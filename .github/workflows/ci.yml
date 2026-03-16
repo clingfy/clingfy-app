@@ -40,28 +40,26 @@ jobs:
       - name: Flutter pub get
         run: flutter pub get
 
-      - name: Debug project layout
+      - name: Verify macOS host project files
         run: |
           set -euo pipefail
-          pwd
-          git rev-parse HEAD
-          ls -la
-          ls -la macos
-          test -f .metadata && echo ".metadata exists"
-          test -f macos/Runner.xcodeproj/project.pbxproj && echo "Runner.xcodeproj exists"
-          sed -n '1,80p' .metadata
+          test -f macos/Runner.xcodeproj/project.pbxproj
+          test -f macos/Runner.xcworkspace/contents.xcworkspacedata
+          test -f macos/Runner.xcodeproj/xcshareddata/xcschemes/${APP_ENV}.xcscheme
+          grep -q "Debug-${APP_ENV}" macos/Runner.xcodeproj/project.pbxproj
+          grep -q "Profile-${APP_ENV}" macos/Runner.xcodeproj/project.pbxproj
+          grep -q "Release-${APP_ENV}" macos/Runner.xcodeproj/project.pbxproj
 
-      - name: Validate Flutter/macOS toolchain
-        run: |
-          flutter --version
-          flutter doctor -v
-          flutter devices
-          flutter precache --macos
-
-      - name: Compile macOS app (unsigned validation build)
+      - name: Install CocoaPods
         run: |
           set -euo pipefail
+          cd macos
+          pod install --repo-update
+          xcodebuild -list -workspace Runner.xcworkspace
 
+      - name: Generate Flutter macOS configs
+        run: |
+          set -euo pipefail
           flutter build macos \
             --debug \
             --config-only \
@@ -70,15 +68,9 @@ jobs:
             --build-number "$BUILD_NUMBER" \
             --dart-define=APP_ENV=$APP_ENV
 
-          echo "Creating empty xcfilelist files to satisfy Xcode's build planner..."
-          mkdir -p macos/Flutter/ephemeral
-          touch macos/Flutter/ephemeral/FlutterInputs.xcfilelist
-          touch macos/Flutter/ephemeral/FlutterOutputs.xcfilelist
-
-          cd macos
-          pod install --repo-update
-          cd ..
-
+      - name: Compile macOS app (unsigned validation build)
+        run: |
+          set -euo pipefail
           xcodebuild \
             -workspace macos/Runner.xcworkspace \
             -scheme "$APP_ENV" \
