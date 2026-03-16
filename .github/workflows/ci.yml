@@ -1,0 +1,84 @@
+name: CI
+
+on:
+  pull_request:
+    branches:
+      - develop
+      - main
+
+jobs:
+  build:
+    runs-on: macos-latest
+
+    env:
+      APP_ENV: ${{ github.base_ref == 'develop' && 'dev' || 'prod' }}
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Verify Xcode and Swift
+        run: |
+          xcodebuild -version
+          swift --version
+
+      - name: Set up Flutter
+        uses: subosito/flutter-action@v2
+        with:
+          flutter-version: 3.41.0
+          channel: stable
+
+      - name: Resolve app version
+        run: |
+          set -euo pipefail
+          VERSION_LINE="$(grep '^version:' pubspec.yaml | awk '{print $2}')"
+          APP_VERSION="${VERSION_LINE%%+*}"
+          BUILD_NUMBER="${GITHUB_RUN_NUMBER}"
+
+          echo "Resolved version: ${APP_VERSION}+${BUILD_NUMBER}"
+          echo "APP_VERSION=${APP_VERSION}" >> "$GITHUB_ENV"
+          echo "BUILD_NUMBER=${BUILD_NUMBER}" >> "$GITHUB_ENV"
+
+      - name: Flutter pub get
+        run: flutter pub get
+
+      - name: Analyze
+        run: flutter analyze
+
+      - name: Test
+        run: flutter test
+
+      - name: Compile macOS app (unsigned validation build)
+        run: |
+          set -euo pipefail
+
+          flutter config --enable-macos-desktop
+
+          flutter build macos \
+            --debug \
+            --config-only \
+            --flavor "$APP_ENV" \
+            --build-name "$APP_VERSION" \
+            --build-number "$BUILD_NUMBER" \
+            --dart-define=APP_ENV=$APP_ENV
+
+          cd macos
+          pod install --repo-update
+          cd ..
+
+          xcodebuild \
+            -workspace macos/Runner.xcworkspace \
+            -scheme "$APP_ENV" \
+            -configuration "Debug-$APP_ENV" \
+            CODE_SIGNING_ALLOWED=NO \
+            CODE_SIGNING_REQUIRED=NO \
+            CODE_SIGN_IDENTITY="" \
+            PROVISIONING_PROFILE_SPECIFIER="" \
+            DEVELOPMENT_TEAM="" \
+            build
+
+      - name: Upload CI artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: Clingfy-CI
+          path: build/macos
