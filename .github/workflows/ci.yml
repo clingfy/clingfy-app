@@ -58,15 +58,27 @@ jobs:
           flutter devices
           flutter precache --macos
 
-      - name: Install CocoaPods
-        run: |
-          cd macos
-          pod install --repo-update
-          cd ..
-          
       - name: Compile macOS app (unsigned validation build)
         run: |
           set -euo pipefail
+
+          flutter build macos \
+            --debug \
+            --config-only \
+            --flavor "$APP_ENV" \
+            --build-name "$APP_VERSION" \
+            --build-number "$BUILD_NUMBER" \
+            --dart-define=APP_ENV=$APP_ENV
+
+          echo "Creating empty xcfilelist files to satisfy Xcode's build planner..."
+          mkdir -p macos/Flutter/ephemeral
+          touch macos/Flutter/ephemeral/FlutterInputs.xcfilelist
+          touch macos/Flutter/ephemeral/FlutterOutputs.xcfilelist
+
+          cd macos
+          pod install --repo-update
+          cd ..
+
           xcodebuild \
             -workspace macos/Runner.xcworkspace \
             -scheme "$APP_ENV" \
