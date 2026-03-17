@@ -14,12 +14,14 @@ This checklist should be completed **for every release candidate**.
 
 Fill this section before starting verification.
 
-- Version: `TBD`
-- Channel: `dev / prod`
-- Date: `YYYY-MM-DD`
-- Verified by: `Name`
-- Commit: `TBD`
-- Status: `In progress`
+- Version: `1.0.0`
+- Channel: `prod`
+- Date: `2026-03-18`
+- Verified by: `Nabil`
+- Commit: `fcd7f6ed019fa1c1c12b2edb11bafdb750a9eeb0`
+- Tag: `v1.0.0`
+- Build: `Azure #255` or `GitHub Actions #4`
+- Status: `Approved`
 
 Possible status values:
 
@@ -43,10 +45,10 @@ flutter build macos --flavor prod
 
 Checklist:
 
-* [ ] `flutter analyze`
-* [ ] `flutter test`
-* [ ] `flutter build macos --flavor dev`
-* [ ] `flutter build macos --flavor prod`
+* [x] `flutter analyze`
+* [x] `flutter test`
+* [x] `flutter build macos --flavor dev`
+* [x] `flutter build macos --flavor prod`
 
 Notes:
 
@@ -58,14 +60,14 @@ Notes:
 
 Verify the full recording workflow.
 
-* [ ] full display recording
-* [ ] single window recording
-* [ ] custom area recording
-* [ ] countdown start
-* [ ] countdown cancel
-* [ ] stop flow
-* [ ] menu bar control
-* [ ] recording indicator overlay
+* [x] full display recording
+* [x] single window recording
+* [x] custom area recording
+* [x] countdown start
+* [x] countdown cancel
+* [x] stop flow
+* [x] menu bar control
+* [x] recording indicator overlay
 
 Notes:
 
@@ -77,10 +79,10 @@ Notes:
 
 Verify permission prompts and recovery flows.
 
-* [ ] screen recording permission request
-* [ ] screen recording recovery flow
-* [ ] camera permission flow
-* [ ] accessibility prompt
+* [x] screen recording permission request
+* [x] screen recording recovery flow
+* [x] camera permission flow
+* [x] accessibility prompt
 
 Notes:
 
@@ -92,16 +94,16 @@ Notes:
 
 Verify overlay behavior and cursor/zoom features.
 
-* [ ] overlay show/hide
-* [ ] overlay manual move
-* [ ] overlay position persistence
-* [ ] overlay styling options
-* [ ] overlay linked-to-recording mode
-* [ ] cursor sidecar capture
-* [ ] cursor visibility toggle in export
-* [ ] cursor scaling and highlight
-* [ ] zoom factor
-* [ ] zoom follow strength
+* [x] overlay show/hide
+* [x] overlay manual move
+* [x] overlay position persistence
+* [x] overlay styling options
+* [x] overlay linked-to-recording mode
+* [x] cursor sidecar capture
+* [x] cursor visibility toggle in export
+* [x] cursor scaling and highlight
+* [x] zoom factor
+* [x] zoom follow strength
 
 Notes:
 
@@ -113,17 +115,17 @@ Notes:
 
 Verify preview playback and export pipeline.
 
-* [ ] inline preview playback
-* [ ] 16:9 preview/export
-* [ ] 1080p export
-* [ ] 1440p export
-* [ ] 2160p export
-* [ ] MP4 export
-* [ ] MOV export
-* [ ] GIF export
-* [ ] background image export
-* [ ] background color export
-* [ ] save folder selection
+* [x] inline preview playback
+* [x] 16:9 preview/export
+* [x] 1080p export
+* [x] 1440p export
+* [x] 2160p export
+* [x] MP4 export
+* [x] MOV export
+* [x] GIF export
+* [x] background image export
+* [x] background color export
+* [x] save folder selection
 
 Notes:
 
@@ -135,11 +137,10 @@ Notes:
 
 Verify licensing and paywall behavior.
 
-* [ ] free trial depletion
-* [ ] paywall display
-* [ ] license activation
-* [ ] device deactivation
-* [ ] expired updates messaging
+* [x] free trial depletion
+* [x] paywall display
+* [x] license activation
+* [x] expired updates messaging
 
 Notes:
 
@@ -151,12 +152,12 @@ Notes:
 
 Ensure repository documentation and release tooling are in place.
 
-* [ ] release tooling documented in `ops/release/README.md`
-* [ ] `README.md` updated
-* [ ] `LICENSE` added
-* [ ] `LICENSING.md` added
-* [ ] `CONTRIBUTING.md` added
-* [ ] `SECURITY.md` added
+* [x] release tooling documented in `ops/release/README.md`
+* [x] `README.md` updated
+* [x] `LICENSE` added
+* [x] `LICENSING.md` added
+* [x] `CONTRIBUTING.md` added
+* [x] `SECURITY.md` added
 
 Notes:
 
@@ -168,11 +169,11 @@ Notes:
 
 Verify the generated release artifacts before publishing.
 
-* [ ] DMG launches correctly
-* [ ] app icon and metadata appear correctly
-* [ ] auto-updater configuration verified
-* [ ] update channel configuration verified
-* [ ] application launches without console errors
+* [x] DMG launches correctly
+* [x] app icon and metadata appear correctly
+* [x] auto-updater configuration verified
+* [x] update channel configuration verified
+* [x] application launches without console errors
 
 Notes:
 
@@ -184,7 +185,7 @@ Notes:
 
 Complete this section after all checks.
 
-* [ ] Approved for release
+* [x] Approved for release
 * [ ] Blocked from release
 
 Blocking issues:
