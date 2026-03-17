@@ -55,16 +55,17 @@ log_info "Version     : $APP_VERSION (build $BUILD_NUMBER)"
 if ! normalize_bool "${SKIP_DEEP_CLEAN:-false}"; then
   log_info "Running deep clean"
   flutter clean
-  flutter pub get
-
-  (
-    cd "$PROJECT_ROOT/macos"
-    rm -rf Podfile.lock Pods .symlinks
-  )
-else
-  log_info "Skipping deep clean"
-  flutter pub get
 fi
+
+log_info "Resolving Dart packages"
+flutter pub get
+
+log_info "Installing CocoaPods"
+(
+  cd "$PROJECT_ROOT/macos"
+  rm -rf Pods .symlinks
+  pod install --repo-update
+)
 
 log_info "Bootstrapping Flutter macOS config"
 flutter build macos \
@@ -78,12 +79,6 @@ echo "BUILD_NUMBER=$BUILD_NUMBER"
 echo "FLUTTER_BUILD_NAME=${FLUTTER_BUILD_NAME:-unset}"
 echo "FLUTTER_BUILD_NUMBER=${FLUTTER_BUILD_NUMBER:-unset}"
 grep -n "FLUTTER_BUILD_" macos/Flutter/Generated.xcconfig || true
-  
-log_info "Installing CocoaPods"
-(
-  cd "$PROJECT_ROOT/macos"
-  pod install --repo-update
-)
 
 log_info "Generating export options plist"
 generate_export_options_plist
