@@ -95,7 +95,7 @@ jobs:
           grep -n "Release-${APP_ENV}" macos/Runner.xcodeproj/project.pbxproj
           echo "OK"
 
-      - name: Compile macOS app (unsigned validation build)
+      - name: Compile macOS app (unsigned build)
         run: |
           set -euo pipefail
           xcodebuild \
