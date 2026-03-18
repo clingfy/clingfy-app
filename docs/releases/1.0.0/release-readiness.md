@@ -18,10 +18,10 @@ Fill this section before starting verification.
 - Channel: `prod`
 - Date: `2026-03-18`
 - Verified by: `Nabil`
-- Commit: `fcd7f6ed019fa1c1c12b2edb11bafdb750a9eeb0`
+- Commit: `333cf8265235dc7ffb85b4732012a2c5c3cb287a`
 - Tag: `v1.0.0`
-- Build: `Azure #255` or `GitHub Actions #4`
-- Status: `Approved`
+- Build: `#20260318.2 • Mark 1.0.0 release as approved`
+- Status: `Released`
 
 Possible status values:
 
