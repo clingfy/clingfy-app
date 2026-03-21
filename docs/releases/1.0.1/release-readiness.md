@@ -14,13 +14,13 @@ This checklist should be completed **for every release candidate**.
 
 Fill this section before starting verification.
 
-- Version: `TBD`
-- Channel: `dev / prod`
-- Date: `YYYY-MM-DD`
-- Verified by: `Name`
+- Version: `1.0.1`
+- Channel: `prod`
+- Date: `2026-03-21`
+- Verified by: `Nabil`
 - Commit: `TBD`
-- Tag: `vT.B.D`
-- Build: `Azure #255` or `GitHub Actions #4`
+- Tag: `v1.0.1`
+- Build: `Azure #255`
 - Status: `In progress`
 
 Possible status values:
@@ -45,10 +45,10 @@ flutter build macos --flavor prod
 
 Checklist:
 
-* [ ] `flutter analyze`
-* [ ] `flutter test`
-* [ ] `flutter build macos --flavor dev`
-* [ ] `flutter build macos --flavor prod`
+* [x] `flutter analyze`
+* [x] `flutter test`
+* [x] `flutter build macos --flavor dev`
+* [x] `flutter build macos --flavor prod`
 
 Notes:
 
