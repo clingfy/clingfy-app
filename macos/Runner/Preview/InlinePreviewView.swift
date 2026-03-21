@@ -16,6 +16,26 @@ final class InlinePreviewView: NSView {
     let frame: CursorFrame?
   }
 
+  struct PreviewUpdatePlan {
+    let requiresFullRebuild: Bool
+    let refreshCanvasGeometry: Bool
+    let refreshMask: Bool
+    let refreshBackground: Bool
+    let refreshAudioMix: Bool
+    let refreshOverlay: Bool
+  }
+
+  struct CanvasLayoutMetrics: Equatable {
+    let targetSize: CGSize
+    let viewSize: CGSize
+    let fitScale: CGFloat
+    let pixelScale: CGFloat
+
+    var containerCenter: CGPoint {
+      CGPoint(x: viewSize.width / 2.0, y: viewSize.height / 2.0)
+    }
+  }
+
   private var player: AVPlayer?
   private var playerLayer: AVPlayerLayer?
   private var timeObserver: Any?
@@ -141,34 +161,58 @@ final class InlinePreviewView: NSView {
   }
 
   private func updateContainerLayout() {
-    guard let container = canvasContainer, let params = currentCompositionParams else { return }
-    let targetSize = params.targetSize
-    guard targetSize.width > 0 && targetSize.height > 0 else { return }
-
-    let viewSize = self.bounds.size
-    let fitScale = min(viewSize.width / targetSize.width, viewSize.height / targetSize.height)
-    let backingScale = self.window?.backingScaleFactor ?? 1.0
-    let pixelScale = fitScale * backingScale
+    guard
+      let params = currentCompositionParams,
+      let metrics = Self.canvasLayoutMetrics(
+        viewSize: bounds.size,
+        backingScale: window?.backingScaleFactor ?? 1.0,
+        targetSize: params.targetSize
+      )
+    else { return }
 
     CATransaction.begin()
     CATransaction.setDisableActions(true)
     defer { CATransaction.commit() }
 
-    // 1. Position the main canvas
-    container.bounds = CGRect(origin: .zero, size: targetSize)
-    container.position = CGPoint(x: viewSize.width / 2.0, y: viewSize.height / 2.0)
-    container.setAffineTransform(CGAffineTransform(scaleX: fitScale, y: fitScale))
+    applyCanvasGeometry(metrics: metrics)
+    updatePreviewMaskLayout(params: params, pixelScale: metrics.pixelScale)
+  }  // updateContainerLayout
 
-    // 2. Make background and zoom layers fill the container exactly
-    canvasBackground?.frame = container.bounds
-    zoomedContentLayer?.frame = container.bounds
+  private func applyCanvasGeometry(metrics: CanvasLayoutMetrics) {
+    guard let container = canvasContainer else { return }
 
-    // 3. Size Masked Layer (Padding + Radius)
+    Self.applyCanvasGeometry(
+      container: container,
+      backgroundLayer: canvasBackground,
+      zoomedLayer: zoomedContentLayer,
+      metrics: metrics,
+      debugLoggingEnabled: shouldShowDebugVisuals
+    )
+  }
+
+  private func updatePreviewMaskLayout() {
+    guard
+      let params = currentCompositionParams,
+      let metrics = Self.canvasLayoutMetrics(
+        viewSize: bounds.size,
+        backingScale: window?.backingScaleFactor ?? 1.0,
+        targetSize: params.targetSize
+      )
+    else { return }
+
+    CATransaction.begin()
+    CATransaction.setDisableActions(true)
+    defer { CATransaction.commit() }
+
+    updatePreviewMaskLayout(params: params, pixelScale: metrics.pixelScale)
+  }
+
+  private func updatePreviewMaskLayout(params: CompositionParams, pixelScale: CGFloat) {
+    guard currentLayout != nil else { return }
     if let layout = currentLayout {
       applyPreviewMask(from: params, layout: layout, pixelScale: pixelScale)
     }
-
-  }  // updateContainerLayout
+  }
 
   private func makePreviewProfile(for params: CompositionParams) -> PreviewProfile {
     PreviewProfile.make(
@@ -188,7 +232,7 @@ final class InlinePreviewView: NSView {
     ).canvasRenderSize
   }
 
-  private func shouldRebuildPreviewProfile(old: PreviewProfile?, new: PreviewProfile) -> Bool {
+  private static func shouldRebuildPreviewProfile(old: PreviewProfile?, new: PreviewProfile) -> Bool {
     old != new
   }
 
@@ -199,7 +243,9 @@ final class InlinePreviewView: NSView {
     else { return }
 
     let newProfile = makePreviewProfile(for: params)
-    guard shouldRebuildPreviewProfile(old: currentPreviewProfile, new: newProfile) else { return }
+    guard Self.shouldRebuildPreviewProfile(old: currentPreviewProfile, new: newProfile) else {
+      return
+    }
 
     scheduleCompositionUpdate(
       params: params,
@@ -343,6 +389,107 @@ final class InlinePreviewView: NSView {
     initialCompositionApplied: Bool
   ) -> Bool {
     !hasEmittedReady && tokenMatches && itemReady && layerReady && initialCompositionApplied
+  }
+
+  static func previewUpdatePlan(
+    from oldParams: CompositionParams,
+    to newParams: CompositionParams,
+    oldProfile: PreviewProfile,
+    newProfile: PreviewProfile
+  ) -> PreviewUpdatePlan {
+    let requiresFullRebuild =
+      shouldRebuildPreviewProfile(old: oldProfile, new: newProfile)
+      || oldParams.targetSize != newParams.targetSize
+      || oldParams.padding != newParams.padding
+      || oldParams.fitMode != newParams.fitMode
+
+    if requiresFullRebuild {
+      return PreviewUpdatePlan(
+        requiresFullRebuild: true,
+        refreshCanvasGeometry: true,
+        refreshMask: true,
+        refreshBackground: true,
+        refreshAudioMix: true,
+        refreshOverlay: true
+      )
+    }
+
+    return PreviewUpdatePlan(
+      requiresFullRebuild: false,
+      refreshCanvasGeometry: false,
+      refreshMask: oldParams.cornerRadius != newParams.cornerRadius,
+      refreshBackground:
+        oldParams.backgroundColor != newParams.backgroundColor
+        || oldParams.backgroundImagePath != newParams.backgroundImagePath,
+      refreshAudioMix:
+        oldParams.audioGainDb != newParams.audioGainDb
+        || oldParams.audioVolumePercent != newParams.audioVolumePercent,
+      refreshOverlay:
+        oldParams.showCursor != newParams.showCursor
+        || oldParams.cursorSize != newParams.cursorSize
+        || oldParams.zoomFactor != newParams.zoomFactor
+        || oldParams.zoomSegments != newParams.zoomSegments
+        || oldParams.zoomEnabled != newParams.zoomEnabled
+    )
+  }
+
+  static func canvasLayoutMetrics(
+    viewSize: CGSize,
+    backingScale: CGFloat,
+    targetSize: CGSize
+  ) -> CanvasLayoutMetrics? {
+    guard targetSize.width > 0 && targetSize.height > 0 else { return nil }
+
+    let fitScale = min(viewSize.width / targetSize.width, viewSize.height / targetSize.height)
+    let safeBackingScale = backingScale > 0 ? backingScale : 1.0
+
+    return CanvasLayoutMetrics(
+      targetSize: targetSize,
+      viewSize: viewSize,
+      fitScale: fitScale,
+      pixelScale: fitScale * safeBackingScale
+    )
+  }
+
+  static func applyCanvasGeometry(
+    container: CALayer,
+    backgroundLayer: CALayer?,
+    zoomedLayer: CALayer?,
+    metrics: CanvasLayoutMetrics,
+    debugLoggingEnabled: Bool = false
+  ) {
+    let contentBounds = CGRect(origin: .zero, size: metrics.targetSize)
+
+    // Avoid recomputing transformed geometry from `frame` while zoom is active.
+    let savedZoomTransform = zoomedLayer?.affineTransform() ?? .identity
+    zoomedLayer?.setAffineTransform(.identity)
+
+    container.bounds = contentBounds
+    container.position = metrics.containerCenter
+    container.setAffineTransform(CGAffineTransform(scaleX: metrics.fitScale, y: metrics.fitScale))
+
+    backgroundLayer?.bounds = contentBounds
+    backgroundLayer?.position = .zero
+
+    zoomedLayer?.bounds = contentBounds
+    zoomedLayer?.position = .zero
+    zoomedLayer?.setAffineTransform(savedZoomTransform)
+
+    if debugLoggingEnabled {
+      NativeLogger.d(
+        "PreviewLayout",
+        "zoomed layer geometry",
+        context: [
+          "viewSize": "\(metrics.viewSize)",
+          "targetSize": "\(metrics.targetSize)",
+          "fitScale": metrics.fitScale,
+          "bounds": "\(zoomedLayer?.bounds ?? .zero)",
+          "position": "\(zoomedLayer?.position ?? .zero)",
+          "frame": "\(zoomedLayer?.frame ?? .zero)",
+          "transform": "\(zoomedLayer?.affineTransform() ?? .identity)",
+        ]
+      )
+    }
   }
 
   /// Emit preview lifecycle event to Flutter
@@ -797,7 +944,7 @@ final class InlinePreviewView: NSView {
     player?.seek(to: targetTime, toleranceBefore: .zero, toleranceAfter: .zero)
 
     resetZoomState()
-    lastZoomTime = 0  // <--- add this
+    lastZoomTime = 0
 
     // Send tick for 0
     sendTick(position: targetTime)
@@ -896,24 +1043,27 @@ final class InlinePreviewView: NSView {
     if
       let currentParams = currentCompositionParams,
       let currentProfile = currentPreviewProfile,
-      currentLayout != nil,
-      !requiresFullCompositionRebuild(
+      currentLayout != nil
+    {
+      let updatePlan = Self.previewUpdatePlan(
         from: currentParams,
         to: mergedParams,
         oldProfile: currentProfile,
         newProfile: newProfile
       )
-    {
-      pendingCompositionWorkItem?.cancel()
-      pendingCompositionWorkItem = nil
-      pendingCompositionParams = nil
-      applyLightweightPreviewUpdate(
-        from: currentParams,
-        to: mergedParams,
-        profile: newProfile,
-        onApplied: onApplied
-      )
-      return
+
+      if !updatePlan.requiresFullRebuild {
+        pendingCompositionWorkItem?.cancel()
+        pendingCompositionWorkItem = nil
+        pendingCompositionParams = nil
+        applyLightweightPreviewUpdate(
+          to: mergedParams,
+          updatePlan: updatePlan,
+          profile: newProfile,
+          onApplied: onApplied
+        )
+        return
+      }
     }
 
     let shouldApplyImmediately = forceImmediate || currentLayout == nil || currentPreviewProfile == nil
@@ -964,37 +1114,28 @@ final class InlinePreviewView: NSView {
     return updated
   }
 
-  private func requiresFullCompositionRebuild(
-    from oldParams: CompositionParams,
-    to newParams: CompositionParams,
-    oldProfile: PreviewProfile,
-    newProfile: PreviewProfile
-  ) -> Bool {
-    if shouldRebuildPreviewProfile(old: oldProfile, new: newProfile) {
-      return true
-    }
-
-    return oldParams.targetSize != newParams.targetSize
-      || oldParams.padding != newParams.padding
-      || oldParams.fitMode != newParams.fitMode
-  }
-
   private func applyLightweightPreviewUpdate(
-    from oldParams: CompositionParams,
     to newParams: CompositionParams,
+    updatePlan: PreviewUpdatePlan,
     profile: PreviewProfile,
     onApplied: ((Bool) -> Void)? = nil
   ) {
     currentCompositionParams = newParams
     currentPreviewProfile = profile
-    updateContainerLayout()
-    applyPreviewBackground(from: newParams, profile: profile)
 
-    if
-      oldParams.audioGainDb != newParams.audioGainDb
-      || oldParams.audioVolumePercent != newParams.audioVolumePercent,
-      let item = player?.currentItem
-    {
+    if updatePlan.refreshCanvasGeometry {
+      updateContainerLayout()
+    }
+
+    if updatePlan.refreshBackground {
+      applyPreviewBackground(from: newParams, profile: profile)
+    }
+
+    if updatePlan.refreshMask {
+      updatePreviewMaskLayout()
+    }
+
+    if updatePlan.refreshAudioMix, let item = player?.currentItem {
       applyAudioMix(
         to: item,
         gainDb: newParams.audioGainDb,
@@ -1002,13 +1143,7 @@ final class InlinePreviewView: NSView {
       )
     }
 
-    if
-      oldParams.showCursor != newParams.showCursor
-      || oldParams.cursorSize != newParams.cursorSize
-      || oldParams.zoomFactor != newParams.zoomFactor
-      || oldParams.zoomSegments != newParams.zoomSegments
-      || oldParams.zoomEnabled != newParams.zoomEnabled
-    {
+    if updatePlan.refreshOverlay {
       applyPreviewOverlayState(at: player?.currentTime().seconds ?? 0, snap: true)
     }
 
