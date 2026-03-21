@@ -18,10 +18,10 @@ Fill this section before starting verification.
 - Channel: `prod`
 - Date: `2026-03-21`
 - Verified by: `Nabil`
-- Commit: `2862b4b4e0b45f7da4260fcf5ef6254c54671efc`
+- Commit: `7f1982450e7a03f6b799c5729b3136dbb816b14e`
 - Tag: `v1.0.1`
-- Build: ``
-- Status: `Approved`
+- Build: `#20260321.1 • Update release-readiness with hash commit`
+- Status: `Released`
 
 Possible status values:
 
