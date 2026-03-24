@@ -44,6 +44,7 @@ final class CursorRecorder {
   private var frames: [CursorFrame] = []
   private var sprites: [CursorSprite] = []
   private var spriteIndexByKey: [SpriteKey: Int] = [:]
+  private var isActive = false
 
   private var startTime: TimeInterval = 0
   private let queue = DispatchQueue(label: "com.clingfy.cursor", qos: .userInteractive)
@@ -105,9 +106,25 @@ final class CursorRecorder {
     }
     t.resume()
     self.timer = t
+    self.isActive = true
   }
 
   func stop(outputURL: URL, completion: @escaping () -> Void) {
+    let wasActive = isActive
+    isActive = false
+
+    guard wasActive else {
+      NativeLogger.d(
+        "CursorRecorder",
+        "Stop skipped because cursor capture was not active",
+        context: ["path": outputURL.path]
+      )
+      DispatchQueue.main.async {
+        completion()
+      }
+      return
+    }
+
     timer?.cancel()
     timer = nil
 
@@ -158,6 +175,7 @@ final class CursorRecorder {
   }
 
   func cancel() {
+    isActive = false
     timer?.cancel()
     timer = nil
 

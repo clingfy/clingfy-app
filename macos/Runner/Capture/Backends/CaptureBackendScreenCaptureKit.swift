@@ -32,6 +32,19 @@ struct TerminalCompletionGuard {
   }
 }
 
+struct CursorFailureFinalizationPlan {
+  let cursorURL: URL?
+  let shouldFlushCursor: Bool
+
+  static func make(recordingURL: URL?, cursorCaptureActive: Bool) -> CursorFailureFinalizationPlan {
+    let cursorURL = recordingURL.map { AppPaths.cursorSidecarURL(for: $0) }
+    return CursorFailureFinalizationPlan(
+      cursorURL: cursorURL,
+      shouldFlushCursor: cursorCaptureActive && cursorURL != nil
+    )
+  }
+}
+
 @available(macOS 15.0, *)
 @MainActor
 final class CaptureBackendScreenCaptureKit: NSObject, CaptureBackend {
@@ -86,6 +99,7 @@ final class CaptureBackendScreenCaptureKit: NSObject, CaptureBackend {
   private var streamMutationTail: Task<Void, Never>?
   private var nextStreamMutationSequence: Int = 0
   private var terminalCompletionGuard = TerminalCompletionGuard()
+  private var isCursorCaptureActive = false
   private var smoothedMicLevelLinear: Double = 0.0
   private var lastMicLevelEmitAt: CFTimeInterval = 0.0
   private let micLevelEmitInterval: CFTimeInterval = 1.0 / 15.0
@@ -420,6 +434,7 @@ final class CaptureBackendScreenCaptureKit: NSObject, CaptureBackend {
 
       // Finish cursor recording AFTER the stream is stopped (video is finalized)
       if let cursorURL {
+        isCursorCaptureActive = false
         cursorRecorder.stop(outputURL: cursorURL) { [weak self] in
           guard let self else { return }
           Task { @MainActor in
@@ -588,14 +603,53 @@ final class CaptureBackendScreenCaptureKit: NSObject, CaptureBackend {
     }
 
     let failedURL = recordingURL
-    cleanupAfterFailure()
-    onFinished?(failedURL, error)
+    let cursorPlan = CursorFailureFinalizationPlan.make(
+      recordingURL: failedURL,
+      cursorCaptureActive: isCursorCaptureActive
+    )
+
+    cleanupStreamAfterFailure(discardCursor: !cursorPlan.shouldFlushCursor)
+
+    guard cursorPlan.shouldFlushCursor, let cursorURL = cursorPlan.cursorURL else {
+      completeFailure(url: failedURL, error: error, cursorURL: cursorPlan.cursorURL)
+      return
+    }
+
+    NativeLogger.i(
+      "SCKBackend", "Flushing cursor recording after failure",
+      context: [
+        "cursor": cursorURL.path,
+        "url": failedURL?.path ?? "nil",
+      ])
+
+    cursorRecorder.stop(outputURL: cursorURL) { [weak self] in
+      guard let self else { return }
+      Task { @MainActor in
+        self.completeFailure(url: failedURL, error: error, cursorURL: cursorURL)
+      }
+    }
+  }
+
+  private func completeFailure(url: URL?, error: Error, cursorURL: URL?) {
+    let cursorExists = cursorURL.map { FileManager.default.fileExists(atPath: $0.path) } ?? false
+
+    NativeLogger.i(
+      "SCKBackend", "Failure completion artifact status",
+      context: [
+        "url": url?.path ?? "nil",
+        "cursorPath": cursorURL?.path ?? "nil",
+        "cursorExists": cursorExists,
+      ])
+
+    resetState()
+    onFinished?(url, error)
   }
 
   private func resetState() {
     didStart = false
     stopRequested = false
     runPhase = .idle
+    isCursorCaptureActive = false
     recordingURL = nil
     currentConfig = nil
     currentOverlayWindowID = nil
@@ -608,11 +662,19 @@ final class CaptureBackendScreenCaptureKit: NSObject, CaptureBackend {
     stopWindowMoveTimer()
   }
 
-  private func cleanupAfterFailure() {
-    cursorRecorder.cancel()
+  private func cleanupStreamAfterFailure(discardCursor: Bool) {
+    if discardCursor {
+      cursorRecorder.cancel()
+    }
+    didStart = false
+    stopRequested = false
+    runPhase = .idle
+    isCursorCaptureActive = false
+    smoothedMicLevelLinear = 0.0
+    lastMicLevelEmitAt = 0.0
+    stopWindowMoveTimer()
     stream = nil
     recordingOutput = nil
-    resetState()
   }
 
   private func markRecordingStarted(url: URL) async {
@@ -631,8 +693,10 @@ final class CaptureBackendScreenCaptureKit: NSObject, CaptureBackend {
         captureRect: currentCaptureRect,
         cursorRasterScale: currentCursorRasterScale
       )
+      isCursorCaptureActive = true
     } else {
       NativeLogger.i("SCKBackend", "Cursor recording disabled (recorder app excluded from capture)")
+      isCursorCaptureActive = false
     }
 
     onStarted?(url)
