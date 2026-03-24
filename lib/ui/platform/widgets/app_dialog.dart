@@ -3,6 +3,7 @@ import 'dart:math' as math;
 import 'package:clingfy/l10n/app_localizations.dart';
 import 'package:clingfy/ui/platform/platform_kind.dart';
 import 'package:clingfy/ui/platform/widgets/app_button.dart';
+import 'package:clingfy/ui/platform/widgets/app_icon_button.dart';
 import 'package:clingfy/ui/theme/app_theme.dart';
 import 'package:flutter/cupertino.dart';
 import 'package:flutter/material.dart';
@@ -58,6 +59,9 @@ class AppDialog {
     T Function()? secondaryBuilder,
     bool barrierDismissible = true,
     double? maxWidth,
+    bool showCloseButton = false,
+    T? closeResult,
+    Key? closeButtonKey,
   }) async {
     final body = content ?? const SizedBox.shrink();
     final l10n = AppLocalizations.of(context)!;
@@ -82,7 +86,11 @@ class AppDialog {
           onSecondaryPressed: resolvedSecondaryLabel == null
               ? null
               : () => Navigator.of(ctx).pop(readSecondary()),
-          maxWidth: maxWidth ?? 300,
+          onClosePressed: showCloseButton
+              ? () => Navigator.of(ctx).pop(closeResult)
+              : null,
+          closeButtonKey: closeButtonKey,
+          maxWidth: maxWidth ?? 380,
         ),
       );
     }
@@ -92,7 +100,18 @@ class AppDialog {
         context: context,
         barrierDismissible: barrierDismissible,
         builder: (ctx) => fluent.ContentDialog(
-          title: Text(title),
+          title: Row(
+            children: [
+              Expanded(child: Text(title)),
+              if (showCloseButton)
+                AppIconButton(
+                  key: closeButtonKey,
+                  tooltip: l10n.cancel,
+                  icon: CupertinoIcons.xmark,
+                  onPressed: () => Navigator.of(ctx).pop(closeResult),
+                ),
+            ],
+          ),
           content: body,
           actions: [
             if (resolvedSecondaryLabel != null)
@@ -125,7 +144,18 @@ class AppDialog {
       context: context,
       barrierDismissible: barrierDismissible,
       builder: (ctx) => AlertDialog(
-        title: Text(title),
+        title: Row(
+          children: [
+            Expanded(child: Text(title)),
+            if (showCloseButton)
+              AppIconButton(
+                key: closeButtonKey,
+                tooltip: l10n.cancel,
+                icon: CupertinoIcons.xmark,
+                onPressed: () => Navigator.of(ctx).pop(closeResult),
+              ),
+          ],
+        ),
         content: body,
         actions: [
           if (resolvedSecondaryLabel != null)
@@ -180,6 +210,8 @@ class _MacosDialogShell extends StatelessWidget {
     required this.maxWidth,
     this.secondaryLabel,
     this.onSecondaryPressed,
+    this.onClosePressed,
+    this.closeButtonKey,
   });
 
   final String title;
@@ -188,13 +220,16 @@ class _MacosDialogShell extends StatelessWidget {
   final String? secondaryLabel;
   final VoidCallback onPrimaryPressed;
   final VoidCallback? onSecondaryPressed;
+  final VoidCallback? onClosePressed;
   final double maxWidth;
+  final Key? closeButtonKey;
 
   @override
   Widget build(BuildContext context) {
     final spacing = context.appSpacing;
     final typography = context.appTypography;
     final brightness = MacosTheme.brightnessOf(context);
+
     final outerBorderColor = brightness.resolve(
       Colors.black.withValues(alpha: 0.23),
       Colors.black.withValues(alpha: 0.76),
@@ -204,16 +239,24 @@ class _MacosDialogShell extends StatelessWidget {
       Colors.white.withValues(alpha: 0.15),
     );
 
+    final backgroundColor = brightness.resolve(
+      CupertinoColors.systemGrey6.color,
+      MacosColors.controlBackgroundColor.darkColor,
+    );
+
+    final contentPadding = EdgeInsets.fromLTRB(
+      spacing.lg,
+      spacing.lg,
+      spacing.lg,
+      16,
+    );
+
     return Dialog(
-      backgroundColor: brightness.resolve(
-        CupertinoColors.systemGrey6.color,
-        MacosColors.controlBackgroundColor.darkColor,
-      ),
+      backgroundColor: backgroundColor,
       shape: const RoundedRectangleBorder(
         borderRadius: BorderRadius.all(Radius.circular(12)),
       ),
       child: Container(
-        padding: EdgeInsets.symmetric(horizontal: spacing.lg),
         decoration: BoxDecoration(
           border: Border.all(width: 2, color: innerBorderColor),
           borderRadius: const BorderRadius.all(Radius.circular(12)),
@@ -228,55 +271,79 @@ class _MacosDialogShell extends StatelessWidget {
             maxWidth: maxWidth,
             maxHeight: MediaQuery.of(context).size.height * 0.85,
           ),
-          child: Column(
-            mainAxisSize: MainAxisSize.min,
+          child: Stack(
             children: [
-              SizedBox(height: spacing.xl),
-              ConstrainedBox(
-                constraints: BoxConstraints(maxHeight: 64, maxWidth: 64),
-                child: const MacosIcon(CupertinoIcons.exclamationmark_bubble),
-              ),
-              SizedBox(height: spacing.lg),
-              Text(
-                title,
-                textAlign: TextAlign.center,
-                style: typography.panelTitle,
-              ),
-              SizedBox(height: spacing.md - 2),
-              Flexible(
-                child: SingleChildScrollView(
-                  child: DefaultTextStyle(
-                    style: typography.body,
-                    textAlign: TextAlign.center,
-                    child: Align(alignment: Alignment.topCenter, child: body),
-                  ),
-                ),
-              ),
-              SizedBox(height: spacing.lg),
-              Row(
-                mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                children: [
-                  if (secondaryLabel != null && onSecondaryPressed != null) ...[
-                    Expanded(
-                      child: AppButton(
-                        label: secondaryLabel!,
-                        variant: AppButtonVariant.secondary,
-                        onPressed: onSecondaryPressed,
-                        expand: true,
+              Padding(
+                padding: contentPadding,
+                child: Column(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    ConstrainedBox(
+                      constraints: const BoxConstraints(
+                        maxHeight: 64,
+                        maxWidth: 64,
+                      ),
+                      child: const MacosIcon(
+                        CupertinoIcons.exclamationmark_bubble,
                       ),
                     ),
-                    const SizedBox(width: 8),
-                  ],
-                  Expanded(
-                    child: AppButton(
-                      label: primaryLabel,
-                      onPressed: onPrimaryPressed,
-                      expand: true,
+                    SizedBox(height: spacing.lg),
+                    Text(
+                      title,
+                      textAlign: TextAlign.center,
+                      style: typography.panelTitle,
                     ),
-                  ),
-                ],
+                    SizedBox(height: spacing.md - 2),
+                    Flexible(
+                      child: SingleChildScrollView(
+                        child: DefaultTextStyle(
+                          style: typography.body,
+                          textAlign: TextAlign.center,
+                          child: Align(
+                            alignment: Alignment.topCenter,
+                            child: body,
+                          ),
+                        ),
+                      ),
+                    ),
+                    SizedBox(height: spacing.lg),
+                    Row(
+                      children: [
+                        if (secondaryLabel != null &&
+                            onSecondaryPressed != null) ...[
+                          Expanded(
+                            child: AppButton(
+                              label: secondaryLabel!,
+                              variant: AppButtonVariant.secondary,
+                              onPressed: onSecondaryPressed,
+                              expand: true,
+                            ),
+                          ),
+                          const SizedBox(width: 8),
+                        ],
+                        Expanded(
+                          child: AppButton(
+                            label: primaryLabel,
+                            onPressed: onPrimaryPressed,
+                            expand: true,
+                          ),
+                        ),
+                      ],
+                    ),
+                  ],
+                ),
               ),
-              const SizedBox(height: 16),
+              if (onClosePressed != null)
+                Positioned(
+                  top: 10,
+                  right: 10,
+                  child: AppIconButton(
+                    key: closeButtonKey ?? const Key('dialog_close'),
+                    tooltip: AppLocalizations.of(context)!.cancel,
+                    icon: CupertinoIcons.xmark,
+                    onPressed: onClosePressed,
+                  ),
+                ),
             ],
           ),
         ),

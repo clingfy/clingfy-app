@@ -817,6 +817,13 @@ class AppLocalizationsEn extends AppLocalizations {
       'Theme, language, and save-folder behavior.';
 
   @override
+  String get settingsStorage => 'Storage';
+
+  @override
+  String get settingsStorageDescription =>
+      'Recording space, internal usage, and disk health.';
+
+  @override
   String get settingsShortcutsDescription =>
       'Customize keyboard shortcuts and resolve conflicts.';
 
@@ -1073,6 +1080,129 @@ class AppLocalizationsEn extends AppLocalizations {
       'Recording setup needs your attention';
 
   @override
+  String get storageOverviewTitle => 'Recording safety';
+
+  @override
+  String get storageOverviewDescription =>
+      'Monitor system free space and Clingfy workspace usage to avoid failed recordings.';
+
+  @override
+  String get storageSystemTitle => 'System storage';
+
+  @override
+  String get storageSystemDescription =>
+      'The drive backing Clingfy\'s active capture destination.';
+
+  @override
+  String get storageClingfyTitle => 'Clingfy storage';
+
+  @override
+  String get storageClingfyDescription =>
+      'Internal recordings, temporary captures, and logs.';
+
+  @override
+  String get storageActionsTitle => 'Actions';
+
+  @override
+  String get storagePathsTitle => 'Paths';
+
+  @override
+  String get storageHealthy => 'Healthy';
+
+  @override
+  String get storageWarning => 'Warning';
+
+  @override
+  String get storageCritical => 'Critical';
+
+  @override
+  String get storageHealthyMessage =>
+      'Your system has enough free space for normal recording.';
+
+  @override
+  String get storageWarningMessage =>
+      'Free space is getting low. Long recordings may fail.';
+
+  @override
+  String get storageCriticalMessage =>
+      'Recording is blocked until more disk space is available.';
+
+  @override
+  String get storageRefresh => 'Refresh';
+
+  @override
+  String get storageOpenRecordingsFolder => 'Open recordings folder';
+
+  @override
+  String get storageOpenTempFolder => 'Open temp folder';
+
+  @override
+  String get storageClearCachedRecordings => 'Clear cached recordings';
+
+  @override
+  String get storageClearCachedRecordingsConfirmTitle =>
+      'Clear cached recordings?';
+
+  @override
+  String get storageClearCachedRecordingsConfirmMessage =>
+      'This removes Clingfy\'s internal recording copies and sidecars. Exported recordings are not deleted, and this action cannot be undone.';
+
+  @override
+  String get storageClearCachedRecordingsConfirmAction => 'Clear recordings';
+
+  @override
+  String storageClearCachedRecordingsSuccess(int count) {
+    String _temp0 = intl.Intl.pluralLogic(
+      count,
+      locale: localeName,
+      other: 'Removed $count cached recordings.',
+      one: 'Removed 1 cached recording.',
+    );
+    return '$_temp0';
+  }
+
+  @override
+  String get storageStatusLabel => 'Status';
+
+  @override
+  String get storageTotalSpace => 'Total';
+
+  @override
+  String get storageUsedSpace => 'Used';
+
+  @override
+  String get storageFreeSpace => 'Free';
+
+  @override
+  String get storageRecordings => 'Recordings';
+
+  @override
+  String get storageTemp => 'Temp';
+
+  @override
+  String get storageLogs => 'Logs';
+
+  @override
+  String get storageClingfyTotal => 'Total Clingfy usage';
+
+  @override
+  String get storageRecordingsPath => 'Recordings folder';
+
+  @override
+  String get storageTempPath => 'Temp folder';
+
+  @override
+  String get storageLogsPath => 'Logs folder';
+
+  @override
+  String get storageActionFailed => 'Storage action failed.';
+
+  @override
+  String storageFreeNow(String value) {
+    return 'Free now: $value';
+  }
+
+  @override
   String get missingRequiredPermission => 'Missing required permission';
 
   @override
@@ -1084,6 +1214,35 @@ class AppLocalizationsEn extends AppLocalizations {
 
   @override
   String get recordWithoutMissingFeatures => 'Record without missing features';
+
+  @override
+  String get storagePreflightTitle => 'Storage needs your attention';
+
+  @override
+  String get storagePreflightCriticalIntro =>
+      'Clingfy detected critically low free space on the active recording drive. Recording is blocked to avoid failed captures.';
+
+  @override
+  String get storagePreflightWarningIntro =>
+      'Free space is getting low. Long recordings may fail before they finish.';
+
+  @override
+  String get storageAvailableNow => 'Available now';
+
+  @override
+  String get storageRecordingBlockedBelow => 'Recording is blocked below';
+
+  @override
+  String get storageRecommendedFreeSpace => 'Recommended free space';
+
+  @override
+  String get openStorageSettings => 'Open Storage Settings';
+
+  @override
+  String get recordAnyway => 'Record anyway';
+
+  @override
+  String get storageBypassAndRecord => 'Bypass and record';
 
   @override
   String get cameraForFaceCam => 'Camera for Face Cam';

@@ -36,6 +36,12 @@ struct OverlayUpdateDeduper {
   }
 }
 
+enum CachedRecordingsCleanupPolicy {
+  static func canClear(recorderState: RecorderState) -> Bool {
+    recorderState == .idle
+  }
+}
+
 enum AudioLevelEstimator {
   static func dbfs(for linear: Double) -> Double {
     let clamped = max(linear, 0.000000001)
@@ -131,6 +137,75 @@ enum AudioLevelEstimator {
 
     let clampedPeak = max(0.0, min(1.0, peak))
     return (linear: clampedPeak, dbfs: dbfs(for: clampedPeak))
+  }
+}
+
+enum CaptureDestinationPreflightDecision {
+  case proceed
+  case noAvailableSpace
+  case belowCriticalThreshold
+}
+
+enum CaptureDestinationPreflightPolicy {
+  static func isNonProductionBuild(
+    bundleIdentifier: String?,
+    isDebugBuild: Bool = BuildEnvironment.isDebugBuild
+  ) -> Bool {
+    if isDebugBuild {
+      return true
+    }
+    return bundleIdentifier?.lowercased().hasSuffix(".dev") == true
+  }
+
+  static func shouldBypassLowStorageCheck(
+    requested: Bool,
+    bundleIdentifier: String?,
+    isDebugBuild: Bool = BuildEnvironment.isDebugBuild
+  ) -> Bool {
+    guard requested else { return false }
+    return isNonProductionBuild(
+      bundleIdentifier: bundleIdentifier,
+      isDebugBuild: isDebugBuild
+    )
+  }
+
+  static func decision(
+    availableBytes: Int64?,
+    requestedBypass: Bool,
+    bundleIdentifier: String?,
+    isDebugBuild: Bool = BuildEnvironment.isDebugBuild
+  ) -> CaptureDestinationPreflightDecision {
+    if shouldBypassLowStorageCheck(
+      requested: requestedBypass,
+      bundleIdentifier: bundleIdentifier,
+      isDebugBuild: isDebugBuild
+    ) {
+      return .proceed
+    }
+
+    guard let availableBytes else {
+      return .proceed
+    }
+
+    if availableBytes <= 0 {
+      return .noAvailableSpace
+    }
+
+    if availableBytes < StorageInfoProvider.criticalThresholdBytes {
+      return .belowCriticalThreshold
+    }
+
+    return .proceed
+  }
+}
+
+enum BuildEnvironment {
+  static var isDebugBuild: Bool {
+    #if DEBUG
+      return true
+    #else
+      return false
+    #endif
   }
 }
 
@@ -574,6 +649,16 @@ final class ScreenRecorderFacade: NSObject {
     result(payload)
   }
 
+  func getStorageSnapshot(result: @escaping FlutterResult) {
+    let snapshot = StorageInfoProvider.buildSnapshot(
+      captureDestinationURL: currentCaptureDestinationURL(),
+      recordingsURL: AppPaths.recordingsRoot(),
+      tempURL: AppPaths.tempRoot(),
+      logsURL: AppPaths.logsRoot()
+    )
+    result(snapshot.asMap())
+  }
+
   func startRecording(args: [String: Any]?, result: @escaping FlutterResult) {
     guard state == .idle else {
       if let path = currentRawURL?.path ?? capture.currentOutputURL?.path {
@@ -591,6 +676,7 @@ final class ScreenRecorderFacade: NSObject {
     sessionDisableMicrophone = args?["disableMicrophone"] as? Bool ?? false
     sessionDisableCameraOverlay = args?["disableCameraOverlay"] as? Bool ?? false
     sessionDisableCursorHighlight = args?["disableCursorHighlight"] as? Bool ?? false
+    let allowLowStorageBypass = args?["allowLowStorageBypass"] as? Bool ?? false
 
     // macOS screen-recording permission
     if #available(macOS 10.15, *), !CGPreflightScreenCaptureAccess() {
@@ -677,7 +763,10 @@ final class ScreenRecorderFacade: NSObject {
       currentRawURL = nil
 
       let session = try makeRecordingFileSession(in: workspaceDir)
-      try preflightCaptureDestination(session.inProgressRawURL)
+      try preflightCaptureDestination(
+        session.inProgressRawURL,
+        allowLowStorageBypass: allowLowStorageBypass
+      )
       activeRecordingFileSession = session
       currentRawURL = session.finalRawURL
 
@@ -1954,22 +2043,61 @@ final class ScreenRecorderFacade: NSObject {
     CaptureDestinationDiagnostics.url(for: activeRecordingFileSession)
   }
 
-  private func preflightCaptureDestination(_ url: URL) throws {
+  private func preflightCaptureDestination(_ url: URL, allowLowStorageBypass: Bool) throws {
     let targetURL = diskSpaceLookupURL(for: url)
     let bytes = availableDiskSpaceBytes(at: url)
+    let bundleIdentifier = Bundle.main.bundleIdentifier
+    let bypassEnabled = CaptureDestinationPreflightPolicy.shouldBypassLowStorageCheck(
+      requested: allowLowStorageBypass,
+      bundleIdentifier: bundleIdentifier
+    )
+    let decision = CaptureDestinationPreflightPolicy.decision(
+      availableBytes: bytes,
+      requestedBypass: allowLowStorageBypass,
+      bundleIdentifier: bundleIdentifier
+    )
 
     NativeLogger.i(
       "Facade", "Capture destination disk preflight",
       context: [
         "path": targetURL.path,
         "availableBytes": bytes ?? -1,
+        "warningThresholdBytes": StorageInfoProvider.warningThresholdBytes,
+        "criticalThresholdBytes": StorageInfoProvider.criticalThresholdBytes,
+        "requestedBypass": allowLowStorageBypass,
+        "bypassEnabled": bypassEnabled,
       ])
 
-    guard let bytes else { return }
-    guard bytes > 0 else {
+    if allowLowStorageBypass && !bypassEnabled {
+      NativeLogger.w(
+        "Facade", "Ignoring low storage bypass request in production build",
+        context: [
+          "bundleID": bundleIdentifier ?? "unknown"
+        ])
+    }
+
+    if bypassEnabled {
+      NativeLogger.w(
+        "Facade", "Bypassing low storage capture preflight for non-production build",
+        context: [
+          "path": targetURL.path,
+          "availableBytes": bytes ?? -1,
+        ])
+      return
+    }
+
+    switch decision {
+    case .proceed:
+      return
+    case .noAvailableSpace:
       throw flutterError(
         NativeErrorCode.outputUrlError,
         "Capture destination has no available disk space"
+      )
+    case .belowCriticalThreshold:
+      throw flutterError(
+        NativeErrorCode.outputUrlError,
+        "Capture destination free space is below the minimum required to start recording"
       )
     }
   }
@@ -1983,41 +2111,7 @@ final class ScreenRecorderFacade: NSObject {
   }
 
   private func availableDiskSpaceBytes(at url: URL) -> Int64? {
-    let targetURL = diskSpaceLookupURL(for: url)
-    do {
-      let values = try targetURL.resourceValues(forKeys: [
-        .volumeAvailableCapacityForImportantUsageKey,
-        .volumeAvailableCapacityKey,
-      ])
-      if let free = values.volumeAvailableCapacityForImportantUsage {
-        return Int64(free)
-      }
-      if let free = values.volumeAvailableCapacity {
-        return Int64(free)
-      }
-    } catch {
-      NativeLogger.w(
-        "Facade", "Failed to read URL resource disk space",
-        context: ["path": targetURL.path, "error": error.localizedDescription])
-    }
-
-    do {
-      let attrs = try FileManager.default.attributesOfFileSystem(forPath: targetURL.path)
-      if let free = attrs[.systemFreeSize] as? NSNumber {
-        return free.int64Value
-      }
-      if let free = attrs[.systemFreeSize] as? Int64 {
-        return free
-      }
-      if let free = attrs[.systemFreeSize] as? UInt64 {
-        return free > UInt64(Int64.max) ? Int64.max : Int64(free)
-      }
-    } catch {
-      NativeLogger.w(
-        "Facade", "Failed to read filesystem disk space",
-        context: ["path": targetURL.path, "error": error.localizedDescription])
-    }
-    return nil
+    StorageInfoProvider.availableCapacity(for: url)
   }
 
   private func setCaptureBackend(_ backend: CaptureBackend) {
@@ -2218,6 +2312,20 @@ final class ScreenRecorderFacade: NSObject {
   private func isStartingOrRecording() -> Bool {
     return state == .starting || state == .recording
   }
+
+  func canClearCachedRecordings() -> Bool {
+    CachedRecordingsCleanupPolicy.canClear(recorderState: state)
+  }
+
+  func clearCachedRecordings() -> Int {
+    let deletedCount = recordingStore.deleteAll()
+    NativeLogger.i(
+      "Facade", "Cleared cached recordings",
+      context: ["deletedCount": deletedCount]
+    )
+    return deletedCount
+  }
+
   private func exportFormatInfo(_ formatRaw: String) -> ExportFormatInfo {
     switch formatRaw.lowercased() {
 

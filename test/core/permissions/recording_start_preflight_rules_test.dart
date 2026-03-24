@@ -1,3 +1,4 @@
+import 'package:clingfy/core/models/storage_snapshot.dart';
 import 'package:clingfy/core/permissions/models/permission_status_snapshot.dart';
 import 'package:clingfy/core/permissions/models/recording_start_preflight.dart';
 import 'package:clingfy/core/permissions/recording_start_preflight_rules.dart';
@@ -77,4 +78,72 @@ void main() {
       );
     },
   );
+
+  test(
+    'storage warning is attached when free space is below warning threshold',
+    () {
+      final preflight = buildRecordingStartPreflight(
+        status: const PermissionStatusSnapshot(
+          screenRecording: true,
+          microphone: true,
+          camera: true,
+          accessibility: true,
+        ),
+        intent: const RecordingStartIntent(
+          needsScreenRecording: true,
+          needsMicrophone: false,
+          needsCamera: false,
+          needsAccessibility: false,
+        ),
+        storageSnapshot: const StorageSnapshot(
+          systemTotalBytes: 500 * 1024 * 1024 * 1024,
+          systemAvailableBytes: 15 * 1024 * 1024 * 1024,
+          recordingsBytes: 0,
+          tempBytes: 0,
+          logsBytes: 0,
+          recordingsPath: '/tmp/recordings',
+          tempPath: '/tmp/temp',
+          logsPath: '/tmp/logs',
+          warningThresholdBytes: 20 * 1024 * 1024 * 1024,
+          criticalThresholdBytes: 10 * 1024 * 1024 * 1024,
+        ),
+      );
+
+      expect(preflight.hasPermissionAttention, isFalse);
+      expect(preflight.hasStorageAttention, isTrue);
+      expect(preflight.storage?.isWarning, isTrue);
+    },
+  );
+
+  test('storage critical blocks clear preflight', () {
+    final preflight = buildRecordingStartPreflight(
+      status: const PermissionStatusSnapshot(
+        screenRecording: true,
+        microphone: true,
+        camera: true,
+        accessibility: true,
+      ),
+      intent: const RecordingStartIntent(
+        needsScreenRecording: true,
+        needsMicrophone: false,
+        needsCamera: false,
+        needsAccessibility: false,
+      ),
+      storageSnapshot: const StorageSnapshot(
+        systemTotalBytes: 500 * 1024 * 1024 * 1024,
+        systemAvailableBytes: 5 * 1024 * 1024 * 1024,
+        recordingsBytes: 0,
+        tempBytes: 0,
+        logsBytes: 0,
+        recordingsPath: '/tmp/recordings',
+        tempPath: '/tmp/temp',
+        logsPath: '/tmp/logs',
+        warningThresholdBytes: 20 * 1024 * 1024 * 1024,
+        criticalThresholdBytes: 10 * 1024 * 1024 * 1024,
+      ),
+    );
+
+    expect(preflight.isClear, isFalse);
+    expect(preflight.storage?.isBlocking, isTrue);
+  });
 }
