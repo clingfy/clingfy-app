@@ -15,6 +15,23 @@ import QuartzCore
 @preconcurrency import ScreenCaptureKit
 import UniformTypeIdentifiers
 
+struct TerminalCompletionGuard {
+  private(set) var didComplete = false
+
+  mutating func beginCompletion() -> Bool {
+    if didComplete {
+      return false
+    }
+
+    didComplete = true
+    return true
+  }
+
+  mutating func reset() {
+    didComplete = false
+  }
+}
+
 @available(macOS 15.0, *)
 @MainActor
 final class CaptureBackendScreenCaptureKit: NSObject, CaptureBackend {
@@ -68,11 +85,13 @@ final class CaptureBackendScreenCaptureKit: NSObject, CaptureBackend {
   private var isFlushingOverlayUpdates: Bool = false
   private var streamMutationTail: Task<Void, Never>?
   private var nextStreamMutationSequence: Int = 0
+  private var terminalCompletionGuard = TerminalCompletionGuard()
   private var smoothedMicLevelLinear: Double = 0.0
   private var lastMicLevelEmitAt: CFTimeInterval = 0.0
   private let micLevelEmitInterval: CFTimeInterval = 1.0 / 15.0
 
   func start(config: CaptureStartConfig) {
+    terminalCompletionGuard.reset()
     self.currentConfig = config
     self.currentOverlayWindowID = config.cameraOverlayWindowID
     self.pendingOverlayWindowID = config.cameraOverlayWindowID
@@ -342,8 +361,7 @@ final class CaptureBackendScreenCaptureKit: NSObject, CaptureBackend {
 
     } catch {
       NativeLogger.e("SCKBackend", "Start failed", context: ["error": "\(error)"])
-      cleanupAfterFailure()
-      onFinished?(nil, error)
+      finishWithFailure(error)
     }
   }
 
@@ -414,8 +432,7 @@ final class CaptureBackendScreenCaptureKit: NSObject, CaptureBackend {
 
     } catch {
       NativeLogger.e("SCKBackend", "Stop failed", context: ["error": "\(error)"])
-      onFinished?(nil, error)
-      resetState()
+      finishWithFailure(error)
     }
   }
 
@@ -551,10 +568,28 @@ final class CaptureBackendScreenCaptureKit: NSObject, CaptureBackend {
 
   // MARK: Helpers
   private func finishSuccessfully(url: URL?) {
+    guard terminalCompletionGuard.beginCompletion() else {
+      NativeLogger.w("SCKBackend", "Ignoring duplicate terminal success completion")
+      return
+    }
+
     if let url { logFinalVideoInfo(url: url) }
     NativeLogger.i("SCKBackend", "Finished", context: ["url": url?.path ?? "nil"])
     onFinished?(url, nil)
     resetState()
+  }
+
+  private func finishWithFailure(_ error: Error) {
+    guard terminalCompletionGuard.beginCompletion() else {
+      NativeLogger.w(
+        "SCKBackend", "Ignoring duplicate terminal failure completion",
+        context: ["error": "\(error)"])
+      return
+    }
+
+    let failedURL = recordingURL
+    cleanupAfterFailure()
+    onFinished?(failedURL, error)
   }
 
   private func resetState() {
@@ -574,6 +609,7 @@ final class CaptureBackendScreenCaptureKit: NSObject, CaptureBackend {
   }
 
   private func cleanupAfterFailure() {
+    cursorRecorder.cancel()
     stream = nil
     recordingOutput = nil
     resetState()
@@ -1186,8 +1222,7 @@ extension CaptureBackendScreenCaptureKit: SCStreamDelegate {
           "error": "\(error)",
           "code": errorCode,
         ])
-      self.onFinished?(nil, error)
-      self.cleanupAfterFailure()
+      self.finishWithFailure(error)
     }
   }
 }
@@ -1232,8 +1267,7 @@ extension CaptureBackendScreenCaptureKit: SCRecordingOutputDelegate {
           "error": "\(error)",
           "phase": self.runPhase.rawValue,
         ])
-      self.onFinished?(nil, error)
-      self.cleanupAfterFailure()
+      self.finishWithFailure(error)
     }
   }
 }

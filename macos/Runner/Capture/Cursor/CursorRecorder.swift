@@ -157,6 +157,27 @@ final class CursorRecorder {
     }
   }
 
+  func cancel() {
+    timer?.cancel()
+    timer = nil
+
+    if let act = activity {
+      ProcessInfo.processInfo.endActivity(act)
+      activity = nil
+    }
+
+    lock.lock()
+    frames = []
+    sprites = []
+    spriteIndexByKey = [:]
+    lock.unlock()
+
+    startTime = 0
+    didLogRasterShape = false
+
+    NativeLogger.d("CursorRecorder", "Cancelled")
+  }
+
   private func captureFrame() {
     let now = ProcessInfo.processInfo.systemUptime
     let t = now - startTime

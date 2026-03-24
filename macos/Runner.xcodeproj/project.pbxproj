@@ -24,6 +24,7 @@
 		32FB535522953FAAFDFB0C14 /* Pods_Runner.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = B8EAFCB83B0EC24EB9C27E83 /* Pods_Runner.framework */; };
 		8F5A1B2C3D4E5F60718293A2 /* OverlayUpdateDeduperTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 8F5A1B2C3D4E5F60718293A1 /* OverlayUpdateDeduperTests.swift */; };
 		A1B2C3D4E5F60718293A4B5D /* CameraOverlayLayoutTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = A1B2C3D4E5F60718293A4B5C /* CameraOverlayLayoutTests.swift */; };
+		C1D2E3F40516273849A5B6C7 /* RecordingFailureRecoveryTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = C1D2E3F40516273849A5B6C6 /* RecordingFailureRecoveryTests.swift */; };
 		331C80D8294CF71000263BE5 /* RunnerTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 331C80D7294CF71000263BE5 /* RunnerTests.swift */; };
 		335BBD1B22A9A15E00E9071D /* GeneratedPluginRegistrant.swift in Sources */ = {isa = PBXBuildFile; fileRef = 335BBD1A22A9A15E00E9071D /* GeneratedPluginRegistrant.swift */; };
 		33CC10F12044A3C60003C045 /* AppDelegate.swift in Sources */ = {isa = PBXBuildFile; fileRef = 33CC10F02044A3C60003C045 /* AppDelegate.swift */; };
@@ -129,6 +130,7 @@
 		331C80D7294CF71000263BE5 /* RunnerTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = RunnerTests.swift; sourceTree = "<group>"; };
 		8F5A1B2C3D4E5F60718293A1 /* OverlayUpdateDeduperTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = OverlayUpdateDeduperTests.swift; sourceTree = "<group>"; };
 		A1B2C3D4E5F60718293A4B5C /* CameraOverlayLayoutTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CameraOverlayLayoutTests.swift; sourceTree = "<group>"; };
+		C1D2E3F40516273849A5B6C6 /* RecordingFailureRecoveryTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = RecordingFailureRecoveryTests.swift; sourceTree = "<group>"; };
 		333000ED22D3DE5D00554162 /* Warnings.xcconfig */ = {isa = PBXFileReference; lastKnownFileType = text.xcconfig; path = Warnings.xcconfig; sourceTree = "<group>"; };
 		335BBD1A22A9A15E00E9071D /* GeneratedPluginRegistrant.swift */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.swift; path = GeneratedPluginRegistrant.swift; sourceTree = "<group>"; };
 		33CC10ED2044A3C60003C045 /* Clingfy.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = Clingfy.app; sourceTree = BUILT_PRODUCTS_DIR; };
@@ -246,6 +248,7 @@
 				9A1B2C3D4E5F60718293A4B9 /* CursorFrameResolverTests.swift */,
 				8F5A1B2C3D4E5F60718293A1 /* OverlayUpdateDeduperTests.swift */,
 				9A1B2C3D4E5F60718293A4B7 /* PreviewProfileTests.swift */,
+				C1D2E3F40516273849A5B6C6 /* RecordingFailureRecoveryTests.swift */,
 				331C80D7294CF71000263BE5 /* RunnerTests.swift */,
 			);
 			path = RunnerTests;
@@ -830,6 +833,7 @@
 				9A1B2C3D4E5F60718293A4BA /* CursorFrameResolverTests.swift in Sources */,
 				8F5A1B2C3D4E5F60718293A2 /* OverlayUpdateDeduperTests.swift in Sources */,
 				9A1B2C3D4E5F60718293A4B8 /* PreviewProfileTests.swift in Sources */,
+				C1D2E3F40516273849A5B6C7 /* RecordingFailureRecoveryTests.swift in Sources */,
 				331C80D8294CF71000263BE5 /* RunnerTests.swift in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
