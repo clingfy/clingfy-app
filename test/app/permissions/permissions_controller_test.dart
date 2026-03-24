@@ -94,6 +94,7 @@ void main() {
 
   test('prepareRecordingStartPreflight refreshes before building', () async {
     var refreshCalls = 0;
+    var storageCalls = 0;
     final messenger =
         TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger;
 
@@ -106,6 +107,20 @@ void main() {
             'microphone': false,
             'camera': true,
             'accessibility': false,
+          };
+        case 'getStorageSnapshot':
+          storageCalls += 1;
+          return <String, dynamic>{
+            'systemTotalBytes': 500 * 1024 * 1024 * 1024,
+            'systemAvailableBytes': 15 * 1024 * 1024 * 1024,
+            'recordingsBytes': 4 * 1024 * 1024,
+            'tempBytes': 2 * 1024 * 1024,
+            'logsBytes': 512 * 1024,
+            'recordingsPath': '/tmp/recordings',
+            'tempPath': '/tmp/temp',
+            'logsPath': '/tmp/logs',
+            'warningThresholdBytes': 20 * 1024 * 1024 * 1024,
+            'criticalThresholdBytes': 10 * 1024 * 1024 * 1024,
           };
         default:
           return null;
@@ -128,6 +143,7 @@ void main() {
     );
 
     expect(refreshCalls, 1);
+    expect(storageCalls, 1);
     expect(preflight.hasHardBlocker, isFalse);
     expect(
       preflight.missingOptional,
@@ -136,6 +152,7 @@ void main() {
         MissingPermissionKind.accessibility,
       ]),
     );
+    expect(preflight.storage?.isWarning, isTrue);
   });
 
   test('onboarding step defaults to zero and can be persisted', () async {

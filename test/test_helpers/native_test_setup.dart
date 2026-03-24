@@ -60,6 +60,19 @@ Future<void> installCommonNativeMocks({
       case 'getDisplays':
       case 'getAppWindows':
         return <dynamic>[];
+      case 'getStorageSnapshot':
+        return <String, dynamic>{
+          'systemTotalBytes': 500 * 1024 * 1024 * 1024,
+          'systemAvailableBytes': 200 * 1024 * 1024 * 1024,
+          'recordingsBytes': 4 * 1024 * 1024,
+          'tempBytes': 2 * 1024 * 1024,
+          'logsBytes': 512 * 1024,
+          'recordingsPath': '/tmp/Clingfy/Recordings',
+          'tempPath': '/tmp/Clingfy/Temp',
+          'logsPath': '/tmp/Clingfy/Logs',
+          'warningThresholdBytes': 20 * 1024 * 1024 * 1024,
+          'criticalThresholdBytes': 10 * 1024 * 1024 * 1024,
+        };
       case 'setAppWindowTarget':
       case 'setAudioSource':
       case 'setVideoSource':
@@ -99,6 +112,9 @@ Future<void> installCommonNativeMocks({
       case 'openAccessibilitySettings':
       case 'openScreenRecordingSettings':
       case 'openSystemSettings':
+      case 'revealRecordingsFolder':
+      case 'revealTempFolder':
+      case 'clearCachedRecordings':
       case 'setAudioMix':
       case 'previewOpen':
       case 'previewClose':

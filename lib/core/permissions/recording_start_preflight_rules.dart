@@ -1,9 +1,11 @@
+import 'package:clingfy/core/models/storage_snapshot.dart';
 import 'package:clingfy/core/permissions/models/permission_status_snapshot.dart';
 import 'package:clingfy/core/permissions/models/recording_start_preflight.dart';
 
 RecordingStartPreflight buildRecordingStartPreflight({
   required PermissionStatusSnapshot status,
   required RecordingStartIntent intent,
+  StorageSnapshot? storageSnapshot,
 }) {
   final missingHard = <MissingPermissionKind>[];
   final missingOptional = <MissingPermissionKind>[];
@@ -28,5 +30,8 @@ RecordingStartPreflight buildRecordingStartPreflight({
     intent: intent,
     missingHard: missingHard,
     missingOptional: missingOptional,
+    storage: storageSnapshot == null
+        ? null
+        : RecordingStoragePreflight.fromSnapshot(storageSnapshot),
   );
 }

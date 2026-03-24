@@ -17,6 +17,7 @@ import 'package:clingfy/l10n/app_localizations.dart';
 import 'package:clingfy/core/models/app_models.dart';
 import 'package:clingfy/core/bridges/native_bridge.dart';
 import 'package:clingfy/app/settings/settings_controller.dart';
+import 'package:clingfy/app/settings/widgets/app_settings_view.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_test/flutter_test.dart';
@@ -91,6 +92,7 @@ void main() {
     WidgetTester tester, {
     required Map<String, bool> permissionStatus,
     List<Map<String, Object?>> audioSources = const [],
+    Map<String, Object?>? storageSnapshot,
   }) async {
     SharedPreferences.setMockInitialValues({});
 
@@ -109,6 +111,20 @@ void main() {
         case 'getDisplays':
         case 'getAppWindows':
           return <dynamic>[];
+        case 'getStorageSnapshot':
+          return storageSnapshot ??
+              <String, Object?>{
+                'systemTotalBytes': 500 * 1024 * 1024 * 1024,
+                'systemAvailableBytes': 200 * 1024 * 1024 * 1024,
+                'recordingsBytes': 4 * 1024 * 1024,
+                'tempBytes': 2 * 1024 * 1024,
+                'logsBytes': 512 * 1024,
+                'recordingsPath': '/tmp/Clingfy/Recordings',
+                'tempPath': '/tmp/Clingfy/Temp',
+                'logsPath': '/tmp/Clingfy/Logs',
+                'warningThresholdBytes': 20 * 1024 * 1024 * 1024,
+                'criticalThresholdBytes': 10 * 1024 * 1024 * 1024,
+              };
         case 'getExcludeRecorderApp':
           return false;
         case 'getExcludeMicFromSystemAudio':
@@ -206,6 +222,14 @@ void main() {
     late BuildContext context;
     await tester.pumpWidget(
       MaterialApp(
+        routes: {
+          AppSettingsView.routeName: (context) =>
+              AppSettingsView(controller: settings),
+          AppSettingsView.storageRouteName: (context) => AppSettingsView(
+            controller: settings,
+            initialSection: SettingsSection.storage,
+          ),
+        },
         localizationsDelegates: AppLocalizations.localizationsDelegates,
         supportedLocales: AppLocalizations.supportedLocales,
         builder: (context, child) =>
@@ -375,5 +399,130 @@ void main() {
     );
     expect(args['disableMicrophone'], isTrue);
     harness.dispose();
+  });
+
+  testWidgets('storage warning shows record anyway flow before native start', (
+    tester,
+  ) async {
+    final harness = await createHarness(
+      tester,
+      permissionStatus: const {
+        'screenRecording': true,
+        'microphone': true,
+        'camera': true,
+        'accessibility': true,
+      },
+      storageSnapshot: <String, Object?>{
+        'systemTotalBytes': 500 * 1024 * 1024 * 1024,
+        'systemAvailableBytes': 15 * 1024 * 1024 * 1024,
+        'recordingsBytes': 4 * 1024 * 1024,
+        'tempBytes': 2 * 1024 * 1024,
+        'logsBytes': 512 * 1024,
+        'recordingsPath': '/tmp/Clingfy/Recordings',
+        'tempPath': '/tmp/Clingfy/Temp',
+        'logsPath': '/tmp/Clingfy/Logs',
+        'warningThresholdBytes': 20 * 1024 * 1024 * 1024,
+        'criticalThresholdBytes': 10 * 1024 * 1024 * 1024,
+      },
+    );
+
+    unawaited(harness.actions.toggleRecording(harness.context));
+    await tester.pumpAndSettle();
+
+    expect(find.text('Record anyway'), findsOneWidget);
+    expect(harness.callsFor('startRecording'), isEmpty);
+
+    await tester.tap(find.text('Record anyway'));
+    await tester.pumpAndSettle();
+
+    expect(harness.callsFor('startRecording'), hasLength(1));
+    final startCall = harness.callsFor('startRecording').single;
+    final args = Map<String, dynamic>.from(
+      startCall.arguments! as Map<dynamic, dynamic>,
+    );
+    expect(args['allowLowStorageBypass'], isFalse);
+  });
+
+  testWidgets('critical storage opens storage settings instead of starting', (
+    tester,
+  ) async {
+    final harness = await createHarness(
+      tester,
+      permissionStatus: const {
+        'screenRecording': true,
+        'microphone': true,
+        'camera': true,
+        'accessibility': true,
+      },
+      storageSnapshot: <String, Object?>{
+        'systemTotalBytes': 500 * 1024 * 1024 * 1024,
+        'systemAvailableBytes': 5 * 1024 * 1024 * 1024,
+        'recordingsBytes': 4 * 1024 * 1024,
+        'tempBytes': 2 * 1024 * 1024,
+        'logsBytes': 512 * 1024,
+        'recordingsPath': '/tmp/Clingfy/Recordings',
+        'tempPath': '/tmp/Clingfy/Temp',
+        'logsPath': '/tmp/Clingfy/Logs',
+        'warningThresholdBytes': 20 * 1024 * 1024 * 1024,
+        'criticalThresholdBytes': 10 * 1024 * 1024 * 1024,
+      },
+    );
+
+    unawaited(harness.actions.toggleRecording(harness.context));
+    await tester.pumpAndSettle();
+
+    expect(find.text('Open Storage Settings'), findsOneWidget);
+    expect(find.byKey(const Key('storage_dialog_close')), findsOneWidget);
+    expect(find.text('Cancel'), findsNothing);
+
+    await tester.tap(find.text('Open Storage Settings'));
+    await tester.pumpAndSettle();
+
+    expect(
+      find.text('Recording space, internal usage, and disk health.'),
+      findsOneWidget,
+    );
+    expect(harness.callsFor('startRecording'), isEmpty);
+  });
+
+  testWidgets('critical storage bypass starts recording in dev mode', (
+    tester,
+  ) async {
+    final harness = await createHarness(
+      tester,
+      permissionStatus: const {
+        'screenRecording': true,
+        'microphone': true,
+        'camera': true,
+        'accessibility': true,
+      },
+      storageSnapshot: <String, Object?>{
+        'systemTotalBytes': 500 * 1024 * 1024 * 1024,
+        'systemAvailableBytes': 5 * 1024 * 1024 * 1024,
+        'recordingsBytes': 4 * 1024 * 1024,
+        'tempBytes': 2 * 1024 * 1024,
+        'logsBytes': 512 * 1024,
+        'recordingsPath': '/tmp/Clingfy/Recordings',
+        'tempPath': '/tmp/Clingfy/Temp',
+        'logsPath': '/tmp/Clingfy/Logs',
+        'warningThresholdBytes': 20 * 1024 * 1024 * 1024,
+        'criticalThresholdBytes': 10 * 1024 * 1024 * 1024,
+      },
+    );
+
+    unawaited(harness.actions.toggleRecording(harness.context));
+    await tester.pumpAndSettle();
+
+    expect(find.text('Bypass and record'), findsOneWidget);
+    expect(harness.callsFor('startRecording'), isEmpty);
+
+    await tester.tap(find.text('Bypass and record'));
+    await tester.pumpAndSettle();
+
+    final startCall = harness.callsFor('startRecording').single;
+    final args = Map<String, dynamic>.from(
+      startCall.arguments! as Map<dynamic, dynamic>,
+    );
+    expect(args['allowLowStorageBypass'], isTrue);
   });
 }

@@ -187,6 +187,7 @@ class RecordingController extends ChangeNotifier {
         'disableMicrophone': overrides.disableMicrophone,
         'disableCameraOverlay': overrides.disableCameraOverlay,
         'disableCursorHighlight': overrides.disableCursorHighlight,
+        'allowLowStorageBypass': overrides.allowLowStorageBypass,
       });
     } on PlatformException catch (e, st) {
       Log.e("Recording", "Failed to start recording: $e");
@@ -201,6 +202,7 @@ class RecordingController extends ChangeNotifier {
           'disableMicrophone': overrides.disableMicrophone,
           'disableCameraOverlay': overrides.disableCameraOverlay,
           'disableCursorHighlight': overrides.disableCursorHighlight,
+          'allowLowStorageBypass': overrides.allowLowStorageBypass,
         },
       );
       await ClingfyTelemetry.stopSession();
@@ -218,6 +220,7 @@ class RecordingController extends ChangeNotifier {
           'disableMicrophone': overrides.disableMicrophone,
           'disableCameraOverlay': overrides.disableCameraOverlay,
           'disableCursorHighlight': overrides.disableCursorHighlight,
+          'allowLowStorageBypass': overrides.allowLowStorageBypass,
         },
       );
       await ClingfyTelemetry.stopSession();

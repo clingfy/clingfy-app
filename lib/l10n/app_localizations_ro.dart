@@ -824,6 +824,13 @@ class AppLocalizationsRo extends AppLocalizations {
       'Temă, limbă și comportamentul folderului de salvare.';
 
   @override
+  String get settingsStorage => 'Stocare';
+
+  @override
+  String get settingsStorageDescription =>
+      'Spațiu pentru înregistrări, utilizare internă și sănătatea discului.';
+
+  @override
   String get settingsShortcutsDescription =>
       'Personalizează scurtăturile de tastatură și rezolvă conflictele.';
 
@@ -1082,6 +1089,130 @@ class AppLocalizationsRo extends AppLocalizations {
       'Configurarea înregistrării necesită atenția ta';
 
   @override
+  String get storageOverviewTitle => 'Siguranța înregistrării';
+
+  @override
+  String get storageOverviewDescription =>
+      'Monitorizează spațiul liber al sistemului și utilizarea spațiului Clingfy pentru a evita înregistrările eșuate.';
+
+  @override
+  String get storageSystemTitle => 'Stocare sistem';
+
+  @override
+  String get storageSystemDescription =>
+      'Discul folosit de destinația activă de captură a Clingfy.';
+
+  @override
+  String get storageClingfyTitle => 'Stocare Clingfy';
+
+  @override
+  String get storageClingfyDescription =>
+      'Înregistrări interne, capturi temporare și loguri.';
+
+  @override
+  String get storageActionsTitle => 'Acțiuni';
+
+  @override
+  String get storagePathsTitle => 'Căi';
+
+  @override
+  String get storageHealthy => 'Sănătos';
+
+  @override
+  String get storageWarning => 'Avertizare';
+
+  @override
+  String get storageCritical => 'Critic';
+
+  @override
+  String get storageHealthyMessage =>
+      'Sistemul are suficient spațiu liber pentru înregistrări normale.';
+
+  @override
+  String get storageWarningMessage =>
+      'Spațiul liber devine redus. Înregistrările lungi pot eșua.';
+
+  @override
+  String get storageCriticalMessage =>
+      'Înregistrarea este blocată până când eliberezi mai mult spațiu.';
+
+  @override
+  String get storageRefresh => 'Reîmprospătează';
+
+  @override
+  String get storageOpenRecordingsFolder => 'Deschide folderul înregistrărilor';
+
+  @override
+  String get storageOpenTempFolder => 'Deschide folderul temporar';
+
+  @override
+  String get storageClearCachedRecordings => 'Șterge înregistrările din cache';
+
+  @override
+  String get storageClearCachedRecordingsConfirmTitle =>
+      'Ștergi înregistrările din cache?';
+
+  @override
+  String get storageClearCachedRecordingsConfirmMessage =>
+      'Aceasta elimină copiile interne ale înregistrărilor și fișierele sidecar ale Clingfy. Înregistrările exportate nu sunt șterse, iar acțiunea nu poate fi anulată.';
+
+  @override
+  String get storageClearCachedRecordingsConfirmAction =>
+      'Șterge înregistrările';
+
+  @override
+  String storageClearCachedRecordingsSuccess(int count) {
+    String _temp0 = intl.Intl.pluralLogic(
+      count,
+      locale: localeName,
+      other: 'Au fost eliminate $count înregistrări din cache.',
+      one: 'A fost eliminată 1 înregistrare din cache.',
+    );
+    return '$_temp0';
+  }
+
+  @override
+  String get storageStatusLabel => 'Stare';
+
+  @override
+  String get storageTotalSpace => 'Total';
+
+  @override
+  String get storageUsedSpace => 'Folosit';
+
+  @override
+  String get storageFreeSpace => 'Liber';
+
+  @override
+  String get storageRecordings => 'Înregistrări';
+
+  @override
+  String get storageTemp => 'Temporar';
+
+  @override
+  String get storageLogs => 'Loguri';
+
+  @override
+  String get storageClingfyTotal => 'Utilizare totală Clingfy';
+
+  @override
+  String get storageRecordingsPath => 'Folder înregistrări';
+
+  @override
+  String get storageTempPath => 'Folder temporar';
+
+  @override
+  String get storageLogsPath => 'Folder loguri';
+
+  @override
+  String get storageActionFailed => 'Acțiunea de stocare a eșuat.';
+
+  @override
+  String storageFreeNow(String value) {
+    return 'Liber acum: $value';
+  }
+
+  @override
   String get missingRequiredPermission => 'Permisiune necesară lipsă';
 
   @override
@@ -1094,6 +1225,35 @@ class AppLocalizationsRo extends AppLocalizations {
   @override
   String get recordWithoutMissingFeatures =>
       'Înregistrează fără funcțiile lipsă';
+
+  @override
+  String get storagePreflightTitle => 'Stocarea necesită atenția ta';
+
+  @override
+  String get storagePreflightCriticalIntro =>
+      'Clingfy a detectat spațiu liber critic de redus pe discul activ de înregistrare. Înregistrarea este blocată pentru a evita capturi eșuate.';
+
+  @override
+  String get storagePreflightWarningIntro =>
+      'Spațiul liber devine redus. Înregistrările lungi pot eșua înainte să se termine.';
+
+  @override
+  String get storageAvailableNow => 'Disponibil acum';
+
+  @override
+  String get storageRecordingBlockedBelow => 'Înregistrarea este blocată sub';
+
+  @override
+  String get storageRecommendedFreeSpace => 'Spațiu liber recomandat';
+
+  @override
+  String get openStorageSettings => 'Deschide Setările de Stocare';
+
+  @override
+  String get recordAnyway => 'Înregistrează oricum';
+
+  @override
+  String get storageBypassAndRecord => 'Ocolește și înregistrează';
 
   @override
   String get cameraForFaceCam => 'Camera pentru Face Cam';

@@ -811,6 +811,13 @@ class AppLocalizationsAr extends AppLocalizations {
   String get settingsWorkspaceDescription => 'المظهر واللغة وسلوك مجلد الحفظ.';
 
   @override
+  String get settingsStorage => 'التخزين';
+
+  @override
+  String get settingsStorageDescription =>
+      'مساحة التسجيل، والاستخدام الداخلي، وحالة القرص.';
+
+  @override
   String get settingsShortcutsDescription =>
       'خصص اختصارات لوحة المفاتيح وحل التعارضات.';
 
@@ -1065,6 +1072,127 @@ class AppLocalizationsAr extends AppLocalizations {
   String get recordingSetupNeedsAttention => 'إعداد التسجيل يحتاج إلى انتباهك';
 
   @override
+  String get storageOverviewTitle => 'سلامة التسجيل';
+
+  @override
+  String get storageOverviewDescription =>
+      'راقب المساحة الحرة في النظام واستخدام Clingfy لتجنب فشل التسجيلات.';
+
+  @override
+  String get storageSystemTitle => 'تخزين النظام';
+
+  @override
+  String get storageSystemDescription =>
+      'القرص الذي يستخدمه مسار الالتقاط النشط في Clingfy.';
+
+  @override
+  String get storageClingfyTitle => 'تخزين Clingfy';
+
+  @override
+  String get storageClingfyDescription =>
+      'التسجيلات الداخلية والملفات المؤقتة والسجلات.';
+
+  @override
+  String get storageActionsTitle => 'الإجراءات';
+
+  @override
+  String get storagePathsTitle => 'المسارات';
+
+  @override
+  String get storageHealthy => 'جيد';
+
+  @override
+  String get storageWarning => 'تحذير';
+
+  @override
+  String get storageCritical => 'حرج';
+
+  @override
+  String get storageHealthyMessage => 'لدى النظام مساحة كافية للتسجيل العادي.';
+
+  @override
+  String get storageWarningMessage =>
+      'المساحة الحرة منخفضة. قد تفشل التسجيلات الطويلة.';
+
+  @override
+  String get storageCriticalMessage => 'تم حظر التسجيل حتى تتوفر مساحة أكبر.';
+
+  @override
+  String get storageRefresh => 'تحديث';
+
+  @override
+  String get storageOpenRecordingsFolder => 'افتح مجلد التسجيلات';
+
+  @override
+  String get storageOpenTempFolder => 'افتح المجلد المؤقت';
+
+  @override
+  String get storageClearCachedRecordings => 'امسح التسجيلات المخزنة مؤقتًا';
+
+  @override
+  String get storageClearCachedRecordingsConfirmTitle =>
+      'مسح التسجيلات المخزنة مؤقتًا؟';
+
+  @override
+  String get storageClearCachedRecordingsConfirmMessage =>
+      'سيؤدي هذا إلى إزالة نسخ التسجيلات الداخلية والملفات الجانبية الخاصة بـ Clingfy. لن يتم حذف التسجيلات المصدّرة، ولا يمكن التراجع عن هذا الإجراء.';
+
+  @override
+  String get storageClearCachedRecordingsConfirmAction => 'امسح التسجيلات';
+
+  @override
+  String storageClearCachedRecordingsSuccess(int count) {
+    String _temp0 = intl.Intl.pluralLogic(
+      count,
+      locale: localeName,
+      other: 'تمت إزالة $count تسجيلات مخزنة مؤقتًا.',
+      one: 'تمت إزالة تسجيل مخزن مؤقتًا واحد.',
+    );
+    return '$_temp0';
+  }
+
+  @override
+  String get storageStatusLabel => 'الحالة';
+
+  @override
+  String get storageTotalSpace => 'الإجمالي';
+
+  @override
+  String get storageUsedSpace => 'المستخدم';
+
+  @override
+  String get storageFreeSpace => 'المتاح';
+
+  @override
+  String get storageRecordings => 'التسجيلات';
+
+  @override
+  String get storageTemp => 'المؤقت';
+
+  @override
+  String get storageLogs => 'السجلات';
+
+  @override
+  String get storageClingfyTotal => 'إجمالي استخدام Clingfy';
+
+  @override
+  String get storageRecordingsPath => 'مجلد التسجيلات';
+
+  @override
+  String get storageTempPath => 'المجلد المؤقت';
+
+  @override
+  String get storageLogsPath => 'مجلد السجلات';
+
+  @override
+  String get storageActionFailed => 'فشل إجراء التخزين.';
+
+  @override
+  String storageFreeNow(String value) {
+    return 'المتاح الآن: $value';
+  }
+
+  @override
   String get missingRequiredPermission => 'هناك إذن مطلوب مفقود';
 
   @override
@@ -1076,6 +1204,35 @@ class AppLocalizationsAr extends AppLocalizations {
 
   @override
   String get recordWithoutMissingFeatures => 'سجّل بدون الميزات المفقودة';
+
+  @override
+  String get storagePreflightTitle => 'التخزين يحتاج إلى انتباهك';
+
+  @override
+  String get storagePreflightCriticalIntro =>
+      'اكتشف Clingfy مساحة حرة منخفضة جدًا على قرص التسجيل النشط. تم حظر التسجيل لتجنب فشل الالتقاط.';
+
+  @override
+  String get storagePreflightWarningIntro =>
+      'المساحة الحرة أصبحت منخفضة. قد تفشل التسجيلات الطويلة قبل أن تنتهي.';
+
+  @override
+  String get storageAvailableNow => 'المتاح الآن';
+
+  @override
+  String get storageRecordingBlockedBelow => 'يتم حظر التسجيل تحت';
+
+  @override
+  String get storageRecommendedFreeSpace => 'المساحة الحرة الموصى بها';
+
+  @override
+  String get openStorageSettings => 'افتح إعدادات التخزين';
+
+  @override
+  String get recordAnyway => 'سجل على أي حال';
+
+  @override
+  String get storageBypassAndRecord => 'تجاوز وابدأ التسجيل';
 
   @override
   String get cameraForFaceCam => 'الكاميرا من أجل Face Cam';

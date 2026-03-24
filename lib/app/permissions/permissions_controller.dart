@@ -1,6 +1,7 @@
 import 'package:flutter/foundation.dart';
 import 'package:clingfy/app/permissions/permissions_onboarding_store.dart';
 import 'package:clingfy/core/bridges/native_bridge.dart';
+import 'package:clingfy/core/models/storage_snapshot.dart';
 import 'package:clingfy/core/permissions/models/permission_status_snapshot.dart';
 import 'package:clingfy/core/permissions/models/recording_start_preflight.dart';
 import 'package:clingfy/core/permissions/recording_start_preflight_rules.dart'
@@ -123,10 +124,12 @@ class PermissionsController extends ChangeNotifier {
 
   RecordingStartPreflight buildRecordingStartPreflight({
     required RecordingStartIntent intent,
+    StorageSnapshot? storageSnapshot,
   }) {
     return permissions_rules.buildRecordingStartPreflight(
       status: _status,
       intent: intent,
+      storageSnapshot: storageSnapshot,
     );
   }
 
@@ -134,7 +137,14 @@ class PermissionsController extends ChangeNotifier {
     required RecordingStartIntent intent,
   }) async {
     await refresh();
-    return buildRecordingStartPreflight(intent: intent);
+    StorageSnapshot? storageSnapshot;
+    try {
+      storageSnapshot = await _bridge.getStorageSnapshot();
+    } catch (_) {}
+    return buildRecordingStartPreflight(
+      intent: intent,
+      storageSnapshot: storageSnapshot,
+    );
   }
 
   bool get requiredOk => true;
