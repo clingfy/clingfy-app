@@ -52,15 +52,15 @@ class AppButton extends StatelessWidget {
     }
 
     final resolvedLabel = label!;
-    if (icon == null) {
-      return Text(resolvedLabel);
-    }
+    // if (icon == null) {
+    //   return Text(resolvedLabel, maxLines: 1, overflow: TextOverflow.ellipsis);
+    // }
 
     return Row(
       mainAxisSize: MainAxisSize.min,
       children: [
-        Icon(icon, size: 16),
-        const SizedBox(width: 8),
+        if (icon != null) Icon(icon, size: 16),
+        if (icon != null) const SizedBox(width: 8),
         Flexible(child: Text(resolvedLabel, overflow: TextOverflow.ellipsis)),
       ],
     );

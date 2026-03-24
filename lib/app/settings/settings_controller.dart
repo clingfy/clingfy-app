@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 
 import 'package:clingfy/core/bridges/native_bridge.dart';
 import 'package:clingfy/app/settings/controllers/app_preferences_controller.dart';
+import 'package:clingfy/app/settings/controllers/storage_settings_controller.dart';
 import 'package:clingfy/core/export/settings/export_settings_controller.dart';
 import 'package:clingfy/core/post_processing/settings/post_processing_settings_controller.dart';
 import 'package:clingfy/core/recording/settings/recording_settings_controller.dart';
@@ -15,6 +16,7 @@ export 'package:clingfy/app/settings/controllers/app_preferences_controller.dart
 class SettingsController extends ChangeNotifier {
   SettingsController({required NativeBridge nativeBridge})
     : app = AppPreferencesController(),
+      storage = StorageSettingsController(nativeBridge: nativeBridge),
       workspace = WorkspaceSettingsController(nativeBridge: nativeBridge),
       recording = RecordingSettingsController(nativeBridge: nativeBridge),
       export = ExportSettingsController(),
@@ -22,6 +24,7 @@ class SettingsController extends ChangeNotifier {
       shortcuts = ShortcutsSettingsController() {
     for (final controller in [
       app,
+      storage,
       workspace,
       recording,
       export,
@@ -33,6 +36,7 @@ class SettingsController extends ChangeNotifier {
   }
 
   final AppPreferencesController app;
+  final StorageSettingsController storage;
   final WorkspaceSettingsController workspace;
   final RecordingSettingsController recording;
   final ExportSettingsController export;
@@ -43,6 +47,7 @@ class SettingsController extends ChangeNotifier {
   void dispose() {
     for (final controller in [
       app,
+      storage,
       workspace,
       recording,
       export,

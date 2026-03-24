@@ -81,6 +81,7 @@
 		5B5427492F21985F00B06BA6 /* CursorHighlighter.swift in Sources */ = {isa = PBXBuildFile; fileRef = 5B54270A2F21985F00B06BA6 /* CursorHighlighter.swift */; };
 		5BE43BEC2F22CD3F0017267E /* RecordingStore.swift in Sources */ = {isa = PBXBuildFile; fileRef = 5BE43BEB2F22CD3F0017267E /* RecordingStore.swift */; };
 		5BE43BED2F22CD3F0017267E /* AppPaths.swift in Sources */ = {isa = PBXBuildFile; fileRef = 5BE43BEA2F22CD3F0017267E /* AppPaths.swift */; };
+		D4A1B2C3D4E5F60718293A4C /* StorageInfoProvider.swift in Sources */ = {isa = PBXBuildFile; fileRef = D4A1B2C3D4E5F60718293A4B /* StorageInfoProvider.swift */; };
 		5BE43BEF2F22CD940017267E /* RecordingMetadata.swift in Sources */ = {isa = PBXBuildFile; fileRef = 5BE43BEE2F22CD940017267E /* RecordingMetadata.swift */; };
 		5BE629DC2F2F9F3800063F17 /* ZoomTimelineBuilder.swift in Sources */ = {isa = PBXBuildFile; fileRef = 5BE629DB2F2F9F3800063F17 /* ZoomTimelineBuilder.swift */; };
 		5C1D00012F50000100A0B001 /* ZoomFollowSmoother.swift in Sources */ = {isa = PBXBuildFile; fileRef = 5C1D00022F50000100A0B001 /* ZoomFollowSmoother.swift */; };
@@ -195,6 +196,7 @@
 		5B54271D2F21985F00B06BA6 /* RecordingIndicatorView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = RecordingIndicatorView.swift; sourceTree = "<group>"; };
 		5BE43BEA2F22CD3F0017267E /* AppPaths.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AppPaths.swift; sourceTree = "<group>"; };
 		5BE43BEB2F22CD3F0017267E /* RecordingStore.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = RecordingStore.swift; sourceTree = "<group>"; };
+		D4A1B2C3D4E5F60718293A4B /* StorageInfoProvider.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = StorageInfoProvider.swift; sourceTree = "<group>"; };
 		5BE43BEE2F22CD940017267E /* RecordingMetadata.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = RecordingMetadata.swift; sourceTree = "<group>"; };
 		5BE629DB2F2F9F3800063F17 /* ZoomTimelineBuilder.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ZoomTimelineBuilder.swift; sourceTree = "<group>"; };
 		5C1D00022F50000100A0B001 /* ZoomFollowSmoother.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ZoomFollowSmoother.swift; sourceTree = "<group>"; };
@@ -554,6 +556,7 @@
 			children = (
 				5BE43BEA2F22CD3F0017267E /* AppPaths.swift */,
 				5BE43BEB2F22CD3F0017267E /* RecordingStore.swift */,
+				D4A1B2C3D4E5F60718293A4B /* StorageInfoProvider.swift */,
 				5B5427172F21985F00B06BA6 /* PreferencesStore.swift */,
 				5B5427182F21985F00B06BA6 /* SaveFolderStore.swift */,
 			);
@@ -861,6 +864,7 @@
 				5B5427342F21985F00B06BA6 /* PlayerEventHandler.swift in Sources */,
 				5BE43BEC2F22CD3F0017267E /* RecordingStore.swift in Sources */,
 				5BE43BED2F22CD3F0017267E /* AppPaths.swift in Sources */,
+				D4A1B2C3D4E5F60718293A4C /* StorageInfoProvider.swift in Sources */,
 				5B5427352F21985F00B06BA6 /* CaptureBackend.swift in Sources */,
 				5B5427362F21985F00B06BA6 /* CaptureBackendAVFoundation.swift in Sources */,
 				5B5427372F21985F00B06BA6 /* CameraOverlay.swift in Sources */,

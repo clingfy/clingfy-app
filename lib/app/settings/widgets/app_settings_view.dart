@@ -2,6 +2,7 @@ import 'package:clingfy/l10n/app_localizations.dart';
 import 'package:clingfy/app/settings/sections/keyboard_shortcuts_settings.dart';
 import 'package:clingfy/app/settings/sections/about_settings_section.dart';
 import 'package:clingfy/app/settings/sections/diagnostics_settings_section.dart';
+import 'package:clingfy/app/settings/sections/storage_settings_section.dart';
 import 'package:clingfy/commercial/licensing/settings/license_settings_section.dart';
 import 'package:clingfy/app/settings/sections/permissions_settings_section.dart';
 import 'package:clingfy/app/settings/sections/workspace_settings_section.dart';
@@ -13,6 +14,7 @@ import 'package:flutter/material.dart';
 
 enum SettingsSection {
   workspace,
+  storage,
   shortcuts,
   license,
   permissions,
@@ -31,6 +33,7 @@ class AppSettingsView extends StatefulWidget {
   final SettingsSection initialSection;
 
   static const routeName = '/settings';
+  static const storageRouteName = '/settings/storage';
 
   @override
   State<AppSettingsView> createState() => _AppSettingsViewState();
@@ -70,6 +73,12 @@ class _AppSettingsViewState extends State<AppSettingsView> {
         icon: CupertinoIcons.square_grid_2x2,
         label: l10n.settingsWorkspace,
         description: l10n.settingsWorkspaceDescription,
+      ),
+      _SettingsNavItem(
+        section: SettingsSection.storage,
+        icon: CupertinoIcons.archivebox,
+        label: l10n.settingsStorage,
+        description: l10n.settingsStorageDescription,
       ),
       _SettingsNavItem(
         section: SettingsSection.shortcuts,
@@ -246,6 +255,8 @@ class _AppSettingsViewState extends State<AppSettingsView> {
     switch (_selectedSection) {
       case SettingsSection.workspace:
         return WorkspaceSettingsSection(controller: widget.controller);
+      case SettingsSection.storage:
+        return StorageSettingsSection(controller: widget.controller);
       case SettingsSection.shortcuts:
         return KeyboardShortcutsSettings(controller: widget.controller);
       case SettingsSection.license:

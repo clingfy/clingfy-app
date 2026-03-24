@@ -8,6 +8,7 @@ import 'package:clingfy/app/settings/widgets/app_settings_view.dart';
 import 'package:clingfy/app/settings/sections/keyboard_shortcuts_settings.dart';
 import 'package:clingfy/app/settings/sections/about_settings_section.dart';
 import 'package:clingfy/app/settings/sections/diagnostics_settings_section.dart';
+import 'package:clingfy/app/settings/sections/storage_settings_section.dart';
 import 'package:clingfy/commercial/licensing/settings/license_settings_section.dart';
 import 'package:clingfy/app/settings/sections/permissions_settings_section.dart';
 import 'package:clingfy/app/settings/sections/workspace_settings_section.dart';
@@ -63,6 +64,19 @@ void main() {
                 'camera': false,
                 'accessibility': false,
               };
+            case 'getStorageSnapshot':
+              return <String, dynamic>{
+                'systemTotalBytes': 500 * 1024 * 1024 * 1024,
+                'systemAvailableBytes': 200 * 1024 * 1024 * 1024,
+                'recordingsBytes': 4 * 1024 * 1024,
+                'tempBytes': 2 * 1024 * 1024,
+                'logsBytes': 512 * 1024,
+                'recordingsPath': '/tmp/Clingfy/Recordings',
+                'tempPath': '/tmp/Clingfy/Temp',
+                'logsPath': '/tmp/Clingfy/Logs',
+                'warningThresholdBytes': 20 * 1024 * 1024 * 1024,
+                'criticalThresholdBytes': 10 * 1024 * 1024 * 1024,
+              };
             default:
               return null;
           }
@@ -94,7 +108,7 @@ void main() {
     );
   }
 
-  testWidgets('settings rail renders six sections', (tester) async {
+  testWidgets('settings rail renders seven sections', (tester) async {
     final settings = SettingsController(nativeBridge: NativeBridge.instance);
 
     await tester.pumpWidget(buildTestApp(settings: settings));
@@ -109,6 +123,7 @@ void main() {
       findsOneWidget,
     );
     expect(find.text('Workspace'), findsWidgets);
+    expect(find.text('Storage'), findsWidgets);
     expect(find.text('Keyboard Shortcuts'), findsWidgets);
     expect(find.text('License'), findsWidgets);
     expect(find.text('Permissions'), findsWidgets);
@@ -185,6 +200,14 @@ void main() {
     expect(find.text('Show Action Bar'), findsOneWidget);
     expect(
       find.text('Warn before closing an unexported recording'),
+      findsOneWidget,
+    );
+
+    await tester.tap(find.text('Storage'));
+    await tester.pumpAndSettle();
+    expect(find.byType(StorageSettingsSection), findsOneWidget);
+    expect(
+      find.text('Recording space, internal usage, and disk health.'),
       findsOneWidget,
     );
 
@@ -335,5 +358,38 @@ void main() {
 
     expect(rail.color, theme.appTokens.panelBackground);
     expect(header.color, theme.appTokens.toolbarOverlay);
+  });
+
+  testWidgets('/settings/storage route opens settings on Storage section', (
+    tester,
+  ) async {
+    final settings = SettingsController(nativeBridge: NativeBridge.instance);
+
+    await tester.pumpWidget(
+      ChangeNotifierProvider<LicenseController>(
+        create: (_) => LicenseController(),
+        child: MaterialApp(
+          initialRoute: AppSettingsView.storageRouteName,
+          theme: buildLightTheme(),
+          darkTheme: buildDarkTheme(),
+          themeMode: ThemeMode.light,
+          localizationsDelegates: AppLocalizations.localizationsDelegates,
+          supportedLocales: AppLocalizations.supportedLocales,
+          builder: (context, child) => MacosTheme(
+            data: buildMacosTheme(Theme.of(context).brightness),
+            child: child!,
+          ),
+          routes: {
+            AppSettingsView.storageRouteName: (context) => AppSettingsView(
+              controller: settings,
+              initialSection: SettingsSection.storage,
+            ),
+          },
+        ),
+      ),
+    );
+    await tester.pumpAndSettle();
+
+    expect(find.byType(StorageSettingsSection), findsOneWidget);
   });
 }

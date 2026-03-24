@@ -86,6 +86,10 @@ class PlatformApp extends StatelessWidget {
           routes: {
             AppSettingsView.routeName: (context) =>
                 AppSettingsView(controller: settingsController),
+            AppSettingsView.storageRouteName: (context) => AppSettingsView(
+              controller: settingsController,
+              initialSection: SettingsSection.storage,
+            ),
             AboutView.routeName: (context) => AppSettingsView(
               controller: settingsController,
               initialSection: SettingsSection.about,

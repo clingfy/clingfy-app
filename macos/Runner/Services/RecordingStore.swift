@@ -30,14 +30,24 @@ final class RecordingStore {
     let recordings: [RecordingInfo]
   }
 
-  private let fm = FileManager.default
+  private let fm: FileManager
+  private let rootURL: URL
+
+  init(rootURL: URL = AppPaths.recordingsRoot(), fileManager: FileManager = .default) {
+    self.rootURL = rootURL
+    self.fm = fileManager
+  }
 
   // MARK: - Discovery
 
   /// Lists all raw recordings (.mov files) in the internal workspace.
   func listRecordings() -> [RecordingInfo] {
-    let root = AppPaths.recordingsRoot()
-    guard let contents = try? fm.contentsOfDirectory(at: root, includingPropertiesForKeys: [.creationDateKey, .fileSizeKey]) else {
+    guard
+      let contents = try? fm.contentsOfDirectory(
+        at: rootURL,
+        includingPropertiesForKeys: [.creationDateKey, .fileSizeKey]
+      )
+    else {
       return []
     }
 
@@ -246,7 +256,7 @@ final class RecordingStore {
       "orphanedRecordings": scan.orphanedCount,
       "totalSize": sizeFormatted,
       "oldestRecording": oldestFormatted,
-      "workspacePath": AppPaths.recordingsRoot().path
+      "workspacePath": rootURL.path
     ])
 
     // Log orphaned recordings for debugging

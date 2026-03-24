@@ -15,12 +15,14 @@ import 'package:clingfy/app/home/home_scope.dart';
 import 'package:clingfy/app/home/home_ui_state.dart';
 import 'package:clingfy/core/permissions/models/recording_start_preflight.dart';
 import 'package:clingfy/app/permissions/widgets/start_recording_permission_dialog.dart';
+import 'package:clingfy/app/permissions/widgets/start_recording_storage_dialog.dart';
 import 'package:clingfy/l10n/app_localizations.dart';
 import 'package:clingfy/app/infrastructure/logging/logger_service.dart';
 import 'package:clingfy/core/models/app_models.dart';
 import 'package:clingfy/core/bridges/native_bridge.dart';
 import 'package:clingfy/app/infrastructure/observability/telemetry_service.dart';
 import 'package:clingfy/app/settings/settings_controller.dart';
+import 'package:clingfy/app/settings/widgets/app_settings_view.dart';
 import 'package:clingfy/app/home/preview/widgets/close_unexported_recording_dialog.dart';
 import 'package:clingfy/commercial/licensing/widgets/paywall_dialog.dart';
 import 'package:flutter/material.dart';
@@ -132,7 +134,10 @@ class HomeActions {
     postProcessingController.updateProgress(progress);
   }
 
-  Future<void> handleRecordingFinalized(BuildContext context, String path) async {
+  Future<void> handleRecordingFinalized(
+    BuildContext context,
+    String path,
+  ) async {
     if (path.isEmpty) return;
 
     if (settingsController.workspace.openFolderAfterStop) {
@@ -284,11 +289,25 @@ class HomeActions {
   }
 
   Future<void> openSettings(BuildContext context) async {
+    await _openSettingsRoute(context, AppSettingsView.routeName);
+  }
+
+  Future<void> openStorageSettings(BuildContext context) async {
+    await _openSettingsRoute(context, AppSettingsView.storageRouteName);
+  }
+
+  Future<void> _openSettingsRoute(
+    BuildContext context,
+    String routeName,
+  ) async {
     if (uiState.isSettingsOpen) return;
 
     uiState.setSettingsOpen(true);
-    await Navigator.of(context).pushNamed('/settings');
-    uiState.setSettingsOpen(false);
+    try {
+      await Navigator.of(context).pushNamed(routeName);
+    } finally {
+      uiState.setSettingsOpen(false);
+    }
   }
 
   Future<void> openSystemSettings(String pane) async {
@@ -312,39 +331,73 @@ class HomeActions {
 
     final preflight = await permissionsController
         .prepareRecordingStartPreflight(intent: intent);
-    if (preflight.isClear) {
-      return const RecordingStartOverrides();
-    }
-    if (!context.mounted) {
-      return null;
+    var overrides = const RecordingStartOverrides();
+
+    if (preflight.hasPermissionAttention) {
+      if (!context.mounted) {
+        return null;
+      }
+
+      final decision = await StartRecordingPermissionDialog.show(
+        context,
+        preflight: preflight,
+      );
+      if (decision == null ||
+          decision == StartRecordingPermissionDecision.cancel) {
+        return null;
+      }
+
+      if (decision == StartRecordingPermissionDecision.grantPermissions) {
+        await _grantMissingRecordingPermissions(preflight);
+        await permissionsController.refresh();
+        return null;
+      }
+
+      overrides = RecordingStartOverrides(
+        disableMicrophone: preflight.missingOptional.contains(
+          MissingPermissionKind.microphone,
+        ),
+        disableCameraOverlay: preflight.missingOptional.contains(
+          MissingPermissionKind.camera,
+        ),
+        disableCursorHighlight: preflight.missingOptional.contains(
+          MissingPermissionKind.accessibility,
+        ),
+      );
     }
 
-    final decision = await StartRecordingPermissionDialog.show(
-      context,
-      preflight: preflight,
-    );
-    if (decision == null ||
-        decision == StartRecordingPermissionDecision.cancel) {
-      return null;
+    final storage = preflight.storage;
+    if (storage != null && storage.needsAttention) {
+      if (!context.mounted) {
+        return null;
+      }
+
+      final decision = await StartRecordingStorageDialog.show(
+        context,
+        storage: storage,
+      );
+      if (decision == null ||
+          decision == StartRecordingStorageDecision.cancel) {
+        return null;
+      }
+      if (!context.mounted) {
+        return null;
+      }
+      if (decision == StartRecordingStorageDecision.openStorageSettings) {
+        await openStorageSettings(context);
+        return null;
+      }
+      if (decision == StartRecordingStorageDecision.bypassAndRecord) {
+        overrides = RecordingStartOverrides(
+          disableMicrophone: overrides.disableMicrophone,
+          disableCameraOverlay: overrides.disableCameraOverlay,
+          disableCursorHighlight: overrides.disableCursorHighlight,
+          allowLowStorageBypass: true,
+        );
+      }
     }
 
-    if (decision == StartRecordingPermissionDecision.grantPermissions) {
-      await _grantMissingRecordingPermissions(preflight);
-      await permissionsController.refresh();
-      return null;
-    }
-
-    return RecordingStartOverrides(
-      disableMicrophone: preflight.missingOptional.contains(
-        MissingPermissionKind.microphone,
-      ),
-      disableCameraOverlay: preflight.missingOptional.contains(
-        MissingPermissionKind.camera,
-      ),
-      disableCursorHighlight: preflight.missingOptional.contains(
-        MissingPermissionKind.accessibility,
-      ),
-    );
+    return overrides;
   }
 
   Future<void> _grantMissingRecordingPermissions(

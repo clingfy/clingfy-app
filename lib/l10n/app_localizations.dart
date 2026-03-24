@@ -1600,6 +1600,18 @@ abstract class AppLocalizations {
   /// **'Theme, language, and save-folder behavior.'**
   String get settingsWorkspaceDescription;
 
+  /// No description provided for @settingsStorage.
+  ///
+  /// In en, this message translates to:
+  /// **'Storage'**
+  String get settingsStorage;
+
+  /// No description provided for @settingsStorageDescription.
+  ///
+  /// In en, this message translates to:
+  /// **'Recording space, internal usage, and disk health.'**
+  String get settingsStorageDescription;
+
   /// No description provided for @settingsShortcutsDescription.
   ///
   /// In en, this message translates to:
@@ -2068,6 +2080,216 @@ abstract class AppLocalizations {
   /// **'Recording setup needs your attention'**
   String get recordingSetupNeedsAttention;
 
+  /// No description provided for @storageOverviewTitle.
+  ///
+  /// In en, this message translates to:
+  /// **'Recording safety'**
+  String get storageOverviewTitle;
+
+  /// No description provided for @storageOverviewDescription.
+  ///
+  /// In en, this message translates to:
+  /// **'Monitor system free space and Clingfy workspace usage to avoid failed recordings.'**
+  String get storageOverviewDescription;
+
+  /// No description provided for @storageSystemTitle.
+  ///
+  /// In en, this message translates to:
+  /// **'System storage'**
+  String get storageSystemTitle;
+
+  /// No description provided for @storageSystemDescription.
+  ///
+  /// In en, this message translates to:
+  /// **'The drive backing Clingfy\'s active capture destination.'**
+  String get storageSystemDescription;
+
+  /// No description provided for @storageClingfyTitle.
+  ///
+  /// In en, this message translates to:
+  /// **'Clingfy storage'**
+  String get storageClingfyTitle;
+
+  /// No description provided for @storageClingfyDescription.
+  ///
+  /// In en, this message translates to:
+  /// **'Internal recordings, temporary captures, and logs.'**
+  String get storageClingfyDescription;
+
+  /// No description provided for @storageActionsTitle.
+  ///
+  /// In en, this message translates to:
+  /// **'Actions'**
+  String get storageActionsTitle;
+
+  /// No description provided for @storagePathsTitle.
+  ///
+  /// In en, this message translates to:
+  /// **'Paths'**
+  String get storagePathsTitle;
+
+  /// No description provided for @storageHealthy.
+  ///
+  /// In en, this message translates to:
+  /// **'Healthy'**
+  String get storageHealthy;
+
+  /// No description provided for @storageWarning.
+  ///
+  /// In en, this message translates to:
+  /// **'Warning'**
+  String get storageWarning;
+
+  /// No description provided for @storageCritical.
+  ///
+  /// In en, this message translates to:
+  /// **'Critical'**
+  String get storageCritical;
+
+  /// No description provided for @storageHealthyMessage.
+  ///
+  /// In en, this message translates to:
+  /// **'Your system has enough free space for normal recording.'**
+  String get storageHealthyMessage;
+
+  /// No description provided for @storageWarningMessage.
+  ///
+  /// In en, this message translates to:
+  /// **'Free space is getting low. Long recordings may fail.'**
+  String get storageWarningMessage;
+
+  /// No description provided for @storageCriticalMessage.
+  ///
+  /// In en, this message translates to:
+  /// **'Recording is blocked until more disk space is available.'**
+  String get storageCriticalMessage;
+
+  /// No description provided for @storageRefresh.
+  ///
+  /// In en, this message translates to:
+  /// **'Refresh'**
+  String get storageRefresh;
+
+  /// No description provided for @storageOpenRecordingsFolder.
+  ///
+  /// In en, this message translates to:
+  /// **'Open recordings folder'**
+  String get storageOpenRecordingsFolder;
+
+  /// No description provided for @storageOpenTempFolder.
+  ///
+  /// In en, this message translates to:
+  /// **'Open temp folder'**
+  String get storageOpenTempFolder;
+
+  /// No description provided for @storageClearCachedRecordings.
+  ///
+  /// In en, this message translates to:
+  /// **'Clear cached recordings'**
+  String get storageClearCachedRecordings;
+
+  /// No description provided for @storageClearCachedRecordingsConfirmTitle.
+  ///
+  /// In en, this message translates to:
+  /// **'Clear cached recordings?'**
+  String get storageClearCachedRecordingsConfirmTitle;
+
+  /// No description provided for @storageClearCachedRecordingsConfirmMessage.
+  ///
+  /// In en, this message translates to:
+  /// **'This removes Clingfy\'s internal recording copies and sidecars. Exported recordings are not deleted, and this action cannot be undone.'**
+  String get storageClearCachedRecordingsConfirmMessage;
+
+  /// No description provided for @storageClearCachedRecordingsConfirmAction.
+  ///
+  /// In en, this message translates to:
+  /// **'Clear recordings'**
+  String get storageClearCachedRecordingsConfirmAction;
+
+  /// No description provided for @storageClearCachedRecordingsSuccess.
+  ///
+  /// In en, this message translates to:
+  /// **'{count, plural, one{Removed 1 cached recording.} other{Removed {count} cached recordings.}}'**
+  String storageClearCachedRecordingsSuccess(int count);
+
+  /// No description provided for @storageStatusLabel.
+  ///
+  /// In en, this message translates to:
+  /// **'Status'**
+  String get storageStatusLabel;
+
+  /// No description provided for @storageTotalSpace.
+  ///
+  /// In en, this message translates to:
+  /// **'Total'**
+  String get storageTotalSpace;
+
+  /// No description provided for @storageUsedSpace.
+  ///
+  /// In en, this message translates to:
+  /// **'Used'**
+  String get storageUsedSpace;
+
+  /// No description provided for @storageFreeSpace.
+  ///
+  /// In en, this message translates to:
+  /// **'Free'**
+  String get storageFreeSpace;
+
+  /// No description provided for @storageRecordings.
+  ///
+  /// In en, this message translates to:
+  /// **'Recordings'**
+  String get storageRecordings;
+
+  /// No description provided for @storageTemp.
+  ///
+  /// In en, this message translates to:
+  /// **'Temp'**
+  String get storageTemp;
+
+  /// No description provided for @storageLogs.
+  ///
+  /// In en, this message translates to:
+  /// **'Logs'**
+  String get storageLogs;
+
+  /// No description provided for @storageClingfyTotal.
+  ///
+  /// In en, this message translates to:
+  /// **'Total Clingfy usage'**
+  String get storageClingfyTotal;
+
+  /// No description provided for @storageRecordingsPath.
+  ///
+  /// In en, this message translates to:
+  /// **'Recordings folder'**
+  String get storageRecordingsPath;
+
+  /// No description provided for @storageTempPath.
+  ///
+  /// In en, this message translates to:
+  /// **'Temp folder'**
+  String get storageTempPath;
+
+  /// No description provided for @storageLogsPath.
+  ///
+  /// In en, this message translates to:
+  /// **'Logs folder'**
+  String get storageLogsPath;
+
+  /// No description provided for @storageActionFailed.
+  ///
+  /// In en, this message translates to:
+  /// **'Storage action failed.'**
+  String get storageActionFailed;
+
+  /// No description provided for @storageFreeNow.
+  ///
+  /// In en, this message translates to:
+  /// **'Free now: {value}'**
+  String storageFreeNow(String value);
+
   /// No description provided for @missingRequiredPermission.
   ///
   /// In en, this message translates to:
@@ -2091,6 +2313,60 @@ abstract class AppLocalizations {
   /// In en, this message translates to:
   /// **'Record without missing features'**
   String get recordWithoutMissingFeatures;
+
+  /// No description provided for @storagePreflightTitle.
+  ///
+  /// In en, this message translates to:
+  /// **'Storage needs your attention'**
+  String get storagePreflightTitle;
+
+  /// No description provided for @storagePreflightCriticalIntro.
+  ///
+  /// In en, this message translates to:
+  /// **'Clingfy detected critically low free space on the active recording drive. Recording is blocked to avoid failed captures.'**
+  String get storagePreflightCriticalIntro;
+
+  /// No description provided for @storagePreflightWarningIntro.
+  ///
+  /// In en, this message translates to:
+  /// **'Free space is getting low. Long recordings may fail before they finish.'**
+  String get storagePreflightWarningIntro;
+
+  /// No description provided for @storageAvailableNow.
+  ///
+  /// In en, this message translates to:
+  /// **'Available now'**
+  String get storageAvailableNow;
+
+  /// No description provided for @storageRecordingBlockedBelow.
+  ///
+  /// In en, this message translates to:
+  /// **'Recording is blocked below'**
+  String get storageRecordingBlockedBelow;
+
+  /// No description provided for @storageRecommendedFreeSpace.
+  ///
+  /// In en, this message translates to:
+  /// **'Recommended free space'**
+  String get storageRecommendedFreeSpace;
+
+  /// No description provided for @openStorageSettings.
+  ///
+  /// In en, this message translates to:
+  /// **'Open Storage Settings'**
+  String get openStorageSettings;
+
+  /// No description provided for @recordAnyway.
+  ///
+  /// In en, this message translates to:
+  /// **'Record anyway'**
+  String get recordAnyway;
+
+  /// No description provided for @storageBypassAndRecord.
+  ///
+  /// In en, this message translates to:
+  /// **'Bypass and record'**
+  String get storageBypassAndRecord;
 
   /// No description provided for @cameraForFaceCam.
   ///
