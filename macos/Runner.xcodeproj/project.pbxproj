@@ -22,6 +22,7 @@
 
 /* Begin PBXBuildFile section */
 		32FB535522953FAAFDFB0C14 /* Pods_Runner.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = B8EAFCB83B0EC24EB9C27E83 /* Pods_Runner.framework */; };
+		8F5A1B2C3D4E5F60718293A2 /* OverlayUpdateDeduperTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 8F5A1B2C3D4E5F60718293A1 /* OverlayUpdateDeduperTests.swift */; };
 		A1B2C3D4E5F60718293A4B5D /* CameraOverlayLayoutTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = A1B2C3D4E5F60718293A4B5C /* CameraOverlayLayoutTests.swift */; };
 		331C80D8294CF71000263BE5 /* RunnerTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 331C80D7294CF71000263BE5 /* RunnerTests.swift */; };
 		335BBD1B22A9A15E00E9071D /* GeneratedPluginRegistrant.swift in Sources */ = {isa = PBXBuildFile; fileRef = 335BBD1A22A9A15E00E9071D /* GeneratedPluginRegistrant.swift */; };
@@ -126,6 +127,7 @@
 		0A91A567C77417E2D6518BA4 /* Pods-Runner.debug-prod.xcconfig */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = text.xcconfig; name = "Pods-Runner.debug-prod.xcconfig"; path = "Target Support Files/Pods-Runner/Pods-Runner.debug-prod.xcconfig"; sourceTree = "<group>"; };
 		331C80D5294CF71000263BE5 /* RunnerTests.xctest */ = {isa = PBXFileReference; explicitFileType = wrapper.cfbundle; includeInIndex = 0; path = RunnerTests.xctest; sourceTree = BUILT_PRODUCTS_DIR; };
 		331C80D7294CF71000263BE5 /* RunnerTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = RunnerTests.swift; sourceTree = "<group>"; };
+		8F5A1B2C3D4E5F60718293A1 /* OverlayUpdateDeduperTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = OverlayUpdateDeduperTests.swift; sourceTree = "<group>"; };
 		A1B2C3D4E5F60718293A4B5C /* CameraOverlayLayoutTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CameraOverlayLayoutTests.swift; sourceTree = "<group>"; };
 		333000ED22D3DE5D00554162 /* Warnings.xcconfig */ = {isa = PBXFileReference; lastKnownFileType = text.xcconfig; path = Warnings.xcconfig; sourceTree = "<group>"; };
 		335BBD1A22A9A15E00E9071D /* GeneratedPluginRegistrant.swift */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.swift; path = GeneratedPluginRegistrant.swift; sourceTree = "<group>"; };
@@ -242,6 +244,7 @@
 				A1B2C3D4E5F60718293A4B5C /* CameraOverlayLayoutTests.swift */,
 				9B1B2C3D4E5F60718293A4B1 /* CameraOverlayShapeTests.swift */,
 				9A1B2C3D4E5F60718293A4B9 /* CursorFrameResolverTests.swift */,
+				8F5A1B2C3D4E5F60718293A1 /* OverlayUpdateDeduperTests.swift */,
 				9A1B2C3D4E5F60718293A4B7 /* PreviewProfileTests.swift */,
 				331C80D7294CF71000263BE5 /* RunnerTests.swift */,
 			);
@@ -825,6 +828,7 @@
 				A1B2C3D4E5F60718293A4B5D /* CameraOverlayLayoutTests.swift in Sources */,
 				9B1B2C3D4E5F60718293A4B2 /* CameraOverlayShapeTests.swift in Sources */,
 				9A1B2C3D4E5F60718293A4BA /* CursorFrameResolverTests.swift in Sources */,
+				8F5A1B2C3D4E5F60718293A2 /* OverlayUpdateDeduperTests.swift in Sources */,
 				9A1B2C3D4E5F60718293A4B8 /* PreviewProfileTests.swift in Sources */,
 				331C80D8294CF71000263BE5 /* RunnerTests.swift in Sources */,
 			);

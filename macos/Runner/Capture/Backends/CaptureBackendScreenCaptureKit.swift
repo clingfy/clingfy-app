@@ -18,6 +18,12 @@ import UniformTypeIdentifiers
 @available(macOS 15.0, *)
 @MainActor
 final class CaptureBackendScreenCaptureKit: NSObject, CaptureBackend {
+  private enum RunPhase: String {
+    case idle
+    case starting
+    case running
+    case stopping
+  }
 
   // MARK: CaptureBackend
   var onStarted: ((URL) -> Void)?
@@ -36,6 +42,7 @@ final class CaptureBackendScreenCaptureKit: NSObject, CaptureBackend {
   private var recordingURL: URL?
   private var didStart: Bool = false
   private var stopRequested: Bool = false
+  private var runPhase: RunPhase = .idle
 
   // Keep these for CursorRecorder normalization (reuse our existing cropRect logic)
   private var currentDisplayID: CGDirectDisplayID = CGMainDisplayID()
@@ -54,8 +61,13 @@ final class CaptureBackendScreenCaptureKit: NSObject, CaptureBackend {
   // State for dynamic updates
   private var currentConfig: CaptureStartConfig?
   private var currentOverlayWindowID: CGWindowID?
+  private var pendingOverlayWindowID: CGWindowID?
+  private var lastAppliedOverlayWindowID: CGWindowID?
   private var windowMoveTimer: Timer?
   private var lastSourceRect: CGRect?
+  private var isFlushingOverlayUpdates: Bool = false
+  private var streamMutationTail: Task<Void, Never>?
+  private var nextStreamMutationSequence: Int = 0
   private var smoothedMicLevelLinear: Double = 0.0
   private var lastMicLevelEmitAt: CFTimeInterval = 0.0
   private let micLevelEmitInterval: CFTimeInterval = 1.0 / 15.0
@@ -63,31 +75,34 @@ final class CaptureBackendScreenCaptureKit: NSObject, CaptureBackend {
   func start(config: CaptureStartConfig) {
     self.currentConfig = config
     self.currentOverlayWindowID = config.cameraOverlayWindowID
+    self.pendingOverlayWindowID = config.cameraOverlayWindowID
+    self.lastAppliedOverlayWindowID = nil
+    self.runPhase = .starting
     Task { await startAsync(config: config) }
   }
 
   func stop() {
+    runPhase = .stopping
     stopWindowMoveTimer()
     Task { await stopAsync() }
   }
 
   func updateOverlay(windowID: CGWindowID?) {
-    guard let stream = stream, let config = currentConfig else { return }
     currentOverlayWindowID = windowID
+    pendingOverlayWindowID = windowID
+
+    guard runPhase == .running, didStart, !stopRequested else {
+      NativeLogger.d(
+        "SCKBackend", "Deferring overlay update until stream is running",
+        context: [
+          "windowID": Int(windowID ?? 0),
+          "phase": runPhase.rawValue,
+        ])
+      return
+    }
 
     Task { @MainActor in
-      do {
-        let content = try await SCShareableContent.excludingDesktopWindows(
-          false, onScreenWindowsOnly: false)
-        let built = try buildContentFilter(
-          for: config.target, content: content, excludeRecorderApp: config.excludeRecorderApp,
-          cameraOverlayWindowID: windowID)
-        try await stream.updateContentFilter(built.filter)
-        NativeLogger.i(
-          "SCKBackend", "Overlay updated mid-recording", context: ["windowID": Int(windowID ?? 0)])
-      } catch {
-        NativeLogger.e("SCKBackend", "Failed to update overlay", context: ["error": "\(error)"])
-      }
+      await flushOverlayUpdateIfNeeded()
     }
   }
 
@@ -111,7 +126,7 @@ final class CaptureBackendScreenCaptureKit: NSObject, CaptureBackend {
   }
 
   private func checkWindowMove(windowID: CGWindowID) async {
-    guard let stream = stream, let config = activeStreamConfig else { return }
+    guard runPhase == .running else { return }
 
     let windowIDArray = [windowID] as CFArray
     guard let info = CGWindowListCreateDescriptionFromArray(windowIDArray) as? [[String: Any]],
@@ -121,15 +136,41 @@ final class CaptureBackendScreenCaptureKit: NSObject, CaptureBackend {
     else { return }
 
     if newFrame != lastSourceRect {
-      lastSourceRect = newFrame
-
-      // Update the existing configuration instance
-      config.sourceRect = newFrame
-
       do {
-        try await stream.updateConfiguration(config)
+        try await performSerializedStreamMutation { sequence in
+          guard self.runPhase == .running, let stream = self.stream,
+            let config = self.activeStreamConfig
+          else { return }
+
+          self.lastSourceRect = newFrame
+          config.sourceRect = newFrame
+
+          NativeLogger.d(
+            "SCKBackend", "Updating sourceRect",
+            context: [
+              "sequence": sequence,
+              "windowID": Int(windowID),
+              "sourceRect": NSStringFromRect(newFrame),
+            ])
+
+          try await stream.updateConfiguration(config)
+
+          NativeLogger.i(
+            "SCKBackend", "Updated sourceRect",
+            context: [
+              "sequence": sequence,
+              "windowID": Int(windowID),
+              "sourceRect": NSStringFromRect(newFrame),
+            ])
+        }
       } catch {
-        NativeLogger.e("SCKBackend", "Failed to update sourceRect", context: ["error": "\(error)"])
+        NativeLogger.e(
+          "SCKBackend", "Failed to update sourceRect",
+          context: [
+            "windowID": Int(windowID),
+            "sourceRect": NSStringFromRect(newFrame),
+            "error": "\(error)",
+          ])
       }
     }
   }
@@ -139,6 +180,7 @@ final class CaptureBackendScreenCaptureKit: NSObject, CaptureBackend {
     do {
       didStart = false
       stopRequested = false
+      runPhase = .starting
       smoothedMicLevelLinear = 0.0
       lastMicLevelEmitAt = 0.0
 
@@ -166,14 +208,15 @@ final class CaptureBackendScreenCaptureKit: NSObject, CaptureBackend {
         false, onScreenWindowsOnly: false)
 
       // Build the proper filter for the requested target (window vs display)
+      let initialOverlayWindowID = currentOverlayWindowID
       let built = try buildContentFilter(
         for: config.target, content: content, excludeRecorderApp: config.excludeRecorderApp,
-        cameraOverlayWindowID: config.cameraOverlayWindowID)
+        cameraOverlayWindowID: initialOverlayWindowID)
       let filter = built.filter
       let sourceRect = built.sourceRect
 
       self.lastSourceRect = sourceRect
-      startWindowMoveTimer()
+      self.lastAppliedOverlayWindowID = initialOverlayWindowID
 
       dbg_pointPixelScale = CGFloat(filter.pointPixelScale)
       dbg_filterContentRect = filter.contentRect
@@ -276,26 +319,25 @@ final class CaptureBackendScreenCaptureKit: NSObject, CaptureBackend {
       recordingOutput = ro
 
       // Start capture (recording begins as stream runs)
-      try await stream.startCapture()
+      logDiskSpace("before_start_capture", url: outURL)
+      try await performSerializedStreamMutation { sequence in
+        NativeLogger.i(
+          "SCKBackend", "Starting stream capture",
+          context: [
+            "sequence": sequence,
+            "phase": self.runPhase.rawValue,
+          ])
 
-      NativeLogger.i("SCKBackend", "Stream started (await startCapture returned)")
+        try await stream.startCapture()
+
+        NativeLogger.i(
+          "SCKBackend", "Stream started (await startCapture returned)",
+          context: ["sequence": sequence])
+      }
 
       // Delegate should fire later; safety net in case it doesn't:
       if !didStart {
-        didStart = true
-        // Only start cursor recording if recorder app is NOT excluded
-        // When excluded, cursor-driven zoom would show misleading movement over blank pixels
-        if !isRecorderExcluded {
-          cursorRecorder.start(
-            displayID: currentDisplayID,
-            captureRect: currentCaptureRect,
-            cursorRasterScale: currentCursorRasterScale
-          )
-        } else {
-          NativeLogger.i(
-            "SCKBackend", "Cursor recording disabled (recorder app excluded from capture)")
-        }
-        onStarted?(outURL)
+        await markRecordingStarted(url: outURL)
       }
 
     } catch {
@@ -306,7 +348,7 @@ final class CaptureBackendScreenCaptureKit: NSObject, CaptureBackend {
   }
 
   private func stopAsync() async {
-    guard let stream else {
+    guard stream != nil else {
       NativeLogger.w("SCKBackend", "Stop called but stream=nil")
       return
     }
@@ -323,30 +365,40 @@ final class CaptureBackendScreenCaptureKit: NSObject, CaptureBackend {
 
     // Set flag to distinguish user-initiated stop from errors
     stopRequested = true
+    runPhase = .stopping
     smoothedMicLevelLinear = 0.0
     lastMicLevelEmitAt = 0.0
 
     do {
-      // IMPORTANT: Stop the stream first, THEN remove recording output
-      // This allows SCRecordingOutput to finalize the file properly
-      NativeLogger.d("SCKBackend", "Stopping stream capture...")
-      try await stream.stopCapture()
+      try await performSerializedStreamMutation { sequence in
+        guard let stream = self.stream else {
+          NativeLogger.w(
+            "SCKBackend", "Stop mutation skipped because stream=nil",
+            context: ["sequence": sequence])
+          return
+        }
 
-      NativeLogger.d("SCKBackend", "Stream stopped, waiting for file flush...")
+        NativeLogger.d("SCKBackend", "Stopping stream capture...", context: ["sequence": sequence])
+        try await stream.stopCapture()
 
-      // Give the recording output time to flush and finalize the file
-      // SCRecordingOutput needs a moment to write final atoms to the .mov file
-      try? await Task.sleep(nanoseconds: 500_000_000)  // 500ms to ensure file is flushed
+        NativeLogger.d(
+          "SCKBackend", "Stream stopped, waiting for file flush...",
+          context: ["sequence": sequence])
 
-      // Now remove recording output (file should be finalized)
-      if let ro = recordingOutput {
-        try stream.removeRecordingOutput(ro)
-        recordingOutput = nil
-        NativeLogger.d("SCKBackend", "Recording output removed")
+        // SCRecordingOutput needs a moment to write final atoms to the .mov file.
+        try? await Task.sleep(nanoseconds: 500_000_000)
+
+        if let ro = self.recordingOutput {
+          try stream.removeRecordingOutput(ro)
+          self.recordingOutput = nil
+          NativeLogger.d(
+            "SCKBackend", "Recording output removed",
+            context: ["sequence": sequence])
+        }
+
+        self.stream = nil
+        NativeLogger.d("SCKBackend", "Stream cleanup complete", context: ["sequence": sequence])
       }
-
-      self.stream = nil
-      NativeLogger.d("SCKBackend", "Stream cleanup complete")
 
       // Finish cursor recording AFTER the stream is stopped (video is finalized)
       if let cursorURL {
@@ -508,15 +560,161 @@ final class CaptureBackendScreenCaptureKit: NSObject, CaptureBackend {
   private func resetState() {
     didStart = false
     stopRequested = false
+    runPhase = .idle
     recordingURL = nil
+    currentConfig = nil
+    currentOverlayWindowID = nil
+    pendingOverlayWindowID = nil
+    lastAppliedOverlayWindowID = nil
     currentCaptureRect = nil
     activeStreamConfig = nil
+    lastSourceRect = nil
+    isFlushingOverlayUpdates = false
+    stopWindowMoveTimer()
   }
 
   private func cleanupAfterFailure() {
     stream = nil
     recordingOutput = nil
     resetState()
+  }
+
+  private func markRecordingStarted(url: URL) async {
+    guard !didStart else { return }
+
+    didStart = true
+    runPhase = .running
+
+    startWindowMoveTimer()
+    await flushOverlayUpdateIfNeeded()
+
+    // Only start cursor recording if recorder app is NOT excluded.
+    if !isRecorderExcluded {
+      cursorRecorder.start(
+        displayID: currentDisplayID,
+        captureRect: currentCaptureRect,
+        cursorRasterScale: currentCursorRasterScale
+      )
+    } else {
+      NativeLogger.i("SCKBackend", "Cursor recording disabled (recorder app excluded from capture)")
+    }
+
+    onStarted?(url)
+  }
+
+  private func flushOverlayUpdateIfNeeded() async {
+    guard runPhase == .running, didStart, !stopRequested else { return }
+    guard currentConfig != nil else { return }
+    guard !isFlushingOverlayUpdates else { return }
+
+    isFlushingOverlayUpdates = true
+    defer { isFlushingOverlayUpdates = false }
+
+    while runPhase == .running && didStart && !stopRequested {
+      let requestedWindowID = pendingOverlayWindowID
+      pendingOverlayWindowID = nil
+
+      if requestedWindowID == lastAppliedOverlayWindowID {
+        if pendingOverlayWindowID == nil {
+          return
+        }
+        continue
+      }
+
+      do {
+        try await performSerializedStreamMutation { sequence in
+          guard self.runPhase == .running, self.didStart, !self.stopRequested,
+            let stream = self.stream, let config = self.currentConfig
+          else { return }
+
+          NativeLogger.d(
+            "SCKBackend", "Applying overlay filter",
+            context: [
+              "sequence": sequence,
+              "windowID": Int(requestedWindowID ?? 0),
+            ])
+
+          let content = try await SCShareableContent.excludingDesktopWindows(
+            false, onScreenWindowsOnly: false)
+          let built = try self.buildContentFilter(
+            for: config.target,
+            content: content,
+            excludeRecorderApp: config.excludeRecorderApp,
+            cameraOverlayWindowID: requestedWindowID
+          )
+
+          try await stream.updateContentFilter(built.filter)
+          self.lastAppliedOverlayWindowID = requestedWindowID
+
+          NativeLogger.i(
+            "SCKBackend", "Overlay updated mid-recording",
+            context: [
+              "sequence": sequence,
+              "windowID": Int(requestedWindowID ?? 0),
+            ])
+        }
+      } catch {
+        NativeLogger.e(
+          "SCKBackend", "Failed to update overlay",
+          context: [
+            "windowID": Int(requestedWindowID ?? 0),
+            "error": "\(error)",
+          ])
+        return
+      }
+
+      if pendingOverlayWindowID == nil || pendingOverlayWindowID == lastAppliedOverlayWindowID {
+        return
+      }
+    }
+  }
+
+  private func performSerializedStreamMutation<T>(
+    _ action: @escaping @MainActor (_ sequence: Int) async throws -> T
+  ) async throws -> T {
+    nextStreamMutationSequence += 1
+    let sequence = nextStreamMutationSequence
+    let previous = streamMutationTail
+
+    let task = Task<T, Error> { @MainActor in
+      if let previous {
+        _ = await previous.result
+      }
+      return try await action(sequence)
+    }
+
+    streamMutationTail = Task { @MainActor in
+      _ = try? await task.value
+    }
+
+    return try await task.value
+  }
+
+  private func logDiskSpace(_ label: String, url: URL?) {
+    guard let dir = url?.deletingLastPathComponent() else { return }
+
+    do {
+      let values = try dir.resourceValues(forKeys: [
+        .volumeAvailableCapacityForImportantUsageKey,
+        .volumeAvailableCapacityKey,
+      ])
+      NativeLogger.i(
+        "SCKBackend", "Disk space",
+        context: [
+          "label": label,
+          "path": dir.path,
+          "important": values.volumeAvailableCapacityForImportantUsage ?? -1,
+          "available": values.volumeAvailableCapacity ?? -1,
+        ])
+    } catch {
+      NativeLogger.w(
+        "SCKBackend", "Failed to read disk space",
+        context: [
+          "label": label,
+          "path": dir.path,
+          "error": "\(error)",
+        ])
+    }
   }
 
   private func resolveSCWindow(windowID: CGWindowID, in content: SCShareableContent) throws
@@ -937,6 +1135,7 @@ extension CaptureBackendScreenCaptureKit: SCStreamDelegate {
       let errorCode = nsError.code
       let errorDomain = nsError.domain
 
+      self.logDiskSpace("stream_did_stop_with_error", url: self.recordingURL)
       NativeLogger.d(
         "SCKBackend", "Stream didStopWithError",
         context: [
@@ -944,6 +1143,7 @@ extension CaptureBackendScreenCaptureKit: SCStreamDelegate {
           "code": errorCode,
           "domain": errorDomain,
           "stopRequested": self.stopRequested,
+          "phase": self.runPhase.rawValue,
         ])
 
       // Filter errors that occur during user-initiated stop
@@ -1017,22 +1217,7 @@ extension CaptureBackendScreenCaptureKit: SCRecordingOutputDelegate {
     Task { @MainActor in
       guard let url = self.recordingURL else { return }
       NativeLogger.i("SCKBackend", "Recording started (delegate)")
-      if !self.didStart {
-        self.didStart = true
-        // Only start cursor recording if recorder app is NOT excluded
-        // When excluded, cursor-driven zoom would show misleading movement over blank pixels
-        if !self.isRecorderExcluded {
-          self.cursorRecorder.start(
-            displayID: self.currentDisplayID,
-            captureRect: self.currentCaptureRect,
-            cursorRasterScale: self.currentCursorRasterScale
-          )
-        } else {
-          NativeLogger.i(
-            "SCKBackend", "Cursor recording disabled (recorder app excluded from capture)")
-        }
-        self.onStarted?(url)
-      }
+      await self.markRecordingStarted(url: url)
     }
   }
 
@@ -1040,7 +1225,13 @@ extension CaptureBackendScreenCaptureKit: SCRecordingOutputDelegate {
     _ recordingOutput: SCRecordingOutput, didFailWithError error: any Error
   ) {
     Task { @MainActor in
-      NativeLogger.e("SCKBackend", "Recording failed", context: ["error": "\(error)"])
+      self.logDiskSpace("recording_output_did_fail", url: self.recordingURL)
+      NativeLogger.e(
+        "SCKBackend", "Recording failed",
+        context: [
+          "error": "\(error)",
+          "phase": self.runPhase.rawValue,
+        ])
       self.onFinished?(nil, error)
       self.cleanupAfterFailure()
     }

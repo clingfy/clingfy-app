@@ -16,6 +16,26 @@ protocol CaptureControlling: AnyObject {
 
 }
 
+struct OverlayUpdateDeduper {
+  private var hasLastSentValue = false
+  private(set) var lastSentWindowID: CGWindowID?
+
+  mutating func shouldSend(_ windowID: CGWindowID?) -> Bool {
+    if hasLastSentValue && lastSentWindowID == windowID {
+      return false
+    }
+
+    hasLastSentValue = true
+    lastSentWindowID = windowID
+    return true
+  }
+
+  mutating func reset() {
+    hasLastSentValue = false
+    lastSentWindowID = nil
+  }
+}
+
 enum AudioLevelEstimator {
   static func dbfs(for linear: Double) -> Double {
     let clamped = max(linear, 0.000000001)
@@ -328,6 +348,7 @@ final class ScreenRecorderFacade: NSObject {
   private var followCurrentDisplay: CGDirectDisplayID?
   private var currentCaptureDisplayID: CGDirectDisplayID?
   private var lastOverlayWindowID: CGWindowID?
+  private var overlayUpdateDeduper = OverlayUpdateDeduper()
   private var sessionDisableMicrophone = false
   private var sessionDisableCameraOverlay = false
   private var sessionDisableCursorHighlight = false
@@ -716,7 +737,7 @@ final class ScreenRecorderFacade: NSObject {
       ? (camera.overlayWindowID ?? lastOverlayWindowID) : nil
 
     logOverlay("syncOverlayIntoCapture()", ["id": id.map { String($0) } ?? "nil"])
-    capture.updateOverlay(windowID: id)
+    sendOverlayUpdateIfNeeded(id)
   }
 
   func stopRecording(result: @escaping FlutterResult) {
@@ -1702,7 +1723,7 @@ final class ScreenRecorderFacade: NSObject {
               "backend": "\(type(of: self.capture))",
             ])
           self.lastOverlayWindowID = self.camera.overlayWindowID
-          self.capture.updateOverlay(windowID: self.camera.overlayWindowID)
+          self.sendOverlayUpdateIfNeeded(self.camera.overlayWindowID)
         }
       }
     } else {
@@ -1710,10 +1731,29 @@ final class ScreenRecorderFacade: NSObject {
       camera.hide()
       if state == .recording {
         logOverlay("updateOverlayVisibility -> capture.updateOverlay(nil)")
-        capture.updateOverlay(windowID: nil)
+        sendOverlayUpdateIfNeeded(nil)
       }
     }
   }
+
+  private func sendOverlayUpdateIfNeeded(_ windowID: CGWindowID?) {
+    guard overlayUpdateDeduper.shouldSend(windowID) else {
+      logOverlay(
+        "Skipping duplicate overlay update",
+        [
+          "windowID": windowID.map { String($0) } ?? "nil",
+          "backend": "\(type(of: capture))",
+        ])
+      return
+    }
+
+    capture.updateOverlay(windowID: windowID)
+  }
+
+  private func resetOverlayUpdateDeduper() {
+    overlayUpdateDeduper.reset()
+  }
+
   private func updateCursorVisibility() {
     let shouldShow =
       prefs.cursorLinked
@@ -1732,6 +1772,12 @@ final class ScreenRecorderFacade: NSObject {
     NotificationCenter.default.addObserver(
       self, selector: #selector(screenParamsChanged),
       name: NSApplication.didChangeScreenParametersNotification, object: nil)
+    NSWorkspace.shared.notificationCenter.addObserver(
+      self, selector: #selector(workspaceWillSleep(_:)),
+      name: NSWorkspace.willSleepNotification, object: nil)
+    NSWorkspace.shared.notificationCenter.addObserver(
+      self, selector: #selector(workspaceDidWake(_:)),
+      name: NSWorkspace.didWakeNotification, object: nil)
   }
   @objc private func devChanged(_ n: Notification) {
     guard let dev = n.object as? AVCaptureDevice else { return }
@@ -1743,6 +1789,7 @@ final class ScreenRecorderFacade: NSObject {
   }
 
   @objc private func screenParamsChanged() {
+    logCaptureSystemEvent("screenParametersChanged")
     if let sel = selectedDisplayID,
       !NSScreen.screens.contains(where: {
         ($0.deviceDescription[NSDeviceDescriptionKey("NSScreenNumber")] as? NSNumber)?.uint32Value
@@ -1760,6 +1807,29 @@ final class ScreenRecorderFacade: NSObject {
       clearAreaRecordingSelection()
     }
     onDevicesChanged?()
+  }
+
+  @objc private func workspaceWillSleep(_ notification: Notification) {
+    logCaptureSystemEvent("willSleep")
+  }
+
+  @objc private func workspaceDidWake(_ notification: Notification) {
+    logCaptureSystemEvent("didWake")
+  }
+
+  private func logCaptureSystemEvent(_ event: String) {
+    guard isStartingOrRecording() else { return }
+
+    NativeLogger.i(
+      "Facade", "Capture system event",
+      context: [
+        "event": event,
+        "state": "\(state)",
+        "backend": currentBackendName(),
+        "selectedDisplayID": selectedDisplayID.map { String($0) } ?? "nil",
+        "currentCaptureDisplayID": currentCaptureDisplayID.map { String($0) } ?? "nil",
+        "overlayWindowID": camera.overlayWindowID.map { String($0) } ?? "nil",
+      ])
   }
 
   private func refreshMicrophoneLevelMonitoring(resetMeter: Bool) {
@@ -1821,6 +1891,7 @@ final class ScreenRecorderFacade: NSObject {
 
   private func setCaptureBackend(_ backend: CaptureBackend) {
     self.capture = backend
+    resetOverlayUpdateDeduper()
     self.capture.onMicrophoneLevel = { [weak self] sample in
       self?.onMicrophoneLevel?(sample)
     }
@@ -1830,6 +1901,7 @@ final class ScreenRecorderFacade: NSObject {
       guard let self else { return }
       let visibleRawURL = self.activeRecordingFileSession?.finalRawURL ?? url
 
+      self.resetOverlayUpdateDeduper()
       self.state = .recording
       self.recordingStartedAt = Date()
       self.stateAsStr()
@@ -1915,6 +1987,7 @@ final class ScreenRecorderFacade: NSObject {
       self.stopResult = nil
 
       self.pendingStop = false
+      self.resetOverlayUpdateDeduper()
       self.state = .idle
       self.stateAsStr()
       self.refreshMicrophoneLevelMonitoring(resetMeter: false)
