@@ -16,6 +16,26 @@ protocol CaptureControlling: AnyObject {
 
 }
 
+struct OverlayUpdateDeduper {
+  private var hasLastSentValue = false
+  private(set) var lastSentWindowID: CGWindowID?
+
+  mutating func shouldSend(_ windowID: CGWindowID?) -> Bool {
+    if hasLastSentValue && lastSentWindowID == windowID {
+      return false
+    }
+
+    hasLastSentValue = true
+    lastSentWindowID = windowID
+    return true
+  }
+
+  mutating func reset() {
+    hasLastSentValue = false
+    lastSentWindowID = nil
+  }
+}
+
 enum AudioLevelEstimator {
   static func dbfs(for linear: Double) -> Double {
     let clamped = max(linear, 0.000000001)
@@ -269,9 +289,123 @@ private struct ExportFormatInfo {
   let avFileType: AVFileType?  // nil for formats not handled by AVAssetExportSession (gif)
 }
 
-private struct RecordingFileSession {
+struct RecordingFileSession {
   let finalRawURL: URL
   let inProgressRawURL: URL
+}
+
+struct CaptureDestinationDiagnostics {
+  static func url(for activeSession: RecordingFileSession?) -> URL {
+    activeSession?.inProgressRawURL ?? AppPaths.tempRoot()
+  }
+}
+
+struct RecordingArtifactPromotionPlan {
+  let sourceRawURL: URL
+  let finalRawURL: URL
+
+  static func make(
+    session: RecordingFileSession,
+    recordedRawURL: URL,
+    fileExists: (URL) -> Bool
+  ) -> RecordingArtifactPromotionPlan {
+    let sourceRawURL =
+      fileExists(session.inProgressRawURL) ? session.inProgressRawURL : recordedRawURL
+    return RecordingArtifactPromotionPlan(
+      sourceRawURL: sourceRawURL,
+      finalRawURL: session.finalRawURL
+    )
+  }
+}
+
+struct RecordingArtifactPromoter {
+  static func promote(
+    session: RecordingFileSession,
+    recordedRawURL: URL,
+    fileManager: FileManager = .default
+  ) throws -> URL {
+    let promotionPlan = RecordingArtifactPromotionPlan.make(
+      session: session,
+      recordedRawURL: recordedRawURL,
+      fileExists: { fileManager.fileExists(atPath: $0.path) }
+    )
+
+    try moveItemIfExists(
+      from: promotionPlan.sourceRawURL,
+      to: promotionPlan.finalRawURL,
+      fileManager: fileManager
+    )
+
+    let tempSidecars = AppPaths.allSidecarURLs(for: promotionPlan.sourceRawURL)
+    let finalSidecars = AppPaths.allSidecarURLs(for: promotionPlan.finalRawURL)
+    for (src, dst) in zip(tempSidecars, finalSidecars) {
+      try moveItemIfExists(from: src, to: dst, fileManager: fileManager)
+    }
+
+    return promotionPlan.finalRawURL
+  }
+
+  private static func moveItemIfExists(
+    from sourceURL: URL,
+    to destinationURL: URL,
+    fileManager: FileManager
+  ) throws {
+    let src = sourceURL.standardizedFileURL
+    let dst = destinationURL.standardizedFileURL
+
+    if src.path == dst.path { return }
+    guard fileManager.fileExists(atPath: src.path) else { return }
+
+    try fileManager.createDirectory(
+      at: dst.deletingLastPathComponent(),
+      withIntermediateDirectories: true
+    )
+
+    if fileManager.fileExists(atPath: dst.path) {
+      try fileManager.removeItem(at: dst)
+    }
+
+    do {
+      try fileManager.moveItem(at: src, to: dst)
+    } catch {
+      try fileManager.copyItem(at: src, to: dst)
+      try? fileManager.removeItem(at: src)
+    }
+  }
+}
+
+enum OverlayRefreshAction: Equatable {
+  case show
+  case resize
+  case reuseVisibleWindow
+}
+
+struct OverlayRefreshPlan {
+  let action: OverlayRefreshAction
+
+  static func make(
+    isShowing: Bool,
+    currentTargetDisplayID: CGDirectDisplayID?,
+    desiredTargetDisplayID: CGDirectDisplayID?,
+    currentPreferredSize: Double,
+    desiredSize: Double
+  ) -> OverlayRefreshPlan {
+    let normalizedDesiredSize = max(120.0, desiredSize)
+
+    guard isShowing else {
+      return OverlayRefreshPlan(action: .show)
+    }
+
+    guard currentTargetDisplayID == desiredTargetDisplayID else {
+      return OverlayRefreshPlan(action: .show)
+    }
+
+    if abs(currentPreferredSize - normalizedDesiredSize) > 0.001 {
+      return OverlayRefreshPlan(action: .resize)
+    }
+
+    return OverlayRefreshPlan(action: .reuseVisibleWindow)
+  }
 }
 
 protocol OverlayManaging: AnyObject {
@@ -328,6 +462,7 @@ final class ScreenRecorderFacade: NSObject {
   private var followCurrentDisplay: CGDirectDisplayID?
   private var currentCaptureDisplayID: CGDirectDisplayID?
   private var lastOverlayWindowID: CGWindowID?
+  private var overlayUpdateDeduper = OverlayUpdateDeduper()
   private var sessionDisableMicrophone = false
   private var sessionDisableCameraOverlay = false
   private var sessionDisableCursorHighlight = false
@@ -427,6 +562,9 @@ final class ScreenRecorderFacade: NSObject {
       "backend": currentBackendName(),
       "captureFps": captureFPS,
     ]
+    if let bytes = availableDiskSpaceBytes(at: currentCaptureDestinationURL()) {
+      payload["captureDestinationFreeBytes"] = bytes
+    }
     if let bytes = availableDiskSpaceBytes(at: AppPaths.recordingsRoot()) {
       payload["recordingsFreeBytes"] = bytes
     }
@@ -535,22 +673,23 @@ final class ScreenRecorderFacade: NSObject {
         excludedRecorderApp: prefs.excludeRecorderApp
       )
 
-      // Generate output URL in a temp location, then atomically promote to final URL on completion.
       activeRecordingFileSession = nil
+      currentRawURL = nil
+
+      let session = try makeRecordingFileSession(in: workspaceDir)
+      try preflightCaptureDestination(session.inProgressRawURL)
+      activeRecordingFileSession = session
+      currentRawURL = session.finalRawURL
+
+      NativeLogger.d(
+        "Facade", "Prepared recording file session",
+        context: [
+          "tempRaw": session.inProgressRawURL.lastPathComponent,
+          "finalRaw": session.finalRawURL.lastPathComponent,
+        ])
+
       let outputURL: () throws -> URL = {
-        if let existing = self.activeRecordingFileSession {
-          return existing.inProgressRawURL
-        }
-        let session = try self.makeRecordingFileSession(in: workspaceDir)
-        self.activeRecordingFileSession = session
-        self.currentRawURL = session.finalRawURL
-        NativeLogger.d(
-          "Facade", "Prepared recording file session",
-          context: [
-            "tempRaw": session.inProgressRawURL.lastPathComponent,
-            "finalRaw": session.finalRawURL.lastPathComponent,
-          ])
-        return session.inProgressRawURL
+        session.inProgressRawURL
       }
 
       // Start recording
@@ -587,6 +726,8 @@ final class ScreenRecorderFacade: NSObject {
             systemAudioEnabled: systemAudioEnabled)
         }
       }
+    } catch let err as FlutterError {
+      finishStartWithError(err)
     } catch {
       finishStartWithError(flutterError(NativeErrorCode.outputUrlError, error.localizedDescription))
     }
@@ -697,26 +838,6 @@ final class ScreenRecorderFacade: NSObject {
     let backend = CaptureBackendFactory.make(for: target)
     self.setCaptureBackend(backend)
     self.capture.start(config: cfg)
-  }
-
-  private func syncOverlayIntoCapture() {
-    logOverlay(
-      "syncOverlayIntoCapture()",
-      [
-        "camera.overlayWindowID": camera.overlayWindowID.map { String($0) } ?? "nil",
-        "prefs.excludeRecorderApp": "\(prefs.excludeRecorderApp)",
-      ])
-
-    // Only meaningful while recording
-    guard state == .recording else { return }
-
-    // If overlay is enabled and visible, attach it; otherwise detach it.
-    let id: CGWindowID? =
-      (effectiveOverlayEnabledForRecording && camera.isShowing)
-      ? (camera.overlayWindowID ?? lastOverlayWindowID) : nil
-
-    logOverlay("syncOverlayIntoCapture()", ["id": id.map { String($0) } ?? "nil"])
-    capture.updateOverlay(windowID: id)
   }
 
   func stopRecording(result: @escaping FlutterResult) {
@@ -1553,46 +1674,9 @@ final class ScreenRecorderFacade: NSObject {
     return RecordingFileSession(finalRawURL: finalRawURL, inProgressRawURL: tempRawURL)
   }
 
-  private func moveItemIfExists(from sourceURL: URL, to destinationURL: URL) throws {
-    let fm = FileManager.default
-    let src = sourceURL.standardizedFileURL
-    let dst = destinationURL.standardizedFileURL
-
-    if src.path == dst.path { return }
-    guard fm.fileExists(atPath: src.path) else { return }
-
-    try fm.createDirectory(at: dst.deletingLastPathComponent(), withIntermediateDirectories: true)
-
-    if fm.fileExists(atPath: dst.path) {
-      try fm.removeItem(at: dst)
-    }
-
-    do {
-      try fm.moveItem(at: src, to: dst)
-    } catch {
-      // Fallback for cross-volume moves.
-      try fm.copyItem(at: src, to: dst)
-      try? fm.removeItem(at: src)
-    }
-  }
-
   private func finalizeRecordingArtifactsIfNeeded(recordedRawURL: URL) throws -> URL {
     guard let session = activeRecordingFileSession else { return recordedRawURL }
-
-    let tempRawURL = session.inProgressRawURL
-    let finalRawURL = session.finalRawURL
-    let sourceRawURL =
-      FileManager.default.fileExists(atPath: tempRawURL.path) ? tempRawURL : recordedRawURL
-
-    try moveItemIfExists(from: sourceRawURL, to: finalRawURL)
-
-    let tempSidecars = AppPaths.allSidecarURLs(for: sourceRawURL)
-    let finalSidecars = AppPaths.allSidecarURLs(for: finalRawURL)
-    for (src, dst) in zip(tempSidecars, finalSidecars) {
-      try moveItemIfExists(from: src, to: dst)
-    }
-
-    return finalRawURL
+    return try RecordingArtifactPromoter.promote(session: session, recordedRawURL: recordedRawURL)
   }
   private enum CaptureTargetError: Error {
     case noWindowSelected, windowUnavailable, noAreaSelected
@@ -1661,8 +1745,17 @@ final class ScreenRecorderFacade: NSObject {
     stateAsStr()
 
     if shouldShow {
+      let desiredTargetDisplayID = currentCaptureDisplayID ?? selectedDisplayID
+      let overlayRefreshPlan = OverlayRefreshPlan.make(
+        isShowing: camera.isShowing,
+        currentTargetDisplayID: camera.targetDisplayID,
+        desiredTargetDisplayID: desiredTargetDisplayID,
+        currentPreferredSize: camera.preferredSize,
+        desiredSize: prefs.overlaySize
+      )
+
+      camera.targetDisplayID = desiredTargetDisplayID
       camera.setDevice(id: prefs.videoDeviceId)
-      camera.targetDisplayID = currentCaptureDisplayID ?? selectedDisplayID
       camera.updateStyle(
         shape: prefs.overlayShape, shadow: prefs.overlayShadow, border: prefs.overlayBorder,
         roundness: prefs.overlayRoundness)
@@ -1677,32 +1770,33 @@ final class ScreenRecorderFacade: NSObject {
       camera.setRecordingHighlight(enabled: (state == .recording) && prefs.overlayHighlight)
 
       logOverlay(
-        "updateOverlayVisibility -> calling camera.show",
+        "updateOverlayVisibility -> applying camera visibility",
         [
           "size": prefs.overlaySize,
-          "targetDisplay": (currentCaptureDisplayID ?? selectedDisplayID).map { String($0) }
-            ?? "nil",
+          "targetDisplay": desiredTargetDisplayID.map { String($0) } ?? "nil",
+          "action": "\(overlayRefreshPlan.action)",
         ])
 
-      // CameraOverlay.show() now handles idempotency internally,
-      // ensuring we only rebuild if the capture (Chroma Key or Device) changed.
-      camera.show(size: prefs.overlaySize) { [weak self] _ in
-        guard let self else { return }
-        self.logOverlay(
-          "camera.show callback in updateOverlayVisibility",
-          [
-            "state": "\(self.state)",
-            "overlayWindowID": self.camera.overlayWindowID.map { String($0) } ?? "nil",
-          ])
-        if self.state == .recording {
+      switch overlayRefreshPlan.action {
+      case .reuseVisibleWindow:
+        logOverlay("updateOverlayVisibility -> reusing visible camera window")
+        syncOverlayWindowIntoCaptureIfNeeded()
+
+      case .resize:
+        logOverlay("updateOverlayVisibility -> resizing visible camera window")
+        camera.resize(size: prefs.overlaySize)
+        syncOverlayWindowIntoCaptureIfNeeded()
+
+      case .show:
+        camera.show(size: prefs.overlaySize) { [weak self] _ in
+          guard let self else { return }
           self.logOverlay(
-            "calling capture.updateOverlay(windowID:)",
+            "camera.show callback in updateOverlayVisibility",
             [
-              "windowID": self.camera.overlayWindowID.map { String($0) } ?? "nil",
-              "backend": "\(type(of: self.capture))",
+              "state": "\(self.state)",
+              "overlayWindowID": self.camera.overlayWindowID.map { String($0) } ?? "nil",
             ])
-          self.lastOverlayWindowID = self.camera.overlayWindowID
-          self.capture.updateOverlay(windowID: self.camera.overlayWindowID)
+          self.syncOverlayWindowIntoCaptureIfNeeded()
         }
       }
     } else {
@@ -1710,10 +1804,42 @@ final class ScreenRecorderFacade: NSObject {
       camera.hide()
       if state == .recording {
         logOverlay("updateOverlayVisibility -> capture.updateOverlay(nil)")
-        capture.updateOverlay(windowID: nil)
+        sendOverlayUpdateIfNeeded(nil)
       }
     }
   }
+
+  private func syncOverlayWindowIntoCaptureIfNeeded() {
+    guard state == .recording else { return }
+
+    logOverlay(
+      "calling capture.updateOverlay(windowID:)",
+      [
+        "windowID": camera.overlayWindowID.map { String($0) } ?? "nil",
+        "backend": "\(type(of: capture))",
+      ])
+    lastOverlayWindowID = camera.overlayWindowID
+    sendOverlayUpdateIfNeeded(camera.overlayWindowID)
+  }
+
+  private func sendOverlayUpdateIfNeeded(_ windowID: CGWindowID?) {
+    guard overlayUpdateDeduper.shouldSend(windowID) else {
+      logOverlay(
+        "Skipping duplicate overlay update",
+        [
+          "windowID": windowID.map { String($0) } ?? "nil",
+          "backend": "\(type(of: capture))",
+        ])
+      return
+    }
+
+    capture.updateOverlay(windowID: windowID)
+  }
+
+  private func resetOverlayUpdateDeduper() {
+    overlayUpdateDeduper.reset()
+  }
+
   private func updateCursorVisibility() {
     let shouldShow =
       prefs.cursorLinked
@@ -1732,6 +1858,12 @@ final class ScreenRecorderFacade: NSObject {
     NotificationCenter.default.addObserver(
       self, selector: #selector(screenParamsChanged),
       name: NSApplication.didChangeScreenParametersNotification, object: nil)
+    NSWorkspace.shared.notificationCenter.addObserver(
+      self, selector: #selector(workspaceWillSleep(_:)),
+      name: NSWorkspace.willSleepNotification, object: nil)
+    NSWorkspace.shared.notificationCenter.addObserver(
+      self, selector: #selector(workspaceDidWake(_:)),
+      name: NSWorkspace.didWakeNotification, object: nil)
   }
   @objc private func devChanged(_ n: Notification) {
     guard let dev = n.object as? AVCaptureDevice else { return }
@@ -1743,6 +1875,7 @@ final class ScreenRecorderFacade: NSObject {
   }
 
   @objc private func screenParamsChanged() {
+    logCaptureSystemEvent("screenParametersChanged")
     if let sel = selectedDisplayID,
       !NSScreen.screens.contains(where: {
         ($0.deviceDescription[NSDeviceDescriptionKey("NSScreenNumber")] as? NSNumber)?.uint32Value
@@ -1760,6 +1893,29 @@ final class ScreenRecorderFacade: NSObject {
       clearAreaRecordingSelection()
     }
     onDevicesChanged?()
+  }
+
+  @objc private func workspaceWillSleep(_ notification: Notification) {
+    logCaptureSystemEvent("willSleep")
+  }
+
+  @objc private func workspaceDidWake(_ notification: Notification) {
+    logCaptureSystemEvent("didWake")
+  }
+
+  private func logCaptureSystemEvent(_ event: String) {
+    guard isStartingOrRecording() else { return }
+
+    NativeLogger.i(
+      "Facade", "Capture system event",
+      context: [
+        "event": event,
+        "state": "\(state)",
+        "backend": currentBackendName(),
+        "selectedDisplayID": selectedDisplayID.map { String($0) } ?? "nil",
+        "currentCaptureDisplayID": currentCaptureDisplayID.map { String($0) } ?? "nil",
+        "overlayWindowID": camera.overlayWindowID.map { String($0) } ?? "nil",
+      ])
   }
 
   private func refreshMicrophoneLevelMonitoring(resetMeter: Bool) {
@@ -1794,14 +1950,59 @@ final class ScreenRecorderFacade: NSObject {
     return String(describing: type(of: capture))
   }
 
-  private func availableDiskSpaceBytes(at url: URL) -> Int64? {
-    let fm = FileManager.default
-    var targetPath = url.path
-    if !fm.fileExists(atPath: targetPath) {
-      targetPath = url.deletingLastPathComponent().path
+  private func currentCaptureDestinationURL() -> URL {
+    CaptureDestinationDiagnostics.url(for: activeRecordingFileSession)
+  }
+
+  private func preflightCaptureDestination(_ url: URL) throws {
+    let targetURL = diskSpaceLookupURL(for: url)
+    let bytes = availableDiskSpaceBytes(at: url)
+
+    NativeLogger.i(
+      "Facade", "Capture destination disk preflight",
+      context: [
+        "path": targetURL.path,
+        "availableBytes": bytes ?? -1,
+      ])
+
+    guard let bytes else { return }
+    guard bytes > 0 else {
+      throw flutterError(
+        NativeErrorCode.outputUrlError,
+        "Capture destination has no available disk space"
+      )
     }
+  }
+
+  private func diskSpaceLookupURL(for url: URL) -> URL {
+    let normalized = url.standardizedFileURL
+    if FileManager.default.fileExists(atPath: normalized.path) {
+      return normalized
+    }
+    return normalized.deletingLastPathComponent()
+  }
+
+  private func availableDiskSpaceBytes(at url: URL) -> Int64? {
+    let targetURL = diskSpaceLookupURL(for: url)
     do {
-      let attrs = try fm.attributesOfFileSystem(forPath: targetPath)
+      let values = try targetURL.resourceValues(forKeys: [
+        .volumeAvailableCapacityForImportantUsageKey,
+        .volumeAvailableCapacityKey,
+      ])
+      if let free = values.volumeAvailableCapacityForImportantUsage {
+        return Int64(free)
+      }
+      if let free = values.volumeAvailableCapacity {
+        return Int64(free)
+      }
+    } catch {
+      NativeLogger.w(
+        "Facade", "Failed to read URL resource disk space",
+        context: ["path": targetURL.path, "error": error.localizedDescription])
+    }
+
+    do {
+      let attrs = try FileManager.default.attributesOfFileSystem(forPath: targetURL.path)
       if let free = attrs[.systemFreeSize] as? NSNumber {
         return free.int64Value
       }
@@ -1813,14 +2014,15 @@ final class ScreenRecorderFacade: NSObject {
       }
     } catch {
       NativeLogger.w(
-        "Facade", "Failed to read disk space",
-        context: ["path": targetPath, "error": error.localizedDescription])
+        "Facade", "Failed to read filesystem disk space",
+        context: ["path": targetURL.path, "error": error.localizedDescription])
     }
     return nil
   }
 
   private func setCaptureBackend(_ backend: CaptureBackend) {
     self.capture = backend
+    resetOverlayUpdateDeduper()
     self.capture.onMicrophoneLevel = { [weak self] sample in
       self?.onMicrophoneLevel?(sample)
     }
@@ -1830,6 +2032,7 @@ final class ScreenRecorderFacade: NSObject {
       guard let self else { return }
       let visibleRawURL = self.activeRecordingFileSession?.finalRawURL ?? url
 
+      self.resetOverlayUpdateDeduper()
       self.state = .recording
       self.recordingStartedAt = Date()
       self.stateAsStr()
@@ -1856,8 +2059,6 @@ final class ScreenRecorderFacade: NSObject {
         self.camera.setRecordingHighlight(enabled: self.prefs.overlayHighlight)
       }
 
-      // Attach overlay windowID to capture (for backends that need updateOverlay after start)
-      self.syncOverlayIntoCapture()
       self.updateOverlayVisibility()
 
       self.updateCursorVisibility()
@@ -1915,6 +2116,7 @@ final class ScreenRecorderFacade: NSObject {
       self.stopResult = nil
 
       self.pendingStop = false
+      self.resetOverlayUpdateDeduper()
       self.state = .idle
       self.stateAsStr()
       self.refreshMicrophoneLevelMonitoring(resetMeter: false)

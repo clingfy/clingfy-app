@@ -10,6 +10,7 @@ import CoreGraphics
 import Foundation
 
 /// AVFoundation backend implementation using the existing CapturePipeline (10.14+).
+@MainActor
 final class CaptureBackendAVFoundation: CaptureBackend {
   // MARK: CaptureBackend
   var onStarted: ((URL) -> Void)?

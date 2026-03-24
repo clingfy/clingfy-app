@@ -116,6 +116,7 @@ struct CaptureStartConfig {
 /// - `onStarted` and `onFinished` are required for our current ScreenRecorderFacade flow
 ///   (state transitions, indicator updates, overlay updates, Flutter callbacks). :contentReference[oaicite:1]{index=1}
 /// - `currentOutputURL` is needed to preserve current "ALREADY_RECORDING returns path" behavior. :contentReference[oaicite:2]{index=2}
+@MainActor
 protocol CaptureBackend: AnyObject {
   var onStarted: ((URL) -> Void)? { get set }
   var onFinished: ((URL?, Error?) -> Void)? { get set }

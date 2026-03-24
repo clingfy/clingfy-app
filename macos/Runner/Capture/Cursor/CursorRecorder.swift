@@ -33,6 +33,37 @@ struct CursorRecording: Codable {
   let frames: [CursorFrame]
 }
 
+struct CursorRecordingWriter {
+  static func write(
+    recording: CursorRecording,
+    to outputURL: URL,
+    queue: DispatchQueue,
+    completion: @escaping () -> Void
+  ) {
+    queue.async {
+      do {
+        let data = try JSONEncoder().encode(recording)
+        try data.write(to: outputURL)
+
+        NativeLogger.i(
+          "CursorRecorder",
+          "Saved cursor recording",
+          context: ["path": outputURL.path]
+        )
+      } catch {
+        NativeLogger.e(
+          "CursorRecorder",
+          "Failed to save cursor recording",
+          context: ["error": error.localizedDescription]
+        )
+      }
+      DispatchQueue.main.async {
+        completion()
+      }
+    }
+  }
+}
+
 private struct SpriteKey: Hashable {
   let width: Int
   let height: Int
@@ -44,6 +75,7 @@ final class CursorRecorder {
   private var frames: [CursorFrame] = []
   private var sprites: [CursorSprite] = []
   private var spriteIndexByKey: [SpriteKey: Int] = [:]
+  private var isActive = false
 
   private var startTime: TimeInterval = 0
   private let queue = DispatchQueue(label: "com.clingfy.cursor", qos: .userInteractive)
@@ -105,9 +137,29 @@ final class CursorRecorder {
     }
     t.resume()
     self.timer = t
+    self.isActive = true
   }
 
   func stop(outputURL: URL, completion: @escaping () -> Void) {
+    let wasActive = isActive
+    isActive = false
+
+    guard wasActive else {
+      NativeLogger.d(
+        "CursorRecorder",
+        "Stop skipped because cursor capture was not active",
+        context: ["path": outputURL.path]
+      )
+      if Thread.isMainThread {
+        completion()
+      } else {
+        DispatchQueue.main.async {
+          completion()
+        }
+      }
+      return
+    }
+
     timer?.cancel()
     timer = nil
 
@@ -134,27 +186,34 @@ final class CursorRecorder {
 
     let recording = CursorRecording(sprites: localSprites, frames: localFrames)
 
-    queue.async {
-      do {
-        let data = try JSONEncoder().encode(recording)
-        try data.write(to: outputURL)
+    CursorRecordingWriter.write(
+      recording: recording,
+      to: outputURL,
+      queue: queue,
+      completion: completion
+    )
+  }
 
-        NativeLogger.i(
-          "CursorRecorder",
-          "Saved cursor recording",
-          context: ["path": outputURL.path]
-        )
-      } catch {
-        NativeLogger.e(
-          "CursorRecorder",
-          "Failed to save cursor recording",
-          context: ["error": error.localizedDescription]
-        )
-      }
-      DispatchQueue.main.async {
-        completion()
-      }
+  func cancel() {
+    isActive = false
+    timer?.cancel()
+    timer = nil
+
+    if let act = activity {
+      ProcessInfo.processInfo.endActivity(act)
+      activity = nil
     }
+
+    lock.lock()
+    frames = []
+    sprites = []
+    spriteIndexByKey = [:]
+    lock.unlock()
+
+    startTime = 0
+    didLogRasterShape = false
+
+    NativeLogger.d("CursorRecorder", "Cancelled")
   }
 
   private func captureFrame() {

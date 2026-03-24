@@ -12,20 +12,24 @@ class CaptureDiagnostics {
   const CaptureDiagnostics({
     this.backend,
     this.captureFps,
+    this.captureDestinationFreeBytes,
     this.recordingsFreeBytes,
     this.saveFolderFreeBytes,
   });
 
   final String? backend;
   final int? captureFps;
+  final int? captureDestinationFreeBytes;
   final int? recordingsFreeBytes;
   final int? saveFolderFreeBytes;
 
-  int? get bestFreeBytes => saveFolderFreeBytes ?? recordingsFreeBytes;
+  int? get bestFreeBytes =>
+      captureDestinationFreeBytes ?? saveFolderFreeBytes ?? recordingsFreeBytes;
 
   bool get isEmpty =>
       (backend == null || backend!.trim().isEmpty) &&
       captureFps == null &&
+      captureDestinationFreeBytes == null &&
       recordingsFreeBytes == null &&
       saveFolderFreeBytes == null;
 
@@ -33,6 +37,8 @@ class CaptureDiagnostics {
     return {
       if (backend != null) 'backend': backend,
       if (captureFps != null) 'captureFps': captureFps,
+      if (captureDestinationFreeBytes != null)
+        'captureDestinationFreeBytes': captureDestinationFreeBytes,
       if (recordingsFreeBytes != null)
         'recordingsFreeBytes': recordingsFreeBytes,
       if (saveFolderFreeBytes != null)
@@ -46,6 +52,7 @@ class CaptureDiagnostics {
     return CaptureDiagnostics(
       backend: raw['backend']?.toString(),
       captureFps: _asInt(raw['captureFps']),
+      captureDestinationFreeBytes: _asInt(raw['captureDestinationFreeBytes']),
       recordingsFreeBytes: _asInt(raw['recordingsFreeBytes']),
       saveFolderFreeBytes: _asInt(raw['saveFolderFreeBytes']),
     );
