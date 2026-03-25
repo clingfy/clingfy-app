@@ -40,7 +40,38 @@ class AppTextField extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final mac = isMac();
+    final theme = Theme.of(context);
     final spacing = context.appSpacing;
+    final inputTheme = theme.inputDecorationTheme;
+    final fillColor = inputTheme.fillColor ?? theme.colorScheme.surface;
+    final enabledBorder =
+        (inputTheme.enabledBorder ?? inputTheme.border)
+            as OutlineInputBorder? ??
+        OutlineInputBorder(
+          borderRadius: BorderRadius.circular(10),
+          borderSide: BorderSide(color: theme.dividerColor),
+        );
+    final focusedBorder =
+        inputTheme.focusedBorder as OutlineInputBorder? ??
+        enabledBorder.copyWith(
+          borderSide: BorderSide(color: theme.colorScheme.primary, width: 1.4),
+        );
+    final decoration = BoxDecoration(
+      color: fillColor,
+      borderRadius: enabledBorder.borderRadius.resolve(
+        Directionality.of(context),
+      ),
+      border: Border.all(
+        color: enabledBorder.borderSide.color,
+        width: enabledBorder.borderSide.width,
+      ),
+    );
+    final focusedDecoration = decoration.copyWith(
+      border: Border.all(
+        color: focusedBorder.borderSide.color,
+        width: focusedBorder.borderSide.width,
+      ),
+    );
     if (mac) {
       return AppControlBox(
         minWidth: minWidth,
@@ -50,6 +81,8 @@ class AppTextField extends StatelessWidget {
         child: MacosTextField(
           controller: controller,
           enabled: enabled,
+          decoration: decoration,
+          focusedDecoration: focusedDecoration,
           placeholder: placeholder,
           keyboardType: keyboardType,
           onChanged: onChanged,

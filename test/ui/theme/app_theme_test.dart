@@ -18,8 +18,23 @@ void main() {
     );
     expect(lightTheme.appTokens.shellGradient.colors, isNotEmpty);
     expect(darkTheme.appTokens.shellGradient.colors, isNotEmpty);
-    expect(darkTheme.scaffoldBackgroundColor, const Color(0xFF0A0A0D));
-    expect(darkTheme.colorScheme.surface, const Color(0xFF121217));
+    expect(darkTheme.scaffoldBackgroundColor, const Color(0xFF0E1318));
+    expect(darkTheme.canvasColor, const Color(0xFF0E1318));
+    expect(darkTheme.cardColor, const Color(0xFF0E1318));
+    expect(darkTheme.colorScheme.surface, const Color(0xFF0E1318));
+    expect(
+      darkTheme.colorScheme.surfaceContainerHighest,
+      const Color(0xFF0E1318),
+    );
+    expect(darkTheme.appTokens.panelBackground, const Color(0xFF0E1318));
+    expect(darkTheme.appTokens.toolbarOverlay, const Color(0xFF0E1318));
+    expect(darkTheme.appTokens.timelineBackground, const Color(0xFF0E1318));
+    expect(darkTheme.inputDecorationTheme.fillColor, const Color(0xFF2A2D35));
+    expect(
+      darkTheme.dropdownMenuTheme.inputDecorationTheme?.fillColor,
+      const Color(0xFF2A2D35),
+    );
+    expect(darkTheme.sliderTheme.inactiveTrackColor, const Color(0xFF2A2D35));
   });
 
   test('semantic spacing and typography tokens are available and stable', () {
@@ -61,10 +76,24 @@ void main() {
     final darkTheme = buildDarkTheme();
     final macosTheme = buildMacosTheme(Brightness.dark);
     final fluentTheme = buildFluentTheme(Brightness.light);
+    final fluentDarkTheme = buildFluentTheme(Brightness.dark);
 
     expect(macosTheme.primaryColor, clingfyBrandColor);
     expect(macosTheme.canvasColor, darkTheme.appTokens.panelBackground);
     expect(macosTheme.dividerColor, darkTheme.appTokens.panelBorder);
+    expect(
+      macosTheme.popupButtonTheme.backgroundColor,
+      const Color(0xFF2A2D35),
+    );
+    expect(macosTheme.popupButtonTheme.popupColor, const Color(0xFF0E1318));
+    expect(
+      macosTheme.pulldownButtonTheme.backgroundColor,
+      const Color(0xFF2A2D35),
+    );
+    expect(
+      macosTheme.pulldownButtonTheme.pulldownColor,
+      const Color(0xFF0E1318),
+    );
 
     expect(fluentTheme.accentColor, isA<fluent.AccentColor>());
     expect(fluentTheme.accentColor.normal, clingfyBrandColor);
@@ -76,5 +105,9 @@ void main() {
       fluentTheme.selectionColor,
       fluentTheme.accentColor.defaultBrushFor(Brightness.light),
     );
+    expect(fluentDarkTheme.scaffoldBackgroundColor, const Color(0xFF0E1318));
+    expect(fluentDarkTheme.cardColor, const Color(0xFF0E1318));
+    expect(fluentDarkTheme.menuColor, const Color(0xFF0E1318));
+    expect(fluentDarkTheme.inactiveBackgroundColor, const Color(0xFF2A2D35));
   });
 }
