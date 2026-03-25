@@ -13,6 +13,7 @@ import 'package:clingfy/core/bridges/native_method_channel.dart';
 import 'package:clingfy/core/models/app_models.dart';
 import 'package:clingfy/core/preview/player_controller.dart';
 import 'package:clingfy/l10n/app_localizations.dart';
+import 'package:clingfy/ui/theme/app_theme.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
@@ -140,6 +141,9 @@ void main() {
       child: MaterialApp(
         localizationsDelegates: AppLocalizations.localizationsDelegates,
         supportedLocales: AppLocalizations.supportedLocales,
+        theme: buildDarkTheme(),
+        darkTheme: buildDarkTheme(),
+        themeMode: ThemeMode.dark,
         home: Scaffold(
           body: Row(
             children: [
@@ -156,6 +160,43 @@ void main() {
       ),
     );
   }
+
+  testWidgets('dark idle shell uses framed panel styling', (tester) async {
+    final harness = await createHarness();
+    addTearDown(harness.recording.dispose);
+    addTearDown(harness.player.dispose);
+    addTearDown(harness.settings.dispose);
+    addTearDown(harness.post.dispose);
+    final theme = buildDarkTheme();
+
+    await tester.pumpWidget(
+      buildPanel(
+        recording: harness.recording,
+        player: harness.player,
+        post: harness.post,
+      ),
+    );
+
+    final shellDecoration = _decorationFor(
+      tester,
+      find.byKey(const Key('home_right_panel_shell')),
+    );
+    final heroDecoration = _decorationFor(
+      tester,
+      find.byKey(const Key('hero_panel_shell')),
+    );
+
+    expect(shellDecoration.color, theme.appTokens.panelBackground);
+    expect(
+      shellDecoration.borderRadius,
+      BorderRadius.circular(theme.appEditorChrome.panelRadius),
+    );
+    expect(heroDecoration.color, theme.colorScheme.surface);
+    expect(
+      heroDecoration.borderRadius,
+      BorderRadius.circular(theme.appEditorChrome.panelRadius),
+    );
+  });
 
   testWidgets('keeps hero panel visible through finalizingRecording', (
     tester,
@@ -229,6 +270,17 @@ void main() {
     expect(
       find.byKey(const Key('inline_preview_hidden_cover')),
       findsOneWidget,
+    );
+
+    final previewDecoration = _decorationFor(
+      tester,
+      find.byKey(const Key('inline_preview_frame')),
+    );
+    final theme = buildDarkTheme();
+    expect(previewDecoration.color, theme.colorScheme.surface);
+    expect(
+      previewDecoration.borderRadius,
+      BorderRadius.circular(theme.appEditorChrome.panelRadius),
     );
   });
 
@@ -329,4 +381,9 @@ void main() {
     expect(find.byType(PreviewWithOverlayControls), findsOneWidget);
     expect(find.text('fake-preview-host'), findsOneWidget);
   });
+}
+
+BoxDecoration _decorationFor(WidgetTester tester, Finder finder) {
+  final container = tester.widget<Container>(finder);
+  return container.decoration! as BoxDecoration;
 }

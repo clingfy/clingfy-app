@@ -229,6 +229,11 @@ class _VideoTimelineState extends State<VideoTimeline> {
     final selectedCount = editor?.selectedCount ?? 0;
     final spacing = theme.appSpacing;
     final typography = theme.appTypography;
+    final chrome = theme.appEditorChrome;
+    final controlFill =
+        theme.inputDecorationTheme.fillColor ??
+        theme.colorScheme.secondaryContainer;
+    final subtleBorder = theme.dividerColor.withValues(alpha: 0.1);
     final deleteTooltip = selectedCount <= 1
         ? l10n.zoomDeleteSelectedOne
         : l10n.zoomDeleteSelectedMany(selectedCount);
@@ -402,18 +407,15 @@ class _VideoTimelineState extends State<VideoTimeline> {
             ),
             SizedBox(width: spacing.lg),
             Container(
+              key: const Key('timeline_time_chip'),
               padding: EdgeInsets.symmetric(
                 horizontal: spacing.md - 2,
                 vertical: spacing.sm - 2,
               ),
               decoration: BoxDecoration(
-                color: theme.colorScheme.surfaceContainerHighest.withValues(
-                  alpha: 0.28,
-                ),
-                borderRadius: BorderRadius.circular(999),
-                border: Border.all(
-                  color: theme.dividerColor.withValues(alpha: 0.12),
-                ),
+                color: controlFill,
+                borderRadius: BorderRadius.circular(chrome.pillRadius),
+                border: Border.all(color: subtleBorder),
               ),
               child: Text(
                 ready
@@ -450,9 +452,8 @@ class _VideoTimelineState extends State<VideoTimeline> {
                     message: statusLineData.message,
                     accentColor: accentColor,
                     textColor: secondaryTextColor,
-                    backgroundColor: theme.colorScheme.surfaceContainerHighest
-                        .withValues(alpha: 0.22),
-                    borderColor: theme.dividerColor.withValues(alpha: 0.1),
+                    backgroundColor: controlFill.withValues(alpha: 0.92),
+                    borderColor: subtleBorder,
                   ),
                 ),
         ),
@@ -461,7 +462,6 @@ class _VideoTimelineState extends State<VideoTimeline> {
         SizedBox(height: spacing.md - 2),
         LayoutBuilder(
           builder: (context, constraints) {
-            final colorScheme = theme.colorScheme;
             final width = constraints.maxWidth.isFinite
                 ? constraints.maxWidth
                 : 0.0;
@@ -549,13 +549,11 @@ class _VideoTimelineState extends State<VideoTimeline> {
                         margin: const EdgeInsets.only(top: 30),
                         height: 18,
                         decoration: BoxDecoration(
-                          color: colorScheme.surfaceContainerHighest.withValues(
-                            alpha: 0.42,
+                          color: controlFill.withValues(alpha: 0.9),
+                          borderRadius: BorderRadius.circular(
+                            chrome.controlRadius,
                           ),
-                          borderRadius: BorderRadius.circular(8),
-                          border: Border.all(
-                            color: theme.dividerColor.withValues(alpha: 0.08),
-                          ),
+                          border: Border.all(color: subtleBorder),
                         ),
                       ),
                       FractionallySizedBox(
@@ -570,11 +568,13 @@ class _VideoTimelineState extends State<VideoTimeline> {
                                 accentColor.withValues(alpha: 0.94),
                               ],
                             ),
-                            borderRadius: BorderRadius.circular(8),
+                            borderRadius: BorderRadius.circular(
+                              chrome.controlRadius,
+                            ),
                             boxShadow: [
                               BoxShadow(
-                                color: accentColor.withValues(alpha: 0.16),
-                                blurRadius: 6,
+                                color: accentColor.withValues(alpha: 0.14),
+                                blurRadius: 5,
                                 offset: const Offset(0, 2),
                               ),
                             ],
@@ -680,6 +680,8 @@ class _VideoTimelineState extends State<VideoTimeline> {
 
     final theme = Theme.of(context);
     final colorScheme = theme.colorScheme;
+    final chrome = theme.appEditorChrome;
+    final tokens = theme.appTokens;
     final l10n = AppLocalizations.of(context)!;
     final accentColor = theme.primaryColor;
     final foregroundColor =
@@ -732,18 +734,15 @@ class _VideoTimelineState extends State<VideoTimeline> {
             behavior: HitTestBehavior.translucent,
             onPointerDown: (_) => _requestTimelineFocus(),
             child: Container(
+              key: const Key('timeline_shell'),
               padding: EdgeInsets.symmetric(
-                horizontal: theme.appSpacing.xl + 2,
-                vertical: theme.appSpacing.lg,
+                horizontal: chrome.timelineHorizontalPadding,
+                vertical: chrome.timelineVerticalPadding,
               ),
               decoration: BoxDecoration(
-                color: theme.scaffoldBackgroundColor,
-                borderRadius: BorderRadius.circular(theme.appSpacing.md),
-                border: Border(
-                  top: BorderSide(
-                    color: theme.dividerColor.withValues(alpha: 0.1),
-                  ),
-                ),
+                color: tokens.timelineBackground,
+                borderRadius: BorderRadius.circular(chrome.panelRadius),
+                border: Border.all(color: tokens.panelBorder),
               ),
               child: editor == null
                   ? _buildTimelineContent(
@@ -801,14 +800,18 @@ class _TimelineToolbarGroup extends StatelessWidget {
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
     final spacing = theme.appSpacing;
+    final chrome = theme.appEditorChrome;
+    final controlFill =
+        theme.inputDecorationTheme.fillColor ??
+        theme.colorScheme.secondaryContainer;
     return Container(
       padding: EdgeInsets.symmetric(
         horizontal: spacing.sm,
         vertical: spacing.xs,
       ),
       decoration: BoxDecoration(
-        color: theme.colorScheme.surfaceContainerHighest.withValues(alpha: 0.3),
-        borderRadius: BorderRadius.circular(10),
+        color: controlFill,
+        borderRadius: BorderRadius.circular(chrome.controlRadius),
         border: Border.all(color: theme.dividerColor.withValues(alpha: 0.1)),
       ),
       child: child,
@@ -838,14 +841,16 @@ class _TimelineToggleIconButton extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final spacing = Theme.of(context).appSpacing;
-    final typography = Theme.of(context).appTypography;
+    final theme = Theme.of(context);
+    final spacing = theme.appSpacing;
+    final typography = theme.appTypography;
+    final chrome = theme.appEditorChrome;
     final child = DecoratedBox(
       decoration: BoxDecoration(
         color: isActive
             ? accentColor.withValues(alpha: 0.14)
             : Colors.transparent,
-        borderRadius: BorderRadius.circular(8),
+        borderRadius: BorderRadius.circular(chrome.controlRadius),
         border: Border.all(
           color: isActive
               ? accentColor.withValues(alpha: 0.28)
@@ -853,7 +858,7 @@ class _TimelineToggleIconButton extends StatelessWidget {
         ),
       ),
       child: InkWell(
-        borderRadius: BorderRadius.circular(8),
+        borderRadius: BorderRadius.circular(chrome.controlRadius),
         onTap: onPressed,
         child: Padding(
           padding: EdgeInsets.symmetric(
@@ -905,8 +910,10 @@ class _TimelineStatusChip extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final spacing = Theme.of(context).appSpacing;
-    final typography = Theme.of(context).appTypography;
+    final theme = Theme.of(context);
+    final spacing = theme.appSpacing;
+    final typography = theme.appTypography;
+    final chrome = theme.appEditorChrome;
     return Container(
       padding: EdgeInsets.symmetric(
         horizontal: spacing.sm,
@@ -914,7 +921,7 @@ class _TimelineStatusChip extends StatelessWidget {
       ),
       decoration: BoxDecoration(
         color: accentColor.withValues(alpha: 0.1),
-        borderRadius: BorderRadius.circular(999),
+        borderRadius: BorderRadius.circular(chrome.pillRadius),
         border: Border.all(color: accentColor.withValues(alpha: 0.2)),
       ),
       child: Row(
@@ -955,8 +962,10 @@ class _TimelineStatusLine extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final spacing = Theme.of(context).appSpacing;
-    final typography = Theme.of(context).appTypography;
+    final theme = Theme.of(context);
+    final spacing = theme.appSpacing;
+    final typography = theme.appTypography;
+    final chrome = theme.appEditorChrome;
     return Container(
       constraints: const BoxConstraints(minHeight: 24),
       padding: EdgeInsets.symmetric(
@@ -965,7 +974,7 @@ class _TimelineStatusLine extends StatelessWidget {
       ),
       decoration: BoxDecoration(
         color: backgroundColor,
-        borderRadius: BorderRadius.circular(8),
+        borderRadius: BorderRadius.circular(chrome.controlRadius),
         border: Border.all(color: borderColor),
       ),
       child: Row(

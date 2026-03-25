@@ -1,6 +1,7 @@
 import 'package:clingfy/app/home/post_processing/widgets/zoom_track.dart';
 import 'package:clingfy/core/bridges/native_bridge.dart';
 import 'package:clingfy/core/zoom/zoom_editor_controller.dart';
+import 'package:clingfy/ui/theme/app_theme.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 
@@ -170,6 +171,29 @@ void main() {
     expect(editor.isTrimming, isFalse);
     expect(editor.selectedCount, 2);
   });
+
+  testWidgets('dark zoom track uses control-fill shell styling', (
+    tester,
+  ) async {
+    final editor = await _createEditor(tester);
+    final theme = buildDarkTheme();
+
+    await tester.pumpWidget(_buildZoomTrack(editor: editor));
+
+    final shellFinder = find.byKey(const Key('zoom_track_shell'));
+    final shell = tester.widget<Container>(shellFinder);
+    final decoration = shell.decoration! as BoxDecoration;
+
+    expect(
+      shell.constraints?.maxHeight,
+      theme.appEditorChrome.inspectorTabHeight,
+    );
+    expect(decoration.color, theme.inputDecorationTheme.fillColor);
+    expect(
+      decoration.borderRadius,
+      BorderRadius.circular(theme.appEditorChrome.controlRadius),
+    );
+  });
 }
 
 Future<ZoomEditorController> _createEditor(
@@ -210,6 +234,9 @@ Widget _buildZoomTrack({
   ValueChanged<int>? onQuickSeek,
 }) {
   return MaterialApp(
+    theme: buildDarkTheme(),
+    darkTheme: buildDarkTheme(),
+    themeMode: ThemeMode.dark,
     home: Scaffold(
       body: Center(
         child: SizedBox(

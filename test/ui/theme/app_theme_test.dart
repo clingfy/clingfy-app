@@ -71,6 +71,23 @@ void main() {
     expect(darkTheme.appSpacing.dialog, lightTheme.appSpacing.dialog);
   });
 
+  test('editor chrome tokens expose the workstation shell defaults', () {
+    final darkTheme = buildDarkTheme();
+    final chrome = darkTheme.appEditorChrome;
+
+    expect(chrome.shellRadius, 14);
+    expect(chrome.panelRadius, 12);
+    expect(chrome.controlRadius, 8);
+    expect(chrome.pillRadius, 999);
+    expect(chrome.toolbarHeight, 46);
+    expect(chrome.editorRailWidth, 58);
+    expect(chrome.stagePadding, 14);
+    expect(chrome.compactControlHeight, 32);
+    expect(chrome.inspectorTabHeight, 34);
+    expect(chrome.timelineHorizontalPadding, 22);
+    expect(chrome.timelineVerticalPadding, 16);
+  });
+
   test('platform themes derive from the same semantic palette', () {
     final lightTheme = buildLightTheme();
     final darkTheme = buildDarkTheme();

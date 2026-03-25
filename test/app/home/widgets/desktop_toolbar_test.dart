@@ -1,5 +1,6 @@
 import 'package:clingfy/app/home/widgets/desktop_toolbar.dart';
 import 'package:clingfy/l10n/app_localizations.dart';
+import 'package:clingfy/ui/theme/app_theme.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 
@@ -11,6 +12,9 @@ void main() {
     return MaterialApp(
       localizationsDelegates: AppLocalizations.localizationsDelegates,
       supportedLocales: AppLocalizations.supportedLocales,
+      theme: buildDarkTheme(),
+      darkTheme: buildDarkTheme(),
+      themeMode: ThemeMode.dark,
       home: Scaffold(
         body: DesktopToolbar(
           title: 'Clingfy',
@@ -105,5 +109,29 @@ void main() {
     );
 
     expect(noticeTop.dy, lessThan(exportTop.dy));
+  });
+
+  testWidgets('dark toolbar row uses the shared editor chrome', (tester) async {
+    final theme = buildDarkTheme();
+
+    await tester.pumpWidget(buildToolbar());
+
+    final surfaceFinder = find.byKey(const Key('desktop_toolbar_surface'));
+    final surface = tester.widget<Container>(surfaceFinder);
+    final decoration = surface.decoration! as BoxDecoration;
+
+    expect(
+      tester.getSize(surfaceFinder).height,
+      theme.appEditorChrome.toolbarHeight,
+    );
+    expect(decoration.color, theme.appTokens.toolbarOverlay);
+    expect(
+      decoration.borderRadius,
+      BorderRadius.circular(theme.appEditorChrome.panelRadius),
+    );
+    expect(
+      (decoration.border! as Border).top.color,
+      theme.appTokens.panelBorder,
+    );
   });
 }
