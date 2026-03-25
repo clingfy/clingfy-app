@@ -366,7 +366,7 @@ ThemeData buildThemeData(Brightness brightness) {
     ),
     inputDecorationTheme: InputDecorationTheme(
       filled: true,
-      fillColor: palette.surfaceRaised,
+      fillColor: palette.controlFill,
       border: inputBorder,
       enabledBorder: inputBorder,
       focusedBorder: inputBorder.copyWith(
@@ -385,7 +385,7 @@ ThemeData buildThemeData(Brightness brightness) {
     dropdownMenuTheme: DropdownMenuThemeData(
       inputDecorationTheme: InputDecorationTheme(
         filled: true,
-        fillColor: palette.surfaceRaised,
+        fillColor: palette.controlFill,
         border: inputBorder,
         enabledBorder: inputBorder,
         focusedBorder: inputBorder.copyWith(
@@ -420,7 +420,9 @@ ThemeData buildThemeData(Brightness brightness) {
         shadowColor: Colors.transparent,
         backgroundColor: clingfyBrandColor,
         foregroundColor: palette.brandForeground,
-        disabledBackgroundColor: palette.surfaceSubtle,
+        disabledBackgroundColor: brightness == Brightness.dark
+            ? palette.controlFill
+            : palette.surfaceSubtle,
         disabledForegroundColor: palette.textSecondary,
         shape: RoundedRectangleBorder(borderRadius: radius),
         textStyle: typography.button,
@@ -459,7 +461,9 @@ ThemeData buildThemeData(Brightness brightness) {
     sliderTheme: SliderThemeData(
       activeTrackColor: clingfyBrandColor,
       activeTickMarkColor: clingfyBrandColor,
-      inactiveTrackColor: palette.surfaceSubtle,
+      inactiveTrackColor: brightness == Brightness.dark
+          ? palette.controlFill
+          : palette.surfaceSubtle,
       disabledActiveTrackColor: palette.borderStrong,
       disabledInactiveTrackColor: palette.border,
       thumbColor: clingfyBrandColor,
@@ -483,7 +487,9 @@ ThemeData buildThemeData(Brightness brightness) {
         if (states.contains(WidgetState.selected)) {
           return clingfyBrandColor.withValues(alpha: 0.5);
         }
-        return palette.surfaceSubtle;
+        return brightness == Brightness.dark
+            ? palette.controlFill
+            : palette.surfaceSubtle;
       }),
       trackOutlineColor: WidgetStateProperty.resolveWith((states) {
         if (states.contains(WidgetState.selected)) {
@@ -507,12 +513,16 @@ MacosThemeData buildMacosTheme(Brightness brightness) {
     dividerColor: palette.tokens.panelBorder,
     pushButtonTheme: PushButtonThemeData(
       color: clingfyBrandColor,
-      secondaryColor: palette.surfaceRaised,
-      disabledColor: palette.surfaceSubtle,
+      secondaryColor: palette.controlFill,
+      disabledColor: brightness == Brightness.dark
+          ? palette.controlFill
+          : palette.surfaceSubtle,
     ),
     macosIconButtonTheme: MacosIconButtonThemeData(
       backgroundColor: Colors.transparent,
-      disabledColor: palette.surfaceSubtle,
+      disabledColor: brightness == Brightness.dark
+          ? palette.controlFill
+          : palette.surfaceSubtle,
       hoverColor: clingfyBrandColor.withValues(alpha: isDark ? 0.18 : 0.08),
       shape: BoxShape.circle,
       boxConstraints: const BoxConstraints(
@@ -525,18 +535,20 @@ MacosThemeData buildMacosTheme(Brightness brightness) {
     iconTheme: MacosIconThemeData(color: palette.textSecondary, size: 20),
     popupButtonTheme: MacosPopupButtonThemeData(
       highlightColor: clingfyBrandColor,
-      backgroundColor: palette.surfaceRaised,
+      backgroundColor: palette.controlFill,
       popupColor: palette.surface,
     ),
     pulldownButtonTheme: MacosPulldownButtonThemeData(
       highlightColor: clingfyBrandColor,
-      backgroundColor: palette.surfaceRaised,
+      backgroundColor: palette.controlFill,
       pulldownColor: palette.surface,
       iconColor: palette.textSecondary,
     ),
     helpButtonTheme: HelpButtonThemeData(
-      color: palette.surfaceRaised,
-      disabledColor: palette.surfaceSubtle,
+      color: palette.controlFill,
+      disabledColor: brightness == Brightness.dark
+          ? palette.controlFill
+          : palette.surfaceSubtle,
     ),
     tooltipTheme: MacosTooltipThemeData.standard(
       brightness: brightness,
@@ -554,11 +566,17 @@ fluent.FluentThemeData buildFluentTheme(Brightness brightness) {
     accentColor: accent,
     selectionColor: accent.defaultBrushFor(brightness),
     scaffoldBackgroundColor: palette.tokens.panelBackground,
-    acrylicBackgroundColor: palette.surfaceRaised,
+    acrylicBackgroundColor: brightness == Brightness.dark
+        ? palette.surface
+        : palette.surfaceRaised,
     micaBackgroundColor: palette.scaffoldBackground,
     cardColor: palette.surface,
-    menuColor: palette.surfaceRaised,
-    inactiveBackgroundColor: palette.surfaceSubtle,
+    menuColor: brightness == Brightness.dark
+        ? palette.surface
+        : palette.surfaceRaised,
+    inactiveBackgroundColor: brightness == Brightness.dark
+        ? palette.controlFill
+        : palette.surfaceSubtle,
     inactiveColor: palette.textPrimary,
     shadowColor: Colors.black.withValues(
       alpha: brightness == Brightness.dark ? 0.3 : 0.08,
@@ -576,6 +594,7 @@ class _ResolvedPalette {
     required this.surface,
     required this.surfaceRaised,
     required this.surfaceSubtle,
+    required this.controlFill,
     required this.textPrimary,
     required this.textSecondary,
     required this.border,
@@ -589,6 +608,7 @@ class _ResolvedPalette {
   final Color surface;
   final Color surfaceRaised;
   final Color surfaceSubtle;
+  final Color controlFill;
   final Color textPrimary;
   final Color textSecondary;
   final Color border;
@@ -671,16 +691,19 @@ class _ResolvedPalette {
         ? Colors.white
         : const Color(0xFF160D24);
 
+    const darkPrimarySurface = Color(0xFF0E1318);
+    const darkSecondarySurface = Color(0xFF2A2D35);
+    const lightSurface = Colors.white;
+    const lightSurfaceRaised = Color(0xFFF7F3FD);
+    const lightSurfaceSubtle = Color(0xFFF0EAFB);
+
     final scaffoldBackground = isDark
-        ? const Color(0xFF0A0A0D)
+        ? darkPrimarySurface
         : const Color(0xFFF7F4FC);
-    final surface = isDark ? const Color(0xFF121217) : Colors.white;
-    final surfaceRaised = isDark
-        ? const Color(0xFF181820)
-        : const Color(0xFFF7F3FD);
-    final surfaceSubtle = isDark
-        ? const Color(0xFF20202A)
-        : const Color(0xFFF0EAFB);
+    final surface = isDark ? darkPrimarySurface : lightSurface;
+    final surfaceRaised = isDark ? darkPrimarySurface : lightSurfaceRaised;
+    final surfaceSubtle = isDark ? darkPrimarySurface : lightSurfaceSubtle;
+    final controlFill = isDark ? darkSecondarySurface : lightSurfaceRaised;
     final textPrimary = isDark
         ? const Color(0xFFF5F2FF)
         : const Color(0xFF241A35);
@@ -710,19 +733,17 @@ class _ResolvedPalette {
           onPrimaryContainer: onPrimaryContainer,
           secondary: isDark ? const Color(0xFFC9B9F3) : const Color(0xFF7455B8),
           onSecondary: brandForeground,
-          secondaryContainer: surfaceSubtle,
+          secondaryContainer: controlFill,
           onSecondaryContainer: textPrimary,
           surface: surface,
           onSurface: textPrimary,
           surfaceContainerLowest: surface,
-          surfaceContainerLow: surfaceRaised,
-          surfaceContainer: surfaceRaised,
-          surfaceContainerHigh: surfaceSubtle,
-          surfaceContainerHighest: _blend(
-            clingfyBrandColor,
-            surface,
-            isDark ? 0.18 : 0.1,
-          ),
+          surfaceContainerLow: isDark ? surface : surfaceRaised,
+          surfaceContainer: isDark ? surface : surfaceRaised,
+          surfaceContainerHigh: isDark ? surface : surfaceSubtle,
+          surfaceContainerHighest: isDark
+              ? surface
+              : _blend(clingfyBrandColor, surface, 0.1),
           onSurfaceVariant: textSecondary,
           outline: borderStrong,
           outlineVariant: border,
@@ -746,16 +767,10 @@ class _ResolvedPalette {
         begin: Alignment.topLeft,
         end: Alignment.bottomRight,
       ),
-      panelBackground: isDark
-          ? const Color(0xF014141B)
-          : const Color(0xF7FFFFFF),
+      panelBackground: isDark ? darkPrimarySurface : const Color(0xF7FFFFFF),
       panelBorder: isDark ? border : border.withValues(alpha: 0.95),
-      toolbarOverlay: isDark
-          ? const Color(0xE61B1B24)
-          : const Color(0xF2FFFFFF),
-      timelineBackground: isDark
-          ? const Color(0xFF0E0E13)
-          : const Color(0xFFFDFBFF),
+      toolbarOverlay: isDark ? darkPrimarySurface : const Color(0xF2FFFFFF),
+      timelineBackground: isDark ? darkPrimarySurface : const Color(0xFFFDFBFF),
       timelineTrack: isDark ? const Color(0xFF1D1D26) : const Color(0xFFE7E0F6),
       timelineTick: isDark ? const Color(0xFF807B93) : const Color(0xFF9288AA),
       selectionFill: clingfyBrandColor.withValues(alpha: isDark ? 0.2 : 0.12),
@@ -794,6 +809,7 @@ class _ResolvedPalette {
       surface: surface,
       surfaceRaised: surfaceRaised,
       surfaceSubtle: surfaceSubtle,
+      controlFill: controlFill,
       textPrimary: textPrimary,
       textSecondary: textSecondary,
       border: border,

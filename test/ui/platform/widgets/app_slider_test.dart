@@ -1,5 +1,6 @@
 import 'package:clingfy/ui/platform/platform_kind.dart';
 import 'package:clingfy/ui/platform/widgets/app_slider.dart';
+import 'package:clingfy/ui/theme/app_theme.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:macos_ui/macos_ui.dart';
@@ -16,26 +17,46 @@ void main() {
     int? divisions,
   }) {
     return MaterialApp(
-      home: MacosTheme(
-        data: MacosThemeData.light(),
-        child: Scaffold(
-          body: Center(
-            child: SizedBox(
-              width: 240,
-              child: _SliderHarness(
-                initialValue: initialValue,
-                min: min,
-                max: max,
-                divisions: divisions,
-                onChanged: onChanged,
-                onChangeEnd: onChangeEnd,
-              ),
+      theme: buildLightTheme(),
+      darkTheme: buildDarkTheme(),
+      themeMode: ThemeMode.dark,
+      builder: (context, child) => MacosTheme(
+        data: buildMacosTheme(Theme.of(context).brightness),
+        child: child!,
+      ),
+      home: Scaffold(
+        body: Center(
+          child: SizedBox(
+            width: 240,
+            child: _SliderHarness(
+              initialValue: initialValue,
+              min: min,
+              max: max,
+              divisions: divisions,
+              onChanged: onChanged,
+              onChangeEnd: onChangeEnd,
             ),
           ),
         ),
       ),
     );
   }
+
+  testWidgets('AppSlider forwards the shared dark inactive track color', (
+    tester,
+  ) async {
+    await tester.pumpWidget(
+      buildSliderApp(initialValue: 0.5, onChanged: (_) {}),
+    );
+    await tester.pumpAndSettle();
+
+    if (!isMac()) {
+      return;
+    }
+
+    final slider = tester.widget<MacosSlider>(find.byType(MacosSlider));
+    expect(slider.backgroundColor.toARGB32(), const Color(0xFF2A2D35).toARGB32());
+  });
 
   testWidgets('AppSlider emits change and end callbacks from pointer input', (
     tester,

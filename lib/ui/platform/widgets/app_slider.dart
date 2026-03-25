@@ -94,12 +94,16 @@ class _AppSliderState extends State<AppSlider> {
   Widget build(BuildContext context) {
     final value = _normalize(widget.value);
     if (isMac()) {
+      final inactiveTrackColor =
+          Theme.of(context).sliderTheme.inactiveTrackColor ??
+          MacosColors.sliderBackgroundColor;
       final slider = MacosSlider(
         value: value,
         onChanged: _handleChanged,
         min: widget.min,
         max: widget.max,
         color: MacosTheme.of(context).primaryColor,
+        backgroundColor: inactiveTrackColor,
       );
 
       if (!_isInteractive) {

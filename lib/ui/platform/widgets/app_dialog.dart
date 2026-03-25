@@ -226,6 +226,7 @@ class _MacosDialogShell extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final theme = Theme.of(context);
     final spacing = context.appSpacing;
     final typography = context.appTypography;
     final brightness = MacosTheme.brightnessOf(context);
@@ -239,10 +240,7 @@ class _MacosDialogShell extends StatelessWidget {
       Colors.white.withValues(alpha: 0.15),
     );
 
-    final backgroundColor = brightness.resolve(
-      CupertinoColors.systemGrey6.color,
-      MacosColors.controlBackgroundColor.darkColor,
-    );
+    final backgroundColor = theme.colorScheme.surface;
 
     final contentPadding = EdgeInsets.fromLTRB(
       spacing.lg,
