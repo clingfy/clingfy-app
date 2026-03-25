@@ -1,5 +1,6 @@
 import 'package:clingfy/ui/platform/widgets/app_form_row.dart';
 import 'package:clingfy/ui/platform/widgets/app_sidebar_tokens.dart';
+import 'package:clingfy/ui/theme/app_theme.dart';
 import 'package:flutter/material.dart' hide PlatformMenuItem;
 import 'package:clingfy/core/models/app_models.dart';
 import 'package:clingfy/core/overlay/overlay_mode.dart';
@@ -239,22 +240,29 @@ class _RecordingOptionsSidebarState extends State<RecordingOptionsSidebar> {
   @override
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
+    final chrome = theme.appEditorChrome;
     final colorScheme = theme.colorScheme;
+    final controlFill =
+        theme.inputDecorationTheme.fillColor ?? colorScheme.surface;
     final headerStyle = (theme.textTheme.titleMedium ?? const TextStyle())
         .copyWith(
           color: colorScheme.onSurface,
           fontWeight: FontWeight.w700,
-          fontSize: 18,
+          fontSize: 16,
         );
 
-    final railColor = colorScheme.surface;
+    final railColor = Color.alphaBlend(
+      controlFill.withValues(alpha: 0.18),
+      colorScheme.surface,
+    );
     final accentColor = theme.primaryColor;
 
     return Row(
       children: [
         // Level 1: Navigation Rail
         Container(
-          width: 60,
+          key: const Key('recording_sidebar_rail'),
+          width: chrome.editorRailWidth,
           color: railColor,
           child: Column(
             children: [
@@ -286,26 +294,42 @@ class _RecordingOptionsSidebarState extends State<RecordingOptionsSidebar> {
           ),
         ),
 
-        const VerticalDivider(indent: 24, endIndent: 24),
+        VerticalDivider(
+          width: 1,
+          thickness: 1,
+          indent: AppSidebarTokens.headerTopPadding,
+          endIndent: AppSidebarTokens.headerTopPadding,
+          color: theme.dividerColor.withValues(alpha: 0.14),
+        ),
         // Level 2: Content Area
         Expanded(
           child: Column(
             crossAxisAlignment: CrossAxisAlignment.stretch,
             children: [
               // Header
-              Padding(
+              Container(
+                key: const Key('recording_sidebar_header'),
                 padding: const EdgeInsets.fromLTRB(
-                  20,
+                  AppSidebarTokens.contentHorizontalPadding,
                   AppSidebarTokens.sectionGap,
-                  20,
+                  AppSidebarTokens.contentHorizontalPadding,
                   AppSidebarTokens.rowGap,
+                ),
+                decoration: BoxDecoration(
+                  border: Border(
+                    bottom: BorderSide(
+                      color: theme.dividerColor.withValues(alpha: 0.08),
+                    ),
+                  ),
                 ),
                 child: Text(_getHeaderTitle(), style: headerStyle),
               ),
 
               Expanded(
                 child: ListView(
-                  padding: const EdgeInsets.symmetric(horizontal: 20),
+                  padding: const EdgeInsets.symmetric(
+                    horizontal: AppSidebarTokens.contentHorizontalPadding,
+                  ),
                   children: [
                     const SizedBox(height: AppSidebarTokens.rowGap),
                     if (_selectedIndex == 0) ..._buildScreenTab(context),
@@ -348,6 +372,9 @@ class _RecordingOptionsSidebarState extends State<RecordingOptionsSidebar> {
     required Color accentColor,
   }) {
     final theme = Theme.of(context);
+    final chrome = theme.appEditorChrome;
+    final controlFill =
+        theme.inputDecorationTheme.fillColor ?? theme.colorScheme.surface;
     final inactiveColor = theme.colorScheme.onSurfaceVariant;
     final labelStyle = (theme.textTheme.labelSmall ?? const TextStyle())
         .copyWith(
@@ -362,19 +389,40 @@ class _RecordingOptionsSidebarState extends State<RecordingOptionsSidebar> {
       child: GestureDetector(
         onTap: () => setState(() => _selectedIndex = index),
         child: Padding(
-          padding: const EdgeInsets.symmetric(vertical: 16),
+          padding: const EdgeInsets.symmetric(
+            vertical: AppSidebarTokens.railItemVerticalPadding,
+          ),
           child: Column(
             children: [
               Container(
-                padding: const EdgeInsets.all(8),
+                key: ValueKey('recording_sidebar_rail_tile_$index'),
+                width: chrome.inspectorTabHeight + 8,
+                height: chrome.inspectorTabHeight + 8,
+                alignment: Alignment.center,
                 decoration: BoxDecoration(
-                  color: isSelected ? accentColor.withValues(alpha: 0.2) : null,
-                  borderRadius: BorderRadius.circular(8),
+                  color: isSelected
+                      ? accentColor.withValues(alpha: 0.16)
+                      : controlFill.withValues(alpha: 0.28),
+                  borderRadius: BorderRadius.circular(chrome.controlRadius + 2),
+                  border: Border.all(
+                    color: isSelected
+                        ? accentColor.withValues(alpha: 0.3)
+                        : theme.dividerColor.withValues(alpha: 0.08),
+                  ),
+                  boxShadow: isSelected
+                      ? [
+                          BoxShadow(
+                            color: accentColor.withValues(alpha: 0.14),
+                            blurRadius: 8,
+                            offset: const Offset(0, 2),
+                          ),
+                        ]
+                      : null,
                 ),
                 child: Icon(
                   icon,
                   color: isSelected ? accentColor : inactiveColor,
-                  size: 24,
+                  size: 20,
                 ),
               ),
               const SizedBox(height: AppSidebarTokens.compactGap / 2),

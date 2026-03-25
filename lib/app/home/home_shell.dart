@@ -33,8 +33,11 @@ class HomeShell extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final theme = Theme.of(context);
     final backgroundGradient = context.appTokens.shellGradient;
     final spacing = context.appSpacing;
+    final chrome = context.appEditorChrome;
+    final tokens = theme.appTokens;
     final isRecording = context.select<RecordingController, bool>(
       (r) => r.isRecording,
     );
@@ -54,54 +57,65 @@ class HomeShell extends StatelessWidget {
             children: [
               Padding(
                 padding: EdgeInsets.all(spacing.page),
-                child: Column(
-                  children: [
-                    HomeToolbar(
-                      title: title,
-                      isRecording: isRecording,
-                      uiState: uiState,
-                      onExport: () {
-                        unawaited(actions.exportFromUi(context));
-                      },
-                      onOpenSettings: () {
-                        unawaited(actions.openSettings(context));
-                      },
-                      onOpenSystemSettings: actions.openSystemSettings,
-                      onClearMessage: actions.clearToolbarErrors,
-                    ),
-                    SizedBox(height: spacing.page),
-                    Expanded(
-                      child: Row(
-                        crossAxisAlignment: CrossAxisAlignment.stretch,
-                        children: [
-                          HomeLeftSidebar(
-                            isRecording: isRecording,
-                            uiState: uiState,
-                            actions: actions,
-                            settingsController: settingsController,
+                child: Container(
+                  key: const Key('editor_shell_frame'),
+                  decoration: BoxDecoration(
+                    color: tokens.panelBackground.withValues(alpha: 0.96),
+                    borderRadius: BorderRadius.circular(chrome.shellRadius),
+                    border: Border.all(color: tokens.panelBorder),
+                  ),
+                  child: Padding(
+                    padding: EdgeInsets.all(spacing.lg),
+                    child: Column(
+                      children: [
+                        HomeToolbar(
+                          title: title,
+                          isRecording: isRecording,
+                          uiState: uiState,
+                          onExport: () {
+                            unawaited(actions.exportFromUi(context));
+                          },
+                          onOpenSettings: () {
+                            unawaited(actions.openSettings(context));
+                          },
+                          onOpenSystemSettings: actions.openSystemSettings,
+                          onClearMessage: actions.clearToolbarErrors,
+                        ),
+                        SizedBox(height: spacing.lg),
+                        Expanded(
+                          child: Row(
+                            crossAxisAlignment: CrossAxisAlignment.stretch,
+                            children: [
+                              HomeLeftSidebar(
+                                isRecording: isRecording,
+                                uiState: uiState,
+                                actions: actions,
+                                settingsController: settingsController,
+                              ),
+                              SizedBox(width: spacing.md),
+                              HomeRightPanel(
+                                isRecording: isRecording,
+                                isBusy: isBusy,
+                                onToggleRecording: () async {
+                                  unawaited(actions.toggleRecording(context));
+                                },
+                                onClosePreview: () {
+                                  unawaited(actions.closePreview(context));
+                                },
+                              ),
+                            ],
                           ),
-                          SizedBox(width: spacing.page),
-                          HomeRightPanel(
-                            isRecording: isRecording,
-                            isBusy: isBusy,
-                            onToggleRecording: () async {
-                              unawaited(actions.toggleRecording(context));
-                            },
-                            onClosePreview: () {
+                        ),
+                        SizedBox(height: spacing.md),
+                        if (showTimelineBar)
+                          TimelineBar(
+                            onClose: () {
                               unawaited(actions.closePreview(context));
                             },
                           ),
-                        ],
-                      ),
+                      ],
                     ),
-                    SizedBox(height: spacing.page),
-                    if (showTimelineBar)
-                      TimelineBar(
-                        onClose: () {
-                          unawaited(actions.closePreview(context));
-                        },
-                      ),
-                  ],
+                  ),
                 ),
               ),
               const ExportProgressDock(),

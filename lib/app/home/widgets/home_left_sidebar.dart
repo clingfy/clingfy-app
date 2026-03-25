@@ -25,18 +25,19 @@ class HomeLeftSidebar extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final tokens = context.appTokens;
-    final spacing = context.appSpacing;
+    final chrome = context.appEditorChrome;
     final showPreviewShell = context.select<RecordingController, bool>(
       (r) => r.showPreviewShell,
     );
 
     return Container(
+      key: const Key('home_left_sidebar_shell'),
       width: showPreviewShell
           ? kPostProcessingOptionsSidebarWidth
           : kRecordingOptionsSidebarWidth,
       decoration: BoxDecoration(
         color: tokens.panelBackground,
-        borderRadius: BorderRadius.circular(spacing.md),
+        borderRadius: BorderRadius.circular(chrome.panelRadius),
         border: Border.all(color: tokens.panelBorder),
       ),
       clipBehavior: Clip.antiAlias,

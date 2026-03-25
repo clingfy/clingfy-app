@@ -27,7 +27,7 @@ class HomeRightPanel extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final tokens = context.appTokens;
-    final spacing = context.appSpacing;
+    final chrome = context.appEditorChrome;
     final previewUiState = context
         .select<
           RecordingController,
@@ -59,58 +59,62 @@ class HomeRightPanel extends StatelessWidget {
 
     return Expanded(
       child: Container(
+        key: const Key('home_right_panel_shell'),
         decoration: BoxDecoration(
           color: tokens.panelBackground,
-          borderRadius: BorderRadius.circular(spacing.md),
+          borderRadius: BorderRadius.circular(chrome.panelRadius),
           border: Border.all(color: tokens.panelBorder),
         ),
         clipBehavior: Clip.antiAlias,
-        child: Column(
-          crossAxisAlignment: CrossAxisAlignment.stretch,
-          children: [
-            Expanded(
-              child: previewUiState.showPreviewShell
-                  ? Builder(
-                      builder: (context) {
-                        final player = context.read<PlayerController>();
-                        return PreviewWithOverlayControls(
-                          preview: KeyedSubtree(
-                            key: ValueKey(
-                              'preview-shell-${previewUiState.sessionId ?? 'none'}',
+        child: Padding(
+          padding: EdgeInsets.all(chrome.stagePadding),
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.stretch,
+            children: [
+              Expanded(
+                child: previewUiState.showPreviewShell
+                    ? Builder(
+                        builder: (context) {
+                          final player = context.read<PlayerController>();
+                          return PreviewWithOverlayControls(
+                            preview: KeyedSubtree(
+                              key: ValueKey(
+                                'preview-shell-${previewUiState.sessionId ?? 'none'}',
+                              ),
+                              child: InlinePreviewPanel(
+                                path: previewUiState.previewPath ?? '',
+                                onToggleRecord: onToggleRecording,
+                                onClose: onClosePreview,
+                                onPreviewHostMounted: recordingController
+                                    .handlePreviewHostMounted,
+                                showLoadingOverlay:
+                                    previewUiState.showPreviewLoadingOverlay,
+                                showSurface: previewUiState.showPreviewSurface,
+                                previewHostBuilder: previewHostBuilder,
+                              ),
                             ),
-                            child: InlinePreviewPanel(
-                              path: previewUiState.previewPath ?? '',
-                              onToggleRecord: onToggleRecording,
-                              onClose: onClosePreview,
-                              onPreviewHostMounted:
-                                  recordingController.handlePreviewHostMounted,
-                              showLoadingOverlay:
-                                  previewUiState.showPreviewLoadingOverlay,
-                              showSurface: previewUiState.showPreviewSurface,
-                              previewHostBuilder: previewHostBuilder,
-                            ),
-                          ),
-                          isPlaying: isPlaying,
-                          controlsEnabled:
-                              previewUiState.showPreviewControls &&
-                              !postHasError,
-                          onPlayPause: (playing) {
-                            if (playing) {
-                              player.play();
-                            } else {
-                              player.pause();
-                            }
-                          },
-                        );
-                      },
-                    )
-                  : HeroPanel(
-                      isRecording: isRecording,
-                      isBusy: isBusy,
-                      onToggle: onToggleRecording,
-                    ),
-            ),
-          ],
+                            isPlaying: isPlaying,
+                            controlsEnabled:
+                                previewUiState.showPreviewControls &&
+                                !postHasError,
+                            onPlayPause: (playing) {
+                              if (playing) {
+                                player.play();
+                              } else {
+                                player.pause();
+                              }
+                            },
+                          );
+                        },
+                      )
+                    : HeroPanel(
+                        isRecording: isRecording,
+                        isBusy: isBusy,
+                        onToggle: onToggleRecording,
+                      ),
+              ),
+            ],
+          ),
         ),
       ),
     );

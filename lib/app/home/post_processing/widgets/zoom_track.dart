@@ -219,6 +219,10 @@ class _ZoomTrackState extends State<ZoomTrack> {
 
     final theme = Theme.of(context);
     final tokens = context.appTokens;
+    final chrome = context.appEditorChrome;
+    final controlFill =
+        theme.inputDecorationTheme.fillColor ??
+        theme.colorScheme.secondaryContainer;
     final accentColor = theme.colorScheme.primary;
     final editor = widget.editorController;
     final isAddMode = editor?.addModeEnabled ?? false;
@@ -459,15 +463,16 @@ class _ZoomTrackState extends State<ZoomTrack> {
           }
         },
         child: Container(
-          height: 34,
+          key: const Key('zoom_track_shell'),
+          height: chrome.inspectorTabHeight,
           margin: const EdgeInsets.symmetric(vertical: 2),
           decoration: BoxDecoration(
-            color: tokens.timelineBackground,
-            borderRadius: BorderRadius.circular(8),
+            color: controlFill,
+            borderRadius: BorderRadius.circular(chrome.controlRadius),
             border: Border.all(color: tokens.panelBorder),
           ),
           child: ClipRRect(
-            borderRadius: BorderRadius.circular(8),
+            borderRadius: BorderRadius.circular(chrome.controlRadius),
             child: LayoutBuilder(
               builder: (context, constraints) {
                 return CustomPaint(

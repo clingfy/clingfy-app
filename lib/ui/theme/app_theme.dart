@@ -314,6 +314,126 @@ class AppTypographyTokens extends ThemeExtension<AppTypographyTokens> {
   }
 }
 
+@immutable
+class AppEditorChromeTokens extends ThemeExtension<AppEditorChromeTokens> {
+  const AppEditorChromeTokens({
+    required this.shellRadius,
+    required this.panelRadius,
+    required this.controlRadius,
+    required this.pillRadius,
+    required this.toolbarHeight,
+    required this.editorRailWidth,
+    required this.stagePadding,
+    required this.compactControlHeight,
+    required this.inspectorTabHeight,
+    required this.timelineHorizontalPadding,
+    required this.timelineVerticalPadding,
+  });
+
+  final double shellRadius;
+  final double panelRadius;
+  final double controlRadius;
+  final double pillRadius;
+  final double toolbarHeight;
+  final double editorRailWidth;
+  final double stagePadding;
+  final double compactControlHeight;
+  final double inspectorTabHeight;
+  final double timelineHorizontalPadding;
+  final double timelineVerticalPadding;
+
+  factory AppEditorChromeTokens.fallback(Brightness brightness) =>
+      const AppEditorChromeTokens(
+        shellRadius: 14,
+        panelRadius: 12,
+        controlRadius: 8,
+        pillRadius: 999,
+        toolbarHeight: 46,
+        editorRailWidth: 58,
+        stagePadding: 14,
+        compactControlHeight: 32,
+        inspectorTabHeight: 34,
+        timelineHorizontalPadding: 22,
+        timelineVerticalPadding: 16,
+      );
+
+  @override
+  AppEditorChromeTokens copyWith({
+    double? shellRadius,
+    double? panelRadius,
+    double? controlRadius,
+    double? pillRadius,
+    double? toolbarHeight,
+    double? editorRailWidth,
+    double? stagePadding,
+    double? compactControlHeight,
+    double? inspectorTabHeight,
+    double? timelineHorizontalPadding,
+    double? timelineVerticalPadding,
+  }) {
+    return AppEditorChromeTokens(
+      shellRadius: shellRadius ?? this.shellRadius,
+      panelRadius: panelRadius ?? this.panelRadius,
+      controlRadius: controlRadius ?? this.controlRadius,
+      pillRadius: pillRadius ?? this.pillRadius,
+      toolbarHeight: toolbarHeight ?? this.toolbarHeight,
+      editorRailWidth: editorRailWidth ?? this.editorRailWidth,
+      stagePadding: stagePadding ?? this.stagePadding,
+      compactControlHeight: compactControlHeight ?? this.compactControlHeight,
+      inspectorTabHeight: inspectorTabHeight ?? this.inspectorTabHeight,
+      timelineHorizontalPadding:
+          timelineHorizontalPadding ?? this.timelineHorizontalPadding,
+      timelineVerticalPadding:
+          timelineVerticalPadding ?? this.timelineVerticalPadding,
+    );
+  }
+
+  @override
+  AppEditorChromeTokens lerp(
+    ThemeExtension<AppEditorChromeTokens>? other,
+    double t,
+  ) {
+    if (other is! AppEditorChromeTokens) {
+      return this;
+    }
+
+    return AppEditorChromeTokens(
+      shellRadius: lerpDouble(shellRadius, other.shellRadius, t) ?? shellRadius,
+      panelRadius: lerpDouble(panelRadius, other.panelRadius, t) ?? panelRadius,
+      controlRadius:
+          lerpDouble(controlRadius, other.controlRadius, t) ?? controlRadius,
+      pillRadius: lerpDouble(pillRadius, other.pillRadius, t) ?? pillRadius,
+      toolbarHeight:
+          lerpDouble(toolbarHeight, other.toolbarHeight, t) ?? toolbarHeight,
+      editorRailWidth:
+          lerpDouble(editorRailWidth, other.editorRailWidth, t) ??
+          editorRailWidth,
+      stagePadding:
+          lerpDouble(stagePadding, other.stagePadding, t) ?? stagePadding,
+      compactControlHeight:
+          lerpDouble(compactControlHeight, other.compactControlHeight, t) ??
+          compactControlHeight,
+      inspectorTabHeight:
+          lerpDouble(inspectorTabHeight, other.inspectorTabHeight, t) ??
+          inspectorTabHeight,
+      timelineHorizontalPadding:
+          lerpDouble(
+            timelineHorizontalPadding,
+            other.timelineHorizontalPadding,
+            t,
+          ) ??
+          timelineHorizontalPadding,
+      timelineVerticalPadding:
+          lerpDouble(
+            timelineVerticalPadding,
+            other.timelineVerticalPadding,
+            t,
+          ) ??
+          timelineVerticalPadding,
+    );
+  }
+}
+
 extension AppThemeDataX on ThemeData {
   AppThemeTokens get appTokens =>
       extension<AppThemeTokens>() ?? AppThemeTokens.fallback(brightness);
@@ -322,19 +442,24 @@ extension AppThemeDataX on ThemeData {
   AppTypographyTokens get appTypography =>
       extension<AppTypographyTokens>() ??
       AppTypographyTokens.fallback(brightness);
+  AppEditorChromeTokens get appEditorChrome =>
+      extension<AppEditorChromeTokens>() ??
+      AppEditorChromeTokens.fallback(brightness);
 }
 
 extension AppThemeContextX on BuildContext {
   AppThemeTokens get appTokens => Theme.of(this).appTokens;
   AppSpacingTokens get appSpacing => Theme.of(this).appSpacing;
   AppTypographyTokens get appTypography => Theme.of(this).appTypography;
+  AppEditorChromeTokens get appEditorChrome => Theme.of(this).appEditorChrome;
 }
 
 ThemeData buildThemeData(Brightness brightness) {
   final palette = _ResolvedPalette.forBrightness(brightness);
   final spacing = palette.spacingTokens;
   final typography = palette.typographyTokens;
-  final radius = BorderRadius.circular(10);
+  final chrome = AppEditorChromeTokens.fallback(brightness);
+  final radius = BorderRadius.circular(chrome.controlRadius);
   final inputBorder = OutlineInputBorder(
     borderRadius: radius,
     borderSide: BorderSide(color: palette.border),
@@ -350,7 +475,12 @@ ThemeData buildThemeData(Brightness brightness) {
     cardColor: palette.surface,
     dividerColor: palette.border,
     colorScheme: palette.colorScheme,
-    extensions: <ThemeExtension<dynamic>>[palette.tokens, spacing, typography],
+    extensions: <ThemeExtension<dynamic>>[
+      palette.tokens,
+      spacing,
+      typography,
+      chrome,
+    ],
     textTheme: TextTheme(
       bodyLarge: typography.body.copyWith(fontSize: 14),
       bodyMedium: typography.body,
@@ -408,7 +538,7 @@ ThemeData buildThemeData(Brightness brightness) {
         alpha: brightness == Brightness.dark ? 0.28 : 0.06,
       ),
       shape: RoundedRectangleBorder(
-        borderRadius: BorderRadius.circular(12),
+        borderRadius: BorderRadius.circular(chrome.panelRadius),
         side: BorderSide(color: palette.tokens.panelBorder),
       ),
       elevation: 0,
@@ -762,7 +892,7 @@ class _ResolvedPalette {
       brandForeground: brandForeground,
       shellGradient: LinearGradient(
         colors: isDark
-            ? const [Color(0xFF050507), Color(0xFF11111A)]
+            ? const [Color(0xFF090D12), Color(0xFF11161C)]
             : const [Color(0xFFF9F6FF), Color(0xFFF4F8FF)],
         begin: Alignment.topLeft,
         end: Alignment.bottomRight,
