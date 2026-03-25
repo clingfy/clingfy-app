@@ -47,66 +47,8 @@ class PlatformDropdown<T> extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final textStyle = Theme.of(context).appTypography.body;
-
     final bool mac = isMac();
     final double h = mac ? heightMac : heightWin;
-
-    Widget control;
-
-    if (mac) {
-      control = macos.MacosPopupButton<T>(
-        value: value,
-        onChanged: onChanged,
-        items: items
-            .map(
-              (e) => macos.MacosPopupMenuItem<T>(
-                value: e.value,
-                child: Text(
-                  e.label,
-                  maxLines: 1,
-                  overflow: TextOverflow.ellipsis,
-                  style: textStyle,
-                ),
-              ),
-            )
-            .toList(),
-        hint: labelText == null
-            ? null
-            : Text(
-                labelText!,
-                maxLines: 1,
-                overflow: TextOverflow.ellipsis,
-                style: textStyle,
-              ),
-      );
-    } else {
-      control = fluent.ComboBox<T>(
-        isExpanded: true, // <-- fills available width nicely
-        value: value,
-        onChanged: onChanged,
-        items: items
-            .map(
-              (e) => fluent.ComboBoxItem<T>(
-                value: e.value,
-                child: Text(
-                  e.label,
-                  maxLines: 1,
-                  overflow: TextOverflow.ellipsis,
-                  style: textStyle,
-                ),
-              ),
-            )
-            .toList(),
-        placeholder: labelText == null
-            ? null
-            : Text(
-                labelText!,
-                maxLines: 1,
-                overflow: TextOverflow.ellipsis,
-                style: textStyle,
-              ),
-      );
-    }
 
     // Clamp min/max based on available width before handing layout to
     // AppControlBox so all field-like controls follow the same sizing system.
@@ -117,6 +59,57 @@ class PlatformDropdown<T> extends StatelessWidget {
             : maxWidth;
         final effectiveMax = math.min(maxWidth, available);
         final effectiveMin = math.min(minWidth, effectiveMax);
+        final buttonLabelWidth = math.max(0.0, effectiveMax - 40);
+
+        Widget labelWidget(String label, {double? width}) {
+          final text = Text(
+            label,
+            maxLines: 1,
+            overflow: TextOverflow.ellipsis,
+            style: textStyle,
+          );
+          if (width == null) {
+            return text;
+          }
+          return SizedBox(
+            width: width,
+            child: Align(alignment: Alignment.centerLeft, child: text),
+          );
+        }
+
+        final Widget control = mac
+            ? macos.MacosPopupButton<T>(
+                value: value,
+                selectedItemBuilder: (context) => items
+                    .map((e) => labelWidget(e.label, width: buttonLabelWidth))
+                    .toList(),
+                onChanged: onChanged,
+                items: items
+                    .map(
+                      (e) => macos.MacosPopupMenuItem<T>(
+                        value: e.value,
+                        child: labelWidget(e.label),
+                      ),
+                    )
+                    .toList(),
+                hint: labelText == null
+                    ? null
+                    : labelWidget(labelText!, width: buttonLabelWidth),
+              )
+            : fluent.ComboBox<T>(
+                isExpanded: true,
+                value: value,
+                onChanged: onChanged,
+                items: items
+                    .map(
+                      (e) => fluent.ComboBoxItem<T>(
+                        value: e.value,
+                        child: labelWidget(e.label),
+                      ),
+                    )
+                    .toList(),
+                placeholder: labelText == null ? null : labelWidget(labelText!),
+              );
 
         return AppControlBox(
           minWidth: effectiveMin,

@@ -64,6 +64,8 @@ class _InlinePreviewPanelState extends State<InlinePreviewPanel> {
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
     final spacing = theme.appSpacing;
+    final chrome = theme.appEditorChrome;
+    final tokens = theme.appTokens;
     final typography = theme.appTypography;
     final player = context.watch<PlayerController>();
 
@@ -116,11 +118,12 @@ class _InlinePreviewPanelState extends State<InlinePreviewPanel> {
     }
 
     return Container(
+      key: const Key('inline_preview_frame'),
       clipBehavior: Clip.antiAlias,
       decoration: BoxDecoration(
-        color: theme.scaffoldBackgroundColor,
-        borderRadius: BorderRadius.zero,
-        border: Border.all(color: theme.dividerColor.withValues(alpha: 0.1)),
+        color: theme.colorScheme.surface,
+        borderRadius: BorderRadius.circular(chrome.panelRadius),
+        border: Border.all(color: tokens.panelBorder),
       ),
       child: Stack(
         children: [

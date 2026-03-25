@@ -1,5 +1,6 @@
 export 'package:clingfy/ui/theme/app_theme.dart'
     show
+        AppEditorChromeTokens,
         AppSpacingTokens,
         AppThemeContextX,
         AppThemeDataX,

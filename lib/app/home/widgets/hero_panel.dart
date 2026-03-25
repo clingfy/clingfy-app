@@ -19,14 +19,17 @@ class HeroPanel extends StatelessWidget {
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
     final spacing = context.appSpacing;
+    final chrome = context.appEditorChrome;
+    final tokens = context.appTokens;
     final typography = context.appTypography;
     final colors = theme.colorScheme;
 
     return Container(
+      key: const Key('hero_panel_shell'),
       decoration: BoxDecoration(
-        color: theme.scaffoldBackgroundColor.withValues(alpha: 0.8),
-        borderRadius: BorderRadius.circular(12),
-        border: Border.all(color: theme.dividerColor.withValues(alpha: 0.2)),
+        color: colors.surface,
+        borderRadius: BorderRadius.circular(chrome.panelRadius),
+        border: Border.all(color: tokens.panelBorder),
       ),
       child: Stack(
         children: [
@@ -75,7 +78,7 @@ class HeroPanel extends StatelessWidget {
                         ? colors.onError
                         : colors.onPrimary,
                     shape: RoundedRectangleBorder(
-                      borderRadius: BorderRadius.circular(8),
+                      borderRadius: BorderRadius.circular(chrome.controlRadius),
                     ),
                   ),
                   label: Text(
