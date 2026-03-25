@@ -8,6 +8,7 @@ import 'package:clingfy/ui/platform/widgets/app_section.dart';
 import 'package:clingfy/ui/platform/widgets/app_slider.dart';
 import 'package:clingfy/ui/platform/widgets/app_slider_row.dart';
 import 'package:clingfy/ui/platform/widgets/app_toggle_row.dart';
+import 'package:clingfy/ui/theme/app_theme.dart';
 import 'package:clingfy/app/home/post_processing/widgets/post_processing_sidebar.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
@@ -32,8 +33,11 @@ void main() {
     return MaterialApp(
       localizationsDelegates: AppLocalizations.localizationsDelegates,
       supportedLocales: AppLocalizations.supportedLocales,
+      theme: buildDarkTheme(),
+      darkTheme: buildDarkTheme(),
+      themeMode: ThemeMode.dark,
       home: MacosTheme(
-        data: MacosThemeData.light(),
+        data: buildMacosTheme(Brightness.dark),
         child: Scaffold(
           body: PostProcessingSidebar(
             isProcessing: false,
@@ -256,6 +260,42 @@ void main() {
     expect(blockedIgnorePointer, findsOneWidget);
   });
 
+  testWidgets('dark sidebar uses the shared rail chrome and selected tile', (
+    tester,
+  ) async {
+    final theme = buildDarkTheme();
+
+    await tester.pumpWidget(buildTestApp());
+    await tester.pumpAndSettle();
+
+    final railFinder = find.byKey(const Key('post_sidebar_rail'));
+    final rail = tester.widget<Container>(railFinder);
+    final selectedTileDecoration = _decorationFor(
+      tester,
+      find.byKey(const ValueKey('post_sidebar_rail_tile_0')),
+    );
+
+    expect(
+      tester.getSize(railFinder).width,
+      theme.appEditorChrome.editorRailWidth,
+    );
+    expect(
+      rail.color,
+      Color.alphaBlend(
+        theme.inputDecorationTheme.fillColor!.withValues(alpha: 0.18),
+        theme.colorScheme.surface,
+      ),
+    );
+    expect(
+      selectedTileDecoration.color,
+      theme.colorScheme.primary.withValues(alpha: 0.16),
+    );
+    expect(
+      selectedTileDecoration.borderRadius,
+      BorderRadius.circular(theme.appEditorChrome.controlRadius + 2),
+    );
+  });
+
   testWidgets('background color picker dialog opens without overflow', (
     tester,
   ) async {
@@ -268,4 +308,9 @@ void main() {
     expect(find.byType(ColorPicker), findsOneWidget);
     expect(tester.takeException(), isNull);
   });
+}
+
+BoxDecoration _decorationFor(WidgetTester tester, Finder finder) {
+  final container = tester.widget<Container>(finder);
+  return container.decoration! as BoxDecoration;
 }

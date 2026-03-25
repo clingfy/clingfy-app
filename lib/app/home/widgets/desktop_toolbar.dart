@@ -12,6 +12,7 @@ import 'package:macos_ui/macos_ui.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
 const _toolbarRowKey = Key('desktop_toolbar_row');
+const _toolbarSurfaceKey = Key('desktop_toolbar_surface');
 const _toolbarStatusStripKey = Key('toolbar_status_strip');
 const _toolbarNoticeLaneKey = Key('toolbar_notice_lane');
 const _toolbarExportLaneKey = Key('toolbar_export_lane');
@@ -331,16 +332,18 @@ class _MacToolbarRow extends StatelessWidget {
     final theme = Theme.of(context);
     final spacing = context.appSpacing;
     final typography = context.appTypography;
+    final chrome = theme.appEditorChrome;
     final tokens = theme.appTokens;
     final bg = tokens.toolbarOverlay;
     final border = tokens.panelBorder;
 
     return Container(
-      height: 46,
+      key: _toolbarSurfaceKey,
+      height: chrome.toolbarHeight,
       padding: EdgeInsets.symmetric(horizontal: spacing.md),
       decoration: BoxDecoration(
         color: bg,
-        borderRadius: BorderRadius.circular(12),
+        borderRadius: BorderRadius.circular(chrome.panelRadius),
         border: Border.all(color: border),
       ),
       child: Row(
@@ -457,15 +460,18 @@ class _WinToolbarRow extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final theme = fluent.FluentTheme.of(context);
-    final spacing = Theme.of(context).appSpacing;
-    final tokens = Theme.of(context).appTokens;
+    final materialTheme = Theme.of(context);
+    final spacing = materialTheme.appSpacing;
+    final tokens = materialTheme.appTokens;
+    final chrome = materialTheme.appEditorChrome;
 
     return fluent.Container(
-      height: 46,
+      key: _toolbarSurfaceKey,
+      height: chrome.toolbarHeight,
       padding: EdgeInsets.symmetric(horizontal: spacing.md),
       decoration: fluent.BoxDecoration(
         color: tokens.toolbarOverlay,
-        borderRadius: BorderRadius.circular(10),
+        borderRadius: BorderRadius.circular(chrome.panelRadius),
         border: fluent.Border.all(color: tokens.panelBorder),
       ),
       child: Row(
@@ -548,15 +554,18 @@ class _FallbackToolbarRow extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final tokens = Theme.of(context).appTokens;
-    final spacing = Theme.of(context).appSpacing;
-    final typography = Theme.of(context).appTypography;
+    final theme = Theme.of(context);
+    final tokens = theme.appTokens;
+    final spacing = theme.appSpacing;
+    final typography = theme.appTypography;
+    final chrome = theme.appEditorChrome;
     return Container(
-      height: 46,
+      key: _toolbarSurfaceKey,
+      height: chrome.toolbarHeight,
       padding: EdgeInsets.symmetric(horizontal: spacing.md),
       decoration: BoxDecoration(
         color: tokens.toolbarOverlay,
-        borderRadius: BorderRadius.circular(12),
+        borderRadius: BorderRadius.circular(chrome.panelRadius),
         border: Border.all(color: tokens.panelBorder),
       ),
       child: Row(
@@ -582,6 +591,7 @@ class _FallbackToolbarRow extends StatelessWidget {
           ],
           if (onExport != null) ...[
             _simpleButton(
+              context: context,
               label: l10n.export,
               icon: Icons.download,
               onPressed: isProcessing ? null : onExport,
@@ -589,7 +599,11 @@ class _FallbackToolbarRow extends StatelessWidget {
             SizedBox(width: spacing.sm),
           ],
           if (onOpenSettings != null)
-            _simpleIconButton(icon: Icons.settings, onPressed: onOpenSettings),
+            _simpleIconButton(
+              context: context,
+              icon: Icons.settings,
+              onPressed: onOpenSettings,
+            ),
         ],
       ),
     );
@@ -707,6 +721,7 @@ class _MacNoticeLane extends StatelessWidget {
   Widget build(BuildContext context) {
     final spacing = context.appSpacing;
     final typography = context.appTypography;
+    final chrome = context.appEditorChrome;
     final colors = _noticeColors(context, notice.tone);
     final icon = _macNoticeIcon(notice.tone);
 
@@ -717,7 +732,7 @@ class _MacNoticeLane extends StatelessWidget {
       ),
       decoration: BoxDecoration(
         color: colors.background,
-        borderRadius: BorderRadius.circular(10),
+        borderRadius: BorderRadius.circular(chrome.controlRadius),
         border: colors.border == null
             ? null
             : Border.all(color: colors.border!),
@@ -772,6 +787,7 @@ class _MacExportLane extends StatelessWidget {
     final typography = context.appTypography;
     final macTheme = MacosTheme.of(context);
     final tokens = Theme.of(context).appTokens;
+    final chrome = context.appEditorChrome;
     final isDark = macTheme.brightness == Brightness.dark;
     final fg = macTheme.typography.body.color;
 
@@ -782,7 +798,7 @@ class _MacExportLane extends StatelessWidget {
       ),
       decoration: BoxDecoration(
         color: tokens.toolbarOverlay.withValues(alpha: isDark ? 0.88 : 0.92),
-        borderRadius: BorderRadius.circular(10),
+        borderRadius: BorderRadius.circular(chrome.controlRadius),
         border: Border.all(color: tokens.panelBorder),
       ),
       child: Row(
@@ -834,7 +850,9 @@ class _WinNoticeLane extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final theme = fluent.FluentTheme.of(context);
-    final spacing = Theme.of(context).appSpacing;
+    final materialTheme = Theme.of(context);
+    final spacing = materialTheme.appSpacing;
+    final chrome = materialTheme.appEditorChrome;
     final colors = _noticeColors(context, notice.tone);
     final icon = _winNoticeIcon(notice.tone);
 
@@ -845,7 +863,7 @@ class _WinNoticeLane extends StatelessWidget {
       ),
       decoration: fluent.BoxDecoration(
         color: colors.background,
-        borderRadius: BorderRadius.circular(8),
+        borderRadius: BorderRadius.circular(chrome.controlRadius),
         border: colors.border == null
             ? null
             : fluent.Border.all(color: colors.border!),
@@ -896,8 +914,10 @@ class _WinExportLane extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final theme = fluent.FluentTheme.of(context);
-    final spacing = Theme.of(context).appSpacing;
-    final tokens = Theme.of(context).appTokens;
+    final materialTheme = Theme.of(context);
+    final spacing = materialTheme.appSpacing;
+    final tokens = materialTheme.appTokens;
+    final chrome = materialTheme.appEditorChrome;
 
     return fluent.Container(
       padding: EdgeInsets.symmetric(
@@ -906,7 +926,7 @@ class _WinExportLane extends StatelessWidget {
       ),
       decoration: fluent.BoxDecoration(
         color: tokens.toolbarOverlay.withValues(alpha: 0.92),
-        borderRadius: BorderRadius.circular(8),
+        borderRadius: BorderRadius.circular(chrome.controlRadius),
         border: fluent.Border.all(color: tokens.panelBorder),
       ),
       child: Row(
@@ -961,6 +981,7 @@ class _FallbackNoticeLane extends StatelessWidget {
   Widget build(BuildContext context) {
     final spacing = context.appSpacing;
     final typography = context.appTypography;
+    final chrome = context.appEditorChrome;
     final colors = _noticeColors(context, notice.tone);
     final icon = _fallbackNoticeIcon(notice.tone);
 
@@ -971,7 +992,7 @@ class _FallbackNoticeLane extends StatelessWidget {
       ),
       decoration: BoxDecoration(
         color: colors.background,
-        borderRadius: BorderRadius.circular(10),
+        borderRadius: BorderRadius.circular(chrome.controlRadius),
         border: colors.border == null
             ? null
             : Border.all(color: colors.border!),
@@ -1025,6 +1046,7 @@ class _FallbackExportLane extends StatelessWidget {
     final spacing = theme.appSpacing;
     final typography = theme.appTypography;
     final tokens = theme.appTokens;
+    final chrome = theme.appEditorChrome;
     return Container(
       padding: EdgeInsets.symmetric(
         horizontal: spacing.md,
@@ -1032,7 +1054,7 @@ class _FallbackExportLane extends StatelessWidget {
       ),
       decoration: BoxDecoration(
         color: tokens.toolbarOverlay,
-        borderRadius: BorderRadius.circular(10),
+        borderRadius: BorderRadius.circular(chrome.controlRadius),
         border: Border.all(color: tokens.panelBorder),
       ),
       child: Row(
@@ -1329,14 +1351,25 @@ Widget _pill(
   final theme = Theme.of(context);
   final spacing = context.appSpacing;
   final typography = context.appTypography;
+  final chrome = theme.appEditorChrome;
+  final controlFill =
+      theme.inputDecorationTheme.fillColor ??
+      theme.colorScheme.secondaryContainer;
   return Container(
     padding: EdgeInsets.symmetric(
       horizontal: spacing.md - 2,
       vertical: spacing.sm - 2,
     ),
     decoration: BoxDecoration(
-      color: theme.colorScheme.primary.withValues(alpha: 0.12),
-      borderRadius: BorderRadius.circular(999),
+      color: pulsingDot
+          ? theme.colorScheme.primary.withValues(alpha: 0.14)
+          : controlFill,
+      borderRadius: BorderRadius.circular(chrome.pillRadius),
+      border: Border.all(
+        color: pulsingDot
+            ? theme.colorScheme.primary.withValues(alpha: 0.24)
+            : theme.dividerColor.withValues(alpha: 0.1),
+      ),
     ),
     child: Row(
       mainAxisSize: MainAxisSize.min,
@@ -1369,6 +1402,7 @@ Widget _pillWin(
       : context.appTokens.noticeInfo;
   final spacing = context.appSpacing;
   final typography = context.appTypography;
+  final chrome = context.appEditorChrome;
 
   return fluent.Container(
     padding: EdgeInsets.symmetric(
@@ -1377,7 +1411,10 @@ Widget _pillWin(
     ),
     decoration: fluent.BoxDecoration(
       color: colors.background,
-      borderRadius: BorderRadius.circular(999),
+      borderRadius: BorderRadius.circular(chrome.pillRadius),
+      border: fluent.Border.all(
+        color: colors.border ?? colors.foreground.withValues(alpha: 0.16),
+      ),
     ),
     child: Row(
       mainAxisSize: MainAxisSize.min,
@@ -1406,6 +1443,7 @@ Widget _pillFallback(
   final colors = icon == Icons.fiber_manual_record
       ? context.appTokens.noticeError
       : context.appTokens.noticeInfo;
+  final chrome = context.appEditorChrome;
 
   return Container(
     padding: EdgeInsets.symmetric(
@@ -1414,7 +1452,10 @@ Widget _pillFallback(
     ),
     decoration: BoxDecoration(
       color: colors.background,
-      borderRadius: BorderRadius.circular(999),
+      borderRadius: BorderRadius.circular(chrome.pillRadius),
+      border: Border.all(
+        color: colors.border ?? colors.foreground.withValues(alpha: 0.16),
+      ),
     ),
     child: Row(
       mainAxisSize: MainAxisSize.min,
@@ -1434,28 +1475,32 @@ Widget _pillFallback(
 }
 
 Widget _simpleButton({
+  required BuildContext context,
   required String label,
   required IconData icon,
   required VoidCallback? onPressed,
 }) {
+  final theme = Theme.of(context);
+  final chrome = theme.appEditorChrome;
+  final controlFill =
+      theme.inputDecorationTheme.fillColor ??
+      theme.colorScheme.secondaryContainer;
   return GestureDetector(
     onTap: onPressed,
     child: Opacity(
       opacity: onPressed == null ? 0.5 : 1,
       child: Container(
-        padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 7),
+        padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 7),
         decoration: BoxDecoration(
-          color: const Color(0xFF000000).withValues(alpha: 0.08),
-          borderRadius: BorderRadius.circular(10),
+          color: controlFill,
+          borderRadius: BorderRadius.circular(chrome.controlRadius),
+          border: Border.all(color: theme.dividerColor.withValues(alpha: 0.1)),
         ),
         child: Row(
           children: [
             Icon(icon, size: 16),
             const SizedBox(width: 6),
-            Builder(
-              builder: (context) =>
-                  Text(label, style: Theme.of(context).appTypography.button),
-            ),
+            Text(label, style: theme.appTypography.button),
           ],
         ),
       ),
@@ -1464,17 +1509,24 @@ Widget _simpleButton({
 }
 
 Widget _simpleIconButton({
+  required BuildContext context,
   required IconData icon,
   required VoidCallback? onPressed,
 }) {
+  final theme = Theme.of(context);
+  final chrome = theme.appEditorChrome;
+  final controlFill =
+      theme.inputDecorationTheme.fillColor ??
+      theme.colorScheme.secondaryContainer;
   return GestureDetector(
     onTap: onPressed,
     child: Container(
       width: 34,
       height: 34,
       decoration: BoxDecoration(
-        color: const Color(0xFF000000).withValues(alpha: 0.06),
-        borderRadius: BorderRadius.circular(10),
+        color: controlFill,
+        borderRadius: BorderRadius.circular(chrome.controlRadius),
+        border: Border.all(color: theme.dividerColor.withValues(alpha: 0.1)),
       ),
       alignment: Alignment.center,
       child: Icon(icon, size: 18),

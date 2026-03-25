@@ -6,25 +6,25 @@ import 'package:clingfy/ui/theme/app_theme.dart';
 /// These values intentionally keep spacing and typography compact so complex
 /// settings panels feel native and readable on desktop.
 abstract final class AppSidebarTokens {
-  static const double sectionGap = 24;
-  static const double rowGap = 12;
-  static const double compactGap = 8;
+  static const double sectionGap = 20;
+  static const double rowGap = 10;
+  static const double compactGap = 6;
   static const double compactRowGap = 4;
-  static const double controlGap = 12;
-  static const double contentHorizontalPadding = 20;
-  static const double headerTopPadding = 24;
-  static const double headerBottomPadding = 12;
-  static const double railWidth = 60;
-  static const double railItemGap = 24;
-  static const double railItemVerticalPadding = 16;
+  static const double controlGap = 10;
+  static const double contentHorizontalPadding = 18;
+  static const double headerTopPadding = 18;
+  static const double headerBottomPadding = 10;
+  static const double railWidth = 58;
+  static const double railItemGap = 14;
+  static const double railItemVerticalPadding = 10;
 
-  static const double labelWidth = 170;
+  static const double labelWidth = 164;
   static const double stackBreakpoint = 520;
 
   static const double controlMinWidth = 220;
   static const double controlMaxWidth = 360;
-  static const double controlHeightMac = 30;
-  static const double controlHeightDefault = 36;
+  static const double controlHeightMac = 32;
+  static const double controlHeightDefault = 34;
   static const double compactButtonHeight = 32;
 
   static TextStyle rowTitleStyle(ThemeData theme) {

@@ -1,6 +1,7 @@
 import 'package:clingfy/l10n/app_localizations.dart';
 import 'package:clingfy/core/models/app_models.dart';
 import 'package:clingfy/ui/platform/widgets/app_sidebar_tokens.dart';
+import 'package:clingfy/ui/theme/app_theme.dart';
 import 'package:clingfy/app/home/post_processing/widgets/post_audio_section.dart';
 import 'package:clingfy/app/home/post_processing/widgets/post_background_section.dart';
 import 'package:clingfy/app/home/post_processing/widgets/post_cursor_section.dart';
@@ -106,48 +107,63 @@ class _PostProcessingSidebarState extends State<PostProcessingSidebar> {
   @override
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
+    final chrome = theme.appEditorChrome;
     final colorScheme = theme.colorScheme;
+    final controlFill =
+        theme.inputDecorationTheme.fillColor ?? colorScheme.secondaryContainer;
+    final railColor = Color.alphaBlend(
+      controlFill.withValues(alpha: 0.18),
+      colorScheme.surface,
+    );
+    final accentColor = colorScheme.primary;
     final headerStyle = (theme.textTheme.titleMedium ?? const TextStyle())
         .copyWith(
           color: colorScheme.onSurface,
           fontWeight: FontWeight.w700,
-          fontSize: 18,
+          fontSize: 16,
         );
 
     return Row(
       children: [
         Container(
-          width: AppSidebarTokens.railWidth,
-          color: colorScheme.surface,
+          key: const Key('post_sidebar_rail'),
+          width: chrome.editorRailWidth,
+          color: railColor,
           child: Column(
             children: [
-              const SizedBox(height: AppSidebarTokens.headerTopPadding),
+              const SizedBox(height: AppSidebarTokens.sectionGap),
               _buildRailItem(
                 icon: Icons.dashboard_customize,
                 label: AppLocalizations.of(context)!.layout,
                 index: 0,
                 isSelected: _selectedIndex == 0,
+                accentColor: accentColor,
               ),
-              const SizedBox(height: AppSidebarTokens.railItemGap),
+              const SizedBox(height: AppSidebarTokens.sectionGap),
               _buildRailItem(
                 icon: Icons.auto_fix_high,
                 label: AppLocalizations.of(context)!.effects,
                 index: 1,
                 isSelected: _selectedIndex == 1,
+                accentColor: accentColor,
               ),
-              const SizedBox(height: AppSidebarTokens.railItemGap),
+              const SizedBox(height: AppSidebarTokens.sectionGap),
               _buildRailItem(
                 icon: Icons.ios_share,
                 label: AppLocalizations.of(context)!.export,
                 index: 2,
                 isSelected: _selectedIndex == 2,
+                accentColor: accentColor,
               ),
             ],
           ),
         ),
-        const VerticalDivider(
-          indent: AppSidebarTokens.sectionGap,
-          endIndent: AppSidebarTokens.sectionGap,
+        VerticalDivider(
+          width: 1,
+          thickness: 1,
+          indent: AppSidebarTokens.headerTopPadding,
+          endIndent: AppSidebarTokens.headerTopPadding,
+          color: theme.dividerColor.withValues(alpha: 0.14),
         ),
         Expanded(
           child: Opacity(
@@ -157,12 +173,20 @@ class _PostProcessingSidebarState extends State<PostProcessingSidebar> {
               child: Column(
                 crossAxisAlignment: CrossAxisAlignment.stretch,
                 children: [
-                  Padding(
+                  Container(
+                    key: const Key('post_sidebar_header'),
                     padding: const EdgeInsets.fromLTRB(
                       AppSidebarTokens.contentHorizontalPadding,
-                      AppSidebarTokens.headerTopPadding,
+                      AppSidebarTokens.sectionGap,
                       AppSidebarTokens.contentHorizontalPadding,
-                      AppSidebarTokens.headerBottomPadding,
+                      AppSidebarTokens.rowGap,
+                    ),
+                    decoration: BoxDecoration(
+                      border: Border(
+                        bottom: BorderSide(
+                          color: theme.dividerColor.withValues(alpha: 0.08),
+                        ),
+                      ),
                     ),
                     child: Text(_headerTitle(context), style: headerStyle),
                   ),
@@ -292,9 +316,12 @@ class _PostProcessingSidebarState extends State<PostProcessingSidebar> {
     required String label,
     required int index,
     required bool isSelected,
+    required Color accentColor,
   }) {
     final theme = Theme.of(context);
-    final accentColor = theme.colorScheme.primary;
+    final chrome = theme.appEditorChrome;
+    final controlFill =
+        theme.inputDecorationTheme.fillColor ?? theme.colorScheme.surface;
     final inactiveColor = theme.colorScheme.onSurfaceVariant;
 
     return MouseRegion(
@@ -308,15 +335,34 @@ class _PostProcessingSidebarState extends State<PostProcessingSidebar> {
           child: Column(
             children: [
               Container(
-                padding: const EdgeInsets.all(AppSidebarTokens.compactGap),
+                key: ValueKey('post_sidebar_rail_tile_$index'),
+                width: chrome.inspectorTabHeight + 8,
+                height: chrome.inspectorTabHeight + 8,
+                alignment: Alignment.center,
                 decoration: BoxDecoration(
-                  color: isSelected ? accentColor.withValues(alpha: 0.2) : null,
-                  borderRadius: BorderRadius.circular(8),
+                  color: isSelected
+                      ? accentColor.withValues(alpha: 0.16)
+                      : controlFill.withValues(alpha: 0.28),
+                  borderRadius: BorderRadius.circular(chrome.controlRadius + 2),
+                  border: Border.all(
+                    color: isSelected
+                        ? accentColor.withValues(alpha: 0.3)
+                        : theme.dividerColor.withValues(alpha: 0.08),
+                  ),
+                  boxShadow: isSelected
+                      ? [
+                          BoxShadow(
+                            color: accentColor.withValues(alpha: 0.14),
+                            blurRadius: 8,
+                            offset: const Offset(0, 2),
+                          ),
+                        ]
+                      : null,
                 ),
                 child: Icon(
                   icon,
                   color: isSelected ? accentColor : inactiveColor,
-                  size: 24,
+                  size: 20,
                 ),
               ),
               const SizedBox(height: AppSidebarTokens.compactGap / 2),

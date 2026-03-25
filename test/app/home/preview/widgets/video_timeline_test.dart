@@ -3,6 +3,7 @@ import 'package:clingfy/core/bridges/native_bridge.dart';
 import 'package:clingfy/core/preview/player_controller.dart';
 import 'package:clingfy/core/zoom/zoom_editor_controller.dart';
 import 'package:clingfy/l10n/app_localizations.dart';
+import 'package:clingfy/ui/theme/app_theme.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:provider/provider.dart';
@@ -159,6 +160,38 @@ void main() {
 
     expect(find.text(_l10n(tester).zoomSelectedCount(2)), findsOneWidget);
   });
+
+  testWidgets('dark timeline uses unified shell and time chip chrome', (
+    tester,
+  ) async {
+    final editor = await _createEditor(tester);
+    final player = _FakePlayerController(editor: editor);
+    addTearDown(player.dispose);
+    final theme = buildDarkTheme();
+
+    await tester.pumpWidget(_buildTimeline(player: player));
+
+    final shellDecoration = _decorationFor(
+      tester,
+      find.byKey(const Key('timeline_shell')),
+    );
+    final timeChipDecoration = _decorationFor(
+      tester,
+      find.byKey(const Key('timeline_time_chip')),
+    );
+
+    expect(shellDecoration.color, theme.appTokens.timelineBackground);
+    expect(
+      shellDecoration.borderRadius,
+      BorderRadius.circular(theme.appEditorChrome.panelRadius),
+    );
+    expect(timeChipDecoration.color, theme.inputDecorationTheme.fillColor);
+    expect(
+      timeChipDecoration.borderRadius,
+      BorderRadius.circular(theme.appEditorChrome.pillRadius),
+    );
+    expect(find.byKey(const Key('zoom_track_shell')), findsOneWidget);
+  });
 }
 
 Future<ZoomEditorController> _createEditor(
@@ -203,6 +236,9 @@ Widget _buildTimeline({
     child: MaterialApp(
       localizationsDelegates: AppLocalizations.localizationsDelegates,
       supportedLocales: AppLocalizations.supportedLocales,
+      theme: buildDarkTheme(),
+      darkTheme: buildDarkTheme(),
+      themeMode: ThemeMode.dark,
       home: Scaffold(
         body: Center(
           child: SizedBox(
@@ -225,6 +261,11 @@ Widget _buildTimeline({
 
 AppLocalizations _l10n(WidgetTester tester) {
   return AppLocalizations.of(tester.element(find.byType(VideoTimeline)))!;
+}
+
+BoxDecoration _decorationFor(WidgetTester tester, Finder finder) {
+  final container = tester.widget<Container>(finder);
+  return container.decoration! as BoxDecoration;
 }
 
 class _FakePlayerController extends PlayerController {
