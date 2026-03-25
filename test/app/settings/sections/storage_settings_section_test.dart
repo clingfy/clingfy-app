@@ -175,8 +175,18 @@ void main() {
 
     expect(find.byKey(const Key('storage_system_chart')), findsOneWidget);
     expect(
-      tester.getSize(find.byKey(const Key('storage_system_chart'))),
-      const Size.square(220),
+      find.descendant(
+        of: find.byKey(const Key('storage_system_chart')),
+        matching: find.text('200 GB'),
+      ),
+      findsOneWidget,
+    );
+    expect(
+      find.descendant(
+        of: find.byKey(const Key('storage_system_chart')),
+        matching: find.text('Free'),
+      ),
+      findsOneWidget,
     );
     expect(
       tester.getTopLeft(find.byKey(const Key('storage_system_chart'))).dy,
@@ -188,8 +198,18 @@ void main() {
 
     expect(find.byKey(const Key('storage_clingfy_chart')), findsOneWidget);
     expect(
-      tester.getSize(find.byKey(const Key('storage_clingfy_chart'))),
-      const Size.square(220),
+      find.descendant(
+        of: find.byKey(const Key('storage_clingfy_chart')),
+        matching: find.text('6.5 MB'),
+      ),
+      findsOneWidget,
+    );
+    expect(
+      find.descendant(
+        of: find.byKey(const Key('storage_clingfy_chart')),
+        matching: find.text('Total Clingfy usage'),
+      ),
+      findsOneWidget,
     );
   });
 
