@@ -594,6 +594,13 @@ protocol RecordingIndicatorManaging: AnyObject {
 
 @MainActor
 final class ScreenRecorderFacade: NSObject {
+  private struct IndicatorConfiguration {
+    let state: IndicatorState
+    let onStopTapped: (() -> Void)?
+    let onResumeTapped: (() -> Void)?
+    let elapsedProvider: (() -> String)?
+  }
+
   // services
   private let prefs = PreferencesStore()
   private let saveFolder = SaveFolderStore()
@@ -2298,9 +2305,19 @@ final class ScreenRecorderFacade: NSObject {
   }
 
   private func applyIndicatorState() {
+    let configuration = makeIndicatorConfiguration()
     indicator.setState(
-      currentIndicatorState(),
+      configuration.state,
       pinned: prefs.indicatorPinned,
+      onStopTapped: configuration.onStopTapped,
+      onResumeTapped: configuration.onResumeTapped,
+      elapsedProvider: configuration.elapsedProvider
+    )
+  }
+
+  private func makeIndicatorConfiguration() -> IndicatorConfiguration {
+    IndicatorConfiguration(
+      state: currentIndicatorState(),
       onStopTapped: { [weak self] in self?.onIndicatorStopTapped?() },
       onResumeTapped: { [weak self] in self?.onIndicatorResumeTapped?() },
       elapsedProvider: { [weak self] in self?.formattedElapsed() ?? "00:00:00" }
@@ -2319,6 +2336,31 @@ final class ScreenRecorderFacade: NSObject {
       return .hidden
     }
   }
+
+#if DEBUG
+  struct IndicatorDebugConfiguration {
+    let state: IndicatorState
+    let onStopTapped: (() -> Void)?
+    let onResumeTapped: (() -> Void)?
+  }
+
+  func _testSetRecorderState(_ state: RecorderState) {
+    self.state = state
+  }
+
+  func _testCurrentIndicatorState() -> IndicatorState {
+    currentIndicatorState()
+  }
+
+  func _testIndicatorConfiguration() -> IndicatorDebugConfiguration {
+    let configuration = makeIndicatorConfiguration()
+    return IndicatorDebugConfiguration(
+      state: configuration.state,
+      onStopTapped: configuration.onStopTapped,
+      onResumeTapped: configuration.onResumeTapped
+    )
+  }
+#endif
 
   private func resolvePauseResumeFailure(_ error: Error) {
     let flutterFailure =
