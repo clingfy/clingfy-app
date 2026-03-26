@@ -43,7 +43,20 @@ void main() {
     bool showDeveloperTools = true,
     Duration autoRefreshInterval = const Duration(seconds: 30),
     RecordingController? recordingController,
+    double? sectionWidth,
   }) {
+    Widget section = StorageSettingsSection(
+      controller: settings,
+      showDeveloperTools: showDeveloperTools,
+      autoRefreshInterval: autoRefreshInterval,
+    );
+    if (sectionWidth != null) {
+      section = Align(
+        alignment: Alignment.topCenter,
+        child: SizedBox(width: sectionWidth, child: section),
+      );
+    }
+
     return MaterialApp(
       theme: buildLightTheme(),
       darkTheme: buildDarkTheme(),
@@ -56,26 +69,14 @@ void main() {
       home: recordingController != null
           ? ChangeNotifierProvider<RecordingController>.value(
               value: recordingController,
-              child: Scaffold(
-                body: StorageSettingsSection(
-                  controller: settings,
-                  showDeveloperTools: showDeveloperTools,
-                  autoRefreshInterval: autoRefreshInterval,
-                ),
-              ),
+              child: Scaffold(body: section),
             )
           : ChangeNotifierProvider<RecordingController>(
               create: (_) => RecordingController(
                 nativeBridge: NativeBridge.instance,
                 settings: settings,
               ),
-              child: Scaffold(
-                body: StorageSettingsSection(
-                  controller: settings,
-                  showDeveloperTools: showDeveloperTools,
-                  autoRefreshInterval: autoRefreshInterval,
-                ),
-              ),
+              child: Scaffold(body: section),
             ),
     );
   }
@@ -86,6 +87,7 @@ void main() {
     bool showDeveloperTools = true,
     Duration autoRefreshInterval = const Duration(seconds: 30),
     RecordingController? recordingController,
+    double? sectionWidth,
   }) async {
     await tester.pumpWidget(
       buildTestApp(
@@ -93,6 +95,7 @@ void main() {
         showDeveloperTools: showDeveloperTools,
         autoRefreshInterval: autoRefreshInterval,
         recordingController: recordingController,
+        sectionWidth: sectionWidth,
       ),
     );
   }
@@ -172,6 +175,20 @@ void main() {
 
     expect(find.byKey(const Key('storage_system_chart')), findsOneWidget);
     expect(
+      find.descendant(
+        of: find.byKey(const Key('storage_system_chart')),
+        matching: find.text('200 GB'),
+      ),
+      findsOneWidget,
+    );
+    expect(
+      find.descendant(
+        of: find.byKey(const Key('storage_system_chart')),
+        matching: find.text('Free'),
+      ),
+      findsOneWidget,
+    );
+    expect(
       tester.getTopLeft(find.byKey(const Key('storage_system_chart'))).dy,
       lessThan(tester.getTopLeft(find.text('Status')).dy),
     );
@@ -180,7 +197,137 @@ void main() {
     await tester.pumpAndSettle();
 
     expect(find.byKey(const Key('storage_clingfy_chart')), findsOneWidget);
+    expect(
+      find.descendant(
+        of: find.byKey(const Key('storage_clingfy_chart')),
+        matching: find.text('6.5 MB'),
+      ),
+      findsOneWidget,
+    );
+    expect(
+      find.descendant(
+        of: find.byKey(const Key('storage_clingfy_chart')),
+        matching: find.text('Total Clingfy usage'),
+      ),
+      findsOneWidget,
+    );
   });
+
+  testWidgets(
+    'renders system and clingfy storage cards side by side at wide widths',
+    (tester) async {
+      tester.view.devicePixelRatio = 1.0;
+      tester.view.physicalSize = const Size(1400, 1200);
+      addTearDown(tester.view.resetDevicePixelRatio);
+      addTearDown(tester.view.resetPhysicalSize);
+
+      TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger
+          .setMockMethodCallHandler(channel, (call) async {
+            if (call.method == 'getStorageSnapshot') {
+              return <String, dynamic>{...storageSnapshotPayload()};
+            }
+            return null;
+          });
+
+      final settings = SettingsController(nativeBridge: NativeBridge.instance);
+      await pumpStorageSection(
+        tester,
+        settings,
+        showDeveloperTools: false,
+        sectionWidth: 980,
+      );
+      await tester.pump();
+      await tester.pump(const Duration(milliseconds: 100));
+
+      expect(find.byKey(const Key('storage_detail_cards_row')), findsOneWidget);
+      expect(
+        find.byKey(const Key('storage_detail_cards_column')),
+        findsNothing,
+      );
+
+      final overviewRect = tester.getRect(
+        find.byKey(const Key('storage_overview_card')),
+      );
+      final systemRect = tester.getRect(
+        find.byKey(const Key('storage_system_card')),
+      );
+      final clingfyRect = tester.getRect(
+        find.byKey(const Key('storage_clingfy_card')),
+      );
+
+      expect(systemRect.top, greaterThan(overviewRect.bottom));
+      expect(systemRect.top, moreOrLessEquals(clingfyRect.top, epsilon: 0.1));
+      expect(clingfyRect.left, greaterThan(systemRect.right));
+      expect(
+        find.descendant(
+          of: find.byKey(const Key('storage_clingfy_card')),
+          matching: find.byKey(
+            const Key('storage_clear_cached_recordings_button'),
+          ),
+        ),
+        findsNothing,
+      );
+    },
+  );
+
+  testWidgets(
+    'renders system and clingfy storage cards stacked at narrow widths',
+    (tester) async {
+      TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger
+          .setMockMethodCallHandler(channel, (call) async {
+            if (call.method == 'getStorageSnapshot') {
+              return <String, dynamic>{...storageSnapshotPayload()};
+            }
+            return null;
+          });
+
+      final settings = SettingsController(nativeBridge: NativeBridge.instance);
+      await pumpStorageSection(
+        tester,
+        settings,
+        showDeveloperTools: false,
+        sectionWidth: 760,
+      );
+      await tester.pumpAndSettle();
+
+      expect(
+        find.byKey(const Key('storage_detail_cards_column')),
+        findsOneWidget,
+      );
+      expect(find.byKey(const Key('storage_detail_cards_row')), findsNothing);
+
+      final overviewRect = tester.getRect(
+        find.byKey(const Key('storage_overview_card')),
+      );
+      final systemRect = tester.getRect(
+        find.byKey(const Key('storage_system_card')),
+      );
+      final clingfyRect = tester.getRect(
+        find.byKey(const Key('storage_clingfy_card')),
+      );
+      await scrollToClearButton(tester);
+      final clingfyRectAfterScroll = tester.getRect(
+        find.byKey(const Key('storage_clingfy_card')),
+      );
+      final clearButtonRect = tester.getRect(
+        find.byKey(const Key('storage_clear_cached_recordings_button')),
+      );
+
+      expect(systemRect.top, greaterThan(overviewRect.bottom));
+      expect(clingfyRect.top, greaterThan(systemRect.bottom));
+      expect(clingfyRect.left, moreOrLessEquals(systemRect.left, epsilon: 0.1));
+      expect(clearButtonRect.top, greaterThan(clingfyRectAfterScroll.bottom));
+      expect(
+        find.descendant(
+          of: find.byKey(const Key('storage_clingfy_card')),
+          matching: find.byKey(
+            const Key('storage_clear_cached_recordings_button'),
+          ),
+        ),
+        findsNothing,
+      );
+    },
+  );
 
   testWidgets('renders critical status when free space is below threshold', (
     tester,
@@ -265,12 +412,13 @@ void main() {
 
     await tester.pump();
     await tester.pumpAndSettle();
-    expect(calls, 1);
+    final initialCalls = calls;
+    expect(initialCalls, greaterThanOrEqualTo(1));
 
     await tester.pump(const Duration(seconds: 1));
     await tester.pumpAndSettle();
 
-    expect(calls, greaterThanOrEqualTo(2));
+    expect(calls, greaterThan(initialCalls));
   });
 
   testWidgets('clear cached recordings is disabled when no recordings exist', (

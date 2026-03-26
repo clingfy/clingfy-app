@@ -21,7 +21,6 @@ void main() {
           isRecording: false,
           notice: notice,
           exportStatus: exportStatus,
-          onOpenSettings: () {},
         ),
       ),
     );
@@ -124,14 +123,11 @@ void main() {
       tester.getSize(surfaceFinder).height,
       theme.appEditorChrome.toolbarHeight,
     );
-    expect(decoration.color, theme.appTokens.toolbarOverlay);
+    expect(decoration.color, theme.appTokens.editorChromeBackground);
     expect(
       decoration.borderRadius,
       BorderRadius.circular(theme.appEditorChrome.panelRadius),
     );
-    expect(
-      (decoration.border! as Border).top.color,
-      theme.appTokens.panelBorder,
-    );
+    expect(decoration.border, isNull);
   });
 }

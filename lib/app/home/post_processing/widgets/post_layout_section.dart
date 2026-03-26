@@ -111,9 +111,15 @@ class PostLayoutSection extends StatelessWidget {
             ),
           ),
         ),
-        const SizedBox(height: AppSidebarTokens.rowGap),
+        const SizedBox(
+          key: Key('post_layout_controls_gap_before_divider'),
+          height: AppSidebarTokens.optionsSubgroupGap,
+        ),
         Divider(color: theme.dividerColor.withValues(alpha: 0.1)),
-        const SizedBox(height: AppSidebarTokens.rowGap),
+        const SizedBox(
+          key: Key('post_layout_controls_gap_after_divider'),
+          height: AppSidebarTokens.optionsSubgroupGap,
+        ),
         AppSliderRow(
           label: l10n.padding,
           valueText: '${padding.toInt()}%',
@@ -169,10 +175,9 @@ class PostLayoutSection extends StatelessWidget {
     if (isMac()) return slider;
 
     return SliderTheme(
-      data: Theme.of(context).sliderTheme.copyWith(
-        activeTrackColor: accentColor,
-        thumbColor: accentColor,
-      ),
+      data: Theme.of(
+        context,
+      ).sliderTheme.copyWith(activeTrackColor: accentColor),
       child: slider,
     );
   }

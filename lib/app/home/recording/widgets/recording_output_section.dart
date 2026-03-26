@@ -57,13 +57,20 @@ class RecordingOutputSection extends StatelessWidget {
                   },
           ),
         ),
-        const SizedBox(height: AppSidebarTokens.sectionGap),
+        const SizedBox(
+          key: Key('recording_output_frame_rate_duration_gap'),
+          height: AppSidebarTokens.optionsGroupGap,
+        ),
+        const SizedBox(
+          key: Key('recording_output_frame_rate_duration_gap2'),
+          height: AppSidebarTokens.optionsGroupGap,
+        ),
         AppSection(
           title: l10n.duration,
+          titleSpacing: AppSidebarTokens.dropdownSectionTitleGap,
           child: Column(
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
-              const SizedBox(height: AppSidebarTokens.compactRowGap),
               AppFormRow(
                 label: l10n.autoStopAfter,
                 control: PlatformDropdown<Duration>(
@@ -99,7 +106,10 @@ class RecordingOutputSection extends StatelessWidget {
             ],
           ),
         ),
-        const SizedBox(height: AppSidebarTokens.compactGap),
+        const SizedBox(
+          key: Key('recording_output_duration_countdown_gap'),
+          height: AppSidebarTokens.optionsSubgroupGap,
+        ),
         AppFormRow(
           label: l10n.countdown,
           control: PlatformDropdown<int>(

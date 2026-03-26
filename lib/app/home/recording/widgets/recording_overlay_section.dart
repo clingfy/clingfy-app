@@ -2,6 +2,7 @@ import 'package:clingfy/l10n/app_localizations.dart';
 import 'package:clingfy/core/models/app_models.dart';
 import 'package:clingfy/core/overlay/overlay_mode.dart';
 import 'package:clingfy/ui/platform/widgets/app_button.dart';
+import 'package:clingfy/ui/platform/widgets/app_inline_info_tooltip.dart';
 import 'package:clingfy/ui/platform/widgets/app_form_row.dart';
 import 'package:clingfy/ui/platform/widgets/app_sidebar_tokens.dart';
 import 'package:clingfy/ui/platform/widgets/app_slider.dart';
@@ -93,13 +94,15 @@ class RecordingOverlaySection extends StatelessWidget {
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
     final l10n = AppLocalizations.of(context)!;
-    final helperStyle = AppSidebarTokens.helperStyle(theme);
 
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
         AppFormRow(
           label: l10n.overlayFaceCamVisibility,
+          infoTooltip: overlayMode == OverlayMode.whileRecording && !isRecording
+              ? l10n.overlayHint
+              : null,
           control: ConstrainedBox(
             constraints: const BoxConstraints(
               minWidth: AppSidebarTokens.controlMinWidth,
@@ -110,17 +113,6 @@ class RecordingOverlaySection extends StatelessWidget {
               onChanged: onOverlayModeChanged,
             ),
           ),
-        ),
-        const SizedBox(height: AppSidebarTokens.compactGap),
-        AnimatedSwitcher(
-          duration: const Duration(milliseconds: 200),
-          child: (overlayMode == OverlayMode.whileRecording && !isRecording)
-              ? Text(
-                  l10n.overlayHint,
-                  key: const ValueKey('overlayHint'),
-                  style: helperStyle,
-                )
-              : const SizedBox.shrink(key: ValueKey('noOverlayHint')),
         ),
         if (overlayMode != OverlayMode.off) ...[
           const SizedBox(height: AppSidebarTokens.rowGap),
@@ -230,26 +222,18 @@ class RecordingOverlaySection extends StatelessWidget {
                     height: 24,
                     child: Align(
                       alignment: Alignment.centerLeft,
-                      child: overlayUseCustomPosition
-                          ? Row(
-                              children: [
-                                _CustomPositionBadge(
-                                  label: l10n.customPosition,
-                                ),
-                                const SizedBox(
-                                  width: AppSidebarTokens.compactGap,
-                                ),
-                                Expanded(
-                                  child: Text(
-                                    l10n.customPositionHint,
-                                    maxLines: 1,
-                                    overflow: TextOverflow.ellipsis,
-                                    style: helperStyle,
-                                  ),
-                                ),
-                              ],
-                            )
-                          : const SizedBox.shrink(),
+                      child: AnimatedSwitcher(
+                        duration: const Duration(milliseconds: 200),
+                        child: overlayUseCustomPosition
+                            ? _CustomPositionBadge(
+                                key: const ValueKey('custom_position_badge'),
+                                label: l10n.customPosition,
+                                infoTooltip: l10n.customPositionHint,
+                              )
+                            : const SizedBox.shrink(
+                                key: ValueKey('no_custom_position_badge'),
+                              ),
+                      ),
                     ),
                   ),
                   const SizedBox(height: AppSidebarTokens.compactGap),
@@ -440,7 +424,7 @@ class RecordingOverlaySection extends StatelessWidget {
             const SizedBox(height: AppSidebarTokens.rowGap),
             AppFormRow(
               label: l10n.chromaKeyColor,
-              helper: l10n.targetColorToRemove,
+              infoTooltip: l10n.targetColorToRemove,
               control: ConstrainedBox(
                 constraints: const BoxConstraints(
                   minWidth: AppSidebarTokens.controlMinWidth,
@@ -557,29 +541,49 @@ class RecordingOverlaySection extends StatelessWidget {
 }
 
 class _CustomPositionBadge extends StatelessWidget {
-  const _CustomPositionBadge({required this.label});
+  const _CustomPositionBadge({
+    super.key,
+    required this.label,
+    required this.infoTooltip,
+  });
 
   final String label;
+  final String infoTooltip;
 
   @override
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
 
-    return Container(
-      key: _overlayCustomPositionBadgeKey,
-      padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
-      decoration: BoxDecoration(
-        color: theme.primaryColor.withValues(alpha: 0.12),
-        borderRadius: BorderRadius.circular(999),
-      ),
-      child: Text(
-        label,
-        style: AppSidebarTokens.valueStyle(theme).copyWith(
-          fontSize: 11,
-          fontWeight: FontWeight.w700,
-          color: theme.primaryColor,
+    return Row(
+      mainAxisSize: MainAxisSize.min,
+      children: [
+        Container(
+          key: _overlayCustomPositionBadgeKey,
+          padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+          decoration: BoxDecoration(
+            color: theme.primaryColor.withValues(alpha: 0.12),
+            borderRadius: BorderRadius.circular(999),
+          ),
+          child: Text(
+            label,
+            style: AppSidebarTokens.valueStyle(theme).copyWith(
+              fontSize: 11,
+              fontWeight: FontWeight.w700,
+              color: theme.primaryColor,
+            ),
+          ),
         ),
-      ),
+        const SizedBox(width: AppSidebarTokens.compactGap),
+        AnimatedSwitcher(
+          duration: const Duration(milliseconds: 200),
+          child: AppInlineInfoTooltip(
+            key: const ValueKey('overlay_custom_position_info'),
+            message: infoTooltip,
+            color: theme.primaryColor,
+            size: 14,
+          ),
+        ),
+      ],
     );
   }
 }

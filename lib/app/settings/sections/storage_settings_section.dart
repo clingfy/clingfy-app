@@ -1,5 +1,4 @@
 import 'dart:async';
-import 'dart:math' as math;
 
 import 'package:clingfy/app/config/build_config.dart';
 import 'package:clingfy/app/home/recording/recording_controller.dart';
@@ -15,6 +14,7 @@ import 'package:flutter/cupertino.dart' show CupertinoIcons;
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:provider/provider.dart';
+import 'package:syncfusion_flutter_charts/charts.dart';
 
 class StorageSettingsSection extends StatefulWidget {
   const StorageSettingsSection({
@@ -33,6 +33,8 @@ class StorageSettingsSection extends StatefulWidget {
 }
 
 class _StorageSettingsSectionState extends State<StorageSettingsSection> {
+  static const _storageDetailCardsBreakpoint = 860.0;
+  static const _storageCardGap = 16.0;
   static const _systemUsedColor = Color(0xFF3F6DF6);
   static const _systemFreeColor = Color(0xFF24B47E);
   static const _recordingsColor = Color(0xFF3F6DF6);
@@ -223,47 +225,80 @@ class _StorageSettingsSectionState extends State<StorageSettingsSection> {
               ),
               const SizedBox(height: 16),
             ],
-            SettingsCard(
-              title: l10n.storageOverviewTitle,
-              subtitle: l10n.storageOverviewDescription,
-              child: _buildOverview(context, snapshot, storage.isLoading),
+            Container(
+              key: const Key('storage_overview_card'),
+              child: SettingsCard(
+                title: l10n.storageOverviewTitle,
+                infoTooltip: l10n.storageOverviewDescription,
+                child: _buildOverview(context, snapshot, storage.isLoading),
+              ),
             ),
             if (snapshot != null) ...[
               const SizedBox(height: 16),
-              SettingsCard(
-                title: l10n.storageSystemTitle,
-                subtitle: l10n.storageSystemDescription,
-                child: _SystemStorageCard(
-                  snapshot: snapshot,
-                  usedColor: _systemUsedColor,
-                  freeColor: _systemFreeColor,
-                ),
+              LayoutBuilder(
+                builder: (context, constraints) {
+                  final systemCard = Container(
+                    key: const Key('storage_system_card'),
+                    child: SettingsCard(
+                      title: l10n.storageSystemTitle,
+                      infoTooltip: l10n.storageSystemDescription,
+                      child: _SystemStorageCard(
+                        snapshot: snapshot,
+                        usedColor: _systemUsedColor,
+                        freeColor: _systemFreeColor,
+                      ),
+                    ),
+                  );
+                  final clingfyCard = Container(
+                    key: const Key('storage_clingfy_card'),
+                    child: SettingsCard(
+                      title: l10n.storageClingfyTitle,
+                      infoTooltip: l10n.storageClingfyDescription,
+                      child: _ClingfyStorageCard(
+                        snapshot: snapshot,
+                        recordingsColor: _recordingsColor,
+                        tempColor: _tempColor,
+                        logsColor: _logsColor,
+                      ),
+                    ),
+                  );
+
+                  if (constraints.maxWidth >= _storageDetailCardsBreakpoint) {
+                    return Row(
+                      key: const Key('storage_detail_cards_row'),
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Expanded(child: systemCard),
+                        const SizedBox(width: _storageCardGap),
+                        Expanded(child: clingfyCard),
+                      ],
+                    );
+                  }
+
+                  return Column(
+                    key: const Key('storage_detail_cards_column'),
+                    crossAxisAlignment: CrossAxisAlignment.stretch,
+                    children: [
+                      systemCard,
+                      const SizedBox(height: _storageCardGap),
+                      clingfyCard,
+                    ],
+                  );
+                },
               ),
               const SizedBox(height: 16),
-              SettingsCard(
-                title: l10n.storageClingfyTitle,
-                subtitle: l10n.storageClingfyDescription,
-                child: _ClingfyStorageCard(
-                  snapshot: snapshot,
-                  recordingsColor: _recordingsColor,
-                  tempColor: _tempColor,
-                  logsColor: _logsColor,
-                  footer: Align(
-                    alignment: Alignment.centerLeft,
-                    child: AppButton(
-                      key: const Key('storage_clear_cached_recordings_button'),
-                      label: l10n.storageClearCachedRecordings,
-                      icon: CupertinoIcons.delete,
-                      variant: AppButtonVariant.secondary,
-                      onPressed: canClearCachedRecordings
-                          ? () {
-                              unawaited(
-                                _confirmAndClearCachedRecordings(context),
-                              );
-                            }
-                          : null,
-                    ),
-                  ),
+              Align(
+                alignment: Alignment.centerLeft,
+                child: AppButton(
+                  key: const Key('storage_clear_cached_recordings_button'),
+                  label: l10n.storageClearCachedRecordings,
+                  icon: CupertinoIcons.delete,
+                  variant: AppButtonVariant.secondary,
+                  onPressed: canClearCachedRecordings
+                      ? () {
+                          unawaited(_confirmAndClearCachedRecordings(context));
+                        }
+                      : null,
                 ),
               ),
               if (_showDeveloperTools) ...[
@@ -414,14 +449,19 @@ class _SystemStorageCard extends StatelessWidget {
   Widget build(BuildContext context) {
     final l10n = AppLocalizations.of(context)!;
     final segments = [
-      _StorageChartSegment(value: snapshot.systemUsedBytes, color: usedColor),
       _StorageChartSegment(
+        label: l10n.storageUsedSpace,
+        value: snapshot.systemUsedBytes,
+        color: usedColor,
+      ),
+      _StorageChartSegment(
+        label: l10n.storageFreeSpace,
         value: snapshot.systemAvailableBytes,
         color: freeColor,
       ),
     ];
 
-    return _StorageDonutCard(
+    return _StorageChartCard(
       chartKey: const Key('storage_system_chart'),
       segments: segments,
       centerValue: _formatBytes(snapshot.systemAvailableBytes),
@@ -460,27 +500,34 @@ class _ClingfyStorageCard extends StatelessWidget {
     required this.recordingsColor,
     required this.tempColor,
     required this.logsColor,
-    this.footer,
   });
 
   final StorageSnapshot snapshot;
   final Color recordingsColor;
   final Color tempColor;
   final Color logsColor;
-  final Widget? footer;
 
   @override
   Widget build(BuildContext context) {
     final l10n = AppLocalizations.of(context)!;
-    return _StorageDonutCard(
+    return _StorageChartCard(
       chartKey: const Key('storage_clingfy_chart'),
       segments: [
         _StorageChartSegment(
+          label: l10n.storageRecordings,
           value: snapshot.recordingsBytes,
           color: recordingsColor,
         ),
-        _StorageChartSegment(value: snapshot.tempBytes, color: tempColor),
-        _StorageChartSegment(value: snapshot.logsBytes, color: logsColor),
+        _StorageChartSegment(
+          label: l10n.storageTemp,
+          value: snapshot.tempBytes,
+          color: tempColor,
+        ),
+        _StorageChartSegment(
+          label: l10n.storageLogs,
+          value: snapshot.logsBytes,
+          color: logsColor,
+        ),
       ],
       centerValue: _formatBytes(snapshot.clingfyTotalBytes),
       centerLabel: l10n.storageClingfyTotal,
@@ -505,19 +552,17 @@ class _ClingfyStorageCard extends StatelessWidget {
           value: _formatBytes(snapshot.clingfyTotalBytes),
         ),
       ],
-      footer: footer,
     );
   }
 }
 
-class _StorageDonutCard extends StatelessWidget {
-  const _StorageDonutCard({
+class _StorageChartCard extends StatelessWidget {
+  const _StorageChartCard({
     required this.chartKey,
     required this.segments,
     required this.centerValue,
     required this.centerLabel,
     required this.rows,
-    this.footer,
   });
 
   final Key chartKey;
@@ -525,34 +570,57 @@ class _StorageDonutCard extends StatelessWidget {
   final String centerValue;
   final String centerLabel;
   final List<Widget> rows;
-  final Widget? footer;
 
   @override
   Widget build(BuildContext context) {
+    final totalValue = segments.fold<int>(
+      0,
+      (sum, segment) => sum + segment.value,
+    );
+    final visibleSegments = segments
+        .where((segment) => segment.value > 0)
+        .toList();
+
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
         Center(
-          child: _StorageDonutChart(
+          child: _StorageDoughnutChart(
             chartKey: chartKey,
             segments: segments,
             centerValue: centerValue,
             centerLabel: centerLabel,
           ),
         ),
-        const SizedBox(height: 20),
+        if (visibleSegments.isNotEmpty) ...[
+          const SizedBox(height: 16),
+          Wrap(
+            spacing: 8,
+            runSpacing: 8,
+            children: visibleSegments
+                .map(
+                  (segment) => _StorageLegendChip(
+                    segment: segment,
+                    totalValue: totalValue,
+                  ),
+                )
+                .toList(),
+          ),
+        ],
+        const SizedBox(height: 18),
         for (var index = 0; index < rows.length; index++) ...[
           if (index > 0) const SizedBox(height: 10),
           rows[index],
         ],
-        if (footer != null) ...[const SizedBox(height: 20), footer!],
       ],
     );
   }
 }
 
-class _StorageDonutChart extends StatelessWidget {
-  const _StorageDonutChart({
+class _StorageDoughnutChart extends StatelessWidget {
+  static const double size = 220;
+
+  const _StorageDoughnutChart({
     this.chartKey,
     required this.segments,
     required this.centerValue,
@@ -567,45 +635,100 @@ class _StorageDonutChart extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
-    final chartBackgroundColor = theme.colorScheme.onSurface.withValues(
-      alpha: 0.08,
+    final isDark = theme.brightness == Brightness.dark;
+
+    final visibleSegments = segments
+        .where((segment) => segment.value > 0)
+        .toList();
+    final hasData = visibleSegments.isNotEmpty;
+
+    final fallbackColor = theme.colorScheme.onSurface.withValues(
+      alpha: isDark ? 0.10 : 0.06,
     );
-    final labelColor = theme.textTheme.bodySmall?.color;
+
+    final chartSegments = hasData
+        ? visibleSegments
+        : [
+            _StorageChartSegment(
+              label: centerLabel,
+              value: 1,
+              color: fallbackColor,
+            ),
+          ];
+
+    final hubColor = isDark
+        ? theme.colorScheme.surface.withValues(alpha: 0.98)
+        : theme.colorScheme.surface;
+
+    final hubBorderColor = theme.colorScheme.onSurface.withValues(
+      alpha: isDark ? 0.08 : 0.06,
+    );
+
+    final centerLabelColor = theme.textTheme.bodySmall?.color?.withValues(
+      alpha: 0.72,
+    );
 
     return SizedBox(
       key: chartKey,
-      height: 204,
-      width: 204,
-      child: Stack(
-        alignment: Alignment.center,
-        children: [
-          CustomPaint(
-            size: const Size.square(204),
-            painter: _StorageDonutChartPainter(
-              segments: segments,
-              backgroundColor: chartBackgroundColor,
+      width: size,
+      height: size,
+      child: SfCircularChart(
+        margin: EdgeInsets.zero,
+        backgroundColor: Colors.transparent,
+        annotations: [
+          CircularChartAnnotation(
+            widget: Container(
+              width: 118,
+              height: 118,
+              padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 12),
+              decoration: BoxDecoration(
+                color: hubColor,
+                shape: BoxShape.circle,
+                border: Border.all(color: hubBorderColor),
+              ),
+              child: Column(
+                mainAxisAlignment: MainAxisAlignment.center,
+                children: [
+                  Text(
+                    centerValue,
+                    textAlign: TextAlign.center,
+                    style: theme.textTheme.titleMedium?.copyWith(
+                      fontSize: 19,
+                      fontWeight: FontWeight.w800,
+                    ),
+                  ),
+                  const SizedBox(height: 4),
+                  Text(
+                    centerLabel,
+                    textAlign: TextAlign.center,
+                    maxLines: 2,
+                    overflow: TextOverflow.ellipsis,
+                    style: theme.textTheme.bodySmall?.copyWith(
+                      color: centerLabelColor,
+                      height: 1.25,
+                    ),
+                  ),
+                ],
+              ),
             ),
           ),
-          Padding(
-            padding: const EdgeInsets.symmetric(horizontal: 32),
-            child: Column(
-              mainAxisSize: MainAxisSize.min,
-              children: [
-                Text(
-                  centerValue,
-                  textAlign: TextAlign.center,
-                  style: theme.textTheme.titleMedium?.copyWith(
-                    fontWeight: FontWeight.w800,
-                  ),
-                ),
-                const SizedBox(height: 6),
-                Text(
-                  centerLabel,
-                  textAlign: TextAlign.center,
-                  style: theme.textTheme.bodySmall?.copyWith(color: labelColor),
-                ),
-              ],
-            ),
+        ],
+        series: <DoughnutSeries<_StorageChartSegment, String>>[
+          DoughnutSeries<_StorageChartSegment, String>(
+            dataSource: chartSegments,
+            xValueMapper: (segment, _) => segment.label,
+            yValueMapper: (segment, _) => segment.value,
+            pointColorMapper: (segment, _) => segment.color,
+            radius: '100%',
+            innerRadius: '68%',
+            cornerStyle: CornerStyle.bothFlat,
+            strokeWidth: 0,
+            enableTooltip: true,
+            explode: true,
+            explodeGesture: ActivationMode.singleTap,
+            legendIconType: LegendIconType.pentagon,
+            selectionBehavior: SelectionBehavior(enable: true),
+            pointRenderMode: PointRenderMode.segment,
           ),
         ],
       ),
@@ -613,69 +736,185 @@ class _StorageDonutChart extends StatelessWidget {
   }
 }
 
-class _StorageDonutChartPainter extends CustomPainter {
-  const _StorageDonutChartPainter({
-    required this.segments,
-    required this.backgroundColor,
-  });
+class _StorageLegendChip extends StatelessWidget {
+  const _StorageLegendChip({required this.segment, required this.totalValue});
 
-  final List<_StorageChartSegment> segments;
-  final Color backgroundColor;
+  final _StorageChartSegment segment;
+  final int totalValue;
 
   @override
-  void paint(Canvas canvas, Size size) {
-    final strokeWidth = size.shortestSide * 0.14;
-    final radius = (size.shortestSide - strokeWidth) / 2;
-    final rect = Rect.fromCircle(
-      center: size.center(Offset.zero),
-      radius: radius,
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    final labelColor = theme.textTheme.bodySmall?.color?.withValues(
+      alpha: 0.72,
     );
-    final basePaint = Paint()
-      ..color = backgroundColor
-      ..style = PaintingStyle.stroke
-      ..strokeWidth = strokeWidth
-      ..strokeCap = StrokeCap.round;
 
-    canvas.drawArc(rect, 0, math.pi * 2, false, basePaint);
-
-    final visibleSegments = segments
-        .where((segment) => segment.value > 0)
-        .toList();
-    if (visibleSegments.isEmpty) {
-      return;
-    }
-
-    final total = visibleSegments.fold<int>(
-      0,
-      (sum, segment) => sum + segment.value,
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 8),
+      decoration: BoxDecoration(
+        color: theme.colorScheme.surface,
+        borderRadius: BorderRadius.circular(999),
+        border: Border.all(
+          color: theme.colorScheme.onSurface.withValues(alpha: 0.08),
+        ),
+      ),
+      child: Row(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          Container(
+            width: 8,
+            height: 8,
+            decoration: BoxDecoration(
+              color: segment.color,
+              shape: BoxShape.circle,
+            ),
+          ),
+          const SizedBox(width: 8),
+          Text(
+            segment.label,
+            style: theme.textTheme.bodySmall?.copyWith(
+              fontWeight: FontWeight.w600,
+            ),
+          ),
+          const SizedBox(width: 8),
+          Text(
+            _formatPercentage(segment.value, totalValue),
+            style: theme.textTheme.bodySmall?.copyWith(color: labelColor),
+          ),
+        ],
+      ),
     );
-    final gapAngle = visibleSegments.length > 1 ? 0.045 : 0.0;
-    final drawableSweep = (math.pi * 2) - (gapAngle * visibleSegments.length);
-    var startAngle = -math.pi / 2;
-
-    for (final segment in visibleSegments) {
-      final sweep = drawableSweep * (segment.value / total);
-      final paint = Paint()
-        ..color = segment.color
-        ..style = PaintingStyle.stroke
-        ..strokeWidth = strokeWidth
-        ..strokeCap = StrokeCap.round;
-
-      canvas.drawArc(rect, startAngle, math.max(sweep, 0.001), false, paint);
-      startAngle += sweep + gapAngle;
-    }
   }
 
-  @override
-  bool shouldRepaint(covariant _StorageDonutChartPainter oldDelegate) {
-    return oldDelegate.segments != segments ||
-        oldDelegate.backgroundColor != backgroundColor;
+  String _formatPercentage(int value, int total) {
+    if (total <= 0) return '0%';
+    final percent = (value / total) * 100;
+    final precision = percent >= 10 ? 0 : 1;
+    return '${percent.toStringAsFixed(precision)}%';
   }
 }
 
-class _StorageChartSegment {
-  const _StorageChartSegment({required this.value, required this.color});
+// class _StorageRadialBarChart extends StatelessWidget {
+//   static const double size = 220;
+//   static const double hubSize = 84;
 
+//   const _StorageRadialBarChart({
+//     this.chartKey,
+//     required this.segments,
+//     required this.centerValue,
+//     required this.centerLabel,
+//   });
+
+//   final Key? chartKey;
+//   final List<_StorageChartSegment> segments;
+//   final String centerValue;
+//   final String centerLabel;
+
+//   @override
+//   Widget build(BuildContext context) {
+//     final theme = Theme.of(context);
+//     final isDark = theme.brightness == Brightness.dark;
+//     final totalValue = segments.fold<int>(
+//       0,
+//       (sum, segment) => sum + segment.value,
+//     );
+//     final trackColor = theme.colorScheme.onSurface.withValues(
+//       alpha: isDark ? 0.12 : 0.08,
+//     );
+//     final hubColor = isDark
+//         ? theme.scaffoldBackgroundColor.withValues(alpha: 0.96)
+//         : theme.colorScheme.surface;
+//     final hubBorderColor = theme.colorScheme.onSurface.withValues(
+//       alpha: isDark ? 0.07 : 0.05,
+//     );
+//     final labelColor = theme.textTheme.bodySmall?.color;
+
+//     return SizedBox(
+//       key: chartKey,
+//       height: size,
+//       width: size,
+//       child: Stack(
+//         alignment: Alignment.center,
+//         children: [
+//           SfCircularChart(
+//             margin: EdgeInsets.zero,
+//             backgroundColor: Colors.transparent,
+//             title: ChartTitle(text: 'Sales by sales person'),
+//             legend: Legend(isVisible: true),
+//             series: <PieSeries<_StorageChartSegment, String>>[
+//               PieSeries<_StorageChartSegment, String>(
+//                 explode: false,
+//                 legendIconType: LegendIconType.circle,
+//                 // legend:  Legend(isVisible: true),
+//                 // series: <RadialBarSeries<_StorageChartSegment, String>>[
+//                 //   RadialBarSeries<_StorageChartSegment, String>(
+//                 dataSource: segments,
+//                 xValueMapper: (segment, _) => segment.label,
+//                 yValueMapper: (segment, _) => segment.value,
+//                 pointColorMapper: (segment, _) => segment.color,
+//                 // maximumValue: totalValue > 0 ? totalValue.toDouble() : 1,
+//                 radius: '100%',
+//                 // innerRadius: '38%',
+//                 // gap: '7%',
+//                 // cornerStyle: CornerStyle.bothCurve,
+//                 // trackColor: trackColor,
+//                 // trackOpacity: 1,
+
+//                 strokeWidth: 2,
+//                 animationDuration: 4 * 1000,
+//                 enableTooltip: false,
+//               ),
+//             ],
+//           ),
+//           SizedBox.square(
+//             dimension: hubSize,
+//             child: DecoratedBox(
+//               decoration: BoxDecoration(
+//                 color: hubColor,
+//                 shape: BoxShape.circle,
+//                 border: Border.all(color: hubBorderColor),
+//               ),
+//             ),
+//           ),
+//           Padding(
+//             padding: const EdgeInsets.symmetric(horizontal: 42),
+//             child: Column(
+//               mainAxisSize: MainAxisSize.min,
+//               children: [
+//                 Text(
+//                   centerValue,
+//                   textAlign: TextAlign.center,
+//                   style: theme.textTheme.titleMedium?.copyWith(
+//                     fontSize: 18,
+//                     fontWeight: FontWeight.w800,
+//                   ),
+//                 ),
+//                 const SizedBox(height: 4),
+//                 Text(
+//                   centerLabel,
+//                   textAlign: TextAlign.center,
+//                   style: theme.textTheme.bodySmall?.copyWith(
+//                     color: labelColor,
+//                     height: 1.25,
+//                   ),
+//                 ),
+//               ],
+//             ),
+//           ),
+//         ],
+//       ),
+//     );
+//   }
+// }
+
+class _StorageChartSegment {
+  const _StorageChartSegment({
+    required this.label,
+    required this.value,
+    required this.color,
+  });
+
+  final String label;
   final int value;
   final Color color;
 }
@@ -693,6 +932,11 @@ class _StorageStatRow extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    final mutedColor = theme.textTheme.bodyMedium?.color?.withValues(
+      alpha: 0.72,
+    );
+
     return Row(
       children: [
         if (accentColor != null) ...[
@@ -706,13 +950,18 @@ class _StorageStatRow extends StatelessWidget {
           ),
           const SizedBox(width: 10),
         ],
-        Expanded(child: Text(label)),
+        Expanded(
+          child: Text(
+            label,
+            style: theme.textTheme.bodyMedium?.copyWith(color: mutedColor),
+          ),
+        ),
         const SizedBox(width: 12),
         Text(
           value,
-          style: Theme.of(
-            context,
-          ).textTheme.bodyMedium?.copyWith(fontWeight: FontWeight.w600),
+          style: theme.textTheme.bodyMedium?.copyWith(
+            fontWeight: FontWeight.w700,
+          ),
         ),
       ],
     );

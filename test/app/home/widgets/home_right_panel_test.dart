@@ -186,16 +186,65 @@ void main() {
       find.byKey(const Key('hero_panel_shell')),
     );
 
-    expect(shellDecoration.color, theme.appTokens.panelBackground);
+    expect(shellDecoration.color, theme.appTokens.previewPanelBackground);
     expect(
       shellDecoration.borderRadius,
       BorderRadius.circular(theme.appEditorChrome.panelRadius),
     );
-    expect(heroDecoration.color, theme.colorScheme.surface);
+    expect(shellDecoration.border, isNull);
+    expect(heroDecoration.color, theme.appTokens.previewPanelBackground);
     expect(
       heroDecoration.borderRadius,
       BorderRadius.circular(theme.appEditorChrome.panelRadius),
     );
+    expect(heroDecoration.border, isNotNull);
+  });
+
+  testWidgets('hero body is centered inside the framed shell', (tester) async {
+    final harness = await createHarness();
+    addTearDown(harness.recording.dispose);
+    addTearDown(harness.player.dispose);
+    addTearDown(harness.settings.dispose);
+    addTearDown(harness.post.dispose);
+
+    await tester.pumpWidget(
+      buildPanel(
+        recording: harness.recording,
+        player: harness.player,
+        post: harness.post,
+      ),
+    );
+
+    final heroRect = tester.getRect(find.byKey(const Key('hero_panel_shell')));
+    final bodyRect = tester.getRect(find.byKey(const Key('hero_panel_body')));
+
+    expect(bodyRect.center.dx, moreOrLessEquals(heroRect.center.dx));
+    expect(bodyRect.center.dy, moreOrLessEquals(heroRect.center.dy));
+  });
+
+  testWidgets('recording hero uses a stronger dark recording accent', (
+    tester,
+  ) async {
+    const recordingAccent = Color(0xFFFF4D5D);
+
+    await tester.pumpWidget(
+      MaterialApp(
+        localizationsDelegates: AppLocalizations.localizationsDelegates,
+        supportedLocales: AppLocalizations.supportedLocales,
+        theme: buildDarkTheme(),
+        darkTheme: buildDarkTheme(),
+        themeMode: ThemeMode.dark,
+        home: const Scaffold(
+          body: HeroPanel(isRecording: true, isBusy: false, onToggle: _noop),
+        ),
+      ),
+    );
+
+    final recordingIcon = tester.widget<Icon>(find.byIcon(Icons.circle));
+    final stopButton = tester.widget<FilledButton>(find.byType(FilledButton));
+
+    expect(recordingIcon.color, recordingAccent);
+    expect(stopButton.style?.backgroundColor?.resolve({}), recordingAccent);
   });
 
   testWidgets('keeps hero panel visible through finalizingRecording', (
@@ -277,7 +326,7 @@ void main() {
       find.byKey(const Key('inline_preview_frame')),
     );
     final theme = buildDarkTheme();
-    expect(previewDecoration.color, theme.colorScheme.surface);
+    expect(previewDecoration.color, theme.appTokens.previewPanelBackground);
     expect(
       previewDecoration.borderRadius,
       BorderRadius.circular(theme.appEditorChrome.panelRadius),
@@ -382,6 +431,8 @@ void main() {
     expect(find.text('fake-preview-host'), findsOneWidget);
   });
 }
+
+void _noop() {}
 
 BoxDecoration _decorationFor(WidgetTester tester, Finder finder) {
   final container = tester.widget<Container>(finder);

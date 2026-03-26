@@ -1,6 +1,7 @@
 import 'package:clingfy/ui/platform/widgets/app_sidebar_tokens.dart';
 import 'package:clingfy/ui/theme/app_theme.dart';
 import 'package:flutter/material.dart';
+import 'package:clingfy/ui/platform/widgets/app_inline_info_tooltip.dart';
 
 /// Lightweight settings section used across platforms.
 ///
@@ -10,13 +11,15 @@ class AppSection extends StatelessWidget {
     super.key,
     this.title,
     required this.child,
+    this.infoTooltip,
     this.trailing,
     this.titleUppercase = true,
-    this.titleSpacing = AppSidebarTokens.compactGap,
+    this.titleSpacing = AppSidebarTokens.rowGap,
   });
 
   final String? title;
   final Widget child;
+  final String? infoTooltip;
   final Widget? trailing;
 
   /// Uppercase section titles match macOS/desktop preferences for sidebar panels.
@@ -39,11 +42,25 @@ class AppSection extends StatelessWidget {
         Row(
           children: [
             Expanded(
-              child: Text(
-                titleUppercase ? title!.toUpperCase() : title!,
-                style: headerStyle,
-                maxLines: 1,
-                overflow: TextOverflow.ellipsis,
+              child: Row(
+                children: [
+                  Flexible(
+                    child: Text(
+                      titleUppercase ? title!.toUpperCase() : title!,
+                      style: headerStyle,
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
+                    ),
+                  ),
+                  if (infoTooltip != null && infoTooltip!.isNotEmpty) ...[
+                    SizedBox(width: spacing.xs),
+                    AppInlineInfoTooltip(
+                      message: infoTooltip!,
+                      color: headerStyle.color,
+                      size: 14,
+                    ),
+                  ],
+                ],
               ),
             ),
             if (trailing != null) ...[SizedBox(width: spacing.sm), trailing!],

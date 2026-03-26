@@ -59,10 +59,19 @@ class _AppSettingsViewState extends State<AppSettingsView> {
   @override
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
+    final isDark = theme.brightness == Brightness.dark;
     final spacing = theme.appSpacing;
     final typography = theme.appTypography;
     final tokens = theme.appTokens;
-    final railColor = tokens.panelBackground;
+    final scaffoldColor = isDark
+        ? tokens.outerBackground
+        : theme.scaffoldBackgroundColor;
+    final chromeSurface = isDark
+        ? tokens.editorChromeBackground
+        : tokens.panelBackground;
+    final headerSurface = isDark
+        ? tokens.editorChromeBackground
+        : tokens.toolbarOverlay;
     final selectedColor = tokens.selectionFill;
     final textColor = theme.colorScheme.onSurface;
     final l10n = AppLocalizations.of(context)!;
@@ -119,13 +128,13 @@ class _AppSettingsViewState extends State<AppSettingsView> {
       animation: widget.controller,
       builder: (context, _) {
         return Scaffold(
-          backgroundColor: theme.scaffoldBackgroundColor,
+          backgroundColor: scaffoldColor,
           body: Row(
             children: [
               Container(
                 key: const Key('settings_nav_rail'),
                 width: 220,
-                color: railColor,
+                color: chromeSurface,
                 child: ListView(
                   padding: EdgeInsets.symmetric(vertical: spacing.lg),
                   children: items.map((item) {
@@ -156,7 +165,7 @@ class _AppSettingsViewState extends State<AppSettingsView> {
                     Container(
                       key: const Key('settings_header'),
                       padding: EdgeInsets.all(spacing.lg),
-                      color: tokens.toolbarOverlay,
+                      color: headerSurface,
                       child: Row(
                         crossAxisAlignment: CrossAxisAlignment.center,
                         children: [
@@ -197,7 +206,15 @@ class _AppSettingsViewState extends State<AppSettingsView> {
                       ),
                     ),
                     SizedBox(height: spacing.sm),
-                    Expanded(child: _buildSectionContent()),
+                    Expanded(
+                      child: Container(
+                        key: const Key('settings_content_surface'),
+                        color: isDark
+                            ? tokens.editorChromeBackground
+                            : Colors.transparent,
+                        child: _buildSectionContent(),
+                      ),
+                    ),
                   ],
                 ),
               ),

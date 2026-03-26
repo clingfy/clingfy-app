@@ -162,6 +162,7 @@ class _RecordingAudioSectionState extends State<RecordingAudioSection> {
 
     return AppSection(
       title: l10n.audio,
+      titleSpacing: AppSidebarTokens.dropdownSectionTitleGap,
       trailing: AppIconButton(
         tooltip: l10n.refreshAudio,
         onPressed: (widget.loadingAudio || widget.isRecording)

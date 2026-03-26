@@ -9,12 +9,14 @@ import 'package:flutter_colorpicker/flutter_colorpicker.dart';
 import 'package:macos_ui/macos_ui.dart';
 
 Widget _buildSection({
+  bool isRecording = false,
   OverlayShape overlayShape = OverlayShape.squircle,
   OverlayMode overlayMode = OverlayMode.alwaysOn,
   OverlayPosition overlayPosition = OverlayPosition.bottomRight,
   bool overlayUseCustomPosition = false,
   double overlayRoundness = 0.2,
   OverlayBorder overlayBorder = OverlayBorder.none,
+  bool chromaKeyEnabled = false,
   ValueChanged<OverlayPosition>? onOverlayPositionChanged,
 }) {
   return MaterialApp(
@@ -29,7 +31,7 @@ Widget _buildSection({
             child: SizedBox(
               width: 720,
               child: RecordingOverlaySection(
-                isRecording: false,
+                isRecording: isRecording,
                 overlayMode: overlayMode,
                 overlayShape: overlayShape,
                 overlaySize: 220,
@@ -44,7 +46,7 @@ Widget _buildSection({
                 overlayRecordingHighlightStrength: 0.7,
                 overlayBorderWidth: 4.0,
                 overlayBorderColor: 0xFFFFFFFF,
-                chromaKeyEnabled: false,
+                chromaKeyEnabled: chromaKeyEnabled,
                 chromaKeyStrength: 0.4,
                 chromaKeyColor: 0xFF00FF00,
                 onOverlayModeChanged: (_) {},
@@ -95,7 +97,7 @@ void main() {
   });
 
   testWidgets(
-    'custom position badge and helper appear when custom mode is on',
+    'custom position badge exposes tooltip helper when custom mode is on',
     (tester) async {
       await tester.pumpWidget(_buildSection(overlayUseCustomPosition: true));
 
@@ -110,7 +112,8 @@ void main() {
         findsOneWidget,
       );
       expect(find.text(l10n.customPosition), findsOneWidget);
-      expect(find.text(l10n.customPositionHint), findsOneWidget);
+      expect(find.byTooltip(l10n.customPositionHint), findsOneWidget);
+      expect(find.text(l10n.customPositionHint), findsNothing);
 
       for (final key in const [
         ValueKey('overlay_position_topLeft'),
@@ -125,6 +128,52 @@ void main() {
       }
     },
   );
+
+  testWidgets('overlay helper copy is exposed via inline tooltips', (
+    tester,
+  ) async {
+    await tester.pumpWidget(
+      _buildSection(
+        overlayMode: OverlayMode.whileRecording,
+        overlayUseCustomPosition: true,
+        chromaKeyEnabled: true,
+      ),
+    );
+    await tester.pumpAndSettle();
+
+    final l10n = AppLocalizations.of(
+      tester.element(find.byType(RecordingOverlaySection)),
+    )!;
+
+    expect(find.byTooltip(l10n.overlayHint), findsOneWidget);
+    expect(find.text(l10n.overlayHint), findsNothing);
+    expect(find.byTooltip(l10n.customPositionHint), findsOneWidget);
+    expect(find.text(l10n.customPositionHint), findsNothing);
+    expect(find.byTooltip(l10n.targetColorToRemove), findsOneWidget);
+    expect(find.text(l10n.targetColorToRemove), findsNothing);
+  });
+
+  testWidgets('overlay hint tooltip hides once recording is active', (
+    tester,
+  ) async {
+    await tester.pumpWidget(
+      _buildSection(overlayMode: OverlayMode.whileRecording),
+    );
+    await tester.pumpAndSettle();
+
+    final l10n = AppLocalizations.of(
+      tester.element(find.byType(RecordingOverlaySection)),
+    )!;
+
+    expect(find.byTooltip(l10n.overlayHint), findsOneWidget);
+
+    await tester.pumpWidget(
+      _buildSection(isRecording: true, overlayMode: OverlayMode.whileRecording),
+    );
+    await tester.pumpAndSettle();
+
+    expect(find.byTooltip(l10n.overlayHint), findsNothing);
+  });
 
   testWidgets('tapping a preset position still triggers the callback', (
     tester,

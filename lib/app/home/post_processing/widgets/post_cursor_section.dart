@@ -35,7 +35,7 @@ class PostCursorSection extends StatelessWidget {
       children: [
         AppToggleRow(
           title: l10n.showCursor,
-          subtitle: l10n.toggleCursorVisibility,
+          infoTooltip: l10n.toggleCursorVisibility,
           value: showCursor && cursorAvailable,
           onChanged: cursorAvailable ? onCursorShowChanged : null,
         ),
@@ -47,7 +47,10 @@ class PostCursorSection extends StatelessWidget {
           ),
         ],
         if (showCursor && cursorAvailable) ...[
-          const SizedBox(height: AppSidebarTokens.rowGap),
+          const SizedBox(
+            key: Key('post_cursor_size_gap'),
+            height: AppSidebarTokens.optionsSubgroupGap,
+          ),
           AppSliderRow(
             label: l10n.cursorSize,
             valueText: '${cursorSize.toStringAsFixed(1)}x',
@@ -89,10 +92,9 @@ class PostCursorSection extends StatelessWidget {
     if (isMac()) return slider;
 
     return SliderTheme(
-      data: Theme.of(context).sliderTheme.copyWith(
-        activeTrackColor: accentColor,
-        thumbColor: accentColor,
-      ),
+      data: Theme.of(
+        context,
+      ).sliderTheme.copyWith(activeTrackColor: accentColor),
       child: slider,
     );
   }

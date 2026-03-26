@@ -42,21 +42,36 @@ void main() {
     );
   }
 
-  testWidgets('AppSlider forwards the shared dark inactive track color', (
-    tester,
-  ) async {
-    await tester.pumpWidget(
-      buildSliderApp(initialValue: 0.5, onChanged: (_) {}),
-    );
-    await tester.pumpAndSettle();
+  testWidgets(
+    'AppSlider uses the shared dark thumb and inactive track styling',
+    (tester) async {
+      await tester.pumpWidget(
+        buildSliderApp(initialValue: 0.5, onChanged: (_) {}),
+      );
+      await tester.pumpAndSettle();
 
-    if (!isMac()) {
-      return;
-    }
+      if (!isMac()) {
+        return;
+      }
 
-    final slider = tester.widget<MacosSlider>(find.byType(MacosSlider));
-    expect(slider.backgroundColor.toARGB32(), const Color(0xFF2A2D35).toARGB32());
-  });
+      final inactiveTrack = tester.widget<Container>(
+        find.byKey(const Key('app_slider_inactive_track')),
+      );
+      final thumb = tester.widget<Container>(
+        find.byKey(const Key('app_slider_thumb')),
+      );
+      final inactiveTrackDecoration =
+          inactiveTrack.decoration! as BoxDecoration;
+      final thumbDecoration = thumb.decoration! as BoxDecoration;
+
+      expect(inactiveTrackDecoration.color, const Color(0xFF2A2D35));
+      expect(thumbDecoration.color, Colors.white);
+      expect(
+        tester.getSize(find.byKey(const Key('app_slider_thumb'))).width,
+        10,
+      );
+    },
+  );
 
   testWidgets('AppSlider emits change and end callbacks from pointer input', (
     tester,
