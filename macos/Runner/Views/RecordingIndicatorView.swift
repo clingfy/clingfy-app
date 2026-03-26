@@ -3,6 +3,7 @@ import Cocoa
 enum IndicatorState {
   case hidden
   case recording
+  case paused
   case stopping
 }
 
@@ -19,6 +20,7 @@ final class RecordingIndicatorView: NSView {
   // Injected by ScreenRecorder
   var elapsedProvider: (() -> String)?
   var onStopTapped: (() -> Void)?
+  var onResumeTapped: (() -> Void)?
 
   // State
   var state: IndicatorState = .hidden {
@@ -89,11 +91,18 @@ final class RecordingIndicatorView: NSView {
   // MARK: - Mouse Events
 
   override func mouseDown(with event: NSEvent) {
-    guard state == .recording else { return }
+    guard state == .recording || state == .paused else { return }
     let p = convert(event.locationInWindow, from: nil)
     if dotHitRect.contains(p) {
       animateDotTap()
-      onStopTapped?()
+      switch state {
+      case .recording:
+        onStopTapped?()
+      case .paused:
+        onResumeTapped?()
+      case .hidden, .stopping:
+        break
+      }
       return
     }
     super.mouseDown(with: event)
@@ -127,6 +136,17 @@ final class RecordingIndicatorView: NSView {
       stoppingLabel.opacity = 0
       spinner.stopAnimation(nil)
       dot.opacity = 1
+      dot.fillColor = NSColor.systemRed.cgColor
+      updateElapsedText()
+      updateIconPath()
+
+    case .paused:
+      stopTicking()
+      elapsedLabel.opacity = 1
+      stoppingLabel.opacity = 0
+      spinner.stopAnimation(nil)
+      dot.opacity = 1
+      dot.fillColor = NSColor.systemOrange.cgColor
       updateIconPath()
 
     case .stopping:
@@ -167,10 +187,31 @@ final class RecordingIndicatorView: NSView {
     dotHitRect = dotFrame.insetBy(dx: -10, dy: -10)
 
     // --- Stop Icon (inside Dot) ---
-    let iconS: CGFloat = 8
-    let iconRect = CGRect(x: (s - iconS) / 2, y: (s - iconS) / 2, width: iconS, height: iconS)
-    stopIconLayer.path = CGPath(
-      roundedRect: iconRect, cornerWidth: 1.5, cornerHeight: 1.5, transform: nil)
+    let iconPath = CGMutablePath()
+    switch state {
+    case .paused:
+      let barWidth: CGFloat = 4
+      let barHeight: CGFloat = 10
+      let gap: CGFloat = 3
+      let totalWidth = barWidth * 2 + gap
+      let startX = (s - totalWidth) / 2
+      let y = (s - barHeight) / 2
+      iconPath.addRoundedRect(
+        in: CGRect(x: startX, y: y, width: barWidth, height: barHeight),
+        cornerWidth: 1,
+        cornerHeight: 1
+      )
+      iconPath.addRoundedRect(
+        in: CGRect(x: startX + barWidth + gap, y: y, width: barWidth, height: barHeight),
+        cornerWidth: 1,
+        cornerHeight: 1
+      )
+    case .recording, .hidden, .stopping:
+      let iconS: CGFloat = 8
+      let iconRect = CGRect(x: (s - iconS) / 2, y: (s - iconS) / 2, width: iconS, height: iconS)
+      iconPath.addRoundedRect(in: iconRect, cornerWidth: 1.5, cornerHeight: 1.5)
+    }
+    stopIconLayer.path = iconPath
 
     // --- Labels & Spinner Layout ---
     let textX = dotFrame.maxX + 10
@@ -211,7 +252,8 @@ final class RecordingIndicatorView: NSView {
   }
 
   private func updateElapsedText() {
-    let text = elapsedProvider?() ?? ""
+    let baseText = elapsedProvider?() ?? ""
+    let text = state == .paused ? "Paused • \(baseText)" : baseText
     if elapsedLabel.string as? String != text {
       elapsedLabel.string = text
     }
@@ -268,6 +310,7 @@ final class RecordingIndicator {
     _ state: IndicatorState,
     pinned: Bool,
     onStopTapped: (() -> Void)? = nil,
+    onResumeTapped: (() -> Void)? = nil,
     elapsedProvider: (() -> String)? = nil
   ) {
     self.pinned = pinned
@@ -278,6 +321,7 @@ final class RecordingIndicator {
       indicatorView?.state = state
       indicatorView?.elapsedProvider = elapsedProvider
       indicatorView?.onStopTapped = onStopTapped
+      indicatorView?.onResumeTapped = onResumeTapped
       applyPinnedBehavior()
       if let w = panel { clampToVisibleFrame(w) }
     }

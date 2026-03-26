@@ -76,8 +76,10 @@ final class CursorRecorder {
   private var sprites: [CursorSprite] = []
   private var spriteIndexByKey: [SpriteKey: Int] = [:]
   private var isActive = false
+  private var isPaused = false
 
-  private var startTime: TimeInterval = 0
+  private var activeSegmentStartTime: TimeInterval = 0
+  private var accumulatedRecordedDuration: TimeInterval = 0
   private let queue = DispatchQueue(label: "com.clingfy.cursor", qos: .userInteractive)
   private var displayID: CGDirectDisplayID = CGMainDisplayID()
   private var baseRect: CGRect = .zero
@@ -128,16 +130,39 @@ final class CursorRecorder {
     self.spriteIndexByKey = [:]
     lock.unlock()
 
-    self.startTime = ProcessInfo.processInfo.systemUptime
-
-    let t = DispatchSource.makeTimerSource(queue: queue)
-    t.schedule(deadline: .now(), repeating: 1.0 / 60.0)
-    t.setEventHandler { [weak self] in
-      self?.captureFrame()
-    }
-    t.resume()
-    self.timer = t
     self.isActive = true
+    self.isPaused = false
+    self.accumulatedRecordedDuration = 0
+    self.activeSegmentStartTime = ProcessInfo.processInfo.systemUptime
+    startSamplingTimer()
+  }
+
+  func pause() {
+    guard isActive, !isPaused else { return }
+    let now = ProcessInfo.processInfo.systemUptime
+    accumulatedRecordedDuration += max(0, now - activeSegmentStartTime)
+    activeSegmentStartTime = 0
+    isPaused = true
+    stopSamplingTimer()
+
+    NativeLogger.d(
+      "CursorRecorder",
+      "Paused",
+      context: ["accumulatedRecordedDuration": accumulatedRecordedDuration]
+    )
+  }
+
+  func resume() {
+    guard isActive, isPaused else { return }
+    isPaused = false
+    activeSegmentStartTime = ProcessInfo.processInfo.systemUptime
+    startSamplingTimer()
+
+    NativeLogger.d(
+      "CursorRecorder",
+      "Resumed",
+      context: ["accumulatedRecordedDuration": accumulatedRecordedDuration]
+    )
   }
 
   func stop(outputURL: URL, completion: @escaping () -> Void) {
@@ -160,8 +185,7 @@ final class CursorRecorder {
       return
     }
 
-    timer?.cancel()
-    timer = nil
+    stopSamplingTimer()
 
     if let act = activity {
       ProcessInfo.processInfo.endActivity(act)
@@ -210,15 +234,19 @@ final class CursorRecorder {
     spriteIndexByKey = [:]
     lock.unlock()
 
-    startTime = 0
+    activeSegmentStartTime = 0
+    accumulatedRecordedDuration = 0
+    isPaused = false
     didLogRasterShape = false
 
     NativeLogger.d("CursorRecorder", "Cancelled")
   }
 
   private func captureFrame() {
+    guard isActive, !isPaused, activeSegmentStartTime > 0 else { return }
+
     let now = ProcessInfo.processInfo.systemUptime
-    let t = now - startTime
+    let t = accumulatedRecordedDuration + (now - activeSegmentStartTime)
 
     guard let event = CGEvent(source: nil) else { return }
     let loc = event.location
@@ -342,5 +370,22 @@ final class CursorRecorder {
     lock.lock()
     frames.append(frame)
     lock.unlock()
+  }
+
+  private func startSamplingTimer() {
+    stopSamplingTimer()
+
+    let t = DispatchSource.makeTimerSource(queue: queue)
+    t.schedule(deadline: .now(), repeating: 1.0 / 60.0)
+    t.setEventHandler { [weak self] in
+      self?.captureFrame()
+    }
+    t.resume()
+    timer = t
+  }
+
+  private func stopSamplingTimer() {
+    timer?.cancel()
+    timer = nil
   }
 }

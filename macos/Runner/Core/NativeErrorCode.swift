@@ -10,6 +10,8 @@ enum NativeErrorCode {
   // Recording lifecycle errors
   static let alreadyRecording = "ALREADY_RECORDING"
   static let notRecording = "NOT_RECORDING"
+  static let invalidRecordingState = "INVALID_RECORDING_STATE"
+  static let pauseResumeUnsupported = "PAUSE_RESUME_UNSUPPORTED"
 
   // Target selection errors
   static let noWindowSelected = "NO_WINDOW_SELECTED"

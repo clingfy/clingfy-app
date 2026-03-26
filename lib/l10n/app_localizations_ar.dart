@@ -771,7 +771,19 @@ class AppLocalizationsAr extends AppLocalizations {
   String get recordingInProgress => 'جاري التسجيل الآن';
 
   @override
+  String get recordingPaused => 'التسجيل متوقف مؤقتًا';
+
+  @override
   String get readyToRecord => 'جاهز للتسجيل';
+
+  @override
+  String get pause => 'إيقاف مؤقت';
+
+  @override
+  String get resume => 'استئناف';
+
+  @override
+  String get paused => 'متوقف مؤقتًا';
 
   @override
   String get stop => 'إيقاف';
@@ -1316,6 +1328,14 @@ class AppLocalizationsAr extends AppLocalizations {
 
   @override
   String get errNotRecording => 'لا يوجد تسجيل نشط لإيقافه.';
+
+  @override
+  String get errInvalidRecordingState =>
+      'هذا الإجراء غير متاح في حالة التسجيل الحالية.';
+
+  @override
+  String get errPauseResumeUnsupported =>
+      'الإيقاف المؤقت والاستئناف غير مدعومين في إعداد التسجيل الحالي.';
 
   @override
   String get errUnknownAudioDevice => 'جهاز الصوت المختار لم يعد متاحاً.';

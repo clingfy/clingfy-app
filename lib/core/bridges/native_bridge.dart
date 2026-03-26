@@ -17,6 +17,7 @@ class NativeBridge {
   final ValueNotifier<bool> isUpdateAvailable = ValueNotifier(false);
 
   VoidCallback? _onIndicatorStopTapped;
+  VoidCallback? _onIndicatorResumeTapped;
   ValueChanged<double>? _onExportProgress;
   VoidCallback? _onMenuBarToggleRequest;
   Function(String type, Map<String, dynamic>? payload)?
@@ -70,6 +71,10 @@ class NativeBridge {
     _onIndicatorStopTapped = cb;
   }
 
+  void setOnIndicatorResumeTapped(VoidCallback? cb) {
+    _onIndicatorResumeTapped = cb;
+  }
+
   void setOnMenuBarToggleRequest(VoidCallback? cb) {
     _onMenuBarToggleRequest = cb;
   }
@@ -112,6 +117,9 @@ class NativeBridge {
         return null;
       case NativeToFlutterMethod.indicatorStopTapped:
         _onIndicatorStopTapped?.call();
+        return null;
+      case NativeToFlutterMethod.indicatorResumeTapped:
+        _onIndicatorResumeTapped?.call();
         return null;
       case NativeToFlutterMethod.menuBarToggleRequest:
         _onMenuBarToggleRequest?.call();
@@ -229,6 +237,31 @@ class NativeBridge {
 
   Future<void> setPreRecordingBarState(Map<String, dynamic> state) async {
     await _nativeBridge.invokeMethod<void>('setPreRecordingBarState', state);
+  }
+
+  Future<void> pauseRecording({String? sessionId}) async {
+    await _nativeBridge.invokeMethod<void>('pauseRecording', {
+      if (sessionId != null) 'sessionId': sessionId,
+    });
+  }
+
+  Future<void> resumeRecording({String? sessionId}) async {
+    await _nativeBridge.invokeMethod<void>('resumeRecording', {
+      if (sessionId != null) 'sessionId': sessionId,
+    });
+  }
+
+  Future<void> togglePauseRecording({String? sessionId}) async {
+    await _nativeBridge.invokeMethod<void>('togglePauseRecording', {
+      if (sessionId != null) 'sessionId': sessionId,
+    });
+  }
+
+  Future<RecordingPauseResumeCapabilities> getRecordingCapabilities() async {
+    final raw = await _nativeBridge.invokeMethod<Map<dynamic, dynamic>>(
+      'getRecordingCapabilities',
+    );
+    return RecordingPauseResumeCapabilities.fromMap(raw);
   }
 
   Future<void> setCursorHighlightEnabled(bool enabled) async {

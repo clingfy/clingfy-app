@@ -10,7 +10,13 @@ public enum DisplayTargetMode: Int {
   case mouseAtStart = 4
   case followMouse = 5
 }
-enum RecorderState { case idle, starting, recording, stopping }
+enum RecorderState {
+  case idle
+  case starting
+  case recording
+  case paused
+  case stopping
+}
 
 enum RecordingQuality: String {
   case sd, hd720, fhd, uhd2k, uhd4k, uhd8k, vertical4k, native

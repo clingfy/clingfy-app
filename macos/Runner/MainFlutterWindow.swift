@@ -7,13 +7,14 @@ private enum NativeWorkflowPhase: Int {
   case idle = 0
   case startingRecording = 1
   case recording = 2
-  case stoppingRecording = 3
-  case finalizingRecording = 4
-  case openingPreview = 5
-  case previewLoading = 6
-  case previewReady = 7
-  case closingPreview = 8
-  case exporting = 9
+  case pausedRecording = 3
+  case stoppingRecording = 4
+  case finalizingRecording = 5
+  case openingPreview = 6
+  case previewLoading = 7
+  case previewReady = 8
+  case closingPreview = 9
+  case exporting = 10
 }
 
 class MainFlutterWindow: NSWindow {
@@ -70,6 +71,14 @@ class MainFlutterWindow: NSWindow {
         self.screenRecorder.startRecording(args: args, result: result)
       case "stopRecording":
         self.screenRecorder.stopRecording(result: result)
+      case "pauseRecording":
+        self.screenRecorder.pauseRecording(result: result)
+      case "resumeRecording":
+        self.screenRecorder.resumeRecording(result: result)
+      case "togglePauseRecording":
+        self.screenRecorder.togglePauseRecording(result: result)
+      case "getRecordingCapabilities":
+        self.screenRecorder.getRecordingCapabilities(result: result)
       case "getAudioSources":
         self.screenRecorder.getAudioSources(result: result)
       case "setAudioSource":
@@ -928,7 +937,10 @@ class MainFlutterWindow: NSWindow {
       )
     }
     screenRecorder.onIndicatorStopTapped = { [weak self] in
-      self?.channel?.invokeMethod("indicatorStopTapped", arguments: nil)
+      self?.channel?.invokeMethod(NativeToFlutterMethod.indicatorStopTapped, arguments: nil)
+    }
+    screenRecorder.onIndicatorResumeTapped = { [weak self] in
+      self?.channel?.invokeMethod(NativeToFlutterMethod.indicatorResumeTapped, arguments: nil)
     }
 
     // --- Menu Bar Integration ---
@@ -984,6 +996,18 @@ class MainFlutterWindow: NSWindow {
         "sessionId": sessionId,
       ])
     }
+    screenRecorder.onRecordingPaused = { [weak self] sessionId in
+      self?.emitWorkflowEvent([
+        "type": "recordingPaused",
+        "sessionId": sessionId,
+      ])
+    }
+    screenRecorder.onRecordingResumed = { [weak self] sessionId in
+      self?.emitWorkflowEvent([
+        "type": "recordingResumed",
+        "sessionId": sessionId,
+      ])
+    }
     screenRecorder.onRecordingFinalized = { [weak self] sessionId, path in
       NativeLogger.d("Recording", "Recording finalized callback from facade. Path: \(path)")
       self?.emitWorkflowEvent([
@@ -1033,8 +1057,15 @@ class MainFlutterWindow: NSWindow {
   private func shouldShowPreRecordingBar() -> Bool {
     guard preRecordingBarEnabled else { return false }
     guard !preRecordingBarDismissedForCurrentCycle else { return false }
-    guard appPhaseRaw == NativeWorkflowPhase.idle.rawValue else { return false }
-    guard !isCountdownActive else { return false }
+    let allowedPhases: Set<Int> = [
+      NativeWorkflowPhase.idle.rawValue,
+      NativeWorkflowPhase.recording.rawValue,
+      NativeWorkflowPhase.pausedRecording.rawValue,
+    ]
+    guard allowedPhases.contains(appPhaseRaw) else { return false }
+    if appPhaseRaw == NativeWorkflowPhase.idle.rawValue && isCountdownActive {
+      return false
+    }
     guard !isAreaSelectionInProgress else { return false }
     return true
   }

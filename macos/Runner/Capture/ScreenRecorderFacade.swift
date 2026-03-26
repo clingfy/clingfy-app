@@ -42,6 +42,95 @@ enum CachedRecordingsCleanupPolicy {
   }
 }
 
+struct RecordedDurationTracker {
+  private(set) var wallClockSessionStart: Date?
+  private var activeSegmentStart: Date?
+  private(set) var accumulatedRecordedDuration: TimeInterval = 0
+  private(set) var isPaused = false
+
+  mutating func start(at date: Date = Date()) {
+    wallClockSessionStart = date
+    activeSegmentStart = date
+    accumulatedRecordedDuration = 0
+    isPaused = false
+  }
+
+  mutating func pause(at date: Date = Date()) {
+    guard let activeSegmentStart else { return }
+    accumulatedRecordedDuration += max(0, date.timeIntervalSince(activeSegmentStart))
+    self.activeSegmentStart = nil
+    isPaused = true
+  }
+
+  mutating func resume(at date: Date = Date()) {
+    guard wallClockSessionStart != nil, activeSegmentStart == nil else { return }
+    activeSegmentStart = date
+    isPaused = false
+  }
+
+  mutating func stop(at date: Date = Date()) {
+    if let activeSegmentStart {
+      accumulatedRecordedDuration += max(0, date.timeIntervalSince(activeSegmentStart))
+    }
+    activeSegmentStart = nil
+    isPaused = false
+  }
+
+  mutating func reset() {
+    wallClockSessionStart = nil
+    activeSegmentStart = nil
+    accumulatedRecordedDuration = 0
+    isPaused = false
+  }
+
+  func currentRecordedDuration(at date: Date = Date()) -> TimeInterval {
+    guard let activeSegmentStart else { return accumulatedRecordedDuration }
+    return accumulatedRecordedDuration + max(0, date.timeIntervalSince(activeSegmentStart))
+  }
+}
+
+struct RecordingPauseResumeCapabilities {
+  enum Backend: String {
+    case avFoundation = "avfoundation"
+    case screenCaptureKit = "screencapturekit"
+    case unsupported = "unsupported"
+  }
+
+  enum Strategy: String {
+    case avFileOutput = "av_file_output"
+    case recordingOutputSegmentation = "recording_output_segmentation"
+    case unsupported = "unsupported"
+  }
+
+  let canPauseResume: Bool
+  let backend: Backend
+  let strategy: Strategy
+
+  func asMap() -> [String: Any] {
+    [
+      "canPauseResume": canPauseResume,
+      "backend": backend.rawValue,
+      "strategy": strategy.rawValue,
+    ]
+  }
+
+  static func current() -> RecordingPauseResumeCapabilities {
+    if #available(macOS 15.0, *) {
+      return RecordingPauseResumeCapabilities(
+        canPauseResume: true,
+        backend: .screenCaptureKit,
+        strategy: .recordingOutputSegmentation
+      )
+    }
+
+    return RecordingPauseResumeCapabilities(
+      canPauseResume: true,
+      backend: .avFoundation,
+      strategy: .avFileOutput
+    )
+  }
+}
+
 enum AudioLevelEstimator {
   static func dbfs(for linear: Double) -> Double {
     let clamped = max(linear, 0.000000001)
@@ -528,9 +617,12 @@ final class ScreenRecorderFacade: NSObject {
   // state
   private var state: RecorderState = .idle
   private var startResult: FlutterResult?
+  private var pauseResult: FlutterResult?
+  private var resumeResult: FlutterResult?
   private var stopResult: FlutterResult?
   private var pendingStop: Bool = false
-  private var recordingStartedAt: Date?
+  private var isPauseResumeMutationInFlight = false
+  private var recordedDurationTracker = RecordedDurationTracker()
   private var selectedDisplayID: CGDirectDisplayID?
   private var selectedAppWindowID: CGWindowID?
   private var followMouseMonitor: Any?
@@ -547,15 +639,18 @@ final class ScreenRecorderFacade: NSObject {
   var onDevicesChanged: (() -> Void)?
   var onVideoDevicesChanged: (() -> Void)?
   var onIndicatorStopTapped: (() -> Void)?
+  var onIndicatorResumeTapped: (() -> Void)?
   var onRecordingStateChanged: ((Bool) -> Void)?
   var onRecordingStarted: ((String) -> Void)?
+  var onRecordingPaused: ((String) -> Void)?
+  var onRecordingResumed: ((String) -> Void)?
   var onRecordingFinalized: ((String, String) -> Void)?
   var onRecordingFailed: (([String: Any]) -> Void)?
   var onAreaSelectionCleared: (() -> Void)?
   var onMicrophoneLevel: ((MicrophoneLevelSample) -> Void)?
   var onCameraOverlayMoved: (([String: Any]) -> Void)?
 
-  var isRecording: Bool { state == .recording }
+  var isRecording: Bool { state == .recording || state == .paused }
 
   override init() {
     super.init()
@@ -657,6 +752,10 @@ final class ScreenRecorderFacade: NSObject {
       logsURL: AppPaths.logsRoot()
     )
     result(snapshot.asMap())
+  }
+
+  func getRecordingCapabilities(result: @escaping FlutterResult) {
+    result(RecordingPauseResumeCapabilities.current().asMap())
   }
 
   func startRecording(args: [String: Any]?, result: @escaping FlutterResult) {
@@ -936,19 +1035,89 @@ final class ScreenRecorderFacade: NSObject {
     case .starting:
       pendingStop = true
       stopResult = result
-    case .recording:
+    case .recording, .paused:
       stopResult = result
-      state = .stopping
-      stateAsStr()
-      indicator.setState(
-        .stopping,
-        pinned: prefs.indicatorPinned,
-        onStopTapped: nil,
-        elapsedProvider: { [weak self] in self?.formattedElapsed() ?? "00:00:00" }
-      )
-      capture.stop()
+      if isPauseResumeMutationInFlight {
+        pendingStop = true
+        NativeLogger.i(
+          "Facade", "Queued stop until pause/resume mutation completes",
+          context: ["state": String(describing: state)])
+        return
+      }
+      beginStoppingCapture()
     case .stopping:
       result(nil)
+    }
+  }
+
+  func pauseRecording(result: @escaping FlutterResult) {
+    let capabilities = RecordingPauseResumeCapabilities.current()
+    guard capabilities.canPauseResume && capture.canPauseResume else {
+      result(flutterError(NativeErrorCode.pauseResumeUnsupported, ""))
+      return
+    }
+
+    switch state {
+    case .paused:
+      result(nil)
+    case .recording:
+      guard !isPauseResumeMutationInFlight else {
+        result(nil)
+        return
+      }
+      isPauseResumeMutationInFlight = true
+      pauseResult = result
+      NativeLogger.i("Facade", "Pause requested")
+      capture.pause()
+    case .starting, .stopping, .idle:
+      result(
+        flutterError(
+          NativeErrorCode.invalidRecordingState,
+          "Pause is only valid while recording."
+        ))
+    }
+  }
+
+  func resumeRecording(result: @escaping FlutterResult) {
+    let capabilities = RecordingPauseResumeCapabilities.current()
+    guard capabilities.canPauseResume && capture.canPauseResume else {
+      result(flutterError(NativeErrorCode.pauseResumeUnsupported, ""))
+      return
+    }
+
+    switch state {
+    case .recording:
+      result(nil)
+    case .paused:
+      guard !isPauseResumeMutationInFlight else {
+        result(nil)
+        return
+      }
+      isPauseResumeMutationInFlight = true
+      resumeResult = result
+      NativeLogger.i("Facade", "Resume requested")
+      capture.resume()
+    case .starting, .stopping, .idle:
+      result(
+        flutterError(
+          NativeErrorCode.invalidRecordingState,
+          "Resume is only valid while paused."
+        ))
+    }
+  }
+
+  func togglePauseRecording(result: @escaping FlutterResult) {
+    switch state {
+    case .recording:
+      pauseRecording(result: result)
+    case .paused:
+      resumeRecording(result: result)
+    case .idle, .starting, .stopping:
+      result(
+        flutterError(
+          NativeErrorCode.invalidRecordingState,
+          "Pause/resume is only valid for an active recording."
+        ))
     }
   }
 
@@ -1321,12 +1490,7 @@ final class ScreenRecorderFacade: NSObject {
 
   func setRecordingIndicatorPinned(_ pinned: Bool, result: @escaping FlutterResult) {
     prefs.indicatorPinned = pinned
-    indicator.setState(
-      state == .recording ? .recording : (state == .stopping ? .stopping : .hidden),
-      pinned: pinned,
-      onStopTapped: { [weak self] in self?.onIndicatorStopTapped?() },
-      elapsedProvider: { [weak self] in self?.formattedElapsed() ?? "00:00:00" }
-    )
+    applyIndicatorState()
     result(nil)
   }
 
@@ -1667,17 +1831,23 @@ final class ScreenRecorderFacade: NSObject {
     state = .idle
     stateAsStr()
     refreshMicrophoneLevelMonitoring(resetMeter: false)
+    recordedDurationTracker.reset()
     resetRecordingSessionSuppressions()
     activeRecordingFileSession = nil
     currentRawURL = nil
     pendingMetadata = nil
+    if pendingStop {
+      stopResult?(err)
+      stopResult = nil
+      pendingStop = false
+    }
+    resolvePauseResumeSuccessIfNeeded()
     activeRecordingWorkflowSessionId = nil
     startResult?(err)
     startResult = nil
   }
   private func formattedElapsed() -> String {
-    guard let start = recordingStartedAt else { return "00:00:00" }
-    let secs = max(0, Int(Date().timeIntervalSince(start)))
+    let secs = max(0, Int(recordedDurationTracker.currentRecordedDuration()))
     let f = DateComponentsFormatter()
     f.allowedUnits = [.hour, .minute, .second]
     f.zeroFormattingBehavior = [.pad]
@@ -1823,13 +1993,13 @@ final class ScreenRecorderFacade: NSObject {
   ) {
     NativeLogger.d("Facade", "updateOverlayVisibility file= \(file):\(line)")
     let shouldShow =
-      effectiveOverlayEnabledForRecording && (!prefs.overlayLinked || isStartingOrRecording())
+      effectiveOverlayEnabledForRecording && (!prefs.overlayLinked || isShowingRecordingLinkedVisuals())
     logOverlay(
       "updateOverlayVisibility ENTER",
       [
         "file": file, "line": line,
         "shouldShow": shouldShow,
-        "isStartingOrRecording": isStartingOrRecording(),
+        "isShowingRecordingLinkedVisuals": isShowingRecordingLinkedVisuals(),
       ])
     stateAsStr()
 
@@ -1856,7 +2026,7 @@ final class ScreenRecorderFacade: NSObject {
       }
       camera.updateOpacity(prefs.overlayOpacity)
       camera.updateMirror(isMirrored: prefs.overlayMirror)
-      camera.setRecordingHighlight(enabled: (state == .recording) && prefs.overlayHighlight)
+      camera.setRecordingHighlight(enabled: isActivelyRecording && prefs.overlayHighlight)
 
       logOverlay(
         "updateOverlayVisibility -> applying camera visibility",
@@ -1891,7 +2061,7 @@ final class ScreenRecorderFacade: NSObject {
     } else {
       logOverlay("updateOverlayVisibility -> hiding camera")
       camera.hide()
-      if state == .recording {
+      if state == .recording || state == .paused {
         logOverlay("updateOverlayVisibility -> capture.updateOverlay(nil)")
         sendOverlayUpdateIfNeeded(nil)
       }
@@ -1932,7 +2102,7 @@ final class ScreenRecorderFacade: NSObject {
   private func updateCursorVisibility() {
     let shouldShow =
       prefs.cursorLinked
-      ? (state == .recording && effectiveCursorEnabledForRecording)
+      ? (isActivelyRecording && effectiveCursorEnabledForRecording)
       : effectiveCursorEnabledForRecording
     shouldShow ? cursor.start() : cursor.stop()
   }
@@ -1993,7 +2163,7 @@ final class ScreenRecorderFacade: NSObject {
   }
 
   private func logCaptureSystemEvent(_ event: String) {
-    guard isStartingOrRecording() else { return }
+    guard state == .starting || isRecordingSessionActive else { return }
 
     NativeLogger.i(
       "Facade", "Capture system event",
@@ -2114,6 +2284,61 @@ final class ScreenRecorderFacade: NSObject {
     StorageInfoProvider.availableCapacity(for: url)
   }
 
+  private func beginStoppingCapture() {
+    guard state == .recording || state == .paused else { return }
+    state = .stopping
+    stateAsStr()
+    applyIndicatorState()
+    capture.stop()
+  }
+
+  private func drainPendingStopIfNeeded() {
+    guard pendingStop, !isPauseResumeMutationInFlight else { return }
+    beginStoppingCapture()
+  }
+
+  private func applyIndicatorState() {
+    indicator.setState(
+      currentIndicatorState(),
+      pinned: prefs.indicatorPinned,
+      onStopTapped: { [weak self] in self?.onIndicatorStopTapped?() },
+      onResumeTapped: { [weak self] in self?.onIndicatorResumeTapped?() },
+      elapsedProvider: { [weak self] in self?.formattedElapsed() ?? "00:00:00" }
+    )
+  }
+
+  private func currentIndicatorState() -> IndicatorState {
+    switch state {
+    case .recording:
+      return .recording
+    case .paused:
+      return .paused
+    case .stopping:
+      return .stopping
+    case .idle, .starting:
+      return .hidden
+    }
+  }
+
+  private func resolvePauseResumeFailure(_ error: Error) {
+    let flutterFailure =
+      (error as? FlutterError)
+      ?? flutterError(NativeErrorCode.recordingError, error.localizedDescription)
+    pauseResult?(flutterFailure)
+    resumeResult?(flutterFailure)
+    pauseResult = nil
+    resumeResult = nil
+    isPauseResumeMutationInFlight = false
+  }
+
+  private func resolvePauseResumeSuccessIfNeeded() {
+    pauseResult?(nil)
+    resumeResult?(nil)
+    pauseResult = nil
+    resumeResult = nil
+    isPauseResumeMutationInFlight = false
+  }
+
   private func setCaptureBackend(_ backend: CaptureBackend) {
     self.capture = backend
     resetOverlayUpdateDeduper()
@@ -2128,7 +2353,7 @@ final class ScreenRecorderFacade: NSObject {
 
       self.resetOverlayUpdateDeduper()
       self.state = .recording
-      self.recordingStartedAt = Date()
+      self.recordedDurationTracker.start()
       self.stateAsStr()
       self.refreshMicrophoneLevelMonitoring(resetMeter: true)
       self.currentRawURL = visibleRawURL
@@ -2141,12 +2366,7 @@ final class ScreenRecorderFacade: NSObject {
         self.onRecordingStarted?(sessionId)
       }
 
-      self.indicator.setState(
-        .recording,
-        pinned: self.prefs.indicatorPinned,
-        onStopTapped: { [weak self] in self?.onIndicatorStopTapped?() },
-        elapsedProvider: { [weak self] in self?.formattedElapsed() ?? "00:00:00" }
-      )
+      self.applyIndicatorState()
 
       // Only update recording-time visual state; don't rebuild the window here.
       if self.camera.isShowing && self.effectiveOverlayEnabledForRecording {
@@ -2160,14 +2380,53 @@ final class ScreenRecorderFacade: NSObject {
       self.startResult?(visibleRawURL.path)
       self.startResult = nil
 
-      // If stop was requested while starting, stop now
-      if self.pendingStop {
-        self.state = .stopping
-        self.stateAsStr()
-        self.capture.stop()
-      } else {
-        self.onRecordingStateChanged?(true)
+      self.drainPendingStopIfNeeded()
+    }
+
+    self.capture.onPaused = { [weak self] in
+      guard let self else { return }
+      self.resetOverlayUpdateDeduper()
+      self.recordedDurationTracker.pause()
+      self.state = .paused
+      self.stateAsStr()
+      self.resolvePauseResumeSuccessIfNeeded()
+      self.applyIndicatorState()
+
+      if self.camera.isShowing && self.effectiveOverlayEnabledForRecording {
+        self.camera.setRecordingHighlight(enabled: false)
       }
+
+      self.updateOverlayVisibility()
+      self.updateCursorVisibility()
+
+      if let sessionId = self.activeRecordingWorkflowSessionId {
+        self.onRecordingPaused?(sessionId)
+      }
+
+      self.drainPendingStopIfNeeded()
+    }
+
+    self.capture.onResumed = { [weak self] in
+      guard let self else { return }
+      self.resetOverlayUpdateDeduper()
+      self.recordedDurationTracker.resume()
+      self.state = .recording
+      self.stateAsStr()
+      self.resolvePauseResumeSuccessIfNeeded()
+      self.applyIndicatorState()
+
+      if self.camera.isShowing && self.effectiveOverlayEnabledForRecording {
+        self.camera.setRecordingHighlight(enabled: self.prefs.overlayHighlight)
+      }
+
+      self.updateOverlayVisibility()
+      self.updateCursorVisibility()
+
+      if let sessionId = self.activeRecordingWorkflowSessionId {
+        self.onRecordingResumed?(sessionId)
+      }
+
+      self.drainPendingStopIfNeeded()
     }
 
     self.capture.onFinished = { [weak self] url, error in
@@ -2186,6 +2445,8 @@ final class ScreenRecorderFacade: NSObject {
       if wasStarting {
         self.startResult = nil
       }
+
+      self.recordedDurationTracker.stop()
 
       var finalURL: URL? = url
       if let rawURL = url {
@@ -2209,19 +2470,25 @@ final class ScreenRecorderFacade: NSObject {
       let completion = self.stopResult
       self.stopResult = nil
 
+      if let error {
+        self.resolvePauseResumeFailure(error)
+      } else {
+        self.resolvePauseResumeSuccessIfNeeded()
+      }
+
       self.pendingStop = false
       self.resetOverlayUpdateDeduper()
       self.state = .idle
       self.stateAsStr()
       self.refreshMicrophoneLevelMonitoring(resetMeter: false)
-      self.recordingStartedAt = nil
+      self.recordedDurationTracker.reset()
       self.currentRawURL = nil
       self.activeRecordingFileSession = nil
       self.pendingMetadata = nil
       self.currentCaptureDisplayID = nil
       self.resetRecordingSessionSuppressions()
 
-      self.indicator.setState(.hidden, pinned: self.prefs.indicatorPinned)
+      self.applyIndicatorState()
 
       self.updateOverlayVisibility()
       self.updateCursorVisibility()
@@ -2250,7 +2517,6 @@ final class ScreenRecorderFacade: NSObject {
             "error": error.localizedDescription
           ])
         completion?(flutterError(NativeErrorCode.recordingError, error.localizedDescription))
-        self.indicator.setState(.hidden, pinned: self.prefs.indicatorPinned)
         self.activeRecordingWorkflowSessionId = nil
         return
       }
@@ -2309,8 +2575,16 @@ final class ScreenRecorderFacade: NSObject {
     }
   }
 
-  private func isStartingOrRecording() -> Bool {
-    return state == .starting || state == .recording
+  private var isActivelyRecording: Bool {
+    state == .recording
+  }
+
+  private var isRecordingSessionActive: Bool {
+    state == .recording || state == .paused
+  }
+
+  private func isShowingRecordingLinkedVisuals() -> Bool {
+    state == .starting || state == .recording
   }
 
   func canClearCachedRecordings() -> Bool {
@@ -2381,10 +2655,10 @@ final class ScreenRecorderFacade: NSObject {
       stateAsString = "starting"
     case .recording:
       stateAsString = "recording"
+    case .paused:
+      stateAsString = "paused"
     case .stopping:
       stateAsString = "stopping"
-    default:
-      stateAsString = "error"
     }
     NativeLogger.d(
       "Facade", "Recroding state stateAsString: \(stateAsString)",

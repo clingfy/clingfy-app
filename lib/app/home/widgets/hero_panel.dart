@@ -9,13 +9,23 @@ class HeroPanel extends StatelessWidget {
   const HeroPanel({
     super.key,
     required this.isRecording,
+    required this.isPaused,
     required this.isBusy,
+    required this.canPause,
+    required this.canResume,
     required this.onToggle,
+    required this.onPause,
+    required this.onResume,
   });
 
   final bool isRecording;
+  final bool isPaused;
   final bool isBusy;
+  final bool canPause;
+  final bool canResume;
   final VoidCallback onToggle;
+  final VoidCallback onPause;
+  final VoidCallback onResume;
 
   @override
   Widget build(BuildContext context) {
@@ -56,13 +66,17 @@ class HeroPanel extends StatelessWidget {
                 mainAxisSize: MainAxisSize.min,
                 children: [
                   Icon(
-                    isRecording ? Icons.circle : Icons.videocam,
+                    isPaused
+                        ? Icons.pause_circle_filled
+                        : (isRecording ? Icons.circle : Icons.videocam),
                     size: 64,
                     color: isRecording ? recordingAccent : colors.primary,
                   ),
                   SizedBox(height: spacing.lg),
                   Text(
-                    isRecording
+                    isPaused
+                        ? AppLocalizations.of(context)!.recordingPaused
+                        : isRecording
                         ? AppLocalizations.of(context)!.recordingInProgress
                         : AppLocalizations.of(context)!.readyToRecord,
                     textAlign: TextAlign.center,
@@ -72,33 +86,78 @@ class HeroPanel extends StatelessWidget {
                     ),
                   ),
                   SizedBox(height: spacing.xxl),
-                  FilledButton.icon(
-                    onPressed: isBusy ? null : onToggle,
-                    icon: Icon(
-                      isRecording ? Icons.stop : Icons.fiber_manual_record,
-                      size: 18,
-                    ),
-                    style: FilledButton.styleFrom(
-                      minimumSize: const Size(180, 48),
-                      backgroundColor: isRecording
-                          ? recordingAccent
-                          : colors.primary,
-                      foregroundColor: isRecording
-                          ? colors.onError
-                          : colors.onPrimary,
-                      shape: RoundedRectangleBorder(
-                        borderRadius: BorderRadius.circular(
-                          chrome.controlRadius,
+                  if (!isRecording)
+                    FilledButton.icon(
+                      onPressed: isBusy ? null : onToggle,
+                      icon: const Icon(Icons.fiber_manual_record, size: 18),
+                      style: FilledButton.styleFrom(
+                        minimumSize: const Size(180, 48),
+                        backgroundColor: colors.primary,
+                        foregroundColor: colors.onPrimary,
+                        shape: RoundedRectangleBorder(
+                          borderRadius: BorderRadius.circular(
+                            chrome.controlRadius,
+                          ),
                         ),
                       ),
+                      label: Text(
+                        AppLocalizations.of(context)!.startRecording,
+                        style: const TextStyle(fontWeight: FontWeight.bold),
+                      ),
+                    )
+                  else
+                    Wrap(
+                      spacing: spacing.md,
+                      runSpacing: spacing.md,
+                      alignment: WrapAlignment.center,
+                      children: [
+                        OutlinedButton.icon(
+                          onPressed: isBusy
+                              ? null
+                              : (isPaused
+                                    ? (canResume ? onResume : null)
+                                    : (canPause ? onPause : null)),
+                          icon: Icon(
+                            isPaused ? Icons.play_arrow : Icons.pause,
+                            size: 18,
+                          ),
+                          style: OutlinedButton.styleFrom(
+                            minimumSize: const Size(160, 48),
+                            foregroundColor: colors.onSurface,
+                            side: BorderSide(color: tokens.panelBorder),
+                            shape: RoundedRectangleBorder(
+                              borderRadius: BorderRadius.circular(
+                                chrome.controlRadius,
+                              ),
+                            ),
+                          ),
+                          label: Text(
+                            isPaused
+                                ? AppLocalizations.of(context)!.resume
+                                : AppLocalizations.of(context)!.pause,
+                            style: const TextStyle(fontWeight: FontWeight.bold),
+                          ),
+                        ),
+                        FilledButton.icon(
+                          onPressed: isBusy ? null : onToggle,
+                          icon: const Icon(Icons.stop, size: 18),
+                          style: FilledButton.styleFrom(
+                            minimumSize: const Size(160, 48),
+                            backgroundColor: recordingAccent,
+                            foregroundColor: colors.onError,
+                            shape: RoundedRectangleBorder(
+                              borderRadius: BorderRadius.circular(
+                                chrome.controlRadius,
+                              ),
+                            ),
+                          ),
+                          label: Text(
+                            AppLocalizations.of(context)!.stop,
+                            style: const TextStyle(fontWeight: FontWeight.bold),
+                          ),
+                        ),
+                      ],
                     ),
-                    label: Text(
-                      isRecording
-                          ? AppLocalizations.of(context)!.stop
-                          : AppLocalizations.of(context)!.startRecording,
-                      style: const TextStyle(fontWeight: FontWeight.bold),
-                    ),
-                  ),
                 ],
               ),
             ),

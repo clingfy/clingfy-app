@@ -115,6 +115,7 @@ void main() {
             body: HomeToolbar(
               title: 'Clingfy',
               isRecording: false,
+              isPaused: false,
               uiState: uiState,
               onExport: () {},
               onOpenSystemSettings: (pane) async {
@@ -182,6 +183,7 @@ void main() {
             body: HomeToolbar(
               title: 'Clingfy',
               isRecording: false,
+              isPaused: false,
               uiState: uiState,
               onExport: () {},
               onOpenSystemSettings: (_) async {},
@@ -224,6 +226,7 @@ void main() {
           body: DesktopToolbar(
             title: 'Clingfy',
             isRecording: false,
+            isPaused: false,
             exportStatus: const ToolbarExportStatusPresentation(
               progress: 0.42,
               cancelRequested: false,

@@ -23,6 +23,7 @@ enum NativeChannel {
 enum NativeToFlutterMethod {
   static let log = "log"
   static let indicatorStopTapped = "indicatorStopTapped"
+  static let indicatorResumeTapped = "indicatorResumeTapped"
   static let menuBarToggleRequest = "menuBarToggleRequest"
   static let updateExportProgress = "updateExportProgress"
   static let preRecordingBarAction = "preRecordingBarAction"

@@ -41,8 +41,17 @@ class HomeShell extends StatelessWidget {
     final isRecording = context.select<RecordingController, bool>(
       (r) => r.isRecording,
     );
+    final isPaused = context.select<RecordingController, bool>(
+      (r) => r.isPaused,
+    );
     final isBusy = context.select<RecordingController, bool>(
       (r) => r.isBusyTransitioning,
+    );
+    final canPause = context.select<RecordingController, bool>(
+      (r) => r.canPause,
+    );
+    final canResume = context.select<RecordingController, bool>(
+      (r) => r.canResume,
     );
     final showTimelineBar = context.select<RecordingController, bool>(
       (r) => r.showTimelineBar,
@@ -88,6 +97,7 @@ class HomeShell extends StatelessWidget {
                               HomeToolbar(
                                 title: title,
                                 isRecording: isRecording,
+                                isPaused: isPaused,
                                 uiState: uiState,
                                 onExport: () {
                                   unawaited(actions.exportFromUi(context));
@@ -111,10 +121,25 @@ class HomeShell extends StatelessWidget {
                                     const SizedBox(width: kEditorShellGap),
                                     HomeRightPanel(
                                       isRecording: isRecording,
+                                      isPaused: isPaused,
                                       isBusy: isBusy,
+                                      canPause: canPause,
+                                      canResume: canResume,
                                       onToggleRecording: () async {
                                         unawaited(
                                           actions.toggleRecording(context),
+                                        );
+                                      },
+                                      onPauseRecording: () {
+                                        unawaited(
+                                          actions.recordingController
+                                              .pauseRecording(),
+                                        );
+                                      },
+                                      onResumeRecording: () {
+                                        unawaited(
+                                          actions.recordingController
+                                              .resumeRecording(),
                                         );
                                       },
                                       onClosePreview: () {

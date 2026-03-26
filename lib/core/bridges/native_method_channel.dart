@@ -29,6 +29,7 @@ abstract class NativeToFlutterMethod {
 
   static const String log = 'log';
   static const String indicatorStopTapped = 'indicatorStopTapped';
+  static const String indicatorResumeTapped = 'indicatorResumeTapped';
   static const String menuBarToggleRequest = 'menuBarToggleRequest';
   static const String updateExportProgress = 'updateExportProgress';
   static const String preRecordingBarAction = 'preRecordingBarAction';
