@@ -22,6 +22,7 @@ import 'package:clingfy/core/models/app_models.dart';
 import 'package:clingfy/core/bridges/native_bridge.dart';
 import 'package:clingfy/app/infrastructure/observability/telemetry_service.dart';
 import 'package:clingfy/app/settings/settings_controller.dart';
+import 'package:clingfy/app/settings/widgets/about_view.dart';
 import 'package:clingfy/app/settings/widgets/app_settings_view.dart';
 import 'package:clingfy/app/home/preview/widgets/close_unexported_recording_dialog.dart';
 import 'package:clingfy/commercial/licensing/widgets/paywall_dialog.dart';
@@ -294,6 +295,10 @@ class HomeActions {
 
   Future<void> openStorageSettings(BuildContext context) async {
     await _openSettingsRoute(context, AppSettingsView.storageRouteName);
+  }
+
+  Future<void> openAbout(BuildContext context) async {
+    await _openSettingsRoute(context, AboutView.routeName);
   }
 
   Future<void> _openSettingsRoute(

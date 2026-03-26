@@ -51,7 +51,6 @@ class RecordingSourceSection extends StatelessWidget {
     final theme = Theme.of(context);
     final l10n = AppLocalizations.of(context)!;
     final colors = theme.colorScheme;
-    final helperStyle = AppSidebarTokens.helperStyle(theme);
 
     final validDisplayId =
         selectedDisplayId == null ||
@@ -107,6 +106,7 @@ class RecordingSourceSection extends StatelessWidget {
             padding: const EdgeInsets.only(top: AppSidebarTokens.sectionGap),
             child: AppSection(
               title: l10n.display,
+              titleSpacing: AppSidebarTokens.dropdownSectionTitleGap,
               trailing: AppIconButton(
                 tooltip: l10n.refreshDisplays,
                 onPressed: isRecording ? null : onRefreshDisplays,
@@ -143,6 +143,7 @@ class RecordingSourceSection extends StatelessWidget {
             padding: const EdgeInsets.only(top: AppSidebarTokens.sectionGap),
             child: AppSection(
               title: l10n.appWindow,
+              titleSpacing: AppSidebarTokens.dropdownSectionTitleGap,
               trailing: AppIconButton(
                 tooltip: l10n.refreshWindows,
                 onPressed: isRecording ? null : onRefreshAppWindows,
@@ -180,11 +181,10 @@ class RecordingSourceSection extends StatelessWidget {
             padding: const EdgeInsets.only(top: AppSidebarTokens.sectionGap),
             child: AppSection(
               title: l10n.areaRecording,
+              infoTooltip: l10n.areaRecordingHelper,
               child: Column(
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
-                  Text(l10n.areaRecordingHelper, style: helperStyle),
-                  const SizedBox(height: AppSidebarTokens.rowGap),
                   if (areaRect == null)
                     AppButton(
                       expand: true,
@@ -230,13 +230,16 @@ class RecordingSourceSection extends StatelessWidget {
                         areaRect!.left.toInt().toString(),
                         areaRect!.top.toInt().toString(),
                       ),
-                      style: helperStyle.copyWith(
+                      style: AppSidebarTokens.helperStyle(theme).copyWith(
                         color: colors.primary,
                         fontWeight: FontWeight.w600,
                       ),
                     )
                   else
-                    Text(l10n.noAreaSelected, style: helperStyle),
+                    Text(
+                      l10n.noAreaSelected,
+                      style: AppSidebarTokens.helperStyle(theme),
+                    ),
                 ],
               ),
             ),

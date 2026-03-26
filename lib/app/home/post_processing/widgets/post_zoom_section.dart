@@ -30,7 +30,7 @@ class PostZoomSection extends StatelessWidget {
       children: [
         AppToggleRow(
           title: l10n.zoomInEffect,
-          subtitle: l10n.manageZoomEffects,
+          infoTooltip: l10n.manageZoomEffects,
           value: zoomFactor > 1.0,
           onChanged: isProcessing
               ? null
@@ -45,7 +45,10 @@ class PostZoomSection extends StatelessWidget {
                 },
         ),
         if (zoomFactor > 1.0) ...[
-          const SizedBox(height: AppSidebarTokens.rowGap),
+          const SizedBox(
+            key: Key('post_zoom_intensity_gap'),
+            height: AppSidebarTokens.optionsSubgroupGap,
+          ),
           AppSliderRow(
             label: l10n.intensity,
             valueText: '${zoomFactor.toStringAsFixed(1)}x',
@@ -87,10 +90,9 @@ class PostZoomSection extends StatelessWidget {
     if (isMac()) return slider;
 
     return SliderTheme(
-      data: Theme.of(context).sliderTheme.copyWith(
-        activeTrackColor: accentColor,
-        thumbColor: accentColor,
-      ),
+      data: Theme.of(
+        context,
+      ).sliderTheme.copyWith(activeTrackColor: accentColor),
       child: slider,
     );
   }

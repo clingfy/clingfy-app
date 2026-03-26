@@ -18,7 +18,6 @@ class HomeToolbar extends StatelessWidget {
     required this.isRecording,
     required this.uiState,
     required this.onExport,
-    required this.onOpenSettings,
     required this.onOpenSystemSettings,
     required this.onClearMessage,
   });
@@ -27,7 +26,6 @@ class HomeToolbar extends StatelessWidget {
   final bool isRecording;
   final HomeUiState uiState;
   final VoidCallback onExport;
-  final VoidCallback onOpenSettings;
   final Future<void> Function(String pane) onOpenSystemSettings;
   final VoidCallback onClearMessage;
 
@@ -148,7 +146,8 @@ class HomeToolbar extends StatelessWidget {
               elapsedText: d.$1,
               countdownText: d.$2,
               notice: explicitNotice ?? mappedNotice,
-              onExport: (previewReady &&
+              onExport:
+                  (previewReady &&
                       !isRecording &&
                       !postEditingLocked &&
                       !postHasError)
@@ -156,7 +155,6 @@ class HomeToolbar extends StatelessWidget {
                   : null,
               exportStatus: exportStatus,
               isProcessing: postEditingLocked,
-              onOpenSettings: onOpenSettings,
             );
           },
         );

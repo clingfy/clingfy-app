@@ -57,7 +57,10 @@ class AppThemeTokens extends ThemeExtension<AppThemeTokens> {
     required this.brand,
     required this.brandForeground,
     required this.shellGradient,
+    required this.outerBackground,
     required this.panelBackground,
+    required this.editorChromeBackground,
+    required this.previewPanelBackground,
     required this.panelBorder,
     required this.toolbarOverlay,
     required this.timelineBackground,
@@ -73,7 +76,10 @@ class AppThemeTokens extends ThemeExtension<AppThemeTokens> {
   final Color brand;
   final Color brandForeground;
   final LinearGradient shellGradient;
+  final Color outerBackground;
   final Color panelBackground;
+  final Color editorChromeBackground;
+  final Color previewPanelBackground;
   final Color panelBorder;
   final Color toolbarOverlay;
   final Color timelineBackground;
@@ -93,7 +99,10 @@ class AppThemeTokens extends ThemeExtension<AppThemeTokens> {
     Color? brand,
     Color? brandForeground,
     LinearGradient? shellGradient,
+    Color? outerBackground,
     Color? panelBackground,
+    Color? editorChromeBackground,
+    Color? previewPanelBackground,
     Color? panelBorder,
     Color? toolbarOverlay,
     Color? timelineBackground,
@@ -109,7 +118,12 @@ class AppThemeTokens extends ThemeExtension<AppThemeTokens> {
       brand: brand ?? this.brand,
       brandForeground: brandForeground ?? this.brandForeground,
       shellGradient: shellGradient ?? this.shellGradient,
+      outerBackground: outerBackground ?? this.outerBackground,
       panelBackground: panelBackground ?? this.panelBackground,
+      editorChromeBackground:
+          editorChromeBackground ?? this.editorChromeBackground,
+      previewPanelBackground:
+          previewPanelBackground ?? this.previewPanelBackground,
       panelBorder: panelBorder ?? this.panelBorder,
       toolbarOverlay: toolbarOverlay ?? this.toolbarOverlay,
       timelineBackground: timelineBackground ?? this.timelineBackground,
@@ -137,9 +151,18 @@ class AppThemeTokens extends ThemeExtension<AppThemeTokens> {
       shellGradient:
           LinearGradient.lerp(shellGradient, other.shellGradient, t) ??
           shellGradient,
+      outerBackground:
+          Color.lerp(outerBackground, other.outerBackground, t) ??
+          outerBackground,
       panelBackground:
           Color.lerp(panelBackground, other.panelBackground, t) ??
           panelBackground,
+      editorChromeBackground:
+          Color.lerp(editorChromeBackground, other.editorChromeBackground, t) ??
+          editorChromeBackground,
+      previewPanelBackground:
+          Color.lerp(previewPanelBackground, other.previewPanelBackground, t) ??
+          previewPanelBackground,
       panelBorder: Color.lerp(panelBorder, other.panelBorder, t) ?? panelBorder,
       toolbarOverlay:
           Color.lerp(toolbarOverlay, other.toolbarOverlay, t) ?? toolbarOverlay,
@@ -326,6 +349,7 @@ class AppEditorChromeTokens extends ThemeExtension<AppEditorChromeTokens> {
     required this.stagePadding,
     required this.compactControlHeight,
     required this.inspectorTabHeight,
+    required this.timelineRulerHeight,
     required this.timelineHorizontalPadding,
     required this.timelineVerticalPadding,
   });
@@ -339,22 +363,24 @@ class AppEditorChromeTokens extends ThemeExtension<AppEditorChromeTokens> {
   final double stagePadding;
   final double compactControlHeight;
   final double inspectorTabHeight;
+  final double timelineRulerHeight;
   final double timelineHorizontalPadding;
   final double timelineVerticalPadding;
 
   factory AppEditorChromeTokens.fallback(Brightness brightness) =>
       const AppEditorChromeTokens(
-        shellRadius: 14,
-        panelRadius: 12,
-        controlRadius: 8,
+        shellRadius: 11,
+        panelRadius: 9,
+        controlRadius: 6,
         pillRadius: 999,
-        toolbarHeight: 46,
-        editorRailWidth: 58,
-        stagePadding: 14,
+        toolbarHeight: 50,
+        editorRailWidth: 60,
+        stagePadding: 8,
         compactControlHeight: 32,
         inspectorTabHeight: 34,
-        timelineHorizontalPadding: 22,
-        timelineVerticalPadding: 16,
+        timelineRulerHeight: 70,
+        timelineHorizontalPadding: 12,
+        timelineVerticalPadding: 10,
       );
 
   @override
@@ -368,6 +394,7 @@ class AppEditorChromeTokens extends ThemeExtension<AppEditorChromeTokens> {
     double? stagePadding,
     double? compactControlHeight,
     double? inspectorTabHeight,
+    double? timelineRulerHeight,
     double? timelineHorizontalPadding,
     double? timelineVerticalPadding,
   }) {
@@ -381,6 +408,7 @@ class AppEditorChromeTokens extends ThemeExtension<AppEditorChromeTokens> {
       stagePadding: stagePadding ?? this.stagePadding,
       compactControlHeight: compactControlHeight ?? this.compactControlHeight,
       inspectorTabHeight: inspectorTabHeight ?? this.inspectorTabHeight,
+      timelineRulerHeight: timelineRulerHeight ?? this.timelineRulerHeight,
       timelineHorizontalPadding:
           timelineHorizontalPadding ?? this.timelineHorizontalPadding,
       timelineVerticalPadding:
@@ -416,6 +444,9 @@ class AppEditorChromeTokens extends ThemeExtension<AppEditorChromeTokens> {
       inspectorTabHeight:
           lerpDouble(inspectorTabHeight, other.inspectorTabHeight, t) ??
           inspectorTabHeight,
+      timelineRulerHeight:
+          lerpDouble(timelineRulerHeight, other.timelineRulerHeight, t) ??
+          timelineRulerHeight,
       timelineHorizontalPadding:
           lerpDouble(
             timelineHorizontalPadding,
@@ -596,15 +627,24 @@ ThemeData buildThemeData(Brightness brightness) {
           : palette.surfaceSubtle,
       disabledActiveTrackColor: palette.borderStrong,
       disabledInactiveTrackColor: palette.border,
-      thumbColor: clingfyBrandColor,
-      overlayColor: clingfyBrandColor.withValues(alpha: 0.16),
+      thumbColor: brightness == Brightness.dark
+          ? Colors.white
+          : clingfyBrandColor,
+      overlayColor:
+          (brightness == Brightness.dark ? Colors.white : clingfyBrandColor)
+              .withValues(alpha: brightness == Brightness.dark ? 0.12 : 0.16),
       valueIndicatorColor: clingfyBrandColor,
       valueIndicatorTextStyle: typography.value.copyWith(
         color: palette.brandForeground,
       ),
       trackHeight: 4,
-      thumbShape: const RoundSliderThumbShape(enabledThumbRadius: 6),
-      overlayShape: const RoundSliderOverlayShape(overlayRadius: 16),
+      thumbShape: RoundSliderThumbShape(
+        enabledThumbRadius: brightness == Brightness.dark ? 5 : 6,
+        disabledThumbRadius: brightness == Brightness.dark ? 5 : 6,
+      ),
+      overlayShape: RoundSliderOverlayShape(
+        overlayRadius: brightness == Brightness.dark ? 14 : 16,
+      ),
     ),
     switchTheme: SwitchThemeData(
       thumbColor: WidgetStateProperty.resolveWith((states) {
@@ -695,7 +735,7 @@ fluent.FluentThemeData buildFluentTheme(Brightness brightness) {
     brightness: brightness,
     accentColor: accent,
     selectionColor: accent.defaultBrushFor(brightness),
-    scaffoldBackgroundColor: palette.tokens.panelBackground,
+    scaffoldBackgroundColor: palette.scaffoldBackground,
     acrylicBackgroundColor: brightness == Brightness.dark
         ? palette.surface
         : palette.surfaceRaised,
@@ -821,14 +861,18 @@ class _ResolvedPalette {
         ? Colors.white
         : const Color(0xFF160D24);
 
+    const darkOuterBackground = Color(0xFF05070B);
     const darkPrimarySurface = Color(0xFF0E1318);
     const darkSecondarySurface = Color(0xFF2A2D35);
+    const darkEditorChromeSurface = Color(0xFF15161A);
+    const darkPreviewSurface = Color(0xFF151718);
+    const darkTimelineSurface = Color(0xFF111113);
     const lightSurface = Colors.white;
     const lightSurfaceRaised = Color(0xFFF7F3FD);
     const lightSurfaceSubtle = Color(0xFFF0EAFB);
 
     final scaffoldBackground = isDark
-        ? darkPrimarySurface
+        ? darkOuterBackground
         : const Color(0xFFF7F4FC);
     final surface = isDark ? darkPrimarySurface : lightSurface;
     final surfaceRaised = isDark ? darkPrimarySurface : lightSurfaceRaised;
@@ -892,15 +936,24 @@ class _ResolvedPalette {
       brandForeground: brandForeground,
       shellGradient: LinearGradient(
         colors: isDark
-            ? const [Color(0xFF090D12), Color(0xFF11161C)]
+            ? const [darkOuterBackground, darkOuterBackground]
             : const [Color(0xFFF9F6FF), Color(0xFFF4F8FF)],
         begin: Alignment.topLeft,
         end: Alignment.bottomRight,
       ),
+      outerBackground: isDark ? darkOuterBackground : const Color(0xFFF7F4FC),
       panelBackground: isDark ? darkPrimarySurface : const Color(0xF7FFFFFF),
+      editorChromeBackground: isDark
+          ? darkEditorChromeSurface
+          : const Color(0xF7FFFFFF),
+      previewPanelBackground: isDark
+          ? darkPreviewSurface
+          : const Color(0xF7FFFFFF),
       panelBorder: isDark ? border : border.withValues(alpha: 0.95),
       toolbarOverlay: isDark ? darkPrimarySurface : const Color(0xF2FFFFFF),
-      timelineBackground: isDark ? darkPrimarySurface : const Color(0xFFFDFBFF),
+      timelineBackground: isDark
+          ? darkTimelineSurface
+          : const Color(0xFFFDFBFF),
       timelineTrack: isDark ? const Color(0xFF1D1D26) : const Color(0xFFE7E0F6),
       timelineTick: isDark ? const Color(0xFF807B93) : const Color(0xFF9288AA),
       selectionFill: clingfyBrandColor.withValues(alpha: isDark ? 0.2 : 0.12),

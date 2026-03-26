@@ -47,6 +47,8 @@ class HomeUiState extends ChangeNotifier {
   bool _indicatorPinned = false;
   bool _isSettingsOpen = false;
   bool _uiPrefsHydrated = false;
+  int _recordingSidebarIndex = 0;
+  int _postProcessingSidebarIndex = 0;
 
   HomeUiNotice? get notice => _notice;
   String? get errorMessage => _notice?.rawErrorCode;
@@ -54,6 +56,8 @@ class HomeUiState extends ChangeNotifier {
   bool get indicatorPinned => _indicatorPinned;
   bool get isSettingsOpen => _isSettingsOpen;
   bool get uiPrefsHydrated => _uiPrefsHydrated;
+  int get recordingSidebarIndex => _recordingSidebarIndex;
+  int get postProcessingSidebarIndex => _postProcessingSidebarIndex;
 
   void setError(String? value) {
     if (value == null) {
@@ -134,6 +138,18 @@ class HomeUiState extends ChangeNotifier {
   void markHydrated() {
     if (_uiPrefsHydrated) return;
     _uiPrefsHydrated = true;
+    notifyListeners();
+  }
+
+  void setRecordingSidebarIndex(int value) {
+    if (_recordingSidebarIndex == value) return;
+    _recordingSidebarIndex = value;
+    notifyListeners();
+  }
+
+  void setPostProcessingSidebarIndex(int value) {
+    if (_postProcessingSidebarIndex == value) return;
+    _postProcessingSidebarIndex = value;
     notifyListeners();
   }
 

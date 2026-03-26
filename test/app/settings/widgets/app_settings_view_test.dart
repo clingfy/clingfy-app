@@ -246,6 +246,79 @@ void main() {
     expect(find.byType(AboutSettingsSection), findsOneWidget);
   });
 
+  testWidgets('settings cards expose help text as inline tooltips', (
+    tester,
+  ) async {
+    final settings = SettingsController(nativeBridge: NativeBridge.instance);
+
+    await tester.pumpWidget(buildTestApp(settings: settings));
+    await tester.pumpAndSettle();
+
+    expect(find.byTooltip('Choose your preferred appearance'), findsOneWidget);
+    expect(find.text('Choose your preferred appearance'), findsNothing);
+
+    await tester.drag(
+      find.descendant(
+        of: find.byType(WorkspaceSettingsSection),
+        matching: find.byType(ListView),
+      ),
+      const Offset(0, -400),
+    );
+    await tester.pumpAndSettle();
+    expect(
+      find.byTooltip(
+        'Show a confirmation before closing the current recording if it has not been exported yet.',
+      ),
+      findsOneWidget,
+    );
+    expect(
+      find.text(
+        'Show a confirmation before closing the current recording if it has not been exported yet.',
+      ),
+      findsNothing,
+    );
+
+    await tester.tap(find.text('Storage'));
+    await tester.pumpAndSettle();
+    expect(
+      find.byTooltip(
+        'Monitor system free space and Clingfy workspace usage to avoid failed recordings.',
+      ),
+      findsOneWidget,
+    );
+    expect(
+      find.text(
+        'Monitor system free space and Clingfy workspace usage to avoid failed recordings.',
+      ),
+      findsNothing,
+    );
+
+    await tester.tap(find.text('License'));
+    await tester.pumpAndSettle();
+    expect(
+      find.byTooltip('Your current plan, entitlement, and update coverage.'),
+      findsOneWidget,
+    );
+
+    await tester.tap(find.text('Permissions'));
+    await tester.pumpAndSettle();
+    expect(
+      find.byTooltip(
+        'Review which permissions Clingfy can use and jump directly to the relevant System Settings pane.',
+      ),
+      findsOneWidget,
+    );
+
+    await tester.tap(find.text('Diagnostics'));
+    await tester.pumpAndSettle();
+    expect(
+      find.byTooltip(
+        'If something goes wrong, open the logs folder and send today\'s log file to support.',
+      ),
+      findsOneWidget,
+    );
+  });
+
   testWidgets('/about route opens settings on About section', (tester) async {
     final settings = SettingsController(nativeBridge: NativeBridge.instance);
 
@@ -327,15 +400,21 @@ void main() {
     );
     await tester.pumpAndSettle();
 
+    final scaffold = tester.widget<Scaffold>(find.byType(Scaffold).first);
     final rail = tester.widget<Container>(
       find.byKey(const Key('settings_nav_rail')),
     );
     final header = tester.widget<Container>(
       find.byKey(const Key('settings_header')),
     );
+    final content = tester.widget<Container>(
+      find.byKey(const Key('settings_content_surface')),
+    );
 
+    expect(scaffold.backgroundColor, theme.scaffoldBackgroundColor);
     expect(rail.color, theme.appTokens.panelBackground);
     expect(header.color, theme.appTokens.toolbarOverlay);
+    expect(content.color, Colors.transparent);
   });
 
   testWidgets('settings chrome uses semantic surfaces in dark mode', (
@@ -349,15 +428,23 @@ void main() {
     );
     await tester.pumpAndSettle();
 
+    final scaffold = tester.widget<Scaffold>(find.byType(Scaffold).first);
     final rail = tester.widget<Container>(
       find.byKey(const Key('settings_nav_rail')),
     );
     final header = tester.widget<Container>(
       find.byKey(const Key('settings_header')),
     );
+    final content = tester.widget<Container>(
+      find.byKey(const Key('settings_content_surface')),
+    );
+    final card = tester.widget<Card>(find.byType(Card).first);
 
-    expect(rail.color, theme.appTokens.panelBackground);
-    expect(header.color, theme.appTokens.toolbarOverlay);
+    expect(scaffold.backgroundColor, theme.appTokens.outerBackground);
+    expect(rail.color, theme.appTokens.editorChromeBackground);
+    expect(header.color, theme.appTokens.editorChromeBackground);
+    expect(content.color, theme.appTokens.editorChromeBackground);
+    expect(card.color, theme.appTokens.editorChromeBackground);
   });
 
   testWidgets('/settings/storage route opens settings on Storage section', (

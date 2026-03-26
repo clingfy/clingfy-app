@@ -1,15 +1,11 @@
-import 'package:clingfy/app/infrastructure/logging/logger_service.dart';
 import 'package:clingfy/l10n/app_localizations.dart';
 import 'package:clingfy/ui/platform/platform_kind.dart';
 import 'package:clingfy/ui/platform/widgets/app_button.dart';
-import 'package:clingfy/ui/platform/widgets/app_dialog.dart';
 import 'package:clingfy/ui/theme/app_shell_tokens.dart';
 import 'package:fluent_ui/fluent_ui.dart' as fluent;
 import 'package:flutter/cupertino.dart';
-import 'package:flutter/foundation.dart' show kDebugMode;
 import 'package:flutter/material.dart' show Icons, Theme;
 import 'package:macos_ui/macos_ui.dart';
-import 'package:shared_preferences/shared_preferences.dart';
 
 const _toolbarRowKey = Key('desktop_toolbar_row');
 const _toolbarSurfaceKey = Key('desktop_toolbar_surface');
@@ -107,7 +103,6 @@ class DesktopToolbar extends StatelessWidget {
     this.notice,
     this.countdownText,
     this.onExport,
-    this.onOpenSettings,
     this.exportStatus,
     this.isProcessing = false,
   });
@@ -118,7 +113,6 @@ class DesktopToolbar extends StatelessWidget {
   final ToolbarNoticePresentation? notice;
   final String? countdownText;
   final VoidCallback? onExport;
-  final VoidCallback? onOpenSettings;
   final ToolbarExportStatusPresentation? exportStatus;
   final bool isProcessing;
 
@@ -157,7 +151,6 @@ class DesktopToolbar extends StatelessWidget {
           elapsedText: elapsedText,
           countdownText: countdownText,
           onExport: onExport,
-          onOpenSettings: onOpenSettings,
           isProcessing: isProcessing,
           l10n: l10n,
         ),
@@ -174,7 +167,6 @@ class DesktopToolbar extends StatelessWidget {
           elapsedText: elapsedText,
           countdownText: countdownText,
           onExport: onExport,
-          onOpenSettings: onOpenSettings,
           isProcessing: isProcessing,
           l10n: l10n,
         ),
@@ -190,7 +182,6 @@ class DesktopToolbar extends StatelessWidget {
         elapsedText: elapsedText,
         countdownText: countdownText,
         onExport: onExport,
-        onOpenSettings: onOpenSettings,
         isProcessing: isProcessing,
         l10n: l10n,
       ),
@@ -295,7 +286,7 @@ class _ToolbarShell extends StatelessWidget {
                 ? const SizedBox.shrink(key: ValueKey('toolbar-status-empty'))
                 : Padding(
                     key: const ValueKey('toolbar-status-visible'),
-                    padding: EdgeInsets.only(top: spacing.sm - 2),
+                    padding: EdgeInsets.only(top: spacing.xs - 1),
                     child: statusStrip!,
                   ),
           ),
@@ -313,7 +304,6 @@ class _MacToolbarRow extends StatelessWidget {
     required this.elapsedText,
     required this.countdownText,
     required this.onExport,
-    required this.onOpenSettings,
     required this.isProcessing,
     required this.l10n,
   });
@@ -323,7 +313,6 @@ class _MacToolbarRow extends StatelessWidget {
   final String? elapsedText;
   final String? countdownText;
   final VoidCallback? onExport;
-  final VoidCallback? onOpenSettings;
   final bool isProcessing;
   final AppLocalizations l10n;
 
@@ -334,22 +323,20 @@ class _MacToolbarRow extends StatelessWidget {
     final typography = context.appTypography;
     final chrome = theme.appEditorChrome;
     final tokens = theme.appTokens;
-    final bg = tokens.toolbarOverlay;
-    final border = tokens.panelBorder;
+    final bg = tokens.editorChromeBackground;
 
     return Container(
       key: _toolbarSurfaceKey,
       height: chrome.toolbarHeight,
-      padding: EdgeInsets.symmetric(horizontal: spacing.md),
+      padding: EdgeInsets.symmetric(horizontal: spacing.sm),
       decoration: BoxDecoration(
         color: bg,
         borderRadius: BorderRadius.circular(chrome.panelRadius),
-        border: Border.all(color: border),
       ),
       child: Row(
         children: [
           Text(title, style: typography.button),
-          SizedBox(width: spacing.md - 2),
+          SizedBox(width: spacing.xs + 2),
           if (isRecording) ...[
             _pill(
               context,
@@ -357,7 +344,7 @@ class _MacToolbarRow extends StatelessWidget {
               text: elapsedText ?? l10n.recording,
               pulsingDot: true,
             ),
-            SizedBox(width: spacing.md - 2),
+            SizedBox(width: spacing.xs + 2),
           ],
           const Spacer(),
           if (countdownText != null) ...[
@@ -367,7 +354,7 @@ class _MacToolbarRow extends StatelessWidget {
               text: l10n.stopIn(countdownText!),
               pulsingDot: true,
             ),
-            SizedBox(width: spacing.md - 2),
+            SizedBox(width: spacing.xs + 2),
           ],
           if (onExport != null) ...[
             AppButton(
@@ -377,7 +364,7 @@ class _MacToolbarRow extends StatelessWidget {
                 children: [
                   if (isProcessing) ...[
                     const CupertinoActivityIndicator(radius: 8),
-                    SizedBox(width: spacing.sm),
+                    SizedBox(width: spacing.xs + 2),
                     Text('${l10n.export}…'),
                   ] else ...[
                     MacosIcon(
@@ -385,53 +372,17 @@ class _MacToolbarRow extends StatelessWidget {
                       size: 16,
                       color: theme.colorScheme.onPrimary,
                     ),
-                    SizedBox(width: spacing.sm - 2),
+                    SizedBox(width: spacing.xs + 2),
                     Text(l10n.export),
                   ],
                 ],
               ),
             ),
-            SizedBox(width: spacing.sm),
+            SizedBox(width: spacing.xs),
           ],
-          if (onOpenSettings != null && kDebugMode)
-            MacosIconButton(
-              icon: const MacosIcon(CupertinoIcons.ant, size: 18),
-              onPressed: () => _confirmReset(context),
-              boxConstraints: const BoxConstraints.tightFor(
-                width: 34,
-                height: 34,
-              ),
-              semanticLabel: l10n.debugResetPreferencesSemanticLabel,
-            ),
-          if (onOpenSettings != null)
-            MacosIconButton(
-              icon: const MacosIcon(CupertinoIcons.gear, size: 18),
-              onPressed: onOpenSettings,
-              boxConstraints: const BoxConstraints.tightFor(
-                width: 34,
-                height: 34,
-              ),
-              semanticLabel: l10n.openAppSettings,
-            ),
         ],
       ),
     );
-  }
-
-  Future<void> _confirmReset(BuildContext context) async {
-    final result = await AppDialog.confirm(
-      context,
-      title: l10n.debugResetPreferencesTitle,
-      message: l10n.debugResetPreferencesMessage,
-      confirmLabel: l10n.debugResetPreferencesConfirm,
-      cancelLabel: l10n.cancel,
-    );
-
-    if (result == true) {
-      Log.i('DesktopToolbar', 'Resetting preferences');
-      final sp = await SharedPreferences.getInstance();
-      await sp.clear();
-    }
   }
 }
 
@@ -443,7 +394,6 @@ class _WinToolbarRow extends StatelessWidget {
     required this.elapsedText,
     required this.countdownText,
     required this.onExport,
-    required this.onOpenSettings,
     required this.isProcessing,
     required this.l10n,
   });
@@ -453,7 +403,6 @@ class _WinToolbarRow extends StatelessWidget {
   final String? elapsedText;
   final String? countdownText;
   final VoidCallback? onExport;
-  final VoidCallback? onOpenSettings;
   final bool isProcessing;
   final AppLocalizations l10n;
 
@@ -468,16 +417,15 @@ class _WinToolbarRow extends StatelessWidget {
     return fluent.Container(
       key: _toolbarSurfaceKey,
       height: chrome.toolbarHeight,
-      padding: EdgeInsets.symmetric(horizontal: spacing.md),
+      padding: EdgeInsets.symmetric(horizontal: spacing.sm),
       decoration: fluent.BoxDecoration(
-        color: tokens.toolbarOverlay,
+        color: tokens.editorChromeBackground,
         borderRadius: BorderRadius.circular(chrome.panelRadius),
-        border: fluent.Border.all(color: tokens.panelBorder),
       ),
       child: Row(
         children: [
           Text(title, style: theme.typography.bodyStrong),
-          SizedBox(width: spacing.md - 2),
+          SizedBox(width: spacing.xs + 2),
           if (isRecording) ...[
             _pillWin(
               context,
@@ -486,7 +434,7 @@ class _WinToolbarRow extends StatelessWidget {
               text: elapsedText ?? l10n.recording,
               danger: true,
             ),
-            SizedBox(width: spacing.md - 2),
+            SizedBox(width: spacing.xs + 2),
           ],
           const Spacer(),
           if (countdownText != null) ...[
@@ -497,7 +445,7 @@ class _WinToolbarRow extends StatelessWidget {
               text: l10n.stopIn(countdownText!),
               danger: false,
             ),
-            SizedBox(width: spacing.md - 2),
+            SizedBox(width: spacing.xs + 2),
           ],
           if (onExport != null) ...[
             fluent.FilledButton(
@@ -506,24 +454,13 @@ class _WinToolbarRow extends StatelessWidget {
                 mainAxisSize: MainAxisSize.min,
                 children: [
                   const Icon(fluent.FluentIcons.download, size: 16),
-                  SizedBox(width: spacing.sm - 2),
+                  SizedBox(width: spacing.xs + 2),
                   Text(l10n.export),
                 ],
               ),
             ),
-            SizedBox(width: spacing.sm),
+            SizedBox(width: spacing.xs),
           ],
-          if (onOpenSettings != null)
-            Semantics(
-              child: fluent.IconButton(
-                icon: Icon(
-                  fluent.FluentIcons.settings,
-                  size: 18,
-                  semanticLabel: l10n.openAppSettings,
-                ),
-                onPressed: onOpenSettings,
-              ),
-            ),
         ],
       ),
     );
@@ -538,7 +475,6 @@ class _FallbackToolbarRow extends StatelessWidget {
     required this.elapsedText,
     required this.countdownText,
     required this.onExport,
-    required this.onOpenSettings,
     required this.isProcessing,
     required this.l10n,
   });
@@ -548,7 +484,6 @@ class _FallbackToolbarRow extends StatelessWidget {
   final String? elapsedText;
   final String? countdownText;
   final VoidCallback? onExport;
-  final VoidCallback? onOpenSettings;
   final bool isProcessing;
   final AppLocalizations l10n;
 
@@ -562,23 +497,22 @@ class _FallbackToolbarRow extends StatelessWidget {
     return Container(
       key: _toolbarSurfaceKey,
       height: chrome.toolbarHeight,
-      padding: EdgeInsets.symmetric(horizontal: spacing.md),
+      padding: EdgeInsets.symmetric(horizontal: spacing.sm),
       decoration: BoxDecoration(
-        color: tokens.toolbarOverlay,
+        color: tokens.editorChromeBackground,
         borderRadius: BorderRadius.circular(chrome.panelRadius),
-        border: Border.all(color: tokens.panelBorder),
       ),
       child: Row(
         children: [
           Text(title, style: typography.button),
-          SizedBox(width: spacing.md - 2),
+          SizedBox(width: spacing.xs + 2),
           if (isRecording) ...[
             _pillFallback(
               context,
               icon: Icons.fiber_manual_record,
               text: elapsedText ?? l10n.recording,
             ),
-            SizedBox(width: spacing.md - 2),
+            SizedBox(width: spacing.xs + 2),
           ],
           const Spacer(),
           if (countdownText != null) ...[
@@ -587,7 +521,7 @@ class _FallbackToolbarRow extends StatelessWidget {
               icon: Icons.timer,
               text: l10n.stopIn(countdownText!),
             ),
-            SizedBox(width: spacing.md - 2),
+            SizedBox(width: spacing.xs + 2),
           ],
           if (onExport != null) ...[
             _simpleButton(
@@ -596,14 +530,8 @@ class _FallbackToolbarRow extends StatelessWidget {
               icon: Icons.download,
               onPressed: isProcessing ? null : onExport,
             ),
-            SizedBox(width: spacing.sm),
+            SizedBox(width: spacing.xs),
           ],
-          if (onOpenSettings != null)
-            _simpleIconButton(
-              context: context,
-              icon: Icons.settings,
-              onPressed: onOpenSettings,
-            ),
         ],
       ),
     );
@@ -797,7 +725,9 @@ class _MacExportLane extends StatelessWidget {
         vertical: spacing.sm - 2,
       ),
       decoration: BoxDecoration(
-        color: tokens.toolbarOverlay.withValues(alpha: isDark ? 0.88 : 0.92),
+        color: tokens.editorChromeBackground.withValues(
+          alpha: isDark ? 0.88 : 0.92,
+        ),
         borderRadius: BorderRadius.circular(chrome.controlRadius),
         border: Border.all(color: tokens.panelBorder),
       ),
@@ -925,7 +855,7 @@ class _WinExportLane extends StatelessWidget {
         vertical: spacing.sm - 2,
       ),
       decoration: fluent.BoxDecoration(
-        color: tokens.toolbarOverlay.withValues(alpha: 0.92),
+        color: tokens.editorChromeBackground.withValues(alpha: 0.92),
         borderRadius: BorderRadius.circular(chrome.controlRadius),
         border: fluent.Border.all(color: tokens.panelBorder),
       ),
@@ -1053,7 +983,7 @@ class _FallbackExportLane extends StatelessWidget {
         vertical: spacing.sm - 2,
       ),
       decoration: BoxDecoration(
-        color: tokens.toolbarOverlay,
+        color: tokens.editorChromeBackground,
         borderRadius: BorderRadius.circular(chrome.controlRadius),
         border: Border.all(color: tokens.panelBorder),
       ),
@@ -1356,10 +1286,7 @@ Widget _pill(
       theme.inputDecorationTheme.fillColor ??
       theme.colorScheme.secondaryContainer;
   return Container(
-    padding: EdgeInsets.symmetric(
-      horizontal: spacing.md - 2,
-      vertical: spacing.sm - 2,
-    ),
+    padding: EdgeInsets.symmetric(horizontal: spacing.sm, vertical: spacing.xs),
     decoration: BoxDecoration(
       color: pulsingDot
           ? theme.colorScheme.primary.withValues(alpha: 0.14)
@@ -1377,7 +1304,7 @@ Widget _pill(
         pulsingDot
             ? _PulseDot(color: theme.colorScheme.primary, size: 8)
             : Icon(icon, size: 12, color: theme.colorScheme.primary),
-        SizedBox(width: spacing.sm - 2),
+        SizedBox(width: spacing.xs + 1),
         Text(
           text,
           style: typography.value.copyWith(
@@ -1405,10 +1332,7 @@ Widget _pillWin(
   final chrome = context.appEditorChrome;
 
   return fluent.Container(
-    padding: EdgeInsets.symmetric(
-      horizontal: spacing.md - 2,
-      vertical: spacing.sm - 2,
-    ),
+    padding: EdgeInsets.symmetric(horizontal: spacing.sm, vertical: spacing.xs),
     decoration: fluent.BoxDecoration(
       color: colors.background,
       borderRadius: BorderRadius.circular(chrome.pillRadius),
@@ -1420,7 +1344,7 @@ Widget _pillWin(
       mainAxisSize: MainAxisSize.min,
       children: [
         Icon(icon, size: 12, color: colors.foreground),
-        SizedBox(width: spacing.sm - 2),
+        SizedBox(width: spacing.xs + 1),
         Text(
           text,
           style: (theme.typography.caption ?? typography.caption).copyWith(
@@ -1446,10 +1370,7 @@ Widget _pillFallback(
   final chrome = context.appEditorChrome;
 
   return Container(
-    padding: EdgeInsets.symmetric(
-      horizontal: spacing.md - 2,
-      vertical: spacing.sm - 2,
-    ),
+    padding: EdgeInsets.symmetric(horizontal: spacing.sm, vertical: spacing.xs),
     decoration: BoxDecoration(
       color: colors.background,
       borderRadius: BorderRadius.circular(chrome.pillRadius),
@@ -1461,7 +1382,7 @@ Widget _pillFallback(
       mainAxisSize: MainAxisSize.min,
       children: [
         Icon(icon, size: 12, color: colors.foreground),
-        SizedBox(width: spacing.sm - 2),
+        SizedBox(width: spacing.xs + 1),
         Text(
           text,
           style: typography.value.copyWith(
@@ -1490,7 +1411,7 @@ Widget _simpleButton({
     child: Opacity(
       opacity: onPressed == null ? 0.5 : 1,
       child: Container(
-        padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 7),
+        padding: const EdgeInsets.symmetric(horizontal: 9, vertical: 5),
         decoration: BoxDecoration(
           color: controlFill,
           borderRadius: BorderRadius.circular(chrome.controlRadius),
@@ -1504,32 +1425,6 @@ Widget _simpleButton({
           ],
         ),
       ),
-    ),
-  );
-}
-
-Widget _simpleIconButton({
-  required BuildContext context,
-  required IconData icon,
-  required VoidCallback? onPressed,
-}) {
-  final theme = Theme.of(context);
-  final chrome = theme.appEditorChrome;
-  final controlFill =
-      theme.inputDecorationTheme.fillColor ??
-      theme.colorScheme.secondaryContainer;
-  return GestureDetector(
-    onTap: onPressed,
-    child: Container(
-      width: 34,
-      height: 34,
-      decoration: BoxDecoration(
-        color: controlFill,
-        borderRadius: BorderRadius.circular(chrome.controlRadius),
-        border: Border.all(color: theme.dividerColor.withValues(alpha: 0.1)),
-      ),
-      alignment: Alignment.center,
-      child: Icon(icon, size: 18),
     ),
   );
 }

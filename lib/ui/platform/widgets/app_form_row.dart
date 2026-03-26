@@ -1,6 +1,7 @@
 import 'package:clingfy/ui/platform/widgets/app_sidebar_tokens.dart';
 import 'package:clingfy/ui/theme/app_theme.dart';
 import 'package:flutter/material.dart';
+import 'package:clingfy/ui/platform/widgets/app_inline_info_tooltip.dart';
 
 /// Desktop-style settings row: label on the left, control on the right.
 ///
@@ -10,14 +11,16 @@ class AppFormRow extends StatelessWidget {
     super.key,
     required this.control,
     this.label,
-    this.helper,
+    this.infoTooltip,
+    this.helperText,
     this.labelWidth = AppSidebarTokens.labelWidth,
     this.stackBreakpoint = AppSidebarTokens.stackBreakpoint,
     this.gap = AppSidebarTokens.controlGap,
   });
 
   final String? label;
-  final String? helper;
+  final String? infoTooltip;
+  final String? helperText;
   final Widget control;
 
   /// Fixed width of the label column when not stacked.
@@ -35,6 +38,8 @@ class AppFormRow extends StatelessWidget {
     final spacing = theme.appSpacing;
     final labelStyle = AppSidebarTokens.rowTitleStyle(theme);
     final helperStyle = AppSidebarTokens.helperStyle(theme);
+    final hasHelperText = helperText != null && helperText!.isNotEmpty;
+    final hasInfoTooltip = infoTooltip != null && infoTooltip!.isNotEmpty;
 
     return LayoutBuilder(
       builder: (context, c) {
@@ -57,10 +62,33 @@ class AppFormRow extends StatelessWidget {
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
-                Text(label!, style: labelStyle),
-                if (helper != null) ...[
+                Row(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    Flexible(child: Text(label!, style: labelStyle)),
+                    AnimatedSwitcher(
+                      duration: const Duration(milliseconds: 200),
+                      child: hasInfoTooltip
+                          ? Row(
+                              key: ValueKey(infoTooltip),
+                              mainAxisSize: MainAxisSize.min,
+                              children: [
+                                SizedBox(width: spacing.xs),
+                                AppInlineInfoTooltip(
+                                  message: infoTooltip!,
+                                  color: helperStyle.color,
+                                ),
+                              ],
+                            )
+                          : const SizedBox.shrink(
+                              key: ValueKey('no_info_tooltip'),
+                            ),
+                    ),
+                  ],
+                ),
+                if (hasHelperText) ...[
                   SizedBox(height: spacing.xs),
-                  Text(helper!, style: helperStyle),
+                  Text(helperText!, style: helperStyle),
                 ],
                 SizedBox(height: spacing.sm),
                 control,
@@ -79,10 +107,32 @@ class AppFormRow extends StatelessWidget {
                 child: Column(
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
-                    Text(label!, style: labelStyle),
-                    if (helper != null) ...[
+                    Row(
+                      children: [
+                        Flexible(child: Text(label!, style: labelStyle)),
+                        AnimatedSwitcher(
+                          duration: const Duration(milliseconds: 200),
+                          child: hasInfoTooltip
+                              ? Row(
+                                  key: ValueKey(infoTooltip),
+                                  mainAxisSize: MainAxisSize.min,
+                                  children: [
+                                    SizedBox(width: spacing.xs),
+                                    AppInlineInfoTooltip(
+                                      message: infoTooltip!,
+                                      color: helperStyle.color,
+                                    ),
+                                  ],
+                                )
+                              : const SizedBox.shrink(
+                                  key: ValueKey('no_info_tooltip'),
+                                ),
+                        ),
+                      ],
+                    ),
+                    if (hasHelperText) ...[
                       SizedBox(height: spacing.xs),
-                      Text(helper!, style: helperStyle),
+                      Text(helperText!, style: helperStyle),
                     ],
                   ],
                 ),

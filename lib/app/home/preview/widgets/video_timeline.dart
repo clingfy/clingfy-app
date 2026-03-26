@@ -234,6 +234,9 @@ class _VideoTimelineState extends State<VideoTimeline> {
         theme.inputDecorationTheme.fillColor ??
         theme.colorScheme.secondaryContainer;
     final subtleBorder = theme.dividerColor.withValues(alpha: 0.1);
+    final timelineBandHeight = chrome.timelineRulerHeight;
+    const timelineTrackTop = 31.0;
+    const timelineTrackHeight = 20.0;
     final deleteTooltip = selectedCount <= 1
         ? l10n.zoomDeleteSelectedOne
         : l10n.zoomDeleteSelectedMany(selectedCount);
@@ -274,7 +277,7 @@ class _VideoTimelineState extends State<VideoTimeline> {
                           size: 18,
                           color: foregroundColor,
                         ),
-                        SizedBox(width: spacing.sm),
+                        SizedBox(width: spacing.xs + 1),
                         Text(
                           l10n.timeline,
                           style: typography.button.copyWith(
@@ -282,13 +285,13 @@ class _VideoTimelineState extends State<VideoTimeline> {
                           ),
                         ),
                         if (statusChip != null) ...[
-                          SizedBox(width: spacing.md - 2),
+                          SizedBox(width: spacing.xs + 2),
                           statusChip,
                         ],
                       ],
                     ),
                     if (hasEditor) ...[
-                      SizedBox(width: spacing.md + 2),
+                      SizedBox(width: spacing.sm + 1),
                       _TimelineToolbarGroup(
                         key: const Key('timeline_toolbar_add_group'),
                         child: Row(
@@ -304,13 +307,13 @@ class _VideoTimelineState extends State<VideoTimeline> {
                               foregroundColor: foregroundColor,
                               onPressed: editor.toggleAddMode,
                             ),
-                            SizedBox(width: spacing.sm - 2),
+                            SizedBox(width: spacing.xs + 1),
                             Container(
                               width: 1,
                               height: 18,
                               color: theme.dividerColor.withValues(alpha: 0.22),
                             ),
-                            SizedBox(width: spacing.sm - 2),
+                            SizedBox(width: spacing.xs + 1),
                             _TimelineToggleIconButton(
                               key: const Key('timeline_sticky_add_button'),
                               icon: Icons.push_pin_rounded,
@@ -323,7 +326,7 @@ class _VideoTimelineState extends State<VideoTimeline> {
                           ],
                         ),
                       ),
-                      SizedBox(width: spacing.md - 2),
+                      SizedBox(width: spacing.xs + 2),
                       _TimelineToolbarGroup(
                         key: const Key('timeline_toolbar_selection_group'),
                         child: Row(
@@ -405,12 +408,12 @@ class _VideoTimelineState extends State<VideoTimeline> {
                 ),
               ),
             ),
-            SizedBox(width: spacing.lg),
+            SizedBox(width: spacing.sm + 2),
             Container(
               key: const Key('timeline_time_chip'),
               padding: EdgeInsets.symmetric(
-                horizontal: spacing.md - 2,
-                vertical: spacing.sm - 2,
+                horizontal: spacing.sm,
+                vertical: spacing.xs,
               ),
               decoration: BoxDecoration(
                 color: controlFill,
@@ -426,7 +429,7 @@ class _VideoTimelineState extends State<VideoTimeline> {
                 ),
               ),
             ),
-            SizedBox(width: spacing.sm),
+            SizedBox(width: spacing.xs + 1),
             AppIconButton(
               key: const Key('timeline_close_button'),
               tooltip: l10n.closeTimelineTooltip,
@@ -445,7 +448,7 @@ class _VideoTimelineState extends State<VideoTimeline> {
               ? const SizedBox.shrink()
               : Padding(
                   key: ValueKey<String>(statusLineData.message),
-                  padding: EdgeInsets.only(top: spacing.md - 2),
+                  padding: EdgeInsets.only(top: spacing.xs + 2),
                   child: _TimelineStatusLine(
                     key: const Key('timeline_status_line'),
                     icon: statusLineData.icon,
@@ -457,9 +460,9 @@ class _VideoTimelineState extends State<VideoTimeline> {
                   ),
                 ),
         ),
-        SizedBox(height: spacing.md),
+        SizedBox(height: spacing.sm),
         timelineTrack,
-        SizedBox(height: spacing.md - 2),
+        SizedBox(height: spacing.xs + 2),
         LayoutBuilder(
           builder: (context, constraints) {
             final width = constraints.maxWidth.isFinite
@@ -528,7 +531,8 @@ class _VideoTimelineState extends State<VideoTimeline> {
                       }
                     : null,
                 child: SizedBox(
-                  height: 58,
+                  key: const Key('timeline_ruler_band'),
+                  height: timelineBandHeight,
                   child: Stack(
                     alignment: Alignment.centerLeft,
                     children: [
@@ -546,8 +550,8 @@ class _VideoTimelineState extends State<VideoTimeline> {
                         ),
                       ),
                       Container(
-                        margin: const EdgeInsets.only(top: 30),
-                        height: 18,
+                        margin: const EdgeInsets.only(top: timelineTrackTop),
+                        height: timelineTrackHeight,
                         decoration: BoxDecoration(
                           color: controlFill.withValues(alpha: 0.9),
                           borderRadius: BorderRadius.circular(
@@ -559,8 +563,8 @@ class _VideoTimelineState extends State<VideoTimeline> {
                       FractionallySizedBox(
                         widthFactor: ready ? fraction : 0,
                         child: Container(
-                          margin: const EdgeInsets.only(top: 30),
-                          height: 18,
+                          margin: const EdgeInsets.only(top: timelineTrackTop),
+                          height: timelineTrackHeight,
                           decoration: BoxDecoration(
                             gradient: LinearGradient(
                               colors: [
@@ -742,7 +746,6 @@ class _VideoTimelineState extends State<VideoTimeline> {
               decoration: BoxDecoration(
                 color: tokens.timelineBackground,
                 borderRadius: BorderRadius.circular(chrome.panelRadius),
-                border: Border.all(color: tokens.panelBorder),
               ),
               child: editor == null
                   ? _buildTimelineContent(
@@ -806,8 +809,8 @@ class _TimelineToolbarGroup extends StatelessWidget {
         theme.colorScheme.secondaryContainer;
     return Container(
       padding: EdgeInsets.symmetric(
-        horizontal: spacing.sm,
-        vertical: spacing.xs,
+        horizontal: spacing.xs + 1,
+        vertical: spacing.xs - 1,
       ),
       decoration: BoxDecoration(
         color: controlFill,
@@ -862,8 +865,8 @@ class _TimelineToggleIconButton extends StatelessWidget {
         onTap: onPressed,
         child: Padding(
           padding: EdgeInsets.symmetric(
-            horizontal: label == null ? spacing.sm : spacing.md - 2,
-            vertical: spacing.sm - 2,
+            horizontal: label == null ? spacing.xs + 1 : spacing.sm,
+            vertical: spacing.xs,
           ),
           child: Row(
             mainAxisSize: MainAxisSize.min,
@@ -876,7 +879,7 @@ class _TimelineToggleIconButton extends StatelessWidget {
                     : foregroundColor.withValues(alpha: 0.8),
               ),
               if (label != null) ...[
-                SizedBox(width: spacing.sm - 2),
+                SizedBox(width: spacing.xs + 1),
                 Text(
                   label!,
                   style: typography.value.copyWith(
@@ -916,8 +919,8 @@ class _TimelineStatusChip extends StatelessWidget {
     final chrome = theme.appEditorChrome;
     return Container(
       padding: EdgeInsets.symmetric(
-        horizontal: spacing.sm,
-        vertical: spacing.xs + 1,
+        horizontal: spacing.xs + 2,
+        vertical: spacing.xs - 1,
       ),
       decoration: BoxDecoration(
         color: accentColor.withValues(alpha: 0.1),

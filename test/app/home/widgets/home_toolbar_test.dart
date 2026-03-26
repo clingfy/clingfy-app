@@ -117,7 +117,6 @@ void main() {
               isRecording: false,
               uiState: uiState,
               onExport: () {},
-              onOpenSettings: () {},
               onOpenSystemSettings: (pane) async {
                 openedPane = pane;
               },
@@ -185,7 +184,6 @@ void main() {
               isRecording: false,
               uiState: uiState,
               onExport: () {},
-              onOpenSettings: () {},
               onOpenSystemSettings: (_) async {},
               onClearMessage: () {
                 uiState.clearError();
@@ -230,7 +228,6 @@ void main() {
               progress: 0.42,
               cancelRequested: false,
             ),
-            onOpenSettings: () {},
           ),
         ),
       ),

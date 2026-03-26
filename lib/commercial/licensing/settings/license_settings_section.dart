@@ -247,7 +247,7 @@ class _LicenseSettingsSectionState extends State<LicenseSettingsSection> {
           children: [
             SettingsCard(
               title: l10n.licenseSummaryHeroTitle,
-              subtitle: l10n.licenseSummaryHeroSubtitle,
+              infoTooltip: l10n.licenseSummaryHeroSubtitle,
               child: Column(
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
@@ -295,7 +295,7 @@ class _LicenseSettingsSectionState extends State<LicenseSettingsSection> {
         const SizedBox(height: 16),
         SettingsCard(
           title: l10n.licenseDetailsTitle,
-          subtitle: l10n.licenseDetailsSubtitle,
+          infoTooltip: l10n.licenseDetailsSubtitle,
           child: Column(
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
@@ -326,7 +326,7 @@ class _LicenseSettingsSectionState extends State<LicenseSettingsSection> {
         const SizedBox(height: 16),
         SettingsCard(
           title: l10n.licenseActionTitle,
-          subtitle: l10n.licenseActionSubtitle,
+          infoTooltip: l10n.licenseActionSubtitle,
           child: Column(
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
