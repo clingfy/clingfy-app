@@ -83,7 +83,7 @@ final class CaptureBackendScreenCaptureKit: NSObject, CaptureBackend {
   // When excluded, cursor recording is disabled to avoid misleading zoom effects
   private var isRecorderExcluded: Bool = false
 
-  // Queues for sample outputs (even if you don’t consume frames)
+  // Queues for sample outputs (even if don’t consume frames)
   private let videoQ = DispatchQueue(label: "SCK.VideoSampleBufferQueue")
   private let audioQ = DispatchQueue(label: "SCK.AudioSampleBufferQueue")
   private let micQ = DispatchQueue(label: "SCK.MicSampleBufferQueue")

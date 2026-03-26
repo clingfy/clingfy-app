@@ -61,9 +61,8 @@ class HomeRightPanel extends StatelessWidget {
       child: Container(
         key: const Key('home_right_panel_shell'),
         decoration: BoxDecoration(
-          color: tokens.panelBackground,
+          color: tokens.previewPanelBackground,
           borderRadius: BorderRadius.circular(chrome.panelRadius),
-          border: Border.all(color: tokens.panelBorder),
         ),
         clipBehavior: Clip.antiAlias,
         child: Padding(

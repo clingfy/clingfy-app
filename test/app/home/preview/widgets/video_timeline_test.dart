@@ -179,11 +179,17 @@ void main() {
       tester,
       find.byKey(const Key('timeline_time_chip')),
     );
+    final rulerBand = find.byKey(const Key('timeline_ruler_band'));
 
     expect(shellDecoration.color, theme.appTokens.timelineBackground);
     expect(
       shellDecoration.borderRadius,
       BorderRadius.circular(theme.appEditorChrome.panelRadius),
+    );
+    expect(shellDecoration.border, isNull);
+    expect(
+      tester.getSize(rulerBand).height,
+      theme.appEditorChrome.timelineRulerHeight,
     );
     expect(timeChipDecoration.color, theme.inputDecorationTheme.fillColor);
     expect(
@@ -191,6 +197,21 @@ void main() {
       BorderRadius.circular(theme.appEditorChrome.pillRadius),
     );
     expect(find.byKey(const Key('zoom_track_shell')), findsOneWidget);
+  });
+
+  testWidgets('timeline ruler band uses the taller editor height', (
+    tester,
+  ) async {
+    final editor = await _createEditor(tester);
+    final player = _FakePlayerController(editor: editor);
+    addTearDown(player.dispose);
+
+    await tester.pumpWidget(_buildTimeline(player: player));
+
+    expect(
+      tester.getSize(find.byKey(const Key('timeline_ruler_band'))).height,
+      70,
+    );
   });
 }
 

@@ -41,6 +41,7 @@ class RecordingCameraSection extends StatelessWidget {
       children: [
         AppSection(
           title: l10n.camera,
+          titleSpacing: AppSidebarTokens.dropdownSectionTitleGap,
           trailing: AppIconButton(
             tooltip: l10n.refreshCameras,
             onPressed: (loadingCams || isRecording) ? null : onRefreshCams,

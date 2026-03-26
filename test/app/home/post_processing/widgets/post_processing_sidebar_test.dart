@@ -5,6 +5,7 @@ import 'package:clingfy/core/models/app_models.dart';
 import 'package:clingfy/ui/platform/widgets/app_icon_button.dart';
 import 'package:clingfy/ui/platform/widgets/app_inline_notice.dart';
 import 'package:clingfy/ui/platform/widgets/app_section.dart';
+import 'package:clingfy/ui/platform/widgets/app_sidebar_tokens.dart';
 import 'package:clingfy/ui/platform/widgets/app_slider.dart';
 import 'package:clingfy/ui/platform/widgets/app_slider_row.dart';
 import 'package:clingfy/ui/platform/widgets/app_toggle_row.dart';
@@ -19,6 +20,7 @@ void main() {
   TestWidgetsFlutterBinding.ensureInitialized();
 
   Widget buildTestApp({
+    int selectedIndex = 0,
     bool enabled = true,
     bool cursorAvailable = true,
     bool hasAudio = true,
@@ -40,6 +42,7 @@ void main() {
         data: buildMacosTheme(Brightness.dark),
         child: Scaffold(
           body: PostProcessingSidebar(
+            selectedIndex: selectedIndex,
             isProcessing: false,
             enabled: enabled,
             layoutPreset: LayoutPreset.auto,
@@ -86,22 +89,99 @@ void main() {
     );
   }
 
-  testWidgets('renders rail tabs and switches tab content', (tester) async {
-    await tester.pumpWidget(buildTestApp());
+  testWidgets(
+    'options panel renders selected content without an embedded rail',
+    (tester) async {
+      await tester.pumpWidget(buildTestApp(selectedIndex: 0));
+      await tester.pumpAndSettle();
+
+      expect(find.byKey(const Key('post_sidebar_rail')), findsNothing);
+      expect(find.text('Layout Settings'), findsOneWidget);
+
+      await tester.pumpWidget(buildTestApp(selectedIndex: 1));
+      await tester.pumpAndSettle();
+      expect(find.text('Effects Settings'), findsOneWidget);
+
+      await tester.pumpWidget(buildTestApp(selectedIndex: 2));
+      await tester.pumpAndSettle();
+      expect(find.text('Export Settings'), findsOneWidget);
+    },
+  );
+
+  testWidgets('standalone rail updates the selected tile on tap', (
+    tester,
+  ) async {
+    final theme = buildDarkTheme();
+    var selectedIndex = 0;
+
+    await tester.pumpWidget(
+      MaterialApp(
+        localizationsDelegates: AppLocalizations.localizationsDelegates,
+        supportedLocales: AppLocalizations.supportedLocales,
+        theme: theme,
+        darkTheme: theme,
+        themeMode: ThemeMode.dark,
+        home: Scaffold(
+          body: StatefulBuilder(
+            builder: (context, setState) {
+              return PostProcessingSidebarRail(
+                selectedIndex: selectedIndex,
+                onSelectedIndexChanged: (value) {
+                  setState(() => selectedIndex = value);
+                },
+              );
+            },
+          ),
+        ),
+      ),
+    );
+
+    final selectedButtonBefore = tester.widget<IconButton>(
+      find.byKey(const ValueKey('post_sidebar_rail_tile_0')),
+    );
+    expect(selectedButtonBefore.iconSize, 28);
+    expect(selectedButtonBefore.isSelected, isTrue);
+    expect(
+      selectedButtonBefore.style?.backgroundColor?.resolve({}),
+      Colors.transparent,
+    );
+    expect(
+      selectedButtonBefore.style?.foregroundColor?.resolve({
+        WidgetState.selected,
+      }),
+      theme.colorScheme.onSurface,
+    );
+    expect(find.text('Layout'), findsNothing);
+    expect(find.text('Effects'), findsNothing);
+    expect(find.text('Export'), findsNothing);
+    expect(
+      find.byTooltip(
+        AppLocalizations.of(tester.element(find.byType(Scaffold)))!.effects,
+      ),
+      findsOneWidget,
+    );
+
+    await tester.tap(find.byKey(const ValueKey('post_sidebar_rail_tile_1')));
     await tester.pumpAndSettle();
 
-    expect(find.text('Layout'), findsWidgets);
-    expect(find.text('Effects'), findsWidgets);
-    expect(find.text('Export'), findsWidgets);
-    expect(find.text('Layout Settings'), findsOneWidget);
-
-    await tester.tap(find.text('Effects').first);
-    await tester.pumpAndSettle();
-    expect(find.text('Effects Settings'), findsOneWidget);
-
-    await tester.tap(find.text('Export').first);
-    await tester.pumpAndSettle();
-    expect(find.text('Export Settings'), findsOneWidget);
+    final selectedButtonAfter = tester.widget<IconButton>(
+      find.byKey(const ValueKey('post_sidebar_rail_tile_1')),
+    );
+    expect(selectedButtonAfter.iconSize, 28);
+    expect(selectedButtonAfter.isSelected, isTrue);
+    expect(
+      selectedButtonAfter.style?.foregroundColor?.resolve({
+        WidgetState.selected,
+      }),
+      theme.colorScheme.onSurface,
+    );
+    final semantics = tester.getSemantics(
+      find.byKey(const ValueKey('post_sidebar_rail_tile_1')),
+    );
+    expect(
+      semantics.label,
+      AppLocalizations.of(tester.element(find.byType(Scaffold)))!.effects,
+    );
   });
 
   testWidgets('layout tab uses app section and slider primitives', (
@@ -155,11 +235,13 @@ void main() {
     tester,
   ) async {
     await tester.pumpWidget(
-      buildTestApp(cursorAvailable: false, hasAudio: false, showCursor: true),
+      buildTestApp(
+        selectedIndex: 1,
+        cursorAvailable: false,
+        hasAudio: false,
+        showCursor: true,
+      ),
     );
-    await tester.pumpAndSettle();
-
-    await tester.tap(find.text('Effects').first);
     await tester.pumpAndSettle();
 
     expect(find.byType(AppInlineNotice), findsNWidgets(2));
@@ -167,11 +249,22 @@ void main() {
     expect(find.text('No mic audio track found'), findsOneWidget);
   });
 
-  testWidgets('export tab only shows normalization controls', (tester) async {
-    await tester.pumpWidget(buildTestApp(autoNormalizeOnExport: false));
+  testWidgets('effects tab exposes zoom and cursor helper copy as tooltips', (
+    tester,
+  ) async {
+    await tester.pumpWidget(buildTestApp(selectedIndex: 1));
     await tester.pumpAndSettle();
 
-    await tester.tap(find.text('Export').first);
+    expect(find.byTooltip('Toggle cursor visibility'), findsOneWidget);
+    expect(find.text('Toggle cursor visibility'), findsNothing);
+    expect(find.byTooltip('Manage zoom in effects'), findsOneWidget);
+    expect(find.text('Manage zoom in effects'), findsNothing);
+  });
+
+  testWidgets('export tab only shows normalization controls', (tester) async {
+    await tester.pumpWidget(
+      buildTestApp(selectedIndex: 2, autoNormalizeOnExport: false),
+    );
     await tester.pumpAndSettle();
 
     expect(find.text('Format'), findsNothing);
@@ -180,10 +273,9 @@ void main() {
     expect(find.text('Auto-normalize on export'), findsOneWidget);
     expect(find.text('Target loudness'), findsNothing);
 
-    await tester.pumpWidget(buildTestApp(autoNormalizeOnExport: true));
-    await tester.pumpAndSettle();
-
-    await tester.tap(find.text('Export').first);
+    await tester.pumpWidget(
+      buildTestApp(selectedIndex: 2, autoNormalizeOnExport: true),
+    );
     await tester.pumpAndSettle();
 
     expect(find.text('Format'), findsNothing);
@@ -200,14 +292,12 @@ void main() {
 
     await tester.pumpWidget(
       buildTestApp(
+        selectedIndex: 1,
         zoomFactor: 1.0,
         onZoomFactorChanged: changed.add,
         onZoomFactorChangeEnd: ended.add,
       ),
     );
-    await tester.pumpAndSettle();
-
-    await tester.tap(find.text('Effects').first);
     await tester.pumpAndSettle();
 
     final toggleRows = find.byType(AppToggleRow);
@@ -224,14 +314,12 @@ void main() {
 
     await tester.pumpWidget(
       buildTestApp(
+        selectedIndex: 1,
         zoomFactor: 2.0,
         onZoomFactorChanged: changed.add,
         onZoomFactorChangeEnd: ended.add,
       ),
     );
-    await tester.pumpAndSettle();
-
-    await tester.tap(find.text('Effects').first);
     await tester.pumpAndSettle();
 
     final zoomToggleEnabled = tester.widget<AppToggleRow>(
@@ -260,42 +348,6 @@ void main() {
     expect(blockedIgnorePointer, findsOneWidget);
   });
 
-  testWidgets('dark sidebar uses the shared rail chrome and selected tile', (
-    tester,
-  ) async {
-    final theme = buildDarkTheme();
-
-    await tester.pumpWidget(buildTestApp());
-    await tester.pumpAndSettle();
-
-    final railFinder = find.byKey(const Key('post_sidebar_rail'));
-    final rail = tester.widget<Container>(railFinder);
-    final selectedTileDecoration = _decorationFor(
-      tester,
-      find.byKey(const ValueKey('post_sidebar_rail_tile_0')),
-    );
-
-    expect(
-      tester.getSize(railFinder).width,
-      theme.appEditorChrome.editorRailWidth,
-    );
-    expect(
-      rail.color,
-      Color.alphaBlend(
-        theme.inputDecorationTheme.fillColor!.withValues(alpha: 0.18),
-        theme.colorScheme.surface,
-      ),
-    );
-    expect(
-      selectedTileDecoration.color,
-      theme.colorScheme.primary.withValues(alpha: 0.16),
-    );
-    expect(
-      selectedTileDecoration.borderRadius,
-      BorderRadius.circular(theme.appEditorChrome.controlRadius + 2),
-    );
-  });
-
   testWidgets('background color picker dialog opens without overflow', (
     tester,
   ) async {
@@ -308,9 +360,97 @@ void main() {
     expect(find.byType(ColorPicker), findsOneWidget);
     expect(tester.takeException(), isNull);
   });
-}
 
-BoxDecoration _decorationFor(WidgetTester tester, Finder finder) {
-  final container = tester.widget<Container>(finder);
-  return container.decoration! as BoxDecoration;
+  testWidgets('header leaves consistent breathing room before tab content', (
+    tester,
+  ) async {
+    Future<void> expectGap(int selectedIndex) async {
+      await tester.pumpWidget(buildTestApp(selectedIndex: selectedIndex));
+      await tester.pumpAndSettle();
+
+      final topSpacer = tester.widget<SizedBox>(
+        find.byKey(const Key('post_sidebar_top_spacer')),
+      );
+      expect(topSpacer.height, AppSidebarTokens.headerContentGap);
+    }
+
+    await expectGap(0);
+    await expectGap(1);
+    await expectGap(2);
+  });
+
+  testWidgets('layout tab uses the new group spacing around background', (
+    tester,
+  ) async {
+    await tester.pumpWidget(buildTestApp(selectedIndex: 0));
+    await tester.pumpAndSettle();
+
+    final backgroundGapBeforeDivider = tester.widget<SizedBox>(
+      find.byKey(const Key('post_layout_background_gap_before_divider')),
+    );
+    final backgroundGapAfterDivider = tester.widget<SizedBox>(
+      find.byKey(const Key('post_layout_background_gap_after_divider')),
+    );
+    final controlsGapBeforeDivider = tester.widget<SizedBox>(
+      find.byKey(const Key('post_layout_controls_gap_before_divider')),
+    );
+    final controlsGapAfterDivider = tester.widget<SizedBox>(
+      find.byKey(const Key('post_layout_controls_gap_after_divider')),
+    );
+
+    expect(backgroundGapBeforeDivider.height, AppSidebarTokens.optionsGroupGap);
+    expect(backgroundGapAfterDivider.height, AppSidebarTokens.optionsGroupGap);
+    expect(
+      controlsGapBeforeDivider.height,
+      AppSidebarTokens.optionsSubgroupGap,
+    );
+    expect(controlsGapAfterDivider.height, AppSidebarTokens.optionsSubgroupGap);
+  });
+
+  testWidgets(
+    'effects tab uses the new spacing between cursor, zoom, and audio',
+    (tester) async {
+      await tester.pumpWidget(
+        buildTestApp(selectedIndex: 1, showCursor: true, zoomFactor: 2.0),
+      );
+      await tester.pumpAndSettle();
+
+      final cursorZoomGap = tester.widget<SizedBox>(
+        find.byKey(const Key('post_effects_cursor_zoom_gap')),
+      );
+      final audioGapBeforeDivider = tester.widget<SizedBox>(
+        find.byKey(const Key('post_effects_audio_gap_before_divider')),
+      );
+      final audioGapAfterDivider = tester.widget<SizedBox>(
+        find.byKey(const Key('post_effects_audio_gap_after_divider')),
+      );
+      final cursorSizeGap = tester.widget<SizedBox>(
+        find.byKey(const Key('post_cursor_size_gap')),
+      );
+      final zoomIntensityGap = tester.widget<SizedBox>(
+        find.byKey(const Key('post_zoom_intensity_gap')),
+      );
+
+      expect(cursorZoomGap.height, AppSidebarTokens.optionsGroupGap);
+      expect(audioGapBeforeDivider.height, AppSidebarTokens.optionsSubgroupGap);
+      expect(audioGapAfterDivider.height, AppSidebarTokens.optionsGroupGap);
+      expect(cursorSizeGap.height, AppSidebarTokens.optionsSubgroupGap);
+      expect(zoomIntensityGap.height, AppSidebarTokens.optionsSubgroupGap);
+    },
+  );
+
+  testWidgets('export tab uses the new spacing before normalization controls', (
+    tester,
+  ) async {
+    await tester.pumpWidget(
+      buildTestApp(selectedIndex: 2, autoNormalizeOnExport: true),
+    );
+    await tester.pumpAndSettle();
+
+    final spacer = tester.widget<SizedBox>(
+      find.byKey(const Key('post_export_target_loudness_gap')),
+    );
+
+    expect(spacer.height, AppSidebarTokens.optionsSubgroupGap);
+  });
 }

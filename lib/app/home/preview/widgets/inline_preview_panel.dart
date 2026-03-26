@@ -121,7 +121,7 @@ class _InlinePreviewPanelState extends State<InlinePreviewPanel> {
       key: const Key('inline_preview_frame'),
       clipBehavior: Clip.antiAlias,
       decoration: BoxDecoration(
-        color: theme.colorScheme.surface,
+        color: tokens.previewPanelBackground,
         borderRadius: BorderRadius.circular(chrome.panelRadius),
         border: Border.all(color: tokens.panelBorder),
       ),

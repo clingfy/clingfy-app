@@ -1,4 +1,5 @@
 import 'package:clingfy/ui/theme/app_theme.dart';
+import 'package:clingfy/ui/theme/app_shell_tokens.dart';
 import 'package:fluent_ui/fluent_ui.dart' as fluent;
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
@@ -17,8 +18,11 @@ void main() {
       isNot(darkTheme.appTokens.panelBackground),
     );
     expect(lightTheme.appTokens.shellGradient.colors, isNotEmpty);
-    expect(darkTheme.appTokens.shellGradient.colors, isNotEmpty);
-    expect(darkTheme.scaffoldBackgroundColor, const Color(0xFF0E1318));
+    expect(darkTheme.appTokens.shellGradient.colors, const [
+      Color(0xFF05070B),
+      Color(0xFF05070B),
+    ]);
+    expect(darkTheme.scaffoldBackgroundColor, const Color(0xFF05070B));
     expect(darkTheme.canvasColor, const Color(0xFF0E1318));
     expect(darkTheme.cardColor, const Color(0xFF0E1318));
     expect(darkTheme.colorScheme.surface, const Color(0xFF0E1318));
@@ -26,15 +30,23 @@ void main() {
       darkTheme.colorScheme.surfaceContainerHighest,
       const Color(0xFF0E1318),
     );
+    expect(darkTheme.appTokens.outerBackground, const Color(0xFF05070B));
     expect(darkTheme.appTokens.panelBackground, const Color(0xFF0E1318));
-    expect(darkTheme.appTokens.toolbarOverlay, const Color(0xFF0E1318));
-    expect(darkTheme.appTokens.timelineBackground, const Color(0xFF0E1318));
+    expect(darkTheme.appTokens.editorChromeBackground, const Color(0xFF15161A));
+    expect(darkTheme.appTokens.previewPanelBackground, const Color(0xFF151718));
+    expect(darkTheme.appTokens.timelineBackground, const Color(0xFF111113));
     expect(darkTheme.inputDecorationTheme.fillColor, const Color(0xFF2A2D35));
     expect(
       darkTheme.dropdownMenuTheme.inputDecorationTheme?.fillColor,
       const Color(0xFF2A2D35),
     );
     expect(darkTheme.sliderTheme.inactiveTrackColor, const Color(0xFF2A2D35));
+    expect(darkTheme.sliderTheme.thumbColor, Colors.white);
+    expect(
+      (darkTheme.sliderTheme.thumbShape as RoundSliderThumbShape)
+          .enabledThumbRadius,
+      5,
+    );
   });
 
   test('semantic spacing and typography tokens are available and stable', () {
@@ -75,17 +87,21 @@ void main() {
     final darkTheme = buildDarkTheme();
     final chrome = darkTheme.appEditorChrome;
 
-    expect(chrome.shellRadius, 14);
-    expect(chrome.panelRadius, 12);
-    expect(chrome.controlRadius, 8);
+    expect(kEditorShellOuterPadding, 2);
+    expect(kEditorShellInnerPadding, 6);
+    expect(kEditorShellGap, 6);
+    expect(chrome.shellRadius, 11);
+    expect(chrome.panelRadius, 9);
+    expect(chrome.controlRadius, 6);
     expect(chrome.pillRadius, 999);
-    expect(chrome.toolbarHeight, 46);
-    expect(chrome.editorRailWidth, 58);
-    expect(chrome.stagePadding, 14);
+    expect(chrome.toolbarHeight, 50);
+    expect(chrome.editorRailWidth, 60);
+    expect(chrome.stagePadding, 8);
     expect(chrome.compactControlHeight, 32);
     expect(chrome.inspectorTabHeight, 34);
-    expect(chrome.timelineHorizontalPadding, 22);
-    expect(chrome.timelineVerticalPadding, 16);
+    expect(chrome.timelineRulerHeight, 70);
+    expect(chrome.timelineHorizontalPadding, 12);
+    expect(chrome.timelineVerticalPadding, 10);
   });
 
   test('platform themes derive from the same semantic palette', () {
@@ -116,13 +132,13 @@ void main() {
     expect(fluentTheme.accentColor.normal, clingfyBrandColor);
     expect(
       fluentTheme.scaffoldBackgroundColor,
-      lightTheme.appTokens.panelBackground,
+      lightTheme.scaffoldBackgroundColor,
     );
     expect(
       fluentTheme.selectionColor,
       fluentTheme.accentColor.defaultBrushFor(Brightness.light),
     );
-    expect(fluentDarkTheme.scaffoldBackgroundColor, const Color(0xFF0E1318));
+    expect(fluentDarkTheme.scaffoldBackgroundColor, const Color(0xFF05070B));
     expect(fluentDarkTheme.cardColor, const Color(0xFF0E1318));
     expect(fluentDarkTheme.menuColor, const Color(0xFF0E1318));
     expect(fluentDarkTheme.inactiveBackgroundColor, const Color(0xFF2A2D35));

@@ -20,7 +20,7 @@ class RecordingCaptureSettingsSection extends StatelessWidget {
 
     return AppToggleRow(
       title: l10n.excludeRecorderAppFromCapture,
-      subtitle: l10n.excludeRecorderAppFromCaptureDescription,
+      // subtitle: l10n.excludeRecorderAppFromCaptureDescription,
       value: excludeRecorderAppFromCapture,
       onChanged: isRecording ? null : onExcludeRecorderAppFromCaptureChanged,
     );

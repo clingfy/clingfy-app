@@ -6,17 +6,21 @@ import 'package:clingfy/ui/theme/app_theme.dart';
 /// These values intentionally keep spacing and typography compact so complex
 /// settings panels feel native and readable on desktop.
 abstract final class AppSidebarTokens {
-  static const double sectionGap = 20;
-  static const double rowGap = 10;
-  static const double compactGap = 6;
+  static const double sectionGap = 12;
+  static const double rowGap = 8;
+  static const double compactGap = 4;
   static const double compactRowGap = 4;
   static const double controlGap = 10;
-  static const double contentHorizontalPadding = 18;
-  static const double headerTopPadding = 18;
+  static const double dropdownSectionTitleGap = 12;
+  static const double optionsGroupGap = 16;
+  static const double optionsSubgroupGap = 12;
+  static const double contentHorizontalPadding = 12;
+  static const double headerTopPadding = 12;
   static const double headerBottomPadding = 10;
+  static const double headerContentGap = 12;
   static const double railWidth = 58;
-  static const double railItemGap = 14;
-  static const double railItemVerticalPadding = 10;
+  static const double railItemGap = 12;
+  static const double railItemVerticalPadding = 6;
 
   static const double labelWidth = 164;
   static const double stackBreakpoint = 520;
@@ -54,9 +58,9 @@ abstract final class AppSidebarTokens {
   static TextStyle railLabelStyle(ThemeData theme, {required bool selected}) {
     return theme.appTypography.caption.copyWith(
       color: selected
-          ? theme.colorScheme.primary
-          : theme.colorScheme.onSurfaceVariant,
-      fontWeight: FontWeight.w600,
+          ? theme.colorScheme.onSurface
+          : theme.colorScheme.onSurfaceVariant.withValues(alpha: 0.78),
+      fontWeight: selected ? FontWeight.w700 : FontWeight.w600,
       height: 1.2,
     );
   }

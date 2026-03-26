@@ -1,6 +1,6 @@
 import 'package:clingfy/ui/platform/widgets/app_form_row.dart';
+import 'package:clingfy/ui/platform/widgets/app_sidebar_rail_button.dart';
 import 'package:clingfy/ui/platform/widgets/app_sidebar_tokens.dart';
-import 'package:clingfy/ui/theme/app_theme.dart';
 import 'package:flutter/material.dart' hide PlatformMenuItem;
 import 'package:clingfy/core/models/app_models.dart';
 import 'package:clingfy/core/overlay/overlay_mode.dart';
@@ -13,8 +13,87 @@ import 'package:clingfy/app/home/recording/widgets/recording_source_section.dart
 import 'package:clingfy/app/home/recording/widgets/overlay_segmented.dart';
 import 'package:clingfy/l10n/app_localizations.dart';
 
-class RecordingOptionsSidebar extends StatefulWidget {
+class RecordingSidebarRail extends StatelessWidget {
+  const RecordingSidebarRail({
+    super.key,
+    required this.selectedIndex,
+    required this.onSelectedIndexChanged,
+  });
+
+  final int selectedIndex;
+  final ValueChanged<int> onSelectedIndexChanged;
+
+  @override
+  Widget build(BuildContext context) {
+    return Column(
+      children: [
+        const SizedBox(height: AppSidebarTokens.sectionGap),
+        _RecordingRailItem(
+          icon: Icons.monitor,
+          label: AppLocalizations.of(context)!.tabScreenAudio,
+          index: 0,
+          isSelected: selectedIndex == 0,
+          onTap: onSelectedIndexChanged,
+        ),
+        const SizedBox(height: AppSidebarTokens.sectionGap),
+        _RecordingRailItem(
+          icon: Icons.face,
+          label: AppLocalizations.of(context)!.tabFaceCam,
+          index: 1,
+          isSelected: selectedIndex == 1,
+          onTap: onSelectedIndexChanged,
+        ),
+        const SizedBox(height: AppSidebarTokens.sectionGap),
+        _RecordingRailItem(
+          icon: Icons.tune,
+          label: AppLocalizations.of(context)!.output,
+          index: 2,
+          isSelected: selectedIndex == 2,
+          onTap: onSelectedIndexChanged,
+        ),
+      ],
+    );
+  }
+}
+
+class _RecordingRailItem extends StatelessWidget {
+  const _RecordingRailItem({
+    required this.icon,
+    required this.label,
+    required this.index,
+    required this.isSelected,
+    required this.onTap,
+  });
+
+  final IconData icon;
+  final String label;
+  final int index;
+  final bool isSelected;
+  final ValueChanged<int> onTap;
+
+  @override
+  Widget build(BuildContext context) {
+    return Padding(
+      padding: const EdgeInsets.symmetric(
+        vertical: AppSidebarTokens.railItemVerticalPadding,
+      ),
+      child: AppSidebarRailButton(
+        buttonKey: ValueKey('recording_sidebar_rail_tile_$index'),
+        icon: icon,
+        tooltip: label,
+        semanticsLabel: label,
+        selected: isSelected,
+        onTap: () => onTap(index),
+        iconSize: 28,
+        buttonSize: 40,
+      ),
+    );
+  }
+}
+
+class RecordingOptionsSidebar extends StatelessWidget {
   final bool isRecording;
+  final int selectedIndex;
 
   // Record Tab
   final DisplayTargetMode targetMode;
@@ -119,6 +198,7 @@ class RecordingOptionsSidebar extends StatefulWidget {
   const RecordingOptionsSidebar({
     super.key,
     required this.isRecording,
+    required this.selectedIndex,
     // Record Tab
     required this.targetMode,
     required this.displays,
@@ -213,37 +293,9 @@ class RecordingOptionsSidebar extends StatefulWidget {
   });
 
   @override
-  State<RecordingOptionsSidebar> createState() =>
-      _RecordingOptionsSidebarState();
-}
-
-class _RecordingOptionsSidebarState extends State<RecordingOptionsSidebar> {
-  int _selectedIndex = 0; // 0: Screen & Audio, 1: Face Cam, 2: Output
-
-  @override
-  void initState() {
-    super.initState();
-  }
-
-  @override
-  void didUpdateWidget(covariant RecordingOptionsSidebar oldWidget) {
-    super.didUpdateWidget(oldWidget);
-
-    if (oldWidget.autoStopAfter != widget.autoStopAfter) {}
-  }
-
-  @override
-  void dispose() {
-    super.dispose();
-  }
-
-  @override
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
-    final chrome = theme.appEditorChrome;
     final colorScheme = theme.colorScheme;
-    final controlFill =
-        theme.inputDecorationTheme.fillColor ?? colorScheme.surface;
     final headerStyle = (theme.textTheme.titleMedium ?? const TextStyle())
         .copyWith(
           color: colorScheme.onSurface,
@@ -251,97 +303,42 @@ class _RecordingOptionsSidebarState extends State<RecordingOptionsSidebar> {
           fontSize: 16,
         );
 
-    final railColor = Color.alphaBlend(
-      controlFill.withValues(alpha: 0.18),
-      colorScheme.surface,
-    );
-    final accentColor = theme.primaryColor;
-
-    return Row(
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.stretch,
       children: [
-        // Level 1: Navigation Rail
         Container(
-          key: const Key('recording_sidebar_rail'),
-          width: chrome.editorRailWidth,
-          color: railColor,
-          child: Column(
-            children: [
-              const SizedBox(height: AppSidebarTokens.sectionGap),
-              _buildRailItem(
-                icon: Icons.monitor,
-                label: AppLocalizations.of(context)!.tabScreenAudio,
-                index: 0,
-                isSelected: _selectedIndex == 0,
-                accentColor: accentColor,
-              ),
-              const SizedBox(height: AppSidebarTokens.sectionGap),
-              _buildRailItem(
-                icon: Icons.face,
-                label: AppLocalizations.of(context)!.tabFaceCam,
-                index: 1,
-                isSelected: _selectedIndex == 1,
-                accentColor: accentColor,
-              ),
-              const SizedBox(height: AppSidebarTokens.sectionGap),
-              _buildRailItem(
-                icon: Icons.tune,
-                label: AppLocalizations.of(context)!.output,
-                index: 2,
-                isSelected: _selectedIndex == 2,
-                accentColor: accentColor,
-              ),
-            ],
+          key: const Key('recording_sidebar_header'),
+          padding: const EdgeInsets.fromLTRB(
+            AppSidebarTokens.contentHorizontalPadding,
+            AppSidebarTokens.headerTopPadding,
+            AppSidebarTokens.contentHorizontalPadding,
+            AppSidebarTokens.headerBottomPadding,
           ),
-        ),
-
-        VerticalDivider(
-          width: 1,
-          thickness: 1,
-          indent: AppSidebarTokens.headerTopPadding,
-          endIndent: AppSidebarTokens.headerTopPadding,
-          color: theme.dividerColor.withValues(alpha: 0.14),
-        ),
-        // Level 2: Content Area
-        Expanded(
-          child: Column(
-            crossAxisAlignment: CrossAxisAlignment.stretch,
-            children: [
-              // Header
-              Container(
-                key: const Key('recording_sidebar_header'),
-                padding: const EdgeInsets.fromLTRB(
-                  AppSidebarTokens.contentHorizontalPadding,
-                  AppSidebarTokens.sectionGap,
-                  AppSidebarTokens.contentHorizontalPadding,
-                  AppSidebarTokens.rowGap,
-                ),
-                decoration: BoxDecoration(
-                  border: Border(
-                    bottom: BorderSide(
-                      color: theme.dividerColor.withValues(alpha: 0.08),
-                    ),
-                  ),
-                ),
-                child: Text(_getHeaderTitle(), style: headerStyle),
+          decoration: BoxDecoration(
+            border: Border(
+              bottom: BorderSide(
+                color: theme.dividerColor.withValues(alpha: 0.08),
               ),
-
-              Expanded(
-                child: ListView(
-                  padding: const EdgeInsets.symmetric(
-                    horizontal: AppSidebarTokens.contentHorizontalPadding,
-                  ),
-                  children: [
-                    const SizedBox(height: AppSidebarTokens.rowGap),
-                    if (_selectedIndex == 0) ..._buildScreenTab(context),
-                    if (_selectedIndex == 1) ..._buildCameraTab(context),
-                    if (_selectedIndex == 2) ..._buildOutputTab(context),
-                    const SizedBox(
-                      height:
-                          AppSidebarTokens.sectionGap +
-                          AppSidebarTokens.compactGap,
-                    ),
-                  ],
-                ),
+            ),
+          ),
+          child: Text(_getHeaderTitle(context), style: headerStyle),
+        ),
+        Expanded(
+          child: ListView(
+            padding: const EdgeInsets.symmetric(
+              horizontal: AppSidebarTokens.contentHorizontalPadding,
+            ),
+            children: [
+              const SizedBox(
+                key: Key('recording_sidebar_top_spacer'),
+                height: AppSidebarTokens.headerContentGap,
+              ),
+              if (selectedIndex == 0) ..._buildScreenTab(context),
+              if (selectedIndex == 1) ..._buildCameraTab(context),
+              if (selectedIndex == 2) ..._buildOutputTab(context),
+              const SizedBox(
+                key: Key('recording_sidebar_bottom_spacer'),
+                height: AppSidebarTokens.rowGap,
               ),
             ],
           ),
@@ -350,9 +347,9 @@ class _RecordingOptionsSidebarState extends State<RecordingOptionsSidebar> {
     );
   }
 
-  String _getHeaderTitle() {
+  String _getHeaderTitle(BuildContext context) {
     final l10n = AppLocalizations.of(context)!;
-    switch (_selectedIndex) {
+    switch (selectedIndex) {
       case 0:
         return l10n.tabScreenAudio;
       case 1:
@@ -364,149 +361,67 @@ class _RecordingOptionsSidebarState extends State<RecordingOptionsSidebar> {
     }
   }
 
-  Widget _buildRailItem({
-    required IconData icon,
-    required String label,
-    required int index,
-    required bool isSelected,
-    required Color accentColor,
-  }) {
-    final theme = Theme.of(context);
-    final chrome = theme.appEditorChrome;
-    final controlFill =
-        theme.inputDecorationTheme.fillColor ?? theme.colorScheme.surface;
-    final inactiveColor = theme.colorScheme.onSurfaceVariant;
-    final labelStyle = (theme.textTheme.labelSmall ?? const TextStyle())
-        .copyWith(
-          color: isSelected ? accentColor : inactiveColor,
-          fontWeight: FontWeight.w600,
-          fontSize: 10,
-          height: 1.2,
-        );
-
-    return MouseRegion(
-      cursor: SystemMouseCursors.click,
-      child: GestureDetector(
-        onTap: () => setState(() => _selectedIndex = index),
-        child: Padding(
-          padding: const EdgeInsets.symmetric(
-            vertical: AppSidebarTokens.railItemVerticalPadding,
-          ),
-          child: Column(
-            children: [
-              Container(
-                key: ValueKey('recording_sidebar_rail_tile_$index'),
-                width: chrome.inspectorTabHeight + 8,
-                height: chrome.inspectorTabHeight + 8,
-                alignment: Alignment.center,
-                decoration: BoxDecoration(
-                  color: isSelected
-                      ? accentColor.withValues(alpha: 0.16)
-                      : controlFill.withValues(alpha: 0.28),
-                  borderRadius: BorderRadius.circular(chrome.controlRadius + 2),
-                  border: Border.all(
-                    color: isSelected
-                        ? accentColor.withValues(alpha: 0.3)
-                        : theme.dividerColor.withValues(alpha: 0.08),
-                  ),
-                  boxShadow: isSelected
-                      ? [
-                          BoxShadow(
-                            color: accentColor.withValues(alpha: 0.14),
-                            blurRadius: 8,
-                            offset: const Offset(0, 2),
-                          ),
-                        ]
-                      : null,
-                ),
-                child: Icon(
-                  icon,
-                  color: isSelected ? accentColor : inactiveColor,
-                  size: 20,
-                ),
-              ),
-              const SizedBox(height: AppSidebarTokens.compactGap / 2),
-              Text(label, style: labelStyle, textAlign: TextAlign.center),
-            ],
-          ),
-        ),
-      ),
-    );
-  }
-
   List<Widget> _buildScreenTab(BuildContext context) {
     final theme = Theme.of(context);
     final l10n = AppLocalizations.of(context)!;
-    final helperStyle = AppSidebarTokens.helperStyle(theme);
 
     return [
       RecordingSourceSection(
-        isRecording: widget.isRecording,
-        targetMode: widget.targetMode,
-        displays: widget.displays,
-        selectedDisplayId: widget.selectedDisplayId,
-        appWindows: widget.appWindows,
-        selectedAppWindowId: widget.selectedAppWindowId,
-        areaDisplayId: widget.areaDisplayId,
-        areaRect: widget.areaRect,
-        onTargetModeChanged: widget.onTargetModeChanged,
-        onDisplayChanged: widget.onDisplayChanged,
-        onRefreshDisplays: widget.onRefreshDisplays,
-        onAppWindowChanged: widget.onAppWindowChanged,
-        onRefreshAppWindows: widget.onRefreshAppWindows,
-        onPickArea: widget.onPickArea,
-        onRevealArea: widget.onRevealArea,
-        onClearArea: widget.onClearArea,
+        isRecording: isRecording,
+        targetMode: targetMode,
+        displays: displays,
+        selectedDisplayId: selectedDisplayId,
+        appWindows: appWindows,
+        selectedAppWindowId: selectedAppWindowId,
+        areaDisplayId: areaDisplayId,
+        areaRect: areaRect,
+        onTargetModeChanged: onTargetModeChanged,
+        onDisplayChanged: onDisplayChanged,
+        onRefreshDisplays: onRefreshDisplays,
+        onAppWindowChanged: onAppWindowChanged,
+        onRefreshAppWindows: onRefreshAppWindows,
+        onPickArea: onPickArea,
+        onRevealArea: onRevealArea,
+        onClearArea: onClearArea,
       ),
-      const SizedBox(height: AppSidebarTokens.sectionGap),
+      const SizedBox(height: AppSidebarTokens.rowGap),
       Divider(color: theme.dividerColor.withValues(alpha: 0.1)),
-      const SizedBox(height: AppSidebarTokens.compactGap),
+      const SizedBox(height: AppSidebarTokens.rowGap),
       RecordingAudioSection(
-        isRecording: widget.isRecording,
-        audioSources: widget.audioSources,
-        selectedAudioSourceId: widget.selectedAudioSourceId,
-        loadingAudio: widget.loadingAudio,
-        systemAudioEnabled: widget.systemAudioEnabled,
-        excludeMicFromSystemAudio: widget.excludeMicFromSystemAudio,
-        micInputLevelLinear: widget.micInputLevelLinear,
-        micInputLevelDbfs: widget.micInputLevelDbfs,
-        micInputTooLow: widget.micInputTooLow,
-        onAudioSourceChanged: widget.onAudioSourceChanged,
-        onRefreshAudio: widget.onRefreshAudio,
-        onSystemAudioEnabledChanged: widget.onSystemAudioEnabledChanged,
-        onExcludeMicFromSystemAudioChanged:
-            widget.onExcludeMicFromSystemAudioChanged,
+        isRecording: isRecording,
+        audioSources: audioSources,
+        selectedAudioSourceId: selectedAudioSourceId,
+        loadingAudio: loadingAudio,
+        systemAudioEnabled: systemAudioEnabled,
+        excludeMicFromSystemAudio: excludeMicFromSystemAudio,
+        micInputLevelLinear: micInputLevelLinear,
+        micInputLevelDbfs: micInputLevelDbfs,
+        micInputTooLow: micInputTooLow,
+        onAudioSourceChanged: onAudioSourceChanged,
+        onRefreshAudio: onRefreshAudio,
+        onSystemAudioEnabledChanged: onSystemAudioEnabledChanged,
+        onExcludeMicFromSystemAudioChanged: onExcludeMicFromSystemAudioChanged,
       ),
-      const SizedBox(height: AppSidebarTokens.sectionGap),
+      const SizedBox(height: AppSidebarTokens.rowGap),
       Divider(color: theme.dividerColor.withValues(alpha: 0.1)),
-      const SizedBox(height: AppSidebarTokens.sectionGap),
+      const SizedBox(height: AppSidebarTokens.rowGap),
       Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
           AppFormRow(
             label: l10n.cursorHighlightVisibility,
+            infoTooltip:
+                cursorEnabled && cursorLinkedToRecording && !isRecording
+                ? l10n.cursorHint
+                : null,
             control: _buildSegmentedControl(
-              mode: widget.cursorEnabled
-                  ? (widget.cursorLinkedToRecording
+              mode: cursorEnabled
+                  ? (cursorLinkedToRecording
                         ? OverlayMode.whileRecording
                         : OverlayMode.alwaysOn)
                   : OverlayMode.off,
-              onChanged: widget.onCursorModeChanged,
+              onChanged: onCursorModeChanged,
             ),
-          ),
-          const SizedBox(height: AppSidebarTokens.compactGap),
-          AnimatedSwitcher(
-            duration: const Duration(milliseconds: 200),
-            child:
-                (widget.cursorEnabled &&
-                    widget.cursorLinkedToRecording &&
-                    !widget.isRecording)
-                ? Text(
-                    l10n.cursorHint,
-                    key: const ValueKey('cursorHint'),
-                    style: helperStyle,
-                  )
-                : const SizedBox.shrink(key: ValueKey('noCursorHint')),
           ),
         ],
       ),
@@ -516,54 +431,57 @@ class _RecordingOptionsSidebarState extends State<RecordingOptionsSidebar> {
   List<Widget> _buildCameraTab(BuildContext context) {
     return [
       RecordingCameraSection(
-        isRecording: widget.isRecording,
-        cams: widget.cams,
-        selectedCamId: widget.selectedCamId,
-        loadingCams: widget.loadingCams,
-        onRefreshCams: widget.onRefreshCams,
-        onCamSourceChanged: widget.onCamSourceChanged,
+        isRecording: isRecording,
+        cams: cams,
+        selectedCamId: selectedCamId,
+        loadingCams: loadingCams,
+        onRefreshCams: onRefreshCams,
+        onCamSourceChanged: onCamSourceChanged,
       ),
-      if (widget.selectedCamId != null)
-        RecordingOverlaySection(
-          isRecording: widget.isRecording,
-          overlayMode: widget.overlayMode,
-          overlayShape: widget.overlayShape,
-          overlaySize: widget.overlaySize,
-          overlayShadow: widget.overlayShadow,
-          overlayBorder: widget.overlayBorder,
-          overlayPosition: widget.overlayPosition,
-          overlayUseCustomPosition: widget.overlayUseCustomPosition,
-          overlayRoundness: widget.overlayRoundness,
-          overlayOpacity: widget.overlayOpacity,
-          overlayMirror: widget.overlayMirror,
-          overlayRecordingHighlightEnabled:
-              widget.overlayRecordingHighlightEnabled,
-          overlayRecordingHighlightStrength:
-              widget.overlayRecordingHighlightStrength,
-          overlayBorderWidth: widget.overlayBorderWidth,
-          overlayBorderColor: widget.overlayBorderColor,
-          chromaKeyEnabled: widget.chromaKeyEnabled,
-          chromaKeyStrength: widget.chromaKeyStrength,
-          chromaKeyColor: widget.chromaKeyColor,
-          onOverlayModeChanged: widget.onOverlayModeChanged,
-          onOverlayShapeChanged: widget.onOverlayShapeChanged,
-          onOverlaySizeChanged: widget.onOverlaySizeChanged,
-          onOverlayShadowChanged: widget.onOverlayShadowChanged,
-          onOverlayBorderChanged: widget.onOverlayBorderChanged,
-          onOverlayPositionChanged: widget.onOverlayPositionChanged,
-          onOverlayRoundnessChanged: widget.onOverlayRoundnessChanged,
-          onOverlayOpacityChanged: widget.onOverlayOpacityChanged,
-          onOverlayMirrorChanged: widget.onOverlayMirrorChanged,
-          onOverlayRecordingHighlightEnabledChanged:
-              widget.onOverlayRecordingHighlightEnabledChanged,
-          onOverlayRecordingHighlightStrengthChanged:
-              widget.onOverlayRecordingHighlightStrengthChanged,
-          onOverlayBorderWidthChanged: widget.onOverlayBorderWidthChanged,
-          onOverlayBorderColorChanged: widget.onOverlayBorderColorChanged,
-          onChromaKeyEnabledChanged: widget.onChromaKeyEnabledChanged,
-          onChromaKeyStrengthChanged: widget.onChromaKeyStrengthChanged,
-          onChromaKeyColorChanged: widget.onChromaKeyColorChanged,
+      if (selectedCamId != null) ...[
+        const SizedBox(
+          key: Key('recording_camera_overlay_gap'),
+          height: AppSidebarTokens.rowGap,
         ),
+        RecordingOverlaySection(
+          isRecording: isRecording,
+          overlayMode: overlayMode,
+          overlayShape: overlayShape,
+          overlaySize: overlaySize,
+          overlayShadow: overlayShadow,
+          overlayBorder: overlayBorder,
+          overlayPosition: overlayPosition,
+          overlayUseCustomPosition: overlayUseCustomPosition,
+          overlayRoundness: overlayRoundness,
+          overlayOpacity: overlayOpacity,
+          overlayMirror: overlayMirror,
+          overlayRecordingHighlightEnabled: overlayRecordingHighlightEnabled,
+          overlayRecordingHighlightStrength: overlayRecordingHighlightStrength,
+          overlayBorderWidth: overlayBorderWidth,
+          overlayBorderColor: overlayBorderColor,
+          chromaKeyEnabled: chromaKeyEnabled,
+          chromaKeyStrength: chromaKeyStrength,
+          chromaKeyColor: chromaKeyColor,
+          onOverlayModeChanged: onOverlayModeChanged,
+          onOverlayShapeChanged: onOverlayShapeChanged,
+          onOverlaySizeChanged: onOverlaySizeChanged,
+          onOverlayShadowChanged: onOverlayShadowChanged,
+          onOverlayBorderChanged: onOverlayBorderChanged,
+          onOverlayPositionChanged: onOverlayPositionChanged,
+          onOverlayRoundnessChanged: onOverlayRoundnessChanged,
+          onOverlayOpacityChanged: onOverlayOpacityChanged,
+          onOverlayMirrorChanged: onOverlayMirrorChanged,
+          onOverlayRecordingHighlightEnabledChanged:
+              onOverlayRecordingHighlightEnabledChanged,
+          onOverlayRecordingHighlightStrengthChanged:
+              onOverlayRecordingHighlightStrengthChanged,
+          onOverlayBorderWidthChanged: onOverlayBorderWidthChanged,
+          onOverlayBorderColorChanged: onOverlayBorderColorChanged,
+          onChromaKeyEnabledChanged: onChromaKeyEnabledChanged,
+          onChromaKeyStrengthChanged: onChromaKeyStrengthChanged,
+          onChromaKeyColorChanged: onChromaKeyColorChanged,
+        ),
+      ],
     ];
   }
 
@@ -572,27 +490,33 @@ class _RecordingOptionsSidebarState extends State<RecordingOptionsSidebar> {
 
     return [
       RecordingOutputSection(
-        isRecording: widget.isRecording,
-        captureFrameRate: widget.captureFrameRate,
-        autoStopEnabled: widget.autoStopEnabled,
-        autoStopAfter: widget.autoStopAfter,
-        countdownEnabled: widget.countdownEnabled,
-        countdownDuration: widget.countdownDuration,
-        onFrameRateChanged: widget.onFrameRateChanged,
-        onAutoStopEnabledChanged: widget.onAutoStopEnabledChanged,
-        onAutoStopAfterChanged: widget.onAutoStopAfterChanged,
-        onCountdownEnabledChanged: widget.onCountdownEnabledChanged,
-        onCountdownDurationChanged: widget.onCountdownDurationChanged,
+        isRecording: isRecording,
+        captureFrameRate: captureFrameRate,
+        autoStopEnabled: autoStopEnabled,
+        autoStopAfter: autoStopAfter,
+        countdownEnabled: countdownEnabled,
+        countdownDuration: countdownDuration,
+        onFrameRateChanged: onFrameRateChanged,
+        onAutoStopEnabledChanged: onAutoStopEnabledChanged,
+        onAutoStopAfterChanged: onAutoStopAfterChanged,
+        onCountdownEnabledChanged: onCountdownEnabledChanged,
+        onCountdownDurationChanged: onCountdownDurationChanged,
       ),
-      if (widget.targetMode != DisplayTargetMode.singleAppWindow) ...[
-        const SizedBox(height: AppSidebarTokens.sectionGap),
+      if (targetMode != DisplayTargetMode.singleAppWindow) ...[
+        const SizedBox(
+          key: Key('recording_output_capture_settings_gap_before_divider'),
+          height: AppSidebarTokens.rowGap,
+        ),
         Divider(color: theme.dividerColor.withValues(alpha: 0.1)),
-        const SizedBox(height: AppSidebarTokens.sectionGap),
+        const SizedBox(
+          key: Key('recording_output_capture_settings_gap_after_divider'),
+          height: AppSidebarTokens.rowGap,
+        ),
         RecordingCaptureSettingsSection(
-          isRecording: widget.isRecording,
-          excludeRecorderAppFromCapture: widget.excludeRecorderAppFromCapture,
+          isRecording: isRecording,
+          excludeRecorderAppFromCapture: excludeRecorderAppFromCapture,
           onExcludeRecorderAppFromCaptureChanged:
-              widget.onExcludeRecorderAppFromCaptureChanged,
+              onExcludeRecorderAppFromCaptureChanged,
         ),
       ],
     ];

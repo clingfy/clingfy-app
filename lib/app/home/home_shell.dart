@@ -8,8 +8,10 @@ import 'package:clingfy/app/home/home_ui_state.dart';
 import 'package:clingfy/app/home/widgets/countdown_overlay.dart';
 import 'package:clingfy/app/home/widgets/export_progress_dock.dart';
 import 'package:clingfy/app/home/widgets/home_left_sidebar.dart';
+import 'package:clingfy/app/home/widgets/home_options_panel.dart';
 import 'package:clingfy/app/home/widgets/home_right_panel.dart';
 import 'package:clingfy/app/home/widgets/home_toolbar.dart';
+import 'package:clingfy/app/home/widgets/reset_preferences_action.dart';
 import 'package:clingfy/app/settings/settings_controller.dart';
 import 'package:clingfy/app/home/preview/widgets/video_timeline.dart';
 import 'package:flutter/material.dart';
@@ -34,8 +36,6 @@ class HomeShell extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
-    final backgroundGradient = context.appTokens.shellGradient;
-    final spacing = context.appSpacing;
     final chrome = context.appEditorChrome;
     final tokens = theme.appTokens;
     final isRecording = context.select<RecordingController, bool>(
@@ -49,70 +49,94 @@ class HomeShell extends StatelessWidget {
     );
 
     return DecoratedBox(
-      decoration: BoxDecoration(gradient: backgroundGradient),
+      decoration: BoxDecoration(color: tokens.outerBackground),
       child: Scaffold(
         backgroundColor: Colors.transparent,
         body: SafeArea(
           child: Stack(
             children: [
               Padding(
-                padding: EdgeInsets.all(spacing.page),
+                padding: const EdgeInsets.all(kEditorShellOuterPadding),
                 child: Container(
                   key: const Key('editor_shell_frame'),
                   decoration: BoxDecoration(
-                    color: tokens.panelBackground.withValues(alpha: 0.96),
+                    color: tokens.outerBackground,
                     borderRadius: BorderRadius.circular(chrome.shellRadius),
-                    border: Border.all(color: tokens.panelBorder),
                   ),
                   child: Padding(
-                    padding: EdgeInsets.all(spacing.lg),
-                    child: Column(
+                    padding: const EdgeInsets.all(kEditorShellInnerPadding),
+                    child: Row(
+                      crossAxisAlignment: CrossAxisAlignment.stretch,
                       children: [
-                        HomeToolbar(
-                          title: title,
-                          isRecording: isRecording,
+                        HomeLeftSidebar(
                           uiState: uiState,
-                          onExport: () {
-                            unawaited(actions.exportFromUi(context));
-                          },
                           onOpenSettings: () {
                             unawaited(actions.openSettings(context));
                           },
-                          onOpenSystemSettings: actions.openSystemSettings,
-                          onClearMessage: actions.clearToolbarErrors,
+                          onOpenHelp: () {
+                            unawaited(actions.openAbout(context));
+                          },
+                          onResetPreferences: () {
+                            unawaited(confirmResetPreferences(context));
+                          },
                         ),
-                        SizedBox(height: spacing.lg),
+                        const SizedBox(width: kEditorShellGap),
                         Expanded(
-                          child: Row(
-                            crossAxisAlignment: CrossAxisAlignment.stretch,
+                          child: Column(
+                            key: const Key('home_workspace_column'),
                             children: [
-                              HomeLeftSidebar(
+                              HomeToolbar(
+                                title: title,
                                 isRecording: isRecording,
                                 uiState: uiState,
-                                actions: actions,
-                                settingsController: settingsController,
-                              ),
-                              SizedBox(width: spacing.md),
-                              HomeRightPanel(
-                                isRecording: isRecording,
-                                isBusy: isBusy,
-                                onToggleRecording: () async {
-                                  unawaited(actions.toggleRecording(context));
+                                onExport: () {
+                                  unawaited(actions.exportFromUi(context));
                                 },
-                                onClosePreview: () {
-                                  unawaited(actions.closePreview(context));
-                                },
+                                onOpenSystemSettings:
+                                    actions.openSystemSettings,
+                                onClearMessage: actions.clearToolbarErrors,
                               ),
+                              const SizedBox(height: kEditorShellGap),
+                              Expanded(
+                                child: Row(
+                                  crossAxisAlignment:
+                                      CrossAxisAlignment.stretch,
+                                  children: [
+                                    HomeOptionsPanel(
+                                      isRecording: isRecording,
+                                      uiState: uiState,
+                                      actions: actions,
+                                      settingsController: settingsController,
+                                    ),
+                                    const SizedBox(width: kEditorShellGap),
+                                    HomeRightPanel(
+                                      isRecording: isRecording,
+                                      isBusy: isBusy,
+                                      onToggleRecording: () async {
+                                        unawaited(
+                                          actions.toggleRecording(context),
+                                        );
+                                      },
+                                      onClosePreview: () {
+                                        unawaited(
+                                          actions.closePreview(context),
+                                        );
+                                      },
+                                    ),
+                                  ],
+                                ),
+                              ),
+                              if (showTimelineBar) ...[
+                                const SizedBox(height: kEditorShellGap),
+                                TimelineBar(
+                                  onClose: () {
+                                    unawaited(actions.closePreview(context));
+                                  },
+                                ),
+                              ],
                             ],
                           ),
                         ),
-                        SizedBox(height: spacing.md),
-                        if (showTimelineBar)
-                          TimelineBar(
-                            onClose: () {
-                              unawaited(actions.closePreview(context));
-                            },
-                          ),
                       ],
                     ),
                   ),
