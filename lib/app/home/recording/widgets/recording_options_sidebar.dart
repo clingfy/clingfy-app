@@ -310,9 +310,9 @@ class RecordingOptionsSidebar extends StatelessWidget {
           key: const Key('recording_sidebar_header'),
           padding: const EdgeInsets.fromLTRB(
             AppSidebarTokens.contentHorizontalPadding,
-            AppSidebarTokens.sectionGap,
+            AppSidebarTokens.headerTopPadding,
             AppSidebarTokens.contentHorizontalPadding,
-            AppSidebarTokens.rowGap,
+            AppSidebarTokens.headerBottomPadding,
           ),
           decoration: BoxDecoration(
             border: Border(
@@ -329,7 +329,10 @@ class RecordingOptionsSidebar extends StatelessWidget {
               horizontal: AppSidebarTokens.contentHorizontalPadding,
             ),
             children: [
-              const SizedBox(height: AppSidebarTokens.rowGap),
+              const SizedBox(
+                key: Key('recording_sidebar_top_spacer'),
+                height: AppSidebarTokens.headerContentGap,
+              ),
               if (selectedIndex == 0) ..._buildScreenTab(context),
               if (selectedIndex == 1) ..._buildCameraTab(context),
               if (selectedIndex == 2) ..._buildOutputTab(context),

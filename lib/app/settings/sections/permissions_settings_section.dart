@@ -66,7 +66,7 @@ class _PermissionsSettingsSectionState extends State<PermissionsSettingsSection>
           children: [
             SettingsCard(
               title: l10n.permissionsTitle,
-              subtitle: l10n.permissionsHelpText,
+              infoTooltip: l10n.permissionsHelpText,
               child: Column(
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [

@@ -21,7 +21,7 @@ class WorkspaceSettingsSection extends StatelessWidget {
       children: [
         SettingsCard(
           title: l10n.appTheme,
-          subtitle: l10n.appThemeDescription,
+          infoTooltip: l10n.appThemeDescription,
           child: SizedBox(
             width: 320,
             child: PlatformDropdown<ThemeMode>(
@@ -41,7 +41,7 @@ class WorkspaceSettingsSection extends StatelessWidget {
         const SizedBox(height: 16),
         SettingsCard(
           title: l10n.appLanguage,
-          subtitle: l10n.appLanguageDescription,
+          infoTooltip: l10n.appLanguageDescription,
           child: SizedBox(
             width: 320,
             child: PlatformDropdown<AppLocaleSetting>(
@@ -106,7 +106,8 @@ class WorkspaceSettingsSection extends StatelessWidget {
               const SizedBox(height: 8),
               AppToggleRow(
                 title: l10n.warnBeforeClosingUnexportedRecording,
-                subtitle: l10n.warnBeforeClosingUnexportedRecordingDescription,
+                infoTooltip:
+                    l10n.warnBeforeClosingUnexportedRecordingDescription,
                 value:
                     controller.workspace.warnBeforeClosingUnexportedRecording,
                 onChanged: controller

@@ -199,9 +199,9 @@ class PostProcessingSidebar extends StatelessWidget {
               key: const Key('post_sidebar_header'),
               padding: const EdgeInsets.fromLTRB(
                 AppSidebarTokens.contentHorizontalPadding,
-                AppSidebarTokens.sectionGap,
+                AppSidebarTokens.headerTopPadding,
                 AppSidebarTokens.contentHorizontalPadding,
-                AppSidebarTokens.rowGap,
+                AppSidebarTokens.headerBottomPadding,
               ),
               decoration: BoxDecoration(
                 border: Border(
@@ -218,7 +218,10 @@ class PostProcessingSidebar extends StatelessWidget {
                   horizontal: AppSidebarTokens.contentHorizontalPadding,
                 ),
                 children: [
-                  const SizedBox(height: AppSidebarTokens.rowGap),
+                  const SizedBox(
+                    key: Key('post_sidebar_top_spacer'),
+                    height: AppSidebarTokens.headerContentGap,
+                  ),
                   if (selectedIndex == 0) ..._buildLayoutTab(context),
                   if (selectedIndex == 1) ..._buildEffectsTab(context),
                   if (selectedIndex == 2) ..._buildExportTab(context),

@@ -12,7 +12,7 @@ class AppSection extends StatelessWidget {
     required this.child,
     this.trailing,
     this.titleUppercase = true,
-    this.titleSpacing = AppSidebarTokens.compactGap,
+    this.titleSpacing = AppSidebarTokens.rowGap,
   });
 
   final String? title;

@@ -229,7 +229,7 @@ class _StorageSettingsSectionState extends State<StorageSettingsSection> {
               key: const Key('storage_overview_card'),
               child: SettingsCard(
                 title: l10n.storageOverviewTitle,
-                subtitle: l10n.storageOverviewDescription,
+                infoTooltip: l10n.storageOverviewDescription,
                 child: _buildOverview(context, snapshot, storage.isLoading),
               ),
             ),
@@ -241,7 +241,7 @@ class _StorageSettingsSectionState extends State<StorageSettingsSection> {
                     key: const Key('storage_system_card'),
                     child: SettingsCard(
                       title: l10n.storageSystemTitle,
-                      subtitle: l10n.storageSystemDescription,
+                      infoTooltip: l10n.storageSystemDescription,
                       child: _SystemStorageCard(
                         snapshot: snapshot,
                         usedColor: _systemUsedColor,
@@ -253,7 +253,7 @@ class _StorageSettingsSectionState extends State<StorageSettingsSection> {
                     key: const Key('storage_clingfy_card'),
                     child: SettingsCard(
                       title: l10n.storageClingfyTitle,
-                      subtitle: l10n.storageClingfyDescription,
+                      infoTooltip: l10n.storageClingfyDescription,
                       child: _ClingfyStorageCard(
                         snapshot: snapshot,
                         recordingsColor: _recordingsColor,

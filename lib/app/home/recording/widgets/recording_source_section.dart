@@ -107,6 +107,7 @@ class RecordingSourceSection extends StatelessWidget {
             padding: const EdgeInsets.only(top: AppSidebarTokens.sectionGap),
             child: AppSection(
               title: l10n.display,
+              titleSpacing: AppSidebarTokens.dropdownSectionTitleGap,
               trailing: AppIconButton(
                 tooltip: l10n.refreshDisplays,
                 onPressed: isRecording ? null : onRefreshDisplays,
@@ -143,6 +144,7 @@ class RecordingSourceSection extends StatelessWidget {
             padding: const EdgeInsets.only(top: AppSidebarTokens.sectionGap),
             child: AppSection(
               title: l10n.appWindow,
+              titleSpacing: AppSidebarTokens.dropdownSectionTitleGap,
               trailing: AppIconButton(
                 tooltip: l10n.refreshWindows,
                 onPressed: isRecording ? null : onRefreshAppWindows,

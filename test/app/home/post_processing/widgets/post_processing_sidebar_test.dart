@@ -5,6 +5,7 @@ import 'package:clingfy/core/models/app_models.dart';
 import 'package:clingfy/ui/platform/widgets/app_icon_button.dart';
 import 'package:clingfy/ui/platform/widgets/app_inline_notice.dart';
 import 'package:clingfy/ui/platform/widgets/app_section.dart';
+import 'package:clingfy/ui/platform/widgets/app_sidebar_tokens.dart';
 import 'package:clingfy/ui/platform/widgets/app_slider.dart';
 import 'package:clingfy/ui/platform/widgets/app_slider_row.dart';
 import 'package:clingfy/ui/platform/widgets/app_toggle_row.dart';
@@ -85,6 +86,12 @@ void main() {
           ),
         ),
       ),
+    );
+  }
+
+  Finder findMacosTooltip(String message) {
+    return find.byWidgetPredicate(
+      (widget) => widget is MacosTooltip && widget.message == message,
     );
   }
 
@@ -248,6 +255,18 @@ void main() {
     expect(find.text('No mic audio track found'), findsOneWidget);
   });
 
+  testWidgets('effects tab exposes zoom and cursor helper copy as tooltips', (
+    tester,
+  ) async {
+    await tester.pumpWidget(buildTestApp(selectedIndex: 1));
+    await tester.pumpAndSettle();
+
+    expect(findMacosTooltip('Toggle cursor visibility'), findsOneWidget);
+    expect(find.text('Toggle cursor visibility'), findsNothing);
+    expect(findMacosTooltip('Manage zoom in effects'), findsOneWidget);
+    expect(find.text('Manage zoom in effects'), findsNothing);
+  });
+
   testWidgets('export tab only shows normalization controls', (tester) async {
     await tester.pumpWidget(
       buildTestApp(selectedIndex: 2, autoNormalizeOnExport: false),
@@ -346,5 +365,23 @@ void main() {
 
     expect(find.byType(ColorPicker), findsOneWidget);
     expect(tester.takeException(), isNull);
+  });
+
+  testWidgets('header leaves consistent breathing room before tab content', (
+    tester,
+  ) async {
+    Future<void> expectGap(int selectedIndex) async {
+      await tester.pumpWidget(buildTestApp(selectedIndex: selectedIndex));
+      await tester.pumpAndSettle();
+
+      final topSpacer = tester.widget<SizedBox>(
+        find.byKey(const Key('post_sidebar_top_spacer')),
+      );
+      expect(topSpacer.height, AppSidebarTokens.headerContentGap);
+    }
+
+    await expectGap(0);
+    await expectGap(1);
+    await expectGap(2);
   });
 }

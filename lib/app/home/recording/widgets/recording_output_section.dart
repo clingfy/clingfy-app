@@ -60,10 +60,10 @@ class RecordingOutputSection extends StatelessWidget {
         const SizedBox(height: AppSidebarTokens.sectionGap),
         AppSection(
           title: l10n.duration,
+          titleSpacing: AppSidebarTokens.dropdownSectionTitleGap,
           child: Column(
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
-              const SizedBox(height: AppSidebarTokens.compactRowGap),
               AppFormRow(
                 label: l10n.autoStopAfter,
                 control: PlatformDropdown<Duration>(

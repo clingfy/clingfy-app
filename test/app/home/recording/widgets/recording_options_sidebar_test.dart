@@ -2,6 +2,7 @@ import 'package:clingfy/app/home/recording/widgets/recording_options_sidebar.dar
 import 'package:clingfy/core/models/app_models.dart';
 import 'package:clingfy/core/overlay/overlay_mode.dart';
 import 'package:clingfy/l10n/app_localizations.dart';
+import 'package:clingfy/ui/platform/widgets/app_section.dart';
 import 'package:clingfy/ui/platform/widgets/app_sidebar_tokens.dart';
 import 'package:clingfy/ui/theme/app_theme.dart';
 import 'package:flutter/material.dart';
@@ -221,5 +222,48 @@ void main() {
     );
 
     expect(bottomSpacer.height, AppSidebarTokens.rowGap);
+  });
+
+  testWidgets('header leaves consistent breathing room before tab content', (
+    tester,
+  ) async {
+    Future<void> expectGap(int selectedIndex) async {
+      await tester.pumpWidget(buildTestApp(selectedIndex: selectedIndex));
+      await tester.pumpAndSettle();
+
+      final topSpacer = tester.widget<SizedBox>(
+        find.byKey(const Key('recording_sidebar_top_spacer')),
+      );
+      expect(topSpacer.height, AppSidebarTokens.headerContentGap);
+    }
+
+    await expectGap(0);
+    await expectGap(1);
+    await expectGap(2);
+  });
+
+  testWidgets('dropdown-backed sections use the larger title spacing', (
+    tester,
+  ) async {
+    Future<void> expectTitleSpacing({
+      required int selectedIndex,
+      required String title,
+    }) async {
+      await tester.pumpWidget(buildTestApp(selectedIndex: selectedIndex));
+      await tester.pumpAndSettle();
+
+      final section = tester.widget<AppSection>(
+        find.byWidgetPredicate(
+          (widget) => widget is AppSection && widget.title == title,
+        ),
+      );
+
+      expect(section.titleSpacing, AppSidebarTokens.dropdownSectionTitleGap);
+    }
+
+    await expectTitleSpacing(selectedIndex: 0, title: 'Audio');
+    await expectTitleSpacing(selectedIndex: 0, title: 'Display');
+    await expectTitleSpacing(selectedIndex: 1, title: 'Camera');
+    await expectTitleSpacing(selectedIndex: 2, title: 'Duration');
   });
 }

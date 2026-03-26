@@ -17,7 +17,8 @@ class DiagnosticsSettingsSection extends StatefulWidget {
       _DiagnosticsSettingsSectionState();
 }
 
-class _DiagnosticsSettingsSectionState extends State<DiagnosticsSettingsSection> {
+class _DiagnosticsSettingsSectionState
+    extends State<DiagnosticsSettingsSection> {
   String? _noticeText;
   AppInlineNoticeVariant _noticeVariant = AppInlineNoticeVariant.info;
 
@@ -48,15 +49,12 @@ class _DiagnosticsSettingsSectionState extends State<DiagnosticsSettingsSection>
       children: [
         SettingsCard(
           title: l10n.diagnosticsTitle,
-          subtitle: l10n.diagnosticsHelpText,
+          infoTooltip: l10n.diagnosticsHelpText,
           child: Column(
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
               if (_noticeText != null) ...[
-                AppInlineNotice(
-                  message: _noticeText!,
-                  variant: _noticeVariant,
-                ),
+                AppInlineNotice(message: _noticeText!, variant: _noticeVariant),
                 const SizedBox(height: 12),
               ],
               Wrap(

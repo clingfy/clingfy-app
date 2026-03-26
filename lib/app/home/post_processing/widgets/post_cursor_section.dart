@@ -35,7 +35,7 @@ class PostCursorSection extends StatelessWidget {
       children: [
         AppToggleRow(
           title: l10n.showCursor,
-          subtitle: l10n.toggleCursorVisibility,
+          infoTooltip: l10n.toggleCursorVisibility,
           value: showCursor && cursorAvailable,
           onChanged: cursorAvailable ? onCursorShowChanged : null,
         ),
