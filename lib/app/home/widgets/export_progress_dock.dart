@@ -46,7 +46,10 @@ class ExportProgressDock extends StatelessWidget {
             post.sendExportToBackground();
           },
           onCancel: () async {
-            final confirmed = await ExportCancelDialog.show(context);
+            final confirmed = await ExportCancelDialog.show(
+              context,
+              controller: post,
+            );
             if (confirmed) {
               post.cancelExport();
             }

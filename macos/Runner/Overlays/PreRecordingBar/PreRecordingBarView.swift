@@ -1,6 +1,5 @@
 import Cocoa
 
-// 1. ADD THIS EXTENSION for macOS 10.15 compatibility
 extension NSImage {
   static func symbol(_ name: String, accessibilityDescription: String? = nil) -> NSImage? {
     if #available(macOS 11.0, *) {
