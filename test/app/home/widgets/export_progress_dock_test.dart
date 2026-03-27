@@ -11,14 +11,8 @@ import 'package:provider/provider.dart';
 import '../../../test_helpers/native_test_setup.dart';
 
 class TestPostProcessingController extends PostProcessingController {
-  TestPostProcessingController._({
-    required this.settings,
-    required this.player,
-  }) : super(
-         settings: settings,
-         player: player,
-         channel: NativeBridge.instance,
-       );
+  TestPostProcessingController._({required this.settings, required this.player})
+    : super(settings: settings, player: player, channel: NativeBridge.instance);
 
   factory TestPostProcessingController() {
     final settings = SettingsController(nativeBridge: NativeBridge.instance);
@@ -41,6 +35,7 @@ class TestPostProcessingController extends PostProcessingController {
   bool inBackground = false;
   bool cancelRequested = false;
   double? progress;
+  int cancelCalls = 0;
 
   @override
   bool get isExporting => exporting;
@@ -64,6 +59,13 @@ class TestPostProcessingController extends PostProcessingController {
     this.inBackground = inBackground;
     this.cancelRequested = cancelRequested;
     this.progress = progress;
+    notifyListeners();
+  }
+
+  @override
+  Future<void> cancelExport() async {
+    cancelCalls += 1;
+    cancelRequested = true;
     notifyListeners();
   }
 
@@ -127,5 +129,45 @@ void main() {
     await tester.pump();
 
     expect(find.byType(LinearProgressIndicator), findsNothing);
+  });
+
+  testWidgets('cancel dialog closes itself when export ends', (tester) async {
+    final controller = TestPostProcessingController();
+    addTearDown(controller.dispose);
+
+    await tester.pumpWidget(buildApp(controller));
+
+    controller.setExportState(
+      exporting: true,
+      inBackground: false,
+      cancelRequested: false,
+      progress: 0.5,
+    );
+    await tester.pump();
+
+    await tester.tap(find.text('Stop Export'));
+    await tester.pumpAndSettle();
+
+    expect(find.text('Cancel Export'), findsOneWidget);
+    expect(
+      find.text('Are you sure you want to stop the export process?'),
+      findsOneWidget,
+    );
+
+    controller.setExportState(
+      exporting: false,
+      inBackground: false,
+      cancelRequested: false,
+    );
+    await tester.pump();
+    await tester.pumpAndSettle();
+
+    expect(find.text('Cancel Export'), findsNothing);
+    expect(
+      find.text('Are you sure you want to stop the export process?'),
+      findsNothing,
+    );
+    expect(controller.cancelCalls, 0);
+    expect(controller.cancelRequested, isFalse);
   });
 }
