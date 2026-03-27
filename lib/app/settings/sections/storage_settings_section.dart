@@ -218,13 +218,7 @@ class _StorageSettingsSectionState extends State<StorageSettingsSection> {
               ),
               const SizedBox(height: 16),
             ],
-            if (snapshot != null) ...[
-              AppInlineNotice(
-                message: _statusMessage(l10n, snapshot.status),
-                variant: _noticeVariant(snapshot.status),
-              ),
-              const SizedBox(height: 16),
-            ],
+
             Container(
               key: const Key('storage_overview_card'),
               child: SettingsCard(
@@ -398,6 +392,15 @@ class _StorageSettingsSectionState extends State<StorageSettingsSection> {
               context,
             ).textTheme.titleSmall?.copyWith(fontWeight: FontWeight.w700),
           ),
+
+          const SizedBox(height: 16),
+          if (snapshot != null) ...[
+            AppInlineNotice(
+              message: _statusMessage(l10n, snapshot.status),
+              variant: _noticeVariant(snapshot.status),
+            ),
+            const SizedBox(height: 16),
+          ],
           const SizedBox(height: 8),
           Text(
             l10n.storageFreeNow(_formatBytes(snapshot.systemAvailableBytes)),

@@ -604,13 +604,25 @@ void main() {
 
     expect(find.text('Clear cached recordings?'), findsOneWidget);
     await tester.tap(find.text('Clear recordings'));
-    await tester.pumpAndSettle();
+    await tester.pump();
+    await tester.pump(const Duration(milliseconds: 200));
+    await tester.pump();
 
     expect(clearCalls, 1);
     expect(getSnapshotCalls, 2);
-    await tester.fling(find.byType(ListView), const Offset(0, 1000), 2000);
-    await tester.pumpAndSettle();
+    tester
+        .state<ScrollableState>(find.byType(Scrollable).first)
+        .position
+        .jumpTo(0);
+    await tester.pump();
     expect(find.text('Removed 2 cached recordings.'), findsOneWidget);
+
+    await tester.pump(const Duration(seconds: 4));
+    expect(find.text('Removed 2 cached recordings.'), findsOneWidget);
+
+    await tester.pump(const Duration(seconds: 1));
+    expect(find.text('Removed 2 cached recordings.'), findsNothing);
+    await tester.pumpAndSettle();
   });
 
   testWidgets('canceling clear cached recordings performs no deletion', (
