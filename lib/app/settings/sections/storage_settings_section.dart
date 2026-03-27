@@ -394,14 +394,11 @@ class _StorageSettingsSectionState extends State<StorageSettingsSection> {
           ),
 
           const SizedBox(height: 16),
-          if (snapshot != null) ...[
-            AppInlineNotice(
-              message: _statusMessage(l10n, snapshot.status),
-              variant: _noticeVariant(snapshot.status),
-            ),
-            const SizedBox(height: 16),
-          ],
-          const SizedBox(height: 8),
+          AppInlineNotice(
+            message: _statusMessage(l10n, snapshot.status),
+            variant: _noticeVariant(snapshot.status),
+          ),
+          const SizedBox(height: 16),
           Text(
             l10n.storageFreeNow(_formatBytes(snapshot.systemAvailableBytes)),
           ),
