@@ -13,6 +13,8 @@ abstract class NativeBarAction {
   static const String systemAudioTapped = 'systemAudioTapped';
   static const String updateTapped = 'updateTapped';
   static const String recordTapped = 'recordTapped';
+  static const String pauseTapped = 'pauseTapped';
+  static const String resumeTapped = 'resumeTapped';
 }
 
 /// Selection type strings for native selection changes (native → Flutter).

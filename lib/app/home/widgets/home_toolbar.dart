@@ -16,6 +16,7 @@ class HomeToolbar extends StatelessWidget {
     super.key,
     required this.title,
     required this.isRecording,
+    required this.isPaused,
     required this.uiState,
     required this.onExport,
     required this.onOpenSystemSettings,
@@ -24,6 +25,7 @@ class HomeToolbar extends StatelessWidget {
 
   final String title;
   final bool isRecording;
+  final bool isPaused;
   final HomeUiState uiState;
   final VoidCallback onExport;
   final Future<void> Function(String pane) onOpenSystemSettings;
@@ -143,6 +145,7 @@ class HomeToolbar extends StatelessWidget {
             return DesktopToolbar(
               title: title,
               isRecording: isRecording,
+              isPaused: isPaused,
               elapsedText: d.$1,
               countdownText: d.$2,
               notice: explicitNotice ?? mappedNotice,

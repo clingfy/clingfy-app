@@ -106,6 +106,9 @@ Future<void> installCommonNativeMocks({
       case 'cacheLocalizedStrings':
       case 'startRecording':
       case 'stopRecording':
+      case 'pauseRecording':
+      case 'resumeRecording':
+      case 'togglePauseRecording':
       case 'requestScreenRecordingPermission':
       case 'requestMicrophonePermission':
       case 'requestCameraPermission':
@@ -125,6 +128,12 @@ Future<void> installCommonNativeMocks({
       case 'inlinePreviewStop':
       case 'checkForUpdates':
         return null;
+      case 'getRecordingCapabilities':
+        return <String, dynamic>{
+          'canPauseResume': true,
+          'backend': 'avfoundation',
+          'strategy': 'av_file_output',
+        };
       case 'getExcludeRecorderApp':
         return false;
       case 'getExcludeMicFromSystemAudio':

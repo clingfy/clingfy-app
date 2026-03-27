@@ -99,6 +99,7 @@ class DesktopToolbar extends StatelessWidget {
     super.key,
     required this.title,
     required this.isRecording,
+    required this.isPaused,
     this.elapsedText,
     this.notice,
     this.countdownText,
@@ -109,6 +110,7 @@ class DesktopToolbar extends StatelessWidget {
 
   final String title;
   final bool isRecording;
+  final bool isPaused;
   final String? elapsedText;
   final ToolbarNoticePresentation? notice;
   final String? countdownText;
@@ -148,6 +150,7 @@ class DesktopToolbar extends StatelessWidget {
           key: _toolbarRowKey,
           title: title,
           isRecording: isRecording,
+          isPaused: isPaused,
           elapsedText: elapsedText,
           countdownText: countdownText,
           onExport: onExport,
@@ -164,6 +167,7 @@ class DesktopToolbar extends StatelessWidget {
           key: _toolbarRowKey,
           title: title,
           isRecording: isRecording,
+          isPaused: isPaused,
           elapsedText: elapsedText,
           countdownText: countdownText,
           onExport: onExport,
@@ -179,6 +183,7 @@ class DesktopToolbar extends StatelessWidget {
         key: _toolbarRowKey,
         title: title,
         isRecording: isRecording,
+        isPaused: isPaused,
         elapsedText: elapsedText,
         countdownText: countdownText,
         onExport: onExport,
@@ -301,6 +306,7 @@ class _MacToolbarRow extends StatelessWidget {
     super.key,
     required this.title,
     required this.isRecording,
+    required this.isPaused,
     required this.elapsedText,
     required this.countdownText,
     required this.onExport,
@@ -310,6 +316,7 @@ class _MacToolbarRow extends StatelessWidget {
 
   final String title;
   final bool isRecording;
+  final bool isPaused;
   final String? elapsedText;
   final String? countdownText;
   final VoidCallback? onExport;
@@ -340,9 +347,13 @@ class _MacToolbarRow extends StatelessWidget {
           if (isRecording) ...[
             _pill(
               context,
-              icon: CupertinoIcons.recordingtape,
-              text: elapsedText ?? l10n.recording,
-              pulsingDot: true,
+              icon: isPaused
+                  ? CupertinoIcons.pause_circle
+                  : CupertinoIcons.recordingtape,
+              text: isPaused
+                  ? '${l10n.paused} • ${elapsedText ?? l10n.recording}'
+                  : (elapsedText ?? l10n.recording),
+              pulsingDot: !isPaused,
             ),
             SizedBox(width: spacing.xs + 2),
           ],
@@ -391,6 +402,7 @@ class _WinToolbarRow extends StatelessWidget {
     super.key,
     required this.title,
     required this.isRecording,
+    required this.isPaused,
     required this.elapsedText,
     required this.countdownText,
     required this.onExport,
@@ -400,6 +412,7 @@ class _WinToolbarRow extends StatelessWidget {
 
   final String title;
   final bool isRecording;
+  final bool isPaused;
   final String? elapsedText;
   final String? countdownText;
   final VoidCallback? onExport;
@@ -430,9 +443,13 @@ class _WinToolbarRow extends StatelessWidget {
             _pillWin(
               context,
               theme,
-              icon: fluent.FluentIcons.circle_fill,
-              text: elapsedText ?? l10n.recording,
-              danger: true,
+              icon: isPaused
+                  ? fluent.FluentIcons.pause
+                  : fluent.FluentIcons.circle_fill,
+              text: isPaused
+                  ? '${l10n.paused} • ${elapsedText ?? l10n.recording}'
+                  : (elapsedText ?? l10n.recording),
+              danger: !isPaused,
             ),
             SizedBox(width: spacing.xs + 2),
           ],
@@ -472,6 +489,7 @@ class _FallbackToolbarRow extends StatelessWidget {
     super.key,
     required this.title,
     required this.isRecording,
+    required this.isPaused,
     required this.elapsedText,
     required this.countdownText,
     required this.onExport,
@@ -481,6 +499,7 @@ class _FallbackToolbarRow extends StatelessWidget {
 
   final String title;
   final bool isRecording;
+  final bool isPaused;
   final String? elapsedText;
   final String? countdownText;
   final VoidCallback? onExport;
@@ -509,8 +528,12 @@ class _FallbackToolbarRow extends StatelessWidget {
           if (isRecording) ...[
             _pillFallback(
               context,
-              icon: Icons.fiber_manual_record,
-              text: elapsedText ?? l10n.recording,
+              icon: isPaused
+                  ? Icons.pause_circle_filled
+                  : Icons.fiber_manual_record,
+              text: isPaused
+                  ? '${l10n.paused} • ${elapsedText ?? l10n.recording}'
+                  : (elapsedText ?? l10n.recording),
             ),
             SizedBox(width: spacing.xs + 2),
           ],

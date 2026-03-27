@@ -12,13 +12,14 @@ enum WorkflowPhase {
   idle(0),
   startingRecording(1),
   recording(2),
-  stoppingRecording(3),
-  finalizingRecording(4),
-  openingPreview(5),
-  previewLoading(6),
-  previewReady(7),
-  closingPreview(8),
-  exporting(9);
+  pausedRecording(3),
+  stoppingRecording(4),
+  finalizingRecording(5),
+  openingPreview(6),
+  previewLoading(7),
+  previewReady(8),
+  closingPreview(9),
+  exporting(10);
 
   const WorkflowPhase(this.wireValue);
 
@@ -31,6 +32,34 @@ enum WorkflowPhase {
       }
     }
     return WorkflowPhase.idle;
+  }
+}
+
+class RecordingPauseResumeCapabilities {
+  const RecordingPauseResumeCapabilities({
+    required this.canPauseResume,
+    required this.backend,
+    required this.strategy,
+  });
+
+  const RecordingPauseResumeCapabilities.unsupported()
+    : canPauseResume = false,
+      backend = 'unsupported',
+      strategy = 'unsupported';
+
+  final bool canPauseResume;
+  final String backend;
+  final String strategy;
+
+  factory RecordingPauseResumeCapabilities.fromMap(Map<dynamic, dynamic>? raw) {
+    if (raw == null) {
+      return const RecordingPauseResumeCapabilities.unsupported();
+    }
+    return RecordingPauseResumeCapabilities(
+      canPauseResume: raw['canPauseResume'] == true,
+      backend: raw['backend']?.toString() ?? 'unknown',
+      strategy: raw['strategy']?.toString() ?? 'unknown',
+    );
   }
 }
 

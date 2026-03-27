@@ -776,7 +776,19 @@ class AppLocalizationsEn extends AppLocalizations {
   String get recordingInProgress => 'RECORDING IN PROGRESS';
 
   @override
+  String get recordingPaused => 'RECORDING PAUSED';
+
+  @override
   String get readyToRecord => 'READY TO RECORD';
+
+  @override
+  String get pause => 'PAUSE';
+
+  @override
+  String get resume => 'RESUME';
+
+  @override
+  String get paused => 'Paused';
 
   @override
   String get stop => 'STOP';
@@ -1326,6 +1338,14 @@ class AppLocalizationsEn extends AppLocalizations {
 
   @override
   String get errNotRecording => 'No active recording to stop.';
+
+  @override
+  String get errInvalidRecordingState =>
+      'That action is not available in the current recording state.';
+
+  @override
+  String get errPauseResumeUnsupported =>
+      'Pause and resume are not supported for the current recording setup.';
 
   @override
   String get errUnknownAudioDevice =>

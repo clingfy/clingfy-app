@@ -120,12 +120,18 @@ struct CaptureStartConfig {
 protocol CaptureBackend: AnyObject {
   var onStarted: ((URL) -> Void)? { get set }
   var onFinished: ((URL?, Error?) -> Void)? { get set }
+  var onPaused: (() -> Void)? { get set }
+  var onResumed: (() -> Void)? { get set }
   var onMicrophoneLevel: ((MicrophoneLevelSample) -> Void)? { get set }
 
+  var canPauseResume: Bool { get }
   var isRecording: Bool { get }
+  var isPaused: Bool { get }
   var currentOutputURL: URL? { get }
 
   func start(config: CaptureStartConfig)
   func stop()
+  func pause()
+  func resume()
   func updateOverlay(windowID: CGWindowID?)
 }

@@ -12,15 +12,25 @@ class HomeRightPanel extends StatelessWidget {
   const HomeRightPanel({
     super.key,
     required this.isRecording,
+    required this.isPaused,
     required this.isBusy,
+    required this.canPause,
+    required this.canResume,
     required this.onToggleRecording,
+    required this.onPauseRecording,
+    required this.onResumeRecording,
     required this.onClosePreview,
     this.previewHostBuilder,
   });
 
   final bool isRecording;
+  final bool isPaused;
   final bool isBusy;
+  final bool canPause;
+  final bool canResume;
   final VoidCallback onToggleRecording;
+  final VoidCallback onPauseRecording;
+  final VoidCallback onResumeRecording;
   final VoidCallback onClosePreview;
   final InlinePreviewHostBuilder? previewHostBuilder;
 
@@ -108,8 +118,13 @@ class HomeRightPanel extends StatelessWidget {
                       )
                     : HeroPanel(
                         isRecording: isRecording,
+                        isPaused: isPaused,
                         isBusy: isBusy,
+                        canPause: canPause,
+                        canResume: canResume,
                         onToggle: onToggleRecording,
+                        onPause: onPauseRecording,
+                        onResume: onResumeRecording,
                       ),
               ),
             ],

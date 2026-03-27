@@ -15,11 +15,18 @@ final class CaptureBackendAVFoundation: CaptureBackend {
   // MARK: CaptureBackend
   var onStarted: ((URL) -> Void)?
   var onFinished: ((URL?, Error?) -> Void)?
+  var onPaused: (() -> Void)?
+  var onResumed: (() -> Void)?
   var onMicrophoneLevel: ((MicrophoneLevelSample) -> Void)?
 
+  var canPauseResume: Bool { true }
   var isRecording: Bool {
     // AVCaptureMovieFileOutput reports recording state reliably.
-    pipeline.movieOutput?.isRecording ?? false
+    (pipeline.movieOutput?.isRecording ?? false) || (pipeline.movieOutput?.isRecordingPaused ?? false)
+  }
+
+  var isPaused: Bool {
+    pipeline.movieOutput?.isRecordingPaused ?? false
   }
 
   var currentOutputURL: URL? {
@@ -35,6 +42,12 @@ final class CaptureBackendAVFoundation: CaptureBackend {
     // Bridge pipeline callbacks -> backend callbacks
     self.pipeline.onStarted = { [weak self] url in
       self?.onStarted?(url)
+    }
+    self.pipeline.onPaused = { [weak self] in
+      self?.onPaused?()
+    }
+    self.pipeline.onResumed = { [weak self] in
+      self?.onResumed?()
     }
     self.pipeline.onFinished = { [weak self] url, err in
       self?.onFinished?(url, err)
@@ -54,6 +67,14 @@ final class CaptureBackendAVFoundation: CaptureBackend {
 
   func stop() {
     pipeline.stop()
+  }
+
+  func pause() {
+    pipeline.pause()
+  }
+
+  func resume() {
+    pipeline.resume()
   }
 
   func updateOverlay(windowID: CGWindowID?) {

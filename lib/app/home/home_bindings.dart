@@ -56,7 +56,7 @@ class HomeBindings {
   }
 
   void _handleWorkflowChanged() {
-    final isRecording = recordingController.isRecording;
+    final isRecording = recordingController.isActivelyRecording;
     if (_lastRecordingActive != isRecording) {
       overlayController.updateRecordingState(isRecording);
       _lastRecordingActive = isRecording;
@@ -93,8 +93,14 @@ class HomeBindings {
 
     HardwareKeyboard.instance.addHandler(_handleKeyDebug);
 
+    nativeBridge.setOnIndicatorPauseTapped(() {
+      unawaited(recordingController.pauseRecording());
+    });
     nativeBridge.setOnIndicatorStopTapped(() {
       onToggleRecording();
+    });
+    nativeBridge.setOnIndicatorResumeTapped(() {
+      unawaited(recordingController.resumeRecording());
     });
     nativeBridge.setOnMenuBarToggleRequest(() {
       onToggleRecording();
@@ -126,7 +132,9 @@ class HomeBindings {
     settingsController.removeListener(onUpdateNativeBarState);
     nativeBridge.isUpdateAvailable.removeListener(onUpdateNativeBarState);
 
+    nativeBridge.setOnIndicatorPauseTapped(null);
     nativeBridge.setOnIndicatorStopTapped(null);
+    nativeBridge.setOnIndicatorResumeTapped(null);
     nativeBridge.setOnMenuBarToggleRequest(null);
     nativeBridge.setOnExportProgress(null);
     nativeBridge.setOnPreRecordingBarAction(null);
