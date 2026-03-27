@@ -13,6 +13,8 @@ enum NativeBarAction {
   static let systemAudioTapped = "systemAudioTapped"
   static let updateTapped = "updateTapped"
   static let recordTapped = "recordTapped"
+  static let pauseTapped = "pauseTapped"
+  static let resumeTapped = "resumeTapped"
 }
 
 /// Selection type strings for native selection changes (native → Flutter).

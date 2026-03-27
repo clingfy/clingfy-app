@@ -36,6 +36,10 @@ class HomeErrorMapper {
         message = l10n.errTargetError;
       case NativeErrorCode.notRecording:
         message = l10n.errNotRecording;
+      case NativeErrorCode.invalidRecordingState:
+        message = l10n.errInvalidRecordingState;
+      case NativeErrorCode.pauseResumeUnsupported:
+        message = l10n.errPauseResumeUnsupported;
       case NativeErrorCode.unknownAudioDevice:
         message = l10n.errUnknownAudioDevice;
       case NativeErrorCode.badQuality:

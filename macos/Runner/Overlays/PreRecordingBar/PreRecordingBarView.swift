@@ -30,6 +30,7 @@ class PreRecordingBarView: NSView {
   public var systemAudioButton: NSButton!
   public var updateButton: NSButton!
   public var recordButton: NSButton!
+  public var pauseResumeButton: NSButton!
   private let recordSpinner = NSProgressIndicator()
 
   private var updateAnimationTimer: Timer?
@@ -105,6 +106,13 @@ class PreRecordingBarView: NSView {
       imageName: "arrow.up.circle", label: "Update", action: #selector(updateTapped))
     updateButton.contentTintColor = NSColor(red: 0x89/255.0, green: 0x57/255.0, blue: 0xE5/255.0, alpha: 1.0)
 
+    pauseResumeButton = createButton(
+      imageName: "pause.fill",
+      label: "Pause",
+      action: #selector(pauseResumeTapped)
+    )
+    pauseResumeButton.isHidden = true
+
     recordButton = createButton(
       imageName: "record.circle", action: #selector(recordTapped))
 
@@ -117,6 +125,7 @@ class PreRecordingBarView: NSView {
     stackView.addArrangedSubview(cameraButton)
     stackView.addArrangedSubview(micButton)
     stackView.addArrangedSubview(systemAudioButton)
+    stackView.addArrangedSubview(pauseResumeButton)
     stackView.addArrangedSubview(recordButton)
 
     // Update button is hidden by default
@@ -231,20 +240,25 @@ class PreRecordingBarView: NSView {
     // 0: idle
     // 1: startingRecording
     // 2: recording
-    // 3: stoppingRecording
-    // 4: finalizingRecording
-    // 5: openingPreview
-    // 6: previewLoading
-    // 7: previewReady
-    // 8: closingPreview
-    // 9: exporting
+    // 3: pausedRecording
+    // 4: stoppingRecording
+    // 5: finalizingRecording
+    // 6: openingPreview
+    // 7: previewLoading
+    // 8: previewReady
+    // 9: closingPreview
+    // 10: exporting
     let isStarting = phase == 1
     let isRecording = phase == 2
-    let isStopping = phase == 3
-    let isExporting = phase == 9
+    let isPaused = phase == 3
+    let isStopping = phase == 4
+    let isFinalizing = phase == 5
+    let isExporting = phase == 10
+    let canPauseResume = newState["canPauseResume"] as? Bool ?? false
+    let pauseResumeInFlight = newState["pauseResumeInFlight"] as? Bool ?? false
     let recordEnabled = phase == 0
 
-    let canInteract = !isStarting && !isRecording && !isStopping && !isExporting
+    let canInteract = !isStarting && !isRecording && !isPaused && !isStopping && !isFinalizing && !isExporting
     displayButton.isEnabled = canInteract
     windowButton.isEnabled = canInteract
     areaButton.isEnabled = canInteract
@@ -253,11 +267,32 @@ class PreRecordingBarView: NSView {
     systemAudioButton.isEnabled = canInteract
     closeButton.isEnabled = !isStarting && !isStopping
 
+    pauseResumeButton.isHidden = !(canPauseResume && (isRecording || isPaused))
+    pauseResumeButton.isEnabled = !pauseResumeInFlight && (isRecording || isPaused)
+    if !pauseResumeButton.isHidden {
+      if #available(macOS 11.0, *) {
+        let config = NSImage.SymbolConfiguration(pointSize: 16, weight: .medium)
+        let symbolName = isPaused ? "play.fill" : "pause.fill"
+        let accessibility = isPaused ? "Resume recording" : "Pause recording"
+        pauseResumeButton.image = NSImage(
+          systemSymbolName: symbolName,
+          accessibilityDescription: accessibility
+        )?.withSymbolConfiguration(config)
+      } else {
+        pauseResumeButton.image = NSImage.symbol(
+          isPaused ? "play.fill" : "pause.fill",
+          accessibilityDescription: isPaused ? "Resume recording" : "Pause recording"
+        )
+      }
+      pauseResumeButton.title = isPaused ? "Resume" : "Pause"
+      pauseResumeButton.contentTintColor = isPaused ? .controlAccentColor : .secondaryLabelColor
+    }
+
     if isStarting {
       recordButton.image = nil
       recordButton.isEnabled = false
       recordSpinner.startAnimation(nil)
-    } else if isRecording {
+    } else if isRecording || isPaused {
       recordSpinner.stopAnimation(nil)
       if #available(macOS 11.0, *) {
         let config = NSImage.SymbolConfiguration(pointSize: 18, weight: .bold)
@@ -269,8 +304,8 @@ class PreRecordingBarView: NSView {
           "stop.circle.fill", accessibilityDescription: "Stop recording")
       }
       recordButton.contentTintColor = .systemRed
-      recordButton.isEnabled = true  // Allow tapping stop
-    } else if isStopping {
+      recordButton.isEnabled = !isFinalizing
+    } else if isStopping || isFinalizing {
       recordButton.image = nil
       recordButton.isEnabled = false
       recordSpinner.startAnimation(nil)
@@ -299,6 +334,14 @@ class PreRecordingBarView: NSView {
   @objc private func systemAudioTapped() { onAction?(NativeBarAction.systemAudioTapped, nil) }
   @objc private func updateTapped() { onAction?(NativeBarAction.updateTapped, nil) }
   @objc private func recordTapped() { onAction?(NativeBarAction.recordTapped, nil) }
+  @objc private func pauseResumeTapped() {
+    let phase = state["phase"] as? Int ?? 0
+    if phase == 3 {
+      onAction?(NativeBarAction.resumeTapped, nil)
+    } else {
+      onAction?(NativeBarAction.pauseTapped, nil)
+    }
+  }
 
   // MARK: - Animations
 

@@ -1528,11 +1528,35 @@ abstract class AppLocalizations {
   /// **'RECORDING IN PROGRESS'**
   String get recordingInProgress;
 
+  /// No description provided for @recordingPaused.
+  ///
+  /// In en, this message translates to:
+  /// **'RECORDING PAUSED'**
+  String get recordingPaused;
+
   /// No description provided for @readyToRecord.
   ///
   /// In en, this message translates to:
   /// **'READY TO RECORD'**
   String get readyToRecord;
+
+  /// No description provided for @pause.
+  ///
+  /// In en, this message translates to:
+  /// **'PAUSE'**
+  String get pause;
+
+  /// No description provided for @resume.
+  ///
+  /// In en, this message translates to:
+  /// **'RESUME'**
+  String get resume;
+
+  /// No description provided for @paused.
+  ///
+  /// In en, this message translates to:
+  /// **'Paused'**
+  String get paused;
 
   /// No description provided for @stop.
   ///
@@ -2529,6 +2553,18 @@ abstract class AppLocalizations {
   /// In en, this message translates to:
   /// **'No active recording to stop.'**
   String get errNotRecording;
+
+  /// No description provided for @errInvalidRecordingState.
+  ///
+  /// In en, this message translates to:
+  /// **'That action is not available in the current recording state.'**
+  String get errInvalidRecordingState;
+
+  /// No description provided for @errPauseResumeUnsupported.
+  ///
+  /// In en, this message translates to:
+  /// **'Pause and resume are not supported for the current recording setup.'**
+  String get errPauseResumeUnsupported;
 
   /// No description provided for @errUnknownAudioDevice.
   ///

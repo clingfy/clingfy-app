@@ -45,6 +45,322 @@ struct CursorFailureFinalizationPlan {
   }
 }
 
+private final class RecordingOutputFinalizationWaiter {
+  private var result: Result<Void, Error>?
+  private var continuations: [CheckedContinuation<Void, Error>] = []
+
+  func wait() async throws {
+    if let result {
+      return try result.get()
+    }
+
+    try await withCheckedThrowingContinuation { continuation in
+      continuations.append(continuation)
+    }
+  }
+
+  func succeed() {
+    resolve(.success(()))
+  }
+
+  func fail(_ error: Error) {
+    resolve(.failure(error))
+  }
+
+  private func resolve(_ result: Result<Void, Error>) {
+    guard self.result == nil else { return }
+    self.result = result
+    let continuations = self.continuations
+    self.continuations.removeAll()
+    for continuation in continuations {
+      continuation.resume(with: result)
+    }
+  }
+}
+
+private struct SegmentedRecordingArtifact {
+  let index: Int
+  let rawURL: URL
+  let cursorURL: URL?
+  let recordedDuration: TimeInterval
+}
+
+private struct SegmentedRecordingSession {
+  let primaryInProgressRawURL: URL
+  let expectsCursorSidecars: Bool
+  private(set) var segmentArtifacts: [SegmentedRecordingArtifact] = []
+  private(set) var cumulativeRecordedDuration: TimeInterval = 0
+  private var nextSegmentIndex: Int = 0
+
+  init(primaryInProgressRawURL: URL, expectsCursorSidecars: Bool) {
+    self.primaryInProgressRawURL = primaryInProgressRawURL
+    self.expectsCursorSidecars = expectsCursorSidecars
+  }
+
+  mutating func nextSegmentURLs() -> (index: Int, rawURL: URL, cursorURL: URL?) {
+    nextSegmentIndex += 1
+    let index = nextSegmentIndex
+    let stem = primaryInProgressRawURL.deletingPathExtension().lastPathComponent
+    let ext = primaryInProgressRawURL.pathExtension.isEmpty ? "mov" : primaryInProgressRawURL.pathExtension
+    let rawURL = primaryInProgressRawURL.deletingLastPathComponent().appendingPathComponent(
+      "\(stem).segment-\(String(format: "%03d", index)).\(ext)"
+    )
+    return (
+      index: index,
+      rawURL: rawURL,
+      cursorURL: expectsCursorSidecars ? AppPaths.cursorSidecarURL(for: rawURL) : nil
+    )
+  }
+
+  mutating func appendSegment(
+    index: Int,
+    rawURL: URL,
+    cursorURL: URL?,
+    recordedDuration: TimeInterval
+  ) {
+    let artifact = SegmentedRecordingArtifact(
+      index: index,
+      rawURL: rawURL,
+      cursorURL: cursorURL,
+      recordedDuration: recordedDuration
+    )
+    segmentArtifacts.append(artifact)
+    cumulativeRecordedDuration += recordedDuration
+  }
+}
+
+@available(macOS 15.0, *)
+private final class RecordingSegmentContext {
+  let index: Int
+  let rawURL: URL
+  let cursorURL: URL?
+  let recordingOutput: SCRecordingOutput
+  let startedAt: Date
+  let finalizationWaiter = RecordingOutputFinalizationWaiter()
+
+  init(
+    index: Int,
+    rawURL: URL,
+    cursorURL: URL?,
+    recordingOutput: SCRecordingOutput,
+    startedAt: Date = Date()
+  ) {
+    self.index = index
+    self.rawURL = rawURL
+    self.cursorURL = cursorURL
+    self.recordingOutput = recordingOutput
+    self.startedAt = startedAt
+  }
+}
+
+private struct CursorSpriteSignature: Hashable {
+  let width: Int
+  let height: Int
+  let hotspotXBits: UInt64
+  let hotspotYBits: UInt64
+  let pixels: Data
+
+  init(sprite: CursorSprite) {
+    width = sprite.width
+    height = sprite.height
+    hotspotXBits = sprite.hotspotX.bitPattern
+    hotspotYBits = sprite.hotspotY.bitPattern
+    pixels = sprite.pixels
+  }
+}
+
+private final class AssetExportSessionBox: @unchecked Sendable {
+  let session: AVAssetExportSession
+
+  init(_ session: AVAssetExportSession) {
+    self.session = session
+  }
+}
+
+private enum RecordingSegmentMerger {
+  static func mergeSegments(
+    _ segmentURLs: [URL],
+    to outputURL: URL,
+    fileManager: FileManager = .default
+  ) async throws -> URL {
+    guard !segmentURLs.isEmpty else {
+      throw flutterError(NativeErrorCode.videoFileMissing, "No recording segments to merge")
+    }
+
+    if fileManager.fileExists(atPath: outputURL.path) {
+      try fileManager.removeItem(at: outputURL)
+    }
+
+    if segmentURLs.count == 1 {
+      try fileManager.moveItem(at: segmentURLs[0], to: outputURL)
+      return outputURL
+    }
+
+    let composition = AVMutableComposition()
+    var cursorTime = CMTime.zero
+    var compositionTracks: [String: AVMutableCompositionTrack] = [:]
+
+    for segmentURL in segmentURLs {
+      let asset = AVURLAsset(url: segmentURL)
+      let duration = asset.duration
+
+      for (type, prefix) in [(AVMediaType.video, "video"), (AVMediaType.audio, "audio")] {
+        let tracks = asset.tracks(withMediaType: type)
+        for (index, track) in tracks.enumerated() {
+          let key = "\(prefix)-\(index)"
+          let compositionTrack =
+            compositionTracks[key]
+            ?? composition.addMutableTrack(withMediaType: type, preferredTrackID: kCMPersistentTrackID_Invalid)
+          guard let compositionTrack else {
+            throw flutterError(
+              NativeErrorCode.recordingError,
+              "Unable to create composition track for merged recording"
+            )
+          }
+          compositionTracks[key] = compositionTrack
+          try compositionTrack.insertTimeRange(
+            CMTimeRange(start: .zero, duration: duration),
+            of: track,
+            at: cursorTime
+          )
+          if type == .video && compositionTrack.preferredTransform == .identity {
+            compositionTrack.preferredTransform = track.preferredTransform
+          }
+        }
+      }
+
+      cursorTime = cursorTime + duration
+    }
+
+    let presetNames = [AVAssetExportPresetPassthrough, AVAssetExportPresetHighestQuality]
+    var lastError: Error?
+
+    for presetName in presetNames {
+      guard let export = AVAssetExportSession(asset: composition, presetName: presetName) else {
+        continue
+      }
+      let exportBox = AssetExportSessionBox(export)
+
+      export.outputURL = outputURL
+      export.outputFileType = .mov
+      export.shouldOptimizeForNetworkUse = false
+
+      do {
+        try await withCheckedThrowingContinuation {
+          (continuation: CheckedContinuation<Void, Error>) in
+          export.exportAsynchronously {
+            let export = exportBox.session
+            switch export.status {
+            case .completed:
+              continuation.resume(returning: ())
+            case .failed:
+              continuation.resume(
+                throwing: export.error
+                  ?? flutterError(NativeErrorCode.recordingError, "Segment merge failed")
+              )
+            case .cancelled:
+              continuation.resume(
+                throwing: flutterError(NativeErrorCode.recordingError, "Segment merge cancelled")
+              )
+            default:
+              continuation.resume(
+                throwing: flutterError(NativeErrorCode.recordingError, "Segment merge incomplete")
+              )
+            }
+          }
+        }
+        return outputURL
+      } catch {
+        lastError = error
+        if fileManager.fileExists(atPath: outputURL.path) {
+          try? fileManager.removeItem(at: outputURL)
+        }
+      }
+    }
+
+    throw lastError
+      ?? flutterError(NativeErrorCode.recordingError, "Unable to create export session for merged recording")
+  }
+}
+
+private enum CursorSegmentMerger {
+  static func mergeSegments(
+    _ segments: [SegmentedRecordingArtifact],
+    expectsCursorSidecars: Bool,
+    outputURL: URL,
+    fileManager: FileManager = .default
+  ) throws {
+    guard expectsCursorSidecars else { return }
+
+    var mergedSprites: [CursorSprite] = []
+    var mergedFrames: [CursorFrame] = []
+    var spriteMap: [CursorSpriteSignature: Int] = [:]
+    var timeOffset: TimeInterval = 0
+
+    for segment in segments.sorted(by: { $0.index < $1.index }) {
+      guard let cursorURL = segment.cursorURL else {
+        throw flutterError(
+          NativeErrorCode.cursorFileMissing,
+          "Missing cursor sidecar path for segment \(segment.index)"
+        )
+      }
+      guard fileManager.fileExists(atPath: cursorURL.path) else {
+        throw flutterError(
+          NativeErrorCode.cursorFileMissing,
+          "Missing cursor sidecar for segment \(segment.index)"
+        )
+      }
+
+      let data = try Data(contentsOf: cursorURL)
+      let recording = try JSONDecoder().decode(CursorRecording.self, from: data)
+      var localSpriteMap: [Int: Int] = [:]
+
+      for sprite in recording.sprites {
+        let signature = CursorSpriteSignature(sprite: sprite)
+        let mergedID: Int
+        if let existing = spriteMap[signature] {
+          mergedID = existing
+        } else {
+          mergedID = mergedSprites.count
+          spriteMap[signature] = mergedID
+          mergedSprites.append(
+            CursorSprite(
+              id: mergedID,
+              width: sprite.width,
+              height: sprite.height,
+              hotspotX: sprite.hotspotX,
+              hotspotY: sprite.hotspotY,
+              pixels: sprite.pixels
+            )
+          )
+        }
+        localSpriteMap[sprite.id] = mergedID
+      }
+
+      for frame in recording.frames {
+        let mergedSpriteID = frame.spriteID >= 0 ? (localSpriteMap[frame.spriteID] ?? frame.spriteID) : -1
+        mergedFrames.append(
+          CursorFrame(
+            t: timeOffset + frame.t,
+            x: frame.x,
+            y: frame.y,
+            spriteID: mergedSpriteID
+          )
+        )
+      }
+
+      timeOffset += segment.recordedDuration
+    }
+
+    let mergedRecording = CursorRecording(sprites: mergedSprites, frames: mergedFrames)
+    let data = try JSONEncoder().encode(mergedRecording)
+    if fileManager.fileExists(atPath: outputURL.path) {
+      try fileManager.removeItem(at: outputURL)
+    }
+    try data.write(to: outputURL)
+  }
+}
+
 @available(macOS 15.0, *)
 @MainActor
 final class CaptureBackendScreenCaptureKit: NSObject, CaptureBackend {
@@ -58,9 +374,13 @@ final class CaptureBackendScreenCaptureKit: NSObject, CaptureBackend {
   // MARK: CaptureBackend
   var onStarted: ((URL) -> Void)?
   var onFinished: ((URL?, Error?) -> Void)?
+  var onPaused: (() -> Void)?
+  var onResumed: (() -> Void)?
   var onMicrophoneLevel: ((MicrophoneLevelSample) -> Void)?
 
+  var canPauseResume: Bool { true }
   var isRecording: Bool { recordingURL != nil && didStart }
+  var isPaused: Bool { paused }
   var currentOutputURL: URL? { recordingURL }
 
   // MARK: Internals
@@ -71,8 +391,12 @@ final class CaptureBackendScreenCaptureKit: NSObject, CaptureBackend {
 
   private var recordingURL: URL?
   private var didStart: Bool = false
+  private var paused: Bool = false
   private var stopRequested: Bool = false
   private var runPhase: RunPhase = .idle
+  private var segmentedSession: SegmentedRecordingSession?
+  private var activeSegmentContext: RecordingSegmentContext?
+  private var segmentContextsByOutputID: [ObjectIdentifier: RecordingSegmentContext] = [:]
 
   // Keep these for CursorRecorder normalization (reuse our existing cropRect logic)
   private var currentDisplayID: CGDirectDisplayID = CGMainDisplayID()
@@ -118,6 +442,14 @@ final class CaptureBackendScreenCaptureKit: NSObject, CaptureBackend {
     runPhase = .stopping
     stopWindowMoveTimer()
     Task { await stopAsync() }
+  }
+
+  func pause() {
+    Task { await pauseAsync() }
+  }
+
+  func resume() {
+    Task { await resumeAsync() }
   }
 
   func updateOverlay(windowID: CGWindowID?) {
@@ -212,8 +544,12 @@ final class CaptureBackendScreenCaptureKit: NSObject, CaptureBackend {
   private func startAsync(config: CaptureStartConfig) async {
     do {
       didStart = false
+      paused = false
       stopRequested = false
       runPhase = .starting
+      segmentedSession = nil
+      activeSegmentContext = nil
+      segmentContextsByOutputID = [:]
       smoothedMicLevelLinear = 0.0
       lastMicLevelEmitAt = 0.0
 
@@ -225,6 +561,10 @@ final class CaptureBackendScreenCaptureKit: NSObject, CaptureBackend {
 
       let outURL = try config.makeOutputURL()
       recordingURL = outURL
+      segmentedSession = SegmentedRecordingSession(
+        primaryInProgressRawURL: outURL,
+        expectsCursorSidecars: !config.excludeRecorderApp
+      )
 
       NativeLogger.i(
         "SCKBackend", "Start requested",
@@ -341,15 +681,10 @@ final class CaptureBackendScreenCaptureKit: NSObject, CaptureBackend {
         try stream.addStreamOutput(self, type: .microphone, sampleHandlerQueue: micQ)
       }
 
-      // Configure recording output (macOS 15+)
-      let rec = SCRecordingOutputConfiguration()
-      rec.outputURL = outURL
-      rec.outputFileType = .mov
-      rec.videoCodecType = .hevc
-
-      let ro = SCRecordingOutput(configuration: rec, delegate: self)
-      try stream.addRecordingOutput(ro)
-      recordingOutput = ro
+      let initialSegment = try makeRecordingSegmentContext()
+      try stream.addRecordingOutput(initialSegment.recordingOutput)
+      recordingOutput = initialSegment.recordingOutput
+      activeSegmentContext = initialSegment
 
       // Start capture (recording begins as stream runs)
       logDiskSpace("before_start_capture", url: outURL)
@@ -386,13 +721,13 @@ final class CaptureBackendScreenCaptureKit: NSObject, CaptureBackend {
     }
 
     let outURL = recordingURL
-    let cursorURL = outURL?.deletingPathExtension().appendingPathExtension("cursor.json")
 
     NativeLogger.i(
       "SCKBackend", "Stop requested",
       context: [
         "out": outURL?.path ?? "nil",
-        "cursor": cursorURL?.path ?? "nil",
+        "paused": paused,
+        "hasActiveSegment": activeSegmentContext != nil,
       ])
 
     // Set flag to distinguish user-initiated stop from errors
@@ -402,45 +737,28 @@ final class CaptureBackendScreenCaptureKit: NSObject, CaptureBackend {
     lastMicLevelEmitAt = 0.0
 
     do {
+      if let activeSegmentContext {
+        try await finalizeSegment(activeSegmentContext)
+      }
+
       try await performSerializedStreamMutation { sequence in
         guard let stream = self.stream else {
           NativeLogger.w(
             "SCKBackend", "Stop mutation skipped because stream=nil",
-            context: ["sequence": sequence])
+            context: ["sequence": sequence]
+          )
           return
         }
 
         NativeLogger.d("SCKBackend", "Stopping stream capture...", context: ["sequence": sequence])
         try await stream.stopCapture()
-
-        NativeLogger.d(
-          "SCKBackend", "Stream stopped, waiting for file flush...",
-          context: ["sequence": sequence])
-
-        // SCRecordingOutput needs a moment to write final atoms to the .mov file.
-        try? await Task.sleep(nanoseconds: 500_000_000)
-
-        if let ro = self.recordingOutput {
-          try stream.removeRecordingOutput(ro)
-          self.recordingOutput = nil
-          NativeLogger.d(
-            "SCKBackend", "Recording output removed",
-            context: ["sequence": sequence])
-        }
-
         self.stream = nil
         NativeLogger.d("SCKBackend", "Stream cleanup complete", context: ["sequence": sequence])
       }
 
-      // Finish cursor recording AFTER the stream is stopped (video is finalized)
-      if let cursorURL {
-        isCursorCaptureActive = false
-        cursorRecorder.stop(outputURL: cursorURL) { [weak self] in
-          guard let self else { return }
-          Task { @MainActor in
-            await self.waitForFileReadyAndFinish(url: outURL)
-          }
-        }
+      if let session = segmentedSession {
+        let mergedOutputURL = try await mergeSegmentArtifacts(session)
+        await waitForFileReadyAndFinish(url: mergedOutputURL)
       } else {
         await waitForFileReadyAndFinish(url: outURL)
       }
@@ -448,6 +766,207 @@ final class CaptureBackendScreenCaptureKit: NSObject, CaptureBackend {
     } catch {
       NativeLogger.e("SCKBackend", "Stop failed", context: ["error": "\(error)"])
       finishWithFailure(error)
+    }
+  }
+
+  private func pauseAsync() async {
+    guard runPhase == .running, didStart, !stopRequested else {
+      NativeLogger.w(
+        "SCKBackend", "Ignoring pause outside running phase",
+        context: ["phase": runPhase.rawValue, "didStart": didStart, "stopRequested": stopRequested]
+      )
+      return
+    }
+    guard !paused else {
+      onPaused?()
+      return
+    }
+    guard let activeSegmentContext else {
+      finishWithFailure(flutterError(NativeErrorCode.recordingError, "Missing active recording segment"))
+      return
+    }
+
+    do {
+      try await finalizeSegment(activeSegmentContext)
+      paused = true
+      onPaused?()
+    } catch {
+      NativeLogger.e("SCKBackend", "Pause failed", context: ["error": "\(error)"])
+      finishWithFailure(error)
+    }
+  }
+
+  private func resumeAsync() async {
+    guard runPhase == .running, didStart, !stopRequested else {
+      NativeLogger.w(
+        "SCKBackend", "Ignoring resume outside running phase",
+        context: ["phase": runPhase.rawValue, "didStart": didStart, "stopRequested": stopRequested]
+      )
+      return
+    }
+    guard paused else {
+      onResumed?()
+      return
+    }
+    guard let stream else {
+      finishWithFailure(flutterError(NativeErrorCode.recordingError, "Missing active stream"))
+      return
+    }
+
+    do {
+      let newSegment = try makeRecordingSegmentContext()
+      try await performSerializedStreamMutation { sequence in
+        NativeLogger.i(
+          "SCKBackend", "Adding recording output for resumed segment",
+          context: ["sequence": sequence, "segmentIndex": newSegment.index]
+        )
+        try stream.addRecordingOutput(newSegment.recordingOutput)
+        self.recordingOutput = newSegment.recordingOutput
+        self.activeSegmentContext = newSegment
+      }
+      await startCursorSegmentIfNeeded(for: newSegment)
+      paused = false
+      onResumed?()
+    } catch {
+      NativeLogger.e("SCKBackend", "Resume failed", context: ["error": "\(error)"])
+      finishWithFailure(error)
+    }
+  }
+
+  private func makeRecordingSegmentContext() throws -> RecordingSegmentContext {
+    guard var session = segmentedSession else {
+      throw flutterError(NativeErrorCode.recordingError, "Missing segmented recording session")
+    }
+
+    let segment = session.nextSegmentURLs()
+    segmentedSession = session
+
+    let configuration = SCRecordingOutputConfiguration()
+    configuration.outputURL = segment.rawURL
+    configuration.outputFileType = .mov
+    configuration.videoCodecType = .hevc
+
+    let recordingOutput = SCRecordingOutput(configuration: configuration, delegate: self)
+    let context = RecordingSegmentContext(
+      index: segment.index,
+      rawURL: segment.rawURL,
+      cursorURL: segment.cursorURL,
+      recordingOutput: recordingOutput
+    )
+    segmentContextsByOutputID[ObjectIdentifier(recordingOutput)] = context
+
+    NativeLogger.i(
+      "SCKBackend", "Prepared recording segment",
+      context: [
+        "index": segment.index,
+        "rawURL": segment.rawURL.path,
+        "cursorURL": segment.cursorURL?.path ?? "nil",
+      ]
+    )
+
+    return context
+  }
+
+  private func finalizeSegment(_ segment: RecordingSegmentContext) async throws {
+    let finishedAt = Date()
+    try await performSerializedStreamMutation { sequence in
+      guard let stream = self.stream else {
+        throw flutterError(NativeErrorCode.recordingError, "Missing active stream")
+      }
+
+      NativeLogger.i(
+        "SCKBackend", "Finalizing recording segment",
+        context: ["sequence": sequence, "segmentIndex": segment.index]
+      )
+      try stream.removeRecordingOutput(segment.recordingOutput)
+      self.recordingOutput = nil
+      self.activeSegmentContext = nil
+    }
+
+    try await segment.finalizationWaiter.wait()
+    try await stopCursorSegmentIfNeeded(for: segment)
+
+    let duration = max(0, finishedAt.timeIntervalSince(segment.startedAt))
+    if var session = segmentedSession {
+      session.appendSegment(
+        index: segment.index,
+        rawURL: segment.rawURL,
+        cursorURL: segment.cursorURL,
+        recordedDuration: duration
+      )
+      segmentedSession = session
+    }
+    segmentContextsByOutputID.removeValue(forKey: ObjectIdentifier(segment.recordingOutput))
+  }
+
+  private func startCursorSegmentIfNeeded(for segment: RecordingSegmentContext) async {
+    guard !isRecorderExcluded else {
+      NativeLogger.i("SCKBackend", "Cursor recording disabled (recorder app excluded from capture)")
+      isCursorCaptureActive = false
+      return
+    }
+
+    cursorRecorder.start(
+      displayID: currentDisplayID,
+      captureRect: currentCaptureRect,
+      cursorRasterScale: currentCursorRasterScale
+    )
+    isCursorCaptureActive = true
+
+    NativeLogger.d(
+      "SCKBackend", "Started cursor segment",
+      context: ["segmentIndex": segment.index, "cursorURL": segment.cursorURL?.path ?? "nil"]
+    )
+  }
+
+  private func stopCursorSegmentIfNeeded(for segment: RecordingSegmentContext) async throws {
+    guard isCursorCaptureActive, let cursorURL = segment.cursorURL else {
+      isCursorCaptureActive = false
+      return
+    }
+
+    try await withCheckedThrowingContinuation { (continuation: CheckedContinuation<Void, Error>) in
+      isCursorCaptureActive = false
+      cursorRecorder.stop(outputURL: cursorURL) {
+        continuation.resume(returning: ())
+      }
+    }
+  }
+
+  private func mergeSegmentArtifacts(_ session: SegmentedRecordingSession) async throws -> URL {
+    let orderedSegments = session.segmentArtifacts.sorted(by: { $0.index < $1.index })
+    NativeLogger.i(
+      "SCKBackend", "Merging recording segments",
+      context: [
+        "count": orderedSegments.count,
+        "output": session.primaryInProgressRawURL.path,
+      ]
+    )
+
+    let mergedURL = try await RecordingSegmentMerger.mergeSegments(
+      orderedSegments.map(\.rawURL),
+      to: session.primaryInProgressRawURL
+    )
+
+    try CursorSegmentMerger.mergeSegments(
+      orderedSegments,
+      expectsCursorSidecars: session.expectsCursorSidecars,
+      outputURL: AppPaths.cursorSidecarURL(for: mergedURL)
+    )
+
+    cleanupMergedSegmentArtifacts(orderedSegments, finalURL: mergedURL)
+    return mergedURL
+  }
+
+  private func cleanupMergedSegmentArtifacts(_ segments: [SegmentedRecordingArtifact], finalURL: URL) {
+    let fm = FileManager.default
+    for segment in segments {
+      if fm.fileExists(atPath: segment.rawURL.path), segment.rawURL != finalURL {
+        try? fm.removeItem(at: segment.rawURL)
+      }
+      if let cursorURL = segment.cursorURL, fm.fileExists(atPath: cursorURL.path) {
+        try? fm.removeItem(at: cursorURL)
+      }
     }
   }
 
@@ -602,16 +1121,16 @@ final class CaptureBackendScreenCaptureKit: NSObject, CaptureBackend {
       return
     }
 
-    let failedURL = recordingURL
-    let cursorPlan = CursorFailureFinalizationPlan.make(
-      recordingURL: failedURL,
-      cursorCaptureActive: isCursorCaptureActive
-    )
+    let cursorURL = activeSegmentContext?.cursorURL
+    let shouldFlushCursor = isCursorCaptureActive && cursorURL != nil
+    for context in segmentContextsByOutputID.values {
+      context.finalizationWaiter.fail(error)
+    }
 
-    cleanupStreamAfterFailure(discardCursor: !cursorPlan.shouldFlushCursor)
+    cleanupStreamAfterFailure(discardCursor: !shouldFlushCursor)
 
-    guard cursorPlan.shouldFlushCursor, let cursorURL = cursorPlan.cursorURL else {
-      completeFailure(url: failedURL, error: error, cursorURL: cursorPlan.cursorURL)
+    guard shouldFlushCursor, let cursorURL else {
+      completeFailure(url: nil, error: error, cursorURL: cursorURL)
       return
     }
 
@@ -619,13 +1138,13 @@ final class CaptureBackendScreenCaptureKit: NSObject, CaptureBackend {
       "SCKBackend", "Flushing cursor recording after failure",
       context: [
         "cursor": cursorURL.path,
-        "url": failedURL?.path ?? "nil",
+        "url": recordingURL?.path ?? "nil",
       ])
 
     cursorRecorder.stop(outputURL: cursorURL) { [weak self] in
       guard let self else { return }
       Task { @MainActor in
-        self.completeFailure(url: failedURL, error: error, cursorURL: cursorURL)
+        self.completeFailure(url: nil, error: error, cursorURL: cursorURL)
       }
     }
   }
@@ -647,10 +1166,16 @@ final class CaptureBackendScreenCaptureKit: NSObject, CaptureBackend {
 
   private func resetState() {
     didStart = false
+    paused = false
     stopRequested = false
     runPhase = .idle
     isCursorCaptureActive = false
+    smoothedMicLevelLinear = 0.0
+    lastMicLevelEmitAt = 0.0
     recordingURL = nil
+    segmentedSession = nil
+    activeSegmentContext = nil
+    segmentContextsByOutputID = [:]
     currentConfig = nil
     currentOverlayWindowID = nil
     pendingOverlayWindowID = nil
@@ -659,20 +1184,32 @@ final class CaptureBackendScreenCaptureKit: NSObject, CaptureBackend {
     activeStreamConfig = nil
     lastSourceRect = nil
     isFlushingOverlayUpdates = false
+    streamMutationTail = nil
     stopWindowMoveTimer()
+    stream = nil
+    recordingOutput = nil
   }
 
   private func cleanupStreamAfterFailure(discardCursor: Bool) {
+    if let stream {
+      Task {
+        try? await stream.stopCapture()
+      }
+    }
     if discardCursor {
       cursorRecorder.cancel()
     }
     didStart = false
+    paused = false
     stopRequested = false
     runPhase = .idle
     isCursorCaptureActive = false
     smoothedMicLevelLinear = 0.0
     lastMicLevelEmitAt = 0.0
     stopWindowMoveTimer()
+    segmentedSession = nil
+    activeSegmentContext = nil
+    segmentContextsByOutputID = [:]
     stream = nil
     recordingOutput = nil
   }
@@ -681,22 +1218,14 @@ final class CaptureBackendScreenCaptureKit: NSObject, CaptureBackend {
     guard !didStart else { return }
 
     didStart = true
+    paused = false
     runPhase = .running
 
     startWindowMoveTimer()
     await flushOverlayUpdateIfNeeded()
 
-    // Only start cursor recording if recorder app is NOT excluded.
-    if !isRecorderExcluded {
-      cursorRecorder.start(
-        displayID: currentDisplayID,
-        captureRect: currentCaptureRect,
-        cursorRasterScale: currentCursorRasterScale
-      )
-      isCursorCaptureActive = true
-    } else {
-      NativeLogger.i("SCKBackend", "Cursor recording disabled (recorder app excluded from capture)")
-      isCursorCaptureActive = false
+    if let activeSegmentContext {
+      await startCursorSegmentIfNeeded(for: activeSegmentContext)
     }
 
     onStarted?(url)
@@ -1314,9 +1843,30 @@ extension CaptureBackendScreenCaptureKit: SCStreamOutput {
 extension CaptureBackendScreenCaptureKit: SCRecordingOutputDelegate {
   nonisolated func recordingOutputDidStartRecording(_ recordingOutput: SCRecordingOutput) {
     Task { @MainActor in
+      let outputID = ObjectIdentifier(recordingOutput)
+      if let context = self.segmentContextsByOutputID[outputID] {
+        NativeLogger.i(
+          "SCKBackend", "Recording segment started",
+          context: ["segmentIndex": context.index, "rawURL": context.rawURL.path]
+        )
+      }
       guard let url = self.recordingURL else { return }
-      NativeLogger.i("SCKBackend", "Recording started (delegate)")
       await self.markRecordingStarted(url: url)
+    }
+  }
+
+  nonisolated func recordingOutputDidFinishRecording(_ recordingOutput: SCRecordingOutput) {
+    Task { @MainActor in
+      let outputID = ObjectIdentifier(recordingOutput)
+      if let context = self.segmentContextsByOutputID[outputID] {
+        NativeLogger.i(
+          "SCKBackend", "Recording segment finished",
+          context: ["segmentIndex": context.index, "rawURL": context.rawURL.path]
+        )
+        context.finalizationWaiter.succeed()
+      } else {
+        NativeLogger.w("SCKBackend", "Received finish callback for unknown recording output")
+      }
     }
   }
 
@@ -1324,6 +1874,10 @@ extension CaptureBackendScreenCaptureKit: SCRecordingOutputDelegate {
     _ recordingOutput: SCRecordingOutput, didFailWithError error: any Error
   ) {
     Task { @MainActor in
+      let outputID = ObjectIdentifier(recordingOutput)
+      if let context = self.segmentContextsByOutputID[outputID] {
+        context.finalizationWaiter.fail(error)
+      }
       self.logDiskSpace("recording_output_did_fail", url: self.recordingURL)
       NativeLogger.e(
         "SCKBackend", "Recording failed",

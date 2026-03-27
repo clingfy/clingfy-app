@@ -6,6 +6,8 @@ final class CapturePipeline: NSObject, AVCaptureFileOutputRecordingDelegate {
   private(set) var session: AVCaptureSession?
   private(set) var movieOutput: AVCaptureMovieFileOutput?
   var onStarted: ((URL) -> Void)?
+  var onPaused: (() -> Void)?
+  var onResumed: (() -> Void)?
   var onFinished: ((URL?, Error?) -> Void)?
 
   private let cursorRecorder = CursorRecorder()
@@ -116,6 +118,21 @@ final class CapturePipeline: NSObject, AVCaptureFileOutputRecordingDelegate {
     queue.async { self.movieOutput?.stopRecording() }
   }
 
+  func pause() {
+    queue.async {
+      guard let movieOutput = self.movieOutput, movieOutput.isRecording, !movieOutput.isRecordingPaused
+      else { return }
+      movieOutput.pauseRecording()
+    }
+  }
+
+  func resume() {
+    queue.async {
+      guard let movieOutput = self.movieOutput, movieOutput.isRecordingPaused else { return }
+      movieOutput.resumeRecording()
+    }
+  }
+
   private func applyQuality(
     screenInput: AVCaptureScreenInput,
     displayID: CGDirectDisplayID,
@@ -178,18 +195,36 @@ final class CapturePipeline: NSObject, AVCaptureFileOutputRecordingDelegate {
       self.onStarted?(fileURL)
     }
   }
+
+  func captureOutput(
+    _ output: AVCaptureFileOutput,
+    didPauseRecordingToOutputFileAt fileURL: URL,
+    fromConnections connections: [AVCaptureConnection]
+  ) {
+    cursorRecorder.pause()
+    DispatchQueue.main.async {
+      self.onPaused?()
+    }
+  }
+
+  func captureOutput(
+    _ output: AVCaptureFileOutput,
+    didResumeRecordingToOutputFileAt fileURL: URL,
+    fromConnections connections: [AVCaptureConnection]
+  ) {
+    cursorRecorder.resume()
+    DispatchQueue.main.async {
+      self.onResumed?()
+    }
+  }
+
   func fileOutput(
     _ output: AVCaptureFileOutput,
     didFinishRecordingTo url: URL,
     from connections: [AVCaptureConnection],
     error: Error?
   ) {
-
-    if url != nil {
-      self.logFinalVideoInfoAVF(url: url)
-    } else {
-      NativeLogger.w("AVFBackend", "No video track found", context: ["url": url.path])
-    }
+    self.logFinalVideoInfoAVF(url: url)
 
     let cursorURL = url.deletingPathExtension().appendingPathExtension("cursor.json")
 

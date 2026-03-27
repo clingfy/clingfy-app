@@ -149,8 +149,13 @@ void main() {
             children: [
               HomeRightPanel(
                 isRecording: recording.isRecording,
+                isPaused: recording.isPaused,
                 isBusy: recording.isBusyTransitioning,
+                canPause: recording.canPause,
+                canResume: recording.canResume,
                 onToggleRecording: () {},
+                onPauseRecording: () {},
+                onResumeRecording: () {},
                 onClosePreview: () {},
                 previewHostBuilder: previewHostBuilder,
               ),
@@ -235,7 +240,16 @@ void main() {
         darkTheme: buildDarkTheme(),
         themeMode: ThemeMode.dark,
         home: const Scaffold(
-          body: HeroPanel(isRecording: true, isBusy: false, onToggle: _noop),
+          body: HeroPanel(
+            isRecording: true,
+            isPaused: false,
+            isBusy: false,
+            canPause: true,
+            canResume: false,
+            onToggle: _noop,
+            onPause: _noop,
+            onResume: _noop,
+          ),
         ),
       ),
     );
@@ -245,6 +259,37 @@ void main() {
 
     expect(recordingIcon.color, recordingAccent);
     expect(stopButton.style?.backgroundColor?.resolve({}), recordingAccent);
+  });
+
+  testWidgets('paused hero shows resume and stop actions', (tester) async {
+    await tester.pumpWidget(
+      MaterialApp(
+        localizationsDelegates: AppLocalizations.localizationsDelegates,
+        supportedLocales: AppLocalizations.supportedLocales,
+        theme: buildDarkTheme(),
+        darkTheme: buildDarkTheme(),
+        themeMode: ThemeMode.dark,
+        home: const Scaffold(
+          body: HeroPanel(
+            isRecording: true,
+            isPaused: true,
+            isBusy: false,
+            canPause: false,
+            canResume: true,
+            onToggle: _noop,
+            onPause: _noop,
+            onResume: _noop,
+          ),
+        ),
+      ),
+    );
+
+    final l10n = AppLocalizations.of(tester.element(find.byType(HeroPanel)))!;
+
+    expect(find.text(l10n.recordingPaused), findsOneWidget);
+    expect(find.text(l10n.resume), findsOneWidget);
+    expect(find.text(l10n.stop), findsOneWidget);
+    expect(find.byIcon(Icons.pause_circle_filled), findsOneWidget);
   });
 
   testWidgets('keeps hero panel visible through finalizingRecording', (

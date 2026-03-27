@@ -10,6 +10,8 @@ abstract class NativeErrorCode {
   // Recording lifecycle errors
   static const String alreadyRecording = 'ALREADY_RECORDING';
   static const String notRecording = 'NOT_RECORDING';
+  static const String invalidRecordingState = 'INVALID_RECORDING_STATE';
+  static const String pauseResumeUnsupported = 'PAUSE_RESUME_UNSUPPORTED';
 
   // Target selection errors
   static const String noWindowSelected = 'NO_WINDOW_SELECTED';

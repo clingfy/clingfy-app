@@ -1,65 +1,93 @@
 import Cocoa
 
-enum IndicatorState {
+enum IndicatorState: Equatable {
   case hidden
   case recording
+  case paused
   case stopping
 }
 
+private enum PrimarySymbolMode {
+  case none
+  case pause
+  case resume
+}
+
+private struct IndicatorPresentation {
+  let primaryTint: NSColor
+  let primarySymbolMode: PrimarySymbolMode
+  let showsPrimaryAction: Bool
+  let showsElapsed: Bool
+  let showsStopping: Bool
+  let showsSecondaryStop: Bool
+  let primaryTooltip: String?
+  let secondaryStopTooltip: String?
+}
+
 final class RecordingIndicatorView: NSView {
-  private let dot = CAShapeLayer()
-  private let stopIconLayer = CAShapeLayer()
+  static let preferredSize = NSSize(width: 192, height: 42)
+  private static let defaultElapsedText = "00:00:00"
+
+  private enum ToolTipRegion: Int {
+    case primaryAction = 1
+    case secondaryStop = 2
+  }
+
+  private enum TapTarget {
+    case primary
+    case secondaryStop
+  }
+
+  private let primaryActionLayer = CAShapeLayer()
+  private let primarySymbolLayer = CAShapeLayer()
+  private let secondaryStopLayer = CAShapeLayer()
+  private let secondaryStopSymbolLayer = CAShapeLayer()
   private let elapsedLabel = CATextLayer()
+  private let spinner = NSProgressIndicator()
+  private let stoppingLabel = CATextLayer()
 
-  // Idle content
-  private let idleContainer = CALayer()
-  private let dotsReplicator = CAReplicatorLayer()
-  private let baseDot = CAShapeLayer()
-
-  // Injected by ScreenRecorder
   var elapsedProvider: (() -> String)?
+  var onPauseTapped: (() -> Void)?
   var onStopTapped: (() -> Void)?
+  var onResumeTapped: (() -> Void)?
 
-  // State
   var state: IndicatorState = .hidden {
     didSet {
       updateUIForState()
     }
   }
 
-  private let spinner = NSProgressIndicator()
-  private let stoppingLabel = CATextLayer()
-
-  // Timers
   private var tickTimer: Timer?
+  private var primaryHitRect: CGRect = .zero
+  private var secondaryStopHitRect: CGRect = .zero
+  private var primaryToolTipTag: NSView.ToolTipTag?
+  private var secondaryToolTipTag: NSView.ToolTipTag?
+  private var primaryToolTipText: String?
+  private var secondaryToolTipText: String?
 
-  // Cache the dot rect for hit testing
-  private var dotHitRect: CGRect = .zero
-
-  override init(frame: NSRect) {
-    super.init(frame: frame)
+  override init(frame frameRect: NSRect) {
+    super.init(frame: frameRect)
     wantsLayer = true
 
-    // --- Container Styling ---
-    // Polished background, slightly more opaque
     layer?.backgroundColor = NSColor.windowBackgroundColor.withAlphaComponent(0.95).cgColor
     layer?.borderWidth = 0
     layer?.borderColor = NSColor.separatorColor.withAlphaComponent(0.5).cgColor
     layer?.masksToBounds = true
-    // cornerRadius is set in layout() to ensure pill shape
 
-    // --- Red Status Dot ---
-    dot.fillColor = NSColor.systemRed.cgColor
-    layer?.addSublayer(dot)
+    primarySymbolLayer.fillColor = NSColor.white.cgColor
+    primarySymbolLayer.contentsScale = NSScreen.main?.backingScaleFactor ?? 2.0
+    primaryActionLayer.addSublayer(primarySymbolLayer)
+    layer?.addSublayer(primaryActionLayer)
 
-    // --- Stop Icon (white square inside dot) ---
-    stopIconLayer.fillColor = NSColor.white.cgColor
-    stopIconLayer.opacity = 1.0
-    stopIconLayer.contentsScale = NSScreen.main?.backingScaleFactor ?? 2.0
-    dot.addSublayer(stopIconLayer)
+    secondaryStopLayer.fillColor = NSColor.systemRed.cgColor
+    secondaryStopLayer.strokeColor = nil
+    secondaryStopLayer.lineWidth = 0
+    secondaryStopSymbolLayer.fillColor = NSColor.white.cgColor
+    secondaryStopSymbolLayer.contentsScale = NSScreen.main?.backingScaleFactor ?? 2.0
+    secondaryStopLayer.addSublayer(secondaryStopSymbolLayer)
+    layer?.addSublayer(secondaryStopLayer)
 
-    // --- Elapsed Timer Label (Always visible during recording) ---
-    elapsedLabel.string = "00:00:00"
+    elapsedLabel.string = Self.defaultElapsedText
     elapsedLabel.opacity = 0
     elapsedLabel.alignmentMode = .left
     elapsedLabel.font = NSFont.monospacedDigitSystemFont(ofSize: 15, weight: .semibold)
@@ -68,7 +96,6 @@ final class RecordingIndicatorView: NSView {
     elapsedLabel.contentsScale = NSScreen.main?.backingScaleFactor ?? 2.0
     layer?.addSublayer(elapsedLabel)
 
-    // --- Stopping State UI ---
     spinner.style = .spinning
     spinner.controlSize = .small
     spinner.isDisplayedWhenStopped = false
@@ -82,123 +109,230 @@ final class RecordingIndicatorView: NSView {
     stoppingLabel.foregroundColor = NSColor.secondaryLabelColor.cgColor
     stoppingLabel.contentsScale = NSScreen.main?.backingScaleFactor ?? 2.0
     layer?.addSublayer(stoppingLabel)
+
+    updateUIForState()
   }
 
   required init?(coder: NSCoder) { fatalError() }
 
-  // MARK: - Mouse Events
-
   override func mouseDown(with event: NSEvent) {
-    guard state == .recording else { return }
-    let p = convert(event.locationInWindow, from: nil)
-    if dotHitRect.contains(p) {
-      animateDotTap()
-      onStopTapped?()
+    let point = convert(event.locationInWindow, from: nil)
+    guard handleClick(at: point) else {
+      super.mouseDown(with: event)
       return
     }
-    super.mouseDown(with: event)
   }
 
-  private func animateDotTap() {
-    // Quick scale down/up to feel like a button press
-    let anim = CAKeyframeAnimation(keyPath: "transform.scale")
-    anim.values = [1.0, 0.85, 1.0]
-    anim.keyTimes = [0, 0.5, 1]
-    anim.duration = 0.15
-    anim.timingFunction = CAMediaTimingFunction(name: .easeInEaseOut)
-    dot.add(anim, forKey: "tap")
+  override func resetCursorRects() {
+    super.resetCursorRects()
+
+    if !primaryHitRect.isEmpty {
+      addCursorRect(primaryHitRect, cursor: .pointingHand)
+    }
+    if !secondaryStopHitRect.isEmpty {
+      addCursorRect(secondaryStopHitRect, cursor: .pointingHand)
+    }
+  }
+
+  override func layout() {
+    super.layout()
+    guard let containerLayer = layer else { return }
+
+    let presentation = Self.presentation(for: state)
+    let showsPrimaryAction = presentation.showsPrimaryAction && isPrimaryActionAvailable
+    let showsSecondaryStop = presentation.showsSecondaryStop && isSecondaryStopAvailable
+    let height = bounds.height
+    containerLayer.cornerRadius = height / 2
+
+    let horizontalInset: CGFloat = 12
+    let primarySize: CGFloat = 20
+    let secondarySize: CGFloat = 18
+    let primaryFrame = CGRect(
+      x: horizontalInset,
+      y: (height - primarySize) / 2,
+      width: primarySize,
+      height: primarySize
+    )
+
+    primaryActionLayer.frame = primaryFrame
+    primaryActionLayer.path = CGPath(ellipseIn: primaryActionLayer.bounds, transform: nil)
+    primarySymbolLayer.frame = primaryActionLayer.bounds
+    primarySymbolLayer.path = Self.symbolPath(
+      for: presentation.primarySymbolMode,
+      in: primarySymbolLayer.bounds.insetBy(dx: 4, dy: 4)
+    )
+
+    let textX = primaryFrame.maxX + 10
+    let lineHeight: CGFloat = 17
+    let secondaryFrame: CGRect
+    let textMaxX: CGFloat
+    if showsSecondaryStop {
+      secondaryFrame = CGRect(
+        x: bounds.width - horizontalInset - secondarySize,
+        y: (height - secondarySize) / 2,
+        width: secondarySize,
+        height: secondarySize
+      )
+      textMaxX = secondaryFrame.minX - 8
+    } else {
+      secondaryFrame = .zero
+      textMaxX = bounds.width - horizontalInset
+    }
+
+    secondaryStopLayer.frame = secondaryFrame
+    secondaryStopLayer.path = CGPath(ellipseIn: secondaryStopLayer.bounds, transform: nil)
+    secondaryStopSymbolLayer.frame = secondaryStopLayer.bounds
+    secondaryStopSymbolLayer.path = Self.stopSymbolPath(
+      in: secondaryStopSymbolLayer.bounds.insetBy(dx: 5.5, dy: 5.5)
+    )
+
+    let textWidth = max(0, textMaxX - textX)
+    let labelFrame = CGRect(
+      x: textX,
+      y: (height - lineHeight) / 2,
+      width: textWidth,
+      height: lineHeight
+    )
+    elapsedLabel.frame = labelFrame
+
+    let spinnerSize: CGFloat = 18
+    let spinnerFrame = CGRect(
+      x: horizontalInset,
+      y: (height - spinnerSize) / 2,
+      width: spinnerSize,
+      height: spinnerSize
+    )
+    spinner.frame = spinnerFrame
+    stoppingLabel.frame = CGRect(
+      x: spinnerFrame.maxX + 8,
+      y: (height - lineHeight) / 2,
+      width: max(0, bounds.width - (spinnerFrame.maxX + 20)),
+      height: lineHeight
+    )
+
+    primaryHitRect = showsPrimaryAction
+      ? primaryFrame.insetBy(dx: -8, dy: -8)
+      : .zero
+    secondaryStopHitRect = showsSecondaryStop
+      ? secondaryFrame.insetBy(dx: -8, dy: -8)
+      : .zero
+
+    updateToolTips(for: presentation)
+    window?.invalidateCursorRects(for: self)
+  }
+
+  func view(
+    _ view: NSView,
+    stringForToolTip tag: NSView.ToolTipTag,
+    point: NSPoint,
+    userData data: UnsafeMutableRawPointer?
+  ) -> String {
+    switch ToolTipRegion(rawValue: Int(bitPattern: data)) {
+    case .primaryAction:
+      return primaryToolTipText ?? ""
+    case .secondaryStop:
+      return secondaryToolTipText ?? ""
+    case .none:
+      return ""
+    }
+  }
+
+  override func isAccessibilityElement() -> Bool {
+    state != .hidden
+  }
+
+  override func accessibilityRole() -> NSAccessibility.Role? {
+    .group
+  }
+
+  override func accessibilityLabel() -> String? {
+    switch state {
+    case .hidden:
+      return nil
+    case .recording:
+      return "Recording in progress, \(formattedBaseElapsedText())"
+    case .paused:
+      return "Recording paused, \(formattedBaseElapsedText())"
+    case .stopping:
+      return "Stopping recording"
+    }
+  }
+
+  override func accessibilityHelp() -> String? {
+    switch state {
+    case .hidden:
+      return nil
+    case .recording:
+      return "Primary action pauses recording. Secondary stop control stops recording."
+    case .paused:
+      return "Primary action resumes recording. Secondary stop control stops recording."
+    case .stopping:
+      return "Recording is stopping."
+    }
+  }
+
+  override func accessibilityPerformPress() -> Bool {
+    switch state {
+    case .recording:
+      guard let onPauseTapped else { return false }
+      onPauseTapped()
+      return true
+    case .paused:
+      guard let onResumeTapped else { return false }
+      onResumeTapped()
+      return true
+    case .hidden, .stopping:
+      return false
+    }
+  }
+
+  func hideNow() {
+    stopTicking()
+    elapsedLabel.string = Self.defaultElapsedText
   }
 
   private func updateUIForState() {
+    let presentation = Self.presentation(for: state)
+
     CATransaction.begin()
     CATransaction.setDisableActions(true)
 
-    switch state {
-    case .hidden:
-      stopTicking()
-      elapsedLabel.opacity = 0
-      stoppingLabel.opacity = 0
-      spinner.stopAnimation(nil)
-      dot.opacity = 0
+    let showsPrimaryAction = presentation.showsPrimaryAction && isPrimaryActionAvailable
+    let showsSecondaryStop = presentation.showsSecondaryStop && isSecondaryStopAvailable
 
-    case .recording:
-      startTicking()
-      elapsedLabel.opacity = 1
-      stoppingLabel.opacity = 0
-      spinner.stopAnimation(nil)
-      dot.opacity = 1
-      updateIconPath()
+    primaryActionLayer.opacity = showsPrimaryAction ? 1 : 0
+    primarySymbolLayer.opacity = showsPrimaryAction ? 1 : 0
+    primaryActionLayer.fillColor = presentation.primaryTint.cgColor
 
-    case .stopping:
-      stopTicking()
-      elapsedLabel.opacity = 0
-      stoppingLabel.opacity = 1
+    secondaryStopLayer.opacity = showsSecondaryStop ? 1 : 0
+    secondaryStopSymbolLayer.opacity = showsSecondaryStop ? 1 : 0
+
+    elapsedLabel.opacity = presentation.showsElapsed ? 1 : 0
+    stoppingLabel.opacity = presentation.showsStopping ? 1 : 0
+
+    if presentation.showsStopping {
       spinner.startAnimation(nil)
-      dot.opacity = 0  // Hide stop button in stopping state
+    } else {
+      spinner.stopAnimation(nil)
     }
+
+    if state == .recording {
+      startTicking()
+    } else {
+      stopTicking()
+    }
+    updateElapsedText()
 
     CATransaction.commit()
     needsLayout = true
   }
 
-  private func updateIconPath() {
-    needsLayout = true
-  }
-
-  // MARK: - Layout
-
-  override func layout() {
-    super.layout()
-    guard let layer = self.layer else { return }
-
-    let h = bounds.height
-    // Capsule shape
-    layer.cornerRadius = h / 2
-
-    // --- Dot Layout (Stop Button Area) ---
-    let s: CGFloat = 20  // Larger dot
-    let dotX: CGFloat = 12
-    let dotFrame = CGRect(x: dotX, y: (h - s) / 2, width: s, height: s)
-
-    dot.frame = dotFrame
-    dot.path = CGPath(ellipseIn: dot.bounds, transform: nil)
-
-    // Hit rect slightly larger for easier clicking
-    dotHitRect = dotFrame.insetBy(dx: -10, dy: -10)
-
-    // --- Stop Icon (inside Dot) ---
-    let iconS: CGFloat = 8
-    let iconRect = CGRect(x: (s - iconS) / 2, y: (s - iconS) / 2, width: iconS, height: iconS)
-    stopIconLayer.path = CGPath(
-      roundedRect: iconRect, cornerWidth: 1.5, cornerHeight: 1.5, transform: nil)
-
-    // --- Labels & Spinner Layout ---
-    let textX = dotFrame.maxX + 10
-    let labelW = bounds.width - textX - 12
-    let lineHeight: CGFloat = 17
-    let labelFrame = CGRect(x: textX, y: (h - lineHeight) / 2, width: labelW, height: lineHeight)
-
-    elapsedLabel.frame = labelFrame
-
-    // Spinner + "Stopping..." next to each other
-    let spinnerSize: CGFloat = 18
-    let spinnerFrame = CGRect(
-      x: 12, y: (h - spinnerSize) / 2, width: spinnerSize, height: spinnerSize)
-    spinner.frame = spinnerFrame
-
-    let stoppingTextX = spinnerFrame.maxX + 8
-    let stoppingTextW = bounds.width - stoppingTextX - 10
-    stoppingLabel.frame = CGRect(
-      x: stoppingTextX, y: (h - lineHeight) / 2, width: stoppingTextW, height: lineHeight)
-  }
-
-  // REMOVED hover logic: ALWAYS show labels during recording/stopping
-  override func updateTrackingAreas() {}
-  override func mouseEntered(with event: NSEvent) {}
-  override func mouseExited(with event: NSEvent) {}
-
   private func startTicking() {
-    tickTimer?.invalidate()
+    guard tickTimer == nil else {
+      updateElapsedText()
+      return
+    }
+
     tickTimer = Timer.scheduledTimer(withTimeInterval: 1.0, repeats: true) { [weak self] _ in
       self?.updateElapsedText()
     }
@@ -211,97 +345,330 @@ final class RecordingIndicatorView: NSView {
   }
 
   private func updateElapsedText() {
-    let text = elapsedProvider?() ?? ""
+    guard state == .recording || state == .paused else {
+      elapsedLabel.string = Self.defaultElapsedText
+      return
+    }
+
+    let baseText = formattedBaseElapsedText()
+    let text = state == .paused ? "Paused • \(baseText)" : baseText
     if elapsedLabel.string as? String != text {
       elapsedLabel.string = text
     }
   }
 
-  private func fade(layer: CALayer, to opacity: Float, duration: CFTimeInterval) {
-    let anim = CABasicAnimation(keyPath: "opacity")
-    anim.fromValue = layer.opacity
-    anim.toValue = opacity
-    anim.duration = duration
-    anim.timingFunction = CAMediaTimingFunction(name: .easeInEaseOut)
-    layer.add(anim, forKey: "fade")
-    layer.opacity = opacity
+  private func formattedBaseElapsedText() -> String {
+    let text = (elapsedProvider?() ?? "").trimmingCharacters(in: .whitespacesAndNewlines)
+    return text.isEmpty ? Self.defaultElapsedText : text
   }
 
-  private func animateScale(layer: CALayer, to scale: CGFloat, duration: CFTimeInterval) {
-    let anim = CABasicAnimation(keyPath: "transform.scale")
-    let currentScale = layer.presentation()?.value(forKeyPath: "transform.scale") as? CGFloat ?? 1.0
-    anim.fromValue = currentScale
-    anim.toValue = scale
-    anim.duration = duration
-    anim.timingFunction = CAMediaTimingFunction(name: .easeInEaseOut)
-    layer.add(anim, forKey: "scale")
-    layer.transform = CATransform3DMakeScale(scale, scale, 1)
+  private var isPrimaryActionAvailable: Bool {
+    switch state {
+    case .recording:
+      return onPauseTapped != nil
+    case .paused:
+      return onResumeTapped != nil
+    case .hidden, .stopping:
+      return false
+    }
   }
 
-  // Call when recording stops so the label hides immediately
-  func hideNow() {
-    stopTicking()
-    elapsedLabel.string = "00:00:00"
+  private var isSecondaryStopAvailable: Bool {
+    switch state {
+    case .recording, .paused:
+      return onStopTapped != nil
+    case .hidden, .stopping:
+      return false
+    }
   }
+
+  @discardableResult
+  private func handleClick(at point: CGPoint) -> Bool {
+    guard let tapTarget = tapTarget(at: point) else { return false }
+
+    performAction(for: tapTarget)
+    return true
+  }
+
+  private func tapTarget(at point: CGPoint) -> TapTarget? {
+    if !secondaryStopHitRect.isEmpty && secondaryStopHitRect.contains(point) {
+      return .secondaryStop
+    }
+    if !primaryHitRect.isEmpty && primaryHitRect.contains(point) {
+      return .primary
+    }
+    return nil
+  }
+
+  private func performAction(for target: TapTarget) {
+    switch target {
+    case .primary:
+      animateTap(on: primaryActionLayer)
+      switch state {
+      case .recording:
+        onPauseTapped?()
+      case .paused:
+        onResumeTapped?()
+      case .hidden, .stopping:
+        break
+      }
+    case .secondaryStop:
+      guard state == .recording || state == .paused else { return }
+      animateTap(on: secondaryStopLayer)
+      onStopTapped?()
+    }
+  }
+
+  private func animateTap(on layer: CALayer) {
+    let animation = CAKeyframeAnimation(keyPath: "transform.scale")
+    animation.values = [1.0, 0.88, 1.0]
+    animation.keyTimes = [0, 0.5, 1]
+    animation.duration = 0.15
+    animation.timingFunction = CAMediaTimingFunction(name: .easeInEaseOut)
+    layer.add(animation, forKey: "tap")
+  }
+
+  private func updateToolTips(for presentation: IndicatorPresentation) {
+    if let primaryToolTipTag {
+      removeToolTip(primaryToolTipTag)
+      self.primaryToolTipTag = nil
+    }
+    if let secondaryToolTipTag {
+      removeToolTip(secondaryToolTipTag)
+      self.secondaryToolTipTag = nil
+    }
+
+    primaryToolTipText = presentation.primaryTooltip
+    secondaryToolTipText = presentation.secondaryStopTooltip
+
+    if let primaryToolTipText, !primaryHitRect.isEmpty {
+      _ = primaryToolTipText
+      primaryToolTipTag = addToolTip(
+        primaryHitRect,
+        owner: self,
+        userData: UnsafeMutableRawPointer(bitPattern: ToolTipRegion.primaryAction.rawValue)
+      )
+    }
+
+    if let secondaryToolTipText, !secondaryStopHitRect.isEmpty {
+      _ = secondaryToolTipText
+      secondaryToolTipTag = addToolTip(
+        secondaryStopHitRect,
+        owner: self,
+        userData: UnsafeMutableRawPointer(bitPattern: ToolTipRegion.secondaryStop.rawValue)
+      )
+    }
+  }
+
+  private static func presentation(for state: IndicatorState) -> IndicatorPresentation {
+    switch state {
+    case .hidden:
+      return IndicatorPresentation(
+        primaryTint: .clear,
+        primarySymbolMode: .none,
+        showsPrimaryAction: false,
+        showsElapsed: false,
+        showsStopping: false,
+        showsSecondaryStop: false,
+        primaryTooltip: nil,
+        secondaryStopTooltip: nil
+      )
+    case .recording:
+      return IndicatorPresentation(
+        primaryTint: .controlAccentColor,
+        primarySymbolMode: .pause,
+        showsPrimaryAction: true,
+        showsElapsed: true,
+        showsStopping: false,
+        showsSecondaryStop: true,
+        primaryTooltip: "Pause recording",
+        secondaryStopTooltip: "Stop recording"
+      )
+    case .paused:
+      return IndicatorPresentation(
+        primaryTint: .controlAccentColor,
+        primarySymbolMode: .resume,
+        showsPrimaryAction: true,
+        showsElapsed: true,
+        showsStopping: false,
+        showsSecondaryStop: true,
+        primaryTooltip: "Resume recording",
+        secondaryStopTooltip: "Stop recording"
+      )
+    case .stopping:
+      return IndicatorPresentation(
+        primaryTint: .clear,
+        primarySymbolMode: .none,
+        showsPrimaryAction: false,
+        showsElapsed: false,
+        showsStopping: true,
+        showsSecondaryStop: false,
+        primaryTooltip: nil,
+        secondaryStopTooltip: nil
+      )
+    }
+  }
+
+  private static func symbolPath(for mode: PrimarySymbolMode, in bounds: CGRect) -> CGPath? {
+    switch mode {
+    case .none:
+      return nil
+    case .pause:
+      return pauseSymbolPath(in: bounds)
+    case .resume:
+      return resumeSymbolPath(in: bounds)
+    }
+  }
+
+  private static func pauseSymbolPath(in bounds: CGRect) -> CGPath {
+    let width = min(bounds.width, 9)
+    let height = min(bounds.height, 10)
+    let barWidth: CGFloat = min(3, width / 3)
+    let gap: CGFloat = 2.5
+    let totalWidth = barWidth * 2 + gap
+    let originX = bounds.midX - totalWidth / 2
+    let originY = bounds.midY - height / 2
+
+    let path = CGMutablePath()
+    path.addRoundedRect(
+      in: CGRect(x: originX, y: originY, width: barWidth, height: height),
+      cornerWidth: 1,
+      cornerHeight: 1
+    )
+    path.addRoundedRect(
+      in: CGRect(
+        x: originX + barWidth + gap,
+        y: originY,
+        width: barWidth,
+        height: height
+      ),
+      cornerWidth: 1,
+      cornerHeight: 1
+    )
+    return path
+  }
+
+  private static func stopSymbolPath(in bounds: CGRect) -> CGPath {
+    let size = min(bounds.width, bounds.height)
+    let squareSize = min(size, 8)
+    let rect = CGRect(
+      x: bounds.midX - squareSize / 2,
+      y: bounds.midY - squareSize / 2,
+      width: squareSize,
+      height: squareSize
+    )
+    return CGPath(
+      roundedRect: rect,
+      cornerWidth: 1.5,
+      cornerHeight: 1.5,
+      transform: nil
+    )
+  }
+
+  private static func resumeSymbolPath(in bounds: CGRect) -> CGPath {
+    let width = min(bounds.width, 8)
+    let height = min(bounds.height, 10)
+    let rect = CGRect(
+      x: bounds.midX - width / 2 + 0.5,
+      y: bounds.midY - height / 2,
+      width: width,
+      height: height
+    )
+
+    let path = CGMutablePath()
+    path.move(to: CGPoint(x: rect.minX, y: rect.minY))
+    path.addLine(to: CGPoint(x: rect.maxX, y: rect.midY))
+    path.addLine(to: CGPoint(x: rect.minX, y: rect.maxY))
+    path.closeSubpath()
+    return path
+  }
+
+#if DEBUG
+  var debugDisplayedElapsedText: String {
+    elapsedLabel.string as? String ?? ""
+  }
+
+  var debugPrimaryHitRect: CGRect {
+    primaryHitRect
+  }
+
+  var debugSecondaryStopHitRect: CGRect {
+    secondaryStopHitRect
+  }
+
+  var debugPrimaryTooltip: String? {
+    primaryToolTipText
+  }
+
+  var debugSecondaryTooltip: String? {
+    secondaryToolTipText
+  }
+
+  var debugHasTickTimer: Bool {
+    tickTimer != nil
+  }
+
+  @discardableResult
+  func debugHandleClick(at point: CGPoint) -> Bool {
+    handleClick(at: point)
+  }
+#endif
 }
 
 final class RecordingIndicator {
   private var panel: NSPanel?
   private var indicatorView: RecordingIndicatorView?
   private var pinned = false
-
-  // Persist position within session
   private var lastFrame: NSRect?
 
-  /// Show/hide + update pin and the elapsed-time provider.
-  /// - Parameters:
-  ///   - isEnabled: show indicator when true, hide when false
-  ///   - pinned: when true the panel ignores mouse and stays at top-right
-  ///   - elapsedProvider: closure returning formatted elapsed time (HH:mm:ss)
-  /// Show/hide + update pin and the elapsed-time provider.
-  /// - Parameters:
-  ///   - isEnabled: show indicator when true, hide when false
-  ///   - pinned: when true the panel ignores mouse and stays at top-right
-  ///   - isRecording: true if recording active (shows Stop icon), false if idle (shows Play icon)
-  ///   - elapsedProvider: closure returning formatted elapsed time (HH:mm:ss)
   func setState(
     _ state: IndicatorState,
     pinned: Bool,
+    onPauseTapped: (() -> Void)? = nil,
     onStopTapped: (() -> Void)? = nil,
+    onResumeTapped: (() -> Void)? = nil,
     elapsedProvider: (() -> String)? = nil
   ) {
     self.pinned = pinned
+
     if state == .hidden {
       hideNow()
-    } else {
-      showIfNeeded()
-      indicatorView?.state = state
-      indicatorView?.elapsedProvider = elapsedProvider
-      indicatorView?.onStopTapped = onStopTapped
-      applyPinnedBehavior()
-      if let w = panel { clampToVisibleFrame(w) }
+      return
+    }
+
+    showIfNeeded()
+    indicatorView?.elapsedProvider = elapsedProvider
+    indicatorView?.onPauseTapped = onPauseTapped
+    indicatorView?.onStopTapped = onStopTapped
+    indicatorView?.onResumeTapped = onResumeTapped
+    indicatorView?.state = state
+    applyPinnedBehavior()
+    if let panel {
+      clampToVisibleFrame(panel)
     }
   }
 
-  // Compatibility overload for callers that still pass pinning state explicitly.
   func update(
     pinned: Bool,
     isRecording: Bool,
+    onPauseTapped: (() -> Void)? = nil,
     onStopTapped: (() -> Void)? = nil,
     elapsedProvider: @escaping () -> String
   ) {
     setState(
-      isRecording ? .recording : .hidden, pinned: pinned, onStopTapped: onStopTapped,
-      elapsedProvider: elapsedProvider)
+      isRecording ? .recording : .hidden,
+      pinned: pinned,
+      onPauseTapped: onPauseTapped,
+      onStopTapped: onStopTapped,
+      elapsedProvider: elapsedProvider
+    )
   }
 
-  /// Immediately hide with the view’s fade logic.
   func hideNow() {
     indicatorView?.hideNow()
 
-    // Save last frame if visible (and not pinned, because pinned ignores manual pos)
-    if let p = panel, !pinned {
-      lastFrame = p.frame
+    if let panel, !pinned {
+      lastFrame = panel.frame
     }
 
     panel?.orderOut(nil)
@@ -309,86 +676,79 @@ final class RecordingIndicator {
     indicatorView = nil
   }
 
-  // MARK: - internals
-
   private func showIfNeeded() {
     guard panel == nil else { return }
 
-    // Updated larger size for modern look: 150w x 42h
-    let size = NSSize(width: 140, height: 42)
+    let size = RecordingIndicatorView.preferredSize
 
-    // Determine start rect
     let startRect: NSRect
-    if let lf = lastFrame {
-      startRect = NSRect(origin: lf.origin, size: size)
+    if let lastFrame {
+      startRect = NSRect(origin: lastFrame.origin, size: size)
     } else {
-      // Default top right
       let screen = NSScreen.main?.visibleFrame ?? NSRect(x: 0, y: 0, width: 1280, height: 800)
       let origin = CGPoint(
-        x: screen.maxX - size.width - 24,  // slightly more padding from edge
-        y: screen.maxY - size.height - 36)
+        x: screen.maxX - size.width - 24,
+        y: screen.maxY - size.height - 36
+      )
       startRect = NSRect(origin: origin, size: size)
     }
 
-    let p = NSPanel(
+    let panel = NSPanel(
       contentRect: startRect,
       styleMask: [.nonactivatingPanel, .borderless],
       backing: .buffered,
       defer: false
     )
-    p.isFloatingPanel = true
-    p.hidesOnDeactivate = false
-    p.becomesKeyOnlyIfNeeded = true
-    p.level = .statusBar
-    p.isOpaque = false
-    p.backgroundColor = .clear
-    p.hasShadow = false
-    p.collectionBehavior = [.canJoinAllSpaces, .fullScreenAuxiliary, .ignoresCycle]
+    panel.isFloatingPanel = true
+    panel.hidesOnDeactivate = false
+    panel.becomesKeyOnlyIfNeeded = true
+    panel.level = .statusBar
+    panel.isOpaque = false
+    panel.backgroundColor = .clear
+    panel.hasShadow = false
+    panel.collectionBehavior = [.canJoinAllSpaces, .fullScreenAuxiliary, .ignoresCycle]
 
-    let v = RecordingIndicatorView(frame: NSRect(origin: .zero, size: size))
-    p.contentView = v
+    let indicatorView = RecordingIndicatorView(frame: NSRect(origin: .zero, size: size))
+    panel.contentView = indicatorView
 
-    panel = p
-    indicatorView = v
+    self.panel = panel
+    self.indicatorView = indicatorView
     applyPinnedBehavior()
-    p.orderFrontRegardless()
+    panel.orderFrontRegardless()
   }
 
   private func applyPinnedBehavior() {
-    guard let p = panel else { return }
+    guard let panel else { return }
 
     if pinned {
-      // Pinned: force top-right
-      let size = p.frame.size
+      let size = panel.frame.size
       let screen = NSScreen.main?.visibleFrame ?? NSRect(x: 0, y: 0, width: 1280, height: 800)
       let origin = CGPoint(
-        x: screen.maxX - size.width - 24,  // Consistent padding
-        y: screen.maxY - size.height - 36)
-      p.setFrameOrigin(origin)
-
-      // Even when pinned, allow clicks (red dot) but DISALLOW dragging
-      p.isMovableByWindowBackground = false
+        x: screen.maxX - size.width - 24,
+        y: screen.maxY - size.height - 36
+      )
+      panel.setFrameOrigin(origin)
+      panel.isMovableByWindowBackground = false
     } else {
-      if let lf = lastFrame {
-        // Restore last known user position
-        p.setFrameOrigin(lf.origin)
+      if let lastFrame {
+        panel.setFrameOrigin(lastFrame.origin)
       }
-
-      p.isMovableByWindowBackground = true
+      panel.isMovableByWindowBackground = true
     }
 
-    // Allow mouse events (for the stop button)
-    p.ignoresMouseEvents = false
+    panel.ignoresMouseEvents = false
   }
 
   private func clampToVisibleFrame(_ window: NSWindow) {
     guard let screen = window.screen ?? NSScreen.main else { return }
-    let vf = screen.visibleFrame
-    var f = window.frame
-    if f.maxX > vf.maxX { f.origin.x = vf.maxX - f.width }
-    if f.minX < vf.minX { f.origin.x = vf.minX }
-    if f.maxY > vf.maxY { f.origin.y = vf.maxY - f.height }
-    if f.minY < vf.minY { f.origin.y = vf.minY }
-    window.setFrame(f, display: true)  // display=true to repaint
+    let visibleFrame = screen.visibleFrame
+    var frame = window.frame
+
+    if frame.maxX > visibleFrame.maxX { frame.origin.x = visibleFrame.maxX - frame.width }
+    if frame.minX < visibleFrame.minX { frame.origin.x = visibleFrame.minX }
+    if frame.maxY > visibleFrame.maxY { frame.origin.y = visibleFrame.maxY - frame.height }
+    if frame.minY < visibleFrame.minY { frame.origin.y = visibleFrame.minY }
+
+    window.setFrame(frame, display: true)
   }
 }

@@ -16,7 +16,9 @@ class NativeBridge {
   /// Whether an app update has been found by Sparkle.
   final ValueNotifier<bool> isUpdateAvailable = ValueNotifier(false);
 
+  VoidCallback? _onIndicatorPauseTapped;
   VoidCallback? _onIndicatorStopTapped;
+  VoidCallback? _onIndicatorResumeTapped;
   ValueChanged<double>? _onExportProgress;
   VoidCallback? _onMenuBarToggleRequest;
   Function(String type, Map<String, dynamic>? payload)?
@@ -66,8 +68,16 @@ class NativeBridge {
   Stream<Map<String, dynamic>> get workflowEvents => _workflowEventStream;
   Stream<Map<String, dynamic>> get playerEvents => _playerEventStream;
 
+  void setOnIndicatorPauseTapped(VoidCallback? cb) {
+    _onIndicatorPauseTapped = cb;
+  }
+
   void setOnIndicatorStopTapped(VoidCallback? cb) {
     _onIndicatorStopTapped = cb;
+  }
+
+  void setOnIndicatorResumeTapped(VoidCallback? cb) {
+    _onIndicatorResumeTapped = cb;
   }
 
   void setOnMenuBarToggleRequest(VoidCallback? cb) {
@@ -110,8 +120,14 @@ class NativeBridge {
           Log.nativeEvent(args.cast<String, dynamic>());
         }
         return null;
+      case NativeToFlutterMethod.indicatorPauseTapped:
+        _onIndicatorPauseTapped?.call();
+        return null;
       case NativeToFlutterMethod.indicatorStopTapped:
         _onIndicatorStopTapped?.call();
+        return null;
+      case NativeToFlutterMethod.indicatorResumeTapped:
+        _onIndicatorResumeTapped?.call();
         return null;
       case NativeToFlutterMethod.menuBarToggleRequest:
         _onMenuBarToggleRequest?.call();
@@ -229,6 +245,31 @@ class NativeBridge {
 
   Future<void> setPreRecordingBarState(Map<String, dynamic> state) async {
     await _nativeBridge.invokeMethod<void>('setPreRecordingBarState', state);
+  }
+
+  Future<void> pauseRecording({String? sessionId}) async {
+    await _nativeBridge.invokeMethod<void>('pauseRecording', {
+      if (sessionId != null) 'sessionId': sessionId,
+    });
+  }
+
+  Future<void> resumeRecording({String? sessionId}) async {
+    await _nativeBridge.invokeMethod<void>('resumeRecording', {
+      if (sessionId != null) 'sessionId': sessionId,
+    });
+  }
+
+  Future<void> togglePauseRecording({String? sessionId}) async {
+    await _nativeBridge.invokeMethod<void>('togglePauseRecording', {
+      if (sessionId != null) 'sessionId': sessionId,
+    });
+  }
+
+  Future<RecordingPauseResumeCapabilities> getRecordingCapabilities() async {
+    final raw = await _nativeBridge.invokeMethod<Map<dynamic, dynamic>>(
+      'getRecordingCapabilities',
+    );
+    return RecordingPauseResumeCapabilities.fromMap(raw);
   }
 
   Future<void> setCursorHighlightEnabled(bool enabled) async {

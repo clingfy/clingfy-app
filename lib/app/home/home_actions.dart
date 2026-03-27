@@ -54,6 +54,7 @@ class HomeActions {
       uiState.setTargetMode(prefs.targetMode);
       await nativeBridge.setRecordingIndicatorPinned(prefs.indicatorPinned);
       await nativeBridge.setDisplayTargetMode(prefs.targetMode);
+      await recordingController.refreshPauseResumeCapabilities();
     } finally {
       uiState.markHydrated();
     }
@@ -80,6 +81,7 @@ class HomeActions {
     uiState.setTargetMode(mode);
     await prefsStore.saveDisplayTargetMode(mode);
     await nativeBridge.setDisplayTargetMode(mode);
+    await recordingController.refreshPauseResumeCapabilities();
 
     if (mode == DisplayTargetMode.singleAppWindow) {
       await deviceController.reloadAppWindows();
@@ -454,6 +456,8 @@ class HomeActions {
           deviceController.selectedAudioSourceId != DeviceController.noAudioId,
       'systemAudioEnabled': settingsController.recording.systemAudioEnabled,
       'updateAvailable': nativeBridge.isUpdateAvailable.value,
+      'canPauseResume': recordingController.canPauseResume,
+      'pauseResumeInFlight': recordingController.pauseResumeInFlight,
       'selectedDisplayId': deviceController.selectedDisplayId,
       'selectedAppWindowId': deviceController.selectedAppWindowId,
       'selectedAudioSourceId': deviceController.selectedAudioSourceId,
@@ -515,6 +519,12 @@ class HomeActions {
       case NativeBarAction.recordTapped:
         unawaited(toggleRecording(context));
         break;
+      case NativeBarAction.pauseTapped:
+        unawaited(recordingController.pauseRecording());
+        break;
+      case NativeBarAction.resumeTapped:
+        unawaited(recordingController.resumeRecording());
+        break;
     }
   }
 
@@ -568,6 +578,7 @@ class HomeActions {
         break;
     }
 
+    unawaited(recordingController.refreshPauseResumeCapabilities());
     updateNativeBarState();
   }
 

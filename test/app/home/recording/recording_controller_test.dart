@@ -82,6 +82,171 @@ void main() {
   );
 
   test(
+    'pause then resume returns to recording and stop still finalizes',
+    () async {
+      final harness = await createHarness();
+      addTearDown(harness.recording.dispose);
+      addTearDown(harness.settings.dispose);
+
+      harness.recording.beginRecordingStartIntent();
+      final sessionId = harness.recording.sessionId!;
+      await _emitWorkflowEvent({
+        'type': 'recordingStarted',
+        'sessionId': sessionId,
+      });
+
+      final pauseFuture = harness.recording.pauseRecording();
+      expect(harness.recording.pauseResumeInFlight, isTrue);
+      await _emitWorkflowEvent({
+        'type': 'recordingPaused',
+        'sessionId': sessionId,
+      });
+      await pauseFuture;
+
+      expect(harness.recording.phase, WorkflowPhase.pausedRecording);
+      expect(harness.recording.isPaused, isTrue);
+      expect(harness.recording.isRecording, isTrue);
+      expect(harness.recording.pauseResumeInFlight, isFalse);
+
+      final resumeFuture = harness.recording.resumeRecording();
+      expect(harness.recording.pauseResumeInFlight, isTrue);
+      await _emitWorkflowEvent({
+        'type': 'recordingResumed',
+        'sessionId': sessionId,
+      });
+      await resumeFuture;
+
+      expect(harness.recording.phase, WorkflowPhase.recording);
+      expect(harness.recording.isActivelyRecording, isTrue);
+      expect(harness.recording.pauseResumeInFlight, isFalse);
+
+      await harness.recording.stopRecording();
+
+      expect(harness.recording.phase, WorkflowPhase.finalizingRecording);
+    },
+  );
+
+  test('stopRecording works while paused', () async {
+    final harness = await createHarness();
+    addTearDown(harness.recording.dispose);
+    addTearDown(harness.settings.dispose);
+
+    harness.recording.beginRecordingStartIntent();
+    final sessionId = harness.recording.sessionId!;
+    await _emitWorkflowEvent({
+      'type': 'recordingStarted',
+      'sessionId': sessionId,
+    });
+
+    final pauseFuture = harness.recording.pauseRecording();
+    await _emitWorkflowEvent({
+      'type': 'recordingPaused',
+      'sessionId': sessionId,
+    });
+    await pauseFuture;
+
+    expect(harness.recording.phase, WorkflowPhase.pausedRecording);
+
+    await harness.recording.stopRecording();
+
+    expect(harness.recording.phase, WorkflowPhase.finalizingRecording);
+    expect(harness.recording.showHeroPanel, isTrue);
+  });
+
+  test('invalid pause and resume requests are ignored safely', () async {
+    final harness = await createHarness();
+    addTearDown(harness.recording.dispose);
+    addTearDown(harness.settings.dispose);
+
+    var pauseCalls = 0;
+    var resumeCalls = 0;
+    final messenger =
+        TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger;
+    messenger.setMockMethodCallHandler(screenRecorderChannel, (call) async {
+      switch (call.method) {
+        case 'pauseRecording':
+          pauseCalls += 1;
+          return null;
+        case 'resumeRecording':
+          resumeCalls += 1;
+          return null;
+        case 'getRecordingCapabilities':
+          return <String, dynamic>{
+            'canPauseResume': true,
+            'backend': 'avfoundation',
+            'strategy': 'av_file_output',
+          };
+        default:
+          return null;
+      }
+    });
+
+    await harness.recording.pauseRecording();
+    await harness.recording.resumeRecording();
+
+    harness.recording.beginRecordingStartIntent();
+    final sessionId = harness.recording.sessionId!;
+    await _emitWorkflowEvent({
+      'type': 'recordingStarted',
+      'sessionId': sessionId,
+    });
+
+    await harness.recording.resumeRecording();
+
+    final pauseFuture = harness.recording.pauseRecording();
+    await _emitWorkflowEvent({
+      'type': 'recordingPaused',
+      'sessionId': sessionId,
+    });
+    await pauseFuture;
+
+    await harness.recording.pauseRecording();
+
+    expect(pauseCalls, 1);
+    expect(resumeCalls, 0);
+    expect(harness.recording.phase, WorkflowPhase.pausedRecording);
+  });
+
+  test('duplicate paused and resumed events keep stable state', () async {
+    final harness = await createHarness();
+    addTearDown(harness.recording.dispose);
+    addTearDown(harness.settings.dispose);
+
+    harness.recording.beginRecordingStartIntent();
+    final sessionId = harness.recording.sessionId!;
+    await _emitWorkflowEvent({
+      'type': 'recordingStarted',
+      'sessionId': sessionId,
+    });
+
+    await _emitWorkflowEvent({
+      'type': 'recordingPaused',
+      'sessionId': sessionId,
+    });
+    final elapsedWhilePaused = harness.recording.elapsed;
+
+    await _emitWorkflowEvent({
+      'type': 'recordingPaused',
+      'sessionId': sessionId,
+    });
+
+    expect(harness.recording.phase, WorkflowPhase.pausedRecording);
+    expect(harness.recording.elapsed, elapsedWhilePaused);
+
+    await _emitWorkflowEvent({
+      'type': 'recordingResumed',
+      'sessionId': sessionId,
+    });
+    await _emitWorkflowEvent({
+      'type': 'recordingResumed',
+      'sessionId': sessionId,
+    });
+
+    expect(harness.recording.phase, WorkflowPhase.recording);
+    expect(harness.recording.isActivelyRecording, isTrue);
+  });
+
+  test(
     'stop transitions through stopping to finalizing without idling',
     () async {
       final harness = await createHarness();

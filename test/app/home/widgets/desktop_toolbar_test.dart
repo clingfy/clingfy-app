@@ -19,6 +19,7 @@ void main() {
         body: DesktopToolbar(
           title: 'Clingfy',
           isRecording: false,
+          isPaused: false,
           notice: notice,
           exportStatus: exportStatus,
         ),
@@ -33,6 +34,34 @@ void main() {
 
     expect(find.byKey(const Key('desktop_toolbar_row')), findsOneWidget);
     expect(find.byKey(const Key('toolbar_status_strip')), findsNothing);
+  });
+
+  testWidgets('renders paused recording badge with frozen elapsed text', (
+    tester,
+  ) async {
+    await tester.pumpWidget(
+      MaterialApp(
+        localizationsDelegates: AppLocalizations.localizationsDelegates,
+        supportedLocales: AppLocalizations.supportedLocales,
+        theme: buildDarkTheme(),
+        darkTheme: buildDarkTheme(),
+        themeMode: ThemeMode.dark,
+        home: const Scaffold(
+          body: DesktopToolbar(
+            title: 'Clingfy',
+            isRecording: true,
+            isPaused: true,
+            elapsedText: '00:00:05',
+          ),
+        ),
+      ),
+    );
+
+    final l10n = AppLocalizations.of(
+      tester.element(find.byType(DesktopToolbar)),
+    )!;
+
+    expect(find.text('${l10n.paused} • 00:00:05'), findsOneWidget);
   });
 
   testWidgets('renders notice only in the status strip', (tester) async {

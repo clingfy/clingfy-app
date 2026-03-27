@@ -22,7 +22,9 @@ enum NativeChannel {
 /// IMPORTANT: Keep this in sync with `native_method_channel.dart` on the Flutter side.
 enum NativeToFlutterMethod {
   static let log = "log"
+  static let indicatorPauseTapped = "indicatorPauseTapped"
   static let indicatorStopTapped = "indicatorStopTapped"
+  static let indicatorResumeTapped = "indicatorResumeTapped"
   static let menuBarToggleRequest = "menuBarToggleRequest"
   static let updateExportProgress = "updateExportProgress"
   static let preRecordingBarAction = "preRecordingBarAction"

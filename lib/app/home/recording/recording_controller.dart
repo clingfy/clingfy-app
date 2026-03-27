@@ -3,6 +3,7 @@ import 'dart:math';
 
 import 'package:flutter/foundation.dart';
 import 'package:flutter/services.dart';
+import 'package:clingfy/app/home/recording/recorded_duration_tracker.dart';
 import 'package:clingfy/core/permissions/models/recording_start_preflight.dart';
 import 'package:clingfy/core/bridges/native_bridge.dart';
 import 'package:clingfy/app/infrastructure/observability/telemetry_service.dart';
@@ -18,6 +19,7 @@ class RecordingController extends ChangeNotifier {
        _settings = settings {
     _settings.addListener(_onSettingsChanged);
     _workflowSub = _nativeBridge.workflowEvents.listen(_handleWorkflowEvent);
+    unawaited(refreshPauseResumeCapabilities());
   }
 
   final NativeBridge _nativeBridge;
@@ -27,7 +29,6 @@ class RecordingController extends ChangeNotifier {
   late final StreamSubscription<Map<String, dynamic>> _workflowSub;
 
   RecordingWorkflowState _state = const RecordingWorkflowState.idle();
-  DateTime? _startedAt;
   Duration _elapsed = Duration.zero;
   Timer? _elapsedTicker;
   Timer? _autoStopTimer;
@@ -35,6 +36,10 @@ class RecordingController extends ChangeNotifier {
   bool _startCommandIssued = false;
   String? _mountedPreviewSessionId;
   bool _previewOpenRequested = false;
+  bool _pauseResumeInFlight = false;
+  RecordingPauseResumeCapabilities _pauseResumeCapabilities =
+      const RecordingPauseResumeCapabilities.unsupported();
+  final RecordedDurationTracker _durationTracker = RecordedDurationTracker();
 
   RecordingWorkflowState get state => _state;
   WorkflowPhase get phase => _state.phase;
@@ -48,12 +53,29 @@ class RecordingController extends ChangeNotifier {
   String? get errorCode => _state.errorCode;
   String? get errorMessage => _state.errorMessage ?? _state.errorCode;
 
-  bool get isRecording => phase == WorkflowPhase.recording;
+  bool get isRecording =>
+      phase == WorkflowPhase.recording ||
+      phase == WorkflowPhase.pausedRecording;
+  bool get isActivelyRecording => phase == WorkflowPhase.recording;
+  bool get isPaused => phase == WorkflowPhase.pausedRecording;
+  bool get canPauseResume => _pauseResumeCapabilities.canPauseResume;
+  bool get canPause =>
+      canPauseResume &&
+      phase == WorkflowPhase.recording &&
+      !_pauseResumeInFlight;
+  bool get canResume =>
+      canPauseResume &&
+      phase == WorkflowPhase.pausedRecording &&
+      !_pauseResumeInFlight;
+  bool get pauseResumeInFlight => _pauseResumeInFlight;
+  RecordingPauseResumeCapabilities get pauseResumeCapabilities =>
+      _pauseResumeCapabilities;
   bool get isExporting => phase == WorkflowPhase.exporting;
   bool get showHeroPanel => switch (phase) {
     WorkflowPhase.idle ||
     WorkflowPhase.startingRecording ||
     WorkflowPhase.recording ||
+    WorkflowPhase.pausedRecording ||
     WorkflowPhase.stoppingRecording ||
     WorkflowPhase.finalizingRecording => true,
     WorkflowPhase.openingPreview ||
@@ -71,6 +93,7 @@ class RecordingController extends ChangeNotifier {
     WorkflowPhase.idle ||
     WorkflowPhase.startingRecording ||
     WorkflowPhase.recording ||
+    WorkflowPhase.pausedRecording ||
     WorkflowPhase.stoppingRecording ||
     WorkflowPhase.finalizingRecording => false,
   };
@@ -90,6 +113,7 @@ class RecordingController extends ChangeNotifier {
     WorkflowPhase.closingPreview => true,
     WorkflowPhase.idle ||
     WorkflowPhase.recording ||
+    WorkflowPhase.pausedRecording ||
     WorkflowPhase.previewReady ||
     WorkflowPhase.exporting => false,
   };
@@ -104,8 +128,9 @@ class RecordingController extends ChangeNotifier {
 
   String? get countdownText {
     if (!_settings.recording.autoStopEnabled ||
-        phase != WorkflowPhase.recording ||
-        _startedAt == null) {
+        !(phase == WorkflowPhase.recording ||
+            phase == WorkflowPhase.pausedRecording) ||
+        !_durationTracker.hasStarted) {
       return null;
     }
     final left = _settings.recording.autoStopAfter - _elapsed;
@@ -128,6 +153,8 @@ class RecordingController extends ChangeNotifier {
     if (phase == WorkflowPhase.recording) {
       _disarmAutoStopTimer();
       _armAutoStopTimer();
+    } else if (phase == WorkflowPhase.pausedRecording) {
+      _disarmAutoStopTimer();
     }
   }
 
@@ -137,10 +164,33 @@ class RecordingController extends ChangeNotifier {
     notifyListeners();
   }
 
+  Future<void> refreshPauseResumeCapabilities() async {
+    try {
+      final capabilities = await _nativeBridge.getRecordingCapabilities();
+      final changed =
+          capabilities.canPauseResume !=
+              _pauseResumeCapabilities.canPauseResume ||
+          capabilities.backend != _pauseResumeCapabilities.backend ||
+          capabilities.strategy != _pauseResumeCapabilities.strategy;
+      _pauseResumeCapabilities = capabilities;
+      if (changed) {
+        notifyListeners();
+      }
+    } catch (e) {
+      Log.w('Recording', 'Failed to refresh pause/resume capabilities: $e');
+      if (_pauseResumeCapabilities.canPauseResume) {
+        _pauseResumeCapabilities =
+            const RecordingPauseResumeCapabilities.unsupported();
+        notifyListeners();
+      }
+    }
+  }
+
   void beginRecordingStartIntent() {
     if (phase != WorkflowPhase.idle) return;
     final nextSessionId = _generateSessionId();
     _startCommandIssued = false;
+    _pauseResumeInFlight = false;
     _mountedPreviewSessionId = null;
     _previewOpenRequested = false;
     _state = RecordingWorkflowState(
@@ -233,7 +283,11 @@ class RecordingController extends ChangeNotifier {
   }
 
   Future<void> stopRecording({bool triggeredByAutoStop = false}) async {
-    if (phase != WorkflowPhase.recording && !triggeredByAutoStop) return;
+    if ((phase != WorkflowPhase.recording &&
+            phase != WorkflowPhase.pausedRecording) &&
+        !triggeredByAutoStop) {
+      return;
+    }
     if (_state.sessionId == null) return;
 
     final previousState = _state;
@@ -249,6 +303,9 @@ class RecordingController extends ChangeNotifier {
       final stopFuture = _nativeBridge.invokeMethod<void>('stopRecording', {
         'sessionId': _state.sessionId,
       });
+      if (previousState.phase == WorkflowPhase.recording) {
+        _elapsed = _durationTracker.current();
+      }
       _stopElapsedTicker();
       _disarmAutoStopTimer();
       Log.d('Recording', 'stopRecording', null, null, {
@@ -285,6 +342,76 @@ class RecordingController extends ChangeNotifier {
         },
       );
       _restoreAfterStopFailure(previousState, 'RECORDING_ERROR', e.toString());
+    }
+  }
+
+  Future<void> pauseRecording() async {
+    if (!canPause || _state.sessionId == null) return;
+
+    _pauseResumeInFlight = true;
+    notifyListeners();
+    try {
+      await _nativeBridge.pauseRecording(sessionId: _state.sessionId);
+    } on PlatformException catch (e, st) {
+      _pauseResumeInFlight = false;
+      notifyListeners();
+      await ClingfyTelemetry.captureError(
+        e,
+        stackTrace: st,
+        method: 'pauseRecording',
+        context: {'sessionId': _state.sessionId, 'phase': phase.name},
+      );
+      _setState(_state.copyWith(errorCode: e.code, errorMessage: e.message));
+    } catch (e, st) {
+      _pauseResumeInFlight = false;
+      notifyListeners();
+      await ClingfyTelemetry.captureError(
+        e,
+        stackTrace: st,
+        method: 'pauseRecording',
+        context: {'sessionId': _state.sessionId, 'phase': phase.name},
+      );
+      _setState(
+        _state.copyWith(
+          errorCode: 'RECORDING_ERROR',
+          errorMessage: e.toString(),
+        ),
+      );
+    }
+  }
+
+  Future<void> resumeRecording() async {
+    if (!canResume || _state.sessionId == null) return;
+
+    _pauseResumeInFlight = true;
+    notifyListeners();
+    try {
+      await _nativeBridge.resumeRecording(sessionId: _state.sessionId);
+    } on PlatformException catch (e, st) {
+      _pauseResumeInFlight = false;
+      notifyListeners();
+      await ClingfyTelemetry.captureError(
+        e,
+        stackTrace: st,
+        method: 'resumeRecording',
+        context: {'sessionId': _state.sessionId, 'phase': phase.name},
+      );
+      _setState(_state.copyWith(errorCode: e.code, errorMessage: e.message));
+    } catch (e, st) {
+      _pauseResumeInFlight = false;
+      notifyListeners();
+      await ClingfyTelemetry.captureError(
+        e,
+        stackTrace: st,
+        method: 'resumeRecording',
+        context: {'sessionId': _state.sessionId, 'phase': phase.name},
+      );
+      _setState(
+        _state.copyWith(
+          errorCode: 'RECORDING_ERROR',
+          errorMessage: e.toString(),
+        ),
+      );
     }
   }
 
@@ -362,7 +489,6 @@ class RecordingController extends ChangeNotifier {
       previousState.copyWith(errorCode: errorCode, errorMessage: errorMessage),
     );
     if (phase == WorkflowPhase.recording) {
-      _startedAt ??= DateTime.now();
       _startElapsedTicker();
       _armAutoStopTimer();
       unawaited(
@@ -372,6 +498,10 @@ class RecordingController extends ChangeNotifier {
           recordingId: _state.sessionId,
         ),
       );
+    } else if (phase == WorkflowPhase.pausedRecording) {
+      _elapsed = _durationTracker.current();
+      _stopElapsedTicker();
+      _disarmAutoStopTimer();
     }
   }
 
@@ -391,6 +521,12 @@ class RecordingController extends ChangeNotifier {
     switch (type) {
       case 'recordingStarted':
         _handleRecordingStartedEvent(event);
+        return;
+      case 'recordingPaused':
+        _handleRecordingPausedEvent(event);
+        return;
+      case 'recordingResumed':
+        _handleRecordingResumedEvent(event);
         return;
       case 'recordingFinalized':
       case 'recordingFinished':
@@ -421,8 +557,68 @@ class RecordingController extends ChangeNotifier {
     if (_isStaleSession(eventSessionId)) return;
     if (phase != WorkflowPhase.startingRecording) return;
 
-    _startedAt = DateTime.now();
+    _durationTracker.start();
     _elapsed = Duration.zero;
+    _pauseResumeInFlight = false;
+    _startElapsedTicker();
+    _disarmAutoStopTimer();
+    _armAutoStopTimer();
+    _setState(
+      _state.copyWith(
+        phase: WorkflowPhase.recording,
+        clearErrorCode: true,
+        clearErrorMessage: true,
+      ),
+    );
+    unawaited(
+      ClingfyTelemetry.syncRecordingScope(
+        phase: WorkflowPhase.recording,
+        settings: _settings,
+        recordingId: eventSessionId,
+      ),
+    );
+  }
+
+  void _handleRecordingPausedEvent(Map<String, dynamic> event) {
+    final eventSessionId = event['sessionId']?.toString();
+    if (_isStaleSession(eventSessionId)) return;
+    if (phase != WorkflowPhase.recording &&
+        phase != WorkflowPhase.pausedRecording) {
+      return;
+    }
+
+    _pauseResumeInFlight = false;
+    _durationTracker.pause();
+    _elapsed = _durationTracker.current();
+    _stopElapsedTicker();
+    _disarmAutoStopTimer();
+    _setState(
+      _state.copyWith(
+        phase: WorkflowPhase.pausedRecording,
+        clearErrorCode: true,
+        clearErrorMessage: true,
+      ),
+    );
+    unawaited(
+      ClingfyTelemetry.syncRecordingScope(
+        phase: WorkflowPhase.pausedRecording,
+        settings: _settings,
+        recordingId: eventSessionId,
+      ),
+    );
+  }
+
+  void _handleRecordingResumedEvent(Map<String, dynamic> event) {
+    final eventSessionId = event['sessionId']?.toString();
+    if (_isStaleSession(eventSessionId)) return;
+    if (phase != WorkflowPhase.pausedRecording &&
+        phase != WorkflowPhase.recording) {
+      return;
+    }
+
+    _pauseResumeInFlight = false;
+    _durationTracker.resume();
+    _elapsed = _durationTracker.current();
     _startElapsedTicker();
     _disarmAutoStopTimer();
     _armAutoStopTimer();
@@ -468,6 +664,7 @@ class RecordingController extends ChangeNotifier {
       'Recording',
       'Recording finalized for session $eventSessionId, opening preview shell for $path',
     );
+    _pauseResumeInFlight = false;
     _stopElapsedTicker();
     _disarmAutoStopTimer();
     Log.recordingId = null;
@@ -497,6 +694,7 @@ class RecordingController extends ChangeNotifier {
         'RECORDING_ERROR';
     final error = event['error']?.toString();
 
+    _pauseResumeInFlight = false;
     _stopElapsedTicker();
     _disarmAutoStopTimer();
     Log.recordingId = null;
@@ -625,7 +823,9 @@ class RecordingController extends ChangeNotifier {
     String? errorMessage,
     bool clearError = false,
   }) {
+    _pauseResumeInFlight = false;
     _stopElapsedTicker();
+    _resetElapsedTracking();
     _disarmAutoStopTimer();
     _startCommandIssued = false;
     _mountedPreviewSessionId = null;
@@ -659,23 +859,35 @@ class RecordingController extends ChangeNotifier {
   void _startElapsedTicker() {
     _elapsedTicker?.cancel();
     _elapsedTicker = Timer.periodic(const Duration(seconds: 1), (_) {
-      if (phase != WorkflowPhase.recording || _startedAt == null) return;
-      _elapsed = DateTime.now().difference(_startedAt!);
+      if (phase != WorkflowPhase.recording) return;
+      _elapsed = _durationTracker.current();
       notifyListeners();
     });
+    if (phase == WorkflowPhase.recording) {
+      _elapsed = _durationTracker.current();
+      notifyListeners();
+    }
   }
 
   void _stopElapsedTicker() {
     _elapsedTicker?.cancel();
     _elapsedTicker = null;
+  }
+
+  void _resetElapsedTracking() {
+    _durationTracker.reset();
     _elapsed = Duration.zero;
-    _startedAt = null;
   }
 
   void _armAutoStopTimer() {
     _autoStopTimer?.cancel();
     if (_settings.recording.autoStopEnabled) {
-      _autoStopTimer = Timer(_settings.recording.autoStopAfter, () async {
+      final remaining = _settings.recording.autoStopAfter - _elapsed;
+      if (remaining <= Duration.zero) {
+        unawaited(stopRecording(triggeredByAutoStop: true));
+        return;
+      }
+      _autoStopTimer = Timer(remaining, () async {
         if (phase != WorkflowPhase.recording) return;
         await stopRecording(triggeredByAutoStop: true);
       });
@@ -693,6 +905,7 @@ class RecordingController extends ChangeNotifier {
     _settings.removeListener(_onSettingsChanged);
     _elapsedTicker?.cancel();
     _autoStopTimer?.cancel();
+    _durationTracker.reset();
     super.dispose();
   }
 }

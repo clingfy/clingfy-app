@@ -783,7 +783,19 @@ class AppLocalizationsRo extends AppLocalizations {
   String get recordingInProgress => 'ÎNREGISTRARE ÎN CURS';
 
   @override
+  String get recordingPaused => 'ÎNREGISTRAREA ESTE ÎN PAUZĂ';
+
+  @override
   String get readyToRecord => 'GATA DE ÎNREGISTRARE';
+
+  @override
+  String get pause => 'PAUZĂ';
+
+  @override
+  String get resume => 'REIA';
+
+  @override
+  String get paused => 'Pauză';
 
   @override
   String get stop => 'STOP';
@@ -1340,6 +1352,14 @@ class AppLocalizationsRo extends AppLocalizations {
 
   @override
   String get errNotRecording => 'Nu există nicio înregistrare activă de oprit.';
+
+  @override
+  String get errInvalidRecordingState =>
+      'Această acțiune nu este disponibilă în starea curentă a înregistrării.';
+
+  @override
+  String get errPauseResumeUnsupported =>
+      'Pauza și reluarea nu sunt acceptate pentru configurația curentă de înregistrare.';
 
   @override
   String get errUnknownAudioDevice =>
