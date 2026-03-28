@@ -54,6 +54,25 @@ void main() {
     expect(prefs.paneLayout, const DesktopPaneLayoutPrefs());
   });
 
+  test(
+    'load falls back safely and logs once for structurally invalid pane layout JSON',
+    () async {
+      var warningCount = 0;
+      SharedPreferences.setMockInitialValues({
+        HomePrefsStore.homePaneLayoutKey:
+            '{"recordingSidebar":{"width":"bad-width"}}',
+      });
+
+      final prefsStore = HomePrefsStore(
+        paneLayoutWarningLogger: (_, __) => warningCount += 1,
+      );
+      final prefs = await prefsStore.load();
+
+      expect(prefs.paneLayout, const DesktopPaneLayoutPrefs());
+      expect(warningCount, 1);
+    },
+  );
+
   test('save methods persist values', () async {
     SharedPreferences.setMockInitialValues({});
     final prefsStore = HomePrefsStore();

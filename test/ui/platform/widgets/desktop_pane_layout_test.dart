@@ -126,36 +126,48 @@ Widget _buildHarness({
 void main() {
   TestWidgetsFlutterBinding.ensureInitialized();
 
-  testWidgets('drag resize clamps width to pane max and commits on drag end', (
-    tester,
-  ) async {
-    _setDesktopWindow(tester);
-    final controller = DesktopPaneController();
-    DesktopPaneLayoutPrefs? committedLayout;
+  testWidgets(
+    'drag resize clamps width to pane max and commits only on drag end',
+    (tester) async {
+      _setDesktopWindow(tester);
+      final controller = DesktopPaneController();
+      DesktopPaneLayoutPrefs? committedLayout;
+      var commitCount = 0;
 
-    await tester.pumpWidget(
-      _buildHarness(
-        controller: controller,
-        onCommit: (layout) => committedLayout = layout,
-      ),
-    );
-    await tester.pumpAndSettle();
+      await tester.pumpWidget(
+        _buildHarness(
+          controller: controller,
+          onCommit: (layout) {
+            commitCount += 1;
+            committedLayout = layout;
+          },
+        ),
+      );
+      await tester.pumpAndSettle();
 
-    await tester.drag(
-      find.byKey(const ValueKey('desktop_pane_handle_recordingSidebar')),
-      const Offset(100, 0),
-    );
-    await tester.pumpAndSettle();
+      final handle = find.byKey(
+        const ValueKey('desktop_pane_handle_recordingSidebar'),
+      );
+      final gesture = await tester.startGesture(tester.getCenter(handle));
+      await gesture.moveBy(const Offset(100, 0));
+      await tester.pump();
 
-    final inspectorRect = tester.getRect(
-      find.byKey(const Key('pane_recording_sidebar')),
-    );
-    expect(inspectorRect.width, moreOrLessEquals(260));
-    expect(
-      committedLayout?.stateFor(DesktopPaneId.recordingSidebar).width,
-      260,
-    );
-  });
+      expect(commitCount, 0);
+
+      await gesture.up();
+      await tester.pumpAndSettle();
+
+      final inspectorRect = tester.getRect(
+        find.byKey(const Key('pane_recording_sidebar')),
+      );
+      expect(inspectorRect.width, moreOrLessEquals(260));
+      expect(commitCount, 1);
+      expect(
+        committedLayout?.stateFor(DesktopPaneId.recordingSidebar).width,
+        260,
+      );
+    },
+  );
 
   testWidgets('collapse and re-expand restore the last expanded width', (
     tester,

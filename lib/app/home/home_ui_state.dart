@@ -164,13 +164,6 @@ class HomeUiState extends ChangeNotifier {
     notifyListeners();
   }
 
-  void setPaneState(DesktopPaneId id, DesktopPaneState state) {
-    final next = _paneLayout.copyWithPaneState(id, state);
-    if (_paneLayout == next) return;
-    _paneLayout = next;
-    notifyListeners();
-  }
-
   bool _sameNotice(HomeUiNotice? current, HomeUiNotice? next) {
     return current?.message == next?.message &&
         current?.rawErrorCode == next?.rawErrorCode &&

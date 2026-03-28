@@ -323,6 +323,10 @@ class DesktopSplitLayout extends StatefulWidget {
   final double gap;
   final double? minHeight;
   final Set<DesktopPaneId> forcedCollapsedPaneIds;
+
+  /// Fires only for committed layout changes, such as drag end or an explicit
+  /// collapse/expand action. Live drag updates remain local to the controller
+  /// so callers can persist the final layout without writing on every frame.
   final ValueChanged<DesktopPaneLayoutPrefs>? onLayoutCommitted;
 
   @override
@@ -492,7 +496,6 @@ class _DesktopSplitLayoutState extends State<DesktopSplitLayout> {
   _ResolvedDesktopPaneLayout _resolveLayout(double availableWidth) {
     final panes = widget.panes;
     final forcedCollapsed = widget.forcedCollapsedPaneIds;
-    final baseWidths = <DesktopPaneId, double>{};
     final squeezedWidths = <DesktopPaneId, double>{};
     final effectiveCollapsed = <DesktopPaneId, bool>{};
     final autoCollapsed = <DesktopPaneId, bool>{};
@@ -512,7 +515,6 @@ class _DesktopSplitLayoutState extends State<DesktopSplitLayout> {
       final isCollapsed =
           pane.spec.collapsible && (state.isCollapsed || isForcedCollapsed);
 
-      baseWidths[pane.spec.id] = baseExpandedWidth;
       squeezedWidths[pane.spec.id] = isCollapsed
           ? pane.spec.collapsedWidth
           : baseExpandedWidth;
@@ -530,6 +532,8 @@ class _DesktopSplitLayoutState extends State<DesktopSplitLayout> {
       var overflow = math.max(0.0, requiredWidth - availableWidth);
 
       if (overflow > 0) {
+        // Keep the workspace dominant by squeezing resizable panes before
+        // auto-collapsing any pane under width pressure.
         final resizableOrder =
             panes
                 .where(
@@ -562,6 +566,9 @@ class _DesktopSplitLayoutState extends State<DesktopSplitLayout> {
       }
 
       if (overflow > 0) {
+        // Auto-collapse eligible panes in priority order only after squeezing
+        // widths to their pane minimums. If that still does not fit, the layout
+        // falls back to horizontal scrolling below.
         final collapseOrder =
             panes
                 .where(

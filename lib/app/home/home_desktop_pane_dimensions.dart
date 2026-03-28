@@ -1,8 +1,8 @@
 import 'package:clingfy/ui/theme/app_shell_tokens.dart';
 
 abstract final class HomeDesktopPaneDimensions {
-  static const double leftExpanded = 60;
-  static const double leftCollapsed = 52;
+  static const double railWidth = 60;
+  static const double compactRailWidth = 52;
   static const double inspectorDefault = 348;
   static const double inspectorMin = 300;
   static const double inspectorMax = 420;
@@ -18,7 +18,7 @@ abstract final class HomeDesktopPaneDimensions {
   static const double innerCollapsedMinWidth =
       inspectorCollapsed + innerGap + workspaceMinWidth;
   static const double autoCompactThreshold =
-      leftExpanded + outerGap + innerExpandedMinWidth;
+      railWidth + outerGap + innerExpandedMinWidth;
   static const double shellMinWidth =
-      leftCollapsed + outerGap + innerCollapsedMinWidth;
+      compactRailWidth + outerGap + innerCollapsedMinWidth;
 }

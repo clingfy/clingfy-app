@@ -19,12 +19,12 @@ import 'package:clingfy/ui/theme/app_shell_tokens.dart';
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 
-const DesktopPaneSpec _homeLeftPaneSpec = DesktopPaneSpec(
+const DesktopPaneSpec _homeRailPaneSpec = DesktopPaneSpec(
   id: DesktopPaneId.homeLeftSidebar,
-  defaultWidth: HomeDesktopPaneDimensions.leftExpanded,
-  minWidth: HomeDesktopPaneDimensions.leftCollapsed,
-  maxWidth: HomeDesktopPaneDimensions.leftExpanded,
-  collapsedWidth: HomeDesktopPaneDimensions.leftCollapsed,
+  defaultWidth: HomeDesktopPaneDimensions.railWidth,
+  minWidth: HomeDesktopPaneDimensions.compactRailWidth,
+  maxWidth: HomeDesktopPaneDimensions.railWidth,
+  collapsedWidth: HomeDesktopPaneDimensions.compactRailWidth,
   collapsible: true,
   autoCollapsePriority: 0,
 );
@@ -165,7 +165,7 @@ class _HomeShellState extends State<HomeShell> {
                     padding: const EdgeInsets.all(kEditorShellInnerPadding),
                     child: LayoutBuilder(
                       builder: (context, constraints) {
-                        final forceCompactLeft =
+                        final forceCompactRail =
                             constraints.maxWidth <
                             HomeDesktopPaneDimensions.autoCompactThreshold;
                         final needsVerticalScroll =
@@ -181,7 +181,7 @@ class _HomeShellState extends State<HomeShell> {
                             controller: _paneController,
                             gap: HomeDesktopPaneDimensions.outerGap,
                             minHeight: HomeDesktopPaneDimensions.shellMinHeight,
-                            forcedCollapsedPaneIds: forceCompactLeft
+                            forcedCollapsedPaneIds: forceCompactRail
                                 ? const <DesktopPaneId>{
                                     DesktopPaneId.homeLeftSidebar,
                                   }
@@ -189,7 +189,7 @@ class _HomeShellState extends State<HomeShell> {
                             onLayoutCommitted: (_) => _persistPaneLayout(),
                             panes: [
                               DesktopPaneSlot(
-                                spec: _homeLeftPaneSpec,
+                                spec: _homeRailPaneSpec,
                                 builder: (context, panePresentation) {
                                   return HomeLeftSidebar(
                                     uiState: widget.uiState,
@@ -209,8 +209,8 @@ class _HomeShellState extends State<HomeShell> {
                                         confirmResetPreferences(context),
                                       );
                                     },
-                                    onToggleCollapsed: () =>
-                                        _togglePane(_homeLeftPaneSpec),
+                                    onToggleRailMode: () =>
+                                        _togglePane(_homeRailPaneSpec),
                                   );
                                 },
                               ),
@@ -356,7 +356,10 @@ class _HomeShellState extends State<HomeShell> {
                         );
 
                         if (needsVerticalScroll) {
-                          shell = SingleChildScrollView(child: shell);
+                          shell = SingleChildScrollView(
+                            key: const Key('home_shell_vertical_scroll_view'),
+                            child: shell,
+                          );
                         }
 
                         return shell;

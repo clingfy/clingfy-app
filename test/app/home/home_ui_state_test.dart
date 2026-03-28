@@ -15,9 +15,12 @@ void main() {
     state.setTargetMode(DisplayTargetMode.singleAppWindow);
     state.setIndicatorPinned(true);
     state.setSettingsOpen(true);
-    state.setPaneState(
-      DesktopPaneId.homeLeftSidebar,
-      const DesktopPaneState(isCollapsed: true),
+    state.applyPaneLayoutPrefs(
+      const DesktopPaneLayoutPrefs(
+        paneStates: {
+          DesktopPaneId.homeLeftSidebar: DesktopPaneState(isCollapsed: true),
+        },
+      ),
     );
     state.markHydrated();
 
@@ -68,13 +71,16 @@ void main() {
         },
       ),
     );
-    state.setPaneState(
-      DesktopPaneId.recordingSidebar,
-      const DesktopPaneState(
-        width: 320,
-        lastExpandedWidth: 320,
-        isCollapsed: true,
-        userResized: true,
+    state.applyPaneLayoutPrefs(
+      const DesktopPaneLayoutPrefs(
+        paneStates: {
+          DesktopPaneId.recordingSidebar: DesktopPaneState(
+            width: 320,
+            lastExpandedWidth: 320,
+            isCollapsed: true,
+            userResized: true,
+          ),
+        },
       ),
     );
 

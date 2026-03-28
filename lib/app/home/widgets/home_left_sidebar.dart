@@ -19,7 +19,7 @@ class HomeLeftSidebar extends StatelessWidget {
     required this.onOpenSettings,
     required this.onOpenHelp,
     required this.onResetPreferences,
-    required this.onToggleCollapsed,
+    required this.onToggleRailMode,
   });
 
   final HomeUiState uiState;
@@ -27,7 +27,7 @@ class HomeLeftSidebar extends StatelessWidget {
   final VoidCallback onOpenSettings;
   final VoidCallback onOpenHelp;
   final VoidCallback onResetPreferences;
-  final VoidCallback onToggleCollapsed;
+  final VoidCallback onToggleRailMode;
 
   static const _sidebarLogoAsset = 'assets/icons/app-logo-512.png';
 
@@ -83,9 +83,9 @@ class HomeLeftSidebar extends StatelessWidget {
                   ? Icons.chevron_right_rounded
                   : Icons.chevron_left_rounded,
               tooltip: panePresentation.effectiveCollapsed
-                  ? 'Expand sidebar'
-                  : 'Collapse sidebar',
-              onTap: onToggleCollapsed,
+                  ? 'Expand navigation rail'
+                  : 'Compact navigation rail',
+              onTap: onToggleRailMode,
             ),
             SizedBox(height: AppSidebarTokens.sectionGap),
             Align(alignment: Alignment.topCenter, child: rail),

@@ -47,6 +47,40 @@ Future<void> _emitWorkflowEvent(Map<String, Object?> event) async {
   await completer.future;
 }
 
+Future<String> _openPreviewShell(RecordingController recording) async {
+  recording.beginRecordingStartIntent();
+  final sessionId = recording.sessionId!;
+  await _emitWorkflowEvent({
+    'type': 'recordingStarted',
+    'sessionId': sessionId,
+  });
+  await recording.stopRecording();
+  await _emitWorkflowEvent({
+    'type': 'recordingFinalized',
+    'sessionId': sessionId,
+    'path': '/tmp/test.mov',
+  });
+  await _emitWorkflowEvent({
+    'type': 'previewReady',
+    'sessionId': sessionId,
+    'path': '/tmp/test.mov',
+    'token': 'preview_token',
+  });
+  return sessionId;
+}
+
+Future<void> _closePreviewShell(
+  RecordingController recording,
+  String sessionId,
+) async {
+  await recording.closePreview();
+  await _emitWorkflowEvent({
+    'type': 'previewClosed',
+    'sessionId': sessionId,
+    'reason': 'user',
+  });
+}
+
 void main() {
   TestWidgetsFlutterBinding.ensureInitialized();
 
@@ -401,25 +435,7 @@ void main() {
         findsOneWidget,
       );
 
-      harness.recording.beginRecordingStartIntent();
-      final sessionId = harness.recording.sessionId!;
-      await _emitWorkflowEvent({
-        'type': 'recordingStarted',
-        'sessionId': sessionId,
-      });
-      await harness.recording.stopRecording();
-      await _emitWorkflowEvent({
-        'type': 'recordingFinalized',
-        'sessionId': sessionId,
-        'path': '/tmp/test.mov',
-      });
-      await _emitWorkflowEvent({
-        'type': 'previewReady',
-        'sessionId': sessionId,
-        'path': '/tmp/test.mov',
-        'token': 'preview_token',
-      });
-
+      await _openPreviewShell(harness.recording);
       await tester.pumpAndSettle();
 
       expect(find.byKey(const Key('timeline_shell')), findsOneWidget);
@@ -629,7 +645,7 @@ void main() {
 
       expect(
         railRect.width,
-        moreOrLessEquals(HomeDesktopPaneDimensions.leftCollapsed),
+        moreOrLessEquals(HomeDesktopPaneDimensions.compactRailWidth),
       );
       expect(optionsRect.width, moreOrLessEquals(320));
     },
@@ -707,6 +723,89 @@ void main() {
   });
 
   testWidgets(
+    'recording and preview inspectors restore independent pane states',
+    (tester) async {
+      _setDesktopWindow(tester);
+      final harness = await createHarness();
+      harness.uiState.applyPaneLayoutPrefs(
+        const DesktopPaneLayoutPrefs(
+          paneStates: {
+            DesktopPaneId.recordingSidebar: DesktopPaneState(
+              width: 320,
+              lastExpandedWidth: 320,
+              userResized: true,
+            ),
+            DesktopPaneId.postProcessingSidebar: DesktopPaneState(
+              width: 388,
+              lastExpandedWidth: 388,
+              isCollapsed: true,
+              userResized: true,
+            ),
+          },
+        ),
+      );
+
+      addTearDown(harness.recording.dispose);
+      addTearDown(harness.player.dispose);
+      addTearDown(harness.device.dispose);
+      addTearDown(harness.overlay.dispose);
+      addTearDown(harness.permissions.dispose);
+      addTearDown(harness.post.dispose);
+      addTearDown(harness.license.dispose);
+      addTearDown(harness.countdown.dispose);
+      addTearDown(harness.uiState.dispose);
+      addTearDown(harness.settings.dispose);
+
+      await tester.pumpWidget(
+        buildShell(
+          actions: harness.actions,
+          countdown: harness.countdown,
+          device: harness.device,
+          license: harness.license,
+          overlay: harness.overlay,
+          player: harness.player,
+          post: harness.post,
+          recording: harness.recording,
+          settings: harness.settings,
+          uiState: harness.uiState,
+        ),
+      );
+      await tester.pumpAndSettle();
+
+      expect(
+        tester.getRect(find.byKey(const Key('home_options_panel_shell'))).width,
+        moreOrLessEquals(320),
+      );
+
+      final sessionId = await _openPreviewShell(harness.recording);
+      await tester.pumpAndSettle();
+
+      expect(
+        find.byKey(const Key('home_options_panel_expand_button')),
+        findsOneWidget,
+      );
+
+      await tester.tap(
+        find.byKey(const Key('home_options_panel_expand_button')),
+      );
+      await tester.pumpAndSettle();
+
+      expect(
+        tester.getRect(find.byKey(const Key('home_options_panel_shell'))).width,
+        moreOrLessEquals(388),
+      );
+
+      await _closePreviewShell(harness.recording, sessionId);
+      await tester.pumpAndSettle();
+
+      expect(
+        tester.getRect(find.byKey(const Key('home_options_panel_shell'))).width,
+        moreOrLessEquals(320),
+      );
+    },
+  );
+
+  testWidgets(
     'narrow shell auto-collapses panes and scrolls without overflow',
     (tester) async {
       final harness = await createHarness();
@@ -753,6 +852,107 @@ void main() {
         find.byKey(const Key('home_options_panel_expand_button')),
         findsOneWidget,
       );
+      expect(tester.takeException(), isNull);
+    },
+  );
+
+  testWidgets('preview shell stays overflow-safe in narrow desktop widths', (
+    tester,
+  ) async {
+    final harness = await createHarness();
+
+    addTearDown(harness.recording.dispose);
+    addTearDown(harness.player.dispose);
+    addTearDown(harness.device.dispose);
+    addTearDown(harness.overlay.dispose);
+    addTearDown(harness.permissions.dispose);
+    addTearDown(harness.post.dispose);
+    addTearDown(harness.license.dispose);
+    addTearDown(harness.countdown.dispose);
+    addTearDown(harness.uiState.dispose);
+    addTearDown(harness.settings.dispose);
+
+    tester.view.physicalSize = const Size(820, 960);
+    tester.view.devicePixelRatio = 1;
+    addTearDown(() {
+      tester.view.resetPhysicalSize();
+      tester.view.resetDevicePixelRatio();
+    });
+
+    await tester.pumpWidget(
+      buildShell(
+        actions: harness.actions,
+        countdown: harness.countdown,
+        device: harness.device,
+        license: harness.license,
+        overlay: harness.overlay,
+        player: harness.player,
+        post: harness.post,
+        recording: harness.recording,
+        settings: harness.settings,
+        uiState: harness.uiState,
+      ),
+    );
+    await tester.pumpAndSettle();
+
+    await _openPreviewShell(harness.recording);
+    await tester.pumpAndSettle();
+
+    expect(find.byKey(const Key('timeline_shell')), findsOneWidget);
+    expect(
+      find.byKey(const Key('desktop_split_layout_scroll_view')),
+      findsWidgets,
+    );
+    expect(tester.takeException(), isNull);
+  });
+
+  testWidgets(
+    'short preview shells fall back to vertical scrolling without clipping',
+    (tester) async {
+      final harness = await createHarness();
+
+      addTearDown(harness.recording.dispose);
+      addTearDown(harness.player.dispose);
+      addTearDown(harness.device.dispose);
+      addTearDown(harness.overlay.dispose);
+      addTearDown(harness.permissions.dispose);
+      addTearDown(harness.post.dispose);
+      addTearDown(harness.license.dispose);
+      addTearDown(harness.countdown.dispose);
+      addTearDown(harness.uiState.dispose);
+      addTearDown(harness.settings.dispose);
+
+      tester.view.physicalSize = const Size(1440, 560);
+      tester.view.devicePixelRatio = 1;
+      addTearDown(() {
+        tester.view.resetPhysicalSize();
+        tester.view.resetDevicePixelRatio();
+      });
+
+      await tester.pumpWidget(
+        buildShell(
+          actions: harness.actions,
+          countdown: harness.countdown,
+          device: harness.device,
+          license: harness.license,
+          overlay: harness.overlay,
+          player: harness.player,
+          post: harness.post,
+          recording: harness.recording,
+          settings: harness.settings,
+          uiState: harness.uiState,
+        ),
+      );
+      await tester.pumpAndSettle();
+
+      await _openPreviewShell(harness.recording);
+      await tester.pumpAndSettle();
+
+      expect(
+        find.byKey(const Key('home_shell_vertical_scroll_view')),
+        findsOneWidget,
+      );
+      expect(find.byKey(const Key('timeline_shell')), findsOneWidget);
       expect(tester.takeException(), isNull);
     },
   );
