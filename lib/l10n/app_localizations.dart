@@ -550,6 +550,18 @@ abstract class AppLocalizations {
   /// **'Open App Settings'**
   String get openAppSettings;
 
+  /// No description provided for @expandNavigationRail.
+  ///
+  /// In en, this message translates to:
+  /// **'Expand navigation rail'**
+  String get expandNavigationRail;
+
+  /// No description provided for @compactNavigationRail.
+  ///
+  /// In en, this message translates to:
+  /// **'Compact navigation rail'**
+  String get compactNavigationRail;
+
   /// No description provided for @overlayFaceCam.
   ///
   /// In en, this message translates to:
@@ -1197,6 +1209,24 @@ abstract class AppLocalizations {
   /// In en, this message translates to:
   /// **'Export Settings'**
   String get exportSettings;
+
+  /// No description provided for @postProcessing.
+  ///
+  /// In en, this message translates to:
+  /// **'Post-processing'**
+  String get postProcessing;
+
+  /// No description provided for @expandPane.
+  ///
+  /// In en, this message translates to:
+  /// **'Expand pane'**
+  String get expandPane;
+
+  /// No description provided for @collapsePane.
+  ///
+  /// In en, this message translates to:
+  /// **'Collapse pane'**
+  String get collapsePane;
 
   /// No description provided for @size.
   ///

@@ -75,6 +75,10 @@ extension ScreenRecorderFacade {
       case "camera": return prefix + "Camera"
       case "microphone": return prefix + "Microphone"
       case "accessibility": return prefix + "Accessibility"
+      case "storage":
+        return (major >= 13)
+          ? "x-apple.systempreferences:com.apple.systempreferences.GeneralSettings?com.apple.settings.Storage"
+          : "x-apple.systempreferences:com.apple.preference.general?Storage"
       default:
         return (major >= 13)
           ? "x-apple.systempreferences:com.apple.settings.PrivacySecurity.extension"

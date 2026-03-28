@@ -248,6 +248,12 @@ class AppLocalizationsAr extends AppLocalizations {
   String get openAppSettings => 'فتح إعدادات التطبيق';
 
   @override
+  String get expandNavigationRail => 'توسيع شريط التنقل';
+
+  @override
+  String get compactNavigationRail => 'تصغير شريط التنقل';
+
+  @override
   String get overlayFaceCam => 'الطبقة العلوية (Face-cam)';
 
   @override
@@ -596,6 +602,15 @@ class AppLocalizationsAr extends AppLocalizations {
 
   @override
   String get exportSettings => 'Export Settings';
+
+  @override
+  String get postProcessing => 'المعالجة اللاحقة';
+
+  @override
+  String get expandPane => 'توسيع اللوحة';
+
+  @override
+  String get collapsePane => 'طي اللوحة';
 
   @override
   String get size => 'الحجم';

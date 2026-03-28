@@ -58,6 +58,8 @@
   "settingsStorage": "Stocare",
   "settingsStorageDescription": "Spațiu pentru înregistrări, utilizare internă și sănătatea discului.",
   "openAppSettings": "Deschide Setări Aplicație",
+  "expandNavigationRail": "Extinde bara de navigare",
+  "compactNavigationRail": "Compactează bara de navigare",
   "overlayFaceCam": "Suprapunere (Face-cam)",
   "overlayFaceCamVisibility": "Vizibilitate Face-cam",
   "visibility": "Vizibilitate",
@@ -218,6 +220,9 @@
   "licenseLinkStatus": "Legare dispozitiv",
   "licenseSummaryStarter": "Activează o cheie sau fă upgrade pentru exporturi Pro nelimitate.",
   "licenseSummaryTrial": "Folosești Trial cu {count} exporturi rămase.",
+  "postProcessing": "Post-procesare",
+  "expandPane": "Extinde panoul",
+  "collapsePane": "Restrânge panoul",
   "@licenseSummaryTrial": {
     "placeholders": {
       "count": {

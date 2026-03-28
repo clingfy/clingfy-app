@@ -1,5 +1,6 @@
 import 'package:clingfy/app/home/home_ui_state.dart';
 import 'package:clingfy/core/models/app_models.dart';
+import 'package:clingfy/ui/platform/widgets/desktop_pane_layout.dart';
 import 'package:flutter_test/flutter_test.dart';
 
 void main() {
@@ -14,14 +15,25 @@ void main() {
     state.setTargetMode(DisplayTargetMode.singleAppWindow);
     state.setIndicatorPinned(true);
     state.setSettingsOpen(true);
+    state.applyPaneLayoutPrefs(
+      const DesktopPaneLayoutPrefs(
+        paneStates: {
+          DesktopPaneId.homeLeftSidebar: DesktopPaneState(isCollapsed: true),
+        },
+      ),
+    );
     state.markHydrated();
 
     expect(state.errorMessage, 'boom');
     expect(state.targetMode, DisplayTargetMode.singleAppWindow);
     expect(state.indicatorPinned, isTrue);
     expect(state.isSettingsOpen, isTrue);
+    expect(
+      state.paneStateFor(DesktopPaneId.homeLeftSidebar).isCollapsed,
+      isTrue,
+    );
     expect(state.uiPrefsHydrated, isTrue);
-    expect(notifications, 5);
+    expect(notifications, 6);
   });
 
   test('duplicate values do not notify again', () {
@@ -35,10 +47,53 @@ void main() {
     state.setTargetMode(DisplayTargetMode.explicitId);
     state.setSettingsOpen(false);
     state.setError(null);
+    state.applyPaneLayoutPrefs(const DesktopPaneLayoutPrefs());
     state.markHydrated();
     state.markHydrated();
 
     expect(notifications, 1);
+  });
+
+  test('pane layout hydration and updates notify once per change', () {
+    final state = HomeUiState();
+    addTearDown(state.dispose);
+    var notifications = 0;
+    state.addListener(() => notifications += 1);
+
+    state.applyPaneLayoutPrefs(
+      const DesktopPaneLayoutPrefs(
+        paneStates: {
+          DesktopPaneId.recordingSidebar: DesktopPaneState(
+            width: 360,
+            lastExpandedWidth: 360,
+            userResized: true,
+          ),
+        },
+      ),
+    );
+    state.applyPaneLayoutPrefs(
+      const DesktopPaneLayoutPrefs(
+        paneStates: {
+          DesktopPaneId.recordingSidebar: DesktopPaneState(
+            width: 320,
+            lastExpandedWidth: 320,
+            isCollapsed: true,
+            userResized: true,
+          ),
+        },
+      ),
+    );
+
+    expect(
+      state.paneStateFor(DesktopPaneId.recordingSidebar),
+      const DesktopPaneState(
+        width: 320,
+        lastExpandedWidth: 320,
+        isCollapsed: true,
+        userResized: true,
+      ),
+    );
+    expect(notifications, 2);
   });
 
   testWidgets('success notice auto dismisses after 5 seconds', (tester) async {

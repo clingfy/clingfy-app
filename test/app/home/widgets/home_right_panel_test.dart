@@ -147,17 +147,19 @@ void main() {
         home: Scaffold(
           body: Row(
             children: [
-              HomeRightPanel(
-                isRecording: recording.isRecording,
-                isPaused: recording.isPaused,
-                isBusy: recording.isBusyTransitioning,
-                canPause: recording.canPause,
-                canResume: recording.canResume,
-                onToggleRecording: () {},
-                onPauseRecording: () {},
-                onResumeRecording: () {},
-                onClosePreview: () {},
-                previewHostBuilder: previewHostBuilder,
+              Expanded(
+                child: HomeRightPanel(
+                  isRecording: recording.isRecording,
+                  isPaused: recording.isPaused,
+                  isBusy: recording.isBusyTransitioning,
+                  canPause: recording.canPause,
+                  canResume: recording.canResume,
+                  onToggleRecording: () {},
+                  onPauseRecording: () {},
+                  onResumeRecording: () {},
+                  onClosePreview: () {},
+                  previewHostBuilder: previewHostBuilder,
+                ),
               ),
             ],
           ),

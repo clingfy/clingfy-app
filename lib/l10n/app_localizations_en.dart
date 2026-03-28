@@ -249,6 +249,12 @@ class AppLocalizationsEn extends AppLocalizations {
   String get openAppSettings => 'Open App Settings';
 
   @override
+  String get expandNavigationRail => 'Expand navigation rail';
+
+  @override
+  String get compactNavigationRail => 'Compact navigation rail';
+
+  @override
   String get overlayFaceCam => 'Overlay (Face-cam)';
 
   @override
@@ -601,6 +607,15 @@ class AppLocalizationsEn extends AppLocalizations {
 
   @override
   String get exportSettings => 'Export Settings';
+
+  @override
+  String get postProcessing => 'Post-processing';
+
+  @override
+  String get expandPane => 'Expand pane';
+
+  @override
+  String get collapsePane => 'Collapse pane';
 
   @override
   String get size => 'Size';

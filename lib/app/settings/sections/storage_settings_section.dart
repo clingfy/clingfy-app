@@ -218,13 +218,7 @@ class _StorageSettingsSectionState extends State<StorageSettingsSection> {
               ),
               const SizedBox(height: 16),
             ],
-            if (snapshot != null) ...[
-              AppInlineNotice(
-                message: _statusMessage(l10n, snapshot.status),
-                variant: _noticeVariant(snapshot.status),
-              ),
-              const SizedBox(height: 16),
-            ],
+
             Container(
               key: const Key('storage_overview_card'),
               child: SettingsCard(
@@ -285,21 +279,6 @@ class _StorageSettingsSectionState extends State<StorageSettingsSection> {
                     ],
                   );
                 },
-              ),
-              const SizedBox(height: 16),
-              Align(
-                alignment: Alignment.centerLeft,
-                child: AppButton(
-                  key: const Key('storage_clear_cached_recordings_button'),
-                  label: l10n.storageClearCachedRecordings,
-                  icon: CupertinoIcons.delete,
-                  variant: AppButtonVariant.secondary,
-                  onPressed: canClearCachedRecordings
-                      ? () {
-                          unawaited(_confirmAndClearCachedRecordings(context));
-                        }
-                      : null,
-                ),
               ),
               if (_showDeveloperTools) ...[
                 const SizedBox(height: 16),
@@ -362,6 +341,35 @@ class _StorageSettingsSectionState extends State<StorageSettingsSection> {
                 ),
               ],
             ],
+            const SizedBox(height: 16),
+            Wrap(
+              alignment: WrapAlignment.start,
+              spacing: 8,
+              runSpacing: 8,
+              children: [
+                AppButton(
+                  key: const Key('storage_open_system_settings_button'),
+                  label: l10n.openStorageSettings,
+                  icon: CupertinoIcons.gear,
+                  variant: AppButtonVariant.secondary,
+                  onPressed: () => _runAction(
+                    storage.openSystemStorageSettings,
+                    fallbackError: l10n.storageActionFailed,
+                  ),
+                ),
+                AppButton(
+                  key: const Key('storage_clear_cached_recordings_button'),
+                  label: l10n.storageClearCachedRecordings,
+                  icon: CupertinoIcons.delete,
+                  variant: AppButtonVariant.secondary,
+                  onPressed: canClearCachedRecordings
+                      ? () {
+                          unawaited(_confirmAndClearCachedRecordings(context));
+                        }
+                      : null,
+                ),
+              ],
+            ),
           ],
         );
       },
@@ -384,7 +392,13 @@ class _StorageSettingsSectionState extends State<StorageSettingsSection> {
               context,
             ).textTheme.titleSmall?.copyWith(fontWeight: FontWeight.w700),
           ),
-          const SizedBox(height: 8),
+
+          const SizedBox(height: 16),
+          AppInlineNotice(
+            message: _statusMessage(l10n, snapshot.status),
+            variant: _noticeVariant(snapshot.status),
+          ),
+          const SizedBox(height: 16),
           Text(
             l10n.storageFreeNow(_formatBytes(snapshot.systemAvailableBytes)),
           ),
