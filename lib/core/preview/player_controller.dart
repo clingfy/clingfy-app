@@ -1,4 +1,5 @@
 import 'dart:async';
+import 'dart:ui' show Offset;
 
 import 'package:flutter/foundation.dart';
 import 'package:clingfy/core/bridges/native_bridge.dart';
@@ -33,6 +34,7 @@ class PlayerController extends ChangeNotifier {
 
   final _warningController = StreamController<String>.broadcast();
   final _warningCodeController = StreamController<String>.broadcast();
+  final _cameraManualPositionController = StreamController<Offset>.broadcast();
 
   ZoomEditorController? _zoomEditor;
   VoidCallback? _zoomEditorListener;
@@ -46,6 +48,8 @@ class PlayerController extends ChangeNotifier {
   String? get blockingErrorCode => _blockingErrorCode;
   Stream<String> get warningStream => _warningController.stream;
   Stream<String> get warningCodeStream => _warningCodeController.stream;
+  Stream<Offset> get cameraManualPositionStream =>
+      _cameraManualPositionController.stream;
   ZoomEditorController? get zoomEditor => _zoomEditor;
   List<ZoomSegment> get zoomSegments => _zoomSegments;
   List<ZoomSegment>? get previewCompositionZoomSegments => _zoomEditor == null
@@ -117,6 +121,13 @@ class PlayerController extends ChangeNotifier {
           return;
         case 'debug':
           Log.d("Player", "Native: ${event['message']}");
+          return;
+        case 'cameraManualPositionChanged':
+          final x = (event['normalizedX'] as num?)?.toDouble();
+          final y = (event['normalizedY'] as num?)?.toDouble();
+          if (x != null && y != null) {
+            _cameraManualPositionController.add(Offset(x, y));
+          }
           return;
         default:
           return;
@@ -310,6 +321,7 @@ class PlayerController extends ChangeNotifier {
     _playerSub?.cancel();
     _warningController.close();
     _warningCodeController.close();
+    _cameraManualPositionController.close();
     _detachZoomEditor();
     super.dispose();
   }

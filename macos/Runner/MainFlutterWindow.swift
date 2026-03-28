@@ -489,11 +489,16 @@ class MainFlutterWindow: NSWindow {
           let sessionId = args["sessionId"] as? String,
           !sessionId.isEmpty
         {
+          let mediaSources = self.screenRecorder.resolvePreviewMediaSources(
+            source: path,
+            explicitCameraPath: args["cameraPath"] as? String
+          )
           NativeLogger.i(
             "Preview", "Received previewOpen request",
             context: [
               "sessionId": sessionId,
-              "path": path,
+              "path": mediaSources.screenPath,
+              "cameraPath": mediaSources.cameraPath ?? "nil",
               "hasInlinePreviewView": inlinePreviewViewInstance != nil,
             ])
           self.bringAppToFront()
@@ -501,23 +506,25 @@ class MainFlutterWindow: NSWindow {
           self.updatePreRecordingBarVisibility()
           pendingPreviewOpenRequest = PendingPreviewOpenRequest(
             sessionId: sessionId,
-            path: path
+            mediaSources: mediaSources
           )
           if let view = inlinePreviewViewInstance {
             NativeLogger.i(
               "Preview", "Opening preview immediately on existing host view",
               context: [
                 "sessionId": sessionId,
-                "path": path,
+                "path": mediaSources.screenPath,
+                "cameraPath": mediaSources.cameraPath ?? "nil",
               ])
-            view.open(path: path, sessionId: sessionId)
+            view.open(mediaSources: mediaSources, sessionId: sessionId)
             pendingPreviewOpenRequest = nil
           } else {
             NativeLogger.i(
               "Preview", "Stored pending previewOpen request until host view is created",
               context: [
                 "sessionId": sessionId,
-                "path": path,
+                "path": mediaSources.screenPath,
+                "cameraPath": mediaSources.cameraPath ?? "nil",
               ])
           }
           result(nil)
@@ -538,8 +545,8 @@ class MainFlutterWindow: NSWindow {
           self.isInlinePreviewActive = false
           self.updatePreRecordingBarVisibility()
           pendingPreviewOpenRequest = nil
-          pendingPreviewParams = nil
           pendingPreviewZoomSegments = nil
+          pendingPreviewSceneRequest = nil
           if let view = inlinePreviewViewInstance, view.currentSessionId == sessionId {
             view.dispose(reason: "flutterRequest")
           } else {
@@ -621,6 +628,10 @@ class MainFlutterWindow: NSWindow {
         if let args = call.arguments as? [String: Any],
           let path = args["path"] as? String
         {
+          let cameraParams = self.screenRecorder.resolveCameraCompositionParams(
+            source: path,
+            args: args
+          )
           let layout = (args["layoutPreset"] as? String) ?? "auto"
           let res = (args["resolutionPreset"] as? String) ?? "auto"
           let fit = (args["fitMode"] as? String) ?? "fit"
@@ -655,6 +666,9 @@ class MainFlutterWindow: NSWindow {
             audioGainDb: (args["audioGainDb"] as? Double) ?? 0.0,
             audioVolumePercent: (args["audioVolumePercent"] as? Double) ?? 100.0,
             zoomSegments: zoomSegments,
+            sessionId: args["sessionId"] as? String,
+            cameraPath: args["cameraPath"] as? String,
+            cameraParams: cameraParams,
             result: result)
         } else {
           result(
@@ -701,6 +715,10 @@ class MainFlutterWindow: NSWindow {
         if let args = call.arguments as? [String: Any],
           let path = args["path"] as? String
         {
+          let cameraParams = self.screenRecorder.resolveCameraCompositionParams(
+            source: path,
+            args: args
+          )
           let layout = (args["layoutPreset"] as? String) ?? "auto"
           let res = (args["resolutionPreset"] as? String) ?? "auto"
           let fit = (args["fitMode"] as? String) ?? "fit"
@@ -740,6 +758,8 @@ class MainFlutterWindow: NSWindow {
             audioVolumePercent: (args["audioVolumePercent"] as? Double) ?? 100.0,
             autoNormalizeOnExport: autoNormalizeOnExport,
             targetLoudnessDbfs: targetLoudnessDbfs,
+            cameraPath: args["cameraPath"] as? String,
+            cameraParams: cameraParams,
             onProgress: { [weak self] progress in
               self?.channel?.invokeMethod("updateExportProgress", arguments: progress)
             },
@@ -752,6 +772,21 @@ class MainFlutterWindow: NSWindow {
       case "cancelExport":
         self.screenRecorder.cancelExport()
         result(nil)
+
+      case "getRecordingSceneInfo":
+        if let args = call.arguments as? [String: Any],
+          let path = args["path"] as? String
+        {
+          self.screenRecorder.getRecordingSceneInfo(source: path, result: result)
+        } else {
+          result(
+            FlutterError(
+              code: NativeErrorCode.badArgs,
+              message: "missing path",
+              details: nil
+            )
+          )
+        }
 
       case "pickImage":
         let panel = NSOpenPanel()

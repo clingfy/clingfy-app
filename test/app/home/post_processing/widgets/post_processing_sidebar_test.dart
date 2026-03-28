@@ -77,6 +77,22 @@ void main() {
             onZoomFactorChanged: onZoomFactorChanged ?? (_) {},
             onZoomFactorChangeEnd: onZoomFactorChangeEnd ?? (_) {},
             onPickImage: () async => null,
+            hasCameraAsset: false,
+            cameraState: null,
+            onCameraVisibleChanged: (_) {},
+            onCameraLayoutPresetChanged: (_) {},
+            onCameraSizeFactorChanged: (_) {},
+            onCameraSizeFactorChangeEnd: (_) {},
+            onCameraShapeChanged: (_) {},
+            onCameraCornerRadiusChanged: (_) {},
+            onCameraCornerRadiusChangeEnd: (_) {},
+            onCameraMirrorChanged: (_) {},
+            onCameraContentModeChanged: (_) {},
+            onCameraManualCenterXChanged: (_) {},
+            onCameraManualCenterXChangeEnd: (_) {},
+            onCameraManualCenterYChanged: (_) {},
+            onCameraManualCenterYChangeEnd: (_) {},
+            onResetCameraManualPosition: () {},
             onAudioGainChanged: (_) {},
             onAudioGainChangeEnd: (_) {},
             onAudioVolumeChanged: (_) {},
@@ -354,6 +370,8 @@ void main() {
     await tester.pumpWidget(buildTestApp());
     await tester.pumpAndSettle();
 
+    await tester.ensureVisible(find.text('More colors'));
+    await tester.pumpAndSettle();
     await tester.tap(find.text('More colors'));
     await tester.pumpAndSettle();
 

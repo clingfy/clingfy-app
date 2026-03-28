@@ -72,12 +72,43 @@ enum AppPaths {
     rawURL.deletingPathExtension().appendingPathExtension("zoom.manual.json")
   }
 
+  /// Returns the raw camera recording URL for a given screen recording URL.
+  /// Example: `recording.mov` -> `recording.camera.mov`
+  static func cameraRawURL(for rawURL: URL) -> URL {
+    rawURL.deletingPathExtension().appendingPathExtension("camera.mov")
+  }
+
+  /// Returns the camera metadata sidecar URL for a given screen recording URL.
+  /// Example: `recording.mov` -> `recording.camera.meta.json`
+  static func cameraMetadataSidecarURL(for rawURL: URL) -> URL {
+    rawURL.deletingPathExtension().appendingPathExtension("camera.meta.json")
+  }
+
+  /// Returns the camera segment directory for a given screen recording URL.
+  /// Example: `recording.mov` -> `recording.camera.segments/`
+  static func cameraSegmentDirectoryURL(for rawURL: URL) -> URL {
+    rawURL.deletingPathExtension().appendingPathExtension("camera.segments")
+  }
+
   /// Returns all sidecar URLs for a given raw recording URL.
   static func allSidecarURLs(for rawURL: URL) -> [URL] {
     [
       cursorSidecarURL(for: rawURL),
       metadataSidecarURL(for: rawURL),
       zoomManualSidecarURL(for: rawURL),
+    ]
+  }
+
+  /// Returns all files and directories related to a raw recording.
+  static func allRecordingArtifactURLs(for rawURL: URL) -> [URL] {
+    [
+      rawURL,
+      cursorSidecarURL(for: rawURL),
+      metadataSidecarURL(for: rawURL),
+      zoomManualSidecarURL(for: rawURL),
+      cameraRawURL(for: rawURL),
+      cameraMetadataSidecarURL(for: rawURL),
+      cameraSegmentDirectoryURL(for: rawURL),
     ]
   }
 

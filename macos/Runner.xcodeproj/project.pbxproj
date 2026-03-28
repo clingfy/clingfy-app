@@ -85,6 +85,9 @@
 		5BE43BEF2F22CD940017267E /* RecordingMetadata.swift in Sources */ = {isa = PBXBuildFile; fileRef = 5BE43BEE2F22CD940017267E /* RecordingMetadata.swift */; };
 		5BE629DC2F2F9F3800063F17 /* ZoomTimelineBuilder.swift in Sources */ = {isa = PBXBuildFile; fileRef = 5BE629DB2F2F9F3800063F17 /* ZoomTimelineBuilder.swift */; };
 		5C1D00012F50000100A0B001 /* ZoomFollowSmoother.swift in Sources */ = {isa = PBXBuildFile; fileRef = 5C1D00022F50000100A0B001 /* ZoomFollowSmoother.swift */; };
+		7C1000012F70000100A0B001 /* CameraCaptureCoordinator.swift in Sources */ = {isa = PBXBuildFile; fileRef = 7C1000112F70000100A0B001 /* CameraCaptureCoordinator.swift */; };
+		7C1000022F70000100A0B001 /* CameraRecorder.swift in Sources */ = {isa = PBXBuildFile; fileRef = 7C1000122F70000100A0B001 /* CameraRecorder.swift */; };
+		7C1000032F70000100A0B001 /* CameraLayoutResolver.swift in Sources */ = {isa = PBXBuildFile; fileRef = 7C1000132F70000100A0B001 /* CameraLayoutResolver.swift */; };
 		9A1B2C3D4E5F60718293A4B2 /* PreviewProfile.swift in Sources */ = {isa = PBXBuildFile; fileRef = 9A1B2C3D4E5F60718293A4B1 /* PreviewProfile.swift */; };
 		9A1B2C3D4E5F60718293A4B4 /* CursorFrameResolver.swift in Sources */ = {isa = PBXBuildFile; fileRef = 9A1B2C3D4E5F60718293A4B3 /* CursorFrameResolver.swift */; };
 		9A1B2C3D4E5F60718293A4B6 /* PreviewBackgroundImageCache.swift in Sources */ = {isa = PBXBuildFile; fileRef = 9A1B2C3D4E5F60718293A4B5 /* PreviewBackgroundImageCache.swift */; };
@@ -200,6 +203,9 @@
 		5BE43BEE2F22CD940017267E /* RecordingMetadata.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = RecordingMetadata.swift; sourceTree = "<group>"; };
 		5BE629DB2F2F9F3800063F17 /* ZoomTimelineBuilder.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ZoomTimelineBuilder.swift; sourceTree = "<group>"; };
 		5C1D00022F50000100A0B001 /* ZoomFollowSmoother.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ZoomFollowSmoother.swift; sourceTree = "<group>"; };
+		7C1000112F70000100A0B001 /* CameraCaptureCoordinator.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CameraCaptureCoordinator.swift; sourceTree = "<group>"; };
+		7C1000122F70000100A0B001 /* CameraRecorder.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CameraRecorder.swift; sourceTree = "<group>"; };
+		7C1000132F70000100A0B001 /* CameraLayoutResolver.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CameraLayoutResolver.swift; sourceTree = "<group>"; };
 		7016C578B942E3719B0C17B5 /* Pods-Runner.profile-prod.xcconfig */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = text.xcconfig; name = "Pods-Runner.profile-prod.xcconfig"; path = "Target Support Files/Pods-Runner/Pods-Runner.profile-prod.xcconfig"; sourceTree = "<group>"; };
 		73AA0A1A2585787F7B39578A /* Pods-Runner.release-dev.xcconfig */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = text.xcconfig; name = "Pods-Runner.release-dev.xcconfig"; path = "Target Support Files/Pods-Runner/Pods-Runner.release-dev.xcconfig"; sourceTree = "<group>"; };
 		79BDE597B4AFB4B8E9940F66 /* Pods-RunnerTests.release-dev.xcconfig */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = text.xcconfig; name = "Pods-RunnerTests.release-dev.xcconfig"; path = "Target Support Files/Pods-RunnerTests/Pods-RunnerTests.release-dev.xcconfig"; sourceTree = "<group>"; };
@@ -413,6 +419,7 @@
 		5B5426EB2F21985F00B06BA6 /* Export */ = {
 			isa = PBXGroup;
 			children = (
+				7C1000132F70000100A0B001 /* CameraLayoutResolver.swift */,
 				5B5426E92F21985F00B06BA6 /* CompositionBuilder.swift */,
 				5B5426EA2F21985F00B06BA6 /* LetterboxExporter.swift */,
 			);
@@ -423,6 +430,8 @@
 			isa = PBXGroup;
 			children = (
 				5B449F6C2F37828300A03934 /* PermissionState.swift */,
+				7C1000112F70000100A0B001 /* CameraCaptureCoordinator.swift */,
+				7C1000122F70000100A0B001 /* CameraRecorder.swift */,
 				5B1C86BE2F300F1C0068C1BE /* Cursor */,
 				5B1C86BD2F300EF30068C1BE /* Zoom */,
 				5B5426E82F21985F00B06BA6 /* Backends */,
@@ -848,6 +857,8 @@
 				5B449F7B2F379D1700A03934 /* PermissionsMethodRouter.swift in Sources */,
 				5B5427272F21985F00B06BA6 /* OptionPickerPopover.swift in Sources */,
 				5B5427282F21985F00B06BA6 /* ScreenRecorderFacade.swift in Sources */,
+				7C1000012F70000100A0B001 /* CameraCaptureCoordinator.swift in Sources */,
+				7C1000022F70000100A0B001 /* CameraRecorder.swift in Sources */,
 				5B5427292F21985F00B06BA6 /* ZoomHysteresis.swift in Sources */,
 				5C1D00012F50000100A0B001 /* ZoomFollowSmoother.swift in Sources */,
 				5B54272A2F21985F00B06BA6 /* CapturePipeline.swift in Sources */,
@@ -871,6 +882,7 @@
 				5B5427382F21985F00B06BA6 /* CaptureBackendScreenCaptureKit.swift in Sources */,
 				5B5427392F21985F00B06BA6 /* Models.swift in Sources */,
 				5B54273A2F21985F00B06BA6 /* CursorRecorder.swift in Sources */,
+				7C1000032F70000100A0B001 /* CameraLayoutResolver.swift in Sources */,
 				5B54273B2F21985F00B06BA6 /* CompositionBuilder.swift in Sources */,
 				5BE629DC2F2F9F3800063F17 /* ZoomTimelineBuilder.swift in Sources */,
 				5B54273C2F21985F00B06BA6 /* RecordingIndicatorView.swift in Sources */,

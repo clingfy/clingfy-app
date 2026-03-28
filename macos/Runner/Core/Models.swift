@@ -33,3 +33,66 @@ enum RecordingQuality: String {
     }
   }
 }
+
+enum CameraCaptureMode: String, Codable {
+  case bakedOverlay = "bakedOverlay"
+  case separateCameraAsset = "separateCameraAsset"
+}
+
+enum CameraLayoutPreset: String, Codable, CaseIterable {
+  case overlayTopLeft = "overlayTopLeft"
+  case overlayTopRight = "overlayTopRight"
+  case overlayBottomLeft = "overlayBottomLeft"
+  case overlayBottomRight = "overlayBottomRight"
+  case sideBySideLeft = "sideBySideLeft"
+  case sideBySideRight = "sideBySideRight"
+  case stackedTop = "stackedTop"
+  case stackedBottom = "stackedBottom"
+  case backgroundBehind = "backgroundBehind"
+  case hidden = "hidden"
+
+  static func fromOverlayPosition(_ value: Int) -> CameraLayoutPreset {
+    switch value {
+    case 0:
+      return .overlayTopLeft
+    case 1:
+      return .overlayTopRight
+    case 2:
+      return .overlayBottomLeft
+    default:
+      return .overlayBottomRight
+    }
+  }
+}
+
+enum CameraZoomBehavior: String, Codable {
+  case fixed = "fixed"
+  case scaleDownWhenScreenZooms = "scaleDownWhenScreenZooms"
+}
+
+enum CameraShape: String, Codable {
+  case circle = "circle"
+  case roundedRect = "roundedRect"
+  case square = "square"
+  case squircle = "squircle"
+
+  static func fromOverlayShape(_ shape: CameraOverlayShapeID) -> CameraShape {
+    switch shape {
+    case .circle:
+      return .circle
+    case .roundedRect:
+      return .roundedRect
+    case .square:
+      return .square
+    case .squircle:
+      return .squircle
+    case .hexagon, .star:
+      return .roundedRect
+    }
+  }
+}
+
+enum CameraContentMode: String, Codable {
+  case fit = "fit"
+  case fill = "fill"
+}

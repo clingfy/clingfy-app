@@ -3,6 +3,7 @@ import 'package:clingfy/app/home/post_processing/post_processing_controller.dart
 import 'package:clingfy/app/home/recording/recording_controller.dart';
 import 'package:clingfy/app/home/post_processing/widgets/post_processing_sidebar.dart';
 import 'package:clingfy/app/settings/settings_controller.dart';
+import 'package:clingfy/core/models/app_models.dart';
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 
@@ -55,6 +56,9 @@ class PostProcessingSidebarContainer extends StatelessWidget {
         double zoom,
         double gain,
         double volume,
+        bool hasCameraAsset,
+        CameraCompositionState? cameraState,
+        bool supportsAdvancedCameraExportStyling,
       })
     >(
       selector: (_, p) => (
@@ -69,6 +73,10 @@ class PostProcessingSidebarContainer extends StatelessWidget {
         zoom: p.zoomFactor,
         gain: p.audioGainDb,
         volume: p.audioVolumePercent,
+        hasCameraAsset: p.hasCameraAsset,
+        cameraState: p.cameraState,
+        supportsAdvancedCameraExportStyling:
+            p.supportsAdvancedCameraExportStyling,
       ),
       builder: (context, vm, _) {
         final post = context.read<PostProcessingController>();
@@ -95,6 +103,10 @@ class PostProcessingSidebarContainer extends StatelessWidget {
           showCursor: vm.showCursor,
           cursorSize: vm.cursorSize,
           zoomFactor: vm.zoom,
+          hasCameraAsset: vm.hasCameraAsset,
+          cameraState: vm.cameraState,
+          supportsAdvancedCameraExportStyling:
+              vm.supportsAdvancedCameraExportStyling,
           audioGainDb: vm.gain,
           audioVolume: vm.volume,
           autoNormalizeOnExport:
@@ -116,6 +128,20 @@ class PostProcessingSidebarContainer extends StatelessWidget {
           onAudioGainChangeEnd: post.setAudioGainDbEnd,
           onAudioVolumeChanged: post.setAudioVolumePercent,
           onAudioVolumeChangeEnd: post.setAudioVolumePercentEnd,
+          onCameraVisibleChanged: post.setCameraVisible,
+          onCameraLayoutPresetChanged: post.setCameraLayoutPreset,
+          onCameraSizeFactorChanged: post.setCameraSizeFactor,
+          onCameraSizeFactorChangeEnd: post.setCameraSizeFactorEnd,
+          onCameraShapeChanged: post.setCameraShape,
+          onCameraCornerRadiusChanged: post.setCameraCornerRadius,
+          onCameraCornerRadiusChangeEnd: post.setCameraCornerRadiusEnd,
+          onCameraMirrorChanged: post.setCameraMirror,
+          onCameraContentModeChanged: post.setCameraContentMode,
+          onCameraManualCenterXChanged: post.setCameraManualCenterX,
+          onCameraManualCenterXChangeEnd: post.setCameraManualCenterXEnd,
+          onCameraManualCenterYChanged: post.setCameraManualCenterY,
+          onCameraManualCenterYChangeEnd: post.setCameraManualCenterYEnd,
+          onResetCameraManualPosition: post.resetCameraManualPosition,
           onAutoNormalizeOnExportChanged:
               settingsController.post.updatePostAutoNormalizeEnabled,
           onAutoNormalizeTargetDbfsChanged:

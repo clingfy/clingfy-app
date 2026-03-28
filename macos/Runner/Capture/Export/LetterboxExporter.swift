@@ -16,6 +16,7 @@ final class LetterboxExporter {
 
   func export(
     inputURL: URL,
+    cameraInputURL: URL? = nil,
     target: CGSize,
     padding: Double = 0,
     cornerRadius: Double = 0,
@@ -36,6 +37,7 @@ final class LetterboxExporter {
     audioVolumePercent: Double = 100.0,
     autoNormalizeOnExport: Bool = false,
     targetLoudnessDbfs: Double = -16.0,
+    cameraParams: CameraCompositionParams? = nil,
     onProgress: ((Double) -> Void)? = nil,
     completion: @escaping (Result<URL, Error>) -> Void
   ) {
@@ -205,18 +207,16 @@ final class LetterboxExporter {
         : pickPreset([AVAssetExportPresetHighestQuality])
     }
 
-    guard let export = AVAssetExportSession(asset: asset, presetName: preset) else {
-      completion(
-        .failure(
-          NSError(
-            domain: "Letterbox", code: -2,
-            userInfo: [NSLocalizedDescriptionKey: "Cannot create export session (preset=\(preset))"]
-          )))
-      return
-    }
+    let cameraAsset = cameraInputURL.map(AVAsset.init(url:))
 
     guard
-      let comp = builder.buildExport(asset: asset, params: params, cursorRecording: cursorRecording)
+      let comp = builder.buildExport(
+        asset: asset,
+        cameraAsset: cameraAsset,
+        params: params,
+        cameraParams: cameraParams,
+        cursorRecording: cursorRecording
+      )
     else {
       completion(
         .failure(
@@ -226,10 +226,20 @@ final class LetterboxExporter {
       return
     }
 
-    export.videoComposition = comp
+    guard let export = AVAssetExportSession(asset: comp.asset, presetName: preset) else {
+      completion(
+        .failure(
+          NSError(
+            domain: "Letterbox", code: -2,
+            userInfo: [NSLocalizedDescriptionKey: "Cannot create export session (preset=\(preset))"]
+          )))
+      return
+    }
+
+    export.videoComposition = comp.videoComposition
 
     export.audioMix = AudioMixEngine.makeAudioMix(
-      asset: asset,
+      asset: comp.asset,
       volumePercent: resolvedAudioMix.volumePercent,
       gainDb: resolvedAudioMix.gainDb
     )
@@ -268,26 +278,26 @@ final class LetterboxExporter {
 
     self.currentSession = export
 
-    NativeLogger.i(
-      "Export", "Export resolved",
-      context: [
-        "input": inputURL.path,
-        "output": outputURL.path,
-        "target": "\(Int(target.width))x\(Int(target.height))",
-        "renderSize": "\(Int(comp.renderSize.width))x\(Int(comp.renderSize.height))",
-        "fpsHint": fpsHint,
-        "format": format,
-        "codec": codec,
-        "bitrate": bitrate,
-        "autoNormalizeOnExport": autoNormalizeOnExport,
-        "targetLoudnessDbfs": targetLoudnessDbfs,
-        "resolvedGainDb": resolvedAudioMix.gainDb,
-        "resolvedVolumePercent": resolvedAudioMix.volumePercent,
-        "sourcePeakDbfs": resolvedAudioMix.sourcePeakDbfs ?? NSNull(),
-        "normalizationGainDb": resolvedAudioMix.normalizationGainDb ?? NSNull(),
-        "supportedTypes": export.supportedFileTypes.map { $0.rawValue },
-        "finalURL": finalURL.path,
-      ])
+    let exportContext: [String: Any] = [
+      "input": inputURL.path,
+      "output": outputURL.path,
+      "target": "\(Int(target.width))x\(Int(target.height))",
+      "renderSize":
+        "\(Int(comp.videoComposition.renderSize.width))x\(Int(comp.videoComposition.renderSize.height))",
+      "fpsHint": fpsHint,
+      "format": format,
+      "codec": codec,
+      "bitrate": bitrate,
+      "autoNormalizeOnExport": autoNormalizeOnExport,
+      "targetLoudnessDbfs": targetLoudnessDbfs,
+      "resolvedGainDb": resolvedAudioMix.gainDb,
+      "resolvedVolumePercent": resolvedAudioMix.volumePercent,
+      "sourcePeakDbfs": resolvedAudioMix.sourcePeakDbfs ?? NSNull(),
+      "normalizationGainDb": resolvedAudioMix.normalizationGainDb ?? NSNull(),
+      "supportedTypes": export.supportedFileTypes.map(\.rawValue),
+      "finalURL": finalURL.path,
+    ]
+    NativeLogger.i("Export", "Export resolved", context: exportContext)
 
     // Polling timer for progress
     progressTimer = Timer.scheduledTimer(withTimeInterval: 0.1, repeats: true) { [weak export] _ in

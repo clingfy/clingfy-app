@@ -410,11 +410,24 @@ class NativeBridge {
   Future<void> previewOpen({
     required String sessionId,
     required String path,
+    String? cameraPath,
   }) async {
     await _nativeBridge.invokeMethod<void>('previewOpen', {
       'sessionId': sessionId,
       'path': path,
+      if (cameraPath != null) 'cameraPath': cameraPath,
     });
+  }
+
+  Future<RecordingSceneInfo> getRecordingSceneInfo(String path) async {
+    final raw = await _nativeBridge.invokeMethod<Map<dynamic, dynamic>>(
+      'getRecordingSceneInfo',
+      {'path': path},
+    );
+    if (raw == null) {
+      return RecordingSceneInfo(screenPath: path);
+    }
+    return RecordingSceneInfo.fromMap(raw);
   }
 
   Future<void> previewClose({required String sessionId}) async {

@@ -5,6 +5,7 @@ import 'package:clingfy/ui/platform/widgets/app_sidebar_rail_button.dart';
 import 'package:clingfy/ui/platform/widgets/app_sidebar_tokens.dart';
 import 'package:clingfy/app/home/post_processing/widgets/post_audio_section.dart';
 import 'package:clingfy/app/home/post_processing/widgets/post_background_section.dart';
+import 'package:clingfy/app/home/post_processing/widgets/post_camera_section.dart';
 import 'package:clingfy/app/home/post_processing/widgets/post_cursor_section.dart';
 import 'package:clingfy/app/home/post_processing/widgets/post_export_settings_section.dart';
 import 'package:clingfy/app/home/post_processing/widgets/post_layout_section.dart';
@@ -105,6 +106,8 @@ class PostProcessingSidebar extends StatelessWidget {
   final bool enabled;
   final bool cursorAvailable;
   final bool hasAudio;
+  final bool hasCameraAsset;
+  final CameraCompositionState? cameraState;
   final String? disabledMessage;
   final bool showHeader;
   final double availableWidth;
@@ -129,6 +132,20 @@ class PostProcessingSidebar extends StatelessWidget {
   final Function(double) onZoomFactorChanged;
   final Function(double) onZoomFactorChangeEnd;
   final Future<String?> Function() onPickImage;
+  final Function(bool) onCameraVisibleChanged;
+  final Function(CameraLayoutPreset) onCameraLayoutPresetChanged;
+  final Function(double) onCameraSizeFactorChanged;
+  final Function(double) onCameraSizeFactorChangeEnd;
+  final Function(CameraShape) onCameraShapeChanged;
+  final Function(double) onCameraCornerRadiusChanged;
+  final Function(double) onCameraCornerRadiusChangeEnd;
+  final Function(bool) onCameraMirrorChanged;
+  final Function(CameraContentMode) onCameraContentModeChanged;
+  final Function(double) onCameraManualCenterXChanged;
+  final Function(double) onCameraManualCenterXChangeEnd;
+  final Function(double) onCameraManualCenterYChanged;
+  final Function(double) onCameraManualCenterYChangeEnd;
+  final VoidCallback onResetCameraManualPosition;
   final Function(double) onAudioGainChanged;
   final Function(double) onAudioGainChangeEnd;
   final Function(double) onAudioVolumeChanged;
@@ -167,6 +184,22 @@ class PostProcessingSidebar extends StatelessWidget {
     required this.onZoomFactorChanged,
     required this.onZoomFactorChangeEnd,
     required this.onPickImage,
+    required this.hasCameraAsset,
+    required this.cameraState,
+    required this.onCameraVisibleChanged,
+    required this.onCameraLayoutPresetChanged,
+    required this.onCameraSizeFactorChanged,
+    required this.onCameraSizeFactorChangeEnd,
+    required this.onCameraShapeChanged,
+    required this.onCameraCornerRadiusChanged,
+    required this.onCameraCornerRadiusChangeEnd,
+    required this.onCameraMirrorChanged,
+    required this.onCameraContentModeChanged,
+    required this.onCameraManualCenterXChanged,
+    required this.onCameraManualCenterXChangeEnd,
+    required this.onCameraManualCenterYChanged,
+    required this.onCameraManualCenterYChangeEnd,
+    required this.onResetCameraManualPosition,
     required this.audioGainDb,
     required this.audioVolume,
     required this.autoNormalizeOnExport,
@@ -247,6 +280,27 @@ class PostProcessingSidebar extends StatelessWidget {
     final theme = Theme.of(context);
 
     return [
+      PostCameraSection(
+        hasCameraAsset: hasCameraAsset,
+        cameraState: cameraState,
+        onVisibleChanged: onCameraVisibleChanged,
+        onLayoutPresetChanged: onCameraLayoutPresetChanged,
+        onSizeFactorChanged: onCameraSizeFactorChanged,
+        onSizeFactorChangeEnd: onCameraSizeFactorChangeEnd,
+        onShapeChanged: onCameraShapeChanged,
+        onCornerRadiusChanged: onCameraCornerRadiusChanged,
+        onCornerRadiusChangeEnd: onCameraCornerRadiusChangeEnd,
+        onMirrorChanged: onCameraMirrorChanged,
+        onContentModeChanged: onCameraContentModeChanged,
+        onManualCenterXChanged: onCameraManualCenterXChanged,
+        onManualCenterXChangeEnd: onCameraManualCenterXChangeEnd,
+        onManualCenterYChanged: onCameraManualCenterYChanged,
+        onManualCenterYChangeEnd: onCameraManualCenterYChangeEnd,
+        onResetManualPosition: onResetCameraManualPosition,
+      ),
+      const SizedBox(height: AppSidebarTokens.sectionGap),
+      Divider(color: theme.dividerColor.withValues(alpha: 0.1)),
+      const SizedBox(height: AppSidebarTokens.sectionGap),
       PostLayoutSection(
         isProcessing: isProcessing,
         layoutPreset: layoutPreset,

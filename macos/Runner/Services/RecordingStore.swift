@@ -52,7 +52,11 @@ final class RecordingStore {
     }
 
     return contents
-      .filter { $0.pathExtension.lowercased() == "mov" }
+      .filter { rawURL in
+        guard rawURL.pathExtension.lowercased() == "mov" else { return false }
+        let name = rawURL.lastPathComponent.lowercased()
+        return !name.contains(".camera.") && !name.contains(".segment-") && !name.contains("segment_")
+      }
       .map { rawURL in
         let cursorURL = AppPaths.cursorSidecarURL(for: rawURL)
         let metaURL = AppPaths.metadataSidecarURL(for: rawURL)
@@ -149,15 +153,24 @@ final class RecordingStore {
       }
     }
 
-    // Delete sidecars (best-effort)
-    for sidecarURL in AppPaths.allSidecarURLs(for: rawURL) {
-      if fm.fileExists(atPath: sidecarURL.path) {
-        do {
-          try fm.removeItem(at: sidecarURL)
-          NativeLogger.d("RecordingStore", "Deleted sidecar", context: ["path": sidecarURL.lastPathComponent])
-        } catch {
-          NativeLogger.w("RecordingStore", "Failed to delete sidecar", context: ["error": error.localizedDescription])
-        }
+    // Delete related artifacts (best-effort).
+    for artifactURL in AppPaths.allRecordingArtifactURLs(for: rawURL) where artifactURL != rawURL {
+      if !fm.fileExists(atPath: artifactURL.path) {
+        continue
+      }
+      do {
+        try fm.removeItem(at: artifactURL)
+        NativeLogger.d(
+          "RecordingStore",
+          "Deleted related recording artifact",
+          context: ["path": artifactURL.lastPathComponent]
+        )
+      } catch {
+        NativeLogger.w(
+          "RecordingStore",
+          "Failed to delete related artifact",
+          context: ["error": error.localizedDescription, "path": artifactURL.lastPathComponent]
+        )
       }
     }
 

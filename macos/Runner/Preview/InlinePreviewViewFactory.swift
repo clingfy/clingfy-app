@@ -12,12 +12,17 @@ import Foundation
 var inlinePreviewViewInstance: InlinePreviewView?
 var inlinePreviewPlayerEventSink: FlutterEventSink?
 var workflowLifecycleEventSink: FlutterEventSink?
-var pendingPreviewParams: CompositionParams?
 var pendingPreviewZoomSegments: [ZoomTimelineSegment]?
+var pendingPreviewSceneRequest: PendingPreviewSceneRequest?
 
 struct PendingPreviewOpenRequest {
   let sessionId: String
-  let path: String
+  let mediaSources: PreviewMediaSources
+}
+
+struct PendingPreviewSceneRequest {
+  let sessionId: String?
+  let scene: PreviewScene
 }
 
 var pendingPreviewOpenRequest: PendingPreviewOpenRequest?
@@ -41,7 +46,7 @@ final class InlinePreviewViewFactory: NSObject, FlutterPlatformViewFactory {
       context: [
         "viewId": "\(viewId)",
         "hasPendingOpenRequest": pendingPreviewOpenRequest != nil,
-        "hasPendingPreviewParams": pendingPreviewParams != nil,
+        "hasPendingPreviewSceneRequest": pendingPreviewSceneRequest != nil,
         "hasPendingZoomSegments": pendingPreviewZoomSegments != nil,
       ])
     let v = InlinePreviewView(
@@ -52,22 +57,39 @@ final class InlinePreviewViewFactory: NSObject, FlutterPlatformViewFactory {
     inlinePreviewViewInstance = v
     v.playerEventSink = inlinePreviewPlayerEventSink
     v.workflowEventSink = workflowLifecycleEventSink
-
-    if let params = pendingPreviewParams {
-      NativeLogger.i("Preview", "Applying pending preview params to new host view")
-      v.updateComposition(params: params)
-      pendingPreviewParams = nil
-    }
+    var didOpenPreview = false
 
     if let request = pendingPreviewOpenRequest {
       NativeLogger.i(
         "Preview", "Consuming pending previewOpen request in new host view",
         context: [
           "sessionId": request.sessionId,
-          "path": request.path,
+          "path": request.mediaSources.screenPath,
+          "cameraPath": request.mediaSources.cameraPath ?? "nil",
         ])
-      v.open(path: request.path, sessionId: request.sessionId)
+      v.open(mediaSources: request.mediaSources, sessionId: request.sessionId)
+      didOpenPreview = true
       pendingPreviewOpenRequest = nil
+    }
+
+    if let request = pendingPreviewSceneRequest {
+      if !didOpenPreview,
+        let sessionId = request.sessionId
+      {
+        NativeLogger.i(
+          "Preview", "Opening preview from pending scene request in new host view",
+          context: [
+            "sessionId": sessionId,
+            "path": request.scene.mediaSources.screenPath,
+            "cameraPath": request.scene.mediaSources.cameraPath ?? "nil",
+          ])
+        v.open(mediaSources: request.scene.mediaSources, sessionId: sessionId)
+        didOpenPreview = true
+      }
+
+      NativeLogger.i("Preview", "Applying pending preview scene to new host view")
+      v.updateComposition(scene: request.scene)
+      pendingPreviewSceneRequest = nil
     }
 
     if let segments = pendingPreviewZoomSegments {

@@ -8,6 +8,256 @@ enum ResolutionPreset { auto, p1080, p1440, p2160, p4320, custom }
 
 enum FitMode { fit, fill }
 
+enum CameraLayoutPreset {
+  overlayTopLeft,
+  overlayTopRight,
+  overlayBottomLeft,
+  overlayBottomRight,
+  sideBySideLeft,
+  sideBySideRight,
+  stackedTop,
+  stackedBottom,
+  backgroundBehind,
+  hidden;
+
+  static CameraLayoutPreset fromRaw(String? raw) {
+    return CameraLayoutPreset.values.firstWhere(
+      (value) => value.name == raw,
+      orElse: () => CameraLayoutPreset.overlayBottomRight,
+    );
+  }
+}
+
+enum CameraZoomBehavior {
+  fixed,
+  scaleDownWhenScreenZooms;
+
+  static CameraZoomBehavior fromRaw(String? raw) {
+    return CameraZoomBehavior.values.firstWhere(
+      (value) => value.name == raw,
+      orElse: () => CameraZoomBehavior.fixed,
+    );
+  }
+}
+
+enum CameraShape {
+  circle,
+  roundedRect,
+  square,
+  squircle;
+
+  static CameraShape fromRaw(String? raw) {
+    return CameraShape.values.firstWhere(
+      (value) => value.name == raw,
+      orElse: () => CameraShape.circle,
+    );
+  }
+}
+
+enum CameraContentMode {
+  fit,
+  fill;
+
+  static CameraContentMode fromRaw(String? raw) {
+    return CameraContentMode.values.firstWhere(
+      (value) => value.name == raw,
+      orElse: () => CameraContentMode.fill,
+    );
+  }
+}
+
+class CameraCompositionState {
+  const CameraCompositionState({
+    required this.visible,
+    required this.layoutPreset,
+    required this.normalizedCanvasCenter,
+    required this.sizeFactor,
+    required this.shape,
+    required this.cornerRadius,
+    required this.opacity,
+    required this.mirror,
+    required this.contentMode,
+    required this.zoomBehavior,
+    required this.borderWidth,
+    required this.borderColorArgb,
+    required this.shadowPreset,
+    required this.chromaKeyEnabled,
+    required this.chromaKeyStrength,
+    required this.chromaKeyColorArgb,
+  });
+
+  const CameraCompositionState.hidden()
+    : visible = false,
+      layoutPreset = CameraLayoutPreset.hidden,
+      normalizedCanvasCenter = null,
+      sizeFactor = 0.18,
+      shape = CameraShape.circle,
+      cornerRadius = 0.0,
+      opacity = 1.0,
+      mirror = true,
+      contentMode = CameraContentMode.fill,
+      zoomBehavior = CameraZoomBehavior.fixed,
+      borderWidth = 0.0,
+      borderColorArgb = null,
+      shadowPreset = 0,
+      chromaKeyEnabled = false,
+      chromaKeyStrength = 0.4,
+      chromaKeyColorArgb = null;
+
+  final bool visible;
+  final CameraLayoutPreset layoutPreset;
+  final Offset? normalizedCanvasCenter;
+  final double sizeFactor;
+  final CameraShape shape;
+  final double cornerRadius;
+  final double opacity;
+  final bool mirror;
+  final CameraContentMode contentMode;
+  final CameraZoomBehavior zoomBehavior;
+  final double borderWidth;
+  final int? borderColorArgb;
+  final int shadowPreset;
+  final bool chromaKeyEnabled;
+  final double chromaKeyStrength;
+  final int? chromaKeyColorArgb;
+
+  bool get isManuallyPositioned => normalizedCanvasCenter != null;
+
+  CameraCompositionState copyWith({
+    bool? visible,
+    CameraLayoutPreset? layoutPreset,
+    Offset? normalizedCanvasCenter,
+    bool clearNormalizedCanvasCenter = false,
+    double? sizeFactor,
+    CameraShape? shape,
+    double? cornerRadius,
+    double? opacity,
+    bool? mirror,
+    CameraContentMode? contentMode,
+    CameraZoomBehavior? zoomBehavior,
+    double? borderWidth,
+    int? borderColorArgb,
+    bool clearBorderColor = false,
+    int? shadowPreset,
+    bool? chromaKeyEnabled,
+    double? chromaKeyStrength,
+    int? chromaKeyColorArgb,
+    bool clearChromaKeyColor = false,
+  }) {
+    return CameraCompositionState(
+      visible: visible ?? this.visible,
+      layoutPreset: layoutPreset ?? this.layoutPreset,
+      normalizedCanvasCenter: clearNormalizedCanvasCenter
+          ? null
+          : (normalizedCanvasCenter ?? this.normalizedCanvasCenter),
+      sizeFactor: sizeFactor ?? this.sizeFactor,
+      shape: shape ?? this.shape,
+      cornerRadius: cornerRadius ?? this.cornerRadius,
+      opacity: opacity ?? this.opacity,
+      mirror: mirror ?? this.mirror,
+      contentMode: contentMode ?? this.contentMode,
+      zoomBehavior: zoomBehavior ?? this.zoomBehavior,
+      borderWidth: borderWidth ?? this.borderWidth,
+      borderColorArgb: clearBorderColor
+          ? null
+          : (borderColorArgb ?? this.borderColorArgb),
+      shadowPreset: shadowPreset ?? this.shadowPreset,
+      chromaKeyEnabled: chromaKeyEnabled ?? this.chromaKeyEnabled,
+      chromaKeyStrength: chromaKeyStrength ?? this.chromaKeyStrength,
+      chromaKeyColorArgb: clearChromaKeyColor
+          ? null
+          : (chromaKeyColorArgb ?? this.chromaKeyColorArgb),
+    );
+  }
+
+  factory CameraCompositionState.fromMap(Map<dynamic, dynamic> raw) {
+    final center = raw['normalizedCanvasCenter'];
+    return CameraCompositionState(
+      visible: raw['visible'] == true,
+      layoutPreset: CameraLayoutPreset.fromRaw(raw['layoutPreset']?.toString()),
+      normalizedCanvasCenter: center is Map
+          ? Offset(
+              (center['x'] as num?)?.toDouble() ?? 0.0,
+              (center['y'] as num?)?.toDouble() ?? 0.0,
+            )
+          : null,
+      sizeFactor: (raw['sizeFactor'] as num?)?.toDouble() ?? 0.18,
+      shape: CameraShape.fromRaw(raw['shape']?.toString()),
+      cornerRadius: (raw['cornerRadius'] as num?)?.toDouble() ?? 0.0,
+      opacity: (raw['opacity'] as num?)?.toDouble() ?? 1.0,
+      mirror: raw['mirror'] as bool? ?? true,
+      contentMode: CameraContentMode.fromRaw(raw['contentMode']?.toString()),
+      zoomBehavior: CameraZoomBehavior.fromRaw(
+        raw['zoomBehavior']?.toString(),
+      ),
+      borderWidth: (raw['borderWidth'] as num?)?.toDouble() ?? 0.0,
+      borderColorArgb: (raw['borderColorArgb'] as num?)?.toInt(),
+      shadowPreset: (raw['shadowPreset'] as num?)?.toInt() ?? 0,
+      chromaKeyEnabled: raw['chromaKeyEnabled'] as bool? ?? false,
+      chromaKeyStrength:
+          (raw['chromaKeyStrength'] as num?)?.toDouble() ?? 0.4,
+      chromaKeyColorArgb: (raw['chromaKeyColorArgb'] as num?)?.toInt(),
+    );
+  }
+
+  Map<String, dynamic> toMap() {
+    return {
+      'cameraVisible': visible,
+      'cameraLayoutPreset': layoutPreset.name,
+      'cameraNormalizedCenter': normalizedCanvasCenter == null
+          ? null
+          : {
+              'x': normalizedCanvasCenter!.dx,
+              'y': normalizedCanvasCenter!.dy,
+            },
+      'cameraSizeFactor': sizeFactor,
+      'cameraShape': shape.name,
+      'cameraCornerRadius': cornerRadius,
+      'cameraOpacity': opacity,
+      'cameraMirror': mirror,
+      'cameraContentMode': contentMode.name,
+      'cameraZoomBehavior': zoomBehavior.name,
+      'cameraBorderWidth': borderWidth,
+      'cameraBorderColorArgb': borderColorArgb,
+      'cameraShadowPreset': shadowPreset,
+      'cameraChromaKeyEnabled': chromaKeyEnabled,
+      'cameraChromaKeyStrength': chromaKeyStrength,
+      'cameraChromaKeyColorArgb': chromaKeyColorArgb,
+    };
+  }
+}
+
+class RecordingSceneInfo {
+  const RecordingSceneInfo({
+    required this.screenPath,
+    this.cameraPath,
+    this.metadataPath,
+    this.camera,
+    this.supportsAdvancedCameraExportStyling = true,
+  });
+
+  final String screenPath;
+  final String? cameraPath;
+  final String? metadataPath;
+  final CameraCompositionState? camera;
+  final bool supportsAdvancedCameraExportStyling;
+
+  bool get hasCameraAsset => cameraPath != null && cameraPath!.isNotEmpty;
+
+  factory RecordingSceneInfo.fromMap(Map<dynamic, dynamic> raw) {
+    return RecordingSceneInfo(
+      screenPath: raw['screenPath']?.toString() ?? '',
+      cameraPath: raw['cameraPath']?.toString(),
+      metadataPath: raw['metadataPath']?.toString(),
+      camera: raw['camera'] is Map
+          ? CameraCompositionState.fromMap(raw['camera'] as Map)
+          : null,
+      supportsAdvancedCameraExportStyling:
+          raw['supportsAdvancedCameraExportStyling'] as bool? ?? true,
+    );
+  }
+}
+
 enum WorkflowPhase {
   idle(0),
   startingRecording(1),

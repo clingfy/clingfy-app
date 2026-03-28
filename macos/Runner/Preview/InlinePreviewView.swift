@@ -16,6 +16,10 @@ final class InlinePreviewView: NSView {
     let frame: CursorFrame?
   }
 
+  private struct CameraDragState {
+    let pointerOffsetFromCenter: CGPoint
+  }
+
   struct PreviewUpdatePlan {
     let requiresFullRebuild: Bool
     let refreshCanvasGeometry: Bool
@@ -38,6 +42,8 @@ final class InlinePreviewView: NSView {
 
   private var player: AVPlayer?
   private var playerLayer: AVPlayerLayer?
+  private var cameraPlayer: AVPlayer?
+  private var cameraPlayerLayer: AVPlayerLayer?
   private var timeObserver: Any?
   // Observation state
   private var itemObservers: [NSKeyValueObservation] = []
@@ -66,6 +72,8 @@ final class InlinePreviewView: NSView {
   private var canvasBackground: CALayer?
   private var zoomedContentLayer: CALayer?
   private var maskedContentLayer: CALayer?
+  private var cameraContainerLayer: CALayer?
+  private var cameraBorderLayer: CAShapeLayer?
 
   // Zoom state
   private var smoothZoom: CGFloat = 1.0
@@ -94,6 +102,8 @@ final class InlinePreviewView: NSView {
   private var isApplyingInitialCompositionForCurrentToken = false
   private var currentPreviewProfile: PreviewProfile?
   private var pendingCompositionWorkItem: DispatchWorkItem?
+  private var currentMediaSources: PreviewMediaSources?
+  private var cameraDragState: CameraDragState?
 
   init(
     viewIdentifier viewId: Int64,
@@ -137,13 +147,31 @@ final class InlinePreviewView: NSView {
 
     let player = AVPlayer()
     let pLayer = AVPlayerLayer(player: player)
+    let cameraPlayer = AVPlayer()
+    let cameraLayer = AVPlayerLayer(player: cameraPlayer)
 
     pLayer.backgroundColor = NSColor.clear.cgColor
     pLayer.videoGravity = .resizeAspectFill
+    cameraLayer.backgroundColor = NSColor.clear.cgColor
+    cameraLayer.videoGravity = .resizeAspectFill
 
     masked.addSublayer(pLayer)
     zoomed.addSublayer(masked)
     container.addSublayer(zoomed)
+
+    let cameraContainer = CALayer()
+    cameraContainer.anchorPoint = .zero
+    cameraContainer.position = .zero
+    cameraContainer.backgroundColor = NSColor.clear.cgColor
+    cameraContainer.masksToBounds = false
+    cameraContainer.isHidden = true
+    cameraContainer.addSublayer(cameraLayer)
+
+    let cameraBorder = CAShapeLayer()
+    cameraBorder.fillColor = NSColor.clear.cgColor
+    cameraBorder.isHidden = true
+    cameraContainer.addSublayer(cameraBorder)
+    container.addSublayer(cameraContainer)
     self.layer?.addSublayer(container)
 
     self.canvasContainer = container
@@ -152,12 +180,37 @@ final class InlinePreviewView: NSView {
     self.maskedContentLayer = masked
     self.player = player
     self.playerLayer = pLayer
+    self.cameraPlayer = cameraPlayer
+    self.cameraPlayerLayer = cameraLayer
+    self.cameraContainerLayer = cameraContainer
+    self.cameraBorderLayer = cameraBorder
   }
 
   override func layout() {
     super.layout()
     updateContainerLayout()
     refreshPreviewProfileForCurrentBounds()
+  }
+
+  override func mouseDown(with event: NSEvent) {
+    guard beginCameraDrag(with: event) else {
+      super.mouseDown(with: event)
+      return
+    }
+  }
+
+  override func mouseDragged(with event: NSEvent) {
+    guard updateCameraDrag(with: event) else {
+      super.mouseDragged(with: event)
+      return
+    }
+  }
+
+  override func mouseUp(with event: NSEvent) {
+    guard finishCameraDrag(with: event) else {
+      super.mouseUp(with: event)
+      return
+    }
   }
 
   private func updateContainerLayout() {
@@ -176,7 +229,85 @@ final class InlinePreviewView: NSView {
 
     applyCanvasGeometry(metrics: metrics)
     updatePreviewMaskLayout(params: params, pixelScale: metrics.pixelScale)
+    updateCameraPreviewLayout()
   }  // updateContainerLayout
+
+  private func canvasPoint(from event: NSEvent) -> CGPoint? {
+    guard
+      let rootLayer = layer,
+      let canvasContainer
+    else {
+      return nil
+    }
+
+    let pointInView = convert(event.locationInWindow, from: nil)
+    return canvasContainer.convert(pointInView, from: rootLayer)
+  }
+
+  private func beginCameraDrag(with event: NSEvent) -> Bool {
+    guard
+      let params = currentCameraCompositionParams,
+      params.visible,
+      currentMediaSources?.cameraPath != nil,
+      let cameraContainerLayer,
+      let canvasPoint = canvasPoint(from: event),
+      cameraContainerLayer.frame.contains(canvasPoint)
+    else {
+      return false
+    }
+
+    let frame = cameraContainerLayer.frame
+    cameraDragState = CameraDragState(
+      pointerOffsetFromCenter: CGPoint(
+        x: canvasPoint.x - frame.midX,
+        y: canvasPoint.y - frame.midY
+      )
+    )
+    return true
+  }
+
+  private func updateCameraDrag(with event: NSEvent) -> Bool {
+    guard
+      let dragState = cameraDragState,
+      let canvasSize = currentCompositionParams?.targetSize,
+      canvasSize.width > 0,
+      canvasSize.height > 0,
+      let canvasPoint = canvasPoint(from: event),
+      var params = currentCameraCompositionParams
+    else {
+      return false
+    }
+
+    let center = CGPoint(
+      x: min(max(canvasPoint.x - dragState.pointerOffsetFromCenter.x, 0.0), canvasSize.width),
+      y: min(max(canvasPoint.y - dragState.pointerOffsetFromCenter.y, 0.0), canvasSize.height)
+    )
+
+    params.normalizedCanvasCenter = CGPoint(
+      x: center.x / canvasSize.width,
+      y: center.y / canvasSize.height
+    )
+    currentCameraCompositionParams = params
+    updateCameraPreviewLayout()
+    return true
+  }
+
+  private func finishCameraDrag(with event: NSEvent) -> Bool {
+    guard cameraDragState != nil else { return false }
+    defer { cameraDragState = nil }
+    _ = updateCameraDrag(with: event)
+
+    guard let normalizedCenter = currentCameraCompositionParams?.normalizedCanvasCenter else {
+      return true
+    }
+
+    emitPlayerEvent([
+      "type": "cameraManualPositionChanged",
+      "normalizedX": normalizedCenter.x,
+      "normalizedY": normalizedCenter.y,
+    ])
+    return true
+  }
 
   private func applyCanvasGeometry(metrics: CanvasLayoutMetrics) {
     guard let container = canvasContainer else { return }
@@ -249,6 +380,7 @@ final class InlinePreviewView: NSView {
 
     scheduleCompositionUpdate(
       params: params,
+      cameraParams: currentCameraCompositionParams,
       reason: "boundsChanged",
       forceImmediate: false
     )
@@ -270,11 +402,60 @@ final class InlinePreviewView: NSView {
     )
   }
 
-  func open(path: String, sessionId: String) {
+  private func configuredTimeForCameraSeek(_ time: CMTime) -> CMTime {
+    guard
+      let cameraItem = cameraPlayer?.currentItem,
+      cameraItem.duration.isNumeric,
+      cameraItem.duration.seconds.isFinite
+    else {
+      return time
+    }
+
+    let clampedSeconds = min(
+      max(0.0, time.seconds.isFinite ? time.seconds : 0.0),
+      max(0.0, cameraItem.duration.seconds)
+    )
+    return CMTime(seconds: clampedSeconds, preferredTimescale: time.timescale > 0 ? time.timescale : 600)
+  }
+
+  private func configureCameraPlayer(cameraPath: String?) {
+    guard let cameraPlayer else { return }
+
+    guard let cameraPath, FileManager.default.fileExists(atPath: cameraPath) else {
+      cameraPlayer.pause()
+      cameraPlayer.replaceCurrentItem(with: nil)
+      cameraContainerLayer?.isHidden = true
+      return
+    }
+
+    let cameraURL = URL(fileURLWithPath: cameraPath)
+    let cameraItem = AVPlayerItem(asset: AVURLAsset(url: cameraURL))
+    cameraPlayer.replaceCurrentItem(with: cameraItem)
+    cameraPlayer.isMuted = true
+    if (player?.rate ?? 0.0) > 0.0 {
+      cameraPlayer.play()
+    } else {
+      cameraPlayer.pause()
+    }
+  }
+
+  private func syncCameraPlayback(to time: CMTime? = nil, force: Bool = false) {
+    guard let cameraPlayer, cameraPlayer.currentItem != nil else { return }
+    let targetTime = configuredTimeForCameraSeek(time ?? player?.currentTime() ?? .zero)
+    let currentTime = cameraPlayer.currentTime()
+    let delta = abs(currentTime.seconds - targetTime.seconds)
+    guard force || !delta.isNaN && delta > 0.08 else { return }
+    cameraPlayer.seek(to: targetTime, toleranceBefore: .zero, toleranceAfter: .zero)
+  }
+
+  func open(mediaSources: PreviewMediaSources, sessionId: String) {
+    let path = mediaSources.screenPath
     // Generate a new token for this open operation
     let openToken = UUID()
     currentOpenToken = openToken
     currentSessionId = sessionId
+    currentMediaSources = mediaSources
+    currentScene = nil
     hasEmittedReadyForCurrentToken = false
     hasAppliedInitialCompositionForCurrentToken = false
     isApplyingInitialCompositionForCurrentToken = false
@@ -288,6 +469,7 @@ final class InlinePreviewView: NSView {
       "Player", "InlinePreviewView.open called",
       context: [
         "path": path,
+        "cameraPath": mediaSources.cameraPath ?? "nil",
         "sessionId": sessionId,
         "token": openToken.uuidString,
         "previousPath": currentVideoPath ?? "nil",
@@ -336,6 +518,7 @@ final class InlinePreviewView: NSView {
     if let player = player {
       player.replaceCurrentItem(with: item)
     }
+    configureCameraPlayer(cameraPath: mediaSources.cameraPath)
 
     // Set up observers for the new item
     observeTicks()
@@ -343,6 +526,7 @@ final class InlinePreviewView: NSView {
 
     // Start playback
     player?.play()
+    cameraPlayer?.play()
 
     // DO NOT apply composition yet. It will be applied in checkAndEmitPreviewReady
     // when both item and layer are ready, preventing race conditions.
@@ -539,11 +723,14 @@ final class InlinePreviewView: NSView {
 
   func play() {
     player?.play()
+    cameraPlayer?.play()
+    syncCameraPlayback(force: true)
     sendState(state: "playing")
   }
 
   func pause() {
     player?.pause()
+    cameraPlayer?.pause()
     sendState(state: "paused")
   }
 
@@ -560,6 +747,7 @@ final class InlinePreviewView: NSView {
 
     let time = CMTime(seconds: seconds, preferredTimescale: 600)
     player.seek(to: time, toleranceBefore: .zero, toleranceAfter: .zero)
+    syncCameraPlayback(to: time, force: true)
     sendTick(position: time)
   }
   /// Fully tears down observers and notifications from previous player item
@@ -605,11 +793,15 @@ final class InlinePreviewView: NSView {
     }
 
     player?.replaceCurrentItem(with: nil)
+    cameraPlayer?.pause()
+    cameraPlayer?.replaceCurrentItem(with: nil)
     setPreviewContentVisible(false)
 
     // Reset state that depends on current item
     currentVideoPath = nil
     currentSessionId = nil
+    currentMediaSources = nil
+    currentScene = nil
     currentOpenToken = nil
     hasEmittedReadyForCurrentToken = false
     hasAppliedInitialCompositionForCurrentToken = false
@@ -619,10 +811,13 @@ final class InlinePreviewView: NSView {
     currentLayout = nil
     currentPreviewProfile = nil
     pendingCompositionParams = nil
+    currentCameraCompositionParams = nil
+    pendingCameraCompositionParams = nil
     pendingZoomSegments = nil
 
     cursorLayer?.removeFromSuperlayer()
     cursorLayer = nil
+    cameraContainerLayer?.isHidden = true
     clearCursorCaches()
 
     resetZoomState(clearDefaultSpriteID: true)
@@ -647,8 +842,12 @@ final class InlinePreviewView: NSView {
     playerLayer?.player = nil
     playerLayer?.removeFromSuperlayer()
     playerLayer = nil
+    cameraPlayerLayer?.player = nil
+    cameraPlayerLayer?.removeFromSuperlayer()
+    cameraPlayerLayer = nil
 
     player = nil
+    cameraPlayer = nil
   }
   deinit {
     resetPlayback(reason: "deinit")
@@ -702,8 +901,11 @@ final class InlinePreviewView: NSView {
             DispatchQueue.main.asyncAfter(deadline: .now() + 0.2) { [weak self] in
               guard let self = self else { return }
               // Only retry if the path hasn't changed
-              if self.currentVideoPath == retryPath, let sessionId = self.currentSessionId {
-                self.open(path: retryPath, sessionId: sessionId)
+              if self.currentVideoPath == retryPath,
+                let sessionId = self.currentSessionId,
+                let mediaSources = self.currentMediaSources
+              {
+                self.open(mediaSources: mediaSources, sessionId: sessionId)
               }
             }
             return  // Wait for the retry
@@ -804,6 +1006,7 @@ final class InlinePreviewView: NSView {
         isApplyingInitialCompositionForCurrentToken = true
         scheduleCompositionUpdate(
           params: params,
+          cameraParams: pendingCameraCompositionParams ?? currentCameraCompositionParams,
           reason: "previewReady",
           forceImmediate: true,
           onApplied: { [weak self] success in
@@ -967,6 +1170,7 @@ final class InlinePreviewView: NSView {
 
   private func sendTick(position: CMTime) {
     guard let duration = player?.currentItem?.duration else { return }
+    syncCameraPlayback(to: position)
 
     let posSeconds = CMTimeGetSeconds(position)
     let durSeconds = CMTimeGetSeconds(duration)
@@ -1000,16 +1204,36 @@ final class InlinePreviewView: NSView {
   private let builder = CompositionBuilder()
   private var cursorRecording: CursorRecording?
   private var cursorLayer: CALayer?
+  private var currentScene: PreviewScene?
   private var currentCompositionParams: CompositionParams?
+  private var currentCameraCompositionParams: CameraCompositionParams?
   private var currentLayout: CompositionBuilder.PreviewCompositionResult?
   private var pendingCompositionParams: CompositionParams?
+  private var pendingCameraCompositionParams: CameraCompositionParams?
   private var pendingZoomSegments: [ZoomTimelineSegment]?
 
   private(set) var currentVideoPath: String?
 
-  func updateComposition(params: CompositionParams) {
+  func updateComposition(scene: PreviewScene) {
+    currentScene = scene
+
+    if currentMediaSources != scene.mediaSources {
+      currentMediaSources = scene.mediaSources
+      if currentVideoPath == scene.mediaSources.screenPath || currentVideoPath == nil {
+        configureCameraPlayer(cameraPath: scene.mediaSources.cameraPath)
+      }
+    }
+
+    updateComposition(
+      params: scene.screenParams,
+      cameraParams: scene.cameraParams
+    )
+  }
+
+  func updateComposition(params: CompositionParams, cameraParams: CameraCompositionParams? = nil) {
     scheduleCompositionUpdate(
       params: params,
+      cameraParams: cameraParams,
       reason: "externalUpdate",
       forceImmediate: false,
       onApplied: nil
@@ -1018,6 +1242,7 @@ final class InlinePreviewView: NSView {
 
   private func scheduleCompositionUpdate(
     params: CompositionParams,
+    cameraParams: CameraCompositionParams?,
     reason: String,
     forceImmediate: Bool,
     onApplied: ((Bool) -> Void)? = nil
@@ -1033,10 +1258,12 @@ final class InlinePreviewView: NSView {
     guard let asset = player?.currentItem?.asset else {
       NativeLogger.d("Player", "No asset yet, storing params as pending")
       pendingCompositionParams = params
+      pendingCameraCompositionParams = cameraParams
       return
     }
     let mergedParams = paramsApplyingPendingZoomSegments(into: params)
     pendingCompositionParams = mergedParams
+    pendingCameraCompositionParams = cameraParams
 
     let newProfile = makePreviewProfile(for: mergedParams)
 
@@ -1058,6 +1285,7 @@ final class InlinePreviewView: NSView {
         pendingCompositionParams = nil
         applyLightweightPreviewUpdate(
           to: mergedParams,
+          cameraParams: cameraParams,
           updatePlan: updatePlan,
           profile: newProfile,
           onApplied: onApplied
@@ -1072,6 +1300,7 @@ final class InlinePreviewView: NSView {
       pendingCompositionWorkItem = nil
       applyCompositionNow(
         params: mergedParams,
+        cameraParams: cameraParams,
         profile: newProfile,
         asset: asset,
         reason: reason,
@@ -1089,9 +1318,11 @@ final class InlinePreviewView: NSView {
       guard let latestAsset = self.player?.currentItem?.asset else { return }
 
       let latestParams = self.pendingCompositionParams ?? mergedParams
+      let latestCameraParams = self.pendingCameraCompositionParams ?? cameraParams
       let latestProfile = self.makePreviewProfile(for: latestParams)
       self.applyCompositionNow(
         params: latestParams,
+        cameraParams: latestCameraParams,
         profile: latestProfile,
         asset: latestAsset,
         reason: "debounced:\(reason)",
@@ -1116,11 +1347,20 @@ final class InlinePreviewView: NSView {
 
   private func applyLightweightPreviewUpdate(
     to newParams: CompositionParams,
+    cameraParams: CameraCompositionParams?,
     updatePlan: PreviewUpdatePlan,
     profile: PreviewProfile,
     onApplied: ((Bool) -> Void)? = nil
   ) {
     currentCompositionParams = newParams
+    currentCameraCompositionParams = cameraParams ?? currentCameraCompositionParams
+    if let mediaSources = currentMediaSources {
+      currentScene = PreviewScene(
+        mediaSources: mediaSources,
+        screenParams: newParams,
+        cameraParams: currentCameraCompositionParams
+      )
+    }
     currentPreviewProfile = profile
 
     if updatePlan.refreshCanvasGeometry {
@@ -1147,12 +1387,14 @@ final class InlinePreviewView: NSView {
       applyPreviewOverlayState(at: player?.currentTime().seconds ?? 0, snap: true)
     }
 
+    updateCameraPreviewLayout()
     applyDebugVisualsIfNeeded()
     onApplied?(true)
   }
 
   private func applyCompositionNow(
     params: CompositionParams,
+    cameraParams: CameraCompositionParams?,
     profile: PreviewProfile,
     asset: AVAsset,
     reason: String,
@@ -1208,7 +1450,21 @@ final class InlinePreviewView: NSView {
     }
 
     NativeLogger.d("Player", "Building preview composition")
-    guard let layout = builder.buildPreview(asset: asset, params: params, profile: profile) else {
+    let mediaSources =
+      currentMediaSources
+      ?? currentScene?.mediaSources
+      ?? PreviewMediaSources(
+        screenPath: currentVideoPath ?? "",
+        cameraPath: nil,
+        metadataPath: nil
+      )
+    let scene = PreviewScene(
+      mediaSources: mediaSources,
+      screenParams: params,
+      cameraParams: cameraParams ?? currentCameraCompositionParams
+    )
+
+    guard let layout = builder.buildPreview(asset: asset, scene: scene, profile: profile) else {
       NativeLogger.e(
         "Player", "ASSET_INVALID: buildPreview returned nil",
         context: [
@@ -1242,9 +1498,16 @@ final class InlinePreviewView: NSView {
     }
 
     currentCompositionParams = params
+    currentCameraCompositionParams = cameraParams ?? currentCameraCompositionParams
+    currentScene = PreviewScene(
+      mediaSources: scene.mediaSources,
+      screenParams: params,
+      cameraParams: currentCameraCompositionParams
+    )
     currentLayout = layout
     currentPreviewProfile = profile
     pendingCompositionParams = nil
+    pendingCameraCompositionParams = nil
 
     if let item = player?.currentItem {
       item.videoComposition = layout.composition
@@ -1275,6 +1538,7 @@ final class InlinePreviewView: NSView {
     updateContainerLayout()
     applyPreviewBackground(from: params, profile: profile)
     applyDebugVisualsIfNeeded()
+    updateCameraPreviewLayout()
     applyPreviewOverlayState(at: currentTime.seconds.isFinite ? currentTime.seconds : 0, snap: true)
     needsDisplay = true
 
@@ -1286,6 +1550,105 @@ final class InlinePreviewView: NSView {
     }
 
     onApplied?(true)
+  }
+
+  private func updateCameraPreviewLayout() {
+    guard
+      let canvasSize = currentCompositionParams?.targetSize,
+      let cameraContainerLayer,
+      let cameraPlayerLayer
+    else {
+      return
+    }
+
+    guard
+      let params = currentCameraCompositionParams,
+      currentMediaSources?.cameraPath != nil,
+      cameraPlayer?.currentItem != nil
+    else {
+      cameraContainerLayer.isHidden = true
+      return
+    }
+
+    let resolution = CameraLayoutResolver.effectiveFrame(canvasSize: canvasSize, params: params)
+    guard resolution.shouldRender else {
+      cameraContainerLayer.isHidden = true
+      return
+    }
+
+    CATransaction.begin()
+    CATransaction.setDisableActions(true)
+    defer { CATransaction.commit() }
+
+    let frame = resolution.frame.integral
+    cameraContainerLayer.isHidden = false
+    cameraContainerLayer.frame = frame
+    cameraContainerLayer.opacity = Float(max(0.0, min(1.0, params.opacity)))
+
+    let bounds = CGRect(origin: .zero, size: frame.size)
+    cameraPlayerLayer.frame = bounds
+    cameraPlayerLayer.videoGravity =
+      params.contentMode == .fit ? .resizeAspect : .resizeAspectFill
+    cameraPlayerLayer.setAffineTransform(
+      params.mirror ? CGAffineTransform(scaleX: -1.0, y: 1.0) : .identity
+    )
+
+    let maskPath = CameraLayoutResolver.maskPath(in: bounds, params: params)
+    let maskLayer = CAShapeLayer()
+    maskLayer.frame = bounds
+    maskLayer.path = maskPath
+    cameraContainerLayer.mask = maskLayer
+
+    if let cameraBorderLayer {
+      cameraBorderLayer.frame = bounds
+      cameraBorderLayer.path = maskPath
+      let borderWidth = max(0.0, CGFloat(params.borderWidth))
+      cameraBorderLayer.lineWidth = borderWidth
+      cameraBorderLayer.strokeColor =
+        borderWidth > 0
+        ? color(from: params.borderColorArgb).cgColor
+        : NSColor.clear.cgColor
+      cameraBorderLayer.isHidden = borderWidth <= 0
+    }
+
+    applyCameraShadow(to: cameraContainerLayer, params: params, path: maskPath)
+  }
+
+  private func color(from argb: Int?) -> NSColor {
+    guard let argb else { return .white }
+    let a = CGFloat((argb >> 24) & 0xFF) / 255.0
+    let r = CGFloat((argb >> 16) & 0xFF) / 255.0
+    let g = CGFloat((argb >> 8) & 0xFF) / 255.0
+    let b = CGFloat(argb & 0xFF) / 255.0
+    return NSColor(red: r, green: g, blue: b, alpha: a)
+  }
+
+  private func applyCameraShadow(to layer: CALayer, params: CameraCompositionParams, path: CGPath) {
+    switch params.shadowPreset {
+    case 1:
+      layer.shadowColor = NSColor.black.cgColor
+      layer.shadowOpacity = 0.18
+      layer.shadowRadius = 10
+      layer.shadowOffset = CGSize(width: 0, height: -2)
+    case 2:
+      layer.shadowColor = NSColor.black.cgColor
+      layer.shadowOpacity = 0.24
+      layer.shadowRadius = 16
+      layer.shadowOffset = CGSize(width: 0, height: -4)
+    case 3:
+      layer.shadowColor = NSColor.black.cgColor
+      layer.shadowOpacity = 0.32
+      layer.shadowRadius = 22
+      layer.shadowOffset = CGSize(width: 0, height: -6)
+    default:
+      layer.shadowOpacity = 0.0
+      layer.shadowRadius = 0.0
+      layer.shadowOffset = .zero
+      layer.shadowPath = nil
+      return
+    }
+
+    layer.shadowPath = path
   }
 
   func updateAudioGainOnly(gainDb: Double) {

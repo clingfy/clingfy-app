@@ -486,28 +486,63 @@ final class CompositionBuilder {
     let renderSize: CGSize
   }
 
+  struct ExportCompositionResult {
+    let asset: AVAsset
+    let videoComposition: AVVideoComposition
+  }
+
   // For Export
   func buildExport(
     asset: AVAsset,
+    cameraAsset: AVAsset?,
     params: CompositionParams,
+    cameraParams: CameraCompositionParams?,
     cursorRecording: CursorRecording?
-  ) -> AVVideoComposition? {
-    return build(
-      asset: asset,
-      params: params,
-      cursorRecording: cursorRecording,
-      previewProfile: nil,
-      forExport: true
-    )?
-      .composition
+  ) -> ExportCompositionResult? {
+    if let cameraAsset,
+      let cameraParams,
+      cameraParams.visible,
+      cameraParams.layoutPreset != .hidden
+    {
+      return buildTwoSourceExport(
+        screenAsset: asset,
+        cameraAsset: cameraAsset,
+        params: params,
+        cameraParams: cameraParams,
+        cursorRecording: cursorRecording
+      )
+    }
+
+    guard
+      let composition = build(
+        asset: asset,
+        params: params,
+        cursorRecording: cursorRecording,
+        previewProfile: nil,
+        forExport: true
+      )?.composition
+    else {
+      return nil
+    }
+
+    return ExportCompositionResult(asset: asset, videoComposition: composition)
   }
 
   // For Preview
   func buildPreview(
     asset: AVAsset,
-    params: CompositionParams,
+    scene: PreviewScene,
     profile: PreviewProfile
   ) -> PreviewCompositionResult? {
+    let params = scene.screenParams
+    NativeLogger.d(
+      "Preview",
+      "Building preview scene",
+      context: [
+        "screenPath": scene.mediaSources.screenPath,
+        "cameraPath": scene.mediaSources.cameraPath ?? "nil",
+        "hasCameraParams": scene.cameraParams != nil,
+      ])
     guard
       let result = build(
         asset: asset,
@@ -533,6 +568,11 @@ final class CompositionBuilder {
     let renderSize: CGSize
   }
 
+  private func orientedSize(_ track: AVAssetTrack) -> CGSize {
+    let rect = CGRect(origin: .zero, size: track.naturalSize).applying(track.preferredTransform)
+    return .init(width: abs(rect.width), height: abs(rect.height))
+  }
+
   private func build(
     asset: AVAsset,
     params: CompositionParams,
@@ -542,11 +582,6 @@ final class CompositionBuilder {
   ) -> BuildResult? {
     guard let vTrack = asset.tracks(withMediaType: .video).first else { return nil }
     guard forExport || previewProfile != nil else { return nil }
-
-    func orientedSize(_ t: AVAssetTrack) -> CGSize {
-      let rect = CGRect(origin: .zero, size: t.naturalSize).applying(t.preferredTransform)
-      return .init(width: abs(rect.width), height: abs(rect.height))
-    }
     let src = orientedSize(vTrack)
     let target = params.targetSize
     let padding = params.padding
@@ -598,51 +633,20 @@ final class CompositionBuilder {
     comp.instructions = [instruction]
 
     if forExport {
-      if params.cornerRadius > 0 || params.backgroundColor != nil
-        || params.backgroundImagePath != nil
-        || params.showCursor
-      {
-        let parentLayer = CALayer()
-        parentLayer.frame = CGRect(origin: .zero, size: target)
-
-        let bgLayer = CALayer()
-        bgLayer.frame = CGRect(origin: .zero, size: target)
-
-        if let bgPath = params.backgroundImagePath, let img = NSImage(contentsOfFile: bgPath) {
-          bgLayer.contents = img.cgImageForLayer()
-          bgLayer.contentsGravity = .resizeAspectFill
-        } else if let color = params.backgroundColor {
-          let r = CGFloat((color >> 16) & 0xFF) / 255.0
-          let g = CGFloat((color >> 8) & 0xFF) / 255.0
-          let b = CGFloat(color & 0xFF) / 255.0
-          let a = (color > 0xFFFFFF) ? CGFloat((color >> 24) & 0xFF) / 255.0 : 1.0
-          bgLayer.backgroundColor = CGColor(red: r, green: g, blue: b, alpha: a)
-        } else {
-          bgLayer.backgroundColor = CGColor.black
-        }
-        parentLayer.addSublayer(bgLayer)
-
-        let videoLayer = CALayer()
-        videoLayer.frame = CGRect(origin: .zero, size: target)
-        parentLayer.addSublayer(videoLayer)
-
-        let maskLayer = CAShapeLayer()
-        let path = CGPath(
-          roundedRect: contentRect, cornerWidth: CGFloat(params.cornerRadius),
-          cornerHeight: CGFloat(params.cornerRadius), transform: nil)
-        maskLayer.path = path
-        videoLayer.mask = maskLayer
-
-        if params.showCursor, let recording = cursorRecording, !recording.frames.isEmpty {
-          addCursorLayer(
-            to: parentLayer, videoLayer: videoLayer, recording: recording, params: params,
-            target: target, contentRect: contentRect, contentWidth: contentWidth,
-            contentHeight: contentHeight, tx: tx, ty: ty, asset: asset, videoToTargetScale: s)
-        }
-
-        comp.animationTool = AVVideoCompositionCoreAnimationTool(
-          postProcessingAsVideoLayer: videoLayer, in: parentLayer)
-      }
+      configureExportAnimationTool(
+        composition: comp,
+        target: target,
+        params: params,
+        cursorRecording: cursorRecording,
+        asset: asset,
+        contentRect: contentRect,
+        contentWidth: contentWidth,
+        contentHeight: contentHeight,
+        tx: tx,
+        ty: ty,
+        videoToTargetScale: s,
+        includeRoundedMask: true
+      )
     }
 
     return BuildResult(
@@ -650,6 +654,274 @@ final class CompositionBuilder {
       contentRect: contentRect,
       videoToTargetScale: s,
       renderSize: renderSize
+    )
+  }
+
+  private func buildTwoSourceExport(
+    screenAsset: AVAsset,
+    cameraAsset: AVAsset,
+    params: CompositionParams,
+    cameraParams: CameraCompositionParams,
+    cursorRecording: CursorRecording?
+  ) -> ExportCompositionResult? {
+    guard let screenTrack = screenAsset.tracks(withMediaType: .video).first else { return nil }
+
+    let target = params.targetSize
+    let padding = params.padding
+    let screenSourceSize = orientedSize(screenTrack)
+
+    let availableSize = CGSize(
+      width: max(1, target.width - 2 * padding),
+      height: max(1, target.height - 2 * padding)
+    )
+    let screenFitMode = params.fitMode ?? "fit"
+    let screenScale: CGFloat = {
+      let sw = availableSize.width / max(screenSourceSize.width, 1)
+      let sh = availableSize.height / max(screenSourceSize.height, 1)
+      return screenFitMode == "fill" ? max(sw, sh) : min(sw, sh)
+    }()
+
+    let contentWidth = screenSourceSize.width * screenScale
+    let contentHeight = screenSourceSize.height * screenScale
+    let tx = (target.width - contentWidth) / 2
+    let ty = (target.height - contentHeight) / 2
+    let screenContentRect = CGRect(x: tx, y: ty, width: contentWidth, height: contentHeight)
+
+    let composition = AVMutableComposition()
+
+    do {
+      guard
+        let composedScreenTrack = composition.addMutableTrack(
+          withMediaType: .video,
+          preferredTrackID: kCMPersistentTrackID_Invalid
+        )
+      else {
+        return nil
+      }
+
+      try composedScreenTrack.insertTimeRange(
+        CMTimeRange(start: .zero, duration: screenAsset.duration),
+        of: screenTrack,
+        at: .zero
+      )
+
+      if let screenAudioTrack = screenAsset.tracks(withMediaType: .audio).first,
+        let composedAudioTrack = composition.addMutableTrack(
+          withMediaType: .audio,
+          preferredTrackID: kCMPersistentTrackID_Invalid
+        )
+      {
+        try composedAudioTrack.insertTimeRange(
+          CMTimeRange(start: .zero, duration: screenAsset.duration),
+          of: screenAudioTrack,
+          at: .zero
+        )
+      }
+
+      var layerInstructions: [AVMutableVideoCompositionLayerInstruction] = []
+
+      let screenLayerInstruction = AVMutableVideoCompositionLayerInstruction(
+        assetTrack: composedScreenTrack
+      )
+      screenLayerInstruction.setTransform(
+        fittedTransform(
+          for: screenTrack,
+          sourceSize: screenSourceSize,
+          destinationRect: screenContentRect,
+          fitMode: screenFitMode,
+          mirror: false
+        ),
+        at: .zero
+      )
+      layerInstructions.append(screenLayerInstruction)
+
+      let cameraResolution = CameraLayoutResolver.effectiveFrame(
+        canvasSize: target,
+        params: cameraParams
+      )
+
+      if cameraResolution.shouldRender,
+        let cameraTrack = cameraAsset.tracks(withMediaType: .video).first,
+        let composedCameraTrack = composition.addMutableTrack(
+          withMediaType: .video,
+          preferredTrackID: kCMPersistentTrackID_Invalid
+        )
+      {
+        let cameraDuration = min(cameraAsset.duration.seconds, screenAsset.duration.seconds)
+        let insertionDuration = CMTime(seconds: max(0.0, cameraDuration), preferredTimescale: 600)
+        if insertionDuration.seconds > 0 {
+          try composedCameraTrack.insertTimeRange(
+            CMTimeRange(start: .zero, duration: insertionDuration),
+            of: cameraTrack,
+            at: .zero
+          )
+
+          let cameraLayerInstruction = AVMutableVideoCompositionLayerInstruction(
+            assetTrack: composedCameraTrack
+          )
+          let cameraFitMode: String =
+            cameraParams.contentMode == .fit ? "fit" : "fill"
+          cameraLayerInstruction.setTransform(
+            fittedTransform(
+              for: cameraTrack,
+              sourceSize: orientedSize(cameraTrack),
+              destinationRect: cameraResolution.frame,
+              fitMode: cameraFitMode,
+              mirror: cameraParams.mirror
+            ),
+            at: .zero
+          )
+          cameraLayerInstruction.setOpacity(Float(max(0.0, min(1.0, cameraParams.opacity))), at: .zero)
+
+          if cameraResolution.zOrder == .behindScreen {
+            layerInstructions = [screenLayerInstruction, cameraLayerInstruction]
+          } else {
+            layerInstructions = [cameraLayerInstruction, screenLayerInstruction]
+          }
+        }
+      }
+
+      let instruction = AVMutableVideoCompositionInstruction()
+      instruction.timeRange = CMTimeRange(start: .zero, duration: screenAsset.duration)
+      instruction.layerInstructions = layerInstructions
+
+      let videoComposition = AVMutableVideoComposition()
+      videoComposition.renderSize = target
+      let timescale = max(1, params.fpsHint)
+      videoComposition.frameDuration = CMTime(value: 1, timescale: timescale)
+      videoComposition.instructions = [instruction]
+
+      configureExportAnimationTool(
+        composition: videoComposition,
+        target: target,
+        params: params,
+        cursorRecording: cursorRecording,
+        asset: screenAsset,
+        contentRect: screenContentRect,
+        contentWidth: contentWidth,
+        contentHeight: contentHeight,
+        tx: tx,
+        ty: ty,
+        videoToTargetScale: screenScale,
+        includeRoundedMask: false
+      )
+
+      return ExportCompositionResult(asset: composition, videoComposition: videoComposition)
+    } catch {
+      NativeLogger.e(
+        "Export",
+        "Failed to build two-source export composition",
+        context: ["error": error.localizedDescription]
+      )
+      return nil
+    }
+  }
+
+  private func fittedTransform(
+    for track: AVAssetTrack,
+    sourceSize: CGSize,
+    destinationRect: CGRect,
+    fitMode: String,
+    mirror: Bool
+  ) -> CGAffineTransform {
+    let scaleX = destinationRect.width / max(sourceSize.width, 1.0)
+    let scaleY = destinationRect.height / max(sourceSize.height, 1.0)
+    let scale = fitMode == "fill" ? max(scaleX, scaleY) : min(scaleX, scaleY)
+    let renderedWidth = sourceSize.width * scale
+    let renderedHeight = sourceSize.height * scale
+    let offsetX = destinationRect.minX + ((destinationRect.width - renderedWidth) / 2.0)
+    let offsetY = destinationRect.minY + ((destinationRect.height - renderedHeight) / 2.0)
+
+    var transform = track.preferredTransform
+    if mirror {
+      transform = transform
+        .concatenating(CGAffineTransform(translationX: sourceSize.width, y: 0))
+        .concatenating(CGAffineTransform(scaleX: -1.0, y: 1.0))
+    }
+    transform = transform.concatenating(CGAffineTransform(scaleX: scale, y: scale))
+    transform = transform.concatenating(CGAffineTransform(translationX: offsetX, y: offsetY))
+    return transform
+  }
+
+  private func configureExportAnimationTool(
+    composition: AVMutableVideoComposition,
+    target: CGSize,
+    params: CompositionParams,
+    cursorRecording: CursorRecording?,
+    asset: AVAsset,
+    contentRect: CGRect,
+    contentWidth: Double,
+    contentHeight: Double,
+    tx: Double,
+    ty: Double,
+    videoToTargetScale: CGFloat,
+    includeRoundedMask: Bool
+  ) {
+    guard
+      params.cornerRadius > 0
+        || params.backgroundColor != nil
+        || params.backgroundImagePath != nil
+        || params.showCursor
+    else {
+      return
+    }
+
+    let parentLayer = CALayer()
+    parentLayer.frame = CGRect(origin: .zero, size: target)
+
+    let bgLayer = CALayer()
+    bgLayer.frame = CGRect(origin: .zero, size: target)
+
+    if let bgPath = params.backgroundImagePath, let img = NSImage(contentsOfFile: bgPath) {
+      bgLayer.contents = img.cgImageForLayer()
+      bgLayer.contentsGravity = .resizeAspectFill
+    } else if let color = params.backgroundColor {
+      let r = CGFloat((color >> 16) & 0xFF) / 255.0
+      let g = CGFloat((color >> 8) & 0xFF) / 255.0
+      let b = CGFloat(color & 0xFF) / 255.0
+      let a = (color > 0xFFFFFF) ? CGFloat((color >> 24) & 0xFF) / 255.0 : 1.0
+      bgLayer.backgroundColor = CGColor(red: r, green: g, blue: b, alpha: a)
+    } else {
+      bgLayer.backgroundColor = CGColor.black
+    }
+    parentLayer.addSublayer(bgLayer)
+
+    let videoLayer = CALayer()
+    videoLayer.frame = CGRect(origin: .zero, size: target)
+    parentLayer.addSublayer(videoLayer)
+
+    if includeRoundedMask, params.cornerRadius > 0 {
+      let maskLayer = CAShapeLayer()
+      let path = CGPath(
+        roundedRect: contentRect,
+        cornerWidth: CGFloat(params.cornerRadius),
+        cornerHeight: CGFloat(params.cornerRadius),
+        transform: nil
+      )
+      maskLayer.path = path
+      videoLayer.mask = maskLayer
+    }
+
+    if params.showCursor, let recording = cursorRecording, !recording.frames.isEmpty {
+      addCursorLayer(
+        to: parentLayer,
+        videoLayer: videoLayer,
+        recording: recording,
+        params: params,
+        target: target,
+        contentRect: contentRect,
+        contentWidth: contentWidth,
+        contentHeight: contentHeight,
+        tx: tx,
+        ty: ty,
+        asset: asset,
+        videoToTargetScale: videoToTargetScale
+      )
+    }
+
+    composition.animationTool = AVVideoCompositionCoreAnimationTool(
+      postProcessingAsVideoLayer: videoLayer,
+      in: parentLayer
     )
   }
 
