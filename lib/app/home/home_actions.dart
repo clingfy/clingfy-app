@@ -14,6 +14,7 @@ import 'package:clingfy/app/home/home_prefs_store.dart';
 import 'package:clingfy/app/home/home_scope.dart';
 import 'package:clingfy/app/home/home_ui_state.dart';
 import 'package:clingfy/core/permissions/models/recording_start_preflight.dart';
+import 'package:clingfy/ui/platform/widgets/desktop_pane_layout.dart';
 import 'package:clingfy/app/permissions/widgets/start_recording_permission_dialog.dart';
 import 'package:clingfy/app/permissions/widgets/start_recording_storage_dialog.dart';
 import 'package:clingfy/l10n/app_localizations.dart';
@@ -52,6 +53,7 @@ class HomeActions {
       final prefs = await prefsStore.load();
       uiState.setIndicatorPinned(prefs.indicatorPinned);
       uiState.setTargetMode(prefs.targetMode);
+      uiState.applyPaneLayoutPrefs(prefs.paneLayout);
       await nativeBridge.setRecordingIndicatorPinned(prefs.indicatorPinned);
       await nativeBridge.setDisplayTargetMode(prefs.targetMode);
       await recordingController.refreshPauseResumeCapabilities();
@@ -86,6 +88,11 @@ class HomeActions {
     if (mode == DisplayTargetMode.singleAppWindow) {
       await deviceController.reloadAppWindows();
     }
+  }
+
+  Future<void> persistPaneLayout(DesktopPaneLayoutPrefs layout) async {
+    uiState.applyPaneLayoutPrefs(layout);
+    await prefsStore.savePaneLayout(layout);
   }
 
   Future<void> toggleRecording(BuildContext context) async {

@@ -58,6 +58,8 @@
   "settingsStorage": "التخزين",
   "settingsStorageDescription": "مساحة التسجيل، والاستخدام الداخلي، وحالة القرص.",
   "openAppSettings": "فتح إعدادات التطبيق",
+  "expandNavigationRail": "توسيع شريط التنقل",
+  "compactNavigationRail": "تصغير شريط التنقل",
   "overlayFaceCam": "الطبقة العلوية (Face-cam)",
   "overlayFaceCamVisibility": "الظهور (Face-cam)",
   "visibility": "الظهور",
@@ -218,6 +220,9 @@
   "licenseLinkStatus": "حالة ربط الجهاز",
   "licenseSummaryStarter": "فعّل مفتاحًا أو قم بالترقية لفتح صادرات Pro غير المحدودة.",
   "licenseSummaryTrial": "أنت تستخدم الخطة التجريبية مع {count} صادرات متبقية.",
+  "postProcessing": "المعالجة اللاحقة",
+  "expandPane": "توسيع اللوحة",
+  "collapsePane": "طي اللوحة",
   "@licenseSummaryTrial": {
     "placeholders": {
       "count": {

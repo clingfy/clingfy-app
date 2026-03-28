@@ -12,6 +12,7 @@ import 'package:clingfy/app/home/recording/widgets/recording_overlay_section.dar
 import 'package:clingfy/app/home/recording/widgets/recording_source_section.dart';
 import 'package:clingfy/app/home/recording/widgets/overlay_segmented.dart';
 import 'package:clingfy/l10n/app_localizations.dart';
+import 'package:clingfy/ui/platform/widgets/app_pane_header.dart';
 
 class RecordingSidebarRail extends StatelessWidget {
   const RecordingSidebarRail({
@@ -199,6 +200,8 @@ class RecordingOptionsSidebar extends StatelessWidget {
     super.key,
     required this.isRecording,
     required this.selectedIndex,
+    this.availableWidth = double.infinity,
+    this.isCompact = false,
     // Record Tab
     required this.targetMode,
     required this.displays,
@@ -290,44 +293,31 @@ class RecordingOptionsSidebar extends StatelessWidget {
 
     required this.onIndicatorPinnedChanged,
     required this.onCursorModeChanged,
+    this.showHeader = true,
   });
+
+  final double availableWidth;
+  final bool isCompact;
+  final bool showHeader;
 
   @override
   Widget build(BuildContext context) {
-    final theme = Theme.of(context);
-    final colorScheme = theme.colorScheme;
-    final headerStyle = (theme.textTheme.titleMedium ?? const TextStyle())
-        .copyWith(
-          color: colorScheme.onSurface,
-          fontWeight: FontWeight.w700,
-          fontSize: 16,
-        );
-
+    final useCompactSpacing = isCompact || availableWidth <= 320;
+    final horizontalPadding = useCompactSpacing
+        ? 10.0
+        : AppSidebarTokens.contentHorizontalPadding;
     return Column(
       crossAxisAlignment: CrossAxisAlignment.stretch,
       children: [
-        Container(
-          key: const Key('recording_sidebar_header'),
-          padding: const EdgeInsets.fromLTRB(
-            AppSidebarTokens.contentHorizontalPadding,
-            AppSidebarTokens.headerTopPadding,
-            AppSidebarTokens.contentHorizontalPadding,
-            AppSidebarTokens.headerBottomPadding,
+        if (showHeader)
+          AppPaneHeader(
+            headerKey: const Key('recording_sidebar_header'),
+            title: _getHeaderTitle(context),
+            isCompact: useCompactSpacing,
           ),
-          decoration: BoxDecoration(
-            border: Border(
-              bottom: BorderSide(
-                color: theme.dividerColor.withValues(alpha: 0.08),
-              ),
-            ),
-          ),
-          child: Text(_getHeaderTitle(context), style: headerStyle),
-        ),
         Expanded(
           child: ListView(
-            padding: const EdgeInsets.symmetric(
-              horizontal: AppSidebarTokens.contentHorizontalPadding,
-            ),
+            padding: EdgeInsets.symmetric(horizontal: horizontalPadding),
             children: [
               const SizedBox(
                 key: Key('recording_sidebar_top_spacer'),

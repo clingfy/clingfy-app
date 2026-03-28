@@ -157,4 +157,34 @@ void main() {
       expect(controller.error, isNull);
     },
   );
+
+  test(
+    'openSystemStorageSettings delegates to native system settings',
+    () async {
+      MethodCall? openCall;
+
+      TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger
+          .setMockMethodCallHandler(channel, (call) async {
+            if (call.method == 'openSystemSettings') {
+              openCall = call;
+            }
+            return null;
+          });
+
+      final controller = StorageSettingsController(
+        nativeBridge: NativeBridge.instance,
+      );
+
+      await controller.openSystemStorageSettings();
+
+      expect(openCall, isNotNull);
+      expect(openCall!.method, 'openSystemSettings');
+      expect(
+        Map<String, dynamic>.from(
+          openCall!.arguments! as Map<dynamic, dynamic>,
+        ),
+        {'pane': 'storage'},
+      );
+    },
+  );
 }

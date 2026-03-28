@@ -109,6 +109,15 @@ void main() {
     await tester.pumpAndSettle();
   }
 
+  Future<void> scrollToOpenStorageSettingsButton(WidgetTester tester) async {
+    await tester.scrollUntilVisible(
+      find.byKey(const Key('storage_open_system_settings_button')),
+      300,
+      scrollable: find.byType(Scrollable).first,
+    );
+    await tester.pumpAndSettle();
+  }
+
   tearDown(() async {
     TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger
         .setMockMethodCallHandler(channel, null);
@@ -369,6 +378,8 @@ void main() {
 
     expect(find.text('Storage action failed.'), findsOneWidget);
     expect(find.text('Refresh'), findsWidgets);
+    await scrollToOpenStorageSettingsButton(tester);
+    expect(find.text('Open Storage Settings'), findsOneWidget);
   });
 
   testWidgets('hides actions and paths in production mode', (tester) async {
@@ -388,8 +399,81 @@ void main() {
     expect(find.text('Paths'), findsNothing);
     expect(find.text('Open recordings folder'), findsNothing);
     expect(find.text('Open temp folder'), findsNothing);
+    await scrollToOpenStorageSettingsButton(tester);
+    expect(find.text('Open Storage Settings'), findsOneWidget);
     await scrollToClearButton(tester);
     expect(find.text('Clear cached recordings'), findsOneWidget);
+  });
+
+  testWidgets('open storage settings delegates to native system settings', (
+    tester,
+  ) async {
+    final calls = <MethodCall>[];
+
+    TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger
+        .setMockMethodCallHandler(channel, (call) async {
+          calls.add(call);
+          if (call.method == 'getStorageSnapshot') {
+            return <String, dynamic>{...storageSnapshotPayload()};
+          }
+          return null;
+        });
+
+    final settings = SettingsController(nativeBridge: NativeBridge.instance);
+    await pumpStorageSection(tester, settings, showDeveloperTools: false);
+    await tester.pumpAndSettle();
+
+    await scrollToOpenStorageSettingsButton(tester);
+    await tester.tap(
+      find.byKey(const Key('storage_open_system_settings_button')),
+    );
+    await tester.pumpAndSettle();
+
+    final openCalls = calls
+        .where((call) => call.method == 'openSystemSettings')
+        .toList();
+    expect(openCalls, hasLength(1));
+    expect(
+      Map<String, dynamic>.from(
+        openCalls.single.arguments! as Map<dynamic, dynamic>,
+      ),
+      {'pane': 'storage'},
+    );
+  });
+
+  testWidgets('open storage settings surfaces inline action errors', (
+    tester,
+  ) async {
+    TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger
+        .setMockMethodCallHandler(channel, (call) async {
+          switch (call.method) {
+            case 'getStorageSnapshot':
+              return <String, dynamic>{...storageSnapshotPayload()};
+            case 'openSystemSettings':
+              throw PlatformException(
+                code: 'OPEN_FAILED',
+                message: 'Unable to open system storage settings.',
+              );
+          }
+          return null;
+        });
+
+    final settings = SettingsController(nativeBridge: NativeBridge.instance);
+    await pumpStorageSection(tester, settings, showDeveloperTools: false);
+    await tester.pumpAndSettle();
+
+    await scrollToOpenStorageSettingsButton(tester);
+    await tester.tap(
+      find.byKey(const Key('storage_open_system_settings_button')),
+    );
+    await tester.pumpAndSettle();
+    await tester.fling(find.byType(ListView), const Offset(0, 1000), 2000);
+    await tester.pumpAndSettle();
+
+    expect(
+      find.text('Unable to open system storage settings.'),
+      findsOneWidget,
+    );
   });
 
   testWidgets('auto refreshes while the section stays visible', (tester) async {
@@ -520,13 +604,25 @@ void main() {
 
     expect(find.text('Clear cached recordings?'), findsOneWidget);
     await tester.tap(find.text('Clear recordings'));
-    await tester.pumpAndSettle();
+    await tester.pump();
+    await tester.pump(const Duration(milliseconds: 200));
+    await tester.pump();
 
     expect(clearCalls, 1);
     expect(getSnapshotCalls, 2);
-    await tester.fling(find.byType(ListView), const Offset(0, 1000), 2000);
-    await tester.pumpAndSettle();
+    tester
+        .state<ScrollableState>(find.byType(Scrollable).first)
+        .position
+        .jumpTo(0);
+    await tester.pump();
     expect(find.text('Removed 2 cached recordings.'), findsOneWidget);
+
+    await tester.pump(const Duration(seconds: 4));
+    expect(find.text('Removed 2 cached recordings.'), findsOneWidget);
+
+    await tester.pump(const Duration(seconds: 1));
+    expect(find.text('Removed 2 cached recordings.'), findsNothing);
+    await tester.pumpAndSettle();
   });
 
   testWidgets('canceling clear cached recordings performs no deletion', (

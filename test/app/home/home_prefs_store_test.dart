@@ -1,5 +1,6 @@
 import 'package:clingfy/app/home/home_prefs_store.dart';
 import 'package:clingfy/core/models/app_models.dart';
+import 'package:clingfy/ui/platform/widgets/desktop_pane_layout.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
@@ -20,6 +21,58 @@ void main() {
     expect(prefs.targetMode, DisplayTargetMode.singleAppWindow);
   });
 
+  test('load reads persisted pane layout JSON', () async {
+    const paneLayout = DesktopPaneLayoutPrefs(
+      paneStates: {
+        DesktopPaneId.homeLeftSidebar: DesktopPaneState(isCollapsed: true),
+        DesktopPaneId.recordingSidebar: DesktopPaneState(
+          width: 364,
+          lastExpandedWidth: 364,
+          userResized: true,
+        ),
+      },
+    );
+    SharedPreferences.setMockInitialValues({
+      HomePrefsStore.homePaneLayoutKey:
+          '{"homeLeftSidebar":{"isCollapsed":true,"autoCollapseAllowed":true,"userResized":false},"recordingSidebar":{"width":364.0,"lastExpandedWidth":364.0,"isCollapsed":false,"autoCollapseAllowed":true,"userResized":true}}',
+    });
+
+    final prefsStore = HomePrefsStore();
+    final prefs = await prefsStore.load();
+
+    expect(prefs.paneLayout, paneLayout);
+  });
+
+  test('load falls back safely for malformed pane layout JSON', () async {
+    SharedPreferences.setMockInitialValues({
+      HomePrefsStore.homePaneLayoutKey: '{broken-json',
+    });
+
+    final prefsStore = HomePrefsStore();
+    final prefs = await prefsStore.load();
+
+    expect(prefs.paneLayout, const DesktopPaneLayoutPrefs());
+  });
+
+  test(
+    'load falls back safely and logs once for structurally invalid pane layout JSON',
+    () async {
+      var warningCount = 0;
+      SharedPreferences.setMockInitialValues({
+        HomePrefsStore.homePaneLayoutKey:
+            '{"recordingSidebar":{"width":"bad-width"}}',
+      });
+
+      final prefsStore = HomePrefsStore(
+        paneLayoutWarningLogger: (_, __) => warningCount += 1,
+      );
+      final prefs = await prefsStore.load();
+
+      expect(prefs.paneLayout, const DesktopPaneLayoutPrefs());
+      expect(warningCount, 1);
+    },
+  );
+
   test('save methods persist values', () async {
     SharedPreferences.setMockInitialValues({});
     final prefsStore = HomePrefsStore();
@@ -32,6 +85,28 @@ void main() {
     expect(
       prefs.getInt(HomePrefsStore.displayTargetModeKey),
       DisplayTargetMode.areaRecording.index,
+    );
+  });
+
+  test('savePaneLayout persists pane layout JSON', () async {
+    SharedPreferences.setMockInitialValues({});
+    final prefsStore = HomePrefsStore();
+    const paneLayout = DesktopPaneLayoutPrefs(
+      paneStates: {
+        DesktopPaneId.postProcessingSidebar: DesktopPaneState(
+          width: 340,
+          lastExpandedWidth: 340,
+          userResized: true,
+        ),
+      },
+    );
+
+    await prefsStore.savePaneLayout(paneLayout);
+
+    final prefs = await SharedPreferences.getInstance();
+    expect(
+      prefs.getString(HomePrefsStore.homePaneLayoutKey),
+      '{"postProcessingSidebar":{"width":340.0,"lastExpandedWidth":340.0,"isCollapsed":false,"userResized":true}}',
     );
   });
 }

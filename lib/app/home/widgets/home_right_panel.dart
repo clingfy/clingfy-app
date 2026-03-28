@@ -67,68 +67,66 @@ class HomeRightPanel extends StatelessWidget {
       (p) => p.isPlaying,
     );
 
-    return Expanded(
-      child: Container(
-        key: const Key('home_right_panel_shell'),
-        decoration: BoxDecoration(
-          color: tokens.previewPanelBackground,
-          borderRadius: BorderRadius.circular(chrome.panelRadius),
-        ),
-        clipBehavior: Clip.antiAlias,
-        child: Padding(
-          padding: EdgeInsets.all(chrome.stagePadding),
-          child: Column(
-            crossAxisAlignment: CrossAxisAlignment.stretch,
-            children: [
-              Expanded(
-                child: previewUiState.showPreviewShell
-                    ? Builder(
-                        builder: (context) {
-                          final player = context.read<PlayerController>();
-                          return PreviewWithOverlayControls(
-                            preview: KeyedSubtree(
-                              key: ValueKey(
-                                'preview-shell-${previewUiState.sessionId ?? 'none'}',
-                              ),
-                              child: InlinePreviewPanel(
-                                path: previewUiState.previewPath ?? '',
-                                onToggleRecord: onToggleRecording,
-                                onClose: onClosePreview,
-                                onPreviewHostMounted: recordingController
-                                    .handlePreviewHostMounted,
-                                showLoadingOverlay:
-                                    previewUiState.showPreviewLoadingOverlay,
-                                showSurface: previewUiState.showPreviewSurface,
-                                previewHostBuilder: previewHostBuilder,
-                              ),
+    return Container(
+      key: const Key('home_right_panel_shell'),
+      decoration: BoxDecoration(
+        color: tokens.previewPanelBackground,
+        borderRadius: BorderRadius.circular(chrome.panelRadius),
+      ),
+      clipBehavior: Clip.antiAlias,
+      child: Padding(
+        padding: EdgeInsets.all(chrome.stagePadding),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.stretch,
+          children: [
+            Expanded(
+              child: previewUiState.showPreviewShell
+                  ? Builder(
+                      builder: (context) {
+                        final player = context.read<PlayerController>();
+                        return PreviewWithOverlayControls(
+                          preview: KeyedSubtree(
+                            key: ValueKey(
+                              'preview-shell-${previewUiState.sessionId ?? 'none'}',
                             ),
-                            isPlaying: isPlaying,
-                            controlsEnabled:
-                                previewUiState.showPreviewControls &&
-                                !postHasError,
-                            onPlayPause: (playing) {
-                              if (playing) {
-                                player.play();
-                              } else {
-                                player.pause();
-                              }
-                            },
-                          );
-                        },
-                      )
-                    : HeroPanel(
-                        isRecording: isRecording,
-                        isPaused: isPaused,
-                        isBusy: isBusy,
-                        canPause: canPause,
-                        canResume: canResume,
-                        onToggle: onToggleRecording,
-                        onPause: onPauseRecording,
-                        onResume: onResumeRecording,
-                      ),
-              ),
-            ],
-          ),
+                            child: InlinePreviewPanel(
+                              path: previewUiState.previewPath ?? '',
+                              onToggleRecord: onToggleRecording,
+                              onClose: onClosePreview,
+                              onPreviewHostMounted:
+                                  recordingController.handlePreviewHostMounted,
+                              showLoadingOverlay:
+                                  previewUiState.showPreviewLoadingOverlay,
+                              showSurface: previewUiState.showPreviewSurface,
+                              previewHostBuilder: previewHostBuilder,
+                            ),
+                          ),
+                          isPlaying: isPlaying,
+                          controlsEnabled:
+                              previewUiState.showPreviewControls &&
+                              !postHasError,
+                          onPlayPause: (playing) {
+                            if (playing) {
+                              player.play();
+                            } else {
+                              player.pause();
+                            }
+                          },
+                        );
+                      },
+                    )
+                  : HeroPanel(
+                      isRecording: isRecording,
+                      isPaused: isPaused,
+                      isBusy: isBusy,
+                      canPause: canPause,
+                      canResume: canResume,
+                      onToggle: onToggleRecording,
+                      onPause: onPauseRecording,
+                      onResume: onResumeRecording,
+                    ),
+            ),
+          ],
         ),
       ),
     );

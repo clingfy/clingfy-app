@@ -249,6 +249,12 @@ class AppLocalizationsRo extends AppLocalizations {
   String get openAppSettings => 'Deschide Setări Aplicație';
 
   @override
+  String get expandNavigationRail => 'Extinde bara de navigare';
+
+  @override
+  String get compactNavigationRail => 'Compactează bara de navigare';
+
+  @override
   String get overlayFaceCam => 'Suprapunere (Face-cam)';
 
   @override
@@ -608,6 +614,15 @@ class AppLocalizationsRo extends AppLocalizations {
 
   @override
   String get exportSettings => 'Export Settings';
+
+  @override
+  String get postProcessing => 'Post-procesare';
+
+  @override
+  String get expandPane => 'Extinde panoul';
+
+  @override
+  String get collapsePane => 'Restrânge panoul';
 
   @override
   String get size => 'Dimensiune';

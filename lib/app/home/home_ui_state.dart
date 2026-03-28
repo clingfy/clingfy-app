@@ -1,6 +1,7 @@
 import 'dart:async';
 
 import 'package:clingfy/core/models/app_models.dart';
+import 'package:clingfy/ui/platform/widgets/desktop_pane_layout.dart';
 import 'package:flutter/foundation.dart';
 
 enum HomeUiNoticeTone { info, success, warning, error }
@@ -49,6 +50,7 @@ class HomeUiState extends ChangeNotifier {
   bool _uiPrefsHydrated = false;
   int _recordingSidebarIndex = 0;
   int _postProcessingSidebarIndex = 0;
+  DesktopPaneLayoutPrefs _paneLayout = const DesktopPaneLayoutPrefs();
 
   HomeUiNotice? get notice => _notice;
   String? get errorMessage => _notice?.rawErrorCode;
@@ -58,6 +60,9 @@ class HomeUiState extends ChangeNotifier {
   bool get uiPrefsHydrated => _uiPrefsHydrated;
   int get recordingSidebarIndex => _recordingSidebarIndex;
   int get postProcessingSidebarIndex => _postProcessingSidebarIndex;
+  DesktopPaneLayoutPrefs get paneLayout => _paneLayout;
+
+  DesktopPaneState paneStateFor(DesktopPaneId id) => _paneLayout.stateFor(id);
 
   void setError(String? value) {
     if (value == null) {
@@ -150,6 +155,12 @@ class HomeUiState extends ChangeNotifier {
   void setPostProcessingSidebarIndex(int value) {
     if (_postProcessingSidebarIndex == value) return;
     _postProcessingSidebarIndex = value;
+    notifyListeners();
+  }
+
+  void applyPaneLayoutPrefs(DesktopPaneLayoutPrefs value) {
+    if (_paneLayout == value) return;
+    _paneLayout = value;
     notifyListeners();
   }
 

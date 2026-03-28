@@ -16,6 +16,9 @@ class RecordingSidebarContainer extends StatelessWidget {
     required this.actions,
     required this.settingsController,
     required this.selectedIndex,
+    required this.availableWidth,
+    required this.isCompact,
+    this.showHeader = true,
   });
 
   final bool isRecording;
@@ -23,6 +26,9 @@ class RecordingSidebarContainer extends StatelessWidget {
   final HomeActions actions;
   final SettingsController settingsController;
   final int selectedIndex;
+  final double availableWidth;
+  final bool isCompact;
+  final bool showHeader;
 
   @override
   Widget build(BuildContext context) {
@@ -31,6 +37,9 @@ class RecordingSidebarContainer extends StatelessWidget {
         return RecordingOptionsSidebar(
           isRecording: isRecording,
           selectedIndex: selectedIndex,
+          availableWidth: availableWidth,
+          isCompact: isCompact,
+          showHeader: showHeader,
           targetMode: uiState.targetMode,
           displays: device.displays,
           selectedDisplayId: device.selectedDisplayId,
