@@ -199,6 +199,8 @@ class RecordingOptionsSidebar extends StatelessWidget {
     super.key,
     required this.isRecording,
     required this.selectedIndex,
+    this.availableWidth = double.infinity,
+    this.isCompact = false,
     // Record Tab
     required this.targetMode,
     required this.displays,
@@ -292,10 +294,23 @@ class RecordingOptionsSidebar extends StatelessWidget {
     required this.onCursorModeChanged,
   });
 
+  final double availableWidth;
+  final bool isCompact;
+
   @override
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
     final colorScheme = theme.colorScheme;
+    final useCompactSpacing = isCompact || availableWidth <= 320;
+    final horizontalPadding = useCompactSpacing
+        ? 10.0
+        : AppSidebarTokens.contentHorizontalPadding;
+    final headerTopPadding = useCompactSpacing
+        ? 10.0
+        : AppSidebarTokens.headerTopPadding;
+    final headerBottomPadding = useCompactSpacing
+        ? 8.0
+        : AppSidebarTokens.headerBottomPadding;
     final headerStyle = (theme.textTheme.titleMedium ?? const TextStyle())
         .copyWith(
           color: colorScheme.onSurface,
@@ -308,11 +323,11 @@ class RecordingOptionsSidebar extends StatelessWidget {
       children: [
         Container(
           key: const Key('recording_sidebar_header'),
-          padding: const EdgeInsets.fromLTRB(
-            AppSidebarTokens.contentHorizontalPadding,
-            AppSidebarTokens.headerTopPadding,
-            AppSidebarTokens.contentHorizontalPadding,
-            AppSidebarTokens.headerBottomPadding,
+          padding: EdgeInsets.fromLTRB(
+            horizontalPadding,
+            headerTopPadding,
+            horizontalPadding,
+            headerBottomPadding,
           ),
           decoration: BoxDecoration(
             border: Border(
@@ -325,9 +340,7 @@ class RecordingOptionsSidebar extends StatelessWidget {
         ),
         Expanded(
           child: ListView(
-            padding: const EdgeInsets.symmetric(
-              horizontal: AppSidebarTokens.contentHorizontalPadding,
-            ),
+            padding: EdgeInsets.symmetric(horizontal: horizontalPadding),
             children: [
               const SizedBox(
                 key: Key('recording_sidebar_top_spacer'),

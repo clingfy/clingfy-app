@@ -1,6 +1,7 @@
 import 'dart:async';
 
 import 'package:clingfy/app/home/home_actions.dart';
+import 'package:clingfy/app/home/home_desktop_pane_dimensions.dart';
 import 'package:clingfy/app/home/home_prefs_store.dart';
 import 'package:clingfy/app/home/home_scope.dart';
 import 'package:clingfy/app/home/home_shell.dart';
@@ -23,6 +24,7 @@ import 'package:clingfy/core/devices/device_controller.dart';
 import 'package:clingfy/core/preview/player_controller.dart';
 import 'package:clingfy/l10n/app_localizations.dart';
 import 'package:clingfy/ui/platform/widgets/app_sidebar_tokens.dart';
+import 'package:clingfy/ui/platform/widgets/desktop_pane_layout.dart';
 import 'package:clingfy/ui/theme/app_shell_tokens.dart';
 import 'package:clingfy/ui/theme/app_theme.dart';
 import 'package:flutter/material.dart';
@@ -179,6 +181,7 @@ void main() {
   testWidgets('recording shell keeps rail separate from the workspace column', (
     tester,
   ) async {
+    _setDesktopWindow(tester);
     final harness = await createHarness();
     final theme = buildDarkTheme();
     harness.uiState.setRecordingSidebarIndex(2);
@@ -358,6 +361,7 @@ void main() {
   testWidgets(
     'preview shell keeps the rail separate and aligns timeline with the workspace column',
     (tester) async {
+      _setDesktopWindow(tester);
       final harness = await createHarness();
       harness.uiState.setRecordingSidebarIndex(2);
       harness.uiState.setPostProcessingSidebarIndex(1);
@@ -453,6 +457,7 @@ void main() {
   testWidgets('sidebar settings button opens the workspace settings route', (
     tester,
   ) async {
+    _setDesktopWindow(tester);
     final harness = await createHarness();
 
     addTearDown(harness.recording.dispose);
@@ -491,6 +496,7 @@ void main() {
   testWidgets('sidebar help button opens the about settings route', (
     tester,
   ) async {
+    _setDesktopWindow(tester);
     final harness = await createHarness();
 
     addTearDown(harness.recording.dispose);
@@ -529,6 +535,7 @@ void main() {
   testWidgets(
     'debug reset action stays in the sidebar and shows confirmation',
     (tester) async {
+      _setDesktopWindow(tester);
       final harness = await createHarness();
 
       addTearDown(harness.recording.dispose);
@@ -567,6 +574,200 @@ void main() {
       expect(find.text(l10n.debugResetPreferencesMessage), findsOneWidget);
     },
   );
+
+  testWidgets(
+    'persisted pane layout restores pane widths and collapsed state',
+    (tester) async {
+      _setDesktopWindow(tester);
+      final harness = await createHarness();
+      harness.uiState.applyPaneLayoutPrefs(
+        const DesktopPaneLayoutPrefs(
+          paneStates: {
+            DesktopPaneId.homeLeftSidebar: DesktopPaneState(isCollapsed: true),
+            DesktopPaneId.recordingSidebar: DesktopPaneState(
+              width: 320,
+              lastExpandedWidth: 320,
+              userResized: true,
+            ),
+          },
+        ),
+      );
+
+      addTearDown(harness.recording.dispose);
+      addTearDown(harness.player.dispose);
+      addTearDown(harness.device.dispose);
+      addTearDown(harness.overlay.dispose);
+      addTearDown(harness.permissions.dispose);
+      addTearDown(harness.post.dispose);
+      addTearDown(harness.license.dispose);
+      addTearDown(harness.countdown.dispose);
+      addTearDown(harness.uiState.dispose);
+      addTearDown(harness.settings.dispose);
+
+      await tester.pumpWidget(
+        buildShell(
+          actions: harness.actions,
+          countdown: harness.countdown,
+          device: harness.device,
+          license: harness.license,
+          overlay: harness.overlay,
+          player: harness.player,
+          post: harness.post,
+          recording: harness.recording,
+          settings: harness.settings,
+          uiState: harness.uiState,
+        ),
+      );
+      await tester.pumpAndSettle();
+
+      final railRect = tester.getRect(
+        find.byKey(const Key('home_left_sidebar_shell')),
+      );
+      final optionsRect = tester.getRect(
+        find.byKey(const Key('home_options_panel_shell')),
+      );
+
+      expect(
+        railRect.width,
+        moreOrLessEquals(HomeDesktopPaneDimensions.leftCollapsed),
+      );
+      expect(optionsRect.width, moreOrLessEquals(320));
+    },
+  );
+
+  testWidgets('options pane collapse and expand restore the last width', (
+    tester,
+  ) async {
+    _setDesktopWindow(tester);
+    final harness = await createHarness();
+    harness.uiState.applyPaneLayoutPrefs(
+      const DesktopPaneLayoutPrefs(
+        paneStates: {
+          DesktopPaneId.recordingSidebar: DesktopPaneState(
+            width: 356,
+            lastExpandedWidth: 356,
+            userResized: true,
+          ),
+        },
+      ),
+    );
+
+    addTearDown(harness.recording.dispose);
+    addTearDown(harness.player.dispose);
+    addTearDown(harness.device.dispose);
+    addTearDown(harness.overlay.dispose);
+    addTearDown(harness.permissions.dispose);
+    addTearDown(harness.post.dispose);
+    addTearDown(harness.license.dispose);
+    addTearDown(harness.countdown.dispose);
+    addTearDown(harness.uiState.dispose);
+    addTearDown(harness.settings.dispose);
+
+    await tester.pumpWidget(
+      buildShell(
+        actions: harness.actions,
+        countdown: harness.countdown,
+        device: harness.device,
+        license: harness.license,
+        overlay: harness.overlay,
+        player: harness.player,
+        post: harness.post,
+        recording: harness.recording,
+        settings: harness.settings,
+        uiState: harness.uiState,
+      ),
+    );
+    await tester.pumpAndSettle();
+
+    await tester.tap(
+      find.byKey(const Key('home_options_panel_collapse_button')),
+    );
+    await tester.pumpAndSettle();
+
+    expect(
+      find.byKey(const Key('home_options_panel_expand_button')),
+      findsOneWidget,
+    );
+    expect(
+      harness.uiState.paneStateFor(DesktopPaneId.recordingSidebar).isCollapsed,
+      isTrue,
+    );
+
+    await tester.tap(find.byKey(const Key('home_options_panel_expand_button')));
+    await tester.pumpAndSettle();
+
+    final optionsRect = tester.getRect(
+      find.byKey(const Key('home_options_panel_shell')),
+    );
+    expect(
+      harness.uiState.paneStateFor(DesktopPaneId.recordingSidebar).isCollapsed,
+      isFalse,
+    );
+    expect(optionsRect.width, moreOrLessEquals(356));
+  });
+
+  testWidgets(
+    'narrow shell auto-collapses panes and scrolls without overflow',
+    (tester) async {
+      final harness = await createHarness();
+
+      addTearDown(harness.recording.dispose);
+      addTearDown(harness.player.dispose);
+      addTearDown(harness.device.dispose);
+      addTearDown(harness.overlay.dispose);
+      addTearDown(harness.permissions.dispose);
+      addTearDown(harness.post.dispose);
+      addTearDown(harness.license.dispose);
+      addTearDown(harness.countdown.dispose);
+      addTearDown(harness.uiState.dispose);
+      addTearDown(harness.settings.dispose);
+
+      tester.view.physicalSize = const Size(820, 960);
+      tester.view.devicePixelRatio = 1;
+      addTearDown(() {
+        tester.view.resetPhysicalSize();
+        tester.view.resetDevicePixelRatio();
+      });
+
+      await tester.pumpWidget(
+        buildShell(
+          actions: harness.actions,
+          countdown: harness.countdown,
+          device: harness.device,
+          license: harness.license,
+          overlay: harness.overlay,
+          player: harness.player,
+          post: harness.post,
+          recording: harness.recording,
+          settings: harness.settings,
+          uiState: harness.uiState,
+        ),
+      );
+      await tester.pumpAndSettle();
+
+      expect(
+        find.byKey(const Key('desktop_split_layout_scroll_view')),
+        findsWidgets,
+      );
+      expect(
+        find.byKey(const Key('home_options_panel_expand_button')),
+        findsOneWidget,
+      );
+      expect(tester.takeException(), isNull);
+    },
+  );
+}
+
+void _setDesktopWindow(
+  WidgetTester tester, {
+  Size size = const Size(1440, 960),
+}) {
+  tester.view.physicalSize = size;
+  tester.view.devicePixelRatio = 1;
+  addTearDown(() {
+    tester.view.resetPhysicalSize();
+    tester.view.resetDevicePixelRatio();
+  });
 }
 
 BoxDecoration _decorationFor(WidgetTester tester, Finder finder) {

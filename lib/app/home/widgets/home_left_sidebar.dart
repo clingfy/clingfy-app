@@ -4,6 +4,7 @@ import 'package:clingfy/app/home/recording/recording_controller.dart';
 import 'package:clingfy/app/home/post_processing/widgets/post_processing_sidebar.dart';
 import 'package:clingfy/app/home/recording/widgets/recording_options_sidebar.dart';
 import 'package:clingfy/ui/platform/widgets/app_sidebar_rail_button.dart';
+import 'package:clingfy/ui/platform/widgets/desktop_pane_layout.dart';
 import 'package:clingfy/l10n/app_localizations.dart';
 import 'package:clingfy/ui/platform/widgets/app_sidebar_tokens.dart';
 import 'package:flutter/foundation.dart' show kDebugMode;
@@ -14,15 +15,19 @@ class HomeLeftSidebar extends StatelessWidget {
   const HomeLeftSidebar({
     super.key,
     required this.uiState,
+    required this.panePresentation,
     required this.onOpenSettings,
     required this.onOpenHelp,
     required this.onResetPreferences,
+    required this.onToggleCollapsed,
   });
 
   final HomeUiState uiState;
+  final DesktopPanePresentation panePresentation;
   final VoidCallback onOpenSettings;
   final VoidCallback onOpenHelp;
   final VoidCallback onResetPreferences;
+  final VoidCallback onToggleCollapsed;
 
   static const _sidebarLogoAsset = 'assets/icons/app-logo-512.png';
 
@@ -32,6 +37,7 @@ class HomeLeftSidebar extends StatelessWidget {
     final chrome = context.appEditorChrome;
     final spacing = context.appSpacing;
     final l10n = AppLocalizations.of(context)!;
+    final isCompact = panePresentation.isCompact;
     final showPreviewShell = context.select<RecordingController, bool>(
       (r) => r.showPreviewShell,
     );
@@ -47,7 +53,6 @@ class HomeLeftSidebar extends StatelessWidget {
 
     return Container(
       key: const Key('home_left_sidebar_shell'),
-      width: chrome.editorRailWidth,
       decoration: BoxDecoration(
         color: tokens.editorChromeBackground,
         borderRadius: BorderRadius.circular(chrome.panelRadius),
@@ -55,13 +60,33 @@ class HomeLeftSidebar extends StatelessWidget {
       clipBehavior: Clip.antiAlias,
       child: Padding(
         padding: EdgeInsets.symmetric(
-          horizontal: spacing.xs / 2,
-          vertical: AppSidebarTokens.sectionGap,
+          horizontal: isCompact ? spacing.xs / 4 : spacing.xs / 2,
+          vertical: isCompact
+              ? AppSidebarTokens.sectionGap - 2
+              : AppSidebarTokens.sectionGap,
         ),
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.center,
           children: [
-            const _SidebarLogoBadge(assetPath: _sidebarLogoAsset),
+            _SidebarLogoBadge(
+              assetPath: _sidebarLogoAsset,
+              size: isCompact ? 30 : 36,
+            ),
+            SizedBox(
+              height: isCompact
+                  ? AppSidebarTokens.compactGap
+                  : AppSidebarTokens.compactGap + 2,
+            ),
+            _RailUtilityButton(
+              buttonKey: const Key('home_sidebar_collapse_button'),
+              icon: panePresentation.effectiveCollapsed
+                  ? Icons.chevron_right_rounded
+                  : Icons.chevron_left_rounded,
+              tooltip: panePresentation.effectiveCollapsed
+                  ? 'Expand sidebar'
+                  : 'Collapse sidebar',
+              onTap: onToggleCollapsed,
+            ),
             SizedBox(height: AppSidebarTokens.sectionGap),
             Align(alignment: Alignment.topCenter, child: rail),
             const Spacer(),
@@ -100,16 +125,17 @@ class HomeLeftSidebar extends StatelessWidget {
 }
 
 class _SidebarLogoBadge extends StatelessWidget {
-  const _SidebarLogoBadge({required this.assetPath});
+  const _SidebarLogoBadge({required this.assetPath, required this.size});
 
   final String assetPath;
+  final double size;
 
   @override
   Widget build(BuildContext context) {
     return SizedBox(
       key: const Key('home_sidebar_logo'),
-      width: 36,
-      height: 36,
+      width: size,
+      height: size,
       child: Image.asset(
         assetPath,
         fit: BoxFit.contain,

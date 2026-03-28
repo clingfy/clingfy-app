@@ -1,10 +1,11 @@
 import 'dart:async';
 
-import 'package:clingfy/ui/theme/app_shell_tokens.dart';
+import 'package:clingfy/app/home/home_actions.dart';
+import 'package:clingfy/app/home/home_desktop_pane_dimensions.dart';
+import 'package:clingfy/app/home/home_ui_state.dart';
+import 'package:clingfy/app/home/preview/widgets/video_timeline.dart';
 import 'package:clingfy/app/home/recording/countdown_controller.dart';
 import 'package:clingfy/app/home/recording/recording_controller.dart';
-import 'package:clingfy/app/home/home_actions.dart';
-import 'package:clingfy/app/home/home_ui_state.dart';
 import 'package:clingfy/app/home/widgets/countdown_overlay.dart';
 import 'package:clingfy/app/home/widgets/export_progress_dock.dart';
 import 'package:clingfy/app/home/widgets/home_left_sidebar.dart';
@@ -13,11 +14,60 @@ import 'package:clingfy/app/home/widgets/home_right_panel.dart';
 import 'package:clingfy/app/home/widgets/home_toolbar.dart';
 import 'package:clingfy/app/home/widgets/reset_preferences_action.dart';
 import 'package:clingfy/app/settings/settings_controller.dart';
-import 'package:clingfy/app/home/preview/widgets/video_timeline.dart';
+import 'package:clingfy/ui/platform/widgets/desktop_pane_layout.dart';
+import 'package:clingfy/ui/theme/app_shell_tokens.dart';
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 
-class HomeShell extends StatelessWidget {
+const DesktopPaneSpec _homeLeftPaneSpec = DesktopPaneSpec(
+  id: DesktopPaneId.homeLeftSidebar,
+  defaultWidth: HomeDesktopPaneDimensions.leftExpanded,
+  minWidth: HomeDesktopPaneDimensions.leftCollapsed,
+  maxWidth: HomeDesktopPaneDimensions.leftExpanded,
+  collapsedWidth: HomeDesktopPaneDimensions.leftCollapsed,
+  collapsible: true,
+  autoCollapsePriority: 0,
+);
+
+const DesktopPaneSpec _homeWorkspaceColumnSpec = DesktopPaneSpec(
+  id: DesktopPaneId.homeWorkspaceColumn,
+  defaultWidth: HomeDesktopPaneDimensions.innerExpandedMinWidth,
+  minWidth: HomeDesktopPaneDimensions.innerCollapsedMinWidth,
+  autoCollapseAllowed: false,
+  flex: true,
+);
+
+const DesktopPaneSpec _recordingInspectorPaneSpec = DesktopPaneSpec(
+  id: DesktopPaneId.recordingSidebar,
+  defaultWidth: HomeDesktopPaneDimensions.inspectorDefault,
+  minWidth: HomeDesktopPaneDimensions.inspectorMin,
+  maxWidth: HomeDesktopPaneDimensions.inspectorMax,
+  collapsedWidth: HomeDesktopPaneDimensions.inspectorCollapsed,
+  resizable: true,
+  collapsible: true,
+  autoCollapsePriority: 1,
+);
+
+const DesktopPaneSpec _postProcessingInspectorPaneSpec = DesktopPaneSpec(
+  id: DesktopPaneId.postProcessingSidebar,
+  defaultWidth: HomeDesktopPaneDimensions.inspectorDefault,
+  minWidth: HomeDesktopPaneDimensions.inspectorMin,
+  maxWidth: HomeDesktopPaneDimensions.inspectorMax,
+  collapsedWidth: HomeDesktopPaneDimensions.inspectorCollapsed,
+  resizable: true,
+  collapsible: true,
+  autoCollapsePriority: 1,
+);
+
+const DesktopPaneSpec _homeRightWorkspacePaneSpec = DesktopPaneSpec(
+  id: DesktopPaneId.homeRightWorkspace,
+  defaultWidth: HomeDesktopPaneDimensions.workspaceMinWidth,
+  minWidth: HomeDesktopPaneDimensions.workspaceMinWidth,
+  autoCollapseAllowed: false,
+  flex: true,
+);
+
+class HomeShell extends StatefulWidget {
   const HomeShell({
     super.key,
     required this.title,
@@ -32,6 +82,38 @@ class HomeShell extends StatelessWidget {
   final HomeUiState uiState;
   final SettingsController settingsController;
   final CountdownController countdownController;
+
+  @override
+  State<HomeShell> createState() => _HomeShellState();
+}
+
+class _HomeShellState extends State<HomeShell> {
+  late final DesktopPaneController _paneController;
+
+  @override
+  void initState() {
+    super.initState();
+    _paneController = DesktopPaneController(
+      initialLayout: widget.uiState.paneLayout,
+    );
+  }
+
+  @override
+  void didUpdateWidget(covariant HomeShell oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    if (_paneController.layout != widget.uiState.paneLayout) {
+      _paneController.applyPersistedLayout(widget.uiState.paneLayout);
+    }
+  }
+
+  void _persistPaneLayout() {
+    unawaited(widget.actions.persistPaneLayout(_paneController.layout));
+  }
+
+  void _togglePane(DesktopPaneSpec spec) {
+    _paneController.togglePaneCollapsed(spec);
+    _persistPaneLayout();
+  }
 
   @override
   Widget build(BuildContext context) {
@@ -56,6 +138,13 @@ class HomeShell extends StatelessWidget {
     final showTimelineBar = context.select<RecordingController, bool>(
       (r) => r.showTimelineBar,
     );
+    final showPreviewShell = context.select<RecordingController, bool>(
+      (r) => r.showPreviewShell,
+    );
+
+    final activeInspectorSpec = showPreviewShell
+        ? _postProcessingInspectorPaneSpec
+        : _recordingInspectorPaneSpec;
 
     return DecoratedBox(
       decoration: BoxDecoration(color: tokens.outerBackground),
@@ -74,95 +163,204 @@ class HomeShell extends StatelessWidget {
                   ),
                   child: Padding(
                     padding: const EdgeInsets.all(kEditorShellInnerPadding),
-                    child: Row(
-                      crossAxisAlignment: CrossAxisAlignment.stretch,
-                      children: [
-                        HomeLeftSidebar(
-                          uiState: uiState,
-                          onOpenSettings: () {
-                            unawaited(actions.openSettings(context));
-                          },
-                          onOpenHelp: () {
-                            unawaited(actions.openAbout(context));
-                          },
-                          onResetPreferences: () {
-                            unawaited(confirmResetPreferences(context));
-                          },
-                        ),
-                        const SizedBox(width: kEditorShellGap),
-                        Expanded(
-                          child: Column(
-                            key: const Key('home_workspace_column'),
-                            children: [
-                              HomeToolbar(
-                                title: title,
-                                isRecording: isRecording,
-                                isPaused: isPaused,
-                                uiState: uiState,
-                                onExport: () {
-                                  unawaited(actions.exportFromUi(context));
+                    child: LayoutBuilder(
+                      builder: (context, constraints) {
+                        final forceCompactLeft =
+                            constraints.maxWidth <
+                            HomeDesktopPaneDimensions.autoCompactThreshold;
+                        final needsVerticalScroll =
+                            constraints.maxHeight <
+                            HomeDesktopPaneDimensions.shellMinHeight;
+
+                        Widget shell = SizedBox(
+                          height: needsVerticalScroll
+                              ? HomeDesktopPaneDimensions.shellMinHeight
+                              : constraints.maxHeight,
+                          child: DesktopSplitLayout(
+                            key: const Key('home_shell_outer_pane_layout'),
+                            controller: _paneController,
+                            gap: HomeDesktopPaneDimensions.outerGap,
+                            minHeight: HomeDesktopPaneDimensions.shellMinHeight,
+                            forcedCollapsedPaneIds: forceCompactLeft
+                                ? const <DesktopPaneId>{
+                                    DesktopPaneId.homeLeftSidebar,
+                                  }
+                                : const <DesktopPaneId>{},
+                            onLayoutCommitted: (_) => _persistPaneLayout(),
+                            panes: [
+                              DesktopPaneSlot(
+                                spec: _homeLeftPaneSpec,
+                                builder: (context, panePresentation) {
+                                  return HomeLeftSidebar(
+                                    uiState: widget.uiState,
+                                    panePresentation: panePresentation,
+                                    onOpenSettings: () {
+                                      unawaited(
+                                        widget.actions.openSettings(context),
+                                      );
+                                    },
+                                    onOpenHelp: () {
+                                      unawaited(
+                                        widget.actions.openAbout(context),
+                                      );
+                                    },
+                                    onResetPreferences: () {
+                                      unawaited(
+                                        confirmResetPreferences(context),
+                                      );
+                                    },
+                                    onToggleCollapsed: () =>
+                                        _togglePane(_homeLeftPaneSpec),
+                                  );
                                 },
-                                onOpenSystemSettings:
-                                    actions.openSystemSettings,
-                                onClearMessage: actions.clearToolbarErrors,
                               ),
-                              const SizedBox(height: kEditorShellGap),
-                              Expanded(
-                                child: Row(
-                                  crossAxisAlignment:
-                                      CrossAxisAlignment.stretch,
-                                  children: [
-                                    HomeOptionsPanel(
-                                      isRecording: isRecording,
-                                      uiState: uiState,
-                                      actions: actions,
-                                      settingsController: settingsController,
-                                    ),
-                                    const SizedBox(width: kEditorShellGap),
-                                    HomeRightPanel(
-                                      isRecording: isRecording,
-                                      isPaused: isPaused,
-                                      isBusy: isBusy,
-                                      canPause: canPause,
-                                      canResume: canResume,
-                                      onToggleRecording: () async {
-                                        unawaited(
-                                          actions.toggleRecording(context),
-                                        );
-                                      },
-                                      onPauseRecording: () {
-                                        unawaited(
-                                          actions.recordingController
-                                              .pauseRecording(),
-                                        );
-                                      },
-                                      onResumeRecording: () {
-                                        unawaited(
-                                          actions.recordingController
-                                              .resumeRecording(),
-                                        );
-                                      },
-                                      onClosePreview: () {
-                                        unawaited(
-                                          actions.closePreview(context),
-                                        );
-                                      },
-                                    ),
-                                  ],
-                                ),
+                              DesktopPaneSlot(
+                                spec: _homeWorkspaceColumnSpec,
+                                builder: (context, _) {
+                                  return Column(
+                                    key: const Key('home_workspace_column'),
+                                    children: [
+                                      HomeToolbar(
+                                        title: widget.title,
+                                        isRecording: isRecording,
+                                        isPaused: isPaused,
+                                        uiState: widget.uiState,
+                                        onExport: () {
+                                          unawaited(
+                                            widget.actions.exportFromUi(
+                                              context,
+                                            ),
+                                          );
+                                        },
+                                        onOpenSystemSettings:
+                                            widget.actions.openSystemSettings,
+                                        onClearMessage:
+                                            widget.actions.clearToolbarErrors,
+                                      ),
+                                      const SizedBox(
+                                        height:
+                                            HomeDesktopPaneDimensions.innerGap,
+                                      ),
+                                      Expanded(
+                                        child: DesktopSplitLayout(
+                                          key: Key(
+                                            'home_shell_inner_pane_layout_${activeInspectorSpec.id.name}',
+                                          ),
+                                          controller: _paneController,
+                                          gap: HomeDesktopPaneDimensions
+                                              .innerGap,
+                                          minHeight: HomeDesktopPaneDimensions
+                                              .workspaceMinHeight,
+                                          onLayoutCommitted: (_) =>
+                                              _persistPaneLayout(),
+                                          panes: [
+                                            DesktopPaneSlot(
+                                              spec: activeInspectorSpec,
+                                              builder:
+                                                  (context, panePresentation) {
+                                                    return HomeOptionsPanel(
+                                                      isRecording: isRecording,
+                                                      showPreviewShell:
+                                                          showPreviewShell,
+                                                      uiState: widget.uiState,
+                                                      actions: widget.actions,
+                                                      settingsController: widget
+                                                          .settingsController,
+                                                      panePresentation:
+                                                          panePresentation,
+                                                      onToggleCollapsed: () =>
+                                                          _togglePane(
+                                                            activeInspectorSpec,
+                                                          ),
+                                                    );
+                                                  },
+                                            ),
+                                            DesktopPaneSlot(
+                                              spec: _homeRightWorkspacePaneSpec,
+                                              builder: (context, _) {
+                                                return ConstrainedBox(
+                                                  constraints: const BoxConstraints(
+                                                    minWidth:
+                                                        HomeDesktopPaneDimensions
+                                                            .workspaceMinWidth,
+                                                    minHeight:
+                                                        HomeDesktopPaneDimensions
+                                                            .workspaceMinHeight,
+                                                  ),
+                                                  child: HomeRightPanel(
+                                                    isRecording: isRecording,
+                                                    isPaused: isPaused,
+                                                    isBusy: isBusy,
+                                                    canPause: canPause,
+                                                    canResume: canResume,
+                                                    onToggleRecording: () async {
+                                                      unawaited(
+                                                        widget.actions
+                                                            .toggleRecording(
+                                                              context,
+                                                            ),
+                                                      );
+                                                    },
+                                                    onPauseRecording: () {
+                                                      unawaited(
+                                                        widget
+                                                            .actions
+                                                            .recordingController
+                                                            .pauseRecording(),
+                                                      );
+                                                    },
+                                                    onResumeRecording: () {
+                                                      unawaited(
+                                                        widget
+                                                            .actions
+                                                            .recordingController
+                                                            .resumeRecording(),
+                                                      );
+                                                    },
+                                                    onClosePreview: () {
+                                                      unawaited(
+                                                        widget.actions
+                                                            .closePreview(
+                                                              context,
+                                                            ),
+                                                      );
+                                                    },
+                                                  ),
+                                                );
+                                              },
+                                            ),
+                                          ],
+                                        ),
+                                      ),
+                                      if (showTimelineBar) ...[
+                                        const SizedBox(
+                                          height: HomeDesktopPaneDimensions
+                                              .innerGap,
+                                        ),
+                                        TimelineBar(
+                                          onClose: () {
+                                            unawaited(
+                                              widget.actions.closePreview(
+                                                context,
+                                              ),
+                                            );
+                                          },
+                                        ),
+                                      ],
+                                    ],
+                                  );
+                                },
                               ),
-                              if (showTimelineBar) ...[
-                                const SizedBox(height: kEditorShellGap),
-                                TimelineBar(
-                                  onClose: () {
-                                    unawaited(actions.closePreview(context));
-                                  },
-                                ),
-                              ],
                             ],
                           ),
-                        ),
-                      ],
+                        );
+
+                        if (needsVerticalScroll) {
+                          shell = SingleChildScrollView(child: shell);
+                        }
+
+                        return shell;
+                      },
                     ),
                   ),
                 ),
@@ -172,7 +370,9 @@ class HomeShell extends StatelessWidget {
           ),
         ),
         floatingActionButtonLocation: FloatingActionButtonLocation.centerFloat,
-        floatingActionButton: CountdownOverlay(controller: countdownController),
+        floatingActionButton: CountdownOverlay(
+          controller: widget.countdownController,
+        ),
       ),
     );
   }

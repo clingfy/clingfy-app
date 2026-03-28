@@ -105,6 +105,8 @@ class PostProcessingSidebar extends StatelessWidget {
   final bool cursorAvailable;
   final bool hasAudio;
   final String? disabledMessage;
+  final double availableWidth;
+  final bool isCompact;
   final double audioGainDb;
   final double audioVolume;
   final bool autoNormalizeOnExport;
@@ -136,6 +138,8 @@ class PostProcessingSidebar extends StatelessWidget {
     super.key,
     required this.selectedIndex,
     required this.isProcessing,
+    this.availableWidth = double.infinity,
+    this.isCompact = false,
     required this.layoutPreset,
     required this.resolutionPreset,
     required this.fitMode,
@@ -181,6 +185,16 @@ class PostProcessingSidebar extends StatelessWidget {
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
     final colorScheme = theme.colorScheme;
+    final useCompactSpacing = isCompact || availableWidth <= 320;
+    final horizontalPadding = useCompactSpacing
+        ? 10.0
+        : AppSidebarTokens.contentHorizontalPadding;
+    final headerTopPadding = useCompactSpacing
+        ? 10.0
+        : AppSidebarTokens.headerTopPadding;
+    final headerBottomPadding = useCompactSpacing
+        ? 8.0
+        : AppSidebarTokens.headerBottomPadding;
     final headerStyle = (theme.textTheme.titleMedium ?? const TextStyle())
         .copyWith(
           color: colorScheme.onSurface,
@@ -197,11 +211,11 @@ class PostProcessingSidebar extends StatelessWidget {
           children: [
             Container(
               key: const Key('post_sidebar_header'),
-              padding: const EdgeInsets.fromLTRB(
-                AppSidebarTokens.contentHorizontalPadding,
-                AppSidebarTokens.headerTopPadding,
-                AppSidebarTokens.contentHorizontalPadding,
-                AppSidebarTokens.headerBottomPadding,
+              padding: EdgeInsets.fromLTRB(
+                horizontalPadding,
+                headerTopPadding,
+                horizontalPadding,
+                headerBottomPadding,
               ),
               decoration: BoxDecoration(
                 border: Border(
@@ -214,9 +228,7 @@ class PostProcessingSidebar extends StatelessWidget {
             ),
             Expanded(
               child: ListView(
-                padding: const EdgeInsets.symmetric(
-                  horizontal: AppSidebarTokens.contentHorizontalPadding,
-                ),
+                padding: EdgeInsets.symmetric(horizontal: horizontalPadding),
                 children: [
                   const SizedBox(
                     key: Key('post_sidebar_top_spacer'),
