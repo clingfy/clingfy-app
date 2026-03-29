@@ -2288,9 +2288,38 @@ final class ScreenRecorderFacade: NSObject {
         }
         result(final.path)
       case .failure(let err):
-        result(FlutterError(code: "EXPORT_ERROR", message: err.localizedDescription, details: nil))
+        result(self.flutterExportFailure(from: err))
       }
     }
+  }
+
+  private func flutterExportFailure(from error: Error) -> FlutterError {
+    let nsError = error as NSError
+    if let nativeErrorCode = nsError.userInfo["nativeErrorCode"] as? String,
+      nativeErrorCode == NativeErrorCode.advancedCameraExportFailed
+    {
+      var details: [String: Any] = [:]
+      if let stage = nsError.userInfo["stage"] as? String {
+        details["stage"] = stage
+      }
+      if let reason = nsError.userInfo["reason"] as? String {
+        details["reason"] = reason
+      }
+      if let context = nsError.userInfo["context"] {
+        details["context"] = context
+      }
+      return FlutterError(
+        code: nativeErrorCode,
+        message: nsError.localizedDescription,
+        details: details.isEmpty ? nil : details
+      )
+    }
+
+    return FlutterError(
+      code: NativeErrorCode.exportError,
+      message: error.localizedDescription,
+      details: nil
+    )
   }
 
   func cancelExport() {

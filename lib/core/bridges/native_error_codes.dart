@@ -41,6 +41,8 @@ abstract class NativeErrorCode {
   static const String outputUrlError = 'OUTPUT_URL_ERROR';
   static const String exportError = 'EXPORT_ERROR';
   static const String exportInputMissing = 'EXPORT_INPUT_MISSING';
+  static const String advancedCameraExportFailed =
+      'ADVANCED_CAMERA_EXPORT_FAILED';
 
   // File errors
   static const String videoFileMissing = 'VIDEO_FILE_MISSING';

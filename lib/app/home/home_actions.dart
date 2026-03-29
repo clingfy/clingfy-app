@@ -2,6 +2,7 @@ import 'dart:async';
 
 import 'package:clingfy/core/overlay/overlay_mode.dart';
 import 'package:clingfy/core/bridges/native_bar_action.dart';
+import 'package:clingfy/core/bridges/native_error_codes.dart';
 import 'package:clingfy/app/home/recording/countdown_controller.dart';
 import 'package:clingfy/core/devices/device_controller.dart';
 import 'package:clingfy/commercial/licensing/license_controller.dart';
@@ -261,6 +262,9 @@ class HomeActions {
 
       final message = e.code == 'EXPORT_INPUT_MISSING'
           ? l10n.errExportInputMissing
+          : e.code == NativeErrorCode.advancedCameraExportFailed
+          ? (e.message ??
+              'Advanced camera styling could not be rendered for export.')
           : l10n.errExportError(e.message ?? 'Unknown error');
 
       uiState.setNotice(

@@ -907,20 +907,27 @@ final class CompositionBuilder {
     parentLayer.frame = bounds
     parentLayer.backgroundColor = NSColor.clear.cgColor
 
+    let backgroundLayer = CALayer()
+    backgroundLayer.frame = bounds
+    backgroundLayer.backgroundColor = NSColor.clear.cgColor
+    parentLayer.addSublayer(backgroundLayer)
+
     let cameraContainerLayer = CALayer()
     cameraContainerLayer.frame = bounds
     cameraContainerLayer.backgroundColor = NSColor.clear.cgColor
     parentLayer.addSublayer(cameraContainerLayer)
+
+    let maskPath = CameraLayoutResolver.maskPath(in: bounds, params: params)
 
     let videoLayer = CALayer()
     videoLayer.frame = bounds
     videoLayer.backgroundColor = NSColor.clear.cgColor
     cameraContainerLayer.addSublayer(videoLayer)
 
-    let maskPath = CameraLayoutResolver.maskPath(in: bounds, params: params)
     let maskLayer = CAShapeLayer()
     maskLayer.frame = bounds
     maskLayer.path = maskPath
+    maskLayer.fillColor = NSColor.white.cgColor
     cameraContainerLayer.mask = maskLayer
 
     let borderWidth = max(0.0, CGFloat(params.borderWidth))
@@ -937,7 +944,7 @@ final class CompositionBuilder {
     applyCameraShadow(to: cameraContainerLayer, params: params, path: maskPath)
 
     composition.animationTool = AVVideoCompositionCoreAnimationTool(
-      postProcessingAsVideoLayer: videoLayer,
+      postProcessingAsVideoLayers: [videoLayer],
       in: parentLayer
     )
   }
