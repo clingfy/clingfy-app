@@ -81,6 +81,12 @@ final class LetterboxExporter {
     return try generator.copyCGImage(at: validationSampleTime(for: asset), actualTime: nil)
   }
 
+  private func orientedSize(for asset: AVAsset) -> CGSize? {
+    guard let track = asset.tracks(withMediaType: .video).first else { return nil }
+    let rect = CGRect(origin: .zero, size: track.naturalSize).applying(track.preferredTransform)
+    return CGSize(width: abs(rect.width), height: abs(rect.height))
+  }
+
   private func analyzeFrameContent(
     _ image: CGImage,
     ignoreTransparentPixels: Bool
@@ -166,17 +172,49 @@ final class LetterboxExporter {
     }
   }
 
+  private func bestMetrics(
+    from image: CGImage,
+    cropRect: CGRect?,
+    canvasSize: CGSize,
+    ignoreTransparentPixels: Bool
+  ) -> FrameContentMetrics? {
+    let candidateImages: [CGImage]
+    if let cropRect {
+      candidateImages = croppedImageVariants(
+        from: image,
+        cropRect: cropRect,
+        canvasSize: canvasSize
+      )
+    } else {
+      candidateImages = [image]
+    }
+
+    return candidateImages
+      .compactMap { analyzeFrameContent($0, ignoreTransparentPixels: ignoreTransparentPixels) }
+      .max(by: { lhs, rhs in
+        lhs.nonBlackVisibleRatio < rhs.nonBlackVisibleRatio
+      })
+  }
+
   private func validateStyledCameraIntermediate(
     rawCameraAsset: AVAsset,
-    styledCameraAsset: AVAsset
+    styledCameraAsset: AVAsset,
+    placementSourceRect: CGRect?
   ) -> NSError? {
     do {
       let rawImage = try sampleFrameImage(asset: rawCameraAsset)
       let styledImage = try sampleFrameImage(asset: styledCameraAsset)
+      let styledCanvasSize = orientedSize(for: styledCameraAsset)
+        ?? CGSize(width: styledImage.width, height: styledImage.height)
 
       guard
         let rawMetrics = analyzeFrameContent(rawImage, ignoreTransparentPixels: false),
-        let styledMetrics = analyzeFrameContent(styledImage, ignoreTransparentPixels: true)
+        let styledMetrics = bestMetrics(
+          from: styledImage,
+          cropRect: placementSourceRect,
+          canvasSize: styledCanvasSize,
+          ignoreTransparentPixels: true
+        )
       else {
         return makeAdvancedCameraExportError(
           stage: .styledIntermediateValidation,
@@ -225,7 +263,8 @@ final class LetterboxExporter {
     styledCameraAsset: AVAsset,
     finalExportAsset: AVAsset,
     canvasSize: CGSize,
-    cameraParams: CameraCompositionParams
+    cameraParams: CameraCompositionParams,
+    placementSourceRect: CGRect?
   ) -> NSError? {
     let resolution = CameraLayoutResolver.effectiveFrame(
       canvasSize: canvasSize,
@@ -236,8 +275,15 @@ final class LetterboxExporter {
     do {
       let styledImage = try sampleFrameImage(asset: styledCameraAsset)
       let finalImage = try sampleFrameImage(asset: finalExportAsset)
+      let styledCanvasSize = orientedSize(for: styledCameraAsset)
+        ?? CGSize(width: styledImage.width, height: styledImage.height)
 
-      guard let styledMetrics = analyzeFrameContent(styledImage, ignoreTransparentPixels: true) else {
+      guard let styledMetrics = bestMetrics(
+        from: styledImage,
+        cropRect: placementSourceRect,
+        canvasSize: styledCanvasSize,
+        ignoreTransparentPixels: true
+      ) else {
         return makeAdvancedCameraExportError(
           stage: .finalOutputValidation,
           reason: "The final export validator could not analyze the styled camera frame."
@@ -556,7 +602,8 @@ final class LetterboxExporter {
     func beginFinalExport(
       resolvedCameraInputURL: URL?,
       progressRange: ClosedRange<Double>,
-      cameraAssetIsPreStyled: Bool
+      cameraAssetIsPreStyled: Bool,
+      cameraPlacementSourceRect: CGRect?
     ) {
       let cameraAsset = resolvedCameraInputURL.map(AVAsset.init(url:))
 
@@ -567,7 +614,8 @@ final class LetterboxExporter {
           params: params,
           cameraParams: cameraParams,
           cursorRecording: cursorRecording,
-          cameraAssetIsPreStyled: cameraAssetIsPreStyled
+          cameraAssetIsPreStyled: cameraAssetIsPreStyled,
+          cameraPlacementSourceRect: cameraPlacementSourceRect
         )
       else {
         cleanupTemporaryArtifacts()
@@ -683,7 +731,8 @@ final class LetterboxExporter {
               styledCameraAsset: AVAsset(url: resolvedCameraInputURL),
               finalExportAsset: AVAsset(url: finalURL),
               canvasSize: target,
-              cameraParams: cameraParams
+              cameraParams: cameraParams,
+              placementSourceRect: cameraPlacementSourceRect
             )
           {
             NativeLogger.e(
@@ -728,7 +777,8 @@ final class LetterboxExporter {
 
           if let validationError = self?.validateStyledCameraIntermediate(
             rawCameraAsset: cameraAsset,
-            styledCameraAsset: AVAsset(url: prepared.url)
+            styledCameraAsset: AVAsset(url: prepared.url),
+            placementSourceRect: prepared.placementSourceRect
           ) {
             NativeLogger.e(
               "Export",
@@ -746,13 +796,15 @@ final class LetterboxExporter {
             context: [
               "path": prepared.url.path,
               "cameraAssetIsPreStyled": prepared.cameraAssetIsPreStyled,
+              "placementSourceRect": NSStringFromRect(prepared.placementSourceRect ?? .zero),
             ]
           )
 
           beginFinalExport(
             resolvedCameraInputURL: prepared.url,
             progressRange: 0.35...1.0,
-            cameraAssetIsPreStyled: prepared.cameraAssetIsPreStyled
+            cameraAssetIsPreStyled: prepared.cameraAssetIsPreStyled,
+            cameraPlacementSourceRect: prepared.placementSourceRect
           )
 
         case .failure(let error):
@@ -766,7 +818,8 @@ final class LetterboxExporter {
     beginFinalExport(
       resolvedCameraInputURL: cameraInputURL,
       progressRange: 0.0...1.0,
-      cameraAssetIsPreStyled: false
+      cameraAssetIsPreStyled: false,
+      cameraPlacementSourceRect: nil
     )
   }
 
@@ -964,11 +1017,13 @@ final class LetterboxExporter {
 
   func _testValidateStyledCameraIntermediate(
     rawCameraURL: URL,
-    styledCameraURL: URL
+    styledCameraURL: URL,
+    placementSourceRect: CGRect? = nil
   ) -> NSError? {
     validateStyledCameraIntermediate(
       rawCameraAsset: AVAsset(url: rawCameraURL),
-      styledCameraAsset: AVAsset(url: styledCameraURL)
+      styledCameraAsset: AVAsset(url: styledCameraURL),
+      placementSourceRect: placementSourceRect
     )
   }
 
@@ -976,13 +1031,15 @@ final class LetterboxExporter {
     styledCameraURL: URL,
     finalExportURL: URL,
     canvasSize: CGSize,
-    cameraParams: CameraCompositionParams
+    cameraParams: CameraCompositionParams,
+    placementSourceRect: CGRect? = nil
   ) -> NSError? {
     validateFinalStyledCameraExport(
       styledCameraAsset: AVAsset(url: styledCameraURL),
       finalExportAsset: AVAsset(url: finalExportURL),
       canvasSize: canvasSize,
-      cameraParams: cameraParams
+      cameraParams: cameraParams,
+      placementSourceRect: placementSourceRect
     )
   }
 #endif

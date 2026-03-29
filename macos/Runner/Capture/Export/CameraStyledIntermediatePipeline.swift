@@ -29,6 +29,7 @@ struct CameraPreparedIntermediate {
   let url: URL
   let cameraAssetIsPreStyled: Bool
   let temporaryArtifacts: [URL]
+  let placementSourceRect: CGRect?
 }
 
 final class CameraStyledIntermediatePipeline {
@@ -36,6 +37,11 @@ final class CameraStyledIntermediatePipeline {
     let opacity: CGFloat
     let radius: CGFloat
     let offset: CGSize
+  }
+
+  private struct StyledCameraRenderResult {
+    let url: URL
+    let placementSourceRect: CGRect
   }
 
   private let chromaKeyRenderer = CameraChromaKeyRenderer()
@@ -75,7 +81,8 @@ final class CameraStyledIntermediatePipeline {
             CameraPreparedIntermediate(
               url: inputURL,
               cameraAssetIsPreStyled: false,
-              temporaryArtifacts: []
+              temporaryArtifacts: [],
+              placementSourceRect: nil
             )
           )
         )
@@ -132,13 +139,14 @@ final class CameraStyledIntermediatePipeline {
         }
       ) { result in
         switch result {
-        case .success(let styledURL):
+        case .success(let styledResult):
           finish(
             .success(
               CameraPreparedIntermediate(
-                url: styledURL,
+                url: styledResult.url,
                 cameraAssetIsPreStyled: true,
-                temporaryArtifacts: temporaryArtifacts
+                temporaryArtifacts: temporaryArtifacts,
+                placementSourceRect: styledResult.placementSourceRect
               )
             )
           )
@@ -302,13 +310,14 @@ final class CameraStyledIntermediatePipeline {
 
   private func makeStyledShadowImage(
     size: CGSize,
+    frameRect: CGRect,
     params: CameraCompositionParams,
     colorSpace: CGColorSpace,
     ciContext: CIContext
   ) -> CGImage? {
     guard let style = shadowStyle(for: params.shadowPreset) else { return nil }
     let bounds = CGRect(origin: .zero, size: size)
-    let maskPath = CameraLayoutResolver.maskPath(in: bounds, params: params)
+    let maskPath = CameraLayoutResolver.maskPath(in: frameRect, params: params)
     guard
       let maskImage = makePathImage(size: size, draw: { context, _ in
         context.setFillColor(NSColor.white.cgColor)
@@ -341,13 +350,13 @@ final class CameraStyledIntermediatePipeline {
 
   private func makeStyledBorderImage(
     size: CGSize,
+    frameRect: CGRect,
     params: CameraCompositionParams
   ) -> CGImage? {
     let borderWidth = max(0.0, CGFloat(params.borderWidth))
     guard borderWidth > 0 else { return nil }
 
-    let bounds = CGRect(origin: .zero, size: size)
-    let maskPath = CameraLayoutResolver.maskPath(in: bounds, params: params)
+    let maskPath = CameraLayoutResolver.maskPath(in: frameRect, params: params)
     let borderColor = cameraColor(from: params.borderColorArgb).cgColor
 
     return makePathImage(size: size, draw: { context, _ in
@@ -365,7 +374,7 @@ final class CameraStyledIntermediatePipeline {
     params: CameraCompositionParams,
     isCancelled: @escaping () -> Bool,
     onProgress: ((Double) -> Void)?,
-    completion: @escaping (Result<URL, Error>) -> Void
+    completion: @escaping (Result<StyledCameraRenderResult, Error>) -> Void
   ) {
     guard params.visible, params.layoutPreset != .hidden else {
       DispatchQueue.main.async {
@@ -410,10 +419,27 @@ final class CameraStyledIntermediatePipeline {
       return
     }
 
-    let renderSize = CGSize(
+    let baseFrameSize = CGSize(
       width: max(1.0, ceil(resolution.frame.width)),
       height: max(1.0, ceil(resolution.frame.height))
     )
+    let unshiftedBaseFrameRect = CGRect(origin: .zero, size: baseFrameSize)
+    let paddedRenderBounds: CGRect = {
+      guard let style = shadowStyle(for: params.shadowPreset) else {
+        return unshiftedBaseFrameRect
+      }
+
+      let blurPadding = ceil(style.radius * 2.0)
+      let shadowBleedRect = unshiftedBaseFrameRect
+        .insetBy(dx: -blurPadding, dy: -blurPadding)
+        .offsetBy(dx: style.offset.width, dy: style.offset.height)
+      return unshiftedBaseFrameRect.union(shadowBleedRect).integral
+    }()
+    let placementSourceRect = unshiftedBaseFrameRect.offsetBy(
+      dx: -paddedRenderBounds.minX,
+      dy: -paddedRenderBounds.minY
+    )
+    let renderSize = paddedRenderBounds.size
     let renderBounds = CGRect(origin: .zero, size: renderSize)
     let colorSpace = CGColorSpaceCreateDeviceRGB()
     let ciContext = CIContext(options: [.cacheIntermediates: false])
@@ -421,17 +447,22 @@ final class CameraStyledIntermediatePipeline {
     let sourceSize = orientedSize(for: videoTrack)
     let fittedDrawRect = CameraLayoutResolver.contentRect(
       for: sourceSize,
-      in: renderBounds,
+      in: placementSourceRect,
       contentMode: params.contentMode
     )
-    let maskPath = CameraLayoutResolver.maskPath(in: renderBounds, params: params)
+    let maskPath = CameraLayoutResolver.maskPath(in: placementSourceRect, params: params)
     let shadowImage = makeStyledShadowImage(
       size: renderSize,
+      frameRect: placementSourceRect,
       params: params,
       colorSpace: colorSpace,
       ciContext: ciContext
     )
-    let borderImage = makeStyledBorderImage(size: renderSize, params: params)
+    let borderImage = makeStyledBorderImage(
+      size: renderSize,
+      frameRect: placementSourceRect,
+      params: params
+    )
 
     let reader: AVAssetReader
     let writer: AVAssetWriter
@@ -516,7 +547,7 @@ final class CameraStyledIntermediatePipeline {
     let renderQueue = DispatchQueue(label: "Clingfy.StyledCameraRender")
     var completed = false
 
-    func finish(_ result: Result<URL, Error>) {
+    func finish(_ result: Result<StyledCameraRenderResult, Error>) {
       guard !completed else { return }
       completed = true
       DispatchQueue.main.async {
@@ -605,7 +636,14 @@ final class CameraStyledIntermediatePipeline {
 
             if writer.status == .completed {
               onProgress?(1.0)
-              finish(.success(outputURL))
+              finish(
+                .success(
+                  StyledCameraRenderResult(
+                    url: outputURL,
+                    placementSourceRect: placementSourceRect
+                  )
+                )
+              )
             } else {
               finish(
                 .failure(

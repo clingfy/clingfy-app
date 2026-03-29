@@ -779,6 +779,15 @@ final class LetterboxExporterTests: XCTestCase {
       prepared.temporaryArtifacts.forEach { try? FileManager.default.removeItem(at: $0) }
     }
     XCTAssertTrue(prepared.cameraAssetIsPreStyled)
+    let placementSourceRect = try XCTUnwrap(prepared.placementSourceRect)
+    let renderedSize = try orientedVideoSize(url: prepared.url)
+    let baseResolution = CameraLayoutResolver.effectiveFrame(
+      canvasSize: CGSize(width: 640, height: 360),
+      params: params
+    )
+    XCTAssertGreaterThan(renderedSize.height, placementSourceRect.height)
+    XCTAssertEqual(placementSourceRect.width, ceil(baseResolution.frame.width), accuracy: 1.0)
+    XCTAssertEqual(placementSourceRect.height, ceil(baseResolution.frame.height), accuracy: 1.0)
 
     let ratio = try nonBlackRatio(
       for: sampleFrameImage(url: prepared.url),
@@ -789,7 +798,8 @@ final class LetterboxExporterTests: XCTestCase {
     XCTAssertNil(
       exporter._testValidateStyledCameraIntermediate(
         rawCameraURL: cameraURL,
-        styledCameraURL: prepared.url
+        styledCameraURL: prepared.url,
+        placementSourceRect: placementSourceRect
       )
     )
   }
@@ -1391,6 +1401,39 @@ final class LetterboxExporterTests: XCTestCase {
     let fittedRect = builder._testFittedRect(
       for: track,
       sourceSize: CGSize(width: 80, height: 80),
+      destinationRect: destinationRect,
+      fitMode: "fit",
+      mirror: false
+    )
+
+    XCTAssertEqual(fittedRect.minX, destinationRect.minX, accuracy: 1.0)
+    XCTAssertEqual(fittedRect.minY, destinationRect.minY, accuracy: 1.0)
+    XCTAssertEqual(fittedRect.width, destinationRect.width, accuracy: 1.0)
+    XCTAssertEqual(fittedRect.height, destinationRect.height, accuracy: 1.0)
+  }
+
+  func testSourceRectFittedTransformPlacesInnerStyledFrameIntoDestinationRect() throws {
+    let tempDir = makeTemporaryDirectory()
+    defer { try? FileManager.default.removeItem(at: tempDir) }
+
+    let cameraURL = tempDir.appendingPathComponent("camera.mov")
+    try makeSolidColorVideo(
+      url: cameraURL,
+      size: CGSize(width: 160, height: 140),
+      durationSeconds: 1.0,
+      color: .systemRed
+    )
+
+    let asset = AVAsset(url: cameraURL)
+    let track = try XCTUnwrap(asset.tracks(withMediaType: .video).first)
+    let sourceRect = CGRect(x: 24, y: 30, width: 80, height: 60)
+    let destinationRect = CGRect(x: 48, y: 72, width: 120, height: 90)
+
+    let builder = CompositionBuilder()
+    let fittedRect = builder._testFittedRect(
+      for: track,
+      sourceSize: CGSize(width: 160, height: 140),
+      sourceRect: sourceRect,
       destinationRect: destinationRect,
       fitMode: "fit",
       mirror: false
@@ -2152,7 +2195,8 @@ final class LetterboxExporterTests: XCTestCase {
       styledCameraURL: styledURL,
       finalExportURL: finalURL,
       canvasSize: CGSize(width: 640, height: 360),
-      cameraParams: params
+      cameraParams: params,
+      placementSourceRect: CGRect(x: 16, y: 16, width: 96, height: 96)
     )
 
     XCTAssertEqual(error?.userInfo["stage"] as? String, "final_output_validation")
@@ -2450,6 +2494,13 @@ final class LetterboxExporterTests: XCTestCase {
     let generator = AVAssetImageGenerator(asset: asset)
     generator.appliesPreferredTrackTransform = true
     return try generator.copyCGImage(at: CMTime(seconds: time, preferredTimescale: 600), actualTime: nil)
+  }
+
+  private func orientedVideoSize(url: URL) throws -> CGSize {
+    let asset = AVAsset(url: url)
+    let track = try XCTUnwrap(asset.tracks(withMediaType: .video).first)
+    let rect = CGRect(origin: .zero, size: track.naturalSize).applying(track.preferredTransform)
+    return CGSize(width: abs(rect.width), height: abs(rect.height))
   }
 
   private func nonBlackRatio(

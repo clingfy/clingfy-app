@@ -499,7 +499,8 @@ final class CompositionBuilder {
     params: CompositionParams,
     cameraParams: CameraCompositionParams?,
     cursorRecording: CursorRecording?,
-    cameraAssetIsPreStyled: Bool = false
+    cameraAssetIsPreStyled: Bool = false,
+    cameraPlacementSourceRect: CGRect? = nil
   ) -> ExportCompositionResult? {
     if let cameraAsset,
       let cameraParams,
@@ -512,7 +513,8 @@ final class CompositionBuilder {
         params: params,
         cameraParams: cameraParams,
         cursorRecording: cursorRecording,
-        cameraAssetIsPreStyled: cameraAssetIsPreStyled
+        cameraAssetIsPreStyled: cameraAssetIsPreStyled,
+        cameraPlacementSourceRect: cameraPlacementSourceRect
       )
     }
 
@@ -707,7 +709,8 @@ final class CompositionBuilder {
     params: CompositionParams,
     cameraParams: CameraCompositionParams,
     cursorRecording: CursorRecording?,
-    cameraAssetIsPreStyled: Bool
+    cameraAssetIsPreStyled: Bool,
+    cameraPlacementSourceRect: CGRect?
   ) -> ExportCompositionResult? {
     guard let screenTrack = screenAsset.tracks(withMediaType: .video).first else { return nil }
 
@@ -852,6 +855,7 @@ final class CompositionBuilder {
             fittedTransform(
               for: cameraTrack,
               sourceSize: cameraSourceSize,
+              sourceRect: cameraAssetIsPreStyled ? cameraPlacementSourceRect : nil,
               destinationRect: animatedCamera.frame,
               fitMode: cameraFitMode,
               mirror: cameraAssetIsPreStyled ? false : cameraParams.mirror
@@ -959,6 +963,7 @@ final class CompositionBuilder {
   private func fittedTransform(
     for track: AVAssetTrack,
     sourceSize: CGSize,
+    sourceRect: CGRect? = nil,
     destinationRect: CGRect,
     fitMode: String,
     mirror: Bool
@@ -967,10 +972,15 @@ final class CompositionBuilder {
     let normalizedPreferredTransform = track.preferredTransform.concatenating(
       CGAffineTransform(translationX: -orientedRect.minX, y: -orientedRect.minY)
     )
-    let normalizedSourceSize = CGSize(
+    let fullNormalizedSourceSize = CGSize(
       width: max(abs(orientedRect.width), sourceSize.width),
       height: max(abs(orientedRect.height), sourceSize.height)
     )
+    let effectiveSourceRect = (sourceRect?.standardized).flatMap { rect in
+      guard rect.width > 0.0, rect.height > 0.0 else { return nil }
+      return rect
+    } ?? CGRect(origin: .zero, size: fullNormalizedSourceSize)
+    let normalizedSourceSize = effectiveSourceRect.size
     let scaleX = destinationRect.width / max(normalizedSourceSize.width, 1.0)
     let scaleY = destinationRect.height / max(normalizedSourceSize.height, 1.0)
     let scale = fitMode == "fill" ? max(scaleX, scaleY) : min(scaleX, scaleY)
@@ -980,6 +990,14 @@ final class CompositionBuilder {
     let offsetY = destinationRect.minY + ((destinationRect.height - renderedHeight) / 2.0)
 
     var transform = normalizedPreferredTransform
+    if sourceRect != nil {
+      transform = transform.concatenating(
+        CGAffineTransform(
+          translationX: -effectiveSourceRect.minX,
+          y: -effectiveSourceRect.minY
+        )
+      )
+    }
     if mirror {
       transform = transform
         .concatenating(CGAffineTransform(translationX: normalizedSourceSize.width, y: 0))
@@ -993,15 +1011,20 @@ final class CompositionBuilder {
   func _testFittedRect(
     for track: AVAssetTrack,
     sourceSize: CGSize,
+    sourceRect: CGRect? = nil,
     destinationRect: CGRect,
     fitMode: String,
     mirror: Bool
   ) -> CGRect {
-    CGRect(origin: .zero, size: track.naturalSize)
+    ((sourceRect?.standardized).flatMap { rect in
+      guard rect.width > 0.0, rect.height > 0.0 else { return nil }
+      return rect
+    } ?? CGRect(origin: .zero, size: track.naturalSize))
       .applying(
         fittedTransform(
           for: track,
           sourceSize: sourceSize,
+          sourceRect: sourceRect,
           destinationRect: destinationRect,
           fitMode: fitMode,
           mirror: mirror
