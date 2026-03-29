@@ -81,6 +81,7 @@ struct CameraLayoutResolution: Equatable {
   let shouldRender: Bool
 }
 
+// Resolves the base camera frame and mask geometry shared by preview and export.
 enum CameraLayoutResolver {
   static func resolve(
     canvasSize: CGSize,

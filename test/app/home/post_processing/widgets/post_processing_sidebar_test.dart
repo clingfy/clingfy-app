@@ -287,41 +287,8 @@ void main() {
     expect(find.text('No mic audio track found'), findsOneWidget);
   });
 
-  testWidgets('camera section shows chroma-key-only preview notice', (
-    tester,
-  ) async {
-    await tester.pumpWidget(
-      buildTestApp(
-        hasCameraAsset: true,
-        cameraExportCapabilities: const CameraExportCapabilities(
-          shapeMask: true,
-          cornerRadius: true,
-          border: true,
-          shadow: true,
-          chromaKey: false,
-        ),
-        cameraState: const CameraCompositionState.hidden().copyWith(
-          visible: true,
-          layoutPreset: CameraLayoutPreset.overlayBottomRight,
-        ),
-      ),
-    );
-    await tester.pumpAndSettle();
-
-    expect(
-      find.text(
-        'Camera chroma key remains preview-only right now. Export supports shape, rounded corners, border, shadow, layout, size, opacity, mirror, and fit/fill.',
-      ),
-      findsOneWidget,
-    );
-    expect(
-      find.text('No separate camera asset was recorded for this clip.'),
-      findsNothing,
-    );
-  });
-
   testWidgets(
-    'camera section hides chroma-key preview notice when export supports it',
+    'camera section does not show deprecated preview-only camera notice',
     (tester) async {
       await tester.pumpWidget(
         buildTestApp(
@@ -331,7 +298,7 @@ void main() {
             cornerRadius: true,
             border: true,
             shadow: true,
-            chromaKey: true,
+            chromaKey: false,
           ),
           cameraState: const CameraCompositionState.hidden().copyWith(
             visible: true,
@@ -345,6 +312,10 @@ void main() {
         find.text(
           'Camera chroma key remains preview-only right now. Export supports shape, rounded corners, border, shadow, layout, size, opacity, mirror, and fit/fill.',
         ),
+        findsNothing,
+      );
+      expect(
+        find.text('No separate camera asset was recorded for this clip.'),
         findsNothing,
       );
     },

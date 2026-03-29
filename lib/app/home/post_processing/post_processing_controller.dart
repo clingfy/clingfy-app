@@ -134,8 +134,6 @@ class PostProcessingController extends ChangeNotifier {
   CameraCompositionState? get cameraState => _cameraState;
   CameraExportCapabilities get cameraExportCapabilities =>
       _cameraExportCapabilities;
-  bool get supportsAdvancedCameraExportStyling =>
-      _cameraExportCapabilities.supportsAdvancedStyling;
 
   // Computed error state
   bool get hasError => _player.blockingError != null;

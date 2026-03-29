@@ -84,8 +84,6 @@ enum CameraZoomBehavior: String, Codable {
     switch rawValue {
     case CameraZoomBehavior.scaleWithScreenZoom.rawValue:
       return .scaleWithScreenZoom
-    case "scaleDownWhenScreenZooms":
-      return .fixed
     default:
       return .fixed
     }

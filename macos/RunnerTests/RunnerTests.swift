@@ -104,7 +104,7 @@ final class RecordingMetadataTests: XCTestCase {
     XCTAssertEqual(decoded.editorSeed, editorSeed)
   }
 
-  func testLegacyV2EditorSeedDefaultsCameraZoomFields() throws {
+  func testLegacyV2EditorSeedDefaultsMissingCameraZoomAndAnimationFields() throws {
     let metadata = RecordingMetadata.create(
       rawURL: URL(fileURLWithPath: "/tmp/recording.mov"),
       displayMode: .explicitID,
@@ -141,7 +141,7 @@ final class RecordingMetadataTests: XCTestCase {
     let encoded = try JSONEncoder().encode(metadata)
     var json = try XCTUnwrap(JSONSerialization.jsonObject(with: encoded) as? [String: Any])
     var editorSeed = try XCTUnwrap(json["editorSeed"] as? [String: Any])
-    editorSeed["cameraZoomBehavior"] = "scaleDownWhenScreenZooms"
+    editorSeed.removeValue(forKey: "cameraZoomBehavior")
     editorSeed.removeValue(forKey: "cameraZoomScaleMultiplier")
     json["editorSeed"] = editorSeed
 
@@ -589,6 +589,48 @@ final class CameraAnimationTimelineBuilderTests: XCTestCase {
     XCTAssertTrue(resolved.shouldBypass)
     XCTAssertEqual(resolved.frame, transformed.frame)
     XCTAssertEqual(resolved.opacity, params.opacity, accuracy: 0.0001)
+  }
+
+  func testResolvePresentationComposesZoomAndAnimationBuilders() {
+    var params = makeParams()
+    params.zoomBehavior = .scaleWithScreenZoom
+    params.zoomScaleMultiplier = 0.35
+    params.introPreset = .pop
+    params.zoomEmphasisPreset = .pulse
+    params.zoomEmphasisStrength = 0.10
+    let canvasSize = CGSize(width: 1000, height: 600)
+    let base = CameraLayoutResolver.effectiveFrame(canvasSize: canvasSize, params: params)
+
+    let transformed = CameraTransformTimelineBuilder.resolve(
+      baseResolution: base,
+      cameraParams: params,
+      screenZoom: 1.8
+    )
+    let stepwise = CameraAnimationTimelineBuilder.resolve(
+      canvasSize: canvasSize,
+      baseResolution: base,
+      transformedResolution: transformed,
+      cameraParams: params,
+      time: 0.12,
+      totalDuration: 2.0,
+      zoomState: CameraAnimationZoomState(isActive: true, localTime: 0.125)
+    )
+    let composed = CameraAnimationTimelineBuilder.resolvePresentation(
+      canvasSize: canvasSize,
+      baseResolution: base,
+      cameraParams: params,
+      screenZoom: 1.8,
+      time: 0.12,
+      totalDuration: 2.0,
+      zoomState: CameraAnimationZoomState(isActive: true, localTime: 0.125)
+    )
+
+    XCTAssertEqual(composed.frame.origin.x, stepwise.frame.origin.x, accuracy: 0.0001)
+    XCTAssertEqual(composed.frame.origin.y, stepwise.frame.origin.y, accuracy: 0.0001)
+    XCTAssertEqual(composed.frame.width, stepwise.frame.width, accuracy: 0.0001)
+    XCTAssertEqual(composed.frame.height, stepwise.frame.height, accuracy: 0.0001)
+    XCTAssertEqual(composed.opacity, stepwise.opacity, accuracy: 0.0001)
+    XCTAssertEqual(composed.additionalScale, stepwise.additionalScale, accuracy: 0.0001)
   }
 
   private func makeParams() -> CameraCompositionParams {
@@ -1603,6 +1645,155 @@ final class LetterboxExporterTests: XCTestCase {
     XCTAssertTrue(leftovers.isEmpty)
   }
 
+  func testCameraPrepassCleansTemporaryArtifactsOnCancellation() throws {
+    let tempDir = makeTemporaryDirectory()
+    defer { try? FileManager.default.removeItem(at: tempDir) }
+
+    let cameraURL = tempDir.appendingPathComponent("camera-\(UUID().uuidString).mov")
+    try makeGreenScreenSubjectVideo(
+      url: cameraURL,
+      size: CGSize(width: 128, height: 128),
+      durationSeconds: 1.0
+    )
+
+    let params = CameraCompositionParams(
+      visible: true,
+      layoutPreset: .overlayTopRight,
+      normalizedCanvasCenter: nil,
+      sizeFactor: 0.2,
+      shape: .square,
+      cornerRadius: 0.0,
+      opacity: 1.0,
+      mirror: false,
+      contentMode: .fill,
+      zoomBehavior: .fixed,
+      borderWidth: 0.0,
+      borderColorArgb: nil,
+      shadowPreset: 0,
+      chromaKeyEnabled: true,
+      chromaKeyStrength: 0.25,
+      chromaKeyColorArgb: 0xFF00FF00
+    )
+
+    let pipeline = CameraStyledIntermediatePipeline()
+    let renderExpectation = expectation(description: "camera prepass cancelled")
+    var renderResult: Result<CameraPreparedIntermediate, Error>?
+
+    pipeline.prepareIntermediate(
+      inputURL: cameraURL,
+      canvasSize: CGSize(width: 640, height: 360),
+      params: params,
+      fpsHint: 30,
+      isCancelled: { true },
+      onProgress: nil
+    ) { result in
+      renderResult = result
+      renderExpectation.fulfill()
+    }
+
+    wait(for: [renderExpectation], timeout: 30.0)
+    XCTAssertThrowsError(try XCTUnwrap(renderResult).get())
+    XCTAssertTrue(temporaryCameraArtifacts(for: cameraURL).isEmpty)
+  }
+
+  func testCameraPrepassCleansTemporaryArtifactsOnFailure() throws {
+    let tempDir = makeTemporaryDirectory()
+    defer { try? FileManager.default.removeItem(at: tempDir) }
+
+    let cameraURL = tempDir.appendingPathComponent("camera-\(UUID().uuidString).mov")
+    try Data("not-a-real-video".utf8).write(to: cameraURL)
+
+    let params = CameraCompositionParams(
+      visible: true,
+      layoutPreset: .overlayTopRight,
+      normalizedCanvasCenter: nil,
+      sizeFactor: 0.2,
+      shape: .squircle,
+      cornerRadius: 0.15,
+      opacity: 1.0,
+      mirror: false,
+      contentMode: .fill,
+      zoomBehavior: .fixed,
+      borderWidth: 0.0,
+      borderColorArgb: nil,
+      shadowPreset: 2,
+      chromaKeyEnabled: false,
+      chromaKeyStrength: 0.4,
+      chromaKeyColorArgb: nil
+    )
+
+    let pipeline = CameraStyledIntermediatePipeline()
+    let renderExpectation = expectation(description: "camera prepass failed")
+    var renderResult: Result<CameraPreparedIntermediate, Error>?
+
+    pipeline.prepareIntermediate(
+      inputURL: cameraURL,
+      canvasSize: CGSize(width: 640, height: 360),
+      params: params,
+      fpsHint: 30,
+      isCancelled: { false },
+      onProgress: nil
+    ) { result in
+      renderResult = result
+      renderExpectation.fulfill()
+    }
+
+    wait(for: [renderExpectation], timeout: 30.0)
+    XCTAssertThrowsError(try XCTUnwrap(renderResult).get())
+    XCTAssertTrue(temporaryCameraArtifacts(for: cameraURL).isEmpty)
+  }
+
+  func testScreenOnlyExportProducesMp4WithoutCameraArtifacts() throws {
+    let tempDir = makeTemporaryDirectory()
+    defer { try? FileManager.default.removeItem(at: tempDir) }
+
+    let screenURL = tempDir.appendingPathComponent("screen.mov")
+    try makeSolidColorVideo(
+      url: screenURL,
+      size: CGSize(width: 320, height: 180),
+      durationSeconds: 1.0,
+      color: .systemBlue
+    )
+
+    let exporter = LetterboxExporter()
+    let exportExpectation = expectation(description: "screen-only export")
+    var exportResult: Result<URL, Error>?
+
+    exporter.export(
+      inputURL: screenURL,
+      cameraInputURL: nil,
+      target: CGSize(width: 640, height: 360),
+      padding: 0.0,
+      cornerRadius: 0.0,
+      backgroundColor: nil,
+      backgroundImagePath: nil,
+      cursorSize: 1.0,
+      showCursor: false,
+      zoomEnabled: false,
+      zoomFactor: 1.5,
+      followStrength: 0.15,
+      fpsHint: 30,
+      outputURL: tempDir.appendingPathComponent("screen-only.mp4"),
+      format: "mp4",
+      codec: "h264",
+      bitrate: "auto",
+      fitMode: "fit",
+      audioGainDb: 0.0,
+      audioVolumePercent: 100.0,
+      autoNormalizeOnExport: false,
+      targetLoudnessDbfs: -16.0,
+      cameraParams: nil
+    ) { result in
+      exportResult = result
+      exportExpectation.fulfill()
+    }
+
+    wait(for: [exportExpectation], timeout: 30.0)
+    let finalURL = try XCTUnwrap(try exportResult?.get())
+    XCTAssertEqual(finalURL.pathExtension.lowercased(), "mp4")
+    XCTAssertTrue(FileManager.default.fileExists(atPath: finalURL.path))
+  }
+
   func testStyledCameraIntermediateValidationFailsForBlackStyledAsset() throws {
     let tempDir = makeTemporaryDirectory()
     defer { try? FileManager.default.removeItem(at: tempDir) }
@@ -1718,6 +1909,17 @@ final class LetterboxExporterTests: XCTestCase {
       && abs(lhs.d - rhs.d) <= epsilon
       && abs(lhs.tx - rhs.tx) <= epsilon
       && abs(lhs.ty - rhs.ty) <= epsilon
+  }
+
+  private func temporaryCameraArtifacts(for sourceURL: URL) -> [URL] {
+    let sourceStem = sourceURL.deletingPathExtension().lastPathComponent
+    return (try? FileManager.default.contentsOfDirectory(
+      at: AppPaths.tempRoot(),
+      includingPropertiesForKeys: nil
+    ).filter { url in
+      let name = url.lastPathComponent
+      return name.contains(sourceStem) && (name.contains(".keyed.") || name.contains(".styled."))
+    }) ?? []
   }
 
   private func makeSolidColorVideo(
@@ -2653,7 +2855,7 @@ final class ScreenRecorderFacadeSeparateCameraTests: XCTestCase {
 
     let payload = try XCTUnwrap(scenePayload as? [String: Any])
     XCTAssertEqual(payload["cameraPath"] as? String, cameraURL.path)
-    XCTAssertEqual(payload["supportsAdvancedCameraExportStyling"] as? Bool, true)
+    XCTAssertNil(payload["supportsAdvancedCameraExportStyling"])
     let capabilities = try XCTUnwrap(payload["cameraExportCapabilities"] as? [String: Bool])
     XCTAssertEqual(capabilities["shapeMask"], true)
     XCTAssertEqual(capabilities["cornerRadius"], true)

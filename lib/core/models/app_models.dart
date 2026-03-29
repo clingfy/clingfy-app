@@ -36,8 +36,6 @@ enum CameraZoomBehavior {
     switch (raw) {
       case 'scaleWithScreenZoom':
         return CameraZoomBehavior.scaleWithScreenZoom;
-      case 'scaleDownWhenScreenZooms':
-        return CameraZoomBehavior.fixed;
       default:
         return CameraZoomBehavior.fixed;
     }
@@ -349,9 +347,6 @@ class CameraExportCapabilities {
   final bool shadow;
   final bool chromaKey;
 
-  bool get supportsAdvancedStyling =>
-      shapeMask && cornerRadius && border && shadow && chromaKey;
-
   factory CameraExportCapabilities.fromMap(Map<dynamic, dynamic>? raw) {
     if (raw == null) {
       return const CameraExportCapabilities.allSupported();
@@ -362,16 +357,6 @@ class CameraExportCapabilities {
       border: raw['border'] as bool? ?? true,
       shadow: raw['shadow'] as bool? ?? true,
       chromaKey: raw['chromaKey'] as bool? ?? true,
-    );
-  }
-
-  factory CameraExportCapabilities.fromLegacyFlag(bool supported) {
-    return CameraExportCapabilities(
-      shapeMask: supported,
-      cornerRadius: supported,
-      border: supported,
-      shadow: supported,
-      chromaKey: supported,
     );
   }
 }
@@ -392,14 +377,9 @@ class RecordingSceneInfo {
   final CameraCompositionState? camera;
   final CameraExportCapabilities cameraExportCapabilities;
 
-  bool get supportsAdvancedCameraExportStyling =>
-      cameraExportCapabilities.supportsAdvancedStyling;
-
   bool get hasCameraAsset => cameraPath != null && cameraPath!.isNotEmpty;
 
   factory RecordingSceneInfo.fromMap(Map<dynamic, dynamic> raw) {
-    final legacySupportsAdvancedStyling =
-        raw['supportsAdvancedCameraExportStyling'] as bool? ?? true;
     return RecordingSceneInfo(
       screenPath: raw['screenPath']?.toString() ?? '',
       cameraPath: raw['cameraPath']?.toString(),
@@ -411,9 +391,7 @@ class RecordingSceneInfo {
           ? CameraExportCapabilities.fromMap(
               raw['cameraExportCapabilities'] as Map,
             )
-          : CameraExportCapabilities.fromLegacyFlag(
-              legacySupportsAdvancedStyling,
-            ),
+          : const CameraExportCapabilities.allSupported(),
     );
   }
 }

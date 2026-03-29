@@ -2,6 +2,7 @@ import AVFoundation
 import AppKit
 import QuartzCore
 
+// Orchestrates export stages; camera-only pixel preprocessing stays in the pre-pass pipeline.
 final class LetterboxExporter {
   private struct FrameContentMetrics {
     let totalPixels: Int
@@ -38,12 +39,14 @@ final class LetterboxExporter {
   }
 
   private func registerTemporaryArtifact(_ url: URL) {
-    temporaryArtifacts.append(url)
+    if !temporaryArtifacts.contains(url) {
+      temporaryArtifacts.append(url)
+    }
   }
 
   private func cleanupTemporaryArtifacts() {
     let fileManager = FileManager.default
-    for url in temporaryArtifacts {
+    for url in Set(temporaryArtifacts) {
       if fileManager.fileExists(atPath: url.path) {
         try? fileManager.removeItem(at: url)
         NativeLogger.d(

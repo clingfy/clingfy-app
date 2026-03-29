@@ -1965,10 +1965,6 @@ final class ScreenRecorderFacade: NSObject {
     let shadow: Bool
     let chromaKey: Bool
 
-    var supportsAllAdvancedStyling: Bool {
-      shapeMask && cornerRadius && border && shadow && chromaKey
-    }
-
     var payload: [String: Bool] {
       [
         "shapeMask": shapeMask,
@@ -1998,10 +1994,6 @@ final class ScreenRecorderFacade: NSObject {
       shadow: true,
       chromaKey: true
     )
-  }
-
-  private func supportsAdvancedCameraExportStyling(for mediaSources: PreviewMediaSources) -> Bool {
-    cameraExportCapabilities(for: mediaSources).supportsAllAdvancedStyling
   }
 
   private func exportSanitizedCameraParams(
@@ -2045,7 +2037,6 @@ final class ScreenRecorderFacade: NSObject {
 
     var payload: [String: Any] = [
       "screenPath": mediaSources.screenPath,
-      "supportsAdvancedCameraExportStyling": exportCapabilities.supportsAllAdvancedStyling,
       "cameraExportCapabilities": exportCapabilities.payload,
     ]
     if let cameraPath = mediaSources.cameraPath {

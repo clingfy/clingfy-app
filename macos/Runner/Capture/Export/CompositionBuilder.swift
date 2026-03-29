@@ -4,6 +4,7 @@ import AudioToolbox
 import MediaToolbox
 import QuartzCore
 
+// Builds the final screen-plus-camera composition; camera-only pixel work must be pre-rendered.
 extension NSImage {
   func cgImageForLayer() -> CGImage? {
     var rect = NSRect(origin: .zero, size: size)
@@ -800,22 +801,19 @@ final class CompositionBuilder {
               )
             ]
             : presentationSamples
-          let cameraTransforms = cameraPresentation.map { sample in
-            let transformedCamera = CameraTransformTimelineBuilder.resolve(
-              baseResolution: cameraResolution,
-              cameraParams: cameraParams,
-              screenZoom: sample.zoom
-            )
-            let animatedCamera = CameraAnimationTimelineBuilder.resolve(
+          let resolvedCameraPresentation = cameraPresentation.map { sample in
+            CameraAnimationTimelineBuilder.resolvePresentation(
               canvasSize: target,
               baseResolution: cameraResolution,
-              transformedResolution: transformedCamera,
               cameraParams: cameraParams,
+              screenZoom: sample.zoom,
               time: sample.time,
               totalDuration: effectiveDuration,
               zoomState: sample.zoomState
             )
-            return fittedTransform(
+          }
+          let cameraTransforms = resolvedCameraPresentation.map { animatedCamera in
+            fittedTransform(
               for: cameraTrack,
               sourceSize: cameraSourceSize,
               destinationRect: animatedCamera.frame,
@@ -823,22 +821,8 @@ final class CompositionBuilder {
               mirror: cameraAssetIsPreStyled ? false : cameraParams.mirror
             )
           }
-          let cameraOpacities = cameraPresentation.map { sample in
-            let transformedCamera = CameraTransformTimelineBuilder.resolve(
-              baseResolution: cameraResolution,
-              cameraParams: cameraParams,
-              screenZoom: sample.zoom
-            )
-            let animatedCamera = CameraAnimationTimelineBuilder.resolve(
-              canvasSize: target,
-              baseResolution: cameraResolution,
-              transformedResolution: transformedCamera,
-              cameraParams: cameraParams,
-              time: sample.time,
-              totalDuration: effectiveDuration,
-              zoomState: sample.zoomState
-            )
-            return Float(max(0.0, min(1.0, animatedCamera.opacity)))
+          let cameraOpacities = resolvedCameraPresentation.map { animatedCamera in
+            Float(max(0.0, min(1.0, animatedCamera.opacity)))
           }
 
           if let firstTransform = cameraTransforms.first {

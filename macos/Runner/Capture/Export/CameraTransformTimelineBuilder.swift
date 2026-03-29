@@ -1,6 +1,7 @@
 import CoreGraphics
 import Foundation
 
+// Resolves camera-only time-varying geometry that belongs in the final composition stage.
 struct CameraTransformResolution: Equatable {
   let frame: CGRect
   let scale: CGFloat

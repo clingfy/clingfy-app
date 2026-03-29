@@ -96,14 +96,6 @@ class PostCameraSection extends StatelessWidget {
             variant: AppInlineNoticeVariant.info,
           ),
         ] else ...[
-          if (!cameraExportCapabilities.chromaKey) ...[
-            const SizedBox(height: AppSidebarTokens.compactGap),
-            const AppInlineNotice(
-              message:
-                  'Camera chroma key remains preview-only right now. Export supports shape, rounded corners, border, shadow, layout, size, opacity, mirror, and fit/fill.',
-              variant: AppInlineNoticeVariant.info,
-            ),
-          ],
           const SizedBox(height: AppSidebarTokens.optionsSubgroupGap),
           AppFormRow(
             label: l10n.position,

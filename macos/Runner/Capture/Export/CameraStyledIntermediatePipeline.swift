@@ -1,6 +1,7 @@
 import AVFoundation
 import AppKit
 
+// Owns camera-only pixel preprocessing before the final two-source composition places the camera.
 enum AdvancedCameraExportStage: String {
   case styledIntermediateBuild = "styled_intermediate_build"
   case styledIntermediateValidation = "styled_intermediate_validation"

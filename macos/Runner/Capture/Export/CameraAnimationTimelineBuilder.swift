@@ -1,6 +1,7 @@
 import CoreGraphics
 import Foundation
 
+// Resolves camera presentation effects after the base layout and zoom-size geometry are known.
 struct CameraAnimationZoomState: Equatable {
   let isActive: Bool
   let localTime: Double?
@@ -19,6 +20,31 @@ struct CameraAnimationResolution: Equatable {
 enum CameraAnimationTimelineBuilder {
   private static let slideMargin: CGFloat = 1.0
   private static let pulseFrequencyHz = 2.0
+
+  static func resolvePresentation(
+    canvasSize: CGSize,
+    baseResolution: CameraLayoutResolution,
+    cameraParams: CameraCompositionParams,
+    screenZoom: CGFloat,
+    time: Double,
+    totalDuration: Double,
+    zoomState: CameraAnimationZoomState = .inactive
+  ) -> CameraAnimationResolution {
+    let transformed = CameraTransformTimelineBuilder.resolve(
+      baseResolution: baseResolution,
+      cameraParams: cameraParams,
+      screenZoom: screenZoom
+    )
+    return resolve(
+      canvasSize: canvasSize,
+      baseResolution: baseResolution,
+      transformedResolution: transformed,
+      cameraParams: cameraParams,
+      time: time,
+      totalDuration: totalDuration,
+      zoomState: zoomState
+    )
+  }
 
   static func resolve(
     canvasSize: CGSize,

@@ -1612,21 +1612,16 @@ final class InlinePreviewView: NSView {
       canvasSize: canvasSize,
       params: params
     )
-    let transformed = CameraTransformTimelineBuilder.resolve(
-      baseResolution: baseResolution,
-      cameraParams: params,
-      screenZoom: screenZoom
-    )
     guard baseResolution.shouldRender else {
       cameraContainerLayer.isHidden = true
       return
     }
 
-    let animated = CameraAnimationTimelineBuilder.resolve(
+    let animated = CameraAnimationTimelineBuilder.resolvePresentation(
       canvasSize: canvasSize,
       baseResolution: baseResolution,
-      transformedResolution: transformed,
       cameraParams: params,
+      screenZoom: screenZoom,
       time: time,
       totalDuration: player?.currentItem?.duration.seconds ?? 0,
       zoomState: resolvedCameraAnimationZoomState(time: time)
