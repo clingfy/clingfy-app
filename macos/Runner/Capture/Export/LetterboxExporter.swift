@@ -607,6 +607,45 @@ final class LetterboxExporter {
     ) {
       let cameraAsset = resolvedCameraInputURL.map(AVAsset.init(url:))
 
+      if CameraPlacementDebug.enabled {
+        var context: [String: Any] = [
+          "resolvedCameraInputURL": resolvedCameraInputURL?.path ?? "nil",
+          "cameraAssetIsPreStyled": cameraAssetIsPreStyled,
+        ]
+        context.merge(
+          CameraPlacementDebug.sizeContext(prefix: "target", size: target),
+          uniquingKeysWith: { _, new in new }
+        )
+        context.merge(
+          CameraPlacementDebug.rectContext(
+            prefix: "cameraPlacementSourceRect",
+            rect: cameraPlacementSourceRect
+          ),
+          uniquingKeysWith: { _, new in new }
+        )
+        if let cameraParams {
+          context["cameraLayoutPreset"] = cameraParams.layoutPreset.rawValue
+          context["cameraSizeFactor"] = cameraParams.sizeFactor
+          context["cameraZoomBehavior"] = cameraParams.zoomBehavior.rawValue
+          context["cameraZoomScaleMultiplier"] = cameraParams.zoomScaleMultiplier
+          context["cameraShape"] = cameraParams.shape.rawValue
+          context["cameraShadowPreset"] = cameraParams.shadowPreset
+          context.merge(
+            CameraPlacementDebug.pointContext(
+              prefix: "cameraNormalizedCanvasCenter",
+              point: cameraParams.normalizedCanvasCenter
+            ),
+            uniquingKeysWith: { _, new in new }
+          )
+        }
+
+        NativeLogger.d(
+          "CameraPlacementDbg",
+          "Final export camera request",
+          context: context
+        )
+      }
+
       guard
         let comp = builder.buildExport(
           asset: asset,

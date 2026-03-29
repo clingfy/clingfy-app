@@ -1627,6 +1627,36 @@ final class InlinePreviewView: NSView {
       zoomState: resolvedCameraAnimationZoomState(time: time)
     )
 
+    if CameraPlacementDebug.shouldLogPreview(tick: debugTick) {
+      var context: [String: Any] = [
+        "time": time,
+        "screenZoom": screenZoom,
+        "opacity": animated.opacity,
+        "layoutPreset": params.layoutPreset.rawValue,
+      ]
+      context.merge(
+        CameraPlacementDebug.rectContext(prefix: "baseCameraFrame", rect: baseResolution.frame),
+        uniquingKeysWith: { _, new in new }
+      )
+      context.merge(
+        CameraPlacementDebug.rectContext(prefix: "resolvedCameraFrame", rect: animated.frame),
+        uniquingKeysWith: { _, new in new }
+      )
+      context.merge(
+        CameraPlacementDebug.pointContext(
+          prefix: "normalizedCanvasCenter",
+          point: params.normalizedCanvasCenter
+        ),
+        uniquingKeysWith: { _, new in new }
+      )
+
+      NativeLogger.d(
+        "CameraPlacementDbg",
+        "Preview camera placement sample",
+        context: context
+      )
+    }
+
     let frame = animated.frame.integral
     cameraContainerLayer.isHidden = false
     cameraContainerLayer.frame = frame

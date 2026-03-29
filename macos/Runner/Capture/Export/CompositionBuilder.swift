@@ -824,7 +824,57 @@ final class CompositionBuilder {
           let cameraFitMode: String =
             cameraAssetIsPreStyled ? "fit" : (cameraParams.contentMode == .fit ? "fit" : "fill")
           let cameraSourceSize = orientedSize(cameraTrack)
+          let fullNormalizedCameraSourceSize = fullNormalizedSourceSize(
+            for: cameraTrack,
+            sourceSize: cameraSourceSize
+          )
+          let rawPlacementSourceRect = cameraAssetIsPreStyled ? cameraPlacementSourceRect?.standardized : nil
+          let normalizedPlacementSourceRect = rawPlacementSourceRect.flatMap {
+            normalizedTrackSourceRect(from: $0, fullSourceSize: fullNormalizedCameraSourceSize)
+          }
           let effectiveDuration = min(insertionDuration.seconds, screenAsset.duration.seconds)
+
+          if CameraPlacementDebug.enabled {
+            var context: [String: Any] = [
+              "cameraAssetIsPreStyled": cameraAssetIsPreStyled,
+              "cameraFitMode": cameraFitMode,
+              "zoomSamplesCount": exportZoomSamples.count,
+              "zoomApplicationMode": "screenOverlayOnly",
+            ]
+            context.merge(
+              CameraPlacementDebug.rectContext(prefix: "screenContentRect", rect: screenContentRect),
+              uniquingKeysWith: { _, new in new }
+            )
+            context.merge(
+              CameraPlacementDebug.rectContext(prefix: "baseCameraFrame", rect: cameraResolution.frame),
+              uniquingKeysWith: { _, new in new }
+            )
+            context.merge(
+              CameraPlacementDebug.sizeContext(prefix: "cameraSourceSize", size: cameraSourceSize),
+              uniquingKeysWith: { _, new in new }
+            )
+            context.merge(
+              CameraPlacementDebug.rectContext(
+                prefix: "rawPlacementSourceRect",
+                rect: rawPlacementSourceRect
+              ),
+              uniquingKeysWith: { _, new in new }
+            )
+            context.merge(
+              CameraPlacementDebug.rectContext(
+                prefix: "normalizedPlacementSourceRect",
+                rect: normalizedPlacementSourceRect
+              ),
+              uniquingKeysWith: { _, new in new }
+            )
+
+            NativeLogger.d(
+              "CameraPlacementDbg",
+              "Two-source export camera build",
+              context: context
+            )
+          }
+
           let presentationSamples = buildCameraPresentationSamples(
             params: params,
             cameraParams: cameraParams,
@@ -851,8 +901,9 @@ final class CompositionBuilder {
               zoomState: sample.zoomState
             )
           }
-          let cameraTransforms = resolvedCameraPresentation.map { animatedCamera in
-            fittedTransform(
+          var didLogFirstActiveZoomSample = false
+          let cameraTransforms = resolvedCameraPresentation.enumerated().map { idx, animatedCamera in
+            let transform = fittedTransform(
               for: cameraTrack,
               sourceSize: cameraSourceSize,
               sourceRect: cameraAssetIsPreStyled ? cameraPlacementSourceRect : nil,
@@ -860,6 +911,61 @@ final class CompositionBuilder {
               fitMode: cameraFitMode,
               mirror: cameraAssetIsPreStyled ? false : cameraParams.mirror
             )
+            let sample = cameraPresentation[idx]
+            let isFirstActiveZoomSample = sample.zoomState.isActive && !didLogFirstActiveZoomSample
+            if isFirstActiveZoomSample {
+              didLogFirstActiveZoomSample = true
+            }
+            if CameraPlacementDebug.shouldLogExport(
+              sampleIndex: idx,
+              sampleCount: resolvedCameraPresentation.count,
+              isFirstActiveZoomSample: isFirstActiveZoomSample
+            ) {
+              var context: [String: Any] = [
+                "sampleIndex": idx,
+                "time": sample.time,
+                "screenZoom": sample.zoom,
+                "zoomActive": sample.zoomState.isActive,
+                "zoomLocalTime": sample.zoomState.localTime ?? NSNull(),
+                "opacity": animatedCamera.opacity,
+              ]
+              context.merge(
+                CameraPlacementDebug.rectContext(prefix: "baseCameraFrame", rect: cameraResolution.frame),
+                uniquingKeysWith: { _, new in new }
+              )
+              context.merge(
+                CameraPlacementDebug.rectContext(
+                  prefix: "resolvedCameraFrame",
+                  rect: animatedCamera.frame
+                ),
+                uniquingKeysWith: { _, new in new }
+              )
+              context.merge(
+                CameraPlacementDebug.rectContext(
+                  prefix: "rawPlacementSourceRect",
+                  rect: rawPlacementSourceRect
+                ),
+                uniquingKeysWith: { _, new in new }
+              )
+              context.merge(
+                CameraPlacementDebug.rectContext(
+                  prefix: "normalizedPlacementSourceRect",
+                  rect: normalizedPlacementSourceRect
+                ),
+                uniquingKeysWith: { _, new in new }
+              )
+              context.merge(
+                CameraPlacementDebug.transformContext(prefix: "cameraTransform", transform: transform),
+                uniquingKeysWith: { _, new in new }
+              )
+
+              NativeLogger.d(
+                "CameraPlacementDbg",
+                "Export camera placement sample",
+                context: context
+              )
+            }
+            return transform
           }
           let cameraOpacities = resolvedCameraPresentation.map { animatedCamera in
             Float(max(0.0, min(1.0, animatedCamera.opacity)))
@@ -972,13 +1078,10 @@ final class CompositionBuilder {
     let normalizedPreferredTransform = track.preferredTransform.concatenating(
       CGAffineTransform(translationX: -orientedRect.minX, y: -orientedRect.minY)
     )
-    let fullNormalizedSourceSize = CGSize(
-      width: max(abs(orientedRect.width), sourceSize.width),
-      height: max(abs(orientedRect.height), sourceSize.height)
-    )
+    let fullNormalizedSourceSize = fullNormalizedSourceSize(for: track, sourceSize: sourceSize)
     let effectiveSourceRect = (sourceRect?.standardized).flatMap { rect in
       guard rect.width > 0.0, rect.height > 0.0 else { return nil }
-      return rect
+      return normalizedTrackSourceRect(from: rect, fullSourceSize: fullNormalizedSourceSize)
     } ?? CGRect(origin: .zero, size: fullNormalizedSourceSize)
     let normalizedSourceSize = effectiveSourceRect.size
     let scaleX = destinationRect.width / max(normalizedSourceSize.width, 1.0)
@@ -1008,6 +1111,29 @@ final class CompositionBuilder {
     return transform
   }
 
+  private func fullNormalizedSourceSize(
+    for track: AVAssetTrack,
+    sourceSize: CGSize
+  ) -> CGSize {
+    let orientedRect = CGRect(origin: .zero, size: track.naturalSize).applying(track.preferredTransform)
+    return CGSize(
+      width: max(abs(orientedRect.width), sourceSize.width),
+      height: max(abs(orientedRect.height), sourceSize.height)
+    )
+  }
+
+  private func normalizedTrackSourceRect(
+    from renderSpaceRect: CGRect,
+    fullSourceSize: CGSize
+  ) -> CGRect {
+    CGRect(
+      x: renderSpaceRect.minX,
+      y: fullSourceSize.height - renderSpaceRect.maxY,
+      width: renderSpaceRect.width,
+      height: renderSpaceRect.height
+    )
+  }
+
   func _testFittedRect(
     for track: AVAssetTrack,
     sourceSize: CGSize,
@@ -1016,9 +1142,10 @@ final class CompositionBuilder {
     fitMode: String,
     mirror: Bool
   ) -> CGRect {
-    ((sourceRect?.standardized).flatMap { rect in
+    let fullNormalizedSourceSize = fullNormalizedSourceSize(for: track, sourceSize: sourceSize)
+    return ((sourceRect?.standardized).flatMap { rect in
       guard rect.width > 0.0, rect.height > 0.0 else { return nil }
-      return rect
+      return normalizedTrackSourceRect(from: rect, fullSourceSize: fullNormalizedSourceSize)
     } ?? CGRect(origin: .zero, size: track.naturalSize))
       .applying(
         fittedTransform(

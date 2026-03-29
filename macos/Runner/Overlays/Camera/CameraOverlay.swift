@@ -57,7 +57,7 @@ class OverlayInteractiveView: NSView {
     )
 
     // Log the drag movement (throttling might be needed in high-frequency logs, but useful for debugging)
-    NativeLogger.d("OverlayView", "mouseDragged to \(newOrigin)")
+    // NativeLogger.d("OverlayView", "mouseDragged to \(newOrigin)")
 
     window.setFrameOrigin(newOrigin)
     let normalized = calculateNormalizedCenter(for: newOrigin)
@@ -744,9 +744,9 @@ final class CameraOverlay: NSObject {
         self?.customNormalizedCenter = CGPoint(x: nx, y: ny)
         self?.onMovedNormalized?(Double(nx), Double(ny))
       }
-      NativeLogger.d(
-        "CameraOverlay",
-        "User moved overlay to: \(newOrigin) (Normalized: \(String(describing: normalized)))")
+      // NativeLogger.d(
+      //   "CameraOverlay",
+      //   "User moved overlay to: \(newOrigin) (Normalized: \(String(describing: normalized)))")
     }
 
     let rootLayer = CALayer()

@@ -84,3 +84,73 @@ enum ZoomFollowParityDebug {
     )
   }
 }
+
+enum CameraPlacementDebug {
+  private static let envValue: String =
+    ProcessInfo.processInfo.environment["CLINGFY_CAMERA_PLACEMENT_DEBUG"] ?? ""
+
+  static let enabled: Bool = {
+    let normalized = envValue.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+    return normalized == "1" || normalized == "true" || normalized == "yes"
+  }()
+
+  static func shouldLogPreview(tick: Int) -> Bool {
+    enabled && (tick <= 1 || tick % 30 == 0)
+  }
+
+  static func shouldLogExport(
+    sampleIndex: Int,
+    sampleCount: Int,
+    isFirstActiveZoomSample: Bool
+  ) -> Bool {
+    enabled
+      && (
+        sampleIndex == 0
+          || sampleIndex == max(sampleCount - 1, 0)
+          || sampleIndex % 30 == 0
+          || isFirstActiveZoomSample
+      )
+  }
+
+  static func rectContext(prefix: String, rect: CGRect?) -> [String: Any] {
+    guard let rect else {
+      return ["\(prefix)Present": false]
+    }
+    return [
+      "\(prefix)Present": true,
+      "\(prefix)X": rect.origin.x,
+      "\(prefix)Y": rect.origin.y,
+      "\(prefix)Width": rect.size.width,
+      "\(prefix)Height": rect.size.height,
+    ]
+  }
+
+  static func sizeContext(prefix: String, size: CGSize) -> [String: Any] {
+    [
+      "\(prefix)Width": size.width,
+      "\(prefix)Height": size.height,
+    ]
+  }
+
+  static func pointContext(prefix: String, point: CGPoint?) -> [String: Any] {
+    guard let point else {
+      return ["\(prefix)Present": false]
+    }
+    return [
+      "\(prefix)Present": true,
+      "\(prefix)X": point.x,
+      "\(prefix)Y": point.y,
+    ]
+  }
+
+  static func transformContext(prefix: String, transform: CGAffineTransform) -> [String: Any] {
+    [
+      "\(prefix)A": transform.a,
+      "\(prefix)B": transform.b,
+      "\(prefix)C": transform.c,
+      "\(prefix)D": transform.d,
+      "\(prefix)Tx": transform.tx,
+      "\(prefix)Ty": transform.ty,
+    ]
+  }
+}

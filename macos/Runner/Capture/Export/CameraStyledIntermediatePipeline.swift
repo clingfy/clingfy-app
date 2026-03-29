@@ -424,8 +424,9 @@ final class CameraStyledIntermediatePipeline {
       height: max(1.0, ceil(resolution.frame.height))
     )
     let unshiftedBaseFrameRect = CGRect(origin: .zero, size: baseFrameSize)
+    let resolvedShadowStyle = shadowStyle(for: params.shadowPreset)
     let paddedRenderBounds: CGRect = {
-      guard let style = shadowStyle(for: params.shadowPreset) else {
+      guard let style = resolvedShadowStyle else {
         return unshiftedBaseFrameRect
       }
 
@@ -463,6 +464,40 @@ final class CameraStyledIntermediatePipeline {
       frameRect: placementSourceRect,
       params: params
     )
+
+    if CameraPlacementDebug.enabled {
+      var context: [String: Any] = [
+        "shadowPreset": params.shadowPreset,
+      ]
+      context.merge(
+        CameraPlacementDebug.sizeContext(prefix: "baseFrameSize", size: baseFrameSize),
+        uniquingKeysWith: { _, new in new }
+      )
+      context.merge(
+        CameraPlacementDebug.rectContext(prefix: "paddedRenderBounds", rect: paddedRenderBounds),
+        uniquingKeysWith: { _, new in new }
+      )
+      context.merge(
+        CameraPlacementDebug.rectContext(prefix: "placementSourceRect", rect: placementSourceRect),
+        uniquingKeysWith: { _, new in new }
+      )
+      context.merge(
+        CameraPlacementDebug.rectContext(prefix: "fittedDrawRect", rect: fittedDrawRect),
+        uniquingKeysWith: { _, new in new }
+      )
+      if let resolvedShadowStyle {
+        context["shadowOpacity"] = resolvedShadowStyle.opacity
+        context["shadowRadius"] = resolvedShadowStyle.radius
+        context["shadowOffsetX"] = resolvedShadowStyle.offset.width
+        context["shadowOffsetY"] = resolvedShadowStyle.offset.height
+      }
+
+      NativeLogger.d(
+        "CameraPlacementDbg",
+        "Styled camera intermediate geometry",
+        context: context
+      )
+    }
 
     let reader: AVAssetReader
     let writer: AVAssetWriter
