@@ -68,6 +68,8 @@
 		5B54273C2F21985F00B06BA6 /* RecordingIndicatorView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 5B54271D2F21985F00B06BA6 /* RecordingIndicatorView.swift */; };
 		5B54273D2F21985F00B06BA6 /* PreferencesStore.swift in Sources */ = {isa = PBXBuildFile; fileRef = 5B5427172F21985F00B06BA6 /* PreferencesStore.swift */; };
 		5B54273E2F21985F00B06BA6 /* LetterboxExporter.swift in Sources */ = {isa = PBXBuildFile; fileRef = 5B5426EA2F21985F00B06BA6 /* LetterboxExporter.swift */; };
+		A1B2C3D4E5F60718293A4B02 /* CameraChromaKeyRenderer.swift in Sources */ = {isa = PBXBuildFile; fileRef = A1B2C3D4E5F60718293A4B01 /* CameraChromaKeyRenderer.swift */; };
+		A1B2C3D4E5F60718293A4B04 /* CameraStyledIntermediatePipeline.swift in Sources */ = {isa = PBXBuildFile; fileRef = A1B2C3D4E5F60718293A4B03 /* CameraStyledIntermediatePipeline.swift */; };
 		5B54273F2F21985F00B06BA6 /* DisplayService.swift in Sources */ = {isa = PBXBuildFile; fileRef = 5B5427112F21985F00B06BA6 /* DisplayService.swift */; };
 		5B5427402F21985F00B06BA6 /* InlinePreviewView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 5B5427022F21985F00B06BA6 /* InlinePreviewView.swift */; };
 		5B5427412F21985F00B06BA6 /* NativeErrorCode.swift in Sources */ = {isa = PBXBuildFile; fileRef = 5B5426F82F21985F00B06BA6 /* NativeErrorCode.swift */; };
@@ -164,6 +166,8 @@
 		5B5426E72F21985F00B06BA6 /* CapturePipeline.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CapturePipeline.swift; sourceTree = "<group>"; };
 		5B5426E92F21985F00B06BA6 /* CompositionBuilder.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CompositionBuilder.swift; sourceTree = "<group>"; };
 		5B5426EA2F21985F00B06BA6 /* LetterboxExporter.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = LetterboxExporter.swift; sourceTree = "<group>"; };
+		A1B2C3D4E5F60718293A4B01 /* CameraChromaKeyRenderer.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CameraChromaKeyRenderer.swift; sourceTree = "<group>"; };
+		A1B2C3D4E5F60718293A4B03 /* CameraStyledIntermediatePipeline.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CameraStyledIntermediatePipeline.swift; sourceTree = "<group>"; };
 		5B5426EC2F21985F00B06BA6 /* CursorRecorder.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CursorRecorder.swift; sourceTree = "<group>"; };
 		5B5426ED2F21985F00B06BA6 /* ZoomHysteresis.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ZoomHysteresis.swift; sourceTree = "<group>"; };
 		5B5426EF2F21985F00B06BA6 /* AppInfo.xcconfig */ = {isa = PBXFileReference; lastKnownFileType = text.xcconfig; path = AppInfo.xcconfig; sourceTree = "<group>"; };
@@ -419,7 +423,9 @@
 		5B5426EB2F21985F00B06BA6 /* Export */ = {
 			isa = PBXGroup;
 			children = (
+				A1B2C3D4E5F60718293A4B01 /* CameraChromaKeyRenderer.swift */,
 				7C1000132F70000100A0B001 /* CameraLayoutResolver.swift */,
+				A1B2C3D4E5F60718293A4B03 /* CameraStyledIntermediatePipeline.swift */,
 				5B5426E92F21985F00B06BA6 /* CompositionBuilder.swift */,
 				5B5426EA2F21985F00B06BA6 /* LetterboxExporter.swift */,
 			);
@@ -882,7 +888,9 @@
 				5B5427382F21985F00B06BA6 /* CaptureBackendScreenCaptureKit.swift in Sources */,
 				5B5427392F21985F00B06BA6 /* Models.swift in Sources */,
 				5B54273A2F21985F00B06BA6 /* CursorRecorder.swift in Sources */,
+				A1B2C3D4E5F60718293A4B02 /* CameraChromaKeyRenderer.swift in Sources */,
 				7C1000032F70000100A0B001 /* CameraLayoutResolver.swift in Sources */,
+				A1B2C3D4E5F60718293A4B04 /* CameraStyledIntermediatePipeline.swift in Sources */,
 				5B54273B2F21985F00B06BA6 /* CompositionBuilder.swift in Sources */,
 				5BE629DC2F2F9F3800063F17 /* ZoomTimelineBuilder.swift in Sources */,
 				5B54273C2F21985F00B06BA6 /* RecordingIndicatorView.swift in Sources */,

@@ -200,6 +200,26 @@ enum CameraLayoutResolver {
     }
   }
 
+  static func contentRect(
+    for sourceSize: CGSize,
+    in bounds: CGRect,
+    contentMode: CameraContentMode
+  ) -> CGRect {
+    let safeSourceWidth = max(sourceSize.width, 1.0)
+    let safeSourceHeight = max(sourceSize.height, 1.0)
+    let scaleX = bounds.width / safeSourceWidth
+    let scaleY = bounds.height / safeSourceHeight
+    let scale = contentMode == .fit ? min(scaleX, scaleY) : max(scaleX, scaleY)
+    let width = safeSourceWidth * scale
+    let height = safeSourceHeight * scale
+    return CGRect(
+      x: bounds.minX + ((bounds.width - width) / 2.0),
+      y: bounds.minY + ((bounds.height - height) / 2.0),
+      width: width,
+      height: height
+    )
+  }
+
   private static func resolvedOverlay(origin: CGPoint, size: CGSize) -> CameraLayoutResolution {
     CameraLayoutResolution(
       frame: CGRect(origin: origin, size: size),

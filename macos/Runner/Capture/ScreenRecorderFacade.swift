@@ -1959,7 +1959,7 @@ final class ScreenRecorderFacade: NSObject {
       cornerRadius: true,
       border: true,
       shadow: true,
-      chromaKey: false
+      chromaKey: true
     )
   }
 
@@ -1973,31 +1973,7 @@ final class ScreenRecorderFacade: NSObject {
   ) -> CameraCompositionParams? {
     guard let params else { return nil }
     guard let cameraPath, !cameraPath.isEmpty else { return params }
-
-    if params.visible, params.layoutPreset != .hidden, params.chromaKeyEnabled {
-      NativeLogger.w(
-        "Export",
-        "Separate camera export does not yet support chroma key; stripping chroma key fields for export",
-        context: [
-          "cameraPath": cameraPath,
-          "layoutPreset": params.layoutPreset.rawValue,
-          "shape": params.shape.rawValue,
-          "cornerRadius": params.cornerRadius,
-          "borderWidth": params.borderWidth,
-          "shadowPreset": params.shadowPreset,
-          "chromaKeyEnabled": params.chromaKeyEnabled,
-          "chromaKeyStrength": params.chromaKeyStrength,
-        ]
-      )
-    }
-
-    guard params.chromaKeyEnabled else { return params }
-
-    var sanitized = params
-    sanitized.chromaKeyEnabled = false
-    sanitized.chromaKeyStrength = 0.4
-    sanitized.chromaKeyColorArgb = nil
-    return sanitized
+    return params
   }
 
   func resolveCameraCompositionParams(

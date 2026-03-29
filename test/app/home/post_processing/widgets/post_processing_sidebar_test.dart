@@ -303,6 +303,35 @@ void main() {
     );
   });
 
+  testWidgets('camera section hides chroma-key preview notice when export supports it', (
+    tester,
+  ) async {
+    await tester.pumpWidget(
+      buildTestApp(
+        hasCameraAsset: true,
+        cameraExportCapabilities: const CameraExportCapabilities(
+          shapeMask: true,
+          cornerRadius: true,
+          border: true,
+          shadow: true,
+          chromaKey: true,
+        ),
+        cameraState: const CameraCompositionState.hidden().copyWith(
+          visible: true,
+          layoutPreset: CameraLayoutPreset.overlayBottomRight,
+        ),
+      ),
+    );
+    await tester.pumpAndSettle();
+
+    expect(
+      find.text(
+        'Camera chroma key remains preview-only right now. Export supports shape, rounded corners, border, shadow, layout, size, opacity, mirror, and fit/fill.',
+      ),
+      findsNothing,
+    );
+  });
+
   testWidgets(
     'camera section shows no-camera notice only when asset is missing',
     (tester) async {
