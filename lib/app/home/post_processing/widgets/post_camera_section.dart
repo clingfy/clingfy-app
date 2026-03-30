@@ -1,7 +1,6 @@
 import 'package:clingfy/core/models/app_models.dart';
 import 'package:clingfy/l10n/app_localizations.dart';
 import 'package:clingfy/ui/platform/platform_kind.dart';
-import 'package:clingfy/ui/platform/widgets/app_button.dart';
 import 'package:clingfy/ui/platform/widgets/app_form_row.dart';
 import 'package:clingfy/ui/platform/widgets/app_inline_notice.dart';
 import 'package:clingfy/ui/platform/widgets/app_sidebar_tokens.dart';
@@ -38,11 +37,8 @@ class PostCameraSection extends StatelessWidget {
     required this.onOutroDurationChangeEnd,
     required this.onZoomEmphasisStrengthChanged,
     required this.onZoomEmphasisStrengthChangeEnd,
-    required this.onManualCenterXChanged,
-    required this.onManualCenterXChangeEnd,
-    required this.onManualCenterYChanged,
-    required this.onManualCenterYChangeEnd,
-    required this.onResetManualPosition,
+    required this.onManualCenterChanged,
+    required this.onManualCenterChangeEnd,
   });
 
   final bool hasCameraAsset;
@@ -69,11 +65,8 @@ class PostCameraSection extends StatelessWidget {
   final ValueChanged<double> onOutroDurationChangeEnd;
   final ValueChanged<double> onZoomEmphasisStrengthChanged;
   final ValueChanged<double> onZoomEmphasisStrengthChangeEnd;
-  final ValueChanged<double> onManualCenterXChanged;
-  final ValueChanged<double> onManualCenterXChangeEnd;
-  final ValueChanged<double> onManualCenterYChanged;
-  final ValueChanged<double> onManualCenterYChangeEnd;
-  final VoidCallback onResetManualPosition;
+  final ValueChanged<Offset> onManualCenterChanged;
+  final ValueChanged<Offset> onManualCenterChangeEnd;
 
   @override
   Widget build(BuildContext context) {
@@ -99,21 +92,12 @@ class PostCameraSection extends StatelessWidget {
           const SizedBox(height: AppSidebarTokens.optionsSubgroupGap),
           AppFormRow(
             label: l10n.position,
-            control: PlatformDropdown<CameraLayoutPreset>(
-              value: camera.layoutPreset,
-              items: CameraLayoutPreset.values
-                  .map(
-                    (preset) => PlatformMenuItem(
-                      value: preset,
-                      label: _layoutLabel(preset),
-                    ),
-                  )
-                  .toList(),
-              onChanged: (value) {
-                if (value != null) {
-                  onLayoutPresetChanged(value);
-                }
-              },
+            helperText: 'Adjust or move camera position on screen',
+            control: _CameraPositionPanel(
+              camera: camera,
+              onPresetSelected: onLayoutPresetChanged,
+              onManualCenterChanged: onManualCenterChanged,
+              onManualCenterChangeEnd: onManualCenterChangeEnd,
             ),
           ),
           const SizedBox(height: AppSidebarTokens.sectionGap),
@@ -349,73 +333,9 @@ class PostCameraSection extends StatelessWidget {
             value: camera.mirror,
             onChanged: onMirrorChanged,
           ),
-          const SizedBox(height: AppSidebarTokens.sectionGap),
-          AppSliderRow(
-            label: '${l10n.customPosition} X',
-            valueText:
-                '${(((camera.normalizedCanvasCenter?.dx ?? 0.5) * 100).round())}%',
-            slider: _buildSidebarSlider(
-              context,
-              value: camera.normalizedCanvasCenter?.dx ?? 0.5,
-              min: 0.0,
-              max: 1.0,
-              divisions: 100,
-              onChanged: onManualCenterXChanged,
-              onChangeEnd: onManualCenterXChangeEnd,
-              accentColor: accentColor,
-            ),
-          ),
-          const SizedBox(height: AppSidebarTokens.sectionGap),
-          AppSliderRow(
-            label: '${l10n.customPosition} Y',
-            valueText:
-                '${(((camera.normalizedCanvasCenter?.dy ?? 0.5) * 100).round())}%',
-            slider: _buildSidebarSlider(
-              context,
-              value: camera.normalizedCanvasCenter?.dy ?? 0.5,
-              min: 0.0,
-              max: 1.0,
-              divisions: 100,
-              onChanged: onManualCenterYChanged,
-              onChangeEnd: onManualCenterYChangeEnd,
-              accentColor: accentColor,
-            ),
-          ),
-          const SizedBox(height: AppSidebarTokens.sectionGap),
-          AppButton(
-            label: 'Reset manual position',
-            onPressed: onResetManualPosition,
-            variant: AppButtonVariant.secondary,
-            size: AppButtonSize.compact,
-          ),
         ],
       ],
     );
-  }
-
-  String _layoutLabel(CameraLayoutPreset preset) {
-    switch (preset) {
-      case CameraLayoutPreset.overlayTopLeft:
-        return 'Overlay Top Left';
-      case CameraLayoutPreset.overlayTopRight:
-        return 'Overlay Top Right';
-      case CameraLayoutPreset.overlayBottomLeft:
-        return 'Overlay Bottom Left';
-      case CameraLayoutPreset.overlayBottomRight:
-        return 'Overlay Bottom Right';
-      case CameraLayoutPreset.sideBySideLeft:
-        return 'Side by Side Left';
-      case CameraLayoutPreset.sideBySideRight:
-        return 'Side by Side Right';
-      case CameraLayoutPreset.stackedTop:
-        return 'Stacked Top';
-      case CameraLayoutPreset.stackedBottom:
-        return 'Stacked Bottom';
-      case CameraLayoutPreset.backgroundBehind:
-        return 'Background Behind';
-      case CameraLayoutPreset.hidden:
-        return 'Hidden';
-    }
   }
 
   String _shapeLabel(CameraShape shape) {
@@ -459,4 +379,348 @@ class PostCameraSection extends StatelessWidget {
       child: slider,
     );
   }
+}
+
+class _CameraPositionPanel extends StatefulWidget {
+  const _CameraPositionPanel({
+    required this.camera,
+    required this.onPresetSelected,
+    required this.onManualCenterChanged,
+    required this.onManualCenterChangeEnd,
+  });
+
+  final CameraCompositionState camera;
+  final ValueChanged<CameraLayoutPreset> onPresetSelected;
+  final ValueChanged<Offset> onManualCenterChanged;
+  final ValueChanged<Offset> onManualCenterChangeEnd;
+
+  @override
+  State<_CameraPositionPanel> createState() => _CameraPositionPanelState();
+}
+
+class _CameraPositionPanelState extends State<_CameraPositionPanel> {
+  static const double _panelHeight = 176;
+  static const double _handleSize = 30;
+  static const double _presetDotSize = 12;
+  static const double _presetTapTargetSize = 28;
+  static const double _presetInsetX = 0.07;
+  static const double _presetInsetY = 0.14;
+  static const double _presetBottomInsetY = 0.86;
+  static const double _handleShadowBlur = 18;
+  static const List<_CameraPositionPreset> _presets = [
+    _CameraPositionPreset(
+      preset: CameraLayoutPreset.overlayTopLeft,
+      normalizedPosition: Offset(_presetInsetX, _presetInsetY),
+      label: 'Top left',
+    ),
+    _CameraPositionPreset(
+      preset: CameraLayoutPreset.stackedTop,
+      normalizedPosition: Offset(0.5, _presetInsetY),
+      label: 'Top center',
+    ),
+    _CameraPositionPreset(
+      preset: CameraLayoutPreset.overlayTopRight,
+      normalizedPosition: Offset(1 - _presetInsetX, _presetInsetY),
+      label: 'Top right',
+    ),
+    _CameraPositionPreset(
+      preset: CameraLayoutPreset.sideBySideLeft,
+      normalizedPosition: Offset(_presetInsetX, 0.5),
+      label: 'Center left',
+    ),
+    _CameraPositionPreset(
+      preset: CameraLayoutPreset.sideBySideRight,
+      normalizedPosition: Offset(1 - _presetInsetX, 0.5),
+      label: 'Center right',
+    ),
+    _CameraPositionPreset(
+      preset: CameraLayoutPreset.overlayBottomLeft,
+      normalizedPosition: Offset(_presetInsetX, _presetBottomInsetY),
+      label: 'Bottom left',
+    ),
+    _CameraPositionPreset(
+      preset: CameraLayoutPreset.stackedBottom,
+      normalizedPosition: Offset(0.5, _presetBottomInsetY),
+      label: 'Bottom center',
+    ),
+    _CameraPositionPreset(
+      preset: CameraLayoutPreset.overlayBottomRight,
+      normalizedPosition: Offset(1 - _presetInsetX, _presetBottomInsetY),
+      label: 'Bottom right',
+    ),
+  ];
+
+  final GlobalKey _panelKey = GlobalKey();
+  Offset? _dragNormalizedCenter;
+
+  Offset get _resolvedHandlePosition {
+    final normalizedCenter = widget.camera.normalizedCanvasCenter;
+    if (normalizedCenter != null) {
+      return Offset(
+        normalizedCenter.dx.clamp(0.0, 1.0),
+        normalizedCenter.dy.clamp(0.0, 1.0),
+      );
+    }
+
+    return _presetPositionForLayout(widget.camera.layoutPreset) ??
+        const Offset(0.5, 0.5);
+  }
+
+  bool get _showsBackgroundBehindHint =>
+      widget.camera.layoutPreset == CameraLayoutPreset.backgroundBehind &&
+      widget.camera.normalizedCanvasCenter == null;
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    final accentColor = theme.colorScheme.primary;
+    final surfaceColor = theme.colorScheme.surfaceContainerHighest.withValues(
+      alpha: 0.72,
+    );
+    final handlePosition = _dragNormalizedCenter ?? _resolvedHandlePosition;
+
+    return ConstrainedBox(
+      constraints: const BoxConstraints(
+        minWidth: AppSidebarTokens.controlMinWidth,
+        maxWidth: AppSidebarTokens.controlMaxWidth,
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        children: [
+          if (_showsBackgroundBehindHint)
+            Padding(
+              padding: const EdgeInsets.only(
+                bottom: AppSidebarTokens.sectionGap,
+              ),
+              child: Text(
+                'Background layout fills the full canvas. Choose a point or drag the handle to switch back to an overlay position.',
+                style: AppSidebarTokens.helperStyle(theme),
+              ),
+            ),
+          SizedBox(
+            key: const ValueKey('camera_position_panel'),
+            height: _panelHeight,
+            child: DecoratedBox(
+              decoration: BoxDecoration(
+                color: surfaceColor,
+                borderRadius: BorderRadius.circular(18),
+                border: Border.all(
+                  color: theme.colorScheme.outlineVariant.withValues(
+                    alpha: 0.28,
+                  ),
+                ),
+              ),
+              child: LayoutBuilder(
+                builder: (context, constraints) {
+                  final width = constraints.maxWidth;
+                  final height = constraints.maxHeight;
+
+                  return Stack(
+                    key: _panelKey,
+                    children: [
+                      for (final preset in _presets)
+                        _buildPresetDot(
+                          context,
+                          preset: preset,
+                          width: width,
+                          height: height,
+                        ),
+                      _buildHandle(
+                        context,
+                        handlePosition: handlePosition,
+                        width: width,
+                        height: height,
+                        accentColor: accentColor,
+                      ),
+                    ],
+                  );
+                },
+              ),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildPresetDot(
+    BuildContext context, {
+    required _CameraPositionPreset preset,
+    required double width,
+    required double height,
+  }) {
+    final theme = Theme.of(context);
+    final center = _positionToPanelOffset(
+      preset.normalizedPosition,
+      width: width,
+      height: height,
+      itemSize: _presetDotSize,
+    );
+    final isSelected =
+        widget.camera.normalizedCanvasCenter == null &&
+        widget.camera.layoutPreset == preset.preset;
+
+    return Positioned(
+      left: center.dx - (_presetTapTargetSize / 2),
+      top: center.dy - (_presetTapTargetSize / 2),
+      child: Semantics(
+        button: true,
+        label: 'Camera position ${preset.label}',
+        child: MouseRegion(
+          cursor: SystemMouseCursors.click,
+          child: GestureDetector(
+            key: ValueKey('camera_position_preset_${preset.preset.name}'),
+            behavior: HitTestBehavior.opaque,
+            onTap: () {
+              setState(() {
+                _dragNormalizedCenter = null;
+              });
+              widget.onPresetSelected(preset.preset);
+            },
+            child: SizedBox(
+              width: _presetTapTargetSize,
+              height: _presetTapTargetSize,
+              child: Center(
+                child: AnimatedContainer(
+                  duration: const Duration(milliseconds: 160),
+                  width: _presetDotSize,
+                  height: _presetDotSize,
+                  decoration: BoxDecoration(
+                    shape: BoxShape.circle,
+                    color: isSelected
+                        ? theme.colorScheme.primary.withValues(alpha: 0.5)
+                        : theme.colorScheme.onSurfaceVariant.withValues(
+                            alpha: 0.22,
+                          ),
+                  ),
+                ),
+              ),
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+
+  Widget _buildHandle(
+    BuildContext context, {
+    required Offset handlePosition,
+    required double width,
+    required double height,
+    required Color accentColor,
+  }) {
+    final center = _positionToPanelOffset(
+      handlePosition,
+      width: width,
+      height: height,
+      itemSize: _handleSize,
+    );
+
+    return Positioned(
+      left: center.dx - (_handleSize / 2),
+      top: center.dy - (_handleSize / 2),
+      child: MouseRegion(
+        cursor: SystemMouseCursors.click,
+        child: GestureDetector(
+          key: const ValueKey('camera_position_handle'),
+          behavior: HitTestBehavior.opaque,
+          onPanStart: (details) => _updateDrag(details.globalPosition),
+          onPanUpdate: (details) => _updateDrag(details.globalPosition),
+          onPanEnd: (_) => _commitDrag(),
+          onPanCancel: _cancelDrag,
+          child: AnimatedContainer(
+            duration: const Duration(milliseconds: 120),
+            width: _handleSize,
+            height: _handleSize,
+            decoration: BoxDecoration(
+              shape: BoxShape.circle,
+              color: accentColor,
+              border: Border.all(color: Colors.white.withValues(alpha: 0.9)),
+              boxShadow: [
+                BoxShadow(
+                  color: accentColor.withValues(alpha: 0.42),
+                  blurRadius: _handleShadowBlur,
+                  spreadRadius: 1.5,
+                ),
+              ],
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+
+  void _updateDrag(Offset globalPosition) {
+    final renderObject = _panelKey.currentContext?.findRenderObject();
+    if (renderObject is! RenderBox) {
+      return;
+    }
+
+    final local = renderObject.globalToLocal(globalPosition);
+    final size = renderObject.size;
+    final nextCenter = Offset(
+      (local.dx / size.width).clamp(0.0, 1.0),
+      (local.dy / size.height).clamp(0.0, 1.0),
+    );
+
+    setState(() {
+      _dragNormalizedCenter = nextCenter;
+    });
+    widget.onManualCenterChanged(nextCenter);
+  }
+
+  void _commitDrag() {
+    final dragCenter = _dragNormalizedCenter;
+    if (dragCenter == null) {
+      return;
+    }
+
+    widget.onManualCenterChangeEnd(dragCenter);
+    setState(() {
+      _dragNormalizedCenter = null;
+    });
+  }
+
+  void _cancelDrag() {
+    setState(() {
+      _dragNormalizedCenter = null;
+    });
+  }
+
+  Offset _positionToPanelOffset(
+    Offset normalizedPosition, {
+    required double width,
+    required double height,
+    required double itemSize,
+  }) {
+    final horizontalTravel = width - itemSize;
+    final verticalTravel = height - itemSize;
+    return Offset(
+      (normalizedPosition.dx.clamp(0.0, 1.0) * horizontalTravel) +
+          (itemSize / 2),
+      (normalizedPosition.dy.clamp(0.0, 1.0) * verticalTravel) + (itemSize / 2),
+    );
+  }
+
+  Offset? _presetPositionForLayout(CameraLayoutPreset preset) {
+    for (final item in _presets) {
+      if (item.preset == preset) {
+        return item.normalizedPosition;
+      }
+    }
+
+    return null;
+  }
+}
+
+class _CameraPositionPreset {
+  const _CameraPositionPreset({
+    required this.preset,
+    required this.normalizedPosition,
+    required this.label,
+  });
+
+  final CameraLayoutPreset preset;
+  final Offset normalizedPosition;
+  final String label;
 }

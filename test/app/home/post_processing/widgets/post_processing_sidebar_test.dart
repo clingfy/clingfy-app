@@ -37,6 +37,9 @@ void main() {
     void Function(CameraZoomBehavior)? onCameraZoomBehaviorChanged,
     void Function(double)? onCameraZoomScaleMultiplierChanged,
     void Function(double)? onCameraZoomScaleMultiplierChangeEnd,
+    void Function(CameraLayoutPreset)? onCameraLayoutPresetChanged,
+    void Function(Offset)? onCameraManualCenterChanged,
+    void Function(Offset)? onCameraManualCenterChangeEnd,
     void Function(String?)? onBackgroundImageChanged,
   }) {
     return MaterialApp(
@@ -88,7 +91,7 @@ void main() {
             cameraExportCapabilities: cameraExportCapabilities,
             cameraState: cameraState,
             onCameraVisibleChanged: (_) {},
-            onCameraLayoutPresetChanged: (_) {},
+            onCameraLayoutPresetChanged: onCameraLayoutPresetChanged ?? (_) {},
             onCameraSizeFactorChanged: (_) {},
             onCameraSizeFactorChangeEnd: (_) {},
             onCameraShapeChanged: (_) {},
@@ -110,11 +113,9 @@ void main() {
             onCameraOutroDurationChangeEnd: (_) {},
             onCameraZoomEmphasisStrengthChanged: (_) {},
             onCameraZoomEmphasisStrengthChangeEnd: (_) {},
-            onCameraManualCenterXChanged: (_) {},
-            onCameraManualCenterXChangeEnd: (_) {},
-            onCameraManualCenterYChanged: (_) {},
-            onCameraManualCenterYChangeEnd: (_) {},
-            onResetCameraManualPosition: () {},
+            onCameraManualCenterChanged: onCameraManualCenterChanged ?? (_) {},
+            onCameraManualCenterChangeEnd:
+                onCameraManualCenterChangeEnd ?? (_) {},
             onAudioGainChanged: (_) {},
             onAudioGainChangeEnd: (_) {},
             onAudioVolumeChanged: (_) {},
@@ -361,6 +362,93 @@ void main() {
       expect(find.text('Zoom Scale'), findsNothing);
     },
   );
+
+  testWidgets('camera section replaces old position controls with panel', (
+    tester,
+  ) async {
+    await tester.pumpWidget(
+      buildTestApp(
+        hasCameraAsset: true,
+        cameraState: const CameraCompositionState.hidden().copyWith(
+          visible: true,
+          layoutPreset: CameraLayoutPreset.overlayBottomRight,
+        ),
+      ),
+    );
+    await tester.pumpAndSettle();
+
+    expect(find.byKey(const ValueKey('camera_position_panel')), findsOneWidget);
+    expect(
+      find.byKey(const ValueKey('camera_position_preset_overlayBottomRight')),
+      findsOneWidget,
+    );
+    expect(
+      find.byKey(const ValueKey('camera_position_handle')),
+      findsOneWidget,
+    );
+    expect(find.text('Custom Position X'), findsNothing);
+    expect(find.text('Custom Position Y'), findsNothing);
+    expect(find.text('Reset manual position'), findsNothing);
+  });
+
+  testWidgets('camera position panel taps preset callback', (tester) async {
+    CameraLayoutPreset? selectedPreset;
+
+    await tester.pumpWidget(
+      buildTestApp(
+        hasCameraAsset: true,
+        cameraState: const CameraCompositionState.hidden().copyWith(
+          visible: true,
+          layoutPreset: CameraLayoutPreset.overlayBottomRight,
+        ),
+        onCameraLayoutPresetChanged: (preset) {
+          selectedPreset = preset;
+        },
+      ),
+    );
+    await tester.pumpAndSettle();
+
+    await tester.tap(
+      find.byKey(const ValueKey('camera_position_preset_overlayTopLeft')),
+    );
+    await tester.pumpAndSettle();
+
+    expect(selectedPreset, CameraLayoutPreset.overlayTopLeft);
+  });
+
+  testWidgets('camera position panel drag emits manual center callbacks', (
+    tester,
+  ) async {
+    final changedCenters = <Offset>[];
+    final endedCenters = <Offset>[];
+
+    await tester.pumpWidget(
+      buildTestApp(
+        hasCameraAsset: true,
+        cameraState: const CameraCompositionState.hidden().copyWith(
+          visible: true,
+          layoutPreset: CameraLayoutPreset.overlayBottomRight,
+          normalizedCanvasCenter: const Offset(0.5, 0.5),
+        ),
+        onCameraManualCenterChanged: changedCenters.add,
+        onCameraManualCenterChangeEnd: endedCenters.add,
+      ),
+    );
+    await tester.pumpAndSettle();
+
+    await tester.drag(
+      find.byKey(const ValueKey('camera_position_handle')),
+      const Offset(-48, -32),
+    );
+    await tester.pumpAndSettle();
+
+    expect(changedCenters, isNotEmpty);
+    expect(endedCenters, isNotEmpty);
+    expect(endedCenters.last.dx, lessThan(0.5));
+    expect(endedCenters.last.dy, lessThan(0.5));
+    expect(endedCenters.last.dx, greaterThanOrEqualTo(0.0));
+    expect(endedCenters.last.dy, greaterThanOrEqualTo(0.0));
+  });
 
   testWidgets(
     'camera section shows zoom scale slider when zoom response scales with zoom',

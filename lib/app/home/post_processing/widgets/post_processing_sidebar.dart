@@ -154,11 +154,8 @@ class PostProcessingSidebar extends StatelessWidget {
   final Function(double) onCameraOutroDurationChangeEnd;
   final Function(double) onCameraZoomEmphasisStrengthChanged;
   final Function(double) onCameraZoomEmphasisStrengthChangeEnd;
-  final Function(double) onCameraManualCenterXChanged;
-  final Function(double) onCameraManualCenterXChangeEnd;
-  final Function(double) onCameraManualCenterYChanged;
-  final Function(double) onCameraManualCenterYChangeEnd;
-  final VoidCallback onResetCameraManualPosition;
+  final ValueChanged<Offset> onCameraManualCenterChanged;
+  final ValueChanged<Offset> onCameraManualCenterChangeEnd;
   final Function(double) onAudioGainChanged;
   final Function(double) onAudioGainChangeEnd;
   final Function(double) onAudioVolumeChanged;
@@ -221,11 +218,8 @@ class PostProcessingSidebar extends StatelessWidget {
     required this.onCameraOutroDurationChangeEnd,
     required this.onCameraZoomEmphasisStrengthChanged,
     required this.onCameraZoomEmphasisStrengthChangeEnd,
-    required this.onCameraManualCenterXChanged,
-    required this.onCameraManualCenterXChangeEnd,
-    required this.onCameraManualCenterYChanged,
-    required this.onCameraManualCenterYChangeEnd,
-    required this.onResetCameraManualPosition,
+    required this.onCameraManualCenterChanged,
+    required this.onCameraManualCenterChangeEnd,
     required this.audioGainDb,
     required this.audioVolume,
     required this.autoNormalizeOnExport,
@@ -331,11 +325,8 @@ class PostProcessingSidebar extends StatelessWidget {
         onOutroDurationChangeEnd: onCameraOutroDurationChangeEnd,
         onZoomEmphasisStrengthChanged: onCameraZoomEmphasisStrengthChanged,
         onZoomEmphasisStrengthChangeEnd: onCameraZoomEmphasisStrengthChangeEnd,
-        onManualCenterXChanged: onCameraManualCenterXChanged,
-        onManualCenterXChangeEnd: onCameraManualCenterXChangeEnd,
-        onManualCenterYChanged: onCameraManualCenterYChanged,
-        onManualCenterYChangeEnd: onCameraManualCenterYChangeEnd,
-        onResetManualPosition: onResetCameraManualPosition,
+        onManualCenterChanged: onCameraManualCenterChanged,
+        onManualCenterChangeEnd: onCameraManualCenterChangeEnd,
       ),
       const SizedBox(height: AppSidebarTokens.sectionGap),
       Divider(color: theme.dividerColor.withValues(alpha: 0.1)),

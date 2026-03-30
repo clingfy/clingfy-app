@@ -44,6 +44,7 @@ class PostProcessingController extends ChangeNotifier {
     _warningSub?.cancel();
     _cameraManualPositionSub?.cancel();
     _audioPreviewDebouncer.dispose();
+    _cameraManualPreviewDebouncer.dispose();
     super.dispose();
   }
 
@@ -105,6 +106,9 @@ class PostProcessingController extends ChangeNotifier {
       const CameraExportCapabilities.allSupported();
   final AudioDebouncer _audioPreviewDebouncer = AudioDebouncer(
     delay: Duration(milliseconds: 150),
+  );
+  final ActionDebouncer _cameraManualPreviewDebouncer = ActionDebouncer(
+    delay: Duration(milliseconds: 75),
   );
 
   // --- Getters ---
@@ -334,6 +338,7 @@ class PostProcessingController extends ChangeNotifier {
   }
 
   void resetCameraManualPosition() {
+    _cameraManualPreviewDebouncer.cancel();
     final current = _cameraState ?? const CameraCompositionState.hidden();
     _cameraState = current.copyWith(clearNormalizedCanvasCenter: true);
     notifyListeners();
@@ -341,6 +346,7 @@ class PostProcessingController extends ChangeNotifier {
   }
 
   void setCameraManualCenter(Offset? center) {
+    _cameraManualPreviewDebouncer.cancel();
     final current = _cameraState ?? const CameraCompositionState.hidden();
     _cameraState = current.copyWith(
       normalizedCanvasCenter: center,
@@ -348,6 +354,27 @@ class PostProcessingController extends ChangeNotifier {
     );
     notifyListeners();
     applyProcessing();
+  }
+
+  void setCameraManualCenterPreview(Offset center) {
+    final current = _cameraState ?? const CameraCompositionState.hidden();
+    _cameraState = current.copyWith(
+      normalizedCanvasCenter: Offset(
+        center.dx.clamp(0.0, 1.0),
+        center.dy.clamp(0.0, 1.0),
+      ),
+    );
+    notifyListeners();
+    _cameraManualPreviewDebouncer.run(() {
+      unawaited(applyProcessing());
+    });
+  }
+
+  void setCameraManualCenterPreviewEnd(Offset center) {
+    _cameraManualPreviewDebouncer.cancel();
+    setCameraManualCenter(
+      Offset(center.dx.clamp(0.0, 1.0), center.dy.clamp(0.0, 1.0)),
+    );
   }
 
   void setCameraManualCenterX(double x) {

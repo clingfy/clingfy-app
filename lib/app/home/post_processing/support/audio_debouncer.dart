@@ -2,11 +2,11 @@ import 'dart:async';
 
 import 'package:flutter/foundation.dart';
 
-class AudioDebouncer {
+class ActionDebouncer {
   final Duration delay;
   Timer? _timer;
 
-  AudioDebouncer({this.delay = const Duration(milliseconds: 150)});
+  ActionDebouncer({this.delay = const Duration(milliseconds: 150)});
 
   /// Cancels the previous timer and starts a new one.
   /// The action only runs if [delay] passes without this being called again.
@@ -25,3 +25,5 @@ class AudioDebouncer {
     cancel();
   }
 }
+
+typedef AudioDebouncer = ActionDebouncer;
