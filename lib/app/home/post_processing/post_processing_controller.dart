@@ -361,7 +361,7 @@ class PostProcessingController extends ChangeNotifier {
     _cameraState = current.copyWith(
       normalizedCanvasCenter: Offset(
         center.dx.clamp(0.0, 1.0),
-        center.dy.clamp(0.0, 1.0),
+        (1.0 - center.dy).clamp(0.0, 1.0), // Invert: Flutter top-down -> native bottom-up
       ),
     );
     notifyListeners();
@@ -373,7 +373,7 @@ class PostProcessingController extends ChangeNotifier {
   void setCameraManualCenterPreviewEnd(Offset center) {
     _cameraManualPreviewDebouncer.cancel();
     setCameraManualCenter(
-      Offset(center.dx.clamp(0.0, 1.0), center.dy.clamp(0.0, 1.0)),
+      Offset(center.dx.clamp(0.0, 1.0), (1.0 - center.dy).clamp(0.0, 1.0)), // Invert: Flutter top-down -> native bottom-up
     );
   }
 

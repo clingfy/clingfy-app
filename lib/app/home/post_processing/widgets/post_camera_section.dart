@@ -458,7 +458,7 @@ class _CameraPositionPanelState extends State<_CameraPositionPanel> {
     if (normalizedCenter != null) {
       return Offset(
         normalizedCenter.dx.clamp(0.0, 1.0),
-        normalizedCenter.dy.clamp(0.0, 1.0),
+        (1.0 - normalizedCenter.dy).clamp(0.0, 1.0), // Invert: native bottom-up -> Flutter top-down for display
       );
     }
 

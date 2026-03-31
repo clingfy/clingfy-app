@@ -903,11 +903,23 @@ final class CompositionBuilder {
           }
           var didLogFirstActiveZoomSample = false
           let cameraTransforms = resolvedCameraPresentation.enumerated().map { idx, animatedCamera in
+            // CameraLayoutResolver returns frames in CG bottom-left-origin
+            // coordinates (y=0 at bottom), but AVVideoComposition layer
+            // instructions use top-left-origin (y=0 at top). Flip the
+            // y-coordinate so the camera appears at the correct vertical
+            // position in the exported video.
+            let cgFrame = animatedCamera.frame
+            let flippedDestinationRect = CGRect(
+              x: cgFrame.minX,
+              y: target.height - cgFrame.maxY,
+              width: cgFrame.width,
+              height: cgFrame.height
+            )
             let transform = fittedTransform(
               for: cameraTrack,
               sourceSize: cameraSourceSize,
               sourceRect: cameraAssetIsPreStyled ? cameraPlacementSourceRect : nil,
-              destinationRect: animatedCamera.frame,
+              destinationRect: flippedDestinationRect,
               fitMode: cameraFitMode,
               mirror: cameraAssetIsPreStyled ? false : cameraParams.mirror
             )
@@ -937,6 +949,13 @@ final class CompositionBuilder {
                 CameraPlacementDebug.rectContext(
                   prefix: "resolvedCameraFrame",
                   rect: animatedCamera.frame
+                ),
+                uniquingKeysWith: { _, new in new }
+              )
+              context.merge(
+                CameraPlacementDebug.rectContext(
+                  prefix: "flippedCameraFrame",
+                  rect: flippedDestinationRect
                 ),
                 uniquingKeysWith: { _, new in new }
               )
