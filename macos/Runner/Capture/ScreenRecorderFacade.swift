@@ -459,6 +459,13 @@ final class MicrophoneLevelMonitor: NSObject, AVCaptureAudioDataOutputSampleBuff
   }
 }
 
+protocol MicrophoneLevelMonitoring: AnyObject {
+  func start(deviceID: String?, onLevel: @escaping (MicrophoneLevelSample) -> Void)
+  func stop(emitZero: Bool)
+}
+
+extension MicrophoneLevelMonitor: MicrophoneLevelMonitoring {}
+
 private struct ExportFormatInfo {
   let ext: String
   let avFileType: AVFileType?  // nil for formats not handled by AVAssetExportSession (gif)
@@ -641,7 +648,7 @@ final class ScreenRecorderFacade: NSObject {
   private let cursor = CursorHighlighter()
   private let indicator = RecordingIndicator()
   private let recordingStore = RecordingStore()
-  private let micLevelMonitor = MicrophoneLevelMonitor()
+  private let micLevelMonitor: MicrophoneLevelMonitoring
 
   private var capture: CaptureBackend = CaptureBackendAVFoundation()
 
@@ -673,6 +680,7 @@ final class ScreenRecorderFacade: NSObject {
   private var sessionDisableCursorHighlight = false
   private var suppressOverlayWindowDuringSeparateCameraCapture = false
   private var activeRecordingWorkflowSessionId: String?
+  private var hasReceivedRecordingMicrophoneLevel = false
 
   // events out
   var onDevicesChanged: (() -> Void)?
@@ -693,7 +701,20 @@ final class ScreenRecorderFacade: NSObject {
   var isRecording: Bool { state == .recording || state == .paused }
 
   override init() {
+    self.micLevelMonitor = MicrophoneLevelMonitor()
     super.init()
+    commonInit()
+  }
+
+  #if DEBUG
+    init(micLevelMonitor: MicrophoneLevelMonitoring) {
+      self.micLevelMonitor = micLevelMonitor
+      super.init()
+      commonInit()
+    }
+  #endif
+
+  private func commonInit() {
     if let storedDisplay = prefs.selectedDisplayId {
       selectedDisplayID = CGDirectDisplayID(storedDisplay)
     }
@@ -716,6 +737,30 @@ final class ScreenRecorderFacade: NSObject {
     // Scan internal workspace on startup for diagnostics
     scanInternalWorkspaceOnStartup()
     cleanupStaleInProgressRecordingsOnStartup()
+  }
+
+  private enum MicrophoneTelemetrySource {
+    case idleMonitor
+    case recordingBackend
+  }
+
+  private func forwardMicrophoneLevel(
+    _ sample: MicrophoneLevelSample,
+    source: MicrophoneTelemetrySource
+  ) {
+    switch source {
+    case .idleMonitor:
+      if state != .idle && hasReceivedRecordingMicrophoneLevel {
+        return
+      }
+    case .recordingBackend:
+      if state != .idle && !hasReceivedRecordingMicrophoneLevel {
+        hasReceivedRecordingMicrophoneLevel = true
+        micLevelMonitor.stop(emitZero: false)
+      }
+    }
+
+    onMicrophoneLevel?(sample)
   }
 
   /// Scans the internal recordings workspace on startup for diagnostics.
@@ -1087,6 +1132,7 @@ final class ScreenRecorderFacade: NSObject {
     overlayID: CGWindowID?,
     systemAudioEnabled: Bool
   ) {
+    hasReceivedRecordingMicrophoneLevel = false
     logOverlay(
       "startCapture()",
       [
@@ -2397,6 +2443,7 @@ final class ScreenRecorderFacade: NSObject {
     }
     state = .idle
     stateAsStr()
+    hasReceivedRecordingMicrophoneLevel = false
     refreshMicrophoneLevelMonitoring(resetMeter: false)
     recordedDurationTracker.reset()
     resetRecordingSessionSuppressions()
@@ -3046,18 +3093,18 @@ final class ScreenRecorderFacade: NSObject {
   }
 
   private func refreshMicrophoneLevelMonitoring(resetMeter: Bool) {
-    guard state == .idle else {
-      micLevelMonitor.stop(emitZero: resetMeter)
-      return
-    }
-
     guard let micId = prefs.audioDeviceId, !micId.isEmpty else {
       micLevelMonitor.stop(emitZero: true)
       return
     }
 
+    guard state == .idle || !hasReceivedRecordingMicrophoneLevel else {
+      micLevelMonitor.stop(emitZero: resetMeter)
+      return
+    }
+
     micLevelMonitor.start(deviceID: micId) { [weak self] sample in
-      self?.onMicrophoneLevel?(sample)
+      self?.forwardMicrophoneLevel(sample, source: .idleMonitor)
     }
   }
 
@@ -3309,6 +3356,7 @@ final class ScreenRecorderFacade: NSObject {
     resetOverlayUpdateDeduper()
     state = .idle
     stateAsStr()
+    hasReceivedRecordingMicrophoneLevel = false
     refreshMicrophoneLevelMonitoring(resetMeter: false)
     recordedDurationTracker.reset()
     currentRawURL = nil
@@ -3369,7 +3417,7 @@ final class ScreenRecorderFacade: NSObject {
     self.capture = backend
     resetOverlayUpdateDeduper()
     self.capture.onMicrophoneLevel = { [weak self] sample in
-      self?.onMicrophoneLevel?(sample)
+      self?.forwardMicrophoneLevel(sample, source: .recordingBackend)
     }
 
     // Bridge backend callbacks into the facade state machine.
@@ -3696,6 +3744,14 @@ final class ScreenRecorderFacade: NSObject {
 
   func _testSetCaptureBackend(_ backend: CaptureBackend) {
     setCaptureBackend(backend)
+  }
+
+  func _testSetAudioDeviceId(_ id: String?) {
+    prefs.audioDeviceId = id
+  }
+
+  func _testRefreshMicrophoneLevelMonitoring(resetMeter: Bool) {
+    refreshMicrophoneLevelMonitoring(resetMeter: resetMeter)
   }
 
   func _testSyncOverlayWindowIntoCaptureIfNeeded() {

@@ -163,6 +163,9 @@ class _MicInputMeterIcon extends StatefulWidget {
 class _MicInputMeterIconState extends State<_MicInputMeterIcon> {
   static const Duration _attackDuration = Duration(milliseconds: 90);
   static const Duration _releaseDuration = Duration(milliseconds: 220);
+  static const double _meterWidth = 7.0;
+  static const double _meterHeight = 11.0;
+  static const double _meterTopOffset = 2.6;
 
   late double _animatedLevel;
   Duration _animationDuration = Duration.zero;
@@ -194,7 +197,7 @@ class _MicInputMeterIconState extends State<_MicInputMeterIcon> {
         ? widget.levelLinear.clamp(0.0, 1.0)
         : 0.0;
     if (linear <= 0) return 0.0;
-    return math.pow(linear, 0.6).toDouble().clamp(0.0, 1.0);
+    return math.pow(linear, 0.5).toDouble().clamp(0.0, 1.0);
   }
 
   @override
@@ -240,23 +243,39 @@ class _MicInputMeterIconState extends State<_MicInputMeterIcon> {
                     alignment: Alignment.center,
                     children: [
                       if (widget.hasSelectedMicrophone)
-                        Opacity(
-                          opacity: 0.14,
-                          child: Icon(
-                            Icons.mic_rounded,
-                            size: 18,
-                            color: _MicInputMeterIcon._activeFillColor,
+                        Positioned(
+                          top: _meterTopOffset,
+                          child: DecoratedBox(
+                            decoration: BoxDecoration(
+                              color: _MicInputMeterIcon._activeFillColor
+                                  .withValues(alpha: 0.14),
+                              borderRadius: BorderRadius.circular(999),
+                            ),
+                            child: SizedBox(
+                              width: _meterWidth,
+                              height: _meterHeight,
+                            ),
                           ),
                         ),
-                      ClipRect(
-                        child: Align(
-                          key: _micInputMeterFillKey,
-                          alignment: Alignment.bottomCenter,
-                          heightFactor: animatedLevel.clamp(0.0, 1.0),
-                          child: Icon(
-                            Icons.mic_rounded,
-                            size: 18,
-                            color: _MicInputMeterIcon._activeFillColor,
+                      Positioned(
+                        top: _meterTopOffset,
+                        child: ClipRRect(
+                          borderRadius: BorderRadius.circular(999),
+                          child: SizedBox(
+                            width: _meterWidth,
+                            height: _meterHeight,
+                            child: Align(
+                              key: _micInputMeterFillKey,
+                              alignment: Alignment.bottomCenter,
+                              heightFactor: widget.hasSelectedMicrophone
+                                  ? animatedLevel.clamp(0.0, 1.0)
+                                  : 0.0,
+                              child: Container(
+                                width: _meterWidth,
+                                height: _meterHeight,
+                                color: _MicInputMeterIcon._activeFillColor,
+                              ),
+                            ),
                           ),
                         ),
                       ),

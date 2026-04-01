@@ -87,6 +87,11 @@ ThemeData _theme(WidgetTester tester) {
   return Theme.of(tester.element(find.byType(RecordingAudioSection)));
 }
 
+double _expectedVisualLevel(double linear) {
+  if (linear <= 0) return 0.0;
+  return math.pow(linear, 0.5).toDouble().clamp(0.0, 1.0);
+}
+
 Align _meterFill(WidgetTester tester) {
   return tester.widget<Align>(find.byKey(const Key('mic_input_meter_fill')));
 }
@@ -154,7 +159,7 @@ void main() {
     );
     expect(
       _meterFill(tester).heightFactor,
-      closeTo(math.pow(0.42, 0.6).toDouble(), 0.001),
+      closeTo(_expectedVisualLevel(0.42), 0.001),
     );
     expect(
       _meterTooltip(tester).message,
@@ -174,7 +179,7 @@ void main() {
 
     expect(
       _meterFill(tester).heightFactor,
-      closeTo(math.pow(0.08, 0.6).toDouble(), 0.001),
+      closeTo(_expectedVisualLevel(0.08), 0.001),
     );
     expect(_meterFill(tester).heightFactor!, greaterThan(0.08));
   });
@@ -189,7 +194,7 @@ void main() {
 
     expect(
       _meterFill(tester).heightFactor,
-      closeTo(math.pow(0.18, 0.6).toDouble(), 0.001),
+      closeTo(_expectedVisualLevel(0.18), 0.001),
     );
 
     await tester.pumpWidget(
@@ -204,8 +209,67 @@ void main() {
 
     expect(
       _meterFill(tester).heightFactor,
-      closeTo(math.pow(0.76, 0.6).toDouble(), 0.001),
+      closeTo(_expectedVisualLevel(0.76), 0.001),
     );
+  });
+
+  testWidgets('meter fill decreases when audio input decreases', (
+    tester,
+  ) async {
+    await _pumpSection(
+      tester,
+      selectedAudioSourceId: 'mic-1',
+      micInputLevelLinear: 0.72,
+      micInputLevelDbfs: -9.0,
+    );
+
+    expect(
+      _meterFill(tester).heightFactor,
+      closeTo(_expectedVisualLevel(0.72), 0.001),
+    );
+
+    await tester.pumpWidget(
+      _buildSection(
+        selectedAudioSourceId: 'mic-1',
+        micInputLevelLinear: 0.16,
+        micInputLevelDbfs: -33.0,
+      ),
+    );
+    await tester.pump();
+    await tester.pumpAndSettle();
+
+    expect(
+      _meterFill(tester).heightFactor,
+      closeTo(_expectedVisualLevel(0.16), 0.001),
+    );
+  });
+
+  testWidgets('meter fill fades to empty when audio input reaches silence', (
+    tester,
+  ) async {
+    await _pumpSection(
+      tester,
+      selectedAudioSourceId: 'mic-1',
+      micInputLevelLinear: 0.36,
+      micInputLevelDbfs: -20.0,
+    );
+
+    expect(
+      _meterFill(tester).heightFactor,
+      closeTo(_expectedVisualLevel(0.36), 0.001),
+    );
+
+    await tester.pumpWidget(
+      _buildSection(
+        selectedAudioSourceId: 'mic-1',
+        micInputLevelLinear: 0.0,
+        micInputLevelDbfs: -160.0,
+      ),
+    );
+    await tester.pump();
+    await tester.pumpAndSettle();
+
+    expect(_meterFill(tester).heightFactor, 0.0);
   });
 
   testWidgets('meter still updates while recording is active', (tester) async {
@@ -219,7 +283,7 @@ void main() {
 
     expect(
       _meterFill(tester).heightFactor,
-      closeTo(math.pow(0.14, 0.6).toDouble(), 0.001),
+      closeTo(_expectedVisualLevel(0.14), 0.001),
     );
 
     await tester.pumpWidget(
@@ -235,7 +299,7 @@ void main() {
 
     expect(
       _meterFill(tester).heightFactor,
-      closeTo(math.pow(0.52, 0.6).toDouble(), 0.001),
+      closeTo(_expectedVisualLevel(0.52), 0.001),
     );
   });
 
@@ -255,7 +319,7 @@ void main() {
     expect(_meterTooltip(tester).message, l10n.micInputIndicatorLowTooltip);
     expect(
       _meterFill(tester).heightFactor,
-      closeTo(math.pow(0.08, 0.6).toDouble(), 0.001),
+      closeTo(_expectedVisualLevel(0.08), 0.001),
     );
   });
 

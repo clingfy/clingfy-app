@@ -2800,6 +2800,25 @@ private final class MockAVFoundationCapturePipeline: AVFoundationCapturePipelini
   }
 }
 
+private final class MockMicrophoneLevelMonitor: MicrophoneLevelMonitoring {
+  private(set) var startDeviceIDs: [String?] = []
+  private(set) var stopEmitZeroValues: [Bool] = []
+  private var onLevel: ((MicrophoneLevelSample) -> Void)?
+
+  func start(deviceID: String?, onLevel: @escaping (MicrophoneLevelSample) -> Void) {
+    startDeviceIDs.append(deviceID)
+    self.onLevel = onLevel
+  }
+
+  func stop(emitZero: Bool) {
+    stopEmitZeroValues.append(emitZero)
+  }
+
+  func emit(_ sample: MicrophoneLevelSample) {
+    onLevel?(sample)
+  }
+}
+
 @MainActor
 final class MicrophoneLevelTelemetryTests: XCTestCase {
   func testAVFoundationBackendForwardsPipelineMicrophoneLevels() throws {
@@ -2822,21 +2841,20 @@ final class MicrophoneLevelTelemetryTests: XCTestCase {
   }
 
   func testRecordingStartDoesNotForceZeroMicSample() {
-    let facade = ScreenRecorderFacade()
+    let micMonitor = MockMicrophoneLevelMonitor()
+    let facade = ScreenRecorderFacade(micLevelMonitor: micMonitor)
     let backend = MockCaptureBackend()
     facade._testSetCaptureBackend(backend)
-
-    let settleInitialAsync = expectation(description: "initial async settle")
-    DispatchQueue.main.asyncAfter(deadline: .now() + 0.2) {
-      settleInitialAsync.fulfill()
-    }
-    wait(for: [settleInitialAsync], timeout: 1.0)
+    facade._testSetAudioDeviceId("mic-1")
+    facade._testRefreshMicrophoneLevelMonitoring(resetMeter: false)
 
     var received: [MicrophoneLevelSample] = []
     facade.onMicrophoneLevel = { sample in
       received.append(sample)
     }
 
+    micMonitor.emit(MicrophoneLevelSample(linear: 0.19, dbfs: -26.0))
+    let stopCountBeforeStart = micMonitor.stopEmitZeroValues.count
     backend.onStarted?(URL(fileURLWithPath: "/tmp/recording.mov"))
 
     let settleStartTransition = expectation(description: "recording start settle")
@@ -2845,7 +2863,9 @@ final class MicrophoneLevelTelemetryTests: XCTestCase {
     }
     wait(for: [settleStartTransition], timeout: 1.0)
 
-    XCTAssertTrue(received.isEmpty)
+    XCTAssertEqual(received.count, 1)
+    XCTAssertEqual(received[0].linear, 0.19, accuracy: 0.0001)
+    XCTAssertEqual(micMonitor.stopEmitZeroValues.count, stopCountBeforeStart)
   }
 
   func testBackendMicrophoneTelemetryStillReachesFacadeAfterRecordingStarts() throws {
@@ -2873,6 +2893,59 @@ final class MicrophoneLevelTelemetryTests: XCTestCase {
     let forwardedSample = try XCTUnwrap(received)
     XCTAssertEqual(forwardedSample.linear, 0.41, accuracy: 0.0001)
     XCTAssertEqual(forwardedSample.dbfs, -17.8, accuracy: 0.0001)
+  }
+
+  func testBackendSilenceTelemetryStillReachesFacadeDuringRecording() throws {
+    let facade = ScreenRecorderFacade()
+    let backend = MockCaptureBackend()
+    facade._testSetCaptureBackend(backend)
+
+    let settleInitialAsync = expectation(description: "initial async settle")
+    DispatchQueue.main.asyncAfter(deadline: .now() + 0.2) {
+      settleInitialAsync.fulfill()
+    }
+    wait(for: [settleInitialAsync], timeout: 1.0)
+
+    let forwarded = expectation(description: "backend silence sample forwarded")
+    var received: MicrophoneLevelSample?
+    facade.onMicrophoneLevel = { sample in
+      received = sample
+      forwarded.fulfill()
+    }
+
+    backend.onStarted?(URL(fileURLWithPath: "/tmp/recording.mov"))
+    backend.onMicrophoneLevel?(MicrophoneLevelSample(linear: 0.0, dbfs: -160.0))
+
+    wait(for: [forwarded], timeout: 1.0)
+    let forwardedSample = try XCTUnwrap(received)
+    XCTAssertEqual(forwardedSample.linear, 0.0, accuracy: 0.0001)
+    XCTAssertEqual(forwardedSample.dbfs, -160.0, accuracy: 0.0001)
+  }
+
+  func testMicMonitorFallbackRemainsLiveUntilRecordingTelemetryTakesOver() {
+    let micMonitor = MockMicrophoneLevelMonitor()
+    let facade = ScreenRecorderFacade(micLevelMonitor: micMonitor)
+    let backend = MockCaptureBackend()
+    facade._testSetCaptureBackend(backend)
+    facade._testSetAudioDeviceId("mic-1")
+    facade._testRefreshMicrophoneLevelMonitoring(resetMeter: false)
+
+    var received: [Double] = []
+    facade.onMicrophoneLevel = { sample in
+      received.append(sample.linear)
+    }
+
+    backend.onStarted?(URL(fileURLWithPath: "/tmp/recording.mov"))
+    micMonitor.emit(MicrophoneLevelSample(linear: 0.22, dbfs: -24.0))
+    backend.onMicrophoneLevel?(MicrophoneLevelSample(linear: 0.48, dbfs: -12.0))
+    micMonitor.emit(MicrophoneLevelSample(linear: 0.31, dbfs: -18.0))
+
+    XCTAssertGreaterThanOrEqual(micMonitor.startDeviceIDs.count, 2)
+    XCTAssertEqual(micMonitor.startDeviceIDs.last!, "mic-1")
+    XCTAssertTrue(micMonitor.stopEmitZeroValues.contains(false))
+    XCTAssertEqual(received.count, 2)
+    XCTAssertEqual(received[0], 0.22, accuracy: 0.0001)
+    XCTAssertEqual(received[1], 0.48, accuracy: 0.0001)
   }
 }
 
