@@ -223,6 +223,8 @@
   "postProcessing": "Post-procesare",
   "expandPane": "Extinde panoul",
   "collapsePane": "Restrânge panoul",
+  "showOptions": "Arată opțiunile",
+  "hideOptions": "Ascunde opțiunile",
   "@licenseSummaryTrial": {
     "placeholders": {
       "count": {

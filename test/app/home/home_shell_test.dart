@@ -212,6 +212,59 @@ void main() {
     );
   }
 
+  testWidgets(
+    'desktop shell defaults to a compact rail and visible inspector',
+    (tester) async {
+      _setDesktopWindow(tester);
+      final harness = await createHarness();
+
+      addTearDown(harness.recording.dispose);
+      addTearDown(harness.player.dispose);
+      addTearDown(harness.device.dispose);
+      addTearDown(harness.overlay.dispose);
+      addTearDown(harness.permissions.dispose);
+      addTearDown(harness.post.dispose);
+      addTearDown(harness.license.dispose);
+      addTearDown(harness.countdown.dispose);
+      addTearDown(harness.uiState.dispose);
+      addTearDown(harness.settings.dispose);
+
+      await tester.pumpWidget(
+        buildShell(
+          actions: harness.actions,
+          countdown: harness.countdown,
+          device: harness.device,
+          license: harness.license,
+          overlay: harness.overlay,
+          player: harness.player,
+          post: harness.post,
+          recording: harness.recording,
+          settings: harness.settings,
+          uiState: harness.uiState,
+        ),
+      );
+      await tester.pumpAndSettle();
+
+      expect(
+        tester.getRect(find.byKey(const Key('home_left_sidebar_shell'))).width,
+        moreOrLessEquals(HomeDesktopPaneDimensions.compactRailWidth),
+      );
+      expect(find.byKey(const Key('home_options_panel_shell')), findsOneWidget);
+      expect(
+        find.byKey(const Key('home_toolbar_options_toggle_button')),
+        findsOneWidget,
+      );
+      expect(
+        find.byKey(const Key('home_options_panel_reveal_handle')),
+        findsNothing,
+      );
+      expect(
+        harness.uiState.paneStateFor(DesktopPaneId.homeLeftSidebar).isCollapsed,
+        isTrue,
+      );
+    },
+  );
+
   testWidgets('recording shell keeps rail separate from the workspace column', (
     tester,
   ) async {
@@ -219,6 +272,13 @@ void main() {
     final harness = await createHarness();
     final theme = buildDarkTheme();
     harness.uiState.setRecordingSidebarIndex(2);
+    harness.uiState.applyPaneLayoutPrefs(
+      const DesktopPaneLayoutPrefs(
+        paneStates: {
+          DesktopPaneId.homeLeftSidebar: DesktopPaneState(isCollapsed: false),
+        },
+      ),
+    );
 
     addTearDown(harness.recording.dispose);
     addTearDown(harness.player.dispose);
@@ -410,21 +470,7 @@ void main() {
       await tester.pumpAndSettle();
 
       expect(
-        find.descendant(
-          of: find.byKey(const Key('home_left_sidebar_shell')),
-          matching: find.text('Screen & Audio'),
-        ),
-        findsOneWidget,
-      );
-
-      await tester.tap(find.byKey(const Key('home_sidebar_collapse_button')));
-      await tester.pumpAndSettle();
-
-      final railRect = tester.getRect(
-        find.byKey(const Key('home_left_sidebar_shell')),
-      );
-      expect(
-        railRect.width,
+        tester.getRect(find.byKey(const Key('home_left_sidebar_shell'))).width,
         moreOrLessEquals(HomeDesktopPaneDimensions.compactRailWidth),
       );
       expect(
@@ -438,8 +484,11 @@ void main() {
       await tester.tap(find.byKey(const Key('home_sidebar_collapse_button')));
       await tester.pumpAndSettle();
 
+      final railRect = tester.getRect(
+        find.byKey(const Key('home_left_sidebar_shell')),
+      );
       expect(
-        tester.getRect(find.byKey(const Key('home_left_sidebar_shell'))).width,
+        railRect.width,
         moreOrLessEquals(HomeDesktopPaneDimensions.railWidth),
       );
       expect(
@@ -448,6 +497,21 @@ void main() {
           matching: find.text('Screen & Audio'),
         ),
         findsOneWidget,
+      );
+
+      await tester.tap(find.byKey(const Key('home_sidebar_collapse_button')));
+      await tester.pumpAndSettle();
+
+      expect(
+        tester.getRect(find.byKey(const Key('home_left_sidebar_shell'))).width,
+        moreOrLessEquals(HomeDesktopPaneDimensions.compactRailWidth),
+      );
+      expect(
+        find.descendant(
+          of: find.byKey(const Key('home_left_sidebar_shell')),
+          matching: find.text('Screen & Audio'),
+        ),
+        findsNothing,
       );
     },
   );
@@ -718,76 +782,99 @@ void main() {
     },
   );
 
-  testWidgets('options pane collapse and expand restore the last width', (
-    tester,
-  ) async {
-    _setDesktopWindow(tester);
-    final harness = await createHarness();
-    harness.uiState.applyPaneLayoutPrefs(
-      const DesktopPaneLayoutPrefs(
-        paneStates: {
-          DesktopPaneId.recordingSidebar: DesktopPaneState(
-            width: 356,
-            lastExpandedWidth: 356,
-            userResized: true,
-          ),
-        },
-      ),
-    );
+  testWidgets(
+    'toolbar toggle hides inspector fully and reveal handle restores width',
+    (tester) async {
+      _setDesktopWindow(tester);
+      final harness = await createHarness();
+      harness.uiState.applyPaneLayoutPrefs(
+        const DesktopPaneLayoutPrefs(
+          paneStates: {
+            DesktopPaneId.recordingSidebar: DesktopPaneState(
+              width: 356,
+              lastExpandedWidth: 356,
+              userResized: true,
+            ),
+          },
+        ),
+      );
 
-    addTearDown(harness.recording.dispose);
-    addTearDown(harness.player.dispose);
-    addTearDown(harness.device.dispose);
-    addTearDown(harness.overlay.dispose);
-    addTearDown(harness.permissions.dispose);
-    addTearDown(harness.post.dispose);
-    addTearDown(harness.license.dispose);
-    addTearDown(harness.countdown.dispose);
-    addTearDown(harness.uiState.dispose);
-    addTearDown(harness.settings.dispose);
+      addTearDown(harness.recording.dispose);
+      addTearDown(harness.player.dispose);
+      addTearDown(harness.device.dispose);
+      addTearDown(harness.overlay.dispose);
+      addTearDown(harness.permissions.dispose);
+      addTearDown(harness.post.dispose);
+      addTearDown(harness.license.dispose);
+      addTearDown(harness.countdown.dispose);
+      addTearDown(harness.uiState.dispose);
+      addTearDown(harness.settings.dispose);
 
-    await tester.pumpWidget(
-      buildShell(
-        actions: harness.actions,
-        countdown: harness.countdown,
-        device: harness.device,
-        license: harness.license,
-        overlay: harness.overlay,
-        player: harness.player,
-        post: harness.post,
-        recording: harness.recording,
-        settings: harness.settings,
-        uiState: harness.uiState,
-      ),
-    );
-    await tester.pumpAndSettle();
+      await tester.pumpWidget(
+        buildShell(
+          actions: harness.actions,
+          countdown: harness.countdown,
+          device: harness.device,
+          license: harness.license,
+          overlay: harness.overlay,
+          player: harness.player,
+          post: harness.post,
+          recording: harness.recording,
+          settings: harness.settings,
+          uiState: harness.uiState,
+        ),
+      );
+      await tester.pumpAndSettle();
 
-    await tester.tap(
-      find.byKey(const Key('home_options_panel_collapse_button')),
-    );
-    await tester.pumpAndSettle();
+      expect(
+        find.byKey(const Key('home_options_panel_reveal_handle')),
+        findsNothing,
+      );
 
-    expect(
-      find.byKey(const Key('home_options_panel_expand_button')),
-      findsOneWidget,
-    );
-    expect(
-      harness.uiState.paneStateFor(DesktopPaneId.recordingSidebar).isCollapsed,
-      isTrue,
-    );
+      await tester.tap(
+        find.byKey(const Key('home_toolbar_options_toggle_button')),
+      );
+      await tester.pumpAndSettle();
 
-    await tester.tap(find.byKey(const Key('home_options_panel_expand_button')));
-    await tester.pumpAndSettle();
+      expect(find.byKey(const Key('home_options_panel_shell')), findsNothing);
+      expect(
+        find.byKey(const Key('home_options_panel_reveal_handle')),
+        findsOneWidget,
+      );
+      expect(
+        harness.uiState
+            .paneStateFor(DesktopPaneId.recordingSidebar)
+            .isCollapsed,
+        isTrue,
+      );
+      expect(
+        tester.getRect(find.byKey(const Key('home_right_panel_shell'))).left,
+        moreOrLessEquals(
+          tester.getRect(find.byKey(const Key('desktop_toolbar_surface'))).left,
+        ),
+      );
 
-    final optionsRect = tester.getRect(
-      find.byKey(const Key('home_options_panel_shell')),
-    );
-    expect(
-      harness.uiState.paneStateFor(DesktopPaneId.recordingSidebar).isCollapsed,
-      isFalse,
-    );
-    expect(optionsRect.width, moreOrLessEquals(356));
-  });
+      await tester.tap(
+        find.byKey(const Key('home_options_panel_reveal_handle')),
+      );
+      await tester.pumpAndSettle();
+
+      final optionsRect = tester.getRect(
+        find.byKey(const Key('home_options_panel_shell')),
+      );
+      expect(
+        harness.uiState
+            .paneStateFor(DesktopPaneId.recordingSidebar)
+            .isCollapsed,
+        isFalse,
+      );
+      expect(optionsRect.width, moreOrLessEquals(356));
+      expect(
+        find.byKey(const Key('home_options_panel_reveal_handle')),
+        findsNothing,
+      );
+    },
+  );
 
   testWidgets(
     'recording and preview inspectors restore independent pane states',
@@ -847,13 +934,14 @@ void main() {
       final sessionId = await _openPreviewShell(harness.recording);
       await tester.pumpAndSettle();
 
+      expect(find.byKey(const Key('home_options_panel_shell')), findsNothing);
       expect(
-        find.byKey(const Key('home_options_panel_expand_button')),
+        find.byKey(const Key('home_options_panel_reveal_handle')),
         findsOneWidget,
       );
 
       await tester.tap(
-        find.byKey(const Key('home_options_panel_expand_button')),
+        find.byKey(const Key('home_options_panel_reveal_handle')),
       );
       await tester.pumpAndSettle();
 
@@ -915,13 +1003,73 @@ void main() {
         find.byKey(const Key('desktop_split_layout_scroll_view')),
         findsWidgets,
       );
+      expect(find.byKey(const Key('home_options_panel_shell')), findsNothing);
       expect(
-        find.byKey(const Key('home_options_panel_expand_button')),
+        find.byKey(const Key('home_options_panel_reveal_handle')),
         findsOneWidget,
       );
       expect(tester.takeException(), isNull);
     },
   );
+
+  testWidgets('selecting a rail destination reopens a hidden inspector', (
+    tester,
+  ) async {
+    _setDesktopWindow(tester);
+    final harness = await createHarness();
+
+    addTearDown(harness.recording.dispose);
+    addTearDown(harness.player.dispose);
+    addTearDown(harness.device.dispose);
+    addTearDown(harness.overlay.dispose);
+    addTearDown(harness.permissions.dispose);
+    addTearDown(harness.post.dispose);
+    addTearDown(harness.license.dispose);
+    addTearDown(harness.countdown.dispose);
+    addTearDown(harness.uiState.dispose);
+    addTearDown(harness.settings.dispose);
+
+    await tester.pumpWidget(
+      buildShell(
+        actions: harness.actions,
+        countdown: harness.countdown,
+        device: harness.device,
+        license: harness.license,
+        overlay: harness.overlay,
+        player: harness.player,
+        post: harness.post,
+        recording: harness.recording,
+        settings: harness.settings,
+        uiState: harness.uiState,
+      ),
+    );
+    await tester.pumpAndSettle();
+
+    await tester.tap(
+      find.byKey(const Key('home_toolbar_options_toggle_button')),
+    );
+    await tester.pumpAndSettle();
+
+    expect(find.byKey(const Key('home_options_panel_shell')), findsNothing);
+
+    await tester.tap(
+      find.byKey(const ValueKey('recording_sidebar_rail_tile_1')),
+    );
+    await tester.pumpAndSettle();
+
+    expect(find.byKey(const Key('home_options_panel_shell')), findsOneWidget);
+    expect(
+      find.descendant(
+        of: find.byKey(const Key('recording_sidebar_header')),
+        matching: find.text('Face Cam'),
+      ),
+      findsOneWidget,
+    );
+    expect(
+      harness.uiState.paneStateFor(DesktopPaneId.recordingSidebar).isCollapsed,
+      isFalse,
+    );
+  });
 
   testWidgets('preview shell stays overflow-safe in narrow desktop widths', (
     tester,

@@ -21,6 +21,8 @@ class HomeToolbar extends StatelessWidget {
     required this.onExport,
     required this.onOpenSystemSettings,
     required this.onClearMessage,
+    this.isInspectorVisible = true,
+    this.onToggleInspector,
   });
 
   final String title;
@@ -30,6 +32,8 @@ class HomeToolbar extends StatelessWidget {
   final VoidCallback onExport;
   final Future<void> Function(String pane) onOpenSystemSettings;
   final VoidCallback onClearMessage;
+  final bool isInspectorVisible;
+  final VoidCallback? onToggleInspector;
 
   @override
   Widget build(BuildContext context) {
@@ -158,6 +162,8 @@ class HomeToolbar extends StatelessWidget {
                   : null,
               exportStatus: exportStatus,
               isProcessing: postEditingLocked,
+              isInspectorVisible: isInspectorVisible,
+              onToggleInspector: onToggleInspector,
             );
           },
         );

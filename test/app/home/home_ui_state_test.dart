@@ -1,9 +1,25 @@
+import 'package:clingfy/app/home/models/home_ui_prefs.dart';
 import 'package:clingfy/app/home/home_ui_state.dart';
 import 'package:clingfy/core/models/app_models.dart';
 import 'package:clingfy/ui/platform/widgets/desktop_pane_layout.dart';
 import 'package:flutter_test/flutter_test.dart';
 
 void main() {
+  test('starts with the compact rail desktop default', () {
+    final state = HomeUiState();
+    addTearDown(state.dispose);
+
+    expect(state.paneLayout, kDefaultHomePaneLayoutPrefs);
+    expect(
+      state.paneStateFor(DesktopPaneId.homeLeftSidebar).isCollapsed,
+      isTrue,
+    );
+    expect(
+      state.paneStateFor(DesktopPaneId.recordingSidebar).isCollapsed,
+      isFalse,
+    );
+  });
+
   test('setters update state and notify listeners', () {
     final state = HomeUiState();
     var notifications = 0;
@@ -18,7 +34,7 @@ void main() {
     state.applyPaneLayoutPrefs(
       const DesktopPaneLayoutPrefs(
         paneStates: {
-          DesktopPaneId.homeLeftSidebar: DesktopPaneState(isCollapsed: true),
+          DesktopPaneId.homeLeftSidebar: DesktopPaneState(isCollapsed: false),
         },
       ),
     );
@@ -30,7 +46,7 @@ void main() {
     expect(state.isSettingsOpen, isTrue);
     expect(
       state.paneStateFor(DesktopPaneId.homeLeftSidebar).isCollapsed,
-      isTrue,
+      isFalse,
     );
     expect(state.uiPrefsHydrated, isTrue);
     expect(notifications, 6);
@@ -47,7 +63,7 @@ void main() {
     state.setTargetMode(DisplayTargetMode.explicitId);
     state.setSettingsOpen(false);
     state.setError(null);
-    state.applyPaneLayoutPrefs(const DesktopPaneLayoutPrefs());
+    state.applyPaneLayoutPrefs(kDefaultHomePaneLayoutPrefs);
     state.markHydrated();
     state.markHydrated();
 

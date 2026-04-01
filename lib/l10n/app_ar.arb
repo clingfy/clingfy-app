@@ -223,6 +223,8 @@
   "postProcessing": "المعالجة اللاحقة",
   "expandPane": "توسيع اللوحة",
   "collapsePane": "طي اللوحة",
+  "showOptions": "إظهار الخيارات",
+  "hideOptions": "إخفاء الخيارات",
   "@licenseSummaryTrial": {
     "placeholders": {
       "count": {

@@ -159,4 +159,41 @@ void main() {
     );
     expect(decoration.border, isNull);
   });
+
+  testWidgets('inspector toggle renders and fires its callback', (
+    tester,
+  ) async {
+    var toggled = 0;
+
+    await tester.pumpWidget(
+      MaterialApp(
+        localizationsDelegates: AppLocalizations.localizationsDelegates,
+        supportedLocales: AppLocalizations.supportedLocales,
+        theme: buildDarkTheme(),
+        darkTheme: buildDarkTheme(),
+        themeMode: ThemeMode.dark,
+        home: Scaffold(
+          body: DesktopToolbar(
+            title: 'Clingfy',
+            isRecording: false,
+            isPaused: false,
+            isInspectorVisible: false,
+            onToggleInspector: () => toggled += 1,
+          ),
+        ),
+      ),
+    );
+
+    expect(
+      find.byKey(const Key('home_toolbar_options_toggle_button')),
+      findsOneWidget,
+    );
+
+    await tester.tap(
+      find.byKey(const Key('home_toolbar_options_toggle_button')),
+    );
+    await tester.pump();
+
+    expect(toggled, 1);
+  });
 }

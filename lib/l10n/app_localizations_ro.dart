@@ -625,6 +625,12 @@ class AppLocalizationsRo extends AppLocalizations {
   String get collapsePane => 'Restrânge panoul';
 
   @override
+  String get showOptions => 'Arată opțiunile';
+
+  @override
+  String get hideOptions => 'Ascunde opțiunile';
+
+  @override
   String get size => 'Dimensiune';
 
   @override

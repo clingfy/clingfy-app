@@ -613,6 +613,12 @@ class AppLocalizationsAr extends AppLocalizations {
   String get collapsePane => 'طي اللوحة';
 
   @override
+  String get showOptions => 'إظهار الخيارات';
+
+  @override
+  String get hideOptions => 'إخفاء الخيارات';
+
+  @override
   String get size => 'الحجم';
 
   @override

@@ -618,6 +618,12 @@ class AppLocalizationsEn extends AppLocalizations {
   String get collapsePane => 'Collapse pane';
 
   @override
+  String get showOptions => 'Show Options';
+
+  @override
+  String get hideOptions => 'Hide Options';
+
+  @override
   String get size => 'Size';
 
   @override

@@ -1228,6 +1228,18 @@ abstract class AppLocalizations {
   /// **'Collapse pane'**
   String get collapsePane;
 
+  /// No description provided for @showOptions.
+  ///
+  /// In en, this message translates to:
+  /// **'Show Options'**
+  String get showOptions;
+
+  /// No description provided for @hideOptions.
+  ///
+  /// In en, this message translates to:
+  /// **'Hide Options'**
+  String get hideOptions;
+
   /// No description provided for @size.
   ///
   /// In en, this message translates to:

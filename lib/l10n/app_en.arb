@@ -214,6 +214,8 @@
   "postProcessing": "Post-processing",
   "expandPane": "Expand pane",
   "collapsePane": "Collapse pane",
+  "showOptions": "Show Options",
+  "hideOptions": "Hide Options",
   "size": "Size",
   "padding": "Padding",
   "roundedCorners": "Rounded corners",
