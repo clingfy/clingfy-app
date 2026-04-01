@@ -21,23 +21,16 @@ final class CaptureBackendAVFoundation: CaptureBackend {
 
   var canPauseResume: Bool { true }
   var supportsLiveOverlayExclusionDuringSeparateCameraCapture: Bool { false }
-  var isRecording: Bool {
-    // AVCaptureMovieFileOutput reports recording state reliably.
-    (pipeline.movieOutput?.isRecording ?? false) || (pipeline.movieOutput?.isRecordingPaused ?? false)
-  }
+  var isRecording: Bool { pipeline.isRecording }
 
-  var isPaused: Bool {
-    pipeline.movieOutput?.isRecordingPaused ?? false
-  }
+  var isPaused: Bool { pipeline.isRecordingPaused }
 
-  var currentOutputURL: URL? {
-    pipeline.movieOutput?.outputFileURL
-  }
+  var currentOutputURL: URL? { pipeline.currentOutputURL }
 
   // MARK: Internals
-  private let pipeline: CapturePipeline
+  private let pipeline: AVFoundationCapturePipelining
 
-  init(pipeline: CapturePipeline = CapturePipeline()) {
+  init(pipeline: AVFoundationCapturePipelining = CapturePipeline()) {
     self.pipeline = pipeline
 
     // Bridge pipeline callbacks -> backend callbacks
@@ -52,6 +45,9 @@ final class CaptureBackendAVFoundation: CaptureBackend {
     }
     self.pipeline.onFinished = { [weak self] url, err in
       self?.onFinished?(url, err)
+    }
+    self.pipeline.onMicrophoneLevel = { [weak self] sample in
+      self?.onMicrophoneLevel?(sample)
     }
   }
 

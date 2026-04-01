@@ -3381,7 +3381,7 @@ final class ScreenRecorderFacade: NSObject {
       self.state = .recording
       self.recordedDurationTracker.start()
       self.stateAsStr()
-      self.refreshMicrophoneLevelMonitoring(resetMeter: true)
+      self.refreshMicrophoneLevelMonitoring(resetMeter: false)
       self.currentRawURL = visibleRawURL
 
       // Write metadata sidecar when recording starts

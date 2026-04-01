@@ -1530,33 +1530,16 @@ class AppLocalizationsAr extends AppLocalizations {
   String get micInputLevel => 'مستوى دخل الميكروفون';
 
   @override
-  String get micInputMonitorTitle => 'مراقبة الإدخال';
-
-  @override
-  String get micInputMonitorInactive => 'غير نشط';
-
-  @override
-  String get micInputMonitorDisabledHint =>
+  String get micInputIndicatorDisabledTooltip =>
       'اختر ميكروفونًا لمعاينة مستوى الإدخال.';
 
   @override
-  String get micInputMonitorLiveHint => 'تتم الآن مراقبة الإدخال المباشر.';
+  String micInputIndicatorLiveTooltip(String dbfs) {
+    return 'مستوى إدخال الميكروفون: $dbfs dBFS';
+  }
 
   @override
-  String get micInputMonitorLowBadge => 'إدخال منخفض';
-
-  @override
-  String get micInputMonitorLowHint =>
-      'ارفع مستوى الكسب أو اقترب من الميكروفون.';
-
-  @override
-  String get micInputMonitorExpandTooltip => 'إظهار مراقب الإدخال التفصيلي';
-
-  @override
-  String get micInputMonitorCollapseTooltip => 'إخفاء مراقب الإدخال التفصيلي';
-
-  @override
-  String get micInputTooLowWarning =>
+  String get micInputIndicatorLowTooltip =>
       'مستوى إدخال الميكروفون منخفض جدًا. ارفع مستوى الإدخال أو اقترب من الميكروفون.';
 
   @override

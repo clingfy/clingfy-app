@@ -522,15 +522,16 @@
   "audioGain": "Audio Gain",
   "volume": "Volume",
   "micInputLevel": "Mic input level",
-  "micInputMonitorTitle": "Input monitoring",
-  "micInputMonitorInactive": "Inactive",
-  "micInputMonitorDisabledHint": "Select a microphone to preview input level.",
-  "micInputMonitorLiveHint": "Monitoring live input.",
-  "micInputMonitorLowBadge": "Low input",
-  "micInputMonitorLowHint": "Raise input gain or move closer.",
-  "micInputMonitorExpandTooltip": "Show detailed input monitor",
-  "micInputMonitorCollapseTooltip": "Hide detailed input monitor",
-  "micInputTooLowWarning": "Mic input is very low. Raise input level or move closer to the mic.",
+  "micInputIndicatorDisabledTooltip": "Select a microphone to preview input level.",
+  "micInputIndicatorLiveTooltip": "Mic input level: {dbfs} dBFS",
+  "@micInputIndicatorLiveTooltip": {
+    "placeholders": {
+      "dbfs": {
+        "type": "String"
+      }
+    }
+  },
+  "micInputIndicatorLowTooltip": "Mic input is very low. Raise input level or move closer to the mic.",
   "noMicAudioFound": "No mic audio track found",
   "autoNormalizeOnExport": "Auto-normalize on export",
   "targetLoudness": "Target loudness",

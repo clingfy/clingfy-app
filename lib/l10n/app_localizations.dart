@@ -2902,59 +2902,23 @@ abstract class AppLocalizations {
   /// **'Mic input level'**
   String get micInputLevel;
 
-  /// No description provided for @micInputMonitorTitle.
-  ///
-  /// In en, this message translates to:
-  /// **'Input monitoring'**
-  String get micInputMonitorTitle;
-
-  /// No description provided for @micInputMonitorInactive.
-  ///
-  /// In en, this message translates to:
-  /// **'Inactive'**
-  String get micInputMonitorInactive;
-
-  /// No description provided for @micInputMonitorDisabledHint.
+  /// No description provided for @micInputIndicatorDisabledTooltip.
   ///
   /// In en, this message translates to:
   /// **'Select a microphone to preview input level.'**
-  String get micInputMonitorDisabledHint;
+  String get micInputIndicatorDisabledTooltip;
 
-  /// No description provided for @micInputMonitorLiveHint.
+  /// No description provided for @micInputIndicatorLiveTooltip.
   ///
   /// In en, this message translates to:
-  /// **'Monitoring live input.'**
-  String get micInputMonitorLiveHint;
+  /// **'Mic input level: {dbfs} dBFS'**
+  String micInputIndicatorLiveTooltip(String dbfs);
 
-  /// No description provided for @micInputMonitorLowBadge.
-  ///
-  /// In en, this message translates to:
-  /// **'Low input'**
-  String get micInputMonitorLowBadge;
-
-  /// No description provided for @micInputMonitorLowHint.
-  ///
-  /// In en, this message translates to:
-  /// **'Raise input gain or move closer.'**
-  String get micInputMonitorLowHint;
-
-  /// No description provided for @micInputMonitorExpandTooltip.
-  ///
-  /// In en, this message translates to:
-  /// **'Show detailed input monitor'**
-  String get micInputMonitorExpandTooltip;
-
-  /// No description provided for @micInputMonitorCollapseTooltip.
-  ///
-  /// In en, this message translates to:
-  /// **'Hide detailed input monitor'**
-  String get micInputMonitorCollapseTooltip;
-
-  /// No description provided for @micInputTooLowWarning.
+  /// No description provided for @micInputIndicatorLowTooltip.
   ///
   /// In en, this message translates to:
   /// **'Mic input is very low. Raise input level or move closer to the mic.'**
-  String get micInputTooLowWarning;
+  String get micInputIndicatorLowTooltip;
 
   /// No description provided for @noMicAudioFound.
   ///

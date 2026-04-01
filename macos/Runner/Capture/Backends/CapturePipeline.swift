@@ -1,20 +1,63 @@
 import AVFoundation
 import AppKit
 
-final class CapturePipeline: NSObject, AVCaptureFileOutputRecordingDelegate {
+protocol AVFoundationCapturePipelining: AnyObject {
+  var onStarted: ((URL) -> Void)? { get set }
+  var onPaused: (() -> Void)? { get set }
+  var onResumed: (() -> Void)? { get set }
+  var onFinished: ((URL?, Error?) -> Void)? { get set }
+  var onMicrophoneLevel: ((MicrophoneLevelSample) -> Void)? { get set }
+  var isRecording: Bool { get }
+  var isRecordingPaused: Bool { get }
+  var currentOutputURL: URL? { get }
+
+  func start(
+    displayID: CGDirectDisplayID,
+    cropRect: CGRect?,
+    quality: RecordingQuality,
+    frameRate: Int,
+    includeAudioDevice: AVCaptureDevice?,
+    makeOutputURL: @escaping () throws -> URL
+  )
+  func stop()
+  func pause()
+  func resume()
+}
+
+final class CapturePipeline: NSObject, AVCaptureFileOutputRecordingDelegate,
+  AVCaptureAudioDataOutputSampleBufferDelegate, AVFoundationCapturePipelining
+{
   private let queue = DispatchQueue(label: "com.clingfy.capture")
+  private let audioLevelQueue = DispatchQueue(label: "com.clingfy.capture.audio_level")
   private(set) var session: AVCaptureSession?
   private(set) var movieOutput: AVCaptureMovieFileOutput?
+  private var microphoneLevelOutput: AVCaptureAudioDataOutput?
   var onStarted: ((URL) -> Void)?
   var onPaused: (() -> Void)?
   var onResumed: (() -> Void)?
   var onFinished: ((URL?, Error?) -> Void)?
+  var onMicrophoneLevel: ((MicrophoneLevelSample) -> Void)?
 
   private let cursorRecorder = CursorRecorder()
+  private var smoothedMicLevelLinear: Double = 0.0
+  private var lastMicLevelEmitAt: CFTimeInterval = 0.0
+  private let micLevelEmitInterval: Double = 1.0 / 15.0
 
   private var currentDisplayID: CGDirectDisplayID = CGMainDisplayID()
   private var currentCaptureRect: CGRect?
   private var currentCursorRasterScale: Double = 1.0
+
+  var isRecording: Bool {
+    (movieOutput?.isRecording ?? false) || (movieOutput?.isRecordingPaused ?? false)
+  }
+
+  var isRecordingPaused: Bool {
+    movieOutput?.isRecordingPaused ?? false
+  }
+
+  var currentOutputURL: URL? {
+    movieOutput?.outputFileURL
+  }
 
   func start(
     displayID: CGDirectDisplayID,
@@ -24,7 +67,7 @@ final class CapturePipeline: NSObject, AVCaptureFileOutputRecordingDelegate {
     includeAudioDevice: AVCaptureDevice?,
     makeOutputURL: @escaping () throws -> URL
   ) {
-    queue.async {
+    queue.async { [self] in
       let session = AVCaptureSession()
       session.sessionPreset = .high
 
@@ -82,6 +125,17 @@ final class CapturePipeline: NSObject, AVCaptureFileOutputRecordingDelegate {
           self.finishStartError(code: "AUDIO_INPUT_ERROR", msg: error.localizedDescription)
           return
         }
+
+        let levelOutput = AVCaptureAudioDataOutput()
+        levelOutput.setSampleBufferDelegate(self, queue: self.audioLevelQueue)
+        if session.canAddOutput(levelOutput) {
+          session.addOutput(levelOutput)
+          self.microphoneLevelOutput = levelOutput
+        } else {
+          NativeLogger.w("AVFBackend", "Cannot add microphone level output")
+        }
+      } else {
+        self.microphoneLevelOutput = nil
       }
 
       guard session.canAddOutput(movie) else {
@@ -101,6 +155,7 @@ final class CapturePipeline: NSObject, AVCaptureFileOutputRecordingDelegate {
         let url = try makeOutputURL()
         self.session = session
         self.movieOutput = movie
+        self.resetMicrophoneLevelSmoothing()
 
         // Persist capture geometry once the session start is confirmed.
         self.currentDisplayID = displayID
@@ -180,6 +235,13 @@ final class CapturePipeline: NSObject, AVCaptureFileOutputRecordingDelegate {
     }
   }
 
+  private func resetMicrophoneLevelSmoothing() {
+    audioLevelQueue.async {
+      self.smoothedMicLevelLinear = 0.0
+      self.lastMicLevelEmitAt = 0.0
+    }
+  }
+
   // MARK: delegate
   func fileOutput(
     _ output: AVCaptureFileOutput,
@@ -224,6 +286,9 @@ final class CapturePipeline: NSObject, AVCaptureFileOutputRecordingDelegate {
     from connections: [AVCaptureConnection],
     error: Error?
   ) {
+    microphoneLevelOutput?.setSampleBufferDelegate(nil, queue: nil)
+    microphoneLevelOutput = nil
+    resetMicrophoneLevelSmoothing()
     self.logFinalVideoInfoAVF(url: url)
 
     let cursorURL = url.deletingPathExtension().appendingPathExtension("cursor.json")
@@ -267,6 +332,36 @@ final class CapturePipeline: NSObject, AVCaptureFileOutputRecordingDelegate {
         "duration_s": seconds,
         "bitrate_from_file_bps": bpsFromFile,
       ])
+  }
+
+  func captureOutput(
+    _ output: AVCaptureOutput,
+    didOutput sampleBuffer: CMSampleBuffer,
+    from connection: AVCaptureConnection
+  ) {
+    guard output === microphoneLevelOutput else { return }
+    guard let estimate = AudioLevelEstimator.estimatePeak(sampleBuffer: sampleBuffer) else {
+      return
+    }
+
+    let alpha = estimate.linear >= smoothedMicLevelLinear ? 0.35 : 0.18
+    smoothedMicLevelLinear =
+      smoothedMicLevelLinear * (1.0 - alpha) + estimate.linear * alpha
+
+    let now = CFAbsoluteTimeGetCurrent()
+    if now - lastMicLevelEmitAt < micLevelEmitInterval {
+      return
+    }
+    lastMicLevelEmitAt = now
+
+    let sample = MicrophoneLevelSample(
+      linear: smoothedMicLevelLinear,
+      dbfs: AudioLevelEstimator.dbfs(for: smoothedMicLevelLinear)
+    )
+
+    DispatchQueue.main.async {
+      self.onMicrophoneLevel?(sample)
+    }
   }
 
   private func displayPointPixelScale(for displayID: CGDirectDisplayID) -> Double {

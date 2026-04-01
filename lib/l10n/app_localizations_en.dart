@@ -1542,32 +1542,16 @@ class AppLocalizationsEn extends AppLocalizations {
   String get micInputLevel => 'Mic input level';
 
   @override
-  String get micInputMonitorTitle => 'Input monitoring';
-
-  @override
-  String get micInputMonitorInactive => 'Inactive';
-
-  @override
-  String get micInputMonitorDisabledHint =>
+  String get micInputIndicatorDisabledTooltip =>
       'Select a microphone to preview input level.';
 
   @override
-  String get micInputMonitorLiveHint => 'Monitoring live input.';
+  String micInputIndicatorLiveTooltip(String dbfs) {
+    return 'Mic input level: $dbfs dBFS';
+  }
 
   @override
-  String get micInputMonitorLowBadge => 'Low input';
-
-  @override
-  String get micInputMonitorLowHint => 'Raise input gain or move closer.';
-
-  @override
-  String get micInputMonitorExpandTooltip => 'Show detailed input monitor';
-
-  @override
-  String get micInputMonitorCollapseTooltip => 'Hide detailed input monitor';
-
-  @override
-  String get micInputTooLowWarning =>
+  String get micInputIndicatorLowTooltip =>
       'Mic input is very low. Raise input level or move closer to the mic.';
 
   @override

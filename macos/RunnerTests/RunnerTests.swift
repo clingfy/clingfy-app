@@ -2759,6 +2759,123 @@ private final class MockCaptureBackend: CaptureBackend {
   }
 }
 
+private final class MockAVFoundationCapturePipeline: AVFoundationCapturePipelining {
+  var onStarted: ((URL) -> Void)?
+  var onPaused: (() -> Void)?
+  var onResumed: (() -> Void)?
+  var onFinished: ((URL?, Error?) -> Void)?
+  var onMicrophoneLevel: ((MicrophoneLevelSample) -> Void)?
+
+  var isRecording: Bool = false
+  var isRecordingPaused: Bool = false
+  var currentOutputURL: URL?
+
+  func start(
+    displayID: CGDirectDisplayID,
+    cropRect: CGRect?,
+    quality: RecordingQuality,
+    frameRate: Int,
+    includeAudioDevice: AVCaptureDevice?,
+    makeOutputURL: @escaping () throws -> URL
+  ) {
+    currentOutputURL = try? makeOutputURL()
+    isRecording = true
+  }
+
+  func stop() {
+    isRecording = false
+    isRecordingPaused = false
+  }
+
+  func pause() {
+    isRecordingPaused = true
+  }
+
+  func resume() {
+    isRecordingPaused = false
+  }
+
+  func emitMicrophoneLevel(_ sample: MicrophoneLevelSample) {
+    onMicrophoneLevel?(sample)
+  }
+}
+
+@MainActor
+final class MicrophoneLevelTelemetryTests: XCTestCase {
+  func testAVFoundationBackendForwardsPipelineMicrophoneLevels() throws {
+    let pipeline = MockAVFoundationCapturePipeline()
+    let backend = CaptureBackendAVFoundation(pipeline: pipeline)
+    let expectation = expectation(description: "backend forwards microphone level")
+    var received: MicrophoneLevelSample?
+
+    backend.onMicrophoneLevel = { sample in
+      received = sample
+      expectation.fulfill()
+    }
+
+    pipeline.emitMicrophoneLevel(MicrophoneLevelSample(linear: 0.27, dbfs: -11.4))
+
+    wait(for: [expectation], timeout: 1.0)
+    let forwarded = try XCTUnwrap(received)
+    XCTAssertEqual(forwarded.linear, 0.27, accuracy: 0.0001)
+    XCTAssertEqual(forwarded.dbfs, -11.4, accuracy: 0.0001)
+  }
+
+  func testRecordingStartDoesNotForceZeroMicSample() {
+    let facade = ScreenRecorderFacade()
+    let backend = MockCaptureBackend()
+    facade._testSetCaptureBackend(backend)
+
+    let settleInitialAsync = expectation(description: "initial async settle")
+    DispatchQueue.main.asyncAfter(deadline: .now() + 0.2) {
+      settleInitialAsync.fulfill()
+    }
+    wait(for: [settleInitialAsync], timeout: 1.0)
+
+    var received: [MicrophoneLevelSample] = []
+    facade.onMicrophoneLevel = { sample in
+      received.append(sample)
+    }
+
+    backend.onStarted?(URL(fileURLWithPath: "/tmp/recording.mov"))
+
+    let settleStartTransition = expectation(description: "recording start settle")
+    DispatchQueue.main.asyncAfter(deadline: .now() + 0.2) {
+      settleStartTransition.fulfill()
+    }
+    wait(for: [settleStartTransition], timeout: 1.0)
+
+    XCTAssertTrue(received.isEmpty)
+  }
+
+  func testBackendMicrophoneTelemetryStillReachesFacadeAfterRecordingStarts() throws {
+    let facade = ScreenRecorderFacade()
+    let backend = MockCaptureBackend()
+    facade._testSetCaptureBackend(backend)
+
+    let settleInitialAsync = expectation(description: "initial async settle")
+    DispatchQueue.main.asyncAfter(deadline: .now() + 0.2) {
+      settleInitialAsync.fulfill()
+    }
+    wait(for: [settleInitialAsync], timeout: 1.0)
+
+    let forwarded = expectation(description: "backend microphone sample forwarded")
+    var received: MicrophoneLevelSample?
+    facade.onMicrophoneLevel = { sample in
+      received = sample
+      forwarded.fulfill()
+    }
+
+    backend.onStarted?(URL(fileURLWithPath: "/tmp/recording.mov"))
+    backend.onMicrophoneLevel?(MicrophoneLevelSample(linear: 0.41, dbfs: -17.8))
+
+    wait(for: [forwarded], timeout: 1.0)
+    let forwardedSample = try XCTUnwrap(received)
+    XCTAssertEqual(forwardedSample.linear, 0.41, accuracy: 0.0001)
+    XCTAssertEqual(forwardedSample.dbfs, -17.8, accuracy: 0.0001)
+  }
+}
+
 @MainActor
 final class ScreenRecorderFacadeSeparateCameraTests: XCTestCase {
   func testFinishMetadataPublishesFinalCameraBasename() throws {

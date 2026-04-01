@@ -1557,36 +1557,16 @@ class AppLocalizationsRo extends AppLocalizations {
   String get micInputLevel => 'Nivel intrare microfon';
 
   @override
-  String get micInputMonitorTitle => 'Monitorizare intrare';
-
-  @override
-  String get micInputMonitorInactive => 'Inactiv';
-
-  @override
-  String get micInputMonitorDisabledHint =>
+  String get micInputIndicatorDisabledTooltip =>
       'Selectează un microfon pentru a previzualiza nivelul de intrare.';
 
   @override
-  String get micInputMonitorLiveHint =>
-      'Monitorizarea intrării live este activă.';
+  String micInputIndicatorLiveTooltip(String dbfs) {
+    return 'Nivel intrare microfon: $dbfs dBFS';
+  }
 
   @override
-  String get micInputMonitorLowBadge => 'Nivel redus';
-
-  @override
-  String get micInputMonitorLowHint =>
-      'Mărește gain-ul sau apropie-te de microfon.';
-
-  @override
-  String get micInputMonitorExpandTooltip =>
-      'Afișează monitorul de intrare detaliat';
-
-  @override
-  String get micInputMonitorCollapseTooltip =>
-      'Ascunde monitorul de intrare detaliat';
-
-  @override
-  String get micInputTooLowWarning =>
+  String get micInputIndicatorLowTooltip =>
       'Intrarea microfonului este foarte mică. Crește nivelul de intrare sau apropie-te de microfon.';
 
   @override
