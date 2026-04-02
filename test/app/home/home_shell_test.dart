@@ -202,7 +202,6 @@ void main() {
           ),
         },
         home: HomeShell(
-          title: 'Clingfy',
           actions: actions,
           uiState: uiState,
           settingsController: settings,
@@ -783,7 +782,7 @@ void main() {
   );
 
   testWidgets(
-    'toolbar toggle hides inspector fully and reveal handle restores width',
+    'toolbar toggle hides inspector fully and restores width when toggled again',
     (tester) async {
       _setDesktopWindow(tester);
       final harness = await createHarness();
@@ -838,8 +837,12 @@ void main() {
 
       expect(find.byKey(const Key('home_options_panel_shell')), findsNothing);
       expect(
-        find.byKey(const Key('home_options_panel_reveal_handle')),
+        find.byKey(const Key('home_toolbar_options_toggle_button')),
         findsOneWidget,
+      );
+      expect(
+        find.byKey(const Key('home_options_panel_reveal_handle')),
+        findsNothing,
       );
       expect(
         harness.uiState
@@ -855,7 +858,7 @@ void main() {
       );
 
       await tester.tap(
-        find.byKey(const Key('home_options_panel_reveal_handle')),
+        find.byKey(const Key('home_toolbar_options_toggle_button')),
       );
       await tester.pumpAndSettle();
 
@@ -873,6 +876,79 @@ void main() {
         find.byKey(const Key('home_options_panel_reveal_handle')),
         findsNothing,
       );
+    },
+  );
+
+  testWidgets(
+    'medium widths hide the inspector before compacting an expanded rail',
+    (tester) async {
+      _setDesktopWindow(tester, size: const Size(1200, 960));
+      final harness = await createHarness();
+      harness.uiState.applyPaneLayoutPrefs(
+        const DesktopPaneLayoutPrefs(
+          paneStates: {
+            DesktopPaneId.homeLeftSidebar: DesktopPaneState(isCollapsed: false),
+          },
+        ),
+      );
+
+      addTearDown(harness.recording.dispose);
+      addTearDown(harness.player.dispose);
+      addTearDown(harness.device.dispose);
+      addTearDown(harness.overlay.dispose);
+      addTearDown(harness.permissions.dispose);
+      addTearDown(harness.post.dispose);
+      addTearDown(harness.license.dispose);
+      addTearDown(harness.countdown.dispose);
+      addTearDown(harness.uiState.dispose);
+      addTearDown(harness.settings.dispose);
+
+      await tester.pumpWidget(
+        buildShell(
+          actions: harness.actions,
+          countdown: harness.countdown,
+          device: harness.device,
+          license: harness.license,
+          overlay: harness.overlay,
+          player: harness.player,
+          post: harness.post,
+          recording: harness.recording,
+          settings: harness.settings,
+          uiState: harness.uiState,
+        ),
+      );
+      await tester.pumpAndSettle();
+
+      final railRect = tester.getRect(
+        find.byKey(const Key('home_left_sidebar_shell')),
+      );
+      final toolbarRect = tester.getRect(
+        find.byKey(const Key('desktop_toolbar_surface')),
+      );
+      final rightPanelRect = tester.getRect(
+        find.byKey(const Key('home_right_panel_shell')),
+      );
+
+      expect(
+        railRect.width,
+        moreOrLessEquals(HomeDesktopPaneDimensions.railWidth),
+      );
+      expect(find.byKey(const Key('home_options_panel_shell')), findsNothing);
+      expect(
+        find.byKey(const Key('home_options_panel_reveal_handle')),
+        findsNothing,
+      );
+      expect(
+        harness.uiState.paneStateFor(DesktopPaneId.homeLeftSidebar).isCollapsed,
+        isFalse,
+      );
+      expect(
+        harness.uiState
+            .paneStateFor(DesktopPaneId.recordingSidebar)
+            .isCollapsed,
+        isFalse,
+      );
+      expect(rightPanelRect.left, moreOrLessEquals(toolbarRect.left));
     },
   );
 
@@ -937,11 +1013,11 @@ void main() {
       expect(find.byKey(const Key('home_options_panel_shell')), findsNothing);
       expect(
         find.byKey(const Key('home_options_panel_reveal_handle')),
-        findsOneWidget,
+        findsNothing,
       );
 
       await tester.tap(
-        find.byKey(const Key('home_options_panel_reveal_handle')),
+        find.byKey(const Key('home_toolbar_options_toggle_button')),
       );
       await tester.pumpAndSettle();
 
@@ -1006,7 +1082,7 @@ void main() {
       expect(find.byKey(const Key('home_options_panel_shell')), findsNothing);
       expect(
         find.byKey(const Key('home_options_panel_reveal_handle')),
-        findsOneWidget,
+        findsNothing,
       );
       expect(tester.takeException(), isNull);
     },

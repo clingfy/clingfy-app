@@ -14,7 +14,6 @@ import 'package:provider/provider.dart';
 class HomeToolbar extends StatelessWidget {
   const HomeToolbar({
     super.key,
-    required this.title,
     required this.isRecording,
     required this.isPaused,
     required this.uiState,
@@ -25,7 +24,6 @@ class HomeToolbar extends StatelessWidget {
     this.onToggleInspector,
   });
 
-  final String title;
   final bool isRecording;
   final bool isPaused;
   final HomeUiState uiState;
@@ -147,7 +145,6 @@ class HomeToolbar extends StatelessWidget {
                 : null;
 
             return DesktopToolbar(
-              title: title,
               isRecording: isRecording,
               isPaused: isPaused,
               elapsedText: d.$1,

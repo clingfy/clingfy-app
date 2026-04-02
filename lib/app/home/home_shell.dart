@@ -14,7 +14,6 @@ import 'package:clingfy/app/home/widgets/home_right_panel.dart';
 import 'package:clingfy/app/home/widgets/home_toolbar.dart';
 import 'package:clingfy/app/home/widgets/reset_preferences_action.dart';
 import 'package:clingfy/app/settings/settings_controller.dart';
-import 'package:clingfy/l10n/app_localizations.dart';
 import 'package:clingfy/ui/platform/widgets/desktop_pane_layout.dart';
 import 'package:clingfy/ui/theme/app_shell_tokens.dart';
 import 'package:flutter/material.dart';
@@ -23,7 +22,7 @@ import 'package:provider/provider.dart';
 const DesktopPaneSpec _homeRailPaneSpec = DesktopPaneSpec(
   id: DesktopPaneId.homeLeftSidebar,
   defaultWidth: HomeDesktopPaneDimensions.railWidth,
-  minWidth: HomeDesktopPaneDimensions.compactRailWidth,
+  minWidth: HomeDesktopPaneDimensions.railWidth,
   maxWidth: HomeDesktopPaneDimensions.railWidth,
   collapsedWidth: HomeDesktopPaneDimensions.compactRailWidth,
   collapsible: true,
@@ -71,14 +70,12 @@ const DesktopPaneSpec _homeRightWorkspacePaneSpec = DesktopPaneSpec(
 class HomeShell extends StatefulWidget {
   const HomeShell({
     super.key,
-    required this.title,
     required this.actions,
     required this.uiState,
     required this.settingsController,
     required this.countdownController,
   });
 
-  final String title;
   final HomeActions actions;
   final HomeUiState uiState;
   final SettingsController settingsController;
@@ -202,17 +199,11 @@ class _HomeShellState extends State<HomeShell> {
                       animation: _paneController,
                       builder: (context, _) => LayoutBuilder(
                         builder: (context, constraints) {
-                          final forceCompactRail =
-                              constraints.maxWidth <
-                              HomeDesktopPaneDimensions.autoCompactThreshold;
                           final inspectorHiddenForLayout =
                               _isInspectorHiddenForLayout(
                                 constraints: constraints,
                                 spec: activeInspectorSpec,
                               );
-                          final inspectorGap = inspectorHiddenForLayout
-                              ? 0.0
-                              : HomeDesktopPaneDimensions.innerGap;
                           final needsVerticalScroll =
                               constraints.maxHeight <
                               HomeDesktopPaneDimensions.shellMinHeight;
@@ -227,11 +218,6 @@ class _HomeShellState extends State<HomeShell> {
                               gap: HomeDesktopPaneDimensions.outerGap,
                               minHeight:
                                   HomeDesktopPaneDimensions.shellMinHeight,
-                              forcedCollapsedPaneIds: forceCompactRail
-                                  ? const <DesktopPaneId>{
-                                      DesktopPaneId.homeLeftSidebar,
-                                    }
-                                  : const <DesktopPaneId>{},
                               onLayoutCommitted: (_) => _persistPaneLayout(),
                               panes: [
                                 DesktopPaneSlot(
@@ -271,7 +257,6 @@ class _HomeShellState extends State<HomeShell> {
                                       key: const Key('home_workspace_column'),
                                       children: [
                                         HomeToolbar(
-                                          title: widget.title,
                                           isRecording: isRecording,
                                           isPaused: isPaused,
                                           uiState: widget.uiState,
@@ -299,23 +284,25 @@ class _HomeShellState extends State<HomeShell> {
                                               .innerGap,
                                         ),
                                         Expanded(
-                                          child: Stack(
-                                            children: [
-                                              DesktopSplitLayout(
-                                                key: Key(
-                                                  'home_shell_inner_pane_layout_${activeInspectorSpec.id.name}',
-                                                ),
-                                                controller: _paneController,
-                                                gap: inspectorGap,
-                                                minHeight:
-                                                    HomeDesktopPaneDimensions
-                                                        .workspaceMinHeight,
-                                                onLayoutCommitted: (_) =>
-                                                    _persistPaneLayout(),
-                                                panes: [
-                                                  DesktopPaneSlot(
-                                                    spec: activeInspectorSpec,
-                                                    builder: (context, panePresentation) {
+                                          child: DesktopSplitLayout(
+                                            key: Key(
+                                              'home_shell_inner_pane_layout_${activeInspectorSpec.id.name}',
+                                            ),
+                                            controller: _paneController,
+                                            gap: HomeDesktopPaneDimensions
+                                                .innerGap,
+                                            minHeight: HomeDesktopPaneDimensions
+                                                .workspaceMinHeight,
+                                            onLayoutCommitted: (_) =>
+                                                _persistPaneLayout(),
+                                            panes: [
+                                              DesktopPaneSlot(
+                                                spec: activeInspectorSpec,
+                                                builder:
+                                                    (
+                                                      context,
+                                                      panePresentation,
+                                                    ) {
                                                       return HomeOptionsPanel(
                                                         isRecording:
                                                             isRecording,
@@ -329,79 +316,62 @@ class _HomeShellState extends State<HomeShell> {
                                                             panePresentation,
                                                       );
                                                     },
-                                                  ),
-                                                  DesktopPaneSlot(
-                                                    spec:
-                                                        _homeRightWorkspacePaneSpec,
-                                                    builder: (context, _) {
-                                                      return ConstrainedBox(
-                                                        constraints: const BoxConstraints(
-                                                          minWidth:
-                                                              HomeDesktopPaneDimensions
-                                                                  .workspaceMinWidth,
-                                                          minHeight:
-                                                              HomeDesktopPaneDimensions
-                                                                  .workspaceMinHeight,
-                                                        ),
-                                                        child: HomeRightPanel(
-                                                          isRecording:
-                                                              isRecording,
-                                                          isPaused: isPaused,
-                                                          isBusy: isBusy,
-                                                          canPause: canPause,
-                                                          canResume: canResume,
-                                                          onToggleRecording:
-                                                              () async {
-                                                                unawaited(
-                                                                  widget.actions
-                                                                      .toggleRecording(
-                                                                        context,
-                                                                      ),
-                                                                );
-                                                              },
-                                                          onPauseRecording: () {
-                                                            unawaited(
-                                                              widget
-                                                                  .actions
-                                                                  .recordingController
-                                                                  .pauseRecording(),
-                                                            );
-                                                          },
-                                                          onResumeRecording: () {
-                                                            unawaited(
-                                                              widget
-                                                                  .actions
-                                                                  .recordingController
-                                                                  .resumeRecording(),
-                                                            );
-                                                          },
-                                                          onClosePreview: () {
-                                                            unawaited(
-                                                              widget.actions
-                                                                  .closePreview(
-                                                                    context,
-                                                                  ),
-                                                            );
-                                                          },
-                                                        ),
-                                                      );
-                                                    },
-                                                  ),
-                                                ],
                                               ),
-                                              if (inspectorHiddenForLayout)
-                                                Positioned.fill(
-                                                  child: Align(
-                                                    alignment:
-                                                        Alignment.centerLeft,
-                                                    child: _InspectorRevealHandle(
-                                                      onPressed: () =>
-                                                          _showPane(
-                                                            activeInspectorSpec,
-                                                          ),
+                                              DesktopPaneSlot(
+                                                spec:
+                                                    _homeRightWorkspacePaneSpec,
+                                                builder: (context, _) {
+                                                  return ConstrainedBox(
+                                                    constraints: const BoxConstraints(
+                                                      minWidth:
+                                                          HomeDesktopPaneDimensions
+                                                              .workspaceMinWidth,
+                                                      minHeight:
+                                                          HomeDesktopPaneDimensions
+                                                              .workspaceMinHeight,
                                                     ),
-                                                  ),
-                                                ),
+                                                    child: HomeRightPanel(
+                                                      isRecording: isRecording,
+                                                      isPaused: isPaused,
+                                                      isBusy: isBusy,
+                                                      canPause: canPause,
+                                                      canResume: canResume,
+                                                      onToggleRecording: () async {
+                                                        unawaited(
+                                                          widget.actions
+                                                              .toggleRecording(
+                                                                context,
+                                                              ),
+                                                        );
+                                                      },
+                                                      onPauseRecording: () {
+                                                        unawaited(
+                                                          widget
+                                                              .actions
+                                                              .recordingController
+                                                              .pauseRecording(),
+                                                        );
+                                                      },
+                                                      onResumeRecording: () {
+                                                        unawaited(
+                                                          widget
+                                                              .actions
+                                                              .recordingController
+                                                              .resumeRecording(),
+                                                        );
+                                                      },
+                                                      onClosePreview: () {
+                                                        unawaited(
+                                                          widget.actions
+                                                              .closePreview(
+                                                                context,
+                                                              ),
+                                                        );
+                                                      },
+                                                    ),
+                                                  );
+                                                },
+                                              ),
                                             ],
                                           ),
                                         ),
@@ -449,54 +419,6 @@ class _HomeShellState extends State<HomeShell> {
         floatingActionButtonLocation: FloatingActionButtonLocation.centerFloat,
         floatingActionButton: CountdownOverlay(
           controller: widget.countdownController,
-        ),
-      ),
-    );
-  }
-}
-
-class _InspectorRevealHandle extends StatelessWidget {
-  const _InspectorRevealHandle({required this.onPressed});
-
-  final VoidCallback onPressed;
-
-  @override
-  Widget build(BuildContext context) {
-    final l10n = AppLocalizations.of(context)!;
-    final theme = Theme.of(context);
-    final chrome = theme.appEditorChrome;
-
-    return Padding(
-      padding: const EdgeInsets.only(left: 8),
-      child: Tooltip(
-        message: l10n.showOptions,
-        child: Semantics(
-          button: true,
-          label: l10n.showOptions,
-          child: GestureDetector(
-            key: const Key('home_options_panel_reveal_handle'),
-            onTap: onPressed,
-            child: DecoratedBox(
-              decoration: BoxDecoration(
-                color: theme.colorScheme.surface.withValues(alpha: 0.94),
-                borderRadius: BorderRadius.circular(chrome.controlRadius + 4),
-                border: Border.all(
-                  color: theme.dividerColor.withValues(alpha: 0.14),
-                ),
-                boxShadow: [
-                  BoxShadow(
-                    color: Colors.black.withValues(alpha: 0.12),
-                    blurRadius: 14,
-                    offset: const Offset(0, 4),
-                  ),
-                ],
-              ),
-              child: const Padding(
-                padding: EdgeInsets.symmetric(horizontal: 8, vertical: 18),
-                child: Icon(Icons.tune_rounded, size: 16),
-              ),
-            ),
-          ),
         ),
       ),
     );

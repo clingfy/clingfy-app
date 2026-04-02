@@ -23,9 +23,8 @@ import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 
 class HomePage extends StatefulWidget {
-  const HomePage({super.key, required this.title, required this.appScope});
+  const HomePage({super.key, required this.appScope});
 
-  final String title;
   final AppScope appScope;
 
   @override
@@ -192,7 +191,6 @@ class _HomePageState extends State<HomePage> {
           return ChangeNotifierProvider<HomeUiState>.value(
             value: _uiState,
             child: HomeShell(
-              title: widget.title,
               actions: actions,
               uiState: _uiState,
               settingsController: widget.appScope.settings,

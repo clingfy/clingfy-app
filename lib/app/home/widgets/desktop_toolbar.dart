@@ -98,7 +98,6 @@ class _PulseDotState extends State<_PulseDot>
 class DesktopToolbar extends StatelessWidget {
   const DesktopToolbar({
     super.key,
-    required this.title,
     required this.isRecording,
     required this.isPaused,
     this.elapsedText,
@@ -111,7 +110,6 @@ class DesktopToolbar extends StatelessWidget {
     this.onToggleInspector,
   });
 
-  final String title;
   final bool isRecording;
   final bool isPaused;
   final String? elapsedText;
@@ -153,7 +151,6 @@ class DesktopToolbar extends StatelessWidget {
       return _ToolbarShell(
         row: _MacToolbarRow(
           key: _toolbarRowKey,
-          title: title,
           isRecording: isRecording,
           isPaused: isPaused,
           elapsedText: elapsedText,
@@ -172,7 +169,6 @@ class DesktopToolbar extends StatelessWidget {
       return _ToolbarShell(
         row: _WinToolbarRow(
           key: _toolbarRowKey,
-          title: title,
           isRecording: isRecording,
           isPaused: isPaused,
           elapsedText: elapsedText,
@@ -190,7 +186,6 @@ class DesktopToolbar extends StatelessWidget {
     return _ToolbarShell(
       row: _FallbackToolbarRow(
         key: _toolbarRowKey,
-        title: title,
         isRecording: isRecording,
         isPaused: isPaused,
         elapsedText: elapsedText,
@@ -315,7 +310,6 @@ class _ToolbarShell extends StatelessWidget {
 class _MacToolbarRow extends StatelessWidget {
   const _MacToolbarRow({
     super.key,
-    required this.title,
     required this.isRecording,
     required this.isPaused,
     required this.elapsedText,
@@ -327,7 +321,6 @@ class _MacToolbarRow extends StatelessWidget {
     required this.l10n,
   });
 
-  final String title;
   final bool isRecording;
   final bool isPaused;
   final String? elapsedText;
@@ -342,7 +335,6 @@ class _MacToolbarRow extends StatelessWidget {
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
     final spacing = context.appSpacing;
-    final typography = context.appTypography;
     final chrome = theme.appEditorChrome;
     final tokens = theme.appTokens;
     final bg = tokens.editorChromeBackground;
@@ -357,8 +349,17 @@ class _MacToolbarRow extends StatelessWidget {
       ),
       child: Row(
         children: [
-          Text(title, style: typography.button),
-          SizedBox(width: spacing.xs + 2),
+          if (onToggleInspector != null) ...[
+            _toolbarIconButton(
+              context: context,
+              buttonKey: _toolbarInspectorToggleKey,
+              icon: Icons.tune_rounded,
+              tooltip: isInspectorVisible ? l10n.hideOptions : l10n.showOptions,
+              onPressed: onToggleInspector,
+              active: isInspectorVisible,
+            ),
+            SizedBox(width: spacing.xs + 2),
+          ],
           if (isRecording) ...[
             _pill(
               context,
@@ -381,17 +382,6 @@ class _MacToolbarRow extends StatelessWidget {
               pulsingDot: true,
             ),
             SizedBox(width: spacing.xs + 2),
-          ],
-          if (onToggleInspector != null) ...[
-            _toolbarIconButton(
-              context: context,
-              buttonKey: _toolbarInspectorToggleKey,
-              icon: Icons.tune_rounded,
-              tooltip: isInspectorVisible ? l10n.hideOptions : l10n.showOptions,
-              onPressed: onToggleInspector,
-              active: isInspectorVisible,
-            ),
-            SizedBox(width: spacing.xs),
           ],
           if (onExport != null) ...[
             AppButton(
@@ -426,7 +416,6 @@ class _MacToolbarRow extends StatelessWidget {
 class _WinToolbarRow extends StatelessWidget {
   const _WinToolbarRow({
     super.key,
-    required this.title,
     required this.isRecording,
     required this.isPaused,
     required this.elapsedText,
@@ -438,7 +427,6 @@ class _WinToolbarRow extends StatelessWidget {
     required this.l10n,
   });
 
-  final String title;
   final bool isRecording;
   final bool isPaused;
   final String? elapsedText;
@@ -467,8 +455,17 @@ class _WinToolbarRow extends StatelessWidget {
       ),
       child: Row(
         children: [
-          Text(title, style: theme.typography.bodyStrong),
-          SizedBox(width: spacing.xs + 2),
+          if (onToggleInspector != null) ...[
+            _toolbarIconButton(
+              context: context,
+              buttonKey: _toolbarInspectorToggleKey,
+              icon: Icons.tune_rounded,
+              tooltip: isInspectorVisible ? l10n.hideOptions : l10n.showOptions,
+              onPressed: onToggleInspector,
+              active: isInspectorVisible,
+            ),
+            SizedBox(width: spacing.xs + 2),
+          ],
           if (isRecording) ...[
             _pillWin(
               context,
@@ -494,17 +491,6 @@ class _WinToolbarRow extends StatelessWidget {
             ),
             SizedBox(width: spacing.xs + 2),
           ],
-          if (onToggleInspector != null) ...[
-            _toolbarIconButton(
-              context: context,
-              buttonKey: _toolbarInspectorToggleKey,
-              icon: Icons.tune_rounded,
-              tooltip: isInspectorVisible ? l10n.hideOptions : l10n.showOptions,
-              onPressed: onToggleInspector,
-              active: isInspectorVisible,
-            ),
-            SizedBox(width: spacing.xs),
-          ],
           if (onExport != null) ...[
             fluent.FilledButton(
               onPressed: isProcessing ? null : onExport,
@@ -528,7 +514,6 @@ class _WinToolbarRow extends StatelessWidget {
 class _FallbackToolbarRow extends StatelessWidget {
   const _FallbackToolbarRow({
     super.key,
-    required this.title,
     required this.isRecording,
     required this.isPaused,
     required this.elapsedText,
@@ -540,7 +525,6 @@ class _FallbackToolbarRow extends StatelessWidget {
     required this.l10n,
   });
 
-  final String title;
   final bool isRecording;
   final bool isPaused;
   final String? elapsedText;
@@ -556,7 +540,6 @@ class _FallbackToolbarRow extends StatelessWidget {
     final theme = Theme.of(context);
     final tokens = theme.appTokens;
     final spacing = theme.appSpacing;
-    final typography = theme.appTypography;
     final chrome = theme.appEditorChrome;
     return Container(
       key: _toolbarSurfaceKey,
@@ -568,8 +551,17 @@ class _FallbackToolbarRow extends StatelessWidget {
       ),
       child: Row(
         children: [
-          Text(title, style: typography.button),
-          SizedBox(width: spacing.xs + 2),
+          if (onToggleInspector != null) ...[
+            _toolbarIconButton(
+              context: context,
+              buttonKey: _toolbarInspectorToggleKey,
+              icon: Icons.tune_rounded,
+              tooltip: isInspectorVisible ? l10n.hideOptions : l10n.showOptions,
+              onPressed: onToggleInspector,
+              active: isInspectorVisible,
+            ),
+            SizedBox(width: spacing.xs + 2),
+          ],
           if (isRecording) ...[
             _pillFallback(
               context,
@@ -590,17 +582,6 @@ class _FallbackToolbarRow extends StatelessWidget {
               text: l10n.stopIn(countdownText!),
             ),
             SizedBox(width: spacing.xs + 2),
-          ],
-          if (onToggleInspector != null) ...[
-            _toolbarIconButton(
-              context: context,
-              buttonKey: _toolbarInspectorToggleKey,
-              icon: Icons.tune_rounded,
-              tooltip: isInspectorVisible ? l10n.hideOptions : l10n.showOptions,
-              onPressed: onToggleInspector,
-              active: isInspectorVisible,
-            ),
-            SizedBox(width: spacing.xs),
           ],
           if (onExport != null) ...[
             _simpleButton(

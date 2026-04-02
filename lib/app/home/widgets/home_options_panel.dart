@@ -32,9 +32,6 @@ class HomeOptionsPanel extends StatelessWidget {
     final l10n = AppLocalizations.of(context)!;
     final tokens = context.appTokens;
     final chrome = context.appEditorChrome;
-    if (panePresentation.effectiveCollapsed) {
-      return const SizedBox.shrink();
-    }
     final title = _resolvedTitle(l10n);
     final headerKey = _resolvedHeaderKey();
     final body = showPreviewShell

@@ -13,13 +13,11 @@ abstract final class HomeDesktopPaneDimensions {
   static const double outerGap = kEditorShellGap;
   static const double innerGap = kEditorShellGap;
   static const double inspectorAutoHideThreshold =
-      inspectorMin + innerGap + workspaceMinWidth;
+      railWidth + outerGap + inspectorMin + innerGap + workspaceMinWidth;
 
   static const double innerExpandedMinWidth =
       inspectorMin + innerGap + workspaceMinWidth;
   static const double innerCollapsedMinWidth = workspaceMinWidth;
-  static const double autoCompactThreshold =
-      railWidth + outerGap + innerExpandedMinWidth;
   static const double shellMinWidth =
       compactRailWidth + outerGap + innerCollapsedMinWidth;
 }

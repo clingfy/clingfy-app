@@ -358,6 +358,9 @@ class _DesktopSplitLayoutState extends State<DesktopSplitLayout> {
               for (final pane in resolved.panes)
                 pane.presentation.id: pane.presentation.effectiveCollapsed,
             };
+            final visiblePanes = resolved.panes
+                .where((pane) => pane.presentation.effectiveWidth > 0)
+                .toList(growable: false);
             _lastCollapsedStates = currentCollapsedStates;
             final widthChanged =
                 previousAvailableWidth != null &&
@@ -378,20 +381,20 @@ class _DesktopSplitLayoutState extends State<DesktopSplitLayout> {
                     children: [
                       for (
                         var index = 0;
-                        index < resolved.panes.length;
+                        index < visiblePanes.length;
                         index++
                       ) ...[
                         _buildPane(
-                          resolved.panes[index],
+                          visiblePanes[index],
                           disableAnimation:
                               collapseStateChanged || widthChanged,
                         ),
-                        if (index < resolved.panes.length - 1)
+                        if (index < visiblePanes.length - 1)
                           SizedBox(width: widget.gap),
                       ],
                     ],
                   ),
-                  ..._buildDividerOverlays(resolved),
+                  ..._buildDividerOverlays(visiblePanes),
                 ],
               ),
             );
@@ -417,17 +420,25 @@ class _DesktopSplitLayoutState extends State<DesktopSplitLayout> {
   }
 
   double _fallbackWidth() {
+    final widths = <DesktopPaneId, double>{};
     var totalWidth = 0.0;
     for (final pane in widget.panes) {
       final state = widget.controller.stateFor(pane.spec.id);
       final isForcedCollapsed =
           pane.spec.collapsible &&
           widget.forcedCollapsedPaneIds.contains(pane.spec.id);
-      totalWidth += (state.isCollapsed || isForcedCollapsed)
+      final paneWidth = (state.isCollapsed || isForcedCollapsed)
           ? pane.spec.collapsedWidth
           : pane.spec.defaultWidth;
+      widths[pane.spec.id] = paneWidth;
+      totalWidth += paneWidth;
     }
-    totalWidth += math.max(0, widget.panes.length - 1) * widget.gap;
+    totalWidth +=
+        math.max(
+          0,
+          _visiblePaneCount(panes: widget.panes, widths: widths) - 1,
+        ) *
+        widget.gap;
     return totalWidth;
   }
 
@@ -442,11 +453,11 @@ class _DesktopSplitLayoutState extends State<DesktopSplitLayout> {
     );
   }
 
-  List<Widget> _buildDividerOverlays(_ResolvedDesktopPaneLayout resolved) {
+  List<Widget> _buildDividerOverlays(List<_ResolvedPane> visiblePanes) {
     final overlays = <Widget>[];
     var offset = 0.0;
-    for (var index = 0; index < resolved.panes.length - 1; index++) {
-      final left = resolved.panes[index];
+    for (var index = 0; index < visiblePanes.length - 1; index++) {
+      final left = visiblePanes[index];
       offset += left.presentation.effectiveWidth;
       final handleLeft =
           offset + (widget.gap / 2) - (PaneDividerHandle.hitWidth / 2);
@@ -718,7 +729,9 @@ class _DesktopSplitLayoutState extends State<DesktopSplitLayout> {
       }
       total += widths[pane.spec.id]!;
     }
-    total += math.max(0, panes.length - 1) * widget.gap;
+    total +=
+        math.max(0, _visiblePaneCount(panes: panes, widths: widths) - 1) *
+        widget.gap;
     return total;
   }
 
@@ -728,6 +741,13 @@ class _DesktopSplitLayoutState extends State<DesktopSplitLayout> {
     required double flexWidth,
   }) {
     return _requiredFixedWidth(panes: panes, widths: widths) + flexWidth;
+  }
+
+  int _visiblePaneCount({
+    required List<DesktopPaneSlot> panes,
+    required Map<DesktopPaneId, double> widths,
+  }) {
+    return panes.where((pane) => (widths[pane.spec.id] ?? 0) > 0).length;
   }
 
   void _debugValidatePaneSpecs(List<DesktopPaneSlot> panes) {
