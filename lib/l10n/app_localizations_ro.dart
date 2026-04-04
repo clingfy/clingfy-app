@@ -640,6 +640,15 @@ class AppLocalizationsRo extends AppLocalizations {
   String get exportSettings => 'Export Settings';
 
   @override
+  String get canvas => 'Canvas';
+
+  @override
+  String get canvasSettings => 'Setări Canvas';
+
+  @override
+  String get cameraSettings => 'Setări Cameră';
+
+  @override
   String get postProcessing => 'Post-procesare';
 
   @override
@@ -653,6 +662,15 @@ class AppLocalizationsRo extends AppLocalizations {
 
   @override
   String get hideOptions => 'Ascunde opțiunile';
+
+  @override
+  String get canvasFormat => 'Format Canvas';
+
+  @override
+  String get framing => 'Încadrare';
+
+  @override
+  String get background => 'Fundal';
 
   @override
   String get size => 'Dimensiune';
@@ -694,16 +712,112 @@ class AppLocalizationsRo extends AppLocalizations {
   String get cursorSize => 'Dimensiune Cursor';
 
   @override
+  String get cursor => 'Cursor';
+
+  @override
   String get zoomInEffect => 'Efect Zoom';
 
   @override
   String get manageZoomEffects => 'Gestionează efecte zoom';
 
   @override
+  String get zoom => 'Zoom';
+
+  @override
   String get intensity => 'Intensitate';
 
   @override
   String get layout => 'Aspect';
+
+  @override
+  String get loudness => 'Volum';
+
+  @override
+  String get placement => 'Poziționare';
+
+  @override
+  String get motion => 'Mișcare';
+
+  @override
+  String get zoomResponse => 'Răspuns la zoom';
+
+  @override
+  String get fixed => 'Fix';
+
+  @override
+  String get scaleWithZoom => 'Scalează odată cu zoomul';
+
+  @override
+  String get zoomScale => 'Scală zoom';
+
+  @override
+  String get intro => 'Intrare';
+
+  @override
+  String get outro => 'Ieșire';
+
+  @override
+  String get introDuration => 'Durată intrare';
+
+  @override
+  String get outroDuration => 'Durată ieșire';
+
+  @override
+  String get fade => 'Estompare';
+
+  @override
+  String get pop => 'Pop';
+
+  @override
+  String get slide => 'Glisare';
+
+  @override
+  String get shrink => 'Micșorare';
+
+  @override
+  String get zoomEmphasis => 'Accent zoom';
+
+  @override
+  String get pulse => 'Puls';
+
+  @override
+  String get pulseStrength => 'Intensitate puls';
+
+  @override
+  String get cameraNoAssetNotice =>
+      'Nu a fost înregistrat un flux separat al camerei pentru acest clip.';
+
+  @override
+  String get cameraPlacementHelper =>
+      'Ajustează sau mută poziția camerei pe ecran.';
+
+  @override
+  String get cameraBackgroundBehindHint =>
+      'Aspectul de fundal umple întregul canvas. Alege un punct sau trage mânerul pentru a reveni la o poziție de suprapunere.';
+
+  @override
+  String get topLeft => 'Sus stânga';
+
+  @override
+  String get topCenter => 'Sus centru';
+
+  @override
+  String get topRight => 'Sus dreapta';
+
+  @override
+  String get centerLeft => 'Centru stânga';
+
+  @override
+  String get centerRight => 'Centru dreapta';
+
+  @override
+  String get bottomLeft => 'Jos stânga';
+
+  @override
+  String get bottomCenter => 'Jos centru';
+
+  @override
+  String get bottomRight => 'Jos dreapta';
 
   @override
   String get refreshDevicesTooltip => 'Reîmprospătare dispozitive (⌘R)';

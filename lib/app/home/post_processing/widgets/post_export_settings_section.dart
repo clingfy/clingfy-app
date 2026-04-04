@@ -1,5 +1,7 @@
 import 'package:clingfy/l10n/app_localizations.dart';
 import 'package:clingfy/ui/platform/platform_kind.dart';
+import 'package:clingfy/ui/platform/widgets/app_inset_group.dart';
+import 'package:clingfy/ui/platform/widgets/app_settings_group.dart';
 import 'package:clingfy/ui/platform/widgets/app_sidebar_tokens.dart';
 import 'package:clingfy/ui/platform/widgets/app_slider.dart';
 import 'package:clingfy/ui/platform/widgets/app_slider_row.dart';
@@ -30,31 +32,43 @@ class PostExportSettingsSection extends StatelessWidget {
     return Column(
       crossAxisAlignment: CrossAxisAlignment.stretch,
       children: [
-        AppToggleRow(
-          title: l10n.autoNormalizeOnExport,
-          value: autoNormalizeOnExport,
-          onChanged: isProcessing ? null : onAutoNormalizeOnExportChanged,
-        ),
-        if (autoNormalizeOnExport) ...[
-          const SizedBox(
-            key: Key('post_export_target_loudness_gap'),
-            height: AppSidebarTokens.optionsSubgroupGap,
-          ),
-          AppSliderRow(
-            label: l10n.targetLoudness,
-            valueText: '${autoNormalizeTargetDbfs.toStringAsFixed(0)} dBFS',
-            slider: _buildSidebarSlider(
-              context,
-              value: autoNormalizeTargetDbfs,
-              min: -24,
-              max: -6,
-              divisions: 18,
-              onChanged: isProcessing ? null : onAutoNormalizeTargetDbfsChanged,
-              onChangeEnd: onAutoNormalizeTargetDbfsChanged,
-              accentColor: accentColor,
+        AppSettingsGroup(
+          title: l10n.loudness,
+          children: [
+            AppToggleRow(
+              title: l10n.autoNormalizeOnExport,
+              value: autoNormalizeOnExport,
+              onChanged: isProcessing ? null : onAutoNormalizeOnExportChanged,
             ),
-          ),
-        ],
+            if (autoNormalizeOnExport) ...[
+              const SizedBox(
+                key: Key('post_export_target_loudness_gap'),
+                height: AppSidebarTokens.optionsSubgroupGap,
+              ),
+              AppInsetGroup(
+                children: [
+                  AppSliderRow(
+                    label: l10n.targetLoudness,
+                    valueText:
+                        '${autoNormalizeTargetDbfs.toStringAsFixed(0)} dBFS',
+                    slider: _buildSidebarSlider(
+                      context,
+                      value: autoNormalizeTargetDbfs,
+                      min: -24,
+                      max: -6,
+                      divisions: 18,
+                      onChanged: isProcessing
+                          ? null
+                          : onAutoNormalizeTargetDbfsChanged,
+                      onChangeEnd: onAutoNormalizeTargetDbfsChanged,
+                      accentColor: accentColor,
+                    ),
+                  ),
+                ],
+              ),
+            ],
+          ],
+        ),
       ],
     );
   }

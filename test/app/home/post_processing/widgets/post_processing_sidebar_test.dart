@@ -1,20 +1,19 @@
 import 'dart:io';
 
-import 'package:clingfy/l10n/app_localizations.dart';
+import 'package:clingfy/app/home/post_processing/widgets/post_processing_sidebar.dart';
 import 'package:clingfy/core/models/app_models.dart';
+import 'package:clingfy/l10n/app_localizations.dart';
 import 'package:clingfy/ui/platform/widgets/app_icon_button.dart';
 import 'package:clingfy/ui/platform/widgets/app_inline_notice.dart';
-import 'package:clingfy/ui/platform/widgets/app_section.dart';
+import 'package:clingfy/ui/platform/widgets/app_inset_group.dart';
+import 'package:clingfy/ui/platform/widgets/app_settings_group.dart';
 import 'package:clingfy/ui/platform/widgets/app_sidebar_tokens.dart';
-import 'package:clingfy/ui/platform/widgets/app_slider.dart';
-import 'package:clingfy/ui/platform/widgets/app_slider_row.dart';
 import 'package:clingfy/ui/platform/widgets/app_toggle_row.dart';
 import 'package:clingfy/ui/platform/widgets/platform_dropdown.dart';
 import 'package:clingfy/ui/theme/app_theme.dart';
-import 'package:clingfy/app/home/post_processing/widgets/post_processing_sidebar.dart';
 import 'package:flutter/material.dart';
-import 'package:flutter_test/flutter_test.dart';
 import 'package:flutter_colorpicker/flutter_colorpicker.dart';
+import 'package:flutter_test/flutter_test.dart';
 import 'package:macos_ui/macos_ui.dart';
 
 void main() {
@@ -31,12 +30,14 @@ void main() {
     bool autoNormalizeOnExport = false,
     double? sidebarWidth,
     LayoutPreset layoutPreset = LayoutPreset.auto,
+    ResolutionPreset resolutionPreset = ResolutionPreset.auto,
     String? backgroundImagePath,
     bool hasCameraAsset = false,
     CameraExportCapabilities cameraExportCapabilities =
         const CameraExportCapabilities.allSupported(),
     CameraCompositionState? cameraState,
     void Function(LayoutPreset)? onLayoutPresetChanged,
+    void Function(ResolutionPreset)? onResolutionPresetChanged,
     void Function(double)? onZoomFactorChanged,
     void Function(double)? onZoomFactorChangeEnd,
     void Function(CameraZoomBehavior)? onCameraZoomBehaviorChanged,
@@ -52,7 +53,7 @@ void main() {
       isProcessing: isProcessing,
       enabled: enabled,
       layoutPreset: layoutPreset,
-      resolutionPreset: ResolutionPreset.auto,
+      resolutionPreset: resolutionPreset,
       fitMode: FitMode.fit,
       padding: 8,
       radius: 4,
@@ -69,7 +70,7 @@ void main() {
       autoNormalizeOnExport: autoNormalizeOnExport,
       autoNormalizeTargetDbfs: -14,
       onLayoutPresetChanged: onLayoutPresetChanged ?? (_) {},
-      onResolutionPresetChanged: (_) {},
+      onResolutionPresetChanged: onResolutionPresetChanged ?? (_) {},
       onFitModeChanged: (_) {},
       onPaddingChanged: (_) {},
       onPaddingChangeEnd: (_) {},
@@ -145,13 +146,17 @@ void main() {
       await tester.pumpAndSettle();
 
       expect(find.byKey(const Key('post_sidebar_rail')), findsNothing);
-      expect(find.text('Layout Settings'), findsOneWidget);
+      expect(find.text('Canvas Settings'), findsOneWidget);
 
       await tester.pumpWidget(buildTestApp(selectedIndex: 1));
       await tester.pumpAndSettle();
-      expect(find.text('Effects Settings'), findsOneWidget);
+      expect(find.text('Camera Settings'), findsOneWidget);
 
       await tester.pumpWidget(buildTestApp(selectedIndex: 2));
+      await tester.pumpAndSettle();
+      expect(find.text('Effects Settings'), findsOneWidget);
+
+      await tester.pumpWidget(buildTestApp(selectedIndex: 3));
       await tester.pumpAndSettle();
       expect(find.text('Export Settings'), findsOneWidget);
     },
@@ -200,21 +205,16 @@ void main() {
       }),
       theme.colorScheme.onSurface,
     );
-    expect(find.text('Layout'), findsNothing);
+    expect(find.text('Canvas'), findsNothing);
+    expect(find.text('Camera'), findsNothing);
     expect(find.text('Effects'), findsNothing);
     expect(find.text('Export'), findsNothing);
-    expect(
-      find.byTooltip(
-        AppLocalizations.of(tester.element(find.byType(Scaffold)))!.effects,
-      ),
-      findsOneWidget,
-    );
 
-    await tester.tap(find.byKey(const ValueKey('post_sidebar_rail_tile_1')));
+    await tester.tap(find.byKey(const ValueKey('post_sidebar_rail_tile_2')));
     await tester.pumpAndSettle();
 
     final selectedButtonAfter = tester.widget<IconButton>(
-      find.byKey(const ValueKey('post_sidebar_rail_tile_1')),
+      find.byKey(const ValueKey('post_sidebar_rail_tile_2')),
     );
     expect(selectedButtonAfter.iconSize, 28);
     expect(selectedButtonAfter.isSelected, isTrue);
@@ -225,7 +225,7 @@ void main() {
       theme.colorScheme.onSurface,
     );
     final semantics = tester.getSemantics(
-      find.byKey(const ValueKey('post_sidebar_rail_tile_1')),
+      find.byKey(const ValueKey('post_sidebar_rail_tile_2')),
     );
     expect(
       semantics.label,
@@ -233,84 +233,55 @@ void main() {
     );
   });
 
-  testWidgets('layout tab uses app section and slider primitives', (
+  testWidgets(
+    'canvas tab uses grouped hierarchy instead of divider structure',
+    (tester) async {
+      await tester.pumpWidget(buildTestApp(selectedIndex: 0));
+      await tester.pumpAndSettle();
+
+      expect(find.text('Canvas Format'), findsOneWidget);
+      expect(find.text('Framing'), findsOneWidget);
+      expect(find.text('Background'), findsOneWidget);
+      expect(find.byType(AppSettingsGroup), findsNWidgets(3));
+      expect(find.byType(Divider), findsNothing);
+      expect(find.text('Pick an image'), findsOneWidget);
+      expect(find.text('More colors'), findsOneWidget);
+      expect(find.byKey(const Key('canvas_aspect_selector')), findsOneWidget);
+      expect(find.byKey(PlatformDropdown.fieldKey), findsOneWidget);
+    },
+  );
+
+  testWidgets('canvas tab renders resolution dropdown and fires callback', (
     tester,
   ) async {
-    await tester.pumpWidget(buildTestApp());
-    await tester.pumpAndSettle();
+    ResolutionPreset? selectedPreset;
 
-    expect(find.byType(AppSection), findsWidgets);
-    expect(find.byType(AppSliderRow), findsNWidgets(2));
-    expect(find.byType(AppSlider), findsNWidgets(2));
-    expect(find.text('Pick an image'), findsOneWidget);
-    expect(find.text('More colors'), findsOneWidget);
-    expect(
-      find.byWidgetPredicate(
-        (widget) => widget.runtimeType.toString() == 'SectionCard',
+    await tester.pumpWidget(
+      buildTestApp(
+        selectedIndex: 0,
+        onResolutionPresetChanged: (preset) => selectedPreset = preset,
       ),
-      findsNothing,
-    );
-  });
-
-  testWidgets('layout tab renders canvas aspect cards instead of dropdown', (
-    tester,
-  ) async {
-    await tester.pumpWidget(buildTestApp());
-    await tester.pumpAndSettle();
-
-    expect(find.byKey(const Key('canvas_aspect_selector')), findsOneWidget);
-    expect(find.byKey(PlatformDropdown.fieldKey), findsNothing);
-    expect(
-      tester.getSize(find.byKey(const ValueKey('canvas_aspect_option_auto'))),
-      const Size(84, 88),
-    );
-    expect(find.text('Auto'), findsOneWidget);
-    expect(find.text('Original'), findsOneWidget);
-    expect(find.text('Wide'), findsOneWidget);
-    expect(find.text('16:9'), findsOneWidget);
-    expect(find.text('Vertical'), findsOneWidget);
-    expect(find.text('9:16'), findsOneWidget);
-    expect(find.text('Square'), findsOneWidget);
-    expect(find.text('1:1'), findsOneWidget);
-    expect(find.text('Classic'), findsOneWidget);
-    expect(find.text('4:3'), findsOneWidget);
-    final selector = tester.widget<DecoratedBox>(
-      find.byKey(const Key('canvas_aspect_selector')),
-    );
-    final decoration = selector.decoration as BoxDecoration;
-    expect(decoration.color, isNull);
-  });
-
-  testWidgets('layout tab canvas aspect selector scrolls without overflow', (
-    tester,
-  ) async {
-    await tester.pumpWidget(buildTestApp(sidebarWidth: 320));
-    await tester.pumpAndSettle();
-
-    final optionFinder = find.byKey(
-      const ValueKey('canvas_aspect_option_classic43'),
-    );
-    final beforeDrag = tester.getTopLeft(optionFinder).dx;
-
-    await tester.drag(
-      find.byKey(const Key('canvas_aspect_selector_scroll')),
-      const Offset(-180, 0),
     );
     await tester.pumpAndSettle();
 
-    final afterDrag = tester.getTopLeft(optionFinder).dx;
-    expect(afterDrag, lessThan(beforeDrag));
-    expect(tester.takeException(), isNull);
+    expect(find.text('Resolution'), findsOneWidget);
+    expect(find.text('Auto'), findsWidgets);
+
+    await tester.tap(find.byKey(PlatformDropdown.fieldKey));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('1440p (2K)').last);
+    await tester.pumpAndSettle();
+
+    expect(selectedPreset, ResolutionPreset.p1440);
   });
 
-  testWidgets('layout tab taps canvas aspect card callback', (tester) async {
+  testWidgets('canvas tab taps canvas aspect card callback', (tester) async {
     LayoutPreset? selectedPreset;
 
     await tester.pumpWidget(
       buildTestApp(
-        onLayoutPresetChanged: (preset) {
-          selectedPreset = preset;
-        },
+        selectedIndex: 0,
+        onLayoutPresetChanged: (preset) => selectedPreset = preset,
       ),
     );
     await tester.pumpAndSettle();
@@ -321,29 +292,6 @@ void main() {
     await tester.pumpAndSettle();
 
     expect(selectedPreset, LayoutPreset.youtube169);
-  });
-
-  testWidgets('layout tab disables canvas aspect changes while processing', (
-    tester,
-  ) async {
-    LayoutPreset? selectedPreset;
-
-    await tester.pumpWidget(
-      buildTestApp(
-        isProcessing: true,
-        onLayoutPresetChanged: (preset) {
-          selectedPreset = preset;
-        },
-      ),
-    );
-    await tester.pumpAndSettle();
-
-    await tester.tap(
-      find.byKey(const ValueKey('canvas_aspect_option_youtube169')),
-    );
-    await tester.pumpAndSettle();
-
-    expect(selectedPreset, isNull);
   });
 
   testWidgets('background image preview uses app icon button clear action', (
@@ -357,6 +305,7 @@ void main() {
 
     await tester.pumpWidget(
       buildTestApp(
+        selectedIndex: 0,
         backgroundImagePath: imagePath,
         onBackgroundImageChanged: cleared.add,
       ),
@@ -374,104 +323,72 @@ void main() {
     expect(cleared, [null]);
   });
 
-  testWidgets('effects tab shows standardized notices when data is missing', (
+  testWidgets('camera tab shows visibility only when camera asset is missing', (
+    tester,
+  ) async {
+    await tester.pumpWidget(
+      buildTestApp(selectedIndex: 1, hasCameraAsset: false),
+    );
+    await tester.pumpAndSettle();
+
+    expect(find.text('Visibility'), findsOneWidget);
+    expect(find.text('Placement'), findsNothing);
+    expect(find.text('Appearance'), findsNothing);
+    expect(find.text('Motion'), findsNothing);
+    expect(
+      find.text('No separate camera asset was recorded for this clip.'),
+      findsOneWidget,
+    );
+  });
+
+  testWidgets('camera tab shows full hierarchy when camera is visible', (
     tester,
   ) async {
     await tester.pumpWidget(
       buildTestApp(
         selectedIndex: 1,
-        cursorAvailable: false,
-        hasAudio: false,
-        showCursor: true,
+        hasCameraAsset: true,
+        cameraState: const CameraCompositionState.hidden().copyWith(
+          visible: true,
+          layoutPreset: CameraLayoutPreset.overlayBottomRight,
+        ),
       ),
     );
     await tester.pumpAndSettle();
 
-    expect(find.byType(AppInlineNotice), findsNWidgets(2));
-    expect(find.text('Cursor data missing'), findsOneWidget);
-    expect(find.text('No mic audio track found'), findsOneWidget);
+    expect(find.text('Visibility'), findsOneWidget);
+    expect(find.text('Placement'), findsOneWidget);
+    expect(find.text('Appearance'), findsOneWidget);
+    expect(find.text('Motion'), findsOneWidget);
+    expect(find.byType(AppSettingsGroup), findsNWidgets(4));
   });
 
-  testWidgets(
-    'camera section does not show deprecated preview-only camera notice',
-    (tester) async {
-      await tester.pumpWidget(
-        buildTestApp(
-          hasCameraAsset: true,
-          cameraExportCapabilities: const CameraExportCapabilities(
-            shapeMask: true,
-            cornerRadius: true,
-            border: true,
-            shadow: true,
-            chromaKey: false,
-          ),
-          cameraState: const CameraCompositionState.hidden().copyWith(
-            visible: true,
-            layoutPreset: CameraLayoutPreset.overlayBottomRight,
-          ),
-        ),
-      );
-      await tester.pumpAndSettle();
-
-      expect(
-        find.text(
-          'Camera chroma key remains preview-only right now. Export supports shape, rounded corners, border, shadow, layout, size, opacity, mirror, and fit/fill.',
-        ),
-        findsNothing,
-      );
-      expect(
-        find.text('No separate camera asset was recorded for this clip.'),
-        findsNothing,
-      );
-    },
-  );
-
-  testWidgets(
-    'camera section shows no-camera notice only when asset is missing',
-    (tester) async {
-      await tester.pumpWidget(buildTestApp(hasCameraAsset: false));
-      await tester.pumpAndSettle();
-
-      expect(
-        find.text('No separate camera asset was recorded for this clip.'),
-        findsOneWidget,
-      );
-
-      await tester.pumpWidget(buildTestApp(hasCameraAsset: true));
-      await tester.pumpAndSettle();
-
-      expect(
-        find.text('No separate camera asset was recorded for this clip.'),
-        findsNothing,
-      );
-    },
-  );
-
-  testWidgets(
-    'camera section hides zoom scale slider when zoom response is fixed',
-    (tester) async {
-      await tester.pumpWidget(
-        buildTestApp(
-          hasCameraAsset: true,
-          cameraState: const CameraCompositionState.hidden().copyWith(
-            visible: true,
-            layoutPreset: CameraLayoutPreset.overlayBottomRight,
-            zoomBehavior: CameraZoomBehavior.fixed,
-          ),
-        ),
-      );
-      await tester.pumpAndSettle();
-
-      expect(find.text('Zoom Response'), findsOneWidget);
-      expect(find.text('Zoom Scale'), findsNothing);
-    },
-  );
-
-  testWidgets('camera section replaces old position controls with panel', (
+  testWidgets('camera tab omits advanced groups when camera is hidden', (
     tester,
   ) async {
     await tester.pumpWidget(
       buildTestApp(
+        selectedIndex: 1,
+        hasCameraAsset: true,
+        cameraState: const CameraCompositionState.hidden().copyWith(
+          visible: false,
+        ),
+      ),
+    );
+    await tester.pumpAndSettle();
+
+    expect(find.text('Visibility'), findsOneWidget);
+    expect(find.text('Placement'), findsNothing);
+    expect(find.text('Appearance'), findsNothing);
+    expect(find.text('Motion'), findsNothing);
+  });
+
+  testWidgets('camera section uses position panel and no deprecated fields', (
+    tester,
+  ) async {
+    await tester.pumpWidget(
+      buildTestApp(
+        selectedIndex: 1,
         hasCameraAsset: true,
         cameraState: const CameraCompositionState.hidden().copyWith(
           visible: true,
@@ -500,14 +417,13 @@ void main() {
 
     await tester.pumpWidget(
       buildTestApp(
+        selectedIndex: 1,
         hasCameraAsset: true,
         cameraState: const CameraCompositionState.hidden().copyWith(
           visible: true,
           layoutPreset: CameraLayoutPreset.overlayBottomRight,
         ),
-        onCameraLayoutPresetChanged: (preset) {
-          selectedPreset = preset;
-        },
+        onCameraLayoutPresetChanged: (preset) => selectedPreset = preset,
       ),
     );
     await tester.pumpAndSettle();
@@ -528,6 +444,7 @@ void main() {
 
     await tester.pumpWidget(
       buildTestApp(
+        selectedIndex: 1,
         hasCameraAsset: true,
         cameraState: const CameraCompositionState.hidden().copyWith(
           visible: true,
@@ -554,64 +471,74 @@ void main() {
     expect(endedCenters.last.dy, greaterThanOrEqualTo(0.0));
   });
 
-  testWidgets(
-    'camera section shows zoom scale slider when zoom response scales with zoom',
-    (tester) async {
-      await tester.pumpWidget(
-        buildTestApp(
-          hasCameraAsset: true,
-          cameraState: const CameraCompositionState.hidden().copyWith(
-            visible: true,
-            layoutPreset: CameraLayoutPreset.overlayBottomRight,
-            zoomBehavior: CameraZoomBehavior.scaleWithScreenZoom,
-            zoomScaleMultiplier: 0.35,
-          ),
+  testWidgets('camera motion uses inset groups for dependent controls', (
+    tester,
+  ) async {
+    await tester.pumpWidget(
+      buildTestApp(
+        selectedIndex: 1,
+        hasCameraAsset: true,
+        cameraState: const CameraCompositionState.hidden().copyWith(
+          visible: true,
+          layoutPreset: CameraLayoutPreset.overlayBottomRight,
+          zoomBehavior: CameraZoomBehavior.scaleWithScreenZoom,
+          zoomScaleMultiplier: 0.35,
+          introPreset: CameraIntroPreset.pop,
+          outroPreset: CameraOutroPreset.fade,
+          zoomEmphasisPreset: CameraZoomEmphasisPreset.pulse,
+          introDurationMs: 300,
+          outroDurationMs: 260,
+          zoomEmphasisStrength: 0.12,
         ),
-      );
-      await tester.pumpAndSettle();
+      ),
+    );
+    await tester.pumpAndSettle();
 
-      expect(find.text('Zoom Response'), findsOneWidget);
-      expect(find.text('Zoom Scale'), findsOneWidget);
-      expect(find.text('35%'), findsOneWidget);
-    },
-  );
+    expect(find.text('Zoom Scale'), findsOneWidget);
+    expect(find.text('Intro Duration'), findsOneWidget);
+    expect(find.text('Outro Duration'), findsOneWidget);
+    expect(find.text('Pulse Strength'), findsOneWidget);
+    expect(find.byType(AppInsetGroup), findsAtLeastNWidgets(4));
+  });
 
-  testWidgets(
-    'camera section shows animation controls only when their presets are enabled',
-    (tester) async {
-      await tester.pumpWidget(
-        buildTestApp(
-          hasCameraAsset: true,
-          cameraState: const CameraCompositionState.hidden().copyWith(
-            visible: true,
-            layoutPreset: CameraLayoutPreset.overlayBottomRight,
-            introPreset: CameraIntroPreset.pop,
-            outroPreset: CameraOutroPreset.fade,
-            zoomEmphasisPreset: CameraZoomEmphasisPreset.pulse,
-            introDurationMs: 300,
-            outroDurationMs: 260,
-            zoomEmphasisStrength: 0.12,
-          ),
-        ),
-      );
-      await tester.pumpAndSettle();
+  testWidgets('effects tab shows cursor and zoom groups without audio', (
+    tester,
+  ) async {
+    await tester.pumpWidget(
+      buildTestApp(
+        selectedIndex: 2,
+        cursorAvailable: false,
+        hasAudio: false,
+        showCursor: true,
+      ),
+    );
+    await tester.pumpAndSettle();
 
-      expect(find.text('Intro'), findsOneWidget);
-      expect(find.text('Outro'), findsOneWidget);
-      expect(find.text('Zoom Emphasis'), findsOneWidget);
-      expect(find.text('Intro Duration'), findsOneWidget);
-      expect(find.text('Outro Duration'), findsOneWidget);
-      expect(find.text('Pulse Strength'), findsOneWidget);
-      expect(find.text('300 ms'), findsOneWidget);
-      expect(find.text('260 ms'), findsOneWidget);
-      expect(find.text('12%'), findsOneWidget);
-    },
-  );
+    expect(find.text('Cursor'), findsOneWidget);
+    expect(find.text('Zoom'), findsOneWidget);
+    expect(find.text('Audio'), findsNothing);
+    expect(find.byType(AppInlineNotice), findsOneWidget);
+    expect(find.text('Cursor data missing'), findsOneWidget);
+    expect(find.text('No mic audio track found'), findsNothing);
+  });
+
+  testWidgets('effects tab uses inset groups for cursor and zoom reveals', (
+    tester,
+  ) async {
+    await tester.pumpWidget(
+      buildTestApp(selectedIndex: 2, showCursor: true, zoomFactor: 2.0),
+    );
+    await tester.pumpAndSettle();
+
+    expect(find.byKey(const Key('post_cursor_size_gap')), findsOneWidget);
+    expect(find.byKey(const Key('post_zoom_intensity_gap')), findsOneWidget);
+    expect(find.byType(AppInsetGroup), findsNWidgets(2));
+  });
 
   testWidgets('effects tab exposes zoom and cursor helper copy as tooltips', (
     tester,
   ) async {
-    await tester.pumpWidget(buildTestApp(selectedIndex: 1));
+    await tester.pumpWidget(buildTestApp(selectedIndex: 2));
     await tester.pumpAndSettle();
 
     expect(find.byTooltip('Toggle cursor visibility'), findsOneWidget);
@@ -620,30 +547,7 @@ void main() {
     expect(find.text('Manage zoom in effects'), findsNothing);
   });
 
-  testWidgets('export tab only shows normalization controls', (tester) async {
-    await tester.pumpWidget(
-      buildTestApp(selectedIndex: 2, autoNormalizeOnExport: false),
-    );
-    await tester.pumpAndSettle();
-
-    expect(find.text('Format'), findsNothing);
-    expect(find.text('Codec'), findsNothing);
-    expect(find.text('Bitrate'), findsNothing);
-    expect(find.text('Auto-normalize on export'), findsOneWidget);
-    expect(find.text('Target loudness'), findsNothing);
-
-    await tester.pumpWidget(
-      buildTestApp(selectedIndex: 2, autoNormalizeOnExport: true),
-    );
-    await tester.pumpAndSettle();
-
-    expect(find.text('Format'), findsNothing);
-    expect(find.text('Codec'), findsNothing);
-    expect(find.text('Bitrate'), findsNothing);
-    expect(find.text('Target loudness'), findsOneWidget);
-  });
-
-  testWidgets('zoom toggle preserves enable/disable callback behavior', (
+  testWidgets('zoom toggle preserves enable and disable callback behavior', (
     tester,
   ) async {
     final changed = <double>[];
@@ -651,7 +555,7 @@ void main() {
 
     await tester.pumpWidget(
       buildTestApp(
-        selectedIndex: 1,
+        selectedIndex: 2,
         zoomFactor: 1.0,
         onZoomFactorChanged: changed.add,
         onZoomFactorChangeEnd: ended.add,
@@ -673,7 +577,7 @@ void main() {
 
     await tester.pumpWidget(
       buildTestApp(
-        selectedIndex: 1,
+        selectedIndex: 2,
         zoomFactor: 2.0,
         onZoomFactorChanged: changed.add,
         onZoomFactorChangeEnd: ended.add,
@@ -688,6 +592,48 @@ void main() {
 
     expect(changed.last, 1.0);
     expect(ended.last, 1.0);
+  });
+
+  testWidgets('export tab shows audio and loudness groups', (tester) async {
+    await tester.pumpWidget(
+      buildTestApp(selectedIndex: 3, autoNormalizeOnExport: false),
+    );
+    await tester.pumpAndSettle();
+
+    expect(find.text('Audio'), findsOneWidget);
+    expect(find.text('Loudness'), findsOneWidget);
+    expect(find.text('Format'), findsNothing);
+    expect(find.text('Codec'), findsNothing);
+    expect(find.text('Bitrate'), findsNothing);
+    expect(find.text('Auto-normalize on export'), findsOneWidget);
+    expect(find.text('Target loudness'), findsNothing);
+
+    await tester.pumpWidget(
+      buildTestApp(selectedIndex: 3, autoNormalizeOnExport: true),
+    );
+    await tester.pumpAndSettle();
+
+    expect(find.text('Target loudness'), findsOneWidget);
+    expect(find.byType(AppInsetGroup), findsOneWidget);
+  });
+
+  testWidgets('header leaves consistent breathing room before tab content', (
+    tester,
+  ) async {
+    Future<void> expectGap(int selectedIndex) async {
+      await tester.pumpWidget(buildTestApp(selectedIndex: selectedIndex));
+      await tester.pumpAndSettle();
+
+      final topSpacer = tester.widget<SizedBox>(
+        find.byKey(const Key('post_sidebar_top_spacer')),
+      );
+      expect(topSpacer.height, AppSidebarTokens.headerContentGap);
+    }
+
+    await expectGap(0);
+    await expectGap(1);
+    await expectGap(2);
+    await expectGap(3);
   });
 
   testWidgets('disabled state keeps content interaction blocked', (
@@ -710,7 +656,7 @@ void main() {
   testWidgets('background color picker dialog opens without overflow', (
     tester,
   ) async {
-    await tester.pumpWidget(buildTestApp());
+    await tester.pumpWidget(buildTestApp(selectedIndex: 0));
     await tester.pumpAndSettle();
 
     await tester.ensureVisible(find.text('More colors'));
@@ -720,98 +666,5 @@ void main() {
 
     expect(find.byType(ColorPicker), findsOneWidget);
     expect(tester.takeException(), isNull);
-  });
-
-  testWidgets('header leaves consistent breathing room before tab content', (
-    tester,
-  ) async {
-    Future<void> expectGap(int selectedIndex) async {
-      await tester.pumpWidget(buildTestApp(selectedIndex: selectedIndex));
-      await tester.pumpAndSettle();
-
-      final topSpacer = tester.widget<SizedBox>(
-        find.byKey(const Key('post_sidebar_top_spacer')),
-      );
-      expect(topSpacer.height, AppSidebarTokens.headerContentGap);
-    }
-
-    await expectGap(0);
-    await expectGap(1);
-    await expectGap(2);
-  });
-
-  testWidgets('layout tab uses the new group spacing around background', (
-    tester,
-  ) async {
-    await tester.pumpWidget(buildTestApp(selectedIndex: 0));
-    await tester.pumpAndSettle();
-
-    final backgroundGapBeforeDivider = tester.widget<SizedBox>(
-      find.byKey(const Key('post_layout_background_gap_before_divider')),
-    );
-    final backgroundGapAfterDivider = tester.widget<SizedBox>(
-      find.byKey(const Key('post_layout_background_gap_after_divider')),
-    );
-    final controlsGapBeforeDivider = tester.widget<SizedBox>(
-      find.byKey(const Key('post_layout_controls_gap_before_divider')),
-    );
-    final controlsGapAfterDivider = tester.widget<SizedBox>(
-      find.byKey(const Key('post_layout_controls_gap_after_divider')),
-    );
-
-    expect(backgroundGapBeforeDivider.height, AppSidebarTokens.optionsGroupGap);
-    expect(backgroundGapAfterDivider.height, AppSidebarTokens.optionsGroupGap);
-    expect(
-      controlsGapBeforeDivider.height,
-      AppSidebarTokens.optionsSubgroupGap,
-    );
-    expect(controlsGapAfterDivider.height, AppSidebarTokens.optionsSubgroupGap);
-  });
-
-  testWidgets(
-    'effects tab uses the new spacing between cursor, zoom, and audio',
-    (tester) async {
-      await tester.pumpWidget(
-        buildTestApp(selectedIndex: 1, showCursor: true, zoomFactor: 2.0),
-      );
-      await tester.pumpAndSettle();
-
-      final cursorZoomGap = tester.widget<SizedBox>(
-        find.byKey(const Key('post_effects_cursor_zoom_gap')),
-      );
-      final audioGapBeforeDivider = tester.widget<SizedBox>(
-        find.byKey(const Key('post_effects_audio_gap_before_divider')),
-      );
-      final audioGapAfterDivider = tester.widget<SizedBox>(
-        find.byKey(const Key('post_effects_audio_gap_after_divider')),
-      );
-      final cursorSizeGap = tester.widget<SizedBox>(
-        find.byKey(const Key('post_cursor_size_gap')),
-      );
-      final zoomIntensityGap = tester.widget<SizedBox>(
-        find.byKey(const Key('post_zoom_intensity_gap')),
-      );
-
-      expect(cursorZoomGap.height, AppSidebarTokens.optionsGroupGap);
-      expect(audioGapBeforeDivider.height, AppSidebarTokens.optionsSubgroupGap);
-      expect(audioGapAfterDivider.height, AppSidebarTokens.optionsGroupGap);
-      expect(cursorSizeGap.height, AppSidebarTokens.optionsSubgroupGap);
-      expect(zoomIntensityGap.height, AppSidebarTokens.optionsSubgroupGap);
-    },
-  );
-
-  testWidgets('export tab uses the new spacing before normalization controls', (
-    tester,
-  ) async {
-    await tester.pumpWidget(
-      buildTestApp(selectedIndex: 2, autoNormalizeOnExport: true),
-    );
-    await tester.pumpAndSettle();
-
-    final spacer = tester.widget<SizedBox>(
-      find.byKey(const Key('post_export_target_loudness_gap')),
-    );
-
-    expect(spacer.height, AppSidebarTokens.optionsSubgroupGap);
   });
 }

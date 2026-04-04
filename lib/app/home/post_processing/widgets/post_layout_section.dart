@@ -4,9 +4,11 @@ import 'package:clingfy/ui/platform/platform_kind.dart';
 import 'package:clingfy/ui/platform/widgets/app_control_box.dart';
 import 'package:clingfy/ui/platform/widgets/app_form_row.dart';
 import 'package:clingfy/ui/platform/widgets/app_segmented.dart';
+import 'package:clingfy/ui/platform/widgets/app_settings_group.dart';
 import 'package:clingfy/ui/platform/widgets/app_sidebar_tokens.dart';
 import 'package:clingfy/ui/platform/widgets/app_slider.dart';
 import 'package:clingfy/ui/platform/widgets/app_slider_row.dart';
+import 'package:clingfy/ui/platform/widgets/platform_dropdown.dart';
 import 'package:flutter/material.dart' hide PlatformMenuItem;
 
 class PostLayoutSection extends StatelessWidget {
@@ -45,115 +47,154 @@ class PostLayoutSection extends StatelessWidget {
   Widget build(BuildContext context) {
     final l10n = AppLocalizations.of(context)!;
     final accentColor = Theme.of(context).colorScheme.primary;
-    final theme = Theme.of(context);
 
     return Column(
       crossAxisAlignment: CrossAxisAlignment.stretch,
       children: [
-        _CanvasAspectSelector(
-          label: l10n.canvasAspect,
-          value: layoutPreset,
-          enabled: !isProcessing,
-          onChanged: onLayoutPresetChanged,
-          options: [
-            _CanvasAspectOption(
-              preset: LayoutPreset.auto,
-              title: l10n.auto,
-              subtitle: l10n.original,
-              previewAspectRatio: 1.45,
+        AppSettingsGroup(
+          title: l10n.canvasFormat,
+          children: [
+            _CanvasAspectSelector(
+              label: l10n.canvasAspect,
+              value: layoutPreset,
+              enabled: !isProcessing,
+              onChanged: onLayoutPresetChanged,
+              options: [
+                _CanvasAspectOption(
+                  preset: LayoutPreset.auto,
+                  title: l10n.auto,
+                  subtitle: l10n.original,
+                  previewAspectRatio: 1.45,
+                ),
+                _CanvasAspectOption(
+                  preset: LayoutPreset.youtube169,
+                  title: l10n.wide,
+                  subtitle: '16:9',
+                  previewAspectRatio: 16 / 9,
+                ),
+                _CanvasAspectOption(
+                  preset: LayoutPreset.reel916,
+                  title: l10n.vertical,
+                  subtitle: '9:16',
+                  previewAspectRatio: 9 / 16,
+                ),
+                _CanvasAspectOption(
+                  preset: LayoutPreset.square11,
+                  title: l10n.square,
+                  subtitle: '1:1',
+                  previewAspectRatio: 1,
+                ),
+                _CanvasAspectOption(
+                  preset: LayoutPreset.classic43,
+                  title: l10n.classic,
+                  subtitle: '4:3',
+                  previewAspectRatio: 4 / 3,
+                ),
+              ],
             ),
-            _CanvasAspectOption(
-              preset: LayoutPreset.youtube169,
-              title: l10n.wide,
-              subtitle: '16:9',
-              previewAspectRatio: 16 / 9,
+            const SizedBox(height: AppSidebarTokens.rowGap),
+            AppFormRow(
+              label: l10n.resolution,
+              control: PlatformDropdown<ResolutionPreset>(
+                value: resolutionPreset,
+                minWidth: 0,
+                maxWidth: double.infinity,
+                expand: true,
+                items: _buildResolutionItems(l10n),
+                onChanged: isProcessing
+                    ? null
+                    : (value) {
+                        if (value != null) {
+                          onResolutionPresetChanged(value);
+                        }
+                      },
+              ),
             ),
-            _CanvasAspectOption(
-              preset: LayoutPreset.reel916,
-              title: l10n.vertical,
-              subtitle: '9:16',
-              previewAspectRatio: 9 / 16,
-            ),
-            _CanvasAspectOption(
-              preset: LayoutPreset.square11,
-              title: l10n.square,
-              subtitle: '1:1',
-              previewAspectRatio: 1,
-            ),
-            _CanvasAspectOption(
-              preset: LayoutPreset.classic43,
-              title: l10n.classic,
-              subtitle: '4:3',
-              previewAspectRatio: 4 / 3,
+            const SizedBox(height: AppSidebarTokens.rowGap),
+            AppFormRow(
+              label: l10n.fitMode,
+              control: AppControlBox(
+                expand: true,
+                height: 40,
+                child: AppSegmented<FitMode>(
+                  value: fitMode,
+                  onChanged: isProcessing ? (_) {} : onFitModeChanged,
+                  items: [
+                    AppSegmentedItem(
+                      value: FitMode.fit,
+                      label: l10n.fit,
+                      icon: Icons.fit_screen,
+                    ),
+                    AppSegmentedItem(
+                      value: FitMode.fill,
+                      label: l10n.fill,
+                      icon: Icons.aspect_ratio,
+                    ),
+                  ],
+                  compact: true,
+                  expand: true,
+                ),
+              ),
             ),
           ],
         ),
-        const SizedBox(height: AppSidebarTokens.sectionGap),
-        AppFormRow(
-          label: l10n.fitMode,
-          control: AppControlBox(
-            expand: true,
-            height: 40,
-            child: AppSegmented<FitMode>(
-              value: fitMode,
-              onChanged: isProcessing ? (_) {} : onFitModeChanged,
-              items: [
-                AppSegmentedItem(
-                  value: FitMode.fit,
-                  label: l10n.fit,
-                  icon: Icons.fit_screen,
-                ),
-                AppSegmentedItem(
-                  value: FitMode.fill,
-                  label: l10n.fill,
-                  icon: Icons.aspect_ratio,
-                ),
-              ],
-              compact: true,
-              expand: true,
+        AppSettingsGroup(
+          title: l10n.framing,
+          children: [
+            AppSliderRow(
+              label: l10n.padding,
+              valueText: '${padding.toInt()}%',
+              slider: _buildSidebarSlider(
+                context,
+                value: padding,
+                min: 0,
+                max: 100,
+                divisions: 100,
+                onChanged: isProcessing ? null : onPaddingChanged,
+                onChangeEnd: onPaddingChangeEnd,
+                accentColor: accentColor,
+              ),
             ),
-          ),
-        ),
-        const SizedBox(
-          key: Key('post_layout_controls_gap_before_divider'),
-          height: AppSidebarTokens.optionsSubgroupGap,
-        ),
-        Divider(color: theme.dividerColor.withValues(alpha: 0.1)),
-        const SizedBox(
-          key: Key('post_layout_controls_gap_after_divider'),
-          height: AppSidebarTokens.optionsSubgroupGap,
-        ),
-        AppSliderRow(
-          label: l10n.padding,
-          valueText: '${padding.toInt()}%',
-          slider: _buildSidebarSlider(
-            context,
-            value: padding,
-            min: 0,
-            max: 100,
-            divisions: 100,
-            onChanged: isProcessing ? null : onPaddingChanged,
-            onChangeEnd: onPaddingChangeEnd,
-            accentColor: accentColor,
-          ),
-        ),
-        const SizedBox(height: AppSidebarTokens.sectionGap),
-        AppSliderRow(
-          label: l10n.roundedCorners,
-          valueText: '${radius.toInt()}px',
-          slider: _buildSidebarSlider(
-            context,
-            value: radius,
-            min: 0,
-            max: 50,
-            divisions: 50,
-            onChanged: isProcessing ? null : onRadiusChanged,
-            onChangeEnd: onRadiusChangeEnd,
-            accentColor: accentColor,
-          ),
+            const SizedBox(height: AppSidebarTokens.rowGap),
+            AppSliderRow(
+              label: l10n.roundedCorners,
+              valueText: '${radius.toInt()}px',
+              slider: _buildSidebarSlider(
+                context,
+                value: radius,
+                min: 0,
+                max: 50,
+                divisions: 50,
+                onChanged: isProcessing ? null : onRadiusChanged,
+                onChangeEnd: onRadiusChangeEnd,
+                accentColor: accentColor,
+              ),
+            ),
+          ],
         ),
       ],
     );
+  }
+
+  List<PlatformMenuItem<ResolutionPreset>> _buildResolutionItems(
+    AppLocalizations l10n,
+  ) {
+    return [
+      PlatformMenuItem(value: ResolutionPreset.auto, label: l10n.auto),
+      const PlatformMenuItem(value: ResolutionPreset.p1080, label: '1080p'),
+      const PlatformMenuItem(
+        value: ResolutionPreset.p1440,
+        label: '1440p (2K)',
+      ),
+      const PlatformMenuItem(
+        value: ResolutionPreset.p2160,
+        label: '2160p (4K)',
+      ),
+      const PlatformMenuItem(
+        value: ResolutionPreset.p4320,
+        label: '4320p (8K)',
+      ),
+    ];
   }
 
   Widget _buildSidebarSlider(

@@ -4,7 +4,7 @@ import 'package:clingfy/l10n/app_localizations.dart';
 import 'package:clingfy/ui/platform/widgets/app_button.dart';
 import 'package:clingfy/ui/platform/widgets/app_dialog.dart';
 import 'package:clingfy/ui/platform/widgets/app_icon_button.dart';
-import 'package:clingfy/ui/platform/widgets/app_section.dart';
+import 'package:clingfy/ui/platform/widgets/app_settings_group.dart';
 import 'package:clingfy/ui/platform/widgets/app_sidebar_tokens.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_colorpicker/flutter_colorpicker.dart';
@@ -30,108 +30,101 @@ class PostBackgroundSection extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final l10n = AppLocalizations.of(context)!;
+    final theme = Theme.of(context);
+    final subsectionStyle = AppSidebarTokens.rowTitleStyle(theme);
 
     return Column(
       crossAxisAlignment: CrossAxisAlignment.stretch,
       children: [
-        AppSection(
-          titleUppercase: false,
-          title: l10n.backgroundImage,
-          child: Column(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              if (backgroundImagePath != null) ...[
-                _ImagePreviewRow(
-                  backgroundImagePath: backgroundImagePath!,
-                  onClear: () => onBackgroundImageChanged(null),
+        AppSettingsGroup(
+          title: l10n.background,
+          children: [
+            Text(l10n.backgroundImage, style: subsectionStyle),
+            const SizedBox(height: AppSidebarTokens.rowGap),
+            if (backgroundImagePath != null) ...[
+              _ImagePreviewRow(
+                backgroundImagePath: backgroundImagePath!,
+                onClear: () => onBackgroundImageChanged(null),
+              ),
+              const SizedBox(height: AppSidebarTokens.rowGap),
+            ],
+            AppButton(
+              label: l10n.pickAnImage,
+              icon: Icons.image_outlined,
+              variant: AppButtonVariant.secondary,
+              size: AppButtonSize.regular,
+              expand: true,
+              onPressed: isProcessing
+                  ? null
+                  : () async {
+                      final path = await onPickImage();
+                      if (path != null) {
+                        onBackgroundImageChanged(path);
+                      }
+                    },
+            ),
+            const SizedBox(height: AppSidebarTokens.optionsSubgroupGap),
+            Text(l10n.backgroundColor, style: subsectionStyle),
+            const SizedBox(height: AppSidebarTokens.rowGap),
+            Wrap(
+              spacing: AppSidebarTokens.rowGap,
+              runSpacing: AppSidebarTokens.rowGap,
+              children: [
+                _ColorCircle(
+                  colorValue: null,
+                  isSelected:
+                      backgroundColor == null && backgroundImagePath == null,
+                  onTap: onBackgroundColorChanged,
+                ),
+                _ColorCircle(
+                  colorValue: 0xFFF44336,
+                  isSelected: backgroundColor == 0xFFF44336,
+                  onTap: onBackgroundColorChanged,
+                ),
+                _ColorCircle(
+                  colorValue: 0xFF8957E5,
+                  isSelected: backgroundColor == 0xFF8957E5,
+                  onTap: onBackgroundColorChanged,
+                ),
+                _ColorCircle(
+                  colorValue: 0xFF4CAF50,
+                  isSelected: backgroundColor == 0xFF4CAF50,
+                  onTap: onBackgroundColorChanged,
+                ),
+                _ColorCircle(
+                  colorValue: 0xFFFFC107,
+                  isSelected: backgroundColor == 0xFFFFC107,
+                  onTap: onBackgroundColorChanged,
+                ),
+                _ColorCircle(
+                  colorValue: 0xFF9C27B0,
+                  isSelected: backgroundColor == 0xFF9C27B0,
+                  onTap: onBackgroundColorChanged,
+                ),
+                _ColorCircle(
+                  colorValue: 0xFFFFFFFF,
+                  isSelected: backgroundColor == 0xFFFFFFFF,
+                  onTap: onBackgroundColorChanged,
                 ),
               ],
-              const SizedBox(height: AppSidebarTokens.rowGap),
-              AppButton(
-                label: l10n.pickAnImage,
-                icon: Icons.image_outlined,
-                variant: AppButtonVariant.secondary,
-                size: AppButtonSize.regular,
-                expand: true,
-                onPressed: isProcessing
-                    ? null
-                    : () async {
-                        final path = await onPickImage();
-                        if (path != null) {
-                          onBackgroundImageChanged(path);
-                        }
-                      },
-              ),
-            ],
-          ),
-        ),
-        const SizedBox(height: AppSidebarTokens.sectionGap),
-        AppSection(
-          titleUppercase: false,
-          title: l10n.backgroundColor,
-          child: Column(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              Wrap(
-                spacing: AppSidebarTokens.rowGap,
-                runSpacing: AppSidebarTokens.rowGap,
-                children: [
-                  _ColorCircle(
-                    colorValue: null,
-                    isSelected:
-                        backgroundColor == null && backgroundImagePath == null,
-                    onTap: onBackgroundColorChanged,
-                  ),
-                  _ColorCircle(
-                    colorValue: 0xFFF44336,
-                    isSelected: backgroundColor == 0xFFF44336,
-                    onTap: onBackgroundColorChanged,
-                  ),
-                  _ColorCircle(
-                    colorValue: 0xFF8957E5,
-                    isSelected: backgroundColor == 0xFF8957E5,
-                    onTap: onBackgroundColorChanged,
-                  ),
-                  _ColorCircle(
-                    colorValue: 0xFF4CAF50,
-                    isSelected: backgroundColor == 0xFF4CAF50,
-                    onTap: onBackgroundColorChanged,
-                  ),
-                  _ColorCircle(
-                    colorValue: 0xFFFFC107,
-                    isSelected: backgroundColor == 0xFFFFC107,
-                    onTap: onBackgroundColorChanged,
-                  ),
-                  _ColorCircle(
-                    colorValue: 0xFF9C27B0,
-                    isSelected: backgroundColor == 0xFF9C27B0,
-                    onTap: onBackgroundColorChanged,
-                  ),
-                  _ColorCircle(
-                    colorValue: 0xFFFFFFFF,
-                    isSelected: backgroundColor == 0xFFFFFFFF,
-                    onTap: onBackgroundColorChanged,
-                  ),
-                ],
-              ),
-              const SizedBox(height: AppSidebarTokens.rowGap),
-              AppButton(
-                label: l10n.moreColors,
-                icon: Icons.palette_outlined,
-                variant: AppButtonVariant.secondary,
-                size: AppButtonSize.regular,
-                expand: true,
-                onPressed: isProcessing
-                    ? null
-                    : () => _openColorPickerDialog(
-                        context,
-                        title: l10n.pickColor,
-                        initialColor: backgroundColor ?? 0xFFFFFFFF,
-                        onPicked: onBackgroundColorChanged,
-                      ),
-              ),
-            ],
-          ),
+            ),
+            const SizedBox(height: AppSidebarTokens.rowGap),
+            AppButton(
+              label: l10n.moreColors,
+              icon: Icons.palette_outlined,
+              variant: AppButtonVariant.secondary,
+              size: AppButtonSize.regular,
+              expand: true,
+              onPressed: isProcessing
+                  ? null
+                  : () => _openColorPickerDialog(
+                      context,
+                      title: l10n.pickColor,
+                      initialColor: backgroundColor ?? 0xFFFFFFFF,
+                      onPicked: onBackgroundColorChanged,
+                    ),
+            ),
+          ],
         ),
       ],
     );

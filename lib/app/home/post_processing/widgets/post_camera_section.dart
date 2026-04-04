@@ -2,7 +2,9 @@ import 'package:clingfy/core/models/app_models.dart';
 import 'package:clingfy/l10n/app_localizations.dart';
 import 'package:clingfy/ui/platform/platform_kind.dart';
 import 'package:clingfy/ui/platform/widgets/app_form_row.dart';
+import 'package:clingfy/ui/platform/widgets/app_inset_group.dart';
 import 'package:clingfy/ui/platform/widgets/app_inline_notice.dart';
+import 'package:clingfy/ui/platform/widgets/app_settings_group.dart';
 import 'package:clingfy/ui/platform/widgets/app_sidebar_tokens.dart';
 import 'package:clingfy/ui/platform/widgets/app_slider.dart';
 import 'package:clingfy/ui/platform/widgets/app_slider_row.dart';
@@ -70,12 +72,29 @@ class PostCameraSection extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final l10n = AppLocalizations.of(context)!;
-    final accentColor = Theme.of(context).colorScheme.primary;
     final camera = cameraState ?? const CameraCompositionState.hidden();
 
     return Column(
       crossAxisAlignment: CrossAxisAlignment.stretch,
+      children: [
+        _buildVisibilityGroup(context, camera),
+        if (hasCameraAsset && camera.visible) ...[
+          _buildPlacementGroup(context, camera),
+          _buildAppearanceGroup(context, camera),
+          _buildMotionGroup(context, camera),
+        ],
+      ],
+    );
+  }
+
+  Widget _buildVisibilityGroup(
+    BuildContext context,
+    CameraCompositionState camera,
+  ) {
+    final l10n = AppLocalizations.of(context)!;
+
+    return AppSettingsGroup(
+      title: l10n.visibility,
       children: [
         AppToggleRow(
           title: l10n.camera,
@@ -84,118 +103,170 @@ class PostCameraSection extends StatelessWidget {
         ),
         if (!hasCameraAsset) ...[
           const SizedBox(height: AppSidebarTokens.compactGap),
-          const AppInlineNotice(
-            message: 'No separate camera asset was recorded for this clip.',
+          AppInlineNotice(
+            message: l10n.cameraNoAssetNotice,
             variant: AppInlineNoticeVariant.info,
           ),
-        ] else ...[
-          const SizedBox(height: AppSidebarTokens.optionsSubgroupGap),
-          AppFormRow(
-            label: l10n.position,
-            helperText: 'Adjust or move camera position on screen',
-            control: _CameraPositionPanel(
-              camera: camera,
-              onPresetSelected: onLayoutPresetChanged,
-              onManualCenterChanged: onManualCenterChanged,
-              onManualCenterChangeEnd: onManualCenterChangeEnd,
-            ),
+        ],
+      ],
+    );
+  }
+
+  Widget _buildPlacementGroup(
+    BuildContext context,
+    CameraCompositionState camera,
+  ) {
+    final l10n = AppLocalizations.of(context)!;
+
+    return AppSettingsGroup(
+      title: l10n.placement,
+      children: [
+        AppFormRow(
+          label: l10n.position,
+          helperText: l10n.cameraPlacementHelper,
+          control: _CameraPositionPanel(
+            camera: camera,
+            onPresetSelected: onLayoutPresetChanged,
+            onManualCenterChanged: onManualCenterChanged,
+            onManualCenterChangeEnd: onManualCenterChangeEnd,
           ),
-          const SizedBox(height: AppSidebarTokens.sectionGap),
-          AppSliderRow(
-            label: l10n.size,
-            valueText: '${(camera.sizeFactor * 100).round()}%',
-            slider: _buildSidebarSlider(
-              context,
-              value: camera.sizeFactor,
-              min: 0.08,
-              max: 0.45,
-              divisions: 37,
-              onChanged: onSizeFactorChanged,
-              onChangeEnd: onSizeFactorChangeEnd,
-              accentColor: accentColor,
-            ),
+        ),
+      ],
+    );
+  }
+
+  Widget _buildAppearanceGroup(
+    BuildContext context,
+    CameraCompositionState camera,
+  ) {
+    final l10n = AppLocalizations.of(context)!;
+    final accentColor = Theme.of(context).colorScheme.primary;
+
+    return AppSettingsGroup(
+      title: l10n.appearance,
+      children: [
+        AppSliderRow(
+          label: l10n.size,
+          valueText: '${(camera.sizeFactor * 100).round()}%',
+          slider: _buildSidebarSlider(
+            context,
+            value: camera.sizeFactor,
+            min: 0.08,
+            max: 0.45,
+            divisions: 37,
+            onChanged: onSizeFactorChanged,
+            onChangeEnd: onSizeFactorChangeEnd,
+            accentColor: accentColor,
           ),
-          const SizedBox(height: AppSidebarTokens.sectionGap),
-          AppFormRow(
-            label: l10n.shape,
-            control: PlatformDropdown<CameraShape>(
-              value: camera.shape,
-              items: CameraShape.values
-                  .map(
-                    (shape) => PlatformMenuItem(
-                      value: shape,
-                      label: _shapeLabel(shape),
-                    ),
-                  )
-                  .toList(),
-              onChanged: (value) {
-                if (value != null) {
-                  onShapeChanged(value);
-                }
-              },
-            ),
+        ),
+        const SizedBox(height: AppSidebarTokens.rowGap),
+        AppFormRow(
+          label: l10n.shape,
+          control: PlatformDropdown<CameraShape>(
+            value: camera.shape,
+            minWidth: 0,
+            maxWidth: double.infinity,
+            expand: true,
+            items: CameraShape.values
+                .map(
+                  (shape) => PlatformMenuItem(
+                    value: shape,
+                    label: _shapeLabel(context, shape),
+                  ),
+                )
+                .toList(),
+            onChanged: (value) {
+              if (value != null) {
+                onShapeChanged(value);
+              }
+            },
           ),
-          const SizedBox(height: AppSidebarTokens.sectionGap),
-          AppSliderRow(
-            label: l10n.roundedCorners,
-            valueText: '${(camera.cornerRadius * 100).round()}%',
-            slider: _buildSidebarSlider(
-              context,
-              value: camera.cornerRadius,
-              min: 0.0,
-              max: 0.5,
-              divisions: 50,
-              onChanged: onCornerRadiusChanged,
-              onChangeEnd: onCornerRadiusChangeEnd,
-              accentColor: accentColor,
-            ),
+        ),
+        const SizedBox(height: AppSidebarTokens.rowGap),
+        AppSliderRow(
+          label: l10n.roundedCorners,
+          valueText: '${(camera.cornerRadius * 100).round()}%',
+          slider: _buildSidebarSlider(
+            context,
+            value: camera.cornerRadius,
+            min: 0.0,
+            max: 0.5,
+            divisions: 50,
+            onChanged: onCornerRadiusChanged,
+            onChangeEnd: onCornerRadiusChangeEnd,
+            accentColor: accentColor,
           ),
-          const SizedBox(height: AppSidebarTokens.sectionGap),
-          AppFormRow(
-            label: l10n.fitMode,
-            control: PlatformDropdown<CameraContentMode>(
-              value: camera.contentMode,
-              items: [
-                PlatformMenuItem(value: CameraContentMode.fit, label: l10n.fit),
-                PlatformMenuItem(
-                  value: CameraContentMode.fill,
-                  label: l10n.fill,
-                ),
-              ],
-              onChanged: (value) {
-                if (value != null) {
-                  onContentModeChanged(value);
-                }
-              },
-            ),
+        ),
+        const SizedBox(height: AppSidebarTokens.rowGap),
+        AppFormRow(
+          label: l10n.fitMode,
+          control: PlatformDropdown<CameraContentMode>(
+            value: camera.contentMode,
+            minWidth: 0,
+            maxWidth: double.infinity,
+            expand: true,
+            items: [
+              PlatformMenuItem(value: CameraContentMode.fit, label: l10n.fit),
+              PlatformMenuItem(value: CameraContentMode.fill, label: l10n.fill),
+            ],
+            onChanged: (value) {
+              if (value != null) {
+                onContentModeChanged(value);
+              }
+            },
           ),
-          const SizedBox(height: AppSidebarTokens.sectionGap),
-          AppFormRow(
-            label: 'Zoom Response',
-            control: PlatformDropdown<CameraZoomBehavior>(
-              value: camera.zoomBehavior,
-              items: const [
-                PlatformMenuItem(
-                  value: CameraZoomBehavior.fixed,
-                  label: 'Fixed',
-                ),
-                PlatformMenuItem(
-                  value: CameraZoomBehavior.scaleWithScreenZoom,
-                  label: 'Scale with Zoom',
-                ),
-              ],
-              onChanged: (value) {
-                if (value != null) {
-                  onZoomBehaviorChanged(value);
-                }
-              },
+        ),
+        const SizedBox(height: AppSidebarTokens.rowGap),
+        AppToggleRow(
+          title: l10n.mirrorSelfView,
+          value: camera.mirror,
+          onChanged: onMirrorChanged,
+        ),
+      ],
+    );
+  }
+
+  Widget _buildMotionGroup(
+    BuildContext context,
+    CameraCompositionState camera,
+  ) {
+    final l10n = AppLocalizations.of(context)!;
+    final accentColor = Theme.of(context).colorScheme.primary;
+
+    final children = <Widget>[
+      AppFormRow(
+        label: l10n.zoomResponse,
+        control: PlatformDropdown<CameraZoomBehavior>(
+          value: camera.zoomBehavior,
+          minWidth: 0,
+          maxWidth: double.infinity,
+          expand: true,
+          items: [
+            PlatformMenuItem(
+              value: CameraZoomBehavior.fixed,
+              label: l10n.fixed,
             ),
-          ),
-          if (camera.zoomBehavior ==
-              CameraZoomBehavior.scaleWithScreenZoom) ...[
-            const SizedBox(height: AppSidebarTokens.sectionGap),
+            PlatformMenuItem(
+              value: CameraZoomBehavior.scaleWithScreenZoom,
+              label: l10n.scaleWithZoom,
+            ),
+          ],
+          onChanged: (value) {
+            if (value != null) {
+              onZoomBehaviorChanged(value);
+            }
+          },
+        ),
+      ),
+    ];
+
+    if (camera.zoomBehavior == CameraZoomBehavior.scaleWithScreenZoom) {
+      children.addAll([
+        const SizedBox(height: AppSidebarTokens.optionsSubgroupGap),
+        AppInsetGroup(
+          children: [
             AppSliderRow(
-              label: 'Zoom Scale',
+              label: l10n.zoomScale,
               valueText: '${(camera.zoomScaleMultiplier * 100).round()}%',
               slider: _buildSidebarSlider(
                 context,
@@ -209,31 +280,41 @@ class PostCameraSection extends StatelessWidget {
               ),
             ),
           ],
-          const SizedBox(height: AppSidebarTokens.sectionGap),
-          AppFormRow(
-            label: 'Intro',
-            control: PlatformDropdown<CameraIntroPreset>(
-              value: camera.introPreset,
-              items: const [
-                PlatformMenuItem(value: CameraIntroPreset.none, label: 'None'),
-                PlatformMenuItem(value: CameraIntroPreset.fade, label: 'Fade'),
-                PlatformMenuItem(value: CameraIntroPreset.pop, label: 'Pop'),
-                PlatformMenuItem(
-                  value: CameraIntroPreset.slide,
-                  label: 'Slide',
-                ),
-              ],
-              onChanged: (value) {
-                if (value != null) {
-                  onIntroPresetChanged(value);
-                }
-              },
-            ),
-          ),
-          if (camera.introPreset != CameraIntroPreset.none) ...[
-            const SizedBox(height: AppSidebarTokens.sectionGap),
+        ),
+      ]);
+    }
+
+    children.add(const SizedBox(height: AppSidebarTokens.rowGap));
+    children.add(
+      AppFormRow(
+        label: l10n.intro,
+        control: PlatformDropdown<CameraIntroPreset>(
+          value: camera.introPreset,
+          minWidth: 0,
+          maxWidth: double.infinity,
+          expand: true,
+          items: [
+            PlatformMenuItem(value: CameraIntroPreset.none, label: l10n.none),
+            PlatformMenuItem(value: CameraIntroPreset.fade, label: l10n.fade),
+            PlatformMenuItem(value: CameraIntroPreset.pop, label: l10n.pop),
+            PlatformMenuItem(value: CameraIntroPreset.slide, label: l10n.slide),
+          ],
+          onChanged: (value) {
+            if (value != null) {
+              onIntroPresetChanged(value);
+            }
+          },
+        ),
+      ),
+    );
+
+    if (camera.introPreset != CameraIntroPreset.none) {
+      children.addAll([
+        const SizedBox(height: AppSidebarTokens.optionsSubgroupGap),
+        AppInsetGroup(
+          children: [
             AppSliderRow(
-              label: 'Intro Duration',
+              label: l10n.introDuration,
               valueText: '${camera.introDurationMs} ms',
               slider: _buildSidebarSlider(
                 context,
@@ -247,34 +328,44 @@ class PostCameraSection extends StatelessWidget {
               ),
             ),
           ],
-          const SizedBox(height: AppSidebarTokens.sectionGap),
-          AppFormRow(
-            label: 'Outro',
-            control: PlatformDropdown<CameraOutroPreset>(
-              value: camera.outroPreset,
-              items: const [
-                PlatformMenuItem(value: CameraOutroPreset.none, label: 'None'),
-                PlatformMenuItem(value: CameraOutroPreset.fade, label: 'Fade'),
-                PlatformMenuItem(
-                  value: CameraOutroPreset.shrink,
-                  label: 'Shrink',
-                ),
-                PlatformMenuItem(
-                  value: CameraOutroPreset.slide,
-                  label: 'Slide',
-                ),
-              ],
-              onChanged: (value) {
-                if (value != null) {
-                  onOutroPresetChanged(value);
-                }
-              },
+        ),
+      ]);
+    }
+
+    children.add(const SizedBox(height: AppSidebarTokens.rowGap));
+    children.add(
+      AppFormRow(
+        label: l10n.outro,
+        control: PlatformDropdown<CameraOutroPreset>(
+          value: camera.outroPreset,
+          minWidth: 0,
+          maxWidth: double.infinity,
+          expand: true,
+          items: [
+            PlatformMenuItem(value: CameraOutroPreset.none, label: l10n.none),
+            PlatformMenuItem(value: CameraOutroPreset.fade, label: l10n.fade),
+            PlatformMenuItem(
+              value: CameraOutroPreset.shrink,
+              label: l10n.shrink,
             ),
-          ),
-          if (camera.outroPreset != CameraOutroPreset.none) ...[
-            const SizedBox(height: AppSidebarTokens.sectionGap),
+            PlatformMenuItem(value: CameraOutroPreset.slide, label: l10n.slide),
+          ],
+          onChanged: (value) {
+            if (value != null) {
+              onOutroPresetChanged(value);
+            }
+          },
+        ),
+      ),
+    );
+
+    if (camera.outroPreset != CameraOutroPreset.none) {
+      children.addAll([
+        const SizedBox(height: AppSidebarTokens.optionsSubgroupGap),
+        AppInsetGroup(
+          children: [
             AppSliderRow(
-              label: 'Outro Duration',
+              label: l10n.outroDuration,
               valueText: '${camera.outroDurationMs} ms',
               slider: _buildSidebarSlider(
                 context,
@@ -288,32 +379,45 @@ class PostCameraSection extends StatelessWidget {
               ),
             ),
           ],
-          const SizedBox(height: AppSidebarTokens.sectionGap),
-          AppFormRow(
-            label: 'Zoom Emphasis',
-            control: PlatformDropdown<CameraZoomEmphasisPreset>(
-              value: camera.zoomEmphasisPreset,
-              items: const [
-                PlatformMenuItem(
-                  value: CameraZoomEmphasisPreset.none,
-                  label: 'None',
-                ),
-                PlatformMenuItem(
-                  value: CameraZoomEmphasisPreset.pulse,
-                  label: 'Pulse',
-                ),
-              ],
-              onChanged: (value) {
-                if (value != null) {
-                  onZoomEmphasisPresetChanged(value);
-                }
-              },
+        ),
+      ]);
+    }
+
+    children.add(const SizedBox(height: AppSidebarTokens.rowGap));
+    children.add(
+      AppFormRow(
+        label: l10n.zoomEmphasis,
+        control: PlatformDropdown<CameraZoomEmphasisPreset>(
+          value: camera.zoomEmphasisPreset,
+          minWidth: 0,
+          maxWidth: double.infinity,
+          expand: true,
+          items: [
+            PlatformMenuItem(
+              value: CameraZoomEmphasisPreset.none,
+              label: l10n.none,
             ),
-          ),
-          if (camera.zoomEmphasisPreset == CameraZoomEmphasisPreset.pulse) ...[
-            const SizedBox(height: AppSidebarTokens.sectionGap),
+            PlatformMenuItem(
+              value: CameraZoomEmphasisPreset.pulse,
+              label: l10n.pulse,
+            ),
+          ],
+          onChanged: (value) {
+            if (value != null) {
+              onZoomEmphasisPresetChanged(value);
+            }
+          },
+        ),
+      ),
+    );
+
+    if (camera.zoomEmphasisPreset == CameraZoomEmphasisPreset.pulse) {
+      children.addAll([
+        const SizedBox(height: AppSidebarTokens.optionsSubgroupGap),
+        AppInsetGroup(
+          children: [
             AppSliderRow(
-              label: 'Pulse Strength',
+              label: l10n.pulseStrength,
               valueText: '${(camera.zoomEmphasisStrength * 100).round()}%',
               slider: _buildSidebarSlider(
                 context,
@@ -327,27 +431,25 @@ class PostCameraSection extends StatelessWidget {
               ),
             ),
           ],
-          const SizedBox(height: AppSidebarTokens.sectionGap),
-          AppToggleRow(
-            title: l10n.mirrorSelfView,
-            value: camera.mirror,
-            onChanged: onMirrorChanged,
-          ),
-        ],
-      ],
-    );
+        ),
+      ]);
+    }
+
+    return AppSettingsGroup(title: l10n.motion, children: children);
   }
 
-  String _shapeLabel(CameraShape shape) {
+  String _shapeLabel(BuildContext context, CameraShape shape) {
+    final l10n = AppLocalizations.of(context)!;
+
     switch (shape) {
       case CameraShape.circle:
-        return 'Circle';
+        return l10n.circle;
       case CameraShape.roundedRect:
-        return 'Rounded Rectangle';
+        return l10n.roundedRect;
       case CameraShape.square:
-        return 'Square';
+        return l10n.square;
       case CameraShape.squircle:
-        return 'Squircle';
+        return l10n.squircle;
     }
   }
 
@@ -411,42 +513,34 @@ class _CameraPositionPanelState extends State<_CameraPositionPanel> {
     _CameraPositionPreset(
       preset: CameraLayoutPreset.overlayTopLeft,
       normalizedPosition: Offset(_presetInsetX, _presetInsetY),
-      label: 'Top left',
     ),
     _CameraPositionPreset(
       preset: CameraLayoutPreset.stackedTop,
       normalizedPosition: Offset(0.5, _presetInsetY),
-      label: 'Top center',
     ),
     _CameraPositionPreset(
       preset: CameraLayoutPreset.overlayTopRight,
       normalizedPosition: Offset(1 - _presetInsetX, _presetInsetY),
-      label: 'Top right',
     ),
     _CameraPositionPreset(
       preset: CameraLayoutPreset.sideBySideLeft,
       normalizedPosition: Offset(_presetInsetX, 0.5),
-      label: 'Center left',
     ),
     _CameraPositionPreset(
       preset: CameraLayoutPreset.sideBySideRight,
       normalizedPosition: Offset(1 - _presetInsetX, 0.5),
-      label: 'Center right',
     ),
     _CameraPositionPreset(
       preset: CameraLayoutPreset.overlayBottomLeft,
       normalizedPosition: Offset(_presetInsetX, _presetBottomInsetY),
-      label: 'Bottom left',
     ),
     _CameraPositionPreset(
       preset: CameraLayoutPreset.stackedBottom,
       normalizedPosition: Offset(0.5, _presetBottomInsetY),
-      label: 'Bottom center',
     ),
     _CameraPositionPreset(
       preset: CameraLayoutPreset.overlayBottomRight,
       normalizedPosition: Offset(1 - _presetInsetX, _presetBottomInsetY),
-      label: 'Bottom right',
     ),
   ];
 
@@ -458,7 +552,7 @@ class _CameraPositionPanelState extends State<_CameraPositionPanel> {
     if (normalizedCenter != null) {
       return Offset(
         normalizedCenter.dx.clamp(0.0, 1.0),
-        (1.0 - normalizedCenter.dy).clamp(0.0, 1.0), // Invert: native bottom-up -> Flutter top-down for display
+        (1.0 - normalizedCenter.dy).clamp(0.0, 1.0),
       );
     }
 
@@ -472,6 +566,7 @@ class _CameraPositionPanelState extends State<_CameraPositionPanel> {
 
   @override
   Widget build(BuildContext context) {
+    final l10n = AppLocalizations.of(context)!;
     final theme = Theme.of(context);
     final accentColor = theme.colorScheme.primary;
     final surfaceColor = theme.colorScheme.surfaceContainerHighest.withValues(
@@ -482,7 +577,6 @@ class _CameraPositionPanelState extends State<_CameraPositionPanel> {
     return ConstrainedBox(
       constraints: const BoxConstraints(
         minWidth: AppSidebarTokens.controlMinWidth,
-        // maxWidth: AppSidebarTokens.controlMaxWidth,
       ),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.stretch,
@@ -493,7 +587,7 @@ class _CameraPositionPanelState extends State<_CameraPositionPanel> {
                 bottom: AppSidebarTokens.sectionGap,
               ),
               child: Text(
-                'Background layout fills the full canvas. Choose a point or drag the handle to switch back to an overlay position.',
+                l10n.cameraBackgroundBehindHint,
                 style: AppSidebarTokens.helperStyle(theme),
               ),
             ),
@@ -549,6 +643,7 @@ class _CameraPositionPanelState extends State<_CameraPositionPanel> {
     required double width,
     required double height,
   }) {
+    final l10n = AppLocalizations.of(context)!;
     final theme = Theme.of(context);
     final center = _positionToPanelOffset(
       preset.normalizedPosition,
@@ -565,7 +660,8 @@ class _CameraPositionPanelState extends State<_CameraPositionPanel> {
       top: center.dy - (_presetTapTargetSize / 2),
       child: Semantics(
         button: true,
-        label: 'Camera position ${preset.label}',
+        label:
+            '${l10n.camera} ${l10n.position}: ${_positionLabel(l10n, preset.preset)}',
         child: MouseRegion(
           cursor: SystemMouseCursors.click,
           child: GestureDetector(
@@ -711,16 +807,39 @@ class _CameraPositionPanelState extends State<_CameraPositionPanel> {
 
     return null;
   }
+
+  String _positionLabel(AppLocalizations l10n, CameraLayoutPreset preset) {
+    switch (preset) {
+      case CameraLayoutPreset.overlayTopLeft:
+        return l10n.topLeft;
+      case CameraLayoutPreset.stackedTop:
+        return l10n.topCenter;
+      case CameraLayoutPreset.overlayTopRight:
+        return l10n.topRight;
+      case CameraLayoutPreset.sideBySideLeft:
+        return l10n.centerLeft;
+      case CameraLayoutPreset.sideBySideRight:
+        return l10n.centerRight;
+      case CameraLayoutPreset.overlayBottomLeft:
+        return l10n.bottomLeft;
+      case CameraLayoutPreset.stackedBottom:
+        return l10n.bottomCenter;
+      case CameraLayoutPreset.overlayBottomRight:
+        return l10n.bottomRight;
+      case CameraLayoutPreset.backgroundBehind:
+        return l10n.background;
+      case CameraLayoutPreset.hidden:
+        return l10n.none;
+    }
+  }
 }
 
 class _CameraPositionPreset {
   const _CameraPositionPreset({
     required this.preset,
     required this.normalizedPosition,
-    required this.label,
   });
 
   final CameraLayoutPreset preset;
   final Offset normalizedPosition;
-  final String label;
 }

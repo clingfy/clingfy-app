@@ -633,6 +633,15 @@ class AppLocalizationsEn extends AppLocalizations {
   String get exportSettings => 'Export Settings';
 
   @override
+  String get canvas => 'Canvas';
+
+  @override
+  String get canvasSettings => 'Canvas Settings';
+
+  @override
+  String get cameraSettings => 'Camera Settings';
+
+  @override
   String get postProcessing => 'Post-processing';
 
   @override
@@ -646,6 +655,15 @@ class AppLocalizationsEn extends AppLocalizations {
 
   @override
   String get hideOptions => 'Hide Options';
+
+  @override
+  String get canvasFormat => 'Canvas Format';
+
+  @override
+  String get framing => 'Framing';
+
+  @override
+  String get background => 'Background';
 
   @override
   String get size => 'Size';
@@ -687,16 +705,112 @@ class AppLocalizationsEn extends AppLocalizations {
   String get cursorSize => 'Cursor Size';
 
   @override
+  String get cursor => 'Cursor';
+
+  @override
   String get zoomInEffect => 'Zoom in effect';
 
   @override
   String get manageZoomEffects => 'Manage zoom in effects';
 
   @override
+  String get zoom => 'Zoom';
+
+  @override
   String get intensity => 'Intensity';
 
   @override
   String get layout => 'Layout';
+
+  @override
+  String get loudness => 'Loudness';
+
+  @override
+  String get placement => 'Placement';
+
+  @override
+  String get motion => 'Motion';
+
+  @override
+  String get zoomResponse => 'Zoom Response';
+
+  @override
+  String get fixed => 'Fixed';
+
+  @override
+  String get scaleWithZoom => 'Scale with Zoom';
+
+  @override
+  String get zoomScale => 'Zoom Scale';
+
+  @override
+  String get intro => 'Intro';
+
+  @override
+  String get outro => 'Outro';
+
+  @override
+  String get introDuration => 'Intro Duration';
+
+  @override
+  String get outroDuration => 'Outro Duration';
+
+  @override
+  String get fade => 'Fade';
+
+  @override
+  String get pop => 'Pop';
+
+  @override
+  String get slide => 'Slide';
+
+  @override
+  String get shrink => 'Shrink';
+
+  @override
+  String get zoomEmphasis => 'Zoom Emphasis';
+
+  @override
+  String get pulse => 'Pulse';
+
+  @override
+  String get pulseStrength => 'Pulse Strength';
+
+  @override
+  String get cameraNoAssetNotice =>
+      'No separate camera asset was recorded for this clip.';
+
+  @override
+  String get cameraPlacementHelper =>
+      'Adjust or move camera position on screen.';
+
+  @override
+  String get cameraBackgroundBehindHint =>
+      'Background layout fills the full canvas. Choose a point or drag the handle to switch back to an overlay position.';
+
+  @override
+  String get topLeft => 'Top left';
+
+  @override
+  String get topCenter => 'Top center';
+
+  @override
+  String get topRight => 'Top right';
+
+  @override
+  String get centerLeft => 'Center left';
+
+  @override
+  String get centerRight => 'Center right';
+
+  @override
+  String get bottomLeft => 'Bottom left';
+
+  @override
+  String get bottomCenter => 'Bottom center';
+
+  @override
+  String get bottomRight => 'Bottom right';
 
   @override
   String get refreshDevicesTooltip => 'Refresh devices (⌘R)';

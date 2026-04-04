@@ -93,23 +93,30 @@ class HomeLeftSidebar extends StatelessWidget {
         _SidebarActionItem(
           buttonKey: const ValueKey('post_sidebar_rail_tile_0'),
           icon: Icons.dashboard_customize,
-          label: l10n.layout,
+          label: l10n.canvas,
           selected: uiState.postProcessingSidebarIndex == 0,
           onTap: () => onPostProcessingSectionSelected(0),
         ),
         _SidebarActionItem(
           buttonKey: const ValueKey('post_sidebar_rail_tile_1'),
-          icon: Icons.auto_fix_high,
-          label: l10n.effects,
+          icon: Icons.face,
+          label: l10n.camera,
           selected: uiState.postProcessingSidebarIndex == 1,
           onTap: () => onPostProcessingSectionSelected(1),
         ),
         _SidebarActionItem(
           buttonKey: const ValueKey('post_sidebar_rail_tile_2'),
-          icon: Icons.ios_share,
-          label: l10n.export,
+          icon: Icons.auto_fix_high,
+          label: l10n.effects,
           selected: uiState.postProcessingSidebarIndex == 2,
           onTap: () => onPostProcessingSectionSelected(2),
+        ),
+        _SidebarActionItem(
+          buttonKey: const ValueKey('post_sidebar_rail_tile_3'),
+          icon: Icons.ios_share,
+          label: l10n.export,
+          selected: uiState.postProcessingSidebarIndex == 3,
+          onTap: () => onPostProcessingSectionSelected(3),
         ),
       ];
     }

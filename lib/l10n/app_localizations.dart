@@ -1258,6 +1258,24 @@ abstract class AppLocalizations {
   /// **'Export Settings'**
   String get exportSettings;
 
+  /// No description provided for @canvas.
+  ///
+  /// In en, this message translates to:
+  /// **'Canvas'**
+  String get canvas;
+
+  /// No description provided for @canvasSettings.
+  ///
+  /// In en, this message translates to:
+  /// **'Canvas Settings'**
+  String get canvasSettings;
+
+  /// No description provided for @cameraSettings.
+  ///
+  /// In en, this message translates to:
+  /// **'Camera Settings'**
+  String get cameraSettings;
+
   /// No description provided for @postProcessing.
   ///
   /// In en, this message translates to:
@@ -1287,6 +1305,24 @@ abstract class AppLocalizations {
   /// In en, this message translates to:
   /// **'Hide Options'**
   String get hideOptions;
+
+  /// No description provided for @canvasFormat.
+  ///
+  /// In en, this message translates to:
+  /// **'Canvas Format'**
+  String get canvasFormat;
+
+  /// No description provided for @framing.
+  ///
+  /// In en, this message translates to:
+  /// **'Framing'**
+  String get framing;
+
+  /// No description provided for @background.
+  ///
+  /// In en, this message translates to:
+  /// **'Background'**
+  String get background;
 
   /// No description provided for @size.
   ///
@@ -1366,6 +1402,12 @@ abstract class AppLocalizations {
   /// **'Cursor Size'**
   String get cursorSize;
 
+  /// No description provided for @cursor.
+  ///
+  /// In en, this message translates to:
+  /// **'Cursor'**
+  String get cursor;
+
   /// No description provided for @zoomInEffect.
   ///
   /// In en, this message translates to:
@@ -1378,6 +1420,12 @@ abstract class AppLocalizations {
   /// **'Manage zoom in effects'**
   String get manageZoomEffects;
 
+  /// No description provided for @zoom.
+  ///
+  /// In en, this message translates to:
+  /// **'Zoom'**
+  String get zoom;
+
   /// No description provided for @intensity.
   ///
   /// In en, this message translates to:
@@ -1389,6 +1437,180 @@ abstract class AppLocalizations {
   /// In en, this message translates to:
   /// **'Layout'**
   String get layout;
+
+  /// No description provided for @loudness.
+  ///
+  /// In en, this message translates to:
+  /// **'Loudness'**
+  String get loudness;
+
+  /// No description provided for @placement.
+  ///
+  /// In en, this message translates to:
+  /// **'Placement'**
+  String get placement;
+
+  /// No description provided for @motion.
+  ///
+  /// In en, this message translates to:
+  /// **'Motion'**
+  String get motion;
+
+  /// No description provided for @zoomResponse.
+  ///
+  /// In en, this message translates to:
+  /// **'Zoom Response'**
+  String get zoomResponse;
+
+  /// No description provided for @fixed.
+  ///
+  /// In en, this message translates to:
+  /// **'Fixed'**
+  String get fixed;
+
+  /// No description provided for @scaleWithZoom.
+  ///
+  /// In en, this message translates to:
+  /// **'Scale with Zoom'**
+  String get scaleWithZoom;
+
+  /// No description provided for @zoomScale.
+  ///
+  /// In en, this message translates to:
+  /// **'Zoom Scale'**
+  String get zoomScale;
+
+  /// No description provided for @intro.
+  ///
+  /// In en, this message translates to:
+  /// **'Intro'**
+  String get intro;
+
+  /// No description provided for @outro.
+  ///
+  /// In en, this message translates to:
+  /// **'Outro'**
+  String get outro;
+
+  /// No description provided for @introDuration.
+  ///
+  /// In en, this message translates to:
+  /// **'Intro Duration'**
+  String get introDuration;
+
+  /// No description provided for @outroDuration.
+  ///
+  /// In en, this message translates to:
+  /// **'Outro Duration'**
+  String get outroDuration;
+
+  /// No description provided for @fade.
+  ///
+  /// In en, this message translates to:
+  /// **'Fade'**
+  String get fade;
+
+  /// No description provided for @pop.
+  ///
+  /// In en, this message translates to:
+  /// **'Pop'**
+  String get pop;
+
+  /// No description provided for @slide.
+  ///
+  /// In en, this message translates to:
+  /// **'Slide'**
+  String get slide;
+
+  /// No description provided for @shrink.
+  ///
+  /// In en, this message translates to:
+  /// **'Shrink'**
+  String get shrink;
+
+  /// No description provided for @zoomEmphasis.
+  ///
+  /// In en, this message translates to:
+  /// **'Zoom Emphasis'**
+  String get zoomEmphasis;
+
+  /// No description provided for @pulse.
+  ///
+  /// In en, this message translates to:
+  /// **'Pulse'**
+  String get pulse;
+
+  /// No description provided for @pulseStrength.
+  ///
+  /// In en, this message translates to:
+  /// **'Pulse Strength'**
+  String get pulseStrength;
+
+  /// No description provided for @cameraNoAssetNotice.
+  ///
+  /// In en, this message translates to:
+  /// **'No separate camera asset was recorded for this clip.'**
+  String get cameraNoAssetNotice;
+
+  /// No description provided for @cameraPlacementHelper.
+  ///
+  /// In en, this message translates to:
+  /// **'Adjust or move camera position on screen.'**
+  String get cameraPlacementHelper;
+
+  /// No description provided for @cameraBackgroundBehindHint.
+  ///
+  /// In en, this message translates to:
+  /// **'Background layout fills the full canvas. Choose a point or drag the handle to switch back to an overlay position.'**
+  String get cameraBackgroundBehindHint;
+
+  /// No description provided for @topLeft.
+  ///
+  /// In en, this message translates to:
+  /// **'Top left'**
+  String get topLeft;
+
+  /// No description provided for @topCenter.
+  ///
+  /// In en, this message translates to:
+  /// **'Top center'**
+  String get topCenter;
+
+  /// No description provided for @topRight.
+  ///
+  /// In en, this message translates to:
+  /// **'Top right'**
+  String get topRight;
+
+  /// No description provided for @centerLeft.
+  ///
+  /// In en, this message translates to:
+  /// **'Center left'**
+  String get centerLeft;
+
+  /// No description provided for @centerRight.
+  ///
+  /// In en, this message translates to:
+  /// **'Center right'**
+  String get centerRight;
+
+  /// No description provided for @bottomLeft.
+  ///
+  /// In en, this message translates to:
+  /// **'Bottom left'**
+  String get bottomLeft;
+
+  /// No description provided for @bottomCenter.
+  ///
+  /// In en, this message translates to:
+  /// **'Bottom center'**
+  String get bottomCenter;
+
+  /// No description provided for @bottomRight.
+  ///
+  /// In en, this message translates to:
+  /// **'Bottom right'**
+  String get bottomRight;
 
   /// No description provided for @refreshDevicesTooltip.
   ///

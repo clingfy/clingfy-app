@@ -628,6 +628,15 @@ class AppLocalizationsAr extends AppLocalizations {
   String get exportSettings => 'Export Settings';
 
   @override
+  String get canvas => 'اللوحة';
+
+  @override
+  String get canvasSettings => 'إعدادات اللوحة';
+
+  @override
+  String get cameraSettings => 'إعدادات الكاميرا';
+
+  @override
   String get postProcessing => 'المعالجة اللاحقة';
 
   @override
@@ -641,6 +650,15 @@ class AppLocalizationsAr extends AppLocalizations {
 
   @override
   String get hideOptions => 'إخفاء الخيارات';
+
+  @override
+  String get canvasFormat => 'تنسيق اللوحة';
+
+  @override
+  String get framing => 'الإطار';
+
+  @override
+  String get background => 'الخلفية';
 
   @override
   String get size => 'الحجم';
@@ -682,16 +700,111 @@ class AppLocalizationsAr extends AppLocalizations {
   String get cursorSize => 'حجم المؤشر';
 
   @override
+  String get cursor => 'المؤشر';
+
+  @override
   String get zoomInEffect => 'تأثير التكبير';
 
   @override
   String get manageZoomEffects => 'إدارة تأثيرات التكبير';
 
   @override
+  String get zoom => 'التكبير';
+
+  @override
   String get intensity => 'الشدة';
 
   @override
   String get layout => 'التخطيط';
+
+  @override
+  String get loudness => 'مستوى الصوت';
+
+  @override
+  String get placement => 'الموضع';
+
+  @override
+  String get motion => 'الحركة';
+
+  @override
+  String get zoomResponse => 'استجابة التكبير';
+
+  @override
+  String get fixed => 'ثابت';
+
+  @override
+  String get scaleWithZoom => 'يتدرج مع التكبير';
+
+  @override
+  String get zoomScale => 'مقياس التكبير';
+
+  @override
+  String get intro => 'مقدمة';
+
+  @override
+  String get outro => 'خاتمة';
+
+  @override
+  String get introDuration => 'مدة المقدمة';
+
+  @override
+  String get outroDuration => 'مدة الخاتمة';
+
+  @override
+  String get fade => 'تلاشي';
+
+  @override
+  String get pop => 'انبثاق';
+
+  @override
+  String get slide => 'انزلاق';
+
+  @override
+  String get shrink => 'تصغير';
+
+  @override
+  String get zoomEmphasis => 'تعزيز التكبير';
+
+  @override
+  String get pulse => 'نبضة';
+
+  @override
+  String get pulseStrength => 'شدة النبضة';
+
+  @override
+  String get cameraNoAssetNotice =>
+      'لم يتم تسجيل مسار كاميرا منفصل لهذا المقطع.';
+
+  @override
+  String get cameraPlacementHelper => 'اضبط أو حرّك موضع الكاميرا على الشاشة.';
+
+  @override
+  String get cameraBackgroundBehindHint =>
+      'تخطيط الخلفية يملأ اللوحة بالكامل. اختر نقطة أو اسحب المقبض للعودة إلى موضع التراكب.';
+
+  @override
+  String get topLeft => 'أعلى اليسار';
+
+  @override
+  String get topCenter => 'أعلى الوسط';
+
+  @override
+  String get topRight => 'أعلى اليمين';
+
+  @override
+  String get centerLeft => 'وسط اليسار';
+
+  @override
+  String get centerRight => 'وسط اليمين';
+
+  @override
+  String get bottomLeft => 'أسفل اليسار';
+
+  @override
+  String get bottomCenter => 'أسفل الوسط';
+
+  @override
+  String get bottomRight => 'أسفل اليمين';
 
   @override
   String get refreshDevicesTooltip => 'تحديث الأجهزة (⌘R)';

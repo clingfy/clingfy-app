@@ -544,7 +544,7 @@ void main() {
       _setDesktopWindow(tester);
       final harness = await createHarness();
       harness.uiState.setRecordingSidebarIndex(2);
-      harness.uiState.setPostProcessingSidebarIndex(1);
+      harness.uiState.setPostProcessingSidebarIndex(2);
 
       addTearDown(harness.recording.dispose);
       addTearDown(harness.player.dispose);

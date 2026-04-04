@@ -77,8 +77,9 @@ class HomeOptionsPanel extends StatelessWidget {
   String _resolvedTitle(AppLocalizations l10n) {
     if (showPreviewShell) {
       return switch (uiState.postProcessingSidebarIndex) {
-        0 => l10n.layoutSettings,
-        1 => l10n.effectsSettings,
+        0 => l10n.canvasSettings,
+        1 => l10n.cameraSettings,
+        2 => l10n.effectsSettings,
         _ => l10n.exportSettings,
       };
     }
