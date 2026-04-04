@@ -500,6 +500,19 @@ class _CameraPositionPanel extends StatefulWidget {
   State<_CameraPositionPanel> createState() => _CameraPositionPanelState();
 }
 
+enum _CameraPositionSelectionKind { layoutPreset, snappedManualCenter }
+
+enum _CameraPositionLabel {
+  topLeft,
+  topCenter,
+  topRight,
+  centerLeft,
+  centerRight,
+  bottomLeft,
+  bottomCenter,
+  bottomRight,
+}
+
 class _CameraPositionPanelState extends State<_CameraPositionPanel> {
   static const double _panelHeight = 176;
   static const double _handleSize = 30;
@@ -509,36 +522,49 @@ class _CameraPositionPanelState extends State<_CameraPositionPanel> {
   static const double _presetInsetY = 0.14;
   static const double _presetBottomInsetY = 0.86;
   static const double _handleShadowBlur = 18;
+  static const double _selectionEpsilon = 0.035;
   static const List<_CameraPositionPreset> _presets = [
     _CameraPositionPreset(
+      kind: _CameraPositionSelectionKind.layoutPreset,
+      label: _CameraPositionLabel.topLeft,
       preset: CameraLayoutPreset.overlayTopLeft,
       normalizedPosition: Offset(_presetInsetX, _presetInsetY),
     ),
     _CameraPositionPreset(
-      preset: CameraLayoutPreset.stackedTop,
+      kind: _CameraPositionSelectionKind.snappedManualCenter,
+      label: _CameraPositionLabel.topCenter,
       normalizedPosition: Offset(0.5, _presetInsetY),
     ),
     _CameraPositionPreset(
+      kind: _CameraPositionSelectionKind.layoutPreset,
+      label: _CameraPositionLabel.topRight,
       preset: CameraLayoutPreset.overlayTopRight,
       normalizedPosition: Offset(1 - _presetInsetX, _presetInsetY),
     ),
     _CameraPositionPreset(
-      preset: CameraLayoutPreset.sideBySideLeft,
+      kind: _CameraPositionSelectionKind.snappedManualCenter,
+      label: _CameraPositionLabel.centerLeft,
       normalizedPosition: Offset(_presetInsetX, 0.5),
     ),
     _CameraPositionPreset(
-      preset: CameraLayoutPreset.sideBySideRight,
+      kind: _CameraPositionSelectionKind.snappedManualCenter,
+      label: _CameraPositionLabel.centerRight,
       normalizedPosition: Offset(1 - _presetInsetX, 0.5),
     ),
     _CameraPositionPreset(
+      kind: _CameraPositionSelectionKind.layoutPreset,
+      label: _CameraPositionLabel.bottomLeft,
       preset: CameraLayoutPreset.overlayBottomLeft,
       normalizedPosition: Offset(_presetInsetX, _presetBottomInsetY),
     ),
     _CameraPositionPreset(
-      preset: CameraLayoutPreset.stackedBottom,
+      kind: _CameraPositionSelectionKind.snappedManualCenter,
+      label: _CameraPositionLabel.bottomCenter,
       normalizedPosition: Offset(0.5, _presetBottomInsetY),
     ),
     _CameraPositionPreset(
+      kind: _CameraPositionSelectionKind.layoutPreset,
+      label: _CameraPositionLabel.bottomRight,
       preset: CameraLayoutPreset.overlayBottomRight,
       normalizedPosition: Offset(1 - _presetInsetX, _presetBottomInsetY),
     ),
@@ -651,9 +677,7 @@ class _CameraPositionPanelState extends State<_CameraPositionPanel> {
       height: height,
       itemSize: _presetDotSize,
     );
-    final isSelected =
-        widget.camera.normalizedCanvasCenter == null &&
-        widget.camera.layoutPreset == preset.preset;
+    final isSelected = _isPresetSelected(preset);
 
     return Positioned(
       left: center.dx - (_presetTapTargetSize / 2),
@@ -661,18 +685,13 @@ class _CameraPositionPanelState extends State<_CameraPositionPanel> {
       child: Semantics(
         button: true,
         label:
-            '${l10n.camera} ${l10n.position}: ${_positionLabel(l10n, preset.preset)}',
+            '${l10n.camera} ${l10n.position}: ${_positionLabel(l10n, preset.label)}',
         child: MouseRegion(
           cursor: SystemMouseCursors.click,
           child: GestureDetector(
-            key: ValueKey('camera_position_preset_${preset.preset.name}'),
+            key: ValueKey('camera_position_preset_${preset.label.name}'),
             behavior: HitTestBehavior.opaque,
-            onTap: () {
-              setState(() {
-                _dragNormalizedCenter = null;
-              });
-              widget.onPresetSelected(preset.preset);
-            },
+            onTap: () => _handlePresetTap(preset),
             child: SizedBox(
               width: _presetTapTargetSize,
               height: _presetTapTargetSize,
@@ -746,6 +765,42 @@ class _CameraPositionPanelState extends State<_CameraPositionPanel> {
     );
   }
 
+  void _handlePresetTap(_CameraPositionPreset preset) {
+    if (preset.kind == _CameraPositionSelectionKind.layoutPreset) {
+      setState(() {
+        _dragNormalizedCenter = null;
+      });
+      widget.onPresetSelected(preset.preset!);
+      return;
+    }
+
+    final snappedCenter = preset.normalizedPosition;
+
+    setState(() {
+      _dragNormalizedCenter = snappedCenter;
+    });
+
+    widget.onManualCenterChanged(snappedCenter);
+    widget.onManualCenterChangeEnd(snappedCenter);
+  }
+
+  bool _isPresetSelected(_CameraPositionPreset preset) {
+    if (preset.kind == _CameraPositionSelectionKind.layoutPreset) {
+      return widget.camera.normalizedCanvasCenter == null &&
+          widget.camera.layoutPreset == preset.preset;
+    }
+
+    if (widget.camera.normalizedCanvasCenter == null) {
+      return false;
+    }
+
+    final handlePosition = _resolvedHandlePosition;
+    return (handlePosition.dx - preset.normalizedPosition.dx).abs() <=
+            _selectionEpsilon &&
+        (handlePosition.dy - preset.normalizedPosition.dy).abs() <=
+            _selectionEpsilon;
+  }
+
   void _updateDrag(Offset globalPosition) {
     final renderObject = _panelKey.currentContext?.findRenderObject();
     if (renderObject is! RenderBox) {
@@ -800,7 +855,8 @@ class _CameraPositionPanelState extends State<_CameraPositionPanel> {
 
   Offset? _presetPositionForLayout(CameraLayoutPreset preset) {
     for (final item in _presets) {
-      if (item.preset == preset) {
+      if (item.kind == _CameraPositionSelectionKind.layoutPreset &&
+          item.preset == preset) {
         return item.normalizedPosition;
       }
     }
@@ -808,38 +864,38 @@ class _CameraPositionPanelState extends State<_CameraPositionPanel> {
     return null;
   }
 
-  String _positionLabel(AppLocalizations l10n, CameraLayoutPreset preset) {
-    switch (preset) {
-      case CameraLayoutPreset.overlayTopLeft:
+  String _positionLabel(AppLocalizations l10n, _CameraPositionLabel label) {
+    switch (label) {
+      case _CameraPositionLabel.topLeft:
         return l10n.topLeft;
-      case CameraLayoutPreset.stackedTop:
+      case _CameraPositionLabel.topCenter:
         return l10n.topCenter;
-      case CameraLayoutPreset.overlayTopRight:
+      case _CameraPositionLabel.topRight:
         return l10n.topRight;
-      case CameraLayoutPreset.sideBySideLeft:
+      case _CameraPositionLabel.centerLeft:
         return l10n.centerLeft;
-      case CameraLayoutPreset.sideBySideRight:
+      case _CameraPositionLabel.centerRight:
         return l10n.centerRight;
-      case CameraLayoutPreset.overlayBottomLeft:
+      case _CameraPositionLabel.bottomLeft:
         return l10n.bottomLeft;
-      case CameraLayoutPreset.stackedBottom:
+      case _CameraPositionLabel.bottomCenter:
         return l10n.bottomCenter;
-      case CameraLayoutPreset.overlayBottomRight:
+      case _CameraPositionLabel.bottomRight:
         return l10n.bottomRight;
-      case CameraLayoutPreset.backgroundBehind:
-        return l10n.background;
-      case CameraLayoutPreset.hidden:
-        return l10n.none;
     }
   }
 }
 
 class _CameraPositionPreset {
   const _CameraPositionPreset({
-    required this.preset,
+    required this.kind,
+    required this.label,
     required this.normalizedPosition,
+    this.preset,
   });
 
-  final CameraLayoutPreset preset;
+  final _CameraPositionSelectionKind kind;
+  final _CameraPositionLabel label;
+  final CameraLayoutPreset? preset;
   final Offset normalizedPosition;
 }

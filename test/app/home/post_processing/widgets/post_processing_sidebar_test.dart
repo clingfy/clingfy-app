@@ -400,7 +400,7 @@ void main() {
 
     expect(find.byKey(const ValueKey('camera_position_panel')), findsOneWidget);
     expect(
-      find.byKey(const ValueKey('camera_position_preset_overlayBottomRight')),
+      find.byKey(const ValueKey('camera_position_preset_bottomRight')),
       findsOneWidget,
     );
     expect(
@@ -429,11 +429,86 @@ void main() {
     await tester.pumpAndSettle();
 
     await tester.tap(
-      find.byKey(const ValueKey('camera_position_preset_overlayTopLeft')),
+      find.byKey(const ValueKey('camera_position_preset_topLeft')),
     );
     await tester.pumpAndSettle();
 
     expect(selectedPreset, CameraLayoutPreset.overlayTopLeft);
+  });
+
+  testWidgets('camera position panel edge snaps emit manual callbacks', (
+    tester,
+  ) async {
+    final changedCenters = <Offset>[];
+    final endedCenters = <Offset>[];
+    CameraLayoutPreset? selectedPreset;
+
+    void expectSingleCenter(
+      List<Offset> values, {
+      required double dx,
+      required double dy,
+    }) {
+      expect(values, hasLength(1));
+      expect(values.single.dx, closeTo(dx, 0.0001));
+      expect(values.single.dy, closeTo(dy, 0.0001));
+    }
+
+    await tester.pumpWidget(
+      buildTestApp(
+        selectedIndex: 1,
+        hasCameraAsset: true,
+        cameraState: const CameraCompositionState.hidden().copyWith(
+          visible: true,
+          layoutPreset: CameraLayoutPreset.overlayBottomRight,
+        ),
+        onCameraLayoutPresetChanged: (preset) => selectedPreset = preset,
+        onCameraManualCenterChanged: changedCenters.add,
+        onCameraManualCenterChangeEnd: endedCenters.add,
+      ),
+    );
+    await tester.pumpAndSettle();
+
+    await tester.tap(
+      find.byKey(const ValueKey('camera_position_preset_topCenter')),
+    );
+    await tester.pumpAndSettle();
+
+    expect(selectedPreset, isNull);
+    expectSingleCenter(changedCenters, dx: 0.5, dy: 0.14);
+    expectSingleCenter(endedCenters, dx: 0.5, dy: 0.14);
+
+    changedCenters.clear();
+    endedCenters.clear();
+
+    await tester.tap(
+      find.byKey(const ValueKey('camera_position_preset_centerLeft')),
+    );
+    await tester.pumpAndSettle();
+    expect(selectedPreset, isNull);
+    expectSingleCenter(changedCenters, dx: 0.07, dy: 0.5);
+    expectSingleCenter(endedCenters, dx: 0.07, dy: 0.5);
+
+    changedCenters.clear();
+    endedCenters.clear();
+
+    await tester.tap(
+      find.byKey(const ValueKey('camera_position_preset_centerRight')),
+    );
+    await tester.pumpAndSettle();
+    expect(selectedPreset, isNull);
+    expectSingleCenter(changedCenters, dx: 0.93, dy: 0.5);
+    expectSingleCenter(endedCenters, dx: 0.93, dy: 0.5);
+
+    changedCenters.clear();
+    endedCenters.clear();
+
+    await tester.tap(
+      find.byKey(const ValueKey('camera_position_preset_bottomCenter')),
+    );
+    await tester.pumpAndSettle();
+    expect(selectedPreset, isNull);
+    expectSingleCenter(changedCenters, dx: 0.5, dy: 0.86);
+    expectSingleCenter(endedCenters, dx: 0.5, dy: 0.86);
   });
 
   testWidgets('camera position panel drag emits manual center callbacks', (
