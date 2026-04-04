@@ -33,6 +33,9 @@ class AppLocalizationsEn extends AppLocalizations {
   String get recordTarget => 'Record target';
 
   @override
+  String get captureSource => 'Capture Source';
+
+  @override
   String get chosenScreen => 'Chosen screen';
 
   @override
@@ -116,6 +119,9 @@ class AppLocalizationsEn extends AppLocalizations {
   String get audio => 'Audio';
 
   @override
+  String get pointer => 'Pointer';
+
+  @override
   String get refreshAudio => 'Refresh audio devices (⌘R)';
 
   @override
@@ -135,6 +141,9 @@ class AppLocalizationsEn extends AppLocalizations {
 
   @override
   String get recordingQuality => 'Recording quality';
+
+  @override
+  String get quality => 'Quality';
 
   @override
   String get resolution => 'Resolution';
@@ -219,6 +228,9 @@ class AppLocalizationsEn extends AppLocalizations {
   String get duration => 'Duration';
 
   @override
+  String get startAndStop => 'Start & Stop';
+
+  @override
   String get autoStopAfter => 'Auto-stop after';
 
   @override
@@ -259,6 +271,18 @@ class AppLocalizationsEn extends AppLocalizations {
 
   @override
   String get overlayFaceCamVisibility => 'Face-cam visibility';
+
+  @override
+  String get visibilityAndPlacement => 'Visibility & Placement';
+
+  @override
+  String get appearance => 'Appearance';
+
+  @override
+  String get style => 'Style';
+
+  @override
+  String get effects => 'Effects';
 
   @override
   String get visibility => 'Visibility';
@@ -673,9 +697,6 @@ class AppLocalizationsEn extends AppLocalizations {
 
   @override
   String get layout => 'Layout';
-
-  @override
-  String get effects => 'Effects';
 
   @override
   String get refreshDevicesTooltip => 'Refresh devices (⌘R)';

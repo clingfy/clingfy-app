@@ -2,6 +2,8 @@ import 'package:clingfy/app/home/recording/widgets/recording_overlay_section.dar
 import 'package:clingfy/core/models/app_models.dart';
 import 'package:clingfy/core/overlay/overlay_mode.dart';
 import 'package:clingfy/l10n/app_localizations.dart';
+import 'package:clingfy/ui/platform/widgets/app_inset_group.dart';
+import 'package:clingfy/ui/platform/widgets/app_settings_group.dart';
 import 'package:clingfy/ui/platform/widgets/app_sidebar_tokens.dart';
 import 'package:clingfy/ui/platform/widgets/platform_dropdown.dart';
 import 'package:flutter/material.dart';
@@ -17,6 +19,7 @@ Widget _buildSection({
   bool overlayUseCustomPosition = false,
   double overlayRoundness = 0.2,
   OverlayBorder overlayBorder = OverlayBorder.none,
+  bool overlayRecordingHighlightEnabled = false,
   bool chromaKeyEnabled = false,
   ValueChanged<OverlayPosition>? onOverlayPositionChanged,
 }) {
@@ -43,7 +46,8 @@ Widget _buildSection({
                 overlayRoundness: overlayRoundness,
                 overlayOpacity: 1.0,
                 overlayMirror: true,
-                overlayRecordingHighlightEnabled: false,
+                overlayRecordingHighlightEnabled:
+                    overlayRecordingHighlightEnabled,
                 overlayRecordingHighlightStrength: 0.7,
                 overlayBorderWidth: 4.0,
                 overlayBorderColor: 0xFFFFFFFF,
@@ -76,6 +80,29 @@ Widget _buildSection({
 }
 
 void main() {
+  testWidgets('overlay settings use explicit top-level groups', (tester) async {
+    await tester.pumpWidget(_buildSection());
+    await tester.pumpAndSettle();
+
+    expect(find.byType(AppSettingsGroup), findsNWidgets(4));
+    expect(find.text('Visibility & Placement'), findsOneWidget);
+    expect(find.text('Appearance'), findsOneWidget);
+    expect(find.text('Style'), findsOneWidget);
+    expect(find.text('Effects'), findsOneWidget);
+  });
+
+  testWidgets('overlay mode off keeps only visibility and placement visible', (
+    tester,
+  ) async {
+    await tester.pumpWidget(_buildSection(overlayMode: OverlayMode.off));
+    await tester.pumpAndSettle();
+
+    expect(find.text('Visibility & Placement'), findsOneWidget);
+    expect(find.text('Appearance'), findsNothing);
+    expect(find.text('Style'), findsNothing);
+    expect(find.text('Effects'), findsNothing);
+  });
+
   testWidgets('shape dropdown shows squircle first with localized label', (
     tester,
   ) async {
@@ -112,7 +139,9 @@ void main() {
 
       expect(
         tester.getSize(shapeField).width,
-        moreOrLessEquals(AppSidebarTokens.controlMaxWidth),
+        moreOrLessEquals(
+          720 - AppSidebarTokens.labelWidth - AppSidebarTokens.controlGap,
+        ),
       );
     },
   );
@@ -172,6 +201,13 @@ void main() {
     expect(find.text(l10n.customPositionHint), findsNothing);
     expect(find.byTooltip(l10n.targetColorToRemove), findsOneWidget);
     expect(find.text(l10n.targetColorToRemove), findsNothing);
+    expect(
+      find.ancestor(
+        of: find.text(l10n.keyTolerance('40')),
+        matching: find.byType(AppInsetGroup),
+      ),
+      findsOneWidget,
+    );
   });
 
   testWidgets('overlay hint tooltip hides once recording is active', (
@@ -241,6 +277,49 @@ void main() {
     )!;
 
     expect(find.text(l10n.cornerRoundness('20')), findsOneWidget);
+  });
+
+  testWidgets('recording highlight reveals a subordinate inset group', (
+    tester,
+  ) async {
+    await tester.pumpWidget(
+      _buildSection(overlayRecordingHighlightEnabled: true),
+    );
+    await tester.pumpAndSettle();
+
+    final l10n = AppLocalizations.of(
+      tester.element(find.byType(RecordingOverlaySection)),
+    )!;
+
+    expect(find.text(l10n.recordingGlowStrengthPercent('70')), findsOneWidget);
+    expect(
+      find.ancestor(
+        of: find.text(l10n.recordingGlowStrengthPercent('70')),
+        matching: find.byType(AppInsetGroup),
+      ),
+      findsOneWidget,
+    );
+  });
+
+  testWidgets('border details reveal inside an inset group when enabled', (
+    tester,
+  ) async {
+    await tester.pumpWidget(_buildSection(overlayBorder: OverlayBorder.white));
+    await tester.pumpAndSettle();
+
+    final l10n = AppLocalizations.of(
+      tester.element(find.byType(RecordingOverlaySection)),
+    )!;
+
+    expect(find.text('More colors'), findsOneWidget);
+    expect(find.text(l10n.borderWidth('4.0')), findsOneWidget);
+    expect(
+      find.ancestor(
+        of: find.text(l10n.borderWidth('4.0')),
+        matching: find.byType(AppInsetGroup),
+      ),
+      findsOneWidget,
+    );
   });
 
   testWidgets('border color picker dialog opens without overflow', (

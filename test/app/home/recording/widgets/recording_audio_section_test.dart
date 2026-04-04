@@ -1,6 +1,8 @@
 import 'package:clingfy/app/home/recording/widgets/recording_audio_section.dart';
 import 'package:clingfy/core/models/app_models.dart';
 import 'package:clingfy/l10n/app_localizations.dart';
+import 'package:clingfy/ui/platform/widgets/app_inset_group.dart';
+import 'package:clingfy/ui/platform/widgets/app_settings_group.dart';
 import 'package:clingfy/ui/platform/widgets/platform_dropdown.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
@@ -165,6 +167,34 @@ double _audioDropdownMenuRowWidth(WidgetTester tester, int index) {
 }
 
 void main() {
+  testWidgets('audio controls render inside a settings group', (tester) async {
+    await _pumpSection(tester, selectedAudioSourceId: '__none__');
+
+    expect(find.byType(AppSettingsGroup), findsOneWidget);
+    expect(find.text('Audio'), findsOneWidget);
+  });
+
+  testWidgets('system audio details are nested inside an inset group', (
+    tester,
+  ) async {
+    await _pumpSection(
+      tester,
+      selectedAudioSourceId: 'mic-1',
+      systemAudioEnabled: true,
+    );
+
+    final l10n = _l10n(tester);
+
+    expect(find.text(l10n.recordingExcludeMicFromSystemAudio), findsOneWidget);
+    expect(
+      find.ancestor(
+        of: find.text(l10n.recordingExcludeMicFromSystemAudio),
+        matching: find.byType(AppInsetGroup),
+      ),
+      findsOneWidget,
+    );
+  });
+
   testWidgets('replaces the old monitor panel with a compact mic indicator', (
     tester,
   ) async {

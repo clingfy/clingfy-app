@@ -33,6 +33,9 @@ class AppLocalizationsRo extends AppLocalizations {
   String get recordTarget => 'Țintă înregistrare';
 
   @override
+  String get captureSource => 'Sursă captură';
+
+  @override
   String get chosenScreen => 'Ecran ales';
 
   @override
@@ -116,6 +119,9 @@ class AppLocalizationsRo extends AppLocalizations {
   String get audio => 'Audio';
 
   @override
+  String get pointer => 'Pointer';
+
+  @override
   String get refreshAudio => 'Reîmprospătare dispozitive audio (⌘R)';
 
   @override
@@ -135,6 +141,9 @@ class AppLocalizationsRo extends AppLocalizations {
 
   @override
   String get recordingQuality => 'Calitate înregistrare';
+
+  @override
+  String get quality => 'Calitate';
 
   @override
   String get resolution => 'Rezoluție';
@@ -219,6 +228,9 @@ class AppLocalizationsRo extends AppLocalizations {
   String get duration => 'Durată';
 
   @override
+  String get startAndStop => 'Pornire și oprire';
+
+  @override
   String get autoStopAfter => 'Oprire automată după';
 
   @override
@@ -259,6 +271,18 @@ class AppLocalizationsRo extends AppLocalizations {
 
   @override
   String get overlayFaceCamVisibility => 'Vizibilitate Face-cam';
+
+  @override
+  String get visibilityAndPlacement => 'Vizibilitate și poziționare';
+
+  @override
+  String get appearance => 'Aspect';
+
+  @override
+  String get style => 'Stil';
+
+  @override
+  String get effects => 'Efecte';
 
   @override
   String get visibility => 'Vizibilitate';
@@ -680,9 +704,6 @@ class AppLocalizationsRo extends AppLocalizations {
 
   @override
   String get layout => 'Aspect';
-
-  @override
-  String get effects => 'Efecte';
 
   @override
   String get refreshDevicesTooltip => 'Reîmprospătare dispozitive (⌘R)';

@@ -3,7 +3,8 @@ import 'package:clingfy/l10n/app_localizations.dart';
 import 'package:clingfy/ui/platform/platform_kind.dart';
 import 'package:clingfy/ui/platform/widgets/app_form_row.dart';
 import 'package:clingfy/ui/platform/widgets/app_icon_button.dart';
-import 'package:clingfy/ui/platform/widgets/app_section.dart';
+import 'package:clingfy/ui/platform/widgets/app_inset_group.dart';
+import 'package:clingfy/ui/platform/widgets/app_settings_group.dart';
 import 'package:clingfy/ui/platform/widgets/app_sidebar_tokens.dart';
 import 'package:clingfy/ui/platform/widgets/app_toggle_row.dart';
 import 'package:clingfy/ui/platform/widgets/platform_dropdown.dart';
@@ -59,82 +60,80 @@ class RecordingAudioSection extends StatelessWidget {
   Widget build(BuildContext context) {
     final l10n = AppLocalizations.of(context)!;
 
-    return AppSection(
+    return AppSettingsGroup(
       title: l10n.audio,
-      titleSpacing: AppSidebarTokens.dropdownSectionTitleGap,
       trailing: AppIconButton(
         tooltip: l10n.refreshAudio,
         onPressed: (loadingAudio || isRecording) ? null : onRefreshAudio,
         icon: Icons.refresh,
       ),
-      child: loadingAudio
-          ? const Padding(
-              padding: EdgeInsets.all(16),
-              child: Center(child: CircularProgressIndicator()),
-            )
-          : Column(
-              children: [
-                AppFormRow(
-                  label: l10n.inputDevice,
-                  control: ConstrainedBox(
-                    constraints: const BoxConstraints(
-                      minWidth: AppSidebarTokens.controlMinWidth,
-                      maxWidth: AppSidebarTokens.controlMaxWidth,
-                    ),
-                    child: Row(
-                      children: [
-                        Expanded(
-                          child: PlatformDropdown<String>(
-                            value: _validAudioId,
-                            minWidth: 0,
-                            maxWidth: double.infinity,
-                            expand: true,
-                            items: [
-                              PlatformMenuItem(
-                                value: '__none__',
-                                label: l10n.noAudio,
+      children: loadingAudio
+          ? const [
+              Padding(
+                padding: EdgeInsets.all(16),
+                child: Center(child: CircularProgressIndicator()),
+              ),
+            ]
+          : [
+              AppFormRow(
+                label: l10n.inputDevice,
+                control: SizedBox(
+                  width: double.infinity,
+                  child: Row(
+                    children: [
+                      Expanded(
+                        child: PlatformDropdown<String>(
+                          value: _validAudioId,
+                          minWidth: 0,
+                          maxWidth: double.infinity,
+                          expand: true,
+                          items: [
+                            PlatformMenuItem(
+                              value: '__none__',
+                              label: l10n.noAudio,
+                            ),
+                            ...audioSources.map(
+                              (source) => PlatformMenuItem(
+                                value: source.id,
+                                label: source.name,
                               ),
-                              ...audioSources.map(
-                                (source) => PlatformMenuItem(
-                                  value: source.id,
-                                  label: source.name,
-                                ),
-                              ),
-                            ],
-                            onChanged: isRecording
-                                ? null
-                                : onAudioSourceChanged,
-                          ),
+                            ),
+                          ],
+                          onChanged: isRecording ? null : onAudioSourceChanged,
                         ),
-                        const SizedBox(width: AppSidebarTokens.rowGap),
-                        _MicInputMeterIcon(
-                          hasSelectedMicrophone: _hasSelectedMicrophone,
-                          levelLinear: micInputLevelLinear,
-                          levelDbfs: micInputLevelDbfs,
-                          inputTooLow: micInputTooLow,
-                        ),
-                      ],
-                    ),
+                      ),
+                      const SizedBox(width: AppSidebarTokens.rowGap),
+                      _MicInputMeterIcon(
+                        hasSelectedMicrophone: _hasSelectedMicrophone,
+                        levelLinear: micInputLevelLinear,
+                        levelDbfs: micInputLevelDbfs,
+                        inputTooLow: micInputTooLow,
+                      ),
+                    ],
                   ),
                 ),
-                const SizedBox(height: AppSidebarTokens.rowGap),
-                AppToggleRow(
-                  title: l10n.recordingSystemAudio,
-                  value: systemAudioEnabled,
-                  onChanged: isRecording ? null : onSystemAudioEnabledChanged,
+              ),
+              const SizedBox(height: AppSidebarTokens.rowGap),
+              AppToggleRow(
+                title: l10n.recordingSystemAudio,
+                value: systemAudioEnabled,
+                onChanged: isRecording ? null : onSystemAudioEnabledChanged,
+              ),
+              if (systemAudioEnabled && _hasSelectedMicrophone) ...[
+                const SizedBox(height: AppSidebarTokens.optionsSubgroupGap),
+                AppInsetGroup(
+                  children: [
+                    AppToggleRow(
+                      title: l10n.recordingExcludeMicFromSystemAudio,
+                      value: excludeMicFromSystemAudio,
+                      onChanged: isRecording
+                          ? null
+                          : onExcludeMicFromSystemAudioChanged,
+                    ),
+                  ],
                 ),
-                if (systemAudioEnabled && _validAudioId != '__none__') ...[
-                  const SizedBox(height: AppSidebarTokens.rowGap),
-                  AppToggleRow(
-                    title: l10n.recordingExcludeMicFromSystemAudio,
-                    value: excludeMicFromSystemAudio,
-                    onChanged: isRecording
-                        ? null
-                        : onExcludeMicFromSystemAudioChanged,
-                  ),
-                ],
               ],
-            ),
+            ],
     );
   }
 }

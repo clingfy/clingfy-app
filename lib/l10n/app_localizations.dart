@@ -148,6 +148,12 @@ abstract class AppLocalizations {
   /// **'Record target'**
   String get recordTarget;
 
+  /// No description provided for @captureSource.
+  ///
+  /// In en, this message translates to:
+  /// **'Capture Source'**
+  String get captureSource;
+
   /// No description provided for @chosenScreen.
   ///
   /// In en, this message translates to:
@@ -298,6 +304,12 @@ abstract class AppLocalizations {
   /// **'Audio'**
   String get audio;
 
+  /// No description provided for @pointer.
+  ///
+  /// In en, this message translates to:
+  /// **'Pointer'**
+  String get pointer;
+
   /// No description provided for @refreshAudio.
   ///
   /// In en, this message translates to:
@@ -339,6 +351,12 @@ abstract class AppLocalizations {
   /// In en, this message translates to:
   /// **'Recording quality'**
   String get recordingQuality;
+
+  /// No description provided for @quality.
+  ///
+  /// In en, this message translates to:
+  /// **'Quality'**
+  String get quality;
 
   /// No description provided for @resolution.
   ///
@@ -496,6 +514,12 @@ abstract class AppLocalizations {
   /// **'Duration'**
   String get duration;
 
+  /// No description provided for @startAndStop.
+  ///
+  /// In en, this message translates to:
+  /// **'Start & Stop'**
+  String get startAndStop;
+
   /// No description provided for @autoStopAfter.
   ///
   /// In en, this message translates to:
@@ -573,6 +597,30 @@ abstract class AppLocalizations {
   /// In en, this message translates to:
   /// **'Face-cam visibility'**
   String get overlayFaceCamVisibility;
+
+  /// No description provided for @visibilityAndPlacement.
+  ///
+  /// In en, this message translates to:
+  /// **'Visibility & Placement'**
+  String get visibilityAndPlacement;
+
+  /// No description provided for @appearance.
+  ///
+  /// In en, this message translates to:
+  /// **'Appearance'**
+  String get appearance;
+
+  /// No description provided for @style.
+  ///
+  /// In en, this message translates to:
+  /// **'Style'**
+  String get style;
+
+  /// No description provided for @effects.
+  ///
+  /// In en, this message translates to:
+  /// **'Effects'**
+  String get effects;
 
   /// No description provided for @visibility.
   ///
@@ -1341,12 +1389,6 @@ abstract class AppLocalizations {
   /// In en, this message translates to:
   /// **'Layout'**
   String get layout;
-
-  /// No description provided for @effects.
-  ///
-  /// In en, this message translates to:
-  /// **'Effects'**
-  String get effects;
 
   /// No description provided for @refreshDevicesTooltip.
   ///

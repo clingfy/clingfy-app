@@ -4,6 +4,8 @@ import 'package:clingfy/core/overlay/overlay_mode.dart';
 import 'package:clingfy/ui/platform/widgets/app_button.dart';
 import 'package:clingfy/ui/platform/widgets/app_inline_info_tooltip.dart';
 import 'package:clingfy/ui/platform/widgets/app_form_row.dart';
+import 'package:clingfy/ui/platform/widgets/app_inset_group.dart';
+import 'package:clingfy/ui/platform/widgets/app_settings_group.dart';
 import 'package:clingfy/ui/platform/widgets/app_sidebar_tokens.dart';
 import 'package:clingfy/ui/platform/widgets/app_slider.dart';
 import 'package:clingfy/ui/platform/widgets/app_slider_row.dart';
@@ -92,11 +94,24 @@ class RecordingOverlaySection extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final theme = Theme.of(context);
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.stretch,
+      children: [
+        _buildVisibilityAndPlacementGroup(context),
+        if (overlayMode != OverlayMode.off) ...[
+          _buildAppearanceGroup(context),
+          _buildStyleGroup(context),
+          _buildEffectsGroup(context),
+        ],
+      ],
+    );
+  }
+
+  Widget _buildVisibilityAndPlacementGroup(BuildContext context) {
     final l10n = AppLocalizations.of(context)!;
 
-    return Column(
-      crossAxisAlignment: CrossAxisAlignment.start,
+    return AppSettingsGroup(
+      title: l10n.visibilityAndPlacement,
       children: [
         AppFormRow(
           label: l10n.overlayFaceCamVisibility,
@@ -115,369 +130,415 @@ class RecordingOverlaySection extends StatelessWidget {
           ),
         ),
         if (overlayMode != OverlayMode.off) ...[
-          const SizedBox(height: AppSidebarTokens.rowGap),
-          const Divider(height: 1),
-          const SizedBox(height: AppSidebarTokens.rowGap),
-          AppFormRow(
-            label: l10n.shape,
-            control: PlatformDropdown<OverlayShape>(
-              value: overlayShape,
-              items: OverlayShape.uiChoices
-                  .map(
-                    (shape) => PlatformMenuItem(
-                      value: shape,
-                      label: _localizedShapeName(context, shape),
-                    ),
-                  )
-                  .toList(),
-              onChanged: (shape) {
-                if (shape != null) onOverlayShapeChanged(shape);
-              },
-            ),
+          const SizedBox(height: AppSidebarTokens.optionsSubgroupGap),
+          AppInsetGroup(
+            children: [
+              AppFormRow(
+                label: l10n.position,
+                control: _buildPositionControl(context),
+              ),
+            ],
           ),
-          if (_canShowRoundness(overlayShape)) ...[
-            const SizedBox(height: AppSidebarTokens.rowGap),
-            AppSliderRow(
-              label: l10n.cornerRoundness(
-                (overlayRoundness * 100).toInt().toString(),
-              ),
-              slider: AppSlider(
-                value: overlayRoundness.clamp(0.0, 0.4),
-                min: 0.0,
-                max: 0.4,
-                divisions: 20,
-                onChanged: onOverlayRoundnessChanged,
-              ),
-            ),
-          ],
-          const SizedBox(height: AppSidebarTokens.rowGap),
-          AppSliderRow(
-            label: l10n.sizePx(overlaySize.toInt().toString()),
-            slider: AppSlider(
-              value: overlaySize,
-              min: 120,
-              max: 400,
-              divisions: 28,
-              onChanged: onOverlaySizeChanged,
-            ),
-          ),
-          const SizedBox(height: AppSidebarTokens.rowGap),
-          AppSliderRow(
-            label: l10n.opacityPercent(
-              (overlayOpacity * 100).round().toString(),
-            ),
-            slider: AppSlider(
-              value: overlayOpacity.clamp(0.3, 1.0),
-              min: 0.3,
-              max: 1.0,
-              divisions: 14,
-              onChanged: onOverlayOpacityChanged,
-            ),
-          ),
-          const SizedBox(height: AppSidebarTokens.rowGap),
-          AppToggleRow(
-            title: l10n.mirrorSelfView,
-            value: overlayMirror,
-            onChanged: onOverlayMirrorChanged,
-          ),
-          const SizedBox(height: AppSidebarTokens.sectionGap),
-          Divider(color: theme.dividerColor.withValues(alpha: 0.1)),
-          const SizedBox(height: AppSidebarTokens.sectionGap),
-          AppToggleRow(
-            title: l10n.recordingHighlight,
-            value: overlayRecordingHighlightEnabled,
-            onChanged: onOverlayRecordingHighlightEnabledChanged,
-          ),
-          if (overlayRecordingHighlightEnabled) ...[
-            const SizedBox(height: AppSidebarTokens.compactGap),
-            AppSliderRow(
-              label: l10n.recordingGlowStrengthPercent(
-                (overlayRecordingHighlightStrength * 100).round().toString(),
-              ),
-              slider: AppSlider(
-                value: (overlayRecordingHighlightStrength * 100).clamp(
-                  10.0,
-                  100.0,
-                ),
-                min: 10,
-                max: 100,
-                divisions: 90,
-                onChanged: (value) =>
-                    onOverlayRecordingHighlightStrengthChanged(value / 100),
-              ),
-            ),
-          ],
-          const SizedBox(height: AppSidebarTokens.rowGap),
-          AppFormRow(
-            label: l10n.position,
-            control: ConstrainedBox(
-              constraints: const BoxConstraints(
-                minWidth: AppSidebarTokens.controlMinWidth,
-                maxWidth: AppSidebarTokens.controlMaxWidth,
-              ),
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  SizedBox(
-                    height: 24,
-                    child: Align(
-                      alignment: Alignment.centerLeft,
-                      child: AnimatedSwitcher(
-                        duration: const Duration(milliseconds: 200),
-                        child: overlayUseCustomPosition
-                            ? _CustomPositionBadge(
-                                key: const ValueKey('custom_position_badge'),
-                                label: l10n.customPosition,
-                                infoTooltip: l10n.customPositionHint,
-                              )
-                            : const SizedBox.shrink(
-                                key: ValueKey('no_custom_position_badge'),
-                              ),
-                      ),
-                    ),
-                  ),
-                  const SizedBox(height: AppSidebarTokens.compactGap),
-                  SizedBox(
-                    height: 120,
-                    child: Row(
-                      children: [
-                        Expanded(
-                          child: Column(
-                            children: [
-                              _PositionButton(
-                                position: OverlayPosition.topLeft,
-                                icon: Icons.north_west,
-                                isSelected:
-                                    !overlayUseCustomPosition &&
-                                    overlayPosition == OverlayPosition.topLeft,
-                                onTap: onOverlayPositionChanged,
-                              ),
-                              const SizedBox(
-                                height: AppSidebarTokens.compactGap,
-                              ),
-                              _PositionButton(
-                                position: OverlayPosition.bottomLeft,
-                                icon: Icons.south_west,
-                                isSelected:
-                                    !overlayUseCustomPosition &&
-                                    overlayPosition ==
-                                        OverlayPosition.bottomLeft,
-                                onTap: onOverlayPositionChanged,
-                              ),
-                            ],
-                          ),
-                        ),
-                        const SizedBox(width: AppSidebarTokens.compactGap),
-                        Expanded(
-                          child: Column(
-                            children: [
-                              _PositionButton(
-                                position: OverlayPosition.topRight,
-                                icon: Icons.north_east,
-                                isSelected:
-                                    !overlayUseCustomPosition &&
-                                    overlayPosition == OverlayPosition.topRight,
-                                onTap: onOverlayPositionChanged,
-                              ),
-                              const SizedBox(
-                                height: AppSidebarTokens.compactGap,
-                              ),
-                              _PositionButton(
-                                position: OverlayPosition.bottomRight,
-                                icon: Icons.south_east,
-                                isSelected:
-                                    !overlayUseCustomPosition &&
-                                    overlayPosition ==
-                                        OverlayPosition.bottomRight,
-                                onTap: onOverlayPositionChanged,
-                              ),
-                            ],
-                          ),
-                        ),
-                      ],
-                    ),
-                  ),
-                ],
-              ),
-            ),
-          ),
-          const SizedBox(height: AppSidebarTokens.rowGap),
-          AppFormRow(
-            label: l10n.shadow,
-            control: PlatformDropdown<OverlayShadow>(
-              value: overlayShadow,
-              items: OverlayShadow.values
-                  .map(
-                    (shadow) => PlatformMenuItem(
-                      value: shadow,
-                      label: shadow.name.toUpperCase(),
-                    ),
-                  )
-                  .toList(),
-              onChanged: (shadow) {
-                if (shadow != null) onOverlayShadowChanged(shadow);
-              },
-            ),
-          ),
-          const SizedBox(height: AppSidebarTokens.rowGap),
-          AppFormRow(
-            label: l10n.border,
-            control: ConstrainedBox(
-              constraints: const BoxConstraints(
-                minWidth: AppSidebarTokens.controlMinWidth,
-                maxWidth: AppSidebarTokens.controlMaxWidth,
-              ),
-              child: Wrap(
-                spacing: AppSidebarTokens.rowGap,
-                runSpacing: AppSidebarTokens.rowGap,
-                children: [
-                  _BorderCircle(
-                    border: OverlayBorder.none,
-                    isSelected: overlayBorder == OverlayBorder.none,
-                    onTap: onOverlayBorderChanged,
-                  ),
-                  _BorderCircle(
-                    border: OverlayBorder.white,
-                    colorValue: 0xFFFFFFFF,
-                    isSelected: overlayBorder == OverlayBorder.white,
-                    onTap: onOverlayBorderChanged,
-                  ),
-                  _BorderCircle(
-                    border: OverlayBorder.black,
-                    colorValue: 0xFF000000,
-                    isSelected: overlayBorder == OverlayBorder.black,
-                    onTap: onOverlayBorderChanged,
-                  ),
-                  _BorderCircle(
-                    border: OverlayBorder.green,
-                    colorValue: 0xFF00CC66,
-                    isSelected: overlayBorder == OverlayBorder.green,
-                    onTap: onOverlayBorderChanged,
-                  ),
-                  _BorderCircle(
-                    border: OverlayBorder.cyan,
-                    colorValue: 0xFF00E5FF,
-                    isSelected: overlayBorder == OverlayBorder.cyan,
-                    onTap: onOverlayBorderChanged,
-                  ),
-                  if (overlayBorder == OverlayBorder.custom)
-                    _BorderCircle(
-                      border: OverlayBorder.custom,
-                      colorValue: overlayBorderColor,
-                      isSelected: true,
-                      onTap: onOverlayBorderChanged,
-                    ),
-                ],
-              ),
-            ),
-          ),
-          if (overlayBorder != OverlayBorder.none) ...[
-            const SizedBox(height: AppSidebarTokens.rowGap),
-            AppButton(
-              label: l10n.moreColors,
-              onPressed: () {
-                _showColorPickerDialog(
-                  context,
-                  title: l10n.pickBorderColor,
-                  initialColor: Color(overlayBorderColor),
-                  onColorSelected: (color) =>
-                      onOverlayBorderColorChanged(color.toARGB32()),
-                );
-              },
-              variant: AppButtonVariant.secondary,
-              size: AppButtonSize.regular,
-            ),
-            const SizedBox(height: AppSidebarTokens.rowGap),
-            AppSliderRow(
-              label: l10n.borderWidth(overlayBorderWidth.toStringAsFixed(1)),
-              slider: AppSlider(
-                value: overlayBorderWidth,
-                min: 0.0,
-                max: 12.0,
-                divisions: 24,
-                onChanged: onOverlayBorderWidthChanged,
-              ),
-            ),
-          ],
-          const SizedBox(height: AppSidebarTokens.sectionGap),
-          Divider(color: theme.dividerColor.withValues(alpha: 0.1)),
-          const SizedBox(height: AppSidebarTokens.sectionGap),
-          AppToggleRow(
-            title: l10n.chromaKey,
-            value: chromaKeyEnabled,
-            onChanged: onChromaKeyEnabledChanged,
-          ),
-          if (chromaKeyEnabled) ...[
-            const SizedBox(height: AppSidebarTokens.compactGap),
-            AppSliderRow(
-              label: l10n.keyTolerance(
-                (chromaKeyStrength * 100).toInt().toString(),
-              ),
-              slider: AppSlider(
-                value: chromaKeyStrength.clamp(0.0, 1.0),
-                min: 0.0,
-                max: 1.0,
-                divisions: 20,
-                onChanged: onChromaKeyStrengthChanged,
-              ),
-            ),
-            const SizedBox(height: AppSidebarTokens.rowGap),
-            AppFormRow(
-              label: l10n.chromaKeyColor,
-              infoTooltip: l10n.targetColorToRemove,
-              control: ConstrainedBox(
-                constraints: const BoxConstraints(
-                  minWidth: AppSidebarTokens.controlMinWidth,
-                  maxWidth: AppSidebarTokens.controlMaxWidth,
-                ),
-                child: Row(
-                  mainAxisSize: MainAxisSize.min,
-                  children: [
-                    GestureDetector(
-                      onTap: () {
-                        _showColorPickerDialog(
-                          context,
-                          title: l10n.pickChromaKeyColor,
-                          initialColor: Color(chromaKeyColor),
-                          onColorSelected: (color) =>
-                              onChromaKeyColorChanged(color.toARGB32()),
-                        );
-                      },
-                      child: Container(
-                        width: 28,
-                        height: 28,
-                        decoration: BoxDecoration(
-                          shape: BoxShape.circle,
-                          color: Color(chromaKeyColor),
-                          border: Border.all(
-                            color: theme.dividerColor,
-                            width: 1,
-                          ),
-                        ),
-                      ),
-                    ),
-                    const SizedBox(width: AppSidebarTokens.compactGap),
-                    AppButton(
-                      label: l10n.pickChromaKeyColor,
-                      variant: AppButtonVariant.secondary,
-                      size: AppButtonSize.regular,
-                      onPressed: () {
-                        _showColorPickerDialog(
-                          context,
-                          title: l10n.pickChromaKeyColor,
-                          initialColor: Color(chromaKeyColor),
-                          onColorSelected: (color) =>
-                              onChromaKeyColorChanged(color.toARGB32()),
-                        );
-                      },
-                    ),
-                  ],
-                ),
-              ),
-            ),
-          ],
         ],
       ],
+    );
+  }
+
+  Widget _buildAppearanceGroup(BuildContext context) {
+    final l10n = AppLocalizations.of(context)!;
+
+    return AppSettingsGroup(
+      title: l10n.appearance,
+      children: [
+        AppFormRow(
+          label: l10n.shape,
+          control: PlatformDropdown<OverlayShape>(
+            value: overlayShape,
+            minWidth: 0,
+            maxWidth: double.infinity,
+            expand: true,
+            items: OverlayShape.uiChoices
+                .map(
+                  (shape) => PlatformMenuItem(
+                    value: shape,
+                    label: _localizedShapeName(context, shape),
+                  ),
+                )
+                .toList(),
+            onChanged: (shape) {
+              if (shape != null) onOverlayShapeChanged(shape);
+            },
+          ),
+        ),
+        if (_canShowRoundness(overlayShape)) ...[
+          const SizedBox(height: AppSidebarTokens.rowGap),
+          AppSliderRow(
+            label: l10n.cornerRoundness(
+              (overlayRoundness * 100).toInt().toString(),
+            ),
+            slider: AppSlider(
+              value: overlayRoundness.clamp(0.0, 0.4),
+              min: 0.0,
+              max: 0.4,
+              divisions: 20,
+              onChanged: onOverlayRoundnessChanged,
+            ),
+          ),
+        ],
+        const SizedBox(height: AppSidebarTokens.rowGap),
+        AppSliderRow(
+          label: l10n.sizePx(overlaySize.toInt().toString()),
+          slider: AppSlider(
+            value: overlaySize,
+            min: 120,
+            max: 400,
+            divisions: 28,
+            onChanged: onOverlaySizeChanged,
+          ),
+        ),
+        const SizedBox(height: AppSidebarTokens.rowGap),
+        AppSliderRow(
+          label: l10n.opacityPercent((overlayOpacity * 100).round().toString()),
+          slider: AppSlider(
+            value: overlayOpacity.clamp(0.3, 1.0),
+            min: 0.3,
+            max: 1.0,
+            divisions: 14,
+            onChanged: onOverlayOpacityChanged,
+          ),
+        ),
+        const SizedBox(height: AppSidebarTokens.rowGap),
+        AppToggleRow(
+          title: l10n.mirrorSelfView,
+          value: overlayMirror,
+          onChanged: onOverlayMirrorChanged,
+        ),
+      ],
+    );
+  }
+
+  Widget _buildStyleGroup(BuildContext context) {
+    final l10n = AppLocalizations.of(context)!;
+
+    return AppSettingsGroup(
+      title: l10n.style,
+      children: [
+        AppFormRow(
+          label: l10n.shadow,
+          control: PlatformDropdown<OverlayShadow>(
+            value: overlayShadow,
+            minWidth: 0,
+            maxWidth: double.infinity,
+            expand: true,
+            items: OverlayShadow.values
+                .map(
+                  (shadow) => PlatformMenuItem(
+                    value: shadow,
+                    label: shadow.name.toUpperCase(),
+                  ),
+                )
+                .toList(),
+            onChanged: (shadow) {
+              if (shadow != null) onOverlayShadowChanged(shadow);
+            },
+          ),
+        ),
+        const SizedBox(height: AppSidebarTokens.rowGap),
+        AppFormRow(label: l10n.border, control: _buildBorderControl()),
+        if (overlayBorder != OverlayBorder.none) ...[
+          const SizedBox(height: AppSidebarTokens.optionsSubgroupGap),
+          AppInsetGroup(
+            children: [
+              AppButton(
+                label: l10n.moreColors,
+                onPressed: () {
+                  _showColorPickerDialog(
+                    context,
+                    title: l10n.pickBorderColor,
+                    initialColor: Color(overlayBorderColor),
+                    onColorSelected: (color) =>
+                        onOverlayBorderColorChanged(color.toARGB32()),
+                  );
+                },
+                variant: AppButtonVariant.secondary,
+                size: AppButtonSize.regular,
+              ),
+              const SizedBox(height: AppSidebarTokens.rowGap),
+              AppSliderRow(
+                label: l10n.borderWidth(overlayBorderWidth.toStringAsFixed(1)),
+                slider: AppSlider(
+                  value: overlayBorderWidth,
+                  min: 0.0,
+                  max: 12.0,
+                  divisions: 24,
+                  onChanged: onOverlayBorderWidthChanged,
+                ),
+              ),
+            ],
+          ),
+        ],
+      ],
+    );
+  }
+
+  Widget _buildEffectsGroup(BuildContext context) {
+    final l10n = AppLocalizations.of(context)!;
+
+    return AppSettingsGroup(
+      title: l10n.effects,
+      children: [
+        AppToggleRow(
+          title: l10n.recordingHighlight,
+          value: overlayRecordingHighlightEnabled,
+          onChanged: onOverlayRecordingHighlightEnabledChanged,
+        ),
+        if (overlayRecordingHighlightEnabled) ...[
+          const SizedBox(height: AppSidebarTokens.optionsSubgroupGap),
+          AppInsetGroup(
+            children: [
+              AppSliderRow(
+                label: l10n.recordingGlowStrengthPercent(
+                  (overlayRecordingHighlightStrength * 100).round().toString(),
+                ),
+                slider: AppSlider(
+                  value: (overlayRecordingHighlightStrength * 100).clamp(
+                    10.0,
+                    100.0,
+                  ),
+                  min: 10,
+                  max: 100,
+                  divisions: 90,
+                  onChanged: (value) =>
+                      onOverlayRecordingHighlightStrengthChanged(value / 100),
+                ),
+              ),
+            ],
+          ),
+        ],
+        const SizedBox(height: AppSidebarTokens.rowGap),
+        AppToggleRow(
+          title: l10n.chromaKey,
+          value: chromaKeyEnabled,
+          onChanged: onChromaKeyEnabledChanged,
+        ),
+        if (chromaKeyEnabled) ...[
+          const SizedBox(height: AppSidebarTokens.optionsSubgroupGap),
+          AppInsetGroup(
+            children: [
+              AppSliderRow(
+                label: l10n.keyTolerance(
+                  (chromaKeyStrength * 100).toInt().toString(),
+                ),
+                slider: AppSlider(
+                  value: chromaKeyStrength.clamp(0.0, 1.0),
+                  min: 0.0,
+                  max: 1.0,
+                  divisions: 20,
+                  onChanged: onChromaKeyStrengthChanged,
+                ),
+              ),
+              const SizedBox(height: AppSidebarTokens.rowGap),
+              AppFormRow(
+                label: l10n.chromaKeyColor,
+                infoTooltip: l10n.targetColorToRemove,
+                control: _buildChromaKeyColorControl(context),
+              ),
+            ],
+          ),
+        ],
+      ],
+    );
+  }
+
+  Widget _buildPositionControl(BuildContext context) {
+    final l10n = AppLocalizations.of(context)!;
+
+    return ConstrainedBox(
+      constraints: const BoxConstraints(
+        minWidth: AppSidebarTokens.controlMinWidth,
+        maxWidth: AppSidebarTokens.controlMaxWidth,
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          SizedBox(
+            height: 24,
+            child: Align(
+              alignment: Alignment.centerLeft,
+              child: AnimatedSwitcher(
+                duration: const Duration(milliseconds: 200),
+                child: overlayUseCustomPosition
+                    ? _CustomPositionBadge(
+                        key: const ValueKey('custom_position_badge'),
+                        label: l10n.customPosition,
+                        infoTooltip: l10n.customPositionHint,
+                      )
+                    : const SizedBox.shrink(
+                        key: ValueKey('no_custom_position_badge'),
+                      ),
+              ),
+            ),
+          ),
+          const SizedBox(height: AppSidebarTokens.compactGap),
+          SizedBox(
+            height: 120,
+            child: Row(
+              children: [
+                Expanded(
+                  child: Column(
+                    children: [
+                      _PositionButton(
+                        position: OverlayPosition.topLeft,
+                        icon: Icons.north_west,
+                        isSelected:
+                            !overlayUseCustomPosition &&
+                            overlayPosition == OverlayPosition.topLeft,
+                        onTap: onOverlayPositionChanged,
+                      ),
+                      const SizedBox(height: AppSidebarTokens.compactGap),
+                      _PositionButton(
+                        position: OverlayPosition.bottomLeft,
+                        icon: Icons.south_west,
+                        isSelected:
+                            !overlayUseCustomPosition &&
+                            overlayPosition == OverlayPosition.bottomLeft,
+                        onTap: onOverlayPositionChanged,
+                      ),
+                    ],
+                  ),
+                ),
+                const SizedBox(width: AppSidebarTokens.compactGap),
+                Expanded(
+                  child: Column(
+                    children: [
+                      _PositionButton(
+                        position: OverlayPosition.topRight,
+                        icon: Icons.north_east,
+                        isSelected:
+                            !overlayUseCustomPosition &&
+                            overlayPosition == OverlayPosition.topRight,
+                        onTap: onOverlayPositionChanged,
+                      ),
+                      const SizedBox(height: AppSidebarTokens.compactGap),
+                      _PositionButton(
+                        position: OverlayPosition.bottomRight,
+                        icon: Icons.south_east,
+                        isSelected:
+                            !overlayUseCustomPosition &&
+                            overlayPosition == OverlayPosition.bottomRight,
+                        onTap: onOverlayPositionChanged,
+                      ),
+                    ],
+                  ),
+                ),
+              ],
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildBorderControl() {
+    return ConstrainedBox(
+      constraints: const BoxConstraints(
+        minWidth: AppSidebarTokens.controlMinWidth,
+        maxWidth: AppSidebarTokens.controlMaxWidth,
+      ),
+      child: Wrap(
+        spacing: AppSidebarTokens.rowGap,
+        runSpacing: AppSidebarTokens.rowGap,
+        children: [
+          _BorderCircle(
+            border: OverlayBorder.none,
+            isSelected: overlayBorder == OverlayBorder.none,
+            onTap: onOverlayBorderChanged,
+          ),
+          _BorderCircle(
+            border: OverlayBorder.white,
+            colorValue: 0xFFFFFFFF,
+            isSelected: overlayBorder == OverlayBorder.white,
+            onTap: onOverlayBorderChanged,
+          ),
+          _BorderCircle(
+            border: OverlayBorder.black,
+            colorValue: 0xFF000000,
+            isSelected: overlayBorder == OverlayBorder.black,
+            onTap: onOverlayBorderChanged,
+          ),
+          _BorderCircle(
+            border: OverlayBorder.green,
+            colorValue: 0xFF00CC66,
+            isSelected: overlayBorder == OverlayBorder.green,
+            onTap: onOverlayBorderChanged,
+          ),
+          _BorderCircle(
+            border: OverlayBorder.cyan,
+            colorValue: 0xFF00E5FF,
+            isSelected: overlayBorder == OverlayBorder.cyan,
+            onTap: onOverlayBorderChanged,
+          ),
+          if (overlayBorder == OverlayBorder.custom)
+            _BorderCircle(
+              border: OverlayBorder.custom,
+              colorValue: overlayBorderColor,
+              isSelected: true,
+              onTap: onOverlayBorderChanged,
+            ),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildChromaKeyColorControl(BuildContext context) {
+    final theme = Theme.of(context);
+    final l10n = AppLocalizations.of(context)!;
+
+    return ConstrainedBox(
+      constraints: const BoxConstraints(
+        minWidth: AppSidebarTokens.controlMinWidth,
+        maxWidth: AppSidebarTokens.controlMaxWidth,
+      ),
+      child: Row(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          GestureDetector(
+            onTap: () {
+              _showColorPickerDialog(
+                context,
+                title: l10n.pickChromaKeyColor,
+                initialColor: Color(chromaKeyColor),
+                onColorSelected: (color) =>
+                    onChromaKeyColorChanged(color.toARGB32()),
+              );
+            },
+            child: Container(
+              width: 28,
+              height: 28,
+              decoration: BoxDecoration(
+                shape: BoxShape.circle,
+                color: Color(chromaKeyColor),
+                border: Border.all(color: theme.dividerColor, width: 1),
+              ),
+            ),
+          ),
+          const SizedBox(width: AppSidebarTokens.compactGap),
+          AppButton(
+            label: l10n.pickChromaKeyColor,
+            variant: AppButtonVariant.secondary,
+            size: AppButtonSize.regular,
+            onPressed: () {
+              _showColorPickerDialog(
+                context,
+                title: l10n.pickChromaKeyColor,
+                initialColor: Color(chromaKeyColor),
+                onColorSelected: (color) =>
+                    onChromaKeyColorChanged(color.toARGB32()),
+              );
+            },
+          ),
+        ],
+      ),
     );
   }
 
@@ -559,11 +620,7 @@ class _CustomPositionBadge extends StatelessWidget {
       children: [
         Container(
           key: _overlayCustomPositionBadgeKey,
-          padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
-          decoration: BoxDecoration(
-            color: theme.primaryColor.withValues(alpha: 0.12),
-            borderRadius: BorderRadius.circular(999),
-          ),
+          padding: const EdgeInsets.symmetric(vertical: 4),
           child: Text(
             label,
             style: AppSidebarTokens.valueStyle(theme).copyWith(

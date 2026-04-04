@@ -33,6 +33,9 @@ class AppLocalizationsAr extends AppLocalizations {
   String get recordTarget => 'هدف التسجيل';
 
   @override
+  String get captureSource => 'مصدر الالتقاط';
+
+  @override
   String get chosenScreen => 'الشاشة المختارة';
 
   @override
@@ -115,6 +118,9 @@ class AppLocalizationsAr extends AppLocalizations {
   String get audio => 'الصوت';
 
   @override
+  String get pointer => 'المؤشر';
+
+  @override
   String get refreshAudio => 'تحديث أجهزة الصوت (⌘R)';
 
   @override
@@ -134,6 +140,9 @@ class AppLocalizationsAr extends AppLocalizations {
 
   @override
   String get recordingQuality => 'جودة التسجيل';
+
+  @override
+  String get quality => 'الجودة';
 
   @override
   String get resolution => 'الدقة';
@@ -218,6 +227,9 @@ class AppLocalizationsAr extends AppLocalizations {
   String get duration => 'المدة';
 
   @override
+  String get startAndStop => 'البدء والإيقاف';
+
+  @override
   String get autoStopAfter => 'إيقاف تلقائي بعد';
 
   @override
@@ -258,6 +270,18 @@ class AppLocalizationsAr extends AppLocalizations {
 
   @override
   String get overlayFaceCamVisibility => 'الظهور (Face-cam)';
+
+  @override
+  String get visibilityAndPlacement => 'الظهور والموضع';
+
+  @override
+  String get appearance => 'المظهر';
+
+  @override
+  String get style => 'النمط';
+
+  @override
+  String get effects => 'التأثيرات';
 
   @override
   String get visibility => 'الظهور';
@@ -668,9 +692,6 @@ class AppLocalizationsAr extends AppLocalizations {
 
   @override
   String get layout => 'التخطيط';
-
-  @override
-  String get effects => 'التأثيرات';
 
   @override
   String get refreshDevicesTooltip => 'تحديث الأجهزة (⌘R)';
