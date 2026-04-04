@@ -770,6 +770,9 @@ class AppLocalizationsEn extends AppLocalizations {
   String get classic43 => 'Classic (4:3)';
 
   @override
+  String get classic => 'Classic';
+
+  @override
   String get square11 => 'Square (1:1)';
 
   @override
@@ -777,6 +780,12 @@ class AppLocalizationsEn extends AppLocalizations {
 
   @override
   String get reel916 => 'Reel (9:16)';
+
+  @override
+  String get wide => 'Wide';
+
+  @override
+  String get vertical => 'Vertical';
 
   @override
   String get vertical4k => 'Vertical 4K (2160x3840)';

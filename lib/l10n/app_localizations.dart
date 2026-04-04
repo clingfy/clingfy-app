@@ -1516,6 +1516,12 @@ abstract class AppLocalizations {
   /// **'Classic (4:3)'**
   String get classic43;
 
+  /// No description provided for @classic.
+  ///
+  /// In en, this message translates to:
+  /// **'Classic'**
+  String get classic;
+
   /// No description provided for @square11.
   ///
   /// In en, this message translates to:
@@ -1533,6 +1539,18 @@ abstract class AppLocalizations {
   /// In en, this message translates to:
   /// **'Reel (9:16)'**
   String get reel916;
+
+  /// No description provided for @wide.
+  ///
+  /// In en, this message translates to:
+  /// **'Wide'**
+  String get wide;
+
+  /// No description provided for @vertical.
+  ///
+  /// In en, this message translates to:
+  /// **'Vertical'**
+  String get vertical;
 
   /// No description provided for @vertical4k.
   ///

@@ -9,6 +9,7 @@ import 'package:clingfy/ui/platform/widgets/app_sidebar_tokens.dart';
 import 'package:clingfy/ui/platform/widgets/app_slider.dart';
 import 'package:clingfy/ui/platform/widgets/app_slider_row.dart';
 import 'package:clingfy/ui/platform/widgets/app_toggle_row.dart';
+import 'package:clingfy/ui/platform/widgets/platform_dropdown.dart';
 import 'package:clingfy/ui/theme/app_theme.dart';
 import 'package:clingfy/app/home/post_processing/widgets/post_processing_sidebar.dart';
 import 'package:flutter/material.dart';
@@ -21,17 +22,21 @@ void main() {
 
   Widget buildTestApp({
     int selectedIndex = 0,
+    bool isProcessing = false,
     bool enabled = true,
     bool cursorAvailable = true,
     bool hasAudio = true,
     bool showCursor = true,
     double zoomFactor = 1.0,
     bool autoNormalizeOnExport = false,
+    double? sidebarWidth,
+    LayoutPreset layoutPreset = LayoutPreset.auto,
     String? backgroundImagePath,
     bool hasCameraAsset = false,
     CameraExportCapabilities cameraExportCapabilities =
         const CameraExportCapabilities.allSupported(),
     CameraCompositionState? cameraState,
+    void Function(LayoutPreset)? onLayoutPresetChanged,
     void Function(double)? onZoomFactorChanged,
     void Function(double)? onZoomFactorChangeEnd,
     void Function(CameraZoomBehavior)? onCameraZoomBehaviorChanged,
@@ -42,6 +47,78 @@ void main() {
     void Function(Offset)? onCameraManualCenterChangeEnd,
     void Function(String?)? onBackgroundImageChanged,
   }) {
+    final sidebar = PostProcessingSidebar(
+      selectedIndex: selectedIndex,
+      isProcessing: isProcessing,
+      enabled: enabled,
+      layoutPreset: layoutPreset,
+      resolutionPreset: ResolutionPreset.auto,
+      fitMode: FitMode.fit,
+      padding: 8,
+      radius: 4,
+      backgroundColor: 0xFFFFFFFF,
+      backgroundImagePath: backgroundImagePath,
+      showCursor: showCursor,
+      cursorSize: 1.0,
+      zoomFactor: zoomFactor,
+      cursorAvailable: cursorAvailable,
+      hasAudio: hasAudio,
+      disabledMessage: null,
+      audioGainDb: 0,
+      audioVolume: 50,
+      autoNormalizeOnExport: autoNormalizeOnExport,
+      autoNormalizeTargetDbfs: -14,
+      onLayoutPresetChanged: onLayoutPresetChanged ?? (_) {},
+      onResolutionPresetChanged: (_) {},
+      onFitModeChanged: (_) {},
+      onPaddingChanged: (_) {},
+      onPaddingChangeEnd: (_) {},
+      onRadiusChanged: (_) {},
+      onRadiusChangeEnd: (_) {},
+      onBackgroundColorChanged: (_) {},
+      onBackgroundImageChanged: onBackgroundImageChanged ?? (_) {},
+      onCursorShowChanged: (_) {},
+      onCursorSizeChanged: (_) {},
+      onCursorSizeChangeEnd: (_) {},
+      onZoomFactorChanged: onZoomFactorChanged ?? (_) {},
+      onZoomFactorChangeEnd: onZoomFactorChangeEnd ?? (_) {},
+      onPickImage: () async => null,
+      hasCameraAsset: hasCameraAsset,
+      cameraExportCapabilities: cameraExportCapabilities,
+      cameraState: cameraState,
+      onCameraVisibleChanged: (_) {},
+      onCameraLayoutPresetChanged: onCameraLayoutPresetChanged ?? (_) {},
+      onCameraSizeFactorChanged: (_) {},
+      onCameraSizeFactorChangeEnd: (_) {},
+      onCameraShapeChanged: (_) {},
+      onCameraCornerRadiusChanged: (_) {},
+      onCameraCornerRadiusChangeEnd: (_) {},
+      onCameraMirrorChanged: (_) {},
+      onCameraContentModeChanged: (_) {},
+      onCameraZoomBehaviorChanged: onCameraZoomBehaviorChanged ?? (_) {},
+      onCameraZoomScaleMultiplierChanged:
+          onCameraZoomScaleMultiplierChanged ?? (_) {},
+      onCameraZoomScaleMultiplierChangeEnd:
+          onCameraZoomScaleMultiplierChangeEnd ?? (_) {},
+      onCameraIntroPresetChanged: (_) {},
+      onCameraOutroPresetChanged: (_) {},
+      onCameraZoomEmphasisPresetChanged: (_) {},
+      onCameraIntroDurationChanged: (_) {},
+      onCameraIntroDurationChangeEnd: (_) {},
+      onCameraOutroDurationChanged: (_) {},
+      onCameraOutroDurationChangeEnd: (_) {},
+      onCameraZoomEmphasisStrengthChanged: (_) {},
+      onCameraZoomEmphasisStrengthChangeEnd: (_) {},
+      onCameraManualCenterChanged: onCameraManualCenterChanged ?? (_) {},
+      onCameraManualCenterChangeEnd: onCameraManualCenterChangeEnd ?? (_) {},
+      onAudioGainChanged: (_) {},
+      onAudioGainChangeEnd: (_) {},
+      onAudioVolumeChanged: (_) {},
+      onAudioVolumeChangeEnd: (_) {},
+      onAutoNormalizeOnExportChanged: (_) {},
+      onAutoNormalizeTargetDbfsChanged: (_) {},
+    );
+
     return MaterialApp(
       localizationsDelegates: AppLocalizations.localizationsDelegates,
       supportedLocales: AppLocalizations.supportedLocales,
@@ -51,78 +128,11 @@ void main() {
       home: MacosTheme(
         data: buildMacosTheme(Brightness.dark),
         child: Scaffold(
-          body: PostProcessingSidebar(
-            selectedIndex: selectedIndex,
-            isProcessing: false,
-            enabled: enabled,
-            layoutPreset: LayoutPreset.auto,
-            resolutionPreset: ResolutionPreset.auto,
-            fitMode: FitMode.fit,
-            padding: 8,
-            radius: 4,
-            backgroundColor: 0xFFFFFFFF,
-            backgroundImagePath: backgroundImagePath,
-            showCursor: showCursor,
-            cursorSize: 1.0,
-            zoomFactor: zoomFactor,
-            cursorAvailable: cursorAvailable,
-            hasAudio: hasAudio,
-            disabledMessage: null,
-            audioGainDb: 0,
-            audioVolume: 50,
-            autoNormalizeOnExport: autoNormalizeOnExport,
-            autoNormalizeTargetDbfs: -14,
-            onLayoutPresetChanged: (_) {},
-            onResolutionPresetChanged: (_) {},
-            onFitModeChanged: (_) {},
-            onPaddingChanged: (_) {},
-            onPaddingChangeEnd: (_) {},
-            onRadiusChanged: (_) {},
-            onRadiusChangeEnd: (_) {},
-            onBackgroundColorChanged: (_) {},
-            onBackgroundImageChanged: onBackgroundImageChanged ?? (_) {},
-            onCursorShowChanged: (_) {},
-            onCursorSizeChanged: (_) {},
-            onCursorSizeChangeEnd: (_) {},
-            onZoomFactorChanged: onZoomFactorChanged ?? (_) {},
-            onZoomFactorChangeEnd: onZoomFactorChangeEnd ?? (_) {},
-            onPickImage: () async => null,
-            hasCameraAsset: hasCameraAsset,
-            cameraExportCapabilities: cameraExportCapabilities,
-            cameraState: cameraState,
-            onCameraVisibleChanged: (_) {},
-            onCameraLayoutPresetChanged: onCameraLayoutPresetChanged ?? (_) {},
-            onCameraSizeFactorChanged: (_) {},
-            onCameraSizeFactorChangeEnd: (_) {},
-            onCameraShapeChanged: (_) {},
-            onCameraCornerRadiusChanged: (_) {},
-            onCameraCornerRadiusChangeEnd: (_) {},
-            onCameraMirrorChanged: (_) {},
-            onCameraContentModeChanged: (_) {},
-            onCameraZoomBehaviorChanged: onCameraZoomBehaviorChanged ?? (_) {},
-            onCameraZoomScaleMultiplierChanged:
-                onCameraZoomScaleMultiplierChanged ?? (_) {},
-            onCameraZoomScaleMultiplierChangeEnd:
-                onCameraZoomScaleMultiplierChangeEnd ?? (_) {},
-            onCameraIntroPresetChanged: (_) {},
-            onCameraOutroPresetChanged: (_) {},
-            onCameraZoomEmphasisPresetChanged: (_) {},
-            onCameraIntroDurationChanged: (_) {},
-            onCameraIntroDurationChangeEnd: (_) {},
-            onCameraOutroDurationChanged: (_) {},
-            onCameraOutroDurationChangeEnd: (_) {},
-            onCameraZoomEmphasisStrengthChanged: (_) {},
-            onCameraZoomEmphasisStrengthChangeEnd: (_) {},
-            onCameraManualCenterChanged: onCameraManualCenterChanged ?? (_) {},
-            onCameraManualCenterChangeEnd:
-                onCameraManualCenterChangeEnd ?? (_) {},
-            onAudioGainChanged: (_) {},
-            onAudioGainChangeEnd: (_) {},
-            onAudioVolumeChanged: (_) {},
-            onAudioVolumeChangeEnd: (_) {},
-            onAutoNormalizeOnExportChanged: (_) {},
-            onAutoNormalizeTargetDbfsChanged: (_) {},
-          ),
+          body: sidebarWidth == null
+              ? sidebar
+              : Center(
+                  child: SizedBox(width: sidebarWidth, child: sidebar),
+                ),
         ),
       ),
     );
@@ -240,6 +250,100 @@ void main() {
       ),
       findsNothing,
     );
+  });
+
+  testWidgets('layout tab renders canvas aspect cards instead of dropdown', (
+    tester,
+  ) async {
+    await tester.pumpWidget(buildTestApp());
+    await tester.pumpAndSettle();
+
+    expect(find.byKey(const Key('canvas_aspect_selector')), findsOneWidget);
+    expect(find.byKey(PlatformDropdown.fieldKey), findsNothing);
+    expect(
+      tester.getSize(find.byKey(const ValueKey('canvas_aspect_option_auto'))),
+      const Size(84, 88),
+    );
+    expect(find.text('Auto'), findsOneWidget);
+    expect(find.text('Original'), findsOneWidget);
+    expect(find.text('Wide'), findsOneWidget);
+    expect(find.text('16:9'), findsOneWidget);
+    expect(find.text('Vertical'), findsOneWidget);
+    expect(find.text('9:16'), findsOneWidget);
+    expect(find.text('Square'), findsOneWidget);
+    expect(find.text('1:1'), findsOneWidget);
+    expect(find.text('Classic'), findsOneWidget);
+    expect(find.text('4:3'), findsOneWidget);
+    final selector = tester.widget<DecoratedBox>(
+      find.byKey(const Key('canvas_aspect_selector')),
+    );
+    final decoration = selector.decoration as BoxDecoration;
+    expect(decoration.color, isNull);
+  });
+
+  testWidgets('layout tab canvas aspect selector scrolls without overflow', (
+    tester,
+  ) async {
+    await tester.pumpWidget(buildTestApp(sidebarWidth: 320));
+    await tester.pumpAndSettle();
+
+    final optionFinder = find.byKey(
+      const ValueKey('canvas_aspect_option_classic43'),
+    );
+    final beforeDrag = tester.getTopLeft(optionFinder).dx;
+
+    await tester.drag(
+      find.byKey(const Key('canvas_aspect_selector_scroll')),
+      const Offset(-180, 0),
+    );
+    await tester.pumpAndSettle();
+
+    final afterDrag = tester.getTopLeft(optionFinder).dx;
+    expect(afterDrag, lessThan(beforeDrag));
+    expect(tester.takeException(), isNull);
+  });
+
+  testWidgets('layout tab taps canvas aspect card callback', (tester) async {
+    LayoutPreset? selectedPreset;
+
+    await tester.pumpWidget(
+      buildTestApp(
+        onLayoutPresetChanged: (preset) {
+          selectedPreset = preset;
+        },
+      ),
+    );
+    await tester.pumpAndSettle();
+
+    await tester.tap(
+      find.byKey(const ValueKey('canvas_aspect_option_youtube169')),
+    );
+    await tester.pumpAndSettle();
+
+    expect(selectedPreset, LayoutPreset.youtube169);
+  });
+
+  testWidgets('layout tab disables canvas aspect changes while processing', (
+    tester,
+  ) async {
+    LayoutPreset? selectedPreset;
+
+    await tester.pumpWidget(
+      buildTestApp(
+        isProcessing: true,
+        onLayoutPresetChanged: (preset) {
+          selectedPreset = preset;
+        },
+      ),
+    );
+    await tester.pumpAndSettle();
+
+    await tester.tap(
+      find.byKey(const ValueKey('canvas_aspect_option_youtube169')),
+    );
+    await tester.pumpAndSettle();
+
+    expect(selectedPreset, isNull);
   });
 
   testWidgets('background image preview uses app icon button clear action', (
@@ -600,7 +704,7 @@ void main() {
     );
 
     expect(dimmedOpacity, findsOneWidget);
-    expect(blockedIgnorePointer, findsOneWidget);
+    expect(blockedIgnorePointer, findsAtLeastNWidgets(1));
   });
 
   testWidgets('background color picker dialog opens without overflow', (

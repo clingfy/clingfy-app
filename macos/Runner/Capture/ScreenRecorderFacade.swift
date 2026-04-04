@@ -1659,13 +1659,15 @@ final class ScreenRecorderFacade: NSObject {
     resolution: String
   ) -> CGSize {
     // 1. Resolve Aspect Ratio from Layout Preset
+    let safeSourceHeight = max(sourceSize.height, 1)
+    let sourceAspect = sourceSize.width / safeSourceHeight
     let aspect: CGFloat
     switch layout {
     case "classic43": aspect = 4.0 / 3.0
     case "square11": aspect = 1.0
     case "youtube169": aspect = 16.0 / 9.0
     case "reel916": aspect = 9.0 / 16.0
-    default: aspect = sourceSize.width / max(sourceSize.height, 1)
+    default: aspect = sourceAspect
     }
 
     // 2. Resolve Resolution (Short Side)
@@ -1677,8 +1679,14 @@ final class ScreenRecorderFacade: NSObject {
     case "p4320": shortSide = 4320
     default:
       // Auto: Use source pixels but respect the aspect ratio we just chose.
-      // This means we might grow one dimension to fit the aspect.
-      return sourceSize
+      // Preserve the full source pixels on one axis and expand the other.
+      guard layout != "auto", sourceSize.width > 0, sourceSize.height > 0 else {
+        return sourceSize
+      }
+      if aspect >= sourceAspect {
+        return CGSize(width: sourceSize.height * aspect, height: sourceSize.height)
+      }
+      return CGSize(width: sourceSize.width, height: sourceSize.width / aspect)
     }
 
     // 3. Compute final size based on shortSide and aspect
@@ -3763,6 +3771,18 @@ final class ScreenRecorderFacade: NSObject {
     cameraPath: String?
   ) -> CameraCompositionParams? {
     exportSanitizedCameraParams(params, cameraPath: cameraPath)
+  }
+
+  func _testResolveTargetSize(
+    sourceSize: CGSize,
+    layout: String,
+    resolution: String
+  ) -> CGSize {
+    resolveTargetSize(
+      sourceSize: sourceSize,
+      layout: layout,
+      resolution: resolution
+    )
   }
 
   func _testHandleCameraRecorderBeginResult(

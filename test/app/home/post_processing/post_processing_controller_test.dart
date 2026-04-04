@@ -157,6 +157,24 @@ void main() {
   );
 
   test(
+    'setLayoutPreset triggers processVideo with the updated layout preset',
+    () async {
+      final harness = await createHarness();
+
+      harness.post.setLayoutPreset(LayoutPreset.youtube169);
+      await Future<void>.delayed(Duration.zero);
+
+      expect(harness.processCalls, isNotEmpty);
+      final args = Map<String, dynamic>.from(
+        harness.processCalls.last.arguments! as Map<dynamic, dynamic>,
+      );
+
+      expect(harness.settings.post.layoutPreset, LayoutPreset.youtube169);
+      expect(args['layoutPreset'], 'youtube169');
+    },
+  );
+
+  test(
     'camera zoom behavior and multiplier are included in preview payloads',
     () async {
       final harness = await createHarness();

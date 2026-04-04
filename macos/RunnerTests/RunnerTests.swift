@@ -3450,6 +3450,43 @@ final class ScreenRecorderFacadeSeparateCameraTests: XCTestCase {
     XCTAssertEqual(zoomEmphasisStrength, 0.12, accuracy: 0.0001)
   }
 
+  func testResolveTargetSizeHonorsLayoutAspectForAutoResolution() {
+    let facade = ScreenRecorderFacade()
+    let sourceSize = CGSize(width: 3024, height: 1964)
+
+    let square = facade._testResolveTargetSize(
+      sourceSize: sourceSize,
+      layout: "square11",
+      resolution: "auto"
+    )
+    XCTAssertEqual(square.width, 3024, accuracy: 0.0001)
+    XCTAssertEqual(square.height, 3024, accuracy: 0.0001)
+
+    let vertical = facade._testResolveTargetSize(
+      sourceSize: sourceSize,
+      layout: "reel916",
+      resolution: "auto"
+    )
+    XCTAssertEqual(vertical.width, 3024, accuracy: 0.0001)
+    XCTAssertEqual(vertical.height, 5376, accuracy: 0.0001)
+
+    let wide = facade._testResolveTargetSize(
+      sourceSize: sourceSize,
+      layout: "youtube169",
+      resolution: "auto"
+    )
+    XCTAssertEqual(wide.width, 1964 * (16.0 / 9.0), accuracy: 0.0001)
+    XCTAssertEqual(wide.height, 1964, accuracy: 0.0001)
+
+    let original = facade._testResolveTargetSize(
+      sourceSize: sourceSize,
+      layout: "auto",
+      resolution: "auto"
+    )
+    XCTAssertEqual(original.width, sourceSize.width, accuracy: 0.0001)
+    XCTAssertEqual(original.height, sourceSize.height, accuracy: 0.0001)
+  }
+
   func testSeparateCameraExportSanitizesOnlyUnsupportedChromaKeyStyling() {
     let params = CameraCompositionParams(
       visible: true,
