@@ -11,6 +11,7 @@ import 'package:clingfy/l10n/app_localizations.dart';
 import 'package:clingfy/core/bridges/native_bridge.dart';
 import 'package:clingfy/app/settings/settings_controller.dart';
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:macos_ui/macos_ui.dart';
 import 'package:provider/provider.dart';
@@ -212,6 +213,168 @@ void main() {
     expect(find.text(l10n.errScreenRecordingPermission), findsOneWidget);
     expect(find.byKey(const Key('toolbar_status_strip')), findsOneWidget);
   });
+
+  testWidgets(
+    'blank recording start errors fall back to the localized window unavailable message',
+    (tester) async {
+      final nativeBridge = NativeBridge.instance;
+      final settings = SettingsController(nativeBridge: nativeBridge);
+      final recording = RecordingController(
+        nativeBridge: nativeBridge,
+        settings: settings,
+      );
+      final device = _FakeDeviceController();
+      final overlay = OverlayController(bridge: nativeBridge);
+      final post = _ToolbarPostProcessingController();
+      final uiState = HomeUiState();
+      final messenger =
+          TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger;
+
+      addTearDown(recording.dispose);
+      addTearDown(device.dispose);
+      addTearDown(overlay.dispose);
+      addTearDown(post.dispose);
+      addTearDown(uiState.dispose);
+      addTearDown(settings.dispose);
+
+      messenger.setMockMethodCallHandler(screenRecorderChannel, (call) async {
+        switch (call.method) {
+          case 'startRecording':
+            throw PlatformException(
+              code: NativeErrorCode.windowNotAvailable,
+              message: '',
+            );
+          case 'getPermissionStatus':
+            return <String, bool>{
+              'screenRecording': true,
+              'microphone': false,
+              'camera': false,
+              'accessibility': false,
+            };
+          case 'getAudioSources':
+          case 'getVideoSources':
+          case 'getDisplays':
+          case 'getAppWindows':
+            return <dynamic>[];
+          case 'getStorageSnapshot':
+            return <String, dynamic>{
+              'systemTotalBytes': 500 * 1024 * 1024 * 1024,
+              'systemAvailableBytes': 200 * 1024 * 1024 * 1024,
+              'recordingsBytes': 4 * 1024 * 1024,
+              'tempBytes': 2 * 1024 * 1024,
+              'logsBytes': 512 * 1024,
+              'recordingsPath': '/tmp/Clingfy/Recordings',
+              'tempPath': '/tmp/Clingfy/Temp',
+              'logsPath': '/tmp/Clingfy/Logs',
+              'warningThresholdBytes': 20 * 1024 * 1024 * 1024,
+              'criticalThresholdBytes': 10 * 1024 * 1024 * 1024,
+            };
+          case 'setAppWindowTarget':
+          case 'setAudioSource':
+          case 'setVideoSource':
+          case 'setRecordingIndicatorPinned':
+          case 'setDisplayTargetMode':
+          case 'setPreRecordingBarEnabled':
+          case 'setPreRecordingBarVisible':
+          case 'togglePreRecordingBar':
+          case 'setExcludeRecorderApp':
+          case 'setExcludeMicFromSystemAudio':
+          case 'setCursorHighlightEnabled':
+          case 'setCursorHighlightLinkedToRecording':
+          case 'setOverlayEnabled':
+          case 'setCameraOverlayShape':
+          case 'setCameraOverlaySize':
+          case 'setCameraOverlayShadow':
+          case 'setCameraOverlayBorder':
+          case 'setCameraOverlayBorderWidth':
+          case 'setCameraOverlayBorderColor':
+          case 'setCameraOverlayRoundness':
+          case 'setCameraOverlayOpacity':
+          case 'setOverlayMirror':
+          case 'setChromaKeyEnabled':
+          case 'setChromaKeyStrength':
+          case 'setChromaKeyColor':
+          case 'setCameraOverlayHighlightStrength':
+          case 'setCameraOverlayPosition':
+          case 'setCameraOverlayCustomPosition':
+          case 'setOverlayLinkedToRecording':
+          case 'setFileNameTemplate':
+          case 'cacheLocalizedStrings':
+          case 'stopRecording':
+          case 'pauseRecording':
+          case 'resumeRecording':
+          case 'togglePauseRecording':
+          case 'requestScreenRecordingPermission':
+          case 'requestMicrophonePermission':
+          case 'requestCameraPermission':
+          case 'openAccessibilitySettings':
+          case 'openScreenRecordingSettings':
+          case 'openSystemSettings':
+          case 'revealRecordingsFolder':
+          case 'revealTempFolder':
+          case 'clearCachedRecordings':
+          case 'setAudioMix':
+          case 'previewOpen':
+          case 'previewClose':
+          case 'previewPlay':
+          case 'previewPause':
+          case 'previewSeekTo':
+          case 'previewPeekTo':
+          case 'inlinePreviewStop':
+          case 'checkForUpdates':
+            return null;
+          case 'getRecordingCapabilities':
+            return <String, dynamic>{
+              'canPauseResume': true,
+              'backend': 'avfoundation',
+              'strategy': 'av_file_output',
+            };
+          case 'getExcludeRecorderApp':
+            return false;
+          case 'getExcludeMicFromSystemAudio':
+            return true;
+          default:
+            return null;
+        }
+      });
+
+      recording.beginRecordingStartIntent();
+      await recording.startRecording();
+
+      await tester.pumpWidget(
+        MultiProvider(
+          providers: [
+            ChangeNotifierProvider<RecordingController>.value(value: recording),
+            ChangeNotifierProvider<DeviceController>.value(value: device),
+            ChangeNotifierProvider<OverlayController>.value(value: overlay),
+            ChangeNotifierProvider<PostProcessingController>.value(value: post),
+          ],
+          child: MaterialApp(
+            localizationsDelegates: AppLocalizations.localizationsDelegates,
+            supportedLocales: AppLocalizations.supportedLocales,
+            home: Scaffold(
+              body: HomeToolbar(
+                isRecording: false,
+                isPaused: false,
+                uiState: uiState,
+                onExport: () {},
+                onOpenSystemSettings: (_) async {},
+                onClearMessage: () {},
+              ),
+            ),
+          ),
+        ),
+      );
+      await tester.pumpAndSettle();
+
+      final l10n = AppLocalizations.of(
+        tester.element(find.byType(HomeToolbar)),
+      )!;
+      expect(recording.errorCode, NativeErrorCode.windowNotAvailable);
+      expect(recording.errorMessage, NativeErrorCode.windowNotAvailable);
+      expect(find.text(l10n.errWindowUnavailable), findsOneWidget);
+    },
+  );
 
   testWidgets('background export renders in separate export lane', (
     tester,

@@ -114,6 +114,9 @@ class HomeActions {
 
     try {
       if (!recordingController.isRecording) {
+        if (!_hasValidRecordingTargetSelection()) {
+          return;
+        }
         final overrides = await _resolveRecordingStartOverrides(context);
         if (overrides == null) {
           return;
@@ -137,8 +140,36 @@ class HomeActions {
       }
     } on PlatformException catch (e) {
       Log.e('HomeActions', 'toggleRecording failed: $e');
-      uiState.setError(e.message ?? e.code);
+      uiState.setError(_platformExceptionMessageOrCode(e));
     }
+  }
+
+  bool _hasValidRecordingTargetSelection() {
+    switch (uiState.targetMode) {
+      case DisplayTargetMode.singleAppWindow:
+        if (deviceController.selectedAppWindowId == null) {
+          uiState.setError(NativeErrorCode.noWindowSelected);
+          return false;
+        }
+        return true;
+      case DisplayTargetMode.areaRecording:
+        if (overlayController.areaRect == null ||
+            overlayController.areaDisplayId == null) {
+          uiState.setError(NativeErrorCode.noAreaSelected);
+          return false;
+        }
+        return true;
+      default:
+        return true;
+    }
+  }
+
+  String _platformExceptionMessageOrCode(PlatformException error) {
+    final message = error.message;
+    if (message == null || message.trim().isEmpty) {
+      return error.code;
+    }
+    return message;
   }
 
   void handleExportProgress(double progress) {

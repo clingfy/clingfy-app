@@ -171,6 +171,14 @@ class RecordingController extends ChangeNotifier {
     notifyListeners();
   }
 
+  String? _normalizedPlatformErrorMessage(PlatformException error) {
+    final message = error.message;
+    if (message == null || message.trim().isEmpty) {
+      return null;
+    }
+    return message;
+  }
+
   Future<void> refreshPauseResumeCapabilities() async {
     try {
       final capabilities = await _nativeBridge.getRecordingCapabilities();
@@ -285,7 +293,10 @@ class RecordingController extends ChangeNotifier {
       );
       await ClingfyTelemetry.stopSession();
       _startCommandIssued = false;
-      _transitionToIdle(errorCode: e.code, errorMessage: e.message);
+      _transitionToIdle(
+        errorCode: e.code,
+        errorMessage: _normalizedPlatformErrorMessage(e),
+      );
     } catch (e, st) {
       await ClingfyTelemetry.captureError(
         e,
@@ -356,7 +367,11 @@ class RecordingController extends ChangeNotifier {
           'previousPhase': previousState.phase.name,
         },
       );
-      _restoreAfterStopFailure(previousState, e.code, e.message);
+      _restoreAfterStopFailure(
+        previousState,
+        e.code,
+        _normalizedPlatformErrorMessage(e),
+      );
     } catch (e, st) {
       Log.e("Recording", "Failed to stop recording: $e");
       await ClingfyTelemetry.captureError(
@@ -389,7 +404,12 @@ class RecordingController extends ChangeNotifier {
         method: 'pauseRecording',
         context: {'sessionId': _state.sessionId, 'phase': phase.name},
       );
-      _setState(_state.copyWith(errorCode: e.code, errorMessage: e.message));
+      _setState(
+        _state.copyWith(
+          errorCode: e.code,
+          errorMessage: _normalizedPlatformErrorMessage(e),
+        ),
+      );
     } catch (e, st) {
       _pauseResumeInFlight = false;
       notifyListeners();
@@ -424,7 +444,12 @@ class RecordingController extends ChangeNotifier {
         method: 'resumeRecording',
         context: {'sessionId': _state.sessionId, 'phase': phase.name},
       );
-      _setState(_state.copyWith(errorCode: e.code, errorMessage: e.message));
+      _setState(
+        _state.copyWith(
+          errorCode: e.code,
+          errorMessage: _normalizedPlatformErrorMessage(e),
+        ),
+      );
     } catch (e, st) {
       _pauseResumeInFlight = false;
       notifyListeners();
