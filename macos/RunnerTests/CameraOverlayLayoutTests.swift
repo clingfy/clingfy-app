@@ -7,7 +7,7 @@ final class CameraOverlayLayoutTests: XCTestCase {
   private let screenFrame = CGRect(x: 0, y: 0, width: 1600, height: 1000)
   private let visibleFrame = CGRect(x: 24, y: 48, width: 1500, height: 920)
   private let contentSize: CGFloat = 220
-  private let shadowPadding: CGFloat = 50
+  private let effectPadding: CGFloat = 50
   private let accuracy: CGFloat = 0.001
 
   func testPresetPlacementFrameUsesPhysicalTopAndVisibleWorkAreaSides() {
@@ -60,13 +60,13 @@ final class CameraOverlayLayoutTests: XCTestCase {
     let origin = cameraOverlayPresetOrigin(
       for: preset,
       contentSize: contentSize,
-      shadowPadding: shadowPadding,
+      effectPadding: effectPadding,
       screenFrame: placementFrame
     )
 
     return CGRect(
-      x: origin.x + shadowPadding,
-      y: origin.y + shadowPadding,
+      x: origin.x + effectPadding,
+      y: origin.y + effectPadding,
       width: contentSize,
       height: contentSize
     )
