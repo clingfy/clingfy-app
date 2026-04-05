@@ -9,7 +9,6 @@ import 'package:clingfy/ui/platform/widgets/app_inset_group.dart';
 import 'package:clingfy/ui/platform/widgets/app_settings_group.dart';
 import 'package:clingfy/ui/platform/widgets/app_sidebar_tokens.dart';
 import 'package:clingfy/ui/platform/widgets/app_toggle_row.dart';
-import 'package:clingfy/ui/platform/widgets/platform_dropdown.dart';
 import 'package:clingfy/ui/theme/app_theme.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_colorpicker/flutter_colorpicker.dart';
@@ -30,14 +29,12 @@ void main() {
     bool autoNormalizeOnExport = false,
     double? sidebarWidth,
     LayoutPreset layoutPreset = LayoutPreset.auto,
-    ResolutionPreset resolutionPreset = ResolutionPreset.auto,
     String? backgroundImagePath,
     bool hasCameraAsset = false,
     CameraExportCapabilities cameraExportCapabilities =
         const CameraExportCapabilities.allSupported(),
     CameraCompositionState? cameraState,
     void Function(LayoutPreset)? onLayoutPresetChanged,
-    void Function(ResolutionPreset)? onResolutionPresetChanged,
     void Function(double)? onZoomFactorChanged,
     void Function(double)? onZoomFactorChangeEnd,
     void Function(CameraZoomBehavior)? onCameraZoomBehaviorChanged,
@@ -54,7 +51,6 @@ void main() {
       isProcessing: isProcessing,
       enabled: enabled,
       layoutPreset: layoutPreset,
-      resolutionPreset: resolutionPreset,
       fitMode: FitMode.fit,
       padding: 8,
       radius: 4,
@@ -71,7 +67,6 @@ void main() {
       autoNormalizeOnExport: autoNormalizeOnExport,
       autoNormalizeTargetDbfs: -14,
       onLayoutPresetChanged: onLayoutPresetChanged ?? (_) {},
-      onResolutionPresetChanged: onResolutionPresetChanged ?? (_) {},
       onFitModeChanged: (_) {},
       onPaddingChanged: (_) {},
       onPaddingChangeEnd: (_) {},
@@ -246,36 +241,15 @@ void main() {
       expect(find.text('Background'), findsOneWidget);
       expect(find.byType(AppSettingsGroup), findsNWidgets(3));
       expect(find.byType(Divider), findsNothing);
+      expect(find.byIcon(Icons.fit_screen), findsOneWidget);
+      expect(find.byIcon(Icons.aspect_ratio), findsOneWidget);
+      expect(find.text('Resolution'), findsNothing);
       expect(find.text('Pick an image'), findsOneWidget);
       expect(find.text('More colors'), findsOneWidget);
       expect(find.byKey(const Key('canvas_aspect_selector')), findsOneWidget);
-      expect(find.byKey(PlatformDropdown.fieldKey), findsOneWidget);
+      expect(find.text('Auto'), findsOneWidget);
     },
   );
-
-  testWidgets('canvas tab renders resolution dropdown and fires callback', (
-    tester,
-  ) async {
-    ResolutionPreset? selectedPreset;
-
-    await tester.pumpWidget(
-      buildTestApp(
-        selectedIndex: 0,
-        onResolutionPresetChanged: (preset) => selectedPreset = preset,
-      ),
-    );
-    await tester.pumpAndSettle();
-
-    expect(find.text('Resolution'), findsOneWidget);
-    expect(find.text('Auto'), findsWidgets);
-
-    await tester.tap(find.byKey(PlatformDropdown.fieldKey));
-    await tester.pumpAndSettle();
-    await tester.tap(find.text('1440p (2K)').last);
-    await tester.pumpAndSettle();
-
-    expect(selectedPreset, ResolutionPreset.p1440);
-  });
 
   testWidgets('canvas tab taps canvas aspect card callback', (tester) async {
     LayoutPreset? selectedPreset;

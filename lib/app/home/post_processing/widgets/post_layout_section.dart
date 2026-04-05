@@ -8,7 +8,6 @@ import 'package:clingfy/ui/platform/widgets/app_settings_group.dart';
 import 'package:clingfy/ui/platform/widgets/app_sidebar_tokens.dart';
 import 'package:clingfy/ui/platform/widgets/app_slider.dart';
 import 'package:clingfy/ui/platform/widgets/app_slider_row.dart';
-import 'package:clingfy/ui/platform/widgets/platform_dropdown.dart';
 import 'package:flutter/material.dart' hide PlatformMenuItem;
 
 class PostLayoutSection extends StatelessWidget {
@@ -16,12 +15,10 @@ class PostLayoutSection extends StatelessWidget {
     super.key,
     required this.isProcessing,
     required this.layoutPreset,
-    required this.resolutionPreset,
     required this.fitMode,
     required this.padding,
     required this.radius,
     required this.onLayoutPresetChanged,
-    required this.onResolutionPresetChanged,
     required this.onFitModeChanged,
     required this.onPaddingChanged,
     required this.onPaddingChangeEnd,
@@ -31,12 +28,10 @@ class PostLayoutSection extends StatelessWidget {
 
   final bool isProcessing;
   final LayoutPreset layoutPreset;
-  final ResolutionPreset resolutionPreset;
   final FitMode fitMode;
   final double padding;
   final double radius;
   final ValueChanged<LayoutPreset> onLayoutPresetChanged;
-  final ValueChanged<ResolutionPreset> onResolutionPresetChanged;
   final ValueChanged<FitMode> onFitModeChanged;
   final ValueChanged<double> onPaddingChanged;
   final ValueChanged<double> onPaddingChangeEnd;
@@ -91,24 +86,6 @@ class PostLayoutSection extends StatelessWidget {
                   previewAspectRatio: 4 / 3,
                 ),
               ],
-            ),
-            const SizedBox(height: AppSidebarTokens.rowGap),
-            AppFormRow(
-              label: l10n.resolution,
-              control: PlatformDropdown<ResolutionPreset>(
-                value: resolutionPreset,
-                minWidth: 0,
-                maxWidth: double.infinity,
-                expand: true,
-                items: _buildResolutionItems(l10n),
-                onChanged: isProcessing
-                    ? null
-                    : (value) {
-                        if (value != null) {
-                          onResolutionPresetChanged(value);
-                        }
-                      },
-              ),
             ),
             const SizedBox(height: AppSidebarTokens.rowGap),
             AppFormRow(
@@ -174,27 +151,6 @@ class PostLayoutSection extends StatelessWidget {
         ),
       ],
     );
-  }
-
-  List<PlatformMenuItem<ResolutionPreset>> _buildResolutionItems(
-    AppLocalizations l10n,
-  ) {
-    return [
-      PlatformMenuItem(value: ResolutionPreset.auto, label: l10n.auto),
-      const PlatformMenuItem(value: ResolutionPreset.p1080, label: '1080p'),
-      const PlatformMenuItem(
-        value: ResolutionPreset.p1440,
-        label: '1440p (2K)',
-      ),
-      const PlatformMenuItem(
-        value: ResolutionPreset.p2160,
-        label: '2160p (4K)',
-      ),
-      const PlatformMenuItem(
-        value: ResolutionPreset.p4320,
-        label: '4320p (8K)',
-      ),
-    ];
   }
 
   Widget _buildSidebarSlider(

@@ -4,6 +4,7 @@ import 'package:clingfy/core/models/app_models.dart';
 import 'package:clingfy/l10n/app_localizations.dart';
 import 'package:clingfy/ui/platform/widgets/app_icon_button.dart';
 import 'package:clingfy/ui/platform/widgets/platform_dropdown.dart';
+import 'package:clingfy/ui/theme/app_theme.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:macos_ui/macos_ui.dart';
@@ -15,8 +16,11 @@ void main() {
     return MaterialApp(
       localizationsDelegates: AppLocalizations.localizationsDelegates,
       supportedLocales: AppLocalizations.supportedLocales,
+      theme: buildDarkTheme(),
+      darkTheme: buildDarkTheme(),
+      themeMode: ThemeMode.dark,
       home: MacosTheme(
-        data: MacosThemeData.light(),
+        data: buildMacosTheme(Brightness.dark),
         child: Scaffold(
           body: ExportFileDialog(
             initialFileName: 'Clingfy Export',
@@ -107,5 +111,27 @@ void main() {
     );
 
     expect(tester.getSize(formatField).width, moreOrLessEquals(100));
+  });
+
+  testWidgets('dialog background matches desktop toolbar background', (
+    tester,
+  ) async {
+    final expectedBackground = buildDarkTheme()
+        .extension<AppThemeTokens>()!
+        .editorChromeBackground;
+
+    await tester.pumpWidget(buildDialog());
+    await tester.pumpAndSettle();
+
+    final dialogMaterial = tester.widget<Material>(
+      find.descendant(
+        of: find.byType(Dialog),
+        matching: find.byWidgetPredicate(
+          (widget) => widget is Material && widget.type == MaterialType.card,
+        ),
+      ),
+    );
+
+    expect(dialogMaterial.color, expectedBackground);
   });
 }

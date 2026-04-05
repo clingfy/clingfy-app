@@ -1188,11 +1188,18 @@ class AppLocalizationsAr extends AppLocalizations {
       'اعرض تأكيدًا قبل إغلاق التسجيل الحالي إذا لم يتم تصديره بعد.';
 
   @override
-  String get closeUnexportedRecordingTitle => 'هل تريد إغلاق هذا التسجيل؟';
+  String get closeUnexportedRecordingTitle =>
+      'هل تريد إغلاق التسجيل بدون تصدير؟';
 
   @override
   String get closeUnexportedRecordingMessage =>
-      'لم تقم بتصدير هذا التسجيل بعد. إذا أغلقته الآن، ستفقد الوصول إليه في الجلسة الحالية.';
+      'لم يتم تصدير هذا التسجيل بعد. إذا أغلقته الآن، فستفقد الوصول إليه في الجلسة الحالية.';
+
+  @override
+  String get keepEditing => 'متابعة التحرير';
+
+  @override
+  String get closeWithoutExporting => 'إغلاق بدون تصدير';
 
   @override
   String get doNotShowAgain => 'عدم الإظهار مرة أخرى';

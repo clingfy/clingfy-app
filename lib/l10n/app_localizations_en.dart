@@ -1196,11 +1196,18 @@ class AppLocalizationsEn extends AppLocalizations {
       'Show a confirmation before closing the current recording if it has not been exported yet.';
 
   @override
-  String get closeUnexportedRecordingTitle => 'Close this recording?';
+  String get closeUnexportedRecordingTitle =>
+      'Close recording without exporting?';
 
   @override
   String get closeUnexportedRecordingMessage =>
-      'You haven’t exported this recording yet. If you close it now, you’ll lose access to it in the current session.';
+      'This recording hasn’t been exported yet. If you close it now, you’ll lose access to it in the current session.';
+
+  @override
+  String get keepEditing => 'Keep Editing';
+
+  @override
+  String get closeWithoutExporting => 'Close Without Exporting';
 
   @override
   String get doNotShowAgain => 'Do not show again';

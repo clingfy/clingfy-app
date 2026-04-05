@@ -104,7 +104,6 @@ class PostProcessingSidebar extends StatelessWidget {
   final bool isProcessing;
   final int selectedIndex;
   final LayoutPreset layoutPreset;
-  final ResolutionPreset resolutionPreset;
   final FitMode fitMode;
   final double padding;
   final double radius;
@@ -129,7 +128,6 @@ class PostProcessingSidebar extends StatelessWidget {
   final double autoNormalizeTargetDbfs;
 
   final Function(LayoutPreset) onLayoutPresetChanged;
-  final Function(ResolutionPreset) onResolutionPresetChanged;
   final Function(FitMode) onFitModeChanged;
   final Function(double) onPaddingChanged;
   final Function(double) onPaddingChangeEnd;
@@ -181,7 +179,6 @@ class PostProcessingSidebar extends StatelessWidget {
     this.availableWidth = double.infinity,
     this.isCompact = false,
     required this.layoutPreset,
-    required this.resolutionPreset,
     required this.fitMode,
     required this.padding,
     required this.radius,
@@ -191,7 +188,6 @@ class PostProcessingSidebar extends StatelessWidget {
     required this.cursorSize,
     required this.zoomFactor,
     required this.onLayoutPresetChanged,
-    required this.onResolutionPresetChanged,
     required this.onFitModeChanged,
     required this.onPaddingChanged,
     required this.onPaddingChangeEnd,
@@ -316,12 +312,10 @@ class PostProcessingSidebar extends StatelessWidget {
       PostLayoutSection(
         isProcessing: isProcessing,
         layoutPreset: layoutPreset,
-        resolutionPreset: resolutionPreset,
         fitMode: fitMode,
         padding: padding,
         radius: radius,
         onLayoutPresetChanged: onLayoutPresetChanged,
-        onResolutionPresetChanged: onResolutionPresetChanged,
         onFitModeChanged: onFitModeChanged,
         onPaddingChanged: onPaddingChanged,
         onPaddingChangeEnd: onPaddingChangeEnd,

@@ -2317,14 +2317,26 @@ abstract class AppLocalizations {
   /// No description provided for @closeUnexportedRecordingTitle.
   ///
   /// In en, this message translates to:
-  /// **'Close this recording?'**
+  /// **'Close recording without exporting?'**
   String get closeUnexportedRecordingTitle;
 
   /// No description provided for @closeUnexportedRecordingMessage.
   ///
   /// In en, this message translates to:
-  /// **'You haven’t exported this recording yet. If you close it now, you’ll lose access to it in the current session.'**
+  /// **'This recording hasn’t been exported yet. If you close it now, you’ll lose access to it in the current session.'**
   String get closeUnexportedRecordingMessage;
+
+  /// No description provided for @keepEditing.
+  ///
+  /// In en, this message translates to:
+  /// **'Keep Editing'**
+  String get keepEditing;
+
+  /// No description provided for @closeWithoutExporting.
+  ///
+  /// In en, this message translates to:
+  /// **'Close Without Exporting'**
+  String get closeWithoutExporting;
 
   /// No description provided for @doNotShowAgain.
   ///

@@ -96,7 +96,6 @@ class PostProcessingSidebarContainer extends StatelessWidget {
               cursorAvailable: vm.cursorAvailable,
               hasAudio: hasAudio,
               layoutPreset: settingsController.post.layoutPreset,
-              resolutionPreset: settingsController.post.resolutionPreset,
               fitMode: settingsController.post.fitMode,
               padding: vm.padding,
               radius: vm.radius,
@@ -165,7 +164,6 @@ class PostProcessingSidebarContainer extends StatelessWidget {
                   settingsController.post.updatePostTargetLoudnessDbfs,
               onPickImage: post.pickImage,
               onLayoutPresetChanged: post.setLayoutPreset,
-              onResolutionPresetChanged: post.setResolutionPreset,
               onFitModeChanged: post.setFitMode,
             );
           },

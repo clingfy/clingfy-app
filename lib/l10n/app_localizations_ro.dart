@@ -1205,11 +1205,18 @@ class AppLocalizationsRo extends AppLocalizations {
       'Afișează o confirmare înainte de a închide înregistrarea curentă dacă nu a fost exportată încă.';
 
   @override
-  String get closeUnexportedRecordingTitle => 'Închizi această înregistrare?';
+  String get closeUnexportedRecordingTitle =>
+      'Închizi înregistrarea fără export?';
 
   @override
   String get closeUnexportedRecordingMessage =>
-      'Nu ai exportat încă această înregistrare. Dacă o închizi acum, vei pierde accesul la ea în sesiunea curentă.';
+      'Această înregistrare nu a fost încă exportată. Dacă o închizi acum, vei pierde accesul la ea în sesiunea curentă.';
+
+  @override
+  String get keepEditing => 'Continuă editarea';
+
+  @override
+  String get closeWithoutExporting => 'Închide fără export';
 
   @override
   String get doNotShowAgain => 'Nu mai arăta';
