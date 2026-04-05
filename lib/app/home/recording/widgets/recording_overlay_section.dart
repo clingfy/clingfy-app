@@ -245,7 +245,7 @@ class RecordingOverlaySection extends StatelessWidget {
         ),
         const SizedBox(height: AppSidebarTokens.rowGap),
         AppFormRow(label: l10n.border, control: _buildBorderControl()),
-        if (overlayBorder != OverlayBorder.none) ...[
+        ...[
           const SizedBox(height: AppSidebarTokens.optionsSubgroupGap),
           AppInsetGroup(
             children: [
@@ -263,17 +263,20 @@ class RecordingOverlaySection extends StatelessWidget {
                 variant: AppButtonVariant.secondary,
                 size: AppButtonSize.regular,
               ),
-              const SizedBox(height: AppSidebarTokens.rowGap),
-              AppSliderRow(
-                label: l10n.borderWidth(overlayBorderWidth.toStringAsFixed(1)),
-                slider: AppSlider(
-                  value: overlayBorderWidth,
-                  min: 0.0,
-                  max: 12.0,
-                  divisions: 24,
-                  onChanged: onOverlayBorderWidthChanged,
+              const SizedBox(height: AppSidebarTokens.sectionGap),
+              if (overlayBorder != OverlayBorder.none)
+                AppSliderRow(
+                  label: l10n.borderWidth(
+                    overlayBorderWidth.toStringAsFixed(1),
+                  ),
+                  slider: AppSlider(
+                    value: overlayBorderWidth,
+                    min: 0.0,
+                    max: 12.0,
+                    divisions: 24,
+                    onChanged: onOverlayBorderWidthChanged,
+                  ),
                 ),
-              ),
             ],
           ),
         ],
