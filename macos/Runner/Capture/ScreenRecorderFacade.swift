@@ -584,6 +584,7 @@ final class ScreenRecorderFacade: NSObject {
   private var resumeResult: FlutterResult?
   private var stopResult: FlutterResult?
   private var pendingStop: Bool = false
+  private var cancelRequestedDuringStart = false
   private var isPauseResumeMutationInFlight = false
   private var recordedDurationTracker = RecordedDurationTracker()
   private var selectedDisplayID: CGDirectDisplayID?
@@ -864,6 +865,7 @@ final class ScreenRecorderFacade: NSObject {
 
       activeRecordingProjectRoot = nil
       pendingCameraRecordingSession = nil
+      cancelRequestedDuringStart = false
       let projectId = RecordingProjectPaths.makeProjectID()
       let projectRoot = try RecordingProjectPaths.createProjectSkeleton(projectId: projectId)
       let screenVideoURL = RecordingProjectPaths.screenVideoURL(for: projectRoot)
@@ -901,12 +903,11 @@ final class ScreenRecorderFacade: NSObject {
         editorSeed: editorSeed(for: target)
       )
 
-      var manifest = RecordingProjectManifest.create(
+      let manifest = RecordingProjectManifest.create(
         projectId: projectId,
         displayName: RecordingProjectPaths.displayName(),
         includeCamera: shouldRecordSeparateCameraAsset
       )
-      manifest.updateStatus(.capturing)
       try manifest.write(to: RecordingProjectPaths.manifestURL(for: projectRoot))
 
       let outputURL: () throws -> URL = {
@@ -1130,6 +1131,7 @@ final class ScreenRecorderFacade: NSObject {
       result(flutterError(NativeErrorCode.notRecording, ""))
     case .starting:
       pendingStop = true
+      cancelRequestedDuringStart = true
       stopResult = result
     case .recording, .paused:
       stopResult = result
@@ -1882,17 +1884,9 @@ final class ScreenRecorderFacade: NSObject {
   func resolvePreviewMediaSources(
     projectPath: String,
     explicitCameraPath: String? = nil
-  ) -> PreviewMediaSources {
+  ) -> PreviewMediaSources? {
     guard let projectRef = loadRecordingProject(projectPath: projectPath) else {
-      let fallbackURL = URL(fileURLWithPath: projectPath)
-      return PreviewMediaSources(
-        projectPath: projectPath,
-        screenPath: fallbackURL.path,
-        cameraPath: explicitCameraPath,
-        metadataPath: nil,
-        cursorPath: nil,
-        zoomManualPath: nil
-      )
+      return nil
     }
     let mediaSources = projectRef.mediaSources()
     let resolvedCameraURL = resolvedCameraAssetURL(
@@ -1927,11 +1921,13 @@ final class ScreenRecorderFacade: NSObject {
     projectPath: String,
     explicitCameraPath: String? = nil,
     args: [String: Any]? = nil
-  ) -> (mediaSources: PreviewMediaSources, cameraParams: CameraCompositionParams?) {
-    let mediaSources = resolvePreviewMediaSources(
+  ) -> (mediaSources: PreviewMediaSources, cameraParams: CameraCompositionParams?)? {
+    guard let mediaSources = resolvePreviewMediaSources(
       projectPath: projectPath,
       explicitCameraPath: explicitCameraPath
-    )
+    ) else {
+      return nil
+    }
     let cameraParams = resolveCameraCompositionParams(
       projectPath: projectPath,
       args: args
@@ -1944,12 +1940,14 @@ final class ScreenRecorderFacade: NSObject {
     screenParams: CompositionParams,
     explicitCameraPath: String? = nil,
     args: [String: Any]? = nil
-  ) -> PreviewScene {
-    let components = resolvePreviewSceneComponents(
+  ) -> PreviewScene? {
+    guard let components = resolvePreviewSceneComponents(
       projectPath: projectPath,
       explicitCameraPath: explicitCameraPath,
       args: args
-    )
+    ) else {
+      return nil
+    }
 
     return PreviewScene(
       mediaSources: components.mediaSources,
@@ -2031,7 +2029,16 @@ final class ScreenRecorderFacade: NSObject {
   }
 
   func getRecordingSceneInfo(projectPath: String, result: @escaping FlutterResult) {
-    let components = resolvePreviewSceneComponents(projectPath: projectPath)
+    guard let components = resolvePreviewSceneComponents(projectPath: projectPath) else {
+      result(
+        FlutterError(
+          code: "SCENE_INPUT_MISSING",
+          message: "Recording project not found. It may have been moved or deleted.",
+          details: projectPath
+        )
+      )
+      return
+    }
     let mediaSources = components.mediaSources
     let cameraParams = components.cameraParams
     let exportCapabilities = cameraExportCapabilities(for: mediaSources)
@@ -2077,10 +2084,19 @@ final class ScreenRecorderFacade: NSObject {
     cameraParams: CameraCompositionParams?,
     result: @escaping FlutterResult
   ) {
-    let mediaSources = resolvePreviewMediaSources(
+    guard let mediaSources = resolvePreviewMediaSources(
       projectPath: projectPath,
       explicitCameraPath: cameraPath
-    )
+    ) else {
+      result(
+        FlutterError(
+          code: "PROCESS_INPUT_MISSING",
+          message: "Recording project not found. It may have been moved or deleted.",
+          details: projectPath
+        )
+      )
+      return
+    }
     let inputURL = URL(fileURLWithPath: mediaSources.screenPath)
     let asset = AVAsset(url: inputURL)
 
@@ -2436,6 +2452,7 @@ final class ScreenRecorderFacade: NSObject {
     }
     activeRecordingProjectRoot = nil
     pendingCameraRecordingSession = nil
+    cancelRequestedDuringStart = false
     pendingSeparateCameraFailure = nil
     pendingMetadata = nil
     if pendingStop {
@@ -3306,7 +3323,8 @@ final class ScreenRecorderFacade: NSObject {
     error: Error?,
     wasStarting: Bool,
     pendingStartResult: FlutterResult?,
-    completion: FlutterResult?
+    completion: FlutterResult?,
+    mode: RecordingCompletionMode = .ready
   ) {
     if let error {
       resolvePauseResumeFailure(error)
@@ -3360,29 +3378,46 @@ final class ScreenRecorderFacade: NSObject {
       completion?(flutterError(NativeErrorCode.recordingError, error.localizedDescription))
       activeRecordingProjectRoot = nil
       activeRecordingWorkflowSessionId = nil
+      cancelRequestedDuringStart = false
       return
     }
 
-    if let projectPath = activeRecordingProjectRoot?.path, let sessionId = activeRecordingWorkflowSessionId {
+    switch mode {
+    case .ready:
+      if let projectPath = activeRecordingProjectRoot?.path,
+        let sessionId = activeRecordingWorkflowSessionId
+      {
+        NativeLogger.i(
+          "Facade",
+          "Triggering onRecordingFinalized callback",
+          context: ["projectPath": projectPath]
+        )
+        onRecordingFinalized?(sessionId, projectPath)
+      }
+
       NativeLogger.i(
         "Facade",
-        "Triggering onRecordingFinalized callback",
-        context: ["projectPath": projectPath]
+        "Recording finished successfully",
+        context: [
+          "projectPath": activeRecordingProjectRoot?.path ?? "nil",
+          "screenPath": finalURL?.path ?? "nil",
+        ]
       )
-      onRecordingFinalized?(sessionId, projectPath)
+      completion?(activeRecordingProjectRoot?.path)
+    case .cancelled:
+      NativeLogger.i(
+        "Facade",
+        "Recording cancelled before finalize completed",
+        context: [
+          "projectPath": activeRecordingProjectRoot?.path ?? "nil",
+          "screenPath": finalURL?.path ?? "nil",
+        ]
+      )
+      completion?(nil)
     }
-
-    NativeLogger.i(
-      "Facade",
-      "Recording finished successfully",
-      context: [
-        "projectPath": activeRecordingProjectRoot?.path ?? "nil",
-        "screenPath": finalURL?.path ?? "nil",
-      ]
-    )
-    completion?(activeRecordingProjectRoot?.path)
     activeRecordingProjectRoot = nil
     activeRecordingWorkflowSessionId = nil
+    cancelRequestedDuringStart = false
   }
 
   private func setCaptureBackend(_ backend: CaptureBackend) {
@@ -3488,15 +3523,48 @@ final class ScreenRecorderFacade: NSObject {
 
       let finalizeWithCameraResult: (CameraRecordingResult?) -> Void = { cameraResult in
         var finalURL: URL? = url
-        if let projectRoot = self.activeRecordingProjectRoot, let rawURL = url {
-          self.updateProjectManifestStatus(.finalizing, projectRoot: projectRoot)
-          self.updateMetadataSidecarOnFinish(
-            projectRoot: projectRoot,
-            cameraResult: cameraResult,
-            publishedScreenURL: rawURL
-          )
-          self.updateProjectManifestStatus(.ready, projectRoot: projectRoot)
-          finalURL = rawURL
+        var completionMode: RecordingCompletionMode = .ready
+        let cancelledDuringStart = self.cancelRequestedDuringStart
+        if let projectRoot = self.activeRecordingProjectRoot {
+          if cancelledDuringStart {
+            completionMode = .cancelled
+            let cancellationDisposition = self.cancellationDisposition(for: projectRoot)
+
+            switch cancellationDisposition {
+            case .deleteProject:
+              let didDelete = self.recordingStore.deleteProject(projectRootURL: projectRoot)
+              if !didDelete {
+                self.updateProjectManifestStatus(.cancelled, projectRoot: projectRoot)
+                finalURL = url
+              } else {
+                finalURL = nil
+              }
+            case .markCancelled:
+              self.updateProjectManifestStatus(.finalizing, projectRoot: projectRoot)
+              if let rawURL = url {
+                self.updateMetadataSidecarOnFinish(
+                  projectRoot: projectRoot,
+                  cameraResult: cameraResult,
+                  publishedScreenURL: rawURL
+                )
+                finalURL = rawURL
+              } else {
+                finalURL = nil
+              }
+              self.updateProjectManifestStatus(.cancelled, projectRoot: projectRoot)
+            }
+          } else if let rawURL = url {
+            self.updateProjectManifestStatus(.finalizing, projectRoot: projectRoot)
+            self.updateMetadataSidecarOnFinish(
+              projectRoot: projectRoot,
+              cameraResult: cameraResult,
+              publishedScreenURL: rawURL
+            )
+            self.updateProjectManifestStatus(.ready, projectRoot: projectRoot)
+            finalURL = rawURL
+          } else {
+            finalURL = nil
+          }
         }
 
         self.completeRecordingLifecycle(
@@ -3504,7 +3572,8 @@ final class ScreenRecorderFacade: NSObject {
           error: terminalError,
           wasStarting: wasStarting,
           pendingStartResult: pendingStartResult,
-          completion: completion
+          completion: completion,
+          mode: completionMode
         )
       }
 
@@ -3700,6 +3769,22 @@ final class ScreenRecorderFacade: NSObject {
     }
   }
 
+  private enum RecordingCompletionMode {
+    case ready
+    case cancelled
+  }
+
+  private enum RecordingCancellationDisposition {
+    case deleteProject
+    case markCancelled
+  }
+
+  private func cancellationDisposition(for projectRoot: URL) -> RecordingCancellationDisposition {
+    RecordingProjectPaths.hasDurableCaptureArtifacts(in: projectRoot)
+      ? .markCancelled
+      : .deleteProject
+  }
+
 #if DEBUG
   func _testBuildCaptureStartConfig(
     target: CaptureTarget,
@@ -3804,6 +3889,15 @@ final class ScreenRecorderFacade: NSObject {
 
   func _testTerminalRecordingError(screenError: Error?) -> Error? {
     terminalRecordingError(screenError: screenError)
+  }
+
+  func _testCancellationDisposition(projectRoot: URL) -> String {
+    switch cancellationDisposition(for: projectRoot) {
+    case .deleteProject:
+      return "delete"
+    case .markCancelled:
+      return "cancelled"
+    }
   }
 #endif
 

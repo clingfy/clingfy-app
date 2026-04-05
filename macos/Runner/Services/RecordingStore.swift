@@ -22,10 +22,14 @@ final class RecordingStore {
 
   private let fm: FileManager
   private let rootURL: URL
+  private let shouldLogInvalidProjects: Bool
 
   init(rootURL: URL = RecordingProjectPaths.projectsRoot(), fileManager: FileManager = .default) {
     self.rootURL = rootURL
     self.fm = fileManager
+    self.shouldLogInvalidProjects = CaptureDestinationPreflightPolicy.isNonProductionBuild(
+      bundleIdentifier: Bundle.main.bundleIdentifier
+    )
   }
 
   func listRecordings() -> [RecordingInfo] {
@@ -41,18 +45,31 @@ final class RecordingStore {
 
     return contents
       .filter(RecordingProjectPaths.isProjectDirectory)
-      .map { projectRootURL in
+      .compactMap { projectRootURL in
         let manifestURL = RecordingProjectPaths.manifestURL(for: projectRootURL)
-        let manifest = try? RecordingProjectManifest.read(from: manifestURL)
-        let screenVideoURL = manifest.flatMap {
-          RecordingProjectPaths.resolvedURL(for: $0.capture.screenVideo, projectRoot: projectRootURL)
+        let manifest: RecordingProjectManifest
+        do {
+          manifest = try RecordingProjectManifest.read(from: manifestURL)
+        } catch {
+          if shouldLogInvalidProjects {
+            NativeLogger.w(
+              "RecordingStore",
+              "Skipping invalid recording project",
+              context: ["path": projectRootURL.path, "error": error.localizedDescription]
+            )
+          }
+          return nil
         }
-        let metadataURL = manifest.flatMap {
-          RecordingProjectPaths.resolvedURL(for: $0.capture.screenMetadata, projectRoot: projectRootURL)
-        }
-        let createdAt =
-          manifest?.createdAt
-          ?? (try? projectRootURL.resourceValues(forKeys: [.creationDateKey]).creationDate)
+
+        let screenVideoURL = RecordingProjectPaths.resolvedURL(
+          for: manifest.capture.screenVideo,
+          projectRoot: projectRootURL
+        )
+        let metadataURL = RecordingProjectPaths.resolvedURL(
+          for: manifest.capture.screenMetadata,
+          projectRoot: projectRootURL
+        )
+        let createdAt = manifest.createdAt
 
         return RecordingInfo(
           projectRootURL: projectRootURL,

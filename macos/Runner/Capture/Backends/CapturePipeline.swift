@@ -291,7 +291,7 @@ final class CapturePipeline: NSObject, AVCaptureFileOutputRecordingDelegate,
     resetMicrophoneLevelSmoothing()
     self.logFinalVideoInfoAVF(url: url)
 
-    let cursorURL = url.deletingPathExtension().appendingPathExtension("cursor.json")
+    let cursorURL = RecordingProjectPaths.resolvedCursorDataURL(forScreenVideoURL: url)
 
     cursorRecorder.stop(outputURL: cursorURL) { [weak self] in
       guard let self = self else { return }

@@ -1070,7 +1070,10 @@ final class InlinePreviewView: NSView {
   // MARK: - Resilient Loading Logic
   private func loadCursorWithRetry(path: String, token: UUID, attempt: Int) {
     let url = URL(fileURLWithPath: path)
-    let cursorDataURL = url.deletingPathExtension().appendingPathExtension("cursor.json")
+    let explicitCursorPath = currentMediaSources?.cursorPath
+    let cursorDataURL =
+      explicitCursorPath.flatMap { $0.isEmpty ? nil : URL(fileURLWithPath: $0) }
+      ?? RecordingProjectPaths.resolvedCursorDataURL(forScreenVideoURL: url)
 
     NativeLogger.d(
       "Player", "Attempting to load cursor recording",

@@ -4,8 +4,23 @@ enum RecordingProjectStatus: String, Codable {
   case capturing
   case finalizing
   case ready
+  case cancelled
   case failed
   case deleted
+}
+
+enum RecordingProjectManifestError: LocalizedError {
+  case invalidProjectDirectory(String)
+  case unsupportedSchemaVersion(Int)
+
+  var errorDescription: String? {
+    switch self {
+    case .invalidProjectDirectory(let path):
+      return "Invalid recording project directory: \(path)"
+    case .unsupportedSchemaVersion(let version):
+      return "Unsupported recording project schema version \(version)"
+    }
+  }
 }
 
 struct RecordingProjectManifest: Codable {
@@ -39,6 +54,10 @@ struct RecordingProjectManifest: Codable {
   }
 
   static let currentSchemaVersion = 2
+
+  static func isSupportedSchemaVersion(_ version: Int) -> Bool {
+    version == currentSchemaVersion
+  }
 
   let schemaVersion: Int
   let projectId: String
@@ -144,13 +163,42 @@ struct RecordingProjectManifest: Codable {
     let encoder = JSONEncoder()
     encoder.outputFormatting = [.prettyPrinted, .sortedKeys]
     encoder.dateEncodingStrategy = .iso8601
-    try encoder.encode(self).write(to: url)
+    let data = try encoder.encode(self)
+    let fileManager = FileManager.default
+    let directoryURL = url.deletingLastPathComponent()
+    try fileManager.createDirectory(at: directoryURL, withIntermediateDirectories: true)
+
+    let temporaryURL = directoryURL.appendingPathComponent(
+      ".\(UUID().uuidString).\(url.lastPathComponent).tmp",
+      isDirectory: false
+    )
+
+    do {
+      try data.write(to: temporaryURL)
+      if fileManager.fileExists(atPath: url.path) {
+        _ = try fileManager.replaceItemAt(
+          url,
+          withItemAt: temporaryURL,
+          backupItemName: nil,
+          options: [.usingNewMetadataOnly]
+        )
+      } else {
+        try fileManager.moveItem(at: temporaryURL, to: url)
+      }
+    } catch {
+      try? fileManager.removeItem(at: temporaryURL)
+      throw error
+    }
   }
 
   static func read(from url: URL) throws -> RecordingProjectManifest {
     let decoder = JSONDecoder()
     decoder.dateDecodingStrategy = .iso8601
-    return try decoder.decode(RecordingProjectManifest.self, from: Data(contentsOf: url))
+    let manifest = try decoder.decode(RecordingProjectManifest.self, from: Data(contentsOf: url))
+    guard isSupportedSchemaVersion(manifest.schemaVersion) else {
+      throw RecordingProjectManifestError.unsupportedSchemaVersion(manifest.schemaVersion)
+    }
+    return manifest
   }
 }
 
@@ -177,6 +225,9 @@ struct RecordingProjectRef {
   let manifest: RecordingProjectManifest
 
   static func open(projectRoot: URL) throws -> RecordingProjectRef {
+    guard RecordingProjectPaths.isProjectDirectory(projectRoot) else {
+      throw RecordingProjectManifestError.invalidProjectDirectory(projectRoot.path)
+    }
     let manifest = try RecordingProjectManifest.read(
       from: RecordingProjectPaths.manifestURL(for: projectRoot)
     )

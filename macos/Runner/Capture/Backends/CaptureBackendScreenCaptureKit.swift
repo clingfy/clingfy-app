@@ -15,8 +15,12 @@ import QuartzCore
 @preconcurrency import ScreenCaptureKit
 import UniformTypeIdentifiers
 
-private func cursorSidecarURL(for videoURL: URL) -> URL {
+private func temporaryCursorSegmentURL(for videoURL: URL) -> URL {
   videoURL.deletingPathExtension().appendingPathExtension("cursor.json")
+}
+
+private func finalCursorDataURL(for videoURL: URL) -> URL {
+  RecordingProjectPaths.resolvedCursorDataURL(forScreenVideoURL: videoURL)
 }
 
 struct TerminalCompletionGuard {
@@ -41,7 +45,7 @@ struct CursorFailureFinalizationPlan {
   let shouldFlushCursor: Bool
 
   static func make(recordingURL: URL?, cursorCaptureActive: Bool) -> CursorFailureFinalizationPlan {
-    let cursorURL = recordingURL.map { cursorSidecarURL(for: $0) }
+    let cursorURL = recordingURL.map { finalCursorDataURL(for: $0) }
     return CursorFailureFinalizationPlan(
       cursorURL: cursorURL,
       shouldFlushCursor: cursorCaptureActive && cursorURL != nil
@@ -112,7 +116,7 @@ private struct SegmentedRecordingSession {
     return (
       index: index,
       rawURL: rawURL,
-      cursorURL: expectsCursorSidecars ? cursorSidecarURL(for: rawURL) : nil
+      cursorURL: expectsCursorSidecars ? temporaryCursorSegmentURL(for: rawURL) : nil
     )
   }
 
@@ -993,7 +997,7 @@ final class CaptureBackendScreenCaptureKit: NSObject, CaptureBackend {
     try CursorSegmentMerger.mergeSegments(
       orderedSegments,
       expectsCursorSidecars: session.expectsCursorSidecars,
-      outputURL: cursorSidecarURL(for: mergedURL)
+      outputURL: finalCursorDataURL(for: mergedURL)
     )
 
     cleanupMergedSegmentArtifacts(orderedSegments, finalURL: mergedURL)

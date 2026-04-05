@@ -57,6 +57,69 @@ final class RecordingFailureRecoveryTests: XCTestCase {
     XCTAssertEqual(updatedReady.status, .ready)
   }
 
+  func testRecordingManifestRejectsUnsupportedSchemaVersion() throws {
+    let rootURL = makeTemporaryDirectory()
+    defer { try? FileManager.default.removeItem(at: rootURL) }
+
+    let manifestURL = rootURL.appendingPathComponent("project.json")
+    let json = """
+      {
+        "schemaVersion": 999,
+        "projectId": "unsupported",
+        "createdAt": "2026-04-05T00:00:00Z",
+        "updatedAt": "2026-04-05T00:00:00Z",
+        "displayName": "Unsupported",
+        "status": "ready",
+        "capture": {
+          "screenVideo": "capture/screen.mov",
+          "screenMetadata": "capture/screen.meta.json",
+          "cursorData": "capture/cursor.json",
+          "zoomManual": "capture/zoom.manual.json"
+        },
+        "camera": null,
+        "post": {
+          "state": "post/state.json",
+          "thumbnail": "post/thumbnail.jpg"
+        },
+        "derived": {
+          "waveform": "derived/waveform.json"
+        },
+        "exportHistory": []
+      }
+      """
+    try Data(json.utf8).write(to: manifestURL)
+
+    XCTAssertThrowsError(try RecordingProjectManifest.read(from: manifestURL)) { error in
+      guard case RecordingProjectManifestError.unsupportedSchemaVersion(999) = error else {
+        return XCTFail("Unexpected error: \(error)")
+      }
+    }
+  }
+
+  func testRecordingManifestWriteReplacesInPlaceWithoutLeavingTemporaryFiles() throws {
+    let rootURL = makeTemporaryDirectory()
+    defer { try? FileManager.default.removeItem(at: rootURL) }
+
+    let projectRoot = rootURL.appendingPathComponent("rec_atomic.clingfy", isDirectory: true)
+    try createProjectSkeleton(at: projectRoot, projectId: "rec_atomic")
+    let manifestURL = RecordingProjectPaths.manifestURL(for: projectRoot)
+
+    var manifest = try RecordingProjectManifest.read(from: manifestURL)
+    manifest.updateStatus(.ready)
+    try manifest.write(to: manifestURL)
+
+    let decoded = try RecordingProjectManifest.read(from: manifestURL)
+    let contents = try FileManager.default.contentsOfDirectory(
+      at: projectRoot,
+      includingPropertiesForKeys: nil,
+      options: [.skipsHiddenFiles]
+    )
+
+    XCTAssertEqual(decoded.status, .ready)
+    XCTAssertEqual(contents.filter { $0.lastPathComponent == "project.json" }.count, 1)
+    XCTAssertFalse(contents.contains { $0.lastPathComponent.contains(".tmp") })
+  }
+
   func testLegacyWorkspaceResetWipesFlatArtifactsAndCreatesSentinel() throws {
     let rootURL = makeTemporaryDirectory()
     defer { try? FileManager.default.removeItem(at: rootURL) }
@@ -102,6 +165,55 @@ final class RecordingFailureRecoveryTests: XCTestCase {
     XCTAssertTrue(fileManager.fileExists(atPath: legacyVideo.path))
   }
 
+  func testRecordingStoreSkipsCorruptAndUnsupportedProjects() throws {
+    let rootURL = makeTemporaryDirectory()
+    defer { try? FileManager.default.removeItem(at: rootURL) }
+
+    let validRoot = rootURL.appendingPathComponent("rec_valid.clingfy", isDirectory: true)
+    let corruptRoot = rootURL.appendingPathComponent("rec_corrupt.clingfy", isDirectory: true)
+    let unsupportedRoot = rootURL.appendingPathComponent("rec_unsupported.clingfy", isDirectory: true)
+
+    try createProjectSkeleton(at: validRoot, projectId: "rec_valid")
+    try FileManager.default.createDirectory(at: corruptRoot, withIntermediateDirectories: true)
+    try Data("not-json".utf8).write(
+      to: RecordingProjectPaths.manifestURL(for: corruptRoot)
+    )
+    try FileManager.default.createDirectory(at: unsupportedRoot, withIntermediateDirectories: true)
+    try Data(
+      """
+      {
+        "schemaVersion": 999,
+        "projectId": "rec_unsupported",
+        "createdAt": "2026-04-05T00:00:00Z",
+        "updatedAt": "2026-04-05T00:00:00Z",
+        "displayName": "Unsupported",
+        "status": "ready",
+        "capture": {
+          "screenVideo": "capture/screen.mov",
+          "screenMetadata": "capture/screen.meta.json",
+          "cursorData": "capture/cursor.json",
+          "zoomManual": "capture/zoom.manual.json"
+        },
+        "camera": null,
+        "post": {
+          "state": "post/state.json",
+          "thumbnail": "post/thumbnail.jpg"
+        },
+        "derived": {
+          "waveform": "derived/waveform.json"
+        },
+        "exportHistory": []
+      }
+      """.utf8
+    ).write(to: RecordingProjectPaths.manifestURL(for: unsupportedRoot))
+
+    let store = RecordingStore(rootURL: rootURL, fileManager: .default)
+    let recordings = store.listRecordings()
+
+    XCTAssertEqual(recordings.count, 1)
+    XCTAssertEqual(recordings.first?.manifest?.projectId, "rec_valid")
+  }
+
   func testTerminalCompletionGuardSuppressesDuplicatesUntilReset() {
     var guardState = TerminalCompletionGuard()
 
@@ -114,7 +226,7 @@ final class RecordingFailureRecoveryTests: XCTestCase {
   }
 
   func testCursorFailurePlanFlushesWhenCursorCaptureIsActiveAndURLExists() {
-    let recordingURL = URL(fileURLWithPath: "/tmp/recording.inprogress.mov")
+    let recordingURL = URL(fileURLWithPath: "/tmp/recording.clingfy/capture/screen.mov")
 
     let plan = CursorFailureFinalizationPlan.make(
       recordingURL: recordingURL,
@@ -124,13 +236,13 @@ final class RecordingFailureRecoveryTests: XCTestCase {
     XCTAssertTrue(plan.shouldFlushCursor)
     XCTAssertEqual(
       plan.cursorURL,
-      recordingURL.deletingPathExtension().appendingPathExtension("cursor.json")
+      URL(fileURLWithPath: "/tmp/recording.clingfy/capture/cursor.json")
     )
   }
 
   func testCursorFailurePlanSkipsFlushWithoutURLOrInactiveCursorCapture() {
     let inactivePlan = CursorFailureFinalizationPlan.make(
-      recordingURL: URL(fileURLWithPath: "/tmp/recording.inprogress.mov"),
+      recordingURL: URL(fileURLWithPath: "/tmp/recording.clingfy/capture/screen.mov"),
       cursorCaptureActive: false
     )
     let nilURLPlan = CursorFailureFinalizationPlan.make(
@@ -273,6 +385,73 @@ final class RecordingFailureRecoveryTests: XCTestCase {
     XCTAssertFalse(fileManager.fileExists(atPath: projectRoot.path))
     XCTAssertTrue(fileManager.fileExists(atPath: tempArtifactURL.path))
     XCTAssertTrue(fileManager.fileExists(atPath: logURL.path))
+  }
+
+  func testRecordingStoreDeleteAllPreservesSchemaSentinel() throws {
+    let rootURL = makeTemporaryDirectory()
+    defer { try? FileManager.default.removeItem(at: rootURL) }
+
+    let fileManager = FileManager.default
+    try RecordingProjectPaths.ensureSchemaSentinel(rootURL: rootURL, fileManager: fileManager)
+    let projectRoot = rootURL.appendingPathComponent("clip.clingfy", isDirectory: true)
+    try createProjectSkeleton(at: projectRoot, projectId: "clip")
+
+    let store = RecordingStore(rootURL: rootURL, fileManager: fileManager)
+    let deletedCount = store.deleteAll()
+
+    XCTAssertEqual(deletedCount, 1)
+    XCTAssertTrue(
+      fileManager.fileExists(atPath: RecordingProjectPaths.schemaSentinelURL(rootURL: rootURL).path)
+    )
+  }
+
+  func testDurableCaptureArtifactsIgnoreManifestAndDerivedDataUntilCaptureFilesExist() throws {
+    let rootURL = makeTemporaryDirectory()
+    defer { try? FileManager.default.removeItem(at: rootURL) }
+
+    let projectRoot = rootURL.appendingPathComponent("clip.clingfy", isDirectory: true)
+    try createProjectSkeleton(at: projectRoot, projectId: "clip")
+
+    XCTAssertFalse(
+      RecordingProjectPaths.hasDurableCaptureArtifacts(in: projectRoot, fileManager: .default)
+    )
+
+    try Data("waveform".utf8).write(to: RecordingProjectPaths.waveformURL(for: projectRoot))
+    XCTAssertFalse(
+      RecordingProjectPaths.hasDurableCaptureArtifacts(in: projectRoot, fileManager: .default)
+    )
+
+    try Data("metadata".utf8).write(
+      to: RecordingProjectPaths.screenMetadataURL(for: projectRoot)
+    )
+    XCTAssertTrue(
+      RecordingProjectPaths.hasDurableCaptureArtifacts(in: projectRoot, fileManager: .default)
+    )
+  }
+
+  @MainActor
+  func testCancellationDispositionDeletesProjectsWithoutDurableCaptureArtifacts() throws {
+    let rootURL = makeTemporaryDirectory()
+    defer { try? FileManager.default.removeItem(at: rootURL) }
+
+    let projectRoot = rootURL.appendingPathComponent("clip.clingfy", isDirectory: true)
+    try createProjectSkeleton(at: projectRoot, projectId: "clip")
+
+    let facade = ScreenRecorderFacade()
+    XCTAssertEqual(facade._testCancellationDisposition(projectRoot: projectRoot), "delete")
+  }
+
+  @MainActor
+  func testCancellationDispositionMarksCancelledWhenDurableCaptureArtifactsExist() throws {
+    let rootURL = makeTemporaryDirectory()
+    defer { try? FileManager.default.removeItem(at: rootURL) }
+
+    let projectRoot = rootURL.appendingPathComponent("clip.clingfy", isDirectory: true)
+    try createProjectSkeleton(at: projectRoot, projectId: "clip")
+    try Data("video".utf8).write(to: RecordingProjectPaths.screenVideoURL(for: projectRoot))
+
+    let facade = ScreenRecorderFacade()
+    XCTAssertEqual(facade._testCancellationDisposition(projectRoot: projectRoot), "cancelled")
   }
 
   func testCachedRecordingsCleanupPolicyAllowsOnlyIdleState() {

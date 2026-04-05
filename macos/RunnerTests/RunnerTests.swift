@@ -3605,7 +3605,9 @@ final class ScreenRecorderFacadeSeparateCameraTests: XCTestCase {
     try metadata.write(to: RecordingProjectPaths.screenMetadataURL(for: projectRoot))
 
     let facade = ScreenRecorderFacade()
-    let mediaSources = facade.resolvePreviewMediaSources(projectPath: projectRoot.path)
+    let mediaSources = try XCTUnwrap(
+      facade.resolvePreviewMediaSources(projectPath: projectRoot.path)
+    )
 
     XCTAssertEqual(mediaSources.cameraPath, cameraURL.path)
   }
@@ -3645,7 +3647,9 @@ final class ScreenRecorderFacadeSeparateCameraTests: XCTestCase {
     try metadata.write(to: RecordingProjectPaths.screenMetadataURL(for: projectRoot))
 
     let facade = ScreenRecorderFacade()
-    let mediaSources = facade.resolvePreviewMediaSources(projectPath: projectRoot.path)
+    let mediaSources = try XCTUnwrap(
+      facade.resolvePreviewMediaSources(projectPath: projectRoot.path)
+    )
 
     XCTAssertNil(mediaSources.cameraPath)
   }
@@ -3704,11 +3708,31 @@ final class ScreenRecorderFacadeSeparateCameraTests: XCTestCase {
     )
     let facade = ScreenRecorderFacade()
     try metadata.write(to: RecordingProjectPaths.screenMetadataURL(for: projectRoot))
-    let scene = facade.resolvePreviewScene(projectPath: projectRoot.path, screenParams: params)
+    let scene = try XCTUnwrap(
+      facade.resolvePreviewScene(projectPath: projectRoot.path, screenParams: params)
+    )
 
     XCTAssertEqual(scene.mediaSources.screenPath, screenURL.path)
     XCTAssertEqual(scene.mediaSources.cameraPath, cameraURL.path)
     XCTAssertEqual(scene.cameraParams?.layoutPreset, .overlayBottomRight)
+  }
+
+  func testResolvePreviewMediaSourcesReturnsNilForInvalidProjectPath() {
+    let facade = ScreenRecorderFacade()
+    let mediaSources = facade.resolvePreviewMediaSources(projectPath: "/tmp/not-a-project.mov")
+    XCTAssertNil(mediaSources)
+  }
+
+  func testGetRecordingSceneInfoFailsForInvalidProjectPath() throws {
+    let facade = ScreenRecorderFacade()
+    var returnedValue: Any?
+
+    facade.getRecordingSceneInfo(projectPath: "/tmp/not-a-project.mov") { value in
+      returnedValue = value
+    }
+
+    let error = try XCTUnwrap(returnedValue as? FlutterError)
+    XCTAssertEqual(error.code, "SCENE_INPUT_MISSING")
   }
 
   func testRecordingSceneInfoExposesFeatureLevelCameraExportCapabilities() throws {

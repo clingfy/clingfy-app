@@ -489,10 +489,19 @@ class MainFlutterWindow: NSWindow {
           let sessionId = args["sessionId"] as? String,
           !sessionId.isEmpty
         {
-          let mediaSources = self.screenRecorder.resolvePreviewMediaSources(
+          guard let mediaSources = self.screenRecorder.resolvePreviewMediaSources(
             projectPath: projectPath,
             explicitCameraPath: args["cameraPath"] as? String
-          )
+          ) else {
+            result(
+              FlutterError(
+                code: "PREVIEW_INPUT_MISSING",
+                message: "Recording project not found. It may have been moved or deleted.",
+                details: projectPath
+              )
+            )
+            return
+          }
           NativeLogger.i(
             "Preview", "Received previewOpen request",
             context: [

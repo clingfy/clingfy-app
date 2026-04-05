@@ -177,8 +177,56 @@ enum RecordingProjectPaths {
     ]
   }
 
+  static func durableProjectStateURLs(for projectRoot: URL) -> [URL] {
+    [
+      manifestURL(for: projectRoot),
+      captureDirectoryURL(for: projectRoot),
+      screenVideoURL(for: projectRoot),
+      screenMetadataURL(for: projectRoot),
+      cursorDataURL(for: projectRoot),
+      zoomManualURL(for: projectRoot),
+      cameraDirectoryURL(for: projectRoot),
+      cameraRawURL(for: projectRoot),
+      cameraMetadataURL(for: projectRoot),
+      cameraSegmentsDirectoryURL(for: projectRoot),
+      postDirectoryURL(for: projectRoot),
+      postStateURL(for: projectRoot),
+      thumbnailURL(for: projectRoot),
+    ]
+  }
+
+  static func rebuildableProjectArtifactURLs(for projectRoot: URL) -> [URL] {
+    [
+      derivedDirectoryURL(for: projectRoot),
+      waveformURL(for: projectRoot),
+    ]
+  }
+
+  static func durableCaptureArtifactFileURLs(for projectRoot: URL) -> [URL] {
+    [
+      screenVideoURL(for: projectRoot),
+      screenMetadataURL(for: projectRoot),
+      cursorDataURL(for: projectRoot),
+      zoomManualURL(for: projectRoot),
+      cameraRawURL(for: projectRoot),
+      cameraMetadataURL(for: projectRoot),
+      postStateURL(for: projectRoot),
+      thumbnailURL(for: projectRoot),
+    ]
+  }
+
+  static func hasDurableCaptureArtifacts(
+    in projectRoot: URL,
+    fileManager: FileManager = .default
+  ) -> Bool {
+    durableCaptureArtifactFileURLs(for: projectRoot).contains {
+      fileManager.fileExists(atPath: $0.path)
+    }
+  }
+
   static func projectExists(_ projectRoot: URL, fileManager: FileManager = .default) -> Bool {
-    fileManager.fileExists(atPath: manifestURL(for: projectRoot).path)
+    isProjectDirectory(projectRoot)
+      && fileManager.fileExists(atPath: manifestURL(for: projectRoot).path)
   }
 
   static func isProjectDirectory(_ url: URL) -> Bool {
@@ -201,6 +249,30 @@ enum RecordingProjectPaths {
   static func resolvedURL(for relativePath: String?, projectRoot: URL) -> URL? {
     guard let relativePath, !relativePath.isEmpty else { return nil }
     return projectRoot.appendingPathComponent(relativePath, isDirectory: false)
+  }
+
+  static func enclosingProjectRoot(for artifactURL: URL) -> URL? {
+    var current = artifactURL.standardizedFileURL
+    if !isProjectDirectory(current) {
+      current.deleteLastPathComponent()
+    }
+
+    while current.path != current.deletingLastPathComponent().path {
+      if isProjectDirectory(current) {
+        return current
+      }
+      current.deleteLastPathComponent()
+    }
+
+    return isProjectDirectory(current) ? current : nil
+  }
+
+  static func resolvedCursorDataURL(forScreenVideoURL screenVideoURL: URL) -> URL {
+    if let projectRoot = enclosingProjectRoot(for: screenVideoURL) {
+      return cursorDataURL(for: projectRoot)
+    }
+
+    return screenVideoURL.deletingPathExtension().appendingPathExtension("cursor.json")
   }
 
   static func makeProjectID(date: Date = Date()) -> String {
