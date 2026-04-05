@@ -665,9 +665,11 @@ final class ScreenRecorderFacade: NSObject {
       )
     }
 
+    recordingStore.markInvalidReadyProjectsAsFailed()
+    recordingStore.markInterruptedProjectsAsFailed()
+
     // Scan internal workspace on startup for diagnostics
     scanInternalWorkspaceOnStartup()
-    recordingStore.markInterruptedProjectsAsFailed()
   }
 
   private enum MicrophoneTelemetrySource {

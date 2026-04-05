@@ -5,7 +5,7 @@ import XCTest
 
 final class RecordingFailureRecoveryTests: XCTestCase {
   func testCaptureDestinationUsesProjectScreenURLWhenProjectIsActive() {
-    let projectRoot = URL(fileURLWithPath: "/tmp/demo.clingfy", isDirectory: true)
+    let projectRoot = URL(fileURLWithPath: "/tmp/demo.clingfyproj", isDirectory: true)
 
     XCTAssertEqual(
       CaptureDestinationDiagnostics.url(for: projectRoot).standardizedFileURL,
@@ -25,8 +25,14 @@ final class RecordingFailureRecoveryTests: XCTestCase {
     defer { try? FileManager.default.removeItem(at: rootURL) }
 
     let fileManager = FileManager.default
-    let interruptedRoot = rootURL.appendingPathComponent("rec_interrupted.clingfy", isDirectory: true)
-    let readyRoot = rootURL.appendingPathComponent("rec_ready.clingfy", isDirectory: true)
+    let interruptedRoot = rootURL.appendingPathComponent(
+      RecordingProjectPaths.projectDirectoryName(for: "rec_interrupted"),
+      isDirectory: true
+    )
+    let readyRoot = rootURL.appendingPathComponent(
+      RecordingProjectPaths.projectDirectoryName(for: "rec_ready"),
+      isDirectory: true
+    )
 
     try createProjectSkeleton(at: interruptedRoot, projectId: "rec_interrupted")
     try createProjectSkeleton(at: readyRoot, projectId: "rec_ready")
@@ -100,7 +106,10 @@ final class RecordingFailureRecoveryTests: XCTestCase {
     let rootURL = makeTemporaryDirectory()
     defer { try? FileManager.default.removeItem(at: rootURL) }
 
-    let projectRoot = rootURL.appendingPathComponent("rec_atomic.clingfy", isDirectory: true)
+    let projectRoot = rootURL.appendingPathComponent(
+      RecordingProjectPaths.projectDirectoryName(for: "rec_atomic"),
+      isDirectory: true
+    )
     try createProjectSkeleton(at: projectRoot, projectId: "rec_atomic")
     let manifestURL = RecordingProjectPaths.manifestURL(for: projectRoot)
 
@@ -169,9 +178,18 @@ final class RecordingFailureRecoveryTests: XCTestCase {
     let rootURL = makeTemporaryDirectory()
     defer { try? FileManager.default.removeItem(at: rootURL) }
 
-    let validRoot = rootURL.appendingPathComponent("rec_valid.clingfy", isDirectory: true)
-    let corruptRoot = rootURL.appendingPathComponent("rec_corrupt.clingfy", isDirectory: true)
-    let unsupportedRoot = rootURL.appendingPathComponent("rec_unsupported.clingfy", isDirectory: true)
+    let validRoot = rootURL.appendingPathComponent(
+      RecordingProjectPaths.projectDirectoryName(for: "rec_valid"),
+      isDirectory: true
+    )
+    let corruptRoot = rootURL.appendingPathComponent(
+      RecordingProjectPaths.projectDirectoryName(for: "rec_corrupt"),
+      isDirectory: true
+    )
+    let unsupportedRoot = rootURL.appendingPathComponent(
+      RecordingProjectPaths.projectDirectoryName(for: "rec_unsupported"),
+      isDirectory: true
+    )
 
     try createProjectSkeleton(at: validRoot, projectId: "rec_valid")
     try FileManager.default.createDirectory(at: corruptRoot, withIntermediateDirectories: true)
@@ -214,6 +232,136 @@ final class RecordingFailureRecoveryTests: XCTestCase {
     XCTAssertEqual(recordings.first?.manifest?.projectId, "rec_valid")
   }
 
+  func testRecordingStoreMarksReadyProjectMissingScreenVideoAsFailedAndSkipsListing() throws {
+    let rootURL = makeTemporaryDirectory()
+    defer { try? FileManager.default.removeItem(at: rootURL) }
+
+    let projectRoot = rootURL.appendingPathComponent(
+      RecordingProjectPaths.projectDirectoryName(for: "rec_missing_screen"),
+      isDirectory: true
+    )
+    try createProjectSkeleton(at: projectRoot, projectId: "rec_missing_screen")
+    try Data("metadata".utf8).write(to: RecordingProjectPaths.screenMetadataURL(for: projectRoot))
+    try markProjectReady(at: projectRoot)
+
+    let store = RecordingStore(rootURL: rootURL, fileManager: .default)
+    XCTAssertEqual(store.markInvalidReadyProjectsAsFailed(), 1)
+
+    let updated = try RecordingProjectManifest.read(
+      from: RecordingProjectPaths.manifestURL(for: projectRoot)
+    )
+    XCTAssertEqual(updated.status, .failed)
+    XCTAssertTrue(store.listRecordings().isEmpty)
+  }
+
+  func testRecordingStoreMarksReadyProjectMissingScreenMetadataAsFailedAndSkipsListing() throws {
+    let rootURL = makeTemporaryDirectory()
+    defer { try? FileManager.default.removeItem(at: rootURL) }
+
+    let projectRoot = rootURL.appendingPathComponent(
+      RecordingProjectPaths.projectDirectoryName(for: "rec_missing_metadata"),
+      isDirectory: true
+    )
+    try createProjectSkeleton(at: projectRoot, projectId: "rec_missing_metadata")
+    try Data("video".utf8).write(to: RecordingProjectPaths.screenVideoURL(for: projectRoot))
+    try markProjectReady(at: projectRoot)
+
+    let store = RecordingStore(rootURL: rootURL, fileManager: .default)
+    XCTAssertEqual(store.markInvalidReadyProjectsAsFailed(), 1)
+
+    let updated = try RecordingProjectManifest.read(
+      from: RecordingProjectPaths.manifestURL(for: projectRoot)
+    )
+    XCTAssertEqual(updated.status, .failed)
+    XCTAssertTrue(store.listRecordings().isEmpty)
+  }
+
+  func testRecordingStoreMarksReadyProjectMissingCameraRawAsFailedAndSkipsListing() throws {
+    let rootURL = makeTemporaryDirectory()
+    defer { try? FileManager.default.removeItem(at: rootURL) }
+
+    let projectRoot = rootURL.appendingPathComponent(
+      RecordingProjectPaths.projectDirectoryName(for: "rec_missing_camera_raw"),
+      isDirectory: true
+    )
+    try createProjectSkeleton(
+      at: projectRoot,
+      projectId: "rec_missing_camera_raw",
+      includeCamera: true
+    )
+    try writeReadyMetadataFiles(to: projectRoot)
+    try markProjectReady(at: projectRoot)
+
+    let store = RecordingStore(rootURL: rootURL, fileManager: .default)
+    XCTAssertEqual(store.markInvalidReadyProjectsAsFailed(), 1)
+
+    let updated = try RecordingProjectManifest.read(
+      from: RecordingProjectPaths.manifestURL(for: projectRoot)
+    )
+    XCTAssertEqual(updated.status, .failed)
+    XCTAssertTrue(store.listRecordings().isEmpty)
+  }
+
+  func testDisplayNameUpdatesDoNotRenameProjectDirectory() throws {
+    let rootURL = makeTemporaryDirectory()
+    defer { try? FileManager.default.removeItem(at: rootURL) }
+
+    let projectRoot = rootURL.appendingPathComponent(
+      RecordingProjectPaths.projectDirectoryName(for: "clip"),
+      isDirectory: true
+    )
+    try createProjectSkeleton(at: projectRoot, projectId: "clip")
+
+    let manifestURL = RecordingProjectPaths.manifestURL(for: projectRoot)
+    var manifest = try RecordingProjectManifest.read(from: manifestURL)
+    manifest.displayName = "Renamed Clip"
+    try manifest.write(to: manifestURL)
+
+    let updated = try RecordingProjectManifest.read(from: manifestURL)
+    XCTAssertEqual(updated.projectId, "clip")
+    XCTAssertEqual(updated.displayName, "Renamed Clip")
+    XCTAssertEqual(projectRoot.lastPathComponent, "clip.\(RecordingProjectPaths.projectExtension)")
+    XCTAssertTrue(FileManager.default.fileExists(atPath: projectRoot.path))
+  }
+
+  func testLegacyWorkspaceResetWipesLegacyClingfyProjectsAndDoesNotRunAgain() throws {
+    let rootURL = makeTemporaryDirectory()
+    defer { try? FileManager.default.removeItem(at: rootURL) }
+
+    let fileManager = FileManager.default
+    let legacyProjectRoot = rootURL.appendingPathComponent("legacy.clingfy", isDirectory: true)
+    try fileManager.createDirectory(at: legacyProjectRoot, withIntermediateDirectories: true)
+
+    let didReset = RecordingProjectPaths.performOneTimeLegacyWorkspaceResetIfNeeded(
+      isNonProductionBuild: true,
+      rootURL: rootURL,
+      fileManager: fileManager
+    )
+
+    XCTAssertTrue(didReset)
+    XCTAssertFalse(fileManager.fileExists(atPath: legacyProjectRoot.path))
+    XCTAssertTrue(
+      fileManager.fileExists(
+        atPath: RecordingProjectPaths.schemaSentinelURL(rootURL: rootURL).path
+      )
+    )
+
+    let currentProjectRoot = rootURL.appendingPathComponent(
+      RecordingProjectPaths.projectDirectoryName(for: "current"),
+      isDirectory: true
+    )
+    try createProjectSkeleton(at: currentProjectRoot, projectId: "current")
+
+    let didResetAgain = RecordingProjectPaths.performOneTimeLegacyWorkspaceResetIfNeeded(
+      isNonProductionBuild: true,
+      rootURL: rootURL,
+      fileManager: fileManager
+    )
+
+    XCTAssertFalse(didResetAgain)
+    XCTAssertTrue(fileManager.fileExists(atPath: currentProjectRoot.path))
+  }
+
   func testTerminalCompletionGuardSuppressesDuplicatesUntilReset() {
     var guardState = TerminalCompletionGuard()
 
@@ -226,7 +374,7 @@ final class RecordingFailureRecoveryTests: XCTestCase {
   }
 
   func testCursorFailurePlanFlushesWhenCursorCaptureIsActiveAndURLExists() {
-    let recordingURL = URL(fileURLWithPath: "/tmp/recording.clingfy/capture/screen.mov")
+    let recordingURL = URL(fileURLWithPath: "/tmp/recording.clingfyproj/capture/screen.mov")
 
     let plan = CursorFailureFinalizationPlan.make(
       recordingURL: recordingURL,
@@ -236,13 +384,13 @@ final class RecordingFailureRecoveryTests: XCTestCase {
     XCTAssertTrue(plan.shouldFlushCursor)
     XCTAssertEqual(
       plan.cursorURL,
-      URL(fileURLWithPath: "/tmp/recording.clingfy/capture/cursor.json")
+      URL(fileURLWithPath: "/tmp/recording.clingfyproj/capture/cursor.json")
     )
   }
 
   func testCursorFailurePlanSkipsFlushWithoutURLOrInactiveCursorCapture() {
     let inactivePlan = CursorFailureFinalizationPlan.make(
-      recordingURL: URL(fileURLWithPath: "/tmp/recording.clingfy/capture/screen.mov"),
+      recordingURL: URL(fileURLWithPath: "/tmp/recording.clingfyproj/capture/screen.mov"),
       cursorCaptureActive: false
     )
     let nilURLPlan = CursorFailureFinalizationPlan.make(
@@ -370,7 +518,7 @@ final class RecordingFailureRecoveryTests: XCTestCase {
     try fileManager.createDirectory(at: logsURL, withIntermediateDirectories: true)
     defer { try? fileManager.removeItem(at: rootURL) }
 
-    let projectRoot = recordingsURL.appendingPathComponent("clip.clingfy", isDirectory: true)
+    let projectRoot = recordingsURL.appendingPathComponent("clip.clingfyproj", isDirectory: true)
     try createProjectSkeleton(at: projectRoot, projectId: "clip")
     let tempArtifactURL = tempURL.appendingPathComponent("capture.inprogress.mov")
     let logURL = logsURL.appendingPathComponent("logs_2026-03-25.jsonl")
@@ -393,7 +541,7 @@ final class RecordingFailureRecoveryTests: XCTestCase {
 
     let fileManager = FileManager.default
     try RecordingProjectPaths.ensureSchemaSentinel(rootURL: rootURL, fileManager: fileManager)
-    let projectRoot = rootURL.appendingPathComponent("clip.clingfy", isDirectory: true)
+    let projectRoot = rootURL.appendingPathComponent("clip.clingfyproj", isDirectory: true)
     try createProjectSkeleton(at: projectRoot, projectId: "clip")
 
     let store = RecordingStore(rootURL: rootURL, fileManager: fileManager)
@@ -409,7 +557,7 @@ final class RecordingFailureRecoveryTests: XCTestCase {
     let rootURL = makeTemporaryDirectory()
     defer { try? FileManager.default.removeItem(at: rootURL) }
 
-    let projectRoot = rootURL.appendingPathComponent("clip.clingfy", isDirectory: true)
+    let projectRoot = rootURL.appendingPathComponent("clip.clingfyproj", isDirectory: true)
     try createProjectSkeleton(at: projectRoot, projectId: "clip")
 
     XCTAssertFalse(
@@ -434,7 +582,7 @@ final class RecordingFailureRecoveryTests: XCTestCase {
     let rootURL = makeTemporaryDirectory()
     defer { try? FileManager.default.removeItem(at: rootURL) }
 
-    let projectRoot = rootURL.appendingPathComponent("clip.clingfy", isDirectory: true)
+    let projectRoot = rootURL.appendingPathComponent("clip.clingfyproj", isDirectory: true)
     try createProjectSkeleton(at: projectRoot, projectId: "clip")
 
     let facade = ScreenRecorderFacade()
@@ -446,7 +594,7 @@ final class RecordingFailureRecoveryTests: XCTestCase {
     let rootURL = makeTemporaryDirectory()
     defer { try? FileManager.default.removeItem(at: rootURL) }
 
-    let projectRoot = rootURL.appendingPathComponent("clip.clingfy", isDirectory: true)
+    let projectRoot = rootURL.appendingPathComponent("clip.clingfyproj", isDirectory: true)
     try createProjectSkeleton(at: projectRoot, projectId: "clip")
     try Data("video".utf8).write(to: RecordingProjectPaths.screenVideoURL(for: projectRoot))
 
@@ -508,7 +656,11 @@ final class RecordingFailureRecoveryTests: XCTestCase {
     return url
   }
 
-  private func createProjectSkeleton(at projectRoot: URL, projectId: String) throws {
+  private func createProjectSkeleton(
+    at projectRoot: URL,
+    projectId: String,
+    includeCamera: Bool = false
+  ) throws {
     let fileManager = FileManager.default
     try fileManager.createDirectory(at: projectRoot, withIntermediateDirectories: true)
     try fileManager.createDirectory(
@@ -531,8 +683,20 @@ final class RecordingFailureRecoveryTests: XCTestCase {
     let manifest = RecordingProjectManifest.create(
       projectId: projectId,
       displayName: "Clingfy Test",
-      includeCamera: false
+      includeCamera: includeCamera
     )
     try manifest.write(to: RecordingProjectPaths.manifestURL(for: projectRoot))
+  }
+
+  private func writeReadyMetadataFiles(to projectRoot: URL) throws {
+    try Data("video".utf8).write(to: RecordingProjectPaths.screenVideoURL(for: projectRoot))
+    try Data("metadata".utf8).write(to: RecordingProjectPaths.screenMetadataURL(for: projectRoot))
+  }
+
+  private func markProjectReady(at projectRoot: URL) throws {
+    let manifestURL = RecordingProjectPaths.manifestURL(for: projectRoot)
+    var manifest = try RecordingProjectManifest.read(from: manifestURL)
+    manifest.updateStatus(.ready)
+    try manifest.write(to: manifestURL)
   }
 }

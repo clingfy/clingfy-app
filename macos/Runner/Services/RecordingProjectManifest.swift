@@ -11,12 +11,16 @@ enum RecordingProjectStatus: String, Codable {
 
 enum RecordingProjectManifestError: LocalizedError {
   case invalidProjectDirectory(String)
+  case projectDirectoryMismatch(expectedProjectID: String, actualProjectID: String)
   case unsupportedSchemaVersion(Int)
 
   var errorDescription: String? {
     switch self {
     case .invalidProjectDirectory(let path):
       return "Invalid recording project directory: \(path)"
+    case .projectDirectoryMismatch(let expectedProjectID, let actualProjectID):
+      return
+        "Recording project directory mismatch: expected \(expectedProjectID), got \(actualProjectID)"
     case .unsupportedSchemaVersion(let version):
       return "Unsupported recording project schema version \(version)"
     }
@@ -231,6 +235,13 @@ struct RecordingProjectRef {
     let manifest = try RecordingProjectManifest.read(
       from: RecordingProjectPaths.manifestURL(for: projectRoot)
     )
+    let expectedProjectID = RecordingProjectPaths.projectID(for: projectRoot)
+    guard manifest.projectId == expectedProjectID else {
+      throw RecordingProjectManifestError.projectDirectoryMismatch(
+        expectedProjectID: expectedProjectID,
+        actualProjectID: manifest.projectId
+      )
+    }
     return RecordingProjectRef(
       projectId: manifest.projectId,
       rootURL: projectRoot,

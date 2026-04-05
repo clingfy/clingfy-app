@@ -59,7 +59,7 @@ Future<String> _openPreviewShell(RecordingController recording) async {
   await _emitWorkflowEvent({
     'type': 'recordingFinalized',
     'sessionId': sessionId,
-    'projectPath': '/tmp/test.clingfy',
+    'projectPath': '/tmp/test.clingfyproj',
   });
   await _emitWorkflowEvent({
     'type': 'previewReady',

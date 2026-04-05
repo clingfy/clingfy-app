@@ -286,11 +286,11 @@ void main() {
       await _emitWorkflowEvent({
         'type': 'recordingFinalized',
         'sessionId': sessionId,
-        'projectPath': '/tmp/test.clingfy',
+        'projectPath': '/tmp/test.clingfyproj',
       });
 
       expect(harness.recording.phase, WorkflowPhase.openingPreview);
-      expect(harness.recording.previewPath, '/tmp/test.clingfy');
+      expect(harness.recording.previewPath, '/tmp/test.clingfyproj');
       expect(harness.recording.showPreviewShell, isTrue);
       expect(harness.recording.showPreviewLoadingOverlay, isTrue);
     },
@@ -330,7 +330,7 @@ void main() {
       await _emitWorkflowEvent({
         'type': 'recordingFinalized',
         'sessionId': sessionId,
-        'projectPath': '/tmp/test.clingfy',
+        'projectPath': '/tmp/test.clingfyproj',
       });
       expect(harness.recording.phase, WorkflowPhase.openingPreview);
       expect(harness.recording.showPreviewShell, isTrue);
@@ -360,7 +360,7 @@ void main() {
       await _emitWorkflowEvent({
         'type': 'recordingFinalized',
         'sessionId': sessionId,
-        'projectPath': '/tmp/test.clingfy',
+        'projectPath': '/tmp/test.clingfyproj',
       });
 
       await harness.recording.handlePreviewHostMounted();
@@ -386,7 +386,7 @@ void main() {
     await _emitWorkflowEvent({
       'type': 'recordingFinalized',
       'sessionId': sessionId,
-      'projectPath': '/tmp/test.clingfy',
+      'projectPath': '/tmp/test.clingfyproj',
     });
     await harness.recording.handlePreviewHostMounted();
 
@@ -420,7 +420,7 @@ void main() {
       await _emitWorkflowEvent({
         'type': 'recordingFinalized',
         'sessionId': sessionId,
-        'projectPath': '/tmp/test.clingfy',
+        'projectPath': '/tmp/test.clingfyproj',
       });
       await harness.recording.handlePreviewHostMounted();
 
@@ -451,7 +451,7 @@ void main() {
     await _emitWorkflowEvent({
       'type': 'recordingFinalized',
       'sessionId': sessionId,
-      'projectPath': '/tmp/test.clingfy',
+      'projectPath': '/tmp/test.clingfyproj',
     });
     await harness.recording.handlePreviewHostMounted();
     await _emitWorkflowEvent({
@@ -490,7 +490,7 @@ void main() {
     await _emitWorkflowEvent({
       'type': 'recordingFinalized',
       'sessionId': sessionId,
-      'projectPath': '/tmp/test.clingfy',
+      'projectPath': '/tmp/test.clingfyproj',
     });
     await harness.recording.handlePreviewHostMounted();
     await _emitWorkflowEvent({
@@ -527,7 +527,7 @@ void main() {
     await _emitWorkflowEvent({
       'type': 'recordingFinalized',
       'sessionId': sessionId,
-      'projectPath': '/tmp/test.clingfy',
+      'projectPath': '/tmp/test.clingfyproj',
     });
 
     await _emitWorkflowEvent({
@@ -539,7 +539,7 @@ void main() {
 
     expect(harness.recording.phase, WorkflowPhase.openingPreview);
     expect(harness.recording.sessionId, sessionId);
-    expect(harness.recording.previewPath, '/tmp/test.clingfy');
+    expect(harness.recording.previewPath, '/tmp/test.clingfyproj');
   });
 
   test('previewClosed during previewLoading is ignored', () async {
@@ -557,7 +557,7 @@ void main() {
     await _emitWorkflowEvent({
       'type': 'recordingFinalized',
       'sessionId': sessionId,
-      'projectPath': '/tmp/test.clingfy',
+      'projectPath': '/tmp/test.clingfyproj',
     });
     await harness.recording.handlePreviewHostMounted();
 
@@ -570,7 +570,7 @@ void main() {
 
     expect(harness.recording.phase, WorkflowPhase.previewLoading);
     expect(harness.recording.sessionId, sessionId);
-    expect(harness.recording.previewPath, '/tmp/test.clingfy');
+    expect(harness.recording.previewPath, '/tmp/test.clingfyproj');
   });
 
   test(
@@ -590,7 +590,7 @@ void main() {
       await _emitWorkflowEvent({
         'type': 'recordingFinalized',
         'sessionId': sessionId,
-        'projectPath': '/tmp/test.clingfy',
+        'projectPath': '/tmp/test.clingfyproj',
       });
       await harness.recording.handlePreviewHostMounted();
       await _emitWorkflowEvent({
@@ -633,7 +633,7 @@ void main() {
     await _emitWorkflowEvent({
       'type': 'recordingFinalized',
       'sessionId': 'rec_stale',
-      'projectPath': '/tmp/stale.clingfy',
+      'projectPath': '/tmp/stale.clingfyproj',
     });
 
     expect(harness.recording.phase, WorkflowPhase.finalizingRecording);
@@ -655,7 +655,7 @@ void main() {
     await _emitWorkflowEvent({
       'type': 'recordingFinalized',
       'sessionId': sessionId,
-      'projectPath': '/tmp/test.clingfy',
+      'projectPath': '/tmp/test.clingfyproj',
     });
     await harness.recording.handlePreviewHostMounted();
 
@@ -705,7 +705,7 @@ void main() {
       await _emitWorkflowEvent({
         'type': 'recordingFinalized',
         'sessionId': sessionId,
-        'projectPath': '/tmp/test.clingfy',
+        'projectPath': '/tmp/test.clingfyproj',
       });
       await harness.recording.handlePreviewHostMounted();
 

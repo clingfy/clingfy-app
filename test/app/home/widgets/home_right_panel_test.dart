@@ -340,11 +340,11 @@ void main() {
       'sessionId': sessionId,
     });
     await harness.recording.stopRecording();
-      await _emitWorkflowEvent({
-        'type': 'recordingFinalized',
-        'sessionId': sessionId,
-        'projectPath': '/tmp/test.clingfy',
-      });
+    await _emitWorkflowEvent({
+      'type': 'recordingFinalized',
+      'sessionId': sessionId,
+      'projectPath': '/tmp/test.clingfyproj',
+    });
 
     await tester.pumpWidget(
       buildPanel(
@@ -394,11 +394,11 @@ void main() {
       'sessionId': sessionId,
     });
     await harness.recording.stopRecording();
-      await _emitWorkflowEvent({
-        'type': 'recordingFinalized',
-        'sessionId': sessionId,
-        'projectPath': '/tmp/test.clingfy',
-      });
+    await _emitWorkflowEvent({
+      'type': 'recordingFinalized',
+      'sessionId': sessionId,
+      'projectPath': '/tmp/test.clingfyproj',
+    });
     await harness.recording.handlePreviewHostMounted();
     await _emitWorkflowEvent({
       'type': 'previewReady',
@@ -444,11 +444,11 @@ void main() {
       'sessionId': sessionId,
     });
     await harness.recording.stopRecording();
-      await _emitWorkflowEvent({
-        'type': 'recordingFinalized',
-        'sessionId': sessionId,
-        'projectPath': '/tmp/test.clingfy',
-      });
+    await _emitWorkflowEvent({
+      'type': 'recordingFinalized',
+      'sessionId': sessionId,
+      'projectPath': '/tmp/test.clingfyproj',
+    });
 
     await tester.pumpWidget(
       buildPanel(

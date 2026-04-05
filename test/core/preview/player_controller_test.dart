@@ -41,13 +41,16 @@ void main() {
     await clearCommonNativeMocks();
   });
 
-  Future<({
-    RecordingController recording,
-    PlayerController player,
-    SettingsController settings,
-    List<MethodCall> calls,
-    String sessionId,
-  })> createReadyPreviewHarness() async {
+  Future<
+    ({
+      RecordingController recording,
+      PlayerController player,
+      SettingsController settings,
+      List<MethodCall> calls,
+      String sessionId,
+    })
+  >
+  createReadyPreviewHarness() async {
     final calls = <MethodCall>[];
     final messenger =
         TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger;
@@ -89,7 +92,7 @@ void main() {
     await _emitWorkflowEvent({
       'type': 'recordingFinalized',
       'sessionId': generatedSessionId,
-      'projectPath': '/tmp/demo.clingfy',
+      'projectPath': '/tmp/demo.clingfyproj',
     });
     await recording.handlePreviewHostMounted();
     await _emitWorkflowEvent({
@@ -141,23 +144,26 @@ void main() {
     expect(harness.player.durationMs, 4000);
   });
 
-  test('previewCompositionZoomSegments is null until preview is ready', () async {
-    final nativeBridge = NativeBridge.instance;
-    final settings = SettingsController(nativeBridge: nativeBridge);
-    await settings.loadPreferences();
-    final recording = RecordingController(
-      nativeBridge: nativeBridge,
-      settings: settings,
-    );
-    final player = PlayerController(nativeBridge: nativeBridge)
-      ..bindWorkflow(recording);
+  test(
+    'previewCompositionZoomSegments is null until preview is ready',
+    () async {
+      final nativeBridge = NativeBridge.instance;
+      final settings = SettingsController(nativeBridge: nativeBridge);
+      await settings.loadPreferences();
+      final recording = RecordingController(
+        nativeBridge: nativeBridge,
+        settings: settings,
+      );
+      final player = PlayerController(nativeBridge: nativeBridge)
+        ..bindWorkflow(recording);
 
-    addTearDown(recording.dispose);
-    addTearDown(player.dispose);
-    addTearDown(settings.dispose);
+      addTearDown(recording.dispose);
+      addTearDown(player.dispose);
+      addTearDown(settings.dispose);
 
-    expect(player.previewCompositionZoomSegments, isNull);
-  });
+      expect(player.previewCompositionZoomSegments, isNull);
+    },
+  );
 
   test('playback transport commands include active sessionId', () async {
     final harness = await createReadyPreviewHarness();
@@ -176,9 +182,15 @@ void main() {
     await harness.player.pause();
     await harness.player.seekTo(333);
 
-    final previewPlay = harness.calls.where((call) => call.method == 'previewPlay');
-    final previewPause = harness.calls.where((call) => call.method == 'previewPause');
-    final previewSeekTo = harness.calls.where((call) => call.method == 'previewSeekTo');
+    final previewPlay = harness.calls.where(
+      (call) => call.method == 'previewPlay',
+    );
+    final previewPause = harness.calls.where(
+      (call) => call.method == 'previewPause',
+    );
+    final previewSeekTo = harness.calls.where(
+      (call) => call.method == 'previewSeekTo',
+    );
 
     expect(previewPlay, hasLength(1));
     expect(previewPause, hasLength(1));

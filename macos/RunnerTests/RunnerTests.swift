@@ -6,7 +6,10 @@ import XCTest
 @testable import Clingfy
 
 private func makeRecordingProjectRoot(at parent: URL, includeCamera: Bool) throws -> URL {
-  let projectRoot = parent.appendingPathComponent("recording.clingfy", isDirectory: true)
+  let projectRoot = parent.appendingPathComponent(
+    RecordingProjectPaths.projectDirectoryName(for: "recording"),
+    isDirectory: true
+  )
   let fileManager = FileManager.default
   try fileManager.createDirectory(
     at: RecordingProjectPaths.captureDirectoryURL(for: projectRoot),
@@ -38,9 +41,15 @@ private func makeRecordingProjectRoot(at parent: URL, includeCamera: Bool) throw
 
 final class RecordingProjectPathsTests: XCTestCase {
   func testProjectArtifactsUseExpectedDirectoryLayout() {
-    let projectRoot = URL(fileURLWithPath: "/tmp/rec_2026-04-05_000000_abcd1234.clingfy", isDirectory: true)
+    let projectRoot = URL(
+      fileURLWithPath: "/tmp/rec_2026-04-05_000000_abcd1234.\(RecordingProjectPaths.projectExtension)",
+      isDirectory: true
+    )
 
-    XCTAssertEqual(RecordingProjectPaths.screenVideoURL(for: projectRoot).path, "/tmp/rec_2026-04-05_000000_abcd1234.clingfy/capture/screen.mov")
+    XCTAssertEqual(
+      RecordingProjectPaths.screenVideoURL(for: projectRoot).path,
+      "/tmp/rec_2026-04-05_000000_abcd1234.\(RecordingProjectPaths.projectExtension)/capture/screen.mov"
+    )
     XCTAssertEqual(RecordingProjectPaths.screenMetadataURL(for: projectRoot).lastPathComponent, "screen.meta.json")
     XCTAssertEqual(RecordingProjectPaths.cursorDataURL(for: projectRoot).lastPathComponent, "cursor.json")
     XCTAssertEqual(RecordingProjectPaths.zoomManualURL(for: projectRoot).lastPathComponent, "zoom.manual.json")
@@ -52,7 +61,7 @@ final class RecordingProjectPathsTests: XCTestCase {
     XCTAssertEqual(
       artifactNames,
       [
-        "rec_2026-04-05_000000_abcd1234.clingfy",
+        "rec_2026-04-05_000000_abcd1234.\(RecordingProjectPaths.projectExtension)",
         "project.json",
         "capture",
         "screen.mov",
@@ -78,7 +87,10 @@ final class RecordingMetadataTests: XCTestCase {
     let tempDir = makeTemporaryDirectory()
     defer { try? FileManager.default.removeItem(at: tempDir) }
 
-    let projectRoot = tempDir.appendingPathComponent("recording.clingfy", isDirectory: true)
+    let projectRoot = tempDir.appendingPathComponent(
+      RecordingProjectPaths.projectDirectoryName(for: "recording"),
+      isDirectory: true
+    )
     try FileManager.default.createDirectory(
       at: RecordingProjectPaths.captureDirectoryURL(for: projectRoot),
       withIntermediateDirectories: true
@@ -261,6 +273,55 @@ final class RecordingMetadataTests: XCTestCase {
       attributes: nil
     )
     return url
+  }
+}
+
+final class RecordingProjectPackageRegistrationTests: XCTestCase {
+  func testInfoPlistDeclaresClingfyProjectPackageType() throws {
+    let infoPlistURL = URL(fileURLWithPath: #filePath)
+      .deletingLastPathComponent()
+      .deletingLastPathComponent()
+      .appendingPathComponent("Runner/Info.plist")
+    let plistData = try Data(contentsOf: infoPlistURL)
+    let plist = try XCTUnwrap(
+      PropertyListSerialization.propertyList(from: plistData, format: nil)
+        as? [String: Any]
+    )
+
+    let exportedTypes = try XCTUnwrap(plist["UTExportedTypeDeclarations"] as? [[String: Any]])
+    let projectType = try XCTUnwrap(
+      exportedTypes.first { ($0["UTTypeIdentifier"] as? String) == "com.clingfy.project" }
+    )
+    let exportedExtensions = try XCTUnwrap(
+      (projectType["UTTypeTagSpecification"] as? [String: Any])?["public.filename-extension"]
+        as? [String]
+    )
+
+    XCTAssertEqual(projectType["UTTypeDescription"] as? String, "Clingfy Project")
+    XCTAssertEqual(projectType["UTTypeIconFile"] as? String, "ClingfyProjectIcon")
+    XCTAssertEqual(
+      projectType["UTTypeConformsTo"] as? [String],
+      ["com.apple.package"]
+    )
+    XCTAssertEqual(exportedExtensions, ["clingfyproj"])
+
+    let documentTypes = try XCTUnwrap(plist["CFBundleDocumentTypes"] as? [[String: Any]])
+    let documentType = try XCTUnwrap(
+      documentTypes.first { ($0["CFBundleTypeName"] as? String) == "Clingfy Project" }
+    )
+
+    XCTAssertEqual(documentType["CFBundleTypeRole"] as? String, "Editor")
+    XCTAssertEqual(documentType["LSHandlerRank"] as? String, "Owner")
+    XCTAssertEqual(documentType["CFBundleTypeIconFile"] as? String, "ClingfyProjectIcon")
+    XCTAssertEqual(
+      documentType["LSItemContentTypes"] as? [String],
+      ["com.clingfy.project"]
+    )
+  }
+
+  func testProjectIconIsBundledInAppResources() {
+    let bundle = Bundle(for: ScreenRecorderFacade.self)
+    XCTAssertNotNil(bundle.url(forResource: "ClingfyProjectIcon", withExtension: "icns"))
   }
 }
 
@@ -3818,7 +3879,7 @@ final class ScreenRecorderFacadeSeparateCameraTests: XCTestCase {
     let facade = ScreenRecorderFacade()
 
     let params = facade.resolveCameraCompositionParams(
-      projectPath: "/tmp/recording.clingfy",
+      projectPath: "/tmp/recording.clingfyproj",
       args: [
         "cameraVisible": true,
         "cameraLayoutPreset": "overlayTopRight",
@@ -3836,7 +3897,7 @@ final class ScreenRecorderFacadeSeparateCameraTests: XCTestCase {
     let facade = ScreenRecorderFacade()
 
     let params = facade.resolveCameraCompositionParams(
-      projectPath: "/tmp/recording.clingfy",
+      projectPath: "/tmp/recording.clingfyproj",
       args: [
         "cameraVisible": true,
         "cameraLayoutPreset": "overlayTopRight",
@@ -3986,7 +4047,10 @@ final class ScreenRecorderFacadeSeparateCameraTests: XCTestCase {
   }
 
   private func makeRecordingProjectRoot(at parent: URL, includeCamera: Bool) throws -> URL {
-    let projectRoot = parent.appendingPathComponent("recording.clingfy", isDirectory: true)
+    let projectRoot = parent.appendingPathComponent(
+      RecordingProjectPaths.projectDirectoryName(for: "recording"),
+      isDirectory: true
+    )
     let fileManager = FileManager.default
     try fileManager.createDirectory(
       at: RecordingProjectPaths.captureDirectoryURL(for: projectRoot),

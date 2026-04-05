@@ -36,7 +36,7 @@ class _ToolbarPostProcessingController extends PostProcessingController {
     );
     controller.attachToRecording(
       sessionId: 'rec_test_session',
-      projectPath: '/tmp/original.clingfy',
+      projectPath: '/tmp/original.clingfyproj',
     );
     return controller;
   }

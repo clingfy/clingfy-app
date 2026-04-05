@@ -1,9 +1,9 @@
 import Foundation
 
 enum RecordingProjectPaths {
-  static let projectExtension = "clingfy"
+  static let projectExtension = "clingfyproj"
   static let manifestFileName = "project.json"
-  static let schemaSentinelFileName = ".schema-v2-projects"
+  static let schemaSentinelFileName = ".schema-v3-clingfyproj"
 
   static let captureDirectoryName = "capture"
   static let cameraDirectoryName = "camera"

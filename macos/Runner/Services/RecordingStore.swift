@@ -33,51 +33,50 @@ final class RecordingStore {
   }
 
   func listRecordings() -> [RecordingInfo] {
-    guard
-      let contents = try? fm.contentsOfDirectory(
-        at: rootURL,
-        includingPropertiesForKeys: [.creationDateKey, .isDirectoryKey],
-        options: [.skipsHiddenFiles]
-      )
-    else {
-      return []
-    }
-
-    return contents
-      .filter(RecordingProjectPaths.isProjectDirectory)
+    return projectDirectories()
       .compactMap { projectRootURL in
-        let manifestURL = RecordingProjectPaths.manifestURL(for: projectRootURL)
-        let manifest: RecordingProjectManifest
-        do {
-          manifest = try RecordingProjectManifest.read(from: manifestURL)
-        } catch {
+        guard let manifestEntry = loadManifestEntry(for: projectRootURL) else {
+          return nil
+        }
+
+        if shouldSkipFromListing(
+          manifest: manifestEntry.manifest,
+          projectRootURL: projectRootURL
+        ) {
+          let missingFiles = missingRequiredReadyProjectFiles(
+            for: manifestEntry.manifest,
+            projectRootURL: projectRootURL
+          )
           if shouldLogInvalidProjects {
             NativeLogger.w(
               "RecordingStore",
-              "Skipping invalid recording project",
-              context: ["path": projectRootURL.path, "error": error.localizedDescription]
+              "Skipping recording project with missing durable files",
+              context: [
+                "path": projectRootURL.path,
+                "status": manifestEntry.manifest.status.rawValue,
+                "missingFiles": missingFiles.map(\.lastPathComponent).joined(separator: ","),
+              ]
             )
           }
           return nil
         }
 
         let screenVideoURL = RecordingProjectPaths.resolvedURL(
-          for: manifest.capture.screenVideo,
+          for: manifestEntry.manifest.capture.screenVideo,
           projectRoot: projectRootURL
         )
         let metadataURL = RecordingProjectPaths.resolvedURL(
-          for: manifest.capture.screenMetadata,
+          for: manifestEntry.manifest.capture.screenMetadata,
           projectRoot: projectRootURL
         )
-        let createdAt = manifest.createdAt
 
         return RecordingInfo(
           projectRootURL: projectRootURL,
-          manifestURL: manifestURL,
-          manifest: manifest,
+          manifestURL: manifestEntry.manifestURL,
+          manifest: manifestEntry.manifest,
           screenVideoURL: screenVideoURL,
           metadataURL: metadataURL,
-          createdAt: createdAt
+          createdAt: manifestEntry.manifest.createdAt
         )
       }
       .sorted { ($0.createdAt ?? .distantPast) > ($1.createdAt ?? .distantPast) }
@@ -210,20 +209,56 @@ final class RecordingStore {
   }
 
   func markInterruptedProjectsAsFailed() {
-    for recording in listRecordings() {
-      guard var manifest = recording.manifest else { continue }
+    for projectRootURL in projectDirectories() {
+      guard let manifestEntry = loadManifestEntry(for: projectRootURL) else { continue }
+      var manifest = manifestEntry.manifest
       guard manifest.status == .capturing || manifest.status == .finalizing else { continue }
       manifest.updateStatus(.failed)
       do {
-        try manifest.write(to: recording.manifestURL)
+        try manifest.write(to: manifestEntry.manifestURL)
       } catch {
         NativeLogger.w(
           "RecordingStore",
           "Failed to mark interrupted project as failed",
-          context: ["path": recording.manifestURL.path, "error": error.localizedDescription]
+          context: ["path": manifestEntry.manifestURL.path, "error": error.localizedDescription]
         )
       }
     }
+  }
+
+  @discardableResult
+  func markInvalidReadyProjectsAsFailed() -> Int {
+    var updatedCount = 0
+
+    for projectRootURL in projectDirectories() {
+      guard let manifestEntry = loadManifestEntry(for: projectRootURL) else { continue }
+      var manifest = manifestEntry.manifest
+      guard manifest.status == .ready else { continue }
+
+      let missingFiles = missingRequiredReadyProjectFiles(
+        for: manifest,
+        projectRootURL: projectRootURL
+      )
+      guard !missingFiles.isEmpty else { continue }
+
+      manifest.updateStatus(.failed)
+      do {
+        try manifest.write(to: manifestEntry.manifestURL)
+        updatedCount += 1
+      } catch {
+        NativeLogger.w(
+          "RecordingStore",
+          "Failed to mark invalid ready project as failed",
+          context: [
+            "path": manifestEntry.manifestURL.path,
+            "missingFiles": missingFiles.map(\.lastPathComponent).joined(separator: ","),
+            "error": error.localizedDescription,
+          ]
+        )
+      }
+    }
+
+    return updatedCount
   }
 
   func logWorkspaceStats() {
@@ -254,5 +289,85 @@ final class RecordingStore {
         "totalSize": sizeFormatted,
       ]
     )
+  }
+
+  private func projectDirectories() -> [URL] {
+    guard
+      let contents = try? fm.contentsOfDirectory(
+        at: rootURL,
+        includingPropertiesForKeys: [.creationDateKey, .isDirectoryKey],
+        options: [.skipsHiddenFiles]
+      )
+    else {
+      return []
+    }
+
+    return contents.filter(RecordingProjectPaths.isProjectDirectory)
+  }
+
+  private func loadManifestEntry(
+    for projectRootURL: URL
+  ) -> (manifestURL: URL, manifest: RecordingProjectManifest)? {
+    let manifestURL = RecordingProjectPaths.manifestURL(for: projectRootURL)
+
+    do {
+      let manifest = try RecordingProjectManifest.read(from: manifestURL)
+      let expectedProjectID = RecordingProjectPaths.projectID(for: projectRootURL)
+      guard manifest.projectId == expectedProjectID else {
+        throw RecordingProjectManifestError.projectDirectoryMismatch(
+          expectedProjectID: expectedProjectID,
+          actualProjectID: manifest.projectId
+        )
+      }
+      return (manifestURL, manifest)
+    } catch {
+      if shouldLogInvalidProjects {
+        NativeLogger.w(
+          "RecordingStore",
+          "Skipping invalid recording project",
+          context: ["path": projectRootURL.path, "error": error.localizedDescription]
+        )
+      }
+      return nil
+    }
+  }
+
+  private func shouldSkipFromListing(
+    manifest: RecordingProjectManifest,
+    projectRootURL: URL
+  ) -> Bool {
+    let missingFiles = missingRequiredReadyProjectFiles(
+      for: manifest,
+      projectRootURL: projectRootURL
+    )
+    guard !missingFiles.isEmpty else { return false }
+    return manifest.status == .ready || manifest.status == .failed
+  }
+
+  private func missingRequiredReadyProjectFiles(
+    for manifest: RecordingProjectManifest,
+    projectRootURL: URL
+  ) -> [URL] {
+    let screenVideoURL =
+      RecordingProjectPaths.resolvedURL(
+        for: manifest.capture.screenVideo,
+        projectRoot: projectRootURL
+      ) ?? RecordingProjectPaths.screenVideoURL(for: projectRootURL)
+    let metadataURL =
+      RecordingProjectPaths.resolvedURL(
+        for: manifest.capture.screenMetadata,
+        projectRoot: projectRootURL
+      ) ?? RecordingProjectPaths.screenMetadataURL(for: projectRootURL)
+
+    var requiredFiles = [screenVideoURL, metadataURL]
+
+    if let camera = manifest.camera {
+      let cameraRawURL =
+        RecordingProjectPaths.resolvedURL(for: camera.rawVideo, projectRoot: projectRootURL)
+        ?? RecordingProjectPaths.cameraRawURL(for: projectRootURL)
+      requiredFiles.append(cameraRawURL)
+    }
+
+    return requiredFiles.filter { !fm.fileExists(atPath: $0.path) }
   }
 }

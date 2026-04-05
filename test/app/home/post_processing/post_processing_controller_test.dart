@@ -86,7 +86,7 @@ void main() {
     );
     post.attachToRecording(
       sessionId: 'rec_test_session',
-      projectPath: '/tmp/original.clingfy',
+      projectPath: '/tmp/original.clingfyproj',
     );
     await Future<void>.delayed(Duration.zero);
     processCalls.clear();
@@ -121,7 +121,7 @@ void main() {
       final args = Map<String, dynamic>.from(
         harness.processCalls.single.arguments! as Map<dynamic, dynamic>,
       );
-      expect(args['projectPath'], '/tmp/original.clingfy');
+      expect(args['projectPath'], '/tmp/original.clingfyproj');
       expect(args['layoutPreset'], harness.settings.post.layoutPreset.name);
       expect(
         args['resolutionPreset'],
@@ -147,7 +147,7 @@ void main() {
         harness.processCalls.single.arguments! as Map<dynamic, dynamic>,
       );
       expect(args.containsKey('zoomSegments'), isFalse);
-      expect(args['projectPath'], '/tmp/original.clingfy');
+      expect(args['projectPath'], '/tmp/original.clingfyproj');
       expect(args['layoutPreset'], harness.settings.post.layoutPreset.name);
       expect(
         args['resolutionPreset'],
