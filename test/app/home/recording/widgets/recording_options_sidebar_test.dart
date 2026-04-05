@@ -4,6 +4,7 @@ import 'package:clingfy/core/overlay/overlay_mode.dart';
 import 'package:clingfy/l10n/app_localizations.dart';
 import 'package:clingfy/ui/platform/widgets/app_settings_group.dart';
 import 'package:clingfy/ui/platform/widgets/app_sidebar_tokens.dart';
+import 'package:clingfy/ui/platform/widgets/platform_dropdown.dart';
 import 'package:clingfy/ui/theme/app_theme.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
@@ -260,6 +261,32 @@ void main() {
     expect(find.text('Audio'), findsOneWidget);
     expect(find.text('Pointer'), findsOneWidget);
     expect(find.byType(Divider), findsNothing);
+  });
+
+  testWidgets('screen tab source dropdowns fill the available control width', (
+    tester,
+  ) async {
+    await tester.pumpWidget(buildTestApp(selectedIndex: 0));
+    await tester.pumpAndSettle();
+
+    final sourceGroup = find.ancestor(
+      of: find.text('Capture Source'),
+      matching: find.byType(AppSettingsGroup),
+    );
+    final sourceFields = find.descendant(
+      of: sourceGroup,
+      matching: find.byKey(PlatformDropdown.fieldKey),
+    );
+
+    expect(sourceFields, findsNWidgets(2));
+    expect(
+      tester.getSize(sourceFields.at(0)).width,
+      greaterThan(AppSidebarTokens.controlMaxWidth),
+    );
+    expect(
+      tester.getSize(sourceFields.at(1)).width,
+      greaterThan(AppSidebarTokens.controlMaxWidth),
+    );
   });
 
   testWidgets(
