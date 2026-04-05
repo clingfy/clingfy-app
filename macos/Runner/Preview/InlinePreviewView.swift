@@ -412,15 +412,28 @@ final class InlinePreviewView: NSView {
       return false
     }
 
-    let center = CGPoint(
-      x: min(max(canvasPoint.x - dragState.pointerOffsetFromCenter.x, 0.0), canvasSize.width),
-      y: min(max(canvasPoint.y - dragState.pointerOffsetFromCenter.y, 0.0), canvasSize.height)
+    let desiredCenter = CGPoint(
+      x: canvasPoint.x - dragState.pointerOffsetFromCenter.x,
+      y: canvasPoint.y - dragState.pointerOffsetFromCenter.y
     )
+    let currentTime = player?.currentTime().seconds ?? 0.0
+    let totalDuration = player?.currentItem?.duration.seconds ?? 0.0
+    let fallbackCenter = CGPoint(
+      x: min(max(desiredCenter.x / canvasSize.width, 0.0), 1.0),
+      y: min(max(desiredCenter.y / canvasSize.height, 0.0), 1.0)
+    )
+    let normalizedCenter =
+      clampedManualNormalizedCenter(
+        for: desiredCenter,
+        canvasSize: canvasSize,
+        params: params,
+        time: currentTime,
+        totalDuration: totalDuration,
+        screenZoom: smoothZoom
+      )
+      ?? fallbackCenter
 
-    params.normalizedCanvasCenter = CGPoint(
-      x: center.x / canvasSize.width,
-      y: center.y / canvasSize.height
-    )
+    params.normalizedCanvasCenter = normalizedCenter
     updateCameraPlacementPreview(
       cameraParams: params,
       changeKind: .dragPreview
@@ -447,6 +460,57 @@ final class InlinePreviewView: NSView {
       "normalizedY": normalizedCenter.y,
     ])
     return true
+  }
+
+  private func clampedManualNormalizedCenter(
+    for desiredCenter: CGPoint,
+    canvasSize: CGSize,
+    params: CameraCompositionParams,
+    time: Double,
+    totalDuration: Double,
+    screenZoom: CGFloat
+  ) -> CGPoint? {
+    guard canvasSize.width > 0.0, canvasSize.height > 0.0 else {
+      return nil
+    }
+
+    var proposedParams = params
+    proposedParams.normalizedCanvasCenter = CGPoint(
+      x: desiredCenter.x / canvasSize.width,
+      y: desiredCenter.y / canvasSize.height
+    )
+
+    let baseFrame =
+      CameraLayoutResolver.manualFrame(canvasSize: canvasSize, params: proposedParams)
+      ?? CameraLayoutResolver.effectiveFrame(canvasSize: canvasSize, params: proposedParams).frame
+    let baseResolution = CameraLayoutResolution(
+      frame: baseFrame,
+      zOrder: proposedParams.layoutPreset == .backgroundBehind ? .behindScreen : .aboveScreen,
+      shouldRender: proposedParams.visible && proposedParams.layoutPreset != .hidden
+    )
+    guard baseResolution.shouldRender else {
+      return nil
+    }
+
+    let transformedResolution = CameraTransformTimelineBuilder.resolve(
+      baseResolution: baseResolution,
+      cameraParams: proposedParams,
+      screenZoom: screenZoom
+    )
+    let restingResolution = CameraAnimationTimelineBuilder.resolveRestingFrame(
+      canvasSize: canvasSize,
+      baseResolution: baseResolution,
+      transformedResolution: transformedResolution,
+      cameraParams: proposedParams,
+      time: time,
+      totalDuration: totalDuration,
+      zoomState: resolvedCameraAnimationZoomState(time: time)
+    )
+
+    return CGPoint(
+      x: min(max(restingResolution.frame.midX / canvasSize.width, 0.0), 1.0),
+      y: min(max(restingResolution.frame.midY / canvasSize.height, 0.0), 1.0)
+    )
   }
 
   private func applyCanvasGeometry(metrics: CanvasLayoutMetrics) {
@@ -2703,6 +2767,24 @@ final class InlinePreviewView: NSView {
 
   func _testCurrentCameraPreviewTransitionMode() -> CameraPreviewTransitionMode? {
     cameraPreviewTransitionState?.mode
+  }
+
+  func _testClampedManualNormalizedCenter(
+    desiredCenter: CGPoint,
+    canvasSize: CGSize,
+    cameraParams: CameraCompositionParams,
+    time: Double,
+    totalDuration: Double,
+    screenZoom: CGFloat
+  ) -> CGPoint? {
+    clampedManualNormalizedCenter(
+      for: desiredCenter,
+      canvasSize: canvasSize,
+      params: cameraParams,
+      time: time,
+      totalDuration: totalDuration,
+      screenZoom: screenZoom
+    )
   }
 
 }

@@ -225,6 +225,58 @@ enum CameraLayoutResolver {
     return resolve(canvasSize: canvasSize, params: params)
   }
 
+  static func clampPresentationFrame(
+    _ frame: CGRect,
+    within canvasSize: CGSize,
+    params: CameraCompositionParams
+  ) -> CGRect {
+    let canvasRect = CGRect(origin: .zero, size: canvasSize)
+    guard canvasRect.width > 0.0, canvasRect.height > 0.0 else {
+      return .zero
+    }
+
+    let outset = presentationVisualOutset(for: params)
+    let safeWidth = max(canvasRect.width - (outset * 2.0), 1.0)
+    let safeHeight = max(canvasRect.height - (outset * 2.0), 1.0)
+    let safeRect = CGRect(
+      x: canvasRect.midX - (safeWidth / 2.0),
+      y: canvasRect.midY - (safeHeight / 2.0),
+      width: safeWidth,
+      height: safeHeight
+    )
+
+    let width = max(frame.width, 1.0)
+    let height = max(frame.height, 1.0)
+    let uniformScale = min(1.0, safeRect.width / width, safeRect.height / height)
+    let scaledSize = CGSize(
+      width: width * uniformScale,
+      height: height * uniformScale
+    )
+
+    let scaledFrame = CGRect(
+      x: frame.midX - (scaledSize.width / 2.0),
+      y: frame.midY - (scaledSize.height / 2.0),
+      width: scaledSize.width,
+      height: scaledSize.height
+    )
+
+    let originX = min(
+      max(safeRect.minX, scaledFrame.minX),
+      max(safeRect.minX, safeRect.maxX - scaledSize.width)
+    )
+    let originY = min(
+      max(safeRect.minY, scaledFrame.minY),
+      max(safeRect.minY, safeRect.maxY - scaledSize.height)
+    )
+
+    return CGRect(
+      x: originX,
+      y: originY,
+      width: scaledSize.width,
+      height: scaledSize.height
+    )
+  }
+
   static func maskPath(
     in rect: CGRect,
     params: CameraCompositionParams
@@ -275,6 +327,25 @@ enum CameraLayoutResolver {
     let edge = min(canvasSize.width, canvasSize.height) * factor
     let size = max(96.0, edge)
     return CGSize(width: size, height: size)
+  }
+
+  private static func presentationVisualOutset(
+    for params: CameraCompositionParams
+  ) -> CGFloat {
+    let borderOutset = max(0.0, CGFloat(params.borderWidth) / 2.0)
+    let shadowOutset: CGFloat
+    switch params.shadowPreset {
+    case 1:
+      shadowOutset = 12.0
+    case 2:
+      shadowOutset = 20.0
+    case 3:
+      shadowOutset = 28.0
+    default:
+      shadowOutset = 0.0
+    }
+
+    return max(borderOutset, shadowOutset)
   }
 
   private static func clamp(frame: CGRect, within canvasSize: CGSize) -> CGRect {

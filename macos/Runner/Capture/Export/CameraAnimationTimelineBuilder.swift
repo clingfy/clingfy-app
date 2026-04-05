@@ -85,25 +85,17 @@ enum CameraAnimationTimelineBuilder {
       durationMs: cameraParams.outroDurationMs
     )
 
-    let introScale = introScale(
-      preset: cameraParams.introPreset,
-      time: clampedTime,
-      durationMs: cameraParams.introDurationMs
-    )
-    let outroScale = outroScale(
-      preset: cameraParams.outroPreset,
+    let restingResolution = resolveRestingFrame(
+      canvasSize: canvasSize,
+      baseResolution: baseResolution,
+      transformedResolution: transformedResolution,
+      cameraParams: cameraParams,
       time: clampedTime,
       totalDuration: totalDuration,
-      durationMs: cameraParams.outroDurationMs
-    )
-    let pulseScale = pulseScale(
-      preset: cameraParams.zoomEmphasisPreset,
-      strength: cameraParams.zoomEmphasisStrength,
       zoomState: zoomState
     )
-
-    let additionalScale = introScale * outroScale * pulseScale
-    var resolvedFrame = scaled(frame: baseFrame, by: additionalScale)
+    let additionalScale = restingResolution.additionalScale
+    var resolvedFrame = restingResolution.frame
 
     let slideEdge = resolvedSlideEdge(
       layoutPreset: cameraParams.layoutPreset,
@@ -155,6 +147,45 @@ enum CameraAnimationTimelineBuilder {
       translation: translation,
       shouldBypass: false
     )
+  }
+
+  static func resolveRestingFrame(
+    canvasSize: CGSize,
+    baseResolution: CameraLayoutResolution,
+    transformedResolution: CameraTransformResolution,
+    cameraParams: CameraCompositionParams,
+    time: Double,
+    totalDuration: Double,
+    zoomState: CameraAnimationZoomState = .inactive
+  ) -> (frame: CGRect, additionalScale: CGFloat) {
+    let clampedTime = min(max(time, 0.0), max(totalDuration, 0.0))
+
+    let introScale = introScale(
+      preset: cameraParams.introPreset,
+      time: clampedTime,
+      durationMs: cameraParams.introDurationMs
+    )
+    let outroScale = outroScale(
+      preset: cameraParams.outroPreset,
+      time: clampedTime,
+      totalDuration: totalDuration,
+      durationMs: cameraParams.outroDurationMs
+    )
+    let pulseScale = pulseScale(
+      preset: cameraParams.zoomEmphasisPreset,
+      strength: cameraParams.zoomEmphasisStrength,
+      zoomState: zoomState
+    )
+
+    let additionalScale = introScale * outroScale * pulseScale
+    let scaledFrame = scaled(frame: transformedResolution.frame, by: additionalScale)
+    let clampedFrame = CameraLayoutResolver.clampPresentationFrame(
+      scaledFrame,
+      within: canvasSize,
+      params: cameraParams
+    )
+
+    return (frame: clampedFrame, additionalScale: additionalScale)
   }
 
   static func hasPresentationEffects(_ params: CameraCompositionParams) -> Bool {

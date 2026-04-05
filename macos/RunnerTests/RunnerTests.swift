@@ -384,6 +384,46 @@ final class CameraLayoutResolverTests: XCTestCase {
     XCTAssertEqual(resolution.frame.minY, 0, accuracy: 0.001)
   }
 
+  func testClampPresentationFrameKeepsVisualOutsetInsideCanvas() {
+    var params = CameraCompositionParams.hidden
+    params.visible = true
+    params.layoutPreset = .overlayBottomRight
+    params.shadowPreset = 3
+
+    let clamped = CameraLayoutResolver.clampPresentationFrame(
+      CGRect(x: 820, y: 420, width: 180, height: 180),
+      within: CGSize(width: 1000, height: 600),
+      params: params
+    )
+
+    XCTAssertEqual(clamped.width, 180, accuracy: 0.001)
+    XCTAssertEqual(clamped.height, 180, accuracy: 0.001)
+    XCTAssertEqual(clamped.maxX, 972, accuracy: 0.001)
+    XCTAssertEqual(clamped.maxY, 572, accuracy: 0.001)
+  }
+
+  func testClampPresentationFrameShrinksUniformlyWhenSafeAreaIsTooSmall() {
+    var params = CameraCompositionParams.hidden
+    params.visible = true
+    params.layoutPreset = .overlayBottomRight
+    params.shadowPreset = 3
+
+    let original = CGRect(x: 10, y: 10, width: 380, height: 220)
+    let clamped = CameraLayoutResolver.clampPresentationFrame(
+      original,
+      within: CGSize(width: 400, height: 240),
+      params: params
+    )
+
+    XCTAssertLessThan(clamped.width, original.width)
+    XCTAssertLessThan(clamped.height, original.height)
+    XCTAssertEqual(clamped.width / clamped.height, original.width / original.height, accuracy: 0.001)
+    XCTAssertGreaterThanOrEqual(clamped.minX, 28.0 - 0.001)
+    XCTAssertGreaterThanOrEqual(clamped.minY, 28.0 - 0.001)
+    XCTAssertLessThanOrEqual(clamped.maxX, 372.0 + 0.001)
+    XCTAssertLessThanOrEqual(clamped.maxY, 212.0 + 0.001)
+  }
+
   func testBackgroundBehindUsesFullCanvasAndHiddenDoesNotRender() {
     var params = CameraCompositionParams.hidden
     params.visible = true
@@ -734,6 +774,36 @@ final class CameraAnimationTimelineBuilderTests: XCTestCase {
     XCTAssertEqual(composed.frame.height, stepwise.frame.height, accuracy: 0.0001)
     XCTAssertEqual(composed.opacity, stepwise.opacity, accuracy: 0.0001)
     XCTAssertEqual(composed.additionalScale, stepwise.additionalScale, accuracy: 0.0001)
+  }
+
+  func testResolvePresentationClampsRestingZoomedFrameInsideCanvas() {
+    var params = makeParams()
+    params.normalizedCanvasCenter = CGPoint(x: 0.95, y: 0.95)
+    params.zoomBehavior = .scaleWithScreenZoom
+    params.zoomScaleMultiplier = 1.0
+    let canvasSize = CGSize(width: 1000, height: 600)
+    let base = CameraLayoutResolver.effectiveFrame(canvasSize: canvasSize, params: params)
+    let transformed = CameraTransformTimelineBuilder.resolve(
+      baseResolution: base,
+      cameraParams: params,
+      screenZoom: 2.0
+    )
+
+    let resolved = CameraAnimationTimelineBuilder.resolve(
+      canvasSize: canvasSize,
+      baseResolution: base,
+      transformedResolution: transformed,
+      cameraParams: params,
+      time: 0.5,
+      totalDuration: 2.0
+    )
+
+    XCTAssertEqual(resolved.frame.width, transformed.frame.width, accuracy: 0.0001)
+    XCTAssertEqual(resolved.frame.height, transformed.frame.height, accuracy: 0.0001)
+    XCTAssertLessThan(resolved.frame.midX, transformed.frame.midX)
+    XCTAssertLessThan(resolved.frame.midY, transformed.frame.midY)
+    XCTAssertLessThanOrEqual(resolved.frame.maxX, canvasSize.width + 0.001)
+    XCTAssertLessThanOrEqual(resolved.frame.maxY, canvasSize.height + 0.001)
   }
 
   private func makeParams() -> CameraCompositionParams {

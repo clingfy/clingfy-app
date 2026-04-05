@@ -361,6 +361,40 @@ final class InlinePreviewViewLayoutTests: XCTestCase {
     )
   }
 
+  func testClampedManualNormalizedCenterUsesZoomedFrameBounds() throws {
+    let view = InlinePreviewView(
+      viewIdentifier: 1,
+      arguments: nil,
+      messenger: nil
+    )
+    let canvasSize = CGSize(width: 1920, height: 1080)
+    var params = makeCameraParams(normalizedCanvasCenter: nil)
+    params.zoomBehavior = .scaleWithScreenZoom
+    params.zoomScaleMultiplier = 1.0
+    params.shadowPreset = 3
+
+    let center = try XCTUnwrap(
+      view._testClampedManualNormalizedCenter(
+        desiredCenter: CGPoint(x: canvasSize.width, y: canvasSize.height),
+        canvasSize: canvasSize,
+        cameraParams: params,
+        time: 0.0,
+        totalDuration: 10.0,
+        screenZoom: 1.8
+      )
+    )
+
+    let baseSize = min(canvasSize.width, canvasSize.height) * CGFloat(params.sizeFactor)
+    let scaledSize = baseSize * 1.8
+    let expectedX = (canvasSize.width - 28.0 - (scaledSize / 2.0)) / canvasSize.width
+    let expectedY = (canvasSize.height - 28.0 - (scaledSize / 2.0)) / canvasSize.height
+
+    XCTAssertEqual(center.x, expectedX, accuracy: 0.001)
+    XCTAssertEqual(center.y, expectedY, accuracy: 0.001)
+    XCTAssertLessThan(center.x, 1.0)
+    XCTAssertLessThan(center.y, 1.0)
+  }
+
   private func makeParams(
     targetSize: CGSize = CGSize(width: 1920, height: 1080),
     padding: Double = 0,
