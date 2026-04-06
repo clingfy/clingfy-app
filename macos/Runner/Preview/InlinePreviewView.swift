@@ -237,6 +237,8 @@ final class InlinePreviewView: NSView {
   private var pendingCompositionWorkItem: DispatchWorkItem?
   private var currentMediaSources: PreviewMediaSources?
   private var cameraDragState: CameraDragState?
+  private var pendingPlaybackSnapshotToRestore: PreviewPlaybackSnapshot?
+  private var lastGeometryOnlyBoundsRefreshSignature: String?
 
   init(
     viewIdentifier viewId: Int64,
@@ -322,7 +324,7 @@ final class InlinePreviewView: NSView {
   override func layout() {
     super.layout()
     updateContainerLayout()
-    refreshPreviewProfileForCurrentBounds()
+    logGeometryOnlyBoundsRefreshIfNeeded()
   }
 
   override func mouseDown(with event: NSEvent) {
@@ -558,36 +560,44 @@ final class InlinePreviewView: NSView {
     )
   }
 
-  private func previewCanvasPixelSize(for targetSize: CGSize) -> CGSize {
-    PreviewProfile.make(
-      viewBounds: bounds.size,
-      backingScale: window?.backingScaleFactor ?? 2.0,
-      targetSize: targetSize,
-      fpsHint: PreviewProfile.defaultFps
-    ).canvasRenderSize
-  }
-
-  private static func shouldRebuildPreviewProfile(old: PreviewProfile?, new: PreviewProfile) -> Bool {
-    old != new
-  }
-
-  private func refreshPreviewProfileForCurrentBounds() {
+  private func logGeometryOnlyBoundsRefreshIfNeeded() {
     guard
       let params = currentCompositionParams,
-      currentLayout != nil
-    else { return }
-
-    let newProfile = makePreviewProfile(for: params)
-    guard Self.shouldRebuildPreviewProfile(old: currentPreviewProfile, new: newProfile) else {
+      currentLayout != nil,
+      let currentPreviewProfile
+    else {
+      lastGeometryOnlyBoundsRefreshSignature = nil
       return
     }
 
-    scheduleCompositionUpdate(
-      params: params,
-      cameraParams: currentCameraCompositionParams,
-      cameraPreviewChangeKind: .none,
-      reason: "boundsChanged",
-      forceImmediate: false
+    let boundsProfile = makePreviewProfile(for: params)
+    guard boundsProfile != currentPreviewProfile else {
+      lastGeometryOnlyBoundsRefreshSignature = nil
+      return
+    }
+
+    let signature = [
+      Int(bounds.size.width.rounded()).description,
+      Int(bounds.size.height.rounded()).description,
+      Int(currentPreviewProfile.canvasRenderSize.width.rounded()).description,
+      Int(currentPreviewProfile.canvasRenderSize.height.rounded()).description,
+      Int(boundsProfile.canvasRenderSize.width.rounded()).description,
+      Int(boundsProfile.canvasRenderSize.height.rounded()).description,
+    ].joined(separator: ":")
+
+    guard signature != lastGeometryOnlyBoundsRefreshSignature else { return }
+    lastGeometryOnlyBoundsRefreshSignature = signature
+
+    NativeLogger.d(
+      "Player",
+      "geometry-only bounds refresh",
+      context: [
+        "viewBounds": "\(Int(bounds.size.width.rounded()))x\(Int(bounds.size.height.rounded()))",
+        "appliedRenderSize":
+          "\(Int(currentPreviewProfile.canvasRenderSize.width.rounded()))x\(Int(currentPreviewProfile.canvasRenderSize.height.rounded()))",
+        "requestedRenderSize":
+          "\(Int(boundsProfile.canvasRenderSize.width.rounded()))x\(Int(boundsProfile.canvasRenderSize.height.rounded()))",
+      ]
     )
   }
 
@@ -654,7 +664,11 @@ final class InlinePreviewView: NSView {
     cameraPlayer.seek(to: targetTime, toleranceBefore: .zero, toleranceAfter: .zero)
   }
 
-  func open(mediaSources: PreviewMediaSources, sessionId: String) {
+  func open(
+    mediaSources: PreviewMediaSources,
+    sessionId: String,
+    initialPlaybackSnapshot: PreviewPlaybackSnapshot? = nil
+  ) {
     let path = mediaSources.screenPath
     // Generate a new token for this open operation
     let openToken = UUID()
@@ -674,7 +688,9 @@ final class InlinePreviewView: NSView {
     pendingCameraPreviewChangeKind = .none
     currentLayout = nil
     currentPreviewProfile = nil
+    lastGeometryOnlyBoundsRefreshSignature = nil
     cancelCameraPreviewPlacementTransition()
+    pendingPlaybackSnapshotToRestore = initialPlaybackSnapshot
     setPreviewContentVisible(false)
 
     NativeLogger.i(
@@ -736,16 +752,21 @@ final class InlinePreviewView: NSView {
     observeTicks()
     observeCurrentItem(for: openToken)
 
-    // Start playback
-    player?.play()
-    cameraPlayer?.play()
+    let shouldStartPlaying = initialPlaybackSnapshot?.isPlaying ?? true
+    if shouldStartPlaying {
+      player?.play()
+      cameraPlayer?.play()
+    } else {
+      player?.pause()
+      cameraPlayer?.pause()
+    }
 
     // DO NOT apply composition yet. It will be applied in checkAndEmitPreviewReady
     // when both item and layer are ready, preventing race conditions.
     NativeLogger.d("Player", "Deferred composition until readyToPlay")
 
     emitCurrentState()
-    sendState(state: "playing")
+    sendState(state: shouldStartPlaying ? "playing" : "paused")
 
     NativeLogger.d(
       "Player", "InlinePreviewView.open completed", context: ["token": openToken.uuidString])
@@ -793,11 +814,13 @@ final class InlinePreviewView: NSView {
     oldProfile: PreviewProfile,
     newProfile: PreviewProfile
   ) -> PreviewUpdatePlan {
+    _ = oldProfile
+    _ = newProfile
     let requiresFullRebuild =
-      shouldRebuildPreviewProfile(old: oldProfile, new: newProfile)
-      || oldParams.targetSize != newParams.targetSize
+      oldParams.targetSize != newParams.targetSize
       || oldParams.padding != newParams.padding
       || oldParams.fitMode != newParams.fitMode
+      || oldParams.fpsHint != newParams.fpsHint
 
     if requiresFullRebuild {
       return PreviewUpdatePlan(
@@ -962,6 +985,11 @@ final class InlinePreviewView: NSView {
     syncCameraPlayback(to: time, force: true)
     sendTick(position: time)
   }
+
+  func queuePlaybackRestore(_ snapshot: PreviewPlaybackSnapshot) {
+    pendingPlaybackSnapshotToRestore = snapshot
+    applyPendingPlaybackRestoreIfReady()
+  }
   /// Fully tears down observers and notifications from previous player item
   private func teardownPlayerObservers() {
     cancelCursorRetry()
@@ -1022,11 +1050,13 @@ final class InlinePreviewView: NSView {
     lastOpenRequestTime = nil
     currentLayout = nil
     currentPreviewProfile = nil
+    lastGeometryOnlyBoundsRefreshSignature = nil
     pendingCompositionParams = nil
     currentCameraCompositionParams = nil
     pendingCameraCompositionParams = nil
     pendingCameraPreviewChangeKind = .none
     pendingZoomSegments = nil
+    pendingPlaybackSnapshotToRestore = nil
     cancelCameraPreviewPlacementTransition()
 
     cursorLayer?.removeFromSuperlayer()
@@ -1266,6 +1296,7 @@ final class InlinePreviewView: NSView {
         "token": token.uuidString,
       ])
 
+    applyPendingPlaybackRestoreIfReady(token: token)
     setPreviewContentVisible(true)
     emitPreviewLifecycleEvent(
       type: "previewReady",
@@ -1411,6 +1442,10 @@ final class InlinePreviewView: NSView {
       "positionMs": posMs,
       "durationMs": durMs,
     ])
+    updateActiveInlinePreviewPlaybackSnapshot(
+      sessionId: currentSessionId,
+      positionMs: posMs
+    )
   }
 
   private func sendState(state: String) {
@@ -1418,6 +1453,49 @@ final class InlinePreviewView: NSView {
       "type": "playerState",
       "state": state,
     ])
+    updateActiveInlinePreviewPlaybackSnapshot(
+      sessionId: currentSessionId,
+      isPlaying: state == "playing"
+    )
+  }
+
+  private func applyPendingPlaybackRestoreIfReady(token: UUID? = nil) {
+    guard let snapshot = pendingPlaybackSnapshotToRestore else { return }
+    if let token, currentOpenToken != token {
+      return
+    }
+    guard hasAppliedInitialCompositionForCurrentToken else { return }
+    guard let item = player?.currentItem, item.status == .readyToPlay else { return }
+    guard let playerLayer, playerLayer.isReadyForDisplay else { return }
+
+    pendingPlaybackSnapshotToRestore = nil
+
+    let targetTime = CMTime(
+      seconds: Double(snapshot.positionMs) / 1000.0,
+      preferredTimescale: 600
+    )
+    let currentTime = player?.currentTime() ?? .zero
+    let shouldSeek =
+      snapshot.positionMs > 0
+      || abs(currentTime.seconds - targetTime.seconds) > 0.001
+
+    if shouldSeek {
+      player?.seek(to: targetTime, toleranceBefore: .zero, toleranceAfter: .zero)
+      syncCameraPlayback(to: targetTime, force: true)
+      sendTick(position: targetTime)
+    } else {
+      emitCurrentState()
+    }
+
+    if snapshot.isPlaying {
+      player?.play()
+      cameraPlayer?.play()
+      sendState(state: "playing")
+    } else {
+      player?.pause()
+      cameraPlayer?.pause()
+      sendState(state: "paused")
+    }
   }
 
   private let builder = CompositionBuilder()
@@ -1623,6 +1701,7 @@ final class InlinePreviewView: NSView {
     profile: PreviewProfile,
     onApplied: ((Bool) -> Void)? = nil
   ) {
+    let appliedProfile = currentPreviewProfile ?? profile
     currentCompositionParams = newParams
     currentCameraCompositionParams = cameraParams ?? currentCameraCompositionParams
     pendingCameraPreviewChangeKind = .none
@@ -1633,7 +1712,6 @@ final class InlinePreviewView: NSView {
         cameraParams: currentCameraCompositionParams
       )
     }
-    currentPreviewProfile = profile
     applyCameraPreviewChangeKind(
       changeKind,
       currentTime: player?.currentTime().seconds ?? 0,
@@ -1645,7 +1723,7 @@ final class InlinePreviewView: NSView {
     }
 
     if updatePlan.refreshBackground {
-      applyPreviewBackground(from: newParams, profile: profile)
+      applyPreviewBackground(from: newParams, profile: appliedProfile)
     }
 
     if updatePlan.refreshMask {
@@ -1788,6 +1866,7 @@ final class InlinePreviewView: NSView {
     )
     currentLayout = layout
     currentPreviewProfile = profile
+    lastGeometryOnlyBoundsRefreshSignature = nil
     cancelCameraPreviewPlacementTransition()
     pendingCompositionParams = nil
     pendingCameraCompositionParams = nil
@@ -2753,6 +2832,25 @@ final class InlinePreviewView: NSView {
     cameraPlayer?.replaceCurrentItem(with: AVPlayerItem(asset: AVMutableComposition()))
   }
 
+  func _testSeedPreviewLayoutState(
+    scene: PreviewScene,
+    profile: PreviewProfile,
+    layout: CompositionBuilder.PreviewCompositionResult
+  ) {
+    currentScene = scene
+    currentMediaSources = scene.mediaSources
+    currentCompositionParams = scene.screenParams
+    currentCameraCompositionParams = scene.cameraParams
+    currentLayout = layout
+    currentPreviewProfile = profile
+    currentVideoPath = scene.mediaSources.screenPath
+    pendingCompositionParams = nil
+    pendingCameraCompositionParams = nil
+    pendingCompositionWorkItem?.cancel()
+    pendingCompositionWorkItem = nil
+    lastGeometryOnlyBoundsRefreshSignature = nil
+  }
+
   func _testCurrentScene() -> PreviewScene? {
     currentScene
   }
@@ -2761,12 +2859,32 @@ final class InlinePreviewView: NSView {
     currentCompositionParams
   }
 
+  func _testCurrentPreviewProfile() -> PreviewProfile? {
+    currentPreviewProfile
+  }
+
+  func _testCurrentMediaSources() -> PreviewMediaSources? {
+    currentMediaSources
+  }
+
   func _testCurrentCameraCompositionParams() -> CameraCompositionParams? {
     currentCameraCompositionParams
   }
 
   func _testCurrentCameraPreviewTransitionMode() -> CameraPreviewTransitionMode? {
     cameraPreviewTransitionState?.mode
+  }
+
+  func _testPendingZoomSegments() -> [ZoomTimelineSegment]? {
+    pendingZoomSegments
+  }
+
+  func _testPendingPlaybackRestoreSnapshot() -> PreviewPlaybackSnapshot? {
+    pendingPlaybackSnapshotToRestore
+  }
+
+  func _testHasPendingCompositionWorkItem() -> Bool {
+    pendingCompositionWorkItem != nil
   }
 
   func _testClampedManualNormalizedCenter(

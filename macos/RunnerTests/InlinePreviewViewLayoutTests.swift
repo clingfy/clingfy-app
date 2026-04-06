@@ -1,3 +1,4 @@
+import AVFoundation
 import Cocoa
 import XCTest
 
@@ -50,13 +51,35 @@ final class InlinePreviewViewLayoutTests: XCTestCase {
     XCTAssertFalse(plan.refreshOverlay)
   }
 
-  func testPreviewUpdatePlanRequiresFullRebuildForStructuralChanges() {
+  func testPreviewUpdatePlanKeepsProfileOnlyChangeLightweight() {
     let params = makeParams()
-    let profile = makeProfile()
-    let changedProfile = makeProfile(
+    let oldProfile = makeProfile(
+      canvasRenderSize: CGSize(width: 1280, height: 720),
+      renderScale: 1280.0 / 1920.0
+    )
+    let newProfile = makeProfile(
       canvasRenderSize: CGSize(width: 960, height: 540),
       renderScale: 0.5
     )
+
+    let plan = InlinePreviewView.previewUpdatePlan(
+      from: params,
+      to: params,
+      oldProfile: oldProfile,
+      newProfile: newProfile
+    )
+
+    XCTAssertFalse(plan.requiresFullRebuild)
+    XCTAssertFalse(plan.refreshCanvasGeometry)
+    XCTAssertFalse(plan.refreshMask)
+    XCTAssertFalse(plan.refreshBackground)
+    XCTAssertFalse(plan.refreshAudioMix)
+    XCTAssertFalse(plan.refreshOverlay)
+  }
+
+  func testPreviewUpdatePlanRequiresFullRebuildForStructuralChanges() {
+    let params = makeParams()
+    let profile = makeProfile()
 
     let scenarios: [(String, CompositionParams, PreviewProfile)] = [
       (
@@ -75,9 +98,9 @@ final class InlinePreviewViewLayoutTests: XCTestCase {
         profile
       ),
       (
-        "profile",
-        params,
-        changedProfile
+        "fpsHint",
+        makeParams(fpsHint: 24),
+        profile
       ),
     ]
 
@@ -92,6 +115,49 @@ final class InlinePreviewViewLayoutTests: XCTestCase {
       XCTAssertTrue(plan.requiresFullRebuild, label)
       XCTAssertTrue(plan.refreshCanvasGeometry, label)
     }
+  }
+
+  func testLayoutBoundsChangeStaysGeometryOnlyWithoutSchedulingCompositionRefresh() {
+    let view = InlinePreviewView(
+      viewIdentifier: 1,
+      arguments: nil,
+      messenger: nil
+    )
+    let profile = makeProfile(
+      canvasRenderSize: CGSize(width: 1024, height: 576),
+      renderScale: 1024.0 / 1920.0
+    )
+    let scene = PreviewScene(
+      mediaSources: PreviewMediaSources(
+        projectPath: "/tmp/project.clingfyproj",
+        screenPath: "/tmp/screen.mov",
+        cameraPath: nil,
+        metadataPath: nil,
+        cursorPath: nil,
+        zoomManualPath: nil
+      ),
+      screenParams: makeParams(),
+      cameraParams: nil
+    )
+    let layout = CompositionBuilder.PreviewCompositionResult(
+      composition: AVMutableVideoComposition(),
+      contentFrame: CGRect(x: 160, y: 90, width: 1600, height: 900),
+      videoToTargetScale: 1.0,
+      renderSize: profile.canvasRenderSize
+    )
+
+    view.frame = CGRect(x: 0, y: 0, width: 512, height: 288)
+    view._testSeedPreviewLayoutState(
+      scene: scene,
+      profile: profile,
+      layout: layout
+    )
+
+    view.frame = CGRect(x: 0, y: 0, width: 600, height: 338)
+    view.layout()
+
+    XCTAssertFalse(view._testHasPendingCompositionWorkItem())
+    XCTAssertEqual(view._testCurrentPreviewProfile(), profile)
   }
 
   func testApplyCanvasGeometryPreservesZoomTransformAndUsesBoundsPosition() {

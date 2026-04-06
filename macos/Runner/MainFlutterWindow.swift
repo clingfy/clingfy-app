@@ -514,6 +514,10 @@ class MainFlutterWindow: NSWindow {
           self.bringAppToFront()
           self.isInlinePreviewActive = true
           self.updatePreRecordingBarVisibility()
+          beginActiveInlinePreviewSession(
+            sessionId: sessionId,
+            mediaSources: mediaSources
+          )
           pendingPreviewOpenRequest = PendingPreviewOpenRequest(
             sessionId: sessionId,
             mediaSources: mediaSources
@@ -562,12 +566,11 @@ class MainFlutterWindow: NSWindow {
         {
           self.isInlinePreviewActive = false
           self.updatePreRecordingBarVisibility()
-          pendingPreviewOpenRequest = nil
-          pendingPreviewZoomSegments = nil
-          pendingPreviewSceneRequest = nil
-          if let view = inlinePreviewViewInstance, view.currentSessionId == sessionId {
-            view.dispose(reason: "flutterRequest")
-          } else {
+          clearAllInlinePreviewState()
+          if !disposeInlinePreviewContentViewIfMatching(
+            sessionId: sessionId,
+            reason: "flutterRequest"
+          ) {
             self.emitWorkflowEvent(
               [
                 "type": "previewClosed",
@@ -588,54 +591,73 @@ class MainFlutterWindow: NSWindow {
 
       case "previewPlay":
         if let args = call.arguments as? [String: Any],
-          let sessionId = args["sessionId"] as? String,
-          let view = inlinePreviewViewInstance,
-          view.currentSessionId == sessionId
+          let sessionId = args["sessionId"] as? String
         {
-          view.play()
+          updateActiveInlinePreviewPlaybackSnapshot(
+            sessionId: sessionId,
+            isPlaying: true
+          )
+          if let view = inlinePreviewViewInstance, view.currentSessionId == sessionId {
+            view.play()
+          }
         }
         result(nil)
 
       case "previewPause":
         if let args = call.arguments as? [String: Any],
-          let sessionId = args["sessionId"] as? String,
-          let view = inlinePreviewViewInstance,
-          view.currentSessionId == sessionId
+          let sessionId = args["sessionId"] as? String
         {
-          view.pause()
+          updateActiveInlinePreviewPlaybackSnapshot(
+            sessionId: sessionId,
+            isPlaying: false
+          )
+          if let view = inlinePreviewViewInstance, view.currentSessionId == sessionId {
+            view.pause()
+          }
         }
         result(nil)
 
       case "previewSeekTo":
         if let args = call.arguments as? [String: Any],
-          let sessionId = args["sessionId"] as? String,
-          let view = inlinePreviewViewInstance,
-          view.currentSessionId == sessionId
+          let sessionId = args["sessionId"] as? String
         {
           let ms = (args["ms"] as? Int) ?? 0
-          view.seekTo(milliseconds: ms)
+          updateActiveInlinePreviewPlaybackSnapshot(
+            sessionId: sessionId,
+            positionMs: ms
+          )
+          if let view = inlinePreviewViewInstance, view.currentSessionId == sessionId {
+            view.seekTo(milliseconds: ms)
+          }
         }
         result(nil)
 
       case "previewPeekTo":
         if let args = call.arguments as? [String: Any],
-          let sessionId = args["sessionId"] as? String,
-          let view = inlinePreviewViewInstance,
-          view.currentSessionId == sessionId
+          let sessionId = args["sessionId"] as? String
         {
           let ms = (args["ms"] as? Int) ?? 0
-          view.seekTo(milliseconds: ms)
+          updateActiveInlinePreviewPlaybackSnapshot(
+            sessionId: sessionId,
+            positionMs: ms
+          )
+          if let view = inlinePreviewViewInstance, view.currentSessionId == sessionId {
+            view.seekTo(milliseconds: ms)
+          }
         }
         result(nil)
 
       case "playerPlay":
+        updateActiveInlinePreviewPlaybackSnapshot(sessionId: nil, isPlaying: true)
         inlinePreviewViewInstance?.play()
         result(nil)
       case "playerPause":
+        updateActiveInlinePreviewPlaybackSnapshot(sessionId: nil, isPlaying: false)
         inlinePreviewViewInstance?.pause()
         result(nil)
       case "playerSeekTo":
         let ms = (call.arguments as? [String: Any])?["ms"] as? Int ?? 0
+        updateActiveInlinePreviewPlaybackSnapshot(sessionId: nil, positionMs: ms)
         inlinePreviewViewInstance?.seekTo(milliseconds: ms)
         result(nil)
       case "inlinePreviewStop":
@@ -938,6 +960,10 @@ class MainFlutterWindow: NSWindow {
           let sessionId = args["sessionId"] as? String,
           let segments = parseZoomTimelineSegments(args["segments"])
         {
+          updateActiveInlinePreviewZoomSegments(
+            sessionId: sessionId,
+            segments: segments
+          )
           if let previewView = inlinePreviewViewInstance,
             previewView.currentSessionId == sessionId
           {

@@ -2168,6 +2168,10 @@ final class ScreenRecorderFacade: NSObject {
     )
 
     DispatchQueue.main.async {
+      updateActiveInlinePreviewScene(
+        sessionId: sessionId,
+        scene: previewScene
+      )
       if let view = inlinePreviewViewInstance {
         view.updateComposition(scene: previewScene)
         pendingPreviewSceneRequest = nil
@@ -2187,6 +2191,11 @@ final class ScreenRecorderFacade: NSObject {
     cameraParams: CameraCompositionParams?,
     result: @escaping FlutterResult
   ) {
+    updateActiveInlinePreviewCameraPlacementOverride(
+      sessionId: sessionId,
+      cameraParams: cameraParams,
+      changeKind: cameraPreviewChangeKind
+    )
     if let view = inlinePreviewViewInstance {
       if let sessionId, view.currentSessionId != sessionId {
         result(nil)
@@ -2223,6 +2232,11 @@ final class ScreenRecorderFacade: NSObject {
   ) {
     let clampedGainDb = max(0, min(24, audioGainDb))
     let clampedVolumePercent = max(0, min(100, audioVolumePercent))
+    updateActiveInlinePreviewAudioMixOverride(
+      sessionId: sessionId,
+      gainDb: clampedGainDb,
+      volumePercent: clampedVolumePercent
+    )
     if let view = inlinePreviewViewInstance {
       if let sessionId, view.currentSessionId != sessionId {
         result(nil)
