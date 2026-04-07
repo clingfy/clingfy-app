@@ -547,6 +547,10 @@ final class CameraStyledIntermediatePipeline {
         AVVideoCodecKey: AVVideoCodecType.proRes4444,
         AVVideoWidthKey: Int(renderSize.width),
         AVVideoHeightKey: Int(renderSize.height),
+        AVVideoColorPropertiesKey: [
+          AVVideoColorPrimariesKey: AVVideoColorPrimaries_ITU_R_709_2,
+          AVVideoTransferFunctionKey: AVVideoTransferFunction_ITU_R_709_2,
+        ],
       ]
     )
     writerInput.expectsMediaDataInRealTime = false

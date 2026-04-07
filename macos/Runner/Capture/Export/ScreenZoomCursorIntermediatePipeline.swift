@@ -200,6 +200,10 @@ final class ScreenZoomCursorIntermediatePipeline {
         AVVideoCodecKey: AVVideoCodecType.proRes4444,
         AVVideoWidthKey: Int(renderSize.width),
         AVVideoHeightKey: Int(renderSize.height),
+        AVVideoColorPropertiesKey: [
+          AVVideoColorPrimariesKey: AVVideoColorPrimaries_ITU_R_709_2,
+          AVVideoTransferFunctionKey: AVVideoTransferFunction_ITU_R_709_2,
+        ],
       ]
     )
     writerInput.expectsMediaDataInRealTime = false
@@ -233,7 +237,7 @@ final class ScreenZoomCursorIntermediatePipeline {
     let durationSeconds = max(inputAsset.duration.seconds, 0.001)
     let renderQueue = DispatchQueue(label: "Clingfy.ScreenZoomCursorIntermediateRender")
     let renderBounds = CGRect(origin: .zero, size: renderSize)
-    let colorSpace = CGColorSpaceCreateDeviceRGB()
+    let colorSpace = CGColorSpace(name: CGColorSpace.sRGB)!
     let ciContext = CIContext(options: [.cacheIntermediates: false])
     var completed = false
 
