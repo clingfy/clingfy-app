@@ -487,9 +487,23 @@ final class CompositionBuilder {
     let renderSize: CGSize
   }
 
+  enum ScreenSourceMode: String {
+    case liveScreenTrack = "liveScreenTrack"
+    case precompositedCanvas = "precompositedCanvas"
+  }
+
+  struct ExportDebugInfo {
+    let screenSourceMode: ScreenSourceMode
+    let usesScreenZoomTransformRamp: Bool
+    let rendersCursorOverlayInAnimationTool: Bool
+    let appliesScreenZoomInAnimationTool: Bool
+    let screenZoomIsPrecomposited: Bool
+  }
+
   struct ExportCompositionResult {
     let asset: AVAsset
     let videoComposition: AVVideoComposition
+    let debugInfo: ExportDebugInfo
   }
 
   // For Export
@@ -500,7 +514,9 @@ final class CompositionBuilder {
     cameraParams: CameraCompositionParams?,
     cursorRecording: CursorRecording?,
     cameraAssetIsPreStyled: Bool = false,
-    cameraPlacementSourceRect: CGRect? = nil
+    cameraPlacementSourceRect: CGRect? = nil,
+    screenSourceMode: ScreenSourceMode = .liveScreenTrack,
+    screenAudioAsset: AVAsset? = nil
   ) -> ExportCompositionResult? {
     if let cameraAsset,
       let cameraParams,
@@ -514,23 +530,71 @@ final class CompositionBuilder {
         cameraParams: cameraParams,
         cursorRecording: cursorRecording,
         cameraAssetIsPreStyled: cameraAssetIsPreStyled,
-        cameraPlacementSourceRect: cameraPlacementSourceRect
+        cameraPlacementSourceRect: cameraPlacementSourceRect,
+        screenSourceMode: screenSourceMode,
+        screenAudioAsset: screenAudioAsset
       )
     }
 
     guard
-      let composition = build(
+      let result = build(
         asset: asset,
         params: params,
         cursorRecording: cursorRecording,
         previewProfile: nil,
-        forExport: true
-      )?.composition
+        forExport: true,
+        renderPass: .finalOutput,
+        debugSource: "export_single_source"
+      )
     else {
       return nil
     }
 
-    return ExportCompositionResult(asset: asset, videoComposition: composition)
+    return ExportCompositionResult(
+      asset: asset,
+      videoComposition: result.composition,
+      debugInfo: result.exportDebugInfo
+        ?? ExportDebugInfo(
+          screenSourceMode: .liveScreenTrack,
+          usesScreenZoomTransformRamp: false,
+          rendersCursorOverlayInAnimationTool: false,
+          appliesScreenZoomInAnimationTool: false,
+          screenZoomIsPrecomposited: false
+        )
+    )
+  }
+
+  func buildScreenPrepass(
+    asset: AVAsset,
+    params: CompositionParams,
+    cursorRecording: CursorRecording
+  ) -> ExportCompositionResult? {
+    guard
+      let result = build(
+        asset: asset,
+        params: params,
+        cursorRecording: cursorRecording,
+        previewProfile: nil,
+        forExport: true,
+        renderPass: .screenPrepass,
+        debugSource: "screen_prepass"
+      )
+    else {
+      return nil
+    }
+
+    return ExportCompositionResult(
+      asset: asset,
+      videoComposition: result.composition,
+      debugInfo: result.exportDebugInfo
+        ?? ExportDebugInfo(
+          screenSourceMode: .liveScreenTrack,
+          usesScreenZoomTransformRamp: false,
+          rendersCursorOverlayInAnimationTool: false,
+          appliesScreenZoomInAnimationTool: false,
+          screenZoomIsPrecomposited: true
+        )
+    )
   }
 
   // For Preview
@@ -571,6 +635,7 @@ final class CompositionBuilder {
     let contentRect: CGRect
     let videoToTargetScale: CGFloat
     let renderSize: CGSize
+    let exportDebugInfo: ExportDebugInfo?
   }
 
   private struct ExportZoomSample {
@@ -593,9 +658,20 @@ final class CompositionBuilder {
     let cameraFrame: CGRect?
   }
 
+  private enum ExportRenderPass {
+    case finalOutput
+    case screenPrepass
+  }
+
+  private enum ExportBackgroundMode {
+    case resolvedOutput
+    case transparent
+  }
+
   private enum ExportZoomApplicationMode {
     case compositeVideoLayer
     case screenOverlayOnly
+    case none
   }
 
   private func orientedSize(_ track: AVAssetTrack) -> CGSize {
@@ -608,7 +684,9 @@ final class CompositionBuilder {
     params: CompositionParams,
     cursorRecording: CursorRecording?,
     previewProfile: PreviewProfile?,
-    forExport: Bool
+    forExport: Bool,
+    renderPass: ExportRenderPass = .finalOutput,
+    debugSource: String = "export"
   ) -> BuildResult? {
     guard let vTrack = asset.tracks(withMediaType: .video).first else { return nil }
     guard forExport || previewProfile != nil else { return nil }
@@ -638,7 +716,8 @@ final class CompositionBuilder {
         contentRect: contentRect,
         contentWidth: contentWidth,
         contentHeight: contentHeight,
-        videoDuration: asset.duration.seconds
+        videoDuration: asset.duration.seconds,
+        debugSource: debugSource
       )
       : []
 
@@ -659,7 +738,9 @@ final class CompositionBuilder {
 
     let instruction = AVMutableVideoCompositionInstruction()
     instruction.timeRange = CMTimeRange(start: .zero, duration: asset.duration)
-    if let backgroundColor = params.backgroundColor {
+    if forExport, renderPass == .screenPrepass {
+      instruction.backgroundColor = CGColor(red: 0, green: 0, blue: 0, alpha: 0)
+    } else if let backgroundColor = params.backgroundColor {
       instruction.backgroundColor = exportBackgroundColor(backgroundColor)
     }
     let layerInstruction = AVMutableVideoCompositionLayerInstruction(assetTrack: vTrack)
@@ -684,7 +765,11 @@ final class CompositionBuilder {
     instruction.layerInstructions = [layerInstruction]
     comp.instructions = [instruction]
 
+    var exportDebugInfo: ExportDebugInfo?
     if forExport {
+      let rendersCursorOverlay =
+        params.showCursor && !(cursorRecording?.frames.isEmpty ?? true)
+      let appliesScreenZoomInAnimationTool = !exportZoomSamples.isEmpty
       configureExportAnimationTool(
         composition: comp,
         target: target,
@@ -700,7 +785,17 @@ final class CompositionBuilder {
         zoomSamples: exportZoomSamples,
         visibleRegionMaskSamples: [],
         zoomApplicationMode: .compositeVideoLayer,
-        includeRoundedMask: true
+        includeRoundedMask: true,
+        backgroundMode: renderPass == .screenPrepass ? .transparent : .resolvedOutput,
+        renderCursorOverlay: rendersCursorOverlay,
+        debugSource: debugSource
+      )
+      exportDebugInfo = ExportDebugInfo(
+        screenSourceMode: .liveScreenTrack,
+        usesScreenZoomTransformRamp: false,
+        rendersCursorOverlayInAnimationTool: rendersCursorOverlay,
+        appliesScreenZoomInAnimationTool: appliesScreenZoomInAnimationTool,
+        screenZoomIsPrecomposited: renderPass == .screenPrepass
       )
     }
 
@@ -708,7 +803,8 @@ final class CompositionBuilder {
       composition: comp,
       contentRect: contentRect,
       videoToTargetScale: s,
-      renderSize: renderSize
+      renderSize: renderSize,
+      exportDebugInfo: exportDebugInfo
     )
   }
 
@@ -719,13 +815,21 @@ final class CompositionBuilder {
     cameraParams: CameraCompositionParams,
     cursorRecording: CursorRecording?,
     cameraAssetIsPreStyled: Bool,
-    cameraPlacementSourceRect: CGRect?
+    cameraPlacementSourceRect: CGRect?,
+    screenSourceMode: ScreenSourceMode,
+    screenAudioAsset: AVAsset?
   ) -> ExportCompositionResult? {
     guard let screenTrack = screenAsset.tracks(withMediaType: .video).first else { return nil }
 
+    let audioSourceAsset = screenAudioAsset ?? screenAsset
+    let geometrySourceAsset = screenAudioAsset ?? screenAsset
+    guard let geometryScreenTrack = geometrySourceAsset.tracks(withMediaType: .video).first else {
+      return nil
+    }
+
     let target = params.targetSize
     let padding = params.padding
-    let screenSourceSize = orientedSize(screenTrack)
+    let geometryScreenSourceSize = orientedSize(geometryScreenTrack)
 
     let availableSize = CGSize(
       width: max(1, target.width - 2 * padding),
@@ -733,13 +837,13 @@ final class CompositionBuilder {
     )
     let screenFitMode = params.fitMode ?? "fit"
     let screenScale: CGFloat = {
-      let sw = availableSize.width / max(screenSourceSize.width, 1)
-      let sh = availableSize.height / max(screenSourceSize.height, 1)
+      let sw = availableSize.width / max(geometryScreenSourceSize.width, 1)
+      let sh = availableSize.height / max(geometryScreenSourceSize.height, 1)
       return screenFitMode == "fill" ? max(sw, sh) : min(sw, sh)
     }()
 
-    let contentWidth = screenSourceSize.width * screenScale
-    let contentHeight = screenSourceSize.height * screenScale
+    let contentWidth = geometryScreenSourceSize.width * screenScale
+    let contentHeight = geometryScreenSourceSize.height * screenScale
     let tx = (target.width - contentWidth) / 2
     let ty = (target.height - contentHeight) / 2
     let screenContentRect = CGRect(x: tx, y: ty, width: contentWidth, height: contentHeight)
@@ -750,7 +854,8 @@ final class CompositionBuilder {
       contentRect: screenContentRect,
       contentWidth: contentWidth,
       contentHeight: contentHeight,
-      videoDuration: screenAsset.duration.seconds
+      videoDuration: geometrySourceAsset.duration.seconds,
+      debugSource: screenSourceMode == .precompositedCanvas ? "export_precomposited_final" : "export_two_source"
     )
 
     let composition = AVMutableComposition()
@@ -771,7 +876,7 @@ final class CompositionBuilder {
         at: .zero
       )
 
-      if let screenAudioTrack = screenAsset.tracks(withMediaType: .audio).first,
+      if let screenAudioTrack = audioSourceAsset.tracks(withMediaType: .audio).first,
         let composedAudioTrack = composition.addMutableTrack(
           withMediaType: .audio,
           preferredTrackID: kCMPersistentTrackID_Invalid
@@ -789,22 +894,43 @@ final class CompositionBuilder {
       let screenLayerInstruction = AVMutableVideoCompositionLayerInstruction(
         assetTrack: composedScreenTrack
       )
+      let screenTrackSourceSize = orientedSize(screenTrack)
+      let screenDestinationRect =
+        screenSourceMode == .precompositedCanvas
+        ? CGRect(origin: .zero, size: target)
+        : screenContentRect
       let baseScreenTransform = fittedTransform(
         for: screenTrack,
-        sourceSize: screenSourceSize,
-        destinationRect: screenContentRect,
-        fitMode: screenFitMode,
+        sourceSize: screenTrackSourceSize,
+        destinationRect: screenDestinationRect,
+        fitMode: screenSourceMode == .precompositedCanvas ? "fit" : screenFitMode,
         mirror: false
       )
-      applyZoomTransformRamps(
-        to: screenLayerInstruction,
-        baseTransform: baseScreenTransform,
-        zoomSamples: exportZoomSamples,
-        focusX: screenContentRect.midX,
-        focusY: screenContentRect.midY,
-        effectiveDuration: screenAsset.duration.seconds
-      )
+      if screenSourceMode == .liveScreenTrack {
+        applyZoomTransformRamps(
+          to: screenLayerInstruction,
+          baseTransform: baseScreenTransform,
+          zoomSamples: exportZoomSamples,
+          focusX: screenContentRect.midX,
+          focusY: screenContentRect.midY,
+          effectiveDuration: screenAsset.duration.seconds
+        )
+      } else {
+        screenLayerInstruction.setTransform(baseScreenTransform, at: .zero)
+      }
       layerInstructions.append(screenLayerInstruction)
+
+      NativeLogger.d(
+        "Export",
+        "Configured two-source screen source",
+        context: [
+          "screenSourceMode": screenSourceMode.rawValue,
+          "screenZoomBaked": screenSourceMode == .precompositedCanvas,
+          "cameraConsumesZoomSamples": !exportZoomSamples.isEmpty,
+          "screenDestinationRect": NSStringFromRect(screenDestinationRect),
+          "screenContentRect": NSStringFromRect(screenContentRect),
+        ]
+      )
 
       let cameraResolution = CameraLayoutResolver.effectiveFrame(
         canvasSize: target,
@@ -849,7 +975,9 @@ final class CompositionBuilder {
               "cameraAssetIsPreStyled": cameraAssetIsPreStyled,
               "cameraFitMode": cameraFitMode,
               "zoomSamplesCount": exportZoomSamples.count,
-              "zoomApplicationMode": "screenOverlayOnly",
+              "zoomApplicationMode": screenSourceMode == .precompositedCanvas
+                ? "precompositedCanvas"
+                : "screenOverlayOnly",
             ]
             context.merge(
               CameraPlacementDebug.rectContext(prefix: "screenContentRect", rect: screenContentRect),
@@ -1101,11 +1229,26 @@ final class CompositionBuilder {
         videoToTargetScale: screenScale,
         zoomSamples: exportZoomSamples,
         visibleRegionMaskSamples: cameraMaskSamples,
-        zoomApplicationMode: .screenOverlayOnly,
-        includeRoundedMask: false
+        zoomApplicationMode: screenSourceMode == .liveScreenTrack ? .screenOverlayOnly : .none,
+        includeRoundedMask: false,
+        backgroundMode: .resolvedOutput,
+        renderCursorOverlay: screenSourceMode == .liveScreenTrack,
+        debugSource: screenSourceMode == .precompositedCanvas ? "export_precomposited_final" : "export_two_source"
       )
 
-      return ExportCompositionResult(asset: composition, videoComposition: videoComposition)
+      return ExportCompositionResult(
+        asset: composition,
+        videoComposition: videoComposition,
+        debugInfo: ExportDebugInfo(
+          screenSourceMode: screenSourceMode,
+          usesScreenZoomTransformRamp: screenSourceMode == .liveScreenTrack && !exportZoomSamples.isEmpty,
+          rendersCursorOverlayInAnimationTool: screenSourceMode == .liveScreenTrack
+            && params.showCursor
+            && !(cursorRecording?.frames.isEmpty ?? true),
+          appliesScreenZoomInAnimationTool: screenSourceMode == .liveScreenTrack && !exportZoomSamples.isEmpty,
+          screenZoomIsPrecomposited: screenSourceMode == .precompositedCanvas
+        )
+      )
     } catch {
       NativeLogger.e(
         "Export",
@@ -1217,7 +1360,8 @@ final class CompositionBuilder {
     contentRect: CGRect,
     contentWidth: Double,
     contentHeight: Double,
-    videoDuration: Double
+    videoDuration: Double,
+    debugSource: String
   ) -> [ExportZoomSample] {
     guard let recording, !recording.frames.isEmpty else {
       return []
@@ -1230,7 +1374,8 @@ final class CompositionBuilder {
       contentRect: contentRect,
       contentWidth: contentWidth,
       contentHeight: contentHeight,
-      videoDuration: videoDuration
+      videoDuration: videoDuration,
+      debugSource: debugSource
     )
   }
 
@@ -1457,13 +1602,19 @@ final class CompositionBuilder {
     zoomSamples: [ExportZoomSample],
     visibleRegionMaskSamples: [VisibleRegionMaskSample],
     zoomApplicationMode: ExportZoomApplicationMode,
-    includeRoundedMask: Bool
+    includeRoundedMask: Bool,
+    backgroundMode: ExportBackgroundMode,
+    renderCursorOverlay: Bool,
+    debugSource: String
   ) {
+    let shouldRenderCursor =
+      renderCursorOverlay && params.showCursor && !(cursorRecording?.frames.isEmpty ?? true)
+    let shouldApplyZoom = !zoomSamples.isEmpty && zoomApplicationMode != .none
     guard
       params.cornerRadius > 0
         || params.backgroundImagePath != nil
-        || params.showCursor
-        || (zoomApplicationMode == .compositeVideoLayer && !zoomSamples.isEmpty)
+        || shouldRenderCursor
+        || shouldApplyZoom
     else {
       return
     }
@@ -1474,13 +1625,18 @@ final class CompositionBuilder {
     let bgLayer = CALayer()
     bgLayer.frame = CGRect(origin: .zero, size: target)
 
-    if let bgPath = params.backgroundImagePath, let img = NSImage(contentsOfFile: bgPath) {
-      bgLayer.contents = img.cgImageForLayer()
-      bgLayer.contentsGravity = .resizeAspectFill
-    } else if let color = params.backgroundColor {
-      bgLayer.backgroundColor = exportBackgroundColor(color)
-    } else {
-      bgLayer.backgroundColor = CGColor.black
+    switch backgroundMode {
+    case .resolvedOutput:
+      if let bgPath = params.backgroundImagePath, let img = NSImage(contentsOfFile: bgPath) {
+        bgLayer.contents = img.cgImageForLayer()
+        bgLayer.contentsGravity = .resizeAspectFill
+      } else if let color = params.backgroundColor {
+        bgLayer.backgroundColor = exportBackgroundColor(color)
+      } else {
+        bgLayer.backgroundColor = CGColor.black
+      }
+    case .transparent:
+      bgLayer.backgroundColor = CGColor(red: 0, green: 0, blue: 0, alpha: 0)
     }
     parentLayer.addSublayer(bgLayer)
 
@@ -1502,7 +1658,7 @@ final class CompositionBuilder {
     }
 
     let screenOverlayLayer: CALayer? = {
-      guard zoomApplicationMode == .screenOverlayOnly, params.showCursor else {
+      guard zoomApplicationMode == .screenOverlayOnly, shouldRenderCursor else {
         return nil
       }
       let overlayLayer = CALayer()
@@ -1514,7 +1670,7 @@ final class CompositionBuilder {
       return overlayLayer
     }()
 
-    if params.showCursor, let recording = cursorRecording, !recording.frames.isEmpty {
+    if shouldRenderCursor, let recording = cursorRecording, !recording.frames.isEmpty {
       addCursorLayer(
         to: screenOverlayLayer ?? videoLayer,
         recording: recording,
@@ -1526,17 +1682,20 @@ final class CompositionBuilder {
         tx: tx,
         ty: ty,
         asset: asset,
-        videoToTargetScale: videoToTargetScale
+        videoToTargetScale: videoToTargetScale,
+        debugSource: debugSource
       )
     }
 
-    if !zoomSamples.isEmpty {
+    if shouldApplyZoom {
       let zoomTargetLayer: CALayer?
       switch zoomApplicationMode {
       case .compositeVideoLayer:
         zoomTargetLayer = videoLayer
       case .screenOverlayOnly:
         zoomTargetLayer = screenOverlayLayer
+      case .none:
+        zoomTargetLayer = nil
       }
       if let zoomTargetLayer {
         applyZoomAnimation(
@@ -1544,10 +1703,23 @@ final class CompositionBuilder {
           zoomSamples: zoomSamples,
           focusX: contentRect.midX,
           focusY: contentRect.midY,
-          videoDuration: asset.duration.seconds
+          videoDuration: asset.duration.seconds,
+          debugSource: debugSource
         )
       }
     }
+
+    NativeLogger.d(
+      "Export",
+      "Configured export animation tool",
+      context: [
+        "debugSource": debugSource,
+        "zoomApplicationMode": "\(zoomApplicationMode)",
+        "shouldRenderCursor": shouldRenderCursor,
+        "shouldApplyZoom": shouldApplyZoom,
+        "backgroundMode": "\(backgroundMode)",
+      ]
+    )
 
     composition.animationTool = AVVideoCompositionCoreAnimationTool(
       postProcessingAsVideoLayer: videoLayer,
@@ -1574,7 +1746,8 @@ final class CompositionBuilder {
     contentRect: CGRect,
     contentWidth: Double,
     contentHeight: Double,
-    videoDuration: Double
+    videoDuration: Double,
+    debugSource: String
   ) -> [ExportZoomSample] {
     let frames = recording.frames
     guard params.zoomEnabled, !frames.isEmpty, videoDuration > 0 else { return [] }
@@ -1683,7 +1856,7 @@ final class CompositionBuilder {
 
       if ZoomFollowParityDebug.shouldLogExport(frameIndex: i) {
         ZoomFollowParityDebug.logSample(
-          source: "export",
+          source: debugSource,
           time: t,
           zoom: smoothZ,
           centerX: smoothCx,
@@ -1691,6 +1864,18 @@ final class CompositionBuilder {
           targetZoom: targetZ,
           targetCenterX: targetLookAtX,
           targetCenterY: targetLookAtY
+        )
+        NativeLogger.d(
+          "ZoomParity",
+          "Export cursor mapping sample",
+          context: [
+            "source": debugSource,
+            "time": t,
+            "zoomActive": stableZoomActive,
+            "mappedCursorX": rawCx,
+            "mappedCursorY": rawCy,
+            "mappedCursorTopDownY": rawCyTop,
+          ]
         )
       }
 
@@ -1825,7 +2010,8 @@ final class CompositionBuilder {
     tx: Double,
     ty: Double,
     asset: AVAsset,
-    videoToTargetScale: CGFloat
+    videoToTargetScale: CGFloat,
+    debugSource: String
   ) {
     let frames = recording.frames
     let sprites = recording.sprites
@@ -1970,6 +2156,37 @@ final class CompositionBuilder {
       return NSValue(point: CGPoint(x: ax, y: ay))
     }
 
+    if ZoomFollowParityDebug.enabled {
+      for (index, frame) in frames.enumerated() where ZoomFollowParityDebug.shouldLogExport(frameIndex: index) {
+        guard frame.spriteID >= 0 else { continue }
+        let size = spriteSizes[frame.spriteID] ?? defaultSize
+        let hotspot = spriteHotspots[frame.spriteID] ?? defaultHotspot
+        let spriteWidth = size.width * finalScale
+        let spriteHeight = size.height * finalScale
+        let hotspotX = hotspot.x * finalScale
+        let hotspotY = hotspot.y * finalScale
+        let mappedX = mapX(frame.x)
+        let mappedYTop = mapYTopDown(frame.y)
+        let mappedY = target.height - mappedYTop
+        let originX = mappedX - hotspotX
+        let originY = mappedY - (spriteHeight - hotspotY)
+        NativeLogger.d(
+          "ZoomParity",
+          "Export cursor layer sample",
+          context: [
+            "source": debugSource,
+            "time": frame.t,
+            "mappedCursorX": mappedX,
+            "mappedCursorY": mappedY,
+            "cursorOriginX": originX,
+            "cursorOriginY": originY,
+            "hotspotX": hotspotX,
+            "hotspotY": hotspotY,
+          ]
+        )
+      }
+    }
+
     // 4. Apply Animations
 
     let animDuration = videoDuration
@@ -2026,7 +2243,8 @@ final class CompositionBuilder {
     zoomSamples: [ExportZoomSample],
     focusX: CGFloat,
     focusY: CGFloat,
-    videoDuration: Double
+    videoDuration: Double,
+    debugSource: String
   ) {
     guard !zoomSamples.isEmpty else { return }
 
@@ -2061,6 +2279,32 @@ final class CompositionBuilder {
           sample: lastSample
         )
       )
+    }
+
+    if ZoomFollowParityDebug.enabled {
+      for (index, sample) in zoomSamples.enumerated() where ZoomFollowParityDebug.shouldLogExport(frameIndex: index) {
+        let transform = exportZoomTransform(
+          focusX: focusX,
+          focusY: focusY,
+          sample: sample
+        )
+        NativeLogger.d(
+          "ZoomParity",
+          "Export zoom parent transform sample",
+          context: [
+            "source": debugSource,
+            "time": sample.time,
+            "zoomActive": sample.isActive,
+            "sharedParent": true,
+            "transformA": transform.a,
+            "transformB": transform.b,
+            "transformC": transform.c,
+            "transformD": transform.d,
+            "transformTx": transform.tx,
+            "transformTy": transform.ty,
+          ]
+        )
+      }
     }
   }
 

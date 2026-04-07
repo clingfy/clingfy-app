@@ -901,6 +901,144 @@ final class LetterboxExporterTests: XCTestCase {
     XCTAssertFalse(exporter._testShouldUseCameraPrepass(cameraParams: params))
   }
 
+  func testCameraCursorZoomUsesScreenPrepass() {
+    let exporter = LetterboxExporter()
+    let params = CompositionParams(
+      targetSize: CGSize(width: 640, height: 360),
+      padding: 0.0,
+      cornerRadius: 0.0,
+      backgroundColor: nil,
+      backgroundImagePath: nil,
+      cursorSize: 1.0,
+      showCursor: true,
+      zoomEnabled: true,
+      zoomFactor: 1.8,
+      followStrength: 0.15,
+      fpsHint: 30,
+      fitMode: "fit",
+      audioGainDb: 0.0,
+      audioVolumePercent: 100.0
+    )
+    let cameraParams = CameraCompositionParams(
+      visible: true,
+      layoutPreset: .overlayBottomRight,
+      normalizedCanvasCenter: nil,
+      sizeFactor: 0.2,
+      shape: .square,
+      cornerRadius: 0.0,
+      opacity: 1.0,
+      mirror: false,
+      contentMode: .fill,
+      zoomBehavior: .fixed,
+      borderWidth: 0.0,
+      borderColorArgb: nil,
+      shadowPreset: 0,
+      chromaKeyEnabled: false,
+      chromaKeyStrength: 0.4,
+      chromaKeyColorArgb: nil
+    )
+
+    XCTAssertTrue(
+      exporter._testShouldUseScreenPrepass(
+        cameraAssetURL: URL(fileURLWithPath: "/tmp/camera.mov"),
+        cameraParams: cameraParams,
+        params: params,
+        cursorRecording: makeZoomCursorRecording()
+      )
+    )
+    XCTAssertFalse(
+      exporter._testShouldUseScreenPrepass(
+        cameraAssetURL: URL(fileURLWithPath: "/tmp/camera.mov"),
+        cameraParams: cameraParams,
+        params: CompositionParams(
+          targetSize: params.targetSize,
+          padding: params.padding,
+          cornerRadius: params.cornerRadius,
+          backgroundColor: params.backgroundColor,
+          backgroundImagePath: params.backgroundImagePath,
+          cursorSize: params.cursorSize,
+          showCursor: params.showCursor,
+          zoomEnabled: false,
+          zoomFactor: params.zoomFactor,
+          followStrength: params.followStrength,
+          fpsHint: params.fpsHint,
+          fitMode: params.fitMode,
+          audioGainDb: params.audioGainDb,
+          audioVolumePercent: params.audioVolumePercent
+        ),
+        cursorRecording: makeZoomCursorRecording()
+      )
+    )
+  }
+
+  func testScreenPrepassPreservesBlueColorBalance() throws {
+    let tempDir = makeTemporaryDirectory()
+    defer { try? FileManager.default.removeItem(at: tempDir) }
+
+    let screenURL = tempDir.appendingPathComponent("screen.mov")
+    try makeSolidColorVideo(
+      url: screenURL,
+      size: CGSize(width: 320, height: 180),
+      durationSeconds: 1.0,
+      color: .systemBlue
+    )
+
+    let params = CompositionParams(
+      targetSize: CGSize(width: 640, height: 360),
+      padding: 0.0,
+      cornerRadius: 0.0,
+      backgroundColor: nil,
+      backgroundImagePath: nil,
+      cursorSize: 20.0,
+      showCursor: true,
+      zoomEnabled: true,
+      zoomFactor: 1.8,
+      followStrength: 0.15,
+      fpsHint: 30,
+      fitMode: "fit",
+      audioGainDb: 0.0,
+      audioVolumePercent: 100.0
+    )
+
+    let exporter = LetterboxExporter()
+    let renderExpectation = expectation(description: "screen prepass rendered")
+    var renderResult: Result<ScreenPreparedIntermediate, Error>?
+
+    exporter._testPrepareScreenIntermediate(
+      inputURL: screenURL,
+      params: params,
+      cursorRecording: makeZoomCursorRecording()
+    ) { result in
+      renderResult = result
+      renderExpectation.fulfill()
+    }
+
+    wait(for: [renderExpectation], timeout: 30.0)
+    let prepared = try XCTUnwrap(try renderResult?.get())
+    defer {
+      prepared.temporaryArtifacts.forEach { try? FileManager.default.removeItem(at: $0) }
+    }
+
+    let renderedSize = try orientedVideoSize(url: prepared.url)
+    XCTAssertEqual(renderedSize.width, params.targetSize.width, accuracy: 1.0)
+    XCTAssertEqual(renderedSize.height, params.targetSize.height, accuracy: 1.0)
+    let image = try sampleFrameImage(url: prepared.url, time: 0.55)
+    XCTAssertGreaterThan(
+      try dominantBlueRatio(for: image, ignoreTransparentPixels: true),
+      0.60
+    )
+    XCTAssertLessThan(
+      try dominantRedRatio(for: image, ignoreTransparentPixels: true),
+      0.10
+    )
+    XCTAssertNil(
+      exporter._testValidateScreenPrepassIntermediate(
+        rawScreenURL: screenURL,
+        prepassScreenURL: prepared.url
+      )
+    )
+  }
+
   func testCameraPrepassRendersNonBlackFrame() throws {
     let tempDir = makeTemporaryDirectory()
     defer { try? FileManager.default.removeItem(at: tempDir) }
@@ -1299,7 +1437,7 @@ final class LetterboxExporterTests: XCTestCase {
     }
   }
 
-  func testTwoSourceExportAppliesScreenZoomRampWhileKeepingFixedCameraStatic() throws {
+  func testTwoSourceExportSkipsScreenZoomRampWhenScreenIsPrecomposited() throws {
     let tempDir = makeTemporaryDirectory()
     defer { try? FileManager.default.removeItem(at: tempDir) }
 
@@ -1325,7 +1463,7 @@ final class LetterboxExporterTests: XCTestCase {
       backgroundColor: nil,
       backgroundImagePath: nil,
       cursorSize: 1.0,
-      showCursor: false,
+      showCursor: true,
       zoomEnabled: true,
       zoomFactor: 1.8,
       followStrength: 0.15,
@@ -1354,17 +1492,44 @@ final class LetterboxExporterTests: XCTestCase {
       chromaKeyColorArgb: nil
     )
 
+    let exporter = LetterboxExporter()
+    let prepassExpectation = expectation(description: "screen prepass rendered")
+    var prepassResult: Result<ScreenPreparedIntermediate, Error>?
+
+    exporter._testPrepareScreenIntermediate(
+      inputURL: screenURL,
+      params: params,
+      cursorRecording: makeZoomCursorRecording()
+    ) { result in
+      prepassResult = result
+      prepassExpectation.fulfill()
+    }
+
+    wait(for: [prepassExpectation], timeout: 30.0)
+    let preparedScreen = try XCTUnwrap(try prepassResult?.get())
+    defer {
+      preparedScreen.temporaryArtifacts.forEach { try? FileManager.default.removeItem(at: $0) }
+    }
+
     let builder = CompositionBuilder()
     let result = try XCTUnwrap(
       builder.buildExport(
-        asset: AVAsset(url: screenURL),
+        asset: AVAsset(url: preparedScreen.url),
         cameraAsset: AVAsset(url: cameraURL),
         params: params,
         cameraParams: cameraParams,
         cursorRecording: makeZoomCursorRecording(),
-        cameraAssetIsPreStyled: false
+        cameraAssetIsPreStyled: false,
+        screenSourceMode: .precompositedCanvas,
+        screenAudioAsset: AVAsset(url: screenURL)
       )
     )
+
+    XCTAssertEqual(result.debugInfo.screenSourceMode, .precompositedCanvas)
+    XCTAssertFalse(result.debugInfo.usesScreenZoomTransformRamp)
+    XCTAssertFalse(result.debugInfo.rendersCursorOverlayInAnimationTool)
+    XCTAssertFalse(result.debugInfo.appliesScreenZoomInAnimationTool)
+    XCTAssertTrue(result.debugInfo.screenZoomIsPrecomposited)
 
     let instruction = try XCTUnwrap(
       result.videoComposition.instructions.first as? AVMutableVideoCompositionInstruction
@@ -1401,12 +1566,7 @@ final class LetterboxExporterTests: XCTestCase {
       timeRange: &screenTimeRange
     )
 
-    XCTAssertTrue(hasScreenRamp)
-    XCTAssertFalse(
-      transformsApproximatelyEqual(screenStart, screenEnd),
-      "screen transform should vary during active zoom in the two-source path"
-    )
-    XCTAssertGreaterThan(screenTimeRange.duration.seconds, 0.0)
+    XCTAssertFalse(hasScreenRamp)
   }
 
   func testSingleSourceExportConfiguresCompositeZoomWithoutCursorOverlay() throws {
@@ -1479,7 +1639,7 @@ final class LetterboxExporterTests: XCTestCase {
       targetSize: CGSize(width: 640, height: 360),
       padding: 0.0,
       cornerRadius: 0.0,
-      backgroundColor: nil,
+      backgroundColor: 0xFF4CAF50,
       backgroundImagePath: nil,
       cursorSize: 20.0,
       showCursor: true,
@@ -1511,18 +1671,41 @@ final class LetterboxExporterTests: XCTestCase {
       chromaKeyColorArgb: nil
     )
 
+    let exporter = LetterboxExporter()
+    let prepassExpectation = expectation(description: "screen prepass rendered")
+    var prepassResult: Result<ScreenPreparedIntermediate, Error>?
+
+    exporter._testPrepareScreenIntermediate(
+      inputURL: screenURL,
+      params: params,
+      cursorRecording: makeZoomCursorRecording()
+    ) { result in
+      prepassResult = result
+      prepassExpectation.fulfill()
+    }
+
+    wait(for: [prepassExpectation], timeout: 30.0)
+    let preparedScreen = try XCTUnwrap(try prepassResult?.get())
+    defer {
+      preparedScreen.temporaryArtifacts.forEach { try? FileManager.default.removeItem(at: $0) }
+    }
+
     let builder = CompositionBuilder()
     let result = try XCTUnwrap(
       builder.buildExport(
-        asset: AVAsset(url: screenURL),
+        asset: AVAsset(url: preparedScreen.url),
         cameraAsset: AVAsset(url: cameraURL),
         params: params,
         cameraParams: cameraParams,
         cursorRecording: makeZoomCursorRecording(),
-        cameraAssetIsPreStyled: false
+        cameraAssetIsPreStyled: false,
+        screenSourceMode: .precompositedCanvas,
+        screenAudioAsset: AVAsset(url: screenURL)
       )
     )
 
+    XCTAssertEqual(result.debugInfo.screenSourceMode, .precompositedCanvas)
+    XCTAssertTrue(result.debugInfo.screenZoomIsPrecomposited)
     let outputURL = tempDir.appendingPathComponent("two-source.mov")
     try exportComposition(result, to: outputURL, preset: AVAssetExportPresetHighestQuality)
 
@@ -1551,6 +1734,16 @@ final class LetterboxExporterTests: XCTestCase {
       try dominantRedRatio(for: cameraCrop, ignoreTransparentPixels: false),
       0.25,
       "camera crop should remain visibly red in its pinned overlay frame during opposite-side zoom"
+    )
+    XCTAssertGreaterThan(
+      try dominantBlueRatio(for: centerCrop, ignoreTransparentPixels: false),
+      0.20,
+      "screen crop should preserve the blue screen content instead of being washed red"
+    )
+    XCTAssertLessThan(
+      try dominantRedRatio(for: centerCrop, ignoreTransparentPixels: false),
+      0.20,
+      "screen crop should not become globally red-tinted when using the screen pre-pass"
     )
     XCTAssertGreaterThan(
       try dominantWhiteRatio(for: centerCrop, ignoreTransparentPixels: false),

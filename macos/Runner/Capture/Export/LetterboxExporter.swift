@@ -20,8 +20,19 @@ final class LetterboxExporter {
     }
   }
 
+  private struct FrameColorMetrics {
+    let visiblePixels: Int
+    let averageRed: Double
+    let averageGreen: Double
+    let averageBlue: Double
+    let dominantRedRatio: Double
+    let dominantGreenRatio: Double
+    let dominantBlueRatio: Double
+  }
+
   private let builder = CompositionBuilder()
   private let cameraPrepassPipeline = CameraStyledIntermediatePipeline()
+  private let screenPrepassPipeline = ScreenZoomCursorIntermediatePipeline()
   private var currentSession: AVAssetExportSession?
   private var progressTimer: Timer?
   private var temporaryArtifacts: [URL] = []
@@ -152,6 +163,91 @@ final class LetterboxExporter {
     }
 
     return metrics
+  }
+
+  private func analyzeFrameColorMetrics(
+    _ image: CGImage,
+    ignoreTransparentPixels: Bool
+  ) -> FrameColorMetrics? {
+    let width = validationSampleDimension
+    let height = validationSampleDimension
+    let bytesPerRow = width * 4
+    var buffer = [UInt8](repeating: 0, count: height * bytesPerRow)
+    let colorSpace = CGColorSpaceCreateDeviceRGB()
+
+    buffer.withUnsafeMutableBytes { rawBuffer in
+      guard
+        let baseAddress = rawBuffer.baseAddress,
+        let context = CGContext(
+          data: baseAddress,
+          width: width,
+          height: height,
+          bitsPerComponent: 8,
+          bytesPerRow: bytesPerRow,
+          space: colorSpace,
+          bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue
+            | CGBitmapInfo.byteOrder32Big.rawValue
+        )
+      else {
+        return
+      }
+
+      context.interpolationQuality = .medium
+      context.draw(image, in: CGRect(x: 0, y: 0, width: width, height: height))
+    }
+
+    var visiblePixels = 0
+    var redDominantPixels = 0
+    var greenDominantPixels = 0
+    var blueDominantPixels = 0
+    var redTotal = 0.0
+    var greenTotal = 0.0
+    var blueTotal = 0.0
+
+    for pixelIndex in 0..<(width * height) {
+      let offset = pixelIndex * 4
+      let alpha = buffer[offset + 3]
+      if ignoreTransparentPixels && alpha <= validationAlphaThreshold {
+        continue
+      }
+
+      let red = Double(buffer[offset]) / 255.0
+      let green = Double(buffer[offset + 1]) / 255.0
+      let blue = Double(buffer[offset + 2]) / 255.0
+
+      visiblePixels += 1
+      redTotal += red
+      greenTotal += green
+      blueTotal += blue
+
+      if Int(buffer[offset]) > Int(buffer[offset + 1]) + 20
+        && Int(buffer[offset]) > Int(buffer[offset + 2]) + 20
+      {
+        redDominantPixels += 1
+      }
+      if Int(buffer[offset + 1]) > Int(buffer[offset]) + 20
+        && Int(buffer[offset + 1]) > Int(buffer[offset + 2]) + 20
+      {
+        greenDominantPixels += 1
+      }
+      if Int(buffer[offset + 2]) > Int(buffer[offset]) + 20
+        && Int(buffer[offset + 2]) > Int(buffer[offset + 1]) + 20
+      {
+        blueDominantPixels += 1
+      }
+    }
+
+    guard visiblePixels > 0 else { return nil }
+
+    return FrameColorMetrics(
+      visiblePixels: visiblePixels,
+      averageRed: redTotal / Double(visiblePixels),
+      averageGreen: greenTotal / Double(visiblePixels),
+      averageBlue: blueTotal / Double(visiblePixels),
+      dominantRedRatio: Double(redDominantPixels) / Double(visiblePixels),
+      dominantGreenRatio: Double(greenDominantPixels) / Double(visiblePixels),
+      dominantBlueRatio: Double(blueDominantPixels) / Double(visiblePixels)
+    )
   }
 
   private func croppedImageVariants(
@@ -345,6 +441,99 @@ final class LetterboxExporter {
       return makeAdvancedCameraExportError(
         stage: .finalOutputValidation,
         reason: "The final export validator could not sample the exported file.",
+        context: ["error": error.localizedDescription]
+      )
+    }
+  }
+
+  private func validateScreenPrepassIntermediate(
+    rawScreenAsset: AVAsset,
+    prepassScreenAsset: AVAsset
+  ) -> NSError? {
+    do {
+      let rawImage = try sampleFrameImage(asset: rawScreenAsset)
+      let prepassImage = try sampleFrameImage(asset: prepassScreenAsset)
+
+      guard
+        let rawContentMetrics = analyzeFrameContent(rawImage, ignoreTransparentPixels: false),
+        let prepassContentMetrics = analyzeFrameContent(prepassImage, ignoreTransparentPixels: true),
+        let rawColorMetrics = analyzeFrameColorMetrics(rawImage, ignoreTransparentPixels: false),
+        let prepassColorMetrics = analyzeFrameColorMetrics(prepassImage, ignoreTransparentPixels: true)
+      else {
+        return makeScreenPrepassExportError(
+          stage: .validation,
+          reason: "The screen pre-pass validator could not analyze the rendered frame."
+        )
+      }
+
+      NativeLogger.d(
+        "Export",
+        "Screen pre-pass validation metrics",
+        context: [
+          "rawNonBlackRatio": rawContentMetrics.nonBlackVisibleRatio,
+          "prepassVisibleRatio": prepassContentMetrics.visibleRatio,
+          "prepassNonBlackRatio": prepassContentMetrics.nonBlackVisibleRatio,
+          "rawAverageRed": rawColorMetrics.averageRed,
+          "rawAverageGreen": rawColorMetrics.averageGreen,
+          "rawAverageBlue": rawColorMetrics.averageBlue,
+          "rawDominantRedRatio": rawColorMetrics.dominantRedRatio,
+          "rawDominantGreenRatio": rawColorMetrics.dominantGreenRatio,
+          "rawDominantBlueRatio": rawColorMetrics.dominantBlueRatio,
+          "prepassAverageRed": prepassColorMetrics.averageRed,
+          "prepassAverageGreen": prepassColorMetrics.averageGreen,
+          "prepassAverageBlue": prepassColorMetrics.averageBlue,
+          "prepassDominantRedRatio": prepassColorMetrics.dominantRedRatio,
+          "prepassDominantGreenRatio": prepassColorMetrics.dominantGreenRatio,
+          "prepassDominantBlueRatio": prepassColorMetrics.dominantBlueRatio,
+        ]
+      )
+
+      guard rawContentMetrics.nonBlackVisibleRatio >= 0.05 else {
+        return nil
+      }
+
+      if prepassContentMetrics.visiblePixels == 0 || prepassContentMetrics.nonBlackVisibleRatio < 0.01 {
+        return makeScreenPrepassExportError(
+          stage: .validation,
+          reason: "The screen pre-pass rendered blank or black video.",
+          context: [
+            "prepassVisibleRatio": prepassContentMetrics.visibleRatio,
+            "prepassNonBlackRatio": prepassContentMetrics.nonBlackVisibleRatio,
+          ]
+        )
+      }
+
+      let hasSevereRedWash =
+        rawColorMetrics.dominantRedRatio < 0.35
+        && prepassColorMetrics.dominantRedRatio > 0.70
+        && prepassColorMetrics.dominantGreenRatio < 0.20
+        && prepassColorMetrics.dominantBlueRatio < 0.20
+        && prepassColorMetrics.averageRed > rawColorMetrics.averageRed + 0.20
+        && prepassColorMetrics.averageRed > prepassColorMetrics.averageGreen + 0.20
+        && prepassColorMetrics.averageRed > prepassColorMetrics.averageBlue + 0.20
+
+      if hasSevereRedWash {
+        return makeScreenPrepassExportError(
+          stage: .validation,
+          reason: "The screen pre-pass rendered with a severe red color cast.",
+          context: [
+            "rawDominantRedRatio": rawColorMetrics.dominantRedRatio,
+            "prepassDominantRedRatio": prepassColorMetrics.dominantRedRatio,
+            "prepassDominantGreenRatio": prepassColorMetrics.dominantGreenRatio,
+            "prepassDominantBlueRatio": prepassColorMetrics.dominantBlueRatio,
+            "rawAverageRed": rawColorMetrics.averageRed,
+            "prepassAverageRed": prepassColorMetrics.averageRed,
+            "prepassAverageGreen": prepassColorMetrics.averageGreen,
+            "prepassAverageBlue": prepassColorMetrics.averageBlue,
+          ]
+        )
+      }
+
+      return nil
+    } catch {
+      return makeScreenPrepassExportError(
+        stage: .validation,
+        reason: "The screen pre-pass validator could not sample the intermediate.",
         context: ["error": error.localizedDescription]
       )
     }
@@ -558,6 +747,14 @@ final class LetterboxExporter {
         "hasCustomBackground": backgroundColor != nil || backgroundImagePath != nil,
       ])
 
+    let shouldUseCameraPrepass = cameraPrepassPipeline.requiresPrepass(cameraParams: cameraParams)
+    let shouldUseScreenPrepass = screenPrepassPipeline.requiresPrepass(
+      cameraAssetURL: cameraInputURL,
+      cameraParams: cameraParams,
+      params: params,
+      cursorRecording: cursorRecording
+    )
+
     func pickPreset(for exportAsset: AVAsset) -> String {
       let compatible = Set(AVAssetExportSession.exportPresets(compatibleWith: exportAsset))
 
@@ -611,18 +808,31 @@ final class LetterboxExporter {
         : pick([AVAssetExportPresetHighestQuality])
     }
 
+    func scaledProgress(
+      _ progress: Double,
+      into range: ClosedRange<Double>
+    ) -> Double {
+      let clamped = min(max(progress, 0.0), 1.0)
+      return range.lowerBound + (clamped * (range.upperBound - range.lowerBound))
+    }
+
     func beginFinalExport(
+      resolvedScreenInputURL: URL,
       resolvedCameraInputURL: URL?,
       progressRange: ClosedRange<Double>,
       cameraAssetIsPreStyled: Bool,
-      cameraPlacementSourceRect: CGRect?
+      cameraPlacementSourceRect: CGRect?,
+      screenSourceMode: CompositionBuilder.ScreenSourceMode
     ) {
+      let screenAsset = AVAsset(url: resolvedScreenInputURL)
       let cameraAsset = resolvedCameraInputURL.map(AVAsset.init(url:))
 
       if CameraPlacementDebug.enabled {
         var context: [String: Any] = [
+          "resolvedScreenInputURL": resolvedScreenInputURL.path,
           "resolvedCameraInputURL": resolvedCameraInputURL?.path ?? "nil",
           "cameraAssetIsPreStyled": cameraAssetIsPreStyled,
+          "screenSourceMode": screenSourceMode.rawValue,
         ]
         context.merge(
           CameraPlacementDebug.sizeContext(prefix: "target", size: target),
@@ -660,13 +870,15 @@ final class LetterboxExporter {
 
       guard
         let comp = builder.buildExport(
-          asset: asset,
+          asset: screenAsset,
           cameraAsset: cameraAsset,
           params: params,
           cameraParams: cameraParams,
           cursorRecording: cursorRecording,
           cameraAssetIsPreStyled: cameraAssetIsPreStyled,
-          cameraPlacementSourceRect: cameraPlacementSourceRect
+          cameraPlacementSourceRect: cameraPlacementSourceRect,
+          screenSourceMode: screenSourceMode,
+          screenAudioAsset: screenSourceMode == .precompositedCanvas ? asset : nil
         )
       else {
         cleanupTemporaryArtifacts()
@@ -739,9 +951,11 @@ final class LetterboxExporter {
         "Export",
         "Starting final export session",
         context: [
-          "input": inputURL.path,
+          "input": resolvedScreenInputURL.path,
           "cameraInput": resolvedCameraInputURL?.path ?? "nil",
           "cameraAssetIsPreStyled": cameraAssetIsPreStyled,
+          "screenSourceMode": screenSourceMode.rawValue,
+          "screenZoomBaked": comp.debugInfo.screenZoomIsPrecomposited,
           "output": outputURL.path,
           "target": "\(Int(target.width))x\(Int(target.height))",
           "renderSize":
@@ -810,11 +1024,75 @@ final class LetterboxExporter {
       }
     }
 
+    func beginScreenPhase(
+      resolvedCameraInputURL: URL?,
+      cameraAssetIsPreStyled: Bool,
+      cameraPlacementSourceRect: CGRect?,
+      screenPrepassRange: ClosedRange<Double>?,
+      finalRange: ClosedRange<Double>
+    ) {
+      guard shouldUseScreenPrepass, let cursorRecording else {
+        beginFinalExport(
+          resolvedScreenInputURL: inputURL,
+          resolvedCameraInputURL: resolvedCameraInputURL,
+          progressRange: finalRange,
+          cameraAssetIsPreStyled: cameraAssetIsPreStyled,
+          cameraPlacementSourceRect: cameraPlacementSourceRect,
+          screenSourceMode: .liveScreenTrack
+        )
+        return
+      }
+
+      let prepassRange = screenPrepassRange ?? finalRange
+      screenPrepassPipeline.prepareIntermediate(
+        inputURL: inputURL,
+        params: params,
+        cursorRecording: cursorRecording,
+        isCancelled: { [weak self] in self?.isCancelled ?? true },
+        onProgress: { progress in
+          onProgress?(scaledProgress(progress, into: prepassRange))
+        }
+      ) { [weak self] result in
+        switch result {
+        case .success(let prepared):
+          prepared.temporaryArtifacts.forEach { self?.registerTemporaryArtifact($0) }
+          if let validationError = self?.validateScreenPrepassIntermediate(
+            rawScreenAsset: asset,
+            prepassScreenAsset: AVAsset(url: prepared.url)
+          ) {
+            NativeLogger.e(
+              "Export",
+              "Screen pre-pass validation failed",
+              context: validationError.userInfo
+            )
+            self?.cleanupTemporaryArtifacts()
+            completion(.failure(validationError))
+            return
+          }
+          beginFinalExport(
+            resolvedScreenInputURL: prepared.url,
+            resolvedCameraInputURL: resolvedCameraInputURL,
+            progressRange: finalRange,
+            cameraAssetIsPreStyled: cameraAssetIsPreStyled,
+            cameraPlacementSourceRect: cameraPlacementSourceRect,
+            screenSourceMode: .precompositedCanvas
+          )
+
+        case .failure(let error):
+          self?.cleanupTemporaryArtifacts()
+          completion(.failure(error))
+        }
+      }
+    }
+
     if let cameraInputURL,
       let cameraParams,
-      cameraPrepassPipeline.requiresPrepass(cameraParams: cameraParams)
+      shouldUseCameraPrepass
     {
       let cameraAsset = AVAsset(url: cameraInputURL)
+      let cameraRange: ClosedRange<Double> = shouldUseScreenPrepass ? (0.0...0.35) : (0.0...0.35)
+      let screenRange: ClosedRange<Double>? = shouldUseScreenPrepass ? (0.35...0.65) : nil
+      let finalRange: ClosedRange<Double> = shouldUseScreenPrepass ? (0.65...1.0) : (0.35...1.0)
       cameraPrepassPipeline.prepareIntermediate(
         inputURL: cameraInputURL,
         canvasSize: target,
@@ -822,7 +1100,7 @@ final class LetterboxExporter {
         fpsHint: fpsHint,
         isCancelled: { [weak self] in self?.isCancelled ?? true },
         onProgress: { progress in
-          onProgress?(progress * 0.35)
+          onProgress?(scaledProgress(progress, into: cameraRange))
         }
       ) { [weak self] result in
         switch result {
@@ -854,11 +1132,12 @@ final class LetterboxExporter {
             ]
           )
 
-          beginFinalExport(
+          beginScreenPhase(
             resolvedCameraInputURL: prepared.url,
-            progressRange: 0.35...1.0,
             cameraAssetIsPreStyled: prepared.cameraAssetIsPreStyled,
-            cameraPlacementSourceRect: prepared.placementSourceRect
+            cameraPlacementSourceRect: prepared.placementSourceRect,
+            screenPrepassRange: screenRange,
+            finalRange: finalRange
           )
 
         case .failure(let error):
@@ -869,11 +1148,12 @@ final class LetterboxExporter {
       return
     }
 
-    beginFinalExport(
+    beginScreenPhase(
       resolvedCameraInputURL: cameraInputURL,
-      progressRange: 0.0...1.0,
       cameraAssetIsPreStyled: false,
-      cameraPlacementSourceRect: nil
+      cameraPlacementSourceRect: nil,
+      screenPrepassRange: shouldUseScreenPrepass ? (0.0...0.30) : nil,
+      finalRange: shouldUseScreenPrepass ? (0.30...1.0) : (0.0...1.0)
     )
   }
 
@@ -1051,6 +1331,20 @@ final class LetterboxExporter {
     cameraPrepassPipeline.requiresPrepass(cameraParams: cameraParams)
   }
 
+  func _testShouldUseScreenPrepass(
+    cameraAssetURL: URL?,
+    cameraParams: CameraCompositionParams?,
+    params: CompositionParams,
+    cursorRecording: CursorRecording?
+  ) -> Bool {
+    screenPrepassPipeline.requiresPrepass(
+      cameraAssetURL: cameraAssetURL,
+      cameraParams: cameraParams,
+      params: params,
+      cursorRecording: cursorRecording
+    )
+  }
+
   func _testPrepareCameraIntermediate(
     inputURL: URL,
     canvasSize: CGSize,
@@ -1063,6 +1357,22 @@ final class LetterboxExporter {
       canvasSize: canvasSize,
       params: cameraParams,
       fpsHint: fpsHint,
+      isCancelled: { false },
+      onProgress: nil,
+      completion: completion
+    )
+  }
+
+  func _testPrepareScreenIntermediate(
+    inputURL: URL,
+    params: CompositionParams,
+    cursorRecording: CursorRecording,
+    completion: @escaping (Result<ScreenPreparedIntermediate, Error>) -> Void
+  ) {
+    screenPrepassPipeline.prepareIntermediate(
+      inputURL: inputURL,
+      params: params,
+      cursorRecording: cursorRecording,
       isCancelled: { false },
       onProgress: nil,
       completion: completion
@@ -1094,6 +1404,16 @@ final class LetterboxExporter {
       canvasSize: canvasSize,
       cameraParams: cameraParams,
       placementSourceRect: placementSourceRect
+    )
+  }
+
+  func _testValidateScreenPrepassIntermediate(
+    rawScreenURL: URL,
+    prepassScreenURL: URL
+  ) -> NSError? {
+    validateScreenPrepassIntermediate(
+      rawScreenAsset: AVAsset(url: rawScreenURL),
+      prepassScreenAsset: AVAsset(url: prepassScreenURL)
     )
   }
 #endif
