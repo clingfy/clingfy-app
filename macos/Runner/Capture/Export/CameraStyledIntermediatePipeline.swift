@@ -264,7 +264,7 @@ final class CameraStyledIntermediatePipeline {
   ) -> CGImage? {
     let width = max(1, Int(ceil(size.width)))
     let height = max(1, Int(ceil(size.height)))
-    let colorSpace = CGColorSpaceCreateDeviceRGB()
+    let colorSpace = VideoColorPipeline.workingColorSpace
     guard
       let context = CGContext(
         data: nil,
@@ -300,12 +300,7 @@ final class CameraStyledIntermediatePipeline {
   }
 
   private func cameraColor(from argb: Int?) -> NSColor {
-    guard let argb else { return .white }
-    let a = CGFloat((argb >> 24) & 0xFF) / 255.0
-    let r = CGFloat((argb >> 16) & 0xFF) / 255.0
-    let g = CGFloat((argb >> 8) & 0xFF) / 255.0
-    let b = CGFloat(argb & 0xFF) / 255.0
-    return NSColor(red: r, green: g, blue: b, alpha: a)
+    VideoColorPipeline.nsColor(fromARGB: argb)
   }
 
   private func makeStyledShadowImage(
@@ -442,7 +437,7 @@ final class CameraStyledIntermediatePipeline {
     )
     let renderSize = paddedRenderBounds.size
     let renderBounds = CGRect(origin: .zero, size: renderSize)
-    let colorSpace = CGColorSpaceCreateDeviceRGB()
+    let colorSpace = VideoColorPipeline.workingColorSpace
     let ciContext = CIContext(options: [.cacheIntermediates: false])
     let sourceTransform = normalizedSourceTransform(for: videoTrack)
     let sourceSize = orientedSize(for: videoTrack)
@@ -541,18 +536,51 @@ final class CameraStyledIntermediatePipeline {
     }
     reader.add(readerOutput)
 
-    let writerInput = AVAssetWriterInput(
-      mediaType: .video,
-      outputSettings: [
-        AVVideoCodecKey: AVVideoCodecType.proRes4444,
-        AVVideoWidthKey: Int(renderSize.width),
-        AVVideoHeightKey: Int(renderSize.height),
-        AVVideoColorPropertiesKey: [
-          AVVideoColorPrimariesKey: AVVideoColorPrimaries_ITU_R_709_2,
-          AVVideoTransferFunctionKey: AVVideoTransferFunction_ITU_R_709_2,
+    let writerInput: AVAssetWriterInput
+    do {
+      writerInput = try VideoColorPipeline.makeVideoWriterInput(
+        baseOutputSettings: [
+          AVVideoCodecKey: AVVideoCodecType.proRes4444,
+          AVVideoWidthKey: Int(renderSize.width),
+          AVVideoHeightKey: Int(renderSize.height),
         ],
-      ]
-    )
+        category: "Export",
+        operation: "styled_camera_intermediate",
+        extraContext: [
+          "cameraPrepassSelected": true,
+          "shape": params.shape.rawValue,
+          "borderWidth": params.borderWidth,
+          "shadowPreset": params.shadowPreset,
+          "renderSize": "\(Int(renderSize.width))x\(Int(renderSize.height))",
+        ]
+      )
+    } catch let error as VideoColorPipeline.VideoWriterInputBuildError {
+      DispatchQueue.main.async {
+        completion(
+          .failure(
+            makeAdvancedCameraExportError(
+              stage: .styledIntermediateBuild,
+              reason: error.reason,
+              context: error.context
+            )
+          )
+        )
+      }
+      return
+    } catch {
+      DispatchQueue.main.async {
+        completion(
+          .failure(
+            makeAdvancedCameraExportError(
+              stage: .styledIntermediateBuild,
+              reason: "The styled camera intermediate writer input could not be created.",
+              context: ["error": error.localizedDescription]
+            )
+          )
+        )
+      }
+      return
+    }
     writerInput.expectsMediaDataInRealTime = false
 
     let adaptor = AVAssetWriterInputPixelBufferAdaptor(
@@ -584,6 +612,7 @@ final class CameraStyledIntermediatePipeline {
     removeFileIfExists(outputURL)
     let durationSeconds = max(inputAsset.duration.seconds, 0.001)
     let renderQueue = DispatchQueue(label: "Clingfy.StyledCameraRender")
+    var didLogSourceColorMetadata = false
     var completed = false
 
     func finish(_ result: Result<StyledCameraRenderResult, Error>) {
@@ -675,6 +704,22 @@ final class CameraStyledIntermediatePipeline {
 
             if writer.status == .completed {
               onProgress?(1.0)
+              var readyContext: [String: Any] = [
+                "output": outputURL.path,
+                "renderSize": "\(Int(renderSize.width))x\(Int(renderSize.height))",
+              ]
+              VideoColorPipeline.metadataContext(
+                prefix: "outputTrack",
+                metadata: VideoColorPipeline.assetTrackColorMetadata(
+                  AVAsset(url: outputURL).tracks(withMediaType: .video).first
+                )
+              ).forEach { readyContext[$0.key] = $0.value }
+              readyContext["workingColorSpace"] = VideoColorPipeline.workingColorSpaceName
+              NativeLogger.i(
+                "Export",
+                "Styled camera intermediate ready",
+                context: readyContext
+              )
               finish(
                 .success(
                   StyledCameraRenderResult(
@@ -703,6 +748,20 @@ final class CameraStyledIntermediatePipeline {
           return
         }
 
+        if !didLogSourceColorMetadata {
+          didLogSourceColorMetadata = true
+          VideoColorPipeline.logColorMetadata(
+            category: "Export",
+            message: "Styled camera pre-pass source color metadata",
+            formatDescription: CMSampleBufferGetFormatDescription(sampleBuffer),
+            pixelBuffer: sourcePixelBuffer,
+            extraContext: [
+              "input": inputAsset.description,
+              "output": outputURL.path,
+            ]
+          )
+        }
+
         guard let pixelBufferPool = adaptor.pixelBufferPool else {
           failRender(reason: "The styled camera intermediate writer has no pixel buffer pool.")
           return
@@ -721,6 +780,7 @@ final class CameraStyledIntermediatePipeline {
           )
           return
         }
+        VideoColorPipeline.tag(pixelBuffer: renderedPixelBuffer)
 
         guard let context = self.makeBitmapContext(pixelBuffer: renderedPixelBuffer, colorSpace: colorSpace) else {
           failRender(reason: "The styled camera intermediate could not create a render context.")

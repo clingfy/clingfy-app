@@ -12,6 +12,566 @@ extension NSImage {
   }
 }
 
+enum VideoColorPipeline {
+  static let workingColorSpace: CGColorSpace =
+    CGColorSpace(name: CGColorSpace.sRGB) ?? CGColorSpaceCreateDeviceRGB()
+  static let outputColorPrimaries = AVVideoColorPrimaries_ITU_R_709_2
+  static let outputColorTransferFunction = AVVideoTransferFunction_ITU_R_709_2
+  static let outputColorYCbCrMatrix = AVVideoYCbCrMatrix_ITU_R_709_2
+  static let outputVideoColorProperties: [String: Any] = [
+    AVVideoColorPrimariesKey: outputColorPrimaries as NSString,
+    AVVideoTransferFunctionKey: outputColorTransferFunction as NSString,
+    AVVideoYCbCrMatrixKey: outputColorYCbCrMatrix as NSString,
+  ]
+  private static let outputVideoColorPropertiesDictionary = NSDictionary(
+    dictionary: outputVideoColorProperties
+  )
+
+  private struct SanitizedVideoOutputSettings {
+    let settings: [String: Any]
+    let omittedWideColorByPolicy: Bool
+    let strippedRequestedWideColor: Bool
+    let requestedWideColorValue: Any?
+  }
+
+  struct VideoWriterInputBuildError: Error {
+    let reason: String
+    let context: [String: Any]
+  }
+
+  static var workingColorSpaceName: String {
+    describe(colorSpace: workingColorSpace)
+  }
+
+  static func videoOutputSettings(_ base: [String: Any]) -> [String: Any] {
+    sanitizeVideoOutputSettings(base).settings
+  }
+
+  static func makeVideoWriterInput(
+    mediaType: AVMediaType = .video,
+    baseOutputSettings: [String: Any],
+    category: String,
+    operation: String,
+    extraContext: [String: Any] = [:]
+  ) throws -> AVAssetWriterInput {
+    let sanitizedSettings = sanitizeVideoOutputSettings(baseOutputSettings)
+    let settings = sanitizedSettings.settings
+    var context = extraContext
+    context["operation"] = operation
+    context["writerAllowWideColorOmitted"] = sanitizedSettings.omittedWideColorByPolicy
+    context["writerAllowWideColorStrippedFromInput"] = sanitizedSettings.strippedRequestedWideColor
+    context["writerAllowWideColorRequestedValue"] = valueDescription(
+      sanitizedSettings.requestedWideColorValue
+    )
+    context["writerAllowWideColorRequestedType"] = runtimeTypeDescription(
+      sanitizedSettings.requestedWideColorValue
+    )
+    writerSettingsDiagnostics(settings).forEach { context[$0.key] = $0.value }
+
+    if sanitizedSettings.strippedRequestedWideColor {
+      NativeLogger.w(
+        category,
+        "Omitting AVVideoAllowWideColorKey due to AVFoundation compatibility on macOS",
+        context: context
+      )
+    }
+
+    if let validationError = validateVideoOutputSettings(settings, context: context) {
+      NativeLogger.e(category, "Rejected invalid video writer settings", context: validationError.context)
+      throw validationError
+    }
+
+    NativeLogger.i(category, "Prepared validated video writer settings", context: context)
+    do {
+      return try AVAssetWriterInputExceptionBridge.makeVideoWriterInput(
+        mediaType: mediaType,
+        outputSettings: settings,
+        sourceFormatHint: nil
+      )
+    } catch {
+      let writerInputError = buildWriterInputCreationError(error: error, context: context)
+      NativeLogger.e(category, "AVAssetWriterInput creation failed", context: writerInputError.context)
+      throw writerInputError
+    }
+  }
+
+  static func applyOutputColorProperties(to composition: AVMutableVideoComposition) {
+    composition.colorPrimaries = outputColorPrimaries
+    composition.colorTransferFunction = outputColorTransferFunction
+    composition.colorYCbCrMatrix = outputColorYCbCrMatrix
+  }
+
+  static func tag(pixelBuffer: CVPixelBuffer) {
+    CVBufferSetAttachment(
+      pixelBuffer,
+      kCVImageBufferCGColorSpaceKey,
+      workingColorSpace as CFTypeRef,
+      .shouldPropagate
+    )
+    CVBufferSetAttachment(
+      pixelBuffer,
+      kCVImageBufferColorPrimariesKey,
+      kCVImageBufferColorPrimaries_ITU_R_709_2,
+      .shouldPropagate
+    )
+    CVBufferSetAttachment(
+      pixelBuffer,
+      kCVImageBufferTransferFunctionKey,
+      kCVImageBufferTransferFunction_ITU_R_709_2,
+      .shouldPropagate
+    )
+    CVBufferSetAttachment(
+      pixelBuffer,
+      kCVImageBufferYCbCrMatrixKey,
+      kCVImageBufferYCbCrMatrix_ITU_R_709_2,
+      .shouldPropagate
+    )
+  }
+
+  static func cgColor(
+    red: CGFloat,
+    green: CGFloat,
+    blue: CGFloat,
+    alpha: CGFloat
+  ) -> CGColor {
+    CGColor(
+      colorSpace: workingColorSpace,
+      components: [red, green, blue, alpha]
+    ) ?? CGColor(red: red, green: green, blue: blue, alpha: alpha)
+  }
+
+  static func cgColor(fromARGB argb: Int?, defaultColor: CGColor = CGColor(gray: 0, alpha: 1))
+    -> CGColor
+  {
+    guard let argb else { return defaultColor }
+    let alpha = (argb > 0xFFFFFF) ? CGFloat((argb >> 24) & 0xFF) / 255.0 : 1.0
+    let red = CGFloat((argb >> 16) & 0xFF) / 255.0
+    let green = CGFloat((argb >> 8) & 0xFF) / 255.0
+    let blue = CGFloat(argb & 0xFF) / 255.0
+    return cgColor(red: red, green: green, blue: blue, alpha: alpha)
+  }
+
+  static func nsColor(fromARGB argb: Int?, defaultColor: NSColor = .white) -> NSColor {
+    guard let argb else {
+      return defaultColor.usingColorSpace(.sRGB) ?? defaultColor
+    }
+
+    let alpha = (argb > 0xFFFFFF) ? CGFloat((argb >> 24) & 0xFF) / 255.0 : 1.0
+    let red = CGFloat((argb >> 16) & 0xFF) / 255.0
+    let green = CGFloat((argb >> 8) & 0xFF) / 255.0
+    let blue = CGFloat(argb & 0xFF) / 255.0
+    return NSColor(srgbRed: red, green: green, blue: blue, alpha: alpha)
+  }
+
+  static func compositionColorMetadata(_ composition: AVVideoComposition) -> [String: String] {
+    var metadata: [String: String] = [:]
+    if let colorPrimaries = composition.colorPrimaries {
+      metadata["colorPrimaries"] = colorPrimaries
+    }
+    if let colorTransferFunction = composition.colorTransferFunction {
+      metadata["colorTransferFunction"] = colorTransferFunction
+    }
+    if let colorYCbCrMatrix = composition.colorYCbCrMatrix {
+      metadata["colorYCbCrMatrix"] = colorYCbCrMatrix
+    }
+    return metadata
+  }
+
+  static func assetTrackColorMetadata(_ track: AVAssetTrack?) -> [String: String] {
+    guard let track else { return [:] }
+    guard let rawFormatDescription = track.formatDescriptions.first else { return [:] }
+    guard let formatDescription = formatDescription(from: rawFormatDescription, source: "assetTrack") else {
+      return [:]
+    }
+    return formatDescriptionColorMetadata(formatDescription)
+  }
+
+  static func formatDescriptionColorMetadata(
+    _ formatDescription: CMFormatDescription?
+  ) -> [String: String] {
+    guard let formatDescription else { return [:] }
+    let extensions = CMFormatDescriptionGetExtensions(formatDescription) as NSDictionary? ?? [:]
+    return colorMetadata(from: extensions)
+  }
+
+  static func pixelBufferColorMetadata(_ pixelBuffer: CVPixelBuffer?) -> [String: String] {
+    guard let pixelBuffer else { return [:] }
+    let attachments: NSDictionary
+    if #available(macOS 12.0, *) {
+      attachments = CVBufferCopyAttachments(pixelBuffer, .shouldPropagate) as NSDictionary? ?? [:]
+    } else {
+      attachments = CVBufferGetAttachments(pixelBuffer, .shouldPropagate) as NSDictionary? ?? [:]
+    }
+    return colorMetadata(from: attachments)
+  }
+
+  static func metadataContext(prefix: String, metadata: [String: String]) -> [String: Any] {
+    metadata.reduce(into: [String: Any]()) { result, entry in
+      result["\(prefix)\(entry.key.prefix(1).uppercased())\(entry.key.dropFirst())"] = entry.value
+    }
+  }
+
+  static func logColorMetadata(
+    category: String,
+    message: String,
+    formatDescription: CMFormatDescription? = nil,
+    pixelBuffer: CVPixelBuffer? = nil,
+    extraContext: [String: Any] = [:]
+  ) {
+    var context = extraContext
+    context["workingColorSpace"] = workingColorSpaceName
+    context["policyColorPrimaries"] = outputColorPrimaries
+    context["policyColorTransferFunction"] = outputColorTransferFunction
+    context["policyColorYCbCrMatrix"] = outputColorYCbCrMatrix
+    metadataContext(prefix: "format", metadata: formatDescriptionColorMetadata(formatDescription))
+      .forEach { context[$0.key] = $0.value }
+    metadataContext(prefix: "buffer", metadata: pixelBufferColorMetadata(pixelBuffer))
+      .forEach { context[$0.key] = $0.value }
+    NativeLogger.i(category, message, context: context)
+  }
+
+  static func describe(colorSpace: CGColorSpace) -> String {
+    if let name = (colorSpace.name as String?) {
+      return name
+    }
+    return "model:\(colorSpace.model.rawValue)"
+  }
+
+  private static func colorMetadata(from dictionary: NSDictionary) -> [String: String] {
+    var metadata: [String: String] = [:]
+    if let colorPrimaries = stringValue(dictionary[kCVImageBufferColorPrimariesKey]) {
+      metadata["colorPrimaries"] = colorPrimaries
+    }
+    if let colorTransferFunction = stringValue(dictionary[kCVImageBufferTransferFunctionKey]) {
+      metadata["colorTransferFunction"] = colorTransferFunction
+    }
+    if let colorYCbCrMatrix = stringValue(dictionary[kCVImageBufferYCbCrMatrixKey]) {
+      metadata["colorYCbCrMatrix"] = colorYCbCrMatrix
+    }
+    if let gammaLevel = stringValue(dictionary[kCVImageBufferGammaLevelKey]) {
+      metadata["gammaLevel"] = gammaLevel
+    }
+    let colorSpaceValue = dictionary[kCVImageBufferCGColorSpaceKey]
+    if let cgColorSpace = describeColorSpaceValue(colorSpaceValue) {
+      metadata["cgColorSpace"] = cgColorSpace
+    } else if colorSpaceValue != nil {
+      logUnexpectedMetadataValue(
+        source: "colorMetadata",
+        field: "cgColorSpace",
+        value: colorSpaceValue
+      )
+    }
+    return metadata
+  }
+
+  private static func stringValue(_ value: Any?) -> String? {
+    guard let value else { return nil }
+    if let string = value as? String {
+      return string
+    }
+    if let number = value as? NSNumber {
+      return number.stringValue
+    }
+    return String(describing: value)
+  }
+
+  private static func describeColorSpaceValue(_ value: Any?) -> String? {
+    guard let value else { return nil }
+    let cfValue = value as CFTypeRef
+    if CFGetTypeID(cfValue) == CGColorSpace.typeID {
+      return String(describing: cfValue)
+    }
+    return stringValue(value)
+  }
+
+  private static func formatDescription(from value: Any, source: String) -> CMFormatDescription? {
+    let cfValue = value as CFTypeRef
+    let actualTypeID = CFGetTypeID(cfValue)
+    let expectedTypeID = CMFormatDescriptionGetTypeID()
+    guard actualTypeID == expectedTypeID else {
+      logUnexpectedMetadataValue(
+        source: source,
+        field: "formatDescription",
+        value: value,
+        extraContext: [
+          "actualTypeID": actualTypeID,
+          "expectedTypeID": expectedTypeID,
+        ]
+      )
+      return nil
+    }
+
+    let formatDescription: CMFormatDescription = cfValue as! CMFormatDescription
+    return formatDescription
+  }
+
+  private static func logUnexpectedMetadataValue(
+    source: String,
+    field: String,
+    value: Any?,
+    extraContext: [String: Any] = [:]
+  ) {
+    var context = extraContext
+    context["source"] = source
+    context["field"] = field
+    context["valueDescription"] = value.map { String(describing: $0) } ?? "nil"
+    if let value {
+      let cfValue = value as CFTypeRef
+      context["cfTypeID"] = CFGetTypeID(cfValue)
+    }
+    NativeLogger.w("Color", "Skipping unexpected color metadata value", context: context)
+  }
+
+  private static func foundationBackedDictionary(_ dictionary: [String: Any]) -> [String: Any] {
+    dictionary.reduce(into: [String: Any]()) { result, entry in
+      result[entry.key] = foundationBackedObject(entry.value)
+    }
+  }
+
+  private static func sanitizeVideoOutputSettings(_ base: [String: Any]) -> SanitizedVideoOutputSettings {
+    var settings = foundationBackedDictionary(base)
+    let requestedWideColorValue = settings.removeValue(forKey: AVVideoAllowWideColorKey)
+    settings[AVVideoColorPropertiesKey] = outputVideoColorPropertiesDictionary
+    // AVVideoAllowWideColorKey crashes AVAssetWriterInput on the current macOS runtime
+    // even when its value is a valid NSNumber, so exports intentionally omit it.
+    return SanitizedVideoOutputSettings(
+      settings: settings,
+      omittedWideColorByPolicy: true,
+      strippedRequestedWideColor: requestedWideColorValue != nil,
+      requestedWideColorValue: requestedWideColorValue
+    )
+  }
+
+  private static func foundationBackedObject(_ value: Any) -> Any {
+    switch value {
+    case let value as NSString:
+      return value
+    case let value as NSNumber:
+      return value
+    case let value as Bool:
+      return NSNumber(value: value)
+    case let value as Int:
+      return NSNumber(value: value)
+    case let value as Int32:
+      return NSNumber(value: value)
+    case let value as Int64:
+      return NSNumber(value: value)
+    case let value as UInt:
+      return NSNumber(value: value)
+    case let value as Float:
+      return NSNumber(value: value)
+    case let value as Double:
+      return NSNumber(value: value)
+    case let value as CGFloat:
+      return NSNumber(value: Double(value))
+    case let value as String:
+      return value as NSString
+    case let value as AVVideoCodecType:
+      return value.rawValue as NSString
+    case let value as [String: Any]:
+      return NSDictionary(dictionary: foundationBackedDictionary(value))
+    case let value as NSDictionary:
+      let bridged = value.reduce(into: [String: Any]()) { result, entry in
+        if let key = entry.key as? String {
+          result[key] = foundationBackedObject(entry.value)
+        }
+      }
+      return NSDictionary(dictionary: bridged)
+    case let value as [Any]:
+      return NSArray(array: value.map(foundationBackedObject))
+    case let value as NSArray:
+      return NSArray(array: value.map(foundationBackedObject))
+    default:
+      return value
+    }
+  }
+
+  private static func validateVideoOutputSettings(
+    _ settings: [String: Any],
+    context: [String: Any]
+  ) -> VideoWriterInputBuildError? {
+    var issues: [String] = []
+    validateFoundationObjectGraph(settings, path: "settings", issues: &issues)
+
+    if settings[AVVideoAllowWideColorKey] != nil {
+      issues.append(
+        "settings.\(AVVideoAllowWideColorKey) must be omitted on macOS due to AVFoundation compatibility"
+      )
+    }
+    requireNSNumber(settings[AVVideoWidthKey], path: "settings.\(AVVideoWidthKey)", issues: &issues)
+    requireNSNumber(settings[AVVideoHeightKey], path: "settings.\(AVVideoHeightKey)", issues: &issues)
+    requireStringValue(settings[AVVideoCodecKey], path: "settings.\(AVVideoCodecKey)", issues: &issues)
+
+    guard let colorProperties = colorPropertiesDictionary(from: settings[AVVideoColorPropertiesKey]) else {
+      issues.append("settings.\(AVVideoColorPropertiesKey) must be a dictionary with string values")
+      return buildWriterSettingsValidationError(issues: issues, context: context)
+    }
+
+    requireStringValue(
+      colorProperties[AVVideoColorPrimariesKey],
+      path: "settings.\(AVVideoColorPropertiesKey).\(AVVideoColorPrimariesKey)",
+      issues: &issues
+    )
+    requireStringValue(
+      colorProperties[AVVideoTransferFunctionKey],
+      path: "settings.\(AVVideoColorPropertiesKey).\(AVVideoTransferFunctionKey)",
+      issues: &issues
+    )
+    requireStringValue(
+      colorProperties[AVVideoYCbCrMatrixKey],
+      path: "settings.\(AVVideoColorPropertiesKey).\(AVVideoYCbCrMatrixKey)",
+      issues: &issues
+    )
+
+    return buildWriterSettingsValidationError(issues: issues, context: context)
+  }
+
+  private static func buildWriterSettingsValidationError(
+    issues: [String],
+    context: [String: Any]
+  ) -> VideoWriterInputBuildError? {
+    guard !issues.isEmpty else { return nil }
+    var errorContext = context
+    errorContext["issues"] = issues
+    return VideoWriterInputBuildError(
+      reason: "The export writer settings contained unsupported value types.",
+      context: errorContext
+    )
+  }
+
+  private static func buildWriterInputCreationError(
+    error: Error,
+    context: [String: Any]
+  ) -> VideoWriterInputBuildError {
+    let nsError = error as NSError
+    var errorContext = context
+    errorContext["underlyingErrorDomain"] = nsError.domain
+    errorContext["underlyingErrorCode"] = nsError.code
+    errorContext["underlyingErrorDescription"] = nsError.localizedDescription
+    if let exceptionName = nsError.userInfo["exceptionName"] {
+      errorContext["exceptionName"] = exceptionName
+    }
+    if let exceptionReason = nsError.userInfo["exceptionReason"] {
+      errorContext["exceptionReason"] = exceptionReason
+    }
+    if let settingTypes = nsError.userInfo["settingTypes"] {
+      errorContext["settingTypes"] = settingTypes
+    }
+    return VideoWriterInputBuildError(
+      reason: "AVAssetWriterInput rejected the export settings.",
+      context: errorContext
+    )
+  }
+
+  private static func validateFoundationObjectGraph(
+    _ value: Any,
+    path: String,
+    issues: inout [String]
+  ) {
+    switch value {
+    case is NSString, is NSNumber, is NSNull:
+      return
+    case let dictionary as [String: Any]:
+      for key in dictionary.keys.sorted() {
+        if let nestedValue = dictionary[key] {
+          validateFoundationObjectGraph(nestedValue, path: "\(path).\(key)", issues: &issues)
+        }
+      }
+    case let dictionary as NSDictionary:
+      for (key, nestedValue) in dictionary {
+        guard let stringKey = key as? String else {
+          issues.append("\(path) contains a non-string key of type \(runtimeTypeDescription(key))")
+          continue
+        }
+        validateFoundationObjectGraph(nestedValue, path: "\(path).\(stringKey)", issues: &issues)
+      }
+    case let array as [Any]:
+      for (index, nestedValue) in array.enumerated() {
+        validateFoundationObjectGraph(nestedValue, path: "\(path)[\(index)]", issues: &issues)
+      }
+    case let array as NSArray:
+      for (index, nestedValue) in array.enumerated() {
+        validateFoundationObjectGraph(nestedValue, path: "\(path)[\(index)]", issues: &issues)
+      }
+    default:
+      issues.append("\(path) has unsupported type \(runtimeTypeDescription(value))")
+    }
+  }
+
+  private static func requireNSNumber(_ value: Any?, path: String, issues: inout [String]) {
+    guard let value else {
+      issues.append("\(path) is missing")
+      return
+    }
+    guard value is NSNumber else {
+      issues.append("\(path) must be NSNumber, found \(runtimeTypeDescription(value))")
+      return
+    }
+  }
+
+  private static func requireStringValue(_ value: Any?, path: String, issues: inout [String]) {
+    guard let value else {
+      issues.append("\(path) is missing")
+      return
+    }
+    guard value is NSString || value is String else {
+      issues.append("\(path) must be NSString, found \(runtimeTypeDescription(value))")
+      return
+    }
+  }
+
+  private static func colorPropertiesDictionary(from value: Any?) -> [String: Any]? {
+    switch value {
+    case let dictionary as [String: Any]:
+      return dictionary
+    case let dictionary as NSDictionary:
+      return dictionary.reduce(into: [String: Any]()) { result, entry in
+        if let key = entry.key as? String {
+          result[key] = entry.value
+        }
+      }
+    default:
+      return nil
+    }
+  }
+
+  private static func writerSettingsDiagnostics(_ settings: [String: Any]) -> [String: Any] {
+    var context: [String: Any] = [
+      "writerSettingsKeys": settings.keys.sorted().joined(separator: ","),
+      "writerCodecValue": valueDescription(settings[AVVideoCodecKey]),
+      "writerCodecType": runtimeTypeDescription(settings[AVVideoCodecKey]),
+      "writerWidthValue": valueDescription(settings[AVVideoWidthKey]),
+      "writerWidthType": runtimeTypeDescription(settings[AVVideoWidthKey]),
+      "writerHeightValue": valueDescription(settings[AVVideoHeightKey]),
+      "writerHeightType": runtimeTypeDescription(settings[AVVideoHeightKey]),
+      "writerAllowWideColorValue": valueDescription(settings[AVVideoAllowWideColorKey]),
+      "writerAllowWideColorType": runtimeTypeDescription(settings[AVVideoAllowWideColorKey]),
+      "writerColorPropertiesType": runtimeTypeDescription(settings[AVVideoColorPropertiesKey]),
+    ]
+
+    if let colorProperties = colorPropertiesDictionary(from: settings[AVVideoColorPropertiesKey]) {
+      context["writerColorPrimariesValue"] = valueDescription(colorProperties[AVVideoColorPrimariesKey])
+      context["writerColorPrimariesType"] = runtimeTypeDescription(colorProperties[AVVideoColorPrimariesKey])
+      context["writerColorTransferFunctionValue"] = valueDescription(colorProperties[AVVideoTransferFunctionKey])
+      context["writerColorTransferFunctionType"] = runtimeTypeDescription(colorProperties[AVVideoTransferFunctionKey])
+      context["writerColorYCbCrMatrixValue"] = valueDescription(colorProperties[AVVideoYCbCrMatrixKey])
+      context["writerColorYCbCrMatrixType"] = runtimeTypeDescription(colorProperties[AVVideoYCbCrMatrixKey])
+    }
+
+    return context
+  }
+
+  private static func valueDescription(_ value: Any?) -> String {
+    guard let value else { return "nil" }
+    return String(describing: value)
+  }
+
+  private static func runtimeTypeDescription(_ value: Any?) -> String {
+    guard let value else { return "nil" }
+    return String(describing: type(of: value as AnyObject))
+  }
+}
+
 struct ZoomTimelineSegment: Codable, Equatable {
   let startMs: Int
   let endMs: Int
@@ -500,10 +1060,165 @@ final class CompositionBuilder {
     let screenZoomIsPrecomposited: Bool
   }
 
+  struct ExportValidationInfo: Equatable {
+    struct CameraSample: Equatable {
+      let time: Double
+      let cameraFrame: CGRect?
+      let zoomActive: Bool
+    }
+
+    struct ResolvedCameraSample: Equatable {
+      let time: Double
+      let cameraFrame: CGRect?
+      let zoomActive: Bool
+      let usedInterpolation: Bool
+      let isTrustworthy: Bool
+    }
+
+    let renderSize: CGSize
+    let effectiveDuration: Double
+    let cameraSamples: [CameraSample]
+
+    func resolvedCameraSample(at time: Double) -> ResolvedCameraSample? {
+      let normalizedSamples = normalizedCameraSamples()
+      guard !normalizedSamples.isEmpty else { return nil }
+
+      let clampedTime = min(max(time, 0.0), max(effectiveDuration, 0.0))
+      if let exactSample = normalizedSamples.first(where: { abs($0.time - clampedTime) <= 0.0001 }) {
+        return ResolvedCameraSample(
+          time: clampedTime,
+          cameraFrame: exactSample.cameraFrame?.standardized,
+          zoomActive: exactSample.zoomActive,
+          usedInterpolation: false,
+          isTrustworthy: exactSample.cameraFrame != nil
+        )
+      }
+
+      guard let upperIndex = normalizedSamples.firstIndex(where: { $0.time >= clampedTime }) else {
+        let last = normalizedSamples[normalizedSamples.count - 1]
+        return ResolvedCameraSample(
+          time: clampedTime,
+          cameraFrame: last.cameraFrame?.standardized,
+          zoomActive: last.zoomActive,
+          usedInterpolation: false,
+          isTrustworthy: last.cameraFrame != nil
+        )
+      }
+
+      let lowerIndex = max(0, upperIndex - 1)
+      let lower = normalizedSamples[lowerIndex]
+      let upper = normalizedSamples[upperIndex]
+
+      guard upper.time > lower.time + 0.0001 else {
+        return ResolvedCameraSample(
+          time: clampedTime,
+          cameraFrame: upper.cameraFrame?.standardized ?? lower.cameraFrame?.standardized,
+          zoomActive: lower.zoomActive || upper.zoomActive,
+          usedInterpolation: false,
+          isTrustworthy: upper.cameraFrame != nil || lower.cameraFrame != nil
+        )
+      }
+
+      let progress = CGFloat((clampedTime - lower.time) / (upper.time - lower.time))
+      switch (lower.cameraFrame?.standardized, upper.cameraFrame?.standardized) {
+      case let (lhs?, rhs?):
+        return ResolvedCameraSample(
+          time: clampedTime,
+          cameraFrame: interpolateRect(from: lhs, to: rhs, progress: progress).standardized,
+          zoomActive: lower.zoomActive || upper.zoomActive,
+          usedInterpolation: true,
+          isTrustworthy: true
+        )
+      case (nil, nil):
+        return ResolvedCameraSample(
+          time: clampedTime,
+          cameraFrame: nil,
+          zoomActive: lower.zoomActive || upper.zoomActive,
+          usedInterpolation: true,
+          isTrustworthy: true
+        )
+      default:
+        return ResolvedCameraSample(
+          time: clampedTime,
+          cameraFrame: nil,
+          zoomActive: lower.zoomActive || upper.zoomActive,
+          usedInterpolation: true,
+          isTrustworthy: false
+        )
+      }
+    }
+
+    private func normalizedCameraSamples() -> [CameraSample] {
+      guard !cameraSamples.isEmpty else { return [] }
+
+      let sorted = cameraSamples
+        .sorted { $0.time < $1.time }
+        .reduce(into: [CameraSample]()) { result, sample in
+          let clampedSample = CameraSample(
+            time: min(max(sample.time, 0.0), max(effectiveDuration, 0.0)),
+            cameraFrame: sample.cameraFrame?.standardized,
+            zoomActive: sample.zoomActive
+          )
+          if let last = result.last, abs(last.time - clampedSample.time) <= 0.0001 {
+            result[result.count - 1] = clampedSample
+          } else {
+            result.append(clampedSample)
+          }
+        }
+
+      guard !sorted.isEmpty else { return [] }
+
+      var normalized = sorted
+      if normalized[0].time > 0.0 {
+        normalized.insert(
+          CameraSample(
+            time: 0.0,
+            cameraFrame: normalized[0].cameraFrame,
+            zoomActive: normalized[0].zoomActive
+          ),
+          at: 0
+        )
+      } else if normalized[0].time < 0.0 {
+        normalized[0] = CameraSample(
+          time: 0.0,
+          cameraFrame: normalized[0].cameraFrame,
+          zoomActive: normalized[0].zoomActive
+        )
+      }
+
+      let clampedDuration = max(effectiveDuration, normalized.last?.time ?? 0.0)
+      if let last = normalized.last, last.time < clampedDuration {
+        normalized.append(
+          CameraSample(
+            time: clampedDuration,
+            cameraFrame: last.cameraFrame,
+            zoomActive: last.zoomActive
+          )
+        )
+      }
+
+      return normalized
+    }
+
+    private func interpolateRect(from lhs: CGRect, to rhs: CGRect, progress: CGFloat) -> CGRect {
+      CGRect(
+        x: lerp(lhs.minX, rhs.minX, progress),
+        y: lerp(lhs.minY, rhs.minY, progress),
+        width: lerp(lhs.width, rhs.width, progress),
+        height: lerp(lhs.height, rhs.height, progress)
+      )
+    }
+
+    private func lerp(_ lhs: CGFloat, _ rhs: CGFloat, _ progress: CGFloat) -> CGFloat {
+      lhs + ((rhs - lhs) * progress)
+    }
+  }
+
   struct ExportCompositionResult {
     let asset: AVAsset
     let videoComposition: AVVideoComposition
     let debugInfo: ExportDebugInfo
+    let validationInfo: ExportValidationInfo?
   }
 
   // For Export
@@ -513,6 +1228,7 @@ final class CompositionBuilder {
     params: CompositionParams,
     cameraParams: CameraCompositionParams?,
     cursorRecording: CursorRecording?,
+    cameraSyncTimeline: CameraSyncTimeline? = nil,
     cameraAssetIsPreStyled: Bool = false,
     cameraPlacementSourceRect: CGRect? = nil,
     screenSourceMode: ScreenSourceMode = .liveScreenTrack,
@@ -529,6 +1245,7 @@ final class CompositionBuilder {
         params: params,
         cameraParams: cameraParams,
         cursorRecording: cursorRecording,
+        cameraSyncTimeline: cameraSyncTimeline,
         cameraAssetIsPreStyled: cameraAssetIsPreStyled,
         cameraPlacementSourceRect: cameraPlacementSourceRect,
         screenSourceMode: screenSourceMode,
@@ -560,7 +1277,8 @@ final class CompositionBuilder {
           rendersCursorOverlayInAnimationTool: false,
           appliesScreenZoomInAnimationTool: false,
           screenZoomIsPrecomposited: false
-        )
+        ),
+      validationInfo: nil
     )
   }
 
@@ -593,7 +1311,8 @@ final class CompositionBuilder {
           rendersCursorOverlayInAnimationTool: false,
           appliesScreenZoomInAnimationTool: false,
           screenZoomIsPrecomposited: true
-        )
+        ),
+      validationInfo: nil
     )
   }
 
@@ -731,6 +1450,7 @@ final class CompositionBuilder {
       renderSize = contentRect.size
     }
     comp.renderSize = renderSize
+    VideoColorPipeline.applyOutputColorProperties(to: comp)
 
     let previewFps = previewProfile?.fps ?? PreviewProfile.defaultFps
     let timescale = max(1, forExport ? params.fpsHint : previewFps)
@@ -814,6 +1534,7 @@ final class CompositionBuilder {
     params: CompositionParams,
     cameraParams: CameraCompositionParams,
     cursorRecording: CursorRecording?,
+    cameraSyncTimeline: CameraSyncTimeline?,
     cameraAssetIsPreStyled: Bool,
     cameraPlacementSourceRect: CGRect?,
     screenSourceMode: ScreenSourceMode,
@@ -937,6 +1658,14 @@ final class CompositionBuilder {
         params: cameraParams
       )
       var cameraMaskSamples: [VisibleRegionMaskSample] = []
+      var cameraValidationSamples: [ExportValidationInfo.CameraSample] = []
+      let screenDuration = max(0.0, screenAsset.duration.seconds)
+      let cameraDuration = max(0.0, cameraAsset.duration.seconds)
+      let resolvedCameraSyncTimeline = resolvedCameraSyncTimeline(
+        provided: cameraSyncTimeline,
+        screenDuration: screenDuration,
+        cameraDuration: cameraDuration
+      )
 
       if cameraResolution.shouldRender,
         let cameraTrack = cameraAsset.tracks(withMediaType: .video).first,
@@ -945,14 +1674,26 @@ final class CompositionBuilder {
           preferredTrackID: kCMPersistentTrackID_Invalid
         )
       {
-        let cameraDuration = min(cameraAsset.duration.seconds, screenAsset.duration.seconds)
-        let insertionDuration = CMTime(seconds: max(0.0, cameraDuration), preferredTimescale: 600)
-        if insertionDuration.seconds > 0 {
-          try composedCameraTrack.insertTimeRange(
-            CMTimeRange(start: .zero, duration: insertionDuration),
-            of: cameraTrack,
-            at: .zero
-          )
+        let insertionSegments = resolvedCameraSyncTimeline.segments.filter {
+          $0.durationSeconds > 0.0001
+        }
+        if !insertionSegments.isEmpty {
+          for segment in insertionSegments {
+            let segmentDuration = min(
+              segment.durationSeconds,
+              max(0.0, cameraDuration - segment.cameraStartSeconds)
+            )
+            guard segmentDuration > 0.0001 else { continue }
+
+            try composedCameraTrack.insertTimeRange(
+              CMTimeRange(
+                start: CMTime(seconds: segment.cameraStartSeconds, preferredTimescale: 600),
+                duration: CMTime(seconds: segmentDuration, preferredTimescale: 600)
+              ),
+              of: cameraTrack,
+              at: CMTime(seconds: segment.screenStartSeconds, preferredTimescale: 600)
+            )
+          }
 
           let cameraLayerInstruction = AVMutableVideoCompositionLayerInstruction(
             assetTrack: composedCameraTrack
@@ -968,13 +1709,14 @@ final class CompositionBuilder {
           let normalizedPlacementSourceRect = rawPlacementSourceRect.flatMap {
             normalizedTrackSourceRect(from: $0, fullSourceSize: fullNormalizedCameraSourceSize)
           }
-          let effectiveDuration = min(insertionDuration.seconds, screenAsset.duration.seconds)
+          let effectiveDuration = screenDuration
 
           if CameraPlacementDebug.enabled {
             var context: [String: Any] = [
               "cameraAssetIsPreStyled": cameraAssetIsPreStyled,
               "cameraFitMode": cameraFitMode,
               "zoomSamplesCount": exportZoomSamples.count,
+              "cameraSyncSegmentsCount": insertionSegments.count,
               "zoomApplicationMode": screenSourceMode == .precompositedCanvas
                 ? "precompositedCanvas"
                 : "screenOverlayOnly",
@@ -1017,6 +1759,9 @@ final class CompositionBuilder {
             params: params,
             cameraParams: cameraParams,
             zoomSamples: exportZoomSamples,
+            additionalSampleTimes: insertionSegments.flatMap {
+              [$0.screenStartSeconds, $0.screenStartSeconds + $0.durationSeconds]
+            },
             effectiveDuration: effectiveDuration
           )
           let cameraPresentation = presentationSamples.isEmpty
@@ -1042,6 +1787,10 @@ final class CompositionBuilder {
           let cameraOpacities = resolvedCameraPresentation.map { animatedCamera in
             Float(max(0.0, min(1.0, animatedCamera.opacity)))
           }
+          let synchronizedCameraOpacities = cameraPresentation.enumerated().map { idx, sample -> Float in
+            guard resolvedCameraSyncTimeline.containsScreenTime(sample.time) else { return 0.0 }
+            return cameraOpacities[idx]
+          }
           var didLogFirstActiveZoomSample = false
           let cameraTransforms = resolvedCameraPresentation.enumerated().map { idx, animatedCamera in
             // CameraLayoutResolver returns frames in CG bottom-left-origin
@@ -1065,11 +1814,19 @@ final class CompositionBuilder {
               mirror: cameraAssetIsPreStyled ? false : cameraParams.mirror
             )
             let sample = cameraPresentation[idx]
-            let cameraOpacity = cameraOpacities[idx]
+            let cameraOpacity = synchronizedCameraOpacities[idx]
+            let resolvedCameraFrame = cameraOpacity > 0.001 ? animatedCamera.frame.standardized : nil
             cameraMaskSamples.append(
               VisibleRegionMaskSample(
                 time: sample.time,
-                cameraFrame: cameraOpacity > 0.001 ? animatedCamera.frame.standardized : nil
+                cameraFrame: resolvedCameraFrame
+              )
+            )
+            cameraValidationSamples.append(
+              ExportValidationInfo.CameraSample(
+                time: sample.time,
+                cameraFrame: resolvedCameraFrame,
+                zoomActive: sample.zoomState.isActive
               )
             )
             let isFirstActiveZoomSample = sample.zoomState.isActive && !didLogFirstActiveZoomSample
@@ -1143,12 +1900,19 @@ final class CompositionBuilder {
                 cameraFrame: nil
               )
             )
+            cameraValidationSamples.append(
+              ExportValidationInfo.CameraSample(
+                time: hideTime,
+                cameraFrame: nil,
+                zoomActive: false
+              )
+            )
           }
 
           if let firstTransform = cameraTransforms.first {
             cameraLayerInstruction.setTransform(firstTransform, at: .zero)
           }
-          if let firstOpacity = cameraOpacities.first {
+          if let firstOpacity = synchronizedCameraOpacities.first {
             cameraLayerInstruction.setOpacity(firstOpacity, at: .zero)
           }
 
@@ -1174,9 +1938,9 @@ final class CompositionBuilder {
             }
           }
 
-          if cameraOpacities.count >= 2,
-            let firstOpacity = cameraOpacities.first,
-            cameraOpacities.dropFirst().contains(where: { abs($0 - firstOpacity) > 0.0001 })
+          if synchronizedCameraOpacities.count >= 2,
+            let firstOpacity = synchronizedCameraOpacities.first,
+            synchronizedCameraOpacities.dropFirst().contains(where: { abs($0 - firstOpacity) > 0.0001 })
           {
             for idx in 0..<(cameraPresentation.count - 1) {
               let startSeconds = cameraPresentation[idx].time
@@ -1187,8 +1951,8 @@ final class CompositionBuilder {
               let endTime = CMTime(seconds: endSeconds, preferredTimescale: 600)
               let timeRange = CMTimeRange(start: startTime, end: endTime)
               cameraLayerInstruction.setOpacityRamp(
-                fromStartOpacity: cameraOpacities[idx],
-                toEndOpacity: cameraOpacities[idx + 1],
+                fromStartOpacity: synchronizedCameraOpacities[idx],
+                toEndOpacity: synchronizedCameraOpacities[idx + 1],
                 timeRange: timeRange
               )
             }
@@ -1211,6 +1975,7 @@ final class CompositionBuilder {
 
       let videoComposition = AVMutableVideoComposition()
       videoComposition.renderSize = target
+      VideoColorPipeline.applyOutputColorProperties(to: videoComposition)
       let timescale = max(1, params.fpsHint)
       videoComposition.frameDuration = CMTime(value: 1, timescale: timescale)
       videoComposition.instructions = [instruction]
@@ -1247,6 +2012,11 @@ final class CompositionBuilder {
             && !(cursorRecording?.frames.isEmpty ?? true),
           appliesScreenZoomInAnimationTool: screenSourceMode == .liveScreenTrack && !exportZoomSamples.isEmpty,
           screenZoomIsPrecomposited: screenSourceMode == .precompositedCanvas
+        ),
+        validationInfo: ExportValidationInfo(
+          renderSize: target,
+          effectiveDuration: screenDuration,
+          cameraSamples: cameraValidationSamples
         )
       )
     } catch {
@@ -1532,11 +2302,7 @@ final class CompositionBuilder {
   }
 
   private func exportBackgroundColor(_ argb: Int) -> CGColor {
-    let r = CGFloat((argb >> 16) & 0xFF) / 255.0
-    let g = CGFloat((argb >> 8) & 0xFF) / 255.0
-    let b = CGFloat(argb & 0xFF) / 255.0
-    let a = (argb > 0xFFFFFF) ? CGFloat((argb >> 24) & 0xFF) / 255.0 : 1.0
-    return CGColor(red: r, green: g, blue: b, alpha: a)
+    VideoColorPipeline.cgColor(fromARGB: argb)
   }
 
   private func applyVisibleRegionMask(
@@ -1898,6 +2664,7 @@ final class CompositionBuilder {
     params: CompositionParams,
     cameraParams: CameraCompositionParams,
     zoomSamples: [ExportZoomSample],
+    additionalSampleTimes: [Double] = [],
     effectiveDuration: Double
   ) -> [CameraPresentationSample] {
     let needsZoomSamples =
@@ -1930,6 +2697,7 @@ final class CompositionBuilder {
     var timePoints = Set(samples.map { roundedSampleTime($0.time) })
     timePoints.insert(0.0)
     timePoints.insert(roundedSampleTime(effectiveDuration))
+    additionalSampleTimes.forEach { timePoints.insert(roundedSampleTime($0)) }
 
     if cameraParams.introPreset != .none {
       let introDuration = min(Double(cameraParams.introDurationMs) / 1000.0, effectiveDuration)
@@ -1984,6 +2752,26 @@ final class CompositionBuilder {
 
   private func roundedSampleTime(_ time: Double) -> Double {
     (time * 1000.0).rounded() / 1000.0
+  }
+
+  private func resolvedCameraSyncTimeline(
+    provided: CameraSyncTimeline?,
+    screenDuration: Double,
+    cameraDuration: Double
+  ) -> CameraSyncTimeline {
+    if let provided, !provided.isEmpty {
+      return provided
+    }
+
+    return CameraSyncTimeline(
+      segments: [
+        CameraSyncTimeline.Segment(
+          screenStartSeconds: 0.0,
+          cameraStartSeconds: 0.0,
+          durationSeconds: min(screenDuration, cameraDuration)
+        )
+      ]
+    )
   }
 
   private func transformsApproximatelyEqual(
@@ -2318,7 +3106,7 @@ final class CompositionBuilder {
     // Sanity check data length
     guard sprite.pixels.count >= length else { return nil }
 
-    let colorSpace = CGColorSpaceCreateDeviceRGB()
+    let colorSpace = VideoColorPipeline.workingColorSpace
     let bitmapInfo = CGBitmapInfo(rawValue: CGImageAlphaInfo.premultipliedLast.rawValue)
 
     // Create provider directly from packed data
@@ -2339,7 +3127,7 @@ final class CompositionBuilder {
     )
   }
   private func transparent1x1() -> CGImage {
-    let colorSpace = CGColorSpaceCreateDeviceRGB()
+    let colorSpace = VideoColorPipeline.workingColorSpace
     var pixel: [UInt8] = [0, 0, 0, 0]  // RGBA transparent
     let data = Data(pixel)
     let provider = CGDataProvider(data: data as CFData)!

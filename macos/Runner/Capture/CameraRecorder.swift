@@ -8,13 +8,6 @@ struct CameraRecordingMetadata: Codable, Equatable {
     let height: Int
   }
 
-  struct Segment: Codable, Equatable {
-    let index: Int
-    let relativePath: String
-    let startWallClock: String
-    let endWallClock: String
-  }
-
   let version: Int
   let recordingId: String
   let rawRelativePath: String
@@ -25,7 +18,7 @@ struct CameraRecordingMetadata: Codable, Equatable {
   let dimensions: Dimensions?
   let startedAt: String
   var endedAt: String?
-  var segments: [Segment]
+  var segments: [RecordingMetadata.CaptureSegment]
 
   func write(to url: URL) throws {
     let encoder = JSONEncoder()
@@ -47,7 +40,7 @@ struct CameraRecordingSession {
   let nominalFrameRate: Double?
   let dimensions: CameraRecordingMetadata.Dimensions?
   let startedAt: Date
-  var segments: [CameraRecordingMetadata.Segment] = []
+  var segments: [RecordingMetadata.CaptureSegment] = []
 
   init(
     outputURL: URL,
@@ -93,6 +86,24 @@ struct CameraRecordingSession {
 
   func metadata(endedAt: Date) -> CameraRecordingMetadata {
     var metadata = stubMetadata()
+    if let earliestSegmentStart = segments
+      .compactMap({ CameraRecorder.date(from: $0.startWallClock) })
+      .min()
+    {
+      metadata = CameraRecordingMetadata(
+        version: metadata.version,
+        recordingId: metadata.recordingId,
+        rawRelativePath: metadata.rawRelativePath,
+        metadataRelativePath: metadata.metadataRelativePath,
+        deviceId: metadata.deviceId,
+        mirroredRaw: metadata.mirroredRaw,
+        nominalFrameRate: metadata.nominalFrameRate,
+        dimensions: metadata.dimensions,
+        startedAt: CameraRecorder.iso8601String(from: earliestSegmentStart),
+        endedAt: metadata.endedAt,
+        segments: metadata.segments
+      )
+    }
     metadata.endedAt = CameraRecorder.iso8601String(from: endedAt)
     metadata.segments = segments
     return metadata
@@ -342,8 +353,16 @@ final class CameraRecorder: NSObject {
       return
     }
 
-    let segmentURLs = session.segments.map {
-      session.segmentDirectoryURL.appendingPathComponent($0.relativePath, isDirectory: false)
+    let segmentURLs = session.segments.compactMap { segment -> URL? in
+      guard let relativePath = segment.relativePath, !relativePath.isEmpty else {
+        NativeLogger.w(
+          "CameraRecorder",
+          "Skipping camera segment with missing relative path during finalize",
+          context: ["index": segment.index]
+        )
+        return nil
+      }
+      return session.segmentDirectoryURL.appendingPathComponent(relativePath, isDirectory: false)
     }
 
     NativeLogger.i(
@@ -376,7 +395,8 @@ final class CameraRecorder: NSObject {
 
   private func cleanupMergedSegments(for session: CameraRecordingSession, finalURL: URL) {
     for segment in session.segments {
-      let url = session.segmentDirectoryURL.appendingPathComponent(segment.relativePath, isDirectory: false)
+      guard let relativePath = segment.relativePath, !relativePath.isEmpty else { continue }
+      let url = session.segmentDirectoryURL.appendingPathComponent(relativePath, isDirectory: false)
       if url != finalURL, fileManager.fileExists(atPath: url.path) {
         try? fileManager.removeItem(at: url)
       }
@@ -414,6 +434,12 @@ final class CameraRecorder: NSObject {
     let formatter = ISO8601DateFormatter()
     formatter.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
     return formatter.string(from: date)
+  }
+
+  static func date(from value: String) -> Date? {
+    let formatter = ISO8601DateFormatter()
+    formatter.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
+    return formatter.date(from: value)
   }
 
   private static func recordingFinishedSuccessfully(_ error: Error?) -> Bool {
@@ -491,11 +517,18 @@ extension CameraRecorder: AVCaptureFileOutputRecordingDelegate {
     }
 
     if let activeSegment {
-      let segment = CameraRecordingMetadata.Segment(
+      let finishedAt = Date()
+      let mediaDuration = recordedDurationSeconds(
+        for: outputFileURL,
+        fallback: max(0.0, finishedAt.timeIntervalSince(activeSegment.startedAt))
+      )
+      let segmentStart = finishedAt.addingTimeInterval(-mediaDuration)
+      let segment = RecordingMetadata.CaptureSegment(
         index: activeSegment.index,
         relativePath: activeSegment.url.lastPathComponent,
-        startWallClock: Self.iso8601String(from: activeSegment.startedAt),
-        endWallClock: Self.iso8601String(from: Date())
+        startWallClock: Self.iso8601String(from: segmentStart),
+        endWallClock: Self.iso8601String(from: finishedAt),
+        durationSeconds: mediaDuration
       )
       session.segments.append(segment)
       recordingSession = session
@@ -519,5 +552,20 @@ extension CameraRecorder: AVCaptureFileOutputRecordingDelegate {
       pendingStopCompletion = nil
       finalizeStoppedRecording(completion: completion)
     }
+  }
+
+  private func recordedDurationSeconds(for url: URL, fallback: TimeInterval) -> TimeInterval {
+    let asset = AVURLAsset(url: url)
+    let duration = asset.duration
+    guard duration.isNumeric else {
+      return fallback
+    }
+
+    let seconds = duration.seconds
+    guard seconds.isFinite, seconds > 0 else {
+      return fallback
+    }
+
+    return seconds
   }
 }

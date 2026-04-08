@@ -1673,6 +1673,24 @@ final class ScreenRecorderFacade: NSObject {
     }
   }
 
+  private func loadCameraRecordingMetadata(projectRef: RecordingProjectRef) -> CameraRecordingMetadata? {
+    guard let metadataURL = projectRef.mediaSources().cameraMetadataURL else {
+      return nil
+    }
+
+    do {
+      let data = try Data(contentsOf: metadataURL)
+      return try JSONDecoder().decode(CameraRecordingMetadata.self, from: data)
+    } catch {
+      NativeLogger.w(
+        "Scene",
+        "Failed to load camera recording metadata",
+        context: ["path": metadataURL.path, "error": error.localizedDescription]
+      )
+      return nil
+    }
+  }
+
   private func resolvedCameraAssetURL(
     projectRef: RecordingProjectRef,
     explicitCameraPath: String?
@@ -1895,6 +1913,18 @@ final class ScreenRecorderFacade: NSObject {
       projectRef: projectRef,
       explicitCameraPath: explicitCameraPath
     )
+    let recordingMetadata = loadRecordingMetadata(projectRef: projectRef)
+    let cameraMetadata = loadCameraRecordingMetadata(projectRef: projectRef)
+    let cameraSyncTimeline = CameraSyncTimelineResolver.resolve(
+      recordingMetadata: recordingMetadata,
+      cameraMetadata: cameraMetadata,
+      screenAsset: AVAsset(url: URL(fileURLWithPath: mediaSources.screenPath)),
+      cameraAsset: resolvedCameraURL.map(AVAsset.init(url:)),
+      logContext: [
+        "context": "preview",
+        "projectPath": projectPath,
+      ]
+    )
 
     NativeLogger.d(
       "Scene",
@@ -1906,6 +1936,7 @@ final class ScreenRecorderFacade: NSObject {
         "metadataPath": mediaSources.metadataPath ?? "nil",
         "cursorPath": mediaSources.cursorPath ?? "nil",
         "zoomManualPath": mediaSources.zoomManualPath ?? "nil",
+        "cameraSyncSegments": cameraSyncTimeline?.segments.count ?? 0,
       ]
     )
 
@@ -1915,7 +1946,8 @@ final class ScreenRecorderFacade: NSObject {
       cameraPath: resolvedCameraURL?.path,
       metadataPath: mediaSources.metadataPath,
       cursorPath: mediaSources.cursorPath,
-      zoomManualPath: mediaSources.zoomManualPath
+      zoomManualPath: mediaSources.zoomManualPath,
+      cameraSyncTimeline: cameraSyncTimeline
     )
   }
 
@@ -3774,6 +3806,7 @@ final class ScreenRecorderFacade: NSObject {
     do {
       var metadata = try RecordingMetadata.read(from: metaURL)
       metadata = metadata.withEndTimestamp()
+      metadata.screen.segments = capture.recordedScreenSegments
       if let cameraResult {
         metadata.camera = cameraCaptureInfo(from: cameraResult, screenRawURL: publishedScreenURL)
       } else if shouldRecordSeparateCameraAsset {

@@ -46,7 +46,7 @@ final class CameraChromaKeyRenderer {
 
     let renderSize = orientedSize(for: videoTrack)
     let renderBounds = CGRect(origin: .zero, size: renderSize)
-    let colorSpace = CGColorSpaceCreateDeviceRGB()
+    let colorSpace = VideoColorPipeline.workingColorSpace
     let sourceTransform = normalizedSourceTransform(for: videoTrack)
     let keyColor = chromaKeyColorVector(from: params.chromaKeyColorArgb)
 
@@ -92,14 +92,49 @@ final class CameraChromaKeyRenderer {
     }
     reader.add(readerOutput)
 
-    let writerInput = AVAssetWriterInput(
-      mediaType: .video,
-      outputSettings: [
-        AVVideoCodecKey: AVVideoCodecType.proRes4444,
-        AVVideoWidthKey: Int(renderSize.width),
-        AVVideoHeightKey: Int(renderSize.height),
-      ]
-    )
+    let writerInput: AVAssetWriterInput
+    do {
+      writerInput = try VideoColorPipeline.makeVideoWriterInput(
+        baseOutputSettings: [
+          AVVideoCodecKey: AVVideoCodecType.proRes4444,
+          AVVideoWidthKey: Int(renderSize.width),
+          AVVideoHeightKey: Int(renderSize.height),
+        ],
+        category: "Export",
+        operation: "camera_chroma_key_intermediate",
+        extraContext: [
+          "cameraPrepassSelected": true,
+          "chromaKeyEnabled": params.chromaKeyEnabled,
+          "renderSize": "\(Int(renderSize.width))x\(Int(renderSize.height))",
+        ]
+      )
+    } catch let error as VideoColorPipeline.VideoWriterInputBuildError {
+      DispatchQueue.main.async {
+        completion(
+          .failure(
+            makeAdvancedCameraExportError(
+              stage: .styledIntermediateBuild,
+              reason: error.reason,
+              context: error.context
+            )
+          )
+        )
+      }
+      return
+    } catch {
+      DispatchQueue.main.async {
+        completion(
+          .failure(
+            makeAdvancedCameraExportError(
+              stage: .styledIntermediateBuild,
+              reason: "The chroma-key camera writer input could not be created.",
+              context: ["error": error.localizedDescription]
+            )
+          )
+        )
+      }
+      return
+    }
     writerInput.expectsMediaDataInRealTime = false
 
     let adaptor = AVAssetWriterInputPixelBufferAdaptor(
@@ -131,6 +166,7 @@ final class CameraChromaKeyRenderer {
     removeFileIfExists(outputURL)
     let durationSeconds = max(inputAsset.duration.seconds, 0.001)
     let renderQueue = DispatchQueue(label: "Clingfy.CameraChromaKeyRender")
+    var didLogSourceColorMetadata = false
     var completed = false
 
     func finish(_ result: Result<URL, Error>) {
@@ -222,6 +258,22 @@ final class CameraChromaKeyRenderer {
 
             if writer.status == .completed {
               onProgress?(1.0)
+              var readyContext: [String: Any] = [
+                "output": outputURL.path,
+                "renderSize": "\(Int(renderSize.width))x\(Int(renderSize.height))",
+              ]
+              VideoColorPipeline.metadataContext(
+                prefix: "outputTrack",
+                metadata: VideoColorPipeline.assetTrackColorMetadata(
+                  AVAsset(url: outputURL).tracks(withMediaType: .video).first
+                )
+              ).forEach { readyContext[$0.key] = $0.value }
+              readyContext["workingColorSpace"] = VideoColorPipeline.workingColorSpaceName
+              NativeLogger.i(
+                "Export",
+                "Chroma-key camera intermediate ready",
+                context: readyContext
+              )
               finish(.success(outputURL))
             } else {
               finish(
@@ -243,6 +295,19 @@ final class CameraChromaKeyRenderer {
           return
         }
 
+        if !didLogSourceColorMetadata {
+          didLogSourceColorMetadata = true
+          VideoColorPipeline.logColorMetadata(
+            category: "Export",
+            message: "Chroma-key camera source color metadata",
+            formatDescription: CMSampleBufferGetFormatDescription(sampleBuffer),
+            pixelBuffer: sourcePixelBuffer,
+            extraContext: [
+              "output": outputURL.path,
+            ]
+          )
+        }
+
         guard let pixelBufferPool = adaptor.pixelBufferPool else {
           failRender(reason: "The chroma-key camera writer has no pixel buffer pool.")
           return
@@ -261,6 +326,7 @@ final class CameraChromaKeyRenderer {
           )
           return
         }
+        VideoColorPipeline.tag(pixelBuffer: renderedPixelBuffer)
 
         let sourceImage = CIImage(cvPixelBuffer: sourcePixelBuffer).transformed(by: sourceTransform)
         let keyedImage: CIImage
@@ -326,7 +392,7 @@ final class CameraChromaKeyRenderer {
   }
 
   private func chromaKeyColorVector(from argb: Int?) -> CIVector {
-    let color = cameraColor(from: argb).usingColorSpace(.deviceRGB) ?? .green
+    let color = cameraColor(from: argb).usingColorSpace(.sRGB) ?? .green
     return CIVector(
       x: color.redComponent,
       y: color.greenComponent,
@@ -335,11 +401,6 @@ final class CameraChromaKeyRenderer {
   }
 
   private func cameraColor(from argb: Int?) -> NSColor {
-    guard let argb else { return .green }
-    let a = CGFloat((argb >> 24) & 0xFF) / 255.0
-    let r = CGFloat((argb >> 16) & 0xFF) / 255.0
-    let g = CGFloat((argb >> 8) & 0xFF) / 255.0
-    let b = CGFloat(argb & 0xFF) / 255.0
-    return NSColor(red: r, green: g, blue: b, alpha: a)
+    VideoColorPipeline.nsColor(fromARGB: argb, defaultColor: .green)
   }
 }

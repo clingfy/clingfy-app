@@ -236,6 +236,8 @@ final class InlinePreviewView: NSView {
   private var currentPreviewProfile: PreviewProfile?
   private var pendingCompositionWorkItem: DispatchWorkItem?
   private var currentMediaSources: PreviewMediaSources?
+  private var lastCameraSyncVisibility: Bool?
+  private var lastCameraSyncSegmentStart: Double?
   private var cameraDragState: CameraDragState?
   private var pendingPlaybackSnapshotToRestore: PreviewPlaybackSnapshot?
   private var lastGeometryOnlyBoundsRefreshSignature: String?
@@ -617,19 +619,27 @@ final class InlinePreviewView: NSView {
     )
   }
 
-  private func configuredTimeForCameraSeek(_ time: CMTime) -> CMTime {
+  private func configuredTimeForCameraSeek(_ time: CMTime) -> CMTime? {
     guard
       let cameraItem = cameraPlayer?.currentItem,
       cameraItem.duration.isNumeric,
       cameraItem.duration.seconds.isFinite
     else {
-      return time
+      return nil
     }
 
-    let clampedSeconds = min(
-      max(0.0, time.seconds.isFinite ? time.seconds : 0.0),
-      max(0.0, cameraItem.duration.seconds)
-    )
+    let requestedScreenSeconds = time.seconds.isFinite ? time.seconds : 0.0
+    let requestedCameraSeconds: Double
+    if let syncTimeline = currentMediaSources?.cameraSyncTimeline {
+      guard let mapping = syncTimeline.mapping(forScreenTime: requestedScreenSeconds) else {
+        return nil
+      }
+      requestedCameraSeconds = mapping.cameraTimeSeconds
+    } else {
+      requestedCameraSeconds = requestedScreenSeconds
+    }
+
+    let clampedSeconds = min(max(0.0, requestedCameraSeconds), max(0.0, cameraItem.duration.seconds))
     return CMTime(seconds: clampedSeconds, preferredTimescale: time.timescale > 0 ? time.timescale : 600)
   }
 
@@ -641,6 +651,8 @@ final class InlinePreviewView: NSView {
       cameraPlayer.pause()
       cameraPlayer.replaceCurrentItem(with: nil)
       cameraContainerLayer?.isHidden = true
+      lastCameraSyncVisibility = nil
+      lastCameraSyncSegmentStart = nil
       return
     }
 
@@ -657,11 +669,58 @@ final class InlinePreviewView: NSView {
 
   private func syncCameraPlayback(to time: CMTime? = nil, force: Bool = false) {
     guard let cameraPlayer, cameraPlayer.currentItem != nil else { return }
-    let targetTime = configuredTimeForCameraSeek(time ?? player?.currentTime() ?? .zero)
+    let screenTime = time ?? player?.currentTime() ?? .zero
+    guard let targetTime = configuredTimeForCameraSeek(screenTime) else {
+      if force || lastCameraSyncVisibility != false {
+        NativeLogger.d(
+          "Player",
+          "Camera preview hidden at screen time due to sync gap",
+          context: [
+            "screenTimeSeconds": screenTime.seconds,
+            "hasSyncTimeline": currentMediaSources?.cameraSyncTimeline != nil,
+          ]
+        )
+      }
+      lastCameraSyncVisibility = false
+      lastCameraSyncSegmentStart = nil
+      cameraPlayer.pause()
+      return
+    }
+
+    if let mapping = currentMediaSources?.cameraSyncTimeline?.mapping(forScreenTime: screenTime.seconds) {
+      if force
+        || lastCameraSyncVisibility != true
+        || lastCameraSyncSegmentStart != mapping.segment.screenStartSeconds
+      {
+        NativeLogger.d(
+          "Player",
+          "Resolved camera preview sync mapping",
+          context: [
+            "screenTimeSeconds": screenTime.seconds,
+            "cameraTimeSeconds": mapping.cameraTimeSeconds,
+            "screenSegmentStartSeconds": mapping.segment.screenStartSeconds,
+            "cameraSegmentStartSeconds": mapping.segment.cameraStartSeconds,
+            "segmentDurationSeconds": mapping.segment.durationSeconds,
+          ]
+        )
+      }
+      lastCameraSyncSegmentStart = mapping.segment.screenStartSeconds
+    } else {
+      lastCameraSyncSegmentStart = nil
+    }
+    lastCameraSyncVisibility = true
+
     let currentTime = cameraPlayer.currentTime()
     let delta = abs(currentTime.seconds - targetTime.seconds)
-    guard force || !delta.isNaN && delta > 0.08 else { return }
-    cameraPlayer.seek(to: targetTime, toleranceBefore: .zero, toleranceAfter: .zero)
+    if force || !delta.isNaN && delta > 0.08 {
+      cameraPlayer.seek(to: targetTime, toleranceBefore: .zero, toleranceAfter: .zero)
+    }
+
+    if (player?.rate ?? 0.0) > 0.0 {
+      cameraPlayer.play()
+    } else {
+      cameraPlayer.pause()
+    }
   }
 
   func open(
@@ -755,7 +814,7 @@ final class InlinePreviewView: NSView {
     let shouldStartPlaying = initialPlaybackSnapshot?.isPlaying ?? true
     if shouldStartPlaying {
       player?.play()
-      cameraPlayer?.play()
+      syncCameraPlayback(force: true)
     } else {
       player?.pause()
       cameraPlayer?.pause()
@@ -958,7 +1017,6 @@ final class InlinePreviewView: NSView {
 
   func play() {
     player?.play()
-    cameraPlayer?.play()
     syncCameraPlayback(force: true)
     sendState(state: "playing")
   }
@@ -1489,7 +1547,7 @@ final class InlinePreviewView: NSView {
 
     if snapshot.isPlaying {
       player?.play()
-      cameraPlayer?.play()
+      syncCameraPlayback(to: targetTime, force: true)
       sendState(state: "playing")
     } else {
       player?.pause()
@@ -1857,6 +1915,17 @@ final class InlinePreviewView: NSView {
       return
     }
 
+    var colorContext = VideoColorPipeline.metadataContext(
+      prefix: "composition",
+      metadata: VideoColorPipeline.compositionColorMetadata(layout.composition)
+    )
+    VideoColorPipeline.metadataContext(
+      prefix: "sourceTrack",
+      metadata: VideoColorPipeline.assetTrackColorMetadata(asset.tracks(withMediaType: .video).first)
+    ).forEach { colorContext[$0.key] = $0.value }
+    colorContext["workingColorSpace"] = VideoColorPipeline.workingColorSpaceName
+    NativeLogger.i("Preview", "Resolved preview color policy", context: colorContext)
+
     currentCompositionParams = params
     currentCameraCompositionParams = cameraParams ?? currentCameraCompositionParams
     currentScene = PreviewScene(
@@ -2123,6 +2192,12 @@ final class InlinePreviewView: NSView {
       return nil
     }
 
+    if let syncTimeline = currentMediaSources?.cameraSyncTimeline,
+      !syncTimeline.containsScreenTime(time)
+    {
+      return nil
+    }
+
     let baseResolution = CameraLayoutResolver.effectiveFrame(
       canvasSize: canvasSize,
       params: params
@@ -2242,12 +2317,7 @@ final class InlinePreviewView: NSView {
   }
 
   private func color(from argb: Int?) -> NSColor {
-    guard let argb else { return .white }
-    let a = CGFloat((argb >> 24) & 0xFF) / 255.0
-    let r = CGFloat((argb >> 16) & 0xFF) / 255.0
-    let g = CGFloat((argb >> 8) & 0xFF) / 255.0
-    let b = CGFloat(argb & 0xFF) / 255.0
-    return NSColor(red: r, green: g, blue: b, alpha: a)
+    VideoColorPipeline.nsColor(fromARGB: argb)
   }
 
   private func applyCameraShadow(to layer: CALayer, params: CameraCompositionParams, path: CGPath) {
@@ -2634,13 +2704,7 @@ final class InlinePreviewView: NSView {
   }
 
   private func previewBackgroundColor(from color: Int?) -> CGColor {
-    guard let color else { return CGColor.black }
-
-    let r = CGFloat((color >> 16) & 0xFF) / 255.0
-    let g = CGFloat((color >> 8) & 0xFF) / 255.0
-    let b = CGFloat(color & 0xFF) / 255.0
-    let a = (color > 0xFFFFFF) ? CGFloat((color >> 24) & 0xFF) / 255.0 : 1.0
-    return CGColor(red: r, green: g, blue: b, alpha: a)
+    VideoColorPipeline.cgColor(fromARGB: color)
   }
 
   private func applyPreviewMask(
@@ -2678,7 +2742,7 @@ final class InlinePreviewView: NSView {
     let bytesPerPixel = 4
     let bytesPerRow = width * bytesPerPixel
 
-    let colorSpace = CGColorSpaceCreateDeviceRGB()
+    let colorSpace = VideoColorPipeline.workingColorSpace
     let bitmapInfo = CGBitmapInfo(rawValue: CGImageAlphaInfo.premultipliedLast.rawValue)
 
     return sprite.pixels.withUnsafeBytes { ptr -> CGImage? in

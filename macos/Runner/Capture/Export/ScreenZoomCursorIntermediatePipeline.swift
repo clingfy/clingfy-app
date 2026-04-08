@@ -194,18 +194,49 @@ final class ScreenZoomCursorIntermediatePipeline {
     reader.add(readerOutput)
 
     let renderSize = prepass.videoComposition.renderSize
-    let writerInput = AVAssetWriterInput(
-      mediaType: .video,
-      outputSettings: [
-        AVVideoCodecKey: AVVideoCodecType.proRes4444,
-        AVVideoWidthKey: Int(renderSize.width),
-        AVVideoHeightKey: Int(renderSize.height),
-        AVVideoColorPropertiesKey: [
-          AVVideoColorPrimariesKey: AVVideoColorPrimaries_ITU_R_709_2,
-          AVVideoTransferFunctionKey: AVVideoTransferFunction_ITU_R_709_2,
+    let writerInput: AVAssetWriterInput
+    do {
+      writerInput = try VideoColorPipeline.makeVideoWriterInput(
+        baseOutputSettings: [
+          AVVideoCodecKey: AVVideoCodecType.proRes4444,
+          AVVideoWidthKey: Int(renderSize.width),
+          AVVideoHeightKey: Int(renderSize.height),
         ],
-      ]
-    )
+        category: "Export",
+        operation: "screen_zoom_cursor_intermediate",
+        extraContext: [
+          "screenPrepassSelected": true,
+          "renderSize": "\(Int(renderSize.width))x\(Int(renderSize.height))",
+          "zoomSegmentCount": params.zoomSegments?.count ?? 0,
+        ]
+      )
+    } catch let error as VideoColorPipeline.VideoWriterInputBuildError {
+      DispatchQueue.main.async {
+        completion(
+          .failure(
+            makeScreenPrepassExportError(
+              stage: .build,
+              reason: error.reason,
+              context: error.context
+            )
+          )
+        )
+      }
+      return
+    } catch {
+      DispatchQueue.main.async {
+        completion(
+          .failure(
+            makeScreenPrepassExportError(
+              stage: .build,
+              reason: "The screen pre-pass writer input could not be created.",
+              context: ["error": error.localizedDescription]
+            )
+          )
+        )
+      }
+      return
+    }
     writerInput.expectsMediaDataInRealTime = false
 
     let adaptor = AVAssetWriterInputPixelBufferAdaptor(
@@ -237,8 +268,9 @@ final class ScreenZoomCursorIntermediatePipeline {
     let durationSeconds = max(inputAsset.duration.seconds, 0.001)
     let renderQueue = DispatchQueue(label: "Clingfy.ScreenZoomCursorIntermediateRender")
     let renderBounds = CGRect(origin: .zero, size: renderSize)
-    let colorSpace = CGColorSpace(name: CGColorSpace.sRGB)!
+    let colorSpace = VideoColorPipeline.workingColorSpace
     let ciContext = CIContext(options: [.cacheIntermediates: false])
+    var didLogSourceColorMetadata = false
     var completed = false
 
     func finish(_ result: Result<ScreenPreparedIntermediate, Error>) {
@@ -307,6 +339,20 @@ final class ScreenZoomCursorIntermediatePipeline {
             return
           }
 
+          if !didLogSourceColorMetadata {
+            didLogSourceColorMetadata = true
+            VideoColorPipeline.logColorMetadata(
+              category: "Export",
+              message: "Screen pre-pass source color metadata",
+              formatDescription: CMSampleBufferGetFormatDescription(sampleBuffer),
+              pixelBuffer: pixelBuffer,
+              extraContext: [
+                "input": inputURL.path,
+                "output": outputURL.path,
+              ]
+            )
+          }
+
           guard let pixelBufferPool = adaptor.pixelBufferPool else {
             fail("The screen pre-pass writer has no pixel buffer pool.")
             return
@@ -325,6 +371,7 @@ final class ScreenZoomCursorIntermediatePipeline {
             )
             return
           }
+          VideoColorPipeline.tag(pixelBuffer: renderedPixelBuffer)
 
           guard let context = self.makeBitmapContext(pixelBuffer: renderedPixelBuffer, colorSpace: colorSpace) else {
             fail("The screen pre-pass could not create a render context.")
@@ -377,13 +424,21 @@ final class ScreenZoomCursorIntermediatePipeline {
           writerInput.markAsFinished()
           writer.finishWriting {
             if writer.status == .completed {
+              var readyContext: [String: Any] = [
+                "output": outputURL.path,
+                "renderSize": "\(Int(renderSize.width))x\(Int(renderSize.height))",
+              ]
+              VideoColorPipeline.metadataContext(
+                prefix: "outputTrack",
+                metadata: VideoColorPipeline.assetTrackColorMetadata(
+                  AVAsset(url: outputURL).tracks(withMediaType: .video).first
+                )
+              ).forEach { readyContext[$0.key] = $0.value }
+              readyContext["workingColorSpace"] = VideoColorPipeline.workingColorSpaceName
               NativeLogger.i(
                 "Export",
                 "Screen zoom/cursor intermediate ready",
-                context: [
-                  "output": outputURL.path,
-                  "renderSize": "\(Int(renderSize.width))x\(Int(renderSize.height))",
-                ]
+                context: readyContext
               )
               finish(.success(ScreenPreparedIntermediate(url: outputURL, temporaryArtifacts: [outputURL])))
             } else {

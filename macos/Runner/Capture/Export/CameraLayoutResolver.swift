@@ -1,3 +1,4 @@
+import AVFoundation
 import CoreGraphics
 import Foundation
 
@@ -8,6 +9,404 @@ struct PreviewMediaSources: Equatable {
   let metadataPath: String?
   let cursorPath: String?
   let zoomManualPath: String?
+  let cameraSyncTimeline: CameraSyncTimeline?
+
+  init(
+    projectPath: String,
+    screenPath: String,
+    cameraPath: String?,
+    metadataPath: String?,
+    cursorPath: String?,
+    zoomManualPath: String?,
+    cameraSyncTimeline: CameraSyncTimeline? = nil
+  ) {
+    self.projectPath = projectPath
+    self.screenPath = screenPath
+    self.cameraPath = cameraPath
+    self.metadataPath = metadataPath
+    self.cursorPath = cursorPath
+    self.zoomManualPath = zoomManualPath
+    self.cameraSyncTimeline = cameraSyncTimeline
+  }
+}
+
+struct CameraSyncTimeline: Equatable {
+  struct Segment: Equatable {
+    let screenStartSeconds: Double
+    let cameraStartSeconds: Double
+    let durationSeconds: Double
+  }
+
+  struct Mapping: Equatable {
+    let screenTimeSeconds: Double
+    let cameraTimeSeconds: Double
+    let segment: Segment
+  }
+
+  let segments: [Segment]
+
+  var isEmpty: Bool { segments.isEmpty }
+
+  func mapping(forScreenTime time: Double) -> Mapping? {
+    guard !segments.isEmpty else { return nil }
+
+    let normalizedTime = max(0.0, time)
+    for (index, segment) in segments.enumerated() {
+      let segmentEnd = segment.screenStartSeconds + segment.durationSeconds
+      let inRange =
+        normalizedTime + CameraSyncTimelineResolver.timeEpsilon >= segment.screenStartSeconds
+        && normalizedTime < segmentEnd - CameraSyncTimelineResolver.timeEpsilon
+      let atTerminalSample =
+        abs(normalizedTime - segmentEnd) <= CameraSyncTimelineResolver.timeEpsilon
+        && index == segments.count - 1
+      guard inRange || atTerminalSample else { continue }
+
+      let clampedScreenTime = min(
+        max(normalizedTime, segment.screenStartSeconds),
+        segmentEnd
+      )
+      let cameraTime =
+        segment.cameraStartSeconds + (clampedScreenTime - segment.screenStartSeconds)
+      return Mapping(
+        screenTimeSeconds: clampedScreenTime,
+        cameraTimeSeconds: cameraTime,
+        segment: segment
+      )
+    }
+
+    return nil
+  }
+
+  func containsScreenTime(_ time: Double) -> Bool {
+    mapping(forScreenTime: time) != nil
+  }
+}
+
+enum CameraSyncTimelineResolver {
+  fileprivate static let timeEpsilon = 0.0001
+
+  private struct AbsoluteSegment: Equatable {
+    let index: Int
+    let startDate: Date
+    let endDate: Date
+    let durationSeconds: Double
+    let relativePath: String?
+    let source: String
+  }
+
+  static func resolve(
+    recordingMetadata: RecordingMetadata?,
+    cameraMetadata: CameraRecordingMetadata?,
+    screenAsset: AVAsset?,
+    cameraAsset: AVAsset?,
+    logContext: [String: Any] = [:]
+  ) -> CameraSyncTimeline? {
+    guard let cameraAsset else { return nil }
+
+    let screenDurationSeconds = mediaDurationSeconds(for: screenAsset)
+    let cameraDurationSeconds = mediaDurationSeconds(for: cameraAsset)
+    guard screenDurationSeconds > timeEpsilon, cameraDurationSeconds > timeEpsilon else {
+      NativeLogger.w(
+        "CameraSync",
+        "Skipping sync timeline resolution: missing media duration",
+        context: mergedContext(
+          logContext,
+          [
+            "screenDurationSeconds": screenDurationSeconds,
+            "cameraDurationSeconds": cameraDurationSeconds,
+          ]
+        )
+      )
+      return nil
+    }
+
+    let screenSegments = resolvedScreenSegments(
+      recordingMetadata: recordingMetadata,
+      screenDurationSeconds: screenDurationSeconds
+    )
+    let cameraSegments = resolvedCameraSegments(
+      recordingMetadata: recordingMetadata,
+      cameraMetadata: cameraMetadata,
+      cameraDurationSeconds: cameraDurationSeconds
+    )
+
+    guard !screenSegments.isEmpty, !cameraSegments.isEmpty else {
+      let fallback = zeroOffsetTimeline(
+        screenDurationSeconds: screenDurationSeconds,
+        cameraDurationSeconds: cameraDurationSeconds
+      )
+      NativeLogger.w(
+        "CameraSync",
+        "Falling back to zero-offset camera sync timeline",
+        context: mergedContext(
+          logContext,
+          [
+            "reason": "missingAuthoritativeSegments",
+            "screenDurationSeconds": screenDurationSeconds,
+            "cameraDurationSeconds": cameraDurationSeconds,
+            "fallbackSegments": fallback.segments.map(segmentPayload),
+          ]
+        )
+      )
+      return fallback
+    }
+
+    let mappingSegments = intersectSegments(screenSegments: screenSegments, cameraSegments: cameraSegments)
+    if mappingSegments.isEmpty {
+      let fallback = zeroOffsetTimeline(
+        screenDurationSeconds: screenDurationSeconds,
+        cameraDurationSeconds: cameraDurationSeconds
+      )
+      NativeLogger.w(
+        "CameraSync",
+        "Falling back to zero-offset camera sync timeline",
+        context: mergedContext(
+          logContext,
+          [
+            "reason": "noSegmentOverlap",
+            "screenSegments": screenSegments.map(absoluteSegmentPayload),
+            "cameraSegments": cameraSegments.map(absoluteSegmentPayload),
+            "fallbackSegments": fallback.segments.map(segmentPayload),
+          ]
+        )
+      )
+      return fallback
+    }
+
+    NativeLogger.i(
+      "CameraSync",
+      "Resolved camera sync timeline",
+      context: mergedContext(
+        logContext,
+        [
+          "screenSegments": screenSegments.map(absoluteSegmentPayload),
+          "cameraSegments": cameraSegments.map(absoluteSegmentPayload),
+          "syncSegments": mappingSegments.map(segmentPayload),
+        ]
+      )
+    )
+
+    return CameraSyncTimeline(segments: mappingSegments)
+  }
+
+  private static func resolvedScreenSegments(
+    recordingMetadata: RecordingMetadata?,
+    screenDurationSeconds: Double
+  ) -> [AbsoluteSegment] {
+    if let authoritative = authoritativeSegments(
+      from: recordingMetadata?.screen.segments,
+      source: "screen.metadata.segments"
+    ) {
+      return authoritative
+    }
+
+    guard let recordingMetadata else { return [] }
+    if let endedAt = date(from: recordingMetadata.endedAt) {
+      return [
+        AbsoluteSegment(
+          index: 0,
+          startDate: endedAt.addingTimeInterval(-screenDurationSeconds),
+          endDate: endedAt,
+          durationSeconds: screenDurationSeconds,
+          relativePath: recordingMetadata.screen.rawRelativePath,
+          source: "screen.metadata.endedAt"
+        )
+      ]
+    }
+    if let startedAt = date(from: recordingMetadata.startedAt) {
+      return [
+        AbsoluteSegment(
+          index: 0,
+          startDate: startedAt,
+          endDate: startedAt.addingTimeInterval(screenDurationSeconds),
+          durationSeconds: screenDurationSeconds,
+          relativePath: recordingMetadata.screen.rawRelativePath,
+          source: "screen.metadata.startedAt"
+        )
+      ]
+    }
+
+    return []
+  }
+
+  private static func resolvedCameraSegments(
+    recordingMetadata: RecordingMetadata?,
+    cameraMetadata: CameraRecordingMetadata?,
+    cameraDurationSeconds: Double
+  ) -> [AbsoluteSegment] {
+    if let authoritative = authoritativeSegments(
+      from: recordingMetadata?.camera?.segments,
+      source: "recordingMetadata.camera.segments"
+    ) {
+      return authoritative
+    }
+    if let authoritative = authoritativeSegments(
+      from: cameraMetadata?.segments,
+      source: "cameraMetadata.segments"
+    ) {
+      return authoritative
+    }
+
+    guard let cameraMetadata else { return [] }
+    if let endedAt = date(from: cameraMetadata.endedAt) {
+      return [
+        AbsoluteSegment(
+          index: 0,
+          startDate: endedAt.addingTimeInterval(-cameraDurationSeconds),
+          endDate: endedAt,
+          durationSeconds: cameraDurationSeconds,
+          relativePath: cameraMetadata.rawRelativePath,
+          source: "camera.metadata.endedAt"
+        )
+      ]
+    }
+    if let startedAt = date(from: cameraMetadata.startedAt) {
+      return [
+        AbsoluteSegment(
+          index: 0,
+          startDate: startedAt,
+          endDate: startedAt.addingTimeInterval(cameraDurationSeconds),
+          durationSeconds: cameraDurationSeconds,
+          relativePath: cameraMetadata.rawRelativePath,
+          source: "camera.metadata.startedAt"
+        )
+      ]
+    }
+
+    return []
+  }
+
+  private static func authoritativeSegments(
+    from segments: [RecordingMetadata.CaptureSegment]?,
+    source: String
+  ) -> [AbsoluteSegment]? {
+    guard let segments, !segments.isEmpty else { return nil }
+
+    let resolved = segments.compactMap { segment -> AbsoluteSegment? in
+      guard
+        let durationSeconds = segment.durationSeconds,
+        durationSeconds > timeEpsilon,
+        let startDate = date(from: segment.startWallClock),
+        let endDate = date(from: segment.endWallClock)
+      else {
+        return nil
+      }
+
+      return AbsoluteSegment(
+        index: segment.index,
+        startDate: startDate,
+        endDate: endDate,
+        durationSeconds: durationSeconds,
+        relativePath: segment.relativePath,
+        source: source
+      )
+    }
+
+    guard resolved.count == segments.count else { return nil }
+    return resolved.sorted(by: { $0.startDate < $1.startDate })
+  }
+
+  private static func intersectSegments(
+    screenSegments: [AbsoluteSegment],
+    cameraSegments: [AbsoluteSegment]
+  ) -> [CameraSyncTimeline.Segment] {
+    var result: [CameraSyncTimeline.Segment] = []
+    var screenIndex = 0
+    var cameraIndex = 0
+    var cumulativeScreenSeconds = 0.0
+    var cumulativeCameraSeconds = 0.0
+
+    while screenIndex < screenSegments.count, cameraIndex < cameraSegments.count {
+      let screenSegment = screenSegments[screenIndex]
+      let cameraSegment = cameraSegments[cameraIndex]
+
+      let overlapStart = max(screenSegment.startDate, cameraSegment.startDate)
+      let overlapEnd = min(screenSegment.endDate, cameraSegment.endDate)
+      let overlapDuration = overlapEnd.timeIntervalSince(overlapStart)
+
+      if overlapDuration > timeEpsilon {
+        let screenOffset = overlapStart.timeIntervalSince(screenSegment.startDate)
+        let cameraOffset = overlapStart.timeIntervalSince(cameraSegment.startDate)
+        result.append(
+          CameraSyncTimeline.Segment(
+            screenStartSeconds: cumulativeScreenSeconds + screenOffset,
+            cameraStartSeconds: cumulativeCameraSeconds + cameraOffset,
+            durationSeconds: overlapDuration
+          )
+        )
+      }
+
+      if screenSegment.endDate <= cameraSegment.endDate {
+        cumulativeScreenSeconds += screenSegment.durationSeconds
+        screenIndex += 1
+      }
+      if cameraSegment.endDate <= screenSegment.endDate {
+        cumulativeCameraSeconds += cameraSegment.durationSeconds
+        cameraIndex += 1
+      }
+    }
+
+    return result
+  }
+
+  private static func zeroOffsetTimeline(
+    screenDurationSeconds: Double,
+    cameraDurationSeconds: Double
+  ) -> CameraSyncTimeline {
+    CameraSyncTimeline(
+      segments: [
+        CameraSyncTimeline.Segment(
+          screenStartSeconds: 0.0,
+          cameraStartSeconds: 0.0,
+          durationSeconds: min(screenDurationSeconds, cameraDurationSeconds)
+        )
+      ]
+    )
+  }
+
+  private static func mediaDurationSeconds(for asset: AVAsset?) -> Double {
+    guard let asset else { return 0.0 }
+    let duration = asset.duration
+    guard duration.isNumeric else { return 0.0 }
+    let seconds = duration.seconds
+    guard seconds.isFinite, seconds > 0 else { return 0.0 }
+    return seconds
+  }
+
+  private static func date(from value: String?) -> Date? {
+    guard let value else { return nil }
+    let formatter = ISO8601DateFormatter()
+    formatter.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
+    return formatter.date(from: value)
+  }
+
+  private static func absoluteSegmentPayload(_ segment: AbsoluteSegment) -> [String: Any] {
+    [
+      "index": segment.index,
+      "relativePath": segment.relativePath ?? "nil",
+      "startWallClock": RecordingMetadata.iso8601String(from: segment.startDate),
+      "endWallClock": RecordingMetadata.iso8601String(from: segment.endDate),
+      "durationSeconds": segment.durationSeconds,
+      "source": segment.source,
+    ]
+  }
+
+  private static func segmentPayload(_ segment: CameraSyncTimeline.Segment) -> [String: Any] {
+    [
+      "screenStartSeconds": segment.screenStartSeconds,
+      "cameraStartSeconds": segment.cameraStartSeconds,
+      "durationSeconds": segment.durationSeconds,
+    ]
+  }
+
+  private static func mergedContext(
+    _ lhs: [String: Any],
+    _ rhs: [String: Any]
+  ) -> [String: Any] {
+    var context = lhs
+    rhs.forEach { context[$0.key] = $0.value }
+    return context
+  }
 }
 
 enum CameraPreviewChangeKind: String, Equatable {

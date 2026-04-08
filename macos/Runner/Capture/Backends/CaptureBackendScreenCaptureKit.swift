@@ -91,6 +91,8 @@ private struct SegmentedRecordingArtifact {
   let rawURL: URL
   let cursorURL: URL?
   let recordedDuration: TimeInterval
+  let startWallClock: Date
+  let endWallClock: Date
 }
 
 private struct SegmentedRecordingSession {
@@ -124,16 +126,34 @@ private struct SegmentedRecordingSession {
     index: Int,
     rawURL: URL,
     cursorURL: URL?,
-    recordedDuration: TimeInterval
+    recordedDuration: TimeInterval,
+    startWallClock: Date,
+    endWallClock: Date
   ) {
     let artifact = SegmentedRecordingArtifact(
       index: index,
       rawURL: rawURL,
       cursorURL: cursorURL,
-      recordedDuration: recordedDuration
+      recordedDuration: recordedDuration,
+      startWallClock: startWallClock,
+      endWallClock: endWallClock
     )
     segmentArtifacts.append(artifact)
     cumulativeRecordedDuration += recordedDuration
+  }
+
+  var recordedScreenSegments: [RecordingMetadata.CaptureSegment] {
+    segmentArtifacts
+      .sorted(by: { $0.index < $1.index })
+      .map { artifact in
+        RecordingMetadata.CaptureSegment(
+          index: artifact.index,
+          relativePath: artifact.rawURL.lastPathComponent,
+          startWallClock: RecordingMetadata.iso8601String(from: artifact.startWallClock),
+          endWallClock: RecordingMetadata.iso8601String(from: artifact.endWallClock),
+          durationSeconds: artifact.recordedDuration
+        )
+      }
   }
 }
 
@@ -426,6 +446,9 @@ final class CaptureBackendScreenCaptureKit: NSObject, CaptureBackend {
   var isRecording: Bool { recordingURL != nil && didStart }
   var isPaused: Bool { paused }
   var currentOutputURL: URL? { recordingURL }
+  var recordedScreenSegments: [RecordingMetadata.CaptureSegment] {
+    segmentedSession?.recordedScreenSegments ?? []
+  }
 
   // MARK: Internals
   private let cursorRecorder = CursorRecorder()
@@ -932,13 +955,17 @@ final class CaptureBackendScreenCaptureKit: NSObject, CaptureBackend {
     try await segment.finalizationWaiter.wait()
     try await stopCursorSegmentIfNeeded(for: segment)
 
-    let duration = max(0, finishedAt.timeIntervalSince(segment.startedAt))
+    let fallbackDuration = max(0, finishedAt.timeIntervalSince(segment.startedAt))
+    let duration = recordedDurationSeconds(for: segment.rawURL, fallback: fallbackDuration)
+    let startedAt = finishedAt.addingTimeInterval(-duration)
     if var session = segmentedSession {
       session.appendSegment(
         index: segment.index,
         rawURL: segment.rawURL,
         cursorURL: segment.cursorURL,
-        recordedDuration: duration
+        recordedDuration: duration,
+        startWallClock: startedAt,
+        endWallClock: finishedAt
       )
       segmentedSession = session
     }
@@ -1275,6 +1302,21 @@ final class CaptureBackendScreenCaptureKit: NSObject, CaptureBackend {
     }
 
     onStarted?(url)
+  }
+
+  private func recordedDurationSeconds(for url: URL, fallback: TimeInterval) -> TimeInterval {
+    let asset = AVURLAsset(url: url)
+    let duration = asset.duration
+    guard duration.isNumeric else {
+      return fallback
+    }
+
+    let seconds = duration.seconds
+    guard seconds.isFinite, seconds > 0 else {
+      return fallback
+    }
+
+    return seconds
   }
 
   private func flushOverlayUpdateIfNeeded() async {

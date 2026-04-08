@@ -2,6 +2,14 @@ import CoreGraphics
 import Foundation
 
 struct RecordingMetadata: Codable {
+  struct CaptureSegment: Codable, Equatable {
+    let index: Int
+    let relativePath: String?
+    let startWallClock: String
+    let endWallClock: String
+    let durationSeconds: Double?
+  }
+
   struct CropRectInfo: Codable, Equatable {
     let x: Double
     let y: Double
@@ -41,6 +49,62 @@ struct RecordingMetadata: Codable {
     let cursorEnabled: Bool
     let cursorLinked: Bool
     let excludedRecorderApp: Bool
+    var segments: [CaptureSegment]
+
+    init(
+      rawRelativePath: String,
+      displayMode: Int,
+      displayId: UInt32,
+      windowId: UInt32?,
+      cropRect: CropRectInfo?,
+      frameRate: Int,
+      quality: String,
+      cursorEnabled: Bool,
+      cursorLinked: Bool,
+      excludedRecorderApp: Bool,
+      segments: [CaptureSegment] = []
+    ) {
+      self.rawRelativePath = rawRelativePath
+      self.displayMode = displayMode
+      self.displayId = displayId
+      self.windowId = windowId
+      self.cropRect = cropRect
+      self.frameRate = frameRate
+      self.quality = quality
+      self.cursorEnabled = cursorEnabled
+      self.cursorLinked = cursorLinked
+      self.excludedRecorderApp = excludedRecorderApp
+      self.segments = segments
+    }
+
+    private enum CodingKeys: String, CodingKey {
+      case rawRelativePath
+      case displayMode
+      case displayId
+      case windowId
+      case cropRect
+      case frameRate
+      case quality
+      case cursorEnabled
+      case cursorLinked
+      case excludedRecorderApp
+      case segments
+    }
+
+    init(from decoder: Decoder) throws {
+      let container = try decoder.container(keyedBy: CodingKeys.self)
+      rawRelativePath = try container.decode(String.self, forKey: .rawRelativePath)
+      displayMode = try container.decode(Int.self, forKey: .displayMode)
+      displayId = try container.decode(UInt32.self, forKey: .displayId)
+      windowId = try container.decodeIfPresent(UInt32.self, forKey: .windowId)
+      cropRect = try container.decodeIfPresent(CropRectInfo.self, forKey: .cropRect)
+      frameRate = try container.decode(Int.self, forKey: .frameRate)
+      quality = try container.decode(String.self, forKey: .quality)
+      cursorEnabled = try container.decode(Bool.self, forKey: .cursorEnabled)
+      cursorLinked = try container.decode(Bool.self, forKey: .cursorLinked)
+      excludedRecorderApp = try container.decode(Bool.self, forKey: .excludedRecorderApp)
+      segments = try container.decodeIfPresent([CaptureSegment].self, forKey: .segments) ?? []
+    }
   }
 
   struct CameraCaptureInfo: Codable, Equatable {
@@ -52,7 +116,7 @@ struct RecordingMetadata: Codable {
     let mirroredRaw: Bool
     let nominalFrameRate: Double?
     let dimensions: Dimensions?
-    let segments: [CameraRecordingMetadata.Segment]
+    let segments: [CaptureSegment]
   }
 
   struct EditorSeed: Codable, Equatable {
@@ -216,7 +280,7 @@ struct RecordingMetadata: Codable {
   let bundleId: String
   let startedAt: String
   var endedAt: String?
-  let screen: ScreenCaptureInfo
+  var screen: ScreenCaptureInfo
   var camera: CameraCaptureInfo?
   var editorSeed: EditorSeed
 
@@ -251,7 +315,8 @@ struct RecordingMetadata: Codable {
         quality: quality.rawValue,
         cursorEnabled: cursorEnabled,
         cursorLinked: cursorLinked,
-        excludedRecorderApp: excludedRecorderApp
+        excludedRecorderApp: excludedRecorderApp,
+        segments: []
       ),
       camera: camera,
       editorSeed: editorSeed
@@ -341,7 +406,8 @@ private extension RecordingMetadata {
         quality: legacy.quality,
         cursorEnabled: legacy.cursorEnabled,
         cursorLinked: legacy.cursorLinked,
-        excludedRecorderApp: legacy.excludedRecorderApp
+        excludedRecorderApp: legacy.excludedRecorderApp,
+        segments: []
       ),
       camera: nil,
       editorSeed: EditorSeed(

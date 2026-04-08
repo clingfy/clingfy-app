@@ -25,9 +25,35 @@ final class LetterboxExporter {
     let averageRed: Double
     let averageGreen: Double
     let averageBlue: Double
+    let averageLuma: Double
     let dominantRedRatio: Double
     let dominantGreenRatio: Double
     let dominantBlueRatio: Double
+
+    func maxAverageChannelDelta(comparedTo other: FrameColorMetrics) -> Double {
+      max(
+        abs(averageRed - other.averageRed),
+        max(
+          abs(averageGreen - other.averageGreen),
+          abs(averageBlue - other.averageBlue)
+        )
+      )
+    }
+  }
+
+  private struct CropCandidate {
+    let image: CGImage
+    let pixelRect: CGRect
+    let flipY: Bool
+  }
+
+  private struct AlignedCropPair {
+    let reference: CropCandidate
+    let final: CropCandidate
+    let referenceContentMetrics: FrameContentMetrics
+    let finalContentMetrics: FrameContentMetrics
+    let referenceColorMetrics: FrameColorMetrics?
+    let finalColorMetrics: FrameColorMetrics?
   }
 
   private let builder = CompositionBuilder()
@@ -40,6 +66,10 @@ final class LetterboxExporter {
   private let validationSampleDimension = 64
   private let validationAlphaThreshold: UInt8 = 8
   private let validationNonBlackThreshold: UInt8 = 12
+  private let validationLumaWarningThreshold = 0.04
+  private let validationLumaFailureThreshold = 0.10
+  private let validationChannelWarningThreshold = 0.05
+  private let validationChannelFailureThreshold = 0.10
 
   func cancel() {
     isCancelled = true
@@ -87,14 +117,30 @@ final class LetterboxExporter {
     return CMTime(seconds: min(1.0, seconds / 2.0), preferredTimescale: 600)
   }
 
-  private func sampleFrameImage(asset: AVAsset) throws -> CGImage {
+  private func sampleFrameImage(
+    asset: AVAsset,
+    videoComposition: AVVideoComposition? = nil
+  ) throws -> CGImage {
+    try sampleFrameImage(
+      asset: asset,
+      videoComposition: videoComposition,
+      at: validationSampleTime(for: asset)
+    )
+  }
+
+  private func sampleFrameImage(
+    asset: AVAsset,
+    videoComposition: AVVideoComposition? = nil,
+    at sampleTime: CMTime
+  ) throws -> CGImage {
     let generator = AVAssetImageGenerator(asset: asset)
-    generator.appliesPreferredTrackTransform = true
+    generator.appliesPreferredTrackTransform = videoComposition == nil
+    generator.videoComposition = videoComposition
     generator.maximumSize = CGSize(
       width: validationSampleDimension,
       height: validationSampleDimension
     )
-    return try generator.copyCGImage(at: validationSampleTime(for: asset), actualTime: nil)
+    return try generator.copyCGImage(at: sampleTime, actualTime: nil)
   }
 
   private func orientedSize(for asset: AVAsset) -> CGSize? {
@@ -111,7 +157,7 @@ final class LetterboxExporter {
     let height = validationSampleDimension
     let bytesPerRow = width * 4
     var buffer = [UInt8](repeating: 0, count: height * bytesPerRow)
-    let colorSpace = CGColorSpaceCreateDeviceRGB()
+    let colorSpace = VideoColorPipeline.workingColorSpace
 
     var metrics: FrameContentMetrics?
     buffer.withUnsafeMutableBytes { rawBuffer in
@@ -173,7 +219,7 @@ final class LetterboxExporter {
     let height = validationSampleDimension
     let bytesPerRow = width * 4
     var buffer = [UInt8](repeating: 0, count: height * bytesPerRow)
-    let colorSpace = CGColorSpaceCreateDeviceRGB()
+    let colorSpace = VideoColorPipeline.workingColorSpace
 
     buffer.withUnsafeMutableBytes { rawBuffer in
       guard
@@ -244,6 +290,9 @@ final class LetterboxExporter {
       averageRed: redTotal / Double(visiblePixels),
       averageGreen: greenTotal / Double(visiblePixels),
       averageBlue: blueTotal / Double(visiblePixels),
+      averageLuma:
+        ((redTotal * 0.2126) + (greenTotal * 0.7152) + (blueTotal * 0.0722))
+        / Double(visiblePixels),
       dominantRedRatio: Double(redDominantPixels) / Double(visiblePixels),
       dominantGreenRatio: Double(greenDominantPixels) / Double(visiblePixels),
       dominantBlueRatio: Double(blueDominantPixels) / Double(visiblePixels)
@@ -255,6 +304,18 @@ final class LetterboxExporter {
     cropRect: CGRect,
     canvasSize: CGSize
   ) -> [CGImage] {
+    cropCandidates(
+      from: image,
+      cropRect: cropRect,
+      canvasSize: canvasSize
+    ).map(\.image)
+  }
+
+  private func cropCandidates(
+    from image: CGImage,
+    cropRect: CGRect,
+    canvasSize: CGSize
+  ) -> [CropCandidate] {
     let imageBounds = CGRect(x: 0, y: 0, width: image.width, height: image.height)
     let scaleX = CGFloat(image.width) / max(canvasSize.width, 1.0)
     let scaleY = CGFloat(image.height) / max(canvasSize.height, 1.0)
@@ -269,7 +330,8 @@ final class LetterboxExporter {
       ).integral.intersection(imageBounds)
 
       guard pixelRect.width >= 1.0, pixelRect.height >= 1.0 else { return nil }
-      return image.cropping(to: pixelRect)
+      guard let cropped = image.cropping(to: pixelRect) else { return nil }
+      return CropCandidate(image: cropped, pixelRect: pixelRect, flipY: flipY)
     }
   }
 
@@ -295,6 +357,87 @@ final class LetterboxExporter {
       .max(by: { lhs, rhs in
         lhs.nonBlackVisibleRatio < rhs.nonBlackVisibleRatio
       })
+  }
+
+  private func bestColorMetrics(
+    from image: CGImage,
+    cropRect: CGRect?,
+    canvasSize: CGSize,
+    ignoreTransparentPixels: Bool
+  ) -> FrameColorMetrics? {
+    let candidateImages: [CGImage]
+    if let cropRect {
+      candidateImages = croppedImageVariants(
+        from: image,
+        cropRect: cropRect,
+        canvasSize: canvasSize
+      )
+    } else {
+      candidateImages = [image]
+    }
+
+    return candidateImages
+      .compactMap { analyzeFrameColorMetrics($0, ignoreTransparentPixels: ignoreTransparentPixels) }
+      .max(by: { lhs, rhs in
+        lhs.visiblePixels < rhs.visiblePixels
+      })
+  }
+
+  private func makeFinalExportValidationError(
+    reason: String,
+    context: [String: Any] = [:]
+  ) -> NSError {
+    var userInfo: [String: Any] = [
+      NSLocalizedDescriptionKey: "Export output failed validation. \(reason)",
+      "nativeErrorCode": NativeErrorCode.exportError,
+      "stage": "final_output_validation",
+      "reason": reason,
+    ]
+    if !context.isEmpty {
+      userInfo["context"] = context
+    }
+    return NSError(domain: "Letterbox.FinalOutputValidation", code: 1, userInfo: userInfo)
+  }
+
+  private func logColorDriftIfNeeded(
+    category: String,
+    message: String,
+    reference: FrameColorMetrics,
+    candidate: FrameColorMetrics,
+    extraContext: [String: Any] = [:]
+  ) {
+    let lumaDelta = candidate.averageLuma - reference.averageLuma
+    let redDelta = candidate.averageRed - reference.averageRed
+    let greenDelta = candidate.averageGreen - reference.averageGreen
+    let blueDelta = candidate.averageBlue - reference.averageBlue
+    let maxChannelDelta = candidate.maxAverageChannelDelta(comparedTo: reference)
+
+    var context = extraContext
+    context["referenceAverageRed"] = reference.averageRed
+    context["referenceAverageGreen"] = reference.averageGreen
+    context["referenceAverageBlue"] = reference.averageBlue
+    context["referenceAverageLuma"] = reference.averageLuma
+    context["candidateAverageRed"] = candidate.averageRed
+    context["candidateAverageGreen"] = candidate.averageGreen
+    context["candidateAverageBlue"] = candidate.averageBlue
+    context["candidateAverageLuma"] = candidate.averageLuma
+    context["deltaRed"] = redDelta
+    context["deltaGreen"] = greenDelta
+    context["deltaBlue"] = blueDelta
+    context["deltaLuma"] = lumaDelta
+    context["maxChannelDelta"] = maxChannelDelta
+
+    NativeLogger.d(category, message, context: context)
+
+    if abs(lumaDelta) > validationLumaWarningThreshold
+      || maxChannelDelta > validationChannelWarningThreshold
+    {
+      NativeLogger.w(
+        category,
+        "\(message) exceeded warning threshold",
+        context: context
+      )
+    }
   }
 
   private func validateStyledCameraIntermediate(
@@ -360,79 +503,230 @@ final class LetterboxExporter {
     }
   }
 
-  private func validateFinalStyledCameraExport(
-    styledCameraAsset: AVAsset,
-    finalExportAsset: AVAsset,
-    canvasSize: CGSize,
-    cameraParams: CameraCompositionParams,
-    placementSourceRect: CGRect?
-  ) -> NSError? {
-    let resolution = CameraLayoutResolver.effectiveFrame(
-      canvasSize: canvasSize,
-      params: cameraParams
+  private func bestAlignedCropPair(
+    referenceImage: CGImage,
+    finalImage: CGImage,
+    cropRect: CGRect,
+    canvasSize: CGSize
+  ) -> AlignedCropPair? {
+    let referenceCandidates = cropCandidates(
+      from: referenceImage,
+      cropRect: cropRect,
+      canvasSize: canvasSize
     )
-    guard resolution.shouldRender else { return nil }
+    let finalCandidates = cropCandidates(
+      from: finalImage,
+      cropRect: cropRect,
+      canvasSize: canvasSize
+    )
 
-    do {
-      let styledImage = try sampleFrameImage(asset: styledCameraAsset)
-      let finalImage = try sampleFrameImage(asset: finalExportAsset)
-      let styledCanvasSize = orientedSize(for: styledCameraAsset)
-        ?? CGSize(width: styledImage.width, height: styledImage.height)
+    var bestPair: AlignedCropPair?
+    var bestNonBlackScore = -Double.infinity
+    var bestColorScore = Double.infinity
 
-      guard let styledMetrics = bestMetrics(
-        from: styledImage,
-        cropRect: placementSourceRect,
-        canvasSize: styledCanvasSize,
-        ignoreTransparentPixels: true
-      ) else {
-        return makeAdvancedCameraExportError(
-          stage: .finalOutputValidation,
-          reason: "The final export validator could not analyze the styled camera frame."
+    for referenceCandidate in referenceCandidates {
+      guard
+        let finalCandidate = finalCandidates.first(where: { $0.flipY == referenceCandidate.flipY }),
+        let referenceContentMetrics = analyzeFrameContent(
+          referenceCandidate.image,
+          ignoreTransparentPixels: false
+        ),
+        let finalContentMetrics = analyzeFrameContent(
+          finalCandidate.image,
+          ignoreTransparentPixels: false
         )
+      else {
+        continue
       }
 
-      guard styledMetrics.nonBlackVisibleRatio >= 0.05 else {
+      let referenceColorMetrics = analyzeFrameColorMetrics(
+        referenceCandidate.image,
+        ignoreTransparentPixels: false
+      )
+      let finalColorMetrics = analyzeFrameColorMetrics(
+        finalCandidate.image,
+        ignoreTransparentPixels: false
+      )
+
+      let nonBlackScore =
+        referenceContentMetrics.nonBlackVisibleRatio + finalContentMetrics.nonBlackVisibleRatio
+      let colorScore: Double
+      if let referenceColorMetrics, let finalColorMetrics {
+        let lumaDelta = abs(finalColorMetrics.averageLuma - referenceColorMetrics.averageLuma)
+        let maxChannelDelta = finalColorMetrics.maxAverageChannelDelta(comparedTo: referenceColorMetrics)
+        colorScore = lumaDelta + maxChannelDelta
+      } else {
+        colorScore = Double.infinity
+      }
+
+      if nonBlackScore > bestNonBlackScore + 0.0001
+        || (abs(nonBlackScore - bestNonBlackScore) <= 0.0001 && colorScore < bestColorScore)
+      {
+        bestNonBlackScore = nonBlackScore
+        bestColorScore = colorScore
+        bestPair = AlignedCropPair(
+          reference: referenceCandidate,
+          final: finalCandidate,
+          referenceContentMetrics: referenceContentMetrics,
+          finalContentMetrics: finalContentMetrics,
+          referenceColorMetrics: referenceColorMetrics,
+          finalColorMetrics: finalColorMetrics
+        )
+      }
+    }
+
+    return bestPair
+  }
+
+  private func validateFinalStyledCameraExport(
+    referenceAsset: AVAsset,
+    referenceComposition: AVVideoComposition,
+    validationInfo: CompositionBuilder.ExportValidationInfo,
+    finalExportAsset: AVAsset
+  ) -> NSError? {
+    let referenceSampleTime = validationSampleTime(for: referenceAsset)
+    let finalSampleTime = validationSampleTime(for: finalExportAsset)
+    let sampleTimeSeconds = min(referenceSampleTime.seconds, finalSampleTime.seconds)
+    let sampleTime = CMTime(seconds: sampleTimeSeconds, preferredTimescale: 600)
+    guard let resolvedSample = validationInfo.resolvedCameraSample(at: sampleTimeSeconds) else {
+      NativeLogger.w(
+        "Export",
+        "Skipping final camera validation: no validation samples available",
+        context: [
+          "sampleTimeSeconds": sampleTimeSeconds,
+          "compositionRenderSize": "\(Int(validationInfo.renderSize.width))x\(Int(validationInfo.renderSize.height))",
+          "cameraSampleCount": validationInfo.cameraSamples.count,
+        ]
+      )
+      return nil
+    }
+    guard resolvedSample.isTrustworthy, let resolvedFrame = resolvedSample.cameraFrame else {
+      NativeLogger.w(
+        "Export",
+        "Skipping final camera validation: unresolved camera frame at sample time",
+        context: [
+          "sampleTimeSeconds": sampleTimeSeconds,
+          "compositionRenderSize": "\(Int(validationInfo.renderSize.width))x\(Int(validationInfo.renderSize.height))",
+          "cameraSampleCount": validationInfo.cameraSamples.count,
+          "zoomActiveAtSample": resolvedSample.zoomActive,
+          "usedInterpolation": resolvedSample.usedInterpolation,
+          "resolvedCameraFrame": resolvedSample.cameraFrame.map(NSStringFromRect) ?? "nil",
+        ]
+      )
+      return nil
+    }
+
+    do {
+      let referenceImage = try sampleFrameImage(
+        asset: referenceAsset,
+        videoComposition: referenceComposition,
+        at: sampleTime
+      )
+      let finalImage = try sampleFrameImage(asset: finalExportAsset, at: sampleTime)
+      let finalEncodedSize = orientedSize(for: finalExportAsset)
+        ?? CGSize(width: finalImage.width, height: finalImage.height)
+
+      guard let cropPair = bestAlignedCropPair(
+        referenceImage: referenceImage,
+        finalImage: finalImage,
+        cropRect: resolvedFrame,
+        canvasSize: validationInfo.renderSize
+      ) else {
+        NativeLogger.w(
+          "Export",
+          "Skipping final camera validation: unable to derive aligned crop pair",
+          context: [
+            "sampleTimeSeconds": sampleTimeSeconds,
+            "compositionRenderSize": "\(Int(validationInfo.renderSize.width))x\(Int(validationInfo.renderSize.height))",
+            "finalEncodedSize": "\(Int(finalEncodedSize.width))x\(Int(finalEncodedSize.height))",
+            "resolvedCameraFrame": NSStringFromRect(resolvedFrame),
+            "zoomActiveAtSample": resolvedSample.zoomActive,
+            "usedInterpolation": resolvedSample.usedInterpolation,
+          ]
+        )
         return nil
       }
 
-      let cropMetrics = croppedImageVariants(
-        from: finalImage,
-        cropRect: resolution.frame,
-        canvasSize: canvasSize
-      ).compactMap {
-        analyzeFrameContent($0, ignoreTransparentPixels: false)
+      guard cropPair.referenceContentMetrics.nonBlackVisibleRatio >= 0.05 else {
+        return nil
       }
 
-      guard let bestCropMetrics = cropMetrics.max(by: { lhs, rhs in
-        lhs.nonBlackVisibleRatio < rhs.nonBlackVisibleRatio
-      }) else {
-        return makeAdvancedCameraExportError(
-          stage: .finalOutputValidation,
-          reason: "The final export validator could not read the exported camera region."
-        )
-      }
-
-      let requiredNonBlackRatio = max(0.01, styledMetrics.nonBlackVisibleRatio * 0.2)
+      let requiredNonBlackRatio = max(0.01, cropPair.referenceContentMetrics.nonBlackVisibleRatio * 0.2)
+      let validationContext: [String: Any] = [
+        "sampleTimeSeconds": sampleTimeSeconds,
+        "compositionRenderSize": "\(Int(validationInfo.renderSize.width))x\(Int(validationInfo.renderSize.height))",
+        "finalEncodedSize": "\(Int(finalEncodedSize.width))x\(Int(finalEncodedSize.height))",
+        "resolvedCameraFrame": NSStringFromRect(resolvedFrame),
+        "referenceCropPixelRect": NSStringFromRect(cropPair.reference.pixelRect),
+        "finalCropPixelRect": NSStringFromRect(cropPair.final.pixelRect),
+        "selectedCropOrientation": cropPair.reference.flipY ? "flippedY" : "nativeY",
+        "zoomActiveAtSample": resolvedSample.zoomActive,
+        "usedInterpolation": resolvedSample.usedInterpolation,
+      ]
 
       NativeLogger.d(
         "Export",
         "Final styled camera validation metrics",
-        context: [
-          "styledNonBlackRatio": styledMetrics.nonBlackVisibleRatio,
-          "finalCropNonBlackRatio": bestCropMetrics.nonBlackVisibleRatio,
-          "requiredNonBlackRatio": requiredNonBlackRatio,
-        ]
+        context: validationContext.merging(
+          [
+            "referenceCropNonBlackRatio": cropPair.referenceContentMetrics.nonBlackVisibleRatio,
+            "finalCropNonBlackRatio": cropPair.finalContentMetrics.nonBlackVisibleRatio,
+            "requiredNonBlackRatio": requiredNonBlackRatio,
+          ],
+          uniquingKeysWith: { _, new in new }
+        )
       )
 
-      guard bestCropMetrics.nonBlackVisibleRatio >= requiredNonBlackRatio else {
+      guard cropPair.finalContentMetrics.nonBlackVisibleRatio >= requiredNonBlackRatio else {
         return makeAdvancedCameraExportError(
           stage: .finalOutputValidation,
           reason: "The final exported camera region rendered blank or black video.",
-          context: [
-            "styledNonBlackRatio": styledMetrics.nonBlackVisibleRatio,
-            "finalCropNonBlackRatio": bestCropMetrics.nonBlackVisibleRatio,
-            "requiredNonBlackRatio": requiredNonBlackRatio,
-          ]
+          context: validationContext.merging(
+            [
+              "referenceCropNonBlackRatio": cropPair.referenceContentMetrics.nonBlackVisibleRatio,
+              "finalCropNonBlackRatio": cropPair.finalContentMetrics.nonBlackVisibleRatio,
+              "requiredNonBlackRatio": requiredNonBlackRatio,
+            ],
+            uniquingKeysWith: { _, new in new }
+          )
+        )
+      }
+
+      if let referenceColorMetrics = cropPair.referenceColorMetrics,
+        let finalCropColorMetrics = cropPair.finalColorMetrics
+      {
+        logColorDriftIfNeeded(
+          category: "Export",
+          message: "Final styled camera color validation metrics",
+          reference: referenceColorMetrics,
+          candidate: finalCropColorMetrics,
+          extraContext: validationContext
+        )
+
+        let maxChannelDelta = finalCropColorMetrics.maxAverageChannelDelta(comparedTo: referenceColorMetrics)
+        let lumaDelta = abs(finalCropColorMetrics.averageLuma - referenceColorMetrics.averageLuma)
+        if lumaDelta > validationLumaFailureThreshold
+          || maxChannelDelta > validationChannelFailureThreshold
+        {
+          return makeAdvancedCameraExportError(
+            stage: .finalOutputValidation,
+            reason: "The final exported camera region drifted materially in brightness or color.",
+            context: validationContext.merging(
+              [
+                "referenceAverageLuma": referenceColorMetrics.averageLuma,
+                "finalAverageLuma": finalCropColorMetrics.averageLuma,
+                "lumaDelta": finalCropColorMetrics.averageLuma - referenceColorMetrics.averageLuma,
+                "maxChannelDelta": maxChannelDelta,
+              ],
+              uniquingKeysWith: { _, new in new }
+            )
+          )
+        }
+      } else {
+        NativeLogger.w(
+          "Export",
+          "Skipping final camera color validation: crop color metrics unavailable",
+          context: validationContext
         )
       }
 
@@ -529,11 +823,92 @@ final class LetterboxExporter {
         )
       }
 
+      logColorDriftIfNeeded(
+        category: "Export",
+        message: "Screen pre-pass color validation metrics",
+        reference: rawColorMetrics,
+        candidate: prepassColorMetrics
+      )
+
+      let lumaDelta = abs(prepassColorMetrics.averageLuma - rawColorMetrics.averageLuma)
+      let maxChannelDelta = prepassColorMetrics.maxAverageChannelDelta(comparedTo: rawColorMetrics)
+      if lumaDelta > validationLumaFailureThreshold
+        || maxChannelDelta > validationChannelFailureThreshold
+      {
+        return makeScreenPrepassExportError(
+          stage: .validation,
+          reason: "The screen pre-pass drifted materially in brightness or color.",
+          context: [
+            "rawAverageLuma": rawColorMetrics.averageLuma,
+            "prepassAverageLuma": prepassColorMetrics.averageLuma,
+            "lumaDelta": prepassColorMetrics.averageLuma - rawColorMetrics.averageLuma,
+            "maxChannelDelta": maxChannelDelta,
+          ]
+        )
+      }
+
       return nil
     } catch {
       return makeScreenPrepassExportError(
         stage: .validation,
         reason: "The screen pre-pass validator could not sample the intermediate.",
+        context: ["error": error.localizedDescription]
+      )
+    }
+  }
+
+  private func validateFinalExportReferenceRender(
+    referenceAsset: AVAsset,
+    referenceComposition: AVVideoComposition,
+    finalExportAsset: AVAsset
+  ) -> NSError? {
+    do {
+      let referenceImage = try sampleFrameImage(
+        asset: referenceAsset,
+        videoComposition: referenceComposition
+      )
+      let finalImage = try sampleFrameImage(asset: finalExportAsset)
+
+      guard
+        let referenceMetrics = analyzeFrameColorMetrics(referenceImage, ignoreTransparentPixels: false),
+        let finalMetrics = analyzeFrameColorMetrics(finalImage, ignoreTransparentPixels: false)
+      else {
+        return makeFinalExportValidationError(
+          reason: "The final export color validator could not analyze the rendered frames."
+        )
+      }
+
+      logColorDriftIfNeeded(
+        category: "Export",
+        message: "Final export reference-render color validation metrics",
+        reference: referenceMetrics,
+        candidate: finalMetrics,
+        extraContext: [
+          "referenceRenderSize":
+            "\(Int(referenceComposition.renderSize.width))x\(Int(referenceComposition.renderSize.height))",
+        ]
+      )
+
+      let lumaDelta = abs(finalMetrics.averageLuma - referenceMetrics.averageLuma)
+      let maxChannelDelta = finalMetrics.maxAverageChannelDelta(comparedTo: referenceMetrics)
+      if lumaDelta > validationLumaFailureThreshold
+        || maxChannelDelta > validationChannelFailureThreshold
+      {
+        return makeFinalExportValidationError(
+          reason: "The final exported file drifted materially from the reference composition render.",
+          context: [
+            "referenceAverageLuma": referenceMetrics.averageLuma,
+            "finalAverageLuma": finalMetrics.averageLuma,
+            "lumaDelta": finalMetrics.averageLuma - referenceMetrics.averageLuma,
+            "maxChannelDelta": maxChannelDelta,
+          ]
+        )
+      }
+
+      return nil
+    } catch {
+      return makeFinalExportValidationError(
+        reason: "The final export color validator could not sample the rendered frames.",
         context: ["error": error.localizedDescription]
       )
     }
@@ -641,6 +1016,23 @@ final class LetterboxExporter {
     let cameraInputURL = mediaSources.cameraVideoURL
 
     let asset = AVAsset(url: inputURL)
+    let recordingMetadata = mediaSources.metadataURL.flatMap {
+      try? RecordingMetadata.read(from: $0)
+    }
+    let cameraMetadata = mediaSources.cameraMetadataURL.flatMap { url -> CameraRecordingMetadata? in
+      guard let data = try? Data(contentsOf: url) else { return nil }
+      return try? JSONDecoder().decode(CameraRecordingMetadata.self, from: data)
+    }
+    let cameraSyncTimeline = CameraSyncTimelineResolver.resolve(
+      recordingMetadata: recordingMetadata,
+      cameraMetadata: cameraMetadata,
+      screenAsset: asset,
+      cameraAsset: cameraInputURL.map(AVAsset.init(url:)),
+      logContext: [
+        "context": "export",
+        "projectPath": project.rootURL.path,
+      ]
+    )
 
     // Load cursor recording if needed (gracefully handle missing cursor file)
     var cursorRecording: CursorRecording?
@@ -875,6 +1267,7 @@ final class LetterboxExporter {
           params: params,
           cameraParams: cameraParams,
           cursorRecording: cursorRecording,
+          cameraSyncTimeline: cameraSyncTimeline,
           cameraAssetIsPreStyled: cameraAssetIsPreStyled,
           cameraPlacementSourceRect: cameraPlacementSourceRect,
           screenSourceMode: screenSourceMode,
@@ -947,35 +1340,55 @@ final class LetterboxExporter {
       export.outputURL = finalURL
       export.shouldOptimizeForNetworkUse = true
 
+      var exportColorContext = VideoColorPipeline.metadataContext(
+        prefix: "composition",
+        metadata: VideoColorPipeline.compositionColorMetadata(comp.videoComposition)
+      )
+      VideoColorPipeline.metadataContext(
+        prefix: "screenTrack",
+        metadata: VideoColorPipeline.assetTrackColorMetadata(screenAsset.tracks(withMediaType: .video).first)
+      ).forEach { exportColorContext[$0.key] = $0.value }
+      VideoColorPipeline.metadataContext(
+        prefix: "cameraTrack",
+        metadata: VideoColorPipeline.assetTrackColorMetadata(cameraAsset?.tracks(withMediaType: .video).first)
+      ).forEach { exportColorContext[$0.key] = $0.value }
+      exportColorContext["workingColorSpace"] = VideoColorPipeline.workingColorSpaceName
+
+      let renderSizeString =
+        "\(Int(comp.videoComposition.renderSize.width))x\(Int(comp.videoComposition.renderSize.height))"
+      let targetSizeString = "\(Int(target.width))x\(Int(target.height))"
+      let sourcePeakDbfs: Any = resolvedAudioMix.sourcePeakDbfs ?? NSNull()
+      let normalizationGainDb: Any = resolvedAudioMix.normalizationGainDb ?? NSNull()
+      var exportStartContext: [String: Any] = [
+        "input": resolvedScreenInputURL.path,
+        "cameraInput": resolvedCameraInputURL?.path ?? "nil",
+        "cameraAssetIsPreStyled": cameraAssetIsPreStyled,
+        "screenSourceMode": screenSourceMode.rawValue,
+        "screenZoomBaked": comp.debugInfo.screenZoomIsPrecomposited,
+        "output": outputURL.path,
+        "target": targetSizeString,
+        "renderSize": renderSizeString,
+        "fpsHint": fpsHint,
+        "format": format,
+        "codec": codec,
+        "bitrate": bitrate,
+        "autoNormalizeOnExport": autoNormalizeOnExport,
+        "targetLoudnessDbfs": targetLoudnessDbfs,
+        "resolvedGainDb": resolvedAudioMix.gainDb,
+        "resolvedVolumePercent": resolvedAudioMix.volumePercent,
+        "sourcePeakDbfs": sourcePeakDbfs,
+        "normalizationGainDb": normalizationGainDb,
+        "backgroundColor": self.formattedBackgroundColor(backgroundColor),
+        "backgroundImagePath": backgroundImagePath ?? "nil",
+        "hasCustomBackground": backgroundColor != nil || backgroundImagePath != nil,
+        "supportedTypes": export.supportedFileTypes.map(\.rawValue),
+        "finalURL": finalURL.path,
+      ]
+      exportColorContext.forEach { exportStartContext[$0.key] = $0.value }
       NativeLogger.i(
         "Export",
         "Starting final export session",
-        context: [
-          "input": resolvedScreenInputURL.path,
-          "cameraInput": resolvedCameraInputURL?.path ?? "nil",
-          "cameraAssetIsPreStyled": cameraAssetIsPreStyled,
-          "screenSourceMode": screenSourceMode.rawValue,
-          "screenZoomBaked": comp.debugInfo.screenZoomIsPrecomposited,
-          "output": outputURL.path,
-          "target": "\(Int(target.width))x\(Int(target.height))",
-          "renderSize":
-            "\(Int(comp.videoComposition.renderSize.width))x\(Int(comp.videoComposition.renderSize.height))",
-          "fpsHint": fpsHint,
-          "format": format,
-          "codec": codec,
-          "bitrate": bitrate,
-          "autoNormalizeOnExport": autoNormalizeOnExport,
-          "targetLoudnessDbfs": targetLoudnessDbfs,
-          "resolvedGainDb": resolvedAudioMix.gainDb,
-          "resolvedVolumePercent": resolvedAudioMix.volumePercent,
-          "sourcePeakDbfs": resolvedAudioMix.sourcePeakDbfs ?? NSNull(),
-          "normalizationGainDb": resolvedAudioMix.normalizationGainDb ?? NSNull(),
-          "backgroundColor": self.formattedBackgroundColor(backgroundColor),
-          "backgroundImagePath": backgroundImagePath ?? "nil",
-          "hasCustomBackground": backgroundColor != nil || backgroundImagePath != nil,
-          "supportedTypes": export.supportedFileTypes.map(\.rawValue),
-          "finalURL": finalURL.path,
-        ]
+        context: exportStartContext
       )
 
       runExportSession(
@@ -992,15 +1405,29 @@ final class LetterboxExporter {
 
         switch result {
         case .success(let finalURL):
+          if let validationError = self.validateFinalExportReferenceRender(
+            referenceAsset: comp.asset,
+            referenceComposition: comp.videoComposition,
+            finalExportAsset: AVAsset(url: finalURL)
+          ) {
+            NativeLogger.e(
+              "Export",
+              "Final export reference-render validation failed",
+              context: validationError.userInfo
+            )
+            self.removeFileIfExists(finalURL)
+            self.cleanupTemporaryArtifacts()
+            completion(.failure(validationError))
+            return
+          }
+
           if cameraAssetIsPreStyled,
-            let resolvedCameraInputURL,
-            let cameraParams,
+            let validationInfo = comp.validationInfo,
             let validationError = self.validateFinalStyledCameraExport(
-              styledCameraAsset: AVAsset(url: resolvedCameraInputURL),
+              referenceAsset: comp.asset,
+              referenceComposition: comp.videoComposition,
+              validationInfo: validationInfo,
               finalExportAsset: AVAsset(url: finalURL),
-              canvasSize: target,
-              cameraParams: cameraParams,
-              placementSourceRect: cameraPlacementSourceRect
             )
           {
             NativeLogger.e(
@@ -1312,18 +1739,26 @@ final class LetterboxExporter {
       .doubleValue ?? 0
     let seconds = max(asset.duration.seconds, 0.001)
     let bpsFromFile = (bytes * 8.0) / seconds
+    var context: [String: Any] = [
+      "url": url.path,
+      "w": w,
+      "h": h,
+      "nominalFps": track.nominalFrameRate,
+      "estimatedDataRate_bps": track.estimatedDataRate,
+      "file_bytes": bytes,
+      "duration_s": seconds,
+      "bitrate_from_file_bps": bpsFromFile,
+    ]
+    VideoColorPipeline.metadataContext(
+      prefix: "track",
+      metadata: VideoColorPipeline.assetTrackColorMetadata(track)
+    ).forEach { context[$0.key] = $0.value }
+    context["workingColorSpace"] = VideoColorPipeline.workingColorSpaceName
 
     NativeLogger.i(
       "Export", "Exported file info",
-      context: [
-        "url": url.path,
-        "w": w, "h": h,
-        "nominalFps": track.nominalFrameRate,
-        "estimatedDataRate_bps": track.estimatedDataRate,
-        "file_bytes": bytes,
-        "duration_s": seconds,
-        "bitrate_from_file_bps": bpsFromFile,
-      ])
+      context: context
+    )
   }
 
 #if DEBUG
@@ -1392,18 +1827,15 @@ final class LetterboxExporter {
   }
 
   func _testValidateFinalStyledCameraExport(
-    styledCameraURL: URL,
-    finalExportURL: URL,
-    canvasSize: CGSize,
-    cameraParams: CameraCompositionParams,
-    placementSourceRect: CGRect? = nil
+    referenceResult: CompositionBuilder.ExportCompositionResult,
+    finalExportURL: URL
   ) -> NSError? {
-    validateFinalStyledCameraExport(
-      styledCameraAsset: AVAsset(url: styledCameraURL),
-      finalExportAsset: AVAsset(url: finalExportURL),
-      canvasSize: canvasSize,
-      cameraParams: cameraParams,
-      placementSourceRect: placementSourceRect
+    guard let validationInfo = referenceResult.validationInfo else { return nil }
+    return validateFinalStyledCameraExport(
+      referenceAsset: referenceResult.asset,
+      referenceComposition: referenceResult.videoComposition,
+      validationInfo: validationInfo,
+      finalExportAsset: AVAsset(url: finalExportURL)
     )
   }
 

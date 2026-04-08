@@ -136,10 +136,15 @@ protocol CaptureBackend: AnyObject {
   var isRecording: Bool { get }
   var isPaused: Bool { get }
   var currentOutputURL: URL? { get }
+  var recordedScreenSegments: [RecordingMetadata.CaptureSegment] { get }
 
   func start(config: CaptureStartConfig)
   func stop()
   func pause()
   func resume()
   func updateOverlay(windowID: CGWindowID?)
+}
+
+extension CaptureBackend {
+  var recordedScreenSegments: [RecordingMetadata.CaptureSegment] { [] }
 }
