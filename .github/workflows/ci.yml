@@ -6,14 +6,74 @@ on:
       - develop
       - main
       - 'release/*'
+  push:
+    branches:
+      - develop
+      - main
+      - 'release/*'
+
+concurrency:
+  group: clingfy-ci-${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+env:
+  APP_ENV: ${{ github.base_ref == 'develop' || github.ref_name == 'develop' && 'dev' || 'prod' }}
 
 jobs:
-  build:
-    name: macOS CI
+  flutter-quality:
+    name: Flutter quality
     runs-on: macos-latest
+    timeout-minutes: 25
 
-    env:
-      APP_ENV: ${{ github.base_ref == 'develop' && 'dev' || 'prod' }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Flutter
+        uses: subosito/flutter-action@v2
+        with:
+          flutter-version: 3.41.1
+          channel: stable
+
+      - name: Cache pub + CocoaPods
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.pub-cache
+            ~/Library/Caches/CocoaPods
+            macos/Pods
+          key: ${{ runner.os }}-flutter-${{ hashFiles('pubspec.lock', 'macos/Podfile.lock') }}
+          restore-keys: |
+            ${{ runner.os }}-flutter-
+
+      - name: Flutter pub get
+        run: flutter pub get
+
+      - name: Check formatting
+        run: dart format --output=none --set-exit-if-changed .
+
+      - name: Static analysis
+        run: dart analyze lib test
+
+      - name: Run Flutter tests
+        run: |
+          set -euo pipefail
+          mkdir -p build/ci
+          flutter test --coverage --reporter expanded 2>&1 | tee build/ci/flutter-test.log
+
+      - name: Upload Flutter CI logs
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: flutter-quality-artifacts
+          path: |
+            build/ci
+            coverage/lcov.info
+
+  native-macos-tests:
+    name: Native macOS tests
+    runs-on: macos-latest
+    timeout-minutes: 35
 
     steps:
       - name: Checkout
@@ -30,6 +90,17 @@ jobs:
           flutter-version: 3.41.1
           channel: stable
 
+      - name: Cache pub + CocoaPods
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.pub-cache
+            ~/Library/Caches/CocoaPods
+            macos/Pods
+          key: ${{ runner.os }}-flutter-${{ hashFiles('pubspec.lock', 'macos/Podfile.lock') }}
+          restore-keys: |
+            ${{ runner.os }}-flutter-
+
       - name: Resolve app version
         run: |
           set -euo pipefail
@@ -45,10 +116,9 @@ jobs:
       - name: Generate Flutter macOS configs
         run: |
           set -euo pipefail
-          
-          # Repair scaffolding if needed (from our previous fix)
+
           flutter create --platforms=macos .
-          
+
           flutter build macos \
             --debug \
             --config-only \
@@ -57,8 +127,6 @@ jobs:
             --build-number "$BUILD_NUMBER" \
             --dart-define=APP_ENV=$APP_ENV
 
-          # Re-adding the dummy files from earlier to prevent Xcode build planner crashes
-          echo "Creating empty xcfilelist files..."
           mkdir -p macos/Flutter/ephemeral
           touch macos/Flutter/ephemeral/FlutterInputs.xcfilelist
           touch macos/Flutter/ephemeral/FlutterOutputs.xcfilelist
@@ -69,37 +137,124 @@ jobs:
           cd macos
           pod install --repo-update
 
-      - name: Verify macOS host project files
+      - name: Verify native test target exists
+        run: |
+          set -euo pipefail
+          if ! grep -q "RunnerTests" macos/Runner.xcodeproj/project.pbxproj; then
+            echo "RunnerTests target not found."
+            echo "Add a native macOS unit test target and include it in the shared scheme."
+            exit 1
+          fi
+
+      - name: Build for testing
+        run: |
+          set -euo pipefail
+          mkdir -p build/ci
+          xcodebuild \
+            -workspace macos/Runner.xcworkspace \
+            -scheme "$APP_ENV" \
+            -configuration "Debug-$APP_ENV" \
+            -destination "platform=macOS" \
+            -derivedDataPath build/DerivedData \
+            COMPILER_INDEX_STORE_ENABLE=NO \
+            build-for-testing 2>&1 | tee build/ci/xcode-build-for-testing.log
+
+      - name: Run native macOS tests
+        run: |
+          set -euo pipefail
+          xcodebuild \
+            -workspace macos/Runner.xcworkspace \
+            -scheme "$APP_ENV" \
+            -configuration "Debug-$APP_ENV" \
+            -destination "platform=macOS" \
+            -derivedDataPath build/DerivedData \
+            -resultBundlePath build/RunnerTests.xcresult \
+            COMPILER_INDEX_STORE_ENABLE=NO \
+            test-without-building 2>&1 | tee build/ci/xcode-test.log
+
+      - name: Upload native test artifacts
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: native-macos-test-artifacts
+          path: |
+            build/ci
+            build/RunnerTests.xcresult
+
+  macos-build:
+    name: macOS unsigned build
+    runs-on: macos-latest
+    timeout-minutes: 35
+    needs:
+      - flutter-quality
+      - native-macos-tests
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Verify Xcode and Swift
+        run: |
+          xcodebuild -version
+          swift --version
+
+      - name: Set up Flutter
+        uses: subosito/flutter-action@v2
+        with:
+          flutter-version: 3.41.1
+          channel: stable
+
+      - name: Cache pub + CocoaPods
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.pub-cache
+            ~/Library/Caches/CocoaPods
+            macos/Pods
+          key: ${{ runner.os }}-flutter-${{ hashFiles('pubspec.lock', 'macos/Podfile.lock') }}
+          restore-keys: |
+            ${{ runner.os }}-flutter-
+
+      - name: Resolve app version
+        run: |
+          set -euo pipefail
+          VERSION_LINE="$(grep '^version:' pubspec.yaml | awk '{print $2}')"
+          APP_VERSION="${VERSION_LINE%%+*}"
+          BUILD_NUMBER="${GITHUB_RUN_NUMBER}"
+          echo "APP_VERSION=${APP_VERSION}" >> "$GITHUB_ENV"
+          echo "BUILD_NUMBER=${BUILD_NUMBER}" >> "$GITHUB_ENV"
+
+      - name: Flutter pub get
+        run: flutter pub get
+
+      - name: Generate Flutter macOS configs
         run: |
           set -euo pipefail
 
-          echo "APP_ENV=$APP_ENV"
+          flutter create --platforms=macos .
 
-          echo "1) project.pbxproj"
-          test -f macos/Runner.xcodeproj/project.pbxproj
-          echo "OK"
+          flutter build macos \
+            --debug \
+            --config-only \
+            --flavor "$APP_ENV" \
+            --build-name "$APP_VERSION" \
+            --build-number "$BUILD_NUMBER" \
+            --dart-define=APP_ENV=$APP_ENV
 
-          echo "2) workspace"
-          test -f macos/Runner.xcworkspace/contents.xcworkspacedata
-          echo "OK"
+          mkdir -p macos/Flutter/ephemeral
+          touch macos/Flutter/ephemeral/FlutterInputs.xcfilelist
+          touch macos/Flutter/ephemeral/FlutterOutputs.xcfilelist
 
-          echo "3) xcschemes dir"
-          ls -la macos/Runner.xcodeproj/xcshareddata || true
-          ls -la macos/Runner.xcodeproj/xcshareddata/xcschemes || true
-
-          echo "4) scheme file"
-          test -f "macos/Runner.xcodeproj/xcshareddata/xcschemes/${APP_ENV}.xcscheme"
-          echo "OK"
-
-          echo "5) build configs"
-          grep -n "Debug-${APP_ENV}" macos/Runner.xcodeproj/project.pbxproj
-          grep -n "Profile-${APP_ENV}" macos/Runner.xcodeproj/project.pbxproj
-          grep -n "Release-${APP_ENV}" macos/Runner.xcodeproj/project.pbxproj
-          echo "OK"
+      - name: Install CocoaPods
+        run: |
+          set -euo pipefail
+          cd macos
+          pod install --repo-update
 
       - name: Compile macOS app (unsigned build)
         run: |
           set -euo pipefail
+          mkdir -p build/ci
           xcodebuild \
             -workspace macos/Runner.xcworkspace \
             -scheme "$APP_ENV" \
@@ -111,10 +266,13 @@ jobs:
             PROVISIONING_PROFILE_SPECIFIER="" \
             DEVELOPMENT_TEAM="" \
             COMPILER_INDEX_STORE_ENABLE=NO \
-            build
+            build 2>&1 | tee build/ci/xcode-build.log
 
-      - name: Upload CI artifact
+      - name: Upload build artifact
+        if: always()
         uses: actions/upload-artifact@v4
         with:
           name: Clingfy-CI
-          path: build/macos
+          path: |
+            build/macos
+            build/ci
