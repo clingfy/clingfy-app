@@ -295,25 +295,28 @@ void main() {
     },
   );
 
-  test('external project preview failures are forwarded through HomeBindings', () async {
-    final failedProjects = <String>[];
-    final harness = await createHarness(
-      onExternalProjectOpenFailed: failedProjects.add,
-    );
-    addTearDown(harness.dispose);
+  test(
+    'external project preview failures are forwarded through HomeBindings',
+    () async {
+      final failedProjects = <String>[];
+      final harness = await createHarness(
+        onExternalProjectOpenFailed: failedProjects.add,
+      );
+      addTearDown(harness.dispose);
 
-    harness.bindings.bind();
-    harness.recording.openExistingProject('/tmp/finder.clingfyproj');
-    final sessionId = harness.recording.sessionId!;
+      harness.bindings.bind();
+      harness.recording.openExistingProject('/tmp/finder.clingfyproj');
+      final sessionId = harness.recording.sessionId!;
 
-    await _emitWorkflowEvent({
-      'type': 'previewFailed',
-      'sessionId': sessionId,
-      'reason': 'PREVIEW_ERROR',
-      'error': 'boom',
-    });
-    await Future<void>.delayed(Duration.zero);
+      await _emitWorkflowEvent({
+        'type': 'previewFailed',
+        'sessionId': sessionId,
+        'reason': 'PREVIEW_ERROR',
+        'error': 'boom',
+      });
+      await Future<void>.delayed(Duration.zero);
 
-    expect(failedProjects, ['/tmp/finder.clingfyproj']);
-  });
+      expect(failedProjects, ['/tmp/finder.clingfyproj']);
+    },
+  );
 }

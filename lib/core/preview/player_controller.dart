@@ -9,9 +9,8 @@ import 'package:clingfy/app/infrastructure/logging/logger_service.dart';
 import 'package:clingfy/core/zoom/zoom_editor_controller.dart';
 
 class PlayerController extends ChangeNotifier {
-  PlayerController({
-    required NativeBridge nativeBridge,
-  }) : _nativeBridge = nativeBridge {
+  PlayerController({required NativeBridge nativeBridge})
+    : _nativeBridge = nativeBridge {
     _listenPlayer();
   }
 
@@ -84,7 +83,9 @@ class PlayerController extends ChangeNotifier {
                 _activePreviewPath != null &&
                 (_workflow?.phase == WorkflowPhase.previewReady ||
                     _workflow?.phase == WorkflowPhase.exporting)) {
-              unawaited(_attachZoomEditor(_activeSessionId!, _activePreviewPath!));
+              unawaited(
+                _attachZoomEditor(_activeSessionId!, _activePreviewPath!),
+              );
             }
             notifyListeners();
           }
@@ -171,7 +172,8 @@ class PlayerController extends ChangeNotifier {
     if (workflowAllowsPreview &&
         nextSessionId != null &&
         nextPreviewPath != null &&
-        (_activeSessionId != nextSessionId || _activePreviewPath != nextPreviewPath)) {
+        (_activeSessionId != nextSessionId ||
+            _activePreviewPath != nextPreviewPath)) {
       _activeSessionId = nextSessionId;
       _activePreviewPath = nextPreviewPath;
       _blockingError = null;
@@ -196,7 +198,8 @@ class PlayerController extends ChangeNotifier {
       return;
     }
 
-    if (!workflow.showPreviewShell || workflow.phase == WorkflowPhase.closingPreview) {
+    if (!workflow.showPreviewShell ||
+        workflow.phase == WorkflowPhase.closingPreview) {
       if (_activeSessionId != null || _zoomEditor != null || _playerReady) {
         _activeSessionId = null;
         _activePreviewPath = null;

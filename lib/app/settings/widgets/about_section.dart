@@ -80,10 +80,7 @@ class _AboutSectionState extends State<AboutSection>
     return Column(
       children: [
         if (_noticeText != null) ...[
-          AppInlineNotice(
-            message: _noticeText!,
-            variant: _noticeVariant,
-          ),
+          AppInlineNotice(message: _noticeText!, variant: _noticeVariant),
           const SizedBox(height: 16),
         ],
         GestureDetector(
@@ -162,7 +159,9 @@ class _AboutSectionState extends State<AboutSection>
                       "Commit: ${BuildConfig.commitHash}\nBranch: ${BuildConfig.branch}\nBuild: ${BuildConfig.buildId}";
                   Clipboard.setData(ClipboardData(text: info));
                   setState(() {
-                    _noticeText = AppLocalizations.of(context)!.copiedToClipboard;
+                    _noticeText = AppLocalizations.of(
+                      context,
+                    )!.copiedToClipboard;
                     _noticeVariant = AppInlineNoticeVariant.success;
                   });
                 },

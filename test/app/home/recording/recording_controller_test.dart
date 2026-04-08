@@ -312,7 +312,10 @@ void main() {
       expect(harness.recording.projectPath, '/tmp/finder.clingfyproj');
       expect(harness.recording.previewPath, '/tmp/finder.clingfyproj');
       expect(harness.recording.sessionId, isNotNull);
-      expect(harness.recording.shouldNotifyRecordingFinalizedOnPreviewOpen, isFalse);
+      expect(
+        harness.recording.shouldNotifyRecordingFinalizedOnPreviewOpen,
+        isFalse,
+      );
     },
   );
 
@@ -410,7 +413,9 @@ void main() {
 
       expect(harness.recording.phase, WorkflowPhase.previewReady);
 
-      await harness.recording.replacePreviewWithProject('/tmp/next.clingfyproj');
+      await harness.recording.replacePreviewWithProject(
+        '/tmp/next.clingfyproj',
+      );
       expect(harness.recording.phase, WorkflowPhase.closingPreview);
 
       await _emitWorkflowEvent({
@@ -426,21 +431,24 @@ void main() {
     },
   );
 
-  test('openProjectRequest workflow events are ignored by RecordingController', () async {
-    final harness = await createHarness();
-    addTearDown(harness.recording.dispose);
-    addTearDown(harness.settings.dispose);
+  test(
+    'openProjectRequest workflow events are ignored by RecordingController',
+    () async {
+      final harness = await createHarness();
+      addTearDown(harness.recording.dispose);
+      addTearDown(harness.settings.dispose);
 
-    expect(harness.recording.phase, WorkflowPhase.idle);
+      expect(harness.recording.phase, WorkflowPhase.idle);
 
-    await _emitWorkflowEvent({
-      'type': 'openProjectRequest',
-      'projectPath': '/tmp/finder.clingfyproj',
-    });
+      await _emitWorkflowEvent({
+        'type': 'openProjectRequest',
+        'projectPath': '/tmp/finder.clingfyproj',
+      });
 
-    expect(harness.recording.phase, WorkflowPhase.idle);
-    expect(harness.recording.projectPath, isNull);
-  });
+      expect(harness.recording.phase, WorkflowPhase.idle);
+      expect(harness.recording.projectPath, isNull);
+    },
+  );
 
   test('previewReady transitions previewLoading to previewReady', () async {
     final harness = await createHarness();

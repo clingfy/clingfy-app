@@ -60,29 +60,32 @@ void main() {
     expect(pauseTapped, 1);
   });
 
-  test('Finder project open requests buffer until callback is attached', () async {
-    final bridge = NativeBridge.instance;
-    final openedProjects = <String>[];
+  test(
+    'Finder project open requests buffer until callback is attached',
+    () async {
+      final bridge = NativeBridge.instance;
+      final openedProjects = <String>[];
 
-    await _emitWorkflowEvent({
-      'type': 'openProjectRequest',
-      'projectPath': '/tmp/first.clingfyproj',
-    });
-    await _emitWorkflowEvent({
-      'type': 'openProjectRequest',
-      'projectPath': '/tmp/first.clingfyproj',
-    });
-    await _emitWorkflowEvent({
-      'type': 'openProjectRequest',
-      'projectPath': '/tmp/second.clingfyproj',
-    });
+      await _emitWorkflowEvent({
+        'type': 'openProjectRequest',
+        'projectPath': '/tmp/first.clingfyproj',
+      });
+      await _emitWorkflowEvent({
+        'type': 'openProjectRequest',
+        'projectPath': '/tmp/first.clingfyproj',
+      });
+      await _emitWorkflowEvent({
+        'type': 'openProjectRequest',
+        'projectPath': '/tmp/second.clingfyproj',
+      });
 
-    bridge.setOnProjectOpenRequested(openedProjects.add);
-    await Future<void>.delayed(Duration.zero);
+      bridge.setOnProjectOpenRequested(openedProjects.add);
+      await Future<void>.delayed(Duration.zero);
 
-    expect(
-      openedProjects,
-      ['/tmp/first.clingfyproj', '/tmp/second.clingfyproj'],
-    );
-  });
+      expect(openedProjects, [
+        '/tmp/first.clingfyproj',
+        '/tmp/second.clingfyproj',
+      ]);
+    },
+  );
 }
