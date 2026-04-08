@@ -17,8 +17,7 @@ concurrency:
   cancel-in-progress: true
 
 env:
-  APP_ENV: ${{ github.base_ref == 'develop' || github.ref_name == 'develop' && 'dev' || 'prod' }}
-
+  APP_ENV: ${{ case(github.base_ref == 'develop' || github.ref_name == 'develop', 'dev', 'prod') }}
 jobs:
   flutter-quality:
     name: Flutter quality
