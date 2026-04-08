@@ -141,9 +141,17 @@ jobs:
           set -euo pipefail
           if ! grep -q "RunnerTests" macos/Runner.xcodeproj/project.pbxproj; then
             echo "RunnerTests target not found."
-            echo "Add a native macOS unit test target and include it in the shared scheme."
             exit 1
           fi
+
+      - name: Print signing settings
+        run: |
+          xcodebuild \
+            -workspace macos/Runner.xcworkspace \
+            -scheme "$APP_ENV" \
+            -configuration "Debug-$APP_ENV" \
+            -showBuildSettings | \
+            grep -E 'PRODUCT_BUNDLE_IDENTIFIER|DEVELOPMENT_TEAM|CODE_SIGN|PROVISIONING_PROFILE|PROVISIONING_PROFILE_SPECIFIER|CODE_SIGN_STYLE'
 
       - name: Build for testing
         run: |
@@ -153,8 +161,13 @@ jobs:
             -workspace macos/Runner.xcworkspace \
             -scheme "$APP_ENV" \
             -configuration "Debug-$APP_ENV" \
-            -destination "platform=macOS" \
+            -destination "platform=macOS,arch=arm64" \
             -derivedDataPath build/DerivedData \
+            CODE_SIGNING_ALLOWED=NO \
+            CODE_SIGNING_REQUIRED=NO \
+            CODE_SIGN_IDENTITY="" \
+            PROVISIONING_PROFILE_SPECIFIER="" \
+            DEVELOPMENT_TEAM="" \
             COMPILER_INDEX_STORE_ENABLE=NO \
             build-for-testing 2>&1 | tee build/ci/xcode-build-for-testing.log
 
@@ -165,9 +178,14 @@ jobs:
             -workspace macos/Runner.xcworkspace \
             -scheme "$APP_ENV" \
             -configuration "Debug-$APP_ENV" \
-            -destination "platform=macOS" \
+            -destination "platform=macOS,arch=arm64" \
             -derivedDataPath build/DerivedData \
             -resultBundlePath build/RunnerTests.xcresult \
+            CODE_SIGNING_ALLOWED=NO \
+            CODE_SIGNING_REQUIRED=NO \
+            CODE_SIGN_IDENTITY="" \
+            PROVISIONING_PROFILE_SPECIFIER="" \
+            DEVELOPMENT_TEAM="" \
             COMPILER_INDEX_STORE_ENABLE=NO \
             test-without-building 2>&1 | tee build/ci/xcode-test.log
 
