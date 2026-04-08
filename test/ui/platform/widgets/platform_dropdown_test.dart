@@ -26,6 +26,7 @@ void main() {
               value: value,
               onChanged: onChanged ?? (_) {},
               maxWidth: maxWidth,
+              expand: false,
               items:
                   items ??
                   const [
