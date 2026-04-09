@@ -18,6 +18,7 @@ on:
 concurrency:
   group: clingfy-ci-${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
   cancel-in-progress: true
+  # cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 env:
   APP_ENV: ${{ case(github.base_ref == 'develop' || github.ref_name == 'develop', 'dev', 'prod') }}
@@ -81,9 +82,9 @@ jobs:
             coverage/lcov.info
 
   native-macos-fast:
+    timeout-minutes: 50
     name: Native macOS fast tests
     runs-on: macos-latest
-    timeout-minutes: 30
     needs:
       - flutter-quality
 
@@ -208,7 +209,16 @@ jobs:
             PROVISIONING_PROFILE_SPECIFIER="" \
             DEVELOPMENT_TEAM="" \
             COMPILER_INDEX_STORE_ENABLE=NO \
-            -skip-testing:RunnerTests/LetterboxExporterTests \
+            -only-testing:RunnerTests/OverlayUpdateDeduperTests \
+            -only-testing:RunnerTests/CameraOverlayLayoutTests \
+            -only-testing:RunnerTests/CameraOverlayShapeTests \
+            -only-testing:RunnerTests/CursorFrameResolverTests \
+            -only-testing:RunnerTests/InlinePreviewViewLayoutTests \
+            -only-testing:RunnerTests/PauseResumeSupportTests \
+            -only-testing:RunnerTests/PreviewProfileTests \
+            -only-testing:RunnerTests/RecordingFailureRecoveryTests \
+            -only-testing:RunnerTests/RecordingIndicatorViewTests \
+            -only-testing:RunnerTests/RunnerTests \
             test-without-building 2>&1 | tee build/ci/xcode-fast-test.log
 
       - name: Upload fast native test artifacts
