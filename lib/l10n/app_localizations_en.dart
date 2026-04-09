@@ -33,6 +33,9 @@ class AppLocalizationsEn extends AppLocalizations {
   String get recordTarget => 'Record target';
 
   @override
+  String get captureSource => 'Capture Source';
+
+  @override
   String get chosenScreen => 'Chosen screen';
 
   @override
@@ -116,6 +119,9 @@ class AppLocalizationsEn extends AppLocalizations {
   String get audio => 'Audio';
 
   @override
+  String get pointer => 'Pointer';
+
+  @override
   String get refreshAudio => 'Refresh audio devices (⌘R)';
 
   @override
@@ -135,6 +141,9 @@ class AppLocalizationsEn extends AppLocalizations {
 
   @override
   String get recordingQuality => 'Recording quality';
+
+  @override
+  String get quality => 'Quality';
 
   @override
   String get resolution => 'Resolution';
@@ -219,6 +228,9 @@ class AppLocalizationsEn extends AppLocalizations {
   String get duration => 'Duration';
 
   @override
+  String get startAndStop => 'Start & Stop';
+
+  @override
   String get autoStopAfter => 'Auto-stop after';
 
   @override
@@ -259,6 +271,18 @@ class AppLocalizationsEn extends AppLocalizations {
 
   @override
   String get overlayFaceCamVisibility => 'Face-cam visibility';
+
+  @override
+  String get visibilityAndPlacement => 'Visibility & Placement';
+
+  @override
+  String get appearance => 'Appearance';
+
+  @override
+  String get style => 'Style';
+
+  @override
+  String get effects => 'Effects';
 
   @override
   String get visibility => 'Visibility';
@@ -609,6 +633,15 @@ class AppLocalizationsEn extends AppLocalizations {
   String get exportSettings => 'Export Settings';
 
   @override
+  String get canvas => 'Canvas';
+
+  @override
+  String get canvasSettings => 'Canvas Settings';
+
+  @override
+  String get cameraSettings => 'Camera Settings';
+
+  @override
   String get postProcessing => 'Post-processing';
 
   @override
@@ -616,6 +649,21 @@ class AppLocalizationsEn extends AppLocalizations {
 
   @override
   String get collapsePane => 'Collapse pane';
+
+  @override
+  String get showOptions => 'Show Options';
+
+  @override
+  String get hideOptions => 'Hide Options';
+
+  @override
+  String get canvasFormat => 'Canvas Format';
+
+  @override
+  String get framing => 'Framing';
+
+  @override
+  String get background => 'Background';
 
   @override
   String get size => 'Size';
@@ -657,10 +705,16 @@ class AppLocalizationsEn extends AppLocalizations {
   String get cursorSize => 'Cursor Size';
 
   @override
+  String get cursor => 'Cursor';
+
+  @override
   String get zoomInEffect => 'Zoom in effect';
 
   @override
   String get manageZoomEffects => 'Manage zoom in effects';
+
+  @override
+  String get zoom => 'Zoom';
 
   @override
   String get intensity => 'Intensity';
@@ -669,7 +723,94 @@ class AppLocalizationsEn extends AppLocalizations {
   String get layout => 'Layout';
 
   @override
-  String get effects => 'Effects';
+  String get loudness => 'Loudness';
+
+  @override
+  String get placement => 'Placement';
+
+  @override
+  String get motion => 'Motion';
+
+  @override
+  String get zoomResponse => 'Zoom Response';
+
+  @override
+  String get fixed => 'Fixed';
+
+  @override
+  String get scaleWithZoom => 'Scale with Zoom';
+
+  @override
+  String get zoomScale => 'Zoom Scale';
+
+  @override
+  String get intro => 'Intro';
+
+  @override
+  String get outro => 'Outro';
+
+  @override
+  String get introDuration => 'Intro Duration';
+
+  @override
+  String get outroDuration => 'Outro Duration';
+
+  @override
+  String get fade => 'Fade';
+
+  @override
+  String get pop => 'Pop';
+
+  @override
+  String get slide => 'Slide';
+
+  @override
+  String get shrink => 'Shrink';
+
+  @override
+  String get zoomEmphasis => 'Zoom Emphasis';
+
+  @override
+  String get pulse => 'Pulse';
+
+  @override
+  String get pulseStrength => 'Pulse Strength';
+
+  @override
+  String get cameraNoAssetNotice =>
+      'No separate camera asset was recorded for this clip.';
+
+  @override
+  String get cameraPlacementHelper =>
+      'Adjust or move camera position on screen.';
+
+  @override
+  String get cameraBackgroundBehindHint =>
+      'Background layout fills the full canvas. Choose a point or drag the handle to switch back to an overlay position.';
+
+  @override
+  String get topLeft => 'Top left';
+
+  @override
+  String get topCenter => 'Top center';
+
+  @override
+  String get topRight => 'Top right';
+
+  @override
+  String get centerLeft => 'Center left';
+
+  @override
+  String get centerRight => 'Center right';
+
+  @override
+  String get bottomLeft => 'Bottom left';
+
+  @override
+  String get bottomCenter => 'Bottom center';
+
+  @override
+  String get bottomRight => 'Bottom right';
 
   @override
   String get refreshDevicesTooltip => 'Refresh devices (⌘R)';
@@ -764,6 +905,9 @@ class AppLocalizationsEn extends AppLocalizations {
   String get classic43 => 'Classic (4:3)';
 
   @override
+  String get classic => 'Classic';
+
+  @override
   String get square11 => 'Square (1:1)';
 
   @override
@@ -771,6 +915,12 @@ class AppLocalizationsEn extends AppLocalizations {
 
   @override
   String get reel916 => 'Reel (9:16)';
+
+  @override
+  String get wide => 'Wide';
+
+  @override
+  String get vertical => 'Vertical';
 
   @override
   String get vertical4k => 'Vertical 4K (2160x3840)';
@@ -1046,11 +1196,18 @@ class AppLocalizationsEn extends AppLocalizations {
       'Show a confirmation before closing the current recording if it has not been exported yet.';
 
   @override
-  String get closeUnexportedRecordingTitle => 'Close this recording?';
+  String get closeUnexportedRecordingTitle =>
+      'Close recording without exporting?';
 
   @override
   String get closeUnexportedRecordingMessage =>
-      'You haven’t exported this recording yet. If you close it now, you’ll lose access to it in the current session.';
+      'This recording hasn’t been exported yet. If you close it now, you’ll lose access to it in the current session.';
+
+  @override
+  String get keepEditing => 'Keep Editing';
+
+  @override
+  String get closeWithoutExporting => 'Close Without Exporting';
 
   @override
   String get doNotShowAgain => 'Do not show again';
@@ -1521,6 +1678,14 @@ class AppLocalizationsEn extends AppLocalizations {
   String get recordingSaved => 'Recording saved:';
 
   @override
+  String get externalProjectOpenBlocked =>
+      'Finish the current recording or preview transition before opening another project.';
+
+  @override
+  String get externalProjectOpenFailed =>
+      'Couldn\'t open that Clingfy project.';
+
+  @override
   String get exportSuccess => 'Export successful:';
 
   @override
@@ -1542,32 +1707,16 @@ class AppLocalizationsEn extends AppLocalizations {
   String get micInputLevel => 'Mic input level';
 
   @override
-  String get micInputMonitorTitle => 'Input monitoring';
-
-  @override
-  String get micInputMonitorInactive => 'Inactive';
-
-  @override
-  String get micInputMonitorDisabledHint =>
+  String get micInputIndicatorDisabledTooltip =>
       'Select a microphone to preview input level.';
 
   @override
-  String get micInputMonitorLiveHint => 'Monitoring live input.';
+  String micInputIndicatorLiveTooltip(String dbfs) {
+    return 'Mic input level: $dbfs dBFS';
+  }
 
   @override
-  String get micInputMonitorLowBadge => 'Low input';
-
-  @override
-  String get micInputMonitorLowHint => 'Raise input gain or move closer.';
-
-  @override
-  String get micInputMonitorExpandTooltip => 'Show detailed input monitor';
-
-  @override
-  String get micInputMonitorCollapseTooltip => 'Hide detailed input monitor';
-
-  @override
-  String get micInputTooLowWarning =>
+  String get micInputIndicatorLowTooltip =>
       'Mic input is very low. Raise input level or move closer to the mic.';
 
   @override

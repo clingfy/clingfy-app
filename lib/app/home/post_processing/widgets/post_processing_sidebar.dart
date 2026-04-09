@@ -5,6 +5,7 @@ import 'package:clingfy/ui/platform/widgets/app_sidebar_rail_button.dart';
 import 'package:clingfy/ui/platform/widgets/app_sidebar_tokens.dart';
 import 'package:clingfy/app/home/post_processing/widgets/post_audio_section.dart';
 import 'package:clingfy/app/home/post_processing/widgets/post_background_section.dart';
+import 'package:clingfy/app/home/post_processing/widgets/post_camera_section.dart';
 import 'package:clingfy/app/home/post_processing/widgets/post_cursor_section.dart';
 import 'package:clingfy/app/home/post_processing/widgets/post_export_settings_section.dart';
 import 'package:clingfy/app/home/post_processing/widgets/post_layout_section.dart';
@@ -23,30 +24,40 @@ class PostProcessingSidebarRail extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final l10n = AppLocalizations.of(context)!;
+
     return Column(
       children: [
         const SizedBox(height: AppSidebarTokens.sectionGap),
         _PostProcessingRailItem(
           icon: Icons.dashboard_customize,
-          label: AppLocalizations.of(context)!.layout,
+          label: l10n.canvas,
           index: 0,
           isSelected: selectedIndex == 0,
           onTap: onSelectedIndexChanged,
         ),
         const SizedBox(height: AppSidebarTokens.sectionGap),
         _PostProcessingRailItem(
-          icon: Icons.auto_fix_high,
-          label: AppLocalizations.of(context)!.effects,
+          icon: Icons.face,
+          label: l10n.camera,
           index: 1,
           isSelected: selectedIndex == 1,
           onTap: onSelectedIndexChanged,
         ),
         const SizedBox(height: AppSidebarTokens.sectionGap),
         _PostProcessingRailItem(
-          icon: Icons.ios_share,
-          label: AppLocalizations.of(context)!.export,
+          icon: Icons.auto_fix_high,
+          label: l10n.effects,
           index: 2,
           isSelected: selectedIndex == 2,
+          onTap: onSelectedIndexChanged,
+        ),
+        const SizedBox(height: AppSidebarTokens.sectionGap),
+        _PostProcessingRailItem(
+          icon: Icons.ios_share,
+          label: l10n.export,
+          index: 3,
+          isSelected: selectedIndex == 3,
           onTap: onSelectedIndexChanged,
         ),
       ],
@@ -105,10 +116,14 @@ class PostProcessingSidebar extends StatelessWidget {
   final bool enabled;
   final bool cursorAvailable;
   final bool hasAudio;
+  final bool hasCameraAsset;
+  final CameraExportCapabilities cameraExportCapabilities;
+  final CameraCompositionState? cameraState;
   final String? disabledMessage;
   final bool showHeader;
   final double availableWidth;
   final bool isCompact;
+  final bool showResolutionControl;
   final double audioGainDb;
   final double audioVolume;
   final bool autoNormalizeOnExport;
@@ -129,6 +144,30 @@ class PostProcessingSidebar extends StatelessWidget {
   final Function(double) onZoomFactorChanged;
   final Function(double) onZoomFactorChangeEnd;
   final Future<String?> Function() onPickImage;
+  final Function(bool) onCameraVisibleChanged;
+  final Function(CameraLayoutPreset) onCameraLayoutPresetChanged;
+  final Function(double) onCameraSizeFactorChanged;
+  final Function(double) onCameraSizeFactorChangeEnd;
+  final Function(CameraShape) onCameraShapeChanged;
+  final Function(double) onCameraCornerRadiusChanged;
+  final Function(double) onCameraCornerRadiusChangeEnd;
+  final Function(bool) onCameraMirrorChanged;
+  final Function(CameraContentMode) onCameraContentModeChanged;
+  final Function(CameraZoomBehavior) onCameraZoomBehaviorChanged;
+  final Function(double) onCameraZoomScaleMultiplierChanged;
+  final Function(double) onCameraZoomScaleMultiplierChangeEnd;
+  final Function(CameraIntroPreset) onCameraIntroPresetChanged;
+  final Function(CameraOutroPreset) onCameraOutroPresetChanged;
+  final Function(CameraZoomEmphasisPreset) onCameraZoomEmphasisPresetChanged;
+  final Function(double) onCameraIntroDurationChanged;
+  final Function(double) onCameraIntroDurationChangeEnd;
+  final Function(double) onCameraOutroDurationChanged;
+  final Function(double) onCameraOutroDurationChangeEnd;
+  final Function(double) onCameraZoomEmphasisStrengthChanged;
+  final Function(double) onCameraZoomEmphasisStrengthChangeEnd;
+  final ValueChanged<Offset> onCameraManualCenterChanged;
+  final ValueChanged<Offset> onCameraManualCenterChangeEnd;
+  final ValueChanged<Offset> onCameraManualCenterSnapped;
   final Function(double) onAudioGainChanged;
   final Function(double) onAudioGainChangeEnd;
   final Function(double) onAudioVolumeChanged;
@@ -167,6 +206,33 @@ class PostProcessingSidebar extends StatelessWidget {
     required this.onZoomFactorChanged,
     required this.onZoomFactorChangeEnd,
     required this.onPickImage,
+    required this.hasCameraAsset,
+    required this.cameraExportCapabilities,
+    required this.cameraState,
+    required this.onCameraVisibleChanged,
+    required this.onCameraLayoutPresetChanged,
+    required this.onCameraSizeFactorChanged,
+    required this.onCameraSizeFactorChangeEnd,
+    required this.onCameraShapeChanged,
+    required this.onCameraCornerRadiusChanged,
+    required this.onCameraCornerRadiusChangeEnd,
+    required this.onCameraMirrorChanged,
+    required this.onCameraContentModeChanged,
+    required this.onCameraZoomBehaviorChanged,
+    required this.onCameraZoomScaleMultiplierChanged,
+    required this.onCameraZoomScaleMultiplierChangeEnd,
+    required this.onCameraIntroPresetChanged,
+    required this.onCameraOutroPresetChanged,
+    required this.onCameraZoomEmphasisPresetChanged,
+    required this.onCameraIntroDurationChanged,
+    required this.onCameraIntroDurationChangeEnd,
+    required this.onCameraOutroDurationChanged,
+    required this.onCameraOutroDurationChangeEnd,
+    required this.onCameraZoomEmphasisStrengthChanged,
+    required this.onCameraZoomEmphasisStrengthChangeEnd,
+    required this.onCameraManualCenterChanged,
+    required this.onCameraManualCenterChangeEnd,
+    required this.onCameraManualCenterSnapped,
     required this.audioGainDb,
     required this.audioVolume,
     required this.autoNormalizeOnExport,
@@ -177,6 +243,7 @@ class PostProcessingSidebar extends StatelessWidget {
     required this.onAudioVolumeChangeEnd,
     required this.onAutoNormalizeOnExportChanged,
     required this.onAutoNormalizeTargetDbfsChanged,
+    required this.showResolutionControl,
     this.enabled = true,
     this.cursorAvailable = true,
     this.hasAudio = true,
@@ -212,9 +279,10 @@ class PostProcessingSidebar extends StatelessWidget {
                     key: Key('post_sidebar_top_spacer'),
                     height: AppSidebarTokens.headerContentGap,
                   ),
-                  if (selectedIndex == 0) ..._buildLayoutTab(context),
-                  if (selectedIndex == 1) ..._buildEffectsTab(context),
-                  if (selectedIndex == 2) ..._buildExportTab(context),
+                  if (selectedIndex == 0) ..._buildCanvasTab(context),
+                  if (selectedIndex == 1) ..._buildCameraTab(context),
+                  if (selectedIndex == 2) ..._buildEffectsTab(context),
+                  if (selectedIndex == 3) ..._buildExportTab(context),
                   const SizedBox(
                     height:
                         AppSidebarTokens.sectionGap +
@@ -233,19 +301,19 @@ class PostProcessingSidebar extends StatelessWidget {
     final l10n = AppLocalizations.of(context)!;
     switch (selectedIndex) {
       case 0:
-        return l10n.layoutSettings;
+        return l10n.canvasSettings;
       case 1:
-        return l10n.effectsSettings;
+        return l10n.cameraSettings;
       case 2:
+        return l10n.effectsSettings;
+      case 3:
         return l10n.exportSettings;
       default:
         return '';
     }
   }
 
-  List<Widget> _buildLayoutTab(BuildContext context) {
-    final theme = Theme.of(context);
-
+  List<Widget> _buildCanvasTab(BuildContext context) {
     return [
       PostLayoutSection(
         isProcessing: isProcessing,
@@ -254,6 +322,7 @@ class PostProcessingSidebar extends StatelessWidget {
         fitMode: fitMode,
         padding: padding,
         radius: radius,
+        showResolutionControl: showResolutionControl,
         onLayoutPresetChanged: onLayoutPresetChanged,
         onResolutionPresetChanged: onResolutionPresetChanged,
         onFitModeChanged: onFitModeChanged,
@@ -261,15 +330,6 @@ class PostProcessingSidebar extends StatelessWidget {
         onPaddingChangeEnd: onPaddingChangeEnd,
         onRadiusChanged: onRadiusChanged,
         onRadiusChangeEnd: onRadiusChangeEnd,
-      ),
-      const SizedBox(
-        key: Key('post_layout_background_gap_before_divider'),
-        height: AppSidebarTokens.optionsGroupGap,
-      ),
-      Divider(color: theme.dividerColor.withValues(alpha: 0.1)),
-      const SizedBox(
-        key: Key('post_layout_background_gap_after_divider'),
-        height: AppSidebarTokens.optionsGroupGap,
       ),
       PostBackgroundSection(
         isProcessing: isProcessing,
@@ -282,9 +342,41 @@ class PostProcessingSidebar extends StatelessWidget {
     ];
   }
 
-  List<Widget> _buildEffectsTab(BuildContext context) {
-    final theme = Theme.of(context);
+  List<Widget> _buildCameraTab(BuildContext context) {
+    return [
+      PostCameraSection(
+        hasCameraAsset: hasCameraAsset,
+        cameraExportCapabilities: cameraExportCapabilities,
+        cameraState: cameraState,
+        onVisibleChanged: onCameraVisibleChanged,
+        onLayoutPresetChanged: onCameraLayoutPresetChanged,
+        onSizeFactorChanged: onCameraSizeFactorChanged,
+        onSizeFactorChangeEnd: onCameraSizeFactorChangeEnd,
+        onShapeChanged: onCameraShapeChanged,
+        onCornerRadiusChanged: onCameraCornerRadiusChanged,
+        onCornerRadiusChangeEnd: onCameraCornerRadiusChangeEnd,
+        onMirrorChanged: onCameraMirrorChanged,
+        onContentModeChanged: onCameraContentModeChanged,
+        onZoomBehaviorChanged: onCameraZoomBehaviorChanged,
+        onZoomScaleMultiplierChanged: onCameraZoomScaleMultiplierChanged,
+        onZoomScaleMultiplierChangeEnd: onCameraZoomScaleMultiplierChangeEnd,
+        onIntroPresetChanged: onCameraIntroPresetChanged,
+        onOutroPresetChanged: onCameraOutroPresetChanged,
+        onZoomEmphasisPresetChanged: onCameraZoomEmphasisPresetChanged,
+        onIntroDurationChanged: onCameraIntroDurationChanged,
+        onIntroDurationChangeEnd: onCameraIntroDurationChangeEnd,
+        onOutroDurationChanged: onCameraOutroDurationChanged,
+        onOutroDurationChangeEnd: onCameraOutroDurationChangeEnd,
+        onZoomEmphasisStrengthChanged: onCameraZoomEmphasisStrengthChanged,
+        onZoomEmphasisStrengthChangeEnd: onCameraZoomEmphasisStrengthChangeEnd,
+        onManualCenterChanged: onCameraManualCenterChanged,
+        onManualCenterChangeEnd: onCameraManualCenterChangeEnd,
+        onManualCenterSnapped: onCameraManualCenterSnapped,
+      ),
+    ];
+  }
 
+  List<Widget> _buildEffectsTab(BuildContext context) {
     return [
       PostCursorSection(
         cursorAvailable: cursorAvailable,
@@ -294,25 +386,17 @@ class PostProcessingSidebar extends StatelessWidget {
         onCursorSizeChanged: onCursorSizeChanged,
         onCursorSizeChangeEnd: onCursorSizeChangeEnd,
       ),
-      const SizedBox(
-        key: Key('post_effects_cursor_zoom_gap'),
-        height: AppSidebarTokens.optionsGroupGap,
-      ),
       PostZoomSection(
         isProcessing: isProcessing,
         zoomFactor: zoomFactor,
         onZoomFactorChanged: onZoomFactorChanged,
         onZoomFactorChangeEnd: onZoomFactorChangeEnd,
       ),
-      const SizedBox(
-        key: Key('post_effects_audio_gap_before_divider'),
-        height: AppSidebarTokens.optionsSubgroupGap,
-      ),
-      Divider(color: theme.dividerColor.withValues(alpha: 0.1)),
-      const SizedBox(
-        key: Key('post_effects_audio_gap_after_divider'),
-        height: AppSidebarTokens.optionsGroupGap,
-      ),
+    ];
+  }
+
+  List<Widget> _buildExportTab(BuildContext context) {
+    return [
       PostAudioSection(
         hasAudio: hasAudio,
         audioVolume: audioVolume,
@@ -322,11 +406,6 @@ class PostProcessingSidebar extends StatelessWidget {
         onAudioGainChanged: onAudioGainChanged,
         onAudioGainChangeEnd: onAudioGainChangeEnd,
       ),
-    ];
-  }
-
-  List<Widget> _buildExportTab(BuildContext context) {
-    return [
       PostExportSettingsSection(
         isProcessing: isProcessing,
         autoNormalizeOnExport: autoNormalizeOnExport,

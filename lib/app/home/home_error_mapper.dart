@@ -76,6 +76,10 @@ class HomeErrorMapper {
         );
       case NativeErrorCode.exportInputMissing:
         message = l10n.errExportInputMissing;
+      case NativeErrorCode.advancedCameraExportFailed:
+        message = l10n.errExportError(
+          'Advanced camera styling could not be rendered for export.',
+        );
       case NativeErrorCode.videoFileMissing:
         message = l10n.errVideoFileMissing;
       case NativeErrorCode.cursorFileMissing:

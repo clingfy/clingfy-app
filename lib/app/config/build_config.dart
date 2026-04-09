@@ -1,3 +1,5 @@
+import 'package:flutter/foundation.dart' show kDebugMode;
+
 // lib/config/build_config.dart
 
 class BuildConfig {
@@ -68,4 +70,17 @@ class BuildConfig {
   static bool isProd() => appEnv.toLowerCase() == "prod";
 
   static bool isDev() => !isProd();
+
+  static bool showDevPreviewResolutionControl({
+    String? appEnvOverride,
+    String? buildIdOverride,
+    bool? isDebugOverride,
+  }) {
+    final resolvedEnv = (appEnvOverride ?? appEnv).toLowerCase();
+    final resolvedBuildId = (buildIdOverride ?? buildId).toLowerCase();
+    final resolvedIsDebug = isDebugOverride ?? kDebugMode;
+    return resolvedEnv == 'dev' &&
+        resolvedBuildId == 'local' &&
+        resolvedIsDebug;
+  }
 }

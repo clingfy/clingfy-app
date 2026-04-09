@@ -184,10 +184,7 @@ class _KeyboardShortcutsSettingsState extends State<KeyboardShortcutsSettings> {
         context,
         children: [
           if (_noticeText != null) ...[
-            AppInlineNotice(
-              message: _noticeText!,
-              variant: _noticeVariant,
-            ),
+            AppInlineNotice(message: _noticeText!, variant: _noticeVariant),
             const SizedBox(height: 12),
           ],
           if (_capturingAction != null)

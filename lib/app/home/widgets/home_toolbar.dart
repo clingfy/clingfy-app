@@ -14,22 +14,24 @@ import 'package:provider/provider.dart';
 class HomeToolbar extends StatelessWidget {
   const HomeToolbar({
     super.key,
-    required this.title,
     required this.isRecording,
     required this.isPaused,
     required this.uiState,
     required this.onExport,
     required this.onOpenSystemSettings,
     required this.onClearMessage,
+    this.isInspectorVisible = true,
+    this.onToggleInspector,
   });
 
-  final String title;
   final bool isRecording;
   final bool isPaused;
   final HomeUiState uiState;
   final VoidCallback onExport;
   final Future<void> Function(String pane) onOpenSystemSettings;
   final VoidCallback onClearMessage;
+  final bool isInspectorVisible;
+  final VoidCallback? onToggleInspector;
 
   @override
   Widget build(BuildContext context) {
@@ -143,7 +145,6 @@ class HomeToolbar extends StatelessWidget {
                 : null;
 
             return DesktopToolbar(
-              title: title,
               isRecording: isRecording,
               isPaused: isPaused,
               elapsedText: d.$1,
@@ -158,6 +159,8 @@ class HomeToolbar extends StatelessWidget {
                   : null,
               exportStatus: exportStatus,
               isProcessing: postEditingLocked,
+              isInspectorVisible: isInspectorVisible,
+              onToggleInspector: onToggleInspector,
             );
           },
         );

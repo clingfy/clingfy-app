@@ -11,6 +11,8 @@ import 'package:clingfy/app/infrastructure/logging/logger_service.dart';
 import 'package:clingfy/core/models/app_models.dart';
 import 'package:clingfy/app/settings/settings_controller.dart';
 
+enum _PreviewOpenSource { recordingFinalized, externalProject }
+
 class RecordingController extends ChangeNotifier {
   RecordingController({
     required NativeBridge nativeBridge,
@@ -37,6 +39,10 @@ class RecordingController extends ChangeNotifier {
   String? _mountedPreviewSessionId;
   bool _previewOpenRequested = false;
   bool _pauseResumeInFlight = false;
+  _PreviewOpenSource? _previewOpenSource;
+  String? _pendingExternalProjectReplacementPath;
+  String? _openingExternalProjectPath;
+  String? _failedExternalProjectOpenPath;
   RecordingPauseResumeCapabilities _pauseResumeCapabilities =
       const RecordingPauseResumeCapabilities.unsupported();
   final RecordedDurationTracker _durationTracker = RecordedDurationTracker();
@@ -44,12 +50,11 @@ class RecordingController extends ChangeNotifier {
   RecordingWorkflowState get state => _state;
   WorkflowPhase get phase => _state.phase;
   String? get sessionId => _state.sessionId;
-  String? get finalizedRecordingPath => _state.finalizedRecordingPath;
-  String? get previewPath =>
-      _state.previewPath ?? _state.finalizedRecordingPath;
+  String? get projectPath => _state.projectPath;
+  String? get previewPath => _state.previewPath ?? _state.projectPath;
   String? get previewToken => _state.previewToken;
   String? get lastRecordingPath => previewPath;
-  String? get originalRecordingPath => _state.finalizedRecordingPath;
+  String? get originalRecordingPath => _state.projectPath;
   String? get errorCode => _state.errorCode;
   String? get errorMessage => _state.errorMessage ?? _state.errorCode;
 
@@ -120,6 +125,8 @@ class RecordingController extends ChangeNotifier {
   bool get isBusy => isBusyTransitioning;
   bool get showTimelineBar => phase == WorkflowPhase.previewReady;
   bool get showPreRecordingBar => phase == WorkflowPhase.idle;
+  bool get shouldNotifyRecordingFinalizedOnPreviewOpen =>
+      _previewOpenSource == _PreviewOpenSource.recordingFinalized;
 
   Duration get elapsed => _elapsed;
   bool get autoStopEnabled => _settings.recording.autoStopEnabled;
@@ -164,6 +171,14 @@ class RecordingController extends ChangeNotifier {
     notifyListeners();
   }
 
+  String? _normalizedPlatformErrorMessage(PlatformException error) {
+    final message = error.message;
+    if (message == null || message.trim().isEmpty) {
+      return null;
+    }
+    return message;
+  }
+
   Future<void> refreshPauseResumeCapabilities() async {
     try {
       final capabilities = await _nativeBridge.getRecordingCapabilities();
@@ -203,6 +218,27 @@ class RecordingController extends ChangeNotifier {
   void cancelPendingStartIntent() {
     if (phase != WorkflowPhase.startingRecording || _startCommandIssued) return;
     _transitionToIdle(clearError: false);
+  }
+
+  void openExistingProject(String projectPath) {
+    if (projectPath.isEmpty) return;
+    _pendingExternalProjectReplacementPath = null;
+    _enterPreviewForProject(
+      projectPath: projectPath,
+      source: _PreviewOpenSource.externalProject,
+    );
+  }
+
+  Future<void> replacePreviewWithProject(String projectPath) async {
+    if (projectPath.isEmpty || !showPreviewShell) return;
+    _pendingExternalProjectReplacementPath = projectPath;
+    await _beginPreviewClose(requestNativeClose: true);
+  }
+
+  String? consumeFailedExternalProjectOpenPath() {
+    final failedPath = _failedExternalProjectOpenPath;
+    _failedExternalProjectOpenPath = null;
+    return failedPath;
   }
 
   Future<void> startRecording({
@@ -257,7 +293,10 @@ class RecordingController extends ChangeNotifier {
       );
       await ClingfyTelemetry.stopSession();
       _startCommandIssued = false;
-      _transitionToIdle(errorCode: e.code, errorMessage: e.message);
+      _transitionToIdle(
+        errorCode: e.code,
+        errorMessage: _normalizedPlatformErrorMessage(e),
+      );
     } catch (e, st) {
       await ClingfyTelemetry.captureError(
         e,
@@ -328,7 +367,11 @@ class RecordingController extends ChangeNotifier {
           'previousPhase': previousState.phase.name,
         },
       );
-      _restoreAfterStopFailure(previousState, e.code, e.message);
+      _restoreAfterStopFailure(
+        previousState,
+        e.code,
+        _normalizedPlatformErrorMessage(e),
+      );
     } catch (e, st) {
       Log.e("Recording", "Failed to stop recording: $e");
       await ClingfyTelemetry.captureError(
@@ -361,7 +404,12 @@ class RecordingController extends ChangeNotifier {
         method: 'pauseRecording',
         context: {'sessionId': _state.sessionId, 'phase': phase.name},
       );
-      _setState(_state.copyWith(errorCode: e.code, errorMessage: e.message));
+      _setState(
+        _state.copyWith(
+          errorCode: e.code,
+          errorMessage: _normalizedPlatformErrorMessage(e),
+        ),
+      );
     } catch (e, st) {
       _pauseResumeInFlight = false;
       notifyListeners();
@@ -396,7 +444,12 @@ class RecordingController extends ChangeNotifier {
         method: 'resumeRecording',
         context: {'sessionId': _state.sessionId, 'phase': phase.name},
       );
-      _setState(_state.copyWith(errorCode: e.code, errorMessage: e.message));
+      _setState(
+        _state.copyWith(
+          errorCode: e.code,
+          errorMessage: _normalizedPlatformErrorMessage(e),
+        ),
+      );
     } catch (e, st) {
       _pauseResumeInFlight = false;
       notifyListeners();
@@ -417,7 +470,7 @@ class RecordingController extends ChangeNotifier {
 
   Future<void> handlePreviewHostMounted() async {
     final activeSessionId = _state.sessionId;
-    final path = _state.previewPath ?? _state.finalizedRecordingPath;
+    final path = _state.previewPath ?? _state.projectPath;
     Log.d('Recording', 'Preview host mounted', null, null, {
       'phase': phase.name,
       'sessionId': activeSessionId,
@@ -447,9 +500,13 @@ class RecordingController extends ChangeNotifier {
         'Recording',
         'Invoking native previewOpen for session $activeSessionId',
       );
-      await _nativeBridge.previewOpen(sessionId: activeSessionId, path: path);
+      await _nativeBridge.previewOpen(
+        sessionId: activeSessionId,
+        projectPath: path,
+      );
     } catch (e, st) {
       Log.e("Recording", "Failed to open preview: $e", e, st);
+      _recordExternalProjectOpenFailureIfNeeded();
       _state = _state.copyWith(
         errorCode: 'PREVIEW_OPEN_ERROR',
         errorMessage: e.toString(),
@@ -546,6 +603,8 @@ class RecordingController extends ChangeNotifier {
         return;
       case 'previewClosed':
         _handlePreviewClosedEvent(event);
+        return;
+      case 'openProjectRequest':
         return;
       default:
         Log.d('Recording', 'Ignoring unknown workflow event: $type');
@@ -648,38 +707,26 @@ class RecordingController extends ChangeNotifier {
       return;
     }
 
-    final path = event['path']?.toString();
-    if (path == null || path.isEmpty) {
+    final projectPath = event['projectPath']?.toString();
+    if (projectPath == null || projectPath.isEmpty) {
       _handleRecordingFailedEvent({
         'type': 'recordingFailed',
         'sessionId': eventSessionId,
         'stage': 'finalize',
         'code': 'RECORDING_FINALIZE_ERROR',
-        'error': 'Missing finalized recording path',
+        'error': 'Missing finalized project path',
       });
       return;
     }
 
     Log.i(
       'Recording',
-      'Recording finalized for session $eventSessionId, opening preview shell for $path',
+      'Recording finalized for session $eventSessionId, opening preview shell for $projectPath',
     );
-    _pauseResumeInFlight = false;
-    _stopElapsedTicker();
-    _disarmAutoStopTimer();
-    Log.recordingId = null;
-    _startCommandIssued = false;
-    _mountedPreviewSessionId = null;
-    _previewOpenRequested = false;
-    _setState(
-      _state.copyWith(
-        phase: WorkflowPhase.openingPreview,
-        finalizedRecordingPath: path,
-        previewPath: path,
-        clearPreviewToken: true,
-        clearErrorCode: true,
-        clearErrorMessage: true,
-      ),
+    _enterPreviewForProject(
+      projectPath: projectPath,
+      source: _PreviewOpenSource.recordingFinalized,
+      sessionId: eventSessionId,
     );
     unawaited(ClingfyTelemetry.stopSession());
   }
@@ -718,7 +765,7 @@ class RecordingController extends ChangeNotifier {
         previewPath:
             event['path']?.toString() ??
             _state.previewPath ??
-            _state.finalizedRecordingPath,
+            _state.projectPath,
         previewToken: event['token']?.toString(),
         clearErrorCode: true,
         clearErrorMessage: true,
@@ -737,13 +784,14 @@ class RecordingController extends ChangeNotifier {
       return;
     }
 
+    _openingExternalProjectPath = null;
     _setState(
       _state.copyWith(
         phase: WorkflowPhase.previewReady,
         previewPath:
             event['path']?.toString() ??
             _state.previewPath ??
-            _state.finalizedRecordingPath,
+            _state.projectPath,
         previewToken: event['token']?.toString(),
         clearErrorCode: true,
         clearErrorMessage: true,
@@ -758,6 +806,7 @@ class RecordingController extends ChangeNotifier {
     final errorCode = event['reason']?.toString() ?? 'PREVIEW_ERROR';
     final errorMessage =
         event['error']?.toString() ?? event['reason']?.toString();
+    _recordExternalProjectOpenFailureIfNeeded();
     _state = _state.copyWith(errorCode: errorCode, errorMessage: errorMessage);
     notifyListeners();
     unawaited(_beginPreviewClose(requestNativeClose: true));
@@ -774,6 +823,16 @@ class RecordingController extends ChangeNotifier {
         null,
         null,
         {'phase': phase.name, 'sessionId': eventSessionId, 'reason': reason},
+      );
+      return;
+    }
+
+    final pendingReplacementPath = _pendingExternalProjectReplacementPath;
+    if (pendingReplacementPath != null && pendingReplacementPath.isNotEmpty) {
+      _pendingExternalProjectReplacementPath = null;
+      _enterPreviewForProject(
+        projectPath: pendingReplacementPath,
+        source: _PreviewOpenSource.externalProject,
       );
       return;
     }
@@ -830,6 +889,9 @@ class RecordingController extends ChangeNotifier {
     _startCommandIssued = false;
     _mountedPreviewSessionId = null;
     _previewOpenRequested = false;
+    _previewOpenSource = null;
+    _pendingExternalProjectReplacementPath = null;
+    _openingExternalProjectPath = null;
     Log.recordingId = null;
     _state = RecordingWorkflowState(
       phase: WorkflowPhase.idle,
@@ -845,6 +907,47 @@ class RecordingController extends ChangeNotifier {
     if (changed) {
       notifyListeners();
     }
+  }
+
+  void _enterPreviewForProject({
+    required String projectPath,
+    required _PreviewOpenSource source,
+    String? sessionId,
+  }) {
+    final nextSessionId = sessionId ?? _generateSessionId();
+    _pauseResumeInFlight = false;
+    _stopElapsedTicker();
+    _disarmAutoStopTimer();
+    Log.recordingId = null;
+    _startCommandIssued = false;
+    _mountedPreviewSessionId = null;
+    _previewOpenRequested = false;
+    _previewOpenSource = source;
+    _failedExternalProjectOpenPath = null;
+    _pendingExternalProjectReplacementPath = null;
+    _openingExternalProjectPath = source == _PreviewOpenSource.externalProject
+        ? projectPath
+        : null;
+    _setState(
+      _state.copyWith(
+        phase: WorkflowPhase.openingPreview,
+        sessionId: nextSessionId,
+        projectPath: projectPath,
+        previewPath: projectPath,
+        clearPreviewToken: true,
+        clearErrorCode: true,
+        clearErrorMessage: true,
+      ),
+    );
+  }
+
+  void _recordExternalProjectOpenFailureIfNeeded() {
+    final externalProjectPath = _openingExternalProjectPath;
+    if (externalProjectPath == null || externalProjectPath.isEmpty) {
+      return;
+    }
+    _failedExternalProjectOpenPath = externalProjectPath;
+    _openingExternalProjectPath = null;
   }
 
   String _generateSessionId() {

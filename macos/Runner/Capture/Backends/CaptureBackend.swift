@@ -84,8 +84,13 @@ struct CaptureStartConfig {
   let excludeMicFromSystemAudio: Bool
 
   /// The window ID of the camera overlay, if active.
-  /// Used to ensure the overlay is included even if the rest of the app is excluded.
+  /// Used to either preserve or explicitly exclude that overlay window, depending on
+  /// `excludeCameraOverlayWindow`.
   let cameraOverlayWindowID: CGWindowID?
+
+  /// When true, `cameraOverlayWindowID` identifies a live overlay window that must be
+  /// excluded from the recorded screen output rather than preserved in it.
+  let excludeCameraOverlayWindow: Bool
 
   init(
     target: CaptureTarget,
@@ -96,6 +101,7 @@ struct CaptureStartConfig {
     makeOutputURL: @escaping () throws -> URL,
     excludeRecorderApp: Bool = false,
     cameraOverlayWindowID: CGWindowID? = nil,
+    excludeCameraOverlayWindow: Bool = false,
     excludeMicFromSystemAudio: Bool = true
   ) {
     self.target = target
@@ -106,6 +112,7 @@ struct CaptureStartConfig {
     self.makeOutputURL = makeOutputURL
     self.excludeRecorderApp = excludeRecorderApp
     self.cameraOverlayWindowID = cameraOverlayWindowID
+    self.excludeCameraOverlayWindow = excludeCameraOverlayWindow
     self.excludeMicFromSystemAudio = excludeMicFromSystemAudio
   }
 }
@@ -125,13 +132,19 @@ protocol CaptureBackend: AnyObject {
   var onMicrophoneLevel: ((MicrophoneLevelSample) -> Void)? { get set }
 
   var canPauseResume: Bool { get }
+  var supportsLiveOverlayExclusionDuringSeparateCameraCapture: Bool { get }
   var isRecording: Bool { get }
   var isPaused: Bool { get }
   var currentOutputURL: URL? { get }
+  var recordedScreenSegments: [RecordingMetadata.CaptureSegment] { get }
 
   func start(config: CaptureStartConfig)
   func stop()
   func pause()
   func resume()
   func updateOverlay(windowID: CGWindowID?)
+}
+
+extension CaptureBackend {
+  var recordedScreenSegments: [RecordingMetadata.CaptureSegment] { [] }
 }

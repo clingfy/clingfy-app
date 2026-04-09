@@ -2,8 +2,9 @@ import 'package:clingfy/app/home/recording/widgets/recording_options_sidebar.dar
 import 'package:clingfy/core/models/app_models.dart';
 import 'package:clingfy/core/overlay/overlay_mode.dart';
 import 'package:clingfy/l10n/app_localizations.dart';
-import 'package:clingfy/ui/platform/widgets/app_section.dart';
+import 'package:clingfy/ui/platform/widgets/app_settings_group.dart';
 import 'package:clingfy/ui/platform/widgets/app_sidebar_tokens.dart';
+import 'package:clingfy/ui/platform/widgets/platform_dropdown.dart';
 import 'package:clingfy/ui/theme/app_theme.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
@@ -17,6 +18,8 @@ void main() {
     bool isRecording = false,
     DisplayTargetMode targetMode = DisplayTargetMode.explicitId,
     bool cursorEnabled = false,
+    OverlayMode overlayMode = OverlayMode.off,
+    String? selectedCamId = 'cam_1',
   }) {
     return MaterialApp(
       localizationsDelegates: AppLocalizations.localizationsDelegates,
@@ -43,7 +46,7 @@ void main() {
               loadingAudio: false,
               systemAudioEnabled: false,
               cams: const [CamSource(id: 'cam_1', name: 'Cam')],
-              selectedCamId: 'cam_1',
+              selectedCamId: selectedCamId,
               loadingCams: false,
               areaDisplayId: null,
               areaRect: null,
@@ -74,7 +77,7 @@ void main() {
               onCountdownDurationChanged: (_) {},
               excludeRecorderAppFromCapture: false,
               onExcludeRecorderAppFromCaptureChanged: (_) {},
-              overlayMode: OverlayMode.off,
+              overlayMode: overlayMode,
               overlayShape: OverlayShape.squircle,
               overlaySize: 0.4,
               overlayShadow: OverlayShadow.medium,
@@ -247,77 +250,111 @@ void main() {
     await expectGap(2);
   });
 
-  testWidgets('dropdown-backed sections use the larger title spacing', (
+  testWidgets('screen tab renders three explicit settings groups', (
     tester,
   ) async {
-    Future<void> expectTitleSpacing({
-      required int selectedIndex,
-      required String title,
-    }) async {
-      await tester.pumpWidget(buildTestApp(selectedIndex: selectedIndex));
-      await tester.pumpAndSettle();
-
-      final section = tester.widget<AppSection>(
-        find.byWidgetPredicate(
-          (widget) => widget is AppSection && widget.title == title,
-        ),
-      );
-
-      expect(section.titleSpacing, AppSidebarTokens.dropdownSectionTitleGap);
-    }
-
-    await expectTitleSpacing(selectedIndex: 0, title: 'Audio');
-    await expectTitleSpacing(selectedIndex: 0, title: 'Display');
-    await expectTitleSpacing(selectedIndex: 1, title: 'Camera');
-    await expectTitleSpacing(selectedIndex: 2, title: 'Duration');
-  });
-
-  testWidgets('face cam tab separates camera and overlay groups', (
-    tester,
-  ) async {
-    await tester.pumpWidget(buildTestApp(selectedIndex: 1));
+    await tester.pumpWidget(buildTestApp(selectedIndex: 0));
     await tester.pumpAndSettle();
 
-    final spacer = tester.widget<SizedBox>(
-      find.byKey(const Key('recording_camera_overlay_gap')),
-    );
-
-    expect(spacer.height, AppSidebarTokens.optionsGroupGap);
+    expect(find.byType(AppSettingsGroup), findsNWidgets(3));
+    expect(find.text('Capture Source'), findsOneWidget);
+    expect(find.text('Audio'), findsOneWidget);
+    expect(find.text('Pointer'), findsOneWidget);
+    expect(find.byType(Divider), findsNothing);
   });
 
-  testWidgets('output tab uses the new group rhythm between controls', (
+  testWidgets('screen tab source dropdowns fill the available control width', (
+    tester,
+  ) async {
+    await tester.pumpWidget(buildTestApp(selectedIndex: 0));
+    await tester.pumpAndSettle();
+
+    final sourceGroup = find.ancestor(
+      of: find.text('Capture Source'),
+      matching: find.byType(AppSettingsGroup),
+    );
+    final sourceFields = find.descendant(
+      of: sourceGroup,
+      matching: find.byKey(PlatformDropdown.fieldKey),
+    );
+
+    expect(sourceFields, findsNWidgets(2));
+    expect(
+      tester.getSize(sourceFields.at(0)).width,
+      greaterThan(AppSidebarTokens.controlMaxWidth),
+    );
+    expect(
+      tester.getSize(sourceFields.at(1)).width,
+      greaterThan(AppSidebarTokens.controlMaxWidth),
+    );
+  });
+
+  testWidgets(
+    'face cam tab keeps advanced groups hidden when overlay mode is off',
+    (tester) async {
+      await tester.pumpWidget(
+        buildTestApp(selectedIndex: 1, overlayMode: OverlayMode.off),
+      );
+      await tester.pumpAndSettle();
+
+      expect(find.byType(AppSettingsGroup), findsNWidgets(2));
+      expect(find.text('Camera'), findsOneWidget);
+      expect(find.text('Visibility & Placement'), findsOneWidget);
+      expect(find.text('Appearance'), findsNothing);
+      expect(find.text('Style'), findsNothing);
+      expect(find.text('Effects'), findsNothing);
+      expect(find.byType(Divider), findsNothing);
+    },
+  );
+
+  testWidgets('face cam tab reveals grouped camera styling controls', (
+    tester,
+  ) async {
+    await tester.pumpWidget(
+      buildTestApp(selectedIndex: 1, overlayMode: OverlayMode.alwaysOn),
+    );
+    await tester.pumpAndSettle();
+
+    expect(find.text('Camera'), findsOneWidget);
+    expect(find.text('Visibility & Placement'), findsOneWidget);
+    expect(find.text('Appearance'), findsOneWidget);
+    expect(find.text('Style'), findsOneWidget);
+    expect(find.text('Effects'), findsOneWidget);
+  });
+
+  testWidgets('output tab renders grouped recording and capture controls', (
     tester,
   ) async {
     await tester.pumpWidget(buildTestApp(selectedIndex: 2));
     await tester.pumpAndSettle();
 
-    final frameRateDurationGap = tester.widget<SizedBox>(
+    expect(find.byType(AppSettingsGroup), findsNWidgets(3));
+    expect(find.text('Quality'), findsOneWidget);
+    expect(find.text('Start & Stop'), findsOneWidget);
+    expect(find.text('Capture Settings'), findsOneWidget);
+    expect(find.byType(Divider), findsNothing);
+    expect(
       find.byKey(const Key('recording_output_frame_rate_duration_gap')),
+      findsNothing,
     );
-    final durationCountdownGap = tester.widget<SizedBox>(
-      find.byKey(const Key('recording_output_duration_countdown_gap')),
+    expect(
+      find.byKey(const Key('recording_output_frame_rate_duration_gap2')),
+      findsNothing,
     );
-    final captureSettingsGapBeforeDivider = tester.widget<SizedBox>(
-      find.byKey(
-        const Key('recording_output_capture_settings_gap_before_divider'),
-      ),
-    );
-    final captureSettingsGapAfterDivider = tester.widget<SizedBox>(
-      find.byKey(
-        const Key('recording_output_capture_settings_gap_after_divider'),
-      ),
-    );
+  });
 
-    expect(frameRateDurationGap.height, AppSidebarTokens.optionsGroupGap);
-    expect(durationCountdownGap.height, AppSidebarTokens.optionsSubgroupGap);
-    expect(
-      captureSettingsGapBeforeDivider.height,
-      AppSidebarTokens.optionsGroupGap,
+  testWidgets('output tab hides capture settings for single-window capture', (
+    tester,
+  ) async {
+    await tester.pumpWidget(
+      buildTestApp(
+        selectedIndex: 2,
+        targetMode: DisplayTargetMode.singleAppWindow,
+      ),
     );
-    expect(
-      captureSettingsGapAfterDivider.height,
-      AppSidebarTokens.optionsGroupGap,
-    );
+    await tester.pumpAndSettle();
+
+    expect(find.text('Capture Settings'), findsNothing);
   });
 
   testWidgets(

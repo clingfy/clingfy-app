@@ -389,8 +389,8 @@ class DeviceController extends ChangeNotifier {
 
     final clampedLinear = linear.clamp(0.0, 1.0);
     final changed =
-        (clampedLinear - _micInputLevelLinear).abs() >= 0.01 ||
-        (dbfs - _micInputLevelDbfs).abs() >= 0.6 ||
+        (clampedLinear - _micInputLevelLinear).abs() >= 0.003 ||
+        (dbfs - _micInputLevelDbfs).abs() >= 0.25 ||
         isLow != _micInputTooLow;
 
     _micInputLevelLinear = clampedLinear;

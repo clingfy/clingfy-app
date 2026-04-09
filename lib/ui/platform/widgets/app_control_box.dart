@@ -38,7 +38,7 @@ class AppControlBox extends StatelessWidget {
         final box = ConstrainedBox(
           constraints: BoxConstraints(
             minWidth: expand ? effectiveMax : effectiveMin,
-            maxWidth: effectiveMax,
+            // maxWidth: effectiveMax,
           ),
           child: SizedBox(width: double.infinity, height: height, child: child),
         );

@@ -46,6 +46,7 @@ final class PreferencesStore {
       PrefKey.keepOriginals: true,
       PrefKey.excludeRecorderApp: false,  // Default: exclude recorder app from capture
       PrefKey.excludeMicFromSystemAudio: true,  // Default: prevent mic feedback in system audio
+      PrefKey.cameraCaptureMode: CameraCaptureMode.separateCameraAsset.rawValue,
 
       PrefKey.overlayShapeId: CameraOverlayShapeID.defaultValue.rawValue,
       "overlayShadow": 0,
@@ -261,6 +262,14 @@ final class PreferencesStore {
   var excludeMicFromSystemAudio: Bool {
     get { ud.bool(forKey: PrefKey.excludeMicFromSystemAudio) }
     set { ud.set(newValue, forKey: PrefKey.excludeMicFromSystemAudio) }
+  }
+
+  var cameraCaptureMode: CameraCaptureMode {
+    get {
+      CameraCaptureMode(rawValue: ud.string(forKey: PrefKey.cameraCaptureMode) ?? "")
+        ?? .separateCameraAsset
+    }
+    set { ud.set(newValue.rawValue, forKey: PrefKey.cameraCaptureMode) }
   }
 
   private func integerValue(forKey key: String) -> Int? {

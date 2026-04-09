@@ -331,7 +331,7 @@ final class CursorRecorder {
       spriteIndex = existing
     } else {
       // 5. Sanitize Pixels
-      let colorSpace = CGColorSpaceCreateDeviceRGB()
+      let colorSpace = VideoColorPipeline.workingColorSpace
       let bitmapInfo = CGBitmapInfo(rawValue: CGImageAlphaInfo.premultipliedLast.rawValue)
       var rawData = Data(count: width * height * 4)
 

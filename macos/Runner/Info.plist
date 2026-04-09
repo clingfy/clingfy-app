@@ -17,6 +17,23 @@
 
 	<key>CFBundleDisplayName</key>
 	<string>$(APP_DISPLAY_NAME)</string>
+	<key>CFBundleDocumentTypes</key>
+	<array>
+		<dict>
+			<key>CFBundleTypeIconFile</key>
+			<string>ClingfyProjectIcon</string>
+			<key>CFBundleTypeName</key>
+			<string>Clingfy Project</string>
+			<key>CFBundleTypeRole</key>
+			<string>Editor</string>
+			<key>LSHandlerRank</key>
+			<string>Owner</string>
+			<key>LSItemContentTypes</key>
+			<array>
+				<string>com.clingfy.project</string>
+			</array>
+		</dict>
+	</array>
 
 	<key>CFBundleInfoDictionaryVersion</key>
 	<string>6.0</string>
@@ -42,6 +59,28 @@
 
 	<key>NSAccessibilityUsageDescription</key>
 	<string>This app needs accessibility to highlight the cursor during recording.</string>
+	<key>UTExportedTypeDeclarations</key>
+	<array>
+		<dict>
+			<key>UTTypeConformsTo</key>
+			<array>
+				<string>com.apple.package</string>
+			</array>
+			<key>UTTypeDescription</key>
+			<string>Clingfy Project</string>
+			<key>UTTypeIconFile</key>
+			<string>ClingfyProjectIcon</string>
+			<key>UTTypeIdentifier</key>
+			<string>com.clingfy.project</string>
+			<key>UTTypeTagSpecification</key>
+			<dict>
+				<key>public.filename-extension</key>
+				<array>
+					<string>clingfyproj</string>
+				</array>
+			</dict>
+		</dict>
+	</array>
 	
 	<!-- Where Sparkle finds RSS/appcast -->
     <key>SUFeedURL</key>

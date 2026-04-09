@@ -1,4 +1,5 @@
 import 'dart:async';
+import 'dart:ui' show Offset;
 
 import 'package:flutter/foundation.dart';
 import 'package:clingfy/core/bridges/native_bridge.dart';
@@ -8,9 +9,8 @@ import 'package:clingfy/app/infrastructure/logging/logger_service.dart';
 import 'package:clingfy/core/zoom/zoom_editor_controller.dart';
 
 class PlayerController extends ChangeNotifier {
-  PlayerController({
-    required NativeBridge nativeBridge,
-  }) : _nativeBridge = nativeBridge {
+  PlayerController({required NativeBridge nativeBridge})
+    : _nativeBridge = nativeBridge {
     _listenPlayer();
   }
 
@@ -33,6 +33,7 @@ class PlayerController extends ChangeNotifier {
 
   final _warningController = StreamController<String>.broadcast();
   final _warningCodeController = StreamController<String>.broadcast();
+  final _cameraManualPositionController = StreamController<Offset>.broadcast();
 
   ZoomEditorController? _zoomEditor;
   VoidCallback? _zoomEditorListener;
@@ -46,6 +47,8 @@ class PlayerController extends ChangeNotifier {
   String? get blockingErrorCode => _blockingErrorCode;
   Stream<String> get warningStream => _warningController.stream;
   Stream<String> get warningCodeStream => _warningCodeController.stream;
+  Stream<Offset> get cameraManualPositionStream =>
+      _cameraManualPositionController.stream;
   ZoomEditorController? get zoomEditor => _zoomEditor;
   List<ZoomSegment> get zoomSegments => _zoomSegments;
   List<ZoomSegment>? get previewCompositionZoomSegments => _zoomEditor == null
@@ -80,7 +83,9 @@ class PlayerController extends ChangeNotifier {
                 _activePreviewPath != null &&
                 (_workflow?.phase == WorkflowPhase.previewReady ||
                     _workflow?.phase == WorkflowPhase.exporting)) {
-              unawaited(_attachZoomEditor(_activeSessionId!, _activePreviewPath!));
+              unawaited(
+                _attachZoomEditor(_activeSessionId!, _activePreviewPath!),
+              );
             }
             notifyListeners();
           }
@@ -118,6 +123,13 @@ class PlayerController extends ChangeNotifier {
         case 'debug':
           Log.d("Player", "Native: ${event['message']}");
           return;
+        case 'cameraManualPositionChanged':
+          final x = (event['normalizedX'] as num?)?.toDouble();
+          final y = (event['normalizedY'] as num?)?.toDouble();
+          if (x != null && y != null) {
+            _cameraManualPositionController.add(Offset(x, y));
+          }
+          return;
         default:
           return;
       }
@@ -152,6 +164,7 @@ class PlayerController extends ChangeNotifier {
 
     final nextSessionId = workflow.sessionId;
     final nextPreviewPath = workflow.previewPath;
+    final nextProjectPath = workflow.projectPath;
     final workflowAllowsPreview =
         workflow.phase == WorkflowPhase.previewReady ||
         workflow.phase == WorkflowPhase.exporting;
@@ -159,14 +172,15 @@ class PlayerController extends ChangeNotifier {
     if (workflowAllowsPreview &&
         nextSessionId != null &&
         nextPreviewPath != null &&
-        (_activeSessionId != nextSessionId || _activePreviewPath != nextPreviewPath)) {
+        (_activeSessionId != nextSessionId ||
+            _activePreviewPath != nextPreviewPath)) {
       _activeSessionId = nextSessionId;
       _activePreviewPath = nextPreviewPath;
       _blockingError = null;
       _blockingErrorCode = null;
       _playerReady = false;
-      if (_durMs > 0) {
-        unawaited(_attachZoomEditor(nextSessionId, nextPreviewPath));
+      if (_durMs > 0 && nextProjectPath != null) {
+        unawaited(_attachZoomEditor(nextSessionId, nextProjectPath));
       } else {
         _detachZoomEditor();
       }
@@ -184,7 +198,8 @@ class PlayerController extends ChangeNotifier {
       return;
     }
 
-    if (!workflow.showPreviewShell || workflow.phase == WorkflowPhase.closingPreview) {
+    if (!workflow.showPreviewShell ||
+        workflow.phase == WorkflowPhase.closingPreview) {
       if (_activeSessionId != null || _zoomEditor != null || _playerReady) {
         _activeSessionId = null;
         _activePreviewPath = null;
@@ -310,6 +325,7 @@ class PlayerController extends ChangeNotifier {
     _playerSub?.cancel();
     _warningController.close();
     _warningCodeController.close();
+    _cameraManualPositionController.close();
     _detachZoomEditor();
     super.dispose();
   }

@@ -485,47 +485,76 @@ class MainFlutterWindow: NSWindow {
 
       case "previewOpen":
         if let args = call.arguments as? [String: Any],
-          let path = args["path"] as? String,
+          let projectPath = args["projectPath"] as? String,
           let sessionId = args["sessionId"] as? String,
           !sessionId.isEmpty
         {
+          guard let mediaSources = self.screenRecorder.resolvePreviewMediaSources(
+            projectPath: projectPath,
+            explicitCameraPath: args["cameraPath"] as? String
+          ) else {
+            result(
+              FlutterError(
+                code: "PREVIEW_INPUT_MISSING",
+                message: "Recording project not found. It may have been moved or deleted.",
+                details: projectPath
+              )
+            )
+            return
+          }
           NativeLogger.i(
             "Preview", "Received previewOpen request",
             context: [
               "sessionId": sessionId,
-              "path": path,
+              "projectPath": projectPath,
+              "path": mediaSources.screenPath,
+              "cameraPath": mediaSources.cameraPath ?? "nil",
               "hasInlinePreviewView": inlinePreviewViewInstance != nil,
             ])
           self.bringAppToFront()
           self.isInlinePreviewActive = true
           self.updatePreRecordingBarVisibility()
+          beginActiveInlinePreviewSession(
+            sessionId: sessionId,
+            mediaSources: mediaSources
+          )
           pendingPreviewOpenRequest = PendingPreviewOpenRequest(
             sessionId: sessionId,
-            path: path
+            mediaSources: mediaSources
           )
           if let view = inlinePreviewViewInstance {
             NativeLogger.i(
               "Preview", "Opening preview immediately on existing host view",
               context: [
-                "sessionId": sessionId,
-                "path": path,
-              ])
-            view.open(path: path, sessionId: sessionId)
+              "sessionId": sessionId,
+              "projectPath": projectPath,
+              "path": mediaSources.screenPath,
+              "cameraPath": mediaSources.cameraPath ?? "nil",
+            ])
+            view.open(mediaSources: mediaSources, sessionId: sessionId)
+            if let sceneRequest = pendingPreviewSceneRequest,
+              sceneRequest.sessionId == sessionId
+            {
+              view.updateComposition(scene: sceneRequest.scene)
+              pendingPreviewSceneRequest = nil
+            }
             pendingPreviewOpenRequest = nil
           } else {
             NativeLogger.i(
               "Preview", "Stored pending previewOpen request until host view is created",
               context: [
-                "sessionId": sessionId,
-                "path": path,
-              ])
+              "sessionId": sessionId,
+              "projectPath": projectPath,
+              "path": mediaSources.screenPath,
+              "cameraPath": mediaSources.cameraPath ?? "nil",
+            ])
           }
           result(nil)
         } else {
           result(
             FlutterError(
               code: NativeErrorCode.badArgs,
-              message: "missing path/sessionId",
+              message: "missing projectPath/sessionId",
               details: nil
             )
           )
@@ -537,12 +566,11 @@ class MainFlutterWindow: NSWindow {
         {
           self.isInlinePreviewActive = false
           self.updatePreRecordingBarVisibility()
-          pendingPreviewOpenRequest = nil
-          pendingPreviewParams = nil
-          pendingPreviewZoomSegments = nil
-          if let view = inlinePreviewViewInstance, view.currentSessionId == sessionId {
-            view.dispose(reason: "flutterRequest")
-          } else {
+          clearAllInlinePreviewState()
+          if !disposeInlinePreviewContentViewIfMatching(
+            sessionId: sessionId,
+            reason: "flutterRequest"
+          ) {
             self.emitWorkflowEvent(
               [
                 "type": "previewClosed",
@@ -563,54 +591,73 @@ class MainFlutterWindow: NSWindow {
 
       case "previewPlay":
         if let args = call.arguments as? [String: Any],
-          let sessionId = args["sessionId"] as? String,
-          let view = inlinePreviewViewInstance,
-          view.currentSessionId == sessionId
+          let sessionId = args["sessionId"] as? String
         {
-          view.play()
+          updateActiveInlinePreviewPlaybackSnapshot(
+            sessionId: sessionId,
+            isPlaying: true
+          )
+          if let view = inlinePreviewViewInstance, view.currentSessionId == sessionId {
+            view.play()
+          }
         }
         result(nil)
 
       case "previewPause":
         if let args = call.arguments as? [String: Any],
-          let sessionId = args["sessionId"] as? String,
-          let view = inlinePreviewViewInstance,
-          view.currentSessionId == sessionId
+          let sessionId = args["sessionId"] as? String
         {
-          view.pause()
+          updateActiveInlinePreviewPlaybackSnapshot(
+            sessionId: sessionId,
+            isPlaying: false
+          )
+          if let view = inlinePreviewViewInstance, view.currentSessionId == sessionId {
+            view.pause()
+          }
         }
         result(nil)
 
       case "previewSeekTo":
         if let args = call.arguments as? [String: Any],
-          let sessionId = args["sessionId"] as? String,
-          let view = inlinePreviewViewInstance,
-          view.currentSessionId == sessionId
+          let sessionId = args["sessionId"] as? String
         {
           let ms = (args["ms"] as? Int) ?? 0
-          view.seekTo(milliseconds: ms)
+          updateActiveInlinePreviewPlaybackSnapshot(
+            sessionId: sessionId,
+            positionMs: ms
+          )
+          if let view = inlinePreviewViewInstance, view.currentSessionId == sessionId {
+            view.seekTo(milliseconds: ms)
+          }
         }
         result(nil)
 
       case "previewPeekTo":
         if let args = call.arguments as? [String: Any],
-          let sessionId = args["sessionId"] as? String,
-          let view = inlinePreviewViewInstance,
-          view.currentSessionId == sessionId
+          let sessionId = args["sessionId"] as? String
         {
           let ms = (args["ms"] as? Int) ?? 0
-          view.seekTo(milliseconds: ms)
+          updateActiveInlinePreviewPlaybackSnapshot(
+            sessionId: sessionId,
+            positionMs: ms
+          )
+          if let view = inlinePreviewViewInstance, view.currentSessionId == sessionId {
+            view.seekTo(milliseconds: ms)
+          }
         }
         result(nil)
 
       case "playerPlay":
+        updateActiveInlinePreviewPlaybackSnapshot(sessionId: nil, isPlaying: true)
         inlinePreviewViewInstance?.play()
         result(nil)
       case "playerPause":
+        updateActiveInlinePreviewPlaybackSnapshot(sessionId: nil, isPlaying: false)
         inlinePreviewViewInstance?.pause()
         result(nil)
       case "playerSeekTo":
         let ms = (call.arguments as? [String: Any])?["ms"] as? Int ?? 0
+        updateActiveInlinePreviewPlaybackSnapshot(sessionId: nil, positionMs: ms)
         inlinePreviewViewInstance?.seekTo(milliseconds: ms)
         result(nil)
       case "inlinePreviewStop":
@@ -619,8 +666,12 @@ class MainFlutterWindow: NSWindow {
 
       case "processVideo":
         if let args = call.arguments as? [String: Any],
-          let path = args["path"] as? String
+          let projectPath = args["projectPath"] as? String
         {
+          let cameraParams = self.screenRecorder.resolveCameraCompositionParams(
+            projectPath: projectPath,
+            args: args
+          )
           let layout = (args["layoutPreset"] as? String) ?? "auto"
           let res = (args["resolutionPreset"] as? String) ?? "auto"
           let fit = (args["fitMode"] as? String) ?? "fit"
@@ -631,6 +682,9 @@ class MainFlutterWindow: NSWindow {
           let cursorSize = (args["cursorSize"] as? Double) ?? 1.0
           let zoomFactor = (args["zoomFactor"] as? Double) ?? 1.5
           let showCursor = (args["showCursor"] as? Bool) ?? true
+          let cameraPreviewChangeKind = CameraPreviewChangeKind(
+            rawValue: (args["cameraPreviewChangeKind"] as? String) ?? CameraPreviewChangeKind.none.rawValue
+          ) ?? .none
 
           let format = (args["format"] as? String) ?? "mov"
           let codec = (args["codec"] as? String) ?? "hevc"
@@ -638,7 +692,7 @@ class MainFlutterWindow: NSWindow {
           let zoomSegments = parseZoomTimelineSegments(args["zoomSegments"])
 
           self.screenRecorder.processVideo(
-            source: path,
+            projectPath: projectPath,
             layout: layout,
             resolution: res,
             fit: fit,
@@ -655,11 +709,38 @@ class MainFlutterWindow: NSWindow {
             audioGainDb: (args["audioGainDb"] as? Double) ?? 0.0,
             audioVolumePercent: (args["audioVolumePercent"] as? Double) ?? 100.0,
             zoomSegments: zoomSegments,
+            cameraPreviewChangeKind: cameraPreviewChangeKind,
+            sessionId: args["sessionId"] as? String,
+            cameraPath: args["cameraPath"] as? String,
+            cameraParams: cameraParams,
             result: result)
         } else {
           result(
             FlutterError(
-              code: NativeErrorCode.badArgs, message: "Missing path/width/height", details: nil))
+              code: NativeErrorCode.badArgs, message: "Missing projectPath/width/height", details: nil))
+        }
+
+      case "previewSetCameraPlacement":
+        if let args = call.arguments as? [String: Any],
+          let projectPath = args["projectPath"] as? String
+        {
+          let cameraParams = self.screenRecorder.resolveCameraCompositionParams(
+            projectPath: projectPath,
+            args: args
+          )
+          let cameraPreviewChangeKind = CameraPreviewChangeKind(
+            rawValue: (args["cameraPreviewChangeKind"] as? String) ?? CameraPreviewChangeKind.none.rawValue
+          ) ?? .none
+          self.screenRecorder.previewSetCameraPlacement(
+            sessionId: args["sessionId"] as? String,
+            cameraPreviewChangeKind: cameraPreviewChangeKind,
+            cameraParams: cameraParams,
+            result: result
+          )
+        } else {
+          result(
+            FlutterError(
+              code: NativeErrorCode.badArgs, message: "Missing projectPath", details: nil))
         }
 
       case "previewSetAudioMix":
@@ -699,8 +780,12 @@ class MainFlutterWindow: NSWindow {
 
       case "exportVideo":
         if let args = call.arguments as? [String: Any],
-          let path = args["path"] as? String
+          let projectPath = args["projectPath"] as? String
         {
+          let cameraParams = self.screenRecorder.resolveCameraCompositionParams(
+            projectPath: projectPath,
+            args: args
+          )
           let layout = (args["layoutPreset"] as? String) ?? "auto"
           let res = (args["resolutionPreset"] as? String) ?? "auto"
           let fit = (args["fitMode"] as? String) ?? "fit"
@@ -720,7 +805,7 @@ class MainFlutterWindow: NSWindow {
           let targetLoudnessDbfs = (args["targetLoudnessDbfs"] as? Double) ?? -16.0
 
           self.screenRecorder.exportVideo(
-            source: path,
+            projectPath: projectPath,
             layout: layout,
             resolution: res,
             fit: fit,
@@ -740,6 +825,8 @@ class MainFlutterWindow: NSWindow {
             audioVolumePercent: (args["audioVolumePercent"] as? Double) ?? 100.0,
             autoNormalizeOnExport: autoNormalizeOnExport,
             targetLoudnessDbfs: targetLoudnessDbfs,
+            cameraPath: args["cameraPath"] as? String,
+            cameraParams: cameraParams,
             onProgress: { [weak self] progress in
               self?.channel?.invokeMethod("updateExportProgress", arguments: progress)
             },
@@ -747,11 +834,26 @@ class MainFlutterWindow: NSWindow {
         } else {
           result(
             FlutterError(
-              code: NativeErrorCode.badArgs, message: "Missing path/width/height", details: nil))
+              code: NativeErrorCode.badArgs, message: "Missing projectPath/width/height", details: nil))
         }
       case "cancelExport":
         self.screenRecorder.cancelExport()
         result(nil)
+
+      case "getRecordingSceneInfo":
+        if let args = call.arguments as? [String: Any],
+          let projectPath = args["projectPath"] as? String
+        {
+          self.screenRecorder.getRecordingSceneInfo(projectPath: projectPath, result: result)
+        } else {
+          result(
+            FlutterError(
+              code: NativeErrorCode.badArgs,
+              message: "missing projectPath",
+              details: nil
+            )
+          )
+        }
 
       case "pickImage":
         let panel = NSOpenPanel()
@@ -824,30 +926,30 @@ class MainFlutterWindow: NSWindow {
 
       case "getZoomSegments":
         if let args = call.arguments as? [String: Any],
-          let path = args["videoPath"] as? String
+          let path = args["projectPath"] as? String
         {
-          self.screenRecorder.getZoomSegments(videoPath: path, result: result)
+          self.screenRecorder.getZoomSegments(projectPath: path, result: result)
         } else {
           result(
-            FlutterError(code: NativeErrorCode.badArgs, message: "Missing videoPath", details: nil))
+            FlutterError(code: NativeErrorCode.badArgs, message: "Missing projectPath", details: nil))
         }
 
       case "getManualZoomSegments":
         if let args = call.arguments as? [String: Any],
-          let path = args["videoPath"] as? String
+          let path = args["projectPath"] as? String
         {
-          result(ZoomManualStore.shared.load(videoPath: path))
+          result(ZoomManualStore.shared.load(projectPath: path))
         } else {
           result(
-            FlutterError(code: NativeErrorCode.badArgs, message: "Missing videoPath", details: nil))
+            FlutterError(code: NativeErrorCode.badArgs, message: "Missing projectPath", details: nil))
         }
 
       case "saveManualZoomSegments":
         if let args = call.arguments as? [String: Any],
-          let path = args["videoPath"] as? String,
+          let path = args["projectPath"] as? String,
           let segments = args["segments"] as? [[String: Any]]
         {
-          result(ZoomManualStore.shared.save(videoPath: path, segments: segments))
+          result(ZoomManualStore.shared.save(projectPath: path, segments: segments))
         } else {
           result(
             FlutterError(code: NativeErrorCode.badArgs, message: "Missing args", details: nil))
@@ -858,6 +960,10 @@ class MainFlutterWindow: NSWindow {
           let sessionId = args["sessionId"] as? String,
           let segments = parseZoomTimelineSegments(args["segments"])
         {
+          updateActiveInlinePreviewZoomSegments(
+            sessionId: sessionId,
+            segments: segments
+          )
           if let previewView = inlinePreviewViewInstance,
             previewView.currentSessionId == sessionId
           {
@@ -1011,12 +1117,12 @@ class MainFlutterWindow: NSWindow {
         "sessionId": sessionId,
       ])
     }
-    screenRecorder.onRecordingFinalized = { [weak self] sessionId, path in
-      NativeLogger.d("Recording", "Recording finalized callback from facade. Path: \(path)")
+    screenRecorder.onRecordingFinalized = { [weak self] sessionId, projectPath in
+      NativeLogger.d("Recording", "Recording finalized callback from facade. Project: \(projectPath)")
       self?.emitWorkflowEvent([
         "type": "recordingFinalized",
         "sessionId": sessionId,
-        "path": path,
+        "projectPath": projectPath,
       ])
     }
     screenRecorder.onRecordingFailed = { [weak self] payload in

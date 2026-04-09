@@ -21,6 +21,7 @@ import 'package:clingfy/commercial/licensing/license_controller.dart';
 import 'package:clingfy/core/bridges/native_bridge.dart';
 import 'package:clingfy/core/bridges/native_method_channel.dart';
 import 'package:clingfy/core/devices/device_controller.dart';
+import 'package:clingfy/core/models/app_models.dart';
 import 'package:clingfy/core/preview/player_controller.dart';
 import 'package:clingfy/l10n/app_localizations.dart';
 import 'package:clingfy/ui/platform/widgets/app_sidebar_tokens.dart';
@@ -58,7 +59,7 @@ Future<String> _openPreviewShell(RecordingController recording) async {
   await _emitWorkflowEvent({
     'type': 'recordingFinalized',
     'sessionId': sessionId,
-    'path': '/tmp/test.mov',
+    'projectPath': '/tmp/test.clingfyproj',
   });
   await _emitWorkflowEvent({
     'type': 'previewReady',
@@ -202,7 +203,6 @@ void main() {
           ),
         },
         home: HomeShell(
-          title: 'Clingfy',
           actions: actions,
           uiState: uiState,
           settingsController: settings,
@@ -212,6 +212,59 @@ void main() {
     );
   }
 
+  testWidgets(
+    'desktop shell defaults to a compact rail and visible inspector',
+    (tester) async {
+      _setDesktopWindow(tester);
+      final harness = await createHarness();
+
+      addTearDown(harness.recording.dispose);
+      addTearDown(harness.player.dispose);
+      addTearDown(harness.device.dispose);
+      addTearDown(harness.overlay.dispose);
+      addTearDown(harness.permissions.dispose);
+      addTearDown(harness.post.dispose);
+      addTearDown(harness.license.dispose);
+      addTearDown(harness.countdown.dispose);
+      addTearDown(harness.uiState.dispose);
+      addTearDown(harness.settings.dispose);
+
+      await tester.pumpWidget(
+        buildShell(
+          actions: harness.actions,
+          countdown: harness.countdown,
+          device: harness.device,
+          license: harness.license,
+          overlay: harness.overlay,
+          player: harness.player,
+          post: harness.post,
+          recording: harness.recording,
+          settings: harness.settings,
+          uiState: harness.uiState,
+        ),
+      );
+      await tester.pumpAndSettle();
+
+      expect(
+        _railWidth(tester),
+        moreOrLessEquals(HomeDesktopPaneDimensions.compactRailWidth),
+      );
+      expect(find.byKey(const Key('home_options_panel_shell')), findsOneWidget);
+      expect(
+        find.byKey(const Key('home_toolbar_options_toggle_button')),
+        findsOneWidget,
+      );
+      expect(
+        find.byKey(const Key('home_options_panel_reveal_handle')),
+        findsNothing,
+      );
+      expect(
+        harness.uiState.paneStateFor(DesktopPaneId.homeLeftSidebar).isCollapsed,
+        isTrue,
+      );
+    },
+  );
+
   testWidgets('recording shell keeps rail separate from the workspace column', (
     tester,
   ) async {
@@ -219,6 +272,13 @@ void main() {
     final harness = await createHarness();
     final theme = buildDarkTheme();
     harness.uiState.setRecordingSidebarIndex(2);
+    harness.uiState.applyPaneLayoutPrefs(
+      const DesktopPaneLayoutPrefs(
+        paneStates: {
+          DesktopPaneId.homeLeftSidebar: DesktopPaneState(isCollapsed: false),
+        },
+      ),
+    );
 
     addTearDown(harness.recording.dispose);
     addTearDown(harness.player.dispose);
@@ -410,21 +470,7 @@ void main() {
       await tester.pumpAndSettle();
 
       expect(
-        find.descendant(
-          of: find.byKey(const Key('home_left_sidebar_shell')),
-          matching: find.text('Screen & Audio'),
-        ),
-        findsOneWidget,
-      );
-
-      await tester.tap(find.byKey(const Key('home_sidebar_collapse_button')));
-      await tester.pumpAndSettle();
-
-      final railRect = tester.getRect(
-        find.byKey(const Key('home_left_sidebar_shell')),
-      );
-      expect(
-        railRect.width,
+        _railWidth(tester),
         moreOrLessEquals(HomeDesktopPaneDimensions.compactRailWidth),
       );
       expect(
@@ -436,10 +482,23 @@ void main() {
       );
 
       await tester.tap(find.byKey(const Key('home_sidebar_collapse_button')));
+      await tester.pump();
+      await tester.pump(const Duration(milliseconds: 90));
+
+      final midExpandRailWidth = _railWidth(tester);
+      expect(
+        midExpandRailWidth,
+        greaterThan(HomeDesktopPaneDimensions.compactRailWidth),
+      );
+      expect(midExpandRailWidth, lessThan(HomeDesktopPaneDimensions.railWidth));
+
       await tester.pumpAndSettle();
 
+      final railRect = tester.getRect(
+        find.byKey(const ValueKey('desktop_pane_slot_homeLeftSidebar')),
+      );
       expect(
-        tester.getRect(find.byKey(const Key('home_left_sidebar_shell'))).width,
+        railRect.width,
         moreOrLessEquals(HomeDesktopPaneDimensions.railWidth),
       );
       expect(
@@ -448,6 +507,34 @@ void main() {
           matching: find.text('Screen & Audio'),
         ),
         findsOneWidget,
+      );
+
+      await tester.tap(find.byKey(const Key('home_sidebar_collapse_button')));
+      await tester.pump();
+      await tester.pump(const Duration(milliseconds: 90));
+
+      final midCollapseRailWidth = _railWidth(tester);
+      expect(
+        midCollapseRailWidth,
+        greaterThan(HomeDesktopPaneDimensions.compactRailWidth),
+      );
+      expect(
+        midCollapseRailWidth,
+        lessThan(HomeDesktopPaneDimensions.railWidth),
+      );
+
+      await tester.pumpAndSettle();
+
+      expect(
+        _railWidth(tester),
+        moreOrLessEquals(HomeDesktopPaneDimensions.compactRailWidth),
+      );
+      expect(
+        find.descendant(
+          of: find.byKey(const Key('home_left_sidebar_shell')),
+          matching: find.text('Screen & Audio'),
+        ),
+        findsNothing,
       );
     },
   );
@@ -458,7 +545,7 @@ void main() {
       _setDesktopWindow(tester);
       final harness = await createHarness();
       harness.uiState.setRecordingSidebarIndex(2);
-      harness.uiState.setPostProcessingSidebarIndex(1);
+      harness.uiState.setPostProcessingSidebarIndex(2);
 
       addTearDown(harness.recording.dispose);
       addTearDown(harness.player.dispose);
@@ -508,7 +595,7 @@ void main() {
       );
 
       final railRect = tester.getRect(
-        find.byKey(const Key('home_left_sidebar_shell')),
+        find.byKey(const ValueKey('desktop_pane_slot_homeLeftSidebar')),
       );
       final toolbarRect = tester.getRect(
         find.byKey(const Key('desktop_toolbar_surface')),
@@ -696,18 +783,11 @@ void main() {
       );
       await tester.pumpAndSettle();
 
-      final railRect = tester.getRect(
-        find.byKey(const Key('home_left_sidebar_shell')),
-      );
-      final optionsRect = tester.getRect(
-        find.byKey(const Key('home_options_panel_shell')),
-      );
-
       expect(
-        railRect.width,
+        _railWidth(tester),
         moreOrLessEquals(HomeDesktopPaneDimensions.compactRailWidth),
       );
-      expect(optionsRect.width, moreOrLessEquals(320));
+      expect(_optionsPanelWidth(tester), moreOrLessEquals(320));
       expect(
         find.descendant(
           of: find.byKey(const Key('home_left_sidebar_shell')),
@@ -718,76 +798,185 @@ void main() {
     },
   );
 
-  testWidgets('options pane collapse and expand restore the last width', (
-    tester,
-  ) async {
-    _setDesktopWindow(tester);
-    final harness = await createHarness();
-    harness.uiState.applyPaneLayoutPrefs(
-      const DesktopPaneLayoutPrefs(
-        paneStates: {
-          DesktopPaneId.recordingSidebar: DesktopPaneState(
-            width: 356,
-            lastExpandedWidth: 356,
-            userResized: true,
-          ),
-        },
-      ),
-    );
+  testWidgets(
+    'toolbar toggle hides inspector fully and restores width when toggled again',
+    (tester) async {
+      _setDesktopWindow(tester);
+      final harness = await createHarness();
+      harness.uiState.applyPaneLayoutPrefs(
+        const DesktopPaneLayoutPrefs(
+          paneStates: {
+            DesktopPaneId.recordingSidebar: DesktopPaneState(
+              width: 356,
+              lastExpandedWidth: 356,
+              userResized: true,
+            ),
+          },
+        ),
+      );
 
-    addTearDown(harness.recording.dispose);
-    addTearDown(harness.player.dispose);
-    addTearDown(harness.device.dispose);
-    addTearDown(harness.overlay.dispose);
-    addTearDown(harness.permissions.dispose);
-    addTearDown(harness.post.dispose);
-    addTearDown(harness.license.dispose);
-    addTearDown(harness.countdown.dispose);
-    addTearDown(harness.uiState.dispose);
-    addTearDown(harness.settings.dispose);
+      addTearDown(harness.recording.dispose);
+      addTearDown(harness.player.dispose);
+      addTearDown(harness.device.dispose);
+      addTearDown(harness.overlay.dispose);
+      addTearDown(harness.permissions.dispose);
+      addTearDown(harness.post.dispose);
+      addTearDown(harness.license.dispose);
+      addTearDown(harness.countdown.dispose);
+      addTearDown(harness.uiState.dispose);
+      addTearDown(harness.settings.dispose);
 
-    await tester.pumpWidget(
-      buildShell(
-        actions: harness.actions,
-        countdown: harness.countdown,
-        device: harness.device,
-        license: harness.license,
-        overlay: harness.overlay,
-        player: harness.player,
-        post: harness.post,
-        recording: harness.recording,
-        settings: harness.settings,
-        uiState: harness.uiState,
-      ),
-    );
-    await tester.pumpAndSettle();
+      await tester.pumpWidget(
+        buildShell(
+          actions: harness.actions,
+          countdown: harness.countdown,
+          device: harness.device,
+          license: harness.license,
+          overlay: harness.overlay,
+          player: harness.player,
+          post: harness.post,
+          recording: harness.recording,
+          settings: harness.settings,
+          uiState: harness.uiState,
+        ),
+      );
+      await tester.pumpAndSettle();
 
-    await tester.tap(
-      find.byKey(const Key('home_options_panel_collapse_button')),
-    );
-    await tester.pumpAndSettle();
+      expect(
+        find.byKey(const Key('home_options_panel_reveal_handle')),
+        findsNothing,
+      );
 
-    expect(
-      find.byKey(const Key('home_options_panel_expand_button')),
-      findsOneWidget,
-    );
-    expect(
-      harness.uiState.paneStateFor(DesktopPaneId.recordingSidebar).isCollapsed,
-      isTrue,
-    );
+      await tester.tap(
+        find.byKey(const Key('home_toolbar_options_toggle_button')),
+      );
+      await tester.pump();
+      await tester.pump(const Duration(milliseconds: 90));
 
-    await tester.tap(find.byKey(const Key('home_options_panel_expand_button')));
-    await tester.pumpAndSettle();
+      expect(tester.takeException(), isNull);
 
-    final optionsRect = tester.getRect(
-      find.byKey(const Key('home_options_panel_shell')),
-    );
-    expect(
-      harness.uiState.paneStateFor(DesktopPaneId.recordingSidebar).isCollapsed,
-      isFalse,
-    );
-    expect(optionsRect.width, moreOrLessEquals(356));
-  });
+      await tester.pumpAndSettle();
+
+      expect(find.byKey(const Key('home_options_panel_shell')), findsOneWidget);
+      expect(
+        find.byKey(const Key('home_toolbar_options_toggle_button')),
+        findsOneWidget,
+      );
+      expect(
+        find.byKey(const Key('home_options_panel_reveal_handle')),
+        findsNothing,
+      );
+      expect(
+        harness.uiState
+            .paneStateFor(DesktopPaneId.recordingSidebar)
+            .isCollapsed,
+        isTrue,
+      );
+      expect(_optionsPanelWidth(tester), moreOrLessEquals(0));
+      expect(
+        tester.getRect(find.byKey(const Key('home_right_panel_shell'))).left,
+        moreOrLessEquals(
+          tester.getRect(find.byKey(const Key('desktop_toolbar_surface'))).left,
+        ),
+      );
+
+      await tester.tap(
+        find.byKey(const Key('home_toolbar_options_toggle_button')),
+      );
+      await tester.pump();
+      await tester.pump(const Duration(milliseconds: 90));
+
+      expect(tester.takeException(), isNull);
+
+      await tester.pumpAndSettle();
+
+      expect(
+        harness.uiState
+            .paneStateFor(DesktopPaneId.recordingSidebar)
+            .isCollapsed,
+        isFalse,
+      );
+      expect(_optionsPanelWidth(tester), moreOrLessEquals(356));
+      expect(
+        find.byKey(const Key('home_options_panel_reveal_handle')),
+        findsNothing,
+      );
+    },
+  );
+
+  testWidgets(
+    'medium widths hide the inspector before compacting an expanded rail',
+    (tester) async {
+      _setDesktopWindow(tester, size: const Size(1200, 960));
+      final harness = await createHarness();
+      harness.uiState.applyPaneLayoutPrefs(
+        const DesktopPaneLayoutPrefs(
+          paneStates: {
+            DesktopPaneId.homeLeftSidebar: DesktopPaneState(isCollapsed: false),
+          },
+        ),
+      );
+
+      addTearDown(harness.recording.dispose);
+      addTearDown(harness.player.dispose);
+      addTearDown(harness.device.dispose);
+      addTearDown(harness.overlay.dispose);
+      addTearDown(harness.permissions.dispose);
+      addTearDown(harness.post.dispose);
+      addTearDown(harness.license.dispose);
+      addTearDown(harness.countdown.dispose);
+      addTearDown(harness.uiState.dispose);
+      addTearDown(harness.settings.dispose);
+
+      await tester.pumpWidget(
+        buildShell(
+          actions: harness.actions,
+          countdown: harness.countdown,
+          device: harness.device,
+          license: harness.license,
+          overlay: harness.overlay,
+          player: harness.player,
+          post: harness.post,
+          recording: harness.recording,
+          settings: harness.settings,
+          uiState: harness.uiState,
+        ),
+      );
+      await tester.pumpAndSettle();
+
+      final railRect = tester.getRect(
+        find.byKey(const Key('home_left_sidebar_shell')),
+      );
+      final toolbarRect = tester.getRect(
+        find.byKey(const Key('desktop_toolbar_surface')),
+      );
+      final rightPanelRect = tester.getRect(
+        find.byKey(const Key('home_right_panel_shell')),
+      );
+
+      expect(
+        railRect.width,
+        moreOrLessEquals(HomeDesktopPaneDimensions.railWidth),
+      );
+      expect(find.byKey(const Key('home_options_panel_shell')), findsOneWidget);
+      expect(_optionsPanelWidth(tester), moreOrLessEquals(0));
+      expect(
+        find.byKey(const Key('home_options_panel_reveal_handle')),
+        findsNothing,
+      );
+      expect(
+        harness.uiState.paneStateFor(DesktopPaneId.homeLeftSidebar).isCollapsed,
+        isFalse,
+      );
+      expect(
+        harness.uiState
+            .paneStateFor(DesktopPaneId.recordingSidebar)
+            .isCollapsed,
+        isFalse,
+      );
+      expect(rightPanelRect.left, moreOrLessEquals(toolbarRect.left));
+    },
+  );
 
   testWidgets(
     'recording and preview inspectors restore independent pane states',
@@ -839,36 +1028,29 @@ void main() {
       );
       await tester.pumpAndSettle();
 
-      expect(
-        tester.getRect(find.byKey(const Key('home_options_panel_shell'))).width,
-        moreOrLessEquals(320),
-      );
+      expect(_optionsPanelWidth(tester), moreOrLessEquals(320));
 
       final sessionId = await _openPreviewShell(harness.recording);
       await tester.pumpAndSettle();
 
+      expect(find.byKey(const Key('home_options_panel_shell')), findsOneWidget);
+      expect(_optionsPanelWidth(tester), moreOrLessEquals(0));
       expect(
-        find.byKey(const Key('home_options_panel_expand_button')),
-        findsOneWidget,
+        find.byKey(const Key('home_options_panel_reveal_handle')),
+        findsNothing,
       );
 
       await tester.tap(
-        find.byKey(const Key('home_options_panel_expand_button')),
+        find.byKey(const Key('home_toolbar_options_toggle_button')),
       );
       await tester.pumpAndSettle();
 
-      expect(
-        tester.getRect(find.byKey(const Key('home_options_panel_shell'))).width,
-        moreOrLessEquals(388),
-      );
+      expect(_optionsPanelWidth(tester), moreOrLessEquals(388));
 
       await _closePreviewShell(harness.recording, sessionId);
       await tester.pumpAndSettle();
 
-      expect(
-        tester.getRect(find.byKey(const Key('home_options_panel_shell'))).width,
-        moreOrLessEquals(320),
-      );
+      expect(_optionsPanelWidth(tester), moreOrLessEquals(320));
     },
   );
 
@@ -915,13 +1097,75 @@ void main() {
         find.byKey(const Key('desktop_split_layout_scroll_view')),
         findsWidgets,
       );
+      expect(find.byKey(const Key('home_options_panel_shell')), findsOneWidget);
+      expect(_optionsPanelWidth(tester), moreOrLessEquals(0));
       expect(
-        find.byKey(const Key('home_options_panel_expand_button')),
-        findsOneWidget,
+        find.byKey(const Key('home_options_panel_reveal_handle')),
+        findsNothing,
       );
       expect(tester.takeException(), isNull);
     },
   );
+
+  testWidgets('selecting a rail destination reopens a hidden inspector', (
+    tester,
+  ) async {
+    _setDesktopWindow(tester);
+    final harness = await createHarness();
+
+    addTearDown(harness.recording.dispose);
+    addTearDown(harness.player.dispose);
+    addTearDown(harness.device.dispose);
+    addTearDown(harness.overlay.dispose);
+    addTearDown(harness.permissions.dispose);
+    addTearDown(harness.post.dispose);
+    addTearDown(harness.license.dispose);
+    addTearDown(harness.countdown.dispose);
+    addTearDown(harness.uiState.dispose);
+    addTearDown(harness.settings.dispose);
+
+    await tester.pumpWidget(
+      buildShell(
+        actions: harness.actions,
+        countdown: harness.countdown,
+        device: harness.device,
+        license: harness.license,
+        overlay: harness.overlay,
+        player: harness.player,
+        post: harness.post,
+        recording: harness.recording,
+        settings: harness.settings,
+        uiState: harness.uiState,
+      ),
+    );
+    await tester.pumpAndSettle();
+
+    await tester.tap(
+      find.byKey(const Key('home_toolbar_options_toggle_button')),
+    );
+    await tester.pumpAndSettle();
+
+    expect(find.byKey(const Key('home_options_panel_shell')), findsOneWidget);
+    expect(_optionsPanelWidth(tester), moreOrLessEquals(0));
+
+    await tester.tap(
+      find.byKey(const ValueKey('recording_sidebar_rail_tile_1')),
+    );
+    await tester.pumpAndSettle();
+
+    expect(find.byKey(const Key('home_options_panel_shell')), findsOneWidget);
+    expect(
+      find.descendant(
+        of: find.byKey(const Key('recording_sidebar_header')),
+        matching: find.text('Face Cam'),
+      ),
+      findsOneWidget,
+    );
+    expect(
+      harness.uiState.paneStateFor(DesktopPaneId.recordingSidebar).isCollapsed,
+      isFalse,
+    );
+  });
 
   testWidgets('preview shell stays overflow-safe in narrow desktop widths', (
     tester,
@@ -974,6 +1218,108 @@ void main() {
   });
 
   testWidgets(
+    'countdown overlay cancel returns the hero to idle without starting recording',
+    (tester) async {
+      _setDesktopWindow(tester);
+      final harness = await createHarness();
+
+      addTearDown(harness.recording.dispose);
+      addTearDown(harness.player.dispose);
+      addTearDown(harness.device.dispose);
+      addTearDown(harness.overlay.dispose);
+      addTearDown(harness.permissions.dispose);
+      addTearDown(harness.post.dispose);
+      addTearDown(harness.license.dispose);
+      addTearDown(harness.countdown.dispose);
+      addTearDown(harness.uiState.dispose);
+      addTearDown(harness.settings.dispose);
+
+      await harness.settings.recording.updateCountdownEnabled(true);
+      await harness.settings.recording.updateCountdownDuration(5);
+
+      var startRecordingCalls = 0;
+      final messenger =
+          TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger;
+      messenger.setMockMethodCallHandler(screenRecorderChannel, (call) async {
+        switch (call.method) {
+          case 'getPermissionStatus':
+            return <String, bool>{
+              'screenRecording': true,
+              'microphone': false,
+              'camera': false,
+              'accessibility': false,
+            };
+          case 'getStorageSnapshot':
+            return <String, dynamic>{
+              'systemTotalBytes': 500 * 1024 * 1024 * 1024,
+              'systemAvailableBytes': 200 * 1024 * 1024 * 1024,
+              'recordingsBytes': 4 * 1024 * 1024,
+              'tempBytes': 2 * 1024 * 1024,
+              'logsBytes': 512 * 1024,
+              'recordingsPath': '/tmp/Clingfy/Recordings',
+              'tempPath': '/tmp/Clingfy/Temp',
+              'logsPath': '/tmp/Clingfy/Logs',
+              'warningThresholdBytes': 20 * 1024 * 1024 * 1024,
+              'criticalThresholdBytes': 10 * 1024 * 1024 * 1024,
+            };
+          case 'startRecording':
+            startRecordingCalls += 1;
+            return null;
+          default:
+            return null;
+        }
+      });
+
+      await tester.pumpWidget(
+        buildShell(
+          actions: harness.actions,
+          countdown: harness.countdown,
+          device: harness.device,
+          license: harness.license,
+          overlay: harness.overlay,
+          player: harness.player,
+          post: harness.post,
+          recording: harness.recording,
+          settings: harness.settings,
+          uiState: harness.uiState,
+        ),
+      );
+      await tester.pumpAndSettle();
+
+      final l10n = AppLocalizations.of(tester.element(find.byType(HomeShell)))!;
+
+      await tester.tap(find.widgetWithText(FilledButton, l10n.startRecording));
+      await tester.pump();
+      await tester.pump();
+
+      expect(harness.countdown.isActive, isTrue);
+      expect(harness.recording.phase, WorkflowPhase.startingRecording);
+      expect(find.widgetWithText(FilledButton, l10n.cancel), findsOneWidget);
+      expect(find.byType(CircularProgressIndicator), findsOneWidget);
+
+      await tester.tap(find.widgetWithText(FilledButton, l10n.cancel));
+      await tester.pump();
+      await tester.pump();
+
+      expect(harness.countdown.isActive, isFalse);
+      expect(harness.recording.phase, WorkflowPhase.idle);
+      expect(find.widgetWithText(FilledButton, l10n.cancel), findsNothing);
+      expect(find.byType(CircularProgressIndicator), findsNothing);
+
+      final startButton = tester.widget<FilledButton>(
+        find.widgetWithText(FilledButton, l10n.startRecording),
+      );
+      expect(startButton.onPressed, isNotNull);
+
+      await tester.pump(const Duration(seconds: 5));
+      await tester.pump();
+
+      expect(startRecordingCalls, 0);
+      expect(harness.recording.phase, WorkflowPhase.idle);
+    },
+  );
+
+  testWidgets(
     'short preview shells fall back to vertical scrolling without clipping',
     (tester) async {
       final harness = await createHarness();
@@ -1023,6 +1369,228 @@ void main() {
       expect(tester.takeException(), isNull);
     },
   );
+
+  testWidgets(
+    'Finder-open requests are blocked with a notice while countdown is active',
+    (tester) async {
+      _setDesktopWindow(tester);
+      final harness = await createHarness();
+
+      addTearDown(harness.recording.dispose);
+      addTearDown(harness.player.dispose);
+      addTearDown(harness.device.dispose);
+      addTearDown(harness.overlay.dispose);
+      addTearDown(harness.permissions.dispose);
+      addTearDown(harness.post.dispose);
+      addTearDown(harness.license.dispose);
+      addTearDown(harness.countdown.dispose);
+      addTearDown(harness.uiState.dispose);
+      addTearDown(harness.settings.dispose);
+
+      await tester.pumpWidget(
+        buildShell(
+          actions: harness.actions,
+          countdown: harness.countdown,
+          device: harness.device,
+          license: harness.license,
+          overlay: harness.overlay,
+          player: harness.player,
+          post: harness.post,
+          recording: harness.recording,
+          settings: harness.settings,
+          uiState: harness.uiState,
+        ),
+      );
+      await tester.pumpAndSettle();
+
+      final context = tester.element(find.byType(HomeShell));
+      final l10n = AppLocalizations.of(context)!;
+
+      harness.recording.beginRecordingStartIntent();
+      harness.countdown.start(durationSeconds: 5, onFinished: () {});
+
+      await harness.actions.handleExternalProjectOpen(
+        context,
+        '/tmp/finder.clingfyproj',
+      );
+      await tester.pump();
+
+      expect(harness.recording.phase, WorkflowPhase.startingRecording);
+      expect(harness.uiState.notice?.message, l10n.externalProjectOpenBlocked);
+
+      harness.countdown.cancel();
+      harness.uiState.clearTransientNotice();
+      await tester.pump();
+    },
+  );
+
+  testWidgets('Finder-open no-ops when the same project is already open', (
+    tester,
+  ) async {
+    _setDesktopWindow(tester);
+    final harness = await createHarness();
+
+    addTearDown(harness.recording.dispose);
+    addTearDown(harness.player.dispose);
+    addTearDown(harness.device.dispose);
+    addTearDown(harness.overlay.dispose);
+    addTearDown(harness.permissions.dispose);
+    addTearDown(harness.post.dispose);
+    addTearDown(harness.license.dispose);
+    addTearDown(harness.countdown.dispose);
+    addTearDown(harness.uiState.dispose);
+    addTearDown(harness.settings.dispose);
+
+    await tester.pumpWidget(
+      buildShell(
+        actions: harness.actions,
+        countdown: harness.countdown,
+        device: harness.device,
+        license: harness.license,
+        overlay: harness.overlay,
+        player: harness.player,
+        post: harness.post,
+        recording: harness.recording,
+        settings: harness.settings,
+        uiState: harness.uiState,
+      ),
+    );
+    await tester.pumpAndSettle();
+
+    final currentSessionId = await _openPreviewShell(harness.recording);
+    await tester.pumpAndSettle();
+    final context = tester.element(find.byType(HomeShell));
+
+    await harness.actions.handleExternalProjectOpen(
+      context,
+      '/tmp/test.clingfyproj',
+    );
+    await tester.pumpAndSettle();
+
+    expect(harness.recording.phase, WorkflowPhase.previewReady);
+    expect(harness.recording.projectPath, '/tmp/test.clingfyproj');
+    expect(harness.recording.sessionId, currentSessionId);
+    expect(
+      find.text(AppLocalizations.of(context)!.closeUnexportedRecordingTitle),
+      findsNothing,
+    );
+  });
+
+  testWidgets('external project open failures surface a localized notice', (
+    tester,
+  ) async {
+    _setDesktopWindow(tester);
+    final harness = await createHarness();
+
+    addTearDown(harness.recording.dispose);
+    addTearDown(harness.player.dispose);
+    addTearDown(harness.device.dispose);
+    addTearDown(harness.overlay.dispose);
+    addTearDown(harness.permissions.dispose);
+    addTearDown(harness.post.dispose);
+    addTearDown(harness.license.dispose);
+    addTearDown(harness.countdown.dispose);
+    addTearDown(harness.uiState.dispose);
+    addTearDown(harness.settings.dispose);
+
+    await tester.pumpWidget(
+      buildShell(
+        actions: harness.actions,
+        countdown: harness.countdown,
+        device: harness.device,
+        license: harness.license,
+        overlay: harness.overlay,
+        player: harness.player,
+        post: harness.post,
+        recording: harness.recording,
+        settings: harness.settings,
+        uiState: harness.uiState,
+      ),
+    );
+    await tester.pumpAndSettle();
+
+    final context = tester.element(find.byType(HomeShell));
+    final l10n = AppLocalizations.of(context)!;
+
+    harness.actions.handleExternalProjectOpenFailed(
+      context,
+      '/tmp/bad.clingfyproj',
+    );
+    await tester.pump();
+
+    expect(harness.uiState.notice?.message, l10n.externalProjectOpenFailed);
+  });
+
+  testWidgets(
+    'Finder-open of a different project confirms before replacing the preview',
+    (tester) async {
+      _setDesktopWindow(tester);
+      final harness = await createHarness();
+
+      addTearDown(harness.recording.dispose);
+      addTearDown(harness.player.dispose);
+      addTearDown(harness.device.dispose);
+      addTearDown(harness.overlay.dispose);
+      addTearDown(harness.permissions.dispose);
+      addTearDown(harness.post.dispose);
+      addTearDown(harness.license.dispose);
+      addTearDown(harness.countdown.dispose);
+      addTearDown(harness.uiState.dispose);
+      addTearDown(harness.settings.dispose);
+
+      await tester.pumpWidget(
+        buildShell(
+          actions: harness.actions,
+          countdown: harness.countdown,
+          device: harness.device,
+          license: harness.license,
+          overlay: harness.overlay,
+          player: harness.player,
+          post: harness.post,
+          recording: harness.recording,
+          settings: harness.settings,
+          uiState: harness.uiState,
+        ),
+      );
+      await tester.pumpAndSettle();
+
+      final currentSessionId = await _openPreviewShell(harness.recording);
+      await tester.pumpAndSettle();
+      final context = tester.element(find.byType(HomeShell));
+      final l10n = AppLocalizations.of(context)!;
+
+      unawaited(
+        harness.actions.handleExternalProjectOpen(
+          context,
+          '/tmp/other.clingfyproj',
+        ),
+      );
+      await tester.pumpAndSettle();
+
+      expect(find.text(l10n.closeUnexportedRecordingTitle), findsOneWidget);
+
+      await tester.tap(find.text(l10n.closeWithoutExporting));
+      await tester.pump();
+
+      expect(harness.recording.phase, WorkflowPhase.closingPreview);
+
+      await _emitWorkflowEvent({
+        'type': 'previewClosed',
+        'sessionId': currentSessionId,
+        'reason': 'flutterRequest',
+      });
+      await tester.pump();
+
+      expect(harness.recording.projectPath, '/tmp/other.clingfyproj');
+      expect(
+        {
+          WorkflowPhase.openingPreview,
+          WorkflowPhase.previewLoading,
+        }.contains(harness.recording.phase),
+        isTrue,
+      );
+    },
+  );
 }
 
 void _setDesktopWindow(
@@ -1035,6 +1603,26 @@ void _setDesktopWindow(
     tester.view.resetPhysicalSize();
     tester.view.resetDevicePixelRatio();
   });
+}
+
+double _optionsPanelWidth(WidgetTester tester) {
+  final recordingSlot = find.byKey(
+    const ValueKey('desktop_pane_slot_recordingSidebar'),
+  );
+  if (recordingSlot.evaluate().isNotEmpty) {
+    return tester.getRect(recordingSlot).width;
+  }
+
+  final postProcessingSlot = find.byKey(
+    const ValueKey('desktop_pane_slot_postProcessingSidebar'),
+  );
+  return tester.getRect(postProcessingSlot).width;
+}
+
+double _railWidth(WidgetTester tester) {
+  return tester
+      .getRect(find.byKey(const ValueKey('desktop_pane_slot_homeLeftSidebar')))
+      .width;
 }
 
 BoxDecoration _decorationFor(WidgetTester tester, Finder finder) {

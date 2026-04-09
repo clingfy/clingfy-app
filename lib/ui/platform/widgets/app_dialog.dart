@@ -90,7 +90,7 @@ class AppDialog {
               ? () => Navigator.of(ctx).pop(closeResult)
               : null,
           closeButtonKey: closeButtonKey,
-          maxWidth: maxWidth ?? 380,
+          maxWidth: maxWidth ?? 420,
         ),
       );
     }
@@ -240,7 +240,7 @@ class _MacosDialogShell extends StatelessWidget {
       Colors.white.withValues(alpha: 0.15),
     );
 
-    final backgroundColor = theme.colorScheme.surface;
+    final backgroundColor = theme.appTokens.editorChromeBackground;
 
     final contentPadding = EdgeInsets.fromLTRB(
       spacing.lg,

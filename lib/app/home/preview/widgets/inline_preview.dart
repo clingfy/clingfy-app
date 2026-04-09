@@ -2,10 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 
 class InlinePreview extends StatelessWidget {
-  const InlinePreview({
-    super.key,
-    this.onPlatformViewCreated,
-  });
+  const InlinePreview({super.key, this.onPlatformViewCreated});
 
   final PlatformViewCreatedCallback? onPlatformViewCreated;
 

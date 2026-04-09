@@ -2,6 +2,7 @@ import 'dart:async';
 
 import 'package:clingfy/core/overlay/overlay_mode.dart';
 import 'package:clingfy/core/bridges/native_bar_action.dart';
+import 'package:clingfy/core/bridges/native_error_codes.dart';
 import 'package:clingfy/app/home/recording/countdown_controller.dart';
 import 'package:clingfy/core/devices/device_controller.dart';
 import 'package:clingfy/commercial/licensing/license_controller.dart';
@@ -101,6 +102,11 @@ class HomeActions {
       postProcessingController.togglePlayback();
       return;
     }
+    if (countdownController.isActive) {
+      countdownController.cancel();
+      recordingController.cancelPendingStartIntent();
+      return;
+    }
     if (recordingController.isBusy || recordingController.isExporting) return;
 
     uiState.clearError();
@@ -108,9 +114,7 @@ class HomeActions {
 
     try {
       if (!recordingController.isRecording) {
-        if (countdownController.isActive) {
-          countdownController.cancel();
-          recordingController.cancelPendingStartIntent();
+        if (!_hasValidRecordingTargetSelection()) {
           return;
         }
         final overrides = await _resolveRecordingStartOverrides(context);
@@ -136,8 +140,36 @@ class HomeActions {
       }
     } on PlatformException catch (e) {
       Log.e('HomeActions', 'toggleRecording failed: $e');
-      uiState.setError(e.message ?? e.code);
+      uiState.setError(_platformExceptionMessageOrCode(e));
     }
+  }
+
+  bool _hasValidRecordingTargetSelection() {
+    switch (uiState.targetMode) {
+      case DisplayTargetMode.singleAppWindow:
+        if (deviceController.selectedAppWindowId == null) {
+          uiState.setError(NativeErrorCode.noWindowSelected);
+          return false;
+        }
+        return true;
+      case DisplayTargetMode.areaRecording:
+        if (overlayController.areaRect == null ||
+            overlayController.areaDisplayId == null) {
+          uiState.setError(NativeErrorCode.noAreaSelected);
+          return false;
+        }
+        return true;
+      default:
+        return true;
+    }
+  }
+
+  String _platformExceptionMessageOrCode(PlatformException error) {
+    final message = error.message;
+    if (message == null || message.trim().isEmpty) {
+      return error.code;
+    }
+    return message;
   }
 
   void handleExportProgress(double progress) {
@@ -161,6 +193,72 @@ class HomeActions {
         );
       }
     }
+  }
+
+  Future<void> handleExternalProjectOpen(
+    BuildContext context,
+    String projectPath,
+  ) async {
+    if (projectPath.isEmpty) return;
+
+    final l10n = AppLocalizations.of(context)!;
+
+    if (_shouldBlockExternalProjectOpen()) {
+      uiState.setNotice(
+        HomeUiNotice(
+          message: l10n.externalProjectOpenBlocked,
+          tone: HomeUiNoticeTone.warning,
+          autoDismissAfter: const Duration(seconds: 5),
+        ),
+      );
+      return;
+    }
+
+    if (recordingController.projectPath == projectPath &&
+        recordingController.canInteractWithPreview) {
+      return;
+    }
+
+    if (recordingController.canInteractWithPreview &&
+        recordingController.projectPath != null &&
+        recordingController.projectPath != projectPath) {
+      final shouldClose = await confirmCloseUnexportedRecordingIfNeeded(
+        context,
+        warningEnabled:
+            settingsController.workspace.warnBeforeClosingUnexportedRecording,
+        hasExportedCurrentRecording:
+            postProcessingController.hasExportedCurrentRecording,
+        disableFutureWarnings: () => settingsController.workspace
+            .updateWarnBeforeClosingUnexportedRecording(false),
+      );
+      if (!shouldClose) {
+        return;
+      }
+
+      playerController.clearError();
+      uiState.clearTransientNotice();
+      await recordingController.replacePreviewWithProject(projectPath);
+      return;
+    }
+
+    playerController.clearError();
+    uiState.clearTransientNotice();
+    recordingController.clearError();
+    recordingController.openExistingProject(projectPath);
+  }
+
+  void handleExternalProjectOpenFailed(
+    BuildContext context,
+    String projectPath,
+  ) {
+    if (projectPath.isEmpty) return;
+
+    uiState.setNotice(
+      HomeUiNotice(
+        message: AppLocalizations.of(context)!.externalProjectOpenFailed,
+        tone: HomeUiNoticeTone.error,
+      ),
+    );
   }
 
   Future<void> exportFromUi(BuildContext context) async {
@@ -261,6 +359,9 @@ class HomeActions {
 
       final message = e.code == 'EXPORT_INPUT_MISSING'
           ? l10n.errExportInputMissing
+          : e.code == NativeErrorCode.advancedCameraExportFailed
+          ? (e.message ??
+                'Advanced camera styling could not be rendered for export.')
           : l10n.errExportError(e.message ?? 'Unknown error');
 
       uiState.setNotice(
@@ -280,6 +381,25 @@ class HomeActions {
     } finally {
       recordingController.finishExporting();
     }
+  }
+
+  bool _shouldBlockExternalProjectOpen() {
+    if (countdownController.isActive) {
+      return true;
+    }
+
+    return switch (recordingController.phase) {
+      WorkflowPhase.idle || WorkflowPhase.previewReady => false,
+      WorkflowPhase.openingPreview ||
+      WorkflowPhase.previewLoading ||
+      WorkflowPhase.closingPreview ||
+      WorkflowPhase.startingRecording ||
+      WorkflowPhase.recording ||
+      WorkflowPhase.pausedRecording ||
+      WorkflowPhase.stoppingRecording ||
+      WorkflowPhase.finalizingRecording ||
+      WorkflowPhase.exporting => true,
+    };
   }
 
   Future<void> closePreview(BuildContext context) async {

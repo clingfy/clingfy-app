@@ -41,19 +41,19 @@ void main() {
     await tester.tap(find.text('Run'));
     await tester.pumpAndSettle();
 
-    expect(find.text('Close this recording?'), findsOneWidget);
+    expect(find.text('Close recording without exporting?'), findsOneWidget);
     expect(
       find.text(
-        'You haven’t exported this recording yet. If you close it now, you’ll lose access to it in the current session.',
+        'This recording hasn’t been exported yet. If you close it now, you’ll lose access to it in the current session.',
       ),
       findsOneWidget,
     );
     expect(find.text('Do not show again'), findsOneWidget);
-    expect(find.text('Close'), findsOneWidget);
-    expect(find.text('Cancel'), findsOneWidget);
+    expect(find.text('Close Without Exporting'), findsOneWidget);
+    expect(find.text('Keep Editing'), findsOneWidget);
   });
 
-  testWidgets('cancel keeps warning enabled', (tester) async {
+  testWidgets('keep editing keeps warning enabled', (tester) async {
     bool? result;
     var disableCalls = 0;
 
@@ -75,7 +75,7 @@ void main() {
 
     await tester.tap(find.text('Run'));
     await tester.pumpAndSettle();
-    await tester.tap(find.text('Cancel'));
+    await tester.tap(find.text('Keep Editing'));
     await tester.pumpAndSettle();
 
     expect(result, isFalse);
@@ -106,7 +106,7 @@ void main() {
 
     await tester.tap(find.text('Run'));
     await tester.pumpAndSettle();
-    await tester.tap(find.text('Close'));
+    await tester.tap(find.text('Close Without Exporting'));
     await tester.pumpAndSettle();
 
     expect(result, isTrue);
@@ -139,7 +139,7 @@ void main() {
     await tester.pumpAndSettle();
     await tester.tap(find.text('Do not show again'));
     await tester.pumpAndSettle();
-    await tester.tap(find.text('Close'));
+    await tester.tap(find.text('Close Without Exporting'));
     await tester.pumpAndSettle();
 
     expect(result, isTrue);
@@ -173,7 +173,7 @@ void main() {
 
     expect(result, isTrue);
     expect(disableCalls, 0);
-    expect(find.text('Close this recording?'), findsNothing);
+    expect(find.text('Close recording without exporting?'), findsNothing);
   });
 
   testWidgets(
@@ -203,7 +203,7 @@ void main() {
 
       expect(result, isTrue);
       expect(disableCalls, 0);
-      expect(find.text('Close this recording?'), findsNothing);
+      expect(find.text('Close recording without exporting?'), findsNothing);
     },
   );
 }

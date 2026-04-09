@@ -1,6 +1,7 @@
 import 'package:clingfy/l10n/app_localizations.dart';
 import 'package:clingfy/ui/platform/platform_kind.dart';
 import 'package:clingfy/ui/platform/widgets/app_inline_notice.dart';
+import 'package:clingfy/ui/platform/widgets/app_settings_group.dart';
 import 'package:clingfy/ui/platform/widgets/app_sidebar_tokens.dart';
 import 'package:clingfy/ui/platform/widgets/app_slider.dart';
 import 'package:clingfy/ui/platform/widgets/app_slider_row.dart';
@@ -34,39 +35,46 @@ class PostAudioSection extends StatelessWidget {
     return Column(
       crossAxisAlignment: CrossAxisAlignment.stretch,
       children: [
-        AppSliderRow(
-          label: l10n.volume,
-          valueText: '${audioVolume.toInt()}%',
-          slider: _buildSidebarSlider(
-            context,
-            value: audioVolume,
-            min: 0,
-            max: 100,
-            divisions: 100,
-            onChanged: hasAudio ? onAudioVolumeChanged : null,
-            onChangeEnd: onAudioVolumeChangeEnd,
-            accentColor: accentColor,
-          ),
+        AppSettingsGroup(
+          title: l10n.audio,
+          children: [
+            AppSliderRow(
+              label: l10n.volume,
+              valueText: '${audioVolume.toInt()}%',
+              slider: _buildSidebarSlider(
+                context,
+                value: audioVolume,
+                min: 0,
+                max: 100,
+                divisions: 100,
+                onChanged: hasAudio ? onAudioVolumeChanged : null,
+                onChangeEnd: onAudioVolumeChangeEnd,
+                accentColor: accentColor,
+              ),
+            ),
+            const SizedBox(height: AppSidebarTokens.rowGap),
+            AppSliderRow(
+              label: l10n.audioGain,
+              valueText: audioGainDb == 0
+                  ? l10n.off
+                  : '+${audioGainDb.toInt()}dB',
+              slider: _buildSidebarSlider(
+                context,
+                value: audioGainDb,
+                min: 0,
+                max: 24,
+                divisions: 24,
+                onChanged: hasAudio ? onAudioGainChanged : null,
+                onChangeEnd: onAudioGainChangeEnd,
+                accentColor: accentColor,
+              ),
+            ),
+            if (!hasAudio) ...[
+              const SizedBox(height: AppSidebarTokens.compactGap),
+              AppInlineNotice(message: l10n.noMicAudioFound),
+            ],
+          ],
         ),
-        const SizedBox(height: AppSidebarTokens.rowGap),
-        AppSliderRow(
-          label: l10n.audioGain,
-          valueText: audioGainDb == 0 ? l10n.off : '+${audioGainDb.toInt()}dB',
-          slider: _buildSidebarSlider(
-            context,
-            value: audioGainDb,
-            min: 0,
-            max: 24,
-            divisions: 24,
-            onChanged: hasAudio ? onAudioGainChanged : null,
-            onChangeEnd: onAudioGainChangeEnd,
-            accentColor: accentColor,
-          ),
-        ),
-        if (!hasAudio) ...[
-          const SizedBox(height: AppSidebarTokens.compactGap),
-          AppInlineNotice(message: l10n.noMicAudioFound),
-        ],
       ],
     );
   }

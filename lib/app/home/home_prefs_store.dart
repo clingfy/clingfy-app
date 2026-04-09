@@ -31,13 +31,13 @@ class HomePrefsStore {
         ? rawMode
         : DisplayTargetMode.explicitId.index;
     final rawPaneLayout = prefs.getString(homePaneLayoutKey);
-    DesktopPaneLayoutPrefs paneLayout = const DesktopPaneLayoutPrefs();
+    DesktopPaneLayoutPrefs paneLayout = kDefaultHomePaneLayoutPrefs;
     if (rawPaneLayout != null && rawPaneLayout.isNotEmpty) {
       try {
         paneLayout = _decodePaneLayout(jsonDecode(rawPaneLayout));
       } catch (error, stackTrace) {
         _paneLayoutWarningLogger(error, stackTrace);
-        paneLayout = const DesktopPaneLayoutPrefs();
+        paneLayout = kDefaultHomePaneLayoutPrefs;
       }
     }
 
