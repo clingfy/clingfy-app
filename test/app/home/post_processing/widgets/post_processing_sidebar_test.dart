@@ -9,6 +9,7 @@ import 'package:clingfy/ui/platform/widgets/app_inset_group.dart';
 import 'package:clingfy/ui/platform/widgets/app_settings_group.dart';
 import 'package:clingfy/ui/platform/widgets/app_sidebar_tokens.dart';
 import 'package:clingfy/ui/platform/widgets/app_toggle_row.dart';
+import 'package:clingfy/ui/platform/widgets/platform_dropdown.dart';
 import 'package:clingfy/ui/theme/app_theme.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_colorpicker/flutter_colorpicker.dart';
@@ -29,12 +30,15 @@ void main() {
     bool autoNormalizeOnExport = false,
     double? sidebarWidth,
     LayoutPreset layoutPreset = LayoutPreset.auto,
+    ResolutionPreset resolutionPreset = ResolutionPreset.auto,
+    bool showResolutionControl = false,
     String? backgroundImagePath,
     bool hasCameraAsset = false,
     CameraExportCapabilities cameraExportCapabilities =
         const CameraExportCapabilities.allSupported(),
     CameraCompositionState? cameraState,
     void Function(LayoutPreset)? onLayoutPresetChanged,
+    void Function(ResolutionPreset)? onResolutionPresetChanged,
     void Function(double)? onZoomFactorChanged,
     void Function(double)? onZoomFactorChangeEnd,
     void Function(CameraZoomBehavior)? onCameraZoomBehaviorChanged,
@@ -51,6 +55,7 @@ void main() {
       isProcessing: isProcessing,
       enabled: enabled,
       layoutPreset: layoutPreset,
+      resolutionPreset: resolutionPreset,
       fitMode: FitMode.fit,
       padding: 8,
       radius: 4,
@@ -66,7 +71,9 @@ void main() {
       audioVolume: 50,
       autoNormalizeOnExport: autoNormalizeOnExport,
       autoNormalizeTargetDbfs: -14,
+      showResolutionControl: showResolutionControl,
       onLayoutPresetChanged: onLayoutPresetChanged ?? (_) {},
+      onResolutionPresetChanged: onResolutionPresetChanged ?? (_) {},
       onFitModeChanged: (_) {},
       onPaddingChanged: (_) {},
       onPaddingChangeEnd: (_) {},
@@ -250,6 +257,90 @@ void main() {
       expect(find.text('Auto'), findsOneWidget);
     },
   );
+
+  testWidgets('canvas tab shows resolution dropdown in dev-only mode', (
+    tester,
+  ) async {
+    await tester.pumpWidget(
+      buildTestApp(selectedIndex: 0, showResolutionControl: true),
+    );
+    await tester.pumpAndSettle();
+
+    final dropdown = tester.widget<PlatformDropdown<ResolutionPreset>>(
+      find.byWidgetPredicate(
+        (widget) => widget is PlatformDropdown<ResolutionPreset>,
+      ),
+    );
+
+    expect(find.text('Resolution'), findsOneWidget);
+    expect(dropdown.items.map((item) => item.label).toList(), [
+      'Auto',
+      '1080p',
+      '1440p (2K)',
+      '2160p (4K)',
+      '4320p (8K)',
+    ]);
+  });
+
+  testWidgets('canvas tab hides resolution dropdown when disabled', (
+    tester,
+  ) async {
+    await tester.pumpWidget(
+      buildTestApp(selectedIndex: 0, showResolutionControl: false),
+    );
+    await tester.pumpAndSettle();
+
+    expect(find.text('Resolution'), findsNothing);
+    expect(
+      find.byWidgetPredicate(
+        (widget) => widget is PlatformDropdown<ResolutionPreset>,
+      ),
+      findsNothing,
+    );
+  });
+
+  testWidgets('resolution dropdown is not shown on non-canvas tabs', (
+    tester,
+  ) async {
+    for (final selectedIndex in [1, 2, 3]) {
+      await tester.pumpWidget(
+        buildTestApp(selectedIndex: selectedIndex, showResolutionControl: true),
+      );
+      await tester.pumpAndSettle();
+
+      expect(find.text('Resolution'), findsNothing);
+      expect(
+        find.byWidgetPredicate(
+          (widget) => widget is PlatformDropdown<ResolutionPreset>,
+        ),
+        findsNothing,
+      );
+    }
+  });
+
+  testWidgets('resolution dropdown selection triggers callback', (
+    tester,
+  ) async {
+    ResolutionPreset? selectedPreset;
+
+    await tester.pumpWidget(
+      buildTestApp(
+        selectedIndex: 0,
+        showResolutionControl: true,
+        onResolutionPresetChanged: (preset) => selectedPreset = preset,
+      ),
+    );
+    await tester.pumpAndSettle();
+
+    final dropdown = tester.widget<PlatformDropdown<ResolutionPreset>>(
+      find.byWidgetPredicate(
+        (widget) => widget is PlatformDropdown<ResolutionPreset>,
+      ),
+    );
+    dropdown.onChanged?.call(ResolutionPreset.p2160);
+
+    expect(selectedPreset, ResolutionPreset.p2160);
+  });
 
   testWidgets('canvas tab taps canvas aspect card callback', (tester) async {
     LayoutPreset? selectedPreset;
