@@ -1,3 +1,4 @@
+import 'package:clingfy/app/config/build_config.dart';
 import 'package:clingfy/core/devices/device_controller.dart';
 import 'package:clingfy/app/home/post_processing/post_processing_controller.dart';
 import 'package:clingfy/app/home/recording/recording_controller.dart';
@@ -86,6 +87,8 @@ class PostProcessingSidebarContainer extends StatelessWidget {
         return ListenableBuilder(
           listenable: settingsController.post,
           builder: (context, _) {
+            final showResolutionControl =
+                BuildConfig.showDevPreviewResolutionControl();
             return PostProcessingSidebar(
               selectedIndex: selectedIndex,
               availableWidth: availableWidth,
@@ -96,6 +99,7 @@ class PostProcessingSidebarContainer extends StatelessWidget {
               cursorAvailable: vm.cursorAvailable,
               hasAudio: hasAudio,
               layoutPreset: settingsController.post.layoutPreset,
+              resolutionPreset: settingsController.post.resolutionPreset,
               fitMode: settingsController.post.fitMode,
               padding: vm.padding,
               radius: vm.radius,
@@ -113,6 +117,7 @@ class PostProcessingSidebarContainer extends StatelessWidget {
                   settingsController.post.postAutoNormalizeEnabled,
               autoNormalizeTargetDbfs:
                   settingsController.post.postTargetLoudnessDbfs,
+              showResolutionControl: showResolutionControl,
               onPaddingChanged: post.setPadding,
               onPaddingChangeEnd: (_) => post.applyProcessing(),
               onRadiusChanged: post.setRadius,
@@ -164,6 +169,7 @@ class PostProcessingSidebarContainer extends StatelessWidget {
                   settingsController.post.updatePostTargetLoudnessDbfs,
               onPickImage: post.pickImage,
               onLayoutPresetChanged: post.setLayoutPreset,
+              onResolutionPresetChanged: post.setResolutionPreset,
               onFitModeChanged: post.setFitMode,
             );
           },

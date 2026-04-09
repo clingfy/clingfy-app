@@ -8,6 +8,8 @@ import 'package:clingfy/ui/platform/widgets/app_settings_group.dart';
 import 'package:clingfy/ui/platform/widgets/app_sidebar_tokens.dart';
 import 'package:clingfy/ui/platform/widgets/app_slider.dart';
 import 'package:clingfy/ui/platform/widgets/app_slider_row.dart';
+import 'package:clingfy/ui/platform/widgets/platform_dropdown.dart';
+import 'package:clingfy/ui/platform/widgets/resolution_preset_menu_items.dart';
 import 'package:flutter/material.dart' hide PlatformMenuItem;
 
 class PostLayoutSection extends StatelessWidget {
@@ -15,10 +17,13 @@ class PostLayoutSection extends StatelessWidget {
     super.key,
     required this.isProcessing,
     required this.layoutPreset,
+    required this.resolutionPreset,
     required this.fitMode,
     required this.padding,
     required this.radius,
+    required this.showResolutionControl,
     required this.onLayoutPresetChanged,
+    required this.onResolutionPresetChanged,
     required this.onFitModeChanged,
     required this.onPaddingChanged,
     required this.onPaddingChangeEnd,
@@ -28,10 +33,13 @@ class PostLayoutSection extends StatelessWidget {
 
   final bool isProcessing;
   final LayoutPreset layoutPreset;
+  final ResolutionPreset resolutionPreset;
   final FitMode fitMode;
   final double padding;
   final double radius;
+  final bool showResolutionControl;
   final ValueChanged<LayoutPreset> onLayoutPresetChanged;
+  final ValueChanged<ResolutionPreset> onResolutionPresetChanged;
   final ValueChanged<FitMode> onFitModeChanged;
   final ValueChanged<double> onPaddingChanged;
   final ValueChanged<double> onPaddingChangeEnd;
@@ -87,6 +95,27 @@ class PostLayoutSection extends StatelessWidget {
                 ),
               ],
             ),
+            if (showResolutionControl) ...[
+              const SizedBox(height: AppSidebarTokens.rowGap),
+              AppFormRow(
+                label: l10n.resolution,
+                control: PlatformDropdown<ResolutionPreset>(
+                  value: resolutionPreset,
+                  labelText: l10n.resolution,
+                  minWidth: 0,
+                  maxWidth: double.infinity,
+                  expand: true,
+                  items: buildResolutionPresetMenuItems(l10n),
+                  onChanged: isProcessing
+                      ? null
+                      : (value) {
+                          if (value != null) {
+                            onResolutionPresetChanged(value);
+                          }
+                        },
+                ),
+              ),
+            ],
             const SizedBox(height: AppSidebarTokens.rowGap),
             AppFormRow(
               label: l10n.fitMode,
