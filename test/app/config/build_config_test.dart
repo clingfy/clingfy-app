@@ -10,7 +10,7 @@ void main() {
           buildIdOverride: '123',
           isDebugOverride: true,
         ),
-        isTrue,
+        isFalse,
       );
     });
 
@@ -32,7 +32,7 @@ void main() {
           buildIdOverride: 'local',
           isDebugOverride: true,
         ),
-        isFalse,
+        isTrue,
       );
     });
 
