@@ -1,5 +1,7 @@
 import 'package:clingfy/l10n/app_localizations.dart';
 import 'package:clingfy/ui/platform/platform_kind.dart';
+import 'package:clingfy/ui/platform/widgets/app_inset_group.dart';
+import 'package:clingfy/ui/platform/widgets/app_settings_group.dart';
 import 'package:clingfy/ui/platform/widgets/app_sidebar_tokens.dart';
 import 'package:clingfy/ui/platform/widgets/app_slider.dart';
 import 'package:clingfy/ui/platform/widgets/app_slider_row.dart';
@@ -28,42 +30,51 @@ class PostZoomSection extends StatelessWidget {
     return Column(
       crossAxisAlignment: CrossAxisAlignment.stretch,
       children: [
-        AppToggleRow(
-          title: l10n.zoomInEffect,
-          infoTooltip: l10n.manageZoomEffects,
-          value: zoomFactor > 1.0,
-          onChanged: isProcessing
-              ? null
-              : (value) {
-                  if (value) {
-                    onZoomFactorChanged(1.5);
-                    onZoomFactorChangeEnd(1.5);
-                  } else {
-                    onZoomFactorChanged(1.0);
-                    onZoomFactorChangeEnd(1.0);
-                  }
-                },
-        ),
-        if (zoomFactor > 1.0) ...[
-          const SizedBox(
-            key: Key('post_zoom_intensity_gap'),
-            height: AppSidebarTokens.optionsSubgroupGap,
-          ),
-          AppSliderRow(
-            label: l10n.intensity,
-            valueText: '${zoomFactor.toStringAsFixed(1)}x',
-            slider: _buildSidebarSlider(
-              context,
-              value: zoomFactor,
-              min: 1.0,
-              max: 3.0,
-              divisions: 20,
-              onChanged: isProcessing ? null : onZoomFactorChanged,
-              onChangeEnd: onZoomFactorChangeEnd,
-              accentColor: accentColor,
+        AppSettingsGroup(
+          title: l10n.zoom,
+          children: [
+            AppToggleRow(
+              title: l10n.zoomInEffect,
+              infoTooltip: l10n.manageZoomEffects,
+              value: zoomFactor > 1.0,
+              onChanged: isProcessing
+                  ? null
+                  : (value) {
+                      if (value) {
+                        onZoomFactorChanged(1.5);
+                        onZoomFactorChangeEnd(1.5);
+                      } else {
+                        onZoomFactorChanged(1.0);
+                        onZoomFactorChangeEnd(1.0);
+                      }
+                    },
             ),
-          ),
-        ],
+            if (zoomFactor > 1.0) ...[
+              const SizedBox(
+                key: Key('post_zoom_intensity_gap'),
+                height: AppSidebarTokens.optionsSubgroupGap,
+              ),
+              AppInsetGroup(
+                children: [
+                  AppSliderRow(
+                    label: l10n.intensity,
+                    valueText: '${zoomFactor.toStringAsFixed(1)}x',
+                    slider: _buildSidebarSlider(
+                      context,
+                      value: zoomFactor,
+                      min: 1.0,
+                      max: 3.0,
+                      divisions: 20,
+                      onChanged: isProcessing ? null : onZoomFactorChanged,
+                      onChangeEnd: onZoomFactorChangeEnd,
+                      accentColor: accentColor,
+                    ),
+                  ),
+                ],
+              ),
+            ],
+          ],
+        ),
       ],
     );
   }

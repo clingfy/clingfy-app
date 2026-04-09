@@ -14,6 +14,8 @@ abstract final class AppSidebarTokens {
   static const double dropdownSectionTitleGap = 12;
   static const double optionsGroupGap = 16;
   static const double optionsSubgroupGap = 12;
+  static const double insetPadding = 12;
+  static const double insetRadius = 12;
   static const double contentHorizontalPadding = 12;
   static const double headerTopPadding = 12;
   static const double headerBottomPadding = 10;

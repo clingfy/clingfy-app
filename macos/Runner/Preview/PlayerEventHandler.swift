@@ -27,12 +27,14 @@ final class WorkflowEventHandler: NSObject, FlutterStreamHandler {
   func onListen(withArguments arguments: Any?, eventSink events: @escaping FlutterEventSink) -> FlutterError? {
     workflowLifecycleEventSink = events
     inlinePreviewViewInstance?.workflowEventSink = events
+    ProjectOpenCoordinator.shared.attachWorkflowEventSink(events)
     return nil
   }
 
   func onCancel(withArguments arguments: Any?) -> FlutterError? {
     workflowLifecycleEventSink = nil
     inlinePreviewViewInstance?.workflowEventSink = nil
+    ProjectOpenCoordinator.shared.detachWorkflowEventSink()
     return nil
   }
 }

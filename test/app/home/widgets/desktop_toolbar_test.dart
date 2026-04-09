@@ -17,7 +17,6 @@ void main() {
       themeMode: ThemeMode.dark,
       home: Scaffold(
         body: DesktopToolbar(
-          title: 'Clingfy',
           isRecording: false,
           isPaused: false,
           notice: notice,
@@ -48,7 +47,6 @@ void main() {
         themeMode: ThemeMode.dark,
         home: const Scaffold(
           body: DesktopToolbar(
-            title: 'Clingfy',
             isRecording: true,
             isPaused: true,
             elapsedText: '00:00:05',
@@ -158,5 +156,74 @@ void main() {
       BorderRadius.circular(theme.appEditorChrome.panelRadius),
     );
     expect(decoration.border, isNull);
+  });
+
+  testWidgets('inspector toggle renders and fires its callback', (
+    tester,
+  ) async {
+    var toggled = 0;
+
+    await tester.pumpWidget(
+      MaterialApp(
+        localizationsDelegates: AppLocalizations.localizationsDelegates,
+        supportedLocales: AppLocalizations.supportedLocales,
+        theme: buildDarkTheme(),
+        darkTheme: buildDarkTheme(),
+        themeMode: ThemeMode.dark,
+        home: Scaffold(
+          body: DesktopToolbar(
+            isRecording: false,
+            isPaused: false,
+            isInspectorVisible: false,
+            onToggleInspector: () => toggled += 1,
+          ),
+        ),
+      ),
+    );
+
+    expect(
+      find.byKey(const Key('home_toolbar_options_toggle_button')),
+      findsOneWidget,
+    );
+
+    await tester.tap(
+      find.byKey(const Key('home_toolbar_options_toggle_button')),
+    );
+    await tester.pump();
+
+    expect(toggled, 1);
+  });
+
+  testWidgets('inspector toggle occupies the leading slot ahead of countdown', (
+    tester,
+  ) async {
+    await tester.pumpWidget(
+      MaterialApp(
+        localizationsDelegates: AppLocalizations.localizationsDelegates,
+        supportedLocales: AppLocalizations.supportedLocales,
+        theme: buildDarkTheme(),
+        darkTheme: buildDarkTheme(),
+        themeMode: ThemeMode.dark,
+        home: Scaffold(
+          body: DesktopToolbar(
+            isRecording: false,
+            isPaused: false,
+            countdownText: '00:00:10',
+            isInspectorVisible: true,
+            onToggleInspector: () {},
+          ),
+        ),
+      ),
+    );
+
+    final l10n = AppLocalizations.of(
+      tester.element(find.byType(DesktopToolbar)),
+    )!;
+    final toggleRect = tester.getRect(
+      find.byKey(const Key('home_toolbar_options_toggle_button')),
+    );
+    final countdownRect = tester.getRect(find.text(l10n.stopIn('00:00:10')));
+
+    expect(toggleRect.left, lessThan(countdownRect.left));
   });
 }

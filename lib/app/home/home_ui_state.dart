@@ -1,5 +1,6 @@
 import 'dart:async';
 
+import 'package:clingfy/app/home/models/home_ui_prefs.dart';
 import 'package:clingfy/core/models/app_models.dart';
 import 'package:clingfy/ui/platform/widgets/desktop_pane_layout.dart';
 import 'package:flutter/foundation.dart';
@@ -50,7 +51,7 @@ class HomeUiState extends ChangeNotifier {
   bool _uiPrefsHydrated = false;
   int _recordingSidebarIndex = 0;
   int _postProcessingSidebarIndex = 0;
-  DesktopPaneLayoutPrefs _paneLayout = const DesktopPaneLayoutPrefs();
+  DesktopPaneLayoutPrefs _paneLayout = kDefaultHomePaneLayoutPrefs;
 
   HomeUiNotice? get notice => _notice;
   String? get errorMessage => _notice?.rawErrorCode;

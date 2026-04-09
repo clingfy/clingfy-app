@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'dart:math' as math;
 
 import 'package:clingfy/ui/platform/widgets/pane_divider_handle.dart';
@@ -24,6 +25,7 @@ class DesktopPaneSpec {
     this.collapsedWidth = 0,
     this.resizable = false,
     this.collapsible = false,
+    this.snapCollapseAtMinWidthOnDragEnd = false,
     this.autoCollapsePriority = 0,
     this.autoCollapseAllowed = true,
     this.flex = false,
@@ -32,6 +34,7 @@ class DesktopPaneSpec {
        assert(maxWidth == null || maxWidth >= minWidth),
        assert(maxWidth == null || maxWidth >= defaultWidth),
        assert(!collapsible || collapsedWidth <= minWidth),
+       assert(!snapCollapseAtMinWidthOnDragEnd || (resizable && collapsible)),
        assert(!(resizable && flex));
 
   final DesktopPaneId id;
@@ -41,6 +44,7 @@ class DesktopPaneSpec {
   final double collapsedWidth;
   final bool resizable;
   final bool collapsible;
+  final bool snapCollapseAtMinWidthOnDragEnd;
   final int autoCollapsePriority;
   final bool autoCollapseAllowed;
   final bool flex;
@@ -276,17 +280,22 @@ class DesktopPaneController extends ChangeNotifier {
     notifyListeners();
   }
 
-  void setPaneCollapsed(DesktopPaneSpec spec, bool collapsed) {
+  void setPaneCollapsed(
+    DesktopPaneSpec spec,
+    bool collapsed, {
+    double? preservedExpandedWidth,
+  }) {
     final current = stateFor(spec.id);
     final expandedWidth = spec.clampWidth(
-      current.width ?? current.lastExpandedWidth ?? spec.defaultWidth,
+      preservedExpandedWidth ??
+          current.width ??
+          current.lastExpandedWidth ??
+          spec.defaultWidth,
     );
     final next = current.copyWith(
       isCollapsed: collapsed,
-      width: collapsed ? current.width : expandedWidth,
-      lastExpandedWidth: collapsed
-          ? expandedWidth
-          : (current.lastExpandedWidth ?? expandedWidth),
+      width: expandedWidth,
+      lastExpandedWidth: expandedWidth,
     );
     if (next == current) {
       return;
@@ -327,13 +336,31 @@ class DesktopSplitLayout extends StatefulWidget {
 }
 
 class _DesktopSplitLayoutState extends State<DesktopSplitLayout> {
+  static const Duration _visibilityAnimationDuration = Duration(
+    milliseconds: 180,
+  );
+  static const double _snapCollapseEpsilon = 0.5;
+
   DesktopPaneId? _activeResizePaneId;
   double? _resizeStartDx;
   double? _resizeStartWidth;
-  Map<DesktopPaneId, bool> _lastCollapsedStates = const <DesktopPaneId, bool>{};
+  Map<DesktopPaneId, bool> _lastPositiveWidthStates =
+      const <DesktopPaneId, bool>{};
+  Map<DesktopPaneId, double> _lastResolvedPaneWidths =
+      const <DesktopPaneId, double>{};
+  Map<DesktopPaneId, double> _lastPositivePaneWidths =
+      const <DesktopPaneId, double>{};
   double? _lastAvailableWidth;
+  bool _suppressDividerOverlays = false;
+  Timer? _dividerOverlayResumeTimer;
 
   bool get _isDragging => _activeResizePaneId != null;
+
+  @override
+  void dispose() {
+    _dividerOverlayResumeTimer?.cancel();
+    super.dispose();
+  }
 
   @override
   Widget build(BuildContext context) {
@@ -353,21 +380,56 @@ class _DesktopSplitLayoutState extends State<DesktopSplitLayout> {
             final previousAvailableWidth = _lastAvailableWidth;
             _lastAvailableWidth = availableWidth;
             final resolved = _resolveLayout(availableWidth);
-            final previousCollapsedStates = _lastCollapsedStates;
-            final currentCollapsedStates = <DesktopPaneId, bool>{
+            final previousResolvedPaneWidths = _lastResolvedPaneWidths;
+            final previousPositiveWidthStates = _lastPositiveWidthStates;
+            final previousPositivePaneWidths = _lastPositivePaneWidths;
+            final currentResolvedPaneWidths = <DesktopPaneId, double>{
               for (final pane in resolved.panes)
-                pane.presentation.id: pane.presentation.effectiveCollapsed,
+                pane.presentation.id: pane.presentation.effectiveWidth,
             };
-            _lastCollapsedStates = currentCollapsedStates;
+            _lastResolvedPaneWidths = currentResolvedPaneWidths;
+            final currentPositiveWidthStates = <DesktopPaneId, bool>{
+              for (final pane in resolved.panes)
+                pane.presentation.id: pane.presentation.effectiveWidth > 0,
+            };
+            _lastPositiveWidthStates = currentPositiveWidthStates;
+            _lastPositivePaneWidths = <DesktopPaneId, double>{
+              for (final pane in resolved.panes)
+                if (pane.presentation.effectiveWidth > 0)
+                  pane.presentation.id: pane.presentation.effectiveWidth
+                else if (previousPositivePaneWidths[pane.presentation.id] !=
+                    null)
+                  pane.presentation.id:
+                      previousPositivePaneWidths[pane.presentation.id]!,
+            };
             final widthChanged =
                 previousAvailableWidth != null &&
                 (previousAvailableWidth - availableWidth).abs() > 0.1;
-            final collapseStateChanged =
-                previousCollapsedStates.length !=
-                    currentCollapsedStates.length ||
-                currentCollapsedStates.entries.any(
-                  (entry) => previousCollapsedStates[entry.key] != entry.value,
-                );
+            final animatedPaneIds = <DesktopPaneId>{
+              if (!widthChanged && previousResolvedPaneWidths.isNotEmpty)
+                for (final entry in currentResolvedPaneWidths.entries)
+                  if (previousResolvedPaneWidths[entry.key] != null &&
+                      (previousResolvedPaneWidths[entry.key]! - entry.value)
+                              .abs() >
+                          0.1)
+                    entry.key,
+            };
+            final animateUserWidthChanges = animatedPaneIds.isNotEmpty;
+            final visibilityStateChanged =
+                previousPositiveWidthStates.isNotEmpty &&
+                (previousPositiveWidthStates.length !=
+                        currentPositiveWidthStates.length ||
+                    currentPositiveWidthStates.entries.any(
+                      (entry) =>
+                          previousPositiveWidthStates[entry.key] != entry.value,
+                    ));
+            final suppressDividerOverlays =
+                _suppressDividerOverlays ||
+                (visibilityStateChanged && !widthChanged);
+            if (visibilityStateChanged && !widthChanged) {
+              _suppressDividerOverlays = true;
+              _scheduleDividerOverlayResume();
+            }
             final row = SizedBox(
               width: resolved.layoutWidth,
               child: Stack(
@@ -383,15 +445,33 @@ class _DesktopSplitLayoutState extends State<DesktopSplitLayout> {
                       ) ...[
                         _buildPane(
                           resolved.panes[index],
-                          disableAnimation:
-                              collapseStateChanged || widthChanged,
+                          animateWidth:
+                              animateUserWidthChanges &&
+                              animatedPaneIds.contains(
+                                resolved.panes[index].presentation.id,
+                              ),
+                          preserveChildLayout:
+                              animatedPaneIds.contains(
+                                resolved.panes[index].presentation.id,
+                              ) ||
+                              resolved
+                                      .panes[index]
+                                      .presentation
+                                      .effectiveWidth <=
+                                  0,
+                          disableAnimation: widthChanged,
                         ),
                         if (index < resolved.panes.length - 1)
-                          SizedBox(width: widget.gap),
+                          _buildGap(
+                            _gapWidthAfter(resolved.panes, index),
+                            animateWidth: animateUserWidthChanges,
+                            disableAnimation: widthChanged,
+                          ),
                       ],
                     ],
                   ),
-                  ..._buildDividerOverlays(resolved),
+                  if (!suppressDividerOverlays)
+                    ..._buildDividerOverlays(resolved.panes),
                 ],
               ),
             );
@@ -417,40 +497,133 @@ class _DesktopSplitLayoutState extends State<DesktopSplitLayout> {
   }
 
   double _fallbackWidth() {
+    final widths = <DesktopPaneId, double>{};
     var totalWidth = 0.0;
     for (final pane in widget.panes) {
       final state = widget.controller.stateFor(pane.spec.id);
       final isForcedCollapsed =
           pane.spec.collapsible &&
           widget.forcedCollapsedPaneIds.contains(pane.spec.id);
-      totalWidth += (state.isCollapsed || isForcedCollapsed)
+      final paneWidth = (state.isCollapsed || isForcedCollapsed)
           ? pane.spec.collapsedWidth
           : pane.spec.defaultWidth;
+      widths[pane.spec.id] = paneWidth;
+      totalWidth += paneWidth;
     }
-    totalWidth += math.max(0, widget.panes.length - 1) * widget.gap;
+    totalWidth +=
+        math.max(
+          0,
+          _visiblePaneCount(panes: widget.panes, widths: widths) - 1,
+        ) *
+        widget.gap;
     return totalWidth;
   }
 
-  Widget _buildPane(_ResolvedPane pane, {required bool disableAnimation}) {
+  Widget _buildPane(
+    _ResolvedPane pane, {
+    required bool animateWidth,
+    required bool preserveChildLayout,
+    required bool disableAnimation,
+  }) {
+    final targetWidth = pane.presentation.effectiveWidth;
+    final isHidden = targetWidth <= 0;
+    final preservedLayoutWidth =
+        _lastPositivePaneWidths[pane.presentation.id] ??
+        pane.slot.spec.minWidth;
+    final child = preserveChildLayout
+        ? Align(
+            alignment: Alignment.centerLeft,
+            child: OverflowBox(
+              alignment: Alignment.centerLeft,
+              minWidth: math.max(targetWidth, preservedLayoutWidth),
+              maxWidth: math.max(targetWidth, preservedLayoutWidth),
+              child: SizedBox(
+                width: math.max(targetWidth, preservedLayoutWidth),
+                child: pane.slot.builder(context, pane.presentation),
+              ),
+            ),
+          )
+        : pane.slot.builder(context, pane.presentation);
+
     return AnimatedContainer(
-      duration: _isDragging || disableAnimation
-          ? Duration.zero
-          : const Duration(milliseconds: 160),
+      key: ValueKey('desktop_pane_slot_${pane.presentation.id.name}'),
+      duration: _animationDuration(
+        animateWidth: animateWidth,
+        disableAnimation: disableAnimation,
+      ),
       curve: Curves.easeOutCubic,
-      width: pane.presentation.effectiveWidth,
-      child: pane.slot.builder(context, pane.presentation),
+      width: targetWidth,
+      child: ClipRect(
+        child: IgnorePointer(
+          ignoring: isHidden,
+          child: ExcludeSemantics(excluding: isHidden, child: child),
+        ),
+      ),
     );
   }
 
-  List<Widget> _buildDividerOverlays(_ResolvedDesktopPaneLayout resolved) {
+  Widget _buildGap(
+    double width, {
+    required bool animateWidth,
+    required bool disableAnimation,
+  }) {
+    return AnimatedContainer(
+      duration: _animationDuration(
+        animateWidth: animateWidth,
+        disableAnimation: disableAnimation,
+      ),
+      curve: Curves.easeOutCubic,
+      width: width,
+    );
+  }
+
+  Duration _animationDuration({
+    required bool animateWidth,
+    required bool disableAnimation,
+  }) {
+    return _isDragging || disableAnimation || !animateWidth
+        ? Duration.zero
+        : _visibilityAnimationDuration;
+  }
+
+  double _gapWidthAfter(List<_ResolvedPane> panes, int index) {
+    final current = panes[index];
+    if (current.presentation.effectiveWidth <= 0) {
+      return 0;
+    }
+
+    final hasLaterVisiblePane = panes
+        .skip(index + 1)
+        .any((pane) => pane.presentation.effectiveWidth > 0);
+
+    return hasLaterVisiblePane ? widget.gap : 0;
+  }
+
+  void _scheduleDividerOverlayResume() {
+    _dividerOverlayResumeTimer?.cancel();
+    _dividerOverlayResumeTimer = Timer(_visibilityAnimationDuration, () {
+      if (!mounted) {
+        return;
+      }
+      setState(() {
+        _suppressDividerOverlays = false;
+      });
+    });
+  }
+
+  List<Widget> _buildDividerOverlays(List<_ResolvedPane> panes) {
+    final visiblePanes = panes
+        .where((pane) => pane.presentation.effectiveWidth > 0)
+        .toList(growable: false);
     final overlays = <Widget>[];
     var offset = 0.0;
-    for (var index = 0; index < resolved.panes.length - 1; index++) {
-      final left = resolved.panes[index];
+    for (var index = 0; index < visiblePanes.length - 1; index++) {
+      final left = visiblePanes[index];
       offset += left.presentation.effectiveWidth;
+      final gapWidth = _gapWidthAfter(visiblePanes, index);
       final handleLeft =
-          offset + (widget.gap / 2) - (PaneDividerHandle.hitWidth / 2);
-      offset += widget.gap;
+          offset + (gapWidth / 2) - (PaneDividerHandle.hitWidth / 2);
+      offset += gapWidth;
 
       if (!left.slot.spec.resizable || left.presentation.effectiveCollapsed) {
         continue;
@@ -484,21 +657,45 @@ class _DesktopSplitLayoutState extends State<DesktopSplitLayout> {
               );
             },
             onHorizontalDragEnd: (_) {
-              if (_activeResizePaneId == left.slot.spec.id) {
-                widget.onLayoutCommitted?.call(widget.controller.layout);
-              }
-              _activeResizePaneId = null;
-              _resizeStartDx = null;
-              _resizeStartWidth = null;
-              if (mounted) {
-                setState(() {});
-              }
+              _commitResizeGesture(left.slot.spec);
             },
+            onHorizontalDragCancel: () => _commitResizeGesture(left.slot.spec),
           ),
         ),
       );
     }
     return overlays;
+  }
+
+  void _commitResizeGesture(DesktopPaneSpec spec) {
+    final finishedPaneId = _activeResizePaneId;
+    final preservedExpandedWidth = _resizeStartWidth;
+    _activeResizePaneId = null;
+    _resizeStartDx = null;
+    _resizeStartWidth = null;
+    if (mounted) {
+      setState(() {});
+    }
+
+    if (finishedPaneId != spec.id) {
+      return;
+    }
+
+    final currentState = widget.controller.stateFor(spec.id);
+    final currentWidth = currentState.width;
+    final shouldSnapCollapse =
+        spec.snapCollapseAtMinWidthOnDragEnd &&
+        currentWidth != null &&
+        currentWidth <= spec.minWidth + _snapCollapseEpsilon;
+
+    if (shouldSnapCollapse) {
+      widget.controller.setPaneCollapsed(
+        spec,
+        true,
+        preservedExpandedWidth: preservedExpandedWidth,
+      );
+    }
+    widget.onLayoutCommitted?.call(widget.controller.layout);
   }
 
   _ResolvedDesktopPaneLayout _resolveLayout(double availableWidth) {
@@ -718,7 +915,9 @@ class _DesktopSplitLayoutState extends State<DesktopSplitLayout> {
       }
       total += widths[pane.spec.id]!;
     }
-    total += math.max(0, panes.length - 1) * widget.gap;
+    total +=
+        math.max(0, _visiblePaneCount(panes: panes, widths: widths) - 1) *
+        widget.gap;
     return total;
   }
 
@@ -728,6 +927,13 @@ class _DesktopSplitLayoutState extends State<DesktopSplitLayout> {
     required double flexWidth,
   }) {
     return _requiredFixedWidth(panes: panes, widths: widths) + flexWidth;
+  }
+
+  int _visiblePaneCount({
+    required List<DesktopPaneSlot> panes,
+    required Map<DesktopPaneId, double> widths,
+  }) {
+    return panes.where((pane) => (widths[pane.spec.id] ?? 0) > 0).length;
   }
 
   void _debugValidatePaneSpecs(List<DesktopPaneSlot> panes) {
@@ -746,6 +952,13 @@ class _DesktopSplitLayoutState extends State<DesktopSplitLayout> {
       flexCount <= 1,
       'DesktopSplitLayout supports at most one flex pane.',
     );
+    for (final pane in panes) {
+      assert(
+        !pane.spec.snapCollapseAtMinWidthOnDragEnd ||
+            (pane.spec.resizable && pane.spec.collapsible),
+        'snapCollapseAtMinWidthOnDragEnd requires a resizable, collapsible pane.',
+      );
+    }
   }
 }
 

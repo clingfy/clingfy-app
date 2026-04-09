@@ -16,6 +16,8 @@ class HomeLeftSidebar extends StatelessWidget {
     super.key,
     required this.uiState,
     required this.panePresentation,
+    required this.onRecordingSectionSelected,
+    required this.onPostProcessingSectionSelected,
     required this.onOpenSettings,
     required this.onOpenHelp,
     required this.onResetPreferences,
@@ -24,13 +26,14 @@ class HomeLeftSidebar extends StatelessWidget {
 
   final HomeUiState uiState;
   final DesktopPanePresentation panePresentation;
+  final ValueChanged<int> onRecordingSectionSelected;
+  final ValueChanged<int> onPostProcessingSectionSelected;
   final VoidCallback onOpenSettings;
   final VoidCallback onOpenHelp;
   final VoidCallback onResetPreferences;
   final VoidCallback onToggleRailMode;
 
   static const _sidebarLogoAsset = 'assets/icons/app-logo-512.png';
-
   @override
   Widget build(BuildContext context) {
     final tokens = context.appTokens;
@@ -40,7 +43,12 @@ class HomeLeftSidebar extends StatelessWidget {
     final showPreviewShell = context.select<RecordingController, bool>(
       (r) => r.showPreviewShell,
     );
-    final navigationItems = _buildNavigationItems(l10n, showPreviewShell);
+    final navigationItems = _buildNavigationItems(
+      l10n,
+      showPreviewShell,
+      onRecordingSectionSelected,
+      onPostProcessingSectionSelected,
+    );
     final utilityItems = _buildUtilityItems(l10n);
 
     return Container(
@@ -58,6 +66,8 @@ class HomeLeftSidebar extends StatelessWidget {
               onOpenSettings: onOpenSettings,
               onOpenHelp: onOpenHelp,
               onResetPreferences: onResetPreferences,
+              onRecordingSectionSelected: onRecordingSectionSelected,
+              onPostProcessingSectionSelected: onPostProcessingSectionSelected,
               uiState: uiState,
             )
           : _ExpandedSidebarContent(
@@ -75,29 +85,38 @@ class HomeLeftSidebar extends StatelessWidget {
   List<_SidebarActionItem> _buildNavigationItems(
     AppLocalizations l10n,
     bool showPreviewShell,
+    ValueChanged<int> onRecordingSectionSelected,
+    ValueChanged<int> onPostProcessingSectionSelected,
   ) {
     if (showPreviewShell) {
       return [
         _SidebarActionItem(
           buttonKey: const ValueKey('post_sidebar_rail_tile_0'),
           icon: Icons.dashboard_customize,
-          label: l10n.layout,
+          label: l10n.canvas,
           selected: uiState.postProcessingSidebarIndex == 0,
-          onTap: () => uiState.setPostProcessingSidebarIndex(0),
+          onTap: () => onPostProcessingSectionSelected(0),
         ),
         _SidebarActionItem(
           buttonKey: const ValueKey('post_sidebar_rail_tile_1'),
-          icon: Icons.auto_fix_high,
-          label: l10n.effects,
+          icon: Icons.face,
+          label: l10n.camera,
           selected: uiState.postProcessingSidebarIndex == 1,
-          onTap: () => uiState.setPostProcessingSidebarIndex(1),
+          onTap: () => onPostProcessingSectionSelected(1),
         ),
         _SidebarActionItem(
           buttonKey: const ValueKey('post_sidebar_rail_tile_2'),
+          icon: Icons.auto_fix_high,
+          label: l10n.effects,
+          selected: uiState.postProcessingSidebarIndex == 2,
+          onTap: () => onPostProcessingSectionSelected(2),
+        ),
+        _SidebarActionItem(
+          buttonKey: const ValueKey('post_sidebar_rail_tile_3'),
           icon: Icons.ios_share,
           label: l10n.export,
-          selected: uiState.postProcessingSidebarIndex == 2,
-          onTap: () => uiState.setPostProcessingSidebarIndex(2),
+          selected: uiState.postProcessingSidebarIndex == 3,
+          onTap: () => onPostProcessingSectionSelected(3),
         ),
       ];
     }
@@ -108,21 +127,21 @@ class HomeLeftSidebar extends StatelessWidget {
         icon: Icons.monitor,
         label: l10n.tabScreenAudio,
         selected: uiState.recordingSidebarIndex == 0,
-        onTap: () => uiState.setRecordingSidebarIndex(0),
+        onTap: () => onRecordingSectionSelected(0),
       ),
       _SidebarActionItem(
         buttonKey: const ValueKey('recording_sidebar_rail_tile_1'),
         icon: Icons.face,
         label: l10n.tabFaceCam,
         selected: uiState.recordingSidebarIndex == 1,
-        onTap: () => uiState.setRecordingSidebarIndex(1),
+        onTap: () => onRecordingSectionSelected(1),
       ),
       _SidebarActionItem(
         buttonKey: const ValueKey('recording_sidebar_rail_tile_2'),
         icon: Icons.tune,
         label: l10n.output,
         selected: uiState.recordingSidebarIndex == 2,
-        onTap: () => uiState.setRecordingSidebarIndex(2),
+        onTap: () => onRecordingSectionSelected(2),
       ),
     ];
   }
@@ -162,6 +181,8 @@ class _CompactSidebarContent extends StatelessWidget {
     required this.onOpenSettings,
     required this.onOpenHelp,
     required this.onResetPreferences,
+    required this.onRecordingSectionSelected,
+    required this.onPostProcessingSectionSelected,
     required this.uiState,
   });
 
@@ -171,6 +192,8 @@ class _CompactSidebarContent extends StatelessWidget {
   final VoidCallback onOpenSettings;
   final VoidCallback onOpenHelp;
   final VoidCallback onResetPreferences;
+  final ValueChanged<int> onRecordingSectionSelected;
+  final ValueChanged<int> onPostProcessingSectionSelected;
   final HomeUiState uiState;
 
   @override
@@ -200,12 +223,11 @@ class _CompactSidebarContent extends StatelessWidget {
             child: showPreviewShell
                 ? PostProcessingSidebarRail(
                     selectedIndex: uiState.postProcessingSidebarIndex,
-                    onSelectedIndexChanged:
-                        uiState.setPostProcessingSidebarIndex,
+                    onSelectedIndexChanged: onPostProcessingSectionSelected,
                   )
                 : RecordingSidebarRail(
                     selectedIndex: uiState.recordingSidebarIndex,
-                    onSelectedIndexChanged: uiState.setRecordingSidebarIndex,
+                    onSelectedIndexChanged: onRecordingSectionSelected,
                   ),
           ),
           const Spacer(),

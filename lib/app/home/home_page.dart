@@ -23,9 +23,8 @@ import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 
 class HomePage extends StatefulWidget {
-  const HomePage({super.key, required this.title, required this.appScope});
+  const HomePage({super.key, required this.appScope});
 
-  final String title;
   final AppScope appScope;
 
   @override
@@ -88,8 +87,12 @@ class _HomePageState extends State<HomePage> {
     _bindings = HomeBindings(
       scope: homeScope,
       onToggleRecording: () => actions.toggleRecording(context),
+      onOpenExternalProject: (projectPath) =>
+          actions.handleExternalProjectOpen(context, projectPath),
       onRecordingFinalized: (path) =>
           actions.handleRecordingFinalized(context, path),
+      onExternalProjectOpenFailed: (projectPath) =>
+          actions.handleExternalProjectOpenFailed(context, projectPath),
       onExportProgress: actions.handleExportProgress,
       onHandleNativeBarAction: (type, payload) =>
           actions.handleNativeBarAction(context, type, payload),
@@ -192,7 +195,6 @@ class _HomePageState extends State<HomePage> {
           return ChangeNotifierProvider<HomeUiState>.value(
             value: _uiState,
             child: HomeShell(
-              title: widget.title,
               actions: actions,
               uiState: _uiState,
               settingsController: widget.appScope.settings,

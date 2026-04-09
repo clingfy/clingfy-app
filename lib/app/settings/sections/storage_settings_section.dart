@@ -44,6 +44,7 @@ class _StorageSettingsSectionState extends State<StorageSettingsSection> {
   String? _actionError;
   String? _actionSuccess;
   Timer? _autoRefreshTimer;
+  Timer? _successDismissTimer;
   bool _isRunningAction = false;
 
   bool get _showDeveloperTools =>
@@ -71,6 +72,7 @@ class _StorageSettingsSectionState extends State<StorageSettingsSection> {
   @override
   void dispose() {
     _autoRefreshTimer?.cancel();
+    _successDismissTimer?.cancel();
     super.dispose();
   }
 
@@ -151,6 +153,13 @@ class _StorageSettingsSectionState extends State<StorageSettingsSection> {
 
     setState(() {
       _actionSuccess = l10n.storageClearCachedRecordingsSuccess(deletedCount);
+    });
+    _successDismissTimer?.cancel();
+    _successDismissTimer = Timer(const Duration(seconds: 5), () {
+      if (!mounted) return;
+      setState(() {
+        _actionSuccess = null;
+      });
     });
   }
 

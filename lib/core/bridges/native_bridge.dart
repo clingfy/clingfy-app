@@ -21,12 +21,14 @@ class NativeBridge {
   VoidCallback? _onIndicatorResumeTapped;
   ValueChanged<double>? _onExportProgress;
   VoidCallback? _onMenuBarToggleRequest;
+  void Function(String projectPath)? _onProjectOpenRequested;
   Function(String type, Map<String, dynamic>? payload)?
   _onPreRecordingBarAction;
   Function(String type, dynamic id)? _onNativeSelectionChanged;
   void Function(double normalizedX, double normalizedY)? _onCameraOverlayMoved;
   VoidCallback? _onAreaSelectionCleared;
   void Function(String version, String build)? _onUpdateAvailable;
+  final List<String> _pendingProjectOpenRequests = [];
 
   static final NativeBridge _instance = NativeBridge._internal();
 
@@ -63,6 +65,41 @@ class NativeBridge {
         Log.e("NativeBridge", "Error on updater event stream: $error");
       },
     );
+
+    _workflowEventStream.listen(
+      (event) {
+        final type = event['type'] as String?;
+        if (type != 'openProjectRequest') {
+          return;
+        }
+
+        final projectPath = event['projectPath'] as String?;
+        if (projectPath == null || projectPath.isEmpty) {
+          return;
+        }
+
+        Log.i(
+          "NativeBridge",
+          "Received Finder project open request",
+          null,
+          null,
+          {'projectPath': projectPath},
+        );
+
+        final cb = _onProjectOpenRequested;
+        if (cb != null) {
+          cb(projectPath);
+          return;
+        }
+
+        if (!_pendingProjectOpenRequests.contains(projectPath)) {
+          _pendingProjectOpenRequests.add(projectPath);
+        }
+      },
+      onError: (error) {
+        Log.e("NativeBridge", "Error on workflow event stream: $error");
+      },
+    );
   }
 
   Stream<Map<String, dynamic>> get workflowEvents => _workflowEventStream;
@@ -82,6 +119,19 @@ class NativeBridge {
 
   void setOnMenuBarToggleRequest(VoidCallback? cb) {
     _onMenuBarToggleRequest = cb;
+  }
+
+  void setOnProjectOpenRequested(void Function(String projectPath)? cb) {
+    _onProjectOpenRequested = cb;
+    if (cb == null) {
+      return;
+    }
+
+    final pending = List<String>.from(_pendingProjectOpenRequests);
+    _pendingProjectOpenRequests.clear();
+    for (final projectPath in pending) {
+      cb(projectPath);
+    }
   }
 
   void setOnPreRecordingBarAction(
@@ -307,11 +357,27 @@ class NativeBridge {
     });
   }
 
+  Future<void> previewSetCameraPlacement({
+    required String projectPath,
+    required CameraPreviewChangeKind changeKind,
+    required String? sessionId,
+    required String? cameraPath,
+    required CameraCompositionState? cameraState,
+  }) async {
+    await _nativeBridge.invokeMethod<void>('previewSetCameraPlacement', {
+      'projectPath': projectPath,
+      if (sessionId != null) 'sessionId': sessionId,
+      if (cameraPath != null) 'cameraPath': cameraPath,
+      'cameraPreviewChangeKind': changeKind.name,
+      ...?cameraState?.toMap(),
+    });
+  }
+
   Future<List<ZoomSegment>> getZoomSegments(String videoPath) async {
     try {
       final List? results = await _nativeBridge.invokeMethod<List>(
         'getZoomSegments',
-        {'videoPath': videoPath},
+        {'projectPath': videoPath},
       );
       if (results == null) return [];
       return results.map((m) => ZoomSegment.fromMap(m as Map)).toList();
@@ -325,7 +391,7 @@ class NativeBridge {
     try {
       final List? results = await _nativeBridge.invokeMethod<List>(
         'getManualZoomSegments',
-        {'videoPath': videoPath},
+        {'projectPath': videoPath},
       );
       if (results == null) return [];
       return results
@@ -342,13 +408,11 @@ class NativeBridge {
     List<ZoomSegment> segments,
   ) async {
     try {
-      final bool? success = await _nativeBridge.invokeMethod<bool>(
-        'saveManualZoomSegments',
-        {
-          'videoPath': videoPath,
-          'segments': segments.map((s) => s.toMap()).toList(),
-        },
-      );
+      final bool? success = await _nativeBridge
+          .invokeMethod<bool>('saveManualZoomSegments', {
+            'projectPath': videoPath,
+            'segments': segments.map((s) => s.toMap()).toList(),
+          });
       return success ?? false;
     } catch (e) {
       Log.e("NativeBridge", "saveManualZoomSegments failed: $e");
@@ -409,12 +473,28 @@ class NativeBridge {
 
   Future<void> previewOpen({
     required String sessionId,
-    required String path,
+    required String projectPath,
+    String? cameraPath,
   }) async {
     await _nativeBridge.invokeMethod<void>('previewOpen', {
       'sessionId': sessionId,
-      'path': path,
+      'projectPath': projectPath,
+      if (cameraPath != null) 'cameraPath': cameraPath,
     });
+  }
+
+  Future<RecordingSceneInfo> getRecordingSceneInfo(String projectPath) async {
+    final raw = await _nativeBridge.invokeMethod<Map<dynamic, dynamic>>(
+      'getRecordingSceneInfo',
+      {'projectPath': projectPath},
+    );
+    if (raw == null) {
+      return RecordingSceneInfo(
+        projectPath: projectPath,
+        screenPath: projectPath,
+      );
+    }
+    return RecordingSceneInfo.fromMap(raw);
   }
 
   Future<void> previewClose({required String sessionId}) async {

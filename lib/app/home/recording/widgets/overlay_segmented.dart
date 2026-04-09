@@ -28,7 +28,7 @@ class OverlaySegmented extends StatelessWidget {
 
     Widget segLabel(String text) {
       return Padding(
-        padding: const EdgeInsets.symmetric(horizontal: 12, vertical:10),
+        padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
         child: Text(
           text,
           maxLines: 1,

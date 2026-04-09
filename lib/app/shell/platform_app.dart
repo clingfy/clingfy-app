@@ -74,7 +74,6 @@ class PlatformApp extends StatelessWidget {
               return PermissionsGate(
                 nativeBridge: nativeBridge,
                 child: HomePage(
-                  title: AppLocalizations.of(context)!.appTitleFull,
                   appScope: AppScope(
                     nativeBridge: nativeBridge,
                     settings: settingsController,

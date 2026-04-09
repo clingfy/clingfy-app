@@ -1,4 +1,5 @@
 import 'package:clingfy/app/home/home_prefs_store.dart';
+import 'package:clingfy/app/home/models/home_ui_prefs.dart';
 import 'package:clingfy/core/models/app_models.dart';
 import 'package:clingfy/ui/platform/widgets/desktop_pane_layout.dart';
 import 'package:flutter_test/flutter_test.dart';
@@ -19,6 +20,7 @@ void main() {
 
     expect(prefs.indicatorPinned, isTrue);
     expect(prefs.targetMode, DisplayTargetMode.singleAppWindow);
+    expect(prefs.paneLayout, kDefaultHomePaneLayoutPrefs);
   });
 
   test('load reads persisted pane layout JSON', () async {
@@ -51,7 +53,7 @@ void main() {
     final prefsStore = HomePrefsStore();
     final prefs = await prefsStore.load();
 
-    expect(prefs.paneLayout, const DesktopPaneLayoutPrefs());
+    expect(prefs.paneLayout, kDefaultHomePaneLayoutPrefs);
   });
 
   test(
@@ -68,7 +70,7 @@ void main() {
       );
       final prefs = await prefsStore.load();
 
-      expect(prefs.paneLayout, const DesktopPaneLayoutPrefs());
+      expect(prefs.paneLayout, kDefaultHomePaneLayoutPrefs);
       expect(warningCount, 1);
     },
   );

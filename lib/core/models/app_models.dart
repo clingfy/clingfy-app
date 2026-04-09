@@ -8,6 +8,399 @@ enum ResolutionPreset { auto, p1080, p1440, p2160, p4320, custom }
 
 enum FitMode { fit, fill }
 
+enum CameraLayoutPreset {
+  overlayTopLeft,
+  overlayTopRight,
+  overlayBottomLeft,
+  overlayBottomRight,
+  sideBySideLeft,
+  sideBySideRight,
+  stackedTop,
+  stackedBottom,
+  backgroundBehind,
+  hidden;
+
+  static CameraLayoutPreset fromRaw(String? raw) {
+    return CameraLayoutPreset.values.firstWhere(
+      (value) => value.name == raw,
+      orElse: () => CameraLayoutPreset.overlayBottomRight,
+    );
+  }
+}
+
+enum CameraZoomBehavior {
+  fixed,
+  scaleWithScreenZoom;
+
+  static CameraZoomBehavior fromRaw(String? raw) {
+    switch (raw) {
+      case 'scaleWithScreenZoom':
+        return CameraZoomBehavior.scaleWithScreenZoom;
+      default:
+        return CameraZoomBehavior.fixed;
+    }
+  }
+}
+
+enum CameraIntroPreset {
+  none,
+  fade,
+  pop,
+  slide;
+
+  static CameraIntroPreset fromRaw(String? raw) {
+    return CameraIntroPreset.values.firstWhere(
+      (value) => value.name == raw,
+      orElse: () => CameraIntroPreset.none,
+    );
+  }
+}
+
+enum CameraOutroPreset {
+  none,
+  fade,
+  shrink,
+  slide;
+
+  static CameraOutroPreset fromRaw(String? raw) {
+    return CameraOutroPreset.values.firstWhere(
+      (value) => value.name == raw,
+      orElse: () => CameraOutroPreset.none,
+    );
+  }
+}
+
+enum CameraZoomEmphasisPreset {
+  none,
+  pulse;
+
+  static CameraZoomEmphasisPreset fromRaw(String? raw) {
+    return CameraZoomEmphasisPreset.values.firstWhere(
+      (value) => value.name == raw,
+      orElse: () => CameraZoomEmphasisPreset.none,
+    );
+  }
+}
+
+enum CameraShape {
+  circle,
+  roundedRect,
+  square,
+  squircle;
+
+  static CameraShape fromRaw(String? raw) {
+    return CameraShape.values.firstWhere(
+      (value) => value.name == raw,
+      orElse: () => CameraShape.circle,
+    );
+  }
+}
+
+enum CameraContentMode {
+  fit,
+  fill;
+
+  static CameraContentMode fromRaw(String? raw) {
+    return CameraContentMode.values.firstWhere(
+      (value) => value.name == raw,
+      orElse: () => CameraContentMode.fill,
+    );
+  }
+}
+
+enum CameraPreviewChangeKind { none, placementJump, dragPreview }
+
+class CameraCompositionState {
+  static const double defaultZoomScaleMultiplier = 0.35;
+  static const int defaultIntroDurationMs = 220;
+  static const int defaultOutroDurationMs = 180;
+  static const double defaultZoomEmphasisStrength = 0.10;
+
+  const CameraCompositionState({
+    required this.visible,
+    required this.layoutPreset,
+    required this.normalizedCanvasCenter,
+    required this.sizeFactor,
+    required this.shape,
+    required this.cornerRadius,
+    required this.opacity,
+    required this.mirror,
+    required this.contentMode,
+    required this.zoomBehavior,
+    this.zoomScaleMultiplier = defaultZoomScaleMultiplier,
+    this.introPreset = CameraIntroPreset.none,
+    this.outroPreset = CameraOutroPreset.none,
+    this.zoomEmphasisPreset = CameraZoomEmphasisPreset.none,
+    this.introDurationMs = defaultIntroDurationMs,
+    this.outroDurationMs = defaultOutroDurationMs,
+    this.zoomEmphasisStrength = defaultZoomEmphasisStrength,
+    required this.borderWidth,
+    required this.borderColorArgb,
+    required this.shadowPreset,
+    required this.chromaKeyEnabled,
+    required this.chromaKeyStrength,
+    required this.chromaKeyColorArgb,
+  });
+
+  const CameraCompositionState.hidden()
+    : visible = false,
+      layoutPreset = CameraLayoutPreset.hidden,
+      normalizedCanvasCenter = null,
+      sizeFactor = 0.18,
+      shape = CameraShape.circle,
+      cornerRadius = 0.0,
+      opacity = 1.0,
+      mirror = true,
+      contentMode = CameraContentMode.fill,
+      zoomBehavior = CameraZoomBehavior.fixed,
+      zoomScaleMultiplier = defaultZoomScaleMultiplier,
+      introPreset = CameraIntroPreset.none,
+      outroPreset = CameraOutroPreset.none,
+      zoomEmphasisPreset = CameraZoomEmphasisPreset.none,
+      introDurationMs = defaultIntroDurationMs,
+      outroDurationMs = defaultOutroDurationMs,
+      zoomEmphasisStrength = defaultZoomEmphasisStrength,
+      borderWidth = 0.0,
+      borderColorArgb = null,
+      shadowPreset = 0,
+      chromaKeyEnabled = false,
+      chromaKeyStrength = 0.4,
+      chromaKeyColorArgb = null;
+
+  final bool visible;
+  final CameraLayoutPreset layoutPreset;
+  final Offset? normalizedCanvasCenter;
+  final double sizeFactor;
+  final CameraShape shape;
+  final double cornerRadius;
+  final double opacity;
+  final bool mirror;
+  final CameraContentMode contentMode;
+  final CameraZoomBehavior zoomBehavior;
+  final double zoomScaleMultiplier;
+  final CameraIntroPreset introPreset;
+  final CameraOutroPreset outroPreset;
+  final CameraZoomEmphasisPreset zoomEmphasisPreset;
+  final int introDurationMs;
+  final int outroDurationMs;
+  final double zoomEmphasisStrength;
+  final double borderWidth;
+  final int? borderColorArgb;
+  final int shadowPreset;
+  final bool chromaKeyEnabled;
+  final double chromaKeyStrength;
+  final int? chromaKeyColorArgb;
+
+  bool get isManuallyPositioned => normalizedCanvasCenter != null;
+
+  CameraCompositionState copyWith({
+    bool? visible,
+    CameraLayoutPreset? layoutPreset,
+    Offset? normalizedCanvasCenter,
+    bool clearNormalizedCanvasCenter = false,
+    double? sizeFactor,
+    CameraShape? shape,
+    double? cornerRadius,
+    double? opacity,
+    bool? mirror,
+    CameraContentMode? contentMode,
+    CameraZoomBehavior? zoomBehavior,
+    double? zoomScaleMultiplier,
+    CameraIntroPreset? introPreset,
+    CameraOutroPreset? outroPreset,
+    CameraZoomEmphasisPreset? zoomEmphasisPreset,
+    int? introDurationMs,
+    int? outroDurationMs,
+    double? zoomEmphasisStrength,
+    double? borderWidth,
+    int? borderColorArgb,
+    bool clearBorderColor = false,
+    int? shadowPreset,
+    bool? chromaKeyEnabled,
+    double? chromaKeyStrength,
+    int? chromaKeyColorArgb,
+    bool clearChromaKeyColor = false,
+  }) {
+    return CameraCompositionState(
+      visible: visible ?? this.visible,
+      layoutPreset: layoutPreset ?? this.layoutPreset,
+      normalizedCanvasCenter: clearNormalizedCanvasCenter
+          ? null
+          : (normalizedCanvasCenter ?? this.normalizedCanvasCenter),
+      sizeFactor: sizeFactor ?? this.sizeFactor,
+      shape: shape ?? this.shape,
+      cornerRadius: cornerRadius ?? this.cornerRadius,
+      opacity: opacity ?? this.opacity,
+      mirror: mirror ?? this.mirror,
+      contentMode: contentMode ?? this.contentMode,
+      zoomBehavior: zoomBehavior ?? this.zoomBehavior,
+      zoomScaleMultiplier: zoomScaleMultiplier ?? this.zoomScaleMultiplier,
+      introPreset: introPreset ?? this.introPreset,
+      outroPreset: outroPreset ?? this.outroPreset,
+      zoomEmphasisPreset: zoomEmphasisPreset ?? this.zoomEmphasisPreset,
+      introDurationMs: introDurationMs ?? this.introDurationMs,
+      outroDurationMs: outroDurationMs ?? this.outroDurationMs,
+      zoomEmphasisStrength: zoomEmphasisStrength ?? this.zoomEmphasisStrength,
+      borderWidth: borderWidth ?? this.borderWidth,
+      borderColorArgb: clearBorderColor
+          ? null
+          : (borderColorArgb ?? this.borderColorArgb),
+      shadowPreset: shadowPreset ?? this.shadowPreset,
+      chromaKeyEnabled: chromaKeyEnabled ?? this.chromaKeyEnabled,
+      chromaKeyStrength: chromaKeyStrength ?? this.chromaKeyStrength,
+      chromaKeyColorArgb: clearChromaKeyColor
+          ? null
+          : (chromaKeyColorArgb ?? this.chromaKeyColorArgb),
+    );
+  }
+
+  factory CameraCompositionState.fromMap(Map<dynamic, dynamic> raw) {
+    final center = raw['normalizedCanvasCenter'];
+    return CameraCompositionState(
+      visible: raw['visible'] == true,
+      layoutPreset: CameraLayoutPreset.fromRaw(raw['layoutPreset']?.toString()),
+      normalizedCanvasCenter: center is Map
+          ? Offset(
+              (center['x'] as num?)?.toDouble() ?? 0.0,
+              (center['y'] as num?)?.toDouble() ?? 0.0,
+            )
+          : null,
+      sizeFactor: (raw['sizeFactor'] as num?)?.toDouble() ?? 0.18,
+      shape: CameraShape.fromRaw(raw['shape']?.toString()),
+      cornerRadius: (raw['cornerRadius'] as num?)?.toDouble() ?? 0.0,
+      opacity: (raw['opacity'] as num?)?.toDouble() ?? 1.0,
+      mirror: raw['mirror'] as bool? ?? true,
+      contentMode: CameraContentMode.fromRaw(raw['contentMode']?.toString()),
+      zoomBehavior: CameraZoomBehavior.fromRaw(raw['zoomBehavior']?.toString()),
+      zoomScaleMultiplier:
+          (raw['zoomScaleMultiplier'] as num?)?.toDouble() ??
+          defaultZoomScaleMultiplier,
+      introPreset: CameraIntroPreset.fromRaw(raw['introPreset']?.toString()),
+      outroPreset: CameraOutroPreset.fromRaw(raw['outroPreset']?.toString()),
+      zoomEmphasisPreset: CameraZoomEmphasisPreset.fromRaw(
+        raw['zoomEmphasisPreset']?.toString(),
+      ),
+      introDurationMs:
+          (raw['introDurationMs'] as num?)?.toInt() ?? defaultIntroDurationMs,
+      outroDurationMs:
+          (raw['outroDurationMs'] as num?)?.toInt() ?? defaultOutroDurationMs,
+      zoomEmphasisStrength:
+          (raw['zoomEmphasisStrength'] as num?)?.toDouble() ??
+          defaultZoomEmphasisStrength,
+      borderWidth: (raw['borderWidth'] as num?)?.toDouble() ?? 0.0,
+      borderColorArgb: (raw['borderColorArgb'] as num?)?.toInt(),
+      shadowPreset: (raw['shadowPreset'] as num?)?.toInt() ?? 0,
+      chromaKeyEnabled: raw['chromaKeyEnabled'] as bool? ?? false,
+      chromaKeyStrength: (raw['chromaKeyStrength'] as num?)?.toDouble() ?? 0.4,
+      chromaKeyColorArgb: (raw['chromaKeyColorArgb'] as num?)?.toInt(),
+    );
+  }
+
+  Map<String, dynamic> toMap() {
+    return {
+      'cameraVisible': visible,
+      'cameraLayoutPreset': layoutPreset.name,
+      'cameraNormalizedCenter': normalizedCanvasCenter == null
+          ? null
+          : {'x': normalizedCanvasCenter!.dx, 'y': normalizedCanvasCenter!.dy},
+      'cameraSizeFactor': sizeFactor,
+      'cameraShape': shape.name,
+      'cameraCornerRadius': cornerRadius,
+      'cameraOpacity': opacity,
+      'cameraMirror': mirror,
+      'cameraContentMode': contentMode.name,
+      'cameraZoomBehavior': zoomBehavior.name,
+      'cameraZoomScaleMultiplier': zoomScaleMultiplier,
+      'cameraIntroPreset': introPreset.name,
+      'cameraOutroPreset': outroPreset.name,
+      'cameraZoomEmphasisPreset': zoomEmphasisPreset.name,
+      'cameraIntroDurationMs': introDurationMs,
+      'cameraOutroDurationMs': outroDurationMs,
+      'cameraZoomEmphasisStrength': zoomEmphasisStrength,
+      'cameraBorderWidth': borderWidth,
+      'cameraBorderColorArgb': borderColorArgb,
+      'cameraShadowPreset': shadowPreset,
+      'cameraChromaKeyEnabled': chromaKeyEnabled,
+      'cameraChromaKeyStrength': chromaKeyStrength,
+      'cameraChromaKeyColorArgb': chromaKeyColorArgb,
+    };
+  }
+}
+
+class CameraExportCapabilities {
+  const CameraExportCapabilities({
+    required this.shapeMask,
+    required this.cornerRadius,
+    required this.border,
+    required this.shadow,
+    required this.chromaKey,
+  });
+
+  const CameraExportCapabilities.allSupported()
+    : shapeMask = true,
+      cornerRadius = true,
+      border = true,
+      shadow = true,
+      chromaKey = true;
+
+  final bool shapeMask;
+  final bool cornerRadius;
+  final bool border;
+  final bool shadow;
+  final bool chromaKey;
+
+  factory CameraExportCapabilities.fromMap(Map<dynamic, dynamic>? raw) {
+    if (raw == null) {
+      return const CameraExportCapabilities.allSupported();
+    }
+    return CameraExportCapabilities(
+      shapeMask: raw['shapeMask'] as bool? ?? true,
+      cornerRadius: raw['cornerRadius'] as bool? ?? true,
+      border: raw['border'] as bool? ?? true,
+      shadow: raw['shadow'] as bool? ?? true,
+      chromaKey: raw['chromaKey'] as bool? ?? true,
+    );
+  }
+}
+
+class RecordingSceneInfo {
+  const RecordingSceneInfo({
+    required this.projectPath,
+    required this.screenPath,
+    this.cameraPath,
+    this.metadataPath,
+    this.camera,
+    this.cameraExportCapabilities =
+        const CameraExportCapabilities.allSupported(),
+  });
+
+  final String projectPath;
+  final String screenPath;
+  final String? cameraPath;
+  final String? metadataPath;
+  final CameraCompositionState? camera;
+  final CameraExportCapabilities cameraExportCapabilities;
+
+  bool get hasCameraAsset => cameraPath != null && cameraPath!.isNotEmpty;
+
+  factory RecordingSceneInfo.fromMap(Map<dynamic, dynamic> raw) {
+    return RecordingSceneInfo(
+      projectPath: raw['projectPath']?.toString() ?? '',
+      screenPath: raw['screenPath']?.toString() ?? '',
+      cameraPath: raw['cameraPath']?.toString(),
+      metadataPath: raw['metadataPath']?.toString(),
+      camera: raw['camera'] is Map
+          ? CameraCompositionState.fromMap(raw['camera'] as Map)
+          : null,
+      cameraExportCapabilities: raw['cameraExportCapabilities'] is Map
+          ? CameraExportCapabilities.fromMap(
+              raw['cameraExportCapabilities'] as Map,
+            )
+          : const CameraExportCapabilities.allSupported(),
+    );
+  }
+}
+
 enum WorkflowPhase {
   idle(0),
   startingRecording(1),
@@ -67,7 +460,7 @@ class RecordingWorkflowState {
   const RecordingWorkflowState({
     required this.phase,
     this.sessionId,
-    this.finalizedRecordingPath,
+    this.projectPath,
     this.previewPath,
     this.previewToken,
     this.errorCode,
@@ -77,7 +470,7 @@ class RecordingWorkflowState {
   const RecordingWorkflowState.idle()
     : phase = WorkflowPhase.idle,
       sessionId = null,
-      finalizedRecordingPath = null,
+      projectPath = null,
       previewPath = null,
       previewToken = null,
       errorCode = null,
@@ -85,7 +478,7 @@ class RecordingWorkflowState {
 
   final WorkflowPhase phase;
   final String? sessionId;
-  final String? finalizedRecordingPath;
+  final String? projectPath;
   final String? previewPath;
   final String? previewToken;
   final String? errorCode;
@@ -99,8 +492,8 @@ class RecordingWorkflowState {
     WorkflowPhase? phase,
     String? sessionId,
     bool clearSessionId = false,
-    String? finalizedRecordingPath,
-    bool clearFinalizedRecordingPath = false,
+    String? projectPath,
+    bool clearProjectPath = false,
     String? previewPath,
     bool clearPreviewPath = false,
     String? previewToken,
@@ -113,9 +506,7 @@ class RecordingWorkflowState {
     return RecordingWorkflowState(
       phase: phase ?? this.phase,
       sessionId: clearSessionId ? null : (sessionId ?? this.sessionId),
-      finalizedRecordingPath: clearFinalizedRecordingPath
-          ? null
-          : (finalizedRecordingPath ?? this.finalizedRecordingPath),
+      projectPath: clearProjectPath ? null : (projectPath ?? this.projectPath),
       previewPath: clearPreviewPath ? null : (previewPath ?? this.previewPath),
       previewToken: clearPreviewToken
           ? null

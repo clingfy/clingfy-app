@@ -27,12 +27,14 @@ class _Harness {
     required this.post,
     required this.settings,
     required this.processCalls,
+    required this.cameraPlacementCalls,
   });
 
   final _TestPlayerController player;
   final PostProcessingController post;
   final SettingsController settings;
   final List<MethodCall> processCalls;
+  final List<MethodCall> cameraPlacementCalls;
 
   void dispose() {
     post.dispose();
@@ -54,6 +56,7 @@ void main() {
 
   Future<_Harness> createHarness({List<ZoomSegment>? zoomSegments}) async {
     final processCalls = <MethodCall>[];
+    final cameraPlacementCalls = <MethodCall>[];
     final messenger =
         TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger;
 
@@ -66,6 +69,9 @@ void main() {
         case 'processVideo':
           processCalls.add(call);
           return '/tmp/preview.mov';
+        case 'previewSetCameraPlacement':
+          cameraPlacementCalls.add(call);
+          return null;
         default:
           return null;
       }
@@ -86,14 +92,17 @@ void main() {
     );
     post.attachToRecording(
       sessionId: 'rec_test_session',
-      sourcePath: '/tmp/original.mov',
+      projectPath: '/tmp/original.clingfyproj',
     );
+    await Future<void>.delayed(Duration.zero);
+    processCalls.clear();
 
     final harness = _Harness(
       player: player,
       post: post,
       settings: settings,
       processCalls: processCalls,
+      cameraPlacementCalls: cameraPlacementCalls,
     );
     addTearDown(harness.dispose);
     return harness;
@@ -119,7 +128,7 @@ void main() {
       final args = Map<String, dynamic>.from(
         harness.processCalls.single.arguments! as Map<dynamic, dynamic>,
       );
-      expect(args['path'], '/tmp/original.mov');
+      expect(args['projectPath'], '/tmp/original.clingfyproj');
       expect(args['layoutPreset'], harness.settings.post.layoutPreset.name);
       expect(
         args['resolutionPreset'],
@@ -127,6 +136,7 @@ void main() {
       );
       expect(args['audioGainDb'], harness.post.audioGainDb);
       expect(args['audioVolumePercent'], harness.post.audioVolumePercent);
+      expect(args['cameraPreviewChangeKind'], 'none');
       expect(args['zoomSegments'], [
         {'startMs': 120, 'endMs': 340},
       ]);
@@ -145,12 +155,220 @@ void main() {
         harness.processCalls.single.arguments! as Map<dynamic, dynamic>,
       );
       expect(args.containsKey('zoomSegments'), isFalse);
-      expect(args['path'], '/tmp/original.mov');
+      expect(args['projectPath'], '/tmp/original.clingfyproj');
       expect(args['layoutPreset'], harness.settings.post.layoutPreset.name);
       expect(
         args['resolutionPreset'],
         harness.settings.post.resolutionPreset.name,
       );
+      expect(args['cameraPreviewChangeKind'], 'none');
     },
   );
+
+  test(
+    'setLayoutPreset triggers processVideo with the updated layout preset',
+    () async {
+      final harness = await createHarness();
+
+      harness.post.setLayoutPreset(LayoutPreset.youtube169);
+      await Future<void>.delayed(Duration.zero);
+
+      expect(harness.processCalls, isNotEmpty);
+      final args = Map<String, dynamic>.from(
+        harness.processCalls.last.arguments! as Map<dynamic, dynamic>,
+      );
+
+      expect(harness.settings.post.layoutPreset, LayoutPreset.youtube169);
+      expect(args['layoutPreset'], 'youtube169');
+      expect(args['cameraPreviewChangeKind'], 'none');
+    },
+  );
+
+  test(
+    'camera layout preset changes mark preview payload as placementJump',
+    () async {
+      final harness = await createHarness();
+
+      harness.post.setCameraVisible(true);
+      harness.processCalls.clear();
+
+      harness.post.setCameraLayoutPreset(CameraLayoutPreset.overlayTopLeft);
+      await Future<void>.delayed(Duration.zero);
+
+      expect(harness.processCalls, isNotEmpty);
+      final args = Map<String, dynamic>.from(
+        harness.processCalls.last.arguments! as Map<dynamic, dynamic>,
+      );
+
+      expect(args['cameraLayoutPreset'], 'overlayTopLeft');
+      expect(args['cameraPreviewChangeKind'], 'placementJump');
+    },
+  );
+
+  test(
+    'snapped manual camera centers mark preview payload as placementJump',
+    () async {
+      final harness = await createHarness();
+
+      harness.post.setCameraVisible(true);
+      harness.processCalls.clear();
+
+      harness.post.setCameraManualCenterSnap(const Offset(0.5, 0.14));
+      await Future<void>.delayed(Duration.zero);
+
+      expect(harness.processCalls, isNotEmpty);
+      final args = Map<String, dynamic>.from(
+        harness.processCalls.last.arguments! as Map<dynamic, dynamic>,
+      );
+
+      expect(args['cameraPreviewChangeKind'], 'placementJump');
+      expect(args['cameraNormalizedCenter'], {'x': 0.5, 'y': 0.86});
+    },
+  );
+
+  test(
+    'manual camera drag preview stays dragPreview and end commits as placementJump',
+    () async {
+      final harness = await createHarness();
+
+      harness.post.setCameraVisible(true);
+      harness.processCalls.clear();
+      harness.cameraPlacementCalls.clear();
+
+      harness.post.setCameraManualCenterPreview(const Offset(0.2, 0.3));
+      await Future<void>.delayed(Duration.zero);
+
+      expect(harness.processCalls, isEmpty);
+      expect(harness.post.isEditingLocked, isFalse);
+      expect(harness.cameraPlacementCalls, isNotEmpty);
+      var args = Map<String, dynamic>.from(
+        harness.cameraPlacementCalls.last.arguments! as Map<dynamic, dynamic>,
+      );
+      expect(args['cameraPreviewChangeKind'], 'dragPreview');
+      expect(args['projectPath'], '/tmp/original.clingfyproj');
+      expect(args['cameraNormalizedCenter'], {'x': 0.2, 'y': 0.7});
+
+      harness.processCalls.clear();
+      harness.cameraPlacementCalls.clear();
+      harness.post.setCameraManualCenterPreviewEnd(const Offset(0.4, 0.6));
+      await Future<void>.delayed(Duration.zero);
+
+      expect(harness.processCalls, isNotEmpty);
+      expect(harness.cameraPlacementCalls, isEmpty);
+      args = Map<String, dynamic>.from(
+        harness.processCalls.last.arguments! as Map<dynamic, dynamic>,
+      );
+      expect(args['cameraPreviewChangeKind'], 'placementJump');
+      expect(args['cameraNormalizedCenter'], {'x': 0.4, 'y': 0.4});
+    },
+  );
+
+  test(
+    'manual camera center commits mark preview payload as placementJump',
+    () async {
+      final harness = await createHarness();
+
+      harness.post.setCameraVisible(true);
+      harness.processCalls.clear();
+
+      harness.post.setCameraManualCenter(const Offset(0.3, 0.7));
+      await Future<void>.delayed(Duration.zero);
+
+      expect(harness.processCalls, isNotEmpty);
+      var args = Map<String, dynamic>.from(
+        harness.processCalls.last.arguments! as Map<dynamic, dynamic>,
+      );
+      expect(args['cameraPreviewChangeKind'], 'placementJump');
+      expect(args['cameraNormalizedCenter'], {'x': 0.3, 'y': 0.7});
+
+      harness.processCalls.clear();
+      harness.post.resetCameraManualPosition();
+      await Future<void>.delayed(Duration.zero);
+
+      expect(harness.processCalls, isNotEmpty);
+      args = Map<String, dynamic>.from(
+        harness.processCalls.last.arguments! as Map<dynamic, dynamic>,
+      );
+      expect(args['cameraPreviewChangeKind'], 'placementJump');
+      expect(args['cameraNormalizedCenter'], isNull);
+    },
+  );
+
+  test(
+    'manual camera axis end updates mark preview payload as placementJump',
+    () async {
+      final harness = await createHarness();
+
+      harness.post.setCameraVisible(true);
+      harness.post.setCameraManualCenter(const Offset(0.25, 0.75));
+      await Future<void>.delayed(Duration.zero);
+      harness.processCalls.clear();
+
+      harness.post.setCameraManualCenterXEnd(0.6);
+      await Future<void>.delayed(Duration.zero);
+
+      expect(harness.processCalls, isNotEmpty);
+      var args = Map<String, dynamic>.from(
+        harness.processCalls.last.arguments! as Map<dynamic, dynamic>,
+      );
+      expect(args['cameraPreviewChangeKind'], 'placementJump');
+      expect(args['cameraNormalizedCenter'], {'x': 0.6, 'y': 0.75});
+
+      harness.processCalls.clear();
+      harness.post.setCameraManualCenterYEnd(0.2);
+      await Future<void>.delayed(Duration.zero);
+
+      expect(harness.processCalls, isNotEmpty);
+      args = Map<String, dynamic>.from(
+        harness.processCalls.last.arguments! as Map<dynamic, dynamic>,
+      );
+      expect(args['cameraPreviewChangeKind'], 'placementJump');
+      expect(args['cameraNormalizedCenter'], {'x': 0.6, 'y': 0.2});
+    },
+  );
+
+  test(
+    'camera zoom behavior and multiplier are included in preview payloads',
+    () async {
+      final harness = await createHarness();
+
+      harness.post.setCameraVisible(true);
+      harness.post.setCameraZoomBehavior(
+        CameraZoomBehavior.scaleWithScreenZoom,
+      );
+      harness.post.setCameraZoomScaleMultiplierEnd(0.6);
+
+      expect(harness.processCalls, isNotEmpty);
+      final args = Map<String, dynamic>.from(
+        harness.processCalls.last.arguments! as Map<dynamic, dynamic>,
+      );
+
+      expect(args['cameraZoomBehavior'], 'scaleWithScreenZoom');
+      expect(args['cameraZoomScaleMultiplier'], 0.6);
+    },
+  );
+
+  test('camera animation settings are included in preview payloads', () async {
+    final harness = await createHarness();
+
+    harness.post.setCameraVisible(true);
+    harness.post.setCameraIntroPreset(CameraIntroPreset.pop);
+    harness.post.setCameraOutroPreset(CameraOutroPreset.slide);
+    harness.post.setCameraZoomEmphasisPreset(CameraZoomEmphasisPreset.pulse);
+    harness.post.setCameraIntroDurationMsEnd(300);
+    harness.post.setCameraOutroDurationMsEnd(260);
+    harness.post.setCameraZoomEmphasisStrengthEnd(0.12);
+
+    expect(harness.processCalls, isNotEmpty);
+    final args = Map<String, dynamic>.from(
+      harness.processCalls.last.arguments! as Map<dynamic, dynamic>,
+    );
+
+    expect(args['cameraIntroPreset'], 'pop');
+    expect(args['cameraOutroPreset'], 'slide');
+    expect(args['cameraZoomEmphasisPreset'], 'pulse');
+    expect(args['cameraIntroDurationMs'], 300);
+    expect(args['cameraOutroDurationMs'], 260);
+    expect(args['cameraZoomEmphasisStrength'], 0.12);
+  });
 }

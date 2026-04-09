@@ -5,11 +5,11 @@ import 'package:flutter/material.dart';
 
 class CloseUnexportedRecordingDialogResult {
   const CloseUnexportedRecordingDialogResult({
-    required this.confirmed,
+    required this.shouldCloseWithoutExporting,
     required this.doNotShowAgain,
   });
 
-  final bool confirmed;
+  final bool shouldCloseWithoutExporting;
   final bool doNotShowAgain;
 }
 
@@ -24,16 +24,15 @@ class CloseUnexportedRecordingDialog {
       context,
       title: l10n.closeUnexportedRecordingTitle,
       barrierDismissible: false,
-      primaryLabel: l10n.cancel,
-
-      secondaryLabel: l10n.close,
-      secondaryBuilder:  () => CloseUnexportedRecordingDialogResult(
-        confirmed: true,
+      primaryLabel: l10n.keepEditing,
+      primaryBuilder: () => CloseUnexportedRecordingDialogResult(
+        shouldCloseWithoutExporting: false,
         doNotShowAgain: doNotShowAgain,
       ),
-      secondaryResult: const CloseUnexportedRecordingDialogResult(
-        confirmed: false,
-        doNotShowAgain: false,
+      secondaryLabel: l10n.closeWithoutExporting,
+      secondaryBuilder: () => CloseUnexportedRecordingDialogResult(
+        shouldCloseWithoutExporting: true,
+        doNotShowAgain: doNotShowAgain,
       ),
       content: StatefulBuilder(
         builder: (context, setState) {
@@ -86,7 +85,7 @@ Future<bool> confirmCloseUnexportedRecordingIfNeeded(
   }
 
   final result = await CloseUnexportedRecordingDialog.show(context);
-  if (result == null || !result.confirmed) {
+  if (result == null || !result.shouldCloseWithoutExporting) {
     return false;
   }
 

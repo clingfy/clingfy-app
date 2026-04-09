@@ -33,6 +33,9 @@ class AppLocalizationsRo extends AppLocalizations {
   String get recordTarget => 'Țintă înregistrare';
 
   @override
+  String get captureSource => 'Sursă captură';
+
+  @override
   String get chosenScreen => 'Ecran ales';
 
   @override
@@ -116,6 +119,9 @@ class AppLocalizationsRo extends AppLocalizations {
   String get audio => 'Audio';
 
   @override
+  String get pointer => 'Pointer';
+
+  @override
   String get refreshAudio => 'Reîmprospătare dispozitive audio (⌘R)';
 
   @override
@@ -135,6 +141,9 @@ class AppLocalizationsRo extends AppLocalizations {
 
   @override
   String get recordingQuality => 'Calitate înregistrare';
+
+  @override
+  String get quality => 'Calitate';
 
   @override
   String get resolution => 'Rezoluție';
@@ -219,6 +228,9 @@ class AppLocalizationsRo extends AppLocalizations {
   String get duration => 'Durată';
 
   @override
+  String get startAndStop => 'Pornire și oprire';
+
+  @override
   String get autoStopAfter => 'Oprire automată după';
 
   @override
@@ -259,6 +271,18 @@ class AppLocalizationsRo extends AppLocalizations {
 
   @override
   String get overlayFaceCamVisibility => 'Vizibilitate Face-cam';
+
+  @override
+  String get visibilityAndPlacement => 'Vizibilitate și poziționare';
+
+  @override
+  String get appearance => 'Aspect';
+
+  @override
+  String get style => 'Stil';
+
+  @override
+  String get effects => 'Efecte';
 
   @override
   String get visibility => 'Vizibilitate';
@@ -616,6 +640,15 @@ class AppLocalizationsRo extends AppLocalizations {
   String get exportSettings => 'Export Settings';
 
   @override
+  String get canvas => 'Canvas';
+
+  @override
+  String get canvasSettings => 'Setări Canvas';
+
+  @override
+  String get cameraSettings => 'Setări Cameră';
+
+  @override
   String get postProcessing => 'Post-procesare';
 
   @override
@@ -623,6 +656,21 @@ class AppLocalizationsRo extends AppLocalizations {
 
   @override
   String get collapsePane => 'Restrânge panoul';
+
+  @override
+  String get showOptions => 'Arată opțiunile';
+
+  @override
+  String get hideOptions => 'Ascunde opțiunile';
+
+  @override
+  String get canvasFormat => 'Format Canvas';
+
+  @override
+  String get framing => 'Încadrare';
+
+  @override
+  String get background => 'Fundal';
 
   @override
   String get size => 'Dimensiune';
@@ -664,10 +712,16 @@ class AppLocalizationsRo extends AppLocalizations {
   String get cursorSize => 'Dimensiune Cursor';
 
   @override
+  String get cursor => 'Cursor';
+
+  @override
   String get zoomInEffect => 'Efect Zoom';
 
   @override
   String get manageZoomEffects => 'Gestionează efecte zoom';
+
+  @override
+  String get zoom => 'Zoom';
 
   @override
   String get intensity => 'Intensitate';
@@ -676,7 +730,94 @@ class AppLocalizationsRo extends AppLocalizations {
   String get layout => 'Aspect';
 
   @override
-  String get effects => 'Efecte';
+  String get loudness => 'Volum';
+
+  @override
+  String get placement => 'Poziționare';
+
+  @override
+  String get motion => 'Mișcare';
+
+  @override
+  String get zoomResponse => 'Răspuns la zoom';
+
+  @override
+  String get fixed => 'Fix';
+
+  @override
+  String get scaleWithZoom => 'Scalează odată cu zoomul';
+
+  @override
+  String get zoomScale => 'Scală zoom';
+
+  @override
+  String get intro => 'Intrare';
+
+  @override
+  String get outro => 'Ieșire';
+
+  @override
+  String get introDuration => 'Durată intrare';
+
+  @override
+  String get outroDuration => 'Durată ieșire';
+
+  @override
+  String get fade => 'Estompare';
+
+  @override
+  String get pop => 'Pop';
+
+  @override
+  String get slide => 'Glisare';
+
+  @override
+  String get shrink => 'Micșorare';
+
+  @override
+  String get zoomEmphasis => 'Accent zoom';
+
+  @override
+  String get pulse => 'Puls';
+
+  @override
+  String get pulseStrength => 'Intensitate puls';
+
+  @override
+  String get cameraNoAssetNotice =>
+      'Nu a fost înregistrat un flux separat al camerei pentru acest clip.';
+
+  @override
+  String get cameraPlacementHelper =>
+      'Ajustează sau mută poziția camerei pe ecran.';
+
+  @override
+  String get cameraBackgroundBehindHint =>
+      'Aspectul de fundal umple întregul canvas. Alege un punct sau trage mânerul pentru a reveni la o poziție de suprapunere.';
+
+  @override
+  String get topLeft => 'Sus stânga';
+
+  @override
+  String get topCenter => 'Sus centru';
+
+  @override
+  String get topRight => 'Sus dreapta';
+
+  @override
+  String get centerLeft => 'Centru stânga';
+
+  @override
+  String get centerRight => 'Centru dreapta';
+
+  @override
+  String get bottomLeft => 'Jos stânga';
+
+  @override
+  String get bottomCenter => 'Jos centru';
+
+  @override
+  String get bottomRight => 'Jos dreapta';
 
   @override
   String get refreshDevicesTooltip => 'Reîmprospătare dispozitive (⌘R)';
@@ -771,6 +912,9 @@ class AppLocalizationsRo extends AppLocalizations {
   String get classic43 => 'Clasic (4:3)';
 
   @override
+  String get classic => 'Clasic';
+
+  @override
   String get square11 => 'Pătrat (1:1)';
 
   @override
@@ -778,6 +922,12 @@ class AppLocalizationsRo extends AppLocalizations {
 
   @override
   String get reel916 => 'Reel (9:16)';
+
+  @override
+  String get wide => 'Lat';
+
+  @override
+  String get vertical => 'Vertical';
 
   @override
   String get vertical4k => 'Vertical 4K (2160x3840)';
@@ -1055,11 +1205,18 @@ class AppLocalizationsRo extends AppLocalizations {
       'Afișează o confirmare înainte de a închide înregistrarea curentă dacă nu a fost exportată încă.';
 
   @override
-  String get closeUnexportedRecordingTitle => 'Închizi această înregistrare?';
+  String get closeUnexportedRecordingTitle =>
+      'Închizi înregistrarea fără export?';
 
   @override
   String get closeUnexportedRecordingMessage =>
-      'Nu ai exportat încă această înregistrare. Dacă o închizi acum, vei pierde accesul la ea în sesiunea curentă.';
+      'Această înregistrare nu a fost încă exportată. Dacă o închizi acum, vei pierde accesul la ea în sesiunea curentă.';
+
+  @override
+  String get keepEditing => 'Continuă editarea';
+
+  @override
+  String get closeWithoutExporting => 'Închide fără export';
 
   @override
   String get doNotShowAgain => 'Nu mai arăta';
@@ -1536,6 +1693,14 @@ class AppLocalizationsRo extends AppLocalizations {
   String get recordingSaved => 'Înregistrare salvată:';
 
   @override
+  String get externalProjectOpenBlocked =>
+      'Finalizează înregistrarea curentă sau tranziția previzualizării înainte de a deschide alt proiect.';
+
+  @override
+  String get externalProjectOpenFailed =>
+      'Acest proiect Clingfy nu a putut fi deschis.';
+
+  @override
   String get exportSuccess => 'Export reușit:';
 
   @override
@@ -1557,36 +1722,16 @@ class AppLocalizationsRo extends AppLocalizations {
   String get micInputLevel => 'Nivel intrare microfon';
 
   @override
-  String get micInputMonitorTitle => 'Monitorizare intrare';
-
-  @override
-  String get micInputMonitorInactive => 'Inactiv';
-
-  @override
-  String get micInputMonitorDisabledHint =>
+  String get micInputIndicatorDisabledTooltip =>
       'Selectează un microfon pentru a previzualiza nivelul de intrare.';
 
   @override
-  String get micInputMonitorLiveHint =>
-      'Monitorizarea intrării live este activă.';
+  String micInputIndicatorLiveTooltip(String dbfs) {
+    return 'Nivel intrare microfon: $dbfs dBFS';
+  }
 
   @override
-  String get micInputMonitorLowBadge => 'Nivel redus';
-
-  @override
-  String get micInputMonitorLowHint =>
-      'Mărește gain-ul sau apropie-te de microfon.';
-
-  @override
-  String get micInputMonitorExpandTooltip =>
-      'Afișează monitorul de intrare detaliat';
-
-  @override
-  String get micInputMonitorCollapseTooltip =>
-      'Ascunde monitorul de intrare detaliat';
-
-  @override
-  String get micInputTooLowWarning =>
+  String get micInputIndicatorLowTooltip =>
       'Intrarea microfonului este foarte mică. Crește nivelul de intrare sau apropie-te de microfon.';
 
   @override

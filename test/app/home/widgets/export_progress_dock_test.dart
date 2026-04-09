@@ -23,7 +23,7 @@ class TestPostProcessingController extends PostProcessingController {
     );
     controller.attachToRecording(
       sessionId: 'rec_test_session',
-      sourcePath: '/tmp/original.mov',
+      projectPath: '/tmp/original.clingfyproj',
     );
     return controller;
   }

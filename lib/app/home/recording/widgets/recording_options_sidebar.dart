@@ -1,4 +1,5 @@
 import 'package:clingfy/ui/platform/widgets/app_form_row.dart';
+import 'package:clingfy/ui/platform/widgets/app_settings_group.dart';
 import 'package:clingfy/ui/platform/widgets/app_sidebar_rail_button.dart';
 import 'package:clingfy/ui/platform/widgets/app_sidebar_tokens.dart';
 import 'package:flutter/material.dart' hide PlatformMenuItem;
@@ -352,7 +353,6 @@ class RecordingOptionsSidebar extends StatelessWidget {
   }
 
   List<Widget> _buildScreenTab(BuildContext context) {
-    final theme = Theme.of(context);
     final l10n = AppLocalizations.of(context)!;
 
     return [
@@ -374,9 +374,6 @@ class RecordingOptionsSidebar extends StatelessWidget {
         onRevealArea: onRevealArea,
         onClearArea: onClearArea,
       ),
-      const SizedBox(height: AppSidebarTokens.rowGap),
-      Divider(color: theme.dividerColor.withValues(alpha: 0.1)),
-      const SizedBox(height: AppSidebarTokens.rowGap),
       RecordingAudioSection(
         isRecording: isRecording,
         audioSources: audioSources,
@@ -392,11 +389,8 @@ class RecordingOptionsSidebar extends StatelessWidget {
         onSystemAudioEnabledChanged: onSystemAudioEnabledChanged,
         onExcludeMicFromSystemAudioChanged: onExcludeMicFromSystemAudioChanged,
       ),
-      const SizedBox(height: AppSidebarTokens.rowGap),
-      Divider(color: theme.dividerColor.withValues(alpha: 0.1)),
-      const SizedBox(height: AppSidebarTokens.rowGap),
-      Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
+      AppSettingsGroup(
+        title: l10n.pointer,
         children: [
           AppFormRow(
             label: l10n.cursorHighlightVisibility,
@@ -419,6 +413,9 @@ class RecordingOptionsSidebar extends StatelessWidget {
   }
 
   List<Widget> _buildCameraTab(BuildContext context) {
+    final hasSelectedCam =
+        selectedCamId != null && cams.any((cam) => cam.id == selectedCamId);
+
     return [
       RecordingCameraSection(
         isRecording: isRecording,
@@ -428,11 +425,7 @@ class RecordingOptionsSidebar extends StatelessWidget {
         onRefreshCams: onRefreshCams,
         onCamSourceChanged: onCamSourceChanged,
       ),
-      if (selectedCamId != null) ...[
-        const SizedBox(
-          key: Key('recording_camera_overlay_gap'),
-          height: AppSidebarTokens.rowGap,
-        ),
+      if (hasSelectedCam) ...[
         RecordingOverlaySection(
           isRecording: isRecording,
           overlayMode: overlayMode,
@@ -476,8 +469,6 @@ class RecordingOptionsSidebar extends StatelessWidget {
   }
 
   List<Widget> _buildOutputTab(BuildContext context) {
-    final theme = Theme.of(context);
-
     return [
       RecordingOutputSection(
         isRecording: isRecording,
@@ -492,23 +483,13 @@ class RecordingOptionsSidebar extends StatelessWidget {
         onCountdownEnabledChanged: onCountdownEnabledChanged,
         onCountdownDurationChanged: onCountdownDurationChanged,
       ),
-      if (targetMode != DisplayTargetMode.singleAppWindow) ...[
-        const SizedBox(
-          key: Key('recording_output_capture_settings_gap_before_divider'),
-          height: AppSidebarTokens.rowGap,
-        ),
-        Divider(color: theme.dividerColor.withValues(alpha: 0.1)),
-        const SizedBox(
-          key: Key('recording_output_capture_settings_gap_after_divider'),
-          height: AppSidebarTokens.rowGap,
-        ),
+      if (targetMode != DisplayTargetMode.singleAppWindow)
         RecordingCaptureSettingsSection(
           isRecording: isRecording,
           excludeRecorderAppFromCapture: excludeRecorderAppFromCapture,
           onExcludeRecorderAppFromCaptureChanged:
               onExcludeRecorderAppFromCaptureChanged,
         ),
-      ],
     ];
   }
 
