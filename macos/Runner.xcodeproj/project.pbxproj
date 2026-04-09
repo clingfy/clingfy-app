@@ -30,7 +30,9 @@
 		33CC10F12044A3C60003C045 /* AppDelegate.swift in Sources */ = {isa = PBXBuildFile; fileRef = 33CC10F02044A3C60003C045 /* AppDelegate.swift */; };
 		33CC10F32044A3C60003C045 /* Assets.xcassets in Resources */ = {isa = PBXBuildFile; fileRef = 33CC10F22044A3C60003C045 /* Assets.xcassets */; };
 		33CC10F62044A3C60003C045 /* MainMenu.xib in Resources */ = {isa = PBXBuildFile; fileRef = 33CC10F42044A3C60003C045 /* MainMenu.xib */; };
+		A2B3C4D5E6F708192A3B4C5D /* ClingfyProjectIcon.icns in Resources */ = {isa = PBXBuildFile; fileRef = A2B3C4D5E6F708192A3B4C5E /* ClingfyProjectIcon.icns */; };
 		33CC11132044BFA00003C045 /* MainFlutterWindow.swift in Sources */ = {isa = PBXBuildFile; fileRef = 33CC11122044BFA00003C045 /* MainFlutterWindow.swift */; };
+		E1A0C0012F60000100BEE001 /* AVAssetWriterInputExceptionBridge.m in Sources */ = {isa = PBXBuildFile; fileRef = E1A0C0032F60000100BEE003 /* AVAssetWriterInputExceptionBridge.m */; };
 		5B1C86BC2F300B730068C1BE /* ZoomManualStore.swift in Sources */ = {isa = PBXBuildFile; fileRef = 5B1C86BB2F300B730068C1BE /* ZoomManualStore.swift */; };
 		5B300C112F3AAA00003A4436 /* Sparkle in Frameworks */ = {isa = PBXBuildFile; productRef = 5B300C102F3AAA00003A4436 /* Sparkle */; };
 		5B449F6D2F37828300A03934 /* PermissionState.swift in Sources */ = {isa = PBXBuildFile; fileRef = 5B449F6C2F37828300A03934 /* PermissionState.swift */; };
@@ -68,6 +70,11 @@
 		5B54273C2F21985F00B06BA6 /* RecordingIndicatorView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 5B54271D2F21985F00B06BA6 /* RecordingIndicatorView.swift */; };
 		5B54273D2F21985F00B06BA6 /* PreferencesStore.swift in Sources */ = {isa = PBXBuildFile; fileRef = 5B5427172F21985F00B06BA6 /* PreferencesStore.swift */; };
 		5B54273E2F21985F00B06BA6 /* LetterboxExporter.swift in Sources */ = {isa = PBXBuildFile; fileRef = 5B5426EA2F21985F00B06BA6 /* LetterboxExporter.swift */; };
+		A1B2C3D4E5F60718293A4B02 /* CameraChromaKeyRenderer.swift in Sources */ = {isa = PBXBuildFile; fileRef = A1B2C3D4E5F60718293A4B01 /* CameraChromaKeyRenderer.swift */; };
+		A1B2C3D4E5F60718293A4B04 /* CameraStyledIntermediatePipeline.swift in Sources */ = {isa = PBXBuildFile; fileRef = A1B2C3D4E5F60718293A4B03 /* CameraStyledIntermediatePipeline.swift */; };
+		A1B2C3D4E5F60718293A4B06 /* CameraTransformTimelineBuilder.swift in Sources */ = {isa = PBXBuildFile; fileRef = A1B2C3D4E5F60718293A4B05 /* CameraTransformTimelineBuilder.swift */; };
+		A1B2C3D4E5F60718293A4B08 /* CameraAnimationTimelineBuilder.swift in Sources */ = {isa = PBXBuildFile; fileRef = A1B2C3D4E5F60718293A4B07 /* CameraAnimationTimelineBuilder.swift */; };
+		A1B2C3D4E5F60718293A4B0A /* ScreenZoomCursorIntermediatePipeline.swift in Sources */ = {isa = PBXBuildFile; fileRef = A1B2C3D4E5F60718293A4B09 /* ScreenZoomCursorIntermediatePipeline.swift */; };
 		5B54273F2F21985F00B06BA6 /* DisplayService.swift in Sources */ = {isa = PBXBuildFile; fileRef = 5B5427112F21985F00B06BA6 /* DisplayService.swift */; };
 		5B5427402F21985F00B06BA6 /* InlinePreviewView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 5B5427022F21985F00B06BA6 /* InlinePreviewView.swift */; };
 		5B5427412F21985F00B06BA6 /* NativeErrorCode.swift in Sources */ = {isa = PBXBuildFile; fileRef = 5B5426F82F21985F00B06BA6 /* NativeErrorCode.swift */; };
@@ -81,10 +88,17 @@
 		5B5427492F21985F00B06BA6 /* CursorHighlighter.swift in Sources */ = {isa = PBXBuildFile; fileRef = 5B54270A2F21985F00B06BA6 /* CursorHighlighter.swift */; };
 		5BE43BEC2F22CD3F0017267E /* RecordingStore.swift in Sources */ = {isa = PBXBuildFile; fileRef = 5BE43BEB2F22CD3F0017267E /* RecordingStore.swift */; };
 		5BE43BED2F22CD3F0017267E /* AppPaths.swift in Sources */ = {isa = PBXBuildFile; fileRef = 5BE43BEA2F22CD3F0017267E /* AppPaths.swift */; };
+		B7C100012FA1000100A0B001 /* ProjectOpenCoordinator.swift in Sources */ = {isa = PBXBuildFile; fileRef = B7C100022FA1000100A0B001 /* ProjectOpenCoordinator.swift */; };
+		B7C100032FA1000100A0B001 /* ProjectOpenValidator.swift in Sources */ = {isa = PBXBuildFile; fileRef = B7C100042FA1000100A0B001 /* ProjectOpenValidator.swift */; };
+		7D1001012FA0000100A0B001 /* RecordingProjectPaths.swift in Sources */ = {isa = PBXBuildFile; fileRef = 7D1001032FA0000100A0B001 /* RecordingProjectPaths.swift */; };
+		7D1001022FA0000100A0B001 /* RecordingProjectManifest.swift in Sources */ = {isa = PBXBuildFile; fileRef = 7D1001042FA0000100A0B001 /* RecordingProjectManifest.swift */; };
 		D4A1B2C3D4E5F60718293A4C /* StorageInfoProvider.swift in Sources */ = {isa = PBXBuildFile; fileRef = D4A1B2C3D4E5F60718293A4B /* StorageInfoProvider.swift */; };
 		5BE43BEF2F22CD940017267E /* RecordingMetadata.swift in Sources */ = {isa = PBXBuildFile; fileRef = 5BE43BEE2F22CD940017267E /* RecordingMetadata.swift */; };
 		5BE629DC2F2F9F3800063F17 /* ZoomTimelineBuilder.swift in Sources */ = {isa = PBXBuildFile; fileRef = 5BE629DB2F2F9F3800063F17 /* ZoomTimelineBuilder.swift */; };
 		5C1D00012F50000100A0B001 /* ZoomFollowSmoother.swift in Sources */ = {isa = PBXBuildFile; fileRef = 5C1D00022F50000100A0B001 /* ZoomFollowSmoother.swift */; };
+		7C1000012F70000100A0B001 /* CameraCaptureCoordinator.swift in Sources */ = {isa = PBXBuildFile; fileRef = 7C1000112F70000100A0B001 /* CameraCaptureCoordinator.swift */; };
+		7C1000022F70000100A0B001 /* CameraRecorder.swift in Sources */ = {isa = PBXBuildFile; fileRef = 7C1000122F70000100A0B001 /* CameraRecorder.swift */; };
+		7C1000032F70000100A0B001 /* CameraLayoutResolver.swift in Sources */ = {isa = PBXBuildFile; fileRef = 7C1000132F70000100A0B001 /* CameraLayoutResolver.swift */; };
 		9A1B2C3D4E5F60718293A4B2 /* PreviewProfile.swift in Sources */ = {isa = PBXBuildFile; fileRef = 9A1B2C3D4E5F60718293A4B1 /* PreviewProfile.swift */; };
 		9A1B2C3D4E5F60718293A4B4 /* CursorFrameResolver.swift in Sources */ = {isa = PBXBuildFile; fileRef = 9A1B2C3D4E5F60718293A4B3 /* CursorFrameResolver.swift */; };
 		9A1B2C3D4E5F60718293A4B6 /* PreviewBackgroundImageCache.swift in Sources */ = {isa = PBXBuildFile; fileRef = 9A1B2C3D4E5F60718293A4B5 /* PreviewBackgroundImageCache.swift */; };
@@ -139,7 +153,11 @@
 		33CC10F22044A3C60003C045 /* Assets.xcassets */ = {isa = PBXFileReference; lastKnownFileType = folder.assetcatalog; name = Assets.xcassets; path = Runner/Assets.xcassets; sourceTree = "<group>"; };
 		33CC10F52044A3C60003C045 /* Base */ = {isa = PBXFileReference; lastKnownFileType = file.xib; name = Base; path = Base.lproj/MainMenu.xib; sourceTree = "<group>"; };
 		33CC10F72044A3C60003C045 /* Info.plist */ = {isa = PBXFileReference; lastKnownFileType = text.plist.xml; name = Info.plist; path = Runner/Info.plist; sourceTree = "<group>"; };
+		A2B3C4D5E6F708192A3B4C5E /* ClingfyProjectIcon.icns */ = {isa = PBXFileReference; lastKnownFileType = image.icns; path = Runner/ClingfyProjectIcon.icns; sourceTree = "<group>"; };
 		33CC11122044BFA00003C045 /* MainFlutterWindow.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MainFlutterWindow.swift; sourceTree = "<group>"; };
+		E1A0C0022F60000100BEE002 /* AVAssetWriterInputExceptionBridge.h */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.c.h; path = AVAssetWriterInputExceptionBridge.h; sourceTree = "<group>"; };
+		E1A0C0032F60000100BEE003 /* AVAssetWriterInputExceptionBridge.m */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.c.objc; path = AVAssetWriterInputExceptionBridge.m; sourceTree = "<group>"; };
+		E1A0C0042F60000100BEE004 /* Runner-Bridging-Header.h */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.c.h; path = "Runner-Bridging-Header.h"; sourceTree = "<group>"; };
 		33CEB47222A05771004F2AC0 /* Flutter-Debug.xcconfig */ = {isa = PBXFileReference; lastKnownFileType = text.xcconfig; path = "Flutter-Debug.xcconfig"; sourceTree = "<group>"; };
 		33CEB47422A05771004F2AC0 /* Flutter-Release.xcconfig */ = {isa = PBXFileReference; lastKnownFileType = text.xcconfig; path = "Flutter-Release.xcconfig"; sourceTree = "<group>"; };
 		33CEB47722A0578A004F2AC0 /* Flutter-Generated.xcconfig */ = {isa = PBXFileReference; lastKnownFileType = text.xcconfig; name = "Flutter-Generated.xcconfig"; path = "ephemeral/Flutter-Generated.xcconfig"; sourceTree = "<group>"; };
@@ -161,6 +179,11 @@
 		5B5426E72F21985F00B06BA6 /* CapturePipeline.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CapturePipeline.swift; sourceTree = "<group>"; };
 		5B5426E92F21985F00B06BA6 /* CompositionBuilder.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CompositionBuilder.swift; sourceTree = "<group>"; };
 		5B5426EA2F21985F00B06BA6 /* LetterboxExporter.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = LetterboxExporter.swift; sourceTree = "<group>"; };
+		A1B2C3D4E5F60718293A4B01 /* CameraChromaKeyRenderer.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CameraChromaKeyRenderer.swift; sourceTree = "<group>"; };
+		A1B2C3D4E5F60718293A4B03 /* CameraStyledIntermediatePipeline.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CameraStyledIntermediatePipeline.swift; sourceTree = "<group>"; };
+		A1B2C3D4E5F60718293A4B05 /* CameraTransformTimelineBuilder.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CameraTransformTimelineBuilder.swift; sourceTree = "<group>"; };
+		A1B2C3D4E5F60718293A4B07 /* CameraAnimationTimelineBuilder.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CameraAnimationTimelineBuilder.swift; sourceTree = "<group>"; };
+		A1B2C3D4E5F60718293A4B09 /* ScreenZoomCursorIntermediatePipeline.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ScreenZoomCursorIntermediatePipeline.swift; sourceTree = "<group>"; };
 		5B5426EC2F21985F00B06BA6 /* CursorRecorder.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CursorRecorder.swift; sourceTree = "<group>"; };
 		5B5426ED2F21985F00B06BA6 /* ZoomHysteresis.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ZoomHysteresis.swift; sourceTree = "<group>"; };
 		5B5426EF2F21985F00B06BA6 /* AppInfo.xcconfig */ = {isa = PBXFileReference; lastKnownFileType = text.xcconfig; path = AppInfo.xcconfig; sourceTree = "<group>"; };
@@ -196,10 +219,17 @@
 		5B54271D2F21985F00B06BA6 /* RecordingIndicatorView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = RecordingIndicatorView.swift; sourceTree = "<group>"; };
 		5BE43BEA2F22CD3F0017267E /* AppPaths.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AppPaths.swift; sourceTree = "<group>"; };
 		5BE43BEB2F22CD3F0017267E /* RecordingStore.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = RecordingStore.swift; sourceTree = "<group>"; };
+		B7C100022FA1000100A0B001 /* ProjectOpenCoordinator.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ProjectOpenCoordinator.swift; sourceTree = "<group>"; };
+		B7C100042FA1000100A0B001 /* ProjectOpenValidator.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ProjectOpenValidator.swift; sourceTree = "<group>"; };
+		7D1001032FA0000100A0B001 /* RecordingProjectPaths.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = RecordingProjectPaths.swift; sourceTree = "<group>"; };
+		7D1001042FA0000100A0B001 /* RecordingProjectManifest.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = RecordingProjectManifest.swift; sourceTree = "<group>"; };
 		D4A1B2C3D4E5F60718293A4B /* StorageInfoProvider.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = StorageInfoProvider.swift; sourceTree = "<group>"; };
 		5BE43BEE2F22CD940017267E /* RecordingMetadata.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = RecordingMetadata.swift; sourceTree = "<group>"; };
 		5BE629DB2F2F9F3800063F17 /* ZoomTimelineBuilder.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ZoomTimelineBuilder.swift; sourceTree = "<group>"; };
 		5C1D00022F50000100A0B001 /* ZoomFollowSmoother.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ZoomFollowSmoother.swift; sourceTree = "<group>"; };
+		7C1000112F70000100A0B001 /* CameraCaptureCoordinator.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CameraCaptureCoordinator.swift; sourceTree = "<group>"; };
+		7C1000122F70000100A0B001 /* CameraRecorder.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CameraRecorder.swift; sourceTree = "<group>"; };
+		7C1000132F70000100A0B001 /* CameraLayoutResolver.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CameraLayoutResolver.swift; sourceTree = "<group>"; };
 		7016C578B942E3719B0C17B5 /* Pods-Runner.profile-prod.xcconfig */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = text.xcconfig; name = "Pods-Runner.profile-prod.xcconfig"; path = "Target Support Files/Pods-Runner/Pods-Runner.profile-prod.xcconfig"; sourceTree = "<group>"; };
 		73AA0A1A2585787F7B39578A /* Pods-Runner.release-dev.xcconfig */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = text.xcconfig; name = "Pods-Runner.release-dev.xcconfig"; path = "Target Support Files/Pods-Runner/Pods-Runner.release-dev.xcconfig"; sourceTree = "<group>"; };
 		79BDE597B4AFB4B8E9940F66 /* Pods-RunnerTests.release-dev.xcconfig */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = text.xcconfig; name = "Pods-RunnerTests.release-dev.xcconfig"; path = "Target Support Files/Pods-RunnerTests/Pods-RunnerTests.release-dev.xcconfig"; sourceTree = "<group>"; };
@@ -294,6 +324,7 @@
 				33CC10F22044A3C60003C045 /* Assets.xcassets */,
 				33CC10F42044A3C60003C045 /* MainMenu.xib */,
 				33CC10F72044A3C60003C045 /* Info.plist */,
+				A2B3C4D5E6F708192A3B4C5E /* ClingfyProjectIcon.icns */,
 			);
 			name = Resources;
 			path = ..;
@@ -393,7 +424,10 @@
 		5B5426E22F21985F00B06BA6 /* Bridges */ = {
 			isa = PBXGroup;
 			children = (
+				E1A0C0022F60000100BEE002 /* AVAssetWriterInputExceptionBridge.h */,
+				E1A0C0032F60000100BEE003 /* AVAssetWriterInputExceptionBridge.m */,
 				5B5426E12F21985F00B06BA6 /* FlutterError+Error.swift */,
+				E1A0C0042F60000100BEE004 /* Runner-Bridging-Header.h */,
 			);
 			path = Bridges;
 			sourceTree = "<group>";
@@ -413,6 +447,12 @@
 		5B5426EB2F21985F00B06BA6 /* Export */ = {
 			isa = PBXGroup;
 			children = (
+				A1B2C3D4E5F60718293A4B01 /* CameraChromaKeyRenderer.swift */,
+				A1B2C3D4E5F60718293A4B07 /* CameraAnimationTimelineBuilder.swift */,
+				7C1000132F70000100A0B001 /* CameraLayoutResolver.swift */,
+				A1B2C3D4E5F60718293A4B03 /* CameraStyledIntermediatePipeline.swift */,
+				A1B2C3D4E5F60718293A4B09 /* ScreenZoomCursorIntermediatePipeline.swift */,
+				A1B2C3D4E5F60718293A4B05 /* CameraTransformTimelineBuilder.swift */,
 				5B5426E92F21985F00B06BA6 /* CompositionBuilder.swift */,
 				5B5426EA2F21985F00B06BA6 /* LetterboxExporter.swift */,
 			);
@@ -423,6 +463,8 @@
 			isa = PBXGroup;
 			children = (
 				5B449F6C2F37828300A03934 /* PermissionState.swift */,
+				7C1000112F70000100A0B001 /* CameraCaptureCoordinator.swift */,
+				7C1000122F70000100A0B001 /* CameraRecorder.swift */,
 				5B1C86BE2F300F1C0068C1BE /* Cursor */,
 				5B1C86BD2F300EF30068C1BE /* Zoom */,
 				5B5426E82F21985F00B06BA6 /* Backends */,
@@ -555,7 +597,11 @@
 			isa = PBXGroup;
 			children = (
 				5BE43BEA2F22CD3F0017267E /* AppPaths.swift */,
+				B7C100022FA1000100A0B001 /* ProjectOpenCoordinator.swift */,
+				B7C100042FA1000100A0B001 /* ProjectOpenValidator.swift */,
 				5BE43BEB2F22CD3F0017267E /* RecordingStore.swift */,
+				7D1001032FA0000100A0B001 /* RecordingProjectPaths.swift */,
+				7D1001042FA0000100A0B001 /* RecordingProjectManifest.swift */,
 				D4A1B2C3D4E5F60718293A4B /* StorageInfoProvider.swift */,
 				5B5427172F21985F00B06BA6 /* PreferencesStore.swift */,
 				5B5427182F21985F00B06BA6 /* SaveFolderStore.swift */,
@@ -719,6 +765,7 @@
 				5B5427252F21985F00B06BA6 /* Localizable.strings in Resources */,
 				5B5427262F21985F00B06BA6 /* Warnings.xcconfig in Resources */,
 				33CC10F62044A3C60003C045 /* MainMenu.xib in Resources */,
+				A2B3C4D5E6F708192A3B4C5D /* ClingfyProjectIcon.icns in Resources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -848,6 +895,8 @@
 				5B449F7B2F379D1700A03934 /* PermissionsMethodRouter.swift in Sources */,
 				5B5427272F21985F00B06BA6 /* OptionPickerPopover.swift in Sources */,
 				5B5427282F21985F00B06BA6 /* ScreenRecorderFacade.swift in Sources */,
+				7C1000012F70000100A0B001 /* CameraCaptureCoordinator.swift in Sources */,
+				7C1000022F70000100A0B001 /* CameraRecorder.swift in Sources */,
 				5B5427292F21985F00B06BA6 /* ZoomHysteresis.swift in Sources */,
 				5C1D00012F50000100A0B001 /* ZoomFollowSmoother.swift in Sources */,
 				5B54272A2F21985F00B06BA6 /* CapturePipeline.swift in Sources */,
@@ -860,10 +909,15 @@
 				5B5427312F21985F00B06BA6 /* NativeLogger.swift in Sources */,
 				5B5427322F21985F00B06BA6 /* NativeChannel.swift in Sources */,
 				9A1B2C3D4E5F60718293A4B4 /* CursorFrameResolver.swift in Sources */,
+				E1A0C0012F60000100BEE001 /* AVAssetWriterInputExceptionBridge.m in Sources */,
 				5B5427332F21985F00B06BA6 /* FlutterError+Error.swift in Sources */,
 				5B5427342F21985F00B06BA6 /* PlayerEventHandler.swift in Sources */,
 				5BE43BEC2F22CD3F0017267E /* RecordingStore.swift in Sources */,
 				5BE43BED2F22CD3F0017267E /* AppPaths.swift in Sources */,
+				B7C100012FA1000100A0B001 /* ProjectOpenCoordinator.swift in Sources */,
+				B7C100032FA1000100A0B001 /* ProjectOpenValidator.swift in Sources */,
+				7D1001012FA0000100A0B001 /* RecordingProjectPaths.swift in Sources */,
+				7D1001022FA0000100A0B001 /* RecordingProjectManifest.swift in Sources */,
 				D4A1B2C3D4E5F60718293A4C /* StorageInfoProvider.swift in Sources */,
 				5B5427352F21985F00B06BA6 /* CaptureBackend.swift in Sources */,
 				5B5427362F21985F00B06BA6 /* CaptureBackendAVFoundation.swift in Sources */,
@@ -871,6 +925,12 @@
 				5B5427382F21985F00B06BA6 /* CaptureBackendScreenCaptureKit.swift in Sources */,
 				5B5427392F21985F00B06BA6 /* Models.swift in Sources */,
 				5B54273A2F21985F00B06BA6 /* CursorRecorder.swift in Sources */,
+				A1B2C3D4E5F60718293A4B02 /* CameraChromaKeyRenderer.swift in Sources */,
+				A1B2C3D4E5F60718293A4B08 /* CameraAnimationTimelineBuilder.swift in Sources */,
+				7C1000032F70000100A0B001 /* CameraLayoutResolver.swift in Sources */,
+				A1B2C3D4E5F60718293A4B04 /* CameraStyledIntermediatePipeline.swift in Sources */,
+				A1B2C3D4E5F60718293A4B0A /* ScreenZoomCursorIntermediatePipeline.swift in Sources */,
+				A1B2C3D4E5F60718293A4B06 /* CameraTransformTimelineBuilder.swift in Sources */,
 				5B54273B2F21985F00B06BA6 /* CompositionBuilder.swift in Sources */,
 				5BE629DC2F2F9F3800063F17 /* ZoomTimelineBuilder.swift in Sources */,
 				5B54273C2F21985F00B06BA6 /* RecordingIndicatorView.swift in Sources */,
@@ -1070,6 +1130,7 @@
 				PROVISIONING_PROFILE_SPECIFIER = "";
 				"PROVISIONING_PROFILE_SPECIFIER[sdk=macosx*]" = Clingfy_Distribution;
 				SPARKLE_FEED_URL = "https://clingfy.com/updates/appcast.xml";
+				SWIFT_OBJC_BRIDGING_HEADER = Runner/Bridges/Runner-Bridging-Header.h;
 				SWIFT_VERSION = 5.0;
 			};
 			name = "Profile-prod";
@@ -1212,6 +1273,7 @@
 				"PROVISIONING_PROFILE_SPECIFIER[sdk=macosx*]" = Clingfy_Distribution;
 				SPARKLE_FEED_URL = "https://clingfy.com/updates/appcast.xml";
 				SWIFT_OPTIMIZATION_LEVEL = "-Onone";
+				SWIFT_OBJC_BRIDGING_HEADER = Runner/Bridges/Runner-Bridging-Header.h;
 				SWIFT_VERSION = 5.0;
 			};
 			name = "Debug-prod";
@@ -1240,6 +1302,7 @@
 				PROVISIONING_PROFILE_SPECIFIER = "";
 				"PROVISIONING_PROFILE_SPECIFIER[sdk=macosx*]" = Clingfy_Distribution;
 				SPARKLE_FEED_URL = "https://clingfy.com/updates/appcast.xml";
+				SWIFT_OBJC_BRIDGING_HEADER = Runner/Bridges/Runner-Bridging-Header.h;
 				SWIFT_VERSION = 5.0;
 			};
 			name = "Release-prod";
@@ -1342,6 +1405,7 @@
 				"PROVISIONING_PROFILE_SPECIFIER[sdk=macosx*]" = Clingfy_Dev_Distribution;
 				SPARKLE_FEED_URL = "https://dev.clingfy.com/updates/appcast.xml";
 				SWIFT_OPTIMIZATION_LEVEL = "-Onone";
+				SWIFT_OBJC_BRIDGING_HEADER = Runner/Bridges/Runner-Bridging-Header.h;
 				SWIFT_VERSION = 5.0;
 			};
 			name = "Debug-dev";
@@ -1443,6 +1507,7 @@
 				PROVISIONING_PROFILE_SPECIFIER = "";
 				"PROVISIONING_PROFILE_SPECIFIER[sdk=macosx*]" = Clingfy_Dev_Distribution;
 				SPARKLE_FEED_URL = "https://dev.clingfy.com/updates/appcast.xml";
+				SWIFT_OBJC_BRIDGING_HEADER = Runner/Bridges/Runner-Bridging-Header.h;
 				SWIFT_VERSION = 5.0;
 			};
 			name = "Release-dev";
@@ -1544,6 +1609,7 @@
 				PROVISIONING_PROFILE_SPECIFIER = "";
 				"PROVISIONING_PROFILE_SPECIFIER[sdk=macosx*]" = Clingfy_Dev_Distribution;
 				SPARKLE_FEED_URL = "https://dev.clingfy.com/updates/appcast.xml";
+				SWIFT_OBJC_BRIDGING_HEADER = Runner/Bridges/Runner-Bridging-Header.h;
 				SWIFT_VERSION = 5.0;
 			};
 			name = "Profile-dev";

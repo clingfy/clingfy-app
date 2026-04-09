@@ -1,39 +1,21 @@
 import 'package:clingfy/core/models/app_models.dart';
 import 'package:clingfy/l10n/app_localizations.dart';
+import 'package:clingfy/ui/platform/platform_kind.dart';
 import 'package:clingfy/ui/platform/widgets/app_form_row.dart';
 import 'package:clingfy/ui/platform/widgets/app_icon_button.dart';
-import 'package:clingfy/ui/platform/widgets/app_section.dart';
+import 'package:clingfy/ui/platform/widgets/app_inset_group.dart';
+import 'package:clingfy/ui/platform/widgets/app_settings_group.dart';
 import 'package:clingfy/ui/platform/widgets/app_sidebar_tokens.dart';
 import 'package:clingfy/ui/platform/widgets/app_toggle_row.dart';
 import 'package:clingfy/ui/platform/widgets/platform_dropdown.dart';
 import 'package:flutter/material.dart' hide PlatformMenuItem;
-import 'package:shared_preferences/shared_preferences.dart';
 
-const _micInputMonitorCompactKey = Key('mic_input_monitor_compact');
-const _micInputMonitorExpandedKey = Key('mic_input_monitor_expanded');
-const _micInputMonitorToggleKey = Key('mic_input_monitor_toggle');
-const _micInputMonitorBadgeKey = Key('mic_input_monitor_badge');
+const _micInputMeterKey = Key('mic_input_meter');
+const _micInputMeterTooltipKey = Key('mic_input_meter_tooltip');
+const _micInputMeterIconKey = Key('mic_input_meter_icon');
+const _micInputMeterFillKey = Key('mic_input_meter_fill');
 
-enum _MicMonitorVisibility {
-  hidden('hidden'),
-  compact('compact'),
-  expanded('expanded');
-
-  const _MicMonitorVisibility(this.storageValue);
-
-  final String storageValue;
-
-  static _MicMonitorVisibility? fromStorageValue(String? raw) {
-    for (final value in _MicMonitorVisibility.values) {
-      if (value.storageValue == raw) {
-        return value;
-      }
-    }
-    return null;
-  }
-}
-
-class RecordingAudioSection extends StatefulWidget {
+class RecordingAudioSection extends StatelessWidget {
   const RecordingAudioSection({
     super.key,
     required this.isRecording,
@@ -65,374 +47,235 @@ class RecordingAudioSection extends StatefulWidget {
   final ValueChanged<bool> onSystemAudioEnabledChanged;
   final ValueChanged<bool> onExcludeMicFromSystemAudioChanged;
 
-  @override
-  State<RecordingAudioSection> createState() => _RecordingAudioSectionState();
-}
-
-class _RecordingAudioSectionState extends State<RecordingAudioSection> {
-  static const _prefMicMonitorVisibility = 'pref.recordingMicMonitorVisibility';
-  static const _monitorAnimationDuration = Duration(milliseconds: 180);
-  static const _monitorInnerAnimationDuration = Duration(milliseconds: 140);
-
-  _MicMonitorVisibility _preferredVisibleMode = _MicMonitorVisibility.compact;
-  bool _didHydrateMonitorPreference = false;
+  String get _validAudioId =>
+      selectedAudioSourceId == '__none__' ||
+          audioSources.any((source) => source.id == selectedAudioSourceId)
+      ? selectedAudioSourceId
+      : '__none__';
 
   bool get _hasSelectedMicrophone =>
       _validAudioId != '__none__' && _validAudioId.isNotEmpty;
 
-  String get _validAudioId =>
-      widget.selectedAudioSourceId == '__none__' ||
-          widget.audioSources.any(
-            (source) => source.id == widget.selectedAudioSourceId,
-          )
-      ? widget.selectedAudioSourceId
-      : '__none__';
+  @override
+  Widget build(BuildContext context) {
+    final l10n = AppLocalizations.of(context)!;
 
-  _MicMonitorVisibility get _effectiveVisibility {
-    if (!_hasSelectedMicrophone) return _MicMonitorVisibility.hidden;
-    return _preferredVisibleMode;
+    return AppSettingsGroup(
+      title: l10n.audio,
+      trailing: AppIconButton(
+        tooltip: l10n.refreshAudio,
+        onPressed: (loadingAudio || isRecording) ? null : onRefreshAudio,
+        icon: Icons.refresh,
+      ),
+      children: loadingAudio
+          ? const [
+              Padding(
+                padding: EdgeInsets.all(16),
+                child: Center(child: CircularProgressIndicator()),
+              ),
+            ]
+          : [
+              AppFormRow(
+                label: l10n.inputDevice,
+                control: SizedBox(
+                  width: double.infinity,
+                  child: Row(
+                    children: [
+                      Expanded(
+                        child: PlatformDropdown<String>(
+                          value: _validAudioId,
+                          minWidth: 0,
+                          maxWidth: double.infinity,
+                          expand: true,
+                          items: [
+                            PlatformMenuItem(
+                              value: '__none__',
+                              label: l10n.noAudio,
+                            ),
+                            ...audioSources.map(
+                              (source) => PlatformMenuItem(
+                                value: source.id,
+                                label: source.name,
+                              ),
+                            ),
+                          ],
+                          onChanged: isRecording ? null : onAudioSourceChanged,
+                        ),
+                      ),
+                      const SizedBox(width: AppSidebarTokens.rowGap),
+                      _MicInputMeterIcon(
+                        hasSelectedMicrophone: _hasSelectedMicrophone,
+                        levelLinear: micInputLevelLinear,
+                        levelDbfs: micInputLevelDbfs,
+                        inputTooLow: micInputTooLow,
+                      ),
+                    ],
+                  ),
+                ),
+              ),
+              const SizedBox(height: AppSidebarTokens.rowGap),
+              AppToggleRow(
+                title: l10n.recordingSystemAudio,
+                value: systemAudioEnabled,
+                onChanged: isRecording ? null : onSystemAudioEnabledChanged,
+              ),
+              if (systemAudioEnabled && _hasSelectedMicrophone) ...[
+                const SizedBox(height: AppSidebarTokens.optionsSubgroupGap),
+                AppInsetGroup(
+                  children: [
+                    AppToggleRow(
+                      title: l10n.recordingExcludeMicFromSystemAudio,
+                      value: excludeMicFromSystemAudio,
+                      onChanged: isRecording
+                          ? null
+                          : onExcludeMicFromSystemAudioChanged,
+                    ),
+                  ],
+                ),
+              ],
+            ],
+    );
   }
+}
 
-  Duration get _animatedDuration =>
-      _didHydrateMonitorPreference ? _monitorAnimationDuration : Duration.zero;
+class _MicInputMeterIcon extends StatefulWidget {
+  const _MicInputMeterIcon({
+    required this.hasSelectedMicrophone,
+    required this.levelLinear,
+    required this.levelDbfs,
+    required this.inputTooLow,
+  });
 
-  Duration get _animatedInnerDuration => _didHydrateMonitorPreference
-      ? _monitorInnerAnimationDuration
-      : Duration.zero;
+  final bool hasSelectedMicrophone;
+  final double levelLinear;
+  final double levelDbfs;
+  final bool inputTooLow;
+
+  @override
+  State<_MicInputMeterIcon> createState() => _MicInputMeterIconState();
+}
+
+class _MicInputMeterIconState extends State<_MicInputMeterIcon> {
+  static const Duration _attackDuration = Duration(milliseconds: 90);
+  static const Duration _releaseDuration = Duration(milliseconds: 220);
+  static const double _minimumDisplayDbfs = -60.0;
+  static const double _iconSize = 18.0;
+  static const double _iconCanvasSize = 20.0;
+
+  late double _animatedLevel;
+  Duration _animationDuration = Duration.zero;
 
   @override
   void initState() {
     super.initState();
-    _loadMicMonitorPreference();
+    _animatedLevel = _visualLevelFor(widget);
   }
 
-  Future<void> _loadMicMonitorPreference() async {
-    final prefs = await SharedPreferences.getInstance();
-    final rawValue = prefs.getString(_prefMicMonitorVisibility);
-    final resolved =
-        _MicMonitorVisibility.fromStorageValue(rawValue) ??
-        _MicMonitorVisibility.compact;
-
-    if (!mounted) return;
-
-    setState(() {
-      _preferredVisibleMode = resolved == _MicMonitorVisibility.hidden
-          ? _MicMonitorVisibility.compact
-          : resolved;
-    });
-
-    WidgetsBinding.instance.addPostFrameCallback((_) {
-      if (!mounted) return;
-      setState(() {
-        _didHydrateMonitorPreference = true;
-      });
-    });
-  }
-
-  Future<void> _persistMicMonitorPreference(
-    _MicMonitorVisibility visibility,
-  ) async {
-    if (visibility == _MicMonitorVisibility.hidden) return;
-    final prefs = await SharedPreferences.getInstance();
-    await prefs.setString(_prefMicMonitorVisibility, visibility.storageValue);
-  }
-
-  void _setPreferredMicMonitorVisibility(_MicMonitorVisibility visibility) {
-    if (visibility == _MicMonitorVisibility.hidden ||
-        _preferredVisibleMode == visibility) {
+  @override
+  void didUpdateWidget(covariant _MicInputMeterIcon oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    final nextLevel = _visualLevelFor(widget);
+    if ((nextLevel - _animatedLevel).abs() < 0.0001) {
       return;
     }
 
     setState(() {
-      _preferredVisibleMode = visibility;
+      _animationDuration = nextLevel >= _animatedLevel
+          ? _attackDuration
+          : _releaseDuration;
+      _animatedLevel = nextLevel;
     });
-    _persistMicMonitorPreference(visibility);
   }
 
-  void _toggleExpanded() {
-    final next = _preferredVisibleMode == _MicMonitorVisibility.expanded
-        ? _MicMonitorVisibility.compact
-        : _MicMonitorVisibility.expanded;
-    _setPreferredMicMonitorVisibility(next);
+  double _visualLevelFor(_MicInputMeterIcon widget) {
+    if (!widget.hasSelectedMicrophone) {
+      return 0.0;
+    }
+
+    if (widget.levelDbfs.isFinite) {
+      final clampedDbfs = widget.levelDbfs
+          .clamp(_minimumDisplayDbfs, 0.0)
+          .toDouble();
+      final normalized =
+          ((clampedDbfs - _minimumDisplayDbfs) / -_minimumDisplayDbfs)
+              .clamp(0.0, 1.0)
+              .toDouble();
+
+      if (normalized <= 0.0) {
+        return 0.0;
+      }
+
+      return Curves.easeOutCubic.transform(normalized);
+    }
+
+    if (!widget.levelLinear.isFinite) {
+      return 0.0;
+    }
+
+    final fallbackLinear = widget.levelLinear.clamp(0.0, 1.0).toDouble();
+    if (fallbackLinear <= 0.0) {
+      return 0.0;
+    }
+
+    return Curves.easeOutCubic.transform(fallbackLinear);
   }
 
   @override
   Widget build(BuildContext context) {
     final l10n = AppLocalizations.of(context)!;
-
-    return AppSection(
-      title: l10n.audio,
-      titleSpacing: AppSidebarTokens.dropdownSectionTitleGap,
-      trailing: AppIconButton(
-        tooltip: l10n.refreshAudio,
-        onPressed: (widget.loadingAudio || widget.isRecording)
-            ? null
-            : widget.onRefreshAudio,
-        icon: Icons.refresh,
-      ),
-      child: widget.loadingAudio
-          ? const Padding(
-              padding: EdgeInsets.all(16),
-              child: Center(child: CircularProgressIndicator()),
-            )
-          : Column(
-              children: [
-                AppFormRow(
-                  label: l10n.inputDevice,
-                  control: PlatformDropdown<String>(
-                    value: _validAudioId,
-                    items: [
-                      PlatformMenuItem(value: '__none__', label: l10n.noAudio),
-                      ...widget.audioSources.map(
-                        (source) => PlatformMenuItem(
-                          value: source.id,
-                          label: source.name,
-                        ),
-                      ),
-                    ],
-                    onChanged: widget.isRecording
-                        ? null
-                        : widget.onAudioSourceChanged,
-                  ),
-                ),
-                AnimatedSwitcher(
-                  duration: _animatedDuration,
-                  switchInCurve: Curves.easeOutCubic,
-                  switchOutCurve: Curves.easeInCubic,
-                  transitionBuilder: (child, animation) {
-                    return FadeTransition(
-                      opacity: animation,
-                      child: SizeTransition(
-                        sizeFactor: animation,
-                        axisAlignment: -1,
-                        child: child,
-                      ),
-                    );
-                  },
-                  child: _effectiveVisibility == _MicMonitorVisibility.hidden
-                      ? const SizedBox.shrink(
-                          key: ValueKey('mic_monitor_hidden'),
-                        )
-                      : Padding(
-                          key: ValueKey<String>(
-                            'mic_monitor_${_effectiveVisibility.storageValue}',
-                          ),
-                          padding: const EdgeInsets.only(
-                            top: AppSidebarTokens.rowGap,
-                          ),
-                          child: AppFormRow(
-                            control: ConstrainedBox(
-                              constraints: const BoxConstraints(
-                                minWidth: AppSidebarTokens.controlMinWidth,
-                                maxWidth: AppSidebarTokens.controlMaxWidth,
-                              ),
-                              child: _MicMonitorContainer(
-                                visibility: _effectiveVisibility,
-                                levelLinear: widget.micInputLevelLinear,
-                                levelDbfs: widget.micInputLevelDbfs,
-                                inputTooLow: widget.micInputTooLow,
-                                onToggleExpanded: _toggleExpanded,
-                                sizeAnimationDuration: _animatedDuration,
-                                contentAnimationDuration:
-                                    _animatedInnerDuration,
-                              ),
-                            ),
-                          ),
-                        ),
-                ),
-                const SizedBox(height: AppSidebarTokens.rowGap),
-                AppToggleRow(
-                  title: l10n.recordingSystemAudio,
-                  value: widget.systemAudioEnabled,
-                  onChanged: widget.isRecording
-                      ? null
-                      : widget.onSystemAudioEnabledChanged,
-                ),
-                if (widget.systemAudioEnabled &&
-                    _validAudioId != '__none__') ...[
-                  const SizedBox(height: AppSidebarTokens.rowGap),
-                  AppToggleRow(
-                    title: l10n.recordingExcludeMicFromSystemAudio,
-                    value: widget.excludeMicFromSystemAudio,
-                    onChanged: widget.isRecording
-                        ? null
-                        : widget.onExcludeMicFromSystemAudioChanged,
-                  ),
-                ],
-              ],
-            ),
-    );
-  }
-}
-
-class _MicMonitorContainer extends StatelessWidget {
-  const _MicMonitorContainer({
-    required this.visibility,
-    required this.levelLinear,
-    required this.levelDbfs,
-    required this.inputTooLow,
-    required this.onToggleExpanded,
-    required this.sizeAnimationDuration,
-    required this.contentAnimationDuration,
-  });
-
-  final _MicMonitorVisibility visibility;
-  final double levelLinear;
-  final double levelDbfs;
-  final bool inputTooLow;
-  final VoidCallback onToggleExpanded;
-  final Duration sizeAnimationDuration;
-  final Duration contentAnimationDuration;
-
-  @override
-  Widget build(BuildContext context) {
-    return AnimatedSize(
-      duration: sizeAnimationDuration,
-      curve: Curves.easeOutCubic,
-      alignment: Alignment.topCenter,
-      child: AnimatedSwitcher(
-        duration: contentAnimationDuration,
-        switchInCurve: Curves.easeOutCubic,
-        switchOutCurve: Curves.easeInCubic,
-        child: visibility == _MicMonitorVisibility.expanded
-            ? _MicInputMonitorPanel(
-                key: const ValueKey('mic_monitor_expanded'),
-                levelLinear: levelLinear,
-                levelDbfs: levelDbfs,
-                inputTooLow: inputTooLow,
-                onCollapse: onToggleExpanded,
-              )
-            : _MicMonitorCompactRow(
-                key: const ValueKey('mic_monitor_compact'),
-                levelLinear: levelLinear,
-                levelDbfs: levelDbfs,
-                inputTooLow: inputTooLow,
-                onExpand: onToggleExpanded,
-              ),
-      ),
-    );
-  }
-}
-
-class _MicMonitorCompactRow extends StatelessWidget {
-  const _MicMonitorCompactRow({
-    super.key,
-    required this.levelLinear,
-    required this.levelDbfs,
-    required this.inputTooLow,
-    required this.onExpand,
-  });
-
-  final double levelLinear;
-  final double levelDbfs;
-  final bool inputTooLow;
-  final VoidCallback onExpand;
-
-  @override
-  Widget build(BuildContext context) {
-    final theme = Theme.of(context);
-    final l10n = AppLocalizations.of(context)!;
-    final meterState = _MicMonitorVisualState.fromContext(
+    final visualState = _MicInputMeterVisualState.fromContext(
       context: context,
-      hasSelectedMicrophone: true,
-      inputTooLow: inputTooLow,
+      hasSelectedMicrophone: widget.hasSelectedMicrophone,
     );
-    final valueStyle = AppSidebarTokens.valueStyle(theme).copyWith(
-      fontSize: 11,
-      fontWeight: FontWeight.w700,
-      fontFeatures: const [FontFeature.tabularFigures()],
-    );
-    final chromeColor = inputTooLow
-        ? theme.colorScheme.error.withValues(alpha: 0.06)
-        : theme.colorScheme.surfaceContainerHighest.withValues(alpha: 0.2);
-    final borderColor = inputTooLow
-        ? theme.colorScheme.error.withValues(alpha: 0.14)
-        : theme.dividerColor.withValues(alpha: 0.1);
-    final trailing = inputTooLow
-        ? _MicMonitorStatusBadge(
-            key: const ValueKey('compact_low_input_badge'),
-            label: l10n.micInputMonitorLowBadge,
-            compact: true,
-          )
-        : Text(
-            '${levelDbfs.toStringAsFixed(1)} dBFS',
-            key: const ValueKey('compact_dbfs_value'),
-            style: valueStyle,
-            maxLines: 1,
-            overflow: TextOverflow.ellipsis,
+
+    final controlSize = isMac()
+        ? AppSidebarTokens.controlHeightMac
+        : AppSidebarTokens.controlHeightDefault;
+
+    final tooltipMessage = !widget.hasSelectedMicrophone
+        ? l10n.micInputIndicatorDisabledTooltip
+        : widget.inputTooLow
+        ? l10n.micInputIndicatorLowTooltip
+        : l10n.micInputIndicatorLiveTooltip(
+            widget.levelDbfs.toStringAsFixed(1),
           );
 
     return Tooltip(
-      message: l10n.micInputMonitorExpandTooltip,
-      child: MouseRegion(
-        cursor: SystemMouseCursors.click,
-        child: GestureDetector(
-          key: _micInputMonitorCompactKey,
-          onTap: onExpand,
-          behavior: HitTestBehavior.opaque,
-          child: Container(
-            height: 40,
-            padding: const EdgeInsets.symmetric(horizontal: 12),
+      key: _micInputMeterTooltipKey,
+      message: tooltipMessage,
+      excludeFromSemantics: true,
+      child: Semantics(
+        container: true,
+        label: tooltipMessage,
+        value: tooltipMessage,
+        child: SizedBox(
+          width: controlSize,
+          height: controlSize,
+          child: DecoratedBox(
+            key: _micInputMeterKey,
             decoration: BoxDecoration(
-              color: chromeColor,
+              color: visualState.chromeColor,
               borderRadius: BorderRadius.circular(10),
-              border: Border.all(color: borderColor),
+              border: Border.all(color: visualState.borderColor),
             ),
-            child: Row(
-              children: [
-                Icon(
-                  Icons.mic_none_rounded,
-                  size: 15,
-                  color: theme.colorScheme.onSurfaceVariant,
-                ),
-                Expanded(
-                  child: Padding(
-                    padding: const EdgeInsets.only(left: 8, right: 8),
-                    child: Row(
-                      children: [
-                        Flexible(
-                          child: Text(
-                            l10n.micInputMonitorTitle,
-                            maxLines: 1,
-                            overflow: TextOverflow.ellipsis,
-                            style: AppSidebarTokens.valueStyle(theme).copyWith(
-                              color: theme.colorScheme.onSurface,
-                              fontWeight: FontWeight.w600,
-                              fontSize: 12,
-                            ),
-                          ),
-                        ),
-                        const SizedBox(width: 8),
-                        Expanded(
-                          child: ClipRRect(
-                            borderRadius: BorderRadius.circular(999),
-                            child: LinearProgressIndicator(
-                              minHeight: 6,
-                              value: levelLinear.clamp(0.0, 1.0),
-                              backgroundColor: meterState.backgroundColor,
-                              valueColor: AlwaysStoppedAnimation<Color>(
-                                meterState.fillColor,
-                              ),
-                            ),
-                          ),
-                        ),
-                      ],
-                    ),
-                  ),
-                ),
-                AnimatedSwitcher(
-                  duration: const Duration(milliseconds: 140),
-                  switchInCurve: Curves.easeOutCubic,
-                  switchOutCurve: Curves.easeInCubic,
-                  child: trailing,
-                ),
-                const SizedBox(width: 2),
-                _MicMonitorChevronButton(
-                  icon: Icons.keyboard_arrow_down_rounded,
-                  tooltip: l10n.micInputMonitorExpandTooltip,
-                  onPressed: onExpand,
-                ),
-              ],
+            child: Center(
+              child: TweenAnimationBuilder<double>(
+                tween: Tween<double>(end: _animatedLevel),
+                duration: _animationDuration,
+                curve: Curves.easeOutCubic,
+                builder: (context, animatedLevel, _) {
+                  final clampedLevel = animatedLevel.clamp(0.0, 1.0).toDouble();
+
+                  return _MicFilledGlyph(
+                    iconSize: _iconSize,
+                    canvasSize: _iconCanvasSize,
+                    level: clampedLevel,
+                    baseColor: visualState.glyphTrackColor,
+                    fillColor: visualState.glyphFillColor,
+                    outlineColor: visualState.outlineColor,
+                  );
+                },
+              ),
             ),
           ),
         ),
@@ -441,232 +284,143 @@ class _MicMonitorCompactRow extends StatelessWidget {
   }
 }
 
-class _MicInputMonitorPanel extends StatelessWidget {
-  const _MicInputMonitorPanel({
-    super.key,
-    required this.levelLinear,
-    required this.levelDbfs,
-    required this.inputTooLow,
-    required this.onCollapse,
+class _MicFilledGlyph extends StatelessWidget {
+  const _MicFilledGlyph({
+    required this.iconSize,
+    required this.canvasSize,
+    required this.level,
+    required this.baseColor,
+    required this.fillColor,
+    required this.outlineColor,
   });
 
-  final double levelLinear;
-  final double levelDbfs;
-  final bool inputTooLow;
-  final VoidCallback onCollapse;
+  final double iconSize;
+  final double canvasSize;
+  final double level;
+  final Color baseColor;
+  final Color fillColor;
+  final Color outlineColor;
 
   @override
   Widget build(BuildContext context) {
-    final theme = Theme.of(context);
-    final l10n = AppLocalizations.of(context)!;
-    final panelTitleStyle = AppSidebarTokens.rowTitleStyle(
-      theme,
-    ).copyWith(fontSize: 12, fontWeight: FontWeight.w600);
-    final valueStyle = AppSidebarTokens.valueStyle(theme);
-    final helperStyle = AppSidebarTokens.helperStyle(theme);
-    final meterState = _MicMonitorVisualState.fromContext(
-      context: context,
-      hasSelectedMicrophone: true,
-      inputTooLow: inputTooLow,
-    );
-    final footerText = inputTooLow
-        ? l10n.micInputMonitorLowHint
-        : l10n.micInputMonitorLiveHint;
+    final clampedLevel = level.clamp(0.0, 1.0).toDouble();
 
-    return Container(
-      key: _micInputMonitorExpandedKey,
-      height: 96,
-      decoration: BoxDecoration(
-        color: theme.colorScheme.surfaceContainerHighest.withValues(
-          alpha: 0.35,
-        ),
-        borderRadius: BorderRadius.circular(12),
-        border: Border.all(color: theme.dividerColor.withValues(alpha: 0.12)),
-      ),
-      child: Padding(
-        padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
-        child: Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            Row(
-              children: [
-                Expanded(
-                  child: Text(
-                    l10n.micInputMonitorTitle,
-                    maxLines: 1,
-                    overflow: TextOverflow.ellipsis,
-                    style: panelTitleStyle,
-                  ),
-                ),
-                const SizedBox(width: AppSidebarTokens.compactGap),
-                AnimatedSwitcher(
-                  duration: const Duration(milliseconds: 140),
-                  switchInCurve: Curves.easeOutCubic,
-                  switchOutCurve: Curves.easeInCubic,
-                  child: inputTooLow
-                      ? _MicMonitorStatusBadge(
-                          key: const ValueKey('expanded_low_input_badge'),
-                          label: l10n.micInputMonitorLowBadge,
-                        )
-                      : Text(
-                          '${levelDbfs.toStringAsFixed(1)} dBFS',
-                          key: const ValueKey('expanded_dbfs_value'),
-                          style: valueStyle.copyWith(
-                            fontFeatures: const [FontFeature.tabularFigures()],
-                          ),
-                        ),
-                ),
-                const SizedBox(width: 4),
-                _MicMonitorChevronButton(
-                  tooltip: l10n.micInputMonitorCollapseTooltip,
-                  icon: Icons.keyboard_arrow_up_rounded,
-                  onPressed: onCollapse,
-                ),
-              ],
+    return SizedBox.square(
+      dimension: canvasSize,
+      child: Stack(
+        alignment: Alignment.center,
+        children: [
+          Icon(
+            Icons.mic_rounded,
+            key: _micInputMeterIconKey,
+            size: iconSize,
+            color: baseColor,
+          ),
+          if (clampedLevel > 0.0)
+            _MicLiveFill(
+              key: _micInputMeterFillKey,
+              iconSize: iconSize,
+              level: clampedLevel,
+              color: fillColor,
             ),
-            const SizedBox(height: 6),
-            ClipRRect(
-              borderRadius: BorderRadius.circular(999),
-              child: LinearProgressIndicator(
-                minHeight: 8,
-                value: levelLinear.clamp(0.0, 1.0),
-                backgroundColor: meterState.backgroundColor,
-                valueColor: AlwaysStoppedAnimation<Color>(meterState.fillColor),
-              ),
-            ),
-            const SizedBox(height: 6),
-            SizedBox(
-              height: 24,
-              child: Align(
-                alignment: Alignment.topLeft,
-                child: Text(
-                  footerText,
-                  maxLines: 2,
-                  overflow: TextOverflow.ellipsis,
-                  style: helperStyle.copyWith(color: meterState.footerColor),
-                ),
-              ),
-            ),
-          ],
-        ),
+          Icon(Icons.mic_none_rounded, size: iconSize, color: outlineColor),
+        ],
       ),
     );
   }
 }
 
-class _MicMonitorChevronButton extends StatelessWidget {
-  const _MicMonitorChevronButton({
-    required this.icon,
-    required this.tooltip,
-    this.onPressed,
+class _MicLiveFill extends StatelessWidget {
+  const _MicLiveFill({
+    super.key,
+    required this.iconSize,
+    required this.level,
+    required this.color,
   });
 
-  final IconData icon;
-  final String tooltip;
-  final VoidCallback? onPressed;
+  final double iconSize;
+  final double level;
+  final Color color;
 
   @override
   Widget build(BuildContext context) {
-    final theme = Theme.of(context);
+    final clampedLevel = level.clamp(0.0, 1.0).toDouble();
 
-    if (onPressed == null) {
-      return Icon(
-        icon,
-        key: _micInputMonitorToggleKey,
-        size: 18,
-        color: theme.colorScheme.onSurfaceVariant,
-      );
+    if (clampedLevel >= 0.999) {
+      return Icon(Icons.mic_rounded, size: iconSize, color: color);
     }
 
-    return AppIconButton(
-      key: _micInputMonitorToggleKey,
-      tooltip: tooltip,
-      icon: icon,
-      size: 18,
-      color: theme.colorScheme.onSurfaceVariant,
-      onPressed: onPressed,
+    final transitionStart = (clampedLevel - 0.001).clamp(0.0, 1.0).toDouble();
+    final transitionEnd = (clampedLevel + 0.001).clamp(0.0, 1.0).toDouble();
+
+    return ShaderMask(
+      blendMode: BlendMode.srcIn,
+      shaderCallback: (bounds) {
+        return LinearGradient(
+          begin: Alignment.bottomCenter,
+          end: Alignment.topCenter,
+          colors: [color, color, Colors.transparent, Colors.transparent],
+          stops: [0.0, transitionStart, transitionEnd, 1.0],
+        ).createShader(bounds);
+      },
+      child: Icon(Icons.mic_rounded, size: iconSize, color: Colors.white),
     );
   }
 }
 
-class _MicMonitorStatusBadge extends StatelessWidget {
-  const _MicMonitorStatusBadge({
-    super.key,
-    required this.label,
-    this.compact = false,
+class _MicInputMeterVisualState {
+  const _MicInputMeterVisualState({
+    required this.outlineColor,
+    required this.chromeColor,
+    required this.borderColor,
+    required this.glyphTrackColor,
+    required this.glyphFillColor,
   });
 
-  final String label;
-  final bool compact;
+  final Color outlineColor;
+  final Color chromeColor;
+  final Color borderColor;
+  final Color glyphTrackColor;
+  final Color glyphFillColor;
 
-  @override
-  Widget build(BuildContext context) {
-    final theme = Theme.of(context);
-
-    return Container(
-      key: _micInputMonitorBadgeKey,
-      padding: EdgeInsets.symmetric(
-        horizontal: compact ? 6 : 8,
-        vertical: compact ? 3 : 4,
-      ),
-      decoration: BoxDecoration(
-        color: theme.colorScheme.error.withValues(alpha: 0.10),
-        borderRadius: BorderRadius.circular(999),
-      ),
-      child: Text(
-        label,
-        maxLines: 1,
-        overflow: TextOverflow.ellipsis,
-        style: AppSidebarTokens.valueStyle(theme).copyWith(
-          fontSize: compact ? 10 : 11,
-          fontWeight: FontWeight.w700,
-          color: theme.colorScheme.error,
-        ),
-      ),
-    );
-  }
-}
-
-class _MicMonitorVisualState {
-  const _MicMonitorVisualState({
-    required this.fillColor,
-    required this.backgroundColor,
-    required this.footerColor,
-  });
-
-  final Color fillColor;
-  final Color backgroundColor;
-  final Color footerColor;
-
-  factory _MicMonitorVisualState.fromContext({
+  factory _MicInputMeterVisualState.fromContext({
     required BuildContext context,
     required bool hasSelectedMicrophone,
-    required bool inputTooLow,
   }) {
     final theme = Theme.of(context);
+    final isDark = theme.brightness == Brightness.dark;
+    final activeFillColor = isDark
+        ? const Color(0xFF30D158)
+        : const Color(0xFF34C759);
 
     if (!hasSelectedMicrophone) {
-      return _MicMonitorVisualState(
-        fillColor: theme.colorScheme.onSurfaceVariant.withValues(alpha: 0.28),
-        backgroundColor: theme.colorScheme.surfaceContainerHighest.withValues(
-          alpha: 0.75,
+      return _MicInputMeterVisualState(
+        outlineColor: theme.colorScheme.onSurfaceVariant.withValues(
+          alpha: 0.62,
         ),
-        footerColor: theme.colorScheme.onSurfaceVariant,
+        chromeColor: theme.colorScheme.surfaceContainerHighest.withValues(
+          alpha: 0.34,
+        ),
+        borderColor: theme.dividerColor.withValues(alpha: 0.14),
+        glyphTrackColor: theme.colorScheme.onSurfaceVariant.withValues(
+          alpha: isDark ? 0.22 : 0.14,
+        ),
+        glyphFillColor: theme.colorScheme.onSurfaceVariant.withValues(
+          alpha: isDark ? 0.22 : 0.16,
+        ),
       );
     }
 
-    if (inputTooLow) {
-      return _MicMonitorVisualState(
-        fillColor: theme.colorScheme.error,
-        backgroundColor: theme.colorScheme.error.withValues(alpha: 0.12),
-        footerColor: theme.colorScheme.error,
-      );
-    }
-
-    return _MicMonitorVisualState(
-      fillColor: theme.colorScheme.primary,
-      backgroundColor: theme.colorScheme.surfaceContainerHighest,
-      footerColor: theme.colorScheme.onSurfaceVariant,
+    return _MicInputMeterVisualState(
+      outlineColor: theme.colorScheme.onSurfaceVariant.withValues(alpha: 0.92),
+      chromeColor: theme.colorScheme.surfaceContainerHighest.withValues(
+        alpha: 0.48,
+      ),
+      borderColor: theme.dividerColor.withValues(alpha: 0.18),
+      glyphTrackColor: theme.colorScheme.onSurfaceVariant.withValues(
+        alpha: isDark ? 0.26 : 0.18,
+      ),
+      glyphFillColor: activeFillColor,
     );
   }
 }

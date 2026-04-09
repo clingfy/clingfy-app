@@ -1,6 +1,8 @@
 import 'package:clingfy/l10n/app_localizations.dart';
 import 'package:clingfy/ui/platform/platform_kind.dart';
+import 'package:clingfy/ui/platform/widgets/app_inset_group.dart';
 import 'package:clingfy/ui/platform/widgets/app_inline_notice.dart';
+import 'package:clingfy/ui/platform/widgets/app_settings_group.dart';
 import 'package:clingfy/ui/platform/widgets/app_sidebar_tokens.dart';
 import 'package:clingfy/ui/platform/widgets/app_slider.dart';
 import 'package:clingfy/ui/platform/widgets/app_slider_row.dart';
@@ -33,39 +35,48 @@ class PostCursorSection extends StatelessWidget {
     return Column(
       crossAxisAlignment: CrossAxisAlignment.stretch,
       children: [
-        AppToggleRow(
-          title: l10n.showCursor,
-          infoTooltip: l10n.toggleCursorVisibility,
-          value: showCursor && cursorAvailable,
-          onChanged: cursorAvailable ? onCursorShowChanged : null,
-        ),
-        if (!cursorAvailable) ...[
-          const SizedBox(height: AppSidebarTokens.compactGap),
-          AppInlineNotice(
-            message: l10n.cursorDataMissing,
-            variant: AppInlineNoticeVariant.warning,
-          ),
-        ],
-        if (showCursor && cursorAvailable) ...[
-          const SizedBox(
-            key: Key('post_cursor_size_gap'),
-            height: AppSidebarTokens.optionsSubgroupGap,
-          ),
-          AppSliderRow(
-            label: l10n.cursorSize,
-            valueText: '${cursorSize.toStringAsFixed(1)}x',
-            slider: _buildSidebarSlider(
-              context,
-              value: cursorSize,
-              min: 0.5,
-              max: 3.0,
-              divisions: 25,
-              onChanged: onCursorSizeChanged,
-              onChangeEnd: onCursorSizeChangeEnd,
-              accentColor: accentColor,
+        AppSettingsGroup(
+          title: l10n.cursor,
+          children: [
+            AppToggleRow(
+              title: l10n.showCursor,
+              infoTooltip: l10n.toggleCursorVisibility,
+              value: showCursor && cursorAvailable,
+              onChanged: cursorAvailable ? onCursorShowChanged : null,
             ),
-          ),
-        ],
+            if (!cursorAvailable) ...[
+              const SizedBox(height: AppSidebarTokens.compactGap),
+              AppInlineNotice(
+                message: l10n.cursorDataMissing,
+                variant: AppInlineNoticeVariant.warning,
+              ),
+            ],
+            if (showCursor && cursorAvailable) ...[
+              const SizedBox(
+                key: Key('post_cursor_size_gap'),
+                height: AppSidebarTokens.optionsSubgroupGap,
+              ),
+              AppInsetGroup(
+                children: [
+                  AppSliderRow(
+                    label: l10n.cursorSize,
+                    valueText: '${cursorSize.toStringAsFixed(1)}x',
+                    slider: _buildSidebarSlider(
+                      context,
+                      value: cursorSize,
+                      min: 0.5,
+                      max: 3.0,
+                      divisions: 25,
+                      onChanged: onCursorSizeChanged,
+                      onChangeEnd: onCursorSizeChangeEnd,
+                      accentColor: accentColor,
+                    ),
+                  ),
+                ],
+              ),
+            ],
+          ],
+        ),
       ],
     );
   }

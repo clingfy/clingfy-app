@@ -33,6 +33,9 @@ class AppLocalizationsAr extends AppLocalizations {
   String get recordTarget => 'هدف التسجيل';
 
   @override
+  String get captureSource => 'مصدر الالتقاط';
+
+  @override
   String get chosenScreen => 'الشاشة المختارة';
 
   @override
@@ -115,6 +118,9 @@ class AppLocalizationsAr extends AppLocalizations {
   String get audio => 'الصوت';
 
   @override
+  String get pointer => 'المؤشر';
+
+  @override
   String get refreshAudio => 'تحديث أجهزة الصوت (⌘R)';
 
   @override
@@ -134,6 +140,9 @@ class AppLocalizationsAr extends AppLocalizations {
 
   @override
   String get recordingQuality => 'جودة التسجيل';
+
+  @override
+  String get quality => 'الجودة';
 
   @override
   String get resolution => 'الدقة';
@@ -218,6 +227,9 @@ class AppLocalizationsAr extends AppLocalizations {
   String get duration => 'المدة';
 
   @override
+  String get startAndStop => 'البدء والإيقاف';
+
+  @override
   String get autoStopAfter => 'إيقاف تلقائي بعد';
 
   @override
@@ -258,6 +270,18 @@ class AppLocalizationsAr extends AppLocalizations {
 
   @override
   String get overlayFaceCamVisibility => 'الظهور (Face-cam)';
+
+  @override
+  String get visibilityAndPlacement => 'الظهور والموضع';
+
+  @override
+  String get appearance => 'المظهر';
+
+  @override
+  String get style => 'النمط';
+
+  @override
+  String get effects => 'التأثيرات';
 
   @override
   String get visibility => 'الظهور';
@@ -604,6 +628,15 @@ class AppLocalizationsAr extends AppLocalizations {
   String get exportSettings => 'Export Settings';
 
   @override
+  String get canvas => 'اللوحة';
+
+  @override
+  String get canvasSettings => 'إعدادات اللوحة';
+
+  @override
+  String get cameraSettings => 'إعدادات الكاميرا';
+
+  @override
   String get postProcessing => 'المعالجة اللاحقة';
 
   @override
@@ -611,6 +644,21 @@ class AppLocalizationsAr extends AppLocalizations {
 
   @override
   String get collapsePane => 'طي اللوحة';
+
+  @override
+  String get showOptions => 'إظهار الخيارات';
+
+  @override
+  String get hideOptions => 'إخفاء الخيارات';
+
+  @override
+  String get canvasFormat => 'تنسيق اللوحة';
+
+  @override
+  String get framing => 'الإطار';
+
+  @override
+  String get background => 'الخلفية';
 
   @override
   String get size => 'الحجم';
@@ -652,10 +700,16 @@ class AppLocalizationsAr extends AppLocalizations {
   String get cursorSize => 'حجم المؤشر';
 
   @override
+  String get cursor => 'المؤشر';
+
+  @override
   String get zoomInEffect => 'تأثير التكبير';
 
   @override
   String get manageZoomEffects => 'إدارة تأثيرات التكبير';
+
+  @override
+  String get zoom => 'التكبير';
 
   @override
   String get intensity => 'الشدة';
@@ -664,7 +718,93 @@ class AppLocalizationsAr extends AppLocalizations {
   String get layout => 'التخطيط';
 
   @override
-  String get effects => 'التأثيرات';
+  String get loudness => 'مستوى الصوت';
+
+  @override
+  String get placement => 'الموضع';
+
+  @override
+  String get motion => 'الحركة';
+
+  @override
+  String get zoomResponse => 'استجابة التكبير';
+
+  @override
+  String get fixed => 'ثابت';
+
+  @override
+  String get scaleWithZoom => 'يتدرج مع التكبير';
+
+  @override
+  String get zoomScale => 'مقياس التكبير';
+
+  @override
+  String get intro => 'مقدمة';
+
+  @override
+  String get outro => 'خاتمة';
+
+  @override
+  String get introDuration => 'مدة المقدمة';
+
+  @override
+  String get outroDuration => 'مدة الخاتمة';
+
+  @override
+  String get fade => 'تلاشي';
+
+  @override
+  String get pop => 'انبثاق';
+
+  @override
+  String get slide => 'انزلاق';
+
+  @override
+  String get shrink => 'تصغير';
+
+  @override
+  String get zoomEmphasis => 'تعزيز التكبير';
+
+  @override
+  String get pulse => 'نبضة';
+
+  @override
+  String get pulseStrength => 'شدة النبضة';
+
+  @override
+  String get cameraNoAssetNotice =>
+      'لم يتم تسجيل مسار كاميرا منفصل لهذا المقطع.';
+
+  @override
+  String get cameraPlacementHelper => 'اضبط أو حرّك موضع الكاميرا على الشاشة.';
+
+  @override
+  String get cameraBackgroundBehindHint =>
+      'تخطيط الخلفية يملأ اللوحة بالكامل. اختر نقطة أو اسحب المقبض للعودة إلى موضع التراكب.';
+
+  @override
+  String get topLeft => 'أعلى اليسار';
+
+  @override
+  String get topCenter => 'أعلى الوسط';
+
+  @override
+  String get topRight => 'أعلى اليمين';
+
+  @override
+  String get centerLeft => 'وسط اليسار';
+
+  @override
+  String get centerRight => 'وسط اليمين';
+
+  @override
+  String get bottomLeft => 'أسفل اليسار';
+
+  @override
+  String get bottomCenter => 'أسفل الوسط';
+
+  @override
+  String get bottomRight => 'أسفل اليمين';
 
   @override
   String get refreshDevicesTooltip => 'تحديث الأجهزة (⌘R)';
@@ -759,6 +899,9 @@ class AppLocalizationsAr extends AppLocalizations {
   String get classic43 => 'كلاسيك (4:3)';
 
   @override
+  String get classic => 'كلاسيك';
+
+  @override
   String get square11 => 'مربع (1:1)';
 
   @override
@@ -766,6 +909,12 @@ class AppLocalizationsAr extends AppLocalizations {
 
   @override
   String get reel916 => 'ريل (9:16)';
+
+  @override
+  String get wide => 'عريض';
+
+  @override
+  String get vertical => 'عمودي';
 
   @override
   String get vertical4k => 'Vertical 4K (2160x3840)';
@@ -1039,11 +1188,18 @@ class AppLocalizationsAr extends AppLocalizations {
       'اعرض تأكيدًا قبل إغلاق التسجيل الحالي إذا لم يتم تصديره بعد.';
 
   @override
-  String get closeUnexportedRecordingTitle => 'هل تريد إغلاق هذا التسجيل؟';
+  String get closeUnexportedRecordingTitle =>
+      'هل تريد إغلاق التسجيل بدون تصدير؟';
 
   @override
   String get closeUnexportedRecordingMessage =>
-      'لم تقم بتصدير هذا التسجيل بعد. إذا أغلقته الآن، ستفقد الوصول إليه في الجلسة الحالية.';
+      'لم يتم تصدير هذا التسجيل بعد. إذا أغلقته الآن، فستفقد الوصول إليه في الجلسة الحالية.';
+
+  @override
+  String get keepEditing => 'متابعة التحرير';
+
+  @override
+  String get closeWithoutExporting => 'إغلاق بدون تصدير';
 
   @override
   String get doNotShowAgain => 'عدم الإظهار مرة أخرى';
@@ -1509,6 +1665,13 @@ class AppLocalizationsAr extends AppLocalizations {
   String get recordingSaved => 'تم حفظ التسجيل:';
 
   @override
+  String get externalProjectOpenBlocked =>
+      'أنهِ التسجيل الحالي أو انتقال المعاينة قبل فتح مشروع آخر.';
+
+  @override
+  String get externalProjectOpenFailed => 'تعذّر فتح مشروع Clingfy هذا.';
+
+  @override
   String get exportSuccess => 'تم التصدير بنجاح:';
 
   @override
@@ -1530,33 +1693,16 @@ class AppLocalizationsAr extends AppLocalizations {
   String get micInputLevel => 'مستوى دخل الميكروفون';
 
   @override
-  String get micInputMonitorTitle => 'مراقبة الإدخال';
-
-  @override
-  String get micInputMonitorInactive => 'غير نشط';
-
-  @override
-  String get micInputMonitorDisabledHint =>
+  String get micInputIndicatorDisabledTooltip =>
       'اختر ميكروفونًا لمعاينة مستوى الإدخال.';
 
   @override
-  String get micInputMonitorLiveHint => 'تتم الآن مراقبة الإدخال المباشر.';
+  String micInputIndicatorLiveTooltip(String dbfs) {
+    return 'مستوى إدخال الميكروفون: $dbfs dBFS';
+  }
 
   @override
-  String get micInputMonitorLowBadge => 'إدخال منخفض';
-
-  @override
-  String get micInputMonitorLowHint =>
-      'ارفع مستوى الكسب أو اقترب من الميكروفون.';
-
-  @override
-  String get micInputMonitorExpandTooltip => 'إظهار مراقب الإدخال التفصيلي';
-
-  @override
-  String get micInputMonitorCollapseTooltip => 'إخفاء مراقب الإدخال التفصيلي';
-
-  @override
-  String get micInputTooLowWarning =>
+  String get micInputIndicatorLowTooltip =>
       'مستوى إدخال الميكروفون منخفض جدًا. ارفع مستوى الإدخال أو اقترب من الميكروفون.';
 
   @override

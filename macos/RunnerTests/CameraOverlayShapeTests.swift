@@ -74,6 +74,69 @@ final class CameraOverlayShapeTests: XCTestCase {
     XCTAssertNotEqual(pathElementCount(squirclePath), pathElementCount(roundedRectPath))
   }
 
+  func testEffectPaddingExpandsForStrongHighlightAndShadow() {
+    let effectPadding = cameraOverlayEffectPadding(
+      border: 1,
+      borderWidth: 4,
+      shadow: 3,
+      recordingHighlightEnabled: true,
+      recordingHighlightStrength: 1.0
+    )
+
+    XCTAssertGreaterThan(effectPadding, 6)
+    XCTAssertGreaterThanOrEqual(effectPadding, cameraOverlayShadowOutset(for: 3))
+  }
+
+  func testInsetRectShrinksByHalfStrokeWidthAndRemainsNonEmpty() {
+    let rect = CGRect(x: 10, y: 20, width: 220, height: 160)
+
+    let insetRect = cameraOverlayInsetRect(rect, strokeWidth: 12)
+
+    XCTAssertEqual(insetRect.minX, rect.minX + 6, accuracy: 0.001)
+    XCTAssertEqual(insetRect.minY, rect.minY + 6, accuracy: 0.001)
+    XCTAssertEqual(insetRect.maxX, rect.maxX - 6, accuracy: 0.001)
+    XCTAssertEqual(insetRect.maxY, rect.maxY - 6, accuracy: 0.001)
+    XCTAssertGreaterThan(insetRect.width, 0)
+    XCTAssertGreaterThan(insetRect.height, 0)
+  }
+
+  func testInsetRoundedRectPathBoundingBoxShrinksWithStrokeInset() {
+    let overlay = CameraOverlay()
+    overlay.roundness = 0.2
+    let rect = CGRect(x: 0, y: 0, width: 220, height: 160)
+
+    let clipPath = overlay.getPath(for: .roundedRect, rect: rect)
+    let insetPath = overlay.getPath(
+      for: .roundedRect,
+      rect: cameraOverlayInsetRect(rect, strokeWidth: 12)
+    )
+
+    XCTAssertLessThan(insetPath.boundingBoxOfPath.width, clipPath.boundingBoxOfPath.width)
+    XCTAssertLessThan(insetPath.boundingBoxOfPath.height, clipPath.boundingBoxOfPath.height)
+  }
+
+  func testRingShadowPathUsesStrokedGeometryWhenLineWidthIsPositive() {
+    let path = CGPath(
+      roundedRect: CGRect(x: 0, y: 0, width: 220, height: 160),
+      cornerWidth: 24,
+      cornerHeight: 24,
+      transform: nil
+    )
+
+    let shadowPath = cameraOverlayRingShadowPath(path: path, lineWidth: 10)
+
+    XCTAssertNotNil(shadowPath)
+    XCTAssertFalse(shadowPath?.isEmpty ?? true)
+    XCTAssertGreaterThanOrEqual(
+      shadowPath?.boundingBoxOfPath.width ?? 0,
+      path.boundingBoxOfPath.width
+    )
+    XCTAssertGreaterThanOrEqual(
+      shadowPath?.boundingBoxOfPath.height ?? 0,
+      path.boundingBoxOfPath.height
+    )
+  }
+
   private func clearShapePreferences() {
     defaults.removeObject(forKey: PrefKey.overlayShapeId)
     defaults.removeObject(forKey: legacyShapeKey)

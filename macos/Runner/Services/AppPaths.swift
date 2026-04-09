@@ -52,35 +52,6 @@ enum AppPaths {
     return tempDir
   }
 
-  // MARK: - Sidecar File Helpers
-
-  /// Returns the cursor sidecar URL for a given raw recording URL.
-  /// Example: `recording.mov` → `recording.cursor.json`
-  static func cursorSidecarURL(for rawURL: URL) -> URL {
-    rawURL.deletingPathExtension().appendingPathExtension("cursor.json")
-  }
-
-  /// Returns the metadata sidecar URL for a given raw recording URL.
-  /// Example: `recording.mov` → `recording.meta.json`
-  static func metadataSidecarURL(for rawURL: URL) -> URL {
-    rawURL.deletingPathExtension().appendingPathExtension("meta.json")
-  }
-
-  /// Returns the zoom manual sidecar URL for a given raw recording URL.
-  /// Example: `recording.mov` → `recording.zoom.manual.json`
-  static func zoomManualSidecarURL(for rawURL: URL) -> URL {
-    rawURL.deletingPathExtension().appendingPathExtension("zoom.manual.json")
-  }
-
-  /// Returns all sidecar URLs for a given raw recording URL.
-  static func allSidecarURLs(for rawURL: URL) -> [URL] {
-    [
-      cursorSidecarURL(for: rawURL),
-      metadataSidecarURL(for: rawURL),
-      zoomManualSidecarURL(for: rawURL),
-    ]
-  }
-
   // MARK: - Validation
 
   /// Checks if a URL is within the internal recordings workspace.
@@ -88,16 +59,6 @@ enum AppPaths {
     let standardizedPath = url.standardizedFileURL.path
     let currentRoot = recordingsRoot().standardizedFileURL.path
     return standardizedPath.hasPrefix(currentRoot)
-  }
-
-  /// Checks if all required files exist for a raw recording.
-  static func recordingFilesExist(rawURL: URL) -> (raw: Bool, cursor: Bool, meta: Bool) {
-    let fm = FileManager.default
-    return (
-      raw: fm.fileExists(atPath: rawURL.path),
-      cursor: fm.fileExists(atPath: cursorSidecarURL(for: rawURL).path),
-      meta: fm.fileExists(atPath: metadataSidecarURL(for: rawURL).path)
-    )
   }
 
   // MARK: - Private Helpers

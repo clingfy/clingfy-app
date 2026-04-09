@@ -343,7 +343,7 @@ void main() {
     await _emitWorkflowEvent({
       'type': 'recordingFinalized',
       'sessionId': sessionId,
-      'path': '/tmp/test.mov',
+      'projectPath': '/tmp/test.clingfyproj',
     });
 
     await tester.pumpWidget(
@@ -397,7 +397,7 @@ void main() {
     await _emitWorkflowEvent({
       'type': 'recordingFinalized',
       'sessionId': sessionId,
-      'path': '/tmp/test.mov',
+      'projectPath': '/tmp/test.clingfyproj',
     });
     await harness.recording.handlePreviewHostMounted();
     await _emitWorkflowEvent({
@@ -447,7 +447,7 @@ void main() {
     await _emitWorkflowEvent({
       'type': 'recordingFinalized',
       'sessionId': sessionId,
-      'path': '/tmp/test.mov',
+      'projectPath': '/tmp/test.clingfyproj',
     });
 
     await tester.pumpWidget(

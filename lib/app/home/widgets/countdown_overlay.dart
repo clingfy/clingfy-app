@@ -3,9 +3,14 @@ import 'package:clingfy/l10n/app_localizations.dart';
 import 'package:flutter/material.dart';
 
 class CountdownOverlay extends StatelessWidget {
-  const CountdownOverlay({super.key, required this.controller});
+  const CountdownOverlay({
+    super.key,
+    required this.controller,
+    required this.onCancel,
+  });
 
   final CountdownController controller;
+  final VoidCallback onCancel;
 
   @override
   Widget build(BuildContext context) {
@@ -37,7 +42,7 @@ class CountdownOverlay extends StatelessWidget {
               ),
               const SizedBox(height: 20),
               FilledButton(
-                onPressed: controller.cancel,
+                onPressed: onCancel,
                 child: Text(AppLocalizations.of(context)!.cancel),
               ),
             ],

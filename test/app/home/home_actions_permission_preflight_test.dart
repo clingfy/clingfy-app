@@ -15,6 +15,7 @@ import 'package:clingfy/app/home/home_scope.dart';
 import 'package:clingfy/app/home/home_ui_state.dart';
 import 'package:clingfy/l10n/app_localizations.dart';
 import 'package:clingfy/core/models/app_models.dart';
+import 'package:clingfy/core/bridges/native_error_codes.dart';
 import 'package:clingfy/core/bridges/native_bridge.dart';
 import 'package:clingfy/app/settings/settings_controller.dart';
 import 'package:clingfy/app/settings/widgets/app_settings_view.dart';
@@ -442,6 +443,62 @@ void main() {
     );
     expect(args['allowLowStorageBypass'], isFalse);
   });
+
+  testWidgets(
+    'single-window mode with no selected window shows a persistent blocker and does not start',
+    (tester) async {
+      final harness = await createHarness(
+        tester,
+        permissionStatus: const {
+          'screenRecording': true,
+          'microphone': true,
+          'camera': true,
+          'accessibility': true,
+        },
+      );
+
+      await harness.actions.setDisplayTargetMode(
+        DisplayTargetMode.singleAppWindow,
+      );
+
+      unawaited(harness.actions.toggleRecording(harness.context));
+      await tester.pumpAndSettle();
+
+      expect(harness.callsFor('startRecording'), isEmpty);
+      expect(harness.countdown.isActive, isFalse);
+      expect(harness.recording.phase, WorkflowPhase.idle);
+      expect(harness.uiState.errorMessage, NativeErrorCode.noWindowSelected);
+      expect(find.text('Grant permissions'), findsNothing);
+    },
+  );
+
+  testWidgets(
+    'area-recording mode with no selected area shows a persistent blocker and does not start',
+    (tester) async {
+      final harness = await createHarness(
+        tester,
+        permissionStatus: const {
+          'screenRecording': true,
+          'microphone': true,
+          'camera': true,
+          'accessibility': true,
+        },
+      );
+
+      await harness.actions.setDisplayTargetMode(
+        DisplayTargetMode.areaRecording,
+      );
+
+      unawaited(harness.actions.toggleRecording(harness.context));
+      await tester.pumpAndSettle();
+
+      expect(harness.callsFor('startRecording'), isEmpty);
+      expect(harness.countdown.isActive, isFalse);
+      expect(harness.recording.phase, WorkflowPhase.idle);
+      expect(harness.uiState.errorMessage, NativeErrorCode.noAreaSelected);
+      expect(find.text('Grant permissions'), findsNothing);
+    },
+  );
 
   testWidgets('critical storage opens storage settings instead of starting', (
     tester,

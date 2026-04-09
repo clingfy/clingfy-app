@@ -5,7 +5,7 @@ import FlutterMacOS
 
 /// A custom view that only captures mouse events within the video frame.
 class OverlayInteractiveView: NSView {
-  /// The frame of the actual video content (excluding shadow padding)
+  /// The frame of the actual video content (excluding outer effect padding)
   var interactiveFrame: CGRect = .zero
   private var initialLocation: NSPoint?
   var onPositionChanged: ((CGPoint, CGPoint?) -> Void)?
@@ -57,7 +57,7 @@ class OverlayInteractiveView: NSView {
     )
 
     // Log the drag movement (throttling might be needed in high-frequency logs, but useful for debugging)
-    NativeLogger.d("OverlayView", "mouseDragged to \(newOrigin)")
+    // NativeLogger.d("OverlayView", "mouseDragged to \(newOrigin)")
 
     window.setFrameOrigin(newOrigin)
     let normalized = calculateNormalizedCenter(for: newOrigin)
@@ -73,6 +73,81 @@ class OverlayInteractiveView: NSView {
 }
 
 let padding: CGFloat = 6.0
+
+func cameraOverlayShadowOutset(for shadow: Int) -> CGFloat {
+  switch shadow {
+  case 1:
+    return 8
+  case 2:
+    return 17
+  case 3:
+    return 30
+  default:
+    return 0
+  }
+}
+
+func cameraOverlayHighlightLineWidth(for strength: CGFloat) -> CGFloat {
+  let clamped = max(0.10, min(1.00, strength))
+  return 3.0 + (clamped * 7.0)
+}
+
+func cameraOverlayHighlightShadowRadius(for strength: CGFloat) -> CGFloat {
+  let clamped = max(0.10, min(1.00, strength))
+  return 6.0 + (20.0 * clamped)
+}
+
+func cameraOverlayEffectPadding(
+  border: Int,
+  borderWidth: CGFloat,
+  shadow: Int,
+  recordingHighlightEnabled: Bool,
+  recordingHighlightStrength: CGFloat
+) -> CGFloat {
+  let borderOutset = (border != 0 && borderWidth > 0) ? borderWidth : 0.0
+
+  let shadowOutset: CGFloat
+  switch shadow {
+  case 1:
+    shadowOutset = (6.0 * 2.0) + abs(-2.0) + 4.0
+  case 2:
+    shadowOutset = (12.0 * 2.0) + abs(-5.0) + 4.0
+  case 3:
+    shadowOutset = (20.0 * 2.0) + abs(-10.0) + 6.0
+  default:
+    shadowOutset = 0.0
+  }
+
+  let highlightOutset: CGFloat
+  if recordingHighlightEnabled {
+    let lineWidth = cameraOverlayHighlightLineWidth(for: recordingHighlightStrength)
+    let shadowRadius = cameraOverlayHighlightShadowRadius(for: recordingHighlightStrength)
+    // The visible glow footprint extends beyond the mathematical path extent,
+    // so this padding is intentionally conservative to avoid panel-edge clipping.
+    highlightOutset = lineWidth + (shadowRadius * 2.0) + 6.0
+  } else {
+    highlightOutset = 0.0
+  }
+
+  return ceil(max(borderOutset, shadowOutset, highlightOutset, 12.0))
+}
+
+func cameraOverlayInsetRect(_ rect: CGRect, strokeWidth: CGFloat) -> CGRect {
+  guard strokeWidth > 0 else { return rect }
+
+  let inset = min(strokeWidth / 2.0, rect.width / 2.0, rect.height / 2.0)
+  return rect.insetBy(dx: inset, dy: inset)
+}
+
+func cameraOverlayRingShadowPath(path: CGPath, lineWidth: CGFloat) -> CGPath? {
+  guard lineWidth > 0 else { return nil }
+  return path.copy(
+    strokingWithWidth: lineWidth,
+    lineCap: .round,
+    lineJoin: .round,
+    miterLimit: 10
+  )
+}
 
 private func clamp01(_ value: CGFloat) -> CGFloat {
   min(max(value, 0.0), 1.0)
@@ -129,10 +204,9 @@ private func cameraOverlayOrigin(
   )
 }
 
-final class CameraOverlay: NSObject, AVCaptureVideoDataOutputSampleBufferDelegate {
+final class CameraOverlay: NSObject {
   private var deviceId: String?
-  private var session: AVCaptureSession?
-  private var input: AVCaptureDeviceInput?
+  private let captureCoordinator: CameraCaptureCoordinator
   private var window: NSWindow?
 
   private var isCustomPosition: Bool = false
@@ -148,7 +222,6 @@ final class CameraOverlay: NSObject, AVCaptureVideoDataOutputSampleBufferDelegat
   private var preview: AVCaptureVideoPreviewLayer?
 
   // Pipeline B: Processing (Chroma Key)
-  private var videoOutput: AVCaptureVideoDataOutput?
   private lazy var ciContext: CIContext = { CIContext() }()
   private lazy var chromaKeyKernel: CIColorKernel? = {
     // Simple RGB distance kernel that accepts a target keyColor
@@ -188,7 +261,36 @@ final class CameraOverlay: NSObject, AVCaptureVideoDataOutputSampleBufferDelegat
   var recordingHighlightStrength: CGFloat = 0.70  // 0.10 .. 1.00
   var onMovedNormalized: ((Double, Double) -> Void)?
 
-  private let shadowPadding: CGFloat = 6.0
+  private var overlayEffectPadding: CGFloat {
+    cameraOverlayEffectPadding(
+      border: border,
+      borderWidth: borderWidth,
+      shadow: shadow,
+      recordingHighlightEnabled: recordingHighlightEnabled,
+      recordingHighlightStrength: recordingHighlightStrength
+    )
+  }
+
+  private func overlayWindowSize(for contentSize: CGFloat) -> CGFloat {
+    contentSize + (overlayEffectPadding * 2.0)
+  }
+
+  private func refreshOverlayLayoutIfNeeded() {
+    guard let win = window else { return }
+
+    let targetWindowSize = overlayWindowSize(for: CGFloat(preferredSize))
+    if abs(win.frame.width - targetWindowSize) > 0.5 || abs(win.frame.height - targetWindowSize) > 0.5 {
+      resize(size: preferredSize)
+      return
+    }
+
+    applyStyle(
+      rootLayer: win.contentView?.layer,
+      containerLayer: containerLayer,
+      shadowLayer: shadowLayer,
+      videoSize: CGFloat(preferredSize)
+    )
+  }
 
   // Helper to check if currently showing
   var isShowing: Bool {
@@ -198,6 +300,19 @@ final class CameraOverlay: NSObject, AVCaptureVideoDataOutputSampleBufferDelegat
   var overlayWindowID: CGWindowID? {
     guard let win = window else { return nil }
     return CGWindowID(win.windowNumber)
+  }
+
+  var currentCustomNormalizedCenter: CGPoint? {
+    customNormalizedCenter
+  }
+
+  init(captureCoordinator: CameraCaptureCoordinator) {
+    self.captureCoordinator = captureCoordinator
+    super.init()
+  }
+
+  convenience override init() {
+    self.init(captureCoordinator: CameraCaptureCoordinator())
   }
 
   func setDevice(id: String?) {
@@ -248,6 +363,9 @@ final class CameraOverlay: NSObject, AVCaptureVideoDataOutputSampleBufferDelegat
 
   func setRecordingHighlightStrength(_ strength: CGFloat) {
     let clamped = max(0.10, min(1.00, strength))
+    if abs(recordingHighlightStrength - clamped) < 0.01 {
+      return
+    }
     recordingHighlightStrength = clamped
     NativeLogger.d(
       "CameraOverlay",
@@ -333,22 +451,15 @@ final class CameraOverlay: NSObject, AVCaptureVideoDataOutputSampleBufferDelegat
       break
     }
 
-    if isShowing, let win = window {
-      applyStyle(
-        rootLayer: win.contentView?.layer,
-        containerLayer: containerLayer,
-        shadowLayer: shadowLayer,
-        videoSize: CGFloat(preferredSize)
-      )
+    if isShowing {
+      refreshOverlayLayoutIfNeeded()
     }
   }
 
   func setBorderWidth(_ width: CGFloat) {
     self.borderWidth = width
-    if isShowing, let win = window {
-      applyStyle(
-        rootLayer: win.contentView?.layer, containerLayer: containerLayer, shadowLayer: shadowLayer,
-        videoSize: CGFloat(preferredSize))
+    if isShowing {
+      refreshOverlayLayoutIfNeeded()
     }
   }
 
@@ -368,6 +479,7 @@ final class CameraOverlay: NSObject, AVCaptureVideoDataOutputSampleBufferDelegat
     if !recordingHighlightEnabled {
       ringLayer?.removeFromSuperlayer()
       ringLayer = nil
+      refreshOverlayLayoutIfNeeded()
       return
     }
 
@@ -383,10 +495,12 @@ final class CameraOverlay: NSObject, AVCaptureVideoDataOutputSampleBufferDelegat
 
     if let ring = ringLayer {
       ring.removeAnimation(forKey: "pulse")
-      ring.lineWidth = 3.0 + (strength * 7.0)
+      ring.lineWidth = cameraOverlayHighlightLineWidth(for: strength)
       ring.strokeColor = NSColor.systemRed.withAlphaComponent(0.60 + (0.40 * strength)).cgColor
       ring.shadowOpacity = Float(0.28 + (0.62 * strength))
-      ring.shadowRadius = 6.0 + (20.0 * strength)
+      ring.shadowRadius = cameraOverlayHighlightShadowRadius(for: strength)
+      ring.lineJoin = .round
+      ring.lineCap = .round
 
       let pulse = CABasicAnimation(keyPath: "opacity")
       pulse.fromValue = 0.35 + (0.40 * strength)
@@ -397,12 +511,7 @@ final class CameraOverlay: NSObject, AVCaptureVideoDataOutputSampleBufferDelegat
       ring.add(pulse, forKey: "pulse")
     }
 
-    // Re-apply style to update path/frame of the ring.
-    if let container = containerLayer, let shadow = shadowLayer {
-      applyStyle(
-        rootLayer: root, containerLayer: container, shadowLayer: shadow,
-        videoSize: CGFloat(preferredSize))
-    }
+    refreshOverlayLayoutIfNeeded()
   }
 
   func updateOpacity(_ value: Double) {
@@ -419,18 +528,11 @@ final class CameraOverlay: NSObject, AVCaptureVideoDataOutputSampleBufferDelegat
 
   func updateMirror(isMirrored: Bool) {
     self.isMirrored = isMirrored
+    captureCoordinator.setMirrored(isMirrored)
 
     // Update Standard Preview
     if let preview = preview {
       applyMirror(to: preview)
-    }
-
-    // Video Output (for Chroma Key)
-    if let connection = videoOutput?.connection(with: .video) {
-      if connection.isVideoMirroringSupported {
-        connection.automaticallyAdjustsVideoMirroring = false
-        connection.isVideoMirrored = isMirrored
-      }
     }
   }
 
@@ -456,7 +558,7 @@ final class CameraOverlay: NSObject, AVCaptureVideoDataOutputSampleBufferDelegat
     let newOrigin = cameraOverlayPresetOrigin(
       for: position,
       contentSize: contentSize,
-      shadowPadding: shadowPadding,
+      effectPadding: overlayEffectPadding,
       screenFrame: placementFrame
     )
 
@@ -466,6 +568,7 @@ final class CameraOverlay: NSObject, AVCaptureVideoDataOutputSampleBufferDelegat
   }
 
   func resize(size: Double) {
+    dispatchPrecondition(condition: .onQueue(.main))
     NativeLogger.i("CameraOverlay", "resize to: \(size). isCustomPos: \(isCustomPosition)")
     guard let win = window else { return }
 
@@ -476,7 +579,7 @@ final class CameraOverlay: NSObject, AVCaptureVideoDataOutputSampleBufferDelegat
     // 2. Update size
     preferredSize = max(120, size)
     let contentSize = CGFloat(preferredSize)
-    let windowSize = contentSize + (shadowPadding * 2)
+    let windowSize = overlayWindowSize(for: contentSize)
 
     var newOrigin: CGPoint
     let targetScreen = findScreen(for: targetDisplayID)
@@ -519,7 +622,7 @@ final class CameraOverlay: NSObject, AVCaptureVideoDataOutputSampleBufferDelegat
       newOrigin = cameraOverlayPresetOrigin(
         for: position,
         contentSize: contentSize,
-        shadowPadding: shadowPadding,
+        effectPadding: overlayEffectPadding,
         screenFrame: cameraOverlayPresetPlacementFrame(
           screenFrame: targetScreen?.frame ?? NSScreen.main?.frame,
           visibleFrame: targetScreen?.visibleFrame ?? NSScreen.main?.visibleFrame
@@ -550,6 +653,7 @@ final class CameraOverlay: NSObject, AVCaptureVideoDataOutputSampleBufferDelegat
     file: String = #file,
     line: Int = #line
   ) {
+    dispatchPrecondition(condition: .onQueue(.main))
     NativeLogger.d("CameraOverlay", "Show file= \(file):\(line)")
     let desired = size ?? preferredSize
     NativeLogger.i(
@@ -559,7 +663,7 @@ final class CameraOverlay: NSObject, AVCaptureVideoDataOutputSampleBufferDelegat
     if isCustomPosition, let win = window {
       let centerX = win.frame.midX
       let centerY = win.frame.midY
-      let newWindowSize = CGFloat(max(120, desired)) + (shadowPadding * 2)
+      let newWindowSize = overlayWindowSize(for: CGFloat(max(120, desired)))
 
       if let norm = customNormalizedCenter, let targetScreen = findScreen(for: targetDisplayID) {
         let screenFrame = targetScreen.visibleFrame
@@ -599,13 +703,13 @@ final class CameraOverlay: NSObject, AVCaptureVideoDataOutputSampleBufferDelegat
     let oldPreferredSize = preferredSize
     preferredSize = max(120, desired)
     let videoSize = CGFloat(preferredSize)
-    let windowSize = videoSize + (shadowPadding * 2)
+    let windowSize = overlayWindowSize(for: videoSize)
 
     // --- IDEMPOTENCY CHECK ---
     let pipelineChanged =
       (activeChromaKeyEnabled != chromaKeyEnabled) || (activeDeviceId != (deviceId ?? "default"))
 
-    if isShowing, let win = window, session != nil, !pipelineChanged,
+    if isShowing, window != nil, !pipelineChanged,
       oldPreferredSize == preferredSize
     {
       NativeLogger.i("CameraOverlay", "show() - resize applied (no rebuild)")
@@ -621,28 +725,19 @@ final class CameraOverlay: NSObject, AVCaptureVideoDataOutputSampleBufferDelegat
       )
     }
 
-    if let w = window {
+    if window != nil {
       NativeLogger.d("CameraOverlay", "Window already exists, hiding first.")
       hide()
     }
 
-    guard
-      let cam =
-        (deviceId.flatMap { AVCaptureDevice(uniqueID: $0) } ?? AVCaptureDevice.default(for: .video))
-    else {
-      NativeLogger.e("CameraOverlay", "No camera device available")
-      completion(
-        FlutterError(code: NativeErrorCode.noCamera, message: "", details: nil))
-      return
-    }
-
-    let session = AVCaptureSession()
-    session.sessionPreset = .high
-
     do {
-      let input = try AVCaptureDeviceInput(device: cam)
-      if session.canAddInput(input) { session.addInput(input) }
-      self.input = input
+      try captureCoordinator.acquirePreview(deviceID: deviceId)
+      captureCoordinator.setMirrored(isMirrored)
+    } catch let flutterError as FlutterError {
+      completion(
+        flutterError
+      )
+      return
     } catch {
       NativeLogger.e("CameraOverlay", "Input Error: \(error.localizedDescription)")
       completion(
@@ -655,25 +750,13 @@ final class CameraOverlay: NSObject, AVCaptureVideoDataOutputSampleBufferDelegat
     // --- Pipeline Selection ---
     if chromaKeyEnabled {
       NativeLogger.d("CameraOverlay", "Setting up ChromaKey Pipeline")
-      let output = AVCaptureVideoDataOutput()
-      // BGRA is required for Core Image usually
-      output.videoSettings = [kCVPixelBufferPixelFormatTypeKey as String: kCVPixelFormatType_32BGRA]
-      output.setSampleBufferDelegate(self, queue: DispatchQueue(label: "camera.processing.queue"))
-
-      if session.canAddOutput(output) {
-        session.addOutput(output)
-        // Apply mirror to connection if needed
-        if let connection = output.connection(with: .video) {
-          if connection.isVideoMirroringSupported {
-            connection.automaticallyAdjustsVideoMirroring = false
-            connection.isVideoMirrored = isMirrored
-          }
-        }
+      captureCoordinator.setSampleBufferHandler { [weak self] sampleBuffer in
+        self?.processSampleBuffer(sampleBuffer)
       }
-      self.videoOutput = output
     } else {
       NativeLogger.d("CameraOverlay", "Setting up Standard Preview Pipeline")
-      let layer = AVCaptureVideoPreviewLayer(session: session)
+      captureCoordinator.setSampleBufferHandler(nil)
+      let layer = captureCoordinator.makePreviewLayer()
       layer.videoGravity = .resizeAspectFill
       applyMirror(to: layer)
       self.preview = layer
@@ -719,7 +802,7 @@ final class CameraOverlay: NSObject, AVCaptureVideoDataOutputSampleBufferDelegat
       origin = cameraOverlayPresetOrigin(
         for: position,
         contentSize: videoSize,
-        shadowPadding: shadowPadding,
+        effectPadding: overlayEffectPadding,
         screenFrame: placementFrame
       )
       NativeLogger.d(
@@ -759,9 +842,9 @@ final class CameraOverlay: NSObject, AVCaptureVideoDataOutputSampleBufferDelegat
         self?.customNormalizedCenter = CGPoint(x: nx, y: ny)
         self?.onMovedNormalized?(Double(nx), Double(ny))
       }
-      NativeLogger.d(
-        "CameraOverlay",
-        "User moved overlay to: \(newOrigin) (Normalized: \(String(describing: normalized)))")
+      // NativeLogger.d(
+      //   "CameraOverlay",
+      //   "User moved overlay to: \(newOrigin) (Normalized: \(String(describing: normalized)))")
     }
 
     let rootLayer = CALayer()
@@ -770,7 +853,13 @@ final class CameraOverlay: NSObject, AVCaptureVideoDataOutputSampleBufferDelegat
     view.layer = rootLayer
 
     // Layout Layers
-    let videoFrame = CGRect(x: shadowPadding, y: shadowPadding, width: videoSize, height: videoSize)
+    let effectPadding = overlayEffectPadding
+    let videoFrame = CGRect(
+      x: effectPadding,
+      y: effectPadding,
+      width: videoSize,
+      height: videoSize
+    )
 
     // Pass the interactive frame to the custom view so it knows where to accept clicks
     view.interactiveFrame = videoFrame
@@ -778,7 +867,7 @@ final class CameraOverlay: NSObject, AVCaptureVideoDataOutputSampleBufferDelegat
     // Shadow Layer
     let shadowL = CAShapeLayer()
     shadowL.frame = videoFrame
-    shadowL.fillColor = NSColor.black.cgColor
+    shadowL.fillColor = NSColor.clear.cgColor
     shadowL.masksToBounds = false
     rootLayer.addSublayer(shadowL)
 
@@ -806,7 +895,6 @@ final class CameraOverlay: NSObject, AVCaptureVideoDataOutputSampleBufferDelegat
     self.window = panel
     self.containerLayer = container
     self.shadowLayer = shadowL
-    self.session = session
 
     let mask = CAShapeLayer()
     container.mask = mask
@@ -825,7 +913,6 @@ final class CameraOverlay: NSObject, AVCaptureVideoDataOutputSampleBufferDelegat
 
     NativeLogger.i("CameraOverlay", "Window constructed & Ordered Front. Starting session...")
     panel.orderFrontRegardless()
-    session.startRunning()
 
     // Update active state tracking
     self.activeChromaKeyEnabled = chromaKeyEnabled
@@ -834,11 +921,7 @@ final class CameraOverlay: NSObject, AVCaptureVideoDataOutputSampleBufferDelegat
     completion(nil)
   }
 
-  // MARK: - AVCaptureVideoDataOutputSampleBufferDelegate
-  func captureOutput(
-    _ output: AVCaptureOutput, didOutput sampleBuffer: CMSampleBuffer,
-    from connection: AVCaptureConnection
-  ) {
+  private func processSampleBuffer(_ sampleBuffer: CMSampleBuffer) {
     guard chromaKeyEnabled, let pixelBuffer = CMSampleBufferGetImageBuffer(sampleBuffer) else {
       return
     }
@@ -873,13 +956,13 @@ final class CameraOverlay: NSObject, AVCaptureVideoDataOutputSampleBufferDelegat
   }
 
   func hide() {
+    dispatchPrecondition(condition: .onQueue(.main))
     NativeLogger.i("CameraOverlay", "Hide called")
-    session?.stopRunning()
-    session = nil
+    captureCoordinator.setSampleBufferHandler(nil)
+    captureCoordinator.removePreviewLayer(preview)
+    captureCoordinator.releasePreview()
     preview?.removeFromSuperlayer()
     preview = nil
-
-    videoOutput = nil
 
     containerLayer?.contents = nil
     containerLayer?.removeFromSuperlayer()
@@ -900,6 +983,7 @@ final class CameraOverlay: NSObject, AVCaptureVideoDataOutputSampleBufferDelegat
   }
 
   func setFrame(x: Double, y: Double, width: Double, height: Double) {
+    dispatchPrecondition(condition: .onQueue(.main))
     NativeLogger.i("CameraOverlay", "setFrame explicit: x=\(x), y=\(y), w=\(width)")
     guard let win = window else { return }
     var f = win.frame
@@ -907,7 +991,7 @@ final class CameraOverlay: NSObject, AVCaptureVideoDataOutputSampleBufferDelegat
     f.size = .init(width: width, height: height)
     win.setFrame(f, display: true)
 
-    let vSize = CGFloat(width) - (shadowPadding * 2)
+    let vSize = CGFloat(width) - (overlayEffectPadding * 2)
     preferredSize = Double(max(10, vSize))
 
     applyStyle(
@@ -926,10 +1010,17 @@ final class CameraOverlay: NSObject, AVCaptureVideoDataOutputSampleBufferDelegat
 
     NativeLogger.d("CameraOverlay", "Applying Style. VideoSize: \(videoSize)")
 
-    let frame = CGRect(x: shadowPadding, y: shadowPadding, width: videoSize, height: videoSize)
+    let effectPadding = overlayEffectPadding
+    let frame = CGRect(
+      x: effectPadding,
+      y: effectPadding,
+      width: videoSize,
+      height: videoSize
+    )
     shadowL.frame = frame
     container.frame = frame
     borderLayer?.frame = frame
+    ringLayer?.frame = frame
 
     // Update the hit-test area in case size changed
     if let overlayView = window?.contentView as? OverlayInteractiveView {
@@ -937,15 +1028,15 @@ final class CameraOverlay: NSObject, AVCaptureVideoDataOutputSampleBufferDelegat
     }
 
     // ... (Rest of styling logic remains the same) ...
-    let bounds = CGRect(origin: .zero, size: frame.size)
-    let path = getPath(for: shape, rect: bounds)
+    let contentBounds = CGRect(origin: .zero, size: frame.size)
+    let clipPath = getPath(for: shape, rect: contentBounds)
 
-    maskLayer?.path = path
-    maskLayer?.frame = bounds
+    maskLayer?.path = clipPath
+    maskLayer?.frame = contentBounds
 
-    shadowL.path = path
+    shadowL.path = clipPath
     shadowL.cornerRadius = 0
-    shadowL.shadowPath = path
+    shadowL.shadowPath = clipPath
     shadowL.shadowColor = NSColor.black.cgColor
 
     switch shadow {
@@ -963,19 +1054,25 @@ final class CameraOverlay: NSObject, AVCaptureVideoDataOutputSampleBufferDelegat
       shadowL.shadowOffset = CGSize(width: 0, height: -10)
     default:
       shadowL.shadowOpacity = 0
+      shadowL.shadowRadius = 0
+      shadowL.shadowOffset = .zero
     }
 
     // 4. Border (Top)
     CATransaction.begin()
     CATransaction.setDisableActions(true)
     if let bLayer = borderLayer {
-      bLayer.path = path
       bLayer.fillColor = nil
+      bLayer.lineJoin = .round
+      bLayer.lineCap = .round
 
       if border == 0 {
+        bLayer.path = nil
         bLayer.strokeColor = nil
         bLayer.lineWidth = 0
       } else {
+        let borderBounds = cameraOverlayInsetRect(contentBounds, strokeWidth: borderWidth)
+        bLayer.path = getPath(for: shape, rect: borderBounds)
         bLayer.strokeColor = borderColor.cgColor
         bLayer.lineWidth = borderWidth
       }
@@ -988,8 +1085,15 @@ final class CameraOverlay: NSObject, AVCaptureVideoDataOutputSampleBufferDelegat
     container.opacity = Float(opacity)
 
     if let rLayer = ringLayer {
-      rLayer.frame = frame
-      rLayer.path = path
+      let ringBounds = cameraOverlayInsetRect(contentBounds, strokeWidth: rLayer.lineWidth)
+      let ringPath = getPath(for: shape, rect: ringBounds)
+      rLayer.lineJoin = .round
+      rLayer.lineCap = .round
+      rLayer.path = ringPath
+      rLayer.shadowPath = cameraOverlayRingShadowPath(
+        path: ringPath,
+        lineWidth: rLayer.lineWidth
+      )
     }
   }
 
@@ -1121,7 +1225,7 @@ final class CameraOverlay: NSObject, AVCaptureVideoDataOutputSampleBufferDelegat
 }
 
 func cameraOverlayPresetOrigin(
-  for pos: Int, contentSize: CGFloat, shadowPadding: CGFloat, screenFrame: CGRect? = nil
+  for pos: Int, contentSize: CGFloat, effectPadding: CGFloat, screenFrame: CGRect? = nil
 ) -> CGPoint {
   let screen =
     screenFrame ?? NSScreen.main?.visibleFrame ?? NSRect(x: 0, y: 0, width: 1440, height: 900)
@@ -1132,37 +1236,33 @@ func cameraOverlayPresetOrigin(
   )
 
   // We calculate where the *visual* edge should be, then offset the window origin
-  // by the shadowPadding amount to align the content, not the container.
+  // by the outer effect padding amount to align the content, not the container.
 
   switch pos {
   case 0:  // Top-Left
-    // X: Start at minX + padding, then shift LEFT by shadowPadding because window starts before content
-    let x = screen.minX + padding - shadowPadding
-    // Y: Start at maxY - padding, then shift DOWN by (content height + shadowPadding)
-    let y = screen.maxY - padding - contentSize - shadowPadding
+    let x = screen.minX + padding - effectPadding
+    let y = screen.maxY - padding - contentSize - effectPadding
     return CGPoint(x: x, y: y)
 
   case 1:  // Top-Right
-    // X: Start at maxX - padding - content width, shift LEFT by shadowPadding
-    let x = screen.maxX - padding - contentSize - shadowPadding
-    let y = screen.maxY - padding - contentSize - shadowPadding
+    let x = screen.maxX - padding - contentSize - effectPadding
+    let y = screen.maxY - padding - contentSize - effectPadding
     return CGPoint(x: x, y: y)
 
   case 2:  // Bottom-Left
-    let x = screen.minX + padding - shadowPadding
-    // Y: Start at minY + padding, shift DOWN by shadowPadding to align bottom visual edge
-    let y = screen.minY + padding - shadowPadding
+    let x = screen.minX + padding - effectPadding
+    let y = screen.minY + padding - effectPadding
     return CGPoint(x: x, y: y)
 
   case 3:  // Bottom-Right
-    let x = screen.maxX - padding - contentSize - shadowPadding
-    let y = screen.minY + padding - shadowPadding
+    let x = screen.maxX - padding - contentSize - effectPadding
+    let y = screen.minY + padding - effectPadding
     return CGPoint(x: x, y: y)
 
   default:
     return CGPoint(
-      x: screen.maxX - padding - contentSize - shadowPadding,
-      y: screen.minY + padding - shadowPadding
+      x: screen.maxX - padding - contentSize - effectPadding,
+      y: screen.minY + padding - effectPadding
     )
   }
 }

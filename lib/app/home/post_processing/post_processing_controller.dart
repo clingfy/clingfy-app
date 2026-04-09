@@ -32,6 +32,9 @@ class PostProcessingController extends ChangeNotifier {
       notifyListeners,
     ); // Propagate player state changes (like error)
     _warningSub = _player.warningCodeStream.listen(_onPlayerWarning);
+    _cameraManualPositionSub = _player.cameraManualPositionStream.listen(
+      _onCameraManualPositionChanged,
+    );
     _resetForNewRecording();
   }
 
@@ -39,11 +42,14 @@ class PostProcessingController extends ChangeNotifier {
   void dispose() {
     _player.removeListener(notifyListeners);
     _warningSub?.cancel();
+    _cameraManualPositionSub?.cancel();
     _audioPreviewDebouncer.dispose();
+    _cameraManualPreviewThrottler.dispose();
     super.dispose();
   }
 
   StreamSubscription? _warningSub;
+  StreamSubscription<Offset>? _cameraManualPositionSub;
   ISentrySpan? _activeExportTransaction;
   ISentrySpan? _activeExportInvokeSpan;
   bool _isExportCancelRequested = false;
@@ -58,6 +64,17 @@ class PostProcessingController extends ChangeNotifier {
         notifyListeners();
       }
     }
+  }
+
+  void _onCameraManualPositionChanged(Offset center) {
+    final current = _cameraState ?? const CameraCompositionState.hidden();
+    _cameraState = current.copyWith(
+      normalizedCanvasCenter: Offset(
+        center.dx.clamp(0.0, 1.0),
+        center.dy.clamp(0.0, 1.0),
+      ),
+    );
+    notifyListeners();
   }
 
   // --- State Fields ---
@@ -78,14 +95,21 @@ class PostProcessingController extends ChangeNotifier {
   double _zoomFactor = 1.5;
   bool _showCursor = true;
   String? _previewPath;
-  String? _sourcePath;
+  String? _projectPath;
   String? _activeSessionId;
   bool _cursorAvailable = true;
   double _audioGainDb = 0.0;
   double _audioVolumePercent = 100.0;
+  String? _cameraPath;
+  CameraCompositionState? _cameraState;
+  CameraExportCapabilities _cameraExportCapabilities =
+      const CameraExportCapabilities.allSupported();
   final AudioDebouncer _audioPreviewDebouncer = AudioDebouncer(
     delay: Duration(milliseconds: 150),
   );
+  final ActionThrottler _cameraManualPreviewThrottler = ActionThrottler();
+  CameraPreviewChangeKind _pendingCameraPreviewChangeKind =
+      CameraPreviewChangeKind.none;
 
   // --- Getters ---
   bool get processing => _isProcessingPreview;
@@ -109,6 +133,11 @@ class PostProcessingController extends ChangeNotifier {
   bool get cursorAvailable => _cursorAvailable;
   double get audioGainDb => _audioGainDb;
   double get audioVolumePercent => _audioVolumePercent;
+  String? get cameraPath => _cameraPath;
+  bool get hasCameraAsset => _cameraPath != null && _cameraPath!.isNotEmpty;
+  CameraCompositionState? get cameraState => _cameraState;
+  CameraExportCapabilities get cameraExportCapabilities =>
+      _cameraExportCapabilities;
 
   // Computed error state
   bool get hasError => _player.blockingError != null;
@@ -170,6 +199,243 @@ class PostProcessingController extends ChangeNotifier {
     applyProcessing();
   }
 
+  void setCameraVisible(bool visible) {
+    final current = _cameraState ?? const CameraCompositionState.hidden();
+    _cameraState = current.copyWith(visible: visible);
+    notifyListeners();
+    applyProcessing();
+  }
+
+  void setCameraLayoutPreset(CameraLayoutPreset preset) {
+    final current = _cameraState ?? const CameraCompositionState.hidden();
+    _cameraState = current.copyWith(
+      layoutPreset: preset,
+      clearNormalizedCanvasCenter: true,
+    );
+    _pendingCameraPreviewChangeKind = CameraPreviewChangeKind.placementJump;
+    notifyListeners();
+    applyProcessing();
+  }
+
+  void setCameraSizeFactor(double sizeFactor) {
+    final current = _cameraState ?? const CameraCompositionState.hidden();
+    _cameraState = current.copyWith(sizeFactor: sizeFactor.clamp(0.08, 0.45));
+    notifyListeners();
+  }
+
+  void setCameraSizeFactorEnd(double sizeFactor) {
+    setCameraSizeFactor(sizeFactor);
+    applyProcessing();
+  }
+
+  void setCameraShape(CameraShape shape) {
+    final current = _cameraState ?? const CameraCompositionState.hidden();
+    _cameraState = current.copyWith(shape: shape);
+    notifyListeners();
+    applyProcessing();
+  }
+
+  void setCameraCornerRadius(double cornerRadius) {
+    final current = _cameraState ?? const CameraCompositionState.hidden();
+    _cameraState = current.copyWith(cornerRadius: cornerRadius.clamp(0.0, 0.5));
+    notifyListeners();
+  }
+
+  void setCameraCornerRadiusEnd(double cornerRadius) {
+    setCameraCornerRadius(cornerRadius);
+    applyProcessing();
+  }
+
+  void setCameraMirror(bool mirror) {
+    final current = _cameraState ?? const CameraCompositionState.hidden();
+    _cameraState = current.copyWith(mirror: mirror);
+    notifyListeners();
+    applyProcessing();
+  }
+
+  void setCameraContentMode(CameraContentMode contentMode) {
+    final current = _cameraState ?? const CameraCompositionState.hidden();
+    _cameraState = current.copyWith(contentMode: contentMode);
+    notifyListeners();
+    applyProcessing();
+  }
+
+  void setCameraZoomBehavior(CameraZoomBehavior behavior) {
+    final current = _cameraState ?? const CameraCompositionState.hidden();
+    _cameraState = current.copyWith(zoomBehavior: behavior);
+    notifyListeners();
+    applyProcessing();
+  }
+
+  void setCameraZoomScaleMultiplier(double value) {
+    final current = _cameraState ?? const CameraCompositionState.hidden();
+    _cameraState = current.copyWith(zoomScaleMultiplier: value.clamp(0.0, 1.0));
+    notifyListeners();
+  }
+
+  void setCameraZoomScaleMultiplierEnd(double value) {
+    setCameraZoomScaleMultiplier(value);
+    applyProcessing();
+  }
+
+  void setCameraIntroPreset(CameraIntroPreset preset) {
+    final current = _cameraState ?? const CameraCompositionState.hidden();
+    _cameraState = current.copyWith(introPreset: preset);
+    notifyListeners();
+    applyProcessing();
+  }
+
+  void setCameraOutroPreset(CameraOutroPreset preset) {
+    final current = _cameraState ?? const CameraCompositionState.hidden();
+    _cameraState = current.copyWith(outroPreset: preset);
+    notifyListeners();
+    applyProcessing();
+  }
+
+  void setCameraZoomEmphasisPreset(CameraZoomEmphasisPreset preset) {
+    final current = _cameraState ?? const CameraCompositionState.hidden();
+    _cameraState = current.copyWith(zoomEmphasisPreset: preset);
+    notifyListeners();
+    applyProcessing();
+  }
+
+  void setCameraIntroDurationMs(double value) {
+    final current = _cameraState ?? const CameraCompositionState.hidden();
+    _cameraState = current.copyWith(
+      introDurationMs: value.round().clamp(80, 600).toInt(),
+    );
+    notifyListeners();
+  }
+
+  void setCameraIntroDurationMsEnd(double value) {
+    setCameraIntroDurationMs(value);
+    applyProcessing();
+  }
+
+  void setCameraOutroDurationMs(double value) {
+    final current = _cameraState ?? const CameraCompositionState.hidden();
+    _cameraState = current.copyWith(
+      outroDurationMs: value.round().clamp(80, 600).toInt(),
+    );
+    notifyListeners();
+  }
+
+  void setCameraOutroDurationMsEnd(double value) {
+    setCameraOutroDurationMs(value);
+    applyProcessing();
+  }
+
+  void setCameraZoomEmphasisStrength(double value) {
+    final current = _cameraState ?? const CameraCompositionState.hidden();
+    _cameraState = current.copyWith(
+      zoomEmphasisStrength: value.clamp(0.0, 0.20),
+    );
+    notifyListeners();
+  }
+
+  void setCameraZoomEmphasisStrengthEnd(double value) {
+    setCameraZoomEmphasisStrength(value);
+    applyProcessing();
+  }
+
+  void resetCameraManualPosition() {
+    _cameraManualPreviewThrottler.cancel();
+    final current = _cameraState ?? const CameraCompositionState.hidden();
+    _cameraState = current.copyWith(clearNormalizedCanvasCenter: true);
+    _pendingCameraPreviewChangeKind = CameraPreviewChangeKind.placementJump;
+    notifyListeners();
+    applyProcessing();
+  }
+
+  void setCameraManualCenter(Offset? center) {
+    _cameraManualPreviewThrottler.cancel();
+    final current = _cameraState ?? const CameraCompositionState.hidden();
+    _cameraState = current.copyWith(
+      normalizedCanvasCenter: center,
+      clearNormalizedCanvasCenter: center == null,
+    );
+    _pendingCameraPreviewChangeKind = CameraPreviewChangeKind.placementJump;
+    notifyListeners();
+    applyProcessing();
+  }
+
+  void setCameraManualCenterSnap(Offset center) {
+    _cameraManualPreviewThrottler.cancel();
+    final current = _cameraState ?? const CameraCompositionState.hidden();
+    _cameraState = current.copyWith(
+      normalizedCanvasCenter: Offset(
+        center.dx.clamp(0.0, 1.0),
+        (1.0 - center.dy).clamp(0.0, 1.0),
+      ),
+    );
+    _pendingCameraPreviewChangeKind = CameraPreviewChangeKind.placementJump;
+    notifyListeners();
+    applyProcessing();
+  }
+
+  void setCameraManualCenterPreview(Offset center) {
+    final current = _cameraState ?? const CameraCompositionState.hidden();
+    _cameraState = current.copyWith(
+      normalizedCanvasCenter: Offset(
+        center.dx.clamp(0.0, 1.0),
+        (1.0 - center.dy).clamp(
+          0.0,
+          1.0,
+        ), // Invert: Flutter top-down -> native bottom-up
+      ),
+    );
+    notifyListeners();
+    _cameraManualPreviewThrottler.run(() {
+      unawaited(
+        _pushPreviewCameraPlacement(CameraPreviewChangeKind.dragPreview),
+      );
+    });
+  }
+
+  void setCameraManualCenterPreviewEnd(Offset center) {
+    _cameraManualPreviewThrottler.cancel();
+    final current = _cameraState ?? const CameraCompositionState.hidden();
+    _cameraState = current.copyWith(
+      normalizedCanvasCenter: Offset(
+        center.dx.clamp(0.0, 1.0),
+        (1.0 - center.dy).clamp(0.0, 1.0),
+      ),
+    );
+    _pendingCameraPreviewChangeKind = CameraPreviewChangeKind.placementJump;
+    notifyListeners();
+    applyProcessing();
+  }
+
+  void setCameraManualCenterX(double x) {
+    final current = _cameraState ?? const CameraCompositionState.hidden();
+    final existing = current.normalizedCanvasCenter ?? const Offset(0.5, 0.5);
+    _cameraState = current.copyWith(
+      normalizedCanvasCenter: Offset(x.clamp(0.0, 1.0), existing.dy),
+    );
+    notifyListeners();
+  }
+
+  void setCameraManualCenterXEnd(double x) {
+    setCameraManualCenterX(x);
+    _pendingCameraPreviewChangeKind = CameraPreviewChangeKind.placementJump;
+    applyProcessing();
+  }
+
+  void setCameraManualCenterY(double y) {
+    final current = _cameraState ?? const CameraCompositionState.hidden();
+    final existing = current.normalizedCanvasCenter ?? const Offset(0.5, 0.5);
+    _cameraState = current.copyWith(
+      normalizedCanvasCenter: Offset(existing.dx, y.clamp(0.0, 1.0)),
+    );
+    notifyListeners();
+  }
+
+  void setCameraManualCenterYEnd(double y) {
+    setCameraManualCenterY(y);
+    _pendingCameraPreviewChangeKind = CameraPreviewChangeKind.placementJump;
+    applyProcessing();
+  }
+
   void setAudioGainDb(double v) {
     _audioGainDb = v.clamp(0.0, 24.0);
     notifyListeners();
@@ -217,17 +483,59 @@ class PostProcessingController extends ChangeNotifier {
     );
   }
 
+  Map<String, dynamic>? _cameraPreviewMethodArgs(
+    CameraPreviewChangeKind changeKind,
+  ) {
+    if (_projectPath == null) {
+      return null;
+    }
+
+    return {
+      'cameraPreviewChangeKind': changeKind.name,
+      if (_cameraPath != null) 'cameraPath': _cameraPath,
+      ...?_cameraState?.toMap(),
+    };
+  }
+
+  Future<void> _pushPreviewCameraPlacement(
+    CameraPreviewChangeKind changeKind,
+  ) async {
+    final projectPath = _projectPath;
+    final args = _cameraPreviewMethodArgs(changeKind);
+    if (projectPath == null || args == null) {
+      return;
+    }
+
+    try {
+      await _nativeBridge.previewSetCameraPlacement(
+        projectPath: projectPath,
+        changeKind: changeKind,
+        sessionId: _activeSessionId,
+        cameraPath: args['cameraPath'] as String?,
+        cameraState: _cameraState,
+      );
+    } catch (e, st) {
+      Log.e(
+        "PostProcessing",
+        "Failed to update preview camera placement",
+        e,
+        st,
+      );
+    }
+  }
+
   // --- Actions ---
 
   void attachToRecording({
     required String sessionId,
-    required String sourcePath,
+    required String projectPath,
   }) {
     _resetForNewRecording();
     _activeSessionId = sessionId;
-    _sourcePath = sourcePath;
-    _previewPath = sourcePath;
+    _projectPath = projectPath;
+    _previewPath = projectPath;
     notifyListeners();
+    unawaited(_loadRecordingSceneInfo(projectPath));
   }
 
   void detachRecording() {
@@ -236,12 +544,12 @@ class PostProcessingController extends ChangeNotifier {
   }
 
   Future<void> prepareInitialPreview({required String sessionId}) async {
-    if (_activeSessionId != sessionId || _sourcePath == null) return;
+    if (_activeSessionId != sessionId || _projectPath == null) return;
     await applyProcessing();
   }
 
   Future<void> reapplyPreviewComposition({required String sessionId}) async {
-    if (_activeSessionId != sessionId || _sourcePath == null) return;
+    if (_activeSessionId != sessionId || _projectPath == null) return;
     await applyProcessing();
   }
 
@@ -254,12 +562,31 @@ class PostProcessingController extends ChangeNotifier {
     _zoomFactor = 1.5;
     _showCursor = true;
     _previewPath = null;
-    _sourcePath = null;
+    _projectPath = null;
     _activeSessionId = null;
     _cursorAvailable = true;
     _audioGainDb = _settings.post.postAudioGainDb;
     _audioVolumePercent = _settings.post.postAudioVolumePercent;
+    _cameraPath = null;
+    _cameraState = null;
+    _cameraExportCapabilities = const CameraExportCapabilities.allSupported();
     _hasExportedCurrentRecording = false;
+  }
+
+  Future<void> _loadRecordingSceneInfo(String projectPath) async {
+    try {
+      final sceneInfo = await _nativeBridge.getRecordingSceneInfo(projectPath);
+      if (_projectPath != projectPath) {
+        return;
+      }
+      _cameraPath = sceneInfo.cameraPath;
+      _cameraState = sceneInfo.camera;
+      _cameraExportCapabilities = sceneInfo.cameraExportCapabilities;
+      notifyListeners();
+      await applyProcessing();
+    } catch (e, st) {
+      Log.e("PostProcessing", "Failed to load recording scene info: $e", e, st);
+    }
   }
 
   void togglePlayback() {
@@ -271,18 +598,24 @@ class PostProcessingController extends ChangeNotifier {
   }
 
   Future<void> applyProcessing() async {
-    final originalPath = _sourcePath;
-    if (originalPath == null) return;
+    final projectPath = _projectPath;
+    if (projectPath == null) return;
 
     _isProcessingPreview = true;
     notifyListeners();
 
     try {
+      final cameraPreviewChangeKind = _pendingCameraPreviewChangeKind;
+      _pendingCameraPreviewChangeKind = CameraPreviewChangeKind.none;
+      final cameraPreviewArgs = _cameraPreviewMethodArgs(
+        cameraPreviewChangeKind,
+      );
+
       Map<String, dynamic> args = {
         'layoutPreset': _settings.post.layoutPreset.name,
         'resolutionPreset': _settings.post.resolutionPreset.name,
         'fitMode': _settings.post.fitMode.name,
-        'path': originalPath,
+        'projectPath': projectPath,
         'padding': _videoPadding,
         'cornerRadius': _videoRadius,
         'backgroundColor': _backgroundColor,
@@ -297,6 +630,7 @@ class PostProcessingController extends ChangeNotifier {
         'format': 'mov',
         'codec': 'hevc',
         'bitrate': 'auto',
+        ...?cameraPreviewArgs,
       };
 
       final zoomSegments = _player.previewCompositionZoomSegments;
@@ -365,8 +699,8 @@ class PostProcessingController extends ChangeNotifier {
       return null;
     }
 
-    final originalPath = _sourcePath;
-    if (originalPath == null) return null;
+    final projectPath = _projectPath;
+    if (projectPath == null) return null;
 
     final l10n = AppLocalizations.of(context)!;
     final dialogResult = await ExportFileDialog.show(
@@ -483,7 +817,7 @@ class PostProcessingController extends ChangeNotifier {
         'layoutPreset': _settings.post.layoutPreset.name,
         'resolutionPreset': _settings.post.resolutionPreset.name,
         'fitMode': _settings.post.fitMode.name,
-        'path': originalPath,
+        'projectPath': projectPath,
         'padding': _videoPadding,
         'cornerRadius': _videoRadius,
         'backgroundColor': _backgroundColor,
@@ -501,6 +835,8 @@ class PostProcessingController extends ChangeNotifier {
         'format': _settings.export.exportFormat,
         'codec': _settings.export.exportCodec,
         'bitrate': _settings.export.exportBitrate,
+        if (_cameraPath != null) 'cameraPath': _cameraPath,
+        ...?_cameraState?.toMap(),
       };
 
       _activeExportInvokeSpan = _activeExportTransaction!.startChild(

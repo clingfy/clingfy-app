@@ -4,7 +4,7 @@ import 'package:clingfy/ui/platform/widgets/app_button.dart';
 import 'package:clingfy/ui/theme/app_shell_tokens.dart';
 import 'package:fluent_ui/fluent_ui.dart' as fluent;
 import 'package:flutter/cupertino.dart';
-import 'package:flutter/material.dart' show Icons, Theme;
+import 'package:flutter/material.dart' show Icons, Theme, Tooltip;
 import 'package:macos_ui/macos_ui.dart';
 
 const _toolbarRowKey = Key('desktop_toolbar_row');
@@ -12,6 +12,7 @@ const _toolbarSurfaceKey = Key('desktop_toolbar_surface');
 const _toolbarStatusStripKey = Key('toolbar_status_strip');
 const _toolbarNoticeLaneKey = Key('toolbar_notice_lane');
 const _toolbarExportLaneKey = Key('toolbar_export_lane');
+const _toolbarInspectorToggleKey = Key('home_toolbar_options_toggle_button');
 
 enum ToolbarMessageTone { info, success, warning, error }
 
@@ -97,7 +98,6 @@ class _PulseDotState extends State<_PulseDot>
 class DesktopToolbar extends StatelessWidget {
   const DesktopToolbar({
     super.key,
-    required this.title,
     required this.isRecording,
     required this.isPaused,
     this.elapsedText,
@@ -106,9 +106,10 @@ class DesktopToolbar extends StatelessWidget {
     this.onExport,
     this.exportStatus,
     this.isProcessing = false,
+    this.isInspectorVisible = true,
+    this.onToggleInspector,
   });
 
-  final String title;
   final bool isRecording;
   final bool isPaused;
   final String? elapsedText;
@@ -117,6 +118,8 @@ class DesktopToolbar extends StatelessWidget {
   final VoidCallback? onExport;
   final ToolbarExportStatusPresentation? exportStatus;
   final bool isProcessing;
+  final bool isInspectorVisible;
+  final VoidCallback? onToggleInspector;
 
   @override
   Widget build(BuildContext context) {
@@ -148,13 +151,14 @@ class DesktopToolbar extends StatelessWidget {
       return _ToolbarShell(
         row: _MacToolbarRow(
           key: _toolbarRowKey,
-          title: title,
           isRecording: isRecording,
           isPaused: isPaused,
           elapsedText: elapsedText,
           countdownText: countdownText,
           onExport: onExport,
           isProcessing: isProcessing,
+          isInspectorVisible: isInspectorVisible,
+          onToggleInspector: onToggleInspector,
           l10n: l10n,
         ),
         statusStrip: stripChild,
@@ -165,13 +169,14 @@ class DesktopToolbar extends StatelessWidget {
       return _ToolbarShell(
         row: _WinToolbarRow(
           key: _toolbarRowKey,
-          title: title,
           isRecording: isRecording,
           isPaused: isPaused,
           elapsedText: elapsedText,
           countdownText: countdownText,
           onExport: onExport,
           isProcessing: isProcessing,
+          isInspectorVisible: isInspectorVisible,
+          onToggleInspector: onToggleInspector,
           l10n: l10n,
         ),
         statusStrip: stripChild,
@@ -181,13 +186,14 @@ class DesktopToolbar extends StatelessWidget {
     return _ToolbarShell(
       row: _FallbackToolbarRow(
         key: _toolbarRowKey,
-        title: title,
         isRecording: isRecording,
         isPaused: isPaused,
         elapsedText: elapsedText,
         countdownText: countdownText,
         onExport: onExport,
         isProcessing: isProcessing,
+        isInspectorVisible: isInspectorVisible,
+        onToggleInspector: onToggleInspector,
         l10n: l10n,
       ),
       statusStrip: stripChild,
@@ -304,30 +310,31 @@ class _ToolbarShell extends StatelessWidget {
 class _MacToolbarRow extends StatelessWidget {
   const _MacToolbarRow({
     super.key,
-    required this.title,
     required this.isRecording,
     required this.isPaused,
     required this.elapsedText,
     required this.countdownText,
     required this.onExport,
     required this.isProcessing,
+    required this.isInspectorVisible,
+    required this.onToggleInspector,
     required this.l10n,
   });
 
-  final String title;
   final bool isRecording;
   final bool isPaused;
   final String? elapsedText;
   final String? countdownText;
   final VoidCallback? onExport;
   final bool isProcessing;
+  final bool isInspectorVisible;
+  final VoidCallback? onToggleInspector;
   final AppLocalizations l10n;
 
   @override
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
     final spacing = context.appSpacing;
-    final typography = context.appTypography;
     final chrome = theme.appEditorChrome;
     final tokens = theme.appTokens;
     final bg = tokens.editorChromeBackground;
@@ -342,8 +349,17 @@ class _MacToolbarRow extends StatelessWidget {
       ),
       child: Row(
         children: [
-          Text(title, style: typography.button),
-          SizedBox(width: spacing.xs + 2),
+          if (onToggleInspector != null) ...[
+            _toolbarIconButton(
+              context: context,
+              buttonKey: _toolbarInspectorToggleKey,
+              icon: Icons.tune_rounded,
+              tooltip: isInspectorVisible ? l10n.hideOptions : l10n.showOptions,
+              onPressed: onToggleInspector,
+              active: isInspectorVisible,
+            ),
+            SizedBox(width: spacing.xs + 2),
+          ],
           if (isRecording) ...[
             _pill(
               context,
@@ -400,23 +416,25 @@ class _MacToolbarRow extends StatelessWidget {
 class _WinToolbarRow extends StatelessWidget {
   const _WinToolbarRow({
     super.key,
-    required this.title,
     required this.isRecording,
     required this.isPaused,
     required this.elapsedText,
     required this.countdownText,
     required this.onExport,
     required this.isProcessing,
+    required this.isInspectorVisible,
+    required this.onToggleInspector,
     required this.l10n,
   });
 
-  final String title;
   final bool isRecording;
   final bool isPaused;
   final String? elapsedText;
   final String? countdownText;
   final VoidCallback? onExport;
   final bool isProcessing;
+  final bool isInspectorVisible;
+  final VoidCallback? onToggleInspector;
   final AppLocalizations l10n;
 
   @override
@@ -437,8 +455,17 @@ class _WinToolbarRow extends StatelessWidget {
       ),
       child: Row(
         children: [
-          Text(title, style: theme.typography.bodyStrong),
-          SizedBox(width: spacing.xs + 2),
+          if (onToggleInspector != null) ...[
+            _toolbarIconButton(
+              context: context,
+              buttonKey: _toolbarInspectorToggleKey,
+              icon: Icons.tune_rounded,
+              tooltip: isInspectorVisible ? l10n.hideOptions : l10n.showOptions,
+              onPressed: onToggleInspector,
+              active: isInspectorVisible,
+            ),
+            SizedBox(width: spacing.xs + 2),
+          ],
           if (isRecording) ...[
             _pillWin(
               context,
@@ -487,23 +514,25 @@ class _WinToolbarRow extends StatelessWidget {
 class _FallbackToolbarRow extends StatelessWidget {
   const _FallbackToolbarRow({
     super.key,
-    required this.title,
     required this.isRecording,
     required this.isPaused,
     required this.elapsedText,
     required this.countdownText,
     required this.onExport,
     required this.isProcessing,
+    required this.isInspectorVisible,
+    required this.onToggleInspector,
     required this.l10n,
   });
 
-  final String title;
   final bool isRecording;
   final bool isPaused;
   final String? elapsedText;
   final String? countdownText;
   final VoidCallback? onExport;
   final bool isProcessing;
+  final bool isInspectorVisible;
+  final VoidCallback? onToggleInspector;
   final AppLocalizations l10n;
 
   @override
@@ -511,7 +540,6 @@ class _FallbackToolbarRow extends StatelessWidget {
     final theme = Theme.of(context);
     final tokens = theme.appTokens;
     final spacing = theme.appSpacing;
-    final typography = theme.appTypography;
     final chrome = theme.appEditorChrome;
     return Container(
       key: _toolbarSurfaceKey,
@@ -523,8 +551,17 @@ class _FallbackToolbarRow extends StatelessWidget {
       ),
       child: Row(
         children: [
-          Text(title, style: typography.button),
-          SizedBox(width: spacing.xs + 2),
+          if (onToggleInspector != null) ...[
+            _toolbarIconButton(
+              context: context,
+              buttonKey: _toolbarInspectorToggleKey,
+              icon: Icons.tune_rounded,
+              tooltip: isInspectorVisible ? l10n.hideOptions : l10n.showOptions,
+              onPressed: onToggleInspector,
+              active: isInspectorVisible,
+            ),
+            SizedBox(width: spacing.xs + 2),
+          ],
           if (isRecording) ...[
             _pillFallback(
               context,
@@ -1446,6 +1483,55 @@ Widget _simpleButton({
             const SizedBox(width: 6),
             Text(label, style: theme.appTypography.button),
           ],
+        ),
+      ),
+    ),
+  );
+}
+
+Widget _toolbarIconButton({
+  required BuildContext context,
+  required Key buttonKey,
+  required IconData icon,
+  required String tooltip,
+  required VoidCallback? onPressed,
+  bool active = false,
+}) {
+  final theme = Theme.of(context);
+  final chrome = theme.appEditorChrome;
+  final controlFill =
+      theme.inputDecorationTheme.fillColor ??
+      theme.colorScheme.secondaryContainer;
+  final background = active
+      ? theme.colorScheme.primary.withValues(alpha: 0.14)
+      : controlFill;
+  final borderColor = active
+      ? theme.colorScheme.primary.withValues(alpha: 0.24)
+      : theme.dividerColor.withValues(alpha: 0.1);
+  final foreground = active
+      ? theme.colorScheme.primary
+      : theme.colorScheme.onSurfaceVariant;
+
+  return Tooltip(
+    message: tooltip,
+    child: Semantics(
+      button: true,
+      label: tooltip,
+      child: GestureDetector(
+        key: buttonKey,
+        onTap: onPressed,
+        child: Opacity(
+          opacity: onPressed == null ? 0.5 : 1,
+          child: Container(
+            width: 32,
+            height: 32,
+            decoration: BoxDecoration(
+              color: background,
+              borderRadius: BorderRadius.circular(chrome.controlRadius),
+              border: Border.all(color: borderColor),
+            ),
+            child: Icon(icon, size: 17, color: foreground),
+          ),
         ),
       ),
     ),

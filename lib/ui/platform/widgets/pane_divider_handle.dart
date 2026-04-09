@@ -6,6 +6,7 @@ class PaneDividerHandle extends StatelessWidget {
     required this.onHorizontalDragStart,
     required this.onHorizontalDragUpdate,
     required this.onHorizontalDragEnd,
+    required this.onHorizontalDragCancel,
     this.isActive = false,
   });
 
@@ -16,6 +17,7 @@ class PaneDividerHandle extends StatelessWidget {
   final GestureDragStartCallback onHorizontalDragStart;
   final GestureDragUpdateCallback onHorizontalDragUpdate;
   final GestureDragEndCallback onHorizontalDragEnd;
+  final GestureDragCancelCallback onHorizontalDragCancel;
   final bool isActive;
 
   @override
@@ -31,6 +33,7 @@ class PaneDividerHandle extends StatelessWidget {
         onHorizontalDragStart: onHorizontalDragStart,
         onHorizontalDragUpdate: onHorizontalDragUpdate,
         onHorizontalDragEnd: onHorizontalDragEnd,
+        onHorizontalDragCancel: onHorizontalDragCancel,
         child: Center(
           child: AnimatedContainer(
             duration: const Duration(milliseconds: 120),

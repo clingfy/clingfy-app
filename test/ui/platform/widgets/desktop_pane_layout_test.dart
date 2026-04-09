@@ -9,7 +9,7 @@ const _leftSpec = DesktopPaneSpec(
   maxWidth: 60,
   collapsedWidth: 40,
   collapsible: true,
-  autoCollapsePriority: 0,
+  autoCollapsePriority: 1,
 );
 
 const _inspectorSpec = DesktopPaneSpec(
@@ -20,7 +20,30 @@ const _inspectorSpec = DesktopPaneSpec(
   collapsedWidth: 32,
   resizable: true,
   collapsible: true,
-  autoCollapsePriority: 1,
+  autoCollapsePriority: 0,
+);
+
+const _zeroWidthInspectorSpec = DesktopPaneSpec(
+  id: DesktopPaneId.recordingSidebar,
+  defaultWidth: 220,
+  minWidth: 200,
+  maxWidth: 260,
+  collapsedWidth: 0,
+  resizable: true,
+  collapsible: true,
+  autoCollapsePriority: 0,
+);
+
+const _snapZeroWidthInspectorSpec = DesktopPaneSpec(
+  id: DesktopPaneId.recordingSidebar,
+  defaultWidth: 220,
+  minWidth: 200,
+  maxWidth: 260,
+  collapsedWidth: 0,
+  resizable: true,
+  collapsible: true,
+  snapCollapseAtMinWidthOnDragEnd: true,
+  autoCollapsePriority: 0,
 );
 
 const _workspaceSpec = DesktopPaneSpec(
@@ -34,6 +57,7 @@ const _workspaceSpec = DesktopPaneSpec(
 Widget _buildHarness({
   required DesktopPaneController controller,
   required ValueChanged<DesktopPaneLayoutPrefs> onCommit,
+  DesktopPaneSpec inspectorSpec = _inspectorSpec,
   double width = 900,
   double height = 500,
 }) {
@@ -66,7 +90,7 @@ Widget _buildHarness({
                 },
               ),
               DesktopPaneSlot(
-                spec: _inspectorSpec,
+                spec: inspectorSpec,
                 builder: (context, presentation) {
                   return Stack(
                     children: [
@@ -87,7 +111,7 @@ Widget _buildHarness({
                         child: IconButton(
                           key: const Key('toggle_recording_sidebar'),
                           onPressed: () {
-                            controller.togglePaneCollapsed(_inspectorSpec);
+                            controller.togglePaneCollapsed(inspectorSpec);
                             onCommit(controller.layout);
                           },
                           icon: Icon(
@@ -169,6 +193,130 @@ void main() {
     },
   );
 
+  testWidgets(
+    'dragging an opted-in zero-width inspector to min width snaps it closed on release',
+    (tester) async {
+      _setDesktopWindow(tester);
+      final controller = DesktopPaneController(
+        initialLayout: const DesktopPaneLayoutPrefs(
+          paneStates: {
+            DesktopPaneId.recordingSidebar: DesktopPaneState(
+              width: 240,
+              lastExpandedWidth: 240,
+              userResized: true,
+            ),
+          },
+        ),
+      );
+
+      await tester.pumpWidget(
+        _buildHarness(
+          controller: controller,
+          inspectorSpec: _snapZeroWidthInspectorSpec,
+          onCommit: (_) {},
+        ),
+      );
+      await tester.pumpAndSettle();
+
+      final handle = find.byKey(
+        const ValueKey('desktop_pane_handle_recordingSidebar'),
+      );
+      final gesture = await tester.startGesture(tester.getCenter(handle));
+      await gesture.moveBy(const Offset(-80, 0));
+      await tester.pump();
+
+      expect(
+        _paneSlotWidth(tester, DesktopPaneId.recordingSidebar),
+        moreOrLessEquals(200),
+      );
+
+      await gesture.up();
+      await tester.pump();
+      await tester.pump(const Duration(milliseconds: 90));
+
+      final midCollapseWidth = _paneSlotWidth(
+        tester,
+        DesktopPaneId.recordingSidebar,
+      );
+      expect(midCollapseWidth, greaterThan(0));
+      expect(midCollapseWidth, lessThan(200));
+
+      await tester.pumpAndSettle();
+
+      expect(find.byKey(const Key('pane_recording_sidebar')), findsOneWidget);
+      expect(
+        controller.stateFor(DesktopPaneId.recordingSidebar).isCollapsed,
+        isTrue,
+      );
+      expect(
+        controller.stateFor(DesktopPaneId.recordingSidebar).width,
+        moreOrLessEquals(240),
+      );
+      expect(
+        controller.stateFor(DesktopPaneId.recordingSidebar).lastExpandedWidth,
+        moreOrLessEquals(240),
+      );
+      expect(
+        _paneSlotWidth(tester, DesktopPaneId.recordingSidebar),
+        moreOrLessEquals(0),
+      );
+
+      controller.togglePaneCollapsed(_snapZeroWidthInspectorSpec);
+      await tester.pump();
+      await tester.pump(const Duration(milliseconds: 90));
+
+      final midExpandWidth = _paneSlotWidth(
+        tester,
+        DesktopPaneId.recordingSidebar,
+      );
+      expect(midExpandWidth, greaterThan(0));
+      expect(midExpandWidth, lessThan(240));
+
+      await tester.pumpAndSettle();
+
+      expect(
+        _paneSlotWidth(tester, DesktopPaneId.recordingSidebar),
+        moreOrLessEquals(240),
+      );
+    },
+  );
+
+  testWidgets(
+    'dragging slightly above min width keeps an opted-in inspector visible',
+    (tester) async {
+      _setDesktopWindow(tester);
+      final controller = DesktopPaneController();
+
+      await tester.pumpWidget(
+        _buildHarness(
+          controller: controller,
+          inspectorSpec: _snapZeroWidthInspectorSpec,
+          onCommit: (_) {},
+        ),
+      );
+      await tester.pumpAndSettle();
+
+      final handle = find.byKey(
+        const ValueKey('desktop_pane_handle_recordingSidebar'),
+      );
+      final gesture = await tester.startGesture(tester.getCenter(handle));
+      await gesture.moveBy(const Offset(-18, 0));
+      await tester.pump();
+      await gesture.up();
+      await tester.pumpAndSettle();
+
+      expect(find.byKey(const Key('pane_recording_sidebar')), findsOneWidget);
+      expect(
+        controller.stateFor(DesktopPaneId.recordingSidebar).isCollapsed,
+        isFalse,
+      );
+      expect(
+        _paneSlotWidth(tester, DesktopPaneId.recordingSidebar),
+        moreOrLessEquals(202),
+      );
+    },
+  );
+
   testWidgets('collapse and re-expand restore the last expanded width', (
     tester,
   ) async {
@@ -193,19 +341,72 @@ void main() {
     await tester.tap(find.byKey(const Key('toggle_recording_sidebar')));
     await tester.pumpAndSettle();
     expect(
-      tester.getRect(find.byKey(const Key('pane_recording_sidebar'))).width,
+      _paneSlotWidth(tester, DesktopPaneId.recordingSidebar),
       moreOrLessEquals(32),
     );
 
     await tester.tap(find.byKey(const Key('toggle_recording_sidebar')));
     await tester.pumpAndSettle();
     expect(
-      tester.getRect(find.byKey(const Key('pane_recording_sidebar'))).width,
+      _paneSlotWidth(tester, DesktopPaneId.recordingSidebar),
       moreOrLessEquals(240),
     );
   });
 
-  testWidgets('auto-collapse prioritizes the left rail before the inspector', (
+  testWidgets('nonzero collapsed panes animate snapped width changes', (
+    tester,
+  ) async {
+    _setDesktopWindow(tester);
+    final controller = DesktopPaneController();
+
+    await tester.pumpWidget(
+      _buildHarness(controller: controller, onCommit: (_) {}),
+    );
+    await tester.pumpAndSettle();
+
+    expect(
+      _paneSlotWidth(tester, DesktopPaneId.homeLeftSidebar),
+      moreOrLessEquals(60),
+    );
+
+    controller.togglePaneCollapsed(_leftSpec);
+    await tester.pump();
+    await tester.pump(const Duration(milliseconds: 90));
+
+    final midCollapseWidth = _paneSlotWidth(
+      tester,
+      DesktopPaneId.homeLeftSidebar,
+    );
+    expect(midCollapseWidth, greaterThan(40));
+    expect(midCollapseWidth, lessThan(60));
+
+    await tester.pumpAndSettle();
+
+    expect(
+      _paneSlotWidth(tester, DesktopPaneId.homeLeftSidebar),
+      moreOrLessEquals(40),
+    );
+
+    controller.togglePaneCollapsed(_leftSpec);
+    await tester.pump();
+    await tester.pump(const Duration(milliseconds: 90));
+
+    final midExpandWidth = _paneSlotWidth(
+      tester,
+      DesktopPaneId.homeLeftSidebar,
+    );
+    expect(midExpandWidth, greaterThan(40));
+    expect(midExpandWidth, lessThan(60));
+
+    await tester.pumpAndSettle();
+
+    expect(
+      _paneSlotWidth(tester, DesktopPaneId.homeLeftSidebar),
+      moreOrLessEquals(60),
+    );
+  });
+
+  testWidgets('auto-collapse prioritizes the inspector before the left rail', (
     tester,
   ) async {
     _setDesktopWindow(tester);
@@ -217,13 +418,58 @@ void main() {
     await tester.pumpAndSettle();
 
     expect(
-      tester.getRect(find.byKey(const Key('pane_home_left_sidebar'))).width,
-      moreOrLessEquals(40),
+      _paneSlotWidth(tester, DesktopPaneId.homeLeftSidebar),
+      moreOrLessEquals(60),
     );
     expect(
-      tester.getRect(find.byKey(const Key('pane_recording_sidebar'))).width,
-      moreOrLessEquals(200),
+      _paneSlotWidth(tester, DesktopPaneId.recordingSidebar),
+      moreOrLessEquals(32),
     );
+  });
+
+  testWidgets('zero-width collapsed panes remove their extra gap and divider', (
+    tester,
+  ) async {
+    _setDesktopWindow(tester);
+    final controller = DesktopPaneController(
+      initialLayout: const DesktopPaneLayoutPrefs(
+        paneStates: {
+          DesktopPaneId.recordingSidebar: DesktopPaneState(
+            isCollapsed: true,
+            width: 240,
+            lastExpandedWidth: 240,
+            userResized: true,
+          ),
+        },
+      ),
+    );
+
+    await tester.pumpWidget(
+      _buildHarness(
+        controller: controller,
+        inspectorSpec: _zeroWidthInspectorSpec,
+        onCommit: (_) {},
+      ),
+    );
+    await tester.pumpAndSettle();
+
+    final leftRect = tester.getRect(
+      find.byKey(const Key('pane_home_left_sidebar')),
+    );
+    final workspaceRect = tester.getRect(
+      find.byKey(const Key('pane_workspace')),
+    );
+
+    expect(find.byKey(const Key('pane_recording_sidebar')), findsOneWidget);
+    expect(
+      _paneSlotWidth(tester, DesktopPaneId.recordingSidebar),
+      moreOrLessEquals(0),
+    );
+    expect(
+      find.byKey(const ValueKey('desktop_pane_handle_recordingSidebar')),
+      findsNothing,
+    );
+    expect(workspaceRect.left, moreOrLessEquals(leftRect.right + 4));
   });
 
   testWidgets('auto-collapse is temporary and does not persist user state', (
@@ -306,6 +552,12 @@ void main() {
 
     expect(tester.takeException(), isA<AssertionError>());
   });
+}
+
+double _paneSlotWidth(WidgetTester tester, DesktopPaneId id) {
+  return tester
+      .getRect(find.byKey(ValueKey('desktop_pane_slot_${id.name}')))
+      .width;
 }
 
 void _setDesktopWindow(

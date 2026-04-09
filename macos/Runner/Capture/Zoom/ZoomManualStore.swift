@@ -36,8 +36,10 @@ class ZoomManualStore {
 
   private init() {}
 
-  func save(videoPath: String, segments: [[String: Any]]) -> Bool {
-    let url = AppPaths.zoomManualSidecarURL(for: URL(fileURLWithPath: videoPath))
+  func save(projectPath: String, segments: [[String: Any]]) -> Bool {
+    let url = RecordingProjectPaths.zoomManualURL(
+      for: URL(fileURLWithPath: projectPath)
+    )
 
     var manualSegments: [ZoomManualSegment] = []
     for dict in segments {
@@ -72,8 +74,10 @@ class ZoomManualStore {
     }
   }
 
-  func load(videoPath: String) -> [[String: Any]] {
-    let url = AppPaths.zoomManualSidecarURL(for: URL(fileURLWithPath: videoPath))
+  func load(projectPath: String) -> [[String: Any]] {
+    let url = RecordingProjectPaths.zoomManualURL(
+      for: URL(fileURLWithPath: projectPath)
+    )
 
     guard FileManager.default.fileExists(atPath: url.path) else {
       return []

@@ -89,7 +89,7 @@ void main() {
 
     expect(kEditorShellOuterPadding, 2);
     expect(kEditorShellInnerPadding, 6);
-    expect(kEditorShellGap, 6);
+    expect(kEditorShellGap, 4);
     expect(chrome.shellRadius, 11);
     expect(chrome.panelRadius, 9);
     expect(chrome.controlRadius, 6);

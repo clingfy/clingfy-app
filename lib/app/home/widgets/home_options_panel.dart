@@ -18,7 +18,6 @@ class HomeOptionsPanel extends StatelessWidget {
     required this.actions,
     required this.settingsController,
     required this.panePresentation,
-    required this.onToggleCollapsed,
   });
 
   final bool isRecording;
@@ -27,7 +26,6 @@ class HomeOptionsPanel extends StatelessWidget {
   final HomeActions actions;
   final SettingsController settingsController;
   final DesktopPanePresentation panePresentation;
-  final VoidCallback onToggleCollapsed;
 
   @override
   Widget build(BuildContext context) {
@@ -63,34 +61,25 @@ class HomeOptionsPanel extends StatelessWidget {
         borderRadius: BorderRadius.circular(chrome.panelRadius),
       ),
       clipBehavior: Clip.antiAlias,
-      child: panePresentation.effectiveCollapsed
-          ? _CollapsedOptionsPane(
-              title: title,
-              expandTooltip: l10n.expandPane,
-              onExpand: onToggleCollapsed,
-            )
-          : Column(
-              children: [
-                AppPaneHeader(
-                  headerKey: headerKey,
-                  title: title,
-                  trailingKey: const Key('home_options_panel_collapse_button'),
-                  trailingTooltip: l10n.collapsePane,
-                  trailingIcon: Icons.chevron_right_rounded,
-                  onTrailingPressed: onToggleCollapsed,
-                  isCompact: panePresentation.isCompact,
-                ),
-                Expanded(child: body),
-              ],
-            ),
+      child: Column(
+        children: [
+          AppPaneHeader(
+            headerKey: headerKey,
+            title: title,
+            isCompact: panePresentation.isCompact,
+          ),
+          Expanded(child: body),
+        ],
+      ),
     );
   }
 
   String _resolvedTitle(AppLocalizations l10n) {
     if (showPreviewShell) {
       return switch (uiState.postProcessingSidebarIndex) {
-        0 => l10n.layoutSettings,
-        1 => l10n.effectsSettings,
+        0 => l10n.canvasSettings,
+        1 => l10n.cameraSettings,
+        2 => l10n.effectsSettings,
         _ => l10n.exportSettings,
       };
     }
@@ -106,37 +95,5 @@ class HomeOptionsPanel extends StatelessWidget {
     return showPreviewShell
         ? const Key('post_sidebar_header')
         : const Key('recording_sidebar_header');
-  }
-}
-
-class _CollapsedOptionsPane extends StatelessWidget {
-  const _CollapsedOptionsPane({
-    required this.title,
-    required this.expandTooltip,
-    required this.onExpand,
-  });
-
-  final String title;
-  final String expandTooltip;
-  final VoidCallback onExpand;
-
-  @override
-  Widget build(BuildContext context) {
-    final tokens = context.appTokens;
-
-    return ColoredBox(
-      color: tokens.previewPanelBackground,
-      child: Center(
-        child: IconButton(
-          key: const Key('home_options_panel_expand_button'),
-          onPressed: onExpand,
-          tooltip: '$expandTooltip: $title',
-          splashRadius: 16,
-          iconSize: 18,
-          visualDensity: VisualDensity.compact,
-          icon: const Icon(Icons.chevron_left_rounded),
-        ),
-      ),
-    );
   }
 }

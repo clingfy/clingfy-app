@@ -619,6 +619,10 @@ ThemeData buildThemeData(Brightness brightness) {
       ),
     ),
     dividerTheme: DividerThemeData(color: palette.border, thickness: 1),
+    dialogTheme: DialogThemeData(
+      backgroundColor: palette.tokens.editorChromeBackground,
+      surfaceTintColor: Colors.transparent,
+    ),
     sliderTheme: SliderThemeData(
       activeTrackColor: clingfyBrandColor,
       activeTickMarkColor: clingfyBrandColor,
@@ -750,6 +754,17 @@ fluent.FluentThemeData buildFluentTheme(Brightness brightness) {
     inactiveColor: palette.textPrimary,
     shadowColor: Colors.black.withValues(
       alpha: brightness == Brightness.dark ? 0.3 : 0.08,
+    ),
+    dialogTheme: fluent.ContentDialogThemeData(
+      decoration: BoxDecoration(
+        color: palette.tokens.editorChromeBackground,
+        borderRadius: BorderRadius.circular(12),
+        boxShadow: kElevationToShadow[6],
+      ),
+      actionsDecoration: BoxDecoration(
+        color: palette.tokens.editorChromeBackground,
+        borderRadius: const BorderRadius.vertical(bottom: Radius.circular(12)),
+      ),
     ),
     iconTheme: IconThemeData(color: palette.textSecondary, size: 18),
   );

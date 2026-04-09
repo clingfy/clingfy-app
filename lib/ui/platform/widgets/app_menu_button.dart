@@ -4,11 +4,7 @@ import 'package:flutter/material.dart';
 import 'package:macos_ui/macos_ui.dart' as macos;
 
 class AppMenuItem<T> {
-  const AppMenuItem({
-    required this.value,
-    required this.label,
-    this.icon,
-  });
+  const AppMenuItem({required this.value, required this.label, this.icon});
 
   final T value;
   final String label;
