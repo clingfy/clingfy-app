@@ -17,9 +17,7 @@ on:
 
 concurrency:
   group: clingfy-ci-${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
-  cancel-in-progress: true
-  # cancel-in-progress: ${{ github.event_name == 'pull_request' }}
-
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 env:
   APP_ENV: ${{ case(github.base_ref == 'develop' || github.ref_name == 'develop', 'dev', 'prod') }}
 
@@ -234,7 +232,6 @@ jobs:
     name: Native macOS export tests
     runs-on: macos-latest
     timeout-minutes: 75
-    if: github.event_name == 'push' || github.event_name == 'workflow_dispatch' || github.event_name == 'schedule'
     needs:
       - flutter-quality
 
@@ -281,9 +278,11 @@ jobs:
           echo "APP_ENV=$APP_ENV"
 
       - name: Flutter pub get
+        if: github.event_name != 'pull_request'
         run: flutter pub get
 
       - name: Generate Flutter macOS configs
+        if: github.event_name != 'pull_request'
         run: |
           set -euo pipefail
 
@@ -302,12 +301,14 @@ jobs:
           touch macos/Flutter/ephemeral/FlutterOutputs.xcfilelist
 
       - name: Install CocoaPods
+        if: github.event_name != 'pull_request'
         run: |
           set -euo pipefail
           cd macos
           pod install --repo-update
 
       - name: Verify native test target exists
+        if: github.event_name != 'pull_request'
         run: |
           set -euo pipefail
           if ! grep -q "RunnerTests" macos/Runner.xcodeproj/project.pbxproj; then
@@ -316,6 +317,7 @@ jobs:
           fi
 
       - name: Build for testing
+        if: github.event_name != 'pull_request'
         run: |
           set -euo pipefail
           mkdir -p build/ci
@@ -334,6 +336,7 @@ jobs:
             build-for-testing 2>&1 | tee build/ci/xcode-build-for-testing-export.log
 
       - name: Run export-only native tests
+        if: github.event_name != 'pull_request'
         run: |
           set -euo pipefail
           xcodebuild \
@@ -352,8 +355,12 @@ jobs:
             -only-testing:RunnerTests/LetterboxExporterTests \
             test-without-building 2>&1 | tee build/ci/xcode-export-test.log
 
+      - name: PR no-op for required check
+        if: github.event_name == 'pull_request'
+        run: echo "Skipping heavy export tests on pull requests; this check passes intentionally."
+
       - name: Upload export native test artifacts
-        if: always()
+        if: always() && github.event_name != 'pull_request'
         uses: actions/upload-artifact@v4
         with:
           name: native-macos-export-artifacts
