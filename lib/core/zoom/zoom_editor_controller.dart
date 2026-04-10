@@ -159,6 +159,7 @@ class ZoomEditorController extends ChangeNotifier {
 
   ZoomSegment? _draftSegment;
   ZoomAddMode _addMode = ZoomAddMode.off;
+  bool _snappingEnabled = true;
 
   // Drag State
   String? _movingSegmentId;
@@ -188,6 +189,7 @@ class ZoomEditorController extends ChangeNotifier {
   ZoomAddMode get addMode => _addMode;
   bool get addModeEnabled => _addMode != ZoomAddMode.off;
   bool get stickyAddModeEnabled => _addMode == ZoomAddMode.sticky;
+  bool get snappingEnabled => _snappingEnabled;
 
   Set<String> get selectedSegmentIds => Set.unmodifiable(_selectedSegmentIds);
   List<ZoomSegment> get selectedSegments {
@@ -441,8 +443,8 @@ class ZoomEditorController extends ChangeNotifier {
   void updateDraft(int startMs, int endMs) {
     if (!addModeEnabled) return;
 
-    int s = _snapToGrid(startMs);
-    int e = _snapToGrid(endMs);
+    int s = _normalizeEditableMs(startMs);
+    int e = _normalizeEditableMs(endMs);
 
     // Normalize
     if (s > e) {
@@ -898,7 +900,7 @@ class ZoomEditorController extends ChangeNotifier {
 
     final duration =
         _movingOriginalSegment!.endMs - _movingOriginalSegment!.startMs;
-    int newStart = _snapToGrid(ms - _movingPointerOffsetMs);
+    int newStart = _normalizeEditableMs(ms - _movingPointerOffsetMs);
     int newEnd = newStart + duration;
 
     // Clamp
@@ -972,7 +974,7 @@ class ZoomEditorController extends ChangeNotifier {
   void updateTrimTo(int ms) {
     if (_trimmingSegmentId == null || _trimmingOriginalSegment == null) return;
 
-    final snappedMs = _snapToGrid(ms);
+    final snappedMs = _normalizeEditableMs(ms);
     final original = _trimmingOriginalSegment!;
 
     int newStart = original.startMs;
@@ -1083,6 +1085,18 @@ class ZoomEditorController extends ChangeNotifier {
   int _snapToGrid(int ms) {
     final snapped = (ms / frameMs).round() * frameMs;
     return snapped.round().clamp(0, durationMs);
+  }
+
+  int _normalizeEditableMs(int ms) {
+    final clamped = ms.clamp(0, durationMs);
+    if (!_snappingEnabled) return clamped;
+    return _snapToGrid(clamped);
+  }
+
+  void setSnappingEnabled(bool enabled) {
+    if (_snappingEnabled == enabled) return;
+    _snappingEnabled = enabled;
+    notifyListeners();
   }
 
   Future<void> _persistManualSegments() async {

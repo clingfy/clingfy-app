@@ -186,7 +186,7 @@ void main() {
 
     expect(
       shell.constraints?.maxHeight,
-      theme.appEditorChrome.inspectorTabHeight,
+      theme.appEditorChrome.timelineLaneHeight,
     );
     expect(decoration.color, theme.inputDecorationTheme.fillColor);
     expect(

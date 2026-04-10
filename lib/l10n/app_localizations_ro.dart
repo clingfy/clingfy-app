@@ -832,6 +832,21 @@ class AppLocalizationsRo extends AppLocalizations {
   String get closeTimelineTooltip => 'Închide timeline';
 
   @override
+  String get play => 'Redare';
+
+  @override
+  String get pausePlayback => 'Pauză';
+
+  @override
+  String get markers => 'Marcaje';
+
+  @override
+  String get lanes => 'Benzi';
+
+  @override
+  String get snap => 'Fixare';
+
+  @override
   String get zoomAddSegment => 'Adaugă segment zoom';
 
   @override
