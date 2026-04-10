@@ -1636,6 +1636,36 @@ abstract class AppLocalizations {
   /// **'Close timeline'**
   String get closeTimelineTooltip;
 
+  /// No description provided for @play.
+  ///
+  /// In en, this message translates to:
+  /// **'Play'**
+  String get play;
+
+  /// No description provided for @pausePlayback.
+  ///
+  /// In en, this message translates to:
+  /// **'Pause'**
+  String get pausePlayback;
+
+  /// No description provided for @markers.
+  ///
+  /// In en, this message translates to:
+  /// **'Markers'**
+  String get markers;
+
+  /// No description provided for @lanes.
+  ///
+  /// In en, this message translates to:
+  /// **'Lanes'**
+  String get lanes;
+
+  /// No description provided for @snap.
+  ///
+  /// In en, this message translates to:
+  /// **'Snap'**
+  String get snap;
+
   /// No description provided for @zoomAddSegment.
   ///
   /// In en, this message translates to:

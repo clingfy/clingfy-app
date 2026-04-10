@@ -12,6 +12,10 @@ class ZoomTrack extends StatefulWidget {
   final ValueChanged<int>? onQuickSeek;
   final ZoomEditorController? editorController;
   final VoidCallback? onFocusRequested;
+  final double? height;
+  final bool showSegmentLabels;
+  final Color? shellColor;
+  final Color? shellBorderColor;
 
   // Optional externally provided selection state. Falls back to editor state.
   final Set<String>? selectedSegmentIds;
@@ -26,6 +30,10 @@ class ZoomTrack extends StatefulWidget {
     this.onQuickSeek,
     this.editorController,
     this.onFocusRequested,
+    this.height,
+    this.showSegmentLabels = true,
+    this.shellColor,
+    this.shellBorderColor,
     this.selectedSegmentIds,
     this.primarySelectedSegmentId,
     this.canSingleEdit,
@@ -226,6 +234,8 @@ class _ZoomTrackState extends State<ZoomTrack> {
     final accentColor = theme.colorScheme.primary;
     final editor = widget.editorController;
     final isAddMode = editor?.addModeEnabled ?? false;
+    final shellColor = widget.shellColor ?? controlFill;
+    final shellBorderColor = widget.shellBorderColor ?? tokens.panelBorder;
 
     return MouseRegion(
       cursor: _cursor,
@@ -464,12 +474,11 @@ class _ZoomTrackState extends State<ZoomTrack> {
         },
         child: Container(
           key: const Key('zoom_track_shell'),
-          height: chrome.inspectorTabHeight,
-          margin: const EdgeInsets.symmetric(vertical: 2),
+          height: widget.height ?? chrome.timelineLaneHeight,
           decoration: BoxDecoration(
-            color: controlFill,
+            color: shellColor,
             borderRadius: BorderRadius.circular(chrome.controlRadius),
-            border: Border.all(color: tokens.panelBorder),
+            border: Border.all(color: shellBorderColor),
           ),
           child: ClipRRect(
             borderRadius: BorderRadius.circular(chrome.controlRadius),
@@ -486,6 +495,7 @@ class _ZoomTrackState extends State<ZoomTrack> {
                     tickColor: tokens.timelineTick,
                     selectedSegmentIds: _selectedIds,
                     primarySelectedSegmentId: _primarySelectedId,
+                    showSegmentLabels: widget.showSegmentLabels,
                     selectionBandStartMs: _selectionBandStartMs(
                       constraints.maxWidth,
                     ),
@@ -513,6 +523,7 @@ class ZoomTrackPainter extends CustomPainter {
   final Color tickColor;
   final Set<String> selectedSegmentIds;
   final String? primarySelectedSegmentId;
+  final bool showSegmentLabels;
   final int? selectionBandStartMs;
   final int? selectionBandEndMs;
 
@@ -526,6 +537,7 @@ class ZoomTrackPainter extends CustomPainter {
     required this.tickColor,
     required this.selectedSegmentIds,
     required this.primarySelectedSegmentId,
+    required this.showSegmentLabels,
     required this.selectionBandStartMs,
     required this.selectionBandEndMs,
   });
@@ -667,6 +679,34 @@ class ZoomTrackPainter extends CustomPainter {
           handlePaint,
         );
       }
+
+      if (showSegmentLabels) {
+        final label = isManual
+            ? 'Manual'
+            : isSelected
+            ? 'Selected'
+            : null;
+        if (label != null && rect.width >= 56) {
+          final textPainter = TextPainter(
+            text: TextSpan(
+              text: label,
+              style: TextStyle(
+                color: tickColor.withValues(alpha: isPrimary ? 0.98 : 0.8),
+                fontSize: 10,
+                fontWeight: FontWeight.w600,
+              ),
+            ),
+            textDirection: TextDirection.ltr,
+            maxLines: 1,
+            ellipsis: '…',
+          )..layout(maxWidth: rect.width - 12);
+
+          textPainter.paint(
+            canvas,
+            Offset(rect.left + 6, rect.center.dy - (textPainter.height / 2)),
+          );
+        }
+      }
     }
 
     if (draftSegment != null) {
@@ -704,6 +744,7 @@ class ZoomTrackPainter extends CustomPainter {
         oldDelegate.durationMs != durationMs ||
         oldDelegate.positionMs != positionMs ||
         oldDelegate.primarySelectedSegmentId != primarySelectedSegmentId ||
+        oldDelegate.showSegmentLabels != showSegmentLabels ||
         oldDelegate.selectionBandStartMs != selectionBandStartMs ||
         oldDelegate.selectionBandEndMs != selectionBandEndMs ||
         !setEquals(oldDelegate.selectedSegmentIds, selectedSegmentIds);

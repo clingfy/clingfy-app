@@ -825,6 +825,21 @@ class AppLocalizationsEn extends AppLocalizations {
   String get closeTimelineTooltip => 'Close timeline';
 
   @override
+  String get play => 'Play';
+
+  @override
+  String get pausePlayback => 'Pause';
+
+  @override
+  String get markers => 'Markers';
+
+  @override
+  String get lanes => 'Lanes';
+
+  @override
+  String get snap => 'Snap';
+
+  @override
   String get zoomAddSegment => 'Add zoom segment';
 
   @override

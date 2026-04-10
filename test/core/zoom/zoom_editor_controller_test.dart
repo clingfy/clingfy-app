@@ -155,6 +155,128 @@ void main() {
     expect(harness.controller.manualSegments, isEmpty);
     expect(harness.controller.addMode, ZoomAddMode.off);
   });
+
+  testWidgets('snapping enabled keeps draft times on the frame grid', (
+    tester,
+  ) async {
+    final harness = await _createHarness(tester);
+
+    harness.controller.enterOneShotAddMode();
+    harness.controller.updateDraft(101, 487);
+    await tester.pump();
+
+    expect(harness.controller.draftSegment?.startMs, isNot(equals(101)));
+    expect(harness.controller.draftSegment?.endMs, isNot(equals(487)));
+  });
+
+  testWidgets(
+    'snapping enabled keeps move and trim results on the frame grid',
+    (tester) async {
+      final harness = await _createHarness(
+        tester,
+        autoSegments: const [
+          {'id': 'auto_0', 'startMs': 100, 'endMs': 300, 'source': 'auto'},
+        ],
+      );
+
+      final segment = harness.controller.segmentById('auto_0')!;
+      harness.controller.beginMoveAt(150, segment);
+      harness.controller.updateMoveTo(277);
+      harness.controller.commitMove();
+      await tester.pump();
+
+      final movedSegment = harness.controller.manualSegments.single;
+      expect(_isOnFrameGrid(movedSegment.startMs), isTrue);
+      expect(_isOnFrameGrid(movedSegment.endMs), isTrue);
+      expect(movedSegment.startMs, isNot(227));
+
+      harness.controller.beginTrimAt(
+        movedSegment.startMs,
+        movedSegment,
+        TrimHandle.right,
+      );
+      harness.controller.updateTrimTo(398);
+      harness.controller.commitTrim();
+      await tester.pump();
+
+      expect(
+        _isOnFrameGrid(harness.controller.manualSegments.single.endMs),
+        isTrue,
+      );
+      expect(harness.controller.manualSegments.single.endMs, isNot(398));
+    },
+  );
+
+  testWidgets('snapping disabled preserves raw draft, move, and trim times', (
+    tester,
+  ) async {
+    final harness = await _createHarness(
+      tester,
+      autoSegments: const [
+        {'id': 'auto_0', 'startMs': 100, 'endMs': 300, 'source': 'auto'},
+      ],
+    );
+
+    harness.controller.setSnappingEnabled(false);
+    harness.controller.enterOneShotAddMode();
+    harness.controller.updateDraft(101, 487);
+    await tester.pump();
+
+    expect(harness.controller.draftSegment?.startMs, 101);
+    expect(harness.controller.draftSegment?.endMs, 487);
+
+    final segment = harness.controller.segmentById('auto_0')!;
+    harness.controller.beginMoveAt(150, segment);
+    harness.controller.updateMoveTo(277);
+    harness.controller.commitMove();
+    await tester.pump();
+
+    expect(harness.controller.manualSegments, hasLength(1));
+    expect(harness.controller.manualSegments.single.startMs, 227);
+    expect(harness.controller.manualSegments.single.endMs, 427);
+
+    final movedSegment = harness.controller.manualSegments.single;
+    harness.controller.beginTrimAt(227, movedSegment, TrimHandle.right);
+    harness.controller.updateTrimTo(398);
+    harness.controller.commitTrim();
+    await tester.pump();
+
+    expect(harness.controller.manualSegments.single.endMs, 398);
+  });
+
+  testWidgets('snapping disabled still enforces bounds and minimum duration', (
+    tester,
+  ) async {
+    final harness = await _createHarness(
+      tester,
+      autoSegments: const [
+        {'id': 'auto_0', 'startMs': 100, 'endMs': 300, 'source': 'auto'},
+      ],
+    );
+
+    harness.controller.setSnappingEnabled(false);
+
+    final segment = harness.controller.segmentById('auto_0')!;
+    harness.controller.beginMoveAt(150, segment);
+    harness.controller.updateMoveTo(-80);
+    harness.controller.commitMove();
+    await tester.pump();
+
+    final movedSegment = harness.controller.manualSegments.single;
+    expect(movedSegment.startMs, 0);
+    expect(movedSegment.endMs, 200);
+
+    harness.controller.beginTrimAt(0, movedSegment, TrimHandle.right);
+    harness.controller.updateTrimTo(1);
+    harness.controller.commitTrim();
+    await tester.pump();
+
+    expect(
+      harness.controller.manualSegments.single.endMs -
+          harness.controller.manualSegments.single.startMs,
+      ZoomEditorController.minDurationMs,
+    );
+  });
 }
 
 Future<_ZoomEditorHarness> _createHarness(
@@ -199,4 +321,10 @@ class _ZoomEditorHarness {
 
   final ZoomEditorController controller;
   final List<MethodCall> calls;
+}
+
+bool _isOnFrameGrid(int ms) {
+  final frameMs = ZoomEditorController.frameMs;
+  final snappedMs = ((ms / frameMs).round() * frameMs);
+  return (snappedMs - ms).abs() < 0.6;
 }

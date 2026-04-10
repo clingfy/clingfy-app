@@ -35,7 +35,25 @@ void main() {
     expect(darkTheme.appTokens.editorChromeBackground, const Color(0xFF15161A));
     expect(darkTheme.appTokens.previewPanelBackground, const Color(0xFF151718));
     expect(darkTheme.appTokens.timelineBackground, const Color(0xFF111113));
+    expect(darkTheme.appTokens.timelineChromeSurface, const Color(0xFF1A1B20));
+    expect(
+      darkTheme.appTokens.timelineViewportSurface,
+      const Color(0xFF16181C),
+    );
+    expect(
+      darkTheme.appTokens.timelineTrackHeaderSurface,
+      const Color(0xFF18191E),
+    );
+    expect(darkTheme.appTokens.timelineLaneSurface, const Color(0xFF1C1D22));
     expect(darkTheme.inputDecorationTheme.fillColor, const Color(0xFF2A2D35));
+    expect(
+      darkTheme.appTokens.timelineChromeSurface,
+      isNot(darkTheme.inputDecorationTheme.fillColor),
+    );
+    expect(
+      darkTheme.appTokens.timelineLaneSurface,
+      isNot(darkTheme.inputDecorationTheme.fillColor),
+    );
     expect(
       darkTheme.dropdownMenuTheme.inputDecorationTheme?.fillColor,
       const Color(0xFF2A2D35),
@@ -100,6 +118,8 @@ void main() {
     expect(chrome.compactControlHeight, 32);
     expect(chrome.inspectorTabHeight, 34);
     expect(chrome.timelineRulerHeight, 70);
+    expect(chrome.timelineLaneHeight, 42);
+    expect(chrome.timelineTrackHeaderWidth, 92);
     expect(chrome.timelineHorizontalPadding, 12);
     expect(chrome.timelineVerticalPadding, 10);
   });
