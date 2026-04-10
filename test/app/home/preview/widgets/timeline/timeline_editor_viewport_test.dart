@@ -22,6 +22,48 @@ void main() {
     await clearCommonNativeMocks();
   });
 
+  testWidgets('viewport surfaces use timeline-only darker theme colors', (
+    tester,
+  ) async {
+    final viewportController = TimelineViewportController(durationMs: 60000);
+    final editor = await _createEditor(tester);
+    final theme = buildDarkTheme();
+
+    await tester.pumpWidget(
+      _buildViewport(
+        viewportController: viewportController,
+        panModeEnabled: false,
+        editor: editor,
+      ),
+    );
+
+    final viewportDecoration = _decorationFor(
+      tester,
+      find.byKey(const Key('timeline_editor_viewport')),
+    );
+    final headerColumnDecoration = _decorationFor(
+      tester,
+      find.byKey(const Key('timeline_track_header_column')),
+    );
+    final markersLaneDecoration = _decorationFor(
+      tester,
+      find.byKey(const Key('markers_timeline_lane')),
+    );
+    final zoomTrackShell = _decorationFor(
+      tester,
+      find.byKey(const Key('zoom_track_shell')),
+    );
+
+    expect(viewportDecoration.color, theme.appTokens.timelineViewportSurface);
+    expect(
+      headerColumnDecoration.color,
+      theme.appTokens.timelineTrackHeaderSurface,
+    );
+    expect(markersLaneDecoration.color, theme.appTokens.timelineLaneSurface);
+    expect(zoomTrackShell.color, theme.appTokens.timelineLaneSurface);
+    expect(zoomTrackShell.color, isNot(theme.inputDecorationTheme.fillColor));
+  });
+
   testWidgets('pan mode drag pans viewport and blocks ruler seek and hover', (
     tester,
   ) async {
@@ -224,4 +266,9 @@ Widget _buildViewport({
       ),
     ),
   );
+}
+
+BoxDecoration _decorationFor(WidgetTester tester, Finder finder) {
+  final container = tester.widget<Container>(finder);
+  return container.decoration! as BoxDecoration;
 }

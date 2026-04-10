@@ -109,9 +109,7 @@ class _TimelineEditorViewportState extends State<TimelineEditorViewport> {
     final theme = Theme.of(context);
     final spacing = theme.appSpacing;
     final chrome = theme.appEditorChrome;
-    final controlFill =
-        theme.inputDecorationTheme.fillColor ??
-        theme.colorScheme.secondaryContainer;
+    final tokens = theme.appTokens;
 
     final visibleLaneCount =
         (widget.showZoomLane ? 1 : 0) + (widget.showMarkersLane ? 1 : 0);
@@ -125,7 +123,7 @@ class _TimelineEditorViewportState extends State<TimelineEditorViewport> {
       key: const Key('timeline_editor_viewport'),
       padding: EdgeInsets.zero,
       decoration: BoxDecoration(
-        color: controlFill.withValues(alpha: 0.58),
+        color: tokens.timelineViewportSurface,
         borderRadius: BorderRadius.circular(chrome.controlRadius),
         border: Border.all(color: theme.dividerColor.withValues(alpha: 0.12)),
       ),
@@ -233,16 +231,14 @@ class TimelineTrackHeaderColumn extends StatelessWidget {
     final theme = Theme.of(context);
     final spacing = theme.appSpacing;
     final chrome = theme.appEditorChrome;
-    final controlFill =
-        theme.inputDecorationTheme.fillColor ??
-        theme.colorScheme.secondaryContainer;
+    final tokens = theme.appTokens;
 
     return Container(
       key: const Key('timeline_track_header_column'),
       width: chrome.timelineTrackHeaderWidth,
       padding: EdgeInsets.symmetric(horizontal: spacing.xs),
       decoration: BoxDecoration(
-        color: controlFill.withValues(alpha: 0.36),
+        color: tokens.timelineTrackHeaderSurface,
         borderRadius: BorderRadius.only(
           topLeft: Radius.circular(chrome.controlRadius),
           bottomLeft: Radius.circular(chrome.controlRadius),
@@ -622,15 +618,13 @@ class _TimelineLaneHeaderCell extends StatelessWidget {
     final spacing = theme.appSpacing;
     final chrome = theme.appEditorChrome;
     final typography = theme.appTypography;
-    final controlFill =
-        theme.inputDecorationTheme.fillColor ??
-        theme.colorScheme.secondaryContainer;
+    final tokens = theme.appTokens;
 
     return Container(
       height: chrome.timelineLaneHeight,
       padding: EdgeInsets.symmetric(horizontal: spacing.sm),
       decoration: BoxDecoration(
-        color: controlFill.withValues(alpha: 0.72),
+        color: tokens.timelineLaneSurface,
         borderRadius: BorderRadius.circular(chrome.controlRadius),
         border: Border.all(color: theme.dividerColor.withValues(alpha: 0.12)),
       ),

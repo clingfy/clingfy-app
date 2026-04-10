@@ -55,9 +55,7 @@ class TimelineHeaderBar extends StatelessWidget {
     final spacing = theme.appSpacing;
     final chrome = theme.appEditorChrome;
     final typography = theme.appTypography;
-    final controlFill =
-        theme.inputDecorationTheme.fillColor ??
-        theme.colorScheme.secondaryContainer;
+    final tokens = theme.appTokens;
 
     return Container(
       key: const Key('timeline_header_bar'),
@@ -66,7 +64,7 @@ class TimelineHeaderBar extends StatelessWidget {
         vertical: spacing.sm,
       ),
       decoration: BoxDecoration(
-        color: controlFill.withValues(alpha: 0.88),
+        color: tokens.timelineChromeSurface,
         borderRadius: BorderRadius.circular(chrome.controlRadius),
         border: Border.all(color: theme.dividerColor.withValues(alpha: 0.12)),
       ),

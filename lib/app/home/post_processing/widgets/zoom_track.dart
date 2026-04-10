@@ -14,6 +14,8 @@ class ZoomTrack extends StatefulWidget {
   final VoidCallback? onFocusRequested;
   final double? height;
   final bool showSegmentLabels;
+  final Color? shellColor;
+  final Color? shellBorderColor;
 
   // Optional externally provided selection state. Falls back to editor state.
   final Set<String>? selectedSegmentIds;
@@ -30,6 +32,8 @@ class ZoomTrack extends StatefulWidget {
     this.onFocusRequested,
     this.height,
     this.showSegmentLabels = true,
+    this.shellColor,
+    this.shellBorderColor,
     this.selectedSegmentIds,
     this.primarySelectedSegmentId,
     this.canSingleEdit,
@@ -230,6 +234,8 @@ class _ZoomTrackState extends State<ZoomTrack> {
     final accentColor = theme.colorScheme.primary;
     final editor = widget.editorController;
     final isAddMode = editor?.addModeEnabled ?? false;
+    final shellColor = widget.shellColor ?? controlFill;
+    final shellBorderColor = widget.shellBorderColor ?? tokens.panelBorder;
 
     return MouseRegion(
       cursor: _cursor,
@@ -470,9 +476,9 @@ class _ZoomTrackState extends State<ZoomTrack> {
           key: const Key('zoom_track_shell'),
           height: widget.height ?? chrome.timelineLaneHeight,
           decoration: BoxDecoration(
-            color: controlFill,
+            color: shellColor,
             borderRadius: BorderRadius.circular(chrome.controlRadius),
-            border: Border.all(color: tokens.panelBorder),
+            border: Border.all(color: shellBorderColor),
           ),
           child: ClipRRect(
             borderRadius: BorderRadius.circular(chrome.controlRadius),

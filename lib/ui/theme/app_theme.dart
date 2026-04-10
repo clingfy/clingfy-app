@@ -64,6 +64,10 @@ class AppThemeTokens extends ThemeExtension<AppThemeTokens> {
     required this.panelBorder,
     required this.toolbarOverlay,
     required this.timelineBackground,
+    required this.timelineChromeSurface,
+    required this.timelineViewportSurface,
+    required this.timelineTrackHeaderSurface,
+    required this.timelineLaneSurface,
     required this.timelineTrack,
     required this.timelineTick,
     required this.selectionFill,
@@ -83,6 +87,10 @@ class AppThemeTokens extends ThemeExtension<AppThemeTokens> {
   final Color panelBorder;
   final Color toolbarOverlay;
   final Color timelineBackground;
+  final Color timelineChromeSurface;
+  final Color timelineViewportSurface;
+  final Color timelineTrackHeaderSurface;
+  final Color timelineLaneSurface;
   final Color timelineTrack;
   final Color timelineTick;
   final Color selectionFill;
@@ -106,6 +114,10 @@ class AppThemeTokens extends ThemeExtension<AppThemeTokens> {
     Color? panelBorder,
     Color? toolbarOverlay,
     Color? timelineBackground,
+    Color? timelineChromeSurface,
+    Color? timelineViewportSurface,
+    Color? timelineTrackHeaderSurface,
+    Color? timelineLaneSurface,
     Color? timelineTrack,
     Color? timelineTick,
     Color? selectionFill,
@@ -127,6 +139,13 @@ class AppThemeTokens extends ThemeExtension<AppThemeTokens> {
       panelBorder: panelBorder ?? this.panelBorder,
       toolbarOverlay: toolbarOverlay ?? this.toolbarOverlay,
       timelineBackground: timelineBackground ?? this.timelineBackground,
+      timelineChromeSurface:
+          timelineChromeSurface ?? this.timelineChromeSurface,
+      timelineViewportSurface:
+          timelineViewportSurface ?? this.timelineViewportSurface,
+      timelineTrackHeaderSurface:
+          timelineTrackHeaderSurface ?? this.timelineTrackHeaderSurface,
+      timelineLaneSurface: timelineLaneSurface ?? this.timelineLaneSurface,
       timelineTrack: timelineTrack ?? this.timelineTrack,
       timelineTick: timelineTick ?? this.timelineTick,
       selectionFill: selectionFill ?? this.selectionFill,
@@ -169,6 +188,26 @@ class AppThemeTokens extends ThemeExtension<AppThemeTokens> {
       timelineBackground:
           Color.lerp(timelineBackground, other.timelineBackground, t) ??
           timelineBackground,
+      timelineChromeSurface:
+          Color.lerp(timelineChromeSurface, other.timelineChromeSurface, t) ??
+          timelineChromeSurface,
+      timelineViewportSurface:
+          Color.lerp(
+            timelineViewportSurface,
+            other.timelineViewportSurface,
+            t,
+          ) ??
+          timelineViewportSurface,
+      timelineTrackHeaderSurface:
+          Color.lerp(
+            timelineTrackHeaderSurface,
+            other.timelineTrackHeaderSurface,
+            t,
+          ) ??
+          timelineTrackHeaderSurface,
+      timelineLaneSurface:
+          Color.lerp(timelineLaneSurface, other.timelineLaneSurface, t) ??
+          timelineLaneSurface,
       timelineTrack:
           Color.lerp(timelineTrack, other.timelineTrack, t) ?? timelineTrack,
       timelineTick:
@@ -990,6 +1029,18 @@ class _ResolvedPalette {
       timelineBackground: isDark
           ? darkTimelineSurface
           : const Color(0xFFFDFBFF),
+      timelineChromeSurface: isDark
+          ? const Color(0xFF1A1B20)
+          : const Color(0xFFF3F0F8),
+      timelineViewportSurface: isDark
+          ? const Color(0xFF16181C)
+          : const Color(0xFFEFEBF5),
+      timelineTrackHeaderSurface: isDark
+          ? const Color(0xFF18191E)
+          : const Color(0xFFEAE5F2),
+      timelineLaneSurface: isDark
+          ? const Color(0xFF1C1D22)
+          : const Color(0xFFF5F1FA),
       timelineTrack: isDark ? const Color(0xFF1D1D26) : const Color(0xFFE7E0F6),
       timelineTick: isDark ? const Color(0xFF807B93) : const Color(0xFF9288AA),
       selectionFill: clingfyBrandColor.withValues(alpha: isDark ? 0.2 : 0.12),

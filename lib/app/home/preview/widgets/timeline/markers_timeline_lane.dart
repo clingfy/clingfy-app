@@ -21,15 +21,12 @@ class MarkersTimelineLane extends StatelessWidget {
     final theme = Theme.of(context);
     final chrome = theme.appEditorChrome;
     final tokens = theme.appTokens;
-    final controlFill =
-        theme.inputDecorationTheme.fillColor ??
-        theme.colorScheme.secondaryContainer;
 
     return Container(
       key: const Key('markers_timeline_lane'),
       height: chrome.timelineLaneHeight,
       decoration: BoxDecoration(
-        color: controlFill,
+        color: tokens.timelineLaneSurface,
         borderRadius: BorderRadius.circular(chrome.controlRadius),
         border: Border.all(color: tokens.panelBorder),
       ),

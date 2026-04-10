@@ -206,13 +206,27 @@ void main() {
       tester,
       find.byKey(const Key('timeline_shell')),
     );
+    final shell = tester.widget<Container>(
+      find.byKey(const Key('timeline_shell')),
+    );
+    final headerDecoration = _decorationFor(
+      tester,
+      find.byKey(const Key('timeline_header_bar')),
+    );
+    final transportDecoration = _decorationFor(
+      tester,
+      find.byKey(const Key('timeline_transport_bar')),
+    );
 
     expect(shellDecoration.color, theme.appTokens.timelineBackground);
+    expect(shell.padding, EdgeInsets.zero);
     expect(
       shellDecoration.borderRadius,
       BorderRadius.circular(theme.appEditorChrome.panelRadius),
     );
     expect(shellDecoration.border, isNull);
+    expect(headerDecoration.color, theme.appTokens.timelineChromeSurface);
+    expect(transportDecoration.color, theme.appTokens.timelineChromeSurface);
     expect(find.byKey(const Key('timeline_ruler_strip')), findsOneWidget);
   });
 

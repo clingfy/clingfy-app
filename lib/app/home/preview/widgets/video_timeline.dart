@@ -394,10 +394,7 @@ class _VideoTimelineState extends State<VideoTimeline> {
             onPointerDown: (_) => _requestTimelineFocus(),
             child: Container(
               key: const Key('timeline_shell'),
-              padding: EdgeInsets.symmetric(
-                horizontal: chrome.timelineHorizontalPadding,
-                vertical: chrome.timelineVerticalPadding,
-              ),
+              padding: EdgeInsets.zero,
               decoration: BoxDecoration(
                 color: tokens.timelineBackground,
                 borderRadius: BorderRadius.circular(chrome.panelRadius),

@@ -24,6 +24,8 @@ class ZoomTimelineLane extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final tokens = context.appTokens;
+
     return SizedBox(
       key: const Key('zoom_timeline_lane'),
       height: context.appEditorChrome.timelineLaneHeight,
@@ -36,6 +38,8 @@ class ZoomTimelineLane extends StatelessWidget {
         onFocusRequested: onFocusRequested,
         height: context.appEditorChrome.timelineLaneHeight,
         showSegmentLabels: true,
+        shellColor: tokens.timelineLaneSurface,
+        shellBorderColor: tokens.panelBorder,
       ),
     );
   }
