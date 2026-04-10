@@ -100,6 +100,8 @@ void main() {
     expect(chrome.compactControlHeight, 32);
     expect(chrome.inspectorTabHeight, 34);
     expect(chrome.timelineRulerHeight, 70);
+    expect(chrome.timelineLaneHeight, 42);
+    expect(chrome.timelineTrackHeaderWidth, 92);
     expect(chrome.timelineHorizontalPadding, 12);
     expect(chrome.timelineVerticalPadding, 10);
   });

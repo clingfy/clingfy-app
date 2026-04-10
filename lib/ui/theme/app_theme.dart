@@ -350,6 +350,8 @@ class AppEditorChromeTokens extends ThemeExtension<AppEditorChromeTokens> {
     required this.compactControlHeight,
     required this.inspectorTabHeight,
     required this.timelineRulerHeight,
+    required this.timelineLaneHeight,
+    required this.timelineTrackHeaderWidth,
     required this.timelineHorizontalPadding,
     required this.timelineVerticalPadding,
   });
@@ -364,6 +366,8 @@ class AppEditorChromeTokens extends ThemeExtension<AppEditorChromeTokens> {
   final double compactControlHeight;
   final double inspectorTabHeight;
   final double timelineRulerHeight;
+  final double timelineLaneHeight;
+  final double timelineTrackHeaderWidth;
   final double timelineHorizontalPadding;
   final double timelineVerticalPadding;
 
@@ -379,6 +383,8 @@ class AppEditorChromeTokens extends ThemeExtension<AppEditorChromeTokens> {
         compactControlHeight: 32,
         inspectorTabHeight: 34,
         timelineRulerHeight: 70,
+        timelineLaneHeight: 42,
+        timelineTrackHeaderWidth: 92,
         timelineHorizontalPadding: 12,
         timelineVerticalPadding: 10,
       );
@@ -395,6 +401,8 @@ class AppEditorChromeTokens extends ThemeExtension<AppEditorChromeTokens> {
     double? compactControlHeight,
     double? inspectorTabHeight,
     double? timelineRulerHeight,
+    double? timelineLaneHeight,
+    double? timelineTrackHeaderWidth,
     double? timelineHorizontalPadding,
     double? timelineVerticalPadding,
   }) {
@@ -409,6 +417,9 @@ class AppEditorChromeTokens extends ThemeExtension<AppEditorChromeTokens> {
       compactControlHeight: compactControlHeight ?? this.compactControlHeight,
       inspectorTabHeight: inspectorTabHeight ?? this.inspectorTabHeight,
       timelineRulerHeight: timelineRulerHeight ?? this.timelineRulerHeight,
+      timelineLaneHeight: timelineLaneHeight ?? this.timelineLaneHeight,
+      timelineTrackHeaderWidth:
+          timelineTrackHeaderWidth ?? this.timelineTrackHeaderWidth,
       timelineHorizontalPadding:
           timelineHorizontalPadding ?? this.timelineHorizontalPadding,
       timelineVerticalPadding:
@@ -447,6 +458,16 @@ class AppEditorChromeTokens extends ThemeExtension<AppEditorChromeTokens> {
       timelineRulerHeight:
           lerpDouble(timelineRulerHeight, other.timelineRulerHeight, t) ??
           timelineRulerHeight,
+      timelineLaneHeight:
+          lerpDouble(timelineLaneHeight, other.timelineLaneHeight, t) ??
+          timelineLaneHeight,
+      timelineTrackHeaderWidth:
+          lerpDouble(
+            timelineTrackHeaderWidth,
+            other.timelineTrackHeaderWidth,
+            t,
+          ) ??
+          timelineTrackHeaderWidth,
       timelineHorizontalPadding:
           lerpDouble(
             timelineHorizontalPadding,

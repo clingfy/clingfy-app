@@ -137,5 +137,5 @@ sentry:
   build_path: build
   symbols_path: build/symbols
 
-# flutter run -d macos --dart-define-from-file=.env.local
+# T
 # flutter build apk --dart-define-from-file=.env.prod

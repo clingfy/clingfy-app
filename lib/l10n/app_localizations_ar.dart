@@ -819,6 +819,21 @@ class AppLocalizationsAr extends AppLocalizations {
   String get closeTimelineTooltip => 'إغلاق الجدول الزمني';
 
   @override
+  String get play => 'تشغيل';
+
+  @override
+  String get pausePlayback => 'إيقاف مؤقت';
+
+  @override
+  String get markers => 'العلامات';
+
+  @override
+  String get lanes => 'المسارات';
+
+  @override
+  String get snap => 'المحاذاة';
+
+  @override
   String get zoomAddSegment => 'إضافة مقطع تكبير';
 
   @override
