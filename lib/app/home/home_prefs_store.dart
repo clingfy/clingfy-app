@@ -17,6 +17,7 @@ class HomePrefsStore {
   static const String indicatorPinnedKey = 'indicatorPinned';
   static const String displayTargetModeKey = 'displayTargetMode';
   static const String homePaneLayoutKey = 'homePaneLayoutV1';
+  static const String homeGuidanceSeenKey = 'home_guidance_seen_v1';
 
   final HomePaneLayoutWarningLogger _paneLayoutWarningLogger;
 
@@ -61,6 +62,16 @@ class HomePrefsStore {
   Future<void> savePaneLayout(DesktopPaneLayoutPrefs layout) async {
     final prefs = await SharedPreferences.getInstance();
     await prefs.setString(homePaneLayoutKey, jsonEncode(layout.toJson()));
+  }
+
+  Future<bool> getGuideSeen() async {
+    final prefs = await SharedPreferences.getInstance();
+    return prefs.getBool(homeGuidanceSeenKey) ?? false;
+  }
+
+  Future<void> setGuideSeen(bool value) async {
+    final prefs = await SharedPreferences.getInstance();
+    await prefs.setBool(homeGuidanceSeenKey, value);
   }
 
   static void _logPaneLayoutWarning(Object error, StackTrace stackTrace) {

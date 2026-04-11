@@ -17,6 +17,7 @@ class RecordingCameraSection extends StatelessWidget {
     required this.loadingCams,
     required this.onRefreshCams,
     required this.onCamSourceChanged,
+    this.guideAnchorKey,
   });
 
   final bool isRecording;
@@ -25,6 +26,7 @@ class RecordingCameraSection extends StatelessWidget {
   final bool loadingCams;
   final VoidCallback onRefreshCams;
   final ValueChanged<String?> onCamSourceChanged;
+  final Key? guideAnchorKey;
 
   @override
   Widget build(BuildContext context) {
@@ -38,6 +40,8 @@ class RecordingCameraSection extends StatelessWidget {
         : null;
 
     return AppSettingsGroup(
+      anchorKey: guideAnchorKey,
+      sectionKey: const Key('recording_camera_group'),
       title: l10n.camera,
       trailing: AppIconButton(
         tooltip: l10n.refreshCameras,

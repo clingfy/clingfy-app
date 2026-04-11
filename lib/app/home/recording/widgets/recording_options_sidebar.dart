@@ -295,11 +295,17 @@ class RecordingOptionsSidebar extends StatelessWidget {
     required this.onIndicatorPinnedChanged,
     required this.onCursorModeChanged,
     this.showHeader = true,
+    this.captureSourceGuideAnchorKey,
+    this.cameraGuideAnchorKey,
+    this.outputGuideAnchorKey,
   });
 
   final double availableWidth;
   final bool isCompact;
   final bool showHeader;
+  final Key? captureSourceGuideAnchorKey;
+  final Key? cameraGuideAnchorKey;
+  final Key? outputGuideAnchorKey;
 
   @override
   Widget build(BuildContext context) {
@@ -358,6 +364,7 @@ class RecordingOptionsSidebar extends StatelessWidget {
     return [
       RecordingSourceSection(
         isRecording: isRecording,
+        guideAnchorKey: captureSourceGuideAnchorKey,
         targetMode: targetMode,
         displays: displays,
         selectedDisplayId: selectedDisplayId,
@@ -419,6 +426,7 @@ class RecordingOptionsSidebar extends StatelessWidget {
     return [
       RecordingCameraSection(
         isRecording: isRecording,
+        guideAnchorKey: cameraGuideAnchorKey,
         cams: cams,
         selectedCamId: selectedCamId,
         loadingCams: loadingCams,
@@ -472,6 +480,7 @@ class RecordingOptionsSidebar extends StatelessWidget {
     return [
       RecordingOutputSection(
         isRecording: isRecording,
+        startAndStopGuideAnchorKey: outputGuideAnchorKey,
         captureFrameRate: captureFrameRate,
         autoStopEnabled: autoStopEnabled,
         autoStopAfter: autoStopAfter,

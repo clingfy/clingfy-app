@@ -2041,4 +2041,73 @@ class AppLocalizationsEn extends AppLocalizations {
 
   @override
   String get permissionsOnboardingLetsRecord => 'Let’s Record! 🚀';
+
+  @override
+  String get quickTour => 'Quick Tour';
+
+  @override
+  String get back => 'Back';
+
+  @override
+  String get next => 'Next';
+
+  @override
+  String get skip => 'Skip';
+
+  @override
+  String get done => 'Done';
+
+  @override
+  String homeGuideStepCounter(int current, int total) {
+    return 'Step $current of $total';
+  }
+
+  @override
+  String get homeGuideSidebarTitle =>
+      'This rail keeps the whole recording workflow within reach.';
+
+  @override
+  String get homeGuideSidebarBody =>
+      'Use these buttons to switch setup sections, open Help, and jump to settings without leaving the recorder.';
+
+  @override
+  String get homeGuideCaptureSourceTitle => 'Choose what Clingfy records here.';
+
+  @override
+  String get homeGuideCaptureSourceBody =>
+      'Pick a display, a single window, or a custom area before you start recording.';
+
+  @override
+  String get homeGuideCameraTitle => 'Turn face cam on only when you need it.';
+
+  @override
+  String get homeGuideCameraBody =>
+      'Select a camera, then adjust the overlay later if you want your face on tutorials or demos.';
+
+  @override
+  String get homeGuideOutputTitle =>
+      'Set recording defaults before you hit record.';
+
+  @override
+  String get homeGuideOutputBody =>
+      'Countdown and auto-stop live here so each recording starts the way you expect.';
+
+  @override
+  String get homeGuideStartRecordingTitle =>
+      'This is the main recording control.';
+
+  @override
+  String get homeGuideStartRecordingBody =>
+      'When your source looks right, start here. The same area lets you pause or stop later.';
+
+  @override
+  String get homeGuideHelpTitle => 'Replay this tour anytime from Help.';
+
+  @override
+  String get homeGuideHelpBody =>
+      'Open Help for a quick refresher or jump to About when you need version and support details.';
+
+  @override
+  String get homeGuideReplayUnavailable =>
+      'Return to recording setup to replay the quick tour.';
 }

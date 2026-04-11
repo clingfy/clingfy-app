@@ -21,6 +21,7 @@ class HomeRightPanel extends StatelessWidget {
     required this.onResumeRecording,
     required this.onClosePreview,
     this.previewHostBuilder,
+    this.startRecordingButtonKey,
   });
 
   final bool isRecording;
@@ -33,6 +34,7 @@ class HomeRightPanel extends StatelessWidget {
   final VoidCallback onResumeRecording;
   final VoidCallback onClosePreview;
   final InlinePreviewHostBuilder? previewHostBuilder;
+  final Key? startRecordingButtonKey;
 
   @override
   Widget build(BuildContext context) {
@@ -124,6 +126,7 @@ class HomeRightPanel extends StatelessWidget {
                       onToggle: onToggleRecording,
                       onPause: onPauseRecording,
                       onResume: onResumeRecording,
+                      startRecordingButtonKey: startRecordingButtonKey,
                     ),
             ),
           ],

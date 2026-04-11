@@ -19,6 +19,9 @@ class RecordingSidebarContainer extends StatelessWidget {
     required this.availableWidth,
     required this.isCompact,
     this.showHeader = true,
+    this.captureSourceGuideAnchorKey,
+    this.cameraGuideAnchorKey,
+    this.outputGuideAnchorKey,
   });
 
   final bool isRecording;
@@ -29,6 +32,9 @@ class RecordingSidebarContainer extends StatelessWidget {
   final double availableWidth;
   final bool isCompact;
   final bool showHeader;
+  final Key? captureSourceGuideAnchorKey;
+  final Key? cameraGuideAnchorKey;
+  final Key? outputGuideAnchorKey;
 
   @override
   Widget build(BuildContext context) {
@@ -40,6 +46,9 @@ class RecordingSidebarContainer extends StatelessWidget {
           availableWidth: availableWidth,
           isCompact: isCompact,
           showHeader: showHeader,
+          captureSourceGuideAnchorKey: captureSourceGuideAnchorKey,
+          cameraGuideAnchorKey: cameraGuideAnchorKey,
+          outputGuideAnchorKey: outputGuideAnchorKey,
           targetMode: uiState.targetMode,
           displays: device.displays,
           selectedDisplayId: device.selectedDisplayId,
