@@ -3789,6 +3789,120 @@ abstract class AppLocalizations {
   /// In en, this message translates to:
   /// **'Let’s Record! 🚀'**
   String get permissionsOnboardingLetsRecord;
+
+  /// No description provided for @quickTour.
+  ///
+  /// In en, this message translates to:
+  /// **'Quick Tour'**
+  String get quickTour;
+
+  /// No description provided for @back.
+  ///
+  /// In en, this message translates to:
+  /// **'Back'**
+  String get back;
+
+  /// No description provided for @next.
+  ///
+  /// In en, this message translates to:
+  /// **'Next'**
+  String get next;
+
+  /// No description provided for @skip.
+  ///
+  /// In en, this message translates to:
+  /// **'Skip'**
+  String get skip;
+
+  /// No description provided for @done.
+  ///
+  /// In en, this message translates to:
+  /// **'Done'**
+  String get done;
+
+  /// No description provided for @homeGuideStepCounter.
+  ///
+  /// In en, this message translates to:
+  /// **'Step {current} of {total}'**
+  String homeGuideStepCounter(int current, int total);
+
+  /// No description provided for @homeGuideSidebarTitle.
+  ///
+  /// In en, this message translates to:
+  /// **'This rail keeps the whole recording workflow within reach.'**
+  String get homeGuideSidebarTitle;
+
+  /// No description provided for @homeGuideSidebarBody.
+  ///
+  /// In en, this message translates to:
+  /// **'Use these buttons to switch setup sections, open Help, and jump to settings without leaving the recorder.'**
+  String get homeGuideSidebarBody;
+
+  /// No description provided for @homeGuideCaptureSourceTitle.
+  ///
+  /// In en, this message translates to:
+  /// **'Choose what Clingfy records here.'**
+  String get homeGuideCaptureSourceTitle;
+
+  /// No description provided for @homeGuideCaptureSourceBody.
+  ///
+  /// In en, this message translates to:
+  /// **'Pick a display, a single window, or a custom area before you start recording.'**
+  String get homeGuideCaptureSourceBody;
+
+  /// No description provided for @homeGuideCameraTitle.
+  ///
+  /// In en, this message translates to:
+  /// **'Turn face cam on only when you need it.'**
+  String get homeGuideCameraTitle;
+
+  /// No description provided for @homeGuideCameraBody.
+  ///
+  /// In en, this message translates to:
+  /// **'Select a camera, then adjust the overlay later if you want your face on tutorials or demos.'**
+  String get homeGuideCameraBody;
+
+  /// No description provided for @homeGuideOutputTitle.
+  ///
+  /// In en, this message translates to:
+  /// **'Set recording defaults before you hit record.'**
+  String get homeGuideOutputTitle;
+
+  /// No description provided for @homeGuideOutputBody.
+  ///
+  /// In en, this message translates to:
+  /// **'Countdown and auto-stop live here so each recording starts the way you expect.'**
+  String get homeGuideOutputBody;
+
+  /// No description provided for @homeGuideStartRecordingTitle.
+  ///
+  /// In en, this message translates to:
+  /// **'This is the main recording control.'**
+  String get homeGuideStartRecordingTitle;
+
+  /// No description provided for @homeGuideStartRecordingBody.
+  ///
+  /// In en, this message translates to:
+  /// **'When your source looks right, start here. The same area lets you pause or stop later.'**
+  String get homeGuideStartRecordingBody;
+
+  /// No description provided for @homeGuideHelpTitle.
+  ///
+  /// In en, this message translates to:
+  /// **'Replay this tour anytime from Help.'**
+  String get homeGuideHelpTitle;
+
+  /// No description provided for @homeGuideHelpBody.
+  ///
+  /// In en, this message translates to:
+  /// **'Open Help for a quick refresher or jump to About when you need version and support details.'**
+  String get homeGuideHelpBody;
+
+  /// No description provided for @homeGuideReplayUnavailable.
+  ///
+  /// In en, this message translates to:
+  /// **'Return to recording setup to replay the quick tour.'**
+  String get homeGuideReplayUnavailable;
 }
 
 class _AppLocalizationsDelegate

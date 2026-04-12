@@ -10,6 +10,8 @@ class AppSettingsGroup extends StatelessWidget {
     this.description,
     this.infoTooltip,
     this.trailing,
+    this.anchorKey,
+    this.sectionKey,
   });
 
   final String title;
@@ -17,6 +19,8 @@ class AppSettingsGroup extends StatelessWidget {
   final String? infoTooltip;
   final Widget? trailing;
   final List<Widget> children;
+  final Key? anchorKey;
+  final Key? sectionKey;
 
   @override
   Widget build(BuildContext context) {
@@ -26,7 +30,8 @@ class AppSettingsGroup extends StatelessWidget {
     ).copyWith(color: theme.colorScheme.onSurface, fontWeight: FontWeight.w700);
     final descriptionStyle = AppSidebarTokens.helperStyle(theme);
 
-    return Padding(
+    final content = Padding(
+      key: sectionKey,
       padding: const EdgeInsets.only(bottom: AppSidebarTokens.optionsGroupGap),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
@@ -76,5 +81,11 @@ class AppSettingsGroup extends StatelessWidget {
         ],
       ),
     );
+
+    if (anchorKey == null) {
+      return content;
+    }
+
+    return Container(key: anchorKey, child: content);
   }
 }

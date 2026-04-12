@@ -523,6 +523,9 @@ class MainFlutterWindow: NSWindow {
             mediaSources: mediaSources
           )
           if let view = inlinePreviewViewInstance {
+            let hadMatchingPendingScene = hasPendingPreviewSceneRequest(
+              matching: sessionId
+            )
             NativeLogger.i(
               "Preview", "Opening preview immediately on existing host view",
               context: [
@@ -532,12 +535,17 @@ class MainFlutterWindow: NSWindow {
               "cameraPath": mediaSources.cameraPath ?? "nil",
             ])
             view.open(mediaSources: mediaSources, sessionId: sessionId)
-            if let sceneRequest = pendingPreviewSceneRequest,
-              sceneRequest.sessionId == sessionId
-            {
-              view.updateComposition(scene: sceneRequest.scene)
-              pendingPreviewSceneRequest = nil
-            }
+            let consumedPendingScene = applyPendingPreviewSceneRequestIfMatching(
+              sessionId: sessionId,
+              to: view
+            )
+            NativeLogger.d(
+              "Preview", "Pending preview scene status after previewOpen",
+              context: [
+                "sessionId": sessionId,
+                "hadMatchingPendingScene": hadMatchingPendingScene,
+                "consumedPendingScene": consumedPendingScene,
+              ])
             pendingPreviewOpenRequest = nil
           } else {
             NativeLogger.i(

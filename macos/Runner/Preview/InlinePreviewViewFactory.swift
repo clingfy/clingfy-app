@@ -16,6 +16,11 @@ var workflowLifecycleEventSink: FlutterEventSink?
 var pendingPreviewZoomSegments: [ZoomTimelineSegment]?
 var pendingPreviewSceneRequest: PendingPreviewSceneRequest?
 
+enum PreviewSceneDeliveryRoute: String {
+  case appliedToLiveView
+  case queuedPendingScene
+}
+
 final class InlinePreviewHostContainerView: NSView {
   override init(frame frameRect: NSRect) {
     super.init(frame: frameRect)
@@ -178,6 +183,58 @@ func clearAllInlinePreviewState() {
   pendingPreviewOpenRequest = nil
   pendingPreviewZoomSegments = nil
   pendingPreviewSceneRequest = nil
+}
+
+func hasPendingPreviewSceneRequest(matching sessionId: String?) -> Bool {
+  pendingPreviewSceneRequest?.sessionId == sessionId
+}
+
+@discardableResult
+func applyPendingPreviewSceneRequestIfMatching(
+  sessionId: String?,
+  to view: InlinePreviewView
+) -> Bool {
+  guard
+    let request = pendingPreviewSceneRequest,
+    request.sessionId == sessionId
+  else {
+    return false
+  }
+
+  NativeLogger.i(
+    "Preview", "Applying pending preview scene to host view",
+    context: [
+      "sessionId": sessionId ?? "nil",
+      "path": request.scene.mediaSources.screenPath,
+      "cameraPath": request.scene.mediaSources.cameraPath ?? "nil",
+    ])
+  view.updateComposition(scene: request.scene)
+  pendingPreviewSceneRequest = nil
+  return true
+}
+
+@discardableResult
+func routePreviewSceneRequest(
+  sessionId: String?,
+  scene: PreviewScene
+) -> PreviewSceneDeliveryRoute {
+  if
+    let sessionId,
+    let view = inlinePreviewViewInstance,
+    view.currentSessionId == sessionId
+  {
+    view.updateComposition(scene: scene)
+    if pendingPreviewSceneRequest?.sessionId == sessionId {
+      pendingPreviewSceneRequest = nil
+    }
+    return .appliedToLiveView
+  }
+
+  pendingPreviewSceneRequest = PendingPreviewSceneRequest(
+    sessionId: sessionId,
+    scene: scene
+  )
+  return .queuedPendingScene
 }
 
 func updateActiveInlinePreviewScene(sessionId: String?, scene: PreviewScene) {
@@ -353,6 +410,9 @@ final class InlinePreviewViewFactory: NSObject, FlutterPlatformViewFactory {
     var didOpenPreview = false
 
     if let request = pendingPreviewOpenRequest {
+      let hadMatchingPendingScene = hasPendingPreviewSceneRequest(
+        matching: request.sessionId
+      )
       NativeLogger.i(
         "Preview", "Consuming pending previewOpen request in new host view",
         context: [
@@ -362,6 +422,17 @@ final class InlinePreviewViewFactory: NSObject, FlutterPlatformViewFactory {
         ])
       v.open(mediaSources: request.mediaSources, sessionId: request.sessionId)
       didOpenPreview = true
+      let consumedPendingScene = applyPendingPreviewSceneRequestIfMatching(
+        sessionId: request.sessionId,
+        to: v
+      )
+      NativeLogger.d(
+        "Preview", "Pending preview scene status after host open",
+        context: [
+          "sessionId": request.sessionId,
+          "hadMatchingPendingScene": hadMatchingPendingScene,
+          "consumedPendingScene": consumedPendingScene,
+        ])
       pendingPreviewOpenRequest = nil
     }
 
@@ -378,11 +449,18 @@ final class InlinePreviewViewFactory: NSObject, FlutterPlatformViewFactory {
           ])
         v.open(mediaSources: request.scene.mediaSources, sessionId: sessionId)
         didOpenPreview = true
+        let consumedPendingScene = applyPendingPreviewSceneRequestIfMatching(
+          sessionId: sessionId,
+          to: v
+        )
+        NativeLogger.d(
+          "Preview", "Pending preview scene status after scene-led host open",
+          context: [
+            "sessionId": sessionId,
+            "hadMatchingPendingScene": true,
+            "consumedPendingScene": consumedPendingScene,
+          ])
       }
-
-      NativeLogger.i("Preview", "Applying pending preview scene to new host view")
-      v.updateComposition(scene: request.scene)
-      pendingPreviewSceneRequest = nil
     }
 
     if let segments = pendingPreviewZoomSegments {

@@ -1,4 +1,5 @@
 import 'package:clingfy/core/bridges/native_method_channel.dart';
+import 'package:clingfy/app/home/home_prefs_store.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:shared_preferences/shared_preferences.dart';
@@ -25,9 +26,11 @@ const MethodChannel packageInfoChannel = MethodChannel(
 Future<void> installCommonNativeMocks({
   bool screenRecordingGranted = true,
   bool onboardingSeen = true,
+  bool homeGuideSeen = true,
 }) async {
   SharedPreferences.setMockInitialValues({
     'onboarding_seen_v1': onboardingSeen,
+    HomePrefsStore.homeGuidanceSeenKey: homeGuideSeen,
   });
 
   final messenger =

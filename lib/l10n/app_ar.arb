@@ -654,5 +654,34 @@
   "permissionsOnboardingSkipForNow": "تخطَّ الآن",
   "permissionsOnboardingBack": "رجوع",
   "permissionsOnboardingNext": "متابعة",
-  "permissionsOnboardingLetsRecord": "لنبدأ التسجيل! 🚀"
+  "permissionsOnboardingLetsRecord": "لنبدأ التسجيل! 🚀",
+  "quickTour": "جولة سريعة",
+  "back": "رجوع",
+  "next": "التالي",
+  "skip": "تخطي",
+  "done": "تم",
+  "homeGuideStepCounter": "الخطوة {current} من {total}",
+  "@homeGuideStepCounter": {
+    "placeholders": {
+      "current": {
+        "type": "int"
+      },
+      "total": {
+        "type": "int"
+      }
+    }
+  },
+  "homeGuideSidebarTitle": "هذا الشريط الجانبي يبقي سير عمل التسجيل كله في متناولك.",
+  "homeGuideSidebarBody": "استخدم هذه الأزرار للتنقل بين أقسام الإعداد وفتح المساعدة والوصول إلى الإعدادات بدون مغادرة المسجل.",
+  "homeGuideCaptureSourceTitle": "اختر من هنا ما الذي سيسجله Clingfy.",
+  "homeGuideCaptureSourceBody": "حدّد شاشة أو نافذة واحدة أو منطقة مخصصة قبل أن تبدأ التسجيل.",
+  "homeGuideCameraTitle": "فعّل الكاميرا فقط عندما تحتاج إليها.",
+  "homeGuideCameraBody": "اختر كاميرا ثم عدّل طبقة الظهور لاحقًا إذا أردت إظهار وجهك في الشروحات أو العروض.",
+  "homeGuideOutputTitle": "اضبط الإعدادات الافتراضية قبل أن تضغط تسجيل.",
+  "homeGuideOutputBody": "هنا ستجد العد التنازلي والإيقاف التلقائي حتى يبدأ كل تسجيل بالطريقة التي تتوقعها.",
+  "homeGuideStartRecordingTitle": "هذا هو عنصر التحكم الرئيسي للتسجيل.",
+  "homeGuideStartRecordingBody": "عندما يصبح المصدر جاهزًا، ابدأ من هنا. ومن نفس المكان يمكنك الإيقاف المؤقت أو الإنهاء لاحقًا.",
+  "homeGuideHelpTitle": "يمكنك إعادة هذه الجولة في أي وقت من المساعدة.",
+  "homeGuideHelpBody": "افتح المساعدة لمراجعة سريعة أو انتقل إلى حول التطبيق عندما تحتاج إلى معلومات الإصدار والدعم.",
+  "homeGuideReplayUnavailable": "عد إلى إعداد التسجيل لإعادة تشغيل الجولة السريعة."
 }
