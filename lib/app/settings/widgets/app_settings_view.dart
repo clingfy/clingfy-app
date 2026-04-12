@@ -40,6 +40,9 @@ class AppSettingsView extends StatefulWidget {
 }
 
 class _AppSettingsViewState extends State<AppSettingsView> {
+  static const double _navItemRadius = 8;
+  static const double _navItemOuterInset = 8;
+
   late SettingsSection _selectedSection;
 
   @override
@@ -72,8 +75,7 @@ class _AppSettingsViewState extends State<AppSettingsView> {
     final headerSurface = isDark
         ? tokens.editorChromeBackground
         : tokens.toolbarOverlay;
-    final selectedColor = tokens.selectionFill;
-    final textColor = theme.colorScheme.onSurface;
+    final navPalette = _SettingsNavPalette.resolve(theme);
     final l10n = AppLocalizations.of(context)!;
 
     final items = [
@@ -139,11 +141,9 @@ class _AppSettingsViewState extends State<AppSettingsView> {
                   padding: EdgeInsets.symmetric(vertical: spacing.lg),
                   children: items.map((item) {
                     return _buildSidebarItem(
-                      icon: item.icon,
-                      label: Text(item.label),
+                      item: item,
                       selected: item.section == _selectedSection,
-                      selectedColor: selectedColor,
-                      textColor: textColor,
+                      palette: navPalette,
                       onTap: () {
                         setState(() {
                           _selectedSection = item.section;
@@ -226,42 +226,68 @@ class _AppSettingsViewState extends State<AppSettingsView> {
   }
 
   Widget _buildSidebarItem({
-    required IconData icon,
-    required Widget label,
+    required _SettingsNavItem item,
     required bool selected,
-    required Color selectedColor,
-    required Color textColor,
+    required _SettingsNavPalette palette,
     required VoidCallback onTap,
   }) {
     final theme = Theme.of(context);
     final spacing = theme.appSpacing;
     final typography = theme.appTypography;
-    final foreground = selected ? theme.colorScheme.primary : textColor;
+    final foreground = selected
+        ? palette.selectedForeground
+        : palette.unselectedForeground;
+    final borderRadius = BorderRadius.circular(_navItemRadius);
 
-    return GestureDetector(
-      onTap: onTap,
-      child: MouseRegion(
-        cursor: SystemMouseCursors.click,
-        child: Container(
-          color: selected ? selectedColor : Colors.transparent,
-          padding: EdgeInsets.symmetric(
-            horizontal: spacing.lg,
-            vertical: spacing.md,
+    return Padding(
+      padding: const EdgeInsets.symmetric(
+        horizontal: _navItemOuterInset,
+        vertical: 2,
+      ),
+      child: Material(
+        color: Colors.transparent,
+        child: Ink(
+          key: Key('settings_nav_item_${item.section.name}'),
+          decoration: BoxDecoration(
+            color: selected ? palette.selectedFill : Colors.transparent,
+            borderRadius: borderRadius,
           ),
-          child: Row(
-            children: [
-              Icon(icon, size: 20, color: foreground),
-              SizedBox(width: spacing.md),
-              Expanded(
-                child: DefaultTextStyle.merge(
-                  style: typography.body.copyWith(
-                    color: foreground,
-                    fontWeight: selected ? FontWeight.w600 : FontWeight.normal,
-                  ),
-                  child: label,
-                ),
+          child: InkWell(
+            borderRadius: borderRadius,
+            hoverColor: palette.hoverFill,
+            splashColor: palette.hoverFill,
+            highlightColor: palette.hoverFill,
+            mouseCursor: SystemMouseCursors.click,
+            onTap: onTap,
+            child: Padding(
+              padding: EdgeInsets.symmetric(
+                horizontal: spacing.lg,
+                vertical: spacing.md,
               ),
-            ],
+              child: Row(
+                children: [
+                  Icon(
+                    item.icon,
+                    key: Key('settings_nav_item_${item.section.name}_icon'),
+                    size: 20,
+                    color: foreground,
+                  ),
+                  SizedBox(width: spacing.md),
+                  Expanded(
+                    child: Text(
+                      item.label,
+                      key: Key('settings_nav_item_${item.section.name}_label'),
+                      style: typography.body.copyWith(
+                        color: foreground,
+                        fontWeight: selected
+                            ? FontWeight.w600
+                            : FontWeight.normal,
+                      ),
+                    ),
+                  ),
+                ],
+              ),
+            ),
           ),
         ),
       ),
@@ -300,4 +326,30 @@ class _SettingsNavItem {
   final IconData icon;
   final String label;
   final String? description;
+}
+
+class _SettingsNavPalette {
+  const _SettingsNavPalette({
+    required this.selectedFill,
+    required this.hoverFill,
+    required this.selectedForeground,
+    required this.unselectedForeground,
+  });
+
+  final Color selectedFill;
+  final Color hoverFill;
+  final Color selectedForeground;
+  final Color unselectedForeground;
+
+  factory _SettingsNavPalette.resolve(ThemeData theme) {
+    final isDark = theme.brightness == Brightness.dark;
+    final foreground = theme.colorScheme.onSurface;
+
+    return _SettingsNavPalette(
+      selectedFill: foreground.withValues(alpha: isDark ? 0.10 : 0.06),
+      hoverFill: foreground.withValues(alpha: isDark ? 0.05 : 0.04),
+      selectedForeground: foreground,
+      unselectedForeground: theme.colorScheme.onSurfaceVariant,
+    );
+  }
 }

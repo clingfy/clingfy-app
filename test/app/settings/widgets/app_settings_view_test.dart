@@ -246,6 +246,108 @@ void main() {
     expect(find.byType(AboutSettingsSection), findsOneWidget);
   });
 
+  testWidgets('settings rail uses neutral selection styling in light mode', (
+    tester,
+  ) async {
+    final settings = SettingsController(nativeBridge: NativeBridge.instance);
+    final theme = buildLightTheme();
+
+    await tester.pumpWidget(
+      buildTestApp(settings: settings, themeMode: ThemeMode.light),
+    );
+    await tester.pumpAndSettle();
+
+    expect(
+      _navItemBackground(tester, SettingsSection.workspace),
+      theme.colorScheme.onSurface.withValues(alpha: 0.06),
+    );
+    expect(
+      _navItemForeground(tester, SettingsSection.workspace),
+      theme.colorScheme.onSurface,
+    );
+    expect(
+      _navItemBackground(tester, SettingsSection.storage),
+      Colors.transparent,
+    );
+    expect(
+      _navItemForeground(tester, SettingsSection.storage),
+      theme.colorScheme.onSurfaceVariant,
+    );
+    expect(
+      _navItemDecoration(tester, SettingsSection.workspace).borderRadius,
+      BorderRadius.circular(8),
+    );
+
+    await tester.tap(find.byKey(_navItemKey(SettingsSection.storage)));
+    await tester.pumpAndSettle();
+
+    expect(
+      _navItemBackground(tester, SettingsSection.storage),
+      theme.colorScheme.onSurface.withValues(alpha: 0.06),
+    );
+    expect(
+      _navItemForeground(tester, SettingsSection.storage),
+      theme.colorScheme.onSurface,
+    );
+    expect(
+      _navItemBackground(tester, SettingsSection.workspace),
+      Colors.transparent,
+    );
+    expect(
+      _navItemForeground(tester, SettingsSection.workspace),
+      theme.colorScheme.onSurfaceVariant,
+    );
+  });
+
+  testWidgets('settings rail uses neutral selection styling in dark mode', (
+    tester,
+  ) async {
+    final settings = SettingsController(nativeBridge: NativeBridge.instance);
+    final theme = buildDarkTheme();
+
+    await tester.pumpWidget(
+      buildTestApp(settings: settings, themeMode: ThemeMode.dark),
+    );
+    await tester.pumpAndSettle();
+
+    expect(
+      _navItemBackground(tester, SettingsSection.workspace),
+      theme.colorScheme.onSurface.withValues(alpha: 0.10),
+    );
+    expect(
+      _navItemForeground(tester, SettingsSection.workspace),
+      theme.colorScheme.onSurface,
+    );
+    expect(
+      _navItemBackground(tester, SettingsSection.storage),
+      Colors.transparent,
+    );
+    expect(
+      _navItemForeground(tester, SettingsSection.storage),
+      theme.colorScheme.onSurfaceVariant,
+    );
+
+    await tester.tap(find.byKey(_navItemKey(SettingsSection.storage)));
+    await tester.pumpAndSettle();
+
+    expect(
+      _navItemBackground(tester, SettingsSection.storage),
+      theme.colorScheme.onSurface.withValues(alpha: 0.10),
+    );
+    expect(
+      _navItemForeground(tester, SettingsSection.storage),
+      theme.colorScheme.onSurface,
+    );
+    expect(
+      _navItemBackground(tester, SettingsSection.workspace),
+      Colors.transparent,
+    );
+    expect(
+      _navItemForeground(tester, SettingsSection.workspace),
+      theme.colorScheme.onSurfaceVariant,
+    );
+  });
+
   testWidgets('settings cards expose help text as inline tooltips', (
     tester,
   ) async {
@@ -479,4 +581,30 @@ void main() {
 
     expect(find.byType(StorageSettingsSection), findsOneWidget);
   });
+}
+
+Key _navItemKey(SettingsSection section) {
+  return Key('settings_nav_item_${section.name}');
+}
+
+BoxDecoration _navItemDecoration(WidgetTester tester, SettingsSection section) {
+  final ink = tester.widget<Ink>(find.byKey(_navItemKey(section)));
+  return ink.decoration! as BoxDecoration;
+}
+
+Color _navItemBackground(WidgetTester tester, SettingsSection section) {
+  return _navItemDecoration(tester, section).color!;
+}
+
+Color _navItemForeground(WidgetTester tester, SettingsSection section) {
+  final icon = tester.widget<Icon>(
+    find.byKey(Key('settings_nav_item_${section.name}_icon')),
+  );
+  final label = tester.widget<Text>(
+    find.byKey(Key('settings_nav_item_${section.name}_label')),
+  );
+
+  expect(label.style, isNotNull);
+  expect(label.style!.color, equals(icon.color));
+  return label.style!.color!;
 }
