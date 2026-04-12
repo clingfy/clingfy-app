@@ -610,10 +610,12 @@ class PostProcessingController extends ChangeNotifier {
       final cameraPreviewArgs = _cameraPreviewMethodArgs(
         cameraPreviewChangeKind,
       );
+      final layoutPresetName = _settings.post.layoutPreset.name;
+      final resolutionPresetName = _settings.post.resolutionPreset.name;
 
       Map<String, dynamic> args = {
-        'layoutPreset': _settings.post.layoutPreset.name,
-        'resolutionPreset': _settings.post.resolutionPreset.name,
+        'layoutPreset': layoutPresetName,
+        'resolutionPreset': resolutionPresetName,
         'fitMode': _settings.post.fitMode.name,
         'projectPath': projectPath,
         'padding': _videoPadding,
@@ -640,6 +642,20 @@ class PostProcessingController extends ChangeNotifier {
             .toList();
       }
 
+      Log.d(
+        "PostProcessing",
+        "Applying preview composition request",
+        null,
+        null,
+        {
+          'sessionId': _activeSessionId,
+          'projectPath': projectPath,
+          'layoutPreset': layoutPresetName,
+          'resolutionPreset': resolutionPresetName,
+          'cameraPreviewChangeKind': cameraPreviewChangeKind.name,
+        },
+      );
+
       final newPath = await _nativeBridge.invokeMethod<String>(
         'processVideo',
         args,
@@ -649,7 +665,31 @@ class PostProcessingController extends ChangeNotifier {
         _previewPath = newPath;
         Log.d(
           "PostProcessing",
-          "Preview composition updated for session $_activeSessionId: $newPath",
+          "Preview composition request completed",
+          null,
+          null,
+          {
+            'sessionId': _activeSessionId,
+            'projectPath': projectPath,
+            'previewPath': newPath,
+            'layoutPreset': layoutPresetName,
+            'resolutionPreset': resolutionPresetName,
+            'cameraPreviewChangeKind': cameraPreviewChangeKind.name,
+          },
+        );
+      } else {
+        Log.d(
+          "PostProcessing",
+          "Preview composition request returned no preview path",
+          null,
+          null,
+          {
+            'sessionId': _activeSessionId,
+            'projectPath': projectPath,
+            'layoutPreset': layoutPresetName,
+            'resolutionPreset': resolutionPresetName,
+            'cameraPreviewChangeKind': cameraPreviewChangeKind.name,
+          },
         );
       }
     } on PlatformException catch (e, st) {

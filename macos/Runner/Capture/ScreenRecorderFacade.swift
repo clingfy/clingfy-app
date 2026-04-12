@@ -2204,15 +2204,20 @@ final class ScreenRecorderFacade: NSObject {
         sessionId: sessionId,
         scene: previewScene
       )
-      if let view = inlinePreviewViewInstance {
-        view.updateComposition(scene: previewScene)
-        pendingPreviewSceneRequest = nil
-      } else {
-        pendingPreviewSceneRequest = PendingPreviewSceneRequest(
-          sessionId: sessionId,
-          scene: previewScene
-        )
-      }
+      let viewSessionId = inlinePreviewViewInstance?.currentSessionId
+      let route = routePreviewSceneRequest(
+        sessionId: sessionId,
+        scene: previewScene
+      )
+      NativeLogger.d(
+        "Preview", "Routed preview scene update",
+        context: [
+          "sessionId": sessionId ?? "nil",
+          "viewSessionId": viewSessionId ?? "nil",
+          "hasInlinePreviewView": inlinePreviewViewInstance != nil,
+          "hasActivePreviewState": activeInlinePreviewState != nil,
+          "route": route.rawValue,
+        ])
     }
     result(projectPath)
   }
