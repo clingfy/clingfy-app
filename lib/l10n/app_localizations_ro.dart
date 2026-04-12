@@ -1582,6 +1582,14 @@ class AppLocalizationsRo extends AppLocalizations {
       'Activați accesul la microfon în Setări Sistem > Confidențialitate și Securitate > Microfon, apoi încercați din nou.';
 
   @override
+  String get recordingSelectedMicFallbackWarning =>
+      'Microfonul selectat nu a putut fi folosit. Înregistrarea a început cu microfonul implicit al sistemului.';
+
+  @override
+  String get recordingSelectedMicFallbackFailure =>
+      'Microfonul selectat nu a putut fi folosit pentru înregistrare. Alegeți alt microfon sau dezactivați înregistrarea microfonului.';
+
+  @override
   String errExportError(Object error) {
     return 'A apărut o eroare la export: $error';
   }

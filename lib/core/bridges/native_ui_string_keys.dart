@@ -18,6 +18,10 @@ abstract class NativeUIStringKey {
       'accessibility.startRecording';
   static const String accessibilityStopRecording =
       'accessibility.stopRecording';
+  static const String recordingSelectedMicFallbackWarning =
+      'recording.selectedMicFallbackWarning';
+  static const String recordingSelectedMicFallbackFailure =
+      'recording.selectedMicFallbackFailure';
 
   /// All keys that native code may request.
   static const List<String> allKeys = [
@@ -27,5 +31,7 @@ abstract class NativeUIStringKey {
     menuQuit,
     accessibilityStartRecording,
     accessibilityStopRecording,
+    recordingSelectedMicFallbackWarning,
+    recordingSelectedMicFallbackFailure,
   ];
 }

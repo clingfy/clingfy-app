@@ -434,11 +434,53 @@ final class CaptureBackendScreenCaptureKit: NSObject, CaptureBackend {
     case stopping
   }
 
+  private enum MicrophoneStartMode: Equatable {
+    case disabled
+    case selectedDevice(String)
+    case systemDefault
+
+    init(device: AVCaptureDevice?) {
+      guard let device else {
+        self = .disabled
+        return
+      }
+
+      let uniqueID = device.uniqueID.trimmingCharacters(in: .whitespacesAndNewlines)
+      self = uniqueID.isEmpty ? .systemDefault : .selectedDevice(uniqueID)
+    }
+
+    var captureEnabled: Bool {
+      switch self {
+      case .disabled:
+        return false
+      case .selectedDevice, .systemDefault:
+        return true
+      }
+    }
+
+    var selectedDeviceID: String? {
+      guard case .selectedDevice(let id) = self else { return nil }
+      return id
+    }
+
+    var logValue: String {
+      switch self {
+      case .disabled:
+        return "disabled"
+      case .selectedDevice(let id):
+        return id
+      case .systemDefault:
+        return "default"
+      }
+    }
+  }
+
   // MARK: CaptureBackend
   var onStarted: ((URL) -> Void)?
   var onFinished: ((URL?, Error?) -> Void)?
   var onPaused: (() -> Void)?
   var onResumed: (() -> Void)?
+  var onWarning: ((String) -> Void)?
   var onMicrophoneLevel: ((MicrophoneLevelSample) -> Void)?
 
   var canPauseResume: Bool { true }
@@ -494,6 +536,7 @@ final class CaptureBackendScreenCaptureKit: NSObject, CaptureBackend {
   private var smoothedMicLevelLinear: Double = 0.0
   private var lastMicLevelEmitAt: CFTimeInterval = 0.0
   private let micLevelEmitInterval: CFTimeInterval = 1.0 / 15.0
+  private var pendingRecordingWarningMessage: String?
 
   func start(config: CaptureStartConfig) {
     terminalCompletionGuard.reset()
@@ -610,28 +653,9 @@ final class CaptureBackendScreenCaptureKit: NSObject, CaptureBackend {
   // MARK: Start/Stop
   private func startAsync(config: CaptureStartConfig) async {
     do {
-      didStart = false
-      paused = false
-      stopRequested = false
-      runPhase = .starting
-      segmentedSession = nil
-      activeSegmentContext = nil
-      segmentContextsByOutputID = [:]
-      smoothedMicLevelLinear = 0.0
-      lastMicLevelEmitAt = 0.0
-
-      // Store for cursor recorder normalization
-      currentDisplayID = config.target.displayID
-      currentCaptureRect = config.target.cropRect
-      currentCursorRasterScale = 1.0
-      isRecorderExcluded = config.excludeRecorderApp
-
       let outURL = try config.makeOutputURL()
-      recordingURL = outURL
-      segmentedSession = SegmentedRecordingSession(
-        primaryInProgressRawURL: outURL,
-        expectsCursorSidecars: !config.excludeRecorderApp
-      )
+      pendingRecordingWarningMessage = nil
+      initializeStartAttemptState(config: config, outputURL: outURL)
 
       NativeLogger.i(
         "SCKBackend", "Start requested",
@@ -642,6 +666,24 @@ final class CaptureBackendScreenCaptureKit: NSObject, CaptureBackend {
           "hasCropRect": config.target.cropRect != nil,
           "out": outURL.path,
         ])
+      await startCaptureAttempt(
+        config: config,
+        outputURL: outURL,
+        microphoneStartMode: MicrophoneStartMode(device: config.includeAudioDevice)
+      )
+    } catch {
+      NativeLogger.e("SCKBackend", "Start failed", context: ["error": "\(error)"])
+      finishWithFailure(error)
+    }
+  }
+
+  private func startCaptureAttempt(
+    config: CaptureStartConfig,
+    outputURL: URL,
+    microphoneStartMode: MicrophoneStartMode
+  ) async {
+    do {
+      initializeStartAttemptState(config: config, outputURL: outputURL)
 
       // Resolve shareable content once (windows + displays + running apps)
       let content = try await SCShareableContent.excludingDesktopWindows(
@@ -683,7 +725,7 @@ final class CaptureBackendScreenCaptureKit: NSObject, CaptureBackend {
       let streamConfig = makeStreamConfiguration(
         quality: config.quality,
         filter: filter,
-        includeAudioDevice: config.includeAudioDevice,
+        microphoneStartMode: microphoneStartMode,
         includeSystemAudio: config.includeSystemAudio,
         excludeMicFromSystemAudio: config.excludeMicFromSystemAudio,
         sourceRect: sourceRect,
@@ -736,6 +778,7 @@ final class CaptureBackendScreenCaptureKit: NSObject, CaptureBackend {
           "hasSourceRect": sourceRect != nil,
           "targetW": streamConfig.width,
           "targetH": streamConfig.height,
+          "microphoneMode": microphoneStartMode.logValue,
         ])
 
       let stream = SCStream(filter: filter, configuration: streamConfig, delegate: self)
@@ -756,30 +799,147 @@ final class CaptureBackendScreenCaptureKit: NSObject, CaptureBackend {
       activeSegmentContext = initialSegment
 
       // Start capture (recording begins as stream runs)
-      logDiskSpace("before_start_capture", url: outURL)
+      logDiskSpace("before_start_capture", url: outputURL)
       try await performSerializedStreamMutation { sequence in
         NativeLogger.i(
           "SCKBackend", "Starting stream capture",
           context: [
             "sequence": sequence,
             "phase": self.runPhase.rawValue,
+            "microphoneMode": microphoneStartMode.logValue,
           ])
 
         try await stream.startCapture()
 
         NativeLogger.i(
           "SCKBackend", "Stream started (await startCapture returned)",
-          context: ["sequence": sequence])
+          context: [
+            "sequence": sequence,
+            "microphoneMode": microphoneStartMode.logValue,
+          ])
       }
 
       // Delegate should fire later; safety net in case it doesn't:
       if !didStart {
-        await markRecordingStarted(url: outURL)
+        await markRecordingStarted(url: outputURL)
+      }
+    } catch {
+      NativeLogger.e(
+        "SCKBackend",
+        "Start failed",
+        context: [
+          "error": "\(error)",
+          "microphoneMode": microphoneStartMode.logValue,
+        ])
+
+      if Self.shouldRetryStartWithDefaultMicrophone(
+        error: error as NSError,
+        attemptedSelectedMicrophoneID: microphoneStartMode.selectedDeviceID
+      ) {
+        pendingRecordingWarningMessage = NativeStringsStore.shared.string(
+          for: NativeUIStringKey.recordingSelectedMicFallbackWarning)
+        await resetStartAttemptForRetry(config: config, outputURL: outputURL)
+        NativeLogger.w(
+          "SCKBackend",
+          "Retrying recording start with system default microphone",
+          context: [
+            "previousMicrophoneID": microphoneStartMode.selectedDeviceID ?? "nil",
+            "outputURL": outputURL.path,
+          ])
+        await startCaptureAttempt(
+          config: config,
+          outputURL: outputURL,
+          microphoneStartMode: .systemDefault
+        )
+        return
       }
 
-    } catch {
-      NativeLogger.e("SCKBackend", "Start failed", context: ["error": "\(error)"])
+      if pendingRecordingWarningMessage != nil {
+        let localizedError = NativeStringsStore.shared.string(
+          for: NativeUIStringKey.recordingSelectedMicFallbackFailure)
+        finishWithFailure(flutterError(NativeErrorCode.recordingError, localizedError))
+        return
+      }
+
       finishWithFailure(error)
+    }
+  }
+
+  private func initializeStartAttemptState(config: CaptureStartConfig, outputURL: URL) {
+    didStart = false
+    paused = false
+    stopRequested = false
+    runPhase = .starting
+    isCursorCaptureActive = false
+    segmentedSession = SegmentedRecordingSession(
+      primaryInProgressRawURL: outputURL,
+      expectsCursorSidecars: !config.excludeRecorderApp
+    )
+    activeSegmentContext = nil
+    segmentContextsByOutputID = [:]
+    smoothedMicLevelLinear = 0.0
+    lastMicLevelEmitAt = 0.0
+
+    // Store for cursor recorder normalization
+    currentDisplayID = config.target.displayID
+    currentCaptureRect = config.target.cropRect
+    currentCursorRasterScale = 1.0
+    isRecorderExcluded = config.excludeRecorderApp
+    recordingURL = outputURL
+    activeStreamConfig = nil
+    lastSourceRect = nil
+    lastAppliedOverlayWindowID = nil
+    pendingOverlayWindowID = currentOverlayWindowID
+    isFlushingOverlayUpdates = false
+    streamMutationTail = nil
+    nextStreamMutationSequence = 0
+    stopWindowMoveTimer()
+    stream = nil
+    recordingOutput = nil
+  }
+
+  private func resetStartAttemptForRetry(config: CaptureStartConfig, outputURL: URL) async {
+    let staleStream = stream
+    let segmentContexts = Array(segmentContextsByOutputID.values)
+
+    for context in segmentContexts {
+      context.finalizationWaiter.fail(flutterError(NativeErrorCode.recordingError, "Retrying start"))
+    }
+
+    if let staleStream {
+      do {
+        try await staleStream.stopCapture()
+      } catch {
+        NativeLogger.d(
+          "SCKBackend",
+          "Ignoring stopCapture failure while resetting retry state",
+          context: ["error": "\(error)"]
+        )
+      }
+    }
+
+    cursorRecorder.cancel()
+    cleanupStartAttemptArtifacts(segmentContexts: segmentContexts)
+    initializeStartAttemptState(config: config, outputURL: outputURL)
+  }
+
+  private func cleanupStartAttemptArtifacts(segmentContexts: [RecordingSegmentContext]) {
+    let fileManager = FileManager.default
+    for context in segmentContexts {
+      let artifactURLs = [context.rawURL, context.cursorURL].compactMap { $0 }
+      for url in artifactURLs where fileManager.fileExists(atPath: url.path) {
+        do {
+          try fileManager.removeItem(at: url)
+        } catch {
+          NativeLogger.w(
+            "SCKBackend",
+            "Failed to remove stale retry artifact",
+            context: [
+              "path": url.path,
+              "error": "\(error)",
+            ])
+        }
+      }
     }
   }
 
@@ -1246,6 +1406,7 @@ final class CaptureBackendScreenCaptureKit: NSObject, CaptureBackend {
     smoothedMicLevelLinear = 0.0
     lastMicLevelEmitAt = 0.0
     recordingURL = nil
+    pendingRecordingWarningMessage = nil
     segmentedSession = nil
     activeSegmentContext = nil
     segmentContextsByOutputID = [:]
@@ -1258,6 +1419,7 @@ final class CaptureBackendScreenCaptureKit: NSObject, CaptureBackend {
     lastSourceRect = nil
     isFlushingOverlayUpdates = false
     streamMutationTail = nil
+    nextStreamMutationSequence = 0
     stopWindowMoveTimer()
     stream = nil
     recordingOutput = nil
@@ -1302,6 +1464,10 @@ final class CaptureBackendScreenCaptureKit: NSObject, CaptureBackend {
     }
 
     onStarted?(url)
+    if let warning = pendingRecordingWarningMessage {
+      pendingRecordingWarningMessage = nil
+      onWarning?(warning)
+    }
   }
 
   private func recordedDurationSeconds(for url: URL, fallback: TimeInterval) -> TimeInterval {
@@ -1614,7 +1780,7 @@ final class CaptureBackendScreenCaptureKit: NSObject, CaptureBackend {
   private func makeStreamConfiguration(
     quality: RecordingQuality,
     filter: SCContentFilter,
-    includeAudioDevice: AVCaptureDevice?,
+    microphoneStartMode: MicrophoneStartMode,
     includeSystemAudio: Bool,
     excludeMicFromSystemAudio: Bool,
     sourceRect: CGRect?,
@@ -1655,9 +1821,11 @@ final class CaptureBackendScreenCaptureKit: NSObject, CaptureBackend {
     }
 
     c.capturesAudio = includeSystemAudio
-    c.captureMicrophone = (includeAudioDevice != nil)
-    if let micId = includeAudioDevice?.uniqueID, !micId.isEmpty {
+    c.captureMicrophone = microphoneStartMode.captureEnabled
+    if let micId = microphoneStartMode.selectedDeviceID {
       c.microphoneCaptureDeviceID = micId
+    } else {
+      c.microphoneCaptureDeviceID = nil
     }
 
     // When both system audio and a mic are active, optionally exclude Clingfy's own process audio
@@ -1667,6 +1835,20 @@ final class CaptureBackendScreenCaptureKit: NSObject, CaptureBackend {
     }
 
     return c
+  }
+
+  static func shouldRetryStartWithDefaultMicrophone(
+    error: NSError,
+    attemptedSelectedMicrophoneID: String?
+  ) -> Bool {
+    guard let attemptedSelectedMicrophoneID,
+      !attemptedSelectedMicrophoneID.isEmpty,
+      error.domain == SCStreamErrorDomain
+    else {
+      return false
+    }
+
+    return error.code == -3812 || error.code == -3820
   }
 
   private func computeCursorRasterScale(
@@ -1859,6 +2041,14 @@ final class CaptureBackendScreenCaptureKit: NSObject, CaptureBackend {
 extension CaptureBackendScreenCaptureKit: SCStreamDelegate {
   nonisolated func stream(_ stream: SCStream, didStopWithError error: any Error) {
     Task { @MainActor in
+      guard stream === self.stream else {
+        NativeLogger.d(
+          "SCKBackend", "Ignoring stale stream didStopWithError callback",
+          context: ["error": "\(error)"]
+        )
+        return
+      }
+
       let nsError = error as NSError
       let errorCode = nsError.code
       let errorDomain = nsError.domain
@@ -1932,6 +2122,7 @@ extension CaptureBackendScreenCaptureKit: SCStreamOutput {
     guard let estimate = AudioLevelEstimator.estimatePeak(sampleBuffer: sampleBuffer) else { return }
     let sample = MicrophoneLevelSample(linear: estimate.linear, dbfs: estimate.dbfs)
     Task { @MainActor in
+      guard stream === self.stream else { return }
       self.handleMicrophoneLevel(sample)
     }
   }
@@ -1943,12 +2134,14 @@ extension CaptureBackendScreenCaptureKit: SCRecordingOutputDelegate {
   nonisolated func recordingOutputDidStartRecording(_ recordingOutput: SCRecordingOutput) {
     Task { @MainActor in
       let outputID = ObjectIdentifier(recordingOutput)
-      if let context = self.segmentContextsByOutputID[outputID] {
-        NativeLogger.i(
-          "SCKBackend", "Recording segment started",
-          context: ["segmentIndex": context.index, "rawURL": context.rawURL.path]
-        )
+      guard let context = self.segmentContextsByOutputID[outputID] else {
+        NativeLogger.d("SCKBackend", "Ignoring stale recording start callback")
+        return
       }
+      NativeLogger.i(
+        "SCKBackend", "Recording segment started",
+        context: ["segmentIndex": context.index, "rawURL": context.rawURL.path]
+      )
       guard let url = self.recordingURL else { return }
       await self.markRecordingStarted(url: url)
     }
@@ -1957,15 +2150,15 @@ extension CaptureBackendScreenCaptureKit: SCRecordingOutputDelegate {
   nonisolated func recordingOutputDidFinishRecording(_ recordingOutput: SCRecordingOutput) {
     Task { @MainActor in
       let outputID = ObjectIdentifier(recordingOutput)
-      if let context = self.segmentContextsByOutputID[outputID] {
-        NativeLogger.i(
-          "SCKBackend", "Recording segment finished",
-          context: ["segmentIndex": context.index, "rawURL": context.rawURL.path]
-        )
-        context.finalizationWaiter.succeed()
-      } else {
-        NativeLogger.w("SCKBackend", "Received finish callback for unknown recording output")
+      guard let context = self.segmentContextsByOutputID[outputID] else {
+        NativeLogger.d("SCKBackend", "Ignoring stale recording finish callback")
+        return
       }
+      NativeLogger.i(
+        "SCKBackend", "Recording segment finished",
+        context: ["segmentIndex": context.index, "rawURL": context.rawURL.path]
+      )
+      context.finalizationWaiter.succeed()
     }
   }
 
@@ -1974,9 +2167,14 @@ extension CaptureBackendScreenCaptureKit: SCRecordingOutputDelegate {
   ) {
     Task { @MainActor in
       let outputID = ObjectIdentifier(recordingOutput)
-      if let context = self.segmentContextsByOutputID[outputID] {
-        context.finalizationWaiter.fail(error)
+      guard let context = self.segmentContextsByOutputID[outputID] else {
+        NativeLogger.d(
+          "SCKBackend", "Ignoring stale recording failure callback",
+          context: ["error": "\(error)"]
+        )
+        return
       }
+      context.finalizationWaiter.fail(error)
       self.logDiskSpace("recording_output_did_fail", url: self.recordingURL)
       NativeLogger.e(
         "SCKBackend", "Recording failed",

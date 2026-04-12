@@ -16,4 +16,8 @@ enum NativeUIStringKey {
   // Accessibility descriptions
   static let accessibilityStartRecording = "accessibility.startRecording"
   static let accessibilityStopRecording = "accessibility.stopRecording"
+
+  // Recording warnings/errors
+  static let recordingSelectedMicFallbackWarning = "recording.selectedMicFallbackWarning"
+  static let recordingSelectedMicFallbackFailure = "recording.selectedMicFallbackFailure"
 }

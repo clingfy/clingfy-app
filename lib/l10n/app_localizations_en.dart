@@ -1568,6 +1568,14 @@ class AppLocalizationsEn extends AppLocalizations {
       'Enable microphone access in System Settings > Privacy & Security > Microphone, then try again.';
 
   @override
+  String get recordingSelectedMicFallbackWarning =>
+      'Selected microphone couldn’t be used. Recording started with the system default microphone.';
+
+  @override
+  String get recordingSelectedMicFallbackFailure =>
+      'Selected microphone couldn’t be used for recording. Choose another microphone or turn microphone recording off.';
+
+  @override
   String errExportError(Object error) {
     return 'An error occurred during export: $error';
   }

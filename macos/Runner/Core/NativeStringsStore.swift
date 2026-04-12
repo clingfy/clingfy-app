@@ -62,6 +62,14 @@ final class NativeStringsStore {
     string(for: NativeUIStringKey.accessibilityStopRecording)
   }
 
+  var recordingSelectedMicFallbackWarning: String {
+    string(for: NativeUIStringKey.recordingSelectedMicFallbackWarning)
+  }
+
+  var recordingSelectedMicFallbackFailure: String {
+    string(for: NativeUIStringKey.recordingSelectedMicFallbackFailure)
+  }
+
   // MARK: - Private
 
   private func initializeFallbacks() {
@@ -73,6 +81,10 @@ final class NativeStringsStore {
       NativeUIStringKey.menuQuit: "Quit Clingfy",
       NativeUIStringKey.accessibilityStartRecording: "Start recording",
       NativeUIStringKey.accessibilityStopRecording: "Stop recording",
+      NativeUIStringKey.recordingSelectedMicFallbackWarning:
+        "Selected microphone couldn’t be used. Recording started with the system default microphone.",
+      NativeUIStringKey.recordingSelectedMicFallbackFailure:
+        "Selected microphone couldn’t be used for recording. Choose another microphone or turn microphone recording off.",
     ]
   }
 
@@ -90,6 +102,10 @@ final class NativeStringsStore {
       return "Start recording"
     case NativeUIStringKey.accessibilityStopRecording:
       return "Stop recording"
+    case NativeUIStringKey.recordingSelectedMicFallbackWarning:
+      return "Selected microphone couldn’t be used. Recording started with the system default microphone."
+    case NativeUIStringKey.recordingSelectedMicFallbackFailure:
+      return "Selected microphone couldn’t be used for recording. Choose another microphone or turn microphone recording off."
     default:
       return key
     }

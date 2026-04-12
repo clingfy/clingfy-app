@@ -536,6 +536,8 @@
   "errOutputUrlError": "Could not create output file: {error}",
   "errAccessibilityPermissionRequired": "Enable Accessibility for cursor highlight in System Settings, then relaunch.",
   "errMicrophonePermissionRequired": "Enable microphone access in System Settings > Privacy & Security > Microphone, then try again.",
+  "recordingSelectedMicFallbackWarning": "Selected microphone couldn’t be used. Recording started with the system default microphone.",
+  "recordingSelectedMicFallbackFailure": "Selected microphone couldn’t be used for recording. Choose another microphone or turn microphone recording off.",
   "errExportError": "An error occurred during export: {error}",
   "errCameraPermissionDenied": "Enable camera in System Settings > Privacy & Security > Camera.",
   "shape": "Shape",

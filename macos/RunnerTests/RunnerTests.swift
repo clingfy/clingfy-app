@@ -4904,11 +4904,74 @@ final class ScreenCaptureKitOverlayFilterPolicyTests: XCTestCase {
   }
 }
 
+@MainActor
+@available(macOS 15.0, *)
+final class ScreenCaptureKitMicrophoneFallbackTests: XCTestCase {
+  func testSelectedMicrophoneInvalidParameterRetriesWithDefaultMicrophone() {
+    let error = NSError(
+      domain: "com.apple.ScreenCaptureKit.SCStreamErrorDomain",
+      code: -3812,
+      userInfo: nil
+    )
+
+    XCTAssertTrue(
+      CaptureBackendScreenCaptureKit.shouldRetryStartWithDefaultMicrophone(
+        error: error,
+        attemptedSelectedMicrophoneID: "mic-1"
+      )
+    )
+  }
+
+  func testOnlySelectedMicrophoneScreenCaptureKitStartErrorsTriggerRetry() {
+    let micStartError = NSError(
+      domain: "com.apple.ScreenCaptureKit.SCStreamErrorDomain",
+      code: -3820,
+      userInfo: nil
+    )
+    let unrelatedDomainError = NSError(
+      domain: "other.domain",
+      code: -3812,
+      userInfo: nil
+    )
+    let unrelatedCodeError = NSError(
+      domain: "com.apple.ScreenCaptureKit.SCStreamErrorDomain",
+      code: -3802,
+      userInfo: nil
+    )
+
+    XCTAssertTrue(
+      CaptureBackendScreenCaptureKit.shouldRetryStartWithDefaultMicrophone(
+        error: micStartError,
+        attemptedSelectedMicrophoneID: "mic-1"
+      )
+    )
+    XCTAssertFalse(
+      CaptureBackendScreenCaptureKit.shouldRetryStartWithDefaultMicrophone(
+        error: unrelatedDomainError,
+        attemptedSelectedMicrophoneID: "mic-1"
+      )
+    )
+    XCTAssertFalse(
+      CaptureBackendScreenCaptureKit.shouldRetryStartWithDefaultMicrophone(
+        error: unrelatedCodeError,
+        attemptedSelectedMicrophoneID: "mic-1"
+      )
+    )
+    XCTAssertFalse(
+      CaptureBackendScreenCaptureKit.shouldRetryStartWithDefaultMicrophone(
+        error: micStartError,
+        attemptedSelectedMicrophoneID: nil
+      )
+    )
+  }
+}
+
 private final class MockCaptureBackend: CaptureBackend {
   var onStarted: ((URL) -> Void)?
   var onFinished: ((URL?, Error?) -> Void)?
   var onPaused: (() -> Void)?
   var onResumed: (() -> Void)?
+  var onWarning: ((String) -> Void)?
   var onMicrophoneLevel: ((MicrophoneLevelSample) -> Void)?
 
   var canPauseResume: Bool = true
@@ -5117,6 +5180,24 @@ final class MicrophoneLevelTelemetryTests: XCTestCase {
     XCTAssertEqual(received.count, 2)
     XCTAssertEqual(received[0], 0.22, accuracy: 0.0001)
     XCTAssertEqual(received[1], 0.48, accuracy: 0.0001)
+  }
+
+  func testBackendWarningsAreForwardedAsRecordingWarnings() {
+    let facade = ScreenRecorderFacade()
+    let backend = MockCaptureBackend()
+    facade._testSetCaptureBackend(backend)
+    facade._testSetActiveRecordingWorkflowSessionId("session-123")
+
+    var payload: [String: Any]?
+    facade.onRecordingWarning = { warningPayload in
+      payload = warningPayload
+    }
+
+    backend.onWarning?("selected mic fallback")
+
+    XCTAssertEqual(payload?["type"] as? String, "recordingWarning")
+    XCTAssertEqual(payload?["sessionId"] as? String, "session-123")
+    XCTAssertEqual(payload?["message"] as? String, "selected mic fallback")
   }
 }
 

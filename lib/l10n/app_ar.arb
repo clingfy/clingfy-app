@@ -513,6 +513,8 @@
   "errOutputUrlError": "تعذر إنشاء ملف المخرجات: {error}",
   "errAccessibilityPermissionRequired": "يرجى تفعيل إذن الوصول (Accessibility) لتمييز المؤشر من إعدادات النظام، ثم أعد تشغيل التطبيق.",
   "errMicrophonePermissionRequired": "يرجى تفعيل الوصول إلى الميكروفون في إعدادات النظام > الخصوصية والأمن > الميكروفون، ثم حاول مرة أخرى.",
+  "recordingSelectedMicFallbackWarning": "تعذر استخدام الميكروفون المحدد. بدأ التسجيل باستخدام الميكروفون الافتراضي للنظام.",
+  "recordingSelectedMicFallbackFailure": "تعذر استخدام الميكروفون المحدد للتسجيل. اختر ميكروفوناً آخر أو عطّل تسجيل الميكروفون.",
   "errExportError": "حدث خطأ أثناء التصدير: {error}",
   "errCameraPermissionDenied": "يرجى تفعيل الكاميرا في إعدادات النظام > الخصوصية والأمن > الكاميرا.",
   "shape": "الشكل",

@@ -513,6 +513,8 @@
   "errOutputUrlError": "Nu s-a putut crea fișierul de ieșire: {error}",
   "errAccessibilityPermissionRequired": "Activați Accesibilitatea pentru evidențierea cursorului în Setări Sistem, apoi reporniți aplicația.",
   "errMicrophonePermissionRequired": "Activați accesul la microfon în Setări Sistem > Confidențialitate și Securitate > Microfon, apoi încercați din nou.",
+  "recordingSelectedMicFallbackWarning": "Microfonul selectat nu a putut fi folosit. Înregistrarea a început cu microfonul implicit al sistemului.",
+  "recordingSelectedMicFallbackFailure": "Microfonul selectat nu a putut fi folosit pentru înregistrare. Alegeți alt microfon sau dezactivați înregistrarea microfonului.",
   "errExportError": "A apărut o eroare la export: {error}",
   "errCameraPermissionDenied": "Activați camera în Setări Sistem > Confidențialitate și Securitate > Cameră.",
   "shape": "Formă",

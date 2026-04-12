@@ -1556,6 +1556,14 @@ class AppLocalizationsAr extends AppLocalizations {
       'يرجى تفعيل الوصول إلى الميكروفون في إعدادات النظام > الخصوصية والأمن > الميكروفون، ثم حاول مرة أخرى.';
 
   @override
+  String get recordingSelectedMicFallbackWarning =>
+      'تعذر استخدام الميكروفون المحدد. بدأ التسجيل باستخدام الميكروفون الافتراضي للنظام.';
+
+  @override
+  String get recordingSelectedMicFallbackFailure =>
+      'تعذر استخدام الميكروفون المحدد للتسجيل. اختر ميكروفوناً آخر أو عطّل تسجيل الميكروفون.';
+
+  @override
   String errExportError(Object error) {
     return 'حدث خطأ أثناء التصدير: $error';
   }

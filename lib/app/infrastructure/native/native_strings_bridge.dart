@@ -95,6 +95,10 @@ class NativeStringsBridge {
         return l10n.menuStartRecording;
       case NativeUIStringKey.accessibilityStopRecording:
         return l10n.menuStopRecording;
+      case NativeUIStringKey.recordingSelectedMicFallbackWarning:
+        return l10n.recordingSelectedMicFallbackWarning;
+      case NativeUIStringKey.recordingSelectedMicFallbackFailure:
+        return l10n.recordingSelectedMicFallbackFailure;
       default:
         return _getFallbackString(key);
     }
@@ -114,6 +118,10 @@ class NativeStringsBridge {
         return 'Start recording';
       case NativeUIStringKey.accessibilityStopRecording:
         return 'Stop recording';
+      case NativeUIStringKey.recordingSelectedMicFallbackWarning:
+        return 'Selected microphone couldn’t be used. Recording started with the system default microphone.';
+      case NativeUIStringKey.recordingSelectedMicFallbackFailure:
+        return 'Selected microphone couldn’t be used for recording. Choose another microphone or turn microphone recording off.';
       default:
         return key;
     }

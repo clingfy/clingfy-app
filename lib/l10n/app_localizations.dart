@@ -2980,6 +2980,18 @@ abstract class AppLocalizations {
   /// **'Enable microphone access in System Settings > Privacy & Security > Microphone, then try again.'**
   String get errMicrophonePermissionRequired;
 
+  /// No description provided for @recordingSelectedMicFallbackWarning.
+  ///
+  /// In en, this message translates to:
+  /// **'Selected microphone couldn’t be used. Recording started with the system default microphone.'**
+  String get recordingSelectedMicFallbackWarning;
+
+  /// No description provided for @recordingSelectedMicFallbackFailure.
+  ///
+  /// In en, this message translates to:
+  /// **'Selected microphone couldn’t be used for recording. Choose another microphone or turn microphone recording off.'**
+  String get recordingSelectedMicFallbackFailure;
+
   /// No description provided for @errExportError.
   ///
   /// In en, this message translates to:

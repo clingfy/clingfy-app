@@ -43,6 +43,7 @@ class RecordingController extends ChangeNotifier {
   String? _pendingExternalProjectReplacementPath;
   String? _openingExternalProjectPath;
   String? _failedExternalProjectOpenPath;
+  String? _pendingWarningMessage;
   RecordingPauseResumeCapabilities _pauseResumeCapabilities =
       const RecordingPauseResumeCapabilities.unsupported();
   final RecordedDurationTracker _durationTracker = RecordedDurationTracker();
@@ -57,6 +58,7 @@ class RecordingController extends ChangeNotifier {
   String? get originalRecordingPath => _state.projectPath;
   String? get errorCode => _state.errorCode;
   String? get errorMessage => _state.errorMessage ?? _state.errorCode;
+  String? get pendingWarningMessage => _pendingWarningMessage;
 
   bool get isRecording =>
       phase == WorkflowPhase.recording ||
@@ -225,7 +227,14 @@ class RecordingController extends ChangeNotifier {
       phase: WorkflowPhase.startingRecording,
       sessionId: nextSessionId,
     );
+    _pendingWarningMessage = null;
     notifyListeners();
+  }
+
+  String? consumePendingWarningMessage() {
+    final warning = _pendingWarningMessage;
+    _pendingWarningMessage = null;
+    return warning;
   }
 
   void cancelPendingStartIntent() {
@@ -610,6 +619,9 @@ class RecordingController extends ChangeNotifier {
       case 'recordingFailed':
         _handleRecordingFailedEvent(event);
         return;
+      case 'recordingWarning':
+        _handleRecordingWarningEvent(event);
+        return;
       case 'previewPreparing':
         _handlePreviewPreparingEvent(event);
         return;
@@ -770,6 +782,19 @@ class RecordingController extends ChangeNotifier {
 
     unawaited(ClingfyTelemetry.stopSession());
     _transitionToIdle(errorCode: code, errorMessage: error);
+  }
+
+  void _handleRecordingWarningEvent(Map<String, dynamic> event) {
+    final eventSessionId = event['sessionId']?.toString();
+    if (_isStaleSession(eventSessionId)) return;
+
+    final message = event['message']?.toString();
+    if (message == null || message.trim().isEmpty) {
+      return;
+    }
+
+    _pendingWarningMessage = message;
+    notifyListeners();
   }
 
   void _handlePreviewPreparingEvent(Map<String, dynamic> event) {
@@ -936,6 +961,7 @@ class RecordingController extends ChangeNotifier {
     _previewOpenSource = null;
     _pendingExternalProjectReplacementPath = null;
     _openingExternalProjectPath = null;
+    _pendingWarningMessage = null;
     Log.recordingId = null;
     _state = RecordingWorkflowState(
       phase: WorkflowPhase.idle,

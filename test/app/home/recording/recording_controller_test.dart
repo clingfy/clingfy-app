@@ -85,6 +85,47 @@ void main() {
   );
 
   test(
+    'recordingWarning preserves workflow state and does not create an error',
+    () async {
+      final harness = await createHarness();
+      addTearDown(harness.recording.dispose);
+      addTearDown(harness.settings.dispose);
+
+      harness.recording.beginRecordingStartIntent();
+      final sessionId = harness.recording.sessionId!;
+
+      await _emitWorkflowEvent({
+        'type': 'recordingWarning',
+        'sessionId': sessionId,
+        'message':
+            'Selected microphone couldn’t be used. Recording started with the system default microphone.',
+      });
+
+      expect(harness.recording.phase, WorkflowPhase.startingRecording);
+      expect(harness.recording.errorCode, isNull);
+      expect(harness.recording.errorMessage, isNull);
+      expect(
+        harness.recording.pendingWarningMessage,
+        'Selected microphone couldn’t be used. Recording started with the system default microphone.',
+      );
+
+      await _emitWorkflowEvent({
+        'type': 'recordingStarted',
+        'sessionId': sessionId,
+      });
+
+      expect(harness.recording.phase, WorkflowPhase.recording);
+      expect(harness.recording.errorCode, isNull);
+      expect(harness.recording.errorMessage, isNull);
+      expect(
+        harness.recording.consumePendingWarningMessage(),
+        'Selected microphone couldn’t be used. Recording started with the system default microphone.',
+      );
+      expect(harness.recording.pendingWarningMessage, isNull);
+    },
+  );
+
+  test(
     'pause then resume returns to recording and stop still finalizes',
     () async {
       final harness = await createHarness();
