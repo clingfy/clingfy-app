@@ -155,6 +155,19 @@ class RecordingController extends ChangeNotifier {
     return '$hh:$mm:$ss';
   }
 
+  Map<String, dynamic> _previewLifecycleLogContext([
+    Map<String, dynamic>? event,
+  ]) {
+    return {
+      'phase': phase.name,
+      'sessionId': event?['sessionId']?.toString() ?? _state.sessionId,
+      'projectPath': _state.projectPath,
+      'previewPath': _state.previewPath,
+      'token': event?['token']?.toString() ?? _state.previewToken,
+      'path': event?['path']?.toString(),
+    };
+  }
+
   void _onSettingsChanged() {
     notifyListeners();
     if (phase == WorkflowPhase.recording) {
@@ -474,6 +487,9 @@ class RecordingController extends ChangeNotifier {
     Log.d('Recording', 'Preview host mounted', null, null, {
       'phase': phase.name,
       'sessionId': activeSessionId,
+      'projectPath': _state.projectPath,
+      'previewPath': _state.previewPath,
+      'token': _state.previewToken,
       'path': path,
     });
     if (phase != WorkflowPhase.openingPreview ||
@@ -566,12 +582,14 @@ class RecordingController extends ChangeNotifier {
     final type = event['type']?.toString();
     if (type == null || type.isEmpty) return;
 
-    if (type == 'previewPreparing' || type == 'previewReady') {
+    if (type == 'previewPreparing' ||
+        type == 'previewReady' ||
+        type == 'previewFailed' ||
+        type == 'previewClosed' ||
+        type == 'recordingFinalized' ||
+        type == 'recordingFinished') {
       Log.d('Recording', 'Received $type workflow event', null, null, {
-        'phase': phase.name,
-        'sessionId': event['sessionId']?.toString(),
-        'token': event['token']?.toString(),
-        'path': event['path']?.toString(),
+        ..._previewLifecycleLogContext(event),
       });
     }
 
@@ -721,7 +739,10 @@ class RecordingController extends ChangeNotifier {
 
     Log.i(
       'Recording',
-      'Recording finalized for session $eventSessionId, opening preview shell for $projectPath',
+      'Recording finalized, opening preview shell',
+      null,
+      null,
+      {..._previewLifecycleLogContext(event), 'projectPath': projectPath},
     );
     _enterPreviewForProject(
       projectPath: projectPath,
@@ -771,6 +792,13 @@ class RecordingController extends ChangeNotifier {
         clearErrorMessage: true,
       ),
     );
+    Log.d(
+      'Recording',
+      'Preview transitioned to loading',
+      null,
+      null,
+      _previewLifecycleLogContext(event),
+    );
   }
 
   void _handlePreviewReadyEvent(Map<String, dynamic> event) {
@@ -797,6 +825,13 @@ class RecordingController extends ChangeNotifier {
         clearErrorMessage: true,
       ),
     );
+    Log.d(
+      'Recording',
+      'Preview transitioned to ready',
+      null,
+      null,
+      _previewLifecycleLogContext(event),
+    );
   }
 
   void _handlePreviewFailedEvent(Map<String, dynamic> event) {
@@ -806,6 +841,11 @@ class RecordingController extends ChangeNotifier {
     final errorCode = event['reason']?.toString() ?? 'PREVIEW_ERROR';
     final errorMessage =
         event['error']?.toString() ?? event['reason']?.toString();
+    Log.w('Recording', 'Preview failed', null, null, {
+      ..._previewLifecycleLogContext(event),
+      'errorCode': errorCode,
+      'errorMessage': errorMessage,
+    });
     _recordExternalProjectOpenFailureIfNeeded();
     _state = _state.copyWith(errorCode: errorCode, errorMessage: errorMessage);
     notifyListeners();
@@ -816,6 +856,10 @@ class RecordingController extends ChangeNotifier {
     final eventSessionId = event['sessionId']?.toString();
     if (_isStaleSession(eventSessionId)) return;
     final reason = event['reason']?.toString() ?? 'unknown';
+    Log.d('Recording', 'Received previewClosed event', null, null, {
+      ..._previewLifecycleLogContext(event),
+      'reason': reason,
+    });
     if (phase != WorkflowPhase.closingPreview) {
       Log.d(
         'Recording',

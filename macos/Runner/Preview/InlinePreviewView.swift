@@ -233,6 +233,7 @@ final class InlinePreviewView: NSView {
   private var hasEmittedReadyForCurrentToken = false
   private var hasAppliedInitialCompositionForCurrentToken = false
   private var isApplyingInitialCompositionForCurrentToken = false
+  private var hasWarnedAboutMissingInitialSceneForCurrentToken = false
   private var currentPreviewProfile: PreviewProfile?
   private var pendingCompositionWorkItem: DispatchWorkItem?
   private var currentMediaSources: PreviewMediaSources?
@@ -729,6 +730,14 @@ final class InlinePreviewView: NSView {
     initialPlaybackSnapshot: PreviewPlaybackSnapshot? = nil
   ) {
     let path = mediaSources.screenPath
+    let previousPath = currentVideoPath
+    let previousSessionId = currentSessionId
+    let hadPendingComposition =
+      pendingCompositionParams != nil
+      || pendingCameraCompositionParams != nil
+      || pendingCompositionWorkItem != nil
+    let hadCurrentScene = currentScene != nil
+    let hadCurrentLayout = currentLayout != nil
     // Generate a new token for this open operation
     let openToken = UUID()
     currentOpenToken = openToken
@@ -738,6 +747,7 @@ final class InlinePreviewView: NSView {
     hasEmittedReadyForCurrentToken = false
     hasAppliedInitialCompositionForCurrentToken = false
     isApplyingInitialCompositionForCurrentToken = false
+    hasWarnedAboutMissingInitialSceneForCurrentToken = false
     pendingCompositionWorkItem?.cancel()
     pendingCompositionWorkItem = nil
     pendingCompositionParams = nil
@@ -759,7 +769,12 @@ final class InlinePreviewView: NSView {
         "cameraPath": mediaSources.cameraPath ?? "nil",
         "sessionId": sessionId,
         "token": openToken.uuidString,
-        "previousPath": currentVideoPath ?? "nil",
+        "previousPath": previousPath ?? "nil",
+        "previousSessionId": previousSessionId ?? "nil",
+        "newSessionId": sessionId,
+        "hadPendingComposition": hadPendingComposition,
+        "hadCurrentScene": hadCurrentScene,
+        "hadCurrentLayout": hadCurrentLayout,
       ])
 
     // Emit previewPreparing event immediately
@@ -865,6 +880,13 @@ final class InlinePreviewView: NSView {
     initialCompositionApplied: Bool
   ) -> Bool {
     !hasEmittedReady && tokenMatches && itemReady && layerReady && initialCompositionApplied
+  }
+
+  static func canAdvanceInitialCompositionGate(
+    hasPendingOrCurrentComposition: Bool,
+    hasCurrentLayout: Bool
+  ) -> Bool {
+    hasPendingOrCurrentComposition || hasCurrentLayout
   }
 
   static func previewUpdatePlan(
@@ -1104,6 +1126,7 @@ final class InlinePreviewView: NSView {
     hasEmittedReadyForCurrentToken = false
     hasAppliedInitialCompositionForCurrentToken = false
     isApplyingInitialCompositionForCurrentToken = false
+    hasWarnedAboutMissingInitialSceneForCurrentToken = false
     openRetryCount = 0
     lastOpenRequestTime = nil
     currentLayout = nil
@@ -1303,7 +1326,11 @@ final class InlinePreviewView: NSView {
         return
       }
 
-      if let params = pendingCompositionParams ?? currentCompositionParams {
+      let paramsToApply = pendingCompositionParams ?? currentCompositionParams
+      let hasPendingOrCurrentComposition = paramsToApply != nil
+      let hasCurrentLayout = currentLayout != nil
+
+      if let params = paramsToApply {
         NativeLogger.i("Player", "Applying deferred composition before previewReady")
         isApplyingInitialCompositionForCurrentToken = true
         scheduleCompositionUpdate(
@@ -1317,10 +1344,33 @@ final class InlinePreviewView: NSView {
             guard self.currentOpenToken == token else { return }
             self.isApplyingInitialCompositionForCurrentToken = false
             guard success else { return }
-            self.hasAppliedInitialCompositionForCurrentToken = true
-            self.finishPreviewReadyIfPossible(token: token)
+            self.checkAndEmitPreviewReady(token: token)
           }
         )
+        return
+      }
+
+      guard
+        Self.canAdvanceInitialCompositionGate(
+          hasPendingOrCurrentComposition: hasPendingOrCurrentComposition,
+          hasCurrentLayout: hasCurrentLayout
+        )
+      else {
+        let context: [String: Any] = [
+          "token": token.uuidString,
+          "sessionId": currentSessionId ?? "nil",
+          "path": currentVideoPath ?? "nil",
+          "hasPendingOrCurrentComposition": hasPendingOrCurrentComposition,
+          "hasCurrentLayout": hasCurrentLayout,
+        ]
+        NativeLogger.d("Player", "waiting for initial preview scene", context: context)
+        if !hasWarnedAboutMissingInitialSceneForCurrentToken {
+          NativeLogger.w(
+            "Player", "Preview ready gate reached without initial preview scene",
+            context: context
+          )
+          hasWarnedAboutMissingInitialSceneForCurrentToken = true
+        }
         return
       }
 
@@ -1819,6 +1869,7 @@ final class InlinePreviewView: NSView {
 
     let currentTime = player?.currentTime() ?? .zero
     let wasPlaying = (player?.rate ?? 0) != 0
+    let hadExistingLayout = currentLayout != nil
     if wasPlaying {
       player?.pause()
     }
@@ -1826,7 +1877,10 @@ final class InlinePreviewView: NSView {
     NativeLogger.d(
       "Player", "Applying preview composition",
       context: [
+        "token": currentOpenToken?.uuidString ?? "nil",
+        "sessionId": currentSessionId ?? "nil",
         "reason": reason,
+        "hadExistingLayout": hadExistingLayout,
         "currentTime": "\(CMTimeGetSeconds(currentTime))s",
         "wasPlaying": wasPlaying,
         "renderSize": "\(Int(profile.canvasRenderSize.width))x\(Int(profile.canvasRenderSize.height))",
@@ -1843,6 +1897,18 @@ final class InlinePreviewView: NSView {
         ])
 
       if !exists {
+        NativeLogger.w(
+          "Player", "Preview composition apply failed",
+          context: [
+            "token": currentOpenToken?.uuidString ?? "nil",
+            "sessionId": currentSessionId ?? "nil",
+            "reason": reason,
+            "hadExistingLayout": hadExistingLayout,
+            "renderSize":
+              "\(Int(profile.canvasRenderSize.width))x\(Int(profile.canvasRenderSize.height))",
+            "success": false,
+            "failure": "VIDEO_FILE_MISSING",
+          ])
         NativeLogger.e("Player", "VIDEO_FILE_MISSING", context: ["path": path])
         player?.pause()
         emitPlayerEvent([
@@ -1883,6 +1949,18 @@ final class InlinePreviewView: NSView {
     )
 
     guard let layout = builder.buildPreview(asset: asset, scene: scene, profile: profile) else {
+      NativeLogger.w(
+        "Player", "Preview composition apply failed",
+        context: [
+          "token": currentOpenToken?.uuidString ?? "nil",
+          "sessionId": currentSessionId ?? "nil",
+          "reason": reason,
+          "hadExistingLayout": hadExistingLayout,
+          "renderSize":
+            "\(Int(profile.canvasRenderSize.width))x\(Int(profile.canvasRenderSize.height))",
+          "success": false,
+          "failure": "ASSET_INVALID",
+        ])
       NativeLogger.e(
         "Player", "ASSET_INVALID: buildPreview returned nil",
         context: [
@@ -1978,6 +2056,32 @@ final class InlinePreviewView: NSView {
       NativeLogger.d("Player", "Restored playback state: playing")
     } else {
       NativeLogger.d("Player", "Playback state: paused")
+    }
+
+    NativeLogger.d(
+      "Player", "Preview composition applied",
+      context: [
+        "token": currentOpenToken?.uuidString ?? "nil",
+        "sessionId": currentSessionId ?? "nil",
+        "reason": reason,
+        "hadExistingLayout": hadExistingLayout,
+        "renderSize": "\(Int(profile.canvasRenderSize.width))x\(Int(profile.canvasRenderSize.height))",
+        "success": true,
+      ])
+
+    if !hasAppliedInitialCompositionForCurrentToken,
+      let token = currentOpenToken
+    {
+      hasAppliedInitialCompositionForCurrentToken = true
+      hasWarnedAboutMissingInitialSceneForCurrentToken = false
+      NativeLogger.d(
+        "Player", "Initial preview composition applied for current token",
+        context: [
+          "token": token.uuidString,
+          "sessionId": currentSessionId ?? "nil",
+          "reason": reason,
+        ])
+      checkAndEmitPreviewReady(token: token)
     }
 
     onApplied?(true)

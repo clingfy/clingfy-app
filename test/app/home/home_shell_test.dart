@@ -33,6 +33,7 @@ import 'package:flutter/services.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:macos_ui/macos_ui.dart';
 import 'package:provider/provider.dart';
+import 'package:shared_preferences/shared_preferences.dart';
 
 import '../../test_helpers/native_test_setup.dart';
 
@@ -80,6 +81,17 @@ Future<void> _closePreviewShell(
     'sessionId': sessionId,
     'reason': 'user',
   });
+}
+
+Future<void> _openHelpMenu(WidgetTester tester) async {
+  await tester.tap(find.byKey(const Key('home_sidebar_help_button')));
+  await tester.pumpAndSettle();
+}
+
+Future<void> _startQuickTourFromHelp(WidgetTester tester) async {
+  await _openHelpMenu(tester);
+  await tester.tap(find.text('Quick Tour'));
+  await tester.pumpAndSettle();
 }
 
 void main() {
@@ -656,7 +668,101 @@ void main() {
     expect(find.byType(WorkspaceSettingsSection), findsOneWidget);
   });
 
-  testWidgets('sidebar help button opens the about settings route', (
+  testWidgets('unseen guide auto-opens with a spotlight on the sidebar shell', (
+    tester,
+  ) async {
+    _setDesktopWindow(tester);
+    SharedPreferences.setMockInitialValues({
+      HomePrefsStore.homeGuidanceSeenKey: false,
+    });
+    final harness = await createHarness();
+
+    addTearDown(harness.recording.dispose);
+    addTearDown(harness.player.dispose);
+    addTearDown(harness.device.dispose);
+    addTearDown(harness.overlay.dispose);
+    addTearDown(harness.permissions.dispose);
+    addTearDown(harness.post.dispose);
+    addTearDown(harness.license.dispose);
+    addTearDown(harness.countdown.dispose);
+    addTearDown(harness.uiState.dispose);
+    addTearDown(harness.settings.dispose);
+
+    await tester.pumpWidget(
+      buildShell(
+        actions: harness.actions,
+        countdown: harness.countdown,
+        device: harness.device,
+        license: harness.license,
+        overlay: harness.overlay,
+        player: harness.player,
+        post: harness.post,
+        recording: harness.recording,
+        settings: harness.settings,
+        uiState: harness.uiState,
+      ),
+    );
+    await tester.pumpAndSettle();
+
+    expect(find.byKey(const Key('home_guide_overlay')), findsOneWidget);
+    expect(find.byKey(const Key('home_guide_spotlight_frame')), findsOneWidget);
+    expect(find.text('Step 1 of 6'), findsOneWidget);
+    expect(
+      find.text('This rail keeps the whole recording workflow within reach.'),
+      findsOneWidget,
+    );
+    final spotlightRect = _spotlightRect(tester);
+    expect(spotlightRect.width, greaterThan(0));
+    expect(spotlightRect.height, greaterThan(0));
+    expect(
+      _rectsOverlap(
+        spotlightRect,
+        tester.getRect(find.byKey(const Key('home_left_sidebar_shell'))),
+      ),
+      isTrue,
+    );
+  });
+
+  testWidgets('seen guide does not auto-open on the home shell', (
+    tester,
+  ) async {
+    _setDesktopWindow(tester);
+    SharedPreferences.setMockInitialValues({
+      HomePrefsStore.homeGuidanceSeenKey: true,
+    });
+    final harness = await createHarness();
+
+    addTearDown(harness.recording.dispose);
+    addTearDown(harness.player.dispose);
+    addTearDown(harness.device.dispose);
+    addTearDown(harness.overlay.dispose);
+    addTearDown(harness.permissions.dispose);
+    addTearDown(harness.post.dispose);
+    addTearDown(harness.license.dispose);
+    addTearDown(harness.countdown.dispose);
+    addTearDown(harness.uiState.dispose);
+    addTearDown(harness.settings.dispose);
+
+    await tester.pumpWidget(
+      buildShell(
+        actions: harness.actions,
+        countdown: harness.countdown,
+        device: harness.device,
+        license: harness.license,
+        overlay: harness.overlay,
+        player: harness.player,
+        post: harness.post,
+        recording: harness.recording,
+        settings: harness.settings,
+        uiState: harness.uiState,
+      ),
+    );
+    await tester.pumpAndSettle();
+
+    expect(find.byKey(const Key('home_guide_overlay')), findsNothing);
+  });
+
+  testWidgets('sidebar help menu opens the about settings route', (
     tester,
   ) async {
     _setDesktopWindow(tester);
@@ -689,11 +795,378 @@ void main() {
     );
     await tester.pumpAndSettle();
 
-    await tester.tap(find.byKey(const Key('home_sidebar_help_button')));
+    await _openHelpMenu(tester);
+    expect(find.text('Quick Tour'), findsOneWidget);
+    await tester.tap(find.text('About this app'));
     await tester.pumpAndSettle();
 
     expect(find.byType(AboutSettingsSection), findsOneWidget);
   });
+
+  testWidgets('sidebar help menu can launch the quick tour', (tester) async {
+    _setDesktopWindow(tester);
+    final harness = await createHarness();
+
+    addTearDown(harness.recording.dispose);
+    addTearDown(harness.player.dispose);
+    addTearDown(harness.device.dispose);
+    addTearDown(harness.overlay.dispose);
+    addTearDown(harness.permissions.dispose);
+    addTearDown(harness.post.dispose);
+    addTearDown(harness.license.dispose);
+    addTearDown(harness.countdown.dispose);
+    addTearDown(harness.uiState.dispose);
+    addTearDown(harness.settings.dispose);
+
+    await tester.pumpWidget(
+      buildShell(
+        actions: harness.actions,
+        countdown: harness.countdown,
+        device: harness.device,
+        license: harness.license,
+        overlay: harness.overlay,
+        player: harness.player,
+        post: harness.post,
+        recording: harness.recording,
+        settings: harness.settings,
+        uiState: harness.uiState,
+      ),
+    );
+    await tester.pumpAndSettle();
+
+    await _startQuickTourFromHelp(tester);
+
+    expect(find.byKey(const Key('home_guide_overlay')), findsOneWidget);
+    expect(
+      find.text('This rail keeps the whole recording workflow within reach.'),
+      findsOneWidget,
+    );
+  });
+
+  testWidgets(
+    'guide spotlight appears immediately for capture, camera, and output steps',
+    (tester) async {
+      _setDesktopWindow(tester);
+      final harness = await createHarness();
+      harness.uiState.setRecordingSidebarIndex(2);
+
+      addTearDown(harness.recording.dispose);
+      addTearDown(harness.player.dispose);
+      addTearDown(harness.device.dispose);
+      addTearDown(harness.overlay.dispose);
+      addTearDown(harness.permissions.dispose);
+      addTearDown(harness.post.dispose);
+      addTearDown(harness.license.dispose);
+      addTearDown(harness.countdown.dispose);
+      addTearDown(harness.uiState.dispose);
+      addTearDown(harness.settings.dispose);
+
+      await tester.pumpWidget(
+        buildShell(
+          actions: harness.actions,
+          countdown: harness.countdown,
+          device: harness.device,
+          license: harness.license,
+          overlay: harness.overlay,
+          player: harness.player,
+          post: harness.post,
+          recording: harness.recording,
+          settings: harness.settings,
+          uiState: harness.uiState,
+        ),
+      );
+      await tester.pumpAndSettle();
+
+      await _startQuickTourFromHelp(tester);
+      expect(harness.uiState.recordingSidebarIndex, 2);
+
+      await tester.tap(find.byKey(const Key('home_guide_next_button')));
+      await tester.pumpAndSettle();
+
+      expect(harness.uiState.recordingSidebarIndex, 0);
+      expect(
+        find.byKey(const Key('home_guide_spotlight_frame')),
+        findsOneWidget,
+      );
+      expect(find.text('Choose what Clingfy records here.'), findsOneWidget);
+      expect(
+        find.descendant(
+          of: find.byKey(const Key('recording_sidebar_header')),
+          matching: find.text('Screen & Audio'),
+        ),
+        findsOneWidget,
+      );
+      expect(
+        _rectsOverlap(
+          _spotlightRect(tester),
+          tester.getRect(
+            find.byKey(const Key('recording_capture_source_group')),
+          ),
+        ),
+        isTrue,
+      );
+
+      await tester.tap(find.byKey(const Key('home_guide_next_button')));
+      await tester.pumpAndSettle();
+
+      expect(harness.uiState.recordingSidebarIndex, 1);
+      expect(
+        find.byKey(const Key('home_guide_spotlight_frame')),
+        findsOneWidget,
+      );
+      expect(
+        find.text('Turn face cam on only when you need it.'),
+        findsOneWidget,
+      );
+      expect(
+        _rectsOverlap(
+          _spotlightRect(tester),
+          tester.getRect(find.byKey(const Key('recording_camera_group'))),
+        ),
+        isTrue,
+      );
+
+      await tester.tap(find.byKey(const Key('home_guide_next_button')));
+      await tester.pumpAndSettle();
+
+      expect(harness.uiState.recordingSidebarIndex, 2);
+      expect(
+        find.byKey(const Key('home_guide_spotlight_frame')),
+        findsOneWidget,
+      );
+      expect(
+        find.text('Set recording defaults before you hit record.'),
+        findsOneWidget,
+      );
+      expect(
+        _rectsOverlap(
+          _spotlightRect(tester),
+          tester.getRect(
+            find.byKey(const Key('recording_output_start_stop_group')),
+          ),
+        ),
+        isTrue,
+      );
+
+      await tester.tap(find.byKey(const Key('home_guide_back_button')));
+      await tester.pumpAndSettle();
+
+      expect(harness.uiState.recordingSidebarIndex, 1);
+      expect(
+        find.byKey(const Key('home_guide_spotlight_frame')),
+        findsOneWidget,
+      );
+      expect(
+        _rectsOverlap(
+          _spotlightRect(tester),
+          tester.getRect(find.byKey(const Key('recording_camera_group'))),
+        ),
+        isTrue,
+      );
+    },
+  );
+
+  testWidgets('guide skip marks the guide as seen and closes the overlay', (
+    tester,
+  ) async {
+    _setDesktopWindow(tester);
+    SharedPreferences.setMockInitialValues({
+      HomePrefsStore.homeGuidanceSeenKey: false,
+    });
+    final harness = await createHarness();
+
+    addTearDown(harness.recording.dispose);
+    addTearDown(harness.player.dispose);
+    addTearDown(harness.device.dispose);
+    addTearDown(harness.overlay.dispose);
+    addTearDown(harness.permissions.dispose);
+    addTearDown(harness.post.dispose);
+    addTearDown(harness.license.dispose);
+    addTearDown(harness.countdown.dispose);
+    addTearDown(harness.uiState.dispose);
+    addTearDown(harness.settings.dispose);
+
+    await tester.pumpWidget(
+      buildShell(
+        actions: harness.actions,
+        countdown: harness.countdown,
+        device: harness.device,
+        license: harness.license,
+        overlay: harness.overlay,
+        player: harness.player,
+        post: harness.post,
+        recording: harness.recording,
+        settings: harness.settings,
+        uiState: harness.uiState,
+      ),
+    );
+    await tester.pumpAndSettle();
+
+    await tester.tap(find.byKey(const Key('home_guide_skip_button')));
+    await tester.pumpAndSettle();
+
+    final prefs = await SharedPreferences.getInstance();
+    expect(prefs.getBool(HomePrefsStore.homeGuidanceSeenKey), isTrue);
+    expect(find.byKey(const Key('home_guide_overlay')), findsNothing);
+  });
+
+  testWidgets('guide done marks the guide as seen and closes the overlay', (
+    tester,
+  ) async {
+    _setDesktopWindow(tester);
+    final harness = await createHarness();
+
+    addTearDown(harness.recording.dispose);
+    addTearDown(harness.player.dispose);
+    addTearDown(harness.device.dispose);
+    addTearDown(harness.overlay.dispose);
+    addTearDown(harness.permissions.dispose);
+    addTearDown(harness.post.dispose);
+    addTearDown(harness.license.dispose);
+    addTearDown(harness.countdown.dispose);
+    addTearDown(harness.uiState.dispose);
+    addTearDown(harness.settings.dispose);
+
+    await tester.pumpWidget(
+      buildShell(
+        actions: harness.actions,
+        countdown: harness.countdown,
+        device: harness.device,
+        license: harness.license,
+        overlay: harness.overlay,
+        player: harness.player,
+        post: harness.post,
+        recording: harness.recording,
+        settings: harness.settings,
+        uiState: harness.uiState,
+      ),
+    );
+    await tester.pumpAndSettle();
+
+    await _startQuickTourFromHelp(tester);
+    for (var i = 0; i < 5; i += 1) {
+      await tester.tap(find.byKey(const Key('home_guide_next_button')));
+      await tester.pumpAndSettle();
+    }
+
+    expect(find.byKey(const Key('home_guide_done_button')), findsOneWidget);
+
+    await tester.tap(find.byKey(const Key('home_guide_done_button')));
+    await tester.pumpAndSettle();
+
+    final prefs = await SharedPreferences.getInstance();
+    expect(prefs.getBool(HomePrefsStore.homeGuidanceSeenKey), isTrue);
+    expect(find.byKey(const Key('home_guide_overlay')), findsNothing);
+  });
+
+  testWidgets(
+    'quick tour replay is blocked while preview is open and shows a notice',
+    (tester) async {
+      _setDesktopWindow(tester);
+      final harness = await createHarness();
+
+      addTearDown(harness.recording.dispose);
+      addTearDown(harness.player.dispose);
+      addTearDown(harness.device.dispose);
+      addTearDown(harness.overlay.dispose);
+      addTearDown(harness.permissions.dispose);
+      addTearDown(harness.post.dispose);
+      addTearDown(harness.license.dispose);
+      addTearDown(harness.countdown.dispose);
+      addTearDown(harness.uiState.dispose);
+      addTearDown(harness.settings.dispose);
+
+      await tester.pumpWidget(
+        buildShell(
+          actions: harness.actions,
+          countdown: harness.countdown,
+          device: harness.device,
+          license: harness.license,
+          overlay: harness.overlay,
+          player: harness.player,
+          post: harness.post,
+          recording: harness.recording,
+          settings: harness.settings,
+          uiState: harness.uiState,
+        ),
+      );
+      await tester.pumpAndSettle();
+
+      await _openPreviewShell(harness.recording);
+      await tester.pumpAndSettle();
+
+      await _openHelpMenu(tester);
+      await tester.tap(find.text('Quick Tour'));
+      await tester.pumpAndSettle();
+
+      expect(find.byKey(const Key('home_guide_overlay')), findsNothing);
+      expect(
+        find.text('Return to recording setup to replay the quick tour.'),
+        findsOneWidget,
+      );
+      await tester.pump(const Duration(seconds: 5));
+      await tester.pumpAndSettle();
+    },
+  );
+
+  testWidgets(
+    'guide restores temporary sidebar selection and pane visibility on exit',
+    (tester) async {
+      _setDesktopWindow(tester);
+      final harness = await createHarness();
+      harness.uiState.setRecordingSidebarIndex(2);
+      harness.uiState.applyPaneLayoutPrefs(
+        const DesktopPaneLayoutPrefs(
+          paneStates: {
+            DesktopPaneId.recordingSidebar: DesktopPaneState(isCollapsed: true),
+          },
+        ),
+      );
+
+      addTearDown(harness.recording.dispose);
+      addTearDown(harness.player.dispose);
+      addTearDown(harness.device.dispose);
+      addTearDown(harness.overlay.dispose);
+      addTearDown(harness.permissions.dispose);
+      addTearDown(harness.post.dispose);
+      addTearDown(harness.license.dispose);
+      addTearDown(harness.countdown.dispose);
+      addTearDown(harness.uiState.dispose);
+      addTearDown(harness.settings.dispose);
+
+      await tester.pumpWidget(
+        buildShell(
+          actions: harness.actions,
+          countdown: harness.countdown,
+          device: harness.device,
+          license: harness.license,
+          overlay: harness.overlay,
+          player: harness.player,
+          post: harness.post,
+          recording: harness.recording,
+          settings: harness.settings,
+          uiState: harness.uiState,
+        ),
+      );
+      await tester.pumpAndSettle();
+
+      expect(_optionsPanelWidth(tester), moreOrLessEquals(0));
+      expect(harness.uiState.recordingSidebarIndex, 2);
+
+      await _startQuickTourFromHelp(tester);
+      await tester.tap(find.byKey(const Key('home_guide_next_button')));
+      await tester.pumpAndSettle();
+
+      expect(harness.uiState.recordingSidebarIndex, 0);
+      expect(_optionsPanelWidth(tester), greaterThan(0));
+
+      await tester.tap(find.byKey(const Key('home_guide_skip_button')));
+      await tester.pumpAndSettle();
+
+      expect(harness.uiState.recordingSidebarIndex, 2);
+      expect(_optionsPanelWidth(tester), moreOrLessEquals(0));
+    },
+  );
 
   testWidgets(
     'debug reset action stays in the sidebar and shows confirmation',
@@ -1623,6 +2096,14 @@ double _railWidth(WidgetTester tester) {
   return tester
       .getRect(find.byKey(const ValueKey('desktop_pane_slot_homeLeftSidebar')))
       .width;
+}
+
+Rect _spotlightRect(WidgetTester tester) {
+  return tester.getRect(find.byKey(const Key('home_guide_spotlight_frame')));
+}
+
+bool _rectsOverlap(Rect a, Rect b) {
+  return a.overlaps(b);
 }
 
 BoxDecoration _decorationFor(WidgetTester tester, Finder finder) {

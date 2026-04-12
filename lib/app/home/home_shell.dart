@@ -2,6 +2,10 @@ import 'dart:async';
 
 import 'package:clingfy/app/home/home_actions.dart';
 import 'package:clingfy/app/home/home_desktop_pane_dimensions.dart';
+import 'package:clingfy/app/home/guide/home_guide_anchors.dart';
+import 'package:clingfy/app/home/guide/home_guide_controller.dart';
+import 'package:clingfy/app/home/guide/home_guide_overlay.dart';
+import 'package:clingfy/app/home/guide/home_guide_step.dart';
 import 'package:clingfy/app/home/home_ui_state.dart';
 import 'package:clingfy/app/home/preview/widgets/video_timeline.dart';
 import 'package:clingfy/app/home/recording/countdown_controller.dart';
@@ -13,6 +17,7 @@ import 'package:clingfy/app/home/widgets/home_options_panel.dart';
 import 'package:clingfy/app/home/widgets/home_right_panel.dart';
 import 'package:clingfy/app/home/widgets/home_toolbar.dart';
 import 'package:clingfy/app/home/widgets/reset_preferences_action.dart';
+import 'package:clingfy/l10n/app_localizations.dart';
 import 'package:clingfy/app/settings/settings_controller.dart';
 import 'package:clingfy/ui/platform/widgets/desktop_pane_layout.dart';
 import 'package:clingfy/ui/theme/app_shell_tokens.dart';
@@ -89,6 +94,14 @@ class HomeShell extends StatefulWidget {
 
 class _HomeShellState extends State<HomeShell> {
   late final DesktopPaneController _paneController;
+  late final HomeGuideController _guideController;
+  late final HomeGuideAnchors _guideAnchors;
+
+  DesktopPaneLayoutPrefs? _guideSavedPaneLayout;
+  int? _guideSavedRecordingSidebarIndex;
+  bool _lastObservedGuideVisible = false;
+  HomeGuideStep _lastObservedGuideStep = HomeGuideStep.sidebar;
+  int _guideSpotlightRefreshSequence = 0;
 
   @override
   void initState() {
@@ -96,6 +109,18 @@ class _HomeShellState extends State<HomeShell> {
     _paneController = DesktopPaneController(
       initialLayout: widget.uiState.paneLayout,
     );
+    _guideAnchors = HomeGuideAnchors();
+    _guideController = HomeGuideController(
+      prefsStore: widget.actions.prefsStore,
+    )..addListener(_handleGuideStateChanged);
+    _lastObservedGuideVisible = _guideController.isVisible;
+    _lastObservedGuideStep = _guideController.currentStep;
+    WidgetsBinding.instance.addPostFrameCallback((_) async {
+      if (!mounted) {
+        return;
+      }
+      await _guideController.maybeStartAutomatically(canShow: _canStartGuide());
+    });
   }
 
   @override
@@ -104,6 +129,13 @@ class _HomeShellState extends State<HomeShell> {
     if (_paneController.layout != widget.uiState.paneLayout) {
       _paneController.applyPersistedLayout(widget.uiState.paneLayout);
     }
+  }
+
+  @override
+  void dispose() {
+    _guideController.removeListener(_handleGuideStateChanged);
+    _guideController.dispose();
+    super.dispose();
   }
 
   void _persistPaneLayout() {
@@ -124,6 +156,136 @@ class _HomeShellState extends State<HomeShell> {
 
   void _toggleRecordingFromUi(BuildContext context) {
     unawaited(widget.actions.toggleRecording(context));
+  }
+
+  bool _canStartGuide() {
+    final recordingController = context.read<RecordingController>();
+    return !recordingController.isRecording &&
+        !recordingController.showPreviewShell &&
+        !recordingController.isBusyTransitioning &&
+        !widget.countdownController.isActive;
+  }
+
+  void _handleGuideStateChanged() {
+    if (!mounted) {
+      return;
+    }
+
+    final isVisible = _guideController.isVisible;
+    final currentStep = _guideController.currentStep;
+    final visibilityChanged = _lastObservedGuideVisible != isVisible;
+    final stepChanged = _lastObservedGuideStep != currentStep;
+
+    _lastObservedGuideVisible = isVisible;
+    _lastObservedGuideStep = currentStep;
+
+    if (!isVisible) {
+      _guideSpotlightRefreshSequence += 1;
+      _restoreGuideUiState();
+      setState(() {});
+      return;
+    }
+
+    if (!visibilityChanged && !stepChanged) {
+      return;
+    }
+
+    _prepareGuideUiState();
+    _applyGuideStepUiState(currentStep);
+    setState(() {});
+    _scheduleGuideSpotlightRefresh(currentStep);
+  }
+
+  void _prepareGuideUiState() {
+    _guideSavedPaneLayout ??= _paneController.layout;
+    _guideSavedRecordingSidebarIndex ??= widget.uiState.recordingSidebarIndex;
+  }
+
+  void _applyGuideStepUiState(HomeGuideStep step) {
+    switch (step) {
+      case HomeGuideStep.captureSource:
+        widget.uiState.setRecordingSidebarIndex(0);
+        _paneController.setPaneCollapsed(_recordingInspectorPaneSpec, false);
+        break;
+      case HomeGuideStep.camera:
+        widget.uiState.setRecordingSidebarIndex(1);
+        _paneController.setPaneCollapsed(_recordingInspectorPaneSpec, false);
+        break;
+      case HomeGuideStep.output:
+        widget.uiState.setRecordingSidebarIndex(2);
+        _paneController.setPaneCollapsed(_recordingInspectorPaneSpec, false);
+        break;
+      case HomeGuideStep.sidebar:
+      case HomeGuideStep.startRecording:
+      case HomeGuideStep.help:
+        break;
+    }
+  }
+
+  void _scheduleGuideSpotlightRefresh(HomeGuideStep step) {
+    final requestSequence = ++_guideSpotlightRefreshSequence;
+    WidgetsBinding.instance.addPostFrameCallback((_) async {
+      if (!_isActiveGuideSpotlightRefresh(requestSequence, step)) {
+        return;
+      }
+
+      if (step == HomeGuideStep.camera || step == HomeGuideStep.output) {
+        final anchorContext = _guideAnchors.keyForStep(step).currentContext;
+        if (anchorContext != null) {
+          await Scrollable.ensureVisible(
+            anchorContext,
+            duration: Duration.zero,
+            alignmentPolicy: ScrollPositionAlignmentPolicy.keepVisibleAtStart,
+          );
+        }
+        WidgetsBinding.instance.addPostFrameCallback((_) {
+          if (_isActiveGuideSpotlightRefresh(requestSequence, step)) {
+            _guideController.requestSpotlightRefresh();
+          }
+        });
+        return;
+      }
+
+      _guideController.requestSpotlightRefresh();
+    });
+  }
+
+  bool _isActiveGuideSpotlightRefresh(int requestSequence, HomeGuideStep step) {
+    return mounted &&
+        requestSequence == _guideSpotlightRefreshSequence &&
+        _guideController.isVisible &&
+        _guideController.currentStep == step;
+  }
+
+  void _restoreGuideUiState() {
+    final savedPaneLayout = _guideSavedPaneLayout;
+    if (savedPaneLayout != null) {
+      _paneController.applyPersistedLayout(savedPaneLayout);
+      _guideSavedPaneLayout = null;
+    }
+
+    final savedRecordingSidebarIndex = _guideSavedRecordingSidebarIndex;
+    if (savedRecordingSidebarIndex != null) {
+      widget.uiState.setRecordingSidebarIndex(savedRecordingSidebarIndex);
+      _guideSavedRecordingSidebarIndex = null;
+    }
+  }
+
+  void _startGuideFromHelp(BuildContext context) {
+    final l10n = AppLocalizations.of(context)!;
+    if (!_canStartGuide()) {
+      widget.uiState.setNotice(
+        HomeUiNotice(
+          message: l10n.homeGuideReplayUnavailable,
+          tone: HomeUiNoticeTone.warning,
+          autoDismissAfter: const Duration(seconds: 5),
+        ),
+      );
+      return;
+    }
+
+    widget.uiState.clearTransientNotice();
+    _guideController.start();
   }
 
   void _selectRecordingSection(int index) {
@@ -232,6 +394,9 @@ class _HomeShellState extends State<HomeShell> {
                                     return HomeLeftSidebar(
                                       uiState: widget.uiState,
                                       panePresentation: panePresentation,
+                                      guideShellKey: _guideAnchors.sidebarShell,
+                                      helpButtonAnchorKey:
+                                          _guideAnchors.helpButton,
                                       onRecordingSectionSelected:
                                           _selectRecordingSection,
                                       onPostProcessingSectionSelected:
@@ -241,7 +406,10 @@ class _HomeShellState extends State<HomeShell> {
                                           widget.actions.openSettings(context),
                                         );
                                       },
-                                      onOpenHelp: () {
+                                      onStartQuickTour: () {
+                                        _startGuideFromHelp(context);
+                                      },
+                                      onOpenAbout: () {
                                         unawaited(
                                           widget.actions.openAbout(context),
                                         );
@@ -304,24 +472,28 @@ class _HomeShellState extends State<HomeShell> {
                                             panes: [
                                               DesktopPaneSlot(
                                                 spec: activeInspectorSpec,
-                                                builder:
-                                                    (
-                                                      context,
-                                                      panePresentation,
-                                                    ) {
-                                                      return HomeOptionsPanel(
-                                                        isRecording:
-                                                            isRecording,
-                                                        showPreviewShell:
-                                                            showPreviewShell,
-                                                        uiState: widget.uiState,
-                                                        actions: widget.actions,
-                                                        settingsController: widget
-                                                            .settingsController,
-                                                        panePresentation:
-                                                            panePresentation,
-                                                      );
-                                                    },
+                                                builder: (context, panePresentation) {
+                                                  return HomeOptionsPanel(
+                                                    isRecording: isRecording,
+                                                    showPreviewShell:
+                                                        showPreviewShell,
+                                                    uiState: widget.uiState,
+                                                    actions: widget.actions,
+                                                    settingsController: widget
+                                                        .settingsController,
+                                                    panePresentation:
+                                                        panePresentation,
+                                                    captureSourceGuideAnchorKey:
+                                                        _guideAnchors
+                                                            .captureSourceSection,
+                                                    cameraGuideAnchorKey:
+                                                        _guideAnchors
+                                                            .cameraSection,
+                                                    outputGuideAnchorKey:
+                                                        _guideAnchors
+                                                            .outputSection,
+                                                  );
+                                                },
                                               ),
                                               DesktopPaneSlot(
                                                 spec:
@@ -370,6 +542,9 @@ class _HomeShellState extends State<HomeShell> {
                                                               ),
                                                         );
                                                       },
+                                                      startRecordingButtonKey:
+                                                          _guideAnchors
+                                                              .startRecordingButton,
                                                     ),
                                                   );
                                                 },
@@ -415,6 +590,10 @@ class _HomeShellState extends State<HomeShell> {
                 ),
               ),
               const ExportProgressDock(),
+              HomeGuideOverlay(
+                controller: _guideController,
+                anchors: _guideAnchors,
+              ),
             ],
           ),
         ),

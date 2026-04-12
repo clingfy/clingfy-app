@@ -2027,4 +2027,75 @@ class AppLocalizationsAr extends AppLocalizations {
 
   @override
   String get permissionsOnboardingLetsRecord => 'لنبدأ التسجيل! 🚀';
+
+  @override
+  String get quickTour => 'جولة سريعة';
+
+  @override
+  String get back => 'رجوع';
+
+  @override
+  String get next => 'التالي';
+
+  @override
+  String get skip => 'تخطي';
+
+  @override
+  String get done => 'تم';
+
+  @override
+  String homeGuideStepCounter(int current, int total) {
+    return 'الخطوة $current من $total';
+  }
+
+  @override
+  String get homeGuideSidebarTitle =>
+      'هذا الشريط الجانبي يبقي سير عمل التسجيل كله في متناولك.';
+
+  @override
+  String get homeGuideSidebarBody =>
+      'استخدم هذه الأزرار للتنقل بين أقسام الإعداد وفتح المساعدة والوصول إلى الإعدادات بدون مغادرة المسجل.';
+
+  @override
+  String get homeGuideCaptureSourceTitle =>
+      'اختر من هنا ما الذي سيسجله Clingfy.';
+
+  @override
+  String get homeGuideCaptureSourceBody =>
+      'حدّد شاشة أو نافذة واحدة أو منطقة مخصصة قبل أن تبدأ التسجيل.';
+
+  @override
+  String get homeGuideCameraTitle => 'فعّل الكاميرا فقط عندما تحتاج إليها.';
+
+  @override
+  String get homeGuideCameraBody =>
+      'اختر كاميرا ثم عدّل طبقة الظهور لاحقًا إذا أردت إظهار وجهك في الشروحات أو العروض.';
+
+  @override
+  String get homeGuideOutputTitle =>
+      'اضبط الإعدادات الافتراضية قبل أن تضغط تسجيل.';
+
+  @override
+  String get homeGuideOutputBody =>
+      'هنا ستجد العد التنازلي والإيقاف التلقائي حتى يبدأ كل تسجيل بالطريقة التي تتوقعها.';
+
+  @override
+  String get homeGuideStartRecordingTitle =>
+      'هذا هو عنصر التحكم الرئيسي للتسجيل.';
+
+  @override
+  String get homeGuideStartRecordingBody =>
+      'عندما يصبح المصدر جاهزًا، ابدأ من هنا. ومن نفس المكان يمكنك الإيقاف المؤقت أو الإنهاء لاحقًا.';
+
+  @override
+  String get homeGuideHelpTitle =>
+      'يمكنك إعادة هذه الجولة في أي وقت من المساعدة.';
+
+  @override
+  String get homeGuideHelpBody =>
+      'افتح المساعدة لمراجعة سريعة أو انتقل إلى حول التطبيق عندما تحتاج إلى معلومات الإصدار والدعم.';
+
+  @override
+  String get homeGuideReplayUnavailable =>
+      'عد إلى إعداد التسجيل لإعادة تشغيل الجولة السريعة.';
 }

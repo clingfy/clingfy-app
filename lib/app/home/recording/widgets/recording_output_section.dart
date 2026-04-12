@@ -19,6 +19,7 @@ class RecordingOutputSection extends StatelessWidget {
     required this.onAutoStopAfterChanged,
     required this.onCountdownEnabledChanged,
     required this.onCountdownDurationChanged,
+    this.startAndStopGuideAnchorKey,
   });
 
   final bool isRecording;
@@ -32,6 +33,7 @@ class RecordingOutputSection extends StatelessWidget {
   final ValueChanged<Duration> onAutoStopAfterChanged;
   final ValueChanged<bool> onCountdownEnabledChanged;
   final ValueChanged<int> onCountdownDurationChanged;
+  final Key? startAndStopGuideAnchorKey;
 
   @override
   Widget build(BuildContext context) {
@@ -41,6 +43,7 @@ class RecordingOutputSection extends StatelessWidget {
       crossAxisAlignment: CrossAxisAlignment.stretch,
       children: [
         AppSettingsGroup(
+          sectionKey: const Key('recording_output_quality_group'),
           title: l10n.quality,
           children: [
             AppFormRow(
@@ -67,6 +70,8 @@ class RecordingOutputSection extends StatelessWidget {
           ],
         ),
         AppSettingsGroup(
+          anchorKey: startAndStopGuideAnchorKey,
+          sectionKey: const Key('recording_output_start_stop_group'),
           title: l10n.startAndStop,
           children: [
             AppFormRow(

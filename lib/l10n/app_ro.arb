@@ -654,5 +654,34 @@
   "permissionsOnboardingSkipForNow": "Omite deocamdată",
   "permissionsOnboardingBack": "Înapoi",
   "permissionsOnboardingNext": "Continuă",
-  "permissionsOnboardingLetsRecord": "Hai să înregistrăm! 🚀"
+  "permissionsOnboardingLetsRecord": "Hai să înregistrăm! 🚀",
+  "quickTour": "Tur rapid",
+  "back": "Înapoi",
+  "next": "Următorul",
+  "skip": "Omite",
+  "done": "Gata",
+  "homeGuideStepCounter": "Pasul {current} din {total}",
+  "@homeGuideStepCounter": {
+    "placeholders": {
+      "current": {
+        "type": "int"
+      },
+      "total": {
+        "type": "int"
+      }
+    }
+  },
+  "homeGuideSidebarTitle": "Această bară laterală păstrează întregul flux de înregistrare la îndemână.",
+  "homeGuideSidebarBody": "Folosește aceste butoane pentru a schimba secțiunile de configurare, a deschide Ajutorul și a intra în setări fără să ieși din recorder.",
+  "homeGuideCaptureSourceTitle": "Alege aici ce înregistrează Clingfy.",
+  "homeGuideCaptureSourceBody": "Selectează un ecran, o singură fereastră sau o zonă personalizată înainte să începi înregistrarea.",
+  "homeGuideCameraTitle": "Activează camera doar când ai nevoie de ea.",
+  "homeGuideCameraBody": "Alege o cameră, apoi ajustează overlay-ul dacă vrei să apari în tutoriale sau demo-uri.",
+  "homeGuideOutputTitle": "Setează valorile implicite înainte să apeși Record.",
+  "homeGuideOutputBody": "Aici găsești countdown și auto-stop, ca fiecare înregistrare să pornească exact cum te aștepți.",
+  "homeGuideStartRecordingTitle": "Acesta este controlul principal pentru înregistrare.",
+  "homeGuideStartRecordingBody": "Când sursa arată corect, pornește de aici. Tot aici vei putea apoi să pui pauză sau să oprești.",
+  "homeGuideHelpTitle": "Poți relua turul oricând din Ajutor.",
+  "homeGuideHelpBody": "Deschide Ajutor pentru o recapitulare rapidă sau mergi la Despre când ai nevoie de versiune și detalii de suport.",
+  "homeGuideReplayUnavailable": "Revino la configurarea înregistrării pentru a relua turul rapid."
 }
