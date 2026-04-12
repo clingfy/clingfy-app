@@ -639,7 +639,6 @@ class _CustomPositionBadge extends StatelessWidget {
           child: AppInlineInfoTooltip(
             key: const ValueKey('overlay_custom_position_info'),
             message: infoTooltip,
-            color: theme.primaryColor,
             size: 14,
           ),
         ),

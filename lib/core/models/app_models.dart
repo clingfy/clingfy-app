@@ -111,7 +111,11 @@ enum CameraContentMode {
 enum CameraPreviewChangeKind { none, placementJump, dragPreview }
 
 class CameraCompositionState {
+  static const CameraZoomBehavior defaultZoomBehavior =
+      CameraZoomBehavior.scaleWithScreenZoom;
   static const double defaultZoomScaleMultiplier = 0.35;
+  static const CameraIntroPreset defaultIntroPreset = CameraIntroPreset.fade;
+  static const CameraOutroPreset defaultOutroPreset = CameraOutroPreset.shrink;
   static const int defaultIntroDurationMs = 220;
   static const int defaultOutroDurationMs = 180;
   static const double defaultZoomEmphasisStrength = 0.10;
@@ -128,8 +132,8 @@ class CameraCompositionState {
     required this.contentMode,
     required this.zoomBehavior,
     this.zoomScaleMultiplier = defaultZoomScaleMultiplier,
-    this.introPreset = CameraIntroPreset.none,
-    this.outroPreset = CameraOutroPreset.none,
+    this.introPreset = defaultIntroPreset,
+    this.outroPreset = defaultOutroPreset,
     this.zoomEmphasisPreset = CameraZoomEmphasisPreset.none,
     this.introDurationMs = defaultIntroDurationMs,
     this.outroDurationMs = defaultOutroDurationMs,
@@ -152,10 +156,10 @@ class CameraCompositionState {
       opacity = 1.0,
       mirror = true,
       contentMode = CameraContentMode.fill,
-      zoomBehavior = CameraZoomBehavior.fixed,
+      zoomBehavior = defaultZoomBehavior,
       zoomScaleMultiplier = defaultZoomScaleMultiplier,
-      introPreset = CameraIntroPreset.none,
-      outroPreset = CameraOutroPreset.none,
+      introPreset = defaultIntroPreset,
+      outroPreset = defaultOutroPreset,
       zoomEmphasisPreset = CameraZoomEmphasisPreset.none,
       introDurationMs = defaultIntroDurationMs,
       outroDurationMs = defaultOutroDurationMs,
@@ -271,12 +275,18 @@ class CameraCompositionState {
       opacity: (raw['opacity'] as num?)?.toDouble() ?? 1.0,
       mirror: raw['mirror'] as bool? ?? true,
       contentMode: CameraContentMode.fromRaw(raw['contentMode']?.toString()),
-      zoomBehavior: CameraZoomBehavior.fromRaw(raw['zoomBehavior']?.toString()),
+      zoomBehavior: raw['zoomBehavior'] == null
+          ? defaultZoomBehavior
+          : CameraZoomBehavior.fromRaw(raw['zoomBehavior']?.toString()),
       zoomScaleMultiplier:
           (raw['zoomScaleMultiplier'] as num?)?.toDouble() ??
           defaultZoomScaleMultiplier,
-      introPreset: CameraIntroPreset.fromRaw(raw['introPreset']?.toString()),
-      outroPreset: CameraOutroPreset.fromRaw(raw['outroPreset']?.toString()),
+      introPreset: raw['introPreset'] == null
+          ? defaultIntroPreset
+          : CameraIntroPreset.fromRaw(raw['introPreset']?.toString()),
+      outroPreset: raw['outroPreset'] == null
+          ? defaultOutroPreset
+          : CameraOutroPreset.fromRaw(raw['outroPreset']?.toString()),
       zoomEmphasisPreset: CameraZoomEmphasisPreset.fromRaw(
         raw['zoomEmphasisPreset']?.toString(),
       ),

@@ -1,3 +1,4 @@
+import 'package:clingfy/ui/platform/widgets/app_inline_info_tooltip.dart';
 import 'package:clingfy/ui/platform/widgets/app_settings_group.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
@@ -28,6 +29,12 @@ void main() {
       expect(find.text('Record target row'), findsOneWidget);
       expect(find.byTooltip('Helpful context'), findsOneWidget);
       expect(find.byIcon(Icons.refresh), findsOneWidget);
+      expect(
+        tester
+            .widget<AppInlineInfoTooltip>(find.byType(AppInlineInfoTooltip))
+            .color,
+        isNull,
+      );
     },
   );
 }

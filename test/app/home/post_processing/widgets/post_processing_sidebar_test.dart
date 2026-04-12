@@ -652,6 +652,27 @@ void main() {
     expect(find.byType(AppInsetGroup), findsAtLeastNWidgets(4));
   });
 
+  testWidgets('camera motion shows default dependent controls on first load', (
+    tester,
+  ) async {
+    await tester.pumpWidget(
+      buildTestApp(
+        selectedIndex: 1,
+        hasCameraAsset: true,
+        cameraState: const CameraCompositionState.hidden().copyWith(
+          visible: true,
+          layoutPreset: CameraLayoutPreset.overlayBottomRight,
+        ),
+      ),
+    );
+    await tester.pumpAndSettle();
+
+    expect(find.text('Zoom Scale'), findsOneWidget);
+    expect(find.text('Intro Duration'), findsOneWidget);
+    expect(find.text('Outro Duration'), findsOneWidget);
+    expect(find.text('Pulse Strength'), findsNothing);
+  });
+
   testWidgets('effects tab shows cursor and zoom groups without audio', (
     tester,
   ) async {

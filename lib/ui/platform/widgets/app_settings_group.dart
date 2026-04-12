@@ -55,11 +55,7 @@ class AppSettingsGroup extends StatelessWidget {
                         ),
                         if (infoTooltip != null && infoTooltip!.isNotEmpty) ...[
                           const SizedBox(width: AppSidebarTokens.compactGap),
-                          AppInlineInfoTooltip(
-                            message: infoTooltip!,
-                            color: titleStyle.color,
-                            size: 14,
-                          ),
+                          AppInlineInfoTooltip(message: infoTooltip!, size: 14),
                         ],
                       ],
                     ),

@@ -350,6 +350,46 @@ void main() {
   );
 
   test(
+    'default camera motion settings are included in preview payloads',
+    () async {
+      final harness = await createHarness();
+
+      harness.post.setCameraVisible(true);
+      await Future<void>.delayed(Duration.zero);
+
+      expect(harness.processCalls, isNotEmpty);
+      final args = Map<String, dynamic>.from(
+        harness.processCalls.last.arguments! as Map<dynamic, dynamic>,
+      );
+
+      expect(
+        args['cameraZoomBehavior'],
+        CameraCompositionState.defaultZoomBehavior.name,
+      );
+      expect(
+        args['cameraZoomScaleMultiplier'],
+        CameraCompositionState.defaultZoomScaleMultiplier,
+      );
+      expect(
+        args['cameraIntroPreset'],
+        CameraCompositionState.defaultIntroPreset.name,
+      );
+      expect(
+        args['cameraOutroPreset'],
+        CameraCompositionState.defaultOutroPreset.name,
+      );
+      expect(
+        args['cameraIntroDurationMs'],
+        CameraCompositionState.defaultIntroDurationMs,
+      );
+      expect(
+        args['cameraOutroDurationMs'],
+        CameraCompositionState.defaultOutroDurationMs,
+      );
+    },
+  );
+
+  test(
     'camera zoom behavior and multiplier are included in preview payloads',
     () async {
       final harness = await createHarness();

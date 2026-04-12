@@ -53,10 +53,10 @@ private func makeBasicEditorSeed() -> RecordingMetadata.EditorSeed {
     cameraOpacity: 1.0,
     cameraMirror: true,
     cameraContentMode: .fill,
-    cameraZoomBehavior: .fixed,
+    cameraZoomBehavior: CameraCompositionParams.defaultZoomBehavior,
     cameraZoomScaleMultiplier: CameraCompositionParams.defaultZoomScaleMultiplier,
-    cameraIntroPreset: .none,
-    cameraOutroPreset: .none,
+    cameraIntroPreset: CameraCompositionParams.defaultIntroPreset,
+    cameraOutroPreset: CameraCompositionParams.defaultOutroPreset,
     cameraZoomEmphasisPreset: .none,
     cameraIntroDurationMs: CameraCompositionParams.defaultIntroDurationMs,
     cameraOutroDurationMs: CameraCompositionParams.defaultOutroDurationMs,
@@ -242,15 +242,32 @@ final class RecordingMetadataTests: XCTestCase {
     var editorSeed = try XCTUnwrap(json["editorSeed"] as? [String: Any])
     editorSeed.removeValue(forKey: "cameraZoomBehavior")
     editorSeed.removeValue(forKey: "cameraZoomScaleMultiplier")
+    editorSeed.removeValue(forKey: "cameraIntroPreset")
+    editorSeed.removeValue(forKey: "cameraOutroPreset")
+    editorSeed.removeValue(forKey: "cameraIntroDurationMs")
+    editorSeed.removeValue(forKey: "cameraOutroDurationMs")
     json["editorSeed"] = editorSeed
 
     let legacyData = try JSONSerialization.data(withJSONObject: json)
     let decoded = try JSONDecoder().decode(RecordingMetadata.self, from: legacyData)
 
-    XCTAssertEqual(decoded.editorSeed.cameraZoomBehavior, .fixed)
-    XCTAssertEqual(decoded.editorSeed.cameraZoomScaleMultiplier, 0.35, accuracy: 0.0001)
-    XCTAssertEqual(decoded.editorSeed.cameraIntroPreset, .none)
-    XCTAssertEqual(decoded.editorSeed.cameraOutroPreset, .none)
+    XCTAssertEqual(
+      decoded.editorSeed.cameraZoomBehavior,
+      CameraCompositionParams.defaultZoomBehavior
+    )
+    XCTAssertEqual(
+      decoded.editorSeed.cameraZoomScaleMultiplier,
+      CameraCompositionParams.defaultZoomScaleMultiplier,
+      accuracy: 0.0001
+    )
+    XCTAssertEqual(
+      decoded.editorSeed.cameraIntroPreset,
+      CameraCompositionParams.defaultIntroPreset
+    )
+    XCTAssertEqual(
+      decoded.editorSeed.cameraOutroPreset,
+      CameraCompositionParams.defaultOutroPreset
+    )
     XCTAssertEqual(decoded.editorSeed.cameraZoomEmphasisPreset, .none)
     XCTAssertEqual(
       decoded.editorSeed.cameraIntroDurationMs,
@@ -5610,11 +5627,24 @@ final class ScreenRecorderFacadeSeparateCameraTests: XCTestCase {
     XCTAssertEqual(capabilities["shadow"], true)
     XCTAssertEqual(capabilities["chromaKey"], true)
     let camera = try XCTUnwrap(payload["camera"] as? [String: Any])
-    XCTAssertEqual(camera["zoomBehavior"] as? String, CameraZoomBehavior.fixed.rawValue)
+    XCTAssertEqual(
+      camera["zoomBehavior"] as? String,
+      CameraCompositionParams.defaultZoomBehavior.rawValue
+    )
     let zoomScaleMultiplier = try XCTUnwrap(camera["zoomScaleMultiplier"] as? Double)
-    XCTAssertEqual(zoomScaleMultiplier, 0.35, accuracy: 0.0001)
-    XCTAssertEqual(camera["introPreset"] as? String, CameraIntroPreset.none.rawValue)
-    XCTAssertEqual(camera["outroPreset"] as? String, CameraOutroPreset.none.rawValue)
+    XCTAssertEqual(
+      zoomScaleMultiplier,
+      CameraCompositionParams.defaultZoomScaleMultiplier,
+      accuracy: 0.0001
+    )
+    XCTAssertEqual(
+      camera["introPreset"] as? String,
+      CameraCompositionParams.defaultIntroPreset.rawValue
+    )
+    XCTAssertEqual(
+      camera["outroPreset"] as? String,
+      CameraCompositionParams.defaultOutroPreset.rawValue
+    )
     XCTAssertEqual(
       camera["zoomEmphasisPreset"] as? String,
       CameraZoomEmphasisPreset.none.rawValue
@@ -5854,8 +5884,8 @@ final class ScreenRecorderFacadeSeparateCameraTests: XCTestCase {
       cameraOpacity: 1.0,
       cameraMirror: true,
       cameraContentMode: .fill,
-      cameraZoomBehavior: .fixed,
-      cameraZoomScaleMultiplier: 0.35,
+      cameraZoomBehavior: CameraCompositionParams.defaultZoomBehavior,
+      cameraZoomScaleMultiplier: CameraCompositionParams.defaultZoomScaleMultiplier,
       cameraChromaKeyEnabled: false,
       cameraChromaKeyStrength: 0.4,
       cameraChromaKeyColorArgb: nil

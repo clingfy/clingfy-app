@@ -2,6 +2,7 @@ import 'package:clingfy/app/home/recording/widgets/recording_overlay_section.dar
 import 'package:clingfy/core/models/app_models.dart';
 import 'package:clingfy/core/overlay/overlay_mode.dart';
 import 'package:clingfy/l10n/app_localizations.dart';
+import 'package:clingfy/ui/platform/widgets/app_inline_info_tooltip.dart';
 import 'package:clingfy/ui/platform/widgets/app_inset_group.dart';
 import 'package:clingfy/ui/platform/widgets/app_settings_group.dart';
 import 'package:clingfy/ui/platform/widgets/app_sidebar_tokens.dart';
@@ -164,6 +165,14 @@ void main() {
       expect(find.text(l10n.customPosition), findsOneWidget);
       expect(find.byTooltip(l10n.customPositionHint), findsOneWidget);
       expect(find.text(l10n.customPositionHint), findsNothing);
+      expect(
+        tester
+            .widget<AppInlineInfoTooltip>(
+              find.byKey(const ValueKey('overlay_custom_position_info')),
+            )
+            .color,
+        isNull,
+      );
 
       for (final key in const [
         ValueKey('overlay_position_topLeft'),

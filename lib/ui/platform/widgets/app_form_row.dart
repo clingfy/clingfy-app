@@ -74,10 +74,7 @@ class AppFormRow extends StatelessWidget {
                               mainAxisSize: MainAxisSize.min,
                               children: [
                                 SizedBox(width: spacing.xs),
-                                AppInlineInfoTooltip(
-                                  message: infoTooltip!,
-                                  color: helperStyle.color,
-                                ),
+                                AppInlineInfoTooltip(message: infoTooltip!),
                               ],
                             )
                           : const SizedBox.shrink(
@@ -118,10 +115,7 @@ class AppFormRow extends StatelessWidget {
                                   mainAxisSize: MainAxisSize.min,
                                   children: [
                                     SizedBox(width: spacing.xs),
-                                    AppInlineInfoTooltip(
-                                      message: infoTooltip!,
-                                      color: helperStyle.color,
-                                    ),
+                                    AppInlineInfoTooltip(message: infoTooltip!),
                                   ],
                                 )
                               : const SizedBox.shrink(

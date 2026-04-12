@@ -45,10 +45,7 @@ class AppToggleRow extends StatelessWidget {
                     Flexible(child: Text(title, style: titleStyle)),
                     if (infoTooltip != null) ...[
                       const SizedBox(width: 8),
-                      AppInlineInfoTooltip(
-                        message: infoTooltip!,
-                        color: subtitleStyle.color,
-                      ),
+                      AppInlineInfoTooltip(message: infoTooltip!),
                     ],
                   ],
                 ),

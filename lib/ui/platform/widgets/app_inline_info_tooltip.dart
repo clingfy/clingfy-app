@@ -1,6 +1,9 @@
 import 'package:flutter/cupertino.dart' show CupertinoIcons;
 import 'package:flutter/material.dart';
 
+const _lightInfoTooltipColor = Color(0xFF6E6E73);
+const _darkInfoTooltipColor = Color(0xFF8E8E93);
+
 class AppInlineInfoTooltip extends StatelessWidget {
   const AppInlineInfoTooltip({
     super.key,
@@ -16,6 +19,9 @@ class AppInlineInfoTooltip extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
+    final defaultColor = theme.brightness == Brightness.dark
+        ? _darkInfoTooltipColor
+        : _lightInfoTooltipColor;
     return Tooltip(
       message: message,
       excludeFromSemantics: true,
@@ -24,10 +30,7 @@ class AppInlineInfoTooltip extends StatelessWidget {
         child: Icon(
           CupertinoIcons.info_circle,
           size: size,
-          color:
-              color ??
-              theme.textTheme.bodySmall?.color ??
-              theme.colorScheme.outline,
+          color: color ?? defaultColor,
           semanticLabel: message,
         ),
       ),
