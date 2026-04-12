@@ -28,6 +28,7 @@ class RecordingSourceSection extends StatelessWidget {
     required this.onPickArea,
     required this.onRevealArea,
     required this.onClearArea,
+    this.guideAnchorKey,
   });
 
   final bool isRecording;
@@ -46,6 +47,7 @@ class RecordingSourceSection extends StatelessWidget {
   final VoidCallback onPickArea;
   final VoidCallback onRevealArea;
   final VoidCallback onClearArea;
+  final Key? guideAnchorKey;
 
   @override
   Widget build(BuildContext context) {
@@ -79,6 +81,8 @@ class RecordingSourceSection extends StatelessWidget {
     );
 
     return AppSettingsGroup(
+      anchorKey: guideAnchorKey,
+      sectionKey: const Key('recording_capture_source_group'),
       title: l10n.captureSource,
       infoTooltip: isAreaTarget ? l10n.areaRecordingHelper : null,
       trailing: _buildTrailingAction(

@@ -105,6 +105,26 @@ final class InlinePreviewViewLifecycleTests: XCTestCase {
         initialCompositionApplied: true
       ))
   }
+
+  func testInitialCompositionGateRequiresQueuedSceneOrExistingLayout() {
+    XCTAssertFalse(
+      InlinePreviewView.canAdvanceInitialCompositionGate(
+        hasPendingOrCurrentComposition: false,
+        hasCurrentLayout: false
+      ))
+
+    XCTAssertTrue(
+      InlinePreviewView.canAdvanceInitialCompositionGate(
+        hasPendingOrCurrentComposition: true,
+        hasCurrentLayout: false
+      ))
+
+    XCTAssertTrue(
+      InlinePreviewView.canAdvanceInitialCompositionGate(
+        hasPendingOrCurrentComposition: false,
+        hasCurrentLayout: true
+      ))
+  }
 }
 
 final class InlinePreviewRehydrationStateTests: XCTestCase {
@@ -211,6 +231,87 @@ final class InlinePreviewRehydrationStateTests: XCTestCase {
     XCTAssertEqual(activeInlinePreviewState?.latestScene, scene)
     XCTAssertNil(activeInlinePreviewState?.audioMixOverride)
     XCTAssertNil(activeInlinePreviewState?.cameraPlacementOverride)
+  }
+
+  func testRoutePreviewSceneRequestQueuesWhenLiveViewHasNoSession() {
+    let sessionId = "preview-session"
+    let mediaSources = makeMediaSources(name: "queued-no-session")
+    let scene = PreviewScene(
+      mediaSources: mediaSources,
+      screenParams: makeParams(audioGainDb: 4.0, audioVolumePercent: 77.0),
+      cameraParams: makeCameraParams()
+    )
+
+    inlinePreviewViewInstance = InlinePreviewView(
+      viewIdentifier: 12,
+      arguments: nil,
+      messenger: nil
+    )
+
+    let route = routePreviewSceneRequest(sessionId: sessionId, scene: scene)
+
+    XCTAssertEqual(route, .queuedPendingScene)
+    XCTAssertNil(inlinePreviewViewInstance?._testCurrentScene())
+    XCTAssertEqual(pendingPreviewSceneRequest?.sessionId, sessionId)
+    XCTAssertEqual(pendingPreviewSceneRequest?.scene.mediaSources, mediaSources)
+    XCTAssertEqual(pendingPreviewSceneRequest?.scene.screenParams, scene.screenParams)
+  }
+
+  func testRoutePreviewSceneRequestQueuesWhenLiveViewSessionDiffers() {
+    let liveSessionId = "live-session"
+    let queuedSessionId = "queued-session"
+    let liveMediaSources = makeMediaSources(name: "live-session")
+    let queuedMediaSources = makeMediaSources(name: "queued-session")
+    let queuedScene = PreviewScene(
+      mediaSources: queuedMediaSources,
+      screenParams: makeParams(audioGainDb: 2.0, audioVolumePercent: 91.0),
+      cameraParams: makeCameraParams(normalizedCanvasCenter: CGPoint(x: 0.52, y: 0.48))
+    )
+
+    let view = InlinePreviewView(viewIdentifier: 13, arguments: nil, messenger: nil)
+    view.open(mediaSources: liveMediaSources, sessionId: liveSessionId)
+    inlinePreviewViewInstance = view
+
+    let route = routePreviewSceneRequest(sessionId: queuedSessionId, scene: queuedScene)
+
+    XCTAssertEqual(route, .queuedPendingScene)
+    XCTAssertEqual(view.currentSessionId, liveSessionId)
+    XCTAssertNil(view._testCurrentScene())
+    XCTAssertEqual(pendingPreviewSceneRequest?.sessionId, queuedSessionId)
+    XCTAssertEqual(
+      pendingPreviewSceneRequest?.scene.mediaSources,
+      queuedScene.mediaSources
+    )
+  }
+
+  func testApplyPendingPreviewSceneRequestIfMatchingConsumesSceneAfterOpen() {
+    let sessionId = "preview-session"
+    let mediaSources = makeMediaSources(name: "consume-pending-scene")
+    let scene = PreviewScene(
+      mediaSources: mediaSources,
+      screenParams: makeParams(audioGainDb: 8.0, audioVolumePercent: 62.0),
+      cameraParams: makeCameraParams(normalizedCanvasCenter: CGPoint(x: 0.63, y: 0.31))
+    )
+
+    pendingPreviewSceneRequest = PendingPreviewSceneRequest(
+      sessionId: sessionId,
+      scene: scene
+    )
+
+    let view = InlinePreviewView(viewIdentifier: 14, arguments: nil, messenger: nil)
+    view.open(mediaSources: mediaSources, sessionId: sessionId)
+
+    XCTAssertTrue(
+      applyPendingPreviewSceneRequestIfMatching(
+        sessionId: sessionId,
+        to: view
+      )
+    )
+    XCTAssertNil(pendingPreviewSceneRequest)
+    XCTAssertEqual(view.currentSessionId, sessionId)
+    XCTAssertEqual(view._testCurrentScene()?.mediaSources, scene.mediaSources)
+    XCTAssertEqual(view._testCurrentScene()?.screenParams, scene.screenParams)
+    XCTAssertEqual(view._testCurrentScene()?.cameraParams, scene.cameraParams)
   }
 
   func testClearAllInlinePreviewStateClearsPendingAndActivePreviewState() {

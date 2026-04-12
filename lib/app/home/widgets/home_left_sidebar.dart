@@ -11,6 +11,8 @@ import 'package:flutter/foundation.dart' show kDebugMode;
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 
+enum _HomeHelpMenuAction { quickTour, about }
+
 class HomeLeftSidebar extends StatelessWidget {
   const HomeLeftSidebar({
     super.key,
@@ -19,9 +21,12 @@ class HomeLeftSidebar extends StatelessWidget {
     required this.onRecordingSectionSelected,
     required this.onPostProcessingSectionSelected,
     required this.onOpenSettings,
-    required this.onOpenHelp,
+    required this.onStartQuickTour,
+    required this.onOpenAbout,
     required this.onResetPreferences,
     required this.onToggleRailMode,
+    this.guideShellKey,
+    this.helpButtonAnchorKey,
   });
 
   final HomeUiState uiState;
@@ -29,9 +34,12 @@ class HomeLeftSidebar extends StatelessWidget {
   final ValueChanged<int> onRecordingSectionSelected;
   final ValueChanged<int> onPostProcessingSectionSelected;
   final VoidCallback onOpenSettings;
-  final VoidCallback onOpenHelp;
+  final VoidCallback onStartQuickTour;
+  final VoidCallback onOpenAbout;
   final VoidCallback onResetPreferences;
   final VoidCallback onToggleRailMode;
+  final Key? guideShellKey;
+  final Key? helpButtonAnchorKey;
 
   static const _sidebarLogoAsset = 'assets/icons/app-logo-512.png';
   @override
@@ -49,9 +57,7 @@ class HomeLeftSidebar extends StatelessWidget {
       onRecordingSectionSelected,
       onPostProcessingSectionSelected,
     );
-    final utilityItems = _buildUtilityItems(l10n);
-
-    return Container(
+    final content = Container(
       key: const Key('home_left_sidebar_shell'),
       decoration: BoxDecoration(
         color: tokens.editorChromeBackground,
@@ -64,11 +70,13 @@ class HomeLeftSidebar extends StatelessWidget {
               expandTooltip: l10n.expandNavigationRail,
               onToggleRailMode: onToggleRailMode,
               onOpenSettings: onOpenSettings,
-              onOpenHelp: onOpenHelp,
+              onStartQuickTour: onStartQuickTour,
+              onOpenAbout: onOpenAbout,
               onResetPreferences: onResetPreferences,
               onRecordingSectionSelected: onRecordingSectionSelected,
               onPostProcessingSectionSelected: onPostProcessingSectionSelected,
               uiState: uiState,
+              helpButtonAnchorKey: helpButtonAnchorKey,
             )
           : _ExpandedSidebarContent(
               sectionLabel: showPreviewShell
@@ -77,9 +85,19 @@ class HomeLeftSidebar extends StatelessWidget {
               compactTooltip: l10n.compactNavigationRail,
               onToggleRailMode: onToggleRailMode,
               navigationItems: navigationItems,
-              utilityItems: utilityItems,
+              onStartQuickTour: onStartQuickTour,
+              onOpenAbout: onOpenAbout,
+              onOpenSettings: onOpenSettings,
+              onResetPreferences: onResetPreferences,
+              helpButtonAnchorKey: helpButtonAnchorKey,
             ),
     );
+
+    if (guideShellKey == null) {
+      return content;
+    }
+
+    return SizedBox(key: guideShellKey, child: content);
   }
 
   List<_SidebarActionItem> _buildNavigationItems(
@@ -145,32 +163,6 @@ class HomeLeftSidebar extends StatelessWidget {
       ),
     ];
   }
-
-  List<_SidebarActionItem> _buildUtilityItems(AppLocalizations l10n) {
-    return [
-      if (kDebugMode)
-        _SidebarActionItem(
-          buttonKey: const Key('home_sidebar_reset_button'),
-          icon: Icons.restart_alt_rounded,
-          label: l10n.debugResetPreferencesConfirm,
-          tooltip: l10n.debugResetPreferencesSemanticLabel,
-          onTap: onResetPreferences,
-        ),
-      _SidebarActionItem(
-        buttonKey: const Key('home_sidebar_help_button'),
-        icon: Icons.help_outline_rounded,
-        label: l10n.settingsAbout,
-        onTap: onOpenHelp,
-      ),
-      _SidebarActionItem(
-        buttonKey: const Key('home_sidebar_settings_button'),
-        icon: Icons.settings_rounded,
-        label: l10n.appSettings,
-        tooltip: l10n.openAppSettings,
-        onTap: onOpenSettings,
-      ),
-    ];
-  }
 }
 
 class _CompactSidebarContent extends StatelessWidget {
@@ -179,22 +171,26 @@ class _CompactSidebarContent extends StatelessWidget {
     required this.expandTooltip,
     required this.onToggleRailMode,
     required this.onOpenSettings,
-    required this.onOpenHelp,
+    required this.onStartQuickTour,
+    required this.onOpenAbout,
     required this.onResetPreferences,
     required this.onRecordingSectionSelected,
     required this.onPostProcessingSectionSelected,
     required this.uiState,
+    required this.helpButtonAnchorKey,
   });
 
   final bool showPreviewShell;
   final String expandTooltip;
   final VoidCallback onToggleRailMode;
   final VoidCallback onOpenSettings;
-  final VoidCallback onOpenHelp;
+  final VoidCallback onStartQuickTour;
+  final VoidCallback onOpenAbout;
   final VoidCallback onResetPreferences;
   final ValueChanged<int> onRecordingSectionSelected;
   final ValueChanged<int> onPostProcessingSectionSelected;
   final HomeUiState uiState;
+  final Key? helpButtonAnchorKey;
 
   @override
   Widget build(BuildContext context) {
@@ -245,11 +241,10 @@ class _CompactSidebarContent extends StatelessWidget {
                 ),
                 const SizedBox(height: AppSidebarTokens.railItemGap),
               ],
-              _RailUtilityButton(
-                buttonKey: const Key('home_sidebar_help_button'),
-                icon: Icons.help_outline_rounded,
-                tooltip: AppLocalizations.of(context)!.settingsAbout,
-                onTap: onOpenHelp,
+              _CompactHelpMenuButton(
+                guideAnchorKey: helpButtonAnchorKey,
+                onStartQuickTour: onStartQuickTour,
+                onOpenAbout: onOpenAbout,
               ),
               const SizedBox(height: AppSidebarTokens.railItemGap),
               _RailUtilityButton(
@@ -272,14 +267,22 @@ class _ExpandedSidebarContent extends StatelessWidget {
     required this.compactTooltip,
     required this.onToggleRailMode,
     required this.navigationItems,
-    required this.utilityItems,
+    required this.onStartQuickTour,
+    required this.onOpenAbout,
+    required this.onOpenSettings,
+    required this.onResetPreferences,
+    required this.helpButtonAnchorKey,
   });
 
   final String sectionLabel;
   final String compactTooltip;
   final VoidCallback onToggleRailMode;
   final List<_SidebarActionItem> navigationItems;
-  final List<_SidebarActionItem> utilityItems;
+  final VoidCallback onStartQuickTour;
+  final VoidCallback onOpenAbout;
+  final VoidCallback onOpenSettings;
+  final VoidCallback onResetPreferences;
+  final Key? helpButtonAnchorKey;
 
   @override
   Widget build(BuildContext context) {
@@ -335,11 +338,37 @@ class _ExpandedSidebarContent extends StatelessWidget {
           Column(
             key: const Key('home_sidebar_utility_cluster'),
             children: [
-              for (var index = 0; index < utilityItems.length; index++) ...[
-                _ExpandedSidebarButton(item: utilityItems[index]),
-                if (index < utilityItems.length - 1)
-                  const SizedBox(height: AppSidebarTokens.railItemGap),
+              if (kDebugMode) ...[
+                _ExpandedSidebarButton(
+                  item: _SidebarActionItem(
+                    buttonKey: const Key('home_sidebar_reset_button'),
+                    icon: Icons.restart_alt_rounded,
+                    label: AppLocalizations.of(
+                      context,
+                    )!.debugResetPreferencesConfirm,
+                    tooltip: AppLocalizations.of(
+                      context,
+                    )!.debugResetPreferencesSemanticLabel,
+                    onTap: onResetPreferences,
+                  ),
+                ),
+                const SizedBox(height: AppSidebarTokens.railItemGap),
               ],
+              _ExpandedHelpMenuButton(
+                guideAnchorKey: helpButtonAnchorKey,
+                onStartQuickTour: onStartQuickTour,
+                onOpenAbout: onOpenAbout,
+              ),
+              const SizedBox(height: AppSidebarTokens.railItemGap),
+              _ExpandedSidebarButton(
+                item: _SidebarActionItem(
+                  buttonKey: const Key('home_sidebar_settings_button'),
+                  icon: Icons.settings_rounded,
+                  label: AppLocalizations.of(context)!.appSettings,
+                  tooltip: AppLocalizations.of(context)!.openAppSettings,
+                  onTap: onOpenSettings,
+                ),
+              ),
             ],
           ),
         ],
@@ -490,4 +519,200 @@ class _RailUtilityButton extends StatelessWidget {
       buttonSize: 40,
     );
   }
+}
+
+class _CompactHelpMenuButton extends StatelessWidget {
+  const _CompactHelpMenuButton({
+    required this.onStartQuickTour,
+    required this.onOpenAbout,
+    this.guideAnchorKey,
+  });
+
+  final VoidCallback onStartQuickTour;
+  final VoidCallback onOpenAbout;
+  final Key? guideAnchorKey;
+
+  @override
+  Widget build(BuildContext context) {
+    return KeyedSubtree(
+      key: const Key('home_sidebar_help_button'),
+      child: AppSidebarRailButton(
+        buttonKey: guideAnchorKey,
+        onTap: () => _showHomeHelpMenu(
+          context,
+          anchorKey: guideAnchorKey,
+          onStartQuickTour: onStartQuickTour,
+          onOpenAbout: onOpenAbout,
+        ),
+        tooltip: AppLocalizations.of(context)!.settingsAbout,
+        icon: Icons.help_outline_rounded,
+        iconSize: 28,
+        buttonSize: 40,
+      ),
+    );
+  }
+}
+
+class _ExpandedHelpMenuButton extends StatelessWidget {
+  const _ExpandedHelpMenuButton({
+    required this.onStartQuickTour,
+    required this.onOpenAbout,
+    this.guideAnchorKey,
+  });
+
+  final VoidCallback onStartQuickTour;
+  final VoidCallback onOpenAbout;
+  final Key? guideAnchorKey;
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    final foreground = theme.colorScheme.onSurfaceVariant.withValues(
+      alpha: 0.88,
+    );
+    final hoverBackground = theme.colorScheme.onSurface.withValues(alpha: 0.04);
+    final labelStyle = (theme.textTheme.bodyMedium ?? const TextStyle())
+        .copyWith(color: foreground, fontWeight: FontWeight.w600);
+
+    return KeyedSubtree(
+      key: const Key('home_sidebar_help_button'),
+      child: Tooltip(
+        message: AppLocalizations.of(context)!.settingsAbout,
+        child: Semantics(
+          button: true,
+          label: AppLocalizations.of(context)!.settingsAbout,
+          child: TextButton(
+            key: guideAnchorKey,
+            onPressed: () => _showHomeHelpMenu(
+              context,
+              anchorKey: guideAnchorKey,
+              onStartQuickTour: onStartQuickTour,
+              onOpenAbout: onOpenAbout,
+            ),
+            style: ButtonStyle(
+              alignment: Alignment.centerLeft,
+              padding: const WidgetStatePropertyAll(
+                EdgeInsets.symmetric(horizontal: 12, vertical: 10),
+              ),
+              minimumSize: const WidgetStatePropertyAll(Size.fromHeight(44)),
+              shape: WidgetStatePropertyAll(
+                RoundedRectangleBorder(
+                  borderRadius: BorderRadius.circular(
+                    theme.appEditorChrome.controlRadius,
+                  ),
+                ),
+              ),
+              foregroundColor: WidgetStatePropertyAll(foreground),
+              backgroundColor: WidgetStateProperty.resolveWith((states) {
+                if (states.contains(WidgetState.hovered) ||
+                    states.contains(WidgetState.focused) ||
+                    states.contains(WidgetState.pressed)) {
+                  return hoverBackground;
+                }
+                return Colors.transparent;
+              }),
+              overlayColor: WidgetStatePropertyAll(
+                theme.colorScheme.onSurface.withValues(alpha: 0.06),
+              ),
+            ),
+            child: Row(
+              children: [
+                const Icon(Icons.help_outline_rounded, size: 20),
+                const SizedBox(width: 12),
+                Expanded(
+                  child: Text(
+                    AppLocalizations.of(context)!.settingsAbout,
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                    style: labelStyle,
+                  ),
+                ),
+              ],
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+Future<void> _showHomeHelpMenu(
+  BuildContext context, {
+  required Key? anchorKey,
+  required VoidCallback onStartQuickTour,
+  required VoidCallback onOpenAbout,
+}) async {
+  final l10n = AppLocalizations.of(context)!;
+  final anchorContext = switch (anchorKey) {
+    final GlobalKey key => key.currentContext,
+    _ => null,
+  };
+  final menuSelection = await showMenu<_HomeHelpMenuAction>(
+    context: context,
+    position: _resolveHelpMenuPosition(context, anchorContext),
+    items: [
+      PopupMenuItem<_HomeHelpMenuAction>(
+        value: _HomeHelpMenuAction.quickTour,
+        child: Row(
+          children: [
+            const Icon(Icons.play_circle_outline_rounded, size: 18),
+            const SizedBox(width: 10),
+            Text(l10n.quickTour),
+          ],
+        ),
+      ),
+      PopupMenuItem<_HomeHelpMenuAction>(
+        value: _HomeHelpMenuAction.about,
+        child: Row(
+          children: [
+            const Icon(Icons.info_outline_rounded, size: 18),
+            const SizedBox(width: 10),
+            Text(l10n.aboutThisApp),
+          ],
+        ),
+      ),
+    ],
+  );
+
+  switch (menuSelection) {
+    case _HomeHelpMenuAction.quickTour:
+      onStartQuickTour();
+      break;
+    case _HomeHelpMenuAction.about:
+      onOpenAbout();
+      break;
+    case null:
+      break;
+  }
+}
+
+RelativeRect _resolveHelpMenuPosition(
+  BuildContext context,
+  BuildContext? anchorContext,
+) {
+  final overlay = Overlay.of(context).context.findRenderObject() as RenderBox;
+  final fallbackRect = Rect.fromLTWH(
+    overlay.size.width - 72,
+    overlay.size.height - 72,
+    40,
+    40,
+  );
+
+  if (anchorContext == null) {
+    return RelativeRect.fromRect(fallbackRect, Offset.zero & overlay.size);
+  }
+
+  final anchorBox = anchorContext.findRenderObject();
+  if (anchorBox is! RenderBox || !anchorBox.hasSize) {
+    return RelativeRect.fromRect(fallbackRect, Offset.zero & overlay.size);
+  }
+
+  final rect = Rect.fromPoints(
+    anchorBox.localToGlobal(Offset.zero, ancestor: overlay),
+    anchorBox.localToGlobal(
+      anchorBox.size.bottomRight(Offset.zero),
+      ancestor: overlay,
+    ),
+  );
+  return RelativeRect.fromRect(rect, Offset.zero & overlay.size);
 }

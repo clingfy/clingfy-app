@@ -185,6 +185,28 @@ void main() {
   );
 
   test(
+    'repeated preview composition requests keep the latest pre-open state',
+    () async {
+      final harness = await createHarness();
+
+      harness.post.setResolutionPreset(ResolutionPreset.p2160);
+      await Future<void>.delayed(Duration.zero);
+      harness.post.setResolutionPreset(ResolutionPreset.p1080);
+      await Future<void>.delayed(Duration.zero);
+
+      expect(harness.processCalls.length, greaterThanOrEqualTo(2));
+      final args = Map<String, dynamic>.from(
+        harness.processCalls.last.arguments! as Map<dynamic, dynamic>,
+      );
+
+      expect(args['sessionId'], 'rec_test_session');
+      expect(args['projectPath'], '/tmp/original.clingfyproj');
+      expect(args['resolutionPreset'], ResolutionPreset.p1080.name);
+      expect(args['cameraPreviewChangeKind'], 'none');
+    },
+  );
+
+  test(
     'camera layout preset changes mark preview payload as placementJump',
     () async {
       final harness = await createHarness();

@@ -684,5 +684,34 @@
   "permissionsOnboardingSkipForNow": "Skip for now",
   "permissionsOnboardingBack": "Back",
   "permissionsOnboardingNext": "Next",
-  "permissionsOnboardingLetsRecord": "Let’s Record! 🚀"
+  "permissionsOnboardingLetsRecord": "Let’s Record! 🚀",
+  "quickTour": "Quick Tour",
+  "back": "Back",
+  "next": "Next",
+  "skip": "Skip",
+  "done": "Done",
+  "homeGuideStepCounter": "Step {current} of {total}",
+  "@homeGuideStepCounter": {
+    "placeholders": {
+      "current": {
+        "type": "int"
+      },
+      "total": {
+        "type": "int"
+      }
+    }
+  },
+  "homeGuideSidebarTitle": "This rail keeps the whole recording workflow within reach.",
+  "homeGuideSidebarBody": "Use these buttons to switch setup sections, open Help, and jump to settings without leaving the recorder.",
+  "homeGuideCaptureSourceTitle": "Choose what Clingfy records here.",
+  "homeGuideCaptureSourceBody": "Pick a display, a single window, or a custom area before you start recording.",
+  "homeGuideCameraTitle": "Turn face cam on only when you need it.",
+  "homeGuideCameraBody": "Select a camera, then adjust the overlay later if you want your face on tutorials or demos.",
+  "homeGuideOutputTitle": "Set recording defaults before you hit record.",
+  "homeGuideOutputBody": "Countdown and auto-stop live here so each recording starts the way you expect.",
+  "homeGuideStartRecordingTitle": "This is the main recording control.",
+  "homeGuideStartRecordingBody": "When your source looks right, start here. The same area lets you pause or stop later.",
+  "homeGuideHelpTitle": "Replay this tour anytime from Help.",
+  "homeGuideHelpBody": "Open Help for a quick refresher or jump to About when you need version and support details.",
+  "homeGuideReplayUnavailable": "Return to recording setup to replay the quick tour."
 }

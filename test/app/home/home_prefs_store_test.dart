@@ -111,4 +111,17 @@ void main() {
       '{"postProcessingSidebar":{"width":340.0,"lastExpandedWidth":340.0,"isCollapsed":false,"userResized":true}}',
     );
   });
+
+  test('guide seen flag defaults to false and can be persisted', () async {
+    SharedPreferences.setMockInitialValues({});
+    final prefsStore = HomePrefsStore();
+
+    expect(await prefsStore.getGuideSeen(), isFalse);
+
+    await prefsStore.setGuideSeen(true);
+
+    final prefs = await SharedPreferences.getInstance();
+    expect(prefs.getBool(HomePrefsStore.homeGuidanceSeenKey), isTrue);
+    expect(await prefsStore.getGuideSeen(), isTrue);
+  });
 }

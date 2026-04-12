@@ -2062,4 +2062,75 @@ class AppLocalizationsRo extends AppLocalizations {
 
   @override
   String get permissionsOnboardingLetsRecord => 'Hai să înregistrăm! 🚀';
+
+  @override
+  String get quickTour => 'Tur rapid';
+
+  @override
+  String get back => 'Înapoi';
+
+  @override
+  String get next => 'Următorul';
+
+  @override
+  String get skip => 'Omite';
+
+  @override
+  String get done => 'Gata';
+
+  @override
+  String homeGuideStepCounter(int current, int total) {
+    return 'Pasul $current din $total';
+  }
+
+  @override
+  String get homeGuideSidebarTitle =>
+      'Această bară laterală păstrează întregul flux de înregistrare la îndemână.';
+
+  @override
+  String get homeGuideSidebarBody =>
+      'Folosește aceste butoane pentru a schimba secțiunile de configurare, a deschide Ajutorul și a intra în setări fără să ieși din recorder.';
+
+  @override
+  String get homeGuideCaptureSourceTitle =>
+      'Alege aici ce înregistrează Clingfy.';
+
+  @override
+  String get homeGuideCaptureSourceBody =>
+      'Selectează un ecran, o singură fereastră sau o zonă personalizată înainte să începi înregistrarea.';
+
+  @override
+  String get homeGuideCameraTitle =>
+      'Activează camera doar când ai nevoie de ea.';
+
+  @override
+  String get homeGuideCameraBody =>
+      'Alege o cameră, apoi ajustează overlay-ul dacă vrei să apari în tutoriale sau demo-uri.';
+
+  @override
+  String get homeGuideOutputTitle =>
+      'Setează valorile implicite înainte să apeși Record.';
+
+  @override
+  String get homeGuideOutputBody =>
+      'Aici găsești countdown și auto-stop, ca fiecare înregistrare să pornească exact cum te aștepți.';
+
+  @override
+  String get homeGuideStartRecordingTitle =>
+      'Acesta este controlul principal pentru înregistrare.';
+
+  @override
+  String get homeGuideStartRecordingBody =>
+      'Când sursa arată corect, pornește de aici. Tot aici vei putea apoi să pui pauză sau să oprești.';
+
+  @override
+  String get homeGuideHelpTitle => 'Poți relua turul oricând din Ajutor.';
+
+  @override
+  String get homeGuideHelpBody =>
+      'Deschide Ajutor pentru o recapitulare rapidă sau mergi la Despre când ai nevoie de versiune și detalii de suport.';
+
+  @override
+  String get homeGuideReplayUnavailable =>
+      'Revino la configurarea înregistrării pentru a relua turul rapid.';
 }

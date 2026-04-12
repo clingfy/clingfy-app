@@ -18,6 +18,9 @@ class HomeOptionsPanel extends StatelessWidget {
     required this.actions,
     required this.settingsController,
     required this.panePresentation,
+    this.captureSourceGuideAnchorKey,
+    this.cameraGuideAnchorKey,
+    this.outputGuideAnchorKey,
   });
 
   final bool isRecording;
@@ -26,6 +29,9 @@ class HomeOptionsPanel extends StatelessWidget {
   final HomeActions actions;
   final SettingsController settingsController;
   final DesktopPanePresentation panePresentation;
+  final Key? captureSourceGuideAnchorKey;
+  final Key? cameraGuideAnchorKey;
+  final Key? outputGuideAnchorKey;
 
   @override
   Widget build(BuildContext context) {
@@ -52,6 +58,9 @@ class HomeOptionsPanel extends StatelessWidget {
             availableWidth: panePresentation.effectiveWidth,
             isCompact: panePresentation.isCompact,
             showHeader: false,
+            captureSourceGuideAnchorKey: captureSourceGuideAnchorKey,
+            cameraGuideAnchorKey: cameraGuideAnchorKey,
+            outputGuideAnchorKey: outputGuideAnchorKey,
           );
 
     return Container(

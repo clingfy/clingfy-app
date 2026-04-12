@@ -16,6 +16,7 @@ class HeroPanel extends StatelessWidget {
     required this.onToggle,
     required this.onPause,
     required this.onResume,
+    this.startRecordingButtonKey,
   });
 
   final bool isRecording;
@@ -26,6 +27,7 @@ class HeroPanel extends StatelessWidget {
   final VoidCallback onToggle;
   final VoidCallback onPause;
   final VoidCallback onResume;
+  final Key? startRecordingButtonKey;
 
   @override
   Widget build(BuildContext context) {
@@ -88,6 +90,7 @@ class HeroPanel extends StatelessWidget {
                   SizedBox(height: spacing.xxl),
                   if (!isRecording)
                     FilledButton.icon(
+                      key: startRecordingButtonKey,
                       onPressed: isBusy ? null : onToggle,
                       icon: const Icon(Icons.fiber_manual_record, size: 18),
                       style: FilledButton.styleFrom(
