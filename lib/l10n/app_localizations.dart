@@ -1384,6 +1384,18 @@ abstract class AppLocalizations {
   /// **'Got it'**
   String get gotIt;
 
+  /// No description provided for @increase.
+  ///
+  /// In en, this message translates to:
+  /// **'Increase'**
+  String get increase;
+
+  /// No description provided for @decrease.
+  ///
+  /// In en, this message translates to:
+  /// **'Decrease'**
+  String get decrease;
+
   /// No description provided for @showCursor.
   ///
   /// In en, this message translates to:
@@ -3064,6 +3076,12 @@ abstract class AppLocalizations {
   /// **'Opacity: {value}%'**
   String opacityPercent(Object value);
 
+  /// No description provided for @opacity.
+  ///
+  /// In en, this message translates to:
+  /// **'Opacity'**
+  String get opacity;
+
   /// No description provided for @mirrorSelfView.
   ///
   /// In en, this message translates to:
@@ -3081,6 +3099,12 @@ abstract class AppLocalizations {
   /// In en, this message translates to:
   /// **'Key Tolerance: {value}%'**
   String keyTolerance(Object value);
+
+  /// No description provided for @keyToleranceLabel.
+  ///
+  /// In en, this message translates to:
+  /// **'Key Tolerance'**
+  String get keyToleranceLabel;
 
   /// No description provided for @chromaKeyColor.
   ///
@@ -3141,6 +3165,12 @@ abstract class AppLocalizations {
   /// In en, this message translates to:
   /// **'Border width: {value} px'**
   String borderWidth(Object value);
+
+  /// No description provided for @borderWidthLabel.
+  ///
+  /// In en, this message translates to:
+  /// **'Border width'**
+  String get borderWidthLabel;
 
   /// No description provided for @diagnosticsTitle.
   ///

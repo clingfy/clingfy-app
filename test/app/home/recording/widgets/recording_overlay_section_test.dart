@@ -6,6 +6,7 @@ import 'package:clingfy/ui/platform/widgets/app_inline_info_tooltip.dart';
 import 'package:clingfy/ui/platform/widgets/app_inset_group.dart';
 import 'package:clingfy/ui/platform/widgets/app_settings_group.dart';
 import 'package:clingfy/ui/platform/widgets/app_sidebar_tokens.dart';
+import 'package:clingfy/ui/platform/widgets/app_slider_row.dart';
 import 'package:clingfy/ui/platform/widgets/platform_dropdown.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
@@ -212,7 +213,7 @@ void main() {
     expect(find.text(l10n.targetColorToRemove), findsNothing);
     expect(
       find.ancestor(
-        of: find.text(l10n.keyTolerance('40')),
+        of: find.text(l10n.keyToleranceLabel),
         matching: find.byType(AppInsetGroup),
       ),
       findsOneWidget,
@@ -270,7 +271,7 @@ void main() {
       tester.element(find.byType(RecordingOverlaySection)),
     )!;
 
-    expect(find.text(l10n.cornerRoundness('20')), findsNothing);
+    expect(find.text(l10n.roundedCorners), findsNothing);
   });
 
   testWidgets('rounded rectangle still shows roundness slider', (tester) async {
@@ -285,7 +286,7 @@ void main() {
       tester.element(find.byType(RecordingOverlaySection)),
     )!;
 
-    expect(find.text(l10n.cornerRoundness('20')), findsOneWidget);
+    expect(find.text(l10n.roundedCorners), findsOneWidget);
   });
 
   testWidgets('recording highlight reveals a subordinate inset group', (
@@ -300,10 +301,10 @@ void main() {
       tester.element(find.byType(RecordingOverlaySection)),
     )!;
 
-    expect(find.text(l10n.recordingGlowStrengthPercent('70')), findsOneWidget);
+    expect(find.text(l10n.recordingGlowStrength), findsOneWidget);
     expect(
       find.ancestor(
-        of: find.text(l10n.recordingGlowStrengthPercent('70')),
+        of: find.text(l10n.recordingGlowStrength),
         matching: find.byType(AppInsetGroup),
       ),
       findsOneWidget,
@@ -321,14 +322,36 @@ void main() {
     )!;
 
     expect(find.text('More colors'), findsOneWidget);
-    expect(find.text(l10n.borderWidth('4.0')), findsOneWidget);
+    expect(find.text(l10n.borderWidthLabel), findsOneWidget);
     expect(
       find.ancestor(
-        of: find.text(l10n.borderWidth('4.0')),
+        of: find.text(l10n.borderWidthLabel),
         matching: find.byType(AppInsetGroup),
       ),
       findsOneWidget,
     );
+  });
+
+  testWidgets('overlay slider rows keep values inside the shared control', (
+    tester,
+  ) async {
+    await tester.pumpWidget(
+      _buildSection(
+        overlayShape: OverlayShape.roundedRect,
+        overlayBorder: OverlayBorder.white,
+        overlayRecordingHighlightEnabled: true,
+        chromaKeyEnabled: true,
+      ),
+    );
+    await tester.pumpAndSettle();
+
+    final sliderRows = tester.widgetList<AppSliderRow>(
+      find.byType(AppSliderRow),
+    );
+
+    expect(sliderRows, isNotEmpty);
+    expect(sliderRows.every((row) => row.valueText == null), isTrue);
+    expect(find.byKey(const Key('app_slider_value_label')), findsWidgets);
   });
 
   testWidgets('border color picker dialog opens without overflow', (

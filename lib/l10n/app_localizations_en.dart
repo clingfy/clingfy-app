@@ -696,6 +696,12 @@ class AppLocalizationsEn extends AppLocalizations {
   String get gotIt => 'Got it';
 
   @override
+  String get increase => 'Increase';
+
+  @override
+  String get decrease => 'Decrease';
+
+  @override
   String get showCursor => 'Show Cursor';
 
   @override
@@ -1621,6 +1627,9 @@ class AppLocalizationsEn extends AppLocalizations {
   }
 
   @override
+  String get opacity => 'Opacity';
+
+  @override
   String get mirrorSelfView => 'Mirror self-view';
 
   @override
@@ -1630,6 +1639,9 @@ class AppLocalizationsEn extends AppLocalizations {
   String keyTolerance(Object value) {
     return 'Key Tolerance: $value%';
   }
+
+  @override
+  String get keyToleranceLabel => 'Key Tolerance';
 
   @override
   String get chromaKeyColor => 'Chroma key color';
@@ -1663,6 +1675,9 @@ class AppLocalizationsEn extends AppLocalizations {
   String borderWidth(Object value) {
     return 'Border width: $value px';
   }
+
+  @override
+  String get borderWidthLabel => 'Border width';
 
   @override
   String get diagnosticsTitle => 'Diagnostics';

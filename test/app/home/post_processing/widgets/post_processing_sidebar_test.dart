@@ -8,6 +8,7 @@ import 'package:clingfy/ui/platform/widgets/app_inline_notice.dart';
 import 'package:clingfy/ui/platform/widgets/app_inset_group.dart';
 import 'package:clingfy/ui/platform/widgets/app_settings_group.dart';
 import 'package:clingfy/ui/platform/widgets/app_sidebar_tokens.dart';
+import 'package:clingfy/ui/platform/widgets/app_slider_row.dart';
 import 'package:clingfy/ui/platform/widgets/app_toggle_row.dart';
 import 'package:clingfy/ui/platform/widgets/platform_dropdown.dart';
 import 'package:clingfy/ui/theme/app_theme.dart';
@@ -257,6 +258,21 @@ void main() {
       expect(find.text('Auto'), findsOneWidget);
     },
   );
+
+  testWidgets('sidebar sliders keep values inside the shared control', (
+    tester,
+  ) async {
+    await tester.pumpWidget(buildTestApp(selectedIndex: 0));
+    await tester.pumpAndSettle();
+
+    final sliderRows = tester.widgetList<AppSliderRow>(
+      find.byType(AppSliderRow),
+    );
+
+    expect(sliderRows, isNotEmpty);
+    expect(sliderRows.every((row) => row.valueText == null), isTrue);
+    expect(find.byKey(const Key('app_slider_value_label')), findsWidgets);
+  });
 
   testWidgets('canvas tab shows resolution dropdown in dev-only mode', (
     tester,

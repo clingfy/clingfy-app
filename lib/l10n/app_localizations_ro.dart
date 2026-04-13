@@ -703,6 +703,12 @@ class AppLocalizationsRo extends AppLocalizations {
   String get gotIt => 'Am înțeles';
 
   @override
+  String get increase => 'Mărește';
+
+  @override
+  String get decrease => 'Micșorează';
+
+  @override
   String get showCursor => 'Arată Cursor';
 
   @override
@@ -1635,6 +1641,9 @@ class AppLocalizationsRo extends AppLocalizations {
   }
 
   @override
+  String get opacity => 'Opacitate';
+
+  @override
   String get mirrorSelfView => 'Oglindire vizualizare';
 
   @override
@@ -1644,6 +1653,9 @@ class AppLocalizationsRo extends AppLocalizations {
   String keyTolerance(Object value) {
     return 'Toleranță cheie: $value%';
   }
+
+  @override
+  String get keyToleranceLabel => 'Toleranță cheie';
 
   @override
   String get chromaKeyColor => 'Culoare chroma key';
@@ -1677,6 +1689,9 @@ class AppLocalizationsRo extends AppLocalizations {
   String borderWidth(Object value) {
     return 'Lățime bordură: $value px';
   }
+
+  @override
+  String get borderWidthLabel => 'Lățime bordură';
 
   @override
   String get diagnosticsTitle => 'Diagnosticare';

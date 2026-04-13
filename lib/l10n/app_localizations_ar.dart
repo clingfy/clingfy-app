@@ -691,6 +691,12 @@ class AppLocalizationsAr extends AppLocalizations {
   String get gotIt => 'فهمت';
 
   @override
+  String get increase => 'زيادة';
+
+  @override
+  String get decrease => 'تقليل';
+
+  @override
   String get showCursor => 'إظهار المؤشر';
 
   @override
@@ -1609,6 +1615,9 @@ class AppLocalizationsAr extends AppLocalizations {
   }
 
   @override
+  String get opacity => 'الشفافية';
+
+  @override
   String get mirrorSelfView => 'مرآة العرض';
 
   @override
@@ -1618,6 +1627,9 @@ class AppLocalizationsAr extends AppLocalizations {
   String keyTolerance(Object value) {
     return 'تسامح المفتاح: $value%';
   }
+
+  @override
+  String get keyToleranceLabel => 'تسامح المفتاح';
 
   @override
   String get chromaKeyColor => 'لون الكروما';
@@ -1650,6 +1662,9 @@ class AppLocalizationsAr extends AppLocalizations {
   String borderWidth(Object value) {
     return 'عرض الحدود: $value بكسل';
   }
+
+  @override
+  String get borderWidthLabel => 'عرض الحدود';
 
   @override
   String get diagnosticsTitle => 'التشخيص';

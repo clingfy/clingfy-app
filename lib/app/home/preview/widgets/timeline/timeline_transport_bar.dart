@@ -3,6 +3,7 @@ import 'dart:math' as math;
 import 'package:clingfy/l10n/app_localizations.dart';
 import 'package:clingfy/ui/platform/widgets/app_button.dart';
 import 'package:clingfy/ui/platform/widgets/app_icon_button.dart';
+import 'package:clingfy/ui/platform/widgets/app_slider.dart';
 import 'package:clingfy/ui/theme/app_theme.dart';
 import 'package:flutter/material.dart';
 
@@ -114,11 +115,13 @@ class TimelineTransportBar extends StatelessWidget {
               SizedBox(width: spacing.xs),
               SizedBox(
                 width: sliderWidth,
-                child: Slider(
+                child: AppSlider(
                   key: const Key('timeline_zoom_slider'),
+                  variant: AppSliderVariant.compact,
                   value: zoomLevel,
                   min: minZoom,
                   max: maxZoom,
+                  semanticLabel: l10n.zoom,
                   onChanged: onZoomLevelChanged,
                 ),
               ),
