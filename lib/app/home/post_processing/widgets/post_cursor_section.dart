@@ -35,6 +35,7 @@ class PostCursorSection extends StatelessWidget {
       children: [
         AppSettingsGroup(
           title: l10n.cursor,
+          showHeader: false,
           children: [
             AppToggleRow(
               title: l10n.showCursor,

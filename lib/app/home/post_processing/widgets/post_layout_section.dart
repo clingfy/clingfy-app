@@ -54,6 +54,7 @@ class PostLayoutSection extends StatelessWidget {
       children: [
         AppSettingsGroup(
           title: l10n.canvasFormat,
+          showHeader: false,
           children: [
             _CanvasAspectSelector(
               label: l10n.canvasAspect,
@@ -144,6 +145,7 @@ class PostLayoutSection extends StatelessWidget {
         ),
         AppSettingsGroup(
           title: l10n.framing,
+          showHeader: false,
           children: [
             AppSliderRow(
               label: l10n.padding,

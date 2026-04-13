@@ -96,6 +96,7 @@ class PostCameraSection extends StatelessWidget {
 
     return AppSettingsGroup(
       title: l10n.visibility,
+      showHeader: false,
       children: [
         AppToggleRow(
           title: l10n.camera,
@@ -121,6 +122,7 @@ class PostCameraSection extends StatelessWidget {
 
     return AppSettingsGroup(
       title: l10n.placement,
+      showHeader: false,
       children: [
         AppFormRow(
           label: l10n.position,
@@ -145,6 +147,7 @@ class PostCameraSection extends StatelessWidget {
 
     return AppSettingsGroup(
       title: l10n.appearance,
+      showHeader: false,
       children: [
         AppSliderRow(
           label: l10n.size,
@@ -429,7 +432,11 @@ class PostCameraSection extends StatelessWidget {
       ]);
     }
 
-    return AppSettingsGroup(title: l10n.motion, children: children);
+    return AppSettingsGroup(
+      title: l10n.motion,
+      showHeader: false,
+      children: children,
+    );
   }
 
   String _shapeLabel(BuildContext context, CameraShape shape) {

@@ -35,6 +35,7 @@ class PostAudioSection extends StatelessWidget {
       children: [
         AppSettingsGroup(
           title: l10n.audio,
+          showHeader: false,
           children: [
             AppSliderRow(
               label: l10n.volume,

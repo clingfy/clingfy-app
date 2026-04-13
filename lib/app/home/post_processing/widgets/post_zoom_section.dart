@@ -30,6 +30,7 @@ class PostZoomSection extends StatelessWidget {
       children: [
         AppSettingsGroup(
           title: l10n.zoom,
+          showHeader: false,
           children: [
             AppToggleRow(
               title: l10n.zoomInEffect,

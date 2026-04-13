@@ -244,11 +244,14 @@ void main() {
       await tester.pumpWidget(buildTestApp(selectedIndex: 0));
       await tester.pumpAndSettle();
 
-      expect(find.text('Canvas Format'), findsOneWidget);
-      expect(find.text('Framing'), findsOneWidget);
-      expect(find.text('Background'), findsOneWidget);
+      expect(find.text('Canvas Format'), findsNothing);
+      expect(find.text('Framing'), findsNothing);
+      expect(find.text('Background'), findsNothing);
       expect(find.byType(AppSettingsGroup), findsNWidgets(3));
       expect(find.byType(Divider), findsNothing);
+      expect(find.text('Canvas Aspect'), findsOneWidget);
+      expect(find.text('Padding'), findsOneWidget);
+      expect(find.text('Background Image'), findsOneWidget);
       expect(find.byIcon(Icons.fit_screen), findsOneWidget);
       expect(find.byIcon(Icons.aspect_ratio), findsOneWidget);
       expect(find.text('Resolution'), findsNothing);
@@ -414,10 +417,11 @@ void main() {
     );
     await tester.pumpAndSettle();
 
-    expect(find.text('Visibility'), findsOneWidget);
+    expect(find.text('Visibility'), findsNothing);
     expect(find.text('Placement'), findsNothing);
     expect(find.text('Appearance'), findsNothing);
     expect(find.text('Motion'), findsNothing);
+    expect(find.text('Camera'), findsOneWidget);
     expect(
       find.text('No separate camera asset was recorded for this clip.'),
       findsOneWidget,
@@ -439,11 +443,15 @@ void main() {
     );
     await tester.pumpAndSettle();
 
-    expect(find.text('Visibility'), findsOneWidget);
-    expect(find.text('Placement'), findsOneWidget);
-    expect(find.text('Appearance'), findsOneWidget);
-    expect(find.text('Motion'), findsOneWidget);
+    expect(find.text('Visibility'), findsNothing);
+    expect(find.text('Placement'), findsNothing);
+    expect(find.text('Appearance'), findsNothing);
+    expect(find.text('Motion'), findsNothing);
     expect(find.byType(AppSettingsGroup), findsNWidgets(4));
+    expect(find.text('Camera'), findsOneWidget);
+    expect(find.text('Position'), findsOneWidget);
+    expect(find.text('Size'), findsOneWidget);
+    expect(find.text('Zoom Response'), findsOneWidget);
   });
 
   testWidgets('camera tab omits advanced groups when camera is hidden', (
@@ -460,10 +468,11 @@ void main() {
     );
     await tester.pumpAndSettle();
 
-    expect(find.text('Visibility'), findsOneWidget);
+    expect(find.text('Visibility'), findsNothing);
     expect(find.text('Placement'), findsNothing);
     expect(find.text('Appearance'), findsNothing);
     expect(find.text('Motion'), findsNothing);
+    expect(find.text('Camera'), findsOneWidget);
   });
 
   testWidgets('camera section uses position panel and no deprecated fields', (
@@ -702,9 +711,11 @@ void main() {
     );
     await tester.pumpAndSettle();
 
-    expect(find.text('Cursor'), findsOneWidget);
-    expect(find.text('Zoom'), findsOneWidget);
+    expect(find.text('Cursor'), findsNothing);
+    expect(find.text('Zoom'), findsNothing);
     expect(find.text('Audio'), findsNothing);
+    expect(find.text('Show Cursor'), findsOneWidget);
+    expect(find.text('Zoom in effect'), findsOneWidget);
     expect(find.byType(AppInlineNotice), findsOneWidget);
     expect(find.text('Cursor data missing'), findsOneWidget);
     expect(find.text('No mic audio track found'), findsNothing);
@@ -788,8 +799,10 @@ void main() {
     );
     await tester.pumpAndSettle();
 
-    expect(find.text('Audio'), findsOneWidget);
+    expect(find.text('Audio'), findsNothing);
     expect(find.text('Loudness'), findsOneWidget);
+    expect(find.text('Volume'), findsOneWidget);
+    expect(find.text('Audio Gain'), findsOneWidget);
     expect(find.text('Format'), findsNothing);
     expect(find.text('Codec'), findsNothing);
     expect(find.text('Bitrate'), findsNothing);
