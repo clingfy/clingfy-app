@@ -4964,6 +4964,68 @@ final class ScreenCaptureKitMicrophoneFallbackTests: XCTestCase {
       )
     )
   }
+
+  func testRetryResetClearsPendingSegmentStateAndRestartsSegmentIndexing() async throws {
+    let backend = CaptureBackendScreenCaptureKit()
+    let tempDir = URL(fileURLWithPath: NSTemporaryDirectory(), isDirectory: true)
+      .appendingPathComponent(UUID().uuidString, isDirectory: true)
+    try FileManager.default.createDirectory(at: tempDir, withIntermediateDirectories: true)
+    defer { try? FileManager.default.removeItem(at: tempDir) }
+
+    let outputURL = tempDir.appendingPathComponent("screen.mov")
+    let config = CaptureStartConfig(
+      target: CaptureTarget(mode: .explicitID, displayID: 1),
+      quality: .fhd,
+      frameRate: 30,
+      includeAudioDevice: nil,
+      makeOutputURL: { outputURL },
+      excludeRecorderApp: false
+    )
+
+    backend._testInitializeStartAttemptState(config: config, outputURL: outputURL)
+    let firstSegment = try backend._testPrepareRecordingSegmentContext(makeActive: true)
+    try Data("video".utf8).write(to: firstSegment.rawURL)
+    if let cursorURL = firstSegment.cursorURL {
+      try Data("cursor".utf8).write(to: cursorURL)
+    }
+
+    XCTAssertEqual(firstSegment.index, 1)
+    XCTAssertEqual(backend._testSegmentContextCount(), 1)
+    XCTAssertEqual(backend._testActiveSegmentIndex(), 1)
+    XCTAssertTrue(backend._testHasRecordingOutput())
+
+    await backend._testResetStartAttemptForRetry(config: config, outputURL: outputURL)
+
+    XCTAssertEqual(backend.currentOutputURL, outputURL)
+    XCTAssertEqual(backend._testSegmentContextCount(), 0)
+    XCTAssertNil(backend._testActiveSegmentIndex())
+    XCTAssertFalse(backend._testHasRecordingOutput())
+    XCTAssertFalse(FileManager.default.fileExists(atPath: firstSegment.rawURL.path))
+    if let cursorURL = firstSegment.cursorURL {
+      XCTAssertFalse(FileManager.default.fileExists(atPath: cursorURL.path))
+    }
+
+    let retriedSegment = try backend._testPrepareRecordingSegmentContext(makeActive: true)
+    XCTAssertEqual(retriedSegment.index, 1)
+    XCTAssertTrue(retriedSegment.rawURL.lastPathComponent.contains("segment-001"))
+  }
+
+  func testExhaustedFallbackReturnsLocalizedMicrophoneStartFailure() throws {
+    let originalError = NSError(
+      domain: "com.apple.ScreenCaptureKit.SCStreamErrorDomain",
+      code: -3820,
+      userInfo: nil
+    )
+
+    let resolved = CaptureBackendScreenCaptureKit._testResolvedStartFailure(
+      error: originalError,
+      exhaustedSelectedMicrophoneFallback: true
+    )
+
+    let flutter = try XCTUnwrap(resolved as? FlutterError)
+    XCTAssertEqual(flutter.code, NativeErrorCode.recordingError)
+    XCTAssertEqual(flutter.message, NativeStringsStore.shared.recordingSelectedMicFallbackFailure)
+  }
 }
 
 private final class MockCaptureBackend: CaptureBackend {

@@ -854,14 +854,12 @@ final class CaptureBackendScreenCaptureKit: NSObject, CaptureBackend {
         return
       }
 
-      if pendingRecordingWarningMessage != nil {
-        let localizedError = NativeStringsStore.shared.string(
-          for: NativeUIStringKey.recordingSelectedMicFallbackFailure)
-        finishWithFailure(flutterError(NativeErrorCode.recordingError, localizedError))
-        return
-      }
-
-      finishWithFailure(error)
+      finishWithFailure(
+        Self.resolvedStartFailure(
+          error,
+          exhaustedSelectedMicrophoneFallback: pendingRecordingWarningMessage != nil
+        )
+      )
     }
   }
 
@@ -1851,6 +1849,19 @@ final class CaptureBackendScreenCaptureKit: NSObject, CaptureBackend {
     return error.code == -3812 || error.code == -3820
   }
 
+  static func resolvedStartFailure(
+    _ error: Error,
+    exhaustedSelectedMicrophoneFallback: Bool
+  ) -> Error {
+    guard exhaustedSelectedMicrophoneFallback else {
+      return error
+    }
+
+    let localizedError = NativeStringsStore.shared.string(
+      for: NativeUIStringKey.recordingSelectedMicFallbackFailure)
+    return flutterError(NativeErrorCode.recordingError, localizedError)
+  }
+
   private func computeCursorRasterScale(
     baseRectPoints: CGRect,
     streamConfig: SCStreamConfiguration
@@ -2186,3 +2197,50 @@ extension CaptureBackendScreenCaptureKit: SCRecordingOutputDelegate {
     }
   }
 }
+
+#if DEBUG
+@available(macOS 15.0, *)
+extension CaptureBackendScreenCaptureKit {
+  func _testInitializeStartAttemptState(config: CaptureStartConfig, outputURL: URL) {
+    initializeStartAttemptState(config: config, outputURL: outputURL)
+  }
+
+  @discardableResult
+  func _testPrepareRecordingSegmentContext(makeActive: Bool = false) throws -> (
+    index: Int, rawURL: URL, cursorURL: URL?
+  ) {
+    let context = try makeRecordingSegmentContext()
+    if makeActive {
+      activeSegmentContext = context
+      recordingOutput = context.recordingOutput
+    }
+    return (context.index, context.rawURL, context.cursorURL)
+  }
+
+  func _testResetStartAttemptForRetry(config: CaptureStartConfig, outputURL: URL) async {
+    await resetStartAttemptForRetry(config: config, outputURL: outputURL)
+  }
+
+  func _testSegmentContextCount() -> Int {
+    segmentContextsByOutputID.count
+  }
+
+  func _testActiveSegmentIndex() -> Int? {
+    activeSegmentContext?.index
+  }
+
+  func _testHasRecordingOutput() -> Bool {
+    recordingOutput != nil
+  }
+
+  static func _testResolvedStartFailure(
+    error: Error,
+    exhaustedSelectedMicrophoneFallback: Bool
+  ) -> Error {
+    resolvedStartFailure(
+      error,
+      exhaustedSelectedMicrophoneFallback: exhaustedSelectedMicrophoneFallback
+    )
+  }
+}
+#endif

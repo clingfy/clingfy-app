@@ -86,11 +86,19 @@ void main() {
     await tester.pumpWidget(_buildSection());
     await tester.pumpAndSettle();
 
+    final l10n = AppLocalizations.of(
+      tester.element(find.byType(RecordingOverlaySection)),
+    )!;
+
     expect(find.byType(AppSettingsGroup), findsNWidgets(4));
-    expect(find.text('Visibility & Placement'), findsOneWidget);
-    expect(find.text('Appearance'), findsOneWidget);
-    expect(find.text('Style'), findsOneWidget);
-    expect(find.text('Effects'), findsOneWidget);
+    expect(find.text('Visibility & Placement'), findsNothing);
+    expect(find.text('Appearance'), findsNothing);
+    expect(find.text('Style'), findsNothing);
+    expect(find.text('Effects'), findsNothing);
+    expect(find.text(l10n.position), findsOneWidget);
+    expect(find.text(l10n.shape), findsOneWidget);
+    expect(find.text(l10n.shadow), findsOneWidget);
+    expect(find.text(l10n.recordingHighlight), findsOneWidget);
   });
 
   testWidgets('overlay mode off keeps only visibility and placement visible', (
@@ -99,10 +107,11 @@ void main() {
     await tester.pumpWidget(_buildSection(overlayMode: OverlayMode.off));
     await tester.pumpAndSettle();
 
-    expect(find.text('Visibility & Placement'), findsOneWidget);
-    expect(find.text('Appearance'), findsNothing);
-    expect(find.text('Style'), findsNothing);
-    expect(find.text('Effects'), findsNothing);
+    expect(find.byType(AppSettingsGroup), findsOneWidget);
+    expect(find.text('Position'), findsNothing);
+    expect(find.text('Shape'), findsNothing);
+    expect(find.text('Shadow'), findsNothing);
+    expect(find.text('Recording highlight'), findsNothing);
   });
 
   testWidgets('shape dropdown shows squircle first with localized label', (

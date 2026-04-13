@@ -12,6 +12,7 @@ class AppSettingsGroup extends StatelessWidget {
     this.trailing,
     this.anchorKey,
     this.sectionKey,
+    this.showHeader = true,
   });
 
   final String title;
@@ -21,6 +22,7 @@ class AppSettingsGroup extends StatelessWidget {
   final List<Widget> children;
   final Key? anchorKey;
   final Key? sectionKey;
+  final bool showHeader;
 
   @override
   Widget build(BuildContext context) {
@@ -36,43 +38,49 @@ class AppSettingsGroup extends StatelessWidget {
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          Row(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              Expanded(
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    Row(
-                      children: [
-                        Flexible(
-                          child: Text(
-                            title,
-                            style: titleStyle,
-                            maxLines: 2,
-                            overflow: TextOverflow.ellipsis,
+          if (showHeader) ...[
+            Row(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Expanded(
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Row(
+                        children: [
+                          Flexible(
+                            child: Text(
+                              title,
+                              style: titleStyle,
+                              maxLines: 2,
+                              overflow: TextOverflow.ellipsis,
+                            ),
                           ),
-                        ),
-                        if (infoTooltip != null && infoTooltip!.isNotEmpty) ...[
-                          const SizedBox(width: AppSidebarTokens.compactGap),
-                          AppInlineInfoTooltip(message: infoTooltip!, size: 14),
+                          if (infoTooltip != null &&
+                              infoTooltip!.isNotEmpty) ...[
+                            const SizedBox(width: AppSidebarTokens.compactGap),
+                            AppInlineInfoTooltip(
+                              message: infoTooltip!,
+                              size: 14,
+                            ),
+                          ],
                         ],
+                      ),
+                      if (description != null && description!.isNotEmpty) ...[
+                        const SizedBox(height: AppSidebarTokens.compactGap),
+                        Text(description!, style: descriptionStyle),
                       ],
-                    ),
-                    if (description != null && description!.isNotEmpty) ...[
-                      const SizedBox(height: AppSidebarTokens.compactGap),
-                      Text(description!, style: descriptionStyle),
                     ],
-                  ],
+                  ),
                 ),
-              ),
-              if (trailing != null) ...[
-                const SizedBox(width: AppSidebarTokens.controlGap),
-                trailing!,
+                if (trailing != null) ...[
+                  const SizedBox(width: AppSidebarTokens.controlGap),
+                  trailing!,
+                ],
               ],
-            ],
-          ),
-          const SizedBox(height: AppSidebarTokens.rowGap),
+            ),
+            const SizedBox(height: AppSidebarTokens.rowGap),
+          ],
           ...children,
         ],
       ),

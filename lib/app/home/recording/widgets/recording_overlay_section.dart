@@ -112,6 +112,7 @@ class RecordingOverlaySection extends StatelessWidget {
 
     return AppSettingsGroup(
       title: l10n.visibilityAndPlacement,
+      showHeader: false,
       children: [
         AppFormRow(
           label: l10n.overlayFaceCamVisibility,
@@ -149,6 +150,7 @@ class RecordingOverlaySection extends StatelessWidget {
 
     return AppSettingsGroup(
       title: l10n.appearance,
+      showHeader: false,
       children: [
         AppFormRow(
           label: l10n.shape,
@@ -226,6 +228,7 @@ class RecordingOverlaySection extends StatelessWidget {
 
     return AppSettingsGroup(
       title: l10n.style,
+      showHeader: false,
       children: [
         AppFormRow(
           label: l10n.shadow,
@@ -293,6 +296,7 @@ class RecordingOverlaySection extends StatelessWidget {
 
     return AppSettingsGroup(
       title: l10n.effects,
+      showHeader: false,
       children: [
         AppToggleRow(
           title: l10n.recordingHighlight,
