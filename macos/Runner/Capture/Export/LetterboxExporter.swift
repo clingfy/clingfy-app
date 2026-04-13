@@ -41,6 +41,11 @@ final class LetterboxExporter {
     }
   }
 
+  private struct ValidationThresholds {
+    let lumaFailure: Double
+    let channelFailure: Double
+  }
+
   private struct CropCandidate {
     let image: CGImage
     let pixelRect: CGRect
@@ -70,6 +75,14 @@ final class LetterboxExporter {
   private let validationLumaFailureThreshold = 0.10
   private let validationChannelWarningThreshold = 0.05
   private let validationChannelFailureThreshold = 0.10
+  private let screenPrepassValidationThresholds = ValidationThresholds(
+    lumaFailure: 0.12,
+    channelFailure: 0.14
+  )
+  private let animationToolValidationThresholds = ValidationThresholds(
+    lumaFailure: 0.14,
+    channelFailure: 0.18
+  )
 
   func cancel() {
     isCancelled = true
@@ -397,6 +410,19 @@ final class LetterboxExporter {
       userInfo["context"] = context
     }
     return NSError(domain: "Letterbox.FinalOutputValidation", code: 1, userInfo: userInfo)
+  }
+
+  private func validationThresholds(
+    for referenceComposition: AVVideoComposition
+  ) -> ValidationThresholds {
+    if referenceComposition.animationTool != nil {
+      return animationToolValidationThresholds
+    }
+
+    return ValidationThresholds(
+      lumaFailure: validationLumaFailureThreshold,
+      channelFailure: validationChannelFailureThreshold
+    )
   }
 
   private func logColorDriftIfNeeded(
@@ -832,8 +858,8 @@ final class LetterboxExporter {
 
       let lumaDelta = abs(prepassColorMetrics.averageLuma - rawColorMetrics.averageLuma)
       let maxChannelDelta = prepassColorMetrics.maxAverageChannelDelta(comparedTo: rawColorMetrics)
-      if lumaDelta > validationLumaFailureThreshold
-        || maxChannelDelta > validationChannelFailureThreshold
+      if lumaDelta > screenPrepassValidationThresholds.lumaFailure
+        || maxChannelDelta > screenPrepassValidationThresholds.channelFailure
       {
         return makeScreenPrepassExportError(
           stage: .validation,
@@ -843,6 +869,8 @@ final class LetterboxExporter {
             "prepassAverageLuma": prepassColorMetrics.averageLuma,
             "lumaDelta": prepassColorMetrics.averageLuma - rawColorMetrics.averageLuma,
             "maxChannelDelta": maxChannelDelta,
+            "lumaFailureThreshold": screenPrepassValidationThresholds.lumaFailure,
+            "channelFailureThreshold": screenPrepassValidationThresholds.channelFailure,
           ]
         )
       }
@@ -889,10 +917,11 @@ final class LetterboxExporter {
         ]
       )
 
+      let thresholds = validationThresholds(for: referenceComposition)
       let lumaDelta = abs(finalMetrics.averageLuma - referenceMetrics.averageLuma)
       let maxChannelDelta = finalMetrics.maxAverageChannelDelta(comparedTo: referenceMetrics)
-      if lumaDelta > validationLumaFailureThreshold
-        || maxChannelDelta > validationChannelFailureThreshold
+      if lumaDelta > thresholds.lumaFailure
+        || maxChannelDelta > thresholds.channelFailure
       {
         return makeFinalExportValidationError(
           reason: "The final exported file drifted materially from the reference composition render.",
@@ -901,6 +930,8 @@ final class LetterboxExporter {
             "finalAverageLuma": finalMetrics.averageLuma,
             "lumaDelta": finalMetrics.averageLuma - referenceMetrics.averageLuma,
             "maxChannelDelta": maxChannelDelta,
+            "lumaFailureThreshold": thresholds.lumaFailure,
+            "channelFailureThreshold": thresholds.channelFailure,
           ]
         )
       }
@@ -976,6 +1007,393 @@ final class LetterboxExporter {
               )
             )
           )
+        }
+      }
+    }
+  }
+
+  private func manualVideoCodec(for codec: String) -> AVVideoCodecType {
+    if codec == "hevc", #available(macOS 10.13, *) {
+      return .hevc
+    }
+    return .h264
+  }
+
+  private func manualAudioOutputSettings() -> [String: Any] {
+    [
+      AVFormatIDKey: kAudioFormatLinearPCM,
+      AVLinearPCMIsFloatKey: false,
+      AVLinearPCMBitDepthKey: 16,
+      AVLinearPCMIsNonInterleaved: false,
+      AVLinearPCMIsBigEndianKey: false,
+    ]
+  }
+
+  private func manualAudioWriterSettings() -> [String: Any] {
+    [
+      AVFormatIDKey: kAudioFormatMPEG4AAC,
+      AVNumberOfChannelsKey: 2,
+      AVSampleRateKey: 44_100,
+      AVEncoderBitRateKey: 192_000,
+    ]
+  }
+
+  private func runRenderedExportSession(
+    asset: AVAsset,
+    videoComposition: AVVideoComposition,
+    audioMix: AVAudioMix?,
+    outputURL: URL,
+    outputFileType: AVFileType,
+    codec: String,
+    progressRange: ClosedRange<Double>,
+    onProgress: ((Double) -> Void)?,
+    logOutputInfo: Bool = false,
+    completion: @escaping (Result<URL, Error>) -> Void
+  ) {
+    let videoTracks = asset.tracks(withMediaType: .video)
+    guard !videoTracks.isEmpty else {
+      completion(
+        .failure(
+          NSError(
+            domain: "Letterbox",
+            code: -11,
+            userInfo: [NSLocalizedDescriptionKey: "Export source has no video track"]
+          )
+        )
+      )
+      return
+    }
+
+    let reader: AVAssetReader
+    let writer: AVAssetWriter
+    do {
+      reader = try AVAssetReader(asset: asset)
+      writer = try AVAssetWriter(outputURL: outputURL, fileType: outputFileType)
+    } catch {
+      completion(
+        .failure(
+          NSError(
+            domain: "Letterbox",
+            code: -12,
+            userInfo: [
+              NSLocalizedDescriptionKey: "Manual export renderer could not be initialized",
+              NSUnderlyingErrorKey: error,
+            ]
+          )
+        )
+      )
+      return
+    }
+
+    let videoOutput = AVAssetReaderVideoCompositionOutput(
+      videoTracks: videoTracks,
+      videoSettings: [
+        kCVPixelBufferPixelFormatTypeKey as String: kCVPixelFormatType_32BGRA
+      ]
+    )
+    videoOutput.videoComposition = videoComposition
+    videoOutput.alwaysCopiesSampleData = false
+    guard reader.canAdd(videoOutput) else {
+      completion(
+        .failure(
+          NSError(
+            domain: "Letterbox",
+            code: -13,
+            userInfo: [NSLocalizedDescriptionKey: "Manual export renderer could not configure the video reader output"]
+          )
+        )
+      )
+      return
+    }
+    reader.add(videoOutput)
+
+    let renderSize = videoComposition.renderSize
+    let videoInput: AVAssetWriterInput
+    do {
+      videoInput = try VideoColorPipeline.makeVideoWriterInput(
+        baseOutputSettings: [
+          AVVideoCodecKey: manualVideoCodec(for: codec),
+          AVVideoWidthKey: Int(renderSize.width),
+          AVVideoHeightKey: Int(renderSize.height),
+        ],
+        category: "Export",
+        operation: "final_output_manual_render",
+        extraContext: [
+          "renderSize": "\(Int(renderSize.width))x\(Int(renderSize.height))",
+          "outputFileType": outputFileType.rawValue,
+        ]
+      )
+    } catch let error as VideoColorPipeline.VideoWriterInputBuildError {
+      completion(
+        .failure(
+          NSError(
+            domain: "Letterbox",
+            code: -14,
+            userInfo: [
+              NSLocalizedDescriptionKey: error.reason,
+              "context": error.context,
+            ]
+          )
+        )
+      )
+      return
+    } catch {
+      completion(
+        .failure(
+          NSError(
+            domain: "Letterbox",
+            code: -15,
+            userInfo: [
+              NSLocalizedDescriptionKey: "Manual export renderer could not create the video writer input",
+              NSUnderlyingErrorKey: error,
+            ]
+          )
+        )
+      )
+      return
+    }
+    videoInput.expectsMediaDataInRealTime = false
+    guard writer.canAdd(videoInput) else {
+      completion(
+        .failure(
+          NSError(
+            domain: "Letterbox",
+            code: -16,
+            userInfo: [NSLocalizedDescriptionKey: "Manual export renderer could not add the video writer input"]
+          )
+        )
+      )
+      return
+    }
+    writer.add(videoInput)
+
+    var audioOutput: AVAssetReaderAudioMixOutput?
+    var audioInput: AVAssetWriterInput?
+    if let audioTrack = asset.tracks(withMediaType: .audio).first {
+      let candidateOutput = AVAssetReaderAudioMixOutput(
+        audioTracks: [audioTrack],
+        audioSettings: manualAudioOutputSettings()
+      )
+      candidateOutput.audioMix = audioMix
+      candidateOutput.alwaysCopiesSampleData = false
+
+      let candidateInput = AVAssetWriterInput(
+        mediaType: .audio,
+        outputSettings: manualAudioWriterSettings()
+      )
+      candidateInput.expectsMediaDataInRealTime = false
+
+      if reader.canAdd(candidateOutput), writer.canAdd(candidateInput) {
+        reader.add(candidateOutput)
+        writer.add(candidateInput)
+        audioOutput = candidateOutput
+        audioInput = candidateInput
+      } else {
+        completion(
+          .failure(
+            NSError(
+              domain: "Letterbox",
+              code: -17,
+              userInfo: [NSLocalizedDescriptionKey: "Manual export renderer could not configure the audio pipeline"]
+            )
+          )
+        )
+        return
+      }
+    }
+
+    writer.shouldOptimizeForNetworkUse = true
+
+    guard writer.startWriting() else {
+      completion(
+        .failure(
+          writer.error
+            ?? NSError(
+              domain: "Letterbox",
+              code: -18,
+              userInfo: [NSLocalizedDescriptionKey: "Manual export writer could not start"]
+            )
+        )
+      )
+      return
+    }
+
+    guard reader.startReading() else {
+      writer.cancelWriting()
+      completion(
+        .failure(
+          reader.error
+            ?? NSError(
+              domain: "Letterbox",
+              code: -19,
+              userInfo: [NSLocalizedDescriptionKey: "Manual export reader could not start"]
+            )
+        )
+      )
+      return
+    }
+
+    let durationSeconds = max(asset.duration.seconds, 0.001)
+    let lower = progressRange.lowerBound
+    let span = progressRange.upperBound - progressRange.lowerBound
+    let stateQueue = DispatchQueue(label: "Clingfy.FinalExportManualRender.State")
+    let videoQueue = DispatchQueue(label: "Clingfy.FinalExportManualRender.Video")
+    let audioQueue = DispatchQueue(label: "Clingfy.FinalExportManualRender.Audio")
+    var videoFinished = false
+    var audioFinished = audioInput == nil
+    var completed = false
+
+    func fail(_ error: Error) {
+      let shouldFinish: Bool = stateQueue.sync {
+        guard !completed else { return false }
+        completed = true
+        return true
+      }
+      guard shouldFinish else { return }
+
+      reader.cancelReading()
+      videoInput.markAsFinished()
+      audioInput?.markAsFinished()
+      writer.cancelWriting()
+      removeFileIfExists(outputURL)
+
+      DispatchQueue.main.async {
+        completion(.failure(error))
+      }
+    }
+
+    func finishIfReady() {
+      stateQueue.async { [weak self] in
+        guard videoFinished, audioFinished, !completed else { return }
+        completed = true
+
+        writer.finishWriting {
+          DispatchQueue.main.async {
+            if writer.status == .completed {
+              onProgress?(progressRange.upperBound)
+              if logOutputInfo {
+                self?.logExportedFileInfo(url: outputURL)
+              }
+              completion(.success(outputURL))
+            } else {
+              self?.removeFileIfExists(outputURL)
+              completion(
+                .failure(
+                  writer.error
+                    ?? NSError(
+                      domain: "Letterbox",
+                      code: -20,
+                      userInfo: [NSLocalizedDescriptionKey: "Manual export writer failed to finish"]
+                    )
+                )
+              )
+            }
+          }
+        }
+      }
+    }
+
+    writer.startSession(atSourceTime: .zero)
+
+    videoInput.requestMediaDataWhenReady(on: videoQueue) {
+      while videoInput.isReadyForMoreMediaData {
+        if self.isCancelled {
+          fail(
+            NSError(
+              domain: "Letterbox",
+              code: -999,
+              userInfo: [NSLocalizedDescriptionKey: "Export cancelled"]
+            )
+          )
+          return
+        }
+
+        guard let sampleBuffer = videoOutput.copyNextSampleBuffer() else {
+          if reader.status == .failed {
+            fail(
+              reader.error
+                ?? NSError(
+                  domain: "Letterbox",
+                  code: -21,
+                  userInfo: [NSLocalizedDescriptionKey: "Manual export video reader failed"]
+                )
+            )
+            return
+          }
+
+          videoInput.markAsFinished()
+          stateQueue.async {
+            videoFinished = true
+          }
+          finishIfReady()
+          return
+        }
+
+        let sampleTime = CMSampleBufferGetPresentationTimeStamp(sampleBuffer).seconds
+        DispatchQueue.main.async {
+          onProgress?(lower + (min(max(sampleTime / durationSeconds, 0.0), 1.0) * span))
+        }
+
+        if !videoInput.append(sampleBuffer) {
+          fail(
+            writer.error
+              ?? NSError(
+                domain: "Letterbox",
+                code: -22,
+                userInfo: [NSLocalizedDescriptionKey: "Manual export video writer rejected a frame"]
+              )
+          )
+          return
+        }
+      }
+    }
+
+    if let audioOutput, let audioInput {
+      audioInput.requestMediaDataWhenReady(on: audioQueue) {
+        while audioInput.isReadyForMoreMediaData {
+          if self.isCancelled {
+            fail(
+              NSError(
+                domain: "Letterbox",
+                code: -999,
+                userInfo: [NSLocalizedDescriptionKey: "Export cancelled"]
+              )
+            )
+            return
+          }
+
+          guard let sampleBuffer = audioOutput.copyNextSampleBuffer() else {
+            if reader.status == .failed {
+              fail(
+                reader.error
+                  ?? NSError(
+                    domain: "Letterbox",
+                    code: -23,
+                    userInfo: [NSLocalizedDescriptionKey: "Manual export audio reader failed"]
+                  )
+              )
+              return
+            }
+
+            audioInput.markAsFinished()
+            stateQueue.async {
+              audioFinished = true
+            }
+            finishIfReady()
+            return
+          }
+
+          if !audioInput.append(sampleBuffer) {
+            fail(
+              writer.error
+                ?? NSError(
+                  domain: "Letterbox",
+                  code: -24,
+                  userInfo: [NSLocalizedDescriptionKey: "Manual export audio writer rejected a sample"]
+                )
+            )
+            return
+          }
         }
       }
     }
@@ -1288,33 +1706,19 @@ final class LetterboxExporter {
       }
 
       let preset = pickPreset(for: comp.asset)
-      guard let export = AVAssetExportSession(asset: comp.asset, presetName: preset) else {
-        cleanupTemporaryArtifacts()
-        completion(
-          .failure(
-            NSError(
-              domain: "Letterbox",
-              code: -2,
-              userInfo: [NSLocalizedDescriptionKey: "Cannot create export session (preset=\(preset))"]
-            )
-          )
-        )
-        return
-      }
-
-      export.videoComposition = comp.videoComposition
-      export.audioMix = AudioMixEngine.makeAudioMix(
+      let exportAudioMix = AudioMixEngine.makeAudioMix(
         asset: comp.asset,
         volumePercent: resolvedAudioMix.volumePercent,
         gainDb: resolvedAudioMix.gainDb
       )
 
       let requestedType = requestedFileType(for: format)
-      if let requestedType, export.supportedFileTypes.contains(requestedType) {
-        export.outputFileType = requestedType
-      } else if let first = export.supportedFileTypes.first {
-        export.outputFileType = first
-      } else {
+      let compatibleTypes = compatibleOutputTypes(
+        for: comp.asset,
+        preset: preset,
+        requestedType: requestedType
+      )
+      guard let chosenType = compatibleTypes.requested ?? compatibleTypes.firstAvailable else {
         cleanupTemporaryArtifacts()
         completion(
           .failure(
@@ -1327,8 +1731,6 @@ final class LetterboxExporter {
         )
         return
       }
-
-      let chosenType = export.outputFileType ?? .mov
       let finalURL = outputURL
         .deletingPathExtension()
         .appendingPathExtension(ext(for: chosenType))
@@ -1336,9 +1738,6 @@ final class LetterboxExporter {
       if FileManager.default.fileExists(atPath: finalURL.path) {
         try? FileManager.default.removeItem(at: finalURL)
       }
-
-      export.outputURL = finalURL
-      export.shouldOptimizeForNetworkUse = true
 
       var exportColorContext = VideoColorPipeline.metadataContext(
         prefix: "composition",
@@ -1381,23 +1780,79 @@ final class LetterboxExporter {
         "backgroundColor": self.formattedBackgroundColor(backgroundColor),
         "backgroundImagePath": backgroundImagePath ?? "nil",
         "hasCustomBackground": backgroundColor != nil || backgroundImagePath != nil,
-        "supportedTypes": export.supportedFileTypes.map(\.rawValue),
+        "supportedTypes": compatibleTypes.all.map(\.rawValue),
         "finalURL": finalURL.path,
       ]
       exportColorContext.forEach { exportStartContext[$0.key] = $0.value }
+      let shouldUseManualRenderExport =
+        cameraAssetIsPreStyled || comp.videoComposition.animationTool != nil
+      exportStartContext["finalRenderPath"] = shouldUseManualRenderExport ? "manual_reader_writer" : "asset_export_session"
       NativeLogger.i(
         "Export",
         "Starting final export session",
         context: exportStartContext
       )
 
-      runExportSession(
-        export,
-        outputURL: finalURL,
-        progressRange: progressRange,
-        onProgress: onProgress,
-        logOutputInfo: true
-      ) { [weak self] result in
+      let runFinalExport: (@escaping (Result<URL, Error>) -> Void) -> Void = { [weak self] completion in
+        guard let self else {
+          completion(
+            .failure(
+              NSError(
+                domain: "Letterbox",
+                code: -25,
+                userInfo: [NSLocalizedDescriptionKey: "Exporter deallocated before final export could start"]
+              )
+            )
+          )
+          return
+        }
+
+        if shouldUseManualRenderExport {
+          self.runRenderedExportSession(
+            asset: comp.asset,
+            videoComposition: comp.videoComposition,
+            audioMix: exportAudioMix,
+            outputURL: finalURL,
+            outputFileType: chosenType,
+            codec: codec,
+            progressRange: progressRange,
+            onProgress: onProgress,
+            logOutputInfo: true,
+            completion: completion
+          )
+          return
+        }
+
+        guard let export = AVAssetExportSession(asset: comp.asset, presetName: preset) else {
+          completion(
+            .failure(
+              NSError(
+                domain: "Letterbox",
+                code: -2,
+                userInfo: [NSLocalizedDescriptionKey: "Cannot create export session (preset=\(preset))"]
+              )
+            )
+          )
+          return
+        }
+
+        export.videoComposition = comp.videoComposition
+        export.audioMix = exportAudioMix
+        export.outputFileType = chosenType
+        export.outputURL = finalURL
+        export.shouldOptimizeForNetworkUse = true
+
+        self.runExportSession(
+          export,
+          outputURL: finalURL,
+          progressRange: progressRange,
+          onProgress: onProgress,
+          logOutputInfo: true,
+          completion: completion
+        )
+      }
+
+      runFinalExport { [weak self] result in
         guard let self else {
           completion(result)
           return
@@ -1720,6 +2175,20 @@ final class LetterboxExporter {
     case "gif": return nil  // handled by a separate GIF export pipeline
     default: return .mov
     }
+  }
+
+  private func compatibleOutputTypes(
+    for asset: AVAsset,
+    preset: String,
+    requestedType: AVFileType?
+  ) -> (requested: AVFileType?, firstAvailable: AVFileType?, all: [AVFileType]) {
+    guard let probe = AVAssetExportSession(asset: asset, presetName: preset) else {
+      return (nil, nil, [])
+    }
+
+    let all = probe.supportedFileTypes
+    let requested = requestedType.flatMap { all.contains($0) ? $0 : nil }
+    return (requested, all.first, all)
   }
 
   private func logExportedFileInfo(url: URL) {

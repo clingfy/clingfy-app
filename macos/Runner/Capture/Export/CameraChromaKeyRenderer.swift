@@ -8,8 +8,12 @@ final class CameraChromaKeyRenderer {
       source:
         "kernel vec4 chromaKey(__sample s, vec3 keyColor, float strength) {"
         + "  vec3 rgb = s.rgb;"
-        + "  float dist = distance(rgb, keyColor);"
-        + "  float alpha = (dist < strength) ? 0.0 : 1.0;"
+        + "  float greenAdvantage = rgb.g - max(rgb.r, rgb.b);"
+        + "  float greenMask = smoothstep(0.02, 0.16 + (strength * 0.20), greenAdvantage);"
+        + "  float keyDistance = distance(rgb, keyColor);"
+        + "  float similarity = 1.0 - smoothstep(0.18 + (strength * 0.10), 0.90, keyDistance);"
+        + "  float matte = clamp(greenMask * (0.85 + (0.15 * similarity)), 0.0, 1.0);"
+        + "  float alpha = pow(1.0 - matte, 2.0);"
         + "  return vec4(rgb, alpha * s.a);"
         + "}"
     )

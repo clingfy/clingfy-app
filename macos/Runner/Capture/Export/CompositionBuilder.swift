@@ -1504,6 +1504,7 @@ final class CompositionBuilder {
         videoToTargetScale: s,
         zoomSamples: exportZoomSamples,
         visibleRegionMaskSamples: [],
+        forceVisibleRegionMask: false,
         zoomApplicationMode: .compositeVideoLayer,
         includeRoundedMask: true,
         backgroundMode: renderPass == .screenPrepass ? .transparent : .resolvedOutput,
@@ -1636,7 +1637,7 @@ final class CompositionBuilder {
           focusY: screenContentRect.midY,
           effectiveDuration: screenAsset.duration.seconds
         )
-      } else {
+      } else if !transformsApproximatelyEqual(baseScreenTransform, .identity) {
         screenLayerInstruction.setTransform(baseScreenTransform, at: .zero)
       }
       layerInstructions.append(screenLayerInstruction)
@@ -1994,6 +1995,7 @@ final class CompositionBuilder {
         videoToTargetScale: screenScale,
         zoomSamples: exportZoomSamples,
         visibleRegionMaskSamples: cameraMaskSamples,
+        forceVisibleRegionMask: screenSourceMode == .precompositedCanvas && !cameraMaskSamples.isEmpty,
         zoomApplicationMode: screenSourceMode == .liveScreenTrack ? .screenOverlayOnly : .none,
         includeRoundedMask: false,
         backgroundMode: .resolvedOutput,
@@ -2367,6 +2369,7 @@ final class CompositionBuilder {
     videoToTargetScale: CGFloat,
     zoomSamples: [ExportZoomSample],
     visibleRegionMaskSamples: [VisibleRegionMaskSample],
+    forceVisibleRegionMask: Bool = false,
     zoomApplicationMode: ExportZoomApplicationMode,
     includeRoundedMask: Bool,
     backgroundMode: ExportBackgroundMode,
@@ -2376,11 +2379,14 @@ final class CompositionBuilder {
     let shouldRenderCursor =
       renderCursorOverlay && params.showCursor && !(cursorRecording?.frames.isEmpty ?? true)
     let shouldApplyZoom = !zoomSamples.isEmpty && zoomApplicationMode != .none
+    let shouldApplyVisibleRegionMask =
+      forceVisibleRegionMask || params.backgroundImagePath != nil || includeRoundedMask
     guard
       params.cornerRadius > 0
         || params.backgroundImagePath != nil
         || shouldRenderCursor
         || shouldApplyZoom
+        || shouldApplyVisibleRegionMask
     else {
       return
     }
@@ -2412,7 +2418,7 @@ final class CompositionBuilder {
     videoLayer.position = .zero
     parentLayer.addSublayer(videoLayer)
 
-    if params.backgroundImagePath != nil || includeRoundedMask {
+    if shouldApplyVisibleRegionMask {
       applyVisibleRegionMask(
         to: videoLayer,
         target: target,

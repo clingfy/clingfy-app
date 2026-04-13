@@ -102,6 +102,16 @@ final class ScreenZoomCursorIntermediatePipeline {
       audioVolumePercent: params.audioVolumePercent
     )
     sanitizedParams.zoomSegments = params.zoomSegments
+    if sanitizedParams.zoomSegments == nil {
+      let autoSegments = ZoomTimelineBuilder.buildSegments(
+        cursorRecording: cursorRecording,
+        durationSeconds: inputAsset.duration.seconds,
+        fps: params.fpsHint > 0 ? Double(params.fpsHint) : 60.0
+      )
+      sanitizedParams.zoomSegments = autoSegments.map {
+        ZoomTimelineSegment(startMs: $0.startMs, endMs: $0.endMs)
+      }
+    }
 
     guard
       let prepass = builder.buildScreenPrepass(

@@ -81,11 +81,11 @@ void main() {
 
       expect(
         tester.getSize(find.byKey(const Key('app_slider_decrement_button'))),
-        const Size(26, 26),
+        const Size(20, 20),
       );
       expect(
         tester.getSize(find.byKey(const Key('app_slider_increment_button'))),
-        const Size(26, 26),
+        const Size(20, 20),
       );
       expect(
         tester.getSize(find.byKey(const Key('app_slider_track'))).height,

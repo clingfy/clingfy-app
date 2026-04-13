@@ -4413,6 +4413,8 @@ final class LetterboxExporterTests: XCTestCase {
     let generator = AVAssetImageGenerator(asset: asset)
     generator.appliesPreferredTrackTransform = videoComposition == nil
     generator.videoComposition = videoComposition
+    generator.requestedTimeToleranceBefore = .zero
+    generator.requestedTimeToleranceAfter = .zero
     return try generator.copyCGImage(
       at: CMTime(seconds: time, preferredTimescale: 600),
       actualTime: nil
