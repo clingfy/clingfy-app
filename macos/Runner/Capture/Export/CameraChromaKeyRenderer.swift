@@ -172,6 +172,7 @@ final class CameraChromaKeyRenderer {
     let renderQueue = DispatchQueue(label: "Clingfy.CameraChromaKeyRender")
     var didLogSourceColorMetadata = false
     var completed = false
+    var frameIndex = 0
 
     func finish(_ result: Result<URL, Error>) {
       guard !completed else { return }
@@ -366,6 +367,8 @@ final class CameraChromaKeyRenderer {
           return
         }
 
+        logExportMemoryCheckpoint(stage: "camera_chroma_key_prepass", frameIndex: frameIndex)
+        frameIndex += 1
         onProgress?(min(1.0, max(0.0, presentationTime.seconds / durationSeconds)))
       }
     }

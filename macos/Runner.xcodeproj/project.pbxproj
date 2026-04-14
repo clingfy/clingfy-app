@@ -57,6 +57,7 @@
 		5B54272F2F21985F00B06BA6 /* CaptureBackendFactory.swift in Sources */ = {isa = PBXBuildFile; fileRef = 5B5426E52F21985F00B06BA6 /* CaptureBackendFactory.swift */; };
 		5B5427302F21985F00B06BA6 /* SaveFolderStore.swift in Sources */ = {isa = PBXBuildFile; fileRef = 5B5427182F21985F00B06BA6 /* SaveFolderStore.swift */; };
 		5B5427312F21985F00B06BA6 /* NativeLogger.swift in Sources */ = {isa = PBXBuildFile; fileRef = 5B54271A2F21985F00B06BA6 /* NativeLogger.swift */; };
+		B8E100012F90000100A0B001 /* ExportMemory.swift in Sources */ = {isa = PBXBuildFile; fileRef = B8E100022F90000100A0B001 /* ExportMemory.swift */; };
 		5B5427322F21985F00B06BA6 /* NativeChannel.swift in Sources */ = {isa = PBXBuildFile; fileRef = 5B5426F72F21985F00B06BA6 /* NativeChannel.swift */; };
 		5B5427332F21985F00B06BA6 /* FlutterError+Error.swift in Sources */ = {isa = PBXBuildFile; fileRef = 5B5426E12F21985F00B06BA6 /* FlutterError+Error.swift */; };
 		5B5427342F21985F00B06BA6 /* PlayerEventHandler.swift in Sources */ = {isa = PBXBuildFile; fileRef = 5B5427042F21985F00B06BA6 /* PlayerEventHandler.swift */; };
@@ -215,6 +216,7 @@
 		5B5427172F21985F00B06BA6 /* PreferencesStore.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PreferencesStore.swift; sourceTree = "<group>"; };
 		5B5427182F21985F00B06BA6 /* SaveFolderStore.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SaveFolderStore.swift; sourceTree = "<group>"; };
 		5B54271A2F21985F00B06BA6 /* NativeLogger.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = NativeLogger.swift; sourceTree = "<group>"; };
+		B8E100022F90000100A0B001 /* ExportMemory.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ExportMemory.swift; sourceTree = "<group>"; };
 		5B54271C2F21985F00B06BA6 /* CursorView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CursorView.swift; sourceTree = "<group>"; };
 		5B54271D2F21985F00B06BA6 /* RecordingIndicatorView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = RecordingIndicatorView.swift; sourceTree = "<group>"; };
 		5BE43BEA2F22CD3F0017267E /* AppPaths.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AppPaths.swift; sourceTree = "<group>"; };
@@ -612,6 +614,7 @@
 		5B54271B2F21985F00B06BA6 /* Utilities */ = {
 			isa = PBXGroup;
 			children = (
+				B8E100022F90000100A0B001 /* ExportMemory.swift */,
 				5B54271A2F21985F00B06BA6 /* NativeLogger.swift */,
 			);
 			path = Utilities;
@@ -907,6 +910,7 @@
 				5B54272F2F21985F00B06BA6 /* CaptureBackendFactory.swift in Sources */,
 				5B5427302F21985F00B06BA6 /* SaveFolderStore.swift in Sources */,
 				5B5427312F21985F00B06BA6 /* NativeLogger.swift in Sources */,
+				B8E100012F90000100A0B001 /* ExportMemory.swift in Sources */,
 				5B5427322F21985F00B06BA6 /* NativeChannel.swift in Sources */,
 				9A1B2C3D4E5F60718293A4B4 /* CursorFrameResolver.swift in Sources */,
 				E1A0C0012F60000100BEE001 /* AVAssetWriterInputExceptionBridge.m in Sources */,

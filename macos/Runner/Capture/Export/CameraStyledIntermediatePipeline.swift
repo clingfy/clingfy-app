@@ -614,6 +614,7 @@ final class CameraStyledIntermediatePipeline {
     let renderQueue = DispatchQueue(label: "Clingfy.StyledCameraRender")
     var didLogSourceColorMetadata = false
     var completed = false
+    var frameIndex = 0
 
     func finish(_ result: Result<StyledCameraRenderResult, Error>) {
       guard !completed else { return }
@@ -836,6 +837,8 @@ final class CameraStyledIntermediatePipeline {
           return
         }
 
+        logExportMemoryCheckpoint(stage: "camera_styled_prepass", frameIndex: frameIndex)
+        frameIndex += 1
         onProgress?(min(1.0, max(0.0, presentationTime.seconds / durationSeconds)))
       }
     }

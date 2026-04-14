@@ -282,6 +282,7 @@ final class ScreenZoomCursorIntermediatePipeline {
     let ciContext = CIContext(options: [.cacheIntermediates: false])
     var didLogSourceColorMetadata = false
     var completed = false
+    var frameIndex = 0
 
     func finish(_ result: Result<ScreenPreparedIntermediate, Error>) {
       guard !completed else { return }
@@ -425,6 +426,8 @@ final class ScreenZoomCursorIntermediatePipeline {
             return
           }
 
+          logExportMemoryCheckpoint(stage: "screen_prepass", frameIndex: frameIndex)
+          frameIndex += 1
           onProgress?(min(max(presentationTime.seconds / durationSeconds, 0.0), 1.0))
           continue
         }

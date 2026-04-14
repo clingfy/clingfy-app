@@ -1242,6 +1242,7 @@ final class LetterboxExporter {
     var videoFinished = false
     var audioFinished = audioInput == nil
     var completed = false
+    var videoFrameIndex = 0
 
     func fail(_ error: Error) {
       let shouldFinish: Bool = stateQueue.sync {
@@ -1346,6 +1347,12 @@ final class LetterboxExporter {
           )
           return
         }
+
+        logExportMemoryCheckpoint(
+          stage: "final_manual_video_render",
+          frameIndex: videoFrameIndex
+        )
+        videoFrameIndex += 1
       }
     }
 
