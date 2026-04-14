@@ -133,5 +133,4 @@ final class NativeStringsStore {
       cache = Self.fallbackStrings
     }
   #endif
-  }
 }

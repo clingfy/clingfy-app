@@ -229,147 +229,165 @@ final class CameraChromaKeyRenderer {
       guard let self else { return }
 
       while writerInput.isReadyForMoreMediaData {
-        if isCancelled() {
-          reader.cancelReading()
-          writerInput.markAsFinished()
-          writer.cancelWriting()
-          finish(
-            .failure(
-              NSError(
-                domain: "Letterbox",
-                code: -999,
-                userInfo: [NSLocalizedDescriptionKey: "Export cancelled"]
+        let shouldContinue = autoreleasepool { () -> Bool in
+          if isCancelled() {
+            reader.cancelReading()
+            writerInput.markAsFinished()
+            writer.cancelWriting()
+            finish(
+              .failure(
+                NSError(
+                  domain: "Letterbox",
+                  code: -999,
+                  userInfo: [NSLocalizedDescriptionKey: "Export cancelled"]
+                )
               )
             )
-          )
-          return
-        }
-
-        guard let sampleBuffer = readerOutput.copyNextSampleBuffer() else {
-          writerInput.markAsFinished()
-          writer.finishWriting {
-            if reader.status == .failed {
-              finish(
-                .failure(
-                  makeAdvancedCameraExportError(
-                    stage: .styledIntermediateBuild,
-                    reason: "The chroma-key camera reader failed.",
-                    context: ["error": reader.error?.localizedDescription ?? "unknown"]
-                  )
-                )
-              )
-              return
-            }
-
-            if writer.status == .completed {
-              onProgress?(1.0)
-              var readyContext: [String: Any] = [
-                "output": outputURL.path,
-                "renderSize": "\(Int(renderSize.width))x\(Int(renderSize.height))",
-              ]
-              VideoColorPipeline.metadataContext(
-                prefix: "outputTrack",
-                metadata: VideoColorPipeline.assetTrackColorMetadata(
-                  AVAsset(url: outputURL).tracks(withMediaType: .video).first
-                )
-              ).forEach { readyContext[$0.key] = $0.value }
-              readyContext["workingColorSpace"] = VideoColorPipeline.workingColorSpaceName
-              NativeLogger.i(
-                "Export",
-                "Chroma-key camera intermediate ready",
-                context: readyContext
-              )
-              finish(.success(outputURL))
-            } else {
-              finish(
-                .failure(
-                  makeAdvancedCameraExportError(
-                    stage: .styledIntermediateBuild,
-                    reason: "The chroma-key camera writer failed.",
-                    context: ["error": writer.error?.localizedDescription ?? "unknown"]
-                  )
-                )
-              )
-            }
+            return false
           }
-          return
-        }
 
-        guard let sourcePixelBuffer = CMSampleBufferGetImageBuffer(sampleBuffer) else {
-          failRender(reason: "The chroma-key camera export received an invalid source frame.")
-          return
-        }
+          guard let pixelBufferPool = adaptor.pixelBufferPool else {
+            failRender(reason: "The chroma-key camera writer has no pixel buffer pool.")
+            return false
+          }
 
-        if !didLogSourceColorMetadata {
-          didLogSourceColorMetadata = true
-          VideoColorPipeline.logColorMetadata(
-            category: "Export",
-            message: "Chroma-key camera source color metadata",
-            formatDescription: CMSampleBufferGetFormatDescription(sampleBuffer),
-            pixelBuffer: sourcePixelBuffer,
-            extraContext: [
-              "output": outputURL.path,
-            ]
+          let allocation = makePooledPixelBuffer(from: pixelBufferPool)
+          if allocation.status == kCVReturnWouldExceedAllocationThreshold {
+            NativeLogger.d(
+              "ExportMemory",
+              "Pixel buffer pool backpressure",
+              context: [
+                "stage": "screen_prepass",
+                "frame": frameIndex,
+              ]
+            )
+            return false
+          }
+
+          guard allocation.status == kCVReturnSuccess, let renderedPixelBuffer = allocation.pixelBuffer else {
+            failRender(
+              reason: "The chroma-key camera export could not allocate an output frame.",
+              context: ["status": allocation.status]
+            )
+            return false
+          }
+          VideoColorPipeline.tag(pixelBuffer: renderedPixelBuffer)
+
+          guard let sampleBuffer = readerOutput.copyNextSampleBuffer() else {
+            writerInput.markAsFinished()
+            writer.finishWriting {
+              if reader.status == .failed {
+                finish(
+                  .failure(
+                    makeAdvancedCameraExportError(
+                      stage: .styledIntermediateBuild,
+                      reason: "The chroma-key camera reader failed.",
+                      context: ["error": reader.error?.localizedDescription ?? "unknown"]
+                    )
+                  )
+                )
+                return
+              }
+
+              if writer.status == .completed {
+                onProgress?(1.0)
+                var readyContext: [String: Any] = [
+                  "output": outputURL.path,
+                  "renderSize": "\(Int(renderSize.width))x\(Int(renderSize.height))",
+                ]
+                VideoColorPipeline.metadataContext(
+                  prefix: "outputTrack",
+                  metadata: VideoColorPipeline.assetTrackColorMetadata(
+                    AVAsset(url: outputURL).tracks(withMediaType: .video).first
+                  )
+                ).forEach { readyContext[$0.key] = $0.value }
+                readyContext["workingColorSpace"] = VideoColorPipeline.workingColorSpaceName
+                NativeLogger.i(
+                  "Export",
+                  "Chroma-key camera intermediate ready",
+                  context: readyContext
+                )
+                finish(.success(outputURL))
+              } else {
+                finish(
+                  .failure(
+                    makeAdvancedCameraExportError(
+                      stage: .styledIntermediateBuild,
+                      reason: "The chroma-key camera writer failed.",
+                      context: ["error": writer.error?.localizedDescription ?? "unknown"]
+                    )
+                  )
+                )
+              }
+            }
+            return false
+          }
+
+          defer {
+            CMSampleBufferInvalidate(sampleBuffer)
+          }
+
+          guard let sourcePixelBuffer = CMSampleBufferGetImageBuffer(sampleBuffer) else {
+            failRender(reason: "The chroma-key camera export received an invalid source frame.")
+            return false
+          }
+
+          if !didLogSourceColorMetadata {
+            didLogSourceColorMetadata = true
+            VideoColorPipeline.logColorMetadata(
+              category: "Export",
+              message: "Chroma-key camera source color metadata",
+              formatDescription: CMSampleBufferGetFormatDescription(sampleBuffer),
+              pixelBuffer: sourcePixelBuffer,
+              extraContext: [
+                "output": outputURL.path,
+              ]
+            )
+          }
+
+          let sourceImage = CIImage(cvPixelBuffer: sourcePixelBuffer).transformed(by: sourceTransform)
+          let keyedImage: CIImage
+          if let kernel = self.chromaKeyKernel {
+            keyedImage =
+              kernel.apply(
+                extent: sourceImage.extent,
+                arguments: [sourceImage, keyColor, Float(params.chromaKeyStrength)]
+              ) ?? sourceImage
+          } else {
+            keyedImage = sourceImage
+          }
+
+          CVPixelBufferLockBaseAddress(renderedPixelBuffer, [])
+          if let baseAddress = CVPixelBufferGetBaseAddress(renderedPixelBuffer) {
+            memset(baseAddress, 0, CVPixelBufferGetDataSize(renderedPixelBuffer))
+          }
+          CVPixelBufferUnlockBaseAddress(renderedPixelBuffer, [])
+
+          self.ciContext.render(
+            keyedImage,
+            to: renderedPixelBuffer,
+            bounds: renderBounds,
+            colorSpace: colorSpace
           )
+
+          let presentationTime = CMSampleBufferGetPresentationTimeStamp(sampleBuffer)
+          guard adaptor.append(renderedPixelBuffer, withPresentationTime: presentationTime) else {
+            failRender(
+              reason: "The chroma-key camera writer rejected a rendered frame.",
+              context: ["error": writer.error?.localizedDescription ?? "unknown"]
+            )
+            return false
+          }
+
+          logExportMemoryCheckpoint(stage: "camera_chroma_key_prepass", frameIndex: frameIndex)
+          frameIndex += 1
+          onProgress?(min(1.0, max(0.0, presentationTime.seconds / durationSeconds)))
+          return true
         }
 
-        guard let pixelBufferPool = adaptor.pixelBufferPool else {
-          failRender(reason: "The chroma-key camera writer has no pixel buffer pool.")
+        if !shouldContinue {
           return
         }
-
-        var renderedPixelBuffer: CVPixelBuffer?
-        let pixelStatus = CVPixelBufferPoolCreatePixelBuffer(
-          kCFAllocatorDefault,
-          pixelBufferPool,
-          &renderedPixelBuffer
-        )
-        guard pixelStatus == kCVReturnSuccess, let renderedPixelBuffer else {
-          failRender(
-            reason: "The chroma-key camera export could not allocate an output frame.",
-            context: ["status": pixelStatus]
-          )
-          return
-        }
-        VideoColorPipeline.tag(pixelBuffer: renderedPixelBuffer)
-
-        let sourceImage = CIImage(cvPixelBuffer: sourcePixelBuffer).transformed(by: sourceTransform)
-        let keyedImage: CIImage
-        if let kernel = chromaKeyKernel {
-          keyedImage =
-            kernel.apply(
-              extent: sourceImage.extent,
-              arguments: [sourceImage, keyColor, Float(params.chromaKeyStrength)]
-            ) ?? sourceImage
-        } else {
-          keyedImage = sourceImage
-        }
-
-        CVPixelBufferLockBaseAddress(renderedPixelBuffer, [])
-        if let baseAddress = CVPixelBufferGetBaseAddress(renderedPixelBuffer) {
-          memset(baseAddress, 0, CVPixelBufferGetDataSize(renderedPixelBuffer))
-        }
-        CVPixelBufferUnlockBaseAddress(renderedPixelBuffer, [])
-
-        self.ciContext.render(
-          keyedImage,
-          to: renderedPixelBuffer,
-          bounds: renderBounds,
-          colorSpace: colorSpace
-        )
-
-        let presentationTime = CMSampleBufferGetPresentationTimeStamp(sampleBuffer)
-        guard adaptor.append(renderedPixelBuffer, withPresentationTime: presentationTime) else {
-          failRender(
-            reason: "The chroma-key camera writer rejected a rendered frame.",
-            context: ["error": writer.error?.localizedDescription ?? "unknown"]
-          )
-          return
-        }
-
-        logExportMemoryCheckpoint(stage: "camera_chroma_key_prepass", frameIndex: frameIndex)
-        frameIndex += 1
-        onProgress?(min(1.0, max(0.0, presentationTime.seconds / durationSeconds)))
       }
     }
   }

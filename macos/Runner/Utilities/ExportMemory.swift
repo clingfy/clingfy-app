@@ -1,6 +1,8 @@
+import AVFoundation
 import Darwin.Mach
 
 private let exportMemoryCheckpointInterval = 120
+private let exportPrepassMaxInFlightBuffers = 6
 
 func currentResidentMB() -> Double? {
   var info = task_vm_info_data_t()
@@ -16,6 +18,25 @@ func currentResidentMB() -> Double? {
 
   guard result == KERN_SUCCESS else { return nil }
   return Double(info.phys_footprint) / 1024.0 / 1024.0
+}
+
+func makePooledPixelBuffer(
+  from pool: CVPixelBufferPool,
+  maxInFlightBuffers: Int = exportPrepassMaxInFlightBuffers
+) -> (pixelBuffer: CVPixelBuffer?, status: CVReturn) {
+  let auxAttributes = [
+    kCVPixelBufferPoolAllocationThresholdKey as String: maxInFlightBuffers
+  ] as CFDictionary
+
+  var pixelBuffer: CVPixelBuffer?
+  let status = CVPixelBufferPoolCreatePixelBufferWithAuxAttributes(
+    kCFAllocatorDefault,
+    pool,
+    auxAttributes,
+    &pixelBuffer
+  )
+
+  return (pixelBuffer, status)
 }
 
 func logExportMemoryCheckpoint(stage: String, frameIndex: Int) {

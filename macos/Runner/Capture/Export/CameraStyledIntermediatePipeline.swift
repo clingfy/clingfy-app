@@ -671,175 +671,193 @@ final class CameraStyledIntermediatePipeline {
       guard let self else { return }
 
       while writerInput.isReadyForMoreMediaData {
-        if isCancelled() {
-          reader.cancelReading()
-          writerInput.markAsFinished()
-          writer.cancelWriting()
-          finish(
-            .failure(
-              NSError(
-                domain: "Letterbox",
-                code: -999,
-                userInfo: [NSLocalizedDescriptionKey: "Export cancelled"]
+        let shouldContinue = autoreleasepool { () -> Bool in
+          if isCancelled() {
+            reader.cancelReading()
+            writerInput.markAsFinished()
+            writer.cancelWriting()
+            finish(
+              .failure(
+                NSError(
+                  domain: "Letterbox",
+                  code: -999,
+                  userInfo: [NSLocalizedDescriptionKey: "Export cancelled"]
+                )
               )
             )
-          )
-          return
-        }
-
-        guard let sampleBuffer = readerOutput.copyNextSampleBuffer() else {
-          writerInput.markAsFinished()
-          writer.finishWriting {
-            if reader.status == .failed {
-              finish(
-                .failure(
-                  makeAdvancedCameraExportError(
-                    stage: .styledIntermediateBuild,
-                    reason: "The styled camera intermediate reader failed.",
-                    context: ["error": reader.error?.localizedDescription ?? "unknown"]
-                  )
-                )
-              )
-              return
-            }
-
-            if writer.status == .completed {
-              onProgress?(1.0)
-              var readyContext: [String: Any] = [
-                "output": outputURL.path,
-                "renderSize": "\(Int(renderSize.width))x\(Int(renderSize.height))",
-              ]
-              VideoColorPipeline.metadataContext(
-                prefix: "outputTrack",
-                metadata: VideoColorPipeline.assetTrackColorMetadata(
-                  AVAsset(url: outputURL).tracks(withMediaType: .video).first
-                )
-              ).forEach { readyContext[$0.key] = $0.value }
-              readyContext["workingColorSpace"] = VideoColorPipeline.workingColorSpaceName
-              NativeLogger.i(
-                "Export",
-                "Styled camera intermediate ready",
-                context: readyContext
-              )
-              finish(
-                .success(
-                  StyledCameraRenderResult(
-                    url: outputURL,
-                    placementSourceRect: placementSourceRect
-                  )
-                )
-              )
-            } else {
-              finish(
-                .failure(
-                  makeAdvancedCameraExportError(
-                    stage: .styledIntermediateBuild,
-                    reason: "The styled camera intermediate writer failed.",
-                    context: ["error": writer.error?.localizedDescription ?? "unknown"]
-                  )
-                )
-              )
-            }
+            return false
           }
+
+          guard let pixelBufferPool = adaptor.pixelBufferPool else {
+            failRender(reason: "The styled camera intermediate writer has no pixel buffer pool.")
+            return false
+          }
+
+          let allocation = makePooledPixelBuffer(from: pixelBufferPool)
+          if allocation.status == kCVReturnWouldExceedAllocationThreshold {
+            NativeLogger.d(
+              "ExportMemory",
+              "Pixel buffer pool backpressure",
+              context: [
+                "stage": "screen_prepass",
+                "frame": frameIndex,
+              ]
+            )
+            return false
+          }
+
+          guard allocation.status == kCVReturnSuccess, let renderedPixelBuffer = allocation.pixelBuffer else {
+            failRender(
+              reason: "The styled camera intermediate could not allocate an output frame.",
+              context: ["status": allocation.status]
+            )
+            return false
+          }
+          VideoColorPipeline.tag(pixelBuffer: renderedPixelBuffer)
+
+          guard let sampleBuffer = readerOutput.copyNextSampleBuffer() else {
+            writerInput.markAsFinished()
+            writer.finishWriting {
+              if reader.status == .failed {
+                finish(
+                  .failure(
+                    makeAdvancedCameraExportError(
+                      stage: .styledIntermediateBuild,
+                      reason: "The styled camera intermediate reader failed.",
+                      context: ["error": reader.error?.localizedDescription ?? "unknown"]
+                    )
+                  )
+                )
+                return
+              }
+
+              if writer.status == .completed {
+                onProgress?(1.0)
+                var readyContext: [String: Any] = [
+                  "output": outputURL.path,
+                  "renderSize": "\(Int(renderSize.width))x\(Int(renderSize.height))",
+                ]
+                VideoColorPipeline.metadataContext(
+                  prefix: "outputTrack",
+                  metadata: VideoColorPipeline.assetTrackColorMetadata(
+                    AVAsset(url: outputURL).tracks(withMediaType: .video).first
+                  )
+                ).forEach { readyContext[$0.key] = $0.value }
+                readyContext["workingColorSpace"] = VideoColorPipeline.workingColorSpaceName
+                NativeLogger.i(
+                  "Export",
+                  "Styled camera intermediate ready",
+                  context: readyContext
+                )
+                finish(
+                  .success(
+                    StyledCameraRenderResult(
+                      url: outputURL,
+                      placementSourceRect: placementSourceRect
+                    )
+                  )
+                )
+              } else {
+                finish(
+                  .failure(
+                    makeAdvancedCameraExportError(
+                      stage: .styledIntermediateBuild,
+                      reason: "The styled camera intermediate writer failed.",
+                      context: ["error": writer.error?.localizedDescription ?? "unknown"]
+                    )
+                  )
+                )
+              }
+            }
+            return false
+          }
+
+          defer {
+            CMSampleBufferInvalidate(sampleBuffer)
+          }
+
+          guard let sourcePixelBuffer = CMSampleBufferGetImageBuffer(sampleBuffer) else {
+            failRender(reason: "The styled camera intermediate received an invalid source frame.")
+            return false
+          }
+
+          if !didLogSourceColorMetadata {
+            didLogSourceColorMetadata = true
+            VideoColorPipeline.logColorMetadata(
+              category: "Export",
+              message: "Styled camera pre-pass source color metadata",
+              formatDescription: CMSampleBufferGetFormatDescription(sampleBuffer),
+              pixelBuffer: sourcePixelBuffer,
+              extraContext: [
+                "input": inputAsset.description,
+                "output": outputURL.path,
+              ]
+            )
+          }
+
+          guard let context = self.makeBitmapContext(pixelBuffer: renderedPixelBuffer, colorSpace: colorSpace) else {
+            failRender(reason: "The styled camera intermediate could not create a render context.")
+            return false
+          }
+
+          defer {
+            CVPixelBufferUnlockBaseAddress(renderedPixelBuffer, [])
+          }
+
+          let sourceImage = CIImage(cvPixelBuffer: sourcePixelBuffer).transformed(by: sourceTransform)
+          guard
+            let sourceCGImage = ciContext.createCGImage(
+              sourceImage,
+              from: CGRect(origin: .zero, size: sourceSize),
+              format: .RGBA8,
+              colorSpace: colorSpace
+            )
+          else {
+            failRender(reason: "The styled camera intermediate could not render the camera frame.")
+            return false
+          }
+
+          context.clear(renderBounds)
+          context.interpolationQuality = .high
+
+          if let shadowImage {
+            context.draw(shadowImage, in: renderBounds)
+          }
+
+          context.saveGState()
+          context.addPath(maskPath)
+          context.clip()
+
+          if params.mirror {
+            context.translateBy(x: fittedDrawRect.minX + fittedDrawRect.maxX, y: 0)
+            context.scaleBy(x: -1.0, y: 1.0)
+          }
+
+          context.draw(sourceCGImage, in: fittedDrawRect)
+          context.restoreGState()
+
+          if let borderImage {
+            context.draw(borderImage, in: renderBounds)
+          }
+
+          let presentationTime = CMSampleBufferGetPresentationTimeStamp(sampleBuffer)
+          guard adaptor.append(renderedPixelBuffer, withPresentationTime: presentationTime) else {
+            failRender(
+              reason: "The styled camera intermediate writer rejected a rendered frame.",
+              context: ["error": writer.error?.localizedDescription ?? "unknown"]
+            )
+            return false
+          }
+
+          logExportMemoryCheckpoint(stage: "camera_styled_prepass", frameIndex: frameIndex)
+          frameIndex += 1
+          onProgress?(min(1.0, max(0.0, presentationTime.seconds / durationSeconds)))
+          return true
+        }
+
+        if !shouldContinue {
           return
         }
-
-        guard let sourcePixelBuffer = CMSampleBufferGetImageBuffer(sampleBuffer) else {
-          failRender(reason: "The styled camera intermediate received an invalid source frame.")
-          return
-        }
-
-        if !didLogSourceColorMetadata {
-          didLogSourceColorMetadata = true
-          VideoColorPipeline.logColorMetadata(
-            category: "Export",
-            message: "Styled camera pre-pass source color metadata",
-            formatDescription: CMSampleBufferGetFormatDescription(sampleBuffer),
-            pixelBuffer: sourcePixelBuffer,
-            extraContext: [
-              "input": inputAsset.description,
-              "output": outputURL.path,
-            ]
-          )
-        }
-
-        guard let pixelBufferPool = adaptor.pixelBufferPool else {
-          failRender(reason: "The styled camera intermediate writer has no pixel buffer pool.")
-          return
-        }
-
-        var renderedPixelBuffer: CVPixelBuffer?
-        let pixelStatus = CVPixelBufferPoolCreatePixelBuffer(
-          kCFAllocatorDefault,
-          pixelBufferPool,
-          &renderedPixelBuffer
-        )
-        guard pixelStatus == kCVReturnSuccess, let renderedPixelBuffer else {
-          failRender(
-            reason: "The styled camera intermediate could not allocate an output frame.",
-            context: ["status": pixelStatus]
-          )
-          return
-        }
-        VideoColorPipeline.tag(pixelBuffer: renderedPixelBuffer)
-
-        guard let context = self.makeBitmapContext(pixelBuffer: renderedPixelBuffer, colorSpace: colorSpace) else {
-          failRender(reason: "The styled camera intermediate could not create a render context.")
-          return
-        }
-
-        defer {
-          CVPixelBufferUnlockBaseAddress(renderedPixelBuffer, [])
-        }
-
-        let sourceImage = CIImage(cvPixelBuffer: sourcePixelBuffer).transformed(by: sourceTransform)
-        guard
-          let sourceCGImage = ciContext.createCGImage(
-            sourceImage,
-            from: CGRect(origin: .zero, size: sourceSize),
-            format: .RGBA8,
-            colorSpace: colorSpace
-          )
-        else {
-          failRender(reason: "The styled camera intermediate could not render the camera frame.")
-          return
-        }
-
-        context.clear(renderBounds)
-        context.interpolationQuality = .high
-
-        if let shadowImage {
-          context.draw(shadowImage, in: renderBounds)
-        }
-
-        context.saveGState()
-        context.addPath(maskPath)
-        context.clip()
-
-        if params.mirror {
-          context.translateBy(x: fittedDrawRect.minX + fittedDrawRect.maxX, y: 0)
-          context.scaleBy(x: -1.0, y: 1.0)
-        }
-
-        context.draw(sourceCGImage, in: fittedDrawRect)
-        context.restoreGState()
-
-        if let borderImage {
-          context.draw(borderImage, in: renderBounds)
-        }
-
-        let presentationTime = CMSampleBufferGetPresentationTimeStamp(sampleBuffer)
-        guard adaptor.append(renderedPixelBuffer, withPresentationTime: presentationTime) else {
-          failRender(
-            reason: "The styled camera intermediate writer rejected a rendered frame.",
-            context: ["error": writer.error?.localizedDescription ?? "unknown"]
-          )
-          return
-        }
-
-        logExportMemoryCheckpoint(stage: "camera_styled_prepass", frameIndex: frameIndex)
-        frameIndex += 1
-        onProgress?(min(1.0, max(0.0, presentationTime.seconds / durationSeconds)))
       }
     }
   }
