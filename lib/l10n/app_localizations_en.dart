@@ -190,6 +190,9 @@ class AppLocalizationsEn extends AppLocalizations {
   String get original => 'Original';
 
   @override
+  String get fhd1080 => '1080p';
+
+  @override
   String get uhd2k => '2K (1440P)';
 
   @override
@@ -2133,4 +2136,119 @@ class AppLocalizationsEn extends AppLocalizations {
   @override
   String get homeGuideReplayUnavailable =>
       'Return to recording setup to replay the quick tour.';
+
+  @override
+  String get window => 'Window';
+
+  @override
+  String get area => 'Area';
+
+  @override
+  String get mic => 'Mic';
+
+  @override
+  String get system => 'System';
+
+  @override
+  String get update => 'Update';
+
+  @override
+  String get screen => 'Screen';
+
+  @override
+  String get app => 'App';
+
+  @override
+  String get selectDisplay => 'Select Display';
+
+  @override
+  String get selectWindow => 'Select Window';
+
+  @override
+  String get selectMicrophone => 'Select Microphone';
+
+  @override
+  String get selectCamera => 'Select Camera';
+
+  @override
+  String get unknownDisplay => 'Unknown Display';
+
+  @override
+  String get unknownWindow => 'Unknown Window';
+
+  @override
+  String get unknownMic => 'Unknown Mic';
+
+  @override
+  String get unknownCamera => 'Unknown Camera';
+
+  @override
+  String get noCamera => 'No camera';
+
+  @override
+  String get doNotRecordAudio => 'Do not record audio';
+
+  @override
+  String get stoppingEllipsis => 'Stopping...';
+
+  @override
+  String get pauseRecording => 'Pause recording';
+
+  @override
+  String get resumeRecording => 'Resume recording';
+
+  @override
+  String get recordingInProgressLabel => 'Recording in progress';
+
+  @override
+  String get recordingPausedLabel => 'Recording paused';
+
+  @override
+  String get stoppingRecording => 'Stopping recording';
+
+  @override
+  String get recordingIndicatorHelpPause =>
+      'Primary action pauses recording. Secondary stop control stops recording.';
+
+  @override
+  String get recordingIndicatorHelpResume =>
+      'Primary action resumes recording. Secondary stop control stops recording.';
+
+  @override
+  String get recordingIndicatorHelpStopping => 'Recording is stopping.';
+
+  @override
+  String get defaultExportFileNameLabel => 'Export';
+
+  @override
+  String get defaultClipFileNameLabel => 'Clip';
+
+  @override
+  String get licenseInitializing => 'Initializing...';
+
+  @override
+  String get licenseInternetRequired => 'Internet required to verify license.';
+
+  @override
+  String get licenseOfflineCached => 'Offline mode (cached)';
+
+  @override
+  String get licenseValidationFailed => 'Could not validate license.';
+
+  @override
+  String get licenseTrialConsumptionFailed => 'Could not sync trial usage.';
+
+  @override
+  String get licenseNetworkUnavailableWhileConsumingTrial =>
+      'Network unavailable while syncing trial usage.';
+
+  @override
+  String get licenseNetworkUnavailableWhileDeactivatingDevice =>
+      'Network unavailable while deactivating device.';
+
+  @override
+  String get licenseValidated => 'License validated.';
+
+  @override
+  String get licenseNotEntitled => 'This license does not unlock Pro features.';
 }

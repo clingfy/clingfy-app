@@ -21,10 +21,10 @@ class AppLocalizationsAr extends AppLocalizations {
   String get settings => 'الإعدادات';
 
   @override
-  String get tabScreenAudio => 'Screen & Audio';
+  String get tabScreenAudio => 'الشاشة والصوت';
 
   @override
-  String get tabFaceCam => 'Face Cam';
+  String get tabFaceCam => 'كاميرا الوجه';
 
   @override
   String get screenTarget => 'هدف الشاشة';
@@ -148,24 +148,24 @@ class AppLocalizationsAr extends AppLocalizations {
   String get resolution => 'الدقة';
 
   @override
-  String get frameRate => 'Frame Rate';
+  String get frameRate => 'معدل الإطارات';
 
   @override
   String fps(Object value) {
-    return '$value FPS';
+    return '$value إطار/ث';
   }
 
   @override
   String get saveLocation => 'موقع الحفظ';
 
   @override
-  String get format => 'Format';
+  String get format => 'التنسيق';
 
   @override
-  String get codec => 'Codec';
+  String get codec => 'الترميز';
 
   @override
-  String get bitrate => 'Bitrate';
+  String get bitrate => 'معدل البت';
 
   @override
   String get hevc => 'HEVC (H.265)';
@@ -177,16 +177,19 @@ class AppLocalizationsAr extends AppLocalizations {
   String get auto => 'تلقائي';
 
   @override
-  String get low => 'Low';
+  String get low => 'منخفضة';
 
   @override
-  String get medium => 'Medium';
+  String get medium => 'متوسطة';
 
   @override
-  String get high => 'High';
+  String get high => 'عالية';
 
   @override
-  String get original => 'Original';
+  String get original => 'أصلي';
+
+  @override
+  String get fhd1080 => '1080p';
 
   @override
   String get uhd2k => '2K (1440P)';
@@ -306,8 +309,7 @@ class AppLocalizationsAr extends AppLocalizations {
   String get cursorHighlight => 'وضوح تمييز المؤشر';
 
   @override
-  String get cursorHighlightVisibility =>
-      'Vizibilitatea evidențierii cursorului';
+  String get cursorHighlightVisibility => 'ظهور تمييز المؤشر';
 
   @override
   String get cursorHint => 'تمييز المؤشر نشط فقط أثناء التسجيل.';
@@ -625,7 +627,7 @@ class AppLocalizationsAr extends AppLocalizations {
   String get effectsSettings => 'إعدادات التأثيرات';
 
   @override
-  String get exportSettings => 'Export Settings';
+  String get exportSettings => 'إعدادات التصدير';
 
   @override
   String get canvas => 'اللوحة';
@@ -938,19 +940,19 @@ class AppLocalizationsAr extends AppLocalizations {
   String get vertical => 'عمودي';
 
   @override
-  String get vertical4k => 'Vertical 4K (2160x3840)';
+  String get vertical4k => '4K عمودي (2160x3840)';
 
   @override
-  String get canvasAspect => 'Canvas Aspect';
+  String get canvasAspect => 'نسبة أبعاد اللوحة';
 
   @override
-  String get fitMode => 'Fit Mode';
+  String get fitMode => 'وضع الاحتواء';
 
   @override
-  String get fit => 'Fit';
+  String get fit => 'احتواء';
 
   @override
-  String get fill => 'Fill';
+  String get fill => 'ملء';
 
   @override
   String get recordingInProgress => 'جاري التسجيل الآن';
@@ -2121,4 +2123,122 @@ class AppLocalizationsAr extends AppLocalizations {
   @override
   String get homeGuideReplayUnavailable =>
       'عد إلى إعداد التسجيل لإعادة تشغيل الجولة السريعة.';
+
+  @override
+  String get window => 'النافذة';
+
+  @override
+  String get area => 'المنطقة';
+
+  @override
+  String get mic => 'الميكروفون';
+
+  @override
+  String get system => 'النظام';
+
+  @override
+  String get update => 'تحديث';
+
+  @override
+  String get screen => 'شاشة';
+
+  @override
+  String get app => 'تطبيق';
+
+  @override
+  String get selectDisplay => 'اختر الشاشة';
+
+  @override
+  String get selectWindow => 'اختر النافذة';
+
+  @override
+  String get selectMicrophone => 'اختر الميكروفون';
+
+  @override
+  String get selectCamera => 'اختر الكاميرا';
+
+  @override
+  String get unknownDisplay => 'شاشة غير معروفة';
+
+  @override
+  String get unknownWindow => 'نافذة غير معروفة';
+
+  @override
+  String get unknownMic => 'ميكروفون غير معروف';
+
+  @override
+  String get unknownCamera => 'كاميرا غير معروفة';
+
+  @override
+  String get noCamera => 'بدون كاميرا';
+
+  @override
+  String get doNotRecordAudio => 'عدم تسجيل الصوت';
+
+  @override
+  String get stoppingEllipsis => 'جاري الإيقاف...';
+
+  @override
+  String get pauseRecording => 'إيقاف التسجيل مؤقتًا';
+
+  @override
+  String get resumeRecording => 'استئناف التسجيل';
+
+  @override
+  String get recordingInProgressLabel => 'التسجيل جارٍ';
+
+  @override
+  String get recordingPausedLabel => 'التسجيل متوقف مؤقتًا';
+
+  @override
+  String get stoppingRecording => 'جارٍ إيقاف التسجيل';
+
+  @override
+  String get recordingIndicatorHelpPause =>
+      'الإجراء الأساسي يوقف التسجيل مؤقتًا. عنصر الإيقاف الثانوي يوقف التسجيل.';
+
+  @override
+  String get recordingIndicatorHelpResume =>
+      'الإجراء الأساسي يستأنف التسجيل. عنصر الإيقاف الثانوي يوقف التسجيل.';
+
+  @override
+  String get recordingIndicatorHelpStopping => 'التسجيل قيد الإيقاف.';
+
+  @override
+  String get defaultExportFileNameLabel => 'تصدير';
+
+  @override
+  String get defaultClipFileNameLabel => 'مقطع';
+
+  @override
+  String get licenseInitializing => 'جارٍ التهيئة...';
+
+  @override
+  String get licenseInternetRequired =>
+      'يلزم الاتصال بالإنترنت للتحقق من الترخيص.';
+
+  @override
+  String get licenseOfflineCached =>
+      'الوضع دون اتصال (من ذاكرة التخزين المؤقت)';
+
+  @override
+  String get licenseValidationFailed => 'تعذر التحقق من الترخيص.';
+
+  @override
+  String get licenseTrialConsumptionFailed =>
+      'تعذر مزامنة استخدام النسخة التجريبية.';
+
+  @override
+  String get licenseNetworkUnavailableWhileConsumingTrial =>
+      'الشبكة غير متاحة أثناء مزامنة استخدام النسخة التجريبية.';
+
+  @override
+  String get licenseNetworkUnavailableWhileDeactivatingDevice =>
+      'الشبكة غير متاحة أثناء إلغاء تفعيل الجهاز.';
+
+  @override
+  String get licenseValidated => 'تم التحقق من الترخيص.';
+
+  @override
+  String get licenseNotEntitled => 'هذا الترخيص لا يفعّل مزايا Pro.';
 }

@@ -45,7 +45,7 @@
   "@fps": {
     "placeholders": {
       "value": {
-        "type": "String"
+        "type": "Object"
       }
     }
   },
