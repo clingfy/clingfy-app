@@ -86,8 +86,11 @@ class OptionPickerPopover: NSViewController {
     refreshButton.isBordered = false
     if #available(macOS 11.0, *) {
       let config = NSImage.SymbolConfiguration(pointSize: 13, weight: .medium)
+      let refreshLabel = NativeStringsStore.shared.string(
+        for: NativeUIStringKey.preRecordingBarRefresh
+      )
       refreshButton.image = NSImage(
-        systemSymbolName: "arrow.clockwise", accessibilityDescription: "Refresh")?
+        systemSymbolName: "arrow.clockwise", accessibilityDescription: refreshLabel)?
         .withSymbolConfiguration(config)
     } else {
       refreshButton.image = NSImage(named: NSImage.refreshTemplateName)

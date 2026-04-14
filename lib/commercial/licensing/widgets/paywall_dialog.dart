@@ -5,6 +5,7 @@ import 'package:flutter/cupertino.dart' show CupertinoIcons;
 
 import 'package:clingfy/app/config/build_config.dart';
 import 'package:clingfy/commercial/licensing/license_controller.dart';
+import 'package:clingfy/commercial/licensing/license_error_mapper.dart';
 import 'package:clingfy/l10n/app_localizations.dart';
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
@@ -106,7 +107,7 @@ class _PaywallDialogState extends State<PaywallDialog> {
     setState(() {
       _isActivating = false;
       _errorText = controller.state.message.isNotEmpty
-          ? controller.state.message
+          ? localizeLicenseMessage(l10n, controller.state.message)
           : l10n.paywallActivationFailed;
     });
   }

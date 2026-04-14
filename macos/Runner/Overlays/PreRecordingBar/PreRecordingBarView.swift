@@ -82,32 +82,55 @@ class PreRecordingBarView: NSView {
   }
 
   private func setupButtons() {
+    let strings = NativeStringsStore.shared
     closeButton = createButton(imageName: "xmark", action: #selector(closeTapped))
 
     displayButton = createButton(
-      imageName: "display", label: "Display", action: #selector(displayTapped))
+      imageName: "display",
+      label: strings.string(for: NativeUIStringKey.preRecordingBarDisplay),
+      action: #selector(displayTapped)
+    )
 
     windowButton = createButton(
-      imageName: "macwindow", label: "Window", action: #selector(windowTapped))
+      imageName: "macwindow",
+      label: strings.string(for: NativeUIStringKey.preRecordingBarWindow),
+      action: #selector(windowTapped)
+    )
 
     areaButton = createButton(
-      imageName: "rectangle.dashed", label: "Area", action: #selector(areaTapped))
+      imageName: "rectangle.dashed",
+      label: strings.string(for: NativeUIStringKey.preRecordingBarArea),
+      action: #selector(areaTapped)
+    )
 
     cameraButton = createButton(
-      imageName: "video", label: "Camera", action: #selector(cameraTapped))
+      imageName: "video",
+      label: strings.string(for: NativeUIStringKey.preRecordingBarCamera),
+      action: #selector(cameraTapped)
+    )
 
-    micButton = createButton(imageName: "mic", label: "Mic", action: #selector(micTapped))
+    micButton = createButton(
+      imageName: "mic",
+      label: strings.string(for: NativeUIStringKey.preRecordingBarMic),
+      action: #selector(micTapped)
+    )
 
     systemAudioButton = createButton(
-      imageName: "speaker.wave.2", label: "System", action: #selector(systemAudioTapped))
+      imageName: "speaker.wave.2",
+      label: strings.string(for: NativeUIStringKey.preRecordingBarSystem),
+      action: #selector(systemAudioTapped)
+    )
 
     updateButton = createButton(
-      imageName: "arrow.up.circle", label: "Update", action: #selector(updateTapped))
+      imageName: "arrow.up.circle",
+      label: strings.string(for: NativeUIStringKey.preRecordingBarUpdate),
+      action: #selector(updateTapped)
+    )
     updateButton.contentTintColor = NSColor(red: 0x89/255.0, green: 0x57/255.0, blue: 0xE5/255.0, alpha: 1.0)
 
     pauseResumeButton = createButton(
       imageName: "pause.fill",
-      label: "Pause",
+      label: strings.string(for: NativeUIStringKey.preRecordingBarPause),
       action: #selector(pauseResumeTapped)
     )
     pauseResumeButton.isHidden = true
@@ -148,6 +171,46 @@ class PreRecordingBarView: NSView {
     ])
   }
 
+  func refreshLocalizedStrings() {
+    let strings = NativeStringsStore.shared
+    applyButtonPresentation(
+      displayButton,
+      imageName: "display",
+      label: strings.string(for: NativeUIStringKey.preRecordingBarDisplay)
+    )
+    applyButtonPresentation(
+      windowButton,
+      imageName: "macwindow",
+      label: strings.string(for: NativeUIStringKey.preRecordingBarWindow)
+    )
+    applyButtonPresentation(
+      areaButton,
+      imageName: "rectangle.dashed",
+      label: strings.string(for: NativeUIStringKey.preRecordingBarArea)
+    )
+    applyButtonPresentation(
+      cameraButton,
+      imageName: "video",
+      label: strings.string(for: NativeUIStringKey.preRecordingBarCamera)
+    )
+    applyButtonPresentation(
+      micButton,
+      imageName: "mic",
+      label: strings.string(for: NativeUIStringKey.preRecordingBarMic)
+    )
+    applyButtonPresentation(
+      systemAudioButton,
+      imageName: "speaker.wave.2",
+      label: strings.string(for: NativeUIStringKey.preRecordingBarSystem)
+    )
+    applyButtonPresentation(
+      updateButton,
+      imageName: "arrow.up.circle",
+      label: strings.string(for: NativeUIStringKey.preRecordingBarUpdate)
+    )
+    updateState(state)
+  }
+
   private func createButton(imageName: String, label: String? = nil, action: Selector) -> NSButton {
     let button = NSButton(frame: .zero)
 
@@ -155,18 +218,7 @@ class PreRecordingBarView: NSView {
     button.bezelStyle = .shadowlessSquare
 
     button.isBordered = false
-    button.title = label ?? ""
-
-    // FIX 2: Use the compatibility helper for images with configuration if available
-    if #available(macOS 11.0, *) {
-      let config = NSImage.SymbolConfiguration(pointSize: 18, weight: .medium)
-      button.image = NSImage(systemSymbolName: imageName, accessibilityDescription: label)?
-        .withSymbolConfiguration(config)
-    } else {
-      button.image = NSImage.symbol(imageName, accessibilityDescription: label)
-    }
-
-    button.imagePosition = label == nil ? .imageOnly : .imageLeft
+    applyButtonPresentation(button, imageName: imageName, label: label)
     button.target = self
     button.action = action
 
@@ -179,6 +231,18 @@ class PreRecordingBarView: NSView {
     }
 
     return button
+  }
+
+  private func applyButtonPresentation(_ button: NSButton, imageName: String, label: String?) {
+    button.title = label ?? ""
+    if #available(macOS 11.0, *) {
+      let config = NSImage.SymbolConfiguration(pointSize: 18, weight: .medium)
+      button.image = NSImage(systemSymbolName: imageName, accessibilityDescription: label)?
+        .withSymbolConfiguration(config)
+    } else {
+      button.image = NSImage.symbol(imageName, accessibilityDescription: label)
+    }
+    button.imagePosition = label == nil ? .imageOnly : .imageLeft
   }
 
   private func createSeparator() -> NSView {
@@ -269,21 +333,29 @@ class PreRecordingBarView: NSView {
     pauseResumeButton.isHidden = !(canPauseResume && (isRecording || isPaused))
     pauseResumeButton.isEnabled = !pauseResumeInFlight && (isRecording || isPaused)
     if !pauseResumeButton.isHidden {
+      let strings = NativeStringsStore.shared
+      let buttonTitle = strings.string(
+        for: isPaused ? NativeUIStringKey.preRecordingBarResume : NativeUIStringKey.preRecordingBarPause
+      )
+      let accessibilityDescription = strings.string(
+        for: isPaused
+          ? NativeUIStringKey.recordingIndicatorResumeRecording
+          : NativeUIStringKey.recordingIndicatorPauseRecording
+      )
       if #available(macOS 11.0, *) {
         let config = NSImage.SymbolConfiguration(pointSize: 16, weight: .medium)
         let symbolName = isPaused ? "play.fill" : "pause.fill"
-        let accessibility = isPaused ? "Resume recording" : "Pause recording"
         pauseResumeButton.image = NSImage(
           systemSymbolName: symbolName,
-          accessibilityDescription: accessibility
+          accessibilityDescription: accessibilityDescription
         )?.withSymbolConfiguration(config)
       } else {
         pauseResumeButton.image = NSImage.symbol(
           isPaused ? "play.fill" : "pause.fill",
-          accessibilityDescription: isPaused ? "Resume recording" : "Pause recording"
+          accessibilityDescription: accessibilityDescription
         )
       }
-      pauseResumeButton.title = isPaused ? "Resume" : "Pause"
+      pauseResumeButton.title = buttonTitle
       pauseResumeButton.contentTintColor = isPaused ? .controlAccentColor : .secondaryLabelColor
     }
 
@@ -296,11 +368,19 @@ class PreRecordingBarView: NSView {
       if #available(macOS 11.0, *) {
         let config = NSImage.SymbolConfiguration(pointSize: 18, weight: .bold)
         recordButton.image = NSImage(
-          systemSymbolName: "stop.circle.fill", accessibilityDescription: "Stop recording")?
+          systemSymbolName: "stop.circle.fill",
+          accessibilityDescription: NativeStringsStore.shared.string(
+            for: NativeUIStringKey.accessibilityStopRecording
+          )
+        )?
           .withSymbolConfiguration(config)
       } else {
         recordButton.image = NSImage.symbol(
-          "stop.circle.fill", accessibilityDescription: "Stop recording")
+          "stop.circle.fill",
+          accessibilityDescription: NativeStringsStore.shared.string(
+            for: NativeUIStringKey.accessibilityStopRecording
+          )
+        )
       }
       recordButton.contentTintColor = .systemRed
       recordButton.isEnabled = !isFinalizing
@@ -313,11 +393,19 @@ class PreRecordingBarView: NSView {
       if #available(macOS 11.0, *) {
         let config = NSImage.SymbolConfiguration(pointSize: 18, weight: .medium)
         recordButton.image = NSImage(
-          systemSymbolName: "record.circle", accessibilityDescription: "Start recording")?
+          systemSymbolName: "record.circle",
+          accessibilityDescription: NativeStringsStore.shared.string(
+            for: NativeUIStringKey.accessibilityStartRecording
+          )
+        )?
           .withSymbolConfiguration(config)
       } else {
         recordButton.image = NSImage.symbol(
-          "record.circle", accessibilityDescription: "Start recording")
+          "record.circle",
+          accessibilityDescription: NativeStringsStore.shared.string(
+            for: NativeUIStringKey.accessibilityStartRecording
+          )
+        )
       }
       recordButton.contentTintColor = recordEnabled ? .controlAccentColor : .secondaryLabelColor
       recordButton.isEnabled = recordEnabled
