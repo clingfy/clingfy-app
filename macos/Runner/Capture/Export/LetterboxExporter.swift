@@ -1268,6 +1268,7 @@ final class LetterboxExporter {
         completed = true
 
         writer.finishWriting {
+          reader.cancelReading()
           DispatchQueue.main.async {
             if writer.status == .completed {
               onProgress?(progressRange.upperBound)
