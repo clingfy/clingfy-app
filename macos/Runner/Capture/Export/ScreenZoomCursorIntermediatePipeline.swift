@@ -30,6 +30,10 @@ struct ScreenPreparedIntermediate {
 
 final class ScreenZoomCursorIntermediatePipeline {
   private let builder = CompositionBuilder()
+  private static let storageEstimateReferenceBitrateBps = 330_000_000.0
+  private static let storageEstimateReferencePixelsPerSecond = Double(1920 * 1080 * 30)
+  private static let storageEstimateSafetyMultiplier = 1.15
+  private static let storageEstimateSafetyBytes: Int64 = 2 * 1024 * 1024 * 1024
 
   private func clearPixelBuffer(_ pixelBuffer: CVPixelBuffer) {
     CVPixelBufferLockBaseAddress(pixelBuffer, [])
@@ -37,6 +41,83 @@ final class ScreenZoomCursorIntermediatePipeline {
       memset(baseAddress, 0, CVPixelBufferGetDataSize(pixelBuffer))
     }
     CVPixelBufferUnlockBaseAddress(pixelBuffer, [])
+  }
+
+  private func fileSizeBytes(for url: URL) -> Int64 {
+    let rawValue =
+      (try? FileManager.default.attributesOfItem(atPath: url.path)[.size] as? NSNumber)?
+      .int64Value
+    return rawValue ?? 0
+  }
+
+  private func writerStatusDescription(_ status: AVAssetWriter.Status) -> String {
+    switch status {
+    case .unknown:
+      return "unknown"
+    case .writing:
+      return "writing"
+    case .completed:
+      return "completed"
+    case .failed:
+      return "failed"
+    case .cancelled:
+      return "cancelled"
+    @unknown default:
+      return "unrecognized"
+    }
+  }
+
+  static func effectiveZoomSegments(
+    params: CompositionParams,
+    cursorRecording: CursorRecording?,
+    durationSeconds: Double?
+  ) -> [ZoomTimelineSegment] {
+    if let zoomSegments = params.zoomSegments {
+      return zoomSegments.filter { $0.endMs > $0.startMs }
+    }
+
+    guard let cursorRecording else { return [] }
+
+    let resolvedDuration = max(
+      durationSeconds ?? cursorRecording.frames.last?.t ?? 0.0,
+      0.0
+    )
+    guard resolvedDuration > 0 else { return [] }
+
+    let fps = params.fpsHint > 0 ? Double(params.fpsHint) : 60.0
+    return ZoomTimelineBuilder.buildSegments(
+      cursorRecording: cursorRecording,
+      durationSeconds: resolvedDuration,
+      fps: fps
+    ).map { ZoomTimelineSegment(startMs: $0.startMs, endMs: $0.endMs) }
+  }
+
+  static func estimatedTempRequirementBytes(
+    renderSize: CGSize,
+    fpsHint: Int32,
+    durationSeconds: Double
+  ) -> Int64 {
+    let resolvedDuration = max(durationSeconds, 0.0)
+    guard resolvedDuration > 0 else {
+      return storageEstimateSafetyBytes
+    }
+
+    let pixelsPerSecond =
+      Double(max(renderSize.width, 1.0))
+      * Double(max(renderSize.height, 1.0))
+      * Double(max(fpsHint, 1))
+    let bitrateScale = pixelsPerSecond / storageEstimateReferencePixelsPerSecond
+    let estimatedBitrateBps = storageEstimateReferenceBitrateBps * max(bitrateScale, 0.0)
+    let estimatedBytes = (estimatedBitrateBps / 8.0) * resolvedDuration
+    let withSafety =
+      (estimatedBytes * storageEstimateSafetyMultiplier)
+      + Double(storageEstimateSafetyBytes)
+
+    guard withSafety.isFinite else { return Int64.max }
+    if withSafety >= Double(Int64.max) {
+      return Int64.max
+    }
+    return Int64(withSafety.rounded(.up))
   }
 
   func requiresPrepass(
@@ -49,9 +130,12 @@ final class ScreenZoomCursorIntermediatePipeline {
     guard let cameraParams, cameraParams.visible, cameraParams.layoutPreset != .hidden else {
       return false
     }
-    guard params.showCursor, params.zoomEnabled else { return false }
-    guard let cursorRecording, !cursorRecording.frames.isEmpty else { return false }
-    return true
+    guard params.zoomEnabled else { return false }
+    return !Self.effectiveZoomSegments(
+      params: params,
+      cursorRecording: cursorRecording,
+      durationSeconds: cursorRecording?.frames.last?.t
+    ).isEmpty
   }
 
   func prepareIntermediate(
@@ -81,17 +165,11 @@ final class ScreenZoomCursorIntermediatePipeline {
       audioGainDb: params.audioGainDb,
       audioVolumePercent: params.audioVolumePercent
     )
-    sanitizedParams.zoomSegments = params.zoomSegments
-    if sanitizedParams.zoomSegments == nil {
-      let autoSegments = ZoomTimelineBuilder.buildSegments(
-        cursorRecording: cursorRecording,
-        durationSeconds: inputAsset.duration.seconds,
-        fps: params.fpsHint > 0 ? Double(params.fpsHint) : 60.0
-      )
-      sanitizedParams.zoomSegments = autoSegments.map {
-        ZoomTimelineSegment(startMs: $0.startMs, endMs: $0.endMs)
-      }
-    }
+    sanitizedParams.zoomSegments = Self.effectiveZoomSegments(
+      params: params,
+      cursorRecording: cursorRecording,
+      durationSeconds: inputAsset.duration.seconds
+    )
 
     guard
       let prepass = builder.buildScreenPrepass(
@@ -256,10 +334,16 @@ final class ScreenZoomCursorIntermediatePipeline {
 
     removeFileIfExists(outputURL)
     let durationSeconds = max(inputAsset.duration.seconds, 0.001)
+    let estimatedRequiredTempBytes = Self.estimatedTempRequirementBytes(
+      renderSize: renderSize,
+      fpsHint: params.fpsHint,
+      durationSeconds: durationSeconds
+    )
     let renderQueue = DispatchQueue(label: "Clingfy.ScreenZoomCursorIntermediateRender")
     let renderBounds = CGRect(origin: .zero, size: renderSize)
     let colorSpace = VideoColorPipeline.workingColorSpace
     let ciContext = CIContext(options: [.cacheIntermediates: false])
+    let stageStart = CFAbsoluteTimeGetCurrent()
     var didLogSourceColorMetadata = false
     var completed = false
     var frameIndex = 0
@@ -332,14 +416,7 @@ final class ScreenZoomCursorIntermediatePipeline {
 
           let allocation = makePooledPixelBuffer(from: pixelBufferPool)
           if allocation.status == kCVReturnWouldExceedAllocationThreshold {
-            NativeLogger.d(
-              "ExportMemory",
-              "Pixel buffer pool backpressure",
-              context: [
-                "stage": "screen_prepass",
-                "frame": frameIndex,
-              ]
-            )
+            logExportBackpressure(stage: "screen_prepass", frameIndex: frameIndex)
             return false
           }
 
@@ -358,6 +435,11 @@ final class ScreenZoomCursorIntermediatePipeline {
               writerInput.markAsFinished()
               writer.finishWriting {
                 if writer.status == .completed {
+                  logExportStagePerformance(
+                    stage: "screen_prepass",
+                    frames: frameIndex,
+                    startedAt: stageStart
+                  )
                   var readyContext: [String: Any] = [
                     "output": outputURL.path,
                     "renderSize": "\(Int(renderSize.width))x\(Int(renderSize.height))",
@@ -464,9 +546,26 @@ final class ScreenZoomCursorIntermediatePipeline {
 
           let presentationTime = CMSampleBufferGetPresentationTimeStamp(sampleBuffer)
           if !adaptor.append(renderedPixelBuffer, withPresentationTime: presentationTime) {
+            let currentTempFileBytes = self.fileSizeBytes(for: outputURL)
+            let availableTempBytes = StorageInfoProvider.availableCapacity(for: AppPaths.tempRoot())
+            let remainingRequiredBytes = max(estimatedRequiredTempBytes - currentTempFileBytes, 0)
+            let reason: String
+            if let availableTempBytes, availableTempBytes < remainingRequiredBytes {
+              reason = "The screen pre-pass ran out of temporary disk space while writing frames."
+            } else {
+              reason = "The screen pre-pass frame could not be written."
+            }
             fail(
-              "The screen pre-pass frame could not be written.",
-              context: ["error": writer.error?.localizedDescription ?? "unknown"]
+              reason,
+              context: [
+                "error": writer.error?.localizedDescription ?? "unknown",
+                "writerStatus": self.writerStatusDescription(writer.status),
+                "currentTempFileBytes": currentTempFileBytes,
+                "availableTempBytes": availableTempBytes ?? -1,
+                "estimatedRequiredTempBytes": estimatedRequiredTempBytes,
+                "estimatedRemainingTempBytes": remainingRequiredBytes,
+                "tempPath": AppPaths.tempRoot().path,
+              ]
             )
             return false
           }

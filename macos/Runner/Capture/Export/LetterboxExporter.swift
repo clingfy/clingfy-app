@@ -4,6 +4,11 @@ import QuartzCore
 
 // Orchestrates export stages; camera-only pixel preprocessing stays in the pre-pass pipeline.
 final class LetterboxExporter {
+  private struct StaleTemporaryArtifactSweepResult {
+    let filesRemoved: Int
+    let bytesReclaimed: Int64
+  }
+
   private struct FrameContentMetrics {
     let totalPixels: Int
     let visiblePixels: Int
@@ -64,6 +69,11 @@ final class LetterboxExporter {
   private let builder = CompositionBuilder()
   private let cameraPrepassPipeline = CameraStyledIntermediatePipeline()
   private let screenPrepassPipeline = ScreenZoomCursorIntermediatePipeline()
+  private let staleTemporaryArtifactPrefixes = [
+    "screen.screen-prepass.",
+    "camera.styled.",
+    "raw.styled.",
+  ]
   private var currentSession: AVAssetExportSession?
   private var progressTimer: Timer?
   private var temporaryArtifacts: [URL] = []
@@ -111,6 +121,105 @@ final class LetterboxExporter {
       }
     }
     temporaryArtifacts.removeAll()
+  }
+
+  private func fileSizeBytes(for url: URL, fileManager: FileManager = .default) -> Int64 {
+    let rawValue =
+      (try? fileManager.attributesOfItem(atPath: url.path)[.size] as? NSNumber)?
+      .int64Value
+    return rawValue ?? 0
+  }
+
+  private func shouldSweepStaleTemporaryArtifact(named fileName: String) -> Bool {
+    guard fileName.hasSuffix(".mov") else { return false }
+    return staleTemporaryArtifactPrefixes.contains { fileName.hasPrefix($0) }
+  }
+
+  @discardableResult
+  private func cleanupStaleExportIntermediates(
+    at tempRoot: URL = AppPaths.tempRoot(),
+    fileManager: FileManager = .default
+  ) -> StaleTemporaryArtifactSweepResult {
+    guard
+      let urls = try? fileManager.contentsOfDirectory(
+        at: tempRoot,
+        includingPropertiesForKeys: nil,
+        options: [.skipsHiddenFiles]
+      )
+    else {
+      return StaleTemporaryArtifactSweepResult(filesRemoved: 0, bytesReclaimed: 0)
+    }
+
+    var filesRemoved = 0
+    var bytesReclaimed: Int64 = 0
+
+    for url in urls where shouldSweepStaleTemporaryArtifact(named: url.lastPathComponent) {
+      let fileBytes = fileSizeBytes(for: url, fileManager: fileManager)
+      do {
+        try fileManager.removeItem(at: url)
+        filesRemoved += 1
+        bytesReclaimed += fileBytes
+      } catch {
+        NativeLogger.w(
+          "Export",
+          "Failed to remove stale export temp artifact",
+          context: [
+            "path": url.path,
+            "error": error.localizedDescription,
+          ]
+        )
+      }
+    }
+
+    if filesRemoved > 0 {
+      NativeLogger.i(
+        "Export",
+        "Cleaned stale export temp artifacts",
+        context: [
+          "tempPath": tempRoot.path,
+          "filesRemoved": filesRemoved,
+          "bytesReclaimed": bytesReclaimed,
+        ]
+      )
+    }
+
+    return StaleTemporaryArtifactSweepResult(
+      filesRemoved: filesRemoved,
+      bytesReclaimed: bytesReclaimed
+    )
+  }
+
+  private func screenPrepassTempCapacityError(
+    targetSize: CGSize,
+    fpsHint: Int32,
+    durationSeconds: Double,
+    tempRoot: URL = AppPaths.tempRoot(),
+    availableCapacityBytesOverride: Int64? = nil
+  ) -> NSError? {
+    let availableCapacityBytes =
+      availableCapacityBytesOverride ?? StorageInfoProvider.availableCapacity(for: tempRoot)
+    guard let availableCapacityBytes else { return nil }
+
+    let estimatedRequiredTempBytes = ScreenZoomCursorIntermediatePipeline.estimatedTempRequirementBytes(
+      renderSize: targetSize,
+      fpsHint: fpsHint,
+      durationSeconds: durationSeconds
+    )
+
+    guard availableCapacityBytes < estimatedRequiredTempBytes else { return nil }
+
+    return makeScreenPrepassExportError(
+      stage: .build,
+      reason: "The screen pre-pass requires more temporary disk space than is currently available.",
+      context: [
+        "tempPath": tempRoot.path,
+        "availableTempBytes": availableCapacityBytes,
+        "estimatedRequiredTempBytes": estimatedRequiredTempBytes,
+        "target": "\(Int(targetSize.width))x\(Int(targetSize.height))",
+        "fpsHint": fpsHint,
+        "durationSeconds": durationSeconds,
+      ]
+    )
   }
 
   private func removeFileIfExists(_ url: URL) {
@@ -888,14 +997,61 @@ final class LetterboxExporter {
   private func validateFinalExportReferenceRender(
     referenceAsset: AVAsset,
     referenceComposition: AVVideoComposition,
-    finalExportAsset: AVAsset
+    finalExportAsset: AVAsset,
+    inlineCameraRenderPlan: CompositionBuilder.InlineCameraRenderPlan? = nil,
+    backgroundColor: Int? = nil,
+    backgroundImagePath: String? = nil
   ) -> NSError? {
     do {
-      let referenceImage = try sampleFrameImage(
-        asset: referenceAsset,
-        videoComposition: referenceComposition
+      let sampleTime = min(max(referenceAsset.duration.seconds * 0.5, 0.0), max(referenceAsset.duration.seconds - 0.001, 0.0))
+      let referenceImage: CGImage
+      if let inlineCameraRenderPlan {
+        let screenImage = try sampleFrameImage(
+          asset: referenceAsset,
+          videoComposition: referenceComposition,
+          at: CMTime(seconds: sampleTime, preferredTimescale: 600)
+        )
+        let cameraSourceImage = try sampleInlineCameraTrackImage(
+          asset: referenceAsset,
+          trackID: inlineCameraRenderPlan.cameraTrackID,
+          time: sampleTime
+        )
+        let renderer = InlineCameraRenderer(
+          renderSize: referenceComposition.renderSize,
+          backgroundColor: backgroundColor,
+          backgroundImagePath: backgroundImagePath
+        )
+        let composedImage = renderer.makeCompositedImage(
+          screenImage: CIImage(cgImage: screenImage),
+          cameraSourceImage: cameraSourceImage,
+          presentationTime: sampleTime,
+          plan: inlineCameraRenderPlan
+        )
+        let ciContext = CIContext(options: [.cacheIntermediates: false])
+        guard
+          let composedCGImage = ciContext.createCGImage(
+            composedImage,
+            from: CGRect(origin: .zero, size: referenceComposition.renderSize),
+            format: .RGBA8,
+            colorSpace: VideoColorPipeline.workingColorSpace
+          )
+        else {
+          return makeFinalExportValidationError(
+            reason: "The inline-camera validation render could not be materialized."
+          )
+        }
+        referenceImage = composedCGImage
+      } else {
+        referenceImage = try sampleFrameImage(
+          asset: referenceAsset,
+          videoComposition: referenceComposition,
+          at: CMTime(seconds: sampleTime, preferredTimescale: 600)
+        )
+      }
+      let finalImage = try sampleFrameImage(
+        asset: finalExportAsset,
+        at: CMTime(seconds: sampleTime, preferredTimescale: 600)
       )
-      let finalImage = try sampleFrameImage(asset: finalExportAsset)
 
       guard
         let referenceMetrics = analyzeFrameColorMetrics(referenceImage, ignoreTransparentPixels: false),
@@ -945,6 +1101,98 @@ final class LetterboxExporter {
     }
   }
 
+  private func sampleInlineCameraTrackImage(
+    asset: AVAsset,
+    trackID: CMPersistentTrackID,
+    time: Double
+  ) throws -> CIImage? {
+    guard let track = asset.tracks(withMediaType: .video).first(where: { $0.trackID == trackID }) else {
+      return nil
+    }
+
+    let reader = try AVAssetReader(asset: asset)
+    let output = AVAssetReaderTrackOutput(
+      track: track,
+      outputSettings: [
+        kCVPixelBufferPixelFormatTypeKey as String: kCVPixelFormatType_32BGRA
+      ]
+    )
+    output.alwaysCopiesSampleData = false
+    guard reader.canAdd(output) else {
+      return nil
+    }
+    reader.add(output)
+
+    let searchWindow = max(referenceFrameDurationSeconds(for: asset), 0.15)
+    let rangeStart = max(0.0, time - (searchWindow * 0.5))
+    reader.timeRange = CMTimeRange(
+      start: CMTime(seconds: rangeStart, preferredTimescale: 600),
+      duration: CMTime(seconds: searchWindow, preferredTimescale: 600)
+    )
+
+    guard reader.startReading() else {
+      throw reader.error ?? NSError(
+        domain: "Letterbox",
+        code: -26,
+        userInfo: [NSLocalizedDescriptionKey: "Inline camera validation reader could not start"]
+      )
+    }
+
+    let ciContext = CIContext(options: [.cacheIntermediates: false])
+    let normalizedTransform: CGAffineTransform = {
+      let orientedRect = CGRect(origin: .zero, size: track.naturalSize).applying(track.preferredTransform)
+      return track.preferredTransform.concatenating(
+        CGAffineTransform(translationX: -orientedRect.minX, y: -orientedRect.minY)
+      )
+    }()
+    let orientedSize: CGSize = {
+      let rect = CGRect(origin: .zero, size: track.naturalSize).applying(track.preferredTransform)
+      return CGSize(width: max(1.0, abs(rect.width)), height: max(1.0, abs(rect.height)))
+    }()
+
+    var bestImage: CIImage?
+    var bestDelta = Double.greatestFiniteMagnitude
+    while let sampleBuffer = output.copyNextSampleBuffer() {
+      defer { CMSampleBufferInvalidate(sampleBuffer) }
+      guard let pixelBuffer = CMSampleBufferGetImageBuffer(sampleBuffer) else { continue }
+
+      let sampleTime = CMSampleBufferGetPresentationTimeStamp(sampleBuffer).seconds
+      let delta = abs(sampleTime - time)
+      if delta > bestDelta && sampleTime > time {
+        break
+      }
+
+      let orientedImage = CIImage(cvPixelBuffer: pixelBuffer)
+        .transformed(by: normalizedTransform)
+        .cropped(to: CGRect(origin: .zero, size: orientedSize))
+      guard
+        let cgImage = ciContext.createCGImage(
+          orientedImage,
+          from: orientedImage.extent,
+          format: .RGBA8,
+          colorSpace: VideoColorPipeline.workingColorSpace
+        )
+      else {
+        continue
+      }
+
+      bestImage = CIImage(cgImage: cgImage)
+      bestDelta = delta
+    }
+
+    reader.cancelReading()
+    return bestImage
+  }
+
+  private func referenceFrameDurationSeconds(for asset: AVAsset) -> Double {
+    guard let track = asset.tracks(withMediaType: .video).first else {
+      return 1.0 / 30.0
+    }
+    let fps = track.nominalFrameRate
+    guard fps > 0 else { return 1.0 / 30.0 }
+    return 1.0 / Double(fps)
+  }
+
   private func runExportSession(
     _ export: AVAssetExportSession,
     outputURL: URL,
@@ -954,6 +1202,7 @@ final class LetterboxExporter {
     completion: @escaping (Result<URL, Error>) -> Void
   ) {
     self.currentSession = export
+    let stageStart = CFAbsoluteTimeGetCurrent()
 
     let lower = progressRange.lowerBound
     let span = progressRange.upperBound - progressRange.lowerBound
@@ -971,6 +1220,11 @@ final class LetterboxExporter {
         switch export.status {
         case .completed:
           onProgress?(progressRange.upperBound)
+          logExportStagePerformance(
+            stage: "final_export",
+            startedAt: stageStart,
+            renderPath: "asset_export_session"
+          )
           if logOutputInfo {
             self?.logExportedFileInfo(url: outputURL)
           }
@@ -1047,6 +1301,9 @@ final class LetterboxExporter {
     codec: String,
     progressRange: ClosedRange<Double>,
     onProgress: ((Double) -> Void)?,
+    inlineCameraRenderPlan: CompositionBuilder.InlineCameraRenderPlan? = nil,
+    backgroundColor: Int? = nil,
+    backgroundImagePath: String? = nil,
     logOutputInfo: Bool = false,
     completion: @escaping (Result<URL, Error>) -> Void
   ) {
@@ -1064,6 +1321,21 @@ final class LetterboxExporter {
       return
     }
 
+    let inlineCameraTrack = inlineCameraRenderPlan.flatMap { plan in
+      videoTracks.first(where: { $0.trackID == plan.cameraTrackID })
+    }
+    if inlineCameraRenderPlan != nil && inlineCameraTrack == nil {
+      completion(
+        .failure(
+          NSError(
+            domain: "Letterbox",
+            code: -29,
+            userInfo: [NSLocalizedDescriptionKey: "Manual export inline camera track could not be found in the composition"]
+          )
+        )
+      )
+      return
+    }
     let reader: AVAssetReader
     let writer: AVAssetWriter
     do {
@@ -1106,6 +1378,31 @@ final class LetterboxExporter {
       return
     }
     reader.add(videoOutput)
+
+    var cameraOutput: AVAssetReaderTrackOutput?
+    if let inlineCameraTrack {
+      let candidateOutput = AVAssetReaderTrackOutput(
+        track: inlineCameraTrack,
+        outputSettings: [
+          kCVPixelBufferPixelFormatTypeKey as String: kCVPixelFormatType_32BGRA
+        ]
+      )
+      candidateOutput.alwaysCopiesSampleData = false
+      guard reader.canAdd(candidateOutput) else {
+        completion(
+          .failure(
+            NSError(
+              domain: "Letterbox",
+              code: -30,
+              userInfo: [NSLocalizedDescriptionKey: "Manual export renderer could not configure the inline camera reader output"]
+            )
+          )
+        )
+        return
+      }
+      reader.add(candidateOutput)
+      cameraOutput = candidateOutput
+    }
 
     let renderSize = videoComposition.renderSize
     let videoInput: AVAssetWriterInput
@@ -1153,6 +1450,18 @@ final class LetterboxExporter {
       return
     }
     videoInput.expectsMediaDataInRealTime = false
+    let videoAdaptor = inlineCameraRenderPlan.map { _ in
+      AVAssetWriterInputPixelBufferAdaptor(
+        assetWriterInput: videoInput,
+        sourcePixelBufferAttributes: [
+          kCVPixelBufferPixelFormatTypeKey as String: kCVPixelFormatType_32BGRA,
+          kCVPixelBufferWidthKey as String: Int(renderSize.width),
+          kCVPixelBufferHeightKey as String: Int(renderSize.height),
+          kCVPixelBufferCGImageCompatibilityKey as String: true,
+          kCVPixelBufferCGBitmapContextCompatibilityKey as String: true,
+        ]
+      )
+    }
     guard writer.canAdd(videoInput) else {
       completion(
         .failure(
@@ -1236,13 +1545,35 @@ final class LetterboxExporter {
     let durationSeconds = max(asset.duration.seconds, 0.001)
     let lower = progressRange.lowerBound
     let span = progressRange.upperBound - progressRange.lowerBound
+    let stageStart = CFAbsoluteTimeGetCurrent()
     let stateQueue = DispatchQueue(label: "Clingfy.FinalExportManualRender.State")
     let videoQueue = DispatchQueue(label: "Clingfy.FinalExportManualRender.Video")
     let audioQueue = DispatchQueue(label: "Clingfy.FinalExportManualRender.Audio")
+    let frameDurationSeconds = max(videoComposition.frameDuration.seconds, 1.0 / 30.0)
     var videoFinished = false
     var audioFinished = audioInput == nil
     var completed = false
     var videoFrameIndex = 0
+    let inlineCameraRenderer = inlineCameraRenderPlan.map { _ in
+      InlineCameraRenderer(
+        renderSize: renderSize,
+        backgroundColor: backgroundColor,
+        backgroundImagePath: backgroundImagePath
+      )
+    }
+    var currentCameraSampleBuffer: CMSampleBuffer?
+    var nextCameraSampleBuffer: CMSampleBuffer?
+
+    func invalidateCameraSamples() {
+      if let currentCameraSampleBuffer {
+        CMSampleBufferInvalidate(currentCameraSampleBuffer)
+      }
+      if let nextCameraSampleBuffer {
+        CMSampleBufferInvalidate(nextCameraSampleBuffer)
+      }
+      currentCameraSampleBuffer = nil
+      nextCameraSampleBuffer = nil
+    }
 
     func fail(_ error: Error) {
       let shouldFinish: Bool = stateQueue.sync {
@@ -1256,6 +1587,7 @@ final class LetterboxExporter {
       videoInput.markAsFinished()
       audioInput?.markAsFinished()
       writer.cancelWriting()
+      invalidateCameraSamples()
       removeFileIfExists(outputURL)
 
       DispatchQueue.main.async {
@@ -1270,9 +1602,16 @@ final class LetterboxExporter {
 
         writer.finishWriting {
           reader.cancelReading()
+          invalidateCameraSamples()
           DispatchQueue.main.async {
             if writer.status == .completed {
               onProgress?(progressRange.upperBound)
+              logExportStagePerformance(
+                stage: "final_export",
+                frames: videoFrameIndex,
+                startedAt: stageStart,
+                renderPath: "manual_reader_writer"
+              )
               if logOutputInfo {
                 self?.logExportedFileInfo(url: outputURL)
               }
@@ -1295,6 +1634,10 @@ final class LetterboxExporter {
       }
     }
 
+    if let cameraOutput {
+      nextCameraSampleBuffer = cameraOutput.copyNextSampleBuffer()
+    }
+
     writer.startSession(atSourceTime: .zero)
 
     videoInput.requestMediaDataWhenReady(on: videoQueue) {
@@ -1310,49 +1653,152 @@ final class LetterboxExporter {
           return
         }
 
-        guard let sampleBuffer = videoOutput.copyNextSampleBuffer() else {
-          if reader.status == .failed {
-            fail(
-              reader.error
-                ?? NSError(
-                  domain: "Letterbox",
-                  code: -21,
-                  userInfo: [NSLocalizedDescriptionKey: "Manual export video reader failed"]
-                )
-            )
-            return
-          }
-
-          videoInput.markAsFinished()
-          stateQueue.async {
-            videoFinished = true
-          }
-          finishIfReady()
-          return
-        }
-
-        let sampleTime = CMSampleBufferGetPresentationTimeStamp(sampleBuffer).seconds
-        DispatchQueue.main.async {
-          onProgress?(lower + (min(max(sampleTime / durationSeconds, 0.0), 1.0) * span))
-        }
-
-        if !videoInput.append(sampleBuffer) {
-          fail(
-            writer.error
-              ?? NSError(
-                domain: "Letterbox",
-                code: -22,
-                userInfo: [NSLocalizedDescriptionKey: "Manual export video writer rejected a frame"]
+        let shouldContinue = autoreleasepool { () -> Bool in
+          guard let sampleBuffer = videoOutput.copyNextSampleBuffer() else {
+            if reader.status == .failed {
+              fail(
+                reader.error
+                  ?? NSError(
+                    domain: "Letterbox",
+                    code: -21,
+                    userInfo: [NSLocalizedDescriptionKey: "Manual export video reader failed"]
+                  )
               )
+              return false
+            }
+
+            videoInput.markAsFinished()
+            stateQueue.async {
+              videoFinished = true
+            }
+            finishIfReady()
+            return false
+          }
+
+          defer {
+            CMSampleBufferInvalidate(sampleBuffer)
+          }
+
+          let presentationTime = CMSampleBufferGetPresentationTimeStamp(sampleBuffer)
+          let sampleTime = presentationTime.seconds
+          DispatchQueue.main.async {
+            onProgress?(lower + (min(max(sampleTime / durationSeconds, 0.0), 1.0) * span))
+          }
+
+          if let inlineCameraRenderPlan, let inlineCameraRenderer, let videoAdaptor {
+            guard let pixelBufferPool = videoAdaptor.pixelBufferPool else {
+              fail(
+                NSError(
+                  domain: "Letterbox",
+                  code: -31,
+                  userInfo: [NSLocalizedDescriptionKey: "Manual export inline camera renderer has no pixel buffer pool"]
+                )
+              )
+              return false
+            }
+
+            let allocation = makePooledPixelBuffer(from: pixelBufferPool)
+            if allocation.status == kCVReturnWouldExceedAllocationThreshold {
+              logExportBackpressure(stage: "final_export", frameIndex: videoFrameIndex)
+              return false
+            }
+
+            guard allocation.status == kCVReturnSuccess, let renderedPixelBuffer = allocation.pixelBuffer else {
+              fail(
+                NSError(
+                  domain: "Letterbox",
+                  code: -32,
+                  userInfo: [
+                    NSLocalizedDescriptionKey: "Manual export inline camera renderer could not allocate an output frame",
+                    "status": allocation.status,
+                  ]
+                )
+              )
+              return false
+            }
+
+            guard let screenPixelBuffer = CMSampleBufferGetImageBuffer(sampleBuffer) else {
+              fail(
+                NSError(
+                  domain: "Letterbox",
+                  code: -33,
+                  userInfo: [NSLocalizedDescriptionKey: "Manual export video reader produced a frame without an image buffer"]
+                )
+              )
+              return false
+            }
+
+            while let queuedCameraSample = nextCameraSampleBuffer {
+              let queuedTime = CMSampleBufferGetPresentationTimeStamp(queuedCameraSample).seconds
+              if queuedTime <= sampleTime + (frameDurationSeconds * 0.5) {
+                if let currentCameraSampleBuffer {
+                  CMSampleBufferInvalidate(currentCameraSampleBuffer)
+                }
+                currentCameraSampleBuffer = queuedCameraSample
+                nextCameraSampleBuffer = cameraOutput?.copyNextSampleBuffer()
+              } else {
+                break
+              }
+            }
+
+            let cameraPixelBuffer: CVPixelBuffer? = {
+              guard
+                let resolvedSample = inlineCameraRenderPlan.resolvedSample(at: sampleTime),
+                resolvedSample.frame != nil,
+                resolvedSample.opacity > 0.001,
+                let currentCameraSampleBuffer
+              else {
+                return nil
+              }
+              return CMSampleBufferGetImageBuffer(currentCameraSampleBuffer)
+            }()
+
+            VideoColorPipeline.tag(pixelBuffer: renderedPixelBuffer)
+            inlineCameraRenderer.render(
+              screenPixelBuffer: screenPixelBuffer,
+              cameraPixelBuffer: cameraPixelBuffer,
+              cameraTrack: inlineCameraTrack!,
+              presentationTime: sampleTime,
+              plan: inlineCameraRenderPlan,
+              to: renderedPixelBuffer
+            )
+
+            guard videoAdaptor.append(renderedPixelBuffer, withPresentationTime: presentationTime) else {
+              fail(
+                writer.error
+                  ?? NSError(
+                    domain: "Letterbox",
+                    code: -34,
+                    userInfo: [NSLocalizedDescriptionKey: "Manual export inline camera writer rejected a frame"]
+                  )
+              )
+              return false
+            }
+          } else {
+            if !videoInput.append(sampleBuffer) {
+              fail(
+                writer.error
+                  ?? NSError(
+                    domain: "Letterbox",
+                    code: -22,
+                    userInfo: [NSLocalizedDescriptionKey: "Manual export video writer rejected a frame"]
+                  )
+              )
+              return false
+            }
+          }
+
+          logExportMemoryCheckpoint(
+            stage: "final_manual_video_render",
+            frameIndex: videoFrameIndex
           )
-          return
+          videoFrameIndex += 1
+          return true
         }
 
-        logExportMemoryCheckpoint(
-          stage: "final_manual_video_render",
-          frameIndex: videoFrameIndex
-        )
-        videoFrameIndex += 1
+        if !shouldContinue {
+          return
+        }
       }
     }
 
@@ -1436,6 +1882,8 @@ final class LetterboxExporter {
     // Cancel any existing session
     cancel()
     isCancelled = false
+    cleanupTemporaryArtifacts()
+    cleanupStaleExportIntermediates()
 
     let mediaSources = project.mediaSources()
     let inputURL = mediaSources.screenVideoURL
@@ -1572,6 +2020,16 @@ final class LetterboxExporter {
       params: params,
       cursorRecording: cursorRecording
     )
+    if shouldUseScreenPrepass,
+      let tempCapacityError = screenPrepassTempCapacityError(
+        targetSize: target,
+        fpsHint: fpsHint,
+        durationSeconds: asset.duration.seconds
+      )
+    {
+      completion(.failure(tempCapacityError))
+      return
+    }
 
     func pickPreset(for exportAsset: AVAsset) -> String {
       let compatible = Set(AVAssetExportSession.exportPresets(compatibleWith: exportAsset))
@@ -1793,7 +2251,9 @@ final class LetterboxExporter {
       ]
       exportColorContext.forEach { exportStartContext[$0.key] = $0.value }
       let shouldUseManualRenderExport =
-        cameraAssetIsPreStyled || comp.videoComposition.animationTool != nil
+        cameraAssetIsPreStyled
+        || comp.inlineCameraRenderPlan != nil
+        || comp.videoComposition.animationTool != nil
       exportStartContext["finalRenderPath"] = shouldUseManualRenderExport ? "manual_reader_writer" : "asset_export_session"
       NativeLogger.i(
         "Export",
@@ -1825,6 +2285,9 @@ final class LetterboxExporter {
             codec: codec,
             progressRange: progressRange,
             onProgress: onProgress,
+            inlineCameraRenderPlan: comp.inlineCameraRenderPlan,
+            backgroundColor: backgroundColor,
+            backgroundImagePath: backgroundImagePath,
             logOutputInfo: true,
             completion: completion
           )
@@ -1871,7 +2334,10 @@ final class LetterboxExporter {
           if let validationError = self.validateFinalExportReferenceRender(
             referenceAsset: comp.asset,
             referenceComposition: comp.videoComposition,
-            finalExportAsset: AVAsset(url: finalURL)
+            finalExportAsset: AVAsset(url: finalURL),
+            inlineCameraRenderPlan: comp.inlineCameraRenderPlan,
+            backgroundColor: backgroundColor,
+            backgroundImagePath: backgroundImagePath
           ) {
             NativeLogger.e(
               "Export",
@@ -1921,7 +2387,7 @@ final class LetterboxExporter {
       screenPrepassRange: ClosedRange<Double>?,
       finalRange: ClosedRange<Double>
     ) {
-      guard shouldUseScreenPrepass, let cursorRecording else {
+      guard shouldUseScreenPrepass else {
         beginFinalExport(
           resolvedScreenInputURL: inputURL,
           resolvedCameraInputURL: resolvedCameraInputURL,
@@ -1933,11 +2399,12 @@ final class LetterboxExporter {
         return
       }
 
+      let prepassCursorRecording = cursorRecording ?? CursorRecording(sprites: [], frames: [])
       let prepassRange = screenPrepassRange ?? finalRange
       screenPrepassPipeline.prepareIntermediate(
         inputURL: inputURL,
         params: params,
-        cursorRecording: cursorRecording,
+        cursorRecording: prepassCursorRecording,
         isCancelled: { [weak self] in self?.isCancelled ?? true },
         onProgress: { progress in
           onProgress?(scaledProgress(progress, into: prepassRange))
@@ -1997,11 +2464,13 @@ final class LetterboxExporter {
         case .success(let prepared):
           prepared.temporaryArtifacts.forEach { self?.registerTemporaryArtifact($0) }
 
-          if let validationError = self?.validateStyledCameraIntermediate(
-            rawCameraAsset: cameraAsset,
-            styledCameraAsset: AVAsset(url: prepared.url),
-            placementSourceRect: prepared.placementSourceRect
-          ) {
+          if prepared.cameraAssetIsPreStyled,
+            let validationError = self?.validateStyledCameraIntermediate(
+              rawCameraAsset: cameraAsset,
+              styledCameraAsset: AVAsset(url: prepared.url),
+              placementSourceRect: prepared.placementSourceRect
+            )
+          {
             NativeLogger.e(
               "Export",
               "Camera pre-pass validation failed",
@@ -2291,6 +2760,29 @@ final class LetterboxExporter {
     )
   }
 
+  func _testCleanupStaleExportIntermediates(
+    at tempRoot: URL
+  ) -> (filesRemoved: Int, bytesReclaimed: Int64) {
+    let result = cleanupStaleExportIntermediates(at: tempRoot)
+    return (result.filesRemoved, result.bytesReclaimed)
+  }
+
+  func _testScreenPrepassTempCapacityError(
+    targetSize: CGSize,
+    fpsHint: Int32,
+    durationSeconds: Double,
+    availableCapacityBytes: Int64,
+    tempRoot: URL = AppPaths.tempRoot()
+  ) -> NSError? {
+    screenPrepassTempCapacityError(
+      targetSize: targetSize,
+      fpsHint: fpsHint,
+      durationSeconds: durationSeconds,
+      tempRoot: tempRoot,
+      availableCapacityBytesOverride: availableCapacityBytes
+    )
+  }
+
   func _testValidateStyledCameraIntermediate(
     rawCameraURL: URL,
     styledCameraURL: URL,
@@ -2313,6 +2805,64 @@ final class LetterboxExporter {
       referenceComposition: referenceResult.videoComposition,
       validationInfo: validationInfo,
       finalExportAsset: AVAsset(url: finalExportURL)
+    )
+  }
+
+  func _testRenderFinalExport(
+    result: CompositionBuilder.ExportCompositionResult,
+    outputURL: URL,
+    backgroundColor: Int? = nil,
+    backgroundImagePath: String? = nil,
+    codec: String = "h264",
+    completion: @escaping (Result<URL, Error>) -> Void
+  ) {
+    if result.inlineCameraRenderPlan != nil || result.videoComposition.animationTool != nil {
+      runRenderedExportSession(
+        asset: result.asset,
+        videoComposition: result.videoComposition,
+        audioMix: nil,
+        outputURL: outputURL,
+        outputFileType: .mov,
+        codec: codec,
+        progressRange: 0.0...1.0,
+        onProgress: nil,
+        inlineCameraRenderPlan: result.inlineCameraRenderPlan,
+        backgroundColor: backgroundColor,
+        backgroundImagePath: backgroundImagePath,
+        completion: completion
+      )
+      return
+    }
+
+    guard Set(AVAssetExportSession.exportPresets(compatibleWith: result.asset)).contains(
+      AVAssetExportPresetHighestQuality
+    ),
+      let export = AVAssetExportSession(
+        asset: result.asset,
+        presetName: AVAssetExportPresetHighestQuality
+      )
+    else {
+      completion(
+        .failure(
+          NSError(
+            domain: "Letterbox",
+            code: -35,
+            userInfo: [NSLocalizedDescriptionKey: "Test export could not create an AVAssetExportSession"]
+          )
+        )
+      )
+      return
+    }
+
+    export.videoComposition = result.videoComposition
+    export.outputFileType = .mov
+    export.outputURL = outputURL
+    runExportSession(
+      export,
+      outputURL: outputURL,
+      progressRange: 0.0...1.0,
+      onProgress: nil,
+      completion: completion
     )
   }
 

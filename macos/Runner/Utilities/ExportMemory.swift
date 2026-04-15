@@ -4,6 +4,20 @@ import Darwin.Mach
 private let exportMemoryCheckpointInterval = 120
 private let exportPrepassMaxInFlightBuffers = 6
 
+enum ExportDiagnostics {
+  private static let envValue: String =
+    ProcessInfo.processInfo.environment["CLINGFY_EXPORT_DIAGNOSTICS"] ?? ""
+
+  static let enabled: Bool = {
+    if BuildEnvironment.isDebugBuild {
+      return true
+    }
+
+    let normalized = envValue.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+    return normalized == "1" || normalized == "true" || normalized == "yes"
+  }()
+}
+
 func currentResidentMB() -> Double? {
   var info = task_vm_info_data_t()
   var count = mach_msg_type_number_t(
@@ -40,6 +54,7 @@ func makePooledPixelBuffer(
 }
 
 func logExportMemoryCheckpoint(stage: String, frameIndex: Int) {
+  guard ExportDiagnostics.enabled else { return }
   guard frameIndex % exportMemoryCheckpointInterval == 0 else { return }
   guard let residentMB = currentResidentMB() else { return }
 
@@ -51,5 +66,46 @@ func logExportMemoryCheckpoint(stage: String, frameIndex: Int) {
       "frame": frameIndex,
       "residentMB": residentMB,
     ]
+  )
+}
+
+func logExportBackpressure(stage: String, frameIndex: Int) {
+  guard ExportDiagnostics.enabled else { return }
+
+  NativeLogger.d(
+    "ExportMemory",
+    "Pixel buffer pool backpressure",
+    context: [
+      "stage": stage,
+      "frame": frameIndex,
+    ]
+  )
+}
+
+func logExportStagePerformance(
+  stage: String,
+  frames: Int? = nil,
+  startedAt: CFAbsoluteTime,
+  renderPath: String? = nil
+) {
+  let elapsedSeconds = max(CFAbsoluteTimeGetCurrent() - startedAt, 0.0001)
+  var context: [String: Any] = [
+    "stage": stage,
+    "elapsedSeconds": elapsedSeconds,
+  ]
+
+  if let frames {
+    context["frames"] = frames
+    context["fps"] = Double(frames) / elapsedSeconds
+  }
+
+  if let renderPath {
+    context["renderPath"] = renderPath
+  }
+
+  NativeLogger.i(
+    "ExportPerf",
+    "Stage finished",
+    context: context
   )
 }

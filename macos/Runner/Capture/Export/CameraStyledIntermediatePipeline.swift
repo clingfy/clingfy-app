@@ -51,18 +51,7 @@ final class CameraStyledIntermediatePipeline {
       return false
     }
 
-    if cameraParams.chromaKeyEnabled || cameraParams.borderWidth > 0 || cameraParams.shadowPreset > 0 {
-      return true
-    }
-
-    switch cameraParams.shape {
-    case .square:
-      return false
-    case .roundedRect:
-      return cameraParams.cornerRadius > 0
-    case .circle, .squircle:
-      return true
-    }
+    return cameraParams.chromaKeyEnabled
   }
 
   func prepareIntermediate(
@@ -184,7 +173,17 @@ final class CameraStyledIntermediatePipeline {
       ) { result in
         switch result {
         case .success(let keyedURL):
-          runStyledPass(from: keyedURL, progressBase: 0.45, progressSpan: 0.55)
+          onProgress?(1.0)
+          finish(
+            .success(
+              CameraPreparedIntermediate(
+                url: keyedURL,
+                cameraAssetIsPreStyled: false,
+                temporaryArtifacts: temporaryArtifacts,
+                placementSourceRect: nil
+              )
+            )
+          )
 
         case .failure(let error):
           cleanupTemporaryArtifacts()
@@ -612,6 +611,7 @@ final class CameraStyledIntermediatePipeline {
     removeFileIfExists(outputURL)
     let durationSeconds = max(inputAsset.duration.seconds, 0.001)
     let renderQueue = DispatchQueue(label: "Clingfy.StyledCameraRender")
+    let stageStart = CFAbsoluteTimeGetCurrent()
     var didLogSourceColorMetadata = false
     var completed = false
     var frameIndex = 0
@@ -695,14 +695,7 @@ final class CameraStyledIntermediatePipeline {
 
           let allocation = makePooledPixelBuffer(from: pixelBufferPool)
           if allocation.status == kCVReturnWouldExceedAllocationThreshold {
-            NativeLogger.d(
-              "ExportMemory",
-              "Pixel buffer pool backpressure",
-              context: [
-                "stage": "screen_prepass",
-                "frame": frameIndex,
-              ]
-            )
+            logExportBackpressure(stage: "camera_styled_prepass", frameIndex: frameIndex)
             return false
           }
 
@@ -733,6 +726,11 @@ final class CameraStyledIntermediatePipeline {
 
               if writer.status == .completed {
                 onProgress?(1.0)
+                logExportStagePerformance(
+                  stage: "camera_styled_prepass",
+                  frames: frameIndex,
+                  startedAt: stageStart
+                )
                 var readyContext: [String: Any] = [
                   "output": outputURL.path,
                   "renderSize": "\(Int(renderSize.width))x\(Int(renderSize.height))",
@@ -866,5 +864,418 @@ final class CameraStyledIntermediatePipeline {
     if FileManager.default.fileExists(atPath: url.path) {
       try? FileManager.default.removeItem(at: url)
     }
+  }
+}
+
+final class InlineCameraRenderer {
+  private struct CameraShadowStyle {
+    let opacity: CGFloat
+    let radius: CGFloat
+    let offset: CGSize
+  }
+
+  private let renderSize: CGSize
+  private let renderBounds: CGRect
+  private let colorSpace = VideoColorPipeline.workingColorSpace
+  private let ciContext = CIContext(options: [.cacheIntermediates: false])
+  private let backgroundImage: CIImage
+
+  init(
+    renderSize: CGSize,
+    backgroundColor: Int?,
+    backgroundImagePath: String?
+  ) {
+    self.renderSize = renderSize
+    self.renderBounds = CGRect(origin: .zero, size: renderSize)
+    self.backgroundImage = InlineCameraRenderer.makeBackgroundImage(
+      renderSize: renderSize,
+      backgroundColor: backgroundColor,
+      backgroundImagePath: backgroundImagePath
+    )
+  }
+
+  func render(
+    screenPixelBuffer: CVPixelBuffer,
+    cameraPixelBuffer: CVPixelBuffer?,
+    cameraTrack: AVAssetTrack,
+    presentationTime: Double,
+    plan: CompositionBuilder.InlineCameraRenderPlan,
+    to outputPixelBuffer: CVPixelBuffer
+  ) {
+    let screenImage = CIImage(cvPixelBuffer: screenPixelBuffer)
+    let cameraImage = cameraPixelBuffer.map { makeCameraSourceImage(pixelBuffer: $0, track: cameraTrack) }
+    let composedImage = makeCompositedImage(
+      screenImage: screenImage,
+      cameraSourceImage: cameraImage,
+      presentationTime: presentationTime,
+      plan: plan
+    )
+
+    ciContext.render(
+      composedImage,
+      to: outputPixelBuffer,
+      bounds: renderBounds,
+      colorSpace: colorSpace
+    )
+  }
+
+  func makeCompositedImage(
+    screenImage: CIImage,
+    cameraSourceImage: CIImage?,
+    presentationTime: Double,
+    plan: CompositionBuilder.InlineCameraRenderPlan
+  ) -> CIImage {
+    let normalizedScreenImage = normalizedScreenImage(screenImage)
+    let cameraImage = makeStyledCameraImage(
+      cameraSourceImage: cameraSourceImage,
+      presentationTime: presentationTime,
+      plan: plan
+    )
+
+    let screenOverBackground = normalizedScreenImage.composited(over: backgroundImage)
+    guard let cameraImage else {
+      return screenOverBackground
+    }
+
+    switch plan.zOrder {
+    case .behindScreen:
+      return normalizedScreenImage.composited(over: cameraImage.composited(over: backgroundImage))
+    case .aboveScreen:
+      return cameraImage.composited(over: screenOverBackground)
+    }
+  }
+
+  func makeCameraSourceImage(pixelBuffer: CVPixelBuffer, track: AVAssetTrack) -> CIImage {
+    let sourceImage = CIImage(cvPixelBuffer: pixelBuffer)
+    let normalizedTransform = normalizedSourceTransform(for: track)
+    let orientedSize = orientedSize(for: track)
+    return sourceImage
+      .transformed(by: normalizedTransform)
+      .cropped(to: CGRect(origin: .zero, size: orientedSize))
+  }
+
+  private func normalizedScreenImage(_ image: CIImage) -> CIImage {
+    let extent = image.extent
+    guard extent.width > 0.0, extent.height > 0.0 else {
+      return CIImage(color: .clear).cropped(to: renderBounds)
+    }
+
+    let translated = image.transformed(
+      by: CGAffineTransform(translationX: -extent.minX, y: -extent.minY)
+    )
+    let normalizedExtent = translated.extent
+    guard abs(normalizedExtent.width - renderSize.width) > 0.0001
+      || abs(normalizedExtent.height - renderSize.height) > 0.0001
+    else {
+      return translated.cropped(to: renderBounds)
+    }
+
+    let scaleX = renderSize.width / max(normalizedExtent.width, 1.0)
+    let scaleY = renderSize.height / max(normalizedExtent.height, 1.0)
+    return translated
+      .transformed(by: CGAffineTransform(scaleX: scaleX, y: scaleY))
+      .cropped(to: renderBounds)
+  }
+
+  private func makeStyledCameraImage(
+    cameraSourceImage: CIImage?,
+    presentationTime: Double,
+    plan: CompositionBuilder.InlineCameraRenderPlan
+  ) -> CIImage? {
+    guard
+      let cameraSourceImage,
+      let resolvedSample = plan.resolvedSample(at: presentationTime),
+      let cameraFrame = resolvedSample.frame?.standardized,
+      resolvedSample.opacity > 0.001,
+      cameraFrame.width > 0.0,
+      cameraFrame.height > 0.0
+    else {
+      return nil
+    }
+
+    let shadowStyle = shadowStyle(for: plan.shadowPreset)
+    let paddedBounds: CGRect = {
+      guard let shadowStyle else {
+        return cameraFrame.integral
+      }
+
+      let blurPadding = ceil(shadowStyle.radius * 2.0)
+      let shadowBleedRect = cameraFrame
+        .insetBy(dx: -blurPadding, dy: -blurPadding)
+        .offsetBy(dx: shadowStyle.offset.width, dy: shadowStyle.offset.height)
+      return cameraFrame.union(shadowBleedRect).integral
+    }()
+    let localCameraFrame = cameraFrame.offsetBy(dx: -paddedBounds.minX, dy: -paddedBounds.minY)
+    let localBounds = CGRect(origin: .zero, size: paddedBounds.size)
+    let cameraParams = cameraParams(for: plan)
+    let maskPath = CameraLayoutResolver.maskPath(in: localCameraFrame, params: cameraParams)
+    let sourceRect = plan.sourceRect?.standardized
+    let sourceImage = sourceRect.map { cameraSourceImage.cropped(to: $0) } ?? cameraSourceImage
+    let sourceSize = sourceRect?.size ?? plan.sourceSize
+    let fittedDrawRect = CameraLayoutResolver.contentRect(
+      for: sourceSize,
+      in: localCameraFrame,
+      contentMode: plan.contentMode
+    )
+
+    guard
+      let sourceCGImage = ciContext.createCGImage(
+        sourceImage,
+        from: sourceImage.extent,
+        format: .RGBA8,
+        colorSpace: colorSpace
+      ),
+      let context = CGContext(
+        data: nil,
+        width: max(1, Int(ceil(localBounds.width))),
+        height: max(1, Int(ceil(localBounds.height))),
+        bitsPerComponent: 8,
+        bytesPerRow: 0,
+        space: colorSpace,
+        bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue
+          | CGBitmapInfo.byteOrder32Big.rawValue
+      )
+    else {
+      return nil
+    }
+
+    context.clear(localBounds)
+    context.interpolationQuality = .high
+
+    if let shadowImage = makeStyledShadowImage(
+      size: localBounds.size,
+      frameRect: localCameraFrame,
+      params: cameraParams
+    ) {
+      context.draw(shadowImage, in: localBounds)
+    }
+
+    context.saveGState()
+    context.addPath(maskPath)
+    context.clip()
+
+    if plan.mirror {
+      context.translateBy(x: fittedDrawRect.minX + fittedDrawRect.maxX, y: 0)
+      context.scaleBy(x: -1.0, y: 1.0)
+    }
+
+    context.draw(sourceCGImage, in: fittedDrawRect)
+    context.restoreGState()
+
+    if let borderImage = makeStyledBorderImage(
+      size: localBounds.size,
+      frameRect: localCameraFrame,
+      params: cameraParams
+    ) {
+      context.draw(borderImage, in: localBounds)
+    }
+
+    guard let renderedImage = context.makeImage() else {
+      return nil
+    }
+
+    return CIImage(cgImage: renderedImage)
+      .applyingFilter(
+        "CIColorMatrix",
+        parameters: [
+          "inputRVector": CIVector(x: 1, y: 0, z: 0, w: 0),
+          "inputGVector": CIVector(x: 0, y: 1, z: 0, w: 0),
+          "inputBVector": CIVector(x: 0, y: 0, z: 1, w: 0),
+          "inputAVector": CIVector(x: 0, y: 0, z: 0, w: resolvedSample.opacity),
+          "inputBiasVector": CIVector(x: 0, y: 0, z: 0, w: 0),
+        ]
+      )
+      .transformed(by: CGAffineTransform(translationX: paddedBounds.minX, y: paddedBounds.minY))
+  }
+
+  private func shadowStyle(for preset: Int) -> CameraShadowStyle? {
+    switch preset {
+    case 1:
+      return CameraShadowStyle(opacity: 0.18, radius: 10, offset: CGSize(width: 0, height: -2))
+    case 2:
+      return CameraShadowStyle(opacity: 0.24, radius: 16, offset: CGSize(width: 0, height: -4))
+    case 3:
+      return CameraShadowStyle(opacity: 0.32, radius: 22, offset: CGSize(width: 0, height: -6))
+    default:
+      return nil
+    }
+  }
+
+  private func cameraParams(
+    for plan: CompositionBuilder.InlineCameraRenderPlan
+  ) -> CameraCompositionParams {
+    CameraCompositionParams(
+      visible: true,
+      layoutPreset: .overlayBottomRight,
+      normalizedCanvasCenter: nil,
+      sizeFactor: 0.2,
+      shape: plan.shape,
+      cornerRadius: plan.cornerRadius,
+      opacity: plan.opacity,
+      mirror: plan.mirror,
+      contentMode: plan.contentMode,
+      zoomBehavior: .fixed,
+      borderWidth: plan.borderWidth,
+      borderColorArgb: plan.borderColorArgb,
+      shadowPreset: plan.shadowPreset,
+      chromaKeyEnabled: false,
+      chromaKeyStrength: 0.4,
+      chromaKeyColorArgb: nil
+    )
+  }
+
+  private func makeStyledShadowImage(
+    size: CGSize,
+    frameRect: CGRect,
+    params: CameraCompositionParams
+  ) -> CGImage? {
+    guard let shadowStyle = shadowStyle(for: params.shadowPreset) else { return nil }
+    let bounds = CGRect(origin: .zero, size: size)
+    let maskPath = CameraLayoutResolver.maskPath(in: frameRect, params: params)
+    guard
+      let maskImage = makePathImage(size: size, draw: { context, _ in
+        context.setFillColor(NSColor.white.cgColor)
+        context.addPath(maskPath)
+        context.fillPath()
+      })
+    else {
+      return nil
+    }
+
+    let clearImage = CIImage(color: CIColor.clear).cropped(to: bounds)
+    let blurredMask = CIImage(cgImage: maskImage)
+      .applyingFilter("CIGaussianBlur", parameters: [kCIInputRadiusKey: shadowStyle.radius])
+      .transformed(by: CGAffineTransform(translationX: shadowStyle.offset.width, y: shadowStyle.offset.height))
+      .cropped(to: bounds)
+      .applyingFilter(
+        "CIColorMatrix",
+        parameters: [
+          "inputRVector": CIVector(x: 0, y: 0, z: 0, w: 0),
+          "inputGVector": CIVector(x: 0, y: 0, z: 0, w: 0),
+          "inputBVector": CIVector(x: 0, y: 0, z: 0, w: 0),
+          "inputAVector": CIVector(x: 0, y: 0, z: 0, w: shadowStyle.opacity),
+          "inputBiasVector": CIVector(x: 0, y: 0, z: 0, w: 0),
+        ]
+      )
+      .composited(over: clearImage)
+
+    return ciContext.createCGImage(blurredMask, from: bounds, format: .RGBA8, colorSpace: colorSpace)
+  }
+
+  private func makeStyledBorderImage(
+    size: CGSize,
+    frameRect: CGRect,
+    params: CameraCompositionParams
+  ) -> CGImage? {
+    let borderWidth = max(0.0, CGFloat(params.borderWidth))
+    guard borderWidth > 0.0 else { return nil }
+
+    let maskPath = CameraLayoutResolver.maskPath(in: frameRect, params: params)
+    let borderColor = VideoColorPipeline.nsColor(fromARGB: params.borderColorArgb).cgColor
+
+    return makePathImage(size: size, draw: { context, _ in
+      context.setLineWidth(borderWidth)
+      context.setStrokeColor(borderColor)
+      context.addPath(maskPath)
+      context.strokePath()
+    })
+  }
+
+  private func makePathImage(
+    size: CGSize,
+    draw: (CGContext, CGRect) -> Void
+  ) -> CGImage? {
+    let width = max(1, Int(ceil(size.width)))
+    let height = max(1, Int(ceil(size.height)))
+    guard
+      let context = CGContext(
+        data: nil,
+        width: width,
+        height: height,
+        bitsPerComponent: 8,
+        bytesPerRow: 0,
+        space: colorSpace,
+        bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue
+          | CGBitmapInfo.byteOrder32Big.rawValue
+      )
+    else {
+      return nil
+    }
+
+    let bounds = CGRect(origin: .zero, size: CGSize(width: width, height: height))
+    context.clear(bounds)
+    draw(context, bounds)
+    return context.makeImage()
+  }
+
+  private func orientedSize(for track: AVAssetTrack) -> CGSize {
+    let rect = CGRect(origin: .zero, size: track.naturalSize).applying(track.preferredTransform)
+    return CGSize(
+      width: max(1.0, abs(rect.width)),
+      height: max(1.0, abs(rect.height))
+    )
+  }
+
+  private func normalizedSourceTransform(for track: AVAssetTrack) -> CGAffineTransform {
+    let orientedRect = CGRect(origin: .zero, size: track.naturalSize).applying(track.preferredTransform)
+    return track.preferredTransform.concatenating(
+      CGAffineTransform(
+        translationX: -orientedRect.minX,
+        y: -orientedRect.minY
+      )
+    )
+  }
+
+  private static func makeBackgroundImage(
+    renderSize: CGSize,
+    backgroundColor: Int?,
+    backgroundImagePath: String?
+  ) -> CIImage {
+    let bounds = CGRect(origin: .zero, size: renderSize)
+
+    if let backgroundImagePath,
+      let image = NSImage(contentsOfFile: backgroundImagePath),
+      let cgImage = image.cgImageForLayer()
+    {
+      let width = max(1, Int(ceil(renderSize.width)))
+      let height = max(1, Int(ceil(renderSize.height)))
+      let colorSpace = VideoColorPipeline.workingColorSpace
+      if let context = CGContext(
+        data: nil,
+        width: width,
+        height: height,
+        bitsPerComponent: 8,
+        bytesPerRow: 0,
+        space: colorSpace,
+        bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue
+          | CGBitmapInfo.byteOrder32Big.rawValue
+      ) {
+        let imageRect = CGRect(origin: .zero, size: CGSize(width: cgImage.width, height: cgImage.height))
+        let fillScale = max(
+          bounds.width / max(imageRect.width, 1.0),
+          bounds.height / max(imageRect.height, 1.0)
+        )
+        let drawSize = CGSize(
+          width: imageRect.width * fillScale,
+          height: imageRect.height * fillScale
+        )
+        let drawRect = CGRect(
+          x: (bounds.width - drawSize.width) / 2.0,
+          y: (bounds.height - drawSize.height) / 2.0,
+          width: drawSize.width,
+          height: drawSize.height
+        )
+        context.draw(cgImage, in: drawRect)
+        if let rendered = context.makeImage() {
+          return CIImage(cgImage: rendered)
+        }
+      }
+    }
+
+    let fallbackColor = VideoColorPipeline.cgColor(
+      fromARGB: backgroundColor,
+      defaultColor: CGColor.black
+    )
+    return CIImage(color: CIColor(cgColor: fallbackColor)).cropped(to: bounds)
   }
 }

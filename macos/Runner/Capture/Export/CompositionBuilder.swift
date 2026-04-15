@@ -1219,6 +1219,101 @@ final class CompositionBuilder {
     let videoComposition: AVVideoComposition
     let debugInfo: ExportDebugInfo
     let validationInfo: ExportValidationInfo?
+    let inlineCameraRenderPlan: InlineCameraRenderPlan?
+
+    init(
+      asset: AVAsset,
+      videoComposition: AVVideoComposition,
+      debugInfo: ExportDebugInfo,
+      validationInfo: ExportValidationInfo?,
+      inlineCameraRenderPlan: InlineCameraRenderPlan? = nil
+    ) {
+      self.asset = asset
+      self.videoComposition = videoComposition
+      self.debugInfo = debugInfo
+      self.validationInfo = validationInfo
+      self.inlineCameraRenderPlan = inlineCameraRenderPlan
+    }
+  }
+
+  struct InlineCameraRenderPlan {
+    struct Sample {
+      let time: Double
+      let frame: CGRect?
+      let opacity: CGFloat
+    }
+
+    let cameraTrackID: CMPersistentTrackID
+    let zOrder: CameraLayoutResolution.ZOrder
+    let sourceSize: CGSize
+    let sourceRect: CGRect?
+    let shape: CameraShape
+    let cornerRadius: Double
+    let borderWidth: Double
+    let borderColorArgb: Int?
+    let shadowPreset: Int
+    let mirror: Bool
+    let opacity: Double
+    let contentMode: CameraContentMode
+    let samples: [Sample]
+
+    func resolvedSample(at time: Double) -> Sample? {
+      guard !samples.isEmpty else { return nil }
+      if samples.count == 1 {
+        return normalized(samples[0])
+      }
+
+      let clampedTime = max(0.0, time)
+      if clampedTime <= samples[0].time {
+        return normalized(samples[0])
+      }
+
+      for idx in 0..<(samples.count - 1) {
+        let start = samples[idx]
+        let end = samples[idx + 1]
+        if clampedTime > end.time {
+          continue
+        }
+
+        let duration = max(end.time - start.time, 0.0001)
+        let progress = CGFloat(min(max((clampedTime - start.time) / duration, 0.0), 1.0))
+        let opacity = start.opacity + ((end.opacity - start.opacity) * progress)
+
+        let frame: CGRect? = {
+          guard let startFrame = start.frame, let endFrame = end.frame else {
+            return opacity > 0.001 ? nearestFrame(to: clampedTime, start: start, end: end) : nil
+          }
+          return CGRect(
+            x: startFrame.minX + ((endFrame.minX - startFrame.minX) * progress),
+            y: startFrame.minY + ((endFrame.minY - startFrame.minY) * progress),
+            width: startFrame.width + ((endFrame.width - startFrame.width) * progress),
+            height: startFrame.height + ((endFrame.height - startFrame.height) * progress)
+          ).standardized
+        }()
+
+        return normalized(Sample(time: clampedTime, frame: frame, opacity: opacity))
+      }
+
+      return normalized(samples[samples.count - 1])
+    }
+
+    private func normalized(_ sample: Sample) -> Sample {
+      guard sample.opacity > 0.001 else {
+        return Sample(time: sample.time, frame: nil, opacity: 0.0)
+      }
+      return Sample(time: sample.time, frame: sample.frame?.standardized, opacity: sample.opacity)
+    }
+
+    private func nearestFrame(
+      to time: Double,
+      start: Sample,
+      end: Sample
+    ) -> CGRect? {
+      if abs(time - start.time) <= abs(end.time - time) {
+        return start.frame?.standardized
+      }
+      return end.frame?.standardized
+    }
   }
 
   // For Export
@@ -1314,6 +1409,20 @@ final class CompositionBuilder {
         ),
       validationInfo: nil
     )
+  }
+
+  private func hasDrawableCursorOverlayContent(_ recording: CursorRecording?) -> Bool {
+    guard let recording, !recording.frames.isEmpty, !recording.sprites.isEmpty else {
+      return false
+    }
+
+    let availableSpriteIDs = Set(recording.sprites.map(\.id))
+    return recording.frames.contains { frame in
+      frame.spriteID >= 0
+        && availableSpriteIDs.contains(frame.spriteID)
+        && (0.0...1.0).contains(frame.x)
+        && (0.0...1.0).contains(frame.y)
+    }
   }
 
   // For Preview
@@ -1488,7 +1597,7 @@ final class CompositionBuilder {
     var exportDebugInfo: ExportDebugInfo?
     if forExport {
       let rendersCursorOverlay =
-        params.showCursor && !(cursorRecording?.frames.isEmpty ?? true)
+        params.showCursor && hasDrawableCursorOverlayContent(cursorRecording)
       let appliesScreenZoomInAnimationTool = !exportZoomSamples.isEmpty
       configureExportAnimationTool(
         composition: comp,
@@ -1660,6 +1769,7 @@ final class CompositionBuilder {
       )
       var cameraMaskSamples: [VisibleRegionMaskSample] = []
       var cameraValidationSamples: [ExportValidationInfo.CameraSample] = []
+      var inlineCameraRenderPlan: InlineCameraRenderPlan?
       let screenDuration = max(0.0, screenAsset.duration.seconds)
       let cameraDuration = max(0.0, cameraAsset.duration.seconds)
       let resolvedCameraSyncTimeline = resolvedCameraSyncTimeline(
@@ -1711,10 +1821,12 @@ final class CompositionBuilder {
             normalizedTrackSourceRect(from: $0, fullSourceSize: fullNormalizedCameraSourceSize)
           }
           let effectiveDuration = screenDuration
+          let shouldInlineCameraRender = !cameraAssetIsPreStyled && cameraNeedsInlineRender(cameraParams)
 
           if CameraPlacementDebug.enabled {
             var context: [String: Any] = [
               "cameraAssetIsPreStyled": cameraAssetIsPreStyled,
+              "cameraInlineRenderSelected": shouldInlineCameraRender,
               "cameraFitMode": cameraFitMode,
               "zoomSamplesCount": exportZoomSamples.count,
               "cameraSyncSegmentsCount": insertionSegments.count,
@@ -1892,6 +2004,15 @@ final class CompositionBuilder {
             }
             return transform
           }
+          let inlineSamples = cameraPresentation.enumerated().map { idx, sample in
+            let opacity = CGFloat(synchronizedCameraOpacities[idx])
+            let frame = opacity > 0.001 ? resolvedCameraPresentation[idx].frame.standardized : nil
+            return InlineCameraRenderPlan.Sample(
+              time: sample.time,
+              frame: frame,
+              opacity: opacity
+            )
+          }
           if effectiveDuration < screenAsset.duration.seconds {
             let frameDuration = 1.0 / max(Double(params.fpsHint), 30.0)
             let hideTime = min(screenAsset.duration.seconds, effectiveDuration + frameDuration)
@@ -1908,68 +2029,107 @@ final class CompositionBuilder {
                 zoomActive: false
               )
             )
-          }
-
-          if let firstTransform = cameraTransforms.first {
-            cameraLayerInstruction.setTransform(firstTransform, at: .zero)
-          }
-          if let firstOpacity = synchronizedCameraOpacities.first {
-            cameraLayerInstruction.setOpacity(firstOpacity, at: .zero)
-          }
-
-          if cameraTransforms.count >= 2,
-            let firstTransform = cameraTransforms.first,
-            cameraTransforms.dropFirst().contains(where: {
-              !transformsApproximatelyEqual($0, firstTransform)
-            })
-          {
-            for idx in 0..<(cameraPresentation.count - 1) {
-              let startSeconds = cameraPresentation[idx].time
-              let endSeconds = min(cameraPresentation[idx + 1].time, effectiveDuration)
-              guard endSeconds > startSeconds else { continue }
-
-              let startTime = CMTime(seconds: startSeconds, preferredTimescale: 600)
-              let endTime = CMTime(seconds: endSeconds, preferredTimescale: 600)
-              let timeRange = CMTimeRange(start: startTime, end: endTime)
-              cameraLayerInstruction.setTransformRamp(
-                fromStart: cameraTransforms[idx],
-                toEnd: cameraTransforms[idx + 1],
-                timeRange: timeRange
+            if shouldInlineCameraRender {
+              inlineCameraRenderPlan = InlineCameraRenderPlan(
+                cameraTrackID: composedCameraTrack.trackID,
+                zOrder: cameraResolution.zOrder,
+                sourceSize: cameraSourceSize,
+                sourceRect: normalizedPlacementSourceRect,
+                shape: cameraParams.shape,
+                cornerRadius: cameraParams.cornerRadius,
+                borderWidth: cameraParams.borderWidth,
+                borderColorArgb: cameraParams.borderColorArgb,
+                shadowPreset: cameraParams.shadowPreset,
+                mirror: cameraParams.mirror,
+                opacity: cameraParams.opacity,
+                contentMode: cameraParams.contentMode,
+                samples: inlineSamples + [
+                  InlineCameraRenderPlan.Sample(time: hideTime, frame: nil, opacity: 0.0)
+                ]
               )
             }
+          } else if shouldInlineCameraRender {
+            inlineCameraRenderPlan = InlineCameraRenderPlan(
+              cameraTrackID: composedCameraTrack.trackID,
+              zOrder: cameraResolution.zOrder,
+              sourceSize: cameraSourceSize,
+              sourceRect: normalizedPlacementSourceRect,
+              shape: cameraParams.shape,
+              cornerRadius: cameraParams.cornerRadius,
+              borderWidth: cameraParams.borderWidth,
+              borderColorArgb: cameraParams.borderColorArgb,
+              shadowPreset: cameraParams.shadowPreset,
+              mirror: cameraParams.mirror,
+              opacity: cameraParams.opacity,
+              contentMode: cameraParams.contentMode,
+              samples: inlineSamples
+            )
           }
 
-          if synchronizedCameraOpacities.count >= 2,
-            let firstOpacity = synchronizedCameraOpacities.first,
-            synchronizedCameraOpacities.dropFirst().contains(where: { abs($0 - firstOpacity) > 0.0001 })
-          {
-            for idx in 0..<(cameraPresentation.count - 1) {
-              let startSeconds = cameraPresentation[idx].time
-              let endSeconds = min(cameraPresentation[idx + 1].time, effectiveDuration)
-              guard endSeconds > startSeconds else { continue }
-
-              let startTime = CMTime(seconds: startSeconds, preferredTimescale: 600)
-              let endTime = CMTime(seconds: endSeconds, preferredTimescale: 600)
-              let timeRange = CMTimeRange(start: startTime, end: endTime)
-              cameraLayerInstruction.setOpacityRamp(
-                fromStartOpacity: synchronizedCameraOpacities[idx],
-                toEndOpacity: synchronizedCameraOpacities[idx + 1],
-                timeRange: timeRange
-              )
+          if !shouldInlineCameraRender {
+            if let firstTransform = cameraTransforms.first {
+              cameraLayerInstruction.setTransform(firstTransform, at: .zero)
             }
-          }
+            if let firstOpacity = synchronizedCameraOpacities.first {
+              cameraLayerInstruction.setOpacity(firstOpacity, at: .zero)
+            }
 
-          if cameraResolution.zOrder == .behindScreen {
-            layerInstructions = [screenLayerInstruction, cameraLayerInstruction]
-          } else {
-            layerInstructions = [cameraLayerInstruction, screenLayerInstruction]
+            if cameraTransforms.count >= 2,
+              let firstTransform = cameraTransforms.first,
+              cameraTransforms.dropFirst().contains(where: {
+                !transformsApproximatelyEqual($0, firstTransform)
+              })
+            {
+              for idx in 0..<(cameraPresentation.count - 1) {
+                let startSeconds = cameraPresentation[idx].time
+                let endSeconds = min(cameraPresentation[idx + 1].time, effectiveDuration)
+                guard endSeconds > startSeconds else { continue }
+
+                let startTime = CMTime(seconds: startSeconds, preferredTimescale: 600)
+                let endTime = CMTime(seconds: endSeconds, preferredTimescale: 600)
+                let timeRange = CMTimeRange(start: startTime, end: endTime)
+                cameraLayerInstruction.setTransformRamp(
+                  fromStart: cameraTransforms[idx],
+                  toEnd: cameraTransforms[idx + 1],
+                  timeRange: timeRange
+                )
+              }
+            }
+
+            if synchronizedCameraOpacities.count >= 2,
+              let firstOpacity = synchronizedCameraOpacities.first,
+              synchronizedCameraOpacities.dropFirst().contains(where: { abs($0 - firstOpacity) > 0.0001 })
+            {
+              for idx in 0..<(cameraPresentation.count - 1) {
+                let startSeconds = cameraPresentation[idx].time
+                let endSeconds = min(cameraPresentation[idx + 1].time, effectiveDuration)
+                guard endSeconds > startSeconds else { continue }
+
+                let startTime = CMTime(seconds: startSeconds, preferredTimescale: 600)
+                let endTime = CMTime(seconds: endSeconds, preferredTimescale: 600)
+                let timeRange = CMTimeRange(start: startTime, end: endTime)
+                cameraLayerInstruction.setOpacityRamp(
+                  fromStartOpacity: synchronizedCameraOpacities[idx],
+                  toEndOpacity: synchronizedCameraOpacities[idx + 1],
+                  timeRange: timeRange
+                )
+              }
+            }
+
+            if cameraResolution.zOrder == .behindScreen {
+              layerInstructions = [screenLayerInstruction, cameraLayerInstruction]
+            } else {
+              layerInstructions = [cameraLayerInstruction, screenLayerInstruction]
+            }
           }
         }
       }
 
       let instruction = AVMutableVideoCompositionInstruction()
       instruction.timeRange = CMTimeRange(start: .zero, duration: screenAsset.duration)
-      if let backgroundColor = params.backgroundColor {
+      if inlineCameraRenderPlan != nil {
+        instruction.backgroundColor = CGColor(red: 0, green: 0, blue: 0, alpha: 0)
+      } else if let backgroundColor = params.backgroundColor {
         instruction.backgroundColor = exportBackgroundColor(backgroundColor)
       }
       instruction.layerInstructions = layerInstructions
@@ -1994,11 +2154,13 @@ final class CompositionBuilder {
         ty: ty,
         videoToTargetScale: screenScale,
         zoomSamples: exportZoomSamples,
-        visibleRegionMaskSamples: cameraMaskSamples,
-        forceVisibleRegionMask: screenSourceMode == .precompositedCanvas && !cameraMaskSamples.isEmpty,
+        visibleRegionMaskSamples: inlineCameraRenderPlan == nil ? cameraMaskSamples : [],
+        forceVisibleRegionMask: inlineCameraRenderPlan == nil
+          && screenSourceMode == .precompositedCanvas
+          && !cameraMaskSamples.isEmpty,
         zoomApplicationMode: screenSourceMode == .liveScreenTrack ? .screenOverlayOnly : .none,
         includeRoundedMask: false,
-        backgroundMode: .resolvedOutput,
+        backgroundMode: inlineCameraRenderPlan == nil ? .resolvedOutput : .transparent,
         renderCursorOverlay: screenSourceMode == .liveScreenTrack,
         debugSource: screenSourceMode == .precompositedCanvas ? "export_precomposited_final" : "export_two_source"
       )
@@ -2011,7 +2173,7 @@ final class CompositionBuilder {
           usesScreenZoomTransformRamp: screenSourceMode == .liveScreenTrack && !exportZoomSamples.isEmpty,
           rendersCursorOverlayInAnimationTool: screenSourceMode == .liveScreenTrack
             && params.showCursor
-            && !(cursorRecording?.frames.isEmpty ?? true),
+            && hasDrawableCursorOverlayContent(cursorRecording),
           appliesScreenZoomInAnimationTool: screenSourceMode == .liveScreenTrack && !exportZoomSamples.isEmpty,
           screenZoomIsPrecomposited: screenSourceMode == .precompositedCanvas
         ),
@@ -2019,7 +2181,8 @@ final class CompositionBuilder {
           renderSize: target,
           effectiveDuration: screenDuration,
           cameraSamples: cameraValidationSamples
-        )
+        ),
+        inlineCameraRenderPlan: inlineCameraRenderPlan
       )
     } catch {
       NativeLogger.e(
@@ -2029,6 +2192,22 @@ final class CompositionBuilder {
       )
       return nil
     }
+  }
+
+  private func cameraNeedsInlineRender(_ cameraParams: CameraCompositionParams) -> Bool {
+    if cameraParams.shape != .square {
+      return true
+    }
+    if cameraParams.borderWidth > 0.0 || cameraParams.shadowPreset > 0 {
+      return true
+    }
+    if cameraParams.mirror {
+      return true
+    }
+    if abs(cameraParams.opacity - 1.0) > 0.0001 {
+      return true
+    }
+    return cameraParams.contentMode != .fill
   }
 
   private func fittedTransform(
@@ -2377,7 +2556,7 @@ final class CompositionBuilder {
     debugSource: String
   ) {
     let shouldRenderCursor =
-      renderCursorOverlay && params.showCursor && !(cursorRecording?.frames.isEmpty ?? true)
+      renderCursorOverlay && params.showCursor && hasDrawableCursorOverlayContent(cursorRecording)
     let shouldApplyZoom = !zoomSamples.isEmpty && zoomApplicationMode != .none
     let shouldApplyVisibleRegionMask =
       forceVisibleRegionMask || params.backgroundImagePath != nil || includeRoundedMask
@@ -2442,7 +2621,7 @@ final class CompositionBuilder {
       return overlayLayer
     }()
 
-    if shouldRenderCursor, let recording = cursorRecording, !recording.frames.isEmpty {
+    if shouldRenderCursor, let recording = cursorRecording {
       addCursorLayer(
         to: screenOverlayLayer ?? videoLayer,
         recording: recording,

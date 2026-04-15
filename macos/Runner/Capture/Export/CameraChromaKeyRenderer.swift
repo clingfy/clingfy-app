@@ -170,6 +170,7 @@ final class CameraChromaKeyRenderer {
     removeFileIfExists(outputURL)
     let durationSeconds = max(inputAsset.duration.seconds, 0.001)
     let renderQueue = DispatchQueue(label: "Clingfy.CameraChromaKeyRender")
+    let stageStart = CFAbsoluteTimeGetCurrent()
     var didLogSourceColorMetadata = false
     var completed = false
     var frameIndex = 0
@@ -253,14 +254,7 @@ final class CameraChromaKeyRenderer {
 
           let allocation = makePooledPixelBuffer(from: pixelBufferPool)
           if allocation.status == kCVReturnWouldExceedAllocationThreshold {
-            NativeLogger.d(
-              "ExportMemory",
-              "Pixel buffer pool backpressure",
-              context: [
-                "stage": "screen_prepass",
-                "frame": frameIndex,
-              ]
-            )
+            logExportBackpressure(stage: "camera_chroma_key_prepass", frameIndex: frameIndex)
             return false
           }
 
@@ -291,6 +285,11 @@ final class CameraChromaKeyRenderer {
 
               if writer.status == .completed {
                 onProgress?(1.0)
+                logExportStagePerformance(
+                  stage: "camera_chroma_key_prepass",
+                  frames: frameIndex,
+                  startedAt: stageStart
+                )
                 var readyContext: [String: Any] = [
                   "output": outputURL.path,
                   "renderSize": "\(Int(renderSize.width))x\(Int(renderSize.height))",
