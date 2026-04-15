@@ -1068,7 +1068,10 @@ class PostProcessingController extends ChangeNotifier {
         normalized.contains('stopped by user');
   }
 
-  String _defaultExportFileName(AppLocalizations l10n, {required String format}) {
+  String _defaultExportFileName(
+    AppLocalizations l10n, {
+    required String format,
+  }) {
     return buildDefaultExportFileName(l10n, format: format);
   }
 
