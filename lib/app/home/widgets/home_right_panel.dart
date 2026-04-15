@@ -45,7 +45,6 @@ class HomeRightPanel extends StatelessWidget {
           RecordingController,
           ({
             bool showPreviewShell,
-            bool showPreviewControls,
             bool showPreviewLoadingOverlay,
             bool showPreviewSurface,
             String? previewPath,
@@ -54,7 +53,6 @@ class HomeRightPanel extends StatelessWidget {
         >(
           (r) => (
             showPreviewShell: r.showPreviewShell,
-            showPreviewControls: r.showPreviewControls,
             showPreviewLoadingOverlay: r.showPreviewLoadingOverlay,
             showPreviewSurface: r.showPreviewSurface,
             previewPath: r.previewPath,
@@ -105,7 +103,7 @@ class HomeRightPanel extends StatelessWidget {
                           ),
                           isPlaying: isPlaying,
                           controlsEnabled:
-                              previewUiState.showPreviewControls &&
+                              previewUiState.showPreviewSurface &&
                               !postHasError,
                           onPlayPause: (playing) {
                             if (playing) {
