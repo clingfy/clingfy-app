@@ -130,6 +130,31 @@ final class LetterboxExporter {
     return rawValue ?? 0
   }
 
+  private func clearPixelBuffer(_ pixelBuffer: CVPixelBuffer) {
+    CVPixelBufferLockBaseAddress(pixelBuffer, [])
+    if let baseAddress = CVPixelBufferGetBaseAddress(pixelBuffer) {
+      memset(baseAddress, 0, CVPixelBufferGetDataSize(pixelBuffer))
+    }
+    CVPixelBufferUnlockBaseAddress(pixelBuffer, [])
+  }
+
+  private func writerStatusDescription(_ status: AVAssetWriter.Status) -> String {
+    switch status {
+    case .unknown:
+      return "unknown"
+    case .writing:
+      return "writing"
+    case .completed:
+      return "completed"
+    case .failed:
+      return "failed"
+    case .cancelled:
+      return "cancelled"
+    @unknown default:
+      return "unrecognized"
+    }
+  }
+
   private func shouldSweepStaleTemporaryArtifact(named fileName: String) -> Bool {
     guard fileName.hasSuffix(".mov") else { return false }
     return staleTemporaryArtifactPrefixes.contains { fileName.hasPrefix($0) }
@@ -1450,18 +1475,16 @@ final class LetterboxExporter {
       return
     }
     videoInput.expectsMediaDataInRealTime = false
-    let videoAdaptor = inlineCameraRenderPlan.map { _ in
-      AVAssetWriterInputPixelBufferAdaptor(
-        assetWriterInput: videoInput,
-        sourcePixelBufferAttributes: [
-          kCVPixelBufferPixelFormatTypeKey as String: kCVPixelFormatType_32BGRA,
-          kCVPixelBufferWidthKey as String: Int(renderSize.width),
-          kCVPixelBufferHeightKey as String: Int(renderSize.height),
-          kCVPixelBufferCGImageCompatibilityKey as String: true,
-          kCVPixelBufferCGBitmapContextCompatibilityKey as String: true,
-        ]
-      )
-    }
+    let videoAdaptor = AVAssetWriterInputPixelBufferAdaptor(
+      assetWriterInput: videoInput,
+      sourcePixelBufferAttributes: [
+        kCVPixelBufferPixelFormatTypeKey as String: kCVPixelFormatType_32BGRA,
+        kCVPixelBufferWidthKey as String: Int(renderSize.width),
+        kCVPixelBufferHeightKey as String: Int(renderSize.height),
+        kCVPixelBufferCGImageCompatibilityKey as String: true,
+        kCVPixelBufferCGBitmapContextCompatibilityKey as String: true,
+      ]
+    )
     guard writer.canAdd(videoInput) else {
       completion(
         .failure(
@@ -1550,10 +1573,12 @@ final class LetterboxExporter {
     let videoQueue = DispatchQueue(label: "Clingfy.FinalExportManualRender.Video")
     let audioQueue = DispatchQueue(label: "Clingfy.FinalExportManualRender.Audio")
     let frameDurationSeconds = max(videoComposition.frameDuration.seconds, 1.0 / 30.0)
+    let renderBounds = CGRect(origin: .zero, size: renderSize)
     var videoFinished = false
     var audioFinished = audioInput == nil
     var completed = false
     var videoFrameIndex = 0
+    let directRenderContext = CIContext(options: [.cacheIntermediates: false])
     let inlineCameraRenderer = inlineCameraRenderPlan.map { _ in
       InlineCameraRenderer(
         renderSize: renderSize,
@@ -1573,6 +1598,31 @@ final class LetterboxExporter {
       }
       currentCameraSampleBuffer = nil
       nextCameraSampleBuffer = nil
+    }
+
+    func manualRenderError(
+      code: Int,
+      reason: String,
+      frameIndex: Int,
+      context: [String: Any] = [:]
+    ) -> NSError {
+      var mergedContext: [String: Any] = [
+        "stage": "final_manual_video_render",
+        "frame": frameIndex,
+        "writerStatus": self.writerStatusDescription(writer.status),
+        "writerError": writer.error?.localizedDescription ?? "nil",
+        "outputPath": outputURL.path,
+        "outputFileBytes": self.fileSizeBytes(for: outputURL),
+      ]
+      context.forEach { mergedContext[$0.key] = $0.value }
+      return NSError(
+        domain: "Letterbox",
+        code: code,
+        userInfo: [
+          NSLocalizedDescriptionKey: reason,
+          "context": mergedContext,
+        ]
+      )
     }
 
     func fail(_ error: Error) {
@@ -1654,6 +1704,35 @@ final class LetterboxExporter {
         }
 
         let shouldContinue = autoreleasepool { () -> Bool in
+          guard let pixelBufferPool = videoAdaptor.pixelBufferPool else {
+            fail(
+              manualRenderError(
+                code: -31,
+                reason: "Manual export renderer has no pixel buffer pool.",
+                frameIndex: videoFrameIndex
+              )
+            )
+            return false
+          }
+
+          let allocation = makePooledPixelBuffer(from: pixelBufferPool)
+          if allocation.status == kCVReturnWouldExceedAllocationThreshold {
+            logExportBackpressure(stage: "final_export", frameIndex: videoFrameIndex)
+            return false
+          }
+
+          guard allocation.status == kCVReturnSuccess, let renderedPixelBuffer = allocation.pixelBuffer else {
+            fail(
+              manualRenderError(
+                code: -32,
+                reason: "Manual export renderer could not allocate an output frame.",
+                frameIndex: videoFrameIndex,
+                context: ["status": allocation.status]
+              )
+            )
+            return false
+          }
+
           guard let sampleBuffer = videoOutput.copyNextSampleBuffer() else {
             if reader.status == .failed {
               fail(
@@ -1685,49 +1764,19 @@ final class LetterboxExporter {
             onProgress?(lower + (min(max(sampleTime / durationSeconds, 0.0), 1.0) * span))
           }
 
-          if let inlineCameraRenderPlan, let inlineCameraRenderer, let videoAdaptor {
-            guard let pixelBufferPool = videoAdaptor.pixelBufferPool else {
-              fail(
-                NSError(
-                  domain: "Letterbox",
-                  code: -31,
-                  userInfo: [NSLocalizedDescriptionKey: "Manual export inline camera renderer has no pixel buffer pool"]
-                )
+          guard let screenPixelBuffer = CMSampleBufferGetImageBuffer(sampleBuffer) else {
+            fail(
+              manualRenderError(
+                code: -33,
+                reason: "Manual export video reader produced a frame without an image buffer.",
+                frameIndex: videoFrameIndex
               )
-              return false
-            }
+            )
+            return false
+          }
 
-            let allocation = makePooledPixelBuffer(from: pixelBufferPool)
-            if allocation.status == kCVReturnWouldExceedAllocationThreshold {
-              logExportBackpressure(stage: "final_export", frameIndex: videoFrameIndex)
-              return false
-            }
-
-            guard allocation.status == kCVReturnSuccess, let renderedPixelBuffer = allocation.pixelBuffer else {
-              fail(
-                NSError(
-                  domain: "Letterbox",
-                  code: -32,
-                  userInfo: [
-                    NSLocalizedDescriptionKey: "Manual export inline camera renderer could not allocate an output frame",
-                    "status": allocation.status,
-                  ]
-                )
-              )
-              return false
-            }
-
-            guard let screenPixelBuffer = CMSampleBufferGetImageBuffer(sampleBuffer) else {
-              fail(
-                NSError(
-                  domain: "Letterbox",
-                  code: -33,
-                  userInfo: [NSLocalizedDescriptionKey: "Manual export video reader produced a frame without an image buffer"]
-                )
-              )
-              return false
-            }
-
+          VideoColorPipeline.tag(pixelBuffer: renderedPixelBuffer)
+          if let inlineCameraRenderPlan, let inlineCameraRenderer {
             while let queuedCameraSample = nextCameraSampleBuffer {
               let queuedTime = CMSampleBufferGetPresentationTimeStamp(queuedCameraSample).seconds
               if queuedTime <= sampleTime + (frameDurationSeconds * 0.5) {
@@ -1753,7 +1802,6 @@ final class LetterboxExporter {
               return CMSampleBufferGetImageBuffer(currentCameraSampleBuffer)
             }()
 
-            VideoColorPipeline.tag(pixelBuffer: renderedPixelBuffer)
             inlineCameraRenderer.render(
               screenPixelBuffer: screenPixelBuffer,
               cameraPixelBuffer: cameraPixelBuffer,
@@ -1762,30 +1810,47 @@ final class LetterboxExporter {
               plan: inlineCameraRenderPlan,
               to: renderedPixelBuffer
             )
-
-            guard videoAdaptor.append(renderedPixelBuffer, withPresentationTime: presentationTime) else {
-              fail(
-                writer.error
-                  ?? NSError(
-                    domain: "Letterbox",
-                    code: -34,
-                    userInfo: [NSLocalizedDescriptionKey: "Manual export inline camera writer rejected a frame"]
-                  )
-              )
-              return false
-            }
           } else {
-            if !videoInput.append(sampleBuffer) {
-              fail(
-                writer.error
-                  ?? NSError(
-                    domain: "Letterbox",
-                    code: -22,
-                    userInfo: [NSLocalizedDescriptionKey: "Manual export video writer rejected a frame"]
-                  )
+            let sourceImage = CIImage(cvPixelBuffer: screenPixelBuffer)
+            let sourceBounds = CGRect(
+              origin: .zero,
+              size: CGSize(
+                width: CVPixelBufferGetWidth(screenPixelBuffer),
+                height: CVPixelBufferGetHeight(screenPixelBuffer)
               )
-              return false
+            )
+            let imageToRender: CIImage
+            if sourceBounds.size == renderBounds.size {
+              imageToRender = sourceImage
+            } else {
+              imageToRender = sourceImage.transformed(
+                by: CGAffineTransform(
+                  scaleX: renderBounds.width / max(sourceBounds.width, 1.0),
+                  y: renderBounds.height / max(sourceBounds.height, 1.0)
+                )
+              )
             }
+
+            self.clearPixelBuffer(renderedPixelBuffer)
+            directRenderContext.render(
+              imageToRender,
+              to: renderedPixelBuffer,
+              bounds: renderBounds,
+              colorSpace: VideoColorPipeline.workingColorSpace
+            )
+          }
+
+          guard videoAdaptor.append(renderedPixelBuffer, withPresentationTime: presentationTime) else {
+            fail(
+              manualRenderError(
+                code: inlineCameraRenderPlan == nil ? -22 : -34,
+                reason: inlineCameraRenderPlan == nil
+                  ? "Manual export video writer rejected a frame."
+                  : "Manual export inline camera writer rejected a frame.",
+                frameIndex: videoFrameIndex
+              )
+            )
+            return false
           }
 
           logExportMemoryCheckpoint(

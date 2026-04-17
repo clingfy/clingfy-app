@@ -2394,6 +2394,82 @@ final class LetterboxExporterTests: XCTestCase {
     )
   }
 
+  func testSingleSourceAnimatedFinalRenderMatchesReferenceComposition() throws {
+    let tempDir = makeTemporaryDirectory()
+    defer { try? FileManager.default.removeItem(at: tempDir) }
+
+    let screenURL = tempDir.appendingPathComponent("screen.mov")
+    try makeSolidColorVideo(
+      url: screenURL,
+      size: CGSize(width: 320, height: 180),
+      durationSeconds: 1.0,
+      color: .systemBlue
+    )
+
+    let params = CompositionParams(
+      targetSize: CGSize(width: 640, height: 360),
+      padding: 0.0,
+      cornerRadius: 0.0,
+      backgroundColor: nil,
+      backgroundImagePath: nil,
+      cursorSize: 1.0,
+      showCursor: true,
+      zoomEnabled: true,
+      zoomFactor: 1.8,
+      followStrength: 0.15,
+      fpsHint: 30,
+      fitMode: "fit",
+      audioGainDb: 0.0,
+      audioVolumePercent: 100.0
+    )
+
+    let builder = CompositionBuilder()
+    let result = try XCTUnwrap(
+      builder.buildExport(
+        asset: AVAsset(url: screenURL),
+        cameraAsset: nil,
+        params: params,
+        cameraParams: nil,
+        cursorRecording: makeZoomCursorRecording(),
+        cameraAssetIsPreStyled: false
+      )
+    )
+
+    XCTAssertNil(result.inlineCameraRenderPlan)
+    XCTAssertNotNil(result.videoComposition.animationTool)
+
+    let exporter = LetterboxExporter()
+    let outputURL = tempDir.appendingPathComponent("single-source-animated-final.mov")
+    let renderExpectation = expectation(description: "single-source animated final render")
+    var renderResult: Result<URL, Error>?
+
+    exporter._testRenderFinalExport(
+      result: result,
+      outputURL: outputURL
+    ) { result in
+      renderResult = result
+      renderExpectation.fulfill()
+    }
+
+    wait(for: [renderExpectation], timeout: 30.0)
+    let finalURL = try XCTUnwrap(try renderResult?.get())
+    let finalSize = try orientedVideoSize(url: finalURL)
+    XCTAssertEqual(finalSize.width, params.targetSize.width, accuracy: 1.0)
+    XCTAssertEqual(finalSize.height, params.targetSize.height, accuracy: 1.0)
+
+    let referenceImage = try sampleFrameImage(
+      asset: result.asset,
+      videoComposition: result.videoComposition
+    )
+    let finalImage = try sampleFrameImage(url: finalURL)
+    try assertAverageColorParity(
+      referenceImage: referenceImage,
+      candidateImage: finalImage,
+      lumaTolerance: 0.08,
+      channelTolerance: 0.08
+    )
+  }
+
   func testTwoSourceExportKeepsCameraPinnedWhileCursorFollowsZoomedScreen() throws {
     let tempDir = makeTemporaryDirectory()
     defer { try? FileManager.default.removeItem(at: tempDir) }
