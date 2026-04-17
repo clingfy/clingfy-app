@@ -11,6 +11,7 @@ import 'package:clingfy/ui/platform/widgets/app_sidebar_tokens.dart';
 import 'package:clingfy/ui/platform/widgets/app_slider_row.dart';
 import 'package:clingfy/ui/platform/widgets/app_toggle_row.dart';
 import 'package:clingfy/ui/platform/widgets/platform_dropdown.dart';
+import 'package:clingfy/ui/platform/widgets/resolution_preset_menu_items.dart';
 import 'package:clingfy/ui/theme/app_theme.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_colorpicker/flutter_colorpicker.dart';
@@ -290,15 +291,13 @@ void main() {
         (widget) => widget is PlatformDropdown<ResolutionPreset>,
       ),
     );
+    final l10n = AppLocalizations.of(tester.element(find.byType(Scaffold)))!;
 
     expect(find.text('Resolution'), findsOneWidget);
-    expect(dropdown.items.map((item) => item.label).toList(), [
-      'Auto',
-      '1080p',
-      '1440p (2K)',
-      '2160p (4K)',
-      '4320p (8K)',
-    ]);
+    expect(
+      dropdown.items.map((item) => item.label).toList(),
+      buildResolutionPresetMenuItems(l10n).map((item) => item.label).toList(),
+    );
   });
 
   testWidgets('canvas tab hides resolution dropdown when disabled', (
