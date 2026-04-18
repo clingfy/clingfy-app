@@ -78,6 +78,12 @@ Future<void> _pumpSection(
   await tester.pumpAndSettle();
 }
 
+Finder _macosTooltip(String message) {
+  return find.byWidgetPredicate(
+    (widget) => widget is MacosTooltip && widget.message == message,
+  );
+}
+
 double _dropdownFieldWidthAt(WidgetTester tester, int index) {
   return tester.getSize(find.byKey(PlatformDropdown.fieldKey).at(index)).width;
 }
@@ -89,6 +95,56 @@ double _dropdownMenuRowWidth(WidgetTester tester, int index) {
 }
 
 void main() {
+  testWidgets(
+    'capture source title is hidden and display refresh moves inline',
+    (tester) async {
+      await _pumpSection(tester);
+
+      final l10n = AppLocalizations.of(
+        tester.element(find.byType(RecordingSourceSection)),
+      )!;
+      final labelRect = tester.getRect(find.text(l10n.screenToRecord));
+      final refreshRect = tester.getRect(_macosTooltip(l10n.refreshDisplays));
+
+      expect(find.text(l10n.captureSource), findsNothing);
+      expect(_macosTooltip(l10n.refreshDisplays), findsOneWidget);
+      expect((refreshRect.center.dy - labelRect.center.dy).abs(), lessThan(4));
+      expect(refreshRect.left, greaterThan(labelRect.right));
+    },
+  );
+
+  testWidgets('window refresh moves inline to window row', (tester) async {
+    await _pumpSection(tester, targetMode: DisplayTargetMode.singleAppWindow);
+
+    final l10n = AppLocalizations.of(
+      tester.element(find.byType(RecordingSourceSection)),
+    )!;
+    final labelRect = tester.getRect(find.text(l10n.windowToRecord));
+    final refreshRect = tester.getRect(_macosTooltip(l10n.refreshWindows));
+
+    expect(_macosTooltip(l10n.refreshWindows), findsOneWidget);
+    expect((refreshRect.center.dy - labelRect.center.dy).abs(), lessThan(4));
+    expect(refreshRect.left, greaterThan(labelRect.right));
+  });
+
+  testWidgets('area mode shows no refresh and keeps helper on record target', (
+    tester,
+  ) async {
+    await _pumpSection(tester, targetMode: DisplayTargetMode.areaRecording);
+
+    final l10n = AppLocalizations.of(
+      tester.element(find.byType(RecordingSourceSection)),
+    )!;
+    final labelRect = tester.getRect(find.text(l10n.recordTarget));
+    final helperRect = tester.getRect(find.byTooltip(l10n.areaRecordingHelper));
+
+    expect(_macosTooltip(l10n.refreshDisplays), findsNothing);
+    expect(_macosTooltip(l10n.refreshWindows), findsNothing);
+    expect(find.byTooltip(l10n.areaRecordingHelper), findsOneWidget);
+    expect((helperRect.center.dy - labelRect.center.dy).abs(), lessThan(4));
+    expect(helperRect.left - labelRect.right, lessThanOrEqualTo(12));
+  });
+
   testWidgets(
     'chosen screen dropdowns expand beyond the old sidebar control cap',
     (tester) async {

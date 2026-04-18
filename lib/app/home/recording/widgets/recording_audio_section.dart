@@ -62,11 +62,7 @@ class RecordingAudioSection extends StatelessWidget {
 
     return AppSettingsGroup(
       title: l10n.audio,
-      trailing: AppIconButton(
-        tooltip: l10n.refreshAudio,
-        onPressed: (loadingAudio || isRecording) ? null : onRefreshAudio,
-        icon: Icons.refresh,
-      ),
+      showHeader: false,
       children: loadingAudio
           ? const [
               Padding(
@@ -77,6 +73,13 @@ class RecordingAudioSection extends StatelessWidget {
           : [
               AppFormRow(
                 label: l10n.inputDevice,
+                labelTrailing: AppIconButton(
+                  tooltip: l10n.refreshAudio,
+                  onPressed: (loadingAudio || isRecording)
+                      ? null
+                      : onRefreshAudio,
+                  icon: Icons.refresh,
+                ),
                 control: SizedBox(
                   width: double.infinity,
                   child: Row(

@@ -398,6 +398,7 @@ class RecordingOptionsSidebar extends StatelessWidget {
       ),
       AppSettingsGroup(
         title: l10n.pointer,
+        showHeader: false,
         children: [
           AppFormRow(
             label: l10n.cursorHighlightVisibility,

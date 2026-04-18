@@ -84,15 +84,11 @@ class RecordingSourceSection extends StatelessWidget {
       anchorKey: guideAnchorKey,
       sectionKey: const Key('recording_capture_source_group'),
       title: l10n.captureSource,
-      infoTooltip: isAreaTarget ? l10n.areaRecordingHelper : null,
-      trailing: _buildTrailingAction(
-        context,
-        isDisplayTarget: isDisplayTarget,
-        isAppWindowTarget: isAppWindowTarget,
-      ),
+      showHeader: false,
       children: [
         AppFormRow(
           label: l10n.recordTarget,
+          infoTooltip: isAreaTarget ? l10n.areaRecordingHelper : null,
           control: PlatformDropdown<DisplayTargetMode>(
             value: targetMode,
             minWidth: 0,
@@ -139,32 +135,6 @@ class RecordingSourceSection extends StatelessWidget {
     );
   }
 
-  Widget? _buildTrailingAction(
-    BuildContext context, {
-    required bool isDisplayTarget,
-    required bool isAppWindowTarget,
-  }) {
-    final l10n = AppLocalizations.of(context)!;
-
-    if (isDisplayTarget) {
-      return AppIconButton(
-        tooltip: l10n.refreshDisplays,
-        onPressed: isRecording ? null : onRefreshDisplays,
-        icon: Icons.refresh,
-      );
-    }
-
-    if (isAppWindowTarget) {
-      return AppIconButton(
-        tooltip: l10n.refreshWindows,
-        onPressed: isRecording ? null : onRefreshAppWindows,
-        icon: Icons.refresh,
-      );
-    }
-
-    return null;
-  }
-
   List<Widget>? _buildTargetDetails(
     BuildContext context, {
     required int? validDisplayId,
@@ -181,6 +151,11 @@ class RecordingSourceSection extends StatelessWidget {
       return [
         AppFormRow(
           label: l10n.screenToRecord,
+          labelTrailing: AppIconButton(
+            tooltip: l10n.refreshDisplays,
+            onPressed: isRecording ? null : onRefreshDisplays,
+            icon: Icons.refresh,
+          ),
           control: PlatformDropdown<int?>(
             value: validDisplayId,
             minWidth: 0,
@@ -208,6 +183,11 @@ class RecordingSourceSection extends StatelessWidget {
       return [
         AppFormRow(
           label: l10n.windowToRecord,
+          labelTrailing: AppIconButton(
+            tooltip: l10n.refreshWindows,
+            onPressed: isRecording ? null : onRefreshAppWindows,
+            icon: Icons.refresh,
+          ),
           control: PlatformDropdown<int?>(
             value: validAppWindowId,
             minWidth: 0,

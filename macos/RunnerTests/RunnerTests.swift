@@ -53,10 +53,10 @@ private func makeBasicEditorSeed() -> RecordingMetadata.EditorSeed {
     cameraOpacity: 1.0,
     cameraMirror: true,
     cameraContentMode: .fill,
-    cameraZoomBehavior: .fixed,
+    cameraZoomBehavior: CameraCompositionParams.defaultZoomBehavior,
     cameraZoomScaleMultiplier: CameraCompositionParams.defaultZoomScaleMultiplier,
-    cameraIntroPreset: .none,
-    cameraOutroPreset: .none,
+    cameraIntroPreset: CameraCompositionParams.defaultIntroPreset,
+    cameraOutroPreset: CameraCompositionParams.defaultOutroPreset,
     cameraZoomEmphasisPreset: .none,
     cameraIntroDurationMs: CameraCompositionParams.defaultIntroDurationMs,
     cameraOutroDurationMs: CameraCompositionParams.defaultOutroDurationMs,
@@ -242,15 +242,32 @@ final class RecordingMetadataTests: XCTestCase {
     var editorSeed = try XCTUnwrap(json["editorSeed"] as? [String: Any])
     editorSeed.removeValue(forKey: "cameraZoomBehavior")
     editorSeed.removeValue(forKey: "cameraZoomScaleMultiplier")
+    editorSeed.removeValue(forKey: "cameraIntroPreset")
+    editorSeed.removeValue(forKey: "cameraOutroPreset")
+    editorSeed.removeValue(forKey: "cameraIntroDurationMs")
+    editorSeed.removeValue(forKey: "cameraOutroDurationMs")
     json["editorSeed"] = editorSeed
 
     let legacyData = try JSONSerialization.data(withJSONObject: json)
     let decoded = try JSONDecoder().decode(RecordingMetadata.self, from: legacyData)
 
-    XCTAssertEqual(decoded.editorSeed.cameraZoomBehavior, .fixed)
-    XCTAssertEqual(decoded.editorSeed.cameraZoomScaleMultiplier, 0.35, accuracy: 0.0001)
-    XCTAssertEqual(decoded.editorSeed.cameraIntroPreset, .none)
-    XCTAssertEqual(decoded.editorSeed.cameraOutroPreset, .none)
+    XCTAssertEqual(
+      decoded.editorSeed.cameraZoomBehavior,
+      CameraCompositionParams.defaultZoomBehavior
+    )
+    XCTAssertEqual(
+      decoded.editorSeed.cameraZoomScaleMultiplier,
+      CameraCompositionParams.defaultZoomScaleMultiplier,
+      accuracy: 0.0001
+    )
+    XCTAssertEqual(
+      decoded.editorSeed.cameraIntroPreset,
+      CameraCompositionParams.defaultIntroPreset
+    )
+    XCTAssertEqual(
+      decoded.editorSeed.cameraOutroPreset,
+      CameraCompositionParams.defaultOutroPreset
+    )
     XCTAssertEqual(decoded.editorSeed.cameraZoomEmphasisPreset, .none)
     XCTAssertEqual(
       decoded.editorSeed.cameraIntroDurationMs,
@@ -874,7 +891,7 @@ final class CameraAnimationTimelineBuilderTests: XCTestCase {
 }
 
 final class LetterboxExporterTests: XCTestCase {
-  func testSeparateCameraExportUsesCameraPrepassForAdvancedStyling() {
+  func testSeparateCameraExportSkipsCameraPrepassForAdvancedStyling() {
     let exporter = LetterboxExporter()
     let params = CameraCompositionParams(
       visible: true,
@@ -895,7 +912,7 @@ final class LetterboxExporterTests: XCTestCase {
       chromaKeyColorArgb: nil
     )
 
-    XCTAssertTrue(exporter._testShouldUseCameraPrepass(cameraParams: params))
+    XCTAssertFalse(exporter._testShouldUseCameraPrepass(cameraParams: params))
   }
 
   func testSeparateCameraExportUsesCameraPrepassForChromaKeyOnly() {
@@ -995,6 +1012,24 @@ final class LetterboxExporterTests: XCTestCase {
       exporter._testShouldUseScreenPrepass(
         cameraAssetURL: URL(fileURLWithPath: "/tmp/camera.mov"),
         cameraParams: cameraParams,
+        params: params,
+        cursorRecording: makeStaticCursorRecording()
+      )
+    )
+    var explicitZoomParams = params
+    explicitZoomParams.zoomSegments = [ZoomTimelineSegment(startMs: 250, endMs: 1_250)]
+    XCTAssertTrue(
+      exporter._testShouldUseScreenPrepass(
+        cameraAssetURL: URL(fileURLWithPath: "/tmp/camera.mov"),
+        cameraParams: cameraParams,
+        params: explicitZoomParams,
+        cursorRecording: nil
+      )
+    )
+    XCTAssertFalse(
+      exporter._testShouldUseScreenPrepass(
+        cameraAssetURL: URL(fileURLWithPath: "/tmp/camera.mov"),
+        cameraParams: cameraParams,
         params: CompositionParams(
           targetSize: params.targetSize,
           padding: params.padding,
@@ -1014,6 +1049,59 @@ final class LetterboxExporterTests: XCTestCase {
         cursorRecording: makeZoomCursorRecording()
       )
     )
+  }
+
+  func testCursorOverlayRequiresDrawableCursorContent() throws {
+    let tempDir = makeTemporaryDirectory()
+    defer { try? FileManager.default.removeItem(at: tempDir) }
+
+    let screenURL = tempDir.appendingPathComponent("screen.mov")
+    try makeSolidColorVideo(
+      url: screenURL,
+      size: CGSize(width: 320, height: 180),
+      durationSeconds: 1.0,
+      color: .systemBlue
+    )
+
+    let params = CompositionParams(
+      targetSize: CGSize(width: 640, height: 360),
+      padding: 0.0,
+      cornerRadius: 0.0,
+      backgroundColor: nil,
+      backgroundImagePath: nil,
+      cursorSize: 1.0,
+      showCursor: true,
+      zoomEnabled: false,
+      zoomFactor: 1.5,
+      followStrength: 0.15,
+      fpsHint: 30,
+      fitMode: "fit",
+      audioGainDb: 0.0,
+      audioVolumePercent: 100.0
+    )
+
+    let builder = CompositionBuilder()
+    let undrawableResult = try XCTUnwrap(
+      builder.buildExport(
+        asset: AVAsset(url: screenURL),
+        cameraAsset: nil,
+        params: params,
+        cameraParams: nil,
+        cursorRecording: makeUndrawableCursorRecording()
+      )
+    )
+    XCTAssertFalse(undrawableResult.debugInfo.rendersCursorOverlayInAnimationTool)
+
+    let drawableResult = try XCTUnwrap(
+      builder.buildExport(
+        asset: AVAsset(url: screenURL),
+        cameraAsset: nil,
+        params: params,
+        cameraParams: nil,
+        cursorRecording: makeZoomCursorRecording()
+      )
+    )
+    XCTAssertTrue(drawableResult.debugInfo.rendersCursorOverlayInAnimationTool)
   }
 
   func testPreviewAndExportCompositionsUseSharedRec709ColorPolicy() throws {
@@ -1191,7 +1279,7 @@ final class LetterboxExporterTests: XCTestCase {
     )
 
     let pipeline = CameraStyledIntermediatePipeline()
-    XCTAssertTrue(pipeline.requiresPrepass(cameraParams: params))
+    XCTAssertFalse(pipeline.requiresPrepass(cameraParams: params))
 
     _ = try VideoColorPipeline.makeVideoWriterInput(
       baseOutputSettings: [
@@ -1406,11 +1494,74 @@ final class LetterboxExporterTests: XCTestCase {
     )
   }
 
-  func testCameraPrepassRendersNonBlackFrame() throws {
+  func testCleanupStaleExportTempArtifactsRemovesOnlyKnownIntermediates() throws {
     let tempDir = makeTemporaryDirectory()
     defer { try? FileManager.default.removeItem(at: tempDir) }
 
+    let staleScreenURL = tempDir.appendingPathComponent("screen.screen-prepass.\(UUID().uuidString).mov")
+    let staleCameraURL = tempDir.appendingPathComponent("camera.styled.\(UUID().uuidString).mov")
+    let staleRawURL = tempDir.appendingPathComponent("raw.styled.\(UUID().uuidString).mov")
+    let keepURL = tempDir.appendingPathComponent("keep.\(UUID().uuidString).mov")
+
+    try Data(repeating: 0x01, count: 32).write(to: staleScreenURL)
+    try Data(repeating: 0x02, count: 64).write(to: staleCameraURL)
+    try Data(repeating: 0x03, count: 96).write(to: staleRawURL)
+    try Data(repeating: 0x04, count: 48).write(to: keepURL)
+
+    let exporter = LetterboxExporter()
+    let result = exporter._testCleanupStaleExportIntermediates(at: tempDir)
+
+    XCTAssertEqual(result.filesRemoved, 3)
+    XCTAssertEqual(result.bytesReclaimed, 32 + 64 + 96)
+    XCTAssertFalse(FileManager.default.fileExists(atPath: staleScreenURL.path))
+    XCTAssertFalse(FileManager.default.fileExists(atPath: staleCameraURL.path))
+    XCTAssertFalse(FileManager.default.fileExists(atPath: staleRawURL.path))
+    XCTAssertTrue(FileManager.default.fileExists(atPath: keepURL.path))
+  }
+
+  func testScreenPrepassFailsEarlyWhenTempCapacityIsInsufficient() throws {
+    let exporter = LetterboxExporter()
+    let error = exporter._testScreenPrepassTempCapacityError(
+      targetSize: CGSize(width: 2560, height: 1440),
+      fpsHint: 60,
+      durationSeconds: 754.5,
+      availableCapacityBytes: 1_024
+    )
+
+    let resolvedError = try XCTUnwrap(error)
+    XCTAssertTrue(
+      resolvedError.localizedDescription.contains("temporary disk space"),
+      "expected a disk-space-specific screen prepass failure"
+    )
+    let context = try XCTUnwrap(resolvedError.userInfo["context"] as? [String: Any])
+    let availableTempBytes = try XCTUnwrap(context["availableTempBytes"] as? Int64)
+    let estimatedRequiredTempBytes = try XCTUnwrap(context["estimatedRequiredTempBytes"] as? Int64)
+    let tempPath = try XCTUnwrap(context["tempPath"] as? String)
+    XCTAssertEqual(availableTempBytes, 1_024)
+    XCTAssertGreaterThan(estimatedRequiredTempBytes, availableTempBytes)
+    XCTAssertFalse(tempPath.isEmpty)
+    XCTAssertNil(
+      exporter._testScreenPrepassTempCapacityError(
+        targetSize: CGSize(width: 640, height: 360),
+        fpsHint: 30,
+        durationSeconds: 1.0,
+        availableCapacityBytes: Int64.max / 4
+      )
+    )
+  }
+
+  func testInlineStyledCameraFinalRenderProducesVisibleCameraCrop() throws {
+    let tempDir = makeTemporaryDirectory()
+    defer { try? FileManager.default.removeItem(at: tempDir) }
+
+    let screenURL = tempDir.appendingPathComponent("screen.mov")
     let cameraURL = tempDir.appendingPathComponent("camera.mov")
+    try makeSolidColorVideo(
+      url: screenURL,
+      size: CGSize(width: 320, height: 180),
+      durationSeconds: 1.0,
+      color: .systemBlue
+    )
     try makeSolidColorVideo(
       url: cameraURL,
       size: CGSize(width: 128, height: 128),
@@ -1427,59 +1578,88 @@ final class LetterboxExporterTests: XCTestCase {
       cornerRadius: 0.15,
       opacity: 1.0,
       mirror: true,
-      contentMode: .fill,
+      contentMode: .fit,
       zoomBehavior: .fixed,
-      borderWidth: 0.0,
-      borderColorArgb: nil,
+      borderWidth: 4.0,
+      borderColorArgb: 0xFFFFFFFF,
       shadowPreset: 2,
       chromaKeyEnabled: false,
       chromaKeyStrength: 0.4,
       chromaKeyColorArgb: nil
     )
+    let params = CompositionParams(
+      targetSize: CGSize(width: 640, height: 360),
+      padding: 0.0,
+      cornerRadius: 0.0,
+      backgroundColor: nil,
+      backgroundImagePath: nil,
+      cursorSize: 1.0,
+      showCursor: false,
+      zoomEnabled: false,
+      zoomFactor: 1.5,
+      followStrength: 0.15,
+      fpsHint: 30,
+      fitMode: "fit",
+      audioGainDb: 0.0,
+      audioVolumePercent: 100.0
+    )
+
+    let builder = CompositionBuilder()
+    let result = try XCTUnwrap(
+      builder.buildExport(
+        asset: AVAsset(url: screenURL),
+        cameraAsset: AVAsset(url: cameraURL),
+        params: params,
+        cameraParams: cameraParams,
+        cursorRecording: nil,
+        cameraAssetIsPreStyled: false
+      )
+    )
+    XCTAssertNotNil(result.inlineCameraRenderPlan)
+    let instruction = try XCTUnwrap(
+      result.videoComposition.instructions.first as? AVMutableVideoCompositionInstruction
+    )
+    XCTAssertEqual(instruction.layerInstructions.count, 1)
 
     let exporter = LetterboxExporter()
-    let renderExpectation = expectation(description: "camera prepass rendered")
-    var renderResult: Result<CameraPreparedIntermediate, Error>?
+    let renderExpectation = expectation(description: "inline camera final render")
+    var renderResult: Result<URL, Error>?
+    let outputURL = tempDir.appendingPathComponent("inline-camera.mov")
 
-    exporter._testPrepareCameraIntermediate(
-      inputURL: cameraURL,
-      canvasSize: CGSize(width: 640, height: 360),
-      cameraParams: cameraParams,
-      fpsHint: 30
+    exporter._testRenderFinalExport(
+      result: result,
+      outputURL: outputURL
     ) { result in
       renderResult = result
       renderExpectation.fulfill()
     }
 
     wait(for: [renderExpectation], timeout: 30.0)
-    let prepared = try XCTUnwrap(try renderResult?.get())
-    defer {
-      prepared.temporaryArtifacts.forEach { try? FileManager.default.removeItem(at: $0) }
-    }
-    XCTAssertTrue(prepared.cameraAssetIsPreStyled)
-    let placementSourceRect = try XCTUnwrap(prepared.placementSourceRect)
-    let renderedSize = try orientedVideoSize(url: prepared.url)
-    let baseResolution = CameraLayoutResolver.effectiveFrame(
-      canvasSize: CGSize(width: 640, height: 360),
+    let finalURL = try XCTUnwrap(try renderResult?.get())
+
+    let image = try sampleFrameImage(url: finalURL)
+    let cameraResolution = CameraLayoutResolver.effectiveFrame(
+      canvasSize: params.targetSize,
       params: cameraParams
     )
-    XCTAssertGreaterThan(renderedSize.height, placementSourceRect.height)
-    XCTAssertEqual(placementSourceRect.width, ceil(baseResolution.frame.width), accuracy: 1.0)
-    XCTAssertEqual(placementSourceRect.height, ceil(baseResolution.frame.height), accuracy: 1.0)
-
-    let ratio = try nonBlackRatio(
-      for: sampleFrameImage(url: prepared.url),
-      ignoreTransparentPixels: true
-    )
-    XCTAssertGreaterThan(ratio, 0.05)
-
-    XCTAssertNil(
-      exporter._testValidateStyledCameraIntermediate(
-        rawCameraURL: cameraURL,
-        styledCameraURL: prepared.url,
-        placementSourceRect: placementSourceRect
+    let cameraCrop = try XCTUnwrap(
+      try bestScoredCropImage(
+        for: image,
+        canvasSize: params.targetSize,
+        cropRect: cameraResolution.frame,
+        scorer: { try dominantRedRatio(for: $0, ignoreTransparentPixels: true) }
       )
     )
+    let centerCrop = try XCTUnwrap(
+      bestCropImage(
+        for: image,
+        canvasSize: params.targetSize,
+        cropRect: CGRect(x: 220, y: 80, width: 200, height: 200)
+      )
+    )
+
+    XCTAssertGreaterThan(try dominantRedRatio(for: cameraCrop, ignoreTransparentPixels: true), 0.08)
+    XCTAssertGreaterThan(try dominantBlueRatio(for: centerCrop, ignoreTransparentPixels: false), 0.20)
   }
 
   func testChromaKeyCameraPrepassRemovesGreenBackgroundAndKeepsSubject() throws {
@@ -1532,6 +1712,8 @@ final class LetterboxExporterTests: XCTestCase {
       prepared.temporaryArtifacts.forEach { try? FileManager.default.removeItem(at: $0) }
     }
 
+    XCTAssertFalse(prepared.cameraAssetIsPreStyled)
+    XCTAssertNil(prepared.placementSourceRect)
     let image = try sampleFrameImage(url: prepared.url)
     XCTAssertLessThan(try visibleRatio(for: image), 0.55)
     XCTAssertLessThan(try dominantGreenRatio(for: image, ignoreTransparentPixels: true), 0.10)
@@ -1570,8 +1752,8 @@ final class LetterboxExporterTests: XCTestCase {
       mirror: true,
       contentMode: .fill,
       zoomBehavior: .fixed,
-      borderWidth: 0.0,
-      borderColorArgb: nil,
+      borderWidth: 4.0,
+      borderColorArgb: 0xFFFFFFFF,
       shadowPreset: 2,
       chromaKeyEnabled: false,
       chromaKeyStrength: 0.4,
@@ -1622,6 +1804,235 @@ final class LetterboxExporterTests: XCTestCase {
       cropRect: resolution.frame
     )
     XCTAssertGreaterThan(cropRatio, 0.05)
+  }
+
+  func testStyledChromaKeyCameraUsesInlineFinalRenderPlan() throws {
+    let tempDir = makeTemporaryDirectory()
+    defer { try? FileManager.default.removeItem(at: tempDir) }
+
+    let screenURL = tempDir.appendingPathComponent("screen.mov")
+    let cameraURL = tempDir.appendingPathComponent("camera.mov")
+    try makeSolidColorVideo(
+      url: screenURL,
+      size: CGSize(width: 320, height: 180),
+      durationSeconds: 1.0,
+      color: .systemBlue
+    )
+    try makeGreenScreenSubjectVideo(
+      url: cameraURL,
+      size: CGSize(width: 128, height: 128),
+      durationSeconds: 1.0
+    )
+
+    let params = CompositionParams(
+      targetSize: CGSize(width: 640, height: 360),
+      padding: 0.0,
+      cornerRadius: 0.0,
+      backgroundColor: nil,
+      backgroundImagePath: nil,
+      cursorSize: 1.0,
+      showCursor: false,
+      zoomEnabled: false,
+      zoomFactor: 1.5,
+      followStrength: 0.15,
+      fpsHint: 30,
+      fitMode: "fit",
+      audioGainDb: 0.0,
+      audioVolumePercent: 100.0
+    )
+    let cameraParams = CameraCompositionParams(
+      visible: true,
+      layoutPreset: .overlayTopRight,
+      normalizedCanvasCenter: nil,
+      sizeFactor: 0.2,
+      shape: .squircle,
+      cornerRadius: 0.15,
+      opacity: 1.0,
+      mirror: false,
+      contentMode: .fill,
+      zoomBehavior: .fixed,
+      borderWidth: 4.0,
+      borderColorArgb: 0xFFFFFFFF,
+      shadowPreset: 2,
+      chromaKeyEnabled: true,
+      chromaKeyStrength: 0.25,
+      chromaKeyColorArgb: 0xFF00FF00
+    )
+
+    let exporter = LetterboxExporter()
+    let prepassExpectation = expectation(description: "camera chroma prepass")
+    var prepassResult: Result<CameraPreparedIntermediate, Error>?
+
+    exporter._testPrepareCameraIntermediate(
+      inputURL: cameraURL,
+      canvasSize: params.targetSize,
+      cameraParams: cameraParams,
+      fpsHint: 30
+    ) { result in
+      prepassResult = result
+      prepassExpectation.fulfill()
+    }
+
+    wait(for: [prepassExpectation], timeout: 30.0)
+    let prepared = try XCTUnwrap(try prepassResult?.get())
+    defer {
+      prepared.temporaryArtifacts.forEach { try? FileManager.default.removeItem(at: $0) }
+    }
+
+    XCTAssertFalse(prepared.cameraAssetIsPreStyled)
+    XCTAssertNil(prepared.placementSourceRect)
+    XCTAssertEqual(prepared.temporaryArtifacts.count, 1)
+
+    let builder = CompositionBuilder()
+    let result = try XCTUnwrap(
+      builder.buildExport(
+        asset: AVAsset(url: screenURL),
+        cameraAsset: AVAsset(url: prepared.url),
+        params: params,
+        cameraParams: cameraParams,
+        cursorRecording: nil,
+        cameraAssetIsPreStyled: prepared.cameraAssetIsPreStyled,
+        cameraPlacementSourceRect: prepared.placementSourceRect
+      )
+    )
+    XCTAssertNotNil(result.inlineCameraRenderPlan)
+    let instruction = try XCTUnwrap(
+      result.videoComposition.instructions.first as? AVMutableVideoCompositionInstruction
+    )
+    XCTAssertEqual(instruction.layerInstructions.count, 1)
+
+    let outputURL = tempDir.appendingPathComponent("styled-chroma-inline.mov")
+    let renderExpectation = expectation(description: "styled chroma inline render")
+    var renderResult: Result<URL, Error>?
+    exporter._testRenderFinalExport(
+      result: result,
+      outputURL: outputURL
+    ) { result in
+      renderResult = result
+      renderExpectation.fulfill()
+    }
+
+    wait(for: [renderExpectation], timeout: 30.0)
+    let finalURL = try XCTUnwrap(try renderResult?.get())
+    let resolution = CameraLayoutResolver.effectiveFrame(canvasSize: params.targetSize, params: cameraParams)
+    let crop = try XCTUnwrap(
+      try bestScoredCropImage(
+        for: sampleFrameImage(url: finalURL),
+        canvasSize: params.targetSize,
+        cropRect: resolution.frame,
+        scorer: { try dominantRedRatio(for: $0, ignoreTransparentPixels: true) }
+      )
+    )
+
+    XCTAssertLessThan(try dominantGreenRatio(for: crop, ignoreTransparentPixels: false), 0.12)
+    XCTAssertGreaterThan(try dominantRedRatio(for: crop, ignoreTransparentPixels: true), 0.05)
+  }
+
+  func testInlineCameraRenderSupportsBehindScreenZOrder() throws {
+    let tempDir = makeTemporaryDirectory()
+    defer { try? FileManager.default.removeItem(at: tempDir) }
+
+    let screenURL = tempDir.appendingPathComponent("screen.mov")
+    let cameraURL = tempDir.appendingPathComponent("camera.mov")
+    try makeSolidColorVideo(
+      url: screenURL,
+      size: CGSize(width: 180, height: 320),
+      durationSeconds: 1.0,
+      color: .systemBlue
+    )
+    try makeSolidColorVideo(
+      url: cameraURL,
+      size: CGSize(width: 128, height: 128),
+      durationSeconds: 1.0,
+      color: .systemRed
+    )
+
+    let params = CompositionParams(
+      targetSize: CGSize(width: 640, height: 360),
+      padding: 0.0,
+      cornerRadius: 0.0,
+      backgroundColor: nil,
+      backgroundImagePath: nil,
+      cursorSize: 1.0,
+      showCursor: false,
+      zoomEnabled: false,
+      zoomFactor: 1.5,
+      followStrength: 0.15,
+      fpsHint: 30,
+      fitMode: "fit",
+      audioGainDb: 0.0,
+      audioVolumePercent: 100.0
+    )
+    let cameraParams = CameraCompositionParams(
+      visible: true,
+      layoutPreset: .backgroundBehind,
+      normalizedCanvasCenter: nil,
+      sizeFactor: 0.2,
+      shape: .square,
+      cornerRadius: 0.0,
+      opacity: 0.9,
+      mirror: false,
+      contentMode: .fill,
+      zoomBehavior: .fixed,
+      borderWidth: 0.0,
+      borderColorArgb: nil,
+      shadowPreset: 0,
+      chromaKeyEnabled: false,
+      chromaKeyStrength: 0.4,
+      chromaKeyColorArgb: nil
+    )
+
+    let builder = CompositionBuilder()
+    let result = try XCTUnwrap(
+      builder.buildExport(
+        asset: AVAsset(url: screenURL),
+        cameraAsset: AVAsset(url: cameraURL),
+        params: params,
+        cameraParams: cameraParams,
+        cursorRecording: nil,
+        cameraAssetIsPreStyled: false
+      )
+    )
+    let inlinePlan = try XCTUnwrap(result.inlineCameraRenderPlan)
+    XCTAssertEqual(inlinePlan.zOrder, .behindScreen)
+    let instruction = try XCTUnwrap(
+      result.videoComposition.instructions.first as? AVMutableVideoCompositionInstruction
+    )
+    XCTAssertEqual(instruction.layerInstructions.count, 1)
+
+    let exporter = LetterboxExporter()
+    let outputURL = tempDir.appendingPathComponent("behind-screen-inline.mov")
+    let renderExpectation = expectation(description: "behind-screen inline render")
+    var renderResult: Result<URL, Error>?
+
+    exporter._testRenderFinalExport(
+      result: result,
+      outputURL: outputURL
+    ) { result in
+      renderResult = result
+      renderExpectation.fulfill()
+    }
+
+    wait(for: [renderExpectation], timeout: 30.0)
+    let finalURL = try XCTUnwrap(try renderResult?.get())
+    let image = try sampleFrameImage(url: finalURL)
+    let sideCrop = try XCTUnwrap(
+      bestCropImage(
+        for: image,
+        canvasSize: params.targetSize,
+        cropRect: CGRect(x: 10, y: 120, width: 90, height: 120)
+      )
+    )
+    let centerCrop = try XCTUnwrap(
+      bestCropImage(
+        for: image,
+        canvasSize: params.targetSize,
+        cropRect: CGRect(x: 260, y: 60, width: 120, height: 220)
+      )
+    )
+
+    XCTAssertGreaterThan(try dominantRedRatio(for: sideCrop, ignoreTransparentPixels: false), 0.20)
+    XCTAssertGreaterThan(try dominantBlueRatio(for: centerCrop, ignoreTransparentPixels: false), 0.50)
   }
 
   func testScaleWithScreenZoomAddsCameraTransformRampsToExportComposition() throws {
@@ -1980,6 +2391,82 @@ final class LetterboxExporterTests: XCTestCase {
     XCTAssertNotNil(
       result.videoComposition.animationTool,
       "single-source export should still configure the composite zoom animation tool even when the cursor overlay is hidden"
+    )
+  }
+
+  func testSingleSourceAnimatedFinalRenderMatchesReferenceComposition() throws {
+    let tempDir = makeTemporaryDirectory()
+    defer { try? FileManager.default.removeItem(at: tempDir) }
+
+    let screenURL = tempDir.appendingPathComponent("screen.mov")
+    try makeSolidColorVideo(
+      url: screenURL,
+      size: CGSize(width: 320, height: 180),
+      durationSeconds: 1.0,
+      color: .systemBlue
+    )
+
+    let params = CompositionParams(
+      targetSize: CGSize(width: 640, height: 360),
+      padding: 0.0,
+      cornerRadius: 0.0,
+      backgroundColor: nil,
+      backgroundImagePath: nil,
+      cursorSize: 1.0,
+      showCursor: true,
+      zoomEnabled: true,
+      zoomFactor: 1.8,
+      followStrength: 0.15,
+      fpsHint: 30,
+      fitMode: "fit",
+      audioGainDb: 0.0,
+      audioVolumePercent: 100.0
+    )
+
+    let builder = CompositionBuilder()
+    let result = try XCTUnwrap(
+      builder.buildExport(
+        asset: AVAsset(url: screenURL),
+        cameraAsset: nil,
+        params: params,
+        cameraParams: nil,
+        cursorRecording: makeZoomCursorRecording(),
+        cameraAssetIsPreStyled: false
+      )
+    )
+
+    XCTAssertNil(result.inlineCameraRenderPlan)
+    XCTAssertNotNil(result.videoComposition.animationTool)
+
+    let exporter = LetterboxExporter()
+    let outputURL = tempDir.appendingPathComponent("single-source-animated-final.mov")
+    let renderExpectation = expectation(description: "single-source animated final render")
+    var renderResult: Result<URL, Error>?
+
+    exporter._testRenderFinalExport(
+      result: result,
+      outputURL: outputURL
+    ) { result in
+      renderResult = result
+      renderExpectation.fulfill()
+    }
+
+    wait(for: [renderExpectation], timeout: 30.0)
+    let finalURL = try XCTUnwrap(try renderResult?.get())
+    let finalSize = try orientedVideoSize(url: finalURL)
+    XCTAssertEqual(finalSize.width, params.targetSize.width, accuracy: 1.0)
+    XCTAssertEqual(finalSize.height, params.targetSize.height, accuracy: 1.0)
+
+    let referenceImage = try sampleFrameImage(
+      asset: result.asset,
+      videoComposition: result.videoComposition
+    )
+    let finalImage = try sampleFrameImage(url: finalURL)
+    try assertAverageColorParity(
+      referenceImage: referenceImage,
+      candidateImage: finalImage,
+      lumaTolerance: 0.08,
+      channelTolerance: 0.08
     )
   }
 
@@ -2782,18 +3269,18 @@ final class LetterboxExporterTests: XCTestCase {
       layoutPreset: .overlayTopRight,
       normalizedCanvasCenter: nil,
       sizeFactor: 0.2,
-      shape: .squircle,
-      cornerRadius: 0.15,
+      shape: .square,
+      cornerRadius: 0.0,
       opacity: 1.0,
       mirror: false,
       contentMode: .fill,
       zoomBehavior: .fixed,
       borderWidth: 0.0,
       borderColorArgb: nil,
-      shadowPreset: 2,
-      chromaKeyEnabled: false,
-      chromaKeyStrength: 0.4,
-      chromaKeyColorArgb: nil
+      shadowPreset: 0,
+      chromaKeyEnabled: true,
+      chromaKeyStrength: 0.25,
+      chromaKeyColorArgb: 0xFF00FF00
     )
 
     let pipeline = CameraStyledIntermediatePipeline()
@@ -3309,12 +3796,12 @@ final class LetterboxExporterTests: XCTestCase {
     )
   }
 
-  func testFinalStyledCameraValidationPassesForDownscaledActiveZoomManualCameraExport() throws {
+  func testInlineCameraRenderSupportsStyledActiveZoomExport() throws {
     let tempDir = makeTemporaryDirectory()
     defer { try? FileManager.default.removeItem(at: tempDir) }
 
     let screenURL = tempDir.appendingPathComponent("screen.mov")
-    let rawCameraURL = tempDir.appendingPathComponent("camera.mov")
+    let cameraURL = tempDir.appendingPathComponent("camera.mov")
     try makeSolidColorVideo(
       url: screenURL,
       size: CGSize(width: 1512, height: 982),
@@ -3322,7 +3809,7 @@ final class LetterboxExporterTests: XCTestCase {
       color: .systemBlue
     )
     try makeSolidColorVideo(
-      url: rawCameraURL,
+      url: cameraURL,
       size: CGSize(width: 256, height: 256),
       durationSeconds: 3.0,
       color: .systemRed
@@ -3366,59 +3853,58 @@ final class LetterboxExporterTests: XCTestCase {
       chromaKeyColorArgb: nil
     )
 
-    let exporter = LetterboxExporter()
-    let renderExpectation = expectation(description: "camera prepass rendered")
-    var renderResult: Result<CameraPreparedIntermediate, Error>?
-
-    exporter._testPrepareCameraIntermediate(
-      inputURL: rawCameraURL,
-      canvasSize: target,
-      cameraParams: cameraParams,
-      fpsHint: 60
-    ) { result in
-      renderResult = result
-      renderExpectation.fulfill()
-    }
-
-    wait(for: [renderExpectation], timeout: 30.0)
-    let prepared = try XCTUnwrap(try renderResult?.get())
-    defer {
-      prepared.temporaryArtifacts.forEach { try? FileManager.default.removeItem(at: $0) }
-    }
-
     let builder = CompositionBuilder()
-    let referenceResult = try XCTUnwrap(
+    let result = try XCTUnwrap(
       builder.buildExport(
         asset: AVAsset(url: screenURL),
-        cameraAsset: AVAsset(url: prepared.url),
+        cameraAsset: AVAsset(url: cameraURL),
         params: params,
         cameraParams: cameraParams,
         cursorRecording: makeLongZoomCursorRecording(),
-        cameraAssetIsPreStyled: true,
-        cameraPlacementSourceRect: prepared.placementSourceRect
+        cameraAssetIsPreStyled: false
       )
     )
+    let inlinePlan = try XCTUnwrap(result.inlineCameraRenderPlan)
+    let instruction = try XCTUnwrap(
+      result.videoComposition.instructions.first as? AVMutableVideoCompositionInstruction
+    )
+    XCTAssertEqual(instruction.layerInstructions.count, 1)
 
-    let resolvedSample = try XCTUnwrap(referenceResult.validationInfo?.resolvedCameraSample(at: 1.0))
-    let resolvedFrame = try XCTUnwrap(resolvedSample.cameraFrame)
+    let resolvedSample = try XCTUnwrap(inlinePlan.resolvedSample(at: 1.0))
+    let resolvedFrame = try XCTUnwrap(resolvedSample.frame)
     let baseFrame = CameraLayoutResolver.effectiveFrame(
       canvasSize: target,
       params: cameraParams
     ).frame
-    XCTAssertTrue(resolvedSample.zoomActive)
     XCTAssertGreaterThan(abs(resolvedFrame.width - baseFrame.width), 1.0)
 
+    let exporter = LetterboxExporter()
     let outputURL = tempDir.appendingPathComponent("downscaled-final.mov")
-    try exportComposition(referenceResult, to: outputURL, preset: AVAssetExportPreset1920x1080)
-
+    let exportExpectation = expectation(description: "inline zoom export")
+    var exportResult: Result<URL, Error>?
+    exporter._testRenderFinalExport(
+      result: result,
+      outputURL: outputURL
+    ) { result in
+      exportResult = result
+      exportExpectation.fulfill()
+    }
+    wait(for: [exportExpectation], timeout: 30.0)
+    let finalURL = try XCTUnwrap(try exportResult?.get())
     let finalSize = try orientedVideoSize(url: outputURL)
-    XCTAssertTrue(finalSize.width < target.width || finalSize.height < target.height)
-    XCTAssertNil(
-      exporter._testValidateFinalStyledCameraExport(
-        referenceResult: referenceResult,
-        finalExportURL: outputURL
+    XCTAssertEqual(finalSize.width, target.width, accuracy: 1.0)
+    XCTAssertEqual(finalSize.height, target.height, accuracy: 1.0)
+
+    let image = try sampleFrameImage(url: finalURL, time: 1.0)
+    let cameraCrop = try XCTUnwrap(
+      try bestScoredCropImage(
+        for: image,
+        canvasSize: target,
+        cropRect: resolvedFrame,
+        scorer: { try dominantRedRatio(for: $0, ignoreTransparentPixels: true) }
       )
     )
+    XCTAssertGreaterThan(try dominantRedRatio(for: cameraCrop, ignoreTransparentPixels: true), 0.05)
   }
 
   func testCameraSyncTimelineResolverMapsScreenToOffsetCameraTimeWhenCameraStartedEarlier()
@@ -3918,6 +4404,31 @@ final class LetterboxExporterTests: XCTestCase {
     )
   }
 
+  private func makeStaticCursorRecording() -> CursorRecording {
+    let defaultPixels = Data([255, 255, 255, 255])
+    return CursorRecording(
+      sprites: [
+        CursorSprite(id: 0, width: 1, height: 1, hotspotX: 0, hotspotY: 0, pixels: defaultPixels)
+      ],
+      frames: [
+        CursorFrame(t: 0.0, x: 0.5, y: 0.5, spriteID: 0),
+        CursorFrame(t: 0.30, x: 0.7, y: 0.5, spriteID: 0),
+        CursorFrame(t: 0.60, x: 0.7, y: 0.5, spriteID: 0),
+        CursorFrame(t: 0.90, x: 0.5, y: 0.5, spriteID: 0),
+      ]
+    )
+  }
+
+  private func makeUndrawableCursorRecording() -> CursorRecording {
+    CursorRecording(
+      sprites: [],
+      frames: [
+        CursorFrame(t: 0.0, x: 0.5, y: 0.5, spriteID: -1),
+        CursorFrame(t: 0.5, x: 0.6, y: 0.5, spriteID: -1),
+      ]
+    )
+  }
+
   private func makeLongZoomCursorRecording() -> CursorRecording {
     let defaultPixels = Data([255, 255, 255, 255])
     return CursorRecording(
@@ -4396,6 +4907,8 @@ final class LetterboxExporterTests: XCTestCase {
     let generator = AVAssetImageGenerator(asset: asset)
     generator.appliesPreferredTrackTransform = videoComposition == nil
     generator.videoComposition = videoComposition
+    generator.requestedTimeToleranceBefore = .zero
+    generator.requestedTimeToleranceAfter = .zero
     return try generator.copyCGImage(
       at: CMTime(seconds: time, preferredTimescale: 600),
       actualTime: nil
@@ -4887,11 +5400,136 @@ final class ScreenCaptureKitOverlayFilterPolicyTests: XCTestCase {
   }
 }
 
+@MainActor
+@available(macOS 15.0, *)
+final class ScreenCaptureKitMicrophoneFallbackTests: XCTestCase {
+  func testSelectedMicrophoneInvalidParameterRetriesWithDefaultMicrophone() {
+    let error = NSError(
+      domain: "com.apple.ScreenCaptureKit.SCStreamErrorDomain",
+      code: -3812,
+      userInfo: nil
+    )
+
+    XCTAssertTrue(
+      CaptureBackendScreenCaptureKit.shouldRetryStartWithDefaultMicrophone(
+        error: error,
+        attemptedSelectedMicrophoneID: "mic-1"
+      )
+    )
+  }
+
+  func testOnlySelectedMicrophoneScreenCaptureKitStartErrorsTriggerRetry() {
+    let micStartError = NSError(
+      domain: "com.apple.ScreenCaptureKit.SCStreamErrorDomain",
+      code: -3820,
+      userInfo: nil
+    )
+    let unrelatedDomainError = NSError(
+      domain: "other.domain",
+      code: -3812,
+      userInfo: nil
+    )
+    let unrelatedCodeError = NSError(
+      domain: "com.apple.ScreenCaptureKit.SCStreamErrorDomain",
+      code: -3802,
+      userInfo: nil
+    )
+
+    XCTAssertTrue(
+      CaptureBackendScreenCaptureKit.shouldRetryStartWithDefaultMicrophone(
+        error: micStartError,
+        attemptedSelectedMicrophoneID: "mic-1"
+      )
+    )
+    XCTAssertFalse(
+      CaptureBackendScreenCaptureKit.shouldRetryStartWithDefaultMicrophone(
+        error: unrelatedDomainError,
+        attemptedSelectedMicrophoneID: "mic-1"
+      )
+    )
+    XCTAssertFalse(
+      CaptureBackendScreenCaptureKit.shouldRetryStartWithDefaultMicrophone(
+        error: unrelatedCodeError,
+        attemptedSelectedMicrophoneID: "mic-1"
+      )
+    )
+    XCTAssertFalse(
+      CaptureBackendScreenCaptureKit.shouldRetryStartWithDefaultMicrophone(
+        error: micStartError,
+        attemptedSelectedMicrophoneID: nil
+      )
+    )
+  }
+
+  func testRetryResetClearsPendingSegmentStateAndRestartsSegmentIndexing() async throws {
+    let backend = CaptureBackendScreenCaptureKit()
+    let tempDir = URL(fileURLWithPath: NSTemporaryDirectory(), isDirectory: true)
+      .appendingPathComponent(UUID().uuidString, isDirectory: true)
+    try FileManager.default.createDirectory(at: tempDir, withIntermediateDirectories: true)
+    defer { try? FileManager.default.removeItem(at: tempDir) }
+
+    let outputURL = tempDir.appendingPathComponent("screen.mov")
+    let config = CaptureStartConfig(
+      target: CaptureTarget(mode: .explicitID, displayID: 1),
+      quality: .fhd,
+      frameRate: 30,
+      includeAudioDevice: nil,
+      makeOutputURL: { outputURL },
+      excludeRecorderApp: false
+    )
+
+    backend._testInitializeStartAttemptState(config: config, outputURL: outputURL)
+    let firstSegment = try backend._testPrepareRecordingSegmentContext(makeActive: true)
+    try Data("video".utf8).write(to: firstSegment.rawURL)
+    if let cursorURL = firstSegment.cursorURL {
+      try Data("cursor".utf8).write(to: cursorURL)
+    }
+
+    XCTAssertEqual(firstSegment.index, 1)
+    XCTAssertEqual(backend._testSegmentContextCount(), 1)
+    XCTAssertEqual(backend._testActiveSegmentIndex(), 1)
+    XCTAssertTrue(backend._testHasRecordingOutput())
+
+    await backend._testResetStartAttemptForRetry(config: config, outputURL: outputURL)
+
+    XCTAssertEqual(backend.currentOutputURL, outputURL)
+    XCTAssertEqual(backend._testSegmentContextCount(), 0)
+    XCTAssertNil(backend._testActiveSegmentIndex())
+    XCTAssertFalse(backend._testHasRecordingOutput())
+    XCTAssertFalse(FileManager.default.fileExists(atPath: firstSegment.rawURL.path))
+    if let cursorURL = firstSegment.cursorURL {
+      XCTAssertFalse(FileManager.default.fileExists(atPath: cursorURL.path))
+    }
+
+    let retriedSegment = try backend._testPrepareRecordingSegmentContext(makeActive: true)
+    XCTAssertEqual(retriedSegment.index, 1)
+    XCTAssertTrue(retriedSegment.rawURL.lastPathComponent.contains("segment-001"))
+  }
+
+  func testExhaustedFallbackReturnsLocalizedMicrophoneStartFailure() throws {
+    let originalError = NSError(
+      domain: "com.apple.ScreenCaptureKit.SCStreamErrorDomain",
+      code: -3820,
+      userInfo: nil
+    )
+
+    let resolved = CaptureBackendScreenCaptureKit._testResolvedStartFailure(
+      error: originalError,
+      exhaustedSelectedMicrophoneFallback: true
+    )
+
+    let flutter = try XCTUnwrap(resolved as? FlutterError)
+    XCTAssertEqual(flutter.code, NativeErrorCode.recordingError)
+    XCTAssertEqual(flutter.message, NativeStringsStore.shared.recordingSelectedMicFallbackFailure)
+  }
+}
+
 private final class MockCaptureBackend: CaptureBackend {
   var onStarted: ((URL) -> Void)?
   var onFinished: ((URL?, Error?) -> Void)?
   var onPaused: (() -> Void)?
   var onResumed: (() -> Void)?
+  var onWarning: ((String) -> Void)?
   var onMicrophoneLevel: ((MicrophoneLevelSample) -> Void)?
 
   var canPauseResume: Bool = true
@@ -5100,6 +5738,24 @@ final class MicrophoneLevelTelemetryTests: XCTestCase {
     XCTAssertEqual(received.count, 2)
     XCTAssertEqual(received[0], 0.22, accuracy: 0.0001)
     XCTAssertEqual(received[1], 0.48, accuracy: 0.0001)
+  }
+
+  func testBackendWarningsAreForwardedAsRecordingWarnings() {
+    let facade = ScreenRecorderFacade()
+    let backend = MockCaptureBackend()
+    facade._testSetCaptureBackend(backend)
+    facade._testSetActiveRecordingWorkflowSessionId("session-123")
+
+    var payload: [String: Any]?
+    facade.onRecordingWarning = { warningPayload in
+      payload = warningPayload
+    }
+
+    backend.onWarning?("selected mic fallback")
+
+    XCTAssertEqual(payload?["type"] as? String, "recordingWarning")
+    XCTAssertEqual(payload?["sessionId"] as? String, "session-123")
+    XCTAssertEqual(payload?["message"] as? String, "selected mic fallback")
   }
 }
 
@@ -5610,11 +6266,24 @@ final class ScreenRecorderFacadeSeparateCameraTests: XCTestCase {
     XCTAssertEqual(capabilities["shadow"], true)
     XCTAssertEqual(capabilities["chromaKey"], true)
     let camera = try XCTUnwrap(payload["camera"] as? [String: Any])
-    XCTAssertEqual(camera["zoomBehavior"] as? String, CameraZoomBehavior.fixed.rawValue)
+    XCTAssertEqual(
+      camera["zoomBehavior"] as? String,
+      CameraCompositionParams.defaultZoomBehavior.rawValue
+    )
     let zoomScaleMultiplier = try XCTUnwrap(camera["zoomScaleMultiplier"] as? Double)
-    XCTAssertEqual(zoomScaleMultiplier, 0.35, accuracy: 0.0001)
-    XCTAssertEqual(camera["introPreset"] as? String, CameraIntroPreset.none.rawValue)
-    XCTAssertEqual(camera["outroPreset"] as? String, CameraOutroPreset.none.rawValue)
+    XCTAssertEqual(
+      zoomScaleMultiplier,
+      CameraCompositionParams.defaultZoomScaleMultiplier,
+      accuracy: 0.0001
+    )
+    XCTAssertEqual(
+      camera["introPreset"] as? String,
+      CameraCompositionParams.defaultIntroPreset.rawValue
+    )
+    XCTAssertEqual(
+      camera["outroPreset"] as? String,
+      CameraCompositionParams.defaultOutroPreset.rawValue
+    )
     XCTAssertEqual(
       camera["zoomEmphasisPreset"] as? String,
       CameraZoomEmphasisPreset.none.rawValue
@@ -5854,8 +6523,8 @@ final class ScreenRecorderFacadeSeparateCameraTests: XCTestCase {
       cameraOpacity: 1.0,
       cameraMirror: true,
       cameraContentMode: .fill,
-      cameraZoomBehavior: .fixed,
-      cameraZoomScaleMultiplier: 0.35,
+      cameraZoomBehavior: CameraCompositionParams.defaultZoomBehavior,
+      cameraZoomScaleMultiplier: CameraCompositionParams.defaultZoomScaleMultiplier,
       cameraChromaKeyEnabled: false,
       cameraChromaKeyStrength: 0.4,
       cameraChromaKeyColorArgb: nil

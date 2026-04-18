@@ -1,3 +1,4 @@
+import 'package:clingfy/ui/platform/widgets/app_inline_info_tooltip.dart';
 import 'package:clingfy/ui/platform/widgets/app_toggle_row.dart';
 import 'package:clingfy/ui/platform/widgets/platform_switch.dart';
 import 'package:clingfy/ui/theme/app_theme.dart';
@@ -44,6 +45,12 @@ void main() {
       expect(find.text('Show cursor'), findsOneWidget);
       expect(find.byTooltip('Toggle cursor visibility'), findsOneWidget);
       expect(find.text('Toggle cursor visibility'), findsNothing);
+      expect(
+        tester
+            .widget<AppInlineInfoTooltip>(find.byType(AppInlineInfoTooltip))
+            .color,
+        isNull,
+      );
 
       final switchPadding = tester.widget<Padding>(findSwitchPadding());
       expect((switchPadding.padding as EdgeInsets).top, 0);

@@ -746,6 +746,7 @@ class PostProcessingController extends ChangeNotifier {
     final dialogResult = await ExportFileDialog.show(
       context,
       initialFileName: _defaultExportFileName(
+        l10n,
         format: _settings.export.exportFormat.trim().toLowerCase(),
       ),
       initialDirectory:
@@ -1067,16 +1068,32 @@ class PostProcessingController extends ChangeNotifier {
         normalized.contains('stopped by user');
   }
 
-  String _defaultExportFileName({required String format}) {
-    final now = DateTime.now();
-    final month = now.month.toString().padLeft(2, '0');
-    final day = now.day.toString().padLeft(2, '0');
-    final hour = now.hour.toString().padLeft(2, '0');
-    final minute = now.minute.toString().padLeft(2, '0');
-    final prefix = format == 'gif' ? 'Clingfy Clip' : 'Clingfy Export';
-    if (BuildConfig.isDev()) {
-      return '${prefix}_${now.year}-$month-${day}_${hour}_$minute';
+  String _defaultExportFileName(
+    AppLocalizations l10n, {
+    required String format,
+  }) {
+    return buildDefaultExportFileName(l10n, format: format);
+  }
+
+  @visibleForTesting
+  static String buildDefaultExportFileName(
+    AppLocalizations l10n, {
+    required String format,
+    DateTime? now,
+    bool? isDev,
+  }) {
+    final timestamp = now ?? DateTime.now();
+    final month = timestamp.month.toString().padLeft(2, '0');
+    final day = timestamp.day.toString().padLeft(2, '0');
+    final hour = timestamp.hour.toString().padLeft(2, '0');
+    final minute = timestamp.minute.toString().padLeft(2, '0');
+    final label = format == 'gif'
+        ? l10n.defaultClipFileNameLabel
+        : l10n.defaultExportFileNameLabel;
+    final prefix = 'Clingfy $label';
+    if (isDev ?? BuildConfig.isDev()) {
+      return '${prefix}_${timestamp.year}-$month-${day}_${hour}_$minute';
     }
-    return '$prefix ${now.year}-$month-$day';
+    return '$prefix ${timestamp.year}-$month-$day';
   }
 }

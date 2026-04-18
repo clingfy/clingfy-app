@@ -6,6 +6,7 @@ import 'package:clingfy/app/home/overlay/overlay_controller.dart';
 import 'package:clingfy/app/home/post_processing/post_processing_controller.dart';
 import 'package:clingfy/app/home/recording/recording_controller.dart';
 import 'package:clingfy/app/home/home_scope.dart';
+import 'package:clingfy/app/home/home_ui_state.dart';
 import 'package:clingfy/core/bridges/native_bridge.dart';
 import 'package:clingfy/core/models/app_models.dart';
 import 'package:clingfy/app/settings/settings_controller.dart';
@@ -44,6 +45,7 @@ class HomeBindings {
   DeviceController get deviceController => scope.devices;
   OverlayController get overlayController => scope.overlay;
   PostProcessingController get postProcessingController => scope.post;
+  HomeUiState get uiState => scope.uiState;
 
   bool? _lastRecordingActive;
   String? _attachedRecordingSessionId;
@@ -70,6 +72,12 @@ class HomeBindings {
         .consumeFailedExternalProjectOpenPath();
     if (failedExternalProjectPath != null) {
       onExternalProjectOpenFailed(failedExternalProjectPath);
+    }
+    final recordingWarning = recordingController.consumePendingWarningMessage();
+    if (recordingWarning != null && recordingWarning.isNotEmpty) {
+      uiState.setNotice(
+        HomeUiNotice(message: recordingWarning, tone: HomeUiNoticeTone.warning),
+      );
     }
 
     if (state.phase == WorkflowPhase.openingPreview &&

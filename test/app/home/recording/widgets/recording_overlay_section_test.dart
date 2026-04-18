@@ -2,9 +2,11 @@ import 'package:clingfy/app/home/recording/widgets/recording_overlay_section.dar
 import 'package:clingfy/core/models/app_models.dart';
 import 'package:clingfy/core/overlay/overlay_mode.dart';
 import 'package:clingfy/l10n/app_localizations.dart';
+import 'package:clingfy/ui/platform/widgets/app_inline_info_tooltip.dart';
 import 'package:clingfy/ui/platform/widgets/app_inset_group.dart';
 import 'package:clingfy/ui/platform/widgets/app_settings_group.dart';
 import 'package:clingfy/ui/platform/widgets/app_sidebar_tokens.dart';
+import 'package:clingfy/ui/platform/widgets/app_slider_row.dart';
 import 'package:clingfy/ui/platform/widgets/platform_dropdown.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
@@ -84,11 +86,19 @@ void main() {
     await tester.pumpWidget(_buildSection());
     await tester.pumpAndSettle();
 
+    final l10n = AppLocalizations.of(
+      tester.element(find.byType(RecordingOverlaySection)),
+    )!;
+
     expect(find.byType(AppSettingsGroup), findsNWidgets(4));
-    expect(find.text('Visibility & Placement'), findsOneWidget);
-    expect(find.text('Appearance'), findsOneWidget);
-    expect(find.text('Style'), findsOneWidget);
-    expect(find.text('Effects'), findsOneWidget);
+    expect(find.text('Visibility & Placement'), findsNothing);
+    expect(find.text('Appearance'), findsNothing);
+    expect(find.text('Style'), findsNothing);
+    expect(find.text('Effects'), findsNothing);
+    expect(find.text(l10n.position), findsOneWidget);
+    expect(find.text(l10n.shape), findsOneWidget);
+    expect(find.text(l10n.shadow), findsOneWidget);
+    expect(find.text(l10n.recordingHighlight), findsOneWidget);
   });
 
   testWidgets('overlay mode off keeps only visibility and placement visible', (
@@ -97,10 +107,11 @@ void main() {
     await tester.pumpWidget(_buildSection(overlayMode: OverlayMode.off));
     await tester.pumpAndSettle();
 
-    expect(find.text('Visibility & Placement'), findsOneWidget);
-    expect(find.text('Appearance'), findsNothing);
-    expect(find.text('Style'), findsNothing);
-    expect(find.text('Effects'), findsNothing);
+    expect(find.byType(AppSettingsGroup), findsOneWidget);
+    expect(find.text('Position'), findsNothing);
+    expect(find.text('Shape'), findsNothing);
+    expect(find.text('Shadow'), findsNothing);
+    expect(find.text('Recording highlight'), findsNothing);
   });
 
   testWidgets('shape dropdown shows squircle first with localized label', (
@@ -164,6 +175,14 @@ void main() {
       expect(find.text(l10n.customPosition), findsOneWidget);
       expect(find.byTooltip(l10n.customPositionHint), findsOneWidget);
       expect(find.text(l10n.customPositionHint), findsNothing);
+      expect(
+        tester
+            .widget<AppInlineInfoTooltip>(
+              find.byKey(const ValueKey('overlay_custom_position_info')),
+            )
+            .color,
+        isNull,
+      );
 
       for (final key in const [
         ValueKey('overlay_position_topLeft'),
@@ -203,7 +222,7 @@ void main() {
     expect(find.text(l10n.targetColorToRemove), findsNothing);
     expect(
       find.ancestor(
-        of: find.text(l10n.keyTolerance('40')),
+        of: find.text(l10n.keyToleranceLabel),
         matching: find.byType(AppInsetGroup),
       ),
       findsOneWidget,
@@ -261,7 +280,7 @@ void main() {
       tester.element(find.byType(RecordingOverlaySection)),
     )!;
 
-    expect(find.text(l10n.cornerRoundness('20')), findsNothing);
+    expect(find.text(l10n.roundedCorners), findsNothing);
   });
 
   testWidgets('rounded rectangle still shows roundness slider', (tester) async {
@@ -276,7 +295,7 @@ void main() {
       tester.element(find.byType(RecordingOverlaySection)),
     )!;
 
-    expect(find.text(l10n.cornerRoundness('20')), findsOneWidget);
+    expect(find.text(l10n.roundedCorners), findsOneWidget);
   });
 
   testWidgets('recording highlight reveals a subordinate inset group', (
@@ -291,10 +310,10 @@ void main() {
       tester.element(find.byType(RecordingOverlaySection)),
     )!;
 
-    expect(find.text(l10n.recordingGlowStrengthPercent('70')), findsOneWidget);
+    expect(find.text(l10n.recordingGlowStrength), findsOneWidget);
     expect(
       find.ancestor(
-        of: find.text(l10n.recordingGlowStrengthPercent('70')),
+        of: find.text(l10n.recordingGlowStrength),
         matching: find.byType(AppInsetGroup),
       ),
       findsOneWidget,
@@ -312,14 +331,36 @@ void main() {
     )!;
 
     expect(find.text('More colors'), findsOneWidget);
-    expect(find.text(l10n.borderWidth('4.0')), findsOneWidget);
+    expect(find.text(l10n.borderWidthLabel), findsOneWidget);
     expect(
       find.ancestor(
-        of: find.text(l10n.borderWidth('4.0')),
+        of: find.text(l10n.borderWidthLabel),
         matching: find.byType(AppInsetGroup),
       ),
       findsOneWidget,
     );
+  });
+
+  testWidgets('overlay slider rows keep values inside the shared control', (
+    tester,
+  ) async {
+    await tester.pumpWidget(
+      _buildSection(
+        overlayShape: OverlayShape.roundedRect,
+        overlayBorder: OverlayBorder.white,
+        overlayRecordingHighlightEnabled: true,
+        chromaKeyEnabled: true,
+      ),
+    );
+    await tester.pumpAndSettle();
+
+    final sliderRows = tester.widgetList<AppSliderRow>(
+      find.byType(AppSliderRow),
+    );
+
+    expect(sliderRows, isNotEmpty);
+    expect(sliderRows.every((row) => row.valueText == null), isTrue);
+    expect(find.byKey(const Key('app_slider_value_label')), findsWidgets);
   });
 
   testWidgets('border color picker dialog opens without overflow', (

@@ -116,6 +116,10 @@ class PreRecordingBarController: NSWindowController, NSPopoverDelegate {
     // We removed this call because it forced the window back to the default start position
   }
 
+  func refreshLocalizedStrings() {
+    barView.refreshLocalizedStrings()
+  }
+
   // func updateState2(_ state: [String: Any]) {
   //   barView.updateState(state)
 
@@ -178,7 +182,9 @@ class PreRecordingBarController: NSWindowController, NSPopoverDelegate {
     fetchDisplayOptions { [weak self] options in
       guard let self = self else { return }
       self.presentPopover(
-        title: "Select Display", options: options, anchor: self.barView.displayButton
+        title: NativeStringsStore.shared.string(for: NativeUIStringKey.preRecordingBarSelectDisplay),
+        options: options,
+        anchor: self.barView.displayButton
       ) { selectedId in
         NativeLogger.d("PreRecordingBar", "Display selected: \(selectedId)")
         if let idInt = Int(selectedId) {
@@ -207,7 +213,9 @@ class PreRecordingBarController: NSWindowController, NSPopoverDelegate {
       let options = displays.map { dict -> PickerOption in
         let rawId = dict["id"] as? NSNumber
         let id = rawId?.stringValue ?? "0"
-        let name = dict["name"] as? String ?? "Unknown Display"
+        let name =
+          dict["name"] as? String
+          ?? NativeStringsStore.shared.string(for: NativeUIStringKey.preRecordingBarUnknownDisplay)
         let isSelected =
           (self.selectedDisplayId == rawId?.intValue
             && self.targetMode == DisplayTargetMode.explicitID.rawValue)
@@ -222,7 +230,9 @@ class PreRecordingBarController: NSWindowController, NSPopoverDelegate {
     fetchWindowOptions { [weak self] options in
       guard let self = self else { return }
       self.presentPopover(
-        title: "Select Window", options: options, anchor: self.barView.windowButton
+        title: NativeStringsStore.shared.string(for: NativeUIStringKey.preRecordingBarSelectWindow),
+        options: options,
+        anchor: self.barView.windowButton
       ) { selectedId in
         NativeLogger.d("PreRecordingBar", "Window selected: \(selectedId)")
         let winId = selectedId == "none" ? nil : Int(selectedId)
@@ -255,7 +265,11 @@ class PreRecordingBarController: NSWindowController, NSPopoverDelegate {
         let title = dict["title"] as? String ?? ""
         var name = appName
         if !title.isEmpty && title != appName { name = "\(appName) - \(title)" }
-        if name.isEmpty { name = "Unknown Window" }
+        if name.isEmpty {
+          name = NativeStringsStore.shared.string(
+            for: NativeUIStringKey.preRecordingBarUnknownWindow
+          )
+        }
         // FIX: Check against singleAppWindow (2)
         let isSelected =
           (self.selectedAppWindowId == rawId?.intValue
@@ -283,7 +297,8 @@ class PreRecordingBarController: NSWindowController, NSPopoverDelegate {
       }
       options.insert(
         PickerOption(
-          id: "none", label: "None",
+          id: "none",
+          label: NativeStringsStore.shared.string(for: NativeUIStringKey.preRecordingBarNone),
           // FIX: Check against mode 2
           isSelected: self.selectedAppWindowId == nil && self.targetMode == 2,
           icon: noneIcon), at: 0)
@@ -296,7 +311,11 @@ class PreRecordingBarController: NSWindowController, NSPopoverDelegate {
     fetchMicOptions { [weak self] options in
       guard let self = self else { return }
       self.presentPopover(
-        title: "Select Microphone", options: options, anchor: self.barView.micButton
+        title: NativeStringsStore.shared.string(
+          for: NativeUIStringKey.preRecordingBarSelectMicrophone
+        ),
+        options: options,
+        anchor: self.barView.micButton
       ) { selectedId in
         NativeLogger.d("PreRecordingBar", "Mic selected: \(selectedId)")
         self.recorder.setAudioSource(
@@ -321,12 +340,17 @@ class PreRecordingBarController: NSWindowController, NSPopoverDelegate {
       }
       var options = devices.map { dict -> PickerOption in
         let id = dict["id"] as? String ?? ""
-        let name = dict["name"] as? String ?? "Unknown Mic"
+        let name =
+          dict["name"] as? String
+          ?? NativeStringsStore.shared.string(for: NativeUIStringKey.preRecordingBarUnknownMic)
         return PickerOption(id: id, label: name, isSelected: (self.selectedAudioSourceId == id))
       }
       options.insert(
         PickerOption(
-          id: "__none__", label: "Do not record audio",
+          id: "__none__",
+          label: NativeStringsStore.shared.string(
+            for: NativeUIStringKey.preRecordingBarDoNotRecordAudio
+          ),
           isSelected: self.selectedAudioSourceId == "__none__"), at: 0)
       completion(options)
     }
@@ -337,7 +361,9 @@ class PreRecordingBarController: NSWindowController, NSPopoverDelegate {
     fetchCameraOptions { [weak self] options in
       guard let self = self else { return }
       self.presentPopover(
-        title: "Select Camera", options: options, anchor: self.barView.cameraButton
+        title: NativeStringsStore.shared.string(for: NativeUIStringKey.preRecordingBarSelectCamera),
+        options: options,
+        anchor: self.barView.cameraButton
       ) { selectedId in
         NativeLogger.d("PreRecordingBar", "Camera selected: \(selectedId)")
         let camId = selectedId == "none" ? nil : selectedId
@@ -367,12 +393,19 @@ class PreRecordingBarController: NSWindowController, NSPopoverDelegate {
 
       var options = devices.map { dict -> PickerOption in
         let id = dict["id"] as? String ?? ""
-        let name = dict["name"] as? String ?? "Unknown Camera"
+        let name =
+          dict["name"] as? String
+          ?? NativeStringsStore.shared.string(for: NativeUIStringKey.preRecordingBarUnknownCamera)
         return PickerOption(id: id, label: name, isSelected: (normalizedSelected == id))
       }
       options.insert(
         PickerOption(
-          id: "none", label: "No camera", isSelected: normalizedSelected == nil), at: 0)
+          id: "none",
+          label: NativeStringsStore.shared.string(for: NativeUIStringKey.preRecordingBarNoCamera),
+          isSelected: normalizedSelected == nil
+        ),
+        at: 0
+      )
       completion(options)
     }
   }

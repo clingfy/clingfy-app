@@ -43,11 +43,7 @@ class RecordingCameraSection extends StatelessWidget {
       anchorKey: guideAnchorKey,
       sectionKey: const Key('recording_camera_group'),
       title: l10n.camera,
-      trailing: AppIconButton(
-        tooltip: l10n.refreshCameras,
-        onPressed: (loadingCams || isRecording) ? null : onRefreshCams,
-        icon: Icons.refresh,
-      ),
+      showHeader: false,
       children: [
         if (loadingCams)
           const Padding(
@@ -57,6 +53,11 @@ class RecordingCameraSection extends StatelessWidget {
         else
           AppFormRow(
             label: l10n.cameraDevice,
+            labelTrailing: AppIconButton(
+              tooltip: l10n.refreshCameras,
+              onPressed: (loadingCams || isRecording) ? null : onRefreshCams,
+              icon: Icons.refresh,
+            ),
             control: PlatformDropdown<String>(
               value: validCamId,
               minWidth: 0,

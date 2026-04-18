@@ -3,6 +3,7 @@ import 'dart:async';
 
 import 'package:flutter/foundation.dart';
 import 'package:uuid/uuid.dart';
+import 'package:clingfy/commercial/licensing/license_error_codes.dart';
 import 'package:clingfy/commercial/licensing/models/license_plan.dart';
 
 import 'package:clingfy/commercial/licensing/license_service.dart';
@@ -27,7 +28,7 @@ class LicenseController extends ChangeNotifier {
 
   bool isLoading = true;
   String? currentKey;
-  LicenseState state = LicenseState.error('Initializing...');
+  LicenseState state = LicenseState.error(LicenseErrorCodes.initializing);
   String? deactivationError;
   bool _initialized = false;
 
@@ -214,8 +215,8 @@ class LicenseController extends ChangeNotifier {
     deactivationError = result.reason?.isNotEmpty == true
         ? result.reason
         : (result.statusCode == 404
-              ? 'LICENSE_NOT_FOUND'
-              : 'License deactivation failed');
+              ? LicenseErrorCodes.notFound
+              : LicenseErrorCodes.deactivationFailed);
     unawaited(
       ClingfyTelemetry.addUiBreadcrumb(
         category: 'ui.license',

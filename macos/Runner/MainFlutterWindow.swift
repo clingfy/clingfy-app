@@ -1136,6 +1136,9 @@ class MainFlutterWindow: NSWindow {
     screenRecorder.onRecordingFailed = { [weak self] payload in
       self?.emitWorkflowEvent(payload)
     }
+    screenRecorder.onRecordingWarning = { [weak self] payload in
+      self?.emitWorkflowEvent(payload)
+    }
     screenRecorder.onCameraOverlayMoved = { [weak self] payload in
       self?.channel?.invokeMethod(NativeToFlutterMethod.cameraOverlayMoved, arguments: payload)
     }

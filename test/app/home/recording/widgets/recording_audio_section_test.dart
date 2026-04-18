@@ -81,13 +81,21 @@ Future<void> _pumpSection(
     ),
   );
   await tester.pump();
-  await tester.pumpAndSettle();
+  if (!loadingAudio) {
+    await tester.pumpAndSettle();
+  }
 }
 
 AppLocalizations _l10n(WidgetTester tester) {
   return AppLocalizations.of(
     tester.element(find.byType(RecordingAudioSection)),
   )!;
+}
+
+Finder _macosTooltip(String message) {
+  return find.byWidgetPredicate(
+    (widget) => widget is MacosTooltip && widget.message == message,
+  );
 }
 
 ThemeData _theme(WidgetTester tester) {
@@ -167,11 +175,44 @@ double _audioDropdownMenuRowWidth(WidgetTester tester, int index) {
 }
 
 void main() {
-  testWidgets('audio controls render inside a settings group', (tester) async {
+  testWidgets('audio controls render inside a headerless settings group', (
+    tester,
+  ) async {
     await _pumpSection(tester, selectedAudioSourceId: '__none__');
 
+    final l10n = _l10n(tester);
+
     expect(find.byType(AppSettingsGroup), findsOneWidget);
-    expect(find.text('Audio'), findsOneWidget);
+    expect(find.text(l10n.audio), findsNothing);
+    expect(find.text(l10n.inputDevice), findsOneWidget);
+  });
+
+  testWidgets('refresh button renders beside input device', (tester) async {
+    await _pumpSection(tester, selectedAudioSourceId: 'mic-1');
+
+    final l10n = _l10n(tester);
+    final labelRect = tester.getRect(find.text(l10n.inputDevice));
+    final refreshRect = tester.getRect(_macosTooltip(l10n.refreshAudio));
+
+    expect(_macosTooltip(l10n.refreshAudio), findsOneWidget);
+    expect((refreshRect.center.dy - labelRect.center.dy).abs(), lessThan(4));
+    expect(refreshRect.left, greaterThan(labelRect.right));
+  });
+
+  testWidgets('loading audio hides inline refresh button with spinner state', (
+    tester,
+  ) async {
+    await _pumpSection(
+      tester,
+      selectedAudioSourceId: 'mic-1',
+      loadingAudio: true,
+    );
+
+    final l10n = _l10n(tester);
+
+    expect(find.byType(CircularProgressIndicator), findsOneWidget);
+    expect(find.text(l10n.inputDevice), findsNothing);
+    expect(_macosTooltip(l10n.refreshAudio), findsNothing);
   });
 
   testWidgets('system audio details are nested inside an inset group', (

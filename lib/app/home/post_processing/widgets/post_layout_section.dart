@@ -1,6 +1,5 @@
 import 'package:clingfy/l10n/app_localizations.dart';
 import 'package:clingfy/core/models/app_models.dart';
-import 'package:clingfy/ui/platform/platform_kind.dart';
 import 'package:clingfy/ui/platform/widgets/app_control_box.dart';
 import 'package:clingfy/ui/platform/widgets/app_form_row.dart';
 import 'package:clingfy/ui/platform/widgets/app_segmented.dart';
@@ -49,13 +48,13 @@ class PostLayoutSection extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final l10n = AppLocalizations.of(context)!;
-    final accentColor = Theme.of(context).colorScheme.primary;
 
     return Column(
       crossAxisAlignment: CrossAxisAlignment.stretch,
       children: [
         AppSettingsGroup(
           title: l10n.canvasFormat,
+          showHeader: false,
           children: [
             _CanvasAspectSelector(
               label: l10n.canvasAspect,
@@ -146,34 +145,33 @@ class PostLayoutSection extends StatelessWidget {
         ),
         AppSettingsGroup(
           title: l10n.framing,
+          showHeader: false,
           children: [
             AppSliderRow(
               label: l10n.padding,
-              valueText: '${padding.toInt()}%',
               slider: _buildSidebarSlider(
-                context,
                 value: padding,
                 min: 0,
                 max: 100,
                 divisions: 100,
+                valueLabel: '${padding.toInt()}%',
+                semanticLabel: l10n.padding,
                 onChanged: isProcessing ? null : onPaddingChanged,
                 onChangeEnd: onPaddingChangeEnd,
-                accentColor: accentColor,
               ),
             ),
             const SizedBox(height: AppSidebarTokens.rowGap),
             AppSliderRow(
               label: l10n.roundedCorners,
-              valueText: '${radius.toInt()}px',
               slider: _buildSidebarSlider(
-                context,
                 value: radius,
                 min: 0,
                 max: 50,
                 divisions: 50,
+                valueLabel: '${radius.toInt()}px',
+                semanticLabel: l10n.roundedCorners,
                 onChanged: isProcessing ? null : onRadiusChanged,
                 onChangeEnd: onRadiusChangeEnd,
-                accentColor: accentColor,
               ),
             ),
           ],
@@ -182,32 +180,25 @@ class PostLayoutSection extends StatelessWidget {
     );
   }
 
-  Widget _buildSidebarSlider(
-    BuildContext context, {
+  Widget _buildSidebarSlider({
     required double value,
     required double min,
     required double max,
+    required String valueLabel,
+    required String semanticLabel,
     required ValueChanged<double>? onChanged,
     required ValueChanged<double> onChangeEnd,
-    required Color accentColor,
     int? divisions,
   }) {
-    final slider = AppSlider(
+    return AppSlider(
       value: value,
       min: min,
       max: max,
       divisions: divisions,
+      valueLabel: valueLabel,
+      semanticLabel: semanticLabel,
       onChanged: onChanged,
       onChangeEnd: onChangeEnd,
-    );
-
-    if (isMac()) return slider;
-
-    return SliderTheme(
-      data: Theme.of(
-        context,
-      ).sliderTheme.copyWith(activeTrackColor: accentColor),
-      child: slider,
     );
   }
 }

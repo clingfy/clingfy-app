@@ -416,7 +416,10 @@ enum CameraPreviewChangeKind: String, Equatable {
 }
 
 struct CameraCompositionParams: Equatable {
+  static let defaultZoomBehavior: CameraZoomBehavior = .scaleWithScreenZoom
   static let defaultZoomScaleMultiplier = 0.35
+  static let defaultIntroPreset: CameraIntroPreset = .fade
+  static let defaultOutroPreset: CameraOutroPreset = .shrink
   static let defaultIntroDurationMs = 220
   static let defaultOutroDurationMs = 180
   static let defaultZoomEmphasisStrength = 0.10
@@ -432,8 +435,8 @@ struct CameraCompositionParams: Equatable {
   var contentMode: CameraContentMode
   var zoomBehavior: CameraZoomBehavior
   var zoomScaleMultiplier: Double = CameraCompositionParams.defaultZoomScaleMultiplier
-  var introPreset: CameraIntroPreset = .none
-  var outroPreset: CameraOutroPreset = .none
+  var introPreset: CameraIntroPreset = CameraCompositionParams.defaultIntroPreset
+  var outroPreset: CameraOutroPreset = CameraCompositionParams.defaultOutroPreset
   var zoomEmphasisPreset: CameraZoomEmphasisPreset = .none
   var introDurationMs: Int = CameraCompositionParams.defaultIntroDurationMs
   var outroDurationMs: Int = CameraCompositionParams.defaultOutroDurationMs
@@ -455,10 +458,10 @@ struct CameraCompositionParams: Equatable {
     opacity: 1.0,
     mirror: true,
     contentMode: .fill,
-    zoomBehavior: .fixed,
+    zoomBehavior: CameraCompositionParams.defaultZoomBehavior,
     zoomScaleMultiplier: CameraCompositionParams.defaultZoomScaleMultiplier,
-    introPreset: .none,
-    outroPreset: .none,
+    introPreset: CameraCompositionParams.defaultIntroPreset,
+    outroPreset: CameraCompositionParams.defaultOutroPreset,
     zoomEmphasisPreset: .none,
     introDurationMs: CameraCompositionParams.defaultIntroDurationMs,
     outroDurationMs: CameraCompositionParams.defaultOutroDurationMs,

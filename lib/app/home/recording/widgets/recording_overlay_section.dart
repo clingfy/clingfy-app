@@ -112,6 +112,7 @@ class RecordingOverlaySection extends StatelessWidget {
 
     return AppSettingsGroup(
       title: l10n.visibilityAndPlacement,
+      showHeader: false,
       children: [
         AppFormRow(
           label: l10n.overlayFaceCamVisibility,
@@ -149,6 +150,7 @@ class RecordingOverlaySection extends StatelessWidget {
 
     return AppSettingsGroup(
       title: l10n.appearance,
+      showHeader: false,
       children: [
         AppFormRow(
           label: l10n.shape,
@@ -173,37 +175,41 @@ class RecordingOverlaySection extends StatelessWidget {
         if (_canShowRoundness(overlayShape)) ...[
           const SizedBox(height: AppSidebarTokens.rowGap),
           AppSliderRow(
-            label: l10n.cornerRoundness(
-              (overlayRoundness * 100).toInt().toString(),
-            ),
+            label: l10n.roundedCorners,
             slider: AppSlider(
               value: overlayRoundness.clamp(0.0, 0.4),
               min: 0.0,
               max: 0.4,
               divisions: 20,
+              valueLabel: '${(overlayRoundness * 100).toInt()}%',
+              semanticLabel: l10n.roundedCorners,
               onChanged: onOverlayRoundnessChanged,
             ),
           ),
         ],
         const SizedBox(height: AppSidebarTokens.rowGap),
         AppSliderRow(
-          label: l10n.sizePx(overlaySize.toInt().toString()),
+          label: l10n.size,
           slider: AppSlider(
             value: overlaySize,
             min: 120,
             max: 400,
             divisions: 28,
+            valueLabel: '${overlaySize.toInt()}px',
+            semanticLabel: l10n.size,
             onChanged: onOverlaySizeChanged,
           ),
         ),
         const SizedBox(height: AppSidebarTokens.rowGap),
         AppSliderRow(
-          label: l10n.opacityPercent((overlayOpacity * 100).round().toString()),
+          label: l10n.opacity,
           slider: AppSlider(
             value: overlayOpacity.clamp(0.3, 1.0),
             min: 0.3,
             max: 1.0,
             divisions: 14,
+            valueLabel: '${(overlayOpacity * 100).round()}%',
+            semanticLabel: l10n.opacity,
             onChanged: onOverlayOpacityChanged,
           ),
         ),
@@ -222,6 +228,7 @@ class RecordingOverlaySection extends StatelessWidget {
 
     return AppSettingsGroup(
       title: l10n.style,
+      showHeader: false,
       children: [
         AppFormRow(
           label: l10n.shadow,
@@ -266,14 +273,14 @@ class RecordingOverlaySection extends StatelessWidget {
               const SizedBox(height: AppSidebarTokens.sectionGap),
               if (overlayBorder != OverlayBorder.none)
                 AppSliderRow(
-                  label: l10n.borderWidth(
-                    overlayBorderWidth.toStringAsFixed(1),
-                  ),
+                  label: l10n.borderWidthLabel,
                   slider: AppSlider(
                     value: overlayBorderWidth,
                     min: 0.0,
                     max: 12.0,
                     divisions: 24,
+                    valueLabel: '${overlayBorderWidth.toStringAsFixed(1)}px',
+                    semanticLabel: l10n.borderWidthLabel,
                     onChanged: onOverlayBorderWidthChanged,
                   ),
                 ),
@@ -289,6 +296,7 @@ class RecordingOverlaySection extends StatelessWidget {
 
     return AppSettingsGroup(
       title: l10n.effects,
+      showHeader: false,
       children: [
         AppToggleRow(
           title: l10n.recordingHighlight,
@@ -300,9 +308,7 @@ class RecordingOverlaySection extends StatelessWidget {
           AppInsetGroup(
             children: [
               AppSliderRow(
-                label: l10n.recordingGlowStrengthPercent(
-                  (overlayRecordingHighlightStrength * 100).round().toString(),
-                ),
+                label: l10n.recordingGlowStrength,
                 slider: AppSlider(
                   value: (overlayRecordingHighlightStrength * 100).clamp(
                     10.0,
@@ -311,6 +317,9 @@ class RecordingOverlaySection extends StatelessWidget {
                   min: 10,
                   max: 100,
                   divisions: 90,
+                  valueLabel:
+                      '${(overlayRecordingHighlightStrength * 100).round()}%',
+                  semanticLabel: l10n.recordingGlowStrength,
                   onChanged: (value) =>
                       onOverlayRecordingHighlightStrengthChanged(value / 100),
                 ),
@@ -329,14 +338,14 @@ class RecordingOverlaySection extends StatelessWidget {
           AppInsetGroup(
             children: [
               AppSliderRow(
-                label: l10n.keyTolerance(
-                  (chromaKeyStrength * 100).toInt().toString(),
-                ),
+                label: l10n.keyToleranceLabel,
                 slider: AppSlider(
                   value: chromaKeyStrength.clamp(0.0, 1.0),
                   min: 0.0,
                   max: 1.0,
                   divisions: 20,
+                  valueLabel: '${(chromaKeyStrength * 100).toInt()}%',
+                  semanticLabel: l10n.keyToleranceLabel,
                   onChanged: onChromaKeyStrengthChanged,
                 ),
               ),
@@ -639,7 +648,6 @@ class _CustomPositionBadge extends StatelessWidget {
           child: AppInlineInfoTooltip(
             key: const ValueKey('overlay_custom_position_info'),
             message: infoTooltip,
-            color: theme.primaryColor,
             size: 14,
           ),
         ),

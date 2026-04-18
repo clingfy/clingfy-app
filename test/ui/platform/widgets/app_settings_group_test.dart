@@ -1,3 +1,4 @@
+import 'package:clingfy/ui/platform/widgets/app_inline_info_tooltip.dart';
 import 'package:clingfy/ui/platform/widgets/app_settings_group.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
@@ -28,6 +29,45 @@ void main() {
       expect(find.text('Record target row'), findsOneWidget);
       expect(find.byTooltip('Helpful context'), findsOneWidget);
       expect(find.byIcon(Icons.refresh), findsOneWidget);
+      expect(
+        tester
+            .widget<AppInlineInfoTooltip>(find.byType(AppInlineInfoTooltip))
+            .color,
+        isNull,
+      );
+    },
+  );
+
+  testWidgets(
+    'headerless mode hides header content and preserves anchor and section keys',
+    (tester) async {
+      await tester.pumpWidget(
+        MaterialApp(
+          home: Scaffold(
+            body: AppSettingsGroup(
+              title: 'Capture Source',
+              description: 'Choose what to record.',
+              infoTooltip: 'Helpful context',
+              trailing: IconButton(
+                onPressed: () {},
+                icon: const Icon(Icons.refresh),
+              ),
+              anchorKey: const Key('anchor_key'),
+              sectionKey: const Key('section_key'),
+              showHeader: false,
+              children: const [Text('Record target row')],
+            ),
+          ),
+        ),
+      );
+
+      expect(find.byKey(const Key('anchor_key')), findsOneWidget);
+      expect(find.byKey(const Key('section_key')), findsOneWidget);
+      expect(find.text('Capture Source'), findsNothing);
+      expect(find.text('Choose what to record.'), findsNothing);
+      expect(find.byTooltip('Helpful context'), findsNothing);
+      expect(find.byIcon(Icons.refresh), findsNothing);
+      expect(find.text('Record target row'), findsOneWidget);
     },
   );
 }

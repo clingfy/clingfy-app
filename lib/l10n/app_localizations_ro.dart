@@ -21,7 +21,7 @@ class AppLocalizationsRo extends AppLocalizations {
   String get settings => 'Setări';
 
   @override
-  String get tabScreenAudio => 'Screen & Audio';
+  String get tabScreenAudio => 'Ecran și audio';
 
   @override
   String get tabFaceCam => 'Face Cam';
@@ -149,7 +149,7 @@ class AppLocalizationsRo extends AppLocalizations {
   String get resolution => 'Rezoluție';
 
   @override
-  String get frameRate => 'Frame Rate';
+  String get frameRate => 'Rată cadre';
 
   @override
   String fps(Object value) {
@@ -166,7 +166,7 @@ class AppLocalizationsRo extends AppLocalizations {
   String get codec => 'Codec';
 
   @override
-  String get bitrate => 'Bitrate';
+  String get bitrate => 'Rată de biți';
 
   @override
   String get hevc => 'HEVC (H.265)';
@@ -178,16 +178,19 @@ class AppLocalizationsRo extends AppLocalizations {
   String get auto => 'Auto';
 
   @override
-  String get low => 'Low';
+  String get low => 'Scăzută';
 
   @override
-  String get medium => 'Medium';
+  String get medium => 'Medie';
 
   @override
-  String get high => 'High';
+  String get high => 'Ridicată';
 
   @override
   String get original => 'Original';
+
+  @override
+  String get fhd1080 => '1080p';
 
   @override
   String get uhd2k => '2K (1440P)';
@@ -637,7 +640,7 @@ class AppLocalizationsRo extends AppLocalizations {
   String get effectsSettings => 'Setări Efecte';
 
   @override
-  String get exportSettings => 'Export Settings';
+  String get exportSettings => 'Setări export';
 
   @override
   String get canvas => 'Canvas';
@@ -701,6 +704,12 @@ class AppLocalizationsRo extends AppLocalizations {
 
   @override
   String get gotIt => 'Am înțeles';
+
+  @override
+  String get increase => 'Mărește';
+
+  @override
+  String get decrease => 'Micșorează';
 
   @override
   String get showCursor => 'Arată Cursor';
@@ -945,19 +954,19 @@ class AppLocalizationsRo extends AppLocalizations {
   String get vertical => 'Vertical';
 
   @override
-  String get vertical4k => 'Vertical 4K (2160x3840)';
+  String get vertical4k => '4K vertical (2160x3840)';
 
   @override
-  String get canvasAspect => 'Canvas Aspect';
+  String get canvasAspect => 'Aspect canvas';
 
   @override
-  String get fitMode => 'Fit Mode';
+  String get fitMode => 'Mod de încadrare';
 
   @override
-  String get fit => 'Fit';
+  String get fit => 'Încadrează';
 
   @override
-  String get fill => 'Fill';
+  String get fill => 'Umple';
 
   @override
   String get recordingInProgress => 'ÎNREGISTRARE ÎN CURS';
@@ -1582,6 +1591,14 @@ class AppLocalizationsRo extends AppLocalizations {
       'Activați accesul la microfon în Setări Sistem > Confidențialitate și Securitate > Microfon, apoi încercați din nou.';
 
   @override
+  String get recordingSelectedMicFallbackWarning =>
+      'Microfonul selectat nu a putut fi folosit. Înregistrarea a început cu microfonul implicit al sistemului.';
+
+  @override
+  String get recordingSelectedMicFallbackFailure =>
+      'Microfonul selectat nu a putut fi folosit pentru înregistrare. Alegeți alt microfon sau dezactivați înregistrarea microfonului.';
+
+  @override
   String errExportError(Object error) {
     return 'A apărut o eroare la export: $error';
   }
@@ -1627,6 +1644,9 @@ class AppLocalizationsRo extends AppLocalizations {
   }
 
   @override
+  String get opacity => 'Opacitate';
+
+  @override
   String get mirrorSelfView => 'Oglindire vizualizare';
 
   @override
@@ -1636,6 +1656,9 @@ class AppLocalizationsRo extends AppLocalizations {
   String keyTolerance(Object value) {
     return 'Toleranță cheie: $value%';
   }
+
+  @override
+  String get keyToleranceLabel => 'Toleranță cheie';
 
   @override
   String get chromaKeyColor => 'Culoare chroma key';
@@ -1669,6 +1692,9 @@ class AppLocalizationsRo extends AppLocalizations {
   String borderWidth(Object value) {
     return 'Lățime bordură: $value px';
   }
+
+  @override
+  String get borderWidthLabel => 'Lățime bordură';
 
   @override
   String get diagnosticsTitle => 'Diagnosticare';
@@ -2133,4 +2159,122 @@ class AppLocalizationsRo extends AppLocalizations {
   @override
   String get homeGuideReplayUnavailable =>
       'Revino la configurarea înregistrării pentru a relua turul rapid.';
+
+  @override
+  String get window => 'Fereastră';
+
+  @override
+  String get area => 'Zonă';
+
+  @override
+  String get mic => 'Microfon';
+
+  @override
+  String get system => 'Sistem';
+
+  @override
+  String get update => 'Actualizare';
+
+  @override
+  String get screen => 'Ecran';
+
+  @override
+  String get app => 'Aplicație';
+
+  @override
+  String get selectDisplay => 'Selectează ecranul';
+
+  @override
+  String get selectWindow => 'Selectează fereastra';
+
+  @override
+  String get selectMicrophone => 'Selectează microfonul';
+
+  @override
+  String get selectCamera => 'Selectează camera';
+
+  @override
+  String get unknownDisplay => 'Ecran necunoscut';
+
+  @override
+  String get unknownWindow => 'Fereastră necunoscută';
+
+  @override
+  String get unknownMic => 'Microfon necunoscut';
+
+  @override
+  String get unknownCamera => 'Cameră necunoscută';
+
+  @override
+  String get noCamera => 'Fără cameră';
+
+  @override
+  String get doNotRecordAudio => 'Nu înregistra audio';
+
+  @override
+  String get stoppingEllipsis => 'Se oprește...';
+
+  @override
+  String get pauseRecording => 'Pune pauză înregistrării';
+
+  @override
+  String get resumeRecording => 'Reia înregistrarea';
+
+  @override
+  String get recordingInProgressLabel => 'Înregistrare în curs';
+
+  @override
+  String get recordingPausedLabel => 'Înregistrare în pauză';
+
+  @override
+  String get stoppingRecording => 'Se oprește înregistrarea';
+
+  @override
+  String get recordingIndicatorHelpPause =>
+      'Acțiunea principală pune pauză înregistrării. Controlul secundar oprește înregistrarea.';
+
+  @override
+  String get recordingIndicatorHelpResume =>
+      'Acțiunea principală reia înregistrarea. Controlul secundar oprește înregistrarea.';
+
+  @override
+  String get recordingIndicatorHelpStopping => 'Înregistrarea se oprește.';
+
+  @override
+  String get defaultExportFileNameLabel => 'Export';
+
+  @override
+  String get defaultClipFileNameLabel => 'Clip';
+
+  @override
+  String get licenseInitializing => 'Se inițializează...';
+
+  @override
+  String get licenseInternetRequired =>
+      'Este necesară conexiunea la internet pentru verificarea licenței.';
+
+  @override
+  String get licenseOfflineCached => 'Mod offline (din cache)';
+
+  @override
+  String get licenseValidationFailed => 'Nu s-a putut valida licența.';
+
+  @override
+  String get licenseTrialConsumptionFailed =>
+      'Nu s-a putut sincroniza utilizarea trial.';
+
+  @override
+  String get licenseNetworkUnavailableWhileConsumingTrial =>
+      'Rețeaua nu este disponibilă în timpul sincronizării utilizării trial.';
+
+  @override
+  String get licenseNetworkUnavailableWhileDeactivatingDevice =>
+      'Rețeaua nu este disponibilă în timpul dezactivării dispozitivului.';
+
+  @override
+  String get licenseValidated => 'Licența a fost validată.';
+
+  @override
+  String get licenseNotEntitled =>
+      'Această licență nu deblochează funcțiile Pro.';
 }

@@ -35,6 +35,8 @@ final class ZoomTimelineBuilder {
     var segments: [ZoomSegment] = []
     var currentSegmentStart: Double? = nil
     var lastStable = false
+    var lastRaw = false
+    var rawChangedAt = 0.0
 
     let totalSteps = Int(durationSeconds * fps)
     var frameIndex = 0
@@ -64,15 +66,19 @@ final class ZoomTimelineBuilder {
       }
 
       let rawZoomWanted = (frame.spriteID != defaultSpriteID)
+      if rawZoomWanted != lastRaw {
+        rawChangedAt = time
+        lastRaw = rawZoomWanted
+      }
       let stableZoomActive = zoomHysteresis.update(time: time, rawZoomWanted: rawZoomWanted)
 
       if stableZoomActive && !lastStable {
-        currentSegmentStart = time
+        currentSegmentStart = rawChangedAt
       } else if !stableZoomActive && lastStable, let start = currentSegmentStart {
         segments.append(
           ZoomSegment(
             startMs: Int((start * 1000).rounded()),
-            endMs: Int((time * 1000).rounded())
+            endMs: Int((rawChangedAt * 1000).rounded())
           ))
         currentSegmentStart = nil
       }
