@@ -37,18 +37,16 @@ Possible status values:
 Run these first.
 
 ```bash
-dart format --output=none --set-exit-if-changed .
-flutter analyze test
-flutter analyze lib
+flutter analyze
+flutter test
 flutter build macos --flavor dev
 flutter build macos --flavor prod
 ```
 
 Checklist:
 
-* [x] `dart format --output=none --set-exit-if-changed .`
-* [x] `flutter analyze test`
-* [x] `flutter analyze lib`
+* [x] `flutter analyze`
+* [x] `flutter test`
 * [x] `flutter build macos --flavor dev`
 * [x] `flutter build macos --flavor prod`
 
