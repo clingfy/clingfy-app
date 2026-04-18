@@ -129,6 +129,7 @@ protocol CaptureBackend: AnyObject {
   var onFinished: ((URL?, Error?) -> Void)? { get set }
   var onPaused: (() -> Void)? { get set }
   var onResumed: (() -> Void)? { get set }
+  var onWarning: ((String) -> Void)? { get set }
   var onMicrophoneLevel: ((MicrophoneLevelSample) -> Void)? { get set }
 
   var canPauseResume: Bool { get }

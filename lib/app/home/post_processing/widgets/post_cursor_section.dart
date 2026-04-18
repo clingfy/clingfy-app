@@ -1,5 +1,4 @@
 import 'package:clingfy/l10n/app_localizations.dart';
-import 'package:clingfy/ui/platform/platform_kind.dart';
 import 'package:clingfy/ui/platform/widgets/app_inset_group.dart';
 import 'package:clingfy/ui/platform/widgets/app_inline_notice.dart';
 import 'package:clingfy/ui/platform/widgets/app_settings_group.dart';
@@ -30,13 +29,13 @@ class PostCursorSection extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final l10n = AppLocalizations.of(context)!;
-    final accentColor = Theme.of(context).colorScheme.primary;
 
     return Column(
       crossAxisAlignment: CrossAxisAlignment.stretch,
       children: [
         AppSettingsGroup(
           title: l10n.cursor,
+          showHeader: false,
           children: [
             AppToggleRow(
               title: l10n.showCursor,
@@ -60,16 +59,15 @@ class PostCursorSection extends StatelessWidget {
                 children: [
                   AppSliderRow(
                     label: l10n.cursorSize,
-                    valueText: '${cursorSize.toStringAsFixed(1)}x',
                     slider: _buildSidebarSlider(
-                      context,
                       value: cursorSize,
                       min: 0.5,
                       max: 3.0,
                       divisions: 25,
+                      valueLabel: '${cursorSize.toStringAsFixed(1)}x',
+                      semanticLabel: l10n.cursorSize,
                       onChanged: onCursorSizeChanged,
                       onChangeEnd: onCursorSizeChangeEnd,
-                      accentColor: accentColor,
                     ),
                   ),
                 ],
@@ -81,32 +79,25 @@ class PostCursorSection extends StatelessWidget {
     );
   }
 
-  Widget _buildSidebarSlider(
-    BuildContext context, {
+  Widget _buildSidebarSlider({
     required double value,
     required double min,
     required double max,
+    required String valueLabel,
+    required String semanticLabel,
     required ValueChanged<double>? onChanged,
     required ValueChanged<double> onChangeEnd,
-    required Color accentColor,
     int? divisions,
   }) {
-    final slider = AppSlider(
+    return AppSlider(
       value: value,
       min: min,
       max: max,
       divisions: divisions,
+      valueLabel: valueLabel,
+      semanticLabel: semanticLabel,
       onChanged: onChanged,
       onChangeEnd: onChangeEnd,
-    );
-
-    if (isMac()) return slider;
-
-    return SliderTheme(
-      data: Theme.of(
-        context,
-      ).sliderTheme.copyWith(activeTrackColor: accentColor),
-      child: slider,
     );
   }
 }

@@ -17,6 +17,7 @@ final class CaptureBackendAVFoundation: CaptureBackend {
   var onFinished: ((URL?, Error?) -> Void)?
   var onPaused: (() -> Void)?
   var onResumed: (() -> Void)?
+  var onWarning: ((String) -> Void)?
   var onMicrophoneLevel: ((MicrophoneLevelSample) -> Void)?
 
   var canPauseResume: Bool { true }

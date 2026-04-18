@@ -101,9 +101,29 @@ void main() {
       PlayerController player,
       SettingsController settings,
       PostProcessingController post,
+      List<MethodCall> calls,
     })
   >
   createHarness() async {
+    final calls = <MethodCall>[];
+    final messenger =
+        TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger;
+
+    messenger.setMockMethodCallHandler(screenRecorderChannel, (call) async {
+      calls.add(call);
+      switch (call.method) {
+        case 'getExcludeRecorderApp':
+          return false;
+        case 'getExcludeMicFromSystemAudio':
+          return true;
+        case 'getZoomSegments':
+        case 'getManualZoomSegments':
+          return <dynamic>[];
+        default:
+          return null;
+      }
+    });
+
     final nativeBridge = NativeBridge.instance;
     final settings = SettingsController(nativeBridge: nativeBridge);
     await settings.loadPreferences();
@@ -123,6 +143,7 @@ void main() {
       player: player,
       settings: settings,
       post: post,
+      calls: calls,
     );
   }
 
@@ -418,6 +439,79 @@ void main() {
     expect(harness.recording.phase, WorkflowPhase.previewReady);
     expect(find.byType(InlinePreviewPanel), findsOneWidget);
     expect(find.byType(PreviewWithOverlayControls), findsOneWidget);
+  });
+
+  testWidgets('inline preview play pause stays enabled while exporting', (
+    tester,
+  ) async {
+    final harness = await createHarness();
+    addTearDown(harness.recording.dispose);
+    addTearDown(harness.player.dispose);
+    addTearDown(harness.settings.dispose);
+    addTearDown(harness.post.dispose);
+
+    harness.recording.beginRecordingStartIntent();
+    final sessionId = harness.recording.sessionId!;
+    await _emitWorkflowEvent({
+      'type': 'recordingStarted',
+      'sessionId': sessionId,
+    });
+    await harness.recording.stopRecording();
+    await _emitWorkflowEvent({
+      'type': 'recordingFinalized',
+      'sessionId': sessionId,
+      'projectPath': '/tmp/test.clingfyproj',
+    });
+    await harness.recording.handlePreviewHostMounted();
+    await _emitWorkflowEvent({
+      'type': 'previewReady',
+      'sessionId': sessionId,
+      'path': '/tmp/test.mov',
+      'token': 'preview_token',
+    });
+    harness.recording.enterExporting();
+
+    await tester.pumpWidget(
+      buildPanel(
+        recording: harness.recording,
+        player: harness.player,
+        post: harness.post,
+      ),
+    );
+    await tester.pump();
+
+    expect(harness.recording.phase, WorkflowPhase.exporting);
+
+    final overlay = tester.widget<PreviewWithOverlayControls>(
+      find.byType(PreviewWithOverlayControls),
+    );
+    expect(overlay.controlsEnabled, isTrue);
+
+    final playPauseButton = find.byType(AnimatedIcon);
+    expect(playPauseButton, findsOneWidget);
+
+    await tester.tap(playPauseButton);
+    await tester.pump();
+    await tester.tap(playPauseButton);
+    await tester.pump();
+
+    final previewPlay = harness.calls.where(
+      (call) => call.method == 'previewPlay',
+    );
+    final previewPause = harness.calls.where(
+      (call) => call.method == 'previewPause',
+    );
+
+    expect(previewPlay, hasLength(1));
+    expect(previewPause, hasLength(1));
+    expect(
+      (previewPlay.single.arguments as Map<dynamic, dynamic>)['sessionId'],
+      sessionId,
+    );
+    expect(
+      (previewPause.single.arguments as Map<dynamic, dynamic>)['sessionId'],
+      sessionId,
+    );
   });
 
   testWidgets('preview host is not remounted when preview becomes ready', (

@@ -6,6 +6,7 @@ import 'package:device_info_plus/device_info_plus.dart';
 import 'package:flutter_secure_storage/flutter_secure_storage.dart';
 import 'package:http/http.dart' as http;
 import 'package:clingfy/app/infrastructure/logging/logger_service.dart';
+import 'package:clingfy/commercial/licensing/license_error_codes.dart';
 import 'package:clingfy/commercial/licensing/models/license_plan.dart';
 
 class LicenseService {
@@ -78,7 +79,7 @@ class LicenseService {
       return LicenseState.error(
         data['reason']?.toString() ??
             data['message']?.toString() ??
-            'License validation failed',
+            LicenseErrorCodes.validationFailed,
       );
     } catch (_) {
       return _checkOfflineLicense();
@@ -102,7 +103,7 @@ class LicenseService {
           reason:
               data['reason']?.toString() ??
               data['message']?.toString() ??
-              'Trial consumption failed',
+              LicenseErrorCodes.trialConsumptionFailed,
         );
       }
 
@@ -121,7 +122,7 @@ class LicenseService {
     } catch (_) {
       return const ConsumeTrialResult(
         ok: false,
-        reason: 'Network unavailable while consuming trial export',
+        reason: LicenseErrorCodes.networkUnavailableWhileConsumingTrial,
       );
     }
   }
@@ -132,7 +133,7 @@ class LicenseService {
       if (trimmedKey.isEmpty) {
         return const DeactivateLicenseResult(
           ok: false,
-          reason: 'License key is required',
+          reason: LicenseErrorCodes.keyRequired,
         );
       }
 
@@ -160,12 +161,12 @@ class LicenseService {
             data['reason']?.toString() ??
             data['error']?.toString() ??
             data['message']?.toString() ??
-            'License deactivation failed',
+            LicenseErrorCodes.deactivationFailed,
       );
     } catch (_) {
       return const DeactivateLicenseResult(
         ok: false,
-        reason: 'Network unavailable while deactivating device',
+        reason: LicenseErrorCodes.networkUnavailableWhileDeactivatingDevice,
       );
     }
   }
@@ -232,13 +233,13 @@ class LicenseService {
       final lastCheckStr = await _storage.read(key: _lastCheckStorageKey);
 
       if (storedData == null || lastCheckStr == null) {
-        return LicenseState.error('Internet required to verify license.');
+        return LicenseState.error(LicenseErrorCodes.internetRequired);
       }
 
       final lastCheck = DateTime.tryParse(lastCheckStr);
       if (lastCheck == null ||
           DateTime.now().difference(lastCheck).inDays >= 7) {
-        return LicenseState.error('Internet required to verify license.');
+        return LicenseState.error(LicenseErrorCodes.internetRequired);
       }
 
       final cachedMap = _decodeMap(storedData);
@@ -259,11 +260,11 @@ class LicenseService {
       final stateWithCoverage = cachedState.copyWith(
         isUpdateCovered: isCovered,
         entitledPro: entitledPro,
-        message: 'Offline mode (cached)',
+        message: LicenseErrorCodes.offlineCached,
       );
       return _applyFirstActivatedFallback(stateWithCoverage);
     } catch (_) {
-      return LicenseState.error('Internet required to verify license.');
+      return LicenseState.error(LicenseErrorCodes.internetRequired);
     }
   }
 
@@ -469,7 +470,9 @@ class LicenseState {
       message:
           json['message']?.toString() ??
           json['reason']?.toString() ??
-          (entitledPro ? 'License validated' : 'License not entitled'),
+          (entitledPro
+              ? LicenseErrorCodes.validated
+              : LicenseErrorCodes.notEntitled),
     );
   }
 

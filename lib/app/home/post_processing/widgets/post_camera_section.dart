@@ -1,6 +1,5 @@
 import 'package:clingfy/core/models/app_models.dart';
 import 'package:clingfy/l10n/app_localizations.dart';
-import 'package:clingfy/ui/platform/platform_kind.dart';
 import 'package:clingfy/ui/platform/widgets/app_form_row.dart';
 import 'package:clingfy/ui/platform/widgets/app_inset_group.dart';
 import 'package:clingfy/ui/platform/widgets/app_inline_notice.dart';
@@ -97,6 +96,7 @@ class PostCameraSection extends StatelessWidget {
 
     return AppSettingsGroup(
       title: l10n.visibility,
+      showHeader: false,
       children: [
         AppToggleRow(
           title: l10n.camera,
@@ -122,6 +122,7 @@ class PostCameraSection extends StatelessWidget {
 
     return AppSettingsGroup(
       title: l10n.placement,
+      showHeader: false,
       children: [
         AppFormRow(
           label: l10n.position,
@@ -143,23 +144,22 @@ class PostCameraSection extends StatelessWidget {
     CameraCompositionState camera,
   ) {
     final l10n = AppLocalizations.of(context)!;
-    final accentColor = Theme.of(context).colorScheme.primary;
 
     return AppSettingsGroup(
       title: l10n.appearance,
+      showHeader: false,
       children: [
         AppSliderRow(
           label: l10n.size,
-          valueText: '${(camera.sizeFactor * 100).round()}%',
           slider: _buildSidebarSlider(
-            context,
             value: camera.sizeFactor,
             min: 0.08,
             max: 0.45,
             divisions: 37,
+            valueLabel: '${(camera.sizeFactor * 100).round()}%',
+            semanticLabel: l10n.size,
             onChanged: onSizeFactorChanged,
             onChangeEnd: onSizeFactorChangeEnd,
-            accentColor: accentColor,
           ),
         ),
         const SizedBox(height: AppSidebarTokens.rowGap),
@@ -188,16 +188,15 @@ class PostCameraSection extends StatelessWidget {
         const SizedBox(height: AppSidebarTokens.rowGap),
         AppSliderRow(
           label: l10n.roundedCorners,
-          valueText: '${(camera.cornerRadius * 100).round()}%',
           slider: _buildSidebarSlider(
-            context,
             value: camera.cornerRadius,
             min: 0.0,
             max: 0.5,
             divisions: 50,
+            valueLabel: '${(camera.cornerRadius * 100).round()}%',
+            semanticLabel: l10n.roundedCorners,
             onChanged: onCornerRadiusChanged,
             onChangeEnd: onCornerRadiusChangeEnd,
-            accentColor: accentColor,
           ),
         ),
         const SizedBox(height: AppSidebarTokens.rowGap),
@@ -234,7 +233,6 @@ class PostCameraSection extends StatelessWidget {
     CameraCompositionState camera,
   ) {
     final l10n = AppLocalizations.of(context)!;
-    final accentColor = Theme.of(context).colorScheme.primary;
 
     final children = <Widget>[
       AppFormRow(
@@ -270,16 +268,15 @@ class PostCameraSection extends StatelessWidget {
           children: [
             AppSliderRow(
               label: l10n.zoomScale,
-              valueText: '${(camera.zoomScaleMultiplier * 100).round()}%',
               slider: _buildSidebarSlider(
-                context,
                 value: camera.zoomScaleMultiplier,
                 min: 0.0,
                 max: 1.0,
                 divisions: 100,
+                valueLabel: '${(camera.zoomScaleMultiplier * 100).round()}%',
+                semanticLabel: l10n.zoomScale,
                 onChanged: onZoomScaleMultiplierChanged,
                 onChangeEnd: onZoomScaleMultiplierChangeEnd,
-                accentColor: accentColor,
               ),
             ),
           ],
@@ -318,16 +315,15 @@ class PostCameraSection extends StatelessWidget {
           children: [
             AppSliderRow(
               label: l10n.introDuration,
-              valueText: '${camera.introDurationMs} ms',
               slider: _buildSidebarSlider(
-                context,
                 value: camera.introDurationMs.toDouble(),
                 min: 80.0,
                 max: 600.0,
                 divisions: 26,
+                valueLabel: '${camera.introDurationMs} ms',
+                semanticLabel: l10n.introDuration,
                 onChanged: onIntroDurationChanged,
                 onChangeEnd: onIntroDurationChangeEnd,
-                accentColor: accentColor,
               ),
             ),
           ],
@@ -369,16 +365,15 @@ class PostCameraSection extends StatelessWidget {
           children: [
             AppSliderRow(
               label: l10n.outroDuration,
-              valueText: '${camera.outroDurationMs} ms',
               slider: _buildSidebarSlider(
-                context,
                 value: camera.outroDurationMs.toDouble(),
                 min: 80.0,
                 max: 600.0,
                 divisions: 26,
+                valueLabel: '${camera.outroDurationMs} ms',
+                semanticLabel: l10n.outroDuration,
                 onChanged: onOutroDurationChanged,
                 onChangeEnd: onOutroDurationChangeEnd,
-                accentColor: accentColor,
               ),
             ),
           ],
@@ -421,16 +416,15 @@ class PostCameraSection extends StatelessWidget {
           children: [
             AppSliderRow(
               label: l10n.pulseStrength,
-              valueText: '${(camera.zoomEmphasisStrength * 100).round()}%',
               slider: _buildSidebarSlider(
-                context,
                 value: camera.zoomEmphasisStrength,
                 min: 0.0,
                 max: 0.2,
                 divisions: 20,
+                valueLabel: '${(camera.zoomEmphasisStrength * 100).round()}%',
+                semanticLabel: l10n.pulseStrength,
                 onChanged: onZoomEmphasisStrengthChanged,
                 onChangeEnd: onZoomEmphasisStrengthChangeEnd,
-                accentColor: accentColor,
               ),
             ),
           ],
@@ -438,7 +432,11 @@ class PostCameraSection extends StatelessWidget {
       ]);
     }
 
-    return AppSettingsGroup(title: l10n.motion, children: children);
+    return AppSettingsGroup(
+      title: l10n.motion,
+      showHeader: false,
+      children: children,
+    );
   }
 
   String _shapeLabel(BuildContext context, CameraShape shape) {
@@ -456,32 +454,25 @@ class PostCameraSection extends StatelessWidget {
     }
   }
 
-  Widget _buildSidebarSlider(
-    BuildContext context, {
+  Widget _buildSidebarSlider({
     required double value,
     required double min,
     required double max,
+    required String valueLabel,
+    required String semanticLabel,
     required ValueChanged<double>? onChanged,
     required ValueChanged<double> onChangeEnd,
-    required Color accentColor,
     int? divisions,
   }) {
-    final slider = AppSlider(
+    return AppSlider(
       value: value,
       min: min,
       max: max,
       divisions: divisions,
+      valueLabel: valueLabel,
+      semanticLabel: semanticLabel,
       onChanged: onChanged,
       onChangeEnd: onChangeEnd,
-    );
-
-    if (isMac()) return slider;
-
-    return SliderTheme(
-      data: Theme.of(
-        context,
-      ).sliderTheme.copyWith(activeTrackColor: accentColor),
-      child: slider,
     );
   }
 }

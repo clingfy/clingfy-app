@@ -3,6 +3,7 @@ import ApplicationServices
 
 final class DisplayService {
   func allDisplays() -> [[String: Any]] {
+    let screenLabel = NativeStringsStore.shared.string(for: NativeUIStringKey.displayServiceScreen)
     return NSScreen.screens.enumerated().compactMap { (idx, s) in
       guard let num = s.deviceDescription[NSDeviceDescriptionKey("NSScreenNumber")] as? NSNumber
       else { return nil }
@@ -10,7 +11,7 @@ final class DisplayService {
       let frame = s.frame
       return [
         "id": UInt32(did),
-        "name": "Screen \(idx + 1)",
+        "name": "\(screenLabel) \(idx + 1)",
         "x": frame.origin.x, "y": frame.origin.y,
         "width": frame.size.width, "height": frame.size.height,
         "scale": s.backingScaleFactor,
@@ -57,7 +58,9 @@ final class DisplayService {
       let normalized = normalize(rect: rect)
       var payload: [String: Any] = [
         "windowId": idNum.uint32Value,
-        "appName": entry[kCGWindowOwnerName as String] as? String ?? "App",
+        "appName":
+          entry[kCGWindowOwnerName as String] as? String
+          ?? NativeStringsStore.shared.string(for: NativeUIStringKey.displayServiceApp),
         "title": entry[kCGWindowName as String] as? String ?? "",
         "bounds": [
           "x": normalized.origin.x,

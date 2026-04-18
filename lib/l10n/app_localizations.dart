@@ -442,6 +442,12 @@ abstract class AppLocalizations {
   /// **'Original'**
   String get original;
 
+  /// No description provided for @fhd1080.
+  ///
+  /// In en, this message translates to:
+  /// **'1080p'**
+  String get fhd1080;
+
   /// No description provided for @uhd2k.
   ///
   /// In en, this message translates to:
@@ -1383,6 +1389,18 @@ abstract class AppLocalizations {
   /// In en, this message translates to:
   /// **'Got it'**
   String get gotIt;
+
+  /// No description provided for @increase.
+  ///
+  /// In en, this message translates to:
+  /// **'Increase'**
+  String get increase;
+
+  /// No description provided for @decrease.
+  ///
+  /// In en, this message translates to:
+  /// **'Decrease'**
+  String get decrease;
 
   /// No description provided for @showCursor.
   ///
@@ -2980,6 +2998,18 @@ abstract class AppLocalizations {
   /// **'Enable microphone access in System Settings > Privacy & Security > Microphone, then try again.'**
   String get errMicrophonePermissionRequired;
 
+  /// No description provided for @recordingSelectedMicFallbackWarning.
+  ///
+  /// In en, this message translates to:
+  /// **'Selected microphone couldn’t be used. Recording started with the system default microphone.'**
+  String get recordingSelectedMicFallbackWarning;
+
+  /// No description provided for @recordingSelectedMicFallbackFailure.
+  ///
+  /// In en, this message translates to:
+  /// **'Selected microphone couldn’t be used for recording. Choose another microphone or turn microphone recording off.'**
+  String get recordingSelectedMicFallbackFailure;
+
   /// No description provided for @errExportError.
   ///
   /// In en, this message translates to:
@@ -3052,6 +3082,12 @@ abstract class AppLocalizations {
   /// **'Opacity: {value}%'**
   String opacityPercent(Object value);
 
+  /// No description provided for @opacity.
+  ///
+  /// In en, this message translates to:
+  /// **'Opacity'**
+  String get opacity;
+
   /// No description provided for @mirrorSelfView.
   ///
   /// In en, this message translates to:
@@ -3069,6 +3105,12 @@ abstract class AppLocalizations {
   /// In en, this message translates to:
   /// **'Key Tolerance: {value}%'**
   String keyTolerance(Object value);
+
+  /// No description provided for @keyToleranceLabel.
+  ///
+  /// In en, this message translates to:
+  /// **'Key Tolerance'**
+  String get keyToleranceLabel;
 
   /// No description provided for @chromaKeyColor.
   ///
@@ -3129,6 +3171,12 @@ abstract class AppLocalizations {
   /// In en, this message translates to:
   /// **'Border width: {value} px'**
   String borderWidth(Object value);
+
+  /// No description provided for @borderWidthLabel.
+  ///
+  /// In en, this message translates to:
+  /// **'Border width'**
+  String get borderWidthLabel;
 
   /// No description provided for @diagnosticsTitle.
   ///
@@ -3903,6 +3951,228 @@ abstract class AppLocalizations {
   /// In en, this message translates to:
   /// **'Return to recording setup to replay the quick tour.'**
   String get homeGuideReplayUnavailable;
+
+  /// No description provided for @window.
+  ///
+  /// In en, this message translates to:
+  /// **'Window'**
+  String get window;
+
+  /// No description provided for @area.
+  ///
+  /// In en, this message translates to:
+  /// **'Area'**
+  String get area;
+
+  /// No description provided for @mic.
+  ///
+  /// In en, this message translates to:
+  /// **'Mic'**
+  String get mic;
+
+  /// No description provided for @system.
+  ///
+  /// In en, this message translates to:
+  /// **'System'**
+  String get system;
+
+  /// No description provided for @update.
+  ///
+  /// In en, this message translates to:
+  /// **'Update'**
+  String get update;
+
+  /// No description provided for @screen.
+  ///
+  /// In en, this message translates to:
+  /// **'Screen'**
+  String get screen;
+
+  /// No description provided for @app.
+  ///
+  /// In en, this message translates to:
+  /// **'App'**
+  String get app;
+
+  /// No description provided for @selectDisplay.
+  ///
+  /// In en, this message translates to:
+  /// **'Select Display'**
+  String get selectDisplay;
+
+  /// No description provided for @selectWindow.
+  ///
+  /// In en, this message translates to:
+  /// **'Select Window'**
+  String get selectWindow;
+
+  /// No description provided for @selectMicrophone.
+  ///
+  /// In en, this message translates to:
+  /// **'Select Microphone'**
+  String get selectMicrophone;
+
+  /// No description provided for @selectCamera.
+  ///
+  /// In en, this message translates to:
+  /// **'Select Camera'**
+  String get selectCamera;
+
+  /// No description provided for @unknownDisplay.
+  ///
+  /// In en, this message translates to:
+  /// **'Unknown Display'**
+  String get unknownDisplay;
+
+  /// No description provided for @unknownWindow.
+  ///
+  /// In en, this message translates to:
+  /// **'Unknown Window'**
+  String get unknownWindow;
+
+  /// No description provided for @unknownMic.
+  ///
+  /// In en, this message translates to:
+  /// **'Unknown Mic'**
+  String get unknownMic;
+
+  /// No description provided for @unknownCamera.
+  ///
+  /// In en, this message translates to:
+  /// **'Unknown Camera'**
+  String get unknownCamera;
+
+  /// No description provided for @noCamera.
+  ///
+  /// In en, this message translates to:
+  /// **'No camera'**
+  String get noCamera;
+
+  /// No description provided for @doNotRecordAudio.
+  ///
+  /// In en, this message translates to:
+  /// **'Do not record audio'**
+  String get doNotRecordAudio;
+
+  /// No description provided for @stoppingEllipsis.
+  ///
+  /// In en, this message translates to:
+  /// **'Stopping...'**
+  String get stoppingEllipsis;
+
+  /// No description provided for @pauseRecording.
+  ///
+  /// In en, this message translates to:
+  /// **'Pause recording'**
+  String get pauseRecording;
+
+  /// No description provided for @resumeRecording.
+  ///
+  /// In en, this message translates to:
+  /// **'Resume recording'**
+  String get resumeRecording;
+
+  /// No description provided for @recordingInProgressLabel.
+  ///
+  /// In en, this message translates to:
+  /// **'Recording in progress'**
+  String get recordingInProgressLabel;
+
+  /// No description provided for @recordingPausedLabel.
+  ///
+  /// In en, this message translates to:
+  /// **'Recording paused'**
+  String get recordingPausedLabel;
+
+  /// No description provided for @stoppingRecording.
+  ///
+  /// In en, this message translates to:
+  /// **'Stopping recording'**
+  String get stoppingRecording;
+
+  /// No description provided for @recordingIndicatorHelpPause.
+  ///
+  /// In en, this message translates to:
+  /// **'Primary action pauses recording. Secondary stop control stops recording.'**
+  String get recordingIndicatorHelpPause;
+
+  /// No description provided for @recordingIndicatorHelpResume.
+  ///
+  /// In en, this message translates to:
+  /// **'Primary action resumes recording. Secondary stop control stops recording.'**
+  String get recordingIndicatorHelpResume;
+
+  /// No description provided for @recordingIndicatorHelpStopping.
+  ///
+  /// In en, this message translates to:
+  /// **'Recording is stopping.'**
+  String get recordingIndicatorHelpStopping;
+
+  /// No description provided for @defaultExportFileNameLabel.
+  ///
+  /// In en, this message translates to:
+  /// **'Export'**
+  String get defaultExportFileNameLabel;
+
+  /// No description provided for @defaultClipFileNameLabel.
+  ///
+  /// In en, this message translates to:
+  /// **'Clip'**
+  String get defaultClipFileNameLabel;
+
+  /// No description provided for @licenseInitializing.
+  ///
+  /// In en, this message translates to:
+  /// **'Initializing...'**
+  String get licenseInitializing;
+
+  /// No description provided for @licenseInternetRequired.
+  ///
+  /// In en, this message translates to:
+  /// **'Internet required to verify license.'**
+  String get licenseInternetRequired;
+
+  /// No description provided for @licenseOfflineCached.
+  ///
+  /// In en, this message translates to:
+  /// **'Offline mode (cached)'**
+  String get licenseOfflineCached;
+
+  /// No description provided for @licenseValidationFailed.
+  ///
+  /// In en, this message translates to:
+  /// **'Could not validate license.'**
+  String get licenseValidationFailed;
+
+  /// No description provided for @licenseTrialConsumptionFailed.
+  ///
+  /// In en, this message translates to:
+  /// **'Could not sync trial usage.'**
+  String get licenseTrialConsumptionFailed;
+
+  /// No description provided for @licenseNetworkUnavailableWhileConsumingTrial.
+  ///
+  /// In en, this message translates to:
+  /// **'Network unavailable while syncing trial usage.'**
+  String get licenseNetworkUnavailableWhileConsumingTrial;
+
+  /// No description provided for @licenseNetworkUnavailableWhileDeactivatingDevice.
+  ///
+  /// In en, this message translates to:
+  /// **'Network unavailable while deactivating device.'**
+  String get licenseNetworkUnavailableWhileDeactivatingDevice;
+
+  /// No description provided for @licenseValidated.
+  ///
+  /// In en, this message translates to:
+  /// **'License validated.'**
+  String get licenseValidated;
+
+  /// No description provided for @licenseNotEntitled.
+  ///
+  /// In en, this message translates to:
+  /// **'This license does not unlock Pro features.'**
+  String get licenseNotEntitled;
 }
 
 class _AppLocalizationsDelegate

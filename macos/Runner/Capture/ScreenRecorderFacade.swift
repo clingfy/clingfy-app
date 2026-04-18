@@ -613,6 +613,7 @@ final class ScreenRecorderFacade: NSObject {
   var onRecordingResumed: ((String) -> Void)?
   var onRecordingFinalized: ((String, String) -> Void)?
   var onRecordingFailed: (([String: Any]) -> Void)?
+  var onRecordingWarning: (([String: Any]) -> Void)?
   var onAreaSelectionCleared: (() -> Void)?
   var onMicrophoneLevel: ((MicrophoneLevelSample) -> Void)?
   var onCameraOverlayMoved: (([String: Any]) -> Void)?
@@ -2713,10 +2714,10 @@ final class ScreenRecorderFacade: NSObject {
       cameraOpacity: prefs.overlayOpacity,
       cameraMirror: prefs.overlayMirror,
       cameraContentMode: .fill,
-      cameraZoomBehavior: .fixed,
+      cameraZoomBehavior: CameraCompositionParams.defaultZoomBehavior,
       cameraZoomScaleMultiplier: CameraCompositionParams.defaultZoomScaleMultiplier,
-      cameraIntroPreset: .none,
-      cameraOutroPreset: .none,
+      cameraIntroPreset: CameraCompositionParams.defaultIntroPreset,
+      cameraOutroPreset: CameraCompositionParams.defaultOutroPreset,
       cameraZoomEmphasisPreset: .none,
       cameraIntroDurationMs: CameraCompositionParams.defaultIntroDurationMs,
       cameraOutroDurationMs: CameraCompositionParams.defaultOutroDurationMs,
@@ -3516,6 +3517,14 @@ final class ScreenRecorderFacade: NSObject {
     self.capture.onMicrophoneLevel = { [weak self] sample in
       self?.forwardMicrophoneLevel(sample, source: .recordingBackend)
     }
+    self.capture.onWarning = { [weak self] message in
+      guard let self, let sessionId = self.activeRecordingWorkflowSessionId else { return }
+      self.onRecordingWarning?([
+        "type": "recordingWarning",
+        "sessionId": sessionId,
+        "message": message,
+      ])
+    }
 
     // Bridge backend callbacks into the facade state machine.
     self.capture.onStarted = { [weak self] url in
@@ -3919,6 +3928,10 @@ final class ScreenRecorderFacade: NSObject {
 
   func _testSetAudioDeviceId(_ id: String?) {
     prefs.audioDeviceId = id
+  }
+
+  func _testSetActiveRecordingWorkflowSessionId(_ id: String?) {
+    activeRecordingWorkflowSessionId = id
   }
 
   func _testRefreshMicrophoneLevelMonitoring(resetMeter: Bool) {

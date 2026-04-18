@@ -257,9 +257,9 @@ void main() {
     await tester.pumpAndSettle();
 
     expect(find.byType(AppSettingsGroup), findsNWidgets(3));
-    expect(find.text('Capture Source'), findsOneWidget);
-    expect(find.text('Audio'), findsOneWidget);
-    expect(find.text('Pointer'), findsOneWidget);
+    expect(find.text('Capture Source'), findsNothing);
+    expect(find.text('Audio'), findsNothing);
+    expect(find.text('Pointer'), findsNothing);
     expect(find.byType(Divider), findsNothing);
   });
 
@@ -269,10 +269,7 @@ void main() {
     await tester.pumpWidget(buildTestApp(selectedIndex: 0));
     await tester.pumpAndSettle();
 
-    final sourceGroup = find.ancestor(
-      of: find.text('Capture Source'),
-      matching: find.byType(AppSettingsGroup),
-    );
+    final sourceGroup = find.byKey(const Key('recording_capture_source_group'));
     final sourceFields = find.descendant(
       of: sourceGroup,
       matching: find.byKey(PlatformDropdown.fieldKey),
@@ -298,8 +295,8 @@ void main() {
       await tester.pumpAndSettle();
 
       expect(find.byType(AppSettingsGroup), findsNWidgets(2));
-      expect(find.text('Camera'), findsOneWidget);
-      expect(find.text('Visibility & Placement'), findsOneWidget);
+      expect(find.text('Camera'), findsNothing);
+      expect(find.text('Visibility & Placement'), findsNothing);
       expect(find.text('Appearance'), findsNothing);
       expect(find.text('Style'), findsNothing);
       expect(find.text('Effects'), findsNothing);
@@ -315,11 +312,21 @@ void main() {
     );
     await tester.pumpAndSettle();
 
-    expect(find.text('Camera'), findsOneWidget);
-    expect(find.text('Visibility & Placement'), findsOneWidget);
-    expect(find.text('Appearance'), findsOneWidget);
-    expect(find.text('Style'), findsOneWidget);
-    expect(find.text('Effects'), findsOneWidget);
+    final l10n = AppLocalizations.of(
+      tester.element(find.byType(RecordingOptionsSidebar)),
+    )!;
+
+    expect(find.byType(AppSettingsGroup), findsNWidgets(5));
+    expect(find.text('Camera'), findsNothing);
+    expect(find.text('Visibility & Placement'), findsNothing);
+    expect(find.text('Appearance'), findsNothing);
+    expect(find.text('Style'), findsNothing);
+    expect(find.text('Effects'), findsNothing);
+    expect(find.text(l10n.cameraDevice), findsOneWidget);
+    expect(find.text(l10n.position), findsOneWidget);
+    expect(find.text(l10n.shape), findsOneWidget);
+    expect(find.text(l10n.shadow), findsOneWidget);
+    expect(find.text(l10n.recordingHighlight), findsOneWidget);
   });
 
   testWidgets('output tab renders grouped recording and capture controls', (
@@ -329,8 +336,8 @@ void main() {
     await tester.pumpAndSettle();
 
     expect(find.byType(AppSettingsGroup), findsNWidgets(3));
-    expect(find.text('Quality'), findsOneWidget);
-    expect(find.text('Start & Stop'), findsOneWidget);
+    expect(find.text('Quality'), findsNothing);
+    expect(find.text('Start & Stop'), findsNothing);
     expect(find.text('Capture Settings'), findsOneWidget);
     expect(find.byType(Divider), findsNothing);
     expect(
@@ -381,7 +388,7 @@ void main() {
     },
   );
 
-  testWidgets('screen tab exposes area recording helper as a section tooltip', (
+  testWidgets('screen tab exposes area recording helper on record target row', (
     tester,
   ) async {
     await tester.pumpWidget(

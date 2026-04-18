@@ -319,4 +319,28 @@ void main() {
       expect(failedProjects, ['/tmp/finder.clingfyproj']);
     },
   );
+
+  test('recordingWarning workflow events become warning notices', () async {
+    final harness = await createHarness();
+    addTearDown(harness.dispose);
+
+    harness.bindings.bind();
+    harness.recording.beginRecordingStartIntent();
+    final sessionId = harness.recording.sessionId!;
+
+    await _emitWorkflowEvent({
+      'type': 'recordingWarning',
+      'sessionId': sessionId,
+      'message':
+          'Selected microphone couldn’t be used. Recording started with the system default microphone.',
+    });
+    await Future<void>.delayed(Duration.zero);
+
+    expect(harness.recording.phase, WorkflowPhase.startingRecording);
+    expect(
+      harness.uiState.notice?.message,
+      'Selected microphone couldn’t be used. Recording started with the system default microphone.',
+    );
+    expect(harness.uiState.notice?.tone, HomeUiNoticeTone.warning);
+  });
 }

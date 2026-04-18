@@ -45,6 +45,7 @@ class RecordingOutputSection extends StatelessWidget {
         AppSettingsGroup(
           sectionKey: const Key('recording_output_quality_group'),
           title: l10n.quality,
+          showHeader: false,
           children: [
             AppFormRow(
               label: l10n.frameRate,
@@ -73,6 +74,7 @@ class RecordingOutputSection extends StatelessWidget {
           anchorKey: startAndStopGuideAnchorKey,
           sectionKey: const Key('recording_output_start_stop_group'),
           title: l10n.startAndStop,
+          showHeader: false,
           children: [
             AppFormRow(
               label: l10n.autoStopAfter,

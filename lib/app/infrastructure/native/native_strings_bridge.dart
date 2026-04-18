@@ -77,43 +77,89 @@ class NativeStringsBridge {
   }
 
   String _getLocalizedString(String key, AppLocalizations? l10n) {
-    // If l10n is null, return English fallback
-    if (l10n == null) {
-      return _getFallbackString(key);
-    }
+    final resolved = l10n ?? lookupAppLocalizations(const Locale('en'));
 
     switch (key) {
       case NativeUIStringKey.menuStartRecording:
-        return l10n.menuStartRecording;
+        return resolved.menuStartRecording;
       case NativeUIStringKey.menuStopRecording:
-        return l10n.menuStopRecording;
+        return resolved.menuStopRecording;
       case NativeUIStringKey.menuOpenApp:
-        return l10n.menuOpenApp;
+        return resolved.menuOpenApp;
       case NativeUIStringKey.menuQuit:
-        return l10n.menuQuit;
+        return resolved.menuQuit;
       case NativeUIStringKey.accessibilityStartRecording:
-        return l10n.menuStartRecording;
+        return resolved.menuStartRecording;
       case NativeUIStringKey.accessibilityStopRecording:
-        return l10n.menuStopRecording;
-      default:
-        return _getFallbackString(key);
-    }
-  }
-
-  String _getFallbackString(String key) {
-    switch (key) {
-      case NativeUIStringKey.menuStartRecording:
-        return 'Start Recording';
-      case NativeUIStringKey.menuStopRecording:
-        return 'Stop Recording';
-      case NativeUIStringKey.menuOpenApp:
-        return 'Open Clingfy';
-      case NativeUIStringKey.menuQuit:
-        return 'Quit Clingfy';
-      case NativeUIStringKey.accessibilityStartRecording:
-        return 'Start recording';
-      case NativeUIStringKey.accessibilityStopRecording:
-        return 'Stop recording';
+        return resolved.menuStopRecording;
+      case NativeUIStringKey.recordingSelectedMicFallbackWarning:
+        return resolved.recordingSelectedMicFallbackWarning;
+      case NativeUIStringKey.recordingSelectedMicFallbackFailure:
+        return resolved.recordingSelectedMicFallbackFailure;
+      case NativeUIStringKey.preRecordingBarDisplay:
+        return resolved.display;
+      case NativeUIStringKey.preRecordingBarWindow:
+        return resolved.window;
+      case NativeUIStringKey.preRecordingBarArea:
+        return resolved.area;
+      case NativeUIStringKey.preRecordingBarCamera:
+        return resolved.camera;
+      case NativeUIStringKey.preRecordingBarMic:
+        return resolved.mic;
+      case NativeUIStringKey.preRecordingBarSystem:
+        return resolved.system;
+      case NativeUIStringKey.preRecordingBarUpdate:
+        return resolved.update;
+      case NativeUIStringKey.preRecordingBarPause:
+        return resolved.pause;
+      case NativeUIStringKey.preRecordingBarResume:
+        return resolved.resume;
+      case NativeUIStringKey.preRecordingBarNone:
+        return resolved.none;
+      case NativeUIStringKey.preRecordingBarRefresh:
+        return resolved.storageRefresh;
+      case NativeUIStringKey.preRecordingBarSelectDisplay:
+        return resolved.selectDisplay;
+      case NativeUIStringKey.preRecordingBarSelectWindow:
+        return resolved.selectWindow;
+      case NativeUIStringKey.preRecordingBarSelectMicrophone:
+        return resolved.selectMicrophone;
+      case NativeUIStringKey.preRecordingBarSelectCamera:
+        return resolved.selectCamera;
+      case NativeUIStringKey.preRecordingBarUnknownDisplay:
+        return resolved.unknownDisplay;
+      case NativeUIStringKey.preRecordingBarUnknownWindow:
+        return resolved.unknownWindow;
+      case NativeUIStringKey.preRecordingBarUnknownMic:
+        return resolved.unknownMic;
+      case NativeUIStringKey.preRecordingBarUnknownCamera:
+        return resolved.unknownCamera;
+      case NativeUIStringKey.preRecordingBarNoCamera:
+        return resolved.noCamera;
+      case NativeUIStringKey.preRecordingBarDoNotRecordAudio:
+        return resolved.doNotRecordAudio;
+      case NativeUIStringKey.displayServiceScreen:
+        return resolved.screen;
+      case NativeUIStringKey.displayServiceApp:
+        return resolved.app;
+      case NativeUIStringKey.recordingIndicatorStopping:
+        return resolved.stoppingEllipsis;
+      case NativeUIStringKey.recordingIndicatorPauseRecording:
+        return resolved.pauseRecording;
+      case NativeUIStringKey.recordingIndicatorResumeRecording:
+        return resolved.resumeRecording;
+      case NativeUIStringKey.recordingIndicatorInProgressLabel:
+        return resolved.recordingInProgressLabel;
+      case NativeUIStringKey.recordingIndicatorPausedLabel:
+        return resolved.recordingPausedLabel;
+      case NativeUIStringKey.recordingIndicatorStoppingRecording:
+        return resolved.stoppingRecording;
+      case NativeUIStringKey.recordingIndicatorHelpPause:
+        return resolved.recordingIndicatorHelpPause;
+      case NativeUIStringKey.recordingIndicatorHelpResume:
+        return resolved.recordingIndicatorHelpResume;
+      case NativeUIStringKey.recordingIndicatorHelpStopping:
+        return resolved.recordingIndicatorHelpStopping;
       default:
         return key;
     }
