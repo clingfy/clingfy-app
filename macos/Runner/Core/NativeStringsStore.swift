@@ -6,6 +6,52 @@ import Foundation
 /// to get localized strings without blocking on Flutter calls.
 final class NativeStringsStore {
   static let shared = NativeStringsStore()
+  private static let fallbackStrings: [String: String] = [
+    NativeUIStringKey.menuStartRecording: "Start Recording",
+    NativeUIStringKey.menuStopRecording: "Stop Recording",
+    NativeUIStringKey.menuOpenApp: "Open Clingfy",
+    NativeUIStringKey.menuQuit: "Quit Clingfy",
+    NativeUIStringKey.accessibilityStartRecording: "Start Recording",
+    NativeUIStringKey.accessibilityStopRecording: "Stop Recording",
+    NativeUIStringKey.recordingSelectedMicFallbackWarning:
+      "Selected microphone couldn’t be used. Recording started with the system default microphone.",
+    NativeUIStringKey.recordingSelectedMicFallbackFailure:
+      "Selected microphone couldn’t be used for recording. Choose another microphone or turn microphone recording off.",
+    NativeUIStringKey.preRecordingBarDisplay: "Display",
+    NativeUIStringKey.preRecordingBarWindow: "Window",
+    NativeUIStringKey.preRecordingBarArea: "Area",
+    NativeUIStringKey.preRecordingBarCamera: "Camera",
+    NativeUIStringKey.preRecordingBarMic: "Mic",
+    NativeUIStringKey.preRecordingBarSystem: "System",
+    NativeUIStringKey.preRecordingBarUpdate: "Update",
+    NativeUIStringKey.preRecordingBarPause: "PAUSE",
+    NativeUIStringKey.preRecordingBarResume: "RESUME",
+    NativeUIStringKey.preRecordingBarNone: "None",
+    NativeUIStringKey.preRecordingBarRefresh: "Refresh",
+    NativeUIStringKey.preRecordingBarSelectDisplay: "Select Display",
+    NativeUIStringKey.preRecordingBarSelectWindow: "Select Window",
+    NativeUIStringKey.preRecordingBarSelectMicrophone: "Select Microphone",
+    NativeUIStringKey.preRecordingBarSelectCamera: "Select Camera",
+    NativeUIStringKey.preRecordingBarUnknownDisplay: "Unknown Display",
+    NativeUIStringKey.preRecordingBarUnknownWindow: "Unknown Window",
+    NativeUIStringKey.preRecordingBarUnknownMic: "Unknown Mic",
+    NativeUIStringKey.preRecordingBarUnknownCamera: "Unknown Camera",
+    NativeUIStringKey.preRecordingBarNoCamera: "No camera",
+    NativeUIStringKey.preRecordingBarDoNotRecordAudio: "Do not record audio",
+    NativeUIStringKey.displayServiceScreen: "Screen",
+    NativeUIStringKey.displayServiceApp: "App",
+    NativeUIStringKey.recordingIndicatorStopping: "Stopping...",
+    NativeUIStringKey.recordingIndicatorPauseRecording: "Pause recording",
+    NativeUIStringKey.recordingIndicatorResumeRecording: "Resume recording",
+    NativeUIStringKey.recordingIndicatorInProgressLabel: "Recording in progress",
+    NativeUIStringKey.recordingIndicatorPausedLabel: "Recording paused",
+    NativeUIStringKey.recordingIndicatorStoppingRecording: "Stopping recording",
+    NativeUIStringKey.recordingIndicatorHelpPause:
+      "Primary action pauses recording. Secondary stop control stops recording.",
+    NativeUIStringKey.recordingIndicatorHelpResume:
+      "Primary action resumes recording. Secondary stop control stops recording.",
+    NativeUIStringKey.recordingIndicatorHelpStopping: "Recording is stopping.",
+  ]
 
   private var cache: [String: String] = [:]
   private let lock = NSLock()
@@ -62,36 +108,29 @@ final class NativeStringsStore {
     string(for: NativeUIStringKey.accessibilityStopRecording)
   }
 
+  var recordingSelectedMicFallbackWarning: String {
+    string(for: NativeUIStringKey.recordingSelectedMicFallbackWarning)
+  }
+
+  var recordingSelectedMicFallbackFailure: String {
+    string(for: NativeUIStringKey.recordingSelectedMicFallbackFailure)
+  }
+
   // MARK: - Private
 
   private func initializeFallbacks() {
-    // Pre-populate with English fallbacks
-    cache = [
-      NativeUIStringKey.menuStartRecording: "Start Recording",
-      NativeUIStringKey.menuStopRecording: "Stop Recording",
-      NativeUIStringKey.menuOpenApp: "Open Clingfy",
-      NativeUIStringKey.menuQuit: "Quit Clingfy",
-      NativeUIStringKey.accessibilityStartRecording: "Start recording",
-      NativeUIStringKey.accessibilityStopRecording: "Stop recording",
-    ]
+    cache = Self.fallbackStrings
   }
 
   private func fallback(for key: String) -> String {
-    switch key {
-    case NativeUIStringKey.menuStartRecording:
-      return "Start Recording"
-    case NativeUIStringKey.menuStopRecording:
-      return "Stop Recording"
-    case NativeUIStringKey.menuOpenApp:
-      return "Open Clingfy"
-    case NativeUIStringKey.menuQuit:
-      return "Quit Clingfy"
-    case NativeUIStringKey.accessibilityStartRecording:
-      return "Start recording"
-    case NativeUIStringKey.accessibilityStopRecording:
-      return "Stop recording"
-    default:
-      return key
-    }
+    Self.fallbackStrings[key] ?? key
   }
+
+  #if DEBUG
+    func resetForTesting() {
+      lock.lock()
+      defer { lock.unlock() }
+      cache = Self.fallbackStrings
+    }
+  #endif
 }

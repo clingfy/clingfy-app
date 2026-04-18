@@ -12,6 +12,7 @@ class AppFormRow extends StatelessWidget {
     required this.control,
     this.label,
     this.infoTooltip,
+    this.labelTrailing,
     this.helperText,
     this.labelWidth = AppSidebarTokens.labelWidth,
     this.stackBreakpoint = AppSidebarTokens.stackBreakpoint,
@@ -20,6 +21,7 @@ class AppFormRow extends StatelessWidget {
 
   final String? label;
   final String? infoTooltip;
+  final Widget? labelTrailing;
   final String? helperText;
   final Widget control;
 
@@ -40,6 +42,40 @@ class AppFormRow extends StatelessWidget {
     final helperStyle = AppSidebarTokens.helperStyle(theme);
     final hasHelperText = helperText != null && helperText!.isNotEmpty;
     final hasInfoTooltip = infoTooltip != null && infoTooltip!.isNotEmpty;
+
+    Widget buildLabelLine() {
+      final labelCluster = Row(
+        mainAxisSize: MainAxisSize.min,
+        crossAxisAlignment: CrossAxisAlignment.center,
+        children: [
+          Flexible(child: Text(label!, style: labelStyle)),
+          AnimatedSwitcher(
+            duration: const Duration(milliseconds: 200),
+            child: hasInfoTooltip
+                ? Row(
+                    key: ValueKey(infoTooltip),
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      SizedBox(width: spacing.xs),
+                      AppInlineInfoTooltip(message: infoTooltip!),
+                    ],
+                  )
+                : const SizedBox.shrink(key: ValueKey('no_info_tooltip')),
+          ),
+        ],
+      );
+
+      return Row(
+        crossAxisAlignment: CrossAxisAlignment.center,
+        children: [
+          Expanded(child: labelCluster),
+          if (labelTrailing != null) ...[
+            SizedBox(width: spacing.xs),
+            labelTrailing!,
+          ],
+        ],
+      );
+    }
 
     return LayoutBuilder(
       builder: (context, c) {
@@ -62,30 +98,7 @@ class AppFormRow extends StatelessWidget {
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
-                Row(
-                  mainAxisSize: MainAxisSize.min,
-                  children: [
-                    Flexible(child: Text(label!, style: labelStyle)),
-                    AnimatedSwitcher(
-                      duration: const Duration(milliseconds: 200),
-                      child: hasInfoTooltip
-                          ? Row(
-                              key: ValueKey(infoTooltip),
-                              mainAxisSize: MainAxisSize.min,
-                              children: [
-                                SizedBox(width: spacing.xs),
-                                AppInlineInfoTooltip(
-                                  message: infoTooltip!,
-                                  color: helperStyle.color,
-                                ),
-                              ],
-                            )
-                          : const SizedBox.shrink(
-                              key: ValueKey('no_info_tooltip'),
-                            ),
-                    ),
-                  ],
-                ),
+                buildLabelLine(),
                 if (hasHelperText) ...[
                   SizedBox(height: spacing.xs),
                   Text(helperText!, style: helperStyle),
@@ -107,29 +120,7 @@ class AppFormRow extends StatelessWidget {
                 child: Column(
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
-                    Row(
-                      children: [
-                        Flexible(child: Text(label!, style: labelStyle)),
-                        AnimatedSwitcher(
-                          duration: const Duration(milliseconds: 200),
-                          child: hasInfoTooltip
-                              ? Row(
-                                  key: ValueKey(infoTooltip),
-                                  mainAxisSize: MainAxisSize.min,
-                                  children: [
-                                    SizedBox(width: spacing.xs),
-                                    AppInlineInfoTooltip(
-                                      message: infoTooltip!,
-                                      color: helperStyle.color,
-                                    ),
-                                  ],
-                                )
-                              : const SizedBox.shrink(
-                                  key: ValueKey('no_info_tooltip'),
-                                ),
-                        ),
-                      ],
-                    ),
+                    buildLabelLine(),
                     if (hasHelperText) ...[
                       SizedBox(height: spacing.xs),
                       Text(helperText!, style: helperStyle),

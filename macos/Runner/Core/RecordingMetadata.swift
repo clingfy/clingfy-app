@@ -158,9 +158,9 @@ struct RecordingMetadata: Codable {
       cameraMirror: Bool,
       cameraContentMode: CameraContentMode,
       cameraZoomBehavior: CameraZoomBehavior,
-      cameraZoomScaleMultiplier: Double = 0.35,
-      cameraIntroPreset: CameraIntroPreset = .none,
-      cameraOutroPreset: CameraOutroPreset = .none,
+      cameraZoomScaleMultiplier: Double = CameraCompositionParams.defaultZoomScaleMultiplier,
+      cameraIntroPreset: CameraIntroPreset = CameraCompositionParams.defaultIntroPreset,
+      cameraOutroPreset: CameraOutroPreset = CameraCompositionParams.defaultOutroPreset,
       cameraZoomEmphasisPreset: CameraZoomEmphasisPreset = .none,
       cameraIntroDurationMs: Int = CameraCompositionParams.defaultIntroDurationMs,
       cameraOutroDurationMs: Int = CameraCompositionParams.defaultOutroDurationMs,
@@ -237,19 +237,25 @@ struct RecordingMetadata: Codable {
       cameraOpacity = try container.decode(Double.self, forKey: .cameraOpacity)
       cameraMirror = try container.decode(Bool.self, forKey: .cameraMirror)
       cameraContentMode = try container.decode(CameraContentMode.self, forKey: .cameraContentMode)
-      cameraZoomBehavior = CameraZoomBehavior.from(
-        rawValue: try container.decodeIfPresent(String.self, forKey: .cameraZoomBehavior)
-      )
+      let rawZoomBehavior = try container.decodeIfPresent(String.self, forKey: .cameraZoomBehavior)
+      cameraZoomBehavior =
+        rawZoomBehavior == nil
+        ? CameraCompositionParams.defaultZoomBehavior
+        : CameraZoomBehavior.from(rawValue: rawZoomBehavior)
       cameraZoomScaleMultiplier = try container.decodeIfPresent(
         Double.self,
         forKey: .cameraZoomScaleMultiplier
-      ) ?? 0.35
-      cameraIntroPreset = CameraIntroPreset.from(
-        rawValue: try container.decodeIfPresent(String.self, forKey: .cameraIntroPreset)
-      )
-      cameraOutroPreset = CameraOutroPreset.from(
-        rawValue: try container.decodeIfPresent(String.self, forKey: .cameraOutroPreset)
-      )
+      ) ?? CameraCompositionParams.defaultZoomScaleMultiplier
+      let rawIntroPreset = try container.decodeIfPresent(String.self, forKey: .cameraIntroPreset)
+      cameraIntroPreset =
+        rawIntroPreset == nil
+        ? CameraCompositionParams.defaultIntroPreset
+        : CameraIntroPreset.from(rawValue: rawIntroPreset)
+      let rawOutroPreset = try container.decodeIfPresent(String.self, forKey: .cameraOutroPreset)
+      cameraOutroPreset =
+        rawOutroPreset == nil
+        ? CameraCompositionParams.defaultOutroPreset
+        : CameraOutroPreset.from(rawValue: rawOutroPreset)
       cameraZoomEmphasisPreset = CameraZoomEmphasisPreset.from(
         rawValue: try container.decodeIfPresent(String.self, forKey: .cameraZoomEmphasisPreset)
       )
@@ -423,10 +429,10 @@ private extension RecordingMetadata {
         cameraOpacity: 1.0,
         cameraMirror: true,
         cameraContentMode: .fill,
-        cameraZoomBehavior: .fixed,
-        cameraZoomScaleMultiplier: 0.35,
-        cameraIntroPreset: .none,
-        cameraOutroPreset: .none,
+        cameraZoomBehavior: CameraCompositionParams.defaultZoomBehavior,
+        cameraZoomScaleMultiplier: CameraCompositionParams.defaultZoomScaleMultiplier,
+        cameraIntroPreset: CameraCompositionParams.defaultIntroPreset,
+        cameraOutroPreset: CameraCompositionParams.defaultOutroPreset,
         cameraZoomEmphasisPreset: .none,
         cameraIntroDurationMs: CameraCompositionParams.defaultIntroDurationMs,
         cameraOutroDurationMs: CameraCompositionParams.defaultOutroDurationMs,

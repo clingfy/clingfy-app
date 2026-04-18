@@ -8,8 +8,10 @@ import 'package:clingfy/ui/platform/widgets/app_inline_notice.dart';
 import 'package:clingfy/ui/platform/widgets/app_inset_group.dart';
 import 'package:clingfy/ui/platform/widgets/app_settings_group.dart';
 import 'package:clingfy/ui/platform/widgets/app_sidebar_tokens.dart';
+import 'package:clingfy/ui/platform/widgets/app_slider_row.dart';
 import 'package:clingfy/ui/platform/widgets/app_toggle_row.dart';
 import 'package:clingfy/ui/platform/widgets/platform_dropdown.dart';
+import 'package:clingfy/ui/platform/widgets/resolution_preset_menu_items.dart';
 import 'package:clingfy/ui/theme/app_theme.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_colorpicker/flutter_colorpicker.dart';
@@ -243,11 +245,14 @@ void main() {
       await tester.pumpWidget(buildTestApp(selectedIndex: 0));
       await tester.pumpAndSettle();
 
-      expect(find.text('Canvas Format'), findsOneWidget);
-      expect(find.text('Framing'), findsOneWidget);
-      expect(find.text('Background'), findsOneWidget);
+      expect(find.text('Canvas Format'), findsNothing);
+      expect(find.text('Framing'), findsNothing);
+      expect(find.text('Background'), findsNothing);
       expect(find.byType(AppSettingsGroup), findsNWidgets(3));
       expect(find.byType(Divider), findsNothing);
+      expect(find.text('Canvas Aspect'), findsOneWidget);
+      expect(find.text('Padding'), findsOneWidget);
+      expect(find.text('Background Image'), findsOneWidget);
       expect(find.byIcon(Icons.fit_screen), findsOneWidget);
       expect(find.byIcon(Icons.aspect_ratio), findsOneWidget);
       expect(find.text('Resolution'), findsNothing);
@@ -257,6 +262,21 @@ void main() {
       expect(find.text('Auto'), findsOneWidget);
     },
   );
+
+  testWidgets('sidebar sliders keep values inside the shared control', (
+    tester,
+  ) async {
+    await tester.pumpWidget(buildTestApp(selectedIndex: 0));
+    await tester.pumpAndSettle();
+
+    final sliderRows = tester.widgetList<AppSliderRow>(
+      find.byType(AppSliderRow),
+    );
+
+    expect(sliderRows, isNotEmpty);
+    expect(sliderRows.every((row) => row.valueText == null), isTrue);
+    expect(find.byKey(const Key('app_slider_value_label')), findsWidgets);
+  });
 
   testWidgets('canvas tab shows resolution dropdown in dev-only mode', (
     tester,
@@ -271,15 +291,13 @@ void main() {
         (widget) => widget is PlatformDropdown<ResolutionPreset>,
       ),
     );
+    final l10n = AppLocalizations.of(tester.element(find.byType(Scaffold)))!;
 
     expect(find.text('Resolution'), findsOneWidget);
-    expect(dropdown.items.map((item) => item.label).toList(), [
-      'Auto',
-      '1080p',
-      '1440p (2K)',
-      '2160p (4K)',
-      '4320p (8K)',
-    ]);
+    expect(
+      dropdown.items.map((item) => item.label).toList(),
+      buildResolutionPresetMenuItems(l10n).map((item) => item.label).toList(),
+    );
   });
 
   testWidgets('canvas tab hides resolution dropdown when disabled', (
@@ -398,10 +416,11 @@ void main() {
     );
     await tester.pumpAndSettle();
 
-    expect(find.text('Visibility'), findsOneWidget);
+    expect(find.text('Visibility'), findsNothing);
     expect(find.text('Placement'), findsNothing);
     expect(find.text('Appearance'), findsNothing);
     expect(find.text('Motion'), findsNothing);
+    expect(find.text('Camera'), findsOneWidget);
     expect(
       find.text('No separate camera asset was recorded for this clip.'),
       findsOneWidget,
@@ -423,11 +442,15 @@ void main() {
     );
     await tester.pumpAndSettle();
 
-    expect(find.text('Visibility'), findsOneWidget);
-    expect(find.text('Placement'), findsOneWidget);
-    expect(find.text('Appearance'), findsOneWidget);
-    expect(find.text('Motion'), findsOneWidget);
+    expect(find.text('Visibility'), findsNothing);
+    expect(find.text('Placement'), findsNothing);
+    expect(find.text('Appearance'), findsNothing);
+    expect(find.text('Motion'), findsNothing);
     expect(find.byType(AppSettingsGroup), findsNWidgets(4));
+    expect(find.text('Camera'), findsOneWidget);
+    expect(find.text('Position'), findsOneWidget);
+    expect(find.text('Size'), findsOneWidget);
+    expect(find.text('Zoom Response'), findsOneWidget);
   });
 
   testWidgets('camera tab omits advanced groups when camera is hidden', (
@@ -444,10 +467,11 @@ void main() {
     );
     await tester.pumpAndSettle();
 
-    expect(find.text('Visibility'), findsOneWidget);
+    expect(find.text('Visibility'), findsNothing);
     expect(find.text('Placement'), findsNothing);
     expect(find.text('Appearance'), findsNothing);
     expect(find.text('Motion'), findsNothing);
+    expect(find.text('Camera'), findsOneWidget);
   });
 
   testWidgets('camera section uses position panel and no deprecated fields', (
@@ -652,6 +676,27 @@ void main() {
     expect(find.byType(AppInsetGroup), findsAtLeastNWidgets(4));
   });
 
+  testWidgets('camera motion shows default dependent controls on first load', (
+    tester,
+  ) async {
+    await tester.pumpWidget(
+      buildTestApp(
+        selectedIndex: 1,
+        hasCameraAsset: true,
+        cameraState: const CameraCompositionState.hidden().copyWith(
+          visible: true,
+          layoutPreset: CameraLayoutPreset.overlayBottomRight,
+        ),
+      ),
+    );
+    await tester.pumpAndSettle();
+
+    expect(find.text('Zoom Scale'), findsOneWidget);
+    expect(find.text('Intro Duration'), findsOneWidget);
+    expect(find.text('Outro Duration'), findsOneWidget);
+    expect(find.text('Pulse Strength'), findsNothing);
+  });
+
   testWidgets('effects tab shows cursor and zoom groups without audio', (
     tester,
   ) async {
@@ -665,9 +710,11 @@ void main() {
     );
     await tester.pumpAndSettle();
 
-    expect(find.text('Cursor'), findsOneWidget);
-    expect(find.text('Zoom'), findsOneWidget);
+    expect(find.text('Cursor'), findsNothing);
+    expect(find.text('Zoom'), findsNothing);
     expect(find.text('Audio'), findsNothing);
+    expect(find.text('Show Cursor'), findsOneWidget);
+    expect(find.text('Zoom in effect'), findsOneWidget);
     expect(find.byType(AppInlineNotice), findsOneWidget);
     expect(find.text('Cursor data missing'), findsOneWidget);
     expect(find.text('No mic audio track found'), findsNothing);
@@ -751,8 +798,10 @@ void main() {
     );
     await tester.pumpAndSettle();
 
-    expect(find.text('Audio'), findsOneWidget);
+    expect(find.text('Audio'), findsNothing);
     expect(find.text('Loudness'), findsOneWidget);
+    expect(find.text('Volume'), findsOneWidget);
+    expect(find.text('Audio Gain'), findsOneWidget);
     expect(find.text('Format'), findsNothing);
     expect(find.text('Codec'), findsNothing);
     expect(find.text('Bitrate'), findsNothing);

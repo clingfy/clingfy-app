@@ -54,11 +54,7 @@ class AppSection extends StatelessWidget {
                   ),
                   if (infoTooltip != null && infoTooltip!.isNotEmpty) ...[
                     SizedBox(width: spacing.xs),
-                    AppInlineInfoTooltip(
-                      message: infoTooltip!,
-                      color: headerStyle.color,
-                      size: 14,
-                    ),
+                    AppInlineInfoTooltip(message: infoTooltip!, size: 14),
                   ],
                 ],
               ),

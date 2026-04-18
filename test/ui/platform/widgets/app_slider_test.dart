@@ -1,4 +1,4 @@
-import 'package:clingfy/ui/platform/platform_kind.dart';
+import 'package:clingfy/l10n/app_localizations.dart';
 import 'package:clingfy/ui/platform/widgets/app_slider.dart';
 import 'package:clingfy/ui/theme/app_theme.dart';
 import 'package:flutter/material.dart';
@@ -15,8 +15,13 @@ void main() {
     double min = 0,
     double max = 1,
     int? divisions,
+    AppSliderVariant variant = AppSliderVariant.field,
+    String? valueLabel,
+    String? semanticLabel,
   }) {
     return MaterialApp(
+      localizationsDelegates: AppLocalizations.localizationsDelegates,
+      supportedLocales: AppLocalizations.supportedLocales,
       theme: buildLightTheme(),
       darkTheme: buildDarkTheme(),
       themeMode: ThemeMode.dark,
@@ -27,12 +32,15 @@ void main() {
       home: Scaffold(
         body: Center(
           child: SizedBox(
-            width: 240,
+            width: 260,
             child: _SliderHarness(
               initialValue: initialValue,
               min: min,
               max: max,
               divisions: divisions,
+              variant: variant,
+              valueLabel: valueLabel,
+              semanticLabel: semanticLabel,
               onChanged: onChanged,
               onChangeEnd: onChangeEnd,
             ),
@@ -43,35 +51,79 @@ void main() {
   }
 
   testWidgets(
-    'AppSlider uses the shared dark thumb and inactive track styling',
+    'field variant renders inline value step buttons and pill thumb',
     (tester) async {
       await tester.pumpWidget(
-        buildSliderApp(initialValue: 0.5, onChanged: (_) {}),
+        buildSliderApp(
+          initialValue: 0.5,
+          min: 0,
+          max: 1,
+          valueLabel: '50%',
+          semanticLabel: 'Opacity',
+          onChanged: (_) {},
+        ),
       );
       await tester.pumpAndSettle();
 
-      if (!isMac()) {
-        return;
-      }
-
-      final inactiveTrack = tester.widget<Container>(
-        find.byKey(const Key('app_slider_inactive_track')),
+      expect(find.text('50%'), findsOneWidget);
+      expect(find.byKey(const Key('app_slider_value_label')), findsOneWidget);
+      expect(
+        find.byKey(const Key('app_slider_decrement_button')),
+        findsOneWidget,
       );
-      final thumb = tester.widget<Container>(
-        find.byKey(const Key('app_slider_thumb')),
+      expect(
+        find.byKey(const Key('app_slider_increment_button')),
+        findsOneWidget,
       );
-      final inactiveTrackDecoration =
-          inactiveTrack.decoration! as BoxDecoration;
-      final thumbDecoration = thumb.decoration! as BoxDecoration;
+      expect(find.byKey(const Key('app_slider_track')), findsOneWidget);
+      expect(find.byKey(const Key('app_slider_active_fill')), findsOneWidget);
+      expect(find.byKey(const Key('app_slider_thumb')), findsOneWidget);
 
-      expect(inactiveTrackDecoration.color, const Color(0xFF2A2D35));
-      expect(thumbDecoration.color, Colors.white);
+      expect(
+        tester.getSize(find.byKey(const Key('app_slider_decrement_button'))),
+        const Size(20, 20),
+      );
+      expect(
+        tester.getSize(find.byKey(const Key('app_slider_increment_button'))),
+        const Size(20, 20),
+      );
+      expect(
+        tester.getSize(find.byKey(const Key('app_slider_track'))).height,
+        8,
+      );
       expect(
         tester.getSize(find.byKey(const Key('app_slider_thumb'))).width,
-        10,
+        4,
+      );
+      expect(
+        tester.getSize(find.byKey(const Key('app_slider_thumb'))).height,
+        22,
       );
     },
   );
+
+  testWidgets('compact variant keeps only track and thumb geometry', (
+    tester,
+  ) async {
+    await tester.pumpWidget(
+      buildSliderApp(
+        initialValue: 0.5,
+        min: 0,
+        max: 1,
+        variant: AppSliderVariant.compact,
+        semanticLabel: 'Zoom',
+        onChanged: (_) {},
+      ),
+    );
+    await tester.pumpAndSettle();
+
+    expect(find.byKey(const Key('app_slider_value_label')), findsNothing);
+    expect(find.byKey(const Key('app_slider_decrement_button')), findsNothing);
+    expect(find.byKey(const Key('app_slider_increment_button')), findsNothing);
+    expect(find.byKey(const Key('app_slider_track')), findsOneWidget);
+    expect(find.byKey(const Key('app_slider_active_fill')), findsOneWidget);
+    expect(find.byKey(const Key('app_slider_thumb')), findsOneWidget);
+  });
 
   testWidgets('AppSlider emits change and end callbacks from pointer input', (
     tester,
@@ -88,12 +140,14 @@ void main() {
     );
     await tester.pumpAndSettle();
 
-    final sliderRect = tester.getRect(find.byType(AppSlider));
+    final sliderRect = tester.getRect(
+      find.byKey(const Key('app_slider_track')),
+    );
     final gesture = await tester.startGesture(
-      Offset(sliderRect.left + 20, sliderRect.center.dy),
+      Offset(sliderRect.left + 2, sliderRect.center.dy),
     );
     await tester.pump();
-    await gesture.moveTo(Offset(sliderRect.right - 20, sliderRect.center.dy));
+    await gesture.moveTo(Offset(sliderRect.right - 2, sliderRect.center.dy));
     await tester.pump();
     await gesture.up();
     await tester.pumpAndSettle();
@@ -104,9 +158,64 @@ void main() {
     expect(changed.last, greaterThan(0.2));
   });
 
-  testWidgets('AppSlider disables interaction when onChanged is null', (
+  testWidgets('field step buttons follow division stepping', (tester) async {
+    final changed = <double>[];
+    final ended = <double>[];
+
+    await tester.pumpWidget(
+      buildSliderApp(
+        initialValue: 50,
+        min: 0,
+        max: 100,
+        divisions: 4,
+        onChanged: changed.add,
+        onChangeEnd: ended.add,
+      ),
+    );
+    await tester.pumpAndSettle();
+
+    await tester.tap(
+      find.byKey(const Key('app_slider_increment_button')),
+      warnIfMissed: false,
+    );
+    await tester.pumpAndSettle();
+
+    expect(changed, isNotEmpty);
+    expect(changed.last, 75);
+    expect(ended, hasLength(1));
+    expect(ended.single, 75);
+  });
+
+  testWidgets('field step buttons use continuous one-percent increments', (
     tester,
   ) async {
+    final changed = <double>[];
+    final ended = <double>[];
+
+    await tester.pumpWidget(
+      buildSliderApp(
+        initialValue: 0.5,
+        min: 0,
+        max: 1,
+        onChanged: changed.add,
+        onChangeEnd: ended.add,
+      ),
+    );
+    await tester.pumpAndSettle();
+
+    await tester.tap(find.byKey(const Key('app_slider_decrement_button')));
+    await tester.pumpAndSettle();
+
+    expect(changed, isNotEmpty);
+    expect(changed.last, closeTo(0.49, 0.0001));
+    expect(ended, hasLength(1));
+    expect(ended.single, closeTo(0.49, 0.0001));
+  });
+
+  testWidgets('AppSlider disables drag and button interaction when disabled', (
+    tester,
+  ) async {
+    final changed = <double>[];
     final ended = <double>[];
 
     await tester.pumpWidget(
@@ -118,36 +227,42 @@ void main() {
     );
     await tester.pumpAndSettle();
 
-    final sliderRect = tester.getRect(find.byType(AppSlider));
+    final sliderRect = tester.getRect(
+      find.byKey(const Key('app_slider_track')),
+    );
     final gesture = await tester.startGesture(
-      Offset(sliderRect.left + 20, sliderRect.center.dy),
+      Offset(sliderRect.left + 2, sliderRect.center.dy),
     );
     await tester.pump();
-    await gesture.moveTo(Offset(sliderRect.right - 20, sliderRect.center.dy));
+    await gesture.moveTo(Offset(sliderRect.right - 2, sliderRect.center.dy));
     await tester.pump();
     await gesture.up();
     await tester.pumpAndSettle();
 
+    await tester.tap(
+      find.byKey(const Key('app_slider_increment_button')),
+      warnIfMissed: false,
+    );
+    await tester.pumpAndSettle();
+
+    expect(changed, isEmpty);
     expect(ended, isEmpty);
 
-    if (isMac()) {
-      final disabledOpacity = find.descendant(
-        of: find.byType(AppSlider),
-        matching: find.byWidgetPredicate(
-          (widget) =>
-              widget is Opacity && (widget.opacity - 0.55).abs() < 0.0001,
-        ),
-      );
-      final disabledIgnorePointer = find.descendant(
-        of: find.byType(AppSlider),
-        matching: find.byWidgetPredicate(
-          (widget) => widget is IgnorePointer && widget.ignoring,
-        ),
-      );
+    final disabledOpacity = find.descendant(
+      of: find.byType(AppSlider),
+      matching: find.byWidgetPredicate(
+        (widget) => widget is Opacity && (widget.opacity - 0.55).abs() < 0.0001,
+      ),
+    );
+    final disabledIgnorePointer = find.descendant(
+      of: find.byType(AppSlider),
+      matching: find.byWidgetPredicate(
+        (widget) => widget is IgnorePointer && widget.ignoring,
+      ),
+    );
 
-      expect(disabledOpacity, findsOneWidget);
-      expect(disabledIgnorePointer, findsOneWidget);
-    }
+    expect(disabledOpacity, findsOneWidget);
+    expect(disabledIgnorePointer, findsOneWidget);
   });
 
   testWidgets('AppSlider quantizes divided values across drag updates', (
@@ -168,9 +283,11 @@ void main() {
     );
     await tester.pumpAndSettle();
 
-    final sliderRect = tester.getRect(find.byType(AppSlider));
+    final sliderRect = tester.getRect(
+      find.byKey(const Key('app_slider_track')),
+    );
     final gesture = await tester.startGesture(
-      Offset(sliderRect.left + 20, sliderRect.center.dy),
+      Offset(sliderRect.left + 2, sliderRect.center.dy),
     );
     await tester.pump();
 
@@ -195,6 +312,9 @@ class _SliderHarness extends StatefulWidget {
     required this.min,
     required this.max,
     required this.divisions,
+    required this.variant,
+    required this.valueLabel,
+    required this.semanticLabel,
     required this.onChanged,
     required this.onChangeEnd,
   });
@@ -203,6 +323,9 @@ class _SliderHarness extends StatefulWidget {
   final double min;
   final double max;
   final int? divisions;
+  final AppSliderVariant variant;
+  final String? valueLabel;
+  final String? semanticLabel;
   final ValueChanged<double>? onChanged;
   final ValueChanged<double>? onChangeEnd;
 
@@ -231,6 +354,9 @@ class _SliderHarnessState extends State<_SliderHarness> {
       min: widget.min,
       max: widget.max,
       divisions: widget.divisions,
+      variant: widget.variant,
+      valueLabel: widget.valueLabel,
+      semanticLabel: widget.semanticLabel,
       onChanged: widget.onChanged == null ? null : _handleChanged,
       onChangeEnd: widget.onChangeEnd,
     );

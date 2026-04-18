@@ -38,6 +38,7 @@ class PostBackgroundSection extends StatelessWidget {
       children: [
         AppSettingsGroup(
           title: l10n.background,
+          showHeader: false,
           children: [
             Text(l10n.backgroundImage, style: subsectionStyle),
             const SizedBox(height: AppSidebarTokens.rowGap),

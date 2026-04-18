@@ -214,6 +214,68 @@ void main() {
     expect(find.byKey(const Key('toolbar_status_strip')), findsOneWidget);
   });
 
+  testWidgets('warning ui notices render in the toolbar notice lane', (
+    tester,
+  ) async {
+    final nativeBridge = NativeBridge.instance;
+    final settings = SettingsController(nativeBridge: nativeBridge);
+    final recording = RecordingController(
+      nativeBridge: nativeBridge,
+      settings: settings,
+    );
+    final device = _FakeDeviceController();
+    final overlay = OverlayController(bridge: nativeBridge);
+    final post = _ToolbarPostProcessingController();
+    final uiState = HomeUiState()
+      ..setNotice(
+        const HomeUiNotice(
+          message:
+              'Selected microphone couldn’t be used. Recording started with the system default microphone.',
+          tone: HomeUiNoticeTone.warning,
+        ),
+      );
+
+    addTearDown(recording.dispose);
+    addTearDown(device.dispose);
+    addTearDown(overlay.dispose);
+    addTearDown(post.dispose);
+    addTearDown(uiState.dispose);
+    addTearDown(settings.dispose);
+
+    await tester.pumpWidget(
+      MultiProvider(
+        providers: [
+          ChangeNotifierProvider<RecordingController>.value(value: recording),
+          ChangeNotifierProvider<DeviceController>.value(value: device),
+          ChangeNotifierProvider<OverlayController>.value(value: overlay),
+          ChangeNotifierProvider<PostProcessingController>.value(value: post),
+        ],
+        child: MaterialApp(
+          localizationsDelegates: AppLocalizations.localizationsDelegates,
+          supportedLocales: AppLocalizations.supportedLocales,
+          home: Scaffold(
+            body: HomeToolbar(
+              isRecording: false,
+              isPaused: false,
+              uiState: uiState,
+              onExport: () {},
+              onOpenSystemSettings: (_) async {},
+              onClearMessage: () {},
+            ),
+          ),
+        ),
+      ),
+    );
+
+    expect(find.byKey(const Key('toolbar_notice_lane')), findsOneWidget);
+    expect(
+      find.text(
+        'Selected microphone couldn’t be used. Recording started with the system default microphone.',
+      ),
+      findsOneWidget,
+    );
+  });
+
   testWidgets(
     'blank recording start errors fall back to the localized window unavailable message',
     (tester) async {

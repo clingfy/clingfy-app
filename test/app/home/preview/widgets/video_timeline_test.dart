@@ -114,6 +114,27 @@ void main() {
       find.byKey(const Key('timeline_transport_fit_button')),
       findsOneWidget,
     );
+    expect(
+      find.descendant(
+        of: find.byKey(const Key('timeline_zoom_slider')),
+        matching: find.byKey(const Key('app_slider_track')),
+      ),
+      findsOneWidget,
+    );
+    expect(
+      find.descendant(
+        of: find.byKey(const Key('timeline_zoom_slider')),
+        matching: find.byKey(const Key('app_slider_decrement_button')),
+      ),
+      findsNothing,
+    );
+    expect(
+      find.descendant(
+        of: find.byKey(const Key('timeline_zoom_slider')),
+        matching: find.byKey(const Key('app_slider_increment_button')),
+      ),
+      findsNothing,
+    );
     expect(find.byKey(const Key('timeline_footer_bar')), findsNothing);
     expect(find.byKey(const Key('timeline_footer_snap_toggle')), findsNothing);
   });
