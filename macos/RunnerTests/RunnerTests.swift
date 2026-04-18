@@ -3269,18 +3269,18 @@ final class LetterboxExporterTests: XCTestCase {
       layoutPreset: .overlayTopRight,
       normalizedCanvasCenter: nil,
       sizeFactor: 0.2,
-      shape: .squircle,
-      cornerRadius: 0.15,
+      shape: .square,
+      cornerRadius: 0.0,
       opacity: 1.0,
       mirror: false,
       contentMode: .fill,
       zoomBehavior: .fixed,
       borderWidth: 0.0,
       borderColorArgb: nil,
-      shadowPreset: 2,
-      chromaKeyEnabled: false,
-      chromaKeyStrength: 0.4,
-      chromaKeyColorArgb: nil
+      shadowPreset: 0,
+      chromaKeyEnabled: true,
+      chromaKeyStrength: 0.25,
+      chromaKeyColorArgb: 0xFF00FF00
     )
 
     let pipeline = CameraStyledIntermediatePipeline()
