@@ -1,31 +1,23 @@
 #!/bin/bash
 
 
-# BUNDLE_ID="com.clingfy.clingfy"; 
-# tccutil reset All $BUNDLE_ID;
-# defaults delete $BUNDLE_ID;
-# rm -rf ~/Library/Containers/$BUNDLE_ID;
-
-APP_ENV=dev
 BUNDLE_ID="com.clingfy.clingfy.dev"; 
 
 echo "Bundle ID   : $APP_BUNDLE_ID"
-
-# export BUNDLE_ID="com.clingfy.clingfy"; tccutil reset All $BUNDLE_ID; defaults delete $BUNDLE_ID; sudo rm -rf ~/Library/Containers/$BUNDLE_ID
 
 echo "🧹 Cleaning Flutter build..."
 flutter clean
 
 echo "🔐 Resetting macOS Accessibility permissions..."
-# Common service names include: Camera, Microphone, AddressBook, Photos, and ScreenCapture.
-# tccutil All Accessibility $BUNDLE_ID
-# tccutil reset All $BUNDLE_ID
+## Common service names include: Camera, Microphone, AddressBook, Photos, and ScreenCapture.
+tccutil All Accessibility $BUNDLE_ID
+tccutil reset All $BUNDLE_ID
 
 echo "⚙️ Wiping Shared Preferences (NSUserDefaults)..."
-# defaults delete $BUNDLE_ID 2>/dev/null || true
+defaults delete $BUNDLE_ID 2>/dev/null || true
 
-# echo "📂 Deleting App Sandbox Container..."
-# rm -rf ~/Library/Containers/$BUNDLE_ID
+echo "📂 Deleting App Sandbox Container..."
+rm -rf ~/Library/Containers/$BUNDLE_ID
 
 echo "🧹 Getting Flutter packages..."
 flutter pub get
@@ -40,6 +32,7 @@ flutter pub get
 
 # flutter build macos --config-only
 
+APP_ENV=dev; flutter run -d macos --release --flavor $APP_ENV --dart-define-from-file=.env.$APP_ENV
 
 echo "🚀 Rebuilding and running..."
 # flutter run -d macos --release --flavor $APP_ENV --dart-define-from-file=.env.$APP_ENV
