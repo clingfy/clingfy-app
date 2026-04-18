@@ -129,22 +129,11 @@ class DesktopToolbar extends StatelessWidget {
 
     final stripChild = normalizedNotice == null && effectiveExportStatus == null
         ? null
-        : KeyedSubtree(
-            key: ValueKey(
-              Object.hash(
-                normalizedNotice?.message,
-                normalizedNotice?.tone,
-                normalizedNotice?.action?.label,
-                effectiveExportStatus?.progress,
-                effectiveExportStatus?.cancelRequested,
-              ),
-            ),
-            child: ToolbarStatusStrip(
-              key: _toolbarStatusStripKey,
-              notice: normalizedNotice,
-              exportStatus: effectiveExportStatus,
-              l10n: l10n,
-            ),
+        : ToolbarStatusStrip(
+            key: _toolbarStatusStripKey,
+            notice: normalizedNotice,
+            exportStatus: effectiveExportStatus,
+            l10n: l10n,
           );
 
     if (isMac()) {
@@ -1215,8 +1204,9 @@ class _MacTextAction extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final typography = context.appTypography;
-    return GestureDetector(
-      onTap: onPressed,
+    return _ToolbarTextAction(
+      label: label,
+      onPressed: onPressed,
       child: Text(label, style: typography.value.copyWith(color: color)),
     );
   }
@@ -1237,8 +1227,9 @@ class _WinTextAction extends StatelessWidget {
   Widget build(BuildContext context) {
     final theme = fluent.FluentTheme.of(context);
     final typography = Theme.of(context).appTypography;
-    return GestureDetector(
-      onTap: onPressed,
+    return _ToolbarTextAction(
+      label: label,
+      onPressed: onPressed,
       child: Text(
         label,
         style: (theme.typography.caption ?? typography.caption).copyWith(
@@ -1264,13 +1255,52 @@ class _FallbackTextAction extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final typography = context.appTypography;
-    return GestureDetector(
-      onTap: onPressed,
+    return _ToolbarTextAction(
+      label: label,
+      onPressed: onPressed,
       child: Text(
         label,
         style: typography.value.copyWith(
           color: color,
           fontWeight: FontWeight.w700,
+        ),
+      ),
+    );
+  }
+}
+
+class _ToolbarTextAction extends StatelessWidget {
+  const _ToolbarTextAction({
+    required this.label,
+    required this.onPressed,
+    required this.child,
+  });
+
+  final String label;
+  final VoidCallback onPressed;
+  final Widget child;
+
+  @override
+  Widget build(BuildContext context) {
+    final spacing = context.appSpacing;
+    return MouseRegion(
+      cursor: SystemMouseCursors.click,
+      child: Semantics(
+        button: true,
+        label: label,
+        child: GestureDetector(
+          behavior: HitTestBehavior.opaque,
+          onTap: onPressed,
+          child: ConstrainedBox(
+            constraints: const BoxConstraints(minWidth: 44, minHeight: 28),
+            child: Padding(
+              padding: EdgeInsets.symmetric(
+                horizontal: 6,
+                vertical: spacing.xs,
+              ),
+              child: Align(alignment: Alignment.center, child: child),
+            ),
+          ),
         ),
       ),
     );
