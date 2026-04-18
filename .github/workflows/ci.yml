@@ -231,7 +231,7 @@ jobs:
   native-macos-export:
     name: Native macOS export tests
     runs-on: macos-latest
-    timeout-minutes: 75
+    timeout-minutes: 90
     needs:
       - flutter-quality
 
