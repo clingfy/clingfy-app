@@ -111,6 +111,83 @@ void main() {
     );
   });
 
+  testWidgets('show progress action invokes callback on first tap', (
+    tester,
+  ) async {
+    var showDetailsCalls = 0;
+
+    await tester.pumpWidget(
+      buildToolbar(
+        exportStatus: ToolbarExportStatusPresentation(
+          progress: 0.42,
+          cancelRequested: false,
+          onShowDetails: () => showDetailsCalls += 1,
+        ),
+      ),
+    );
+
+    final l10n = AppLocalizations.of(
+      tester.element(find.byType(DesktopToolbar)),
+    )!;
+
+    await tester.tap(find.text(l10n.showProgress));
+    await tester.pump();
+
+    expect(showDetailsCalls, 1);
+  });
+
+  testWidgets('show progress action remains tappable after progress updates', (
+    tester,
+  ) async {
+    final progress = ValueNotifier(0.12);
+    addTearDown(progress.dispose);
+    var showDetailsCalls = 0;
+
+    await tester.pumpWidget(
+      MaterialApp(
+        localizationsDelegates: AppLocalizations.localizationsDelegates,
+        supportedLocales: AppLocalizations.supportedLocales,
+        theme: buildDarkTheme(),
+        darkTheme: buildDarkTheme(),
+        themeMode: ThemeMode.dark,
+        home: Scaffold(
+          body: ValueListenableBuilder<double>(
+            valueListenable: progress,
+            builder: (context, value, _) {
+              return DesktopToolbar(
+                isRecording: false,
+                isPaused: false,
+                exportStatus: ToolbarExportStatusPresentation(
+                  progress: value,
+                  cancelRequested: false,
+                  onShowDetails: () => showDetailsCalls += 1,
+                ),
+              );
+            },
+          ),
+        ),
+      ),
+    );
+
+    progress.value = 0.27;
+    await tester.pump();
+    progress.value = 0.49;
+    await tester.pump();
+    progress.value = 0.73;
+    await tester.pump();
+
+    final l10n = AppLocalizations.of(
+      tester.element(find.byType(DesktopToolbar)),
+    )!;
+
+    expect(find.textContaining('73%'), findsOneWidget);
+
+    await tester.tap(find.text(l10n.showProgress));
+    await tester.pump();
+
+    expect(showDetailsCalls, 1);
+  });
+
   testWidgets('renders notice lane before export lane when both are present', (
     tester,
   ) async {
