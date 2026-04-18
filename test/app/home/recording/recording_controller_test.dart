@@ -64,6 +64,48 @@ void main() {
     },
   );
 
+  test('startRecording preserves native PlatformException message', () async {
+    final harness = await createHarness();
+    addTearDown(harness.recording.dispose);
+    addTearDown(harness.settings.dispose);
+
+    final messenger =
+        TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger;
+    messenger.setMockMethodCallHandler(screenRecorderChannel, (call) async {
+      switch (call.method) {
+        case 'getCaptureDiagnostics':
+          return <String, dynamic>{
+            'backend': 'screencapturekit',
+            'captureFps': 30,
+            'captureDestinationFreeBytes': 100 * 1024 * 1024 * 1024,
+          };
+        case 'startRecording':
+          throw PlatformException(
+            code: 'RECORDING_ERROR',
+            message: 'Failed due to an invalid parameter',
+            details: <String, dynamic>{
+              'startFailureInfo': <String, dynamic>{
+                'failingCall': 'stream.startCapture()',
+                'errorOriginFile': 'CaptureBackendScreenCaptureKit.swift',
+                'errorOriginLine': 815,
+              },
+            },
+          );
+        default:
+          return null;
+      }
+    });
+
+    await harness.recording.startRecording();
+
+    expect(harness.recording.errorCode, 'RECORDING_ERROR');
+    expect(
+      harness.recording.errorMessage,
+      'Failed due to an invalid parameter',
+    );
+    expect(harness.recording.phase, WorkflowPhase.idle);
+  });
+
   test(
     'recordingStarted transitions to recording for active session',
     () async {

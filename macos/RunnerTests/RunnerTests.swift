@@ -6165,7 +6165,7 @@ final class ScreenCaptureKitMicrophoneFallbackTests: XCTestCase {
   }
 }
 
-private final class MockCaptureBackend: CaptureBackend {
+private class MockCaptureBackend: CaptureBackend {
   var onStarted: ((URL) -> Void)?
   var onFinished: ((URL?, Error?) -> Void)?
   var onPaused: (() -> Void)?
@@ -6181,8 +6181,11 @@ private final class MockCaptureBackend: CaptureBackend {
   var currentOutputURL: URL?
   private(set) var overlayUpdates: [CGWindowID?] = []
   private(set) var stopCallCount: Int = 0
+  private(set) var startConfigs: [CaptureStartConfig] = []
 
-  func start(config: CaptureStartConfig) {}
+  func start(config: CaptureStartConfig) {
+    startConfigs.append(config)
+  }
   func stop() { stopCallCount += 1 }
   func pause() {}
   func resume() {}
@@ -6190,6 +6193,30 @@ private final class MockCaptureBackend: CaptureBackend {
   func updateOverlay(windowID: CGWindowID?) {
     overlayUpdates.append(windowID)
   }
+}
+
+private final class MockScreenCaptureKitCaptureBackend: MockCaptureBackend {}
+private final class MockAVFoundationCaptureBackend: MockCaptureBackend {}
+
+@available(macOS 15.0, *)
+@MainActor
+private func makeScreenCaptureKitInvalidParameterStartError(
+  message: String = "Failed due to an invalid parameter",
+  startFailureInfo: [String: Any] = [
+    "failingCall": "stream.startCapture()",
+    "errorOriginFile": "CaptureBackendScreenCaptureKit.swift",
+    "errorOriginLine": 812,
+  ]
+) -> FlutterError {
+  CaptureBackendScreenCaptureKit._testWrapRecordingStartFailure(
+    error: NSError(
+      domain: "com.apple.ScreenCaptureKit.SCStreamErrorDomain",
+      code: -3812,
+      userInfo: [NSLocalizedDescriptionKey: message]
+    ),
+    startFailureInfo: startFailureInfo,
+    message: message
+  )
 }
 
 private final class MockAVFoundationCapturePipeline: AVFoundationCapturePipelining {
@@ -6397,6 +6424,110 @@ final class MicrophoneLevelTelemetryTests: XCTestCase {
     XCTAssertEqual(payload?["type"] as? String, "recordingWarning")
     XCTAssertEqual(payload?["sessionId"] as? String, "session-123")
     XCTAssertEqual(payload?["message"] as? String, "selected mic fallback")
+  }
+}
+
+@available(macOS 15.0, *)
+@MainActor
+final class ScreenRecorderFacadeStartFallbackTests: XCTestCase {
+  func testRecordingStartFailureWrapPreservesStartFailureInfo() throws {
+    let error = makeScreenCaptureKitInvalidParameterStartError(
+      startFailureInfo: [
+        "failingCall": "stream.startCapture()",
+        "errorOriginFile": "CaptureBackendScreenCaptureKit.swift",
+        "errorOriginLine": 815,
+      ]
+    )
+
+    let details = try XCTUnwrap(error.details as? [String: Any])
+    let startFailureInfo = try XCTUnwrap(details["startFailureInfo"] as? [String: Any])
+
+    XCTAssertEqual(error.code, NativeErrorCode.recordingError)
+    XCTAssertEqual(error.message, "Failed due to an invalid parameter")
+    XCTAssertEqual(
+      details["underlyingErrorDomain"] as? String,
+      "com.apple.ScreenCaptureKit.SCStreamErrorDomain"
+    )
+    XCTAssertEqual(details["underlyingErrorCode"] as? Int, -3812)
+    XCTAssertEqual(
+      startFailureInfo["failingCall"] as? String,
+      "stream.startCapture()"
+    )
+    XCTAssertEqual(
+      startFailureInfo["errorOriginFile"] as? String,
+      "CaptureBackendScreenCaptureKit.swift"
+    )
+    XCTAssertEqual(startFailureInfo["errorOriginLine"] as? Int, 815)
+  }
+
+  func testScreenCaptureKitInvalidParameterRetriesWithAVFoundationFallbackAndWarnsOnStart() {
+    let facade = ScreenRecorderFacade()
+    let primaryBackend = MockScreenCaptureKitCaptureBackend()
+    let fallbackBackend = MockAVFoundationCaptureBackend()
+    let target = CaptureTarget(mode: .explicitID, displayID: 1)
+    let config = facade._testBuildCaptureStartConfig(target: target)
+
+    facade._testSetCaptureBackend(primaryBackend)
+    facade._testSetFallbackCaptureBackendFactory { _ in fallbackBackend }
+    facade._testSetRecorderState(.starting)
+    facade._testSetActiveRecordingWorkflowSessionId("session-123")
+    facade._testSetPendingStartCaptureConfig(config)
+
+    var warningPayload: [String: Any]?
+    facade.onRecordingWarning = { payload in
+      warningPayload = payload
+    }
+
+    primaryBackend.onFinished?(nil, makeScreenCaptureKitInvalidParameterStartError())
+
+    XCTAssertEqual(fallbackBackend.startConfigs.count, 1)
+    XCTAssertEqual(fallbackBackend.startConfigs.first?.target.displayID, 1)
+    XCTAssertNil(warningPayload)
+
+    fallbackBackend.onStarted?(URL(fileURLWithPath: "/tmp/fallback.mov"))
+
+    XCTAssertEqual(warningPayload?["type"] as? String, "recordingWarning")
+    XCTAssertEqual(warningPayload?["sessionId"] as? String, "session-123")
+    XCTAssertEqual(
+      warningPayload?["message"] as? String,
+      "ScreenCaptureKit couldn’t start recording. Recording started with the AVFoundation fallback."
+    )
+  }
+
+  func testAvFoundationFallbackFailureDoesNotRetryAgainAndCombinesErrors() {
+    let facade = ScreenRecorderFacade()
+    let primaryBackend = MockScreenCaptureKitCaptureBackend()
+    let fallbackBackend = MockAVFoundationCaptureBackend()
+    let target = CaptureTarget(mode: .explicitID, displayID: 1)
+    let config = facade._testBuildCaptureStartConfig(target: target)
+
+    facade._testSetCaptureBackend(primaryBackend)
+    facade._testSetFallbackCaptureBackendFactory { _ in fallbackBackend }
+    facade._testSetRecorderState(.starting)
+    facade._testSetActiveRecordingWorkflowSessionId("session-123")
+    facade._testSetPendingStartCaptureConfig(config)
+
+    var failurePayload: [String: Any]?
+    facade.onRecordingFailed = { payload in
+      failurePayload = payload
+    }
+
+    primaryBackend.onFinished?(nil, makeScreenCaptureKitInvalidParameterStartError())
+    fallbackBackend.onFinished?(
+      nil,
+      flutterError(NativeErrorCode.recordingError, "fallback backend failed")
+    )
+
+    XCTAssertEqual(fallbackBackend.startConfigs.count, 1)
+    XCTAssertEqual(failurePayload?["type"] as? String, "recordingFailed")
+    XCTAssertEqual(failurePayload?["sessionId"] as? String, "session-123")
+    XCTAssertEqual(failurePayload?["stage"] as? String, "start")
+    XCTAssertEqual(failurePayload?["code"] as? String, NativeErrorCode.recordingError)
+
+    let message = failurePayload?["error"] as? String ?? ""
+    XCTAssertTrue(message.contains("ScreenCaptureKit"))
+    XCTAssertTrue(message.contains("AVFoundation"))
+    XCTAssertTrue(message.contains("fallback backend failed"))
   }
 }
 
