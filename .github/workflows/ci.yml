@@ -353,7 +353,28 @@ jobs:
             DEVELOPMENT_TEAM="" \
             COMPILER_INDEX_STORE_ENABLE=NO \
             -only-testing:RunnerTests/LetterboxExporterTests \
+            -skip-testing:RunnerTests/LetterboxExporterTests/testInlineCameraRenderSupportsStyledActiveZoomExport_largeFixture \
             test-without-building 2>&1 | tee build/ci/xcode-export-test.log
+
+      - name: Run scheduled/manual large-fixture export regression
+        if: github.event_name == 'schedule' || github.event_name == 'workflow_dispatch'
+        run: |
+          set -euo pipefail
+          xcodebuild \
+            -workspace macos/Runner.xcworkspace \
+            -scheme "$APP_ENV" \
+            -configuration "Debug-$APP_ENV" \
+            -destination "platform=macOS,arch=arm64" \
+            -derivedDataPath build/DerivedData \
+            -resultBundlePath build/RunnerExportLargeFixtureTests.xcresult \
+            CODE_SIGNING_ALLOWED=NO \
+            CODE_SIGNING_REQUIRED=NO \
+            CODE_SIGN_IDENTITY="" \
+            PROVISIONING_PROFILE_SPECIFIER="" \
+            DEVELOPMENT_TEAM="" \
+            COMPILER_INDEX_STORE_ENABLE=NO \
+            -only-testing:RunnerTests/LetterboxExporterTests/testInlineCameraRenderSupportsStyledActiveZoomExport_largeFixture \
+            test-without-building 2>&1 | tee build/ci/xcode-export-large-fixture-test.log
 
       - name: PR no-op for required check
         if: github.event_name == 'pull_request'
@@ -367,6 +388,7 @@ jobs:
           path: |
             build/ci
             build/RunnerExportTests.xcresult
+            build/RunnerExportLargeFixtureTests.xcresult
 
   macos-build:
     name: macOS unsigned build
