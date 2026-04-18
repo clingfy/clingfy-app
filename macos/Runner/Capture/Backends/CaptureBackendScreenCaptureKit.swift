@@ -10,6 +10,7 @@ import AVFoundation
 import CoreGraphics
 import CoreMedia
 import CoreVideo  // : Needed for kCVPixelFormatType
+import FlutterMacOS
 import Foundation
 import QuartzCore
 @preconcurrency import ScreenCaptureKit
@@ -497,6 +498,7 @@ final class CaptureBackendScreenCaptureKit: NSObject, CaptureBackend {
   private var stream: SCStream?
   private var recordingOutput: SCRecordingOutput?
   private var activeStreamConfig: SCStreamConfiguration?
+  private var activeRecordingOutputConfigSnapshot: [String: Any]?
 
   private var recordingURL: URL?
   private var didStart: Bool = false
@@ -809,7 +811,24 @@ final class CaptureBackendScreenCaptureKit: NSObject, CaptureBackend {
             "microphoneMode": microphoneStartMode.logValue,
           ])
 
-        try await stream.startCapture()
+        let startCaptureOriginLine = #line + 2
+        do {
+          try await stream.startCapture()
+        } catch {
+          let startFailureInfo = self.startFailureInfo(
+            target: config.target,
+            filter: filter,
+            sourceRect: sourceRect,
+            streamConfig: streamConfig,
+            microphoneStartMode: microphoneStartMode,
+            errorOriginFile: #file,
+            errorOriginLine: startCaptureOriginLine
+          )
+          throw Self.wrapRecordingStartFailure(
+            error,
+            startFailureInfo: startFailureInfo
+          )
+        }
 
         NativeLogger.i(
           "SCKBackend", "Stream started (await startCapture returned)",
@@ -824,16 +843,19 @@ final class CaptureBackendScreenCaptureKit: NSObject, CaptureBackend {
         await markRecordingStarted(url: outputURL)
       }
     } catch {
+      let underlyingStartError = Self.underlyingStartFailureNSError(from: error)
+      let startFailureInfo = Self.startFailureInfo(from: error)
       NativeLogger.e(
         "SCKBackend",
         "Start failed",
         context: [
-          "error": "\(error)",
+          "error": "\(underlyingStartError)",
           "microphoneMode": microphoneStartMode.logValue,
+          "startFailureInfo": startFailureInfo ?? [:],
         ])
 
       if Self.shouldRetryStartWithDefaultMicrophone(
-        error: error as NSError,
+        error: underlyingStartError,
         attemptedSelectedMicrophoneID: microphoneStartMode.selectedDeviceID
       ) {
         pendingRecordingWarningMessage = NativeStringsStore.shared.string(
@@ -894,6 +916,7 @@ final class CaptureBackendScreenCaptureKit: NSObject, CaptureBackend {
     stopWindowMoveTimer()
     stream = nil
     recordingOutput = nil
+    activeRecordingOutputConfigSnapshot = nil
   }
 
   private func resetStartAttemptForRetry(config: CaptureStartConfig, outputURL: URL) async {
@@ -1072,6 +1095,11 @@ final class CaptureBackendScreenCaptureKit: NSObject, CaptureBackend {
     configuration.outputURL = segment.rawURL
     configuration.outputFileType = .mov
     configuration.videoCodecType = .hevc
+    activeRecordingOutputConfigSnapshot = recordingOutputConfigurationSnapshot(
+      configuration: configuration,
+      segmentIndex: segment.index,
+      cursorURL: segment.cursorURL
+    )
 
     let recordingOutput = SCRecordingOutput(configuration: configuration, delegate: self)
     let context = RecordingSegmentContext(
@@ -1421,6 +1449,7 @@ final class CaptureBackendScreenCaptureKit: NSObject, CaptureBackend {
     stopWindowMoveTimer()
     stream = nil
     recordingOutput = nil
+    activeRecordingOutputConfigSnapshot = nil
   }
 
   private func cleanupStreamAfterFailure(discardCursor: Bool) {
@@ -1445,6 +1474,7 @@ final class CaptureBackendScreenCaptureKit: NSObject, CaptureBackend {
     segmentContextsByOutputID = [:]
     stream = nil
     recordingOutput = nil
+    activeRecordingOutputConfigSnapshot = nil
   }
 
   private func markRecordingStarted(url: URL) async {
@@ -1835,6 +1865,126 @@ final class CaptureBackendScreenCaptureKit: NSObject, CaptureBackend {
     return c
   }
 
+  private func recordingOutputConfigurationSnapshot(
+    configuration: SCRecordingOutputConfiguration,
+    segmentIndex: Int,
+    cursorURL: URL?
+  ) -> [String: Any] {
+    [
+      "segmentIndex": segmentIndex,
+      "outputURL": configuration.outputURL.path,
+      "outputFileType": configuration.outputFileType.rawValue,
+      "videoCodecType": configuration.videoCodecType.rawValue,
+      "cursorURL": cursorURL?.path ?? NSNull(),
+    ]
+  }
+
+  private func streamConfigurationSnapshot(
+    _ streamConfig: SCStreamConfiguration,
+    microphoneStartMode: MicrophoneStartMode
+  ) -> [String: Any] {
+    [
+      "width": streamConfig.width,
+      "height": streamConfig.height,
+      "sourceRect": NSStringFromRect(streamConfig.sourceRect),
+      "scalesToFit": streamConfig.scalesToFit,
+      "preservesAspectRatio": streamConfig.preservesAspectRatio,
+      "captureResolution": "\(streamConfig.captureResolution)",
+      "minimumFrameIntervalSeconds": streamConfig.minimumFrameInterval.seconds,
+      "showsCursor": streamConfig.showsCursor,
+      "capturesAudio": streamConfig.capturesAudio,
+      "captureMicrophone": streamConfig.captureMicrophone,
+      "microphoneCaptureDeviceID": streamConfig.microphoneCaptureDeviceID ?? NSNull(),
+      "microphoneMode": microphoneStartMode.logValue,
+      "selectedMicrophoneID": microphoneStartMode.selectedDeviceID ?? NSNull(),
+      "excludesCurrentProcessAudio": streamConfig.excludesCurrentProcessAudio,
+    ]
+  }
+
+  private func startFailureDiagnosticStages(
+    streamConfig: SCStreamConfiguration,
+    recordingOutputConfig: [String: Any],
+    microphoneStartMode: MicrophoneStartMode
+  ) -> [[String: Any]] {
+    [
+      [
+        "stage": "baseline",
+        "streamConfig": [
+          "minimumFrameIntervalSeconds": streamConfig.minimumFrameInterval.seconds,
+          "showsCursor": streamConfig.showsCursor,
+        ],
+        "recordingOutputConfig": [
+          "outputURL": recordingOutputConfig["outputURL"] ?? NSNull(),
+          "outputFileType": recordingOutputConfig["outputFileType"] ?? NSNull(),
+        ],
+      ],
+      [
+        "stage": "geometry",
+        "streamConfig": [
+          "width": streamConfig.width,
+          "height": streamConfig.height,
+          "sourceRect": NSStringFromRect(streamConfig.sourceRect),
+          "scalesToFit": streamConfig.scalesToFit,
+          "preservesAspectRatio": streamConfig.preservesAspectRatio,
+          "captureResolution": "\(streamConfig.captureResolution)",
+        ],
+      ],
+      [
+        "stage": "recordingOutput",
+        "recordingOutputConfig": recordingOutputConfig,
+      ],
+      [
+        "stage": "audio",
+        "streamConfig": [
+          "capturesAudio": streamConfig.capturesAudio,
+          "captureMicrophone": streamConfig.captureMicrophone,
+          "microphoneCaptureDeviceID": streamConfig.microphoneCaptureDeviceID ?? NSNull(),
+          "microphoneMode": microphoneStartMode.logValue,
+        ],
+      ],
+    ]
+  }
+
+  private func startFailureInfo(
+    target: CaptureTarget,
+    filter: SCContentFilter,
+    sourceRect: CGRect?,
+    streamConfig: SCStreamConfiguration,
+    microphoneStartMode: MicrophoneStartMode,
+    errorOriginFile: String,
+    errorOriginLine: Int
+  ) -> [String: Any] {
+    let recordingOutputConfig = activeRecordingOutputConfigSnapshot ?? [:]
+    return [
+      "failingCall": "stream.startCapture()",
+      "errorOriginFile": errorOriginFile,
+      "errorOriginLine": errorOriginLine,
+      "backend": "screenCaptureKit",
+      "targetMode": "\(target.mode)",
+      "displayID": Int(target.displayID),
+      "windowID": target.windowID.map { Int($0) } ?? NSNull(),
+      "targetCropRect": target.cropRect.map(NSStringFromRect) ?? NSNull(),
+      "sourceRect": sourceRect.map(NSStringFromRect) ?? NSNull(),
+      "filterContentRect": NSStringFromRect(filter.contentRect),
+      "streamConfig": streamConfigurationSnapshot(
+        streamConfig,
+        microphoneStartMode: microphoneStartMode
+      ),
+      "recordingOutputConfig": recordingOutputConfig,
+      "diagnosticStageOrder": [
+        "baseline",
+        "geometry",
+        "recordingOutput",
+        "audio",
+      ],
+      "diagnosticStages": startFailureDiagnosticStages(
+        streamConfig: streamConfig,
+        recordingOutputConfig: recordingOutputConfig,
+        microphoneStartMode: microphoneStartMode
+      ),
+    ]
+  }
+
   static func shouldRetryStartWithDefaultMicrophone(
     error: NSError,
     attemptedSelectedMicrophoneID: String?
@@ -1859,7 +2009,90 @@ final class CaptureBackendScreenCaptureKit: NSObject, CaptureBackend {
 
     let localizedError = NativeStringsStore.shared.string(
       for: NativeUIStringKey.recordingSelectedMicFallbackFailure)
-    return flutterError(NativeErrorCode.recordingError, localizedError)
+    return wrapRecordingStartFailure(
+      underlyingStartFailureNSError(from: error),
+      message: localizedError,
+      startFailureInfo: startFailureInfo(from: error) ?? [:],
+      additionalDetails: ["selectedMicrophoneFallbackExhausted": true]
+    )
+  }
+
+  private static func wrapRecordingStartFailure(
+    _ error: Error,
+    message: String? = nil,
+    startFailureInfo: [String: Any],
+    additionalDetails: [String: Any] = [:]
+  ) -> FlutterError {
+    let nsError = error as NSError
+    var details: [String: Any] = additionalDetails
+    details["startFailureInfo"] = startFailureInfo
+    details["underlyingErrorDomain"] = nsError.domain
+    details["underlyingErrorCode"] = nsError.code
+    details["underlyingErrorDescription"] = nsError.localizedDescription
+    return flutterError(
+      NativeErrorCode.recordingError,
+      message ?? nsError.localizedDescription,
+      details: details
+    )
+  }
+
+  private static func startFailureInfo(from error: Error) -> [String: Any]? {
+    guard
+      let details = recordingStartFailureDetails(from: error),
+      let info = dictionaryValue(details["startFailureInfo"])
+    else {
+      return nil
+    }
+    return info
+  }
+
+  private static func recordingStartFailureDetails(from error: Error) -> [String: Any]? {
+    guard let flutterError = error as? FlutterError else { return nil }
+    return dictionaryValue(flutterError.details)
+  }
+
+  private static func underlyingStartFailureNSError(from error: Error) -> NSError {
+    guard
+      let details = recordingStartFailureDetails(from: error),
+      let domain = details["underlyingErrorDomain"] as? String,
+      let code = intValue(details["underlyingErrorCode"])
+    else {
+      return error as NSError
+    }
+
+    let description =
+      details["underlyingErrorDescription"] as? String
+      ?? (error as NSError).localizedDescription
+    return NSError(
+      domain: domain,
+      code: code,
+      userInfo: [NSLocalizedDescriptionKey: description]
+    )
+  }
+
+  private static func dictionaryValue(_ value: Any?) -> [String: Any]? {
+    if let dictionary = value as? [String: Any] {
+      return dictionary
+    }
+    if let dictionary = value as? [AnyHashable: Any] {
+      return Dictionary(uniqueKeysWithValues: dictionary.map { key, value in
+        (String(describing: key), value)
+      })
+    }
+    return nil
+  }
+
+  private static func intValue(_ value: Any?) -> Int? {
+    if let int = value as? Int {
+      return int
+    }
+    if let number = value as? NSNumber {
+      return number.intValue
+    }
+    if let string = value as? String {
+      return Int(string)
+    }
+    return nil
   }
 
   private func computeCursorRasterScale(
@@ -2240,6 +2473,18 @@ extension CaptureBackendScreenCaptureKit {
     resolvedStartFailure(
       error,
       exhaustedSelectedMicrophoneFallback: exhaustedSelectedMicrophoneFallback
+    )
+  }
+
+  static func _testWrapRecordingStartFailure(
+    error: Error,
+    startFailureInfo: [String: Any],
+    message: String? = nil
+  ) -> FlutterError {
+    wrapRecordingStartFailure(
+      error,
+      message: message,
+      startFailureInfo: startFailureInfo
     )
   }
 }
