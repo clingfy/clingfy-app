@@ -342,7 +342,7 @@ final class ScreenZoomCursorIntermediatePipeline {
     let renderQueue = DispatchQueue(label: "Clingfy.ScreenZoomCursorIntermediateRender")
     let renderBounds = CGRect(origin: .zero, size: renderSize)
     let colorSpace = VideoColorPipeline.workingColorSpace
-    let ciContext = CIContext(options: [.cacheIntermediates: false])
+    let ciContext = VideoColorPipeline.makeCIContext()
     let stageStart = CFAbsoluteTimeGetCurrent()
     var didLogSourceColorMetadata = false
     var completed = false
@@ -502,12 +502,14 @@ final class ScreenZoomCursorIntermediatePipeline {
             return false
           }
 
+          let formatDescription = CMSampleBufferGetFormatDescription(sampleBuffer)
+
           if !didLogSourceColorMetadata {
             didLogSourceColorMetadata = true
             VideoColorPipeline.logColorMetadata(
               category: "Export",
               message: "Screen pre-pass source color metadata",
-              formatDescription: CMSampleBufferGetFormatDescription(sampleBuffer),
+              formatDescription: formatDescription,
               pixelBuffer: pixelBuffer,
               extraContext: [
                 "input": inputURL.path,
@@ -516,7 +518,10 @@ final class ScreenZoomCursorIntermediatePipeline {
             )
           }
 
-          let sourceImage = CIImage(cvPixelBuffer: pixelBuffer)
+          let sourceImage = VideoColorPipeline.sourceImage(
+            pixelBuffer: pixelBuffer,
+            formatDescription: formatDescription
+          )
           let sourceBounds = CGRect(
             origin: .zero,
             size: CGSize(

@@ -2,7 +2,7 @@ import AVFoundation
 import AppKit
 
 final class CameraChromaKeyRenderer {
-  private lazy var ciContext = CIContext(options: [.cacheIntermediates: false])
+  private lazy var ciContext = VideoColorPipeline.makeCIContext()
   private lazy var chromaKeyKernel: CIColorKernel? = {
     CIColorKernel(
       source:
@@ -331,12 +331,14 @@ final class CameraChromaKeyRenderer {
             return false
           }
 
+          let formatDescription = CMSampleBufferGetFormatDescription(sampleBuffer)
+
           if !didLogSourceColorMetadata {
             didLogSourceColorMetadata = true
             VideoColorPipeline.logColorMetadata(
               category: "Export",
               message: "Chroma-key camera source color metadata",
-              formatDescription: CMSampleBufferGetFormatDescription(sampleBuffer),
+              formatDescription: formatDescription,
               pixelBuffer: sourcePixelBuffer,
               extraContext: [
                 "output": outputURL.path,
@@ -344,7 +346,10 @@ final class CameraChromaKeyRenderer {
             )
           }
 
-          let sourceImage = CIImage(cvPixelBuffer: sourcePixelBuffer).transformed(by: sourceTransform)
+          let sourceImage = VideoColorPipeline.sourceImage(
+            pixelBuffer: sourcePixelBuffer,
+            formatDescription: formatDescription
+          ).transformed(by: sourceTransform)
           let keyedImage: CIImage
           if let kernel = self.chromaKeyKernel {
             keyedImage =

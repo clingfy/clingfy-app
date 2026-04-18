@@ -1052,7 +1052,7 @@ final class LetterboxExporter {
           presentationTime: sampleTime,
           plan: inlineCameraRenderPlan
         )
-        let ciContext = CIContext(options: [.cacheIntermediates: false])
+        let ciContext = VideoColorPipeline.makeCIContext()
         guard
           let composedCGImage = ciContext.createCGImage(
             composedImage,
@@ -1163,7 +1163,7 @@ final class LetterboxExporter {
       )
     }
 
-    let ciContext = CIContext(options: [.cacheIntermediates: false])
+    let ciContext = VideoColorPipeline.makeCIContext()
     let normalizedTransform: CGAffineTransform = {
       let orientedRect = CGRect(origin: .zero, size: track.naturalSize).applying(track.preferredTransform)
       return track.preferredTransform.concatenating(
@@ -1187,7 +1187,11 @@ final class LetterboxExporter {
         break
       }
 
-      let orientedImage = CIImage(cvPixelBuffer: pixelBuffer)
+      let formatDescription = CMSampleBufferGetFormatDescription(sampleBuffer)
+      let orientedImage = VideoColorPipeline.sourceImage(
+        pixelBuffer: pixelBuffer,
+        formatDescription: formatDescription
+      )
         .transformed(by: normalizedTransform)
         .cropped(to: CGRect(origin: .zero, size: orientedSize))
       guard
@@ -1578,7 +1582,9 @@ final class LetterboxExporter {
     var audioFinished = audioInput == nil
     var completed = false
     var videoFrameIndex = 0
-    let directRenderContext = CIContext(options: [.cacheIntermediates: false])
+    var didLogScreenSourceColorMetadata = false
+    var didLogCameraSourceColorMetadata = false
+    let directRenderContext = VideoColorPipeline.makeCIContext()
     let inlineCameraRenderer = inlineCameraRenderPlan.map { _ in
       InlineCameraRenderer(
         renderSize: renderSize,
@@ -1774,6 +1780,21 @@ final class LetterboxExporter {
             )
             return false
           }
+          let screenFormatDescription = CMSampleBufferGetFormatDescription(sampleBuffer)
+
+          if !didLogScreenSourceColorMetadata {
+            didLogScreenSourceColorMetadata = true
+            VideoColorPipeline.logColorMetadata(
+              category: "Export",
+              message: "Final export screen source color metadata",
+              formatDescription: screenFormatDescription,
+              pixelBuffer: screenPixelBuffer,
+              extraContext: [
+                "output": outputURL.path,
+                "renderPath": "manual_reader_writer",
+              ]
+            )
+          }
 
           VideoColorPipeline.tag(pixelBuffer: renderedPixelBuffer)
           if let inlineCameraRenderPlan, let inlineCameraRenderer {
@@ -1801,17 +1822,39 @@ final class LetterboxExporter {
               }
               return CMSampleBufferGetImageBuffer(currentCameraSampleBuffer)
             }()
+            let cameraFormatDescription = currentCameraSampleBuffer.flatMap {
+              CMSampleBufferGetFormatDescription($0)
+            }
+
+            if let cameraPixelBuffer, !didLogCameraSourceColorMetadata {
+              didLogCameraSourceColorMetadata = true
+              VideoColorPipeline.logColorMetadata(
+                category: "Export",
+                message: "Final export camera source color metadata",
+                formatDescription: cameraFormatDescription,
+                pixelBuffer: cameraPixelBuffer,
+                extraContext: [
+                  "output": outputURL.path,
+                  "renderPath": "manual_reader_writer",
+                ]
+              )
+            }
 
             inlineCameraRenderer.render(
               screenPixelBuffer: screenPixelBuffer,
+              screenFormatDescription: screenFormatDescription,
               cameraPixelBuffer: cameraPixelBuffer,
+              cameraFormatDescription: cameraFormatDescription,
               cameraTrack: inlineCameraTrack!,
               presentationTime: sampleTime,
               plan: inlineCameraRenderPlan,
               to: renderedPixelBuffer
             )
           } else {
-            let sourceImage = CIImage(cvPixelBuffer: screenPixelBuffer)
+            let sourceImage = VideoColorPipeline.sourceImage(
+              pixelBuffer: screenPixelBuffer,
+              formatDescription: screenFormatDescription
+            )
             let sourceBounds = CGRect(
               origin: .zero,
               size: CGSize(

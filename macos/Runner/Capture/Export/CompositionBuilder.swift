@@ -13,8 +13,9 @@ extension NSImage {
 }
 
 enum VideoColorPipeline {
-  static let workingColorSpace: CGColorSpace =
-    CGColorSpace(name: CGColorSpace.sRGB) ?? CGColorSpaceCreateDeviceRGB()
+  static let workingColorSpace = CGColorSpace(name: CGColorSpace.sRGB)!
+  private static let displayP3ColorSpace =
+    CGColorSpace(name: CGColorSpace.displayP3) ?? workingColorSpace
   static let outputColorPrimaries = AVVideoColorPrimaries_ITU_R_709_2
   static let outputColorTransferFunction = AVVideoTransferFunction_ITU_R_709_2
   static let outputColorYCbCrMatrix = AVVideoYCbCrMatrix_ITU_R_709_2
@@ -39,8 +40,21 @@ enum VideoColorPipeline {
     let context: [String: Any]
   }
 
+  struct ResolvedSourceColorSpace {
+    let colorSpace: CGColorSpace
+    let source: String
+  }
+
   static var workingColorSpaceName: String {
     describe(colorSpace: workingColorSpace)
+  }
+
+  static func makeCIContext(cacheIntermediates: Bool = false) -> CIContext {
+    CIContext(options: [
+      .cacheIntermediates: cacheIntermediates,
+      .workingColorSpace: workingColorSpace,
+      .outputColorSpace: workingColorSpace,
+    ])
   }
 
   static func videoOutputSettings(_ base: [String: Any]) -> [String: Any] {
@@ -128,6 +142,42 @@ enum VideoColorPipeline {
     )
   }
 
+  static func resolveSourceColorSpace(
+    pixelBuffer: CVPixelBuffer?,
+    formatDescription: CMFormatDescription? = nil
+  ) -> ResolvedSourceColorSpace {
+    if let resolved = resolveSourceColorSpace(
+      from: pixelBufferAttachments(pixelBuffer),
+      sourcePrefix: "pixelBuffer"
+    ) {
+      return resolved
+    }
+    if let resolved = resolveSourceColorSpace(
+      from: formatDescriptionExtensions(formatDescription),
+      sourcePrefix: "formatDescription"
+    ) {
+      return resolved
+    }
+    return ResolvedSourceColorSpace(
+      colorSpace: workingColorSpace,
+      source: "fallbackWorkingColorSpace"
+    )
+  }
+
+  static func sourceImage(
+    pixelBuffer: CVPixelBuffer,
+    formatDescription: CMFormatDescription? = nil
+  ) -> CIImage {
+    let resolvedColorSpace = resolveSourceColorSpace(
+      pixelBuffer: pixelBuffer,
+      formatDescription: formatDescription
+    )
+    return CIImage(
+      cvPixelBuffer: pixelBuffer,
+      options: [.colorSpace: resolvedColorSpace.colorSpace]
+    )
+  }
+
   static func cgColor(
     red: CGFloat,
     green: CGFloat,
@@ -195,14 +245,7 @@ enum VideoColorPipeline {
   }
 
   static func pixelBufferColorMetadata(_ pixelBuffer: CVPixelBuffer?) -> [String: String] {
-    guard let pixelBuffer else { return [:] }
-    let attachments: NSDictionary
-    if #available(macOS 12.0, *) {
-      attachments = CVBufferCopyAttachments(pixelBuffer, .shouldPropagate) as NSDictionary? ?? [:]
-    } else {
-      attachments = CVBufferGetAttachments(pixelBuffer, .shouldPropagate) as NSDictionary? ?? [:]
-    }
-    return colorMetadata(from: attachments)
+    colorMetadata(from: pixelBufferAttachments(pixelBuffer) ?? [:])
   }
 
   static func metadataContext(prefix: String, metadata: [String: String]) -> [String: Any] {
@@ -219,10 +262,16 @@ enum VideoColorPipeline {
     extraContext: [String: Any] = [:]
   ) {
     var context = extraContext
+    let resolvedColorSpace = resolveSourceColorSpace(
+      pixelBuffer: pixelBuffer,
+      formatDescription: formatDescription
+    )
     context["workingColorSpace"] = workingColorSpaceName
     context["policyColorPrimaries"] = outputColorPrimaries
     context["policyColorTransferFunction"] = outputColorTransferFunction
     context["policyColorYCbCrMatrix"] = outputColorYCbCrMatrix
+    context["resolvedSourceColorSpace"] = describe(colorSpace: resolvedColorSpace.colorSpace)
+    context["resolvedSourceColorSpaceSource"] = resolvedColorSpace.source
     metadataContext(prefix: "format", metadata: formatDescriptionColorMetadata(formatDescription))
       .forEach { context[$0.key] = $0.value }
     metadataContext(prefix: "buffer", metadata: pixelBufferColorMetadata(pixelBuffer))
@@ -279,9 +328,104 @@ enum VideoColorPipeline {
     guard let value else { return nil }
     let cfValue = value as CFTypeRef
     if CFGetTypeID(cfValue) == CGColorSpace.typeID {
-      return String(describing: cfValue)
+      return describe(colorSpace: unsafeBitCast(cfValue, to: CGColorSpace.self))
     }
     return stringValue(value)
+  }
+
+  private static func pixelBufferAttachments(_ pixelBuffer: CVPixelBuffer?) -> NSDictionary? {
+    guard let pixelBuffer else { return nil }
+    if #available(macOS 12.0, *) {
+      return CVBufferCopyAttachments(pixelBuffer, .shouldPropagate) as NSDictionary? ?? [:]
+    }
+    return CVBufferGetAttachments(pixelBuffer, .shouldPropagate) as NSDictionary? ?? [:]
+  }
+
+  private static func formatDescriptionExtensions(
+    _ formatDescription: CMFormatDescription?
+  ) -> NSDictionary? {
+    guard let formatDescription else { return nil }
+    return CMFormatDescriptionGetExtensions(formatDescription) as NSDictionary? ?? [:]
+  }
+
+  private static func resolveSourceColorSpace(
+    from dictionary: NSDictionary?,
+    sourcePrefix: String
+  ) -> ResolvedSourceColorSpace? {
+    guard let dictionary else { return nil }
+
+    if let colorSpace = normalizedSourceColorSpace(from: dictionary[kCVImageBufferCGColorSpaceKey]) {
+      return ResolvedSourceColorSpace(
+        colorSpace: colorSpace,
+        source: "\(sourcePrefix)ColorSpaceAttachment"
+      )
+    }
+
+    if let colorSpace = normalizedSourceColorSpace(
+      fromColorPrimaries: dictionary[kCVImageBufferColorPrimariesKey]
+    ) {
+      return ResolvedSourceColorSpace(
+        colorSpace: colorSpace,
+        source: "\(sourcePrefix)ColorPrimaries"
+      )
+    }
+
+    return nil
+  }
+
+  private static func normalizedSourceColorSpace(from value: Any?) -> CGColorSpace? {
+    if let colorSpace = cgColorSpace(from: value) {
+      return normalizedSourceColorSpace(colorSpace)
+    }
+
+    guard let description = stringValue(value) else { return nil }
+    if isDisplayP3Description(description) {
+      return displayP3ColorSpace
+    }
+    if isSRGBDescription(description) {
+      return workingColorSpace
+    }
+
+    return nil
+  }
+
+  private static func normalizedSourceColorSpace(fromColorPrimaries value: Any?) -> CGColorSpace? {
+    guard let description = stringValue(value) else { return nil }
+    if isDisplayP3Description(description) {
+      return displayP3ColorSpace
+    }
+    return workingColorSpace
+  }
+
+  private static func cgColorSpace(from value: Any?) -> CGColorSpace? {
+    guard let value else { return nil }
+    let cfValue = value as CFTypeRef
+    guard CFGetTypeID(cfValue) == CGColorSpace.typeID else {
+      return nil
+    }
+    return unsafeBitCast(cfValue, to: CGColorSpace.self)
+  }
+
+  private static func normalizedSourceColorSpace(_ colorSpace: CGColorSpace) -> CGColorSpace {
+    if colorSpace.name as String? == CGColorSpace.displayP3 as String {
+      return displayP3ColorSpace
+    }
+    return workingColorSpace
+  }
+
+  private static func isDisplayP3Description(_ value: String) -> Bool {
+    let normalized = value.lowercased()
+    return normalized.contains("display p3")
+      || normalized.contains("displayp3")
+      || normalized.contains("p3_d65")
+      || normalized == AVVideoColorPrimaries_P3_D65.lowercased()
+      || normalized == String(describing: kCVImageBufferColorPrimaries_P3_D65).lowercased()
+  }
+
+  private static func isSRGBDescription(_ value: String) -> Bool {
+    let normalized = value.lowercased()
+    return normalized.contains("srgb")
+      || normalized == String(describing: CGColorSpace.sRGB).lowercased()
   }
 
   private static func formatDescription(from value: Any, source: String) -> CMFormatDescription? {

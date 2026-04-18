@@ -437,7 +437,7 @@ final class CameraStyledIntermediatePipeline {
     let renderSize = paddedRenderBounds.size
     let renderBounds = CGRect(origin: .zero, size: renderSize)
     let colorSpace = VideoColorPipeline.workingColorSpace
-    let ciContext = CIContext(options: [.cacheIntermediates: false])
+    let ciContext = VideoColorPipeline.makeCIContext()
     let sourceTransform = normalizedSourceTransform(for: videoTrack)
     let sourceSize = orientedSize(for: videoTrack)
     let fittedDrawRect = CameraLayoutResolver.contentRect(
@@ -779,12 +779,14 @@ final class CameraStyledIntermediatePipeline {
             return false
           }
 
+          let formatDescription = CMSampleBufferGetFormatDescription(sampleBuffer)
+
           if !didLogSourceColorMetadata {
             didLogSourceColorMetadata = true
             VideoColorPipeline.logColorMetadata(
               category: "Export",
               message: "Styled camera pre-pass source color metadata",
-              formatDescription: CMSampleBufferGetFormatDescription(sampleBuffer),
+              formatDescription: formatDescription,
               pixelBuffer: sourcePixelBuffer,
               extraContext: [
                 "input": inputAsset.description,
@@ -802,7 +804,10 @@ final class CameraStyledIntermediatePipeline {
             CVPixelBufferUnlockBaseAddress(renderedPixelBuffer, [])
           }
 
-          let sourceImage = CIImage(cvPixelBuffer: sourcePixelBuffer).transformed(by: sourceTransform)
+          let sourceImage = VideoColorPipeline.sourceImage(
+            pixelBuffer: sourcePixelBuffer,
+            formatDescription: formatDescription
+          ).transformed(by: sourceTransform)
           guard
             let sourceCGImage = ciContext.createCGImage(
               sourceImage,
@@ -877,7 +882,7 @@ final class InlineCameraRenderer {
   private let renderSize: CGSize
   private let renderBounds: CGRect
   private let colorSpace = VideoColorPipeline.workingColorSpace
-  private let ciContext = CIContext(options: [.cacheIntermediates: false])
+  private let ciContext = VideoColorPipeline.makeCIContext()
   private let backgroundImage: CIImage
 
   init(
@@ -896,14 +901,25 @@ final class InlineCameraRenderer {
 
   func render(
     screenPixelBuffer: CVPixelBuffer,
+    screenFormatDescription: CMFormatDescription? = nil,
     cameraPixelBuffer: CVPixelBuffer?,
+    cameraFormatDescription: CMFormatDescription? = nil,
     cameraTrack: AVAssetTrack,
     presentationTime: Double,
     plan: CompositionBuilder.InlineCameraRenderPlan,
     to outputPixelBuffer: CVPixelBuffer
   ) {
-    let screenImage = CIImage(cvPixelBuffer: screenPixelBuffer)
-    let cameraImage = cameraPixelBuffer.map { makeCameraSourceImage(pixelBuffer: $0, track: cameraTrack) }
+    let screenImage = VideoColorPipeline.sourceImage(
+      pixelBuffer: screenPixelBuffer,
+      formatDescription: screenFormatDescription
+    )
+    let cameraImage = cameraPixelBuffer.map {
+      makeCameraSourceImage(
+        pixelBuffer: $0,
+        formatDescription: cameraFormatDescription,
+        track: cameraTrack
+      )
+    }
     let composedImage = makeCompositedImage(
       screenImage: screenImage,
       cameraSourceImage: cameraImage,
@@ -945,8 +961,15 @@ final class InlineCameraRenderer {
     }
   }
 
-  func makeCameraSourceImage(pixelBuffer: CVPixelBuffer, track: AVAssetTrack) -> CIImage {
-    let sourceImage = CIImage(cvPixelBuffer: pixelBuffer)
+  func makeCameraSourceImage(
+    pixelBuffer: CVPixelBuffer,
+    formatDescription: CMFormatDescription? = nil,
+    track: AVAssetTrack
+  ) -> CIImage {
+    let sourceImage = VideoColorPipeline.sourceImage(
+      pixelBuffer: pixelBuffer,
+      formatDescription: formatDescription
+    )
     let normalizedTransform = normalizedSourceTransform(for: track)
     let orientedSize = orientedSize(for: track)
     return sourceImage
