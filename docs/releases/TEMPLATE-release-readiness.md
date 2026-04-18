@@ -38,8 +38,8 @@ Run these first.
 
 ```bash
 dart format --output=none --set-exit-if-changed .
-flutter analyze lib
 flutter analyze test
+flutter analyze lib
 flutter build macos --flavor dev
 flutter build macos --flavor prod
 ```
@@ -47,8 +47,8 @@ flutter build macos --flavor prod
 Checklist:
 
 * [ ] `dart format --output=none --set-exit-if-changed .`
-* [ ] `flutter analyze lib`
 * [ ] `flutter analyze test`
+* [ ] `flutter analyze lib`
 * [ ] `flutter build macos --flavor dev`
 * [ ] `flutter build macos --flavor prod`
 
