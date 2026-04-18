@@ -298,7 +298,10 @@ class RecordingController extends ChangeNotifier {
         'allowLowStorageBypass': overrides.allowLowStorageBypass,
       });
     } on PlatformException catch (e, st) {
-      Log.e("Recording", "Failed to start recording: $e");
+      Log.e('Recording', 'Failed to start recording: $e', null, null, {
+        'sessionId': activeSessionId,
+        'details': e.details,
+      });
       await ClingfyTelemetry.captureError(
         e,
         stackTrace: st,
