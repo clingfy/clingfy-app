@@ -18,9 +18,9 @@ Fill this section before starting verification.
 - Channel: `prod`
 - Date: `2026-04-19`
 - Verified by: `Nabil`
-- Commit: `TBD`
+- Commit: `4900053ce64bf8a3bc0676c8b0487b727f9e8d41`
 - Tag: `v1.0.2`
-- Build: `Azure #255` or `GitHub Actions #4`
+- Build: `#20260419.1 • Updates CHANGELOG.md file`
 - Status: `In progress`
 
 Possible status values:
