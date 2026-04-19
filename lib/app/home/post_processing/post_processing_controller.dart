@@ -91,7 +91,7 @@ class PostProcessingController extends ChangeNotifier {
   double _videoRadius = 0; // 0 to 50
   int? _backgroundColor; // null = black default
   String? _backgroundImagePath;
-  double _cursorSize = 1.0;
+  double _cursorSize = 1.5;
   double _zoomFactor = 1.5;
   bool _showCursor = true;
   String? _previewPath;
@@ -558,7 +558,7 @@ class PostProcessingController extends ChangeNotifier {
     _videoRadius = 0;
     _backgroundColor = null;
     _backgroundImagePath = null;
-    _cursorSize = 1.0;
+    _cursorSize = 1.5;
     _zoomFactor = 1.5;
     _showCursor = true;
     _previewPath = null;
