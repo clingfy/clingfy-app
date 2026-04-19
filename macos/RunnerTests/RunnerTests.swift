@@ -1,6 +1,7 @@
 import AVFoundation
 import Cocoa
 import FlutterMacOS
+import ScreenCaptureKit
 import XCTest
 
 @testable import Clingfy
@@ -6205,7 +6206,7 @@ private func makeScreenCaptureKitInvalidParameterStartError(
   startFailureInfo: [String: Any] = [
     "failingCall": "stream.startCapture()",
     "errorOriginFile": "CaptureBackendScreenCaptureKit.swift",
-    "errorOriginLine": 812,
+    "errorOriginLine": 831,
   ]
 ) -> FlutterError {
   CaptureBackendScreenCaptureKit._testWrapRecordingStartFailure(
@@ -6429,7 +6430,7 @@ final class MicrophoneLevelTelemetryTests: XCTestCase {
 
 @available(macOS 15.0, *)
 @MainActor
-final class ScreenRecorderFacadeStartFallbackTests: XCTestCase {
+final class ScreenRecorderFacadeStartFailureTests: XCTestCase {
   func testRecordingStartFailureWrapPreservesStartFailureInfo() throws {
     let error = makeScreenCaptureKitInvalidParameterStartError(
       startFailureInfo: [
@@ -6449,6 +6450,12 @@ final class ScreenRecorderFacadeStartFallbackTests: XCTestCase {
       "com.apple.ScreenCaptureKit.SCStreamErrorDomain"
     )
     XCTAssertEqual(details["underlyingErrorCode"] as? Int, -3812)
+    XCTAssertEqual(details["failingCall"] as? String, "stream.startCapture()")
+    XCTAssertEqual(
+      details["errorOriginFile"] as? String,
+      "CaptureBackendScreenCaptureKit.swift"
+    )
+    XCTAssertEqual(details["errorOriginLine"] as? Int, 815)
     XCTAssertEqual(
       startFailureInfo["failingCall"] as? String,
       "stream.startCapture()"
@@ -6460,74 +6467,64 @@ final class ScreenRecorderFacadeStartFallbackTests: XCTestCase {
     XCTAssertEqual(startFailureInfo["errorOriginLine"] as? Int, 815)
   }
 
-  func testScreenCaptureKitInvalidParameterRetriesWithAVFoundationFallbackAndWarnsOnStart() {
+  func testScreenCaptureKitInvalidParameterStartFailureSurfacesDirectlyWithoutWarning() {
     let facade = ScreenRecorderFacade()
     let primaryBackend = MockScreenCaptureKitCaptureBackend()
-    let fallbackBackend = MockAVFoundationCaptureBackend()
-    let target = CaptureTarget(mode: .explicitID, displayID: 1)
-    let config = facade._testBuildCaptureStartConfig(target: target)
 
     facade._testSetCaptureBackend(primaryBackend)
-    facade._testSetFallbackCaptureBackendFactory { _ in fallbackBackend }
     facade._testSetRecorderState(.starting)
     facade._testSetActiveRecordingWorkflowSessionId("session-123")
-    facade._testSetPendingStartCaptureConfig(config)
 
     var warningPayload: [String: Any]?
+    var failurePayload: [String: Any]?
     facade.onRecordingWarning = { payload in
       warningPayload = payload
     }
-
-    primaryBackend.onFinished?(nil, makeScreenCaptureKitInvalidParameterStartError())
-
-    XCTAssertEqual(fallbackBackend.startConfigs.count, 1)
-    XCTAssertEqual(fallbackBackend.startConfigs.first?.target.displayID, 1)
-    XCTAssertNil(warningPayload)
-
-    fallbackBackend.onStarted?(URL(fileURLWithPath: "/tmp/fallback.mov"))
-
-    XCTAssertEqual(warningPayload?["type"] as? String, "recordingWarning")
-    XCTAssertEqual(warningPayload?["sessionId"] as? String, "session-123")
-    XCTAssertEqual(
-      warningPayload?["message"] as? String,
-      "ScreenCaptureKit couldn’t start recording. Recording started with the AVFoundation fallback."
-    )
-  }
-
-  func testAvFoundationFallbackFailureDoesNotRetryAgainAndCombinesErrors() {
-    let facade = ScreenRecorderFacade()
-    let primaryBackend = MockScreenCaptureKitCaptureBackend()
-    let fallbackBackend = MockAVFoundationCaptureBackend()
-    let target = CaptureTarget(mode: .explicitID, displayID: 1)
-    let config = facade._testBuildCaptureStartConfig(target: target)
-
-    facade._testSetCaptureBackend(primaryBackend)
-    facade._testSetFallbackCaptureBackendFactory { _ in fallbackBackend }
-    facade._testSetRecorderState(.starting)
-    facade._testSetActiveRecordingWorkflowSessionId("session-123")
-    facade._testSetPendingStartCaptureConfig(config)
-
-    var failurePayload: [String: Any]?
     facade.onRecordingFailed = { payload in
       failurePayload = payload
     }
 
     primaryBackend.onFinished?(nil, makeScreenCaptureKitInvalidParameterStartError())
-    fallbackBackend.onFinished?(
-      nil,
-      flutterError(NativeErrorCode.recordingError, "fallback backend failed")
-    )
 
-    XCTAssertEqual(fallbackBackend.startConfigs.count, 1)
+    XCTAssertNil(warningPayload)
     XCTAssertEqual(failurePayload?["type"] as? String, "recordingFailed")
     XCTAssertEqual(failurePayload?["sessionId"] as? String, "session-123")
     XCTAssertEqual(failurePayload?["stage"] as? String, "start")
     XCTAssertEqual(failurePayload?["code"] as? String, NativeErrorCode.recordingError)
+    XCTAssertEqual(
+      failurePayload?["error"] as? String,
+      "Failed due to an invalid parameter"
+    )
+    XCTAssertEqual(failurePayload?["failingCall"] as? String, "stream.startCapture()")
+    XCTAssertEqual(
+      failurePayload?["errorOriginFile"] as? String,
+      "CaptureBackendScreenCaptureKit.swift"
+    )
+    XCTAssertEqual(failurePayload?["errorOriginLine"] as? Int, 831)
+    let details = failurePayload?["details"] as? [String: Any]
+    XCTAssertEqual(
+      details?["underlyingErrorDomain"] as? String,
+      "com.apple.ScreenCaptureKit.SCStreamErrorDomain"
+    )
+    XCTAssertEqual(details?["underlyingErrorCode"] as? Int, -3812)
+  }
 
-    let message = failurePayload?["error"] as? String ?? ""
-    XCTAssertTrue(message.contains("ScreenCaptureKit"))
-    XCTAssertTrue(message.contains("AVFoundation"))
-    XCTAssertTrue(message.contains("fallback backend failed"))
+  func testNativeQualityStreamConfigurationKeepsExplicitSizeWithoutForcingBestResolution() {
+    let backend = CaptureBackendScreenCaptureKit()
+    let streamConfig = backend._testMakeStreamConfiguration(
+      quality: .native,
+      baseRectPoints: CGRect(x: 0, y: 0, width: 1512, height: 982),
+      pointPixelScale: 2.0
+    )
+    let defaultConfig = SCStreamConfiguration()
+
+    XCTAssertEqual(streamConfig.width, 3024)
+    XCTAssertEqual(streamConfig.height, 1964)
+    XCTAssertFalse(streamConfig.scalesToFit)
+    XCTAssertEqual(
+      streamConfig.captureResolution.rawValue,
+      defaultConfig.captureResolution.rawValue
+    )
   }
 }
 

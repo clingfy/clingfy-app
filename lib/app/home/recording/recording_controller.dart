@@ -14,6 +14,24 @@ import 'package:clingfy/app/settings/settings_controller.dart';
 enum _PreviewOpenSource { recordingFinalized, externalProject }
 
 class RecordingController extends ChangeNotifier {
+  static const List<String> _recordingStartFailureContextKeys = [
+    'failingCall',
+    'errorOriginFile',
+    'errorOriginLine',
+    'backend',
+    'targetMode',
+    'displayID',
+    'windowID',
+    'targetCropRect',
+    'sourceRect',
+    'filterContentRect',
+    'streamConfig',
+    'recordingOutputConfig',
+    'underlyingErrorDomain',
+    'underlyingErrorCode',
+    'underlyingErrorDescription',
+  ];
+
   RecordingController({
     required NativeBridge nativeBridge,
     required SettingsController settings,
@@ -186,6 +204,42 @@ class RecordingController extends ChangeNotifier {
     notifyListeners();
   }
 
+  @visibleForTesting
+  static Map<String, dynamic> recordingStartFailureContextFromPlatformException(
+    PlatformException error,
+  ) {
+    final details = _stringKeyedMap(error.details);
+    if (details == null) {
+      return <String, dynamic>{};
+    }
+
+    final startFailureInfo = _stringKeyedMap(details['startFailureInfo']);
+    final context = <String, dynamic>{};
+    if (startFailureInfo != null) {
+      context['startFailureInfo'] = startFailureInfo;
+    }
+
+    for (final key in _recordingStartFailureContextKeys) {
+      final value = details[key] ?? startFailureInfo?[key];
+      if (value != null) {
+        context[key] = value;
+      }
+    }
+    return context;
+  }
+
+  static Map<String, dynamic>? _stringKeyedMap(dynamic value) {
+    if (value is Map<String, dynamic>) {
+      return value;
+    }
+    if (value is Map) {
+      return value.map(
+        (key, nestedValue) => MapEntry(key.toString(), nestedValue),
+      );
+    }
+    return null;
+  }
+
   String? _normalizedPlatformErrorMessage(PlatformException error) {
     final message = error.message;
     if (message == null || message.trim().isEmpty) {
@@ -298,9 +352,14 @@ class RecordingController extends ChangeNotifier {
         'allowLowStorageBypass': overrides.allowLowStorageBypass,
       });
     } on PlatformException catch (e, st) {
+      final startFailureContext =
+          RecordingController.recordingStartFailureContextFromPlatformException(
+            e,
+          );
       Log.e('Recording', 'Failed to start recording: $e', null, null, {
         'sessionId': activeSessionId,
         'details': e.details,
+        ...startFailureContext,
       });
       await ClingfyTelemetry.captureError(
         e,
@@ -314,6 +373,8 @@ class RecordingController extends ChangeNotifier {
           'disableCameraOverlay': overrides.disableCameraOverlay,
           'disableCursorHighlight': overrides.disableCursorHighlight,
           'allowLowStorageBypass': overrides.allowLowStorageBypass,
+          'details': e.details,
+          ...startFailureContext,
         },
       );
       await ClingfyTelemetry.stopSession();

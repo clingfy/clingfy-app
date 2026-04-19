@@ -573,9 +573,6 @@ final class ScreenRecorderFacade: NSObject {
   private var captureBackendFactory: (CaptureTarget) -> CaptureBackend = { target in
     CaptureBackendFactory.make(for: target)
   }
-  private var fallbackCaptureBackendFactory: (CaptureTarget) -> CaptureBackend = { _ in
-    CaptureBackendAVFoundation()
-  }
 
   // Metadata for current recording session (written on start, updated on finish)
   private var pendingMetadata: RecordingMetadata?
@@ -606,10 +603,6 @@ final class ScreenRecorderFacade: NSObject {
   private var suppressOverlayWindowDuringSeparateCameraCapture = false
   private var activeRecordingWorkflowSessionId: String?
   private var hasReceivedRecordingMicrophoneLevel = false
-  private var pendingStartCaptureConfig: CaptureStartConfig?
-  private var hasAttemptedStartBackendFallback = false
-  private var pendingStartFallbackOriginalError: Error?
-  private var pendingStartFallbackWarningMessage: String?
 
   // events out
   var onDevicesChanged: (() -> Void)?
@@ -802,7 +795,6 @@ final class ScreenRecorderFacade: NSObject {
     startResult = result
     state = .starting
     stateAsStr()
-    resetPendingStartRecoveryState()
     refreshMicrophoneLevelMonitoring(resetMeter: true)
     activeRecordingWorkflowSessionId = args?["sessionId"] as? String
     sessionDisableMicrophone = args?["disableMicrophone"] as? Bool ?? false
@@ -1115,7 +1107,6 @@ final class ScreenRecorderFacade: NSObject {
       effectiveOverlayID: effectiveOverlayID,
       systemAudioEnabled: systemAudioEnabled
     )
-    pendingStartCaptureConfig = cfg
     self.capture.start(config: cfg)
   }
 
@@ -2535,15 +2526,16 @@ final class ScreenRecorderFacade: NSObject {
   }
 
   private func finishStartWithError(_ err: FlutterError) {
-    resetPendingStartRecoveryState()
     if let sessionId = activeRecordingWorkflowSessionId {
-      onRecordingFailed?([
+      var payload: [String: Any] = [
         "type": "recordingFailed",
         "sessionId": sessionId,
         "stage": "start",
         "code": err.code,
         "error": err.message ?? "",
-      ])
+      ]
+      Self.mergeRecordingStartFailureDetails(from: err, into: &payload)
+      onRecordingFailed?(payload)
     }
     state = .idle
     stateAsStr()
@@ -3207,131 +3199,53 @@ final class ScreenRecorderFacade: NSObject {
     return String(describing: type(of: capture))
   }
 
-  private func resetPendingStartRecoveryState() {
-    pendingStartCaptureConfig = nil
-    hasAttemptedStartBackendFallback = false
-    pendingStartFallbackOriginalError = nil
-    pendingStartFallbackWarningMessage = nil
-  }
-
-  private func recoverFromScreenCaptureKitStartFailureIfNeeded(screenError: Error) -> Bool {
-    guard state == .starting else { return false }
-    guard !hasAttemptedStartBackendFallback else { return false }
-    guard currentBackendName() == "screencapturekit" else { return false }
-    guard let config = pendingStartCaptureConfig else { return false }
-
-    let underlyingError = Self.recordingStartUnderlyingNSError(from: screenError)
-    guard
-      underlyingError.domain == Self.screenCaptureKitStreamErrorDomain,
-      underlyingError.code == Self.screenCaptureKitInvalidParameterCode
-    else {
-      return false
-    }
-
-    hasAttemptedStartBackendFallback = true
-    pendingStartFallbackOriginalError = screenError
-    pendingStartFallbackWarningMessage =
-      "ScreenCaptureKit couldn’t start recording. Recording started with the AVFoundation fallback."
-
-    NativeLogger.w(
-      "Facade",
-      "Retrying recording start with AVFoundation fallback",
-      context: [
-        "errorDomain": underlyingError.domain,
-        "errorCode": underlyingError.code,
-        "targetMode": "\(config.target.mode)",
-        "displayID": Int(config.target.displayID),
-        "windowID": config.target.windowID.map { Int($0) } ?? NSNull(),
-        "startFailureInfo": Self.recordingStartFailureInfo(from: screenError) ?? [:],
-      ]
-    )
-
-    let fallbackBackend = fallbackCaptureBackendFactory(config.target)
-    setCaptureBackend(fallbackBackend)
-    fallbackBackend.start(config: config)
-    return true
-  }
-
-  private func combinedStartFallbackFailureIfNeeded(screenError: Error?) -> Error? {
-    guard let screenError else { return nil }
-    guard state == .starting else { return screenError }
-    guard let originalError = pendingStartFallbackOriginalError else { return screenError }
-    guard hasAttemptedStartBackendFallback else { return screenError }
-    guard currentBackendName() == "avfoundation" else { return screenError }
-
-    var details: [String: Any] = [
-      "screenCaptureKitFailure": Self.recordingStartErrorSummary(from: originalError),
-      "avFoundationFailure": Self.recordingStartErrorSummary(from: screenError),
-    ]
-    if let startFailureInfo = Self.recordingStartFailureInfo(from: originalError) {
-      details["startFailureInfo"] = startFailureInfo
-    }
-
-    return flutterError(
-      NativeErrorCode.recordingError,
-      "ScreenCaptureKit start failed: \(Self.errorMessage(from: originalError)). AVFoundation fallback failed: \(Self.errorMessage(from: screenError)).",
-      details: details
-    )
-  }
-
-  private static let screenCaptureKitStreamErrorDomain =
-    "com.apple.ScreenCaptureKit.SCStreamErrorDomain"
-  private static let screenCaptureKitInvalidParameterCode = -3812
-
-  private static func recordingStartUnderlyingNSError(from error: Error) -> NSError {
-    guard
-      let details = recordingStartFailureDetails(from: error),
-      let domain = details["underlyingErrorDomain"] as? String,
-      let code = intValue(details["underlyingErrorCode"])
-    else {
-      return error as NSError
-    }
-
-    let description =
-      details["underlyingErrorDescription"] as? String
-      ?? (error as NSError).localizedDescription
-    return NSError(
-      domain: domain,
-      code: code,
-      userInfo: [NSLocalizedDescriptionKey: description]
-    )
-  }
-
-  private static func recordingStartFailureInfo(from error: Error) -> [String: Any]? {
-    guard
-      let details = recordingStartFailureDetails(from: error),
-      let info = dictionaryValue(details["startFailureInfo"])
-    else {
-      return nil
-    }
-    return info
-  }
-
   private static func recordingStartFailureDetails(from error: Error) -> [String: Any]? {
     guard let flutterError = error as? FlutterError else { return nil }
     return dictionaryValue(flutterError.details)
   }
 
-  private static func recordingStartErrorSummary(from error: Error) -> [String: Any] {
-    if let flutterError = error as? FlutterError {
-      var summary: [String: Any] = [
-        "type": "flutterError",
-        "code": flutterError.code,
-        "message": flutterError.message ?? "",
-      ]
-      if let details = recordingStartFailureDetails(from: error) {
-        summary["details"] = details
-      }
-      return summary
-    }
+  private static func flattenedRecordingStartFailureDetails(from error: Error) -> [String: Any] {
+    guard let details = recordingStartFailureDetails(from: error) else { return [:] }
 
-    let nsError = error as NSError
-    return [
-      "type": "nsError",
-      "domain": nsError.domain,
-      "code": nsError.code,
-      "message": nsError.localizedDescription,
+    let flattenedKeys = [
+      "failingCall",
+      "errorOriginFile",
+      "errorOriginLine",
+      "backend",
+      "targetMode",
+      "displayID",
+      "windowID",
+      "targetCropRect",
+      "sourceRect",
+      "filterContentRect",
+      "streamConfig",
+      "recordingOutputConfig",
+      "underlyingErrorDomain",
+      "underlyingErrorCode",
+      "underlyingErrorDescription",
     ]
+    let startFailureInfo = dictionaryValue(details["startFailureInfo"])
+
+    var flattened: [String: Any] = [:]
+    if let startFailureInfo {
+      flattened["startFailureInfo"] = startFailureInfo
+    }
+    for key in flattenedKeys {
+      flattened[key] = details[key] ?? startFailureInfo?[key] ?? NSNull()
+    }
+    return flattened
+  }
+
+  private static func mergeRecordingStartFailureDetails(
+    from error: Error,
+    into payload: inout [String: Any]
+  ) {
+    guard let details = recordingStartFailureDetails(from: error) else { return }
+    payload["details"] = details
+    payload.merge(
+      flattenedRecordingStartFailureDetails(from: error),
+      uniquingKeysWith: { _, new in new }
+    )
   }
 
   private static func errorMessage(from error: Error) -> String {
@@ -3349,19 +3263,6 @@ final class ScreenRecorderFacade: NSObject {
       return Dictionary(uniqueKeysWithValues: dictionary.map { key, value in
         (String(describing: key), value)
       })
-    }
-    return nil
-  }
-
-  private static func intValue(_ value: Any?) -> Int? {
-    if let int = value as? Int {
-      return int
-    }
-    if let number = value as? NSNumber {
-      return number.intValue
-    }
-    if let string = value as? String {
-      return Int(string)
     }
     return nil
   }
@@ -3589,7 +3490,6 @@ final class ScreenRecorderFacade: NSObject {
     completion: FlutterResult?,
     mode: RecordingCompletionMode = .ready
   ) {
-    resetPendingStartRecoveryState()
     if let error {
       resolvePauseResumeFailure(error)
     } else {
@@ -3621,13 +3521,15 @@ final class ScreenRecorderFacade: NSObject {
         updateProjectManifestStatus(.failed, projectRoot: projectRoot)
       }
       if let sessionId = activeRecordingWorkflowSessionId {
-        onRecordingFailed?([
+        var payload: [String: Any] = [
           "type": "recordingFailed",
           "sessionId": sessionId,
           "stage": wasStarting ? "start" : "finalize",
           "code": NativeErrorCode.recordingError,
           "error": errorMessage,
-        ])
+        ]
+        Self.mergeRecordingStartFailureDetails(from: error, into: &payload)
+        onRecordingFailed?(payload)
       }
       if wasStarting {
         let startErr =
@@ -3638,7 +3540,11 @@ final class ScreenRecorderFacade: NSObject {
       NativeLogger.e(
         "Facade",
         "Recording finished with error",
-        context: ["error": errorMessage]
+        context: {
+          var context: [String: Any] = ["error": errorMessage]
+          Self.mergeRecordingStartFailureDetails(from: error, into: &context)
+          return context
+        }()
       )
       completion?(flutterError(NativeErrorCode.recordingError, errorMessage))
       activeRecordingProjectRoot = nil
@@ -3718,18 +3624,7 @@ final class ScreenRecorderFacade: NSObject {
       self.onRecordingStateChanged?(true)
       if let sessionId = self.activeRecordingWorkflowSessionId {
         self.onRecordingStarted?(sessionId)
-        if let warning = self.pendingStartFallbackWarningMessage {
-          self.pendingStartFallbackWarningMessage = nil
-          self.onRecordingWarning?([
-            "type": "recordingWarning",
-            "sessionId": sessionId,
-            "message": warning,
-          ])
-        }
       }
-      self.pendingStartFallbackOriginalError = nil
-      self.pendingStartCaptureConfig = nil
-      self.hasAttemptedStartBackendFallback = false
 
       self.applyIndicatorState()
 
@@ -3794,16 +3689,6 @@ final class ScreenRecorderFacade: NSObject {
           "error": terminalError.map { Self.errorMessage(from: $0) } ?? "nil",
         ])
 
-      if let terminalError,
-        self.recoverFromScreenCaptureKitStartFailureIfNeeded(screenError: terminalError)
-      {
-        return
-      }
-
-      let resolvedTerminalError = self.combinedStartFallbackFailureIfNeeded(
-        screenError: terminalError
-      )
-
       let pendingStartResult = self.startResult
       let wasStarting = self.state == .starting
       if wasStarting {
@@ -3863,7 +3748,7 @@ final class ScreenRecorderFacade: NSObject {
 
         self.completeRecordingLifecycle(
           finalURL: finalURL,
-          error: resolvedTerminalError,
+          error: terminalError,
           wasStarting: wasStarting,
           pendingStartResult: pendingStartResult,
           completion: completion,
@@ -3871,11 +3756,11 @@ final class ScreenRecorderFacade: NSObject {
         )
       }
 
-      if let resolvedTerminalError {
+      if let terminalError {
         if self.pendingSeparateCameraFailure != nil {
           self.completeRecordingLifecycle(
             finalURL: nil,
-            error: resolvedTerminalError,
+            error: terminalError,
             wasStarting: wasStarting,
             pendingStartResult: pendingStartResult,
             completion: completion
@@ -3891,12 +3776,12 @@ final class ScreenRecorderFacade: NSObject {
             case .failure(let cameraError):
               NativeLogger.w(
                 "Facade",
-                "Camera recorder stop failed during screen failure fallback",
+                "Camera recorder stop failed after screen recording failure",
                 context: ["error": cameraError.localizedDescription]
               )
               self.completeRecordingLifecycle(
                 finalURL: nil,
-                error: resolvedTerminalError,
+                error: terminalError,
                 wasStarting: wasStarting,
                 pendingStartResult: pendingStartResult,
                 completion: completion
@@ -3906,7 +3791,7 @@ final class ScreenRecorderFacade: NSObject {
         } else {
           self.completeRecordingLifecycle(
             finalURL: nil,
-            error: resolvedTerminalError,
+            error: terminalError,
             wasStarting: wasStarting,
             pendingStartResult: pendingStartResult,
             completion: completion
@@ -4127,15 +4012,6 @@ final class ScreenRecorderFacade: NSObject {
 
   func _testSetActiveRecordingWorkflowSessionId(_ id: String?) {
     activeRecordingWorkflowSessionId = id
-  }
-
-  func _testSetPendingStartCaptureConfig(_ config: CaptureStartConfig?) {
-    pendingStartCaptureConfig = config
-  }
-
-  func _testSetFallbackCaptureBackendFactory(_ factory: @escaping (CaptureTarget) -> CaptureBackend)
-  {
-    fallbackCaptureBackendFactory = factory
   }
 
   func _testRefreshMicrophoneLevelMonitoring(resetMeter: Bool) {
