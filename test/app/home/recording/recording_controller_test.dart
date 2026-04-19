@@ -107,6 +107,62 @@ void main() {
   });
 
   test(
+    'recordingStartFailureContextFromPlatformException keeps flattened native diagnostics',
+    () {
+      final context =
+          RecordingController.recordingStartFailureContextFromPlatformException(
+            PlatformException(
+              code: 'RECORDING_ERROR',
+              message: 'Failed due to an invalid parameter',
+              details: <String, dynamic>{
+                'underlyingErrorDomain':
+                    'com.apple.ScreenCaptureKit.SCStreamErrorDomain',
+                'underlyingErrorCode': -3812,
+                'startFailureInfo': <String, dynamic>{
+                  'failingCall': 'stream.startCapture()',
+                  'errorOriginFile': 'CaptureBackendScreenCaptureKit.swift',
+                  'errorOriginLine': 815,
+                  'backend': 'screenCaptureKit',
+                  'targetMode': 'explicitID',
+                  'displayID': 1,
+                  'streamConfig': <String, dynamic>{
+                    'width': 3024,
+                    'height': 1964,
+                  },
+                  'recordingOutputConfig': <String, dynamic>{
+                    'outputFileType': 'mov',
+                  },
+                },
+              },
+            ),
+          );
+
+      expect(context['failingCall'], 'stream.startCapture()');
+      expect(
+        context['errorOriginFile'],
+        'CaptureBackendScreenCaptureKit.swift',
+      );
+      expect(context['errorOriginLine'], 815);
+      expect(context['backend'], 'screenCaptureKit');
+      expect(context['targetMode'], 'explicitID');
+      expect(context['displayID'], 1);
+      expect(
+        context['underlyingErrorDomain'],
+        'com.apple.ScreenCaptureKit.SCStreamErrorDomain',
+      );
+      expect(context['underlyingErrorCode'], -3812);
+      expect(context['streamConfig'], <String, dynamic>{
+        'width': 3024,
+        'height': 1964,
+      });
+      expect(context['recordingOutputConfig'], <String, dynamic>{
+        'outputFileType': 'mov',
+      });
+      expect(context['startFailureInfo'], isA<Map<String, dynamic>>());
+    },
+  );
+
+  test(
     'recordingStarted transitions to recording for active session',
     () async {
       final harness = await createHarness();
