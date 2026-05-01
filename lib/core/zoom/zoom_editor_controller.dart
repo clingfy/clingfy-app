@@ -496,7 +496,10 @@ class ZoomEditorController extends ChangeNotifier {
   /// Returns true when adding a default-sized segment centered around
   /// [centerMs] would either fail to fit or overlap an existing display
   /// segment. Used by the lane to decide whether to show the ghost.
-  bool canAddDefaultSegmentAt(int centerMs, {int durationMs = defaultNewSegmentDurationMs}) {
+  bool canAddDefaultSegmentAt(
+    int centerMs, {
+    int durationMs = defaultNewSegmentDurationMs,
+  }) {
     if (this.durationMs <= 0) return false;
     final span = _resolveDefaultSpan(centerMs, durationMs);
     if (span == null) return false;
@@ -506,7 +509,10 @@ class ZoomEditorController extends ChangeNotifier {
   /// Resolved (start, end) for a default-sized segment centered around
   /// [centerMs], clamped to the timeline. Returns null when the resulting
   /// span cannot satisfy [minDurationMs] or fits inside the timeline.
-  (int, int)? defaultSpanFor(int centerMs, {int durationMs = defaultNewSegmentDurationMs}) {
+  (int, int)? defaultSpanFor(
+    int centerMs, {
+    int durationMs = defaultNewSegmentDurationMs,
+  }) {
     return _resolveDefaultSpan(centerMs, durationMs);
   }
 
@@ -1169,6 +1175,12 @@ class ZoomEditorController extends ChangeNotifier {
     if (!_snappingEnabled) return clamped;
     return _snapToGrid(clamped);
   }
+
+  /// Public accessor mirroring [_normalizeEditableMs]. UI surfaces such as
+  /// hover ghosts can use this to preview the same ms the controller would
+  /// commit. Snap-on returns frame-grid aligned ms; snap-off returns the raw
+  /// clamped ms.
+  int normalizeEditableMsForUi(int ms) => _normalizeEditableMs(ms);
 
   void setSnappingEnabled(bool enabled) {
     if (_snappingEnabled == enabled) return;

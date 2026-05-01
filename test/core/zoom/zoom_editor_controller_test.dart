@@ -322,6 +322,92 @@ void main() {
     expect(controller.manualSegments, hasLength(1));
   });
 
+  testWidgets('snap OFF: defaultSpanFor returns raw non-grid span',
+      (tester) async {
+    await installCommonNativeMocks();
+    final controller = ZoomEditorController(
+      nativeBridge: NativeBridge.instance,
+      videoPath: '/tmp/demo.mov',
+      durationMs: 8000,
+    );
+    await controller.init();
+    addTearDown(controller.dispose);
+
+    controller.setSnappingEnabled(false);
+    // Center is intentionally off the 60fps grid (~16.667ms).
+    final span = controller.defaultSpanFor(4001);
+    expect(span, isNotNull);
+    final start = span!.$1;
+    final end = span.$2;
+    // With snap off, normalizeEditableMsForUi must equal the raw clamped ms.
+    expect(controller.normalizeEditableMsForUi(start), start);
+    expect(controller.normalizeEditableMsForUi(end), end);
+    // And the raw center should not be force-aligned to the frame grid.
+    final raw = 4001;
+    expect(controller.normalizeEditableMsForUi(raw), raw);
+  });
+
+  testWidgets('snap ON: defaultSpanFor aligns to frame grid',
+      (tester) async {
+    await installCommonNativeMocks();
+    final controller = ZoomEditorController(
+      nativeBridge: NativeBridge.instance,
+      videoPath: '/tmp/demo.mov',
+      durationMs: 8000,
+    );
+    await controller.init();
+    addTearDown(controller.dispose);
+    expect(controller.snappingEnabled, isTrue);
+
+    // Ensure normalize collapses non-grid input to the frame grid.
+    final raw = 4001;
+    final normalized = controller.normalizeEditableMsForUi(raw);
+    expect(_isOnFrameGrid(normalized), isTrue);
+  });
+
+  testWidgets('setSnappingEnabled notifies listeners exactly once',
+      (tester) async {
+    await installCommonNativeMocks();
+    final controller = ZoomEditorController(
+      nativeBridge: NativeBridge.instance,
+      videoPath: '/tmp/demo.mov',
+      durationMs: 8000,
+    );
+    await controller.init();
+    addTearDown(controller.dispose);
+
+    var notifyCount = 0;
+    controller.addListener(() => notifyCount++);
+
+    controller.setSnappingEnabled(false);
+    expect(notifyCount, 1);
+    // Same value: no extra notification.
+    controller.setSnappingEnabled(false);
+    expect(notifyCount, 1);
+    controller.setSnappingEnabled(true);
+    expect(notifyCount, 2);
+  });
+
+  testWidgets('canAddDefaultSegmentAt respects snap-off span',
+      (tester) async {
+    await installCommonNativeMocks();
+    final controller = ZoomEditorController(
+      nativeBridge: NativeBridge.instance,
+      videoPath: '/tmp/demo.mov',
+      durationMs: 8000,
+    );
+    await controller.init();
+    addTearDown(controller.dispose);
+
+    controller.setSnappingEnabled(false);
+    expect(controller.canAddDefaultSegmentAt(4001), isTrue);
+    final created = controller.addDefaultSegmentAt(4001);
+    expect(created, isNotNull);
+    // No further default segment can be placed at the center of the new one.
+    final center = ((created!.startMs + created.endMs) / 2).round();
+    expect(controller.canAddDefaultSegmentAt(center), isFalse);
+  });
+
   testWidgets('addDefaultSegmentAt clamps near timeline start/end',
       (tester) async {
     await installCommonNativeMocks();

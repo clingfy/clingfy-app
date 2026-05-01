@@ -228,21 +228,21 @@ class _TimelineToolbarButton extends StatelessWidget {
       button: true,
       label: label,
       enabled: onPressed != null,
-      child: DecoratedBox(
-        decoration: BoxDecoration(
-          color: isActive
-              ? accentColor.withValues(alpha: 0.12)
-              : Colors.transparent,
-          borderRadius: BorderRadius.circular(chrome.controlRadius),
-          border: Border.all(
+      child: GestureDetector(
+        behavior: HitTestBehavior.opaque,
+        onTap: onPressed,
+        child: DecoratedBox(
+          decoration: BoxDecoration(
             color: isActive
-                ? accentColor.withValues(alpha: 0.28)
-                : theme.dividerColor.withValues(alpha: 0.12),
+                ? accentColor.withValues(alpha: 0.12)
+                : Colors.transparent,
+            borderRadius: BorderRadius.circular(chrome.controlRadius),
+            border: Border.all(
+              color: isActive
+                  ? accentColor.withValues(alpha: 0.28)
+                  : theme.dividerColor.withValues(alpha: 0.12),
+            ),
           ),
-        ),
-        child: InkWell(
-          borderRadius: BorderRadius.circular(chrome.controlRadius),
-          onTap: onPressed,
           child: ConstrainedBox(
             constraints: BoxConstraints(minHeight: chipMinHeight),
             child: Padding(
