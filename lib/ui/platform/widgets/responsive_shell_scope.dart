@@ -77,6 +77,57 @@ class ShellResponsiveMetrics {
     required this.sidebarControlHeightMac,
     required this.sidebarControlHeightDefault,
     required this.sidebarCompactButtonHeight,
+    required this.timelineShellGap,
+    required this.timelineShellPaddingX,
+    required this.timelineShellPaddingY,
+    required this.timelineHeaderMinHeight,
+    required this.timelineTransportMinHeight,
+    required this.timelineChromePaddingX,
+    required this.timelineChromePaddingY,
+    required this.timelineControlGap,
+    required this.timelineSectionGap,
+    required this.timelineRulerHeight,
+    required this.timelineLaneHeight,
+    required this.timelineLaneGap,
+    required this.timelineTrackHeaderWidth,
+    required this.timelineTrackHeaderPaddingX,
+    required this.timelineLaneHeaderIconSize,
+    required this.timelineLaneHeaderIconTextGap,
+    required this.timelineLaneHeaderTextScale,
+    required this.timelineToolbarChipMinHeight,
+    required this.timelineToolbarChipPaddingX,
+    required this.timelineToolbarChipPaddingY,
+    required this.timelineToolbarChipIconSize,
+    required this.timelineToolbarChipTextScale,
+    required this.timelineCloseIconSize,
+    required this.timelineIconButtonSize,
+    required this.timelineIconButtonIconSize,
+    required this.timelineButtonMinHeight,
+    required this.timelineZoomSliderMinWidth,
+    required this.timelineZoomSliderMaxWidth,
+    required this.timelineZoomSliderWidthFactor,
+    required this.timelineTimeTextScale,
+    required this.timelineModeTextScale,
+    required this.timelineHideZoomLabelBelowWidth,
+    required this.timelineCompactTransportBelowWidth,
+    required this.timelineRulerLabelFontSize,
+    required this.timelineRulerMajorTickHeight,
+    required this.timelineRulerMinorTickHeight,
+    required this.timelineRulerMajorStrokeWidth,
+    required this.timelineRulerMinorStrokeWidth,
+    required this.timelineRulerLabelTop,
+    required this.timelineRulerMinMajorTickSpacing,
+    required this.timelinePlayheadHoverWidth,
+    required this.timelinePlayheadLineWidth,
+    required this.timelinePlayheadCapWidth,
+    required this.timelinePlayheadCapHeight,
+    required this.timelinePlayheadCapRadius,
+    required this.timelinePlayheadCapTop,
+    required this.timelinePlayheadShadowBlur,
+    required this.timelineMarkerPinUp,
+    required this.timelineMarkerPinDown,
+    required this.timelineMarkerStrokeWidth,
+    required this.timelineMarkerMaxVisiblePins,
     required this.sidebarIconSmall,
     required this.sidebarIconMedium,
     required this.sidebarActionIconSize,
@@ -162,6 +213,71 @@ class ShellResponsiveMetrics {
   final double sidebarIconSmall;
   final double sidebarIconMedium;
   final double sidebarActionIconSize;
+
+  // Timeline chrome / structural metrics.
+  final double timelineShellGap;
+  final double timelineShellPaddingX;
+  final double timelineShellPaddingY;
+  final double timelineHeaderMinHeight;
+  final double timelineTransportMinHeight;
+  final double timelineChromePaddingX;
+  final double timelineChromePaddingY;
+  final double timelineControlGap;
+  final double timelineSectionGap;
+
+  // Timeline viewport.
+  final double timelineRulerHeight;
+  final double timelineLaneHeight;
+  final double timelineLaneGap;
+  final double timelineTrackHeaderWidth;
+  final double timelineTrackHeaderPaddingX;
+  final double timelineLaneHeaderIconSize;
+  final double timelineLaneHeaderIconTextGap;
+  final double timelineLaneHeaderTextScale;
+
+  // Timeline header/transport controls.
+  final double timelineToolbarChipMinHeight;
+  final double timelineToolbarChipPaddingX;
+  final double timelineToolbarChipPaddingY;
+  final double timelineToolbarChipIconSize;
+  final double timelineToolbarChipTextScale;
+  final double timelineCloseIconSize;
+  final double timelineIconButtonSize;
+  final double timelineIconButtonIconSize;
+  final double timelineButtonMinHeight;
+
+  // Transport.
+  final double timelineZoomSliderMinWidth;
+  final double timelineZoomSliderMaxWidth;
+  final double timelineZoomSliderWidthFactor;
+  final double timelineTimeTextScale;
+  final double timelineModeTextScale;
+  final double timelineHideZoomLabelBelowWidth;
+  final double timelineCompactTransportBelowWidth;
+
+  // Ruler painter.
+  final double timelineRulerLabelFontSize;
+  final double timelineRulerMajorTickHeight;
+  final double timelineRulerMinorTickHeight;
+  final double timelineRulerMajorStrokeWidth;
+  final double timelineRulerMinorStrokeWidth;
+  final double timelineRulerLabelTop;
+  final double timelineRulerMinMajorTickSpacing;
+
+  // Playhead.
+  final double timelinePlayheadHoverWidth;
+  final double timelinePlayheadLineWidth;
+  final double timelinePlayheadCapWidth;
+  final double timelinePlayheadCapHeight;
+  final double timelinePlayheadCapRadius;
+  final double timelinePlayheadCapTop;
+  final double timelinePlayheadShadowBlur;
+
+  // Markers.
+  final double timelineMarkerPinUp;
+  final double timelineMarkerPinDown;
+  final double timelineMarkerStrokeWidth;
+  final int timelineMarkerMaxVisiblePins;
 
   /// True when window is narrow enough that the options panel should auto
   /// collapse / be hidden by default.
@@ -381,6 +497,80 @@ class ShellResponsiveMetrics {
       sidebarIconSmall: _atLeast(14 * scale, 12),
       sidebarIconMedium: _atLeast(18 * scale, 14),
       sidebarActionIconSize: _atLeast(20 * scale, 16),
+      // Timeline structural metrics. Comfortable values mirror existing
+      // appEditorChrome / appSpacing values used today; smaller densities
+      // shrink toward hard minimums.
+      timelineShellGap: _atLeast(6 * scale, 3),
+      timelineShellPaddingX: _atLeast(0 * scale, 0),
+      timelineShellPaddingY: _atLeast(0 * scale, 0),
+      timelineHeaderMinHeight: _atLeast(40 * scale, 32),
+      timelineTransportMinHeight: _atLeast(40 * scale, 32),
+      timelineChromePaddingX: _atLeast(12 * scale, 8),
+      timelineChromePaddingY: _atLeast(8 * scale, 5),
+      timelineControlGap: _atLeast(6 * scale, 4),
+      timelineSectionGap: _atLeast(12 * scale, 8),
+      timelineRulerHeight: _atLeast(28 * scale, 24),
+      timelineLaneHeight: _atLeast(42 * scale, 34),
+      timelineLaneGap: _atLeast(6 * scale, 3),
+      timelineTrackHeaderWidth: _atLeast(92 * scale, 56),
+      timelineTrackHeaderPaddingX: _atLeast(4 * scale, 3),
+      timelineLaneHeaderIconSize: _atLeast(16 * scale, 13),
+      timelineLaneHeaderIconTextGap: _atLeast(4 * scale, 3),
+      timelineLaneHeaderTextScale: _clampDouble(
+        0.86 + (scale - 0.78) * 0.6,
+        0.86,
+        1.0,
+      ),
+      timelineToolbarChipMinHeight: _atLeast(34 * scale, 28),
+      timelineToolbarChipPaddingX: _atLeast(8 * scale, 5),
+      timelineToolbarChipPaddingY: _atLeast(4 * scale, 3),
+      timelineToolbarChipIconSize: _atLeast(16 * scale, 13),
+      timelineToolbarChipTextScale: _clampDouble(
+        0.86 + (scale - 0.78) * 0.6,
+        0.86,
+        1.0,
+      ),
+      timelineCloseIconSize: _atLeast(17 * scale, 13),
+      timelineIconButtonSize: _atLeast(32 * scale, 28),
+      timelineIconButtonIconSize: _atLeast(18 * scale, 14),
+      timelineButtonMinHeight: _atLeast(32 * scale, 28),
+      timelineZoomSliderMinWidth: _atLeast(120 * scale, 80),
+      timelineZoomSliderMaxWidth: _atLeast(220 * scale, 140),
+      timelineZoomSliderWidthFactor: 0.20,
+      timelineTimeTextScale: _clampDouble(
+        0.86 + (scale - 0.78) * 0.6,
+        0.86,
+        1.0,
+      ),
+      timelineModeTextScale: _clampDouble(
+        0.86 + (scale - 0.78) * 0.6,
+        0.86,
+        1.0,
+      ),
+      timelineHideZoomLabelBelowWidth: _atLeast(560 * scale, 420),
+      timelineCompactTransportBelowWidth: _atLeast(640 * scale, 480),
+      timelineRulerLabelFontSize: _atLeast(11 * scale, 9.5),
+      timelineRulerMajorTickHeight: _atLeast(15 * scale, 9),
+      timelineRulerMinorTickHeight: _atLeast(8 * scale, 5),
+      timelineRulerMajorStrokeWidth: 1.2,
+      timelineRulerMinorStrokeWidth: 1.0,
+      timelineRulerLabelTop: _atLeast(6 * scale, 4),
+      timelineRulerMinMajorTickSpacing: _atLeast(110 * scale, 72),
+      timelinePlayheadHoverWidth: _atLeast(1.5 * scale, 1.0),
+      timelinePlayheadLineWidth: _atLeast(2 * scale, 1.5),
+      timelinePlayheadCapWidth: _atLeast(8 * scale, 6),
+      timelinePlayheadCapHeight: _atLeast(6 * scale, 4),
+      timelinePlayheadCapRadius: _atLeast(3 * scale, 2),
+      timelinePlayheadCapTop: _atLeast(1 * scale, 0.5),
+      timelinePlayheadShadowBlur: _atLeast(5 * scale, 3),
+      timelineMarkerPinUp: _atLeast(8 * scale, 5),
+      timelineMarkerPinDown: _atLeast(5 * scale, 3),
+      timelineMarkerStrokeWidth: 1.25,
+      timelineMarkerMaxVisiblePins: density == ShellDensity.minimal
+          ? 6
+          : density == ShellDensity.dense
+              ? 7
+              : 8,
       autoCollapseOptions: isMinimal,
       autoCompactRail: isMinimal,
     );
@@ -494,6 +684,65 @@ class ShellResponsiveMetrics {
         other.sidebarIconSmall == sidebarIconSmall &&
         other.sidebarIconMedium == sidebarIconMedium &&
         other.sidebarActionIconSize == sidebarActionIconSize &&
+        other.timelineShellGap == timelineShellGap &&
+        other.timelineShellPaddingX == timelineShellPaddingX &&
+        other.timelineShellPaddingY == timelineShellPaddingY &&
+        other.timelineHeaderMinHeight == timelineHeaderMinHeight &&
+        other.timelineTransportMinHeight == timelineTransportMinHeight &&
+        other.timelineChromePaddingX == timelineChromePaddingX &&
+        other.timelineChromePaddingY == timelineChromePaddingY &&
+        other.timelineControlGap == timelineControlGap &&
+        other.timelineSectionGap == timelineSectionGap &&
+        other.timelineRulerHeight == timelineRulerHeight &&
+        other.timelineLaneHeight == timelineLaneHeight &&
+        other.timelineLaneGap == timelineLaneGap &&
+        other.timelineTrackHeaderWidth == timelineTrackHeaderWidth &&
+        other.timelineTrackHeaderPaddingX == timelineTrackHeaderPaddingX &&
+        other.timelineLaneHeaderIconSize == timelineLaneHeaderIconSize &&
+        other.timelineLaneHeaderIconTextGap ==
+            timelineLaneHeaderIconTextGap &&
+        other.timelineLaneHeaderTextScale == timelineLaneHeaderTextScale &&
+        other.timelineToolbarChipMinHeight == timelineToolbarChipMinHeight &&
+        other.timelineToolbarChipPaddingX == timelineToolbarChipPaddingX &&
+        other.timelineToolbarChipPaddingY == timelineToolbarChipPaddingY &&
+        other.timelineToolbarChipIconSize == timelineToolbarChipIconSize &&
+        other.timelineToolbarChipTextScale == timelineToolbarChipTextScale &&
+        other.timelineCloseIconSize == timelineCloseIconSize &&
+        other.timelineIconButtonSize == timelineIconButtonSize &&
+        other.timelineIconButtonIconSize == timelineIconButtonIconSize &&
+        other.timelineButtonMinHeight == timelineButtonMinHeight &&
+        other.timelineZoomSliderMinWidth == timelineZoomSliderMinWidth &&
+        other.timelineZoomSliderMaxWidth == timelineZoomSliderMaxWidth &&
+        other.timelineZoomSliderWidthFactor ==
+            timelineZoomSliderWidthFactor &&
+        other.timelineTimeTextScale == timelineTimeTextScale &&
+        other.timelineModeTextScale == timelineModeTextScale &&
+        other.timelineHideZoomLabelBelowWidth ==
+            timelineHideZoomLabelBelowWidth &&
+        other.timelineCompactTransportBelowWidth ==
+            timelineCompactTransportBelowWidth &&
+        other.timelineRulerLabelFontSize == timelineRulerLabelFontSize &&
+        other.timelineRulerMajorTickHeight == timelineRulerMajorTickHeight &&
+        other.timelineRulerMinorTickHeight == timelineRulerMinorTickHeight &&
+        other.timelineRulerMajorStrokeWidth ==
+            timelineRulerMajorStrokeWidth &&
+        other.timelineRulerMinorStrokeWidth ==
+            timelineRulerMinorStrokeWidth &&
+        other.timelineRulerLabelTop == timelineRulerLabelTop &&
+        other.timelineRulerMinMajorTickSpacing ==
+            timelineRulerMinMajorTickSpacing &&
+        other.timelinePlayheadHoverWidth == timelinePlayheadHoverWidth &&
+        other.timelinePlayheadLineWidth == timelinePlayheadLineWidth &&
+        other.timelinePlayheadCapWidth == timelinePlayheadCapWidth &&
+        other.timelinePlayheadCapHeight == timelinePlayheadCapHeight &&
+        other.timelinePlayheadCapRadius == timelinePlayheadCapRadius &&
+        other.timelinePlayheadCapTop == timelinePlayheadCapTop &&
+        other.timelinePlayheadShadowBlur == timelinePlayheadShadowBlur &&
+        other.timelineMarkerPinUp == timelineMarkerPinUp &&
+        other.timelineMarkerPinDown == timelineMarkerPinDown &&
+        other.timelineMarkerStrokeWidth == timelineMarkerStrokeWidth &&
+        other.timelineMarkerMaxVisiblePins ==
+            timelineMarkerMaxVisiblePins &&
         other.autoCollapseOptions == autoCollapseOptions &&
         other.autoCompactRail == autoCompactRail;
   }
@@ -570,6 +819,57 @@ class ShellResponsiveMetrics {
     sidebarIconSmall,
     sidebarIconMedium,
     sidebarActionIconSize,
+    timelineShellGap,
+    timelineShellPaddingX,
+    timelineShellPaddingY,
+    timelineHeaderMinHeight,
+    timelineTransportMinHeight,
+    timelineChromePaddingX,
+    timelineChromePaddingY,
+    timelineControlGap,
+    timelineSectionGap,
+    timelineRulerHeight,
+    timelineLaneHeight,
+    timelineLaneGap,
+    timelineTrackHeaderWidth,
+    timelineTrackHeaderPaddingX,
+    timelineLaneHeaderIconSize,
+    timelineLaneHeaderIconTextGap,
+    timelineLaneHeaderTextScale,
+    timelineToolbarChipMinHeight,
+    timelineToolbarChipPaddingX,
+    timelineToolbarChipPaddingY,
+    timelineToolbarChipIconSize,
+    timelineToolbarChipTextScale,
+    timelineCloseIconSize,
+    timelineIconButtonSize,
+    timelineIconButtonIconSize,
+    timelineButtonMinHeight,
+    timelineZoomSliderMinWidth,
+    timelineZoomSliderMaxWidth,
+    timelineZoomSliderWidthFactor,
+    timelineTimeTextScale,
+    timelineModeTextScale,
+    timelineHideZoomLabelBelowWidth,
+    timelineCompactTransportBelowWidth,
+    timelineRulerLabelFontSize,
+    timelineRulerMajorTickHeight,
+    timelineRulerMinorTickHeight,
+    timelineRulerMajorStrokeWidth,
+    timelineRulerMinorStrokeWidth,
+    timelineRulerLabelTop,
+    timelineRulerMinMajorTickSpacing,
+    timelinePlayheadHoverWidth,
+    timelinePlayheadLineWidth,
+    timelinePlayheadCapWidth,
+    timelinePlayheadCapHeight,
+    timelinePlayheadCapRadius,
+    timelinePlayheadCapTop,
+    timelinePlayheadShadowBlur,
+    timelineMarkerPinUp,
+    timelineMarkerPinDown,
+    timelineMarkerStrokeWidth,
+    timelineMarkerMaxVisiblePins,
     autoCollapseOptions,
     autoCompactRail,
   ]);

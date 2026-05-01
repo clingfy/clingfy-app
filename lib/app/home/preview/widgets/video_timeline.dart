@@ -8,6 +8,7 @@ import 'package:clingfy/core/models/app_models.dart';
 import 'package:clingfy/core/preview/player_controller.dart';
 import 'package:clingfy/core/zoom/zoom_editor_controller.dart';
 import 'package:clingfy/l10n/app_localizations.dart';
+import 'package:clingfy/ui/platform/widgets/responsive_shell_scope.dart';
 import 'package:clingfy/ui/theme/app_theme.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
@@ -248,6 +249,8 @@ class _VideoTimelineState extends State<VideoTimeline> {
     final chrome = theme.appEditorChrome;
     final l10n = AppLocalizations.of(context)!;
     final tokens = theme.appTokens;
+    final metrics = context.shellMetricsOrNull;
+    final shellGap = metrics?.timelineShellGap ?? (theme.appSpacing.xs + 2);
     final editor = context.select<PlayerController, ZoomEditorController?>(
       (player) => player.zoomEditor,
     );
@@ -302,7 +305,7 @@ class _VideoTimelineState extends State<VideoTimeline> {
               onToggleMarkersLaneVisibility: _toggleMarkersLaneVisibility,
               onClose: widget.onClose,
             ),
-            SizedBox(height: theme.appSpacing.xs + 2),
+            SizedBox(height: shellGap),
             TimelineTransportBar(
               isReady: ready,
               isPlaying: isPlaying,
@@ -325,7 +328,7 @@ class _VideoTimelineState extends State<VideoTimeline> {
                     )
                   : null,
             ),
-            SizedBox(height: theme.appSpacing.xs + 2),
+            SizedBox(height: shellGap),
             TimelineEditorViewport(
               durationMs: totalMs,
               positionMs: widget.positionMs,
@@ -399,7 +402,7 @@ class _VideoTimelineState extends State<VideoTimeline> {
                 color: tokens.timelineBackground,
                 borderRadius: BorderRadius.circular(chrome.panelRadius),
               ),
-              child: dockContent,
+              child: RepaintBoundary(child: dockContent),
             ),
           ),
         ),

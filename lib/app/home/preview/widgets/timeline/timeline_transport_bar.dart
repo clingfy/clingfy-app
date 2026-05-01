@@ -4,6 +4,7 @@ import 'package:clingfy/l10n/app_localizations.dart';
 import 'package:clingfy/ui/platform/widgets/app_button.dart';
 import 'package:clingfy/ui/platform/widgets/app_icon_button.dart';
 import 'package:clingfy/ui/platform/widgets/app_slider.dart';
+import 'package:clingfy/ui/platform/widgets/responsive_shell_scope.dart';
 import 'package:clingfy/ui/theme/app_theme.dart';
 import 'package:flutter/material.dart';
 
@@ -47,13 +48,38 @@ class TimelineTransportBar extends StatelessWidget {
     final chrome = theme.appEditorChrome;
     final typography = theme.appTypography;
     final tokens = theme.appTokens;
+    final metrics = context.shellMetricsOrNull;
+    final padX = metrics?.timelineChromePaddingX ?? spacing.md;
+    final padY = metrics?.timelineChromePaddingY ?? spacing.sm;
+    final sectionGap = metrics?.timelineSectionGap ?? spacing.md;
+    final controlGap = metrics?.timelineControlGap ?? spacing.xs;
+    final minHeight = metrics?.timelineTransportMinHeight ?? 40;
+    final timeScale = metrics?.timelineTimeTextScale ?? 1.0;
+    final modeScale = metrics?.timelineModeTextScale ?? 1.0;
+    final hideZoomLabelBelow =
+        metrics?.timelineHideZoomLabelBelowWidth ?? 560;
+    final compactBelow =
+        metrics?.timelineCompactTransportBelowWidth ?? 640;
+    final sliderMin = metrics?.timelineZoomSliderMinWidth ?? 120;
+    final sliderMax = metrics?.timelineZoomSliderMaxWidth ?? 220;
+    final sliderFactor = metrics?.timelineZoomSliderWidthFactor ?? 0.20;
+
+    final timeStyle = typography.mono.copyWith(
+      color: theme.colorScheme.onSurface.withValues(alpha: 0.9),
+      fontSize: (typography.mono.fontSize ?? 12) * timeScale,
+    );
+    final modeStyle = typography.bodyMuted.copyWith(
+      color: theme.colorScheme.onSurface.withValues(alpha: 0.72),
+      fontSize: (typography.bodyMuted.fontSize ?? 12) * modeScale,
+    );
+    final zoomLabelStyle = typography.value.copyWith(
+      color: theme.colorScheme.onSurface.withValues(alpha: 0.78),
+    );
 
     return Container(
       key: const Key('timeline_transport_bar'),
-      padding: EdgeInsets.symmetric(
-        horizontal: spacing.md,
-        vertical: spacing.sm,
-      ),
+      constraints: BoxConstraints(minHeight: minHeight),
+      padding: EdgeInsets.symmetric(horizontal: padX, vertical: padY),
       decoration: BoxDecoration(
         color: tokens.timelineChromeSurface,
         borderRadius: BorderRadius.circular(chrome.controlRadius),
@@ -62,87 +88,85 @@ class TimelineTransportBar extends StatelessWidget {
       child: LayoutBuilder(
         builder: (context, constraints) {
           final sliderWidth = math.min(
-            220.0,
-            math.max(120.0, constraints.maxWidth * 0.2),
+            sliderMax,
+            math.max(sliderMin, constraints.maxWidth * sliderFactor),
           );
+          final isCompact = constraints.maxWidth < compactBelow;
+          final showZoomLabel = constraints.maxWidth >= hideZoomLabelBelow;
+          final innerSectionGap = isCompact ? controlGap : sectionGap;
 
-          return Row(
-            children: [
-              AppButton(
-                key: const Key('timeline_play_pause_button'),
-                label: isPlaying ? l10n.pausePlayback : l10n.play,
-                icon: isPlaying
-                    ? Icons.pause_rounded
-                    : Icons.play_arrow_rounded,
-                size: AppButtonSize.compact,
-                variant: AppButtonVariant.secondary,
-                onPressed: isReady ? onPlayPause : null,
+          final children = <Widget>[
+            AppButton(
+              key: const Key('timeline_play_pause_button'),
+              label: isPlaying ? l10n.pausePlayback : l10n.play,
+              icon: isPlaying
+                  ? Icons.pause_rounded
+                  : Icons.play_arrow_rounded,
+              size: AppButtonSize.compact,
+              variant: AppButtonVariant.secondary,
+              onPressed: isReady ? onPlayPause : null,
+            ),
+            SizedBox(width: innerSectionGap),
+            Text(
+              '$currentTimeLabel / $totalTimeLabel',
+              key: const Key('timeline_transport_time'),
+              maxLines: 1,
+              overflow: TextOverflow.clip,
+              style: timeStyle,
+            ),
+            SizedBox(width: innerSectionGap),
+            Expanded(
+              child: Text(
+                modeText ?? '',
+                key: const Key('timeline_transport_mode_text'),
+                maxLines: 1,
+                overflow: TextOverflow.ellipsis,
+                style: modeStyle,
               ),
-              SizedBox(width: spacing.md),
-              Text(
-                '$currentTimeLabel / $totalTimeLabel',
-                key: const Key('timeline_transport_time'),
-                style: typography.mono.copyWith(
-                  color: theme.colorScheme.onSurface.withValues(alpha: 0.9),
-                ),
-              ),
-              SizedBox(width: spacing.md),
-              Expanded(
-                child: Text(
-                  modeText ?? '',
-                  key: const Key('timeline_transport_mode_text'),
-                  maxLines: 1,
-                  overflow: TextOverflow.ellipsis,
-                  style: typography.bodyMuted.copyWith(
-                    color: theme.colorScheme.onSurface.withValues(alpha: 0.72),
-                  ),
-                ),
-              ),
-              SizedBox(width: spacing.md),
-              Text(
-                l10n.zoom,
-                style: typography.value.copyWith(
-                  color: theme.colorScheme.onSurface.withValues(alpha: 0.78),
-                ),
-              ),
-              SizedBox(width: spacing.sm),
-              AppIconButton(
-                key: const Key('timeline_zoom_out_button'),
-                icon: Icons.remove_rounded,
-                tooltip: l10n.zoom,
-                onPressed: onZoomOut,
-              ),
-              SizedBox(width: spacing.xs),
-              SizedBox(
-                width: sliderWidth,
-                child: AppSlider(
-                  key: const Key('timeline_zoom_slider'),
-                  variant: AppSliderVariant.compact,
-                  value: zoomLevel,
-                  min: minZoom,
-                  max: maxZoom,
-                  semanticLabel: l10n.zoom,
-                  onChanged: onZoomLevelChanged,
-                ),
-              ),
-              SizedBox(width: spacing.xs),
-              AppIconButton(
-                key: const Key('timeline_zoom_in_button'),
-                icon: Icons.add_rounded,
-                tooltip: l10n.zoom,
-                onPressed: onZoomIn,
-              ),
-              SizedBox(width: spacing.md),
-              AppButton(
-                key: const Key('timeline_transport_fit_button'),
-                label: l10n.fit,
-                icon: Icons.fit_screen_rounded,
-                size: AppButtonSize.compact,
-                variant: AppButtonVariant.secondary,
-                onPressed: onFit,
-              ),
+            ),
+            SizedBox(width: innerSectionGap),
+            if (showZoomLabel) ...[
+              Text(l10n.zoom, style: zoomLabelStyle),
+              SizedBox(width: controlGap),
             ],
-          );
+            AppIconButton(
+              key: const Key('timeline_zoom_out_button'),
+              icon: Icons.remove_rounded,
+              tooltip: l10n.zoom,
+              onPressed: onZoomOut,
+            ),
+            SizedBox(width: controlGap),
+            SizedBox(
+              width: sliderWidth,
+              child: AppSlider(
+                key: const Key('timeline_zoom_slider'),
+                variant: AppSliderVariant.compact,
+                value: zoomLevel,
+                min: minZoom,
+                max: maxZoom,
+                semanticLabel: l10n.zoom,
+                onChanged: onZoomLevelChanged,
+              ),
+            ),
+            SizedBox(width: controlGap),
+            AppIconButton(
+              key: const Key('timeline_zoom_in_button'),
+              icon: Icons.add_rounded,
+              tooltip: l10n.zoom,
+              onPressed: onZoomIn,
+            ),
+            SizedBox(width: innerSectionGap),
+            AppButton(
+              key: const Key('timeline_transport_fit_button'),
+              label: l10n.fit,
+              icon: Icons.fit_screen_rounded,
+              size: AppButtonSize.compact,
+              variant: AppButtonVariant.secondary,
+              onPressed: onFit,
+            ),
+          ];
+
+          return Row(children: children);
         },
       ),
     );

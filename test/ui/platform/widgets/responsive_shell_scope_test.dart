@@ -123,6 +123,47 @@ void main() {
       expect(minimal.sidebarCompactButtonHeight, greaterThanOrEqualTo(28));
     });
 
+    test('timeline structural metrics shrink with density and clamp minimums',
+        () {
+      final comfortable =
+          ShellResponsiveMetrics.fromSize(const Size(1500, 900));
+      final minimal = ShellResponsiveMetrics.fromSize(const Size(800, 760));
+      // Heights and widths shrink.
+      expect(minimal.timelineRulerHeight,
+          lessThan(comfortable.timelineRulerHeight));
+      expect(minimal.timelineLaneHeight,
+          lessThan(comfortable.timelineLaneHeight));
+      expect(minimal.timelineTrackHeaderWidth,
+          lessThan(comfortable.timelineTrackHeaderWidth));
+      expect(minimal.timelineHeaderMinHeight,
+          lessThan(comfortable.timelineHeaderMinHeight));
+      expect(minimal.timelineTransportMinHeight,
+          lessThan(comfortable.timelineTransportMinHeight));
+      expect(minimal.timelineZoomSliderMinWidth,
+          lessThan(comfortable.timelineZoomSliderMinWidth));
+      expect(minimal.timelineZoomSliderMaxWidth,
+          lessThan(comfortable.timelineZoomSliderMaxWidth));
+      expect(minimal.timelineRulerLabelFontSize,
+          lessThan(comfortable.timelineRulerLabelFontSize));
+      expect(minimal.timelinePlayheadCapWidth,
+          lessThan(comfortable.timelinePlayheadCapWidth));
+      // Hard minimums respected.
+      expect(minimal.timelineHeaderMinHeight, greaterThanOrEqualTo(32));
+      expect(minimal.timelineTransportMinHeight, greaterThanOrEqualTo(32));
+      expect(minimal.timelineRulerHeight, greaterThanOrEqualTo(24));
+      expect(minimal.timelineLaneHeight, greaterThanOrEqualTo(34));
+      expect(minimal.timelineTrackHeaderWidth, greaterThanOrEqualTo(56));
+      expect(minimal.timelineToolbarChipMinHeight, greaterThanOrEqualTo(28));
+      expect(minimal.timelineToolbarChipIconSize, greaterThanOrEqualTo(13));
+      expect(minimal.timelineCloseIconSize, greaterThanOrEqualTo(13));
+      expect(minimal.timelineIconButtonSize, greaterThanOrEqualTo(28));
+      expect(minimal.timelineRulerLabelFontSize, greaterThanOrEqualTo(9.5));
+      expect(minimal.timelineZoomSliderMinWidth, greaterThanOrEqualTo(80));
+      expect(minimal.timelineZoomSliderMaxWidth, greaterThanOrEqualTo(140));
+      expect(minimal.timelinePlayheadCapWidth, greaterThanOrEqualTo(6));
+      expect(minimal.timelinePlayheadCapHeight, greaterThanOrEqualTo(4));
+    });
+
     test('density boundary is half-open (>= breakpoint -> tier above)', () {
       expect(ShellResponsiveMetrics.densityForWidth(1400),
           ShellDensity.comfortable);

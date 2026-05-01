@@ -1,6 +1,7 @@
 import 'package:clingfy/app/home/post_processing/widgets/zoom_track.dart';
 import 'package:clingfy/core/models/app_models.dart';
 import 'package:clingfy/core/zoom/zoom_editor_controller.dart';
+import 'package:clingfy/ui/platform/widgets/responsive_shell_scope.dart';
 import 'package:clingfy/ui/theme/app_theme.dart';
 import 'package:flutter/material.dart';
 
@@ -25,10 +26,13 @@ class ZoomTimelineLane extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final tokens = context.appTokens;
+    final metrics = context.shellMetricsOrNull;
+    final laneHeight =
+        metrics?.timelineLaneHeight ?? context.appEditorChrome.timelineLaneHeight;
 
     return SizedBox(
       key: const Key('zoom_timeline_lane'),
-      height: context.appEditorChrome.timelineLaneHeight,
+      height: laneHeight,
       child: ZoomTrack(
         segments: segments,
         durationMs: durationMs,
@@ -36,7 +40,7 @@ class ZoomTimelineLane extends StatelessWidget {
         onQuickSeek: onQuickSeek,
         editorController: editorController,
         onFocusRequested: onFocusRequested,
-        height: context.appEditorChrome.timelineLaneHeight,
+        height: laneHeight,
         showSegmentLabels: true,
         shellColor: tokens.timelineLaneSurface,
         shellBorderColor: tokens.panelBorder,
