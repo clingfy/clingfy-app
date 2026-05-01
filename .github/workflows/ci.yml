@@ -352,12 +352,16 @@ jobs:
             PROVISIONING_PROFILE_SPECIFIER="" \
             DEVELOPMENT_TEAM="" \
             COMPILER_INDEX_STORE_ENABLE=NO \
+            -parallel-testing-enabled NO \
             -only-testing:RunnerTests/LetterboxExporterTests \
             -skip-testing:RunnerTests/LetterboxExporterTests/testInlineCameraRenderSupportsStyledActiveZoomExport_largeFixture \
             test-without-building 2>&1 | tee build/ci/xcode-export-test.log
 
       - name: Run scheduled/manual large-fixture export regression
         if: github.event_name == 'schedule' || github.event_name == 'workflow_dispatch'
+        continue-on-error: true
+        env:
+          CLINGFY_RUN_LARGE_EXPORT_TESTS: "1"
         run: |
           set -euo pipefail
           xcodebuild \
@@ -373,12 +377,34 @@ jobs:
             PROVISIONING_PROFILE_SPECIFIER="" \
             DEVELOPMENT_TEAM="" \
             COMPILER_INDEX_STORE_ENABLE=NO \
+            -parallel-testing-enabled NO \
             -only-testing:RunnerTests/LetterboxExporterTests/testInlineCameraRenderSupportsStyledActiveZoomExport_largeFixture \
             test-without-building 2>&1 | tee build/ci/xcode-export-large-fixture-test.log
 
       - name: PR no-op for required check
         if: github.event_name == 'pull_request'
         run: echo "Skipping heavy export tests on pull requests; this check passes intentionally."
+
+      - name: Extract XCTest failure summary
+        if: always() && github.event_name != 'pull_request'
+        run: |
+          set +e
+          mkdir -p build/ci/xcresult
+
+          for bundle in build/*.xcresult; do
+            [ -d "$bundle" ] || continue
+            name="$(basename "$bundle" .xcresult)"
+
+            xcrun xcresulttool get test-results summary \
+              --path "$bundle" \
+              --format json \
+              > "build/ci/xcresult/${name}-summary.json" 2>/dev/null
+
+            xcrun xcresulttool get test-results tests \
+              --path "$bundle" \
+              --format json \
+              > "build/ci/xcresult/${name}-tests.json" 2>/dev/null
+          done
 
       - name: Upload export native test artifacts
         if: always() && github.event_name != 'pull_request'

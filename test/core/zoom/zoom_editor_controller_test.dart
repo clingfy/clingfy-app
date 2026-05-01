@@ -322,6 +322,88 @@ void main() {
     expect(controller.manualSegments, hasLength(1));
   });
 
+  testWidgets(
+    'verification table: move/resize/ghost/visual reflect snap on vs off',
+    (tester) async {
+      await installCommonNativeMocks();
+      final controller = ZoomEditorController(
+        nativeBridge: NativeBridge.instance,
+        videoPath: '/tmp/demo.mov',
+        durationMs: 8000,
+      );
+      await controller.init();
+      addTearDown(controller.dispose);
+
+      // Visual button: defaults to ON / highlighted.
+      expect(controller.snappingEnabled, isTrue);
+
+      // ROW 1+2 (Snap ON): move + resize align to the frame grid.
+      // Seed a manual segment to operate on.
+      final seeded = controller.addDefaultSegmentAt(2000);
+      expect(seeded, isNotNull);
+      controller.beginMoveAt(seeded!.startMs + 50, seeded);
+      controller.updateMoveTo(seeded.startMs + 50 + 277);
+      controller.commitMove();
+      await tester.pump();
+      final movedOn = controller.manualSegments.single;
+      expect(_isOnFrameGrid(movedOn.startMs), isTrue);
+      expect(_isOnFrameGrid(movedOn.endMs), isTrue);
+
+      controller.beginTrimAt(movedOn.startMs, movedOn, TrimHandle.right);
+      controller.updateTrimTo(movedOn.startMs + 998);
+      controller.commitTrim();
+      await tester.pump();
+      final trimmedOn = controller.manualSegments.single;
+      expect(_isOnFrameGrid(trimmedOn.endMs), isTrue);
+
+      // ROW 3 (Snap ON): ghost span aligns to the grid.
+      // Pick a center far from the existing segment so a default span fits.
+      final ghostCenterOn = trimmedOn.endMs + 1500;
+      final spanOn = controller.defaultSpanFor(ghostCenterOn);
+      expect(spanOn, isNotNull);
+      expect(_isOnFrameGrid(spanOn!.$1), isTrue);
+      expect(_isOnFrameGrid(spanOn.$2), isTrue);
+
+      // Toggle to OFF. Visual button: inactive/not highlighted.
+      controller.setSnappingEnabled(false);
+      await tester.pump();
+      expect(controller.snappingEnabled, isFalse);
+
+      // ROW 1 (Snap OFF): move follows mouse exactly (raw ms preserved).
+      final preMoveStart = trimmedOn.startMs;
+      final preMoveEnd = trimmedOn.endMs;
+      final duration = preMoveEnd - preMoveStart;
+      const rawDelta = 277;
+      // Pointer down at startMs+50, then drag by rawDelta to (startMs+50+rawDelta).
+      controller.beginMoveAt(preMoveStart + 50, trimmedOn);
+      controller.updateMoveTo(preMoveStart + 50 + rawDelta);
+      controller.commitMove();
+      await tester.pump();
+      final movedOff = controller.manualSegments.single;
+      expect(movedOff.startMs, preMoveStart + rawDelta);
+      expect(movedOff.endMs, preMoveStart + rawDelta + duration);
+
+      // ROW 2 (Snap OFF): resize edge follows mouse exactly.
+      const rawTrimEnd = 5001; // intentionally non-grid integer
+      controller.beginTrimAt(movedOff.startMs, movedOff, TrimHandle.right);
+      controller.updateTrimTo(rawTrimEnd);
+      controller.commitTrim();
+      await tester.pump();
+      expect(controller.manualSegments.single.endMs, rawTrimEnd);
+
+      // ROW 3 (Snap OFF): ghost span endpoints exactly mirror the raw input.
+      const ghostCenterOff = 6501;
+      final spanOff = controller.defaultSpanFor(ghostCenterOff);
+      expect(spanOff, isNotNull);
+      // Snap-off normalize keeps raw ms (verified independently below).
+      expect(controller.normalizeEditableMsForUi(spanOff!.$1), spanOff.$1);
+      expect(controller.normalizeEditableMsForUi(spanOff.$2), spanOff.$2);
+      // And the span should not be grid-aligned for a non-grid center.
+      expect(_isOnFrameGrid(spanOff.$1) && _isOnFrameGrid(spanOff.$2),
+          isFalse);
+    },
+  );
+
   testWidgets('snap OFF: defaultSpanFor returns raw non-grid span',
       (tester) async {
     await installCommonNativeMocks();
