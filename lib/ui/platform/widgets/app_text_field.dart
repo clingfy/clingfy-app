@@ -44,16 +44,20 @@ class AppTextField extends StatelessWidget {
     final theme = Theme.of(context);
     final spacing = context.appSpacing;
     final metrics = context.shellMetricsOrNull;
-    final effectiveMinWidth = minWidth ??
+    final effectiveMinWidth =
+        minWidth ??
         metrics?.sidebarControlMinWidth ??
         AppSidebarTokens.controlMinWidth;
-    final effectiveMaxWidth = maxWidth ??
+    final effectiveMaxWidth =
+        maxWidth ??
         metrics?.sidebarControlMaxWidth ??
         AppSidebarTokens.controlMaxWidth;
-    final effectiveHeightMac = heightMac ??
+    final effectiveHeightMac =
+        heightMac ??
         metrics?.sidebarControlHeightMac ??
         AppSidebarTokens.controlHeightMac;
-    final effectiveHeightWin = heightWin ??
+    final effectiveHeightWin =
+        heightWin ??
         metrics?.sidebarControlHeightDefault ??
         AppSidebarTokens.controlHeightDefault;
     final inputTheme = theme.inputDecorationTheme;

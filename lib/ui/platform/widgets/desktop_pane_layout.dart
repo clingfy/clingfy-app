@@ -468,11 +468,13 @@ class _DesktopSplitLayoutState extends State<DesktopSplitLayout> {
                           ) ...[
                             _buildPane(
                               resolved.panes[index],
-                              animateWidth: animateUserWidthChanges &&
+                              animateWidth:
+                                  animateUserWidthChanges &&
                                   animatedPaneIds.contains(
                                     resolved.panes[index].presentation.id,
                                   ),
-                              preserveChildLayout: animatedPaneIds.contains(
+                              preserveChildLayout:
+                                  animatedPaneIds.contains(
                                     resolved.panes[index].presentation.id,
                                   ) ||
                                   resolved
@@ -805,9 +807,7 @@ class _DesktopSplitLayoutState extends State<DesktopSplitLayout> {
                       pane.spec.collapsible &&
                       !(effectiveCollapsed[pane.spec.id] ?? false) &&
                       pane.spec.autoCollapseAllowed &&
-                      !widget.preventAutoCollapsePaneIds.contains(
-                        pane.spec.id,
-                      ),
+                      !widget.preventAutoCollapsePaneIds.contains(pane.spec.id),
                 )
                 .toList()
               ..sort(

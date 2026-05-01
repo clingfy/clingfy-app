@@ -75,7 +75,7 @@ class AppButton extends StatelessWidget {
     final metrics = context.shellMetricsOrNull;
     final minHeight = isCompact
         ? metrics?.sidebarCompactButtonHeight ??
-            AppSidebarTokens.compactButtonHeight
+              AppSidebarTokens.compactButtonHeight
         : 40.0;
     final horizontalPadding = isCompact ? spacing.md : spacing.lg;
     final resolvedChild = _buildChild();

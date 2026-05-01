@@ -102,8 +102,7 @@ class HeroPanel extends StatelessWidget {
                         letterSpacing: 1.2,
                         color: colors.onSurface,
                         fontSize:
-                            (typography.panelTitle.fontSize ?? 18) *
-                            titleScale,
+                            (typography.panelTitle.fontSize ?? 18) * titleScale,
                       ),
                     ),
                     SizedBox(height: xxlGap),

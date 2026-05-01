@@ -58,12 +58,13 @@ DesktopPaneSpec _inspectorSpecForId(
   DesktopPaneId id,
   ShellResponsiveMetrics? metrics,
 ) {
-  final defaultWidth = metrics?.optionsPanelDefaultWidth ??
+  final defaultWidth =
+      metrics?.optionsPanelDefaultWidth ??
       HomeDesktopPaneDimensions.inspectorDefault;
-  final minWidth = metrics?.optionsPanelMinWidth ??
-      HomeDesktopPaneDimensions.inspectorMin;
-  final maxWidth = metrics?.optionsPanelMaxWidth ??
-      HomeDesktopPaneDimensions.inspectorMax;
+  final minWidth =
+      metrics?.optionsPanelMinWidth ?? HomeDesktopPaneDimensions.inspectorMin;
+  final maxWidth =
+      metrics?.optionsPanelMaxWidth ?? HomeDesktopPaneDimensions.inspectorMax;
   return DesktopPaneSpec(
     id: id,
     defaultWidth: defaultWidth,
@@ -385,8 +386,7 @@ class _HomeShellState extends State<HomeShell> {
       return;
     }
 
-    final isPinned =
-        _compactForcedInlineInspectorId == activeInspectorSpec.id;
+    final isPinned = _compactForcedInlineInspectorId == activeInspectorSpec.id;
     if (isPinned) {
       setState(() => _compactForcedInlineInspectorId = null);
       _setPaneCollapsed(activeInspectorSpec, true);
@@ -510,36 +510,34 @@ class _HomeShellState extends State<HomeShell> {
                                 ? constraints.maxHeight
                                 : MediaQuery.sizeOf(context).height,
                           );
-                          final metrics =
-                              ShellResponsiveMetrics.fromSize(shellSize);
-                          _currentMetrics = metrics;
-                          _applyDensityAutoCollapse(
-                            metrics,
-                            _homeRailPaneSpec,
+                          final metrics = ShellResponsiveMetrics.fromSize(
+                            shellSize,
                           );
+                          _currentMetrics = metrics;
+                          _applyDensityAutoCollapse(metrics, _homeRailPaneSpec);
                           final activeInspectorSpec = showPreviewShell
                               ? _postProcessingInspectorPaneSpec
                               : _recordingInspectorPaneSpec;
                           final canShowInspectorInline =
                               !metrics.autoCollapseOptions &&
-                                  constraints.maxWidth >=
-                                      HomeDesktopPaneDimensions
-                                          .inspectorAutoHideThreshold;
+                              constraints.maxWidth >=
+                                  HomeDesktopPaneDimensions
+                                      .inspectorAutoHideThreshold;
                           _syncCompactInlineState(canShowInspectorInline);
                           final inspectorCollapsedByUser = _paneController
                               .stateFor(activeInspectorSpec.id)
                               .isCollapsed;
                           final inspectorVisibleInline =
                               canShowInspectorInline &&
-                                  !inspectorCollapsedByUser;
+                              !inspectorCollapsedByUser;
                           final compactForcedInlineActive =
                               !canShowInspectorInline &&
-                                  _compactForcedInlineInspectorId ==
-                                      activeInspectorSpec.id &&
-                                  !inspectorCollapsedByUser;
+                              _compactForcedInlineInspectorId ==
+                                  activeInspectorSpec.id &&
+                              !inspectorCollapsedByUser;
                           final inspectorVisibleForToolbar =
                               inspectorVisibleInline ||
-                                  compactForcedInlineActive;
+                              compactForcedInlineActive;
                           final needsVerticalScroll =
                               constraints.maxHeight <
                               HomeDesktopPaneDimensions.shellMinHeight;
@@ -641,22 +639,27 @@ class _HomeShellState extends State<HomeShell> {
                                                 _persistPaneLayout(),
                                             preventAutoCollapsePaneIds:
                                                 compactForcedInlineActive
-                                                    ? <DesktopPaneId>{
-                                                        activeInspectorSpec.id,
-                                                      }
-                                                    : const <DesktopPaneId>{},
+                                                ? <DesktopPaneId>{
+                                                    activeInspectorSpec.id,
+                                                  }
+                                                : const <DesktopPaneId>{},
                                             panes: [
                                               DesktopPaneSlot(
                                                 spec: activeInspectorSpec,
-                                                builder: (context, panePresentation) {
-                                                  return _buildHomeOptionsPanel(
-                                                    panePresentation:
-                                                        panePresentation,
-                                                    isRecording: isRecording,
-                                                    showPreviewShell:
-                                                        showPreviewShell,
-                                                  );
-                                                },
+                                                builder:
+                                                    (
+                                                      context,
+                                                      panePresentation,
+                                                    ) {
+                                                      return _buildHomeOptionsPanel(
+                                                        panePresentation:
+                                                            panePresentation,
+                                                        isRecording:
+                                                            isRecording,
+                                                        showPreviewShell:
+                                                            showPreviewShell,
+                                                      );
+                                                    },
                                               ),
                                               DesktopPaneSlot(
                                                 spec:
@@ -772,4 +775,3 @@ class _HomeShellState extends State<HomeShell> {
     );
   }
 }
-

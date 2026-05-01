@@ -234,10 +234,9 @@ class _MicInputMeterIconState extends State<_MicInputMeterIcon> {
 
     final metrics = context.shellMetricsOrNull;
     final controlSize = isMac()
-        ? metrics?.sidebarControlHeightMac ??
-            AppSidebarTokens.controlHeightMac
+        ? metrics?.sidebarControlHeightMac ?? AppSidebarTokens.controlHeightMac
         : metrics?.sidebarControlHeightDefault ??
-            AppSidebarTokens.controlHeightDefault;
+              AppSidebarTokens.controlHeightDefault;
 
     final tooltipMessage = !widget.hasSelectedMicrophone
         ? l10n.micInputIndicatorDisabledTooltip

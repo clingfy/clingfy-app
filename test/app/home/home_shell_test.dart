@@ -2075,40 +2075,39 @@ void main() {
     },
   );
 
-  testWidgets(
-    'options panel default width shrinks with denser shell density',
-    (tester) async {
-      _setDesktopWindow(tester, size: const Size(1500, 960));
-      final harnessLarge = await createHarness();
-      addTearDown(harnessLarge.recording.dispose);
-      addTearDown(harnessLarge.player.dispose);
-      addTearDown(harnessLarge.device.dispose);
-      addTearDown(harnessLarge.overlay.dispose);
-      addTearDown(harnessLarge.permissions.dispose);
-      addTearDown(harnessLarge.post.dispose);
-      addTearDown(harnessLarge.license.dispose);
-      addTearDown(harnessLarge.countdown.dispose);
-      addTearDown(harnessLarge.uiState.dispose);
-      addTearDown(harnessLarge.settings.dispose);
-      await tester.pumpWidget(
-        buildShell(
-          actions: harnessLarge.actions,
-          countdown: harnessLarge.countdown,
-          device: harnessLarge.device,
-          license: harnessLarge.license,
-          overlay: harnessLarge.overlay,
-          player: harnessLarge.player,
-          post: harnessLarge.post,
-          recording: harnessLarge.recording,
-          settings: harnessLarge.settings,
-          uiState: harnessLarge.uiState,
-        ),
-      );
-      await tester.pumpAndSettle();
-      final comfortableWidth = _optionsPanelWidth(tester);
-      expect(comfortableWidth, greaterThan(310));
-    },
-  );
+  testWidgets('options panel default width shrinks with denser shell density', (
+    tester,
+  ) async {
+    _setDesktopWindow(tester, size: const Size(1500, 960));
+    final harnessLarge = await createHarness();
+    addTearDown(harnessLarge.recording.dispose);
+    addTearDown(harnessLarge.player.dispose);
+    addTearDown(harnessLarge.device.dispose);
+    addTearDown(harnessLarge.overlay.dispose);
+    addTearDown(harnessLarge.permissions.dispose);
+    addTearDown(harnessLarge.post.dispose);
+    addTearDown(harnessLarge.license.dispose);
+    addTearDown(harnessLarge.countdown.dispose);
+    addTearDown(harnessLarge.uiState.dispose);
+    addTearDown(harnessLarge.settings.dispose);
+    await tester.pumpWidget(
+      buildShell(
+        actions: harnessLarge.actions,
+        countdown: harnessLarge.countdown,
+        device: harnessLarge.device,
+        license: harnessLarge.license,
+        overlay: harnessLarge.overlay,
+        player: harnessLarge.player,
+        post: harnessLarge.post,
+        recording: harnessLarge.recording,
+        settings: harnessLarge.settings,
+        uiState: harnessLarge.uiState,
+      ),
+    );
+    await tester.pumpAndSettle();
+    final comfortableWidth = _optionsPanelWidth(tester);
+    expect(comfortableWidth, greaterThan(310));
+  });
 
   testWidgets(
     'persisted oversized inspector width is clamped at dense density',
@@ -2162,202 +2161,182 @@ void main() {
     },
   );
 
-  testWidgets(
-    'minimal shell width auto-collapses the options panel',
-    (tester) async {
-      _setDesktopWindow(tester, size: const Size(960, 760));
-      final harness = await createHarness();
-      addTearDown(harness.recording.dispose);
-      addTearDown(harness.player.dispose);
-      addTearDown(harness.device.dispose);
-      addTearDown(harness.overlay.dispose);
-      addTearDown(harness.permissions.dispose);
-      addTearDown(harness.post.dispose);
-      addTearDown(harness.license.dispose);
-      addTearDown(harness.countdown.dispose);
-      addTearDown(harness.uiState.dispose);
-      addTearDown(harness.settings.dispose);
-      await tester.pumpWidget(
-        buildShell(
-          actions: harness.actions,
-          countdown: harness.countdown,
-          device: harness.device,
-          license: harness.license,
-          overlay: harness.overlay,
-          player: harness.player,
-          post: harness.post,
-          recording: harness.recording,
-          settings: harness.settings,
-          uiState: harness.uiState,
-        ),
-      );
-      await tester.pumpAndSettle();
-      expect(_optionsPanelWidth(tester), moreOrLessEquals(0));
-    },
-  );
+  testWidgets('minimal shell width auto-collapses the options panel', (
+    tester,
+  ) async {
+    _setDesktopWindow(tester, size: const Size(960, 760));
+    final harness = await createHarness();
+    addTearDown(harness.recording.dispose);
+    addTearDown(harness.player.dispose);
+    addTearDown(harness.device.dispose);
+    addTearDown(harness.overlay.dispose);
+    addTearDown(harness.permissions.dispose);
+    addTearDown(harness.post.dispose);
+    addTearDown(harness.license.dispose);
+    addTearDown(harness.countdown.dispose);
+    addTearDown(harness.uiState.dispose);
+    addTearDown(harness.settings.dispose);
+    await tester.pumpWidget(
+      buildShell(
+        actions: harness.actions,
+        countdown: harness.countdown,
+        device: harness.device,
+        license: harness.license,
+        overlay: harness.overlay,
+        player: harness.player,
+        post: harness.post,
+        recording: harness.recording,
+        settings: harness.settings,
+        uiState: harness.uiState,
+      ),
+    );
+    await tester.pumpAndSettle();
+    expect(_optionsPanelWidth(tester), moreOrLessEquals(0));
+  });
 
-  testWidgets(
-    'expanded rail width shrinks with density',
-    (tester) async {
-      // 1320 is wide enough for rail+inspector+workspace minima, so the rail
-      // stays expanded; density falls in the compact tier.
-      _setDesktopWindow(tester, size: const Size(1320, 800));
-      final harness = await createHarness();
-      harness.uiState.applyPaneLayoutPrefs(
-        const DesktopPaneLayoutPrefs(
-          paneStates: {
-            DesktopPaneId.homeLeftSidebar: DesktopPaneState(isCollapsed: false),
-          },
-        ),
-      );
-      addTearDown(harness.recording.dispose);
-      addTearDown(harness.player.dispose);
-      addTearDown(harness.device.dispose);
-      addTearDown(harness.overlay.dispose);
-      addTearDown(harness.permissions.dispose);
-      addTearDown(harness.post.dispose);
-      addTearDown(harness.license.dispose);
-      addTearDown(harness.countdown.dispose);
-      addTearDown(harness.uiState.dispose);
-      addTearDown(harness.settings.dispose);
-      await tester.pumpWidget(
-        buildShell(
-          actions: harness.actions,
-          countdown: harness.countdown,
-          device: harness.device,
-          license: harness.license,
-          overlay: harness.overlay,
-          player: harness.player,
-          post: harness.post,
-          recording: harness.recording,
-          settings: harness.settings,
-          uiState: harness.uiState,
-        ),
-      );
-      await tester.pumpAndSettle();
-      // At compact density the rail spec uses ~204 (compact tier) which is
-      // strictly less than the comfortable default (220) and at/above the
-      // compact expanded min (184).
-      final railWidth = _railWidth(tester);
-      expect(
-        railWidth,
-        lessThan(HomeDesktopPaneDimensions.railWidth),
-      );
-      expect(railWidth, greaterThanOrEqualTo(180));
-    },
-  );
+  testWidgets('expanded rail width shrinks with density', (tester) async {
+    // 1320 is wide enough for rail+inspector+workspace minima, so the rail
+    // stays expanded; density falls in the compact tier.
+    _setDesktopWindow(tester, size: const Size(1320, 800));
+    final harness = await createHarness();
+    harness.uiState.applyPaneLayoutPrefs(
+      const DesktopPaneLayoutPrefs(
+        paneStates: {
+          DesktopPaneId.homeLeftSidebar: DesktopPaneState(isCollapsed: false),
+        },
+      ),
+    );
+    addTearDown(harness.recording.dispose);
+    addTearDown(harness.player.dispose);
+    addTearDown(harness.device.dispose);
+    addTearDown(harness.overlay.dispose);
+    addTearDown(harness.permissions.dispose);
+    addTearDown(harness.post.dispose);
+    addTearDown(harness.license.dispose);
+    addTearDown(harness.countdown.dispose);
+    addTearDown(harness.uiState.dispose);
+    addTearDown(harness.settings.dispose);
+    await tester.pumpWidget(
+      buildShell(
+        actions: harness.actions,
+        countdown: harness.countdown,
+        device: harness.device,
+        license: harness.license,
+        overlay: harness.overlay,
+        player: harness.player,
+        post: harness.post,
+        recording: harness.recording,
+        settings: harness.settings,
+        uiState: harness.uiState,
+      ),
+    );
+    await tester.pumpAndSettle();
+    // At compact density the rail spec uses ~204 (compact tier) which is
+    // strictly less than the comfortable default (220) and at/above the
+    // compact expanded min (184).
+    final railWidth = _railWidth(tester);
+    expect(railWidth, lessThan(HomeDesktopPaneDimensions.railWidth));
+    expect(railWidth, greaterThanOrEqualTo(180));
+  });
 
-  testWidgets(
-    'compact rail width shrinks with density',
-    (tester) async {
-      _setDesktopWindow(tester, size: const Size(960, 760));
-      final harness = await createHarness();
-      harness.uiState.applyPaneLayoutPrefs(
-        const DesktopPaneLayoutPrefs(
-          paneStates: {
-            DesktopPaneId.homeLeftSidebar: DesktopPaneState(isCollapsed: true),
-          },
-        ),
-      );
-      addTearDown(harness.recording.dispose);
-      addTearDown(harness.player.dispose);
-      addTearDown(harness.device.dispose);
-      addTearDown(harness.overlay.dispose);
-      addTearDown(harness.permissions.dispose);
-      addTearDown(harness.post.dispose);
-      addTearDown(harness.license.dispose);
-      addTearDown(harness.countdown.dispose);
-      addTearDown(harness.uiState.dispose);
-      addTearDown(harness.settings.dispose);
-      await tester.pumpWidget(
-        buildShell(
-          actions: harness.actions,
-          countdown: harness.countdown,
-          device: harness.device,
-          license: harness.license,
-          overlay: harness.overlay,
-          player: harness.player,
-          post: harness.post,
-          recording: harness.recording,
-          settings: harness.settings,
-          uiState: harness.uiState,
-        ),
-      );
-      await tester.pumpAndSettle();
-      final railWidth = _railWidth(tester);
-      // The pane spec uses HomeDesktopPaneDimensions.compactRailWidth
-      // constants, but the rail must remain in compact mode (<= the
-      // expanded comfortable rail width).
-      expect(
-        railWidth,
-        lessThanOrEqualTo(HomeDesktopPaneDimensions.compactRailWidth),
-      );
-      expect(railWidth, greaterThanOrEqualTo(46));
-    },
-  );
+  testWidgets('compact rail width shrinks with density', (tester) async {
+    _setDesktopWindow(tester, size: const Size(960, 760));
+    final harness = await createHarness();
+    harness.uiState.applyPaneLayoutPrefs(
+      const DesktopPaneLayoutPrefs(
+        paneStates: {
+          DesktopPaneId.homeLeftSidebar: DesktopPaneState(isCollapsed: true),
+        },
+      ),
+    );
+    addTearDown(harness.recording.dispose);
+    addTearDown(harness.player.dispose);
+    addTearDown(harness.device.dispose);
+    addTearDown(harness.overlay.dispose);
+    addTearDown(harness.permissions.dispose);
+    addTearDown(harness.post.dispose);
+    addTearDown(harness.license.dispose);
+    addTearDown(harness.countdown.dispose);
+    addTearDown(harness.uiState.dispose);
+    addTearDown(harness.settings.dispose);
+    await tester.pumpWidget(
+      buildShell(
+        actions: harness.actions,
+        countdown: harness.countdown,
+        device: harness.device,
+        license: harness.license,
+        overlay: harness.overlay,
+        player: harness.player,
+        post: harness.post,
+        recording: harness.recording,
+        settings: harness.settings,
+        uiState: harness.uiState,
+      ),
+    );
+    await tester.pumpAndSettle();
+    final railWidth = _railWidth(tester);
+    // The pane spec uses HomeDesktopPaneDimensions.compactRailWidth
+    // constants, but the rail must remain in compact mode (<= the
+    // expanded comfortable rail width).
+    expect(
+      railWidth,
+      lessThanOrEqualTo(HomeDesktopPaneDimensions.compactRailWidth),
+    );
+    expect(railWidth, greaterThanOrEqualTo(46));
+  });
 
-  testWidgets(
-    'compact-mode toolbar toggle reveals inline inspector pane',
-    (tester) async {
-      _setDesktopWindow(tester, size: const Size(960, 760));
-      final harness = await createHarness();
-      addTearDown(harness.recording.dispose);
-      addTearDown(harness.player.dispose);
-      addTearDown(harness.device.dispose);
-      addTearDown(harness.overlay.dispose);
-      addTearDown(harness.permissions.dispose);
-      addTearDown(harness.post.dispose);
-      addTearDown(harness.license.dispose);
-      addTearDown(harness.countdown.dispose);
-      addTearDown(harness.uiState.dispose);
-      addTearDown(harness.settings.dispose);
-      await tester.pumpWidget(
-        buildShell(
-          actions: harness.actions,
-          countdown: harness.countdown,
-          device: harness.device,
-          license: harness.license,
-          overlay: harness.overlay,
-          player: harness.player,
-          post: harness.post,
-          recording: harness.recording,
-          settings: harness.settings,
-          uiState: harness.uiState,
-        ),
-      );
-      await tester.pumpAndSettle();
+  testWidgets('compact-mode toolbar toggle reveals inline inspector pane', (
+    tester,
+  ) async {
+    _setDesktopWindow(tester, size: const Size(960, 760));
+    final harness = await createHarness();
+    addTearDown(harness.recording.dispose);
+    addTearDown(harness.player.dispose);
+    addTearDown(harness.device.dispose);
+    addTearDown(harness.overlay.dispose);
+    addTearDown(harness.permissions.dispose);
+    addTearDown(harness.post.dispose);
+    addTearDown(harness.license.dispose);
+    addTearDown(harness.countdown.dispose);
+    addTearDown(harness.uiState.dispose);
+    addTearDown(harness.settings.dispose);
+    await tester.pumpWidget(
+      buildShell(
+        actions: harness.actions,
+        countdown: harness.countdown,
+        device: harness.device,
+        license: harness.license,
+        overlay: harness.overlay,
+        player: harness.player,
+        post: harness.post,
+        recording: harness.recording,
+        settings: harness.settings,
+        uiState: harness.uiState,
+      ),
+    );
+    await tester.pumpAndSettle();
 
-      // In compact mode the inspector is auto-collapsed to width 0; the
-      // panel is the same one used inline.
-      expect(_optionsPanelWidth(tester), moreOrLessEquals(0));
-      expect(
-        find.byKey(const Key('home_options_panel_shell')),
-        findsOneWidget,
-      );
+    // In compact mode the inspector is auto-collapsed to width 0; the
+    // panel is the same one used inline.
+    expect(_optionsPanelWidth(tester), moreOrLessEquals(0));
+    expect(find.byKey(const Key('home_options_panel_shell')), findsOneWidget);
 
-      // First tap reveals the inline inspector pane at non-zero width.
-      await tester.tap(
-        find.byKey(const Key('home_toolbar_options_toggle_button')),
-      );
-      await tester.pumpAndSettle();
-      expect(_optionsPanelWidth(tester), greaterThan(0));
-      expect(
-        find.byKey(const Key('home_options_panel_shell')),
-        findsOneWidget,
-      );
+    // First tap reveals the inline inspector pane at non-zero width.
+    await tester.tap(
+      find.byKey(const Key('home_toolbar_options_toggle_button')),
+    );
+    await tester.pumpAndSettle();
+    expect(_optionsPanelWidth(tester), greaterThan(0));
+    expect(find.byKey(const Key('home_options_panel_shell')), findsOneWidget);
 
-      // Second tap collapses it back inline (no overlay involved).
-      await tester.tap(
-        find.byKey(const Key('home_toolbar_options_toggle_button')),
-      );
-      await tester.pumpAndSettle();
-      expect(_optionsPanelWidth(tester), moreOrLessEquals(0));
-      expect(
-        find.byKey(const Key('home_options_panel_shell')),
-        findsOneWidget,
-      );
-    },
-  );
+    // Second tap collapses it back inline (no overlay involved).
+    await tester.tap(
+      find.byKey(const Key('home_toolbar_options_toggle_button')),
+    );
+    await tester.pumpAndSettle();
+    expect(_optionsPanelWidth(tester), moreOrLessEquals(0));
+    expect(find.byKey(const Key('home_options_panel_shell')), findsOneWidget);
+  });
 
   testWidgets(
     'compact-mode sidebar section tap reveals inline inspector pane',
@@ -2402,58 +2381,59 @@ void main() {
     },
   );
 
-  testWidgets(
-    'compact sidebar utility cluster sits at the bottom',
-    (tester) async {
-      _setDesktopWindow(tester);
-      final harness = await createHarness();
-      harness.uiState.applyPaneLayoutPrefs(
-        const DesktopPaneLayoutPrefs(
-          paneStates: {
-            DesktopPaneId.homeLeftSidebar: DesktopPaneState(isCollapsed: true),
-          },
-        ),
-      );
-      addTearDown(harness.recording.dispose);
-      addTearDown(harness.player.dispose);
-      addTearDown(harness.device.dispose);
-      addTearDown(harness.overlay.dispose);
-      addTearDown(harness.permissions.dispose);
-      addTearDown(harness.post.dispose);
-      addTearDown(harness.license.dispose);
-      addTearDown(harness.countdown.dispose);
-      addTearDown(harness.uiState.dispose);
-      addTearDown(harness.settings.dispose);
-      await tester.pumpWidget(
-        buildShell(
-          actions: harness.actions,
-          countdown: harness.countdown,
-          device: harness.device,
-          license: harness.license,
-          overlay: harness.overlay,
-          player: harness.player,
-          post: harness.post,
-          recording: harness.recording,
-          settings: harness.settings,
-          uiState: harness.uiState,
-        ),
-      );
-      await tester.pumpAndSettle();
-      final sidebarRect =
-          tester.getRect(find.byKey(const Key('home_left_sidebar_shell')));
-      final clusterRect =
-          tester.getRect(find.byKey(const Key('home_sidebar_utility_cluster')));
-      final viewSize = tester.view.physicalSize / tester.view.devicePixelRatio;
-      final metrics = ShellResponsiveMetrics.fromSize(viewSize);
-      // Cluster bottom must sit within bottom padding tolerance of the sidebar
-      // bottom (no large empty space underneath).
-      final tolerance = metrics.railBottomPaddingCompact + 4;
-      expect(
-        sidebarRect.bottom - clusterRect.bottom,
-        lessThanOrEqualTo(tolerance),
-      );
-    },
-  );
+  testWidgets('compact sidebar utility cluster sits at the bottom', (
+    tester,
+  ) async {
+    _setDesktopWindow(tester);
+    final harness = await createHarness();
+    harness.uiState.applyPaneLayoutPrefs(
+      const DesktopPaneLayoutPrefs(
+        paneStates: {
+          DesktopPaneId.homeLeftSidebar: DesktopPaneState(isCollapsed: true),
+        },
+      ),
+    );
+    addTearDown(harness.recording.dispose);
+    addTearDown(harness.player.dispose);
+    addTearDown(harness.device.dispose);
+    addTearDown(harness.overlay.dispose);
+    addTearDown(harness.permissions.dispose);
+    addTearDown(harness.post.dispose);
+    addTearDown(harness.license.dispose);
+    addTearDown(harness.countdown.dispose);
+    addTearDown(harness.uiState.dispose);
+    addTearDown(harness.settings.dispose);
+    await tester.pumpWidget(
+      buildShell(
+        actions: harness.actions,
+        countdown: harness.countdown,
+        device: harness.device,
+        license: harness.license,
+        overlay: harness.overlay,
+        player: harness.player,
+        post: harness.post,
+        recording: harness.recording,
+        settings: harness.settings,
+        uiState: harness.uiState,
+      ),
+    );
+    await tester.pumpAndSettle();
+    final sidebarRect = tester.getRect(
+      find.byKey(const Key('home_left_sidebar_shell')),
+    );
+    final clusterRect = tester.getRect(
+      find.byKey(const Key('home_sidebar_utility_cluster')),
+    );
+    final viewSize = tester.view.physicalSize / tester.view.devicePixelRatio;
+    final metrics = ShellResponsiveMetrics.fromSize(viewSize);
+    // Cluster bottom must sit within bottom padding tolerance of the sidebar
+    // bottom (no large empty space underneath).
+    final tolerance = metrics.railBottomPaddingCompact + 4;
+    expect(
+      sidebarRect.bottom - clusterRect.bottom,
+      lessThanOrEqualTo(tolerance),
+    );
+  });
 }
 
 void _setDesktopWindow(

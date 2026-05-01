@@ -85,51 +85,51 @@ class HomeRightPanel extends StatelessWidget {
             children: [
               Expanded(
                 child: previewUiState.showPreviewShell
-                  ? Builder(
-                      builder: (context) {
-                        final player = context.read<PlayerController>();
-                        return PreviewWithOverlayControls(
-                          preview: KeyedSubtree(
-                            key: ValueKey(
-                              'preview-shell-${previewUiState.sessionId ?? 'none'}',
+                    ? Builder(
+                        builder: (context) {
+                          final player = context.read<PlayerController>();
+                          return PreviewWithOverlayControls(
+                            preview: KeyedSubtree(
+                              key: ValueKey(
+                                'preview-shell-${previewUiState.sessionId ?? 'none'}',
+                              ),
+                              child: InlinePreviewPanel(
+                                path: previewUiState.previewPath ?? '',
+                                onToggleRecord: onToggleRecording,
+                                onClose: onClosePreview,
+                                onPreviewHostMounted: recordingController
+                                    .handlePreviewHostMounted,
+                                showLoadingOverlay:
+                                    previewUiState.showPreviewLoadingOverlay,
+                                showSurface: previewUiState.showPreviewSurface,
+                                previewHostBuilder: previewHostBuilder,
+                              ),
                             ),
-                            child: InlinePreviewPanel(
-                              path: previewUiState.previewPath ?? '',
-                              onToggleRecord: onToggleRecording,
-                              onClose: onClosePreview,
-                              onPreviewHostMounted:
-                                  recordingController.handlePreviewHostMounted,
-                              showLoadingOverlay:
-                                  previewUiState.showPreviewLoadingOverlay,
-                              showSurface: previewUiState.showPreviewSurface,
-                              previewHostBuilder: previewHostBuilder,
-                            ),
-                          ),
-                          isPlaying: isPlaying,
-                          controlsEnabled:
-                              previewUiState.showPreviewSurface &&
-                              !postHasError,
-                          onPlayPause: (playing) {
-                            if (playing) {
-                              player.play();
-                            } else {
-                              player.pause();
-                            }
-                          },
-                        );
-                      },
-                    )
-                  : HeroPanel(
-                      isRecording: isRecording,
-                      isPaused: isPaused,
-                      isBusy: isBusy,
-                      canPause: canPause,
-                      canResume: canResume,
-                      onToggle: onToggleRecording,
-                      onPause: onPauseRecording,
-                      onResume: onResumeRecording,
-                      startRecordingButtonKey: startRecordingButtonKey,
-                    ),
+                            isPlaying: isPlaying,
+                            controlsEnabled:
+                                previewUiState.showPreviewSurface &&
+                                !postHasError,
+                            onPlayPause: (playing) {
+                              if (playing) {
+                                player.play();
+                              } else {
+                                player.pause();
+                              }
+                            },
+                          );
+                        },
+                      )
+                    : HeroPanel(
+                        isRecording: isRecording,
+                        isPaused: isPaused,
+                        isBusy: isBusy,
+                        canPause: canPause,
+                        canResume: canResume,
+                        onToggle: onToggleRecording,
+                        onPause: onPauseRecording,
+                        onResume: onResumeRecording,
+                        startRecordingButtonKey: startRecordingButtonKey,
+                      ),
               ),
             ],
           ),

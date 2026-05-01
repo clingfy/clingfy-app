@@ -27,7 +27,8 @@ class PostProcessingSidebarRail extends StatelessWidget {
   Widget build(BuildContext context) {
     final l10n = AppLocalizations.of(context)!;
     final metrics = context.shellMetricsOrNull;
-    final sectionGap = metrics?.sidebarSectionGap ?? AppSidebarTokens.sectionGap;
+    final sectionGap =
+        metrics?.sidebarSectionGap ?? AppSidebarTokens.sectionGap;
 
     return Column(
       children: [
@@ -86,7 +87,8 @@ class _PostProcessingRailItem extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final metrics = context.shellMetricsOrNull;
-    final verticalPadding = metrics?.sidebarRailItemVerticalPadding ??
+    final verticalPadding =
+        metrics?.sidebarRailItemVerticalPadding ??
         AppSidebarTokens.railItemVerticalPadding;
     return Padding(
       padding: EdgeInsets.symmetric(vertical: verticalPadding),
@@ -256,19 +258,18 @@ class PostProcessingSidebar extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final metrics = context.shellMetricsOrNull;
-    final compactWidthThreshold =
-        metrics?.sidebarCompactWidthBreakpoint ?? 320;
+    final compactWidthThreshold = metrics?.sidebarCompactWidthBreakpoint ?? 320;
     final useCompactSpacing =
         isCompact || availableWidth <= compactWidthThreshold;
     final horizontalPadding = useCompactSpacing
         ? metrics?.sidebarContentHorizontalPaddingCompact ?? 10.0
         : metrics?.sidebarContentHorizontalPadding ??
-            AppSidebarTokens.contentHorizontalPadding;
+              AppSidebarTokens.contentHorizontalPadding;
     final topSpacer =
         metrics?.sidebarHeaderContentGap ?? AppSidebarTokens.headerContentGap;
     final bottomSpacer =
         (metrics?.sidebarSectionGap ?? AppSidebarTokens.sectionGap) +
-            (metrics?.sidebarCompactGap ?? AppSidebarTokens.compactGap);
+        (metrics?.sidebarCompactGap ?? AppSidebarTokens.compactGap);
 
     return Opacity(
       opacity: enabled ? 1.0 : 0.45,

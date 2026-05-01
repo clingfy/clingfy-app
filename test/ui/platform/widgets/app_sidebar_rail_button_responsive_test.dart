@@ -24,33 +24,28 @@ double _iconButtonConstraintWidth(WidgetTester tester) {
 }
 
 void main() {
-  testWidgets('AppSidebarRailButton uses metrics defaults when sizes omitted',
-      (tester) async {
+  testWidgets('AppSidebarRailButton uses metrics defaults when sizes omitted', (
+    tester,
+  ) async {
     final comfortable = ShellResponsiveMetrics.fromSize(const Size(1500, 900));
     await tester.pumpWidget(
       _wrap(
         comfortable,
-        AppSidebarRailButton(
-          icon: Icons.menu,
-          tooltip: 'menu',
-          onTap: () {},
-        ),
+        AppSidebarRailButton(icon: Icons.menu, tooltip: 'menu', onTap: () {}),
       ),
     );
     expect(_iconButtonIconSize(tester), comfortable.railIconSize);
     expect(_iconButtonConstraintWidth(tester), comfortable.railButtonSize);
   });
 
-  testWidgets('AppSidebarRailButton shrinks at minimal density', (tester) async {
+  testWidgets('AppSidebarRailButton shrinks at minimal density', (
+    tester,
+  ) async {
     final minimal = ShellResponsiveMetrics.fromSize(const Size(820, 760));
     await tester.pumpWidget(
       _wrap(
         minimal,
-        AppSidebarRailButton(
-          icon: Icons.menu,
-          tooltip: 'menu',
-          onTap: () {},
-        ),
+        AppSidebarRailButton(icon: Icons.menu, tooltip: 'menu', onTap: () {}),
       ),
     );
     expect(_iconButtonIconSize(tester), minimal.railIconSize);
@@ -61,8 +56,9 @@ void main() {
     expect(minimal.railIconSize, greaterThanOrEqualTo(20));
   });
 
-  testWidgets('AppSidebarRailButton explicit sizes override metrics',
-      (tester) async {
+  testWidgets('AppSidebarRailButton explicit sizes override metrics', (
+    tester,
+  ) async {
     final minimal = ShellResponsiveMetrics.fromSize(const Size(820, 760));
     await tester.pumpWidget(
       _wrap(
@@ -80,8 +76,9 @@ void main() {
     expect(_iconButtonConstraintWidth(tester), 50);
   });
 
-  testWidgets('AppSidebarRailButton without scope uses legacy defaults',
-      (tester) async {
+  testWidgets('AppSidebarRailButton without scope uses legacy defaults', (
+    tester,
+  ) async {
     await tester.pumpWidget(
       MaterialApp(
         home: Material(

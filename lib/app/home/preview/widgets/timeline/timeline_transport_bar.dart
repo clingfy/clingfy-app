@@ -56,10 +56,8 @@ class TimelineTransportBar extends StatelessWidget {
     final minHeight = metrics?.timelineTransportMinHeight ?? 40;
     final timeScale = metrics?.timelineTimeTextScale ?? 1.0;
     final modeScale = metrics?.timelineModeTextScale ?? 1.0;
-    final hideZoomLabelBelow =
-        metrics?.timelineHideZoomLabelBelowWidth ?? 560;
-    final compactBelow =
-        metrics?.timelineCompactTransportBelowWidth ?? 640;
+    final hideZoomLabelBelow = metrics?.timelineHideZoomLabelBelowWidth ?? 560;
+    final compactBelow = metrics?.timelineCompactTransportBelowWidth ?? 640;
     final sliderMin = metrics?.timelineZoomSliderMinWidth ?? 120;
     final sliderMax = metrics?.timelineZoomSliderMaxWidth ?? 220;
     final sliderFactor = metrics?.timelineZoomSliderWidthFactor ?? 0.20;
@@ -99,9 +97,7 @@ class TimelineTransportBar extends StatelessWidget {
             AppButton(
               key: const Key('timeline_play_pause_button'),
               label: isPlaying ? l10n.pausePlayback : l10n.play,
-              icon: isPlaying
-                  ? Icons.pause_rounded
-                  : Icons.play_arrow_rounded,
+              icon: isPlaying ? Icons.pause_rounded : Icons.play_arrow_rounded,
               size: AppButtonSize.compact,
               variant: AppButtonVariant.secondary,
               onPressed: isReady ? onPlayPause : null,

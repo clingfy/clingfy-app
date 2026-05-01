@@ -279,31 +279,33 @@ void main() {
   });
 
   testWidgets(
-      'addDefaultSegmentAt creates and selects a centered manual segment',
-      (tester) async {
-    await installCommonNativeMocks();
-    final controller = ZoomEditorController(
-      nativeBridge: NativeBridge.instance,
-      videoPath: '/tmp/demo.mov',
-      durationMs: 8000,
-    );
-    await controller.init();
-    addTearDown(controller.dispose);
+    'addDefaultSegmentAt creates and selects a centered manual segment',
+    (tester) async {
+      await installCommonNativeMocks();
+      final controller = ZoomEditorController(
+        nativeBridge: NativeBridge.instance,
+        videoPath: '/tmp/demo.mov',
+        durationMs: 8000,
+      );
+      await controller.init();
+      addTearDown(controller.dispose);
 
-    final created = controller.addDefaultSegmentAt(4000);
-    await tester.pump();
+      final created = controller.addDefaultSegmentAt(4000);
+      await tester.pump();
 
-    expect(created, isNotNull);
-    expect(
-      created!.endMs - created.startMs,
-      ZoomEditorController.defaultNewSegmentDurationMs,
-    );
-    expect(controller.primarySelectedSegmentId, created.id);
-    expect(controller.manualSegments, hasLength(1));
-  });
+      expect(created, isNotNull);
+      expect(
+        created!.endMs - created.startMs,
+        ZoomEditorController.defaultNewSegmentDurationMs,
+      );
+      expect(controller.primarySelectedSegmentId, created.id);
+      expect(controller.manualSegments, hasLength(1));
+    },
+  );
 
-  testWidgets('addDefaultSegmentAt returns null when overlapping existing',
-      (tester) async {
+  testWidgets('addDefaultSegmentAt returns null when overlapping existing', (
+    tester,
+  ) async {
     await installCommonNativeMocks();
     final controller = ZoomEditorController(
       nativeBridge: NativeBridge.instance,
@@ -399,13 +401,13 @@ void main() {
       expect(controller.normalizeEditableMsForUi(spanOff!.$1), spanOff.$1);
       expect(controller.normalizeEditableMsForUi(spanOff.$2), spanOff.$2);
       // And the span should not be grid-aligned for a non-grid center.
-      expect(_isOnFrameGrid(spanOff.$1) && _isOnFrameGrid(spanOff.$2),
-          isFalse);
+      expect(_isOnFrameGrid(spanOff.$1) && _isOnFrameGrid(spanOff.$2), isFalse);
     },
   );
 
-  testWidgets('snap OFF: defaultSpanFor returns raw non-grid span',
-      (tester) async {
+  testWidgets('snap OFF: defaultSpanFor returns raw non-grid span', (
+    tester,
+  ) async {
     await installCommonNativeMocks();
     final controller = ZoomEditorController(
       nativeBridge: NativeBridge.instance,
@@ -429,8 +431,7 @@ void main() {
     expect(controller.normalizeEditableMsForUi(raw), raw);
   });
 
-  testWidgets('snap ON: defaultSpanFor aligns to frame grid',
-      (tester) async {
+  testWidgets('snap ON: defaultSpanFor aligns to frame grid', (tester) async {
     await installCommonNativeMocks();
     final controller = ZoomEditorController(
       nativeBridge: NativeBridge.instance,
@@ -447,8 +448,9 @@ void main() {
     expect(_isOnFrameGrid(normalized), isTrue);
   });
 
-  testWidgets('setSnappingEnabled notifies listeners exactly once',
-      (tester) async {
+  testWidgets('setSnappingEnabled notifies listeners exactly once', (
+    tester,
+  ) async {
     await installCommonNativeMocks();
     final controller = ZoomEditorController(
       nativeBridge: NativeBridge.instance,
@@ -470,8 +472,7 @@ void main() {
     expect(notifyCount, 2);
   });
 
-  testWidgets('canAddDefaultSegmentAt respects snap-off span',
-      (tester) async {
+  testWidgets('canAddDefaultSegmentAt respects snap-off span', (tester) async {
     await installCommonNativeMocks();
     final controller = ZoomEditorController(
       nativeBridge: NativeBridge.instance,
@@ -490,8 +491,9 @@ void main() {
     expect(controller.canAddDefaultSegmentAt(center), isFalse);
   });
 
-  testWidgets('addDefaultSegmentAt clamps near timeline start/end',
-      (tester) async {
+  testWidgets('addDefaultSegmentAt clamps near timeline start/end', (
+    tester,
+  ) async {
     await installCommonNativeMocks();
     final controller = ZoomEditorController(
       nativeBridge: NativeBridge.instance,

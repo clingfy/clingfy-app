@@ -71,13 +71,16 @@ class _PlatformDropdownState<T> extends State<PlatformDropdown<T>> {
     final textStyle = theme.appTypography.body;
     final palette = _DropdownPalette.resolve(theme);
     final metrics = context.shellMetricsOrNull;
-    final effectiveMaxWidth = widget.maxWidth ??
+    final effectiveMaxWidth =
+        widget.maxWidth ??
         metrics?.sidebarControlMaxWidth ??
         AppSidebarTokens.controlMaxWidth;
-    final effectiveHeightMac = widget.heightMac ??
+    final effectiveHeightMac =
+        widget.heightMac ??
         metrics?.sidebarControlHeightMac ??
         AppSidebarTokens.controlHeightMac;
-    final effectiveHeightWin = widget.heightWin ??
+    final effectiveHeightWin =
+        widget.heightWin ??
         metrics?.sidebarControlHeightDefault ??
         AppSidebarTokens.controlHeightDefault;
     final height = isMac() ? effectiveHeightMac : effectiveHeightWin;

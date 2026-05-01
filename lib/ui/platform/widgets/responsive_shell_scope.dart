@@ -614,8 +614,8 @@ class ShellResponsiveMetrics {
       timelineMarkerMaxVisiblePins: density == ShellDensity.minimal
           ? 6
           : density == ShellDensity.dense
-              ? 7
-              : 8,
+          ? 7
+          : 8,
       autoCollapseOptions: isMinimal,
       autoCompactRail: isMinimal,
     );
@@ -688,8 +688,7 @@ class ShellResponsiveMetrics {
         other.expandedSidebarUtilityGap == expandedSidebarUtilityGap &&
         other.sidebarHelpMenuIconSize == sidebarHelpMenuIconSize &&
         other.sidebarHelpMenuIconGap == sidebarHelpMenuIconGap &&
-        other.sidebarHelpMenuFallbackInset ==
-            sidebarHelpMenuFallbackInset &&
+        other.sidebarHelpMenuFallbackInset == sidebarHelpMenuFallbackInset &&
         other.sidebarHelpMenuFallbackSize == sidebarHelpMenuFallbackSize &&
         other.optionsPanelDefaultWidth == optionsPanelDefaultWidth &&
         other.optionsPanelMinWidth == optionsPanelMinWidth &&
@@ -730,8 +729,7 @@ class ShellResponsiveMetrics {
             sidebarRailItemVerticalPadding &&
         other.sidebarLabelWidth == sidebarLabelWidth &&
         other.sidebarStackBreakpoint == sidebarStackBreakpoint &&
-        other.sidebarCompactWidthBreakpoint ==
-            sidebarCompactWidthBreakpoint &&
+        other.sidebarCompactWidthBreakpoint == sidebarCompactWidthBreakpoint &&
         other.sidebarControlMinWidth == sidebarControlMinWidth &&
         other.sidebarControlMaxWidth == sidebarControlMaxWidth &&
         other.sidebarControlHeightMac == sidebarControlHeightMac &&
@@ -755,8 +753,7 @@ class ShellResponsiveMetrics {
         other.timelineTrackHeaderWidth == timelineTrackHeaderWidth &&
         other.timelineTrackHeaderPaddingX == timelineTrackHeaderPaddingX &&
         other.timelineLaneHeaderIconSize == timelineLaneHeaderIconSize &&
-        other.timelineLaneHeaderIconTextGap ==
-            timelineLaneHeaderIconTextGap &&
+        other.timelineLaneHeaderIconTextGap == timelineLaneHeaderIconTextGap &&
         other.timelineLaneHeaderTextScale == timelineLaneHeaderTextScale &&
         other.timelineToolbarChipMinHeight == timelineToolbarChipMinHeight &&
         other.timelineToolbarChipPaddingX == timelineToolbarChipPaddingX &&
@@ -769,8 +766,7 @@ class ShellResponsiveMetrics {
         other.timelineButtonMinHeight == timelineButtonMinHeight &&
         other.timelineZoomSliderMinWidth == timelineZoomSliderMinWidth &&
         other.timelineZoomSliderMaxWidth == timelineZoomSliderMaxWidth &&
-        other.timelineZoomSliderWidthFactor ==
-            timelineZoomSliderWidthFactor &&
+        other.timelineZoomSliderWidthFactor == timelineZoomSliderWidthFactor &&
         other.timelineTimeTextScale == timelineTimeTextScale &&
         other.timelineModeTextScale == timelineModeTextScale &&
         other.timelineHideZoomLabelBelowWidth ==
@@ -780,10 +776,8 @@ class ShellResponsiveMetrics {
         other.timelineRulerLabelFontSize == timelineRulerLabelFontSize &&
         other.timelineRulerMajorTickHeight == timelineRulerMajorTickHeight &&
         other.timelineRulerMinorTickHeight == timelineRulerMinorTickHeight &&
-        other.timelineRulerMajorStrokeWidth ==
-            timelineRulerMajorStrokeWidth &&
-        other.timelineRulerMinorStrokeWidth ==
-            timelineRulerMinorStrokeWidth &&
+        other.timelineRulerMajorStrokeWidth == timelineRulerMajorStrokeWidth &&
+        other.timelineRulerMinorStrokeWidth == timelineRulerMinorStrokeWidth &&
         other.timelineRulerLabelTop == timelineRulerLabelTop &&
         other.timelineRulerMinMajorTickSpacing ==
             timelineRulerMinMajorTickSpacing &&
@@ -797,8 +791,7 @@ class ShellResponsiveMetrics {
         other.timelineMarkerPinUp == timelineMarkerPinUp &&
         other.timelineMarkerPinDown == timelineMarkerPinDown &&
         other.timelineMarkerStrokeWidth == timelineMarkerStrokeWidth &&
-        other.timelineMarkerMaxVisiblePins ==
-            timelineMarkerMaxVisiblePins &&
+        other.timelineMarkerMaxVisiblePins == timelineMarkerMaxVisiblePins &&
         other.autoCollapseOptions == autoCollapseOptions &&
         other.autoCompactRail == autoCompactRail;
   }

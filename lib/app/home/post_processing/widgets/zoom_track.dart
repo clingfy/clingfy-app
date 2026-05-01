@@ -821,7 +821,9 @@ class ZoomTrackPainter extends CustomPainter {
       );
     }
 
-    if (ghostStartMs != null && ghostEndMs != null && ghostEndMs! > ghostStartMs!) {
+    if (ghostStartMs != null &&
+        ghostEndMs != null &&
+        ghostEndMs! > ghostStartMs!) {
       final rawX1 = (ghostStartMs! / durationMs) * size.width;
       final rawX2 = (ghostEndMs! / durationMs) * size.width;
       const minVisualWidth = 24.0;

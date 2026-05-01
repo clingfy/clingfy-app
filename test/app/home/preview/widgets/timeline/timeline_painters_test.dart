@@ -30,25 +30,33 @@ void main() {
       expect(make().shouldRepaint(make()), isFalse);
     });
     test('detects labelFontSize change', () {
-      expect(make(labelFontSize: 11).shouldRepaint(make(labelFontSize: 10)),
-          isTrue);
+      expect(
+        make(labelFontSize: 11).shouldRepaint(make(labelFontSize: 10)),
+        isTrue,
+      );
     });
     test('detects majorTickHeight change', () {
-      expect(make(majorTickHeight: 15).shouldRepaint(make(majorTickHeight: 12)),
-          isTrue);
+      expect(
+        make(majorTickHeight: 15).shouldRepaint(make(majorTickHeight: 12)),
+        isTrue,
+      );
     });
     test('detects minorTickHeight change', () {
-      expect(make(minorTickHeight: 8).shouldRepaint(make(minorTickHeight: 6)),
-          isTrue);
+      expect(
+        make(minorTickHeight: 8).shouldRepaint(make(minorTickHeight: 6)),
+        isTrue,
+      );
     });
     test('detects labelTop change', () {
       expect(make(labelTop: 6).shouldRepaint(make(labelTop: 4)), isTrue);
     });
     test('detects minMajorTickSpacing change', () {
       expect(
-          make(minMajorTickSpacing: 110)
-              .shouldRepaint(make(minMajorTickSpacing: 80)),
-          isTrue);
+        make(
+          minMajorTickSpacing: 110,
+        ).shouldRepaint(make(minMajorTickSpacing: 80)),
+        isTrue,
+      );
     });
   });
 
@@ -84,13 +92,17 @@ void main() {
     });
     test('detects markerStrokeWidth change', () {
       expect(
-          make(markerStrokeWidth: 1.25)
-              .shouldRepaint(make(markerStrokeWidth: 1.0)),
-          isTrue);
+        make(
+          markerStrokeWidth: 1.25,
+        ).shouldRepaint(make(markerStrokeWidth: 1.0)),
+        isTrue,
+      );
     });
     test('detects maxVisiblePins change', () {
-      expect(make(maxVisiblePins: 8).shouldRepaint(make(maxVisiblePins: 6)),
-          isTrue);
+      expect(
+        make(maxVisiblePins: 8).shouldRepaint(make(maxVisiblePins: 6)),
+        isTrue,
+      );
     });
   });
 }

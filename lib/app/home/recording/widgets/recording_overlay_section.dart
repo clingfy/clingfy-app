@@ -125,9 +125,11 @@ class RecordingOverlaySection extends StatelessWidget {
               final metrics = context.shellMetricsOrNull;
               return ConstrainedBox(
                 constraints: BoxConstraints(
-                  minWidth: metrics?.sidebarControlMinWidth ??
+                  minWidth:
+                      metrics?.sidebarControlMinWidth ??
                       AppSidebarTokens.controlMinWidth,
-                  maxWidth: metrics?.sidebarControlMaxWidth ??
+                  maxWidth:
+                      metrics?.sidebarControlMaxWidth ??
                       AppSidebarTokens.controlMaxWidth,
                 ),
                 child: OverlaySegmented(
@@ -259,10 +261,7 @@ class RecordingOverlaySection extends StatelessWidget {
           ),
         ),
         const SizedBox(height: AppSidebarTokens.rowGap),
-        AppFormRow(
-          label: l10n.border,
-          control: _buildBorderControl(context),
-        ),
+        AppFormRow(label: l10n.border, control: _buildBorderControl(context)),
         ...[
           const SizedBox(height: AppSidebarTokens.optionsSubgroupGap),
           AppInsetGroup(
@@ -379,10 +378,10 @@ class RecordingOverlaySection extends StatelessWidget {
 
     return ConstrainedBox(
       constraints: BoxConstraints(
-        minWidth: metrics?.sidebarControlMinWidth ??
-            AppSidebarTokens.controlMinWidth,
-        maxWidth: metrics?.sidebarControlMaxWidth ??
-            AppSidebarTokens.controlMaxWidth,
+        minWidth:
+            metrics?.sidebarControlMinWidth ?? AppSidebarTokens.controlMinWidth,
+        maxWidth:
+            metrics?.sidebarControlMaxWidth ?? AppSidebarTokens.controlMaxWidth,
       ),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
@@ -469,10 +468,10 @@ class RecordingOverlaySection extends StatelessWidget {
     final metrics = context.shellMetricsOrNull;
     return ConstrainedBox(
       constraints: BoxConstraints(
-        minWidth: metrics?.sidebarControlMinWidth ??
-            AppSidebarTokens.controlMinWidth,
-        maxWidth: metrics?.sidebarControlMaxWidth ??
-            AppSidebarTokens.controlMaxWidth,
+        minWidth:
+            metrics?.sidebarControlMinWidth ?? AppSidebarTokens.controlMinWidth,
+        maxWidth:
+            metrics?.sidebarControlMaxWidth ?? AppSidebarTokens.controlMaxWidth,
       ),
       child: Wrap(
         spacing: AppSidebarTokens.rowGap,
@@ -526,10 +525,10 @@ class RecordingOverlaySection extends StatelessWidget {
 
     return ConstrainedBox(
       constraints: BoxConstraints(
-        minWidth: metrics?.sidebarControlMinWidth ??
-            AppSidebarTokens.controlMinWidth,
-        maxWidth: metrics?.sidebarControlMaxWidth ??
-            AppSidebarTokens.controlMaxWidth,
+        minWidth:
+            metrics?.sidebarControlMinWidth ?? AppSidebarTokens.controlMinWidth,
+        maxWidth:
+            metrics?.sidebarControlMaxWidth ?? AppSidebarTokens.controlMaxWidth,
       ),
       child: Row(
         mainAxisSize: MainAxisSize.min,

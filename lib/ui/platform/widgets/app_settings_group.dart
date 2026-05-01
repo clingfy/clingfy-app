@@ -29,8 +29,8 @@ class AppSettingsGroup extends StatelessWidget {
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
     final metrics = context.shellMetricsOrNull;
-    final optionsGroupGap = metrics?.sidebarOptionsGroupGap ??
-        AppSidebarTokens.optionsGroupGap;
+    final optionsGroupGap =
+        metrics?.sidebarOptionsGroupGap ?? AppSidebarTokens.optionsGroupGap;
     final compactGap =
         metrics?.sidebarCompactGap ?? AppSidebarTokens.compactGap;
     final controlGap =

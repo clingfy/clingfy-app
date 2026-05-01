@@ -29,13 +29,15 @@ class AppPaneHeader extends StatelessWidget {
     final theme = Theme.of(context);
     final colorScheme = theme.colorScheme;
     final metrics = context.shellMetricsOrNull;
-    final defaultTop = metrics?.paneHeaderTopPadding ??
-        AppSidebarTokens.headerTopPadding;
-    final defaultBottom = metrics?.paneHeaderBottomPadding ??
+    final defaultTop =
+        metrics?.paneHeaderTopPadding ?? AppSidebarTokens.headerTopPadding;
+    final defaultBottom =
+        metrics?.paneHeaderBottomPadding ??
         AppSidebarTokens.headerBottomPadding;
     final headerTopPadding = isCompact ? 10.0 : defaultTop;
     final headerBottomPadding = isCompact ? 8.0 : defaultBottom;
-    final horizontalPadding = metrics?.sidebarContentHorizontalPadding ??
+    final horizontalPadding =
+        metrics?.sidebarContentHorizontalPadding ??
         AppSidebarTokens.contentHorizontalPadding;
     final titleFontSize = metrics?.paneHeaderTitleSize ?? 16;
     final titleStyle = (theme.textTheme.titleMedium ?? const TextStyle())

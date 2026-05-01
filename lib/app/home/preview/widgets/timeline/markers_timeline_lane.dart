@@ -45,8 +45,7 @@ class MarkersTimelineLane extends StatelessWidget {
           pinUp: metrics?.timelineMarkerPinUp ?? 8,
           pinDown: metrics?.timelineMarkerPinDown ?? 5,
           maxVisiblePins: metrics?.timelineMarkerMaxVisiblePins ?? 8,
-          minMajorTickSpacing:
-              metrics?.timelineRulerMinMajorTickSpacing ?? 110,
+          minMajorTickSpacing: metrics?.timelineRulerMinMajorTickSpacing ?? 110,
         ),
       ),
     );

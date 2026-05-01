@@ -331,8 +331,7 @@ class _MacToolbarRow extends StatelessWidget {
 
     final metrics = context.shellMetricsOrNull;
     final toolbarHeight = metrics?.toolbarHeight ?? chrome.toolbarHeight;
-    final hPad =
-        metrics?.toolbarHorizontalPadding ?? spacing.sm;
+    final hPad = metrics?.toolbarHorizontalPadding ?? spacing.sm;
     return Container(
       key: _toolbarSurfaceKey,
       height: toolbarHeight,

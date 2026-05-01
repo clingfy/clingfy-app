@@ -29,7 +29,8 @@ class RecordingSidebarRail extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final metrics = context.shellMetricsOrNull;
-    final sectionGap = metrics?.sidebarSectionGap ?? AppSidebarTokens.sectionGap;
+    final sectionGap =
+        metrics?.sidebarSectionGap ?? AppSidebarTokens.sectionGap;
     return Column(
       children: [
         SizedBox(height: sectionGap),
@@ -79,7 +80,8 @@ class _RecordingRailItem extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final metrics = context.shellMetricsOrNull;
-    final verticalPadding = metrics?.sidebarRailItemVerticalPadding ??
+    final verticalPadding =
+        metrics?.sidebarRailItemVerticalPadding ??
         AppSidebarTokens.railItemVerticalPadding;
     return Padding(
       padding: EdgeInsets.symmetric(vertical: verticalPadding),
@@ -312,13 +314,13 @@ class RecordingOptionsSidebar extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final metrics = context.shellMetricsOrNull;
-    final compactWidthThreshold =
-        metrics?.sidebarCompactWidthBreakpoint ?? 320;
-    final useCompactSpacing = isCompact || availableWidth <= compactWidthThreshold;
+    final compactWidthThreshold = metrics?.sidebarCompactWidthBreakpoint ?? 320;
+    final useCompactSpacing =
+        isCompact || availableWidth <= compactWidthThreshold;
     final horizontalPadding = useCompactSpacing
         ? metrics?.sidebarContentHorizontalPaddingCompact ?? 10.0
         : metrics?.sidebarContentHorizontalPadding ??
-            AppSidebarTokens.contentHorizontalPadding;
+              AppSidebarTokens.contentHorizontalPadding;
     final topSpacer =
         metrics?.sidebarHeaderContentGap ?? AppSidebarTokens.headerContentGap;
     final bottomSpacer = metrics?.sidebarRowGap ?? AppSidebarTokens.rowGap;
@@ -522,9 +524,11 @@ class RecordingOptionsSidebar extends StatelessWidget {
         return ConstrainedBox(
           constraints: BoxConstraints(
             minWidth:
-                metrics?.sidebarControlMinWidth ?? AppSidebarTokens.controlMinWidth,
+                metrics?.sidebarControlMinWidth ??
+                AppSidebarTokens.controlMinWidth,
             maxWidth:
-                metrics?.sidebarControlMaxWidth ?? AppSidebarTokens.controlMaxWidth,
+                metrics?.sidebarControlMaxWidth ??
+                AppSidebarTokens.controlMaxWidth,
           ),
           child: OverlaySegmented(mode: mode, onChanged: onChanged),
         );

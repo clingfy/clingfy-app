@@ -200,7 +200,8 @@ class _CompactSidebarContent extends StatelessWidget {
     final hPad = metrics?.railHorizontalPaddingCompact ?? 6;
     final topPad = metrics?.railTopPaddingCompact ?? 14;
     final bottomPad = metrics?.railBottomPaddingCompact ?? 8;
-    final headerGap = metrics?.railHeaderGapCompact ?? AppSidebarTokens.compactGap;
+    final headerGap =
+        metrics?.railHeaderGapCompact ?? AppSidebarTokens.compactGap;
     final sectionGap =
         metrics?.railSectionGapCompact ?? AppSidebarTokens.sectionGap;
     final utilityGap = metrics?.railUtilityGap ?? AppSidebarTokens.railItemGap;
@@ -229,8 +230,7 @@ class _CompactSidebarContent extends StatelessWidget {
                 child: showPreviewShell
                     ? PostProcessingSidebarRail(
                         selectedIndex: uiState.postProcessingSidebarIndex,
-                        onSelectedIndexChanged:
-                            onPostProcessingSectionSelected,
+                        onSelectedIndexChanged: onPostProcessingSectionSelected,
                       )
                     : RecordingSidebarRail(
                         selectedIndex: uiState.recordingSidebarIndex,
@@ -306,8 +306,7 @@ class _ExpandedSidebarContent extends StatelessWidget {
     final theme = Theme.of(context);
     final metrics = context.shellMetricsOrNull;
     final logoSize = metrics?.railLogoSizeExpanded ?? 36;
-    final railItemGap =
-        metrics?.railUtilityGap ?? AppSidebarTokens.railItemGap;
+    final railItemGap = metrics?.railUtilityGap ?? AppSidebarTokens.railItemGap;
     final navItemGap =
         metrics?.expandedNavButtonGap ?? AppSidebarTokens.compactGap;
     final headerGap = metrics?.expandedSidebarHeaderGap ?? 18;
@@ -320,24 +319,21 @@ class _ExpandedSidebarContent extends StatelessWidget {
     final titleStyle = (theme.textTheme.titleMedium ?? const TextStyle())
         .copyWith(
           fontWeight: FontWeight.w700,
-          fontSize: metrics?.expandedSidebarTitleFontSize ??
+          fontSize:
+              metrics?.expandedSidebarTitleFontSize ??
               theme.textTheme.titleMedium?.fontSize,
         );
     final sectionStyle = (theme.textTheme.bodySmall ?? const TextStyle())
         .copyWith(
           color: theme.colorScheme.onSurfaceVariant,
           fontWeight: FontWeight.w600,
-          fontSize: metrics?.expandedSidebarSectionFontSize ??
+          fontSize:
+              metrics?.expandedSidebarSectionFontSize ??
               theme.textTheme.bodySmall?.fontSize,
         );
 
     return Padding(
-      padding: EdgeInsets.fromLTRB(
-        outerPad,
-        outerPad,
-        outerPad,
-        bottomPad,
-      ),
+      padding: EdgeInsets.fromLTRB(outerPad, outerPad, outerPad, bottomPad),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.stretch,
         children: [
@@ -386,7 +382,11 @@ class _ExpandedSidebarContent extends StatelessWidget {
               child: Column(
                 crossAxisAlignment: CrossAxisAlignment.stretch,
                 children: [
-                  for (var index = 0; index < navigationItems.length; index++) ...[
+                  for (
+                    var index = 0;
+                    index < navigationItems.length;
+                    index++
+                  ) ...[
                     _ExpandedSidebarButton(item: navigationItems[index]),
                     if (index < navigationItems.length - 1)
                       SizedBox(height: navItemGap),

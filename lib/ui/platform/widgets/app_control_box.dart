@@ -29,13 +29,16 @@ class AppControlBox extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final metrics = context.shellMetricsOrNull;
-    final effectiveMinFallback = minWidth ??
+    final effectiveMinFallback =
+        minWidth ??
         metrics?.sidebarControlMinWidth ??
         AppSidebarTokens.controlMinWidth;
-    final effectiveMaxFallback = maxWidth ??
+    final effectiveMaxFallback =
+        maxWidth ??
         metrics?.sidebarControlMaxWidth ??
         AppSidebarTokens.controlMaxWidth;
-    final effectiveHeight = height ??
+    final effectiveHeight =
+        height ??
         metrics?.sidebarControlHeightDefault ??
         AppSidebarTokens.controlHeightDefault;
     return LayoutBuilder(

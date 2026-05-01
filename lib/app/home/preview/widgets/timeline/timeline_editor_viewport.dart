@@ -118,9 +118,9 @@ class _TimelineEditorViewportState extends State<TimelineEditorViewport> {
     final laneGap = metrics?.timelineLaneGap ?? (spacing.xs + 2);
     final rulerHeight =
         metrics?.timelineRulerHeight ?? chrome.timelineRulerHeight;
-    final laneHeight =
-        metrics?.timelineLaneHeight ?? chrome.timelineLaneHeight;
-    final viewportHeight = rulerHeight +
+    final laneHeight = metrics?.timelineLaneHeight ?? chrome.timelineLaneHeight;
+    final viewportHeight =
+        rulerHeight +
         (visibleLaneCount * laneHeight) +
         (visibleLaneCount > 0 ? (visibleLaneCount - 1) * laneGap : 0);
 
@@ -242,8 +242,7 @@ class TimelineTrackHeaderColumn extends StatelessWidget {
     final metrics = context.shellMetricsOrNull;
     final headerWidth =
         metrics?.timelineTrackHeaderWidth ?? chrome.timelineTrackHeaderWidth;
-    final headerPadX =
-        metrics?.timelineTrackHeaderPaddingX ?? spacing.xs;
+    final headerPadX = metrics?.timelineTrackHeaderPaddingX ?? spacing.xs;
     final rulerHeight =
         metrics?.timelineRulerHeight ?? chrome.timelineRulerHeight;
     final laneGap = metrics?.timelineLaneGap ?? (spacing.xs + 2);
@@ -327,10 +326,10 @@ class TimelineScrollableCanvas extends StatelessWidget {
     final laneGap = metrics?.timelineLaneGap ?? (spacing.xs + 2);
     final rulerHeight =
         metrics?.timelineRulerHeight ?? chrome.timelineRulerHeight;
-    final laneHeight =
-        metrics?.timelineLaneHeight ?? chrome.timelineLaneHeight;
+    final laneHeight = metrics?.timelineLaneHeight ?? chrome.timelineLaneHeight;
     final laneCount = (showZoomLane ? 1 : 0) + (showMarkersLane ? 1 : 0);
-    final totalHeight = rulerHeight +
+    final totalHeight =
+        rulerHeight +
         (laneCount * laneHeight) +
         (laneCount > 0 ? (laneCount - 1) * laneGap : 0);
 
@@ -438,17 +437,16 @@ class TimelineRulerStrip extends StatelessWidget {
             painter: TimelineRulerPainter(
               durationMs: durationMs,
               contentWidth: viewportController.contentWidth,
-              visibleDurationMs: viewportController.visibleEndMs -
+              visibleDurationMs:
+                  viewportController.visibleEndMs -
                   viewportController.visibleStartMs,
               tickColor: tickColor,
               textColor: textColor,
               labelFontSize: metrics?.timelineRulerLabelFontSize ?? 11,
               majorTickHeight: metrics?.timelineRulerMajorTickHeight ?? 15,
               minorTickHeight: metrics?.timelineRulerMinorTickHeight ?? 8,
-              majorStrokeWidth:
-                  metrics?.timelineRulerMajorStrokeWidth ?? 1.2,
-              minorStrokeWidth:
-                  metrics?.timelineRulerMinorStrokeWidth ?? 1.0,
+              majorStrokeWidth: metrics?.timelineRulerMajorStrokeWidth ?? 1.2,
+              minorStrokeWidth: metrics?.timelineRulerMinorStrokeWidth ?? 1.0,
               labelTop: metrics?.timelineRulerLabelTop ?? 6,
               minMajorTickSpacing:
                   metrics?.timelineRulerMinMajorTickSpacing ?? 110,
@@ -582,8 +580,9 @@ class TimelineRulerPainter extends CustomPainter {
     if (durationMs <= 0 || contentWidth <= 0) return;
 
     final majorStepMs = TimelineRulerMetrics.pickMajorStepMs(
-      visibleDurationMs:
-          visibleDurationMs <= 0 ? durationMs : visibleDurationMs,
+      visibleDurationMs: visibleDurationMs <= 0
+          ? durationMs
+          : visibleDurationMs,
       visibleWidth: size.width,
       minMajorTickSpacingPx: minMajorTickSpacing,
     );
@@ -684,8 +683,7 @@ class _TimelineLaneHeaderCell extends StatelessWidget {
     final typography = theme.appTypography;
     final tokens = theme.appTokens;
     final metrics = context.shellMetricsOrNull;
-    final height =
-        metrics?.timelineLaneHeight ?? chrome.timelineLaneHeight;
+    final height = metrics?.timelineLaneHeight ?? chrome.timelineLaneHeight;
     final padX = metrics?.timelineTrackHeaderPaddingX ?? spacing.sm;
     final iconSize = metrics?.timelineLaneHeaderIconSize ?? 16;
     final iconTextGap = metrics?.timelineLaneHeaderIconTextGap ?? spacing.xs;
@@ -705,12 +703,12 @@ class _TimelineLaneHeaderCell extends StatelessWidget {
         decoration: BoxDecoration(
           color: tokens.timelineLaneSurface,
           borderRadius: BorderRadius.circular(chrome.controlRadius),
-          border:
-              Border.all(color: theme.dividerColor.withValues(alpha: 0.12)),
+          border: Border.all(color: theme.dividerColor.withValues(alpha: 0.12)),
         ),
         child: Row(
-          mainAxisAlignment:
-              hideLabel ? MainAxisAlignment.center : MainAxisAlignment.start,
+          mainAxisAlignment: hideLabel
+              ? MainAxisAlignment.center
+              : MainAxisAlignment.start,
           children: [
             Icon(
               icon,

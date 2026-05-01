@@ -28,7 +28,8 @@ class ZoomTimelineLane extends StatelessWidget {
     final tokens = context.appTokens;
     final metrics = context.shellMetricsOrNull;
     final laneHeight =
-        metrics?.timelineLaneHeight ?? context.appEditorChrome.timelineLaneHeight;
+        metrics?.timelineLaneHeight ??
+        context.appEditorChrome.timelineLaneHeight;
 
     return SizedBox(
       key: const Key('zoom_timeline_lane'),

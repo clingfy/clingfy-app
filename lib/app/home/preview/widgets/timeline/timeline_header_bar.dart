@@ -219,8 +219,8 @@ class _TimelineToolbarButton extends StatelessWidget {
       color: onPressed == null
           ? theme.colorScheme.onSurface.withValues(alpha: 0.35)
           : isActive
-              ? accentColor
-              : theme.colorScheme.onSurface.withValues(alpha: 0.88),
+          ? accentColor
+          : theme.colorScheme.onSurface.withValues(alpha: 0.88),
       fontSize: (typography.value.fontSize ?? 12) * chipTextScale,
     );
 
@@ -259,9 +259,8 @@ class _TimelineToolbarButton extends StatelessWidget {
                     color: onPressed == null
                         ? theme.colorScheme.onSurface.withValues(alpha: 0.35)
                         : isActive
-                            ? accentColor
-                            : theme.colorScheme.onSurface
-                                .withValues(alpha: 0.82),
+                        ? accentColor
+                        : theme.colorScheme.onSurface.withValues(alpha: 0.82),
                   ),
                   SizedBox(width: chipIconTextGap),
                   Flexible(

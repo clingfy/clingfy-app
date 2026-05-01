@@ -43,7 +43,8 @@ class AppFormRow extends StatelessWidget {
     final metrics = context.shellMetricsOrNull;
     final effectiveLabelWidth =
         labelWidth ?? metrics?.sidebarLabelWidth ?? AppSidebarTokens.labelWidth;
-    final effectiveStackBreakpoint = stackBreakpoint ??
+    final effectiveStackBreakpoint =
+        stackBreakpoint ??
         metrics?.sidebarStackBreakpoint ??
         AppSidebarTokens.stackBreakpoint;
     final effectiveGap =
