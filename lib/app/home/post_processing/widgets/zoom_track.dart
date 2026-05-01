@@ -1,3 +1,5 @@
+import 'dart:math' as math;
+
 import 'package:clingfy/core/zoom/zoom_editor_controller.dart';
 import 'package:clingfy/core/models/app_models.dart';
 import 'package:clingfy/ui/theme/app_shell_tokens.dart';
@@ -16,6 +18,11 @@ class ZoomTrack extends StatefulWidget {
   final bool showSegmentLabels;
   final Color? shellColor;
   final Color? shellBorderColor;
+
+  /// Whether the lane should preview a ghost "Add zoom segment" template
+  /// when the pointer hovers an empty region. Disabling this is useful for
+  /// callers that present the track read-only.
+  final bool showAddTemplate;
 
   // Optional externally provided selection state. Falls back to editor state.
   final Set<String>? selectedSegmentIds;
@@ -37,6 +44,7 @@ class ZoomTrack extends StatefulWidget {
     this.selectedSegmentIds,
     this.primarySelectedSegmentId,
     this.canSingleEdit,
+    this.showAddTemplate = true,
   });
 
   @override
@@ -54,6 +62,8 @@ class _ZoomTrackState extends State<ZoomTrack> {
   double? _bandStartDx;
   double? _bandCurrentDx;
   Offset? _lastHoverLocalPosition;
+  int? _ghostStartMs;
+  int? _ghostEndMs;
 
   bool get _isMacOS => defaultTargetPlatform == TargetPlatform.macOS;
 
@@ -219,6 +229,60 @@ class _ZoomTrackState extends State<ZoomTrack> {
     }
 
     _applyCursor(nextCursor);
+    _updateGhost(localX: localX, totalWidth: totalWidth, hit: hit);
+  }
+
+  void _clearGhost() {
+    if (_ghostStartMs == null && _ghostEndMs == null) return;
+    setState(() {
+      _ghostStartMs = null;
+      _ghostEndMs = null;
+    });
+  }
+
+  void _updateGhost({
+    required double localX,
+    required double totalWidth,
+    required ZoomSegment? hit,
+  }) {
+    if (!widget.showAddTemplate) {
+      _clearGhost();
+      return;
+    }
+    final editor = widget.editorController;
+    if (editor == null) {
+      _clearGhost();
+      return;
+    }
+    if (_dragMode != _TrackDragMode.none) {
+      _clearGhost();
+      return;
+    }
+    if (editor.addModeEnabled) {
+      _clearGhost();
+      return;
+    }
+    if (hit != null) {
+      _clearGhost();
+      return;
+    }
+    final centerMs = _localXToMs(localX, totalWidth);
+    final span = editor.defaultSpanFor(centerMs);
+    if (span == null) {
+      _clearGhost();
+      return;
+    }
+    if (!editor.canAddDefaultSegmentAt(centerMs)) {
+      _clearGhost();
+      return;
+    }
+    if (_ghostStartMs == span.$1 && _ghostEndMs == span.$2) {
+      return;
+    }
+    setState(() {
+      _ghostStartMs = span.$1;
+      _ghostEndMs = span.$2;
+    });
   }
 
   @override
@@ -243,6 +307,7 @@ class _ZoomTrackState extends State<ZoomTrack> {
       onExit: (_) {
         _lastHoverLocalPosition = null;
         _applyCursor(SystemMouseCursors.click);
+        _clearGhost();
       },
       child: GestureDetector(
         behavior: HitTestBehavior.opaque,
@@ -267,9 +332,19 @@ class _ZoomTrackState extends State<ZoomTrack> {
                 final isToggleSelection = _isToggleModifierPressed;
 
                 if (hit == null) {
-                  if (!isRangeSelection && !isToggleSelection) {
-                    editor.clearSelection();
+                  if (isRangeSelection || isToggleSelection) {
+                    return;
                   }
+                  // Click-to-add when ghost template is visible.
+                  if (widget.showAddTemplate &&
+                      editor.canAddDefaultSegmentAt(tapMs)) {
+                    final created = editor.addDefaultSegmentAt(tapMs);
+                    if (created != null) {
+                      _clearGhost();
+                      return;
+                    }
+                  }
+                  editor.clearSelection();
                   return;
                 }
 
@@ -305,6 +380,7 @@ class _ZoomTrackState extends State<ZoomTrack> {
 
           _dragMode = _TrackDragMode.none;
           _dragConsumed = false;
+          _clearGhost();
 
           final isRangeSelection = _isRangeModifierPressed;
           final isToggleSelection = _isToggleModifierPressed;
@@ -502,6 +578,9 @@ class _ZoomTrackState extends State<ZoomTrack> {
                     selectionBandEndMs: _selectionBandEndMs(
                       constraints.maxWidth,
                     ),
+                    ghostStartMs: _ghostStartMs,
+                    ghostEndMs: _ghostEndMs,
+                    ghostLabel: 'Add zoom segment',
                   ),
                 );
               },
@@ -526,6 +605,9 @@ class ZoomTrackPainter extends CustomPainter {
   final bool showSegmentLabels;
   final int? selectionBandStartMs;
   final int? selectionBandEndMs;
+  final int? ghostStartMs;
+  final int? ghostEndMs;
+  final String? ghostLabel;
 
   ZoomTrackPainter({
     required this.segments,
@@ -540,6 +622,9 @@ class ZoomTrackPainter extends CustomPainter {
     required this.showSegmentLabels,
     required this.selectionBandStartMs,
     required this.selectionBandEndMs,
+    this.ghostStartMs,
+    this.ghostEndMs,
+    this.ghostLabel,
   });
 
   @override
@@ -735,6 +820,67 @@ class ZoomTrackPainter extends CustomPainter {
           ..strokeWidth = 1.2,
       );
     }
+
+    if (ghostStartMs != null && ghostEndMs != null && ghostEndMs! > ghostStartMs!) {
+      final rawX1 = (ghostStartMs! / durationMs) * size.width;
+      final rawX2 = (ghostEndMs! / durationMs) * size.width;
+      const minVisualWidth = 24.0;
+      var x1 = rawX1;
+      var x2 = rawX2;
+      if (x2 - x1 < minVisualWidth) {
+        final mid = (x1 + x2) / 2;
+        x1 = (mid - minVisualWidth / 2).clamp(0.0, size.width);
+        x2 = (mid + minVisualWidth / 2).clamp(0.0, size.width);
+      }
+      final ghostHeight = laneRect.height - 6;
+      final rect = RRect.fromRectAndRadius(
+        Rect.fromLTRB(
+          x1,
+          laneRect.center.dy - ghostHeight / 2,
+          x2,
+          laneRect.center.dy + ghostHeight / 2,
+        ),
+        const Radius.circular(4),
+      );
+      canvas.drawRRect(
+        rect,
+        Paint()
+          ..color = accentColor.withValues(alpha: 0.18)
+          ..style = PaintingStyle.fill,
+      );
+      canvas.drawRRect(
+        rect,
+        Paint()
+          ..color = accentColor.withValues(alpha: 0.7)
+          ..style = PaintingStyle.stroke
+          ..strokeWidth = 1.2,
+      );
+      final label = ghostLabel;
+      if (showSegmentLabels && label != null && label.isNotEmpty) {
+        final textPainter = TextPainter(
+          text: TextSpan(
+            text: label,
+            style: TextStyle(
+              color: accentColor.withValues(alpha: 0.92),
+              fontSize: 11,
+              fontWeight: FontWeight.w600,
+            ),
+          ),
+          maxLines: 1,
+          ellipsis: '…',
+          textDirection: TextDirection.ltr,
+        )..layout(maxWidth: math.max(0, rect.width - 12));
+        if (textPainter.width > 0) {
+          textPainter.paint(
+            canvas,
+            Offset(
+              rect.left + (rect.width - textPainter.width) / 2,
+              rect.center.dy - textPainter.height / 2,
+            ),
+          );
+        }
+      }
+    }
   }
 
   @override
@@ -747,6 +893,9 @@ class ZoomTrackPainter extends CustomPainter {
         oldDelegate.showSegmentLabels != showSegmentLabels ||
         oldDelegate.selectionBandStartMs != selectionBandStartMs ||
         oldDelegate.selectionBandEndMs != selectionBandEndMs ||
+        oldDelegate.ghostStartMs != ghostStartMs ||
+        oldDelegate.ghostEndMs != ghostEndMs ||
+        oldDelegate.ghostLabel != ghostLabel ||
         !setEquals(oldDelegate.selectedSegmentIds, selectedSegmentIds);
   }
 }

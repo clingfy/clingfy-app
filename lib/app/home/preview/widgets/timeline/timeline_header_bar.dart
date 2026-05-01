@@ -10,16 +10,12 @@ import 'package:flutter/material.dart';
 class TimelineHeaderBar extends StatelessWidget {
   const TimelineHeaderBar({
     super.key,
-    required this.addModeActive,
-    required this.stickyAddModeActive,
     required this.snappingEnabled,
     required this.canEditZoom,
     required this.canDelete,
     required this.canUndo,
     required this.showZoomLane,
     required this.showMarkersLane,
-    required this.onToggleAddZoom,
-    required this.onToggleKeepAdding,
     required this.onToggleSnap,
     required this.onSelectAllVisible,
     required this.onSelectAfterPlayhead,
@@ -30,16 +26,12 @@ class TimelineHeaderBar extends StatelessWidget {
     required this.onClose,
   });
 
-  final bool addModeActive;
-  final bool stickyAddModeActive;
   final bool snappingEnabled;
   final bool canEditZoom;
   final bool canDelete;
   final bool canUndo;
   final bool showZoomLane;
   final bool showMarkersLane;
-  final VoidCallback? onToggleAddZoom;
-  final VoidCallback? onToggleKeepAdding;
   final VoidCallback? onToggleSnap;
   final VoidCallback? onSelectAllVisible;
   final VoidCallback? onSelectAfterPlayhead;
@@ -88,20 +80,6 @@ class TimelineHeaderBar extends StatelessWidget {
                     ),
                   ),
                   SizedBox(width: sectionGap),
-                  _TimelineToolbarButton(
-                    label: l10n.zoomAddSegment,
-                    icon: Icons.add_rounded,
-                    isActive: addModeActive,
-                    onPressed: onToggleAddZoom,
-                  ),
-                  SizedBox(width: controlGap),
-                  _TimelineToolbarButton(
-                    label: l10n.zoomKeepAdding,
-                    icon: Icons.push_pin_rounded,
-                    isActive: stickyAddModeActive,
-                    onPressed: onToggleKeepAdding,
-                  ),
-                  SizedBox(width: controlGap),
                   _TimelineToolbarButton(
                     key: const Key('timeline_snap_chip'),
                     label: l10n.snap,

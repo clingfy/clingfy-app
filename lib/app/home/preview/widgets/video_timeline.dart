@@ -185,24 +185,6 @@ class _VideoTimelineState extends State<VideoTimeline> {
     editor.selectAllAfter(widget.positionMs);
   }
 
-  void _toggleOneShotAdd(ZoomEditorController? editor) {
-    if (editor == null) return;
-    if (editor.addMode == ZoomAddMode.oneShot) {
-      editor.exitAddMode();
-    } else {
-      editor.enterOneShotAddMode();
-    }
-  }
-
-  void _toggleStickyAdd(ZoomEditorController? editor) {
-    if (editor == null) return;
-    if (editor.addMode == ZoomAddMode.sticky) {
-      editor.exitAddMode();
-    } else {
-      editor.enterStickyAddMode();
-    }
-  }
-
   void _toggleSnap(ZoomEditorController? editor) {
     if (editor == null) return;
     editor.setSnappingEnabled(!editor.snappingEnabled);
@@ -276,20 +258,12 @@ class _VideoTimelineState extends State<VideoTimeline> {
           mainAxisSize: MainAxisSize.min,
           children: [
             TimelineHeaderBar(
-              addModeActive: editor?.addMode == ZoomAddMode.oneShot,
-              stickyAddModeActive: editor?.addMode == ZoomAddMode.sticky,
               snappingEnabled: editor?.snappingEnabled ?? false,
               canEditZoom: canEditZoom,
               canDelete: activeEditor?.hasSelection ?? false,
               canUndo: activeEditor?.canUndo ?? false,
               showZoomLane: _showZoomLane,
               showMarkersLane: _showMarkersLane,
-              onToggleAddZoom: canEditZoom
-                  ? () => _toggleOneShotAdd(editor)
-                  : null,
-              onToggleKeepAdding: canEditZoom
-                  ? () => _toggleStickyAdd(editor)
-                  : null,
               onToggleSnap: canEditZoom ? () => _toggleSnap(editor) : null,
               onSelectAllVisible: canEditZoom
                   ? () => _handleSelectAllVisible(editor)

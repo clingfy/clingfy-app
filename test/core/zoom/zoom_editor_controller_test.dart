@@ -277,6 +277,70 @@ void main() {
       ZoomEditorController.minDurationMs,
     );
   });
+
+  testWidgets(
+      'addDefaultSegmentAt creates and selects a centered manual segment',
+      (tester) async {
+    await installCommonNativeMocks();
+    final controller = ZoomEditorController(
+      nativeBridge: NativeBridge.instance,
+      videoPath: '/tmp/demo.mov',
+      durationMs: 8000,
+    );
+    await controller.init();
+    addTearDown(controller.dispose);
+
+    final created = controller.addDefaultSegmentAt(4000);
+    await tester.pump();
+
+    expect(created, isNotNull);
+    expect(
+      created!.endMs - created.startMs,
+      ZoomEditorController.defaultNewSegmentDurationMs,
+    );
+    expect(controller.primarySelectedSegmentId, created.id);
+    expect(controller.manualSegments, hasLength(1));
+  });
+
+  testWidgets('addDefaultSegmentAt returns null when overlapping existing',
+      (tester) async {
+    await installCommonNativeMocks();
+    final controller = ZoomEditorController(
+      nativeBridge: NativeBridge.instance,
+      videoPath: '/tmp/demo.mov',
+      durationMs: 8000,
+    );
+    await controller.init();
+    addTearDown(controller.dispose);
+
+    final first = controller.addDefaultSegmentAt(2000);
+    expect(first, isNotNull);
+    final centerOfExisting = ((first!.startMs + first.endMs) / 2).round();
+
+    expect(controller.canAddDefaultSegmentAt(centerOfExisting), isFalse);
+    expect(controller.addDefaultSegmentAt(centerOfExisting), isNull);
+    expect(controller.manualSegments, hasLength(1));
+  });
+
+  testWidgets('addDefaultSegmentAt clamps near timeline start/end',
+      (tester) async {
+    await installCommonNativeMocks();
+    final controller = ZoomEditorController(
+      nativeBridge: NativeBridge.instance,
+      videoPath: '/tmp/demo.mov',
+      durationMs: 8000,
+    );
+    await controller.init();
+    addTearDown(controller.dispose);
+
+    final near0 = controller.addDefaultSegmentAt(50);
+    expect(near0, isNotNull);
+    expect(near0!.startMs, greaterThanOrEqualTo(0));
+    expect(
+      near0.endMs - near0.startMs,
+      ZoomEditorController.defaultNewSegmentDurationMs,
+    );
+  });
 }
 
 Future<_ZoomEditorHarness> _createHarness(

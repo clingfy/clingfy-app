@@ -489,6 +489,83 @@ class ZoomEditorController extends ChangeNotifier {
     selectOnly(newSegment);
   }
 
+  /// Default duration (ms) used when the timeline lane creates a new segment
+  /// from the ghost template (click-to-add).
+  static const int defaultNewSegmentDurationMs = 1200;
+
+  /// Returns true when adding a default-sized segment centered around
+  /// [centerMs] would either fail to fit or overlap an existing display
+  /// segment. Used by the lane to decide whether to show the ghost.
+  bool canAddDefaultSegmentAt(int centerMs, {int durationMs = defaultNewSegmentDurationMs}) {
+    if (this.durationMs <= 0) return false;
+    final span = _resolveDefaultSpan(centerMs, durationMs);
+    if (span == null) return false;
+    return !_spanOverlapsExisting(span.$1, span.$2);
+  }
+
+  /// Resolved (start, end) for a default-sized segment centered around
+  /// [centerMs], clamped to the timeline. Returns null when the resulting
+  /// span cannot satisfy [minDurationMs] or fits inside the timeline.
+  (int, int)? defaultSpanFor(int centerMs, {int durationMs = defaultNewSegmentDurationMs}) {
+    return _resolveDefaultSpan(centerMs, durationMs);
+  }
+
+  /// Adds a default-sized segment centered around [centerMs]. Selects the
+  /// new segment. Returns the segment, or null when the span cannot be
+  /// placed (overlap, invalid duration, etc.).
+  ZoomSegment? addDefaultSegmentAt(
+    int centerMs, {
+    int durationMs = defaultNewSegmentDurationMs,
+  }) {
+    if (this.durationMs <= 0) return null;
+    final span = _resolveDefaultSpan(centerMs, durationMs);
+    if (span == null) return null;
+    final start = span.$1;
+    final end = span.$2;
+    if (end - start < minDurationMs) return null;
+    if (_spanOverlapsExisting(start, end)) return null;
+
+    final newSegment = ZoomSegment(
+      id: const Uuid().v4(),
+      startMs: start,
+      endMs: end,
+      source: 'manual',
+    );
+    execute(AddZoomSegmentCommand(this, newSegment));
+    selectOnly(newSegment);
+    return newSegment;
+  }
+
+  (int, int)? _resolveDefaultSpan(int centerMs, int requestedDurationMs) {
+    if (durationMs <= 0) return null;
+    final clampedDuration = requestedDurationMs.clamp(
+      minDurationMs,
+      durationMs,
+    );
+    final half = clampedDuration ~/ 2;
+    var start = (centerMs - half).clamp(0, durationMs - clampedDuration);
+    if (start < 0) start = 0;
+    var end = start + clampedDuration;
+    if (end > durationMs) {
+      end = durationMs;
+      start = (end - clampedDuration).clamp(0, end);
+    }
+    final normStart = _normalizeEditableMs(start);
+    final normEnd = _normalizeEditableMs(end);
+    if (normEnd - normStart < minDurationMs) return null;
+    return (normStart, normEnd);
+  }
+
+  bool _spanOverlapsExisting(int start, int end) {
+    for (final segment in displaySegments) {
+      if (_isTombstone(segment)) continue;
+      if (segment.startMs < end && segment.endMs > start) {
+        return true;
+      }
+    }
+    return false;
+  }
+
   void execute(ZoomEditCommand cmd) {
     cmd.apply();
     _history.add(cmd);
