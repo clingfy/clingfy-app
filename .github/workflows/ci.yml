@@ -11,6 +11,8 @@ on:
       - develop
       - main
       - 'release/*'
+      - 'bugfix/*'
+      - 'hotfix/*'
   workflow_dispatch:
   schedule:
     - cron: '23 3 * * *'
