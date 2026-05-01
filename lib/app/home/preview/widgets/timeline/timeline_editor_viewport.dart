@@ -696,8 +696,9 @@ class _TimelineLaneHeaderCell extends StatelessWidget {
       fontSize: (typography.value.fontSize ?? 12) * textScale,
     );
 
-    return Tooltip(
-      message: label,
+    return Semantics(
+      label: label,
+      container: true,
       child: Container(
         height: height,
         padding: EdgeInsets.symmetric(horizontal: padX),

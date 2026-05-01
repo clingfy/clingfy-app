@@ -246,8 +246,10 @@ class _TimelineToolbarButton extends StatelessWidget {
       fontSize: (typography.value.fontSize ?? 12) * chipTextScale,
     );
 
-    return Tooltip(
-      message: label,
+    return Semantics(
+      button: true,
+      label: label,
+      enabled: onPressed != null,
       child: DecoratedBox(
         decoration: BoxDecoration(
           color: isActive
