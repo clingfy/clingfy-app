@@ -25,15 +25,26 @@ import 'package:clingfy/ui/theme/app_shell_tokens.dart';
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 
-const DesktopPaneSpec _homeRailPaneSpec = DesktopPaneSpec(
-  id: DesktopPaneId.homeLeftSidebar,
-  defaultWidth: HomeDesktopPaneDimensions.railWidth,
-  minWidth: HomeDesktopPaneDimensions.railWidth,
-  maxWidth: HomeDesktopPaneDimensions.railWidth,
-  collapsedWidth: HomeDesktopPaneDimensions.compactRailWidth,
-  collapsible: true,
-  autoCollapsePriority: 0,
-);
+DesktopPaneSpec _railSpecFor(ShellResponsiveMetrics? metrics) {
+  final defaultWidth =
+      metrics?.railWidth ?? HomeDesktopPaneDimensions.railWidth;
+  final minWidth = metrics?.leftRailExpandedMinWidth ?? defaultWidth;
+  final maxWidth = metrics?.leftRailExpandedMaxWidth ?? defaultWidth;
+  final compactWidth =
+      metrics?.railCompactWidth ?? HomeDesktopPaneDimensions.compactRailWidth;
+  // Clamp default into [min, max] so the spec invariant is satisfied even at
+  // tiers where the metric defaults end up outside the clamp window.
+  final clampedDefault = defaultWidth.clamp(minWidth, maxWidth).toDouble();
+  return DesktopPaneSpec(
+    id: DesktopPaneId.homeLeftSidebar,
+    defaultWidth: clampedDefault,
+    minWidth: minWidth,
+    maxWidth: maxWidth,
+    collapsedWidth: compactWidth,
+    collapsible: true,
+    autoCollapsePriority: 0,
+  );
+}
 
 const DesktopPaneSpec _homeWorkspaceColumnSpec = DesktopPaneSpec(
   id: DesktopPaneId.homeWorkspaceColumn,
@@ -115,6 +126,8 @@ class _HomeShellState extends State<HomeShell> {
   //    toggle / sidebar tap / guide step).
   DesktopPaneId? _compactForcedInlineInspectorId;
   bool _lastCanShowInspectorInline = true;
+
+  DesktopPaneSpec get _homeRailPaneSpec => _railSpecFor(_currentMetrics);
 
   DesktopPaneSpec get _recordingInspectorPaneSpec =>
       _inspectorSpecForId(DesktopPaneId.recordingSidebar, _currentMetrics);

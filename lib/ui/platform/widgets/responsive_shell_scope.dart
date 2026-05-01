@@ -35,6 +35,15 @@ class ShellResponsiveMetrics {
     required this.expandedSidebarTitleSpacing,
     required this.expandedSidebarLogoTitleGap,
     required this.expandedSidebarSplashRadius,
+    required this.leftRailExpandedMinWidth,
+    required this.leftRailExpandedMaxWidth,
+    required this.expandedSidebarTitleFontSize,
+    required this.expandedSidebarSectionFontSize,
+    required this.expandedSidebarUtilityGap,
+    required this.sidebarHelpMenuIconSize,
+    required this.sidebarHelpMenuIconGap,
+    required this.sidebarHelpMenuFallbackInset,
+    required this.sidebarHelpMenuFallbackSize,
     required this.optionsPanelDefaultWidth,
     required this.optionsPanelMinWidth,
     required this.optionsPanelMaxWidth,
@@ -161,6 +170,15 @@ class ShellResponsiveMetrics {
   final double expandedSidebarTitleSpacing;
   final double expandedSidebarLogoTitleGap;
   final double expandedSidebarSplashRadius;
+  final double leftRailExpandedMinWidth;
+  final double leftRailExpandedMaxWidth;
+  final double expandedSidebarTitleFontSize;
+  final double expandedSidebarSectionFontSize;
+  final double expandedSidebarUtilityGap;
+  final double sidebarHelpMenuIconSize;
+  final double sidebarHelpMenuIconGap;
+  final double sidebarHelpMenuFallbackInset;
+  final double sidebarHelpMenuFallbackSize;
 
   final double optionsPanelDefaultWidth;
   final double optionsPanelMinWidth;
@@ -434,6 +452,33 @@ class ShellResponsiveMetrics {
       expandedSidebarTitleSpacing: _atLeast(2 * scale, 1),
       expandedSidebarLogoTitleGap: _atLeast(12 * scale, 8),
       expandedSidebarSplashRadius: _atLeast(18 * scale, 14),
+      leftRailExpandedMinWidth: _atLeast(
+        _lerpForDensity(
+          density,
+          comfortable: 196,
+          compact: 184,
+          dense: 172,
+          minimal: 164,
+        ),
+        160,
+      ),
+      leftRailExpandedMaxWidth: _atLeast(
+        _lerpForDensity(
+          density,
+          comfortable: 260,
+          compact: 244,
+          dense: 224,
+          minimal: 204,
+        ),
+        180,
+      ),
+      expandedSidebarTitleFontSize: _atLeast(15 * scale, 13),
+      expandedSidebarSectionFontSize: _atLeast(12 * scale, 11),
+      expandedSidebarUtilityGap: _atLeast(8 * scale, 4),
+      sidebarHelpMenuIconSize: _atLeast(18 * scale, 14),
+      sidebarHelpMenuIconGap: _atLeast(10 * scale, 6),
+      sidebarHelpMenuFallbackInset: _atLeast(72 * scale, 48),
+      sidebarHelpMenuFallbackSize: _atLeast(40 * scale, 32),
       optionsPanelDefaultWidth: _lerpForDensity(
         density,
         comfortable: 332,
@@ -635,6 +680,17 @@ class ShellResponsiveMetrics {
         other.expandedSidebarTitleSpacing == expandedSidebarTitleSpacing &&
         other.expandedSidebarLogoTitleGap == expandedSidebarLogoTitleGap &&
         other.expandedSidebarSplashRadius == expandedSidebarSplashRadius &&
+        other.leftRailExpandedMinWidth == leftRailExpandedMinWidth &&
+        other.leftRailExpandedMaxWidth == leftRailExpandedMaxWidth &&
+        other.expandedSidebarTitleFontSize == expandedSidebarTitleFontSize &&
+        other.expandedSidebarSectionFontSize ==
+            expandedSidebarSectionFontSize &&
+        other.expandedSidebarUtilityGap == expandedSidebarUtilityGap &&
+        other.sidebarHelpMenuIconSize == sidebarHelpMenuIconSize &&
+        other.sidebarHelpMenuIconGap == sidebarHelpMenuIconGap &&
+        other.sidebarHelpMenuFallbackInset ==
+            sidebarHelpMenuFallbackInset &&
+        other.sidebarHelpMenuFallbackSize == sidebarHelpMenuFallbackSize &&
         other.optionsPanelDefaultWidth == optionsPanelDefaultWidth &&
         other.optionsPanelMinWidth == optionsPanelMinWidth &&
         other.optionsPanelMaxWidth == optionsPanelMaxWidth &&
@@ -774,6 +830,15 @@ class ShellResponsiveMetrics {
     expandedSidebarTitleSpacing,
     expandedSidebarLogoTitleGap,
     expandedSidebarSplashRadius,
+    leftRailExpandedMinWidth,
+    leftRailExpandedMaxWidth,
+    expandedSidebarTitleFontSize,
+    expandedSidebarSectionFontSize,
+    expandedSidebarUtilityGap,
+    sidebarHelpMenuIconSize,
+    sidebarHelpMenuIconGap,
+    sidebarHelpMenuFallbackInset,
+    sidebarHelpMenuFallbackSize,
     optionsPanelDefaultWidth,
     optionsPanelMinWidth,
     optionsPanelMaxWidth,

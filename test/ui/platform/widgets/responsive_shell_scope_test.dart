@@ -61,6 +61,29 @@ void main() {
       expect(a.hashCode, equals(b.hashCode));
     });
 
+    test('left rail expanded min/max + font sizes + help-menu fallback shrink',
+        () {
+      final comfortable =
+          ShellResponsiveMetrics.fromSize(const Size(1500, 900));
+      final minimal = ShellResponsiveMetrics.fromSize(const Size(800, 760));
+      expect(minimal.leftRailExpandedMinWidth,
+          lessThan(comfortable.leftRailExpandedMinWidth));
+      expect(minimal.leftRailExpandedMaxWidth,
+          lessThan(comfortable.leftRailExpandedMaxWidth));
+      expect(minimal.expandedSidebarTitleFontSize,
+          lessThan(comfortable.expandedSidebarTitleFontSize));
+      expect(minimal.expandedSidebarSectionFontSize,
+          lessThanOrEqualTo(comfortable.expandedSidebarSectionFontSize));
+      expect(minimal.sidebarHelpMenuIconSize,
+          lessThan(comfortable.sidebarHelpMenuIconSize));
+      expect(minimal.sidebarHelpMenuFallbackInset,
+          lessThan(comfortable.sidebarHelpMenuFallbackInset));
+      // Hard minimums.
+      expect(minimal.leftRailExpandedMinWidth, greaterThanOrEqualTo(160));
+      expect(minimal.expandedSidebarTitleFontSize, greaterThanOrEqualTo(13));
+      expect(minimal.expandedSidebarSectionFontSize, greaterThanOrEqualTo(11));
+    });
+
     test('rail chrome shrinks with density and respects minimums', () {
       final comfortable =
           ShellResponsiveMetrics.fromSize(const Size(1500, 900));

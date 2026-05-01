@@ -318,11 +318,17 @@ class _ExpandedSidebarContent extends StatelessWidget {
     final splashRadius = metrics?.expandedSidebarSplashRadius ?? 18;
     final bottomPad = metrics?.railBottomPaddingCompact ?? 6;
     final titleStyle = (theme.textTheme.titleMedium ?? const TextStyle())
-        .copyWith(fontWeight: FontWeight.w700);
+        .copyWith(
+          fontWeight: FontWeight.w700,
+          fontSize: metrics?.expandedSidebarTitleFontSize ??
+              theme.textTheme.titleMedium?.fontSize,
+        );
     final sectionStyle = (theme.textTheme.bodySmall ?? const TextStyle())
         .copyWith(
           color: theme.colorScheme.onSurfaceVariant,
           fontWeight: FontWeight.w600,
+          fontSize: metrics?.expandedSidebarSectionFontSize ??
+              theme.textTheme.bodySmall?.fontSize,
         );
 
     return Padding(
@@ -708,6 +714,9 @@ Future<void> _showHomeHelpMenu(
   required VoidCallback onOpenAbout,
 }) async {
   final l10n = AppLocalizations.of(context)!;
+  final metrics = context.shellMetricsOrNull;
+  final iconSize = metrics?.sidebarHelpMenuIconSize ?? 18;
+  final iconGap = metrics?.sidebarHelpMenuIconGap ?? 10;
   final anchorContext = switch (anchorKey) {
     final GlobalKey key => key.currentContext,
     _ => null,
@@ -720,8 +729,8 @@ Future<void> _showHomeHelpMenu(
         value: _HomeHelpMenuAction.quickTour,
         child: Row(
           children: [
-            const Icon(Icons.play_circle_outline_rounded, size: 18),
-            const SizedBox(width: 10),
+            Icon(Icons.play_circle_outline_rounded, size: iconSize),
+            SizedBox(width: iconGap),
             Text(l10n.quickTour),
           ],
         ),
@@ -730,8 +739,8 @@ Future<void> _showHomeHelpMenu(
         value: _HomeHelpMenuAction.about,
         child: Row(
           children: [
-            const Icon(Icons.info_outline_rounded, size: 18),
-            const SizedBox(width: 10),
+            Icon(Icons.info_outline_rounded, size: iconSize),
+            SizedBox(width: iconGap),
             Text(l10n.aboutThisApp),
           ],
         ),
@@ -756,11 +765,14 @@ RelativeRect _resolveHelpMenuPosition(
   BuildContext? anchorContext,
 ) {
   final overlay = Overlay.of(context).context.findRenderObject() as RenderBox;
+  final metrics = context.shellMetricsOrNull;
+  final fallbackInset = metrics?.sidebarHelpMenuFallbackInset ?? 72;
+  final fallbackSize = metrics?.sidebarHelpMenuFallbackSize ?? 40;
   final fallbackRect = Rect.fromLTWH(
-    overlay.size.width - 72,
-    overlay.size.height - 72,
-    40,
-    40,
+    overlay.size.width - fallbackInset,
+    overlay.size.height - fallbackInset,
+    fallbackSize,
+    fallbackSize,
   );
 
   if (anchorContext == null) {

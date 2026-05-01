@@ -2197,6 +2197,57 @@ void main() {
   );
 
   testWidgets(
+    'expanded rail width shrinks with density',
+    (tester) async {
+      // 1320 is wide enough for rail+inspector+workspace minima, so the rail
+      // stays expanded; density falls in the compact tier.
+      _setDesktopWindow(tester, size: const Size(1320, 800));
+      final harness = await createHarness();
+      harness.uiState.applyPaneLayoutPrefs(
+        const DesktopPaneLayoutPrefs(
+          paneStates: {
+            DesktopPaneId.homeLeftSidebar: DesktopPaneState(isCollapsed: false),
+          },
+        ),
+      );
+      addTearDown(harness.recording.dispose);
+      addTearDown(harness.player.dispose);
+      addTearDown(harness.device.dispose);
+      addTearDown(harness.overlay.dispose);
+      addTearDown(harness.permissions.dispose);
+      addTearDown(harness.post.dispose);
+      addTearDown(harness.license.dispose);
+      addTearDown(harness.countdown.dispose);
+      addTearDown(harness.uiState.dispose);
+      addTearDown(harness.settings.dispose);
+      await tester.pumpWidget(
+        buildShell(
+          actions: harness.actions,
+          countdown: harness.countdown,
+          device: harness.device,
+          license: harness.license,
+          overlay: harness.overlay,
+          player: harness.player,
+          post: harness.post,
+          recording: harness.recording,
+          settings: harness.settings,
+          uiState: harness.uiState,
+        ),
+      );
+      await tester.pumpAndSettle();
+      // At compact density the rail spec uses ~204 (compact tier) which is
+      // strictly less than the comfortable default (220) and at/above the
+      // compact expanded min (184).
+      final railWidth = _railWidth(tester);
+      expect(
+        railWidth,
+        lessThan(HomeDesktopPaneDimensions.railWidth),
+      );
+      expect(railWidth, greaterThanOrEqualTo(180));
+    },
+  );
+
+  testWidgets(
     'compact rail width shrinks with density',
     (tester) async {
       _setDesktopWindow(tester, size: const Size(960, 760));
