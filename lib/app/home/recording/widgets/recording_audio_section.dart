@@ -8,6 +8,7 @@ import 'package:clingfy/ui/platform/widgets/app_settings_group.dart';
 import 'package:clingfy/ui/platform/widgets/app_sidebar_tokens.dart';
 import 'package:clingfy/ui/platform/widgets/app_toggle_row.dart';
 import 'package:clingfy/ui/platform/widgets/platform_dropdown.dart';
+import 'package:clingfy/ui/platform/widgets/responsive_shell_scope.dart';
 import 'package:flutter/material.dart' hide PlatformMenuItem;
 
 const _micInputMeterKey = Key('mic_input_meter');
@@ -231,9 +232,12 @@ class _MicInputMeterIconState extends State<_MicInputMeterIcon> {
       hasSelectedMicrophone: widget.hasSelectedMicrophone,
     );
 
+    final metrics = context.shellMetricsOrNull;
     final controlSize = isMac()
-        ? AppSidebarTokens.controlHeightMac
-        : AppSidebarTokens.controlHeightDefault;
+        ? metrics?.sidebarControlHeightMac ??
+            AppSidebarTokens.controlHeightMac
+        : metrics?.sidebarControlHeightDefault ??
+            AppSidebarTokens.controlHeightDefault;
 
     final tooltipMessage = !widget.hasSelectedMicrophone
         ? l10n.micInputIndicatorDisabledTooltip

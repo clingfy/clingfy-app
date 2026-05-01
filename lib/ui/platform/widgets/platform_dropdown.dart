@@ -2,6 +2,7 @@ import 'dart:math' as math;
 
 import 'package:clingfy/ui/platform/platform_kind.dart';
 import 'package:clingfy/ui/platform/widgets/app_sidebar_tokens.dart';
+import 'package:clingfy/ui/platform/widgets/responsive_shell_scope.dart';
 import 'package:clingfy/ui/theme/app_theme.dart';
 import 'package:flutter/material.dart';
 
@@ -18,11 +19,11 @@ class PlatformDropdown<T> extends StatefulWidget {
     required this.value,
     required this.onChanged,
     this.labelText,
-    this.minWidth = AppSidebarTokens.controlMinWidth,
-    this.maxWidth = AppSidebarTokens.controlMaxWidth,
+    this.minWidth,
+    this.maxWidth,
     this.expand = true,
-    this.heightMac = AppSidebarTokens.controlHeightMac,
-    this.heightWin = AppSidebarTokens.controlHeightDefault,
+    this.heightMac,
+    this.heightWin,
   });
 
   static const ValueKey<String> fieldKey = ValueKey<String>(
@@ -39,11 +40,11 @@ class PlatformDropdown<T> extends StatefulWidget {
   final T? value;
   final ValueChanged<T?>? onChanged;
   final String? labelText;
-  final double minWidth;
-  final double maxWidth;
+  final double? minWidth;
+  final double? maxWidth;
   final bool expand;
-  final double heightMac;
-  final double heightWin;
+  final double? heightMac;
+  final double? heightWin;
 
   @override
   State<PlatformDropdown<T>> createState() => _PlatformDropdownState<T>();
@@ -69,21 +70,31 @@ class _PlatformDropdownState<T> extends State<PlatformDropdown<T>> {
     final theme = Theme.of(context);
     final textStyle = theme.appTypography.body;
     final palette = _DropdownPalette.resolve(theme);
-    final height = isMac() ? widget.heightMac : widget.heightWin;
+    final metrics = context.shellMetricsOrNull;
+    final effectiveMaxWidth = widget.maxWidth ??
+        metrics?.sidebarControlMaxWidth ??
+        AppSidebarTokens.controlMaxWidth;
+    final effectiveHeightMac = widget.heightMac ??
+        metrics?.sidebarControlHeightMac ??
+        AppSidebarTokens.controlHeightMac;
+    final effectiveHeightWin = widget.heightWin ??
+        metrics?.sidebarControlHeightDefault ??
+        AppSidebarTokens.controlHeightDefault;
+    final height = isMac() ? effectiveHeightMac : effectiveHeightWin;
     return LayoutBuilder(
       builder: (context, constraints) {
         final availableWidth = constraints.maxWidth.isFinite
             ? constraints.maxWidth
-            : (widget.maxWidth.isFinite
-                  ? widget.maxWidth
+            : (effectiveMaxWidth.isFinite
+                  ? effectiveMaxWidth
                   : AppSidebarTokens.controlMaxWidth);
 
-        final clampedWidth = widget.maxWidth.isFinite
-            ? math.min(widget.maxWidth, availableWidth)
+        final clampedWidth = effectiveMaxWidth.isFinite
+            ? math.min(effectiveMaxWidth, availableWidth)
             : availableWidth;
 
         final fieldWidth = widget.expand ? availableWidth : clampedWidth;
-        final labelWidth = math.max(0.0, fieldWidth - 48);
+        final labelWidth = math.max(0.0, fieldWidth - 48).toDouble();
 
         final popupTheme = theme.copyWith(
           splashColor: Colors.transparent,

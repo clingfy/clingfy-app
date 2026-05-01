@@ -1,6 +1,7 @@
 import 'package:clingfy/ui/platform/platform_kind.dart';
 import 'package:clingfy/ui/platform/widgets/app_control_box.dart';
 import 'package:clingfy/ui/platform/widgets/app_sidebar_tokens.dart';
+import 'package:clingfy/ui/platform/widgets/responsive_shell_scope.dart';
 import 'package:clingfy/ui/theme/app_theme.dart';
 import 'package:flutter/material.dart';
 import 'package:macos_ui/macos_ui.dart';
@@ -18,11 +19,11 @@ class AppTextField extends StatelessWidget {
     this.keyboardType,
     this.onSubmitted,
     this.onChanged,
-    this.minWidth = AppSidebarTokens.controlMinWidth,
-    this.maxWidth = AppSidebarTokens.controlMaxWidth,
+    this.minWidth,
+    this.maxWidth,
     this.expand = false,
-    this.heightMac = AppSidebarTokens.controlHeightMac,
-    this.heightWin = AppSidebarTokens.controlHeightDefault,
+    this.heightMac,
+    this.heightWin,
   });
 
   final TextEditingController controller;
@@ -31,17 +32,30 @@ class AppTextField extends StatelessWidget {
   final TextInputType? keyboardType;
   final ValueChanged<String>? onSubmitted;
   final ValueChanged<String>? onChanged;
-  final double minWidth;
-  final double maxWidth;
+  final double? minWidth;
+  final double? maxWidth;
   final bool expand;
-  final double heightMac;
-  final double heightWin;
+  final double? heightMac;
+  final double? heightWin;
 
   @override
   Widget build(BuildContext context) {
     final mac = isMac();
     final theme = Theme.of(context);
     final spacing = context.appSpacing;
+    final metrics = context.shellMetricsOrNull;
+    final effectiveMinWidth = minWidth ??
+        metrics?.sidebarControlMinWidth ??
+        AppSidebarTokens.controlMinWidth;
+    final effectiveMaxWidth = maxWidth ??
+        metrics?.sidebarControlMaxWidth ??
+        AppSidebarTokens.controlMaxWidth;
+    final effectiveHeightMac = heightMac ??
+        metrics?.sidebarControlHeightMac ??
+        AppSidebarTokens.controlHeightMac;
+    final effectiveHeightWin = heightWin ??
+        metrics?.sidebarControlHeightDefault ??
+        AppSidebarTokens.controlHeightDefault;
     final inputTheme = theme.inputDecorationTheme;
     final fillColor = inputTheme.fillColor ?? theme.colorScheme.surface;
     final enabledBorder =
@@ -74,10 +88,10 @@ class AppTextField extends StatelessWidget {
     );
     if (mac) {
       return AppControlBox(
-        minWidth: minWidth,
-        maxWidth: maxWidth,
+        minWidth: effectiveMinWidth,
+        maxWidth: effectiveMaxWidth,
         expand: expand,
-        height: heightMac,
+        height: effectiveHeightMac,
         child: MacosTextField(
           controller: controller,
           enabled: enabled,
@@ -92,10 +106,10 @@ class AppTextField extends StatelessWidget {
     }
 
     return AppControlBox(
-      minWidth: minWidth,
-      maxWidth: maxWidth,
+      minWidth: effectiveMinWidth,
+      maxWidth: effectiveMaxWidth,
       expand: expand,
-      height: mac ? heightMac : heightWin,
+      height: mac ? effectiveHeightMac : effectiveHeightWin,
       child: TextFormField(
         controller: controller,
         enabled: enabled,

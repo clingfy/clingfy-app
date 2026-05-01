@@ -35,6 +35,8 @@ class AppPaneHeader extends StatelessWidget {
         AppSidebarTokens.headerBottomPadding;
     final headerTopPadding = isCompact ? 10.0 : defaultTop;
     final headerBottomPadding = isCompact ? 8.0 : defaultBottom;
+    final horizontalPadding = metrics?.sidebarContentHorizontalPadding ??
+        AppSidebarTokens.contentHorizontalPadding;
     final titleFontSize = metrics?.paneHeaderTitleSize ?? 16;
     final titleStyle = (theme.textTheme.titleMedium ?? const TextStyle())
         .copyWith(
@@ -46,9 +48,9 @@ class AppPaneHeader extends StatelessWidget {
     return Container(
       key: headerKey,
       padding: EdgeInsets.fromLTRB(
-        AppSidebarTokens.contentHorizontalPadding,
+        horizontalPadding,
         headerTopPadding,
-        AppSidebarTokens.contentHorizontalPadding,
+        horizontalPadding,
         headerBottomPadding,
       ),
       decoration: BoxDecoration(

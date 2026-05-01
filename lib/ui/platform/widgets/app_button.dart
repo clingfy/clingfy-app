@@ -1,4 +1,5 @@
 import 'package:clingfy/ui/platform/widgets/app_sidebar_tokens.dart';
+import 'package:clingfy/ui/platform/widgets/responsive_shell_scope.dart';
 import 'package:clingfy/ui/theme/app_theme.dart';
 import 'package:flutter/material.dart';
 import 'package:macos_ui/macos_ui.dart';
@@ -71,7 +72,11 @@ class AppButton extends StatelessWidget {
     final isCompact = size == AppButtonSize.compact;
     final spacing = context.appSpacing;
     final typography = context.appTypography;
-    final minHeight = isCompact ? AppSidebarTokens.compactButtonHeight : 40.0;
+    final metrics = context.shellMetricsOrNull;
+    final minHeight = isCompact
+        ? metrics?.sidebarCompactButtonHeight ??
+            AppSidebarTokens.compactButtonHeight
+        : 40.0;
     final horizontalPadding = isCompact ? spacing.md : spacing.lg;
     final resolvedChild = _buildChild();
     // final hasMacosTheme = MacosTheme.maybeOf(context) != null;

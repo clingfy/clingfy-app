@@ -7,6 +7,7 @@ import 'package:clingfy/ui/platform/widgets/app_form_row.dart';
 import 'package:clingfy/ui/platform/widgets/app_inset_group.dart';
 import 'package:clingfy/ui/platform/widgets/app_settings_group.dart';
 import 'package:clingfy/ui/platform/widgets/app_sidebar_tokens.dart';
+import 'package:clingfy/ui/platform/widgets/responsive_shell_scope.dart';
 import 'package:clingfy/ui/platform/widgets/app_slider.dart';
 import 'package:clingfy/ui/platform/widgets/app_slider_row.dart';
 import 'package:clingfy/ui/platform/widgets/app_toggle_row.dart';
@@ -119,15 +120,22 @@ class RecordingOverlaySection extends StatelessWidget {
           infoTooltip: overlayMode == OverlayMode.whileRecording && !isRecording
               ? l10n.overlayHint
               : null,
-          control: ConstrainedBox(
-            constraints: const BoxConstraints(
-              minWidth: AppSidebarTokens.controlMinWidth,
-              maxWidth: AppSidebarTokens.controlMaxWidth,
-            ),
-            child: OverlaySegmented(
-              mode: overlayMode,
-              onChanged: onOverlayModeChanged,
-            ),
+          control: Builder(
+            builder: (context) {
+              final metrics = context.shellMetricsOrNull;
+              return ConstrainedBox(
+                constraints: BoxConstraints(
+                  minWidth: metrics?.sidebarControlMinWidth ??
+                      AppSidebarTokens.controlMinWidth,
+                  maxWidth: metrics?.sidebarControlMaxWidth ??
+                      AppSidebarTokens.controlMaxWidth,
+                ),
+                child: OverlaySegmented(
+                  mode: overlayMode,
+                  onChanged: onOverlayModeChanged,
+                ),
+              );
+            },
           ),
         ),
         if (overlayMode != OverlayMode.off) ...[
@@ -251,7 +259,10 @@ class RecordingOverlaySection extends StatelessWidget {
           ),
         ),
         const SizedBox(height: AppSidebarTokens.rowGap),
-        AppFormRow(label: l10n.border, control: _buildBorderControl()),
+        AppFormRow(
+          label: l10n.border,
+          control: _buildBorderControl(context),
+        ),
         ...[
           const SizedBox(height: AppSidebarTokens.optionsSubgroupGap),
           AppInsetGroup(
@@ -364,11 +375,14 @@ class RecordingOverlaySection extends StatelessWidget {
 
   Widget _buildPositionControl(BuildContext context) {
     final l10n = AppLocalizations.of(context)!;
+    final metrics = context.shellMetricsOrNull;
 
     return ConstrainedBox(
-      constraints: const BoxConstraints(
-        minWidth: AppSidebarTokens.controlMinWidth,
-        maxWidth: AppSidebarTokens.controlMaxWidth,
+      constraints: BoxConstraints(
+        minWidth: metrics?.sidebarControlMinWidth ??
+            AppSidebarTokens.controlMinWidth,
+        maxWidth: metrics?.sidebarControlMaxWidth ??
+            AppSidebarTokens.controlMaxWidth,
       ),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
@@ -451,11 +465,14 @@ class RecordingOverlaySection extends StatelessWidget {
     );
   }
 
-  Widget _buildBorderControl() {
+  Widget _buildBorderControl(BuildContext context) {
+    final metrics = context.shellMetricsOrNull;
     return ConstrainedBox(
-      constraints: const BoxConstraints(
-        minWidth: AppSidebarTokens.controlMinWidth,
-        maxWidth: AppSidebarTokens.controlMaxWidth,
+      constraints: BoxConstraints(
+        minWidth: metrics?.sidebarControlMinWidth ??
+            AppSidebarTokens.controlMinWidth,
+        maxWidth: metrics?.sidebarControlMaxWidth ??
+            AppSidebarTokens.controlMaxWidth,
       ),
       child: Wrap(
         spacing: AppSidebarTokens.rowGap,
@@ -505,11 +522,14 @@ class RecordingOverlaySection extends StatelessWidget {
   Widget _buildChromaKeyColorControl(BuildContext context) {
     final theme = Theme.of(context);
     final l10n = AppLocalizations.of(context)!;
+    final metrics = context.shellMetricsOrNull;
 
     return ConstrainedBox(
-      constraints: const BoxConstraints(
-        minWidth: AppSidebarTokens.controlMinWidth,
-        maxWidth: AppSidebarTokens.controlMaxWidth,
+      constraints: BoxConstraints(
+        minWidth: metrics?.sidebarControlMinWidth ??
+            AppSidebarTokens.controlMinWidth,
+        maxWidth: metrics?.sidebarControlMaxWidth ??
+            AppSidebarTokens.controlMaxWidth,
       ),
       child: Row(
         mainAxisSize: MainAxisSize.min,
