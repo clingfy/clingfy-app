@@ -1,6 +1,7 @@
 import 'package:clingfy/l10n/app_localizations.dart';
 import 'package:clingfy/ui/platform/platform_kind.dart';
 import 'package:clingfy/ui/platform/widgets/app_button.dart';
+import 'package:clingfy/ui/platform/widgets/responsive_shell_scope.dart';
 import 'package:clingfy/ui/theme/app_shell_tokens.dart';
 import 'package:fluent_ui/fluent_ui.dart' as fluent;
 import 'package:flutter/cupertino.dart';
@@ -328,10 +329,14 @@ class _MacToolbarRow extends StatelessWidget {
     final tokens = theme.appTokens;
     final bg = tokens.editorChromeBackground;
 
+    final metrics = context.shellMetricsOrNull;
+    final toolbarHeight = metrics?.toolbarHeight ?? chrome.toolbarHeight;
+    final hPad =
+        metrics?.toolbarHorizontalPadding ?? spacing.sm;
     return Container(
       key: _toolbarSurfaceKey,
-      height: chrome.toolbarHeight,
-      padding: EdgeInsets.symmetric(horizontal: spacing.sm),
+      height: toolbarHeight,
+      padding: EdgeInsets.symmetric(horizontal: hPad),
       decoration: BoxDecoration(
         color: bg,
         borderRadius: BorderRadius.circular(chrome.panelRadius),
@@ -381,7 +386,13 @@ class _MacToolbarRow extends StatelessWidget {
                   if (isProcessing) ...[
                     const CupertinoActivityIndicator(radius: 8),
                     SizedBox(width: spacing.xs + 2),
-                    Text('${l10n.export}…'),
+                    Flexible(
+                      child: Text(
+                        '${l10n.export}…',
+                        maxLines: 1,
+                        overflow: TextOverflow.ellipsis,
+                      ),
+                    ),
                   ] else ...[
                     MacosIcon(
                       CupertinoIcons.arrow_down_to_line,
@@ -389,7 +400,13 @@ class _MacToolbarRow extends StatelessWidget {
                       color: theme.colorScheme.onPrimary,
                     ),
                     SizedBox(width: spacing.xs + 2),
-                    Text(l10n.export),
+                    Flexible(
+                      child: Text(
+                        l10n.export,
+                        maxLines: 1,
+                        overflow: TextOverflow.ellipsis,
+                      ),
+                    ),
                   ],
                 ],
               ),
@@ -434,10 +451,13 @@ class _WinToolbarRow extends StatelessWidget {
     final tokens = materialTheme.appTokens;
     final chrome = materialTheme.appEditorChrome;
 
+    final metrics = context.shellMetricsOrNull;
+    final toolbarHeight = metrics?.toolbarHeight ?? chrome.toolbarHeight;
+    final hPad = metrics?.toolbarHorizontalPadding ?? spacing.sm;
     return fluent.Container(
       key: _toolbarSurfaceKey,
-      height: chrome.toolbarHeight,
-      padding: EdgeInsets.symmetric(horizontal: spacing.sm),
+      height: toolbarHeight,
+      padding: EdgeInsets.symmetric(horizontal: hPad),
       decoration: fluent.BoxDecoration(
         color: tokens.editorChromeBackground,
         borderRadius: BorderRadius.circular(chrome.panelRadius),
@@ -530,10 +550,13 @@ class _FallbackToolbarRow extends StatelessWidget {
     final tokens = theme.appTokens;
     final spacing = theme.appSpacing;
     final chrome = theme.appEditorChrome;
+    final metrics = context.shellMetricsOrNull;
+    final toolbarHeight = metrics?.toolbarHeight ?? chrome.toolbarHeight;
+    final hPad = metrics?.toolbarHorizontalPadding ?? spacing.sm;
     return Container(
       key: _toolbarSurfaceKey,
-      height: chrome.toolbarHeight,
-      padding: EdgeInsets.symmetric(horizontal: spacing.sm),
+      height: toolbarHeight,
+      padding: EdgeInsets.symmetric(horizontal: hPad),
       decoration: BoxDecoration(
         color: tokens.editorChromeBackground,
         borderRadius: BorderRadius.circular(chrome.panelRadius),
@@ -1372,6 +1395,8 @@ Widget _pill(
   final spacing = context.appSpacing;
   final typography = context.appTypography;
   final chrome = theme.appEditorChrome;
+  final metrics = context.shellMetricsOrNull;
+  final iconSize = metrics?.toolbarPillIconSize ?? 12;
   final controlFill =
       theme.inputDecorationTheme.fillColor ??
       theme.colorScheme.secondaryContainer;
@@ -1392,8 +1417,8 @@ Widget _pill(
       mainAxisSize: MainAxisSize.min,
       children: [
         pulsingDot
-            ? _PulseDot(color: theme.colorScheme.primary, size: 8)
-            : Icon(icon, size: 12, color: theme.colorScheme.primary),
+            ? _PulseDot(color: theme.colorScheme.primary, size: iconSize - 4)
+            : Icon(icon, size: iconSize, color: theme.colorScheme.primary),
         SizedBox(width: spacing.xs + 1),
         Text(
           text,
@@ -1529,6 +1554,7 @@ Widget _toolbarIconButton({
 }) {
   final theme = Theme.of(context);
   final chrome = theme.appEditorChrome;
+  final metrics = context.shellMetricsOrNull;
   final controlFill =
       theme.inputDecorationTheme.fillColor ??
       theme.colorScheme.secondaryContainer;
@@ -1541,6 +1567,8 @@ Widget _toolbarIconButton({
   final foreground = active
       ? theme.colorScheme.primary
       : theme.colorScheme.onSurfaceVariant;
+  final size = metrics?.toolbarIconButtonSize ?? 32;
+  final iconSize = metrics?.toolbarIconSize ?? 17;
 
   return Tooltip(
     message: tooltip,
@@ -1553,14 +1581,14 @@ Widget _toolbarIconButton({
         child: Opacity(
           opacity: onPressed == null ? 0.5 : 1,
           child: Container(
-            width: 32,
-            height: 32,
+            width: size,
+            height: size,
             decoration: BoxDecoration(
               color: background,
               borderRadius: BorderRadius.circular(chrome.controlRadius),
               border: Border.all(color: borderColor),
             ),
-            child: Icon(icon, size: 17, color: foreground),
+            child: Icon(icon, size: iconSize, color: foreground),
           ),
         ),
       ),

@@ -2,6 +2,7 @@ import 'package:clingfy/ui/platform/widgets/app_form_row.dart';
 import 'package:clingfy/ui/platform/widgets/app_settings_group.dart';
 import 'package:clingfy/ui/platform/widgets/app_sidebar_rail_button.dart';
 import 'package:clingfy/ui/platform/widgets/app_sidebar_tokens.dart';
+import 'package:clingfy/ui/platform/widgets/responsive_shell_scope.dart';
 import 'package:flutter/material.dart' hide PlatformMenuItem;
 import 'package:clingfy/core/models/app_models.dart';
 import 'package:clingfy/core/overlay/overlay_mode.dart';
@@ -27,9 +28,11 @@ class RecordingSidebarRail extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final metrics = context.shellMetricsOrNull;
+    final sectionGap = metrics?.sidebarSectionGap ?? AppSidebarTokens.sectionGap;
     return Column(
       children: [
-        const SizedBox(height: AppSidebarTokens.sectionGap),
+        SizedBox(height: sectionGap),
         _RecordingRailItem(
           icon: Icons.monitor,
           label: AppLocalizations.of(context)!.tabScreenAudio,
@@ -37,7 +40,7 @@ class RecordingSidebarRail extends StatelessWidget {
           isSelected: selectedIndex == 0,
           onTap: onSelectedIndexChanged,
         ),
-        const SizedBox(height: AppSidebarTokens.sectionGap),
+        SizedBox(height: sectionGap),
         _RecordingRailItem(
           icon: Icons.face,
           label: AppLocalizations.of(context)!.tabFaceCam,
@@ -45,7 +48,7 @@ class RecordingSidebarRail extends StatelessWidget {
           isSelected: selectedIndex == 1,
           onTap: onSelectedIndexChanged,
         ),
-        const SizedBox(height: AppSidebarTokens.sectionGap),
+        SizedBox(height: sectionGap),
         _RecordingRailItem(
           icon: Icons.tune,
           label: AppLocalizations.of(context)!.output,
@@ -75,10 +78,11 @@ class _RecordingRailItem extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final metrics = context.shellMetricsOrNull;
+    final verticalPadding = metrics?.sidebarRailItemVerticalPadding ??
+        AppSidebarTokens.railItemVerticalPadding;
     return Padding(
-      padding: const EdgeInsets.symmetric(
-        vertical: AppSidebarTokens.railItemVerticalPadding,
-      ),
+      padding: EdgeInsets.symmetric(vertical: verticalPadding),
       child: AppSidebarRailButton(
         buttonKey: ValueKey('recording_sidebar_rail_tile_$index'),
         icon: icon,
@@ -86,8 +90,6 @@ class _RecordingRailItem extends StatelessWidget {
         semanticsLabel: label,
         selected: isSelected,
         onTap: () => onTap(index),
-        iconSize: 28,
-        buttonSize: 40,
       ),
     );
   }
@@ -309,10 +311,17 @@ class RecordingOptionsSidebar extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final useCompactSpacing = isCompact || availableWidth <= 320;
+    final metrics = context.shellMetricsOrNull;
+    final compactWidthThreshold =
+        metrics?.sidebarCompactWidthBreakpoint ?? 320;
+    final useCompactSpacing = isCompact || availableWidth <= compactWidthThreshold;
     final horizontalPadding = useCompactSpacing
-        ? 10.0
-        : AppSidebarTokens.contentHorizontalPadding;
+        ? metrics?.sidebarContentHorizontalPaddingCompact ?? 10.0
+        : metrics?.sidebarContentHorizontalPadding ??
+            AppSidebarTokens.contentHorizontalPadding;
+    final topSpacer =
+        metrics?.sidebarHeaderContentGap ?? AppSidebarTokens.headerContentGap;
+    final bottomSpacer = metrics?.sidebarRowGap ?? AppSidebarTokens.rowGap;
     return Column(
       crossAxisAlignment: CrossAxisAlignment.stretch,
       children: [
@@ -326,16 +335,16 @@ class RecordingOptionsSidebar extends StatelessWidget {
           child: ListView(
             padding: EdgeInsets.symmetric(horizontal: horizontalPadding),
             children: [
-              const SizedBox(
-                key: Key('recording_sidebar_top_spacer'),
-                height: AppSidebarTokens.headerContentGap,
+              SizedBox(
+                key: const Key('recording_sidebar_top_spacer'),
+                height: topSpacer,
               ),
               if (selectedIndex == 0) ..._buildScreenTab(context),
               if (selectedIndex == 1) ..._buildCameraTab(context),
               if (selectedIndex == 2) ..._buildOutputTab(context),
-              const SizedBox(
-                key: Key('recording_sidebar_bottom_spacer'),
-                height: AppSidebarTokens.rowGap,
+              SizedBox(
+                key: const Key('recording_sidebar_bottom_spacer'),
+                height: bottomSpacer,
               ),
             ],
           ),
@@ -507,12 +516,19 @@ class RecordingOptionsSidebar extends StatelessWidget {
     required OverlayMode mode,
     required ValueChanged<OverlayMode> onChanged,
   }) {
-    return ConstrainedBox(
-      constraints: const BoxConstraints(
-        minWidth: AppSidebarTokens.controlMinWidth,
-        maxWidth: AppSidebarTokens.controlMaxWidth,
-      ),
-      child: OverlaySegmented(mode: mode, onChanged: onChanged),
+    return Builder(
+      builder: (context) {
+        final metrics = context.shellMetricsOrNull;
+        return ConstrainedBox(
+          constraints: BoxConstraints(
+            minWidth:
+                metrics?.sidebarControlMinWidth ?? AppSidebarTokens.controlMinWidth,
+            maxWidth:
+                metrics?.sidebarControlMaxWidth ?? AppSidebarTokens.controlMaxWidth,
+          ),
+          child: OverlaySegmented(mode: mode, onChanged: onChanged),
+        );
+      },
     );
   }
 }

@@ -1,3 +1,4 @@
+import 'package:clingfy/ui/platform/widgets/responsive_shell_scope.dart';
 import 'package:clingfy/ui/theme/app_shell_tokens.dart';
 import 'package:clingfy/core/preview/player_controller.dart';
 import 'package:clingfy/app/home/post_processing/post_processing_controller.dart';
@@ -67,6 +68,8 @@ class HomeRightPanel extends StatelessWidget {
       (p) => p.isPlaying,
     );
 
+    final metrics = context.shellMetricsOrNull;
+    final stagePadding = metrics?.stagePadding ?? chrome.stagePadding;
     return Container(
       key: const Key('home_right_panel_shell'),
       decoration: BoxDecoration(
@@ -74,13 +77,14 @@ class HomeRightPanel extends StatelessWidget {
         borderRadius: BorderRadius.circular(chrome.panelRadius),
       ),
       clipBehavior: Clip.antiAlias,
-      child: Padding(
-        padding: EdgeInsets.all(chrome.stagePadding),
-        child: Column(
-          crossAxisAlignment: CrossAxisAlignment.stretch,
-          children: [
-            Expanded(
-              child: previewUiState.showPreviewShell
+      child: RepaintBoundary(
+        child: Padding(
+          padding: EdgeInsets.all(stagePadding),
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.stretch,
+            children: [
+              Expanded(
+                child: previewUiState.showPreviewShell
                   ? Builder(
                       builder: (context) {
                         final player = context.read<PlayerController>();
@@ -126,8 +130,9 @@ class HomeRightPanel extends StatelessWidget {
                       onResume: onResumeRecording,
                       startRecordingButtonKey: startRecordingButtonKey,
                     ),
-            ),
-          ],
+              ),
+            ],
+          ),
         ),
       ),
     );

@@ -1,5 +1,6 @@
 import 'package:clingfy/ui/platform/widgets/app_inline_info_tooltip.dart';
 import 'package:clingfy/ui/platform/widgets/app_sidebar_tokens.dart';
+import 'package:clingfy/ui/platform/widgets/responsive_shell_scope.dart';
 import 'package:flutter/material.dart';
 
 class AppSettingsGroup extends StatelessWidget {
@@ -27,6 +28,15 @@ class AppSettingsGroup extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
+    final metrics = context.shellMetricsOrNull;
+    final optionsGroupGap = metrics?.sidebarOptionsGroupGap ??
+        AppSidebarTokens.optionsGroupGap;
+    final compactGap =
+        metrics?.sidebarCompactGap ?? AppSidebarTokens.compactGap;
+    final controlGap =
+        metrics?.sidebarControlGap ?? AppSidebarTokens.controlGap;
+    final rowGap = metrics?.sidebarRowGap ?? AppSidebarTokens.rowGap;
+    final infoIconSize = metrics?.sidebarIconSmall ?? 14;
     final titleStyle = AppSidebarTokens.sectionHeaderStyle(
       theme,
     ).copyWith(color: theme.colorScheme.onSurface, fontWeight: FontWeight.w700);
@@ -34,7 +44,7 @@ class AppSettingsGroup extends StatelessWidget {
 
     final content = Padding(
       key: sectionKey,
-      padding: const EdgeInsets.only(bottom: AppSidebarTokens.optionsGroupGap),
+      padding: EdgeInsets.only(bottom: optionsGroupGap),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
@@ -58,28 +68,28 @@ class AppSettingsGroup extends StatelessWidget {
                           ),
                           if (infoTooltip != null &&
                               infoTooltip!.isNotEmpty) ...[
-                            const SizedBox(width: AppSidebarTokens.compactGap),
+                            SizedBox(width: compactGap),
                             AppInlineInfoTooltip(
                               message: infoTooltip!,
-                              size: 14,
+                              size: infoIconSize,
                             ),
                           ],
                         ],
                       ),
                       if (description != null && description!.isNotEmpty) ...[
-                        const SizedBox(height: AppSidebarTokens.compactGap),
+                        SizedBox(height: compactGap),
                         Text(description!, style: descriptionStyle),
                       ],
                     ],
                   ),
                 ),
                 if (trailing != null) ...[
-                  const SizedBox(width: AppSidebarTokens.controlGap),
+                  SizedBox(width: controlGap),
                   trailing!,
                 ],
               ],
             ),
-            const SizedBox(height: AppSidebarTokens.rowGap),
+            SizedBox(height: rowGap),
           ],
           ...children,
         ],

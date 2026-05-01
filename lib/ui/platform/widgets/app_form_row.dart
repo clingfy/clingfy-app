@@ -1,4 +1,5 @@
 import 'package:clingfy/ui/platform/widgets/app_sidebar_tokens.dart';
+import 'package:clingfy/ui/platform/widgets/responsive_shell_scope.dart';
 import 'package:clingfy/ui/theme/app_theme.dart';
 import 'package:flutter/material.dart';
 import 'package:clingfy/ui/platform/widgets/app_inline_info_tooltip.dart';
@@ -14,9 +15,9 @@ class AppFormRow extends StatelessWidget {
     this.infoTooltip,
     this.labelTrailing,
     this.helperText,
-    this.labelWidth = AppSidebarTokens.labelWidth,
-    this.stackBreakpoint = AppSidebarTokens.stackBreakpoint,
-    this.gap = AppSidebarTokens.controlGap,
+    this.labelWidth,
+    this.stackBreakpoint,
+    this.gap,
   });
 
   final String? label;
@@ -25,19 +26,28 @@ class AppFormRow extends StatelessWidget {
   final String? helperText;
   final Widget control;
 
-  /// Fixed width of the label column when not stacked.
-  final double labelWidth;
+  /// Fixed width of the label column when not stacked. Overrides metrics.
+  final double? labelWidth;
 
-  /// Below this width, the row becomes a column.
-  final double stackBreakpoint;
+  /// Below this width, the row becomes a column. Overrides metrics.
+  final double? stackBreakpoint;
 
-  /// Horizontal spacing between label and control when not stacked.
-  final double gap;
+  /// Horizontal spacing between label and control when not stacked. Overrides
+  /// metrics.
+  final double? gap;
 
   @override
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
     final spacing = theme.appSpacing;
+    final metrics = context.shellMetricsOrNull;
+    final effectiveLabelWidth =
+        labelWidth ?? metrics?.sidebarLabelWidth ?? AppSidebarTokens.labelWidth;
+    final effectiveStackBreakpoint = stackBreakpoint ??
+        metrics?.sidebarStackBreakpoint ??
+        AppSidebarTokens.stackBreakpoint;
+    final effectiveGap =
+        gap ?? metrics?.sidebarControlGap ?? AppSidebarTokens.controlGap;
     final labelStyle = AppSidebarTokens.rowTitleStyle(theme);
     final helperStyle = AppSidebarTokens.helperStyle(theme);
     final hasHelperText = helperText != null && helperText!.isNotEmpty;
@@ -79,7 +89,7 @@ class AppFormRow extends StatelessWidget {
 
     return LayoutBuilder(
       builder: (context, c) {
-        final stacked = c.maxWidth < stackBreakpoint;
+        final stacked = c.maxWidth < effectiveStackBreakpoint;
 
         // Control-only row.
         if (label == null) {
@@ -116,7 +126,7 @@ class AppFormRow extends StatelessWidget {
             crossAxisAlignment: CrossAxisAlignment.center,
             children: [
               SizedBox(
-                width: labelWidth,
+                width: effectiveLabelWidth,
                 child: Column(
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
@@ -128,7 +138,7 @@ class AppFormRow extends StatelessWidget {
                   ],
                 ),
               ),
-              SizedBox(width: gap),
+              SizedBox(width: effectiveGap),
               Expanded(
                 child: Align(alignment: Alignment.centerRight, child: control),
               ),

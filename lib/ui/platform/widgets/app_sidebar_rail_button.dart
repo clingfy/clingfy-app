@@ -1,3 +1,4 @@
+import 'package:clingfy/ui/platform/widgets/responsive_shell_scope.dart';
 import 'package:flutter/material.dart';
 import 'package:clingfy/ui/theme/app_theme.dart';
 
@@ -9,8 +10,8 @@ class AppSidebarRailButton extends StatelessWidget {
     required this.tooltip,
     required this.onTap,
     this.selected = false,
-    this.iconSize = 28,
-    this.buttonSize = 40,
+    this.iconSize,
+    this.buttonSize,
     this.semanticsLabel,
   });
 
@@ -19,13 +20,16 @@ class AppSidebarRailButton extends StatelessWidget {
   final String tooltip;
   final VoidCallback onTap;
   final bool selected;
-  final double iconSize;
-  final double buttonSize;
+  final double? iconSize;
+  final double? buttonSize;
   final String? semanticsLabel;
 
   @override
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
+    final metrics = context.shellMetricsOrNull;
+    final effectiveIconSize = iconSize ?? metrics?.railIconSize ?? 28;
+    final effectiveButtonSize = buttonSize ?? metrics?.railButtonSize ?? 40;
     final activeColor = theme.colorScheme.onSurface;
     final inactiveColor = theme.colorScheme.onSurfaceVariant.withValues(
       alpha: 0.78,
@@ -42,11 +46,11 @@ class AppSidebarRailButton extends StatelessWidget {
         isSelected: selected,
         padding: EdgeInsets.zero,
         constraints: BoxConstraints.tightFor(
-          width: buttonSize,
-          height: buttonSize,
+          width: effectiveButtonSize,
+          height: effectiveButtonSize,
         ),
-        splashRadius: buttonSize / 2,
-        iconSize: iconSize,
+        splashRadius: effectiveButtonSize / 2,
+        iconSize: effectiveIconSize,
         style: ButtonStyle(
           backgroundColor: const WidgetStatePropertyAll(Colors.transparent),
           foregroundColor: WidgetStateProperty.resolveWith((states) {

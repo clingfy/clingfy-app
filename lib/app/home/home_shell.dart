@@ -20,6 +20,7 @@ import 'package:clingfy/app/home/widgets/reset_preferences_action.dart';
 import 'package:clingfy/l10n/app_localizations.dart';
 import 'package:clingfy/app/settings/settings_controller.dart';
 import 'package:clingfy/ui/platform/widgets/desktop_pane_layout.dart';
+import 'package:clingfy/ui/platform/widgets/responsive_shell_scope.dart';
 import 'package:clingfy/ui/theme/app_shell_tokens.dart';
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
@@ -42,29 +43,28 @@ const DesktopPaneSpec _homeWorkspaceColumnSpec = DesktopPaneSpec(
   flex: true,
 );
 
-const DesktopPaneSpec _recordingInspectorPaneSpec = DesktopPaneSpec(
-  id: DesktopPaneId.recordingSidebar,
-  defaultWidth: HomeDesktopPaneDimensions.inspectorDefault,
-  minWidth: HomeDesktopPaneDimensions.inspectorMin,
-  maxWidth: HomeDesktopPaneDimensions.inspectorMax,
-  collapsedWidth: HomeDesktopPaneDimensions.inspectorCollapsed,
-  resizable: true,
-  collapsible: true,
-  snapCollapseAtMinWidthOnDragEnd: true,
-  autoCollapsePriority: 1,
-);
-
-const DesktopPaneSpec _postProcessingInspectorPaneSpec = DesktopPaneSpec(
-  id: DesktopPaneId.postProcessingSidebar,
-  defaultWidth: HomeDesktopPaneDimensions.inspectorDefault,
-  minWidth: HomeDesktopPaneDimensions.inspectorMin,
-  maxWidth: HomeDesktopPaneDimensions.inspectorMax,
-  collapsedWidth: HomeDesktopPaneDimensions.inspectorCollapsed,
-  resizable: true,
-  collapsible: true,
-  snapCollapseAtMinWidthOnDragEnd: true,
-  autoCollapsePriority: 1,
-);
+DesktopPaneSpec _inspectorSpecForId(
+  DesktopPaneId id,
+  ShellResponsiveMetrics? metrics,
+) {
+  final defaultWidth = metrics?.optionsPanelDefaultWidth ??
+      HomeDesktopPaneDimensions.inspectorDefault;
+  final minWidth = metrics?.optionsPanelMinWidth ??
+      HomeDesktopPaneDimensions.inspectorMin;
+  final maxWidth = metrics?.optionsPanelMaxWidth ??
+      HomeDesktopPaneDimensions.inspectorMax;
+  return DesktopPaneSpec(
+    id: id,
+    defaultWidth: defaultWidth,
+    minWidth: minWidth,
+    maxWidth: maxWidth,
+    collapsedWidth: HomeDesktopPaneDimensions.inspectorCollapsed,
+    resizable: true,
+    collapsible: true,
+    snapCollapseAtMinWidthOnDragEnd: true,
+    autoCollapsePriority: 1,
+  );
+}
 
 const DesktopPaneSpec _homeRightWorkspacePaneSpec = DesktopPaneSpec(
   id: DesktopPaneId.homeRightWorkspace,
@@ -102,6 +102,25 @@ class _HomeShellState extends State<HomeShell> {
   bool _lastObservedGuideVisible = false;
   HomeGuideStep _lastObservedGuideStep = HomeGuideStep.sidebar;
   int _guideSpotlightRefreshSequence = 0;
+  ShellDensity? _lastDensity;
+  ShellResponsiveMetrics? _currentMetrics;
+
+  // Decoupled visibility model:
+  //  - persisted pane collapsed state lives in _paneController
+  //  - responsive inline availability lives in _lastCanShowInspectorInline
+  //  - _compactForcedInlineInspectorId pins the active inspector pane inline
+  //    in compact mode so that DesktopSplitLayout will not auto-collapse it,
+  //    even when the resolver would normally squeeze it out. This is a
+  //    transient (non-persisted) signal that follows user intent (toolbar
+  //    toggle / sidebar tap / guide step).
+  DesktopPaneId? _compactForcedInlineInspectorId;
+  bool _lastCanShowInspectorInline = true;
+
+  DesktopPaneSpec get _recordingInspectorPaneSpec =>
+      _inspectorSpecForId(DesktopPaneId.recordingSidebar, _currentMetrics);
+
+  DesktopPaneSpec get _postProcessingInspectorPaneSpec =>
+      _inspectorSpecForId(DesktopPaneId.postProcessingSidebar, _currentMetrics);
 
   @override
   void initState() {
@@ -206,19 +225,28 @@ class _HomeShellState extends State<HomeShell> {
       case HomeGuideStep.captureSource:
         widget.uiState.setRecordingSidebarIndex(0);
         _paneController.setPaneCollapsed(_recordingInspectorPaneSpec, false);
+        _ensureOptionsVisibleForGuide();
         break;
       case HomeGuideStep.camera:
         widget.uiState.setRecordingSidebarIndex(1);
         _paneController.setPaneCollapsed(_recordingInspectorPaneSpec, false);
+        _ensureOptionsVisibleForGuide();
         break;
       case HomeGuideStep.output:
         widget.uiState.setRecordingSidebarIndex(2);
         _paneController.setPaneCollapsed(_recordingInspectorPaneSpec, false);
+        _ensureOptionsVisibleForGuide();
         break;
       case HomeGuideStep.sidebar:
       case HomeGuideStep.startRecording:
       case HomeGuideStep.help:
         break;
+    }
+  }
+
+  void _ensureOptionsVisibleForGuide() {
+    if (!_lastCanShowInspectorInline) {
+      _compactForcedInlineInspectorId = _recordingInspectorPaneSpec.id;
     }
   }
 
@@ -290,29 +318,127 @@ class _HomeShellState extends State<HomeShell> {
 
   void _selectRecordingSection(int index) {
     widget.uiState.setRecordingSidebarIndex(index);
-    if (_paneController.stateFor(_recordingInspectorPaneSpec.id).isCollapsed) {
-      _showPane(_recordingInspectorPaneSpec);
+    final spec = _recordingInspectorPaneSpec;
+    if (_lastCanShowInspectorInline) {
+      if (_paneController.stateFor(spec.id).isCollapsed) {
+        _showPane(spec);
+      }
+      return;
     }
+    _revealInlineInCompact(spec);
   }
 
   void _selectPostProcessingSection(int index) {
     widget.uiState.setPostProcessingSidebarIndex(index);
-    if (_paneController
-        .stateFor(_postProcessingInspectorPaneSpec.id)
-        .isCollapsed) {
-      _showPane(_postProcessingInspectorPaneSpec);
+    final spec = _postProcessingInspectorPaneSpec;
+    if (_lastCanShowInspectorInline) {
+      if (_paneController.stateFor(spec.id).isCollapsed) {
+        _showPane(spec);
+      }
+      return;
+    }
+    _revealInlineInCompact(spec);
+  }
+
+  /// In compact mode, "reveal" means: pin the active inspector pane id so the
+  /// resolver does not auto-collapse it, and ensure the user-collapsed state
+  /// is cleared. This brings the existing inline pane into view; if the
+  /// available width is too small the layout will fall back to its existing
+  /// horizontal scrolling behaviour.
+  void _revealInlineInCompact(DesktopPaneSpec spec) {
+    final wasCollapsed = _paneController.stateFor(spec.id).isCollapsed;
+    if (_compactForcedInlineInspectorId != spec.id) {
+      setState(() {
+        _compactForcedInlineInspectorId = spec.id;
+      });
+    }
+    if (wasCollapsed) {
+      _setPaneCollapsed(spec, false);
     }
   }
 
-  bool _isInspectorHiddenForLayout({
-    required BoxConstraints constraints,
-    required DesktopPaneSpec spec,
+  void _toggleActiveInspector({
+    required DesktopPaneSpec activeInspectorSpec,
+    required bool canShowInspectorInline,
   }) {
-    if (_paneController.stateFor(spec.id).isCollapsed) {
-      return true;
+    if (canShowInspectorInline) {
+      if (_compactForcedInlineInspectorId != null) {
+        setState(() => _compactForcedInlineInspectorId = null);
+      }
+      _setPaneCollapsed(
+        activeInspectorSpec,
+        !_paneController.stateFor(activeInspectorSpec.id).isCollapsed,
+      );
+      return;
     }
-    return constraints.maxWidth <
-        HomeDesktopPaneDimensions.inspectorAutoHideThreshold;
+
+    final isPinned =
+        _compactForcedInlineInspectorId == activeInspectorSpec.id;
+    if (isPinned) {
+      setState(() => _compactForcedInlineInspectorId = null);
+      _setPaneCollapsed(activeInspectorSpec, true);
+    } else {
+      _revealInlineInCompact(activeInspectorSpec);
+    }
+  }
+
+  Widget _buildHomeOptionsPanel({
+    required DesktopPanePresentation panePresentation,
+    required bool isRecording,
+    required bool showPreviewShell,
+  }) {
+    return HomeOptionsPanel(
+      isRecording: isRecording,
+      showPreviewShell: showPreviewShell,
+      uiState: widget.uiState,
+      actions: widget.actions,
+      settingsController: widget.settingsController,
+      panePresentation: panePresentation,
+      captureSourceGuideAnchorKey: _guideAnchors.captureSourceSection,
+      cameraGuideAnchorKey: _guideAnchors.cameraSection,
+      outputGuideAnchorKey: _guideAnchors.outputSection,
+    );
+  }
+
+  void _syncCompactInlineState(bool canShowInspectorInline) {
+    if (_lastCanShowInspectorInline == canShowInspectorInline) {
+      return;
+    }
+    _lastCanShowInspectorInline = canShowInspectorInline;
+    // When the layout regains room for the inline inspector, drop the
+    // compact "force inline" pin so the normal auto-collapse behaviour
+    // resumes.
+    if (canShowInspectorInline && _compactForcedInlineInspectorId != null) {
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        if (!mounted) return;
+        if (_compactForcedInlineInspectorId != null) {
+          setState(() => _compactForcedInlineInspectorId = null);
+        }
+      });
+    }
+  }
+
+  void _applyDensityAutoCollapse(
+    ShellResponsiveMetrics metrics,
+    DesktopPaneSpec railSpec,
+  ) {
+    if (_lastDensity == metrics.density) {
+      return;
+    }
+    _lastDensity = metrics.density;
+    if (metrics.autoCompactRail) {
+      final railState = _paneController.stateFor(railSpec.id);
+      if (!railState.isCollapsed) {
+        WidgetsBinding.instance.addPostFrameCallback((_) {
+          if (!mounted) return;
+          final current = _paneController.stateFor(railSpec.id);
+          if (!current.isCollapsed) {
+            _paneController.setPaneCollapsed(railSpec, true);
+            _persistPaneLayout();
+          }
+        });
+      }
+    }
   }
 
   @override
@@ -342,10 +468,6 @@ class _HomeShellState extends State<HomeShell> {
       (r) => r.showPreviewShell,
     );
 
-    final activeInspectorSpec = showPreviewShell
-        ? _postProcessingInspectorPaneSpec
-        : _recordingInspectorPaneSpec;
-
     return DecoratedBox(
       decoration: BoxDecoration(color: tokens.outerBackground),
       child: Scaffold(
@@ -367,11 +489,44 @@ class _HomeShellState extends State<HomeShell> {
                       animation: _paneController,
                       builder: (context, _) => LayoutBuilder(
                         builder: (context, constraints) {
-                          final inspectorHiddenForLayout =
-                              _isInspectorHiddenForLayout(
-                                constraints: constraints,
-                                spec: activeInspectorSpec,
-                              );
+                          final shellSize = Size(
+                            constraints.hasBoundedWidth
+                                ? constraints.maxWidth
+                                : MediaQuery.sizeOf(context).width,
+                            constraints.hasBoundedHeight
+                                ? constraints.maxHeight
+                                : MediaQuery.sizeOf(context).height,
+                          );
+                          final metrics =
+                              ShellResponsiveMetrics.fromSize(shellSize);
+                          _currentMetrics = metrics;
+                          _applyDensityAutoCollapse(
+                            metrics,
+                            _homeRailPaneSpec,
+                          );
+                          final activeInspectorSpec = showPreviewShell
+                              ? _postProcessingInspectorPaneSpec
+                              : _recordingInspectorPaneSpec;
+                          final canShowInspectorInline =
+                              !metrics.autoCollapseOptions &&
+                                  constraints.maxWidth >=
+                                      HomeDesktopPaneDimensions
+                                          .inspectorAutoHideThreshold;
+                          _syncCompactInlineState(canShowInspectorInline);
+                          final inspectorCollapsedByUser = _paneController
+                              .stateFor(activeInspectorSpec.id)
+                              .isCollapsed;
+                          final inspectorVisibleInline =
+                              canShowInspectorInline &&
+                                  !inspectorCollapsedByUser;
+                          final compactForcedInlineActive =
+                              !canShowInspectorInline &&
+                                  _compactForcedInlineInspectorId ==
+                                      activeInspectorSpec.id &&
+                                  !inspectorCollapsedByUser;
+                          final inspectorVisibleForToolbar =
+                              inspectorVisibleInline ||
+                                  compactForcedInlineActive;
                           final needsVerticalScroll =
                               constraints.maxHeight <
                               HomeDesktopPaneDimensions.shellMinHeight;
@@ -446,11 +601,13 @@ class _HomeShellState extends State<HomeShell> {
                                           onClearMessage:
                                               widget.actions.clearToolbarErrors,
                                           isInspectorVisible:
-                                              !inspectorHiddenForLayout,
+                                              inspectorVisibleForToolbar,
                                           onToggleInspector: () =>
-                                              _setPaneCollapsed(
-                                                activeInspectorSpec,
-                                                !inspectorHiddenForLayout,
+                                              _toggleActiveInspector(
+                                                activeInspectorSpec:
+                                                    activeInspectorSpec,
+                                                canShowInspectorInline:
+                                                    canShowInspectorInline,
                                               ),
                                         ),
                                         const SizedBox(
@@ -469,29 +626,22 @@ class _HomeShellState extends State<HomeShell> {
                                                 .workspaceMinHeight,
                                             onLayoutCommitted: (_) =>
                                                 _persistPaneLayout(),
+                                            preventAutoCollapsePaneIds:
+                                                compactForcedInlineActive
+                                                    ? <DesktopPaneId>{
+                                                        activeInspectorSpec.id,
+                                                      }
+                                                    : const <DesktopPaneId>{},
                                             panes: [
                                               DesktopPaneSlot(
                                                 spec: activeInspectorSpec,
                                                 builder: (context, panePresentation) {
-                                                  return HomeOptionsPanel(
+                                                  return _buildHomeOptionsPanel(
+                                                    panePresentation:
+                                                        panePresentation,
                                                     isRecording: isRecording,
                                                     showPreviewShell:
                                                         showPreviewShell,
-                                                    uiState: widget.uiState,
-                                                    actions: widget.actions,
-                                                    settingsController: widget
-                                                        .settingsController,
-                                                    panePresentation:
-                                                        panePresentation,
-                                                    captureSourceGuideAnchorKey:
-                                                        _guideAnchors
-                                                            .captureSourceSection,
-                                                    cameraGuideAnchorKey:
-                                                        _guideAnchors
-                                                            .cameraSection,
-                                                    outputGuideAnchorKey:
-                                                        _guideAnchors
-                                                            .outputSection,
                                                   );
                                                 },
                                               ),
@@ -582,7 +732,10 @@ class _HomeShellState extends State<HomeShell> {
                             );
                           }
 
-                          return shell;
+                          return ResponsiveShellScope(
+                            metrics: metrics,
+                            child: shell,
+                          );
                         },
                       ),
                     ),
@@ -606,3 +759,4 @@ class _HomeShellState extends State<HomeShell> {
     );
   }
 }
+

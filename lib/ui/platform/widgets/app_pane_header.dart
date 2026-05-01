@@ -1,4 +1,5 @@
 import 'package:clingfy/ui/platform/widgets/app_sidebar_tokens.dart';
+import 'package:clingfy/ui/platform/widgets/responsive_shell_scope.dart';
 import 'package:flutter/material.dart';
 
 class AppPaneHeader extends StatelessWidget {
@@ -27,17 +28,19 @@ class AppPaneHeader extends StatelessWidget {
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
     final colorScheme = theme.colorScheme;
-    final headerTopPadding = isCompact
-        ? 10.0
-        : AppSidebarTokens.headerTopPadding;
-    final headerBottomPadding = isCompact
-        ? 8.0
-        : AppSidebarTokens.headerBottomPadding;
+    final metrics = context.shellMetricsOrNull;
+    final defaultTop = metrics?.paneHeaderTopPadding ??
+        AppSidebarTokens.headerTopPadding;
+    final defaultBottom = metrics?.paneHeaderBottomPadding ??
+        AppSidebarTokens.headerBottomPadding;
+    final headerTopPadding = isCompact ? 10.0 : defaultTop;
+    final headerBottomPadding = isCompact ? 8.0 : defaultBottom;
+    final titleFontSize = metrics?.paneHeaderTitleSize ?? 16;
     final titleStyle = (theme.textTheme.titleMedium ?? const TextStyle())
         .copyWith(
           color: colorScheme.onSurface,
           fontWeight: FontWeight.w700,
-          fontSize: 16,
+          fontSize: titleFontSize,
         );
 
     return Container(

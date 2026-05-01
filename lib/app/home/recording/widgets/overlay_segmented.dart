@@ -1,3 +1,4 @@
+import 'package:clingfy/ui/platform/widgets/responsive_shell_scope.dart';
 import 'package:flutter/cupertino.dart';
 import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
@@ -19,6 +20,10 @@ class OverlaySegmented extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final l10n = AppLocalizations.of(context)!;
+    final metrics = context.shellMetricsOrNull;
+    final scale = metrics?.scale ?? 1.0;
+    final hPad = (12 * scale).clamp(8.0, 12.0).toDouble();
+    final vPad = (10 * scale).clamp(7.0, 10.0).toDouble();
 
     final labels = <OverlayMode, String>{
       OverlayMode.off: l10n.off,
@@ -28,7 +33,7 @@ class OverlaySegmented extends StatelessWidget {
 
     Widget segLabel(String text) {
       return Padding(
-        padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
+        padding: EdgeInsets.symmetric(horizontal: hPad, vertical: vPad),
         child: Text(
           text,
           maxLines: 1,

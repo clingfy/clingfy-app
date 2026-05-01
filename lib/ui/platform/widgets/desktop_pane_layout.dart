@@ -317,6 +317,7 @@ class DesktopSplitLayout extends StatefulWidget {
     required this.gap,
     this.minHeight,
     this.forcedCollapsedPaneIds = const <DesktopPaneId>{},
+    this.preventAutoCollapsePaneIds = const <DesktopPaneId>{},
     this.onLayoutCommitted,
   });
 
@@ -325,6 +326,12 @@ class DesktopSplitLayout extends StatefulWidget {
   final double gap;
   final double? minHeight;
   final Set<DesktopPaneId> forcedCollapsedPaneIds;
+
+  /// Panes whose ids appear here are excluded from the layout's
+  /// auto-collapse step. Manual/user collapsed state on the controller and
+  /// [forcedCollapsedPaneIds] still take precedence; this opt-out only
+  /// prevents the resolver from collapsing the pane to fit available width.
+  final Set<DesktopPaneId> preventAutoCollapsePaneIds;
 
   /// Fires only for committed layout changes, such as drag end or an explicit
   /// collapse/expand action. Live drag updates remain local to the controller
@@ -781,7 +788,10 @@ class _DesktopSplitLayoutState extends State<DesktopSplitLayout> {
                       !pane.spec.flex &&
                       pane.spec.collapsible &&
                       !(effectiveCollapsed[pane.spec.id] ?? false) &&
-                      pane.spec.autoCollapseAllowed,
+                      pane.spec.autoCollapseAllowed &&
+                      !widget.preventAutoCollapsePaneIds.contains(
+                        pane.spec.id,
+                      ),
                 )
                 .toList()
               ..sort(

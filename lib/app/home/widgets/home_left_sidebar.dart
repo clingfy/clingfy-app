@@ -6,6 +6,7 @@ import 'package:clingfy/l10n/app_localizations.dart';
 import 'package:clingfy/ui/platform/widgets/app_sidebar_rail_button.dart';
 import 'package:clingfy/ui/platform/widgets/app_sidebar_tokens.dart';
 import 'package:clingfy/ui/platform/widgets/desktop_pane_layout.dart';
+import 'package:clingfy/ui/platform/widgets/responsive_shell_scope.dart';
 import 'package:clingfy/ui/theme/app_shell_tokens.dart';
 import 'package:flutter/foundation.dart' show kDebugMode;
 import 'package:flutter/material.dart';
@@ -194,66 +195,82 @@ class _CompactSidebarContent extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final metrics = context.shellMetricsOrNull;
+    final logoSize = metrics?.railLogoSizeCompact ?? 30;
+    final hPad = metrics?.railHorizontalPaddingCompact ?? 6;
+    final topPad = metrics?.railTopPaddingCompact ?? 14;
+    final bottomPad = metrics?.railBottomPaddingCompact ?? 8;
+    final headerGap = metrics?.railHeaderGapCompact ?? AppSidebarTokens.compactGap;
+    final sectionGap =
+        metrics?.railSectionGapCompact ?? AppSidebarTokens.sectionGap;
+    final utilityGap = metrics?.railUtilityGap ?? AppSidebarTokens.railItemGap;
     return Padding(
-      padding: EdgeInsets.symmetric(
-        horizontal: context.appSpacing.xs / 4,
-        vertical: AppSidebarTokens.sectionGap - 2,
-      ),
+      padding: EdgeInsets.fromLTRB(hPad, topPad, hPad, bottomPad),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.center,
         children: [
-          const _SidebarLogoBadge(
+          _SidebarLogoBadge(
             assetPath: HomeLeftSidebar._sidebarLogoAsset,
-            size: 30,
+            size: logoSize,
           ),
-          const SizedBox(height: AppSidebarTokens.compactGap),
+          SizedBox(height: headerGap),
           _RailUtilityButton(
             buttonKey: const Key('home_sidebar_collapse_button'),
             icon: Icons.chevron_right_rounded,
             tooltip: expandTooltip,
             onTap: onToggleRailMode,
           ),
-          const SizedBox(height: AppSidebarTokens.sectionGap),
-          Align(
-            alignment: Alignment.topCenter,
-            child: showPreviewShell
-                ? PostProcessingSidebarRail(
-                    selectedIndex: uiState.postProcessingSidebarIndex,
-                    onSelectedIndexChanged: onPostProcessingSectionSelected,
-                  )
-                : RecordingSidebarRail(
-                    selectedIndex: uiState.recordingSidebarIndex,
-                    onSelectedIndexChanged: onRecordingSectionSelected,
-                  ),
+          SizedBox(height: sectionGap),
+          Expanded(
+            child: Align(
+              alignment: Alignment.topCenter,
+              child: SingleChildScrollView(
+                primary: false,
+                child: showPreviewShell
+                    ? PostProcessingSidebarRail(
+                        selectedIndex: uiState.postProcessingSidebarIndex,
+                        onSelectedIndexChanged:
+                            onPostProcessingSectionSelected,
+                      )
+                    : RecordingSidebarRail(
+                        selectedIndex: uiState.recordingSidebarIndex,
+                        onSelectedIndexChanged: onRecordingSectionSelected,
+                      ),
+              ),
+            ),
           ),
-          const Spacer(),
-          Column(
-            key: const Key('home_sidebar_utility_cluster'),
-            children: [
-              if (kDebugMode) ...[
-                _RailUtilityButton(
-                  buttonKey: const Key('home_sidebar_reset_button'),
-                  icon: Icons.restart_alt_rounded,
-                  tooltip: AppLocalizations.of(
-                    context,
-                  )!.debugResetPreferencesSemanticLabel,
-                  onTap: onResetPreferences,
+          SizedBox(height: utilityGap),
+          Align(
+            alignment: Alignment.bottomCenter,
+            child: Column(
+              key: const Key('home_sidebar_utility_cluster'),
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                if (kDebugMode) ...[
+                  _RailUtilityButton(
+                    buttonKey: const Key('home_sidebar_reset_button'),
+                    icon: Icons.restart_alt_rounded,
+                    tooltip: AppLocalizations.of(
+                      context,
+                    )!.debugResetPreferencesSemanticLabel,
+                    onTap: onResetPreferences,
+                  ),
+                  SizedBox(height: utilityGap),
+                ],
+                _CompactHelpMenuButton(
+                  guideAnchorKey: helpButtonAnchorKey,
+                  onStartQuickTour: onStartQuickTour,
+                  onOpenAbout: onOpenAbout,
                 ),
-                const SizedBox(height: AppSidebarTokens.railItemGap),
+                SizedBox(height: utilityGap),
+                _RailUtilityButton(
+                  buttonKey: const Key('home_sidebar_settings_button'),
+                  icon: Icons.settings_rounded,
+                  tooltip: AppLocalizations.of(context)!.openAppSettings,
+                  onTap: onOpenSettings,
+                ),
               ],
-              _CompactHelpMenuButton(
-                guideAnchorKey: helpButtonAnchorKey,
-                onStartQuickTour: onStartQuickTour,
-                onOpenAbout: onOpenAbout,
-              ),
-              const SizedBox(height: AppSidebarTokens.railItemGap),
-              _RailUtilityButton(
-                buttonKey: const Key('home_sidebar_settings_button'),
-                icon: Icons.settings_rounded,
-                tooltip: AppLocalizations.of(context)!.openAppSettings,
-                onTap: onOpenSettings,
-              ),
-            ],
+            ),
           ),
         ],
       ),
@@ -287,6 +304,19 @@ class _ExpandedSidebarContent extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
+    final metrics = context.shellMetricsOrNull;
+    final logoSize = metrics?.railLogoSizeExpanded ?? 36;
+    final railItemGap =
+        metrics?.railUtilityGap ?? AppSidebarTokens.railItemGap;
+    final navItemGap =
+        metrics?.expandedNavButtonGap ?? AppSidebarTokens.compactGap;
+    final headerGap = metrics?.expandedSidebarHeaderGap ?? 18;
+    final outerPad =
+        metrics?.expandedSidebarPadding ?? AppSidebarTokens.sectionGap;
+    final logoTitleGap = metrics?.expandedSidebarLogoTitleGap ?? 12;
+    final titleSpacing = metrics?.expandedSidebarTitleSpacing ?? 2;
+    final splashRadius = metrics?.expandedSidebarSplashRadius ?? 18;
+    final bottomPad = metrics?.railBottomPaddingCompact ?? 6;
     final titleStyle = (theme.textTheme.titleMedium ?? const TextStyle())
         .copyWith(fontWeight: FontWeight.w700);
     final sectionStyle = (theme.textTheme.bodySmall ?? const TextStyle())
@@ -296,25 +326,40 @@ class _ExpandedSidebarContent extends StatelessWidget {
         );
 
     return Padding(
-      padding: const EdgeInsets.all(AppSidebarTokens.sectionGap),
+      padding: EdgeInsets.fromLTRB(
+        outerPad,
+        outerPad,
+        outerPad,
+        bottomPad,
+      ),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.stretch,
         children: [
           Row(
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
-              const _SidebarLogoBadge(
+              _SidebarLogoBadge(
                 assetPath: HomeLeftSidebar._sidebarLogoAsset,
-                size: 36,
+                size: logoSize,
               ),
-              const SizedBox(width: 12),
+              SizedBox(width: logoTitleGap),
               Expanded(
                 child: Column(
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
-                    Text('Clingfy', style: titleStyle),
-                    const SizedBox(height: 2),
-                    Text(sectionLabel, style: sectionStyle),
+                    Text(
+                      'Clingfy',
+                      style: titleStyle,
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
+                    ),
+                    SizedBox(height: titleSpacing),
+                    Text(
+                      sectionLabel,
+                      style: sectionStyle,
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
+                    ),
                   ],
                 ),
               ),
@@ -323,20 +368,31 @@ class _ExpandedSidebarContent extends StatelessWidget {
                 onPressed: onToggleRailMode,
                 tooltip: compactTooltip,
                 visualDensity: VisualDensity.compact,
-                splashRadius: 18,
+                splashRadius: splashRadius,
                 icon: const Icon(Icons.chevron_left_rounded),
               ),
             ],
           ),
-          const SizedBox(height: 18),
-          for (var index = 0; index < navigationItems.length; index++) ...[
-            _ExpandedSidebarButton(item: navigationItems[index]),
-            if (index < navigationItems.length - 1)
-              const SizedBox(height: AppSidebarTokens.compactGap),
-          ],
-          const Spacer(),
+          SizedBox(height: headerGap),
+          Expanded(
+            child: SingleChildScrollView(
+              primary: false,
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.stretch,
+                children: [
+                  for (var index = 0; index < navigationItems.length; index++) ...[
+                    _ExpandedSidebarButton(item: navigationItems[index]),
+                    if (index < navigationItems.length - 1)
+                      SizedBox(height: navItemGap),
+                  ],
+                ],
+              ),
+            ),
+          ),
+          SizedBox(height: railItemGap),
           Column(
             key: const Key('home_sidebar_utility_cluster'),
+            mainAxisSize: MainAxisSize.min,
             children: [
               if (kDebugMode) ...[
                 _ExpandedSidebarButton(
@@ -352,14 +408,14 @@ class _ExpandedSidebarContent extends StatelessWidget {
                     onTap: onResetPreferences,
                   ),
                 ),
-                const SizedBox(height: AppSidebarTokens.railItemGap),
+                SizedBox(height: railItemGap),
               ],
               _ExpandedHelpMenuButton(
                 guideAnchorKey: helpButtonAnchorKey,
                 onStartQuickTour: onStartQuickTour,
                 onOpenAbout: onOpenAbout,
               ),
-              const SizedBox(height: AppSidebarTokens.railItemGap),
+              SizedBox(height: railItemGap),
               _ExpandedSidebarButton(
                 item: _SidebarActionItem(
                   buttonKey: const Key('home_sidebar_settings_button'),
@@ -403,6 +459,12 @@ class _ExpandedSidebarButton extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
+    final metrics = context.shellMetricsOrNull;
+    final minHeight = metrics?.expandedNavButtonHeight ?? 44;
+    final iconSize = metrics?.expandedNavButtonIconSize ?? 20;
+    final iconLabelGap = metrics?.expandedNavButtonGap ?? 12;
+    final hPad = metrics?.expandedNavButtonHorizontalPadding ?? 12;
+    final vPad = metrics?.expandedNavButtonVerticalPadding ?? 10;
     final selectedBackground = theme.colorScheme.onSurface.withValues(
       alpha: 0.08,
     );
@@ -427,10 +489,10 @@ class _ExpandedSidebarButton extends StatelessWidget {
           onPressed: item.onTap,
           style: ButtonStyle(
             alignment: Alignment.centerLeft,
-            padding: const WidgetStatePropertyAll(
-              EdgeInsets.symmetric(horizontal: 12, vertical: 10),
+            padding: WidgetStatePropertyAll(
+              EdgeInsets.symmetric(horizontal: hPad, vertical: vPad),
             ),
-            minimumSize: const WidgetStatePropertyAll(Size.fromHeight(44)),
+            minimumSize: WidgetStatePropertyAll(Size.fromHeight(minHeight)),
             shape: WidgetStatePropertyAll(
               RoundedRectangleBorder(
                 borderRadius: BorderRadius.circular(
@@ -456,8 +518,8 @@ class _ExpandedSidebarButton extends StatelessWidget {
           ),
           child: Row(
             children: [
-              Icon(item.icon, size: 20),
-              const SizedBox(width: 12),
+              Icon(item.icon, size: iconSize),
+              SizedBox(width: iconLabelGap),
               Expanded(
                 child: Text(
                   item.label,
@@ -515,8 +577,6 @@ class _RailUtilityButton extends StatelessWidget {
       onTap: onTap,
       tooltip: tooltip,
       icon: icon,
-      iconSize: 28,
-      buttonSize: 40,
     );
   }
 }
@@ -546,8 +606,6 @@ class _CompactHelpMenuButton extends StatelessWidget {
         ),
         tooltip: AppLocalizations.of(context)!.settingsAbout,
         icon: Icons.help_outline_rounded,
-        iconSize: 28,
-        buttonSize: 40,
       ),
     );
   }
@@ -567,6 +625,10 @@ class _ExpandedHelpMenuButton extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
+    final metrics = context.shellMetricsOrNull;
+    final minHeight = metrics?.expandedNavButtonHeight ?? 44;
+    final hPad = metrics?.expandedNavButtonHorizontalPadding ?? 12;
+    final vPad = metrics?.expandedNavButtonVerticalPadding ?? 10;
     final foreground = theme.colorScheme.onSurfaceVariant.withValues(
       alpha: 0.88,
     );
@@ -591,10 +653,10 @@ class _ExpandedHelpMenuButton extends StatelessWidget {
             ),
             style: ButtonStyle(
               alignment: Alignment.centerLeft,
-              padding: const WidgetStatePropertyAll(
-                EdgeInsets.symmetric(horizontal: 12, vertical: 10),
+              padding: WidgetStatePropertyAll(
+                EdgeInsets.symmetric(horizontal: hPad, vertical: vPad),
               ),
-              minimumSize: const WidgetStatePropertyAll(Size.fromHeight(44)),
+              minimumSize: WidgetStatePropertyAll(Size.fromHeight(minHeight)),
               shape: WidgetStatePropertyAll(
                 RoundedRectangleBorder(
                   borderRadius: BorderRadius.circular(
@@ -617,8 +679,11 @@ class _ExpandedHelpMenuButton extends StatelessWidget {
             ),
             child: Row(
               children: [
-                const Icon(Icons.help_outline_rounded, size: 20),
-                const SizedBox(width: 12),
+                Icon(
+                  Icons.help_outline_rounded,
+                  size: metrics?.expandedNavButtonIconSize ?? 20,
+                ),
+                SizedBox(width: metrics?.expandedNavButtonGap ?? 12),
                 Expanded(
                   child: Text(
                     AppLocalizations.of(context)!.settingsAbout,

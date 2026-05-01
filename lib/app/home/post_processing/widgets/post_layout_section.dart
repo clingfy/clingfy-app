@@ -9,6 +9,7 @@ import 'package:clingfy/ui/platform/widgets/app_slider.dart';
 import 'package:clingfy/ui/platform/widgets/app_slider_row.dart';
 import 'package:clingfy/ui/platform/widgets/platform_dropdown.dart';
 import 'package:clingfy/ui/platform/widgets/resolution_preset_menu_items.dart';
+import 'package:clingfy/ui/platform/widgets/responsive_shell_scope.dart';
 import 'package:flutter/material.dart' hide PlatformMenuItem;
 
 class PostLayoutSection extends StatelessWidget {
@@ -226,11 +227,12 @@ class _CanvasAspectSelector extends StatelessWidget {
     final theme = Theme.of(context);
     final colorScheme = theme.colorScheme;
     final borderRadius = BorderRadius.circular(12);
+    final metrics = context.shellMetricsOrNull;
+    final minWidth =
+        metrics?.sidebarControlMinWidth ?? AppSidebarTokens.controlMinWidth;
 
     return ConstrainedBox(
-      constraints: const BoxConstraints(
-        minWidth: AppSidebarTokens.controlMinWidth,
-      ),
+      constraints: BoxConstraints(minWidth: minWidth),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [

@@ -9,6 +9,7 @@ import 'package:clingfy/ui/platform/widgets/app_slider.dart';
 import 'package:clingfy/ui/platform/widgets/app_slider_row.dart';
 import 'package:clingfy/ui/platform/widgets/app_toggle_row.dart';
 import 'package:clingfy/ui/platform/widgets/platform_dropdown.dart';
+import 'package:clingfy/ui/platform/widgets/responsive_shell_scope.dart';
 import 'package:flutter/material.dart' hide PlatformMenuItem;
 
 class PostCameraSection extends StatelessWidget {
@@ -595,11 +596,12 @@ class _CameraPositionPanelState extends State<_CameraPositionPanel> {
       alpha: 0.72,
     );
     final handlePosition = _dragNormalizedCenter ?? _resolvedHandlePosition;
+    final metrics = context.shellMetricsOrNull;
+    final controlMinWidth =
+        metrics?.sidebarControlMinWidth ?? AppSidebarTokens.controlMinWidth;
 
     return ConstrainedBox(
-      constraints: const BoxConstraints(
-        minWidth: AppSidebarTokens.controlMinWidth,
-      ),
+      constraints: BoxConstraints(minWidth: controlMinWidth),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.stretch,
         children: [
