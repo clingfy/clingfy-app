@@ -147,7 +147,10 @@ class _VideoTimelineState extends State<VideoTimeline> {
   }
 
   KeyEventResult _handleTimelineKeyEvent(FocusNode node, KeyEvent event) {
-    if (event.logicalKey != LogicalKeyboardKey.space) {
+    final isSpace = event.logicalKey == LogicalKeyboardKey.space;
+    final isAltSpace = isSpace && HardwareKeyboard.instance.isAltPressed;
+
+    if (!isAltSpace) {
       return KeyEventResult.ignored;
     }
 
