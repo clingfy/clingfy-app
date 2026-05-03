@@ -838,7 +838,31 @@ class AppLocalizationsRo extends AppLocalizations {
   String get timeline => 'Timeline';
 
   @override
-  String get closeTimelineTooltip => 'Închide timeline';
+  String get closeTimelineTooltip =>
+      'Închide previzualizarea și începe din nou';
+
+  @override
+  String get closePreviewTooltip => 'Închide previzualizarea și începe din nou';
+
+  @override
+  String get newRecording => 'Înregistrare nouă';
+
+  @override
+  String get newRecordingTooltip =>
+      'Renunță la previzualizarea curentă și începe o înregistrare nouă';
+
+  @override
+  String get startNewRecordingTitle => 'Începi o înregistrare nouă?';
+
+  @override
+  String get startNewRecordingBody =>
+      'Aceasta va închide previzualizarea curentă și va elimina orice modificări nesalvate. Exportă mai întâi dacă vrei să păstrezi această înregistrare.';
+
+  @override
+  String get keepEditing => 'Continuă editarea';
+
+  @override
+  String get discardPreview => 'Renunță la previzualizare';
 
   @override
   String get play => 'Redare';
@@ -1235,9 +1259,6 @@ class AppLocalizationsRo extends AppLocalizations {
   @override
   String get closeUnexportedRecordingMessage =>
       'Această înregistrare nu a fost încă exportată. Dacă o închizi acum, vei pierde accesul la ea în sesiunea curentă.';
-
-  @override
-  String get keepEditing => 'Continuă editarea';
 
   @override
   String get closeWithoutExporting => 'Închide fără export';

@@ -824,7 +824,29 @@ class AppLocalizationsAr extends AppLocalizations {
   String get timeline => 'الجدول الزمني';
 
   @override
-  String get closeTimelineTooltip => 'إغلاق الجدول الزمني';
+  String get closeTimelineTooltip => 'إغلاق المعاينة والبدء من جديد';
+
+  @override
+  String get closePreviewTooltip => 'إغلاق المعاينة والبدء من جديد';
+
+  @override
+  String get newRecording => 'تسجيل جديد';
+
+  @override
+  String get newRecordingTooltip => 'تجاهل المعاينة الحالية وبدء تسجيل جديد';
+
+  @override
+  String get startNewRecordingTitle => 'بدء تسجيل جديد؟';
+
+  @override
+  String get startNewRecordingBody =>
+      'سيؤدي هذا إلى إغلاق المعاينة الحالية وإزالة أي تعديلات غير محفوظة. صدّر أولاً إذا كنت تريد الاحتفاظ بهذا التسجيل.';
+
+  @override
+  String get keepEditing => 'متابعة التحرير';
+
+  @override
+  String get discardPreview => 'تجاهل المعاينة';
 
   @override
   String get play => 'تشغيل';
@@ -1217,9 +1239,6 @@ class AppLocalizationsAr extends AppLocalizations {
   @override
   String get closeUnexportedRecordingMessage =>
       'لم يتم تصدير هذا التسجيل بعد. إذا أغلقته الآن، فستفقد الوصول إليه في الجلسة الحالية.';
-
-  @override
-  String get keepEditing => 'متابعة التحرير';
 
   @override
   String get closeWithoutExporting => 'إغلاق بدون تصدير';

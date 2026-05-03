@@ -1651,8 +1651,50 @@ abstract class AppLocalizations {
   /// No description provided for @closeTimelineTooltip.
   ///
   /// In en, this message translates to:
-  /// **'Close timeline'**
+  /// **'Close preview and start over'**
   String get closeTimelineTooltip;
+
+  /// No description provided for @closePreviewTooltip.
+  ///
+  /// In en, this message translates to:
+  /// **'Close preview and start over'**
+  String get closePreviewTooltip;
+
+  /// No description provided for @newRecording.
+  ///
+  /// In en, this message translates to:
+  /// **'New recording'**
+  String get newRecording;
+
+  /// No description provided for @newRecordingTooltip.
+  ///
+  /// In en, this message translates to:
+  /// **'Discard current preview and start a new recording'**
+  String get newRecordingTooltip;
+
+  /// No description provided for @startNewRecordingTitle.
+  ///
+  /// In en, this message translates to:
+  /// **'Start a new recording?'**
+  String get startNewRecordingTitle;
+
+  /// No description provided for @startNewRecordingBody.
+  ///
+  /// In en, this message translates to:
+  /// **'This will close the current preview and remove any unsaved edits. Export first if you want to keep this recording.'**
+  String get startNewRecordingBody;
+
+  /// No description provided for @keepEditing.
+  ///
+  /// In en, this message translates to:
+  /// **'Keep Editing'**
+  String get keepEditing;
+
+  /// No description provided for @discardPreview.
+  ///
+  /// In en, this message translates to:
+  /// **'Discard preview'**
+  String get discardPreview;
 
   /// No description provided for @play.
   ///
@@ -2373,12 +2415,6 @@ abstract class AppLocalizations {
   /// In en, this message translates to:
   /// **'This recording hasn’t been exported yet. If you close it now, you’ll lose access to it in the current session.'**
   String get closeUnexportedRecordingMessage;
-
-  /// No description provided for @keepEditing.
-  ///
-  /// In en, this message translates to:
-  /// **'Keep Editing'**
-  String get keepEditing;
 
   /// No description provided for @closeWithoutExporting.
   ///

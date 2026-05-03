@@ -191,6 +191,10 @@ class _HomeShellState extends State<HomeShell> {
     unawaited(widget.actions.toggleRecording(context));
   }
 
+  Future<void> _confirmClosePreview(BuildContext context) async {
+    unawaited(widget.actions.closePreview(context));
+  }
+
   bool _canStartGuide() {
     final recordingController = context.read<RecordingController>();
     return !recordingController.isRecording &&
@@ -620,6 +624,12 @@ class _HomeShellState extends State<HomeShell> {
                                                 canShowInspectorInline:
                                                     canShowInspectorInline,
                                               ),
+                                          showPreviewActions: showPreviewShell,
+                                          onNewRecording: showPreviewShell
+                                              ? () => unawaited(
+                                                  _confirmClosePreview(context),
+                                                )
+                                              : null,
                                         ),
                                         const SizedBox(
                                           height: HomeDesktopPaneDimensions
@@ -724,13 +734,9 @@ class _HomeShellState extends State<HomeShell> {
                                                 .innerGap,
                                           ),
                                           TimelineBar(
-                                            onClose: () {
-                                              unawaited(
-                                                widget.actions.closePreview(
-                                                  context,
-                                                ),
-                                              );
-                                            },
+                                            onClose: () => unawaited(
+                                              _confirmClosePreview(context),
+                                            ),
                                           ),
                                         ],
                                       ],

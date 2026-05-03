@@ -831,7 +831,30 @@ class AppLocalizationsEn extends AppLocalizations {
   String get timeline => 'Timeline';
 
   @override
-  String get closeTimelineTooltip => 'Close timeline';
+  String get closeTimelineTooltip => 'Close preview and start over';
+
+  @override
+  String get closePreviewTooltip => 'Close preview and start over';
+
+  @override
+  String get newRecording => 'New recording';
+
+  @override
+  String get newRecordingTooltip =>
+      'Discard current preview and start a new recording';
+
+  @override
+  String get startNewRecordingTitle => 'Start a new recording?';
+
+  @override
+  String get startNewRecordingBody =>
+      'This will close the current preview and remove any unsaved edits. Export first if you want to keep this recording.';
+
+  @override
+  String get keepEditing => 'Keep Editing';
+
+  @override
+  String get discardPreview => 'Discard preview';
 
   @override
   String get play => 'Play';
@@ -1226,9 +1249,6 @@ class AppLocalizationsEn extends AppLocalizations {
   @override
   String get closeUnexportedRecordingMessage =>
       'This recording hasn’t been exported yet. If you close it now, you’ll lose access to it in the current session.';
-
-  @override
-  String get keepEditing => 'Keep Editing';
 
   @override
   String get closeWithoutExporting => 'Close Without Exporting';

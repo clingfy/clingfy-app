@@ -14,6 +14,7 @@ const _toolbarStatusStripKey = Key('toolbar_status_strip');
 const _toolbarNoticeLaneKey = Key('toolbar_notice_lane');
 const _toolbarExportLaneKey = Key('toolbar_export_lane');
 const _toolbarInspectorToggleKey = Key('home_toolbar_options_toggle_button');
+const _toolbarNewRecordingKey = Key('new_recording_button');
 
 enum ToolbarMessageTone { info, success, warning, error }
 
@@ -109,6 +110,8 @@ class DesktopToolbar extends StatelessWidget {
     this.isProcessing = false,
     this.isInspectorVisible = true,
     this.onToggleInspector,
+    this.showPreviewActions = false,
+    this.onNewRecording,
   });
 
   final bool isRecording;
@@ -121,6 +124,8 @@ class DesktopToolbar extends StatelessWidget {
   final bool isProcessing;
   final bool isInspectorVisible;
   final VoidCallback? onToggleInspector;
+  final bool showPreviewActions;
+  final VoidCallback? onNewRecording;
 
   @override
   Widget build(BuildContext context) {
@@ -149,6 +154,8 @@ class DesktopToolbar extends StatelessWidget {
           isProcessing: isProcessing,
           isInspectorVisible: isInspectorVisible,
           onToggleInspector: onToggleInspector,
+          showPreviewActions: showPreviewActions,
+          onNewRecording: onNewRecording,
           l10n: l10n,
         ),
         statusStrip: stripChild,
@@ -167,6 +174,8 @@ class DesktopToolbar extends StatelessWidget {
           isProcessing: isProcessing,
           isInspectorVisible: isInspectorVisible,
           onToggleInspector: onToggleInspector,
+          showPreviewActions: showPreviewActions,
+          onNewRecording: onNewRecording,
           l10n: l10n,
         ),
         statusStrip: stripChild,
@@ -184,6 +193,8 @@ class DesktopToolbar extends StatelessWidget {
         isProcessing: isProcessing,
         isInspectorVisible: isInspectorVisible,
         onToggleInspector: onToggleInspector,
+        showPreviewActions: showPreviewActions,
+        onNewRecording: onNewRecording,
         l10n: l10n,
       ),
       statusStrip: stripChild,
@@ -308,6 +319,8 @@ class _MacToolbarRow extends StatelessWidget {
     required this.isProcessing,
     required this.isInspectorVisible,
     required this.onToggleInspector,
+    required this.showPreviewActions,
+    required this.onNewRecording,
     required this.l10n,
   });
 
@@ -319,6 +332,8 @@ class _MacToolbarRow extends StatelessWidget {
   final bool isProcessing;
   final bool isInspectorVisible;
   final VoidCallback? onToggleInspector;
+  final bool showPreviewActions;
+  final VoidCallback? onNewRecording;
   final AppLocalizations l10n;
 
   @override
@@ -376,6 +391,35 @@ class _MacToolbarRow extends StatelessWidget {
             ),
             SizedBox(width: spacing.xs + 2),
           ],
+          if (showPreviewActions && onNewRecording != null) ...[
+            Tooltip(
+              message: l10n.newRecordingTooltip,
+              child: AppButton(
+                key: _toolbarNewRecordingKey,
+                variant: AppButtonVariant.secondary,
+                onPressed: onNewRecording,
+                child: Row(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    Icon(
+                      Icons.restart_alt_rounded,
+                      size: 16,
+                      color: theme.colorScheme.onSurface,
+                    ),
+                    SizedBox(width: spacing.xs + 2),
+                    Flexible(
+                      child: Text(
+                        l10n.newRecording,
+                        maxLines: 1,
+                        overflow: TextOverflow.ellipsis,
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+            ),
+            SizedBox(width: spacing.xs + 2),
+          ],
           if (onExport != null) ...[
             AppButton(
               onPressed: isProcessing ? null : onExport,
@@ -429,6 +473,8 @@ class _WinToolbarRow extends StatelessWidget {
     required this.isProcessing,
     required this.isInspectorVisible,
     required this.onToggleInspector,
+    required this.showPreviewActions,
+    required this.onNewRecording,
     required this.l10n,
   });
 
@@ -440,6 +486,8 @@ class _WinToolbarRow extends StatelessWidget {
   final bool isProcessing;
   final bool isInspectorVisible;
   final VoidCallback? onToggleInspector;
+  final bool showPreviewActions;
+  final VoidCallback? onNewRecording;
   final AppLocalizations l10n;
 
   @override
@@ -499,6 +547,24 @@ class _WinToolbarRow extends StatelessWidget {
             ),
             SizedBox(width: spacing.xs + 2),
           ],
+          if (showPreviewActions && onNewRecording != null) ...[
+            Tooltip(
+              message: l10n.newRecordingTooltip,
+              child: fluent.Button(
+                key: _toolbarNewRecordingKey,
+                onPressed: onNewRecording,
+                child: Row(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    const Icon(Icons.restart_alt_rounded, size: 16),
+                    SizedBox(width: spacing.xs + 2),
+                    Text(l10n.newRecording),
+                  ],
+                ),
+              ),
+            ),
+            SizedBox(width: spacing.xs + 2),
+          ],
           if (onExport != null) ...[
             fluent.FilledButton(
               onPressed: isProcessing ? null : onExport,
@@ -530,6 +596,8 @@ class _FallbackToolbarRow extends StatelessWidget {
     required this.isProcessing,
     required this.isInspectorVisible,
     required this.onToggleInspector,
+    required this.showPreviewActions,
+    required this.onNewRecording,
     required this.l10n,
   });
 
@@ -541,6 +609,8 @@ class _FallbackToolbarRow extends StatelessWidget {
   final bool isProcessing;
   final bool isInspectorVisible;
   final VoidCallback? onToggleInspector;
+  final bool showPreviewActions;
+  final VoidCallback? onNewRecording;
   final AppLocalizations l10n;
 
   @override
@@ -591,6 +661,19 @@ class _FallbackToolbarRow extends StatelessWidget {
               context,
               icon: Icons.timer,
               text: l10n.stopIn(countdownText!),
+            ),
+            SizedBox(width: spacing.xs + 2),
+          ],
+          if (showPreviewActions && onNewRecording != null) ...[
+            Tooltip(
+              message: l10n.newRecordingTooltip,
+              child: _simpleButton(
+                context: context,
+                buttonKey: _toolbarNewRecordingKey,
+                label: l10n.newRecording,
+                icon: Icons.restart_alt_rounded,
+                onPressed: onNewRecording,
+              ),
             ),
             SizedBox(width: spacing.xs + 2),
           ],
@@ -1514,6 +1597,7 @@ Widget _simpleButton({
   required String label,
   required IconData icon,
   required VoidCallback? onPressed,
+  Key? buttonKey,
 }) {
   final theme = Theme.of(context);
   final chrome = theme.appEditorChrome;
@@ -1521,6 +1605,7 @@ Widget _simpleButton({
       theme.inputDecorationTheme.fillColor ??
       theme.colorScheme.secondaryContainer;
   return GestureDetector(
+    key: buttonKey,
     onTap: onPressed,
     child: Opacity(
       opacity: onPressed == null ? 0.5 : 1,

@@ -171,11 +171,11 @@ class TimelineHeaderBar extends StatelessWidget {
           SizedBox(width: controlGap),
           AppIconButton(
             key: const Key('timeline_close_button'),
-            tooltip: l10n.closeTimelineTooltip,
+            tooltip: l10n.closePreviewTooltip,
             icon: CupertinoIcons.xmark,
             onPressed: onClose,
             color: theme.colorScheme.onSurface.withValues(alpha: 0.8),
-            size: closeIconSize,
+            size: closeIconSize + 2,
           ),
         ],
       ),
