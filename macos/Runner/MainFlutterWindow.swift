@@ -985,6 +985,39 @@ class MainFlutterWindow: NSWindow {
             FlutterError(code: NativeErrorCode.badArgs, message: "Missing segments", details: nil))
         }
 
+      case "previewGetZoomCapabilities":
+        // Phase 1 contract: this build supports the cursor-samples
+        // query, fixed-target preview rendering, and fixed-target
+        // export rendering. Dart unlocks the smart fixed-target UX
+        // only when cursorSamples && fixedTargetPreview are both true.
+        result([
+          "cursorSamples": true,
+          "fixedTargetPreview": true,
+          "fixedTargetExport": true,
+        ])
+
+      case "previewGetCursorSamples":
+        guard let args = call.arguments as? [String: Any],
+          let startMs = args["startMs"] as? Int,
+          let endMs = args["endMs"] as? Int,
+          let playheadMs = args["playheadMs"] as? Int
+        else {
+          result(
+            FlutterError(
+              code: NativeErrorCode.badArgs,
+              message: "Missing args for previewGetCursorSamples",
+              details: nil))
+          break
+        }
+        let sessionId = args["sessionId"] as? String
+        let response = self.previewGetCursorSamplesResponse(
+          sessionId: sessionId,
+          startMs: startMs,
+          endMs: endMs,
+          playheadMs: playheadMs
+        )
+        result(response)
+
       /*
         =================================================================
         ========================== PERMISSIONS ==========================
@@ -1160,13 +1193,133 @@ class MainFlutterWindow: NSWindow {
     }
   }
 
+  /// Loads cursor samples from the active preview session's
+  /// `cursor.json`, filters them to `[startMs, endMs]`, and converts
+  /// from normalized `[0,1]` to source-recording pixel coordinates.
+  ///
+  /// Always returns a valid map. Missing cursor data, missing session,
+  /// missing metadata, and decode failures all resolve to an empty
+  /// samples array — never a Flutter error. The Dart side treats an
+  /// empty result as "no cursor data in range" and falls back to a
+  /// fixed-target zoom centered on the canvas.
+  private func previewGetCursorSamplesResponse(
+    sessionId: String?,
+    startMs: Int,
+    endMs: Int,
+    playheadMs: Int
+  ) -> [String: Any] {
+    let emptyResponse: [String: Any] = [
+      "samples": [Any](),
+      "playheadSample": NSNull(),
+      "width": 0.0,
+      "height": 0.0,
+    ]
+
+    guard let state = activeInlinePreviewState else {
+      return emptyResponse
+    }
+    if let sessionId = sessionId, state.sessionId != sessionId {
+      return emptyResponse
+    }
+
+    let media = state.mediaSources
+    guard let cursorPath = media.cursorPath, !cursorPath.isEmpty else {
+      return emptyResponse
+    }
+    let cursorURL = URL(fileURLWithPath: cursorPath)
+    guard let cursorData = try? Data(contentsOf: cursorURL),
+      let recording = try? JSONDecoder().decode(
+        CursorRecording.self, from: cursorData)
+    else {
+      return emptyResponse
+    }
+
+    let (sourceWidth, sourceHeight) = previewSourceDimensions(
+      mediaSources: media)
+
+    func encode(_ frame: CursorFrame, visible: Bool) -> [String: Any] {
+      let tMs = Int((frame.t * 1000.0).rounded())
+      return [
+        "tMs": tMs,
+        "x": frame.x * sourceWidth,
+        "y": frame.y * sourceHeight,
+        "visible": visible,
+      ]
+    }
+
+    var samples: [[String: Any]] = []
+    var nearest: CursorFrame?
+    var nearestDeltaMs: Int = Int.max
+
+    for frame in recording.frames {
+      let tMs = Int((frame.t * 1000.0).rounded())
+      // The cursor.json schema has no `visible` field today. Treat
+      // every recorded sample as visible; native may extend the
+      // schema later without changing the wire contract.
+      if tMs >= startMs && tMs <= endMs {
+        samples.append(encode(frame, visible: true))
+      }
+      let delta = abs(tMs - playheadMs)
+      if delta < nearestDeltaMs {
+        nearest = frame
+        nearestDeltaMs = delta
+      }
+    }
+
+    let playheadSample: Any = nearest.map { encode($0, visible: true) } ?? NSNull()
+
+    return [
+      "samples": samples,
+      "playheadSample": playheadSample,
+      "width": sourceWidth,
+      "height": sourceHeight,
+    ]
+  }
+
+  /// Source recording dimensions in pixels. Prefers the recorded crop
+  /// rect from `screen.meta.json`; falls back to the AVAsset's natural
+  /// size; finally falls back to `(0, 0)` so the response is still
+  /// well-formed.
+  private func previewSourceDimensions(
+    mediaSources: PreviewMediaSources
+  ) -> (Double, Double) {
+    if let metadataPath = mediaSources.metadataPath,
+      !metadataPath.isEmpty,
+      let data = try? Data(contentsOf: URL(fileURLWithPath: metadataPath)),
+      let metadata = try? JSONDecoder().decode(
+        RecordingMetadata.self, from: data),
+      let crop = metadata.screen.cropRect
+    {
+      return (crop.width, crop.height)
+    }
+    let url = URL(fileURLWithPath: mediaSources.screenPath)
+    let asset = AVURLAsset(url: url)
+    if let track = asset.tracks(withMediaType: .video).first {
+      let size = track.naturalSize.applying(track.preferredTransform)
+      return (Swift.abs(Double(size.width)), Swift.abs(Double(size.height)))
+    }
+    return (0.0, 0.0)
+  }
+
   private func parseZoomTimelineSegments(_ raw: Any?) -> [ZoomTimelineSegment]? {
     guard let segmentsRaw = raw as? [[String: Any]] else { return nil }
     return segmentsRaw.compactMap { dict in
       guard let start = dict["startMs"] as? Int, let end = dict["endMs"] as? Int else {
         return nil
       }
-      return ZoomTimelineSegment(startMs: start, endMs: end)
+      let focusMode = ZoomFocusMode(wireValue: dict["focusMode"])
+      // Missing/invalid fixedTarget on a fixedTarget segment falls back
+      // to center {0.5, 0.5}; the struct init enforces this. For
+      // followCursor segments the field is dropped regardless.
+      let fixedTarget: ZoomFixedTarget? = focusMode == .fixedTarget
+        ? (ZoomFixedTarget.parse(dict["fixedTarget"]) ?? .center)
+        : nil
+      return ZoomTimelineSegment(
+        startMs: start,
+        endMs: end,
+        focusMode: focusMode,
+        fixedTarget: fixedTarget
+      )
     }
   }
 

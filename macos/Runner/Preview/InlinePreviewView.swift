@@ -2623,14 +2623,24 @@ final class InlinePreviewView: NSView {
       return 1.0
     }
 
-    guard let frame = tick.frame else {
+    // Resolve the active manual segment first so a fixedTarget segment
+    // can still drive the zoom transform when the cursor frame is
+    // unavailable (e.g. cursor lives on a second display that wasn't
+    // recorded — `tick.frame` is nil there).
+    var activeManualSegment: ZoomTimelineSegment?
+    if let manualSegments = params.zoomSegments {
+      let tMs = Int(time * 1000)
+      activeManualSegment = manualSegments.first { $0.contains(timeMs: tMs) }
+    }
+
+    if tick.frame == nil
+      && activeManualSegment?.focusMode != .fixedTarget
+    {
       zoomedLayer.setAffineTransform(.identity)
       currentZoomActive = false
       currentZoomStartTime = nil
       return 1.0
     }
-
-    let defID = defaultSpriteID ?? frame.spriteID
 
     let targetSize = params.targetSize
     guard targetSize.width > 0 && targetSize.height > 0 else {
@@ -2644,11 +2654,27 @@ final class InlinePreviewView: NSView {
     let focusX = logicalContentFrame.midX
     let focusY = logicalContentFrame.midY
 
-    let nx = frame.x
-    let ny = 1.0 - frame.y
-
-    let cursorLogicalX = logicalContentFrame.origin.x + nx * logicalContentFrame.width
-    let cursorLogicalY = logicalContentFrame.origin.y + ny * logicalContentFrame.height
+    // When tick.frame is nil but we're inside a fixedTarget segment,
+    // the cursor-derived values are unused — initialize to neutral
+    // defaults so the followCursor branch still type-checks.
+    let cursorLogicalX: CGFloat
+    let cursorLogicalY: CGFloat
+    let isInside: Bool
+    let rawZoomWanted: Bool
+    if let frame = tick.frame {
+      let defID = defaultSpriteID ?? frame.spriteID
+      let nx = frame.x
+      let ny = 1.0 - frame.y
+      cursorLogicalX = logicalContentFrame.origin.x + nx * logicalContentFrame.width
+      cursorLogicalY = logicalContentFrame.origin.y + ny * logicalContentFrame.height
+      isInside = isInBounds(frame)
+      rawZoomWanted = isInside && (frame.spriteID != defID)
+    } else {
+      cursorLogicalX = focusX
+      cursorLogicalY = focusY
+      isInside = false
+      rawZoomWanted = false
+    }
 
     // Min / Max for center so that we never expose outside of the contentRect
     let contentMinX = logicalContentFrame.minX
@@ -2656,16 +2682,12 @@ final class InlinePreviewView: NSView {
     let contentMinY = logicalContentFrame.minY
     let contentMaxY = logicalContentFrame.maxY
 
-    let isInside = isInBounds(frame)
-
-    // Is zoom active? (with hysteresis)
-    let rawZoomWanted = isInside && (frame.spriteID != defID)
-
     var stableZoomActive: Bool = false
-    if isInside {
-      if let manualSegments = params.zoomSegments {
-        let tMs = Int(time * 1000)
-        stableZoomActive = manualSegments.contains { $0.contains(timeMs: tMs) }
+    if isInside || activeManualSegment?.focusMode == .fixedTarget {
+      // A fixedTarget segment must zoom even when the cursor is
+      // out-of-bounds — it's the whole point of the mode.
+      if activeManualSegment != nil {
+        stableZoomActive = true
       } else {
         stableZoomActive = zoomHysteresis.update(time: time, rawZoomWanted: rawZoomWanted)
       }
@@ -2685,8 +2707,34 @@ final class InlinePreviewView: NSView {
 
     let targetZ: CGFloat = stableZoomActive ? params.zoomFactor : 1.0
 
-    let targetLookAtX = (stableZoomActive && isInside) ? cursorLogicalX : focusX
-    let targetLookAtY = (stableZoomActive && isInside) ? cursorLogicalY : focusY
+    // Fixed-target segments ignore the cursor path. The target is the
+    // segment's normalized point mapped through the same content-rect
+    // transform as the cursor — so preview and export center match.
+    let fixedLookAtX: CGFloat?
+    let fixedLookAtY: CGFloat?
+    if let seg = activeManualSegment, seg.focusMode == .fixedTarget {
+      let pt = seg.fixedTarget ?? .center
+      let nFx = pt.dx
+      let nFy = 1.0 - pt.dy
+      fixedLookAtX = logicalContentFrame.origin.x + nFx * logicalContentFrame.width
+      fixedLookAtY = logicalContentFrame.origin.y + nFy * logicalContentFrame.height
+    } else {
+      fixedLookAtX = nil
+      fixedLookAtY = nil
+    }
+
+    let targetLookAtX: CGFloat
+    let targetLookAtY: CGFloat
+    if stableZoomActive, let fx = fixedLookAtX, let fy = fixedLookAtY {
+      targetLookAtX = fx
+      targetLookAtY = fy
+    } else if stableZoomActive && isInside {
+      targetLookAtX = cursorLogicalX
+      targetLookAtY = cursorLogicalY
+    } else {
+      targetLookAtX = focusX
+      targetLookAtY = focusY
+    }
 
     let alpha =
       snap
