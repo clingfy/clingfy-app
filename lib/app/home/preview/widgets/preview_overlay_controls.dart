@@ -176,14 +176,15 @@ class _PlayPauseVisualState extends State<_PlayPauseVisual>
         ),
         boxShadow: [
           BoxShadow(
-            color: colors.scrim.withValues(alpha: 0.55),
+            color: colors.scrim.withValues(alpha: 0.45),
             blurRadius: 24,
-            spreadRadius: 2,
+            spreadRadius: 12,
             offset: const Offset(0, 8),
           ),
           BoxShadow(
-            color: colors.scrim.withValues(alpha: 0.35),
-            blurRadius: 8,
+            color: colors.scrim.withValues(alpha: 0.55),
+            blurRadius: 18,
+            spreadRadius: 6,
             offset: const Offset(0, 2),
           ),
         ],
