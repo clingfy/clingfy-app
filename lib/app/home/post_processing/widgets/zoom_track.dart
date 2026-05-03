@@ -580,7 +580,7 @@ class _ZoomTrackState extends State<ZoomTrack> {
                     ),
                     ghostStartMs: _ghostStartMs,
                     ghostEndMs: _ghostEndMs,
-                    ghostLabel: 'Add zoom segment',
+                    ghostLabel: 'Add zoom',
                   ),
                 );
               },
@@ -859,25 +859,23 @@ class ZoomTrackPainter extends CustomPainter {
       );
       final label = ghostLabel;
       if (showSegmentLabels && label != null && label.isNotEmpty) {
-        final textPainter = TextPainter(
-          text: TextSpan(
-            text: label,
-            style: TextStyle(
-              color: accentColor.withValues(alpha: 0.92),
-              fontSize: 11,
-              fontWeight: FontWeight.w600,
-            ),
-          ),
+        final textStyle = TextStyle(
+          color: accentColor.withValues(alpha: 0.92),
+          fontSize: 11,
+          fontWeight: FontWeight.w600,
+        );
+        final naturalPainter = TextPainter(
+          text: TextSpan(text: label, style: textStyle),
           maxLines: 1,
-          ellipsis: '…',
           textDirection: TextDirection.ltr,
-        )..layout(maxWidth: math.max(0, rect.width - 12));
-        if (textPainter.width > 0) {
-          textPainter.paint(
+        )..layout();
+        final available = math.max(0.0, rect.width - 12);
+        if (naturalPainter.width <= available && naturalPainter.width > 0) {
+          naturalPainter.paint(
             canvas,
             Offset(
-              rect.left + (rect.width - textPainter.width) / 2,
-              rect.center.dy - textPainter.height / 2,
+              rect.left + (rect.width - naturalPainter.width) / 2,
+              rect.center.dy - naturalPainter.height / 2,
             ),
           );
         }
