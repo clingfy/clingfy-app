@@ -53,6 +53,29 @@ class ZoomTrack extends StatefulWidget {
 
 enum _TrackDragMode { none, addDraft, move, trimLeft, trimRight, bandSelect }
 
+const String _kGhostLabel = 'Add zoom';
+const double _kGhostHorizontalPadding = 10.0;
+const double _kGhostMinChipWidth = 28.0;
+const TextStyle _kGhostLabelStyle = TextStyle(
+  fontSize: 11,
+  fontWeight: FontWeight.w600,
+);
+
+double _measureGhostChipWidthPx() {
+  final tp = TextPainter(
+    text: const TextSpan(text: _kGhostLabel, style: _kGhostLabelStyle),
+    maxLines: 1,
+    textDirection: TextDirection.ltr,
+  )..layout();
+  return math.max(_kGhostMinChipWidth, tp.width + _kGhostHorizontalPadding * 2);
+}
+
+int _chipDurationMsFor(double totalWidth, int totalDurationMs) {
+  if (totalWidth <= 0 || totalDurationMs <= 0) return 0;
+  final chipPx = _measureGhostChipWidthPx();
+  return (chipPx / totalWidth * totalDurationMs).round();
+}
+
 class _ZoomTrackState extends State<ZoomTrack> {
   MouseCursor _cursor = SystemMouseCursors.click;
   static const double _handleTolerancePx = 10.0;
@@ -267,12 +290,19 @@ class _ZoomTrackState extends State<ZoomTrack> {
       return;
     }
     final centerMs = _localXToMs(localX, totalWidth);
-    final span = editor.defaultSpanFor(centerMs);
+    final chipDurationMs = _chipDurationMsFor(totalWidth, widget.durationMs);
+    final span = editor.defaultSpanFor(
+      centerMs,
+      durationMs: chipDurationMs,
+    );
     if (span == null) {
       _clearGhost();
       return;
     }
-    if (!editor.canAddDefaultSegmentAt(centerMs)) {
+    if (!editor.canAddDefaultSegmentAt(
+      centerMs,
+      durationMs: chipDurationMs,
+    )) {
       _clearGhost();
       return;
     }
@@ -336,9 +366,19 @@ class _ZoomTrackState extends State<ZoomTrack> {
                     return;
                   }
                   // Click-to-add when ghost template is visible.
+                  final chipDurationMs = _chipDurationMsFor(
+                    box.size.width,
+                    widget.durationMs,
+                  );
                   if (widget.showAddTemplate &&
-                      editor.canAddDefaultSegmentAt(tapMs)) {
-                    final created = editor.addDefaultSegmentAt(tapMs);
+                      editor.canAddDefaultSegmentAt(
+                        tapMs,
+                        durationMs: chipDurationMs,
+                      )) {
+                    final created = editor.addDefaultSegmentAt(
+                      tapMs,
+                      durationMs: chipDurationMs,
+                    );
                     if (created != null) {
                       _clearGhost();
                       return;
@@ -826,14 +866,44 @@ class ZoomTrackPainter extends CustomPainter {
         ghostEndMs! > ghostStartMs!) {
       final rawX1 = (ghostStartMs! / durationMs) * size.width;
       final rawX2 = (ghostEndMs! / durationMs) * size.width;
-      const minVisualWidth = 24.0;
-      var x1 = rawX1;
-      var x2 = rawX2;
-      if (x2 - x1 < minVisualWidth) {
-        final mid = (x1 + x2) / 2;
-        x1 = (mid - minVisualWidth / 2).clamp(0.0, size.width);
-        x2 = (mid + minVisualWidth / 2).clamp(0.0, size.width);
+      final centerX = (rawX1 + rawX2) / 2;
+
+      final label = ghostLabel;
+      TextPainter? labelPainter;
+      if (showSegmentLabels && label != null && label.isNotEmpty) {
+        labelPainter = TextPainter(
+          text: TextSpan(
+            text: label,
+            style: TextStyle(
+              color: accentColor.withValues(alpha: 0.92),
+              fontSize: 11,
+              fontWeight: FontWeight.w600,
+            ),
+          ),
+          maxLines: 1,
+          textDirection: TextDirection.ltr,
+        )..layout();
       }
+
+      const horizontalPadding = 10.0;
+      const minVisualWidth = 28.0;
+      final contentWidth = labelPainter?.width ?? 0;
+      final chipWidth = math.max(
+        minVisualWidth,
+        contentWidth + horizontalPadding * 2,
+      );
+      var x1 = centerX - chipWidth / 2;
+      var x2 = centerX + chipWidth / 2;
+      if (x1 < 0) {
+        x2 += -x1;
+        x1 = 0;
+      }
+      if (x2 > size.width) {
+        x1 -= x2 - size.width;
+        x2 = size.width;
+      }
+      x1 = x1.clamp(0.0, size.width);
+
       final ghostHeight = laneRect.height - 6;
       final rect = RRect.fromRectAndRadius(
         Rect.fromLTRB(
@@ -857,28 +927,15 @@ class ZoomTrackPainter extends CustomPainter {
           ..style = PaintingStyle.stroke
           ..strokeWidth = 1.2,
       );
-      final label = ghostLabel;
-      if (showSegmentLabels && label != null && label.isNotEmpty) {
-        final textStyle = TextStyle(
-          color: accentColor.withValues(alpha: 0.92),
-          fontSize: 11,
-          fontWeight: FontWeight.w600,
+
+      if (labelPainter != null && labelPainter.width <= rect.width - 8) {
+        labelPainter.paint(
+          canvas,
+          Offset(
+            rect.left + (rect.width - labelPainter.width) / 2,
+            rect.center.dy - labelPainter.height / 2,
+          ),
         );
-        final naturalPainter = TextPainter(
-          text: TextSpan(text: label, style: textStyle),
-          maxLines: 1,
-          textDirection: TextDirection.ltr,
-        )..layout();
-        final available = math.max(0.0, rect.width - 12);
-        if (naturalPainter.width <= available && naturalPainter.width > 0) {
-          naturalPainter.paint(
-            canvas,
-            Offset(
-              rect.left + (rect.width - naturalPainter.width) / 2,
-              rect.center.dy - naturalPainter.height / 2,
-            ),
-          );
-        }
       }
     }
   }
