@@ -1738,6 +1738,18 @@ abstract class AppLocalizations {
   /// **'Cursor does not move in this range. Fixed target gives a visible zoom.'**
   String get zoomCursorStaticHint;
 
+  /// No description provided for @zoomTarget.
+  ///
+  /// In en, this message translates to:
+  /// **'Zoom target'**
+  String get zoomTarget;
+
+  /// No description provided for @dragZoomTargetTooltip.
+  ///
+  /// In en, this message translates to:
+  /// **'Drag to change zoom target'**
+  String get dragZoomTargetTooltip;
+
   /// No description provided for @zoomAddSegment.
   ///
   /// In en, this message translates to:

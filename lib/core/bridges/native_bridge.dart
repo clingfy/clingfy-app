@@ -540,25 +540,53 @@ class NativeBridge {
     String? sessionId,
   }) async {
     try {
-      final raw = await _nativeBridge.invokeMethod<Map<dynamic, dynamic>>(
-        'previewGetCursorSamples',
-        {
-          if (sessionId != null) 'sessionId': sessionId,
-          'startMs': startMs,
-          'endMs': endMs,
-          'playheadMs': playheadMs,
-        },
-      );
+      final raw = await _nativeBridge
+          .invokeMethod<Map<dynamic, dynamic>>('previewGetCursorSamples', {
+            if (sessionId != null) 'sessionId': sessionId,
+            'startMs': startMs,
+            'endMs': endMs,
+            'playheadMs': playheadMs,
+          });
       if (raw == null) return CursorSamplesResult.empty;
       return CursorSamplesResult.fromMap(raw);
     } on MissingPluginException catch (e) {
-      throw ZoomNativeCapabilityMissing(
-        'previewGetCursorSamples',
-        e.message,
-      );
+      throw ZoomNativeCapabilityMissing('previewGetCursorSamples', e.message);
     } catch (e) {
       Log.e("NativeBridge", "previewGetCursorSamples failed: $e");
       return CursorSamplesResult.empty;
+    }
+  }
+
+  /// Returns the active preview session's source recording dimensions
+  /// in pixels. Used by Dart to map normalized fixed-target points onto
+  /// the displayed (letterboxed/pillarboxed) preview surface.
+  ///
+  /// Returns `null` when:
+  ///   - the native build predates this call (`MissingPluginException`),
+  ///   - there is no active preview session,
+  ///   - native could not resolve the recording dimensions.
+  ///
+  /// Callers that depend on a real source size for hit-testing should
+  /// hide their UI when this returns `null`.
+  Future<Size?> previewGetSourceDimensions({String? sessionId}) async {
+    try {
+      final raw = await _nativeBridge.invokeMethod<Map<dynamic, dynamic>>(
+        'previewGetSourceDimensions',
+        {if (sessionId != null) 'sessionId': sessionId},
+      );
+      if (raw == null) return null;
+      final w = raw['width'];
+      final h = raw['height'];
+      if (w is! num || h is! num) return null;
+      final width = w.toDouble();
+      final height = h.toDouble();
+      if (width <= 0 || height <= 0) return null;
+      return Size(width, height);
+    } on MissingPluginException {
+      return null;
+    } catch (e) {
+      Log.e("NativeBridge", "previewGetSourceDimensions failed: $e");
+      return null;
     }
   }
 

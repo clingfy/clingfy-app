@@ -879,6 +879,12 @@ class AppLocalizationsEn extends AppLocalizations {
       'Cursor does not move in this range. Fixed target gives a visible zoom.';
 
   @override
+  String get zoomTarget => 'Zoom target';
+
+  @override
+  String get dragZoomTargetTooltip => 'Drag to change zoom target';
+
+  @override
   String get zoomAddSegment => 'Add zoom segment';
 
   @override

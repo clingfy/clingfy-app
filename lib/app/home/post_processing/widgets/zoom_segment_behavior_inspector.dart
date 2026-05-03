@@ -136,8 +136,7 @@ class _ZoomSegmentBehaviorInspectorState
     final l10n = AppLocalizations.of(context)!;
     final theme = Theme.of(context);
     final isFollow = segment.focusMode == ZoomFocusMode.followCursor;
-    final showHint =
-        isFollow && (_staticHintBySegmentId[segment.id] ?? false);
+    final showHint = isFollow && (_staticHintBySegmentId[segment.id] ?? false);
 
     return Padding(
       padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 6),
@@ -147,10 +146,7 @@ class _ZoomSegmentBehaviorInspectorState
         children: [
           Row(
             children: [
-              Text(
-                l10n.zoomBehavior,
-                style: theme.textTheme.labelMedium,
-              ),
+              Text(l10n.zoomBehavior, style: theme.textTheme.labelMedium),
               const SizedBox(width: 12),
               Expanded(
                 child: SegmentedButton<ZoomFocusMode>(

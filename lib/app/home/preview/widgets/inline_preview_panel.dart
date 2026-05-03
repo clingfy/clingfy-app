@@ -2,6 +2,7 @@ import 'dart:async';
 
 import 'package:clingfy/app/home/home_ui_state.dart';
 import 'package:clingfy/app/home/preview/widgets/inline_preview.dart';
+import 'package:clingfy/app/home/preview/widgets/zoom_target_overlay.dart';
 import 'package:clingfy/app/settings/settings_controller.dart';
 import 'package:clingfy/core/preview/player_controller.dart';
 import 'package:clingfy/l10n/app_localizations.dart';
@@ -144,6 +145,8 @@ class _InlinePreviewPanelState extends State<InlinePreviewPanel> {
               ),
             ),
           ),
+          if (widget.showSurface && !widget.showLoadingOverlay)
+            const Positioned.fill(child: ZoomTargetOverlay()),
           if (widget.showLoadingOverlay)
             Positioned.fill(
               child: Container(

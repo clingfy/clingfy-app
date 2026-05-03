@@ -35,12 +35,13 @@ void main() {
       final effective = harness.controller.effectiveZoomSegments;
       expect(effective, hasLength(1));
       expect(effective.single.focusMode, ZoomFocusMode.fixedTarget);
-      expect(effective.single.fixedTarget,
-          const NormalizedPoint(0.25, 0.75));
+      expect(effective.single.fixedTarget, const NormalizedPoint(0.25, 0.75));
 
-      final pushed = harness.calls
-          .lastWhere((c) => c.method == 'previewSetZoomSegments')
-          .arguments as Map;
+      final pushed =
+          harness.calls
+                  .lastWhere((c) => c.method == 'previewSetZoomSegments')
+                  .arguments
+              as Map;
       final segments = (pushed['segments'] as List).cast<Map>();
       expect(segments, hasLength(1));
       expect(segments.single['focusMode'], 'fixedTarget');
@@ -50,34 +51,36 @@ void main() {
     },
   );
 
-  testWidgets(
-    'adjacent segments with different focus modes are NOT merged',
-    (tester) async {
-      final harness = await _createHarness(tester);
+  testWidgets('adjacent segments with different focus modes are NOT merged', (
+    tester,
+  ) async {
+    final harness = await _createHarness(tester);
 
-      // Two manual segments back-to-back; one followCursor, one
-      // fixedTarget. The 120ms gap-merge optimization must not blend
-      // them — that would erase the fixedTarget intent.
-      harness.controller.addDefaultSegmentAt(
-        500,
-        durationMs: 600,
-        focusMode: ZoomFocusMode.followCursor,
-      );
-      harness.controller.addDefaultSegmentAt(
-        1300,
-        durationMs: 600,
-        focusMode: ZoomFocusMode.fixedTarget,
-        fixedTarget: NormalizedPoint.center,
-      );
-      await tester.pump();
+    // Two manual segments back-to-back; one followCursor, one
+    // fixedTarget. The 120ms gap-merge optimization must not blend
+    // them — that would erase the fixedTarget intent.
+    harness.controller.addDefaultSegmentAt(
+      500,
+      durationMs: 600,
+      focusMode: ZoomFocusMode.followCursor,
+    );
+    harness.controller.addDefaultSegmentAt(
+      1300,
+      durationMs: 600,
+      focusMode: ZoomFocusMode.fixedTarget,
+      fixedTarget: NormalizedPoint.center,
+    );
+    await tester.pump();
 
-      final effective = harness.controller.effectiveZoomSegments;
-      expect(effective.length, 2,
-          reason: 'segments with different focus modes must stay separate');
-      expect(effective.first.focusMode, ZoomFocusMode.followCursor);
-      expect(effective.last.focusMode, ZoomFocusMode.fixedTarget);
-    },
-  );
+    final effective = harness.controller.effectiveZoomSegments;
+    expect(
+      effective.length,
+      2,
+      reason: 'segments with different focus modes must stay separate',
+    );
+    expect(effective.first.focusMode, ZoomFocusMode.followCursor);
+    expect(effective.last.focusMode, ZoomFocusMode.fixedTarget);
+  });
 }
 
 Future<_Harness> _createHarness(WidgetTester tester) async {

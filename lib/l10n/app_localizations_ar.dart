@@ -871,6 +871,12 @@ class AppLocalizationsAr extends AppLocalizations {
       'المؤشر لا يتحرّك في هذا النطاق. الهدف الثابت يوفّر تكبيرًا واضحًا.';
 
   @override
+  String get zoomTarget => 'هدف التكبير';
+
+  @override
+  String get dragZoomTargetTooltip => 'اسحب لتغيير هدف التكبير';
+
+  @override
   String get zoomAddSegment => 'إضافة مقطع تكبير';
 
   @override

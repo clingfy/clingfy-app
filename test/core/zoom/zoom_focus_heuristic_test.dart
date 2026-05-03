@@ -28,8 +28,12 @@ void main() {
           CursorSample(tMs: 1500, x: 400, y: 220, visible: true),
           CursorSample(tMs: 2000, x: 700, y: 480, visible: true),
         ],
-        playheadSample:
-            const CursorSample(tMs: 1500, x: 400, y: 220, visible: true),
+        playheadSample: const CursorSample(
+          tMs: 1500,
+          x: 400,
+          y: 220,
+          visible: true,
+        ),
       );
 
       final decision = chooseZoomFocusModeForRange(
@@ -62,8 +66,12 @@ void main() {
           CursorSample(tMs: 1500, x: 482, y: 271, visible: true),
           CursorSample(tMs: 2000, x: 484, y: 272, visible: true),
         ],
-        playheadSample:
-            const CursorSample(tMs: 1500, x: 482, y: 271, visible: true),
+        playheadSample: const CursorSample(
+          tMs: 1500,
+          x: 482,
+          y: 271,
+          visible: true,
+        ),
       );
 
       final decision = chooseZoomFocusModeForRange(
@@ -86,8 +94,12 @@ void main() {
           CursorSample(tMs: 1500, x: 400, y: 220, visible: false),
           CursorSample(tMs: 2000, x: 700, y: 480, visible: false),
         ],
-        playheadSample:
-            const CursorSample(tMs: 1500, x: 400, y: 220, visible: false),
+        playheadSample: const CursorSample(
+          tMs: 1500,
+          x: 400,
+          y: 220,
+          visible: false,
+        ),
       );
 
       final decision = chooseZoomFocusModeForRange(
@@ -101,8 +113,7 @@ void main() {
       expect(decision.fixedTarget, NormalizedPoint.center);
     });
 
-    test('out-of-bounds samples are ignored, fall back to fixedTarget',
-        () {
+    test('out-of-bounds samples are ignored, fall back to fixedTarget', () {
       final samples = resultWith(
         samples: const [
           CursorSample(tMs: 1000, x: -50, y: -10, visible: true),

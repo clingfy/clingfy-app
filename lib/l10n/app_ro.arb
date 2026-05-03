@@ -362,6 +362,8 @@
   "zoomFollowCursor": "Urmărește cursorul",
   "zoomFixedTarget": "Țintă fixă",
   "zoomCursorStaticHint": "Cursorul nu se mișcă în acest interval. Ținta fixă oferă un zoom vizibil.",
+  "zoomTarget": "Țintă zoom",
+  "dragZoomTargetTooltip": "Trage pentru a schimba ținta zoom",
   "zoomAddSegment": "Adaugă segment zoom",
   "zoomAddOne": "Adaugă unul",
   "zoomKeepAdding": "Continuă adăugarea",

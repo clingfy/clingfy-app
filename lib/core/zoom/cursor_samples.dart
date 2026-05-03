@@ -25,8 +25,7 @@ class ZoomNativeCapabilities {
   /// True when both the cursor-samples query and fixed-target preview
   /// rendering are available — the minimum needed to drive the
   /// smart-add heuristic without producing a no-op preview.
-  bool get supportsSmartFixedTarget =>
-      cursorSamples && fixedTargetPreview;
+  bool get supportsSmartFixedTarget => cursorSamples && fixedTargetPreview;
 
   static ZoomNativeCapabilities fromMap(Object? raw) {
     if (raw is! Map) return legacy;
@@ -46,11 +45,8 @@ class ZoomNativeCapabilities {
           other.fixedTargetExport == fixedTargetExport;
 
   @override
-  int get hashCode => Object.hash(
-    cursorSamples,
-    fixedTargetPreview,
-    fixedTargetExport,
-  );
+  int get hashCode =>
+      Object.hash(cursorSamples, fixedTargetPreview, fixedTargetExport);
 
   @override
   String toString() =>

@@ -754,9 +754,7 @@ class ZoomSegment {
     source: source ?? this.source,
     baseId: clearBaseId ? null : (baseId ?? this.baseId),
     focusMode: focusMode ?? this.focusMode,
-    fixedTarget: clearFixedTarget
-        ? null
-        : (fixedTarget ?? this.fixedTarget),
+    fixedTarget: clearFixedTarget ? null : (fixedTarget ?? this.fixedTarget),
   );
 
   @override
@@ -777,13 +775,6 @@ class ZoomSegment {
           fixedTarget == other.fixedTarget;
 
   @override
-  int get hashCode => Object.hash(
-    id,
-    startMs,
-    endMs,
-    source,
-    baseId,
-    focusMode,
-    fixedTarget,
-  );
+  int get hashCode =>
+      Object.hash(id, startMs, endMs, source, baseId, focusMode, fixedTarget);
 }

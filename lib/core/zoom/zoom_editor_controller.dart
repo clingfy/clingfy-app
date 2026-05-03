@@ -1,5 +1,6 @@
 import 'dart:async';
 import 'dart:collection';
+import 'dart:ui' show Size;
 import 'package:flutter/foundation.dart';
 import 'package:clingfy/core/models/app_models.dart';
 import 'package:clingfy/core/bridges/native_bridge.dart';
@@ -148,7 +149,11 @@ class ChangeZoomFocusModeCommand implements ZoomEditCommand {
   final ZoomSegment newSegment;
   late final List<ZoomSegment> _previousManualSegments;
 
-  ChangeZoomFocusModeCommand(this.controller, this.oldSegment, this.newSegment) {
+  ChangeZoomFocusModeCommand(
+    this.controller,
+    this.oldSegment,
+    this.newSegment,
+  ) {
     _previousManualSegments = List<ZoomSegment>.from(controller.manualSegments);
   }
 
@@ -213,6 +218,11 @@ class ZoomEditorController extends ChangeNotifier {
   ZoomSegment? _trimmingOriginalSegment;
   ZoomSegment? _trimmingPreviewSegment;
   TrimHandle? _activeTrimHandle;
+
+  // Fixed-target drag state (Phase 2 overlay).
+  String? _draggingTargetSegmentId;
+  ZoomSegment? _draggingTargetOriginalSegment;
+  Size? _sourceSize;
 
   // Selection
   final LinkedHashSet<String> _selectedSegmentIds = LinkedHashSet<String>();
@@ -424,8 +434,21 @@ class ZoomEditorController extends ChangeNotifier {
   /// produces a silently broken preview.
   ZoomNativeCapabilities get capabilities => _capabilities;
 
+  /// Source recording dimensions in pixels, fetched once at [init].
+  /// `null` when unavailable (legacy native build, missing session,
+  /// metadata gap). Used by the fixed-target overlay to compute the
+  /// fitted content rect over the preview surface.
+  Size? get sourceSize => _sourceSize;
+
+  bool get isDraggingFixedTarget => _draggingTargetSegmentId != null;
+
   Future<void> init() async {
     _capabilities = await _nativeBridge.previewGetZoomCapabilities();
+    if (_capabilities.fixedTargetPreview) {
+      _sourceSize = await _nativeBridge.previewGetSourceDimensions(
+        sessionId: sessionId,
+      );
+    }
     final rawAuto = await _nativeBridge.getZoomSegments(videoPath);
     // Normalize auto segment IDs so manual overrides remain stable across reloads.
     _autoSegments = rawAuto.asMap().entries.map((e) {
@@ -630,10 +653,7 @@ class ZoomEditorController extends ChangeNotifier {
     // followCursor path so we never produce a segment the renderer
     // will silently ignore.
     if (!_capabilities.supportsSmartFixedTarget) {
-      return addDefaultSegmentAt(
-        centerMs,
-        durationMs: durationMs,
-      );
+      return addDefaultSegmentAt(centerMs, durationMs: durationMs);
     }
 
     final clampedPlayhead = playheadMs.clamp(start, end);
@@ -657,10 +677,7 @@ class ZoomEditorController extends ChangeNotifier {
         fixedTargetPreview: false,
         fixedTargetExport: false,
       );
-      return addDefaultSegmentAt(
-        centerMs,
-        durationMs: durationMs,
-      );
+      return addDefaultSegmentAt(centerMs, durationMs: durationMs);
     }
 
     final decision = chooseZoomFocusModeForRange(
@@ -678,6 +695,165 @@ class ZoomEditorController extends ChangeNotifier {
     );
   }
 
+  /// Begins a drag on the fixed-target overlay for [segment]. Snapshots
+  /// the original segment so [commitFixedTargetDrag] can build a single
+  /// undoable command, while [updateFixedTargetDrag] mutates live for
+  /// immediate preview feedback.
+  ///
+  /// No-op when [segment] is not a fixedTarget segment — the overlay
+  /// only ever calls this on a fixedTarget selection.
+  void beginFixedTargetDrag(ZoomSegment segment) {
+    if (segment.focusMode != ZoomFocusMode.fixedTarget) return;
+    final live = _findDisplaySegmentById(segment.id);
+    if (live == null) return;
+    _draggingTargetSegmentId = live.id;
+    _draggingTargetOriginalSegment = live;
+  }
+
+  /// Live-updates the dragged segment's [ZoomSegment.fixedTarget].
+  /// Mutates the manual segment in place (or materializes a manual
+  /// override for an auto segment on first call) and reschedules a
+  /// throttled native sync. Does NOT push to the undo history; the
+  /// commit happens in [commitFixedTargetDrag].
+  void updateFixedTargetDrag(NormalizedPoint target) {
+    final id = _draggingTargetSegmentId;
+    if (id == null) return;
+    final original = _draggingTargetOriginalSegment;
+    if (original == null) return;
+    final clamped = target.clamped();
+
+    final current = _findDisplaySegmentById(id);
+    if (current == null) return;
+
+    if (current.source == 'manual') {
+      if (current.fixedTarget == clamped &&
+          current.focusMode == ZoomFocusMode.fixedTarget) {
+        return;
+      }
+      _manualSegments.removeWhere((s) => s.id == id);
+      _manualSegments.add(
+        current.copyWith(
+          focusMode: ZoomFocusMode.fixedTarget,
+          fixedTarget: clamped,
+        ),
+      );
+    } else {
+      // Auto segment — materialize a manual override the first time we
+      // see a drag update for it, then keep updating that override.
+      final existingOverride = _manualSegments
+          .where((s) => s.baseId == original.id)
+          .toList();
+      if (existingOverride.isEmpty) {
+        final override = ZoomSegment(
+          id: const Uuid().v4(),
+          startMs: original.startMs,
+          endMs: original.endMs,
+          source: 'manual',
+          baseId: original.id,
+          focusMode: ZoomFocusMode.fixedTarget,
+          fixedTarget: clamped,
+        );
+        _manualSegments.add(override);
+        _draggingTargetSegmentId = override.id;
+      } else {
+        final override = existingOverride.first;
+        if (override.fixedTarget == clamped &&
+            override.focusMode == ZoomFocusMode.fixedTarget) {
+          return;
+        }
+        _manualSegments.removeWhere((s) => s.id == override.id);
+        _manualSegments.add(
+          override.copyWith(
+            focusMode: ZoomFocusMode.fixedTarget,
+            fixedTarget: clamped,
+          ),
+        );
+        _draggingTargetSegmentId = override.id;
+      }
+    }
+
+    _commitManualMutation();
+    _throttleSync();
+  }
+
+  /// Commits the in-flight drag as a single undoable command. Restores
+  /// the pre-drag manual list before applying the command so undo/redo
+  /// behaves as if the drag was one atomic edit.
+  void commitFixedTargetDrag() {
+    final id = _draggingTargetSegmentId;
+    final original = _draggingTargetOriginalSegment;
+    _draggingTargetSegmentId = null;
+    _draggingTargetOriginalSegment = null;
+    _nativeSyncTimer?.cancel();
+    _nativeSyncTimer = null;
+    if (id == null || original == null) return;
+
+    final finalSegment = _findDisplaySegmentById(id);
+    if (finalSegment == null) {
+      _syncToNative();
+      return;
+    }
+    if (finalSegment.fixedTarget == original.fixedTarget &&
+        finalSegment.focusMode == original.focusMode &&
+        finalSegment.source == original.source) {
+      _syncToNative();
+      return;
+    }
+
+    // Roll back to the pre-drag state, then re-apply through execute()
+    // so the change becomes one undo entry.
+    final preDragManual = List<ZoomSegment>.from(_manualSegments);
+    if (finalSegment.source == 'manual' && original.source != 'manual') {
+      preDragManual.removeWhere((s) => s.id == finalSegment.id);
+    } else if (finalSegment.source == 'manual') {
+      final idx = preDragManual.indexWhere((s) => s.id == finalSegment.id);
+      if (idx != -1) preDragManual[idx] = original;
+    }
+    _manualSegments = preDragManual;
+    _commitManualMutation(notify: false);
+
+    final updated = original.copyWith(
+      focusMode: ZoomFocusMode.fixedTarget,
+      fixedTarget: finalSegment.fixedTarget,
+    );
+    execute(ChangeZoomFocusModeCommand(this, original, updated));
+    // execute() persists + syncs. Re-select whichever segment now
+    // owns the dragged target so the overlay does not vanish on
+    // commit (auto segments materialize a fresh manual override id).
+    ZoomSegment? selected = _findDisplaySegmentById(updated.id);
+    if (selected == null) {
+      for (final s in _manualSegments) {
+        if (s.baseId == original.id) selected = s;
+      }
+    }
+    if (selected != null) selectOnly(selected);
+  }
+
+  /// Cancels the in-flight drag, reverting the segment to its pre-drag
+  /// state without creating an undo entry.
+  void cancelFixedTargetDrag() {
+    final id = _draggingTargetSegmentId;
+    final original = _draggingTargetOriginalSegment;
+    _draggingTargetSegmentId = null;
+    _draggingTargetOriginalSegment = null;
+    _nativeSyncTimer?.cancel();
+    _nativeSyncTimer = null;
+    if (id == null || original == null) return;
+
+    if (original.source == 'manual') {
+      final idx = _manualSegments.indexWhere((s) => s.id == original.id);
+      if (idx != -1) {
+        _manualSegments[idx] = original;
+      } else {
+        _manualSegments.add(original);
+      }
+    } else {
+      _manualSegments.removeWhere((s) => s.baseId == original.id);
+    }
+    _commitManualMutation();
+    _syncToNative();
+  }
+
   /// Switches the focus mode of [segment]. Pass [fixedTarget] when the
   /// new mode is [ZoomFocusMode.fixedTarget]; null defaults to whatever
   /// is already on the segment, or center if none.
@@ -689,8 +865,7 @@ class ZoomEditorController extends ChangeNotifier {
     final resolvedTarget = mode == ZoomFocusMode.fixedTarget
         ? (fixedTarget ?? segment.fixedTarget ?? NormalizedPoint.center)
         : null;
-    if (segment.focusMode == mode &&
-        segment.fixedTarget == resolvedTarget) {
+    if (segment.focusMode == mode && segment.fixedTarget == resolvedTarget) {
       return;
     }
     final updated = segment.copyWith(
@@ -1313,7 +1488,8 @@ class ZoomEditorController extends ChangeNotifier {
 
     for (int i = 1; i < sorted.length; i++) {
       final next = sorted[i];
-      final canMerge = next.startMs <= currentEnd + 120 &&
+      final canMerge =
+          next.startMs <= currentEnd + 120 &&
           next.focusMode == currentMode &&
           next.fixedTarget == currentTarget;
 

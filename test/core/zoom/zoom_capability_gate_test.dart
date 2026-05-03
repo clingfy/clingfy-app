@@ -53,10 +53,7 @@ void main() {
       },
     );
 
-    expect(
-      harness.controller.capabilities.supportsSmartFixedTarget,
-      isTrue,
-    );
+    expect(harness.controller.capabilities.supportsSmartFixedTarget, isTrue);
 
     final created = await harness.controller.addDefaultSegmentAtWithFocus(
       1000,

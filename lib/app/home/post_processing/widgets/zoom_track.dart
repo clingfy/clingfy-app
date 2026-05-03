@@ -292,18 +292,12 @@ class _ZoomTrackState extends State<ZoomTrack> {
     }
     final centerMs = _localXToMs(localX, totalWidth);
     final chipDurationMs = _chipDurationMsFor(totalWidth, widget.durationMs);
-    final span = editor.defaultSpanFor(
-      centerMs,
-      durationMs: chipDurationMs,
-    );
+    final span = editor.defaultSpanFor(centerMs, durationMs: chipDurationMs);
     if (span == null) {
       _clearGhost();
       return;
     }
-    if (!editor.canAddDefaultSegmentAt(
-      centerMs,
-      durationMs: chipDurationMs,
-    )) {
+    if (!editor.canAddDefaultSegmentAt(centerMs, durationMs: chipDurationMs)) {
       _clearGhost();
       return;
     }

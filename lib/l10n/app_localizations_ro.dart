@@ -886,6 +886,12 @@ class AppLocalizationsRo extends AppLocalizations {
       'Cursorul nu se mișcă în acest interval. Ținta fixă oferă un zoom vizibil.';
 
   @override
+  String get zoomTarget => 'Țintă zoom';
+
+  @override
+  String get dragZoomTargetTooltip => 'Trage pentru a schimba ținta zoom';
+
+  @override
   String get zoomAddSegment => 'Adaugă segment zoom';
 
   @override

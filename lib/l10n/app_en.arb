@@ -300,6 +300,8 @@
   "zoomFollowCursor": "Follow cursor",
   "zoomFixedTarget": "Fixed target",
   "zoomCursorStaticHint": "Cursor does not move in this range. Fixed target gives a visible zoom.",
+  "zoomTarget": "Zoom target",
+  "dragZoomTargetTooltip": "Drag to change zoom target",
   "zoomAddSegment": "Add zoom segment",
   "zoomAddOne": "Add one",
   "zoomKeepAdding": "Keep adding",

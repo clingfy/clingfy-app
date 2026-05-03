@@ -1018,6 +1018,13 @@ class MainFlutterWindow: NSWindow {
         )
         result(response)
 
+      case "previewGetSourceDimensions":
+        let args = call.arguments as? [String: Any]
+        let sessionId = args?["sessionId"] as? String
+        let response = self.previewGetSourceDimensionsResponse(
+          sessionId: sessionId)
+        result(response)
+
       /*
         =================================================================
         ========================== PERMISSIONS ==========================
@@ -1274,6 +1281,22 @@ class MainFlutterWindow: NSWindow {
       "width": sourceWidth,
       "height": sourceHeight,
     ]
+  }
+
+  /// Returns `{width, height}` for the active preview session's source
+  /// recording. Used by Dart to compute the fitted content rect for
+  /// overlays (e.g. the fixed-target zoom marker). Always returns a
+  /// well-formed map; `0` dimensions signal "unavailable" to Dart.
+  private func previewGetSourceDimensionsResponse(
+    sessionId: String?
+  ) -> [String: Any] {
+    let unavailable: [String: Any] = ["width": 0.0, "height": 0.0]
+    guard let state = activeInlinePreviewState else { return unavailable }
+    if let sessionId = sessionId, state.sessionId != sessionId {
+      return unavailable
+    }
+    let (w, h) = previewSourceDimensions(mediaSources: state.mediaSources)
+    return ["width": w, "height": h]
   }
 
   /// Source recording dimensions in pixels. Prefers the recorded crop
