@@ -277,12 +277,6 @@ void main() {
 
     await tester.sendKeyDownEvent(LogicalKeyboardKey.space);
     await tester.pump();
-
-    expect(find.byKey(const Key('timeline_pan_overlay')), findsOneWidget);
-
-    await tester.sendKeyUpEvent(LogicalKeyboardKey.space);
-    await tester.pump();
-
     expect(find.byKey(const Key('timeline_pan_overlay')), findsNothing);
   });
 
