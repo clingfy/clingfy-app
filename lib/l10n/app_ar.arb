@@ -347,8 +347,6 @@
   "refreshDevicesTooltip": "تحديث الأجهزة (⌘R)",
   "copyLastPathTooltip": "نسخ المسار الأخير",
   "timeline": "الجدول الزمني",
-  "closeTimelineTooltip": "إغلاق المعاينة والبدء من جديد",
-  "closePreviewTooltip": "إغلاق المعاينة والبدء من جديد",
   "newRecording": "تسجيل جديد",
   "newRecordingTooltip": "تجاهل المعاينة الحالية وبدء تسجيل جديد",
   "startNewRecordingTitle": "بدء تسجيل جديد؟",

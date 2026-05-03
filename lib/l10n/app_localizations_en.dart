@@ -831,12 +831,6 @@ class AppLocalizationsEn extends AppLocalizations {
   String get timeline => 'Timeline';
 
   @override
-  String get closeTimelineTooltip => 'Close preview and start over';
-
-  @override
-  String get closePreviewTooltip => 'Close preview and start over';
-
-  @override
   String get newRecording => 'New recording';
 
   @override

@@ -347,8 +347,6 @@
   "refreshDevicesTooltip": "Reîmprospătare dispozitive (⌘R)",
   "copyLastPathTooltip": "Copiază ultima cale",
   "timeline": "Timeline",
-  "closeTimelineTooltip": "Închide previzualizarea și începe din nou",
-  "closePreviewTooltip": "Închide previzualizarea și începe din nou",
   "newRecording": "Înregistrare nouă",
   "newRecordingTooltip": "Renunță la previzualizarea curentă și începe o înregistrare nouă",
   "startNewRecordingTitle": "Începi o înregistrare nouă?",

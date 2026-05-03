@@ -1648,18 +1648,6 @@ abstract class AppLocalizations {
   /// **'Timeline'**
   String get timeline;
 
-  /// No description provided for @closeTimelineTooltip.
-  ///
-  /// In en, this message translates to:
-  /// **'Close preview and start over'**
-  String get closeTimelineTooltip;
-
-  /// No description provided for @closePreviewTooltip.
-  ///
-  /// In en, this message translates to:
-  /// **'Close preview and start over'**
-  String get closePreviewTooltip;
-
   /// No description provided for @newRecording.
   ///
   /// In en, this message translates to:

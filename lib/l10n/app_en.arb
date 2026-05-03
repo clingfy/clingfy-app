@@ -285,8 +285,6 @@
   "refreshDevicesTooltip": "Refresh devices (⌘R)",
   "copyLastPathTooltip": "Copy last path",
   "timeline": "Timeline",
-  "closeTimelineTooltip": "Close preview and start over",
-  "closePreviewTooltip": "Close preview and start over",
   "newRecording": "New recording",
   "newRecordingTooltip": "Discard current preview and start a new recording",
   "startNewRecordingTitle": "Start a new recording?",

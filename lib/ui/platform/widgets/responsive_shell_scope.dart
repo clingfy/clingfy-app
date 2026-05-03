@@ -108,7 +108,6 @@ class ShellResponsiveMetrics {
     required this.timelineToolbarChipPaddingY,
     required this.timelineToolbarChipIconSize,
     required this.timelineToolbarChipTextScale,
-    required this.timelineCloseIconSize,
     required this.timelineIconButtonSize,
     required this.timelineIconButtonIconSize,
     required this.timelineButtonMinHeight,
@@ -259,7 +258,6 @@ class ShellResponsiveMetrics {
   final double timelineToolbarChipPaddingY;
   final double timelineToolbarChipIconSize;
   final double timelineToolbarChipTextScale;
-  final double timelineCloseIconSize;
   final double timelineIconButtonSize;
   final double timelineIconButtonIconSize;
   final double timelineButtonMinHeight;
@@ -575,7 +573,6 @@ class ShellResponsiveMetrics {
         0.86,
         1.0,
       ),
-      timelineCloseIconSize: _atLeast(17 * scale, 13),
       timelineIconButtonSize: _atLeast(32 * scale, 28),
       timelineIconButtonIconSize: _atLeast(18 * scale, 14),
       timelineButtonMinHeight: _atLeast(32 * scale, 28),
@@ -760,7 +757,6 @@ class ShellResponsiveMetrics {
         other.timelineToolbarChipPaddingY == timelineToolbarChipPaddingY &&
         other.timelineToolbarChipIconSize == timelineToolbarChipIconSize &&
         other.timelineToolbarChipTextScale == timelineToolbarChipTextScale &&
-        other.timelineCloseIconSize == timelineCloseIconSize &&
         other.timelineIconButtonSize == timelineIconButtonSize &&
         other.timelineIconButtonIconSize == timelineIconButtonIconSize &&
         other.timelineButtonMinHeight == timelineButtonMinHeight &&
@@ -899,7 +895,6 @@ class ShellResponsiveMetrics {
     timelineToolbarChipPaddingY,
     timelineToolbarChipIconSize,
     timelineToolbarChipTextScale,
-    timelineCloseIconSize,
     timelineIconButtonSize,
     timelineIconButtonIconSize,
     timelineButtonMinHeight,

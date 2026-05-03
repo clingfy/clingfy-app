@@ -824,12 +824,6 @@ class AppLocalizationsAr extends AppLocalizations {
   String get timeline => 'الجدول الزمني';
 
   @override
-  String get closeTimelineTooltip => 'إغلاق المعاينة والبدء من جديد';
-
-  @override
-  String get closePreviewTooltip => 'إغلاق المعاينة والبدء من جديد';
-
-  @override
   String get newRecording => 'تسجيل جديد';
 
   @override

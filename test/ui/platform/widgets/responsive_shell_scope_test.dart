@@ -243,7 +243,6 @@ void main() {
         expect(minimal.timelineTrackHeaderWidth, greaterThanOrEqualTo(56));
         expect(minimal.timelineToolbarChipMinHeight, greaterThanOrEqualTo(28));
         expect(minimal.timelineToolbarChipIconSize, greaterThanOrEqualTo(13));
-        expect(minimal.timelineCloseIconSize, greaterThanOrEqualTo(13));
         expect(minimal.timelineIconButtonSize, greaterThanOrEqualTo(28));
         expect(minimal.timelineRulerLabelFontSize, greaterThanOrEqualTo(9.5));
         expect(minimal.timelineZoomSliderMinWidth, greaterThanOrEqualTo(80));

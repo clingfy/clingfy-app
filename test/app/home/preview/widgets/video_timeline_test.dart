@@ -38,25 +38,17 @@ void main() {
     expect(find.byKey(const Key('timeline_status_line')), findsNothing);
   });
 
-  testWidgets('header shows title and close action', (tester) async {
+  testWidgets('header shows title and no close action', (tester) async {
     final editor = await _createEditor(tester);
     final player = _FakePlayerController(editor: editor);
     addTearDown(player.dispose);
 
-    var didClose = false;
-    await tester.pumpWidget(
-      _buildTimeline(player: player, onClose: () => didClose = true),
-    );
+    await tester.pumpWidget(_buildTimeline(player: player));
 
     final l10n = _l10n(tester);
 
     expect(find.text(l10n.timeline), findsOneWidget);
-    expect(find.byKey(const Key('timeline_close_button')), findsOneWidget);
-
-    await tester.tap(find.byKey(const Key('timeline_close_button')));
-    await tester.pump();
-
-    expect(didClose, isTrue);
+    expect(find.byKey(const Key('timeline_close_button')), findsNothing);
   });
 
   testWidgets('timeline opens with zoom lane visible and markers hidden', (
@@ -331,7 +323,6 @@ Future<ZoomEditorController> _createEditor(
 
 Widget _buildTimeline({
   required PlayerController player,
-  VoidCallback? onClose,
   ValueChanged<int>? onSeek,
   ValueChanged<int>? onHoverSeek,
   VoidCallback? onHoverEnd,
@@ -353,7 +344,6 @@ Widget _buildTimeline({
               positionMs: 15000,
               isReady: true,
               onSeek: onSeek ?? (_) {},
-              onClose: onClose ?? () {},
               onHoverSeek: onHoverSeek ?? (_) {},
               onHoverEnd: onHoverEnd ?? () {},
             ),

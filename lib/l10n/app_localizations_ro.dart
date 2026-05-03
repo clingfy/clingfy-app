@@ -838,13 +838,6 @@ class AppLocalizationsRo extends AppLocalizations {
   String get timeline => 'Timeline';
 
   @override
-  String get closeTimelineTooltip =>
-      'Închide previzualizarea și începe din nou';
-
-  @override
-  String get closePreviewTooltip => 'Închide previzualizarea și începe din nou';
-
-  @override
   String get newRecording => 'Înregistrare nouă';
 
   @override

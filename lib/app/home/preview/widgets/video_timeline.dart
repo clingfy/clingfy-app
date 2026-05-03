@@ -15,9 +15,7 @@ import 'package:flutter/services.dart';
 import 'package:provider/provider.dart';
 
 class TimelineBar extends StatelessWidget {
-  const TimelineBar({super.key, required this.onClose});
-
-  final VoidCallback onClose;
+  const TimelineBar({super.key});
 
   @override
   Widget build(BuildContext context) {
@@ -33,7 +31,6 @@ class TimelineBar extends StatelessWidget {
           onSeek: (ms) => unawaited(player.seekTo(ms)),
           onHoverSeek: (ms) => unawaited(player.previewPeekTo(ms)),
           onHoverEnd: () => unawaited(player.previewPeekEnd()),
-          onClose: onClose,
         );
       },
     );
@@ -47,7 +44,6 @@ class VideoTimeline extends StatefulWidget {
     required this.positionMs,
     required this.isReady,
     required this.onSeek,
-    required this.onClose,
     this.onHoverSeek,
     this.onHoverEnd,
   });
@@ -57,7 +53,6 @@ class VideoTimeline extends StatefulWidget {
   final bool isReady;
   final ValueChanged<int> onSeek;
   final ValueChanged<int>? onHoverSeek;
-  final VoidCallback onClose;
   final VoidCallback? onHoverEnd;
 
   @override
@@ -280,7 +275,6 @@ class _VideoTimelineState extends State<VideoTimeline> {
               onUndo: activeEditor?.undo,
               onToggleZoomLaneVisibility: _toggleZoomLaneVisibility,
               onToggleMarkersLaneVisibility: _toggleMarkersLaneVisibility,
-              onClose: widget.onClose,
             ),
             SizedBox(height: shellGap),
             TimelineTransportBar(

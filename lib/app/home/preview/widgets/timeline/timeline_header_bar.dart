@@ -4,7 +4,6 @@ import 'package:clingfy/ui/platform/widgets/app_icon_button.dart';
 import 'package:clingfy/ui/platform/widgets/app_menu_button.dart';
 import 'package:clingfy/ui/platform/widgets/responsive_shell_scope.dart';
 import 'package:clingfy/ui/theme/app_theme.dart';
-import 'package:flutter/cupertino.dart';
 import 'package:flutter/material.dart';
 
 class TimelineHeaderBar extends StatelessWidget {
@@ -23,7 +22,6 @@ class TimelineHeaderBar extends StatelessWidget {
     required this.onUndo,
     required this.onToggleZoomLaneVisibility,
     required this.onToggleMarkersLaneVisibility,
-    required this.onClose,
   });
 
   final bool snappingEnabled;
@@ -39,7 +37,6 @@ class TimelineHeaderBar extends StatelessWidget {
   final VoidCallback? onUndo;
   final VoidCallback onToggleZoomLaneVisibility;
   final VoidCallback onToggleMarkersLaneVisibility;
-  final VoidCallback onClose;
 
   @override
   Widget build(BuildContext context) {
@@ -55,7 +52,6 @@ class TimelineHeaderBar extends StatelessWidget {
     final controlGap = metrics?.timelineControlGap ?? spacing.xs;
     final sectionGap = metrics?.timelineSectionGap ?? spacing.md;
     final minHeight = metrics?.timelineHeaderMinHeight ?? 40;
-    final closeIconSize = metrics?.timelineCloseIconSize ?? 17;
 
     return Container(
       key: const Key('timeline_header_bar'),
@@ -167,15 +163,6 @@ class TimelineHeaderBar extends StatelessWidget {
                   break;
               }
             },
-          ),
-          SizedBox(width: controlGap),
-          AppIconButton(
-            key: const Key('timeline_close_button'),
-            tooltip: l10n.closePreviewTooltip,
-            icon: CupertinoIcons.xmark,
-            onPressed: onClose,
-            color: theme.colorScheme.onSurface.withValues(alpha: 0.8),
-            size: closeIconSize + 2,
           ),
         ],
       ),

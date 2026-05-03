@@ -733,11 +733,7 @@ class _HomeShellState extends State<HomeShell> {
                                             height: HomeDesktopPaneDimensions
                                                 .innerGap,
                                           ),
-                                          TimelineBar(
-                                            onClose: () => unawaited(
-                                              _confirmClosePreview(context),
-                                            ),
-                                          ),
+                                          const TimelineBar(),
                                         ],
                                       ],
                                     );
