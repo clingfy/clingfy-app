@@ -1,4 +1,5 @@
 import 'dart:async';
+
 import 'package:flutter/material.dart';
 
 class PreviewWithOverlayControls extends StatefulWidget {
@@ -24,14 +25,38 @@ class PreviewWithOverlayControls extends StatefulWidget {
 
 class _PreviewWithOverlayControlsState
     extends State<PreviewWithOverlayControls> {
-  bool _showControls = true;
+  static const double _buttonSize = 80;
+  static const Duration _hideDelay = Duration(seconds: 1);
+  bool _showButton = false;
   Timer? _hideTimer;
 
+  void _onEnter() {
+    if (!widget.controlsEnabled || !widget.allowOverlayInteraction) return;
+    _hideTimer?.cancel();
+    if (!_showButton) setState(() => _showButton = true);
+  }
+
+  void _onExit() {
+    if (!widget.controlsEnabled || !widget.allowOverlayInteraction) return;
+    _hideTimer?.cancel();
+    if (!widget.isPlaying) return;
+    _hideTimer = Timer(_hideDelay, () {
+      if (!mounted) return;
+      if (_showButton) setState(() => _showButton = false);
+    });
+  }
+
   @override
-  void initState() {
-    super.initState();
-    if (widget.controlsEnabled) {
-      _startHideTimer();
+  void didUpdateWidget(covariant PreviewWithOverlayControls oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    if (!widget.controlsEnabled || !widget.allowOverlayInteraction) {
+      _hideTimer?.cancel();
+      if (_showButton) setState(() => _showButton = false);
+      return;
+    }
+    if (oldWidget.isPlaying && !widget.isPlaying) {
+      _hideTimer?.cancel();
+      if (!_showButton) setState(() => _showButton = true);
     }
   }
 
@@ -41,109 +66,70 @@ class _PreviewWithOverlayControlsState
     super.dispose();
   }
 
-  void _startHideTimer() {
-    if (!widget.controlsEnabled) return;
-    _hideTimer?.cancel();
-    _hideTimer = Timer(const Duration(seconds: 2), () {
-      if (mounted && widget.isPlaying) {
-        setState(() => _showControls = false);
-      }
-    });
-  }
-
-  void _onUserInteraction() {
-    if (!widget.controlsEnabled || !widget.allowOverlayInteraction) return;
-    if (!_showControls) {
-      setState(() => _showControls = true);
-    }
-    _startHideTimer();
-  }
-
-  @override
-  void didUpdateWidget(covariant PreviewWithOverlayControls oldWidget) {
-    super.didUpdateWidget(oldWidget);
-    if (!widget.controlsEnabled) {
-      _hideTimer?.cancel();
-      if (_showControls) {
-        setState(() => _showControls = false);
-      }
-      return;
-    }
-    if (!oldWidget.controlsEnabled && widget.controlsEnabled) {
-      setState(() => _showControls = true);
-      _startHideTimer();
-    }
-  }
-
   @override
   Widget build(BuildContext context) {
-    return MouseRegion(
-      onHover: widget.allowOverlayInteraction
-          ? (_) => _onUserInteraction()
-          : null,
-      onEnter: widget.allowOverlayInteraction
-          ? (_) => _onUserInteraction()
-          : null,
-      child: GestureDetector(
-        onTap: widget.allowOverlayInteraction
-            ? () {
-                _onUserInteraction();
-              }
-            : null,
-        child: Stack(
-          children: [
-            // 1. Video Preview
-            Positioned.fill(
-              child: Container(
-                color: Theme.of(context).colorScheme.scrim,
-                child: widget.preview,
-              ),
-            ),
-
-            // 2. Overlay Controls
-            Positioned.fill(
-              child: IgnorePointer(
-                ignoring:
-                    !widget.controlsEnabled || !widget.allowOverlayInteraction,
+    final interactive =
+        widget.controlsEnabled && widget.allowOverlayInteraction;
+    return Stack(
+      children: [
+        Positioned.fill(
+          child: Container(
+            color: Theme.of(context).colorScheme.scrim,
+            child: widget.preview,
+          ),
+        ),
+        Positioned.fill(
+          child: Stack(
+            alignment: Alignment.center,
+            children: [
+              IgnorePointer(
                 child: AnimatedOpacity(
-                  opacity: widget.controlsEnabled && _showControls ? 1.0 : 0.0,
+                  opacity: interactive && _showButton ? 1.0 : 0.0,
                   duration: const Duration(milliseconds: 200),
-                  child: Stack(
-                    alignment: Alignment.center,
-                    children: [
-                      _PlayPauseButton(
-                        isPlaying: widget.isPlaying,
-                        onPressed: () {
-                          _onUserInteraction();
-                          widget.onPlayPause(!widget.isPlaying);
-                        },
-                      ),
-                    ],
+                  child: _PlayPauseVisual(
+                    isPlaying: widget.isPlaying,
+                    isHovering: _showButton,
                   ),
                 ),
               ),
-            ),
-          ],
+              SizedBox(
+                width: _buttonSize,
+                height: _buttonSize,
+                child: MouseRegion(
+                  onEnter: interactive ? (_) => _onEnter() : null,
+                  onExit: interactive ? (_) => _onExit() : null,
+                  cursor: interactive
+                      ? SystemMouseCursors.click
+                      : MouseCursor.defer,
+                  child: GestureDetector(
+                    behavior: HitTestBehavior.opaque,
+                    onTap: interactive
+                        ? () => widget.onPlayPause(!widget.isPlaying)
+                        : null,
+                  ),
+                ),
+              ),
+            ],
+          ),
         ),
-      ),
+      ],
     );
   }
 }
 
-class _PlayPauseButton extends StatefulWidget {
+class _PlayPauseVisual extends StatefulWidget {
   final bool isPlaying;
-  final VoidCallback onPressed;
+  final bool isHovering;
 
-  const _PlayPauseButton({required this.isPlaying, required this.onPressed});
+  const _PlayPauseVisual({required this.isPlaying, required this.isHovering});
 
   @override
-  State<_PlayPauseButton> createState() => _PlayPauseButtonState();
+  State<_PlayPauseVisual> createState() => _PlayPauseVisualState();
 }
 
-class _PlayPauseButtonState extends State<_PlayPauseButton>
+class _PlayPauseVisualState extends State<_PlayPauseVisual>
     with SingleTickerProviderStateMixin {
   late AnimationController _controller;
-  bool _isHovering = false;
 
   @override
   void initState() {
@@ -156,7 +142,7 @@ class _PlayPauseButtonState extends State<_PlayPauseButton>
   }
 
   @override
-  void didUpdateWidget(_PlayPauseButton oldWidget) {
+  void didUpdateWidget(_PlayPauseVisual oldWidget) {
     super.didUpdateWidget(oldWidget);
     if (widget.isPlaying != oldWidget.isPlaying) {
       if (widget.isPlaying) {
@@ -175,45 +161,39 @@ class _PlayPauseButtonState extends State<_PlayPauseButton>
 
   @override
   Widget build(BuildContext context) {
-    return MouseRegion(
-      onEnter: (_) => setState(() => _isHovering = true),
-      onExit: (_) => setState(() => _isHovering = false),
-      cursor: SystemMouseCursors.click,
-      child: GestureDetector(
-        onTap: widget.onPressed,
-        child: AnimatedContainer(
-          duration: const Duration(milliseconds: 150),
-          width: 80,
-          height: 80,
-          decoration: BoxDecoration(
-            color: Theme.of(
-              context,
-            ).colorScheme.scrim.withValues(alpha: _isHovering ? 0.6 : 0.4),
-            shape: BoxShape.circle,
-            border: Border.all(
-              color: Theme.of(context).colorScheme.onPrimary.withValues(
-                alpha: _isHovering ? 0.5 : 0.2,
-              ),
-              width: 1,
-            ),
-            boxShadow: [
-              BoxShadow(
-                color: Theme.of(
-                  context,
-                ).colorScheme.scrim.withValues(alpha: 0.3),
-                blurRadius: 10,
-                offset: const Offset(0, 4),
-              ),
-            ],
+    final colors = Theme.of(context).colorScheme;
+    final hovering = widget.isHovering;
+    return AnimatedContainer(
+      duration: const Duration(milliseconds: 150),
+      width: 80,
+      height: 80,
+      decoration: BoxDecoration(
+        color: colors.scrim.withValues(alpha: hovering ? 0.6 : 0.4),
+        shape: BoxShape.circle,
+        border: Border.all(
+          color: colors.onPrimary.withValues(alpha: hovering ? 0.5 : 0.2),
+          width: 1,
+        ),
+        boxShadow: [
+          BoxShadow(
+            color: colors.scrim.withValues(alpha: 0.55),
+            blurRadius: 24,
+            spreadRadius: 2,
+            offset: const Offset(0, 8),
           ),
-          child: Center(
-            child: AnimatedIcon(
-              icon: AnimatedIcons.play_pause,
-              progress: _controller,
-              color: Theme.of(context).colorScheme.onPrimary,
-              size: 40,
-            ),
+          BoxShadow(
+            color: colors.scrim.withValues(alpha: 0.35),
+            blurRadius: 8,
+            offset: const Offset(0, 2),
           ),
+        ],
+      ),
+      child: Center(
+        child: AnimatedIcon(
+          icon: AnimatedIcons.play_pause,
+          progress: _controller,
+          color: colors.onPrimary,
+          size: 40,
         ),
       ),
     );

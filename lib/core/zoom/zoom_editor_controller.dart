@@ -1288,39 +1288,47 @@ class ZoomEditorController extends ChangeNotifier {
       ..sort((a, b) => a.startMs.compareTo(b.startMs));
 
     final List<ZoomSegment> merged = [];
-    if (sorted.isEmpty) return [];
 
     var currentStart = sorted[0].startMs;
     var currentEnd = sorted[0].endMs;
+    // Carry the focus mode + target through the merge so per-segment
+    // intent (fixedTarget vs followCursor) survives the trip to native.
+    // Adjacent segments are only merged when their focus mode and
+    // fixedTarget match — different intent must not be blended into one.
+    var currentMode = sorted[0].focusMode;
+    var currentTarget = sorted[0].fixedTarget;
+
+    void emit() {
+      merged.add(
+        ZoomSegment(
+          id: 'merged_${merged.length}',
+          startMs: currentStart,
+          endMs: currentEnd,
+          source: 'effective',
+          focusMode: currentMode,
+          fixedTarget: currentTarget,
+        ),
+      );
+    }
 
     for (int i = 1; i < sorted.length; i++) {
       final next = sorted[i];
+      final canMerge = next.startMs <= currentEnd + 120 &&
+          next.focusMode == currentMode &&
+          next.fixedTarget == currentTarget;
 
-      if (next.startMs <= currentEnd + 120) {
+      if (canMerge) {
         currentEnd = currentEnd > next.endMs ? currentEnd : next.endMs;
       } else {
-        merged.add(
-          ZoomSegment(
-            id: 'merged_${merged.length}',
-            startMs: currentStart,
-            endMs: currentEnd,
-            source: 'effective',
-          ),
-        );
+        emit();
         currentStart = next.startMs;
         currentEnd = next.endMs;
+        currentMode = next.focusMode;
+        currentTarget = next.fixedTarget;
       }
     }
 
-    merged.add(
-      ZoomSegment(
-        id: 'merged_${merged.length}',
-        startMs: currentStart,
-        endMs: currentEnd,
-        source: 'effective',
-      ),
-    );
-
+    emit();
     return merged;
   }
 
