@@ -3,6 +3,8 @@ import 'dart:collection';
 import 'package:flutter/foundation.dart';
 import 'package:clingfy/core/models/app_models.dart';
 import 'package:clingfy/core/bridges/native_bridge.dart';
+import 'package:clingfy/core/zoom/zoom_focus_heuristic.dart';
+import 'package:clingfy/app/infrastructure/logging/logger_service.dart';
 import 'package:uuid/uuid.dart';
 
 abstract class ZoomEditCommand {
@@ -134,6 +136,44 @@ class DeleteZoomSegmentsCommand implements ZoomEditCommand {
 @Deprecated('Use DeleteZoomSegmentsCommand')
 class DeleteManyZoomSegmentsCommand extends DeleteZoomSegmentsCommand {
   DeleteManyZoomSegmentsCommand(super.controller, super.segments);
+}
+
+/// Updates a segment's [ZoomSegment.focusMode] / [ZoomSegment.fixedTarget].
+/// For manual segments the change is applied in place. For auto segments
+/// it materializes a manual override segment with the same time range
+/// — matching the behavior of trim/move on auto segments.
+class ChangeZoomFocusModeCommand implements ZoomEditCommand {
+  final ZoomEditorController controller;
+  final ZoomSegment oldSegment;
+  final ZoomSegment newSegment;
+  late final List<ZoomSegment> _previousManualSegments;
+
+  ChangeZoomFocusModeCommand(this.controller, this.oldSegment, this.newSegment) {
+    _previousManualSegments = List<ZoomSegment>.from(controller.manualSegments);
+  }
+
+  @override
+  void apply() {
+    if (oldSegment.source == 'manual') {
+      controller._updateManualSegment(newSegment);
+    } else {
+      final override = ZoomSegment(
+        id: const Uuid().v4(),
+        startMs: oldSegment.startMs,
+        endMs: oldSegment.endMs,
+        source: 'manual',
+        baseId: oldSegment.id,
+        focusMode: newSegment.focusMode,
+        fixedTarget: newSegment.fixedTarget,
+      );
+      controller._addManualSegment(override);
+    }
+  }
+
+  @override
+  void revert() {
+    controller._restoreManualSegments(_previousManualSegments);
+  }
 }
 
 enum TrimHandle { left, right }
@@ -374,7 +414,18 @@ class ZoomEditorController extends ChangeNotifier {
   final List<ZoomEditCommand> _history = [];
   bool get canUndo => _history.isNotEmpty;
 
+  ZoomNativeCapabilities _capabilities = ZoomNativeCapabilities.legacy;
+
+  /// Native zoom features detected on this binary. Updated once during
+  /// [init]; falls back to [ZoomNativeCapabilities.legacy] when the
+  /// probe fails or the build predates Phase 1. UI surfaces should
+  /// gate fixed-target controls on this — exposing
+  /// [ZoomFocusMode.fixedTarget] when the backend ignores the field
+  /// produces a silently broken preview.
+  ZoomNativeCapabilities get capabilities => _capabilities;
+
   Future<void> init() async {
+    _capabilities = await _nativeBridge.previewGetZoomCapabilities();
     final rawAuto = await _nativeBridge.getZoomSegments(videoPath);
     // Normalize auto segment IDs so manual overrides remain stable across reloads.
     _autoSegments = rawAuto.asMap().entries.map((e) {
@@ -516,12 +567,17 @@ class ZoomEditorController extends ChangeNotifier {
     return _resolveDefaultSpan(centerMs, durationMs);
   }
 
-  /// Adds a default-sized segment centered around [centerMs]. Selects the
-  /// new segment. Returns the segment, or null when the span cannot be
-  /// placed (overlap, invalid duration, etc.).
+  /// Adds a default-sized segment centered around [centerMs] without
+  /// consulting cursor data. Used by callers that already know the
+  /// desired focus mode (e.g. tests, programmatic add). Prefer
+  /// [addDefaultSegmentAtWithFocus] from interactive UI so the segment
+  /// auto-falls back to a fixed target when cursor data is missing or
+  /// static.
   ZoomSegment? addDefaultSegmentAt(
     int centerMs, {
     int durationMs = defaultNewSegmentDurationMs,
+    ZoomFocusMode focusMode = ZoomFocusMode.followCursor,
+    NormalizedPoint? fixedTarget,
   }) {
     if (this.durationMs <= 0) return null;
     final span = _resolveDefaultSpan(centerMs, durationMs);
@@ -531,15 +587,118 @@ class ZoomEditorController extends ChangeNotifier {
     if (end - start < minDurationMs) return null;
     if (_spanOverlapsExisting(start, end)) return null;
 
+    final resolvedTarget = focusMode == ZoomFocusMode.fixedTarget
+        ? (fixedTarget ?? NormalizedPoint.center)
+        : null;
+
     final newSegment = ZoomSegment(
       id: const Uuid().v4(),
       startMs: start,
       endMs: end,
       source: 'manual',
+      focusMode: focusMode,
+      fixedTarget: resolvedTarget,
     );
     execute(AddZoomSegmentCommand(this, newSegment));
     selectOnly(newSegment);
     return newSegment;
+  }
+
+  /// Adds a default-sized segment centered around [centerMs], picking
+  /// the focus mode by inspecting cursor data inside the resolved span.
+  ///
+  /// Falls back to [ZoomFocusMode.fixedTarget] centered on the playhead
+  /// cursor (or canvas center) when:
+  ///   - the bridge query fails or returns no samples,
+  ///   - all samples in range are hidden / out of bounds,
+  ///   - cursor motion across the segment is below
+  ///     [kZoomCursorMotionThresholdPx].
+  Future<ZoomSegment?> addDefaultSegmentAtWithFocus(
+    int centerMs, {
+    required int playheadMs,
+    int durationMs = defaultNewSegmentDurationMs,
+  }) async {
+    if (this.durationMs <= 0) return null;
+    final span = _resolveDefaultSpan(centerMs, durationMs);
+    if (span == null) return null;
+    final start = span.$1;
+    final end = span.$2;
+    if (end - start < minDurationMs) return null;
+    if (_spanOverlapsExisting(start, end)) return null;
+
+    // Backend cannot honor a fixedTarget zoom — fall back to the legacy
+    // followCursor path so we never produce a segment the renderer
+    // will silently ignore.
+    if (!_capabilities.supportsSmartFixedTarget) {
+      return addDefaultSegmentAt(
+        centerMs,
+        durationMs: durationMs,
+      );
+    }
+
+    final clampedPlayhead = playheadMs.clamp(start, end);
+    final CursorSamplesResult samples;
+    try {
+      samples = await _nativeBridge.previewGetCursorSamples(
+        startMs: start,
+        endMs: end,
+        playheadMs: clampedPlayhead,
+        sessionId: sessionId,
+      );
+    } on ZoomNativeCapabilityMissing catch (e) {
+      // Capabilities probe said this build supports cursor samples but
+      // the channel call was unimplemented. Treat as missing capability
+      // for the rest of the session and use the legacy path. Do NOT
+      // treat this as "no cursor data" — that would create a
+      // fixedTarget segment the renderer will ignore.
+      Log.w('ZoomEditor', 'Cursor samples missing native impl: $e');
+      _capabilities = const ZoomNativeCapabilities(
+        cursorSamples: false,
+        fixedTargetPreview: false,
+        fixedTargetExport: false,
+      );
+      return addDefaultSegmentAt(
+        centerMs,
+        durationMs: durationMs,
+      );
+    }
+
+    final decision = chooseZoomFocusModeForRange(
+      startMs: start,
+      endMs: end,
+      playheadMs: clampedPlayhead,
+      samples: samples,
+    );
+
+    return addDefaultSegmentAt(
+      centerMs,
+      durationMs: durationMs,
+      focusMode: decision.mode,
+      fixedTarget: decision.fixedTarget,
+    );
+  }
+
+  /// Switches the focus mode of [segment]. Pass [fixedTarget] when the
+  /// new mode is [ZoomFocusMode.fixedTarget]; null defaults to whatever
+  /// is already on the segment, or center if none.
+  void setSegmentFocusMode(
+    ZoomSegment segment, {
+    required ZoomFocusMode mode,
+    NormalizedPoint? fixedTarget,
+  }) {
+    final resolvedTarget = mode == ZoomFocusMode.fixedTarget
+        ? (fixedTarget ?? segment.fixedTarget ?? NormalizedPoint.center)
+        : null;
+    if (segment.focusMode == mode &&
+        segment.fixedTarget == resolvedTarget) {
+      return;
+    }
+    final updated = segment.copyWith(
+      focusMode: mode,
+      fixedTarget: resolvedTarget,
+      clearFixedTarget: resolvedTarget == null,
+    );
+    execute(ChangeZoomFocusModeCommand(this, segment, updated));
   }
 
   (int, int)? _resolveDefaultSpan(int centerMs, int requestedDurationMs) {

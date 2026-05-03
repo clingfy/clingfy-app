@@ -1714,6 +1714,30 @@ abstract class AppLocalizations {
   /// **'Snap'**
   String get snap;
 
+  /// No description provided for @zoomBehavior.
+  ///
+  /// In en, this message translates to:
+  /// **'Zoom behavior'**
+  String get zoomBehavior;
+
+  /// No description provided for @zoomFollowCursor.
+  ///
+  /// In en, this message translates to:
+  /// **'Follow cursor'**
+  String get zoomFollowCursor;
+
+  /// No description provided for @zoomFixedTarget.
+  ///
+  /// In en, this message translates to:
+  /// **'Fixed target'**
+  String get zoomFixedTarget;
+
+  /// No description provided for @zoomCursorStaticHint.
+  ///
+  /// In en, this message translates to:
+  /// **'Cursor does not move in this range. Fixed target gives a visible zoom.'**
+  String get zoomCursorStaticHint;
+
   /// No description provided for @zoomAddSegment.
   ///
   /// In en, this message translates to:

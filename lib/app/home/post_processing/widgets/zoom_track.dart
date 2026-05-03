@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'dart:math' as math;
 
 import 'package:clingfy/core/zoom/zoom_editor_controller.dart';
@@ -375,14 +376,18 @@ class _ZoomTrackState extends State<ZoomTrack> {
                         tapMs,
                         durationMs: chipDurationMs,
                       )) {
-                    final created = editor.addDefaultSegmentAt(
-                      tapMs,
-                      durationMs: chipDurationMs,
+                    _clearGhost();
+                    // Fire-and-forget: heuristic queries native cursor
+                    // data, then commits the segment with the chosen
+                    // focus mode. UI stays responsive.
+                    unawaited(
+                      editor.addDefaultSegmentAtWithFocus(
+                        tapMs,
+                        playheadMs: widget.positionMs,
+                        durationMs: chipDurationMs,
+                      ),
                     );
-                    if (created != null) {
-                      _clearGhost();
-                      return;
-                    }
+                    return;
                   }
                   editor.clearSelection();
                   return;

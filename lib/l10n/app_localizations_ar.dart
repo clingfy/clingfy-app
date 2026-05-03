@@ -858,6 +858,19 @@ class AppLocalizationsAr extends AppLocalizations {
   String get snap => 'المحاذاة';
 
   @override
+  String get zoomBehavior => 'سلوك التكبير';
+
+  @override
+  String get zoomFollowCursor => 'اتباع المؤشر';
+
+  @override
+  String get zoomFixedTarget => 'هدف ثابت';
+
+  @override
+  String get zoomCursorStaticHint =>
+      'المؤشر لا يتحرّك في هذا النطاق. الهدف الثابت يوفّر تكبيرًا واضحًا.';
+
+  @override
   String get zoomAddSegment => 'إضافة مقطع تكبير';
 
   @override

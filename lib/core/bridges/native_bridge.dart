@@ -420,6 +420,18 @@ class NativeBridge {
     }
   }
 
+  /// Sends the effective zoom timeline to native preview/export.
+  ///
+  /// Native contract:
+  ///   - Each segment carries `startMs`, `endMs`, `focusMode` and an
+  ///     optional `fixedTarget` map `{dx, dy}` in normalized `[0,1]`
+  ///     coordinates of the source recording (top-left origin).
+  ///   - When `focusMode == "fixedTarget"` and `fixedTarget` is present,
+  ///     native MUST render the zoom transform centered on that point
+  ///     and ignore the cursor path for the duration of the segment.
+  ///   - When `focusMode == "followCursor"` or missing, native MUST
+  ///     keep the legacy cursor-tracking behavior. This guarantees
+  ///     backward compatibility with older payloads that omit the field.
   Future<void> previewSetZoomSegments(
     List<ZoomSegment> segments, {
     required String? sessionId,
@@ -427,12 +439,126 @@ class NativeBridge {
     try {
       await _nativeBridge.invokeMethod('previewSetZoomSegments', {
         if (sessionId != null) 'sessionId': sessionId,
-        'segments': segments
-            .map((s) => {'startMs': s.startMs, 'endMs': s.endMs})
-            .toList(),
+        'segments': segments.map((s) {
+          final map = <String, dynamic>{
+            'startMs': s.startMs,
+            'endMs': s.endMs,
+            'focusMode': s.focusMode.wireValue,
+          };
+          if (s.focusMode == ZoomFocusMode.fixedTarget &&
+              s.fixedTarget != null) {
+            map['fixedTarget'] = s.fixedTarget!.toMap();
+          }
+          return map;
+        }).toList(),
       });
     } catch (e) {
       Log.e("NativeBridge", "previewSetZoomSegments failed: $e");
+    }
+  }
+
+  /// Probes native for which Phase 1 zoom features are available on
+  /// this build of the macOS backend.
+  ///
+  /// Native contract (`previewGetZoomCapabilities`):
+  ///   Request:  no arguments.
+  ///   Response:
+  ///     {
+  ///       "cursorSamples":      Bool,
+  ///       "fixedTargetPreview": Bool,
+  ///       "fixedTargetExport":  Bool
+  ///     }
+  ///
+  /// Older binaries that predate Phase 1 will throw
+  /// `MissingPluginException`; this method returns
+  /// [ZoomNativeCapabilities.legacy] in that case so Dart can suppress
+  /// fixed-target UX cleanly. Any other failure also resolves to legacy
+  /// — we err on the side of disabling the feature.
+  Future<ZoomNativeCapabilities> previewGetZoomCapabilities() async {
+    try {
+      final raw = await _nativeBridge.invokeMethod<Map<dynamic, dynamic>>(
+        'previewGetZoomCapabilities',
+      );
+      if (raw == null) return ZoomNativeCapabilities.legacy;
+      return ZoomNativeCapabilities.fromMap(raw);
+    } on MissingPluginException {
+      return ZoomNativeCapabilities.legacy;
+    } catch (e) {
+      Log.e("NativeBridge", "previewGetZoomCapabilities failed: $e");
+      return ZoomNativeCapabilities.legacy;
+    }
+  }
+
+  /// Queries native for cursor samples inside `[startMs, endMs]` and the
+  /// closest sample to `playheadMs`.
+  ///
+  /// Native contract (`previewGetCursorSamples`):
+  ///   Request:
+  ///     {
+  ///       "sessionId": "...optional...",
+  ///       "startMs": 1200,
+  ///       "endMs":   3200,
+  ///       "playheadMs": 1500
+  ///     }
+  ///   Response:
+  ///     {
+  ///       "samples": [
+  ///         { "tMs": 1200, "x": 421.0, "y": 240.0, "visible": true },
+  ///         ...
+  ///       ],
+  ///       "playheadSample": { "tMs": 1500, "x": 430.0, "y": 244.0,
+  ///                           "visible": true },
+  ///       "width":  1920.0,
+  ///       "height": 1080.0
+  ///     }
+  ///
+  ///   - `x` / `y` are in source-recording pixel space (top-left origin).
+  ///   - `width` / `height` are the source recording dimensions in
+  ///     pixels. Dart converts cursor pixel coords to normalized
+  ///     `[0, 1]` for the [ZoomSegment.fixedTarget] field.
+  ///   - `visible` is `false` when the cursor was hidden / off-surface.
+  ///   - On any failure (no session, missing recording, IO error)
+  ///     native should return an empty sample list with `width`/`height`
+  ///     set to the recording size if known, otherwise `0`.
+  ///
+  /// Failure modes are deliberately distinguished so callers can choose
+  /// the right UX:
+  ///   - [MissingPluginException] from the channel → throws
+  ///     [ZoomNativeCapabilityMissing]. The native build does not
+  ///     support cursor-samples queries; do NOT treat this as "no
+  ///     cursor data".
+  ///   - Any other native error → logged and returns
+  ///     [CursorSamplesResult.empty]; the caller can still apply the
+  ///     fixed-target fallback.
+  ///   - Valid response with zero samples → [CursorSamplesResult.empty]
+  ///     with `width`/`height` populated when known. This represents
+  ///     "no cursor data in range" and is a normal fallback trigger.
+  Future<CursorSamplesResult> previewGetCursorSamples({
+    required int startMs,
+    required int endMs,
+    required int playheadMs,
+    String? sessionId,
+  }) async {
+    try {
+      final raw = await _nativeBridge.invokeMethod<Map<dynamic, dynamic>>(
+        'previewGetCursorSamples',
+        {
+          if (sessionId != null) 'sessionId': sessionId,
+          'startMs': startMs,
+          'endMs': endMs,
+          'playheadMs': playheadMs,
+        },
+      );
+      if (raw == null) return CursorSamplesResult.empty;
+      return CursorSamplesResult.fromMap(raw);
+    } on MissingPluginException catch (e) {
+      throw ZoomNativeCapabilityMissing(
+        'previewGetCursorSamples',
+        e.message,
+      );
+    } catch (e) {
+      Log.e("NativeBridge", "previewGetCursorSamples failed: $e");
+      return CursorSamplesResult.empty;
     }
   }
 

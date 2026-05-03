@@ -1,9 +1,11 @@
 import 'dart:async';
 
+import 'package:clingfy/app/home/post_processing/widgets/zoom_segment_behavior_inspector.dart';
 import 'package:clingfy/app/home/preview/widgets/timeline/timeline_editor_viewport.dart';
 import 'package:clingfy/app/home/preview/widgets/timeline/timeline_header_bar.dart';
 import 'package:clingfy/app/home/preview/widgets/timeline/timeline_transport_bar.dart';
 import 'package:clingfy/app/home/preview/widgets/timeline/timeline_viewport_controller.dart';
+import 'package:clingfy/core/bridges/native_bridge.dart';
 import 'package:clingfy/core/models/app_models.dart';
 import 'package:clingfy/core/preview/player_controller.dart';
 import 'package:clingfy/core/zoom/zoom_editor_controller.dart';
@@ -317,6 +319,12 @@ class _VideoTimelineState extends State<VideoTimeline> {
               hoverPositionMs: _hoverPositionMs,
               onFocusRequested: _requestTimelineFocus,
             ),
+            if (canEditZoom)
+              ZoomSegmentBehaviorInspector(
+                editor: editor,
+                nativeBridge: NativeBridge.instance,
+                sessionId: editor.sessionId,
+              ),
           ],
         );
       },

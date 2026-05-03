@@ -873,6 +873,19 @@ class AppLocalizationsRo extends AppLocalizations {
   String get snap => 'Fixare';
 
   @override
+  String get zoomBehavior => 'Comportament zoom';
+
+  @override
+  String get zoomFollowCursor => 'Urmărește cursorul';
+
+  @override
+  String get zoomFixedTarget => 'Țintă fixă';
+
+  @override
+  String get zoomCursorStaticHint =>
+      'Cursorul nu se mișcă în acest interval. Ținta fixă oferă un zoom vizibil.';
+
+  @override
   String get zoomAddSegment => 'Adaugă segment zoom';
 
   @override

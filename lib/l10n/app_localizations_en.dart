@@ -866,6 +866,19 @@ class AppLocalizationsEn extends AppLocalizations {
   String get snap => 'Snap';
 
   @override
+  String get zoomBehavior => 'Zoom behavior';
+
+  @override
+  String get zoomFollowCursor => 'Follow cursor';
+
+  @override
+  String get zoomFixedTarget => 'Fixed target';
+
+  @override
+  String get zoomCursorStaticHint =>
+      'Cursor does not move in this range. Fixed target gives a visible zoom.';
+
+  @override
   String get zoomAddSegment => 'Add zoom segment';
 
   @override

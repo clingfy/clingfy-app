@@ -1,4 +1,14 @@
+import 'package:clingfy/core/zoom/cursor_samples.dart';
 import 'package:flutter/material.dart';
+
+export 'package:clingfy/core/zoom/cursor_samples.dart'
+    show
+        ZoomFocusMode,
+        NormalizedPoint,
+        CursorSample,
+        CursorSamplesResult,
+        ZoomNativeCapabilities,
+        ZoomNativeCapabilityMissing;
 
 enum RecordingQuality { sd, hd720, fhd, qhd2k, uhd4k, k8k, native }
 
@@ -689,6 +699,10 @@ class ZoomSegment {
   final String source; // "auto" or "manual"
   final String?
   baseId; // if non-null, this manual segment overrides an auto segment
+  final ZoomFocusMode focusMode;
+  // Normalized [0,1] target inside the source recording. Only meaningful
+  // when [focusMode] is [ZoomFocusMode.fixedTarget]; null otherwise.
+  final NormalizedPoint? fixedTarget;
 
   const ZoomSegment({
     required this.id,
@@ -696,6 +710,8 @@ class ZoomSegment {
     required this.endMs,
     this.source = 'auto',
     this.baseId,
+    this.focusMode = ZoomFocusMode.followCursor,
+    this.fixedTarget,
   });
 
   factory ZoomSegment.fromMap(Map m) => ZoomSegment(
@@ -706,6 +722,8 @@ class ZoomSegment {
     endMs: (m['endMs'] as num).toInt(),
     source: m['source']?.toString() ?? 'auto',
     baseId: m['baseId']?.toString(),
+    focusMode: ZoomFocusMode.fromWire(m['focusMode']),
+    fixedTarget: NormalizedPoint.fromMap(m['fixedTarget']),
   );
 
   Map<String, dynamic> toMap() => {
@@ -714,6 +732,9 @@ class ZoomSegment {
     'endMs': endMs,
     'source': source,
     if (baseId != null) 'baseId': baseId,
+    'focusMode': focusMode.wireValue,
+    if (focusMode == ZoomFocusMode.fixedTarget && fixedTarget != null)
+      'fixedTarget': fixedTarget!.toMap(),
   };
 
   ZoomSegment copyWith({
@@ -723,17 +744,24 @@ class ZoomSegment {
     String? source,
     String? baseId,
     bool clearBaseId = false,
+    ZoomFocusMode? focusMode,
+    NormalizedPoint? fixedTarget,
+    bool clearFixedTarget = false,
   }) => ZoomSegment(
     id: id ?? this.id,
     startMs: startMs ?? this.startMs,
     endMs: endMs ?? this.endMs,
     source: source ?? this.source,
     baseId: clearBaseId ? null : (baseId ?? this.baseId),
+    focusMode: focusMode ?? this.focusMode,
+    fixedTarget: clearFixedTarget
+        ? null
+        : (fixedTarget ?? this.fixedTarget),
   );
 
   @override
   String toString() =>
-      'ZoomSegment(id: $id, startMs: $startMs, endMs: $endMs, source: $source, baseId: $baseId)';
+      'ZoomSegment(id: $id, startMs: $startMs, endMs: $endMs, source: $source, baseId: $baseId, focusMode: $focusMode, fixedTarget: $fixedTarget)';
 
   @override
   bool operator ==(Object other) =>
@@ -744,13 +772,18 @@ class ZoomSegment {
           startMs == other.startMs &&
           endMs == other.endMs &&
           source == other.source &&
-          baseId == other.baseId;
+          baseId == other.baseId &&
+          focusMode == other.focusMode &&
+          fixedTarget == other.fixedTarget;
 
   @override
-  int get hashCode =>
-      id.hashCode ^
-      startMs.hashCode ^
-      endMs.hashCode ^
-      source.hashCode ^
-      baseId.hashCode;
+  int get hashCode => Object.hash(
+    id,
+    startMs,
+    endMs,
+    source,
+    baseId,
+    focusMode,
+    fixedTarget,
+  );
 }
