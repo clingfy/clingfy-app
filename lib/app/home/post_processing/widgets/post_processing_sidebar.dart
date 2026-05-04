@@ -117,6 +117,7 @@ class PostProcessingSidebar extends StatelessWidget {
   final bool showCursor;
   final double cursorSize;
   final double zoomFactor;
+  final bool zoomEffectEnabled;
   final bool enabled;
   final bool cursorAvailable;
   final bool hasAudio;
@@ -147,6 +148,7 @@ class PostProcessingSidebar extends StatelessWidget {
   final Function(double) onCursorSizeChangeEnd;
   final Function(double) onZoomFactorChanged;
   final Function(double) onZoomFactorChangeEnd;
+  final ValueChanged<bool> onZoomEffectEnabledChanged;
   final Future<String?> Function() onPickImage;
   final Function(bool) onCameraVisibleChanged;
   final Function(CameraLayoutPreset) onCameraLayoutPresetChanged;
@@ -195,6 +197,7 @@ class PostProcessingSidebar extends StatelessWidget {
     required this.showCursor,
     required this.cursorSize,
     required this.zoomFactor,
+    required this.zoomEffectEnabled,
     required this.onLayoutPresetChanged,
     required this.onResolutionPresetChanged,
     required this.onFitModeChanged,
@@ -209,6 +212,7 @@ class PostProcessingSidebar extends StatelessWidget {
     required this.onCursorSizeChangeEnd,
     required this.onZoomFactorChanged,
     required this.onZoomFactorChangeEnd,
+    required this.onZoomEffectEnabledChanged,
     required this.onPickImage,
     required this.hasCameraAsset,
     required this.cameraExportCapabilities,
@@ -397,7 +401,9 @@ class PostProcessingSidebar extends StatelessWidget {
       ),
       PostZoomSection(
         isProcessing: isProcessing,
+        zoomEffectEnabled: zoomEffectEnabled,
         zoomFactor: zoomFactor,
+        onZoomEffectEnabledChanged: onZoomEffectEnabledChanged,
         onZoomFactorChanged: onZoomFactorChanged,
         onZoomFactorChangeEnd: onZoomFactorChangeEnd,
       ),

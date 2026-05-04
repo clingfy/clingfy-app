@@ -410,6 +410,110 @@ void main() {
     },
   );
 
+  test(
+    'post-processing controller defaults zoom effect to on at 1.5x',
+    () async {
+      final harness = await createHarness();
+
+      expect(harness.post.zoomEffectEnabled, isTrue);
+      expect(harness.post.zoomFactor, 1.5);
+    },
+  );
+
+  test(
+    'setZoomEffectEnabled re-enable does not jump zoomFactor to 1.5',
+    () async {
+      final harness = await createHarness();
+
+      // Drive zoomFactor away from the default before flipping the toggle so
+      // we can prove enabling does not force-jump back to 1.5.
+      harness.post.setZoomFactor(1.0);
+      harness.post.setZoomEffectEnabled(false);
+      await Future<void>.delayed(Duration.zero);
+      harness.post.setZoomEffectEnabled(true);
+      await Future<void>.delayed(Duration.zero);
+
+      expect(harness.post.zoomEffectEnabled, isTrue);
+      expect(harness.post.zoomFactor, 1.0);
+
+      final args = Map<String, dynamic>.from(
+        harness.processCalls.last.arguments! as Map<dynamic, dynamic>,
+      );
+      expect(args['zoomEffectEnabled'], isTrue);
+      expect(args['zoomFactor'], 1.0);
+    },
+  );
+
+  test(
+    'setZoomFactor at 1.0 while enabled keeps zoom effect enabled',
+    () async {
+      final harness = await createHarness();
+
+      harness.post.setZoomFactor(1.4);
+      harness.post.setZoomFactor(1.0);
+
+      expect(harness.post.zoomEffectEnabled, isTrue);
+      expect(harness.post.zoomFactor, 1.0);
+    },
+  );
+
+  test('disabling zoom effect preserves last zoomFactor', () async {
+    final harness = await createHarness();
+
+    harness.post.setZoomFactor(2.2);
+    harness.post.setZoomEffectEnabled(false);
+    await Future<void>.delayed(Duration.zero);
+
+    expect(harness.post.zoomEffectEnabled, isFalse);
+    expect(harness.post.zoomFactor, closeTo(2.2, 1e-9));
+
+    final args = Map<String, dynamic>.from(
+      harness.processCalls.last.arguments! as Map<dynamic, dynamic>,
+    );
+    expect(args['zoomEffectEnabled'], isFalse);
+    expect(args['zoomFactor'], closeTo(2.2, 1e-9));
+  });
+
+  test(
+    'setZoomFactorEnd persists factor across new recording sessions',
+    () async {
+      final harness = await createHarness();
+
+      harness.post.setZoomFactorEnd(2.2);
+      harness.post.setZoomEffectEnabled(false);
+      await Future<void>.delayed(Duration.zero);
+
+      // Re-attach simulates starting a new recording — _resetForNewRecording
+      // must reseed zoom state from the persisted settings, not from defaults.
+      harness.post.attachToRecording(
+        sessionId: 'rec_test_session_2',
+        projectPath: '/tmp/original.clingfyproj',
+      );
+      await Future<void>.delayed(Duration.zero);
+
+      expect(harness.post.zoomEffectEnabled, isFalse);
+      expect(harness.post.zoomFactor, closeTo(2.2, 1e-9));
+    },
+  );
+
+  test(
+    'setZoomFactor drag without end does not persist across sessions',
+    () async {
+      final harness = await createHarness();
+
+      harness.post.setZoomFactor(2.0);
+      harness.post.attachToRecording(
+        sessionId: 'rec_test_session_3',
+        projectPath: '/tmp/original.clingfyproj',
+      );
+      await Future<void>.delayed(Duration.zero);
+
+      // No commit happened — re-attach should restore the persisted default.
+      expect(harness.post.zoomEffectEnabled, isTrue);
+      expect(harness.post.zoomFactor, 1.5);
+    },
+  );
+
   test('camera animation settings are included in preview payloads', () async {
     final harness = await createHarness();
 

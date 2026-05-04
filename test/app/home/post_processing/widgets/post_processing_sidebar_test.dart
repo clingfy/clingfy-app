@@ -29,6 +29,7 @@ void main() {
     bool hasAudio = true,
     bool showCursor = true,
     double zoomFactor = 1.0,
+    bool zoomEffectEnabled = false,
     bool autoNormalizeOnExport = false,
     double? sidebarWidth,
     LayoutPreset layoutPreset = LayoutPreset.auto,
@@ -43,6 +44,7 @@ void main() {
     void Function(ResolutionPreset)? onResolutionPresetChanged,
     void Function(double)? onZoomFactorChanged,
     void Function(double)? onZoomFactorChangeEnd,
+    void Function(bool)? onZoomEffectEnabledChanged,
     void Function(CameraZoomBehavior)? onCameraZoomBehaviorChanged,
     void Function(double)? onCameraZoomScaleMultiplierChanged,
     void Function(double)? onCameraZoomScaleMultiplierChangeEnd,
@@ -66,6 +68,7 @@ void main() {
       showCursor: showCursor,
       cursorSize: 1.0,
       zoomFactor: zoomFactor,
+      zoomEffectEnabled: zoomEffectEnabled,
       cursorAvailable: cursorAvailable,
       hasAudio: hasAudio,
       disabledMessage: null,
@@ -88,6 +91,7 @@ void main() {
       onCursorSizeChangeEnd: (_) {},
       onZoomFactorChanged: onZoomFactorChanged ?? (_) {},
       onZoomFactorChangeEnd: onZoomFactorChangeEnd ?? (_) {},
+      onZoomEffectEnabledChanged: onZoomEffectEnabledChanged ?? (_) {},
       onPickImage: () async => null,
       hasCameraAsset: hasCameraAsset,
       cameraExportCapabilities: cameraExportCapabilities,
@@ -724,7 +728,12 @@ void main() {
     tester,
   ) async {
     await tester.pumpWidget(
-      buildTestApp(selectedIndex: 2, showCursor: true, zoomFactor: 2.0),
+      buildTestApp(
+        selectedIndex: 2,
+        showCursor: true,
+        zoomEffectEnabled: true,
+        zoomFactor: 2.0,
+      ),
     );
     await tester.pumpAndSettle();
 
@@ -745,18 +754,21 @@ void main() {
     expect(find.text('Manage zoom in effects'), findsNothing);
   });
 
-  testWidgets('zoom toggle preserves enable and disable callback behavior', (
+  testWidgets('zoom toggle drives enabled callback without forcing intensity', (
     tester,
   ) async {
-    final changed = <double>[];
-    final ended = <double>[];
+    final enabledChanges = <bool>[];
+    final factorChanges = <double>[];
+    final factorEnds = <double>[];
 
     await tester.pumpWidget(
       buildTestApp(
         selectedIndex: 2,
+        zoomEffectEnabled: false,
         zoomFactor: 1.0,
-        onZoomFactorChanged: changed.add,
-        onZoomFactorChangeEnd: ended.add,
+        onZoomEffectEnabledChanged: enabledChanges.add,
+        onZoomFactorChanged: factorChanges.add,
+        onZoomFactorChangeEnd: factorEnds.add,
       ),
     );
     await tester.pumpAndSettle();
@@ -764,33 +776,58 @@ void main() {
     final toggleRows = find.byType(AppToggleRow);
     expect(toggleRows, findsNWidgets(2));
 
-    final zoomToggle = tester.widget<AppToggleRow>(toggleRows.at(1));
-    zoomToggle.onChanged?.call(true);
+    final offToggle = tester.widget<AppToggleRow>(toggleRows.at(1));
+    offToggle.onChanged?.call(true);
+    expect(enabledChanges, [true]);
+    expect(factorChanges, isEmpty);
+    expect(factorEnds, isEmpty);
 
-    expect(changed.last, 1.5);
-    expect(ended.last, 1.5);
-
-    changed.clear();
-    ended.clear();
+    enabledChanges.clear();
 
     await tester.pumpWidget(
       buildTestApp(
         selectedIndex: 2,
-        zoomFactor: 2.0,
-        onZoomFactorChanged: changed.add,
-        onZoomFactorChangeEnd: ended.add,
+        zoomEffectEnabled: true,
+        zoomFactor: 1.0,
+        onZoomEffectEnabledChanged: enabledChanges.add,
+        onZoomFactorChanged: factorChanges.add,
+        onZoomFactorChangeEnd: factorEnds.add,
       ),
     );
     await tester.pumpAndSettle();
 
-    final zoomToggleEnabled = tester.widget<AppToggleRow>(
+    final onToggle = tester.widget<AppToggleRow>(
       find.byType(AppToggleRow).at(1),
     );
-    zoomToggleEnabled.onChanged?.call(false);
-
-    expect(changed.last, 1.0);
-    expect(ended.last, 1.0);
+    onToggle.onChanged?.call(false);
+    expect(enabledChanges, [false]);
+    expect(factorChanges, isEmpty);
+    expect(factorEnds, isEmpty);
   });
+
+  testWidgets(
+    'zoom slider stays visible at 1.0x without disabling the toggle',
+    (tester) async {
+      final enabledChanges = <bool>[];
+      final factorChanges = <double>[];
+
+      await tester.pumpWidget(
+        buildTestApp(
+          selectedIndex: 2,
+          zoomEffectEnabled: true,
+          zoomFactor: 1.0,
+          onZoomEffectEnabledChanged: enabledChanges.add,
+          onZoomFactorChanged: factorChanges.add,
+        ),
+      );
+      await tester.pumpAndSettle();
+
+      expect(find.byKey(const Key('post_zoom_intensity_gap')), findsOneWidget);
+      expect(find.text('1.0x'), findsWidgets);
+      expect(enabledChanges, isEmpty);
+      expect(factorChanges, isEmpty);
+    },
+  );
 
   testWidgets('export tab shows audio and loudness groups', (tester) async {
     await tester.pumpWidget(

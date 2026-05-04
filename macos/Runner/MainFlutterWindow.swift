@@ -688,7 +688,11 @@ class MainFlutterWindow: NSWindow {
           let bgCol = args["backgroundColor"] as? Int
           let bgImg = args["backgroundImagePath"] as? String
           let cursorSize = (args["cursorSize"] as? Double) ?? 1.0
-          let zoomFactor = (args["zoomFactor"] as? Double) ?? 1.5
+          let rawZoomFactor = (args["zoomFactor"] as? Double) ?? 1.5
+          // Newer Flutter clients send zoomEffectEnabled separately so 1.0x is a valid enabled value.
+          // Older clients omit it; fall back to the legacy zoomFactor > 1.0 contract.
+          let zoomEffectEnabled = (args["zoomEffectEnabled"] as? Bool) ?? (rawZoomFactor > 1.0)
+          let zoomFactor = zoomEffectEnabled ? rawZoomFactor : 1.0
           let showCursor = (args["showCursor"] as? Bool) ?? true
           let cameraPreviewChangeKind = CameraPreviewChangeKind(
             rawValue: (args["cameraPreviewChangeKind"] as? String) ?? CameraPreviewChangeKind.none.rawValue
@@ -802,7 +806,9 @@ class MainFlutterWindow: NSWindow {
           let bgCol = args["backgroundColor"] as? Int
           let bgImg = args["backgroundImagePath"] as? String
           let cursorSize = (args["cursorSize"] as? Double) ?? 1.0
-          let zoomFactor = (args["zoomFactor"] as? Double) ?? 1.5
+          let rawZoomFactor = (args["zoomFactor"] as? Double) ?? 1.5
+          let zoomEffectEnabled = (args["zoomEffectEnabled"] as? Bool) ?? (rawZoomFactor > 1.0)
+          let zoomFactor = zoomEffectEnabled ? rawZoomFactor : 1.0
           let showCursor = (args["showCursor"] as? Bool) ?? true
           let filename = args["filename"] as? String
           let directoryOverride = args["directoryOverride"] as? String
