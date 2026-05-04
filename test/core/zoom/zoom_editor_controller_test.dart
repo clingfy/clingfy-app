@@ -1,4 +1,5 @@
 import 'package:clingfy/core/bridges/native_bridge.dart';
+import 'package:clingfy/core/models/app_models.dart';
 import 'package:clingfy/core/zoom/zoom_editor_controller.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_test/flutter_test.dart';
@@ -511,15 +512,279 @@ void main() {
       ZoomEditorController.defaultNewSegmentDurationMs,
     );
   });
+
+  group('overlap merge on user edits', () {
+    testWidgets('drag-create overlapping a manual merges into one', (
+      tester,
+    ) async {
+      final harness = await _createHarness(tester, durationMs: 10000);
+
+      harness.controller.enterOneShotAddMode();
+      harness.controller.updateDraft(1000, 2500);
+      harness.controller.commitDraft();
+      await tester.pump();
+
+      harness.controller.enterOneShotAddMode();
+      harness.controller.updateDraft(2200, 4000);
+      harness.controller.commitDraft();
+      await tester.pump();
+
+      final display = harness.controller.displaySegments;
+      expect(display, hasLength(1));
+      expect(display.single.startMs, 1000);
+      expect(display.single.endMs, 4000);
+      expect(harness.controller.primarySelectedSegmentId, display.single.id);
+    });
+
+    testWidgets('drag-move into another manual segment merges into one', (
+      tester,
+    ) async {
+      final harness = await _createHarness(tester, durationMs: 10000);
+
+      harness.controller.enterOneShotAddMode();
+      harness.controller.updateDraft(1000, 2000);
+      harness.controller.commitDraft();
+      await tester.pump();
+
+      harness.controller.enterOneShotAddMode();
+      harness.controller.updateDraft(5000, 6000);
+      harness.controller.commitDraft();
+      await tester.pump();
+
+      final mover = harness.controller.manualSegments.firstWhere(
+        (s) => s.startMs == 5000,
+      );
+      harness.controller.beginMoveAt(mover.startMs, mover);
+      harness.controller.updateMoveTo(1500); // overlaps the 1000-2000 segment
+      harness.controller.commitMove();
+      await tester.pump();
+
+      final display = harness.controller.displaySegments;
+      expect(display, hasLength(1));
+      expect(display.single.startMs, lessThanOrEqualTo(1000));
+      expect(display.single.endMs, greaterThanOrEqualTo(2000));
+    });
+
+    testWidgets('resizing a manual segment into another merges them', (
+      tester,
+    ) async {
+      final harness = await _createHarness(tester, durationMs: 10000);
+
+      harness.controller.enterOneShotAddMode();
+      harness.controller.updateDraft(1000, 2000);
+      harness.controller.commitDraft();
+      await tester.pump();
+
+      harness.controller.enterOneShotAddMode();
+      harness.controller.updateDraft(3000, 4000);
+      harness.controller.commitDraft();
+      await tester.pump();
+
+      final left = harness.controller.manualSegments.firstWhere(
+        (s) => s.startMs == 1000,
+      );
+      harness.controller.beginTrimAt(left.endMs, left, TrimHandle.right);
+      harness.controller.updateTrimTo(3500); // crosses into the 3000-4000 seg
+      harness.controller.commitTrim();
+      await tester.pump();
+
+      final display = harness.controller.displaySegments;
+      expect(display, hasLength(1));
+      expect(display.single.startMs, 1000);
+      expect(display.single.endMs, 4000);
+    });
+
+    testWidgets(
+      'edited fixedTarget metadata wins when absorbing followCursor segment',
+      (tester) async {
+        final harness = await _createHarness(tester, durationMs: 10000);
+
+        // Seed a follow-cursor manual at 1000-3000.
+        harness.controller.enterOneShotAddMode();
+        harness.controller.updateDraft(1000, 3000);
+        harness.controller.commitDraft();
+        await tester.pump();
+
+        // Add a fixedTarget segment overlapping it.
+        final fixed = harness.controller.addDefaultSegmentAt(
+          5000,
+          focusMode: ZoomFocusMode.fixedTarget,
+          fixedTarget: const NormalizedPoint(0.7, 0.3),
+        );
+        expect(fixed, isNotNull);
+
+        // Move the fixedTarget segment to overlap the followCursor one.
+        harness.controller.beginMoveAt(fixed!.startMs, fixed);
+        harness.controller.updateMoveTo(1500);
+        harness.controller.commitMove();
+        await tester.pump();
+
+        final display = harness.controller.displaySegments;
+        expect(display, hasLength(1));
+        expect(display.single.focusMode, ZoomFocusMode.fixedTarget);
+        expect(display.single.fixedTarget, const NormalizedPoint(0.7, 0.3));
+      },
+    );
+
+    testWidgets('drag-move into auto segment tombstones the auto', (
+      tester,
+    ) async {
+      final harness = await _createHarness(
+        tester,
+        durationMs: 10000,
+        autoSegments: const [
+          {'id': 'auto_0', 'startMs': 1000, 'endMs': 2000, 'source': 'auto'},
+        ],
+      );
+
+      // Add a manual segment far away and drag it onto the auto.
+      harness.controller.enterOneShotAddMode();
+      harness.controller.updateDraft(5000, 6000);
+      harness.controller.commitDraft();
+      await tester.pump();
+
+      final mover = harness.controller.manualSegments.single;
+      harness.controller.beginMoveAt(mover.startMs, mover);
+      harness.controller.updateMoveTo(1200);
+      harness.controller.commitMove();
+      await tester.pump();
+
+      final display = harness.controller.displaySegments;
+      expect(display, hasLength(1));
+      // Auto segment should be hidden — covered by a tombstone or the merged
+      // manual.
+      final hasAuto = display.any((s) => s.source == 'auto');
+      expect(hasAuto, isFalse);
+      expect(display.single.startMs, lessThanOrEqualTo(1000));
+      expect(display.single.endMs, greaterThanOrEqualTo(2000));
+    });
+
+    testWidgets('absorbed segment is undoable in a single step', (
+      tester,
+    ) async {
+      final harness = await _createHarness(tester, durationMs: 10000);
+
+      harness.controller.enterOneShotAddMode();
+      harness.controller.updateDraft(1000, 2000);
+      harness.controller.commitDraft();
+      await tester.pump();
+
+      harness.controller.enterOneShotAddMode();
+      harness.controller.updateDraft(5000, 6000);
+      harness.controller.commitDraft();
+      await tester.pump();
+
+      final mover = harness.controller.manualSegments.firstWhere(
+        (s) => s.startMs == 5000,
+      );
+      harness.controller.beginMoveAt(mover.startMs, mover);
+      harness.controller.updateMoveTo(1500);
+      harness.controller.commitMove();
+      await tester.pump();
+
+      expect(harness.controller.displaySegments, hasLength(1));
+
+      harness.controller.undo();
+      await tester.pump();
+
+      // Both pre-merge segments must be back.
+      final restored = harness.controller.displaySegments;
+      expect(restored, hasLength(2));
+      final byStart = List.of(restored)
+        ..sort((a, b) => a.startMs.compareTo(b.startMs));
+      expect(byStart.first.startMs, 1000);
+      expect(byStart.first.endMs, 2000);
+      expect(byStart.last.startMs, 5000);
+      expect(byStart.last.endMs, 6000);
+    });
+
+    testWidgets('drag-create absorbing several segments merges them all', (
+      tester,
+    ) async {
+      final harness = await _createHarness(tester, durationMs: 10000);
+
+      for (final pair in const [
+        [1000, 1500],
+        [1800, 2200],
+        [2400, 2800],
+      ]) {
+        harness.controller.enterOneShotAddMode();
+        harness.controller.updateDraft(pair[0], pair[1]);
+        harness.controller.commitDraft();
+        await tester.pump();
+      }
+
+      // Draw an overlay across all three.
+      harness.controller.enterOneShotAddMode();
+      harness.controller.updateDraft(1300, 2500);
+      harness.controller.commitDraft();
+      await tester.pump();
+
+      final display = harness.controller.displaySegments;
+      expect(display, hasLength(1));
+      expect(display.single.startMs, 1000);
+      expect(display.single.endMs, 2800);
+    });
+
+    testWidgets('non-overlapping resize keeps segment id stable', (
+      tester,
+    ) async {
+      final harness = await _createHarness(tester, durationMs: 10000);
+
+      harness.controller.enterOneShotAddMode();
+      harness.controller.updateDraft(1000, 2000);
+      harness.controller.commitDraft();
+      await tester.pump();
+
+      final original = harness.controller.manualSegments.single;
+      harness.controller.beginTrimAt(
+        original.endMs,
+        original,
+        TrimHandle.right,
+      );
+      harness.controller.updateTrimTo(2500);
+      harness.controller.commitTrim();
+      await tester.pump();
+
+      final after = harness.controller.manualSegments.single;
+      expect(after.id, original.id);
+      expect(after.endMs, 2500);
+    });
+
+    testWidgets('saved manual segments contain no overlapping displays', (
+      tester,
+    ) async {
+      final harness = await _createHarness(tester, durationMs: 10000);
+
+      harness.controller.enterOneShotAddMode();
+      harness.controller.updateDraft(1000, 2000);
+      harness.controller.commitDraft();
+      await tester.pump();
+
+      harness.controller.enterOneShotAddMode();
+      harness.controller.updateDraft(1500, 2500);
+      harness.controller.commitDraft();
+      await tester.pump();
+
+      // Last save snapshot must reduce to a single visible segment.
+      expect(harness.savedManualSegments, isNotEmpty);
+      final visibleSaved = harness.savedManualSegments.last
+          .where((m) => (m['endMs'] as num) > (m['startMs'] as num))
+          .toList();
+      expect(visibleSaved, hasLength(1));
+    });
+  });
 }
 
 Future<_ZoomEditorHarness> _createHarness(
   WidgetTester tester, {
   List<Map<String, Object?>> autoSegments = const [],
   List<Map<String, Object?>> manualSegments = const [],
+  int durationMs = 2000,
 }) async {
   await installCommonNativeMocks();
   final calls = <MethodCall>[];
+  final savedManualSegments = <List<Map<String, Object?>>>[];
   final messenger =
       TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger;
 
@@ -531,6 +796,12 @@ Future<_ZoomEditorHarness> _createHarness(
       case 'getManualZoomSegments':
         return manualSegments;
       case 'saveManualZoomSegments':
+        final args = call.arguments as Map?;
+        final segs = (args?['segments'] as List?)
+            ?.cast<Map>()
+            .map((m) => m.cast<String, Object?>())
+            .toList(growable: false);
+        if (segs != null) savedManualSegments.add(segs);
         return true;
       case 'previewSetZoomSegments':
         return null;
@@ -542,19 +813,28 @@ Future<_ZoomEditorHarness> _createHarness(
   final controller = ZoomEditorController(
     nativeBridge: NativeBridge.instance,
     videoPath: '/tmp/demo.mov',
-    durationMs: 2000,
+    durationMs: durationMs,
   );
   await controller.init();
   addTearDown(controller.dispose);
 
-  return _ZoomEditorHarness(controller: controller, calls: calls);
+  return _ZoomEditorHarness(
+    controller: controller,
+    calls: calls,
+    savedManualSegments: savedManualSegments,
+  );
 }
 
 class _ZoomEditorHarness {
-  const _ZoomEditorHarness({required this.controller, required this.calls});
+  const _ZoomEditorHarness({
+    required this.controller,
+    required this.calls,
+    required this.savedManualSegments,
+  });
 
   final ZoomEditorController controller;
   final List<MethodCall> calls;
+  final List<List<Map<String, Object?>>> savedManualSegments;
 }
 
 bool _isOnFrameGrid(int ms) {

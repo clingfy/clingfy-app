@@ -131,38 +131,6 @@ void main() {
     expect(find.byKey(const Key('timeline_footer_snap_toggle')), findsNothing);
   });
 
-  testWidgets('lane visibility menu shows and hides markers lane', (
-    tester,
-  ) async {
-    final editor = await _createEditor(tester);
-    final player = _FakePlayerController(editor: editor);
-    addTearDown(player.dispose);
-
-    await tester.pumpWidget(_buildTimeline(player: player));
-
-    expect(find.byKey(const Key('timeline_lane_header_markers')), findsNothing);
-    expect(find.byKey(const Key('markers_timeline_lane')), findsNothing);
-
-    await tester.tap(find.byKey(const Key('timeline_lane_visibility_menu')));
-    await tester.pumpAndSettle();
-    await tester.tap(find.text(_l10n(tester).markers).last);
-    await tester.pumpAndSettle();
-
-    expect(
-      find.byKey(const Key('timeline_lane_header_markers')),
-      findsOneWidget,
-    );
-    expect(find.byKey(const Key('markers_timeline_lane')), findsOneWidget);
-
-    await tester.tap(find.byKey(const Key('timeline_lane_visibility_menu')));
-    await tester.pumpAndSettle();
-    await tester.tap(find.text(_l10n(tester).markers).last);
-    await tester.pumpAndSettle();
-
-    expect(find.byKey(const Key('timeline_lane_header_markers')), findsNothing);
-    expect(find.byKey(const Key('markers_timeline_lane')), findsNothing);
-  });
-
   testWidgets('header renders snap chip and toggles controller state', (
     tester,
   ) async {

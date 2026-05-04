@@ -5,6 +5,7 @@ import 'package:flutter/foundation.dart';
 import 'package:clingfy/core/models/app_models.dart';
 import 'package:clingfy/core/bridges/native_bridge.dart';
 import 'package:clingfy/core/zoom/zoom_focus_heuristic.dart';
+import 'package:clingfy/core/zoom/zoom_segment_merge.dart';
 import 'package:clingfy/app/infrastructure/logging/logger_service.dart';
 import 'package:uuid/uuid.dart';
 
@@ -86,6 +87,31 @@ class TrimZoomSegmentCommand implements ZoomEditCommand {
       );
       controller._addManualSegment(override);
     }
+  }
+
+  @override
+  void revert() {
+    controller._restoreManualSegments(_previousManualSegments);
+  }
+}
+
+/// Atomic mutation that swaps the entire manual segment list for a new
+/// one, snapshotting the previous list so undo/redo can roll back any
+/// number of absorbed/added segments in a single step. Used by edit
+/// paths that may collapse multiple overlapping segments into one
+/// (create / drag-move / resize).
+class MergeZoomEditCommand implements ZoomEditCommand {
+  final ZoomEditorController controller;
+  final List<ZoomSegment> nextManualSegments;
+  late final List<ZoomSegment> _previousManualSegments;
+
+  MergeZoomEditCommand(this.controller, this.nextManualSegments) {
+    _previousManualSegments = List<ZoomSegment>.from(controller.manualSegments);
+  }
+
+  @override
+  void apply() {
+    controller._restoreManualSegments(nextManualSegments);
   }
 
   @override
@@ -555,12 +581,11 @@ class ZoomEditorController extends ChangeNotifier {
       source: 'manual',
     );
 
-    execute(AddZoomSegmentCommand(this, newSegment));
+    _executeMergeEdit(edited: newSegment, originalDisplay: null);
     _draftSegment = null;
     if (_addMode == ZoomAddMode.oneShot) {
       _addMode = ZoomAddMode.off;
     }
-    selectOnly(newSegment);
   }
 
   /// Default duration (ms) used when the timeline lane creates a new segment
@@ -894,6 +919,113 @@ class ZoomEditorController extends ChangeNotifier {
     final normEnd = _normalizeEditableMs(end);
     if (normEnd - normStart < minDurationMs) return null;
     return (normStart, normEnd);
+  }
+
+  /// Plans a merge-aware edit and pushes it to the undo history as a
+  /// single [MergeZoomEditCommand]. After application, selection focuses
+  /// on the merged segment so the user can immediately keep editing it.
+  ///
+  /// [edited] carries the proposed final range and metadata (focus mode,
+  /// fixed target). For move/resize, its id matches [originalDisplay]'s
+  /// id (the segment being edited). For new adds, [originalDisplay] is
+  /// null and [edited] carries a fresh uuid.
+  void _executeMergeEdit({
+    required ZoomSegment edited,
+    required ZoomSegment? originalDisplay,
+  }) {
+    final plan = _planManualForMergedEdit(
+      edited: edited,
+      originalDisplay: originalDisplay,
+    );
+    execute(MergeZoomEditCommand(this, plan.nextManual));
+    selectOnly(plan.mergedSegment);
+  }
+
+  /// Computes the new [_manualSegments] list produced by merging [edited]
+  /// into the current display segments. Auto segments absorbed by the
+  /// merge are tombstoned (so they disappear from the display), and
+  /// manual segments absorbed by the merge are removed. The returned
+  /// merged segment is the one inserted into the manual list.
+  ({List<ZoomSegment> nextManual, ZoomSegment mergedSegment})
+  _planManualForMergedEdit({
+    required ZoomSegment edited,
+    required ZoomSegment? originalDisplay,
+  }) {
+    final basis = _displaySegmentsBase;
+    final byId = {for (final s in basis) s.id: s};
+
+    final plan = mergeEditedZoomSegment(
+      existingSegments: basis,
+      editedSegment: edited,
+      durationMs: durationMs,
+    );
+
+    final next = List<ZoomSegment>.from(_manualSegments);
+    final autoIdsToTombstone = <String>{};
+
+    // Absorbed neighbors: drop manual ones, schedule auto tombstones.
+    for (final id in plan.absorbedSegmentIds) {
+      final s = byId[id];
+      if (s == null) continue;
+      if (s.source == 'manual') {
+        next.removeWhere((m) => m.id == s.id);
+        // An absorbed manual override must keep its underlying auto hidden.
+        if (s.baseId != null) autoIdsToTombstone.add(s.baseId!);
+      } else {
+        autoIdsToTombstone.add(s.id);
+      }
+    }
+
+    // Identity of the merged segment: keep the user's segment identity
+    // when editing a manual (preserves selection round-trip and any
+    // existing baseId override link) — otherwise materialize a fresh
+    // override pointing back to the auto being edited (matches legacy
+    // Move/Trim behavior for autos).
+    String mergedId;
+    String? mergedBaseId;
+    if (originalDisplay == null) {
+      mergedId = edited.id;
+      mergedBaseId = null;
+    } else if (originalDisplay.source == 'manual') {
+      mergedId = originalDisplay.id;
+      mergedBaseId = originalDisplay.baseId;
+      next.removeWhere((m) => m.id == originalDisplay.id);
+    } else {
+      mergedId = const Uuid().v4();
+      mergedBaseId = originalDisplay.id;
+      // No separate tombstone needed — the merged manual override
+      // already hides this auto via baseId.
+      autoIdsToTombstone.remove(originalDisplay.id);
+    }
+
+    // Drop any prior reference to the autos we're tombstoning so the
+    // tombstone is the single owner of the override mapping.
+    for (final autoId in autoIdsToTombstone) {
+      if (mergedBaseId == autoId) continue;
+      next.removeWhere((m) => m.baseId == autoId);
+      next.add(
+        ZoomSegment(
+          id: const Uuid().v4(),
+          startMs: plan.mergedSegment.startMs,
+          endMs: plan.mergedSegment.startMs,
+          source: 'manual',
+          baseId: autoId,
+        ),
+      );
+    }
+
+    final mergedManual = ZoomSegment(
+      id: mergedId,
+      startMs: plan.mergedSegment.startMs,
+      endMs: plan.mergedSegment.endMs,
+      source: 'manual',
+      baseId: mergedBaseId,
+      focusMode: plan.mergedSegment.focusMode,
+      fixedTarget: plan.mergedSegment.fixedTarget,
+    );
+    next.add(mergedManual);
+
+    return (nextManual: next, mergedSegment: mergedManual);
   }
 
   bool _spanOverlapsExisting(int start, int end) {
@@ -1352,7 +1484,7 @@ class ZoomEditorController extends ChangeNotifier {
     final oldSeg = _movingOriginalSegment!;
 
     if (newSeg.startMs != oldSeg.startMs || newSeg.endMs != oldSeg.endMs) {
-      execute(MoveZoomSegmentCommand(this, oldSeg, newSeg));
+      _executeMergeEdit(edited: newSeg, originalDisplay: oldSeg);
     }
 
     _cancelMoveInternal();
@@ -1425,7 +1557,7 @@ class ZoomEditorController extends ChangeNotifier {
     final oldSeg = _trimmingOriginalSegment!;
 
     if (newSeg.startMs != oldSeg.startMs || newSeg.endMs != oldSeg.endMs) {
-      execute(TrimZoomSegmentCommand(this, oldSeg, newSeg));
+      _executeMergeEdit(edited: newSeg, originalDisplay: oldSeg);
     }
 
     _cancelTrimInternal();

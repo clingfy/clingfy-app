@@ -132,38 +132,6 @@ class TimelineHeaderBar extends StatelessWidget {
               ),
             ),
           ),
-          SizedBox(width: controlGap),
-          AppMenuButton<_TimelineLaneAction>(
-            key: const Key('timeline_lane_visibility_menu'),
-            tooltip: l10n.lanes,
-            icon: Icons.view_stream_rounded,
-            items: [
-              AppMenuItem(
-                value: _TimelineLaneAction.zoom,
-                label: l10n.zoom,
-                icon: showZoomLane
-                    ? Icons.visibility_rounded
-                    : Icons.visibility_off_outlined,
-              ),
-              AppMenuItem(
-                value: _TimelineLaneAction.markers,
-                label: l10n.markers,
-                icon: showMarkersLane
-                    ? Icons.visibility_rounded
-                    : Icons.visibility_off_outlined,
-              ),
-            ],
-            onSelected: (action) {
-              switch (action) {
-                case _TimelineLaneAction.zoom:
-                  onToggleZoomLaneVisibility();
-                  break;
-                case _TimelineLaneAction.markers:
-                  onToggleMarkersLaneVisibility();
-                  break;
-              }
-            },
-          ),
         ],
       ),
     );
@@ -171,8 +139,6 @@ class TimelineHeaderBar extends StatelessWidget {
 }
 
 enum _TimelineOverflowAction { selectAfterPlayhead }
-
-enum _TimelineLaneAction { zoom, markers }
 
 class _TimelineToolbarButton extends StatelessWidget {
   const _TimelineToolbarButton({
