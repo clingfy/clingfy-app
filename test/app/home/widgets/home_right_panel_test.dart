@@ -490,9 +490,11 @@ void main() {
     final playPauseButton = find.byType(AnimatedIcon);
     expect(playPauseButton, findsOneWidget);
 
-    await tester.tap(playPauseButton);
+    // The AnimatedIcon visual sits inside an IgnorePointer; taps fall through
+    // to the GestureDetector behind it, so warnIfMissed would false-positive.
+    await tester.tap(playPauseButton, warnIfMissed: false);
     await tester.pump();
-    await tester.tap(playPauseButton);
+    await tester.tap(playPauseButton, warnIfMissed: false);
     await tester.pump();
 
     final previewPlay = harness.calls.where(

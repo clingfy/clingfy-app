@@ -27,9 +27,10 @@ class ZoomTimelineLane extends StatelessWidget {
   Widget build(BuildContext context) {
     final tokens = context.appTokens;
     final metrics = context.shellMetricsOrNull;
-    final laneHeight =
+    final baseLaneHeight =
         metrics?.timelineLaneHeight ??
         context.appEditorChrome.timelineLaneHeight;
+    final laneHeight = zoomLaneHeightFor(baseLaneHeight);
 
     return SizedBox(
       key: const Key('zoom_timeline_lane'),
@@ -49,3 +50,13 @@ class ZoomTimelineLane extends StatelessWidget {
     );
   }
 }
+
+/// Extra vertical room added to the zoom lane on top of the shared
+/// timelineLaneHeight token, so the segment thumb has more drag headroom.
+const double kZoomLaneHeightBoost = 14;
+
+/// Derives the zoom lane height from the shared timeline lane height,
+/// keeping a single source of truth for any caller that needs to size or
+/// reserve space for the zoom lane (e.g. viewport sizing math).
+double zoomLaneHeightFor(double baseLaneHeight) =>
+    baseLaneHeight + kZoomLaneHeightBoost;

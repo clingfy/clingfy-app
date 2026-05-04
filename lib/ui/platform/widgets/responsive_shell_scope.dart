@@ -552,7 +552,7 @@ class ShellResponsiveMetrics {
       timelineChromePaddingY: _atLeast(8 * scale, 5),
       timelineControlGap: _atLeast(6 * scale, 4),
       timelineSectionGap: _atLeast(12 * scale, 8),
-      timelineRulerHeight: _atLeast(28 * scale, 24),
+      timelineRulerHeight: _atLeast(56 * scale, 48),
       timelineLaneHeight: _atLeast(42 * scale, 34),
       timelineLaneGap: _atLeast(6 * scale, 3),
       timelineTrackHeaderWidth: _atLeast(92 * scale, 56),

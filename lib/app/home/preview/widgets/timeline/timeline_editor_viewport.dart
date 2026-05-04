@@ -122,7 +122,8 @@ class _TimelineEditorViewportState extends State<TimelineEditorViewport> {
     final viewportHeight =
         rulerHeight +
         (visibleLaneCount * laneHeight) +
-        (visibleLaneCount > 0 ? (visibleLaneCount - 1) * laneGap : 0);
+        (visibleLaneCount > 0 ? (visibleLaneCount - 1) * laneGap : 0) +
+        (widget.showZoomLane ? kZoomLaneHeightBoost : 0);
 
     return Container(
       key: const Key('timeline_editor_viewport'),
@@ -267,6 +268,9 @@ class TimelineTrackHeaderColumn extends StatelessWidget {
               icon: Icons.zoom_in_rounded,
               label: l10n.zoom,
               hideLabel: headerWidth <= 64,
+              heightOverride: zoomLaneHeightFor(
+                metrics?.timelineLaneHeight ?? chrome.timelineLaneHeight,
+              ),
             ),
             if (showMarkersLane) SizedBox(height: laneGap),
           ],
@@ -331,7 +335,8 @@ class TimelineScrollableCanvas extends StatelessWidget {
     final totalHeight =
         rulerHeight +
         (laneCount * laneHeight) +
-        (laneCount > 0 ? (laneCount - 1) * laneGap : 0);
+        (laneCount > 0 ? (laneCount - 1) * laneGap : 0) +
+        (showZoomLane ? kZoomLaneHeightBoost : 0);
 
     return SizedBox(
       width: width,
@@ -669,11 +674,13 @@ class _TimelineLaneHeaderCell extends StatelessWidget {
     required this.icon,
     required this.label,
     this.hideLabel = false,
+    this.heightOverride,
   });
 
   final IconData icon;
   final String label;
   final bool hideLabel;
+  final double? heightOverride;
 
   @override
   Widget build(BuildContext context) {
@@ -683,7 +690,10 @@ class _TimelineLaneHeaderCell extends StatelessWidget {
     final typography = theme.appTypography;
     final tokens = theme.appTokens;
     final metrics = context.shellMetricsOrNull;
-    final height = metrics?.timelineLaneHeight ?? chrome.timelineLaneHeight;
+    final height =
+        heightOverride ??
+        metrics?.timelineLaneHeight ??
+        chrome.timelineLaneHeight;
     final padX = metrics?.timelineTrackHeaderPaddingX ?? spacing.sm;
     final iconSize = metrics?.timelineLaneHeaderIconSize ?? 16;
     final iconTextGap = metrics?.timelineLaneHeaderIconTextGap ?? spacing.xs;
