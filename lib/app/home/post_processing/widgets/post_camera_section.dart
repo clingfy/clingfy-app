@@ -95,15 +95,20 @@ class PostCameraSection extends StatelessWidget {
   ) {
     final l10n = AppLocalizations.of(context)!;
 
+    final cameraToggle = AppToggleRow(
+      title: l10n.camera,
+      value: hasCameraAsset && camera.visible,
+      onChanged: hasCameraAsset ? onVisibleChanged : null,
+    );
+
     return AppSettingsGroup(
       title: l10n.visibility,
       showHeader: false,
       children: [
-        AppToggleRow(
-          title: l10n.camera,
-          value: hasCameraAsset && camera.visible,
-          onChanged: hasCameraAsset ? onVisibleChanged : null,
-        ),
+        if (hasCameraAsset)
+          cameraToggle
+        else
+          Opacity(opacity: 0.45, child: cameraToggle),
         if (!hasCameraAsset) ...[
           const SizedBox(height: AppSidebarTokens.compactGap),
           AppInlineNotice(
