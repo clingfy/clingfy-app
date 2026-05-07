@@ -142,11 +142,11 @@ void main() {
     await tester.pumpAndSettle();
 
     expect(find.text(_l10n(tester).zoomBehavior), findsNothing);
+    // Closing the pill also releases the selected zoom segment.
+    expect(editor.hasSelection, isFalse);
 
-    // Re-selecting the same segment after a clear should bring the
-    // pill back — dismissal is per-selection, not sticky.
-    editor.clearSelection();
-    await tester.pumpAndSettle();
+    // Re-selecting the same segment after a clear brings the pill back
+    // — dismissal is per-selection, not sticky.
     editor.selectOnly(segments.first);
     await tester.pumpAndSettle();
 

@@ -217,6 +217,7 @@ class _ZoomSegmentBehaviorFloatingToolbarState
                   setState(() {
                     _dismissedForSegmentId = segment.id;
                   });
+                  editor.clearSelection();
                 },
                 child: Padding(
                   padding: const EdgeInsets.all(4),
