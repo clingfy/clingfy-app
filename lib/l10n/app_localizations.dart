@@ -1264,6 +1264,12 @@ abstract class AppLocalizations {
   /// **'Export Settings'**
   String get exportSettings;
 
+  /// No description provided for @audioSettings.
+  ///
+  /// In en, this message translates to:
+  /// **'Audio Settings'**
+  String get audioSettings;
+
   /// No description provided for @canvas.
   ///
   /// In en, this message translates to:

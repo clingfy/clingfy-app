@@ -58,8 +58,8 @@ class PostProcessingSidebarRail extends StatelessWidget {
         ),
         SizedBox(height: sectionGap),
         _PostProcessingRailItem(
-          icon: Icons.ios_share,
-          label: l10n.export,
+          icon: Icons.graphic_eq,
+          label: l10n.audio,
           index: 3,
           isSelected: selectedIndex == 3,
           onTap: onSelectedIndexChanged,
@@ -320,7 +320,7 @@ class PostProcessingSidebar extends StatelessWidget {
       case 2:
         return l10n.effectsSettings;
       case 3:
-        return l10n.exportSettings;
+        return l10n.audioSettings;
       default:
         return '';
     }
@@ -423,6 +423,7 @@ class PostProcessingSidebar extends StatelessWidget {
       ),
       PostExportSettingsSection(
         isProcessing: isProcessing,
+        hasAudio: hasAudio,
         autoNormalizeOnExport: autoNormalizeOnExport,
         autoNormalizeTargetDbfs: autoNormalizeTargetDbfs,
         onAutoNormalizeOnExportChanged: onAutoNormalizeOnExportChanged,

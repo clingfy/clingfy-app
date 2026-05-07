@@ -168,7 +168,8 @@ void main() {
 
       await tester.pumpWidget(buildTestApp(selectedIndex: 3));
       await tester.pumpAndSettle();
-      expect(find.text('Export Settings'), findsOneWidget);
+      expect(find.text('Audio Settings'), findsOneWidget);
+      expect(find.text('Export Settings'), findsNothing);
     },
   );
 
@@ -218,7 +219,7 @@ void main() {
     expect(find.text('Canvas'), findsNothing);
     expect(find.text('Camera'), findsNothing);
     expect(find.text('Effects'), findsNothing);
-    expect(find.text('Export'), findsNothing);
+    expect(find.text('Audio'), findsNothing);
 
     await tester.tap(find.byKey(const ValueKey('post_sidebar_rail_tile_2')));
     await tester.pumpAndSettle();
@@ -826,6 +827,40 @@ void main() {
       expect(find.text('1.0x'), findsWidgets);
       expect(enabledChanges, isEmpty);
       expect(factorChanges, isEmpty);
+    },
+  );
+
+  testWidgets(
+    'audio tab grays out loudness controls when no mic audio is available',
+    (tester) async {
+      await tester.pumpWidget(
+        buildTestApp(
+          selectedIndex: 3,
+          hasAudio: false,
+          autoNormalizeOnExport: true,
+        ),
+      );
+      await tester.pumpAndSettle();
+
+      final loudnessTitle = find.text('Loudness');
+      expect(loudnessTitle, findsOneWidget);
+
+      final dimmed = find.ancestor(
+        of: loudnessTitle,
+        matching: find.byWidgetPredicate(
+          (widget) =>
+              widget is Opacity && (widget.opacity - 0.45).abs() < 0.0001,
+        ),
+      );
+      expect(dimmed, findsOneWidget);
+
+      final blocked = find.ancestor(
+        of: loudnessTitle,
+        matching: find.byWidgetPredicate(
+          (widget) => widget is IgnorePointer && widget.ignoring,
+        ),
+      );
+      expect(blocked, findsAtLeastNWidgets(1));
     },
   );
 

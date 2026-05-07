@@ -89,7 +89,7 @@ class HomeOptionsPanel extends StatelessWidget {
         0 => l10n.canvasSettings,
         1 => l10n.cameraSettings,
         2 => l10n.effectsSettings,
-        _ => l10n.exportSettings,
+        _ => l10n.audioSettings,
       };
     }
 

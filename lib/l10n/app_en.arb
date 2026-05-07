@@ -220,6 +220,7 @@
   "layoutSettings": "Layout Settings",
   "effectsSettings": "Effects Settings",
   "exportSettings": "Export Settings",
+  "audioSettings": "Audio Settings",
   "canvas": "Canvas",
   "canvasSettings": "Canvas Settings",
   "cameraSettings": "Camera Settings",

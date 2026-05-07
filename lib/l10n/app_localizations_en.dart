@@ -636,6 +636,9 @@ class AppLocalizationsEn extends AppLocalizations {
   String get exportSettings => 'Export Settings';
 
   @override
+  String get audioSettings => 'Audio Settings';
+
+  @override
   String get canvas => 'Canvas';
 
   @override

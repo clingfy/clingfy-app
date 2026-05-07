@@ -643,6 +643,9 @@ class AppLocalizationsRo extends AppLocalizations {
   String get exportSettings => 'Setări export';
 
   @override
+  String get audioSettings => 'Setări audio';
+
+  @override
   String get canvas => 'Canvas';
 
   @override

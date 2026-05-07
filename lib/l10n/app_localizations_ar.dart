@@ -630,6 +630,9 @@ class AppLocalizationsAr extends AppLocalizations {
   String get exportSettings => 'إعدادات التصدير';
 
   @override
+  String get audioSettings => 'إعدادات الصوت';
+
+  @override
   String get canvas => 'اللوحة';
 
   @override
