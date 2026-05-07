@@ -861,6 +861,9 @@ class AppLocalizationsAr extends AppLocalizations {
   String get zoomBehavior => 'سلوك التكبير';
 
   @override
+  String get zoomBehaviorTooltip => 'اختر كيف يتبع مقطع التكبير هذا التسجيل.';
+
+  @override
   String get zoomFollowCursor => 'اتباع المؤشر';
 
   @override

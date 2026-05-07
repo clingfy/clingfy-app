@@ -297,6 +297,7 @@
   "lanes": "Lanes",
   "snap": "Snap",
   "zoomBehavior": "Zoom behavior",
+  "zoomBehaviorTooltip": "Choose how this zoom segment follows the recording.",
   "zoomFollowCursor": "Follow cursor",
   "zoomFixedTarget": "Fixed target",
   "zoomCursorStaticHint": "Cursor does not move in this range. Fixed target gives a visible zoom.",

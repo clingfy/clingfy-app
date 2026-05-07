@@ -359,6 +359,7 @@
   "lanes": "Benzi",
   "snap": "Fixare",
   "zoomBehavior": "Comportament zoom",
+  "zoomBehaviorTooltip": "Alege cum urmărește acest segment de zoom înregistrarea.",
   "zoomFollowCursor": "Urmărește cursorul",
   "zoomFixedTarget": "Țintă fixă",
   "zoomCursorStaticHint": "Cursorul nu se mișcă în acest interval. Ținta fixă oferă un zoom vizibil.",

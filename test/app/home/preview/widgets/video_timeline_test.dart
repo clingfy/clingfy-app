@@ -254,18 +254,71 @@ void main() {
       const Size(8, 6),
     );
   });
+
+  testWidgets(
+    'timeline shell height is stable when a zoom segment is selected',
+    (tester) async {
+      final editor = await _createEditor(
+        tester,
+        fixedTargetPreview: true,
+        manualSegments: const [
+          {
+            'id': 'manual_seg_a',
+            'startMs': 1000,
+            'endMs': 4000,
+            'source': 'manual',
+            'focusMode': 'followCursor',
+          },
+        ],
+      );
+      final player = _FakePlayerController(editor: editor);
+      addTearDown(player.dispose);
+
+      await tester.pumpWidget(_buildTimeline(player: player));
+      await tester.pumpAndSettle();
+
+      final shellFinder = find.byKey(const Key('timeline_shell'));
+      final heightDeselected = tester.getSize(shellFinder).height;
+
+      editor.selectOnly(editor.displaySegments.single);
+      await tester.pumpAndSettle();
+
+      expect(
+        find.byKey(const Key('zoom_behavior_floating_toolbar')),
+        findsOneWidget,
+      );
+      expect(tester.getSize(shellFinder).height, heightDeselected);
+
+      editor.clearSelection();
+      await tester.pumpAndSettle();
+
+      expect(tester.getSize(shellFinder).height, heightDeselected);
+    },
+  );
 }
 
 Future<ZoomEditorController> _createEditor(
   WidgetTester tester, {
   List<Map<String, Object?>> autoSegments = const [],
   List<Map<String, Object?>> manualSegments = const [],
+  bool fixedTargetPreview = false,
 }) async {
   final messenger =
       TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger;
 
   messenger.setMockMethodCallHandler(screenRecorderChannel, (call) async {
     switch (call.method) {
+      case 'previewGetZoomCapabilities':
+        if (!fixedTargetPreview) return null;
+        return <String, dynamic>{
+          'cursorSamples': true,
+          'fixedTargetPreview': true,
+          'fixedTargetExport': true,
+        };
+      case 'previewGetSourceDimensions':
+        return <String, dynamic>{'width': 1920.0, 'height': 1080.0};
+      case 'previewGetCursorSamples':
+        return null;
       case 'getZoomSegments':
         return autoSegments;
       case 'getManualZoomSegments':

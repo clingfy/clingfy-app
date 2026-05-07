@@ -876,6 +876,10 @@ class AppLocalizationsRo extends AppLocalizations {
   String get zoomBehavior => 'Comportament zoom';
 
   @override
+  String get zoomBehaviorTooltip =>
+      'Alege cum urmărește acest segment de zoom înregistrarea.';
+
+  @override
   String get zoomFollowCursor => 'Urmărește cursorul';
 
   @override

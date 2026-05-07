@@ -1,6 +1,6 @@
 import 'dart:async';
 
-import 'package:clingfy/app/home/post_processing/widgets/zoom_segment_behavior_inspector.dart';
+import 'package:clingfy/app/home/post_processing/widgets/zoom_segment_behavior_floating_toolbar.dart';
 import 'package:clingfy/app/home/preview/widgets/timeline/timeline_editor_viewport.dart';
 import 'package:clingfy/app/home/preview/widgets/timeline/timeline_header_bar.dart';
 import 'package:clingfy/app/home/preview/widgets/timeline/timeline_transport_bar.dart';
@@ -253,77 +253,89 @@ class _VideoTimelineState extends State<VideoTimeline> {
         final activeEditor = canEditZoom ? editor : null;
         final modeText = _buildModeText(l10n, editor);
 
-        return Column(
-          crossAxisAlignment: CrossAxisAlignment.stretch,
-          mainAxisSize: MainAxisSize.min,
+        return Stack(
+          clipBehavior: Clip.none,
           children: [
-            TimelineHeaderBar(
-              snappingEnabled: editor?.snappingEnabled ?? false,
-              canEditZoom: canEditZoom,
-              canDelete: activeEditor?.hasSelection ?? false,
-              canUndo: activeEditor?.canUndo ?? false,
-              showZoomLane: _showZoomLane,
-              showMarkersLane: _showMarkersLane,
-              onToggleSnap: canEditZoom ? () => _toggleSnap(editor) : null,
-              onSelectAllVisible: canEditZoom
-                  ? () => _handleSelectAllVisible(editor)
-                  : null,
-              onSelectAfterPlayhead: canEditZoom
-                  ? () => _handleSelectAfterPlayhead(editor)
-                  : null,
-              onDeleteSelected: canEditZoom
-                  ? () => _handleDeleteSelected(editor)
-                  : null,
-              onUndo: activeEditor?.undo,
-              onToggleZoomLaneVisibility: _toggleZoomLaneVisibility,
-              onToggleMarkersLaneVisibility: _toggleMarkersLaneVisibility,
-            ),
-            SizedBox(height: shellGap),
-            TimelineTransportBar(
-              isReady: ready,
-              isPlaying: isPlaying,
-              currentTimeLabel: ready ? _fmt(widget.positionMs) : '--:--',
-              totalTimeLabel: ready ? _fmt(widget.durationMs) : '--:--',
-              modeText: modeText,
-              zoomLevel: _viewportController.zoomLevel,
-              minZoom: _viewportController.minZoom,
-              maxZoom: _viewportController.maxZoom,
-              onZoomLevelChanged: (value) =>
-                  _viewportController.setZoomLevel(value),
-              onZoomIn: _viewportController.zoomIn,
-              onZoomOut: _viewportController.zoomOut,
-              onFit: () => _viewportController.fitToDuration(
-                centerMs: widget.positionMs,
-              ),
-              onPlayPause: ready
-                  ? () => unawaited(
-                      _togglePlayback(context.read<PlayerController>()),
-                    )
-                  : null,
-            ),
-            SizedBox(height: shellGap),
-            TimelineEditorViewport(
-              durationMs: totalMs,
-              positionMs: widget.positionMs,
-              viewportController: _viewportController,
-              segments: playerSegments,
-              editorController: editor,
-              showZoomLane: _showZoomLane,
-              showMarkersLane: _showMarkersLane,
-              panModeEnabled: _panModeEnabled,
-              onSeek: widget.onSeek,
-              onHoverSeek: widget.onHoverSeek,
-              onHoverEnd: widget.onHoverEnd,
-              onHoverChanged: (value) =>
-                  setState(() => _hoverPositionMs = value),
-              hoverPositionMs: _hoverPositionMs,
-              onFocusRequested: _requestTimelineFocus,
+            Column(
+              crossAxisAlignment: CrossAxisAlignment.stretch,
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                TimelineHeaderBar(
+                  snappingEnabled: editor?.snappingEnabled ?? false,
+                  canEditZoom: canEditZoom,
+                  canDelete: activeEditor?.hasSelection ?? false,
+                  canUndo: activeEditor?.canUndo ?? false,
+                  showZoomLane: _showZoomLane,
+                  showMarkersLane: _showMarkersLane,
+                  onToggleSnap: canEditZoom ? () => _toggleSnap(editor) : null,
+                  onSelectAllVisible: canEditZoom
+                      ? () => _handleSelectAllVisible(editor)
+                      : null,
+                  onSelectAfterPlayhead: canEditZoom
+                      ? () => _handleSelectAfterPlayhead(editor)
+                      : null,
+                  onDeleteSelected: canEditZoom
+                      ? () => _handleDeleteSelected(editor)
+                      : null,
+                  onUndo: activeEditor?.undo,
+                  onToggleZoomLaneVisibility: _toggleZoomLaneVisibility,
+                  onToggleMarkersLaneVisibility: _toggleMarkersLaneVisibility,
+                ),
+                SizedBox(height: shellGap),
+                TimelineTransportBar(
+                  isReady: ready,
+                  isPlaying: isPlaying,
+                  currentTimeLabel: ready ? _fmt(widget.positionMs) : '--:--',
+                  totalTimeLabel: ready ? _fmt(widget.durationMs) : '--:--',
+                  modeText: modeText,
+                  zoomLevel: _viewportController.zoomLevel,
+                  minZoom: _viewportController.minZoom,
+                  maxZoom: _viewportController.maxZoom,
+                  onZoomLevelChanged: (value) =>
+                      _viewportController.setZoomLevel(value),
+                  onZoomIn: _viewportController.zoomIn,
+                  onZoomOut: _viewportController.zoomOut,
+                  onFit: () => _viewportController.fitToDuration(
+                    centerMs: widget.positionMs,
+                  ),
+                  onPlayPause: ready
+                      ? () => unawaited(
+                          _togglePlayback(context.read<PlayerController>()),
+                        )
+                      : null,
+                ),
+                SizedBox(height: shellGap),
+                TimelineEditorViewport(
+                  durationMs: totalMs,
+                  positionMs: widget.positionMs,
+                  viewportController: _viewportController,
+                  segments: playerSegments,
+                  editorController: editor,
+                  showZoomLane: _showZoomLane,
+                  showMarkersLane: _showMarkersLane,
+                  panModeEnabled: _panModeEnabled,
+                  onSeek: widget.onSeek,
+                  onHoverSeek: widget.onHoverSeek,
+                  onHoverEnd: widget.onHoverEnd,
+                  onHoverChanged: (value) =>
+                      setState(() => _hoverPositionMs = value),
+                  hoverPositionMs: _hoverPositionMs,
+                  onFocusRequested: _requestTimelineFocus,
+                ),
+              ],
             ),
             if (canEditZoom)
-              ZoomSegmentBehaviorInspector(
-                editor: editor,
-                nativeBridge: NativeBridge.instance,
-                sessionId: editor.sessionId,
+              Positioned(
+                top: 0,
+                right: 8,
+                child: ZoomSegmentBehaviorFloatingToolbar(
+                  key: const Key('zoom_behavior_floating_toolbar'),
+                  editor: editor,
+                  nativeBridge: NativeBridge.instance,
+                  sessionId: editor.sessionId,
+                  viewportController: _viewportController,
+                  durationMs: totalMs,
+                ),
               ),
           ],
         );
