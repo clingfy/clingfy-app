@@ -43,11 +43,17 @@ class _ZoomSegmentBehaviorFloatingToolbarState
     extends State<ZoomSegmentBehaviorFloatingToolbar> {
   final Map<String, bool> _staticHintBySegmentId = <String, bool>{};
   String? _inFlightSegmentId;
+  // Segment id the user dismissed the pill for. Cleared whenever the
+  // primary selection changes — re-selecting (or selecting another
+  // segment) brings the pill back without a separate "show" toggle.
+  String? _dismissedForSegmentId;
+  String? _lastPrimarySelectionId;
 
   @override
   void initState() {
     super.initState();
     widget.editor?.addListener(_onEditorChanged);
+    _lastPrimarySelectionId = widget.editor?.primarySelectedSegmentId;
     _maybeQueryHintForSelection();
   }
 
@@ -59,6 +65,8 @@ class _ZoomSegmentBehaviorFloatingToolbarState
       widget.editor?.addListener(_onEditorChanged);
       _staticHintBySegmentId.clear();
       _inFlightSegmentId = null;
+      _dismissedForSegmentId = null;
+      _lastPrimarySelectionId = widget.editor?.primarySelectedSegmentId;
       _maybeQueryHintForSelection();
     }
   }
@@ -70,7 +78,13 @@ class _ZoomSegmentBehaviorFloatingToolbarState
   }
 
   void _onEditorChanged() {
+    final currentPrimary = widget.editor?.primarySelectedSegmentId;
+    if (currentPrimary != _lastPrimarySelectionId) {
+      _lastPrimarySelectionId = currentPrimary;
+      _dismissedForSegmentId = null;
+    }
     _maybeQueryHintForSelection();
+    if (mounted) setState(() {});
   }
 
   void _maybeQueryHintForSelection() {
@@ -133,6 +147,7 @@ class _ZoomSegmentBehaviorFloatingToolbarState
     if (!editor.canSingleEdit) return const SizedBox.shrink();
     final segment = editor.primarySelectedSegment;
     if (segment == null) return const SizedBox.shrink();
+    if (_dismissedForSegmentId == segment.id) return const SizedBox.shrink();
 
     final l10n = AppLocalizations.of(context)!;
     final theme = Theme.of(context);
@@ -192,6 +207,27 @@ class _ZoomSegmentBehaviorFloatingToolbarState
                 ),
               ),
             ],
+            const SizedBox(width: 6),
+            Tooltip(
+              message: l10n.zoomBehaviorDismissTooltip,
+              child: InkWell(
+                key: const Key('zoom_behavior_floating_toolbar_close'),
+                customBorder: const CircleBorder(),
+                onTap: () {
+                  setState(() {
+                    _dismissedForSegmentId = segment.id;
+                  });
+                },
+                child: Padding(
+                  padding: const EdgeInsets.all(4),
+                  child: Icon(
+                    Icons.close,
+                    size: 14,
+                    color: theme.colorScheme.onSurface,
+                  ),
+                ),
+              ),
+            ),
           ],
         ),
       ),

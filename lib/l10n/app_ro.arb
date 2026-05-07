@@ -360,6 +360,7 @@
   "snap": "Fixare",
   "zoomBehavior": "Comportament zoom",
   "zoomBehaviorTooltip": "Alege cum urmărește acest segment de zoom înregistrarea.",
+  "zoomBehaviorDismissTooltip": "Ascunde controalele pentru comportamentul zoom",
   "zoomFollowCursor": "Urmărește cursorul",
   "zoomFixedTarget": "Țintă fixă",
   "zoomCursorStaticHint": "Cursorul nu se mișcă în acest interval. Ținta fixă oferă un zoom vizibil.",

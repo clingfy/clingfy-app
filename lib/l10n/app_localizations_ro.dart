@@ -880,6 +880,10 @@ class AppLocalizationsRo extends AppLocalizations {
       'Alege cum urmărește acest segment de zoom înregistrarea.';
 
   @override
+  String get zoomBehaviorDismissTooltip =>
+      'Ascunde controalele pentru comportamentul zoom';
+
+  @override
   String get zoomFollowCursor => 'Urmărește cursorul';
 
   @override

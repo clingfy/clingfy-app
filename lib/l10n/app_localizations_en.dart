@@ -873,6 +873,9 @@ class AppLocalizationsEn extends AppLocalizations {
       'Choose how this zoom segment follows the recording.';
 
   @override
+  String get zoomBehaviorDismissTooltip => 'Hide zoom behavior controls';
+
+  @override
   String get zoomFollowCursor => 'Follow cursor';
 
   @override

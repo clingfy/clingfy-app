@@ -1726,6 +1726,12 @@ abstract class AppLocalizations {
   /// **'Choose how this zoom segment follows the recording.'**
   String get zoomBehaviorTooltip;
 
+  /// No description provided for @zoomBehaviorDismissTooltip.
+  ///
+  /// In en, this message translates to:
+  /// **'Hide zoom behavior controls'**
+  String get zoomBehaviorDismissTooltip;
+
   /// No description provided for @zoomFollowCursor.
   ///
   /// In en, this message translates to:

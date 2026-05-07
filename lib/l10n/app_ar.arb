@@ -360,6 +360,7 @@
   "snap": "المحاذاة",
   "zoomBehavior": "سلوك التكبير",
   "zoomBehaviorTooltip": "اختر كيف يتبع مقطع التكبير هذا التسجيل.",
+  "zoomBehaviorDismissTooltip": "إخفاء عناصر التحكم في سلوك التكبير",
   "zoomFollowCursor": "اتباع المؤشر",
   "zoomFixedTarget": "هدف ثابت",
   "zoomCursorStaticHint": "المؤشر لا يتحرّك في هذا النطاق. الهدف الثابت يوفّر تكبيرًا واضحًا.",

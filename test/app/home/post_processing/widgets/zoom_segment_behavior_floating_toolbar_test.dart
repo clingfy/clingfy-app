@@ -119,6 +119,52 @@ void main() {
     expect(editor.primarySelectedSegment!.focusMode, ZoomFocusMode.fixedTarget);
   });
 
+  testWidgets('close button hides the pill until selection changes', (
+    tester,
+  ) async {
+    final editor = await _createEditor(
+      tester,
+      fixedTargetPreview: true,
+      manualSegments: const [_segmentMap, _secondSegmentMap],
+    );
+    addTearDown(editor.dispose);
+    final segments = editor.displaySegments;
+    editor.selectOnly(segments.first);
+
+    await tester.pumpWidget(_host(editor: editor));
+    await tester.pumpAndSettle();
+
+    expect(find.text(_l10n(tester).zoomBehavior), findsOneWidget);
+
+    await tester.tap(
+      find.byKey(const Key('zoom_behavior_floating_toolbar_close')),
+    );
+    await tester.pumpAndSettle();
+
+    expect(find.text(_l10n(tester).zoomBehavior), findsNothing);
+
+    // Re-selecting the same segment after a clear should bring the
+    // pill back — dismissal is per-selection, not sticky.
+    editor.clearSelection();
+    await tester.pumpAndSettle();
+    editor.selectOnly(segments.first);
+    await tester.pumpAndSettle();
+
+    expect(find.text(_l10n(tester).zoomBehavior), findsOneWidget);
+
+    // Dismiss again, then select a different segment — pill should
+    // also reappear because primary selection changed.
+    await tester.tap(
+      find.byKey(const Key('zoom_behavior_floating_toolbar_close')),
+    );
+    await tester.pumpAndSettle();
+    expect(find.text(_l10n(tester).zoomBehavior), findsNothing);
+
+    editor.selectOnly(segments.last);
+    await tester.pumpAndSettle();
+    expect(find.text(_l10n(tester).zoomBehavior), findsOneWidget);
+  });
+
   testWidgets(
     'static cursor hint surfaces for low-motion followCursor segments',
     (tester) async {
