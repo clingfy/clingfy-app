@@ -1,3 +1,16 @@
+## [1.0.3] - 2026-05-10
+
+## Highlights
+* Added advanced zoom editing with **follow cursor** and **fixed target** modes.
+* Added a draggable fixed-target zoom overlay for precise zoom positioning.
+* Replaced the bottom zoom inspector with a floating pill toolbar so selecting a zoom segment no longer shrinks or resizes the timeline.
+* Made zoom creation simpler by allowing users to create zoom segments directly from the timeline.
+* Added a clear **New Recording** button with confirmation instead of relying on a small timeline close button.
+* Improved responsive behavior across the timeline, preview controls, and left sidebar.
+* Fixed Space key playback behavior while editing zoom segments.
+* Improved audio settings behavior when no audio is available.
+
+
 ## [1.0.2] - 2026-04-19
 
 Clingfy 1.0.2 focuses on reliability, editing flexibility, and polish. This release adds pause/resume recording, introduces a more powerful separate camera source workflow for editing and export, improves storage visibility and cleanup controls, and refreshes key parts of the UI. It also fixes several recording and export issues, including start failures, preview flicker, camera placement drift, export brightness/washout problems, and temp-disk related export failures.

@@ -14,14 +14,14 @@ This checklist should be completed **for every release candidate**.
 
 Fill this section before starting verification.
 
-- Version: `TBD`
-- Channel: `dev / prod`
-- Date: `YYYY-MM-DD`
-- Verified by: `Name`
+- Version: `1.0.3`
+- Channel: `prod`
+- Date: `2026-05-10`
+- Verified by: `Nabil`
 - Commit: `TBD`
-- Tag: `vT.B.D`
-- Build: `Azure #255` or `GitHub Actions #4`
-- Status: `In progress`
+- Tag: `v1.0.3`
+- Build: `GitHub Actions #4`
+- Status: `Approved`
 
 Possible status values:
 
@@ -46,11 +46,11 @@ flutter build macos --flavor prod
 
 Checklist:
 
-* [ ] `dart format --output=none --set-exit-if-changed .`
-* [ ] `flutter analyze test`
-* [ ] `flutter analyze lib`
-* [ ] `flutter build macos --flavor dev`
-* [ ] `flutter build macos --flavor prod`
+* [x] `dart format --output=none --set-exit-if-changed .`
+* [x] `flutter analyze test`
+* [x] `flutter analyze lib`
+* [x] `flutter build macos --flavor dev`
+* [x] `flutter build macos --flavor prod`
 
 Notes:
 
@@ -62,14 +62,14 @@ Notes:
 
 Verify the full recording workflow.
 
-* [ ] full display recording
-* [ ] single window recording
-* [ ] custom area recording
-* [ ] countdown start
-* [ ] countdown cancel
-* [ ] stop flow
-* [ ] menu bar control
-* [ ] recording indicator overlay
+* [x] full display recording
+* [x] single window recording
+* [x] custom area recording
+* [x] countdown start
+* [x] countdown cancel
+* [x] stop flow
+* [x] menu bar control
+* [x] recording indicator overlay
 
 Notes:
 
@@ -81,10 +81,10 @@ Notes:
 
 Verify permission prompts and recovery flows.
 
-* [ ] screen recording permission request
-* [ ] screen recording recovery flow
-* [ ] camera permission flow
-* [ ] accessibility prompt
+* [x] screen recording permission request
+* [x] screen recording recovery flow
+* [x] camera permission flow
+* [x] accessibility prompt
 
 Notes:
 
@@ -96,16 +96,16 @@ Notes:
 
 Verify overlay behavior and cursor/zoom features.
 
-* [ ] overlay show/hide
-* [ ] overlay manual move
-* [ ] overlay position persistence
-* [ ] overlay styling options
-* [ ] overlay linked-to-recording mode
-* [ ] cursor sidecar capture
-* [ ] cursor visibility toggle in export
-* [ ] cursor scaling and highlight
-* [ ] zoom factor
-* [ ] zoom follow strength
+* [x] overlay show/hide
+* [x] overlay manual move
+* [x] overlay position persistence
+* [x] overlay styling options
+* [x] overlay linked-to-recording mode
+* [x] cursor sidecar capture
+* [x] cursor visibility toggle in export
+* [x] cursor scaling and highlight
+* [x] zoom factor
+* [x] zoom follow strength
 
 Notes:
 
@@ -117,17 +117,17 @@ Notes:
 
 Verify preview playback and export pipeline.
 
-* [ ] inline preview playback
-* [ ] 16:9 preview/export
-* [ ] 1080p export
-* [ ] 1440p export
-* [ ] 2160p export
-* [ ] MP4 export
-* [ ] MOV export
+* [x] inline preview playback
+* [x] 16:9 preview/export
+* [x] 1080p export
+* [x] 1440p export
+* [x] 2160p export
+* [x] MP4 export
+* [x] MOV export
 * [ ] GIF export
-* [ ] background image export
-* [ ] background color export
-* [ ] save folder selection
+* [x] background image export
+* [x] background color export
+* [x] save folder selection
 
 Notes:
 
@@ -139,10 +139,10 @@ Notes:
 
 Verify licensing and paywall behavior.
 
-* [ ] free trial depletion
-* [ ] paywall display
-* [ ] license activation
-* [ ] expired updates messaging
+* [x] free trial depletion
+* [x] paywall display
+* [x] license activation
+* [x] expired updates messaging
 
 Notes:
 
