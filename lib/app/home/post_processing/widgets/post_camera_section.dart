@@ -9,6 +9,7 @@ import 'package:clingfy/ui/platform/widgets/app_slider.dart';
 import 'package:clingfy/ui/platform/widgets/app_slider_row.dart';
 import 'package:clingfy/ui/platform/widgets/app_toggle_row.dart';
 import 'package:clingfy/ui/platform/widgets/platform_dropdown.dart';
+import 'package:clingfy/ui/platform/widgets/responsive_shell_scope.dart';
 import 'package:flutter/material.dart' hide PlatformMenuItem;
 
 class PostCameraSection extends StatelessWidget {
@@ -94,15 +95,20 @@ class PostCameraSection extends StatelessWidget {
   ) {
     final l10n = AppLocalizations.of(context)!;
 
+    final cameraToggle = AppToggleRow(
+      title: l10n.camera,
+      value: hasCameraAsset && camera.visible,
+      onChanged: hasCameraAsset ? onVisibleChanged : null,
+    );
+
     return AppSettingsGroup(
       title: l10n.visibility,
       showHeader: false,
       children: [
-        AppToggleRow(
-          title: l10n.camera,
-          value: hasCameraAsset && camera.visible,
-          onChanged: hasCameraAsset ? onVisibleChanged : null,
-        ),
+        if (hasCameraAsset)
+          cameraToggle
+        else
+          Opacity(opacity: 0.45, child: cameraToggle),
         if (!hasCameraAsset) ...[
           const SizedBox(height: AppSidebarTokens.compactGap),
           AppInlineNotice(
@@ -595,11 +601,12 @@ class _CameraPositionPanelState extends State<_CameraPositionPanel> {
       alpha: 0.72,
     );
     final handlePosition = _dragNormalizedCenter ?? _resolvedHandlePosition;
+    final metrics = context.shellMetricsOrNull;
+    final controlMinWidth =
+        metrics?.sidebarControlMinWidth ?? AppSidebarTokens.controlMinWidth;
 
     return ConstrainedBox(
-      constraints: const BoxConstraints(
-        minWidth: AppSidebarTokens.controlMinWidth,
-      ),
+      constraints: BoxConstraints(minWidth: controlMinWidth),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.stretch,
         children: [

@@ -2,23 +2,19 @@ import 'package:clingfy/l10n/app_localizations.dart';
 import 'package:clingfy/ui/platform/widgets/app_button.dart';
 import 'package:clingfy/ui/platform/widgets/app_icon_button.dart';
 import 'package:clingfy/ui/platform/widgets/app_menu_button.dart';
+import 'package:clingfy/ui/platform/widgets/responsive_shell_scope.dart';
 import 'package:clingfy/ui/theme/app_theme.dart';
-import 'package:flutter/cupertino.dart';
 import 'package:flutter/material.dart';
 
 class TimelineHeaderBar extends StatelessWidget {
   const TimelineHeaderBar({
     super.key,
-    required this.addModeActive,
-    required this.stickyAddModeActive,
     required this.snappingEnabled,
     required this.canEditZoom,
     required this.canDelete,
     required this.canUndo,
     required this.showZoomLane,
     required this.showMarkersLane,
-    required this.onToggleAddZoom,
-    required this.onToggleKeepAdding,
     required this.onToggleSnap,
     required this.onSelectAllVisible,
     required this.onSelectAfterPlayhead,
@@ -26,19 +22,14 @@ class TimelineHeaderBar extends StatelessWidget {
     required this.onUndo,
     required this.onToggleZoomLaneVisibility,
     required this.onToggleMarkersLaneVisibility,
-    required this.onClose,
   });
 
-  final bool addModeActive;
-  final bool stickyAddModeActive;
   final bool snappingEnabled;
   final bool canEditZoom;
   final bool canDelete;
   final bool canUndo;
   final bool showZoomLane;
   final bool showMarkersLane;
-  final VoidCallback? onToggleAddZoom;
-  final VoidCallback? onToggleKeepAdding;
   final VoidCallback? onToggleSnap;
   final VoidCallback? onSelectAllVisible;
   final VoidCallback? onSelectAfterPlayhead;
@@ -46,7 +37,6 @@ class TimelineHeaderBar extends StatelessWidget {
   final VoidCallback? onUndo;
   final VoidCallback onToggleZoomLaneVisibility;
   final VoidCallback onToggleMarkersLaneVisibility;
-  final VoidCallback onClose;
 
   @override
   Widget build(BuildContext context) {
@@ -56,13 +46,17 @@ class TimelineHeaderBar extends StatelessWidget {
     final chrome = theme.appEditorChrome;
     final typography = theme.appTypography;
     final tokens = theme.appTokens;
+    final metrics = context.shellMetricsOrNull;
+    final padX = metrics?.timelineChromePaddingX ?? spacing.md;
+    final padY = metrics?.timelineChromePaddingY ?? spacing.sm;
+    final controlGap = metrics?.timelineControlGap ?? spacing.xs;
+    final sectionGap = metrics?.timelineSectionGap ?? spacing.md;
+    final minHeight = metrics?.timelineHeaderMinHeight ?? 40;
 
     return Container(
       key: const Key('timeline_header_bar'),
-      padding: EdgeInsets.symmetric(
-        horizontal: spacing.md,
-        vertical: spacing.sm,
-      ),
+      constraints: BoxConstraints(minHeight: minHeight),
+      padding: EdgeInsets.symmetric(horizontal: padX, vertical: padY),
       decoration: BoxDecoration(
         color: tokens.timelineChromeSurface,
         borderRadius: BorderRadius.circular(chrome.controlRadius),
@@ -81,21 +75,7 @@ class TimelineHeaderBar extends StatelessWidget {
                       color: theme.colorScheme.onSurface,
                     ),
                   ),
-                  SizedBox(width: spacing.md),
-                  _TimelineToolbarButton(
-                    label: l10n.zoomAddSegment,
-                    icon: Icons.add_rounded,
-                    isActive: addModeActive,
-                    onPressed: onToggleAddZoom,
-                  ),
-                  SizedBox(width: spacing.xs),
-                  _TimelineToolbarButton(
-                    label: l10n.zoomKeepAdding,
-                    icon: Icons.push_pin_rounded,
-                    isActive: stickyAddModeActive,
-                    onPressed: onToggleKeepAdding,
-                  ),
-                  SizedBox(width: spacing.xs),
+                  SizedBox(width: sectionGap),
                   _TimelineToolbarButton(
                     key: const Key('timeline_snap_chip'),
                     label: l10n.snap,
@@ -112,7 +92,7 @@ class TimelineHeaderBar extends StatelessWidget {
                     variant: AppButtonVariant.secondary,
                     onPressed: canEditZoom ? onSelectAllVisible : null,
                   ),
-                  SizedBox(width: spacing.xs),
+                  SizedBox(width: controlGap),
                   AppMenuButton<_TimelineOverflowAction>(
                     key: const Key('timeline_selection_overflow_menu'),
                     tooltip: l10n.zoomSelectionTools,
@@ -126,7 +106,7 @@ class TimelineHeaderBar extends StatelessWidget {
                     ],
                     onSelected: (_) => onSelectAfterPlayhead?.call(),
                   ),
-                  SizedBox(width: spacing.xs),
+                  SizedBox(width: controlGap),
                   AppIconButton(
                     key: const Key('timeline_delete_button'),
                     icon: Icons.delete_outline_rounded,
@@ -138,7 +118,7 @@ class TimelineHeaderBar extends StatelessWidget {
                         ? theme.colorScheme.error
                         : theme.colorScheme.onSurface.withValues(alpha: 0.35),
                   ),
-                  SizedBox(width: spacing.xs),
+                  SizedBox(width: controlGap),
                   AppIconButton(
                     key: const Key('timeline_undo_button'),
                     icon: Icons.undo_rounded,
@@ -152,47 +132,6 @@ class TimelineHeaderBar extends StatelessWidget {
               ),
             ),
           ),
-          SizedBox(width: spacing.xs),
-          AppMenuButton<_TimelineLaneAction>(
-            key: const Key('timeline_lane_visibility_menu'),
-            tooltip: l10n.lanes,
-            icon: Icons.view_stream_rounded,
-            items: [
-              AppMenuItem(
-                value: _TimelineLaneAction.zoom,
-                label: l10n.zoom,
-                icon: showZoomLane
-                    ? Icons.visibility_rounded
-                    : Icons.visibility_off_outlined,
-              ),
-              AppMenuItem(
-                value: _TimelineLaneAction.markers,
-                label: l10n.markers,
-                icon: showMarkersLane
-                    ? Icons.visibility_rounded
-                    : Icons.visibility_off_outlined,
-              ),
-            ],
-            onSelected: (action) {
-              switch (action) {
-                case _TimelineLaneAction.zoom:
-                  onToggleZoomLaneVisibility();
-                  break;
-                case _TimelineLaneAction.markers:
-                  onToggleMarkersLaneVisibility();
-                  break;
-              }
-            },
-          ),
-          SizedBox(width: spacing.xs),
-          AppIconButton(
-            key: const Key('timeline_close_button'),
-            tooltip: l10n.closeTimelineTooltip,
-            icon: CupertinoIcons.xmark,
-            onPressed: onClose,
-            color: theme.colorScheme.onSurface.withValues(alpha: 0.8),
-            size: 17,
-          ),
         ],
       ),
     );
@@ -200,8 +139,6 @@ class TimelineHeaderBar extends StatelessWidget {
 }
 
 enum _TimelineOverflowAction { selectAfterPlayhead }
-
-enum _TimelineLaneAction { zoom, markers }
 
 class _TimelineToolbarButton extends StatelessWidget {
   const _TimelineToolbarButton({
@@ -224,51 +161,72 @@ class _TimelineToolbarButton extends StatelessWidget {
     final typography = theme.appTypography;
     final chrome = theme.appEditorChrome;
     final accentColor = theme.colorScheme.primary;
+    final metrics = context.shellMetricsOrNull;
+    final chipMinHeight = metrics?.timelineToolbarChipMinHeight ?? 34;
+    final chipPadX = metrics?.timelineToolbarChipPaddingX ?? spacing.sm;
+    final chipPadY = metrics?.timelineToolbarChipPaddingY ?? spacing.xs;
+    final chipIconSize = metrics?.timelineToolbarChipIconSize ?? 16;
+    final chipTextScale = metrics?.timelineToolbarChipTextScale ?? 1.0;
+    final chipIconTextGap = metrics?.timelineControlGap ?? spacing.xs;
+    final chipTextStyle = typography.value.copyWith(
+      color: onPressed == null
+          ? theme.colorScheme.onSurface.withValues(alpha: 0.35)
+          : isActive
+          ? accentColor
+          : theme.colorScheme.onSurface.withValues(alpha: 0.88),
+      fontSize: (typography.value.fontSize ?? 12) * chipTextScale,
+    );
 
-    return DecoratedBox(
-      decoration: BoxDecoration(
-        color: isActive
-            ? accentColor.withValues(alpha: 0.12)
-            : Colors.transparent,
-        borderRadius: BorderRadius.circular(chrome.controlRadius),
-        border: Border.all(
-          color: isActive
-              ? accentColor.withValues(alpha: 0.28)
-              : theme.dividerColor.withValues(alpha: 0.12),
-        ),
-      ),
-      child: InkWell(
-        borderRadius: BorderRadius.circular(chrome.controlRadius),
+    return Semantics(
+      button: true,
+      label: label,
+      enabled: onPressed != null,
+      child: GestureDetector(
+        behavior: HitTestBehavior.opaque,
         onTap: onPressed,
-        child: Padding(
-          padding: EdgeInsets.symmetric(
-            horizontal: spacing.sm,
-            vertical: spacing.xs,
+        child: DecoratedBox(
+          decoration: BoxDecoration(
+            color: isActive
+                ? accentColor.withValues(alpha: 0.12)
+                : Colors.transparent,
+            borderRadius: BorderRadius.circular(chrome.controlRadius),
+            border: Border.all(
+              color: isActive
+                  ? accentColor.withValues(alpha: 0.28)
+                  : theme.dividerColor.withValues(alpha: 0.12),
+            ),
           ),
-          child: Row(
-            mainAxisSize: MainAxisSize.min,
-            children: [
-              Icon(
-                icon,
-                size: 16,
-                color: onPressed == null
-                    ? theme.colorScheme.onSurface.withValues(alpha: 0.35)
-                    : isActive
-                    ? accentColor
-                    : theme.colorScheme.onSurface.withValues(alpha: 0.82),
+          child: ConstrainedBox(
+            constraints: BoxConstraints(minHeight: chipMinHeight),
+            child: Padding(
+              padding: EdgeInsets.symmetric(
+                horizontal: chipPadX,
+                vertical: chipPadY,
               ),
-              SizedBox(width: spacing.xs),
-              Text(
-                label,
-                style: typography.value.copyWith(
-                  color: onPressed == null
-                      ? theme.colorScheme.onSurface.withValues(alpha: 0.35)
-                      : isActive
-                      ? accentColor
-                      : theme.colorScheme.onSurface.withValues(alpha: 0.88),
-                ),
+              child: Row(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  Icon(
+                    icon,
+                    size: chipIconSize,
+                    color: onPressed == null
+                        ? theme.colorScheme.onSurface.withValues(alpha: 0.35)
+                        : isActive
+                        ? accentColor
+                        : theme.colorScheme.onSurface.withValues(alpha: 0.82),
+                  ),
+                  SizedBox(width: chipIconTextGap),
+                  Flexible(
+                    child: Text(
+                      label,
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
+                      style: chipTextStyle,
+                    ),
+                  ),
+                ],
               ),
-            ],
+            ),
           ),
         ),
       ),

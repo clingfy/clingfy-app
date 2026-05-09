@@ -10,6 +10,8 @@ class PostProcessingSettingsController extends ChangeNotifier {
   static const String _prefPostAutoNormalizeEnabled =
       'postAutoNormalizeEnabled';
   static const String _prefPostTargetLoudnessDbfs = 'postTargetLoudnessDbfs';
+  static const String _prefPostZoomEffectEnabled = 'postZoomEffectEnabled';
+  static const String _prefPostZoomFactor = 'postZoomFactor';
 
   LayoutPreset _layoutPreset = LayoutPreset.auto;
   ResolutionPreset _resolutionPreset = ResolutionPreset.auto;
@@ -18,6 +20,8 @@ class PostProcessingSettingsController extends ChangeNotifier {
   double _postAudioVolumePercent = 100.0;
   bool _postAutoNormalizeEnabled = false;
   double _postTargetLoudnessDbfs = -16.0;
+  bool _postZoomEffectEnabled = true;
+  double _postZoomFactor = 1.5;
 
   LayoutPreset get layoutPreset => _layoutPreset;
   ResolutionPreset get resolutionPreset => _resolutionPreset;
@@ -26,12 +30,16 @@ class PostProcessingSettingsController extends ChangeNotifier {
   double get postAudioVolumePercent => _postAudioVolumePercent;
   bool get postAutoNormalizeEnabled => _postAutoNormalizeEnabled;
   double get postTargetLoudnessDbfs => _postTargetLoudnessDbfs;
+  bool get postZoomEffectEnabled => _postZoomEffectEnabled;
+  double get postZoomFactor => _postZoomFactor;
 
   static double _clampPostAudioGainDb(double value) => value.clamp(0.0, 24.0);
   static double _clampPostAudioVolumePercent(double value) =>
       value.clamp(0.0, 100.0);
   static double _clampPostTargetLoudnessDbfs(double value) =>
       value.clamp(-24.0, -6.0);
+  static double _clampPostZoomFactor(double value) =>
+      value.isFinite ? value.clamp(1.0, 3.0).toDouble() : 1.0;
 
   Future<void> loadPreferences(SharedPreferences prefs) async {
     final layoutName = prefs.getString('layoutPreset');
@@ -66,6 +74,10 @@ class PostProcessingSettingsController extends ChangeNotifier {
         prefs.getBool(_prefPostAutoNormalizeEnabled) ?? false;
     _postTargetLoudnessDbfs = _clampPostTargetLoudnessDbfs(
       prefs.getDouble(_prefPostTargetLoudnessDbfs) ?? -16.0,
+    );
+    _postZoomEffectEnabled = prefs.getBool(_prefPostZoomEffectEnabled) ?? true;
+    _postZoomFactor = _clampPostZoomFactor(
+      prefs.getDouble(_prefPostZoomFactor) ?? 1.5,
     );
     notifyListeners();
   }
@@ -154,6 +166,31 @@ class PostProcessingSettingsController extends ChangeNotifier {
       await prefs.setDouble(_prefPostTargetLoudnessDbfs, clamped);
     } catch (e, st) {
       Log.e('Settings', 'Failed to persist post target loudness', e, st);
+    }
+  }
+
+  Future<void> updatePostZoomEffectEnabled(bool value) async {
+    if (value == _postZoomEffectEnabled) return;
+    _postZoomEffectEnabled = value;
+    notifyListeners();
+    final prefs = await SharedPreferences.getInstance();
+    try {
+      await prefs.setBool(_prefPostZoomEffectEnabled, value);
+    } catch (e, st) {
+      Log.e('Settings', 'Failed to persist post zoom effect enabled', e, st);
+    }
+  }
+
+  Future<void> updatePostZoomFactor(double value) async {
+    final clamped = _clampPostZoomFactor(value);
+    if ((clamped - _postZoomFactor).abs() < 0.001) return;
+    _postZoomFactor = clamped;
+    notifyListeners();
+    final prefs = await SharedPreferences.getInstance();
+    try {
+      await prefs.setDouble(_prefPostZoomFactor, clamped);
+    } catch (e, st) {
+      Log.e('Settings', 'Failed to persist post zoom factor', e, st);
     }
   }
 }

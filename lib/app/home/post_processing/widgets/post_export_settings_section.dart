@@ -11,6 +11,7 @@ class PostExportSettingsSection extends StatelessWidget {
   const PostExportSettingsSection({
     super.key,
     required this.isProcessing,
+    required this.hasAudio,
     required this.autoNormalizeOnExport,
     required this.autoNormalizeTargetDbfs,
     required this.onAutoNormalizeOnExportChanged,
@@ -18,6 +19,7 @@ class PostExportSettingsSection extends StatelessWidget {
   });
 
   final bool isProcessing;
+  final bool hasAudio;
   final bool autoNormalizeOnExport;
   final double autoNormalizeTargetDbfs;
   final ValueChanged<bool> onAutoNormalizeOnExportChanged;
@@ -26,47 +28,54 @@ class PostExportSettingsSection extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final l10n = AppLocalizations.of(context)!;
+    final disabled = isProcessing || !hasAudio;
 
-    return Column(
-      crossAxisAlignment: CrossAxisAlignment.stretch,
-      children: [
-        AppSettingsGroup(
-          title: l10n.loudness,
+    return Opacity(
+      opacity: hasAudio ? 1.0 : 0.45,
+      child: IgnorePointer(
+        ignoring: !hasAudio,
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.stretch,
           children: [
-            AppToggleRow(
-              title: l10n.autoNormalizeOnExport,
-              value: autoNormalizeOnExport,
-              onChanged: isProcessing ? null : onAutoNormalizeOnExportChanged,
-            ),
-            if (autoNormalizeOnExport) ...[
-              const SizedBox(
-                key: Key('post_export_target_loudness_gap'),
-                height: AppSidebarTokens.optionsSubgroupGap,
-              ),
-              AppInsetGroup(
-                children: [
-                  AppSliderRow(
-                    label: l10n.targetLoudness,
-                    slider: _buildSidebarSlider(
-                      value: autoNormalizeTargetDbfs,
-                      min: -24,
-                      max: -6,
-                      divisions: 18,
-                      valueLabel:
-                          '${autoNormalizeTargetDbfs.toStringAsFixed(0)} dBFS',
-                      semanticLabel: l10n.targetLoudness,
-                      onChanged: isProcessing
-                          ? null
-                          : onAutoNormalizeTargetDbfsChanged,
-                      onChangeEnd: onAutoNormalizeTargetDbfsChanged,
-                    ),
+            AppSettingsGroup(
+              title: l10n.loudness,
+              children: [
+                AppToggleRow(
+                  title: l10n.autoNormalizeOnExport,
+                  value: autoNormalizeOnExport,
+                  onChanged: disabled ? null : onAutoNormalizeOnExportChanged,
+                ),
+                if (autoNormalizeOnExport) ...[
+                  const SizedBox(
+                    key: Key('post_export_target_loudness_gap'),
+                    height: AppSidebarTokens.optionsSubgroupGap,
+                  ),
+                  AppInsetGroup(
+                    children: [
+                      AppSliderRow(
+                        label: l10n.targetLoudness,
+                        slider: _buildSidebarSlider(
+                          value: autoNormalizeTargetDbfs,
+                          min: -24,
+                          max: -6,
+                          divisions: 18,
+                          valueLabel:
+                              '${autoNormalizeTargetDbfs.toStringAsFixed(0)} dBFS',
+                          semanticLabel: l10n.targetLoudness,
+                          onChanged: disabled
+                              ? null
+                              : onAutoNormalizeTargetDbfsChanged,
+                          onChangeEnd: onAutoNormalizeTargetDbfsChanged,
+                        ),
+                      ),
+                    ],
                   ),
                 ],
-              ),
-            ],
+              ],
+            ),
           ],
         ),
-      ],
+      ),
     );
   }
 

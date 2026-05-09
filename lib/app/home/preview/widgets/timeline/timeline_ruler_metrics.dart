@@ -6,8 +6,10 @@ class TimelineRulerMetrics {
   static int pickMajorStepMs({
     required int visibleDurationMs,
     required double visibleWidth,
+    double minMajorTickSpacingPx = 110,
   }) {
-    final majorTickCount = math.max(1, (visibleWidth / 110).floor());
+    final spacing = minMajorTickSpacingPx <= 0 ? 110.0 : minMajorTickSpacingPx;
+    final majorTickCount = math.max(1, (visibleWidth / spacing).floor());
     final rawStepMs = visibleDurationMs / majorTickCount;
     const intervals = <int>[
       250,
@@ -44,6 +46,7 @@ class TimelineRulerMetrics {
     required int visibleEndMs,
     required double visibleWidth,
     int maxVisiblePins = 8,
+    double minMajorTickSpacingPx = 110,
   }) {
     if (durationMs <= 0 || visibleWidth <= 0 || maxVisiblePins <= 0) {
       return const <int>[];
@@ -61,6 +64,7 @@ class TimelineRulerMetrics {
     final majorStepMs = pickMajorStepMs(
       visibleDurationMs: visibleDuration,
       visibleWidth: visibleWidth,
+      minMajorTickSpacingPx: minMajorTickSpacingPx,
     );
     final firstVisibleTick =
         ((clampedVisibleStart + majorStepMs - 1) ~/ majorStepMs) * majorStepMs;

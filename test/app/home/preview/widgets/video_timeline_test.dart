@@ -38,25 +38,17 @@ void main() {
     expect(find.byKey(const Key('timeline_status_line')), findsNothing);
   });
 
-  testWidgets('header shows title and close action', (tester) async {
+  testWidgets('header shows title and no close action', (tester) async {
     final editor = await _createEditor(tester);
     final player = _FakePlayerController(editor: editor);
     addTearDown(player.dispose);
 
-    var didClose = false;
-    await tester.pumpWidget(
-      _buildTimeline(player: player, onClose: () => didClose = true),
-    );
+    await tester.pumpWidget(_buildTimeline(player: player));
 
     final l10n = _l10n(tester);
 
     expect(find.text(l10n.timeline), findsOneWidget);
-    expect(find.byKey(const Key('timeline_close_button')), findsOneWidget);
-
-    await tester.tap(find.byKey(const Key('timeline_close_button')));
-    await tester.pump();
-
-    expect(didClose, isTrue);
+    expect(find.byKey(const Key('timeline_close_button')), findsNothing);
   });
 
   testWidgets('timeline opens with zoom lane visible and markers hidden', (
@@ -137,38 +129,6 @@ void main() {
     );
     expect(find.byKey(const Key('timeline_footer_bar')), findsNothing);
     expect(find.byKey(const Key('timeline_footer_snap_toggle')), findsNothing);
-  });
-
-  testWidgets('lane visibility menu shows and hides markers lane', (
-    tester,
-  ) async {
-    final editor = await _createEditor(tester);
-    final player = _FakePlayerController(editor: editor);
-    addTearDown(player.dispose);
-
-    await tester.pumpWidget(_buildTimeline(player: player));
-
-    expect(find.byKey(const Key('timeline_lane_header_markers')), findsNothing);
-    expect(find.byKey(const Key('markers_timeline_lane')), findsNothing);
-
-    await tester.tap(find.byKey(const Key('timeline_lane_visibility_menu')));
-    await tester.pumpAndSettle();
-    await tester.tap(find.text(_l10n(tester).markers).last);
-    await tester.pumpAndSettle();
-
-    expect(
-      find.byKey(const Key('timeline_lane_header_markers')),
-      findsOneWidget,
-    );
-    expect(find.byKey(const Key('markers_timeline_lane')), findsOneWidget);
-
-    await tester.tap(find.byKey(const Key('timeline_lane_visibility_menu')));
-    await tester.pumpAndSettle();
-    await tester.tap(find.text(_l10n(tester).markers).last);
-    await tester.pumpAndSettle();
-
-    expect(find.byKey(const Key('timeline_lane_header_markers')), findsNothing);
-    expect(find.byKey(const Key('markers_timeline_lane')), findsNothing);
   });
 
   testWidgets('header renders snap chip and toggles controller state', (
@@ -277,12 +237,6 @@ void main() {
 
     await tester.sendKeyDownEvent(LogicalKeyboardKey.space);
     await tester.pump();
-
-    expect(find.byKey(const Key('timeline_pan_overlay')), findsOneWidget);
-
-    await tester.sendKeyUpEvent(LogicalKeyboardKey.space);
-    await tester.pump();
-
     expect(find.byKey(const Key('timeline_pan_overlay')), findsNothing);
   });
 
@@ -300,18 +254,71 @@ void main() {
       const Size(8, 6),
     );
   });
+
+  testWidgets(
+    'timeline shell height is stable when a zoom segment is selected',
+    (tester) async {
+      final editor = await _createEditor(
+        tester,
+        fixedTargetPreview: true,
+        manualSegments: const [
+          {
+            'id': 'manual_seg_a',
+            'startMs': 1000,
+            'endMs': 4000,
+            'source': 'manual',
+            'focusMode': 'followCursor',
+          },
+        ],
+      );
+      final player = _FakePlayerController(editor: editor);
+      addTearDown(player.dispose);
+
+      await tester.pumpWidget(_buildTimeline(player: player));
+      await tester.pumpAndSettle();
+
+      final shellFinder = find.byKey(const Key('timeline_shell'));
+      final heightDeselected = tester.getSize(shellFinder).height;
+
+      editor.selectOnly(editor.displaySegments.single);
+      await tester.pumpAndSettle();
+
+      expect(
+        find.byKey(const Key('zoom_behavior_floating_toolbar')),
+        findsOneWidget,
+      );
+      expect(tester.getSize(shellFinder).height, heightDeselected);
+
+      editor.clearSelection();
+      await tester.pumpAndSettle();
+
+      expect(tester.getSize(shellFinder).height, heightDeselected);
+    },
+  );
 }
 
 Future<ZoomEditorController> _createEditor(
   WidgetTester tester, {
   List<Map<String, Object?>> autoSegments = const [],
   List<Map<String, Object?>> manualSegments = const [],
+  bool fixedTargetPreview = false,
 }) async {
   final messenger =
       TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger;
 
   messenger.setMockMethodCallHandler(screenRecorderChannel, (call) async {
     switch (call.method) {
+      case 'previewGetZoomCapabilities':
+        if (!fixedTargetPreview) return null;
+        return <String, dynamic>{
+          'cursorSamples': true,
+          'fixedTargetPreview': true,
+          'fixedTargetExport': true,
+        };
+      case 'previewGetSourceDimensions':
+        return <String, dynamic>{'width': 1920.0, 'height': 1080.0};
+      case 'previewGetCursorSamples':
+        return null;
       case 'getZoomSegments':
         return autoSegments;
       case 'getManualZoomSegments':
@@ -337,7 +344,6 @@ Future<ZoomEditorController> _createEditor(
 
 Widget _buildTimeline({
   required PlayerController player,
-  VoidCallback? onClose,
   ValueChanged<int>? onSeek,
   ValueChanged<int>? onHoverSeek,
   VoidCallback? onHoverEnd,
@@ -359,7 +365,6 @@ Widget _buildTimeline({
               positionMs: 15000,
               isReady: true,
               onSeek: onSeek ?? (_) {},
-              onClose: onClose ?? () {},
               onHoverSeek: onHoverSeek ?? (_) {},
               onHoverEnd: onHoverEnd ?? () {},
             ),

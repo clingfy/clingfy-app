@@ -1,22 +1,23 @@
 import 'dart:async';
 
+import 'package:clingfy/app/home/post_processing/widgets/zoom_segment_behavior_floating_toolbar.dart';
 import 'package:clingfy/app/home/preview/widgets/timeline/timeline_editor_viewport.dart';
 import 'package:clingfy/app/home/preview/widgets/timeline/timeline_header_bar.dart';
 import 'package:clingfy/app/home/preview/widgets/timeline/timeline_transport_bar.dart';
 import 'package:clingfy/app/home/preview/widgets/timeline/timeline_viewport_controller.dart';
+import 'package:clingfy/core/bridges/native_bridge.dart';
 import 'package:clingfy/core/models/app_models.dart';
 import 'package:clingfy/core/preview/player_controller.dart';
 import 'package:clingfy/core/zoom/zoom_editor_controller.dart';
 import 'package:clingfy/l10n/app_localizations.dart';
+import 'package:clingfy/ui/platform/widgets/responsive_shell_scope.dart';
 import 'package:clingfy/ui/theme/app_theme.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:provider/provider.dart';
 
 class TimelineBar extends StatelessWidget {
-  const TimelineBar({super.key, required this.onClose});
-
-  final VoidCallback onClose;
+  const TimelineBar({super.key});
 
   @override
   Widget build(BuildContext context) {
@@ -32,7 +33,6 @@ class TimelineBar extends StatelessWidget {
           onSeek: (ms) => unawaited(player.seekTo(ms)),
           onHoverSeek: (ms) => unawaited(player.previewPeekTo(ms)),
           onHoverEnd: () => unawaited(player.previewPeekEnd()),
-          onClose: onClose,
         );
       },
     );
@@ -46,7 +46,6 @@ class VideoTimeline extends StatefulWidget {
     required this.positionMs,
     required this.isReady,
     required this.onSeek,
-    required this.onClose,
     this.onHoverSeek,
     this.onHoverEnd,
   });
@@ -56,7 +55,6 @@ class VideoTimeline extends StatefulWidget {
   final bool isReady;
   final ValueChanged<int> onSeek;
   final ValueChanged<int>? onHoverSeek;
-  final VoidCallback onClose;
   final VoidCallback? onHoverEnd;
 
   @override
@@ -146,7 +144,10 @@ class _VideoTimelineState extends State<VideoTimeline> {
   }
 
   KeyEventResult _handleTimelineKeyEvent(FocusNode node, KeyEvent event) {
-    if (event.logicalKey != LogicalKeyboardKey.space) {
+    final isSpace = event.logicalKey == LogicalKeyboardKey.space;
+    final isAltSpace = isSpace && HardwareKeyboard.instance.isAltPressed;
+
+    if (!isAltSpace) {
       return KeyEventResult.ignored;
     }
 
@@ -182,24 +183,6 @@ class _VideoTimelineState extends State<VideoTimeline> {
   void _handleSelectAfterPlayhead(ZoomEditorController? editor) {
     if (editor == null) return;
     editor.selectAllAfter(widget.positionMs);
-  }
-
-  void _toggleOneShotAdd(ZoomEditorController? editor) {
-    if (editor == null) return;
-    if (editor.addMode == ZoomAddMode.oneShot) {
-      editor.exitAddMode();
-    } else {
-      editor.enterOneShotAddMode();
-    }
-  }
-
-  void _toggleStickyAdd(ZoomEditorController? editor) {
-    if (editor == null) return;
-    if (editor.addMode == ZoomAddMode.sticky) {
-      editor.exitAddMode();
-    } else {
-      editor.enterStickyAddMode();
-    }
   }
 
   void _toggleSnap(ZoomEditorController? editor) {
@@ -248,6 +231,8 @@ class _VideoTimelineState extends State<VideoTimeline> {
     final chrome = theme.appEditorChrome;
     final l10n = AppLocalizations.of(context)!;
     final tokens = theme.appTokens;
+    final metrics = context.shellMetricsOrNull;
+    final shellGap = metrics?.timelineShellGap ?? (theme.appSpacing.xs + 2);
     final editor = context.select<PlayerController, ZoomEditorController?>(
       (player) => player.zoomEditor,
     );
@@ -268,81 +253,90 @@ class _VideoTimelineState extends State<VideoTimeline> {
         final activeEditor = canEditZoom ? editor : null;
         final modeText = _buildModeText(l10n, editor);
 
-        return Column(
-          crossAxisAlignment: CrossAxisAlignment.stretch,
-          mainAxisSize: MainAxisSize.min,
+        return Stack(
+          clipBehavior: Clip.none,
           children: [
-            TimelineHeaderBar(
-              addModeActive: editor?.addMode == ZoomAddMode.oneShot,
-              stickyAddModeActive: editor?.addMode == ZoomAddMode.sticky,
-              snappingEnabled: editor?.snappingEnabled ?? false,
-              canEditZoom: canEditZoom,
-              canDelete: activeEditor?.hasSelection ?? false,
-              canUndo: activeEditor?.canUndo ?? false,
-              showZoomLane: _showZoomLane,
-              showMarkersLane: _showMarkersLane,
-              onToggleAddZoom: canEditZoom
-                  ? () => _toggleOneShotAdd(editor)
-                  : null,
-              onToggleKeepAdding: canEditZoom
-                  ? () => _toggleStickyAdd(editor)
-                  : null,
-              onToggleSnap: canEditZoom ? () => _toggleSnap(editor) : null,
-              onSelectAllVisible: canEditZoom
-                  ? () => _handleSelectAllVisible(editor)
-                  : null,
-              onSelectAfterPlayhead: canEditZoom
-                  ? () => _handleSelectAfterPlayhead(editor)
-                  : null,
-              onDeleteSelected: canEditZoom
-                  ? () => _handleDeleteSelected(editor)
-                  : null,
-              onUndo: activeEditor?.undo,
-              onToggleZoomLaneVisibility: _toggleZoomLaneVisibility,
-              onToggleMarkersLaneVisibility: _toggleMarkersLaneVisibility,
-              onClose: widget.onClose,
+            Column(
+              crossAxisAlignment: CrossAxisAlignment.stretch,
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                TimelineHeaderBar(
+                  snappingEnabled: editor?.snappingEnabled ?? false,
+                  canEditZoom: canEditZoom,
+                  canDelete: activeEditor?.hasSelection ?? false,
+                  canUndo: activeEditor?.canUndo ?? false,
+                  showZoomLane: _showZoomLane,
+                  showMarkersLane: _showMarkersLane,
+                  onToggleSnap: canEditZoom ? () => _toggleSnap(editor) : null,
+                  onSelectAllVisible: canEditZoom
+                      ? () => _handleSelectAllVisible(editor)
+                      : null,
+                  onSelectAfterPlayhead: canEditZoom
+                      ? () => _handleSelectAfterPlayhead(editor)
+                      : null,
+                  onDeleteSelected: canEditZoom
+                      ? () => _handleDeleteSelected(editor)
+                      : null,
+                  onUndo: activeEditor?.undo,
+                  onToggleZoomLaneVisibility: _toggleZoomLaneVisibility,
+                  onToggleMarkersLaneVisibility: _toggleMarkersLaneVisibility,
+                ),
+                SizedBox(height: shellGap),
+                TimelineTransportBar(
+                  isReady: ready,
+                  isPlaying: isPlaying,
+                  currentTimeLabel: ready ? _fmt(widget.positionMs) : '--:--',
+                  totalTimeLabel: ready ? _fmt(widget.durationMs) : '--:--',
+                  modeText: modeText,
+                  zoomLevel: _viewportController.zoomLevel,
+                  minZoom: _viewportController.minZoom,
+                  maxZoom: _viewportController.maxZoom,
+                  onZoomLevelChanged: (value) =>
+                      _viewportController.setZoomLevel(value),
+                  onZoomIn: _viewportController.zoomIn,
+                  onZoomOut: _viewportController.zoomOut,
+                  onFit: () => _viewportController.fitToDuration(
+                    centerMs: widget.positionMs,
+                  ),
+                  onPlayPause: ready
+                      ? () => unawaited(
+                          _togglePlayback(context.read<PlayerController>()),
+                        )
+                      : null,
+                ),
+                SizedBox(height: shellGap),
+                TimelineEditorViewport(
+                  durationMs: totalMs,
+                  positionMs: widget.positionMs,
+                  viewportController: _viewportController,
+                  segments: playerSegments,
+                  editorController: editor,
+                  showZoomLane: _showZoomLane,
+                  showMarkersLane: _showMarkersLane,
+                  panModeEnabled: _panModeEnabled,
+                  onSeek: widget.onSeek,
+                  onHoverSeek: widget.onHoverSeek,
+                  onHoverEnd: widget.onHoverEnd,
+                  onHoverChanged: (value) =>
+                      setState(() => _hoverPositionMs = value),
+                  hoverPositionMs: _hoverPositionMs,
+                  onFocusRequested: _requestTimelineFocus,
+                ),
+              ],
             ),
-            SizedBox(height: theme.appSpacing.xs + 2),
-            TimelineTransportBar(
-              isReady: ready,
-              isPlaying: isPlaying,
-              currentTimeLabel: ready ? _fmt(widget.positionMs) : '--:--',
-              totalTimeLabel: ready ? _fmt(widget.durationMs) : '--:--',
-              modeText: modeText,
-              zoomLevel: _viewportController.zoomLevel,
-              minZoom: _viewportController.minZoom,
-              maxZoom: _viewportController.maxZoom,
-              onZoomLevelChanged: (value) =>
-                  _viewportController.setZoomLevel(value),
-              onZoomIn: _viewportController.zoomIn,
-              onZoomOut: _viewportController.zoomOut,
-              onFit: () => _viewportController.fitToDuration(
-                centerMs: widget.positionMs,
+            if (canEditZoom)
+              Positioned(
+                top: 0,
+                right: 8,
+                child: ZoomSegmentBehaviorFloatingToolbar(
+                  key: const Key('zoom_behavior_floating_toolbar'),
+                  editor: editor,
+                  nativeBridge: NativeBridge.instance,
+                  sessionId: editor.sessionId,
+                  viewportController: _viewportController,
+                  durationMs: totalMs,
+                ),
               ),
-              onPlayPause: ready
-                  ? () => unawaited(
-                      _togglePlayback(context.read<PlayerController>()),
-                    )
-                  : null,
-            ),
-            SizedBox(height: theme.appSpacing.xs + 2),
-            TimelineEditorViewport(
-              durationMs: totalMs,
-              positionMs: widget.positionMs,
-              viewportController: _viewportController,
-              segments: playerSegments,
-              editorController: editor,
-              showZoomLane: _showZoomLane,
-              showMarkersLane: _showMarkersLane,
-              panModeEnabled: _panModeEnabled,
-              onSeek: widget.onSeek,
-              onHoverSeek: widget.onHoverSeek,
-              onHoverEnd: widget.onHoverEnd,
-              onHoverChanged: (value) =>
-                  setState(() => _hoverPositionMs = value),
-              hoverPositionMs: _hoverPositionMs,
-              onFocusRequested: _requestTimelineFocus,
-            ),
           ],
         );
       },
@@ -399,7 +393,7 @@ class _VideoTimelineState extends State<VideoTimeline> {
                 color: tokens.timelineBackground,
                 borderRadius: BorderRadius.circular(chrome.panelRadius),
               ),
-              child: dockContent,
+              child: RepaintBoundary(child: dockContent),
             ),
           ),
         ),

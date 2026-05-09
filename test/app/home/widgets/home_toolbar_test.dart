@@ -470,4 +470,72 @@ void main() {
       findsNothing,
     );
   });
+
+  testWidgets(
+    'shows new_recording_button only when showPreviewActions is true',
+    (tester) async {
+      await tester.pumpWidget(
+        MaterialApp(
+          localizationsDelegates: AppLocalizations.localizationsDelegates,
+          supportedLocales: AppLocalizations.supportedLocales,
+          home: Scaffold(
+            body: DesktopToolbar(
+              isRecording: false,
+              isPaused: false,
+              showPreviewActions: false,
+              onNewRecording: () {},
+            ),
+          ),
+        ),
+      );
+
+      expect(find.byKey(const Key('new_recording_button')), findsNothing);
+
+      await tester.pumpWidget(
+        MaterialApp(
+          localizationsDelegates: AppLocalizations.localizationsDelegates,
+          supportedLocales: AppLocalizations.supportedLocales,
+          home: Scaffold(
+            body: DesktopToolbar(
+              isRecording: false,
+              isPaused: false,
+              showPreviewActions: true,
+              onNewRecording: () {},
+            ),
+          ),
+        ),
+      );
+
+      expect(find.byKey(const Key('new_recording_button')), findsOneWidget);
+      final l10n = AppLocalizations.of(
+        tester.element(find.byType(DesktopToolbar)),
+      )!;
+      expect(find.text(l10n.newRecording), findsOneWidget);
+    },
+  );
+
+  testWidgets('tapping new_recording_button invokes onNewRecording', (
+    tester,
+  ) async {
+    var taps = 0;
+    await tester.pumpWidget(
+      MaterialApp(
+        localizationsDelegates: AppLocalizations.localizationsDelegates,
+        supportedLocales: AppLocalizations.supportedLocales,
+        home: Scaffold(
+          body: DesktopToolbar(
+            isRecording: false,
+            isPaused: false,
+            showPreviewActions: true,
+            onNewRecording: () => taps++,
+          ),
+        ),
+      ),
+    );
+
+    await tester.tap(find.byKey(const Key('new_recording_button')));
+    await tester.pump();
+
+    expect(taps, 1);
+  });
 }

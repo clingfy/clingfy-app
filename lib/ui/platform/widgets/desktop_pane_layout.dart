@@ -317,6 +317,7 @@ class DesktopSplitLayout extends StatefulWidget {
     required this.gap,
     this.minHeight,
     this.forcedCollapsedPaneIds = const <DesktopPaneId>{},
+    this.preventAutoCollapsePaneIds = const <DesktopPaneId>{},
     this.onLayoutCommitted,
   });
 
@@ -325,6 +326,12 @@ class DesktopSplitLayout extends StatefulWidget {
   final double gap;
   final double? minHeight;
   final Set<DesktopPaneId> forcedCollapsedPaneIds;
+
+  /// Panes whose ids appear here are excluded from the layout's
+  /// auto-collapse step. Manual/user collapsed state on the controller and
+  /// [forcedCollapsedPaneIds] still take precedence; this opt-out only
+  /// prevents the resolver from collapsing the pane to fit available width.
+  final Set<DesktopPaneId> preventAutoCollapsePaneIds;
 
   /// Fires only for committed layout changes, such as drag end or an explicit
   /// collapse/expand action. Live drag updates remain local to the controller
@@ -430,49 +437,67 @@ class _DesktopSplitLayoutState extends State<DesktopSplitLayout> {
               _suppressDividerOverlays = true;
               _scheduleDividerOverlayResume();
             }
+            // The Row's children have explicit widths set by the resolver. In
+            // theory the sum equals layoutWidth, but during density-driven
+            // pane spec transitions (rail spec width changes, animated
+            // shrink/grow, OverflowBox-preserved layout, or stale
+            // `_lastPositivePaneWidths`) the children can momentarily report
+            // a slightly larger natural width. Give the Row unbounded
+            // horizontal constraints via OverflowBox and clip visually so
+            // these transient overshoots don't trip the RenderFlex overflow
+            // assertion. The wrapping SizedBox + ClipRect keep the
+            // externally observed size equal to layoutWidth.
             final row = SizedBox(
               width: resolved.layoutWidth,
-              child: Stack(
-                clipBehavior: Clip.none,
-                children: [
-                  Row(
-                    crossAxisAlignment: CrossAxisAlignment.stretch,
-                    children: [
-                      for (
-                        var index = 0;
-                        index < resolved.panes.length;
-                        index++
-                      ) ...[
-                        _buildPane(
-                          resolved.panes[index],
-                          animateWidth:
-                              animateUserWidthChanges &&
-                              animatedPaneIds.contains(
-                                resolved.panes[index].presentation.id,
+              child: ClipRect(
+                child: Stack(
+                  clipBehavior: Clip.none,
+                  children: [
+                    OverflowBox(
+                      alignment: Alignment.centerLeft,
+                      minWidth: 0,
+                      maxWidth: double.infinity,
+                      child: Row(
+                        crossAxisAlignment: CrossAxisAlignment.stretch,
+                        mainAxisSize: MainAxisSize.min,
+                        children: [
+                          for (
+                            var index = 0;
+                            index < resolved.panes.length;
+                            index++
+                          ) ...[
+                            _buildPane(
+                              resolved.panes[index],
+                              animateWidth:
+                                  animateUserWidthChanges &&
+                                  animatedPaneIds.contains(
+                                    resolved.panes[index].presentation.id,
+                                  ),
+                              preserveChildLayout:
+                                  animatedPaneIds.contains(
+                                    resolved.panes[index].presentation.id,
+                                  ) ||
+                                  resolved
+                                          .panes[index]
+                                          .presentation
+                                          .effectiveWidth <=
+                                      0,
+                              disableAnimation: widthChanged,
+                            ),
+                            if (index < resolved.panes.length - 1)
+                              _buildGap(
+                                _gapWidthAfter(resolved.panes, index),
+                                animateWidth: animateUserWidthChanges,
+                                disableAnimation: widthChanged,
                               ),
-                          preserveChildLayout:
-                              animatedPaneIds.contains(
-                                resolved.panes[index].presentation.id,
-                              ) ||
-                              resolved
-                                      .panes[index]
-                                      .presentation
-                                      .effectiveWidth <=
-                                  0,
-                          disableAnimation: widthChanged,
-                        ),
-                        if (index < resolved.panes.length - 1)
-                          _buildGap(
-                            _gapWidthAfter(resolved.panes, index),
-                            animateWidth: animateUserWidthChanges,
-                            disableAnimation: widthChanged,
-                          ),
-                      ],
-                    ],
-                  ),
-                  if (!suppressDividerOverlays)
-                    ..._buildDividerOverlays(resolved.panes),
-                ],
+                          ],
+                        ],
+                      ),
+                    ),
+                    if (!suppressDividerOverlays)
+                      ..._buildDividerOverlays(resolved.panes),
+                  ],
+                ),
               ),
             );
 
@@ -781,7 +806,8 @@ class _DesktopSplitLayoutState extends State<DesktopSplitLayout> {
                       !pane.spec.flex &&
                       pane.spec.collapsible &&
                       !(effectiveCollapsed[pane.spec.id] ?? false) &&
-                      pane.spec.autoCollapseAllowed,
+                      pane.spec.autoCollapseAllowed &&
+                      !widget.preventAutoCollapsePaneIds.contains(pane.spec.id),
                 )
                 .toList()
               ..sort(

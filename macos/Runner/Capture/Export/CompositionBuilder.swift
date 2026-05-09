@@ -716,9 +716,66 @@ enum VideoColorPipeline {
   }
 }
 
+/// Phase 1 zoom focus mode. `followCursor` keeps the legacy
+/// cursor-tracking behavior. `fixedTarget` zooms around a fixed
+/// normalized point on the source recording, used when cursor data is
+/// missing or static during the segment.
+enum ZoomFocusMode: String, Codable, Equatable {
+  case followCursor
+  case fixedTarget
+
+  init(wireValue raw: Any?) {
+    if let s = raw as? String, s == "fixedTarget" {
+      self = .fixedTarget
+    } else {
+      self = .followCursor
+    }
+  }
+}
+
+/// Normalized 2D point on the source recording. `dx` and `dy` are in
+/// `[0, 1]`. `(0, 0)` is top-left, `(1, 1)` is bottom-right.
+struct ZoomFixedTarget: Codable, Equatable {
+  let dx: Double
+  let dy: Double
+
+  static let center = ZoomFixedTarget(dx: 0.5, dy: 0.5)
+
+  static func parse(_ raw: Any?) -> ZoomFixedTarget? {
+    guard let dict = raw as? [String: Any] else { return nil }
+    guard let dx = (dict["dx"] as? NSNumber)?.doubleValue
+      ?? (dict["dx"] as? Double),
+      let dy = (dict["dy"] as? NSNumber)?.doubleValue
+        ?? (dict["dy"] as? Double)
+    else {
+      return nil
+    }
+    return ZoomFixedTarget(
+      dx: Swift.min(1.0, Swift.max(0.0, dx)),
+      dy: Swift.min(1.0, Swift.max(0.0, dy))
+    )
+  }
+}
+
 struct ZoomTimelineSegment: Codable, Equatable {
   let startMs: Int
   let endMs: Int
+  let focusMode: ZoomFocusMode
+  let fixedTarget: ZoomFixedTarget?
+
+  init(
+    startMs: Int,
+    endMs: Int,
+    focusMode: ZoomFocusMode = .followCursor,
+    fixedTarget: ZoomFixedTarget? = nil
+  ) {
+    self.startMs = startMs
+    self.endMs = endMs
+    self.focusMode = focusMode
+    self.fixedTarget = focusMode == .fixedTarget
+      ? (fixedTarget ?? .center)
+      : nil
+  }
 
   func contains(timeMs: Int) -> Bool {
     return timeMs >= startMs && timeMs < endMs
@@ -2887,24 +2944,35 @@ final class CompositionBuilder {
       let isInside = inBounds(frame)
       let rawZoomWanted = isInside && (frame.spriteID != defaultSpriteID)
 
+      let activeManualSegmentForFrame: ZoomTimelineSegment? = {
+        guard let segs = params.zoomSegments else { return nil }
+        let tMs = Int(t * 1000)
+        return segs.first { $0.contains(timeMs: tMs) }
+      }()
+
       let stableZoomActive: Bool
       if isInside {
-        if let manualSegments = params.zoomSegments {
-          let tMs = Int(t * 1000)
-          stableZoomActive = manualSegments.contains { $0.contains(timeMs: tMs) }
-        } else {
-          stableZoomActive = zoomHysteresis.update(time: t, rawZoomWanted: rawZoomWanted)
-        }
+        stableZoomActive = activeManualSegmentForFrame != nil
+          || (params.zoomSegments == nil
+            && zoomHysteresis.update(time: t, rawZoomWanted: rawZoomWanted))
+      } else if activeManualSegmentForFrame?.focusMode == .fixedTarget {
+        // Fixed-target segments must zoom even when the cursor path is
+        // out-of-bounds (e.g. cursor on an unrecorded second display).
+        stableZoomActive = true
       } else {
         zoomHysteresis.reset()
         stableZoomActive = false
       }
 
+      var activeFixedTargetSegment: ZoomTimelineSegment?
       if stableZoomActive {
         if let manualSegments = params.zoomSegments,
           let activeSegment = manualSegments.first(where: { $0.contains(timeMs: Int(t * 1000)) })
         {
           stableZoomStartTime = Double(activeSegment.startMs) / 1000.0
+          if activeSegment.focusMode == .fixedTarget {
+            activeFixedTargetSegment = activeSegment
+          }
         } else if stableZoomStartTime == nil {
           stableZoomStartTime = t
         }
@@ -2913,8 +2981,28 @@ final class CompositionBuilder {
       }
 
       let targetZ: CGFloat = stableZoomActive ? params.zoomFactor : 1.0
-      let targetLookAtX = stableZoomActive ? rawCx : focusX
-      let targetLookAtY = stableZoomActive ? rawCy : focusY
+      // Fixed-target segments ignore the cursor path and zoom around
+      // the segment's normalized point. Use the same content-rect
+      // mapping as the cursor path so preview and export match.
+      let fixedLookAt: (CGFloat, CGFloat)? = activeFixedTargetSegment.map {
+        seg in
+        let pt = seg.fixedTarget ?? .center
+        let lookAtX = mapX(pt.dx)
+        let lookAtYTop = mapYTopDown(pt.dy)
+        return (lookAtX, target.height - lookAtYTop)
+      }
+      let targetLookAtX: CGFloat
+      let targetLookAtY: CGFloat
+      if stableZoomActive, let fixed = fixedLookAt {
+        targetLookAtX = fixed.0
+        targetLookAtY = fixed.1
+      } else if stableZoomActive {
+        targetLookAtX = rawCx
+        targetLookAtY = rawCy
+      } else {
+        targetLookAtX = focusX
+        targetLookAtY = focusY
+      }
 
       let alpha = ZoomFollowSmoother.alpha(
         baseStrength: params.followStrength,

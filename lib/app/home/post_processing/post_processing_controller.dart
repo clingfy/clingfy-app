@@ -92,7 +92,8 @@ class PostProcessingController extends ChangeNotifier {
   int? _backgroundColor; // null = black default
   String? _backgroundImagePath;
   double _cursorSize = 1.5;
-  double _zoomFactor = 1.5;
+  double _zoomFactor = 1.0;
+  bool _zoomEffectEnabled = false;
   bool _showCursor = true;
   String? _previewPath;
   String? _projectPath;
@@ -128,6 +129,7 @@ class PostProcessingController extends ChangeNotifier {
   String? get backgroundImagePath => _backgroundImagePath;
   double get cursorSize => _cursorSize;
   double get zoomFactor => _zoomFactor;
+  bool get zoomEffectEnabled => _zoomEffectEnabled;
   bool get showCursor => _showCursor;
   String? get previewPath => _previewPath;
   bool get cursorAvailable => _cursorAvailable;
@@ -189,8 +191,28 @@ class PostProcessingController extends ChangeNotifier {
   }
 
   void setZoomFactor(double v) {
-    _zoomFactor = v;
+    final next = v.isFinite ? v.clamp(1.0, 3.0).toDouble() : 1.0;
+    _zoomFactor = next;
     notifyListeners();
+  }
+
+  void setZoomFactorEnd(double v) {
+    setZoomFactor(v);
+    unawaited(_settings.post.updatePostZoomFactor(_zoomFactor));
+    applyProcessing();
+  }
+
+  void setZoomEffectEnabled(bool enabled) {
+    _zoomEffectEnabled = enabled;
+    if (!_zoomFactor.isFinite || _zoomFactor < 1.0) {
+      _zoomFactor = 1.0;
+    } else {
+      _zoomFactor = _zoomFactor.clamp(1.0, 3.0).toDouble();
+    }
+    notifyListeners();
+    unawaited(_settings.post.updatePostZoomEffectEnabled(_zoomEffectEnabled));
+    unawaited(_settings.post.updatePostZoomFactor(_zoomFactor));
+    applyProcessing();
   }
 
   void setShowCursor(bool v) {
@@ -559,7 +581,8 @@ class PostProcessingController extends ChangeNotifier {
     _backgroundColor = null;
     _backgroundImagePath = null;
     _cursorSize = 1.5;
-    _zoomFactor = 1.5;
+    _zoomFactor = _settings.post.postZoomFactor;
+    _zoomEffectEnabled = _settings.post.postZoomEffectEnabled;
     _showCursor = true;
     _previewPath = null;
     _projectPath = null;
@@ -624,6 +647,7 @@ class PostProcessingController extends ChangeNotifier {
         'backgroundImagePath': _backgroundImagePath,
         'cursorSize': _cursorSize,
         'zoomFactor': _zoomFactor,
+        'zoomEffectEnabled': _zoomEffectEnabled,
         'showCursor': _showCursor,
         'audioGainDb': _audioGainDb,
         'audioVolumePercent': _audioVolumePercent,
@@ -865,6 +889,7 @@ class PostProcessingController extends ChangeNotifier {
         'backgroundImagePath': _backgroundImagePath,
         'cursorSize': _cursorSize,
         'zoomFactor': _zoomFactor,
+        'zoomEffectEnabled': _zoomEffectEnabled,
         'showCursor': _showCursor,
         'audioGainDb': _audioGainDb,
         'audioVolumePercent': _audioVolumePercent,

@@ -50,6 +50,7 @@ dependencies:
   sentry_flutter: ^9.14.0
   confetti: ^0.8.0
   syncfusion_flutter_charts: ^33.1.45
+  window_manager: ^0.5.1
 
 dev_dependencies:
   flutter_launcher_icons: "^0.14.4"

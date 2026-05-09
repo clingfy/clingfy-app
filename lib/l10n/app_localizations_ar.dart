@@ -630,6 +630,9 @@ class AppLocalizationsAr extends AppLocalizations {
   String get exportSettings => 'إعدادات التصدير';
 
   @override
+  String get audioSettings => 'إعدادات الصوت';
+
+  @override
   String get canvas => 'اللوحة';
 
   @override
@@ -824,7 +827,23 @@ class AppLocalizationsAr extends AppLocalizations {
   String get timeline => 'الجدول الزمني';
 
   @override
-  String get closeTimelineTooltip => 'إغلاق الجدول الزمني';
+  String get newRecording => 'تسجيل جديد';
+
+  @override
+  String get newRecordingTooltip => 'تجاهل المعاينة الحالية وبدء تسجيل جديد';
+
+  @override
+  String get startNewRecordingTitle => 'بدء تسجيل جديد؟';
+
+  @override
+  String get startNewRecordingBody =>
+      'سيؤدي هذا إلى إغلاق المعاينة الحالية وإزالة أي تعديلات غير محفوظة. صدّر أولاً إذا كنت تريد الاحتفاظ بهذا التسجيل.';
+
+  @override
+  String get keepEditing => 'متابعة التحرير';
+
+  @override
+  String get discardPreview => 'تجاهل المعاينة';
 
   @override
   String get play => 'تشغيل';
@@ -840,6 +859,31 @@ class AppLocalizationsAr extends AppLocalizations {
 
   @override
   String get snap => 'المحاذاة';
+
+  @override
+  String get zoomBehavior => 'سلوك التكبير';
+
+  @override
+  String get zoomBehaviorTooltip => 'اختر كيف يتبع مقطع التكبير هذا التسجيل.';
+
+  @override
+  String get zoomBehaviorDismissTooltip => 'إخفاء عناصر التحكم في سلوك التكبير';
+
+  @override
+  String get zoomFollowCursor => 'اتباع المؤشر';
+
+  @override
+  String get zoomFixedTarget => 'هدف ثابت';
+
+  @override
+  String get zoomCursorStaticHint =>
+      'المؤشر لا يتحرّك في هذا النطاق. الهدف الثابت يوفّر تكبيرًا واضحًا.';
+
+  @override
+  String get zoomTarget => 'هدف التكبير';
+
+  @override
+  String get dragZoomTargetTooltip => 'اسحب لتغيير هدف التكبير';
 
   @override
   String get zoomAddSegment => 'إضافة مقطع تكبير';
@@ -1217,9 +1261,6 @@ class AppLocalizationsAr extends AppLocalizations {
   @override
   String get closeUnexportedRecordingMessage =>
       'لم يتم تصدير هذا التسجيل بعد. إذا أغلقته الآن، فستفقد الوصول إليه في الجلسة الحالية.';
-
-  @override
-  String get keepEditing => 'متابعة التحرير';
 
   @override
   String get closeWithoutExporting => 'إغلاق بدون تصدير';

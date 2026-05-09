@@ -1264,6 +1264,12 @@ abstract class AppLocalizations {
   /// **'Export Settings'**
   String get exportSettings;
 
+  /// No description provided for @audioSettings.
+  ///
+  /// In en, this message translates to:
+  /// **'Audio Settings'**
+  String get audioSettings;
+
   /// No description provided for @canvas.
   ///
   /// In en, this message translates to:
@@ -1648,11 +1654,41 @@ abstract class AppLocalizations {
   /// **'Timeline'**
   String get timeline;
 
-  /// No description provided for @closeTimelineTooltip.
+  /// No description provided for @newRecording.
   ///
   /// In en, this message translates to:
-  /// **'Close timeline'**
-  String get closeTimelineTooltip;
+  /// **'New recording'**
+  String get newRecording;
+
+  /// No description provided for @newRecordingTooltip.
+  ///
+  /// In en, this message translates to:
+  /// **'Discard current preview and start a new recording'**
+  String get newRecordingTooltip;
+
+  /// No description provided for @startNewRecordingTitle.
+  ///
+  /// In en, this message translates to:
+  /// **'Start a new recording?'**
+  String get startNewRecordingTitle;
+
+  /// No description provided for @startNewRecordingBody.
+  ///
+  /// In en, this message translates to:
+  /// **'This will close the current preview and remove any unsaved edits. Export first if you want to keep this recording.'**
+  String get startNewRecordingBody;
+
+  /// No description provided for @keepEditing.
+  ///
+  /// In en, this message translates to:
+  /// **'Keep Editing'**
+  String get keepEditing;
+
+  /// No description provided for @discardPreview.
+  ///
+  /// In en, this message translates to:
+  /// **'Discard preview'**
+  String get discardPreview;
 
   /// No description provided for @play.
   ///
@@ -1683,6 +1719,54 @@ abstract class AppLocalizations {
   /// In en, this message translates to:
   /// **'Snap'**
   String get snap;
+
+  /// No description provided for @zoomBehavior.
+  ///
+  /// In en, this message translates to:
+  /// **'Zoom behavior'**
+  String get zoomBehavior;
+
+  /// No description provided for @zoomBehaviorTooltip.
+  ///
+  /// In en, this message translates to:
+  /// **'Choose how this zoom segment follows the recording.'**
+  String get zoomBehaviorTooltip;
+
+  /// No description provided for @zoomBehaviorDismissTooltip.
+  ///
+  /// In en, this message translates to:
+  /// **'Hide zoom behavior controls'**
+  String get zoomBehaviorDismissTooltip;
+
+  /// No description provided for @zoomFollowCursor.
+  ///
+  /// In en, this message translates to:
+  /// **'Follow cursor'**
+  String get zoomFollowCursor;
+
+  /// No description provided for @zoomFixedTarget.
+  ///
+  /// In en, this message translates to:
+  /// **'Fixed target'**
+  String get zoomFixedTarget;
+
+  /// No description provided for @zoomCursorStaticHint.
+  ///
+  /// In en, this message translates to:
+  /// **'Cursor does not move in this range. Fixed target gives a visible zoom.'**
+  String get zoomCursorStaticHint;
+
+  /// No description provided for @zoomTarget.
+  ///
+  /// In en, this message translates to:
+  /// **'Zoom target'**
+  String get zoomTarget;
+
+  /// No description provided for @dragZoomTargetTooltip.
+  ///
+  /// In en, this message translates to:
+  /// **'Drag to change zoom target'**
+  String get dragZoomTargetTooltip;
 
   /// No description provided for @zoomAddSegment.
   ///
@@ -2373,12 +2457,6 @@ abstract class AppLocalizations {
   /// In en, this message translates to:
   /// **'This recording hasn’t been exported yet. If you close it now, you’ll lose access to it in the current session.'**
   String get closeUnexportedRecordingMessage;
-
-  /// No description provided for @keepEditing.
-  ///
-  /// In en, this message translates to:
-  /// **'Keep Editing'**
-  String get keepEditing;
 
   /// No description provided for @closeWithoutExporting.
   ///

@@ -22,6 +22,8 @@ class HomeToolbar extends StatelessWidget {
     required this.onClearMessage,
     this.isInspectorVisible = true,
     this.onToggleInspector,
+    this.showPreviewActions = false,
+    this.onNewRecording,
   });
 
   final bool isRecording;
@@ -32,6 +34,8 @@ class HomeToolbar extends StatelessWidget {
   final VoidCallback onClearMessage;
   final bool isInspectorVisible;
   final VoidCallback? onToggleInspector;
+  final bool showPreviewActions;
+  final VoidCallback? onNewRecording;
 
   @override
   Widget build(BuildContext context) {
@@ -161,6 +165,8 @@ class HomeToolbar extends StatelessWidget {
               isProcessing: postEditingLocked,
               isInspectorVisible: isInspectorVisible,
               onToggleInspector: onToggleInspector,
+              showPreviewActions: showPreviewActions,
+              onNewRecording: onNewRecording,
             );
           },
         );

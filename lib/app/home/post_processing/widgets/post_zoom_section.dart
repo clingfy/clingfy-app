@@ -11,19 +11,26 @@ class PostZoomSection extends StatelessWidget {
   const PostZoomSection({
     super.key,
     required this.isProcessing,
+    required this.zoomEffectEnabled,
     required this.zoomFactor,
+    required this.onZoomEffectEnabledChanged,
     required this.onZoomFactorChanged,
     required this.onZoomFactorChangeEnd,
   });
 
   final bool isProcessing;
+  final bool zoomEffectEnabled;
   final double zoomFactor;
+  final ValueChanged<bool> onZoomEffectEnabledChanged;
   final ValueChanged<double> onZoomFactorChanged;
   final ValueChanged<double> onZoomFactorChangeEnd;
 
   @override
   Widget build(BuildContext context) {
     final l10n = AppLocalizations.of(context)!;
+    final clampedZoom = zoomFactor.isFinite
+        ? zoomFactor.clamp(1.0, 3.0).toDouble()
+        : 1.0;
 
     return Column(
       crossAxisAlignment: CrossAxisAlignment.stretch,
@@ -35,20 +42,10 @@ class PostZoomSection extends StatelessWidget {
             AppToggleRow(
               title: l10n.zoomInEffect,
               infoTooltip: l10n.manageZoomEffects,
-              value: zoomFactor > 1.0,
-              onChanged: isProcessing
-                  ? null
-                  : (value) {
-                      if (value) {
-                        onZoomFactorChanged(1.5);
-                        onZoomFactorChangeEnd(1.5);
-                      } else {
-                        onZoomFactorChanged(1.0);
-                        onZoomFactorChangeEnd(1.0);
-                      }
-                    },
+              value: zoomEffectEnabled,
+              onChanged: isProcessing ? null : onZoomEffectEnabledChanged,
             ),
-            if (zoomFactor > 1.0) ...[
+            if (zoomEffectEnabled) ...[
               const SizedBox(
                 key: Key('post_zoom_intensity_gap'),
                 height: AppSidebarTokens.optionsSubgroupGap,
@@ -58,11 +55,11 @@ class PostZoomSection extends StatelessWidget {
                   AppSliderRow(
                     label: l10n.intensity,
                     slider: _buildSidebarSlider(
-                      value: zoomFactor,
+                      value: clampedZoom,
                       min: 1.0,
                       max: 3.0,
                       divisions: 20,
-                      valueLabel: '${zoomFactor.toStringAsFixed(1)}x',
+                      valueLabel: '${clampedZoom.toStringAsFixed(1)}x',
                       semanticLabel: l10n.intensity,
                       onChanged: isProcessing ? null : onZoomFactorChanged,
                       onChangeEnd: onZoomFactorChangeEnd,

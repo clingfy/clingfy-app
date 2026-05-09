@@ -3,6 +3,7 @@ import 'package:clingfy/core/models/app_models.dart';
 import 'package:clingfy/ui/platform/widgets/app_pane_header.dart';
 import 'package:clingfy/ui/platform/widgets/app_sidebar_rail_button.dart';
 import 'package:clingfy/ui/platform/widgets/app_sidebar_tokens.dart';
+import 'package:clingfy/ui/platform/widgets/responsive_shell_scope.dart';
 import 'package:clingfy/app/home/post_processing/widgets/post_audio_section.dart';
 import 'package:clingfy/app/home/post_processing/widgets/post_background_section.dart';
 import 'package:clingfy/app/home/post_processing/widgets/post_camera_section.dart';
@@ -25,10 +26,13 @@ class PostProcessingSidebarRail extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final l10n = AppLocalizations.of(context)!;
+    final metrics = context.shellMetricsOrNull;
+    final sectionGap =
+        metrics?.sidebarSectionGap ?? AppSidebarTokens.sectionGap;
 
     return Column(
       children: [
-        const SizedBox(height: AppSidebarTokens.sectionGap),
+        SizedBox(height: sectionGap),
         _PostProcessingRailItem(
           icon: Icons.dashboard_customize,
           label: l10n.canvas,
@@ -36,7 +40,7 @@ class PostProcessingSidebarRail extends StatelessWidget {
           isSelected: selectedIndex == 0,
           onTap: onSelectedIndexChanged,
         ),
-        const SizedBox(height: AppSidebarTokens.sectionGap),
+        SizedBox(height: sectionGap),
         _PostProcessingRailItem(
           icon: Icons.face,
           label: l10n.camera,
@@ -44,7 +48,7 @@ class PostProcessingSidebarRail extends StatelessWidget {
           isSelected: selectedIndex == 1,
           onTap: onSelectedIndexChanged,
         ),
-        const SizedBox(height: AppSidebarTokens.sectionGap),
+        SizedBox(height: sectionGap),
         _PostProcessingRailItem(
           icon: Icons.auto_fix_high,
           label: l10n.effects,
@@ -52,10 +56,10 @@ class PostProcessingSidebarRail extends StatelessWidget {
           isSelected: selectedIndex == 2,
           onTap: onSelectedIndexChanged,
         ),
-        const SizedBox(height: AppSidebarTokens.sectionGap),
+        SizedBox(height: sectionGap),
         _PostProcessingRailItem(
-          icon: Icons.ios_share,
-          label: l10n.export,
+          icon: Icons.graphic_eq,
+          label: l10n.audio,
           index: 3,
           isSelected: selectedIndex == 3,
           onTap: onSelectedIndexChanged,
@@ -82,10 +86,12 @@ class _PostProcessingRailItem extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final metrics = context.shellMetricsOrNull;
+    final verticalPadding =
+        metrics?.sidebarRailItemVerticalPadding ??
+        AppSidebarTokens.railItemVerticalPadding;
     return Padding(
-      padding: const EdgeInsets.symmetric(
-        vertical: AppSidebarTokens.railItemVerticalPadding,
-      ),
+      padding: EdgeInsets.symmetric(vertical: verticalPadding),
       child: AppSidebarRailButton(
         buttonKey: ValueKey('post_sidebar_rail_tile_$index'),
         icon: icon,
@@ -93,8 +99,6 @@ class _PostProcessingRailItem extends StatelessWidget {
         semanticsLabel: label,
         selected: isSelected,
         onTap: () => onTap(index),
-        iconSize: 28,
-        buttonSize: 40,
       ),
     );
   }
@@ -113,6 +117,7 @@ class PostProcessingSidebar extends StatelessWidget {
   final bool showCursor;
   final double cursorSize;
   final double zoomFactor;
+  final bool zoomEffectEnabled;
   final bool enabled;
   final bool cursorAvailable;
   final bool hasAudio;
@@ -143,6 +148,7 @@ class PostProcessingSidebar extends StatelessWidget {
   final Function(double) onCursorSizeChangeEnd;
   final Function(double) onZoomFactorChanged;
   final Function(double) onZoomFactorChangeEnd;
+  final ValueChanged<bool> onZoomEffectEnabledChanged;
   final Future<String?> Function() onPickImage;
   final Function(bool) onCameraVisibleChanged;
   final Function(CameraLayoutPreset) onCameraLayoutPresetChanged;
@@ -191,6 +197,7 @@ class PostProcessingSidebar extends StatelessWidget {
     required this.showCursor,
     required this.cursorSize,
     required this.zoomFactor,
+    required this.zoomEffectEnabled,
     required this.onLayoutPresetChanged,
     required this.onResolutionPresetChanged,
     required this.onFitModeChanged,
@@ -205,6 +212,7 @@ class PostProcessingSidebar extends StatelessWidget {
     required this.onCursorSizeChangeEnd,
     required this.onZoomFactorChanged,
     required this.onZoomFactorChangeEnd,
+    required this.onZoomEffectEnabledChanged,
     required this.onPickImage,
     required this.hasCameraAsset,
     required this.cameraExportCapabilities,
@@ -253,10 +261,19 @@ class PostProcessingSidebar extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final useCompactSpacing = isCompact || availableWidth <= 320;
+    final metrics = context.shellMetricsOrNull;
+    final compactWidthThreshold = metrics?.sidebarCompactWidthBreakpoint ?? 320;
+    final useCompactSpacing =
+        isCompact || availableWidth <= compactWidthThreshold;
     final horizontalPadding = useCompactSpacing
-        ? 10.0
-        : AppSidebarTokens.contentHorizontalPadding;
+        ? metrics?.sidebarContentHorizontalPaddingCompact ?? 10.0
+        : metrics?.sidebarContentHorizontalPadding ??
+              AppSidebarTokens.contentHorizontalPadding;
+    final topSpacer =
+        metrics?.sidebarHeaderContentGap ?? AppSidebarTokens.headerContentGap;
+    final bottomSpacer =
+        (metrics?.sidebarSectionGap ?? AppSidebarTokens.sectionGap) +
+        (metrics?.sidebarCompactGap ?? AppSidebarTokens.compactGap);
 
     return Opacity(
       opacity: enabled ? 1.0 : 0.45,
@@ -275,19 +292,15 @@ class PostProcessingSidebar extends StatelessWidget {
               child: ListView(
                 padding: EdgeInsets.symmetric(horizontal: horizontalPadding),
                 children: [
-                  const SizedBox(
-                    key: Key('post_sidebar_top_spacer'),
-                    height: AppSidebarTokens.headerContentGap,
+                  SizedBox(
+                    key: const Key('post_sidebar_top_spacer'),
+                    height: topSpacer,
                   ),
                   if (selectedIndex == 0) ..._buildCanvasTab(context),
                   if (selectedIndex == 1) ..._buildCameraTab(context),
                   if (selectedIndex == 2) ..._buildEffectsTab(context),
                   if (selectedIndex == 3) ..._buildExportTab(context),
-                  const SizedBox(
-                    height:
-                        AppSidebarTokens.sectionGap +
-                        AppSidebarTokens.compactGap,
-                  ),
+                  SizedBox(height: bottomSpacer),
                 ],
               ),
             ),
@@ -307,7 +320,7 @@ class PostProcessingSidebar extends StatelessWidget {
       case 2:
         return l10n.effectsSettings;
       case 3:
-        return l10n.exportSettings;
+        return l10n.audioSettings;
       default:
         return '';
     }
@@ -388,7 +401,9 @@ class PostProcessingSidebar extends StatelessWidget {
       ),
       PostZoomSection(
         isProcessing: isProcessing,
+        zoomEffectEnabled: zoomEffectEnabled,
         zoomFactor: zoomFactor,
+        onZoomEffectEnabledChanged: onZoomEffectEnabledChanged,
         onZoomFactorChanged: onZoomFactorChanged,
         onZoomFactorChangeEnd: onZoomFactorChangeEnd,
       ),
@@ -408,6 +423,7 @@ class PostProcessingSidebar extends StatelessWidget {
       ),
       PostExportSettingsSection(
         isProcessing: isProcessing,
+        hasAudio: hasAudio,
         autoNormalizeOnExport: autoNormalizeOnExport,
         autoNormalizeTargetDbfs: autoNormalizeTargetDbfs,
         onAutoNormalizeOnExportChanged: onAutoNormalizeOnExportChanged,

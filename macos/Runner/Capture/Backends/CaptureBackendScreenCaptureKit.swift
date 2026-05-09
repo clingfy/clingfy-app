@@ -726,6 +726,7 @@ final class CaptureBackendScreenCaptureKit: NSObject, CaptureBackend {
       // Configure stream (stable output size; optional crop via sourceRect)
       let streamConfig = makeStreamConfiguration(
         quality: config.quality,
+        // filter: filter,
         baseRectPoints: baseRectPoints,
         pointPixelScale: CGFloat(filter.pointPixelScale),
         microphoneStartMode: microphoneStartMode,
@@ -1824,6 +1825,7 @@ final class CaptureBackendScreenCaptureKit: NSObject, CaptureBackend {
 
   private func makeStreamConfiguration(
     quality: RecordingQuality,
+    // filter: SCContentFilter,
     baseRectPoints: CGRect,
     pointPixelScale: CGFloat,
     microphoneStartMode: MicrophoneStartMode,
@@ -1836,7 +1838,18 @@ final class CaptureBackendScreenCaptureKit: NSObject, CaptureBackend {
     let c = SCStreamConfiguration()
     c.minimumFrameInterval = CMTime(value: 1, timescale: CMTimeScale(frameRate))
     c.showsCursor = false
+
+    // Strongly recommended for sharpness / full-res capture
+    c.captureResolution = .best  //SCCaptureResolutionBest  // or .best in Swift, depending on SDK
     c.preservesAspectRatio = true
+
+    // Rect in points (DIPs)
+    // let baseRectPoints = sourceRect ?? filter.contentRect
+    // let scale = filter.pointPixelScale
+
+    // Size in pixels
+    // let pixelW = Int((baseRectPoints.width * CGFloat(scale)).rounded())
+    // let pixelH = Int((baseRectPoints.height * CGFloat(scale)).rounded())
 
     // Size in pixels
     let pixelW = Int((baseRectPoints.width * pointPixelScale).rounded())

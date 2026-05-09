@@ -643,6 +643,9 @@ class AppLocalizationsRo extends AppLocalizations {
   String get exportSettings => 'Setări export';
 
   @override
+  String get audioSettings => 'Setări audio';
+
+  @override
   String get canvas => 'Canvas';
 
   @override
@@ -838,7 +841,24 @@ class AppLocalizationsRo extends AppLocalizations {
   String get timeline => 'Timeline';
 
   @override
-  String get closeTimelineTooltip => 'Închide timeline';
+  String get newRecording => 'Înregistrare nouă';
+
+  @override
+  String get newRecordingTooltip =>
+      'Renunță la previzualizarea curentă și începe o înregistrare nouă';
+
+  @override
+  String get startNewRecordingTitle => 'Începi o înregistrare nouă?';
+
+  @override
+  String get startNewRecordingBody =>
+      'Aceasta va închide previzualizarea curentă și va elimina orice modificări nesalvate. Exportă mai întâi dacă vrei să păstrezi această înregistrare.';
+
+  @override
+  String get keepEditing => 'Continuă editarea';
+
+  @override
+  String get discardPreview => 'Renunță la previzualizare';
 
   @override
   String get play => 'Redare';
@@ -854,6 +874,33 @@ class AppLocalizationsRo extends AppLocalizations {
 
   @override
   String get snap => 'Fixare';
+
+  @override
+  String get zoomBehavior => 'Comportament zoom';
+
+  @override
+  String get zoomBehaviorTooltip =>
+      'Alege cum urmărește acest segment de zoom înregistrarea.';
+
+  @override
+  String get zoomBehaviorDismissTooltip =>
+      'Ascunde controalele pentru comportamentul zoom';
+
+  @override
+  String get zoomFollowCursor => 'Urmărește cursorul';
+
+  @override
+  String get zoomFixedTarget => 'Țintă fixă';
+
+  @override
+  String get zoomCursorStaticHint =>
+      'Cursorul nu se mișcă în acest interval. Ținta fixă oferă un zoom vizibil.';
+
+  @override
+  String get zoomTarget => 'Țintă zoom';
+
+  @override
+  String get dragZoomTargetTooltip => 'Trage pentru a schimba ținta zoom';
 
   @override
   String get zoomAddSegment => 'Adaugă segment zoom';
@@ -1235,9 +1282,6 @@ class AppLocalizationsRo extends AppLocalizations {
   @override
   String get closeUnexportedRecordingMessage =>
       'Această înregistrare nu a fost încă exportată. Dacă o închizi acum, vei pierde accesul la ea în sesiunea curentă.';
-
-  @override
-  String get keepEditing => 'Continuă editarea';
 
   @override
   String get closeWithoutExporting => 'Închide fără export';

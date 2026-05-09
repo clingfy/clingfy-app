@@ -1,8 +1,12 @@
 import 'dart:async';
 import 'dart:collection';
+import 'dart:ui' show Size;
 import 'package:flutter/foundation.dart';
 import 'package:clingfy/core/models/app_models.dart';
 import 'package:clingfy/core/bridges/native_bridge.dart';
+import 'package:clingfy/core/zoom/zoom_focus_heuristic.dart';
+import 'package:clingfy/core/zoom/zoom_segment_merge.dart';
+import 'package:clingfy/app/infrastructure/logging/logger_service.dart';
 import 'package:uuid/uuid.dart';
 
 abstract class ZoomEditCommand {
@@ -91,6 +95,31 @@ class TrimZoomSegmentCommand implements ZoomEditCommand {
   }
 }
 
+/// Atomic mutation that swaps the entire manual segment list for a new
+/// one, snapshotting the previous list so undo/redo can roll back any
+/// number of absorbed/added segments in a single step. Used by edit
+/// paths that may collapse multiple overlapping segments into one
+/// (create / drag-move / resize).
+class MergeZoomEditCommand implements ZoomEditCommand {
+  final ZoomEditorController controller;
+  final List<ZoomSegment> nextManualSegments;
+  late final List<ZoomSegment> _previousManualSegments;
+
+  MergeZoomEditCommand(this.controller, this.nextManualSegments) {
+    _previousManualSegments = List<ZoomSegment>.from(controller.manualSegments);
+  }
+
+  @override
+  void apply() {
+    controller._restoreManualSegments(nextManualSegments);
+  }
+
+  @override
+  void revert() {
+    controller._restoreManualSegments(_previousManualSegments);
+  }
+}
+
 class DeleteZoomSegmentCommand implements ZoomEditCommand {
   final ZoomEditorController controller;
   final ZoomSegment segment;
@@ -136,6 +165,48 @@ class DeleteManyZoomSegmentsCommand extends DeleteZoomSegmentsCommand {
   DeleteManyZoomSegmentsCommand(super.controller, super.segments);
 }
 
+/// Updates a segment's [ZoomSegment.focusMode] / [ZoomSegment.fixedTarget].
+/// For manual segments the change is applied in place. For auto segments
+/// it materializes a manual override segment with the same time range
+/// — matching the behavior of trim/move on auto segments.
+class ChangeZoomFocusModeCommand implements ZoomEditCommand {
+  final ZoomEditorController controller;
+  final ZoomSegment oldSegment;
+  final ZoomSegment newSegment;
+  late final List<ZoomSegment> _previousManualSegments;
+
+  ChangeZoomFocusModeCommand(
+    this.controller,
+    this.oldSegment,
+    this.newSegment,
+  ) {
+    _previousManualSegments = List<ZoomSegment>.from(controller.manualSegments);
+  }
+
+  @override
+  void apply() {
+    if (oldSegment.source == 'manual') {
+      controller._updateManualSegment(newSegment);
+    } else {
+      final override = ZoomSegment(
+        id: const Uuid().v4(),
+        startMs: oldSegment.startMs,
+        endMs: oldSegment.endMs,
+        source: 'manual',
+        baseId: oldSegment.id,
+        focusMode: newSegment.focusMode,
+        fixedTarget: newSegment.fixedTarget,
+      );
+      controller._addManualSegment(override);
+    }
+  }
+
+  @override
+  void revert() {
+    controller._restoreManualSegments(_previousManualSegments);
+  }
+}
+
 enum TrimHandle { left, right }
 
 enum ZoomAddMode { off, oneShot, sticky }
@@ -173,6 +244,11 @@ class ZoomEditorController extends ChangeNotifier {
   ZoomSegment? _trimmingOriginalSegment;
   ZoomSegment? _trimmingPreviewSegment;
   TrimHandle? _activeTrimHandle;
+
+  // Fixed-target drag state (Phase 2 overlay).
+  String? _draggingTargetSegmentId;
+  ZoomSegment? _draggingTargetOriginalSegment;
+  Size? _sourceSize;
 
   // Selection
   final LinkedHashSet<String> _selectedSegmentIds = LinkedHashSet<String>();
@@ -374,7 +450,31 @@ class ZoomEditorController extends ChangeNotifier {
   final List<ZoomEditCommand> _history = [];
   bool get canUndo => _history.isNotEmpty;
 
+  ZoomNativeCapabilities _capabilities = ZoomNativeCapabilities.legacy;
+
+  /// Native zoom features detected on this binary. Updated once during
+  /// [init]; falls back to [ZoomNativeCapabilities.legacy] when the
+  /// probe fails or the build predates Phase 1. UI surfaces should
+  /// gate fixed-target controls on this — exposing
+  /// [ZoomFocusMode.fixedTarget] when the backend ignores the field
+  /// produces a silently broken preview.
+  ZoomNativeCapabilities get capabilities => _capabilities;
+
+  /// Source recording dimensions in pixels, fetched once at [init].
+  /// `null` when unavailable (legacy native build, missing session,
+  /// metadata gap). Used by the fixed-target overlay to compute the
+  /// fitted content rect over the preview surface.
+  Size? get sourceSize => _sourceSize;
+
+  bool get isDraggingFixedTarget => _draggingTargetSegmentId != null;
+
   Future<void> init() async {
+    _capabilities = await _nativeBridge.previewGetZoomCapabilities();
+    if (_capabilities.fixedTargetPreview) {
+      _sourceSize = await _nativeBridge.previewGetSourceDimensions(
+        sessionId: sessionId,
+      );
+    }
     final rawAuto = await _nativeBridge.getZoomSegments(videoPath);
     // Normalize auto segment IDs so manual overrides remain stable across reloads.
     _autoSegments = rawAuto.asMap().entries.map((e) {
@@ -481,12 +581,461 @@ class ZoomEditorController extends ChangeNotifier {
       source: 'manual',
     );
 
-    execute(AddZoomSegmentCommand(this, newSegment));
+    _executeMergeEdit(edited: newSegment, originalDisplay: null);
     _draftSegment = null;
     if (_addMode == ZoomAddMode.oneShot) {
       _addMode = ZoomAddMode.off;
     }
+  }
+
+  /// Default duration (ms) used when the timeline lane creates a new segment
+  /// from the ghost template (click-to-add).
+  static const int defaultNewSegmentDurationMs = 1200;
+
+  /// Returns true when adding a default-sized segment centered around
+  /// [centerMs] would either fail to fit or overlap an existing display
+  /// segment. Used by the lane to decide whether to show the ghost.
+  bool canAddDefaultSegmentAt(
+    int centerMs, {
+    int durationMs = defaultNewSegmentDurationMs,
+  }) {
+    if (this.durationMs <= 0) return false;
+    final span = _resolveDefaultSpan(centerMs, durationMs);
+    if (span == null) return false;
+    return !_spanOverlapsExisting(span.$1, span.$2);
+  }
+
+  /// Resolved (start, end) for a default-sized segment centered around
+  /// [centerMs], clamped to the timeline. Returns null when the resulting
+  /// span cannot satisfy [minDurationMs] or fits inside the timeline.
+  (int, int)? defaultSpanFor(
+    int centerMs, {
+    int durationMs = defaultNewSegmentDurationMs,
+  }) {
+    return _resolveDefaultSpan(centerMs, durationMs);
+  }
+
+  /// Adds a default-sized segment centered around [centerMs] without
+  /// consulting cursor data. Used by callers that already know the
+  /// desired focus mode (e.g. tests, programmatic add). Prefer
+  /// [addDefaultSegmentAtWithFocus] from interactive UI so the segment
+  /// auto-falls back to a fixed target when cursor data is missing or
+  /// static.
+  ZoomSegment? addDefaultSegmentAt(
+    int centerMs, {
+    int durationMs = defaultNewSegmentDurationMs,
+    ZoomFocusMode focusMode = ZoomFocusMode.followCursor,
+    NormalizedPoint? fixedTarget,
+  }) {
+    if (this.durationMs <= 0) return null;
+    final span = _resolveDefaultSpan(centerMs, durationMs);
+    if (span == null) return null;
+    final start = span.$1;
+    final end = span.$2;
+    if (end - start < minDurationMs) return null;
+    if (_spanOverlapsExisting(start, end)) return null;
+
+    final resolvedTarget = focusMode == ZoomFocusMode.fixedTarget
+        ? (fixedTarget ?? NormalizedPoint.center)
+        : null;
+
+    final newSegment = ZoomSegment(
+      id: const Uuid().v4(),
+      startMs: start,
+      endMs: end,
+      source: 'manual',
+      focusMode: focusMode,
+      fixedTarget: resolvedTarget,
+    );
+    execute(AddZoomSegmentCommand(this, newSegment));
     selectOnly(newSegment);
+    return newSegment;
+  }
+
+  /// Adds a default-sized segment centered around [centerMs], picking
+  /// the focus mode by inspecting cursor data inside the resolved span.
+  ///
+  /// Falls back to [ZoomFocusMode.fixedTarget] centered on the playhead
+  /// cursor (or canvas center) when:
+  ///   - the bridge query fails or returns no samples,
+  ///   - all samples in range are hidden / out of bounds,
+  ///   - cursor motion across the segment is below
+  ///     [kZoomCursorMotionThresholdPx].
+  Future<ZoomSegment?> addDefaultSegmentAtWithFocus(
+    int centerMs, {
+    required int playheadMs,
+    int durationMs = defaultNewSegmentDurationMs,
+  }) async {
+    if (this.durationMs <= 0) return null;
+    final span = _resolveDefaultSpan(centerMs, durationMs);
+    if (span == null) return null;
+    final start = span.$1;
+    final end = span.$2;
+    if (end - start < minDurationMs) return null;
+    if (_spanOverlapsExisting(start, end)) return null;
+
+    // Backend cannot honor a fixedTarget zoom — fall back to the legacy
+    // followCursor path so we never produce a segment the renderer
+    // will silently ignore.
+    if (!_capabilities.supportsSmartFixedTarget) {
+      return addDefaultSegmentAt(centerMs, durationMs: durationMs);
+    }
+
+    final clampedPlayhead = playheadMs.clamp(start, end);
+    final CursorSamplesResult samples;
+    try {
+      samples = await _nativeBridge.previewGetCursorSamples(
+        startMs: start,
+        endMs: end,
+        playheadMs: clampedPlayhead,
+        sessionId: sessionId,
+      );
+    } on ZoomNativeCapabilityMissing catch (e) {
+      // Capabilities probe said this build supports cursor samples but
+      // the channel call was unimplemented. Treat as missing capability
+      // for the rest of the session and use the legacy path. Do NOT
+      // treat this as "no cursor data" — that would create a
+      // fixedTarget segment the renderer will ignore.
+      Log.w('ZoomEditor', 'Cursor samples missing native impl: $e');
+      _capabilities = const ZoomNativeCapabilities(
+        cursorSamples: false,
+        fixedTargetPreview: false,
+        fixedTargetExport: false,
+      );
+      return addDefaultSegmentAt(centerMs, durationMs: durationMs);
+    }
+
+    final decision = chooseZoomFocusModeForRange(
+      startMs: start,
+      endMs: end,
+      playheadMs: clampedPlayhead,
+      samples: samples,
+    );
+
+    return addDefaultSegmentAt(
+      centerMs,
+      durationMs: durationMs,
+      focusMode: decision.mode,
+      fixedTarget: decision.fixedTarget,
+    );
+  }
+
+  /// Begins a drag on the fixed-target overlay for [segment]. Snapshots
+  /// the original segment so [commitFixedTargetDrag] can build a single
+  /// undoable command, while [updateFixedTargetDrag] mutates live for
+  /// immediate preview feedback.
+  ///
+  /// No-op when [segment] is not a fixedTarget segment — the overlay
+  /// only ever calls this on a fixedTarget selection.
+  void beginFixedTargetDrag(ZoomSegment segment) {
+    if (segment.focusMode != ZoomFocusMode.fixedTarget) return;
+    final live = _findDisplaySegmentById(segment.id);
+    if (live == null) return;
+    _draggingTargetSegmentId = live.id;
+    _draggingTargetOriginalSegment = live;
+  }
+
+  /// Live-updates the dragged segment's [ZoomSegment.fixedTarget].
+  /// Mutates the manual segment in place (or materializes a manual
+  /// override for an auto segment on first call) and reschedules a
+  /// throttled native sync. Does NOT push to the undo history; the
+  /// commit happens in [commitFixedTargetDrag].
+  void updateFixedTargetDrag(NormalizedPoint target) {
+    final id = _draggingTargetSegmentId;
+    if (id == null) return;
+    final original = _draggingTargetOriginalSegment;
+    if (original == null) return;
+    final clamped = target.clamped();
+
+    final current = _findDisplaySegmentById(id);
+    if (current == null) return;
+
+    if (current.source == 'manual') {
+      if (current.fixedTarget == clamped &&
+          current.focusMode == ZoomFocusMode.fixedTarget) {
+        return;
+      }
+      _manualSegments.removeWhere((s) => s.id == id);
+      _manualSegments.add(
+        current.copyWith(
+          focusMode: ZoomFocusMode.fixedTarget,
+          fixedTarget: clamped,
+        ),
+      );
+    } else {
+      // Auto segment — materialize a manual override the first time we
+      // see a drag update for it, then keep updating that override.
+      final existingOverride = _manualSegments
+          .where((s) => s.baseId == original.id)
+          .toList();
+      if (existingOverride.isEmpty) {
+        final override = ZoomSegment(
+          id: const Uuid().v4(),
+          startMs: original.startMs,
+          endMs: original.endMs,
+          source: 'manual',
+          baseId: original.id,
+          focusMode: ZoomFocusMode.fixedTarget,
+          fixedTarget: clamped,
+        );
+        _manualSegments.add(override);
+        _draggingTargetSegmentId = override.id;
+      } else {
+        final override = existingOverride.first;
+        if (override.fixedTarget == clamped &&
+            override.focusMode == ZoomFocusMode.fixedTarget) {
+          return;
+        }
+        _manualSegments.removeWhere((s) => s.id == override.id);
+        _manualSegments.add(
+          override.copyWith(
+            focusMode: ZoomFocusMode.fixedTarget,
+            fixedTarget: clamped,
+          ),
+        );
+        _draggingTargetSegmentId = override.id;
+      }
+    }
+
+    _commitManualMutation();
+    _throttleSync();
+  }
+
+  /// Commits the in-flight drag as a single undoable command. Restores
+  /// the pre-drag manual list before applying the command so undo/redo
+  /// behaves as if the drag was one atomic edit.
+  void commitFixedTargetDrag() {
+    final id = _draggingTargetSegmentId;
+    final original = _draggingTargetOriginalSegment;
+    _draggingTargetSegmentId = null;
+    _draggingTargetOriginalSegment = null;
+    _nativeSyncTimer?.cancel();
+    _nativeSyncTimer = null;
+    if (id == null || original == null) return;
+
+    final finalSegment = _findDisplaySegmentById(id);
+    if (finalSegment == null) {
+      _syncToNative();
+      return;
+    }
+    if (finalSegment.fixedTarget == original.fixedTarget &&
+        finalSegment.focusMode == original.focusMode &&
+        finalSegment.source == original.source) {
+      _syncToNative();
+      return;
+    }
+
+    // Roll back to the pre-drag state, then re-apply through execute()
+    // so the change becomes one undo entry.
+    final preDragManual = List<ZoomSegment>.from(_manualSegments);
+    if (finalSegment.source == 'manual' && original.source != 'manual') {
+      preDragManual.removeWhere((s) => s.id == finalSegment.id);
+    } else if (finalSegment.source == 'manual') {
+      final idx = preDragManual.indexWhere((s) => s.id == finalSegment.id);
+      if (idx != -1) preDragManual[idx] = original;
+    }
+    _manualSegments = preDragManual;
+    _commitManualMutation(notify: false);
+
+    final updated = original.copyWith(
+      focusMode: ZoomFocusMode.fixedTarget,
+      fixedTarget: finalSegment.fixedTarget,
+    );
+    execute(ChangeZoomFocusModeCommand(this, original, updated));
+    // execute() persists + syncs. Re-select whichever segment now
+    // owns the dragged target so the overlay does not vanish on
+    // commit (auto segments materialize a fresh manual override id).
+    ZoomSegment? selected = _findDisplaySegmentById(updated.id);
+    if (selected == null) {
+      for (final s in _manualSegments) {
+        if (s.baseId == original.id) selected = s;
+      }
+    }
+    if (selected != null) selectOnly(selected);
+  }
+
+  /// Cancels the in-flight drag, reverting the segment to its pre-drag
+  /// state without creating an undo entry.
+  void cancelFixedTargetDrag() {
+    final id = _draggingTargetSegmentId;
+    final original = _draggingTargetOriginalSegment;
+    _draggingTargetSegmentId = null;
+    _draggingTargetOriginalSegment = null;
+    _nativeSyncTimer?.cancel();
+    _nativeSyncTimer = null;
+    if (id == null || original == null) return;
+
+    if (original.source == 'manual') {
+      final idx = _manualSegments.indexWhere((s) => s.id == original.id);
+      if (idx != -1) {
+        _manualSegments[idx] = original;
+      } else {
+        _manualSegments.add(original);
+      }
+    } else {
+      _manualSegments.removeWhere((s) => s.baseId == original.id);
+    }
+    _commitManualMutation();
+    _syncToNative();
+  }
+
+  /// Switches the focus mode of [segment]. Pass [fixedTarget] when the
+  /// new mode is [ZoomFocusMode.fixedTarget]; null defaults to whatever
+  /// is already on the segment, or center if none.
+  void setSegmentFocusMode(
+    ZoomSegment segment, {
+    required ZoomFocusMode mode,
+    NormalizedPoint? fixedTarget,
+  }) {
+    final resolvedTarget = mode == ZoomFocusMode.fixedTarget
+        ? (fixedTarget ?? segment.fixedTarget ?? NormalizedPoint.center)
+        : null;
+    if (segment.focusMode == mode && segment.fixedTarget == resolvedTarget) {
+      return;
+    }
+    final updated = segment.copyWith(
+      focusMode: mode,
+      fixedTarget: resolvedTarget,
+      clearFixedTarget: resolvedTarget == null,
+    );
+    execute(ChangeZoomFocusModeCommand(this, segment, updated));
+  }
+
+  (int, int)? _resolveDefaultSpan(int centerMs, int requestedDurationMs) {
+    if (durationMs <= 0) return null;
+    final clampedDuration = requestedDurationMs.clamp(
+      minDurationMs,
+      durationMs,
+    );
+    final half = clampedDuration ~/ 2;
+    var start = (centerMs - half).clamp(0, durationMs - clampedDuration);
+    if (start < 0) start = 0;
+    var end = start + clampedDuration;
+    if (end > durationMs) {
+      end = durationMs;
+      start = (end - clampedDuration).clamp(0, end);
+    }
+    final normStart = _normalizeEditableMs(start);
+    final normEnd = _normalizeEditableMs(end);
+    if (normEnd - normStart < minDurationMs) return null;
+    return (normStart, normEnd);
+  }
+
+  /// Plans a merge-aware edit and pushes it to the undo history as a
+  /// single [MergeZoomEditCommand]. After application, selection focuses
+  /// on the merged segment so the user can immediately keep editing it.
+  ///
+  /// [edited] carries the proposed final range and metadata (focus mode,
+  /// fixed target). For move/resize, its id matches [originalDisplay]'s
+  /// id (the segment being edited). For new adds, [originalDisplay] is
+  /// null and [edited] carries a fresh uuid.
+  void _executeMergeEdit({
+    required ZoomSegment edited,
+    required ZoomSegment? originalDisplay,
+  }) {
+    final plan = _planManualForMergedEdit(
+      edited: edited,
+      originalDisplay: originalDisplay,
+    );
+    execute(MergeZoomEditCommand(this, plan.nextManual));
+    selectOnly(plan.mergedSegment);
+  }
+
+  /// Computes the new [_manualSegments] list produced by merging [edited]
+  /// into the current display segments. Auto segments absorbed by the
+  /// merge are tombstoned (so they disappear from the display), and
+  /// manual segments absorbed by the merge are removed. The returned
+  /// merged segment is the one inserted into the manual list.
+  ({List<ZoomSegment> nextManual, ZoomSegment mergedSegment})
+  _planManualForMergedEdit({
+    required ZoomSegment edited,
+    required ZoomSegment? originalDisplay,
+  }) {
+    final basis = _displaySegmentsBase;
+    final byId = {for (final s in basis) s.id: s};
+
+    final plan = mergeEditedZoomSegment(
+      existingSegments: basis,
+      editedSegment: edited,
+      durationMs: durationMs,
+    );
+
+    final next = List<ZoomSegment>.from(_manualSegments);
+    final autoIdsToTombstone = <String>{};
+
+    // Absorbed neighbors: drop manual ones, schedule auto tombstones.
+    for (final id in plan.absorbedSegmentIds) {
+      final s = byId[id];
+      if (s == null) continue;
+      if (s.source == 'manual') {
+        next.removeWhere((m) => m.id == s.id);
+        // An absorbed manual override must keep its underlying auto hidden.
+        if (s.baseId != null) autoIdsToTombstone.add(s.baseId!);
+      } else {
+        autoIdsToTombstone.add(s.id);
+      }
+    }
+
+    // Identity of the merged segment: keep the user's segment identity
+    // when editing a manual (preserves selection round-trip and any
+    // existing baseId override link) — otherwise materialize a fresh
+    // override pointing back to the auto being edited (matches legacy
+    // Move/Trim behavior for autos).
+    String mergedId;
+    String? mergedBaseId;
+    if (originalDisplay == null) {
+      mergedId = edited.id;
+      mergedBaseId = null;
+    } else if (originalDisplay.source == 'manual') {
+      mergedId = originalDisplay.id;
+      mergedBaseId = originalDisplay.baseId;
+      next.removeWhere((m) => m.id == originalDisplay.id);
+    } else {
+      mergedId = const Uuid().v4();
+      mergedBaseId = originalDisplay.id;
+      // No separate tombstone needed — the merged manual override
+      // already hides this auto via baseId.
+      autoIdsToTombstone.remove(originalDisplay.id);
+    }
+
+    // Drop any prior reference to the autos we're tombstoning so the
+    // tombstone is the single owner of the override mapping.
+    for (final autoId in autoIdsToTombstone) {
+      if (mergedBaseId == autoId) continue;
+      next.removeWhere((m) => m.baseId == autoId);
+      next.add(
+        ZoomSegment(
+          id: const Uuid().v4(),
+          startMs: plan.mergedSegment.startMs,
+          endMs: plan.mergedSegment.startMs,
+          source: 'manual',
+          baseId: autoId,
+        ),
+      );
+    }
+
+    final mergedManual = ZoomSegment(
+      id: mergedId,
+      startMs: plan.mergedSegment.startMs,
+      endMs: plan.mergedSegment.endMs,
+      source: 'manual',
+      baseId: mergedBaseId,
+      focusMode: plan.mergedSegment.focusMode,
+      fixedTarget: plan.mergedSegment.fixedTarget,
+    );
+    next.add(mergedManual);
+
+    return (nextManual: next, mergedSegment: mergedManual);
+  }
+
+  bool _spanOverlapsExisting(int start, int end) {
+    for (final segment in displaySegments) {
+      if (_isTombstone(segment)) continue;
+      if (segment.startMs < end && segment.endMs > start) {
+        return true;
+      }
+    }
+    return false;
   }
 
   void execute(ZoomEditCommand cmd) {
@@ -935,7 +1484,7 @@ class ZoomEditorController extends ChangeNotifier {
     final oldSeg = _movingOriginalSegment!;
 
     if (newSeg.startMs != oldSeg.startMs || newSeg.endMs != oldSeg.endMs) {
-      execute(MoveZoomSegmentCommand(this, oldSeg, newSeg));
+      _executeMergeEdit(edited: newSeg, originalDisplay: oldSeg);
     }
 
     _cancelMoveInternal();
@@ -1008,7 +1557,7 @@ class ZoomEditorController extends ChangeNotifier {
     final oldSeg = _trimmingOriginalSegment!;
 
     if (newSeg.startMs != oldSeg.startMs || newSeg.endMs != oldSeg.endMs) {
-      execute(TrimZoomSegmentCommand(this, oldSeg, newSeg));
+      _executeMergeEdit(edited: newSeg, originalDisplay: oldSeg);
     }
 
     _cancelTrimInternal();
@@ -1046,39 +1595,48 @@ class ZoomEditorController extends ChangeNotifier {
       ..sort((a, b) => a.startMs.compareTo(b.startMs));
 
     final List<ZoomSegment> merged = [];
-    if (sorted.isEmpty) return [];
 
     var currentStart = sorted[0].startMs;
     var currentEnd = sorted[0].endMs;
+    // Carry the focus mode + target through the merge so per-segment
+    // intent (fixedTarget vs followCursor) survives the trip to native.
+    // Adjacent segments are only merged when their focus mode and
+    // fixedTarget match — different intent must not be blended into one.
+    var currentMode = sorted[0].focusMode;
+    var currentTarget = sorted[0].fixedTarget;
+
+    void emit() {
+      merged.add(
+        ZoomSegment(
+          id: 'merged_${merged.length}',
+          startMs: currentStart,
+          endMs: currentEnd,
+          source: 'effective',
+          focusMode: currentMode,
+          fixedTarget: currentTarget,
+        ),
+      );
+    }
 
     for (int i = 1; i < sorted.length; i++) {
       final next = sorted[i];
+      final canMerge =
+          next.startMs <= currentEnd + 120 &&
+          next.focusMode == currentMode &&
+          next.fixedTarget == currentTarget;
 
-      if (next.startMs <= currentEnd + 120) {
+      if (canMerge) {
         currentEnd = currentEnd > next.endMs ? currentEnd : next.endMs;
       } else {
-        merged.add(
-          ZoomSegment(
-            id: 'merged_${merged.length}',
-            startMs: currentStart,
-            endMs: currentEnd,
-            source: 'effective',
-          ),
-        );
+        emit();
         currentStart = next.startMs;
         currentEnd = next.endMs;
+        currentMode = next.focusMode;
+        currentTarget = next.fixedTarget;
       }
     }
 
-    merged.add(
-      ZoomSegment(
-        id: 'merged_${merged.length}',
-        startMs: currentStart,
-        endMs: currentEnd,
-        source: 'effective',
-      ),
-    );
-
+    emit();
     return merged;
   }
 
@@ -1092,6 +1650,12 @@ class ZoomEditorController extends ChangeNotifier {
     if (!_snappingEnabled) return clamped;
     return _snapToGrid(clamped);
   }
+
+  /// Public accessor mirroring [_normalizeEditableMs]. UI surfaces such as
+  /// hover ghosts can use this to preview the same ms the controller would
+  /// commit. Snap-on returns frame-grid aligned ms; snap-off returns the raw
+  /// clamped ms.
+  int normalizeEditableMsForUi(int ms) => _normalizeEditableMs(ms);
 
   void setSnappingEnabled(bool enabled) {
     if (_snappingEnabled == enabled) return;
