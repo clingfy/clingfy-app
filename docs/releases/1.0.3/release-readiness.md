@@ -18,9 +18,9 @@ Fill this section before starting verification.
 - Channel: `prod`
 - Date: `2026-05-10`
 - Verified by: `Nabil`
-- Commit: `TBD`
+- Commit: `42799f8245257f62dab1060ae54ac2af8d68af4e`
 - Tag: `v1.0.3`
-- Build: `GitHub Actions #4`
+- Build: `#20260509.2 • Popup application build number`
 - Status: `Approved`
 
 Possible status values:
@@ -171,11 +171,11 @@ Notes:
 
 Verify the generated release artifacts before publishing.
 
-* [ ] DMG launches correctly
-* [ ] app icon and metadata appear correctly
-* [ ] auto-updater configuration verified
-* [ ] update channel configuration verified
-* [ ] application launches without console errors
+* [x] DMG launches correctly
+* [x] app icon and metadata appear correctly
+* [x] auto-updater configuration verified
+* [x] update channel configuration verified
+* [x] application launches without console errors
 
 Notes:
 
@@ -187,7 +187,7 @@ Notes:
 
 Complete this section after all checks.
 
-* [ ] Approved for release
+* [x] Approved for release
 * [ ] Blocked from release
 
 Blocking issues:
