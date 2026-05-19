@@ -21,6 +21,7 @@
 /* End PBXAggregateTarget section */
 
 /* Begin PBXBuildFile section */
+		01AAE1E4B799E6B85610A896 /* ExportPrep.swift in Sources */ = {isa = PBXBuildFile; fileRef = DBAFE534F311451D8C165B52 /* ExportPrep.swift */; };
 		0BE271D35B92B01091FE6C78 /* PermissionsMethodRouterTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = A804343376134DBC7318D507 /* PermissionsMethodRouterTests.swift */; };
 		112D3DF45F7941FE5186DA7E /* PreviewSceneResolverTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 999B6BF0AF215D618A11151E /* PreviewSceneResolverTests.swift */; };
 		13331D48B0581167284E8DBC /* AudioLevelEstimator.swift in Sources */ = {isa = PBXBuildFile; fileRef = B81915A6645E96590BCA2C31 /* AudioLevelEstimator.swift */; };
@@ -96,6 +97,7 @@
 		5BE43BEF2F22CD940017267E /* RecordingMetadata.swift in Sources */ = {isa = PBXBuildFile; fileRef = 5BE43BEE2F22CD940017267E /* RecordingMetadata.swift */; };
 		5BE629DC2F2F9F3800063F17 /* ZoomTimelineBuilder.swift in Sources */ = {isa = PBXBuildFile; fileRef = 5BE629DB2F2F9F3800063F17 /* ZoomTimelineBuilder.swift */; };
 		5C1D00012F50000100A0B001 /* ZoomFollowSmoother.swift in Sources */ = {isa = PBXBuildFile; fileRef = 5C1D00022F50000100A0B001 /* ZoomFollowSmoother.swift */; };
+		632E2DD388917796BE34FCCD /* ExportPrepTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = E0F9BE980D7AC62253E76CAC /* ExportPrepTests.swift */; };
 		694F07480FE17B655AC013A3 /* RecordingStateMachineTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 04091965DCAEC5DFBFFCCDEB /* RecordingStateMachineTests.swift */; };
 		69B5122F481E9152FAF2A9B3 /* RequestParsingTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 964282A8773D929D64A40630 /* RequestParsingTests.swift */; };
 		79A2C220CAB9E6C95BED894A /* CachedRecordingsCleanupPolicy.swift in Sources */ = {isa = PBXBuildFile; fileRef = 1C10603525072F935CFA8A14 /* CachedRecordingsCleanupPolicy.swift */; };
@@ -306,10 +308,12 @@
 		D4369B6E34FE7C645656404F /* Pods-RunnerTests.debug-prod.xcconfig */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = text.xcconfig; name = "Pods-RunnerTests.debug-prod.xcconfig"; path = "Target Support Files/Pods-RunnerTests/Pods-RunnerTests.debug-prod.xcconfig"; sourceTree = "<group>"; };
 		D4A1B2C3D4E5F60718293A4B /* StorageInfoProvider.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = StorageInfoProvider.swift; sourceTree = "<group>"; };
 		D851B0263A47BA61AA6AC854 /* ZoomQueryService.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = ZoomQueryService.swift; sourceTree = "<group>"; };
+		DBAFE534F311451D8C165B52 /* ExportPrep.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = ExportPrep.swift; sourceTree = "<group>"; };
 		DEC89D912852F9AAC2996A07 /* ScreenRecorderEventBridge.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = ScreenRecorderEventBridge.swift; sourceTree = "<group>"; };
 		DF9975749BBCCB19C63D6DF2 /* Pods-Runner.release-prod.xcconfig */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = text.xcconfig; name = "Pods-Runner.release-prod.xcconfig"; path = "Target Support Files/Pods-Runner/Pods-Runner.release-prod.xcconfig"; sourceTree = "<group>"; };
 		DFABA6A057D27E2AC4CDFEB6 /* StorageDiagnosticsServiceTests.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = StorageDiagnosticsServiceTests.swift; sourceTree = "<group>"; };
 		E0BAB8E4875F02496F16101E /* Pods-Runner.debug-dev.xcconfig */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = text.xcconfig; name = "Pods-Runner.debug-dev.xcconfig"; path = "Target Support Files/Pods-Runner/Pods-Runner.debug-dev.xcconfig"; sourceTree = "<group>"; };
+		E0F9BE980D7AC62253E76CAC /* ExportPrepTests.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = ExportPrepTests.swift; sourceTree = "<group>"; };
 		E1A0C0022F60000100BEE002 /* AVAssetWriterInputExceptionBridge.h */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.c.h; path = AVAssetWriterInputExceptionBridge.h; sourceTree = "<group>"; };
 		E1A0C0032F60000100BEE003 /* AVAssetWriterInputExceptionBridge.m */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.c.objc; path = AVAssetWriterInputExceptionBridge.m; sourceTree = "<group>"; };
 		E1A0C0042F60000100BEE004 /* Runner-Bridging-Header.h */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.c.h; path = "Runner-Bridging-Header.h"; sourceTree = "<group>"; };
@@ -388,6 +392,7 @@
 				A74D174212C4749A322E8474 /* ZoomQueryServiceTests.swift */,
 				999B6BF0AF215D618A11151E /* PreviewSceneResolverTests.swift */,
 				E2A4BFCDF024B903AA3E4CD8 /* MetadataSidecarWriterTests.swift */,
+				E0F9BE980D7AC62253E76CAC /* ExportPrepTests.swift */,
 			);
 			path = RunnerTests;
 			sourceTree = "<group>";
@@ -582,6 +587,7 @@
 				5B5426E92F21985F00B06BA6 /* CompositionBuilder.swift */,
 				5B5426EA2F21985F00B06BA6 /* LetterboxExporter.swift */,
 				9A56D128845BBC2C5A5CADEB /* ExportFormatInfo.swift */,
+				DBAFE534F311451D8C165B52 /* ExportPrep.swift */,
 			);
 			path = Export;
 			sourceTree = "<group>";
@@ -1096,6 +1102,7 @@
 				8A7F969A09CE93447DE1EA17 /* ZoomQueryServiceTests.swift in Sources */,
 				112D3DF45F7941FE5186DA7E /* PreviewSceneResolverTests.swift in Sources */,
 				CD7DECF96B7CEAA5E41AFBB5 /* MetadataSidecarWriterTests.swift in Sources */,
+				632E2DD388917796BE34FCCD /* ExportPrepTests.swift in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -1192,6 +1199,7 @@
 				A182380CC6315B176E68F111 /* ZoomQueryService.swift in Sources */,
 				4F72510E7C98E741BF80A496 /* PreviewSceneResolver.swift in Sources */,
 				81CB5B49A932A3DC69059C83 /* MetadataSidecarWriter.swift in Sources */,
+				01AAE1E4B799E6B85610A896 /* ExportPrep.swift in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
