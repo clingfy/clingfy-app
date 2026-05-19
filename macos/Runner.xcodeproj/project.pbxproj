@@ -22,8 +22,11 @@
 
 /* Begin PBXBuildFile section */
 		13331D48B0581167284E8DBC /* AudioLevelEstimator.swift in Sources */ = {isa = PBXBuildFile; fileRef = B81915A6645E96590BCA2C31 /* AudioLevelEstimator.swift */; };
+		1FDC4012354B4C4B8C9E4681 /* ExportVideoRequest.swift in Sources */ = {isa = PBXBuildFile; fileRef = 213556AE9CE165CAD73E9898 /* ExportVideoRequest.swift */; };
+		2222176CC2AA8979DC722460 /* StartRecordingRequest.swift in Sources */ = {isa = PBXBuildFile; fileRef = E2D6F5E68DD08113B91D5F81 /* StartRecordingRequest.swift */; };
 		27230021F49F32E7A39261DE /* ExportFormatInfo.swift in Sources */ = {isa = PBXBuildFile; fileRef = 9A56D128845BBC2C5A5CADEB /* ExportFormatInfo.swift */; };
 		32FB535522953FAAFDFB0C14 /* Pods_Runner.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = B8EAFCB83B0EC24EB9C27E83 /* Pods_Runner.framework */; };
+		3311FCB1314995C1392F1E81 /* PreviewSceneRequest.swift in Sources */ = {isa = PBXBuildFile; fileRef = 1DEDC02DB9240C56A4EB2D23 /* PreviewSceneRequest.swift */; };
 		331C80D8294CF71000263BE5 /* RunnerTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 331C80D7294CF71000263BE5 /* RunnerTests.swift */; };
 		335BBD1B22A9A15E00E9071D /* GeneratedPluginRegistrant.swift in Sources */ = {isa = PBXBuildFile; fileRef = 335BBD1A22A9A15E00E9071D /* GeneratedPluginRegistrant.swift */; };
 		33CC10F12044A3C60003C045 /* AppDelegate.swift in Sources */ = {isa = PBXBuildFile; fileRef = 33CC10F02044A3C60003C045 /* AppDelegate.swift */; };
@@ -87,6 +90,7 @@
 		5BE43BEF2F22CD940017267E /* RecordingMetadata.swift in Sources */ = {isa = PBXBuildFile; fileRef = 5BE43BEE2F22CD940017267E /* RecordingMetadata.swift */; };
 		5BE629DC2F2F9F3800063F17 /* ZoomTimelineBuilder.swift in Sources */ = {isa = PBXBuildFile; fileRef = 5BE629DB2F2F9F3800063F17 /* ZoomTimelineBuilder.swift */; };
 		5C1D00012F50000100A0B001 /* ZoomFollowSmoother.swift in Sources */ = {isa = PBXBuildFile; fileRef = 5C1D00022F50000100A0B001 /* ZoomFollowSmoother.swift */; };
+		69B5122F481E9152FAF2A9B3 /* RequestParsingTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 964282A8773D929D64A40630 /* RequestParsingTests.swift */; };
 		79A2C220CAB9E6C95BED894A /* CachedRecordingsCleanupPolicy.swift in Sources */ = {isa = PBXBuildFile; fileRef = 1C10603525072F935CFA8A14 /* CachedRecordingsCleanupPolicy.swift */; };
 		7C0FF00100000000FF00CC02 /* ZoomFocusModeTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 7C0FF00100000000FF00CC01 /* ZoomFocusModeTests.swift */; };
 		7C1000012F70000100A0B001 /* CameraCaptureCoordinator.swift in Sources */ = {isa = PBXBuildFile; fileRef = 7C1000112F70000100A0B001 /* CameraCaptureCoordinator.swift */; };
@@ -159,7 +163,9 @@
 		08F6040D2F4D412CF5867FEF /* CaptureDestinationPreflightPolicy.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = CaptureDestinationPreflightPolicy.swift; sourceTree = "<group>"; };
 		0A91A567C77417E2D6518BA4 /* Pods-Runner.debug-prod.xcconfig */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = text.xcconfig; name = "Pods-Runner.debug-prod.xcconfig"; path = "Target Support Files/Pods-Runner/Pods-Runner.debug-prod.xcconfig"; sourceTree = "<group>"; };
 		1C10603525072F935CFA8A14 /* CachedRecordingsCleanupPolicy.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = CachedRecordingsCleanupPolicy.swift; sourceTree = "<group>"; };
+		1DEDC02DB9240C56A4EB2D23 /* PreviewSceneRequest.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = PreviewSceneRequest.swift; sourceTree = "<group>"; };
 		203D1F2F01AC749D9502A133 /* OverlayContracts.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = OverlayContracts.swift; sourceTree = "<group>"; };
+		213556AE9CE165CAD73E9898 /* ExportVideoRequest.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = ExportVideoRequest.swift; sourceTree = "<group>"; };
 		2C32D8A0F642CCEFB8D71E36 /* CaptureControlling.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = CaptureControlling.swift; sourceTree = "<group>"; };
 		2CA30527B5FD7B013F4A64F9 /* RecordedDurationTracker.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = RecordedDurationTracker.swift; sourceTree = "<group>"; };
 		331C80D5294CF71000263BE5 /* RunnerTests.xctest */ = {isa = PBXFileReference; explicitFileType = wrapper.cfbundle; includeInIndex = 0; path = RunnerTests.xctest; sourceTree = BUILT_PRODUCTS_DIR; };
@@ -247,6 +253,7 @@
 		815246B6D0905FCBEA4C2BFE /* AudioLevelEstimatorTests.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = AudioLevelEstimatorTests.swift; sourceTree = "<group>"; };
 		8487F0FC7655749D593D1968 /* Pods-RunnerTests.profile-dev.xcconfig */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = text.xcconfig; name = "Pods-RunnerTests.profile-dev.xcconfig"; path = "Target Support Files/Pods-RunnerTests/Pods-RunnerTests.profile-dev.xcconfig"; sourceTree = "<group>"; };
 		8F5A1B2C3D4E5F60718293A1 /* OverlayUpdateDeduperTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = OverlayUpdateDeduperTests.swift; sourceTree = "<group>"; };
+		964282A8773D929D64A40630 /* RequestParsingTests.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = RequestParsingTests.swift; sourceTree = "<group>"; };
 		9740EEB21CF90195004384FC /* Debug.xcconfig */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = text.xcconfig; path = Debug.xcconfig; sourceTree = "<group>"; };
 		9A1B2C3D4E5F60718293A4B1 /* PreviewProfile.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PreviewProfile.swift; sourceTree = "<group>"; };
 		9A1B2C3D4E5F60718293A4B3 /* CursorFrameResolver.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CursorFrameResolver.swift; sourceTree = "<group>"; };
@@ -280,6 +287,7 @@
 		E1A0C0022F60000100BEE002 /* AVAssetWriterInputExceptionBridge.h */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.c.h; path = AVAssetWriterInputExceptionBridge.h; sourceTree = "<group>"; };
 		E1A0C0032F60000100BEE003 /* AVAssetWriterInputExceptionBridge.m */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.c.objc; path = AVAssetWriterInputExceptionBridge.m; sourceTree = "<group>"; };
 		E1A0C0042F60000100BEE004 /* Runner-Bridging-Header.h */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.c.h; path = "Runner-Bridging-Header.h"; sourceTree = "<group>"; };
+		E2D6F5E68DD08113B91D5F81 /* StartRecordingRequest.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = StartRecordingRequest.swift; sourceTree = "<group>"; };
 		F54D9966BB1B393ACEF4E44A /* Pods-Runner.profile-dev.xcconfig */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = text.xcconfig; name = "Pods-Runner.profile-dev.xcconfig"; path = "Target Support Files/Pods-Runner/Pods-Runner.profile-dev.xcconfig"; sourceTree = "<group>"; };
 /* End PBXFileReference section */
 
@@ -335,6 +343,7 @@
 				C1D2E3F40516273849A5B6C6 /* RecordingFailureRecoveryTests.swift */,
 				331C80D7294CF71000263BE5 /* RunnerTests.swift */,
 				815246B6D0905FCBEA4C2BFE /* AudioLevelEstimatorTests.swift */,
+				964282A8773D929D64A40630 /* RequestParsingTests.swift */,
 			);
 			path = RunnerTests;
 			sourceTree = "<group>";
@@ -548,6 +557,7 @@
 				8B524B5B9B36BC9D664FBFD8 /* Engine */,
 				5347A549760AE85A7D4C010F /* Diagnostics */,
 				E559AB0D29852BED62ADF7CC /* Audio */,
+				682C2B4A23F545BEB043E74D /* Requests */,
 			);
 			path = Capture;
 			sourceTree = "<group>";
@@ -705,6 +715,17 @@
 			);
 			name = Contracts;
 			path = Contracts;
+			sourceTree = "<group>";
+		};
+		682C2B4A23F545BEB043E74D /* Requests */ = {
+			isa = PBXGroup;
+			children = (
+				E2D6F5E68DD08113B91D5F81 /* StartRecordingRequest.swift */,
+				213556AE9CE165CAD73E9898 /* ExportVideoRequest.swift */,
+				1DEDC02DB9240C56A4EB2D23 /* PreviewSceneRequest.swift */,
+			);
+			name = Requests;
+			path = Requests;
 			sourceTree = "<group>";
 		};
 		8B524B5B9B36BC9D664FBFD8 /* Engine */ = {
@@ -998,6 +1019,7 @@
 				C1D2E3F40516273849A5B6C7 /* RecordingFailureRecoveryTests.swift in Sources */,
 				331C80D8294CF71000263BE5 /* RunnerTests.swift in Sources */,
 				DCD38ECB9B70DA6BE66ADC4D /* AudioLevelEstimatorTests.swift in Sources */,
+				69B5122F481E9152FAF2A9B3 /* RequestParsingTests.swift in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -1084,6 +1106,9 @@
 				27230021F49F32E7A39261DE /* ExportFormatInfo.swift in Sources */,
 				13331D48B0581167284E8DBC /* AudioLevelEstimator.swift in Sources */,
 				4C17FA78443E9B25D54838E3 /* MicrophoneLevelMonitor.swift in Sources */,
+				2222176CC2AA8979DC722460 /* StartRecordingRequest.swift in Sources */,
+				1FDC4012354B4C4B8C9E4681 /* ExportVideoRequest.swift in Sources */,
+				3311FCB1314995C1392F1E81 /* PreviewSceneRequest.swift in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
