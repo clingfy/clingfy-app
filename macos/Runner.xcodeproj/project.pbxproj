@@ -104,6 +104,7 @@
 		7D1001012FA0000100A0B001 /* RecordingProjectPaths.swift in Sources */ = {isa = PBXBuildFile; fileRef = 7D1001032FA0000100A0B001 /* RecordingProjectPaths.swift */; };
 		7D1001022FA0000100A0B001 /* RecordingProjectManifest.swift in Sources */ = {isa = PBXBuildFile; fileRef = 7D1001042FA0000100A0B001 /* RecordingProjectManifest.swift */; };
 		80187E677136AC16CC76ED14 /* Pods_RunnerTests.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = B01053F62F931EDFDC4E9F77 /* Pods_RunnerTests.framework */; };
+		8A7F969A09CE93447DE1EA17 /* ZoomQueryServiceTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = A74D174212C4749A322E8474 /* ZoomQueryServiceTests.swift */; };
 		8AAA59EA7CDDF22B4E47FB07 /* CaptureDestinationDiagnostics.swift in Sources */ = {isa = PBXBuildFile; fileRef = BDCE6283CC82D1BA03141B01 /* CaptureDestinationDiagnostics.swift */; };
 		8F5A1B2C3D4E5F60718293A2 /* OverlayUpdateDeduperTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 8F5A1B2C3D4E5F60718293A1 /* OverlayUpdateDeduperTests.swift */; };
 		99EA998456840B42F1512660 /* ScreenRecorderEventBridgeTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = C5F53265860D2AA59ECBD56F /* ScreenRecorderEventBridgeTests.swift */; };
@@ -113,6 +114,7 @@
 		9A1B2C3D4E5F60718293A4B8 /* PreviewProfileTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 9A1B2C3D4E5F60718293A4B7 /* PreviewProfileTests.swift */; };
 		9A1B2C3D4E5F60718293A4BA /* CursorFrameResolverTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 9A1B2C3D4E5F60718293A4B9 /* CursorFrameResolverTests.swift */; };
 		9B1B2C3D4E5F60718293A4B2 /* CameraOverlayShapeTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 9B1B2C3D4E5F60718293A4B1 /* CameraOverlayShapeTests.swift */; };
+		A182380CC6315B176E68F111 /* ZoomQueryService.swift in Sources */ = {isa = PBXBuildFile; fileRef = D851B0263A47BA61AA6AC854 /* ZoomQueryService.swift */; };
 		A1B2C3D4E5F60718293A4B02 /* CameraChromaKeyRenderer.swift in Sources */ = {isa = PBXBuildFile; fileRef = A1B2C3D4E5F60718293A4B01 /* CameraChromaKeyRenderer.swift */; };
 		A1B2C3D4E5F60718293A4B04 /* CameraStyledIntermediatePipeline.swift in Sources */ = {isa = PBXBuildFile; fileRef = A1B2C3D4E5F60718293A4B03 /* CameraStyledIntermediatePipeline.swift */; };
 		A1B2C3D4E5F60718293A4B06 /* CameraTransformTimelineBuilder.swift in Sources */ = {isa = PBXBuildFile; fileRef = A1B2C3D4E5F60718293A4B05 /* CameraTransformTimelineBuilder.swift */; };
@@ -280,6 +282,7 @@
 		A1B2C3D4E5F60718293A4B5C /* CameraOverlayLayoutTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CameraOverlayLayoutTests.swift; sourceTree = "<group>"; };
 		A2B3C4D5E6F708192A3B4C5E /* ClingfyProjectIcon.icns */ = {isa = PBXFileReference; lastKnownFileType = image.icns; path = Runner/ClingfyProjectIcon.icns; sourceTree = "<group>"; };
 		A4E6CA46562C4E1ADEB34988 /* StorageDiagnosticsService.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = StorageDiagnosticsService.swift; sourceTree = "<group>"; };
+		A74D174212C4749A322E8474 /* ZoomQueryServiceTests.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = ZoomQueryServiceTests.swift; sourceTree = "<group>"; };
 		A77BB536EE34C7BCF42EEA92 /* RecordingStateMachine.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = RecordingStateMachine.swift; sourceTree = "<group>"; };
 		A804343376134DBC7318D507 /* PermissionsMethodRouterTests.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = PermissionsMethodRouterTests.swift; sourceTree = "<group>"; };
 		B01053F62F931EDFDC4E9F77 /* Pods_RunnerTests.framework */ = {isa = PBXFileReference; explicitFileType = wrapper.framework; includeInIndex = 0; path = Pods_RunnerTests.framework; sourceTree = BUILT_PRODUCTS_DIR; };
@@ -296,6 +299,7 @@
 		D31B40A1260A71654C81E859 /* RecordingPauseResumeCapabilities.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = RecordingPauseResumeCapabilities.swift; sourceTree = "<group>"; };
 		D4369B6E34FE7C645656404F /* Pods-RunnerTests.debug-prod.xcconfig */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = text.xcconfig; name = "Pods-RunnerTests.debug-prod.xcconfig"; path = "Target Support Files/Pods-RunnerTests/Pods-RunnerTests.debug-prod.xcconfig"; sourceTree = "<group>"; };
 		D4A1B2C3D4E5F60718293A4B /* StorageInfoProvider.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = StorageInfoProvider.swift; sourceTree = "<group>"; };
+		D851B0263A47BA61AA6AC854 /* ZoomQueryService.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = ZoomQueryService.swift; sourceTree = "<group>"; };
 		DEC89D912852F9AAC2996A07 /* ScreenRecorderEventBridge.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = ScreenRecorderEventBridge.swift; sourceTree = "<group>"; };
 		DF9975749BBCCB19C63D6DF2 /* Pods-Runner.release-prod.xcconfig */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = text.xcconfig; name = "Pods-Runner.release-prod.xcconfig"; path = "Target Support Files/Pods-Runner/Pods-Runner.release-prod.xcconfig"; sourceTree = "<group>"; };
 		DFABA6A057D27E2AC4CDFEB6 /* StorageDiagnosticsServiceTests.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = StorageDiagnosticsServiceTests.swift; sourceTree = "<group>"; };
@@ -364,6 +368,7 @@
 				04091965DCAEC5DFBFFCCDEB /* RecordingStateMachineTests.swift */,
 				C5F53265860D2AA59ECBD56F /* ScreenRecorderEventBridgeTests.swift */,
 				DFABA6A057D27E2AC4CDFEB6 /* StorageDiagnosticsServiceTests.swift */,
+				A74D174212C4749A322E8474 /* ZoomQueryServiceTests.swift */,
 			);
 			path = RunnerTests;
 			sourceTree = "<group>";
@@ -478,6 +483,7 @@
 				5B5426ED2F21985F00B06BA6 /* ZoomHysteresis.swift */,
 				5C1D00022F50000100A0B001 /* ZoomFollowSmoother.swift */,
 				5BE629DB2F2F9F3800063F17 /* ZoomTimelineBuilder.swift */,
+				D851B0263A47BA61AA6AC854 /* ZoomQueryService.swift */,
 			);
 			path = Zoom;
 			sourceTree = "<group>";
@@ -1057,6 +1063,7 @@
 				694F07480FE17B655AC013A3 /* RecordingStateMachineTests.swift in Sources */,
 				99EA998456840B42F1512660 /* ScreenRecorderEventBridgeTests.swift in Sources */,
 				C9F53A704E24243F7769EE2C /* StorageDiagnosticsServiceTests.swift in Sources */,
+				8A7F969A09CE93447DE1EA17 /* ZoomQueryServiceTests.swift in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -1150,6 +1157,7 @@
 				5A747E6083E28FD362AC217C /* RecordingStateMachine.swift in Sources */,
 				2FB5DA91DCB61199C7CADA8C /* ScreenRecorderEventBridge.swift in Sources */,
 				4D3822C9EC285F2A78877BE5 /* StorageDiagnosticsService.swift in Sources */,
+				A182380CC6315B176E68F111 /* ZoomQueryService.swift in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
