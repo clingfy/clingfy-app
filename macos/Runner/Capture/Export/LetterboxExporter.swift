@@ -283,10 +283,20 @@ final class LetterboxExporter {
     let generator = AVAssetImageGenerator(asset: asset)
     generator.appliesPreferredTrackTransform = videoComposition == nil
     generator.videoComposition = videoComposition
-    generator.maximumSize = CGSize(
-      width: validationSampleDimension,
-      height: validationSampleDimension
-    )
+    // When the composition carries an AVVideoCompositionCoreAnimationTool,
+    // applying `maximumSize` triggers a reduced-resolution render path in
+    // AVAssetImageGenerator where the post-processing videoLayer fails to
+    // receive the screen video — the reference frame collapses to mostly the
+    // bgLayer colour and the FinalOutputValidation falsely rejects correct
+    // exports. Render the animation-tool composition at full size and let the
+    // downstream metrics analyzer (analyzeFrameColorMetrics) do the uniform
+    // 64×64 downsample instead.
+    if videoComposition?.animationTool == nil {
+      generator.maximumSize = CGSize(
+        width: validationSampleDimension,
+        height: validationSampleDimension
+      )
+    }
     return try generator.copyCGImage(at: sampleTime, actualTime: nil)
   }
 
@@ -356,6 +366,21 @@ final class LetterboxExporter {
     }
 
     return metrics
+  }
+
+  /// Retags an arbitrary CGImage with sRGB without converting its pixel
+  /// values, so downstream colour analysis sees byte values directly instead
+  /// of going through CoreGraphics' chromatic-adaptation matrix. The
+  /// validator's reference frames come back from AVAssetImageGenerator tagged
+  /// as `kCGColorSpaceGenericRGB` (Apple's old gamma-1.8 generic space) when
+  /// the composition has an animation tool; converting that to sRGB during
+  /// `CGContext.draw` introduces a measurable channel cross-talk (e.g. pure
+  /// blue 0,0,255 → 5,51,255) that distorts the luma comparison and falsely
+  /// rejects correct exports. Final-output frames come back as CoreMedia709
+  /// (BT.709) and do not exhibit the same shift, so the reference vs final
+  /// comparison becomes asymmetric. Retagging in sRGB makes both comparable.
+  private func normalizeForColorAnalysis(_ image: CGImage) -> CGImage? {
+    image.copy(colorSpace: VideoColorPipeline.workingColorSpace) ?? image
   }
 
   private func analyzeFrameColorMetrics(
@@ -1078,9 +1103,21 @@ final class LetterboxExporter {
         at: CMTime(seconds: sampleTime, preferredTimescale: 600)
       )
 
+      // Retag the reference and final as sRGB before colour analysis.
+      // AVAssetImageGenerator hands back animation-tool composites tagged
+      // `kCGColorSpaceGenericRGB`, and converting that to sRGB during
+      // CGContext.draw inside analyzeFrameColorMetrics applies a chromatic-
+      // adaptation matrix that injects phantom green (pure blue → 5,51,255).
+      // The final file is tagged CoreMedia709 and does not exhibit the same
+      // shift, so the comparison becomes asymmetric and correct exports get
+      // wrongly rejected. Retagging without converting bytes makes both
+      // sides comparable.
+      let normalizedReference = normalizeForColorAnalysis(referenceImage) ?? referenceImage
+      let normalizedFinal = normalizeForColorAnalysis(finalImage) ?? finalImage
+
       guard
-        let referenceMetrics = analyzeFrameColorMetrics(referenceImage, ignoreTransparentPixels: false),
-        let finalMetrics = analyzeFrameColorMetrics(finalImage, ignoreTransparentPixels: false)
+        let referenceMetrics = analyzeFrameColorMetrics(normalizedReference, ignoreTransparentPixels: false),
+        let finalMetrics = analyzeFrameColorMetrics(normalizedFinal, ignoreTransparentPixels: false)
       else {
         return makeFinalExportValidationError(
           reason: "The final export color validator could not analyze the rendered frames."
