@@ -37,7 +37,7 @@ final class ScreenRecorderFacade: NSObject {
   private let saveFolder = SaveFolderStore()
   private let displaySvc = DisplayService()
   private let exporter = LetterboxExporter()
-  private var captureFPS: Int = 30
+  var captureFPS: Int = 30  // internal: read by StorageDiagnosticsService (PR 7)
   private let defaultZoomFollowStrength: CGFloat = 0.15
   private let cameraCaptureCoordinator = CameraCaptureCoordinator()
   private lazy var cameraRecorder = CameraRecorder(coordinator: cameraCaptureCoordinator)
@@ -59,7 +59,7 @@ final class ScreenRecorderFacade: NSObject {
   private var pendingMetadata: RecordingMetadata?
   private var pendingCameraRecordingSession: CameraRecordingSession?
   private var pendingSeparateCameraFailure: FlutterError?
-  private var activeRecordingProjectRoot: URL?
+  var activeRecordingProjectRoot: URL?  // internal: read by StorageDiagnosticsService (PR 7)
 
   // state
   private var state: RecorderState = .idle
@@ -240,32 +240,8 @@ final class ScreenRecorderFacade: NSObject {
     self.captureFPS = fps
   }
 
-  func getCaptureDiagnostics(result: @escaping FlutterResult) {
-    var payload: [String: Any] = [
-      "backend": currentBackendName(),
-      "captureFps": captureFPS,
-    ]
-    if let bytes = availableDiskSpaceBytes(at: currentCaptureDestinationURL()) {
-      payload["captureDestinationFreeBytes"] = bytes
-    }
-    if let bytes = availableDiskSpaceBytes(at: AppPaths.recordingsRoot()) {
-      payload["recordingsFreeBytes"] = bytes
-    }
-    if let bytes = availableDiskSpaceBytes(at: resolveSaveFolderURL()) {
-      payload["saveFolderFreeBytes"] = bytes
-    }
-    result(payload)
-  }
-
-  func getStorageSnapshot(result: @escaping FlutterResult) {
-    let snapshot = StorageInfoProvider.buildSnapshot(
-      captureDestinationURL: currentCaptureDestinationURL(),
-      recordingsURL: AppPaths.recordingsRoot(),
-      tempURL: AppPaths.tempRoot(),
-      logsURL: AppPaths.logsRoot()
-    )
-    result(snapshot.asMap())
-  }
+  // getCaptureDiagnostics / getStorageSnapshot / currentCaptureDestinationURL /
+  // availableDiskSpaceBytes moved to StorageDiagnosticsService.swift (PR 7).
 
   func getRecordingCapabilities(result: @escaping FlutterResult) {
     result(RecordingPauseResumeCapabilities.current().asMap())
@@ -2682,7 +2658,7 @@ final class ScreenRecorderFacade: NSObject {
     saveFolder.resolveFolderURL()
   }
 
-  private func currentBackendName() -> String {
+  func currentBackendName() -> String {  // internal: used by StorageDiagnosticsService (PR 7)
     let raw = String(describing: type(of: capture)).lowercased()
     if raw.contains("screencapturekit") || raw.contains("sck") {
       return "screencapturekit"
@@ -2852,9 +2828,7 @@ final class ScreenRecorderFacade: NSObject {
     return nil
   }
 
-  private func currentCaptureDestinationURL() -> URL {
-    CaptureDestinationDiagnostics.url(for: activeRecordingProjectRoot)
-  }
+  // currentCaptureDestinationURL moved to StorageDiagnosticsService.swift (PR 7).
 
   private func preflightCaptureDestination(_ url: URL, allowLowStorageBypass: Bool) throws {
     let targetURL = diskSpaceLookupURL(for: url)
@@ -2923,9 +2897,7 @@ final class ScreenRecorderFacade: NSObject {
     return normalized.deletingLastPathComponent()
   }
 
-  private func availableDiskSpaceBytes(at url: URL) -> Int64? {
-    StorageInfoProvider.availableCapacity(for: url)
-  }
+  // availableDiskSpaceBytes moved to StorageDiagnosticsService.swift (PR 7).
 
   private func beginStoppingCapture() {
     guard state == .recording || state == .paused else { return }
