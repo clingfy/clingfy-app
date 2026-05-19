@@ -66,6 +66,9 @@ final class ScreenRecorderFacade: NSObject {
   // Pure decision table consulted at lifecycle entry points. The facade still
   // owns `state` and the flags; the machine never mutates anything (Commit 4).
   private let recordingStateMachine = RecordingStateMachine()
+  // Stateless collaborators (own no session state) — Slice 3.
+  private let captureTargetResolver = CaptureTargetResolver()
+  private let recordingProjectService = RecordingProjectService()
   private var startResult: FlutterResult?
   private var pauseResult: FlutterResult?
   private var resumeResult: FlutterResult?
@@ -272,7 +275,7 @@ final class ScreenRecorderFacade: NSObject {
     let allowLowStorageBypass = request.allowLowStorageBypass
 
     // macOS screen-recording permission
-    if #available(macOS 10.15, *), !CGPreflightScreenCaptureAccess() {
+    if !RecordingPreflightService.screenRecordingSatisfied() {
       _ = CGRequestScreenCaptureAccess()
       finishStartWithError(
         flutterError(NativeErrorCode.screenRecordingPermission, ""))
@@ -281,7 +284,16 @@ final class ScreenRecorderFacade: NSObject {
 
     let captureTarget: CaptureTarget
     do {
-      captureTarget = try resolveCaptureTarget()
+      captureTarget = try captureTargetResolver.resolve(
+        .init(
+          displayMode: prefs.displayMode,
+          selectedDisplayID: selectedDisplayID,
+          selectedAppWindowID: selectedAppWindowID,
+          areaRect: prefs.areaRect,
+          areaDisplayId: prefs.areaDisplayId
+        ),
+        displayService: displaySvc
+      )
     } catch CaptureTargetError.noWindowSelected {
       finishStartWithError(
         flutterError(NativeErrorCode.noWindowSelected, ""))
@@ -320,19 +332,24 @@ final class ScreenRecorderFacade: NSObject {
       let frameRate = args?["frameRate"] as? Int ?? 60
       let systemAudioEnabled = args?["systemAudioEnabled"] as? Bool ?? false
 
-      if !sessionDisableMicrophone,
-        let audioDeviceId = prefs.audioDeviceId,
-        !audioDeviceId.isEmpty,
-        audioDeviceId != "__none__",
-        AVCaptureDevice.authorizationStatus(for: .audio) != .authorized
-      {
+      if !RecordingPreflightService.microphoneSatisfied(
+        disableMicrophone: sessionDisableMicrophone,
+        audioDeviceId: prefs.audioDeviceId,
+        audioAuthorized: AVCaptureDevice.authorizationStatus(for: .audio) == .authorized
+      ) {
         finishStartWithError(
           flutterError(NativeErrorCode.microphonePermissionRequired, ""))
         return
       }
 
-      if effectiveCursorEnabledForRecording && prefs.cursorLinked && !ensureAccessibilityAllowed(prompt: false)
-      {
+      // ensureAccessibilityAllowed(prompt: false) is side-effect-free (no
+      // prompt — pure AXIsProcessTrusted query), so eager evaluation here is
+      // observably identical to the previous short-circuit (Slice 3 / PR 14).
+      if RecordingPreflightService.accessibilityBlocksRecording(
+        cursorEnabledForRecording: effectiveCursorEnabledForRecording,
+        cursorLinked: prefs.cursorLinked,
+        accessibilityAllowed: ensureAccessibilityAllowed(prompt: false)
+      ) {
         finishStartWithError(
           flutterError(NativeErrorCode.accessibilityPermissionRequired, ""))
         return
@@ -341,9 +358,10 @@ final class ScreenRecorderFacade: NSObject {
       activeRecordingProjectRoot = nil
       pendingCameraRecordingSession = nil
       cancelRequestedDuringStart = false
-      let projectId = RecordingProjectPaths.makeProjectID()
-      let projectRoot = try RecordingProjectPaths.createProjectSkeleton(projectId: projectId)
-      let screenVideoURL = RecordingProjectPaths.screenVideoURL(for: projectRoot)
+      let skeleton = try recordingProjectService.createSkeleton()
+      let projectId = skeleton.projectId
+      let projectRoot = skeleton.projectRoot
+      let screenVideoURL = skeleton.screenVideoURL
 
       try preflightCaptureDestination(
         screenVideoURL,
@@ -363,27 +381,24 @@ final class ScreenRecorderFacade: NSObject {
         pendingCameraRecordingSession = cameraRecordingSession(for: projectRoot)
       }
 
-      pendingMetadata = RecordingMetadata.create(
-        screenRawRelativePath: RecordingProjectPaths.relativeScreenVideoPath,
-        displayMode: prefs.displayMode,
-        displayID: captureTarget.displayID,
-        cropRect: captureTarget.cropRect,
-        frameRate: frameRate,
-        quality: prefs.recordingQuality,
-        cursorEnabled: effectiveCursorEnabledForRecording,
-        cursorLinked: prefs.cursorLinked,
-        windowID: (prefs.displayMode == .singleAppWindow ? selectedAppWindowID : nil),
-        excludedRecorderApp: prefs.excludeRecorderApp,
-        camera: pendingCameraCaptureInfo(for: projectRoot),
-        editorSeed: editorSeed(for: target)
-      )
-
-      let manifest = RecordingProjectManifest.create(
+      pendingMetadata = try recordingProjectService.writeProjectFiles(
+        projectRoot: projectRoot,
         projectId: projectId,
-        displayName: RecordingProjectPaths.displayName(),
-        includeCamera: shouldRecordSeparateCameraAsset
+        metadataInputs: .init(
+          displayMode: prefs.displayMode,
+          displayID: captureTarget.displayID,
+          cropRect: captureTarget.cropRect,
+          frameRate: frameRate,
+          quality: prefs.recordingQuality,
+          cursorEnabled: effectiveCursorEnabledForRecording,
+          cursorLinked: prefs.cursorLinked,
+          windowID: (prefs.displayMode == .singleAppWindow ? selectedAppWindowID : nil),
+          excludedRecorderApp: prefs.excludeRecorderApp
+        ),
+        cameraCaptureInfo: pendingCameraCaptureInfo(for: projectRoot),
+        editorSeed: editorSeed(for: target),
+        includeCameraInManifest: shouldRecordSeparateCameraAsset
       )
-      try manifest.write(to: RecordingProjectPaths.manifestURL(for: projectRoot))
 
       let outputURL: () throws -> URL = {
         screenVideoURL
@@ -1691,56 +1706,8 @@ final class ScreenRecorderFacade: NSObject {
     return candidate
   }
 
-  private enum CaptureTargetError: Error {
-    case noWindowSelected, windowUnavailable, noAreaSelected
-  }
-
-  private func resolveCaptureTarget() throws -> CaptureTarget {
-    switch prefs.displayMode {
-    case .explicitID:
-      return CaptureTarget(
-        mode: DisplayTargetMode.explicitID,
-        displayID: selectedDisplayID ?? displaySvc.displayIDForAppWindowOrMain(),
-        cropRect: nil,  // for cursor normalization
-        windowID: nil  // for SCK true window capture
-      )
-    case .appWindow:
-      return CaptureTarget(
-        mode: DisplayTargetMode.appWindow,
-        displayID: displaySvc.displayIDForAppWindowOrMain(),
-        cropRect: nil,  // for cursor normalization
-        windowID: nil  // for SCK true window capture
-      )
-    case .mouseAtStart, .followMouse:
-      return CaptureTarget(
-        mode: DisplayTargetMode.mouseAtStart,
-        displayID: displaySvc.displayIDUnderMouse() ?? displaySvc.displayIDForAppWindowOrMain(),
-        cropRect: nil,  // for cursor normalization
-        windowID: nil  // for SCK true window capture
-      )
-    case .singleAppWindow:
-      guard let windowID = selectedAppWindowID else { throw CaptureTargetError.noWindowSelected }
-      guard let config = displaySvc.captureTarget(forWindowID: windowID) else {
-        throw CaptureTargetError.windowUnavailable
-      }
-      return CaptureTarget(
-        mode: DisplayTargetMode.singleAppWindow,
-        displayID: config.displayID,
-        cropRect: config.rect,  // for cursor normalization
-        windowID: windowID  // for SCK true window capture
-      )
-    case .areaRecording:
-      guard let rect = prefs.areaRect, let displayID = prefs.areaDisplayId else {
-        throw CaptureTargetError.noAreaSelected
-      }
-      return CaptureTarget(
-        mode: DisplayTargetMode.areaRecording,
-        displayID: CGDirectDisplayID(displayID),
-        cropRect: rect,  // for cursor normalization
-        windowID: nil  // for SCK true window capture
-      )
-    }
-  }
+  // resolveCaptureTarget / CaptureTargetError moved to
+  // Capture/Targeting/CaptureTargetResolver.swift (Slice 3 / PR 12).
   private func updateOverlayVisibility(
     file: String = #file,
     line: Int = #line
