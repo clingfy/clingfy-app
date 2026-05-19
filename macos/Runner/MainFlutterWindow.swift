@@ -680,56 +680,38 @@ class MainFlutterWindow: NSWindow {
 
       case "processVideo":
         if let args = call.arguments as? [String: Any],
-          let projectPath = args["projectPath"] as? String
+          let req = PreviewSceneRequest.fromFlutter(args)
         {
+          // cameraParams and zoomSegments are derived (not raw arg reads) and
+          // stay resolved by their existing helpers — intentionally outside
+          // the DTO (Slice 2 / PR 5B).
           let cameraParams = self.screenRecorder.resolveCameraCompositionParams(
-            projectPath: projectPath,
+            projectPath: req.projectPath,
             args: args
           )
-          let layout = (args["layoutPreset"] as? String) ?? "auto"
-          let res = (args["resolutionPreset"] as? String) ?? "auto"
-          let fit = (args["fitMode"] as? String) ?? "fit"
-          let p = (args["padding"] as? Double) ?? 0.0
-          let r = (args["cornerRadius"] as? Double) ?? 0.0
-          let bgCol = args["backgroundColor"] as? Int
-          let bgImg = args["backgroundImagePath"] as? String
-          let cursorSize = (args["cursorSize"] as? Double) ?? 1.0
-          let rawZoomFactor = (args["zoomFactor"] as? Double) ?? 1.5
-          // Newer Flutter clients send zoomEffectEnabled separately so 1.0x is a valid enabled value.
-          // Older clients omit it; fall back to the legacy zoomFactor > 1.0 contract.
-          let zoomEffectEnabled = (args["zoomEffectEnabled"] as? Bool) ?? (rawZoomFactor > 1.0)
-          let zoomFactor = zoomEffectEnabled ? rawZoomFactor : 1.0
-          let showCursor = (args["showCursor"] as? Bool) ?? true
-          let cameraPreviewChangeKind = CameraPreviewChangeKind(
-            rawValue: (args["cameraPreviewChangeKind"] as? String) ?? CameraPreviewChangeKind.none.rawValue
-          ) ?? .none
-
-          let format = (args["format"] as? String) ?? "mov"
-          let codec = (args["codec"] as? String) ?? "hevc"
-          let bitrate = (args["bitrate"] as? String) ?? "auto"
           let zoomSegments = parseZoomTimelineSegments(args["zoomSegments"])
 
           self.screenRecorder.processVideo(
-            projectPath: projectPath,
-            layout: layout,
-            resolution: res,
-            fit: fit,
-            padding: p,
-            cornerRadius: r,
-            backgroundColor: bgCol,
-            backgroundImagePath: bgImg,
-            cursorSize: cursorSize,
-            zoomFactor: zoomFactor,
-            showCursor: showCursor,
-            format: format,
-            codec: codec,
-            bitrate: bitrate,
-            audioGainDb: (args["audioGainDb"] as? Double) ?? 0.0,
-            audioVolumePercent: (args["audioVolumePercent"] as? Double) ?? 100.0,
+            projectPath: req.projectPath,
+            layout: req.layout,
+            resolution: req.resolution,
+            fit: req.fit,
+            padding: req.padding,
+            cornerRadius: req.cornerRadius,
+            backgroundColor: req.backgroundColor,
+            backgroundImagePath: req.backgroundImagePath,
+            cursorSize: req.cursorSize,
+            zoomFactor: req.zoomFactor,
+            showCursor: req.showCursor,
+            format: req.format,
+            codec: req.codec,
+            bitrate: req.bitrate,
+            audioGainDb: req.audioGainDb,
+            audioVolumePercent: req.audioVolumePercent,
             zoomSegments: zoomSegments,
-            cameraPreviewChangeKind: cameraPreviewChangeKind,
-            sessionId: args["sessionId"] as? String,
-            cameraPath: args["cameraPath"] as? String,
+            cameraPreviewChangeKind: req.cameraPreviewChangeKind,
+            sessionId: req.sessionId,
+            cameraPath: req.cameraPath,
             cameraParams: cameraParams,
             result: result)
         } else {
@@ -798,54 +780,37 @@ class MainFlutterWindow: NSWindow {
 
       case "exportVideo":
         if let args = call.arguments as? [String: Any],
-          let projectPath = args["projectPath"] as? String
+          let req = ExportVideoRequest.fromFlutter(args)
         {
+          // cameraParams stays resolved by its existing helper (derived, not a
+          // raw arg read) — intentionally outside the DTO (Slice 2 / PR 5B).
           let cameraParams = self.screenRecorder.resolveCameraCompositionParams(
-            projectPath: projectPath,
+            projectPath: req.projectPath,
             args: args
           )
-          let layout = (args["layoutPreset"] as? String) ?? "auto"
-          let res = (args["resolutionPreset"] as? String) ?? "auto"
-          let fit = (args["fitMode"] as? String) ?? "fit"
-          let p = (args["padding"] as? Double) ?? 0.0
-          let r = (args["cornerRadius"] as? Double) ?? 0.0
-          let bgCol = args["backgroundColor"] as? Int
-          let bgImg = args["backgroundImagePath"] as? String
-          let cursorSize = (args["cursorSize"] as? Double) ?? 1.0
-          let rawZoomFactor = (args["zoomFactor"] as? Double) ?? 1.5
-          let zoomEffectEnabled = (args["zoomEffectEnabled"] as? Bool) ?? (rawZoomFactor > 1.0)
-          let zoomFactor = zoomEffectEnabled ? rawZoomFactor : 1.0
-          let showCursor = (args["showCursor"] as? Bool) ?? true
-          let filename = args["filename"] as? String
-          let directoryOverride = args["directoryOverride"] as? String
-          let format = (args["format"] as? String) ?? "mov"
-          let codec = (args["codec"] as? String) ?? "hevc"
-          let bitrate = (args["bitrate"] as? String) ?? "auto"
-          let autoNormalizeOnExport = (args["autoNormalizeOnExport"] as? Bool) ?? false
-          let targetLoudnessDbfs = (args["targetLoudnessDbfs"] as? Double) ?? -16.0
 
           self.screenRecorder.exportVideo(
-            projectPath: projectPath,
-            layout: layout,
-            resolution: res,
-            fit: fit,
-            padding: p,
-            cornerRadius: r,
-            backgroundColor: bgCol,
-            backgroundImagePath: bgImg,
-            cursorSize: cursorSize,
-            zoomFactor: zoomFactor,
-            showCursor: showCursor,
-            filename: filename,
-            directoryOverride: directoryOverride,
-            format: format,
-            codec: codec,
-            bitrate: bitrate,
-            audioGainDb: (args["audioGainDb"] as? Double) ?? 0.0,
-            audioVolumePercent: (args["audioVolumePercent"] as? Double) ?? 100.0,
-            autoNormalizeOnExport: autoNormalizeOnExport,
-            targetLoudnessDbfs: targetLoudnessDbfs,
-            cameraPath: args["cameraPath"] as? String,
+            projectPath: req.projectPath,
+            layout: req.layout,
+            resolution: req.resolution,
+            fit: req.fit,
+            padding: req.padding,
+            cornerRadius: req.cornerRadius,
+            backgroundColor: req.backgroundColor,
+            backgroundImagePath: req.backgroundImagePath,
+            cursorSize: req.cursorSize,
+            zoomFactor: req.zoomFactor,
+            showCursor: req.showCursor,
+            filename: req.filename,
+            directoryOverride: req.directoryOverride,
+            format: req.format,
+            codec: req.codec,
+            bitrate: req.bitrate,
+            audioGainDb: req.audioGainDb,
+            audioVolumePercent: req.audioVolumePercent,
+            autoNormalizeOnExport: req.autoNormalizeOnExport,
+            targetLoudnessDbfs: req.targetLoudnessDbfs,
+            cameraPath: req.cameraPath,
             cameraParams: cameraParams,
             onProgress: { [weak self] progress in
               self?.channel?.invokeMethod("updateExportProgress", arguments: progress)
