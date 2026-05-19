@@ -63,6 +63,9 @@ final class ScreenRecorderFacade: NSObject {
 
   // state
   private var state: RecorderState = .idle
+  // Pure decision table consulted at lifecycle entry points. The facade still
+  // owns `state` and the flags; the machine never mutates anything (Commit 4).
+  private let recordingStateMachine = RecordingStateMachine()
   private var startResult: FlutterResult?
   private var pauseResult: FlutterResult?
   private var resumeResult: FlutterResult?
@@ -269,16 +272,19 @@ final class ScreenRecorderFacade: NSObject {
   }
 
   func startRecording(args: [String: Any]?, result: @escaping FlutterResult) {
-    guard state == .idle else {
+    switch recordingStateMachine.startDecision(from: state) {
+    case .alreadyActive:
       if let path = activeRecordingProjectRoot?.path {
         result(path)
       } else {
         result(flutterError(NativeErrorCode.alreadyRecording, ""))
       }
       return
+    case .start:
+      break
     }
     startResult = result
-    state = .starting
+    state = recordingStateMachine.nextOnStart(from: state)
     stateAsStr()
     resetPendingStartRecoveryState()
     refreshMicrophoneLevelMonitoring(resetMeter: true)
@@ -619,24 +625,25 @@ final class ScreenRecorderFacade: NSObject {
   }
 
   func stopRecording(result: @escaping FlutterResult) {
-    switch state {
-    case .idle:
+    switch recordingStateMachine.stopDecision(
+      from: state, isPauseResumeMutationInFlight: isPauseResumeMutationInFlight
+    ) {
+    case .notRecording:
       result(flutterError(NativeErrorCode.notRecording, ""))
-    case .starting:
+    case .cancelDuringStart:
       pendingStop = true
       cancelRequestedDuringStart = true
       stopResult = result
-    case .recording, .paused:
+    case .queueUntilMutation:
       stopResult = result
-      if isPauseResumeMutationInFlight {
-        pendingStop = true
-        NativeLogger.i(
-          "Facade", "Queued stop until pause/resume mutation completes",
-          context: ["state": String(describing: state)])
-        return
-      }
+      pendingStop = true
+      NativeLogger.i(
+        "Facade", "Queued stop until pause/resume mutation completes",
+        context: ["state": String(describing: state)])
+    case .beginStopping:
+      stopResult = result
       beginStoppingCapture()
-    case .stopping:
+    case .alreadyStopping:
       result(nil)
     }
   }
@@ -648,19 +655,19 @@ final class ScreenRecorderFacade: NSObject {
       return
     }
 
-    switch state {
-    case .paused:
+    switch recordingStateMachine.pauseDecision(
+      from: state, isPauseResumeMutationInFlight: isPauseResumeMutationInFlight
+    ) {
+    case .alreadyPaused:
       result(nil)
-    case .recording:
-      guard !isPauseResumeMutationInFlight else {
-        result(nil)
-        return
-      }
+    case .mutationInFlightNoop:
+      result(nil)
+    case .begin:
       isPauseResumeMutationInFlight = true
       pauseResult = result
       NativeLogger.i("Facade", "Pause requested")
       capture.pause()
-    case .starting, .stopping, .idle:
+    case .invalidState:
       result(
         flutterError(
           NativeErrorCode.invalidRecordingState,
@@ -676,19 +683,19 @@ final class ScreenRecorderFacade: NSObject {
       return
     }
 
-    switch state {
-    case .recording:
+    switch recordingStateMachine.resumeDecision(
+      from: state, isPauseResumeMutationInFlight: isPauseResumeMutationInFlight
+    ) {
+    case .alreadyRecording:
       result(nil)
-    case .paused:
-      guard !isPauseResumeMutationInFlight else {
-        result(nil)
-        return
-      }
+    case .mutationInFlightNoop:
+      result(nil)
+    case .begin:
       isPauseResumeMutationInFlight = true
       resumeResult = result
       NativeLogger.i("Facade", "Resume requested")
       capture.resume()
-    case .starting, .stopping, .idle:
+    case .invalidState:
       result(
         flutterError(
           NativeErrorCode.invalidRecordingState,
@@ -698,12 +705,12 @@ final class ScreenRecorderFacade: NSObject {
   }
 
   func togglePauseRecording(result: @escaping FlutterResult) {
-    switch state {
-    case .recording:
+    switch recordingStateMachine.toggleDecision(from: state) {
+    case .pause:
       pauseRecording(result: result)
-    case .paused:
+    case .resume:
       resumeRecording(result: result)
-    case .idle, .starting, .stopping:
+    case .invalidState:
       result(
         flutterError(
           NativeErrorCode.invalidRecordingState,
