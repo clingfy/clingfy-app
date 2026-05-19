@@ -4,532 +4,10 @@ import ApplicationServices
 import AudioToolbox
 import FlutterMacOS
 
-private extension NSColor {
-  var argbIntValue: Int {
-    let resolved = usingColorSpace(.deviceRGB) ?? self
-    let a = Int(round(resolved.alphaComponent * 255.0))
-    let r = Int(round(resolved.redComponent * 255.0))
-    let g = Int(round(resolved.greenComponent * 255.0))
-    let b = Int(round(resolved.blueComponent * 255.0))
-    return (a << 24) | (r << 16) | (g << 8) | b
-  }
-}
-
-protocol CaptureControlling: AnyObject {
-  var isRecording: Bool { get }
-  func start(
-    includeAudio: Bool,
-    to url: URL,
-    didStart: @escaping (URL) -> Void,
-    didFail: @escaping (Error) -> Void)
-  // func stop(didFinish: @escaping (Result<URL, Error>) -> Void)
-  func stop(didFinish: @escaping (Result<URL, FlutterError>) -> Void)
-
-}
-
-struct OverlayUpdateDeduper {
-  private var hasLastSentValue = false
-  private(set) var lastSentWindowID: CGWindowID?
-
-  mutating func shouldSend(_ windowID: CGWindowID?) -> Bool {
-    if hasLastSentValue && lastSentWindowID == windowID {
-      return false
-    }
-
-    hasLastSentValue = true
-    lastSentWindowID = windowID
-    return true
-  }
-
-  mutating func reset() {
-    hasLastSentValue = false
-    lastSentWindowID = nil
-  }
-}
-
-enum CachedRecordingsCleanupPolicy {
-  static func canClear(recorderState: RecorderState) -> Bool {
-    recorderState == .idle
-  }
-}
-
-struct RecordedDurationTracker {
-  private(set) var wallClockSessionStart: Date?
-  private var activeSegmentStart: Date?
-  private(set) var accumulatedRecordedDuration: TimeInterval = 0
-  private(set) var isPaused = false
-
-  mutating func start(at date: Date = Date()) {
-    wallClockSessionStart = date
-    activeSegmentStart = date
-    accumulatedRecordedDuration = 0
-    isPaused = false
-  }
-
-  mutating func pause(at date: Date = Date()) {
-    guard let activeSegmentStart else { return }
-    accumulatedRecordedDuration += max(0, date.timeIntervalSince(activeSegmentStart))
-    self.activeSegmentStart = nil
-    isPaused = true
-  }
-
-  mutating func resume(at date: Date = Date()) {
-    guard wallClockSessionStart != nil, activeSegmentStart == nil else { return }
-    activeSegmentStart = date
-    isPaused = false
-  }
-
-  mutating func stop(at date: Date = Date()) {
-    if let activeSegmentStart {
-      accumulatedRecordedDuration += max(0, date.timeIntervalSince(activeSegmentStart))
-    }
-    activeSegmentStart = nil
-    isPaused = false
-  }
-
-  mutating func reset() {
-    wallClockSessionStart = nil
-    activeSegmentStart = nil
-    accumulatedRecordedDuration = 0
-    isPaused = false
-  }
-
-  func currentRecordedDuration(at date: Date = Date()) -> TimeInterval {
-    guard let activeSegmentStart else { return accumulatedRecordedDuration }
-    return accumulatedRecordedDuration + max(0, date.timeIntervalSince(activeSegmentStart))
-  }
-}
-
-struct RecordingPauseResumeCapabilities {
-  enum Backend: String {
-    case avFoundation = "avfoundation"
-    case screenCaptureKit = "screencapturekit"
-    case unsupported = "unsupported"
-  }
-
-  enum Strategy: String {
-    case avFileOutput = "av_file_output"
-    case recordingOutputSegmentation = "recording_output_segmentation"
-    case unsupported = "unsupported"
-  }
-
-  let canPauseResume: Bool
-  let backend: Backend
-  let strategy: Strategy
-
-  func asMap() -> [String: Any] {
-    [
-      "canPauseResume": canPauseResume,
-      "backend": backend.rawValue,
-      "strategy": strategy.rawValue,
-    ]
-  }
-
-  static func current() -> RecordingPauseResumeCapabilities {
-    if #available(macOS 15.0, *) {
-      return RecordingPauseResumeCapabilities(
-        canPauseResume: true,
-        backend: .screenCaptureKit,
-        strategy: .recordingOutputSegmentation
-      )
-    }
-
-    return RecordingPauseResumeCapabilities(
-      canPauseResume: true,
-      backend: .avFoundation,
-      strategy: .avFileOutput
-    )
-  }
-}
-
-enum AudioLevelEstimator {
-  static func dbfs(for linear: Double) -> Double {
-    let clamped = max(linear, 0.000000001)
-    return 20.0 * log10(clamped)
-  }
-
-  static func estimatePeak(sampleBuffer: CMSampleBuffer) -> (linear: Double, dbfs: Double)? {
-    guard CMSampleBufferDataIsReady(sampleBuffer) else { return nil }
-    guard let format = CMSampleBufferGetFormatDescription(sampleBuffer),
-      let asbdPtr = CMAudioFormatDescriptionGetStreamBasicDescription(format)
-    else { return nil }
-
-    let asbd = asbdPtr.pointee
-    let channelCount = max(1, Int(asbd.mChannelsPerFrame))
-    let bufferListSize =
-      MemoryLayout<AudioBufferList>.size + (channelCount - 1) * MemoryLayout<AudioBuffer>.size
-    let rawPointer = UnsafeMutableRawPointer.allocate(
-      byteCount: bufferListSize,
-      alignment: MemoryLayout<AudioBufferList>.alignment
-    )
-    defer { rawPointer.deallocate() }
-    let audioBufferListPointer = rawPointer.bindMemory(to: AudioBufferList.self, capacity: 1)
-
-    var blockBuffer: CMBlockBuffer?
-    let status = CMSampleBufferGetAudioBufferListWithRetainedBlockBuffer(
-      sampleBuffer,
-      bufferListSizeNeededOut: nil,
-      bufferListOut: audioBufferListPointer,
-      bufferListSize: bufferListSize,
-      blockBufferAllocator: nil,
-      blockBufferMemoryAllocator: nil,
-      flags: UInt32(kCMSampleBufferFlag_AudioBufferList_Assure16ByteAlignment),
-      blockBufferOut: &blockBuffer
-    )
-    guard status == noErr else { return nil }
-    let audioBufferList = UnsafeMutableAudioBufferListPointer(audioBufferListPointer)
-
-    let flags = asbd.mFormatFlags
-    let bitsPerChannel = asbd.mBitsPerChannel
-    let isFloat = (flags & kAudioFormatFlagIsFloat) != 0
-    let isSignedInt = (flags & kAudioFormatFlagIsSignedInteger) != 0
-    var peak = 0.0
-
-    if isFloat && bitsPerChannel == 32 {
-      for audioBuffer in audioBufferList {
-        guard let data = audioBuffer.mData else { continue }
-        let sampleCount = Int(audioBuffer.mDataByteSize) / MemoryLayout<Float>.size
-        let samples = data.assumingMemoryBound(to: Float.self)
-        for i in 0..<sampleCount {
-          let value = Double(abs(samples[i]))
-          if value > peak { peak = value }
-        }
-      }
-    } else if isFloat && bitsPerChannel == 64 {
-      for audioBuffer in audioBufferList {
-        guard let data = audioBuffer.mData else { continue }
-        let sampleCount = Int(audioBuffer.mDataByteSize) / MemoryLayout<Double>.size
-        let samples = data.assumingMemoryBound(to: Double.self)
-        for i in 0..<sampleCount {
-          let value = abs(samples[i])
-          if value > peak { peak = value }
-        }
-      }
-    } else if isSignedInt && bitsPerChannel == 16 {
-      let denom = Double(Int16.max)
-      for audioBuffer in audioBufferList {
-        guard let data = audioBuffer.mData else { continue }
-        let sampleCount = Int(audioBuffer.mDataByteSize) / MemoryLayout<Int16>.size
-        let samples = data.assumingMemoryBound(to: Int16.self)
-        for i in 0..<sampleCount {
-          let sample = samples[i]
-          let value =
-            sample == Int16.min ? 1.0 : (Double(abs(Int(sample))) / denom)
-          if value > peak { peak = value }
-        }
-      }
-    } else if isSignedInt && bitsPerChannel == 32 {
-      let denom = Double(Int32.max)
-      for audioBuffer in audioBufferList {
-        guard let data = audioBuffer.mData else { continue }
-        let sampleCount = Int(audioBuffer.mDataByteSize) / MemoryLayout<Int32>.size
-        let samples = data.assumingMemoryBound(to: Int32.self)
-        for i in 0..<sampleCount {
-          let sample = samples[i]
-          let value =
-            sample == Int32.min ? 1.0 : (Double(abs(Int64(sample))) / denom)
-          if value > peak { peak = value }
-        }
-      }
-    } else {
-      return nil
-    }
-
-    let clampedPeak = max(0.0, min(1.0, peak))
-    return (linear: clampedPeak, dbfs: dbfs(for: clampedPeak))
-  }
-}
-
-enum CaptureDestinationPreflightDecision {
-  case proceed
-  case noAvailableSpace
-  case belowCriticalThreshold
-}
-
-enum CaptureDestinationPreflightPolicy {
-  static func isNonProductionBuild(
-    bundleIdentifier: String?,
-    isDebugBuild: Bool = BuildEnvironment.isDebugBuild
-  ) -> Bool {
-    if isDebugBuild {
-      return true
-    }
-    return bundleIdentifier?.lowercased().hasSuffix(".dev") == true
-  }
-
-  static func shouldBypassLowStorageCheck(
-    requested: Bool,
-    bundleIdentifier: String?,
-    isDebugBuild: Bool = BuildEnvironment.isDebugBuild
-  ) -> Bool {
-    guard requested else { return false }
-    return isNonProductionBuild(
-      bundleIdentifier: bundleIdentifier,
-      isDebugBuild: isDebugBuild
-    )
-  }
-
-  static func decision(
-    availableBytes: Int64?,
-    requestedBypass: Bool,
-    bundleIdentifier: String?,
-    isDebugBuild: Bool = BuildEnvironment.isDebugBuild
-  ) -> CaptureDestinationPreflightDecision {
-    if shouldBypassLowStorageCheck(
-      requested: requestedBypass,
-      bundleIdentifier: bundleIdentifier,
-      isDebugBuild: isDebugBuild
-    ) {
-      return .proceed
-    }
-
-    guard let availableBytes else {
-      return .proceed
-    }
-
-    if availableBytes <= 0 {
-      return .noAvailableSpace
-    }
-
-    if availableBytes < StorageInfoProvider.criticalThresholdBytes {
-      return .belowCriticalThreshold
-    }
-
-    return .proceed
-  }
-}
-
-enum BuildEnvironment {
-  static var isDebugBuild: Bool {
-    #if DEBUG
-      return true
-    #else
-      return false
-    #endif
-  }
-}
-
-final class MicrophoneLevelMonitor: NSObject, AVCaptureAudioDataOutputSampleBufferDelegate {
-  private let sessionQueue = DispatchQueue(label: "com.clingfy.mic.monitor.session")
-  private let outputQueue = DispatchQueue(label: "com.clingfy.mic.monitor.output")
-
-  private var session: AVCaptureSession?
-  private var currentDeviceID: String?
-  private var smoothedLinear: Double = 0.0
-  private var lastEmitAt: CFTimeInterval = 0.0
-  private let emitIntervalSeconds: Double = 1.0 / 15.0
-
-  var onLevel: ((MicrophoneLevelSample) -> Void)?
-
-  func start(deviceID: String?, onLevel: @escaping (MicrophoneLevelSample) -> Void) {
-    self.onLevel = onLevel
-    guard let trimmed = deviceID?.trimmingCharacters(in: .whitespacesAndNewlines), !trimmed.isEmpty
-    else {
-      stop(emitZero: true)
-      return
-    }
-
-    sessionQueue.async { [weak self] in
-      self?._start(deviceID: trimmed)
-    }
-  }
-
-  func stop(emitZero: Bool = false) {
-    sessionQueue.async { [weak self] in
-      guard let self else { return }
-      self._stopSessionLocked()
-      if emitZero {
-        DispatchQueue.main.async {
-          self.onLevel?(MicrophoneLevelSample(linear: 0.0, dbfs: -160.0))
-        }
-      }
-    }
-  }
-
-  private func _start(deviceID: String) {
-    if currentDeviceID == deviceID, let session, session.isRunning {
-      return
-    }
-
-    _stopSessionLocked()
-
-    guard AVCaptureDevice.authorizationStatus(for: .audio) == .authorized else {
-      NativeLogger.w("MicMonitor", "Microphone permission not granted; level monitor disabled")
-      DispatchQueue.main.async {
-        self.onLevel?(MicrophoneLevelSample(linear: 0.0, dbfs: -160.0))
-      }
-      return
-    }
-
-    guard let device = AVCaptureDevice(uniqueID: deviceID) else {
-      NativeLogger.w(
-        "MicMonitor",
-        "Selected microphone not found for monitor",
-        context: ["deviceID": deviceID]
-      )
-      DispatchQueue.main.async {
-        self.onLevel?(MicrophoneLevelSample(linear: 0.0, dbfs: -160.0))
-      }
-      return
-    }
-
-    let session = AVCaptureSession()
-    session.beginConfiguration()
-
-    do {
-      let input = try AVCaptureDeviceInput(device: device)
-      guard session.canAddInput(input) else {
-        session.commitConfiguration()
-        NativeLogger.w("MicMonitor", "Cannot add monitor audio input")
-        return
-      }
-      session.addInput(input)
-    } catch {
-      session.commitConfiguration()
-      NativeLogger.e(
-        "MicMonitor", "Failed to create monitor audio input", context: ["error": "\(error)"])
-      return
-    }
-
-    let output = AVCaptureAudioDataOutput()
-    output.setSampleBufferDelegate(self, queue: outputQueue)
-    guard session.canAddOutput(output) else {
-      session.commitConfiguration()
-      NativeLogger.w("MicMonitor", "Cannot add monitor audio output")
-      return
-    }
-    session.addOutput(output)
-    session.commitConfiguration()
-
-    outputQueue.async { [weak self] in
-      self?.smoothedLinear = 0.0
-      self?.lastEmitAt = 0.0
-    }
-
-    session.startRunning()
-    self.session = session
-    self.currentDeviceID = deviceID
-    NativeLogger.d(
-      "MicMonitor", "Microphone level monitor started", context: ["deviceID": deviceID])
-  }
-
-  private func _stopSessionLocked() {
-    if let session {
-      for output in session.outputs {
-        if let audioOutput = output as? AVCaptureAudioDataOutput {
-          audioOutput.setSampleBufferDelegate(nil, queue: nil)
-        }
-      }
-      if session.isRunning {
-        session.stopRunning()
-      }
-      self.session = nil
-    }
-    self.currentDeviceID = nil
-    outputQueue.async { [weak self] in
-      self?.smoothedLinear = 0.0
-      self?.lastEmitAt = 0.0
-    }
-  }
-
-  func captureOutput(
-    _ output: AVCaptureOutput,
-    didOutput sampleBuffer: CMSampleBuffer,
-    from connection: AVCaptureConnection
-  ) {
-    guard let estimate = AudioLevelEstimator.estimatePeak(sampleBuffer: sampleBuffer) else {
-      return
-    }
-
-    let alpha = estimate.linear >= smoothedLinear ? 0.35 : 0.18
-    smoothedLinear = smoothedLinear * (1.0 - alpha) + estimate.linear * alpha
-
-    let now = CFAbsoluteTimeGetCurrent()
-    if now - lastEmitAt < emitIntervalSeconds { return }
-    lastEmitAt = now
-
-    let sample = MicrophoneLevelSample(
-      linear: smoothedLinear,
-      dbfs: AudioLevelEstimator.dbfs(for: smoothedLinear)
-    )
-
-    DispatchQueue.main.async { [weak self] in
-      self?.onLevel?(sample)
-    }
-  }
-}
-
-protocol MicrophoneLevelMonitoring: AnyObject {
-  func start(deviceID: String?, onLevel: @escaping (MicrophoneLevelSample) -> Void)
-  func stop(emitZero: Bool)
-}
-
-extension MicrophoneLevelMonitor: MicrophoneLevelMonitoring {}
-
-private struct ExportFormatInfo {
-  let ext: String
-  let avFileType: AVFileType?  // nil for formats not handled by AVAssetExportSession (gif)
-}
-
-struct CaptureDestinationDiagnostics {
-  static func url(for activeProjectRoot: URL?) -> URL {
-    activeProjectRoot.map { RecordingProjectPaths.screenVideoURL(for: $0) } ?? AppPaths.tempRoot()
-  }
-}
-
-enum OverlayRefreshAction: Equatable {
-  case show
-  case resize
-  case reuseVisibleWindow
-}
-
-struct OverlayRefreshPlan {
-  let action: OverlayRefreshAction
-
-  static func make(
-    isShowing: Bool,
-    currentTargetDisplayID: CGDirectDisplayID?,
-    desiredTargetDisplayID: CGDirectDisplayID?,
-    currentPreferredSize: Double,
-    desiredSize: Double
-  ) -> OverlayRefreshPlan {
-    let normalizedDesiredSize = max(120.0, desiredSize)
-
-    guard isShowing else {
-      return OverlayRefreshPlan(action: .show)
-    }
-
-    guard currentTargetDisplayID == desiredTargetDisplayID else {
-      return OverlayRefreshPlan(action: .show)
-    }
-
-    if abs(currentPreferredSize - normalizedDesiredSize) > 0.001 {
-      return OverlayRefreshPlan(action: .resize)
-    }
-
-    return OverlayRefreshPlan(action: .reuseVisibleWindow)
-  }
-}
-
-protocol OverlayManaging: AnyObject {
-  var overlayEnabledByUser: Bool { get set }
-  var overlayLinkedToRecording: Bool { get set }
-  var preferredOverlaySize: Double { get set }
-  func showIfNeeded(isRecording: Bool)
-  func hide()
-}
-
-protocol CursorHighlighting: AnyObject {
-  var enabledByUser: Bool { get set }
-  var linkedToRecording: Bool { get set }
-  func update(isRecording: Bool)
-}
-
-protocol RecordingIndicatorManaging: AnyObject {
-  var enabledByUser: Bool { get set }
-  var pinned: Bool { get set }
-  func update(isRecording: Bool)
-}
+// NOTE: Pure helper types previously declared here were extracted into
+// Capture/{Support,Indicator,Overlay,Engine,Diagnostics,Export,Audio}/ as part of
+// the strangler refactor (see ~/.claude/plans + docs/windows-port-inventory.md §7).
+// This file keeps only the ScreenRecorderFacade coordinator.
 
 @MainActor
 final class ScreenRecorderFacade: NSObject {
@@ -559,7 +37,7 @@ final class ScreenRecorderFacade: NSObject {
   private let saveFolder = SaveFolderStore()
   private let displaySvc = DisplayService()
   private let exporter = LetterboxExporter()
-  private var captureFPS: Int = 30
+  var captureFPS: Int = 30  // internal: read by StorageDiagnosticsService (PR 7)
   private let defaultZoomFollowStrength: CGFloat = 0.15
   private let cameraCaptureCoordinator = CameraCaptureCoordinator()
   private lazy var cameraRecorder = CameraRecorder(coordinator: cameraCaptureCoordinator)
@@ -581,10 +59,13 @@ final class ScreenRecorderFacade: NSObject {
   private var pendingMetadata: RecordingMetadata?
   private var pendingCameraRecordingSession: CameraRecordingSession?
   private var pendingSeparateCameraFailure: FlutterError?
-  private var activeRecordingProjectRoot: URL?
+  var activeRecordingProjectRoot: URL?  // internal: read by StorageDiagnosticsService (PR 7)
 
   // state
   private var state: RecorderState = .idle
+  // Pure decision table consulted at lifecycle entry points. The facade still
+  // owns `state` and the flags; the machine never mutates anything (Commit 4).
+  private let recordingStateMachine = RecordingStateMachine()
   private var startResult: FlutterResult?
   private var pauseResult: FlutterResult?
   private var resumeResult: FlutterResult?
@@ -759,56 +240,36 @@ final class ScreenRecorderFacade: NSObject {
     self.captureFPS = fps
   }
 
-  func getCaptureDiagnostics(result: @escaping FlutterResult) {
-    var payload: [String: Any] = [
-      "backend": currentBackendName(),
-      "captureFps": captureFPS,
-    ]
-    if let bytes = availableDiskSpaceBytes(at: currentCaptureDestinationURL()) {
-      payload["captureDestinationFreeBytes"] = bytes
-    }
-    if let bytes = availableDiskSpaceBytes(at: AppPaths.recordingsRoot()) {
-      payload["recordingsFreeBytes"] = bytes
-    }
-    if let bytes = availableDiskSpaceBytes(at: resolveSaveFolderURL()) {
-      payload["saveFolderFreeBytes"] = bytes
-    }
-    result(payload)
-  }
-
-  func getStorageSnapshot(result: @escaping FlutterResult) {
-    let snapshot = StorageInfoProvider.buildSnapshot(
-      captureDestinationURL: currentCaptureDestinationURL(),
-      recordingsURL: AppPaths.recordingsRoot(),
-      tempURL: AppPaths.tempRoot(),
-      logsURL: AppPaths.logsRoot()
-    )
-    result(snapshot.asMap())
-  }
+  // getCaptureDiagnostics / getStorageSnapshot / currentCaptureDestinationURL /
+  // availableDiskSpaceBytes moved to StorageDiagnosticsService.swift (PR 7).
 
   func getRecordingCapabilities(result: @escaping FlutterResult) {
     result(RecordingPauseResumeCapabilities.current().asMap())
   }
 
   func startRecording(args: [String: Any]?, result: @escaping FlutterResult) {
-    guard state == .idle else {
+    switch recordingStateMachine.startDecision(from: state) {
+    case .alreadyActive:
       if let path = activeRecordingProjectRoot?.path {
         result(path)
       } else {
         result(flutterError(NativeErrorCode.alreadyRecording, ""))
       }
       return
+    case .start:
+      break
     }
     startResult = result
-    state = .starting
+    state = recordingStateMachine.nextOnStart(from: state)
     stateAsStr()
     resetPendingStartRecoveryState()
     refreshMicrophoneLevelMonitoring(resetMeter: true)
-    activeRecordingWorkflowSessionId = args?["sessionId"] as? String
-    sessionDisableMicrophone = args?["disableMicrophone"] as? Bool ?? false
-    sessionDisableCameraOverlay = args?["disableCameraOverlay"] as? Bool ?? false
-    sessionDisableCursorHighlight = args?["disableCursorHighlight"] as? Bool ?? false
-    let allowLowStorageBypass = args?["allowLowStorageBypass"] as? Bool ?? false
+    let request = StartRecordingRequest.fromFlutter(args)
+    activeRecordingWorkflowSessionId = request.sessionId
+    sessionDisableMicrophone = request.disableMicrophone
+    sessionDisableCameraOverlay = request.disableCameraOverlay
+    sessionDisableCursorHighlight = request.disableCursorHighlight
+    let allowLowStorageBypass = request.allowLowStorageBypass
 
     // macOS screen-recording permission
     if #available(macOS 10.15, *), !CGPreflightScreenCaptureAccess() {
@@ -1141,24 +602,25 @@ final class ScreenRecorderFacade: NSObject {
   }
 
   func stopRecording(result: @escaping FlutterResult) {
-    switch state {
-    case .idle:
+    switch recordingStateMachine.stopDecision(
+      from: state, isPauseResumeMutationInFlight: isPauseResumeMutationInFlight
+    ) {
+    case .notRecording:
       result(flutterError(NativeErrorCode.notRecording, ""))
-    case .starting:
+    case .cancelDuringStart:
       pendingStop = true
       cancelRequestedDuringStart = true
       stopResult = result
-    case .recording, .paused:
+    case .queueUntilMutation:
       stopResult = result
-      if isPauseResumeMutationInFlight {
-        pendingStop = true
-        NativeLogger.i(
-          "Facade", "Queued stop until pause/resume mutation completes",
-          context: ["state": String(describing: state)])
-        return
-      }
+      pendingStop = true
+      NativeLogger.i(
+        "Facade", "Queued stop until pause/resume mutation completes",
+        context: ["state": String(describing: state)])
+    case .beginStopping:
+      stopResult = result
       beginStoppingCapture()
-    case .stopping:
+    case .alreadyStopping:
       result(nil)
     }
   }
@@ -1170,19 +632,19 @@ final class ScreenRecorderFacade: NSObject {
       return
     }
 
-    switch state {
-    case .paused:
+    switch recordingStateMachine.pauseDecision(
+      from: state, isPauseResumeMutationInFlight: isPauseResumeMutationInFlight
+    ) {
+    case .alreadyPaused:
       result(nil)
-    case .recording:
-      guard !isPauseResumeMutationInFlight else {
-        result(nil)
-        return
-      }
+    case .mutationInFlightNoop:
+      result(nil)
+    case .begin:
       isPauseResumeMutationInFlight = true
       pauseResult = result
       NativeLogger.i("Facade", "Pause requested")
       capture.pause()
-    case .starting, .stopping, .idle:
+    case .invalidState:
       result(
         flutterError(
           NativeErrorCode.invalidRecordingState,
@@ -1198,19 +660,19 @@ final class ScreenRecorderFacade: NSObject {
       return
     }
 
-    switch state {
-    case .recording:
+    switch recordingStateMachine.resumeDecision(
+      from: state, isPauseResumeMutationInFlight: isPauseResumeMutationInFlight
+    ) {
+    case .alreadyRecording:
       result(nil)
-    case .paused:
-      guard !isPauseResumeMutationInFlight else {
-        result(nil)
-        return
-      }
+    case .mutationInFlightNoop:
+      result(nil)
+    case .begin:
       isPauseResumeMutationInFlight = true
       resumeResult = result
       NativeLogger.i("Facade", "Resume requested")
       capture.resume()
-    case .starting, .stopping, .idle:
+    case .invalidState:
       result(
         flutterError(
           NativeErrorCode.invalidRecordingState,
@@ -1220,12 +682,12 @@ final class ScreenRecorderFacade: NSObject {
   }
 
   func togglePauseRecording(result: @escaping FlutterResult) {
-    switch state {
-    case .recording:
+    switch recordingStateMachine.toggleDecision(from: state) {
+    case .pause:
       pauseRecording(result: result)
-    case .paused:
+    case .resume:
       resumeRecording(result: result)
-    case .idle, .starting, .stopping:
+    case .invalidState:
       result(
         flutterError(
           NativeErrorCode.invalidRecordingState,
@@ -1608,55 +1070,9 @@ final class ScreenRecorderFacade: NSObject {
   }
 
   // MARK: helpers
-  private func resolveTargetSize(
-    sourceSize: CGSize,
-    layout: String,
-    resolution: String
-  ) -> CGSize {
-    // 1. Resolve Aspect Ratio from Layout Preset
-    let safeSourceHeight = max(sourceSize.height, 1)
-    let sourceAspect = sourceSize.width / safeSourceHeight
-    let aspect: CGFloat
-    switch layout {
-    case "classic43": aspect = 4.0 / 3.0
-    case "square11": aspect = 1.0
-    case "youtube169": aspect = 16.0 / 9.0
-    case "reel916": aspect = 9.0 / 16.0
-    default: aspect = sourceAspect
-    }
+  // resolveTargetSize moved to ExportPrep.swift (PR 11).
 
-    // 2. Resolve Resolution (Short Side)
-    let shortSide: CGFloat
-    switch resolution {
-    case "p1080": shortSide = 1080
-    case "p1440": shortSide = 1440
-    case "p2160": shortSide = 2160
-    case "p4320": shortSide = 4320
-    default:
-      // Auto: Use source pixels but respect the aspect ratio we just chose.
-      // Preserve the full source pixels on one axis and expand the other.
-      guard layout != "auto", sourceSize.width > 0, sourceSize.height > 0 else {
-        return sourceSize
-      }
-      if aspect >= sourceAspect {
-        return CGSize(width: sourceSize.height * aspect, height: sourceSize.height)
-      }
-      return CGSize(width: sourceSize.width, height: sourceSize.width / aspect)
-    }
-
-    // 3. Compute final size based on shortSide and aspect
-    // If aspect > 1 (horizontal), shortSide is height.
-    // If aspect < 1 (vertical), shortSide is width.
-    if aspect >= 1.0 {
-      // Horizontal or Square
-      return CGSize(width: shortSide * aspect, height: shortSide)
-    } else {
-      // Vertical
-      return CGSize(width: shortSide, height: shortSide / aspect)
-    }
-  }
-
-  private func loadRecordingProject(projectPath: String) -> RecordingProjectRef? {
+  func loadRecordingProject(projectPath: String) -> RecordingProjectRef? {  // internal: used by ZoomQueryService (PR 8) / PreviewSceneResolver (PR 9)
     do {
       return try RecordingProjectRef.open(projectPath: projectPath)
     } catch {
@@ -1669,377 +1085,14 @@ final class ScreenRecorderFacade: NSObject {
     }
   }
 
-  private func loadRecordingMetadata(projectRef: RecordingProjectRef) -> RecordingMetadata? {
-    guard let metadataURL = projectRef.mediaSources().metadataURL else {
-      return nil
-    }
+  // loadRecordingMetadata, loadCameraRecordingMetadata, resolvedCameraAssetURL,
+  // cameraCompositionParams(from:), cameraCompositionParamsMap,
+  // anyCameraParamOverride, doubleValue, boolValue and
+  // explicitCameraCompositionParams moved to PreviewSceneResolver.swift (PR 9).
 
-    do {
-      return try RecordingMetadata.read(from: metadataURL)
-    } catch {
-      NativeLogger.w(
-        "Scene",
-        "Failed to load recording metadata",
-        context: ["path": metadataURL.path, "error": error.localizedDescription]
-      )
-      return nil
-    }
-  }
-
-  private func loadCameraRecordingMetadata(projectRef: RecordingProjectRef) -> CameraRecordingMetadata? {
-    guard let metadataURL = projectRef.mediaSources().cameraMetadataURL else {
-      return nil
-    }
-
-    do {
-      let data = try Data(contentsOf: metadataURL)
-      return try JSONDecoder().decode(CameraRecordingMetadata.self, from: data)
-    } catch {
-      NativeLogger.w(
-        "Scene",
-        "Failed to load camera recording metadata",
-        context: ["path": metadataURL.path, "error": error.localizedDescription]
-      )
-      return nil
-    }
-  }
-
-  private func resolvedCameraAssetURL(
-    projectRef: RecordingProjectRef,
-    explicitCameraPath: String?
-  ) -> URL? {
-    if let explicitCameraPath, !explicitCameraPath.isEmpty {
-      let explicitURL = URL(fileURLWithPath: explicitCameraPath)
-      guard FileManager.default.fileExists(atPath: explicitURL.path) else {
-        NativeLogger.w(
-          "Scene",
-          "Explicit camera asset is missing; falling back to metadata resolution",
-          context: ["path": explicitURL.path]
-        )
-        return nil
-      }
-      return explicitURL
-    }
-
-    return projectRef.mediaSources().cameraVideoURL
-  }
-
-  private func cameraCompositionParams(from editorSeed: RecordingMetadata.EditorSeed) -> CameraCompositionParams {
-    CameraCompositionParams(
-      visible: editorSeed.cameraVisible,
-      layoutPreset: editorSeed.cameraLayoutPreset,
-      normalizedCanvasCenter: editorSeed.cameraNormalizedCenter.map {
-        CGPoint(x: $0.x, y: $0.y)
-      },
-      sizeFactor: editorSeed.cameraSizeFactor,
-      shape: editorSeed.cameraShape,
-      cornerRadius: editorSeed.cameraCornerRadius,
-      opacity: editorSeed.cameraOpacity,
-      mirror: editorSeed.cameraMirror,
-      contentMode: editorSeed.cameraContentMode,
-      zoomBehavior: editorSeed.cameraZoomBehavior,
-      zoomScaleMultiplier: editorSeed.cameraZoomScaleMultiplier,
-      introPreset: editorSeed.cameraIntroPreset,
-      outroPreset: editorSeed.cameraOutroPreset,
-      zoomEmphasisPreset: editorSeed.cameraZoomEmphasisPreset,
-      introDurationMs: editorSeed.cameraIntroDurationMs,
-      outroDurationMs: editorSeed.cameraOutroDurationMs,
-      zoomEmphasisStrength: editorSeed.cameraZoomEmphasisStrength,
-      borderWidth: editorSeed.cameraBorderWidth,
-      borderColorArgb: editorSeed.cameraBorderColorArgb,
-      shadowPreset: editorSeed.cameraShadow,
-      chromaKeyEnabled: editorSeed.cameraChromaKeyEnabled,
-      chromaKeyStrength: editorSeed.cameraChromaKeyStrength,
-      chromaKeyColorArgb: editorSeed.cameraChromaKeyColorArgb
-    )
-  }
-
-  private func cameraCompositionParamsMap(_ params: CameraCompositionParams) -> [String: Any] {
-    var map: [String: Any] = [
-      "visible": params.visible,
-      "layoutPreset": params.layoutPreset.rawValue,
-      "sizeFactor": params.sizeFactor,
-      "shape": params.shape.rawValue,
-      "cornerRadius": params.cornerRadius,
-      "opacity": params.opacity,
-      "mirror": params.mirror,
-      "contentMode": params.contentMode.rawValue,
-      "zoomBehavior": params.zoomBehavior.rawValue,
-      "zoomScaleMultiplier": params.zoomScaleMultiplier,
-      "introPreset": params.introPreset.rawValue,
-      "outroPreset": params.outroPreset.rawValue,
-      "zoomEmphasisPreset": params.zoomEmphasisPreset.rawValue,
-      "introDurationMs": params.introDurationMs,
-      "outroDurationMs": params.outroDurationMs,
-      "zoomEmphasisStrength": params.zoomEmphasisStrength,
-      "borderWidth": params.borderWidth,
-      "shadowPreset": params.shadowPreset,
-      "chromaKeyEnabled": params.chromaKeyEnabled,
-      "chromaKeyStrength": params.chromaKeyStrength,
-    ]
-
-    if let normalizedCanvasCenter = params.normalizedCanvasCenter {
-      map["normalizedCanvasCenter"] = [
-        "x": normalizedCanvasCenter.x,
-        "y": normalizedCanvasCenter.y,
-      ]
-    }
-    if let borderColorArgb = params.borderColorArgb {
-      map["borderColorArgb"] = borderColorArgb
-    }
-    if let chromaKeyColorArgb = params.chromaKeyColorArgb {
-      map["chromaKeyColorArgb"] = chromaKeyColorArgb
-    }
-
-    return map
-  }
-
-  private func anyCameraParamOverride(in args: [String: Any]) -> Bool {
-    args.keys.contains { $0.hasPrefix("camera") }
-  }
-
-  private func doubleValue(_ value: Any?) -> Double? {
-    if let number = value as? Double { return number }
-    if let number = value as? NSNumber { return number.doubleValue }
-    if let string = value as? String { return Double(string) }
-    return nil
-  }
-
-  private func boolValue(_ value: Any?) -> Bool? {
-    if let bool = value as? Bool { return bool }
-    if let number = value as? NSNumber { return number.boolValue }
-    if let string = value as? String {
-      switch string.lowercased() {
-      case "true", "1", "yes": return true
-      case "false", "0", "no": return false
-      default: return nil
-      }
-    }
-    return nil
-  }
-
-  private func explicitCameraCompositionParams(
-    from args: [String: Any],
-    fallback: CameraCompositionParams?
-  ) -> CameraCompositionParams? {
-    guard anyCameraParamOverride(in: args) else { return fallback }
-
-    var params = fallback ?? .hidden
-
-    if let visible = boolValue(args["cameraVisible"]) {
-      params.visible = visible
-    }
-    if let rawPreset = args["cameraLayoutPreset"] as? String,
-      let preset = CameraLayoutPreset(rawValue: rawPreset)
-    {
-      params.layoutPreset = preset
-    }
-    if let rawShape = args["cameraShape"] as? String,
-      let shape = CameraShape(rawValue: rawShape)
-    {
-      params.shape = shape
-    }
-    if let rawContentMode = args["cameraContentMode"] as? String,
-      let contentMode = CameraContentMode(rawValue: rawContentMode)
-    {
-      params.contentMode = contentMode
-    }
-    if let rawZoomBehavior = args["cameraZoomBehavior"] as? String {
-      params.zoomBehavior = CameraZoomBehavior.from(rawValue: rawZoomBehavior)
-    }
-    if let zoomScaleMultiplier = doubleValue(args["cameraZoomScaleMultiplier"]) {
-      params.zoomScaleMultiplier = min(max(zoomScaleMultiplier, 0.0), 1.0)
-    }
-    if let rawIntroPreset = args["cameraIntroPreset"] as? String {
-      params.introPreset = CameraIntroPreset.from(rawValue: rawIntroPreset)
-    }
-    if let rawOutroPreset = args["cameraOutroPreset"] as? String {
-      params.outroPreset = CameraOutroPreset.from(rawValue: rawOutroPreset)
-    }
-    if let rawZoomEmphasisPreset = args["cameraZoomEmphasisPreset"] as? String {
-      params.zoomEmphasisPreset = CameraZoomEmphasisPreset.from(rawValue: rawZoomEmphasisPreset)
-    }
-    if let introDurationMs = args["cameraIntroDurationMs"] as? Int {
-      params.introDurationMs = min(max(introDurationMs, 80), 600)
-    } else if let introDurationMs = doubleValue(args["cameraIntroDurationMs"]) {
-      params.introDurationMs = min(max(Int(introDurationMs.rounded()), 80), 600)
-    }
-    if let outroDurationMs = args["cameraOutroDurationMs"] as? Int {
-      params.outroDurationMs = min(max(outroDurationMs, 80), 600)
-    } else if let outroDurationMs = doubleValue(args["cameraOutroDurationMs"]) {
-      params.outroDurationMs = min(max(Int(outroDurationMs.rounded()), 80), 600)
-    }
-    if let zoomEmphasisStrength = doubleValue(args["cameraZoomEmphasisStrength"]) {
-      params.zoomEmphasisStrength = min(max(zoomEmphasisStrength, 0.0), 0.2)
-    }
-    if let sizeFactor = doubleValue(args["cameraSizeFactor"]) {
-      params.sizeFactor = sizeFactor
-    }
-    if let cornerRadius = doubleValue(args["cameraCornerRadius"]) {
-      params.cornerRadius = cornerRadius
-    }
-    if let opacity = doubleValue(args["cameraOpacity"]) {
-      params.opacity = opacity
-    }
-    if let mirror = boolValue(args["cameraMirror"]) {
-      params.mirror = mirror
-    }
-    if let borderWidth = doubleValue(args["cameraBorderWidth"]) {
-      params.borderWidth = borderWidth
-    }
-    if let borderColorArgb = args["cameraBorderColorArgb"] as? Int {
-      params.borderColorArgb = borderColorArgb
-    }
-    if let shadowPreset = args["cameraShadowPreset"] as? Int {
-      params.shadowPreset = shadowPreset
-    }
-    if let chromaKeyEnabled = boolValue(args["cameraChromaKeyEnabled"]) {
-      params.chromaKeyEnabled = chromaKeyEnabled
-    }
-    if let chromaKeyStrength = doubleValue(args["cameraChromaKeyStrength"]) {
-      params.chromaKeyStrength = chromaKeyStrength
-    }
-    if let chromaKeyColorArgb = args["cameraChromaKeyColorArgb"] as? Int {
-      params.chromaKeyColorArgb = chromaKeyColorArgb
-    }
-    if let center = args["cameraNormalizedCenter"] as? [String: Any],
-      let x = doubleValue(center["x"]),
-      let y = doubleValue(center["y"])
-    {
-      params.normalizedCanvasCenter = CGPoint(x: x, y: y)
-    } else if args.keys.contains("cameraNormalizedCenter") {
-      params.normalizedCanvasCenter = nil
-    }
-
-    return params
-  }
-
-  func resolvePreviewMediaSources(
-    projectPath: String,
-    explicitCameraPath: String? = nil
-  ) -> PreviewMediaSources? {
-    guard let projectRef = loadRecordingProject(projectPath: projectPath) else {
-      return nil
-    }
-    let mediaSources = projectRef.mediaSources()
-    let resolvedCameraURL = resolvedCameraAssetURL(
-      projectRef: projectRef,
-      explicitCameraPath: explicitCameraPath
-    )
-    let recordingMetadata = loadRecordingMetadata(projectRef: projectRef)
-    let cameraMetadata = loadCameraRecordingMetadata(projectRef: projectRef)
-    let cameraSyncTimeline = CameraSyncTimelineResolver.resolve(
-      recordingMetadata: recordingMetadata,
-      cameraMetadata: cameraMetadata,
-      screenAsset: AVAsset(url: URL(fileURLWithPath: mediaSources.screenPath)),
-      cameraAsset: resolvedCameraURL.map(AVAsset.init(url:)),
-      logContext: [
-        "context": "preview",
-        "projectPath": projectPath,
-      ]
-    )
-
-    NativeLogger.d(
-      "Scene",
-      "Resolved preview media sources",
-      context: [
-        "projectPath": projectPath,
-        "screenPath": mediaSources.screenPath,
-        "cameraPath": resolvedCameraURL?.path ?? "nil",
-        "metadataPath": mediaSources.metadataPath ?? "nil",
-        "cursorPath": mediaSources.cursorPath ?? "nil",
-        "zoomManualPath": mediaSources.zoomManualPath ?? "nil",
-        "cameraSyncSegments": cameraSyncTimeline?.segments.count ?? 0,
-      ]
-    )
-
-    return PreviewMediaSources(
-      projectPath: projectPath,
-      screenPath: mediaSources.screenPath,
-      cameraPath: resolvedCameraURL?.path,
-      metadataPath: mediaSources.metadataPath,
-      cursorPath: mediaSources.cursorPath,
-      zoomManualPath: mediaSources.zoomManualPath,
-      cameraSyncTimeline: cameraSyncTimeline
-    )
-  }
-
-  private func resolvePreviewSceneComponents(
-    projectPath: String,
-    explicitCameraPath: String? = nil,
-    args: [String: Any]? = nil
-  ) -> (mediaSources: PreviewMediaSources, cameraParams: CameraCompositionParams?)? {
-    guard let mediaSources = resolvePreviewMediaSources(
-      projectPath: projectPath,
-      explicitCameraPath: explicitCameraPath
-    ) else {
-      return nil
-    }
-    let cameraParams = resolveCameraCompositionParams(
-      projectPath: projectPath,
-      args: args
-    )
-    return (mediaSources, cameraParams)
-  }
-
-  func resolvePreviewScene(
-    projectPath: String,
-    screenParams: CompositionParams,
-    explicitCameraPath: String? = nil,
-    args: [String: Any]? = nil
-  ) -> PreviewScene? {
-    guard let components = resolvePreviewSceneComponents(
-      projectPath: projectPath,
-      explicitCameraPath: explicitCameraPath,
-      args: args
-    ) else {
-      return nil
-    }
-
-    return PreviewScene(
-      mediaSources: components.mediaSources,
-      screenParams: screenParams,
-      cameraParams: components.cameraParams
-    )
-  }
-
-  private struct CameraExportCapabilitySet {
-    let shapeMask: Bool
-    let cornerRadius: Bool
-    let border: Bool
-    let shadow: Bool
-    let chromaKey: Bool
-
-    var payload: [String: Bool] {
-      [
-        "shapeMask": shapeMask,
-        "cornerRadius": cornerRadius,
-        "border": border,
-        "shadow": shadow,
-        "chromaKey": chromaKey,
-      ]
-    }
-  }
-
-  private func cameraExportCapabilities(for mediaSources: PreviewMediaSources) -> CameraExportCapabilitySet {
-    guard mediaSources.cameraPath?.isEmpty == false else {
-      return CameraExportCapabilitySet(
-        shapeMask: true,
-        cornerRadius: true,
-        border: true,
-        shadow: true,
-        chromaKey: true
-      )
-    }
-
-    return CameraExportCapabilitySet(
-      shapeMask: true,
-      cornerRadius: true,
-      border: true,
-      shadow: true,
-      chromaKey: true
-    )
-  }
+  // resolvePreviewMediaSources, resolvePreviewSceneComponents,
+  // resolvePreviewScene, CameraExportCapabilitySet and cameraExportCapabilities
+  // moved to PreviewSceneResolver.swift (PR 9).
 
   private func exportSanitizedCameraParams(
     _ params: CameraCompositionParams?,
@@ -2050,70 +1103,8 @@ final class ScreenRecorderFacade: NSObject {
     return params
   }
 
-  func resolveCameraCompositionParams(
-    projectPath: String,
-    args: [String: Any]? = nil
-  ) -> CameraCompositionParams? {
-    let metadata = loadRecordingProject(projectPath: projectPath).flatMap { projectRef in
-      loadRecordingMetadata(projectRef: projectRef)
-    }
-    let seededParams = metadata.map { cameraCompositionParams(from: $0.editorSeed) }
-    let resolved = explicitCameraCompositionParams(from: args ?? [:], fallback: seededParams)
-    var context: [String: Any] = [
-      "projectPath": projectPath,
-      "hasSeed": seededParams != nil,
-      "hasExplicitArgs": args.map(anyCameraParamOverride(in:)) ?? false,
-      "cameraPreviewChangeKind":
-        (args?["cameraPreviewChangeKind"] as? String) ?? CameraPreviewChangeKind.none.rawValue,
-      "visible": resolved?.visible ?? false,
-      "layoutPreset": resolved?.layoutPreset.rawValue ?? "nil",
-    ]
-    if let center = resolved?.normalizedCanvasCenter {
-      context["normalizedCenterX"] = center.x
-      context["normalizedCenterY"] = center.y
-    }
-
-    NativeLogger.d(
-      "Scene",
-      "Resolved camera composition params",
-      context: context
-    )
-
-    return resolved
-  }
-
-  func getRecordingSceneInfo(projectPath: String, result: @escaping FlutterResult) {
-    guard let components = resolvePreviewSceneComponents(projectPath: projectPath) else {
-      result(
-        FlutterError(
-          code: "SCENE_INPUT_MISSING",
-          message: "Recording project not found. It may have been moved or deleted.",
-          details: projectPath
-        )
-      )
-      return
-    }
-    let mediaSources = components.mediaSources
-    let cameraParams = components.cameraParams
-    let exportCapabilities = cameraExportCapabilities(for: mediaSources)
-
-    var payload: [String: Any] = [
-      "projectPath": mediaSources.projectPath,
-      "screenPath": mediaSources.screenPath,
-      "cameraExportCapabilities": exportCapabilities.payload,
-    ]
-    if let cameraPath = mediaSources.cameraPath {
-      payload["cameraPath"] = cameraPath
-    }
-    if let metadataPath = mediaSources.metadataPath {
-      payload["metadataPath"] = metadataPath
-    }
-    if let cameraParams {
-      payload["camera"] = cameraCompositionParamsMap(cameraParams)
-    }
-
-    result(payload)
-  }
+  // resolveCameraCompositionParams and getRecordingSceneInfo moved to
+  // PreviewSceneResolver.swift (PR 9).
 
   func processVideo(
     projectPath: String,
@@ -2443,96 +1434,13 @@ final class ScreenRecorderFacade: NSObject {
     }
   }
 
-  private func flutterExportFailure(from error: Error) -> FlutterError {
-    let nsError = error as NSError
-    if let nativeErrorCode = nsError.userInfo["nativeErrorCode"] as? String,
-      nativeErrorCode == NativeErrorCode.advancedCameraExportFailed
-    {
-      var details: [String: Any] = [:]
-      if let stage = nsError.userInfo["stage"] as? String {
-        details["stage"] = stage
-      }
-      if let reason = nsError.userInfo["reason"] as? String {
-        details["reason"] = reason
-      }
-      if let context = nsError.userInfo["context"] {
-        details["context"] = context
-      }
-      return FlutterError(
-        code: nativeErrorCode,
-        message: nsError.localizedDescription,
-        details: details.isEmpty ? nil : details
-      )
-    }
-
-    return FlutterError(
-      code: NativeErrorCode.exportError,
-      message: error.localizedDescription,
-      details: nil
-    )
-  }
+  // flutterExportFailure moved to ExportPrep.swift (PR 11).
 
   func cancelExport() {
     exporter.cancel()
   }
 
-  func getZoomSegments(projectPath: String, result: @escaping FlutterResult) {
-    guard let projectRef = loadRecordingProject(projectPath: projectPath) else {
-      result([])
-      return
-    }
-    let mediaSources = projectRef.mediaSources()
-    let videoURL = mediaSources.screenVideoURL
-    let asset = AVAsset(url: videoURL)
-
-    // 1. Check if asset is valid and duration is finite
-    guard asset.duration.isNumeric else {
-      NativeLogger.e(
-        "Facade", "getZoomSegments: duration is not numeric", context: ["projectPath": projectPath])
-      result([])
-      return
-    }
-    let durationSeconds = asset.duration.seconds
-
-    // 2. Locate cursor sidecar
-    guard let cursorURL = mediaSources.cursorDataURL else {
-      NativeLogger.w(
-        "Facade", "getZoomSegments: cursor.json missing", context: ["projectPath": projectPath])
-      result([])
-      return
-    }
-
-    // 3. Load and decode cursor recording
-    do {
-      let data = try Data(contentsOf: cursorURL)
-      let cursorRecording = try JSONDecoder().decode(CursorRecording.self, from: data)
-
-      // 4. Build segments
-      let segments = ZoomTimelineBuilder.buildSegments(
-        cursorRecording: cursorRecording,
-        durationSeconds: durationSeconds
-      )
-
-      // 5. Convert to dictionaries for result
-      let dicts = segments.enumerated().map { (index, segment) in
-        return [
-          "id": "auto_\(index)",
-          "startMs": segment.startMs,
-          "endMs": segment.endMs,
-          "source": "auto",
-        ]
-      }
-      result(dicts)
-    } catch {
-      NativeLogger.e(
-        "Facade", "getZoomSegments: failed to decode cursor.json",
-        context: [
-          "path": cursorURL.path,
-          "error": error.localizedDescription,
-        ])
-      result([])
-    }
-  }
+  // getZoomSegments moved to ZoomQueryService.swift (PR 8).
 
   private func finishStartWithError(_ err: FlutterError) {
     resetPendingStartRecoveryState()
@@ -2552,7 +1460,7 @@ final class ScreenRecorderFacade: NSObject {
     recordedDurationTracker.reset()
     resetRecordingSessionSuppressions()
     if let projectRoot = activeRecordingProjectRoot {
-      updateProjectManifestStatus(.failed, projectRoot: projectRoot)
+      MetadataSidecarWriter.updateProjectManifestStatus(.failed, projectRoot: projectRoot)
     }
     activeRecordingProjectRoot = nil
     pendingCameraRecordingSession = nil
@@ -3196,7 +2104,7 @@ final class ScreenRecorderFacade: NSObject {
     saveFolder.resolveFolderURL()
   }
 
-  private func currentBackendName() -> String {
+  func currentBackendName() -> String {  // internal: used by StorageDiagnosticsService (PR 7)
     let raw = String(describing: type(of: capture)).lowercased()
     if raw.contains("screencapturekit") || raw.contains("sck") {
       return "screencapturekit"
@@ -3366,9 +2274,7 @@ final class ScreenRecorderFacade: NSObject {
     return nil
   }
 
-  private func currentCaptureDestinationURL() -> URL {
-    CaptureDestinationDiagnostics.url(for: activeRecordingProjectRoot)
-  }
+  // currentCaptureDestinationURL moved to StorageDiagnosticsService.swift (PR 7).
 
   private func preflightCaptureDestination(_ url: URL, allowLowStorageBypass: Bool) throws {
     let targetURL = diskSpaceLookupURL(for: url)
@@ -3437,9 +2343,7 @@ final class ScreenRecorderFacade: NSObject {
     return normalized.deletingLastPathComponent()
   }
 
-  private func availableDiskSpaceBytes(at url: URL) -> Int64? {
-    StorageInfoProvider.availableCapacity(for: url)
-  }
+  // availableDiskSpaceBytes moved to StorageDiagnosticsService.swift (PR 7).
 
   private func beginStoppingCapture() {
     guard state == .recording || state == .paused else { return }
@@ -3618,7 +2522,7 @@ final class ScreenRecorderFacade: NSObject {
     if let error {
       let errorMessage = Self.errorMessage(from: error)
       if let projectRoot = activeRecordingProjectRoot {
-        updateProjectManifestStatus(.failed, projectRoot: projectRoot)
+        MetadataSidecarWriter.updateProjectManifestStatus(.failed, projectRoot: projectRoot)
       }
       if let sessionId = activeRecordingWorkflowSessionId {
         onRecordingFailed?([
@@ -3828,13 +2732,13 @@ final class ScreenRecorderFacade: NSObject {
             case .deleteProject:
               let didDelete = self.recordingStore.deleteProject(projectRootURL: projectRoot)
               if !didDelete {
-                self.updateProjectManifestStatus(.cancelled, projectRoot: projectRoot)
+                MetadataSidecarWriter.updateProjectManifestStatus(.cancelled, projectRoot: projectRoot)
                 finalURL = url
               } else {
                 finalURL = nil
               }
             case .markCancelled:
-              self.updateProjectManifestStatus(.finalizing, projectRoot: projectRoot)
+              MetadataSidecarWriter.updateProjectManifestStatus(.finalizing, projectRoot: projectRoot)
               if let rawURL = url {
                 self.updateMetadataSidecarOnFinish(
                   projectRoot: projectRoot,
@@ -3845,16 +2749,16 @@ final class ScreenRecorderFacade: NSObject {
               } else {
                 finalURL = nil
               }
-              self.updateProjectManifestStatus(.cancelled, projectRoot: projectRoot)
+              MetadataSidecarWriter.updateProjectManifestStatus(.cancelled, projectRoot: projectRoot)
             }
           } else if let rawURL = url {
-            self.updateProjectManifestStatus(.finalizing, projectRoot: projectRoot)
+            MetadataSidecarWriter.updateProjectManifestStatus(.finalizing, projectRoot: projectRoot)
             self.updateMetadataSidecarOnFinish(
               projectRoot: projectRoot,
               cameraResult: cameraResult,
               publishedScreenURL: rawURL
             )
-            self.updateProjectManifestStatus(.ready, projectRoot: projectRoot)
+            MetadataSidecarWriter.updateProjectManifestStatus(.ready, projectRoot: projectRoot)
             finalURL = rawURL
           } else {
             finalURL = nil
@@ -3984,24 +2888,7 @@ final class ScreenRecorderFacade: NSObject {
     }
   }
 
-  private func cameraCaptureInfo(
-    from result: CameraRecordingResult,
-    screenRawURL _: URL
-  ) -> RecordingMetadata.CameraCaptureInfo {
-    RecordingMetadata.CameraCaptureInfo(
-      mode: .separateCameraAsset,
-      enabled: true,
-      rawRelativePath: RecordingProjectPaths.relativeCameraRawPath,
-      metadataRelativePath: RecordingProjectPaths.relativeCameraMetadataPath,
-      deviceId: result.metadata.deviceId,
-      mirroredRaw: result.metadata.mirroredRaw,
-      nominalFrameRate: result.metadata.nominalFrameRate,
-      dimensions: result.metadata.dimensions.map {
-        RecordingMetadata.Dimensions(width: $0.width, height: $0.height)
-      },
-      segments: result.metadata.segments
-    )
-  }
+  // cameraCaptureInfo moved to MetadataSidecarWriter.swift (PR 10a).
 
   /// Updates the metadata sidecar with end timestamp when recording finishes.
   private func updateMetadataSidecarOnFinish(
@@ -4017,7 +2904,8 @@ final class ScreenRecorderFacade: NSObject {
       metadata = metadata.withEndTimestamp()
       metadata.screen.segments = capture.recordedScreenSegments
       if let cameraResult {
-        metadata.camera = cameraCaptureInfo(from: cameraResult, screenRawURL: publishedScreenURL)
+        metadata.camera = MetadataSidecarWriter.cameraCaptureInfo(
+          from: cameraResult, screenRawURL: publishedScreenURL)
       } else if shouldRecordSeparateCameraAsset {
         metadata.camera = nil
         metadata.editorSeed.cameraVisible = false
@@ -4034,35 +2922,7 @@ final class ScreenRecorderFacade: NSObject {
     }
   }
 
-  private func updateProjectManifestStatus(
-    _ status: RecordingProjectStatus,
-    projectRoot: URL
-  ) {
-    let manifestURL = RecordingProjectPaths.manifestURL(for: projectRoot)
-    guard var manifest = try? RecordingProjectManifest.read(from: manifestURL) else {
-      NativeLogger.w(
-        "Facade",
-        "Could not update recording project manifest status",
-        context: ["path": manifestURL.path, "status": status.rawValue]
-      )
-      return
-    }
-
-    manifest.updateStatus(status)
-    do {
-      try manifest.write(to: manifestURL)
-    } catch {
-      NativeLogger.w(
-        "Facade",
-        "Failed writing recording project manifest status",
-        context: [
-          "path": manifestURL.path,
-          "status": status.rawValue,
-          "error": error.localizedDescription,
-        ]
-      )
-    }
-  }
+  // updateProjectManifestStatus moved to MetadataSidecarWriter.swift (PR 10a).
 
   private enum RecordingCompletionMode {
     case ready
@@ -4234,26 +3094,7 @@ final class ScreenRecorderFacade: NSObject {
     return deletedCount
   }
 
-  private func exportFormatInfo(_ formatRaw: String) -> ExportFormatInfo {
-    switch formatRaw.lowercased() {
-
-    case "mp4":
-      return .init(ext: "mp4", avFileType: .mp4)
-
-    case "m4v":
-      return .init(ext: "m4v", avFileType: .m4v)
-
-    case "mov":
-      return .init(ext: "mov", avFileType: .mov)
-
-    case "gif":
-      return .init(ext: "gif", avFileType: nil)  // handled by GIF pipeline, not AVAssetExportSession
-
-    default:
-      // Fallback safe default
-      return .init(ext: "mov", avFileType: .mov)
-    }
-  }
+  // exportFormatInfo moved to ExportPrep.swift (PR 11).
 
   private func overlayCtx(_ extra: [String: Any] = [:]) -> [String: Any] {
     var ctx: [String: Any] = [

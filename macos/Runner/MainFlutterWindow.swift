@@ -19,7 +19,9 @@ private enum NativeWorkflowPhase: Int {
 
 class MainFlutterWindow: NSWindow {
   private let screenRecorder = ScreenRecorderFacade()
+  private lazy var methodDispatcher = ScreenRecorderMethodDispatcher(facade: screenRecorder)
   private let eventHandler = AudioDevicesEventHandler()
+  private var eventBridge: ScreenRecorderEventBridge?
   private var channel: FlutterMethodChannel?
   private var menuBarController: MenuBarController?
   private var preRecordingBarController: PreRecordingBarController?
@@ -63,6 +65,11 @@ class MainFlutterWindow: NSWindow {
     channel?.setMethodCallHandler { [weak self] call, result in
       guard let self else {
         result(FlutterMethodNotImplemented)
+        return
+      }
+      // Strangler routing layer: routers claim a subset of methods ahead of the
+      // legacy switch. Claimed methods are removed from the switch below.
+      if self.methodDispatcher.handle(call, result) {
         return
       }
       switch call.method {
@@ -674,56 +681,38 @@ class MainFlutterWindow: NSWindow {
 
       case "processVideo":
         if let args = call.arguments as? [String: Any],
-          let projectPath = args["projectPath"] as? String
+          let req = PreviewSceneRequest.fromFlutter(args)
         {
+          // cameraParams and zoomSegments are derived (not raw arg reads) and
+          // stay resolved by their existing helpers — intentionally outside
+          // the DTO (Slice 2 / PR 5B).
           let cameraParams = self.screenRecorder.resolveCameraCompositionParams(
-            projectPath: projectPath,
+            projectPath: req.projectPath,
             args: args
           )
-          let layout = (args["layoutPreset"] as? String) ?? "auto"
-          let res = (args["resolutionPreset"] as? String) ?? "auto"
-          let fit = (args["fitMode"] as? String) ?? "fit"
-          let p = (args["padding"] as? Double) ?? 0.0
-          let r = (args["cornerRadius"] as? Double) ?? 0.0
-          let bgCol = args["backgroundColor"] as? Int
-          let bgImg = args["backgroundImagePath"] as? String
-          let cursorSize = (args["cursorSize"] as? Double) ?? 1.0
-          let rawZoomFactor = (args["zoomFactor"] as? Double) ?? 1.5
-          // Newer Flutter clients send zoomEffectEnabled separately so 1.0x is a valid enabled value.
-          // Older clients omit it; fall back to the legacy zoomFactor > 1.0 contract.
-          let zoomEffectEnabled = (args["zoomEffectEnabled"] as? Bool) ?? (rawZoomFactor > 1.0)
-          let zoomFactor = zoomEffectEnabled ? rawZoomFactor : 1.0
-          let showCursor = (args["showCursor"] as? Bool) ?? true
-          let cameraPreviewChangeKind = CameraPreviewChangeKind(
-            rawValue: (args["cameraPreviewChangeKind"] as? String) ?? CameraPreviewChangeKind.none.rawValue
-          ) ?? .none
-
-          let format = (args["format"] as? String) ?? "mov"
-          let codec = (args["codec"] as? String) ?? "hevc"
-          let bitrate = (args["bitrate"] as? String) ?? "auto"
           let zoomSegments = parseZoomTimelineSegments(args["zoomSegments"])
 
           self.screenRecorder.processVideo(
-            projectPath: projectPath,
-            layout: layout,
-            resolution: res,
-            fit: fit,
-            padding: p,
-            cornerRadius: r,
-            backgroundColor: bgCol,
-            backgroundImagePath: bgImg,
-            cursorSize: cursorSize,
-            zoomFactor: zoomFactor,
-            showCursor: showCursor,
-            format: format,
-            codec: codec,
-            bitrate: bitrate,
-            audioGainDb: (args["audioGainDb"] as? Double) ?? 0.0,
-            audioVolumePercent: (args["audioVolumePercent"] as? Double) ?? 100.0,
+            projectPath: req.projectPath,
+            layout: req.layout,
+            resolution: req.resolution,
+            fit: req.fit,
+            padding: req.padding,
+            cornerRadius: req.cornerRadius,
+            backgroundColor: req.backgroundColor,
+            backgroundImagePath: req.backgroundImagePath,
+            cursorSize: req.cursorSize,
+            zoomFactor: req.zoomFactor,
+            showCursor: req.showCursor,
+            format: req.format,
+            codec: req.codec,
+            bitrate: req.bitrate,
+            audioGainDb: req.audioGainDb,
+            audioVolumePercent: req.audioVolumePercent,
             zoomSegments: zoomSegments,
-            cameraPreviewChangeKind: cameraPreviewChangeKind,
-            sessionId: args["sessionId"] as? String,
-            cameraPath: args["cameraPath"] as? String,
+            cameraPreviewChangeKind: req.cameraPreviewChangeKind,
+            sessionId: req.sessionId,
+            cameraPath: req.cameraPath,
             cameraParams: cameraParams,
             result: result)
         } else {
@@ -792,54 +781,37 @@ class MainFlutterWindow: NSWindow {
 
       case "exportVideo":
         if let args = call.arguments as? [String: Any],
-          let projectPath = args["projectPath"] as? String
+          let req = ExportVideoRequest.fromFlutter(args)
         {
+          // cameraParams stays resolved by its existing helper (derived, not a
+          // raw arg read) — intentionally outside the DTO (Slice 2 / PR 5B).
           let cameraParams = self.screenRecorder.resolveCameraCompositionParams(
-            projectPath: projectPath,
+            projectPath: req.projectPath,
             args: args
           )
-          let layout = (args["layoutPreset"] as? String) ?? "auto"
-          let res = (args["resolutionPreset"] as? String) ?? "auto"
-          let fit = (args["fitMode"] as? String) ?? "fit"
-          let p = (args["padding"] as? Double) ?? 0.0
-          let r = (args["cornerRadius"] as? Double) ?? 0.0
-          let bgCol = args["backgroundColor"] as? Int
-          let bgImg = args["backgroundImagePath"] as? String
-          let cursorSize = (args["cursorSize"] as? Double) ?? 1.0
-          let rawZoomFactor = (args["zoomFactor"] as? Double) ?? 1.5
-          let zoomEffectEnabled = (args["zoomEffectEnabled"] as? Bool) ?? (rawZoomFactor > 1.0)
-          let zoomFactor = zoomEffectEnabled ? rawZoomFactor : 1.0
-          let showCursor = (args["showCursor"] as? Bool) ?? true
-          let filename = args["filename"] as? String
-          let directoryOverride = args["directoryOverride"] as? String
-          let format = (args["format"] as? String) ?? "mov"
-          let codec = (args["codec"] as? String) ?? "hevc"
-          let bitrate = (args["bitrate"] as? String) ?? "auto"
-          let autoNormalizeOnExport = (args["autoNormalizeOnExport"] as? Bool) ?? false
-          let targetLoudnessDbfs = (args["targetLoudnessDbfs"] as? Double) ?? -16.0
 
           self.screenRecorder.exportVideo(
-            projectPath: projectPath,
-            layout: layout,
-            resolution: res,
-            fit: fit,
-            padding: p,
-            cornerRadius: r,
-            backgroundColor: bgCol,
-            backgroundImagePath: bgImg,
-            cursorSize: cursorSize,
-            zoomFactor: zoomFactor,
-            showCursor: showCursor,
-            filename: filename,
-            directoryOverride: directoryOverride,
-            format: format,
-            codec: codec,
-            bitrate: bitrate,
-            audioGainDb: (args["audioGainDb"] as? Double) ?? 0.0,
-            audioVolumePercent: (args["audioVolumePercent"] as? Double) ?? 100.0,
-            autoNormalizeOnExport: autoNormalizeOnExport,
-            targetLoudnessDbfs: targetLoudnessDbfs,
-            cameraPath: args["cameraPath"] as? String,
+            projectPath: req.projectPath,
+            layout: req.layout,
+            resolution: req.resolution,
+            fit: req.fit,
+            padding: req.padding,
+            cornerRadius: req.cornerRadius,
+            backgroundColor: req.backgroundColor,
+            backgroundImagePath: req.backgroundImagePath,
+            cursorSize: req.cursorSize,
+            zoomFactor: req.zoomFactor,
+            showCursor: req.showCursor,
+            filename: req.filename,
+            directoryOverride: req.directoryOverride,
+            format: req.format,
+            codec: req.codec,
+            bitrate: req.bitrate,
+            audioGainDb: req.audioGainDb,
+            audioVolumePercent: req.audioVolumePercent,
+            autoNormalizeOnExport: req.autoNormalizeOnExport,
+            targetLoudnessDbfs: req.targetLoudnessDbfs,
+            cameraPath: req.cameraPath,
             cameraParams: cameraParams,
             onProgress: { [weak self] progress in
               self?.channel?.invokeMethod("updateExportProgress", arguments: progress)
@@ -1036,27 +1008,15 @@ class MainFlutterWindow: NSWindow {
         ========================== PERMISSIONS ==========================
         =================================================================
       */
-      case "getPermissionStatus":
-        screenRecorder.getPermissionStatus(result: result)
-      case "requestScreenRecordingPermission":
-        screenRecorder.requestScreenRecordingPermission(result: result)
-      case "requestMicrophonePermission":
-        screenRecorder.requestMicrophonePermission(result: result)
-      case "requestCameraPermission":
-        screenRecorder.requestCameraPermission(result: result)
-      case "openAccessibilitySettings":
-        result(NSNumber(value: self.screenRecorder.ensureAccessibilityAllowedAndGuideUser()))
+      // getPermissionStatus, requestScreenRecordingPermission,
+      // requestMicrophonePermission, requestCameraPermission,
+      // openAccessibilitySettings, openScreenRecordingSettings and relaunchApp
+      // are now claimed by PermissionsMethodRouter via methodDispatcher (above).
+      // openSystemSettings and checkForUpdates remain residual (not yet routed).
       case "openSystemSettings":
         let args = call.arguments as? [String: Any]
         let pane = (args?["pane"] as? String) ?? ""
         self.screenRecorder.openSystemSettings(pane: pane, result: result)
-
-      case "openScreenRecordingSettings":
-        screenRecorder.openScreenRecordingSettings()
-        result(nil)
-
-      case "relaunchApp":
-        self.screenRecorder.relaunchApp()
 
       case "checkForUpdates":
         UpdaterController.shared.channel = self.channel
@@ -1082,29 +1042,19 @@ class MainFlutterWindow: NSWindow {
     let updaterStreamHandler = UpdaterStreamHandler()
     updaterEventChannel.setStreamHandler(updaterStreamHandler)
 
-    // Fire audio/video device changes
-    screenRecorder.onDevicesChanged = { [weak self] in
-      self?.eventHandler.fireAudioSourcesChanged()
-    }
-    screenRecorder.onVideoDevicesChanged = { [weak self] in
-      self?.eventHandler.fireVideoSourcesChanged()
-    }
-    screenRecorder.onMicrophoneLevel = { [weak self] sample in
-      self?.eventHandler.fireMicrophoneLevel(
-        linear: sample.linear,
-        dbfs: sample.dbfs,
-        isLow: sample.isLow
-      )
-    }
-    screenRecorder.onIndicatorPauseTapped = { [weak self] in
-      self?.channel?.invokeMethod(NativeToFlutterMethod.indicatorPauseTapped, arguments: nil)
-    }
-    screenRecorder.onIndicatorStopTapped = { [weak self] in
-      self?.channel?.invokeMethod(NativeToFlutterMethod.indicatorStopTapped, arguments: nil)
-    }
-    screenRecorder.onIndicatorResumeTapped = { [weak self] in
-      self?.channel?.invokeMethod(NativeToFlutterMethod.indicatorResumeTapped, arguments: nil)
-    }
+    // The pure forwarding event callbacks (device/mic, indicator taps,
+    // recording-lifecycle workflow events, cameraOverlayMoved) are wired by
+    // ScreenRecorderEventBridge (Slice 2 / PR 6). The two
+    // MenuBar/PreRecordingBar-coupled callbacks (onRecordingStateChanged,
+    // onAreaSelectionCleared) stay wired inline below.
+    let eventBridge = ScreenRecorderEventBridge(
+      facade: screenRecorder,
+      eventHandler: eventHandler,
+      channel: channel,
+      emitWorkflowEvent: { [weak self] payload in self?.emitWorkflowEvent(payload) }
+    )
+    eventBridge.bind()
+    self.eventBridge = eventBridge
 
     // --- Menu Bar Integration ---
     self.menuBarController = MenuBarController(
@@ -1151,43 +1101,8 @@ class MainFlutterWindow: NSWindow {
       )
     }
 
-    // Mirror external recording lifecycle changes back to Flutter.
-    screenRecorder.onRecordingStarted = { [weak self] sessionId in
-      NativeLogger.d("Recording", "Recording started callback from facade")
-      self?.emitWorkflowEvent([
-        "type": "recordingStarted",
-        "sessionId": sessionId,
-      ])
-    }
-    screenRecorder.onRecordingPaused = { [weak self] sessionId in
-      self?.emitWorkflowEvent([
-        "type": "recordingPaused",
-        "sessionId": sessionId,
-      ])
-    }
-    screenRecorder.onRecordingResumed = { [weak self] sessionId in
-      self?.emitWorkflowEvent([
-        "type": "recordingResumed",
-        "sessionId": sessionId,
-      ])
-    }
-    screenRecorder.onRecordingFinalized = { [weak self] sessionId, projectPath in
-      NativeLogger.d("Recording", "Recording finalized callback from facade. Project: \(projectPath)")
-      self?.emitWorkflowEvent([
-        "type": "recordingFinalized",
-        "sessionId": sessionId,
-        "projectPath": projectPath,
-      ])
-    }
-    screenRecorder.onRecordingFailed = { [weak self] payload in
-      self?.emitWorkflowEvent(payload)
-    }
-    screenRecorder.onRecordingWarning = { [weak self] payload in
-      self?.emitWorkflowEvent(payload)
-    }
-    screenRecorder.onCameraOverlayMoved = { [weak self] payload in
-      self?.channel?.invokeMethod(NativeToFlutterMethod.cameraOverlayMoved, arguments: payload)
-    }
+    // (Recording-lifecycle + cameraOverlayMoved callbacks moved to
+    // ScreenRecorderEventBridge — PR 6.)
     screenRecorder.onAreaSelectionCleared = { [weak self] in
       self?.isAreaSelectionInProgress = false
       self?.updatePreRecordingBarVisibility()
