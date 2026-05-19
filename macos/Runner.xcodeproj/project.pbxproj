@@ -43,6 +43,7 @@
 		4C17FA78443E9B25D54838E3 /* MicrophoneLevelMonitor.swift in Sources */ = {isa = PBXBuildFile; fileRef = 5964845B237A9BCC08254B7C /* MicrophoneLevelMonitor.swift */; };
 		4D3822C9EC285F2A78877BE5 /* StorageDiagnosticsService.swift in Sources */ = {isa = PBXBuildFile; fileRef = A4E6CA46562C4E1ADEB34988 /* StorageDiagnosticsService.swift */; };
 		4F72510E7C98E741BF80A496 /* PreviewSceneResolver.swift in Sources */ = {isa = PBXBuildFile; fileRef = F6DF001BDAEDC3B8FCDE13F9 /* PreviewSceneResolver.swift */; };
+		529C777FC592D8815112EE7E /* RecordingPreflightServiceTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 6A813BE34FDB0E24F2F1245F /* RecordingPreflightServiceTests.swift */; };
 		5A747E6083E28FD362AC217C /* RecordingStateMachine.swift in Sources */ = {isa = PBXBuildFile; fileRef = A77BB536EE34C7BCF42EEA92 /* RecordingStateMachine.swift */; };
 		5B1C86BC2F300B730068C1BE /* ZoomManualStore.swift in Sources */ = {isa = PBXBuildFile; fileRef = 5B1C86BB2F300B730068C1BE /* ZoomManualStore.swift */; };
 		5B300C112F3AAA00003A4436 /* Sparkle in Frameworks */ = {isa = PBXBuildFile; productRef = 5B300C102F3AAA00003A4436 /* Sparkle */; };
@@ -97,6 +98,7 @@
 		5BE43BEF2F22CD940017267E /* RecordingMetadata.swift in Sources */ = {isa = PBXBuildFile; fileRef = 5BE43BEE2F22CD940017267E /* RecordingMetadata.swift */; };
 		5BE629DC2F2F9F3800063F17 /* ZoomTimelineBuilder.swift in Sources */ = {isa = PBXBuildFile; fileRef = 5BE629DB2F2F9F3800063F17 /* ZoomTimelineBuilder.swift */; };
 		5C1D00012F50000100A0B001 /* ZoomFollowSmoother.swift in Sources */ = {isa = PBXBuildFile; fileRef = 5C1D00022F50000100A0B001 /* ZoomFollowSmoother.swift */; };
+		5C28475D0A634AE086923798 /* RecordingPreflightService.swift in Sources */ = {isa = PBXBuildFile; fileRef = 82C7424BD75B1B0FA0FC7E64 /* RecordingPreflightService.swift */; };
 		632E2DD388917796BE34FCCD /* ExportPrepTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = E0F9BE980D7AC62253E76CAC /* ExportPrepTests.swift */; };
 		694F07480FE17B655AC013A3 /* RecordingStateMachineTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 04091965DCAEC5DFBFFCCDEB /* RecordingStateMachineTests.swift */; };
 		69B5122F481E9152FAF2A9B3 /* RequestParsingTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 964282A8773D929D64A40630 /* RequestParsingTests.swift */; };
@@ -263,6 +265,7 @@
 		5BE43BEE2F22CD940017267E /* RecordingMetadata.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = RecordingMetadata.swift; sourceTree = "<group>"; };
 		5BE629DB2F2F9F3800063F17 /* ZoomTimelineBuilder.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ZoomTimelineBuilder.swift; sourceTree = "<group>"; };
 		5C1D00022F50000100A0B001 /* ZoomFollowSmoother.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ZoomFollowSmoother.swift; sourceTree = "<group>"; };
+		6A813BE34FDB0E24F2F1245F /* RecordingPreflightServiceTests.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = RecordingPreflightServiceTests.swift; sourceTree = "<group>"; };
 		7016C578B942E3719B0C17B5 /* Pods-Runner.profile-prod.xcconfig */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = text.xcconfig; name = "Pods-Runner.profile-prod.xcconfig"; path = "Target Support Files/Pods-Runner/Pods-Runner.profile-prod.xcconfig"; sourceTree = "<group>"; };
 		73AA0A1A2585787F7B39578A /* Pods-Runner.release-dev.xcconfig */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = text.xcconfig; name = "Pods-Runner.release-dev.xcconfig"; path = "Target Support Files/Pods-Runner/Pods-Runner.release-dev.xcconfig"; sourceTree = "<group>"; };
 		76F7D4904C8CB0412CE24890 /* RecordingProjectService.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = RecordingProjectService.swift; sourceTree = "<group>"; };
@@ -275,6 +278,7 @@
 		7D1001032FA0000100A0B001 /* RecordingProjectPaths.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = RecordingProjectPaths.swift; sourceTree = "<group>"; };
 		7D1001042FA0000100A0B001 /* RecordingProjectManifest.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = RecordingProjectManifest.swift; sourceTree = "<group>"; };
 		815246B6D0905FCBEA4C2BFE /* AudioLevelEstimatorTests.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = AudioLevelEstimatorTests.swift; sourceTree = "<group>"; };
+		82C7424BD75B1B0FA0FC7E64 /* RecordingPreflightService.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = RecordingPreflightService.swift; sourceTree = "<group>"; };
 		8487F0FC7655749D593D1968 /* Pods-RunnerTests.profile-dev.xcconfig */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = text.xcconfig; name = "Pods-RunnerTests.profile-dev.xcconfig"; path = "Target Support Files/Pods-RunnerTests/Pods-RunnerTests.profile-dev.xcconfig"; sourceTree = "<group>"; };
 		8F5A1B2C3D4E5F60718293A1 /* OverlayUpdateDeduperTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = OverlayUpdateDeduperTests.swift; sourceTree = "<group>"; };
 		964282A8773D929D64A40630 /* RequestParsingTests.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = RequestParsingTests.swift; sourceTree = "<group>"; };
@@ -371,6 +375,15 @@
 			path = Support;
 			sourceTree = "<group>";
 		};
+		20346BB138C702CEAF758F9D /* Preflight */ = {
+			isa = PBXGroup;
+			children = (
+				82C7424BD75B1B0FA0FC7E64 /* RecordingPreflightService.swift */,
+			);
+			name = Preflight;
+			path = Preflight;
+			sourceTree = "<group>";
+		};
 		207E8EBA865103A12815A4DE /* Overlay */ = {
 			isa = PBXGroup;
 			children = (
@@ -404,6 +417,7 @@
 				E0F9BE980D7AC62253E76CAC /* ExportPrepTests.swift */,
 				2CB8AFC0EC977891C483011A /* CaptureTargetResolverTests.swift */,
 				B2F68F98AC976184031BF555 /* RecordingProjectServiceTests.swift */,
+				6A813BE34FDB0E24F2F1245F /* RecordingPreflightServiceTests.swift */,
 			);
 			path = RunnerTests;
 			sourceTree = "<group>";
@@ -625,6 +639,7 @@
 				AC0D2A3D0953BE1ABD822342 /* Preview */,
 				076DE1E594E51ABFCE0A6A51 /* Project */,
 				A920B9A939C254149120CEF3 /* Targeting */,
+				20346BB138C702CEAF758F9D /* Preflight */,
 			);
 			path = Capture;
 			sourceTree = "<group>";
@@ -1126,6 +1141,7 @@
 				632E2DD388917796BE34FCCD /* ExportPrepTests.swift in Sources */,
 				A9DBBBED4745D5601A076271 /* CaptureTargetResolverTests.swift in Sources */,
 				9815310AE9CB2D8AE9292079 /* RecordingProjectServiceTests.swift in Sources */,
+				529C777FC592D8815112EE7E /* RecordingPreflightServiceTests.swift in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -1225,6 +1241,7 @@
 				01AAE1E4B799E6B85610A896 /* ExportPrep.swift in Sources */,
 				E119FE7B1D15945159EF746A /* CaptureTargetResolver.swift in Sources */,
 				DE60092E7B24A40FE3DA966F /* RecordingProjectService.swift in Sources */,
+				5C28475D0A634AE086923798 /* RecordingPreflightService.swift in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};

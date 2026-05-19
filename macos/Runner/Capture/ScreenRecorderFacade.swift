@@ -275,7 +275,7 @@ final class ScreenRecorderFacade: NSObject {
     let allowLowStorageBypass = request.allowLowStorageBypass
 
     // macOS screen-recording permission
-    if #available(macOS 10.15, *), !CGPreflightScreenCaptureAccess() {
+    if !RecordingPreflightService.screenRecordingSatisfied() {
       _ = CGRequestScreenCaptureAccess()
       finishStartWithError(
         flutterError(NativeErrorCode.screenRecordingPermission, ""))
@@ -332,19 +332,24 @@ final class ScreenRecorderFacade: NSObject {
       let frameRate = args?["frameRate"] as? Int ?? 60
       let systemAudioEnabled = args?["systemAudioEnabled"] as? Bool ?? false
 
-      if !sessionDisableMicrophone,
-        let audioDeviceId = prefs.audioDeviceId,
-        !audioDeviceId.isEmpty,
-        audioDeviceId != "__none__",
-        AVCaptureDevice.authorizationStatus(for: .audio) != .authorized
-      {
+      if !RecordingPreflightService.microphoneSatisfied(
+        disableMicrophone: sessionDisableMicrophone,
+        audioDeviceId: prefs.audioDeviceId,
+        audioAuthorized: AVCaptureDevice.authorizationStatus(for: .audio) == .authorized
+      ) {
         finishStartWithError(
           flutterError(NativeErrorCode.microphonePermissionRequired, ""))
         return
       }
 
-      if effectiveCursorEnabledForRecording && prefs.cursorLinked && !ensureAccessibilityAllowed(prompt: false)
-      {
+      // ensureAccessibilityAllowed(prompt: false) is side-effect-free (no
+      // prompt — pure AXIsProcessTrusted query), so eager evaluation here is
+      // observably identical to the previous short-circuit (Slice 3 / PR 14).
+      if RecordingPreflightService.accessibilityBlocksRecording(
+        cursorEnabledForRecording: effectiveCursorEnabledForRecording,
+        cursorLinked: prefs.cursorLinked,
+        accessibilityAllowed: ensureAccessibilityAllowed(prompt: false)
+      ) {
         finishStartWithError(
           flutterError(NativeErrorCode.accessibilityPermissionRequired, ""))
         return
