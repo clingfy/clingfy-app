@@ -139,3 +139,7 @@ final class DisplayService {
     return CGRect(x: x, y: y, width: w, height: h)
   }
 }
+
+// Conformance-only: DisplayService already exposes the exact signatures the
+// CaptureTargetResolver seam needs (Slice 3 / PR 12).
+extension DisplayService: CaptureDisplayResolving {}

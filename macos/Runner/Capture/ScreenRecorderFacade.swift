@@ -66,6 +66,8 @@ final class ScreenRecorderFacade: NSObject {
   // Pure decision table consulted at lifecycle entry points. The facade still
   // owns `state` and the flags; the machine never mutates anything (Commit 4).
   private let recordingStateMachine = RecordingStateMachine()
+  // Stateless collaborators (own no session state) — Slice 3.
+  private let captureTargetResolver = CaptureTargetResolver()
   private var startResult: FlutterResult?
   private var pauseResult: FlutterResult?
   private var resumeResult: FlutterResult?
@@ -281,7 +283,16 @@ final class ScreenRecorderFacade: NSObject {
 
     let captureTarget: CaptureTarget
     do {
-      captureTarget = try resolveCaptureTarget()
+      captureTarget = try captureTargetResolver.resolve(
+        .init(
+          displayMode: prefs.displayMode,
+          selectedDisplayID: selectedDisplayID,
+          selectedAppWindowID: selectedAppWindowID,
+          areaRect: prefs.areaRect,
+          areaDisplayId: prefs.areaDisplayId
+        ),
+        displayService: displaySvc
+      )
     } catch CaptureTargetError.noWindowSelected {
       finishStartWithError(
         flutterError(NativeErrorCode.noWindowSelected, ""))
@@ -1691,56 +1702,8 @@ final class ScreenRecorderFacade: NSObject {
     return candidate
   }
 
-  private enum CaptureTargetError: Error {
-    case noWindowSelected, windowUnavailable, noAreaSelected
-  }
-
-  private func resolveCaptureTarget() throws -> CaptureTarget {
-    switch prefs.displayMode {
-    case .explicitID:
-      return CaptureTarget(
-        mode: DisplayTargetMode.explicitID,
-        displayID: selectedDisplayID ?? displaySvc.displayIDForAppWindowOrMain(),
-        cropRect: nil,  // for cursor normalization
-        windowID: nil  // for SCK true window capture
-      )
-    case .appWindow:
-      return CaptureTarget(
-        mode: DisplayTargetMode.appWindow,
-        displayID: displaySvc.displayIDForAppWindowOrMain(),
-        cropRect: nil,  // for cursor normalization
-        windowID: nil  // for SCK true window capture
-      )
-    case .mouseAtStart, .followMouse:
-      return CaptureTarget(
-        mode: DisplayTargetMode.mouseAtStart,
-        displayID: displaySvc.displayIDUnderMouse() ?? displaySvc.displayIDForAppWindowOrMain(),
-        cropRect: nil,  // for cursor normalization
-        windowID: nil  // for SCK true window capture
-      )
-    case .singleAppWindow:
-      guard let windowID = selectedAppWindowID else { throw CaptureTargetError.noWindowSelected }
-      guard let config = displaySvc.captureTarget(forWindowID: windowID) else {
-        throw CaptureTargetError.windowUnavailable
-      }
-      return CaptureTarget(
-        mode: DisplayTargetMode.singleAppWindow,
-        displayID: config.displayID,
-        cropRect: config.rect,  // for cursor normalization
-        windowID: windowID  // for SCK true window capture
-      )
-    case .areaRecording:
-      guard let rect = prefs.areaRect, let displayID = prefs.areaDisplayId else {
-        throw CaptureTargetError.noAreaSelected
-      }
-      return CaptureTarget(
-        mode: DisplayTargetMode.areaRecording,
-        displayID: CGDirectDisplayID(displayID),
-        cropRect: rect,  // for cursor normalization
-        windowID: nil  // for SCK true window capture
-      )
-    }
-  }
+  // resolveCaptureTarget / CaptureTargetError moved to
+  // Capture/Targeting/CaptureTargetResolver.swift (Slice 3 / PR 12).
   private func updateOverlayVisibility(
     file: String = #file,
     line: Int = #line
