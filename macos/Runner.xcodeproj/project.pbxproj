@@ -22,6 +22,7 @@
 
 /* Begin PBXBuildFile section */
 		0BE271D35B92B01091FE6C78 /* PermissionsMethodRouterTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = A804343376134DBC7318D507 /* PermissionsMethodRouterTests.swift */; };
+		112D3DF45F7941FE5186DA7E /* PreviewSceneResolverTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 999B6BF0AF215D618A11151E /* PreviewSceneResolverTests.swift */; };
 		13331D48B0581167284E8DBC /* AudioLevelEstimator.swift in Sources */ = {isa = PBXBuildFile; fileRef = B81915A6645E96590BCA2C31 /* AudioLevelEstimator.swift */; };
 		1FDC4012354B4C4B8C9E4681 /* ExportVideoRequest.swift in Sources */ = {isa = PBXBuildFile; fileRef = 213556AE9CE165CAD73E9898 /* ExportVideoRequest.swift */; };
 		2222176CC2AA8979DC722460 /* StartRecordingRequest.swift in Sources */ = {isa = PBXBuildFile; fileRef = E2D6F5E68DD08113B91D5F81 /* StartRecordingRequest.swift */; };
@@ -40,6 +41,7 @@
 		4817DD3C2B25F77C9E6133A8 /* OverlayUpdateDeduper.swift in Sources */ = {isa = PBXBuildFile; fileRef = CB4E0C29E30DA358A5C81FD4 /* OverlayUpdateDeduper.swift */; };
 		4C17FA78443E9B25D54838E3 /* MicrophoneLevelMonitor.swift in Sources */ = {isa = PBXBuildFile; fileRef = 5964845B237A9BCC08254B7C /* MicrophoneLevelMonitor.swift */; };
 		4D3822C9EC285F2A78877BE5 /* StorageDiagnosticsService.swift in Sources */ = {isa = PBXBuildFile; fileRef = A4E6CA46562C4E1ADEB34988 /* StorageDiagnosticsService.swift */; };
+		4F72510E7C98E741BF80A496 /* PreviewSceneResolver.swift in Sources */ = {isa = PBXBuildFile; fileRef = F6DF001BDAEDC3B8FCDE13F9 /* PreviewSceneResolver.swift */; };
 		5A747E6083E28FD362AC217C /* RecordingStateMachine.swift in Sources */ = {isa = PBXBuildFile; fileRef = A77BB536EE34C7BCF42EEA92 /* RecordingStateMachine.swift */; };
 		5B1C86BC2F300B730068C1BE /* ZoomManualStore.swift in Sources */ = {isa = PBXBuildFile; fileRef = 5B1C86BB2F300B730068C1BE /* ZoomManualStore.swift */; };
 		5B300C112F3AAA00003A4436 /* Sparkle in Frameworks */ = {isa = PBXBuildFile; productRef = 5B300C102F3AAA00003A4436 /* Sparkle */; };
@@ -267,6 +269,7 @@
 		8F5A1B2C3D4E5F60718293A1 /* OverlayUpdateDeduperTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = OverlayUpdateDeduperTests.swift; sourceTree = "<group>"; };
 		964282A8773D929D64A40630 /* RequestParsingTests.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = RequestParsingTests.swift; sourceTree = "<group>"; };
 		9740EEB21CF90195004384FC /* Debug.xcconfig */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = text.xcconfig; path = Debug.xcconfig; sourceTree = "<group>"; };
+		999B6BF0AF215D618A11151E /* PreviewSceneResolverTests.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = PreviewSceneResolverTests.swift; sourceTree = "<group>"; };
 		9A1B2C3D4E5F60718293A4B1 /* PreviewProfile.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PreviewProfile.swift; sourceTree = "<group>"; };
 		9A1B2C3D4E5F60718293A4B3 /* CursorFrameResolver.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CursorFrameResolver.swift; sourceTree = "<group>"; };
 		9A1B2C3D4E5F60718293A4B5 /* PreviewBackgroundImageCache.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PreviewBackgroundImageCache.swift; sourceTree = "<group>"; };
@@ -309,6 +312,7 @@
 		E1A0C0042F60000100BEE004 /* Runner-Bridging-Header.h */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.c.h; path = "Runner-Bridging-Header.h"; sourceTree = "<group>"; };
 		E2D6F5E68DD08113B91D5F81 /* StartRecordingRequest.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = StartRecordingRequest.swift; sourceTree = "<group>"; };
 		F54D9966BB1B393ACEF4E44A /* Pods-Runner.profile-dev.xcconfig */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = text.xcconfig; name = "Pods-Runner.profile-dev.xcconfig"; path = "Target Support Files/Pods-Runner/Pods-Runner.profile-dev.xcconfig"; sourceTree = "<group>"; };
+		F6DF001BDAEDC3B8FCDE13F9 /* PreviewSceneResolver.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = PreviewSceneResolver.swift; sourceTree = "<group>"; };
 /* End PBXFileReference section */
 
 /* Begin PBXFrameworksBuildPhase section */
@@ -369,6 +373,7 @@
 				C5F53265860D2AA59ECBD56F /* ScreenRecorderEventBridgeTests.swift */,
 				DFABA6A057D27E2AC4CDFEB6 /* StorageDiagnosticsServiceTests.swift */,
 				A74D174212C4749A322E8474 /* ZoomQueryServiceTests.swift */,
+				999B6BF0AF215D618A11151E /* PreviewSceneResolverTests.swift */,
 			);
 			path = RunnerTests;
 			sourceTree = "<group>";
@@ -586,6 +591,7 @@
 				E559AB0D29852BED62ADF7CC /* Audio */,
 				682C2B4A23F545BEB043E74D /* Requests */,
 				C9D21C8FD3401740AA764D43 /* Routing */,
+				AC0D2A3D0953BE1ABD822342 /* Preview */,
 			);
 			path = Capture;
 			sourceTree = "<group>";
@@ -766,6 +772,15 @@
 			);
 			name = Engine;
 			path = Engine;
+			sourceTree = "<group>";
+		};
+		AC0D2A3D0953BE1ABD822342 /* Preview */ = {
+			isa = PBXGroup;
+			children = (
+				F6DF001BDAEDC3B8FCDE13F9 /* PreviewSceneResolver.swift */,
+			);
+			name = Preview;
+			path = Preview;
 			sourceTree = "<group>";
 		};
 		C5793A6AD443C2C3E1BE00B6 /* Pods */ = {
@@ -1064,6 +1079,7 @@
 				99EA998456840B42F1512660 /* ScreenRecorderEventBridgeTests.swift in Sources */,
 				C9F53A704E24243F7769EE2C /* StorageDiagnosticsServiceTests.swift in Sources */,
 				8A7F969A09CE93447DE1EA17 /* ZoomQueryServiceTests.swift in Sources */,
+				112D3DF45F7941FE5186DA7E /* PreviewSceneResolverTests.swift in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -1158,6 +1174,7 @@
 				2FB5DA91DCB61199C7CADA8C /* ScreenRecorderEventBridge.swift in Sources */,
 				4D3822C9EC285F2A78877BE5 /* StorageDiagnosticsService.swift in Sources */,
 				A182380CC6315B176E68F111 /* ZoomQueryService.swift in Sources */,
+				4F72510E7C98E741BF80A496 /* PreviewSceneResolver.swift in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
