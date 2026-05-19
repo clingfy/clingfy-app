@@ -68,6 +68,7 @@ final class ScreenRecorderFacade: NSObject {
   private let recordingStateMachine = RecordingStateMachine()
   // Stateless collaborators (own no session state) — Slice 3.
   private let captureTargetResolver = CaptureTargetResolver()
+  private let recordingProjectService = RecordingProjectService()
   private var startResult: FlutterResult?
   private var pauseResult: FlutterResult?
   private var resumeResult: FlutterResult?
@@ -352,9 +353,10 @@ final class ScreenRecorderFacade: NSObject {
       activeRecordingProjectRoot = nil
       pendingCameraRecordingSession = nil
       cancelRequestedDuringStart = false
-      let projectId = RecordingProjectPaths.makeProjectID()
-      let projectRoot = try RecordingProjectPaths.createProjectSkeleton(projectId: projectId)
-      let screenVideoURL = RecordingProjectPaths.screenVideoURL(for: projectRoot)
+      let skeleton = try recordingProjectService.createSkeleton()
+      let projectId = skeleton.projectId
+      let projectRoot = skeleton.projectRoot
+      let screenVideoURL = skeleton.screenVideoURL
 
       try preflightCaptureDestination(
         screenVideoURL,
@@ -374,27 +376,24 @@ final class ScreenRecorderFacade: NSObject {
         pendingCameraRecordingSession = cameraRecordingSession(for: projectRoot)
       }
 
-      pendingMetadata = RecordingMetadata.create(
-        screenRawRelativePath: RecordingProjectPaths.relativeScreenVideoPath,
-        displayMode: prefs.displayMode,
-        displayID: captureTarget.displayID,
-        cropRect: captureTarget.cropRect,
-        frameRate: frameRate,
-        quality: prefs.recordingQuality,
-        cursorEnabled: effectiveCursorEnabledForRecording,
-        cursorLinked: prefs.cursorLinked,
-        windowID: (prefs.displayMode == .singleAppWindow ? selectedAppWindowID : nil),
-        excludedRecorderApp: prefs.excludeRecorderApp,
-        camera: pendingCameraCaptureInfo(for: projectRoot),
-        editorSeed: editorSeed(for: target)
-      )
-
-      let manifest = RecordingProjectManifest.create(
+      pendingMetadata = try recordingProjectService.writeProjectFiles(
+        projectRoot: projectRoot,
         projectId: projectId,
-        displayName: RecordingProjectPaths.displayName(),
-        includeCamera: shouldRecordSeparateCameraAsset
+        metadataInputs: .init(
+          displayMode: prefs.displayMode,
+          displayID: captureTarget.displayID,
+          cropRect: captureTarget.cropRect,
+          frameRate: frameRate,
+          quality: prefs.recordingQuality,
+          cursorEnabled: effectiveCursorEnabledForRecording,
+          cursorLinked: prefs.cursorLinked,
+          windowID: (prefs.displayMode == .singleAppWindow ? selectedAppWindowID : nil),
+          excludedRecorderApp: prefs.excludeRecorderApp
+        ),
+        cameraCaptureInfo: pendingCameraCaptureInfo(for: projectRoot),
+        editorSeed: editorSeed(for: target),
+        includeCameraInManifest: shouldRecordSeparateCameraAsset
       )
-      try manifest.write(to: RecordingProjectPaths.manifestURL(for: projectRoot))
 
       let outputURL: () throws -> URL = {
         screenVideoURL
