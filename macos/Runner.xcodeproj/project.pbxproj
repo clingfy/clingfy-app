@@ -26,6 +26,7 @@
 		1FDC4012354B4C4B8C9E4681 /* ExportVideoRequest.swift in Sources */ = {isa = PBXBuildFile; fileRef = 213556AE9CE165CAD73E9898 /* ExportVideoRequest.swift */; };
 		2222176CC2AA8979DC722460 /* StartRecordingRequest.swift in Sources */ = {isa = PBXBuildFile; fileRef = E2D6F5E68DD08113B91D5F81 /* StartRecordingRequest.swift */; };
 		27230021F49F32E7A39261DE /* ExportFormatInfo.swift in Sources */ = {isa = PBXBuildFile; fileRef = 9A56D128845BBC2C5A5CADEB /* ExportFormatInfo.swift */; };
+		2FB5DA91DCB61199C7CADA8C /* ScreenRecorderEventBridge.swift in Sources */ = {isa = PBXBuildFile; fileRef = DEC89D912852F9AAC2996A07 /* ScreenRecorderEventBridge.swift */; };
 		32FB535522953FAAFDFB0C14 /* Pods_Runner.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = B8EAFCB83B0EC24EB9C27E83 /* Pods_Runner.framework */; };
 		3311FCB1314995C1392F1E81 /* PreviewSceneRequest.swift in Sources */ = {isa = PBXBuildFile; fileRef = 1DEDC02DB9240C56A4EB2D23 /* PreviewSceneRequest.swift */; };
 		331C80D8294CF71000263BE5 /* RunnerTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 331C80D7294CF71000263BE5 /* RunnerTests.swift */; };
@@ -104,6 +105,7 @@
 		80187E677136AC16CC76ED14 /* Pods_RunnerTests.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = B01053F62F931EDFDC4E9F77 /* Pods_RunnerTests.framework */; };
 		8AAA59EA7CDDF22B4E47FB07 /* CaptureDestinationDiagnostics.swift in Sources */ = {isa = PBXBuildFile; fileRef = BDCE6283CC82D1BA03141B01 /* CaptureDestinationDiagnostics.swift */; };
 		8F5A1B2C3D4E5F60718293A2 /* OverlayUpdateDeduperTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 8F5A1B2C3D4E5F60718293A1 /* OverlayUpdateDeduperTests.swift */; };
+		99EA998456840B42F1512660 /* ScreenRecorderEventBridgeTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = C5F53265860D2AA59ECBD56F /* ScreenRecorderEventBridgeTests.swift */; };
 		9A1B2C3D4E5F60718293A4B2 /* PreviewProfile.swift in Sources */ = {isa = PBXBuildFile; fileRef = 9A1B2C3D4E5F60718293A4B1 /* PreviewProfile.swift */; };
 		9A1B2C3D4E5F60718293A4B4 /* CursorFrameResolver.swift in Sources */ = {isa = PBXBuildFile; fileRef = 9A1B2C3D4E5F60718293A4B3 /* CursorFrameResolver.swift */; };
 		9A1B2C3D4E5F60718293A4B6 /* PreviewBackgroundImageCache.swift in Sources */ = {isa = PBXBuildFile; fileRef = 9A1B2C3D4E5F60718293A4B5 /* PreviewBackgroundImageCache.swift */; };
@@ -286,10 +288,12 @@
 		BDCE6283CC82D1BA03141B01 /* CaptureDestinationDiagnostics.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = CaptureDestinationDiagnostics.swift; sourceTree = "<group>"; };
 		C1D2E3F40516273849A5B6C6 /* RecordingFailureRecoveryTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = RecordingFailureRecoveryTests.swift; sourceTree = "<group>"; };
 		C2200342B4777D6C129AE306 /* Pods-RunnerTests.debug-dev.xcconfig */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = text.xcconfig; name = "Pods-RunnerTests.debug-dev.xcconfig"; path = "Target Support Files/Pods-RunnerTests/Pods-RunnerTests.debug-dev.xcconfig"; sourceTree = "<group>"; };
+		C5F53265860D2AA59ECBD56F /* ScreenRecorderEventBridgeTests.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = ScreenRecorderEventBridgeTests.swift; sourceTree = "<group>"; };
 		CB4E0C29E30DA358A5C81FD4 /* OverlayUpdateDeduper.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = OverlayUpdateDeduper.swift; sourceTree = "<group>"; };
 		D31B40A1260A71654C81E859 /* RecordingPauseResumeCapabilities.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = RecordingPauseResumeCapabilities.swift; sourceTree = "<group>"; };
 		D4369B6E34FE7C645656404F /* Pods-RunnerTests.debug-prod.xcconfig */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = text.xcconfig; name = "Pods-RunnerTests.debug-prod.xcconfig"; path = "Target Support Files/Pods-RunnerTests/Pods-RunnerTests.debug-prod.xcconfig"; sourceTree = "<group>"; };
 		D4A1B2C3D4E5F60718293A4B /* StorageInfoProvider.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = StorageInfoProvider.swift; sourceTree = "<group>"; };
+		DEC89D912852F9AAC2996A07 /* ScreenRecorderEventBridge.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = ScreenRecorderEventBridge.swift; sourceTree = "<group>"; };
 		DF9975749BBCCB19C63D6DF2 /* Pods-Runner.release-prod.xcconfig */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = text.xcconfig; name = "Pods-Runner.release-prod.xcconfig"; path = "Target Support Files/Pods-Runner/Pods-Runner.release-prod.xcconfig"; sourceTree = "<group>"; };
 		E0BAB8E4875F02496F16101E /* Pods-Runner.debug-dev.xcconfig */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = text.xcconfig; name = "Pods-Runner.debug-dev.xcconfig"; path = "Target Support Files/Pods-Runner/Pods-Runner.debug-dev.xcconfig"; sourceTree = "<group>"; };
 		E1A0C0022F60000100BEE002 /* AVAssetWriterInputExceptionBridge.h */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.c.h; path = AVAssetWriterInputExceptionBridge.h; sourceTree = "<group>"; };
@@ -354,6 +358,7 @@
 				964282A8773D929D64A40630 /* RequestParsingTests.swift */,
 				A804343376134DBC7318D507 /* PermissionsMethodRouterTests.swift */,
 				04091965DCAEC5DFBFFCCDEB /* RecordingStateMachineTests.swift */,
+				C5F53265860D2AA59ECBD56F /* ScreenRecorderEventBridgeTests.swift */,
 			);
 			path = RunnerTests;
 			sourceTree = "<group>";
@@ -774,6 +779,7 @@
 			isa = PBXGroup;
 			children = (
 				4397E0D64816B4207BDD9EE0 /* ScreenRecorderMethodDispatcher.swift */,
+				DEC89D912852F9AAC2996A07 /* ScreenRecorderEventBridge.swift */,
 			);
 			name = Routing;
 			path = Routing;
@@ -1043,6 +1049,7 @@
 				69B5122F481E9152FAF2A9B3 /* RequestParsingTests.swift in Sources */,
 				0BE271D35B92B01091FE6C78 /* PermissionsMethodRouterTests.swift in Sources */,
 				694F07480FE17B655AC013A3 /* RecordingStateMachineTests.swift in Sources */,
+				99EA998456840B42F1512660 /* ScreenRecorderEventBridgeTests.swift in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -1134,6 +1141,7 @@
 				3311FCB1314995C1392F1E81 /* PreviewSceneRequest.swift in Sources */,
 				ED14C053CA72B2C3595D73FE /* ScreenRecorderMethodDispatcher.swift in Sources */,
 				5A747E6083E28FD362AC217C /* RecordingStateMachine.swift in Sources */,
+				2FB5DA91DCB61199C7CADA8C /* ScreenRecorderEventBridge.swift in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};

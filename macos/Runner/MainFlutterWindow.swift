@@ -21,6 +21,7 @@ class MainFlutterWindow: NSWindow {
   private let screenRecorder = ScreenRecorderFacade()
   private lazy var methodDispatcher = ScreenRecorderMethodDispatcher(facade: screenRecorder)
   private let eventHandler = AudioDevicesEventHandler()
+  private var eventBridge: ScreenRecorderEventBridge?
   private var channel: FlutterMethodChannel?
   private var menuBarController: MenuBarController?
   private var preRecordingBarController: PreRecordingBarController?
@@ -1041,29 +1042,19 @@ class MainFlutterWindow: NSWindow {
     let updaterStreamHandler = UpdaterStreamHandler()
     updaterEventChannel.setStreamHandler(updaterStreamHandler)
 
-    // Fire audio/video device changes
-    screenRecorder.onDevicesChanged = { [weak self] in
-      self?.eventHandler.fireAudioSourcesChanged()
-    }
-    screenRecorder.onVideoDevicesChanged = { [weak self] in
-      self?.eventHandler.fireVideoSourcesChanged()
-    }
-    screenRecorder.onMicrophoneLevel = { [weak self] sample in
-      self?.eventHandler.fireMicrophoneLevel(
-        linear: sample.linear,
-        dbfs: sample.dbfs,
-        isLow: sample.isLow
-      )
-    }
-    screenRecorder.onIndicatorPauseTapped = { [weak self] in
-      self?.channel?.invokeMethod(NativeToFlutterMethod.indicatorPauseTapped, arguments: nil)
-    }
-    screenRecorder.onIndicatorStopTapped = { [weak self] in
-      self?.channel?.invokeMethod(NativeToFlutterMethod.indicatorStopTapped, arguments: nil)
-    }
-    screenRecorder.onIndicatorResumeTapped = { [weak self] in
-      self?.channel?.invokeMethod(NativeToFlutterMethod.indicatorResumeTapped, arguments: nil)
-    }
+    // The pure forwarding event callbacks (device/mic, indicator taps,
+    // recording-lifecycle workflow events, cameraOverlayMoved) are wired by
+    // ScreenRecorderEventBridge (Slice 2 / PR 6). The two
+    // MenuBar/PreRecordingBar-coupled callbacks (onRecordingStateChanged,
+    // onAreaSelectionCleared) stay wired inline below.
+    let eventBridge = ScreenRecorderEventBridge(
+      facade: screenRecorder,
+      eventHandler: eventHandler,
+      channel: channel,
+      emitWorkflowEvent: { [weak self] payload in self?.emitWorkflowEvent(payload) }
+    )
+    eventBridge.bind()
+    self.eventBridge = eventBridge
 
     // --- Menu Bar Integration ---
     self.menuBarController = MenuBarController(
@@ -1110,43 +1101,8 @@ class MainFlutterWindow: NSWindow {
       )
     }
 
-    // Mirror external recording lifecycle changes back to Flutter.
-    screenRecorder.onRecordingStarted = { [weak self] sessionId in
-      NativeLogger.d("Recording", "Recording started callback from facade")
-      self?.emitWorkflowEvent([
-        "type": "recordingStarted",
-        "sessionId": sessionId,
-      ])
-    }
-    screenRecorder.onRecordingPaused = { [weak self] sessionId in
-      self?.emitWorkflowEvent([
-        "type": "recordingPaused",
-        "sessionId": sessionId,
-      ])
-    }
-    screenRecorder.onRecordingResumed = { [weak self] sessionId in
-      self?.emitWorkflowEvent([
-        "type": "recordingResumed",
-        "sessionId": sessionId,
-      ])
-    }
-    screenRecorder.onRecordingFinalized = { [weak self] sessionId, projectPath in
-      NativeLogger.d("Recording", "Recording finalized callback from facade. Project: \(projectPath)")
-      self?.emitWorkflowEvent([
-        "type": "recordingFinalized",
-        "sessionId": sessionId,
-        "projectPath": projectPath,
-      ])
-    }
-    screenRecorder.onRecordingFailed = { [weak self] payload in
-      self?.emitWorkflowEvent(payload)
-    }
-    screenRecorder.onRecordingWarning = { [weak self] payload in
-      self?.emitWorkflowEvent(payload)
-    }
-    screenRecorder.onCameraOverlayMoved = { [weak self] payload in
-      self?.channel?.invokeMethod(NativeToFlutterMethod.cameraOverlayMoved, arguments: payload)
-    }
+    // (Recording-lifecycle + cameraOverlayMoved callbacks moved to
+    // ScreenRecorderEventBridge — PR 6.)
     screenRecorder.onAreaSelectionCleared = { [weak self] in
       self?.isAreaSelectionInProgress = false
       self?.updatePreRecordingBarVisibility()
