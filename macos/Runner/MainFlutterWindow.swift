@@ -19,6 +19,7 @@ private enum NativeWorkflowPhase: Int {
 
 class MainFlutterWindow: NSWindow {
   private let screenRecorder = ScreenRecorderFacade()
+  private lazy var methodDispatcher = ScreenRecorderMethodDispatcher(facade: screenRecorder)
   private let eventHandler = AudioDevicesEventHandler()
   private var channel: FlutterMethodChannel?
   private var menuBarController: MenuBarController?
@@ -63,6 +64,11 @@ class MainFlutterWindow: NSWindow {
     channel?.setMethodCallHandler { [weak self] call, result in
       guard let self else {
         result(FlutterMethodNotImplemented)
+        return
+      }
+      // Strangler routing layer: routers claim a subset of methods ahead of the
+      // legacy switch. Claimed methods are removed from the switch below.
+      if self.methodDispatcher.handle(call, result) {
         return
       }
       switch call.method {
@@ -1036,27 +1042,15 @@ class MainFlutterWindow: NSWindow {
         ========================== PERMISSIONS ==========================
         =================================================================
       */
-      case "getPermissionStatus":
-        screenRecorder.getPermissionStatus(result: result)
-      case "requestScreenRecordingPermission":
-        screenRecorder.requestScreenRecordingPermission(result: result)
-      case "requestMicrophonePermission":
-        screenRecorder.requestMicrophonePermission(result: result)
-      case "requestCameraPermission":
-        screenRecorder.requestCameraPermission(result: result)
-      case "openAccessibilitySettings":
-        result(NSNumber(value: self.screenRecorder.ensureAccessibilityAllowedAndGuideUser()))
+      // getPermissionStatus, requestScreenRecordingPermission,
+      // requestMicrophonePermission, requestCameraPermission,
+      // openAccessibilitySettings, openScreenRecordingSettings and relaunchApp
+      // are now claimed by PermissionsMethodRouter via methodDispatcher (above).
+      // openSystemSettings and checkForUpdates remain residual (not yet routed).
       case "openSystemSettings":
         let args = call.arguments as? [String: Any]
         let pane = (args?["pane"] as? String) ?? ""
         self.screenRecorder.openSystemSettings(pane: pane, result: result)
-
-      case "openScreenRecordingSettings":
-        screenRecorder.openScreenRecordingSettings()
-        result(nil)
-
-      case "relaunchApp":
-        self.screenRecorder.relaunchApp()
 
       case "checkForUpdates":
         UpdaterController.shared.channel = self.channel

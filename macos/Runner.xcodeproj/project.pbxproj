@@ -21,6 +21,7 @@
 /* End PBXAggregateTarget section */
 
 /* Begin PBXBuildFile section */
+		0BE271D35B92B01091FE6C78 /* PermissionsMethodRouterTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = A804343376134DBC7318D507 /* PermissionsMethodRouterTests.swift */; };
 		13331D48B0581167284E8DBC /* AudioLevelEstimator.swift in Sources */ = {isa = PBXBuildFile; fileRef = B81915A6645E96590BCA2C31 /* AudioLevelEstimator.swift */; };
 		1FDC4012354B4C4B8C9E4681 /* ExportVideoRequest.swift in Sources */ = {isa = PBXBuildFile; fileRef = 213556AE9CE165CAD73E9898 /* ExportVideoRequest.swift */; };
 		2222176CC2AA8979DC722460 /* StartRecordingRequest.swift in Sources */ = {isa = PBXBuildFile; fileRef = E2D6F5E68DD08113B91D5F81 /* StartRecordingRequest.swift */; };
@@ -126,6 +127,7 @@
 		D721BEECDE5AA17D736C72DF /* RecordedDurationTracker.swift in Sources */ = {isa = PBXBuildFile; fileRef = 2CA30527B5FD7B013F4A64F9 /* RecordedDurationTracker.swift */; };
 		DCD38ECB9B70DA6BE66ADC4D /* AudioLevelEstimatorTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 815246B6D0905FCBEA4C2BFE /* AudioLevelEstimatorTests.swift */; };
 		E1A0C0012F60000100BEE001 /* AVAssetWriterInputExceptionBridge.m in Sources */ = {isa = PBXBuildFile; fileRef = E1A0C0032F60000100BEE003 /* AVAssetWriterInputExceptionBridge.m */; };
+		ED14C053CA72B2C3595D73FE /* ScreenRecorderMethodDispatcher.swift in Sources */ = {isa = PBXBuildFile; fileRef = 4397E0D64816B4207BDD9EE0 /* ScreenRecorderMethodDispatcher.swift */; };
 /* End PBXBuildFile section */
 
 /* Begin PBXContainerItemProxy section */
@@ -185,6 +187,7 @@
 		33E51914231749380026EE4D /* Release.entitlements */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = text.plist.entitlements; path = Release.entitlements; sourceTree = "<group>"; };
 		33E5194F232828860026EE4D /* AppInfo.xcconfig */ = {isa = PBXFileReference; lastKnownFileType = text.xcconfig; path = AppInfo.xcconfig; sourceTree = "<group>"; };
 		427E590FBC9C4916C464DEA7 /* OverlayRefreshPlan.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = OverlayRefreshPlan.swift; sourceTree = "<group>"; };
+		4397E0D64816B4207BDD9EE0 /* ScreenRecorderMethodDispatcher.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = ScreenRecorderMethodDispatcher.swift; sourceTree = "<group>"; };
 		4899C8EB90C6FE3503A404A8 /* Pods-RunnerTests.release-prod.xcconfig */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = text.xcconfig; name = "Pods-RunnerTests.release-prod.xcconfig"; path = "Target Support Files/Pods-RunnerTests/Pods-RunnerTests.release-prod.xcconfig"; sourceTree = "<group>"; };
 		49998781A7ED783ED2315B93 /* NSColor+ARGB.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = "NSColor+ARGB.swift"; sourceTree = "<group>"; };
 		5964845B237A9BCC08254B7C /* MicrophoneLevelMonitor.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = MicrophoneLevelMonitor.swift; sourceTree = "<group>"; };
@@ -269,6 +272,7 @@
 		A1B2C3D4E5F60718293A4B09 /* ScreenZoomCursorIntermediatePipeline.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ScreenZoomCursorIntermediatePipeline.swift; sourceTree = "<group>"; };
 		A1B2C3D4E5F60718293A4B5C /* CameraOverlayLayoutTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CameraOverlayLayoutTests.swift; sourceTree = "<group>"; };
 		A2B3C4D5E6F708192A3B4C5E /* ClingfyProjectIcon.icns */ = {isa = PBXFileReference; lastKnownFileType = image.icns; path = Runner/ClingfyProjectIcon.icns; sourceTree = "<group>"; };
+		A804343376134DBC7318D507 /* PermissionsMethodRouterTests.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = PermissionsMethodRouterTests.swift; sourceTree = "<group>"; };
 		B01053F62F931EDFDC4E9F77 /* Pods_RunnerTests.framework */ = {isa = PBXFileReference; explicitFileType = wrapper.framework; includeInIndex = 0; path = Pods_RunnerTests.framework; sourceTree = BUILT_PRODUCTS_DIR; };
 		B7C100022FA1000100A0B001 /* ProjectOpenCoordinator.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ProjectOpenCoordinator.swift; sourceTree = "<group>"; };
 		B7C100042FA1000100A0B001 /* ProjectOpenValidator.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ProjectOpenValidator.swift; sourceTree = "<group>"; };
@@ -344,6 +348,7 @@
 				331C80D7294CF71000263BE5 /* RunnerTests.swift */,
 				815246B6D0905FCBEA4C2BFE /* AudioLevelEstimatorTests.swift */,
 				964282A8773D929D64A40630 /* RequestParsingTests.swift */,
+				A804343376134DBC7318D507 /* PermissionsMethodRouterTests.swift */,
 			);
 			path = RunnerTests;
 			sourceTree = "<group>";
@@ -558,6 +563,7 @@
 				5347A549760AE85A7D4C010F /* Diagnostics */,
 				E559AB0D29852BED62ADF7CC /* Audio */,
 				682C2B4A23F545BEB043E74D /* Requests */,
+				C9D21C8FD3401740AA764D43 /* Routing */,
 			);
 			path = Capture;
 			sourceTree = "<group>";
@@ -756,6 +762,15 @@
 				8487F0FC7655749D593D1968 /* Pods-RunnerTests.profile-dev.xcconfig */,
 			);
 			path = Pods;
+			sourceTree = "<group>";
+		};
+		C9D21C8FD3401740AA764D43 /* Routing */ = {
+			isa = PBXGroup;
+			children = (
+				4397E0D64816B4207BDD9EE0 /* ScreenRecorderMethodDispatcher.swift */,
+			);
+			name = Routing;
+			path = Routing;
 			sourceTree = "<group>";
 		};
 		DE2A75613866BC107F3C84B9 /* Indicator */ = {
@@ -1020,6 +1035,7 @@
 				331C80D8294CF71000263BE5 /* RunnerTests.swift in Sources */,
 				DCD38ECB9B70DA6BE66ADC4D /* AudioLevelEstimatorTests.swift in Sources */,
 				69B5122F481E9152FAF2A9B3 /* RequestParsingTests.swift in Sources */,
+				0BE271D35B92B01091FE6C78 /* PermissionsMethodRouterTests.swift in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -1109,6 +1125,7 @@
 				2222176CC2AA8979DC722460 /* StartRecordingRequest.swift in Sources */,
 				1FDC4012354B4C4B8C9E4681 /* ExportVideoRequest.swift in Sources */,
 				3311FCB1314995C1392F1E81 /* PreviewSceneRequest.swift in Sources */,
+				ED14C053CA72B2C3595D73FE /* ScreenRecorderMethodDispatcher.swift in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
