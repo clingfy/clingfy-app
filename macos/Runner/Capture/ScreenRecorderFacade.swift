@@ -288,11 +288,12 @@ final class ScreenRecorderFacade: NSObject {
     stateAsStr()
     resetPendingStartRecoveryState()
     refreshMicrophoneLevelMonitoring(resetMeter: true)
-    activeRecordingWorkflowSessionId = args?["sessionId"] as? String
-    sessionDisableMicrophone = args?["disableMicrophone"] as? Bool ?? false
-    sessionDisableCameraOverlay = args?["disableCameraOverlay"] as? Bool ?? false
-    sessionDisableCursorHighlight = args?["disableCursorHighlight"] as? Bool ?? false
-    let allowLowStorageBypass = args?["allowLowStorageBypass"] as? Bool ?? false
+    let request = StartRecordingRequest.fromFlutter(args)
+    activeRecordingWorkflowSessionId = request.sessionId
+    sessionDisableMicrophone = request.disableMicrophone
+    sessionDisableCameraOverlay = request.disableCameraOverlay
+    sessionDisableCursorHighlight = request.disableCursorHighlight
+    let allowLowStorageBypass = request.allowLowStorageBypass
 
     // macOS screen-recording permission
     if #available(macOS 10.15, *), !CGPreflightScreenCaptureAccess() {
