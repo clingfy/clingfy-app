@@ -1533,7 +1533,7 @@ final class ScreenRecorderFacade: NSObject {
     recordedDurationTracker.reset()
     resetRecordingSessionSuppressions()
     if let projectRoot = activeRecordingProjectRoot {
-      updateProjectManifestStatus(.failed, projectRoot: projectRoot)
+      MetadataSidecarWriter.updateProjectManifestStatus(.failed, projectRoot: projectRoot)
     }
     activeRecordingProjectRoot = nil
     pendingCameraRecordingSession = nil
@@ -2595,7 +2595,7 @@ final class ScreenRecorderFacade: NSObject {
     if let error {
       let errorMessage = Self.errorMessage(from: error)
       if let projectRoot = activeRecordingProjectRoot {
-        updateProjectManifestStatus(.failed, projectRoot: projectRoot)
+        MetadataSidecarWriter.updateProjectManifestStatus(.failed, projectRoot: projectRoot)
       }
       if let sessionId = activeRecordingWorkflowSessionId {
         onRecordingFailed?([
@@ -2805,13 +2805,13 @@ final class ScreenRecorderFacade: NSObject {
             case .deleteProject:
               let didDelete = self.recordingStore.deleteProject(projectRootURL: projectRoot)
               if !didDelete {
-                self.updateProjectManifestStatus(.cancelled, projectRoot: projectRoot)
+                MetadataSidecarWriter.updateProjectManifestStatus(.cancelled, projectRoot: projectRoot)
                 finalURL = url
               } else {
                 finalURL = nil
               }
             case .markCancelled:
-              self.updateProjectManifestStatus(.finalizing, projectRoot: projectRoot)
+              MetadataSidecarWriter.updateProjectManifestStatus(.finalizing, projectRoot: projectRoot)
               if let rawURL = url {
                 self.updateMetadataSidecarOnFinish(
                   projectRoot: projectRoot,
@@ -2822,16 +2822,16 @@ final class ScreenRecorderFacade: NSObject {
               } else {
                 finalURL = nil
               }
-              self.updateProjectManifestStatus(.cancelled, projectRoot: projectRoot)
+              MetadataSidecarWriter.updateProjectManifestStatus(.cancelled, projectRoot: projectRoot)
             }
           } else if let rawURL = url {
-            self.updateProjectManifestStatus(.finalizing, projectRoot: projectRoot)
+            MetadataSidecarWriter.updateProjectManifestStatus(.finalizing, projectRoot: projectRoot)
             self.updateMetadataSidecarOnFinish(
               projectRoot: projectRoot,
               cameraResult: cameraResult,
               publishedScreenURL: rawURL
             )
-            self.updateProjectManifestStatus(.ready, projectRoot: projectRoot)
+            MetadataSidecarWriter.updateProjectManifestStatus(.ready, projectRoot: projectRoot)
             finalURL = rawURL
           } else {
             finalURL = nil
@@ -2961,24 +2961,7 @@ final class ScreenRecorderFacade: NSObject {
     }
   }
 
-  private func cameraCaptureInfo(
-    from result: CameraRecordingResult,
-    screenRawURL _: URL
-  ) -> RecordingMetadata.CameraCaptureInfo {
-    RecordingMetadata.CameraCaptureInfo(
-      mode: .separateCameraAsset,
-      enabled: true,
-      rawRelativePath: RecordingProjectPaths.relativeCameraRawPath,
-      metadataRelativePath: RecordingProjectPaths.relativeCameraMetadataPath,
-      deviceId: result.metadata.deviceId,
-      mirroredRaw: result.metadata.mirroredRaw,
-      nominalFrameRate: result.metadata.nominalFrameRate,
-      dimensions: result.metadata.dimensions.map {
-        RecordingMetadata.Dimensions(width: $0.width, height: $0.height)
-      },
-      segments: result.metadata.segments
-    )
-  }
+  // cameraCaptureInfo moved to MetadataSidecarWriter.swift (PR 10a).
 
   /// Updates the metadata sidecar with end timestamp when recording finishes.
   private func updateMetadataSidecarOnFinish(
@@ -2994,7 +2977,8 @@ final class ScreenRecorderFacade: NSObject {
       metadata = metadata.withEndTimestamp()
       metadata.screen.segments = capture.recordedScreenSegments
       if let cameraResult {
-        metadata.camera = cameraCaptureInfo(from: cameraResult, screenRawURL: publishedScreenURL)
+        metadata.camera = MetadataSidecarWriter.cameraCaptureInfo(
+          from: cameraResult, screenRawURL: publishedScreenURL)
       } else if shouldRecordSeparateCameraAsset {
         metadata.camera = nil
         metadata.editorSeed.cameraVisible = false
@@ -3011,35 +2995,7 @@ final class ScreenRecorderFacade: NSObject {
     }
   }
 
-  private func updateProjectManifestStatus(
-    _ status: RecordingProjectStatus,
-    projectRoot: URL
-  ) {
-    let manifestURL = RecordingProjectPaths.manifestURL(for: projectRoot)
-    guard var manifest = try? RecordingProjectManifest.read(from: manifestURL) else {
-      NativeLogger.w(
-        "Facade",
-        "Could not update recording project manifest status",
-        context: ["path": manifestURL.path, "status": status.rawValue]
-      )
-      return
-    }
-
-    manifest.updateStatus(status)
-    do {
-      try manifest.write(to: manifestURL)
-    } catch {
-      NativeLogger.w(
-        "Facade",
-        "Failed writing recording project manifest status",
-        context: [
-          "path": manifestURL.path,
-          "status": status.rawValue,
-          "error": error.localizedDescription,
-        ]
-      )
-    }
-  }
+  // updateProjectManifestStatus moved to MetadataSidecarWriter.swift (PR 10a).
 
   private enum RecordingCompletionMode {
     case ready
