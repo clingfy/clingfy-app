@@ -181,4 +181,227 @@ final class RecordingSessionCoordinatorTests: XCTestCase {
       }
     }
   }
+
+  // MARK: - Slice 7 / PR 23: prepareStart
+
+  /// Real-FS helper — `RecordingProjectService.createSkeleton` writes the
+  /// `.clingfyproj` folder tree under `AppPaths.recordingsRoot()`. Each test
+  /// resets the workspace so the artifacts don't collide.
+  private func resetRecordingsWorkspace() {
+    let root = AppPaths.recordingsRoot()
+    try? FileManager.default.removeItem(at: root)
+    try? FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+  }
+
+  private func makeEditorSeed() -> RecordingMetadata.EditorSeed {
+    // Mirrors `makeBasicEditorSeed()` in `RecordingProjectServiceTests` —
+    // any valid `EditorSeed` is fine here because `prepareStart` just
+    // threads it through to `writeProjectFiles`.
+    RecordingMetadata.EditorSeed(
+      cameraVisible: true,
+      cameraLayoutPreset: .overlayBottomRight,
+      cameraNormalizedCenter: nil,
+      cameraSizeFactor: 0.18,
+      cameraShape: .circle,
+      cameraCornerRadius: 0.0,
+      cameraBorderWidth: 0.0,
+      cameraBorderColorArgb: nil,
+      cameraShadow: 0,
+      cameraOpacity: 1.0,
+      cameraMirror: true,
+      cameraContentMode: .fill,
+      cameraZoomBehavior: CameraCompositionParams.defaultZoomBehavior,
+      cameraChromaKeyEnabled: false,
+      cameraChromaKeyStrength: 0.4,
+      cameraChromaKeyColorArgb: nil
+    )
+  }
+
+  private func makeInputs(
+    shouldRecordSeparateCameraAsset: Bool = false,
+    selectedAppWindowID: CGWindowID? = nil,
+    displayMode: DisplayTargetMode = .explicitID
+  ) -> RecordingSessionCoordinator.PrepareStartInputs {
+    .init(
+      captureTarget: CaptureTarget(
+        mode: displayMode, displayID: 1, cropRect: nil,
+        windowID: displayMode == .singleAppWindow ? selectedAppWindowID : nil),
+      frameRate: 60,
+      displayMode: displayMode,
+      selectedAppWindowID: selectedAppWindowID,
+      recordingQuality: .fhd,
+      cursorEnabledForRecording: true,
+      cursorLinked: false,
+      excludeRecorderApp: false,
+      shouldRecordSeparateCameraAsset: shouldRecordSeparateCameraAsset,
+      videoDeviceId: nil,
+      overlayMirror: false,
+      editorSeed: makeEditorSeed()
+    )
+  }
+
+  func testPrepareStartPropagatesCreateSkeletonError() {
+    resetRecordingsWorkspace()
+    let coord = makeCoordinator()
+
+    // Force createSkeleton to fail by pre-creating a file where the root
+    // recordings dir wants to be a directory.
+    let root = AppPaths.recordingsRoot()
+    try? FileManager.default.removeItem(at: root)
+    FileManager.default.createFile(atPath: root.path, contents: nil)
+
+    var onResolvedFired = false
+    XCTAssertThrowsError(
+      try coord.prepareStart(
+        inputs: makeInputs(),
+        projectService: RecordingProjectService(),
+        cameraCoordination: CameraCoordinationController(),
+        preflightStorage: { _ in },
+        onProjectRootResolved: { _, _ in onResolvedFired = true }
+      )
+    )
+    XCTAssertFalse(
+      onResolvedFired,
+      "onProjectRootResolved must not fire when createSkeleton throws")
+
+    // Cleanup so subsequent tests can use the workspace.
+    try? FileManager.default.removeItem(at: root)
+  }
+
+  func testPrepareStartPropagatesStoragePreflightError() throws {
+    resetRecordingsWorkspace()
+    let coord = makeCoordinator()
+    struct StorageFull: Error {}
+    var onResolvedFired = false
+
+    XCTAssertThrowsError(
+      try coord.prepareStart(
+        inputs: makeInputs(),
+        projectService: RecordingProjectService(),
+        cameraCoordination: CameraCoordinationController(),
+        preflightStorage: { _ in throw StorageFull() },
+        onProjectRootResolved: { _, _ in onResolvedFired = true }
+      )
+    ) { error in
+      XCTAssertTrue(error is StorageFull)
+    }
+    XCTAssertFalse(
+      onResolvedFired,
+      "onProjectRootResolved must not fire when storage preflight throws")
+  }
+
+  func testPrepareStartFiresOnProjectRootResolvedBetweenPreflightAndWrite() throws {
+    resetRecordingsWorkspace()
+    let coord = makeCoordinator()
+    var callbackArgs: (projectRoot: URL, screenVideoURL: URL)?
+
+    let prepared = try coord.prepareStart(
+      inputs: makeInputs(),
+      projectService: RecordingProjectService(),
+      cameraCoordination: CameraCoordinationController(),
+      preflightStorage: { _ in },
+      onProjectRootResolved: { projectRoot, screenVideoURL in
+        callbackArgs = (projectRoot, screenVideoURL)
+      }
+    )
+
+    XCTAssertNotNil(callbackArgs, "onProjectRootResolved must fire on success")
+    XCTAssertEqual(callbackArgs?.projectRoot, prepared.projectRoot)
+    XCTAssertEqual(callbackArgs?.screenVideoURL, prepared.screenVideoURL)
+  }
+
+  func testPrepareStartReturnsNilCameraSessionWhenNotSeparateCameraAsset() throws {
+    resetRecordingsWorkspace()
+    let coord = makeCoordinator()
+
+    let prepared = try coord.prepareStart(
+      inputs: makeInputs(shouldRecordSeparateCameraAsset: false),
+      projectService: RecordingProjectService(),
+      cameraCoordination: CameraCoordinationController(),
+      preflightStorage: { _ in },
+      onProjectRootResolved: { _, _ in }
+    )
+
+    XCTAssertNil(prepared.cameraSession)
+    XCTAssertNil(
+      prepared.metadata.camera,
+      "no camera asset section when shouldRecordSeparateCameraAsset is false")
+  }
+
+  func testPrepareStartBuildsCameraSessionWhenSeparateCameraAsset() throws {
+    resetRecordingsWorkspace()
+    let coord = makeCoordinator()
+
+    let prepared = try coord.prepareStart(
+      inputs: makeInputs(shouldRecordSeparateCameraAsset: true),
+      projectService: RecordingProjectService(),
+      cameraCoordination: CameraCoordinationController(),
+      preflightStorage: { _ in },
+      onProjectRootResolved: { _, _ in }
+    )
+
+    XCTAssertNotNil(prepared.cameraSession)
+    XCTAssertEqual(prepared.cameraSession?.mirroredRaw, false)
+    XCTAssertEqual(
+      prepared.cameraSession?.outputURL,
+      RecordingProjectPaths.cameraRawURL(for: prepared.projectRoot))
+    // Manifest reflects camera presence.
+    XCTAssertNotNil(prepared.metadata.camera)
+    XCTAssertEqual(prepared.metadata.camera?.enabled, true)
+  }
+
+  func testPrepareStartWritesManifestToProjectRootAndReturnsInMemoryMetadata() throws {
+    resetRecordingsWorkspace()
+    let coord = makeCoordinator()
+
+    let prepared = try coord.prepareStart(
+      inputs: makeInputs(),
+      projectService: RecordingProjectService(),
+      cameraCoordination: CameraCoordinationController(),
+      preflightStorage: { _ in },
+      onProjectRootResolved: { _, _ in }
+    )
+
+    // Only the manifest is persisted by writeProjectFiles; the screen
+    // metadata sidecar is held in-memory in `prepared.metadata` and
+    // written by the facade later (via `writeMetadataSidecar` on
+    // backendDidStart).
+    let manifestURL = RecordingProjectPaths.manifestURL(for: prepared.projectRoot)
+    XCTAssertTrue(
+      FileManager.default.fileExists(atPath: manifestURL.path),
+      "manifest must exist after writeProjectFiles")
+    XCTAssertFalse(
+      FileManager.default.fileExists(
+        atPath: RecordingProjectPaths.screenMetadataURL(for: prepared.projectRoot).path),
+      "screen metadata sidecar must NOT be written by prepareStart — facade owns that on start")
+
+    XCTAssertEqual(prepared.projectId.hasPrefix("rec_"), true)
+    XCTAssertEqual(prepared.metadata.screen.frameRate, 60)
+  }
+
+  func testPrepareStartThreadsWindowIDOnlyForSingleAppWindowMode() throws {
+    resetRecordingsWorkspace()
+    let coord = makeCoordinator()
+
+    // For singleAppWindow, the metadata's windowID should reflect selectedAppWindowID.
+    let preparedSingleWindow = try coord.prepareStart(
+      inputs: makeInputs(
+        selectedAppWindowID: 4242, displayMode: .singleAppWindow),
+      projectService: RecordingProjectService(),
+      cameraCoordination: CameraCoordinationController(),
+      preflightStorage: { _ in },
+      onProjectRootResolved: { _, _ in }
+    )
+    XCTAssertEqual(preparedSingleWindow.metadata.screen.windowId, 4242)
+
+    // For any other mode, the windowId is dropped even if selectedAppWindowID is set.
+    let preparedExplicit = try coord.prepareStart(
+      inputs: makeInputs(selectedAppWindowID: 4242, displayMode: .explicitID),
+      projectService: RecordingProjectService(),
+      cameraCoordination: CameraCoordinationController(),
+      preflightStorage: { _ in },
+      onProjectRootResolved: { _, _ in }
+    )
+    XCTAssertNil(preparedExplicit.metadata.screen.windowId)
+  }
 }
