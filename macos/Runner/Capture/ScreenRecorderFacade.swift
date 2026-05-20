@@ -32,6 +32,11 @@ final class ScreenRecorderFacade: NSObject {
   // `ExportEngine`; the facade keeps a single engine reference and
   // delegates `exportVideo(...)` / `cancelExport()` through it.
   private let exportEngine = ExportEngine()
+  // Slice 8 / PR 28: preview-surface methods (processVideo,
+  // previewSetCameraPlacement, previewSetAudioGainDb, previewSetAudioMix)
+  // moved into `PreviewEngine`. Facade keeps the public method
+  // signatures unchanged and delegates.
+  private let previewEngine = PreviewEngine()
   var captureFPS: Int = 30  // internal: read by StorageDiagnosticsService (PR 7)
   private let defaultZoomFollowStrength: CGFloat = 0.15
   private let cameraCaptureCoordinator = CameraCaptureCoordinator()
@@ -1222,100 +1227,44 @@ final class ScreenRecorderFacade: NSObject {
     cameraParams: CameraCompositionParams?,
     result: @escaping FlutterResult
   ) {
-    guard let mediaSources = resolvePreviewMediaSources(
-      projectPath: projectPath,
-      explicitCameraPath: cameraPath
-    ) else {
-      result(
-        FlutterError(
-          code: "PROCESS_INPUT_MISSING",
-          message: "Recording project not found. It may have been moved or deleted.",
-          details: projectPath
-        )
-      )
-      return
-    }
-    let inputURL = URL(fileURLWithPath: mediaSources.screenPath)
-    let asset = AVAsset(url: inputURL)
-
-    func orientedSize(_ track: AVAssetTrack) -> CGSize {
-      let rect = CGRect(origin: .zero, size: track.naturalSize).applying(track.preferredTransform)
-      return CGSize(width: abs(rect.width), height: abs(rect.height))
-    }
-
-    let srcSize: CGSize = {
-      if let track = asset.tracks(withMediaType: .video).first {
-        return orientedSize(track)
-      }
-      return CGSize(width: 1920, height: 1080)
-    }()
-
-    let targetSize = resolveTargetSize(sourceSize: srcSize, layout: layout, resolution: resolution)
-
-    let clampedGainDb = max(0, min(24, audioGainDb))
-    let clampedVolumePercent = max(0, min(100, audioVolumePercent))
-
-    var params = CompositionParams(
-      targetSize: targetSize,
-      padding: padding,
-      cornerRadius: cornerRadius,
-      backgroundColor: backgroundColor,
-      backgroundImagePath: backgroundImagePath,
-      cursorSize: cursorSize,
-      showCursor: showCursor,
-      zoomEnabled: true,
-      zoomFactor: CGFloat(zoomFactor),
-      followStrength: defaultZoomFollowStrength,
-      fpsHint: 60,
-      fitMode: fit,
-      audioGainDb: clampedGainDb,
-      audioVolumePercent: clampedVolumePercent
-    )
-    params.zoomSegments = zoomSegments
-
-    NativeLogger.i(
-      "Facade", "processVideo called (New Architecture)",
-      context: [
-        "projectPath": projectPath,
-        "source": inputURL.path,
-        "layout": layout,
-        "resolution": resolution,
-        "fit": fit,
-        "targetSize": "\(targetSize.width)x\(targetSize.height)",
-        "zoomSegments": zoomSegments.map { "\($0.count)" } ?? "nil",
-        "cameraPreviewChangeKind": cameraPreviewChangeKind.rawValue,
-        "cameraNormalizedCenterX": cameraParams?.normalizedCanvasCenter?.x ?? "nil",
-        "cameraNormalizedCenterY": cameraParams?.normalizedCanvasCenter?.y ?? "nil",
-      ])
-
-    let previewScene = PreviewScene(
-      mediaSources: mediaSources,
-      screenParams: params,
-      cameraParams: cameraParams,
-      cameraPreviewChangeKind: cameraPreviewChangeKind
-    )
-
-    DispatchQueue.main.async {
-      updateActiveInlinePreviewScene(
+    // Slice 8 / PR 28: orchestration moved to PreviewEngine. The facade
+    // discards the unused `format` / `codec` / `bitrate` params (they
+    // were received but never read in the original body) when building
+    // the engine input. PreviewSceneResolver + ExportPrep extension
+    // helpers are exposed to the engine via closures so they don't have
+    // to move out of `extension ScreenRecorderFacade` yet.
+    previewEngine.processVideo(
+      input: .init(
+        projectPath: projectPath,
+        layout: layout,
+        resolution: resolution,
+        fit: fit,
+        padding: padding,
+        cornerRadius: cornerRadius,
+        backgroundColor: backgroundColor,
+        backgroundImagePath: backgroundImagePath,
+        cursorSize: cursorSize,
+        zoomFactor: zoomFactor,
+        showCursor: showCursor,
+        audioGainDb: audioGainDb,
+        audioVolumePercent: audioVolumePercent,
+        zoomSegments: zoomSegments,
+        cameraPreviewChangeKind: cameraPreviewChangeKind,
         sessionId: sessionId,
-        scene: previewScene
-      )
-      let viewSessionId = inlinePreviewViewInstance?.currentSessionId
-      let route = routePreviewSceneRequest(
-        sessionId: sessionId,
-        scene: previewScene
-      )
-      NativeLogger.d(
-        "Preview", "Routed preview scene update",
-        context: [
-          "sessionId": sessionId ?? "nil",
-          "viewSessionId": viewSessionId ?? "nil",
-          "hasInlinePreviewView": inlinePreviewViewInstance != nil,
-          "hasActivePreviewState": activeInlinePreviewState != nil,
-          "route": route.rawValue,
-        ])
-    }
-    result(projectPath)
+        cameraPath: cameraPath,
+        cameraParams: cameraParams
+      ),
+      dependencies: .init(
+        resolvePreviewMediaSources: { [unowned self] path, explicitCameraPath in
+          self.resolvePreviewMediaSources(projectPath: path, explicitCameraPath: explicitCameraPath)
+        },
+        resolveTargetSize: { [unowned self] src, layout, resolution in
+          self.resolveTargetSize(sourceSize: src, layout: layout, resolution: resolution)
+        },
+        defaultZoomFollowStrength: defaultZoomFollowStrength
+      ),
+      result: result
+    )
   }
 
   func previewSetCameraPlacement(
@@ -1324,37 +1273,15 @@ final class ScreenRecorderFacade: NSObject {
     cameraParams: CameraCompositionParams?,
     result: @escaping FlutterResult
   ) {
-    updateActiveInlinePreviewCameraPlacementOverride(
+    previewEngine.setCameraPlacement(
       sessionId: sessionId,
+      cameraPreviewChangeKind: cameraPreviewChangeKind,
       cameraParams: cameraParams,
-      changeKind: cameraPreviewChangeKind
-    )
-    if let view = inlinePreviewViewInstance {
-      if let sessionId, view.currentSessionId != sessionId {
-        result(nil)
-        return
-      }
-      view.updateCameraPlacementPreview(
-        cameraParams: cameraParams,
-        changeKind: cameraPreviewChangeKind
-      )
-    } else if let sessionId,
-      let request = pendingPreviewOpenRequest,
-      request.sessionId != sessionId
-    {
-      result(nil)
-      return
-    }
-    result(nil)
+      result: result)
   }
 
   func previewSetAudioGainDb(audioGainDb: Double, result: @escaping FlutterResult) {
-    previewSetAudioMix(
-      sessionId: nil,
-      audioGainDb: audioGainDb,
-      audioVolumePercent: 100.0,
-      result: result
-    )
+    previewEngine.setAudioGainDb(audioGainDb: audioGainDb, result: result)
   }
 
   func previewSetAudioMix(
@@ -1363,27 +1290,11 @@ final class ScreenRecorderFacade: NSObject {
     audioVolumePercent: Double,
     result: @escaping FlutterResult
   ) {
-    let clampedGainDb = max(0, min(24, audioGainDb))
-    let clampedVolumePercent = max(0, min(100, audioVolumePercent))
-    updateActiveInlinePreviewAudioMixOverride(
+    previewEngine.setAudioMix(
       sessionId: sessionId,
-      gainDb: clampedGainDb,
-      volumePercent: clampedVolumePercent
-    )
-    if let view = inlinePreviewViewInstance {
-      if let sessionId, view.currentSessionId != sessionId {
-        result(nil)
-        return
-      }
-      view.updateAudioMixOnly(gainDb: clampedGainDb, volumePercent: clampedVolumePercent)
-    } else if let sessionId,
-      let request = pendingPreviewOpenRequest,
-      request.sessionId != sessionId
-    {
-      result(nil)
-      return
-    }
-    result(nil)
+      audioGainDb: audioGainDb,
+      audioVolumePercent: audioVolumePercent,
+      result: result)
   }
 
   func exportVideo(
