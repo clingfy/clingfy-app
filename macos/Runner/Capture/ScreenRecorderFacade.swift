@@ -24,14 +24,6 @@ final class ScreenRecorderFacade: NSObject {
     }
   }
 
-  private struct IndicatorConfiguration {
-    let state: IndicatorState
-    let onPauseTapped: (() -> Void)?
-    let onStopTapped: (() -> Void)?
-    let onResumeTapped: (() -> Void)?
-    let elapsedProvider: (() -> String)?
-  }
-
   // services
   private let prefs = PreferencesStore()
   private let saveFolder = SaveFolderStore()
@@ -43,7 +35,12 @@ final class ScreenRecorderFacade: NSObject {
   private lazy var cameraRecorder = CameraRecorder(coordinator: cameraCaptureCoordinator)
   private lazy var camera = CameraOverlay(captureCoordinator: cameraCaptureCoordinator)
   private let cursor = CursorHighlighter()
-  private let indicator = RecordingIndicator()
+  /// Slice 4 / PR 17: the `RecordingIndicator` panel + pure state-mapping
+  /// (`currentIndicatorState()`) + elapsed formatter (`formattedElapsed()`)
+  /// now live on this coordinator; the facade keeps `RecorderState`,
+  /// `recordedDurationTracker`, `prefs.indicatorPinned`, and the indicator
+  /// tap callbacks and threads them through on every `apply(...)`.
+  private let indicatorCoordinator = RecordingIndicatorCoordinator()
   private let recordingStore = RecordingStore()
   private let micLevelMonitor: MicrophoneLevelMonitoring
 
@@ -1517,11 +1514,8 @@ final class ScreenRecorderFacade: NSObject {
     startResult = nil
   }
   private func formattedElapsed() -> String {
-    let secs = max(0, Int(recordedDurationTracker.currentRecordedDuration()))
-    let f = DateComponentsFormatter()
-    f.allowedUnits = [.hour, .minute, .second]
-    f.zeroFormattingBehavior = [.pad]
-    return f.string(from: TimeInterval(secs)) ?? "00:00:00"
+    RecordingIndicatorCoordinator.formatElapsed(
+      seconds: Int(recordedDurationTracker.currentRecordedDuration()))
   }
   private func ensureAccessibilityAllowed(prompt: Bool) -> Bool {
     let opt = [kAXTrustedCheckOptionPrompt.takeUnretainedValue() as String: prompt] as CFDictionary
@@ -2287,23 +2281,11 @@ final class ScreenRecorderFacade: NSObject {
   }
 
   private func applyIndicatorState() {
-    let configuration = makeIndicatorConfiguration()
-    indicator.setState(
-      configuration.state,
+    indicatorCoordinator.apply(
+      recorderState: state,
       pinned: prefs.indicatorPinned,
-      onPauseTapped: configuration.onPauseTapped,
-      onStopTapped: configuration.onStopTapped,
-      onResumeTapped: configuration.onResumeTapped,
-      elapsedProvider: configuration.elapsedProvider
-    )
-  }
-
-  private func makeIndicatorConfiguration() -> IndicatorConfiguration {
-    IndicatorConfiguration(
-      state: currentIndicatorState(),
-      onPauseTapped: capture.canPauseResume
-        ? { [weak self] in self?.onIndicatorPauseTapped?() }
-        : nil,
+      canPauseResume: capture.canPauseResume,
+      onPauseTapped: { [weak self] in self?.onIndicatorPauseTapped?() },
       onStopTapped: { [weak self] in self?.onIndicatorStopTapped?() },
       onResumeTapped: { [weak self] in self?.onIndicatorResumeTapped?() },
       elapsedProvider: { [weak self] in self?.formattedElapsed() ?? "00:00:00" }
@@ -2311,16 +2293,7 @@ final class ScreenRecorderFacade: NSObject {
   }
 
   private func currentIndicatorState() -> IndicatorState {
-    switch state {
-    case .recording:
-      return .recording
-    case .paused:
-      return .paused
-    case .stopping:
-      return .stopping
-    case .idle, .starting:
-      return .hidden
-    }
+    RecordingIndicatorCoordinator.indicatorState(for: state)
   }
 
 #if DEBUG
@@ -2340,12 +2313,15 @@ final class ScreenRecorderFacade: NSObject {
   }
 
   func _testIndicatorConfiguration() -> IndicatorDebugConfiguration {
-    let configuration = makeIndicatorConfiguration()
+    // Mirrors the closures forwarded to `RecordingIndicatorCoordinator.apply(...)`
+    // — same `canPauseResume` gating and the same `[weak self]` callbacks.
     return IndicatorDebugConfiguration(
-      state: configuration.state,
-      onPauseTapped: configuration.onPauseTapped,
-      onStopTapped: configuration.onStopTapped,
-      onResumeTapped: configuration.onResumeTapped
+      state: RecordingIndicatorCoordinator.indicatorState(for: state),
+      onPauseTapped: capture.canPauseResume
+        ? { [weak self] in self?.onIndicatorPauseTapped?() }
+        : nil,
+      onStopTapped: { [weak self] in self?.onIndicatorStopTapped?() },
+      onResumeTapped: { [weak self] in self?.onIndicatorResumeTapped?() }
     )
   }
 #endif
