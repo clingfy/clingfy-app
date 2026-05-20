@@ -82,6 +82,13 @@ final class ScreenRecorderFacade: NSObject {
   // Stateless collaborators (own no session state) — Slice 3.
   private let captureTargetResolver = CaptureTargetResolver()
   private let recordingProjectService = RecordingProjectService()
+  // Slice 5 / PR 20: wraps the two preflight clusters of startRecording
+  // (screen+target, mic+accessibility) into a single typed-outcome surface.
+  // Consumes the Slice-3 services; owns no state. Facade still owns every
+  // side effect (state transition, finishStartWithError,
+  // CGRequestScreenCaptureAccess).
+  private lazy var recordingSessionCoordinator = RecordingSessionCoordinator(
+    captureTargetResolver: captureTargetResolver)
   private var startResult: FlutterResult?
   private var pauseResult: FlutterResult?
   private var resumeResult: FlutterResult?
@@ -295,41 +302,29 @@ final class ScreenRecorderFacade: NSObject {
     sessionDisableCursorHighlight = request.disableCursorHighlight
     let allowLowStorageBypass = request.allowLowStorageBypass
 
-    // macOS screen-recording permission
-    if !RecordingPreflightService.screenRecordingSatisfied() {
-      _ = CGRequestScreenCaptureAccess()
-      finishStartWithError(
-        flutterError(NativeErrorCode.screenRecordingPermission, ""))
-      return
-    }
-
+    // Slice 5 / PR 20 — first preflight cluster (screen permission +
+    // capture target). The facade keeps the screen-permission side effect
+    // (CGRequestScreenCaptureAccess) and finishStartWithError; the
+    // coordinator just returns the typed outcome.
     let captureTarget: CaptureTarget
-    do {
-      captureTarget = try captureTargetResolver.resolve(
-        .init(
-          displayMode: prefs.displayMode,
-          selectedDisplayID: selectedDisplayID,
-          selectedAppWindowID: selectedAppWindowID,
-          areaRect: prefs.areaRect,
-          areaDisplayId: prefs.areaDisplayId
-        ),
-        displayService: displaySvc
-      )
-    } catch CaptureTargetError.noWindowSelected {
-      finishStartWithError(
-        flutterError(NativeErrorCode.noWindowSelected, ""))
+    switch recordingSessionCoordinator.evaluateScreenPermissionAndTarget(
+      captureTargetInput: .init(
+        displayMode: prefs.displayMode,
+        selectedDisplayID: selectedDisplayID,
+        selectedAppWindowID: selectedAppWindowID,
+        areaRect: prefs.areaRect,
+        areaDisplayId: prefs.areaDisplayId
+      ),
+      displayService: displaySvc
+    ) {
+    case .proceed(let target):
+      captureTarget = target
+    case .fail(let code) where code == NativeErrorCode.screenRecordingPermission:
+      _ = CGRequestScreenCaptureAccess()
+      finishStartWithError(flutterError(code, ""))
       return
-    } catch CaptureTargetError.windowUnavailable {
-      finishStartWithError(
-        flutterError(NativeErrorCode.windowNotAvailable, ""))
-      return
-    } catch CaptureTargetError.noAreaSelected {
-      finishStartWithError(
-        flutterError(NativeErrorCode.noAreaSelected, ""))
-      return
-    } catch {
-      finishStartWithError(
-        flutterError(NativeErrorCode.targetError, ""))
+    case .fail(let code):
+      finishStartWithError(flutterError(code, ""))
       return
     }
 
@@ -353,26 +348,26 @@ final class ScreenRecorderFacade: NSObject {
       let frameRate = args?["frameRate"] as? Int ?? 60
       let systemAudioEnabled = args?["systemAudioEnabled"] as? Bool ?? false
 
-      if !RecordingPreflightService.microphoneSatisfied(
-        disableMicrophone: sessionDisableMicrophone,
+      // Slice 5 / PR 20 — second preflight cluster (microphone +
+      // accessibility). The coordinator returns the first failing code;
+      // facade still owns finishStartWithError.
+      // `ensureAccessibilityAllowed(prompt: false)` is side-effect-free
+      // (pure AXIsProcessTrusted query), so eager evaluation here is
+      // observably identical to the original short-circuit
+      // (Slice 3 / PR 14).
+      switch recordingSessionCoordinator.evaluateMicAndAccessibility(
+        target: target,
+        sessionDisableMicrophone: sessionDisableMicrophone,
         audioDeviceId: prefs.audioDeviceId,
-        audioAuthorized: AVCaptureDevice.authorizationStatus(for: .audio) == .authorized
-      ) {
-        finishStartWithError(
-          flutterError(NativeErrorCode.microphonePermissionRequired, ""))
-        return
-      }
-
-      // ensureAccessibilityAllowed(prompt: false) is side-effect-free (no
-      // prompt — pure AXIsProcessTrusted query), so eager evaluation here is
-      // observably identical to the previous short-circuit (Slice 3 / PR 14).
-      if RecordingPreflightService.accessibilityBlocksRecording(
+        audioAuthorized: AVCaptureDevice.authorizationStatus(for: .audio) == .authorized,
         cursorEnabledForRecording: effectiveCursorEnabledForRecording,
         cursorLinked: prefs.cursorLinked,
         accessibilityAllowed: ensureAccessibilityAllowed(prompt: false)
       ) {
-        finishStartWithError(
-          flutterError(NativeErrorCode.accessibilityPermissionRequired, ""))
+      case .proceed:
+        break
+      case .fail(let code):
+        finishStartWithError(flutterError(code, ""))
         return
       }
 
