@@ -24,6 +24,7 @@
 		01AAE1E4B799E6B85610A896 /* ExportPrep.swift in Sources */ = {isa = PBXBuildFile; fileRef = DBAFE534F311451D8C165B52 /* ExportPrep.swift */; };
 		0BE271D35B92B01091FE6C78 /* PermissionsMethodRouterTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = A804343376134DBC7318D507 /* PermissionsMethodRouterTests.swift */; };
 		112D3DF45F7941FE5186DA7E /* PreviewSceneResolverTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 999B6BF0AF215D618A11151E /* PreviewSceneResolverTests.swift */; };
+		1331725660D5952BBA3FD378 /* OverlayVisibilityControllerTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = BB2C9D8FFE41A526BD03CCBD /* OverlayVisibilityControllerTests.swift */; };
 		13331D48B0581167284E8DBC /* AudioLevelEstimator.swift in Sources */ = {isa = PBXBuildFile; fileRef = B81915A6645E96590BCA2C31 /* AudioLevelEstimator.swift */; };
 		1FDC4012354B4C4B8C9E4681 /* ExportVideoRequest.swift in Sources */ = {isa = PBXBuildFile; fileRef = 213556AE9CE165CAD73E9898 /* ExportVideoRequest.swift */; };
 		2222176CC2AA8979DC722460 /* StartRecordingRequest.swift in Sources */ = {isa = PBXBuildFile; fileRef = E2D6F5E68DD08113B91D5F81 /* StartRecordingRequest.swift */; };
@@ -115,6 +116,7 @@
 		8AAA59EA7CDDF22B4E47FB07 /* CaptureDestinationDiagnostics.swift in Sources */ = {isa = PBXBuildFile; fileRef = BDCE6283CC82D1BA03141B01 /* CaptureDestinationDiagnostics.swift */; };
 		8F5A1B2C3D4E5F60718293A2 /* OverlayUpdateDeduperTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 8F5A1B2C3D4E5F60718293A1 /* OverlayUpdateDeduperTests.swift */; };
 		9815310AE9CB2D8AE9292079 /* RecordingProjectServiceTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = B2F68F98AC976184031BF555 /* RecordingProjectServiceTests.swift */; };
+		98339761B94AD03F488F111F /* OverlayVisibilityController.swift in Sources */ = {isa = PBXBuildFile; fileRef = E241F5B3AEEB5920DAF553C2 /* OverlayVisibilityController.swift */; };
 		99EA998456840B42F1512660 /* ScreenRecorderEventBridgeTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = C5F53265860D2AA59ECBD56F /* ScreenRecorderEventBridgeTests.swift */; };
 		9A1B2C3D4E5F60718293A4B2 /* PreviewProfile.swift in Sources */ = {isa = PBXBuildFile; fileRef = 9A1B2C3D4E5F60718293A4B1 /* PreviewProfile.swift */; };
 		9A1B2C3D4E5F60718293A4B4 /* CursorFrameResolver.swift in Sources */ = {isa = PBXBuildFile; fileRef = 9A1B2C3D4E5F60718293A4B3 /* CursorFrameResolver.swift */; };
@@ -309,6 +311,7 @@
 		B81915A6645E96590BCA2C31 /* AudioLevelEstimator.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = AudioLevelEstimator.swift; sourceTree = "<group>"; };
 		B8E100022F90000100A0B001 /* ExportMemory.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ExportMemory.swift; sourceTree = "<group>"; };
 		B8EAFCB83B0EC24EB9C27E83 /* Pods_Runner.framework */ = {isa = PBXFileReference; explicitFileType = wrapper.framework; includeInIndex = 0; path = Pods_Runner.framework; sourceTree = BUILT_PRODUCTS_DIR; };
+		BB2C9D8FFE41A526BD03CCBD /* OverlayVisibilityControllerTests.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = OverlayVisibilityControllerTests.swift; sourceTree = "<group>"; };
 		BDCE6283CC82D1BA03141B01 /* CaptureDestinationDiagnostics.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = CaptureDestinationDiagnostics.swift; sourceTree = "<group>"; };
 		C1D2E3F40516273849A5B6C6 /* RecordingFailureRecoveryTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = RecordingFailureRecoveryTests.swift; sourceTree = "<group>"; };
 		C2200342B4777D6C129AE306 /* Pods-RunnerTests.debug-dev.xcconfig */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = text.xcconfig; name = "Pods-RunnerTests.debug-dev.xcconfig"; path = "Target Support Files/Pods-RunnerTests/Pods-RunnerTests.debug-dev.xcconfig"; sourceTree = "<group>"; };
@@ -328,6 +331,7 @@
 		E1A0C0022F60000100BEE002 /* AVAssetWriterInputExceptionBridge.h */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.c.h; path = AVAssetWriterInputExceptionBridge.h; sourceTree = "<group>"; };
 		E1A0C0032F60000100BEE003 /* AVAssetWriterInputExceptionBridge.m */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.c.objc; path = AVAssetWriterInputExceptionBridge.m; sourceTree = "<group>"; };
 		E1A0C0042F60000100BEE004 /* Runner-Bridging-Header.h */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.c.h; path = "Runner-Bridging-Header.h"; sourceTree = "<group>"; };
+		E241F5B3AEEB5920DAF553C2 /* OverlayVisibilityController.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = OverlayVisibilityController.swift; sourceTree = "<group>"; };
 		E2A4BFCDF024B903AA3E4CD8 /* MetadataSidecarWriterTests.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = MetadataSidecarWriterTests.swift; sourceTree = "<group>"; };
 		E2D6F5E68DD08113B91D5F81 /* StartRecordingRequest.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = StartRecordingRequest.swift; sourceTree = "<group>"; };
 		EB6C5804359E20EA9C85113A /* CaptureTargetResolver.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = CaptureTargetResolver.swift; sourceTree = "<group>"; };
@@ -389,6 +393,7 @@
 			children = (
 				CB4E0C29E30DA358A5C81FD4 /* OverlayUpdateDeduper.swift */,
 				427E590FBC9C4916C464DEA7 /* OverlayRefreshPlan.swift */,
+				E241F5B3AEEB5920DAF553C2 /* OverlayVisibilityController.swift */,
 			);
 			name = Overlay;
 			path = Overlay;
@@ -418,6 +423,7 @@
 				2CB8AFC0EC977891C483011A /* CaptureTargetResolverTests.swift */,
 				B2F68F98AC976184031BF555 /* RecordingProjectServiceTests.swift */,
 				6A813BE34FDB0E24F2F1245F /* RecordingPreflightServiceTests.swift */,
+				BB2C9D8FFE41A526BD03CCBD /* OverlayVisibilityControllerTests.swift */,
 			);
 			path = RunnerTests;
 			sourceTree = "<group>";
@@ -1142,6 +1148,7 @@
 				A9DBBBED4745D5601A076271 /* CaptureTargetResolverTests.swift in Sources */,
 				9815310AE9CB2D8AE9292079 /* RecordingProjectServiceTests.swift in Sources */,
 				529C777FC592D8815112EE7E /* RecordingPreflightServiceTests.swift in Sources */,
+				1331725660D5952BBA3FD378 /* OverlayVisibilityControllerTests.swift in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -1242,6 +1249,7 @@
 				E119FE7B1D15945159EF746A /* CaptureTargetResolver.swift in Sources */,
 				DE60092E7B24A40FE3DA966F /* RecordingProjectService.swift in Sources */,
 				5C28475D0A634AE086923798 /* RecordingPreflightService.swift in Sources */,
+				98339761B94AD03F488F111F /* OverlayVisibilityController.swift in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};

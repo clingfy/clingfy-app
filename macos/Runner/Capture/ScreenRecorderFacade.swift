@@ -82,8 +82,13 @@ final class ScreenRecorderFacade: NSObject {
   private var followMouseMonitor: Any?
   private var followCurrentDisplay: CGDirectDisplayID?
   private var currentCaptureDisplayID: CGDirectDisplayID?
-  private var lastOverlayWindowID: CGWindowID?
-  private var overlayUpdateDeduper = OverlayUpdateDeduper()
+  /// Slice 4 / PR 15: state previously held as `lastOverlayWindowID` +
+  /// `overlayUpdateDeduper` is now owned by this controller. The facade keeps
+  /// every overlay side effect (`camera.show`, `capture.updateOverlay`,
+  /// `state == .recording` guards); only the small overlay-update dedup +
+  /// last-pushed-window-ID state and the pure
+  /// `overlayWindowIDForCapture(...)` decision live here.
+  private let overlayVisibility = OverlayVisibilityController()
   private var sessionDisableMicrophone = false
   private var sessionDisableCameraOverlay = false
   private var sessionDisableCursorHighlight = false
@@ -550,7 +555,7 @@ final class ScreenRecorderFacade: NSObject {
           "overlayWindowID_now": self.camera.overlayWindowID.map { String($0) } ?? "nil"
         ])
       let id = self.camera.overlayWindowID
-      self.lastOverlayWindowID = id
+      self.overlayVisibility.setLastOverlayWindowID(id)
       completion(id)
     }
   }
@@ -1810,13 +1815,12 @@ final class ScreenRecorderFacade: NSObject {
   }
 
   private func overlayWindowIDForCapture(liveOverlayWindowID: CGWindowID?) -> CGWindowID? {
-    guard shouldRecordSeparateCameraAsset else {
-      return liveOverlayWindowID
-    }
-
-    return capture.supportsLiveOverlayExclusionDuringSeparateCameraCapture
-      ? liveOverlayWindowID
-      : nil
+    overlayVisibility.overlayWindowIDForCapture(
+      liveOverlayWindowID: liveOverlayWindowID,
+      shouldRecordSeparateCameraAsset: shouldRecordSeparateCameraAsset,
+      supportsLiveOverlayExclusionDuringSeparateCameraCapture:
+        capture.supportsLiveOverlayExclusionDuringSeparateCameraCapture
+    )
   }
 
   private func syncOverlayWindowIntoCaptureIfNeeded() {
@@ -1830,7 +1834,7 @@ final class ScreenRecorderFacade: NSObject {
           "windowID": overlayWindowID.map { String($0) } ?? "nil",
           "backendSupportsLiveExclusion": "\(capture.supportsLiveOverlayExclusionDuringSeparateCameraCapture)",
         ])
-      lastOverlayWindowID = overlayWindowID
+      overlayVisibility.setLastOverlayWindowID(overlayWindowID)
       sendOverlayUpdateIfNeeded(overlayWindowID)
       return
     }
@@ -1841,12 +1845,12 @@ final class ScreenRecorderFacade: NSObject {
         "windowID": camera.overlayWindowID.map { String($0) } ?? "nil",
         "backend": "\(type(of: capture))",
       ])
-    lastOverlayWindowID = camera.overlayWindowID
+    overlayVisibility.setLastOverlayWindowID(camera.overlayWindowID)
     sendOverlayUpdateIfNeeded(camera.overlayWindowID)
   }
 
   private func sendOverlayUpdateIfNeeded(_ windowID: CGWindowID?) {
-    guard overlayUpdateDeduper.shouldSend(windowID) else {
+    guard overlayVisibility.shouldSendOverlayUpdate(windowID) else {
       logOverlay(
         "Skipping duplicate overlay update",
         [
@@ -1969,7 +1973,7 @@ final class ScreenRecorderFacade: NSObject {
   }
 
   private func resetOverlayUpdateDeduper() {
-    overlayUpdateDeduper.reset()
+    overlayVisibility.resetDeduper()
   }
 
   private func updateCursorVisibility() {
