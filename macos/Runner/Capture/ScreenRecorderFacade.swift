@@ -28,7 +28,10 @@ final class ScreenRecorderFacade: NSObject {
   private let prefs = PreferencesStore()
   private let saveFolder = SaveFolderStore()
   private let displaySvc = DisplayService()
-  private let exporter = LetterboxExporter()
+  // Slice 8 / PR 27: `LetterboxExporter` ownership moved into
+  // `ExportEngine`; the facade keeps a single engine reference and
+  // delegates `exportVideo(...)` / `cancelExport()` through it.
+  private let exportEngine = ExportEngine()
   var captureFPS: Int = 30  // internal: read by StorageDiagnosticsService (PR 7)
   private let defaultZoomFollowStrength: CGFloat = 0.15
   private let cameraCaptureCoordinator = CameraCaptureCoordinator()
@@ -1409,124 +1412,64 @@ final class ScreenRecorderFacade: NSObject {
     onProgress: ((Double) -> Void)? = nil,
     result: @escaping FlutterResult
   ) {
-    guard let projectRef = loadRecordingProject(projectPath: projectPath) else {
-      result(
-        FlutterError(
-          code: "EXPORT_INPUT_MISSING",
-          message: "Recording project not found. It may have been moved or deleted.",
-          details: projectPath
-        )
-      )
-      return
-    }
-    let mediaSources = projectRef.mediaSources()
-    let inputURL = mediaSources.screenVideoURL
-    let asset = AVAsset(url: inputURL)
-
-    func orientedSize(_ track: AVAssetTrack) -> CGSize {
-      let rect = CGRect(origin: .zero, size: track.naturalSize).applying(track.preferredTransform)
-      return CGSize(width: abs(rect.width), height: abs(rect.height))
-    }
-
-    let srcSize: CGSize = {
-      if let track = asset.tracks(withMediaType: .video).first {
-        return orientedSize(track)
-      }
-      return CGSize(width: 1920, height: 1080)
-    }()
-
-    let targetSize = resolveTargetSize(sourceSize: srcSize, layout: layout, resolution: resolution)
-
-    if !FileManager.default.fileExists(atPath: inputURL.path) {
-      result(
-        FlutterError(
-          code: "EXPORT_INPUT_MISSING",
-          message: "Recording file not found. It may have been moved or deleted.",
-          details: inputURL.path))
-      return
-    }
-
-    let folder: URL
-    if let directoryOverride = directoryOverride, !directoryOverride.isEmpty {
-      folder = URL(fileURLWithPath: directoryOverride)
-    } else {
-      folder = saveFolder.resolveFolderURL()
-    }
-
-    let info = exportFormatInfo(format)
-    let name = (filename?.isEmpty ?? true) ? "processed" : filename!
-    let stem = (name as NSString).deletingPathExtension
-    let finalName = "\(stem).\(info.ext)"
-    var outputURL = folder.appendingPathComponent(finalName)
-    var idx = 1
-    while FileManager.default.fileExists(atPath: outputURL.path) {
-      outputURL = folder.appendingPathComponent("\(stem) (\(idx)).\(info.ext)")
-      idx += 1
-    }
-
-    // Capture self and prefs for cleanup after export
-    let keepOriginals = prefs.keepOriginals
-    let recordingStoreRef = recordingStore
-
-    let clampedGainDb = max(0, min(24, audioGainDb))
-    let clampedVolumePercent = max(0, min(100, audioVolumePercent))
-    let clampedTargetLoudnessDbfs = max(-24.0, min(-6.0, targetLoudnessDbfs))
-    let exportCameraParams = exportSanitizedCameraParams(cameraParams, cameraPath: cameraPath)
-
-    exporter.export(
-      project: projectRef,
-      target: targetSize,
-      padding: padding,
-      cornerRadius: cornerRadius,
-      backgroundColor: backgroundColor,
-      backgroundImagePath: backgroundImagePath,
-      cursorSize: cursorSize,
-      showCursor: showCursor,
-      zoomEnabled: true,
-      zoomFactor: CGFloat(zoomFactor),
-      followStrength: defaultZoomFollowStrength,
-      outputURL: outputURL,
-      format: format,
-      codec: codec,
-      bitrate: bitrate,
-      fitMode: fit,
-      audioGainDb: clampedGainDb,
-      audioVolumePercent: clampedVolumePercent,
-      autoNormalizeOnExport: autoNormalizeOnExport,
-      targetLoudnessDbfs: clampedTargetLoudnessDbfs,
-      cameraParams: exportCameraParams,
+    // Slice 8 / PR 27: orchestration moved to ExportEngine. The facade
+    // assembles the typed Input + dependency closures and delegates;
+    // ExportPrep helpers (`resolveTargetSize`, `exportFormatInfo`,
+    // `flutterExportFailure`) stay as facade extensions and are exposed
+    // to the engine via closures.
+    exportEngine.export(
+      input: .init(
+        projectPath: projectPath,
+        layout: layout,
+        resolution: resolution,
+        fit: fit,
+        padding: padding,
+        cornerRadius: cornerRadius,
+        backgroundColor: backgroundColor,
+        backgroundImagePath: backgroundImagePath,
+        cursorSize: cursorSize,
+        zoomFactor: zoomFactor,
+        showCursor: showCursor,
+        filename: filename,
+        directoryOverride: directoryOverride,
+        format: format,
+        codec: codec,
+        bitrate: bitrate,
+        audioGainDb: audioGainDb,
+        audioVolumePercent: audioVolumePercent,
+        autoNormalizeOnExport: autoNormalizeOnExport,
+        targetLoudnessDbfs: targetLoudnessDbfs,
+        cameraPath: cameraPath,
+        cameraParams: cameraParams
+      ),
+      dependencies: .init(
+        loadRecordingProject: { [unowned self] path in
+          self.loadRecordingProject(projectPath: path)
+        },
+        resolveTargetSize: { [unowned self] src, layout, resolution in
+          self.resolveTargetSize(sourceSize: src, layout: layout, resolution: resolution)
+        },
+        exportFormatInfo: { [unowned self] fmt in self.exportFormatInfo(fmt) },
+        flutterExportFailure: { [unowned self] err in self.flutterExportFailure(from: err) },
+        sanitizeCameraParams: { [unowned self] params, cameraPath in
+          self.exportSanitizedCameraParams(params, cameraPath: cameraPath)
+        },
+        saveFolderURL: { [unowned self] in self.saveFolder.resolveFolderURL() },
+        recordingStore: recordingStore,
+        // Snapshot at call time — matches the original `let keepOriginals
+        // = prefs.keepOriginals` capture.
+        keepOriginals: prefs.keepOriginals,
+        defaultZoomFollowStrength: defaultZoomFollowStrength
+      ),
       onProgress: onProgress,
-    ) { res in
-      switch res {
-      case .success(let final):
-        if var manifest = try? RecordingProjectManifest.read(
-          from: RecordingProjectPaths.manifestURL(for: projectRef.rootURL)
-        ) {
-          manifest.appendExportRecord(
-            format: format,
-            resolution: resolution,
-            destinationPath: final.path
-          )
-          try? manifest.write(to: RecordingProjectPaths.manifestURL(for: projectRef.rootURL))
-        }
-        // Cleanup raw recording and sidecars after successful export
-        DispatchQueue.global(qos: .utility).async {
-          recordingStoreRef.cleanupAfterExport(
-            projectRootURL: projectRef.rootURL,
-            keepOriginals: keepOriginals
-          )
-        }
-        result(final.path)
-      case .failure(let err):
-        result(self.flutterExportFailure(from: err))
-      }
-    }
+      result: result
+    )
   }
 
   // flutterExportFailure moved to ExportPrep.swift (PR 11).
 
   func cancelExport() {
-    exporter.cancel()
+    exportEngine.cancel()
   }
 
   // getZoomSegments moved to ZoomQueryService.swift (PR 8).
