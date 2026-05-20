@@ -2599,21 +2599,8 @@ final class ScreenRecorderFacade: NSObject {
     activeRecordingWorkflowSessionId = id
   }
 
-  func _testSetPendingStartCaptureConfig(_ config: CaptureStartConfig?) {
-    pendingStartCaptureConfig = config
-  }
-
-  func _testSetFallbackCaptureBackendFactory(_ factory: @escaping (CaptureTarget) -> CaptureBackend)
-  {
-    fallbackCaptureBackendFactory = factory
-  }
-
   func _testRefreshMicrophoneLevelMonitoring(resetMeter: Bool) {
     refreshMicrophoneLevelMonitoring(resetMeter: resetMeter)
-  }
-
-  func _testSyncOverlayWindowIntoCaptureIfNeeded() {
-    syncOverlayWindowIntoCaptureIfNeeded()
   }
 
   func _testSanitizedCameraParamsForExport(
