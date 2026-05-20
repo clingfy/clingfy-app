@@ -86,6 +86,11 @@ final class ScreenRecorderFacade: NSObject {
   // methods declared on the `CaptureBackendEventHandling` conformance below.
   // Owns no state.
   private let captureBackendBinder = CaptureBackendBinder()
+  // Slice 7 / PR 25: turns per-session inputs into a CaptureStartConfig.
+  // Stateless; consumes inputs the facade already gathers at startCapture
+  // time. Behavior-identical to the old makeCaptureStartConfig +
+  // resolveAudioDevice pair.
+  private let captureStartConfigBuilder = CaptureStartConfigBuilder()
   // Slice 5 / PR 20: wraps the two preflight clusters of startRecording
   // (screen+target, mic+accessibility) into a single typed-outcome surface.
   // Consumes the Slice-3 services; owns no state. Facade still owns every
@@ -637,18 +642,24 @@ final class ScreenRecorderFacade: NSObject {
     effectiveOverlayID: CGWindowID?,
     systemAudioEnabled: Bool
   ) -> CaptureStartConfig {
-    CaptureStartConfig(
-      target: target,
-      quality: .native,
-      frameRate: frameRate,
-      includeAudioDevice: resolveAudioDevice(disableMicrophone: sessionDisableMicrophone),
-      includeSystemAudio: systemAudioEnabled,
-      makeOutputURL: outputURL,
-      excludeRecorderApp: prefs.excludeRecorderApp,
-      cameraOverlayWindowID: effectiveOverlayID,
-      excludeCameraOverlayWindow: shouldRecordSeparateCameraAsset,
-      excludeMicFromSystemAudio: prefs.excludeMicFromSystemAudio
-    )
+    // Slice 7 / PR 25: body delegated to `CaptureStartConfigBuilder`. The
+    // facade still owns reads of `sessionDisableMicrophone`, `prefs.audio
+    // DeviceId`, `prefs.excludeRecorderApp`, `shouldRecordSeparateCamera
+    // Asset`, and `prefs.excludeMicFromSystemAudio` — the builder is
+    // input-pure and never touches facade state.
+    captureStartConfigBuilder.build(
+      .init(
+        target: target,
+        frameRate: frameRate,
+        outputURL: outputURL,
+        effectiveOverlayID: effectiveOverlayID,
+        systemAudioEnabled: systemAudioEnabled,
+        audioDeviceID: prefs.audioDeviceId,
+        disableMicrophone: sessionDisableMicrophone,
+        excludeRecorderApp: prefs.excludeRecorderApp,
+        shouldRecordSeparateCameraAsset: shouldRecordSeparateCameraAsset,
+        excludeMicFromSystemAudio: prefs.excludeMicFromSystemAudio
+      ))
   }
 
   func stopRecording(result: @escaping FlutterResult) {
@@ -1645,12 +1656,7 @@ final class ScreenRecorderFacade: NSObject {
     )
   }
 
-  private func resolveAudioDevice(disableMicrophone: Bool) -> AVCaptureDevice? {
-    // Audio input is optional — only use a device when the user has explicitly selected one.
-    guard !disableMicrophone else { return nil }
-    guard let id = prefs.audioDeviceId, !id.isEmpty, id != "__none__" else { return nil }
-    return AVCaptureDevice(uniqueID: id)
-  }
+  // resolveAudioDevice(...) moved to CaptureStartConfigBuilder (Slice 7 / PR 25).
   private func appName() -> String {
     (Bundle.main.object(forInfoDictionaryKey: "CFBundleName") as? String ?? "ScreenRecording")
       .replacingOccurrences(of: "[/\\\\:?%*|\"<>]+", with: "-", options: .regularExpression)
