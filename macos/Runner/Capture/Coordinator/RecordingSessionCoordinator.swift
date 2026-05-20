@@ -270,4 +270,101 @@ struct RecordingSessionCoordinator {
       handleCameraBeginResult(result, beginScreenCapture)
     }
   }
+
+  // MARK: - Slice 7 / PR 26: startCapture orchestration
+
+  /// Inputs the facade gathers for `startCapture`. Three fields are closures
+  /// instead of plain values because the coordinator first runs
+  /// `updateOverlayVisibility` (which can rebuild the camera overlay and
+  /// change `camera.overlayWindowID` / `camera.isShowing`); the
+  /// `effectiveOverlayID` resolution that follows must read FRESH camera
+  /// state to match the pre-PR-26 behavior.
+  struct StartCaptureInput {
+    let target: CaptureTarget
+    let frameRate: Int
+    let outputURL: () throws -> URL
+    let overlayID: CGWindowID?
+    let systemAudioEnabled: Bool
+
+    let shouldRecordSeparateCameraAsset: Bool
+    let shouldSuppressOverlayWindowDuringCapture: Bool
+
+    // Closures — read AFTER updateOverlayVisibility runs.
+    let effectiveOverlayEnabledForRecording: () -> Bool
+    let cameraIsShowing: () -> Bool
+    let cameraOverlayWindowID: () -> CGWindowID?
+
+    let audioDeviceID: String?
+    let disableMicrophone: Bool
+    let excludeRecorderApp: Bool
+    let excludeMicFromSystemAudio: Bool
+  }
+
+  /// Side-effect surface the facade implements. Each field is one named
+  /// step from the old `startCapture` / `beginCapture` body so the
+  /// orchestration ordering can be asserted by tests against a recording
+  /// mock.
+  struct StartCaptureEffects {
+    let setSuppressOverlayDuringCapture: (Bool) -> Void
+    let updateOverlayVisibility: () -> Void
+    let resetMicrophoneLevelFlag: () -> Void
+    let logStartCaptureEntry: () -> Void
+    let logEffectiveOverlayID: (CGWindowID?) -> Void
+    let setPendingStartCaptureConfig: (CaptureStartConfig) -> Void
+    let startCapture: (CaptureStartConfig) -> Void
+  }
+
+  /// Pre-PR-26 ordering — preserved byte-for-byte:
+  ///   1. set `suppressOverlayWindowDuringSeparateCameraCapture` (was in
+  ///      the inline `beginCapture` closure)
+  ///   2. `updateOverlayVisibility()` (was in the inline `beginCapture`
+  ///      closure — runs BEFORE effectiveOverlayID is computed)
+  ///   3. `hasReceivedRecordingMicrophoneLevel = false` (was first line
+  ///      of startCapture)
+  ///   4. entry log (was second statement of startCapture)
+  ///   5. compute `effectiveOverlayID` (reads fresh camera state via the
+  ///      input closures, matching the original `if let overlayID;
+  ///      guard effectiveOverlayEnabledForRecording, camera.isShowing;
+  ///      return camera.overlayWindowID` block)
+  ///   6. effectiveOverlayID log
+  ///   7. build `CaptureStartConfig` via the Slice-7 / PR-25 builder
+  ///   8. `pendingStartCaptureConfig = cfg`
+  ///   9. `capture.start(config: cfg)`
+  func startCapture(
+    input: StartCaptureInput,
+    configBuilder: CaptureStartConfigBuilder,
+    effects: StartCaptureEffects
+  ) {
+    effects.setSuppressOverlayDuringCapture(input.shouldSuppressOverlayWindowDuringCapture)
+    effects.updateOverlayVisibility()
+
+    effects.resetMicrophoneLevelFlag()
+    effects.logStartCaptureEntry()
+
+    let effectiveOverlayID: CGWindowID? = {
+      if let overlayID = input.overlayID { return overlayID }
+      guard input.effectiveOverlayEnabledForRecording(),
+        input.cameraIsShowing()
+      else { return nil }
+      return input.cameraOverlayWindowID()
+    }()
+
+    effects.logEffectiveOverlayID(effectiveOverlayID)
+
+    let cfg = configBuilder.build(
+      .init(
+        target: input.target,
+        frameRate: input.frameRate,
+        outputURL: input.outputURL,
+        effectiveOverlayID: effectiveOverlayID,
+        systemAudioEnabled: input.systemAudioEnabled,
+        audioDeviceID: input.audioDeviceID,
+        disableMicrophone: input.disableMicrophone,
+        excludeRecorderApp: input.excludeRecorderApp,
+        shouldRecordSeparateCameraAsset: input.shouldRecordSeparateCameraAsset,
+        excludeMicFromSystemAudio: input.excludeMicFromSystemAudio))
+
+    effects.setPendingStartCaptureConfig(cfg)
+    effects.startCapture(cfg)
+  }
 }
