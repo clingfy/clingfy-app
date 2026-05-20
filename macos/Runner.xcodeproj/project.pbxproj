@@ -139,6 +139,7 @@
 		A788E3B0EB7D159DB89B44C6 /* CameraCoordinationController.swift in Sources */ = {isa = PBXBuildFile; fileRef = DDCBBF407771E3216D57604D /* CameraCoordinationController.swift */; };
 		A9DBBBED4745D5601A076271 /* CaptureTargetResolverTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 2CB8AFC0EC977891C483011A /* CaptureTargetResolverTests.swift */; };
 		AECABD9A70102BAE501C3A23 /* CursorHighlightCoordinatorTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = D2B70FA1377388FC70B7DBB8 /* CursorHighlightCoordinatorTests.swift */; };
+		B79DCF2F362ADC42F012501D /* RecordingLifecycleEffects.swift in Sources */ = {isa = PBXBuildFile; fileRef = 264E55FB16AE497C7A188C18 /* RecordingLifecycleEffects.swift */; };
 		B7C100012FA1000100A0B001 /* ProjectOpenCoordinator.swift in Sources */ = {isa = PBXBuildFile; fileRef = B7C100022FA1000100A0B001 /* ProjectOpenCoordinator.swift */; };
 		B7C100032FA1000100A0B001 /* ProjectOpenValidator.swift in Sources */ = {isa = PBXBuildFile; fileRef = B7C100042FA1000100A0B001 /* ProjectOpenValidator.swift */; };
 		B8E100012F90000100A0B001 /* ExportMemory.swift in Sources */ = {isa = PBXBuildFile; fileRef = B8E100022F90000100A0B001 /* ExportMemory.swift */; };
@@ -197,6 +198,7 @@
 		1DEDC02DB9240C56A4EB2D23 /* PreviewSceneRequest.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = PreviewSceneRequest.swift; sourceTree = "<group>"; };
 		203D1F2F01AC749D9502A133 /* OverlayContracts.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = OverlayContracts.swift; sourceTree = "<group>"; };
 		213556AE9CE165CAD73E9898 /* ExportVideoRequest.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = ExportVideoRequest.swift; sourceTree = "<group>"; };
+		264E55FB16AE497C7A188C18 /* RecordingLifecycleEffects.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = RecordingLifecycleEffects.swift; sourceTree = "<group>"; };
 		28946DA5F865D8DF340185EF /* CameraCoordinationControllerTests.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = CameraCoordinationControllerTests.swift; sourceTree = "<group>"; };
 		2C32D8A0F642CCEFB8D71E36 /* CaptureControlling.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = CaptureControlling.swift; sourceTree = "<group>"; };
 		2CA30527B5FD7B013F4A64F9 /* RecordedDurationTracker.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = RecordedDurationTracker.swift; sourceTree = "<group>"; };
@@ -840,6 +842,7 @@
 				1C10603525072F935CFA8A14 /* CachedRecordingsCleanupPolicy.swift */,
 				5BE27D89E5BD2C0ADD722046 /* Contracts */,
 				A77BB536EE34C7BCF42EEA92 /* RecordingStateMachine.swift */,
+				264E55FB16AE497C7A188C18 /* RecordingLifecycleEffects.swift */,
 			);
 			name = Engine;
 			path = Engine;
@@ -1274,6 +1277,7 @@
 				A788E3B0EB7D159DB89B44C6 /* CameraCoordinationController.swift in Sources */,
 				0397B2A14242AA904B51F603 /* RecordingIndicatorCoordinator.swift in Sources */,
 				5F5EDA722068D506AFF43F06 /* CursorHighlightCoordinator.swift in Sources */,
+				B79DCF2F362ADC42F012501D /* RecordingLifecycleEffects.swift in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};

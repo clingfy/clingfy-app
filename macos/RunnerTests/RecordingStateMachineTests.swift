@@ -2,10 +2,11 @@ import XCTest
 
 @testable import Clingfy
 
-/// Exhaustive table tests for the pure RecordingStateMachine (Commit 4).
-/// These pin every decision the facade now delegates at its lifecycle entry
-/// points, including the flag-dependent branches (stop during start, stop
-/// queued behind a pause/resume mutation, no-op while a mutation is in flight).
+/// Exhaustive table tests for the pure RecordingStateMachine (Commit 4) plus
+/// the new state-ownership + `RecordingLifecycleEffects` surface introduced
+/// in Slice 5 / PR 19. `@MainActor` because the type itself is
+/// `@MainActor`-isolated — the facade only calls it from the main thread.
+@MainActor
 final class RecordingStateMachineTests: XCTestCase {
   private let m = RecordingStateMachine()
   private let allStates: [RecorderState] = [.idle, .starting, .recording, .paused, .stopping]
@@ -95,6 +96,103 @@ final class RecordingStateMachineTests: XCTestCase {
     XCTAssertEqual(m.toggleDecision(from: .paused), .resume)
     for s: RecorderState in [.idle, .starting, .stopping] {
       XCTAssertEqual(m.toggleDecision(from: s), .invalidState, "state \(s)")
+    }
+  }
+
+  // MARK: - Slice 5 / PR 19: state ownership + lifecycle effects
+
+  /// Test double that records every `didTransition` callback so the order
+  /// and from→to tuples can be asserted.
+  @MainActor
+  private final class EffectsRecorder: RecordingLifecycleEffects {
+    var transitions: [(from: RecorderState, to: RecorderState)] = []
+    func didTransition(to newState: RecorderState, from previousState: RecorderState) {
+      transitions.append((previousState, newState))
+    }
+  }
+
+  func testInitialStateIsIdle() {
+    let sm = RecordingStateMachine()
+    XCTAssertEqual(sm.state, .idle)
+  }
+
+  func testTransitionUpdatesStateAndFiresEffectsWithFromAndTo() {
+    let sm = RecordingStateMachine()
+    let observer = EffectsRecorder()
+    sm.effects = observer
+
+    sm.transition(to: .starting)
+    XCTAssertEqual(sm.state, .starting)
+    XCTAssertEqual(observer.transitions.count, 1)
+    XCTAssertEqual(observer.transitions.last?.from, .idle)
+    XCTAssertEqual(observer.transitions.last?.to, .starting)
+
+    sm.transition(to: .recording)
+    XCTAssertEqual(sm.state, .recording)
+    XCTAssertEqual(observer.transitions.last?.from, .starting)
+    XCTAssertEqual(observer.transitions.last?.to, .recording)
+  }
+
+  func testSelfTransitionStillFiresEffects() {
+    // Matches Swift property setter semantics — `state = .recording` even
+    // when already `.recording` would re-fire any willSet/didSet. We mirror
+    // that so the observer surface is predictable.
+    let sm = RecordingStateMachine()
+    let observer = EffectsRecorder()
+    sm.effects = observer
+
+    sm.transition(to: .recording)
+    sm.transition(to: .recording)
+
+    XCTAssertEqual(observer.transitions.count, 2)
+    XCTAssertEqual(observer.transitions.last?.from, .recording)
+    XCTAssertEqual(observer.transitions.last?.to, .recording)
+  }
+
+  func testEffectsReferenceIsWeak() {
+    let sm = RecordingStateMachine()
+    weak var weakObserver: EffectsRecorder?
+    do {
+      let observer = EffectsRecorder()
+      sm.effects = observer
+      weakObserver = observer
+      XCTAssertNotNil(weakObserver, "observer should be alive while in scope")
+    }
+    // Observer went out of scope. The `weak` effects reference must let
+    // it deallocate; the state machine must not keep it alive.
+    XCTAssertNil(weakObserver, "RecordingStateMachine.effects must be weak")
+
+    // Transitions still work after the observer is gone — they just don't
+    // fire any callback.
+    sm.transition(to: .starting)
+    XCTAssertEqual(sm.state, .starting)
+  }
+
+  func testHappyPathSequenceProducesExpectedTransitionTuples() {
+    let sm = RecordingStateMachine()
+    let observer = EffectsRecorder()
+    sm.effects = observer
+
+    // idle → starting → recording → paused → recording → stopping → idle
+    sm.transition(to: .starting)
+    sm.transition(to: .recording)
+    sm.transition(to: .paused)
+    sm.transition(to: .recording)
+    sm.transition(to: .stopping)
+    sm.transition(to: .idle)
+
+    let expected: [(RecorderState, RecorderState)] = [
+      (.idle, .starting),
+      (.starting, .recording),
+      (.recording, .paused),
+      (.paused, .recording),
+      (.recording, .stopping),
+      (.stopping, .idle),
+    ]
+    XCTAssertEqual(observer.transitions.count, expected.count)
+    for (i, e) in expected.enumerated() {
+      XCTAssertEqual(observer.transitions[i].from, e.0, "step \(i) from")
+      XCTAssertEqual(observer.transitions[i].to, e.1, "step \(i) to")
     }
   }
 }

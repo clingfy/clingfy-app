@@ -1,21 +1,48 @@
 import Foundation
 
 /// Pure decision table for the recorder lifecycle
-/// (idle → starting → recording ↔ paused → stopping → idle).
+/// (idle → starting → recording ↔ paused → stopping → idle), now also the
+/// owner of the lifecycle `state` itself (Slice 5 / PR 19).
 ///
-/// Commit 4 of the strangler refactor introduces this as a *validator only*:
-/// the facade still owns `var state` and the in-flight/stop flags and performs
-/// every side effect. This type just answers "given the current state (and
-/// relevant flags), what should happen?" — a faithful, pure extraction of the
-/// `switch state` tables previously inlined in
-/// ScreenRecorderFacade.{startRecording,stopRecording,pauseRecording,
-/// resumeRecording,togglePauseRecording}. Behavior is unchanged: each decision
-/// case maps 1:1 to the original branch.
+/// Commit 4 of the strangler refactor introduced this as a *validator only*
+/// (a value type that returned decisions but stored no state). PR 19 promotes
+/// it to `final class` and migrates the `var state: RecorderState` field
+/// previously held on `ScreenRecorderFacade`. Behavior is preserved: the
+/// facade exposes `state` as a get/set computed property that proxies to this
+/// type, so every existing reader (~50 call sites) sees the same value and
+/// every writer (~10 call sites) routes through `transition(to:)`.
+///
+/// Why a class now: ownership semantics. We want a single shared mutable
+/// `state` that the facade and (in PR 20) `RecordingSessionCoordinator` both
+/// read/write through, plus a `weak` effects observer so `didTransition`
+/// fires next to the storage update. A struct would force "the current
+/// owner" model and copy ambiguity across the seam.
 ///
 /// Engine-domain core (the future video-editing engine and Windows port build
-/// on this — see windows-port-inventory §7). State ownership migration is a
-/// later, separate slice.
-struct RecordingStateMachine {
+/// on this — see windows-port-inventory §7). All pre-existing pure decision
+/// methods are unchanged; only ownership + a `transition(to:)` writer were
+/// added.
+@MainActor
+final class RecordingStateMachine {
+
+  /// Lifecycle state, owned here. Read by the facade (via its computed
+  /// `state` proxy) and by `transition(to:)`. Mutation is funnelled through
+  /// `transition(to:)` so every write fires `effects?.didTransition(...)`.
+  private(set) var state: RecorderState = .idle
+
+  /// Receives `didTransition(to:from:)` on every `transition(to:)` call.
+  /// `weak` to avoid a retain cycle with the facade that implements the
+  /// protocol and owns this instance.
+  weak var effects: RecordingLifecycleEffects?
+
+  /// Set `state` to `newState` and fire `effects?.didTransition`. Self-
+  /// transitions still fire — matches Swift property setter semantics and
+  /// keeps the observer surface predictable (callers can dedup if they care).
+  func transition(to newState: RecorderState) {
+    let previous = state
+    state = newState
+    effects?.didTransition(to: newState, from: previous)
+  }
 
   enum StartDecision: Equatable {
     /// Recorder is idle — proceed; caller should transition to `.starting`.
