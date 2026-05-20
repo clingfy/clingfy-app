@@ -739,98 +739,61 @@ final class ScreenRecorderFacade: NSObject {
       ))
   }
 
+  // Slice 9 / PR 33a: stop / pause / resume / togglePause bodies moved into
+  // `RecordingEngine`. The facade keeps the public method signatures (Flutter
+  // bridge contract) and forwards to the engine, passing in the facade-owned
+  // session state as inputs + the mutators / capture-backend calls as
+  // closures. Behavior-identical: same decision branches, same logs, same
+  // capability gate, same `beginStoppingCapture` call timing.
   func stopRecording(result: @escaping FlutterResult) {
-    switch recordingEngine.stateMachine.stopDecision(
-      from: state, isPauseResumeMutationInFlight: isPauseResumeMutationInFlight
-    ) {
-    case .notRecording:
-      result(flutterError(NativeErrorCode.notRecording, ""))
-    case .cancelDuringStart:
-      pendingStop = true
-      cancelRequestedDuringStart = true
-      stopResult = result
-    case .queueUntilMutation:
-      stopResult = result
-      pendingStop = true
-      NativeLogger.i(
-        "Facade", "Queued stop until pause/resume mutation completes",
-        context: ["state": String(describing: state)])
-    case .beginStopping:
-      stopResult = result
-      beginStoppingCapture()
-    case .alreadyStopping:
-      result(nil)
-    }
+    recordingEngine.stopRecording(
+      state: state,
+      isPauseResumeMutationInFlight: isPauseResumeMutationInFlight,
+      setStopResult: { [unowned self] r in self.stopResult = r },
+      setPendingStop: { [unowned self] v in self.pendingStop = v },
+      setCancelRequestedDuringStart: { [unowned self] v in self.cancelRequestedDuringStart = v },
+      beginStoppingCapture: { [unowned self] in self.beginStoppingCapture() },
+      result: result
+    )
   }
 
   func pauseRecording(result: @escaping FlutterResult) {
-    let capabilities = RecordingPauseResumeCapabilities.current()
-    guard capabilities.canPauseResume && capture.canPauseResume else {
-      result(flutterError(NativeErrorCode.pauseResumeUnsupported, ""))
-      return
-    }
-
-    switch recordingEngine.stateMachine.pauseDecision(
-      from: state, isPauseResumeMutationInFlight: isPauseResumeMutationInFlight
-    ) {
-    case .alreadyPaused:
-      result(nil)
-    case .mutationInFlightNoop:
-      result(nil)
-    case .begin:
-      isPauseResumeMutationInFlight = true
-      pauseResult = result
-      NativeLogger.i("Facade", "Pause requested")
-      capture.pause()
-    case .invalidState:
-      result(
-        flutterError(
-          NativeErrorCode.invalidRecordingState,
-          "Pause is only valid while recording."
-        ))
-    }
+    recordingEngine.pauseRecording(
+      state: state,
+      isPauseResumeMutationInFlight: isPauseResumeMutationInFlight,
+      captureCanPauseResume: capture.canPauseResume,
+      setIsPauseResumeMutationInFlight: { [unowned self] v in
+        self.isPauseResumeMutationInFlight = v
+      },
+      setPauseResult: { [unowned self] r in self.pauseResult = r },
+      beginPauseOnCapture: { [unowned self] in self.capture.pause() },
+      result: result
+    )
   }
 
   func resumeRecording(result: @escaping FlutterResult) {
-    let capabilities = RecordingPauseResumeCapabilities.current()
-    guard capabilities.canPauseResume && capture.canPauseResume else {
-      result(flutterError(NativeErrorCode.pauseResumeUnsupported, ""))
-      return
-    }
-
-    switch recordingEngine.stateMachine.resumeDecision(
-      from: state, isPauseResumeMutationInFlight: isPauseResumeMutationInFlight
-    ) {
-    case .alreadyRecording:
-      result(nil)
-    case .mutationInFlightNoop:
-      result(nil)
-    case .begin:
-      isPauseResumeMutationInFlight = true
-      resumeResult = result
-      NativeLogger.i("Facade", "Resume requested")
-      capture.resume()
-    case .invalidState:
-      result(
-        flutterError(
-          NativeErrorCode.invalidRecordingState,
-          "Resume is only valid while paused."
-        ))
-    }
+    recordingEngine.resumeRecording(
+      state: state,
+      isPauseResumeMutationInFlight: isPauseResumeMutationInFlight,
+      captureCanPauseResume: capture.canPauseResume,
+      setIsPauseResumeMutationInFlight: { [unowned self] v in
+        self.isPauseResumeMutationInFlight = v
+      },
+      setResumeResult: { [unowned self] r in self.resumeResult = r },
+      beginResumeOnCapture: { [unowned self] in self.capture.resume() },
+      result: result
+    )
   }
 
   func togglePauseRecording(result: @escaping FlutterResult) {
-    switch recordingEngine.stateMachine.toggleDecision(from: state) {
+    switch recordingEngine.togglePauseRecording(state: state, result: result) {
     case .pause:
       pauseRecording(result: result)
     case .resume:
       resumeRecording(result: result)
-    case .invalidState:
-      result(
-        flutterError(
-          NativeErrorCode.invalidRecordingState,
-          "Pause/resume is only valid for an active recording."
-        ))
+    case .handled:
+      // Engine already invoked `result(...)` with the invalid-state error.
+      break
     }
   }
 
