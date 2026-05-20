@@ -535,4 +535,251 @@ final class RecordingSessionCoordinatorTests: XCTestCase {
     XCTAssertEqual((handlerReceivedError as? CameraFailure)?.code, "CAM_BUSY")
     XCTAssertEqual(beginScreenCalls, 0, "screen capture must not start on camera failure")
   }
+
+  // MARK: - Slice 7 / PR 26: startCapture orchestration
+
+  /// Records the ordering of every effect the coordinator triggers, so
+  /// `startCapture` tests can assert "suppress-flag set BEFORE update
+  /// overlay BEFORE config set BEFORE capture.start" — the exact pre-PR-26
+  /// sequence.
+  private final class StartCaptureSpy {
+    enum Event: Equatable {
+      case setSuppress(Bool)
+      case updateOverlay
+      case resetMicLevel
+      case logEntry
+      case logEffective(CGWindowID?)
+      case setPending  // CaptureStartConfig isn't Equatable — store presence only
+      case startCapture  // ditto
+    }
+    private(set) var events: [Event] = []
+    private(set) var pendingConfig: CaptureStartConfig?
+    private(set) var startedConfig: CaptureStartConfig?
+
+    func makeEffects() -> RecordingSessionCoordinator.StartCaptureEffects {
+      .init(
+        setSuppressOverlayDuringCapture: { [self] v in events.append(.setSuppress(v)) },
+        updateOverlayVisibility: { [self] in events.append(.updateOverlay) },
+        resetMicrophoneLevelFlag: { [self] in events.append(.resetMicLevel) },
+        logStartCaptureEntry: { [self] in events.append(.logEntry) },
+        logEffectiveOverlayID: { [self] id in events.append(.logEffective(id)) },
+        setPendingStartCaptureConfig: { [self] cfg in
+          events.append(.setPending)
+          pendingConfig = cfg
+        },
+        startCapture: { [self] cfg in
+          events.append(.startCapture)
+          startedConfig = cfg
+        })
+    }
+  }
+
+  private func makeStartCaptureInput(
+    overlayID: CGWindowID? = nil,
+    effectiveOverlayEnabledForRecording: @escaping () -> Bool = { false },
+    cameraIsShowing: @escaping () -> Bool = { false },
+    cameraOverlayWindowID: @escaping () -> CGWindowID? = { nil },
+    shouldSuppressOverlayWindowDuringCapture: Bool = false,
+    shouldRecordSeparateCameraAsset: Bool = false,
+    systemAudioEnabled: Bool = false,
+    audioDeviceID: String? = nil,
+    disableMicrophone: Bool = true,
+    excludeRecorderApp: Bool = false,
+    excludeMicFromSystemAudio: Bool = true
+  ) -> RecordingSessionCoordinator.StartCaptureInput {
+    .init(
+      target: CaptureTarget(mode: .explicitID, displayID: 1, cropRect: nil, windowID: nil),
+      frameRate: 60,
+      outputURL: { URL(fileURLWithPath: "/tmp/out.mov") },
+      overlayID: overlayID,
+      systemAudioEnabled: systemAudioEnabled,
+      shouldRecordSeparateCameraAsset: shouldRecordSeparateCameraAsset,
+      shouldSuppressOverlayWindowDuringCapture: shouldSuppressOverlayWindowDuringCapture,
+      effectiveOverlayEnabledForRecording: effectiveOverlayEnabledForRecording,
+      cameraIsShowing: cameraIsShowing,
+      cameraOverlayWindowID: cameraOverlayWindowID,
+      audioDeviceID: audioDeviceID,
+      disableMicrophone: disableMicrophone,
+      excludeRecorderApp: excludeRecorderApp,
+      excludeMicFromSystemAudio: excludeMicFromSystemAudio)
+  }
+
+  func testStartCaptureRunsTheSevenEffectsInTheExactPreRefactorOrder() {
+    let coord = makeCoordinator()
+    let spy = StartCaptureSpy()
+
+    coord.startCapture(
+      input: makeStartCaptureInput(shouldSuppressOverlayWindowDuringCapture: true),
+      configBuilder: CaptureStartConfigBuilder(),
+      effects: spy.makeEffects())
+
+    // Critical: setSuppress runs FIRST so updateOverlayVisibility sees the
+    // post-suppress state; resetMicLevel + logEntry run BEFORE effective
+    // overlay id is computed; setPending runs BEFORE startCapture.
+    XCTAssertEqual(
+      spy.events,
+      [
+        .setSuppress(true),
+        .updateOverlay,
+        .resetMicLevel,
+        .logEntry,
+        .logEffective(nil),
+        .setPending,
+        .startCapture,
+      ])
+  }
+
+  func testStartCaptureUsesExplicitOverlayIDWhenProvided() {
+    let coord = makeCoordinator()
+    let spy = StartCaptureSpy()
+
+    coord.startCapture(
+      input: makeStartCaptureInput(
+        overlayID: 42,
+        // Even if the closures say "overlay enabled + camera showing", the
+        // explicit overlayID parameter wins — verbatim from the original
+        // `if let overlayID { return overlayID }` branch.
+        effectiveOverlayEnabledForRecording: { true },
+        cameraIsShowing: { true },
+        cameraOverlayWindowID: { 99 }),
+      configBuilder: CaptureStartConfigBuilder(),
+      effects: spy.makeEffects())
+
+    XCTAssertEqual(spy.pendingConfig?.cameraOverlayWindowID, 42)
+    XCTAssertEqual(spy.events.first(where: {
+      if case .logEffective = $0 { return true }
+      return false
+    }), .logEffective(42))
+  }
+
+  func testStartCaptureFallsBackToCameraOverlayWindowIDWhenOverlayEnabledAndShowing() {
+    let coord = makeCoordinator()
+    let spy = StartCaptureSpy()
+
+    coord.startCapture(
+      input: makeStartCaptureInput(
+        overlayID: nil,
+        effectiveOverlayEnabledForRecording: { true },
+        cameraIsShowing: { true },
+        cameraOverlayWindowID: { 77 }),
+      configBuilder: CaptureStartConfigBuilder(),
+      effects: spy.makeEffects())
+
+    XCTAssertEqual(spy.pendingConfig?.cameraOverlayWindowID, 77)
+  }
+
+  func testStartCaptureYieldsNilOverlayIDWhenOverlayDisabledOrCameraHidden() {
+    let coord = makeCoordinator()
+
+    // overlay disabled → nil
+    let spyDisabled = StartCaptureSpy()
+    coord.startCapture(
+      input: makeStartCaptureInput(
+        overlayID: nil,
+        effectiveOverlayEnabledForRecording: { false },
+        cameraIsShowing: { true },
+        cameraOverlayWindowID: { 99 }),
+      configBuilder: CaptureStartConfigBuilder(),
+      effects: spyDisabled.makeEffects())
+    XCTAssertNil(spyDisabled.pendingConfig?.cameraOverlayWindowID)
+
+    // overlay enabled but camera hidden → nil
+    let spyHidden = StartCaptureSpy()
+    coord.startCapture(
+      input: makeStartCaptureInput(
+        overlayID: nil,
+        effectiveOverlayEnabledForRecording: { true },
+        cameraIsShowing: { false },
+        cameraOverlayWindowID: { 99 }),
+      configBuilder: CaptureStartConfigBuilder(),
+      effects: spyHidden.makeEffects())
+    XCTAssertNil(spyHidden.pendingConfig?.cameraOverlayWindowID)
+  }
+
+  func testStartCaptureReadsCameraStateAfterUpdateOverlayVisibility() {
+    // Behavior preservation: updateOverlayVisibility can rebuild the
+    // overlay; the coordinator must read camera.overlayWindowID via the
+    // injected closure AFTER updateOverlay fires, not from a value
+    // snapshotted at coordinator-call time.
+    //
+    // The spy itself decorates `updateOverlayVisibility` with a closure that
+    // mutates the camera-window-id source. The pendingConfig the spy ends
+    // up with then reflects the POST-updateOverlay read.
+    final class MutatingCameraSpy {
+      var cameraWindowID: CGWindowID? = nil
+      private(set) var pendingConfig: CaptureStartConfig?
+
+      func makeEffects() -> RecordingSessionCoordinator.StartCaptureEffects {
+        .init(
+          setSuppressOverlayDuringCapture: { _ in },
+          updateOverlayVisibility: { [self] in cameraWindowID = 555 },
+          resetMicrophoneLevelFlag: {},
+          logStartCaptureEntry: {},
+          logEffectiveOverlayID: { _ in },
+          setPendingStartCaptureConfig: { [self] cfg in pendingConfig = cfg },
+          startCapture: { _ in })
+      }
+    }
+
+    let coord = makeCoordinator()
+    let spy = MutatingCameraSpy()
+
+    coord.startCapture(
+      input: makeStartCaptureInput(
+        overlayID: nil,
+        effectiveOverlayEnabledForRecording: { true },
+        cameraIsShowing: { true },
+        cameraOverlayWindowID: { spy.cameraWindowID }),
+      configBuilder: CaptureStartConfigBuilder(),
+      effects: spy.makeEffects())
+
+    // 555 came from the post-updateOverlay read, NOT the pre-call snapshot
+    // (which would have been nil).
+    XCTAssertEqual(spy.pendingConfig?.cameraOverlayWindowID, 555)
+  }
+
+  func testStartCapturePassesAudioAndExclusionInputsToConfig() {
+    let coord = makeCoordinator()
+    let spy = StartCaptureSpy()
+
+    coord.startCapture(
+      input: makeStartCaptureInput(
+        shouldRecordSeparateCameraAsset: true,
+        systemAudioEnabled: true,
+        audioDeviceID: "__none__",  // sentinel → no device
+        disableMicrophone: false,
+        excludeRecorderApp: true,
+        excludeMicFromSystemAudio: false),
+      configBuilder: CaptureStartConfigBuilder(),
+      effects: spy.makeEffects())
+
+    let cfg = spy.startedConfig
+    XCTAssertNotNil(cfg)
+    XCTAssertNil(cfg?.includeAudioDevice, "__none__ sentinel must yield no audio device")
+    XCTAssertEqual(cfg?.includeSystemAudio, true)
+    XCTAssertEqual(cfg?.excludeRecorderApp, true)
+    XCTAssertEqual(cfg?.excludeCameraOverlayWindow, true)
+    XCTAssertEqual(cfg?.excludeMicFromSystemAudio, false)
+  }
+
+  func testStartCaptureForwardsSameConfigToSetPendingAndStartCapture() {
+    let coord = makeCoordinator()
+    let spy = StartCaptureSpy()
+
+    coord.startCapture(
+      input: makeStartCaptureInput(),
+      configBuilder: CaptureStartConfigBuilder(),
+      effects: spy.makeEffects())
+
+    // setPending and startCapture both receive the same config instance —
+    // the original code: `pendingStartCaptureConfig = cfg; capture.start(config: cfg)`.
+    // Both struct copies (not reference identity) must match field-wise.
+    XCTAssertNotNil(spy.pendingConfig)
+    XCTAssertNotNil(spy.startedConfig)
+    XCTAssertEqual(spy.pendingConfig?.target, spy.startedConfig?.target)
+    XCTAssertEqual(spy.pendingConfig?.frameRate, spy.startedConfig?.frameRate)
+    XCTAssertEqual(spy.pendingConfig?.includeSystemAudio, spy.startedConfig?.includeSystemAudio)
+    XCTAssertEqual(
+      spy.pendingConfig?.cameraOverlayWindowID, spy.startedConfig?.cameraOverlayWindowID)
+  }
 }

@@ -456,10 +456,13 @@ final class ScreenRecorderFacade: NSObject {
       // the coordinator never touches `target` / `frameRate` / `outputURL`
       // / `overlayID` / `systemAudioEnabled`.
       let startScreenCapture: (CGWindowID?) -> Void = { overlayID in
+        // Slice 7 / PR 26: the suppress-flag + updateOverlayVisibility
+        // steps that used to live here in beginCapture moved INTO the
+        // coordinator's startCapture body (run as the first two effects
+        // before resetMicrophoneLevelFlag + the log). beginCapture is
+        // now just the facade's startCapture wrapper, which delegates
+        // the whole orchestration.
         let beginCapture = {
-          self.suppressOverlayWindowDuringSeparateCameraCapture =
-            self.shouldSuppressOverlayWindowDuringCapture
-          self.updateOverlayVisibility()
           self.startCapture(
             target: target,
             frameRate: frameRate,
@@ -601,38 +604,63 @@ final class ScreenRecorderFacade: NSObject {
     overlayID: CGWindowID?,
     systemAudioEnabled: Bool
   ) {
-    hasReceivedRecordingMicrophoneLevel = false
-    logOverlay(
-      "startCapture()",
-      [
-        "overlayID_param": overlayID.map { String($0) } ?? "nil",
-        "camera.overlayWindowID": camera.overlayWindowID.map { String($0) } ?? "nil",
-        "prefs.excludeRecorderApp": "\(prefs.excludeRecorderApp)",
-        "systemAudioEnabled": systemAudioEnabled,
-        "sessionDisableMicrophone": "\(sessionDisableMicrophone)",
-        "sessionDisableCameraOverlay": "\(sessionDisableCameraOverlay)",
-        "sessionDisableCursorHighlight": "\(sessionDisableCursorHighlight)",
-      ])
-
-    // If caller didn't pass overlayID (e.g. alwaysOn), use current overlay window if visible
-    let effectiveOverlayID: CGWindowID? = {
-      if let overlayID { return overlayID }
-      guard effectiveOverlayEnabledForRecording, camera.isShowing else { return nil }
-      return camera.overlayWindowID
-    }()
-
-    logOverlay(
-      "startCapture()", ["effectiveOverlayID": effectiveOverlayID.map { String($0) } ?? "nil"])
-
-    let cfg = makeCaptureStartConfig(
-      target: target,
-      frameRate: frameRate,
-      outputURL: outputURL,
-      effectiveOverlayID: effectiveOverlayID,
-      systemAudioEnabled: systemAudioEnabled
-    )
-    pendingStartCaptureConfig = cfg
-    self.capture.start(config: cfg)
+    // Slice 7 / PR 26: the orchestration (suppress-flag → update overlay
+    // visibility → reset mic level flag → entry log → resolve effective
+    // overlay id → effective-overlay-id log → build config → set pending
+    // config → capture.start) moved into the coordinator. The 7 facade-
+    // owned side effects are injected as closures so the facade keeps
+    // ownership of every state mutation and the backend call.
+    recordingSessionCoordinator.startCapture(
+      input: .init(
+        target: target,
+        frameRate: frameRate,
+        outputURL: outputURL,
+        overlayID: overlayID,
+        systemAudioEnabled: systemAudioEnabled,
+        shouldRecordSeparateCameraAsset: shouldRecordSeparateCameraAsset,
+        shouldSuppressOverlayWindowDuringCapture: shouldSuppressOverlayWindowDuringCapture,
+        effectiveOverlayEnabledForRecording: { [unowned self] in
+          self.effectiveOverlayEnabledForRecording
+        },
+        cameraIsShowing: { [unowned self] in self.camera.isShowing },
+        cameraOverlayWindowID: { [unowned self] in self.camera.overlayWindowID },
+        audioDeviceID: prefs.audioDeviceId,
+        disableMicrophone: sessionDisableMicrophone,
+        excludeRecorderApp: prefs.excludeRecorderApp,
+        excludeMicFromSystemAudio: prefs.excludeMicFromSystemAudio
+      ),
+      configBuilder: captureStartConfigBuilder,
+      effects: .init(
+        setSuppressOverlayDuringCapture: { [unowned self] value in
+          self.suppressOverlayWindowDuringSeparateCameraCapture = value
+        },
+        updateOverlayVisibility: { [unowned self] in self.updateOverlayVisibility() },
+        resetMicrophoneLevelFlag: { [unowned self] in
+          self.hasReceivedRecordingMicrophoneLevel = false
+        },
+        logStartCaptureEntry: { [unowned self] in
+          self.logOverlay(
+            "startCapture()",
+            [
+              "overlayID_param": overlayID.map { String($0) } ?? "nil",
+              "camera.overlayWindowID": self.camera.overlayWindowID.map { String($0) } ?? "nil",
+              "prefs.excludeRecorderApp": "\(self.prefs.excludeRecorderApp)",
+              "systemAudioEnabled": systemAudioEnabled,
+              "sessionDisableMicrophone": "\(self.sessionDisableMicrophone)",
+              "sessionDisableCameraOverlay": "\(self.sessionDisableCameraOverlay)",
+              "sessionDisableCursorHighlight": "\(self.sessionDisableCursorHighlight)",
+            ])
+        },
+        logEffectiveOverlayID: { [unowned self] id in
+          self.logOverlay(
+            "startCapture()",
+            ["effectiveOverlayID": id.map { String($0) } ?? "nil"])
+        },
+        setPendingStartCaptureConfig: { [unowned self] cfg in
+          self.pendingStartCaptureConfig = cfg
+        },
+        startCapture: { [unowned self] cfg in self.capture.start(config: cfg) }
+      ))
   }
 
   private func makeCaptureStartConfig(
