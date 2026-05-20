@@ -82,30 +82,36 @@ final class ScreenRecorderFacade: NSObject {
   // through it so every existing call site (~50 reads, ~10 writes) keeps
   // working unchanged; every write fires `RecordingLifecycleEffects` (the
   // facade conforms to it as an empty observer for now — PR 20 fills it in).
-  private let recordingStateMachine = RecordingStateMachine()
+  // Slice 8 / PR 29: composition root for the lifecycle layer.
+  // `recordingEngine` owns the state machine + session coordinator +
+  // backend binder. The facade keeps the existing call sites
+  // (`recordingStateMachine.x`, `recordingSessionCoordinator.x`,
+  // `captureBackendBinder.x`) working unchanged via computed-property
+  // forwarders below. Per-session UI coordinators (camera, overlay,
+  // cursor, indicator) stay on the facade — they hold session state and
+  // migrate with a later lifecycle-ownership slice.
+  private let captureTargetResolver = CaptureTargetResolver()
+  private let recordingEngine: RecordingEngine
+  private var recordingStateMachine: RecordingStateMachine {
+    recordingEngine.stateMachine
+  }
+  private var recordingSessionCoordinator: RecordingSessionCoordinator {
+    recordingEngine.sessionCoordinator
+  }
+  private var captureBackendBinder: CaptureBackendBinder {
+    recordingEngine.captureBackendBinder
+  }
   private var state: RecorderState {
     get { recordingStateMachine.state }
     set { recordingStateMachine.transition(to: newValue) }
   }
-  // Stateless collaborators (own no session state) — Slice 3.
-  private let captureTargetResolver = CaptureTargetResolver()
+  // Stateless collaborators that don't fit the engine yet — Slice 3 / 7.
   private let recordingProjectService = RecordingProjectService()
-  // Slice 6 / PR 22: routes the 6 backend callback slots into facade
-  // methods declared on the `CaptureBackendEventHandling` conformance below.
-  // Owns no state.
-  private let captureBackendBinder = CaptureBackendBinder()
   // Slice 7 / PR 25: turns per-session inputs into a CaptureStartConfig.
   // Stateless; consumes inputs the facade already gathers at startCapture
   // time. Behavior-identical to the old makeCaptureStartConfig +
   // resolveAudioDevice pair.
   private let captureStartConfigBuilder = CaptureStartConfigBuilder()
-  // Slice 5 / PR 20: wraps the two preflight clusters of startRecording
-  // (screen+target, mic+accessibility) into a single typed-outcome surface.
-  // Consumes the Slice-3 services; owns no state. Facade still owns every
-  // side effect (state transition, finishStartWithError,
-  // CGRequestScreenCaptureAccess).
-  private lazy var recordingSessionCoordinator = RecordingSessionCoordinator(
-    captureTargetResolver: captureTargetResolver)
   private var startResult: FlutterResult?
   private var pauseResult: FlutterResult?
   private var resumeResult: FlutterResult?
@@ -158,6 +164,8 @@ final class ScreenRecorderFacade: NSObject {
 
   override init() {
     self.micLevelMonitor = MicrophoneLevelMonitor()
+    self.recordingEngine = RecordingEngine(
+      captureTargetResolver: captureTargetResolver)
     super.init()
     commonInit()
   }
@@ -165,6 +173,8 @@ final class ScreenRecorderFacade: NSObject {
   #if DEBUG
     init(micLevelMonitor: MicrophoneLevelMonitoring) {
       self.micLevelMonitor = micLevelMonitor
+      self.recordingEngine = RecordingEngine(
+        captureTargetResolver: captureTargetResolver)
       super.init()
       commonInit()
     }
