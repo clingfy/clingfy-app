@@ -111,4 +111,122 @@ struct RecordingSessionCoordinator {
 
     return .proceed(target)
   }
+
+  // MARK: - Slice 7 / PR 23: project + camera-session preparation
+
+  /// Inputs the facade gathers from prefs / per-session state before calling
+  /// `prepareStart(...)`. Bundled into one struct purely to keep the call
+  /// site readable — every field maps 1:1 to a value that used to be read
+  /// inline in `startRecording`.
+  struct PrepareStartInputs {
+    let captureTarget: CaptureTarget
+    let frameRate: Int
+    let displayMode: DisplayTargetMode
+    let selectedAppWindowID: CGWindowID?
+    let recordingQuality: RecordingQuality
+    let cursorEnabledForRecording: Bool
+    let cursorLinked: Bool
+    let excludeRecorderApp: Bool
+    let shouldRecordSeparateCameraAsset: Bool
+    let videoDeviceId: String?
+    let overlayMirror: Bool
+    let editorSeed: RecordingMetadata.EditorSeed
+  }
+
+  /// Result returned to the facade. The facade applies state mutations in
+  /// the order it always did:
+  ///   1. `activeRecordingProjectRoot = nil` (before the call)
+  ///   2. `cameraCoordination.setPendingRecordingSession(nil)` (before the call)
+  ///   3. `cancelRequestedDuringStart = false` (before the call)
+  ///   4. `onProjectRootResolved` callback fires inside the coordinator — the
+  ///      facade sets `activeRecordingProjectRoot = projectRoot` + logs
+  ///   5. `cameraCoordination.setPendingRecordingSession(prepared.cameraSession)`
+  ///      (after the call returns)
+  ///   6. `pendingMetadata = prepared.metadata` (after the call returns)
+  struct PreparedStart {
+    let projectRoot: URL
+    let projectId: String
+    let screenVideoURL: URL
+    let metadata: RecordingMetadata
+    let cameraSession: CameraRecordingSession?
+  }
+
+  /// Moves the project-preparation block of `startRecording` (lines 378-429
+  /// pre-PR-23) into the coordinator: create skeleton → preflight storage →
+  /// hand control back to the facade so it can claim
+  /// `activeRecordingProjectRoot` + log → optionally build the
+  /// camera-recording session → write the project files.
+  ///
+  /// Error-mode preservation is critical here: the original code sets
+  /// `activeRecordingProjectRoot = projectRoot` BETWEEN the storage preflight
+  /// and `writeProjectFiles`. `finishStartWithError` later reads that field
+  /// to decide whether to mark the manifest `.failed`. That means:
+  ///   - storage preflight throws → `activeRecordingProjectRoot` stays nil →
+  ///     no manifest update on cleanup (no project exists yet).
+  ///   - `writeProjectFiles` throws → `activeRecordingProjectRoot` IS set →
+  ///     manifest gets marked `.failed` on cleanup.
+  ///
+  /// The `onProjectRootResolved` callback is what bridges those two states:
+  /// it fires only after the storage preflight succeeds, so the facade owns
+  /// the claim-the-project-root side effect at exactly the original timing.
+  ///
+  /// `preflightStorage` is also a closure rather than a direct call: it
+  /// hides `preflightCaptureDestination` (facade method that uses the
+  /// already-extracted Slice-1 `CaptureDestinationPreflightPolicy` + still
+  /// reads facade state for the storage diagnostic).
+  func prepareStart(
+    inputs: PrepareStartInputs,
+    projectService: RecordingProjectService,
+    cameraCoordination: CameraCoordinationController,
+    preflightStorage: (URL) throws -> Void,
+    onProjectRootResolved: (_ projectRoot: URL, _ screenVideoURL: URL) -> Void
+  ) throws -> PreparedStart {
+    let skeleton = try projectService.createSkeleton()
+
+    try preflightStorage(skeleton.screenVideoURL)
+
+    // Facade owns `activeRecordingProjectRoot` + the "Prepared recording
+    // project" log; this callback fires at the exact pre-PR-23 timing so
+    // `finishStartWithError`'s manifest-failure decision is unchanged.
+    onProjectRootResolved(skeleton.projectRoot, skeleton.screenVideoURL)
+
+    let cameraSession: CameraRecordingSession? =
+      inputs.shouldRecordSeparateCameraAsset
+      ? cameraCoordination.makeRecordingSession(
+        projectRoot: skeleton.projectRoot,
+        deviceId: inputs.videoDeviceId,
+        mirrored: inputs.overlayMirror)
+      : nil
+
+    let metadata = try projectService.writeProjectFiles(
+      projectRoot: skeleton.projectRoot,
+      projectId: skeleton.projectId,
+      metadataInputs: .init(
+        displayMode: inputs.displayMode,
+        displayID: inputs.captureTarget.displayID,
+        cropRect: inputs.captureTarget.cropRect,
+        frameRate: inputs.frameRate,
+        quality: inputs.recordingQuality,
+        cursorEnabled: inputs.cursorEnabledForRecording,
+        cursorLinked: inputs.cursorLinked,
+        windowID: (inputs.displayMode == .singleAppWindow ? inputs.selectedAppWindowID : nil),
+        excludedRecorderApp: inputs.excludeRecorderApp
+      ),
+      cameraCaptureInfo: cameraCoordination.makeCaptureInfo(
+        projectRoot: skeleton.projectRoot,
+        shouldRecordSeparateCameraAsset: inputs.shouldRecordSeparateCameraAsset,
+        deviceId: inputs.videoDeviceId,
+        mirrored: inputs.overlayMirror),
+      editorSeed: inputs.editorSeed,
+      includeCameraInManifest: inputs.shouldRecordSeparateCameraAsset
+    )
+
+    return PreparedStart(
+      projectRoot: skeleton.projectRoot,
+      projectId: skeleton.projectId,
+      screenVideoURL: skeleton.screenVideoURL,
+      metadata: metadata,
+      cameraSession: cameraSession
+    )
+  }
 }

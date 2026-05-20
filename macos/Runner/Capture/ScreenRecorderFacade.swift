@@ -375,58 +375,58 @@ final class ScreenRecorderFacade: NSObject {
         return
       }
 
+      // Slice 7 / PR 23 — project + camera-session preparation. The
+      // facade still owns the three pre-call clears (activeRecordingProject
+      // Root / cameraCoordination.setPendingRecordingSession(nil) /
+      // cancelRequestedDuringStart) so the storage-preflight-failure path
+      // keeps the manifest unchanged. Inside `prepareStart(...)`:
+      //   1. createSkeleton (throws)
+      //   2. preflightStorage closure (facade method, throws)
+      //   3. onProjectRootResolved callback → facade sets activeRecording
+      //      ProjectRoot + logs (so finishStartWithError's manifest-failed
+      //      check still flips for writeProjectFiles failures only)
+      //   4. optional camera session create
+      //   5. writeProjectFiles (throws)
       activeRecordingProjectRoot = nil
       cameraCoordination.setPendingRecordingSession(nil)
       cancelRequestedDuringStart = false
-      let skeleton = try recordingProjectService.createSkeleton()
-      let projectId = skeleton.projectId
-      let projectRoot = skeleton.projectRoot
-      let screenVideoURL = skeleton.screenVideoURL
 
-      try preflightCaptureDestination(
-        screenVideoURL,
-        allowLowStorageBypass: allowLowStorageBypass
-      )
-      activeRecordingProjectRoot = projectRoot
-
-      NativeLogger.d(
-        "Facade", "Prepared recording project",
-        context: [
-          "projectRoot": projectRoot.lastPathComponent,
-          "screenVideo": screenVideoURL.lastPathComponent,
-          "cameraMode": effectiveCameraCaptureModeForRecording.rawValue,
-        ])
-
-      if shouldRecordSeparateCameraAsset {
-        cameraCoordination.setPendingRecordingSession(
-          cameraCoordination.makeRecordingSession(
-            projectRoot: projectRoot,
-            deviceId: prefs.videoDeviceId,
-            mirrored: prefs.overlayMirror))
-      }
-
-      pendingMetadata = try recordingProjectService.writeProjectFiles(
-        projectRoot: projectRoot,
-        projectId: projectId,
-        metadataInputs: .init(
-          displayMode: prefs.displayMode,
-          displayID: captureTarget.displayID,
-          cropRect: captureTarget.cropRect,
+      let prepared = try recordingSessionCoordinator.prepareStart(
+        inputs: .init(
+          captureTarget: captureTarget,
           frameRate: frameRate,
-          quality: prefs.recordingQuality,
-          cursorEnabled: effectiveCursorEnabledForRecording,
+          displayMode: prefs.displayMode,
+          selectedAppWindowID: selectedAppWindowID,
+          recordingQuality: prefs.recordingQuality,
+          cursorEnabledForRecording: effectiveCursorEnabledForRecording,
           cursorLinked: prefs.cursorLinked,
-          windowID: (prefs.displayMode == .singleAppWindow ? selectedAppWindowID : nil),
-          excludedRecorderApp: prefs.excludeRecorderApp
-        ),
-        cameraCaptureInfo: cameraCoordination.makeCaptureInfo(
-          projectRoot: projectRoot,
+          excludeRecorderApp: prefs.excludeRecorderApp,
           shouldRecordSeparateCameraAsset: shouldRecordSeparateCameraAsset,
-          deviceId: prefs.videoDeviceId,
-          mirrored: prefs.overlayMirror),
-        editorSeed: editorSeed(for: target),
-        includeCameraInManifest: shouldRecordSeparateCameraAsset
+          videoDeviceId: prefs.videoDeviceId,
+          overlayMirror: prefs.overlayMirror,
+          editorSeed: editorSeed(for: target)
+        ),
+        projectService: recordingProjectService,
+        cameraCoordination: cameraCoordination,
+        preflightStorage: { [unowned self] url in
+          try self.preflightCaptureDestination(
+            url, allowLowStorageBypass: allowLowStorageBypass)
+        },
+        onProjectRootResolved: { [unowned self] projectRoot, screenVideoURL in
+          self.activeRecordingProjectRoot = projectRoot
+          NativeLogger.d(
+            "Facade", "Prepared recording project",
+            context: [
+              "projectRoot": projectRoot.lastPathComponent,
+              "screenVideo": screenVideoURL.lastPathComponent,
+              "cameraMode": self.effectiveCameraCaptureModeForRecording.rawValue,
+            ])
+        }
       )
+
+      cameraCoordination.setPendingRecordingSession(prepared.cameraSession)
+      pendingMetadata = prepared.metadata
+      let screenVideoURL = prepared.screenVideoURL
 
       let outputURL: () throws -> URL = {
         screenVideoURL
