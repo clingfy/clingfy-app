@@ -34,13 +34,18 @@ final class ScreenRecorderFacade: NSObject {
   private let cameraCaptureCoordinator = CameraCaptureCoordinator()
   private lazy var cameraRecorder = CameraRecorder(coordinator: cameraCaptureCoordinator)
   private lazy var camera = CameraOverlay(captureCoordinator: cameraCaptureCoordinator)
-  private let cursor = CursorHighlighter()
   /// Slice 4 / PR 17: the `RecordingIndicator` panel + pure state-mapping
   /// (`currentIndicatorState()`) + elapsed formatter (`formattedElapsed()`)
   /// now live on this coordinator; the facade keeps `RecorderState`,
   /// `recordedDurationTracker`, `prefs.indicatorPinned`, and the indicator
   /// tap callbacks and threads them through on every `apply(...)`.
   private let indicatorCoordinator = RecordingIndicatorCoordinator()
+  /// Slice 4 / PR 18: `CursorHighlighter` overlay + the pure visibility
+  /// decisions (`effectiveCursorEnabledForRecording`, `shouldShowCursor`)
+  /// now live on this coordinator; the facade keeps the prefs writes
+  /// (`setCursorHighlightEnabled` / `setCursorHighlightLinkedToRecording`)
+  /// and the accessibility-prompt UX which is permission-coupled.
+  private let cursorCoordinator = CursorHighlightCoordinator()
   private let recordingStore = RecordingStore()
   private let micLevelMonitor: MicrophoneLevelMonitoring
 
@@ -1541,7 +1546,9 @@ final class ScreenRecorderFacade: NSObject {
   }
 
   private var effectiveCursorEnabledForRecording: Bool {
-    prefs.cursorEnabled && !sessionDisableCursorHighlight
+    CursorHighlightCoordinator.effectiveCursorEnabledForRecording(
+      prefsCursorEnabled: prefs.cursorEnabled,
+      sessionDisableCursorHighlight: sessionDisableCursorHighlight)
   }
 
   private func resetRecordingSessionSuppressions() {
@@ -1928,11 +1935,11 @@ final class ScreenRecorderFacade: NSObject {
   }
 
   private func updateCursorVisibility() {
-    let shouldShow =
-      prefs.cursorLinked
-      ? (isActivelyRecording && effectiveCursorEnabledForRecording)
-      : effectiveCursorEnabledForRecording
-    shouldShow ? cursor.start() : cursor.stop()
+    cursorCoordinator.updateVisibility(
+      prefsCursorEnabled: prefs.cursorEnabled,
+      sessionDisableCursorHighlight: sessionDisableCursorHighlight,
+      cursorLinked: prefs.cursorLinked,
+      isActivelyRecording: isActivelyRecording)
   }
 
   private func observeDevices() {

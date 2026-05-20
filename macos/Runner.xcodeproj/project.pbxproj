@@ -103,6 +103,7 @@
 		5BE629DC2F2F9F3800063F17 /* ZoomTimelineBuilder.swift in Sources */ = {isa = PBXBuildFile; fileRef = 5BE629DB2F2F9F3800063F17 /* ZoomTimelineBuilder.swift */; };
 		5C1D00012F50000100A0B001 /* ZoomFollowSmoother.swift in Sources */ = {isa = PBXBuildFile; fileRef = 5C1D00022F50000100A0B001 /* ZoomFollowSmoother.swift */; };
 		5C28475D0A634AE086923798 /* RecordingPreflightService.swift in Sources */ = {isa = PBXBuildFile; fileRef = 82C7424BD75B1B0FA0FC7E64 /* RecordingPreflightService.swift */; };
+		5F5EDA722068D506AFF43F06 /* CursorHighlightCoordinator.swift in Sources */ = {isa = PBXBuildFile; fileRef = A868AEABCCB24F61D1BAC9CF /* CursorHighlightCoordinator.swift */; };
 		632E2DD388917796BE34FCCD /* ExportPrepTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = E0F9BE980D7AC62253E76CAC /* ExportPrepTests.swift */; };
 		694F07480FE17B655AC013A3 /* RecordingStateMachineTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 04091965DCAEC5DFBFFCCDEB /* RecordingStateMachineTests.swift */; };
 		69B5122F481E9152FAF2A9B3 /* RequestParsingTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 964282A8773D929D64A40630 /* RequestParsingTests.swift */; };
@@ -137,6 +138,7 @@
 		A2B3C4D5E6F708192A3B4C5D /* ClingfyProjectIcon.icns in Resources */ = {isa = PBXBuildFile; fileRef = A2B3C4D5E6F708192A3B4C5E /* ClingfyProjectIcon.icns */; };
 		A788E3B0EB7D159DB89B44C6 /* CameraCoordinationController.swift in Sources */ = {isa = PBXBuildFile; fileRef = DDCBBF407771E3216D57604D /* CameraCoordinationController.swift */; };
 		A9DBBBED4745D5601A076271 /* CaptureTargetResolverTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 2CB8AFC0EC977891C483011A /* CaptureTargetResolverTests.swift */; };
+		AECABD9A70102BAE501C3A23 /* CursorHighlightCoordinatorTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = D2B70FA1377388FC70B7DBB8 /* CursorHighlightCoordinatorTests.swift */; };
 		B7C100012FA1000100A0B001 /* ProjectOpenCoordinator.swift in Sources */ = {isa = PBXBuildFile; fileRef = B7C100022FA1000100A0B001 /* ProjectOpenCoordinator.swift */; };
 		B7C100032FA1000100A0B001 /* ProjectOpenValidator.swift in Sources */ = {isa = PBXBuildFile; fileRef = B7C100042FA1000100A0B001 /* ProjectOpenValidator.swift */; };
 		B8E100012F90000100A0B001 /* ExportMemory.swift in Sources */ = {isa = PBXBuildFile; fileRef = B8E100022F90000100A0B001 /* ExportMemory.swift */; };
@@ -309,6 +311,7 @@
 		A74D174212C4749A322E8474 /* ZoomQueryServiceTests.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = ZoomQueryServiceTests.swift; sourceTree = "<group>"; };
 		A77BB536EE34C7BCF42EEA92 /* RecordingStateMachine.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = RecordingStateMachine.swift; sourceTree = "<group>"; };
 		A804343376134DBC7318D507 /* PermissionsMethodRouterTests.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = PermissionsMethodRouterTests.swift; sourceTree = "<group>"; };
+		A868AEABCCB24F61D1BAC9CF /* CursorHighlightCoordinator.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = CursorHighlightCoordinator.swift; sourceTree = "<group>"; };
 		B01053F62F931EDFDC4E9F77 /* Pods_RunnerTests.framework */ = {isa = PBXFileReference; explicitFileType = wrapper.framework; includeInIndex = 0; path = Pods_RunnerTests.framework; sourceTree = BUILT_PRODUCTS_DIR; };
 		B2F68F98AC976184031BF555 /* RecordingProjectServiceTests.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = RecordingProjectServiceTests.swift; sourceTree = "<group>"; };
 		B7C100022FA1000100A0B001 /* ProjectOpenCoordinator.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ProjectOpenCoordinator.swift; sourceTree = "<group>"; };
@@ -324,6 +327,7 @@
 		C5F53265860D2AA59ECBD56F /* ScreenRecorderEventBridgeTests.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = ScreenRecorderEventBridgeTests.swift; sourceTree = "<group>"; };
 		C7624E3F54B75567B79BEB96 /* MetadataSidecarWriter.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = MetadataSidecarWriter.swift; sourceTree = "<group>"; };
 		CB4E0C29E30DA358A5C81FD4 /* OverlayUpdateDeduper.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = OverlayUpdateDeduper.swift; sourceTree = "<group>"; };
+		D2B70FA1377388FC70B7DBB8 /* CursorHighlightCoordinatorTests.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = CursorHighlightCoordinatorTests.swift; sourceTree = "<group>"; };
 		D31B40A1260A71654C81E859 /* RecordingPauseResumeCapabilities.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = RecordingPauseResumeCapabilities.swift; sourceTree = "<group>"; };
 		D4369B6E34FE7C645656404F /* Pods-RunnerTests.debug-prod.xcconfig */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = text.xcconfig; name = "Pods-RunnerTests.debug-prod.xcconfig"; path = "Target Support Files/Pods-RunnerTests/Pods-RunnerTests.debug-prod.xcconfig"; sourceTree = "<group>"; };
 		D4A1B2C3D4E5F60718293A4B /* StorageInfoProvider.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = StorageInfoProvider.swift; sourceTree = "<group>"; };
@@ -434,6 +438,7 @@
 				BB2C9D8FFE41A526BD03CCBD /* OverlayVisibilityControllerTests.swift */,
 				28946DA5F865D8DF340185EF /* CameraCoordinationControllerTests.swift */,
 				FFCE4AC19B74487497E3E8EF /* RecordingIndicatorCoordinatorTests.swift */,
+				D2B70FA1377388FC70B7DBB8 /* CursorHighlightCoordinatorTests.swift */,
 			);
 			path = RunnerTests;
 			sourceTree = "<group>";
@@ -557,6 +562,7 @@
 			isa = PBXGroup;
 			children = (
 				5B5426EC2F21985F00B06BA6 /* CursorRecorder.swift */,
+				A868AEABCCB24F61D1BAC9CF /* CursorHighlightCoordinator.swift */,
 			);
 			path = Cursor;
 			sourceTree = "<group>";
@@ -1163,6 +1169,7 @@
 				1331725660D5952BBA3FD378 /* OverlayVisibilityControllerTests.swift in Sources */,
 				4C00B4E8C289BE63C1D7E2BF /* CameraCoordinationControllerTests.swift in Sources */,
 				4CCA783F3E41F1507386A94D /* RecordingIndicatorCoordinatorTests.swift in Sources */,
+				AECABD9A70102BAE501C3A23 /* CursorHighlightCoordinatorTests.swift in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -1266,6 +1273,7 @@
 				98339761B94AD03F488F111F /* OverlayVisibilityController.swift in Sources */,
 				A788E3B0EB7D159DB89B44C6 /* CameraCoordinationController.swift in Sources */,
 				0397B2A14242AA904B51F603 /* RecordingIndicatorCoordinator.swift in Sources */,
+				5F5EDA722068D506AFF43F06 /* CursorHighlightCoordinator.swift in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
