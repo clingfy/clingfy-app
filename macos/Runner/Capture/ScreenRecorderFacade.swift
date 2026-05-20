@@ -69,11 +69,16 @@ final class ScreenRecorderFacade: NSObject {
   private let cameraCoordination = CameraCoordinationController()
   var activeRecordingProjectRoot: URL?  // internal: read by StorageDiagnosticsService (PR 7)
 
-  // state
-  private var state: RecorderState = .idle
-  // Pure decision table consulted at lifecycle entry points. The facade still
-  // owns `state` and the flags; the machine never mutates anything (Commit 4).
+  // state — Slice 5 / PR 19 moved `var state: RecorderState` ownership into
+  // `RecordingStateMachine`. The computed property below proxies reads/writes
+  // through it so every existing call site (~50 reads, ~10 writes) keeps
+  // working unchanged; every write fires `RecordingLifecycleEffects` (the
+  // facade conforms to it as an empty observer for now — PR 20 fills it in).
   private let recordingStateMachine = RecordingStateMachine()
+  private var state: RecorderState {
+    get { recordingStateMachine.state }
+    set { recordingStateMachine.transition(to: newValue) }
+  }
   // Stateless collaborators (own no session state) — Slice 3.
   private let captureTargetResolver = CaptureTargetResolver()
   private let recordingProjectService = RecordingProjectService()
@@ -142,6 +147,9 @@ final class ScreenRecorderFacade: NSObject {
   #endif
 
   private func commonInit() {
+    // Slice 5 / PR 19: wire the lifecycle observer. `effects` is `weak`, so
+    // no retain cycle even though the machine is facade-owned.
+    recordingStateMachine.effects = self
     if let storedDisplay = prefs.selectedDisplayId {
       selectedDisplayID = CGDirectDisplayID(storedDisplay)
     }
@@ -3061,4 +3069,19 @@ final class ScreenRecorderFacade: NSObject {
     }
   }
 
+}
+
+// MARK: - Slice 5 / PR 19: RecordingLifecycleEffects
+
+extension ScreenRecorderFacade: RecordingLifecycleEffects {
+  /// Intentionally empty in PR 19. The 53 existing `state` reads and ~10
+  /// writes are routed through `RecordingStateMachine` via the computed
+  /// `state` property, so behavior is byte-identical. PR 20
+  /// (`RecordingSessionCoordinator`) will populate this hook with the
+  /// transition-time side effects (`stateAsStr()` logging,
+  /// `applyIndicatorState()`, `updateCursorVisibility()`, etc.) that
+  /// today live inline next to each `state = X` write.
+  func didTransition(to newState: RecorderState, from previousState: RecorderState) {
+    // No-op: existing call sites still perform their own side effects inline.
+  }
 }
