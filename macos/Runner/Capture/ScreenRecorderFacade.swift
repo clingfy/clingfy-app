@@ -4,10 +4,50 @@ import ApplicationServices
 import AudioToolbox
 import FlutterMacOS
 
-// NOTE: Pure helper types previously declared here were extracted into
-// Capture/{Support,Indicator,Overlay,Engine,Diagnostics,Export,Audio}/ as part of
-// the strangler refactor (see ~/.claude/plans + docs/windows-port-inventory.md §7).
-// This file keeps only the ScreenRecorderFacade coordinator.
+// MARK: - ScreenRecorderFacade — layered architecture overview
+//
+// After Slices 1–8, this facade is a thin bridge between Flutter method
+// calls (driven by MainFlutterWindow) and the engine + coordinator layer
+// that owns most of the work. The remaining ~3k lines are mostly:
+//   1. lifecycle bodies (startRecording / stopRecording / pauseRecording
+//      / resumeRecording) that orchestrate the coordinator + engines but
+//      stay inline pending a future lifecycle-ownership slice
+//   2. backend-callback bodies inside the CaptureBackendEventHandling
+//      conformance (Slice 6 / PR 22)
+//   3. session-state mutation glue + UI side effects
+//
+// The layered structure is:
+//
+//   ScreenRecorderFacade (this file)
+//     │
+//     ├─ exportEngine: ExportEngine            (Slice 8 / PR 27)
+//     ├─ previewEngine: PreviewEngine          (Slice 8 / PR 28)
+//     ├─ recordingEngine: RecordingEngine      (Slice 8 / PR 29)
+//     │     ├─ stateMachine: RecordingStateMachine             (PR 19)
+//     │     ├─ sessionCoordinator: RecordingSessionCoordinator (PR 20+23-26)
+//     │     └─ captureBackendBinder: CaptureBackendBinder      (PR 22)
+//     │
+//     ├─ per-session UI coordinators (NOT in recordingEngine yet — each
+//     │  holds session state; ownership migrates with a later slice):
+//     │     ├─ cameraCoordination: CameraCoordinationController (PR 16)
+//     │     ├─ overlayVisibility: OverlayVisibilityController   (PR 15)
+//     │     ├─ cursorCoordinator: CursorHighlightCoordinator    (PR 18)
+//     │     └─ indicatorCoordinator: RecordingIndicatorCoordinator (PR 17)
+//     │
+//     ├─ stateless collaborators:
+//     │     ├─ captureTargetResolver: CaptureTargetResolver  (PR 12)
+//     │     ├─ recordingProjectService: RecordingProjectService (PR 13)
+//     │     └─ captureStartConfigBuilder: CaptureStartConfigBuilder (PR 25)
+//     │
+//     └─ pure-decision namespaces (called as enum.staticMethod):
+//           ├─ RecordingPreflightService (PR 14)
+//           ├─ RecordingFinalizer        (PR 21)
+//           └─ ExportPrep                (PR 11 — still an extension)
+//
+// Pure helper types previously declared inline in this file were extracted
+// into Capture/{Support,Indicator,Overlay,Engine,Diagnostics,Export,Audio}/
+// as part of the strangler refactor. See ~/.claude/plans +
+// docs/windows-port-inventory.md §7 for the migration history.
 
 @MainActor
 final class ScreenRecorderFacade: NSObject {
@@ -82,28 +122,19 @@ final class ScreenRecorderFacade: NSObject {
   // through it so every existing call site (~50 reads, ~10 writes) keeps
   // working unchanged; every write fires `RecordingLifecycleEffects` (the
   // facade conforms to it as an empty observer for now — PR 20 fills it in).
-  // Slice 8 / PR 29: composition root for the lifecycle layer.
+  // Slice 8 / PR 29-30: composition root for the lifecycle layer.
   // `recordingEngine` owns the state machine + session coordinator +
-  // backend binder. The facade keeps the existing call sites
-  // (`recordingStateMachine.x`, `recordingSessionCoordinator.x`,
-  // `captureBackendBinder.x`) working unchanged via computed-property
-  // forwarders below. Per-session UI coordinators (camera, overlay,
-  // cursor, indicator) stay on the facade — they hold session state and
-  // migrate with a later lifecycle-ownership slice.
+  // backend binder. PR 30 removed the computed-property forwarders that
+  // proxied to it — every call site now reads `recordingEngine.x`
+  // directly, so the layering is visible at use, not hidden behind a
+  // forwarder. Per-session UI coordinators (camera, overlay, cursor,
+  // indicator) stay on the facade — they hold session state and migrate
+  // with a later lifecycle-ownership slice.
   private let captureTargetResolver = CaptureTargetResolver()
   private let recordingEngine: RecordingEngine
-  private var recordingStateMachine: RecordingStateMachine {
-    recordingEngine.stateMachine
-  }
-  private var recordingSessionCoordinator: RecordingSessionCoordinator {
-    recordingEngine.sessionCoordinator
-  }
-  private var captureBackendBinder: CaptureBackendBinder {
-    recordingEngine.captureBackendBinder
-  }
   private var state: RecorderState {
-    get { recordingStateMachine.state }
-    set { recordingStateMachine.transition(to: newValue) }
+    get { recordingEngine.stateMachine.state }
+    set { recordingEngine.stateMachine.transition(to: newValue) }
   }
   // Stateless collaborators that don't fit the engine yet — Slice 3 / 7.
   private let recordingProjectService = RecordingProjectService()
@@ -183,7 +214,7 @@ final class ScreenRecorderFacade: NSObject {
   private func commonInit() {
     // Slice 5 / PR 19: wire the lifecycle observer. `effects` is `weak`, so
     // no retain cycle even though the machine is facade-owned.
-    recordingStateMachine.effects = self
+    recordingEngine.stateMachine.effects = self
     if let storedDisplay = prefs.selectedDisplayId {
       selectedDisplayID = CGDirectDisplayID(storedDisplay)
     }
@@ -306,7 +337,7 @@ final class ScreenRecorderFacade: NSObject {
   }
 
   func startRecording(args: [String: Any]?, result: @escaping FlutterResult) {
-    switch recordingStateMachine.startDecision(from: state) {
+    switch recordingEngine.stateMachine.startDecision(from: state) {
     case .alreadyActive:
       if let path = activeRecordingProjectRoot?.path {
         result(path)
@@ -318,7 +349,7 @@ final class ScreenRecorderFacade: NSObject {
       break
     }
     startResult = result
-    state = recordingStateMachine.nextOnStart(from: state)
+    state = recordingEngine.stateMachine.nextOnStart(from: state)
     stateAsStr()
     resetPendingStartRecoveryState()
     refreshMicrophoneLevelMonitoring(resetMeter: true)
@@ -334,7 +365,7 @@ final class ScreenRecorderFacade: NSObject {
     // (CGRequestScreenCaptureAccess) and finishStartWithError; the
     // coordinator just returns the typed outcome.
     let captureTarget: CaptureTarget
-    switch recordingSessionCoordinator.evaluateScreenPermissionAndTarget(
+    switch recordingEngine.sessionCoordinator.evaluateScreenPermissionAndTarget(
       captureTargetInput: .init(
         displayMode: prefs.displayMode,
         selectedDisplayID: selectedDisplayID,
@@ -382,7 +413,7 @@ final class ScreenRecorderFacade: NSObject {
       // (pure AXIsProcessTrusted query), so eager evaluation here is
       // observably identical to the original short-circuit
       // (Slice 3 / PR 14).
-      switch recordingSessionCoordinator.evaluateMicAndAccessibility(
+      switch recordingEngine.sessionCoordinator.evaluateMicAndAccessibility(
         target: target,
         sessionDisableMicrophone: sessionDisableMicrophone,
         audioDeviceId: prefs.audioDeviceId,
@@ -414,7 +445,7 @@ final class ScreenRecorderFacade: NSObject {
       cameraCoordination.setPendingRecordingSession(nil)
       cancelRequestedDuringStart = false
 
-      let prepared = try recordingSessionCoordinator.prepareStart(
+      let prepared = try recordingEngine.sessionCoordinator.prepareStart(
         inputs: .init(
           captureTarget: captureTarget,
           frameRate: frameRate,
@@ -490,7 +521,7 @@ final class ScreenRecorderFacade: NSObject {
           )
         }
 
-        self.recordingSessionCoordinator.beginCaptureFlow(
+        self.recordingEngine.sessionCoordinator.beginCaptureFlow(
           shouldRecordSeparateCameraAsset: self.shouldRecordSeparateCameraAsset,
           cameraSession: self.cameraCoordination.pendingRecordingSession,
           beginScreenCapture: beginCapture,
@@ -628,7 +659,7 @@ final class ScreenRecorderFacade: NSObject {
     // config → capture.start) moved into the coordinator. The 7 facade-
     // owned side effects are injected as closures so the facade keeps
     // ownership of every state mutation and the backend call.
-    recordingSessionCoordinator.startCapture(
+    recordingEngine.sessionCoordinator.startCapture(
       input: .init(
         target: target,
         frameRate: frameRate,
@@ -709,7 +740,7 @@ final class ScreenRecorderFacade: NSObject {
   }
 
   func stopRecording(result: @escaping FlutterResult) {
-    switch recordingStateMachine.stopDecision(
+    switch recordingEngine.stateMachine.stopDecision(
       from: state, isPauseResumeMutationInFlight: isPauseResumeMutationInFlight
     ) {
     case .notRecording:
@@ -739,7 +770,7 @@ final class ScreenRecorderFacade: NSObject {
       return
     }
 
-    switch recordingStateMachine.pauseDecision(
+    switch recordingEngine.stateMachine.pauseDecision(
       from: state, isPauseResumeMutationInFlight: isPauseResumeMutationInFlight
     ) {
     case .alreadyPaused:
@@ -767,7 +798,7 @@ final class ScreenRecorderFacade: NSObject {
       return
     }
 
-    switch recordingStateMachine.resumeDecision(
+    switch recordingEngine.stateMachine.resumeDecision(
       from: state, isPauseResumeMutationInFlight: isPauseResumeMutationInFlight
     ) {
     case .alreadyRecording:
@@ -789,7 +820,7 @@ final class ScreenRecorderFacade: NSObject {
   }
 
   func togglePauseRecording(result: @escaping FlutterResult) {
-    switch recordingStateMachine.toggleDecision(from: state) {
+    switch recordingEngine.stateMachine.toggleDecision(from: state) {
     case .pause:
       pauseRecording(result: result)
     case .resume:
@@ -2422,7 +2453,7 @@ final class ScreenRecorderFacade: NSObject {
     // `CaptureBackendEventHandling` conformance (extension at the bottom of
     // this file). Behavior-identical: same closures, same `[weak self]`
     // capture (now `[weak handler]` inside the binder), same dispatch.
-    captureBackendBinder.bind(backend, to: self)
+    recordingEngine.captureBackendBinder.bind(backend, to: self)
   }
 
   /// Writes the metadata sidecar file when recording starts.
