@@ -82,6 +82,10 @@ final class ScreenRecorderFacade: NSObject {
   // Stateless collaborators (own no session state) — Slice 3.
   private let captureTargetResolver = CaptureTargetResolver()
   private let recordingProjectService = RecordingProjectService()
+  // Slice 6 / PR 22: routes the 6 backend callback slots into facade
+  // methods declared on the `CaptureBackendEventHandling` conformance below.
+  // Owns no state.
+  private let captureBackendBinder = CaptureBackendBinder()
   // Slice 5 / PR 20: wraps the two preflight clusters of startRecording
   // (screen+target, mic+accessibility) into a single typed-outcome surface.
   // Consumes the Slice-3 services; owns no state. Facade still owns every
@@ -2510,258 +2514,12 @@ final class ScreenRecorderFacade: NSObject {
   private func setCaptureBackend(_ backend: CaptureBackend) {
     self.capture = backend
     resetOverlayUpdateDeduper()
-    self.capture.onMicrophoneLevel = { [weak self] sample in
-      self?.forwardMicrophoneLevel(sample, source: .recordingBackend)
-    }
-    self.capture.onWarning = { [weak self] message in
-      guard let self, let sessionId = self.activeRecordingWorkflowSessionId else { return }
-      self.onRecordingWarning?([
-        "type": "recordingWarning",
-        "sessionId": sessionId,
-        "message": message,
-      ])
-    }
-
-    // Bridge backend callbacks into the facade state machine.
-    self.capture.onStarted = { [weak self] url in
-      guard let self else { return }
-      let visibleProjectPath = self.activeRecordingProjectRoot?.path ?? url.path
-
-      self.resetOverlayUpdateDeduper()
-      self.state = .recording
-      self.recordedDurationTracker.start()
-      self.stateAsStr()
-      self.refreshMicrophoneLevelMonitoring(resetMeter: false)
-
-      // Write metadata sidecar when recording starts
-      self.writeMetadataSidecar()
-      self.writeCameraMetadataSidecarIfNeeded()
-
-      self.onRecordingStateChanged?(true)
-      if let sessionId = self.activeRecordingWorkflowSessionId {
-        self.onRecordingStarted?(sessionId)
-        if let warning = self.pendingStartFallbackWarningMessage {
-          self.pendingStartFallbackWarningMessage = nil
-          self.onRecordingWarning?([
-            "type": "recordingWarning",
-            "sessionId": sessionId,
-            "message": warning,
-          ])
-        }
-      }
-      self.pendingStartFallbackOriginalError = nil
-      self.pendingStartCaptureConfig = nil
-      self.hasAttemptedStartBackendFallback = false
-
-      self.applyIndicatorState()
-
-      // Only update recording-time visual state; don't rebuild the window here.
-      if self.camera.isShowing && self.effectiveOverlayEnabledForRecording {
-        self.camera.setRecordingHighlight(enabled: self.prefs.overlayHighlight)
-      }
-
-      self.updateOverlayVisibility()
-
-      self.updateCursorVisibility()
-
-      self.startResult?(visibleProjectPath)
-      self.startResult = nil
-
-      self.drainPendingStopIfNeeded()
-    }
-
-    self.capture.onPaused = { [weak self] in
-      guard let self else { return }
-      guard self.shouldRecordSeparateCameraAsset else {
-        self.completePausedTransition()
-        return
-      }
-
-      self.cameraRecorder.pause { result in
-        switch result {
-        case .success:
-          self.completePausedTransition()
-        case .failure(let error):
-          self.resolvePauseResumeFailure(error)
-        }
-      }
-    }
-
-    self.capture.onResumed = { [weak self] in
-      guard let self else { return }
-      guard self.shouldRecordSeparateCameraAsset else {
-        self.completeResumedTransition()
-        return
-      }
-
-      self.cameraRecorder.resume { result in
-        switch result {
-        case .success:
-          self.completeResumedTransition()
-        case .failure(let error):
-          self.resolvePauseResumeFailure(error)
-        }
-      }
-    }
-
-    self.capture.onFinished = { [weak self] url, error in
-      guard let self else { return }
-      let terminalError = self.terminalRecordingError(screenError: error)
-
-      NativeLogger.i(
-        "Facade", "Backend onFinished called",
-        context: [
-          "url": url?.path ?? "nil",
-          "hasError": terminalError != nil,
-          "error": terminalError.map { RecordingFinalizer.errorMessage(from: $0) } ?? "nil",
-        ])
-
-      if let terminalError,
-        self.recoverFromScreenCaptureKitStartFailureIfNeeded(screenError: terminalError)
-      {
-        return
-      }
-
-      let resolvedTerminalError = self.combinedStartFallbackFailureIfNeeded(
-        screenError: terminalError
-      )
-
-      let pendingStartResult = self.startResult
-      let wasStarting = self.state == .starting
-      if wasStarting {
-        self.startResult = nil
-      }
-
-      self.recordedDurationTracker.stop()
-
-      let completion = self.stopResult
-      self.stopResult = nil
-
-      let finalizeWithCameraResult: (CameraRecordingResult?) -> Void = { cameraResult in
-        var finalURL: URL? = url
-        var completionMode: RecordingCompletionMode = .ready
-        let cancelledDuringStart = self.cancelRequestedDuringStart
-        if let projectRoot = self.activeRecordingProjectRoot {
-          if cancelledDuringStart {
-            completionMode = .cancelled
-            let cancellationDisposition = self.cancellationDisposition(for: projectRoot)
-
-            switch cancellationDisposition {
-            case .deleteProject:
-              let didDelete = self.recordingStore.deleteProject(projectRootURL: projectRoot)
-              if !didDelete {
-                MetadataSidecarWriter.updateProjectManifestStatus(.cancelled, projectRoot: projectRoot)
-                finalURL = url
-              } else {
-                finalURL = nil
-              }
-            case .markCancelled:
-              MetadataSidecarWriter.updateProjectManifestStatus(.finalizing, projectRoot: projectRoot)
-              if let rawURL = url {
-                self.updateMetadataSidecarOnFinish(
-                  projectRoot: projectRoot,
-                  cameraResult: cameraResult,
-                  publishedScreenURL: rawURL
-                )
-                finalURL = rawURL
-              } else {
-                finalURL = nil
-              }
-              MetadataSidecarWriter.updateProjectManifestStatus(.cancelled, projectRoot: projectRoot)
-            }
-          } else if let rawURL = url {
-            MetadataSidecarWriter.updateProjectManifestStatus(.finalizing, projectRoot: projectRoot)
-            self.updateMetadataSidecarOnFinish(
-              projectRoot: projectRoot,
-              cameraResult: cameraResult,
-              publishedScreenURL: rawURL
-            )
-            MetadataSidecarWriter.updateProjectManifestStatus(.ready, projectRoot: projectRoot)
-            finalURL = rawURL
-          } else {
-            finalURL = nil
-          }
-        }
-
-        self.completeRecordingLifecycle(
-          finalURL: finalURL,
-          error: resolvedTerminalError,
-          wasStarting: wasStarting,
-          pendingStartResult: pendingStartResult,
-          completion: completion,
-          mode: completionMode
-        )
-      }
-
-      if let resolvedTerminalError {
-        if self.cameraCoordination.pendingFailure != nil {
-          self.completeRecordingLifecycle(
-            finalURL: nil,
-            error: resolvedTerminalError,
-            wasStarting: wasStarting,
-            pendingStartResult: pendingStartResult,
-            completion: completion
-          )
-          return
-        }
-
-        if self.shouldRecordSeparateCameraAsset {
-          self.cameraRecorder.stop { result in
-            switch result {
-            case .success(let cameraResult):
-              finalizeWithCameraResult(cameraResult)
-            case .failure(let cameraError):
-              NativeLogger.w(
-                "Facade",
-                "Camera recorder stop failed during screen failure fallback",
-                context: ["error": cameraError.localizedDescription]
-              )
-              self.completeRecordingLifecycle(
-                finalURL: nil,
-                error: resolvedTerminalError,
-                wasStarting: wasStarting,
-                pendingStartResult: pendingStartResult,
-                completion: completion
-              )
-            }
-          }
-        } else {
-          self.completeRecordingLifecycle(
-            finalURL: nil,
-            error: resolvedTerminalError,
-            wasStarting: wasStarting,
-            pendingStartResult: pendingStartResult,
-            completion: completion
-          )
-        }
-        return
-      }
-
-      guard self.shouldRecordSeparateCameraAsset else {
-        finalizeWithCameraResult(nil)
-        return
-      }
-
-      self.cameraRecorder.stop { result in
-        switch result {
-        case .success(let cameraResult):
-          finalizeWithCameraResult(cameraResult)
-        case .failure(let cameraError):
-          NativeLogger.e(
-            "Facade",
-            "Camera recorder finalize failed during separate-camera recording",
-            context: ["error": cameraError.localizedDescription]
-          )
-          self.completeRecordingLifecycle(
-            finalURL: nil,
-            error: cameraError,
-            wasStarting: wasStarting,
-            pendingStartResult: pendingStartResult,
-            completion: completion
-          )
-        }
-      }
-    }
+    // Slice 6 / PR 22: the 256-line callback block is gone — `bind(_:to:)`
+    // attaches the 6 backend slots to facade methods declared on the
+    // `CaptureBackendEventHandling` conformance (extension at the bottom of
+    // this file). Behavior-identical: same closures, same `[weak self]`
+    // capture (now `[weak handler]` inside the binder), same dispatch.
+    captureBackendBinder.bind(backend, to: self)
   }
 
   /// Writes the metadata sidecar file when recording starts.
@@ -3082,5 +2840,270 @@ extension ScreenRecorderFacade: RecordingLifecycleEffects {
   /// today live inline next to each `state = X` write.
   func didTransition(to newState: RecorderState, from previousState: RecorderState) {
     // No-op: existing call sites still perform their own side effects inline.
+  }
+}
+
+// MARK: - Slice 6 / PR 22: CaptureBackendEventHandling
+//
+// The 6 callback bodies that used to live inline inside
+// `setCaptureBackend(_:)` (lines 2513-2764 pre-PR-22) move here verbatim,
+// one per protocol method. `CaptureBackendBinder.bind(backend, to: self)`
+// attaches each closure with `[weak handler]` capture, so the dispatch
+// behavior is byte-identical to the old inline `[weak self]` closures.
+
+extension ScreenRecorderFacade: CaptureBackendEventHandling {
+
+  func backendDidReportMicrophoneLevel(_ sample: MicrophoneLevelSample) {
+    forwardMicrophoneLevel(sample, source: .recordingBackend)
+  }
+
+  func backendDidWarn(message: String) {
+    guard let sessionId = activeRecordingWorkflowSessionId else { return }
+    onRecordingWarning?([
+      "type": "recordingWarning",
+      "sessionId": sessionId,
+      "message": message,
+    ])
+  }
+
+  func backendDidStart(url: URL) {
+    let visibleProjectPath = activeRecordingProjectRoot?.path ?? url.path
+
+    resetOverlayUpdateDeduper()
+    state = .recording
+    recordedDurationTracker.start()
+    stateAsStr()
+    refreshMicrophoneLevelMonitoring(resetMeter: false)
+
+    // Write metadata sidecar when recording starts
+    writeMetadataSidecar()
+    writeCameraMetadataSidecarIfNeeded()
+
+    onRecordingStateChanged?(true)
+    if let sessionId = activeRecordingWorkflowSessionId {
+      onRecordingStarted?(sessionId)
+      if let warning = pendingStartFallbackWarningMessage {
+        pendingStartFallbackWarningMessage = nil
+        onRecordingWarning?([
+          "type": "recordingWarning",
+          "sessionId": sessionId,
+          "message": warning,
+        ])
+      }
+    }
+    pendingStartFallbackOriginalError = nil
+    pendingStartCaptureConfig = nil
+    hasAttemptedStartBackendFallback = false
+
+    applyIndicatorState()
+
+    // Only update recording-time visual state; don't rebuild the window here.
+    if camera.isShowing && effectiveOverlayEnabledForRecording {
+      camera.setRecordingHighlight(enabled: prefs.overlayHighlight)
+    }
+
+    updateOverlayVisibility()
+
+    updateCursorVisibility()
+
+    startResult?(visibleProjectPath)
+    startResult = nil
+
+    drainPendingStopIfNeeded()
+  }
+
+  func backendDidPause() {
+    guard shouldRecordSeparateCameraAsset else {
+      completePausedTransition()
+      return
+    }
+
+    cameraRecorder.pause { [weak self] result in
+      guard let self else { return }
+      switch result {
+      case .success:
+        self.completePausedTransition()
+      case .failure(let error):
+        self.resolvePauseResumeFailure(error)
+      }
+    }
+  }
+
+  func backendDidResume() {
+    guard shouldRecordSeparateCameraAsset else {
+      completeResumedTransition()
+      return
+    }
+
+    cameraRecorder.resume { [weak self] result in
+      guard let self else { return }
+      switch result {
+      case .success:
+        self.completeResumedTransition()
+      case .failure(let error):
+        self.resolvePauseResumeFailure(error)
+      }
+    }
+  }
+
+  func backendDidFinish(url: URL?, error: Error?) {
+    let terminalError = terminalRecordingError(screenError: error)
+
+    NativeLogger.i(
+      "Facade", "Backend onFinished called",
+      context: [
+        "url": url?.path ?? "nil",
+        "hasError": terminalError != nil,
+        "error": terminalError.map { RecordingFinalizer.errorMessage(from: $0) } ?? "nil",
+      ])
+
+    if let terminalError,
+      recoverFromScreenCaptureKitStartFailureIfNeeded(screenError: terminalError)
+    {
+      return
+    }
+
+    let resolvedTerminalError = combinedStartFallbackFailureIfNeeded(
+      screenError: terminalError
+    )
+
+    let pendingStartResult = startResult
+    let wasStarting = state == .starting
+    if wasStarting {
+      startResult = nil
+    }
+
+    recordedDurationTracker.stop()
+
+    let completion = stopResult
+    stopResult = nil
+
+    let finalizeWithCameraResult: (CameraRecordingResult?) -> Void = { [weak self] cameraResult in
+      guard let self else { return }
+      var finalURL: URL? = url
+      var completionMode: RecordingCompletionMode = .ready
+      let cancelledDuringStart = self.cancelRequestedDuringStart
+      if let projectRoot = self.activeRecordingProjectRoot {
+        if cancelledDuringStart {
+          completionMode = .cancelled
+          let cancellationDisposition = self.cancellationDisposition(for: projectRoot)
+
+          switch cancellationDisposition {
+          case .deleteProject:
+            let didDelete = self.recordingStore.deleteProject(projectRootURL: projectRoot)
+            if !didDelete {
+              MetadataSidecarWriter.updateProjectManifestStatus(.cancelled, projectRoot: projectRoot)
+              finalURL = url
+            } else {
+              finalURL = nil
+            }
+          case .markCancelled:
+            MetadataSidecarWriter.updateProjectManifestStatus(.finalizing, projectRoot: projectRoot)
+            if let rawURL = url {
+              self.updateMetadataSidecarOnFinish(
+                projectRoot: projectRoot,
+                cameraResult: cameraResult,
+                publishedScreenURL: rawURL
+              )
+              finalURL = rawURL
+            } else {
+              finalURL = nil
+            }
+            MetadataSidecarWriter.updateProjectManifestStatus(.cancelled, projectRoot: projectRoot)
+          }
+        } else if let rawURL = url {
+          MetadataSidecarWriter.updateProjectManifestStatus(.finalizing, projectRoot: projectRoot)
+          self.updateMetadataSidecarOnFinish(
+            projectRoot: projectRoot,
+            cameraResult: cameraResult,
+            publishedScreenURL: rawURL
+          )
+          MetadataSidecarWriter.updateProjectManifestStatus(.ready, projectRoot: projectRoot)
+          finalURL = rawURL
+        } else {
+          finalURL = nil
+        }
+      }
+
+      self.completeRecordingLifecycle(
+        finalURL: finalURL,
+        error: resolvedTerminalError,
+        wasStarting: wasStarting,
+        pendingStartResult: pendingStartResult,
+        completion: completion,
+        mode: completionMode
+      )
+    }
+
+    if let resolvedTerminalError {
+      if cameraCoordination.pendingFailure != nil {
+        completeRecordingLifecycle(
+          finalURL: nil,
+          error: resolvedTerminalError,
+          wasStarting: wasStarting,
+          pendingStartResult: pendingStartResult,
+          completion: completion
+        )
+        return
+      }
+
+      if shouldRecordSeparateCameraAsset {
+        cameraRecorder.stop { [weak self] result in
+          guard let self else { return }
+          switch result {
+          case .success(let cameraResult):
+            finalizeWithCameraResult(cameraResult)
+          case .failure(let cameraError):
+            NativeLogger.w(
+              "Facade",
+              "Camera recorder stop failed during screen failure fallback",
+              context: ["error": cameraError.localizedDescription]
+            )
+            self.completeRecordingLifecycle(
+              finalURL: nil,
+              error: resolvedTerminalError,
+              wasStarting: wasStarting,
+              pendingStartResult: pendingStartResult,
+              completion: completion
+            )
+          }
+        }
+      } else {
+        completeRecordingLifecycle(
+          finalURL: nil,
+          error: resolvedTerminalError,
+          wasStarting: wasStarting,
+          pendingStartResult: pendingStartResult,
+          completion: completion
+        )
+      }
+      return
+    }
+
+    guard shouldRecordSeparateCameraAsset else {
+      finalizeWithCameraResult(nil)
+      return
+    }
+
+    cameraRecorder.stop { [weak self] result in
+      guard let self else { return }
+      switch result {
+      case .success(let cameraResult):
+        finalizeWithCameraResult(cameraResult)
+      case .failure(let cameraError):
+        NativeLogger.e(
+          "Facade",
+          "Camera recorder finalize failed during separate-camera recording",
+          context: ["error": cameraError.localizedDescription]
+        )
+        self.completeRecordingLifecycle(
+          finalURL: nil,
+          error: cameraError,
+          wasStarting: wasStarting,
+          pendingStartResult: pendingStartResult,
+          completion: completion
+        )
+      }
+    }
   }
 }
