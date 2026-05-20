@@ -57,8 +57,14 @@ final class ScreenRecorderFacade: NSObject {
 
   // Metadata for current recording session (written on start, updated on finish)
   private var pendingMetadata: RecordingMetadata?
-  private var pendingCameraRecordingSession: CameraRecordingSession?
-  private var pendingSeparateCameraFailure: FlutterError?
+  /// Slice 4 / PR 16: separate-camera coordination state +
+  /// pure-factory helpers previously held as `pendingCameraRecordingSession`,
+  /// `pendingSeparateCameraFailure`, `cameraRecordingDimensions(deviceID:)`,
+  /// `cameraNominalFrameRate(deviceID:)`, `cameraRecordingSession(for:)`,
+  /// `pendingCameraCaptureInfo(for:)`, and `terminalRecordingError(...)`.
+  /// `handleSeparateCameraRecorderFailure(_:)` keeps its state-machine
+  /// transitions on the facade; only the failure-dedup primitive moves.
+  private let cameraCoordination = CameraCoordinationController()
   var activeRecordingProjectRoot: URL?  // internal: read by StorageDiagnosticsService (PR 7)
 
   // state
@@ -361,7 +367,7 @@ final class ScreenRecorderFacade: NSObject {
       }
 
       activeRecordingProjectRoot = nil
-      pendingCameraRecordingSession = nil
+      cameraCoordination.setPendingRecordingSession(nil)
       cancelRequestedDuringStart = false
       let skeleton = try recordingProjectService.createSkeleton()
       let projectId = skeleton.projectId
@@ -383,7 +389,11 @@ final class ScreenRecorderFacade: NSObject {
         ])
 
       if shouldRecordSeparateCameraAsset {
-        pendingCameraRecordingSession = cameraRecordingSession(for: projectRoot)
+        cameraCoordination.setPendingRecordingSession(
+          cameraCoordination.makeRecordingSession(
+            projectRoot: projectRoot,
+            deviceId: prefs.videoDeviceId,
+            mirrored: prefs.overlayMirror))
       }
 
       pendingMetadata = try recordingProjectService.writeProjectFiles(
@@ -400,7 +410,11 @@ final class ScreenRecorderFacade: NSObject {
           windowID: (prefs.displayMode == .singleAppWindow ? selectedAppWindowID : nil),
           excludedRecorderApp: prefs.excludeRecorderApp
         ),
-        cameraCaptureInfo: pendingCameraCaptureInfo(for: projectRoot),
+        cameraCaptureInfo: cameraCoordination.makeCaptureInfo(
+          projectRoot: projectRoot,
+          shouldRecordSeparateCameraAsset: shouldRecordSeparateCameraAsset,
+          deviceId: prefs.videoDeviceId,
+          mirrored: prefs.overlayMirror),
         editorSeed: editorSeed(for: target),
         includeCameraInManifest: shouldRecordSeparateCameraAsset
       )
@@ -434,7 +448,9 @@ final class ScreenRecorderFacade: NSObject {
           )
         }
 
-        guard self.shouldRecordSeparateCameraAsset, let cameraSession = self.pendingCameraRecordingSession else {
+        guard self.shouldRecordSeparateCameraAsset,
+          let cameraSession = self.cameraCoordination.pendingRecordingSession
+        else {
           beginCapture()
           return
         }
@@ -1483,9 +1499,9 @@ final class ScreenRecorderFacade: NSObject {
       MetadataSidecarWriter.updateProjectManifestStatus(.failed, projectRoot: projectRoot)
     }
     activeRecordingProjectRoot = nil
-    pendingCameraRecordingSession = nil
+    cameraCoordination.setPendingRecordingSession(nil)
     cancelRequestedDuringStart = false
-    pendingSeparateCameraFailure = nil
+    cameraCoordination.clearPendingFailure()
     pendingMetadata = nil
     if pendingStop {
       stopResult?(err)
@@ -1539,64 +1555,11 @@ final class ScreenRecorderFacade: NSObject {
     sessionDisableCameraOverlay = false
     sessionDisableCursorHighlight = false
     suppressOverlayWindowDuringSeparateCameraCapture = false
-    pendingSeparateCameraFailure = nil
+    cameraCoordination.clearPendingFailure()
   }
 
-  private func cameraRecordingDimensions(deviceID: String?) -> CameraRecordingMetadata.Dimensions? {
-    let device =
-      deviceID.flatMap { AVCaptureDevice(uniqueID: $0) }
-      ?? AVCaptureDevice.default(for: .video)
-    guard let device else { return nil }
-    let dimensions = CMVideoFormatDescriptionGetDimensions(device.activeFormat.formatDescription)
-    return CameraRecordingMetadata.Dimensions(
-      width: Int(dimensions.width),
-      height: Int(dimensions.height)
-    )
-  }
-
-  private func cameraNominalFrameRate(deviceID: String?) -> Double? {
-    let device =
-      deviceID.flatMap { AVCaptureDevice(uniqueID: $0) }
-      ?? AVCaptureDevice.default(for: .video)
-    guard let device else { return nil }
-    if device.activeVideoMinFrameDuration.isNumeric,
-      device.activeVideoMinFrameDuration.seconds > 0
-    {
-      return 1.0 / device.activeVideoMinFrameDuration.seconds
-    }
-    return device.activeFormat.videoSupportedFrameRateRanges.first?.maxFrameRate
-  }
-
-  private func cameraRecordingSession(for projectRoot: URL) -> CameraRecordingSession {
-    CameraRecordingSession(
-      outputURL: RecordingProjectPaths.cameraRawURL(for: projectRoot),
-      metadataURL: RecordingProjectPaths.cameraMetadataURL(for: projectRoot),
-      rawRelativePath: RecordingProjectPaths.relativeCameraRawPath,
-      metadataRelativePath: RecordingProjectPaths.relativeCameraMetadataPath,
-      segmentDirectoryURL: RecordingProjectPaths.cameraSegmentsDirectoryURL(for: projectRoot),
-      deviceId: prefs.videoDeviceId,
-      mirroredRaw: prefs.overlayMirror,
-      nominalFrameRate: cameraNominalFrameRate(deviceID: prefs.videoDeviceId),
-      dimensions: cameraRecordingDimensions(deviceID: prefs.videoDeviceId)
-    )
-  }
-
-  private func pendingCameraCaptureInfo(for projectRoot: URL?) -> RecordingMetadata.CameraCaptureInfo? {
-    guard shouldRecordSeparateCameraAsset, projectRoot != nil else { return nil }
-    return RecordingMetadata.CameraCaptureInfo(
-      mode: .separateCameraAsset,
-      enabled: true,
-      rawRelativePath: RecordingProjectPaths.relativeCameraRawPath,
-      metadataRelativePath: RecordingProjectPaths.relativeCameraMetadataPath,
-      deviceId: prefs.videoDeviceId,
-      mirroredRaw: prefs.overlayMirror,
-      nominalFrameRate: cameraNominalFrameRate(deviceID: prefs.videoDeviceId),
-      dimensions: cameraRecordingDimensions(deviceID: prefs.videoDeviceId).map {
-        RecordingMetadata.Dimensions(width: $0.width, height: $0.height)
-      },
-      segments: []
-    )
-  }
+  // Camera coordination factories moved to `CameraCoordinationController`
+  // (Slice 4 / PR 16); the facade reads them via `cameraCoordination`.
 
   private func findScreen(displayID: CGDirectDisplayID) -> NSScreen? {
     NSScreen.screens.first {
@@ -1934,18 +1897,14 @@ final class ScreenRecorderFacade: NSObject {
   }
 
   private func terminalRecordingError(screenError: Error?) -> Error? {
-    if let screenError {
-      return screenError
-    }
-
-    return pendingSeparateCameraFailure
+    cameraCoordination.terminalRecordingError(screenError: screenError)
   }
 
   private func handleSeparateCameraRecorderFailure(_ error: FlutterError) {
     runOnMainIfNeeded(reason: "cameraRecorder.onFailure", category: "Facade") { [weak self] in
       guard let self else { return }
       guard self.shouldRecordSeparateCameraAsset else { return }
-      guard self.pendingSeparateCameraFailure == nil else { return }
+      guard self.cameraCoordination.storeFailureIfFirst(error) else { return }
 
       NativeLogger.e(
         "Facade",
@@ -1954,8 +1913,6 @@ final class ScreenRecorderFacade: NSObject {
           "state": "\(self.state)",
           "error": error.message ?? error.code,
         ])
-
-      self.pendingSeparateCameraFailure = error
 
       switch self.state {
       case .starting:
@@ -2479,7 +2436,7 @@ final class ScreenRecorderFacade: NSObject {
     refreshMicrophoneLevelMonitoring(resetMeter: false)
     recordedDurationTracker.reset()
     pendingMetadata = nil
-    pendingCameraRecordingSession = nil
+    cameraCoordination.setPendingRecordingSession(nil)
     currentCaptureDisplayID = nil
     resetRecordingSessionSuppressions()
 
@@ -2747,7 +2704,7 @@ final class ScreenRecorderFacade: NSObject {
       }
 
       if let resolvedTerminalError {
-        if self.pendingSeparateCameraFailure != nil {
+        if self.cameraCoordination.pendingFailure != nil {
           self.completeRecordingLifecycle(
             finalURL: nil,
             error: resolvedTerminalError,
@@ -2841,7 +2798,7 @@ final class ScreenRecorderFacade: NSObject {
   }
 
   private func writeCameraMetadataSidecarIfNeeded() {
-    guard let session = pendingCameraRecordingSession else { return }
+    guard let session = cameraCoordination.pendingRecordingSession else { return }
 
     do {
       try session.stubMetadata().write(to: session.metadataURL)
@@ -3023,7 +2980,7 @@ final class ScreenRecorderFacade: NSObject {
   }
 
   func _testPendingSeparateCameraFailureCode() -> String? {
-    pendingSeparateCameraFailure?.code
+    cameraCoordination.pendingFailure?.code
   }
 
   func _testTerminalRecordingError(screenError: Error?) -> Error? {
