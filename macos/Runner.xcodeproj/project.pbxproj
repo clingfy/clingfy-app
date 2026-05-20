@@ -41,6 +41,7 @@
 		4657DF33BADA75DCB03591FF /* OverlayRefreshPlan.swift in Sources */ = {isa = PBXBuildFile; fileRef = 427E590FBC9C4916C464DEA7 /* OverlayRefreshPlan.swift */; };
 		4690267C9B29BA2AC7BCE968 /* OverlayContracts.swift in Sources */ = {isa = PBXBuildFile; fileRef = 203D1F2F01AC749D9502A133 /* OverlayContracts.swift */; };
 		4817DD3C2B25F77C9E6133A8 /* OverlayUpdateDeduper.swift in Sources */ = {isa = PBXBuildFile; fileRef = CB4E0C29E30DA358A5C81FD4 /* OverlayUpdateDeduper.swift */; };
+		4C00B4E8C289BE63C1D7E2BF /* CameraCoordinationControllerTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 28946DA5F865D8DF340185EF /* CameraCoordinationControllerTests.swift */; };
 		4C17FA78443E9B25D54838E3 /* MicrophoneLevelMonitor.swift in Sources */ = {isa = PBXBuildFile; fileRef = 5964845B237A9BCC08254B7C /* MicrophoneLevelMonitor.swift */; };
 		4D3822C9EC285F2A78877BE5 /* StorageDiagnosticsService.swift in Sources */ = {isa = PBXBuildFile; fileRef = A4E6CA46562C4E1ADEB34988 /* StorageDiagnosticsService.swift */; };
 		4F72510E7C98E741BF80A496 /* PreviewSceneResolver.swift in Sources */ = {isa = PBXBuildFile; fileRef = F6DF001BDAEDC3B8FCDE13F9 /* PreviewSceneResolver.swift */; };
@@ -132,6 +133,7 @@
 		A1B2C3D4E5F60718293A4B0A /* ScreenZoomCursorIntermediatePipeline.swift in Sources */ = {isa = PBXBuildFile; fileRef = A1B2C3D4E5F60718293A4B09 /* ScreenZoomCursorIntermediatePipeline.swift */; };
 		A1B2C3D4E5F60718293A4B5D /* CameraOverlayLayoutTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = A1B2C3D4E5F60718293A4B5C /* CameraOverlayLayoutTests.swift */; };
 		A2B3C4D5E6F708192A3B4C5D /* ClingfyProjectIcon.icns in Resources */ = {isa = PBXBuildFile; fileRef = A2B3C4D5E6F708192A3B4C5E /* ClingfyProjectIcon.icns */; };
+		A788E3B0EB7D159DB89B44C6 /* CameraCoordinationController.swift in Sources */ = {isa = PBXBuildFile; fileRef = DDCBBF407771E3216D57604D /* CameraCoordinationController.swift */; };
 		A9DBBBED4745D5601A076271 /* CaptureTargetResolverTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 2CB8AFC0EC977891C483011A /* CaptureTargetResolverTests.swift */; };
 		B7C100012FA1000100A0B001 /* ProjectOpenCoordinator.swift in Sources */ = {isa = PBXBuildFile; fileRef = B7C100022FA1000100A0B001 /* ProjectOpenCoordinator.swift */; };
 		B7C100032FA1000100A0B001 /* ProjectOpenValidator.swift in Sources */ = {isa = PBXBuildFile; fileRef = B7C100042FA1000100A0B001 /* ProjectOpenValidator.swift */; };
@@ -191,6 +193,7 @@
 		1DEDC02DB9240C56A4EB2D23 /* PreviewSceneRequest.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = PreviewSceneRequest.swift; sourceTree = "<group>"; };
 		203D1F2F01AC749D9502A133 /* OverlayContracts.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = OverlayContracts.swift; sourceTree = "<group>"; };
 		213556AE9CE165CAD73E9898 /* ExportVideoRequest.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = ExportVideoRequest.swift; sourceTree = "<group>"; };
+		28946DA5F865D8DF340185EF /* CameraCoordinationControllerTests.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = CameraCoordinationControllerTests.swift; sourceTree = "<group>"; };
 		2C32D8A0F642CCEFB8D71E36 /* CaptureControlling.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = CaptureControlling.swift; sourceTree = "<group>"; };
 		2CA30527B5FD7B013F4A64F9 /* RecordedDurationTracker.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = RecordedDurationTracker.swift; sourceTree = "<group>"; };
 		2CB8AFC0EC977891C483011A /* CaptureTargetResolverTests.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = CaptureTargetResolverTests.swift; sourceTree = "<group>"; };
@@ -323,6 +326,7 @@
 		D4A1B2C3D4E5F60718293A4B /* StorageInfoProvider.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = StorageInfoProvider.swift; sourceTree = "<group>"; };
 		D851B0263A47BA61AA6AC854 /* ZoomQueryService.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = ZoomQueryService.swift; sourceTree = "<group>"; };
 		DBAFE534F311451D8C165B52 /* ExportPrep.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = ExportPrep.swift; sourceTree = "<group>"; };
+		DDCBBF407771E3216D57604D /* CameraCoordinationController.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = CameraCoordinationController.swift; sourceTree = "<group>"; };
 		DEC89D912852F9AAC2996A07 /* ScreenRecorderEventBridge.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = ScreenRecorderEventBridge.swift; sourceTree = "<group>"; };
 		DF9975749BBCCB19C63D6DF2 /* Pods-Runner.release-prod.xcconfig */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = text.xcconfig; name = "Pods-Runner.release-prod.xcconfig"; path = "Target Support Files/Pods-Runner/Pods-Runner.release-prod.xcconfig"; sourceTree = "<group>"; };
 		DFABA6A057D27E2AC4CDFEB6 /* StorageDiagnosticsServiceTests.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = StorageDiagnosticsServiceTests.swift; sourceTree = "<group>"; };
@@ -424,6 +428,7 @@
 				B2F68F98AC976184031BF555 /* RecordingProjectServiceTests.swift */,
 				6A813BE34FDB0E24F2F1245F /* RecordingPreflightServiceTests.swift */,
 				BB2C9D8FFE41A526BD03CCBD /* OverlayVisibilityControllerTests.swift */,
+				28946DA5F865D8DF340185EF /* CameraCoordinationControllerTests.swift */,
 			);
 			path = RunnerTests;
 			sourceTree = "<group>";
@@ -646,6 +651,7 @@
 				076DE1E594E51ABFCE0A6A51 /* Project */,
 				A920B9A939C254149120CEF3 /* Targeting */,
 				20346BB138C702CEAF758F9D /* Preflight */,
+				DDCBBF407771E3216D57604D /* CameraCoordinationController.swift */,
 			);
 			path = Capture;
 			sourceTree = "<group>";
@@ -1149,6 +1155,7 @@
 				9815310AE9CB2D8AE9292079 /* RecordingProjectServiceTests.swift in Sources */,
 				529C777FC592D8815112EE7E /* RecordingPreflightServiceTests.swift in Sources */,
 				1331725660D5952BBA3FD378 /* OverlayVisibilityControllerTests.swift in Sources */,
+				4C00B4E8C289BE63C1D7E2BF /* CameraCoordinationControllerTests.swift in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -1250,6 +1257,7 @@
 				DE60092E7B24A40FE3DA966F /* RecordingProjectService.swift in Sources */,
 				5C28475D0A634AE086923798 /* RecordingPreflightService.swift in Sources */,
 				98339761B94AD03F488F111F /* OverlayVisibilityController.swift in Sources */,
+				A788E3B0EB7D159DB89B44C6 /* CameraCoordinationController.swift in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
