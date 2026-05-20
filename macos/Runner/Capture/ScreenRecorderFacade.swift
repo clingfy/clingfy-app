@@ -444,9 +444,16 @@ final class ScreenRecorderFacade: NSObject {
       let needsOverlay = self.effectiveOverlayEnabledForRecording && self.prefs.overlayLinked
       let backend = self.captureBackendFactory(target)
       self.setCaptureBackend(backend)
+      // Slice 7 / PR 24: the separate-camera-asset-first vs.
+      // screen-capture-directly branch moved into
+      // `RecordingSessionCoordinator.beginCaptureFlow`. The three side
+      // effects are still owned by the facade — passed in as closures so
+      // the coordinator never touches `target` / `frameRate` / `outputURL`
+      // / `overlayID` / `systemAudioEnabled`.
       let startScreenCapture: (CGWindowID?) -> Void = { overlayID in
         let beginCapture = {
-          self.suppressOverlayWindowDuringSeparateCameraCapture = self.shouldSuppressOverlayWindowDuringCapture
+          self.suppressOverlayWindowDuringSeparateCameraCapture =
+            self.shouldSuppressOverlayWindowDuringCapture
           self.updateOverlayVisibility()
           self.startCapture(
             target: target,
@@ -457,19 +464,17 @@ final class ScreenRecorderFacade: NSObject {
           )
         }
 
-        guard self.shouldRecordSeparateCameraAsset,
-          let cameraSession = self.cameraCoordination.pendingRecordingSession
-        else {
-          beginCapture()
-          return
-        }
-
-        self.cameraRecorder.begin(session: cameraSession) { [weak self] result in
-          self?.handleCameraRecorderBeginResult(
-            result,
-            beginCapture: beginCapture
-          )
-        }
+        self.recordingSessionCoordinator.beginCaptureFlow(
+          shouldRecordSeparateCameraAsset: self.shouldRecordSeparateCameraAsset,
+          cameraSession: self.cameraCoordination.pendingRecordingSession,
+          beginScreenCapture: beginCapture,
+          beginCameraRecording: { session, completion in
+            self.cameraRecorder.begin(session: session, completion: completion)
+          },
+          handleCameraBeginResult: { [weak self] result, beginScreen in
+            self?.handleCameraRecorderBeginResult(result, beginCapture: beginScreen)
+          }
+        )
       }
 
       if needsOverlay {
