@@ -229,4 +229,45 @@ struct RecordingSessionCoordinator {
       cameraSession: cameraSession
     )
   }
+
+  // MARK: - Slice 7 / PR 24: begin-capture branching
+
+  /// Owns the "separate camera asset first vs. straight to screen" branch
+  /// that used to live inline in `startRecording`'s `startScreenCapture`
+  /// closure. The two side effects (`cameraRecorder.begin(session:)` +
+  /// `handleCameraRecorderBeginResult(...)`) and the inner
+  /// `beginCapture()` body (which touches `suppressOverlayWindowDuring
+  /// SeparateCameraCapture`, `updateOverlayVisibility()`, and
+  /// `startCapture(...)`) stay on the facade — the coordinator never sees
+  /// `target` / `frameRate` / `outputURL` / `overlayID` / `systemAudio
+  /// Enabled`. They were captured in the outer closure when it was built;
+  /// the `beginScreenCapture` closure passed in here carries them.
+  ///
+  /// Ordering preserved exactly:
+  ///   - no separate camera (or no pending session) → `beginScreenCapture`
+  ///   - separate camera + session → `beginCameraRecording(session)` then
+  ///     `handleCameraBeginResult(result, beginScreenCapture)` (the existing
+  ///     `handleCameraRecorderBeginResult` on the facade is what wraps the
+  ///     error into FlutterError + dispatches to `beginCapture` /
+  ///     `finishStartWithError` on success / failure).
+  func beginCaptureFlow(
+    shouldRecordSeparateCameraAsset: Bool,
+    cameraSession: CameraRecordingSession?,
+    beginScreenCapture: @escaping () -> Void,
+    beginCameraRecording: (
+      CameraRecordingSession, @escaping (Result<Void, Error>) -> Void
+    ) -> Void,
+    handleCameraBeginResult: @escaping (
+      Result<Void, Error>, @escaping () -> Void
+    ) -> Void
+  ) {
+    guard shouldRecordSeparateCameraAsset, let session = cameraSession else {
+      beginScreenCapture()
+      return
+    }
+
+    beginCameraRecording(session) { result in
+      handleCameraBeginResult(result, beginScreenCapture)
+    }
+  }
 }

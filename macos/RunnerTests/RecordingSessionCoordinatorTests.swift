@@ -404,4 +404,135 @@ final class RecordingSessionCoordinatorTests: XCTestCase {
     )
     XCTAssertNil(preparedExplicit.metadata.screen.windowId)
   }
+
+  // MARK: - Slice 7 / PR 24: beginCaptureFlow
+
+  /// Test-only camera session — `CameraRecordingSession` doesn't have a
+  /// default initializer and the binder doesn't care what's in it (it's
+  /// purely a payload threaded through to `beginCameraRecording`), so a
+  /// minimal instance is enough.
+  private func makeCameraSessionStub() -> CameraRecordingSession {
+    CameraRecordingSession(
+      outputURL: URL(fileURLWithPath: "/tmp/cam-raw.mov"),
+      metadataURL: URL(fileURLWithPath: "/tmp/cam-meta.json"),
+      segmentDirectoryURL: URL(fileURLWithPath: "/tmp/cam-segments"),
+      deviceId: "cam-1",
+      mirroredRaw: false,
+      nominalFrameRate: 30,
+      dimensions: CameraRecordingMetadata.Dimensions(width: 1280, height: 720))
+  }
+
+  func testBeginCaptureFlowGoesStraightToScreenWhenSeparateCameraDisabled() {
+    let coord = makeCoordinator()
+    var beginScreenCalls = 0
+    var beginCameraCalls = 0
+    var handleResultCalls = 0
+
+    coord.beginCaptureFlow(
+      shouldRecordSeparateCameraAsset: false,
+      cameraSession: makeCameraSessionStub(),  // ignored when flag is false
+      beginScreenCapture: { beginScreenCalls += 1 },
+      beginCameraRecording: { _, _ in beginCameraCalls += 1 },
+      handleCameraBeginResult: { _, _ in handleResultCalls += 1 }
+    )
+
+    XCTAssertEqual(beginScreenCalls, 1)
+    XCTAssertEqual(beginCameraCalls, 0)
+    XCTAssertEqual(handleResultCalls, 0)
+  }
+
+  func testBeginCaptureFlowGoesStraightToScreenWhenCameraSessionIsNil() {
+    // Defensive guard — separate-camera-asset is on, but the pending
+    // session is unexpectedly nil. Original code falls through to
+    // `beginCapture()` rather than failing the start.
+    let coord = makeCoordinator()
+    var beginScreenCalls = 0
+    var beginCameraCalls = 0
+
+    coord.beginCaptureFlow(
+      shouldRecordSeparateCameraAsset: true,
+      cameraSession: nil,
+      beginScreenCapture: { beginScreenCalls += 1 },
+      beginCameraRecording: { _, _ in beginCameraCalls += 1 },
+      handleCameraBeginResult: { _, _ in }
+    )
+
+    XCTAssertEqual(beginScreenCalls, 1)
+    XCTAssertEqual(beginCameraCalls, 0)
+  }
+
+  func testBeginCaptureFlowStartsCameraFirstThenForwardsResultToHandler() {
+    let coord = makeCoordinator()
+    let session = makeCameraSessionStub()
+
+    var beginScreenCalls = 0
+    var beginCameraReceivedSession: CameraRecordingSession?
+    var handlerReceivedResult: Result<Void, Error>?
+
+    // Capture the camera-completion so we can fire it ourselves to drive
+    // the test through the success/failure paths.
+    var capturedCameraCompletion: ((Result<Void, Error>) -> Void)?
+
+    coord.beginCaptureFlow(
+      shouldRecordSeparateCameraAsset: true,
+      cameraSession: session,
+      beginScreenCapture: { beginScreenCalls += 1 },
+      beginCameraRecording: { s, completion in
+        beginCameraReceivedSession = s
+        capturedCameraCompletion = completion
+      },
+      handleCameraBeginResult: { result, beginScreen in
+        handlerReceivedResult = result
+        // Mirror what the facade's handleCameraRecorderBeginResult does on
+        // success — call beginScreenCapture. We do it inline here so the
+        // test can assert beginScreenCalls reflects the dispatch.
+        if case .success = result {
+          beginScreen()
+        }
+      }
+    )
+
+    // beginCameraRecording was invoked with the supplied session; screen
+    // capture has NOT started yet.
+    XCTAssertEqual(beginCameraReceivedSession?.outputURL.lastPathComponent, "cam-raw.mov")
+    XCTAssertEqual(beginScreenCalls, 0)
+    XCTAssertNil(handlerReceivedResult)
+
+    // Camera finished beginning — happy path. handler should fire, and
+    // it should call beginScreen, bumping the screen counter.
+    capturedCameraCompletion?(.success(()))
+
+    if case .success = handlerReceivedResult { /* ok */ } else {
+      XCTFail("expected .success forwarded to handler, got \(String(describing: handlerReceivedResult))")
+    }
+    XCTAssertEqual(beginScreenCalls, 1)
+  }
+
+  func testBeginCaptureFlowForwardsCameraFailureToHandlerWithoutStartingScreen() {
+    let coord = makeCoordinator()
+    let session = makeCameraSessionStub()
+    struct CameraFailure: Error, Equatable { let code: String }
+
+    var beginScreenCalls = 0
+    var handlerReceivedError: Error?
+    var capturedCameraCompletion: ((Result<Void, Error>) -> Void)?
+
+    coord.beginCaptureFlow(
+      shouldRecordSeparateCameraAsset: true,
+      cameraSession: session,
+      beginScreenCapture: { beginScreenCalls += 1 },
+      beginCameraRecording: { _, completion in
+        capturedCameraCompletion = completion
+      },
+      handleCameraBeginResult: { result, _ in
+        if case .failure(let e) = result { handlerReceivedError = e }
+        // On failure the facade's real handler does NOT call beginScreen.
+      }
+    )
+
+    capturedCameraCompletion?(.failure(CameraFailure(code: "CAM_BUSY")))
+
+    XCTAssertEqual((handlerReceivedError as? CameraFailure)?.code, "CAM_BUSY")
+    XCTAssertEqual(beginScreenCalls, 0, "screen capture must not start on camera failure")
+  }
 }
