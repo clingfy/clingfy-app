@@ -2109,7 +2109,7 @@ final class ScreenRecorderFacade: NSObject {
 
     return flutterError(
       NativeErrorCode.recordingError,
-      "ScreenCaptureKit start failed: \(Self.errorMessage(from: originalError)). AVFoundation fallback failed: \(Self.errorMessage(from: screenError)).",
+      "ScreenCaptureKit start failed: \(RecordingFinalizer.errorMessage(from: originalError)). AVFoundation fallback failed: \(RecordingFinalizer.errorMessage(from: screenError)).",
       details: details
     )
   }
@@ -2174,12 +2174,7 @@ final class ScreenRecorderFacade: NSObject {
     ]
   }
 
-  private static func errorMessage(from error: Error) -> String {
-    if let flutterError = error as? FlutterError {
-      return flutterError.message ?? flutterError.code
-    }
-    return error.localizedDescription
-  }
+  // errorMessage(from:) moved to RecordingFinalizer (Slice 6 / PR 21).
 
   private static func dictionaryValue(_ value: Any?) -> [String: Any]? {
     if let dictionary = value as? [String: Any] {
@@ -2433,8 +2428,21 @@ final class ScreenRecorderFacade: NSObject {
 
     onRecordingStateChanged?(false)
 
-    if let error {
-      let errorMessage = Self.errorMessage(from: error)
+    // Slice 6 / PR 21: the typed finalization-action decision is pure and
+    // lives in RecordingFinalizer. The facade still owns every side effect
+    // (manifest write, callback fires, NativeLogger, session-field clears)
+    // and runs them in the same order as before.
+    let action = RecordingFinalizer.decideAction(
+      error: error,
+      wasStarting: wasStarting,
+      mode: mode == .ready ? .ready : .cancelled,
+      activeProjectPath: activeRecordingProjectRoot?.path,
+      activeSessionId: activeRecordingWorkflowSessionId,
+      recordingErrorCode: NativeErrorCode.recordingError
+    )
+
+    switch action {
+    case .fail(let errorMessage, let code, let stage):
       if let projectRoot = activeRecordingProjectRoot {
         MetadataSidecarWriter.updateProjectManifestStatus(.failed, projectRoot: projectRoot)
       }
@@ -2442,15 +2450,15 @@ final class ScreenRecorderFacade: NSObject {
         onRecordingFailed?([
           "type": "recordingFailed",
           "sessionId": sessionId,
-          "stage": wasStarting ? "start" : "finalize",
-          "code": NativeErrorCode.recordingError,
+          "stage": stage,
+          "code": code,
           "error": errorMessage,
         ])
       }
       if wasStarting {
         let startErr =
           (error as? FlutterError)
-          ?? flutterError(NativeErrorCode.recordingError, errorMessage)
+          ?? flutterError(code, errorMessage)
         pendingStartResult?(startErr)
       }
       NativeLogger.e(
@@ -2458,18 +2466,14 @@ final class ScreenRecorderFacade: NSObject {
         "Recording finished with error",
         context: ["error": errorMessage]
       )
-      completion?(flutterError(NativeErrorCode.recordingError, errorMessage))
+      completion?(flutterError(code, errorMessage))
       activeRecordingProjectRoot = nil
       activeRecordingWorkflowSessionId = nil
       cancelRequestedDuringStart = false
       return
-    }
 
-    switch mode {
-    case .ready:
-      if let projectPath = activeRecordingProjectRoot?.path,
-        let sessionId = activeRecordingWorkflowSessionId
-      {
+    case .ready(let projectPath, let sessionId):
+      if let projectPath, let sessionId {
         NativeLogger.i(
           "Facade",
           "Triggering onRecordingFinalized callback",
@@ -2477,7 +2481,6 @@ final class ScreenRecorderFacade: NSObject {
         )
         onRecordingFinalized?(sessionId, projectPath)
       }
-
       NativeLogger.i(
         "Facade",
         "Recording finished successfully",
@@ -2486,13 +2489,14 @@ final class ScreenRecorderFacade: NSObject {
           "screenPath": finalURL?.path ?? "nil",
         ]
       )
-      completion?(activeRecordingProjectRoot?.path)
-    case .cancelled:
+      completion?(projectPath)
+
+    case .cancelled(let projectPath):
       NativeLogger.i(
         "Facade",
         "Recording cancelled before finalize completed",
         context: [
-          "projectPath": activeRecordingProjectRoot?.path ?? "nil",
+          "projectPath": projectPath ?? "nil",
           "screenPath": finalURL?.path ?? "nil",
         ]
       )
@@ -2609,7 +2613,7 @@ final class ScreenRecorderFacade: NSObject {
         context: [
           "url": url?.path ?? "nil",
           "hasError": terminalError != nil,
-          "error": terminalError.map { Self.errorMessage(from: $0) } ?? "nil",
+          "error": terminalError.map { RecordingFinalizer.errorMessage(from: $0) } ?? "nil",
         ])
 
       if let terminalError,
