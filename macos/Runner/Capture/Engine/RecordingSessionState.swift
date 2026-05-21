@@ -75,4 +75,21 @@ final class RecordingSessionState {
   var stopResult: FlutterResult?
   var pauseResult: FlutterResult?
   var resumeResult: FlutterResult?
+
+  /// Start / recovery flags (PR 37).
+  ///
+  /// `pendingStop` — a stop was requested while still starting or while a
+  /// pause/resume mutation was in flight; drained once the recorder
+  /// settles. `cancelRequestedDuringStart` — the stop arrived mid-start so
+  /// the finished recording is finalized as cancelled rather than ready.
+  ///
+  /// The three `*Fallback*` fields drive the ScreenCaptureKit →
+  /// AVFoundation start-retry path: whether a fallback has been attempted,
+  /// the original SCK error to surface if the fallback also fails, and the
+  /// warning message to emit once the fallback succeeds.
+  var pendingStop = false
+  var cancelRequestedDuringStart = false
+  var hasAttemptedStartBackendFallback = false
+  var pendingStartFallbackOriginalError: Error?
+  var pendingStartFallbackWarningMessage: String?
 }

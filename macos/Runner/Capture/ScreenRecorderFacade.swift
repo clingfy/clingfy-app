@@ -62,23 +62,17 @@ import FlutterMacOS
 // (`finishStartWithError`, `refreshMicrophoneLevelMonitoring`,
 // `prepareCameraOverlayForRecordingStart`, …).
 //
-// Slice 10 is migrating the loose per-session fields into a single
-// `RecordingSessionState` owner — done so far: PR 35 (passive fields —
-// `activeRecordingProjectRoot`, `activeRecordingWorkflowSessionId`,
-// `pendingMetadata`, `currentCaptureDisplayID`, `sessionDisable*`,
-// `pendingStartCaptureConfig`) and PR 36 (the pending Flutter-result
-// slots — `startResult` / `stopResult` / `pauseResult` / `resumeResult`,
-// each still resolved exactly-once at the facade's resolve sites). Still
-// loose on the facade pending PR 37: the start/recovery flags
-// (`pendingStop`, `cancelRequestedDuringStart`, the backend-fallback
-// fields).
+// Slice 10 migrated every loose per-session field into a single
+// `RecordingSessionState` owner — PR 35 (passive fields), PR 36 (the
+// pending Flutter-result slots), PR 37 (the start/recovery + backend-
+// fallback flags). The facade no longer holds scattered session `var`s;
+// it reads/writes `sessionState.x`.
 //
-// Moving `startRecording` into `RecordingEngine` today would still
-// require a ~20-closure signature or a ~30-member host protocol — code
-// relocation, not decoupling. Once `RecordingSessionState` owns the full
-// set, `startRecording` and `finishStartWithError` can move because they
-// would carry the state owner with them. Until then `startRecording`
-// legitimately lives here — the facade *is* the orchestrator. See
+// Moving `startRecording` into `RecordingEngine` is now a smaller seam —
+// the engine could take `sessionState` directly instead of ~20 closures.
+// That move (plus `finishStartWithError` and the backend-callback bodies)
+// is the next slice; until it lands `startRecording` still lives here as
+// orchestration glue — the facade *is* the orchestrator. See
 // docs/windows-port-inventory.md §7.
 
 @MainActor
@@ -181,8 +175,6 @@ final class ScreenRecorderFacade: NSObject {
   // time. Behavior-identical to the old makeCaptureStartConfig +
   // resolveAudioDevice pair.
   private let captureStartConfigBuilder = CaptureStartConfigBuilder()
-  private var pendingStop: Bool = false
-  private var cancelRequestedDuringStart = false
   private var isPauseResumeMutationInFlight = false
   private var recordedDurationTracker = RecordedDurationTracker()
   private var selectedDisplayID: CGDirectDisplayID?
@@ -198,9 +190,6 @@ final class ScreenRecorderFacade: NSObject {
   private let overlayVisibility = OverlayVisibilityController()
   private var suppressOverlayWindowDuringSeparateCameraCapture = false
   private var hasReceivedRecordingMicrophoneLevel = false
-  private var hasAttemptedStartBackendFallback = false
-  private var pendingStartFallbackOriginalError: Error?
-  private var pendingStartFallbackWarningMessage: String?
 
   // events out
   var onDevicesChanged: (() -> Void)?
@@ -491,7 +480,7 @@ final class ScreenRecorderFacade: NSObject {
       //   5. writeProjectFiles (throws)
       sessionState.activeRecordingProjectRoot = nil
       cameraCoordination.setPendingRecordingSession(nil)
-      cancelRequestedDuringStart = false
+      sessionState.cancelRequestedDuringStart = false
 
       let prepared = try recordingEngine.sessionCoordinator.prepareStart(
         inputs: .init(
@@ -798,8 +787,8 @@ final class ScreenRecorderFacade: NSObject {
       state: state,
       isPauseResumeMutationInFlight: isPauseResumeMutationInFlight,
       setStopResult: { [unowned self] r in self.sessionState.stopResult = r },
-      setPendingStop: { [unowned self] v in self.pendingStop = v },
-      setCancelRequestedDuringStart: { [unowned self] v in self.cancelRequestedDuringStart = v },
+      setPendingStop: { [unowned self] v in self.sessionState.pendingStop = v },
+      setCancelRequestedDuringStart: { [unowned self] v in self.sessionState.cancelRequestedDuringStart = v },
       beginStoppingCapture: { [unowned self] in self.beginStoppingCapture() },
       result: result
     )
@@ -1459,13 +1448,13 @@ final class ScreenRecorderFacade: NSObject {
     }
     sessionState.activeRecordingProjectRoot = nil
     cameraCoordination.setPendingRecordingSession(nil)
-    cancelRequestedDuringStart = false
+    sessionState.cancelRequestedDuringStart = false
     cameraCoordination.clearPendingFailure()
     sessionState.pendingMetadata = nil
-    if pendingStop {
+    if sessionState.pendingStop {
       sessionState.stopResult?(err)
       sessionState.stopResult = nil
-      pendingStop = false
+      sessionState.pendingStop = false
     }
     resolvePauseResumeSuccessIfNeeded()
     applyIndicatorState()
@@ -1998,14 +1987,14 @@ final class ScreenRecorderFacade: NSObject {
 
   private func resetPendingStartRecoveryState() {
     sessionState.pendingStartCaptureConfig = nil
-    hasAttemptedStartBackendFallback = false
-    pendingStartFallbackOriginalError = nil
-    pendingStartFallbackWarningMessage = nil
+    sessionState.hasAttemptedStartBackendFallback = false
+    sessionState.pendingStartFallbackOriginalError = nil
+    sessionState.pendingStartFallbackWarningMessage = nil
   }
 
   private func recoverFromScreenCaptureKitStartFailureIfNeeded(screenError: Error) -> Bool {
     guard state == .starting else { return false }
-    guard !hasAttemptedStartBackendFallback else { return false }
+    guard !sessionState.hasAttemptedStartBackendFallback else { return false }
     guard currentBackendName() == "screencapturekit" else { return false }
     guard let config = sessionState.pendingStartCaptureConfig else { return false }
 
@@ -2017,9 +2006,9 @@ final class ScreenRecorderFacade: NSObject {
       return false
     }
 
-    hasAttemptedStartBackendFallback = true
-    pendingStartFallbackOriginalError = screenError
-    pendingStartFallbackWarningMessage =
+    sessionState.hasAttemptedStartBackendFallback = true
+    sessionState.pendingStartFallbackOriginalError = screenError
+    sessionState.pendingStartFallbackWarningMessage =
       "ScreenCaptureKit couldn’t start recording. Recording started with the AVFoundation fallback."
 
     NativeLogger.w(
@@ -2044,8 +2033,8 @@ final class ScreenRecorderFacade: NSObject {
   private func combinedStartFallbackFailureIfNeeded(screenError: Error?) -> Error? {
     guard let screenError else { return nil }
     guard state == .starting else { return screenError }
-    guard let originalError = pendingStartFallbackOriginalError else { return screenError }
-    guard hasAttemptedStartBackendFallback else { return screenError }
+    guard let originalError = sessionState.pendingStartFallbackOriginalError else { return screenError }
+    guard sessionState.hasAttemptedStartBackendFallback else { return screenError }
     guard currentBackendName() == "avfoundation" else { return screenError }
 
     var details: [String: Any] = [
@@ -2230,7 +2219,7 @@ final class ScreenRecorderFacade: NSObject {
   }
 
   private func drainPendingStopIfNeeded() {
-    guard pendingStop, !isPauseResumeMutationInFlight else { return }
+    guard sessionState.pendingStop, !isPauseResumeMutationInFlight else { return }
     beginStoppingCapture()
   }
 
@@ -2358,7 +2347,7 @@ final class ScreenRecorderFacade: NSObject {
       resolvePauseResumeSuccessIfNeeded()
     }
 
-    pendingStop = false
+    sessionState.pendingStop = false
     resetOverlayUpdateDeduper()
     state = .idle
     stateAsStr()
@@ -2418,7 +2407,7 @@ final class ScreenRecorderFacade: NSObject {
       completion?(flutterError(code, errorMessage))
       sessionState.activeRecordingProjectRoot = nil
       sessionState.activeRecordingWorkflowSessionId = nil
-      cancelRequestedDuringStart = false
+      sessionState.cancelRequestedDuringStart = false
       return
 
     case .ready(let projectPath, let sessionId):
@@ -2453,7 +2442,7 @@ final class ScreenRecorderFacade: NSObject {
     }
     sessionState.activeRecordingProjectRoot = nil
     sessionState.activeRecordingWorkflowSessionId = nil
-    cancelRequestedDuringStart = false
+    sessionState.cancelRequestedDuringStart = false
   }
 
   private func setCaptureBackend(_ backend: CaptureBackend) {
@@ -2814,8 +2803,8 @@ extension ScreenRecorderFacade: CaptureBackendEventHandling {
     onRecordingStateChanged?(true)
     if let sessionId = sessionState.activeRecordingWorkflowSessionId {
       onRecordingStarted?(sessionId)
-      if let warning = pendingStartFallbackWarningMessage {
-        pendingStartFallbackWarningMessage = nil
+      if let warning = sessionState.pendingStartFallbackWarningMessage {
+        sessionState.pendingStartFallbackWarningMessage = nil
         onRecordingWarning?([
           "type": "recordingWarning",
           "sessionId": sessionId,
@@ -2823,9 +2812,9 @@ extension ScreenRecorderFacade: CaptureBackendEventHandling {
         ])
       }
     }
-    pendingStartFallbackOriginalError = nil
+    sessionState.pendingStartFallbackOriginalError = nil
     sessionState.pendingStartCaptureConfig = nil
-    hasAttemptedStartBackendFallback = false
+    sessionState.hasAttemptedStartBackendFallback = false
 
     applyIndicatorState()
 
@@ -2914,7 +2903,7 @@ extension ScreenRecorderFacade: CaptureBackendEventHandling {
       guard let self else { return }
       var finalURL: URL? = url
       var completionMode: RecordingCompletionMode = .ready
-      let cancelledDuringStart = self.cancelRequestedDuringStart
+      let cancelledDuringStart = self.sessionState.cancelRequestedDuringStart
       if let projectRoot = self.sessionState.activeRecordingProjectRoot {
         if cancelledDuringStart {
           completionMode = .cancelled
