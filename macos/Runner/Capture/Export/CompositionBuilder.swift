@@ -2360,7 +2360,17 @@ final class CompositionBuilder {
           && screenSourceMode == .precompositedCanvas
           && !cameraMaskSamples.isEmpty,
         zoomApplicationMode: screenSourceMode == .liveScreenTrack ? .screenOverlayOnly : .none,
-        includeRoundedMask: false,
+        // When the camera is composited inline (InlineCameraRenderer), the
+        // screen layer is rendered onto a transparent background so the
+        // renderer can stack screen / camera / resolved background itself.
+        // That layer must therefore carry the rounded-corner visible-region
+        // mask: the mask both rounds the screen corners AND forces alpha 0
+        // outside the screen content rect, so the resolved background shows
+        // through the padding margins. Without it the screen layer keeps
+        // sharp corners and opaque margins that hide the background — the
+        // single-source export path already passes `includeRoundedMask:
+        // true` for the same reason.
+        includeRoundedMask: inlineCameraRenderPlan != nil,
         backgroundMode: inlineCameraRenderPlan == nil ? .resolvedOutput : .transparent,
         renderCursorOverlay: screenSourceMode == .liveScreenTrack,
         debugSource: screenSourceMode == .precompositedCanvas ? "export_precomposited_final" : "export_two_source"
