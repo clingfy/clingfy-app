@@ -6,12 +6,15 @@ import FlutterMacOS
 
 // MARK: - ScreenRecorderFacade — layered architecture overview
 //
-// After Slices 1–8, this facade is a thin bridge between Flutter method
+// After Slices 1–9, this facade is a thin bridge between Flutter method
 // calls (driven by MainFlutterWindow) and the engine + coordinator layer
 // that owns most of the work. The remaining ~3k lines are mostly:
-//   1. lifecycle bodies (startRecording / stopRecording / pauseRecording
-//      / resumeRecording) that orchestrate the coordinator + engines but
-//      stay inline pending a future lifecycle-ownership slice
+//   1. `startRecording` — orchestration glue over facade-owned session
+//      state. `stop` / `pause` / `resume` / `togglePause` already moved
+//      into `RecordingEngine` (Slice 9 / PR 33a); `startRecording`'s read
+//      surface is now a single `StartRecordingContext` snapshot (PR 33b).
+//      The method itself stays inline — see "Why startRecording stays"
+//      below.
 //   2. backend-callback bodies inside the CaptureBackendEventHandling
 //      conformance (Slice 6 / PR 22)
 //   3. session-state mutation glue + UI side effects
@@ -48,6 +51,29 @@ import FlutterMacOS
 // into Capture/{Support,Indicator,Overlay,Engine,Diagnostics,Export,Audio}/
 // as part of the strangler refactor. See ~/.claude/plans +
 // docs/windows-port-inventory.md §7 for the migration history.
+//
+// MARK: Why startRecording stays in the facade
+//
+// `startRecording` is orchestration glue, not domain logic: the heavy
+// lifting was already extracted into `RecordingSessionCoordinator`
+// (Slices 5–7) and the engines (Slice 8). What remains inline is a
+// sequence of coordinator/engine calls interleaved with ~12 writes to
+// loose facade-owned session fields (`activeRecordingProjectRoot`,
+// `activeRecordingWorkflowSessionId`, `pendingMetadata`, `pendingStop`,
+// `cancelRequestedDuringStart`, `startResult`/`stopResult`/`pauseResult`/
+// `resumeResult`, `currentCaptureDisplayID`, `sessionDisable*`) and ~15
+// facade-private side-effect helpers (`finishStartWithError`,
+// `refreshMicrophoneLevelMonitoring`, `prepareCameraOverlayForRecording
+// Start`, …).
+//
+// Moving the body into `RecordingEngine` today would require a ~20-closure
+// signature or a ~30-member host protocol — code relocation, not
+// decoupling, and a readability regression. The genuine prerequisite is a
+// future slice that gives those loose session fields a single owner
+// (a `RecordingSessionState` type); once that exists, `startRecording`
+// and `finishStartWithError` can move because they would carry the state
+// owner with them. Until then `startRecording` legitimately lives here —
+// the facade *is* the orchestrator. See docs/windows-port-inventory.md §7.
 
 @MainActor
 final class ScreenRecorderFacade: NSObject {

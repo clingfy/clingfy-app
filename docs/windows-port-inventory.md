@@ -437,3 +437,39 @@ rewrite vs port — is recorded here, not in folder names.
 The `RecordingStateMachine` is the highest-value engine-core extraction: it is the recorder lifecycle
 (Idle → Starting → Recording → Paused → Stopping → Finalizing …) that §1 already lists as a "Direct
 port", and the seam a future video-editing engine builds on.
+
+### 7.1 Strangler refactor — status (Slices 1–9 complete)
+
+The behavior-preserving strangler refactor of `ScreenRecorderFacade.swift` ran from ~4,311 lines down
+to ~3,000, with each PR green before the next and the Flutter↔Swift bridge contract frozen throughout.
+
+**Completed:**
+- Slices 1–2 — helper-type extraction, typed bridge DTOs, method dispatcher + routers, pure
+  `RecordingStateMachine` validator, stateless services.
+- Slice 3 — `CaptureTargetResolver`, `RecordingProjectService`, `RecordingPreflightService`.
+- Slice 4 — per-session UI coordinators (`OverlayVisibilityController`, `CameraCoordinationController`,
+  `RecordingIndicatorCoordinator`, `CursorHighlightCoordinator`).
+- Slice 5 — `RecordingStateMachine` promoted to lifecycle owner (`RecordingLifecycleEffects`),
+  `RecordingSessionCoordinator` introduced.
+- Slice 6 — `RecordingFinalizer` pure decisions, `CaptureBackendBinder`.
+- Slice 7 — `RecordingSessionCoordinator` grown to own `prepareStart` / `beginCaptureFlow` /
+  `startCapture`; `CaptureStartConfigBuilder`.
+- Slice 8 — real engines: `ExportEngine`, `PreviewEngine`, `RecordingEngine` (composition root).
+- Slice 9 — `stop` / `pause` / `resume` / `togglePause` lifecycle bodies moved into `RecordingEngine`
+  (PR 33a); `startRecording`'s read surface reduced to a single `StartRecordingContext` snapshot
+  (PR 33b).
+
+**Intentionally deferred — `startRecording` body + `finishStartWithError`.** Both remain inline in the
+facade. They are orchestration glue over ~12 loose facade-owned session fields
+(`activeRecordingProjectRoot`, `activeRecordingWorkflowSessionId`, `pendingMetadata`, `pendingStop`,
+`cancelRequestedDuringStart`, the four `*Result` callbacks, `currentCaptureDisplayID`,
+`sessionDisable*`). A mechanical move would need a ~20-closure signature / ~30-member host protocol —
+code relocation, not decoupling. `finishStartWithError` in particular is ~18 side effects with zero
+decision logic; wrapping it in an effects-struct handler buys nothing.
+
+**Prerequisite for any further lifecycle migration — Slice 10: `RecordingSessionState`.** The genuine
+next step (if the refactor resumes) is to give the loose session fields one owner type. Once that
+exists, `startRecording`, `finishStartWithError`, and the `CaptureBackendEventHandling` callback
+bodies become movable because they would carry the state owner with them. Backend-callback body
+migration should follow `RecordingSessionState`, not precede it — those bodies touch the same fields
+and would otherwise hit the identical wrapper problem.
