@@ -360,6 +360,26 @@ final class ScreenRecorderFacade: NSObject {
     sessionDisableCursorHighlight = request.disableCursorHighlight
     let allowLowStorageBypass = request.allowLowStorageBypass
 
+    // Slice 9 / PR 33b: snapshot every facade-state / prefs value that the
+    // rest of startRecording reads into one typed context. Built here —
+    // after the sessionDisable* writes above — because the effective*
+    // values depend on them. prefs + selection are not mutated anywhere
+    // for the rest of the method (including its async camera-permission /
+    // overlay tail), so the snapshot is observably identical to the
+    // original live reads. See StartRecordingContext for the full
+    // ordering contract.
+    let context = StartRecordingContext.from(
+      request: request,
+      args: args,
+      prefs: prefs,
+      selectedDisplayID: selectedDisplayID,
+      selectedAppWindowID: selectedAppWindowID,
+      effectiveOverlayEnabledForRecording: effectiveOverlayEnabledForRecording,
+      effectiveCursorEnabledForRecording: effectiveCursorEnabledForRecording,
+      effectiveCameraCaptureModeForRecording: effectiveCameraCaptureModeForRecording,
+      shouldRecordSeparateCameraAsset: shouldRecordSeparateCameraAsset
+    )
+
     // Slice 5 / PR 20 — first preflight cluster (screen permission +
     // capture target). The facade keeps the screen-permission side effect
     // (CGRequestScreenCaptureAccess) and finishStartWithError; the
@@ -367,11 +387,11 @@ final class ScreenRecorderFacade: NSObject {
     let captureTarget: CaptureTarget
     switch recordingEngine.sessionCoordinator.evaluateScreenPermissionAndTarget(
       captureTargetInput: .init(
-        displayMode: prefs.displayMode,
-        selectedDisplayID: selectedDisplayID,
-        selectedAppWindowID: selectedAppWindowID,
-        areaRect: prefs.areaRect,
-        areaDisplayId: prefs.areaDisplayId
+        displayMode: context.displayMode,
+        selectedDisplayID: context.selectedDisplayID,
+        selectedAppWindowID: context.selectedAppWindowID,
+        areaRect: context.areaRect,
+        areaDisplayId: context.areaDisplayId
       ),
       displayService: displaySvc
     ) {
@@ -397,14 +417,14 @@ final class ScreenRecorderFacade: NSObject {
       AreaPreviewOverlay.hide()
 
       let target = CaptureTarget(
-        mode: prefs.displayMode,
+        mode: context.displayMode,
         displayID: captureTarget.displayID,
         cropRect: captureTarget.cropRect,
-        windowID: (prefs.displayMode == .singleAppWindow ? selectedAppWindowID : nil)
+        windowID: (context.displayMode == .singleAppWindow ? context.selectedAppWindowID : nil)
       )
 
-      let frameRate = args?["frameRate"] as? Int ?? 60
-      let systemAudioEnabled = args?["systemAudioEnabled"] as? Bool ?? false
+      let frameRate = context.frameRate
+      let systemAudioEnabled = context.systemAudioEnabled
 
       // Slice 5 / PR 20 — second preflight cluster (microphone +
       // accessibility). The coordinator returns the first failing code;
@@ -415,11 +435,11 @@ final class ScreenRecorderFacade: NSObject {
       // (Slice 3 / PR 14).
       switch recordingEngine.sessionCoordinator.evaluateMicAndAccessibility(
         target: target,
-        sessionDisableMicrophone: sessionDisableMicrophone,
-        audioDeviceId: prefs.audioDeviceId,
+        sessionDisableMicrophone: context.request.disableMicrophone,
+        audioDeviceId: context.audioDeviceId,
         audioAuthorized: AVCaptureDevice.authorizationStatus(for: .audio) == .authorized,
-        cursorEnabledForRecording: effectiveCursorEnabledForRecording,
-        cursorLinked: prefs.cursorLinked,
+        cursorEnabledForRecording: context.effectiveCursorEnabledForRecording,
+        cursorLinked: context.cursorLinked,
         accessibilityAllowed: ensureAccessibilityAllowed(prompt: false)
       ) {
       case .proceed:
@@ -449,15 +469,15 @@ final class ScreenRecorderFacade: NSObject {
         inputs: .init(
           captureTarget: captureTarget,
           frameRate: frameRate,
-          displayMode: prefs.displayMode,
-          selectedAppWindowID: selectedAppWindowID,
-          recordingQuality: prefs.recordingQuality,
-          cursorEnabledForRecording: effectiveCursorEnabledForRecording,
-          cursorLinked: prefs.cursorLinked,
-          excludeRecorderApp: prefs.excludeRecorderApp,
-          shouldRecordSeparateCameraAsset: shouldRecordSeparateCameraAsset,
-          videoDeviceId: prefs.videoDeviceId,
-          overlayMirror: prefs.overlayMirror,
+          displayMode: context.displayMode,
+          selectedAppWindowID: context.selectedAppWindowID,
+          recordingQuality: context.recordingQuality,
+          cursorEnabledForRecording: context.effectiveCursorEnabledForRecording,
+          cursorLinked: context.cursorLinked,
+          excludeRecorderApp: context.excludeRecorderApp,
+          shouldRecordSeparateCameraAsset: context.shouldRecordSeparateCameraAsset,
+          videoDeviceId: context.videoDeviceId,
+          overlayMirror: context.overlayMirror,
           editorSeed: editorSeed(for: target)
         ),
         projectService: recordingProjectService,
@@ -473,7 +493,7 @@ final class ScreenRecorderFacade: NSObject {
             context: [
               "projectRoot": projectRoot.lastPathComponent,
               "screenVideo": screenVideoURL.lastPathComponent,
-              "cameraMode": self.effectiveCameraCaptureModeForRecording.rawValue,
+              "cameraMode": context.effectiveCameraCaptureModeForRecording.rawValue,
             ])
         }
       )
@@ -492,10 +512,10 @@ final class ScreenRecorderFacade: NSObject {
         "startRecording before prepareCameraOverlayForRecordingStart",
         [
           "target.displayID": String(target.displayID),
-          "displayMode": "\(prefs.displayMode)",
+          "displayMode": "\(context.displayMode)",
         ])
 
-      let needsOverlay = self.effectiveOverlayEnabledForRecording && self.prefs.overlayLinked
+      let needsOverlay = context.effectiveOverlayEnabledForRecording && context.overlayLinked
       let backend = self.captureBackendFactory(target)
       self.setCaptureBackend(backend)
       // Slice 7 / PR 24: the separate-camera-asset-first vs.
@@ -522,7 +542,7 @@ final class ScreenRecorderFacade: NSObject {
         }
 
         self.recordingEngine.sessionCoordinator.beginCaptureFlow(
-          shouldRecordSeparateCameraAsset: self.shouldRecordSeparateCameraAsset,
+          shouldRecordSeparateCameraAsset: context.shouldRecordSeparateCameraAsset,
           cameraSession: self.cameraCoordination.pendingRecordingSession,
           beginScreenCapture: beginCapture,
           beginCameraRecording: { session, completion in
