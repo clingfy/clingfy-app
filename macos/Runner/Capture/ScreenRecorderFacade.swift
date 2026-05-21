@@ -371,10 +371,7 @@ final class ScreenRecorderFacade: NSObject {
     resetPendingStartRecoveryState()
     refreshMicrophoneLevelMonitoring(resetMeter: true)
     let request = StartRecordingRequest.fromFlutter(args)
-    sessionState.activeRecordingWorkflowSessionId = request.sessionId
-    sessionState.sessionDisableMicrophone = request.disableMicrophone
-    sessionState.sessionDisableCameraOverlay = request.disableCameraOverlay
-    sessionState.sessionDisableCursorHighlight = request.disableCursorHighlight
+    sessionState.applyStartRequest(request)
     let allowLowStorageBypass = request.allowLowStorageBypass
 
     // Slice 9 / PR 33b: snapshot every facade-state / prefs value that the
@@ -1498,9 +1495,7 @@ final class ScreenRecorderFacade: NSObject {
   }
 
   private func resetRecordingSessionSuppressions() {
-    sessionState.sessionDisableMicrophone = false
-    sessionState.sessionDisableCameraOverlay = false
-    sessionState.sessionDisableCursorHighlight = false
+    sessionState.clearSessionSuppressions()
     suppressOverlayWindowDuringSeparateCameraCapture = false
     cameraCoordination.clearPendingFailure()
   }
@@ -1986,10 +1981,7 @@ final class ScreenRecorderFacade: NSObject {
   }
 
   private func resetPendingStartRecoveryState() {
-    sessionState.pendingStartCaptureConfig = nil
-    sessionState.hasAttemptedStartBackendFallback = false
-    sessionState.pendingStartFallbackOriginalError = nil
-    sessionState.pendingStartFallbackWarningMessage = nil
+    sessionState.resetStartRecovery()
   }
 
   private func recoverFromScreenCaptureKitStartFailureIfNeeded(screenError: Error) -> Bool {
@@ -2006,10 +1998,11 @@ final class ScreenRecorderFacade: NSObject {
       return false
     }
 
-    sessionState.hasAttemptedStartBackendFallback = true
-    sessionState.pendingStartFallbackOriginalError = screenError
-    sessionState.pendingStartFallbackWarningMessage =
-      "ScreenCaptureKit couldn’t start recording. Recording started with the AVFoundation fallback."
+    sessionState.markFallbackAttempted(
+      originalError: screenError,
+      warningMessage:
+        "ScreenCaptureKit couldn’t start recording. Recording started with the AVFoundation fallback."
+    )
 
     NativeLogger.w(
       "Facade",
@@ -2405,9 +2398,7 @@ final class ScreenRecorderFacade: NSObject {
         context: ["error": errorMessage]
       )
       completion?(flutterError(code, errorMessage))
-      sessionState.activeRecordingProjectRoot = nil
-      sessionState.activeRecordingWorkflowSessionId = nil
-      sessionState.cancelRequestedDuringStart = false
+      sessionState.clearTerminalSessionState()
       return
 
     case .ready(let projectPath, let sessionId):
@@ -2440,9 +2431,7 @@ final class ScreenRecorderFacade: NSObject {
       )
       completion?(nil)
     }
-    sessionState.activeRecordingProjectRoot = nil
-    sessionState.activeRecordingWorkflowSessionId = nil
-    sessionState.cancelRequestedDuringStart = false
+    sessionState.clearTerminalSessionState()
   }
 
   private func setCaptureBackend(_ backend: CaptureBackend) {
