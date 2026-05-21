@@ -65,15 +65,20 @@ import FlutterMacOS
 // Slice 10 migrated every loose per-session field into a single
 // `RecordingSessionState` owner — PR 35 (passive fields), PR 36 (the
 // pending Flutter-result slots), PR 37 (the start/recovery + backend-
-// fallback flags). The facade no longer holds scattered session `var`s;
-// it reads/writes `sessionState.x`.
+// fallback flags), PR 38 (intent-named mutation helpers). The facade no
+// longer holds scattered session `var`s; it reads/writes `sessionState.x`.
 //
-// Moving `startRecording` into `RecordingEngine` is now a smaller seam —
-// the engine could take `sessionState` directly instead of ~20 closures.
-// That move (plus `finishStartWithError` and the backend-callback bodies)
-// is the next slice; until it lands `startRecording` still lives here as
-// orchestration glue — the facade *is* the orchestrator. See
-// docs/windows-port-inventory.md §7.
+// Slice 11 then re-audited `startRecording` / `finishStartWithError` /
+// the `CaptureBackendEventHandling` callback bodies as candidates to move
+// into `RecordingEngine`, and closed without moving them: even with
+// `sessionState` collapsing the field-pokes, each body still needs a
+// 12–15-member effects protocol because it is facade-platform
+// orchestration — driving the per-session UI coordinators (camera /
+// overlay / cursor / indicator), mic telemetry, metadata writers, and
+// Flutter event callbacks. The engine-domain *decisions* were already
+// extracted in Slices 5–8; what is left here is the orchestrator's job.
+// The facade *is* the orchestrator — a legitimate end state. See
+// docs/windows-port-inventory.md §7.1 for the full audit.
 
 @MainActor
 final class ScreenRecorderFacade: NSObject {
