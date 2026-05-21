@@ -93,3 +93,62 @@ final class RecordingSessionState {
   var pendingStartFallbackOriginalError: Error?
   var pendingStartFallbackWarningMessage: String?
 }
+
+// MARK: - Session-state mutation helpers (PR 38)
+//
+// Intent-named replacements for the assignment clusters that the facade
+// previously inlined in `startRecording` / `resetPendingStartRecoveryState`
+// / `resetRecordingSessionSuppressions` / the SCK-fallback recovery /
+// `completeRecordingLifecycle`. Each helper is a verbatim, same-order
+// relocation of the facade's inline assignments — no behavior change. They
+// shrink the seam for the eventual `startRecording` migration: the engine
+// can call one intent-named method instead of poking individual fields.
+extension RecordingSessionState {
+
+  /// Applies the per-session fields carried by a `startRecording` request:
+  /// the workflow id + the three `sessionDisable*` suppression flags.
+  /// Mirrors the four facade writes near the top of `startRecording`.
+  func applyStartRequest(_ request: StartRecordingRequest) {
+    activeRecordingWorkflowSessionId = request.sessionId
+    sessionDisableMicrophone = request.disableMicrophone
+    sessionDisableCameraOverlay = request.disableCameraOverlay
+    sessionDisableCursorHighlight = request.disableCursorHighlight
+  }
+
+  /// Clears the ScreenCaptureKit → AVFoundation start-fallback bookkeeping.
+  /// Verbatim body of the old facade-private `resetPendingStartRecoveryState()`.
+  func resetStartRecovery() {
+    pendingStartCaptureConfig = nil
+    hasAttemptedStartBackendFallback = false
+    pendingStartFallbackOriginalError = nil
+    pendingStartFallbackWarningMessage = nil
+  }
+
+  /// Clears the three per-session suppression flags. The facade's
+  /// `resetRecordingSessionSuppressions()` still owns the non-session-state
+  /// resets (overlay-window suppression, camera failure dedup).
+  func clearSessionSuppressions() {
+    sessionDisableMicrophone = false
+    sessionDisableCameraOverlay = false
+    sessionDisableCursorHighlight = false
+  }
+
+  /// Records that a start-backend fallback (SCK → AVFoundation) was
+  /// attempted, retaining the original error + the warning to emit once
+  /// the fallback succeeds.
+  func markFallbackAttempted(originalError: Error, warningMessage: String?) {
+    hasAttemptedStartBackendFallback = true
+    pendingStartFallbackOriginalError = originalError
+    pendingStartFallbackWarningMessage = warningMessage
+  }
+
+  /// Clears the active project / workflow id / cancel flag once a recording
+  /// reaches a terminal state. Mirrors the duplicated three-line cluster at
+  /// the end of `completeRecordingLifecycle` (both the `.fail` early-return
+  /// path and the `.ready` / `.cancelled` fallthrough).
+  func clearTerminalSessionState() {
+    activeRecordingProjectRoot = nil
+    activeRecordingWorkflowSessionId = nil
+    cancelRequestedDuringStart = false
+  }
+}
