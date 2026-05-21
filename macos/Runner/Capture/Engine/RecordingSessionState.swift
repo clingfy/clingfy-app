@@ -1,4 +1,5 @@
 import CoreGraphics
+import FlutterMacOS
 import Foundation
 
 /// Slice 10 / PR 35: a single owner for the per-recording-session mutable
@@ -61,4 +62,17 @@ final class RecordingSessionState {
   /// The `CaptureStartConfig` retained for the ScreenCaptureKit →
   /// AVFoundation start-fallback retry path.
   var pendingStartCaptureConfig: CaptureStartConfig?
+
+  /// Pending Flutter-result slots for the four lifecycle calls (PR 36).
+  ///
+  /// Each must be completed **exactly once** and then cleared to `nil` —
+  /// the facade's resolve sites (`finishStartWithError`,
+  /// `completeRecordingLifecycle`, `resolvePauseResume{Failure,
+  /// SuccessIfNeeded}`, `backendDidStart`) own that contract. Moving the
+  /// slots here is a pure relocation; the fire-then-nil ordering at every
+  /// call site is unchanged.
+  var startResult: FlutterResult?
+  var stopResult: FlutterResult?
+  var pauseResult: FlutterResult?
+  var resumeResult: FlutterResult?
 }

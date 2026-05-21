@@ -63,13 +63,14 @@ import FlutterMacOS
 // `prepareCameraOverlayForRecordingStart`, …).
 //
 // Slice 10 is migrating the loose per-session fields into a single
-// `RecordingSessionState` owner (PR 35: the passive fields —
+// `RecordingSessionState` owner — done so far: PR 35 (passive fields —
 // `activeRecordingProjectRoot`, `activeRecordingWorkflowSessionId`,
 // `pendingMetadata`, `currentCaptureDisplayID`, `sessionDisable*`,
-// `pendingStartCaptureConfig`). Still loose on the facade pending
-// PR 36 / PR 37: the pending Flutter-result slots (`startResult` /
-// `stopResult` / `pauseResult` / `resumeResult`) and the start/recovery
-// flags (`pendingStop`, `cancelRequestedDuringStart`, the backend-fallback
+// `pendingStartCaptureConfig`) and PR 36 (the pending Flutter-result
+// slots — `startResult` / `stopResult` / `pauseResult` / `resumeResult`,
+// each still resolved exactly-once at the facade's resolve sites). Still
+// loose on the facade pending PR 37: the start/recovery flags
+// (`pendingStop`, `cancelRequestedDuringStart`, the backend-fallback
 // fields).
 //
 // Moving `startRecording` into `RecordingEngine` today would still
@@ -180,10 +181,6 @@ final class ScreenRecorderFacade: NSObject {
   // time. Behavior-identical to the old makeCaptureStartConfig +
   // resolveAudioDevice pair.
   private let captureStartConfigBuilder = CaptureStartConfigBuilder()
-  private var startResult: FlutterResult?
-  private var pauseResult: FlutterResult?
-  private var resumeResult: FlutterResult?
-  private var stopResult: FlutterResult?
   private var pendingStop: Bool = false
   private var cancelRequestedDuringStart = false
   private var isPauseResumeMutationInFlight = false
@@ -379,7 +376,7 @@ final class ScreenRecorderFacade: NSObject {
     case .start:
       break
     }
-    startResult = result
+    sessionState.startResult = result
     state = recordingEngine.stateMachine.nextOnStart(from: state)
     stateAsStr()
     resetPendingStartRecoveryState()
@@ -800,7 +797,7 @@ final class ScreenRecorderFacade: NSObject {
     recordingEngine.stopRecording(
       state: state,
       isPauseResumeMutationInFlight: isPauseResumeMutationInFlight,
-      setStopResult: { [unowned self] r in self.stopResult = r },
+      setStopResult: { [unowned self] r in self.sessionState.stopResult = r },
       setPendingStop: { [unowned self] v in self.pendingStop = v },
       setCancelRequestedDuringStart: { [unowned self] v in self.cancelRequestedDuringStart = v },
       beginStoppingCapture: { [unowned self] in self.beginStoppingCapture() },
@@ -816,7 +813,7 @@ final class ScreenRecorderFacade: NSObject {
       setIsPauseResumeMutationInFlight: { [unowned self] v in
         self.isPauseResumeMutationInFlight = v
       },
-      setPauseResult: { [unowned self] r in self.pauseResult = r },
+      setPauseResult: { [unowned self] r in self.sessionState.pauseResult = r },
       beginPauseOnCapture: { [unowned self] in self.capture.pause() },
       result: result
     )
@@ -830,7 +827,7 @@ final class ScreenRecorderFacade: NSObject {
       setIsPauseResumeMutationInFlight: { [unowned self] v in
         self.isPauseResumeMutationInFlight = v
       },
-      setResumeResult: { [unowned self] r in self.resumeResult = r },
+      setResumeResult: { [unowned self] r in self.sessionState.resumeResult = r },
       beginResumeOnCapture: { [unowned self] in self.capture.resume() },
       result: result
     )
@@ -1466,8 +1463,8 @@ final class ScreenRecorderFacade: NSObject {
     cameraCoordination.clearPendingFailure()
     sessionState.pendingMetadata = nil
     if pendingStop {
-      stopResult?(err)
-      stopResult = nil
+      sessionState.stopResult?(err)
+      sessionState.stopResult = nil
       pendingStop = false
     }
     resolvePauseResumeSuccessIfNeeded()
@@ -1475,8 +1472,8 @@ final class ScreenRecorderFacade: NSObject {
     updateOverlayVisibility()
     updateCursorVisibility()
     sessionState.activeRecordingWorkflowSessionId = nil
-    startResult?(err)
-    startResult = nil
+    sessionState.startResult?(err)
+    sessionState.startResult = nil
   }
   private func formattedElapsed() -> String {
     RecordingIndicatorCoordinator.formatElapsed(
@@ -2287,18 +2284,18 @@ final class ScreenRecorderFacade: NSObject {
     let flutterFailure =
       (error as? FlutterError)
       ?? flutterError(NativeErrorCode.recordingError, error.localizedDescription)
-    pauseResult?(flutterFailure)
-    resumeResult?(flutterFailure)
-    pauseResult = nil
-    resumeResult = nil
+    sessionState.pauseResult?(flutterFailure)
+    sessionState.resumeResult?(flutterFailure)
+    sessionState.pauseResult = nil
+    sessionState.resumeResult = nil
     isPauseResumeMutationInFlight = false
   }
 
   private func resolvePauseResumeSuccessIfNeeded() {
-    pauseResult?(nil)
-    resumeResult?(nil)
-    pauseResult = nil
-    resumeResult = nil
+    sessionState.pauseResult?(nil)
+    sessionState.resumeResult?(nil)
+    sessionState.pauseResult = nil
+    sessionState.resumeResult = nil
     isPauseResumeMutationInFlight = false
   }
 
@@ -2841,8 +2838,8 @@ extension ScreenRecorderFacade: CaptureBackendEventHandling {
 
     updateCursorVisibility()
 
-    startResult?(visibleProjectPath)
-    startResult = nil
+    sessionState.startResult?(visibleProjectPath)
+    sessionState.startResult = nil
 
     drainPendingStopIfNeeded()
   }
@@ -2902,16 +2899,16 @@ extension ScreenRecorderFacade: CaptureBackendEventHandling {
       screenError: terminalError
     )
 
-    let pendingStartResult = startResult
+    let pendingStartResult = sessionState.startResult
     let wasStarting = state == .starting
     if wasStarting {
-      startResult = nil
+      sessionState.startResult = nil
     }
 
     recordedDurationTracker.stop()
 
-    let completion = stopResult
-    stopResult = nil
+    let completion = sessionState.stopResult
+    sessionState.stopResult = nil
 
     let finalizeWithCameraResult: (CameraRecordingResult?) -> Void = { [weak self] cameraResult in
       guard let self else { return }
