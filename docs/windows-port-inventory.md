@@ -438,7 +438,7 @@ The `RecordingStateMachine` is the highest-value engine-core extraction: it is t
 (Idle → Starting → Recording → Paused → Stopping → Finalizing …) that §1 already lists as a "Direct
 port", and the seam a future video-editing engine builds on.
 
-### 7.1 Strangler refactor — status (Slices 1–9 complete)
+### 7.1 Strangler refactor — status (Slices 1–10 complete; Slice 11 audited + closed)
 
 The behavior-preserving strangler refactor of `ScreenRecorderFacade.swift` ran from ~4,311 lines down
 to ~3,000, with each PR green before the next and the Flutter↔Swift bridge contract frozen throughout.
@@ -458,18 +458,39 @@ to ~3,000, with each PR green before the next and the Flutter↔Swift bridge con
 - Slice 9 — `stop` / `pause` / `resume` / `togglePause` lifecycle bodies moved into `RecordingEngine`
   (PR 33a); `startRecording`'s read surface reduced to a single `StartRecordingContext` snapshot
   (PR 33b).
+- Slice 10 — `RecordingSessionState`: every loose per-session field given one owner — PR 35 (passive
+  fields), PR 36 (the pending `FlutterResult` slots), PR 37 (the start/recovery + backend-fallback
+  flags), PR 38 (intent-named mutation helpers — `applyStartRequest`, `resetStartRecovery`,
+  `clearSessionSuppressions`, `markFallbackAttempted`, `clearTerminalSessionState`).
 
-**Intentionally deferred — `startRecording` body + `finishStartWithError`.** Both remain inline in the
-facade. They are orchestration glue over ~12 loose facade-owned session fields
-(`activeRecordingProjectRoot`, `activeRecordingWorkflowSessionId`, `pendingMetadata`, `pendingStop`,
-`cancelRequestedDuringStart`, the four `*Result` callbacks, `currentCaptureDisplayID`,
-`sessionDisable*`). A mechanical move would need a ~20-closure signature / ~30-member host protocol —
-code relocation, not decoupling. `finishStartWithError` in particular is ~18 side effects with zero
-decision logic; wrapping it in an effects-struct handler buys nothing.
+**Slice 11 — lifecycle-body migration: audited and closed (not done).** With `RecordingSessionState`
+in place, `finishStartWithError` and the `CaptureBackendEventHandling` callback bodies
+(`backendDidStart` / `backendDidFinish` / `backendDidPause` / `backendDidResume` / `backendDidWarn` /
+`backendDidReportMicrophoneLevel`) were re-audited as candidates to move into `RecordingEngine`.
+They stay in the facade:
 
-**Prerequisite for any further lifecycle migration — Slice 10: `RecordingSessionState`.** The genuine
-next step (if the refactor resumes) is to give the loose session fields one owner type. Once that
-exists, `startRecording`, `finishStartWithError`, and the `CaptureBackendEventHandling` callback
-bodies become movable because they would carry the state owner with them. Backend-callback body
-migration should follow `RecordingSessionState`, not precede it — those bodies touch the same fields
-and would otherwise hit the identical wrapper problem.
+- `finishStartWithError` — Slice 10 collapsed its ~8 scattered field-pokes into one `sessionState`
+  object, but the body is still ~12 facade-platform side effects (`refreshMicrophoneLevelMonitoring`,
+  `recordedDurationTracker.reset`, `resetRecordingSessionSuppressions`, the `cameraCoordination`
+  clears, `resolvePauseResumeSuccessIfNeeded`, `applyIndicatorState`, `updateOverlayVisibility`,
+  `updateCursorVisibility`, the `onRecordingFailed` Flutter callback, …). Moving it needs a
+  ~12-member effects protocol — not *smaller* than the method, so it fails the "seam smaller than
+  the method" rule.
+- `backendDidStart` / `backendDidFinish` etc. — worse: 15+ effects (camera highlight, overlay,
+  cursor, indicator, metadata-sidecar writers, prefs, mic monitoring, `drainPendingStopIfNeeded`,
+  the SCK→AVFoundation fallback recovery).
+
+Root cause: the lifecycle bodies are **facade-platform orchestration**, not engine-domain logic. The
+engine-domain *decisions* — `RecordingStateMachine` (transitions), `RecordingFinalizer` (finalization
+action), `RecordingSessionCoordinator` (preflight + capture flow) — were already extracted in
+Slices 5–8. What remains in the lifecycle bodies is the orchestrator driving the per-session UI
+coordinators (camera / overlay / cursor / indicator), mic telemetry, metadata writers, and Flutter
+event callbacks. The facade *is* the orchestrator; that is a legitimate end state.
+
+The only thing that would let the lifecycle bodies move without a 12–15-member protocol is migrating
+the **per-session UI coordinators' ownership** into `RecordingEngine` (so it calls them directly).
+That is a large slice with thin payoff and is **not currently planned**. The strangler refactor is
+considered complete at Slice 10: `ScreenRecorderFacade` went from a ~4,311-line god object to a
+~3,000-line orchestrator with every domain (export, preview, recording lifecycle decisions, session
+state, capture targeting, project/metadata, preflight, UI coordination) behind a named engine,
+coordinator, service, or owner type.
