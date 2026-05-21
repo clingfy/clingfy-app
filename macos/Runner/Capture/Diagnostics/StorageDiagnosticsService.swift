@@ -39,7 +39,7 @@ extension ScreenRecorderFacade {
   }
 
   func currentCaptureDestinationURL() -> URL {
-    CaptureDestinationDiagnostics.url(for: activeRecordingProjectRoot)
+    CaptureDestinationDiagnostics.url(for: sessionState.activeRecordingProjectRoot)
   }
 
   func availableDiskSpaceBytes(at url: URL) -> Int64? {

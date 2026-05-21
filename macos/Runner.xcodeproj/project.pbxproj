@@ -123,6 +123,7 @@
 		81CB5B49A932A3DC69059C83 /* MetadataSidecarWriter.swift in Sources */ = {isa = PBXBuildFile; fileRef = C7624E3F54B75567B79BEB96 /* MetadataSidecarWriter.swift */; };
 		8A7F969A09CE93447DE1EA17 /* ZoomQueryServiceTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = A74D174212C4749A322E8474 /* ZoomQueryServiceTests.swift */; };
 		8AAA59EA7CDDF22B4E47FB07 /* CaptureDestinationDiagnostics.swift in Sources */ = {isa = PBXBuildFile; fileRef = BDCE6283CC82D1BA03141B01 /* CaptureDestinationDiagnostics.swift */; };
+		8DD941C470535110159C907D /* RecordingSessionState.swift in Sources */ = {isa = PBXBuildFile; fileRef = 7756A56B1B8A4B603EFFAEA1 /* RecordingSessionState.swift */; };
 		8F5A1B2C3D4E5F60718293A2 /* OverlayUpdateDeduperTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 8F5A1B2C3D4E5F60718293A1 /* OverlayUpdateDeduperTests.swift */; };
 		92DE71AE93031D649E329B64 /* CaptureStartConfigBuilderTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 888783F13627B16A2EE25EE9 /* CaptureStartConfigBuilderTests.swift */; };
 		9815310AE9CB2D8AE9292079 /* RecordingProjectServiceTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = B2F68F98AC976184031BF555 /* RecordingProjectServiceTests.swift */; };
@@ -303,6 +304,7 @@
 		7016C578B942E3719B0C17B5 /* Pods-Runner.profile-prod.xcconfig */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = text.xcconfig; name = "Pods-Runner.profile-prod.xcconfig"; path = "Target Support Files/Pods-Runner/Pods-Runner.profile-prod.xcconfig"; sourceTree = "<group>"; };
 		73AA0A1A2585787F7B39578A /* Pods-Runner.release-dev.xcconfig */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = text.xcconfig; name = "Pods-Runner.release-dev.xcconfig"; path = "Target Support Files/Pods-Runner/Pods-Runner.release-dev.xcconfig"; sourceTree = "<group>"; };
 		76F7D4904C8CB0412CE24890 /* RecordingProjectService.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = RecordingProjectService.swift; sourceTree = "<group>"; };
+		7756A56B1B8A4B603EFFAEA1 /* RecordingSessionState.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = RecordingSessionState.swift; sourceTree = "<group>"; };
 		79BDE597B4AFB4B8E9940F66 /* Pods-RunnerTests.release-dev.xcconfig */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = text.xcconfig; name = "Pods-RunnerTests.release-dev.xcconfig"; path = "Target Support Files/Pods-RunnerTests/Pods-RunnerTests.release-dev.xcconfig"; sourceTree = "<group>"; };
 		7AFA3C8E1D35360C0083082E /* Release.xcconfig */ = {isa = PBXFileReference; lastKnownFileType = text.xcconfig; path = Release.xcconfig; sourceTree = "<group>"; };
 		7C0FF00100000000FF00CC01 /* ZoomFocusModeTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ZoomFocusModeTests.swift; sourceTree = "<group>"; };
@@ -899,6 +901,7 @@
 				2CC62ED71D4FA3FF539BFFD2 /* CaptureStartConfigBuilder.swift */,
 				A5A6225F6CBBE813D421D521 /* RecordingEngine.swift */,
 				23F2D8D7FDF08CD8BB5BAED0 /* StartRecordingContext.swift */,
+				7756A56B1B8A4B603EFFAEA1 /* RecordingSessionState.swift */,
 			);
 			name = Engine;
 			path = Engine;
@@ -1351,6 +1354,7 @@
 				70E344F67EBA92C8E19FC2A9 /* PreviewEngine.swift in Sources */,
 				E3ECE685EE9CE4A7311FD73C /* RecordingEngine.swift in Sources */,
 				D25147457A373A7068CF541A /* StartRecordingContext.swift in Sources */,
+				8DD941C470535110159C907D /* RecordingSessionState.swift in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};

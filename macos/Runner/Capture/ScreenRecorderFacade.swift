@@ -57,23 +57,28 @@ import FlutterMacOS
 // `startRecording` is orchestration glue, not domain logic: the heavy
 // lifting was already extracted into `RecordingSessionCoordinator`
 // (Slices 5–7) and the engines (Slice 8). What remains inline is a
-// sequence of coordinator/engine calls interleaved with ~12 writes to
-// loose facade-owned session fields (`activeRecordingProjectRoot`,
-// `activeRecordingWorkflowSessionId`, `pendingMetadata`, `pendingStop`,
-// `cancelRequestedDuringStart`, `startResult`/`stopResult`/`pauseResult`/
-// `resumeResult`, `currentCaptureDisplayID`, `sessionDisable*`) and ~15
-// facade-private side-effect helpers (`finishStartWithError`,
-// `refreshMicrophoneLevelMonitoring`, `prepareCameraOverlayForRecording
-// Start`, …).
+// sequence of coordinator/engine calls interleaved with writes to
+// per-session state and ~15 facade-private side-effect helpers
+// (`finishStartWithError`, `refreshMicrophoneLevelMonitoring`,
+// `prepareCameraOverlayForRecordingStart`, …).
 //
-// Moving the body into `RecordingEngine` today would require a ~20-closure
-// signature or a ~30-member host protocol — code relocation, not
-// decoupling, and a readability regression. The genuine prerequisite is a
-// future slice that gives those loose session fields a single owner
-// (a `RecordingSessionState` type); once that exists, `startRecording`
-// and `finishStartWithError` can move because they would carry the state
-// owner with them. Until then `startRecording` legitimately lives here —
-// the facade *is* the orchestrator. See docs/windows-port-inventory.md §7.
+// Slice 10 is migrating the loose per-session fields into a single
+// `RecordingSessionState` owner (PR 35: the passive fields —
+// `activeRecordingProjectRoot`, `activeRecordingWorkflowSessionId`,
+// `pendingMetadata`, `currentCaptureDisplayID`, `sessionDisable*`,
+// `pendingStartCaptureConfig`). Still loose on the facade pending
+// PR 36 / PR 37: the pending Flutter-result slots (`startResult` /
+// `stopResult` / `pauseResult` / `resumeResult`) and the start/recovery
+// flags (`pendingStop`, `cancelRequestedDuringStart`, the backend-fallback
+// fields).
+//
+// Moving `startRecording` into `RecordingEngine` today would still
+// require a ~20-closure signature or a ~30-member host protocol — code
+// relocation, not decoupling. Once `RecordingSessionState` owns the full
+// set, `startRecording` and `finishStartWithError` can move because they
+// would carry the state owner with them. Until then `startRecording`
+// legitimately lives here — the facade *is* the orchestrator. See
+// docs/windows-port-inventory.md §7.
 
 @MainActor
 final class ScreenRecorderFacade: NSObject {
@@ -131,8 +136,15 @@ final class ScreenRecorderFacade: NSObject {
     CaptureBackendAVFoundation()
   }
 
-  // Metadata for current recording session (written on start, updated on finish)
-  private var pendingMetadata: RecordingMetadata?
+  // Slice 10 / PR 35: the passive per-recording-session fields
+  // (`activeRecordingProjectRoot`, `activeRecordingWorkflowSessionId`,
+  // `pendingMetadata`, `currentCaptureDisplayID`, `sessionDisable*`,
+  // `pendingStartCaptureConfig`) moved into this owner. `internal` (not
+  // `private`) so the `StorageDiagnosticsService` facade extension can
+  // still read `sessionState.activeRecordingProjectRoot`. Pending Flutter
+  // results + start/recovery flags stay loose on the facade pending
+  // PR 36 / PR 37.
+  let sessionState = RecordingSessionState()
   /// Slice 4 / PR 16: separate-camera coordination state +
   /// pure-factory helpers previously held as `pendingCameraRecordingSession`,
   /// `pendingSeparateCameraFailure`, `cameraRecordingDimensions(deviceID:)`,
@@ -141,7 +153,6 @@ final class ScreenRecorderFacade: NSObject {
   /// `handleSeparateCameraRecorderFailure(_:)` keeps its state-machine
   /// transitions on the facade; only the failure-dedup primitive moves.
   private let cameraCoordination = CameraCoordinationController()
-  var activeRecordingProjectRoot: URL?  // internal: read by StorageDiagnosticsService (PR 7)
 
   // state — Slice 5 / PR 19 moved `var state: RecorderState` ownership into
   // `RecordingStateMachine`. The computed property below proxies reads/writes
@@ -181,7 +192,6 @@ final class ScreenRecorderFacade: NSObject {
   private var selectedAppWindowID: CGWindowID?
   private var followMouseMonitor: Any?
   private var followCurrentDisplay: CGDirectDisplayID?
-  private var currentCaptureDisplayID: CGDirectDisplayID?
   /// Slice 4 / PR 15: state previously held as `lastOverlayWindowID` +
   /// `overlayUpdateDeduper` is now owned by this controller. The facade keeps
   /// every overlay side effect (`camera.show`, `capture.updateOverlay`,
@@ -189,13 +199,8 @@ final class ScreenRecorderFacade: NSObject {
   /// last-pushed-window-ID state and the pure
   /// `overlayWindowIDForCapture(...)` decision live here.
   private let overlayVisibility = OverlayVisibilityController()
-  private var sessionDisableMicrophone = false
-  private var sessionDisableCameraOverlay = false
-  private var sessionDisableCursorHighlight = false
   private var suppressOverlayWindowDuringSeparateCameraCapture = false
-  private var activeRecordingWorkflowSessionId: String?
   private var hasReceivedRecordingMicrophoneLevel = false
-  private var pendingStartCaptureConfig: CaptureStartConfig?
   private var hasAttemptedStartBackendFallback = false
   private var pendingStartFallbackOriginalError: Error?
   private var pendingStartFallbackWarningMessage: String?
@@ -365,7 +370,7 @@ final class ScreenRecorderFacade: NSObject {
   func startRecording(args: [String: Any]?, result: @escaping FlutterResult) {
     switch recordingEngine.stateMachine.startDecision(from: state) {
     case .alreadyActive:
-      if let path = activeRecordingProjectRoot?.path {
+      if let path = sessionState.activeRecordingProjectRoot?.path {
         result(path)
       } else {
         result(flutterError(NativeErrorCode.alreadyRecording, ""))
@@ -380,10 +385,10 @@ final class ScreenRecorderFacade: NSObject {
     resetPendingStartRecoveryState()
     refreshMicrophoneLevelMonitoring(resetMeter: true)
     let request = StartRecordingRequest.fromFlutter(args)
-    activeRecordingWorkflowSessionId = request.sessionId
-    sessionDisableMicrophone = request.disableMicrophone
-    sessionDisableCameraOverlay = request.disableCameraOverlay
-    sessionDisableCursorHighlight = request.disableCursorHighlight
+    sessionState.activeRecordingWorkflowSessionId = request.sessionId
+    sessionState.sessionDisableMicrophone = request.disableMicrophone
+    sessionState.sessionDisableCameraOverlay = request.disableCameraOverlay
+    sessionState.sessionDisableCursorHighlight = request.disableCursorHighlight
     let allowLowStorageBypass = request.allowLowStorageBypass
 
     // Slice 9 / PR 33b: snapshot every facade-state / prefs value that the
@@ -487,7 +492,7 @@ final class ScreenRecorderFacade: NSObject {
       //      check still flips for writeProjectFiles failures only)
       //   4. optional camera session create
       //   5. writeProjectFiles (throws)
-      activeRecordingProjectRoot = nil
+      sessionState.activeRecordingProjectRoot = nil
       cameraCoordination.setPendingRecordingSession(nil)
       cancelRequestedDuringStart = false
 
@@ -513,7 +518,7 @@ final class ScreenRecorderFacade: NSObject {
             url, allowLowStorageBypass: allowLowStorageBypass)
         },
         onProjectRootResolved: { [unowned self] projectRoot, screenVideoURL in
-          self.activeRecordingProjectRoot = projectRoot
+          self.sessionState.activeRecordingProjectRoot = projectRoot
           NativeLogger.d(
             "Facade", "Prepared recording project",
             context: [
@@ -525,7 +530,7 @@ final class ScreenRecorderFacade: NSObject {
       )
 
       cameraCoordination.setPendingRecordingSession(prepared.cameraSession)
-      pendingMetadata = prepared.metadata
+      sessionState.pendingMetadata = prepared.metadata
       let screenVideoURL = prepared.screenVideoURL
 
       let outputURL: () throws -> URL = {
@@ -533,7 +538,7 @@ final class ScreenRecorderFacade: NSObject {
       }
 
       // Start recording
-      self.currentCaptureDisplayID = target.displayID
+      self.sessionState.currentCaptureDisplayID = target.displayID
       logOverlay(
         "startRecording before prepareCameraOverlayForRecordingStart",
         [
@@ -720,7 +725,7 @@ final class ScreenRecorderFacade: NSObject {
         cameraIsShowing: { [unowned self] in self.camera.isShowing },
         cameraOverlayWindowID: { [unowned self] in self.camera.overlayWindowID },
         audioDeviceID: prefs.audioDeviceId,
-        disableMicrophone: sessionDisableMicrophone,
+        disableMicrophone: sessionState.sessionDisableMicrophone,
         excludeRecorderApp: prefs.excludeRecorderApp,
         excludeMicFromSystemAudio: prefs.excludeMicFromSystemAudio
       ),
@@ -741,9 +746,9 @@ final class ScreenRecorderFacade: NSObject {
               "camera.overlayWindowID": self.camera.overlayWindowID.map { String($0) } ?? "nil",
               "prefs.excludeRecorderApp": "\(self.prefs.excludeRecorderApp)",
               "systemAudioEnabled": systemAudioEnabled,
-              "sessionDisableMicrophone": "\(self.sessionDisableMicrophone)",
-              "sessionDisableCameraOverlay": "\(self.sessionDisableCameraOverlay)",
-              "sessionDisableCursorHighlight": "\(self.sessionDisableCursorHighlight)",
+              "sessionDisableMicrophone": "\(self.sessionState.sessionDisableMicrophone)",
+              "sessionDisableCameraOverlay": "\(self.sessionState.sessionDisableCameraOverlay)",
+              "sessionDisableCursorHighlight": "\(self.sessionState.sessionDisableCursorHighlight)",
             ])
         },
         logEffectiveOverlayID: { [unowned self] id in
@@ -752,7 +757,7 @@ final class ScreenRecorderFacade: NSObject {
             ["effectiveOverlayID": id.map { String($0) } ?? "nil"])
         },
         setPendingStartCaptureConfig: { [unowned self] cfg in
-          self.pendingStartCaptureConfig = cfg
+          self.sessionState.pendingStartCaptureConfig = cfg
         },
         startCapture: { [unowned self] cfg in self.capture.start(config: cfg) }
       ))
@@ -778,7 +783,7 @@ final class ScreenRecorderFacade: NSObject {
         effectiveOverlayID: effectiveOverlayID,
         systemAudioEnabled: systemAudioEnabled,
         audioDeviceID: prefs.audioDeviceId,
-        disableMicrophone: sessionDisableMicrophone,
+        disableMicrophone: sessionState.sessionDisableMicrophone,
         excludeRecorderApp: prefs.excludeRecorderApp,
         shouldRecordSeparateCameraAsset: shouldRecordSeparateCameraAsset,
         excludeMicFromSystemAudio: prefs.excludeMicFromSystemAudio
@@ -1437,7 +1442,7 @@ final class ScreenRecorderFacade: NSObject {
 
   private func finishStartWithError(_ err: FlutterError) {
     resetPendingStartRecoveryState()
-    if let sessionId = activeRecordingWorkflowSessionId {
+    if let sessionId = sessionState.activeRecordingWorkflowSessionId {
       onRecordingFailed?([
         "type": "recordingFailed",
         "sessionId": sessionId,
@@ -1452,14 +1457,14 @@ final class ScreenRecorderFacade: NSObject {
     refreshMicrophoneLevelMonitoring(resetMeter: false)
     recordedDurationTracker.reset()
     resetRecordingSessionSuppressions()
-    if let projectRoot = activeRecordingProjectRoot {
+    if let projectRoot = sessionState.activeRecordingProjectRoot {
       MetadataSidecarWriter.updateProjectManifestStatus(.failed, projectRoot: projectRoot)
     }
-    activeRecordingProjectRoot = nil
+    sessionState.activeRecordingProjectRoot = nil
     cameraCoordination.setPendingRecordingSession(nil)
     cancelRequestedDuringStart = false
     cameraCoordination.clearPendingFailure()
-    pendingMetadata = nil
+    sessionState.pendingMetadata = nil
     if pendingStop {
       stopResult?(err)
       stopResult = nil
@@ -1469,7 +1474,7 @@ final class ScreenRecorderFacade: NSObject {
     applyIndicatorState()
     updateOverlayVisibility()
     updateCursorVisibility()
-    activeRecordingWorkflowSessionId = nil
+    sessionState.activeRecordingWorkflowSessionId = nil
     startResult?(err)
     startResult = nil
   }
@@ -1482,7 +1487,7 @@ final class ScreenRecorderFacade: NSObject {
     return AXIsProcessTrustedWithOptions(opt)
   }
   private var effectiveOverlayEnabledForRecording: Bool {
-    prefs.overlayEnabled && !sessionDisableCameraOverlay
+    prefs.overlayEnabled && !sessionState.sessionDisableCameraOverlay
   }
 
   private var effectiveCameraCaptureModeForRecording: CameraCaptureMode {
@@ -1503,13 +1508,13 @@ final class ScreenRecorderFacade: NSObject {
   private var effectiveCursorEnabledForRecording: Bool {
     CursorHighlightCoordinator.effectiveCursorEnabledForRecording(
       prefsCursorEnabled: prefs.cursorEnabled,
-      sessionDisableCursorHighlight: sessionDisableCursorHighlight)
+      sessionDisableCursorHighlight: sessionState.sessionDisableCursorHighlight)
   }
 
   private func resetRecordingSessionSuppressions() {
-    sessionDisableMicrophone = false
-    sessionDisableCameraOverlay = false
-    sessionDisableCursorHighlight = false
+    sessionState.sessionDisableMicrophone = false
+    sessionState.sessionDisableCameraOverlay = false
+    sessionState.sessionDisableCursorHighlight = false
     suppressOverlayWindowDuringSeparateCameraCapture = false
     cameraCoordination.clearPendingFailure()
   }
@@ -1664,7 +1669,7 @@ final class ScreenRecorderFacade: NSObject {
     stateAsStr()
 
     if shouldShow {
-      let desiredTargetDisplayID = currentCaptureDisplayID ?? selectedDisplayID
+      let desiredTargetDisplayID = sessionState.currentCaptureDisplayID ?? selectedDisplayID
       let overlayRefreshPlan = OverlayRefreshPlan.make(
         isShowing: camera.isShowing,
         currentTargetDisplayID: camera.targetDisplayID,
@@ -1887,7 +1892,7 @@ final class ScreenRecorderFacade: NSObject {
   private func updateCursorVisibility() {
     cursorCoordinator.updateVisibility(
       prefsCursorEnabled: prefs.cursorEnabled,
-      sessionDisableCursorHighlight: sessionDisableCursorHighlight,
+      sessionDisableCursorHighlight: sessionState.sessionDisableCursorHighlight,
       cursorLinked: prefs.cursorLinked,
       isActivelyRecording: isActivelyRecording)
   }
@@ -1957,7 +1962,7 @@ final class ScreenRecorderFacade: NSObject {
         "state": "\(state)",
         "backend": currentBackendName(),
         "selectedDisplayID": selectedDisplayID.map { String($0) } ?? "nil",
-        "currentCaptureDisplayID": currentCaptureDisplayID.map { String($0) } ?? "nil",
+        "currentCaptureDisplayID": sessionState.currentCaptureDisplayID.map { String($0) } ?? "nil",
         "overlayWindowID": camera.overlayWindowID.map { String($0) } ?? "nil",
       ])
   }
@@ -1995,7 +2000,7 @@ final class ScreenRecorderFacade: NSObject {
   }
 
   private func resetPendingStartRecoveryState() {
-    pendingStartCaptureConfig = nil
+    sessionState.pendingStartCaptureConfig = nil
     hasAttemptedStartBackendFallback = false
     pendingStartFallbackOriginalError = nil
     pendingStartFallbackWarningMessage = nil
@@ -2005,7 +2010,7 @@ final class ScreenRecorderFacade: NSObject {
     guard state == .starting else { return false }
     guard !hasAttemptedStartBackendFallback else { return false }
     guard currentBackendName() == "screencapturekit" else { return false }
-    guard let config = pendingStartCaptureConfig else { return false }
+    guard let config = sessionState.pendingStartCaptureConfig else { return false }
 
     let underlyingError = Self.recordingStartUnderlyingNSError(from: screenError)
     guard
@@ -2312,7 +2317,7 @@ final class ScreenRecorderFacade: NSObject {
     updateOverlayVisibility()
     updateCursorVisibility()
 
-    if let sessionId = activeRecordingWorkflowSessionId {
+    if let sessionId = sessionState.activeRecordingWorkflowSessionId {
       onRecordingPaused?(sessionId)
     }
 
@@ -2334,7 +2339,7 @@ final class ScreenRecorderFacade: NSObject {
     updateOverlayVisibility()
     updateCursorVisibility()
 
-    if let sessionId = activeRecordingWorkflowSessionId {
+    if let sessionId = sessionState.activeRecordingWorkflowSessionId {
       onRecordingResumed?(sessionId)
     }
 
@@ -2363,9 +2368,9 @@ final class ScreenRecorderFacade: NSObject {
     hasReceivedRecordingMicrophoneLevel = false
     refreshMicrophoneLevelMonitoring(resetMeter: false)
     recordedDurationTracker.reset()
-    pendingMetadata = nil
+    sessionState.pendingMetadata = nil
     cameraCoordination.setPendingRecordingSession(nil)
-    currentCaptureDisplayID = nil
+    sessionState.currentCaptureDisplayID = nil
     resetRecordingSessionSuppressions()
 
     applyIndicatorState()
@@ -2383,17 +2388,17 @@ final class ScreenRecorderFacade: NSObject {
       error: error,
       wasStarting: wasStarting,
       mode: mode == .ready ? .ready : .cancelled,
-      activeProjectPath: activeRecordingProjectRoot?.path,
-      activeSessionId: activeRecordingWorkflowSessionId,
+      activeProjectPath: sessionState.activeRecordingProjectRoot?.path,
+      activeSessionId: sessionState.activeRecordingWorkflowSessionId,
       recordingErrorCode: NativeErrorCode.recordingError
     )
 
     switch action {
     case .fail(let errorMessage, let code, let stage):
-      if let projectRoot = activeRecordingProjectRoot {
+      if let projectRoot = sessionState.activeRecordingProjectRoot {
         MetadataSidecarWriter.updateProjectManifestStatus(.failed, projectRoot: projectRoot)
       }
-      if let sessionId = activeRecordingWorkflowSessionId {
+      if let sessionId = sessionState.activeRecordingWorkflowSessionId {
         onRecordingFailed?([
           "type": "recordingFailed",
           "sessionId": sessionId,
@@ -2414,8 +2419,8 @@ final class ScreenRecorderFacade: NSObject {
         context: ["error": errorMessage]
       )
       completion?(flutterError(code, errorMessage))
-      activeRecordingProjectRoot = nil
-      activeRecordingWorkflowSessionId = nil
+      sessionState.activeRecordingProjectRoot = nil
+      sessionState.activeRecordingWorkflowSessionId = nil
       cancelRequestedDuringStart = false
       return
 
@@ -2432,7 +2437,7 @@ final class ScreenRecorderFacade: NSObject {
         "Facade",
         "Recording finished successfully",
         context: [
-          "projectPath": activeRecordingProjectRoot?.path ?? "nil",
+          "projectPath": sessionState.activeRecordingProjectRoot?.path ?? "nil",
           "screenPath": finalURL?.path ?? "nil",
         ]
       )
@@ -2449,8 +2454,8 @@ final class ScreenRecorderFacade: NSObject {
       )
       completion?(nil)
     }
-    activeRecordingProjectRoot = nil
-    activeRecordingWorkflowSessionId = nil
+    sessionState.activeRecordingProjectRoot = nil
+    sessionState.activeRecordingWorkflowSessionId = nil
     cancelRequestedDuringStart = false
   }
 
@@ -2467,11 +2472,11 @@ final class ScreenRecorderFacade: NSObject {
 
   /// Writes the metadata sidecar file when recording starts.
   private func writeMetadataSidecar() {
-    guard let metadata = pendingMetadata else {
+    guard let metadata = sessionState.pendingMetadata else {
       NativeLogger.w("Facade", "No pending metadata to write")
       return
     }
-    guard let projectRoot = activeRecordingProjectRoot else {
+    guard let projectRoot = sessionState.activeRecordingProjectRoot else {
       NativeLogger.w("Facade", "No active recording project to write metadata into")
       return
     }
@@ -2605,7 +2610,7 @@ final class ScreenRecorderFacade: NSObject {
   }
 
   func _testSetActiveRecordingWorkflowSessionId(_ id: String?) {
-    activeRecordingWorkflowSessionId = id
+    sessionState.activeRecordingWorkflowSessionId = id
   }
 
   func _testRefreshMicrophoneLevelMonitoring(resetMeter: Bool) {
@@ -2710,7 +2715,7 @@ final class ScreenRecorderFacade: NSObject {
       "cameraIsShowing": camera.isShowing,
       "overlayWindowID": camera.overlayWindowID.map { String($0) } ?? "nil",
       "selectedDisplayID": selectedDisplayID.map { String($0) } ?? "nil",
-      "currentCaptureDisplayID": currentCaptureDisplayID.map { String($0) } ?? "nil",
+      "currentCaptureDisplayID": sessionState.currentCaptureDisplayID.map { String($0) } ?? "nil",
       "cameraTargetDisplayID": camera.targetDisplayID.map { String($0) } ?? "nil",
       "videoDeviceId": prefs.videoDeviceId ?? "nil",
       "camAuth": "\(AVCaptureDevice.authorizationStatus(for: .video))",
@@ -2788,7 +2793,7 @@ extension ScreenRecorderFacade: CaptureBackendEventHandling {
   }
 
   func backendDidWarn(message: String) {
-    guard let sessionId = activeRecordingWorkflowSessionId else { return }
+    guard let sessionId = sessionState.activeRecordingWorkflowSessionId else { return }
     onRecordingWarning?([
       "type": "recordingWarning",
       "sessionId": sessionId,
@@ -2797,7 +2802,7 @@ extension ScreenRecorderFacade: CaptureBackendEventHandling {
   }
 
   func backendDidStart(url: URL) {
-    let visibleProjectPath = activeRecordingProjectRoot?.path ?? url.path
+    let visibleProjectPath = sessionState.activeRecordingProjectRoot?.path ?? url.path
 
     resetOverlayUpdateDeduper()
     state = .recording
@@ -2810,7 +2815,7 @@ extension ScreenRecorderFacade: CaptureBackendEventHandling {
     writeCameraMetadataSidecarIfNeeded()
 
     onRecordingStateChanged?(true)
-    if let sessionId = activeRecordingWorkflowSessionId {
+    if let sessionId = sessionState.activeRecordingWorkflowSessionId {
       onRecordingStarted?(sessionId)
       if let warning = pendingStartFallbackWarningMessage {
         pendingStartFallbackWarningMessage = nil
@@ -2822,7 +2827,7 @@ extension ScreenRecorderFacade: CaptureBackendEventHandling {
       }
     }
     pendingStartFallbackOriginalError = nil
-    pendingStartCaptureConfig = nil
+    sessionState.pendingStartCaptureConfig = nil
     hasAttemptedStartBackendFallback = false
 
     applyIndicatorState()
@@ -2913,7 +2918,7 @@ extension ScreenRecorderFacade: CaptureBackendEventHandling {
       var finalURL: URL? = url
       var completionMode: RecordingCompletionMode = .ready
       let cancelledDuringStart = self.cancelRequestedDuringStart
-      if let projectRoot = self.activeRecordingProjectRoot {
+      if let projectRoot = self.sessionState.activeRecordingProjectRoot {
         if cancelledDuringStart {
           completionMode = .cancelled
           let cancellationDisposition = self.cancellationDisposition(for: projectRoot)
