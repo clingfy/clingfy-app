@@ -19,6 +19,11 @@ struct ExportVideoRequest: Equatable {
   let cornerRadius: Double
   let backgroundColor: Int?
   let backgroundImagePath: String?
+  /// Explicit background-kind discriminator ("color" / "image" / "preset");
+  /// `nil` for older Flutter payloads, in which case the kind is inferred.
+  let backgroundKind: String?
+  /// Procedural preset parameters when the background kind is `.preset`.
+  let backgroundPreset: CanvasBackgroundPreset?
   let cursorSize: Double
   let rawZoomFactor: Double
   let zoomEffectEnabled: Bool
@@ -37,6 +42,15 @@ struct ExportVideoRequest: Equatable {
   /// The effective zoom factor after applying the legacy/explicit enable contract.
   var zoomFactor: Double { zoomEffectEnabled ? rawZoomFactor : 1.0 }
 
+  /// The fully resolved canvas background (color / image / preset).
+  var canvasBackground: CanvasBackground {
+    CanvasBackground.resolve(
+      kindRaw: backgroundKind,
+      colorArgb: backgroundColor,
+      imagePath: backgroundImagePath,
+      preset: backgroundPreset)
+  }
+
   static func fromFlutter(_ args: [String: Any]?) -> ExportVideoRequest? {
     guard let args, let projectPath = args["projectPath"] as? String else { return nil }
     let rawZoomFactor = (args["zoomFactor"] as? Double) ?? 1.5
@@ -49,6 +63,8 @@ struct ExportVideoRequest: Equatable {
       cornerRadius: (args["cornerRadius"] as? Double) ?? 0.0,
       backgroundColor: args["backgroundColor"] as? Int,
       backgroundImagePath: args["backgroundImagePath"] as? String,
+      backgroundKind: args["backgroundKind"] as? String,
+      backgroundPreset: CanvasBackgroundPreset.from(args: args),
       cursorSize: (args["cursorSize"] as? Double) ?? 1.0,
       rawZoomFactor: rawZoomFactor,
       zoomEffectEnabled: (args["zoomEffectEnabled"] as? Bool) ?? (rawZoomFactor > 1.0),

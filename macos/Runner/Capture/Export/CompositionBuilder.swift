@@ -820,6 +820,12 @@ struct CompositionParams: Equatable {
   let audioGainDb: Double
   let audioVolumePercent: Double
   var zoomSegments: [ZoomTimelineSegment]?
+  /// Procedural preset background parameters. When non-nil the renderers
+  /// generate the background from this and ignore `backgroundColor` /
+  /// `backgroundImagePath`. Declared as a defaulted `var` (like
+  /// `zoomSegments`) so existing `CompositionParams(...)` call sites that
+  /// predate the preset feature compile unchanged.
+  var backgroundPreset: CanvasBackgroundPreset?
 }
 
 private enum AudioTapSampleType {

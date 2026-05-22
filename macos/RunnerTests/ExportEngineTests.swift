@@ -27,6 +27,7 @@ final class ExportEngineTests: XCTestCase {
       cornerRadius: 0,
       backgroundColor: nil,
       backgroundImagePath: nil,
+      backgroundPreset: nil,
       cursorSize: 1.0,
       zoomFactor: 1.0,
       showCursor: true,

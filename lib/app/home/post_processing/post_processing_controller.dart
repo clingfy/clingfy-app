@@ -91,6 +91,8 @@ class PostProcessingController extends ChangeNotifier {
   double _videoRadius = 0; // 0 to 50
   int? _backgroundColor; // null = black default
   String? _backgroundImagePath;
+  BackgroundKind _backgroundKind = BackgroundKind.color;
+  CanvasBackgroundPreset? _backgroundPreset;
   double _cursorSize = 1.5;
   double _zoomFactor = 1.0;
   bool _zoomEffectEnabled = false;
@@ -127,6 +129,8 @@ class PostProcessingController extends ChangeNotifier {
   double get radius => _videoRadius;
   int? get backgroundColor => _backgroundColor;
   String? get backgroundImagePath => _backgroundImagePath;
+  BackgroundKind get backgroundKind => _backgroundKind;
+  CanvasBackgroundPreset? get backgroundPreset => _backgroundPreset;
   double get cursorSize => _cursorSize;
   double get zoomFactor => _zoomFactor;
   bool get zoomEffectEnabled => _zoomEffectEnabled;
@@ -174,6 +178,8 @@ class PostProcessingController extends ChangeNotifier {
   void setBackgroundColor(int? v) {
     _backgroundColor = v;
     _backgroundImagePath = null;
+    _backgroundPreset = null;
+    _backgroundKind = BackgroundKind.color;
     notifyListeners();
     applyProcessing();
   }
@@ -181,6 +187,19 @@ class PostProcessingController extends ChangeNotifier {
   void setBackgroundImagePath(String? path) {
     _backgroundImagePath = path;
     _backgroundColor = null;
+    _backgroundPreset = null;
+    _backgroundKind = path != null
+        ? BackgroundKind.image
+        : BackgroundKind.color;
+    notifyListeners();
+    applyProcessing();
+  }
+
+  void setBackgroundPreset(CanvasBackgroundPreset preset) {
+    _backgroundPreset = preset;
+    _backgroundColor = null;
+    _backgroundImagePath = null;
+    _backgroundKind = BackgroundKind.preset;
     notifyListeners();
     applyProcessing();
   }
@@ -645,6 +664,12 @@ class PostProcessingController extends ChangeNotifier {
         'cornerRadius': _videoRadius,
         'backgroundColor': _backgroundColor,
         'backgroundImagePath': _backgroundImagePath,
+        'backgroundKind': _backgroundKind.name,
+        'backgroundPresetId': _backgroundPreset?.id,
+        'backgroundPresetPalette': _backgroundPreset?.palette,
+        'backgroundPresetIntensity': _backgroundPreset?.intensity,
+        'backgroundPresetBlur': _backgroundPreset?.blur,
+        'backgroundPresetSeed': _backgroundPreset?.seed,
         'cursorSize': _cursorSize,
         'zoomFactor': _zoomFactor,
         'zoomEffectEnabled': _zoomEffectEnabled,
@@ -887,6 +912,12 @@ class PostProcessingController extends ChangeNotifier {
         'cornerRadius': _videoRadius,
         'backgroundColor': _backgroundColor,
         'backgroundImagePath': _backgroundImagePath,
+        'backgroundKind': _backgroundKind.name,
+        'backgroundPresetId': _backgroundPreset?.id,
+        'backgroundPresetPalette': _backgroundPreset?.palette,
+        'backgroundPresetIntensity': _backgroundPreset?.intensity,
+        'backgroundPresetBlur': _backgroundPreset?.blur,
+        'backgroundPresetSeed': _backgroundPreset?.seed,
         'cursorSize': _cursorSize,
         'zoomFactor': _zoomFactor,
         'zoomEffectEnabled': _zoomEffectEnabled,
