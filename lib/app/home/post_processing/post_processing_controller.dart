@@ -9,6 +9,7 @@ import 'package:clingfy/core/export/models/export_settings_types.dart';
 import 'package:clingfy/l10n/app_localizations.dart';
 import 'package:clingfy/app/infrastructure/logging/logger_service.dart';
 import 'package:clingfy/core/models/app_models.dart';
+import 'package:clingfy/core/models/background_preset_catalog.dart';
 import 'package:clingfy/app/settings/settings_controller.dart';
 import 'package:clingfy/core/bridges/native_bridge.dart';
 import 'package:clingfy/app/infrastructure/observability/telemetry_service.dart';
@@ -202,6 +203,37 @@ class PostProcessingController extends ChangeNotifier {
     _backgroundKind = BackgroundKind.preset;
     notifyListeners();
     applyProcessing();
+  }
+
+  /// Live, UI-only preset update for slider drags — refreshes the controls
+  /// without kicking a (debounced) preview re-render on every tick. The
+  /// caller commits the final value with [setBackgroundPreset] on release.
+  void updateBackgroundPresetPreview(CanvasBackgroundPreset preset) {
+    _backgroundPreset = preset;
+    _backgroundColor = null;
+    _backgroundImagePath = null;
+    _backgroundKind = BackgroundKind.preset;
+    notifyListeners();
+  }
+
+  /// Switches the background mode from the Color / Image / Preset picker.
+  /// Switching applies a sensible default for the chosen mode so the
+  /// preview reflects the change immediately.
+  void setBackgroundKind(BackgroundKind kind) {
+    switch (kind) {
+      case BackgroundKind.color:
+        setBackgroundColor(_backgroundColor);
+      case BackgroundKind.image:
+        _backgroundKind = BackgroundKind.image;
+        _backgroundColor = null;
+        _backgroundPreset = null;
+        notifyListeners();
+        applyProcessing();
+      case BackgroundKind.preset:
+        setBackgroundPreset(
+          _backgroundPreset ?? BackgroundPresetCatalog.defaultPreset(),
+        );
+    }
   }
 
   void setCursorSize(double v) {

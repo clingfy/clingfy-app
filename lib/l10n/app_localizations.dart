@@ -1390,6 +1390,54 @@ abstract class AppLocalizations {
   /// **'Pick a color'**
   String get pickColor;
 
+  /// No description provided for @backgroundModeColor.
+  ///
+  /// In en, this message translates to:
+  /// **'Color'**
+  String get backgroundModeColor;
+
+  /// No description provided for @backgroundModeImage.
+  ///
+  /// In en, this message translates to:
+  /// **'Image'**
+  String get backgroundModeImage;
+
+  /// No description provided for @backgroundModePreset.
+  ///
+  /// In en, this message translates to:
+  /// **'Preset'**
+  String get backgroundModePreset;
+
+  /// No description provided for @backgroundPalette.
+  ///
+  /// In en, this message translates to:
+  /// **'Palette'**
+  String get backgroundPalette;
+
+  /// No description provided for @backgroundIntensity.
+  ///
+  /// In en, this message translates to:
+  /// **'Intensity'**
+  String get backgroundIntensity;
+
+  /// No description provided for @backgroundSoftness.
+  ///
+  /// In en, this message translates to:
+  /// **'Softness'**
+  String get backgroundSoftness;
+
+  /// No description provided for @randomize.
+  ///
+  /// In en, this message translates to:
+  /// **'Randomize'**
+  String get randomize;
+
+  /// No description provided for @presetAbstractWaves.
+  ///
+  /// In en, this message translates to:
+  /// **'Abstract Waves'**
+  String get presetAbstractWaves;
+
   /// No description provided for @gotIt.
   ///
   /// In en, this message translates to:

@@ -706,6 +706,30 @@ class AppLocalizationsRo extends AppLocalizations {
   String get pickColor => 'Alege o culoare';
 
   @override
+  String get backgroundModeColor => 'Culoare';
+
+  @override
+  String get backgroundModeImage => 'Imagine';
+
+  @override
+  String get backgroundModePreset => 'Presetare';
+
+  @override
+  String get backgroundPalette => 'Paletă';
+
+  @override
+  String get backgroundIntensity => 'Intensitate';
+
+  @override
+  String get backgroundSoftness => 'Estompare';
+
+  @override
+  String get randomize => 'Aleatoriu';
+
+  @override
+  String get presetAbstractWaves => 'Valuri abstracte';
+
+  @override
   String get gotIt => 'Am înțeles';
 
   @override

@@ -693,6 +693,30 @@ class AppLocalizationsAr extends AppLocalizations {
   String get pickColor => 'اختر لوناً';
 
   @override
+  String get backgroundModeColor => 'لون';
+
+  @override
+  String get backgroundModeImage => 'صورة';
+
+  @override
+  String get backgroundModePreset => 'نمط';
+
+  @override
+  String get backgroundPalette => 'لوحة الألوان';
+
+  @override
+  String get backgroundIntensity => 'الكثافة';
+
+  @override
+  String get backgroundSoftness => 'النعومة';
+
+  @override
+  String get randomize => 'عشوائي';
+
+  @override
+  String get presetAbstractWaves => 'موجات تجريدية';
+
+  @override
   String get gotIt => 'فهمت';
 
   @override
