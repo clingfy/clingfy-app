@@ -65,6 +65,31 @@ class CanvasBackgroundPreset {
     );
   }
 
+  Map<String, dynamic> toJson() => {
+    'id': id,
+    'palette': palette,
+    'intensity': intensity,
+    'blur': blur,
+    'seed': seed,
+  };
+
+  /// Parses a preset from persisted JSON. Returns `null` when the map is
+  /// missing the required `id`, so callers can fall back to defaults.
+  static CanvasBackgroundPreset? fromJson(Map<String, dynamic>? json) {
+    if (json == null) return null;
+    final id = json['id'];
+    if (id is! String || id.isEmpty) return null;
+    return CanvasBackgroundPreset(
+      id: id,
+      palette: json['palette'] is String
+          ? json['palette'] as String
+          : 'default',
+      intensity: (json['intensity'] as num?)?.toDouble() ?? 0.7,
+      blur: (json['blur'] as num?)?.toDouble() ?? 0.35,
+      seed: (json['seed'] as num?)?.toInt() ?? 0,
+    );
+  }
+
   @override
   bool operator ==(Object other) =>
       other is CanvasBackgroundPreset &&

@@ -14,6 +14,7 @@ import 'package:clingfy/app/settings/settings_controller.dart';
 import 'package:clingfy/core/bridges/native_bridge.dart';
 import 'package:clingfy/app/infrastructure/observability/telemetry_service.dart';
 import 'package:clingfy/app/home/post_processing/support/audio_debouncer.dart';
+import 'package:clingfy/app/home/post_processing/support/canvas_appearance_store.dart';
 import 'package:clingfy/app/home/export/widgets/export_file_dialog.dart';
 import 'package:clingfy/core/preview/player_controller.dart';
 
@@ -631,6 +632,8 @@ class PostProcessingController extends ChangeNotifier {
     _videoRadius = 0;
     _backgroundColor = null;
     _backgroundImagePath = null;
+    _backgroundKind = BackgroundKind.color;
+    _backgroundPreset = null;
     _cursorSize = 1.5;
     _zoomFactor = _settings.post.postZoomFactor;
     _zoomEffectEnabled = _settings.post.postZoomEffectEnabled;
@@ -656,11 +659,49 @@ class PostProcessingController extends ChangeNotifier {
       _cameraPath = sceneInfo.cameraPath;
       _cameraState = sceneInfo.camera;
       _cameraExportCapabilities = sceneInfo.cameraExportCapabilities;
+      // Restore persisted canvas appearance (padding / corner radius /
+      // background) before the first preview render, so the recording
+      // reopens exactly as it was last edited. Synchronous — keeps the
+      // scene-load → applyProcessing ordering unchanged.
+      _loadCanvasAppearance(projectPath);
       notifyListeners();
       await applyProcessing();
     } catch (e, st) {
       Log.e("PostProcessing", "Failed to load recording scene info: $e", e, st);
     }
+  }
+
+  /// Reads `editor_state.json` from the project bundle and applies it to
+  /// the canvas fields. Best-effort: a missing/old file leaves the
+  /// defaults in place (back-compatible with pre-persistence recordings).
+  void _loadCanvasAppearance(String projectPath) {
+    final state = CanvasAppearanceStore.load(projectPath);
+    if (state == null || _projectPath != projectPath) return;
+    _videoPadding = state.padding;
+    _videoRadius = state.cornerRadius;
+    _backgroundKind = state.backgroundKind;
+    _backgroundColor = state.backgroundColorArgb;
+    _backgroundImagePath = state.backgroundImagePath;
+    _backgroundPreset = state.backgroundPreset;
+  }
+
+  /// Persists the current canvas appearance to the project bundle.
+  /// Fire-and-forget — invoked from [applyProcessing] on every committed
+  /// canvas edit.
+  void _persistCanvasAppearance(String projectPath) {
+    unawaited(
+      CanvasAppearanceStore.save(
+        projectPath,
+        CanvasAppearanceState(
+          padding: _videoPadding,
+          cornerRadius: _videoRadius,
+          backgroundKind: _backgroundKind,
+          backgroundColorArgb: _backgroundColor,
+          backgroundImagePath: _backgroundImagePath,
+          backgroundPreset: _backgroundPreset,
+        ),
+      ),
+    );
   }
 
   void togglePlayback() {
@@ -674,6 +715,10 @@ class PostProcessingController extends ChangeNotifier {
   Future<void> applyProcessing() async {
     final projectPath = _projectPath;
     if (projectPath == null) return;
+
+    // Persist the canvas appearance on every committed edit (this method
+    // is the debounced canvas-update path). Best-effort, non-blocking.
+    _persistCanvasAppearance(projectPath);
 
     _isProcessingPreview = true;
     notifyListeners();
