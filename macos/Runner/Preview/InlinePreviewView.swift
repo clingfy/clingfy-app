@@ -920,7 +920,8 @@ final class InlinePreviewView: NSView {
       refreshMask: oldParams.cornerRadius != newParams.cornerRadius,
       refreshBackground:
         oldParams.backgroundColor != newParams.backgroundColor
-        || oldParams.backgroundImagePath != newParams.backgroundImagePath,
+        || oldParams.backgroundImagePath != newParams.backgroundImagePath
+        || oldParams.backgroundPreset != newParams.backgroundPreset,
       refreshAudioMix:
         oldParams.audioGainDb != newParams.audioGainDb
         || oldParams.audioVolumePercent != newParams.audioVolumePercent,
@@ -2826,6 +2827,32 @@ final class InlinePreviewView: NSView {
   }
 
   private func applyPreviewBackground(from params: CompositionParams, profile: PreviewProfile) {
+    let requestedCanvasSize = profile.canvasRenderSize
+    let token = currentOpenToken
+
+    // Procedural preset background — rendered off-main, takes precedence
+    // over color/image. Same renderer as export, so preview matches the
+    // exported file (rendered here at the preview canvas size).
+    if let preset = params.backgroundPreset {
+      canvasBackground?.backgroundColor = NSColor.clear.cgColor
+      backgroundImageQueue.async { [weak self] in
+        guard let self else { return }
+        let image = CanvasBackgroundRenderer.shared.image(
+          for: preset, pixelSize: requestedCanvasSize)
+        DispatchQueue.main.async { [weak self] in
+          guard let self else { return }
+          guard self.currentOpenToken == token else { return }
+          guard self.currentCompositionParams?.backgroundPreset == preset else { return }
+          guard self.currentPreviewProfile?.canvasRenderSize == requestedCanvasSize else {
+            return
+          }
+          self.canvasBackground?.contents = image
+          self.canvasBackground?.contentsGravity = .resizeAspectFill
+        }
+      }
+      return
+    }
+
     canvasBackground?.backgroundColor = previewBackgroundColor(from: params.backgroundColor)
 
     guard let path = params.backgroundImagePath, !path.isEmpty else {
@@ -2833,9 +2860,6 @@ final class InlinePreviewView: NSView {
       canvasBackground?.contentsGravity = .resizeAspectFill
       return
     }
-
-    let requestedCanvasSize = profile.canvasRenderSize
-    let token = currentOpenToken
 
     backgroundImageQueue.async { [weak self] in
       guard let self else { return }

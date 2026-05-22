@@ -1050,7 +1050,8 @@ final class LetterboxExporter {
     finalExportAsset: AVAsset,
     inlineCameraRenderPlan: CompositionBuilder.InlineCameraRenderPlan? = nil,
     backgroundColor: Int? = nil,
-    backgroundImagePath: String? = nil
+    backgroundImagePath: String? = nil,
+    backgroundPreset: CanvasBackgroundPreset? = nil
   ) -> NSError? {
     do {
       let sampleTime = min(max(referenceAsset.duration.seconds * 0.5, 0.0), max(referenceAsset.duration.seconds - 0.001, 0.0))
@@ -1069,7 +1070,8 @@ final class LetterboxExporter {
         let renderer = InlineCameraRenderer(
           renderSize: referenceComposition.renderSize,
           backgroundColor: backgroundColor,
-          backgroundImagePath: backgroundImagePath
+          backgroundImagePath: backgroundImagePath,
+          backgroundPreset: backgroundPreset
         )
         let composedImage = renderer.makeCompositedImage(
           screenImage: CIImage(cgImage: screenImage),
@@ -1370,6 +1372,7 @@ final class LetterboxExporter {
     inlineCameraRenderPlan: CompositionBuilder.InlineCameraRenderPlan? = nil,
     backgroundColor: Int? = nil,
     backgroundImagePath: String? = nil,
+    backgroundPreset: CanvasBackgroundPreset? = nil,
     logOutputInfo: Bool = false,
     completion: @escaping (Result<URL, Error>) -> Void
   ) {
@@ -1626,7 +1629,8 @@ final class LetterboxExporter {
       InlineCameraRenderer(
         renderSize: renderSize,
         backgroundColor: backgroundColor,
-        backgroundImagePath: backgroundImagePath
+        backgroundImagePath: backgroundImagePath,
+        backgroundPreset: backgroundPreset
       )
     }
     var currentCameraSampleBuffer: CMSampleBuffer?
@@ -2435,6 +2439,7 @@ final class LetterboxExporter {
             inlineCameraRenderPlan: comp.inlineCameraRenderPlan,
             backgroundColor: backgroundColor,
             backgroundImagePath: backgroundImagePath,
+            backgroundPreset: backgroundPreset,
             logOutputInfo: true,
             completion: completion
           )
@@ -2484,7 +2489,8 @@ final class LetterboxExporter {
             finalExportAsset: AVAsset(url: finalURL),
             inlineCameraRenderPlan: comp.inlineCameraRenderPlan,
             backgroundColor: backgroundColor,
-            backgroundImagePath: backgroundImagePath
+            backgroundImagePath: backgroundImagePath,
+            backgroundPreset: backgroundPreset
           ) {
             NativeLogger.e(
               "Export",
