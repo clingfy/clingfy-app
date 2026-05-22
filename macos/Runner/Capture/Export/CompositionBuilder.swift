@@ -2780,6 +2780,7 @@ final class CompositionBuilder {
     guard
       params.cornerRadius > 0
         || params.backgroundImagePath != nil
+        || params.backgroundPreset != nil
         || shouldRenderCursor
         || shouldApplyZoom
         || shouldApplyVisibleRegionMask
@@ -2795,7 +2796,15 @@ final class CompositionBuilder {
 
     switch backgroundMode {
     case .resolvedOutput:
-      if let bgPath = params.backgroundImagePath, let img = NSImage(contentsOfFile: bgPath) {
+      if let preset = params.backgroundPreset,
+        let presetImage = CanvasBackgroundRenderer.shared.image(
+          for: preset, pixelSize: target)
+      {
+        bgLayer.contents = presetImage
+        bgLayer.contentsGravity = .resizeAspectFill
+      } else if let bgPath = params.backgroundImagePath,
+        let img = NSImage(contentsOfFile: bgPath)
+      {
         bgLayer.contents = img.cgImageForLayer()
         bgLayer.contentsGravity = .resizeAspectFill
       } else if let color = params.backgroundColor {
