@@ -39,9 +39,8 @@ enum BackgroundPresetCatalog {
       colorsArgb: [0xFF15171A, 0xFF272B30, 0xFF3C424A, 0xFF5A626C, 0xFF7E8893]),
   ]
 
-  /// Preset ids the renderer dispatch recognizes. Phase 2 ships
-  /// `abstractWaves`; later phases append more.
-  static let presetIds = ["abstractWaves"]
+  /// Preset ids the renderer dispatch recognizes.
+  static let presetIds = ["abstractWaves", "graphicMesh", "radialGlow"]
 
   /// Returns the palette with `id`, or the default palette when unknown.
   static func palette(_ id: String) -> Palette {

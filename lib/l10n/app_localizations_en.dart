@@ -723,6 +723,12 @@ class AppLocalizationsEn extends AppLocalizations {
   String get presetAbstractWaves => 'Abstract Waves';
 
   @override
+  String get presetGraphicMesh => 'Graphic Mesh';
+
+  @override
+  String get presetRadialGlow => 'Radial Glow';
+
+  @override
   String get gotIt => 'Got it';
 
   @override

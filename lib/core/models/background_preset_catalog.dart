@@ -43,8 +43,13 @@ abstract final class BackgroundPresetCatalog {
     ),
   ];
 
-  /// Preset ids the native renderer recognizes (Phase 2 ships one).
-  static const List<String> presetIds = ['abstractWaves'];
+  /// Preset ids the native renderer recognizes. Kept in sync with the
+  /// native `BackgroundPresetCatalog.presetIds`.
+  static const List<String> presetIds = [
+    'abstractWaves',
+    'graphicMesh',
+    'radialGlow',
+  ];
 
   static const double defaultIntensity = 0.7;
   static const double defaultBlur = 0.35;

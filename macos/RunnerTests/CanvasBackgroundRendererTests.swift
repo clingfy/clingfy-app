@@ -96,6 +96,55 @@ final class CanvasBackgroundRendererTests: XCTestCase {
     XCTAssertNotEqual(pixelData(a), pixelData(b))
   }
 
+  // MARK: - Phase 5 presets (graphicMesh, radialGlow)
+
+  func testCatalogListsAllPhase5Presets() {
+    XCTAssertEqual(
+      Set(BackgroundPresetCatalog.presetIds),
+      ["abstractWaves", "graphicMesh", "radialGlow"])
+  }
+
+  func testGraphicMeshRendersAndIsDeterministic() {
+    let size = CGSize(width: 360, height: 240)
+    let p = CanvasBackgroundPreset(
+      id: "graphicMesh", palette: "aurora", intensity: 0.7, blur: 0.3, seed: 5)
+    let renderer = GraphicMeshBackgroundRenderer()
+    guard
+      let a = renderer.render(preset: p, pixelSize: size),
+      let b = renderer.render(preset: p, pixelSize: size)
+    else {
+      return XCTFail("graphicMesh renderer returned nil")
+    }
+    XCTAssertEqual(a.width, 360)
+    XCTAssertEqual(pixelData(a), pixelData(b))
+  }
+
+  func testRadialGlowRendersAndIsDeterministic() {
+    let size = CGSize(width: 360, height: 240)
+    let p = CanvasBackgroundPreset(
+      id: "radialGlow", palette: "sunset", intensity: 0.6, blur: 0.2, seed: 8)
+    let renderer = RadialGlowBackgroundRenderer()
+    guard
+      let a = renderer.render(preset: p, pixelSize: size),
+      let b = renderer.render(preset: p, pixelSize: size)
+    else {
+      return XCTFail("radialGlow renderer returned nil")
+    }
+    XCTAssertEqual(a.height, 240)
+    XCTAssertEqual(pixelData(a), pixelData(b))
+  }
+
+  func testDispatcherRoutesEachPresetId() {
+    let size = CGSize(width: 200, height: 120)
+    for id in BackgroundPresetCatalog.presetIds {
+      let p = CanvasBackgroundPreset(
+        id: id, palette: "bluePurple", intensity: 0.7, blur: 0.35, seed: 3)
+      XCTAssertNotNil(
+        CanvasBackgroundRenderer.shared.image(for: p, pixelSize: size),
+        "dispatcher returned nil for preset \(id)")
+    }
+  }
+
   // MARK: - Seeded generator
 
   func testSeededGeneratorIsDeterministic() {

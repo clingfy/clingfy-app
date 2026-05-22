@@ -26,6 +26,8 @@ final class CanvasBackgroundRenderer {
 
   private let cache = NSCache<NSString, CGImage>()
   private let wavesRenderer = AbstractWavesBackgroundRenderer()
+  private let meshRenderer = GraphicMeshBackgroundRenderer()
+  private let glowRenderer = RadialGlowBackgroundRenderer()
 
   /// Returns the rendered background for `preset` at `pixelSize`, using a
   /// memoized result when one exists. The cache key includes every input
@@ -60,6 +62,10 @@ final class CanvasBackgroundRenderer {
     switch id {
     case "abstractWaves":
       return wavesRenderer
+    case "graphicMesh":
+      return meshRenderer
+    case "radialGlow":
+      return glowRenderer
     default:
       return wavesRenderer
     }
