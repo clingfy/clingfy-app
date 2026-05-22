@@ -114,6 +114,7 @@
 		694F07480FE17B655AC013A3 /* RecordingStateMachineTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 04091965DCAEC5DFBFFCCDEB /* RecordingStateMachineTests.swift */; };
 		69B5122F481E9152FAF2A9B3 /* RequestParsingTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 964282A8773D929D64A40630 /* RequestParsingTests.swift */; };
 		70E344F67EBA92C8E19FC2A9 /* PreviewEngine.swift in Sources */ = {isa = PBXBuildFile; fileRef = 20A218232ED0A6EA98B32ABD /* PreviewEngine.swift */; };
+		78803A98243937CED6567313 /* RadialGlowBackgroundRenderer.swift in Sources */ = {isa = PBXBuildFile; fileRef = DD7E17F6CABE8AC154B4FDD0 /* RadialGlowBackgroundRenderer.swift */; };
 		79A2C220CAB9E6C95BED894A /* CachedRecordingsCleanupPolicy.swift in Sources */ = {isa = PBXBuildFile; fileRef = 1C10603525072F935CFA8A14 /* CachedRecordingsCleanupPolicy.swift */; };
 		7C0FF00100000000FF00CC02 /* ZoomFocusModeTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 7C0FF00100000000FF00CC01 /* ZoomFocusModeTests.swift */; };
 		7C1000012F70000100A0B001 /* CameraCaptureCoordinator.swift in Sources */ = {isa = PBXBuildFile; fileRef = 7C1000112F70000100A0B001 /* CameraCaptureCoordinator.swift */; };
@@ -127,6 +128,7 @@
 		8AAA59EA7CDDF22B4E47FB07 /* CaptureDestinationDiagnostics.swift in Sources */ = {isa = PBXBuildFile; fileRef = BDCE6283CC82D1BA03141B01 /* CaptureDestinationDiagnostics.swift */; };
 		8DD941C470535110159C907D /* RecordingSessionState.swift in Sources */ = {isa = PBXBuildFile; fileRef = 7756A56B1B8A4B603EFFAEA1 /* RecordingSessionState.swift */; };
 		8F5A1B2C3D4E5F60718293A2 /* OverlayUpdateDeduperTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 8F5A1B2C3D4E5F60718293A1 /* OverlayUpdateDeduperTests.swift */; };
+		91CE937036D54A858468EA85 /* GraphicMeshBackgroundRenderer.swift in Sources */ = {isa = PBXBuildFile; fileRef = CC09958A111E0B11EB556C4E /* GraphicMeshBackgroundRenderer.swift */; };
 		92DE71AE93031D649E329B64 /* CaptureStartConfigBuilderTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 888783F13627B16A2EE25EE9 /* CaptureStartConfigBuilderTests.swift */; };
 		95E7E1E7DE1FD1B713B715B1 /* CanvasBackgroundRendererTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = FC018DDF8B9C3E041725E337 /* CanvasBackgroundRendererTests.swift */; };
 		9815310AE9CB2D8AE9292079 /* RecordingProjectServiceTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = B2F68F98AC976184031BF555 /* RecordingProjectServiceTests.swift */; };
@@ -371,6 +373,7 @@
 		C5F53265860D2AA59ECBD56F /* ScreenRecorderEventBridgeTests.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = ScreenRecorderEventBridgeTests.swift; sourceTree = "<group>"; };
 		C7624E3F54B75567B79BEB96 /* MetadataSidecarWriter.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = MetadataSidecarWriter.swift; sourceTree = "<group>"; };
 		CB4E0C29E30DA358A5C81FD4 /* OverlayUpdateDeduper.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = OverlayUpdateDeduper.swift; sourceTree = "<group>"; };
+		CC09958A111E0B11EB556C4E /* GraphicMeshBackgroundRenderer.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = GraphicMeshBackgroundRenderer.swift; sourceTree = "<group>"; };
 		CDB7D0CE2C3759DD0ABDFF44 /* CanvasBackgroundRenderer.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = CanvasBackgroundRenderer.swift; sourceTree = "<group>"; };
 		D1A3CEC813899A2B13CCFB87 /* RecordingSessionCoordinator.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = RecordingSessionCoordinator.swift; sourceTree = "<group>"; };
 		D2B70FA1377388FC70B7DBB8 /* CursorHighlightCoordinatorTests.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = CursorHighlightCoordinatorTests.swift; sourceTree = "<group>"; };
@@ -380,6 +383,7 @@
 		D4A1B2C3D4E5F60718293A4B /* StorageInfoProvider.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = StorageInfoProvider.swift; sourceTree = "<group>"; };
 		D851B0263A47BA61AA6AC854 /* ZoomQueryService.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = ZoomQueryService.swift; sourceTree = "<group>"; };
 		DBAFE534F311451D8C165B52 /* ExportPrep.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = ExportPrep.swift; sourceTree = "<group>"; };
+		DD7E17F6CABE8AC154B4FDD0 /* RadialGlowBackgroundRenderer.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = RadialGlowBackgroundRenderer.swift; sourceTree = "<group>"; };
 		DDCBBF407771E3216D57604D /* CameraCoordinationController.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = CameraCoordinationController.swift; sourceTree = "<group>"; };
 		DEC89D912852F9AAC2996A07 /* ScreenRecorderEventBridge.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = ScreenRecorderEventBridge.swift; sourceTree = "<group>"; };
 		DF9975749BBCCB19C63D6DF2 /* Pods-Runner.release-prod.xcconfig */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = text.xcconfig; name = "Pods-Runner.release-prod.xcconfig"; path = "Target Support Files/Pods-Runner/Pods-Runner.release-prod.xcconfig"; sourceTree = "<group>"; };
@@ -903,6 +907,8 @@
 				C15C26A3F7B6D7C61763927A /* BackgroundPresetCatalog.swift */,
 				CDB7D0CE2C3759DD0ABDFF44 /* CanvasBackgroundRenderer.swift */,
 				E52DA51611DA1D49059AFA04 /* AbstractWavesBackgroundRenderer.swift */,
+				CC09958A111E0B11EB556C4E /* GraphicMeshBackgroundRenderer.swift */,
+				DD7E17F6CABE8AC154B4FDD0 /* RadialGlowBackgroundRenderer.swift */,
 			);
 			name = Background;
 			path = Background;
@@ -1392,6 +1398,8 @@
 				9930D9336777D0BBDBF47135 /* BackgroundPresetCatalog.swift in Sources */,
 				F105AFBAF4A49E9E45E9F551 /* CanvasBackgroundRenderer.swift in Sources */,
 				17468F59AA74810CA89265CB /* AbstractWavesBackgroundRenderer.swift in Sources */,
+				91CE937036D54A858468EA85 /* GraphicMeshBackgroundRenderer.swift in Sources */,
+				78803A98243937CED6567313 /* RadialGlowBackgroundRenderer.swift in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};

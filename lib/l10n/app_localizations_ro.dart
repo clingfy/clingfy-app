@@ -730,6 +730,12 @@ class AppLocalizationsRo extends AppLocalizations {
   String get presetAbstractWaves => 'Valuri abstracte';
 
   @override
+  String get presetGraphicMesh => 'Rețea grafică';
+
+  @override
+  String get presetRadialGlow => 'Strălucire radială';
+
+  @override
   String get gotIt => 'Am înțeles';
 
   @override

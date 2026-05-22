@@ -1438,6 +1438,18 @@ abstract class AppLocalizations {
   /// **'Abstract Waves'**
   String get presetAbstractWaves;
 
+  /// No description provided for @presetGraphicMesh.
+  ///
+  /// In en, this message translates to:
+  /// **'Graphic Mesh'**
+  String get presetGraphicMesh;
+
+  /// No description provided for @presetRadialGlow.
+  ///
+  /// In en, this message translates to:
+  /// **'Radial Glow'**
+  String get presetRadialGlow;
+
   /// No description provided for @gotIt.
   ///
   /// In en, this message translates to:

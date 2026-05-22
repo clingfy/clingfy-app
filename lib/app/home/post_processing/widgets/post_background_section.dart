@@ -20,6 +20,10 @@ String _presetDisplayName(AppLocalizations l10n, String presetId) {
   switch (presetId) {
     case 'abstractWaves':
       return l10n.presetAbstractWaves;
+    case 'graphicMesh':
+      return l10n.presetGraphicMesh;
+    case 'radialGlow':
+      return l10n.presetRadialGlow;
     default:
       return presetId;
   }

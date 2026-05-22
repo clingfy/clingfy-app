@@ -717,6 +717,12 @@ class AppLocalizationsAr extends AppLocalizations {
   String get presetAbstractWaves => 'موجات تجريدية';
 
   @override
+  String get presetGraphicMesh => 'شبكة رسومية';
+
+  @override
+  String get presetRadialGlow => 'توهج شعاعي';
+
+  @override
   String get gotIt => 'فهمت';
 
   @override

@@ -249,6 +249,8 @@
   "backgroundSoftness": "Softness",
   "randomize": "Randomize",
   "presetAbstractWaves": "Abstract Waves",
+  "presetGraphicMesh": "Graphic Mesh",
+  "presetRadialGlow": "Radial Glow",
   "gotIt": "Got it",
   "increase": "Increase",
   "decrease": "Decrease",
