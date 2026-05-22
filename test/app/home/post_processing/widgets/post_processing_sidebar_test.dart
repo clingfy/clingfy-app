@@ -65,6 +65,10 @@ void main() {
       radius: 4,
       backgroundColor: 0xFFFFFFFF,
       backgroundImagePath: backgroundImagePath,
+      backgroundKind: backgroundImagePath != null
+          ? BackgroundKind.image
+          : BackgroundKind.color,
+      backgroundPreset: null,
       showCursor: showCursor,
       cursorSize: 1.0,
       zoomFactor: zoomFactor,
@@ -86,6 +90,9 @@ void main() {
       onRadiusChangeEnd: (_) {},
       onBackgroundColorChanged: (_) {},
       onBackgroundImageChanged: onBackgroundImageChanged ?? (_) {},
+      onBackgroundKindChanged: (_) {},
+      onBackgroundPresetChanged: (_) {},
+      onBackgroundPresetPreview: (_) {},
       onCursorShowChanged: (_) {},
       onCursorSizeChanged: (_) {},
       onCursorSizeChangeEnd: (_) {},
@@ -257,11 +264,14 @@ void main() {
       expect(find.byType(Divider), findsNothing);
       expect(find.text('Canvas Aspect'), findsOneWidget);
       expect(find.text('Padding'), findsOneWidget);
-      expect(find.text('Background Image'), findsOneWidget);
+      // Background mode picker — Color / Image / Preset segments.
+      expect(find.text('Color'), findsOneWidget);
+      expect(find.text('Image'), findsOneWidget);
+      expect(find.text('Preset'), findsOneWidget);
       expect(find.byIcon(Icons.fit_screen), findsOneWidget);
       expect(find.byIcon(Icons.aspect_ratio), findsOneWidget);
       expect(find.text('Resolution'), findsNothing);
-      expect(find.text('Pick an image'), findsOneWidget);
+      // Color is the default mode → its "More colors" action is shown.
       expect(find.text('More colors'), findsOneWidget);
       expect(find.byKey(const Key('canvas_aspect_selector')), findsOneWidget);
       expect(find.text('Auto'), findsOneWidget);

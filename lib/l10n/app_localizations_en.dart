@@ -699,6 +699,30 @@ class AppLocalizationsEn extends AppLocalizations {
   String get pickColor => 'Pick a color';
 
   @override
+  String get backgroundModeColor => 'Color';
+
+  @override
+  String get backgroundModeImage => 'Image';
+
+  @override
+  String get backgroundModePreset => 'Preset';
+
+  @override
+  String get backgroundPalette => 'Palette';
+
+  @override
+  String get backgroundIntensity => 'Intensity';
+
+  @override
+  String get backgroundSoftness => 'Softness';
+
+  @override
+  String get randomize => 'Randomize';
+
+  @override
+  String get presetAbstractWaves => 'Abstract Waves';
+
+  @override
   String get gotIt => 'Got it';
 
   @override
