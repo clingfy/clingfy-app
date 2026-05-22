@@ -48,6 +48,7 @@ final class PreviewEngine {
     let cornerRadius: Double
     let backgroundColor: Int?
     let backgroundImagePath: String?
+    let backgroundPreset: CanvasBackgroundPreset?
     let cursorSize: Double
     let zoomFactor: Double
     let showCursor: Bool
@@ -124,6 +125,7 @@ final class PreviewEngine {
       audioVolumePercent: clampedVolumePercent
     )
     params.zoomSegments = input.zoomSegments
+    params.backgroundPreset = input.backgroundPreset
 
     NativeLogger.i(
       "Facade", "processVideo called (New Architecture)",

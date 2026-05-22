@@ -2477,7 +2477,8 @@ final class InlinePreviewView: NSView {
         fitMode: params.fitMode,
         audioGainDb: clampAudioGainDb(gainDb),
         audioVolumePercent: clampAudioVolumePercent(volumePercent),
-        zoomSegments: params.zoomSegments
+        zoomSegments: params.zoomSegments,
+        backgroundPreset: params.backgroundPreset
       )
       self.currentCompositionParams = updatedParams
     }

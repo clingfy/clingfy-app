@@ -60,6 +60,7 @@ final class ExportEngine {
     let cornerRadius: Double
     let backgroundColor: Int?
     let backgroundImagePath: String?
+    let backgroundPreset: CanvasBackgroundPreset?
     let cursorSize: Double
     let zoomFactor: Double
     let showCursor: Bool
@@ -185,6 +186,7 @@ final class ExportEngine {
       cornerRadius: input.cornerRadius,
       backgroundColor: input.backgroundColor,
       backgroundImagePath: input.backgroundImagePath,
+      backgroundPreset: input.backgroundPreset,
       cursorSize: input.cursorSize,
       showCursor: input.showCursor,
       zoomEnabled: true,

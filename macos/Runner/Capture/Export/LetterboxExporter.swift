@@ -2005,6 +2005,7 @@ final class LetterboxExporter {
     cornerRadius: Double = 0,
     backgroundColor: Int? = nil,
     backgroundImagePath: String? = nil,
+    backgroundPreset: CanvasBackgroundPreset? = nil,
     cursorSize: Double = 1.0,
     showCursor: Bool = true,
     zoomEnabled: Bool = false,
@@ -2134,6 +2135,7 @@ final class LetterboxExporter {
       audioVolumePercent: audioVolumePercent
     )
     params.zoomSegments = effectiveSegments
+    params.backgroundPreset = backgroundPreset
 
     let resolvedAudioMix = resolveAudioMixControls(
       asset: asset,
