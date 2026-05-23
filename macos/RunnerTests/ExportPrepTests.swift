@@ -66,4 +66,58 @@ final class ExportPrepTests: XCTestCase {
     XCTAssertEqual(details?["stage"] as? String, "compose")
     XCTAssertEqual(details?["reason"] as? String, "bad")
   }
+
+  func testFlutterExportFailureForwardsDiskFullCodeAndDetails() {
+    let err = NSError(
+      domain: "Letterbox.ScreenPrepass", code: 1,
+      userInfo: [
+        NSLocalizedDescriptionKey: "Not enough free disk space …",
+        "nativeErrorCode": NativeErrorCode.exportDiskFull,
+        "stage": "screen_prepass_build",
+        "reason": "Not enough free disk space …",
+        "context": [
+          "availableTempFormatted": "59 GB",
+          "estimatedRequiredTempFormatted": "96 GB",
+          "shortfallTempFormatted": "37 GB",
+        ],
+      ])
+    let fe = facade.flutterExportFailure(from: err)
+    XCTAssertEqual(fe.code, NativeErrorCode.exportDiskFull)
+    XCTAssertEqual(fe.message, "Not enough free disk space …")
+    let details = fe.details as? [String: Any]
+    XCTAssertEqual(details?["stage"] as? String, "screen_prepass_build")
+    let ctx = details?["context"] as? [String: Any]
+    XCTAssertEqual(ctx?["availableTempFormatted"] as? String, "59 GB")
+    XCTAssertEqual(ctx?["estimatedRequiredTempFormatted"] as? String, "96 GB")
+    XCTAssertEqual(ctx?["shortfallTempFormatted"] as? String, "37 GB")
+  }
+
+  // The disk-full reason should NOT be prefixed by "Screen zoom export could
+  // not be rendered." — it's a user-actionable storage condition, not a
+  // rendering failure, and the prefix would just confuse the user.
+  func testMakeScreenPrepassExportErrorDiskFullSkipsRenderingPreamble() {
+    let err = makeScreenPrepassExportError(
+      stage: .build,
+      nativeErrorCode: NativeErrorCode.exportDiskFull,
+      reason: "Not enough free disk space to render this export.",
+      context: [:]
+    )
+    XCTAssertEqual(
+      err.userInfo[NSLocalizedDescriptionKey] as? String,
+      "Not enough free disk space to render this export."
+    )
+    XCTAssertEqual(err.userInfo["nativeErrorCode"] as? String, NativeErrorCode.exportDiskFull)
+  }
+
+  func testMakeScreenPrepassExportErrorGenericKeepsRenderingPreamble() {
+    let err = makeScreenPrepassExportError(
+      stage: .build,
+      reason: "some other failure"
+    )
+    XCTAssertEqual(
+      err.userInfo[NSLocalizedDescriptionKey] as? String,
+      "Screen zoom export could not be rendered. some other failure"
+    )
+    XCTAssertEqual(err.userInfo["nativeErrorCode"] as? String, NativeErrorCode.exportError)
+  }
 }

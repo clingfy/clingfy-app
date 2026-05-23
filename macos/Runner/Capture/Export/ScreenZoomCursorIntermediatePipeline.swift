@@ -8,12 +8,23 @@ enum ScreenPrepassExportStage: String {
 
 func makeScreenPrepassExportError(
   stage: ScreenPrepassExportStage,
+  nativeErrorCode: String = NativeErrorCode.exportError,
   reason: String,
   context: [String: Any] = [:]
 ) -> NSError {
+  // Disk-full is a user-actionable condition (free up space / pick lower res),
+  // not a generic rendering failure — its message stands on its own without
+  // the "Screen zoom export could not be rendered." preamble that would
+  // otherwise just confuse the user.
+  let description: String
+  if nativeErrorCode == NativeErrorCode.exportDiskFull {
+    description = reason
+  } else {
+    description = "Screen zoom export could not be rendered. \(reason)"
+  }
   var userInfo: [String: Any] = [
-    NSLocalizedDescriptionKey: "Screen zoom export could not be rendered. \(reason)",
-    "nativeErrorCode": NativeErrorCode.exportError,
+    NSLocalizedDescriptionKey: description,
+    "nativeErrorCode": nativeErrorCode,
     "stage": stage.rawValue,
     "reason": reason,
   ]

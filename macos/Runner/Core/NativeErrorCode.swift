@@ -39,6 +39,7 @@ enum NativeErrorCode {
   static let outputUrlError = "OUTPUT_URL_ERROR"
   static let exportError = "EXPORT_ERROR"
   static let exportInputMissing = "EXPORT_INPUT_MISSING"
+  static let exportDiskFull = "EXPORT_DISK_FULL"
   static let advancedCameraExportFailed = "ADVANCED_CAMERA_EXPORT_FAILED"
 
   // File errors

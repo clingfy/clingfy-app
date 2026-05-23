@@ -566,6 +566,16 @@
   "recordingSelectedMicFallbackWarning": "Selected microphone couldn’t be used. Recording started with the system default microphone.",
   "recordingSelectedMicFallbackFailure": "Selected microphone couldn’t be used for recording. Choose another microphone or turn microphone recording off.",
   "errExportError": "An error occurred during export: {error}",
+  "errExportDiskFull": "Not enough free disk space to export. About {required} of temporary space is needed for the render — only {available} is available (short by {shortfall}). Free up some disk space, or pick a lower output resolution, and try again.",
+  "@errExportDiskFull": {
+    "description": "Friendly disk-space-exhausted message shown when the screen pre-pass cannot fit on disk. Shows formatted byte counts.",
+    "placeholders": {
+      "required": {"type": "String"},
+      "available": {"type": "String"},
+      "shortfall": {"type": "String"}
+    }
+  },
+  "errExportDiskFullFallback": "Not enough free disk space to export. Free up some disk space, or pick a lower output resolution, and try again.",
   "errCameraPermissionDenied": "Enable camera in System Settings > Privacy & Security > Camera.",
   "shape": "Shape",
   "squircle": "Squircle",
