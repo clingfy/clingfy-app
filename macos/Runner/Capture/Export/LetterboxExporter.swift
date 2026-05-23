@@ -248,8 +248,8 @@ final class LetterboxExporter {
     // has to stand on its own everywhere — logs, Sentry, fallback dialogs.
     let reason =
       "Not enough free disk space to render this export. "
-      + "About \(requiredFormatted) of temporary space is needed for the "
-      + "intermediate render, only \(availableFormatted) is available "
+      + "About \(requiredFormatted) of temporary disk space is needed for "
+      + "the intermediate render, only \(availableFormatted) is available "
       + "(short by \(shortfallFormatted)). "
       + "Free up some space — or pick a lower output resolution — and try again."
 

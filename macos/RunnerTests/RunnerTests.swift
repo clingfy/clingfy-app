@@ -1242,7 +1242,8 @@ final class LetterboxExporterTests: XCTestCase {
     let cases: [(operation: String, codec: AVVideoCodecType, size: CGSize)] = [
       ("styled_camera_intermediate", .proRes4444, CGSize(width: 250, height: 250)),
       ("camera_chroma_key_intermediate", .proRes4444, CGSize(width: 1920, height: 1080)),
-      ("screen_zoom_cursor_intermediate", .proRes4444, CGSize(width: 1440, height: 935)),
+      // Screen pre-pass uses HEVC-with-alpha (see ScreenZoomCursorIntermediatePipeline).
+      ("screen_zoom_cursor_intermediate", .hevcWithAlpha, CGSize(width: 1440, height: 935)),
     ]
 
     for testCase in cases {
@@ -1605,6 +1606,11 @@ final class LetterboxExporterTests: XCTestCase {
   }
 
   func testScreenPrepassFailsEarlyWhenTempCapacityIsInsufficient() throws {
+    // The estimator is calibrated for HEVC-with-alpha. With 1 KB available,
+    // even tiny render sizes should trip the guard once duration is non-zero
+    // (the safety padding alone is 2 GB ≫ 1 KB). We pick a 4K+ canvas /
+    // long duration so the bitrate-scaling path is genuinely exercised
+    // rather than dominated by the safety padding.
     let exporter = LetterboxExporter()
     let error = exporter._testScreenPrepassTempCapacityError(
       targetSize: CGSize(width: 2560, height: 1440),
@@ -1633,6 +1639,74 @@ final class LetterboxExporterTests: XCTestCase {
         availableCapacityBytes: Int64.max / 4
       )
     )
+  }
+
+  // The pre-pass intermediate is HEVC-with-alpha with a pixel-rate-scaled
+  // bitrate target capped at 150 Mbps. Both the writer-input setup and the
+  // disk-capacity estimator MUST go through the same helper so the encoded
+  // file roughly matches the friendly disk-full estimate — anything else
+  // means we either over-allocate (false-positive on a successful export)
+  // or under-allocate (the export starts, then fails halfway through).
+  func testIntermediateBitrateScalesWithPixelRate() {
+    // 1080p30 sits exactly at the reference point.
+    let baseline = ScreenZoomCursorIntermediatePipeline
+      .intermediateAverageBitrateBps(
+        renderSize: CGSize(width: 1920, height: 1080), fpsHint: 30
+      )
+    XCTAssertEqual(baseline, 12_000_000, accuracy: 1.0)
+
+    // 4K60 has 8× the pixel rate of 1080p30 → 96 Mbps, still under the cap.
+    let fourKSixty = ScreenZoomCursorIntermediatePipeline
+      .intermediateAverageBitrateBps(
+        renderSize: CGSize(width: 3840, height: 2160), fpsHint: 60
+      )
+    XCTAssertEqual(fourKSixty, 96_000_000, accuracy: 1.0)
+  }
+
+  func testIntermediateBitrateIsCappedAtCeiling() {
+    // 8K60 = 32× the reference; raw scale would be 384 Mbps but the cap
+    // pins it at 150 Mbps. Without this cap, a long 8K60 recording would
+    // still demand more disk than most users have.
+    let eightKSixty = ScreenZoomCursorIntermediatePipeline
+      .intermediateAverageBitrateBps(
+        renderSize: CGSize(width: 7680, height: 4320), fpsHint: 60
+      )
+    XCTAssertEqual(eightKSixty, 150_000_000, accuracy: 1.0)
+  }
+
+  func testIntermediateTempEstimateMatchesBitrateTimesDuration() {
+    // Sanity check: the estimator is just bitrate × duration × safety,
+    // computed via the same helper the writer uses. If these drift apart,
+    // the disk-full guard becomes either overcautious or wrong.
+    let size = CGSize(width: 3840, height: 2160)
+    let bps = ScreenZoomCursorIntermediatePipeline
+      .intermediateAverageBitrateBps(renderSize: size, fpsHint: 60)
+    let estimate = ScreenZoomCursorIntermediatePipeline
+      .estimatedTempRequirementBytes(
+        renderSize: size, fpsHint: 60, durationSeconds: 60.0
+      )
+    let expectedBase = bps / 8.0 * 60.0
+    let expectedWithSafety = expectedBase * 1.30 + Double(2 * 1024 * 1024 * 1024)
+    XCTAssertEqual(Double(estimate), expectedWithSafety, accuracy: 16.0)
+  }
+
+  // The reported user case: 8K60 for ~38 min on a 50 GB disk used to
+  // demand 3.4 TB (ProRes 4444). With HEVC-with-alpha + the 150 Mbps cap,
+  // it should now estimate well under 100 GB — still not fitting in 50 GB
+  // for this extreme case, but back in the realm of "free some disk or
+  // pick a lower resolution" instead of "physically impossible".
+  func testEightKSixtyEstimateIsReasonableAfterCodecSwap() {
+    let estimate = ScreenZoomCursorIntermediatePipeline
+      .estimatedTempRequirementBytes(
+        renderSize: CGSize(width: 7680, height: 4320),
+        fpsHint: 60,
+        durationSeconds: 2269.15  // 37:49 from the reported failure
+      )
+    // Sanity bounds: should be much less than the old ~3.4 TB ProRes 4444
+    // estimate, and well under 1 TB.
+    let gigabyte: Int64 = 1024 * 1024 * 1024
+    XCTAssertLessThan(estimate, 100 * gigabyte, "expected post-codec-swap estimate < 100 GB")
+    XCTAssertGreaterThan(estimate, 30 * gigabyte, "expected post-codec-swap estimate > 30 GB")
   }
 
   func testInlineStyledCameraFinalRenderProducesVisibleCameraCrop() throws {
