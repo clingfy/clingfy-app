@@ -1648,6 +1648,19 @@ class AppLocalizationsAr extends AppLocalizations {
   }
 
   @override
+  String errExportDiskFull(
+    String required,
+    String available,
+    String shortfall,
+  ) {
+    return 'لا توجد مساحة كافية على القرص للتصدير. تحتاج المعالجة إلى حوالي $required كمساحة مؤقتة — المتاح فقط $available (ينقصك $shortfall). فرّغ بعض المساحة أو اختر دقة إخراج أقل ثم حاول مرة أخرى.';
+  }
+
+  @override
+  String get errExportDiskFullFallback =>
+      'لا توجد مساحة كافية على القرص للتصدير. فرّغ بعض المساحة أو اختر دقة إخراج أقل ثم حاول مرة أخرى.';
+
+  @override
   String get errCameraPermissionDenied =>
       'يرجى تفعيل الكاميرا في إعدادات النظام > الخصوصية والأمن > الكاميرا.';
 

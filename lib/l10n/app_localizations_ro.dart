@@ -1678,6 +1678,19 @@ class AppLocalizationsRo extends AppLocalizations {
   }
 
   @override
+  String errExportDiskFull(
+    String required,
+    String available,
+    String shortfall,
+  ) {
+    return 'Nu este suficient spațiu liber pe disc pentru export. Sunt necesari aproximativ $required pentru randarea intermediară — sunt disponibili doar $available (lipsesc $shortfall). Eliberează spațiu sau alege o rezoluție de export mai mică și încearcă din nou.';
+  }
+
+  @override
+  String get errExportDiskFullFallback =>
+      'Nu este suficient spațiu liber pe disc pentru export. Eliberează spațiu sau alege o rezoluție de export mai mică și încearcă din nou.';
+
+  @override
   String get errCameraPermissionDenied =>
       'Activați camera în Setări Sistem > Confidențialitate și Securitate > Cameră.';
 

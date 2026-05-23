@@ -1663,6 +1663,19 @@ class AppLocalizationsEn extends AppLocalizations {
   }
 
   @override
+  String errExportDiskFull(
+    String required,
+    String available,
+    String shortfall,
+  ) {
+    return 'Not enough free disk space to export. About $required of temporary space is needed for the render — only $available is available (short by $shortfall). Free up some disk space, or pick a lower output resolution, and try again.';
+  }
+
+  @override
+  String get errExportDiskFullFallback =>
+      'Not enough free disk space to export. Free up some disk space, or pick a lower output resolution, and try again.';
+
+  @override
   String get errCameraPermissionDenied =>
       'Enable camera in System Settings > Privacy & Security > Camera.';
 

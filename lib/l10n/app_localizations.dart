@@ -3154,6 +3154,18 @@ abstract class AppLocalizations {
   /// **'An error occurred during export: {error}'**
   String errExportError(Object error);
 
+  /// Friendly disk-space-exhausted message shown when the screen pre-pass cannot fit on disk. Shows formatted byte counts.
+  ///
+  /// In en, this message translates to:
+  /// **'Not enough free disk space to export. About {required} of temporary space is needed for the render — only {available} is available (short by {shortfall}). Free up some disk space, or pick a lower output resolution, and try again.'**
+  String errExportDiskFull(String required, String available, String shortfall);
+
+  /// No description provided for @errExportDiskFullFallback.
+  ///
+  /// In en, this message translates to:
+  /// **'Not enough free disk space to export. Free up some disk space, or pick a lower output resolution, and try again.'**
+  String get errExportDiskFullFallback;
+
   /// No description provided for @errCameraPermissionDenied.
   ///
   /// In en, this message translates to:

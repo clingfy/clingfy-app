@@ -233,13 +233,38 @@ final class LetterboxExporter {
 
     guard availableCapacityBytes < estimatedRequiredTempBytes else { return nil }
 
+    let shortfallBytes = max(estimatedRequiredTempBytes - availableCapacityBytes, 0)
+    let formatter = ByteCountFormatter()
+    formatter.allowedUnits = [.useGB, .useMB]
+    formatter.countStyle = .file
+    formatter.includesUnit = true
+    let availableFormatted = formatter.string(fromByteCount: availableCapacityBytes)
+    let requiredFormatted = formatter.string(fromByteCount: estimatedRequiredTempBytes)
+    let shortfallFormatted = formatter.string(fromByteCount: shortfallBytes)
+
+    // Human-readable, self-contained explanation. Flutter has a structured
+    // EXPORT_DISK_FULL handler that re-renders this from the details payload,
+    // but this string is also what `error.localizedDescription` returns, so it
+    // has to stand on its own everywhere — logs, Sentry, fallback dialogs.
+    let reason =
+      "Not enough free disk space to render this export. "
+      + "About \(requiredFormatted) of temporary space is needed for the "
+      + "intermediate render, only \(availableFormatted) is available "
+      + "(short by \(shortfallFormatted)). "
+      + "Free up some space — or pick a lower output resolution — and try again."
+
     return makeScreenPrepassExportError(
       stage: .build,
-      reason: "The screen pre-pass requires more temporary disk space than is currently available.",
+      nativeErrorCode: NativeErrorCode.exportDiskFull,
+      reason: reason,
       context: [
         "tempPath": tempRoot.path,
         "availableTempBytes": availableCapacityBytes,
         "estimatedRequiredTempBytes": estimatedRequiredTempBytes,
+        "shortfallTempBytes": shortfallBytes,
+        "availableTempFormatted": availableFormatted,
+        "estimatedRequiredTempFormatted": requiredFormatted,
+        "shortfallTempFormatted": shortfallFormatted,
         "target": "\(Int(targetSize.width))x\(Int(targetSize.height))",
         "fpsHint": fpsHint,
         "durationSeconds": durationSeconds,

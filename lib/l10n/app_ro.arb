@@ -572,6 +572,8 @@
   "recordingSelectedMicFallbackWarning": "Microfonul selectat nu a putut fi folosit. Înregistrarea a început cu microfonul implicit al sistemului.",
   "recordingSelectedMicFallbackFailure": "Microfonul selectat nu a putut fi folosit pentru înregistrare. Alegeți alt microfon sau dezactivați înregistrarea microfonului.",
   "errExportError": "A apărut o eroare la export: {error}",
+  "errExportDiskFull": "Nu este suficient spațiu liber pe disc pentru export. Sunt necesari aproximativ {required} pentru randarea intermediară — sunt disponibili doar {available} (lipsesc {shortfall}). Eliberează spațiu sau alege o rezoluție de export mai mică și încearcă din nou.",
+  "errExportDiskFullFallback": "Nu este suficient spațiu liber pe disc pentru export. Eliberează spațiu sau alege o rezoluție de export mai mică și încearcă din nou.",
   "errCameraPermissionDenied": "Activați camera în Setări Sistem > Confidențialitate și Securitate > Cameră.",
   "shape": "Formă",
   "squircle": "Squircle",

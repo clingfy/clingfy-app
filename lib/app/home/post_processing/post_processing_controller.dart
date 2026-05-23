@@ -1168,6 +1168,9 @@ class PostProcessingController extends ChangeNotifier {
         e.code == NativeErrorCode.fileNotFound) {
       return const SpanStatus.notFound();
     }
+    if (e.code == NativeErrorCode.exportDiskFull) {
+      return const SpanStatus.resourceExhausted();
+    }
     if (e.code == NativeErrorCode.exportError &&
         (e.message?.toLowerCase().contains('space') == true ||
             e.message?.toLowerCase().contains('storage') == true ||

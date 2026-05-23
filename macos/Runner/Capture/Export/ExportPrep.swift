@@ -65,7 +65,11 @@ extension ScreenRecorderFacade {
     let nsError = error as NSError
     if let nativeErrorCode = nsError.userInfo["nativeErrorCode"] as? String,
       nativeErrorCode == NativeErrorCode.advancedCameraExportFailed
+        || nativeErrorCode == NativeErrorCode.exportDiskFull
     {
+      // Forward `stage` / `reason` / `context` so Flutter can render a
+      // structured, user-friendly dialog (especially for disk-full, which
+      // exposes formatted byte counts in `context`).
       var details: [String: Any] = [:]
       if let stage = nsError.userInfo["stage"] as? String {
         details["stage"] = stage

@@ -9,6 +9,7 @@ import 'package:clingfy/commercial/licensing/license_controller.dart';
 import 'package:clingfy/app/home/overlay/overlay_controller.dart';
 import 'package:clingfy/app/permissions/permissions_controller.dart';
 import 'package:clingfy/core/preview/player_controller.dart';
+import 'package:clingfy/app/home/export/export_disk_full_message.dart';
 import 'package:clingfy/app/home/post_processing/post_processing_controller.dart';
 import 'package:clingfy/app/home/recording/recording_controller.dart';
 import 'package:clingfy/app/home/home_prefs_store.dart';
@@ -357,12 +358,16 @@ class HomeActions {
         return;
       }
 
-      final message = e.code == 'EXPORT_INPUT_MISSING'
-          ? l10n.errExportInputMissing
-          : e.code == NativeErrorCode.advancedCameraExportFailed
-          ? (e.message ??
-                'Advanced camera styling could not be rendered for export.')
-          : l10n.errExportError(e.message ?? 'Unknown error');
+      // Disk-full ranks above the generic export-error message: it tells the
+      // user *exactly* why and what to do (free space / lower resolution).
+      final message =
+          ExportDiskFullMessage.forException(e, l10n) ??
+          (e.code == 'EXPORT_INPUT_MISSING'
+              ? l10n.errExportInputMissing
+              : e.code == NativeErrorCode.advancedCameraExportFailed
+              ? (e.message ??
+                    'Advanced camera styling could not be rendered for export.')
+              : l10n.errExportError(e.message ?? 'Unknown error'));
 
       uiState.setNotice(
         HomeUiNotice(message: message, tone: HomeUiNoticeTone.error),
