@@ -26,6 +26,9 @@ add_library(runner_bridge STATIC
   "Bridge/Routers/preview_router.cpp"
   "Bridge/Routers/recording_router.cpp"
   "Bridge/Routers/storage_router.cpp"
+  "Capture/recording_clock.cpp"
+  "Capture/recording_engine.cpp"
+  "Capture/recording_session_state.cpp"
 )
 apply_standard_settings(runner_bridge)
 target_compile_definitions(runner_bridge PRIVATE "NOMINMAX")
