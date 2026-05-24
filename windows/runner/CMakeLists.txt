@@ -12,6 +12,11 @@ add_library(runner_bridge STATIC
   "Bridge/method_dispatcher.cpp"
   "Bridge/method_router.cpp"
   "Bridge/event_channel_stubs.cpp"
+  "Bridge/Devices/audio_source_enumerator.cpp"
+  "Bridge/Devices/device_record.cpp"
+  "Bridge/Devices/display_enumerator.cpp"
+  "Bridge/Devices/video_source_enumerator.cpp"
+  "Bridge/Devices/window_enumerator.cpp"
   "Bridge/Routers/camera_overlay_router.cpp"
   "Bridge/Routers/devices_router.cpp"
   "Bridge/Routers/export_router.cpp"
@@ -26,6 +31,24 @@ apply_standard_settings(runner_bridge)
 target_compile_definitions(runner_bridge PRIVATE "NOMINMAX")
 target_include_directories(runner_bridge PUBLIC "${CMAKE_CURRENT_SOURCE_DIR}")
 target_link_libraries(runner_bridge PUBLIC flutter flutter_wrapper_app)
+
+# Win32 / WASAPI / Media Foundation libraries required by the Phase 2 device
+# enumerators. These ship with the Windows SDK and do not pull in any
+# additional CMake dependencies.
+#   * shcore   — GetDpiForMonitor (per-monitor DPI scale)
+#   * dwmapi   — DwmGetWindowAttribute (cloaked + extended frame bounds)
+#   * mmdevapi — IMMDeviceEnumerator (WASAPI capture endpoints)
+#   * propsys  — PROPVARIANT helpers for reading device friendly names
+#   * mf / mfplat / mfuuid — Media Foundation video capture enumeration
+target_link_libraries(runner_bridge PUBLIC
+  "shcore.lib"
+  "dwmapi.lib"
+  "mmdevapi.lib"
+  "propsys.lib"
+  "mf.lib"
+  "mfplat.lib"
+  "mfuuid.lib"
+)
 
 # === Runner executable ===
 #

@@ -51,8 +51,8 @@ lifecycle, preview, and basic export.
 | ----- | ------------------------------------------------------------- | ------ |
 | 0     | App launches; native bridge stubs; no MissingPluginException  | done   |
 | 1     | Full bridge contract parity (every method routed, stubbed)    | done   |
-| 2     | Real device / target discovery                                | next   |
-| 3     | MVP recording (full display + mic + system audio → MP4)       |
+| 2     | Real device / target discovery                                | done   |
+| 3     | MVP recording (full display + mic + system audio → MP4)       | next   |
 | 4     | Lifecycle parity (state machine, pause/resume, recovery)      |
 | 5     | Preview player + project reopen                               |
 | 6     | Basic export + post-processing (resolution, background, etc.) |
@@ -64,7 +64,7 @@ lifecycle, preview, and basic export.
 Detailed scope per phase is tracked in the session task list and in
 [../CLAUDE.md](../CLAUDE.md).
 
-## Current status — Phase 1
+## Current status — Phase 2
 
 Phase 0 stood up the bridge scaffolding (a catch-all method handler plus
 no-op event-channel stubs) so the app could boot without throwing
@@ -77,6 +77,24 @@ through its full startup sequence (settings hydration, permissions probe,
 device enumeration, post-processing prefs) without the bridge surfacing a
 wall of errors.
 
+Phase 2 — **real device / target discovery** — replaces the empty-list
+stubs for the four discovery getters with live OS enumerations under
+`windows/runner/Bridge/Devices/`:
+
+| Getter             | Backed by                                              |
+| ------------------ | ------------------------------------------------------ |
+| `getDisplays`      | `EnumDisplayMonitors` + `GetMonitorInfoW` + `GetDpiForMonitor` |
+| `getAppWindows`    | `EnumWindows` filtered by visibility / cloak / tool-window / extended-frame bounds, plus `QueryFullProcessImageNameW` for the app name |
+| `getAudioSources`  | WASAPI `IMMDeviceEnumerator::EnumAudioEndpoints(eCapture, DEVICE_STATE_ACTIVE)` + `PKEY_Device_FriendlyName` |
+| `getVideoSources`  | Media Foundation `MFEnumDeviceSources(VIDCAP)` reading the symbolic-link id and friendly-name attributes |
+
+The picker UI now lists real monitors, app windows, microphones, and
+cameras. Setters (`setDisplay`, `setAudioSource`, etc.) are still no-op
+success — the recording engine that consumes those selections lands in
+Phase 3. Device-change notifications (audio / video source hot-plug events
+on the `screen_recorder/events` channel) also land in Phase 3 alongside
+the recording lifecycle.
+
 ### Layout
 
 ```
@@ -88,11 +106,24 @@ windows/runner/Bridge/
   native_error_codes.h           error code constants
   event_channel_stubs.{h,cpp}    no-op event channels
 
+  Devices/                       Phase 2 device enumerators
+    device_record.{h,cpp}        plain-data records + `ToEncodable` helpers
+                                 (pure formatters, unit-tested in isolation)
+    display_enumerator.{h,cpp}   EnumDisplayMonitors → DisplayRecord
+    window_enumerator.{h,cpp}    EnumWindows → AppWindowRecord, with the
+                                 visibility / cloak / tool-window filters
+    audio_source_enumerator.{h,cpp}
+                                 WASAPI capture endpoints → AudioSourceRecord
+    video_source_enumerator.{h,cpp}
+                                 Media Foundation video capture devices →
+                                 VideoSourceRecord
+
   Routers/
     recording_router.{h,cpp}     startRecording, lifecycle, capabilities,
                                  recording settings
-    devices_router.{h,cpp}       getDisplays / getAppWindows / get*Sources,
-                                 selection setters, area selection
+    devices_router.{h,cpp}       getDisplays / getAppWindows / get*Sources
+                                 (Phase 2 real), selection setters, area
+                                 selection
     camera_overlay_router.{h,cpp} all setCameraOverlay*, chroma key,
                                  cursor highlight
     indicator_router.{h,cpp}     recording indicator + pre-recording bar
@@ -122,13 +153,16 @@ windows/runner/Bridge/
 | `startRecording`, `stopRecording`, `exportVideo`, `processVideo` | `WINDOWS_NOT_IMPLEMENTED` error so the user gets a clean "not on Windows yet" message |
 | Unknown / unrouted methods | `WINDOWS_NOT_IMPLEMENTED` — keeps bridge drift visible |
 
-### What works after Phase 1
+### What works after Phase 2
 
 - `flutter run -d windows --dart-define-from-file=.env.dev` launches the
   app.
 - Home shell, settings, post-processing, permissions onboarding, and
   licensing UI all render under fluent_ui without surfacing a wall of
   bridge errors.
+- The display, window, microphone, and camera pickers list real devices
+  from the host machine. Selecting any of them round-trips through the
+  no-op setters cleanly — Phase 3 picks up the selection state.
 - Pre-recording flows (selecting a quality preset, toggling the recorder
   exclusion, opening the camera overlay settings) round-trip cleanly.
 - Hitting **Record** or **Export** surfaces a clean
@@ -136,8 +170,12 @@ windows/runner/Bridge/
 
 ### What does not work yet
 
-- No actual recording, preview, export, device enumeration, or permission
-  resolution. Those land in Phases 2–10.
+- No actual recording, preview, or export. Those land in Phases 3–6.
+- No device hot-plug notifications: plugging in a new mic / camera does
+  not refresh the picker until the user re-opens it. Audio (WASAPI
+  `IMMNotificationClient`) and video (WM_DEVICECHANGE) notifications
+  arrive alongside the recording engine in Phase 3.
+- Permission resolution still returns "not granted". Phase 10.
 - File reveal / "open folder" actions accept the call but do nothing — a
   real ShellExecute pass arrives in Phase 10.
 
@@ -180,13 +218,14 @@ demand via CMake `FetchContent`. They mirror what `macos/RunnerTests/` does
 for the Swift engine — exercise the bridge code without spinning up the
 Flutter engine.
 
-### What the tests cover (Phase 1)
+### What the tests cover
 
 | File | What it asserts |
 |---|---|
 | `method_router_test.cpp` | Unknown methods fall back to `WINDOWS_NOT_IMPLEMENTED`; `HasHandler` reflects registration state. |
 | `bridge_contract_coverage_test.cpp` | Every method on the Dart bridge contract has an explicit registered handler — the drift-detection net. Update the list here when you add a method to either side. |
-| `router_stub_shapes_test.cpp` | Per-method stub shapes: setters return success+null, getters return the documented list/map/bool/null, `startRecording` / `stopRecording` / `exportVideo` / `processVideo` return `WINDOWS_NOT_IMPLEMENTED`, `getStorageSnapshot` carries all ten required keys, etc. |
+| `router_stub_shapes_test.cpp` | Per-method stub shapes: setters return success+null, getters return the documented list/map/bool/null, `startRecording` / `stopRecording` / `exportVideo` / `processVideo` return `WINDOWS_NOT_IMPLEMENTED`, `getStorageSnapshot` carries all ten required keys, etc. The Phase 2 `DeviceListGettersReturnList` case checks `getDisplays` / `getAppWindows` / `getAudioSources` / `getVideoSources` shape (list-of-maps with the documented keys) without assuming any particular count. |
+| `device_record_test.cpp` | Pure formatters that translate the Phase 2 `DisplayRecord` / `AppWindowRecord` / `AudioSourceRecord` / `VideoSourceRecord` structs into the EncodableMap shape Dart parses. Bounds-omission for incomplete `AppWindowRecord`, int64 widths for ids, double widths for coordinates. |
 
 ### Why a separate static library
 

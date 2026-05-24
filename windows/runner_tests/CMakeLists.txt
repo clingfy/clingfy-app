@@ -34,6 +34,7 @@ add_executable(runner_tests
   "method_router_test.cpp"
   "bridge_contract_coverage_test.cpp"
   "router_stub_shapes_test.cpp"
+  "device_record_test.cpp"
 )
 
 target_link_libraries(runner_tests

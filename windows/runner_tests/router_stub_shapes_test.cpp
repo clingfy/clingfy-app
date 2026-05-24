@@ -148,12 +148,19 @@ TEST(StubShapesTest, RecordingAndExportActionsReturnNotImplemented) {
 }
 
 // === Empty-list getters. ===================================================
+//
+// Phase 2 moved getDisplays / getAppWindows / getAudioSources /
+// getVideoSources onto real OS enumerations — the result depends on the host
+// machine's monitors, microphones, and cameras and is no longer guaranteed
+// to be empty. They are covered by `DeviceListGettersReturnList` below,
+// which only asserts the shape (list of maps, with the documented field
+// names). The remaining methods here are still Phase-1-style stubs.
 
 TEST(StubShapesTest, ListGettersReturnEmptyList) {
   MethodRouter router;
   const std::vector<std::string> kListGetters = {
-      "getDisplays",      "getAppWindows",        "getAudioSources",
-      "getVideoSources",  "getZoomSegments",      "getManualZoomSegments",
+      "getZoomSegments",
+      "getManualZoomSegments",
   };
 
   for (const auto& method : kListGetters) {
@@ -164,10 +171,56 @@ TEST(StubShapesTest, ListGettersReturnEmptyList) {
     ASSERT_NE(list, nullptr)
         << "Method '" << method << "' did not return a List.";
     EXPECT_TRUE(list->empty())
-        << "Method '" << method
-        << "' should return an empty list until Phase 2 wires up the real "
-           "discovery.";
+        << "Method '" << method << "' should still return an empty list.";
   }
+}
+
+// Phase 2 device list-getters: shape only. The host running the tests may
+// have zero or many entries; we just want to confirm the dispatcher routes
+// the call, the reply is a list, and that any entries present carry the
+// documented map keys so the Dart parsers won't crash.
+
+namespace {
+
+void ExpectMapHasStringKeys(const flutter::EncodableMap& map,
+                            const std::vector<std::string>& required_keys) {
+  for (const auto& key : required_keys) {
+    const auto it = map.find(flutter::EncodableValue(key));
+    EXPECT_NE(it, map.end()) << "Map is missing required key '" << key << "'.";
+  }
+}
+
+void ExpectListOfMapsWithKeys(const RecordedReply& reply,
+                              const std::string& method,
+                              const std::vector<std::string>& keys) {
+  ASSERT_TRUE(reply.success_called)
+      << "Method '" << method << "' did not succeed.";
+  const auto* list =
+      std::get_if<flutter::EncodableList>(&reply.success_value);
+  ASSERT_NE(list, nullptr)
+      << "Method '" << method << "' did not return a List.";
+  for (const auto& entry : *list) {
+    const auto* entry_map = std::get_if<flutter::EncodableMap>(&entry);
+    ASSERT_NE(entry_map, nullptr)
+        << "Method '" << method << "' returned a non-map entry.";
+    ExpectMapHasStringKeys(*entry_map, keys);
+  }
+}
+
+}  // namespace
+
+TEST(StubShapesTest, DeviceListGettersReturnList) {
+  MethodRouter router;
+
+  ExpectListOfMapsWithKeys(
+      Dispatch(router, "getDisplays"), "getDisplays",
+      {"id", "name", "x", "y", "width", "height", "scale"});
+  ExpectListOfMapsWithKeys(Dispatch(router, "getAppWindows"), "getAppWindows",
+                           {"windowId", "appName", "title"});
+  ExpectListOfMapsWithKeys(Dispatch(router, "getAudioSources"),
+                           "getAudioSources", {"id", "name"});
+  ExpectListOfMapsWithKeys(Dispatch(router, "getVideoSources"),
+                           "getVideoSources", {"id", "name"});
 }
 
 // === Empty-map getters. ====================================================
