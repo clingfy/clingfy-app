@@ -1,3 +1,34 @@
+## [1.0.4] - 2026-05-24
+
+Clingfy 1.0.4 focuses on better-looking canvases and far more achievable high-resolution exports. It adds preset backgrounds with three procedural styles, makes your canvas settings stick when you reopen a recording, dramatically shrinks the disk space exports need, and improves error messages when storage runs out. Several visual and reliability bugs are also fixed.
+
+### Highlights
+- New preset backgrounds: Abstract Waves, Graphic Mesh, and Radial Glow.
+- Padding, corner radius, and background now persist when you reopen a recording.
+- Exports use far less temporary disk space — high-resolution recordings that previously required hundreds of GB or more now fit on a typical SSD.
+- Clearer disk-full error messages with exact storage requirements.
+
+### New Features
+- Added three procedural canvas backgrounds — **Abstract Waves**, **Graphic Mesh**, and **Radial Glow** — with palette selection, intensity and softness sliders, and a randomize button. The live preview matches the final export.
+- Added five built-in palettes: Blue Purple, Sunset, Aurora, Forest, and Mono.
+- Canvas appearance (padding, corner radius, and background — color, image, or preset) is now saved per recording and restored when you reopen it.
+
+### Improvements
+- Reduced the disk space required for export by switching the screen pre-pass to a hardware-encoded HEVC intermediate. Estimated temp space on a 37-minute recording: 1080p30 dropped from ~88 GB to ~5 GB, 4K60 from ~705 GB to ~37 GB, and 8K60 from ~3.4 TB to ~57 GB.
+- Improved the disk-full error message during export so it shows exactly how much space is required, how much is available, and the shortfall.
+
+### Bug Fixes
+- Fixed exports losing background color and rounded corners when recording with a camera.
+- Fixed sharp 90° corners in the inline preview area so the rounded preview border now renders cleanly on macOS.
+- Fixed the daily log file so sessions that cross midnight start a new file instead of appending to the previous day's, and older log files are pruned after 30 days.
+
+### Refactoring / Internal Changes
+- Continued a large internal restructure of the macOS recording engine, splitting it into smaller, individually tested components for better maintainability. No user-facing behavior change.
+
+### Docs / CI / Tooling
+- Added the 1.0.4 release-readiness checklist.
+
+
 ## [1.0.3] - 2026-05-10
 
 ## Highlights
