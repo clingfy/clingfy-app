@@ -38,6 +38,8 @@ add_executable(runner_tests
   "recording_clock_test.cpp"
   "recording_engine_test.cpp"
   "recording_session_state_test.cpp"
+  "video_frame_queue_test.cpp"
+  "windows_selection_state_test.cpp"
 )
 
 target_link_libraries(runner_tests

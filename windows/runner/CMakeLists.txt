@@ -29,6 +29,10 @@ add_library(runner_bridge STATIC
   "Capture/recording_clock.cpp"
   "Capture/recording_engine.cpp"
   "Capture/recording_session_state.cpp"
+  "Capture/video_frame_queue.cpp"
+  "Capture/wgc_display_capture_backend.cpp"
+  "Capture/windows_selection_state.cpp"
+  "Graphics/d3d_device.cpp"
 )
 apply_standard_settings(runner_bridge)
 target_compile_definitions(runner_bridge PRIVATE "NOMINMAX")
@@ -51,6 +55,28 @@ target_link_libraries(runner_bridge PUBLIC
   "mf.lib"
   "mfplat.lib"
   "mfuuid.lib"
+)
+
+# Phase 3B: Direct3D 11, DXGI, and the C++/WinRT runtime libs needed by
+# WgcDisplayCaptureBackend.
+#   * d3d11      — D3D11CreateDevice (D3DDevice)
+#   * dxgi       — IDXGIDevice query needed for the WGC interop conversion
+#   * windowsapp — RoGetActivationFactory / WinRT activation, plus the
+#                  CreateDirect3D11DeviceFromDXGIDevice interop helper
+target_link_libraries(runner_bridge PUBLIC
+  "d3d11.lib"
+  "dxgi.lib"
+  "windowsapp.lib"
+)
+
+# C++/WinRT headers use the standard-layout `co_await`-friendly types but
+# this PR's code is plain (non-coroutine). Still, enable C++17 just to be
+# explicit — the project compiles at C++17 already, this only makes it
+# load-bearing.
+set_target_properties(runner_bridge PROPERTIES
+  CXX_STANDARD 17
+  CXX_STANDARD_REQUIRED ON
+  CXX_EXTENSIONS OFF
 )
 
 # === Runner executable ===

@@ -1,6 +1,11 @@
 #include "Capture/recording_engine.h"
 
+#include "Bridge/Devices/display_enumerator.h"
 #include "Bridge/native_error_codes.h"
+#include "Capture/video_frame_queue.h"
+#include "Capture/wgc_display_capture_backend.h"
+#include "Capture/windows_selection_state.h"
+#include "Graphics/d3d_device.h"
 
 namespace clingfy::capture {
 
@@ -8,6 +13,9 @@ RecordingEngine& RecordingEngine::Instance() {
   static RecordingEngine engine;
   return engine;
 }
+
+RecordingEngine::RecordingEngine() = default;
+RecordingEngine::~RecordingEngine() = default;
 
 std::optional<RecordingError> RecordingEngine::Start(
     StartRecordingRequest request) {
@@ -30,21 +38,65 @@ std::optional<RecordingError> RecordingEngine::Start(
         "starting another."};
   }
 
+  // Phase 3B capability gate: only display recording is supported. Future
+  // sub-phases will widen this — window/area/follow-mouse/mouse-at-start
+  // each need their own capture pipeline.
+  const DisplayTargetMode mode =
+      WindowsSelectionState::Instance().TargetMode();
+  if (mode != DisplayTargetMode::kExplicitId) {
+    return RecordingError{
+        clingfy::bridge::error::kBadMode,
+        std::string("Target mode '") + TargetModeName(mode) +
+            "' is not supported on Windows yet. Phase 3B only supports "
+            "explicit-display recording."};
+  }
+
+  // Resolve the selected display to an HMONITOR. A null selection falls
+  // back to the primary monitor for a friendlier first-run experience.
+  const auto display_id = WindowsSelectionState::Instance().DisplayId();
+  const auto monitor =
+      clingfy::bridge::devices::ResolveHMonitor(display_id);
+  if (!monitor) {
+    return RecordingError{
+        clingfy::bridge::error::kTargetError,
+        "No display available to record. Plug in a monitor, or pick one "
+        "in the display selector."};
+  }
+
   if (!session_.BeginStart(request.session_id)) {
-    // BeginStart only refuses while a session is already active, which we
-    // checked above. Reaching here would be a programming error in the
-    // state machine.
     return RecordingError{clingfy::bridge::error::kInvalidRecordingState,
                           "Engine refused to enter Starting state."};
   }
 
-  // Phase 3A skeleton: no capture pipeline to spin up, so the start
-  // handshake completes synchronously. Phase 3B/C/D will move this between
-  // the BeginStart and MarkStarted calls.
+  // Spin up D3D + WGC. On failure, tear the partial pipeline down and
+  // mark the session failed so a defensive caller doesn't get stuck in a
+  // Starting state.
+  d3d_device_ = std::make_unique<clingfy::graphics::D3DDevice>();
+  if (auto d3d_err = d3d_device_->Create()) {
+    TeardownPipeline();
+    session_.MarkFailed();
+    session_.Reset();
+    return RecordingError{clingfy::bridge::error::kRecordingError,
+                          d3d_err->message};
+  }
+
+  frame_queue_ = std::make_unique<VideoFrameQueue>(/*capacity=*/60);
+  capture_backend_ = std::make_unique<WgcDisplayCaptureBackend>();
+  if (auto wgc_err =
+          capture_backend_->Start(*monitor, *d3d_device_, *frame_queue_)) {
+    TeardownPipeline();
+    session_.MarkFailed();
+    session_.Reset();
+    return RecordingError{clingfy::bridge::error::kRecordingError,
+                          wgc_err->message};
+  }
+
   clock_.MarkStart();
 
   if (!session_.MarkStarted()) {
+    TeardownPipeline();
     session_.MarkFailed();
+    session_.Reset();
     return RecordingError{clingfy::bridge::error::kInvalidRecordingState,
                           "Engine refused to enter Recording state."};
   }
@@ -57,14 +109,9 @@ std::optional<RecordingError> RecordingEngine::Stop(
 
   if (!session_.IsActive() && session_.state() != RecordingState::kStopped &&
       session_.state() != RecordingState::kFailed) {
-    // Nothing to stop — treat as success so a defensive double-stop from
-    // Dart does not surface a confusing toast.
     return std::nullopt;
   }
 
-  // If the caller quotes a session id at all, it must match. A blank id is
-  // tolerated for backward compatibility with the older Phase 1 stub
-  // behavior, where stopRecording carried no payload.
   if (!session_id.empty() && !session_.session_id().empty() &&
       session_id != session_.session_id()) {
     return RecordingError{
@@ -74,23 +121,19 @@ std::optional<RecordingError> RecordingEngine::Stop(
 
   if (session_.state() == RecordingState::kStopped ||
       session_.state() == RecordingState::kFailed) {
+    TeardownPipeline();
     session_.Reset();
     return std::nullopt;
   }
 
   if (!session_.BeginStop()) {
-    // BeginStop only refuses outside of Recording. The only active state
-    // not covered is Starting, which Phase 3A reaches transiently inside
-    // Start (under the same lock) — so reaching here in practice means an
-    // illegal external transition.
     return RecordingError{clingfy::bridge::error::kInvalidRecordingState,
                           "Cannot stop a session that has not finished "
                           "starting."};
   }
 
-  // Phase 3A skeleton: no capture pipeline to tear down, so the stop
-  // handshake completes synchronously. Phase 3B/C/D will move encoder
-  // finalize + capture teardown between BeginStop and MarkStopped.
+  TeardownPipeline();
+
   if (!session_.MarkStopped()) {
     session_.MarkFailed();
     return RecordingError{clingfy::bridge::error::kInvalidRecordingState,
@@ -98,6 +141,25 @@ std::optional<RecordingError> RecordingEngine::Stop(
   }
   session_.Reset();
   return std::nullopt;
+}
+
+void RecordingEngine::TeardownPipeline() {
+  // Order matters: stop pushing frames first, then close the queue so any
+  // future Phase 3C drain thread wakes and exits, then drop the D3D
+  // device. Owning unique_ptr resets are safe-to-call-twice so a
+  // failure-path caller does not have to be defensive.
+  if (capture_backend_) {
+    capture_backend_->Stop();
+    capture_backend_.reset();
+  }
+  if (frame_queue_) {
+    frame_queue_->Close();
+    frame_queue_.reset();
+  }
+  if (d3d_device_) {
+    d3d_device_->Reset();
+    d3d_device_.reset();
+  }
 }
 
 bool RecordingEngine::IsRecording() const {
@@ -115,8 +177,24 @@ std::string RecordingEngine::session_id() const {
   return std::string(session_.session_id());
 }
 
+RecordingEngine::CaptureDiagnostics RecordingEngine::Diagnostics() const {
+  std::lock_guard<std::mutex> lock(mutex_);
+  CaptureDiagnostics out;
+  if (capture_backend_) {
+    const auto stats = capture_backend_->Stats();
+    out.frame_width = stats.frame_width;
+    out.frame_height = stats.frame_height;
+    out.frames_received = stats.frames_received;
+  }
+  if (frame_queue_) {
+    out.frames_dropped = frame_queue_->dropped_frame_count();
+  }
+  return out;
+}
+
 void RecordingEngine::ForceResetForTesting() {
   std::lock_guard<std::mutex> lock(mutex_);
+  TeardownPipeline();
   session_ = RecordingSessionState{};
   clock_ = RecordingClock{};
 }
