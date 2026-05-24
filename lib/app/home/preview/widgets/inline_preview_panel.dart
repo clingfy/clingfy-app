@@ -129,11 +129,21 @@ class _InlinePreviewPanelState extends State<InlinePreviewPanel> {
       child: Stack(
         children: [
           Positioned.fill(
-            child: (widget.previewHostBuilder ?? _defaultPreviewHostBuilder)((
-              _,
-            ) {
-              unawaited(widget.onPreviewHostMounted());
-            }),
+            // Native AppKit clip must match the Flutter Container's inner
+            // clip radius (= outer radius − border width). Default
+            // Border.all width is 1pt; passing the outer panelRadius leaves
+            // a 1pt square step leaking at each corner.
+            child:
+                (widget.previewHostBuilder ??
+                (cb) => InlinePreview(
+                  cornerRadius: (chrome.panelRadius - 1).clamp(
+                    0,
+                    double.infinity,
+                  ),
+                  onPlatformViewCreated: cb,
+                ))((_) {
+                  unawaited(widget.onPreviewHostMounted());
+                }),
           ),
           Positioned.fill(
             child: IgnorePointer(
@@ -170,9 +180,5 @@ class _InlinePreviewPanelState extends State<InlinePreviewPanel> {
         ],
       ),
     );
-  }
-
-  Widget _defaultPreviewHostBuilder(PlatformViewCreatedCallback onCreated) {
-    return InlinePreview(onPlatformViewCreated: onCreated);
   }
 }

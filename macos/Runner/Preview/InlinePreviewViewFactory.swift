@@ -22,6 +22,8 @@ enum PreviewSceneDeliveryRoute: String {
 }
 
 final class InlinePreviewHostContainerView: NSView {
+  private var rootCornerRadius: CGFloat = 0
+
   override init(frame frameRect: NSRect) {
     super.init(frame: frameRect)
     wantsLayer = true
@@ -38,7 +40,45 @@ final class InlinePreviewHostContainerView: NSView {
 
   override func layout() {
     super.layout()
+    refreshRootCornerMask()
     subviews.first?.frame = bounds
+  }
+
+  /// Round the host's root layer via a CAShapeLayer mask. We avoid
+  /// `cornerRadius` + `masksToBounds` because AVPlayerLayer in the embedded
+  /// preview ignores ancestor `cornerRadius` clipping on macOS.
+  func applyRootCornerRadius(_ radius: CGFloat) {
+    rootCornerRadius = max(0, radius)
+    NSLog(
+      "[Preview] InlinePreviewHostContainerView.applyRootCornerRadius radius=\(rootCornerRadius) bounds=\(bounds.size)"
+    )
+    refreshRootCornerMask()
+  }
+
+  private func refreshRootCornerMask() {
+    guard let rootLayer = self.layer else { return }
+    let layerBounds = rootLayer.bounds
+    guard
+      rootCornerRadius > 0,
+      layerBounds.width > 0,
+      layerBounds.height > 0
+    else {
+      rootLayer.mask = nil
+      return
+    }
+
+    let mask: CAShapeLayer = (rootLayer.mask as? CAShapeLayer) ?? CAShapeLayer()
+    mask.frame = layerBounds
+    mask.path = CGPath(
+      roundedRect: layerBounds,
+      cornerWidth: rootCornerRadius,
+      cornerHeight: rootCornerRadius,
+      transform: nil
+    )
+    mask.fillColor = NSColor.black.cgColor
+    if rootLayer.mask !== mask {
+      rootLayer.mask = mask
+    }
   }
 
   func attachPreviewView(_ previewView: InlinePreviewView) {
@@ -52,6 +92,30 @@ final class InlinePreviewHostContainerView: NSView {
     previewView.frame = bounds
     previewView.autoresizingMask = [.width, .height]
   }
+}
+
+/// Pulls `cornerRadius` (in logical points) out of the AppKitView creation
+/// params dictionary. Returns 0 when absent or malformed. Defensive about
+/// the args type — StandardMessageCodec may bridge a Dart Map as either
+/// `[String: Any]` or `[AnyHashable: Any]` depending on the codec path.
+func inlinePreviewCornerRadius(from args: Any?) -> CGFloat {
+  func extract(_ raw: Any?) -> CGFloat? {
+    if let value = raw as? Double { return CGFloat(value) }
+    if let value = raw as? NSNumber { return CGFloat(truncating: value) }
+    if let value = raw as? CGFloat { return value }
+    return nil
+  }
+
+  if let dict = args as? [String: Any], let v = extract(dict["cornerRadius"]) {
+    return v
+  }
+  if let dict = args as? [AnyHashable: Any], let v = extract(dict["cornerRadius"]) {
+    return v
+  }
+  if let dict = args as? NSDictionary, let v = extract(dict["cornerRadius"]) {
+    return v
+  }
+  return 0
 }
 
 struct PendingPreviewOpenRequest {
@@ -384,17 +448,23 @@ final class InlinePreviewViewFactory: NSObject, FlutterPlatformViewFactory {
     withViewIdentifier viewId: Int64,
     arguments args: Any?
   ) -> NSView {
+    let cornerRadius = inlinePreviewCornerRadius(from: args)
     NativeLogger.i(
       "Preview", "Creating inline preview host view",
       context: [
         "viewId": "\(viewId)",
+        "cornerRadius": cornerRadius,
         "hasPendingOpenRequest": pendingPreviewOpenRequest != nil,
         "hasPendingPreviewSceneRequest": pendingPreviewSceneRequest != nil,
         "hasPendingZoomSegments": pendingPreviewZoomSegments != nil,
         "hasActivePreviewState": activeInlinePreviewState != nil,
       ])
     let host = InlinePreviewHostContainerView(frame: .zero)
+    host.applyRootCornerRadius(cornerRadius)
     if attachExistingInlinePreviewContentViewIfPossible(to: host) {
+      // Re-apply on the existing reused content view in case panelRadius
+      // changed since it was first created (responsive shell scale change).
+      inlinePreviewViewInstance?.applyRootCornerRadius(cornerRadius)
       return host
     }
 
@@ -403,6 +473,7 @@ final class InlinePreviewViewFactory: NSObject, FlutterPlatformViewFactory {
       arguments: args,
       messenger: messenger
     )
+    v.applyRootCornerRadius(cornerRadius)
     v.playerEventSink = inlinePreviewPlayerEventSink
     v.workflowEventSink = workflowLifecycleEventSink
     host.attachPreviewView(v)
