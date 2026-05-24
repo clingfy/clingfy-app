@@ -25,6 +25,16 @@ bool FlutterWindow::OnCreate() {
     return false;
   }
   RegisterPlugins(flutter_controller_->engine());
+
+  // Stand up the native bridge before the first frame. Methods called from
+  // Flutter (NativeBridge.instance) must always have a registered handler —
+  // otherwise we leak MissingPluginException through every recorder action.
+  auto* messenger = flutter_controller_->engine()->messenger();
+  method_dispatcher_ =
+      std::make_unique<clingfy::bridge::MethodDispatcher>(messenger);
+  event_channel_stubs_ =
+      std::make_unique<clingfy::bridge::EventChannelStubs>(messenger);
+
   SetChildContent(flutter_controller_->view()->GetNativeWindow());
 
   flutter_controller_->engine()->SetNextFrameCallback([&]() {
@@ -40,6 +50,11 @@ bool FlutterWindow::OnCreate() {
 }
 
 void FlutterWindow::OnDestroy() {
+  // Tear bridges down before the engine so their channel handlers don't
+  // outlive the messenger they were registered against.
+  event_channel_stubs_.reset();
+  method_dispatcher_.reset();
+
   if (flutter_controller_) {
     flutter_controller_ = nullptr;
   }

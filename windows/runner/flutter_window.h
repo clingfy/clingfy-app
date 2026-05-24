@@ -6,6 +6,8 @@
 
 #include <memory>
 
+#include "Bridge/event_channel_stubs.h"
+#include "Bridge/method_dispatcher.h"
 #include "win32_window.h"
 
 // A window that does nothing but host a Flutter view.
@@ -28,6 +30,12 @@ class FlutterWindow : public Win32Window {
 
   // The Flutter instance hosted by this window.
   std::unique_ptr<flutter::FlutterViewController> flutter_controller_;
+
+  // Native bridge to Flutter. Owns the screen-recorder method channel and the
+  // four event channels (Phase 0: stubs only — see Bridge/method_dispatcher.h
+  // and Bridge/event_channel_stubs.h).
+  std::unique_ptr<clingfy::bridge::MethodDispatcher> method_dispatcher_;
+  std::unique_ptr<clingfy::bridge::EventChannelStubs> event_channel_stubs_;
 };
 
 #endif  // RUNNER_FLUTTER_WINDOW_H_
