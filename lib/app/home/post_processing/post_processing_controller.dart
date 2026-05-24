@@ -9,10 +9,12 @@ import 'package:clingfy/core/export/models/export_settings_types.dart';
 import 'package:clingfy/l10n/app_localizations.dart';
 import 'package:clingfy/app/infrastructure/logging/logger_service.dart';
 import 'package:clingfy/core/models/app_models.dart';
+import 'package:clingfy/core/models/background_preset_catalog.dart';
 import 'package:clingfy/app/settings/settings_controller.dart';
 import 'package:clingfy/core/bridges/native_bridge.dart';
 import 'package:clingfy/app/infrastructure/observability/telemetry_service.dart';
 import 'package:clingfy/app/home/post_processing/support/audio_debouncer.dart';
+import 'package:clingfy/app/home/post_processing/support/canvas_appearance_store.dart';
 import 'package:clingfy/app/home/export/widgets/export_file_dialog.dart';
 import 'package:clingfy/core/preview/player_controller.dart';
 
@@ -91,6 +93,8 @@ class PostProcessingController extends ChangeNotifier {
   double _videoRadius = 0; // 0 to 50
   int? _backgroundColor; // null = black default
   String? _backgroundImagePath;
+  BackgroundKind _backgroundKind = BackgroundKind.color;
+  CanvasBackgroundPreset? _backgroundPreset;
   double _cursorSize = 1.5;
   double _zoomFactor = 1.0;
   bool _zoomEffectEnabled = false;
@@ -127,6 +131,8 @@ class PostProcessingController extends ChangeNotifier {
   double get radius => _videoRadius;
   int? get backgroundColor => _backgroundColor;
   String? get backgroundImagePath => _backgroundImagePath;
+  BackgroundKind get backgroundKind => _backgroundKind;
+  CanvasBackgroundPreset? get backgroundPreset => _backgroundPreset;
   double get cursorSize => _cursorSize;
   double get zoomFactor => _zoomFactor;
   bool get zoomEffectEnabled => _zoomEffectEnabled;
@@ -174,6 +180,8 @@ class PostProcessingController extends ChangeNotifier {
   void setBackgroundColor(int? v) {
     _backgroundColor = v;
     _backgroundImagePath = null;
+    _backgroundPreset = null;
+    _backgroundKind = BackgroundKind.color;
     notifyListeners();
     applyProcessing();
   }
@@ -181,8 +189,52 @@ class PostProcessingController extends ChangeNotifier {
   void setBackgroundImagePath(String? path) {
     _backgroundImagePath = path;
     _backgroundColor = null;
+    _backgroundPreset = null;
+    _backgroundKind = path != null
+        ? BackgroundKind.image
+        : BackgroundKind.color;
     notifyListeners();
     applyProcessing();
+  }
+
+  void setBackgroundPreset(CanvasBackgroundPreset preset) {
+    _backgroundPreset = preset;
+    _backgroundColor = null;
+    _backgroundImagePath = null;
+    _backgroundKind = BackgroundKind.preset;
+    notifyListeners();
+    applyProcessing();
+  }
+
+  /// Live, UI-only preset update for slider drags — refreshes the controls
+  /// without kicking a (debounced) preview re-render on every tick. The
+  /// caller commits the final value with [setBackgroundPreset] on release.
+  void updateBackgroundPresetPreview(CanvasBackgroundPreset preset) {
+    _backgroundPreset = preset;
+    _backgroundColor = null;
+    _backgroundImagePath = null;
+    _backgroundKind = BackgroundKind.preset;
+    notifyListeners();
+  }
+
+  /// Switches the background mode from the Color / Image / Preset picker.
+  /// Switching applies a sensible default for the chosen mode so the
+  /// preview reflects the change immediately.
+  void setBackgroundKind(BackgroundKind kind) {
+    switch (kind) {
+      case BackgroundKind.color:
+        setBackgroundColor(_backgroundColor);
+      case BackgroundKind.image:
+        _backgroundKind = BackgroundKind.image;
+        _backgroundColor = null;
+        _backgroundPreset = null;
+        notifyListeners();
+        applyProcessing();
+      case BackgroundKind.preset:
+        setBackgroundPreset(
+          _backgroundPreset ?? BackgroundPresetCatalog.defaultPreset(),
+        );
+    }
   }
 
   void setCursorSize(double v) {
@@ -580,6 +632,8 @@ class PostProcessingController extends ChangeNotifier {
     _videoRadius = 0;
     _backgroundColor = null;
     _backgroundImagePath = null;
+    _backgroundKind = BackgroundKind.color;
+    _backgroundPreset = null;
     _cursorSize = 1.5;
     _zoomFactor = _settings.post.postZoomFactor;
     _zoomEffectEnabled = _settings.post.postZoomEffectEnabled;
@@ -605,11 +659,49 @@ class PostProcessingController extends ChangeNotifier {
       _cameraPath = sceneInfo.cameraPath;
       _cameraState = sceneInfo.camera;
       _cameraExportCapabilities = sceneInfo.cameraExportCapabilities;
+      // Restore persisted canvas appearance (padding / corner radius /
+      // background) before the first preview render, so the recording
+      // reopens exactly as it was last edited. Synchronous — keeps the
+      // scene-load → applyProcessing ordering unchanged.
+      _loadCanvasAppearance(projectPath);
       notifyListeners();
       await applyProcessing();
     } catch (e, st) {
       Log.e("PostProcessing", "Failed to load recording scene info: $e", e, st);
     }
+  }
+
+  /// Reads `editor_state.json` from the project bundle and applies it to
+  /// the canvas fields. Best-effort: a missing/old file leaves the
+  /// defaults in place (back-compatible with pre-persistence recordings).
+  void _loadCanvasAppearance(String projectPath) {
+    final state = CanvasAppearanceStore.load(projectPath);
+    if (state == null || _projectPath != projectPath) return;
+    _videoPadding = state.padding;
+    _videoRadius = state.cornerRadius;
+    _backgroundKind = state.backgroundKind;
+    _backgroundColor = state.backgroundColorArgb;
+    _backgroundImagePath = state.backgroundImagePath;
+    _backgroundPreset = state.backgroundPreset;
+  }
+
+  /// Persists the current canvas appearance to the project bundle.
+  /// Fire-and-forget — invoked from [applyProcessing] on every committed
+  /// canvas edit.
+  void _persistCanvasAppearance(String projectPath) {
+    unawaited(
+      CanvasAppearanceStore.save(
+        projectPath,
+        CanvasAppearanceState(
+          padding: _videoPadding,
+          cornerRadius: _videoRadius,
+          backgroundKind: _backgroundKind,
+          backgroundColorArgb: _backgroundColor,
+          backgroundImagePath: _backgroundImagePath,
+          backgroundPreset: _backgroundPreset,
+        ),
+      ),
+    );
   }
 
   void togglePlayback() {
@@ -623,6 +715,10 @@ class PostProcessingController extends ChangeNotifier {
   Future<void> applyProcessing() async {
     final projectPath = _projectPath;
     if (projectPath == null) return;
+
+    // Persist the canvas appearance on every committed edit (this method
+    // is the debounced canvas-update path). Best-effort, non-blocking.
+    _persistCanvasAppearance(projectPath);
 
     _isProcessingPreview = true;
     notifyListeners();
@@ -645,6 +741,12 @@ class PostProcessingController extends ChangeNotifier {
         'cornerRadius': _videoRadius,
         'backgroundColor': _backgroundColor,
         'backgroundImagePath': _backgroundImagePath,
+        'backgroundKind': _backgroundKind.name,
+        'backgroundPresetId': _backgroundPreset?.id,
+        'backgroundPresetPalette': _backgroundPreset?.palette,
+        'backgroundPresetIntensity': _backgroundPreset?.intensity,
+        'backgroundPresetBlur': _backgroundPreset?.blur,
+        'backgroundPresetSeed': _backgroundPreset?.seed,
         'cursorSize': _cursorSize,
         'zoomFactor': _zoomFactor,
         'zoomEffectEnabled': _zoomEffectEnabled,
@@ -887,6 +989,12 @@ class PostProcessingController extends ChangeNotifier {
         'cornerRadius': _videoRadius,
         'backgroundColor': _backgroundColor,
         'backgroundImagePath': _backgroundImagePath,
+        'backgroundKind': _backgroundKind.name,
+        'backgroundPresetId': _backgroundPreset?.id,
+        'backgroundPresetPalette': _backgroundPreset?.palette,
+        'backgroundPresetIntensity': _backgroundPreset?.intensity,
+        'backgroundPresetBlur': _backgroundPreset?.blur,
+        'backgroundPresetSeed': _backgroundPreset?.seed,
         'cursorSize': _cursorSize,
         'zoomFactor': _zoomFactor,
         'zoomEffectEnabled': _zoomEffectEnabled,
@@ -1059,6 +1167,9 @@ class PostProcessingController extends ChangeNotifier {
     if (e.code == NativeErrorCode.exportInputMissing ||
         e.code == NativeErrorCode.fileNotFound) {
       return const SpanStatus.notFound();
+    }
+    if (e.code == NativeErrorCode.exportDiskFull) {
+      return const SpanStatus.resourceExhausted();
     }
     if (e.code == NativeErrorCode.exportError &&
         (e.message?.toLowerCase().contains('space') == true ||

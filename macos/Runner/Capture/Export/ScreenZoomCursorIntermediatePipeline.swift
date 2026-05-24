@@ -8,12 +8,23 @@ enum ScreenPrepassExportStage: String {
 
 func makeScreenPrepassExportError(
   stage: ScreenPrepassExportStage,
+  nativeErrorCode: String = NativeErrorCode.exportError,
   reason: String,
   context: [String: Any] = [:]
 ) -> NSError {
+  // Disk-full is a user-actionable condition (free up space / pick lower res),
+  // not a generic rendering failure — its message stands on its own without
+  // the "Screen zoom export could not be rendered." preamble that would
+  // otherwise just confuse the user.
+  let description: String
+  if nativeErrorCode == NativeErrorCode.exportDiskFull {
+    description = reason
+  } else {
+    description = "Screen zoom export could not be rendered. \(reason)"
+  }
   var userInfo: [String: Any] = [
-    NSLocalizedDescriptionKey: "Screen zoom export could not be rendered. \(reason)",
-    "nativeErrorCode": NativeErrorCode.exportError,
+    NSLocalizedDescriptionKey: description,
+    "nativeErrorCode": nativeErrorCode,
     "stage": stage.rawValue,
     "reason": reason,
   ]
@@ -30,10 +41,45 @@ struct ScreenPreparedIntermediate {
 
 final class ScreenZoomCursorIntermediatePipeline {
   private let builder = CompositionBuilder()
-  private static let storageEstimateReferenceBitrateBps = 330_000_000.0
+  // The screen pre-pass writes an HEVC-with-alpha intermediate (Apple
+  // hardware-encoded on Apple Silicon; supports alpha for the rounded-corner
+  // mask the final pass composites over the canvas background).
+  //
+  // Reference bitrate is calibrated for screen content (text, UI, large flat
+  // regions — compresses dramatically better than natural video in HEVC) at
+  // visually-high quality, scaled linearly by pixel-rate. The cap prevents
+  // 8K60 exports from demanding a half-terabyte intermediate; at the cap,
+  // HEVC at 150 Mbps still produces an excellent screen recording.
+  //
+  // Why this was changed from ProRes 4444 (commit history reference): ProRes
+  // 4444 at 4K60 ran ~2.6 Gbps and at 8K60 ~10.5 Gbps. That made >4K exports
+  // impossible on most disks (a 30-minute 8K60 recording would need ~3 TB of
+  // temp space). HEVC-with-alpha is ~50x smaller at comparable visual quality
+  // for screen content, with the tradeoff of one extra lossy stage in the
+  // pipeline (intermediate + final). For a screen recorder this is the
+  // standard tradeoff — the alternative isn't actually a tradeoff.
+  private static let storageEstimateReferenceBitrateBps = 12_000_000.0
   private static let storageEstimateReferencePixelsPerSecond = Double(1920 * 1080 * 30)
-  private static let storageEstimateSafetyMultiplier = 1.15
+  private static let storageEstimateMaxBitrateBps = 150_000_000.0
+  private static let storageEstimateSafetyMultiplier = 1.30
   private static let storageEstimateSafetyBytes: Int64 = 2 * 1024 * 1024 * 1024
+
+  /// Average bitrate target for the HEVC-with-alpha intermediate at this
+  /// render size + fps. Shared between the writer-input setup (so the actual
+  /// encoded file roughly matches the estimate) and the disk-capacity
+  /// estimator (so the friendly disk-full message is honest).
+  static func intermediateAverageBitrateBps(
+    renderSize: CGSize,
+    fpsHint: Int32
+  ) -> Double {
+    let pixelsPerSecond =
+      Double(max(renderSize.width, 1.0))
+      * Double(max(renderSize.height, 1.0))
+      * Double(max(fpsHint, 1))
+    let scale = pixelsPerSecond / storageEstimateReferencePixelsPerSecond
+    let raw = storageEstimateReferenceBitrateBps * max(scale, 0.0)
+    return min(raw, storageEstimateMaxBitrateBps)
+  }
 
   private func clearPixelBuffer(_ pixelBuffer: CVPixelBuffer) {
     CVPixelBufferLockBaseAddress(pixelBuffer, [])
@@ -102,12 +148,9 @@ final class ScreenZoomCursorIntermediatePipeline {
       return storageEstimateSafetyBytes
     }
 
-    let pixelsPerSecond =
-      Double(max(renderSize.width, 1.0))
-      * Double(max(renderSize.height, 1.0))
-      * Double(max(fpsHint, 1))
-    let bitrateScale = pixelsPerSecond / storageEstimateReferencePixelsPerSecond
-    let estimatedBitrateBps = storageEstimateReferenceBitrateBps * max(bitrateScale, 0.0)
+    let estimatedBitrateBps = intermediateAverageBitrateBps(
+      renderSize: renderSize, fpsHint: fpsHint
+    )
     let estimatedBytes = (estimatedBitrateBps / 8.0) * resolvedDuration
     let withSafety =
       (estimatedBytes * storageEstimateSafetyMultiplier)
@@ -262,18 +305,36 @@ final class ScreenZoomCursorIntermediatePipeline {
     reader.add(readerOutput)
 
     let renderSize = prepass.videoComposition.renderSize
+    // Pin an average bitrate so the encoded file roughly matches the
+    // disk-capacity estimate (the friendly disk-full guard upstream and the
+    // encoder share the same formula via intermediateAverageBitrateBps).
+    let avgBitrate = Int(
+      Self.intermediateAverageBitrateBps(renderSize: renderSize, fpsHint: params.fpsHint)
+        .rounded()
+    )
+    // 2-second GOP gives good seek granularity for any downstream reader
+    // without bloating the file. Cap fps lookup to 30 so very low fps inputs
+    // still get reasonable keyframe spacing.
+    let keyframeInterval = max(Int(params.fpsHint), 30) * 2
     let writerInput: AVAssetWriterInput
     do {
       writerInput = try VideoColorPipeline.makeVideoWriterInput(
         baseOutputSettings: [
-          AVVideoCodecKey: AVVideoCodecType.proRes4444,
+          AVVideoCodecKey: AVVideoCodecType.hevcWithAlpha,
           AVVideoWidthKey: Int(renderSize.width),
           AVVideoHeightKey: Int(renderSize.height),
+          AVVideoCompressionPropertiesKey: [
+            AVVideoAverageBitRateKey: avgBitrate,
+            AVVideoMaxKeyFrameIntervalKey: keyframeInterval,
+            AVVideoExpectedSourceFrameRateKey: Int(params.fpsHint),
+          ],
         ],
         category: "Export",
         operation: "screen_zoom_cursor_intermediate",
         extraContext: [
           "screenPrepassSelected": true,
+          "screenPrepassCodec": "hevcWithAlpha",
+          "screenPrepassAverageBitrateBps": avgBitrate,
           "renderSize": "\(Int(renderSize.width))x\(Int(renderSize.height))",
           "zoomSegmentCount": sanitizedParams.zoomSegments?.count ?? 0,
         ]

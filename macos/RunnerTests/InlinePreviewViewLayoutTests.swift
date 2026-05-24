@@ -427,6 +427,70 @@ final class InlinePreviewViewLayoutTests: XCTestCase {
     )
   }
 
+  func testRootLayerInstallsShapeMaskWhenCornerRadiusProvided() {
+    let view = InlinePreviewView(
+      viewIdentifier: 1,
+      arguments: ["cornerRadius": 9.0],
+      messenger: nil
+    )
+    view.frame = CGRect(x: 0, y: 0, width: 400, height: 300)
+    view.layout()
+
+    let mask = view.layer?.mask as? CAShapeLayer
+    XCTAssertNotNil(mask, "Root layer should have a CAShapeLayer mask")
+    XCTAssertEqual(mask?.frame.size, CGSize(width: 400, height: 300))
+    XCTAssertNotNil(mask?.path, "Mask path should be set")
+  }
+
+  func testRootLayerMaskIsAbsentWhenCornerRadiusIsZero() {
+    let view = InlinePreviewView(
+      viewIdentifier: 1,
+      arguments: nil,
+      messenger: nil
+    )
+    view.frame = CGRect(x: 0, y: 0, width: 400, height: 300)
+    view.layout()
+
+    XCTAssertNil(view.layer?.mask, "Root layer should have no mask when radius is 0")
+  }
+
+  func testApplyRootCornerRadiusUpdatesMaskOnReuse() {
+    let view = InlinePreviewView(
+      viewIdentifier: 1,
+      arguments: ["cornerRadius": 9.0],
+      messenger: nil
+    )
+    view.frame = CGRect(x: 0, y: 0, width: 400, height: 300)
+    view.layout()
+
+    XCTAssertNotNil(view.layer?.mask, "Mask should be installed initially")
+
+    view.applyRootCornerRadius(0.0)
+    XCTAssertNil(view.layer?.mask, "Mask should be removed when radius becomes 0")
+
+    view.applyRootCornerRadius(14.0)
+    XCTAssertNotNil(view.layer?.mask, "Mask should be reinstalled when radius becomes positive")
+  }
+
+  func testRootLayerMaskResizesOnLayout() {
+    let view = InlinePreviewView(
+      viewIdentifier: 1,
+      arguments: ["cornerRadius": 8.0],
+      messenger: nil
+    )
+    view.frame = CGRect(x: 0, y: 0, width: 400, height: 300)
+    view.layout()
+
+    let initialMaskSize = (view.layer?.mask as? CAShapeLayer)?.frame.size
+    XCTAssertEqual(initialMaskSize, CGSize(width: 400, height: 300))
+
+    view.frame = CGRect(x: 0, y: 0, width: 600, height: 450)
+    view.layout()
+
+    let resizedMaskSize = (view.layer?.mask as? CAShapeLayer)?.frame.size
+    XCTAssertEqual(resizedMaskSize, CGSize(width: 600, height: 450))
+  }
+
   func testClampedManualNormalizedCenterUsesZoomedFrameBounds() throws {
     let view = InlinePreviewView(
       viewIdentifier: 1,

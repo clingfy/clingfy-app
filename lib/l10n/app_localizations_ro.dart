@@ -706,6 +706,36 @@ class AppLocalizationsRo extends AppLocalizations {
   String get pickColor => 'Alege o culoare';
 
   @override
+  String get backgroundModeColor => 'Culoare';
+
+  @override
+  String get backgroundModeImage => 'Imagine';
+
+  @override
+  String get backgroundModePreset => 'Presetare';
+
+  @override
+  String get backgroundPalette => 'Paletă';
+
+  @override
+  String get backgroundIntensity => 'Intensitate';
+
+  @override
+  String get backgroundSoftness => 'Estompare';
+
+  @override
+  String get randomize => 'Aleatoriu';
+
+  @override
+  String get presetAbstractWaves => 'Valuri abstracte';
+
+  @override
+  String get presetGraphicMesh => 'Rețea grafică';
+
+  @override
+  String get presetRadialGlow => 'Strălucire radială';
+
+  @override
   String get gotIt => 'Am înțeles';
 
   @override
@@ -1646,6 +1676,19 @@ class AppLocalizationsRo extends AppLocalizations {
   String errExportError(Object error) {
     return 'A apărut o eroare la export: $error';
   }
+
+  @override
+  String errExportDiskFull(
+    String required,
+    String available,
+    String shortfall,
+  ) {
+    return 'Nu este suficient spațiu liber pe disc pentru export. Sunt necesari aproximativ $required pentru randarea intermediară — sunt disponibili doar $available (lipsesc $shortfall). Eliberează spațiu sau alege o rezoluție de export mai mică și încearcă din nou.';
+  }
+
+  @override
+  String get errExportDiskFullFallback =>
+      'Nu este suficient spațiu liber pe disc pentru export. Eliberează spațiu sau alege o rezoluție de export mai mică și încearcă din nou.';
 
   @override
   String get errCameraPermissionDenied =>

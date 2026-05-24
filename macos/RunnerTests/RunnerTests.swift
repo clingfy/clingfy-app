@@ -1242,7 +1242,8 @@ final class LetterboxExporterTests: XCTestCase {
     let cases: [(operation: String, codec: AVVideoCodecType, size: CGSize)] = [
       ("styled_camera_intermediate", .proRes4444, CGSize(width: 250, height: 250)),
       ("camera_chroma_key_intermediate", .proRes4444, CGSize(width: 1920, height: 1080)),
-      ("screen_zoom_cursor_intermediate", .proRes4444, CGSize(width: 1440, height: 935)),
+      // Screen pre-pass uses HEVC-with-alpha (see ScreenZoomCursorIntermediatePipeline).
+      ("screen_zoom_cursor_intermediate", .hevcWithAlpha, CGSize(width: 1440, height: 935)),
     ]
 
     for testCase in cases {
@@ -1605,6 +1606,11 @@ final class LetterboxExporterTests: XCTestCase {
   }
 
   func testScreenPrepassFailsEarlyWhenTempCapacityIsInsufficient() throws {
+    // The estimator is calibrated for HEVC-with-alpha. With 1 KB available,
+    // even tiny render sizes should trip the guard once duration is non-zero
+    // (the safety padding alone is 2 GB ≫ 1 KB). We pick a 4K+ canvas /
+    // long duration so the bitrate-scaling path is genuinely exercised
+    // rather than dominated by the safety padding.
     let exporter = LetterboxExporter()
     let error = exporter._testScreenPrepassTempCapacityError(
       targetSize: CGSize(width: 2560, height: 1440),
@@ -1633,6 +1639,74 @@ final class LetterboxExporterTests: XCTestCase {
         availableCapacityBytes: Int64.max / 4
       )
     )
+  }
+
+  // The pre-pass intermediate is HEVC-with-alpha with a pixel-rate-scaled
+  // bitrate target capped at 150 Mbps. Both the writer-input setup and the
+  // disk-capacity estimator MUST go through the same helper so the encoded
+  // file roughly matches the friendly disk-full estimate — anything else
+  // means we either over-allocate (false-positive on a successful export)
+  // or under-allocate (the export starts, then fails halfway through).
+  func testIntermediateBitrateScalesWithPixelRate() {
+    // 1080p30 sits exactly at the reference point.
+    let baseline = ScreenZoomCursorIntermediatePipeline
+      .intermediateAverageBitrateBps(
+        renderSize: CGSize(width: 1920, height: 1080), fpsHint: 30
+      )
+    XCTAssertEqual(baseline, 12_000_000, accuracy: 1.0)
+
+    // 4K60 has 8× the pixel rate of 1080p30 → 96 Mbps, still under the cap.
+    let fourKSixty = ScreenZoomCursorIntermediatePipeline
+      .intermediateAverageBitrateBps(
+        renderSize: CGSize(width: 3840, height: 2160), fpsHint: 60
+      )
+    XCTAssertEqual(fourKSixty, 96_000_000, accuracy: 1.0)
+  }
+
+  func testIntermediateBitrateIsCappedAtCeiling() {
+    // 8K60 = 32× the reference; raw scale would be 384 Mbps but the cap
+    // pins it at 150 Mbps. Without this cap, a long 8K60 recording would
+    // still demand more disk than most users have.
+    let eightKSixty = ScreenZoomCursorIntermediatePipeline
+      .intermediateAverageBitrateBps(
+        renderSize: CGSize(width: 7680, height: 4320), fpsHint: 60
+      )
+    XCTAssertEqual(eightKSixty, 150_000_000, accuracy: 1.0)
+  }
+
+  func testIntermediateTempEstimateMatchesBitrateTimesDuration() {
+    // Sanity check: the estimator is just bitrate × duration × safety,
+    // computed via the same helper the writer uses. If these drift apart,
+    // the disk-full guard becomes either overcautious or wrong.
+    let size = CGSize(width: 3840, height: 2160)
+    let bps = ScreenZoomCursorIntermediatePipeline
+      .intermediateAverageBitrateBps(renderSize: size, fpsHint: 60)
+    let estimate = ScreenZoomCursorIntermediatePipeline
+      .estimatedTempRequirementBytes(
+        renderSize: size, fpsHint: 60, durationSeconds: 60.0
+      )
+    let expectedBase = bps / 8.0 * 60.0
+    let expectedWithSafety = expectedBase * 1.30 + Double(2 * 1024 * 1024 * 1024)
+    XCTAssertEqual(Double(estimate), expectedWithSafety, accuracy: 16.0)
+  }
+
+  // The reported user case: 8K60 for ~38 min on a 50 GB disk used to
+  // demand 3.4 TB (ProRes 4444). With HEVC-with-alpha + the 150 Mbps cap,
+  // it should now estimate well under 100 GB — still not fitting in 50 GB
+  // for this extreme case, but back in the realm of "free some disk or
+  // pick a lower resolution" instead of "physically impossible".
+  func testEightKSixtyEstimateIsReasonableAfterCodecSwap() {
+    let estimate = ScreenZoomCursorIntermediatePipeline
+      .estimatedTempRequirementBytes(
+        renderSize: CGSize(width: 7680, height: 4320),
+        fpsHint: 60,
+        durationSeconds: 2269.15  // 37:49 from the reported failure
+      )
+    // Sanity bounds: should be much less than the old ~3.4 TB ProRes 4444
+    // estimate, and well under 1 TB.
+    let gigabyte: Int64 = 1024 * 1024 * 1024
+    XCTAssertLessThan(estimate, 100 * gigabyte, "expected post-codec-swap estimate < 100 GB")
+    XCTAssertGreaterThan(estimate, 30 * gigabyte, "expected post-codec-swap estimate > 30 GB")
   }
 
   func testInlineStyledCameraFinalRenderProducesVisibleCameraCrop() throws {
@@ -6015,6 +6089,122 @@ final class LetterboxExporterTests: XCTestCase {
       return 0.0
     }
     return try nonBlackRatio(for: cropped, ignoreTransparentPixels: false)
+  }
+
+  // MARK: - Repro: rounded corners + background color (Screen-Studio-style)
+
+  /// Repro for two user-reported export-only bugs:
+  ///  (1) with a corner radius, only the bottom-right screen corner is rounded;
+  ///  (2) with a background color the export is all black (preview is fine).
+  /// Mirrors testScreenOnlyExportUsesBackgroundColorForLetterboxArea (which
+  /// passes with cornerRadius 0), but adds cornerRadius > 0 — the untested gap.
+  /// Source 180x320 (portrait) into 640x360 (landscape) "fit" ⇒ centered blue
+  /// pillar, red letterbox bars. Geometry:
+  ///   contentH=360, contentW=360*180/320=202.5, tx=(640-202.5)/2≈218.75, ty=0
+  ///   screen pillar ≈ x[218.75,421.25] y[0,360]. Image coords: top-left origin.
+  /// Correct rounding ⇒ every pillar corner shows a red wedge. The bug ⇒ only
+  /// the bottom-right corner is red, the other three stay fully blue (square).
+  func testReproPaddedRoundedBackgroundExportRoundsAllFourCornersAndIsNotBlack()
+    throws
+  {
+    let tempDir = makeTemporaryDirectory()
+    defer { try? FileManager.default.removeItem(at: tempDir) }
+
+    let projectRoot = try makeRecordingProjectRoot(at: tempDir, includeCamera: false)
+    let project = try RecordingProjectRef.open(projectRoot: projectRoot)
+    let screenURL = RecordingProjectPaths.screenVideoURL(for: projectRoot)
+    // Source aspect == target aspect ⇒ "fit" produces NO letterbox; with
+    // padding 40 the screen is inset by 40 on ALL four sides:
+    //   contentRect = (40, 40, 560, 280)  (image coords: top-left origin)
+    try makeSolidColorVideo(
+      url: screenURL,
+      size: CGSize(width: 640, height: 360),
+      durationSeconds: 0.6,
+      color: .blue
+    )
+
+    let target = CGSize(width: 640, height: 360)
+    let exporter = LetterboxExporter()
+    let exportExpectation = expectation(description: "rounded + bg export")
+    var exportResult: Result<URL, Error>?
+
+    exporter.export(
+      project: project,
+      target: target,
+      padding: 0.0,
+      cornerRadius: 50.0,
+      backgroundColor: 0xFFFF_0000,
+      backgroundImagePath: nil,
+      cursorSize: 1.0,
+      showCursor: false,
+      zoomEnabled: false,
+      zoomFactor: 1.5,
+      followStrength: 0.15,
+      fpsHint: 30,
+      outputURL: tempDir.appendingPathComponent("rounded-bg.mp4"),
+      format: "mp4",
+      codec: "h264",
+      bitrate: "auto",
+      fitMode: "fit",
+      audioGainDb: 0.0,
+      audioVolumePercent: 100.0,
+      autoNormalizeOnExport: false,
+      targetLoudnessDbfs: -16.0,
+      cameraParams: nil
+    ) { result in
+      exportResult = result
+      exportExpectation.fulfill()
+    }
+
+    wait(for: [exportExpectation], timeout: 30.0)
+    let finalURL = try XCTUnwrap(try exportResult?.get())
+    let image = try sampleFrameImage(url: finalURL)
+
+    // Dump the actual exported frame for visual root-cause inspection.
+    let rep = NSBitmapImageRep(cgImage: image)
+    if let png = rep.representation(using: .png, properties: [:]) {
+      try png.write(to: URL(fileURLWithPath: "/tmp/clingfy_repro_frame.png"))
+    }
+
+    // padding 0, source aspect == target ⇒ contentRect = (0,0,640,360): the
+    // screen fills the whole frame; background (red) is only visible where the
+    // rounded mask cuts the 4 frame corners.
+
+    // Bug 2 guard: screen centre must be blue — i.e. the frame is NOT all black.
+    let centre = try XCTUnwrap(
+      bestCropImage(
+        for: image, canvasSize: target,
+        cropRect: CGRect(x: 300, y: 160, width: 40, height: 40)))
+    let centreBlue = try dominantBlueRatio(for: centre, ignoreTransparentPixels: false)
+    XCTAssertGreaterThan(
+      centreBlue, 0.80,
+      "BUG2: screen centre is not blue (export likely black). centreBlue=\(centreBlue)")
+
+    // Bug 1: each of the 4 frame corners must show a red wedge from the
+    // rounded cut (radius 50). 34x34 boxes hugging each frame corner; a square
+    // (un-rounded) corner stays fully blue (red≈0).
+    let corners: [(String, CGRect)] = [
+      ("top-left", CGRect(x: 1, y: 1, width: 34, height: 34)),
+      ("top-right", CGRect(x: 605, y: 1, width: 34, height: 34)),
+      ("bottom-left", CGRect(x: 1, y: 325, width: 34, height: 34)),
+      ("bottom-right", CGRect(x: 605, y: 325, width: 34, height: 34)),
+    ]
+    var redByCorner: [String: Double] = [:]
+    for (name, rect) in corners {
+      let crop = try XCTUnwrap(
+        bestCropImage(for: image, canvasSize: target, cropRect: rect),
+        "could not crop \(name)")
+      redByCorner[name] = try dominantRedRatio(for: crop, ignoreTransparentPixels: false)
+    }
+    let summary = redByCorner
+      .sorted { $0.key < $1.key }
+      .map { "\($0.key)=\(String(format: "%.3f", $0.value))" }
+      .joined(separator: " ")
+    for (name, _) in corners {
+      XCTAssertGreaterThan(
+        redByCorner[name] ?? 0.0, 0.15,
+        "BUG1: \(name) screen corner not rounded (no red wedge). corners: \(summary)")
+    }
   }
 }
 

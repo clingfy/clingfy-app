@@ -888,14 +888,16 @@ final class InlineCameraRenderer {
   init(
     renderSize: CGSize,
     backgroundColor: Int?,
-    backgroundImagePath: String?
+    backgroundImagePath: String?,
+    backgroundPreset: CanvasBackgroundPreset? = nil
   ) {
     self.renderSize = renderSize
     self.renderBounds = CGRect(origin: .zero, size: renderSize)
     self.backgroundImage = InlineCameraRenderer.makeBackgroundImage(
       renderSize: renderSize,
       backgroundColor: backgroundColor,
-      backgroundImagePath: backgroundImagePath
+      backgroundImagePath: backgroundImagePath,
+      backgroundPreset: backgroundPreset
     )
   }
 
@@ -1252,9 +1254,20 @@ final class InlineCameraRenderer {
   private static func makeBackgroundImage(
     renderSize: CGSize,
     backgroundColor: Int?,
-    backgroundImagePath: String?
+    backgroundImagePath: String?,
+    backgroundPreset: CanvasBackgroundPreset? = nil
   ) -> CIImage {
     let bounds = CGRect(origin: .zero, size: renderSize)
+
+    // Procedural preset background takes precedence — rendered with the
+    // same `CanvasBackgroundRenderer` as the preview and the single-source
+    // export path, at the full export size.
+    if let backgroundPreset,
+      let presetImage = CanvasBackgroundRenderer.shared.image(
+        for: backgroundPreset, pixelSize: renderSize)
+    {
+      return CIImage(cgImage: presetImage).cropped(to: bounds)
+    }
 
     if let backgroundImagePath,
       let image = NSImage(contentsOfFile: backgroundImagePath),

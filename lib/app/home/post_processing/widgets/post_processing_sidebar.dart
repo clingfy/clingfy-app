@@ -114,6 +114,8 @@ class PostProcessingSidebar extends StatelessWidget {
   final double radius;
   final int? backgroundColor;
   final String? backgroundImagePath;
+  final BackgroundKind backgroundKind;
+  final CanvasBackgroundPreset? backgroundPreset;
   final bool showCursor;
   final double cursorSize;
   final double zoomFactor;
@@ -143,6 +145,9 @@ class PostProcessingSidebar extends StatelessWidget {
   final Function(double) onRadiusChangeEnd;
   final Function(int?) onBackgroundColorChanged;
   final Function(String?) onBackgroundImageChanged;
+  final Function(BackgroundKind) onBackgroundKindChanged;
+  final Function(CanvasBackgroundPreset) onBackgroundPresetChanged;
+  final Function(CanvasBackgroundPreset) onBackgroundPresetPreview;
   final Function(bool) onCursorShowChanged;
   final Function(double) onCursorSizeChanged;
   final Function(double) onCursorSizeChangeEnd;
@@ -194,6 +199,8 @@ class PostProcessingSidebar extends StatelessWidget {
     required this.radius,
     required this.backgroundColor,
     required this.backgroundImagePath,
+    required this.backgroundKind,
+    required this.backgroundPreset,
     required this.showCursor,
     required this.cursorSize,
     required this.zoomFactor,
@@ -207,6 +214,9 @@ class PostProcessingSidebar extends StatelessWidget {
     required this.onRadiusChangeEnd,
     required this.onBackgroundColorChanged,
     required this.onBackgroundImageChanged,
+    required this.onBackgroundKindChanged,
+    required this.onBackgroundPresetChanged,
+    required this.onBackgroundPresetPreview,
     required this.onCursorShowChanged,
     required this.onCursorSizeChanged,
     required this.onCursorSizeChangeEnd,
@@ -348,8 +358,13 @@ class PostProcessingSidebar extends StatelessWidget {
         isProcessing: isProcessing,
         backgroundColor: backgroundColor,
         backgroundImagePath: backgroundImagePath,
+        backgroundKind: backgroundKind,
+        backgroundPreset: backgroundPreset,
         onBackgroundColorChanged: onBackgroundColorChanged,
         onBackgroundImageChanged: onBackgroundImageChanged,
+        onBackgroundKindChanged: onBackgroundKindChanged,
+        onBackgroundPresetChanged: onBackgroundPresetChanged,
+        onBackgroundPresetPreview: onBackgroundPresetPreview,
         onPickImage: onPickImage,
       ),
     ];

@@ -693,6 +693,36 @@ class AppLocalizationsAr extends AppLocalizations {
   String get pickColor => 'اختر لوناً';
 
   @override
+  String get backgroundModeColor => 'لون';
+
+  @override
+  String get backgroundModeImage => 'صورة';
+
+  @override
+  String get backgroundModePreset => 'نمط';
+
+  @override
+  String get backgroundPalette => 'لوحة الألوان';
+
+  @override
+  String get backgroundIntensity => 'الكثافة';
+
+  @override
+  String get backgroundSoftness => 'النعومة';
+
+  @override
+  String get randomize => 'عشوائي';
+
+  @override
+  String get presetAbstractWaves => 'موجات تجريدية';
+
+  @override
+  String get presetGraphicMesh => 'شبكة رسومية';
+
+  @override
+  String get presetRadialGlow => 'توهج شعاعي';
+
+  @override
   String get gotIt => 'فهمت';
 
   @override
@@ -1616,6 +1646,19 @@ class AppLocalizationsAr extends AppLocalizations {
   String errExportError(Object error) {
     return 'حدث خطأ أثناء التصدير: $error';
   }
+
+  @override
+  String errExportDiskFull(
+    String required,
+    String available,
+    String shortfall,
+  ) {
+    return 'لا توجد مساحة كافية على القرص للتصدير. تحتاج المعالجة إلى حوالي $required كمساحة مؤقتة — المتاح فقط $available (ينقصك $shortfall). فرّغ بعض المساحة أو اختر دقة إخراج أقل ثم حاول مرة أخرى.';
+  }
+
+  @override
+  String get errExportDiskFullFallback =>
+      'لا توجد مساحة كافية على القرص للتصدير. فرّغ بعض المساحة أو اختر دقة إخراج أقل ثم حاول مرة أخرى.';
 
   @override
   String get errCameraPermissionDenied =>

@@ -18,6 +18,91 @@ enum ResolutionPreset { auto, p1080, p1440, p2160, p4320, custom }
 
 enum FitMode { fit, fill }
 
+/// Which kind of canvas background the post-processing canvas renders.
+/// `.name` ("color" / "image" / "preset") is the wire value sent to native
+/// as `backgroundKind`.
+enum BackgroundKind { color, image, preset }
+
+/// Parameters for a procedural ("Graphic / Abstract Waves") preset
+/// background. Deterministic: the same field values render the same image.
+class CanvasBackgroundPreset {
+  const CanvasBackgroundPreset({
+    required this.id,
+    required this.palette,
+    required this.intensity,
+    required this.blur,
+    required this.seed,
+  });
+
+  /// Catalog id, e.g. `"abstractWaves"`.
+  final String id;
+
+  /// Named palette, e.g. `"bluePurple"`.
+  final String palette;
+
+  /// Visual strength of the generated detail, `0.0`–`1.0`.
+  final double intensity;
+
+  /// Softness / blur of the generated detail, `0.0`–`1.0`.
+  final double blur;
+
+  /// Deterministic randomization seed.
+  final int seed;
+
+  CanvasBackgroundPreset copyWith({
+    String? id,
+    String? palette,
+    double? intensity,
+    double? blur,
+    int? seed,
+  }) {
+    return CanvasBackgroundPreset(
+      id: id ?? this.id,
+      palette: palette ?? this.palette,
+      intensity: intensity ?? this.intensity,
+      blur: blur ?? this.blur,
+      seed: seed ?? this.seed,
+    );
+  }
+
+  Map<String, dynamic> toJson() => {
+    'id': id,
+    'palette': palette,
+    'intensity': intensity,
+    'blur': blur,
+    'seed': seed,
+  };
+
+  /// Parses a preset from persisted JSON. Returns `null` when the map is
+  /// missing the required `id`, so callers can fall back to defaults.
+  static CanvasBackgroundPreset? fromJson(Map<String, dynamic>? json) {
+    if (json == null) return null;
+    final id = json['id'];
+    if (id is! String || id.isEmpty) return null;
+    return CanvasBackgroundPreset(
+      id: id,
+      palette: json['palette'] is String
+          ? json['palette'] as String
+          : 'default',
+      intensity: (json['intensity'] as num?)?.toDouble() ?? 0.7,
+      blur: (json['blur'] as num?)?.toDouble() ?? 0.35,
+      seed: (json['seed'] as num?)?.toInt() ?? 0,
+    );
+  }
+
+  @override
+  bool operator ==(Object other) =>
+      other is CanvasBackgroundPreset &&
+      other.id == id &&
+      other.palette == palette &&
+      other.intensity == intensity &&
+      other.blur == blur &&
+      other.seed == seed;
+
+  @override
+  int get hashCode => Object.hash(id, palette, intensity, blur, seed);
+}
+
 enum CameraLayoutPreset {
   overlayTopLeft,
   overlayTopRight,

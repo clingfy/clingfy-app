@@ -699,6 +699,36 @@ class AppLocalizationsEn extends AppLocalizations {
   String get pickColor => 'Pick a color';
 
   @override
+  String get backgroundModeColor => 'Color';
+
+  @override
+  String get backgroundModeImage => 'Image';
+
+  @override
+  String get backgroundModePreset => 'Preset';
+
+  @override
+  String get backgroundPalette => 'Palette';
+
+  @override
+  String get backgroundIntensity => 'Intensity';
+
+  @override
+  String get backgroundSoftness => 'Softness';
+
+  @override
+  String get randomize => 'Randomize';
+
+  @override
+  String get presetAbstractWaves => 'Abstract Waves';
+
+  @override
+  String get presetGraphicMesh => 'Graphic Mesh';
+
+  @override
+  String get presetRadialGlow => 'Radial Glow';
+
+  @override
   String get gotIt => 'Got it';
 
   @override
@@ -1631,6 +1661,19 @@ class AppLocalizationsEn extends AppLocalizations {
   String errExportError(Object error) {
     return 'An error occurred during export: $error';
   }
+
+  @override
+  String errExportDiskFull(
+    String required,
+    String available,
+    String shortfall,
+  ) {
+    return 'Not enough free disk space to export. About $required of temporary space is needed for the render — only $available is available (short by $shortfall). Free up some disk space, or pick a lower output resolution, and try again.';
+  }
+
+  @override
+  String get errExportDiskFullFallback =>
+      'Not enough free disk space to export. Free up some disk space, or pick a lower output resolution, and try again.';
 
   @override
   String get errCameraPermissionDenied =>

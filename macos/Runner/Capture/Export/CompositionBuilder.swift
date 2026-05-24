@@ -820,6 +820,12 @@ struct CompositionParams: Equatable {
   let audioGainDb: Double
   let audioVolumePercent: Double
   var zoomSegments: [ZoomTimelineSegment]?
+  /// Procedural preset background parameters. When non-nil the renderers
+  /// generate the background from this and ignore `backgroundColor` /
+  /// `backgroundImagePath`. Declared as a defaulted `var` (like
+  /// `zoomSegments`) so existing `CompositionParams(...)` call sites that
+  /// predate the preset feature compile unchanged.
+  var backgroundPreset: CanvasBackgroundPreset?
 }
 
 private enum AudioTapSampleType {
@@ -2360,7 +2366,17 @@ final class CompositionBuilder {
           && screenSourceMode == .precompositedCanvas
           && !cameraMaskSamples.isEmpty,
         zoomApplicationMode: screenSourceMode == .liveScreenTrack ? .screenOverlayOnly : .none,
-        includeRoundedMask: false,
+        // When the camera is composited inline (InlineCameraRenderer), the
+        // screen layer is rendered onto a transparent background so the
+        // renderer can stack screen / camera / resolved background itself.
+        // That layer must therefore carry the rounded-corner visible-region
+        // mask: the mask both rounds the screen corners AND forces alpha 0
+        // outside the screen content rect, so the resolved background shows
+        // through the padding margins. Without it the screen layer keeps
+        // sharp corners and opaque margins that hide the background — the
+        // single-source export path already passes `includeRoundedMask:
+        // true` for the same reason.
+        includeRoundedMask: inlineCameraRenderPlan != nil,
         backgroundMode: inlineCameraRenderPlan == nil ? .resolvedOutput : .transparent,
         renderCursorOverlay: screenSourceMode == .liveScreenTrack,
         debugSource: screenSourceMode == .precompositedCanvas ? "export_precomposited_final" : "export_two_source"
@@ -2764,6 +2780,7 @@ final class CompositionBuilder {
     guard
       params.cornerRadius > 0
         || params.backgroundImagePath != nil
+        || params.backgroundPreset != nil
         || shouldRenderCursor
         || shouldApplyZoom
         || shouldApplyVisibleRegionMask
@@ -2779,7 +2796,15 @@ final class CompositionBuilder {
 
     switch backgroundMode {
     case .resolvedOutput:
-      if let bgPath = params.backgroundImagePath, let img = NSImage(contentsOfFile: bgPath) {
+      if let preset = params.backgroundPreset,
+        let presetImage = CanvasBackgroundRenderer.shared.image(
+          for: preset, pixelSize: target)
+      {
+        bgLayer.contents = presetImage
+        bgLayer.contentsGravity = .resizeAspectFill
+      } else if let bgPath = params.backgroundImagePath,
+        let img = NSImage(contentsOfFile: bgPath)
+      {
         bgLayer.contents = img.cgImageForLayer()
         bgLayer.contentsGravity = .resizeAspectFill
       } else if let color = params.backgroundColor {

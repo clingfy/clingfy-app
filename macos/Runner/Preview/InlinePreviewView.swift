@@ -243,6 +243,12 @@ final class InlinePreviewView: NSView {
   private var pendingPlaybackSnapshotToRestore: PreviewPlaybackSnapshot?
   private var lastGeometryOnlyBoundsRefreshSignature: String?
 
+  /// Outer Flutter panel radius in logical points, plumbed through
+  /// AppKitView creationParams. Applied to the root CALayer so the AppKit
+  /// pixels stop at the rounded boundary — Flutter's Clip.antiAlias does
+  /// not reliably clip hosted AppKit content at the four corners.
+  private var rootCornerRadius: CGFloat = 0
+
   init(
     viewIdentifier viewId: Int64,
     arguments args: Any?,
@@ -254,11 +260,58 @@ final class InlinePreviewView: NSView {
     layer?.backgroundColor = NSColor.clear.cgColor
 
     setupLayers()
+    applyRootCornerRadius(inlinePreviewCornerRadius(from: args))
   }
 
   required init?(coder: NSCoder) {
     super.init(coder: coder)
     setupLayers()
+  }
+
+  /// Round the root layer to match the outer Flutter panel border. Safe to
+  /// call multiple times — the factory re-applies when the singleton content
+  /// view is reattached to a new host (e.g. responsive shell scale change
+  /// alters panelRadius).
+  ///
+  /// Uses a CAShapeLayer mask rather than `cornerRadius` + `masksToBounds`,
+  /// because AVPlayerLayer ignores an ancestor's `cornerRadius` clip on
+  /// macOS — it composites through a separate IOSurface path. A CAShapeLayer
+  /// mask is honored.
+  func applyRootCornerRadius(_ radius: CGFloat) {
+    rootCornerRadius = max(0, radius)
+    NSLog(
+      "[Preview] InlinePreviewView.applyRootCornerRadius radius=\(rootCornerRadius) bounds=\(bounds.size)"
+    )
+    refreshRootCornerMask()
+  }
+
+  /// Rebuilds the rounded-rect mask path against the current `layer.bounds`.
+  /// Must be called when the view resizes (the mask path is in layer-local
+  /// coords and does not auto-resize like `cornerRadius` does).
+  func refreshRootCornerMask() {
+    guard let rootLayer = self.layer else { return }
+    let layerBounds = rootLayer.bounds
+    guard
+      rootCornerRadius > 0,
+      layerBounds.width > 0,
+      layerBounds.height > 0
+    else {
+      rootLayer.mask = nil
+      return
+    }
+
+    let mask: CAShapeLayer = (rootLayer.mask as? CAShapeLayer) ?? CAShapeLayer()
+    mask.frame = layerBounds
+    mask.path = CGPath(
+      roundedRect: layerBounds,
+      cornerWidth: rootCornerRadius,
+      cornerHeight: rootCornerRadius,
+      transform: nil
+    )
+    mask.fillColor = NSColor.black.cgColor
+    if rootLayer.mask !== mask {
+      rootLayer.mask = mask
+    }
   }
 
   private func setupLayers() {
@@ -326,6 +379,7 @@ final class InlinePreviewView: NSView {
 
   override func layout() {
     super.layout()
+    refreshRootCornerMask()
     updateContainerLayout()
     logGeometryOnlyBoundsRefreshIfNeeded()
   }
@@ -920,7 +974,8 @@ final class InlinePreviewView: NSView {
       refreshMask: oldParams.cornerRadius != newParams.cornerRadius,
       refreshBackground:
         oldParams.backgroundColor != newParams.backgroundColor
-        || oldParams.backgroundImagePath != newParams.backgroundImagePath,
+        || oldParams.backgroundImagePath != newParams.backgroundImagePath
+        || oldParams.backgroundPreset != newParams.backgroundPreset,
       refreshAudioMix:
         oldParams.audioGainDb != newParams.audioGainDb
         || oldParams.audioVolumePercent != newParams.audioVolumePercent,
@@ -2477,7 +2532,8 @@ final class InlinePreviewView: NSView {
         fitMode: params.fitMode,
         audioGainDb: clampAudioGainDb(gainDb),
         audioVolumePercent: clampAudioVolumePercent(volumePercent),
-        zoomSegments: params.zoomSegments
+        zoomSegments: params.zoomSegments,
+        backgroundPreset: params.backgroundPreset
       )
       self.currentCompositionParams = updatedParams
     }
@@ -2825,6 +2881,32 @@ final class InlinePreviewView: NSView {
   }
 
   private func applyPreviewBackground(from params: CompositionParams, profile: PreviewProfile) {
+    let requestedCanvasSize = profile.canvasRenderSize
+    let token = currentOpenToken
+
+    // Procedural preset background — rendered off-main, takes precedence
+    // over color/image. Same renderer as export, so preview matches the
+    // exported file (rendered here at the preview canvas size).
+    if let preset = params.backgroundPreset {
+      canvasBackground?.backgroundColor = NSColor.clear.cgColor
+      backgroundImageQueue.async { [weak self] in
+        guard let self else { return }
+        let image = CanvasBackgroundRenderer.shared.image(
+          for: preset, pixelSize: requestedCanvasSize)
+        DispatchQueue.main.async { [weak self] in
+          guard let self else { return }
+          guard self.currentOpenToken == token else { return }
+          guard self.currentCompositionParams?.backgroundPreset == preset else { return }
+          guard self.currentPreviewProfile?.canvasRenderSize == requestedCanvasSize else {
+            return
+          }
+          self.canvasBackground?.contents = image
+          self.canvasBackground?.contentsGravity = .resizeAspectFill
+        }
+      }
+      return
+    }
+
     canvasBackground?.backgroundColor = previewBackgroundColor(from: params.backgroundColor)
 
     guard let path = params.backgroundImagePath, !path.isEmpty else {
@@ -2832,9 +2914,6 @@ final class InlinePreviewView: NSView {
       canvasBackground?.contentsGravity = .resizeAspectFill
       return
     }
-
-    let requestedCanvasSize = profile.canvasRenderSize
-    let token = currentOpenToken
 
     backgroundImageQueue.async { [weak self] in
       guard let self else { return }

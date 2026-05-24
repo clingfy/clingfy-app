@@ -233,13 +233,38 @@ final class LetterboxExporter {
 
     guard availableCapacityBytes < estimatedRequiredTempBytes else { return nil }
 
+    let shortfallBytes = max(estimatedRequiredTempBytes - availableCapacityBytes, 0)
+    let formatter = ByteCountFormatter()
+    formatter.allowedUnits = [.useGB, .useMB]
+    formatter.countStyle = .file
+    formatter.includesUnit = true
+    let availableFormatted = formatter.string(fromByteCount: availableCapacityBytes)
+    let requiredFormatted = formatter.string(fromByteCount: estimatedRequiredTempBytes)
+    let shortfallFormatted = formatter.string(fromByteCount: shortfallBytes)
+
+    // Human-readable, self-contained explanation. Flutter has a structured
+    // EXPORT_DISK_FULL handler that re-renders this from the details payload,
+    // but this string is also what `error.localizedDescription` returns, so it
+    // has to stand on its own everywhere — logs, Sentry, fallback dialogs.
+    let reason =
+      "Not enough free disk space to render this export. "
+      + "About \(requiredFormatted) of temporary disk space is needed for "
+      + "the intermediate render, only \(availableFormatted) is available "
+      + "(short by \(shortfallFormatted)). "
+      + "Free up some space — or pick a lower output resolution — and try again."
+
     return makeScreenPrepassExportError(
       stage: .build,
-      reason: "The screen pre-pass requires more temporary disk space than is currently available.",
+      nativeErrorCode: NativeErrorCode.exportDiskFull,
+      reason: reason,
       context: [
         "tempPath": tempRoot.path,
         "availableTempBytes": availableCapacityBytes,
         "estimatedRequiredTempBytes": estimatedRequiredTempBytes,
+        "shortfallTempBytes": shortfallBytes,
+        "availableTempFormatted": availableFormatted,
+        "estimatedRequiredTempFormatted": requiredFormatted,
+        "shortfallTempFormatted": shortfallFormatted,
         "target": "\(Int(targetSize.width))x\(Int(targetSize.height))",
         "fpsHint": fpsHint,
         "durationSeconds": durationSeconds,
@@ -283,10 +308,20 @@ final class LetterboxExporter {
     let generator = AVAssetImageGenerator(asset: asset)
     generator.appliesPreferredTrackTransform = videoComposition == nil
     generator.videoComposition = videoComposition
-    generator.maximumSize = CGSize(
-      width: validationSampleDimension,
-      height: validationSampleDimension
-    )
+    // When the composition carries an AVVideoCompositionCoreAnimationTool,
+    // applying `maximumSize` triggers a reduced-resolution render path in
+    // AVAssetImageGenerator where the post-processing videoLayer fails to
+    // receive the screen video — the reference frame collapses to mostly the
+    // bgLayer colour and the FinalOutputValidation falsely rejects correct
+    // exports. Render the animation-tool composition at full size and let the
+    // downstream metrics analyzer (analyzeFrameColorMetrics) do the uniform
+    // 64×64 downsample instead.
+    if videoComposition?.animationTool == nil {
+      generator.maximumSize = CGSize(
+        width: validationSampleDimension,
+        height: validationSampleDimension
+      )
+    }
     return try generator.copyCGImage(at: sampleTime, actualTime: nil)
   }
 
@@ -356,6 +391,21 @@ final class LetterboxExporter {
     }
 
     return metrics
+  }
+
+  /// Retags an arbitrary CGImage with sRGB without converting its pixel
+  /// values, so downstream colour analysis sees byte values directly instead
+  /// of going through CoreGraphics' chromatic-adaptation matrix. The
+  /// validator's reference frames come back from AVAssetImageGenerator tagged
+  /// as `kCGColorSpaceGenericRGB` (Apple's old gamma-1.8 generic space) when
+  /// the composition has an animation tool; converting that to sRGB during
+  /// `CGContext.draw` introduces a measurable channel cross-talk (e.g. pure
+  /// blue 0,0,255 → 5,51,255) that distorts the luma comparison and falsely
+  /// rejects correct exports. Final-output frames come back as CoreMedia709
+  /// (BT.709) and do not exhibit the same shift, so the reference vs final
+  /// comparison becomes asymmetric. Retagging in sRGB makes both comparable.
+  private func normalizeForColorAnalysis(_ image: CGImage) -> CGImage? {
+    image.copy(colorSpace: VideoColorPipeline.workingColorSpace) ?? image
   }
 
   private func analyzeFrameColorMetrics(
@@ -1025,7 +1075,8 @@ final class LetterboxExporter {
     finalExportAsset: AVAsset,
     inlineCameraRenderPlan: CompositionBuilder.InlineCameraRenderPlan? = nil,
     backgroundColor: Int? = nil,
-    backgroundImagePath: String? = nil
+    backgroundImagePath: String? = nil,
+    backgroundPreset: CanvasBackgroundPreset? = nil
   ) -> NSError? {
     do {
       let sampleTime = min(max(referenceAsset.duration.seconds * 0.5, 0.0), max(referenceAsset.duration.seconds - 0.001, 0.0))
@@ -1044,7 +1095,8 @@ final class LetterboxExporter {
         let renderer = InlineCameraRenderer(
           renderSize: referenceComposition.renderSize,
           backgroundColor: backgroundColor,
-          backgroundImagePath: backgroundImagePath
+          backgroundImagePath: backgroundImagePath,
+          backgroundPreset: backgroundPreset
         )
         let composedImage = renderer.makeCompositedImage(
           screenImage: CIImage(cgImage: screenImage),
@@ -1078,9 +1130,21 @@ final class LetterboxExporter {
         at: CMTime(seconds: sampleTime, preferredTimescale: 600)
       )
 
+      // Retag the reference and final as sRGB before colour analysis.
+      // AVAssetImageGenerator hands back animation-tool composites tagged
+      // `kCGColorSpaceGenericRGB`, and converting that to sRGB during
+      // CGContext.draw inside analyzeFrameColorMetrics applies a chromatic-
+      // adaptation matrix that injects phantom green (pure blue → 5,51,255).
+      // The final file is tagged CoreMedia709 and does not exhibit the same
+      // shift, so the comparison becomes asymmetric and correct exports get
+      // wrongly rejected. Retagging without converting bytes makes both
+      // sides comparable.
+      let normalizedReference = normalizeForColorAnalysis(referenceImage) ?? referenceImage
+      let normalizedFinal = normalizeForColorAnalysis(finalImage) ?? finalImage
+
       guard
-        let referenceMetrics = analyzeFrameColorMetrics(referenceImage, ignoreTransparentPixels: false),
-        let finalMetrics = analyzeFrameColorMetrics(finalImage, ignoreTransparentPixels: false)
+        let referenceMetrics = analyzeFrameColorMetrics(normalizedReference, ignoreTransparentPixels: false),
+        let finalMetrics = analyzeFrameColorMetrics(normalizedFinal, ignoreTransparentPixels: false)
       else {
         return makeFinalExportValidationError(
           reason: "The final export color validator could not analyze the rendered frames."
@@ -1333,6 +1397,7 @@ final class LetterboxExporter {
     inlineCameraRenderPlan: CompositionBuilder.InlineCameraRenderPlan? = nil,
     backgroundColor: Int? = nil,
     backgroundImagePath: String? = nil,
+    backgroundPreset: CanvasBackgroundPreset? = nil,
     logOutputInfo: Bool = false,
     completion: @escaping (Result<URL, Error>) -> Void
   ) {
@@ -1589,7 +1654,8 @@ final class LetterboxExporter {
       InlineCameraRenderer(
         renderSize: renderSize,
         backgroundColor: backgroundColor,
-        backgroundImagePath: backgroundImagePath
+        backgroundImagePath: backgroundImagePath,
+        backgroundPreset: backgroundPreset
       )
     }
     var currentCameraSampleBuffer: CMSampleBuffer?
@@ -1968,6 +2034,7 @@ final class LetterboxExporter {
     cornerRadius: Double = 0,
     backgroundColor: Int? = nil,
     backgroundImagePath: String? = nil,
+    backgroundPreset: CanvasBackgroundPreset? = nil,
     cursorSize: Double = 1.0,
     showCursor: Bool = true,
     zoomEnabled: Bool = false,
@@ -2097,6 +2164,7 @@ final class LetterboxExporter {
       audioVolumePercent: audioVolumePercent
     )
     params.zoomSegments = effectiveSegments
+    params.backgroundPreset = backgroundPreset
 
     let resolvedAudioMix = resolveAudioMixControls(
       asset: asset,
@@ -2396,6 +2464,7 @@ final class LetterboxExporter {
             inlineCameraRenderPlan: comp.inlineCameraRenderPlan,
             backgroundColor: backgroundColor,
             backgroundImagePath: backgroundImagePath,
+            backgroundPreset: backgroundPreset,
             logOutputInfo: true,
             completion: completion
           )
@@ -2445,7 +2514,8 @@ final class LetterboxExporter {
             finalExportAsset: AVAsset(url: finalURL),
             inlineCameraRenderPlan: comp.inlineCameraRenderPlan,
             backgroundColor: backgroundColor,
-            backgroundImagePath: backgroundImagePath
+            backgroundImagePath: backgroundImagePath,
+            backgroundPreset: backgroundPreset
           ) {
             NativeLogger.e(
               "Export",

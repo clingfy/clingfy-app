@@ -1390,6 +1390,66 @@ abstract class AppLocalizations {
   /// **'Pick a color'**
   String get pickColor;
 
+  /// No description provided for @backgroundModeColor.
+  ///
+  /// In en, this message translates to:
+  /// **'Color'**
+  String get backgroundModeColor;
+
+  /// No description provided for @backgroundModeImage.
+  ///
+  /// In en, this message translates to:
+  /// **'Image'**
+  String get backgroundModeImage;
+
+  /// No description provided for @backgroundModePreset.
+  ///
+  /// In en, this message translates to:
+  /// **'Preset'**
+  String get backgroundModePreset;
+
+  /// No description provided for @backgroundPalette.
+  ///
+  /// In en, this message translates to:
+  /// **'Palette'**
+  String get backgroundPalette;
+
+  /// No description provided for @backgroundIntensity.
+  ///
+  /// In en, this message translates to:
+  /// **'Intensity'**
+  String get backgroundIntensity;
+
+  /// No description provided for @backgroundSoftness.
+  ///
+  /// In en, this message translates to:
+  /// **'Softness'**
+  String get backgroundSoftness;
+
+  /// No description provided for @randomize.
+  ///
+  /// In en, this message translates to:
+  /// **'Randomize'**
+  String get randomize;
+
+  /// No description provided for @presetAbstractWaves.
+  ///
+  /// In en, this message translates to:
+  /// **'Abstract Waves'**
+  String get presetAbstractWaves;
+
+  /// No description provided for @presetGraphicMesh.
+  ///
+  /// In en, this message translates to:
+  /// **'Graphic Mesh'**
+  String get presetGraphicMesh;
+
+  /// No description provided for @presetRadialGlow.
+  ///
+  /// In en, this message translates to:
+  /// **'Radial Glow'**
+  String get presetRadialGlow;
+
   /// No description provided for @gotIt.
   ///
   /// In en, this message translates to:
@@ -3093,6 +3153,18 @@ abstract class AppLocalizations {
   /// In en, this message translates to:
   /// **'An error occurred during export: {error}'**
   String errExportError(Object error);
+
+  /// Friendly disk-space-exhausted message shown when the screen pre-pass cannot fit on disk. Shows formatted byte counts.
+  ///
+  /// In en, this message translates to:
+  /// **'Not enough free disk space to export. About {required} of temporary space is needed for the render — only {available} is available (short by {shortfall}). Free up some disk space, or pick a lower output resolution, and try again.'**
+  String errExportDiskFull(String required, String available, String shortfall);
+
+  /// No description provided for @errExportDiskFullFallback.
+  ///
+  /// In en, this message translates to:
+  /// **'Not enough free disk space to export. Free up some disk space, or pick a lower output resolution, and try again.'**
+  String get errExportDiskFullFallback;
 
   /// No description provided for @errCameraPermissionDenied.
   ///
