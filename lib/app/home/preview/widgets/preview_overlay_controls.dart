@@ -72,12 +72,10 @@ class _PreviewWithOverlayControlsState
         widget.controlsEnabled && widget.allowOverlayInteraction;
     return Stack(
       children: [
-        Positioned.fill(
-          child: Container(
-            color: Theme.of(context).colorScheme.scrim,
-            child: widget.preview,
-          ),
-        ),
+        // The preview already paints its own opaque rounded background.
+        // Don't wrap it in a rectangular scrim Container — the four corners
+        // of that scrim leak outside the preview's rounded border.
+        Positioned.fill(child: widget.preview),
         Positioned.fill(
           child: Stack(
             alignment: Alignment.center,
