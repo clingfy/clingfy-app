@@ -19,7 +19,7 @@ class NoopStreamHandler
   std::unique_ptr<flutter::StreamHandlerError<flutter::EncodableValue>>
   OnListenInternal(
       const flutter::EncodableValue* /*arguments*/,
-      std::unique_ptr<flutter::EventSink<flutter::EncodableValue>> /*events*/)
+      std::unique_ptr<flutter::EventSink<flutter::EncodableValue>>&& /*events*/)
       override {
     return nullptr;
   }
