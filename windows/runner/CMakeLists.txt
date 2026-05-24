@@ -1,6 +1,34 @@
 cmake_minimum_required(VERSION 3.14)
 project(runner LANGUAGES CXX)
 
+# === Bridge static library ===
+#
+# Bridge sources live in a static library so they can be linked by both the
+# runner executable AND the unit-test binary under `windows/runner_tests/`
+# without duplicating compilation rules. Sources here must NOT depend on a
+# live Flutter engine (no `flutter_window.cpp`, no plugin registrant) so the
+# test target can construct a `MethodRouter` in isolation.
+add_library(runner_bridge STATIC
+  "Bridge/method_dispatcher.cpp"
+  "Bridge/method_router.cpp"
+  "Bridge/event_channel_stubs.cpp"
+  "Bridge/Routers/camera_overlay_router.cpp"
+  "Bridge/Routers/devices_router.cpp"
+  "Bridge/Routers/export_router.cpp"
+  "Bridge/Routers/indicator_router.cpp"
+  "Bridge/Routers/misc_router.cpp"
+  "Bridge/Routers/permissions_router.cpp"
+  "Bridge/Routers/preview_router.cpp"
+  "Bridge/Routers/recording_router.cpp"
+  "Bridge/Routers/storage_router.cpp"
+)
+apply_standard_settings(runner_bridge)
+target_compile_definitions(runner_bridge PRIVATE "NOMINMAX")
+target_include_directories(runner_bridge PUBLIC "${CMAKE_CURRENT_SOURCE_DIR}")
+target_link_libraries(runner_bridge PUBLIC flutter flutter_wrapper_app)
+
+# === Runner executable ===
+#
 # Define the application target. To change its name, change BINARY_NAME in the
 # top-level CMakeLists.txt, not the value here, or `flutter run` will no longer
 # work.
@@ -11,8 +39,6 @@ add_executable(${BINARY_NAME} WIN32
   "main.cpp"
   "utils.cpp"
   "win32_window.cpp"
-  "Bridge/method_dispatcher.cpp"
-  "Bridge/event_channel_stubs.cpp"
   "${FLUTTER_MANAGED_DIR}/generated_plugin_registrant.cc"
   "Runner.rc"
   "runner.exe.manifest"
@@ -34,7 +60,7 @@ target_compile_definitions(${BINARY_NAME} PRIVATE "NOMINMAX")
 
 # Add dependency libraries and include directories. Add any application-specific
 # dependencies here.
-target_link_libraries(${BINARY_NAME} PRIVATE flutter flutter_wrapper_app)
+target_link_libraries(${BINARY_NAME} PRIVATE runner_bridge)
 target_link_libraries(${BINARY_NAME} PRIVATE "dwmapi.lib")
 target_include_directories(${BINARY_NAME} PRIVATE "${CMAKE_SOURCE_DIR}" "${CMAKE_CURRENT_SOURCE_DIR}")
 

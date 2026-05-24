@@ -7,17 +7,18 @@
 
 #include <memory>
 
+#include "Bridge/method_router.h"
+
 namespace clingfy::bridge {
 
-// Owns the screen-recorder method channel on the Windows side.
+// Owns the screen-recorder method channel on the Windows side and forwards
+// every call to a `MethodRouter`.
 //
-// Phase 0: every method returns a structured error with code
-// `WINDOWS_NOT_IMPLEMENTED`. The goal is that the Flutter UI never sees a raw
-// MissingPluginException at startup, and every action degrades to a clean,
-// localizable error.
+// The routing logic itself lives in `MethodRouter` so it can be unit-tested
+// without a `BinaryMessenger`. This class is the thin glue that registers
+// the channel handler and keeps the router alive for the channel's lifetime.
 //
-// Later phases replace the catch-all stub with real handlers (device
-// enumeration in Phase 2, capture in Phase 3, export in Phase 6, etc.).
+// See `MethodRouter` for the Phase 1 stub policy.
 class MethodDispatcher {
  public:
   explicit MethodDispatcher(flutter::BinaryMessenger* messenger);
@@ -27,10 +28,7 @@ class MethodDispatcher {
   MethodDispatcher& operator=(const MethodDispatcher&) = delete;
 
  private:
-  void HandleCall(
-      const flutter::MethodCall<flutter::EncodableValue>& call,
-      std::unique_ptr<flutter::MethodResult<flutter::EncodableValue>> result);
-
+  MethodRouter router_;
   std::unique_ptr<flutter::MethodChannel<flutter::EncodableValue>> channel_;
 };
 

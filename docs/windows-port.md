@@ -47,11 +47,11 @@ The port is sequenced so that each phase produces a usable app. Do not skip
 ahead — the hard parts (camera, chroma key, composition) depend on a stable
 lifecycle, preview, and basic export.
 
-| Phase | Goal                                                          |
-| ----- | ------------------------------------------------------------- |
-| 0     | App launches; native bridge stubs; no MissingPluginException  |
-| 1     | Full bridge contract parity (every method routed, stubbed)    |
-| 2     | Real device / target discovery                                |
+| Phase | Goal                                                          | Status |
+| ----- | ------------------------------------------------------------- | ------ |
+| 0     | App launches; native bridge stubs; no MissingPluginException  | done   |
+| 1     | Full bridge contract parity (every method routed, stubbed)    | done   |
+| 2     | Real device / target discovery                                | next   |
 | 3     | MVP recording (full display + mic + system audio → MP4)       |
 | 4     | Lifecycle parity (state machine, pause/resume, recovery)      |
 | 5     | Preview player + project reopen                               |
@@ -64,34 +64,82 @@ lifecycle, preview, and basic export.
 Detailed scope per phase is tracked in the session task list and in
 [../CLAUDE.md](../CLAUDE.md).
 
-## Current status — Phase 0
+## Current status — Phase 1
 
-Phase 0 establishes the Windows native bridge so the app boots without
-crashing and every native call from Flutter is intercepted.
+Phase 0 stood up the bridge scaffolding (a catch-all method handler plus
+no-op event-channel stubs) so the app could boot without throwing
+`MissingPluginException` at startup.
 
-Shipped in this phase:
+Phase 1 — **full bridge contract parity** — replaces that catch-all with a
+per-method router. Every method on the Dart bridge contract has an explicit
+handler that returns a shape-correct stub. The Flutter UI can now walk
+through its full startup sequence (settings hydration, permissions probe,
+device enumeration, post-processing prefs) without the bridge surfacing a
+wall of errors.
 
-- `windows/runner/Bridge/native_channel_names.h` — channel name constants
-  shared with Dart.
-- `windows/runner/Bridge/native_error_codes.h` — error code constants
-  shared with Dart.
-- `windows/runner/Bridge/method_dispatcher.{h,cpp}` — registers the
-  `com.clingfy/screen_recorder` method channel with a catch-all handler that
-  returns `WINDOWS_NOT_IMPLEMENTED` for every method.
-- `windows/runner/Bridge/event_channel_stubs.{h,cpp}` — registers all four
-  event channels with no-op stream handlers so `receiveBroadcastStream()`
-  never throws at startup.
-- `WINDOWS_NOT_IMPLEMENTED` added to `NativeErrorCode` on the Dart side.
+### Layout
 
-What works after Phase 0:
+```
+windows/runner/Bridge/
+  method_dispatcher.{h,cpp}      table-based dispatch; unknown method →
+                                 WINDOWS_NOT_IMPLEMENTED
+  result_helpers.h               small reply helpers
+  native_channel_names.h         channel name constants
+  native_error_codes.h           error code constants
+  event_channel_stubs.{h,cpp}    no-op event channels
 
-- `flutter run -d windows --flavor dev --dart-define-from-file=.env.dev`
-  launches the app.
-- The home shell, settings, and licensing UI render under fluent_ui.
-- Recorder actions return a clean structured error instead of crashing.
+  Routers/
+    recording_router.{h,cpp}     startRecording, lifecycle, capabilities,
+                                 recording settings
+    devices_router.{h,cpp}       getDisplays / getAppWindows / get*Sources,
+                                 selection setters, area selection
+    camera_overlay_router.{h,cpp} all setCameraOverlay*, chroma key,
+                                 cursor highlight
+    indicator_router.{h,cpp}     recording indicator + pre-recording bar
+    preview_router.{h,cpp}       preview/player/zoom queries + setters
+    export_router.{h,cpp}        exportVideo, processVideo, scene info,
+                                 zoom segment store
+    permissions_router.{h,cpp}   permission status/requests, open settings,
+                                 relaunchApp
+    storage_router.{h,cpp}       save folder, reveal helpers,
+                                 storage snapshot, clear cache
+    misc_router.{h,cpp}          pickImage, cacheLocalizedStrings,
+                                 checkForUpdates
+```
 
-What does not work yet: any actual recording, preview, export, or device
-enumeration. Those are Phases 2–9.
+### Stub-response policy
+
+| Category | Behavior |
+|---|---|
+| Setters and fire-and-forget actions | `result.Success(null)` |
+| Getters returning a list | `[]` |
+| Getters returning a map / model | shape-correct empty (zero-filled `StorageSnapshot`, `{canPauseResume:false}`, etc.) |
+| Boolean getters | `false` (Dart parsers treat this as "feature off" / "not granted") |
+| `previewGetZoomCapabilities` | all-`false` so the smart fixed-target UX hides |
+| `previewGetCursorSamples` | empty samples + zero dimensions |
+| `getRecordingSceneInfo` | echo `projectPath` as both `projectPath` and `screenPath` (matches Dart's own fallback) |
+| `clearCachedRecordings` | `{deletedCount: 0}` |
+| `startRecording`, `stopRecording`, `exportVideo`, `processVideo` | `WINDOWS_NOT_IMPLEMENTED` error so the user gets a clean "not on Windows yet" message |
+| Unknown / unrouted methods | `WINDOWS_NOT_IMPLEMENTED` — keeps bridge drift visible |
+
+### What works after Phase 1
+
+- `flutter run -d windows --dart-define-from-file=.env.dev` launches the
+  app.
+- Home shell, settings, post-processing, permissions onboarding, and
+  licensing UI all render under fluent_ui without surfacing a wall of
+  bridge errors.
+- Pre-recording flows (selecting a quality preset, toggling the recorder
+  exclusion, opening the camera overlay settings) round-trip cleanly.
+- Hitting **Record** or **Export** surfaces a clean
+  `WINDOWS_NOT_IMPLEMENTED` error rather than crashing.
+
+### What does not work yet
+
+- No actual recording, preview, export, device enumeration, or permission
+  resolution. Those land in Phases 2–10.
+- File reveal / "open folder" actions accept the call but do nothing — a
+  real ShellExecute pass arrives in Phase 10.
 
 ## Building and running on Windows
 
@@ -111,19 +159,72 @@ Run the app:
 ```powershell
 flutter pub get
 
-flutter run -d windows --flavor dev --dart-define-from-file=.env.dev
+flutter run -d windows --dart-define-from-file=.env.dev
 ```
 
 Build a release exe:
 
 ```powershell
-flutter build windows --flavor dev  --dart-define-from-file=.env.dev
-flutter build windows --flavor prod --dart-define-from-file=.env.prod
+flutter build windows --dart-define-from-file=.env.dev
+flutter build windows --dart-define-from-file=.env.prod
 ```
 
-> Flavor support on Windows is wired the same way as macOS; both flavors
-> share the same exe name today and differ only in the bundled dotenv.
-> Separate per-flavor installers land in Phase 10.
+> `flutter build windows` does not accept `--flavor` — Windows builds are
+> distinguished only by which dotenv is passed via `--dart-define-from-file`.
+> Per-flavor installers (bundle id, app name, icon) land in Phase 10.
+
+## Native Windows test layout
+
+Tests live under `windows/runner_tests/` and use **GoogleTest**, fetched on
+demand via CMake `FetchContent`. They mirror what `macos/RunnerTests/` does
+for the Swift engine — exercise the bridge code without spinning up the
+Flutter engine.
+
+### What the tests cover (Phase 1)
+
+| File | What it asserts |
+|---|---|
+| `method_router_test.cpp` | Unknown methods fall back to `WINDOWS_NOT_IMPLEMENTED`; `HasHandler` reflects registration state. |
+| `bridge_contract_coverage_test.cpp` | Every method on the Dart bridge contract has an explicit registered handler — the drift-detection net. Update the list here when you add a method to either side. |
+| `router_stub_shapes_test.cpp` | Per-method stub shapes: setters return success+null, getters return the documented list/map/bool/null, `startRecording` / `stopRecording` / `exportVideo` / `processVideo` return `WINDOWS_NOT_IMPLEMENTED`, `getStorageSnapshot` carries all ten required keys, etc. |
+
+### Why a separate static library
+
+`windows/runner/CMakeLists.txt` builds the bridge sources into a
+`runner_bridge` STATIC library. The runner executable links against it,
+and so does the test executable — no source duplication, no test-only
+includes of `flutter_window.cpp`, and the test binary never needs a live
+Flutter engine.
+
+### Running the tests
+
+`flutter build windows` does **not** enable the test target (it would
+otherwise pay the GoogleTest FetchContent cost on every app build). Tests
+are an opt-in CMake build:
+
+```powershell
+# One-time configure (downloads GoogleTest on first run).
+cmake -S windows -B build/windows-tests -DBUILD_RUNNER_TESTS=ON `
+  -DFLUTTER_VERSION="3.44.0" `
+  -DFLUTTER_VERSION_MAJOR=3 -DFLUTTER_VERSION_MINOR=44 `
+  -DFLUTTER_VERSION_PATCH=0 -DFLUTTER_VERSION_BUILD=0
+
+# Build the test binary.
+cmake --build build/windows-tests --config Debug --target runner_tests
+
+# Run everything.
+ctest --test-dir build/windows-tests --output-on-failure -C Debug
+
+# Run a single test by name.
+ctest --test-dir build/windows-tests --output-on-failure -C Debug `
+  -R "MethodRouterTest.UnknownMethodFallsBackToWindowsNotImplemented"
+```
+
+> The configure step requires a Windows-host CMake and that `flutter build
+> windows` has run at least once (so `windows/flutter/ephemeral/` is
+> populated). The flutter version `-D` values do not need to be exact —
+> they just satisfy the runner's `target_compile_definitions` for the
+> bundled version metadata.
 
 ## Validation before committing Windows changes
 
@@ -137,10 +238,11 @@ flutter test
 ```
 
 For changes to `windows/runner/`, build the Windows target on a Windows host
-(macOS CI cannot build the Windows runner). At minimum:
+(macOS CI cannot build the Windows runner) and run the native tests:
 
 ```powershell
-flutter build windows --flavor dev --dart-define-from-file=.env.dev
+flutter build windows --dart-define-from-file=.env.dev
+ctest --test-dir build/windows-tests --output-on-failure -C Debug
 ```
 
 Windows-side native tests will land alongside the engine in Phase 3+. Until
