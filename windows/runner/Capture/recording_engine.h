@@ -2,12 +2,23 @@
 #define RUNNER_CAPTURE_RECORDING_ENGINE_H_
 
 #include <cstdint>
+#include <memory>
 #include <mutex>
 #include <optional>
 #include <string>
 
 #include "Capture/recording_clock.h"
 #include "Capture/recording_session_state.h"
+
+namespace clingfy::graphics {
+class D3DDevice;
+}
+
+namespace clingfy::capture {
+class VideoFrameQueue;
+class WgcDisplayCaptureBackend;
+struct WgcCaptureStats;
+}
 
 // Singleton orchestrator for the Windows recording lifecycle.
 //
@@ -64,6 +75,17 @@ class RecordingEngine {
   RecordingState state() const;
   std::string session_id() const;
 
+  // Diagnostics snapshot — used by manual smoke-tests in Phase 3B to
+  // confirm frames are arriving and by Phase 3C+ to surface drop counts.
+  // Returns zeros when no capture is in flight.
+  struct CaptureDiagnostics {
+    std::uint32_t frame_width = 0;
+    std::uint32_t frame_height = 0;
+    std::uint64_t frames_received = 0;
+    std::uint64_t frames_dropped = 0;
+  };
+  CaptureDiagnostics Diagnostics() const;
+
   // Test seam: resets the singleton's state to Idle and clears the session
   // id. Not safe to call while a real recording is in flight (only Phase
   // 3A's skeleton path is exercised today, but later PRs that bring in
@@ -71,11 +93,24 @@ class RecordingEngine {
   void ForceResetForTesting();
 
  private:
-  RecordingEngine() = default;
+  RecordingEngine();
+  ~RecordingEngine();
+
+  // Tears the capture pipeline down (backend → D3D device → queue) without
+  // touching state-machine state. Called from Stop / failure paths so the
+  // caller does not have to hand-roll the teardown order.
+  void TeardownPipeline();
 
   mutable std::mutex mutex_;
   RecordingSessionState session_;
   RecordingClock clock_;
+
+  // Capture pipeline (Phase 3B). Held as unique_ptrs so the engine header
+  // can stay free of D3D / WinRT includes; the implementation owns the
+  // full types.
+  std::unique_ptr<clingfy::graphics::D3DDevice> d3d_device_;
+  std::unique_ptr<VideoFrameQueue> frame_queue_;
+  std::unique_ptr<WgcDisplayCaptureBackend> capture_backend_;
 };
 
 }  // namespace clingfy::capture

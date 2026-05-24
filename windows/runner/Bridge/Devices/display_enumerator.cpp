@@ -58,6 +58,42 @@ double ScaleForMonitor(HMONITOR monitor) {
   return static_cast<double>(dpi_x) / 96.0;
 }
 
+// Computes the hashed id that `EnumerateDisplays` would assign to this
+// monitor. Kept as a free function so `ResolveHMonitor` can recompute the
+// id for each HMONITOR without re-running the full enumeration.
+std::int64_t ComputeIdForMonitor(HMONITOR monitor) {
+  MONITORINFOEXW info{};
+  info.cbSize = sizeof(info);
+  if (!::GetMonitorInfoW(monitor, &info)) {
+    return 0;
+  }
+  DISPLAY_DEVICEW device{};
+  device.cb = sizeof(device);
+  const bool ok = ::EnumDisplayDevicesW(info.szDevice, 0, &device,
+                                         EDD_GET_DEVICE_INTERFACE_NAME) != 0;
+  const std::wstring id_source =
+      (ok && device.DeviceID[0] != L'\0') ? std::wstring(device.DeviceID)
+                                          : std::wstring(info.szDevice);
+  return HashDevicePath(id_source);
+}
+
+struct MatchContext {
+  std::int64_t target_id = 0;
+  HMONITOR match = nullptr;
+};
+
+BOOL CALLBACK MatchMonitorEnumProc(HMONITOR monitor,
+                                   HDC /*hdc*/,
+                                   LPRECT /*clip*/,
+                                   LPARAM user_data) {
+  auto* ctx = reinterpret_cast<MatchContext*>(user_data);
+  if (ComputeIdForMonitor(monitor) == ctx->target_id) {
+    ctx->match = monitor;
+    return FALSE;  // Stop enumeration on the first match.
+  }
+  return TRUE;
+}
+
 BOOL CALLBACK MonitorEnumProc(HMONITOR monitor,
                               HDC /*hdc*/,
                               LPRECT /*clip*/,
@@ -112,6 +148,29 @@ std::vector<DisplayRecord> EnumerateDisplays() {
   ::EnumDisplayMonitors(nullptr, nullptr, &MonitorEnumProc,
                         reinterpret_cast<LPARAM>(&displays));
   return displays;
+}
+
+std::optional<HMONITOR> ResolveHMonitor(std::optional<std::int64_t> id) {
+  if (!id) {
+    // No explicit selection — use the primary monitor as the friendly
+    // default. `MonitorFromPoint` with (0, 0) and DEFAULTTOPRIMARY is the
+    // documented way to fetch the primary monitor handle without iterating.
+    const POINT origin{0, 0};
+    HMONITOR primary = ::MonitorFromPoint(origin, MONITOR_DEFAULTTOPRIMARY);
+    if (primary == nullptr) {
+      return std::nullopt;
+    }
+    return primary;
+  }
+
+  MatchContext ctx;
+  ctx.target_id = *id;
+  ::EnumDisplayMonitors(nullptr, nullptr, &MatchMonitorEnumProc,
+                        reinterpret_cast<LPARAM>(&ctx));
+  if (ctx.match == nullptr) {
+    return std::nullopt;
+  }
+  return ctx.match;
 }
 
 }  // namespace clingfy::bridge::devices

@@ -52,7 +52,7 @@ lifecycle, preview, and basic export.
 | 0     | App launches; native bridge stubs; no MissingPluginException  | done   |
 | 1     | Full bridge contract parity (every method routed, stubbed)    | done   |
 | 2     | Real device / target discovery                                | done   |
-| 3     | MVP recording (full display + mic + system audio → MP4)       | in progress (3A done, 3B next) |
+| 3     | MVP recording (full display + mic + system audio → MP4)       | in progress (3A+3B done, 3C next) |
 | 4     | Lifecycle parity (state machine, pause/resume, recovery)      |
 | 5     | Preview player + project reopen                               |
 | 6     | Basic export + post-processing (resolution, background, etc.) |
@@ -64,6 +64,92 @@ lifecycle, preview, and basic export.
 Detailed scope per phase is tracked in the session task list and in
 [../CLAUDE.md](../CLAUDE.md).
 
+## Current status — Phase 3B
+
+Phase 3B builds on the 3A skeleton by spinning up a real
+Windows.Graphics.Capture pipeline behind `startRecording`. Frames now
+arrive on a WinRT thread-pool callback, get tagged with a 100-ns
+timestamp, and land in a bounded queue waiting for the encoder that
+lands in 3C. No MP4 file is produced yet — the queue's frames are
+dropped on the floor when the queue fills.
+
+### New files
+
+```
+windows/runner/
+  Graphics/
+    d3d_device.{h,cpp}              D3D11CreateDevice with the mandatory
+                                    BGRA_SUPPORT flag, hardware → WARP
+                                    fallback for headless / VM hosts.
+  Capture/
+    captured_video_frame.h          Frame metadata struct (timestamp,
+                                    size, optional ID3D11Texture2D).
+    video_frame_queue.{h,cpp}       Bounded thread-safe queue. Drops
+                                    oldest frame when full; surfaces
+                                    drop / total counters so diagnostics
+                                    can spot a backed-up encoder.
+    wgc_display_capture_backend.{h,cpp}
+                                    GraphicsCaptureItem from HMONITOR via
+                                    the interop activation factory.
+                                    Direct3D11CaptureFramePool::Create-
+                                    FreeThreaded; FrameArrived pushes
+                                    metadata into the queue. Pimpl keeps
+                                    `<winrt/...>` out of public headers.
+    windows_selection_state.{h,cpp} Process-level singleton for the user's
+                                    display + target-mode + microphone
+                                    choices. Phase 1/2 setters now write
+                                    here; the engine snapshots at Start.
+```
+
+### Capability gate
+
+`RecordingEngine::Start` rejects every target mode except
+`explicitId` with a structured `BAD_MODE` error so Dart's existing
+"feature not supported" path lights up. The roadmap for the other
+modes:
+
+| Target mode | Lands in |
+| ----------- | -------- |
+| `appWindow` / `singleAppWindow` | Phase 7 (window recording) |
+| `areaRecording` | Phase 7 (window + area recording) |
+| `mouseAtStart` / `followMouse` | Phase 8 (cursor sidecar + zoom) |
+
+### Display resolution
+
+`setDisplay` stores the hashed display id from Phase 2 in
+`WindowsSelectionState`. At `Start` time the engine calls
+`display_enumerator::ResolveHMonitor(id)` to re-walk monitors and find
+the live HMONITOR — that re-resolution catches docked / undocked
+monitors that change between the picker render and the record click.
+A null selection falls back to the primary monitor.
+
+### What works after Phase 3B
+
+- `startRecording` (with explicit-display target mode) walks the full
+  pipeline: D3D device → WGC item → frame pool → capture session.
+  FrameArrived fires on a thread-pool thread and pushes metadata into
+  `VideoFrameQueue` until the queue is full or `stopRecording` runs.
+- `getCaptureDiagnostics` still returns an empty map on the bridge —
+  the engine's `Diagnostics()` is wired internally but not yet surfaced
+  to Dart; that happens with the rest of the 3E workflow integration.
+- `stopRecording` tears the WGC session, frame pool, and D3D device
+  down in order. Safe to call repeatedly.
+- `setDisplay`, `setDisplayTargetMode`, `setAudioSource` no longer
+  no-op; they feed `WindowsSelectionState`.
+- 4 new error codes surface via the existing bridge:
+  `BAD_MODE` (unsupported target mode), `TARGET_ERROR` (no monitor
+  found), `RECORDING_ERROR` (D3D / WGC initialization failure).
+
+### What still doesn't work after Phase 3B
+
+- No MP4 file. The frame queue fills and frames get dropped. Phase 3C
+  adds the Media Foundation Sink Writer that drains the queue and
+  writes H.264 video into an MP4.
+- No audio at all. Phase 3D.
+- No workflow events — Flutter UI still parks in "starting". Phase 3E.
+- Window / area / follow-mouse modes return `BAD_MODE` and are gated
+  off the picker until later phases.
+
 ## Current status — Phase 3A
 
 Phase 3 is split into five vertical slices so each one ships a real PR
@@ -72,8 +158,8 @@ against develop instead of one giant landing:
 | Sub-phase | Goal | Status |
 | --------- | ---- | ------ |
 | 3A | Recording engine skeleton + honest capability gate | done |
-| 3B | WGC full-display video capture (frames arrive, no MP4 yet) | next |
-| 3C | MP4 / H.264 video writer (Media Foundation Sink Writer) | |
+| 3B | WGC full-display video capture (frames arrive, no MP4 yet) | done |
+| 3C | MP4 / H.264 video writer (Media Foundation Sink Writer) | next |
 | 3D | WASAPI microphone + system-audio capture, mixed into the MP4 | |
 | 3E | Project manifest + workflow events so Flutter sees a real recording | |
 
