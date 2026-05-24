@@ -58,6 +58,24 @@ add_subdirectory("runner")
 include(flutter/generated_plugins.cmake)
 
 
+# === Optional native unit tests ===
+#
+# `flutter build windows` does NOT enable this -- it builds only the runner
+# executable target. Tests are an opt-in build step driven by CMake directly:
+#
+#   cmake -S windows -B build/windows-tests -DBUILD_RUNNER_TESTS=ON
+#   cmake --build build/windows-tests --config Debug
+#   ctest --test-dir build/windows-tests --output-on-failure -C Debug
+#
+# Keeping the option default-OFF avoids paying the GoogleTest FetchContent
+# cost on every normal app build.
+option(BUILD_RUNNER_TESTS "Build native Windows unit tests under windows/runner_tests/" OFF)
+if(BUILD_RUNNER_TESTS)
+  enable_testing()
+  add_subdirectory("runner_tests")
+endif()
+
+
 # === Installation ===
 # Support files are copied into place next to the executable, so that it can
 # run in place. This is done instead of making a separate bundle (as on Linux)

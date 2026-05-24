@@ -3,9 +3,16 @@
 /// These codes are returned by the native side via PlatformException.code
 /// and mapped to localized strings in Flutter.
 ///
-/// IMPORTANT: Keep this in sync with `NativeErrorCode.swift` on the native side.
+/// IMPORTANT: Keep this in sync with `NativeErrorCode.swift` on macOS and
+/// `windows/runner/Bridge/native_error_codes.h` on Windows.
 abstract class NativeErrorCode {
   NativeErrorCode._();
+
+  /// Returned by the native Windows engine when a method is recognized but
+  /// hasn't been ported yet. The Phase 0 catch-all returns this for every
+  /// call so the UI can show a friendly "not available on Windows yet"
+  /// message instead of a raw MissingPluginException.
+  static const String windowsNotImplemented = 'WINDOWS_NOT_IMPLEMENTED';
 
   // Recording lifecycle errors
   static const String alreadyRecording = 'ALREADY_RECORDING';
