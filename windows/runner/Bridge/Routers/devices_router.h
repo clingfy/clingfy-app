@@ -7,9 +7,10 @@ namespace clingfy::bridge::routers::devices {
 
 // Display / window / audio / video target discovery and selection.
 //
-// Phase 1: every getter returns an empty list, every setter is no-op success.
-// Real enumeration lands in Phase 2 (WinRT DisplayInformation /
-// Windows.Graphics.Capture / WASAPI / MediaCapture).
+// Phase 2: getters return real enumerations (Win32 EnumDisplayMonitors /
+// EnumWindows, WASAPI capture endpoints, Media Foundation video capture
+// sources). Setters are still no-op success — they begin storing selection
+// state in Phase 3 alongside the recording engine.
 void RegisterHandlers(HandlerTable& table);
 
 }  // namespace clingfy::bridge::routers::devices
