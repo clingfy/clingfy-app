@@ -52,7 +52,7 @@ lifecycle, preview, and basic export.
 | 0     | App launches; native bridge stubs; no MissingPluginException  | done   |
 | 1     | Full bridge contract parity (every method routed, stubbed)    | done   |
 | 2     | Real device / target discovery                                | done   |
-| 3     | MVP recording (full display + mic + system audio → MP4)       | next   |
+| 3     | MVP recording (full display + mic + system audio → MP4)       | in progress (3A done, 3B next) |
 | 4     | Lifecycle parity (state machine, pause/resume, recovery)      |
 | 5     | Preview player + project reopen                               |
 | 6     | Basic export + post-processing (resolution, background, etc.) |
@@ -63,6 +63,57 @@ lifecycle, preview, and basic export.
 
 Detailed scope per phase is tracked in the session task list and in
 [../CLAUDE.md](../CLAUDE.md).
+
+## Current status — Phase 3A
+
+Phase 3 is split into five vertical slices so each one ships a real PR
+against develop instead of one giant landing:
+
+| Sub-phase | Goal | Status |
+| --------- | ---- | ------ |
+| 3A | Recording engine skeleton + honest capability gate | done |
+| 3B | WGC full-display video capture (frames arrive, no MP4 yet) | next |
+| 3C | MP4 / H.264 video writer (Media Foundation Sink Writer) | |
+| 3D | WASAPI microphone + system-audio capture, mixed into the MP4 | |
+| 3E | Project manifest + workflow events so Flutter sees a real recording | |
+
+Phase 3A introduces `windows/runner/Capture/`:
+
+| File | What it does |
+| ---- | ------------ |
+| `recording_session_state.{h,cpp}` | Pure state machine: `Idle → Starting → Recording → Stopping → Stopped` (`Failed` reachable from any active state). Illegal transitions return `false` so the engine can map them to structured `ALREADY_RECORDING` / `NOT_RECORDING` / `INVALID_RECORDING_STATE` errors instead of throwing. |
+| `recording_clock.{h,cpp}` | QueryPerformanceCounter wrapper that converts ticks to 100-ns units (Media Foundation sample timestamp unit). The QPC source is injectable so the unit tests can exercise the conversion math with a fake clock. |
+| `recording_engine.{h,cpp}` | Singleton orchestrator. `Start(StartRecordingRequest)` validates args (`sessionId` required, `frameRate > 0`), drives the state machine, and stamps the clock. `Stop(sessionId)` is idempotent and rejects mismatched session ids. No capture or encoding yet — those land in 3B / 3C / 3D. Thread-safe via `std::mutex` so later phases can call it from the capture / audio threads. |
+
+`recording_router.cpp` no longer returns `WINDOWS_NOT_IMPLEMENTED` for
+`startRecording` / `stopRecording`; it parses the Dart-shaped argument map
+into a `StartRecordingRequest` and forwards to the engine. The
+`getRecordingCapabilities` reply flips its `backend` field from the
+placeholder `"windows-stub"` to the honest `"windows_mf"` while
+`canPauseResume` stays `false` (pause/resume lands in Phase 4).
+
+### What works after Phase 3A
+
+- `startRecording` succeeds when given a valid `sessionId`; the engine
+  transitions to `Recording` and stamps a wall clock.
+- `stopRecording` succeeds and returns the engine to `Idle`. A
+  double-stop is idempotent. A mismatched `sessionId` returns a structured
+  `INVALID_RECORDING_STATE` error rather than silently stopping the wrong
+  session.
+- A second `startRecording` while one is in flight returns
+  `ALREADY_RECORDING` (mapped from the state machine).
+- Bad args (empty `sessionId` or non-positive `frameRate`) return
+  `BAD_ARGS` and leave the engine in `Idle`.
+
+### What still doesn't work after Phase 3A
+
+- No actual capture — no frames, no audio, no MP4 file. Phases 3B–3D.
+- No workflow events on `workflow/events` (`recordingStarted` /
+  `recordingFinalized` / `recordingFailed`). Phase 3E.
+- The Flutter UI will hang in "starting" after a successful
+  `startRecording` because it waits for the `recordingStarted` event the
+  engine has not learned to emit yet. This is expected and is the
+  motivating reason 3E lands before the slice is declared "done".
 
 ## Current status — Phase 2
 

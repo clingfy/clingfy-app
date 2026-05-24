@@ -8,6 +8,7 @@
 #include <vector>
 
 #include "Bridge/native_error_codes.h"
+#include "Capture/recording_engine.h"
 #include "test_support.h"
 
 namespace clingfy::bridge {
@@ -126,12 +127,16 @@ TEST(StubShapesTest, NoopSettersReturnSuccessWithNullValue) {
 }
 
 // === Action methods that must return WINDOWS_NOT_IMPLEMENTED. ==============
+//
+// Phase 3A moved startRecording / stopRecording onto the real
+// `RecordingEngine`; they no longer return WINDOWS_NOT_IMPLEMENTED. The
+// engine's happy/sad paths are covered in `recording_engine_test.cpp` and
+// the router-level wiring is covered by `StartRecordingWithoutArgsReturnsBadArgs`
+// below. Export / post-processing still go via the not-implemented path.
 
-TEST(StubShapesTest, RecordingAndExportActionsReturnNotImplemented) {
+TEST(StubShapesTest, ExportActionsReturnNotImplemented) {
   MethodRouter router;
   const std::vector<std::string> kBlocked = {
-      "startRecording",
-      "stopRecording",
       "exportVideo",
       "processVideo",
   };
@@ -140,7 +145,7 @@ TEST(StubShapesTest, RecordingAndExportActionsReturnNotImplemented) {
     const RecordedReply reply = Dispatch(router, method);
     EXPECT_TRUE(reply.error_called)
         << "Method '" << method
-        << "' should return a structured error in Phase 1.";
+        << "' should return a structured error until export ships.";
     EXPECT_EQ(reply.error_code, error::kWindowsNotImplemented)
         << "Method '" << method
         << "' should use the WINDOWS_NOT_IMPLEMENTED error code.";
@@ -451,6 +456,74 @@ TEST(StubShapesTest, PauseResumeAreNoopSuccess) {
     EXPECT_FALSE(reply.error_called)
         << "Method '" << method << "' should not surface an error.";
   }
+}
+
+// === Phase 3A — engine-backed start / stop wiring. =========================
+//
+// These tests pin the router-level translation between Dart-shaped arguments
+// and the `RecordingEngine` calls. The engine itself has its own dedicated
+// test file (`recording_engine_test.cpp`); these only confirm that the
+// router parses arguments correctly and that engine errors propagate as
+// structured `MethodResult::Error` calls instead of swallowed successes.
+
+TEST(StubShapesTest, StartRecordingWithoutArgsReturnsBadArgs) {
+  // Reset the engine state because the router uses the process-wide
+  // singleton — previous tests may have left it in a non-idle state.
+  clingfy::capture::RecordingEngine::Instance().ForceResetForTesting();
+
+  MethodRouter router;
+  const RecordedReply reply = Dispatch(router, "startRecording");
+  ASSERT_TRUE(reply.error_called);
+  EXPECT_EQ(reply.error_code, error::kBadArgs);
+  EXPECT_EQ(clingfy::capture::RecordingEngine::Instance().state(),
+            clingfy::capture::RecordingState::kIdle)
+      << "A bad-args rejection must NOT mutate engine state.";
+}
+
+TEST(StubShapesTest, StartRecordingWithSessionIdSucceeds) {
+  clingfy::capture::RecordingEngine::Instance().ForceResetForTesting();
+
+  MethodRouter router;
+  flutter::EncodableMap args{
+      {flutter::EncodableValue("sessionId"),
+       flutter::EncodableValue(std::string("router-test"))},
+      {flutter::EncodableValue("frameRate"),
+       flutter::EncodableValue(static_cast<std::int32_t>(60))},
+      {flutter::EncodableValue("systemAudioEnabled"),
+       flutter::EncodableValue(true)},
+  };
+
+  const RecordedReply start_reply =
+      DispatchWithArgs(router, "startRecording", std::move(args));
+  ASSERT_TRUE(start_reply.success_called) << start_reply.error_message;
+  EXPECT_FALSE(start_reply.error_called);
+  EXPECT_TRUE(clingfy::capture::RecordingEngine::Instance().IsRecording());
+
+  // Stop with a matching session id closes the lifecycle cleanly.
+  flutter::EncodableMap stop_args{
+      {flutter::EncodableValue("sessionId"),
+       flutter::EncodableValue(std::string("router-test"))},
+  };
+  const RecordedReply stop_reply =
+      DispatchWithArgs(router, "stopRecording", std::move(stop_args));
+  ASSERT_TRUE(stop_reply.success_called) << stop_reply.error_message;
+  EXPECT_EQ(clingfy::capture::RecordingEngine::Instance().state(),
+            clingfy::capture::RecordingState::kIdle);
+}
+
+TEST(StubShapesTest, GetRecordingCapabilitiesReportsWindowsMfBackend) {
+  MethodRouter router;
+  const RecordedReply reply = Dispatch(router, "getRecordingCapabilities");
+  ASSERT_TRUE(reply.success_called);
+  const auto* map = std::get_if<flutter::EncodableMap>(&reply.success_value);
+  ASSERT_NE(map, nullptr);
+  const auto backend = map->find(flutter::EncodableValue("backend"));
+  ASSERT_NE(backend, map->end());
+  const auto* backend_str = std::get_if<std::string>(&backend->second);
+  ASSERT_NE(backend_str, nullptr);
+  EXPECT_EQ(*backend_str, "windows_mf")
+      << "Phase 3A flips the placeholder backend identifier to the real "
+         "Windows engine name so diagnostics surface it.";
 }
 
 }  // namespace
