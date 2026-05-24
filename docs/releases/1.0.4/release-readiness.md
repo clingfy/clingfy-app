@@ -18,10 +18,10 @@ Fill this section before starting verification.
 - Channel: `prod`
 - Date: `2026-05-24`
 - Verified by: `Nabil`
-- Commit: `TBD`
+- Commit: `808f89e168a12b09da93f0dbf3d857fa6c805240`
 - Tag: `v1.0.4`
-- Build: `Azure #255` or `GitHub Actions #4`
-- Status: `In progress`
+- Build: `#20260524.2 • chore(release): bump version to 1.0.4+5`
+- Status: `Released`
 
 Possible status values:
 
