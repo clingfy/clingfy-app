@@ -402,7 +402,10 @@ TEST(StubShapesTest, NullGettersReturnNull) {
 
 // === Specific shaped maps. =================================================
 
-TEST(StubShapesTest, GetRecordingCapabilitiesReportsUnsupported) {
+TEST(StubShapesTest, GetRecordingCapabilitiesReportsPauseResumeOnWindows) {
+  // Phase 4 flipped canPauseResume from false to true and tagged the
+  // strategy as windows_mf_pause. Dart's `RecordingPauseResumeCapabilities.
+  // fromMap` reads all three keys verbatim.
   MethodRouter router;
   const RecordedReply reply = Dispatch(router, "getRecordingCapabilities");
   ASSERT_TRUE(reply.success_called);
@@ -414,15 +417,21 @@ TEST(StubShapesTest, GetRecordingCapabilitiesReportsUnsupported) {
   ASSERT_NE(can_pause, map->end());
   const auto* can_pause_bool = std::get_if<bool>(&can_pause->second);
   ASSERT_NE(can_pause_bool, nullptr);
-  EXPECT_FALSE(*can_pause_bool);
+  EXPECT_TRUE(*can_pause_bool)
+      << "Phase 4 wires pause/resume on the engine — the bridge must "
+         "tell Dart's UI the feature is available.";
 
   const auto backend = map->find(flutter::EncodableValue("backend"));
   ASSERT_NE(backend, map->end());
-  EXPECT_NE(std::get_if<std::string>(&backend->second), nullptr);
+  const auto* backend_str = std::get_if<std::string>(&backend->second);
+  ASSERT_NE(backend_str, nullptr);
+  EXPECT_EQ(*backend_str, "windows_mf");
 
   const auto strategy = map->find(flutter::EncodableValue("strategy"));
   ASSERT_NE(strategy, map->end());
-  EXPECT_NE(std::get_if<std::string>(&strategy->second), nullptr);
+  const auto* strategy_str = std::get_if<std::string>(&strategy->second);
+  ASSERT_NE(strategy_str, nullptr);
+  EXPECT_EQ(*strategy_str, "windows_mf_pause");
 }
 
 TEST(StubShapesTest, PreviewGetZoomCapabilitiesReportsAllFalse) {
@@ -530,20 +539,27 @@ TEST(StubShapesTest, GetStorageSnapshotReturnsAllRequiredKeys) {
   }
 }
 
-// === Pause / resume should not surface a spurious error. ===================
+// === Pause / resume now go through the engine ==============================
 //
-// There is no live recording on Phase 1, but the Flutter side may issue
-// these defensively. We return success so the UI does not throw.
+// Phase 4 swapped the Phase-1 no-op pause/resume stubs for real engine
+// calls. With no active recording, the engine returns kNotRecording —
+// the router translates that into a structured error reply (not a
+// silent success) so Dart's defensive double-tap surfaces a useful
+// code instead of pretending nothing happened.
 
-TEST(StubShapesTest, PauseResumeAreNoopSuccess) {
+TEST(StubShapesTest, PauseResumeReturnNotRecordingWhenIdle) {
+  clingfy::capture::RecordingEngine::Instance().ForceResetForTesting();
   MethodRouter router;
   for (const auto& method : {"pauseRecording", "resumeRecording",
                              "togglePauseRecording"}) {
     const RecordedReply reply = Dispatch(router, method);
-    EXPECT_TRUE(reply.success_called)
-        << "Method '" << method << "' should succeed as no-op.";
-    EXPECT_FALSE(reply.error_called)
-        << "Method '" << method << "' should not surface an error.";
+    EXPECT_TRUE(reply.error_called)
+        << "Method '" << method
+        << "' should surface a structured error when no session is active.";
+    EXPECT_EQ(reply.error_code, error::kNotRecording)
+        << "Method '" << method
+        << "' should use the NOT_RECORDING code so Dart can localize the "
+           "matching toast.";
   }
 }
 

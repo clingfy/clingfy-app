@@ -60,6 +60,16 @@ void WorkflowEventPublisher::EmitRecordingStarted(
   EmitMap(MakeEvent("recordingStarted", session_id));
 }
 
+void WorkflowEventPublisher::EmitRecordingPaused(
+    const std::string& session_id) {
+  EmitMap(MakeEvent("recordingPaused", session_id));
+}
+
+void WorkflowEventPublisher::EmitRecordingResumed(
+    const std::string& session_id) {
+  EmitMap(MakeEvent("recordingResumed", session_id));
+}
+
 void WorkflowEventPublisher::EmitRecordingFinalized(
     const std::string& session_id, const std::string& project_path) {
   auto event = MakeEvent("recordingFinalized", session_id);

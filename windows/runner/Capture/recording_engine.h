@@ -80,6 +80,15 @@ class RecordingEngine {
   // structured error only when the session id does not match.
   std::optional<RecordingError> Stop(const std::string& session_id);
 
+  // Phase 4: pause / resume. Both are idempotent at the engine level —
+  // pausing while already paused (or resuming while already recording)
+  // returns success without touching the captures. A pause / resume
+  // when no session is active returns kNotRecording so the Dart UI's
+  // defensive double-tap surfaces a clean error instead of silently
+  // succeeding.
+  std::optional<RecordingError> Pause(const std::string& session_id);
+  std::optional<RecordingError> Resume(const std::string& session_id);
+
   bool IsRecording() const;
   RecordingState state() const;
   std::string session_id() const;

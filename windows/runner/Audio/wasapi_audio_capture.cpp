@@ -52,6 +52,8 @@ class WasapiAudioCapture::Impl {
                                           const std::string& device_id,
                                           AudioPacketQueue& queue);
   void Stop();
+  void Pause();
+  void Resume();
 
   WasapiCaptureKind kind() const { return kind_; }
   AudioFormatSnapshot format() const { return format_; }
@@ -76,6 +78,7 @@ class WasapiAudioCapture::Impl {
   HANDLE stop_event_ = nullptr;
   std::thread thread_;
   std::atomic<bool> running_{false};
+  std::atomic<bool> paused_{false};
   std::atomic<std::uint64_t> packets_emitted_{0};
 };
 
@@ -313,6 +316,27 @@ void WasapiAudioCapture::Impl::Stop() {
   capture_client_.Reset();
   client_.Reset();
   queue_ = nullptr;
+  paused_.store(false);
+}
+
+void WasapiAudioCapture::Impl::Pause() {
+  if (!running_.load() || paused_.exchange(true)) {
+    return;
+  }
+  if (client_ != nullptr) {
+    // Stop the WASAPI client. Buffer events stop firing; the capture
+    // thread's WaitForMultipleObjects sees the timeout path and idles.
+    client_->Stop();
+  }
+}
+
+void WasapiAudioCapture::Impl::Resume() {
+  if (!running_.load() || !paused_.exchange(false)) {
+    return;
+  }
+  if (client_ != nullptr) {
+    client_->Start();
+  }
 }
 
 // ---- Public forwarding ----------------------------------------------------
@@ -331,6 +355,14 @@ std::optional<WasapiCaptureError> WasapiAudioCapture::Start(
 
 void WasapiAudioCapture::Stop() {
   impl_->Stop();
+}
+
+void WasapiAudioCapture::Pause() {
+  impl_->Pause();
+}
+
+void WasapiAudioCapture::Resume() {
+  impl_->Resume();
 }
 
 WasapiCaptureKind WasapiAudioCapture::kind() const {

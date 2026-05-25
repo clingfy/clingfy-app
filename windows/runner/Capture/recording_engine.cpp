@@ -286,6 +286,113 @@ std::optional<RecordingError> RecordingEngine::Start(
   return std::nullopt;
 }
 
+std::optional<RecordingError> RecordingEngine::Pause(
+    const std::string& session_id) {
+  std::lock_guard<std::mutex> lock(mutex_);
+
+  if (!session_.IsActive()) {
+    return RecordingError{
+        clingfy::bridge::error::kNotRecording,
+        "pauseRecording called with no active recording session."};
+  }
+  if (!session_id.empty() && !session_.session_id().empty() &&
+      session_id != session_.session_id()) {
+    return RecordingError{
+        clingfy::bridge::error::kInvalidRecordingState,
+        "pauseRecording sessionId does not match the active session."};
+  }
+  // Idempotent: already-paused returns success without touching the
+  // captures or the clock.
+  if (session_.IsPausedOrPausing()) {
+    return std::nullopt;
+  }
+  if (session_.state() != RecordingState::kRecording) {
+    return RecordingError{
+        clingfy::bridge::error::kInvalidRecordingState,
+        "Cannot pause a session that is mid-start or mid-stop."};
+  }
+
+  if (!session_.BeginPause()) {
+    return RecordingError{clingfy::bridge::error::kInvalidRecordingState,
+                          "Engine refused to enter Pausing state."};
+  }
+  // Order: clock first (so subsequent timestamps reflect the pause),
+  // then WGC (to stop pushing frames), then WASAPI (to stop the
+  // upstream audio client). Reverse on resume.
+  clock_.Pause();
+  if (capture_backend_) {
+    capture_backend_->Pause();
+  }
+  if (mic_capture_) {
+    mic_capture_->Pause();
+  }
+  if (loopback_capture_) {
+    loopback_capture_->Pause();
+  }
+  if (!session_.MarkPaused()) {
+    session_.MarkFailed();
+    return RecordingError{clingfy::bridge::error::kInvalidRecordingState,
+                          "Engine refused to enter Paused state."};
+  }
+
+  clingfy::bridge::WorkflowEventPublisher::Instance().EmitRecordingPaused(
+      std::string(session_.session_id()));
+  return std::nullopt;
+}
+
+std::optional<RecordingError> RecordingEngine::Resume(
+    const std::string& session_id) {
+  std::lock_guard<std::mutex> lock(mutex_);
+
+  if (!session_.IsActive()) {
+    return RecordingError{
+        clingfy::bridge::error::kNotRecording,
+        "resumeRecording called with no active recording session."};
+  }
+  if (!session_id.empty() && !session_.session_id().empty() &&
+      session_id != session_.session_id()) {
+    return RecordingError{
+        clingfy::bridge::error::kInvalidRecordingState,
+        "resumeRecording sessionId does not match the active session."};
+  }
+  // Idempotent: already-recording returns success.
+  if (session_.state() == RecordingState::kRecording) {
+    return std::nullopt;
+  }
+  if (session_.state() != RecordingState::kPaused) {
+    return RecordingError{
+        clingfy::bridge::error::kInvalidRecordingState,
+        "Cannot resume a session that is not paused."};
+  }
+
+  if (!session_.BeginResume()) {
+    return RecordingError{clingfy::bridge::error::kInvalidRecordingState,
+                          "Engine refused to enter Resuming state."};
+  }
+  // Reverse pause order: WASAPI first, then WGC, then clock — the
+  // capture threads need to be live before the clock starts producing
+  // new sample timestamps so we don't drop a frame at the seam.
+  if (loopback_capture_) {
+    loopback_capture_->Resume();
+  }
+  if (mic_capture_) {
+    mic_capture_->Resume();
+  }
+  if (capture_backend_) {
+    capture_backend_->Resume();
+  }
+  clock_.Resume();
+  if (!session_.MarkResumed()) {
+    session_.MarkFailed();
+    return RecordingError{clingfy::bridge::error::kInvalidRecordingState,
+                          "Engine refused to enter Recording state."};
+  }
+
+  clingfy::bridge::WorkflowEventPublisher::Instance().EmitRecordingResumed(
+      std::string(session_.session_id()));
+  return std::nullopt;
+}
+
 std::optional<RecordingError> RecordingEngine::Stop(
     const std::string& session_id) {
   std::lock_guard<std::mutex> lock(mutex_);

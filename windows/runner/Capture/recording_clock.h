@@ -34,10 +34,24 @@ class RecordingClock {
   // transitions Starting -> Recording. Safe to call again to re-base.
   void MarkStart();
 
-  // Returns the elapsed time since `MarkStart` in 100-nanosecond units.
-  // Returns 0 if `MarkStart` has not been called yet (Phase 3A skeleton
-  // never queries the clock from outside its tests, but the contract is
-  // already defined so encoders in later phases can rely on it).
+  // Phase 4: pause / resume. The clock accumulates the wall-clock
+  // time spent paused so that subsequent `ElapsedHns()` calls subtract
+  // it — i.e. a recording that pauses for 5 s does NOT produce 5 s of
+  // frozen frame timestamps in the output MP4. The encoder samples
+  // continue from where they left off in encoded-time.
+  //
+  // Pause/Resume pairs MUST be balanced; calling Pause when already
+  // paused is a no-op (idempotent), and Resume when not paused is
+  // also a no-op. The engine's state machine guards the order.
+  void Pause();
+  void Resume();
+  bool paused() const { return paused_; }
+  // Cumulative paused duration in 100-ns units. Public for tests.
+  std::int64_t paused_hns() const { return paused_hns_; }
+
+  // Returns the elapsed time since `MarkStart` in 100-nanosecond units,
+  // MINUS any time the clock spent paused. Returns 0 if `MarkStart` has
+  // not been called yet.
   std::int64_t ElapsedHns() const;
 
   // Same as ElapsedHns but takes an explicit QPC tick value — used by the
@@ -54,7 +68,12 @@ class RecordingClock {
   QpcSource now_qpc_;
   std::int64_t qpc_frequency_ = 0;
   std::int64_t start_qpc_ = 0;
+  // QPC tick stamped when Pause() fired; 0 when not paused.
+  std::int64_t pause_started_qpc_ = 0;
+  // Sum of all completed pause intervals in 100-ns units.
+  std::int64_t paused_hns_ = 0;
   bool started_ = false;
+  bool paused_ = false;
 };
 
 }  // namespace clingfy::capture
