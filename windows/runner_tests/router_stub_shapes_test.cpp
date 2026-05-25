@@ -231,10 +231,12 @@ TEST(StubShapesTest, DeviceListGettersReturnList) {
 // === Empty-map getters. ====================================================
 
 TEST(StubShapesTest, MapGettersReturnEmptyMap) {
+  // Phase 3E flipped `getCaptureDiagnostics` onto the live engine
+  // diagnostics, so it no longer returns an empty map — it has its own
+  // shape-test below (`GetCaptureDiagnosticsReportsBackendAndCounters`).
   MethodRouter router;
   const std::vector<std::string> kMapGetters = {
       "getPermissionStatus",
-      "getCaptureDiagnostics",
   };
 
   for (const auto& method : kMapGetters) {
@@ -247,6 +249,39 @@ TEST(StubShapesTest, MapGettersReturnEmptyMap) {
     EXPECT_TRUE(map->empty())
         << "Method '" << method << "' should return an empty map.";
   }
+}
+
+TEST(StubShapesTest, GetCaptureDiagnosticsReportsBackendAndCounters) {
+  // Reset the singleton so the test does not see counters from earlier
+  // engine-test cases.
+  clingfy::capture::RecordingEngine::Instance().ForceResetForTesting();
+
+  MethodRouter router;
+  const RecordedReply reply = Dispatch(router, "getCaptureDiagnostics");
+  ASSERT_TRUE(reply.success_called);
+  const auto* map = std::get_if<flutter::EncodableMap>(&reply.success_value);
+  ASSERT_NE(map, nullptr);
+
+  const auto backend = map->find(flutter::EncodableValue("backend"));
+  ASSERT_NE(backend, map->end());
+  const auto* backend_str = std::get_if<std::string>(&backend->second);
+  ASSERT_NE(backend_str, nullptr);
+  EXPECT_EQ(*backend_str, "windows_mf");
+
+  // The numeric counter keys are always present, even with no
+  // recording in flight — Dart's diagnostics UI prefers a stable shape
+  // over conditional fields.
+  for (const auto& key : {
+           "frameWidth", "frameHeight", "framesReceived",
+           "framesDropped", "videoSamplesWritten",
+           "audioSamplesWritten", "micPackets", "loopbackPackets",
+       }) {
+    const auto it = map->find(flutter::EncodableValue(key));
+    ASSERT_NE(it, map->end()) << "Missing key '" << key << "'.";
+  }
+  EXPECT_NE(map->find(flutter::EncodableValue("micActive")), map->end());
+  EXPECT_NE(map->find(flutter::EncodableValue("loopbackActive")), map->end());
+  EXPECT_NE(map->find(flutter::EncodableValue("outputPath")), map->end());
 }
 
 // === Boolean false getters. ================================================

@@ -52,8 +52,8 @@ lifecycle, preview, and basic export.
 | 0     | App launches; native bridge stubs; no MissingPluginException  | done   |
 | 1     | Full bridge contract parity (every method routed, stubbed)    | done   |
 | 2     | Real device / target discovery                                | done   |
-| 3     | MVP recording (full display + mic + system audio → MP4)       | in progress (3A+3B+3C+3D done, 3E next) |
-| 4     | Lifecycle parity (state machine, pause/resume, recovery)      |
+| 3     | MVP recording (full display + mic + system audio → MP4)       | done   |
+| 4     | Lifecycle parity (state machine, pause/resume, recovery)      | next   |
 | 5     | Preview player + project reopen                               |
 | 6     | Basic export + post-processing (resolution, background, etc.) |
 | 7     | Window + area recording                                       |
@@ -63,6 +63,93 @@ lifecycle, preview, and basic export.
 
 Detailed scope per phase is tracked in the session task list and in
 [../CLAUDE.md](../CLAUDE.md).
+
+## Current status — Phase 3E (Phase 3 complete)
+
+Phase 3E closes the MVP recording slice. The end-to-end path now
+mirrors what the macOS engine does: a Windows recording produces a
+`.clingfyproj` bundle that Dart's `RecordingProjectRef.open` accepts,
+and the workflow lifecycle events fire on the `workflow/events`
+channel exactly the way the Dart `recording_controller` listener
+expects.
+
+### New files
+
+```
+windows/runner/Bridge/
+  workflow_event_publisher.{h,cpp}    Process-level singleton owning
+                                       the workflow channel's EventSink.
+                                       Helpers for the four lifecycle
+                                       events (started / finalized /
+                                       failed / warning) match the
+                                       macOS payload shape exactly.
+
+windows/runner/Capture/
+  recording_project_writer.{h,cpp}    Reshapes the encoder's temp MP4
+                                       into a `.clingfyproj` folder:
+                                       project.json (status:"ready"),
+                                       capture/screen.mov,
+                                       capture/screen.meta.json,
+                                       post/state.json. Pure file I/O —
+                                       unit-tested by pointing the
+                                       recordings root at a temp dir.
+```
+
+### `event_channel_stubs` lost a stub
+
+The Phase 0 `EventChannelStubs` registered a no-op handler for all four
+event channels. Phase 3E replaces the `workflow/events` handler with
+one that forwards `listen` / `cancel` into `WorkflowEventPublisher`;
+the other three channels stay no-op until later phases pick them up
+(player events in 5, screen-recorder device-change events in 4,
+updater in 10).
+
+### Engine integration
+
+`RecordingEngine::Start` now emits `recordingStarted` after
+`MarkStarted` succeeds. Every early-return on the start path emits
+`recordingFailed{sessionId, stage:"start", code, error}` so Dart's UI
+flips out of "starting" regardless of which gate refused. Stop
+snapshots `Diagnostics()` before `TeardownPipeline`, runs
+`RecordingProjectWriter`, and emits `recordingFinalized{sessionId,
+projectPath}` on success or `recordingFailed{..., stage:"finalize"}`
+on writer failure. Mismatched-sessionId stops still return the
+structured error but do NOT emit — the active recording is unaffected
+and we don't want to race a finalize event for the wrong session.
+
+### `getCaptureDiagnostics`
+
+Returns a live map keyed by `backend` (`"windows_mf"`), the frame /
+audio counters from `RecordingEngine::Diagnostics()`, and the
+in-flight `outputPath`. Free-space counters (`captureDestinationFreeBytes`
+etc. that macOS surfaces) are deferred to Phase 10 alongside the
+storage UX.
+
+### What works after Phase 3E
+
+- Start → record for N seconds → Stop produces a `.clingfyproj` bundle
+  under `%LOCALAPPDATA%\Clingfy\recordings\<sessionId>.clingfyproj\`,
+  ready for Dart to open via `nativeBridge.previewOpen(projectPath)`.
+- Flutter's recording UI transitions out of "starting" on
+  `recordingStarted`, into preview / post-processing on
+  `recordingFinalized`, and back to idle on `recordingFailed` —
+  matching the macOS flow with no Windows-only branches.
+- Recording warnings surface as toasts via the existing
+  `recordingWarning` listener.
+- The picker shows real device counts via the live
+  `getCaptureDiagnostics`.
+
+### What still doesn't work after Phase 3E
+
+- Phase 4: no pause / resume (the bridge methods stay as no-op
+  success; the recording continues straight through).
+- Phase 4: no recovery if WASAPI / WGC mid-recording — a capture
+  failure shows up only at finalize, not in real time.
+- Phase 5: preview playback once Dart opens the project — the Windows
+  `previewOpen` handler is still the Phase 1 no-op. Project opens but
+  the preview view shows an empty timeline.
+- Phase 6+: post-processing, window / area / camera / zoom remain
+  capability-gated off.
 
 ## Current status — Phase 3D
 
@@ -343,7 +430,7 @@ against develop instead of one giant landing:
 | 3B | WGC full-display video capture (frames arrive, no MP4 yet) | done |
 | 3C | MP4 / H.264 video writer (Media Foundation Sink Writer) | done |
 | 3D | WASAPI microphone + system-audio capture, mixed into the MP4 | done |
-| 3E | Project manifest + workflow events so Flutter sees a real recording | next |
+| 3E | Project manifest + workflow events so Flutter sees a real recording | done |
 
 Phase 3A introduces `windows/runner/Capture/`:
 

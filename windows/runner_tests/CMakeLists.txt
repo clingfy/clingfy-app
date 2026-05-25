@@ -42,9 +42,11 @@ add_executable(runner_tests
   "mf_encoder_config_test.cpp"
   "recording_clock_test.cpp"
   "recording_engine_test.cpp"
+  "recording_project_writer_test.cpp"
   "recording_session_state_test.cpp"
   "video_frame_queue_test.cpp"
   "windows_selection_state_test.cpp"
+  "workflow_event_publisher_test.cpp"
 )
 
 target_link_libraries(runner_tests
