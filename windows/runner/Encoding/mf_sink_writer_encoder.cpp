@@ -444,4 +444,9 @@ std::uint64_t MfSinkWriterEncoder::samples_written() const {
   return samples_written_;
 }
 
+std::uint64_t MfSinkWriterEncoder::audio_samples_written_count() const {
+  std::lock_guard<std::mutex> lock(mutex_);
+  return audio_samples_written_;
+}
+
 }  // namespace clingfy::encoding

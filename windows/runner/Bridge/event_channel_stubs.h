@@ -31,6 +31,12 @@ class EventChannelStubs {
  private:
   void Register(flutter::BinaryMessenger* messenger, const char* name);
 
+  // Phase 3E: workflow/events is no longer a stub. This registers a real
+  // stream handler that forwards listen / cancel into the process-level
+  // `WorkflowEventPublisher` so the recording engine can push events
+  // back to Flutter.
+  void RegisterWorkflow(flutter::BinaryMessenger* messenger);
+
   std::vector<std::unique_ptr<flutter::EventChannel<flutter::EncodableValue>>>
       channels_;
 };

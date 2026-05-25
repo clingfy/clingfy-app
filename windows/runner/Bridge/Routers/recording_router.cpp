@@ -169,10 +169,52 @@ void HandleGetExcludeMicFromSystemAudio(
   reply::Bool(*result, true);
 }
 
+// Phase 3E: surface the engine's live capture diagnostics. The keys
+// here match the macOS `StorageDiagnosticsService` shape
+// (`backend`, `captureFps`, free-space counters) where the meaning
+// translates, and add Windows-specific extras for the audio counters
+// the engine now tracks. Free-space keys are intentionally omitted on
+// Windows for Phase 3E — the recordings root lookup needs
+// `GetDiskFreeSpaceExW` plumbing, which lands with the rest of the
+// storage UX in Phase 10.
 void HandleGetCaptureDiagnostics(
     const flutter::MethodCall<flutter::EncodableValue>& /*call*/,
     std::unique_ptr<flutter::MethodResult<flutter::EncodableValue>> result) {
-  reply::EmptyMap(*result);
+  const auto diag =
+      clingfy::capture::RecordingEngine::Instance().Diagnostics();
+  flutter::EncodableMap map{
+      {flutter::EncodableValue("backend"),
+       flutter::EncodableValue("windows_mf")},
+      {flutter::EncodableValue("frameWidth"),
+       flutter::EncodableValue(static_cast<std::int64_t>(diag.frame_width))},
+      {flutter::EncodableValue("frameHeight"),
+       flutter::EncodableValue(static_cast<std::int64_t>(diag.frame_height))},
+      {flutter::EncodableValue("framesReceived"),
+       flutter::EncodableValue(
+           static_cast<std::int64_t>(diag.frames_received))},
+      {flutter::EncodableValue("framesDropped"),
+       flutter::EncodableValue(
+           static_cast<std::int64_t>(diag.frames_dropped))},
+      {flutter::EncodableValue("videoSamplesWritten"),
+       flutter::EncodableValue(
+           static_cast<std::int64_t>(diag.samples_written))},
+      {flutter::EncodableValue("audioSamplesWritten"),
+       flutter::EncodableValue(
+           static_cast<std::int64_t>(diag.audio_samples_written))},
+      {flutter::EncodableValue("micActive"),
+       flutter::EncodableValue(diag.mic_active)},
+      {flutter::EncodableValue("loopbackActive"),
+       flutter::EncodableValue(diag.loopback_active)},
+      {flutter::EncodableValue("micPackets"),
+       flutter::EncodableValue(
+           static_cast<std::int64_t>(diag.mic_packets))},
+      {flutter::EncodableValue("loopbackPackets"),
+       flutter::EncodableValue(
+           static_cast<std::int64_t>(diag.loopback_packets))},
+      {flutter::EncodableValue("outputPath"),
+       flutter::EncodableValue(diag.output_path)},
+  };
+  reply::Map(*result, std::move(map));
 }
 
 }  // namespace

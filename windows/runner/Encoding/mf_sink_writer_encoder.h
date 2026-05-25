@@ -94,6 +94,10 @@ class MfSinkWriterEncoder {
   bool open() const;
   const std::string& output_path() const { return config_.output_path; }
   std::uint64_t samples_written() const;
+  // Phase 3E: separate accessor for AAC samples so the engine's
+  // diagnostics + the project meta.json carry the right number when
+  // both streams are present.
+  std::uint64_t audio_samples_written_count() const;
 
  private:
   // Build the input (uncompressed) and output (compressed H.264) media

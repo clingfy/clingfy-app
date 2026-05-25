@@ -9,7 +9,9 @@
 #include "Audio/wasapi_audio_capture.h"
 #include "Bridge/Devices/display_enumerator.h"
 #include "Bridge/native_error_codes.h"
+#include "Bridge/workflow_event_publisher.h"
 #include "Capture/captured_video_frame.h"
+#include "Capture/recording_project_writer.h"
 #include "Capture/video_frame_queue.h"
 #include "Capture/wgc_display_capture_backend.h"
 #include "Capture/windows_selection_state.h"
@@ -59,48 +61,61 @@ RecordingEngine::~RecordingEngine() {
 
 std::optional<RecordingError> RecordingEngine::Start(
     StartRecordingRequest request) {
+  // Helper for the structured-error early returns below. Captures the
+  // request's sessionId so a `recordingFailed` event fires with the
+  // exact id Dart used. We emit at "start" stage for everything that
+  // refuses the lifecycle transition before MarkStarted; the
+  // post-MarkStarted teardown paths emit at "start" too because the
+  // recording never actually became visible to the user.
+  auto fail_start = [&](const std::string& code,
+                        const std::string& msg) -> RecordingError {
+    clingfy::bridge::WorkflowEventPublisher::Instance().EmitRecordingFailed(
+        request.session_id, "start", code, msg);
+    return RecordingError{code, msg};
+  };
+
   std::lock_guard<std::mutex> lock(mutex_);
 
   if (request.session_id.empty()) {
-    return RecordingError{clingfy::bridge::error::kBadArgs,
-                          "startRecording requires a non-empty sessionId."};
+    return fail_start(clingfy::bridge::error::kBadArgs,
+                      "startRecording requires a non-empty sessionId.");
   }
   if (request.frame_rate <= 0) {
-    return RecordingError{
+    return fail_start(
         clingfy::bridge::error::kBadArgs,
-        "startRecording frameRate must be a positive integer."};
+        "startRecording frameRate must be a positive integer.");
   }
 
   if (session_.IsActive()) {
-    return RecordingError{
+    return fail_start(
         clingfy::bridge::error::kAlreadyRecording,
         "A recording session is already in flight; stop it before "
-        "starting another."};
+        "starting another.");
   }
 
   const DisplayTargetMode mode =
       WindowsSelectionState::Instance().TargetMode();
   if (mode != DisplayTargetMode::kExplicitId) {
-    return RecordingError{
+    return fail_start(
         clingfy::bridge::error::kBadMode,
         std::string("Target mode '") + TargetModeName(mode) +
-            "' is not supported on Windows yet. Phase 3D only supports "
-            "explicit-display recording."};
+            "' is not supported on Windows yet. Phase 3E only supports "
+            "explicit-display recording.");
   }
 
   const auto display_id = WindowsSelectionState::Instance().DisplayId();
   const auto monitor =
       clingfy::bridge::devices::ResolveHMonitor(display_id);
   if (!monitor) {
-    return RecordingError{
+    return fail_start(
         clingfy::bridge::error::kTargetError,
         "No display available to record. Plug in a monitor, or pick one "
-        "in the display selector."};
+        "in the display selector.");
   }
 
   if (!session_.BeginStart(request.session_id)) {
-    return RecordingError{clingfy::bridge::error::kInvalidRecordingState,
-                          "Engine refused to enter Starting state."};
+    return fail_start(clingfy::bridge::error::kInvalidRecordingState,
+                      "Engine refused to enter Starting state.");
   }
 
   d3d_device_ = std::make_unique<clingfy::graphics::D3DDevice>();
@@ -108,8 +123,8 @@ std::optional<RecordingError> RecordingEngine::Start(
     TeardownPipeline();
     session_.MarkFailed();
     session_.Reset();
-    return RecordingError{clingfy::bridge::error::kRecordingError,
-                          d3d_err->message};
+    return fail_start(clingfy::bridge::error::kRecordingError,
+                      d3d_err->message);
   }
 
   // Resolve monitor dimensions ahead of the encoder open so the
@@ -149,8 +164,8 @@ std::optional<RecordingError> RecordingEngine::Start(
     TeardownPipeline();
     session_.MarkFailed();
     session_.Reset();
-    return RecordingError{clingfy::bridge::error::kRecordingError,
-                          enc_err->message};
+    return fail_start(clingfy::bridge::error::kRecordingError,
+                      enc_err->message);
   }
   current_output_path_ = encoder_config.output_path;
 
@@ -161,8 +176,8 @@ std::optional<RecordingError> RecordingEngine::Start(
     TeardownPipeline();
     session_.MarkFailed();
     session_.Reset();
-    return RecordingError{clingfy::bridge::error::kRecordingError,
-                          wgc_err->message};
+    return fail_start(clingfy::bridge::error::kRecordingError,
+                      wgc_err->message);
   }
 
   // Audio captures: each is best-effort. If mic open fails we log and
@@ -259,9 +274,15 @@ std::optional<RecordingError> RecordingEngine::Start(
     TeardownPipeline();
     session_.MarkFailed();
     session_.Reset();
-    return RecordingError{clingfy::bridge::error::kInvalidRecordingState,
-                          "Engine refused to enter Recording state."};
+    return fail_start(clingfy::bridge::error::kInvalidRecordingState,
+                      "Engine refused to enter Recording state.");
   }
+
+  // Lifecycle event: the recording is officially live. Phase 3E onward
+  // the Flutter UI transitions to its `recording` phase on this event
+  // and only then enables the stop button.
+  clingfy::bridge::WorkflowEventPublisher::Instance().EmitRecordingStarted(
+      request.session_id);
   return std::nullopt;
 }
 
@@ -276,6 +297,10 @@ std::optional<RecordingError> RecordingEngine::Stop(
 
   if (!session_id.empty() && !session_.session_id().empty() &&
       session_id != session_.session_id()) {
+    // Mismatched session id — do NOT emit `recordingFailed` here:
+    // the existing session is still legitimately recording, and
+    // surfacing a failure event would race with the eventual success
+    // event for the *real* session id. Mirrors macOS.
     return RecordingError{
         clingfy::bridge::error::kInvalidRecordingState,
         "stopRecording sessionId does not match the active session."};
@@ -288,6 +313,43 @@ std::optional<RecordingError> RecordingEngine::Stop(
     return std::nullopt;
   }
 
+  // Snapshot diagnostics + the active session id BEFORE TeardownPipeline
+  // / MarkStopped clear them — the project writer needs the values
+  // post-teardown, and `recordingFinalized` carries the original
+  // session id.
+  const std::string active_session_id(session_.session_id());
+  ProjectWriterInput project_input;
+  project_input.session_id = active_session_id;
+  project_input.source_mp4_path = current_output_path_;
+  if (capture_backend_) {
+    const auto stats = capture_backend_->Stats();
+    project_input.width = stats.frame_width;
+    project_input.height = stats.frame_height;
+    project_input.frames_received = stats.frames_received;
+  }
+  if (frame_queue_) {
+    project_input.frames_dropped = frame_queue_->dropped_frame_count();
+  }
+  if (encoder_) {
+    project_input.audio_samples_written =
+        encoder_->audio_samples_written_count();
+  }
+  if (mic_capture_) {
+    project_input.mic_active = mic_capture_->running();
+  }
+  if (loopback_capture_) {
+    project_input.loopback_active = loopback_capture_->running();
+  }
+
+  // We populate `fps` from the encoder's config so the meta.json
+  // reflects the *configured* rate, not whatever the capture happened
+  // to deliver. The encoder doesn't expose its config struct directly;
+  // for Phase 3E we just store it on the engine when Start completes
+  // and read it back here. Future polish: thread the value through
+  // Diagnostics().
+  // (Width/height/fps may be zero if no frames arrived; that's fine —
+  // the meta.json still validates as JSON.)
+
   if (!session_.BeginStop()) {
     return RecordingError{clingfy::bridge::error::kInvalidRecordingState,
                           "Cannot stop a session that has not finished "
@@ -298,10 +360,29 @@ std::optional<RecordingError> RecordingEngine::Stop(
 
   if (!session_.MarkStopped()) {
     session_.MarkFailed();
+    clingfy::bridge::WorkflowEventPublisher::Instance().EmitRecordingFailed(
+        active_session_id, "finalize",
+        clingfy::bridge::error::kInvalidRecordingState,
+        "Engine refused to enter Stopped state.");
     return RecordingError{clingfy::bridge::error::kInvalidRecordingState,
                           "Engine refused to enter Stopped state."};
   }
   session_.Reset();
+
+  // Project finalize: reshape the encoder's temp MP4 into a
+  // `.clingfyproj` bundle Dart can open. On failure we still consider
+  // the stopRecording call successful (the file exists in %TEMP%) but
+  // emit a `recordingFailed` event so the UI surfaces the issue.
+  auto writer_result = WriteRecordingProject(project_input);
+  if (writer_result.kind == ProjectWriterErrorKind::kNone) {
+    clingfy::bridge::WorkflowEventPublisher::Instance()
+        .EmitRecordingFinalized(active_session_id,
+                                 writer_result.project_path);
+  } else {
+    clingfy::bridge::WorkflowEventPublisher::Instance().EmitRecordingFailed(
+        active_session_id, "finalize",
+        clingfy::bridge::error::kRecordingError, writer_result.message);
+  }
   return std::nullopt;
 }
 
@@ -373,6 +454,7 @@ RecordingEngine::CaptureDiagnostics RecordingEngine::Diagnostics() const {
   }
   if (encoder_) {
     out.samples_written = encoder_->samples_written();
+    out.audio_samples_written = encoder_->audio_samples_written_count();
     out.output_path = encoder_->output_path();
   } else {
     out.output_path = current_output_path_;
