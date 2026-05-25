@@ -64,6 +64,25 @@ lifecycle, preview, and basic export.
 Detailed scope per phase is tracked in the session task list and in
 [../CLAUDE.md](../CLAUDE.md).
 
+## Permissions handling (between Phase 3 and Phase 4)
+
+The recording flow's preflight (`lib/app/home/home_actions.dart` → `recording_start_preflight_rules.dart`) checks four permission slots: `screenRecording`, `microphone`, `camera`, `accessibility`. Windows handles them as follows:
+
+| Slot              | Windows behavior |
+| ----------------- | ---------------- |
+| `screenRecording` | Always `true`. WGC requires no system grant. |
+| `microphone`      | Probed via `Windows.Security.Authorization.AppCapabilityAccess.AppCapability::Create("microphone").CheckAccess()`. Reflects both the global "Allow desktop apps to access your microphone" toggle and the per-app entry in `Settings > Privacy > Microphone`. |
+| `camera`          | Same probe with `"webcam"`. |
+| `accessibility`   | Always `true`. Windows has no AX-trust gate for input / cursor capture. |
+
+The `request*` handlers cannot trigger the Windows TCC-style prompt (it doesn't exist for non-packaged Win32 apps); when the probe reports denied they deep-link into the relevant `ms-settings:` page so the user can flip the toggle and retry. `requestScreenRecordingPermission` / `isAccessibilityTrusted` always return `true`.
+
+`openSystemSettings(pane)` accepts `"microphone"` / `"camera"` (or `"webcam"`) / `"screenRecording"` / `"accessibility"` and launches the matching `ms-settings:` URI via `ShellExecuteW`. Unknown panes are a silent no-op so a forward-compatible Dart client doesn't crash here.
+
+Source files:
+- `windows/runner/Permissions/permission_probe.{h,cpp}` — probe + URI table + ShellExecuteW launcher.
+- `windows/runner/Bridge/Routers/permissions_router.cpp` — handler wiring.
+
 ## Current status — Phase 3E (Phase 3 complete)
 
 Phase 3E closes the MVP recording slice. The end-to-end path now

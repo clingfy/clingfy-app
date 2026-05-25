@@ -43,6 +43,7 @@ add_library(runner_bridge STATIC
   "Encoding/mf_encoder_config.cpp"
   "Encoding/mf_sink_writer_encoder.cpp"
   "Graphics/d3d_device.cpp"
+  "Permissions/permission_probe.cpp"
 )
 apply_standard_settings(runner_bridge)
 target_compile_definitions(runner_bridge PRIVATE "NOMINMAX")
