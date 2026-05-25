@@ -48,6 +48,7 @@ add_executable(runner_tests
   "video_frame_queue_test.cpp"
   "windows_selection_state_test.cpp"
   "workflow_event_publisher_test.cpp"
+  "zoom_easing_constants_test.cpp"
 )
 
 target_link_libraries(runner_tests
