@@ -32,6 +32,10 @@ add_library(runner_bridge STATIC
   "Capture/video_frame_queue.cpp"
   "Capture/wgc_display_capture_backend.cpp"
   "Capture/windows_selection_state.cpp"
+  "Encoding/encoder_output_path.cpp"
+  "Encoding/mf_dxgi_manager.cpp"
+  "Encoding/mf_encoder_config.cpp"
+  "Encoding/mf_sink_writer_encoder.cpp"
   "Graphics/d3d_device.cpp"
 )
 apply_standard_settings(runner_bridge)
@@ -67,6 +71,14 @@ target_link_libraries(runner_bridge PUBLIC
   "d3d11.lib"
   "dxgi.lib"
   "windowsapp.lib"
+)
+
+# Phase 3C: Media Foundation Sink Writer for MP4 / H.264 encoding.
+#   * mfreadwrite — IMFSinkWriter + MFCreateSinkWriterFromURL
+# (mf.lib, mfplat.lib, mfuuid.lib were already linked for the Phase 2
+# video source enumerator.)
+target_link_libraries(runner_bridge PUBLIC
+  "mfreadwrite.lib"
 )
 
 # C++/WinRT headers use the standard-layout `co_await`-friendly types but

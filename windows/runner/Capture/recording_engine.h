@@ -1,17 +1,22 @@
 #ifndef RUNNER_CAPTURE_RECORDING_ENGINE_H_
 #define RUNNER_CAPTURE_RECORDING_ENGINE_H_
 
+#include <atomic>
 #include <cstdint>
 #include <memory>
 #include <mutex>
 #include <optional>
 #include <string>
+#include <thread>
 
 #include "Capture/recording_clock.h"
 #include "Capture/recording_session_state.h"
 
 namespace clingfy::graphics {
 class D3DDevice;
+}
+namespace clingfy::encoding {
+class MfSinkWriterEncoder;
 }
 
 namespace clingfy::capture {
@@ -76,13 +81,15 @@ class RecordingEngine {
   std::string session_id() const;
 
   // Diagnostics snapshot — used by manual smoke-tests in Phase 3B to
-  // confirm frames are arriving and by Phase 3C+ to surface drop counts.
-  // Returns zeros when no capture is in flight.
+  // confirm frames are arriving and by Phase 3E to surface counts on the
+  // bridge. Returns zeros when no capture is in flight.
   struct CaptureDiagnostics {
     std::uint32_t frame_width = 0;
     std::uint32_t frame_height = 0;
     std::uint64_t frames_received = 0;
     std::uint64_t frames_dropped = 0;
+    std::uint64_t samples_written = 0;
+    std::string output_path;
   };
   CaptureDiagnostics Diagnostics() const;
 
@@ -105,12 +112,22 @@ class RecordingEngine {
   RecordingSessionState session_;
   RecordingClock clock_;
 
-  // Capture pipeline (Phase 3B). Held as unique_ptrs so the engine header
-  // can stay free of D3D / WinRT includes; the implementation owns the
-  // full types.
+  // Capture pipeline (Phase 3B+). Held as unique_ptrs so the engine
+  // header can stay free of D3D / WinRT / MF includes; the implementation
+  // owns the full types.
   std::unique_ptr<clingfy::graphics::D3DDevice> d3d_device_;
   std::unique_ptr<VideoFrameQueue> frame_queue_;
   std::unique_ptr<WgcDisplayCaptureBackend> capture_backend_;
+
+  // Encoder pipeline (Phase 3C). The drain thread blocks on
+  // `frame_queue_->Pop()` and feeds frames to the encoder; Stop closes
+  // the queue, joins the thread, then calls `encoder_->Finalize()` so
+  // the MP4 footer lands before the Dart caller sees `stopRecording`
+  // succeed.
+  std::unique_ptr<clingfy::encoding::MfSinkWriterEncoder> encoder_;
+  std::thread encoder_thread_;
+  std::atomic<bool> encoder_stopped_{true};
+  std::string current_output_path_;
 };
 
 }  // namespace clingfy::capture
