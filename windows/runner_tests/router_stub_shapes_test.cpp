@@ -230,24 +230,77 @@ TEST(StubShapesTest, DeviceListGettersReturnList) {
 
 // === Empty-map getters. ====================================================
 
-TEST(StubShapesTest, MapGettersReturnEmptyMap) {
-  // Phase 3E flipped `getCaptureDiagnostics` onto the live engine
-  // diagnostics, so it no longer returns an empty map — it has its own
-  // shape-test below (`GetCaptureDiagnosticsReportsBackendAndCounters`).
-  MethodRouter router;
-  const std::vector<std::string> kMapGetters = {
-      "getPermissionStatus",
-  };
+// Phase 3E and the permissions PR each moved a previously-empty-map
+// getter onto a real shape (`getCaptureDiagnostics`,
+// `getPermissionStatus`). Both now have their own dedicated shape
+// tests further below — `GetCaptureDiagnosticsReportsBackendAndCounters`
+// and `GetPermissionStatusReportsFlatBoolMap`. The empty-map block is
+// kept around in case a future stub needs the assertion; for now it has
+// no inhabitants.
 
-  for (const auto& method : kMapGetters) {
+TEST(StubShapesTest, GetPermissionStatusReportsFlatBoolMap) {
+  // The Dart parser (`PermissionStatusSnapshot.fromStatusMap`) expects
+  // a flat `Map<String, bool>` with these four keys. Screen recording
+  // + accessibility are pinned to `true` on Windows (no system gate);
+  // mic + camera depend on host privacy settings, so we only assert on
+  // the keys and types.
+  MethodRouter router;
+  const RecordedReply reply = Dispatch(router, "getPermissionStatus");
+  ASSERT_TRUE(reply.success_called);
+  const auto* map = std::get_if<flutter::EncodableMap>(&reply.success_value);
+  ASSERT_NE(map, nullptr);
+  for (const auto& key :
+       {"screenRecording", "microphone", "camera", "accessibility"}) {
+    const auto it = map->find(flutter::EncodableValue(key));
+    ASSERT_NE(it, map->end()) << "Missing key '" << key << "'.";
+    EXPECT_NE(std::get_if<bool>(&it->second), nullptr)
+        << "Key '" << key << "' must be a bool.";
+  }
+  const auto screen =
+      map->find(flutter::EncodableValue("screenRecording"));
+  EXPECT_TRUE(*std::get_if<bool>(&screen->second));
+  const auto access = map->find(flutter::EncodableValue("accessibility"));
+  EXPECT_TRUE(*std::get_if<bool>(&access->second));
+}
+
+TEST(StubShapesTest, RequestScreenRecordingAlwaysGrantedOnWindows) {
+  MethodRouter router;
+  const RecordedReply reply =
+      Dispatch(router, "requestScreenRecordingPermission");
+  ASSERT_TRUE(reply.success_called);
+  const auto* value = std::get_if<bool>(&reply.success_value);
+  ASSERT_NE(value, nullptr);
+  EXPECT_TRUE(*value)
+      << "Screen recording has no per-app gate on Windows — the request "
+         "must always report granted.";
+}
+
+TEST(StubShapesTest, IsAccessibilityTrustedAlwaysTrueOnWindows) {
+  MethodRouter router;
+  const RecordedReply reply = Dispatch(router, "isAccessibilityTrusted");
+  ASSERT_TRUE(reply.success_called);
+  const auto* value = std::get_if<bool>(&reply.success_value);
+  ASSERT_NE(value, nullptr);
+  EXPECT_TRUE(*value);
+}
+
+TEST(StubShapesTest, OpenSystemSettingsAndRelaunchAreNoopSuccess) {
+  // `openSystemSettings` without a pane arg short-circuits inside the
+  // handler — `LaunchSettingsUri` rejects the empty URI returned by
+  // `ResolveSettingsUri("")`, so no Settings window is launched here.
+  // `relaunchApp` is a Phase-10 stub that returns success without side
+  // effects. The two `open*Settings` handlers with pinned panes
+  // (accessibility / screenRecording) would actually pop a Settings
+  // window inside `ctest`, so we cover their URI mapping in
+  // `PermissionProbeTest.ResolveSettingsUri*` and leave the side-effect-
+  // free routes alone here.
+  MethodRouter router;
+  for (const auto& method : {"openSystemSettings", "relaunchApp"}) {
     const RecordedReply reply = Dispatch(router, method);
-    ASSERT_TRUE(reply.success_called)
-        << "Method '" << method << "' did not succeed.";
-    const auto* map = std::get_if<flutter::EncodableMap>(&reply.success_value);
-    ASSERT_NE(map, nullptr)
-        << "Method '" << method << "' did not return a Map.";
-    EXPECT_TRUE(map->empty())
-        << "Method '" << method << "' should return an empty map.";
+    EXPECT_TRUE(reply.success_called)
+        << "Method '" << method << "' should succeed.";
+    EXPECT_FALSE(reply.error_called)
+        << "Method '" << method << "' should not surface an error.";
   }
 }
 
@@ -287,13 +340,14 @@ TEST(StubShapesTest, GetCaptureDiagnosticsReportsBackendAndCounters) {
 // === Boolean false getters. ================================================
 
 TEST(StubShapesTest, BoolGettersReturnFalse) {
+  // The permissions wiring (`requestScreenRecordingPermission`,
+  // `requestMicrophonePermission`, `requestCameraPermission`,
+  // `isAccessibilityTrusted`) used to land here as Phase-1 false-stubs.
+  // The permissions PR moved them onto the real probe — see
+  // `PermissionRoutingTest.*` below.
   MethodRouter router;
   const std::vector<std::string> kFalseGetters = {
       "getExcludeRecorderApp",
-      "requestScreenRecordingPermission",
-      "requestMicrophonePermission",
-      "requestCameraPermission",
-      "isAccessibilityTrusted",
       "checkForUpdates",
       "saveManualZoomSegments",
   };
