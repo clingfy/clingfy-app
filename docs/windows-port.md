@@ -52,7 +52,7 @@ lifecycle, preview, and basic export.
 | 0     | App launches; native bridge stubs; no MissingPluginException  | done   |
 | 1     | Full bridge contract parity (every method routed, stubbed)    | done   |
 | 2     | Real device / target discovery                                | done   |
-| 3     | MVP recording (full display + mic + system audio → MP4)       | in progress (3A+3B+3C done, 3D next) |
+| 3     | MVP recording (full display + mic + system audio → MP4)       | in progress (3A+3B+3C+3D done, 3E next) |
 | 4     | Lifecycle parity (state machine, pause/resume, recovery)      |
 | 5     | Preview player + project reopen                               |
 | 6     | Basic export + post-processing (resolution, background, etc.) |
@@ -63,6 +63,105 @@ lifecycle, preview, and basic export.
 
 Detailed scope per phase is tracked in the session task list and in
 [../CLAUDE.md](../CLAUDE.md).
+
+## Current status — Phase 3D
+
+Phase 3D adds the audio half of the MVP recording slice: the captured
+display is now muxed alongside the user's microphone and the system
+audio loopback into a single MP4 file via an AAC audio track.
+
+### New files
+
+```
+windows/runner/Audio/
+  audio_format.{h,cpp}           WAVEFORMATEX → AudioFormatSnapshot,
+                                 plus IsPipelineCompatible(snapshot)
+                                 and ClampFloat32ToInt16. Pure helpers,
+                                 unit-tested without WASAPI.
+  audio_packet.h                 POD packet: interleaved float32 stereo
+                                 samples + 100-ns timestamp + silent
+                                 flag.
+  audio_packet_queue.{h,cpp}     Bounded thread-safe queue mirroring
+                                 VideoFrameQueue's drop-oldest contract.
+  audio_mixer.{h,cpp}            Sums two streams element-wise into
+                                 interleaved int16 PCM. Pads the shorter
+                                 stream with silence, honors the
+                                 producer's `silent` flag, tracks a
+                                 monotonic sample-position counter so
+                                 the AAC stream never sees a tied
+                                 timestamp.
+  wasapi_audio_capture.{h,cpp}   Unified mic / system-loopback client
+                                 via WASAPI shared-mode + event-driven
+                                 IAudioCaptureClient. Pimpl keeps the
+                                 IMMDevice / IAudioClient COM pointers
+                                 out of consumer headers. Pinned to
+                                 48 kHz float32 stereo input (rejected
+                                 otherwise — Phase 3D does not yet
+                                 resample). Capture thread runs at
+                                 Pro Audio MMCSS priority so an OS
+                                 preempt doesn't blow the buffer.
+```
+
+### Encoder extension
+
+`MfSinkWriterEncoder::Open(...)` grew an optional `AudioEncoderConfig`
+parameter. When supplied, the encoder adds an AAC LC output stream
+(48 kHz / 128 kbps / stereo) alongside the existing H.264 video
+stream — the same Sink Writer instance owns both. The new
+`WriteAudioPacket(MixedPacket)` writes one PCM int16 sample into the
+audio stream, tagged as a clean point (every AAC sample is a sync
+sample, no inter-sample dependency). Audio bookkeeping is reset on
+Cancel().
+
+### Engine orchestration
+
+`RecordingEngine::Start` reads two new boolean gates from the Dart
+`StartRecordingRequest`:
+- `disable_microphone` → if false, mic capture starts via
+  `WasapiAudioCapture(kMicrophone, MicrophoneId, mic_queue_)`.
+- `system_audio_enabled` → if true, loopback capture starts via
+  `WasapiAudioCapture(kSystemLoopback, "", loopback_queue_)`.
+
+Either capture is best-effort: if mic open fails, the recording
+continues with system audio only and vice versa. If both fail (or
+both flags are off), the encoder is opened video-only.
+
+A dedicated mixer thread blocks on `mic_queue_->Pop()` and grabs the
+matching loopback packet via `TryPop` (so missing system audio doesn't
+stall the mixer); both packets are summed via `AudioMixer::Mix`, and
+the result is handed to `encoder_->WriteAudioPacket`. When only
+loopback is alive, the mixer flips to a blocking Pop on the loopback
+queue so it doesn't busy-spin.
+
+Stop tears down in this order: capture producers → close queues → join
+encoder + mixer threads → encoder.Finalize() (writes MOOV atom with
+both tracks) → release D3D device.
+
+### What works after Phase 3D
+
+- Mic-only recording (request `disable_microphone=false`,
+  `systemAudioEnabled=false`) produces an MP4 with one video track and
+  one mic audio track.
+- System-audio-only recording (mic disabled, system audio enabled)
+  records whatever is playing through the default render endpoint.
+- Mic + system audio together → both streams mixed into one AAC track.
+- Selecting a mic via `setAudioSource` is honored — `MicrophoneId` from
+  `WindowsSelectionState` is passed to the capture; a stale id falls
+  back to the default capture endpoint without failing the recording.
+- A missing or unsupported mix format (anything other than 48 kHz
+  float32 stereo) skips that capture and logs; the recording continues
+  with the other source.
+
+### What still doesn't work after Phase 3D
+
+- The MP4 still lands in `%TEMP%`; project folder + recent-recordings
+  routing is Phase 3E.
+- No workflow events on `workflow/events` — Flutter UI parks in
+  "starting" after a successful `startRecording`. Phase 3E.
+- Audio-format conversion (e.g. headsets that default to 44.1 kHz or
+  16-bit PCM) is a hard reject in 3D; the capture is dropped with a
+  structured warning. A resampler shim can land in a follow-up if
+  prod telemetry shows real-world hosts are affected.
 
 ## Current status — Phase 3C
 
@@ -243,8 +342,8 @@ against develop instead of one giant landing:
 | 3A | Recording engine skeleton + honest capability gate | done |
 | 3B | WGC full-display video capture (frames arrive, no MP4 yet) | done |
 | 3C | MP4 / H.264 video writer (Media Foundation Sink Writer) | done |
-| 3D | WASAPI microphone + system-audio capture, mixed into the MP4 | next |
-| 3E | Project manifest + workflow events so Flutter sees a real recording | |
+| 3D | WASAPI microphone + system-audio capture, mixed into the MP4 | done |
+| 3E | Project manifest + workflow events so Flutter sees a real recording | next |
 
 Phase 3A introduces `windows/runner/Capture/`:
 

@@ -33,4 +33,29 @@ std::optional<std::string> EncoderConfig::Validate() const {
   return std::nullopt;
 }
 
+std::optional<std::string> AudioEncoderConfig::Validate() const {
+  // The AAC MFT only accepts a tight set of sample rates / channel
+  // counts. We pin to the values the WASAPI mixer produces — anything
+  // else means a misconfiguration upstream.
+  if (sample_rate_hz != 48'000 && sample_rate_hz != 44'100) {
+    return std::string(
+        "AudioEncoderConfig.sample_rate_hz must be 48000 or 44100; the AAC "
+        "MFT rejects other rates.");
+  }
+  if (channel_count != 1 && channel_count != 2) {
+    return std::string(
+        "AudioEncoderConfig.channel_count must be 1 (mono) or 2 (stereo).");
+  }
+  if (bits_per_sample != 16) {
+    return std::string(
+        "AudioEncoderConfig.bits_per_sample must be 16 — the AAC MFT input "
+        "type is PCM int16.");
+  }
+  if (avg_bitrate_bps == 0) {
+    return std::string(
+        "AudioEncoderConfig.avg_bitrate_bps must be > 0.");
+  }
+  return std::nullopt;
+}
+
 }  // namespace clingfy::encoding

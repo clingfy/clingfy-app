@@ -3,6 +3,10 @@
 #include <thread>
 #include <utility>
 
+#include "Audio/audio_mixer.h"
+#include "Audio/audio_packet.h"
+#include "Audio/audio_packet_queue.h"
+#include "Audio/wasapi_audio_capture.h"
 #include "Bridge/Devices/display_enumerator.h"
 #include "Bridge/native_error_codes.h"
 #include "Capture/captured_video_frame.h"
@@ -45,6 +49,12 @@ RecordingEngine::~RecordingEngine() {
     }
     encoder_thread_.join();
   }
+  if (audio_mixer_thread_.joinable()) {
+    audio_mixer_stopped_.store(true);
+    if (mic_queue_) mic_queue_->Close();
+    if (loopback_queue_) loopback_queue_->Close();
+    audio_mixer_thread_.join();
+  }
 }
 
 std::optional<RecordingError> RecordingEngine::Start(
@@ -74,7 +84,7 @@ std::optional<RecordingError> RecordingEngine::Start(
     return RecordingError{
         clingfy::bridge::error::kBadMode,
         std::string("Target mode '") + TargetModeName(mode) +
-            "' is not supported on Windows yet. Phase 3C only supports "
+            "' is not supported on Windows yet. Phase 3D only supports "
             "explicit-display recording."};
   }
 
@@ -102,10 +112,8 @@ std::optional<RecordingError> RecordingEngine::Start(
                           d3d_err->message};
   }
 
-  // Resolve the monitor's pixel dimensions ahead of the encoder open so
-  // the recording resolution matches the source. WGC reports the size on
-  // the first FrameArrived; for the encoder we need it up front, so we
-  // pull it from `GetMonitorInfoW` here.
+  // Resolve monitor dimensions ahead of the encoder open so the
+  // recording resolution matches the source.
   MONITORINFO info{};
   info.cbSize = sizeof(info);
   std::uint32_t width = 1920;
@@ -124,9 +132,20 @@ std::optional<RecordingError> RecordingEngine::Start(
   encoder_config.output_path =
       clingfy::encoding::ResolveTempMp4Path(request.session_id);
 
+  // Decide whether to ship an audio stream. Both gates have to clear:
+  // mic must not be explicitly disabled by Dart, AND/OR system audio
+  // must be enabled. If both are off, the recording is video-only.
+  const bool want_mic = !request.disable_microphone;
+  const bool want_loopback = request.system_audio_enabled;
+  std::optional<clingfy::encoding::AudioEncoderConfig> audio_config;
+  if (want_mic || want_loopback) {
+    audio_config = clingfy::encoding::AudioEncoderConfig{};
+  }
+
   encoder_ =
       std::make_unique<clingfy::encoding::MfSinkWriterEncoder>();
-  if (auto enc_err = encoder_->Open(encoder_config, *d3d_device_)) {
+  if (auto enc_err = encoder_->Open(encoder_config, *d3d_device_,
+                                      audio_config)) {
     TeardownPipeline();
     session_.MarkFailed();
     session_.Reset();
@@ -146,9 +165,39 @@ std::optional<RecordingError> RecordingEngine::Start(
                           wgc_err->message};
   }
 
-  // Drain thread: pulls captured frames off the queue and writes them to
-  // the encoder. `Pop` blocks until either a frame is available or the
-  // queue is closed (signalled by `TeardownPipeline` during Stop).
+  // Audio captures: each is best-effort. If mic open fails we log and
+  // continue with loopback only; if loopback fails we continue with mic
+  // only. Both failing isn't a hard error either — the recording still
+  // produces a video-only MP4, which is the macOS engine's behavior on
+  // a host with no audio devices.
+  if (want_mic) {
+    mic_queue_ = std::make_unique<clingfy::audio::AudioPacketQueue>();
+    mic_capture_ =
+        std::make_unique<clingfy::audio::WasapiAudioCapture>();
+    const auto mic_id =
+        WindowsSelectionState::Instance().MicrophoneId().value_or("");
+    if (mic_capture_->Start(
+            clingfy::audio::WasapiCaptureKind::kMicrophone, mic_id,
+            *mic_queue_)) {
+      mic_capture_.reset();
+      mic_queue_.reset();
+    }
+  }
+  if (want_loopback) {
+    loopback_queue_ =
+        std::make_unique<clingfy::audio::AudioPacketQueue>();
+    loopback_capture_ =
+        std::make_unique<clingfy::audio::WasapiAudioCapture>();
+    if (loopback_capture_->Start(
+            clingfy::audio::WasapiCaptureKind::kSystemLoopback, "",
+            *loopback_queue_)) {
+      loopback_capture_.reset();
+      loopback_queue_.reset();
+    }
+  }
+
+  // Drain thread: pulls captured frames off the queue and writes them
+  // to the encoder.
   encoder_stopped_.store(false);
   encoder_thread_ = std::thread([this] {
     auto* queue = frame_queue_.get();
@@ -163,6 +212,46 @@ std::optional<RecordingError> RecordingEngine::Start(
       encoder->WriteVideoFrame(*frame);
     }
   });
+
+  // Audio mixer thread: pulls one packet at a time from whichever
+  // queue(s) are alive, mixes (or pass-through when a source is
+  // missing), and forwards to the encoder. Skipped entirely when both
+  // captures failed or both were disabled.
+  if (mic_capture_ != nullptr || loopback_capture_ != nullptr) {
+    audio_mixer_stopped_.store(false);
+    audio_mixer_thread_ = std::thread([this] {
+      clingfy::audio::AudioMixer mixer;
+      while (!audio_mixer_stopped_.load()) {
+        std::optional<clingfy::audio::AudioPacket> mic;
+        std::optional<clingfy::audio::AudioPacket> loopback;
+        if (mic_queue_ != nullptr) {
+          mic = mic_queue_->Pop();
+          if (audio_mixer_stopped_.load()) break;
+        }
+        if (loopback_queue_ != nullptr) {
+          // Use TryPop when the mic queue is alive so we don't block
+          // waiting for system audio if nothing is currently playing.
+          // When only loopback is alive (no mic), fall back to a
+          // blocking Pop so the mixer doesn't busy-spin.
+          if (mic_queue_ != nullptr) {
+            loopback = loopback_queue_->TryPop();
+          } else {
+            loopback = loopback_queue_->Pop();
+            if (audio_mixer_stopped_.load()) break;
+          }
+        }
+        if (!mic.has_value() && !loopback.has_value()) {
+          // Both queues drained / closed → exit the mixer loop.
+          break;
+        }
+        auto mixed = mixer.Mix(mic.has_value() ? &*mic : nullptr,
+                                loopback.has_value() ? &*loopback : nullptr);
+        if (mixed.frame_count > 0 && encoder_ != nullptr) {
+          encoder_->WriteAudioPacket(mixed);
+        }
+      }
+    });
+  }
 
   clock_.MarkStart();
 
@@ -217,28 +306,38 @@ std::optional<RecordingError> RecordingEngine::Stop(
 }
 
 void RecordingEngine::TeardownPipeline() {
-  // Strict ordering: stop producing frames first (WGC), then signal the
-  // drain thread to exit by closing the queue, then join the thread,
-  // THEN finalize the encoder so the MP4 footer is written before the
-  // D3D device that backs its DXGI manager goes away.
+  // Strict ordering: stop the capture producers first, then signal the
+  // drain / mixer consumer threads via queue Close, join them, then
+  // finalize the encoder so the MP4 footer is written before the
+  // device that backs its DXGI manager goes away.
   if (capture_backend_) {
     capture_backend_->Stop();
     capture_backend_.reset();
   }
+  if (mic_capture_) {
+    mic_capture_->Stop();
+    mic_capture_.reset();
+  }
+  if (loopback_capture_) {
+    loopback_capture_->Stop();
+    loopback_capture_.reset();
+  }
+
   encoder_stopped_.store(true);
-  if (frame_queue_) {
-    frame_queue_->Close();
-  }
-  if (encoder_thread_.joinable()) {
-    encoder_thread_.join();
-  }
+  audio_mixer_stopped_.store(true);
+  if (frame_queue_) frame_queue_->Close();
+  if (mic_queue_) mic_queue_->Close();
+  if (loopback_queue_) loopback_queue_->Close();
+  if (encoder_thread_.joinable()) encoder_thread_.join();
+  if (audio_mixer_thread_.joinable()) audio_mixer_thread_.join();
+
   if (encoder_) {
     encoder_->Finalize();
     encoder_.reset();
   }
-  if (frame_queue_) {
-    frame_queue_.reset();
-  }
+  if (frame_queue_) frame_queue_.reset();
+  if (mic_queue_) mic_queue_.reset();
+  if (loopback_queue_) loopback_queue_.reset();
   if (d3d_device_) {
     d3d_device_->Reset();
     d3d_device_.reset();
@@ -277,6 +376,14 @@ RecordingEngine::CaptureDiagnostics RecordingEngine::Diagnostics() const {
     out.output_path = encoder_->output_path();
   } else {
     out.output_path = current_output_path_;
+  }
+  if (mic_capture_) {
+    out.mic_active = mic_capture_->running();
+    out.mic_packets = mic_capture_->packets_emitted();
+  }
+  if (loopback_capture_) {
+    out.loopback_active = loopback_capture_->running();
+    out.loopback_packets = loopback_capture_->packets_emitted();
   }
   return out;
 }

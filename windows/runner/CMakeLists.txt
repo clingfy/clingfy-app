@@ -12,6 +12,10 @@ add_library(runner_bridge STATIC
   "Bridge/method_dispatcher.cpp"
   "Bridge/method_router.cpp"
   "Bridge/event_channel_stubs.cpp"
+  "Audio/audio_format.cpp"
+  "Audio/audio_mixer.cpp"
+  "Audio/audio_packet_queue.cpp"
+  "Audio/wasapi_audio_capture.cpp"
   "Bridge/Devices/audio_source_enumerator.cpp"
   "Bridge/Devices/device_record.cpp"
   "Bridge/Devices/display_enumerator.cpp"
@@ -79,6 +83,14 @@ target_link_libraries(runner_bridge PUBLIC
 # video source enumerator.)
 target_link_libraries(runner_bridge PUBLIC
   "mfreadwrite.lib"
+)
+
+# Phase 3D: WASAPI audio capture (microphone + system loopback) and AAC
+# encoding. mmdevapi.lib was already linked for the Phase 2 audio
+# source enumerator.
+#   * avrt — AvSetMmThreadCharacteristics (Pro Audio MMCSS task)
+target_link_libraries(runner_bridge PUBLIC
+  "avrt.lib"
 )
 
 # C++/WinRT headers use the standard-layout `co_await`-friendly types but
