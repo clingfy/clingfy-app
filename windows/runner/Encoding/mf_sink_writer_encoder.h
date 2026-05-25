@@ -18,6 +18,9 @@
 #include "Encoding/mf_dxgi_manager.h"
 #include "Encoding/mf_encoder_config.h"
 
+namespace clingfy::audio {
+struct MixedPacket;
+}
 namespace clingfy::capture {
 struct CapturedVideoFrame;
 }
@@ -53,8 +56,14 @@ class MfSinkWriterEncoder {
   // MFT is engaged, configures input (ARGB32 = BGRA in memory layout,
   // matching what WGC produces) and output (H.264 in MP4) media types,
   // and calls `BeginWriting`. Returns std::nullopt on success.
-  std::optional<EncoderError> Open(const EncoderConfig& config,
-                                   clingfy::graphics::D3DDevice& device);
+  //
+  // The optional `audio` parameter adds an AAC audio stream alongside
+  // the video stream. Pass `std::nullopt` for video-only recording
+  // (e.g. mic + system audio both disabled).
+  std::optional<EncoderError> Open(
+      const EncoderConfig& config,
+      clingfy::graphics::D3DDevice& device,
+      const std::optional<AudioEncoderConfig>& audio = std::nullopt);
 
   // Write one captured frame. The first call records the frame's
   // timestamp as the recording origin so the resulting MP4 always starts
@@ -64,6 +73,13 @@ class MfSinkWriterEncoder {
   // does not crash the writer).
   std::optional<EncoderError> WriteVideoFrame(
       const clingfy::capture::CapturedVideoFrame& frame);
+
+  // Write one mixed audio packet. No-op (success) when the encoder was
+  // opened video-only. AAC samples are tagged as clean points (every
+  // AAC sample is a keyframe), so the Sink Writer does not need to
+  // insert sync hints. Returns std::nullopt on success.
+  std::optional<EncoderError> WriteAudioPacket(
+      const clingfy::audio::MixedPacket& packet);
 
   // Finalize the MP4 file. Required before the file is playable;
   // without it the MOOV atom is missing and the MP4 reader sees a 0-byte
@@ -84,17 +100,23 @@ class MfSinkWriterEncoder {
   // types. Kept private (free helpers in the .cpp) because they capture
   // the bridge contract between WGC's pixel format and Media Foundation
   // input expectations.
-  std::optional<EncoderError> ConfigureMediaTypes();
+  std::optional<EncoderError> ConfigureVideoMediaTypes();
+  std::optional<EncoderError> ConfigureAudioMediaTypes();
 
   mutable std::mutex mutex_;
   EncoderConfig config_;
+  std::optional<AudioEncoderConfig> audio_config_;
   MfDxgiManager dxgi_manager_;
   Microsoft::WRL::ComPtr<IMFSinkWriter> sink_writer_;
   DWORD video_stream_index_ = 0;
+  DWORD audio_stream_index_ = 0;
+  bool has_audio_stream_ = false;
   std::int64_t origin_timestamp_hns_ = -1;
   std::int64_t sample_duration_hns_ = 0;
   std::int64_t last_sample_time_hns_ = -1;
+  std::int64_t last_audio_sample_time_hns_ = -1;
   std::uint64_t samples_written_ = 0;
+  std::uint64_t audio_samples_written_ = 0;
   bool open_ = false;
 };
 

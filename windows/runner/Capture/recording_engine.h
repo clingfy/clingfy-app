@@ -12,6 +12,10 @@
 #include "Capture/recording_clock.h"
 #include "Capture/recording_session_state.h"
 
+namespace clingfy::audio {
+class AudioPacketQueue;
+class WasapiAudioCapture;
+}
 namespace clingfy::graphics {
 class D3DDevice;
 }
@@ -89,6 +93,14 @@ class RecordingEngine {
     std::uint64_t frames_received = 0;
     std::uint64_t frames_dropped = 0;
     std::uint64_t samples_written = 0;
+    // Phase 3D audio counters. mic_active / loopback_active expose
+    // whether the underlying WASAPI client is alive (vs. unavailable
+    // / explicitly disabled).
+    bool mic_active = false;
+    bool loopback_active = false;
+    std::uint64_t mic_packets = 0;
+    std::uint64_t loopback_packets = 0;
+    std::uint64_t audio_samples_written = 0;
     std::string output_path;
   };
   CaptureDiagnostics Diagnostics() const;
@@ -128,6 +140,18 @@ class RecordingEngine {
   std::thread encoder_thread_;
   std::atomic<bool> encoder_stopped_{true};
   std::string current_output_path_;
+
+  // Audio pipeline (Phase 3D). Two WASAPI captures (mic + loopback)
+  // fill the matching packet queues; a dedicated mixer thread sums
+  // both streams and forwards the mixed PCM packets into the encoder.
+  // Either capture may be std::nullopt — the engine starts only the
+  // half requested by `disable_microphone` / `systemAudioEnabled`.
+  std::unique_ptr<clingfy::audio::WasapiAudioCapture> mic_capture_;
+  std::unique_ptr<clingfy::audio::WasapiAudioCapture> loopback_capture_;
+  std::unique_ptr<clingfy::audio::AudioPacketQueue> mic_queue_;
+  std::unique_ptr<clingfy::audio::AudioPacketQueue> loopback_queue_;
+  std::thread audio_mixer_thread_;
+  std::atomic<bool> audio_mixer_stopped_{true};
 };
 
 }  // namespace clingfy::capture

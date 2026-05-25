@@ -4,11 +4,14 @@
 #include <mfapi.h>
 #include <mferror.h>
 #include <mfidl.h>
+#include <mmreg.h>
 
 #include <atomic>
+#include <cstring>
 #include <mutex>
 #include <string>
 
+#include "Audio/audio_mixer.h"
 #include "Capture/captured_video_frame.h"
 #include "Graphics/d3d_device.h"
 
@@ -61,7 +64,8 @@ MfSinkWriterEncoder::~MfSinkWriterEncoder() {
 
 std::optional<EncoderError> MfSinkWriterEncoder::Open(
     const EncoderConfig& config,
-    clingfy::graphics::D3DDevice& device) {
+    clingfy::graphics::D3DDevice& device,
+    const std::optional<AudioEncoderConfig>& audio) {
   std::lock_guard<std::mutex> lock(mutex_);
   if (open_) {
     return ToError("MfSinkWriterEncoder::Open called on an open encoder.",
@@ -69,6 +73,11 @@ std::optional<EncoderError> MfSinkWriterEncoder::Open(
   }
   if (auto invalid = config.Validate()) {
     return EncoderError{*invalid, E_INVALIDARG};
+  }
+  if (audio.has_value()) {
+    if (auto invalid_audio = audio->Validate()) {
+      return EncoderError{*invalid_audio, E_INVALIDARG};
+    }
   }
   EnsureMediaFoundationStarted();
 
@@ -102,15 +111,25 @@ std::optional<EncoderError> MfSinkWriterEncoder::Open(
   }
 
   config_ = config;
+  audio_config_ = audio;
   sample_duration_hns_ =
       static_cast<std::int64_t>(10'000'000) / static_cast<std::int64_t>(config.fps);
   origin_timestamp_hns_ = -1;
   last_sample_time_hns_ = -1;
+  last_audio_sample_time_hns_ = -1;
   samples_written_ = 0;
+  audio_samples_written_ = 0;
+  has_audio_stream_ = false;
 
-  if (auto err = ConfigureMediaTypes()) {
+  if (auto err = ConfigureVideoMediaTypes()) {
     Cancel();
     return err;
+  }
+  if (audio_config_.has_value()) {
+    if (auto err = ConfigureAudioMediaTypes()) {
+      Cancel();
+      return err;
+    }
   }
 
   hr = sink_writer_->BeginWriting();
@@ -123,7 +142,7 @@ std::optional<EncoderError> MfSinkWriterEncoder::Open(
   return std::nullopt;
 }
 
-std::optional<EncoderError> MfSinkWriterEncoder::ConfigureMediaTypes() {
+std::optional<EncoderError> MfSinkWriterEncoder::ConfigureVideoMediaTypes() {
   // Output: H.264 in MP4. Picked the Main profile so the result plays in
   // QuickTime / VLC / browsers without re-muxing.
   Microsoft::WRL::ComPtr<IMFMediaType> output_type;
@@ -179,6 +198,67 @@ std::optional<EncoderError> MfSinkWriterEncoder::ConfigureMediaTypes() {
         "selected hardware encoder may not accept BGRA directly.",
         hr);
   }
+  return std::nullopt;
+}
+
+std::optional<EncoderError> MfSinkWriterEncoder::ConfigureAudioMediaTypes() {
+  if (!audio_config_.has_value()) {
+    return std::nullopt;
+  }
+  const AudioEncoderConfig& cfg = *audio_config_;
+
+  // Output: AAC LC. The Sink Writer's AAC encoder MFT accepts a small
+  // matrix of (sample rate, channels, bitrate) tuples; the pinned
+  // 48 kHz / 2-channel / 128 kbps combination is universally
+  // supported and matches the WASAPI mixer's output.
+  Microsoft::WRL::ComPtr<IMFMediaType> output_type;
+  HRESULT hr = ::MFCreateMediaType(output_type.GetAddressOf());
+  if (FAILED(hr)) {
+    return ToError("MFCreateMediaType failed for AAC output type.", hr);
+  }
+  output_type->SetGUID(MF_MT_MAJOR_TYPE, MFMediaType_Audio);
+  output_type->SetGUID(MF_MT_SUBTYPE, MFAudioFormat_AAC);
+  output_type->SetUINT32(MF_MT_AUDIO_BITS_PER_SAMPLE, cfg.bits_per_sample);
+  output_type->SetUINT32(MF_MT_AUDIO_SAMPLES_PER_SECOND, cfg.sample_rate_hz);
+  output_type->SetUINT32(MF_MT_AUDIO_NUM_CHANNELS, cfg.channel_count);
+  output_type->SetUINT32(MF_MT_AUDIO_AVG_BYTES_PER_SECOND,
+                          cfg.avg_bitrate_bps / 8);
+  // AAC Profile Level Indication 0x29 = AAC-LC, 2 channels, 48 kHz —
+  // the exact value here is what the SinkWriter inspects to pick the
+  // matching encoder MFT.
+  output_type->SetUINT32(MF_MT_AAC_AUDIO_PROFILE_LEVEL_INDICATION, 0x29);
+
+  hr = sink_writer_->AddStream(output_type.Get(), &audio_stream_index_);
+  if (FAILED(hr)) {
+    return ToError("IMFSinkWriter::AddStream failed for AAC output.", hr);
+  }
+
+  // Input: PCM int16, same rate / channels as the output. The mixer
+  // produces samples in exactly this layout so no resampling is needed.
+  Microsoft::WRL::ComPtr<IMFMediaType> input_type;
+  hr = ::MFCreateMediaType(input_type.GetAddressOf());
+  if (FAILED(hr)) {
+    return ToError("MFCreateMediaType failed for PCM input type.", hr);
+  }
+  input_type->SetGUID(MF_MT_MAJOR_TYPE, MFMediaType_Audio);
+  input_type->SetGUID(MF_MT_SUBTYPE, MFAudioFormat_PCM);
+  input_type->SetUINT32(MF_MT_AUDIO_BITS_PER_SAMPLE, cfg.bits_per_sample);
+  input_type->SetUINT32(MF_MT_AUDIO_SAMPLES_PER_SECOND, cfg.sample_rate_hz);
+  input_type->SetUINT32(MF_MT_AUDIO_NUM_CHANNELS, cfg.channel_count);
+  const UINT32 block_align = cfg.channel_count * (cfg.bits_per_sample / 8u);
+  input_type->SetUINT32(MF_MT_AUDIO_BLOCK_ALIGNMENT, block_align);
+  input_type->SetUINT32(MF_MT_AUDIO_AVG_BYTES_PER_SECOND,
+                          cfg.sample_rate_hz * block_align);
+  input_type->SetUINT32(MF_MT_ALL_SAMPLES_INDEPENDENT, TRUE);
+
+  hr = sink_writer_->SetInputMediaType(audio_stream_index_, input_type.Get(),
+                                        nullptr);
+  if (FAILED(hr)) {
+    return ToError("IMFSinkWriter::SetInputMediaType failed for PCM input.",
+                   hr);
+  }
+
+  has_audio_stream_ = true;
   return std::nullopt;
 }
 
@@ -246,6 +326,79 @@ std::optional<EncoderError> MfSinkWriterEncoder::WriteVideoFrame(
   return std::nullopt;
 }
 
+std::optional<EncoderError> MfSinkWriterEncoder::WriteAudioPacket(
+    const clingfy::audio::MixedPacket& packet) {
+  std::lock_guard<std::mutex> lock(mutex_);
+  if (!open_) {
+    return ToError("Encoder is not open; call Open() first.",
+                   E_NOT_VALID_STATE);
+  }
+  if (!has_audio_stream_) {
+    // Video-only recording — silently accept and drop.
+    return std::nullopt;
+  }
+  if (packet.frame_count == 0 || packet.samples.empty()) {
+    return std::nullopt;
+  }
+
+  const std::uint32_t bytes_per_sample =
+      audio_config_->bits_per_sample / 8u;
+  const std::uint32_t channels = audio_config_->channel_count;
+  const std::uint32_t byte_length = packet.frame_count * channels *
+                                     bytes_per_sample;
+  if (byte_length == 0) {
+    return std::nullopt;
+  }
+
+  Microsoft::WRL::ComPtr<IMFMediaBuffer> buffer;
+  HRESULT hr = ::MFCreateMemoryBuffer(byte_length, buffer.GetAddressOf());
+  if (FAILED(hr) || buffer == nullptr) {
+    return ToError("MFCreateMemoryBuffer failed for AAC input sample.", hr);
+  }
+  BYTE* mapped = nullptr;
+  hr = buffer->Lock(&mapped, nullptr, nullptr);
+  if (FAILED(hr) || mapped == nullptr) {
+    return ToError("IMFMediaBuffer::Lock failed for AAC input sample.", hr);
+  }
+  std::memcpy(mapped, packet.samples.data(), byte_length);
+  buffer->Unlock();
+  buffer->SetCurrentLength(byte_length);
+
+  Microsoft::WRL::ComPtr<IMFSample> sample;
+  hr = ::MFCreateSample(sample.GetAddressOf());
+  if (FAILED(hr)) {
+    return ToError("MFCreateSample failed for AAC input sample.", hr);
+  }
+  sample->AddBuffer(buffer.Get());
+
+  std::int64_t sample_time = packet.timestamp_hns;
+  if (sample_time < 0) {
+    sample_time = 0;
+  }
+  // AAC stream's own monotonic-time guarantee — mirrors the video path
+  // for the same MF_E_INVALIDREQUEST reason on some encoder MFTs.
+  if (sample_time <= last_audio_sample_time_hns_) {
+    sample_time = last_audio_sample_time_hns_ + 1;
+  }
+  const std::int64_t duration_hns =
+      (static_cast<std::int64_t>(packet.frame_count) * 10'000'000) /
+      static_cast<std::int64_t>(audio_config_->sample_rate_hz);
+  sample->SetSampleTime(sample_time);
+  sample->SetSampleDuration(duration_hns);
+  // Every AAC sample is a clean point (no inter-sample dependencies in
+  // the bitstream), so flag it accordingly — without this, MP4 readers
+  // may complain about missing sync samples.
+  sample->SetUINT32(MFSampleExtension_CleanPoint, TRUE);
+
+  hr = sink_writer_->WriteSample(audio_stream_index_, sample.Get());
+  if (FAILED(hr)) {
+    return ToError("IMFSinkWriter::WriteSample failed for AAC input.", hr);
+  }
+  last_audio_sample_time_hns_ = sample_time;
+  ++audio_samples_written_;
+  return std::nullopt;
+}
+
 std::optional<EncoderError> MfSinkWriterEncoder::Finalize() {
   std::lock_guard<std::mutex> lock(mutex_);
   if (!open_) {
@@ -273,9 +426,12 @@ void MfSinkWriterEncoder::Cancel() {
   sink_writer_.Reset();
   dxgi_manager_.Reset();
   open_ = false;
+  has_audio_stream_ = false;
   samples_written_ = 0;
+  audio_samples_written_ = 0;
   origin_timestamp_hns_ = -1;
   last_sample_time_hns_ = -1;
+  last_audio_sample_time_hns_ = -1;
 }
 
 bool MfSinkWriterEncoder::open() const {

@@ -38,6 +38,23 @@ struct EncoderConfig {
   std::optional<std::string> Validate() const;
 };
 
+// Audio side of the encoder, added in Phase 3D. Pinned to AAC-LC at
+// 48 kHz stereo because that's what the WASAPI mixer produces and what
+// the Sink Writer's AAC encoder MFT accepts as a universal input —
+// expanding the matrix is future work.
+struct AudioEncoderConfig {
+  // PCM input: 48 kHz stereo int16. Mirrors the AudioMixer's output.
+  std::uint32_t sample_rate_hz = 48'000;
+  std::uint16_t channel_count = 2;
+  std::uint16_t bits_per_sample = 16;
+
+  // Output AAC bitrate. 128 kbps is the canonical "voice + music"
+  // shared-mode default and matches what Windows' own Game Bar uses.
+  std::uint32_t avg_bitrate_bps = 128'000;
+
+  std::optional<std::string> Validate() const;
+};
+
 }  // namespace clingfy::encoding
 
 #endif  // RUNNER_ENCODING_MF_ENCODER_CONFIG_H_
