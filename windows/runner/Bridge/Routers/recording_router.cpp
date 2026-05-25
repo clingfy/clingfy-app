@@ -121,29 +121,85 @@ void HandleStopRecording(
   reply::Null(*result);
 }
 
-// Pause / resume / togglePause are routed but treated as no-op success in
-// Phase 3A: pause/resume support lands in Phase 4. Returning success keeps
-// the call cheap and avoids spurious error toasts if the Flutter UI re-issues
-// them defensively.
-void HandlePauseResume(
-    const flutter::MethodCall<flutter::EncodableValue>& /*call*/,
+// Phase 4 wires pause / resume / togglePause onto the live engine.
+// togglePauseRecording drives the engine into whichever state is the
+// opposite of the current one — its bridge contract is "if recording,
+// pause; if paused, resume".
+void HandlePauseRecording(
+    const flutter::MethodCall<flutter::EncodableValue>& call,
     std::unique_ptr<flutter::MethodResult<flutter::EncodableValue>> result) {
+  std::string session_id;
+  if (const auto* args = AsMap(call.arguments())) {
+    session_id = ReadString(*args, "sessionId");
+  }
+  auto error =
+      clingfy::capture::RecordingEngine::Instance().Pause(session_id);
+  if (error) {
+    result->Error(error->code, error->message);
+    return;
+  }
+  reply::Null(*result);
+}
+
+void HandleResumeRecording(
+    const flutter::MethodCall<flutter::EncodableValue>& call,
+    std::unique_ptr<flutter::MethodResult<flutter::EncodableValue>> result) {
+  std::string session_id;
+  if (const auto* args = AsMap(call.arguments())) {
+    session_id = ReadString(*args, "sessionId");
+  }
+  auto error =
+      clingfy::capture::RecordingEngine::Instance().Resume(session_id);
+  if (error) {
+    result->Error(error->code, error->message);
+    return;
+  }
+  reply::Null(*result);
+}
+
+void HandleTogglePauseRecording(
+    const flutter::MethodCall<flutter::EncodableValue>& call,
+    std::unique_ptr<flutter::MethodResult<flutter::EncodableValue>> result) {
+  std::string session_id;
+  if (const auto* args = AsMap(call.arguments())) {
+    session_id = ReadString(*args, "sessionId");
+  }
+  // Snapshot the engine state to decide which way to flip. The engine
+  // calls themselves are idempotent and re-check state under their own
+  // mutex, so a tiny race here just produces one extra Pause/Resume
+  // event — harmless.
+  const auto state =
+      clingfy::capture::RecordingEngine::Instance().state();
+  std::optional<clingfy::capture::RecordingError> error;
+  if (state == clingfy::capture::RecordingState::kPaused ||
+      state == clingfy::capture::RecordingState::kPausing) {
+    error = clingfy::capture::RecordingEngine::Instance().Resume(session_id);
+  } else {
+    error = clingfy::capture::RecordingEngine::Instance().Pause(session_id);
+  }
+  if (error) {
+    result->Error(error->code, error->message);
+    return;
+  }
   reply::Null(*result);
 }
 
 // `RecordingPauseResumeCapabilities.fromMap` reads `canPauseResume`,
-// `backend`, `strategy`. Phase 3A tells the UI the Windows engine is
-// running on Media Foundation but pause/resume is not yet wired up.
+// `backend`, `strategy`. Phase 4 flips the boolean to `true` (the
+// engine now drives WASAPI Stop/Start + the WGC drop-frame path +
+// the RecordingClock skip-the-gap math) and reports a Windows-
+// specific strategy identifier so diagnostics can surface which
+// pause path is in use.
 void HandleGetRecordingCapabilities(
     const flutter::MethodCall<flutter::EncodableValue>& /*call*/,
     std::unique_ptr<flutter::MethodResult<flutter::EncodableValue>> result) {
   flutter::EncodableMap value{
       {flutter::EncodableValue("canPauseResume"),
-       flutter::EncodableValue(false)},
+       flutter::EncodableValue(true)},
       {flutter::EncodableValue("backend"),
        flutter::EncodableValue("windows_mf")},
       {flutter::EncodableValue("strategy"),
-       flutter::EncodableValue("unsupported")},
+       flutter::EncodableValue("windows_mf_pause")},
   };
   reply::Map(*result, std::move(value));
 }
@@ -222,9 +278,9 @@ void HandleGetCaptureDiagnostics(
 void RegisterHandlers(HandlerTable& table) {
   table["startRecording"] = &HandleStartRecording;
   table["stopRecording"] = &HandleStopRecording;
-  table["pauseRecording"] = &HandlePauseResume;
-  table["resumeRecording"] = &HandlePauseResume;
-  table["togglePauseRecording"] = &HandlePauseResume;
+  table["pauseRecording"] = &HandlePauseRecording;
+  table["resumeRecording"] = &HandleResumeRecording;
+  table["togglePauseRecording"] = &HandleTogglePauseRecording;
   table["getRecordingCapabilities"] = &HandleGetRecordingCapabilities;
 
   table["setRecordingQuality"] = &HandleNoopSetter;

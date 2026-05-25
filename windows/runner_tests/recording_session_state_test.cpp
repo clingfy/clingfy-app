@@ -130,9 +130,69 @@ TEST(RecordingSessionStateTest, ToStringMapsEachState) {
   EXPECT_STREQ(ToString(RecordingState::kIdle), "idle");
   EXPECT_STREQ(ToString(RecordingState::kStarting), "starting");
   EXPECT_STREQ(ToString(RecordingState::kRecording), "recording");
+  EXPECT_STREQ(ToString(RecordingState::kPausing), "pausing");
+  EXPECT_STREQ(ToString(RecordingState::kPaused), "paused");
+  EXPECT_STREQ(ToString(RecordingState::kResuming), "resuming");
   EXPECT_STREQ(ToString(RecordingState::kStopping), "stopping");
   EXPECT_STREQ(ToString(RecordingState::kStopped), "stopped");
   EXPECT_STREQ(ToString(RecordingState::kFailed), "failed");
+}
+
+// === Phase 4: pause / resume transitions ===================================
+
+TEST(RecordingSessionStateTest, PauseResumeRoundTrip) {
+  RecordingSessionState state;
+  ASSERT_TRUE(state.BeginStart("sess-p"));
+  ASSERT_TRUE(state.MarkStarted());
+
+  ASSERT_TRUE(state.BeginPause());
+  EXPECT_EQ(state.state(), RecordingState::kPausing);
+  EXPECT_TRUE(state.IsPausedOrPausing());
+  ASSERT_TRUE(state.MarkPaused());
+  EXPECT_EQ(state.state(), RecordingState::kPaused);
+
+  ASSERT_TRUE(state.BeginResume());
+  EXPECT_EQ(state.state(), RecordingState::kResuming);
+  ASSERT_TRUE(state.MarkResumed());
+  EXPECT_EQ(state.state(), RecordingState::kRecording);
+  EXPECT_FALSE(state.IsPausedOrPausing());
+}
+
+TEST(RecordingSessionStateTest, BeginPauseRejectedOutsideRecording) {
+  RecordingSessionState state;
+  EXPECT_FALSE(state.BeginPause());  // Idle.
+  ASSERT_TRUE(state.BeginStart("sess-1"));
+  EXPECT_FALSE(state.BeginPause())
+      << "Starting -> Pausing is illegal: the capture pipeline isn't fully "
+         "spun up yet.";
+  ASSERT_TRUE(state.MarkStarted());
+  ASSERT_TRUE(state.BeginPause());
+  EXPECT_FALSE(state.BeginPause())
+      << "Pausing -> Pausing is illegal — MarkPaused first.";
+}
+
+TEST(RecordingSessionStateTest, BeginResumeRejectedOutsidePaused) {
+  RecordingSessionState state;
+  ASSERT_TRUE(state.BeginStart("sess-1"));
+  ASSERT_TRUE(state.MarkStarted());
+  EXPECT_FALSE(state.BeginResume()) << "Resume from Recording is illegal.";
+  ASSERT_TRUE(state.BeginPause());
+  EXPECT_FALSE(state.BeginResume()) << "Resume from Pausing is illegal.";
+  ASSERT_TRUE(state.MarkPaused());
+  EXPECT_TRUE(state.BeginResume());
+}
+
+TEST(RecordingSessionStateTest, BeginStopFromPausedIsAllowed) {
+  // Stop-from-Paused is a deliberate finalize — the user pressed
+  // Pause then changed their mind and hit Stop. The engine accepts it
+  // and produces a shorter MP4 instead of refusing.
+  RecordingSessionState state;
+  ASSERT_TRUE(state.BeginStart("sess-1"));
+  ASSERT_TRUE(state.MarkStarted());
+  ASSERT_TRUE(state.BeginPause());
+  ASSERT_TRUE(state.MarkPaused());
+  EXPECT_TRUE(state.BeginStop());
+  EXPECT_EQ(state.state(), RecordingState::kStopping);
 }
 
 }  // namespace

@@ -10,6 +10,12 @@ const char* ToString(RecordingState state) {
       return "starting";
     case RecordingState::kRecording:
       return "recording";
+    case RecordingState::kPausing:
+      return "pausing";
+    case RecordingState::kPaused:
+      return "paused";
+    case RecordingState::kResuming:
+      return "resuming";
     case RecordingState::kStopping:
       return "stopping";
     case RecordingState::kStopped:
@@ -23,7 +29,15 @@ const char* ToString(RecordingState state) {
 bool RecordingSessionState::IsActive() const {
   return state_ == RecordingState::kStarting ||
          state_ == RecordingState::kRecording ||
+         state_ == RecordingState::kPausing ||
+         state_ == RecordingState::kPaused ||
+         state_ == RecordingState::kResuming ||
          state_ == RecordingState::kStopping;
+}
+
+bool RecordingSessionState::IsPausedOrPausing() const {
+  return state_ == RecordingState::kPausing ||
+         state_ == RecordingState::kPaused;
 }
 
 bool RecordingSessionState::BeginStart(std::string session_id) {
@@ -47,12 +61,47 @@ bool RecordingSessionState::MarkStarted() {
   return true;
 }
 
-bool RecordingSessionState::BeginStop() {
-  // Stopping is only valid from Recording. Starting -> Stopping is
-  // intentionally NOT allowed: the engine has to finish the start handshake
-  // before it can request a stop, otherwise capture and encoder ownership
-  // is ambiguous.
+bool RecordingSessionState::BeginPause() {
   if (state_ != RecordingState::kRecording) {
+    return false;
+  }
+  state_ = RecordingState::kPausing;
+  return true;
+}
+
+bool RecordingSessionState::MarkPaused() {
+  if (state_ != RecordingState::kPausing) {
+    return false;
+  }
+  state_ = RecordingState::kPaused;
+  return true;
+}
+
+bool RecordingSessionState::BeginResume() {
+  if (state_ != RecordingState::kPaused) {
+    return false;
+  }
+  state_ = RecordingState::kResuming;
+  return true;
+}
+
+bool RecordingSessionState::MarkResumed() {
+  if (state_ != RecordingState::kResuming) {
+    return false;
+  }
+  state_ = RecordingState::kRecording;
+  return true;
+}
+
+bool RecordingSessionState::BeginStop() {
+  // Phase 4 widens this from Recording-only to {Recording, Paused}.
+  // Stop-from-Paused is a deliberate finalize: the user pressed
+  // Pause, decided they're done, and hit Stop without resuming. We
+  // accept it and let the engine finalize the partial MP4 rather
+  // than refusing the call. Starting / Pausing / Resuming are still
+  // illegal because their underlying captures are mid-transition.
+  if (state_ != RecordingState::kRecording &&
+      state_ != RecordingState::kPaused) {
     return false;
   }
   state_ = RecordingState::kStopping;

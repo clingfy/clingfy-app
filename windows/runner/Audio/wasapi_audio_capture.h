@@ -56,6 +56,14 @@ class WasapiAudioCapture {
   // wait for everything to drain. Safe to call multiple times.
   void Stop();
 
+  // Phase 4: pause / resume. Pause calls IAudioClient::Stop, which
+  // halts buffer production at the OS level — the capture thread
+  // keeps spinning on its event handle but the wait times out
+  // cleanly because no new buffers fire. Resume restarts via
+  // IAudioClient::Start. Both are idempotent.
+  void Pause();
+  void Resume();
+
   WasapiCaptureKind kind() const;
   AudioFormatSnapshot format() const;
   std::uint64_t packets_emitted() const;

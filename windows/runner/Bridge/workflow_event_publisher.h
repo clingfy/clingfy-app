@@ -49,6 +49,8 @@ class WorkflowEventPublisher {
   // listeners (`_handleRecordingStartedEvent`, etc.) work without any
   // Windows-only branching.
   void EmitRecordingStarted(const std::string& session_id);
+  void EmitRecordingPaused(const std::string& session_id);
+  void EmitRecordingResumed(const std::string& session_id);
 
   // `project_path` is the absolute path to the `.clingfyproj` folder.
   // Dart requires a non-empty string here or the finalize is treated as

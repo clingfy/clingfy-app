@@ -12,25 +12,37 @@
 // class so a programming bug surfaces as a structured error rather than a
 // half-baked MP4 on disk.
 //
-// State diagram:
+// State diagram (Phase 4 adds Pausing / Paused / Resuming):
 //
-//   Idle -> Starting -> Recording -> Stopping -> Stopped -+
-//     ^         \           \           \                 |
-//     |          +-----------+-----------+--> Failed --+  |
-//     +-------------------------------------------------+-+
+//   Idle -> Starting -> Recording <-+-> Pausing -> Paused
+//     ^         \           \      |                 |
+//     |          \           \     +- Resuming <-----+
+//     |           \           \           ↓
+//     |            \           Stopping -> Stopped -+
+//     |             \                              |
+//     |              +-------- Failed --+          |
+//     +------------------------------------+-------+
 //                              (Reset)
+//
+// Stop is reachable from both Recording AND Paused — the engine
+// finalizes a paused recording into a (shorter) MP4 rather than
+// refusing the call.
 //
 // The transitions are intentionally narrow: callers can only move forward
 // through the lifecycle, fail out from any active state, or `Reset` back
 // to `Idle` once the session has reached a terminal state. Illegal
 // transitions return `false` instead of throwing — the engine maps that
-// into a structured `ALREADY_RECORDING` / `NOT_RECORDING` error for Dart.
+// into a structured `ALREADY_RECORDING` / `NOT_RECORDING` /
+// `INVALID_RECORDING_STATE` error for Dart.
 namespace clingfy::capture {
 
 enum class RecordingState {
   kIdle,
   kStarting,
   kRecording,
+  kPausing,
+  kPaused,
+  kResuming,
   kStopping,
   kStopped,
   kFailed,
@@ -43,10 +55,15 @@ class RecordingSessionState {
   RecordingState state() const { return state_; }
   std::string_view session_id() const { return session_id_; }
 
-  // True while a session is in flight (Starting / Recording / Stopping).
-  // Used by the engine to reject `Start` while another session is active
-  // and to short-circuit `Stop` when nothing is running.
+  // True while a session is in flight (Starting / Recording / Pausing /
+  // Paused / Resuming / Stopping). Used by the engine to reject `Start`
+  // while another session is active and to short-circuit `Stop` when
+  // nothing is running.
   bool IsActive() const;
+
+  // True while the session is paused or pausing — Phase 4 uses this to
+  // gate pause/resume idempotency at the engine level.
+  bool IsPausedOrPausing() const;
 
   // Idle -> Starting. Returns false if the state machine is anywhere other
   // than Idle / Stopped / Failed (a terminal state can be reused for the
@@ -59,9 +76,20 @@ class RecordingSessionState {
   // asynchronous setup yet.
   bool MarkStarted();
 
-  // Recording -> Stopping. Returns false otherwise. The engine treats a
-  // false return as "nothing to stop" (idempotent stop) rather than an
-  // error.
+  // Recording -> Pausing -> Paused. Each helper returns false if the
+  // state machine refuses the transition (e.g. BeginPause from
+  // anything other than Recording). Phase 4 uses these to drive the
+  // capture pipeline + clock pause / resume.
+  bool BeginPause();
+  bool MarkPaused();
+  bool BeginResume();
+  bool MarkResumed();
+
+  // Recording -> Stopping, OR Paused -> Stopping. Returns false
+  // otherwise. The engine treats a false return as "nothing to stop"
+  // (idempotent stop) rather than an error. Stop-from-Paused is the
+  // user finalizing a paused recording without resuming first; we
+  // accept it and produce a shorter MP4 instead of refusing.
   bool BeginStop();
 
   // Stopping -> Stopped. Clears the session id.

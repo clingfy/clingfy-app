@@ -53,8 +53,8 @@ lifecycle, preview, and basic export.
 | 1     | Full bridge contract parity (every method routed, stubbed)    | done   |
 | 2     | Real device / target discovery                                | done   |
 | 3     | MVP recording (full display + mic + system audio → MP4)       | done   |
-| 4     | Lifecycle parity (state machine, pause/resume, recovery)      | next   |
-| 5     | Preview player + project reopen                               |
+| 4     | Lifecycle parity (state machine, pause/resume, recovery)      | done   |
+| 5     | Preview player + project reopen                               | next   |
 | 6     | Basic export + post-processing (resolution, background, etc.) |
 | 7     | Window + area recording                                       |
 | 8     | Cursor sidecar + smart zoom                                   |
@@ -63,6 +63,40 @@ lifecycle, preview, and basic export.
 
 Detailed scope per phase is tracked in the session task list and in
 [../CLAUDE.md](../CLAUDE.md).
+
+## Current status — Phase 4 (lifecycle parity)
+
+Phase 4 adds pause / resume on top of the Phase 3 MVP recording. The
+state machine grows three transitional states (`Pausing`, `Paused`,
+`Resuming`); the clock learns to subtract the cumulative paused time
+so the encoder's timestamps stay continuous; and WGC + the two WASAPI
+captures gain per-session pause hooks so they don't waste host
+resources while paused.
+
+### Changes summary
+
+| File | What changed |
+| ---- | ------------ |
+| `Capture/recording_clock.{h,cpp}` | `Pause()` / `Resume()` accumulate `paused_hns_`; `ElapsedHns()` subtracts both completed pauses and any in-progress pause's partial duration so the encoder never sees the clock advance while paused. |
+| `Capture/recording_session_state.{h,cpp}` | New `kPausing` / `kPaused` / `kResuming` states. `BeginPause` only valid from Recording; `BeginResume` only from Paused. `BeginStop` widened to accept Paused (the user can press Stop after Pause to finalize the partial recording). |
+| `Capture/wgc_display_capture_backend.{h,cpp}` | Atomic `paused_` flag short-circuits the FrameArrived handler before the texture copy — WGC keeps producing but the frame auto-closes immediately. No queue push, no GPU work. |
+| `Audio/wasapi_audio_capture.{h,cpp}` | `Pause()` calls `IAudioClient::Stop` (the buffer event simply stops firing, the capture thread idles on its WaitForMultipleObjects timeout); `Resume()` calls `Start`. Both idempotent. |
+| `Capture/recording_engine.{h,cpp}` | New `Pause(session_id)` / `Resume(session_id)`. Idempotent at the engine level — already-paused / already-recording returns success. `kNotRecording` when no session is active. Pause order: clock → WGC → mic → loopback; reverse on resume so capture is live before the clock starts producing new timestamps. Emits `recordingPaused` / `recordingResumed` workflow events. |
+| `Bridge/Routers/recording_router.cpp` | `pauseRecording` / `resumeRecording` / `togglePauseRecording` swap from the Phase-1 no-op stubs to real engine calls. `getRecordingCapabilities` flips `canPauseResume:true` with `strategy:"windows_mf_pause"`. |
+| `Bridge/workflow_event_publisher.{h,cpp}` | `EmitRecordingPaused` / `EmitRecordingResumed` helpers matching the macOS `ScreenRecorderEventBridge` payload exactly. |
+
+### What works after Phase 4
+
+- Mid-recording Pause from the Flutter UI freezes audio + video capture. The MP4 the engine eventually writes has no audible / visible discontinuity at the seam — the timestamps "skip" the paused interval.
+- Resume restarts capture from the paused instant. Multiple pause cycles in one recording accumulate cleanly.
+- Stop from Paused finalizes a shorter MP4 rather than refusing the call.
+- `getRecordingCapabilities` reports `canPauseResume:true` so Dart's UI no longer hides the pause button on Windows.
+- Idempotent: double-pause / double-resume / pause-when-idle / resume-when-idle all return the right code (`success`, `success`, `NOT_RECORDING`, `NOT_RECORDING`) without breaking the recording.
+
+### What still doesn't work after Phase 4
+
+- No mid-recording recovery: if the WGC capture session, IAudioClient, or the encoder fail mid-flight, the engine's drain thread logs and continues — the next Stop still finalizes whatever made it through, but there's no proactive watchdog that aborts a broken session.
+- Preview playback (Phase 5) is still the Phase 1 no-op. Once the user clicks the recording in the post-record list, Dart's `previewOpen(projectPath)` reaches the Windows bridge and silently succeeds with nothing to show.
 
 ## Permissions handling (between Phase 3 and Phase 4)
 

@@ -112,6 +112,23 @@ TEST_F(WorkflowEventPublisherTest, RecordingFailedShape) {
   EXPECT_EQ(ReadString(*map, "error"), "missing sessionId");
 }
 
+TEST_F(WorkflowEventPublisherTest, RecordingPausedAndResumedShapes) {
+  auto events = InstallRecordingSink();
+  WorkflowEventPublisher::Instance().EmitRecordingPaused("sess-p");
+  WorkflowEventPublisher::Instance().EmitRecordingResumed("sess-p");
+  ASSERT_EQ(events->size(), 2u);
+
+  const auto* paused = AsMap((*events)[0]);
+  ASSERT_NE(paused, nullptr);
+  EXPECT_EQ(ReadString(*paused, "type"), "recordingPaused");
+  EXPECT_EQ(ReadString(*paused, "sessionId"), "sess-p");
+
+  const auto* resumed = AsMap((*events)[1]);
+  ASSERT_NE(resumed, nullptr);
+  EXPECT_EQ(ReadString(*resumed, "type"), "recordingResumed");
+  EXPECT_EQ(ReadString(*resumed, "sessionId"), "sess-p");
+}
+
 TEST_F(WorkflowEventPublisherTest, RecordingWarningShape) {
   auto events = InstallRecordingSink();
   WorkflowEventPublisher::Instance().EmitRecordingWarning(

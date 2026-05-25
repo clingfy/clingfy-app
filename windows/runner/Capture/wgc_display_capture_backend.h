@@ -61,6 +61,16 @@ class WgcDisplayCaptureBackend {
   // call multiple times.
   void Stop();
 
+  // Phase 4: pause / resume. While paused, the FrameArrived handler
+  // closes incoming WGC frames immediately and drops them on the
+  // floor — no queue push, no extra D3D copies. WGC keeps producing
+  // (we don't close the pool) because re-opening it on resume would
+  // race the GraphicsCaptureItem activation, but the cost is just
+  // wasted work in the system thread pool, not bandwidth or memory.
+  void Pause();
+  void Resume();
+  bool paused() const;
+
   // Snapshot of frame counters for diagnostics / smoke-test logging.
   WgcCaptureStats Stats() const;
 

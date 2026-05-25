@@ -80,6 +80,9 @@ class WgcDisplayCaptureBackend::Impl {
                                        clingfy::graphics::D3DDevice& device,
                                        VideoFrameQueue& queue);
   void Stop();
+  void Pause();
+  void Resume();
+  bool Paused() const;
   WgcCaptureStats Stats() const;
   bool Running() const;
 
@@ -97,6 +100,7 @@ class WgcDisplayCaptureBackend::Impl {
 
   mutable std::mutex mutex_;
   bool running_ = false;
+  std::atomic<bool> paused_{false};
   VideoFrameQueue* queue_ = nullptr;
   Microsoft::WRL::ComPtr<ID3D11Device> d3d_device_;
   Microsoft::WRL::ComPtr<ID3D11DeviceContext> d3d_context_;
@@ -249,6 +253,14 @@ void WgcDisplayCaptureBackend::Impl::OnFrameArrived(
     return;
   }
 
+  // Phase 4 pause path: WGC keeps producing frames (closing the pool
+  // would race the GraphicsCaptureSession activation if the user
+  // resumes a moment later). We just drop them here. The frame auto-
+  // closes on scope exit so the pool's surface returns immediately.
+  if (paused_.load()) {
+    return;
+  }
+
   const auto size = frame.ContentSize();
   const auto timestamp = frame.SystemRelativeTime();
   last_width_.store(static_cast<std::uint32_t>(size.Width));
@@ -338,6 +350,18 @@ bool WgcDisplayCaptureBackend::Impl::Running() const {
   return running_;
 }
 
+void WgcDisplayCaptureBackend::Impl::Pause() {
+  paused_.store(true);
+}
+
+void WgcDisplayCaptureBackend::Impl::Resume() {
+  paused_.store(false);
+}
+
+bool WgcDisplayCaptureBackend::Impl::Paused() const {
+  return paused_.load();
+}
+
 // ---- Public pimpl forwarding ----------------------------------------------
 
 WgcDisplayCaptureBackend::WgcDisplayCaptureBackend()
@@ -360,6 +384,22 @@ void WgcDisplayCaptureBackend::Stop() {
   if (impl_) {
     impl_->Stop();
   }
+}
+
+void WgcDisplayCaptureBackend::Pause() {
+  if (impl_) {
+    impl_->Pause();
+  }
+}
+
+void WgcDisplayCaptureBackend::Resume() {
+  if (impl_) {
+    impl_->Resume();
+  }
+}
+
+bool WgcDisplayCaptureBackend::paused() const {
+  return impl_ && impl_->Paused();
 }
 
 WgcCaptureStats WgcDisplayCaptureBackend::Stats() const {
