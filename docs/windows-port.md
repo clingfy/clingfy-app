@@ -52,7 +52,7 @@ lifecycle, preview, and basic export.
 | 0     | App launches; native bridge stubs; no MissingPluginException  | done   |
 | 1     | Full bridge contract parity (every method routed, stubbed)    | done   |
 | 2     | Real device / target discovery                                | done   |
-| 3     | MVP recording (full display + mic + system audio → MP4)       | in progress (3A+3B done, 3C next) |
+| 3     | MVP recording (full display + mic + system audio → MP4)       | in progress (3A+3B+3C done, 3D next) |
 | 4     | Lifecycle parity (state machine, pause/resume, recovery)      |
 | 5     | Preview player + project reopen                               |
 | 6     | Basic export + post-processing (resolution, background, etc.) |
@@ -63,6 +63,89 @@ lifecycle, preview, and basic export.
 
 Detailed scope per phase is tracked in the session task list and in
 [../CLAUDE.md](../CLAUDE.md).
+
+## Current status — Phase 3C
+
+Phase 3C drains the `VideoFrameQueue` Phase 3B set up and writes a
+playable MP4 to disk. The recording lifecycle is now end-to-end at the
+video level: start → frames arrive → samples encoded → stop → MP4
+finalized.
+
+### New files
+
+```
+windows/runner/Encoding/
+  mf_encoder_config.{h,cpp}      Plain config struct (width, height, fps,
+                                 bitrate, output path) + Validate(). Pure,
+                                 unit-tested without touching MF.
+  encoder_output_path.{h,cpp}    Phase-3C output-path helper. Sanitizes
+                                 sessionId (any non `[A-Za-z0-9._-]` →
+                                 `_`) and joins under %TEMP%. Phase 3E
+                                 swaps this for the real project folder.
+  mf_dxgi_manager.{h,cpp}        Tiny RAII wrapper around
+                                 IMFDXGIDeviceManager — required to
+                                 engage the hardware H.264 encoder MFT,
+                                 without it MF silently falls back to
+                                 software encode.
+  mf_sink_writer_encoder.{h,cpp} Wraps IMFSinkWriter. Open() configures
+                                 hardware H.264 output + ARGB32 input
+                                 over MP4. WriteVideoFrame() translates a
+                                 CapturedVideoFrame into an IMFSample via
+                                 MFCreateDXGISurfaceBuffer. Finalize()
+                                 closes the MOOV atom out so the file is
+                                 playable. Re-bases timestamps so the
+                                 MP4 always starts at t=0.
+```
+
+### Capture-side change
+
+The Phase 3B FrameArrived handler pushed metadata with `texture =
+nullptr` because the WGC frame-pool surface gets recycled as soon as
+the `Direct3D11CaptureFrame` auto-closes. Phase 3C extracts the
+underlying `ID3D11Texture2D`, copies it into a freshly-allocated
+staging texture via `ID3D11DeviceContext::CopyResource`, and pushes
+that into the queue instead. The encoder can hold the staging texture
+through `WriteSample` and release it via the IMFSample's normal COM
+refcount path.
+
+### Engine integration
+
+`RecordingEngine::Start` now spins up the MP4 encoder + a dedicated
+drain thread that blocks on `frame_queue_->Pop()` and feeds frames to
+the encoder. `RecordingEngine::Stop` closes the queue (wakes the
+drain), joins the thread, then calls `encoder_->Finalize()` so the MP4
+footer is written before `stopRecording` returns success to Dart. If
+any of the start steps fails, `TeardownPipeline` rolls everything back
+in the right order so the next Start is a clean retry.
+
+`getRecordingCapabilities` still reports `canPauseResume: false` and
+`backend: "windows_mf"`. The engine's `Diagnostics()` now also tracks
+`samples_written` and `output_path` so 3E can wire those onto the
+bridge.
+
+### Output
+
+`%TEMP%\clingfy_<sanitized-sessionId>.mp4`. Pickable in any media
+player. Phase 3E moves this into the real Clingfy project folder.
+
+### What works after Phase 3C
+
+- 5–10 second display recording produces a playable MP4.
+- Stop finalizes the MOOV atom — file is not 0 bytes; duration is
+  roughly correct (within a few hundred ms of wall-clock).
+- A second startRecording after stopRecording works (the engine resets
+  cleanly).
+- `BAD_MODE` for non-display targets, `BAD_ARGS` for invalid frame
+  rates, `RECORDING_ERROR` for D3D / MF setup failures.
+
+### What still doesn't work after Phase 3C
+
+- No audio at all (Phase 3D — WASAPI mic + system loopback, AAC
+  encoded into the same MP4).
+- No workflow events on `workflow/events` — Flutter UI still parks in
+  "starting" after a successful `startRecording`. Phase 3E.
+- The MP4 lands in `%TEMP%`; recent recordings + project format land
+  alongside the workflow events in 3E.
 
 ## Current status — Phase 3B
 
@@ -159,8 +242,8 @@ against develop instead of one giant landing:
 | --------- | ---- | ------ |
 | 3A | Recording engine skeleton + honest capability gate | done |
 | 3B | WGC full-display video capture (frames arrive, no MP4 yet) | done |
-| 3C | MP4 / H.264 video writer (Media Foundation Sink Writer) | next |
-| 3D | WASAPI microphone + system-audio capture, mixed into the MP4 | |
+| 3C | MP4 / H.264 video writer (Media Foundation Sink Writer) | done |
+| 3D | WASAPI microphone + system-audio capture, mixed into the MP4 | next |
 | 3E | Project manifest + workflow events so Flutter sees a real recording | |
 
 Phase 3A introduces `windows/runner/Capture/`:

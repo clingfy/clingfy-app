@@ -24,6 +24,23 @@
 #include "Capture/captured_video_frame.h"
 #include "Graphics/d3d_device.h"
 
+// `IDirect3DDxgiInterfaceAccess` lets us pull the underlying
+// ID3D11Texture2D out of the WinRT IDirect3DSurface that
+// `Direct3D11CaptureFrame::Surface` returns. Microsoft's SDK header
+// `Windows.Graphics.DirectX.Direct3D11.Interop.h` is supposed to declare
+// this — and on most build configurations it does — but in some
+// compiler / pre-processor combinations the C++ block stays guarded out
+// and the symbol is missing. Forward-declaring it inline with the
+// canonical IID (stable since Windows 8) keeps the build self-contained
+// without forcing every consumer of this file to fight a
+// platform-toolset version.
+extern "C++" {
+struct __declspec(uuid("A9B3D012-3DF2-4EE3-B8D1-8695F457D3C1"))
+    IDirect3DDxgiInterfaceAccess : public IUnknown {
+  virtual HRESULT __stdcall GetInterface(REFIID iid, void** p) = 0;
+};
+}
+
 namespace clingfy::capture {
 
 namespace {
@@ -71,9 +88,18 @@ class WgcDisplayCaptureBackend::Impl {
       wgc::Direct3D11CaptureFramePool const& sender,
       winrt::Windows::Foundation::IInspectable const& args);
 
+  // Copies a WGC frame's texture into a freshly-allocated staging texture
+  // that the encoder can hold past the WGC frame's auto-close. Returns
+  // nullptr if any of the COM calls fail; the FrameArrived handler treats
+  // that as "drop this frame" rather than failing the recording.
+  Microsoft::WRL::ComPtr<ID3D11Texture2D> CopyIntoStagingTexture(
+      ID3D11Texture2D* source);
+
   mutable std::mutex mutex_;
   bool running_ = false;
   VideoFrameQueue* queue_ = nullptr;
+  Microsoft::WRL::ComPtr<ID3D11Device> d3d_device_;
+  Microsoft::WRL::ComPtr<ID3D11DeviceContext> d3d_context_;
 
   wgc::GraphicsCaptureItem item_{nullptr};
   wgc::Direct3D11CaptureFramePool pool_{nullptr};
@@ -135,6 +161,12 @@ std::optional<WgcCaptureError> WgcDisplayCaptureBackend::Impl::Start(
     item_ = item;
     pool_ = pool;
     queue_ = &queue;
+    // Keep refcounts on the D3D device / context so the FrameArrived
+    // copy path stays valid even if the engine's D3DDevice wrapper is
+    // released mid-flight (the encoder, which also holds a refcount,
+    // owns the actual device-lifetime contract).
+    d3d_device_ = device.device();
+    d3d_context_ = device.context();
     running_ = true;
 
     frame_token_ = pool_.FrameArrived(
@@ -155,6 +187,45 @@ std::optional<WgcCaptureError> WgcDisplayCaptureBackend::Impl::Start(
     session_ = nullptr;
     return WgcCaptureError{winrt::to_string(ex.message()), ex.code()};
   }
+}
+
+Microsoft::WRL::ComPtr<ID3D11Texture2D>
+WgcDisplayCaptureBackend::Impl::CopyIntoStagingTexture(
+    ID3D11Texture2D* source) {
+  if (source == nullptr || d3d_device_ == nullptr || d3d_context_ == nullptr) {
+    return nullptr;
+  }
+  D3D11_TEXTURE2D_DESC src_desc{};
+  source->GetDesc(&src_desc);
+
+  // Mirror the source dimensions / format but force a fresh resource
+  // that the encoder can hold past the WGC frame's auto-close. We strip
+  // CPU-access flags because all consumption happens on the GPU, and
+  // request RenderTarget + ShaderResource bind so the H.264 MFT can
+  // attach the texture as input — both bind flags are widely supported
+  // and forgiving across drivers.
+  D3D11_TEXTURE2D_DESC dst_desc{};
+  dst_desc.Width = src_desc.Width;
+  dst_desc.Height = src_desc.Height;
+  dst_desc.MipLevels = 1;
+  dst_desc.ArraySize = 1;
+  dst_desc.Format = src_desc.Format;
+  dst_desc.SampleDesc.Count = 1;
+  dst_desc.SampleDesc.Quality = 0;
+  dst_desc.Usage = D3D11_USAGE_DEFAULT;
+  dst_desc.BindFlags =
+      D3D11_BIND_RENDER_TARGET | D3D11_BIND_SHADER_RESOURCE;
+  dst_desc.CPUAccessFlags = 0;
+  dst_desc.MiscFlags = 0;
+
+  Microsoft::WRL::ComPtr<ID3D11Texture2D> staging;
+  HRESULT hr = d3d_device_->CreateTexture2D(&dst_desc, nullptr,
+                                             staging.GetAddressOf());
+  if (FAILED(hr) || staging == nullptr) {
+    return nullptr;
+  }
+  d3d_context_->CopyResource(staging.Get(), source);
+  return staging;
 }
 
 void WgcDisplayCaptureBackend::Impl::OnFrameArrived(
@@ -184,15 +255,31 @@ void WgcDisplayCaptureBackend::Impl::OnFrameArrived(
   last_height_.store(static_cast<std::uint32_t>(size.Height));
   frames_received_.fetch_add(1);
 
+  // Extract the underlying D3D11 texture from the WGC frame's
+  // IDirect3DSurface via the interop interface, then copy it into a
+  // staging texture WE own so the encoder can hold the pixels past
+  // `frame`'s auto-close. The leading `::` on the COM interface name
+  // disambiguates it from any C++/WinRT projection of the same name.
+  Microsoft::WRL::ComPtr<ID3D11Texture2D> staging;
+  {
+    auto surface = frame.Surface();
+    auto access = surface.as<::IDirect3DDxgiInterfaceAccess>();
+    Microsoft::WRL::ComPtr<ID3D11Texture2D> source;
+    if (SUCCEEDED(access->GetInterface(
+            __uuidof(ID3D11Texture2D),
+            reinterpret_cast<void**>(source.GetAddressOf()))) &&
+        source != nullptr) {
+      std::lock_guard<std::mutex> lock(mutex_);
+      staging = CopyIntoStagingTexture(source.Get());
+    }
+  }
+
   if (queue_snapshot != nullptr) {
     CapturedVideoFrame out;
     out.width = static_cast<std::uint32_t>(size.Width);
     out.height = static_cast<std::uint32_t>(size.Height);
     out.timestamp_hns = timestamp.count();
-    // Texture intentionally left null in Phase 3B — Phase 3C will copy
-    // the surface into a staging texture (or use a separately-managed
-    // texture pool) before pushing, since the WGC frame-pool buffer
-    // gets recycled as soon as `frame` goes out of scope.
+    out.texture = staging;  // null if the copy failed -> encoder skips it.
     queue_snapshot->Push(std::move(out));
   }
 
@@ -223,6 +310,8 @@ void WgcDisplayCaptureBackend::Impl::Stop() {
     session_ = nullptr;
     item_ = nullptr;
     frame_token_ = winrt::event_token{};
+    d3d_context_.Reset();
+    d3d_device_.Reset();
   }
 
   if (pool && token.value != 0) {

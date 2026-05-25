@@ -35,6 +35,8 @@ add_executable(runner_tests
   "bridge_contract_coverage_test.cpp"
   "router_stub_shapes_test.cpp"
   "device_record_test.cpp"
+  "encoder_output_path_test.cpp"
+  "mf_encoder_config_test.cpp"
   "recording_clock_test.cpp"
   "recording_engine_test.cpp"
   "recording_session_state_test.cpp"
