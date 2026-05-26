@@ -76,6 +76,25 @@ if(BUILD_RUNNER_TESTS)
 endif()
 
 
+# === Optional Windows Phase 5 live-compositor POC ===
+#
+# Opt-in target. `flutter build windows` does NOT enable this -- it only
+# builds the runner executable. The POC is a standalone Win32 GUI exe
+# used to de-risk the Phase 5 design before any production wiring goes
+# in. Build with:
+#
+#   cmake -S windows -B build/windows-poc -DBUILD_LIVE_COMPOSITOR_POC=ON
+#   cmake --build build/windows-poc --config Debug --target live_compositor_demo
+#
+# See windows/runner/preview/live_compositor_demo.cpp for what it does
+# and what is intentionally out of scope.
+option(BUILD_LIVE_COMPOSITOR_POC
+  "Build the Windows Phase 5 live-compositor POC executable" OFF)
+if(BUILD_LIVE_COMPOSITOR_POC)
+  add_subdirectory("runner/preview")
+endif()
+
+
 # === Installation ===
 # Support files are copied into place next to the executable, so that it can
 # run in place. This is done instead of making a separate bundle (as on Linux)
