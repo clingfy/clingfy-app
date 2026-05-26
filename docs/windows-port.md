@@ -54,7 +54,7 @@ lifecycle, preview, and basic export.
 | 2     | Real device / target discovery                                | done   |
 | 3     | MVP recording (full display + mic + system audio → MP4)       | done   |
 | 4     | Lifecycle parity (state machine, pause/resume, recovery)      | done   |
-| 5     | Preview player + project reopen                               | next   |
+| 5     | Preview player + project reopen                               | POC done, design v2 next |
 | 6     | Basic export + post-processing (resolution, background, etc.) |
 | 7     | Window + area recording                                       |
 | 8     | Cursor sidecar + smart zoom                                   |
@@ -96,7 +96,28 @@ resources while paused.
 ### What still doesn't work after Phase 4
 
 - No mid-recording recovery: if the WGC capture session, IAudioClient, or the encoder fail mid-flight, the engine's drain thread logs and continues — the next Stop still finalizes whatever made it through, but there's no proactive watchdog that aborts a broken session.
-- Preview playback (Phase 5) is still the Phase 1 no-op. Once the user clicks the recording in the post-record list, Dart's `previewOpen(projectPath)` reaches the Windows bridge and silently succeeds with nothing to show.
+- Preview playback (Phase 5) is still the Phase 1 no-op. Once the user clicks the recording in the post-record list, Dart's `previewOpen(projectPath)` reaches the Windows bridge and silently succeeds with nothing to show. The renderer that fills this gap is locked — see "Phase 5 POC — architecture decision" below — but production code has not been written yet.
+
+## Phase 5 POC — architecture decision (between Phase 4 and Phase 5)
+
+Phase 5 production is gated on a runtime architecture decision: how a decoded video frame becomes pixels inside the Flutter preview view. To make that decision on evidence rather than speculation, the port ran a sequenced POC under `windows/runner/preview/` (gated by the `BUILD_LIVE_COMPOSITOR_POC` CMake option for the standalone demos and by `--dart-define=POC_STAGE_2A=true` for the in-app debug screen). Nothing in the POC ships in production builds: `flutter build windows` never enters the POC CMakeLists, and the dart-define-gated debug screen tree-shakes out of release Dart.
+
+POC sequence (most recent last; all merged into `develop`):
+
+| PR  | Stage  | What it proved |
+| --- | ------ | -------------- |
+| #96 | Step 0 | Zoom / easing constants moved to a shared Windows header, parity-tested against macOS Swift. |
+| #97 | 1A0    | Direct2D on an HWND swap chain — 2D rendering / Present is alive in our build. |
+| #98 | 1B     | MediaPlayer frame-server → Direct2D on HWND. Real decoded video at the per-frame budget. |
+| #100 | 1C    | Stage 1B + cursor JSONL → smart-zoom + radial halo composition. |
+| #101 | 1D    | Stage 1C + scrub slider + 30 s measurement window + Markdown verdict artifact. Total median **4.040 ms**, p99 **4.991 ms**. |
+| #102 | 2A-1  | DXGI shared-handle texture (solid-color animated) → Flutter `Texture(textureId:)`. Raster median **0.865 ms**, p99 **1.858 ms**. Confirmed legacy `IDXGIResource::GetSharedHandle` is required; NT handles + keyed mutex crash. |
+| #103 | 2A-2 Phase A | Extract `PreviewCompositor` into the shared `preview_poc_common` static lib so the HWND demo and the Flutter bridge consume the same composition logic. |
+| #104 | 2A-2 Phase B+ | Real MediaPlayer → `PreviewCompositor` → DXGI shared handle → Flutter `Texture`. Native total median **4.178 ms**, p99 **6.001 ms**; Flutter raster median **0.886 ms**, p99 **10.741 ms**; 712 frames, 0 dropped — all under the 16 / 25 ms design-doc bar. |
+
+The resulting decision is recorded in [decisions/windows-phase-5-preview-architecture.md](decisions/windows-phase-5-preview-architecture.md). Summary: **Approach A is accepted** — WinRT MediaPlayer frame-server + `PreviewCompositor` + `D3D11_RESOURCE_MISC_SHARED` + Flutter `Texture` widget, with the Flutter shell as the visible preview surface. That note also lists the locked technical choices (legacy shared handle only, multi-thread-protected D3D11 + `MULTI_THREADED` D2D factory, explicit `Flush` before mark-frame-available) and the known follow-ups that production must address before ship (texture unregister stability on Intel iGPU, audio path, multi-GPU validation, the move out of `poc_stage_2a/` into `preview/` proper).
+
+The Phase 5 design v2 PR (intended #106) turns the locked architecture into a production implementation order: `previewOpen`, `previewPlay` / `previewPause`, `previewSeekTo`, `player/events`, `getRecordingSceneInfo`, `.clingfy` project reopen. Production work on `previewOpen` does not start until that design lands.
 
 ## Permissions handling (between Phase 3 and Phase 4)
 
