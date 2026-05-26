@@ -1,51 +1,91 @@
 cmake_minimum_required(VERSION 3.14)
-project(live_compositor_demo LANGUAGES CXX)
+project(live_compositor_pocs LANGUAGES CXX)
 
-# === Windows Phase 5 POC — Stage 1A0 executable ===
+# === Windows Phase 5 POC executables ===
 #
-# Opt-in target. `flutter build windows` never enters this CMakeLists
-# because the parent windows/CMakeLists.txt only `add_subdirectory(...)`s
-# us when BUILD_LIVE_COMPOSITOR_POC=ON. So the option is invisible by
+# Opt-in. `flutter build windows` never enters this CMakeLists because
+# the parent windows/CMakeLists.txt only `add_subdirectory(...)`s us
+# when BUILD_LIVE_COMPOSITOR_POC=ON. So the option is invisible by
 # default and adds nothing to normal app builds.
 #
-# Stage 1A0 is the Direct2D HWND timing harness — pure GPU 2D rendering
-# + QPC frame timing, no video decode. Stage 1B adds MediaPlayer
-# frame-server feeding the same Direct2D path; Win2D / WindowsAppSDK
-# come later, only if the Direct2D path doesn't suffice.
+# Two peer executables live here, one per POC sub-stage. Both are
+# single-file Win32 GUI apps that share frame_timing.{h,cpp}.
 #
-# Stage 1A0 deliberately depends on nothing beyond what the Windows SDK
-# ships:
-#   * d2d1.lib       — Direct2D 1.1
-#   * d3d11.lib      — Direct3D 11 device
-#   * dxgi.lib       — DXGI 1.2 swap chain
+#   live_compositor_demo
+#     Stage 1A0 — Direct2D HWND timing harness. Animated square +
+#     QPC frame timing. No video. Proves the GPU 2D rendering /
+#     swap-chain / Present slice works in our build.
+#
+#   mediaplayer_frame_server_demo
+#     Stage 1B — MediaPlayer frame-server → Direct2D HWND. Loads
+#     a real MP4, runs CopyFrameToVideoSurface in
+#     IsVideoFrameServerEnabled mode, blits the decoded frame
+#     onto the same swap-chain back buffer Stage 1A0 used. Pulls
+#     in C++/WinRT headers and windowsapp.lib for MediaPlayer.
+#
+# Stage 1B is what the Phase 5 design doc Stage-1 milestone measures.
+# Win2D / WindowsAppSDK come later, only if the Direct2D path doesn't
+# suffice.
 
-add_executable(live_compositor_demo WIN32
-  "live_compositor_demo.cpp"
+# Shared helper library — `FrameTimingCollector` plus its translation
+# unit. Both executables link this rather than each compiling
+# `frame_timing.cpp` independently.
+add_library(preview_poc_common STATIC
   "frame_timing.cpp"
 )
+apply_standard_settings(preview_poc_common)
+target_compile_definitions(preview_poc_common PRIVATE "NOMINMAX")
+target_include_directories(preview_poc_common
+  PUBLIC "${CMAKE_CURRENT_SOURCE_DIR}/..")
+set_target_properties(preview_poc_common PROPERTIES
+  CXX_STANDARD 17
+  CXX_STANDARD_REQUIRED ON
+  CXX_EXTENSIONS OFF
+)
 
-# Pick up the project-wide standard settings (cxx_std_17, /W4 /WX, etc.).
-# These are defined as a function on the parent scope by the top-level
-# windows/CMakeLists.txt.
+# --- Stage 1A0: live_compositor_demo --------------------------------
+# Depends on nothing beyond what the Windows SDK ships:
+#   d2d1.lib  — Direct2D 1.1
+#   d3d11.lib — Direct3D 11 device
+#   dxgi.lib  — DXGI 1.2 swap chain
+add_executable(live_compositor_demo WIN32
+  "live_compositor_demo.cpp"
+)
 apply_standard_settings(live_compositor_demo)
-
-# The POC includes its own headers via `#include "preview/foo.h"` paths.
-# Add the windows/runner directory as an include root so those paths
-# resolve. Done as PRIVATE because nothing else links against this
-# executable.
-target_include_directories(live_compositor_demo
-  PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}/..")
-
 target_compile_definitions(live_compositor_demo PRIVATE "NOMINMAX")
-
 target_link_libraries(live_compositor_demo
   PRIVATE
+    preview_poc_common
     "d2d1.lib"
     "d3d11.lib"
     "dxgi.lib"
 )
-
 set_target_properties(live_compositor_demo PROPERTIES
+  CXX_STANDARD 17
+  CXX_STANDARD_REQUIRED ON
+  CXX_EXTENSIONS OFF
+)
+
+# --- Stage 1B: mediaplayer_frame_server_demo ------------------------
+# Adds on top of Stage 1A0's link set:
+#   windowsapp.lib   — WinRT activation + CreateDirect3D11*From* exports
+#   runtimeobject.lib — used by C++/WinRT for WindowsCreateString etc.
+add_executable(mediaplayer_frame_server_demo WIN32
+  "mediaplayer_frame_server_demo.cpp"
+)
+apply_standard_settings(mediaplayer_frame_server_demo)
+target_compile_definitions(mediaplayer_frame_server_demo PRIVATE "NOMINMAX")
+target_link_libraries(mediaplayer_frame_server_demo
+  PRIVATE
+    preview_poc_common
+    "d2d1.lib"
+    "d3d11.lib"
+    "dxgi.lib"
+    "windowsapp.lib"
+    "runtimeobject.lib"
+    "shell32.lib"  # CommandLineToArgvW
+)
+set_target_properties(mediaplayer_frame_server_demo PROPERTIES
   CXX_STANDARD 17
   CXX_STANDARD_REQUIRED ON
   CXX_EXTENSIONS OFF
