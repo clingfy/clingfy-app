@@ -1,49 +1,61 @@
-// Windows Phase 5 POC — Stage 1B (video-only) + Stage 1C (video + cursor).
+// Windows Phase 5 POC — Stage 1B (video-only)
+//                     + Stage 1C (video + cursor)
+//                     + Stage 1D (1C + seek slider + 30 s measurement)
 //
-// What this is: the second opt-in standalone Win32 GUI executable in the
-// preview/ POC set, peer to live_compositor_demo.exe from Stage 1A0.
-// One binary covers both Stage 1B and Stage 1C measurement runs:
+// One opt-in standalone Win32 GUI executable. Three modes, decided
+// purely by the CLI arguments at startup:
 //
-//   * Pass --video=PATH only (or just `CLINGFY_POC_VIDEO`):
-//     Stage 1B behavior — load the MP4 via MediaPlayer frame-server,
+//   * --video=PATH only (or just `CLINGFY_POC_VIDEO`):
+//     Stage 1B behavior. Load the MP4 via MediaPlayer frame-server,
 //     CopyFrameToVideoSurface onto an offscreen D3D11 texture, D2D
 //     blit (letterboxed) onto the swap-chain back buffer, Present.
-//     STAGE1B_STATS goes to stderr on close.
+//     STAGE1B_STATS to stderr on close.
 //
-//   * Pass --cursor=PATH too (or `CLINGFY_POC_CURSOR`):
-//     Stage 1C behavior — same pipeline, plus per-frame cursor /
-//     click composition. cursor.jsonl is hand-authored, one JSON
-//     object per line, with fields:
+//   * --video=PATH plus --cursor=PATH (or `CLINGFY_POC_CURSOR`):
+//     Stage 1C behavior — same pipeline, plus per-frame
+//     cursor / click composition. cursor.jsonl is hand-authored,
+//     one JSON object per line:
 //         ts_us         video-timeline timestamp (microseconds)
 //         x, y          cursor position in VIDEO PIXEL coordinates
 //         button_state  0 = up sample, non-zero = mouse-down
 //         monitor_id    integer, currently unused
-//     The compositor looks up the nearest cursor sample for the
-//     current playback timestamp and the nearest CLICK event within
-//     ±500 ms of it. A click triggers a zoom-in to
-//     `kZoomFactorDefault` centered on the click position. After the
-//     `kZoomMinOnSeconds` hold expires it decays back to 1.0×. A
-//     radial highlight is drawn at the cursor position with alpha
-//     tied to the zoom intensity. STAGE1C_STATS goes to stderr on
-//     close, with separate per-bucket lines (total / copy / render /
-//     present).
+//     A click within ±500 ms of playback ts triggers a zoom-in to
+//     `kZoomFactorDefault` centered on the click. After the
+//     `kZoomMinOnSeconds` hold expires it decays back to 1.0×.
+//     A radial highlight is drawn at the cursor position with
+//     alpha tied to zoom intensity. STAGE1C_STATS (four bucket
+//     lines: total / copy / render / present) to stderr on close.
 //
-// What this is NOT: production code. It is not linked into the main
-// Flutter app. It does not touch the bridge contract or any
-// production preview surface. The cmake option
-// BUILD_LIVE_COMPOSITOR_POC defaults to OFF, so `flutter build
-// windows` ignores this file entirely.
+//   * Either of the above, AND the 30-second measurement window
+//     automatically completes:
+//     Stage 1D behavior. Same stderr output as 1B / 1C plus a
+//     Markdown summary at `build/windows-poc/stage1d_result.md`
+//     with:
+//        * header (UTC timestamp + branch)
+//        * system info (Windows build, GPU description, video
+//          natural size, source FPS proxy)
+//        * per-bucket stats (median / p99 / max / dropped)
+//        * seek samples (target ts, latency, source = user/programmed)
+//        * verdict line vs the design-doc bar (median ≤ 16 ms,
+//          p99 ≤ 25 ms total)
+//     A native Win32 trackbar at the bottom of the window lets the
+//     user scrub. Two programmed seeks fire automatically inside
+//     the measurement window (at elapsed = 7 s and 22 s) so the
+//     report always has at least two seek samples even with no
+//     human input.
 //
-// Stage 1C deliberately stays inside the same constraints as 1A0/1B:
-//   - No seek slider.
-//   - No Flutter Texture bridge.
-//   - No real cursor sidecar capture (hand-authored JSONL only).
-//   - No production preview/player bridge methods touched.
-//   - No Dart bridge contract touched.
-//   - All zoom timing / intensity constants come from
-//     `preview/zoom_easing_constants.h`, the source-of-truth header
-//     populated in Step 0 (#96). Never hard-code a zoom magnitude
-//     or smoother strength here.
+// What this is NOT: production code. Not linked into the main
+// Flutter app. Does not touch the bridge contract or any production
+// preview surface. The cmake option BUILD_LIVE_COMPOSITOR_POC
+// defaults to OFF, so `flutter build windows` ignores this file
+// entirely. No production previewOpen / previewPlay / previewSeekTo
+// touched. No Dart bridge contract additions. No real cursor sidecar
+// capture (hand-authored JSONL only). No Flutter Texture bridge —
+// that is Stage 2's whole job.
+//
+// All zoom timing / intensity constants come from
+// `preview/zoom_easing_constants.h` (the Step 0 #96 header).
+// Never hard-code a zoom magnitude or smoother strength here.
 //
 // Threading note: VideoFrameAvailable fires on a WinRT thread-pool
 // worker. We do the whole render-and-present on that worker thread.
@@ -61,6 +73,8 @@
 // NOMINMAX is set via target_compile_definitions in the POC CMakeLists.
 
 #include <windows.h>
+#include <winternl.h>  // RTL_OSVERSIONINFOW + NTSTATUS for WindowsVersionString
+#include <commctrl.h>
 #include <shellapi.h>
 #include <inspectable.h>
 #include <d2d1_1.h>
@@ -80,11 +94,13 @@
 
 #include <algorithm>
 #include <atomic>
+#include <chrono>
 #include <cmath>
 #include <cstdint>
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
+#include <ctime>
 #include <fstream>
 #include <mutex>
 #include <sstream>
@@ -109,34 +125,64 @@ constexpr wchar_t kWindowTitle[] =
 constexpr int kDefaultWidth = 1280;
 constexpr int kDefaultHeight = 720;
 
-// ±500 ms click-lookup window. Per the Stage 1C instructions; not a
-// constant from zoom_easing_constants.h because it describes the POC's
-// hand-authored cursor.jsonl semantics, not the macOS smoother math.
+// ±500 ms click-lookup window. POC-specific (cursor.jsonl semantics),
+// not a constant from zoom_easing_constants.h.
 constexpr std::int64_t kClickLookupWindowUs = 500'000;
 
-// Cursor highlight radius in BACK BUFFER PIXELS. The Stage 1C scope
-// adds a radial halo at the cursor position; the macOS engine does not
-// have a parity constant for this (we explicitly excluded it from
-// zoom_easing_constants.h to avoid inventing one). 60 px reads well at
-// 1280×720 and 1920×1080 default windows; future production work can
-// scale it with viewport DPI.
+// Cursor highlight radius in BACK BUFFER PIXELS. The macOS engine has
+// no parity constant for this; documented inline as a POC choice.
 constexpr float kHighlightRadiusPx = 60.0f;
 
+// --- Stage 1D constants -----------------------------------------------
+// Pixel reservation at the bottom of the client area for the Win32
+// trackbar control. Slider sits inside, video dest rect is computed
+// against (client_height - kSliderStripPx).
+constexpr int kSliderStripPx = 36;
+// Slider range: 0..1000 = 0..100.0 % of NaturalDuration. 0.1 %
+// resolution is plenty for a scrub UI; the actual MediaPlayer seek
+// target is computed in TimeSpan ticks so the round-trip stays exact
+// at the API boundary.
+constexpr int kSliderRange = 1000;
+// Timer that polls MediaPlayer.PlaybackSession.Position and updates the
+// trackbar thumb to match. UI thread. 100 ms feels live without
+// flooding the window queue.
+constexpr UINT_PTR kPositionPollTimerId = 1;
+constexpr UINT kPositionPollPeriodMs = 100;
+// Stage 1D measurement window. Frames inside [first_frame_qpc,
+// first_frame_qpc + kMeasurementWindowSeconds] count toward the
+// per-bucket stats; frames outside still render but are ignored by
+// the collectors.
+constexpr double kMeasurementWindowSeconds = 30.0;
+// Programmed seek schedule, in seconds since measurement start. Each
+// fires exactly once; the latency is measured against the next
+// VideoFrameAvailable. Picked at 7 s and 22 s so the report always has
+// at least two seek samples even if the user never touches the slider
+// during the run.
+constexpr double kProgrammedSeek1Seconds = 7.0;
+constexpr double kProgrammedSeek2Seconds = 22.0;
+// Where the Stage 1D markdown artifact is written. Relative to the
+// current working directory at exe launch — typically the repo root
+// when run via the documented `build/windows-poc/...` path.
+constexpr wchar_t kStage1dResultPath[] =
+    L"build\\windows-poc\\stage1d_result.md";
+
+// Design-doc Stage-1 pass bar (the verdict line in the artifact
+// compares against these). 1080p, total bucket.
+constexpr double kPassBarMedianMs = 16.0;
+constexpr double kPassBarP99Ms = 25.0;
+
 // ---------------------------------------------------------------------
-// Cursor event model + hand-authored JSONL loader
+// Cursor event model + hand-authored JSONL loader (unchanged from 1C)
 // ---------------------------------------------------------------------
 
 struct CursorEvent {
-  std::int64_t ts_us = 0;     // video-timeline timestamp, microseconds
-  double x = 0.0;             // video pixel x
-  double y = 0.0;             // video pixel y
-  int button_state = 0;       // 0 = up sample, non-zero = mouse-down
-  int monitor_id = 0;         // currently unused; preserved for symmetry
+  std::int64_t ts_us = 0;
+  double x = 0.0;
+  double y = 0.0;
+  int button_state = 0;
+  int monitor_id = 0;
 };
 
-// Skip whitespace at the start of [pos, s.size()). Returns the new
-// index. JSON allows space, tab, newline, carriage return between
-// tokens; this matches that set.
 std::size_t SkipWs(const std::string& s, std::size_t pos) {
   while (pos < s.size() &&
          (s[pos] == ' ' || s[pos] == '\t' || s[pos] == '\n' ||
@@ -146,24 +192,14 @@ std::size_t SkipWs(const std::string& s, std::size_t pos) {
   return pos;
 }
 
-// Find the value of a numeric field named `key` in `line`. Returns
-// true on success. Tolerates:
-//   * arbitrary whitespace
-//   * either "key": value or unquoted key: value (a few JSONL files
-//     in the wild are loose about quoting)
-//   * scientific notation, signs, decimals
 template <typename T>
 bool ReadJsonNumber(const std::string& line, const std::string& key,
                     T& out) {
-  // We accept the field whether it appears as `"key"` or `key`. The
-  // search target is the key name surrounded by an optional quote
-  // and followed (after whitespace) by ':'.
   std::string quoted = std::string("\"") + key + "\"";
   std::size_t pos = line.find(quoted);
   if (pos == std::string::npos) {
     pos = line.find(key);
     if (pos == std::string::npos) return false;
-    // Make sure we matched a whole word, not a substring of another.
     if (pos > 0 && (std::isalnum(static_cast<unsigned char>(line[pos - 1])) ||
                     line[pos - 1] == '_')) {
       return false;
@@ -182,8 +218,6 @@ bool ReadJsonNumber(const std::string& line, const std::string& key,
   if (pos >= line.size() || line[pos] != ':') return false;
   pos = SkipWs(line, pos + 1);
 
-  // Parse a number with the standard library; std::stod / std::stoll
-  // handle signs, decimals, and scientific notation.
   const char* start = line.c_str() + pos;
   char* end = nullptr;
   if constexpr (std::is_integral_v<T>) {
@@ -198,10 +232,6 @@ bool ReadJsonNumber(const std::string& line, const std::string& key,
   return true;
 }
 
-// Parse one JSONL line into a CursorEvent. Returns false if the line
-// does not look like a cursor record (blank, comment, missing
-// required fields). Required fields: ts_us, x, y. Optional:
-// button_state (defaults to 0), monitor_id (defaults to 0).
 bool ParseCursorLine(const std::string& line, CursorEvent& out) {
   const auto first = line.find_first_not_of(" \t\r\n");
   if (first == std::string::npos) return false;
@@ -217,9 +247,6 @@ bool ParseCursorLine(const std::string& line, CursorEvent& out) {
   return true;
 }
 
-// Load and sort cursor events from a UTF-8 JSONL file. Bad lines are
-// silently skipped (this is a hand-authored fixture — strict validation
-// would just slow iteration down). On any IO failure returns empty.
 std::vector<CursorEvent> LoadCursorJsonl(const std::wstring& path) {
   std::vector<CursorEvent> out;
   std::ifstream in(path);
@@ -227,9 +254,7 @@ std::vector<CursorEvent> LoadCursorJsonl(const std::wstring& path) {
   std::string line;
   while (std::getline(in, line)) {
     CursorEvent ev;
-    if (ParseCursorLine(line, ev)) {
-      out.push_back(ev);
-    }
+    if (ParseCursorLine(line, ev)) out.push_back(ev);
   }
   std::sort(out.begin(), out.end(),
             [](const CursorEvent& a, const CursorEvent& b) {
@@ -238,14 +263,9 @@ std::vector<CursorEvent> LoadCursorJsonl(const std::wstring& path) {
   return out;
 }
 
-// Nearest cursor sample by absolute distance in ts. Linear search;
-// hand-authored fixtures are tiny so this is fast enough. Returns
-// nullptr only when `events` is empty.
 const CursorEvent* FindNearestCursor(
     const std::vector<CursorEvent>& events, std::int64_t ts_us) {
   if (events.empty()) return nullptr;
-  // Binary search for the upper bound, then compare with the lower
-  // neighbour to pick the closer one.
   auto it = std::lower_bound(
       events.begin(), events.end(), ts_us,
       [](const CursorEvent& e, std::int64_t v) { return e.ts_us < v; });
@@ -257,15 +277,10 @@ const CursorEvent* FindNearestCursor(
   return diff_prev <= diff_next ? &*prev : &*it;
 }
 
-// Nearest event whose button_state != 0 within ±window_us of ts_us.
-// Returns nullptr when no click qualifies.
 const CursorEvent* FindNearestClick(
     const std::vector<CursorEvent>& events, std::int64_t ts_us,
     std::int64_t window_us) {
   if (events.empty()) return nullptr;
-  // Walk neighbours of the lower-bound until distance exceeds the
-  // window. Hand-authored fixtures rarely exceed a few dozen entries
-  // so this is fine.
   const CursorEvent* best = nullptr;
   std::int64_t best_diff = window_us + 1;
   for (const auto& e : events) {
@@ -280,26 +295,20 @@ const CursorEvent* FindNearestClick(
 }
 
 // ---------------------------------------------------------------------
-// Zoom state + smoother (per-frame lerp toward target)
+// Zoom state + smoother (unchanged from 1C)
 // ---------------------------------------------------------------------
 
 struct ZoomState {
   double current_zoom = 1.0;
-  double current_x = 0.0;  // in VIDEO PIXEL coordinates
+  double current_x = 0.0;
   double current_y = 0.0;
   double target_zoom = 1.0;
   double target_x = 0.0;
   double target_y = 0.0;
   double last_update_seconds = -1.0;
-  // Most recent click ts (microseconds), used to enforce the
-  // kZoomMinOnSeconds hold after a click before decay can start.
   std::int64_t last_click_ts_us = std::numeric_limits<std::int64_t>::min();
 };
 
-// One per-frame smoother step. Updates current_* toward target_* with
-// the exponential smoothing alpha from
-// preview/zoom_easing_constants.h. `now_seconds` is wall-clock from
-// QueryPerformanceCounter on the worker thread.
 void StepZoomSmoother(ZoomState& z, double now_seconds) {
   using namespace clingfy::preview;
   if (z.last_update_seconds < 0.0) {
@@ -322,8 +331,18 @@ void StepZoomSmoother(ZoomState& z, double now_seconds) {
 }
 
 // ---------------------------------------------------------------------
-// Demo state
+// Stage 1D — seek samples + measurement window state
 // ---------------------------------------------------------------------
+
+struct SeekSample {
+  bool user_driven = false;      // false = programmed by the timer
+  std::int64_t target_ms = 0;    // requested playback position
+  std::int64_t call_qpc = 0;     // QPC ticks at the moment Position(.) was called
+  std::int64_t resolved_qpc = 0; // QPC ticks at the next VideoFrameAvailable
+  bool resolved = false;
+};
+
+enum class MeasurementState { kNotStarted, kRunning, kDone };
 
 struct DemoState {
   // ---- Direct3D / DXGI / Direct2D ----
@@ -351,21 +370,38 @@ struct DemoState {
 
   // ---- Window state ----
   HWND hwnd = nullptr;
+  HWND slider_hwnd = nullptr;
   UINT client_width = kDefaultWidth;
   UINT client_height = kDefaultHeight;
 
   // ---- Synchronization ----
   std::mutex render_mutex;
   std::atomic<bool> shutting_down{false};
+  // True while the user is dragging the trackbar thumb. The position
+  // poll timer skips updating the slider in this window so the thumb
+  // doesn't fight the mouse.
+  std::atomic<bool> user_dragging{false};
+  std::wstring gpu_description;
 
   // ---- CLI + cursor fixture ----
   std::wstring video_path;
   std::wstring cursor_path;
   std::vector<CursorEvent> cursor_events;
-  bool cursor_mode = false;  // true → STAGE1C_STATS, false → STAGE1B_STATS
+  bool cursor_mode = false;
 
   // ---- Zoom state ----
   ZoomState zoom;
+
+  // ---- Measurement / seek tracking ----
+  std::atomic<MeasurementState> measurement_state{
+      MeasurementState::kNotStarted};
+  std::int64_t measurement_start_qpc = 0;
+  std::atomic<bool> programmed_seek1_fired{false};
+  std::atomic<bool> programmed_seek2_fired{false};
+  // SeekSample[] guarded by render_mutex. Programmed and user seeks
+  // both push onto it; the next VideoFrameAvailable fills resolved_qpc.
+  std::vector<SeekSample> seek_samples;
+  bool stage1d_artifact_written = false;
 
   // ---- Stats (four buckets when cursor_mode is on) ----
   clingfy::preview::FrameTimingCollector timing_total;
@@ -377,12 +413,9 @@ struct DemoState {
 };
 
 // ---------------------------------------------------------------------
-// CLI parsing
+// CLI parsing (unchanged from 1C)
 // ---------------------------------------------------------------------
 
-// Extract a `--flag=PATH` (or `--flag PATH`) argument from a parsed
-// argv. Returns the empty wstring if not found. Quotes are stripped
-// from the returned value. Helper used by both --video and --cursor.
 std::wstring ExtractFlag(int argc, LPWSTR* argv, const std::wstring& flag) {
   std::wstring out;
   if (argv == nullptr) return out;
@@ -411,7 +444,6 @@ std::wstring EnvVar(const wchar_t* name) {
   return std::wstring();
 }
 
-// Parse both --video and --cursor in one pass over the command line.
 struct CliPaths {
   std::wstring video;
   std::wstring cursor;
@@ -443,19 +475,34 @@ std::int64_t QpcTicks() {
   return static_cast<std::int64_t>(v.QuadPart);
 }
 
-// Convert QPC ticks delta to milliseconds. Cached frequency so the
-// hot path stays cheap.
-double TicksToMs(std::int64_t ticks) {
-  static const double freq = []() {
+std::int64_t QpcFrequencyTicks() {
+  static const std::int64_t freq = []() {
     LARGE_INTEGER v{};
     ::QueryPerformanceFrequency(&v);
-    return static_cast<double>(v.QuadPart);
+    return static_cast<std::int64_t>(v.QuadPart);
   }();
-  return freq > 0 ? (static_cast<double>(ticks) * 1000.0) / freq : 0.0;
+  return freq;
 }
 
-// Print STAGE1B_STATS (cursor_mode == false) or four STAGE1C_STATS
-// lines (cursor_mode == true) to stderr, once.
+double TicksToMs(std::int64_t ticks) {
+  const auto freq = QpcFrequencyTicks();
+  return freq > 0
+             ? (static_cast<double>(ticks) * 1000.0) /
+                   static_cast<double>(freq)
+             : 0.0;
+}
+
+double TicksToSeconds(std::int64_t ticks) {
+  const auto freq = QpcFrequencyTicks();
+  return freq > 0
+             ? static_cast<double>(ticks) / static_cast<double>(freq)
+             : 0.0;
+}
+
+// ---------------------------------------------------------------------
+// Stats / artifact writers
+// ---------------------------------------------------------------------
+
 void PrintStatsOnce(DemoState& state) {
   bool expected = false;
   if (!state.stats_printed.compare_exchange_strong(expected, true)) {
@@ -464,8 +511,8 @@ void PrintStatsOnce(DemoState& state) {
   using clingfy::preview::FrameTimingCollector;
   if (!state.cursor_mode) {
     const auto stats = state.timing_total.ComputeStats();
-    const auto line = FrameTimingCollector::FormatStats(stats);
-    std::fprintf(stderr, "STAGE1B_STATS %s  dropped=%llu\n", line.c_str(),
+    std::fprintf(stderr, "STAGE1B_STATS %s  dropped=%llu\n",
+                 FrameTimingCollector::FormatStats(stats).c_str(),
                  static_cast<unsigned long long>(
                      state.dropped_frames.load()));
   } else {
@@ -488,8 +535,189 @@ void PrintStatsOnce(DemoState& state) {
   std::fflush(stderr);
 }
 
+std::string UtcTimestampNow() {
+  std::time_t now = std::time(nullptr);
+  std::tm tm_utc{};
+#if defined(_MSC_VER)
+  ::gmtime_s(&tm_utc, &now);
+#else
+  tm_utc = *std::gmtime(&now);
+#endif
+  char buf[32];
+  std::snprintf(buf, sizeof(buf), "%04d-%02d-%02dT%02d:%02d:%02dZ",
+                tm_utc.tm_year + 1900, tm_utc.tm_mon + 1, tm_utc.tm_mday,
+                tm_utc.tm_hour, tm_utc.tm_min, tm_utc.tm_sec);
+  return std::string(buf);
+}
+
+// Best-effort "Windows 10/11, build N" string for the artifact header.
+// RtlGetVersion lives in ntdll and is the only call that doesn't go
+// through the compat shim layer.
+std::string WindowsVersionString() {
+  using RtlGetVersionFn = NTSTATUS(WINAPI*)(PRTL_OSVERSIONINFOW);
+  HMODULE ntdll = ::GetModuleHandleW(L"ntdll.dll");
+  if (ntdll == nullptr) return "unknown";
+  auto fn = reinterpret_cast<RtlGetVersionFn>(
+      ::GetProcAddress(ntdll, "RtlGetVersion"));
+  if (fn == nullptr) return "unknown";
+  RTL_OSVERSIONINFOW v{};
+  v.dwOSVersionInfoSize = sizeof(v);
+  if (fn(&v) != 0) return "unknown";
+  char buf[64];
+  std::snprintf(buf, sizeof(buf), "Windows %lu.%lu build %lu",
+                static_cast<unsigned long>(v.dwMajorVersion),
+                static_cast<unsigned long>(v.dwMinorVersion),
+                static_cast<unsigned long>(v.dwBuildNumber));
+  return std::string(buf);
+}
+
+std::string WideToUtf8(const std::wstring& w) {
+  if (w.empty()) return {};
+  const int needed = ::WideCharToMultiByte(
+      CP_UTF8, 0, w.c_str(), static_cast<int>(w.size()), nullptr, 0,
+      nullptr, nullptr);
+  if (needed <= 0) return {};
+  std::string out(static_cast<size_t>(needed), '\0');
+  ::WideCharToMultiByte(CP_UTF8, 0, w.c_str(),
+                        static_cast<int>(w.size()), out.data(), needed,
+                        nullptr, nullptr);
+  return out;
+}
+
+// Pulled in PrepareDevices() so the artifact writer doesn't have to
+// re-walk DXGI.
+std::wstring QueryGpuDescription(ID3D11Device* device) {
+  if (device == nullptr) return L"unknown";
+  ComPtr<IDXGIDevice> dxgi_device;
+  if (FAILED(device->QueryInterface(IID_PPV_ARGS(&dxgi_device)))) {
+    return L"unknown";
+  }
+  ComPtr<IDXGIAdapter> adapter;
+  if (FAILED(dxgi_device->GetAdapter(adapter.GetAddressOf()))) {
+    return L"unknown";
+  }
+  DXGI_ADAPTER_DESC desc{};
+  if (FAILED(adapter->GetDesc(&desc))) return L"unknown";
+  return std::wstring(desc.Description);
+}
+
+void WriteStage1dArtifact(DemoState& state, bool measurement_completed,
+                          double measurement_duration_seconds) {
+  std::ofstream f;
+  f.open(kStage1dResultPath,
+         std::ios::out | std::ios::trunc | std::ios::binary);
+  if (!f.is_open()) {
+    std::fprintf(stderr,
+                 "STAGE1D_ARTIFACT failed to open %ls for writing\n",
+                 kStage1dResultPath);
+    return;
+  }
+
+  using clingfy::preview::FrameTimingCollector;
+  const auto total = state.timing_total.ComputeStats();
+  const auto copy = state.timing_copy.ComputeStats();
+  const auto render = state.timing_render.ComputeStats();
+  const auto present = state.timing_present.ComputeStats();
+
+  // ---- Header ----
+  f << "# Stage 1D — 30-second measurement\n\n";
+  f << "- **Generated:** " << UtcTimestampNow() << " (UTC)\n";
+  f << "- **Status:** "
+    << (measurement_completed ? "completed (30 s elapsed)"
+                              : "partial — exe closed before window expired")
+    << "\n";
+  char dur_buf[32];
+  std::snprintf(dur_buf, sizeof(dur_buf), "%.2f",
+                measurement_duration_seconds);
+  f << "- **Measurement window:** " << dur_buf << " s\n";
+  f << "- **Mode:** " << (state.cursor_mode ? "cursor (1C+1D)" : "video-only (1B+1D)")
+    << "\n\n";
+
+  // ---- System info ----
+  f << "## System info\n\n";
+  f << "- **OS:** " << WindowsVersionString() << "\n";
+  f << "- **GPU:** " << WideToUtf8(state.gpu_description) << "\n";
+  f << "- **Video:** " << state.video_width << " × " << state.video_height
+    << " px\n";
+  f << "- **Video path:** `" << WideToUtf8(state.video_path) << "`\n";
+  if (!state.cursor_path.empty()) {
+    f << "- **Cursor path:** `" << WideToUtf8(state.cursor_path)
+      << "` (" << state.cursor_events.size() << " events)\n";
+  }
+  f << "\n";
+
+  // ---- Per-bucket stats ----
+  auto fmt_bucket = [&](const char* name, const auto& s) {
+    char buf[256];
+    std::snprintf(
+        buf, sizeof(buf),
+        "| %-7s | %5zu | %7.3f | %7.3f | %7.3f | %7.3f |\n",
+        name, s.frame_count, s.min_ms, s.median_ms, s.p99_ms, s.max_ms);
+    f << buf;
+  };
+  f << "## Per-bucket frame timings (ms)\n\n";
+  f << "| bucket  | frames |    min  | median  |   p99   |   max   |\n";
+  f << "|---------|-------:|--------:|--------:|--------:|--------:|\n";
+  fmt_bucket("total", total);
+  if (state.cursor_mode) {
+    fmt_bucket("copy", copy);
+    fmt_bucket("render", render);
+    fmt_bucket("present", present);
+  }
+  f << "\n";
+  f << "Dropped frames during the measurement window: "
+    << state.dropped_frames.load() << "\n\n";
+
+  // ---- Seek samples ----
+  f << "## Seek samples\n\n";
+  if (state.seek_samples.empty()) {
+    f << "_No seek samples captured during the measurement window._\n\n";
+  } else {
+    f << "| source       | target (ms) | resolved | latency (ms) |\n";
+    f << "|--------------|------------:|:--------:|-------------:|\n";
+    for (const auto& s : state.seek_samples) {
+      char row[256];
+      const char* src = s.user_driven ? "user" : "programmed";
+      if (s.resolved) {
+        const double latency_ms =
+            TicksToMs(s.resolved_qpc - s.call_qpc);
+        std::snprintf(row, sizeof(row),
+                      "| %-12s | %11lld | yes      | %12.3f |\n", src,
+                      static_cast<long long>(s.target_ms), latency_ms);
+      } else {
+        std::snprintf(row, sizeof(row),
+                      "| %-12s | %11lld | no       |          —   |\n",
+                      src, static_cast<long long>(s.target_ms));
+      }
+      f << row;
+    }
+    f << "\n";
+  }
+
+  // ---- Verdict ----
+  f << "## Verdict vs design-doc Stage 1 bar\n\n";
+  f << "- **Bar:** total median ≤ " << kPassBarMedianMs
+    << " ms AND total p99 ≤ " << kPassBarP99Ms << " ms (1080p)\n";
+  char verdict[256];
+  const bool pass_median = total.median_ms <= kPassBarMedianMs;
+  const bool pass_p99 = total.p99_ms <= kPassBarP99Ms;
+  const bool pass = pass_median && pass_p99;
+  std::snprintf(verdict, sizeof(verdict),
+                "- **Result:** median=%.3f ms (%s), p99=%.3f ms (%s) → "
+                "**%s**\n",
+                total.median_ms, pass_median ? "PASS" : "FAIL",
+                total.p99_ms, pass_p99 ? "PASS" : "FAIL",
+                pass ? "PASS" : "FAIL");
+  f << verdict << "\n";
+  if (!pass) {
+    f << "_Failing this bar means Stage 2's Flutter Texture bridge does "
+         "not get the headroom the design doc assumed. Triage before "
+         "moving on._\n";
+  }
+}
+
 // ---------------------------------------------------------------------
-// D3D11 / D2D setup (unchanged from 1B)
+// D3D11 / D2D setup (unchanged from 1C)
 // ---------------------------------------------------------------------
 
 HRESULT CreateDeviceIndependentResources(DemoState& s) {
@@ -553,6 +781,8 @@ HRESULT CreateD3DAndD2DDevices(DemoState& s) {
   winrt::com_ptr<::IInspectable> winrt_inspectable;
   winrt_inspectable.attach(inspectable.Detach());
   s.winrt_device = winrt_inspectable.as<winrt_dxd3d::IDirect3DDevice>();
+
+  s.gpu_description = QueryGpuDescription(s.d3d_device.Get());
   return S_OK;
 }
 
@@ -586,9 +816,6 @@ HRESULT CreateSwapChainForHwnd(DemoState& s, HWND hwnd) {
 
 HRESULT EnsureHighlightBrush(DemoState& s) {
   if (s.highlight_brush) return S_OK;
-  // Two-stop radial gradient: warm yellow at the center, transparent
-  // at the rim. The brush is reused every frame; only its center +
-  // opacity change.
   D2D1_GRADIENT_STOP stops[2] = {
       {0.0f, D2D1::ColorF(1.0f, 0.95f, 0.55f, 0.85f)},
       {1.0f, D2D1::ColorF(1.0f, 0.95f, 0.55f, 0.0f)},
@@ -695,8 +922,14 @@ HRESULT EnsureVideoTarget(DemoState& s, UINT vw, UINT vh) {
 }
 
 // ---------------------------------------------------------------------
-// Geometry helpers
+// Geometry helpers (Stage 1D: dest rect now excludes the slider strip)
 // ---------------------------------------------------------------------
+
+UINT VideoStripHeight(UINT client_h) {
+  return client_h > static_cast<UINT>(kSliderStripPx)
+             ? client_h - static_cast<UINT>(kSliderStripPx)
+             : client_h;
+}
 
 D2D1_RECT_F LetterboxRect(UINT win_w, UINT win_h, UINT vid_w, UINT vid_h) {
   if (win_w == 0 || win_h == 0 || vid_w == 0 || vid_h == 0) {
@@ -719,9 +952,6 @@ D2D1_RECT_F LetterboxRect(UINT win_w, UINT win_h, UINT vid_w, UINT vid_h) {
           static_cast<float>(top + draw_h)};
 }
 
-// Map a point in video-pixel space to a point in back-buffer pixel
-// space, given the letterboxed dest rect that the video unscaled would
-// occupy.
 D2D1_POINT_2F VideoToBackBuffer(double vx, double vy, UINT vid_w,
                                 UINT vid_h, const D2D1_RECT_F& dest) {
   if (vid_w == 0 || vid_h == 0) return D2D1::Point2F(0.0f, 0.0f);
@@ -734,27 +964,20 @@ D2D1_POINT_2F VideoToBackBuffer(double vx, double vy, UINT vid_w,
   return D2D1::Point2F(ox, oy);
 }
 
-// Compute the zoom destination rect on the back buffer. The "focus"
-// point in back-buffer pixels is held fixed under the zoom so the
-// cursor pixel in the source video stays exactly where it would have
-// been at zoom=1.0. zoom_factor=1.0 returns `dest` unchanged.
 D2D1_RECT_F ZoomedDestRect(const D2D1_RECT_F& dest, float focus_x,
                            float focus_y, float zoom_factor) {
   if (zoom_factor <= 1.0f + 1e-4f) return dest;
-  const float left =
-      focus_x - (focus_x - dest.left) * zoom_factor;
-  const float top =
-      focus_y - (focus_y - dest.top) * zoom_factor;
+  const float left = focus_x - (focus_x - dest.left) * zoom_factor;
+  const float top = focus_y - (focus_y - dest.top) * zoom_factor;
   const float width = (dest.right - dest.left) * zoom_factor;
   const float height = (dest.bottom - dest.top) * zoom_factor;
   return {left, top, left + width, top + height};
 }
 
 // ---------------------------------------------------------------------
-// Per-frame composition
+// MediaPlayer helpers + seek tracking
 // ---------------------------------------------------------------------
 
-// Returns the playback position in microseconds, or -1 if unavailable.
 std::int64_t CurrentPlaybackUs(winrt_playback::MediaPlayer const& player) {
   try {
     const auto pos = player.PlaybackSession().Position();
@@ -765,20 +988,134 @@ std::int64_t CurrentPlaybackUs(winrt_playback::MediaPlayer const& player) {
   }
 }
 
+std::int64_t NaturalDurationUs(winrt_playback::MediaPlayer const& player) {
+  try {
+    const auto d = player.PlaybackSession().NaturalDuration();
+    return std::chrono::duration_cast<std::chrono::microseconds>(d).count();
+  } catch (winrt::hresult_error const&) {
+    return 0;
+  }
+}
+
+void IssueSeek(DemoState& state, std::int64_t target_us, bool user_driven) {
+  if (!state.player) return;
+  try {
+    state.player.PlaybackSession().Position(
+        std::chrono::duration_cast<winrt_foundation::TimeSpan>(
+            std::chrono::microseconds(target_us)));
+  } catch (winrt::hresult_error const&) {
+    return;
+  }
+  SeekSample s;
+  s.user_driven = user_driven;
+  s.target_ms = target_us / 1000;
+  s.call_qpc = QpcTicks();
+  {
+    std::lock_guard<std::mutex> lock(state.render_mutex);
+    state.seek_samples.push_back(s);
+  }
+  // A seek invalidates the smoother's positional carry-over; reset
+  // the "last click" timestamp so a previous hold doesn't bleed into
+  // the new playback ts range.
+  state.zoom.last_click_ts_us =
+      std::numeric_limits<std::int64_t>::min();
+}
+
+void MaybeFireProgrammedSeeks(DemoState& state, double elapsed_seconds) {
+  if (state.measurement_state.load() != MeasurementState::kRunning) {
+    return;
+  }
+  const std::int64_t duration_us = NaturalDurationUs(state.player);
+  if (duration_us <= 0) return;
+
+  // Seek 1: jump to ~80 % of duration. Seek 2: jump back to ~20 %.
+  bool expected = false;
+  if (elapsed_seconds >= kProgrammedSeek1Seconds &&
+      state.programmed_seek1_fired.compare_exchange_strong(expected,
+                                                           true)) {
+    const std::int64_t target =
+        static_cast<std::int64_t>(duration_us * 0.80);
+    IssueSeek(state, target, /*user_driven=*/false);
+  }
+  expected = false;
+  if (elapsed_seconds >= kProgrammedSeek2Seconds &&
+      state.programmed_seek2_fired.compare_exchange_strong(expected,
+                                                           true)) {
+    const std::int64_t target =
+        static_cast<std::int64_t>(duration_us * 0.20);
+    IssueSeek(state, target, /*user_driven=*/false);
+  }
+}
+
+// Pair the first VideoFrameAvailable callback after a seek with the
+// corresponding SeekSample. Multiple seeks back-to-back: only the
+// first unresolved entry gets resolved per frame; the next frame
+// resolves the next one. With realistic seek cadence (tens of seconds
+// apart in the programmed case, ~1 per UI-frame at worst when the
+// user drags), the queue is never long.
+void ResolvePendingSeeks(DemoState& state, std::int64_t now_qpc) {
+  for (auto& s : state.seek_samples) {
+    if (!s.resolved) {
+      s.resolved = true;
+      s.resolved_qpc = now_qpc;
+      return;
+    }
+  }
+}
+
+// ---------------------------------------------------------------------
+// Per-frame composition (Stage 1B / 1C path + measurement gating)
+// ---------------------------------------------------------------------
+
 void HandleVideoFrameAvailable(DemoState& s,
                                winrt_playback::MediaPlayer const& sender) {
   if (s.shutting_down.load()) {
     s.dropped_frames.fetch_add(1, std::memory_order_relaxed);
     return;
   }
-  // Total bucket bracket — entire callback work.
-  const std::int64_t t_start = QpcTicks();
-  s.timing_total.BeginFrame();
 
+  // ---- Stage 1D measurement state transitions ----
+  const std::int64_t now_qpc = QpcTicks();
+  auto state_now = s.measurement_state.load();
+  if (state_now == MeasurementState::kNotStarted) {
+    s.measurement_start_qpc = now_qpc;
+    s.measurement_state.store(MeasurementState::kRunning);
+    state_now = MeasurementState::kRunning;
+  }
+  const double elapsed =
+      TicksToSeconds(now_qpc - s.measurement_start_qpc);
+  const bool in_measurement_window =
+      state_now == MeasurementState::kRunning &&
+      elapsed < kMeasurementWindowSeconds;
+  bool should_write_artifact = false;
+  if (state_now == MeasurementState::kRunning &&
+      elapsed >= kMeasurementWindowSeconds) {
+    s.measurement_state.store(MeasurementState::kDone);
+    if (!s.stage1d_artifact_written) {
+      s.stage1d_artifact_written = true;
+      should_write_artifact = true;  // perform the write below, outside the render lock
+    }
+  }
+
+  // Programmed seeks are fired AFTER the render pass (see end of this
+  // function). Doing them up-front used to resolve the just-issued
+  // seek against the SAME frame's now_qpc and reported negative
+  // latency. Moving the firing to the tail end means any new seek
+  // gets resolved by the NEXT VideoFrameAvailable callback, which is
+  // the documented frame-server semantics we want to measure.
+
+  // Bracket the total bucket only inside the measurement window so
+  // post-window frames don't dilute the stats.
+  if (in_measurement_window) s.timing_total.BeginFrame();
+
+  {  // ---- nested scope so the lock_guard releases before
+     //      MaybeFireProgrammedSeeks runs (IssueSeek takes the lock)
   std::lock_guard<std::mutex> lock(s.render_mutex);
+  ResolvePendingSeeks(s, now_qpc);
+
   if (!s.swap_chain || !s.backbuffer_bitmap) {
     s.dropped_frames.fetch_add(1, std::memory_order_relaxed);
-    s.timing_total.EndFrame();
+    if (in_measurement_window) s.timing_total.EndFrame();
     return;
   }
 
@@ -787,34 +1124,34 @@ void HandleVideoFrameAvailable(DemoState& s,
   const UINT vh = session.NaturalVideoHeight();
   if (vw == 0 || vh == 0) {
     s.dropped_frames.fetch_add(1, std::memory_order_relaxed);
-    s.timing_total.EndFrame();
+    if (in_measurement_window) s.timing_total.EndFrame();
     return;
   }
   if (FAILED(EnsureVideoTarget(s, vw, vh))) {
     s.dropped_frames.fetch_add(1, std::memory_order_relaxed);
-    s.timing_total.EndFrame();
+    if (in_measurement_window) s.timing_total.EndFrame();
     return;
   }
 
-  // ---- Copy bucket: CopyFrameToVideoSurface ----
-  const std::int64_t t_before_copy = QpcTicks();
-  if (s.cursor_mode) s.timing_copy.BeginFrame();
+  // ---- Copy bucket ----
+  if (s.cursor_mode && in_measurement_window) s.timing_copy.BeginFrame();
   try {
     sender.CopyFrameToVideoSurface(s.winrt_video_surface);
   } catch (winrt::hresult_error const&) {
     s.dropped_frames.fetch_add(1, std::memory_order_relaxed);
-    if (s.cursor_mode) s.timing_copy.EndFrame();
-    s.timing_total.EndFrame();
+    if (s.cursor_mode && in_measurement_window) s.timing_copy.EndFrame();
+    if (in_measurement_window) s.timing_total.EndFrame();
     return;
   }
-  if (s.cursor_mode) s.timing_copy.EndFrame();
-  (void)t_before_copy;
+  if (s.cursor_mode && in_measurement_window) s.timing_copy.EndFrame();
 
-  // ---- Zoom state machine (only when cursor data is loaded) ----
+  // ---- Zoom state machine + position ----
   float cursor_back_x = 0.0f, cursor_back_y = 0.0f;
   float highlight_alpha = 0.0f;
   float zoom_for_draw = 1.0f;
-  const D2D1_RECT_F dest = LetterboxRect(s.client_width, s.client_height,
+  // Dest rect now excludes the slider strip at the bottom.
+  const UINT video_strip_h = VideoStripHeight(s.client_height);
+  const D2D1_RECT_F dest = LetterboxRect(s.client_width, video_strip_h,
                                          s.video_width, s.video_height);
 
   if (s.cursor_mode) {
@@ -825,33 +1162,26 @@ void HandleVideoFrameAvailable(DemoState& s,
     const CursorEvent* click = FindNearestClick(
         s.cursor_events, playback_us, kClickLookupWindowUs);
 
-    // Position target follows the nearest cursor sample.
     if (nearest != nullptr) {
       s.zoom.target_x = nearest->x;
       s.zoom.target_y = nearest->y;
     }
-    // Zoom target: if a click was recent OR we're still inside the
-    // minimum-on hold from the last click, keep target zoomed in.
     const std::int64_t now_us = playback_us;
     const std::int64_t hold_us = static_cast<std::int64_t>(
         kZoomMinOnSeconds * 1'000'000.0);
     bool zoom_wanted = false;
     if (click != nullptr) {
-      // A click is recent → trigger / refresh the hold.
       s.zoom.last_click_ts_us =
           std::max(s.zoom.last_click_ts_us, click->ts_us);
       zoom_wanted = true;
     } else if (s.zoom.last_click_ts_us !=
                    std::numeric_limits<std::int64_t>::min() &&
-               now_us >= 0 &&
+               now_us >= 0 && now_us >= s.zoom.last_click_ts_us &&
                (now_us - s.zoom.last_click_ts_us) < hold_us) {
-      // Inside the post-click hold window.
       zoom_wanted = true;
     }
     s.zoom.target_zoom =
         zoom_wanted ? kZoomFactorDefault : 1.0;
-
-    // Smoother step.
     StepZoomSmoother(s.zoom, NowSeconds());
 
     const float zf = static_cast<float>(s.zoom.current_zoom);
@@ -861,21 +1191,19 @@ void HandleVideoFrameAvailable(DemoState& s,
         s.video_height, dest);
     cursor_back_x = cursor_bb.x;
     cursor_back_y = cursor_bb.y;
-    // Highlight fades in linearly with zoom magnitude across the
-    // smoother range [1.0, kZoomFactorDefault]. At rest (zoom == 1.0)
-    // the halo is invisible, matching the macOS "no overlay between
-    // zoom segments" feel.
     const double span = kZoomFactorDefault - 1.0;
     const double t = span > 0 ? (s.zoom.current_zoom - 1.0) / span : 0.0;
     highlight_alpha = static_cast<float>(std::clamp(t, 0.0, 1.0));
   }
 
-  // ---- Render bucket: D2D BeginDraw → DrawBitmap → optional
-  //                     highlight → EndDraw ----
-  if (s.cursor_mode) s.timing_render.BeginFrame();
+  // ---- Render bucket ----
+  if (s.cursor_mode && in_measurement_window) s.timing_render.BeginFrame();
   s.d2d_context->BeginDraw();
   s.d2d_context->Clear(D2D1::ColorF(0.0f, 0.0f, 0.0f, 1.0f));
 
+  // The slider strip is painted by Windows (its own child HWND); we
+  // just leave that band as the clear color so the trackbar's
+  // background reads against pure black.
   const auto zoomed_dest = s.cursor_mode
                                ? ZoomedDestRect(dest, cursor_back_x,
                                                 cursor_back_y,
@@ -898,20 +1226,108 @@ void HandleVideoFrameAvailable(DemoState& s,
   if (end_hr == D2DERR_RECREATE_TARGET) {
     BindBackBuffer(s);
   }
-  if (s.cursor_mode) s.timing_render.EndFrame();
+  if (s.cursor_mode && in_measurement_window) s.timing_render.EndFrame();
 
   // ---- Present bucket ----
-  if (s.cursor_mode) s.timing_present.BeginFrame();
+  if (s.cursor_mode && in_measurement_window) s.timing_present.BeginFrame();
   s.swap_chain->Present(0, 0);
-  if (s.cursor_mode) s.timing_present.EndFrame();
+  if (s.cursor_mode && in_measurement_window) s.timing_present.EndFrame();
 
-  s.timing_total.EndFrame();
-  (void)t_start;
+  if (in_measurement_window) s.timing_total.EndFrame();
+  }  // ---- lock_guard releases here (close of nested scope) ----
+
+  // Outside the lock — IssueSeek acquires render_mutex internally, so
+  // doing it inside the lock above would deadlock. Doing it here also
+  // gives seeks fired THIS frame the proper "resolved by the NEXT
+  // VideoFrameAvailable" semantics, instead of the broken "resolved
+  // by the same frame's now_qpc" path that produced negative latencies.
+  MaybeFireProgrammedSeeks(s, elapsed);
+
+  // FrameTimingCollector::ComputeStats() copies + sorts; safe outside
+  // the lock since no other thread mutates the samples vectors. Same
+  // for the seek_samples snapshot below.
+  if (should_write_artifact) {
+    WriteStage1dArtifact(s, /*completed=*/true, kMeasurementWindowSeconds);
+    std::fprintf(stderr,
+                 "STAGE1D_ARTIFACT wrote %ls (completed run)\n",
+                 kStage1dResultPath);
+    std::fflush(stderr);
+  }
 }
 
 // ---------------------------------------------------------------------
-// Win32 plumbing
+// Win32 plumbing — adds Stage 1D slider + position-poll timer
 // ---------------------------------------------------------------------
+
+// Map the trackbar's integer position (0..kSliderRange) to a playback
+// position in microseconds, given the current natural duration.
+std::int64_t SliderPosToUs(int slider_pos, std::int64_t duration_us) {
+  if (slider_pos < 0) slider_pos = 0;
+  if (slider_pos > kSliderRange) slider_pos = kSliderRange;
+  if (duration_us <= 0) return 0;
+  return static_cast<std::int64_t>(
+      (static_cast<double>(slider_pos) /
+       static_cast<double>(kSliderRange)) *
+      static_cast<double>(duration_us));
+}
+
+int UsToSliderPos(std::int64_t us, std::int64_t duration_us) {
+  if (duration_us <= 0) return 0;
+  double r = static_cast<double>(us) / static_cast<double>(duration_us);
+  if (r < 0.0) r = 0.0;
+  if (r > 1.0) r = 1.0;
+  return static_cast<int>(r * kSliderRange + 0.5);
+}
+
+void HandleHScroll(DemoState& state, WPARAM wparam) {
+  if (!state.slider_hwnd || !state.player) return;
+  const int code = LOWORD(wparam);
+  switch (code) {
+    case TB_THUMBTRACK:
+      state.user_dragging.store(true);
+      return;  // wait for THUMBPOSITION / ENDTRACK to commit
+    case TB_ENDTRACK:
+      state.user_dragging.store(false);
+      break;
+    case TB_THUMBPOSITION:
+      state.user_dragging.store(false);
+      break;
+    case TB_LINEUP:
+    case TB_LINEDOWN:
+    case TB_PAGEUP:
+    case TB_PAGEDOWN:
+    case TB_TOP:
+    case TB_BOTTOM:
+      break;
+    default:
+      return;
+  }
+  const LRESULT pos = ::SendMessageW(state.slider_hwnd, TBM_GETPOS, 0, 0);
+  const std::int64_t duration_us = NaturalDurationUs(state.player);
+  const std::int64_t target_us =
+      SliderPosToUs(static_cast<int>(pos), duration_us);
+  IssueSeek(state, target_us, /*user_driven=*/true);
+}
+
+void HandlePositionPollTick(DemoState& state) {
+  if (!state.slider_hwnd || !state.player) return;
+  if (state.user_dragging.load()) return;  // don't fight the mouse
+  const std::int64_t pos_us = CurrentPlaybackUs(state.player);
+  const std::int64_t duration_us = NaturalDurationUs(state.player);
+  if (pos_us < 0 || duration_us <= 0) return;
+  const int slider_pos = UsToSliderPos(pos_us, duration_us);
+  ::SendMessageW(state.slider_hwnd, TBM_SETPOS, TRUE, slider_pos);
+}
+
+void LayoutSlider(DemoState& state) {
+  if (!state.slider_hwnd) return;
+  const int margin = 8;
+  const int y = static_cast<int>(state.client_height) - kSliderStripPx + 4;
+  ::SetWindowPos(state.slider_hwnd, nullptr, margin, y,
+                 static_cast<int>(state.client_width) - margin * 2,
+                 kSliderStripPx - 8,
+                 SWP_NOZORDER | SWP_NOACTIVATE);
+}
 
 LRESULT CALLBACK WindowProc(HWND hwnd, UINT msg, WPARAM wparam,
                             LPARAM lparam) {
@@ -922,6 +1338,20 @@ LRESULT CALLBACK WindowProc(HWND hwnd, UINT msg, WPARAM wparam,
       auto* cs = reinterpret_cast<CREATESTRUCTW*>(lparam);
       ::SetWindowLongPtrW(hwnd, GWLP_USERDATA,
                           reinterpret_cast<LONG_PTR>(cs->lpCreateParams));
+      auto* st = reinterpret_cast<DemoState*>(cs->lpCreateParams);
+      if (st != nullptr) {
+        st->slider_hwnd = ::CreateWindowExW(
+            0, TRACKBAR_CLASS, L"",
+            WS_CHILD | WS_VISIBLE | TBS_HORZ | TBS_NOTICKS, 0, 0, 10, 10,
+            hwnd, nullptr, cs->hInstance, nullptr);
+        if (st->slider_hwnd) {
+          ::SendMessageW(st->slider_hwnd, TBM_SETRANGE, TRUE,
+                         MAKELPARAM(0, kSliderRange));
+          ::SendMessageW(st->slider_hwnd, TBM_SETPOS, TRUE, 0);
+        }
+        ::SetTimer(hwnd, kPositionPollTimerId, kPositionPollPeriodMs,
+                   nullptr);
+      }
       return 0;
     }
     case WM_SIZE: {
@@ -931,6 +1361,7 @@ LRESULT CALLBACK WindowProc(HWND hwnd, UINT msg, WPARAM wparam,
         if (w > 0 && h > 0) {
           ResizeSwapChain(*state, w, h);
         }
+        LayoutSlider(*state);
       }
       return 0;
     }
@@ -940,6 +1371,16 @@ LRESULT CALLBACK WindowProc(HWND hwnd, UINT msg, WPARAM wparam,
       ::EndPaint(hwnd, &ps);
       return 0;
     }
+    case WM_HSCROLL: {
+      if (state) HandleHScroll(*state, wparam);
+      return 0;
+    }
+    case WM_TIMER: {
+      if (state && wparam == kPositionPollTimerId) {
+        HandlePositionPollTick(*state);
+      }
+      return 0;
+    }
     case WM_CLOSE: {
       if (state) PrintStatsOnce(*state);
       ::DestroyWindow(hwnd);
@@ -947,6 +1388,7 @@ LRESULT CALLBACK WindowProc(HWND hwnd, UINT msg, WPARAM wparam,
     }
     case WM_DESTROY: {
       if (state) PrintStatsOnce(*state);
+      ::KillTimer(hwnd, kPositionPollTimerId);
       ::PostQuitMessage(0);
       return 0;
     }
@@ -989,8 +1431,10 @@ int RunDemo(HINSTANCE hinstance, int show_cmd, LPWSTR cmdline) {
         L"Cursor file not found:\n" + paths.cursor, 102);
   }
 
-  // ---- 2. Init COM apartment ----
+  // ---- 2. WinRT apartment + common controls ----
   winrt::init_apartment(winrt::apartment_type::single_threaded);
+  INITCOMMONCONTROLSEX icc{sizeof(icc), ICC_BAR_CLASSES};
+  ::InitCommonControlsEx(&icc);
 
   // ---- 3. Window class ----
   WNDCLASSEXW wc{};
@@ -1010,9 +1454,6 @@ int RunDemo(HINSTANCE hinstance, int show_cmd, LPWSTR cmdline) {
     state.cursor_events = LoadCursorJsonl(paths.cursor);
     state.cursor_mode = !state.cursor_events.empty();
     if (!state.cursor_mode) {
-      // The path existed and the user clearly meant to enable cursor
-      // mode, but we got nothing parseable out. Tell the operator;
-      // don't silently fall back to video-only.
       return ShowErrorAndExit(
           L"Cursor file parsed to zero events:\n" + paths.cursor +
               L"\nCheck JSONL syntax (ts_us, x, y required).",
@@ -1046,6 +1487,9 @@ int RunDemo(HINSTANCE hinstance, int show_cmd, LPWSTR cmdline) {
     ::DestroyWindow(state.hwnd);
     return 6;
   }
+  // Initial slider layout — uses the default client size until the
+  // first WM_SIZE refines it.
+  LayoutSlider(state);
   ::ShowWindow(state.hwnd, show_cmd);
   ::UpdateWindow(state.hwnd);
 
@@ -1074,6 +1518,9 @@ int RunDemo(HINSTANCE hinstance, int show_cmd, LPWSTR cmdline) {
     state.frame_token = state.player.VideoFrameAvailable(
         [&state](winrt_playback::MediaPlayer const& sender,
                  winrt_foundation::IInspectable const& /*args*/) {
+          // HandleVideoFrameAvailable owns the Running→Done
+          // transition AND the artifact write that goes with it.
+          // The lambda just dispatches.
           HandleVideoFrameAvailable(state, sender);
         });
     state.player.Play();
@@ -1103,7 +1550,21 @@ int RunDemo(HINSTANCE hinstance, int show_cmd, LPWSTR cmdline) {
       state.player = nullptr;
     }
   } catch (winrt::hresult_error const&) {
-    // Best-effort. Stats already printed by WM_DESTROY.
+    // Best-effort.
+  }
+  // If the measurement didn't complete (early close), still write a
+  // partial artifact so the run is captured.
+  if (!state.stage1d_artifact_written) {
+    state.stage1d_artifact_written = true;
+    const double partial_elapsed =
+        state.measurement_state.load() == MeasurementState::kNotStarted
+            ? 0.0
+            : TicksToSeconds(QpcTicks() - state.measurement_start_qpc);
+    WriteStage1dArtifact(state, /*completed=*/false, partial_elapsed);
+    std::fprintf(stderr,
+                 "STAGE1D_ARTIFACT wrote %ls (partial run, %.2f s)\n",
+                 kStage1dResultPath, partial_elapsed);
+    std::fflush(stderr);
   }
   PrintStatsOnce(state);
   return static_cast<int>(msg.wParam);

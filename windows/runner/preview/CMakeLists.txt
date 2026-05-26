@@ -17,15 +17,20 @@ project(live_compositor_pocs LANGUAGES CXX)
 #     swap-chain / Present slice works in our build.
 #
 #   mediaplayer_frame_server_demo
-#     Stage 1B — MediaPlayer frame-server → Direct2D HWND. Loads
-#     a real MP4, runs CopyFrameToVideoSurface in
-#     IsVideoFrameServerEnabled mode, blits the decoded frame
-#     onto the same swap-chain back buffer Stage 1A0 used. Pulls
-#     in C++/WinRT headers and windowsapp.lib for MediaPlayer.
+#     Stage 1B / 1C / 1D — MediaPlayer frame-server → Direct2D HWND.
+#     One binary covers three modes (decided by --video / --cursor
+#     args). Loads a real MP4, runs CopyFrameToVideoSurface in
+#     IsVideoFrameServerEnabled mode, blits the decoded frame onto
+#     the same swap-chain back buffer Stage 1A0 used, optionally
+#     composites a hand-authored cursor.jsonl into zoom + highlight
+#     overlays, and Stage 1D adds a native Win32 trackbar + 30 s
+#     measurement window + Markdown artifact. Pulls in C++/WinRT
+#     headers, windowsapp.lib for MediaPlayer, and comctl32.lib
+#     for the trackbar.
 #
-# Stage 1B is what the Phase 5 design doc Stage-1 milestone measures.
-# Win2D / WindowsAppSDK come later, only if the Direct2D path doesn't
-# suffice.
+# Stage 1B/1D bar is what the Phase 5 design doc Stage-1 milestone
+# measures. Win2D / WindowsAppSDK come later, only if the Direct2D
+# path doesn't suffice.
 
 # Shared helper library — `FrameTimingCollector` plus its translation
 # unit. Both executables link this rather than each compiling
@@ -66,10 +71,12 @@ set_target_properties(live_compositor_demo PROPERTIES
   CXX_EXTENSIONS OFF
 )
 
-# --- Stage 1B: mediaplayer_frame_server_demo ------------------------
+# --- Stage 1B / 1C / 1D: mediaplayer_frame_server_demo --------------
 # Adds on top of Stage 1A0's link set:
-#   windowsapp.lib   — WinRT activation + CreateDirect3D11*From* exports
+#   windowsapp.lib    — WinRT activation + CreateDirect3D11*From* exports
 #   runtimeobject.lib — used by C++/WinRT for WindowsCreateString etc.
+#   shell32.lib       — CommandLineToArgvW
+#   comctl32.lib      — TRACKBAR_CLASS / InitCommonControlsEx (Stage 1D slider)
 add_executable(mediaplayer_frame_server_demo WIN32
   "mediaplayer_frame_server_demo.cpp"
 )
@@ -83,7 +90,8 @@ target_link_libraries(mediaplayer_frame_server_demo
     "dxgi.lib"
     "windowsapp.lib"
     "runtimeobject.lib"
-    "shell32.lib"  # CommandLineToArgvW
+    "shell32.lib"
+    "comctl32.lib"
 )
 set_target_properties(mediaplayer_frame_server_demo PROPERTIES
   CXX_STANDARD 17
