@@ -108,6 +108,7 @@
 #include <vector>
 
 #include "preview/frame_timing.h"
+#include "preview/preview_compositor.h"
 #include "preview/zoom_easing_constants.h"
 
 namespace {
@@ -125,13 +126,11 @@ constexpr wchar_t kWindowTitle[] =
 constexpr int kDefaultWidth = 1280;
 constexpr int kDefaultHeight = 720;
 
-// ±500 ms click-lookup window. POC-specific (cursor.jsonl semantics),
-// not a constant from zoom_easing_constants.h.
-constexpr std::int64_t kClickLookupWindowUs = 500'000;
-
-// Cursor highlight radius in BACK BUFFER PIXELS. The macOS engine has
-// no parity constant for this; documented inline as a POC choice.
-constexpr float kHighlightRadiusPx = 60.0f;
+// kClickLookupWindowUs + kHighlightRadiusPx live in preview_compositor.h
+// (the shared static lib). The HWND demo and the Flutter texture bridge
+// both consume the same values.
+using clingfy::preview::CursorEvent;
+using clingfy::preview::ZoomState;
 
 // --- Stage 1D constants -----------------------------------------------
 // Pixel reservation at the bottom of the client area for the Win32
@@ -171,164 +170,10 @@ constexpr wchar_t kStage1dResultPath[] =
 constexpr double kPassBarMedianMs = 16.0;
 constexpr double kPassBarP99Ms = 25.0;
 
-// ---------------------------------------------------------------------
-// Cursor event model + hand-authored JSONL loader (unchanged from 1C)
-// ---------------------------------------------------------------------
-
-struct CursorEvent {
-  std::int64_t ts_us = 0;
-  double x = 0.0;
-  double y = 0.0;
-  int button_state = 0;
-  int monitor_id = 0;
-};
-
-std::size_t SkipWs(const std::string& s, std::size_t pos) {
-  while (pos < s.size() &&
-         (s[pos] == ' ' || s[pos] == '\t' || s[pos] == '\n' ||
-          s[pos] == '\r')) {
-    ++pos;
-  }
-  return pos;
-}
-
-template <typename T>
-bool ReadJsonNumber(const std::string& line, const std::string& key,
-                    T& out) {
-  std::string quoted = std::string("\"") + key + "\"";
-  std::size_t pos = line.find(quoted);
-  if (pos == std::string::npos) {
-    pos = line.find(key);
-    if (pos == std::string::npos) return false;
-    if (pos > 0 && (std::isalnum(static_cast<unsigned char>(line[pos - 1])) ||
-                    line[pos - 1] == '_')) {
-      return false;
-    }
-    const std::size_t after = pos + key.size();
-    if (after < line.size() && (std::isalnum(static_cast<unsigned char>(
-                                    line[after])) ||
-                                line[after] == '_')) {
-      return false;
-    }
-    pos = after;
-  } else {
-    pos += quoted.size();
-  }
-  pos = SkipWs(line, pos);
-  if (pos >= line.size() || line[pos] != ':') return false;
-  pos = SkipWs(line, pos + 1);
-
-  const char* start = line.c_str() + pos;
-  char* end = nullptr;
-  if constexpr (std::is_integral_v<T>) {
-    const long long v = std::strtoll(start, &end, 10);
-    if (end == start) return false;
-    out = static_cast<T>(v);
-  } else {
-    const double v = std::strtod(start, &end);
-    if (end == start) return false;
-    out = static_cast<T>(v);
-  }
-  return true;
-}
-
-bool ParseCursorLine(const std::string& line, CursorEvent& out) {
-  const auto first = line.find_first_not_of(" \t\r\n");
-  if (first == std::string::npos) return false;
-  if (line[first] != '{') return false;
-
-  CursorEvent ev;
-  if (!ReadJsonNumber<std::int64_t>(line, "ts_us", ev.ts_us)) return false;
-  if (!ReadJsonNumber<double>(line, "x", ev.x)) return false;
-  if (!ReadJsonNumber<double>(line, "y", ev.y)) return false;
-  ReadJsonNumber<int>(line, "button_state", ev.button_state);
-  ReadJsonNumber<int>(line, "monitor_id", ev.monitor_id);
-  out = ev;
-  return true;
-}
-
-std::vector<CursorEvent> LoadCursorJsonl(const std::wstring& path) {
-  std::vector<CursorEvent> out;
-  std::ifstream in(path);
-  if (!in.is_open()) return out;
-  std::string line;
-  while (std::getline(in, line)) {
-    CursorEvent ev;
-    if (ParseCursorLine(line, ev)) out.push_back(ev);
-  }
-  std::sort(out.begin(), out.end(),
-            [](const CursorEvent& a, const CursorEvent& b) {
-              return a.ts_us < b.ts_us;
-            });
-  return out;
-}
-
-const CursorEvent* FindNearestCursor(
-    const std::vector<CursorEvent>& events, std::int64_t ts_us) {
-  if (events.empty()) return nullptr;
-  auto it = std::lower_bound(
-      events.begin(), events.end(), ts_us,
-      [](const CursorEvent& e, std::int64_t v) { return e.ts_us < v; });
-  if (it == events.end()) return &events.back();
-  if (it == events.begin()) return &*it;
-  auto prev = std::prev(it);
-  const std::int64_t diff_prev = std::llabs(prev->ts_us - ts_us);
-  const std::int64_t diff_next = std::llabs(it->ts_us - ts_us);
-  return diff_prev <= diff_next ? &*prev : &*it;
-}
-
-const CursorEvent* FindNearestClick(
-    const std::vector<CursorEvent>& events, std::int64_t ts_us,
-    std::int64_t window_us) {
-  if (events.empty()) return nullptr;
-  const CursorEvent* best = nullptr;
-  std::int64_t best_diff = window_us + 1;
-  for (const auto& e : events) {
-    if (e.button_state == 0) continue;
-    const std::int64_t diff = std::llabs(e.ts_us - ts_us);
-    if (diff <= window_us && diff < best_diff) {
-      best = &e;
-      best_diff = diff;
-    }
-  }
-  return best;
-}
-
-// ---------------------------------------------------------------------
-// Zoom state + smoother (unchanged from 1C)
-// ---------------------------------------------------------------------
-
-struct ZoomState {
-  double current_zoom = 1.0;
-  double current_x = 0.0;
-  double current_y = 0.0;
-  double target_zoom = 1.0;
-  double target_x = 0.0;
-  double target_y = 0.0;
-  double last_update_seconds = -1.0;
-  std::int64_t last_click_ts_us = std::numeric_limits<std::int64_t>::min();
-};
-
-void StepZoomSmoother(ZoomState& z, double now_seconds) {
-  using namespace clingfy::preview;
-  if (z.last_update_seconds < 0.0) {
-    z.last_update_seconds = now_seconds;
-    return;
-  }
-  double dt = now_seconds - z.last_update_seconds;
-  z.last_update_seconds = now_seconds;
-  if (dt < kZoomFollowMinDtSeconds) dt = kZoomFollowMinDtSeconds;
-  if (dt > kZoomFollowMaxDtSeconds) dt = kZoomFollowMaxDtSeconds;
-
-  const double normalized_frames = dt * kZoomFollowReferenceFPS;
-  const double strength = kZoomFollowStrengthDefault;
-  const double alpha =
-      1.0 - std::pow(1.0 - strength, normalized_frames);
-
-  z.current_zoom += (z.target_zoom - z.current_zoom) * alpha;
-  z.current_x += (z.target_x - z.current_x) * alpha;
-  z.current_y += (z.target_y - z.current_y) * alpha;
-}
+// CursorEvent, JSONL parser, FindNearestCursor / FindNearestClick,
+// ZoomState, StepZoomSmoother — all moved to preview_compositor.{h,cpp}
+// (the preview_poc_common static lib) so the Flutter texture bridge in
+// Stage 2A-2 can reuse the same logic. See preview/preview_compositor.h.
 
 // ---------------------------------------------------------------------
 // Stage 1D — seek samples + measurement window state
@@ -354,19 +199,19 @@ struct DemoState {
   ComPtr<ID2D1DeviceContext> d2d_context;
   ComPtr<ID2D1Bitmap1> backbuffer_bitmap;
   ComPtr<ID2D1SolidColorBrush> black_brush;
-  ComPtr<ID2D1RadialGradientBrush> highlight_brush;
 
   // ---- WinRT MediaPlayer ----
   winrt_dxd3d::IDirect3DDevice winrt_device{nullptr};
   winrt_playback::MediaPlayer player{nullptr};
   winrt::event_token frame_token{};
 
-  // ---- Per-frame video surface ----
-  ComPtr<ID3D11Texture2D> video_texture;
-  ComPtr<ID2D1Bitmap1> video_bitmap;
-  winrt_dxd3d::IDirect3DSurface winrt_video_surface{nullptr};
-  UINT video_width = 0;
-  UINT video_height = 0;
+  // ---- Per-frame video target + composition ----
+  // Owns the offscreen video texture (the surface MediaPlayer copies
+  // into), the WinRT surface wrapper, the D2D bitmap wrapper, and the
+  // radial highlight brush. Drives the BeginDraw / DrawBitmap / halo
+  // sequence each frame. Shared with the Stage 2A texture bridge in
+  // Stage 2A-2.
+  clingfy::preview::PreviewCompositor compositor;
 
   // ---- Window state ----
   HWND hwnd = nullptr;
@@ -637,7 +482,8 @@ void WriteStage1dArtifact(DemoState& state, bool measurement_completed,
   f << "## System info\n\n";
   f << "- **OS:** " << WindowsVersionString() << "\n";
   f << "- **GPU:** " << WideToUtf8(state.gpu_description) << "\n";
-  f << "- **Video:** " << state.video_width << " × " << state.video_height
+  f << "- **Video:** " << state.compositor.video_width() << " × "
+    << state.compositor.video_height()
     << " px\n";
   f << "- **Video path:** `" << WideToUtf8(state.video_path) << "`\n";
   if (!state.cursor_path.empty()) {
@@ -814,25 +660,7 @@ HRESULT CreateSwapChainForHwnd(DemoState& s, HWND hwnd) {
       s.swap_chain.ReleaseAndGetAddressOf());
 }
 
-HRESULT EnsureHighlightBrush(DemoState& s) {
-  if (s.highlight_brush) return S_OK;
-  D2D1_GRADIENT_STOP stops[2] = {
-      {0.0f, D2D1::ColorF(1.0f, 0.95f, 0.55f, 0.85f)},
-      {1.0f, D2D1::ColorF(1.0f, 0.95f, 0.55f, 0.0f)},
-  };
-  ComPtr<ID2D1GradientStopCollection> collection;
-  HRESULT hr = s.d2d_context->CreateGradientStopCollection(
-      stops, 2, collection.GetAddressOf());
-  if (FAILED(hr)) return hr;
-  D2D1_RADIAL_GRADIENT_BRUSH_PROPERTIES props{};
-  props.center = D2D1::Point2F(0.0f, 0.0f);
-  props.gradientOriginOffset = D2D1::Point2F(0.0f, 0.0f);
-  props.radiusX = kHighlightRadiusPx;
-  props.radiusY = kHighlightRadiusPx;
-  return s.d2d_context->CreateRadialGradientBrush(
-      props, collection.Get(),
-      s.highlight_brush.ReleaseAndGetAddressOf());
-}
+// EnsureHighlightBrush moved to PreviewCompositor in preview_compositor.cpp.
 
 HRESULT BindBackBuffer(DemoState& s) {
   s.backbuffer_bitmap.Reset();
@@ -853,11 +681,9 @@ HRESULT BindBackBuffer(DemoState& s) {
   if (FAILED(hr)) return hr;
   s.d2d_context->SetTarget(s.backbuffer_bitmap.Get());
 
-  hr = s.d2d_context->CreateSolidColorBrush(
+  return s.d2d_context->CreateSolidColorBrush(
       D2D1::ColorF(D2D1::ColorF::Black),
       s.black_brush.ReleaseAndGetAddressOf());
-  if (FAILED(hr)) return hr;
-  return EnsureHighlightBrush(s);
 }
 
 HRESULT ResizeSwapChain(DemoState& s, UINT w, UINT h) {
@@ -872,106 +698,20 @@ HRESULT ResizeSwapChain(DemoState& s, UINT w, UINT h) {
   return BindBackBuffer(s);
 }
 
-HRESULT EnsureVideoTarget(DemoState& s, UINT vw, UINT vh) {
-  if (vw == 0 || vh == 0) return E_INVALIDARG;
-  if (s.video_texture && s.video_width == vw && s.video_height == vh) {
-    return S_OK;
-  }
-  s.video_bitmap.Reset();
-  s.video_texture.Reset();
-  s.winrt_video_surface = nullptr;
-
-  D3D11_TEXTURE2D_DESC td{};
-  td.Width = vw;
-  td.Height = vh;
-  td.MipLevels = 1;
-  td.ArraySize = 1;
-  td.Format = DXGI_FORMAT_B8G8R8A8_UNORM;
-  td.SampleDesc.Count = 1;
-  td.Usage = D3D11_USAGE_DEFAULT;
-  td.BindFlags = D3D11_BIND_RENDER_TARGET | D3D11_BIND_SHADER_RESOURCE;
-  HRESULT hr = s.d3d_device->CreateTexture2D(
-      &td, nullptr, s.video_texture.ReleaseAndGetAddressOf());
-  if (FAILED(hr)) return hr;
-
-  ComPtr<IDXGISurface> dxgi_surface;
-  hr = s.video_texture.As(&dxgi_surface);
-  if (FAILED(hr)) return hr;
-  ComPtr<::IInspectable> inspectable;
-  hr = ::CreateDirect3D11SurfaceFromDXGISurface(
-      dxgi_surface.Get(),
-      reinterpret_cast<::IInspectable**>(inspectable.GetAddressOf()));
-  if (FAILED(hr)) return hr;
-  winrt::com_ptr<::IInspectable> winrt_inspectable;
-  winrt_inspectable.attach(inspectable.Detach());
-  s.winrt_video_surface =
-      winrt_inspectable.as<winrt_dxd3d::IDirect3DSurface>();
-
-  const auto props = D2D1::BitmapProperties1(
-      D2D1_BITMAP_OPTIONS_NONE,
-      D2D1::PixelFormat(DXGI_FORMAT_B8G8R8A8_UNORM,
-                        D2D1_ALPHA_MODE_IGNORE));
-  hr = s.d2d_context->CreateBitmapFromDxgiSurface(
-      dxgi_surface.Get(), &props,
-      s.video_bitmap.ReleaseAndGetAddressOf());
-  if (FAILED(hr)) return hr;
-
-  s.video_width = vw;
-  s.video_height = vh;
-  return S_OK;
-}
+// EnsureVideoTarget + LetterboxRect / VideoToBackBuffer / ZoomedDestRect
+// all moved to preview_compositor.{h,cpp}. The HWND demo reaches them
+// via the clingfy::preview namespace (LetterboxRect is also used in
+// HandleVideoFrameAvailable for the slider-stripped dest rect below).
 
 // ---------------------------------------------------------------------
-// Geometry helpers (Stage 1D: dest rect now excludes the slider strip)
+// Slider strip — HWND-only geometry. Stays here because the texture
+// bridge doesn't have an HWND swap chain underneath.
 // ---------------------------------------------------------------------
 
 UINT VideoStripHeight(UINT client_h) {
   return client_h > static_cast<UINT>(kSliderStripPx)
              ? client_h - static_cast<UINT>(kSliderStripPx)
              : client_h;
-}
-
-D2D1_RECT_F LetterboxRect(UINT win_w, UINT win_h, UINT vid_w, UINT vid_h) {
-  if (win_w == 0 || win_h == 0 || vid_w == 0 || vid_h == 0) {
-    return {0, 0, static_cast<float>(win_w), static_cast<float>(win_h)};
-  }
-  const double win_ratio = static_cast<double>(win_w) / win_h;
-  const double vid_ratio = static_cast<double>(vid_w) / vid_h;
-  double draw_w = 0, draw_h = 0;
-  if (vid_ratio > win_ratio) {
-    draw_w = win_w;
-    draw_h = win_w / vid_ratio;
-  } else {
-    draw_h = win_h;
-    draw_w = win_h * vid_ratio;
-  }
-  const double left = (win_w - draw_w) * 0.5;
-  const double top = (win_h - draw_h) * 0.5;
-  return {static_cast<float>(left), static_cast<float>(top),
-          static_cast<float>(left + draw_w),
-          static_cast<float>(top + draw_h)};
-}
-
-D2D1_POINT_2F VideoToBackBuffer(double vx, double vy, UINT vid_w,
-                                UINT vid_h, const D2D1_RECT_F& dest) {
-  if (vid_w == 0 || vid_h == 0) return D2D1::Point2F(0.0f, 0.0f);
-  const float dx = dest.right - dest.left;
-  const float dy = dest.bottom - dest.top;
-  const float ox =
-      dest.left + static_cast<float>(vx / vid_w) * dx;
-  const float oy =
-      dest.top + static_cast<float>(vy / vid_h) * dy;
-  return D2D1::Point2F(ox, oy);
-}
-
-D2D1_RECT_F ZoomedDestRect(const D2D1_RECT_F& dest, float focus_x,
-                           float focus_y, float zoom_factor) {
-  if (zoom_factor <= 1.0f + 1e-4f) return dest;
-  const float left = focus_x - (focus_x - dest.left) * zoom_factor;
-  const float top = focus_y - (focus_y - dest.top) * zoom_factor;
-  const float width = (dest.right - dest.left) * zoom_factor;
-  const float height = (dest.bottom - dest.top) * zoom_factor;
-  return {left, top, left + width, top + height};
 }
 
 // ---------------------------------------------------------------------
@@ -1127,7 +867,8 @@ void HandleVideoFrameAvailable(DemoState& s,
     if (in_measurement_window) s.timing_total.EndFrame();
     return;
   }
-  if (FAILED(EnsureVideoTarget(s, vw, vh))) {
+  if (FAILED(s.compositor.EnsureResources(s.d3d_device.Get(),
+                                          s.d2d_context.Get(), vw, vh))) {
     s.dropped_frames.fetch_add(1, std::memory_order_relaxed);
     if (in_measurement_window) s.timing_total.EndFrame();
     return;
@@ -1136,7 +877,7 @@ void HandleVideoFrameAvailable(DemoState& s,
   // ---- Copy bucket ----
   if (s.cursor_mode && in_measurement_window) s.timing_copy.BeginFrame();
   try {
-    sender.CopyFrameToVideoSurface(s.winrt_video_surface);
+    sender.CopyFrameToVideoSurface(s.compositor.winrt_video_surface());
   } catch (winrt::hresult_error const&) {
     s.dropped_frames.fetch_add(1, std::memory_order_relaxed);
     if (s.cursor_mode && in_measurement_window) s.timing_copy.EndFrame();
@@ -1145,83 +886,27 @@ void HandleVideoFrameAvailable(DemoState& s,
   }
   if (s.cursor_mode && in_measurement_window) s.timing_copy.EndFrame();
 
-  // ---- Zoom state machine + position ----
-  float cursor_back_x = 0.0f, cursor_back_y = 0.0f;
-  float highlight_alpha = 0.0f;
-  float zoom_for_draw = 1.0f;
-  // Dest rect now excludes the slider strip at the bottom.
-  const UINT video_strip_h = VideoStripHeight(s.client_height);
-  const D2D1_RECT_F dest = LetterboxRect(s.client_width, video_strip_h,
-                                         s.video_width, s.video_height);
-
-  if (s.cursor_mode) {
-    using namespace clingfy::preview;
-    const std::int64_t playback_us = CurrentPlaybackUs(sender);
-    const CursorEvent* nearest =
-        FindNearestCursor(s.cursor_events, playback_us);
-    const CursorEvent* click = FindNearestClick(
-        s.cursor_events, playback_us, kClickLookupWindowUs);
-
-    if (nearest != nullptr) {
-      s.zoom.target_x = nearest->x;
-      s.zoom.target_y = nearest->y;
-    }
-    const std::int64_t now_us = playback_us;
-    const std::int64_t hold_us = static_cast<std::int64_t>(
-        kZoomMinOnSeconds * 1'000'000.0);
-    bool zoom_wanted = false;
-    if (click != nullptr) {
-      s.zoom.last_click_ts_us =
-          std::max(s.zoom.last_click_ts_us, click->ts_us);
-      zoom_wanted = true;
-    } else if (s.zoom.last_click_ts_us !=
-                   std::numeric_limits<std::int64_t>::min() &&
-               now_us >= 0 && now_us >= s.zoom.last_click_ts_us &&
-               (now_us - s.zoom.last_click_ts_us) < hold_us) {
-      zoom_wanted = true;
-    }
-    s.zoom.target_zoom =
-        zoom_wanted ? kZoomFactorDefault : 1.0;
-    StepZoomSmoother(s.zoom, NowSeconds());
-
-    const float zf = static_cast<float>(s.zoom.current_zoom);
-    zoom_for_draw = zf;
-    const auto cursor_bb = VideoToBackBuffer(
-        s.zoom.current_x, s.zoom.current_y, s.video_width,
-        s.video_height, dest);
-    cursor_back_x = cursor_bb.x;
-    cursor_back_y = cursor_bb.y;
-    const double span = kZoomFactorDefault - 1.0;
-    const double t = span > 0 ? (s.zoom.current_zoom - 1.0) / span : 0.0;
-    highlight_alpha = static_cast<float>(std::clamp(t, 0.0, 1.0));
-  }
-
   // ---- Render bucket ----
+  // The slider strip is painted by Windows (its own child HWND);
+  // VideoStripHeight subtracts it so the video dest never overlaps.
+  const UINT video_strip_h = VideoStripHeight(s.client_height);
+  const D2D1_RECT_F dest = clingfy::preview::LetterboxRect(
+      s.client_width, video_strip_h, s.compositor.video_width(),
+      s.compositor.video_height());
+  const std::int64_t playback_us =
+      s.cursor_mode ? CurrentPlaybackUs(sender) : -1;
+
   if (s.cursor_mode && in_measurement_window) s.timing_render.BeginFrame();
   s.d2d_context->BeginDraw();
-  s.d2d_context->Clear(D2D1::ColorF(0.0f, 0.0f, 0.0f, 1.0f));
-
-  // The slider strip is painted by Windows (its own child HWND); we
-  // just leave that band as the clear color so the trackbar's
-  // background reads against pure black.
-  const auto zoomed_dest = s.cursor_mode
-                               ? ZoomedDestRect(dest, cursor_back_x,
-                                                cursor_back_y,
-                                                zoom_for_draw)
-                               : dest;
-  s.d2d_context->DrawBitmap(s.video_bitmap.Get(), &zoomed_dest, 1.0f,
-                            D2D1_BITMAP_INTERPOLATION_MODE_LINEAR);
-
-  if (s.cursor_mode && s.highlight_brush && highlight_alpha > 0.0f) {
-    s.highlight_brush->SetCenter(
-        D2D1::Point2F(cursor_back_x, cursor_back_y));
-    s.highlight_brush->SetOpacity(highlight_alpha);
-    const D2D1_ELLIPSE halo = {
-        D2D1::Point2F(cursor_back_x, cursor_back_y),
-        kHighlightRadiusPx, kHighlightRadiusPx};
-    s.d2d_context->FillEllipse(halo, s.highlight_brush.Get());
-  }
-
+  // PreviewCompositor::ComposeFrame does Clear + DrawBitmap +
+  // optional zoom + highlight in one go. cursor_events empty means
+  // video-only mode; zoom and halo are skipped and the call is a
+  // pure DrawBitmap.
+  // Compositor handles empty cursor_events as the "video-only" path
+  // internally; no separate codepath needed when cursor_mode is off
+  // (s.cursor_events is just empty in that case).
+  s.compositor.ComposeFrame(s.d2d_context.Get(), dest, s.cursor_events,
+                            playback_us, NowSeconds(), s.zoom);
   const HRESULT end_hr = s.d2d_context->EndDraw();
   if (end_hr == D2DERR_RECREATE_TARGET) {
     BindBackBuffer(s);
@@ -1451,7 +1136,7 @@ int RunDemo(HINSTANCE hinstance, int show_cmd, LPWSTR cmdline) {
   state.video_path = paths.video;
   state.cursor_path = paths.cursor;
   if (!paths.cursor.empty()) {
-    state.cursor_events = LoadCursorJsonl(paths.cursor);
+    state.cursor_events = clingfy::preview::LoadCursorJsonl(paths.cursor);
     state.cursor_mode = !state.cursor_events.empty();
     if (!state.cursor_mode) {
       return ShowErrorAndExit(
