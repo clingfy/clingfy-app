@@ -8,8 +8,20 @@
 #include <memory>
 #include <vector>
 
+#include "test_support.h"
+
 namespace clingfy::bridge {
 namespace {
+
+// Step 5.4.1 fix: emits route through PlatformThreadDispatcher.
+// Once any test in this process calls Initialize() on the dispatcher
+// (the dispatcher tests do, in their SetUp), every subsequent
+// EmitPlayer* call PostMessages to the test thread instead of running
+// inline. Each emit in this file is therefore followed by a
+// `test_support::PumpMessages()` call so the assertions land
+// deterministically regardless of test-execution order. When the
+// dispatcher is still uninitialized (first test in a process), Post()
+// runs inline and the pump is a no-op.
 
 // Captures whatever the publisher emits. Mirrors the RecordingSink
 // shape from workflow_event_publisher_test — the captured events live
@@ -90,6 +102,7 @@ TEST_F(PlayerEventPublisherTest, NoSinkDropsEventsSilently) {
       "sess-no-sink", "VIDEO_FILE_MISSING", "file gone");
   PlayerEventPublisher::Instance().EmitPlayerWarning(
       "sess-no-sink", "CURSOR_FILE_MISSING", "cursor gone");
+  test_support::PumpMessages();
 }
 
 TEST_F(PlayerEventPublisherTest, HasSinkReflectsAttachAndClear) {
@@ -99,6 +112,7 @@ TEST_F(PlayerEventPublisherTest, HasSinkReflectsAttachAndClear) {
   EXPECT_FALSE(PlayerEventPublisher::Instance().has_sink());
   // Emissions after ClearSink must be silent drops.
   PlayerEventPublisher::Instance().EmitPlayerTick("sess-1", 1, 2);
+  test_support::PumpMessages();
   EXPECT_TRUE(events->empty());
 }
 
@@ -107,6 +121,7 @@ TEST_F(PlayerEventPublisherTest, HasSinkReflectsAttachAndClear) {
 TEST_F(PlayerEventPublisherTest, PlayerTickShapeMatchesMacOS) {
   auto events = InstallRecordingSink();
   PlayerEventPublisher::Instance().EmitPlayerTick("sess-42", 1234, 60000);
+  test_support::PumpMessages();
 
   ASSERT_EQ(events->size(), 1u);
   const auto* map = AsMap((*events)[0]);
@@ -127,6 +142,7 @@ TEST_F(PlayerEventPublisherTest, PlayerTickPreservesLargeDurationMs) {
   const std::int64_t kTenHoursMs = 10LL * 60LL * 60LL * 1000LL;
   PlayerEventPublisher::Instance().EmitPlayerTick("sess-long", 0,
                                                   kTenHoursMs);
+  test_support::PumpMessages();
   ASSERT_EQ(events->size(), 1u);
   const auto* map = AsMap((*events)[0]);
   ASSERT_NE(map, nullptr);
@@ -138,6 +154,7 @@ TEST_F(PlayerEventPublisherTest, PlayerTickPreservesLargeDurationMs) {
 TEST_F(PlayerEventPublisherTest, PlayerStatePlayingShape) {
   auto events = InstallRecordingSink();
   PlayerEventPublisher::Instance().EmitPlayerState("sess-42", "playing");
+  test_support::PumpMessages();
 
   ASSERT_EQ(events->size(), 1u);
   const auto* map = AsMap((*events)[0]);
@@ -151,6 +168,7 @@ TEST_F(PlayerEventPublisherTest, PlayerStatePlayingShape) {
 TEST_F(PlayerEventPublisherTest, PlayerStatePausedShape) {
   auto events = InstallRecordingSink();
   PlayerEventPublisher::Instance().EmitPlayerState("sess-42", "paused");
+  test_support::PumpMessages();
   ASSERT_EQ(events->size(), 1u);
   EXPECT_EQ(ReadString(*AsMap((*events)[0]), "state"), "paused");
 }
@@ -158,6 +176,7 @@ TEST_F(PlayerEventPublisherTest, PlayerStatePausedShape) {
 TEST_F(PlayerEventPublisherTest, PlayerStateCompletedShape) {
   auto events = InstallRecordingSink();
   PlayerEventPublisher::Instance().EmitPlayerState("sess-42", "completed");
+  test_support::PumpMessages();
   ASSERT_EQ(events->size(), 1u);
   EXPECT_EQ(ReadString(*AsMap((*events)[0]), "state"), "completed");
 }
@@ -169,6 +188,7 @@ TEST_F(PlayerEventPublisherTest, PlayerErrorShapeMatchesMacOS) {
   PlayerEventPublisher::Instance().EmitPlayerError(
       "sess-42", "VIDEO_FILE_MISSING",
       "Recording file was moved or deleted.");
+  test_support::PumpMessages();
 
   ASSERT_EQ(events->size(), 1u);
   const auto* map = AsMap((*events)[0]);
@@ -186,6 +206,7 @@ TEST_F(PlayerEventPublisherTest, PlayerWarningShapeMatchesMacOS) {
   PlayerEventPublisher::Instance().EmitPlayerWarning(
       "sess-42", "CURSOR_FILE_MISSING",
       "Cursor data is missing. Cursor effects are disabled.");
+  test_support::PumpMessages();
 
   ASSERT_EQ(events->size(), 1u);
   const auto* map = AsMap((*events)[0]);
@@ -209,6 +230,7 @@ TEST_F(PlayerEventPublisherTest, EventsArriveInEmissionOrder) {
   pub.EmitPlayerState("sess-1", "paused");
   pub.EmitPlayerWarning("sess-1", "CURSOR_FILE_MISSING", "no cursor");
   pub.EmitPlayerError("sess-1", "VIDEO_FILE_MISSING", "no video");
+  test_support::PumpMessages();
 
   ASSERT_EQ(events->size(), 6u);
   EXPECT_EQ(ReadString(*AsMap((*events)[0]), "type"), "playerState");
@@ -227,12 +249,14 @@ TEST_F(PlayerEventPublisherTest,
        SecondSinkInstallReplacesAndStopsFirstFromReceiving) {
   auto first_events = InstallRecordingSink();
   PlayerEventPublisher::Instance().EmitPlayerTick("sess-1", 1, 1);
+  test_support::PumpMessages();
   ASSERT_EQ(first_events->size(), 1u);
 
   // Install a second sink — Dart re-subscribes after a hot reload, the
   // publisher replaces in place, and the new sink must take over.
   auto second_events = InstallRecordingSink();
   PlayerEventPublisher::Instance().EmitPlayerTick("sess-1", 2, 2);
+  test_support::PumpMessages();
   EXPECT_EQ(first_events->size(), 1u)
       << "first sink should not receive events after the second listen";
   ASSERT_EQ(second_events->size(), 1u);

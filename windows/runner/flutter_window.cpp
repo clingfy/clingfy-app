@@ -2,6 +2,7 @@
 
 #include <optional>
 
+#include "Bridge/platform_thread_dispatcher.h"
 #include "flutter/generated_plugin_registrant.h"
 #include "preview/preview_engine.h"
 
@@ -26,6 +27,16 @@ bool FlutterWindow::OnCreate() {
     return false;
   }
   RegisterPlugins(flutter_controller_->engine());
+
+  // Initialize the platform-thread dispatcher BEFORE the event-channel
+  // stubs register `player/events`. Step 5.4.1 fix: any worker thread
+  // that wants to emit a player/events payload (VideoFrameAvailable,
+  // PlaybackStateChanged, MediaEnded, MediaFailed, the heartbeat
+  // thread) must marshal through the dispatcher so the actual
+  // EventSink::Success call lands on the platform thread that runs
+  // this constructor. We're already on that thread here, so this is
+  // the right place to register the hidden message-only window.
+  clingfy::bridge::PlatformThreadDispatcher::Instance().Initialize();
 
   // Stand up the native bridge before the first frame. Methods called from
   // Flutter (NativeBridge.instance) must always have a registered handler —
