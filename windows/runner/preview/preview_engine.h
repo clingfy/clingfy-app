@@ -1,25 +1,37 @@
-// Stage 2A-2 (Phase B+) — DXGI shared-handle texture registered with the
-// Flutter Windows TextureRegistrar, this time fed by a real MediaPlayer
-// frame-server pipeline composed through `clingfy::preview::PreviewCompositor`.
+// PreviewEngine — DXGI shared-handle texture registered with the Flutter
+// Windows TextureRegistrar, fed by a WinRT MediaPlayer frame-server
+// pipeline composed through `clingfy::preview::PreviewCompositor`.
 //
-// Stage 2A-1 (PR #102) proved the bridge works with a solid-color animated
-// texture. Stage 2A-2 replaces the producer thread with a WinRT MediaPlayer
-// subscribed to VideoFrameAvailable: each callback copies the decoded video
-// onto an offscreen surface, the compositor blits it (letterboxed +
-// optional cursor zoom/highlight) into the shared D3D11 texture via D2D,
-// and the texture-registrar is marked for sampling. This is the exact
-// shape Phase 5 production preview wants — only the wire-up to
-// previewOpen/previewPlay/previewSeekTo is still missing, and that's
-// deliberately out of scope until the architecture decision is signed.
+// History (the empirical findings that shape this code live in PRs
+// #96–#104; the architecture decision that locks them is recorded in
+// `docs/decisions/windows-phase-5-preview-architecture.md`):
+//
+//   * Stage 2A-1 (#102) proved the legacy DXGI shared-handle bridge into
+//     Flutter on Intel Iris Xe. NT shared handles + keyed mutex crash
+//     ANGLE's import path; the constraints in MakeSharedTextureDesc() +
+//     the "skip unregister" workaround in Close() are the result.
+//   * Stage 2A-2 (#104) replaced the producer thread with a real
+//     MediaPlayer + PreviewCompositor pipeline subscribed to
+//     VideoFrameAvailable: each callback copies the decoded video onto
+//     an offscreen surface, the compositor blits it (letterboxed +
+//     optional cursor zoom/highlight) into the shared D3D11 texture via
+//     D2D, and the texture-registrar is marked for sampling.
+//   * Step 5.0 of Phase 5 production (this file) lifted that code out
+//     of windows/runner/preview/poc_stage_2a/, renamed the type to
+//     PreviewEngine, and moved it into the production preview/
+//     directory. Behavior is unchanged — production previewOpen
+//     semantics (sessionId, projectPath, manifest reader) arrive in
+//     later steps; today the engine is still driven only through the
+//     deprecated pocStage2aStart / pocStage2aStop aliases routed
+//     through `Bridge/Routers/preview_router.cpp`.
 //
 // Singleton because flutter::MethodCall handlers in this project are
-// stateless function pointers (see Bridge/method_router.h). The
-// singleton is Initialized once at app startup from FlutterWindow,
-// after the engine + plugin registrar exist; Start/Stop are driven by
-// the POC method-channel calls from the debug-only Dart screen.
+// stateless function pointers (see Bridge/method_router.h). Initialize
+// is called once at app startup from FlutterWindow; Open/Close are
+// driven by method-channel calls.
 
-#ifndef RUNNER_PREVIEW_POC_STAGE_2A_STAGE2A_TEXTURE_BRIDGE_H_
-#define RUNNER_PREVIEW_POC_STAGE_2A_STAGE2A_TEXTURE_BRIDGE_H_
+#ifndef RUNNER_PREVIEW_PREVIEW_ENGINE_H_
+#define RUNNER_PREVIEW_PREVIEW_ENGINE_H_
 
 #include <flutter_plugin_registrar.h>
 #include <flutter_texture_registrar.h>
@@ -32,17 +44,17 @@
 #include <string>
 #include <vector>
 
-namespace clingfy::poc::stage2a {
+namespace clingfy::preview {
 
-// Inputs to Start. Both paths are wide-character because Windows file
+// Inputs to Open. Both paths are wide-character because Windows file
 // paths are wchars natively; the router converts UTF-8 from Dart at the
 // channel boundary.
-struct StartArgs {
-  std::wstring video_path;   // required; empty → start fails with error
+struct OpenArgs {
+  std::wstring video_path;   // required; empty → open fails with error
   std::wstring cursor_path;  // optional; empty → video-only (no zoom/halo)
 };
 
-struct StartResult {
+struct OpenResult {
   // The Flutter texture id the Dart Texture widget should mount. -1
   // when allocation or registration failed (check `error`).
   std::int64_t texture_id = -1;
@@ -58,7 +70,7 @@ struct StartResult {
   int width = 0;
   int height = 0;
   // Natural video size pulled from MediaPlayer after the first
-  // VideoFrameAvailable. Zero until the first frame arrives — Start
+  // VideoFrameAvailable. Zero until the first frame arrives — Open
   // returns before that, so callers should treat 0 as "not yet known."
   int video_width = 0;
   int video_height = 0;
@@ -71,7 +83,7 @@ struct StartResult {
   std::string error;
 };
 
-struct StopArgs {
+struct CloseArgs {
   // Flutter SchedulerBinding timings, passed back from the Dart side
   // so the native artifact writer can include them in the Markdown.
   // Each pair is (median_ms, p99_ms) for a bucket. Buckets are
@@ -85,10 +97,10 @@ struct StopArgs {
   std::int64_t flutter_frames_observed = 0;
 };
 
-class Stage2aTextureBridge {
+class PreviewEngine {
  public:
-  // Process-wide singleton accessor used by the POC router handlers.
-  static Stage2aTextureBridge* Instance();
+  // Process-wide singleton accessor used by the bridge router handlers.
+  static PreviewEngine* Instance();
 
   // Initialize against the engine's plugin registrar ref (C API).
   // Called once from FlutterWindow::OnCreate(). Safe to call multiple
@@ -97,28 +109,29 @@ class Stage2aTextureBridge {
 
   // Allocate the shared D3D11 texture + register it with the Flutter
   // TextureRegistrar, then start the MediaPlayer frame-server feeding
-  // the compositor. Idempotent: calling Start when already running
+  // the compositor. Idempotent: calling Open when already running
   // returns the same texture id (but ignores the new args).
-  StartResult Start(const StartArgs& args);
+  OpenResult Open(const OpenArgs& args);
 
   // Unsubscribe from VideoFrameAvailable, tear down the MediaPlayer +
   // compositor, and write `build/windows-poc/stage2a_2_result.md`
   // from `args` plus the native producer timings collected during the
   // run. Texture stays leaked (see #102 workaround for Intel iGPU
-  // shutdown crash inside Flutter's unregister path).
-  void Stop(const StopArgs& args);
+  // shutdown crash inside Flutter's unregister path) — the production-
+  // grade lifecycle fix lands in Step 5.3.
+  void Close(const CloseArgs& args);
 
   // For tests / observability.
   std::int64_t current_texture_id() const;
 
  private:
-  Stage2aTextureBridge() = default;
-  ~Stage2aTextureBridge();
-  Stage2aTextureBridge(const Stage2aTextureBridge&) = delete;
-  Stage2aTextureBridge& operator=(const Stage2aTextureBridge&) = delete;
+  PreviewEngine() = default;
+  ~PreviewEngine();
+  PreviewEngine(const PreviewEngine&) = delete;
+  PreviewEngine& operator=(const PreviewEngine&) = delete;
 
   // Implementation lives in the .cpp where the winrt projection
-  // headers are visible. The trampoline lambda in Start() passes a
+  // headers are visible. The trampoline lambda in Open() passes a
   // pointer to the `MediaPlayer const&` it received from WinRT; the
   // implementation reinterpret-casts back. Opaque `void*` keeps the
   // header free of `winrt/...` includes so router consumers don't
@@ -137,7 +150,7 @@ class Stage2aTextureBridge {
   std::unique_ptr<Impl> impl_;
 
   // Plugin registrar + texture registrar are owned by the engine and
-  // outlive this singleton in practice (Stop tears the registration
+  // outlive this singleton in practice (Close tears the registration
   // down before the engine shuts). C API refs to avoid pulling in
   // the flutter_wrapper_plugin library (which would conflict on
   // core_implementations.cc with flutter_wrapper_app).
@@ -148,7 +161,7 @@ class Stage2aTextureBridge {
   std::atomic<bool> running_{false};
   std::atomic<bool> shutting_down_{false};
 
-  // Stats / IDs returned by Start.
+  // Stats / IDs returned by Open.
   std::int64_t texture_id_ = -1;
   bool shared_handle_ok_ = false;
   int texture_width_ = 0;
@@ -159,6 +172,6 @@ class Stage2aTextureBridge {
   mutable std::mutex mutex_;
 };
 
-}  // namespace clingfy::poc::stage2a
+}  // namespace clingfy::preview
 
-#endif  // RUNNER_PREVIEW_POC_STAGE_2A_STAGE2A_TEXTURE_BRIDGE_H_
+#endif  // RUNNER_PREVIEW_PREVIEW_ENGINE_H_
