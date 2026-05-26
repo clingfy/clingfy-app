@@ -117,7 +117,7 @@ POC sequence (most recent last; all merged into `develop`):
 
 The resulting decision is recorded in [decisions/windows-phase-5-preview-architecture.md](decisions/windows-phase-5-preview-architecture.md). Summary: **Approach A is accepted** — WinRT MediaPlayer frame-server + `PreviewCompositor` + `D3D11_RESOURCE_MISC_SHARED` + Flutter `Texture` widget, with the Flutter shell as the visible preview surface. That note also lists the locked technical choices (legacy shared handle only, multi-thread-protected D3D11 + `MULTI_THREADED` D2D factory, explicit `Flush` before mark-frame-available) and the known follow-ups that production must address before ship (texture unregister stability on Intel iGPU, audio path, multi-GPU validation, the move out of `poc_stage_2a/` into `preview/` proper).
 
-The Phase 5 design v2 PR (intended #106) turns the locked architecture into a production implementation order: `previewOpen`, `previewPlay` / `previewPause`, `previewSeekTo`, `player/events`, `getRecordingSceneInfo`, `.clingfy` project reopen. Production work on `previewOpen` does not start until that design lands.
+The Phase 5 design v2 — the production implementation order for `previewOpen`, `previewPlay` / `previewPause`, `previewSeekTo`, `player/events`, `getRecordingSceneInfo`, `.clingfy` project reopen — is recorded in [decisions/windows-phase-5-implementation-plan.md](decisions/windows-phase-5-implementation-plan.md). The plan splits Phase 5 into eight PRs (5.0 → 5.7), with Step 5.7 (multi-GPU validation + texture-unregister fix) gating the ship. Production work on `previewOpen` does not start until Step 5.0 (lift the Stage 2A-2 bridge out of `poc_stage_2a/` and rename to `PreviewEngine`) lands.
 
 ## Permissions handling (between Phase 3 and Phase 4)
 
