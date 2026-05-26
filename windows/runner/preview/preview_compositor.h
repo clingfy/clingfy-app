@@ -8,7 +8,7 @@
 //     (build/windows-poc/.../mediaplayer_frame_server_demo.exe — drives
 //     `stage1d_result.md`), and
 //   * the Flutter Texture / DXGI shared-handle bridge
-//     (Stage2aTextureBridge — drives `stage2a_2_result.md`).
+//     (PreviewEngine — drives `stage2a_2_result.md`).
 //
 // Single source of truth for cursor.jsonl parsing, smart-zoom state +
 // smoother math, letterbox / zoom geometry, and the actual Direct2D

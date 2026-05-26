@@ -28,7 +28,6 @@ add_library(runner_bridge STATIC
   "Bridge/Routers/indicator_router.cpp"
   "Bridge/Routers/misc_router.cpp"
   "Bridge/Routers/permissions_router.cpp"
-  "Bridge/Routers/poc_stage_2a_router.cpp"
   "Bridge/Routers/preview_router.cpp"
   "Bridge/Routers/recording_router.cpp"
   "Bridge/Routers/storage_router.cpp"
@@ -47,7 +46,7 @@ add_library(runner_bridge STATIC
   "Permissions/permission_probe.cpp"
   "preview/frame_timing.cpp"
   "preview/preview_compositor.cpp"
-  "preview/poc_stage_2a/stage2a_texture_bridge.cpp"
+  "preview/preview_engine.cpp"
 )
 apply_standard_settings(runner_bridge)
 target_compile_definitions(runner_bridge PRIVATE "NOMINMAX")
@@ -100,9 +99,9 @@ target_link_libraries(runner_bridge PUBLIC
   "avrt.lib"
 )
 
-# Phase 5 POC Stage 2A-2: Direct2D 1.1 + WinRT C++/WinRT runtime are
-# needed by `Stage2aTextureBridge` to composite MediaPlayer frame-server
-# frames into the DXGI shared texture before handing it to Flutter.
+# Phase 5: Direct2D 1.1 + WinRT C++/WinRT runtime are needed by
+# `PreviewEngine` to composite MediaPlayer frame-server frames into the
+# DXGI shared texture before handing it to Flutter.
 #   * d2d1 — D2D1CreateFactory, ID2D1DeviceContext, RenderTargetBitmap
 # d3d11.lib + dxgi.lib + windowsapp.lib were already linked above for
 # Phase 3B / 3C.

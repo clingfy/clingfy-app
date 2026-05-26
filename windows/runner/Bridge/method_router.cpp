@@ -7,7 +7,6 @@
 #include "Bridge/Routers/indicator_router.h"
 #include "Bridge/Routers/misc_router.h"
 #include "Bridge/Routers/permissions_router.h"
-#include "Bridge/Routers/poc_stage_2a_router.h"
 #include "Bridge/Routers/preview_router.h"
 #include "Bridge/Routers/recording_router.h"
 #include "Bridge/Routers/storage_router.h"
@@ -27,11 +26,10 @@ MethodRouter::MethodRouter() {
   routers::permissions::RegisterHandlers(handlers_);
   routers::storage::RegisterHandlers(handlers_);
   routers::misc::RegisterHandlers(handlers_);
-  // POC Stage 2A debug-only methods. The Dart-side debug screen is
-  // gated by `--dart-define=POC_STAGE_2A=true`; the methods are
-  // always present in the router so the debug screen does not hit a
-  // MissingPluginException at runtime.
-  routers::poc_stage_2a::RegisterHandlers(handlers_);
+  // Note: pocStage2aStart / pocStage2aStop are now registered as
+  // deprecated aliases inside preview_router.cpp — they forward into
+  // the same PreviewEngine that production previewOpen / previewClose
+  // will use starting in Step 5.3.
 }
 
 void MethodRouter::Dispatch(

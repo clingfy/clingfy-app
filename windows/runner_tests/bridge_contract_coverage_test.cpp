@@ -149,10 +149,14 @@ const std::vector<std::string>& BridgeContractMethods() {
       "cacheLocalizedStrings",
       "checkForUpdates",
 
-      // Phase 5 POC — Stage 2A texture-bridge spike (debug-only).
-      // The Dart-side debug screen is gated by
-      // `--dart-define=POC_STAGE_2A=true`; the methods are present in
-      // the router regardless so the bridge contract stays uniform.
+      // Deprecated Stage 2A POC aliases. Step 5.0 lifted the texture
+      // bridge into windows/runner/preview/preview_engine.{h,cpp} and
+      // renamed it PreviewEngine; the pocStage2a* method names remain
+      // registered (now inside preview_router.cpp) so the debug screen
+      // gated by `--dart-define=POC_STAGE_2A=true` keeps working
+      // during Steps 5.1 / 5.2 / 5.3. The aliases (and the debug
+      // screen) are deleted in the PR that lands the production
+      // previewOpen semantics in Step 5.3.
       "pocStage2aStart",
       "pocStage2aStop",
   };

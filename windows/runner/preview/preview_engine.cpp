@@ -1,4 +1,4 @@
-#include "preview/poc_stage_2a/stage2a_texture_bridge.h"
+#include "preview/preview_engine.h"
 
 #include <windows.h>
 #include <winternl.h>
@@ -27,7 +27,7 @@
 #include "preview/frame_timing.h"
 #include "preview/preview_compositor.h"
 
-namespace clingfy::poc::stage2a {
+namespace clingfy::preview {
 
 using Microsoft::WRL::ComPtr;
 
@@ -43,13 +43,14 @@ namespace {
 // arbitrary source resolutions work without resizing the shared handle.
 // 720p is plenty of headroom for the design-doc verdict bar and keeps
 // the shared allocation small enough that Intel iGPU drivers behave.
+// Step 5.3 of the Phase 5 plan replaces this fixed size with a
+// Flutter-widget-sized surface.
 constexpr int kTextureWidth = 1280;
 constexpr int kTextureHeight = 720;
 constexpr wchar_t kArtifactPath[] =
     L"build\\windows-poc\\stage2a_2_result.md";
 constexpr wchar_t kNativeLogPath[] =
     L"build\\windows-poc\\stage2a_2_native.log";
-constexpr const char* kPluginName = "ClingfyPocStage2a";
 
 // Design-doc Stage-1 pass bar (the verdict line in the artifact
 // compares Flutter raster + native producer median/p99 against these).
@@ -59,7 +60,7 @@ constexpr double kPassBarP99Ms = 25.0;
 // File-based logger because a Flutter Windows debug build is a GUI
 // subsystem exe with no console; the standard streams are not
 // reliably reachable from outside. The log file is overwritten each
-// Start(); each line carries an HRESULT-style breadcrumb so a crash
+// Open(); each line carries an HRESULT-style breadcrumb so a crash
 // can be localised by inspecting the last surviving line.
 void LogNative(const char* msg) {
   std::ofstream f(kNativeLogPath,
@@ -89,10 +90,11 @@ D3D11_TEXTURE2D_DESC MakeSharedTextureDesc(int w, int h) {
   d.SampleDesc.Count = 1;
   d.Usage = D3D11_USAGE_DEFAULT;
   d.BindFlags = D3D11_BIND_RENDER_TARGET | D3D11_BIND_SHADER_RESOURCE;
-  // Legacy SHARED handle — see the long comment in Stage 2A-1: NT
-  // shared handles + keyed mutex crash ANGLE's import path; the only
-  // form Flutter's GpuSurface bridge accepts on Intel iGPU drivers is
-  // the legacy (non-NT) form produced by IDXGIResource::GetSharedHandle.
+  // Legacy SHARED handle — see the Phase 5 ADR's "Locked technical
+  // choices" item 4: NT shared handles + keyed mutex crash ANGLE's
+  // import path on Intel iGPU; the only form Flutter's GpuSurface
+  // bridge accepts is the legacy (non-NT) form produced by
+  // IDXGIResource::GetSharedHandle.
   d.MiscFlags = D3D11_RESOURCE_MISC_SHARED;
   return d;
 }
@@ -169,7 +171,7 @@ std::int64_t CurrentPlaybackUs(winrt_playback::MediaPlayer const& player) {
 // timing collectors. Hidden in the .cpp so the header stays free of
 // D3D11 / D2D / WinRT types.
 // ---------------------------------------------------------------------
-struct Stage2aTextureBridge::Impl {
+struct PreviewEngine::Impl {
   // ---- D3D11 / D2D ----
   ComPtr<ID3D11Device> d3d_device;
   ComPtr<ID3D11DeviceContext> d3d_context;
@@ -232,7 +234,7 @@ namespace {
 // frame because texture size never changes.
 const FlutterDesktopGpuSurfaceDescriptor* ObtainSurfaceDescriptor(
     size_t /*width*/, size_t /*height*/, void* user_data) {
-  auto* impl = static_cast<Stage2aTextureBridge::Impl*>(user_data);
+  auto* impl = static_cast<PreviewEngine::Impl*>(user_data);
   if (impl == nullptr) {
     LogNative("ObtainSurfaceDescriptor: impl is null");
     return nullptr;
@@ -248,19 +250,19 @@ const FlutterDesktopGpuSurfaceDescriptor* ObtainSurfaceDescriptor(
 
 // ---------------------------------------------------------------------
 
-Stage2aTextureBridge* Stage2aTextureBridge::Instance() {
-  static Stage2aTextureBridge instance;
+PreviewEngine* PreviewEngine::Instance() {
+  static PreviewEngine instance;
   return &instance;
 }
 
-Stage2aTextureBridge::~Stage2aTextureBridge() {
+PreviewEngine::~PreviewEngine() {
   // Best-effort tear-down; in practice the singleton outlives the
   // engine so this destructor only runs at process exit.
-  StopArgs empty{};
-  if (running_.load()) Stop(empty);
+  CloseArgs empty{};
+  if (running_.load()) Close(empty);
 }
 
-void Stage2aTextureBridge::Initialize(
+void PreviewEngine::Initialize(
     FlutterDesktopPluginRegistrarRef registrar) {
   std::lock_guard<std::mutex> lock(mutex_);
   if (registrar_ != nullptr) return;  // already initialized
@@ -270,45 +272,44 @@ void Stage2aTextureBridge::Initialize(
                 : nullptr;
 }
 
-std::int64_t Stage2aTextureBridge::current_texture_id() const {
+std::int64_t PreviewEngine::current_texture_id() const {
   std::lock_guard<std::mutex> lock(mutex_);
   return texture_id_;
 }
 
-StartResult Stage2aTextureBridge::Start(const StartArgs& args) {
-  // Truncate the log file at the top of every Start() so its tail
+OpenResult PreviewEngine::Open(const OpenArgs& args) {
+  // Truncate the log file at the top of every Open() so its tail
   // localises the most recent crash if there is one.
   {
     std::ofstream f(kNativeLogPath,
                     std::ios::out | std::ios::trunc | std::ios::binary);
   }
-  LogNative("Start() entered");
+  LogNative("Open() entered");
   std::lock_guard<std::mutex> lock(mutex_);
 
-  StartResult result;
+  OpenResult result;
   result.width = kTextureWidth;
   result.height = kTextureHeight;
 
   if (texture_registrar_ == nullptr) {
-    LogNative("Start() abort: texture_registrar_ is null");
+    LogNative("Open() abort: texture_registrar_ is null");
     result.error =
-        "POC Stage 2A bridge not initialized — Flutter texture "
-        "registrar is null. Did FlutterWindow::OnCreate() call "
-        "Initialize()?";
+        "PreviewEngine not initialized — Flutter texture registrar is "
+        "null. Did FlutterWindow::OnCreate() call Initialize()?";
     last_error_ = result.error;
     return result;
   }
   if (args.video_path.empty()) {
-    LogNative("Start() abort: video_path is empty");
+    LogNative("Open() abort: video_path is empty");
     result.error =
-        "Stage 2A-2 requires a video path. Pass POC_STAGE_2A_VIDEO via "
+        "PreviewEngine requires a video path. Pass POC_STAGE_2A_VIDEO via "
         "--dart-define or the args map.";
     last_error_ = result.error;
     return result;
   }
   if (::GetFileAttributesW(args.video_path.c_str()) ==
       INVALID_FILE_ATTRIBUTES) {
-    LogNative("Start() abort: video file not found");
+    LogNative("Open() abort: video file not found");
     result.error =
         "Video file not found: " + WideToUtf8(args.video_path);
     last_error_ = result.error;
@@ -317,7 +318,7 @@ StartResult Stage2aTextureBridge::Start(const StartArgs& args) {
   if (!args.cursor_path.empty() &&
       ::GetFileAttributesW(args.cursor_path.c_str()) ==
           INVALID_FILE_ATTRIBUTES) {
-    LogNative("Start() abort: cursor file not found");
+    LogNative("Open() abort: cursor file not found");
     result.error =
         "Cursor file not found: " + WideToUtf8(args.cursor_path);
     last_error_ = result.error;
@@ -325,7 +326,7 @@ StartResult Stage2aTextureBridge::Start(const StartArgs& args) {
   }
   if (running_.load()) {
     // Idempotent: report the existing registration. New args are
-    // ignored on re-entry — Stop+Start is the way to swap inputs.
+    // ignored on re-entry — Close+Open is the way to swap inputs.
     result.texture_id = texture_id_;
     result.shared_handle_ok = shared_handle_ok_;
     result.egl_extensions = egl_extensions_;
@@ -484,7 +485,7 @@ StartResult Stage2aTextureBridge::Start(const StartArgs& args) {
   shared_handle_ok_ = true;
 
   // Wrap the shared texture as a D2D bitmap render target. Same target
-  // every frame — bind once at Start, SetTarget once, reuse.
+  // every frame — bind once at Open, SetTarget once, reuse.
   {
     ComPtr<IDXGISurface> dxgi_surface;
     hr = impl_->shared_texture.As(&dxgi_surface);
@@ -601,11 +602,11 @@ StartResult Stage2aTextureBridge::Start(const StartArgs& args) {
         winrt_media::MediaSource::CreateFromUri(winrt_uri));
 
     // Capturing `this` (the singleton) is safe because the singleton
-    // outlives the player; Stop() unsubscribes the token before
-    // releasing the player. The frame body lives in OnVideoFrame()
+    // outlives the player; Close() unsubscribes the token before
+    // releasing the player. The frame body lives in HandleVideoFrame()
     // below; this lambda is a thin trampoline so the winrt projection
     // types don't leak into the public header.
-    Stage2aTextureBridge* self = this;
+    PreviewEngine* self = this;
     impl_->frame_token = impl_->player.VideoFrameAvailable(
         [self](winrt_playback::MediaPlayer const& sender,
                winrt_foundation::IInspectable const& /*args*/) {
@@ -625,7 +626,7 @@ StartResult Stage2aTextureBridge::Start(const StartArgs& args) {
   }
 
   running_.store(true);
-  LogNative("Start() returning success");
+  LogNative("Open() returning success");
 
   result.texture_id = tex_id;
   result.shared_handle_ok = true;
@@ -639,10 +640,10 @@ StartResult Stage2aTextureBridge::Start(const StartArgs& args) {
   return result;
 }
 
-void Stage2aTextureBridge::HandleVideoFrame(
+void PreviewEngine::HandleVideoFrame(
     const void* sender_media_player_ptr) {
   if (sender_media_player_ptr == nullptr) return;
-  // The lambda in Start() passes `&sender`; sender is a
+  // The lambda in Open() passes `&sender`; sender is a
   // `MediaPlayer const&` from the WinRT callback. Reinterpret back
   // to the concrete type for the per-frame work.
   const auto& sender =
@@ -651,7 +652,7 @@ void Stage2aTextureBridge::HandleVideoFrame(
     if (impl_) impl_->dropped_frames.fetch_add(1, std::memory_order_relaxed);
     return;
   }
-  // Snapshot pointer under lock so a concurrent Stop can't drop impl_
+  // Snapshot pointer under lock so a concurrent Close can't drop impl_
   // mid-frame. The render path itself doesn't need the singleton-level
   // mutex; impl_->render_mutex serializes frames against each other.
   Impl* impl = nullptr;
@@ -718,8 +719,9 @@ void Stage2aTextureBridge::HandleVideoFrame(
   impl->timing_render.EndFrame();
   if (FAILED(end_hr)) {
     // D2DERR_RECREATE_TARGET would be the typical failure here; we
-    // don't recover in the POC (the descriptor + bitmap are bound
-    // once at Start). Drop the frame and move on.
+    // don't recover yet (the descriptor + bitmap are bound once at
+    // Open). Production recovery lands in Step 5.3 along with the
+    // texture-unregister fix. Drop the frame and move on.
     impl->dropped_frames.fetch_add(1, std::memory_order_relaxed);
     impl->timing_total.EndFrame();
     return;
@@ -741,10 +743,10 @@ void Stage2aTextureBridge::HandleVideoFrame(
   impl->timing_total.EndFrame();
 }
 
-void Stage2aTextureBridge::Stop(const StopArgs& args) {
-  LogNative("Stop() entered");
+void PreviewEngine::Close(const CloseArgs& args) {
+  LogNative("Close() entered");
   if (!running_.load()) {
-    LogNative("Stop() abort: not running");
+    LogNative("Close() abort: not running");
     return;
   }
   shutting_down_.store(true);
@@ -818,8 +820,9 @@ void Stage2aTextureBridge::Stop(const StopArgs& args) {
   // ---- 2. SKIP UnregisterExternalTexture — see PR #102 writeup.
   // Async unregister + Intel iGPU + Flutter ANGLE consumer = 0xC0000005
   // crash on shutdown. We intentionally leak the texture; process is
-  // about to exit anyway.
-  LogNative("Stop() SKIPPING UnregisterExternalTexture (POC workaround)");
+  // about to exit anyway. Step 5.3 (Phase 5 implementation plan)
+  // replaces this with a production-grade lifecycle.
+  LogNative("Close() SKIPPING UnregisterExternalTexture (POC workaround)");
   if (dying_impl) dying_impl.release();
 
   // ---- 3. Write the artifact. ----
@@ -928,4 +931,4 @@ void Stage2aTextureBridge::Stop(const StopArgs& args) {
   }
 }
 
-}  // namespace clingfy::poc::stage2a
+}  // namespace clingfy::preview
