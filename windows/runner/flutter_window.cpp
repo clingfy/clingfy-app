@@ -3,6 +3,7 @@
 #include <optional>
 
 #include "flutter/generated_plugin_registrant.h"
+#include "preview/poc_stage_2a/stage2a_texture_bridge.h"
 
 FlutterWindow::FlutterWindow(const flutter::DartProject& project)
     : project_(project) {}
@@ -34,6 +35,16 @@ bool FlutterWindow::OnCreate() {
       std::make_unique<clingfy::bridge::MethodDispatcher>(messenger);
   event_channel_stubs_ =
       std::make_unique<clingfy::bridge::EventChannelStubs>(messenger);
+
+  // Stage 2A-1 (debug-only POC) texture bridge. Initialized through
+  // the raw C registrar ref to avoid pulling in the
+  // flutter_wrapper_plugin library (which conflicts on
+  // core_implementations.cc with flutter_wrapper_app, the wrapper the
+  // runner already links). The registrar ref is owned by the engine;
+  // we only borrow it.
+  clingfy::poc::stage2a::Stage2aTextureBridge::Instance()->Initialize(
+      flutter_controller_->engine()->GetRegistrarForPlugin(
+          "ClingfyPocStage2a"));
 
   SetChildContent(flutter_controller_->view()->GetNativeWindow());
 

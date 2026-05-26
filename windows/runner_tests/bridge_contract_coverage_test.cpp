@@ -148,6 +148,13 @@ const std::vector<std::string>& BridgeContractMethods() {
       "pickImage",
       "cacheLocalizedStrings",
       "checkForUpdates",
+
+      // Phase 5 POC — Stage 2A texture-bridge spike (debug-only).
+      // The Dart-side debug screen is gated by
+      // `--dart-define=POC_STAGE_2A=true`; the methods are present in
+      // the router regardless so the bridge contract stays uniform.
+      "pocStage2aStart",
+      "pocStage2aStop",
   };
   return kMethods;
 }
