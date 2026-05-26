@@ -41,6 +41,7 @@ add_executable(runner_tests
   "encoder_output_path_test.cpp"
   "mf_encoder_config_test.cpp"
   "permission_probe_test.cpp"
+  "preview_router_test.cpp"
   "recording_clock_test.cpp"
   "recording_engine_test.cpp"
   "recording_project_reader_test.cpp"

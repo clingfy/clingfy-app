@@ -4,7 +4,9 @@
 
 #include <string>
 
+#include "Bridge/native_error_codes.h"
 #include "Bridge/result_helpers.h"
+#include "Capture/recording_project_reader.h"
 #include "preview/preview_engine.h"
 
 namespace clingfy::bridge::routers::preview {
@@ -65,22 +67,8 @@ void HandleGetSourceDimensions(
 }
 
 // ---------------------------------------------------------------------
-// Deprecated POC Stage 2A aliases.
-//
-// pocStage2aStart / pocStage2aStop were the POC-only entry points the
-// dart-define-gated debug screen (lib/app/debug/poc_stage_2a_screen.dart)
-// uses to drive the underlying texture bridge. Step 5.0 of the Phase 5
-// implementation plan lifted that bridge out of poc_stage_2a/ into the
-// production preview/ tree and renamed it to PreviewEngine; the method
-// names stay registered here as deprecated aliases so the debug screen
-// continues to work for benchmarking through Steps 5.1 / 5.2 / 5.3.
-//
-// When Step 5.3 lands the real previewOpen / previewClose semantics
-// (sessionId + projectPath, manifest reader, production texture
-// lifecycle), the debug screen + these aliases are deleted in the same
-// PR. The Dart bridge contract list keeps the method names registered
-// during the deprecation window — see
-// windows/runner_tests/bridge_contract_coverage_test.cpp.
+// EncodableMap arg-extraction helpers — used by both the production
+// handlers below and the deprecated POC alias section that follows.
 // ---------------------------------------------------------------------
 
 double ReadDouble(const flutter::EncodableMap& map, const char* key,
@@ -131,6 +119,166 @@ std::wstring Utf8ToWide(const std::string& s) {
                         out.data(), needed);
   return out;
 }
+
+std::string WideToUtf8(const std::wstring& w) {
+  if (w.empty()) return {};
+  const int needed = ::WideCharToMultiByte(
+      CP_UTF8, 0, w.c_str(), static_cast<int>(w.size()), nullptr, 0,
+      nullptr, nullptr);
+  if (needed <= 0) return {};
+  std::string out(static_cast<size_t>(needed), '\0');
+  ::WideCharToMultiByte(CP_UTF8, 0, w.c_str(), static_cast<int>(w.size()),
+                        out.data(), needed, nullptr, nullptr);
+  return out;
+}
+
+// ---------------------------------------------------------------------
+// getRecordingSceneInfo — Step 5.2 of the Phase 5 implementation plan.
+//
+// Reads the `.clingfyproj` manifest via
+// `clingfy::capture::RecordingProjectReader` and returns the macOS-
+// shaped map. All reader-side errors collapse to `SCENE_INPUT_MISSING`
+// (with the offending `projectPath` in the FlutterError details) so
+// Dart's `_handleProjectOpenError` flow stays platform-agnostic; the
+// specific reader-error variant is emitted to the Windows debugger via
+// `OutputDebugStringW` for triage without leaking implementation
+// detail across the bridge.
+//
+// `camera` key is intentionally omitted — the Windows recording engine
+// does not currently emit `editorSeed` into screen.meta.json, so there
+// is no manifest-derived camera layout state to surface today. Dart's
+// `RecordingSceneInfo.fromMap` treats a missing key and a `null`
+// identically (`raw['camera'] is Map` → false), which matches the
+// macOS handler exactly.
+// ---------------------------------------------------------------------
+
+flutter::EncodableMap BuildCameraExportCapabilities() {
+  // Windows reports all-true because the production PreviewCompositor
+  // will support them (Phase 9 builds the camera overlay on top of the
+  // same compositor); shipping `false` early would force a Dart-side
+  // capability branch we would just have to remove later.
+  return flutter::EncodableMap{
+      {flutter::EncodableValue("shapeMask"), flutter::EncodableValue(true)},
+      {flutter::EncodableValue("cornerRadius"),
+       flutter::EncodableValue(true)},
+      {flutter::EncodableValue("border"), flutter::EncodableValue(true)},
+      {flutter::EncodableValue("shadow"), flutter::EncodableValue(true)},
+      {flutter::EncodableValue("chromaKey"), flutter::EncodableValue(true)},
+  };
+}
+
+const char* ReadErrorVariantName(clingfy::capture::ReadError e) {
+  using clingfy::capture::ReadError;
+  switch (e) {
+    case ReadError::kNone: return "kNone";
+    case ReadError::kBundleNotFound: return "PROJECT_BUNDLE_NOT_FOUND";
+    case ReadError::kManifestInvalidJson:
+      return "PROJECT_MANIFEST_INVALID_JSON";
+    case ReadError::kSchemaVersionMismatch:
+      return "PROJECT_SCHEMA_VERSION_MISMATCH";
+    case ReadError::kRequiredFileMissing:
+      return "PROJECT_REQUIRED_FILE_MISSING";
+  }
+  return "PROJECT_UNKNOWN_ERROR";
+}
+
+void LogSceneInfoReaderError(const std::string& project_path_utf8,
+                             const clingfy::capture::ReadResult& read) {
+  // OutputDebugStringW surfaces to attached debuggers and to DebugView
+  // when running outside a debugger. fprintf(stderr, ...) on a GUI
+  // subsystem exe is not reliably reachable. Keep the line ASCII-safe
+  // since `OutputDebugStringW` does not interpret line endings.
+  std::string line = "[getRecordingSceneInfo] reader=";
+  line += ReadErrorVariantName(read.error);
+  line += " projectPath=";
+  line += project_path_utf8;
+  if (!read.message.empty()) {
+    line += " — ";
+    line += read.message;
+  }
+  ::OutputDebugStringW(Utf8ToWide(line).c_str());
+}
+
+void HandleGetRecordingSceneInfo(
+    const flutter::MethodCall<flutter::EncodableValue>& call,
+    std::unique_ptr<flutter::MethodResult<flutter::EncodableValue>> result) {
+  // Match macOS: missing or wrong-type `projectPath` → BAD_ARGS with
+  // null details. Empty-string projectPath is forwarded through to the
+  // reader, which fails with bundle-not-found → SCENE_INPUT_MISSING —
+  // also matching macOS.
+  const flutter::EncodableMap* args =
+      std::get_if<flutter::EncodableMap>(call.arguments());
+  if (args == nullptr) {
+    result->Error(error::kBadArgs, "missing projectPath");
+    return;
+  }
+  auto it = args->find(flutter::EncodableValue("projectPath"));
+  if (it == args->end() ||
+      !std::holds_alternative<std::string>(it->second)) {
+    result->Error(error::kBadArgs, "missing projectPath");
+    return;
+  }
+  const std::string project_path_utf8 = std::get<std::string>(it->second);
+
+  const std::wstring project_path_w = Utf8ToWide(project_path_utf8);
+  const auto read =
+      clingfy::capture::ReadRecordingProject(project_path_w);
+
+  if (read.error != clingfy::capture::ReadError::kNone) {
+    LogSceneInfoReaderError(project_path_utf8, read);
+    // Single user-visible code mirrors macOS's PreviewSceneResolver:
+    //   FlutterError(
+    //     code: "SCENE_INPUT_MISSING",
+    //     message: "Recording project not found. It may have been moved or deleted.",
+    //     details: projectPath)
+    result->Error(
+        "SCENE_INPUT_MISSING",
+        "Recording project not found. It may have been moved or deleted.",
+        flutter::EncodableValue(project_path_utf8));
+    return;
+  }
+
+  const auto& project = *read.project;
+  flutter::EncodableMap out{
+      {flutter::EncodableValue("projectPath"),
+       flutter::EncodableValue(project_path_utf8)},
+      {flutter::EncodableValue("screenPath"),
+       flutter::EncodableValue(WideToUtf8(project.screen_path))},
+      // The reader fails with kRequiredFileMissing when screen.meta.json
+      // is absent on disk, so on a successful read the metadata path
+      // is always real — match macOS, which only emits this key when
+      // the file exists.
+      {flutter::EncodableValue("metadataPath"),
+       flutter::EncodableValue(WideToUtf8(project.screen_metadata_path))},
+      {flutter::EncodableValue("cameraExportCapabilities"),
+       flutter::EncodableValue(BuildCameraExportCapabilities())},
+  };
+  if (project.camera_video_path.has_value()) {
+    out[flutter::EncodableValue("cameraPath")] =
+        flutter::EncodableValue(WideToUtf8(*project.camera_video_path));
+  }
+  // Intentionally NO `camera` key — see the function-header comment.
+  reply::Map(*result, std::move(out));
+}
+
+// ---------------------------------------------------------------------
+// Deprecated POC Stage 2A aliases.
+//
+// pocStage2aStart / pocStage2aStop were the POC-only entry points the
+// dart-define-gated debug screen (lib/app/debug/poc_stage_2a_screen.dart)
+// uses to drive the underlying texture bridge. Step 5.0 of the Phase 5
+// implementation plan lifted that bridge out of poc_stage_2a/ into the
+// production preview/ tree and renamed it to PreviewEngine; the method
+// names stay registered here as deprecated aliases so the debug screen
+// continues to work for benchmarking through Steps 5.1 / 5.2 / 5.3.
+//
+// When Step 5.3 lands the real previewOpen / previewClose semantics
+// (sessionId + projectPath, manifest reader, production texture
+// lifecycle), the debug screen + these aliases are deleted in the same
+// PR. The Dart bridge contract list keeps the method names registered
+// during the deprecation window — see
+// windows/runner_tests/bridge_contract_coverage_test.cpp.
+// ---------------------------------------------------------------------
 
 void HandlePocStage2aStart(
     const flutter::MethodCall<flutter::EncodableValue>& call,
@@ -217,6 +365,10 @@ void RegisterHandlers(HandlerTable& table) {
   table["previewGetZoomCapabilities"] = &HandleGetZoomCapabilities;
   table["previewGetCursorSamples"] = &HandleGetCursorSamples;
   table["previewGetSourceDimensions"] = &HandleGetSourceDimensions;
+
+  // Step 5.2: real getRecordingSceneInfo backed by RecordingProjectReader.
+  // Was a Phase 1 stub in Bridge/Routers/export_router.cpp until 5.2.
+  table["getRecordingSceneInfo"] = &HandleGetRecordingSceneInfo;
 
   // Deprecated POC Stage 2A aliases — remove in Step 5.3.
   table["pocStage2aStart"] = &HandlePocStage2aStart;

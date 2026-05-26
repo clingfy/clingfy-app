@@ -33,32 +33,6 @@ void HandleSaveManualZoomSegments(
   reply::Bool(*result, false);
 }
 
-// `RecordingSceneInfo.fromMap` requires at least `projectPath`; falling back
-// on the caller's path keeps the post-processing screen from crashing if it
-// ever reaches a state where this is invoked.
-void HandleGetRecordingSceneInfo(
-    const flutter::MethodCall<flutter::EncodableValue>& call,
-    std::unique_ptr<flutter::MethodResult<flutter::EncodableValue>> result) {
-  std::string project_path;
-  if (const auto* args =
-          std::get_if<flutter::EncodableMap>(call.arguments())) {
-    auto it = args->find(flutter::EncodableValue("projectPath"));
-    if (it != args->end()) {
-      if (const auto* value = std::get_if<std::string>(&it->second)) {
-        project_path = *value;
-      }
-    }
-  }
-
-  flutter::EncodableMap value{
-      {flutter::EncodableValue("projectPath"),
-       flutter::EncodableValue(project_path)},
-      {flutter::EncodableValue("screenPath"),
-       flutter::EncodableValue(project_path)},
-  };
-  reply::Map(*result, std::move(value));
-}
-
 }  // namespace
 
 void RegisterHandlers(HandlerTable& table) {
@@ -66,7 +40,10 @@ void RegisterHandlers(HandlerTable& table) {
   table["processVideo"] = &HandleNotImplemented;
   table["cancelExport"] = &HandleNoopSetter;
 
-  table["getRecordingSceneInfo"] = &HandleGetRecordingSceneInfo;
+  // `getRecordingSceneInfo` was a Phase 1 stub here; Step 5.2 moved it
+  // into `Bridge/Routers/preview_router.cpp` where it now reads the
+  // .clingfyproj manifest via `clingfy::capture::RecordingProjectReader`
+  // and returns the macOS-shaped map.
 
   table["getZoomSegments"] = &HandleEmptyList;
   table["getManualZoomSegments"] = &HandleEmptyList;

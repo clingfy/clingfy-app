@@ -471,7 +471,13 @@ TEST(StubShapesTest, PreviewGetCursorSamplesReturnsEmptyPayload) {
   EXPECT_NE(map->find(flutter::EncodableValue("height")), map->end());
 }
 
-TEST(StubShapesTest, GetRecordingSceneInfoEchoesProjectPath) {
+TEST(StubShapesTest, GetRecordingSceneInfoBundleMissingReturnsSceneInputMissing) {
+  // Step 5.2: the Phase 1 stub that echoed projectPath into screenPath
+  // is gone. The production handler now reads the manifest via
+  // RecordingProjectReader; a bogus path fails with SCENE_INPUT_MISSING
+  // (matching the macOS PreviewSceneResolver). Fuller per-shape coverage
+  // (happy paths, BAD_ARGS, camera assets) lives in
+  // preview_router_test.cpp.
   MethodRouter router;
   flutter::EncodableMap args{
       {flutter::EncodableValue("projectPath"),
@@ -480,23 +486,8 @@ TEST(StubShapesTest, GetRecordingSceneInfoEchoesProjectPath) {
   const RecordedReply reply =
       DispatchWithArgs(router, "getRecordingSceneInfo", std::move(args));
 
-  ASSERT_TRUE(reply.success_called);
-  const auto* map = std::get_if<flutter::EncodableMap>(&reply.success_value);
-  ASSERT_NE(map, nullptr);
-
-  const auto project = map->find(flutter::EncodableValue("projectPath"));
-  ASSERT_NE(project, map->end());
-  const auto* project_str = std::get_if<std::string>(&project->second);
-  ASSERT_NE(project_str, nullptr);
-  EXPECT_EQ(*project_str, "/some/project.clingfy");
-
-  const auto screen = map->find(flutter::EncodableValue("screenPath"));
-  ASSERT_NE(screen, map->end());
-  const auto* screen_str = std::get_if<std::string>(&screen->second);
-  ASSERT_NE(screen_str, nullptr);
-  EXPECT_EQ(*screen_str, "/some/project.clingfy")
-      << "Phase 1 stub mirrors projectPath into screenPath -- matches Dart's "
-         "own fallback when native returns null.";
+  EXPECT_TRUE(reply.error_called);
+  EXPECT_EQ(reply.error_code, "SCENE_INPUT_MISSING");
 }
 
 TEST(StubShapesTest, ClearCachedRecordingsReturnsZeroDeleted) {

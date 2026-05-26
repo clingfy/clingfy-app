@@ -26,6 +26,12 @@ struct RecordedReply {
   flutter::EncodableValue success_value;
   std::string error_code;
   std::string error_message;
+  // The `details` payload passed alongside an Error reply. Populated
+  // when the handler called the 3-arg Error overload; left default-
+  // constructed (kNull) otherwise. Useful for verifying contract-
+  // facing fields like the projectPath echo macOS includes alongside
+  // SCENE_INPUT_MISSING.
+  flutter::EncodableValue error_details;
 };
 
 inline std::unique_ptr<flutter::MethodResult<flutter::EncodableValue>>
@@ -40,10 +46,13 @@ MakeRecorder(RecordedReply& out) {
       },
       [&out](const std::string& code,
              const std::string& message,
-             const flutter::EncodableValue* /*details*/) {
+             const flutter::EncodableValue* details) {
         out.error_called = true;
         out.error_code = code;
         out.error_message = message;
+        if (details != nullptr) {
+          out.error_details = *details;
+        }
       },
       [&out]() { out.not_implemented_called = true; });
 }
