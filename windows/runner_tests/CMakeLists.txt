@@ -43,6 +43,7 @@ add_executable(runner_tests
   "permission_probe_test.cpp"
   "recording_clock_test.cpp"
   "recording_engine_test.cpp"
+  "recording_project_reader_test.cpp"
   "recording_project_writer_test.cpp"
   "recording_session_state_test.cpp"
   "video_frame_queue_test.cpp"

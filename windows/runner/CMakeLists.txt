@@ -33,6 +33,7 @@ add_library(runner_bridge STATIC
   "Bridge/Routers/storage_router.cpp"
   "Capture/recording_clock.cpp"
   "Capture/recording_engine.cpp"
+  "Capture/recording_project_reader.cpp"
   "Capture/recording_project_writer.cpp"
   "Capture/recording_session_state.cpp"
   "Capture/video_frame_queue.cpp"
