@@ -24,6 +24,7 @@
 #include <fstream>
 #include <limits>
 
+#include "Bridge/player_event_publisher.h"
 #include "preview/frame_timing.h"
 #include "preview/preview_compositor.h"
 
@@ -188,6 +189,13 @@ struct PreviewEngine::Impl {
   winrt_dxd3d::IDirect3DDevice winrt_device{nullptr};
   winrt_playback::MediaPlayer player{nullptr};
   winrt::event_token frame_token{};
+  // Step 5.4 event hooks. PlaybackStateChanged + MediaEnded +
+  // MediaFailed surface as playerState / playerError events. Tokens
+  // captured here so Close() can unsubscribe before tearing the
+  // player down.
+  winrt::event_token state_changed_token{};
+  winrt::event_token media_ended_token{};
+  winrt::event_token media_failed_token{};
 
   // ---- Compositor + cursor fixture ----
   clingfy::preview::PreviewCompositor compositor;
@@ -620,18 +628,49 @@ OpenResult PreviewEngine::Open(const OpenArgs& args) {
         winrt_media::MediaSource::CreateFromUri(winrt_uri));
 
     // Capturing `this` (the singleton) is safe because the singleton
-    // outlives the player; Close() unsubscribes the token before
-    // releasing the player. The frame body lives in HandleVideoFrame()
-    // below; this lambda is a thin trampoline so the winrt projection
-    // types don't leak into the public header.
+    // outlives the player; Close() unsubscribes every token before
+    // releasing the player. Each lambda body lives in a Handle*()
+    // member below; these lambdas are thin trampolines so the winrt
+    // projection types don't leak into the public header.
     PreviewEngine* self = this;
     impl_->frame_token = impl_->player.VideoFrameAvailable(
         [self](winrt_playback::MediaPlayer const& sender,
                winrt_foundation::IInspectable const& /*args*/) {
           self->HandleVideoFrame(&sender);
         });
+
+    // PlaybackStateChanged fires on transitions between Opening /
+    // Buffering / Playing / Paused / None. We translate to the macOS
+    // "playing" / "paused" pair (Opening + Buffering coalesce to
+    // "paused" so Dart's _playerPlaying stays false during load).
+    impl_->state_changed_token =
+        impl_->player.PlaybackSession().PlaybackStateChanged(
+            [self](winrt_playback::MediaPlaybackSession const& session,
+                   winrt_foundation::IInspectable const& /*args*/) {
+              self->HandlePlaybackStateChanged(&session);
+            });
+
+    // MediaEnded fires when playback runs off the end of the source
+    // (IsLoopingEnabled is false in production; see Open's IsLooping
+    // call above). Emit playerState "completed".
+    impl_->media_ended_token = impl_->player.MediaEnded(
+        [self](winrt_playback::MediaPlayer const& sender,
+               winrt_foundation::IInspectable const& /*args*/) {
+          self->HandleMediaEnded(&sender);
+        });
+
+    // MediaFailed fires when the source file becomes unreadable
+    // mid-playback (deleted, network drop, codec failure, etc.). Map
+    // to VIDEO_FILE_MISSING — matches the macOS code surface so the
+    // Dart side can use the same error-handling branch.
+    impl_->media_failed_token = impl_->player.MediaFailed(
+        [self](winrt_playback::MediaPlayer const& sender,
+               winrt_playback::MediaPlayerFailedEventArgs const& args) {
+          self->HandleMediaFailed(&sender, &args);
+        });
+
     impl_->player.Play();
-    LogNative("MediaPlayer started + VideoFrameAvailable subscribed");
+    LogNative("MediaPlayer started + event subscriptions installed");
   } catch (winrt::hresult_error const& e) {
     result.error =
         "MediaPlayer setup failed: " + WideToUtf8(e.message().c_str());
@@ -645,6 +684,25 @@ OpenResult PreviewEngine::Open(const OpenArgs& args) {
 
   active_session_id_ = args.session_id;
   running_.store(true);
+
+  // Step 5.4: emit CURSOR_FILE_MISSING when a cursor path was supplied
+  // but parsed to zero events. The file existed (we checked above) but
+  // its content was empty or malformed; non-fatal so playback keeps
+  // going, but Dart wants to surface a banner.
+  if (!args.cursor_path.empty() && !impl_->cursor_mode) {
+    clingfy::bridge::PlayerEventPublisher::Instance().EmitPlayerWarning(
+        args.session_id, "CURSOR_FILE_MISSING",
+        "Cursor data is missing. Cursor effects are disabled.");
+  }
+
+  // Spawn the paused-heartbeat thread. It loops at ~100ms and emits
+  // a playerTick whenever the producer hasn't ticked in the last
+  // ~150ms (covers paused, buffering, and seeking states). Joined in
+  // Close() before the texture lifecycle teardown. shutting_down_ is
+  // already false at this point — set by the MediaPlayer setup block
+  // above.
+  heartbeat_thread_ = std::thread([this] { HeartbeatLoop(); });
+
   LogNative("Open() returning success");
 
   result.texture_id = tex_id;
@@ -760,6 +818,195 @@ void PreviewEngine::HandleVideoFrame(
 
   impl->frames_consumed.fetch_add(1, std::memory_order_relaxed);
   impl->timing_total.EndFrame();
+
+  // Step 5.4: emit playerTick AFTER the texture is marked available.
+  // The session id snapshot under the singleton mutex tolerates a
+  // racing Close (it would have cleared active_session_id_ before
+  // joining the heartbeat / draining callbacks). NowMs() snapshot
+  // here also feeds the heartbeat thread's "skip if recent" check.
+  std::string session_snapshot;
+  {
+    std::lock_guard<std::mutex> lock(mutex_);
+    session_snapshot = active_session_id_;
+  }
+  if (!session_snapshot.empty() && !shutting_down_.load()) {
+    const std::int64_t pos_us = CurrentPlaybackUs(sender);
+    std::int64_t dur_us = 0;
+    try {
+      const auto d = sender.PlaybackSession().NaturalDuration();
+      dur_us =
+          std::chrono::duration_cast<std::chrono::microseconds>(d).count();
+    } catch (winrt::hresult_error const&) {
+      dur_us = 0;
+    }
+    const std::int64_t pos_ms = pos_us > 0 ? pos_us / 1000 : 0;
+    const std::int64_t dur_ms = dur_us > 0 ? dur_us / 1000 : 0;
+    last_frame_ms_.store(
+        std::chrono::duration_cast<std::chrono::milliseconds>(
+            std::chrono::steady_clock::now().time_since_epoch())
+            .count(),
+        std::memory_order_relaxed);
+    clingfy::bridge::PlayerEventPublisher::Instance().EmitPlayerTick(
+        session_snapshot, pos_ms, dur_ms);
+  }
+}
+
+void PreviewEngine::HandlePlaybackStateChanged(
+    const void* sender_playback_session_ptr) {
+  if (sender_playback_session_ptr == nullptr) return;
+  if (shutting_down_.load() || !running_.load()) return;
+  const auto& session =
+      *static_cast<winrt_playback::MediaPlaybackSession const*>(
+          sender_playback_session_ptr);
+
+  // Map WinRT MediaPlaybackState to the macOS-compatible string set.
+  // Opening / Buffering / None all coalesce to "paused" so Dart's
+  // PlayerController doesn't think it's playing during load. The
+  // explicit "Playing" → "playing" mapping is the only positive case.
+  std::string state_str;
+  try {
+    switch (session.PlaybackState()) {
+      case winrt_playback::MediaPlaybackState::Playing:
+        state_str = "playing";
+        break;
+      case winrt_playback::MediaPlaybackState::Paused:
+        state_str = "paused";
+        break;
+      case winrt_playback::MediaPlaybackState::Opening:
+      case winrt_playback::MediaPlaybackState::Buffering:
+      case winrt_playback::MediaPlaybackState::None:
+      default:
+        state_str = "paused";
+        break;
+    }
+  } catch (winrt::hresult_error const&) {
+    return;
+  }
+
+  std::string session_snapshot;
+  bool should_emit = false;
+  {
+    std::lock_guard<std::mutex> lock(mutex_);
+    session_snapshot = active_session_id_;
+    // Debounce: only emit when the state actually changed.
+    if (state_str != last_emitted_state_) {
+      last_emitted_state_ = state_str;
+      should_emit = true;
+    }
+  }
+  if (should_emit && !session_snapshot.empty()) {
+    clingfy::bridge::PlayerEventPublisher::Instance().EmitPlayerState(
+        session_snapshot, state_str);
+  }
+}
+
+void PreviewEngine::HandleMediaEnded(
+    const void* /*sender_media_player_ptr*/) {
+  if (shutting_down_.load() || !running_.load()) return;
+  std::string session_snapshot;
+  bool should_emit = false;
+  {
+    std::lock_guard<std::mutex> lock(mutex_);
+    session_snapshot = active_session_id_;
+    if (last_emitted_state_ != "completed") {
+      last_emitted_state_ = "completed";
+      should_emit = true;
+    }
+  }
+  if (should_emit && !session_snapshot.empty()) {
+    clingfy::bridge::PlayerEventPublisher::Instance().EmitPlayerState(
+        session_snapshot, "completed");
+  }
+}
+
+void PreviewEngine::HandleMediaFailed(
+    const void* /*sender_media_player_ptr*/,
+    const void* args_failed_event_args_ptr) {
+  if (shutting_down_.load() || !running_.load()) return;
+  const auto* failed_args =
+      static_cast<winrt_playback::MediaPlayerFailedEventArgs const*>(
+          args_failed_event_args_ptr);
+  std::string message = "MediaPlayer reported a media failure.";
+  if (failed_args != nullptr) {
+    try {
+      const std::wstring w = failed_args->ErrorMessage().c_str();
+      if (!w.empty()) message = WideToUtf8(w);
+    } catch (winrt::hresult_error const&) {
+      // Best effort — keep the generic message.
+    }
+  }
+  std::string session_snapshot;
+  {
+    std::lock_guard<std::mutex> lock(mutex_);
+    session_snapshot = active_session_id_;
+  }
+  if (!session_snapshot.empty()) {
+    clingfy::bridge::PlayerEventPublisher::Instance().EmitPlayerError(
+        session_snapshot, "VIDEO_FILE_MISSING", message);
+  }
+}
+
+void PreviewEngine::HeartbeatLoop() {
+  // Heartbeat at 10 Hz. Skips the emit when VideoFrameAvailable
+  // ticked within the last 150 ms (the producer's natural cadence
+  // would otherwise double-fire ticks). The reason we don't rely
+  // solely on PlaybackStateChanged + the producer loop is that
+  // MediaPlayer's paused-state position can change (scrubbing,
+  // user-driven seek before play resumes) and Dart's _playerReady
+  // must stay updated regardless.
+  using namespace std::chrono_literals;
+  constexpr auto kInterval = 100ms;
+  constexpr std::int64_t kStaleProducerMs = 150;
+
+  while (!shutting_down_.load()) {
+    std::this_thread::sleep_for(kInterval);
+    if (shutting_down_.load()) break;
+
+    const std::int64_t now_ms =
+        std::chrono::duration_cast<std::chrono::milliseconds>(
+            std::chrono::steady_clock::now().time_since_epoch())
+            .count();
+    const std::int64_t last_frame = last_frame_ms_.load();
+    if (last_frame > 0 && (now_ms - last_frame) < kStaleProducerMs) {
+      // Producer is fresh — skip this beat.
+      continue;
+    }
+
+    // Snapshot the session id + the MediaPlayer pointer under the
+    // mutex; release the lock before touching the player (its API
+    // is safe from any thread).
+    std::string session_snapshot;
+    winrt_playback::MediaPlayer player_snapshot{nullptr};
+    {
+      std::lock_guard<std::mutex> lock(mutex_);
+      session_snapshot = active_session_id_;
+      if (impl_) {
+        player_snapshot = impl_->player;
+      }
+    }
+    if (session_snapshot.empty() || player_snapshot == nullptr) continue;
+
+    std::int64_t pos_ms = 0;
+    std::int64_t dur_ms = 0;
+    try {
+      const auto session = player_snapshot.PlaybackSession();
+      const auto pos =
+          std::chrono::duration_cast<std::chrono::microseconds>(
+              session.Position())
+              .count();
+      const auto dur =
+          std::chrono::duration_cast<std::chrono::microseconds>(
+              session.NaturalDuration())
+              .count();
+      pos_ms = pos > 0 ? pos / 1000 : 0;
+      dur_ms = dur > 0 ? dur / 1000 : 0;
+    } catch (winrt::hresult_error const&) {
+      continue;  // Skip this beat; next loop iteration retries.
+    }
+
+    clingfy::bridge::PlayerEventPublisher::Instance().EmitPlayerTick(
+        session_snapshot, pos_ms, dur_ms);
+  }
 }
 
 namespace {
@@ -828,6 +1075,15 @@ void PreviewEngine::Close(const CloseArgs& args) {
   shutting_down_.store(true);
   running_.store(false);
 
+  // Join the heartbeat thread before we touch impl_ — the thread
+  // reads impl_->player under the singleton mutex, and we don't want
+  // its next iteration to race with the move below. The sleep_for in
+  // HeartbeatLoop is bounded at 100ms so this join is fast.
+  if (heartbeat_thread_.joinable()) {
+    heartbeat_thread_.join();
+  }
+  LogNative("Close() heartbeat thread joined");
+
   // ---- 1. Unsubscribe + tear down the MediaPlayer FIRST. ----
   // Doing this before we touch impl_ avoids a callback racing the
   // unique_ptr move below. MediaPlayer::Close() waits for the last
@@ -880,14 +1136,28 @@ void PreviewEngine::Close(const CloseArgs& args) {
     stats_render = dying_impl->timing_render.ComputeStats();
     stats_handoff = dying_impl->timing_handoff.ComputeStats();
 
-    // Drain the MediaPlayer: unsubscribe the VideoFrameAvailable
-    // event first (so the callback can't fire on a half-torn impl),
-    // then Pause + Close. MediaPlayer::Close() waits for the last
-    // pending callback to return.
+    // Drain the MediaPlayer: unsubscribe every event token first (so
+    // no callback can fire on a half-torn impl), then Pause + Close.
+    // MediaPlayer::Close() waits for the last pending callback to
+    // return.
     try {
       if (dying_impl->player) {
         if (dying_impl->frame_token.value) {
           dying_impl->player.VideoFrameAvailable(dying_impl->frame_token);
+        }
+        if (dying_impl->media_ended_token.value) {
+          dying_impl->player.MediaEnded(dying_impl->media_ended_token);
+        }
+        if (dying_impl->media_failed_token.value) {
+          dying_impl->player.MediaFailed(dying_impl->media_failed_token);
+        }
+        if (dying_impl->state_changed_token.value) {
+          try {
+            dying_impl->player.PlaybackSession().PlaybackStateChanged(
+                dying_impl->state_changed_token);
+          } catch (winrt::hresult_error const&) {
+            // PlaybackSession may already be torn down.
+          }
         }
         dying_impl->player.Pause();
         dying_impl->player.Close();
@@ -897,6 +1167,13 @@ void PreviewEngine::Close(const CloseArgs& args) {
       // Best-effort.
     }
   }
+
+  // Reset state-debounce tracker so the next Open starts with a
+  // blank slate (next emitted state — typically "paused" during
+  // Opening — will fire even though it equals what we just torn
+  // down).
+  last_emitted_state_.clear();
+  last_frame_ms_.store(0);
 
   // ---- 2. Production unregister via the documented async callback.
   // FlutterDesktopTextureRegistrarUnregisterExternalTexture is
@@ -935,9 +1212,31 @@ void PreviewEngine::Close(const CloseArgs& args) {
     dying_impl.reset();
   }
 
-  // ---- 3. Write the artifact. ----
-  std::ofstream f(kArtifactPath,
-                  std::ios::out | std::ios::trunc | std::ios::binary);
+  // ---- 3. Write the artifact (debug-only). ----
+  // Production callers (users) get a clean Close that touches the
+  // disk only for the engine's own log. The Stage 2A-2 producer
+  // timing report is still useful for triage but only when the
+  // developer opts in by setting `CLINGFY_POC_TIMING_VERBOSE=true`
+  // in the environment. dart-define values don't reach native, so
+  // this is OS env var only.
+  bool write_artifact = false;
+  {
+    wchar_t buf[16] = {};
+    const DWORD n = ::GetEnvironmentVariableW(
+        L"CLINGFY_POC_TIMING_VERBOSE", buf, ARRAYSIZE(buf));
+    if (n > 0 && n < ARRAYSIZE(buf)) {
+      // Anything other than "0" / "false" / empty is treated as true.
+      const std::wstring v(buf);
+      if (v != L"0" && v != L"false" && v != L"False" && v != L"FALSE") {
+        write_artifact = true;
+      }
+    }
+  }
+  std::ofstream f;
+  if (write_artifact) {
+    f.open(kArtifactPath,
+           std::ios::out | std::ios::trunc | std::ios::binary);
+  }
   if (f.is_open()) {
     f << "# Stage 2A-2 — MediaPlayer + PreviewCompositor through Flutter Texture\n\n";
     f << "- **Generated:** " << UtcTimestampNow() << " (UTC)\n";

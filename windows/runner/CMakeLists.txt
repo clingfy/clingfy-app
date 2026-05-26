@@ -12,6 +12,7 @@ add_library(runner_bridge STATIC
   "Bridge/method_dispatcher.cpp"
   "Bridge/method_router.cpp"
   "Bridge/event_channel_stubs.cpp"
+  "Bridge/player_event_publisher.cpp"
   "Bridge/workflow_event_publisher.cpp"
   "Audio/audio_format.cpp"
   "Audio/audio_mixer.cpp"

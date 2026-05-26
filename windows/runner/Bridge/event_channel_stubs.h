@@ -37,6 +37,12 @@ class EventChannelStubs {
   // back to Flutter.
   void RegisterWorkflow(flutter::BinaryMessenger* messenger);
 
+  // Step 5.4: player/events is no longer a stub. Same shape as
+  // RegisterWorkflow, forwarding sinks into `PlayerEventPublisher`
+  // so `PreviewEngine` can push playerTick / playerState / playerError
+  // / playerWarning events back to Dart's PlayerController.
+  void RegisterPlayer(flutter::BinaryMessenger* messenger);
+
   std::vector<std::unique_ptr<flutter::EventChannel<flutter::EncodableValue>>>
       channels_;
 };

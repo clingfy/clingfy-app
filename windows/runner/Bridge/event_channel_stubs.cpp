@@ -3,6 +3,7 @@
 #include <flutter/event_stream_handler_functions.h>
 
 #include "Bridge/native_channel_names.h"
+#include "Bridge/player_event_publisher.h"
 #include "Bridge/workflow_event_publisher.h"
 
 namespace clingfy::bridge {
@@ -57,11 +58,37 @@ class WorkflowStreamHandler
   }
 };
 
+// Step 5.4 wires player/events into the same shape as the workflow
+// publisher. PreviewEngine pushes playerTick / playerState /
+// playerError / playerWarning through PlayerEventPublisher; the sink
+// installed here is what Dart's PlayerController subscribes to.
+class PlayerStreamHandler
+    : public flutter::StreamHandler<flutter::EncodableValue> {
+ public:
+  PlayerStreamHandler() = default;
+
+ protected:
+  std::unique_ptr<flutter::StreamHandlerError<flutter::EncodableValue>>
+  OnListenInternal(
+      const flutter::EncodableValue* /*arguments*/,
+      std::unique_ptr<flutter::EventSink<flutter::EncodableValue>>&& events)
+      override {
+    PlayerEventPublisher::Instance().SetSink(std::move(events));
+    return nullptr;
+  }
+
+  std::unique_ptr<flutter::StreamHandlerError<flutter::EncodableValue>>
+  OnCancelInternal(const flutter::EncodableValue* /*arguments*/) override {
+    PlayerEventPublisher::Instance().ClearSink();
+    return nullptr;
+  }
+};
+
 }  // namespace
 
 EventChannelStubs::EventChannelStubs(flutter::BinaryMessenger* messenger) {
   Register(messenger, channel::kScreenRecorderEvents);
-  Register(messenger, channel::kPlayerEvents);
+  RegisterPlayer(messenger);
   RegisterWorkflow(messenger);
   Register(messenger, channel::kUpdaterEvents);
 }
@@ -72,9 +99,10 @@ EventChannelStubs::~EventChannelStubs() {
       channel->SetStreamHandler(nullptr);
     }
   }
-  // Make sure any sink still held by the publisher (e.g. Dart never
-  // sent a cancel before app teardown) is released before the engine
-  // tries to use it on the next launch.
+  // Make sure any sinks still held by the publishers (e.g. Dart never
+  // sent a cancel before app teardown) are released before the engine
+  // tries to use them on the next launch.
+  PlayerEventPublisher::Instance().ClearSink();
   WorkflowEventPublisher::Instance().ClearSink();
 }
 
@@ -93,6 +121,15 @@ void EventChannelStubs::RegisterWorkflow(flutter::BinaryMessenger* messenger) {
           messenger, channel::kWorkflowEvents,
           &flutter::StandardMethodCodec::GetInstance());
   channel->SetStreamHandler(std::make_unique<WorkflowStreamHandler>());
+  channels_.push_back(std::move(channel));
+}
+
+void EventChannelStubs::RegisterPlayer(flutter::BinaryMessenger* messenger) {
+  auto channel =
+      std::make_unique<flutter::EventChannel<flutter::EncodableValue>>(
+          messenger, channel::kPlayerEvents,
+          &flutter::StandardMethodCodec::GetInstance());
+  channel->SetStreamHandler(std::make_unique<PlayerStreamHandler>());
   channels_.push_back(std::move(channel));
 }
 
