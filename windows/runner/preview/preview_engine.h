@@ -42,6 +42,7 @@
 #include <memory>
 #include <mutex>
 #include <string>
+#include <thread>
 #include <vector>
 
 namespace clingfy::preview {
@@ -153,12 +154,23 @@ class PreviewEngine {
   PreviewEngine& operator=(const PreviewEngine&) = delete;
 
   // Implementation lives in the .cpp where the winrt projection
-  // headers are visible. The trampoline lambda in Open() passes a
-  // pointer to the `MediaPlayer const&` it received from WinRT; the
-  // implementation reinterpret-casts back. Opaque `void*` keeps the
-  // header free of `winrt/...` includes so router consumers don't
-  // have to pull in C++/WinRT.
+  // headers are visible. The trampoline lambdas in Open() pass an
+  // opaque `void*` to the actual winrt event-args; the implementation
+  // reinterpret-casts back. Opaque `void*` keeps the header free of
+  // `winrt/...` includes so router consumers don't have to pull in
+  // C++/WinRT.
   void HandleVideoFrame(const void* sender_media_player_ptr);
+  void HandlePlaybackStateChanged(const void* sender_playback_session_ptr);
+  void HandleMediaEnded(const void* sender_media_player_ptr);
+  void HandleMediaFailed(const void* sender_media_player_ptr,
+                         const void* args_failed_event_args_ptr);
+
+  // Paused heartbeat thread body. Loops until shutting_down_; while
+  // running, emits a playerTick at ~10 Hz, but only when the player
+  // is not actively producing frames (paused / scrubbing). When the
+  // VideoFrameAvailable callback is firing, the heartbeat skips so
+  // Dart doesn't see double-ticks.
+  void HeartbeatLoop();
 
  public:
   // Forward declaration. The actual definition lives in the .cpp at
@@ -195,6 +207,25 @@ class PreviewEngine {
   // Compared against incoming Close/Play/Pause/Seek calls to enforce
   // the stale-session no-op contract.
   std::string active_session_id_;
+
+  // Step 5.4 event-emission tracking.
+  //
+  // last_emitted_state_ debounces playerState so multiple
+  // PlaybackStateChanged callbacks for the same logical state (which
+  // MediaPlayer can fire) only produce one Dart-side event. Empty
+  // means "no state has been emitted yet" — the next emit always
+  // fires regardless of value.
+  std::string last_emitted_state_;
+  // ms-since-epoch of the most recent VideoFrameAvailable. Used by
+  // the heartbeat thread to skip when the producer is already firing
+  // ticks naturally. Atomic so the heartbeat can read without taking
+  // the singleton mutex.
+  std::atomic<std::int64_t> last_frame_ms_{0};
+
+  // Heartbeat thread + its lifecycle flag. Heartbeat runs while
+  // running_ is true and emits a playerTick every ~100ms when the
+  // producer thread hasn't ticked recently. shutting_down_ stops it.
+  std::thread heartbeat_thread_;
 
   mutable std::mutex mutex_;
 };
