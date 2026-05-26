@@ -28,6 +28,7 @@ add_library(runner_bridge STATIC
   "Bridge/Routers/indicator_router.cpp"
   "Bridge/Routers/misc_router.cpp"
   "Bridge/Routers/permissions_router.cpp"
+  "Bridge/Routers/poc_stage_2a_router.cpp"
   "Bridge/Routers/preview_router.cpp"
   "Bridge/Routers/recording_router.cpp"
   "Bridge/Routers/storage_router.cpp"
@@ -44,6 +45,7 @@ add_library(runner_bridge STATIC
   "Encoding/mf_sink_writer_encoder.cpp"
   "Graphics/d3d_device.cpp"
   "Permissions/permission_probe.cpp"
+  "preview/poc_stage_2a/stage2a_texture_bridge.cpp"
 )
 apply_standard_settings(runner_bridge)
 target_compile_definitions(runner_bridge PRIVATE "NOMINMAX")

@@ -36,6 +36,7 @@ class FlutterWindow : public Win32Window {
   // and Bridge/event_channel_stubs.h).
   std::unique_ptr<clingfy::bridge::MethodDispatcher> method_dispatcher_;
   std::unique_ptr<clingfy::bridge::EventChannelStubs> event_channel_stubs_;
+
 };
 
 #endif  // RUNNER_FLUTTER_WINDOW_H_
