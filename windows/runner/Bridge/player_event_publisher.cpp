@@ -2,6 +2,8 @@
 
 #include <utility>
 
+#include "Bridge/platform_thread_dispatcher.h"
+
 namespace clingfy::bridge {
 
 namespace {
@@ -41,21 +43,50 @@ bool PlayerEventPublisher::has_sink() const {
 }
 
 void PlayerEventPublisher::EmitMap(flutter::EncodableMap event) {
-  // Snapshot the raw pointer under the mutex but release the lock
-  // before calling into Success — Flutter's sink delivery can block
-  // on the platform thread's message pump, and we don't want to gate
-  // other emits on that.
-  EventSink* sink_snapshot = nullptr;
+  // EmitMap may be called from a WinRT worker thread (the
+  // VideoFrameAvailable / PlaybackStateChanged / MediaEnded /
+  // MediaFailed callbacks) or from the producer heartbeat thread,
+  // neither of which is the Flutter platform thread. Flutter's
+  // platform-channel contract requires EventSink::Success() to land
+  // on the platform thread; routing through PlatformThreadDispatcher
+  // satisfies that without forcing every caller to know which thread
+  // they are on.
+  //
+  // The dispatcher is initialized once at FlutterWindow startup. When
+  // it isn't initialized (tests, or a pathological cold-start race),
+  // Dispatcher::Post() runs the task inline — preserving event
+  // delivery and the synchronous behaviour the publisher unit tests
+  // depend on.
+  //
+  // Drop-when-no-sink is checked twice: once eagerly here to avoid
+  // posting a no-op task, and again at dispatch time in case Dart
+  // cancels the subscription between Emit and the platform-thread
+  // dispatch. The second check is strictly necessary for correctness;
+  // the first is purely a fast path.
   {
     std::lock_guard<std::mutex> lock(mutex_);
-    sink_snapshot = sink_.get();
+    if (sink_ == nullptr) return;
   }
-  if (sink_snapshot == nullptr) {
-    // No listener — drop the event. Matches the macOS engine's
-    // best-effort behavior when the Flutter side hasn't subscribed yet.
-    return;
-  }
-  sink_snapshot->Success(flutter::EncodableValue(std::move(event)));
+  PlatformThreadDispatcher::Instance().Post(
+      [this, event = std::move(event)]() mutable {
+        // Runs on the Flutter platform thread (or inline if the
+        // dispatcher wasn't initialized). Look up the sink fresh —
+        // SetSink / ClearSink also run on the platform thread, so
+        // there is no concurrent mutation between this lookup and
+        // the Success() call.
+        EventSink* sink_snapshot = nullptr;
+        {
+          std::lock_guard<std::mutex> lock(mutex_);
+          sink_snapshot = sink_.get();
+        }
+        if (sink_snapshot == nullptr) {
+          // Subscription was cancelled between enqueue and dispatch.
+          // Drop on the floor — matches the no-listener policy.
+          return;
+        }
+        sink_snapshot->Success(
+            flutter::EncodableValue(std::move(event)));
+      });
 }
 
 void PlayerEventPublisher::EmitPlayerTick(const std::string& session_id,

@@ -1,6 +1,8 @@
 #ifndef RUNNER_TESTS_TEST_SUPPORT_H_
 #define RUNNER_TESTS_TEST_SUPPORT_H_
 
+#include <windows.h>
+
 #include <flutter/encodable_value.h>
 #include <flutter/method_call.h>
 #include <flutter/method_result.h>
@@ -10,6 +12,29 @@
 #include <string>
 
 namespace clingfy::bridge::test_support {
+
+// Drains the calling thread's Win32 message queue. Needed by tests
+// that exercise `PlatformThreadDispatcher`-routed events
+// (`PlayerEventPublisher`) — once any test in this process calls
+// `PlatformThreadDispatcher::Initialize()`, every subsequent
+// publisher emit goes through `PostMessage` and only delivers after
+// the platform thread pumps messages. The publisher tests call this
+// after each emit so they don't depend on test-execution order
+// relative to the dispatcher tests.
+//
+// Bounded at `max_messages` to avoid hanging if a buggy callback
+// keeps posting. Returns the count of messages actually dispatched.
+inline int PumpMessages(int max_messages = 256) {
+  int dispatched = 0;
+  MSG msg{};
+  while (dispatched < max_messages &&
+         ::PeekMessageW(&msg, nullptr, 0, 0, PM_REMOVE)) {
+    ::TranslateMessage(&msg);
+    ::DispatchMessageW(&msg);
+    ++dispatched;
+  }
+  return dispatched;
+}
 
 // Captures everything a Phase 1 handler can do with the `MethodResult` it is
 // given: success (with the optional reply value), error (with code +
