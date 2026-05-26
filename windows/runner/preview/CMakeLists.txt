@@ -32,11 +32,14 @@ project(live_compositor_pocs LANGUAGES CXX)
 # measures. Win2D / WindowsAppSDK come later, only if the Direct2D
 # path doesn't suffice.
 
-# Shared helper library — `FrameTimingCollector` plus its translation
-# unit. Both executables link this rather than each compiling
-# `frame_timing.cpp` independently.
+# Shared helper library — `FrameTimingCollector` + the reusable
+# `PreviewCompositor`. Both POC executables link this rather than each
+# compiling the sources independently. PreviewCompositor pulls in
+# C++/WinRT projection headers so any consumer of this lib that needs
+# its own WinRT init must call winrt::init_apartment first.
 add_library(preview_poc_common STATIC
   "frame_timing.cpp"
+  "preview_compositor.cpp"
 )
 apply_standard_settings(preview_poc_common)
 target_compile_definitions(preview_poc_common PRIVATE "NOMINMAX")
