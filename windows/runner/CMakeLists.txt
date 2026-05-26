@@ -45,6 +45,8 @@ add_library(runner_bridge STATIC
   "Encoding/mf_sink_writer_encoder.cpp"
   "Graphics/d3d_device.cpp"
   "Permissions/permission_probe.cpp"
+  "preview/frame_timing.cpp"
+  "preview/preview_compositor.cpp"
   "preview/poc_stage_2a/stage2a_texture_bridge.cpp"
 )
 apply_standard_settings(runner_bridge)
@@ -96,6 +98,16 @@ target_link_libraries(runner_bridge PUBLIC
 #   * avrt — AvSetMmThreadCharacteristics (Pro Audio MMCSS task)
 target_link_libraries(runner_bridge PUBLIC
   "avrt.lib"
+)
+
+# Phase 5 POC Stage 2A-2: Direct2D 1.1 + WinRT C++/WinRT runtime are
+# needed by `Stage2aTextureBridge` to composite MediaPlayer frame-server
+# frames into the DXGI shared texture before handing it to Flutter.
+#   * d2d1 — D2D1CreateFactory, ID2D1DeviceContext, RenderTargetBitmap
+# d3d11.lib + dxgi.lib + windowsapp.lib were already linked above for
+# Phase 3B / 3C.
+target_link_libraries(runner_bridge PUBLIC
+  "d2d1.lib"
 )
 
 # C++/WinRT headers use the standard-layout `co_await`-friendly types but

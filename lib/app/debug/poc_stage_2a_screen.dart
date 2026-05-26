@@ -1,24 +1,33 @@
-// Phase 5 POC Stage 2A-1 — debug-only Flutter screen.
+// Phase 5 POC Stage 2A-2 — debug-only Flutter screen.
 //
 // Gated by `--dart-define=POC_STAGE_2A=true`. main.dart branches on
-// `PocStage2aScreen.isEnabled` and replaces the production
-// PlatformApp with this screen when the flag is set. Production
-// builds never touch any of this — both kPocStage2a and the branch in
-// main.dart inline-constant out under tree-shaking.
+// `PocStage2aScreen.isEnabled` and replaces the production PlatformApp
+// with this screen when the flag is set. Production builds never touch
+// any of this — both kPocStage2a and the branch in main.dart
+// inline-constant out under tree-shaking.
 //
-// What it does:
-//   1. Calls `pocStage2aStart` on the screen recorder method channel
-//      (the existing one — no new channel). Native side allocates a
-//      DXGI shared-handle D3D11 texture, registers it with the
-//      Flutter Windows TextureRegistrar, returns the texture id.
-//   2. Mounts a `Texture(textureId: ...)` widget — Flutter samples the
+// What it does (Stage 2A-2 — Phase B+):
+//   1. Reads POC_STAGE_2A_VIDEO (required) + POC_STAGE_2A_CURSOR
+//      (optional) from --dart-define and passes them to
+//      `pocStage2aStart` on the screen recorder method channel
+//      (the existing one — no new channel).
+//   2. Native side: starts a WinRT MediaPlayer in frame-server mode
+//      against the MP4, composes each decoded frame through
+//      `clingfy::preview::PreviewCompositor` (cursor zoom + radial
+//      halo when cursor.jsonl was provided) into a DXGI shared-handle
+//      D3D11 texture, marks the texture frame-available so Flutter
+//      samples it.
+//   3. Mounts a `Texture(textureId: ...)` widget — Flutter samples the
 //      shared handle through its own ANGLE / EGL context.
-//   3. Attaches SchedulerBinding.instance.addTimingsCallback to track
+//   4. Attaches SchedulerBinding.instance.addTimingsCallback to track
 //      buildDuration / rasterDuration / totalSpan for the last
 //      `kTimingWindow` frames. Median + p99 are computed on the fly.
-//   4. On dispose (or the Stop button), invokes `pocStage2aStop` with
-//      the final timing stats so the native side can write
-//      `build/windows-poc/stage2a_result.md`.
+//   5. On dispose (or the Stop button or the 25 s auto-stop), invokes
+//      `pocStage2aStop` with the final Flutter timing stats so the
+//      native side can write `build/windows-poc/stage2a_2_result.md`
+//      (which combines native producer copy/render/handoff buckets
+//      with the Flutter raster numbers and runs the design-doc
+//      Stage-1 verdict).
 
 import 'dart:async';
 import 'dart:math' as math;
@@ -33,6 +42,17 @@ class PocStage2aScreen extends StatefulWidget {
   const PocStage2aScreen({super.key});
 
   static const bool isEnabled = bool.fromEnvironment('POC_STAGE_2A');
+
+  /// Stage 2A-2 inputs. The bridge requires a real MP4 path; cursor is
+  /// optional (empty = video-only mode, zoom/highlight skipped). Pass
+  /// with `--dart-define=POC_STAGE_2A_VIDEO=C:\path\to\recording.mp4`.
+  /// Wide-string paths survive `--dart-define` because Flutter encodes
+  /// the value as UTF-8 over the method channel; the native router
+  /// converts back to wchar_t at the boundary.
+  static const String videoPath = String.fromEnvironment('POC_STAGE_2A_VIDEO');
+  static const String cursorPath = String.fromEnvironment(
+    'POC_STAGE_2A_CURSOR',
+  );
 
   @override
   State<PocStage2aScreen> createState() => _PocStage2aScreenState();
@@ -52,6 +72,10 @@ class _PocStage2aScreenState extends State<PocStage2aScreen> {
   String? _startError;
   int _textureWidth = 0;
   int _textureHeight = 0;
+  int _videoWidth = 0;
+  int _videoHeight = 0;
+  int _cursorEventCount = 0;
+  bool _cursorMode = false;
 
   // Ring buffer of recent Flutter pipeline timings (microseconds).
   final List<int> _buildUs = <int>[];
@@ -119,6 +143,10 @@ class _PocStage2aScreenState extends State<PocStage2aScreen> {
     try {
       final dynamic raw = await _channel.invokeMethod<Map<dynamic, dynamic>>(
         'pocStage2aStart',
+        <String, dynamic>{
+          'videoPath': PocStage2aScreen.videoPath,
+          'cursorPath': PocStage2aScreen.cursorPath,
+        },
       );
       if (raw is! Map) {
         if (mounted) {
@@ -142,6 +170,10 @@ class _PocStage2aScreenState extends State<PocStage2aScreen> {
             const <String>[];
         _textureWidth = (result['width'] as num?)?.toInt() ?? 0;
         _textureHeight = (result['height'] as num?)?.toInt() ?? 0;
+        _videoWidth = (result['videoWidth'] as num?)?.toInt() ?? 0;
+        _videoHeight = (result['videoHeight'] as num?)?.toInt() ?? 0;
+        _cursorEventCount = (result['cursorEventCount'] as num?)?.toInt() ?? 0;
+        _cursorMode = result['cursorMode'] as bool? ?? false;
         _startError = result['error'] as String?;
       });
     } on PlatformException catch (e) {
@@ -223,7 +255,9 @@ class _PocStage2aScreenState extends State<PocStage2aScreen> {
     return Scaffold(
       backgroundColor: const Color(0xFF101012),
       appBar: AppBar(
-        title: const Text('Stage 2A-1 — Flutter Texture / shared-handle spike'),
+        title: const Text(
+          'Stage 2A-2 — MediaPlayer + PreviewCompositor through Flutter Texture',
+        ),
         backgroundColor: const Color(0xFF1A1A1F),
         actions: [
           IconButton(
@@ -266,6 +300,12 @@ class _PocStage2aScreenState extends State<PocStage2aScreen> {
     if (_textureId == null) {
       return const Center(child: CircularProgressIndicator());
     }
+    // Show the texture at the SHARED-TEXTURE aspect (not the video
+    // aspect) — the native compositor letterboxes the source into the
+    // shared canvas, so what Flutter samples is always the canvas. If
+    // we used the video aspect here, the letterboxing would get
+    // double-applied and the live letterbox bars would shrink as the
+    // window resized.
     return Container(
       color: Colors.black,
       child: Center(
@@ -306,7 +346,12 @@ class _PocStage2aScreenState extends State<PocStage2aScreen> {
             Text(
               'textureId        : ${_textureId ?? "—"}\n'
               'sharedHandleOk   : $_sharedHandleOk\n'
-              'size             : $_textureWidth × $_textureHeight\n'
+              'texture size     : $_textureWidth × $_textureHeight\n'
+              'video size       : $_videoWidth × $_videoHeight\n'
+              'cursor events    : $_cursorEventCount\n'
+              'cursor mode      : $_cursorMode\n'
+              'video path       : ${PocStage2aScreen.videoPath.isEmpty ? "(none)" : PocStage2aScreen.videoPath}\n'
+              'cursor path      : ${PocStage2aScreen.cursorPath.isEmpty ? "(none)" : PocStage2aScreen.cursorPath}\n'
               'error            : ${_startError ?? "—"}',
               style: bodyStyle,
             ),

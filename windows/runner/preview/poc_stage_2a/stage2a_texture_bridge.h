@@ -1,8 +1,16 @@
-// Stage 2A-1 (bridge-only) — DXGI shared-handle texture registered with
-// the Flutter Windows TextureRegistrar, surfacing a Texture widget on
-// the Dart side. The texture is filled with an animated solid color
-// (HSV hue cycle) so live updates are visible. Real video / cursor /
-// zoom composition arrives in Stage 2A-2.
+// Stage 2A-2 (Phase B+) — DXGI shared-handle texture registered with the
+// Flutter Windows TextureRegistrar, this time fed by a real MediaPlayer
+// frame-server pipeline composed through `clingfy::preview::PreviewCompositor`.
+//
+// Stage 2A-1 (PR #102) proved the bridge works with a solid-color animated
+// texture. Stage 2A-2 replaces the producer thread with a WinRT MediaPlayer
+// subscribed to VideoFrameAvailable: each callback copies the decoded video
+// onto an offscreen surface, the compositor blits it (letterboxed +
+// optional cursor zoom/highlight) into the shared D3D11 texture via D2D,
+// and the texture-registrar is marked for sampling. This is the exact
+// shape Phase 5 production preview wants — only the wire-up to
+// previewOpen/previewPlay/previewSeekTo is still missing, and that's
+// deliberately out of scope until the architecture decision is signed.
 //
 // Singleton because flutter::MethodCall handlers in this project are
 // stateless function pointers (see Bridge/method_router.h). The
@@ -22,10 +30,17 @@
 #include <memory>
 #include <mutex>
 #include <string>
-#include <thread>
 #include <vector>
 
 namespace clingfy::poc::stage2a {
+
+// Inputs to Start. Both paths are wide-character because Windows file
+// paths are wchars natively; the router converts UTF-8 from Dart at the
+// channel boundary.
+struct StartArgs {
+  std::wstring video_path;   // required; empty → start fails with error
+  std::wstring cursor_path;  // optional; empty → video-only (no zoom/halo)
+};
 
 struct StartResult {
   // The Flutter texture id the Dart Texture widget should mount. -1
@@ -42,6 +57,16 @@ struct StartResult {
   // Texture surface size (width / height in pixels).
   int width = 0;
   int height = 0;
+  // Natural video size pulled from MediaPlayer after the first
+  // VideoFrameAvailable. Zero until the first frame arrives — Start
+  // returns before that, so callers should treat 0 as "not yet known."
+  int video_width = 0;
+  int video_height = 0;
+  // Number of cursor events parsed from the JSONL fixture; 0 when
+  // cursor_path was empty or the file parsed to no events.
+  std::int64_t cursor_event_count = 0;
+  // Whether cursor compositing is active (cursor_event_count > 0).
+  bool cursor_mode = false;
   // First-frame error string, if anything failed. Empty on success.
   std::string error;
 };
@@ -71,14 +96,16 @@ class Stage2aTextureBridge {
   void Initialize(FlutterDesktopPluginRegistrarRef registrar);
 
   // Allocate the shared D3D11 texture + register it with the Flutter
-  // TextureRegistrar. Spins up the producer thread that updates the
-  // texture content. Idempotent: calling Start when already running
-  // returns the same texture id.
-  StartResult Start();
+  // TextureRegistrar, then start the MediaPlayer frame-server feeding
+  // the compositor. Idempotent: calling Start when already running
+  // returns the same texture id (but ignores the new args).
+  StartResult Start(const StartArgs& args);
 
-  // Unregister + tear down the texture + stop the producer thread.
-  // Also writes `build/windows-poc/stage2a_result.md` from `args`.
-  // Idempotent.
+  // Unsubscribe from VideoFrameAvailable, tear down the MediaPlayer +
+  // compositor, and write `build/windows-poc/stage2a_2_result.md`
+  // from `args` plus the native producer timings collected during the
+  // run. Texture stays leaked (see #102 workaround for Intel iGPU
+  // shutdown crash inside Flutter's unregister path).
   void Stop(const StopArgs& args);
 
   // For tests / observability.
@@ -90,7 +117,13 @@ class Stage2aTextureBridge {
   Stage2aTextureBridge(const Stage2aTextureBridge&) = delete;
   Stage2aTextureBridge& operator=(const Stage2aTextureBridge&) = delete;
 
-  void ProducerThreadMain();
+  // Implementation lives in the .cpp where the winrt projection
+  // headers are visible. The trampoline lambda in Start() passes a
+  // pointer to the `MediaPlayer const&` it received from WinRT; the
+  // implementation reinterpret-casts back. Opaque `void*` keeps the
+  // header free of `winrt/...` includes so router consumers don't
+  // have to pull in C++/WinRT.
+  void HandleVideoFrame(const void* sender_media_player_ptr);
 
  public:
   // Forward declaration. The actual definition lives in the .cpp at
@@ -114,7 +147,6 @@ class Stage2aTextureBridge {
   // Lifecycle state.
   std::atomic<bool> running_{false};
   std::atomic<bool> shutting_down_{false};
-  std::thread producer_thread_;
 
   // Stats / IDs returned by Start.
   std::int64_t texture_id_ = -1;
@@ -123,9 +155,6 @@ class Stage2aTextureBridge {
   int texture_height_ = 0;
   std::vector<std::string> egl_extensions_;
   std::string last_error_;
-
-  // Wall-clock anchor for the animation (HSV hue cycle).
-  std::chrono::steady_clock::time_point start_time_;
 
   mutable std::mutex mutex_;
 };
