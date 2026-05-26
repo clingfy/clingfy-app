@@ -67,38 +67,10 @@ void HandleGetSourceDimensions(
 }
 
 // ---------------------------------------------------------------------
-// EncodableMap arg-extraction helpers — used by both the production
-// handlers below and the deprecated POC alias section that follows.
+// EncodableMap arg-extraction helpers — used by the production
+// previewOpen / previewClose / getRecordingSceneInfo handlers and the
+// deprecated POC alias section that follows.
 // ---------------------------------------------------------------------
-
-double ReadDouble(const flutter::EncodableMap& map, const char* key,
-                  double fallback) {
-  auto it = map.find(flutter::EncodableValue(key));
-  if (it == map.end()) return fallback;
-  if (std::holds_alternative<double>(it->second)) {
-    return std::get<double>(it->second);
-  }
-  if (std::holds_alternative<int32_t>(it->second)) {
-    return static_cast<double>(std::get<int32_t>(it->second));
-  }
-  if (std::holds_alternative<int64_t>(it->second)) {
-    return static_cast<double>(std::get<int64_t>(it->second));
-  }
-  return fallback;
-}
-
-int64_t ReadInt(const flutter::EncodableMap& map, const char* key,
-                int64_t fallback) {
-  auto it = map.find(flutter::EncodableValue(key));
-  if (it == map.end()) return fallback;
-  if (std::holds_alternative<int64_t>(it->second)) {
-    return std::get<int64_t>(it->second);
-  }
-  if (std::holds_alternative<int32_t>(it->second)) {
-    return std::get<int32_t>(it->second);
-  }
-  return fallback;
-}
 
 std::string ReadString(const flutter::EncodableMap& map, const char* key) {
   auto it = map.find(flutter::EncodableValue(key));
@@ -262,91 +234,106 @@ void HandleGetRecordingSceneInfo(
 }
 
 // ---------------------------------------------------------------------
-// Deprecated POC Stage 2A aliases.
-//
-// pocStage2aStart / pocStage2aStop were the POC-only entry points the
-// dart-define-gated debug screen (lib/app/debug/poc_stage_2a_screen.dart)
-// uses to drive the underlying texture bridge. Step 5.0 of the Phase 5
-// implementation plan lifted that bridge out of poc_stage_2a/ into the
-// production preview/ tree and renamed it to PreviewEngine; the method
-// names stay registered here as deprecated aliases so the debug screen
-// continues to work for benchmarking through Steps 5.1 / 5.2 / 5.3.
-//
-// When Step 5.3 lands the real previewOpen / previewClose semantics
-// (sessionId + projectPath, manifest reader, production texture
-// lifecycle), the debug screen + these aliases are deleted in the same
-// PR. The Dart bridge contract list keeps the method names registered
-// during the deprecation window — see
-// windows/runner_tests/bridge_contract_coverage_test.cpp.
+// previewOpen / previewClose — Step 5.3 of the Phase 5 implementation
+// plan. Production preview lifecycle: Dart calls previewOpen with a
+// session id + .clingfyproj path; native resolves the manifest via
+// RecordingProjectReader, then drives PreviewEngine::Open. The
+// Texture id is NOT returned from previewOpen — it surfaces through
+// the player/events event channel in Step 5.4 (matching macOS's
+// inline-preview-view discovery pattern). previewOpen returns null on
+// success.
 // ---------------------------------------------------------------------
 
-void HandlePocStage2aStart(
+void HandlePreviewOpen(
     const flutter::MethodCall<flutter::EncodableValue>& call,
     std::unique_ptr<flutter::MethodResult<flutter::EncodableValue>> result) {
-  clingfy::preview::OpenArgs args{};
-  if (const auto* map =
-          std::get_if<flutter::EncodableMap>(call.arguments())) {
-    args.video_path = Utf8ToWide(ReadString(*map, "videoPath"));
-    args.cursor_path = Utf8ToWide(ReadString(*map, "cursorPath"));
+  const flutter::EncodableMap* args =
+      std::get_if<flutter::EncodableMap>(call.arguments());
+  if (args == nullptr) {
+    result->Error(error::kBadArgs, "missing args map");
+    return;
   }
-  auto* engine = PreviewEngine::Instance();
-  const auto r = engine->Open(args);
+  const std::string session_id = ReadString(*args, "sessionId");
+  const std::string project_path_utf8 = ReadString(*args, "projectPath");
+  const std::string camera_path_override = ReadString(*args, "cameraPath");
 
-  flutter::EncodableList extensions;
-  for (const auto& ext : r.egl_extensions) {
-    extensions.push_back(flutter::EncodableValue(ext));
+  if (session_id.empty() || project_path_utf8.empty()) {
+    result->Error(
+        error::kBadArgs,
+        "previewOpen requires non-empty sessionId and projectPath");
+    return;
   }
-  flutter::EncodableMap out{
-      {flutter::EncodableValue("textureId"),
-       flutter::EncodableValue(r.texture_id)},
-      {flutter::EncodableValue("sharedHandleOk"),
-       flutter::EncodableValue(r.shared_handle_ok)},
-      {flutter::EncodableValue("eglExtensions"),
-       flutter::EncodableValue(std::move(extensions))},
-      {flutter::EncodableValue("width"),
-       flutter::EncodableValue(r.width)},
-      {flutter::EncodableValue("height"),
-       flutter::EncodableValue(r.height)},
-      {flutter::EncodableValue("videoWidth"),
-       flutter::EncodableValue(r.video_width)},
-      {flutter::EncodableValue("videoHeight"),
-       flutter::EncodableValue(r.video_height)},
-      {flutter::EncodableValue("cursorEventCount"),
-       flutter::EncodableValue(r.cursor_event_count)},
-      {flutter::EncodableValue("cursorMode"),
-       flutter::EncodableValue(r.cursor_mode)},
-  };
+
+  const std::wstring project_path_w = Utf8ToWide(project_path_utf8);
+  const auto read =
+      clingfy::capture::ReadRecordingProject(project_path_w);
+  if (read.error != clingfy::capture::ReadError::kNone) {
+    LogSceneInfoReaderError(project_path_utf8, read);
+    // Match the macOS PreviewSceneResolver error code + message
+    // shape; details echoes the projectPath so the Dart layer can
+    // surface "<path> could not be opened" without re-deriving it.
+    result->Error(
+        "PREVIEW_INPUT_MISSING",
+        "Recording project not found. It may have been moved or deleted.",
+        flutter::EncodableValue(project_path_utf8));
+    return;
+  }
+
+  clingfy::preview::OpenArgs open_args{};
+  open_args.session_id = session_id;
+  open_args.video_path = read.project->screen_path;
+  if (read.project->cursor_path.has_value()) {
+    open_args.cursor_path = *read.project->cursor_path;
+  }
+  // The Dart-side override wins when present; otherwise fall back to
+  // whatever the reader resolved. Plumbed through Step 5.3; camera
+  // compositing itself lands in Phase 9.
+  if (!camera_path_override.empty()) {
+    open_args.camera_path = Utf8ToWide(camera_path_override);
+  } else if (read.project->camera_video_path.has_value()) {
+    open_args.camera_path = *read.project->camera_video_path;
+  }
+
+  auto* engine = PreviewEngine::Instance();
+  const auto r = engine->Open(open_args);
   if (!r.error.empty()) {
-    out[flutter::EncodableValue("error")] =
-        flutter::EncodableValue(r.error);
+    // Engine-side validation rejection (e.g. another session already
+    // open, texture allocation failed). Map to the same user-visible
+    // code Dart already handles for PREVIEW_INPUT_MISSING — but
+    // surface the engine's message in details for triage.
+    result->Error(
+        "PREVIEW_INPUT_MISSING",
+        r.error,
+        flutter::EncodableValue(project_path_utf8));
+    return;
   }
-  reply::Map(*result, std::move(out));
+  reply::Null(*result);
 }
 
-void HandlePocStage2aStop(
+void HandlePreviewClose(
     const flutter::MethodCall<flutter::EncodableValue>& call,
     std::unique_ptr<flutter::MethodResult<flutter::EncodableValue>> result) {
-  clingfy::preview::CloseArgs args{};
-  if (const auto* map =
+  std::string session_id;
+  if (const auto* args =
           std::get_if<flutter::EncodableMap>(call.arguments())) {
-    args.build_median_ms = ReadDouble(*map, "buildMedianMs", 0.0);
-    args.build_p99_ms = ReadDouble(*map, "buildP99Ms", 0.0);
-    args.raster_median_ms = ReadDouble(*map, "rasterMedianMs", 0.0);
-    args.raster_p99_ms = ReadDouble(*map, "rasterP99Ms", 0.0);
-    args.total_median_ms = ReadDouble(*map, "totalMedianMs", 0.0);
-    args.total_p99_ms = ReadDouble(*map, "totalP99Ms", 0.0);
-    args.flutter_frames_observed = ReadInt(*map, "flutterFramesObserved", 0);
+    session_id = ReadString(*args, "sessionId");
   }
-  auto* engine = PreviewEngine::Instance();
-  engine->Close(args);
+  // Stale-session close is a silent no-op inside PreviewEngine::Close;
+  // missing-args is too. Match macOS's "always reply null" contract.
+  clingfy::preview::CloseArgs close_args{};
+  close_args.session_id = session_id;
+  PreviewEngine::Instance()->Close(close_args);
   reply::Null(*result);
 }
 
 }  // namespace
 
 void RegisterHandlers(HandlerTable& table) {
-  table["previewOpen"] = &HandleNoopSetter;
-  table["previewClose"] = &HandleNoopSetter;
+  // Step 5.3: previewOpen / previewClose now drive PreviewEngine.
+  // previewPlay / previewPause / previewSeekTo / previewPeekTo stay
+  // Phase 1 no-ops until Steps 5.4 and 5.5 (transport + event channel).
+  table["previewOpen"] = &HandlePreviewOpen;
+  table["previewClose"] = &HandlePreviewClose;
   table["previewPlay"] = &HandleNoopSetter;
   table["previewPause"] = &HandleNoopSetter;
   table["previewSeekTo"] = &HandleNoopSetter;
@@ -369,10 +356,6 @@ void RegisterHandlers(HandlerTable& table) {
   // Step 5.2: real getRecordingSceneInfo backed by RecordingProjectReader.
   // Was a Phase 1 stub in Bridge/Routers/export_router.cpp until 5.2.
   table["getRecordingSceneInfo"] = &HandleGetRecordingSceneInfo;
-
-  // Deprecated POC Stage 2A aliases — remove in Step 5.3.
-  table["pocStage2aStart"] = &HandlePocStage2aStart;
-  table["pocStage2aStop"] = &HandlePocStage2aStop;
 }
 
 }  // namespace clingfy::bridge::routers::preview

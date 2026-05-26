@@ -86,8 +86,10 @@ TEST(StubShapesTest, NoopSettersReturnSuccessWithNullValue) {
       "showPreRecordingBar",
       "togglePreRecordingBar",
       "setPreRecordingBarState",
-      "previewOpen",
-      "previewClose",
+      // previewOpen / previewClose are no longer no-op setters as of
+      // Step 5.3 — they route through PreviewEngine and return BAD_ARGS
+      // / PREVIEW_INPUT_MISSING when inputs are wrong. Their dedicated
+      // contract tests live in preview_router_test.cpp.
       "previewPlay",
       "previewPause",
       "previewSeekTo",

@@ -325,5 +325,157 @@ TEST_F(PreviewRouterSceneInfoTest, AbsolutePathsAreEchoedBack) {
   }
 }
 
+// ====================================================================
+// previewOpen / previewClose router contract.
+//
+// The full happy path (texture allocation, MediaPlayer setup,
+// VideoFrameAvailable subscription) requires a live Flutter
+// TextureRegistrar — only available in the running app, not in
+// runner_tests. These tests therefore focus on the contract surface
+// the bridge exposes BEFORE the engine itself runs: argument
+// validation, manifest-resolution failures, the PREVIEW_INPUT_MISSING
+// error shape, and previewClose's silent stale-session no-op. The
+// open/close lifecycle was stress-tested manually against the live
+// runner during this PR (build/windows-poc/stage2a_2_native.log
+// confirms the UnregisterExternalTexture callback fires cleanly on
+// Intel Iris Xe).
+// ====================================================================
+
+class PreviewRouterOpenCloseTest : public PreviewRouterSceneInfoTest {
+ protected:
+  static flutter::EncodableMap OpenArgsMap(const std::string& session_id,
+                                           const std::string& project_path) {
+    flutter::EncodableMap m;
+    if (!session_id.empty()) {
+      m[flutter::EncodableValue("sessionId")] =
+          flutter::EncodableValue(session_id);
+    }
+    if (!project_path.empty()) {
+      m[flutter::EncodableValue("projectPath")] =
+          flutter::EncodableValue(project_path);
+    }
+    return m;
+  }
+
+  static flutter::EncodableMap CloseArgsMap(const std::string& session_id) {
+    flutter::EncodableMap m;
+    m[flutter::EncodableValue("sessionId")] =
+        flutter::EncodableValue(session_id);
+    return m;
+  }
+};
+
+// ---- previewOpen BAD_ARGS ------------------------------------------
+
+TEST_F(PreviewRouterOpenCloseTest, OpenMissingArgsReturnsBadArgs) {
+  MethodRouter router;
+  RecordedReply reply;
+  router.Dispatch(test_support::MakeCall("previewOpen"), MakeRecorder(reply));
+  EXPECT_TRUE(reply.error_called);
+  EXPECT_EQ(reply.error_code, "BAD_ARGS");
+}
+
+TEST_F(PreviewRouterOpenCloseTest, OpenMissingSessionIdReturnsBadArgs) {
+  MethodRouter router;
+  const auto reply = DispatchWithArgs(
+      router, "previewOpen",
+      OpenArgsMap(/*session_id=*/"", "C:\\some\\path.clingfyproj"));
+  EXPECT_TRUE(reply.error_called);
+  EXPECT_EQ(reply.error_code, "BAD_ARGS");
+}
+
+TEST_F(PreviewRouterOpenCloseTest, OpenMissingProjectPathReturnsBadArgs) {
+  MethodRouter router;
+  const auto reply = DispatchWithArgs(
+      router, "previewOpen", OpenArgsMap("sess-1", /*project_path=*/""));
+  EXPECT_TRUE(reply.error_called);
+  EXPECT_EQ(reply.error_code, "BAD_ARGS");
+}
+
+// ---- previewOpen PREVIEW_INPUT_MISSING -----------------------------
+
+TEST_F(PreviewRouterOpenCloseTest, OpenNonexistentBundleReturnsPreviewInputMissing) {
+  MethodRouter router;
+  const fs::path nonexistent = base_ / "missing.clingfyproj";
+  const auto reply = DispatchWithArgs(
+      router, "previewOpen",
+      OpenArgsMap("sess-1", PathToUtf8(nonexistent)));
+
+  ASSERT_TRUE(reply.error_called);
+  EXPECT_EQ(reply.error_code, "PREVIEW_INPUT_MISSING");
+  EXPECT_EQ(reply.error_message,
+            "Recording project not found. It may have been moved or deleted.");
+  ASSERT_TRUE(std::holds_alternative<std::string>(reply.error_details));
+  EXPECT_EQ(std::get<std::string>(reply.error_details),
+            PathToUtf8(nonexistent));
+}
+
+TEST_F(PreviewRouterOpenCloseTest, OpenSchemaDriftReturnsPreviewInputMissing) {
+  MethodRouter router;
+  const fs::path root = MakeMinimalBundle(base_, "open-schema-drift");
+  std::ofstream out(root / "project.json", std::ios::binary);
+  out << R"({"schemaVersion": 99, "status": "ready"})";
+  out.close();
+
+  const auto reply = DispatchWithArgs(
+      router, "previewOpen", OpenArgsMap("sess-1", PathToUtf8(root)));
+  EXPECT_TRUE(reply.error_called);
+  EXPECT_EQ(reply.error_code, "PREVIEW_INPUT_MISSING");
+}
+
+TEST_F(PreviewRouterOpenCloseTest, OpenMissingScreenReturnsPreviewInputMissing) {
+  MethodRouter router;
+  const fs::path root = MakeMinimalBundle(base_, "open-missing-screen");
+  fs::remove(root / "capture" / "screen.mov");
+
+  const auto reply = DispatchWithArgs(
+      router, "previewOpen", OpenArgsMap("sess-1", PathToUtf8(root)));
+  EXPECT_TRUE(reply.error_called);
+  EXPECT_EQ(reply.error_code, "PREVIEW_INPUT_MISSING");
+}
+
+// ---- previewClose contract -----------------------------------------
+
+TEST_F(PreviewRouterOpenCloseTest, CloseAlwaysReplyNull) {
+  // previewClose is documented to silently no-op on stale session
+  // and on a not-running engine. The handler always reply::Null.
+  MethodRouter router;
+  const auto reply =
+      DispatchWithArgs(router, "previewClose", CloseArgsMap("unknown-session"));
+  EXPECT_TRUE(reply.success_called);
+  EXPECT_FALSE(reply.error_called);
+}
+
+TEST_F(PreviewRouterOpenCloseTest, CloseWithNoArgsReplyNull) {
+  MethodRouter router;
+  RecordedReply reply;
+  router.Dispatch(test_support::MakeCall("previewClose"), MakeRecorder(reply));
+  EXPECT_TRUE(reply.success_called);
+  EXPECT_FALSE(reply.error_called);
+}
+
+// ---- POC alias removal confirmation --------------------------------
+
+TEST_F(PreviewRouterOpenCloseTest, PocStage2aStartIsNoLongerRegistered) {
+  // Confirms Step 5.3 cleanup: the deprecated aliases were removed
+  // from preview_router along with the debug screen. Calls now flow
+  // through the default not-implemented path.
+  MethodRouter router;
+  RecordedReply reply;
+  router.Dispatch(test_support::MakeCall("pocStage2aStart"),
+                  MakeRecorder(reply));
+  EXPECT_TRUE(reply.error_called);
+  EXPECT_EQ(reply.error_code, "WINDOWS_NOT_IMPLEMENTED");
+}
+
+TEST_F(PreviewRouterOpenCloseTest, PocStage2aStopIsNoLongerRegistered) {
+  MethodRouter router;
+  RecordedReply reply;
+  router.Dispatch(test_support::MakeCall("pocStage2aStop"),
+                  MakeRecorder(reply));
+  EXPECT_TRUE(reply.error_called);
+  EXPECT_EQ(reply.error_code, "WINDOWS_NOT_IMPLEMENTED");
+}
+
 }  // namespace
 }  // namespace clingfy::bridge
