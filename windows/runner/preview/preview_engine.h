@@ -46,12 +46,20 @@
 
 namespace clingfy::preview {
 
-// Inputs to Open. Both paths are wide-character because Windows file
-// paths are wchars natively; the router converts UTF-8 from Dart at the
-// channel boundary.
+// Inputs to Open. Both file paths are wide-character because Windows
+// file paths are wchars natively; the router converts UTF-8 from Dart
+// at the channel boundary.
 struct OpenArgs {
+  // Required. The Dart-side session id that owns this preview. Used
+  // to gate later Close / Play / Pause / Seek calls (calls targeting
+  // a non-matching session id are silently no-op'd, matching macOS's
+  // InlinePreviewView behavior). Empty session_id → open fails.
+  std::string session_id;
   std::wstring video_path;   // required; empty → open fails with error
   std::wstring cursor_path;  // optional; empty → video-only (no zoom/halo)
+  // Optional; plumbed-but-not-composited in Step 5.3. Phase 9 picks
+  // up camera compositing on top of the same PreviewCompositor.
+  std::wstring camera_path;
 };
 
 struct OpenResult {
@@ -84,17 +92,13 @@ struct OpenResult {
 };
 
 struct CloseArgs {
-  // Flutter SchedulerBinding timings, passed back from the Dart side
-  // so the native artifact writer can include them in the Markdown.
-  // Each pair is (median_ms, p99_ms) for a bucket. Buckets are
-  // {build, raster, total}.
-  double build_median_ms = 0.0;
-  double build_p99_ms = 0.0;
-  double raster_median_ms = 0.0;
-  double raster_p99_ms = 0.0;
-  double total_median_ms = 0.0;
-  double total_p99_ms = 0.0;
-  std::int64_t flutter_frames_observed = 0;
+  // Session id that owns this Close. If the engine's active session
+  // does not match (stale call from a previous session), Close is a
+  // silent no-op. Mirrors the macOS contract documented in the Phase 5
+  // ADR §macOS gotcha #2. Empty session_id is treated as a wildcard
+  // and force-closes whatever is open — used by the singleton's
+  // destructor at process exit.
+  std::string session_id;
 };
 
 class PreviewEngine {
@@ -109,16 +113,34 @@ class PreviewEngine {
 
   // Allocate the shared D3D11 texture + register it with the Flutter
   // TextureRegistrar, then start the MediaPlayer frame-server feeding
-  // the compositor. Idempotent: calling Open when already running
-  // returns the same texture id (but ignores the new args).
+  // the compositor. Returns immediately after registration; the first
+  // VideoFrameAvailable callback later fills in video_width /
+  // video_height via the OpenResult's cached state.
+  //
+  // Re-entry behavior:
+  //   * Open with the SAME session_id while already running →
+  //     idempotent, returns the existing state.
+  //   * Open with a DIFFERENT session_id while already running →
+  //     returns error (caller must Close first). This is stricter
+  //     than macOS's "queue the request" model, but Flutter has no
+  //     analogous gate for us to wait on — failing loudly is safer
+  //     than silently swapping inputs out from under the Dart layer.
   OpenResult Open(const OpenArgs& args);
 
-  // Unsubscribe from VideoFrameAvailable, tear down the MediaPlayer +
-  // compositor, and write `build/windows-poc/stage2a_2_result.md`
-  // from `args` plus the native producer timings collected during the
-  // run. Texture stays leaked (see #102 workaround for Intel iGPU
-  // shutdown crash inside Flutter's unregister path) — the production-
-  // grade lifecycle fix lands in Step 5.3.
+  // Tear down the MediaPlayer + compositor and release the Flutter
+  // texture via FlutterDesktopTextureRegistrarUnregisterExternalTexture
+  // with the documented async-completion callback. The Impl owning
+  // the shared D3D11 / D2D / WinRT resources is kept alive until
+  // Flutter's callback fires, then released. This is the production
+  // replacement for the POC's "leak forever" workaround — the
+  // earlier crash investigation found the unregister itself works
+  // when the process keeps running; the POC was crashing at process
+  // exit, not on a normal Close. See the Phase 5 ADR's "Known
+  // follow-ups" entry on texture unregister.
+  //
+  // Stale-session calls (session_id mismatches active_session_id_)
+  // are silent no-ops, matching macOS gotcha #2. An empty session_id
+  // is the wildcard the destructor uses at process exit.
   void Close(const CloseArgs& args);
 
   // For tests / observability.
@@ -168,6 +190,11 @@ class PreviewEngine {
   int texture_height_ = 0;
   std::vector<std::string> egl_extensions_;
   std::string last_error_;
+
+  // Session id from the active Open. Empty when no preview is open.
+  // Compared against incoming Close/Play/Pause/Seek calls to enforce
+  // the stale-session no-op contract.
+  std::string active_session_id_;
 
   mutable std::mutex mutex_;
 };

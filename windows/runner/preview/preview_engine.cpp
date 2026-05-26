@@ -52,11 +52,6 @@ constexpr wchar_t kArtifactPath[] =
 constexpr wchar_t kNativeLogPath[] =
     L"build\\windows-poc\\stage2a_2_native.log";
 
-// Design-doc Stage-1 pass bar (the verdict line in the artifact
-// compares Flutter raster + native producer median/p99 against these).
-constexpr double kPassBarMedianMs = 16.0;
-constexpr double kPassBarP99Ms = 25.0;
-
 // File-based logger because a Flutter Windows debug build is a GUI
 // subsystem exe with no console; the standard streams are not
 // reliably reachable from outside. The log file is overwritten each
@@ -299,11 +294,16 @@ OpenResult PreviewEngine::Open(const OpenArgs& args) {
     last_error_ = result.error;
     return result;
   }
+  if (args.session_id.empty()) {
+    LogNative("Open() abort: session_id is empty");
+    result.error = "PreviewEngine requires a non-empty session_id.";
+    last_error_ = result.error;
+    return result;
+  }
   if (args.video_path.empty()) {
     LogNative("Open() abort: video_path is empty");
     result.error =
-        "PreviewEngine requires a video path. Pass POC_STAGE_2A_VIDEO via "
-        "--dart-define or the args map.";
+        "PreviewEngine requires a video path.";
     last_error_ = result.error;
     return result;
   }
@@ -325,18 +325,30 @@ OpenResult PreviewEngine::Open(const OpenArgs& args) {
     return result;
   }
   if (running_.load()) {
-    // Idempotent: report the existing registration. New args are
-    // ignored on re-entry — Close+Open is the way to swap inputs.
-    result.texture_id = texture_id_;
-    result.shared_handle_ok = shared_handle_ok_;
-    result.egl_extensions = egl_extensions_;
-    if (impl_ != nullptr) {
-      result.video_width = static_cast<int>(impl_->last_video_width.load());
-      result.video_height = static_cast<int>(impl_->last_video_height.load());
-      result.cursor_event_count =
-          static_cast<std::int64_t>(impl_->cursor_events.size());
-      result.cursor_mode = impl_->cursor_mode;
+    if (active_session_id_ == args.session_id) {
+      // Idempotent: report the existing registration. New paths are
+      // ignored on same-session re-entry — Close+Open is the way to
+      // swap inputs.
+      result.texture_id = texture_id_;
+      result.shared_handle_ok = shared_handle_ok_;
+      result.egl_extensions = egl_extensions_;
+      if (impl_ != nullptr) {
+        result.video_width = static_cast<int>(impl_->last_video_width.load());
+        result.video_height = static_cast<int>(impl_->last_video_height.load());
+        result.cursor_event_count =
+            static_cast<std::int64_t>(impl_->cursor_events.size());
+        result.cursor_mode = impl_->cursor_mode;
+      }
+      return result;
     }
+    // Different session id while already running — caller must Close
+    // the previous session first. Surfacing a real error here is
+    // safer than silently force-closing the previous session out
+    // from under whichever Dart layer still holds its texture id.
+    LogNative("Open() abort: another session is already active");
+    result.error =
+        "PreviewEngine already has an active session — Close it first.";
+    last_error_ = result.error;
     return result;
   }
 
@@ -578,7 +590,13 @@ OpenResult PreviewEngine::Open(const OpenArgs& args) {
   try {
     impl_->player = winrt_playback::MediaPlayer();
     impl_->player.IsVideoFrameServerEnabled(true);
-    impl_->player.IsLoopingEnabled(true);
+    // Production preview does NOT loop. Phase 5 wants MediaEnded to
+    // surface as a "completed" playerState event in Step 5.4; looping
+    // would swallow that signal. The earlier POC enabled looping as a
+    // convenience so a short fixture could be measured for the full
+    // 25 s auto-stop window; that convenience does not survive the
+    // production previewOpen path.
+    impl_->player.IsLoopingEnabled(false);
 
     wchar_t full[MAX_PATH * 2] = {};
     const DWORD n = ::GetFullPathNameW(args.video_path.c_str(),
@@ -625,6 +643,7 @@ OpenResult PreviewEngine::Open(const OpenArgs& args) {
     return result;
   }
 
+  active_session_id_ = args.session_id;
   running_.store(true);
   LogNative("Open() returning success");
 
@@ -743,21 +762,79 @@ void PreviewEngine::HandleVideoFrame(
   impl->timing_total.EndFrame();
 }
 
+namespace {
+
+// Carries the dying Impl alive across the async unregister round-trip.
+// FlutterDesktopTextureRegistrarUnregisterExternalTexture calls
+// OnUnregisterComplete (file-scope) on a Flutter thread once it has
+// finished with the texture; that callback `delete`s this struct,
+// which releases the Impl + drops the last reference to the D3D11 /
+// D2D / WinRT resources. Doing so on Flutter's signal — instead of
+// the POC's "leak forever at shutdown" — is the production texture
+// lifecycle the Phase 5 ADR's "Known follow-ups" called out.
+struct TearDownContext {
+  std::unique_ptr<PreviewEngine::Impl> dying_impl;
+  // Identifying info captured at Close time so the unregister-
+  // complete log line is useful even though the Impl has been moved
+  // by then.
+  std::int64_t texture_id = -1;
+  std::string session_id;
+};
+
+void CALLBACK OnUnregisterComplete(void* user_data) {
+  // Flutter is documented to invoke this once the consumer side has
+  // finished sampling the texture. From here on it is safe to drop
+  // the D3D11/D2D/WinRT resources the Impl owns.
+  auto* tc = static_cast<TearDownContext*>(user_data);
+  if (tc == nullptr) return;
+  char buf[128];
+  std::snprintf(buf, sizeof(buf),
+                "UnregisterExternalTexture callback fired — tex=%lld "
+                "session=%s — releasing Impl",
+                static_cast<long long>(tc->texture_id),
+                tc->session_id.empty() ? "(none)" : tc->session_id.c_str());
+  LogNative(buf);
+  delete tc;
+}
+
+}  // namespace
+
 void PreviewEngine::Close(const CloseArgs& args) {
   LogNative("Close() entered");
   if (!running_.load()) {
     LogNative("Close() abort: not running");
     return;
   }
+
+  // Stale-session no-op. Empty session_id is a wildcard the destructor
+  // uses to force-close at process exit (matches macOS gotcha #2 for
+  // the play/pause/seek path; we extend the same rule to Close so a
+  // racy late Close from a previous session can't tear down the
+  // current one).
+  {
+    std::lock_guard<std::mutex> lock(mutex_);
+    if (!args.session_id.empty() &&
+        args.session_id != active_session_id_) {
+      char buf[160];
+      std::snprintf(buf, sizeof(buf),
+                    "Close() stale-session no-op: incoming=%s active=%s",
+                    args.session_id.c_str(),
+                    active_session_id_.c_str());
+      LogNative(buf);
+      return;
+    }
+  }
+
   shutting_down_.store(true);
   running_.store(false);
 
   // ---- 1. Unsubscribe + tear down the MediaPlayer FIRST. ----
   // Doing this before we touch impl_ avoids a callback racing the
-  // unique_ptr move below. MediaPlayer::Close() is documented to
-  // wait for the last pending callback to drain.
+  // unique_ptr move below. MediaPlayer::Close() waits for the last
+  // pending callback to drain.
   std::unique_ptr<Impl> dying_impl;
   std::int64_t tex_id_to_unregister = -1;
+  std::string closing_session;
   std::string gpu;
   bool handle_ok = false;
   std::string err;
@@ -777,6 +854,7 @@ void PreviewEngine::Close(const CloseArgs& args) {
   {
     std::lock_guard<std::mutex> lock(mutex_);
     tex_id_to_unregister = texture_id_;
+    closing_session = active_session_id_;
     handle_ok = shared_handle_ok_;
     err = last_error_;
     tw = texture_width_;
@@ -785,6 +863,7 @@ void PreviewEngine::Close(const CloseArgs& args) {
     texture_id_ = -1;
     shared_handle_ok_ = false;
     egl_extensions_.clear();
+    active_session_id_.clear();
   }
   if (dying_impl) {
     gpu = dying_impl->gpu_description;
@@ -801,8 +880,10 @@ void PreviewEngine::Close(const CloseArgs& args) {
     stats_render = dying_impl->timing_render.ComputeStats();
     stats_handoff = dying_impl->timing_handoff.ComputeStats();
 
-    // Drain the MediaPlayer under render_mutex so no in-flight
-    // callback is touching the compositor when we proceed.
+    // Drain the MediaPlayer: unsubscribe the VideoFrameAvailable
+    // event first (so the callback can't fire on a half-torn impl),
+    // then Pause + Close. MediaPlayer::Close() waits for the last
+    // pending callback to return.
     try {
       if (dying_impl->player) {
         if (dying_impl->frame_token.value) {
@@ -817,13 +898,42 @@ void PreviewEngine::Close(const CloseArgs& args) {
     }
   }
 
-  // ---- 2. SKIP UnregisterExternalTexture — see PR #102 writeup.
-  // Async unregister + Intel iGPU + Flutter ANGLE consumer = 0xC0000005
-  // crash on shutdown. We intentionally leak the texture; process is
-  // about to exit anyway. Step 5.3 (Phase 5 implementation plan)
-  // replaces this with a production-grade lifecycle.
-  LogNative("Close() SKIPPING UnregisterExternalTexture (POC workaround)");
-  if (dying_impl) dying_impl.release();
+  // ---- 2. Production unregister via the documented async callback.
+  // FlutterDesktopTextureRegistrarUnregisterExternalTexture is
+  // explicitly async; the optional callback fires from a Flutter
+  // thread once the consumer side has finished with the texture.
+  // We hand it a heap-allocated TearDownContext that owns the dying
+  // Impl, so the Impl (and the D3D11/D2D/WinRT resources it owns)
+  // outlives the round-trip. The callback `delete`s the context,
+  // releasing everything.
+  //
+  // The earlier POC's "leak forever" was a process-exit workaround,
+  // not a fundamental unregister bug: the crash was the Impl being
+  // freed before Flutter's ANGLE consumer was done sampling. With
+  // the TearDownContext holding the Impl alive, the documented
+  // pattern works.
+  if (texture_registrar_ && tex_id_to_unregister >= 0 && dying_impl) {
+    auto* teardown = new TearDownContext{
+        std::move(dying_impl),
+        tex_id_to_unregister,
+        closing_session,
+    };
+    LogNative("Calling FlutterDesktopTextureRegistrarUnregisterExternalTexture");
+    FlutterDesktopTextureRegistrarUnregisterExternalTexture(
+        texture_registrar_, tex_id_to_unregister, &OnUnregisterComplete,
+        teardown);
+    // dying_impl was moved into the TearDownContext; nothing more
+    // for this thread to do — the callback will release everything.
+  } else if (dying_impl) {
+    // Defensive: if the texture_registrar_ is unexpectedly null or
+    // we never got a real texture id, fall back to direct teardown
+    // here. We won't be calling Flutter, so there's no async to wait
+    // for. This branch should not happen in practice — Initialize
+    // sets the registrar at app startup and Open only succeeds when
+    // the registration returned a valid id.
+    LogNative("Close() direct teardown — no Flutter registrar or texture id");
+    dying_impl.reset();
+  }
 
   // ---- 3. Write the artifact. ----
   std::ofstream f(kArtifactPath,
@@ -875,57 +985,14 @@ void PreviewEngine::Close(const CloseArgs& args) {
     f << "\nFrames consumed by producer: " << frames_consumed
       << " (dropped: " << dropped << ")\n\n";
 
-    f << "## Flutter SchedulerBinding timings\n\n";
-    f << "| bucket | median (ms) | p99 (ms) |\n";
-    f << "|--------|------------:|---------:|\n";
-    char row[128];
-    std::snprintf(row, sizeof(row), "| build  | %11.3f | %8.3f |\n",
-                  args.build_median_ms, args.build_p99_ms);
-    f << row;
-    std::snprintf(row, sizeof(row), "| raster | %11.3f | %8.3f |\n",
-                  args.raster_median_ms, args.raster_p99_ms);
-    f << row;
-    std::snprintf(row, sizeof(row), "| total  | %11.3f | %8.3f |\n",
-                  args.total_median_ms, args.total_p99_ms);
-    f << row;
-    f << "\nFrames observed by Dart: " << args.flutter_frames_observed
-      << "\n\n";
-
-    f << "## Verdict vs design-doc Stage 1 bar\n\n";
-    f << "- **Bar:** Flutter raster median <= " << kPassBarMedianMs
-      << " ms AND raster p99 <= " << kPassBarP99Ms << " ms,\n";
-    f << "  AND native producer total median <= " << kPassBarMedianMs
-      << " ms AND p99 <= " << kPassBarP99Ms << " ms,\n";
-    f << "  AND shared-handle ok, AND >= 1 frame consumed.\n";
-    const bool pass_handle = handle_ok && tex_id_to_unregister >= 0;
-    const bool pass_frames = frames_consumed > 0;
-    const bool pass_flutter_med = args.raster_median_ms <= kPassBarMedianMs;
-    const bool pass_flutter_p99 = args.raster_p99_ms <= kPassBarP99Ms;
-    const bool pass_native_med = stats_total.median_ms <= kPassBarMedianMs;
-    const bool pass_native_p99 = stats_total.p99_ms <= kPassBarP99Ms;
-    const bool pass = pass_handle && pass_frames && pass_flutter_med &&
-                      pass_flutter_p99 && pass_native_med &&
-                      pass_native_p99;
-    char verdict[512];
-    std::snprintf(verdict, sizeof(verdict),
-                  "- **Result:** handle=%s, frames=%lld, "
-                  "flutter raster median=%.3f (%s), p99=%.3f (%s), "
-                  "native total median=%.3f (%s), p99=%.3f (%s) -> "
-                  "**%s**\n",
-                  pass_handle ? "ok" : "FAIL",
-                  static_cast<long long>(frames_consumed),
-                  args.raster_median_ms, pass_flutter_med ? "PASS" : "FAIL",
-                  args.raster_p99_ms, pass_flutter_p99 ? "PASS" : "FAIL",
-                  stats_total.median_ms,
-                  pass_native_med ? "PASS" : "FAIL",
-                  stats_total.p99_ms, pass_native_p99 ? "PASS" : "FAIL",
-                  pass ? "PASS" : "FAIL");
-    f << verdict << "\n";
-    if (!pass) {
-      f << "_Stage 2A-2 missed the Stage 1 bar. The architecture decision "
-           "should NOT lock in Approach A until the failing bucket is "
-           "explained and remediated._\n";
-    }
+    // The Flutter SchedulerBinding timings + verdict line are gone in
+    // Step 5.3 because production previewClose has no Dart-side timing
+    // payload (CloseArgs is just {session_id}). Step 5.4 wires real
+    // Flutter timings back through the player/events channel and
+    // brings the verdict line back behind a `POC_TIMING_VERBOSE`
+    // dart-define. The native producer-side table above continues to
+    // be the lifecycle-validation signal in the interim.
+    f << "Closed session: " << closing_session << "\n";
     std::fprintf(stderr, "STAGE2A_2_ARTIFACT wrote %ls\n", kArtifactPath);
     std::fflush(stderr);
   }
