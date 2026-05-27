@@ -158,4 +158,19 @@ void WorkflowEventPublisher::EmitPreviewFailed(
   EmitMap(std::move(event));
 }
 
+void WorkflowEventPublisher::EmitOpenProjectRequest(
+    const std::string& project_path) {
+  // No sessionId — the request predates any preview/recording session;
+  // Dart's `NativeBridge` filter ignores the field, but we still pass
+  // through MakeEvent for the shared `type` plumbing. Use an empty
+  // session id so the wire shape is uniform with other events.
+  auto event = MakeEvent("openProjectRequest", "");
+  // Match the macOS payload key (`projectPath`, not `path`) — Dart's
+  // workflow-channel listener in `lib/core/bridges/native_bridge.dart`
+  // reads `event['projectPath']`.
+  event[flutter::EncodableValue("projectPath")] =
+      flutter::EncodableValue(project_path);
+  EmitMap(std::move(event));
+}
+
 }  // namespace clingfy::bridge

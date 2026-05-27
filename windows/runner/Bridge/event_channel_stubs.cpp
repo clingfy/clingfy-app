@@ -4,6 +4,7 @@
 
 #include "Bridge/native_channel_names.h"
 #include "Bridge/player_event_publisher.h"
+#include "Bridge/project_open_coordinator.h"
 #include "Bridge/workflow_event_publisher.h"
 
 namespace clingfy::bridge {
@@ -48,12 +49,17 @@ class WorkflowStreamHandler
       std::unique_ptr<flutter::EventSink<flutter::EncodableValue>>&& events)
       override {
     WorkflowEventPublisher::Instance().SetSink(std::move(events));
+    // Step 5.6: drain pending `openProjectRequest` events now that Dart
+    // has a listener. Cold-start argv paths enqueue before this point;
+    // without the flush they would never reach Dart.
+    ProjectOpenCoordinator::Instance().OnSinkAttached();
     return nullptr;
   }
 
   std::unique_ptr<flutter::StreamHandlerError<flutter::EncodableValue>>
   OnCancelInternal(const flutter::EncodableValue* /*arguments*/) override {
     WorkflowEventPublisher::Instance().ClearSink();
+    ProjectOpenCoordinator::Instance().OnSinkDetached();
     return nullptr;
   }
 };
