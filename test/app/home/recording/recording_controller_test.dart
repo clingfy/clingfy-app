@@ -950,4 +950,169 @@ void main() {
       expect(harness.recording.errorCode, 'assetInvalid');
     },
   );
+
+  group('Step 5.5.2 — Windows inline preview texture id', () {
+    test(
+      'handlePreviewHostMounted stores textureId from Windows previewOpen reply',
+      () async {
+        final harness = await createHarness();
+        addTearDown(harness.recording.dispose);
+        addTearDown(harness.settings.dispose);
+
+        final messenger =
+            TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger;
+        messenger.setMockMethodCallHandler(screenRecorderChannel, (call) async {
+          if (call.method == 'previewOpen') {
+            return <String, dynamic>{
+              'textureId': 42,
+              'width': 1920,
+              'height': 1080,
+              'videoWidth': 1280,
+              'videoHeight': 720,
+              'sharedHandleOk': true,
+            };
+          }
+          return null;
+        });
+
+        harness.recording.beginRecordingStartIntent();
+        final sessionId = harness.recording.sessionId!;
+        await _emitWorkflowEvent({
+          'type': 'recordingStarted',
+          'sessionId': sessionId,
+        });
+        await harness.recording.stopRecording();
+        await _emitWorkflowEvent({
+          'type': 'recordingFinalized',
+          'sessionId': sessionId,
+          'projectPath': '/tmp/test.clingfyproj',
+        });
+
+        expect(harness.recording.inlinePreviewTextureId, isNull);
+        await harness.recording.handlePreviewHostMounted();
+
+        expect(harness.recording.inlinePreviewTextureId, 42);
+      },
+    );
+
+    test(
+      'handlePreviewHostMounted keeps textureId null when native returns null (macOS path)',
+      () async {
+        final harness = await createHarness();
+        addTearDown(harness.recording.dispose);
+        addTearDown(harness.settings.dispose);
+
+        harness.recording.beginRecordingStartIntent();
+        final sessionId = harness.recording.sessionId!;
+        await _emitWorkflowEvent({
+          'type': 'recordingStarted',
+          'sessionId': sessionId,
+        });
+        await harness.recording.stopRecording();
+        await _emitWorkflowEvent({
+          'type': 'recordingFinalized',
+          'sessionId': sessionId,
+          'projectPath': '/tmp/test.clingfyproj',
+        });
+
+        await harness.recording.handlePreviewHostMounted();
+
+        // installCommonNativeMocks' previewOpen returns null — macOS shape.
+        // hasTexture is false; the stored id must stay null.
+        expect(harness.recording.inlinePreviewTextureId, isNull);
+      },
+    );
+
+    test(
+      'textureId clears when closePreview drives _beginPreviewClose',
+      () async {
+        final harness = await createHarness();
+        addTearDown(harness.recording.dispose);
+        addTearDown(harness.settings.dispose);
+
+        final messenger =
+            TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger;
+        messenger.setMockMethodCallHandler(screenRecorderChannel, (call) async {
+          if (call.method == 'previewOpen') {
+            return <String, dynamic>{
+              'textureId': 7,
+              'width': 1920,
+              'height': 1080,
+              'videoWidth': 1920,
+              'videoHeight': 1080,
+              'sharedHandleOk': true,
+            };
+          }
+          return null;
+        });
+
+        harness.recording.beginRecordingStartIntent();
+        final sessionId = harness.recording.sessionId!;
+        await _emitWorkflowEvent({
+          'type': 'recordingStarted',
+          'sessionId': sessionId,
+        });
+        await harness.recording.stopRecording();
+        await _emitWorkflowEvent({
+          'type': 'recordingFinalized',
+          'sessionId': sessionId,
+          'projectPath': '/tmp/test.clingfyproj',
+        });
+        await harness.recording.handlePreviewHostMounted();
+        await _emitWorkflowEvent({
+          'type': 'previewReady',
+          'sessionId': sessionId,
+          'path': '/tmp/test.clingfyproj',
+          'token': 'tok',
+        });
+        expect(harness.recording.inlinePreviewTextureId, 7);
+
+        await harness.recording.closePreview();
+
+        expect(harness.recording.inlinePreviewTextureId, isNull);
+      },
+    );
+
+    test(
+      'negative textureId from native reply is treated as no-texture',
+      () async {
+        final harness = await createHarness();
+        addTearDown(harness.recording.dispose);
+        addTearDown(harness.settings.dispose);
+
+        final messenger =
+            TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger;
+        messenger.setMockMethodCallHandler(screenRecorderChannel, (call) async {
+          if (call.method == 'previewOpen') {
+            return <String, dynamic>{
+              'textureId': -1,
+              'width': 0,
+              'height': 0,
+              'videoWidth': 0,
+              'videoHeight': 0,
+              'sharedHandleOk': false,
+            };
+          }
+          return null;
+        });
+
+        harness.recording.beginRecordingStartIntent();
+        final sessionId = harness.recording.sessionId!;
+        await _emitWorkflowEvent({
+          'type': 'recordingStarted',
+          'sessionId': sessionId,
+        });
+        await harness.recording.stopRecording();
+        await _emitWorkflowEvent({
+          'type': 'recordingFinalized',
+          'sessionId': sessionId,
+          'projectPath': '/tmp/test.clingfyproj',
+        });
+
+        await harness.recording.handlePreviewHostMounted();
+
+        expect(harness.recording.inlinePreviewTextureId, isNull);
+      },
+    );
+  });
 }

@@ -625,16 +625,27 @@ class NativeBridge {
     return int.tryParse(deletedCount?.toString() ?? '') ?? 0;
   }
 
-  Future<void> previewOpen({
+  Future<PreviewOpenResult> previewOpen({
     required String sessionId,
     required String projectPath,
     String? cameraPath,
   }) async {
-    await _nativeBridge.invokeMethod<void>('previewOpen', {
-      'sessionId': sessionId,
-      'projectPath': projectPath,
-      if (cameraPath != null) 'cameraPath': cameraPath,
-    });
+    // Windows returns an EncodableMap with the Flutter texture id and
+    // surface metrics (Step 5.5.2 of the Phase 5 plan). macOS still
+    // returns null because its inline preview is an AppKitView and
+    // does not need a texture id on the Dart side. Treat null /
+    // wrong-shape responses as a macOS-equivalent "no texture" so the
+    // caller can rely on a non-null result type.
+    final raw = await _nativeBridge
+        .invokeMethod<Map<dynamic, dynamic>>('previewOpen', {
+          'sessionId': sessionId,
+          'projectPath': projectPath,
+          if (cameraPath != null) 'cameraPath': cameraPath,
+        });
+    if (raw == null) {
+      return const PreviewOpenResult.none();
+    }
+    return PreviewOpenResult.fromMap(raw);
   }
 
   Future<RecordingSceneInfo> getRecordingSceneInfo(String projectPath) async {
