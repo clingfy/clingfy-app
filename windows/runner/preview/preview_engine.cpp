@@ -54,6 +54,31 @@ constexpr wchar_t kArtifactPath[] =
 constexpr wchar_t kNativeLogPath[] =
     L"build\\windows-poc\\stage2a_2_native.log";
 
+// Step 5.7: process-lifetime monotonic counter incremented at every
+// Open. Used as the `cycle` key in the structured PHASE5-CYCLE log
+// lines that `tools/phase5_extract_verdict.ps1` aggregates. Atomic
+// so the (currently single-threaded) Open path stays correct even if
+// a future stress runner drives multiple Opens from worker threads.
+std::atomic<std::int64_t> g_phase5_cycle_counter{0};
+
+std::int64_t QueryQpcFrequencyHz() {
+  LARGE_INTEGER freq{};
+  if (!::QueryPerformanceFrequency(&freq)) return 0;
+  return static_cast<std::int64_t>(freq.QuadPart);
+}
+
+std::int64_t NowQpc() {
+  LARGE_INTEGER now{};
+  ::QueryPerformanceCounter(&now);
+  return static_cast<std::int64_t>(now.QuadPart);
+}
+
+std::int64_t QpcDeltaMs(std::int64_t start, std::int64_t end,
+                         std::int64_t freq) {
+  if (freq <= 0 || start <= 0 || end < start) return 0;
+  return ((end - start) * 1000) / freq;
+}
+
 // File-based logger because a Flutter Windows debug build is a GUI
 // subsystem exe with no console; the standard streams are not
 // reliably reachable from outside. The log file is overwritten each
@@ -731,6 +756,24 @@ OpenResult PreviewEngine::Open(const OpenArgs& args) {
 
   LogNative("Open() returning success");
 
+  // Step 5.7: structured open-side line for the verdict tool. Pairs
+  // with the PHASE5-CYCLE line emitted by OnUnregisterComplete. The
+  // open-side log line carries the freshly-allocated texture_id and
+  // the monotonic cycle counter so the parser can pair them.
+  const std::int64_t cycle_index =
+      g_phase5_cycle_counter.fetch_add(1, std::memory_order_relaxed) + 1;
+  {
+    char buf[256];
+    std::snprintf(buf, sizeof(buf),
+                  "PHASE5-OPEN cycle=%lld session=%s texture_id=%lld",
+                  static_cast<long long>(cycle_index),
+                  args.session_id.empty() ? "(none)"
+                                          : args.session_id.c_str(),
+                  static_cast<long long>(tex_id));
+    LogNative(buf);
+  }
+  current_cycle_index_ = cycle_index;
+
   result.texture_id = tex_id;
   result.shared_handle_ok = true;
   result.egl_extensions = egl_extensions_;
@@ -1094,6 +1137,14 @@ struct TearDownContext {
   // by then.
   std::int64_t texture_id = -1;
   std::string session_id;
+  // Step 5.7: capture Close's QPC tick so the
+  // close-to-unregister-callback latency can be computed when the
+  // Flutter side eventually fires OnUnregisterComplete. Used by the
+  // PHASE5-CYCLE structured log line the verdict tool grep's for.
+  std::int64_t close_qpc = 0;
+  std::int64_t qpc_frequency = 0;
+  std::int64_t cycle_index = 0;
+  std::uint64_t frames_consumed = 0;
 };
 
 void CALLBACK OnUnregisterComplete(void* user_data) {
@@ -1102,12 +1153,32 @@ void CALLBACK OnUnregisterComplete(void* user_data) {
   // the D3D11/D2D/WinRT resources the Impl owns.
   auto* tc = static_cast<TearDownContext*>(user_data);
   if (tc == nullptr) return;
-  char buf[128];
+  LARGE_INTEGER now{};
+  ::QueryPerformanceCounter(&now);
+  const std::int64_t now_qpc = static_cast<std::int64_t>(now.QuadPart);
+  std::int64_t close_to_unregister_ms = 0;
+  if (tc->qpc_frequency > 0 && tc->close_qpc > 0 &&
+      now_qpc >= tc->close_qpc) {
+    close_to_unregister_ms =
+        ((now_qpc - tc->close_qpc) * 1000) / tc->qpc_frequency;
+  }
+  char buf[256];
   std::snprintf(buf, sizeof(buf),
                 "UnregisterExternalTexture callback fired — tex=%lld "
                 "session=%s — releasing Impl",
                 static_cast<long long>(tc->texture_id),
                 tc->session_id.empty() ? "(none)" : tc->session_id.c_str());
+  LogNative(buf);
+  // Step 5.7: structured cycle-end line for the verdict tool. The
+  // PHASE5-CYCLE prefix is what `tools/phase5_extract_verdict.ps1`
+  // grep's for — keep the key=value layout stable.
+  std::snprintf(buf, sizeof(buf),
+                "PHASE5-CYCLE cycle=%lld session=%s frames=%llu "
+                "close_to_unregister_ms=%lld",
+                static_cast<long long>(tc->cycle_index),
+                tc->session_id.empty() ? "(none)" : tc->session_id.c_str(),
+                static_cast<unsigned long long>(tc->frames_consumed),
+                static_cast<long long>(close_to_unregister_ms));
   LogNative(buf);
   delete tc;
 }
@@ -1217,6 +1288,7 @@ void PreviewEngine::Close(const CloseArgs& args) {
     active_session_id_.clear();
     active_project_path_.clear();
     emitted_preview_ready_ = false;
+    current_cycle_index_ = 0;
   }
   if (dying_impl) {
     gpu = dying_impl->gpu_description;
@@ -1287,11 +1359,21 @@ void PreviewEngine::Close(const CloseArgs& args) {
   // the TearDownContext holding the Impl alive, the documented
   // pattern works.
   if (texture_registrar_ && tex_id_to_unregister >= 0 && dying_impl) {
-    auto* teardown = new TearDownContext{
-        std::move(dying_impl),
-        tex_id_to_unregister,
-        closing_session,
-    };
+    // Step 5.7: copy the frames-consumed counter out of dying_impl
+    // *before* moving the unique_ptr — once moved we can't read it,
+    // and the OnUnregisterComplete log line needs the cycle's frame
+    // count to compute the consume rate.
+    const std::uint64_t frames_captured =
+        static_cast<std::uint64_t>(
+            dying_impl->frames_consumed.load(std::memory_order_relaxed));
+    auto* teardown = new TearDownContext{};
+    teardown->dying_impl = std::move(dying_impl);
+    teardown->texture_id = tex_id_to_unregister;
+    teardown->session_id = closing_session;
+    teardown->close_qpc = NowQpc();
+    teardown->qpc_frequency = QueryQpcFrequencyHz();
+    teardown->cycle_index = current_cycle_index_;
+    teardown->frames_consumed = frames_captured;
     LogNative("Calling FlutterDesktopTextureRegistrarUnregisterExternalTexture");
     FlutterDesktopTextureRegistrarUnregisterExternalTexture(
         texture_registrar_, tex_id_to_unregister, &OnUnregisterComplete,

@@ -246,6 +246,12 @@ class PreviewEngine {
   // wedging the workflow state machine.
   bool emitted_preview_ready_ = false;
 
+  // Step 5.7: monotonic open/close cycle index assigned in Open and
+  // copied into TearDownContext at Close so the
+  // PHASE5-OPEN / PHASE5-CYCLE log pair can be matched by the verdict
+  // tool. Zero when no Open has occurred yet.
+  std::int64_t current_cycle_index_ = 0;
+
   // Step 5.4 event-emission tracking.
   //
   // last_emitted_state_ debounces playerState so multiple
