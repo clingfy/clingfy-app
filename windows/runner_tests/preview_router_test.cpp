@@ -477,5 +477,145 @@ TEST_F(PreviewRouterOpenCloseTest, PocStage2aStopIsNoLongerRegistered) {
   EXPECT_EQ(reply.error_code, "WINDOWS_NOT_IMPLEMENTED");
 }
 
+// ====================================================================
+// previewPlay / previewPause / previewSeekTo router contract (5.5).
+//
+// The router-level tests focus on the contract surface: argument
+// validation and the macOS-style "stale session = silent success"
+// behaviour. The full happy-path engine interaction (MediaPlayer.Play
+// actually plays, PlaybackSession.Position actually seeks) requires a
+// live MediaPlayer + Flutter TextureRegistrar that the test process
+// doesn't have — that path is validated manually against the running
+// runner. The unit tests therefore exercise the "no session is open"
+// case for each method, which exercises the same code path as a stale
+// session id in production (PreviewEngine returns early before
+// touching MediaPlayer).
+// ====================================================================
+
+class PreviewRouterTransportTest : public PreviewRouterSceneInfoTest {
+ protected:
+  static flutter::EncodableMap PlayPauseArgs(const std::string& session_id) {
+    flutter::EncodableMap m;
+    m[flutter::EncodableValue("sessionId")] =
+        flutter::EncodableValue(session_id);
+    return m;
+  }
+
+  static flutter::EncodableMap SeekArgs(const std::string& session_id,
+                                        std::int64_t ms) {
+    flutter::EncodableMap m;
+    m[flutter::EncodableValue("sessionId")] =
+        flutter::EncodableValue(session_id);
+    m[flutter::EncodableValue("ms")] = flutter::EncodableValue(ms);
+    return m;
+  }
+};
+
+// ---- previewPlay --------------------------------------------------
+
+TEST_F(PreviewRouterTransportTest, PlayMissingArgsReturnsBadArgs) {
+  MethodRouter router;
+  RecordedReply reply;
+  router.Dispatch(test_support::MakeCall("previewPlay"), MakeRecorder(reply));
+  EXPECT_TRUE(reply.error_called);
+  EXPECT_EQ(reply.error_code, "BAD_ARGS");
+}
+
+TEST_F(PreviewRouterTransportTest, PlayMissingSessionIdReturnsBadArgs) {
+  MethodRouter router;
+  const auto reply =
+      DispatchWithArgs(router, "previewPlay", flutter::EncodableMap{});
+  EXPECT_TRUE(reply.error_called);
+  EXPECT_EQ(reply.error_code, "BAD_ARGS");
+  EXPECT_EQ(reply.error_message, "missing sessionId");
+}
+
+TEST_F(PreviewRouterTransportTest, PlayStaleSessionReturnsSuccessNull) {
+  // No session is open in the test process; the engine returns early
+  // (no MediaPlayer touch) and the router replies null. This is the
+  // same code path a stale session id hits in production.
+  MethodRouter router;
+  const auto reply =
+      DispatchWithArgs(router, "previewPlay", PlayPauseArgs("sess-stale"));
+  EXPECT_TRUE(reply.success_called);
+  EXPECT_FALSE(reply.error_called);
+}
+
+// ---- previewPause -------------------------------------------------
+
+TEST_F(PreviewRouterTransportTest, PauseMissingSessionIdReturnsBadArgs) {
+  MethodRouter router;
+  const auto reply =
+      DispatchWithArgs(router, "previewPause", flutter::EncodableMap{});
+  EXPECT_TRUE(reply.error_called);
+  EXPECT_EQ(reply.error_code, "BAD_ARGS");
+}
+
+TEST_F(PreviewRouterTransportTest, PauseStaleSessionReturnsSuccessNull) {
+  MethodRouter router;
+  const auto reply = DispatchWithArgs(router, "previewPause",
+                                      PlayPauseArgs("sess-stale"));
+  EXPECT_TRUE(reply.success_called);
+  EXPECT_FALSE(reply.error_called);
+}
+
+// ---- previewSeekTo ------------------------------------------------
+
+TEST_F(PreviewRouterTransportTest, SeekToMissingSessionIdReturnsBadArgs) {
+  MethodRouter router;
+  flutter::EncodableMap args;
+  args[flutter::EncodableValue("ms")] =
+      flutter::EncodableValue(std::int64_t{1234});
+  const auto reply =
+      DispatchWithArgs(router, "previewSeekTo", std::move(args));
+  EXPECT_TRUE(reply.error_called);
+  EXPECT_EQ(reply.error_code, "BAD_ARGS");
+}
+
+TEST_F(PreviewRouterTransportTest, SeekToMissingMsReturnsBadArgs) {
+  MethodRouter router;
+  const auto reply = DispatchWithArgs(router, "previewSeekTo",
+                                      PlayPauseArgs("sess-1"));
+  EXPECT_TRUE(reply.error_called);
+  EXPECT_EQ(reply.error_code, "BAD_ARGS");
+  EXPECT_EQ(reply.error_message, "missing ms");
+}
+
+TEST_F(PreviewRouterTransportTest, SeekToWrongTypeMsReturnsBadArgs) {
+  MethodRouter router;
+  flutter::EncodableMap args;
+  args[flutter::EncodableValue("sessionId")] =
+      flutter::EncodableValue(std::string("sess-1"));
+  // Double is rejected — the channel contract is integer milliseconds.
+  args[flutter::EncodableValue("ms")] = flutter::EncodableValue(1234.5);
+  const auto reply =
+      DispatchWithArgs(router, "previewSeekTo", std::move(args));
+  EXPECT_TRUE(reply.error_called);
+  EXPECT_EQ(reply.error_code, "BAD_ARGS");
+}
+
+TEST_F(PreviewRouterTransportTest, SeekToStaleSessionReturnsSuccessNull) {
+  MethodRouter router;
+  const auto reply = DispatchWithArgs(router, "previewSeekTo",
+                                      SeekArgs("sess-stale", 1234));
+  EXPECT_TRUE(reply.success_called);
+  EXPECT_FALSE(reply.error_called);
+}
+
+TEST_F(PreviewRouterTransportTest, SeekToAcceptsInt32Ms) {
+  // Some Dart/EncodableValue paths emit int32 instead of int64 for
+  // small values. The router should accept both for resilience.
+  MethodRouter router;
+  flutter::EncodableMap args;
+  args[flutter::EncodableValue("sessionId")] =
+      flutter::EncodableValue(std::string("sess-stale"));
+  args[flutter::EncodableValue("ms")] =
+      flutter::EncodableValue(std::int32_t{42});
+  const auto reply =
+      DispatchWithArgs(router, "previewSeekTo", std::move(args));
+  EXPECT_TRUE(reply.success_called);
+  EXPECT_FALSE(reply.error_called);
+}
+
 }  // namespace
 }  // namespace clingfy::bridge

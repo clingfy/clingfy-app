@@ -144,6 +144,25 @@ class PreviewEngine {
   // is the wildcard the destructor uses at process exit.
   void Close(const CloseArgs& args);
 
+  // ---- Step 5.5 transport ----------------------------------------
+  //
+  // Play / Pause / SeekTo all take a session_id. When it mismatches
+  // active_session_id_ the call is a silent no-op (matches the macOS
+  // InlinePreviewView contract — previewPlay / previewPause /
+  // previewSeekTo with a stale session id never report an error, they
+  // just don't do anything). On a matching session_id, the MediaPlayer
+  // transport API is driven directly; the next playerTick / playerState
+  // events from `player/events` are how Dart confirms the result.
+  //
+  // SeekTo additionally queues a SeekSample so the next
+  // VideoFrameAvailable resolves the seek's QPC latency. The data is
+  // collected unconditionally but only exposed through future telemetry
+  // (Phase 5.7 multi-GPU verdict artifact) so the production fast path
+  // pays nothing user-visible.
+  void Play(const std::string& session_id);
+  void Pause(const std::string& session_id);
+  void SeekTo(const std::string& session_id, std::int64_t position_ms);
+
   // For tests / observability.
   std::int64_t current_texture_id() const;
 
