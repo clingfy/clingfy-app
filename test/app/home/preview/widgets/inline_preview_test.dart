@@ -1,9 +1,6 @@
 import 'package:clingfy/app/home/preview/widgets/inline_preview.dart';
 import 'package:clingfy/app/home/recording/recording_controller.dart';
-import 'package:clingfy/app/settings/settings_controller.dart';
-import 'package:clingfy/core/bridges/native_bridge.dart';
 import 'package:flutter/material.dart';
-import 'package:flutter/services.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:provider/provider.dart';
 

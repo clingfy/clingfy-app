@@ -25,6 +25,7 @@
 #include <limits>
 
 #include "Bridge/player_event_publisher.h"
+#include "Bridge/workflow_event_publisher.h"
 #include "preview/frame_timing.h"
 #include "preview/preview_compositor.h"
 
@@ -697,7 +698,18 @@ OpenResult PreviewEngine::Open(const OpenArgs& args) {
   }
 
   active_session_id_ = args.session_id;
+  active_project_path_ = args.project_path;
+  emitted_preview_ready_ = false;
   running_.store(true);
+
+  // Step 5.5.3: announce that native is warming up the preview. macOS
+  // emits this from InlinePreviewView.swift right after the player is
+  // created; Windows mirrors that here. Dart's `_handlePreviewPreparing`
+  // is idempotent w.r.t. workflow phase (it stays in / transitions to
+  // `previewLoading`), so a duplicate emit is harmless. The matching
+  // `previewReady` event fires from the first VideoFrameAvailable.
+  clingfy::bridge::WorkflowEventPublisher::Instance().EmitPreviewPreparing(
+      args.session_id, args.project_path);
 
   // Step 5.4: emit CURSOR_FILE_MISSING when a cursor path was supplied
   // but parsed to zero events. The file existed (we checked above) but
@@ -855,9 +867,26 @@ void PreviewEngine::HandleVideoFrame(
   // joining the heartbeat / draining callbacks). NowMs() snapshot
   // here also feeds the heartbeat thread's "skip if recent" check.
   std::string session_snapshot;
+  std::string project_path_snapshot;
+  bool fire_preview_ready = false;
   {
     std::lock_guard<std::mutex> lock(mutex_);
     session_snapshot = active_session_id_;
+    project_path_snapshot = active_project_path_;
+    // Step 5.5.3: the first successfully rendered frame is the signal
+    // Dart needs to lift the "Preparing preview" overlay. Latch under
+    // the singleton mutex so we emit exactly once per Open / Close
+    // cycle even though the WinRT worker thread may produce multiple
+    // frames concurrently with a racing Close.
+    if (!emitted_preview_ready_ && !session_snapshot.empty() &&
+        !shutting_down_.load()) {
+      emitted_preview_ready_ = true;
+      fire_preview_ready = true;
+    }
+  }
+  if (fire_preview_ready) {
+    clingfy::bridge::WorkflowEventPublisher::Instance().EmitPreviewReady(
+        session_snapshot, project_path_snapshot);
   }
   if (!session_snapshot.empty() && !shutting_down_.load()) {
     const std::int64_t pos_us = CurrentPlaybackUs(sender);
@@ -966,13 +995,22 @@ void PreviewEngine::HandleMediaFailed(
     }
   }
   std::string session_snapshot;
+  std::string project_path_snapshot;
   {
     std::lock_guard<std::mutex> lock(mutex_);
     session_snapshot = active_session_id_;
+    project_path_snapshot = active_project_path_;
   }
   if (!session_snapshot.empty()) {
     clingfy::bridge::PlayerEventPublisher::Instance().EmitPlayerError(
         session_snapshot, "VIDEO_FILE_MISSING", message);
+    // Step 5.5.3: also emit `previewFailed` on the workflow channel so
+    // Dart's RecordingController transitions out of `previewLoading` /
+    // `previewReady` into the closing/error flow (matches macOS, which
+    // fires this from `KVO`'d AVPlayer status observers).
+    clingfy::bridge::WorkflowEventPublisher::Instance().EmitPreviewFailed(
+        session_snapshot, project_path_snapshot, "VIDEO_FILE_MISSING",
+        message);
   }
 }
 
@@ -1102,6 +1140,20 @@ void PreviewEngine::Close(const CloseArgs& args) {
     }
   }
 
+  // Step 5.5.3: snapshot the project path + emit `previewClosed`
+  // before we tear anything down. Doing it here (rather than after the
+  // unregister callback) keeps the Dart-side state machine in sync
+  // with native — Dart waits on `previewClosed` to leave the
+  // `closingPreview` phase, and the unregister callback can land
+  // hundreds of ms later.
+  std::string closing_session_id;
+  std::string closing_project_path;
+  {
+    std::lock_guard<std::mutex> lock(mutex_);
+    closing_session_id = active_session_id_;
+    closing_project_path = active_project_path_;
+  }
+
   shutting_down_.store(true);
   running_.store(false);
 
@@ -1113,6 +1165,19 @@ void PreviewEngine::Close(const CloseArgs& args) {
     heartbeat_thread_.join();
   }
   LogNative("Close() heartbeat thread joined");
+
+  if (!closing_session_id.empty()) {
+    clingfy::bridge::WorkflowEventPublisher::Instance().EmitPreviewClosed(
+        closing_session_id, closing_project_path,
+        // `flutterRequest` mirrors the macOS reason string for a
+        // Dart-initiated close (vs. native error cleanup, which uses
+        // `failureCleanup`). The bridge-level close handler does not
+        // currently distinguish those two cases, so we always send
+        // `flutterRequest` here — recording-failure paths run through
+        // `EmitPreviewFailed` first, which Dart treats as an error
+        // close anyway.
+        "flutterRequest");
+  }
 
   // ---- 1. Unsubscribe + tear down the MediaPlayer FIRST. ----
   // Doing this before we touch impl_ avoids a callback racing the
@@ -1150,6 +1215,8 @@ void PreviewEngine::Close(const CloseArgs& args) {
     shared_handle_ok_ = false;
     egl_extensions_.clear();
     active_session_id_.clear();
+    active_project_path_.clear();
+    emitted_preview_ready_ = false;
   }
   if (dying_impl) {
     gpu = dying_impl->gpu_description;

@@ -68,6 +68,23 @@ class WorkflowEventPublisher {
   void EmitRecordingWarning(const std::string& session_id,
                             const std::string& message);
 
+  // Preview lifecycle events (Step 5.5.3). macOS emits these from
+  // InlinePreviewView.swift to drive the Dart workflow state machine
+  // (`previewLoading` → `previewReady`, etc.). Windows now mirrors that
+  // contract from `PreviewEngine`. Payload shape matches macOS exactly:
+  // `{type, sessionId, path}` plus optional `reason` / `code` / `error`.
+  void EmitPreviewPreparing(const std::string& session_id,
+                            const std::string& project_path);
+  void EmitPreviewReady(const std::string& session_id,
+                        const std::string& project_path);
+  void EmitPreviewClosed(const std::string& session_id,
+                         const std::string& project_path,
+                         const std::string& reason);
+  void EmitPreviewFailed(const std::string& session_id,
+                         const std::string& project_path,
+                         const std::string& code,
+                         const std::string& error);
+
  private:
   WorkflowEventPublisher() = default;
 

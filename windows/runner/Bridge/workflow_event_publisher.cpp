@@ -2,6 +2,8 @@
 
 #include <utility>
 
+#include "Bridge/platform_thread_dispatcher.h"
+
 namespace clingfy::bridge {
 
 namespace {
@@ -38,21 +40,33 @@ bool WorkflowEventPublisher::has_sink() const {
 }
 
 void WorkflowEventPublisher::EmitMap(flutter::EncodableMap event) {
-  // Snapshot the raw pointer under the mutex but release the lock before
-  // calling into Success — Flutter's sink delivery can block on the
-  // platform thread's message pump, and we don't want to gate other
-  // emits on that.
-  EventSink* sink_snapshot = nullptr;
+  // Step 5.5.3: route through `PlatformThreadDispatcher` so callers can
+  // emit from any thread without violating Flutter's platform-channel
+  // contract. The preview lifecycle events (previewReady, previewFailed,
+  // previewClosed) fire from `PreviewEngine::HandleVideoFrame` and the
+  // WinRT MediaPlayer worker thread; the recording-lifecycle events
+  // already fire from the platform thread but routing them through the
+  // dispatcher costs nothing and keeps both publishers symmetric.
+  //
+  // When the dispatcher is not initialized (tests, cold-start race)
+  // `Post()` runs the task inline. The drop-when-no-sink check is done
+  // both eagerly (fast path) and again at dispatch time so that a
+  // subscription cancelled mid-flight does not deliver a stale event.
   {
     std::lock_guard<std::mutex> lock(mutex_);
-    sink_snapshot = sink_.get();
+    if (sink_ == nullptr) return;
   }
-  if (sink_snapshot == nullptr) {
-    // No listener — drop the event. Matches the macOS engine's
-    // best-effort behavior when the Flutter side hasn't subscribed yet.
-    return;
-  }
-  sink_snapshot->Success(flutter::EncodableValue(std::move(event)));
+  PlatformThreadDispatcher::Instance().Post(
+      [this, event = std::move(event)]() mutable {
+        EventSink* sink_snapshot = nullptr;
+        {
+          std::lock_guard<std::mutex> lock(mutex_);
+          sink_snapshot = sink_.get();
+        }
+        if (sink_snapshot == nullptr) return;
+        sink_snapshot->Success(
+            flutter::EncodableValue(std::move(event)));
+      });
 }
 
 void WorkflowEventPublisher::EmitRecordingStarted(
@@ -99,6 +113,48 @@ void WorkflowEventPublisher::EmitRecordingWarning(
   auto event = MakeEvent("recordingWarning", session_id);
   event[flutter::EncodableValue("message")] =
       flutter::EncodableValue(message);
+  EmitMap(std::move(event));
+}
+
+void WorkflowEventPublisher::EmitPreviewPreparing(
+    const std::string& session_id, const std::string& project_path) {
+  auto event = MakeEvent("previewPreparing", session_id);
+  event[flutter::EncodableValue("path")] =
+      flutter::EncodableValue(project_path);
+  EmitMap(std::move(event));
+}
+
+void WorkflowEventPublisher::EmitPreviewReady(
+    const std::string& session_id, const std::string& project_path) {
+  auto event = MakeEvent("previewReady", session_id);
+  event[flutter::EncodableValue("path")] =
+      flutter::EncodableValue(project_path);
+  EmitMap(std::move(event));
+}
+
+void WorkflowEventPublisher::EmitPreviewClosed(
+    const std::string& session_id,
+    const std::string& project_path,
+    const std::string& reason) {
+  auto event = MakeEvent("previewClosed", session_id);
+  event[flutter::EncodableValue("path")] =
+      flutter::EncodableValue(project_path);
+  event[flutter::EncodableValue("reason")] = flutter::EncodableValue(reason);
+  EmitMap(std::move(event));
+}
+
+void WorkflowEventPublisher::EmitPreviewFailed(
+    const std::string& session_id,
+    const std::string& project_path,
+    const std::string& code,
+    const std::string& error) {
+  auto event = MakeEvent("previewFailed", session_id);
+  event[flutter::EncodableValue("path")] =
+      flutter::EncodableValue(project_path);
+  event[flutter::EncodableValue("code")] = flutter::EncodableValue(code);
+  // macOS uses the `error` key (not `message`) for the human-readable
+  // string. Keep parity so the Dart handler does not need a branch.
+  event[flutter::EncodableValue("error")] = flutter::EncodableValue(error);
   EmitMap(std::move(event));
 }
 

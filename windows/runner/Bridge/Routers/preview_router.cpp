@@ -296,6 +296,7 @@ void HandlePreviewOpen(
 
   clingfy::preview::OpenArgs open_args{};
   open_args.session_id = session_id;
+  open_args.project_path = project_path_utf8;
   open_args.video_path = read.project->screen_path;
   if (read.project->cursor_path.has_value()) {
     open_args.cursor_path = *read.project->cursor_path;
