@@ -66,30 +66,37 @@ if (-not (Test-Path -LiteralPath $LogPath)) {
 
 $lines = Get-Content -LiteralPath $LogPath
 
-# Pair PHASE5-OPEN and PHASE5-CYCLE on the `cycle=` token.
+# Pair PHASE5-OPEN and PHASE5-CYCLE by `session=` (unique per cycle).
+# Earlier shipping code paired by the `cycle=` token, but a bug in
+# PreviewEngine's Close() path always reports CYCLE cycle=0 (the
+# index is cleared before the TearDownContext snapshots it). Matching
+# by session sidesteps that bug for logs produced before the native
+# fix lands.
 $opens = @{}
 $closes = @{}
+$openOrder = @()
 foreach ($line in $lines) {
     if ($line -match 'PHASE5-OPEN\s+cycle=(\d+)\s+session=(\S+)\s+texture_id=(-?\d+)') {
         $cycle = [int]$Matches[1]
-        $opens[$cycle] = @{
-            session = $Matches[2]
+        $session = $Matches[2]
+        $opens[$session] = @{
+            cycle = $cycle
             texture_id = [int64]$Matches[3]
         }
+        $openOrder += $session
     }
     elseif ($line -match 'PHASE5-CYCLE\s+cycle=(\d+)\s+session=(\S+)\s+frames=(\d+)\s+close_to_unregister_ms=(\d+)') {
-        $cycle = [int]$Matches[1]
-        $closes[$cycle] = @{
-            session = $Matches[2]
+        $session = $Matches[2]
+        $closes[$session] = @{
             frames = [int64]$Matches[3]
             close_to_unregister_ms = [int]$Matches[4]
         }
     }
 }
 
-$pairedCycles = $closes.Keys | Where-Object { $opens.ContainsKey($_) } | Sort-Object
+$pairedSessions = $openOrder | Where-Object { $closes.ContainsKey($_) }
 
-if ($pairedCycles.Count -eq 0) {
+if ($pairedSessions.Count -eq 0) {
     Write-Host '# Phase 5 verdict' -ForegroundColor Yellow
     Write-Host ''
     Write-Host 'No PHASE5-OPEN/PHASE5-CYCLE pairs found in the log.' -ForegroundColor Yellow
@@ -104,14 +111,14 @@ Write-Host '## Per-cycle measurements'
 Write-Host ''
 Write-Host '| Cycle | Frames consumed | Close -> unregister callback (ms) | Texture id |'
 Write-Host '|-------|-----------------|------------------------------------|------------|'
-foreach ($c in $pairedCycles) {
-    $o = $opens[$c]
-    $cl = $closes[$c]
-    Write-Host ("| {0,5} | {1,15} | {2,34} | {3,10} |" -f $c, $cl.frames, $cl.close_to_unregister_ms, $o.texture_id)
+foreach ($s in $pairedSessions) {
+    $o = $opens[$s]
+    $cl = $closes[$s]
+    Write-Host ("| {0,5} | {1,15} | {2,34} | {3,10} |" -f $o.cycle, $cl.frames, $cl.close_to_unregister_ms, $o.texture_id)
 }
 
 # Aggregate.
-$latencies = $pairedCycles | ForEach-Object { $closes[$_].close_to_unregister_ms }
+$latencies = $pairedSessions | ForEach-Object { $closes[$_].close_to_unregister_ms }
 $sorted = $latencies | Sort-Object
 $min = $sorted[0]
 $max = $sorted[-1]
@@ -119,13 +126,13 @@ $median = $sorted[[int][math]::Floor($sorted.Count / 2)]
 $p99Index = [int][math]::Floor($sorted.Count * 0.99)
 if ($p99Index -ge $sorted.Count) { $p99Index = $sorted.Count - 1 }
 $p99 = $sorted[$p99Index]
-$maxFrames = ($pairedCycles | ForEach-Object { $closes[$_].frames } | Measure-Object -Maximum).Maximum
-$totalFrames = ($pairedCycles | ForEach-Object { $closes[$_].frames } | Measure-Object -Sum).Sum
+$maxFrames = ($pairedSessions | ForEach-Object { $closes[$_].frames } | Measure-Object -Maximum).Maximum
+$totalFrames = ($pairedSessions | ForEach-Object { $closes[$_].frames } | Measure-Object -Sum).Sum
 
 Write-Host ''
 Write-Host '## Aggregate'
 Write-Host ''
-Write-Host "- Cycles paired: $($pairedCycles.Count)"
+Write-Host "- Cycles paired: $($pairedSessions.Count)"
 Write-Host ('- Unregister callback latency ms — min: {0}  median: {1}  p99: {2}  max: {3}' -f $min, $median, $p99, $max)
 Write-Host ('- Frames consumed across all cycles: {0} (peak per cycle: {1})' -f $totalFrames, $maxFrames)
 Write-Host "- Log path: $LogPath"
@@ -133,9 +140,9 @@ Write-Host "- Log path: $LogPath"
 # Verdict.
 $verdict = 'PASS'
 $reasons = @()
-if ($pairedCycles.Count -lt $MinCycles) {
+if ($pairedSessions.Count -lt $MinCycles) {
     $verdict = 'WARN'
-    $reasons += ('Only {0} cycles paired (threshold for confidence: {1}).' -f $pairedCycles.Count, $MinCycles)
+    $reasons += ('Only {0} cycles paired (threshold for confidence: {1}).' -f $pairedSessions.Count, $MinCycles)
 }
 if ($max -gt $MaxUnregisterMs) {
     $verdict = 'FAIL'
@@ -143,10 +150,11 @@ if ($max -gt $MaxUnregisterMs) {
 }
 # A zero-frame cycle means MediaPlayer never produced output before close
 # — that's a load failure dressed up as a successful cycle.
-$zeroFrameCycles = $pairedCycles | Where-Object { $closes[$_].frames -eq 0 }
-if ($zeroFrameCycles.Count -gt 0) {
+$zeroFrameSessions = $pairedSessions | Where-Object { $closes[$_].frames -eq 0 }
+if ($zeroFrameSessions.Count -gt 0) {
+    $zeroFrameOpenCycles = $zeroFrameSessions | ForEach-Object { $opens[$_].cycle }
     $verdict = 'FAIL'
-    $reasons += "$($zeroFrameCycles.Count) cycle(s) consumed zero frames (cycles: $($zeroFrameCycles -join ', '))."
+    $reasons += "$($zeroFrameSessions.Count) cycle(s) consumed zero frames (cycles: $($zeroFrameOpenCycles -join ', '))."
 }
 
 Write-Host ''

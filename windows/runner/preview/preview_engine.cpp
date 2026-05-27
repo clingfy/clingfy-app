@@ -1317,6 +1317,12 @@ void PreviewEngine::Close(const CloseArgs& args) {
   clingfy::preview::FrameTimingStats stats_copy{};
   clingfy::preview::FrameTimingStats stats_render{};
   clingfy::preview::FrameTimingStats stats_handoff{};
+  // Step 5.7.2: snapshot the cycle index INSIDE the lock, before the
+  // cleanup clears it to zero. The earlier Step 5.7 code populated the
+  // TearDownContext after the lock was released, by which point
+  // current_cycle_index_ had been reset — so every PHASE5-CYCLE line
+  // ended up reporting cycle=0, breaking the verdict tool's pairing.
+  std::int64_t closing_cycle_index = 0;
 
   {
     std::lock_guard<std::mutex> lock(mutex_);
@@ -1326,6 +1332,7 @@ void PreviewEngine::Close(const CloseArgs& args) {
     err = last_error_;
     tw = texture_width_;
     th_h = texture_height_;
+    closing_cycle_index = current_cycle_index_;
     dying_impl = std::move(impl_);
     texture_id_ = -1;
     shared_handle_ok_ = false;
@@ -1417,7 +1424,7 @@ void PreviewEngine::Close(const CloseArgs& args) {
     teardown->session_id = closing_session;
     teardown->close_qpc = NowQpc();
     teardown->qpc_frequency = QueryQpcFrequencyHz();
-    teardown->cycle_index = current_cycle_index_;
+    teardown->cycle_index = closing_cycle_index;
     teardown->frames_consumed = frames_captured;
     LogNative("Calling FlutterDesktopTextureRegistrarUnregisterExternalTexture");
     FlutterDesktopTextureRegistrarUnregisterExternalTexture(
