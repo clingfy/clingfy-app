@@ -21,8 +21,10 @@
 #include <cmath>
 #include <cstdio>
 #include <ctime>
+#include <filesystem>
 #include <fstream>
 #include <limits>
+#include <system_error>
 
 #include "Bridge/player_event_publisher.h"
 #include "Bridge/workflow_event_publisher.h"
@@ -53,6 +55,22 @@ constexpr wchar_t kArtifactPath[] =
     L"build\\windows-poc\\stage2a_2_result.md";
 constexpr wchar_t kNativeLogPath[] =
     L"build\\windows-poc\\stage2a_2_native.log";
+// Step 5.7.1: process-lifetime append-only log for PHASE5-OPEN /
+// PHASE5-CYCLE structured lines. Separate from kNativeLogPath because
+// that file is truncated at every Open() for crash-breadcrumb
+// localisation — truncation would defeat the stress verdict tool,
+// which needs cross-cycle history to compute aggregate stats.
+constexpr wchar_t kPhase5CycleLogPath[] =
+    L"build\\windows-poc\\phase5_cycles.log";
+
+void EnsureLogParentDir() {
+  // Both log files live under build\windows-poc\. Create the dir if it
+  // doesn't exist yet — on a fresh checkout the directory is gitignored
+  // and missing, which would otherwise cause `std::ofstream` to fail
+  // silently and the stress verdict tool to find nothing.
+  std::error_code ec;
+  std::filesystem::create_directories(L"build\\windows-poc", ec);
+}
 
 // Step 5.7: process-lifetime monotonic counter incremented at every
 // Open. Used as the `cycle` key in the structured PHASE5-CYCLE log
@@ -85,6 +103,7 @@ std::int64_t QpcDeltaMs(std::int64_t start, std::int64_t end,
 // Open(); each line carries an HRESULT-style breadcrumb so a crash
 // can be localised by inspecting the last surviving line.
 void LogNative(const char* msg) {
+  EnsureLogParentDir();
   std::ofstream f(kNativeLogPath,
                   std::ios::out | std::ios::app | std::ios::binary);
   if (f.is_open()) {
@@ -100,6 +119,30 @@ void LogNative(const char* msg) {
                   tm_utc.tm_hour, tm_utc.tm_min, tm_utc.tm_sec);
     f << ts << msg << "\n";
   }
+}
+
+// Step 5.7.1: append-only cycle log. Lives separately from
+// kNativeLogPath because that file is truncated on every Open() — a
+// design constraint for crash-breadcrumb localisation but lethal for
+// cross-cycle aggregation. The stress verdict tool reads from this
+// file. Format-wise identical to LogNative; differences are scope
+// (which file) and the no-truncate guarantee.
+void LogPhase5Cycle(const char* msg) {
+  EnsureLogParentDir();
+  std::ofstream f(kPhase5CycleLogPath,
+                  std::ios::out | std::ios::app | std::ios::binary);
+  if (!f.is_open()) return;
+  std::time_t now = std::time(nullptr);
+  std::tm tm_utc{};
+#if defined(_MSC_VER)
+  ::gmtime_s(&tm_utc, &now);
+#else
+  tm_utc = *std::gmtime(&now);
+#endif
+  char ts[32];
+  std::snprintf(ts, sizeof(ts), "%02d:%02d:%02d ",
+                tm_utc.tm_hour, tm_utc.tm_min, tm_utc.tm_sec);
+  f << ts << msg << "\n";
 }
 
 D3D11_TEXTURE2D_DESC MakeSharedTextureDesc(int w, int h) {
@@ -770,7 +813,7 @@ OpenResult PreviewEngine::Open(const OpenArgs& args) {
                   args.session_id.empty() ? "(none)"
                                           : args.session_id.c_str(),
                   static_cast<long long>(tex_id));
-    LogNative(buf);
+    LogPhase5Cycle(buf);
   }
   current_cycle_index_ = cycle_index;
 
@@ -1171,7 +1214,9 @@ void CALLBACK OnUnregisterComplete(void* user_data) {
   LogNative(buf);
   // Step 5.7: structured cycle-end line for the verdict tool. The
   // PHASE5-CYCLE prefix is what `tools/phase5_extract_verdict.ps1`
-  // grep's for — keep the key=value layout stable.
+  // grep's for — keep the key=value layout stable. Routed through
+  // LogPhase5Cycle (Step 5.7.1) so it lands in the append-only cycle
+  // log instead of the truncated-per-Open native log.
   std::snprintf(buf, sizeof(buf),
                 "PHASE5-CYCLE cycle=%lld session=%s frames=%llu "
                 "close_to_unregister_ms=%lld",
@@ -1179,7 +1224,7 @@ void CALLBACK OnUnregisterComplete(void* user_data) {
                 tc->session_id.empty() ? "(none)" : tc->session_id.c_str(),
                 static_cast<unsigned long long>(tc->frames_consumed),
                 static_cast<long long>(close_to_unregister_ms));
-  LogNative(buf);
+  LogPhase5Cycle(buf);
   delete tc;
 }
 

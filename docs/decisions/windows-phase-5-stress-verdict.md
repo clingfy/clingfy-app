@@ -16,7 +16,9 @@ class is exercised and re-confirmed.
 ## How to run a session
 
 The runner instruments every open/close cycle with two structured
-lines in `build/windows-poc/stage2a_2_native.log`:
+lines in `build/windows-poc/phase5_cycles.log` (an append-only log
+separate from the per-Open-truncated crash-breadcrumb log at
+`stage2a_2_native.log`):
 
 ```
 PHASE5-OPEN cycle=<n> session=<id> texture_id=<id>
