@@ -56,6 +56,10 @@ class RecordingController extends ChangeNotifier {
   bool _startCommandIssued = false;
   String? _mountedPreviewSessionId;
   bool _previewOpenRequested = false;
+  // Step 5.5.2: Flutter texture id returned by Windows previewOpen so
+  // the InlinePreview widget can mount `Texture(textureId: ...)`. null
+  // on macOS (AppKitView path) and until the native call completes.
+  int? _inlinePreviewTextureId;
   bool _pauseResumeInFlight = false;
   _PreviewOpenSource? _previewOpenSource;
   String? _pendingExternalProjectReplacementPath;
@@ -147,6 +151,12 @@ class RecordingController extends ChangeNotifier {
   bool get showPreRecordingBar => phase == WorkflowPhase.idle;
   bool get shouldNotifyRecordingFinalizedOnPreviewOpen =>
       _previewOpenSource == _PreviewOpenSource.recordingFinalized;
+
+  /// Step 5.5.2: Windows-only Flutter texture id from the latest
+  /// `previewOpen` reply. macOS uses an AppKit platform view and never
+  /// produces a texture id. Cleared by `_beginPreviewClose` and on
+  /// `_transitionToIdle`.
+  int? get inlinePreviewTextureId => _inlinePreviewTextureId;
 
   Duration get elapsed => _elapsed;
   bool get autoStopEnabled => _settings.recording.autoStopEnabled;
@@ -589,10 +599,28 @@ class RecordingController extends ChangeNotifier {
         'Recording',
         'Invoking native previewOpen for session $activeSessionId',
       );
-      await _nativeBridge.previewOpen(
+      final openResult = await _nativeBridge.previewOpen(
         sessionId: activeSessionId,
         projectPath: path,
       );
+      // Stale-session guard: if the user already pressed close while
+      // native was warming the texture, drop the id on the floor.
+      if (_mountedPreviewSessionId == activeSessionId &&
+          _previewOpenRequested) {
+        _inlinePreviewTextureId = openResult.hasTexture
+            ? openResult.textureId
+            : null;
+        Log.d('Recording', 'previewOpen returned', null, null, {
+          'sessionId': activeSessionId,
+          'textureId': _inlinePreviewTextureId,
+          'width': openResult.width,
+          'height': openResult.height,
+          'videoWidth': openResult.videoWidth,
+          'videoHeight': openResult.videoHeight,
+          'sharedHandleOk': openResult.sharedHandleOk,
+        });
+        notifyListeners();
+      }
     } catch (e, st) {
       Log.e("Recording", "Failed to open preview: $e", e, st);
       _recordExternalProjectOpenFailureIfNeeded();
@@ -996,6 +1024,7 @@ class RecordingController extends ChangeNotifier {
 
     _mountedPreviewSessionId = null;
     _previewOpenRequested = false;
+    _inlinePreviewTextureId = null;
     if (phase != WorkflowPhase.closingPreview) {
       _setState(_state.copyWith(phase: WorkflowPhase.closingPreview));
     }
@@ -1022,6 +1051,7 @@ class RecordingController extends ChangeNotifier {
     _startCommandIssued = false;
     _mountedPreviewSessionId = null;
     _previewOpenRequested = false;
+    _inlinePreviewTextureId = null;
     _previewOpenSource = null;
     _pendingExternalProjectReplacementPath = null;
     _openingExternalProjectPath = null;
@@ -1056,6 +1086,7 @@ class RecordingController extends ChangeNotifier {
     _startCommandIssued = false;
     _mountedPreviewSessionId = null;
     _previewOpenRequested = false;
+    _inlinePreviewTextureId = null;
     _previewOpenSource = source;
     _failedExternalProjectOpenPath = null;
     _pendingExternalProjectReplacementPath = null;

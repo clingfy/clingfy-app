@@ -506,6 +506,67 @@ class RecordingSceneInfo {
   }
 }
 
+/// Native `previewOpen` reply shape. Windows fills every field from
+/// PreviewEngine's OpenResult so the Dart side can mount a
+/// `Texture(textureId: ...)` widget; macOS returns null (its inline
+/// preview is an AppKitView), which `PreviewOpenResult.none()` models.
+class PreviewOpenResult {
+  const PreviewOpenResult({
+    required this.textureId,
+    required this.width,
+    required this.height,
+    required this.videoWidth,
+    required this.videoHeight,
+    required this.sharedHandleOk,
+  });
+
+  const PreviewOpenResult.none()
+    : textureId = null,
+      width = 0,
+      height = 0,
+      videoWidth = 0,
+      videoHeight = 0,
+      sharedHandleOk = false;
+
+  /// Flutter texture id to mount via `Texture(textureId: ...)`, or null
+  /// when the platform does not expose a texture (macOS / null reply /
+  /// allocation failure where native returned -1).
+  final int? textureId;
+  final int width;
+  final int height;
+  final int videoWidth;
+  final int videoHeight;
+  final bool sharedHandleOk;
+
+  bool get hasTexture => textureId != null && textureId! >= 0;
+
+  factory PreviewOpenResult.fromMap(Map<dynamic, dynamic> raw) {
+    int? parseTextureId(Object? v) {
+      if (v is int) return v < 0 ? null : v;
+      if (v is num) {
+        final i = v.toInt();
+        return i < 0 ? null : i;
+      }
+      return null;
+    }
+
+    int parseInt(Object? v) {
+      if (v is int) return v;
+      if (v is num) return v.toInt();
+      return 0;
+    }
+
+    return PreviewOpenResult(
+      textureId: parseTextureId(raw['textureId']),
+      width: parseInt(raw['width']),
+      height: parseInt(raw['height']),
+      videoWidth: parseInt(raw['videoWidth']),
+      videoHeight: parseInt(raw['videoHeight']),
+      sharedHandleOk: raw['sharedHandleOk'] as bool? ?? false,
+    );
+  }
+}
+
 enum WorkflowPhase {
   idle(0),
   startingRecording(1),

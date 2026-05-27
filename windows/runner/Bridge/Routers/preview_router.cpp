@@ -235,13 +235,28 @@ void HandleGetRecordingSceneInfo(
 
 // ---------------------------------------------------------------------
 // previewOpen / previewClose — Step 5.3 of the Phase 5 implementation
-// plan. Production preview lifecycle: Dart calls previewOpen with a
-// session id + .clingfyproj path; native resolves the manifest via
-// RecordingProjectReader, then drives PreviewEngine::Open. The
-// Texture id is NOT returned from previewOpen — it surfaces through
-// the player/events event channel in Step 5.4 (matching macOS's
-// inline-preview-view discovery pattern). previewOpen returns null on
-// success.
+// plan, extended in Step 5.5.2 to return the Flutter texture id so the
+// Dart UI can mount a `Texture(textureId: ...)` widget.
+//
+// macOS surfaces its inline preview through an AppKit platform view
+// (`AppKitView('inline_preview_view')`) and therefore returns null
+// from previewOpen — Flutter does not need a texture id to render an
+// AppKit view. Windows has no AppKit; the only path from the
+// PreviewEngine's DXGI shared-handle texture to a Flutter widget is
+// through the `Texture(textureId:)` widget. Step 5.5.2 returns that
+// id here so the Dart side has something to mount.
+//
+// Reply shape on success (keys match the Swift-side macOS contract
+// where applicable; the texture-id key is Windows-specific because
+// macOS does not produce one):
+//   {
+//     "textureId":      int64,   // -1 if allocation failed
+//     "width":          int32,   // shared texture size in pixels
+//     "height":         int32,
+//     "videoWidth":     int32,   // natural video size; 0 until the
+//     "videoHeight":    int32,   //   first VideoFrameAvailable arrives
+//     "sharedHandleOk": bool,    // DXGI shared-handle success
+//   }
 // ---------------------------------------------------------------------
 
 void HandlePreviewOpen(
@@ -307,7 +322,20 @@ void HandlePreviewOpen(
         flutter::EncodableValue(project_path_utf8));
     return;
   }
-  reply::Null(*result);
+  flutter::EncodableMap out;
+  out[flutter::EncodableValue("textureId")] =
+      flutter::EncodableValue(r.texture_id);
+  out[flutter::EncodableValue("width")] =
+      flutter::EncodableValue(r.width);
+  out[flutter::EncodableValue("height")] =
+      flutter::EncodableValue(r.height);
+  out[flutter::EncodableValue("videoWidth")] =
+      flutter::EncodableValue(r.video_width);
+  out[flutter::EncodableValue("videoHeight")] =
+      flutter::EncodableValue(r.video_height);
+  out[flutter::EncodableValue("sharedHandleOk")] =
+      flutter::EncodableValue(r.shared_handle_ok);
+  reply::Map(*result, std::move(out));
 }
 
 void HandlePreviewClose(
