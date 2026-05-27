@@ -85,6 +85,17 @@ class WorkflowEventPublisher {
                          const std::string& code,
                          const std::string& error);
 
+  // `openProjectRequest` event used by Step 5.6 (`.clingfyproj` Explorer
+  // reopen). The bridge's NativeBridge already buffers these on the
+  // Dart side until a callback attaches, but the queue-before-sink
+  // logic on the native side lives in `ProjectOpenCoordinator`; this
+  // helper is the leaf emitter the coordinator calls once the sink is
+  // attached.
+  //
+  // Payload shape mirrors the macOS engine's `AppDelegate` emission:
+  //   { "type": "openProjectRequest", "projectPath": "<UTF-8 abs path>" }
+  void EmitOpenProjectRequest(const std::string& project_path);
+
  private:
   WorkflowEventPublisher() = default;
 

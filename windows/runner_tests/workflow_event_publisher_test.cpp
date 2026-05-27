@@ -243,5 +243,22 @@ TEST_F(WorkflowEventPublisherTest, PreviewLifecycleAllowsEmptyProjectPath) {
   EXPECT_EQ(ReadString(*map, "path"), "");
 }
 
+// ---- Step 5.6 openProjectRequest emit shape -----------------------
+
+TEST_F(WorkflowEventPublisherTest, OpenProjectRequestShape) {
+  auto events = InstallRecordingSink();
+  WorkflowEventPublisher::Instance().EmitOpenProjectRequest(
+      R"(C:\Users\me\Recording.clingfyproj)");
+  test_support::PumpMessages();
+  ASSERT_EQ(events->size(), 1u);
+  const auto* map = AsMap((*events)[0]);
+  ASSERT_NE(map, nullptr);
+  EXPECT_EQ(ReadString(*map, "type"), "openProjectRequest");
+  // macOS payload key is `projectPath` (not `path`); Dart's
+  // NativeBridge filters on this exact key.
+  EXPECT_EQ(ReadString(*map, "projectPath"),
+            R"(C:\Users\me\Recording.clingfyproj)");
+}
+
 }  // namespace
 }  // namespace clingfy::bridge
