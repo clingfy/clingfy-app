@@ -23,6 +23,7 @@ add_library(runner_bridge STATIC
   "Audio/audio_packet_queue.cpp"
   "Audio/wasapi_audio_capture.cpp"
   "Bridge/Devices/audio_source_enumerator.cpp"
+  "Bridge/Devices/device_probe_log.cpp"
   "Bridge/Devices/device_record.cpp"
   "Bridge/Devices/display_enumerator.cpp"
   "Bridge/Devices/video_source_enumerator.cpp"
