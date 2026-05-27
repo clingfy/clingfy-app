@@ -21,8 +21,11 @@
   same file; this script just produces the numbers.
 
 .PARAMETER LogPath
-  Path to the native log. Defaults to
-  build\windows-poc\stage2a_2_native.log under the repo root.
+  Path to the append-only PHASE5 cycle log. Defaults to
+  build\windows-poc\phase5_cycles.log under the repo root. The legacy
+  build\windows-poc\stage2a_2_native.log path is *not* used — that
+  file is truncated on every Open() (crash breadcrumb semantics) and
+  cannot retain cross-cycle history.
 
 .PARAMETER MaxUnregisterMs
   Threshold for the "all unregister callbacks under N ms" gate.
@@ -54,11 +57,11 @@ $ErrorActionPreference = 'Stop'
 
 if (-not $LogPath) {
     $repoRoot = Split-Path -Parent $PSScriptRoot
-    $LogPath = Join-Path $repoRoot 'build\windows-poc\stage2a_2_native.log'
+    $LogPath = Join-Path $repoRoot 'build\windows-poc\phase5_cycles.log'
 }
 
 if (-not (Test-Path -LiteralPath $LogPath)) {
-    throw "Native log not found at $LogPath. Run the app, do at least a few Record -> Stop -> Close cycles, then re-run this script."
+    throw "PHASE5 cycle log not found at $LogPath. Run the app, do at least a few Record -> Stop -> Close cycles, then re-run this script."
 }
 
 $lines = Get-Content -LiteralPath $LogPath
