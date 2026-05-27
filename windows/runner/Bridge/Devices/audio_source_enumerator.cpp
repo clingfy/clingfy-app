@@ -6,11 +6,42 @@
 #include <propsys.h>
 #include <propvarutil.h>
 
+#include <cstdio>
+#include <filesystem>
+#include <fstream>
 #include <string>
+#include <system_error>
 
 namespace clingfy::bridge::devices {
 
 namespace {
+
+// Lightweight diagnostic logger for the device enumerators. macOS has
+// no equivalent because AVFoundation device enumeration is rock-solid;
+// on Windows the combination of WASAPI / Media Foundation +
+// per-Realtek-driver edge cases means a missing mic / camera is often
+// only diagnosable by inspecting the device state the OS actually
+// hands back. Writes append-only to the same `build/windows-poc/`
+// directory the Phase 5 cycle log uses so support requests can
+// include both artifacts.
+void LogDeviceProbe(const char* msg) {
+  std::error_code ec;
+  std::filesystem::create_directories(L"build\\windows-poc", ec);
+  std::ofstream f(L"build\\windows-poc\\device_probe.log",
+                  std::ios::out | std::ios::app | std::ios::binary);
+  if (!f.is_open()) return;
+  std::time_t now = std::time(nullptr);
+  std::tm tm_utc{};
+#if defined(_MSC_VER)
+  ::gmtime_s(&tm_utc, &now);
+#else
+  tm_utc = *std::gmtime(&now);
+#endif
+  char ts[32];
+  std::snprintf(ts, sizeof(ts), "%02d:%02d:%02d ",
+                tm_utc.tm_hour, tm_utc.tm_min, tm_utc.tm_sec);
+  f << ts << msg << "\n";
+}
 
 // PROPERTYKEYs we need for friendly-name resolution. We do NOT include
 // `<functiondiscoverykeys_devpkey.h>` — that header lacks include guards and
@@ -140,19 +171,42 @@ std::vector<AudioSourceRecord> EnumerateAudioInputs() {
       __uuidof(IMMDeviceEnumerator),
       reinterpret_cast<void**>(enumerator.ReleaseAndGetAddressOf()));
   if (FAILED(hr) || !enumerator) {
+    char buf[160];
+    std::snprintf(buf, sizeof(buf),
+                  "EnumerateAudioInputs: CoCreateInstance(MMDeviceEnumerator) "
+                  "failed hr=0x%08X — no mics enumerable",
+                  hr);
+    LogDeviceProbe(buf);
     return sources;
   }
 
+  // Broadened filter: include ACTIVE *and* UNPLUGGED endpoints. Some
+  // Realtek driver configurations leave the built-in mic array in an
+  // UNPLUGGED state until a recording client (re-)activates it; without
+  // this widening we'd report "no microphone" while the user sees an
+  // active mic in the Windows Sound control panel. The downstream
+  // capture code already retries activation, so a stale "unplugged"
+  // mic that won't actually open is the rare case and surfaces as a
+  // clean recording-start failure later. macOS has no equivalent
+  // (AVFoundation device enumeration is single-state).
+  const DWORD kStateMask = DEVICE_STATE_ACTIVE | DEVICE_STATE_UNPLUGGED;
   ScopedCom<IMMDeviceCollection> collection;
   hr = enumerator->EnumAudioEndpoints(
-      eCapture, DEVICE_STATE_ACTIVE,
-      collection.ReleaseAndGetAddressOf());
+      eCapture, kStateMask, collection.ReleaseAndGetAddressOf());
   if (FAILED(hr) || !collection) {
+    char buf[160];
+    std::snprintf(buf, sizeof(buf),
+                  "EnumerateAudioInputs: EnumAudioEndpoints(eCapture, "
+                  "ACTIVE|UNPLUGGED) failed hr=0x%08X",
+                  hr);
+    LogDeviceProbe(buf);
     return sources;
   }
 
   UINT count = 0;
   if (FAILED(collection->GetCount(&count))) {
+    LogDeviceProbe(
+        "EnumerateAudioInputs: collection->GetCount failed — returning empty");
     return sources;
   }
 
@@ -162,6 +216,9 @@ std::vector<AudioSourceRecord> EnumerateAudioInputs() {
         !device) {
       continue;
     }
+
+    DWORD state = 0;
+    device->GetState(&state);
 
     LPWSTR raw_id = nullptr;
     if (FAILED(device->GetId(&raw_id)) || raw_id == nullptr) {
@@ -179,8 +236,19 @@ std::vector<AudioSourceRecord> EnumerateAudioInputs() {
     if (record.name.empty()) {
       record.name = "Microphone";
     }
+    char buf[256];
+    std::snprintf(buf, sizeof(buf),
+                  "EnumerateAudioInputs: #%u state=0x%08lX name=%s",
+                  i, state, record.name.c_str());
+    LogDeviceProbe(buf);
     sources.push_back(std::move(record));
   }
+
+  char summary[160];
+  std::snprintf(summary, sizeof(summary),
+                "EnumerateAudioInputs: returning %zu source(s)",
+                sources.size());
+  LogDeviceProbe(summary);
 
   return sources;
 }
