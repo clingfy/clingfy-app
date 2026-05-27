@@ -215,6 +215,20 @@ struct PreviewEngine::Impl {
   std::atomic<UINT> last_video_height{0};
   std::atomic<std::int64_t> frames_consumed{0};
 
+  // ---- Step 5.5 seek tracking ----
+  // Each SeekTo() call appends a sample; the next VideoFrameAvailable
+  // sets resolved_qpc on the first unresolved entry. The seek-latency
+  // numbers feed the Phase 5.7 multi-GPU verdict artifact; production
+  // playback doesn't read them otherwise. Guarded by render_mutex
+  // (same lock the per-frame composition path takes).
+  struct SeekSample {
+    std::int64_t target_ms = 0;
+    std::int64_t call_qpc = 0;
+    std::int64_t resolved_qpc = 0;
+    bool resolved = false;
+  };
+  std::vector<SeekSample> seek_samples;
+
   // The descriptor handed back to Flutter every callback. Pointer
   // stability matters: Flutter holds the returned pointer until it
   // imports the handle.
@@ -743,6 +757,22 @@ void PreviewEngine::HandleVideoFrame(
   if (shutting_down_.load() || impl_ == nullptr) {
     impl->dropped_frames.fetch_add(1, std::memory_order_relaxed);
     return;
+  }
+
+  // Step 5.5: resolve the first unresolved seek (if any). Stage 1D
+  // semantics — the QPC delta between SeekTo() and "next frame" is the
+  // seek latency. Multiple SeekTo() calls between frames stack up;
+  // each successive VideoFrameAvailable resolves the next sample.
+  {
+    LARGE_INTEGER qpc{};
+    ::QueryPerformanceCounter(&qpc);
+    for (auto& s : impl->seek_samples) {
+      if (!s.resolved) {
+        s.resolved = true;
+        s.resolved_qpc = static_cast<std::int64_t>(qpc.QuadPart);
+        break;
+      }
+    }
   }
 
   impl->timing_total.BeginFrame();
@@ -1294,6 +1324,101 @@ void PreviewEngine::Close(const CloseArgs& args) {
     f << "Closed session: " << closing_session << "\n";
     std::fprintf(stderr, "STAGE2A_2_ARTIFACT wrote %ls\n", kArtifactPath);
     std::fflush(stderr);
+  }
+}
+
+// ---------------------------------------------------------------------
+// Step 5.5 transport — Play / Pause / SeekTo.
+//
+// All three mirror the macOS InlinePreviewView contract: silent no-op
+// on stale session_id (matches ADR gotcha #2). MediaPlayer's transport
+// API is documented as safe-from-any-thread; we still hold the
+// singleton mutex while reading impl_->player to avoid a race with a
+// concurrent Close moving the unique_ptr away.
+// ---------------------------------------------------------------------
+
+void PreviewEngine::Play(const std::string& session_id) {
+  winrt_playback::MediaPlayer player_snapshot{nullptr};
+  {
+    std::lock_guard<std::mutex> lock(mutex_);
+    if (!running_.load() || session_id != active_session_id_) {
+      return;  // Stale or pre-Open call — silent no-op.
+    }
+    if (impl_) player_snapshot = impl_->player;
+  }
+  if (player_snapshot == nullptr) return;
+  try {
+    player_snapshot.Play();
+  } catch (winrt::hresult_error const&) {
+    // Best-effort. MediaPlayer errors surface separately via the
+    // MediaFailed event subscription installed in Open().
+  }
+}
+
+void PreviewEngine::Pause(const std::string& session_id) {
+  winrt_playback::MediaPlayer player_snapshot{nullptr};
+  {
+    std::lock_guard<std::mutex> lock(mutex_);
+    if (!running_.load() || session_id != active_session_id_) {
+      return;
+    }
+    if (impl_) player_snapshot = impl_->player;
+  }
+  if (player_snapshot == nullptr) return;
+  try {
+    player_snapshot.Pause();
+  } catch (winrt::hresult_error const&) {
+    // Best-effort.
+  }
+}
+
+void PreviewEngine::SeekTo(const std::string& session_id,
+                           std::int64_t position_ms) {
+  winrt_playback::MediaPlayer player_snapshot{nullptr};
+  Impl* impl_snapshot = nullptr;
+  {
+    std::lock_guard<std::mutex> lock(mutex_);
+    if (!running_.load() || session_id != active_session_id_) {
+      return;
+    }
+    if (impl_) {
+      player_snapshot = impl_->player;
+      impl_snapshot = impl_.get();
+    }
+  }
+  if (player_snapshot == nullptr || impl_snapshot == nullptr) return;
+
+  // Clamp negative positions to 0 — Dart can emit them during
+  // optimistic scrubs (e.g. user drags below the timeline minimum
+  // briefly). MediaPlayer accepts any TimeSpan but Position < 0 is
+  // not meaningful for preview.
+  if (position_ms < 0) position_ms = 0;
+
+  // Capture call_qpc BEFORE issuing the seek so the next-frame
+  // resolution measures the round-trip from "user-issued seek" to
+  // "next frame produced." Append the sample under render_mutex
+  // (same lock HandleVideoFrame's ResolvePendingSeeks would take).
+  LARGE_INTEGER qpc{};
+  ::QueryPerformanceCounter(&qpc);
+  {
+    std::lock_guard<std::mutex> render_lock(impl_snapshot->render_mutex);
+    Impl::SeekSample sample;
+    sample.target_ms = position_ms;
+    sample.call_qpc = static_cast<std::int64_t>(qpc.QuadPart);
+    impl_snapshot->seek_samples.push_back(sample);
+  }
+
+  try {
+    // MediaPlayer.Position is deprecated since Windows 10 1607; use
+    // PlaybackSession.Position. TimeSpan is 100ns ticks; build it
+    // from std::chrono::milliseconds so we don't fight the WinRT
+    // duration plumbing.
+    player_snapshot.PlaybackSession().Position(
+        std::chrono::duration_cast<winrt_foundation::TimeSpan>(
+            std::chrono::milliseconds(position_ms)));
+  } catch (winrt::hresult_error const&) {
+    // Best-effort. MediaFailed will report deeper issues; routine
+    // seek failures (e.g. past end of stream) just no-op.
   }
 }
 

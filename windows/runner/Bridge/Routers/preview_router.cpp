@@ -326,17 +326,108 @@ void HandlePreviewClose(
   reply::Null(*result);
 }
 
+// ---------------------------------------------------------------------
+// previewPlay / previewPause / previewSeekTo — Step 5.5 transport.
+//
+// Each handler validates its args and forwards to the corresponding
+// PreviewEngine method. Stale-session calls (the engine's
+// active_session_id_ mismatches the call's sessionId) are silent
+// no-ops inside the engine itself — the router always returns null
+// on a successfully-parsed request, matching macOS's contract that
+// transport methods never report stale-session errors.
+//
+// BAD_ARGS is reserved for genuinely malformed inputs: missing args
+// map, missing/empty sessionId, missing/wrong-type ms (seek only).
+// The Dart-side PlayerController guards against these with its own
+// state machine, so BAD_ARGS in practice surfaces only as a
+// development-time signal that someone called the bridge with the
+// wrong shape.
+// ---------------------------------------------------------------------
+
+bool ReadSessionId(const flutter::MethodCall<flutter::EncodableValue>& call,
+                   flutter::MethodResult<flutter::EncodableValue>& result,
+                   std::string* out_session_id) {
+  const auto* args =
+      std::get_if<flutter::EncodableMap>(call.arguments());
+  if (args == nullptr) {
+    result.Error(error::kBadArgs, "missing args map");
+    return false;
+  }
+  *out_session_id = ReadString(*args, "sessionId");
+  if (out_session_id->empty()) {
+    result.Error(error::kBadArgs, "missing sessionId");
+    return false;
+  }
+  return true;
+}
+
+void HandlePreviewPlay(
+    const flutter::MethodCall<flutter::EncodableValue>& call,
+    std::unique_ptr<flutter::MethodResult<flutter::EncodableValue>> result) {
+  std::string session_id;
+  if (!ReadSessionId(call, *result, &session_id)) return;
+  PreviewEngine::Instance()->Play(session_id);
+  reply::Null(*result);
+}
+
+void HandlePreviewPause(
+    const flutter::MethodCall<flutter::EncodableValue>& call,
+    std::unique_ptr<flutter::MethodResult<flutter::EncodableValue>> result) {
+  std::string session_id;
+  if (!ReadSessionId(call, *result, &session_id)) return;
+  PreviewEngine::Instance()->Pause(session_id);
+  reply::Null(*result);
+}
+
+void HandlePreviewSeekTo(
+    const flutter::MethodCall<flutter::EncodableValue>& call,
+    std::unique_ptr<flutter::MethodResult<flutter::EncodableValue>> result) {
+  std::string session_id;
+  if (!ReadSessionId(call, *result, &session_id)) return;
+
+  // `ms` must be present and integer-typed. Dart's PlayerController
+  // sends `ms` as `int` which serializes to int64 in EncodableValue;
+  // we also accept int32 for tolerance against any future Dart
+  // changes that might widen / narrow the wire type. Doubles are
+  // rejected — the channel contract is integer milliseconds.
+  const auto* args =
+      std::get_if<flutter::EncodableMap>(call.arguments());
+  if (args == nullptr) {
+    result->Error(error::kBadArgs, "missing args map");
+    return;
+  }
+  auto it = args->find(flutter::EncodableValue("ms"));
+  if (it == args->end()) {
+    result->Error(error::kBadArgs, "missing ms");
+    return;
+  }
+  std::int64_t ms_value = 0;
+  if (const auto* ms64 = std::get_if<std::int64_t>(&it->second)) {
+    ms_value = *ms64;
+  } else if (const auto* ms32 = std::get_if<std::int32_t>(&it->second)) {
+    ms_value = *ms32;
+  } else {
+    result->Error(error::kBadArgs, "ms must be an integer (milliseconds)");
+    return;
+  }
+
+  PreviewEngine::Instance()->SeekTo(session_id, ms_value);
+  reply::Null(*result);
+}
+
 }  // namespace
 
 void RegisterHandlers(HandlerTable& table) {
-  // Step 5.3: previewOpen / previewClose now drive PreviewEngine.
-  // previewPlay / previewPause / previewSeekTo / previewPeekTo stay
-  // Phase 1 no-ops until Steps 5.4 and 5.5 (transport + event channel).
+  // Steps 5.3 + 5.5: previewOpen / previewClose / previewPlay /
+  // previewPause / previewSeekTo all drive PreviewEngine now.
+  // previewPeekTo (preview-time scrubbing without play) stays a
+  // Phase 1 no-op — it's never called from the current Dart preview
+  // flow and surfaces in a future editor revision.
   table["previewOpen"] = &HandlePreviewOpen;
   table["previewClose"] = &HandlePreviewClose;
-  table["previewPlay"] = &HandleNoopSetter;
-  table["previewPause"] = &HandleNoopSetter;
-  table["previewSeekTo"] = &HandleNoopSetter;
+  table["previewPlay"] = &HandlePreviewPlay;
+  table["previewPause"] = &HandlePreviewPause;
+  table["previewSeekTo"] = &HandlePreviewSeekTo;
   table["previewPeekTo"] = &HandleNoopSetter;
 
   table["playerPlay"] = &HandleNoopSetter;
