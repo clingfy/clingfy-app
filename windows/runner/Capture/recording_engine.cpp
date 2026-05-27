@@ -1,5 +1,6 @@
 #include "Capture/recording_engine.h"
 
+#include <cstdio>
 #include <thread>
 #include <utility>
 
@@ -7,6 +8,7 @@
 #include "Audio/audio_packet.h"
 #include "Audio/audio_packet_queue.h"
 #include "Audio/wasapi_audio_capture.h"
+#include "Bridge/Devices/device_probe_log.h"
 #include "Bridge/Devices/display_enumerator.h"
 #include "Bridge/native_error_codes.h"
 #include "Bridge/workflow_event_publisher.h"
@@ -191,11 +193,27 @@ std::optional<RecordingError> RecordingEngine::Start(
         std::make_unique<clingfy::audio::WasapiAudioCapture>();
     const auto mic_id =
         WindowsSelectionState::Instance().MicrophoneId().value_or("");
-    if (mic_capture_->Start(
-            clingfy::audio::WasapiCaptureKind::kMicrophone, mic_id,
-            *mic_queue_)) {
+    {
+      char buf[512];
+      std::snprintf(buf, sizeof(buf),
+                    "RecordingEngine: mic open attempt id=%s",
+                    mic_id.empty() ? "<default>" : mic_id.c_str());
+      clingfy::bridge::devices::LogDeviceProbe(buf);
+    }
+    auto mic_err = mic_capture_->Start(
+        clingfy::audio::WasapiCaptureKind::kMicrophone, mic_id, *mic_queue_);
+    if (mic_err) {
+      char buf[640];
+      std::snprintf(buf, sizeof(buf),
+                    "RecordingEngine: mic open FAILED hr=0x%08lX msg=%s",
+                    static_cast<unsigned long>(mic_err->hr),
+                    mic_err->message.c_str());
+      clingfy::bridge::devices::LogDeviceProbe(buf);
       mic_capture_.reset();
       mic_queue_.reset();
+    } else {
+      clingfy::bridge::devices::LogDeviceProbe(
+          "RecordingEngine: mic open OK");
     }
   }
   if (want_loopback) {
@@ -203,11 +221,21 @@ std::optional<RecordingError> RecordingEngine::Start(
         std::make_unique<clingfy::audio::AudioPacketQueue>();
     loopback_capture_ =
         std::make_unique<clingfy::audio::WasapiAudioCapture>();
-    if (loopback_capture_->Start(
-            clingfy::audio::WasapiCaptureKind::kSystemLoopback, "",
-            *loopback_queue_)) {
+    auto loopback_err = loopback_capture_->Start(
+        clingfy::audio::WasapiCaptureKind::kSystemLoopback, "",
+        *loopback_queue_);
+    if (loopback_err) {
+      char buf[640];
+      std::snprintf(buf, sizeof(buf),
+                    "RecordingEngine: loopback open FAILED hr=0x%08lX msg=%s",
+                    static_cast<unsigned long>(loopback_err->hr),
+                    loopback_err->message.c_str());
+      clingfy::bridge::devices::LogDeviceProbe(buf);
       loopback_capture_.reset();
       loopback_queue_.reset();
+    } else {
+      clingfy::bridge::devices::LogDeviceProbe(
+          "RecordingEngine: loopback open OK");
     }
   }
 
