@@ -17,8 +17,16 @@ import 'package:clingfy/app/home/post_processing/support/audio_debouncer.dart';
 import 'package:clingfy/app/home/post_processing/support/canvas_appearance_store.dart';
 import 'package:clingfy/app/home/export/widgets/export_file_dialog.dart';
 import 'package:clingfy/core/preview/player_controller.dart';
+import 'package:clingfy/ui/platform/platform_kind.dart' as platform_kind;
 
 class PostProcessingController extends ChangeNotifier {
+  // Test seam: when non-null, overrides the host-OS check used to decide
+  // whether `processVideo` is invoked. Production reads
+  // `platform_kind.isWindows()` when this is null. Tests use it so the
+  // Windows-skip branch can be exercised on any host.
+  @visibleForTesting
+  static bool? debugIsWindowsOverride;
+
   final NativeBridge _nativeBridge;
   final SettingsController _settings;
   final PlayerController _player;
@@ -719,6 +727,23 @@ class PostProcessingController extends ChangeNotifier {
     // Persist the canvas appearance on every committed edit (this method
     // is the debounced canvas-update path). Best-effort, non-blocking.
     _persistCanvasAppearance(projectPath);
+
+    // Windows preview shows the raw native PreviewEngine texture and does
+    // not yet implement `processVideo` (Phase 6). Calling it now surfaces
+    // WINDOWS_NOT_IMPLEMENTED PlatformExceptions on every canvas edit;
+    // suppress the call here so the preview shell stays clean. macOS is
+    // unaffected.
+    final isWindows = debugIsWindowsOverride ?? platform_kind.isWindows();
+    if (isWindows) {
+      Log.d(
+        "PostProcessing",
+        "Skipping preview composition on Windows; processVideo lands in Phase 6.",
+        null,
+        null,
+        {'sessionId': _activeSessionId, 'projectPath': projectPath},
+      );
+      return;
+    }
 
     _isProcessingPreview = true;
     notifyListeners();
