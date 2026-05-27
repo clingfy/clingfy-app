@@ -56,6 +56,13 @@ struct OpenArgs {
   // a non-matching session id are silently no-op'd, matching macOS's
   // InlinePreviewView behavior). Empty session_id → open fails.
   std::string session_id;
+  // Optional UTF-8 `.clingfyproj` path. Echoed back to Dart in the
+  // workflow lifecycle events (`previewPreparing` / `previewReady` /
+  // `previewClosed` / `previewFailed`) under the `path` key so the
+  // Dart-side `_handlePreview*Event` handlers see the same payload
+  // shape macOS produces. Empty is tolerated — Dart falls back to its
+  // own state's previewPath in that case (Step 5.5.3).
+  std::string project_path;
   std::wstring video_path;   // required; empty → open fails with error
   std::wstring cursor_path;  // optional; empty → video-only (no zoom/halo)
   // Optional; plumbed-but-not-composited in Step 5.3. Phase 9 picks
@@ -226,6 +233,18 @@ class PreviewEngine {
   // Compared against incoming Close/Play/Pause/Seek calls to enforce
   // the stale-session no-op contract.
   std::string active_session_id_;
+
+  // Step 5.5.3: project path echoed back to Dart in the workflow
+  // lifecycle events. Set in Open; cleared in Close. Empty is
+  // tolerated — Dart falls back to its own state's previewPath.
+  std::string active_project_path_;
+
+  // Step 5.5.3: first-frame gate for the `previewReady` workflow
+  // event. Set true the first time HandleVideoFrame emits the event;
+  // reset in Open / Close. Without this gate Dart would receive a
+  // `previewReady` event for every VideoFrameAvailable (~30Hz),
+  // wedging the workflow state machine.
+  bool emitted_preview_ready_ = false;
 
   // Step 5.4 event-emission tracking.
   //

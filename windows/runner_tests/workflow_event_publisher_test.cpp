@@ -8,6 +8,8 @@
 #include <memory>
 #include <vector>
 
+#include "test_support.h"
+
 namespace clingfy::bridge {
 namespace {
 
@@ -69,11 +71,13 @@ std::string ReadString(const flutter::EncodableMap& m, const std::string& k) {
 TEST_F(WorkflowEventPublisherTest, NoSinkDropsEventsSilently) {
   // Sanity: emitting before a Dart listener attaches must not crash.
   WorkflowEventPublisher::Instance().EmitRecordingStarted("no-sink");
+  test_support::PumpMessages();
 }
 
 TEST_F(WorkflowEventPublisherTest, RecordingStartedShape) {
   auto events = InstallRecordingSink();
   WorkflowEventPublisher::Instance().EmitRecordingStarted("sess-42");
+  test_support::PumpMessages();
   ASSERT_EQ(events->size(), 1u);
   const auto* map = AsMap((*events)[0]);
   ASSERT_NE(map, nullptr);
@@ -85,6 +89,7 @@ TEST_F(WorkflowEventPublisherTest, RecordingFinalizedIncludesProjectPath) {
   auto events = InstallRecordingSink();
   WorkflowEventPublisher::Instance().EmitRecordingFinalized(
       "sess-7", R"(C:\Users\me\AppData\Local\Clingfy\recordings\sess-7.clingfyproj)");
+  test_support::PumpMessages();
   ASSERT_EQ(events->size(), 1u);
   const auto* map = AsMap((*events)[0]);
   ASSERT_NE(map, nullptr);
@@ -100,6 +105,7 @@ TEST_F(WorkflowEventPublisherTest, RecordingFailedShape) {
   auto events = InstallRecordingSink();
   WorkflowEventPublisher::Instance().EmitRecordingFailed(
       "sess-x", "start", "BAD_ARGS", "missing sessionId");
+  test_support::PumpMessages();
   ASSERT_EQ(events->size(), 1u);
   const auto* map = AsMap((*events)[0]);
   ASSERT_NE(map, nullptr);
@@ -116,6 +122,7 @@ TEST_F(WorkflowEventPublisherTest, RecordingPausedAndResumedShapes) {
   auto events = InstallRecordingSink();
   WorkflowEventPublisher::Instance().EmitRecordingPaused("sess-p");
   WorkflowEventPublisher::Instance().EmitRecordingResumed("sess-p");
+  test_support::PumpMessages();
   ASSERT_EQ(events->size(), 2u);
 
   const auto* paused = AsMap((*events)[0]);
@@ -133,6 +140,7 @@ TEST_F(WorkflowEventPublisherTest, RecordingWarningShape) {
   auto events = InstallRecordingSink();
   WorkflowEventPublisher::Instance().EmitRecordingWarning(
       "sess-q", "loopback endpoint silenced for 3s");
+  test_support::PumpMessages();
   ASSERT_EQ(events->size(), 1u);
   const auto* map = AsMap((*events)[0]);
   ASSERT_NE(map, nullptr);
@@ -145,13 +153,94 @@ TEST_F(WorkflowEventPublisherTest, RecordingWarningShape) {
 TEST_F(WorkflowEventPublisherTest, ClearSinkStopsEmissions) {
   auto events = InstallRecordingSink();
   WorkflowEventPublisher::Instance().EmitRecordingStarted("sess-1");
+  test_support::PumpMessages();
   WorkflowEventPublisher::Instance().ClearSink();
   WorkflowEventPublisher::Instance().EmitRecordingStarted("sess-2");
+  test_support::PumpMessages();
   // First call landed; second was silently dropped. The shared events
   // vector outlives the sink's destruction inside ClearSink, so this
   // observation is safe.
   EXPECT_EQ(events->size(), 1u);
   EXPECT_FALSE(WorkflowEventPublisher::Instance().has_sink());
+}
+
+// ---- Step 5.5.3 preview lifecycle emitters ------------------------
+
+TEST_F(WorkflowEventPublisherTest, PreviewPreparingShape) {
+  auto events = InstallRecordingSink();
+  WorkflowEventPublisher::Instance().EmitPreviewPreparing(
+      "sess-p",
+      R"(C:\Users\me\AppData\Local\Clingfy\recordings\sess-p.clingfyproj)");
+  test_support::PumpMessages();
+  ASSERT_EQ(events->size(), 1u);
+  const auto* map = AsMap((*events)[0]);
+  ASSERT_NE(map, nullptr);
+  EXPECT_EQ(ReadString(*map, "type"), "previewPreparing");
+  EXPECT_EQ(ReadString(*map, "sessionId"), "sess-p");
+  EXPECT_NE(ReadString(*map, "path").find("sess-p.clingfyproj"),
+            std::string::npos);
+}
+
+TEST_F(WorkflowEventPublisherTest, PreviewReadyShape) {
+  auto events = InstallRecordingSink();
+  WorkflowEventPublisher::Instance().EmitPreviewReady(
+      "sess-r",
+      R"(C:\Users\me\AppData\Local\Clingfy\recordings\sess-r.clingfyproj)");
+  test_support::PumpMessages();
+  ASSERT_EQ(events->size(), 1u);
+  const auto* map = AsMap((*events)[0]);
+  ASSERT_NE(map, nullptr);
+  EXPECT_EQ(ReadString(*map, "type"), "previewReady");
+  EXPECT_EQ(ReadString(*map, "sessionId"), "sess-r");
+  EXPECT_NE(ReadString(*map, "path").find("sess-r.clingfyproj"),
+            std::string::npos);
+}
+
+TEST_F(WorkflowEventPublisherTest, PreviewClosedShapeIncludesReason) {
+  auto events = InstallRecordingSink();
+  WorkflowEventPublisher::Instance().EmitPreviewClosed(
+      "sess-c",
+      R"(C:\proj.clingfyproj)",
+      "flutterRequest");
+  test_support::PumpMessages();
+  ASSERT_EQ(events->size(), 1u);
+  const auto* map = AsMap((*events)[0]);
+  ASSERT_NE(map, nullptr);
+  EXPECT_EQ(ReadString(*map, "type"), "previewClosed");
+  EXPECT_EQ(ReadString(*map, "sessionId"), "sess-c");
+  EXPECT_EQ(ReadString(*map, "reason"), "flutterRequest");
+  EXPECT_NE(ReadString(*map, "path").find("proj.clingfyproj"),
+            std::string::npos);
+}
+
+TEST_F(WorkflowEventPublisherTest, PreviewFailedShapeIncludesCodeAndError) {
+  auto events = InstallRecordingSink();
+  WorkflowEventPublisher::Instance().EmitPreviewFailed(
+      "sess-f",
+      R"(C:\proj.clingfyproj)",
+      "VIDEO_FILE_MISSING",
+      "Source could not be loaded.");
+  test_support::PumpMessages();
+  ASSERT_EQ(events->size(), 1u);
+  const auto* map = AsMap((*events)[0]);
+  ASSERT_NE(map, nullptr);
+  EXPECT_EQ(ReadString(*map, "type"), "previewFailed");
+  EXPECT_EQ(ReadString(*map, "sessionId"), "sess-f");
+  EXPECT_EQ(ReadString(*map, "code"), "VIDEO_FILE_MISSING");
+  // macOS uses `error`, not `message`, for the human-readable payload.
+  EXPECT_EQ(ReadString(*map, "error"), "Source could not be loaded.");
+}
+
+TEST_F(WorkflowEventPublisherTest, PreviewLifecycleAllowsEmptyProjectPath) {
+  // macOS sometimes emits with a missing path; Dart falls back to its
+  // own previewPath in that case. Confirm we don't add a synthetic path.
+  auto events = InstallRecordingSink();
+  WorkflowEventPublisher::Instance().EmitPreviewReady("sess-empty", "");
+  test_support::PumpMessages();
+  ASSERT_EQ(events->size(), 1u);
+  const auto* map = AsMap((*events)[0]);
+  ASSERT_NE(map, nullptr);
+  EXPECT_EQ(ReadString(*map, "path"), "");
 }
 
 }  // namespace
