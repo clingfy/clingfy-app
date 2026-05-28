@@ -47,16 +47,11 @@ void main() {
   TestWidgetsFlutterBinding.ensureInitialized();
 
   setUp(() async {
-    // Force the non-Windows branch by default so existing assertions
-    // around processVideo invocation behave the same on every host.
-    // The Windows-skip path has its own group below that flips this.
-    PostProcessingController.debugIsWindowsOverride = false;
     await installCommonNativeMocks();
   });
 
   tearDown(() async {
     await clearCommonNativeMocks();
-    PostProcessingController.debugIsWindowsOverride = null;
   });
 
   Future<_Harness> createHarness({List<ZoomSegment>? zoomSegments}) async {
@@ -543,41 +538,10 @@ void main() {
     expect(args['cameraZoomEmphasisStrength'], 0.12);
   });
 
-  group('Windows preview composition guard', () {
-    test('applyProcessing skips processVideo on Windows', () async {
-      final harness = await createHarness();
-      PostProcessingController.debugIsWindowsOverride = true;
-      harness.processCalls.clear();
-
-      await harness.post.applyProcessing();
-
-      expect(harness.processCalls, isEmpty);
-      expect(harness.post.processing, isFalse);
-    });
-
-    test('setLayoutPreset on Windows does not invoke processVideo', () async {
-      final harness = await createHarness();
-      PostProcessingController.debugIsWindowsOverride = true;
-      harness.processCalls.clear();
-
-      harness.post.setLayoutPreset(LayoutPreset.youtube169);
-      await Future<void>.delayed(Duration.zero);
-
-      expect(harness.processCalls, isEmpty);
-    });
-
-    test(
-      'non-Windows path still invokes processVideo after the override clears',
-      () async {
-        final harness = await createHarness();
-        PostProcessingController.debugIsWindowsOverride = false;
-        harness.processCalls.clear();
-
-        await harness.post.applyProcessing();
-
-        expect(harness.processCalls, hasLength(1));
-        expect(harness.processCalls.single.method, 'processVideo');
-      },
-    );
-  });
+  // The "Windows preview composition guard" group was removed in Phase 6
+  // Slice 1: the platform-conditional suppression of processVideo no longer
+  // exists. Native Windows now returns null from processVideo (signaling
+  // "no preview file generated"), which the Dart caller handles cleanly —
+  // no platform check needed. Coverage for that null-return path lives in
+  // windows/runner_tests/router_stub_shapes_test.cpp::ProcessVideoReturnsNullPreviewPath.
 }

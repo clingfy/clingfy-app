@@ -1,6 +1,11 @@
 #include "Bridge/Routers/export_router.h"
 
+#include <optional>
+#include <string>
+
+#include "Bridge/native_error_codes.h"
 #include "Bridge/result_helpers.h"
+#include "Capture/Export/export_passthrough.h"
 
 namespace clingfy::bridge::routers::export_ {
 
@@ -33,11 +38,86 @@ void HandleSaveManualZoomSegments(
   reply::Bool(*result, false);
 }
 
+// ---- Phase 6 / Slice 1 ------------------------------------------------------
+// `exportVideo` and `processVideo` move off the NotImplemented stub. Slice 1
+// scope:
+//   - exportVideo: passthrough copy of `capture/screen.mov` to a Dart-chosen
+//     destination directory + filename, forcing a `.mov` extension. No
+//     composition, no audio post-processing, no progress event yet (the copy
+//     is sub-second on the recordings Slice 1 ships against).
+//   - processVideo: returns null (signals "no preview file was generated;
+//     re-use the original screen.mov"). The Dart-side Windows suppression in
+//     `lib/app/home/post_processing/post_processing_controller.dart` lifts in
+//     the same PR so the preview shell can call through. Future slices will
+//     wire processVideo to update the live PreviewCompositor's parameters.
+
+const flutter::EncodableMap* AsMap(
+    const flutter::EncodableValue* arguments) {
+  if (arguments == nullptr) {
+    return nullptr;
+  }
+  return std::get_if<flutter::EncodableMap>(arguments);
+}
+
+std::string ReadString(const flutter::EncodableMap& map,
+                       const std::string& key) {
+  const auto it = map.find(flutter::EncodableValue(key));
+  if (it == map.end()) {
+    return {};
+  }
+  if (const auto* value = std::get_if<std::string>(&it->second)) {
+    return *value;
+  }
+  return {};
+}
+
+void HandleExportVideo(
+    const flutter::MethodCall<flutter::EncodableValue>& call,
+    std::unique_ptr<flutter::MethodResult<flutter::EncodableValue>> result) {
+  clingfy::capture::export_::PassthroughInput input;
+  if (const auto* args = AsMap(call.arguments())) {
+    input.project_path = ReadString(*args, "projectPath");
+    input.directory_override = ReadString(*args, "directoryOverride");
+    input.filename = ReadString(*args, "filename");
+    input.format = ReadString(*args, "format");
+  }
+
+  const auto outcome =
+      clingfy::capture::export_::ExportPassthroughCopy(input);
+  switch (outcome.error) {
+    case clingfy::capture::export_::PassthroughError::kNone:
+      reply::String(*result, outcome.output_path);
+      return;
+    case clingfy::capture::export_::PassthroughError::kInputMissing:
+      result->Error(error::kExportInputMissing, outcome.message,
+                    flutter::EncodableValue(input.project_path));
+      return;
+    case clingfy::capture::export_::PassthroughError::kNoDestination:
+      result->Error(error::kBadArgs, outcome.message,
+                    flutter::EncodableValue(input.directory_override));
+      return;
+    case clingfy::capture::export_::PassthroughError::kCopyFailed:
+      result->Error(error::kExportError, outcome.message,
+                    flutter::EncodableValue(input.project_path));
+      return;
+  }
+}
+
+void HandleProcessVideo(
+    const flutter::MethodCall<flutter::EncodableValue>& /*call*/,
+    std::unique_ptr<flutter::MethodResult<flutter::EncodableValue>> result) {
+  // Slice 1: return null so the Dart caller falls back to using the
+  // original screen.mov as the preview source (its current behavior on
+  // Windows anyway). Slices 2+ extend the PreviewCompositor with
+  // composition params and start updating the live preview here.
+  reply::Null(*result);
+}
+
 }  // namespace
 
 void RegisterHandlers(HandlerTable& table) {
-  table["exportVideo"] = &HandleNotImplemented;
-  table["processVideo"] = &HandleNotImplemented;
+  table["exportVideo"] = &HandleExportVideo;
+  table["processVideo"] = &HandleProcessVideo;
   table["cancelExport"] = &HandleNoopSetter;
 
   // `getRecordingSceneInfo` was a Phase 1 stub here; Step 5.2 moved it
