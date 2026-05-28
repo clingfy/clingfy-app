@@ -161,6 +161,17 @@ class RecordingEngine {
   std::unique_ptr<clingfy::audio::AudioPacketQueue> loopback_queue_;
   std::thread audio_mixer_thread_;
   std::atomic<bool> audio_mixer_stopped_{true};
+
+  // Diagnostic counters for the audio pipeline. Phase 5 user reports of
+  // "MP4 has no audio" need to distinguish three failure modes: WASAPI
+  // delivered no packets, the mixer never produced non-empty packets, or
+  // `MfSinkWriterEncoder::WriteAudioPacket` rejected every sample. The
+  // first two are already covered by `mic_capture_->packets_emitted()` /
+  // `loopback_capture_->packets_emitted()` and the encoder's
+  // `audio_samples_written_count()`; this counter (plus a one-shot first-
+  // error log) covers the third. All best-effort — never gates teardown.
+  std::atomic<std::uint64_t> audio_write_errors_{0};
+  std::atomic<bool> audio_write_logged_first_error_{false};
 };
 
 }  // namespace clingfy::capture

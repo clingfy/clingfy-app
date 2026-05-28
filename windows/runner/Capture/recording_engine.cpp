@@ -260,9 +260,13 @@ std::optional<RecordingError> RecordingEngine::Start(
   // queue(s) are alive, mixes (or pass-through when a source is
   // missing), and forwards to the encoder. Skipped entirely when both
   // captures failed or both were disabled.
+  audio_write_errors_.store(0);
+  audio_write_logged_first_error_.store(false);
   if (mic_capture_ != nullptr || loopback_capture_ != nullptr) {
     audio_mixer_stopped_.store(false);
     audio_mixer_thread_ = std::thread([this] {
+      clingfy::bridge::devices::LogDeviceProbe(
+          "RecordingEngine: audio mixer thread start");
       clingfy::audio::AudioMixer mixer;
       while (!audio_mixer_stopped_.load()) {
         std::optional<clingfy::audio::AudioPacket> mic;
@@ -290,9 +294,24 @@ std::optional<RecordingError> RecordingEngine::Start(
         auto mixed = mixer.Mix(mic.has_value() ? &*mic : nullptr,
                                 loopback.has_value() ? &*loopback : nullptr);
         if (mixed.frame_count > 0 && encoder_ != nullptr) {
-          encoder_->WriteAudioPacket(mixed);
+          if (auto write_err = encoder_->WriteAudioPacket(mixed)) {
+            audio_write_errors_.fetch_add(1, std::memory_order_relaxed);
+            bool expected = false;
+            if (audio_write_logged_first_error_.compare_exchange_strong(
+                    expected, true)) {
+              char buf[640];
+              std::snprintf(buf, sizeof(buf),
+                            "RecordingEngine: WriteAudioPacket FAILED "
+                            "(first error) hr=0x%08lX msg=%s",
+                            static_cast<unsigned long>(write_err->hr),
+                            write_err->message.c_str());
+              clingfy::bridge::devices::LogDeviceProbe(buf);
+            }
+          }
         }
       }
+      clingfy::bridge::devices::LogDeviceProbe(
+          "RecordingEngine: audio mixer thread exit");
     });
   }
 
@@ -489,6 +508,31 @@ std::optional<RecordingError> RecordingEngine::Stop(
     return RecordingError{clingfy::bridge::error::kInvalidRecordingState,
                           "Cannot stop a session that has not finished "
                           "starting."};
+  }
+
+  // Audio pipeline summary log. Phase 5 follow-up to PR #122's open-time
+  // logging — captures the four numbers that pinpoint which stage of the
+  // pipeline lost the audio (WASAPI delivery, mixer activity, encoder
+  // accept, write errors).
+  {
+    const auto mic_packets =
+        mic_capture_ ? mic_capture_->packets_emitted() : 0ULL;
+    const auto loopback_packets =
+        loopback_capture_ ? loopback_capture_->packets_emitted() : 0ULL;
+    const auto audio_samples_written =
+        encoder_ ? encoder_->audio_samples_written_count() : 0ULL;
+    const auto write_errors =
+        audio_write_errors_.load(std::memory_order_relaxed);
+    char buf[512];
+    std::snprintf(buf, sizeof(buf),
+                  "RecordingEngine: stop summary mic_packets=%llu "
+                  "loopback_packets=%llu audio_samples_written=%llu "
+                  "write_errors=%llu",
+                  static_cast<unsigned long long>(mic_packets),
+                  static_cast<unsigned long long>(loopback_packets),
+                  static_cast<unsigned long long>(audio_samples_written),
+                  static_cast<unsigned long long>(write_errors));
+    clingfy::bridge::devices::LogDeviceProbe(buf);
   }
 
   TeardownPipeline();
