@@ -40,6 +40,7 @@ add_executable(runner_tests
   "audio_packet_queue_test.cpp"
   "device_record_test.cpp"
   "encoder_output_path_test.cpp"
+  "export_passthrough_test.cpp"
   "mf_encoder_config_test.cpp"
   "permission_probe_test.cpp"
   "platform_thread_dispatcher_test.cpp"

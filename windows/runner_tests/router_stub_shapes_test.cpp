@@ -128,30 +128,30 @@ TEST(StubShapesTest, NoopSettersReturnSuccessWithNullValue) {
   }
 }
 
-// === Action methods that must return WINDOWS_NOT_IMPLEMENTED. ==============
+// === Export action methods (Phase 6 Slice 1). ==============================
 //
 // Phase 3A moved startRecording / stopRecording onto the real
-// `RecordingEngine`; they no longer return WINDOWS_NOT_IMPLEMENTED. The
-// engine's happy/sad paths are covered in `recording_engine_test.cpp` and
-// the router-level wiring is covered by `StartRecordingWithoutArgsReturnsBadArgs`
-// below. Export / post-processing still go via the not-implemented path.
+// `RecordingEngine`. Phase 6 Slice 1 lifts `exportVideo` and `processVideo`
+// off the NotImplemented stub:
+//   - `exportVideo` with no args returns EXPORT_INPUT_MISSING (the project
+//     path is required); a happy-path copy is covered in
+//     `export_passthrough_test.cpp`.
+//   - `processVideo` returns null (no preview file generated; Dart falls
+//     back to the raw screen.mov as the preview source). Slices 2+ will
+//     produce a real preview path here.
 
-TEST(StubShapesTest, ExportActionsReturnNotImplemented) {
+TEST(StubShapesTest, ExportVideoWithoutProjectPathReturnsInputMissing) {
   MethodRouter router;
-  const std::vector<std::string> kBlocked = {
-      "exportVideo",
-      "processVideo",
-  };
+  const RecordedReply reply = Dispatch(router, "exportVideo");
+  EXPECT_TRUE(reply.error_called);
+  EXPECT_EQ(reply.error_code, error::kExportInputMissing);
+}
 
-  for (const auto& method : kBlocked) {
-    const RecordedReply reply = Dispatch(router, method);
-    EXPECT_TRUE(reply.error_called)
-        << "Method '" << method
-        << "' should return a structured error until export ships.";
-    EXPECT_EQ(reply.error_code, error::kWindowsNotImplemented)
-        << "Method '" << method
-        << "' should use the WINDOWS_NOT_IMPLEMENTED error code.";
-  }
+TEST(StubShapesTest, ProcessVideoReturnsNullPreviewPath) {
+  MethodRouter router;
+  const RecordedReply reply = Dispatch(router, "processVideo");
+  EXPECT_TRUE(reply.success_called);
+  EXPECT_TRUE(reply.success_value.IsNull());
 }
 
 // === Empty-list getters. ===================================================
