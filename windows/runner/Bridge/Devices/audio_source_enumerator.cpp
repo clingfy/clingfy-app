@@ -152,30 +152,55 @@ std::vector<AudioSourceRecord> EnumerateAudioInputs() {
     return sources;
   }
 
-  // Broadened filter: include ACTIVE *and* UNPLUGGED endpoints. Some
-  // Realtek driver configurations leave the built-in mic array in an
-  // UNPLUGGED state until a recording client (re-)activates it; without
-  // this widening we'd report "no microphone" while the user sees an
-  // active mic in the Windows Sound control panel. The downstream
-  // capture code already retries activation, so a stale "unplugged"
-  // mic that won't actually open is the rare case and surfaces as a
-  // clean recording-start failure later. macOS has no equivalent
-  // (AVFoundation device enumeration is single-state).
-  const DWORD kStateMask = DEVICE_STATE_ACTIVE | DEVICE_STATE_UNPLUGGED;
+  // Two-pass enumeration. First try ACTIVE-only — this is what every
+  // user with a normal Windows audio setup expects to see in the
+  // microphone dropdown. If that pass returns zero devices, widen to
+  // ACTIVE|UNPLUGGED so the Realtek edge case (mic array stuck in
+  // UNPLUGGED state until the first WASAPI activation) still surfaces
+  // *something* the user can pick. PR #121 originally widened
+  // unconditionally to fix that Realtek case; the side effect was that
+  // a physically-empty 3.5 mm jack also showed up first in the dropdown
+  // and selecting it silently recorded 6+ seconds of -91 dB samples.
+  // Narrowing the default keeps both shapes working.
+  //
+  // macOS has no equivalent — AVFoundation device enumeration is
+  // single-state and never reports unplugged endpoints.
   ScopedCom<IMMDeviceCollection> collection;
   hr = enumerator->EnumAudioEndpoints(
-      eCapture, kStateMask, collection.ReleaseAndGetAddressOf());
+      eCapture, DEVICE_STATE_ACTIVE, collection.ReleaseAndGetAddressOf());
   if (FAILED(hr) || !collection) {
-    char buf[160];
+    char buf[200];
     std::snprintf(buf, sizeof(buf),
                   "EnumerateAudioInputs: EnumAudioEndpoints(eCapture, "
-                  "ACTIVE|UNPLUGGED) failed hr=0x%08X",
+                  "ACTIVE) failed hr=0x%08X — trying ACTIVE|UNPLUGGED",
                   hr);
     LogDeviceProbe(buf);
-    return sources;
   }
 
   UINT count = 0;
+  if (collection && SUCCEEDED(collection->GetCount(&count)) && count == 0) {
+    LogDeviceProbe(
+        "EnumerateAudioInputs: zero ACTIVE endpoints — widening to "
+        "ACTIVE|UNPLUGGED for the Realtek-stuck edge case");
+    collection.Reset();
+  }
+
+  if (!collection) {
+    hr = enumerator->EnumAudioEndpoints(
+        eCapture, DEVICE_STATE_ACTIVE | DEVICE_STATE_UNPLUGGED,
+        collection.ReleaseAndGetAddressOf());
+    if (FAILED(hr) || !collection) {
+      char buf[200];
+      std::snprintf(buf, sizeof(buf),
+                    "EnumerateAudioInputs: EnumAudioEndpoints(eCapture, "
+                    "ACTIVE|UNPLUGGED) failed hr=0x%08X",
+                    hr);
+      LogDeviceProbe(buf);
+      return sources;
+    }
+  }
+
+  count = 0;
   if (FAILED(collection->GetCount(&count))) {
     LogDeviceProbe(
         "EnumerateAudioInputs: collection->GetCount failed — returning empty");

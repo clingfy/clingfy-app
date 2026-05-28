@@ -9,9 +9,12 @@
 
 #include <atomic>
 #include <chrono>
+#include <cstdio>
 #include <cstring>
 #include <thread>
 #include <utility>
+
+#include "Bridge/Devices/device_probe_log.h"
 
 namespace clingfy::audio {
 
@@ -116,6 +119,22 @@ ComPtr<IMMDevice> WasapiAudioCapture::Impl::OpenDevice(
 
   // Microphone path: prefer the user's saved selection, fall back to the
   // default capture endpoint.
+  //
+  // Two failure modes have to be handled here:
+  //   1. The id no longer resolves at all (device unplugged + driver
+  //      released the endpoint) → `GetDevice` returns an error and we
+  //      drop through to the default endpoint, preserving the original
+  //      "stale id should not block recording" intent.
+  //   2. The id resolves to an endpoint whose state is UNPLUGGED → on
+  //      Realtek-class drivers `GetDevice` returns S_OK, `Activate`
+  //      returns S_OK, but every capture buffer carries
+  //      AUDCLNT_BUFFERFLAGS_SILENT and the MP4 ends up with 6+ seconds
+  //      of -91 dB samples. PR #121 surfaced these endpoints in the
+  //      dropdown to fix a different Realtek bug (mic stuck in
+  //      UNPLUGGED state until first activation); the side effect was
+  //      that a physically-empty 3.5 mm jack now looks pickable. Detect
+  //      that case here and fall back to the default endpoint instead
+  //      of recording silence.
   if (!device_id.empty()) {
     const int needed = ::MultiByteToWideChar(
         CP_UTF8, 0, device_id.c_str(), static_cast<int>(device_id.size()),
@@ -127,10 +146,22 @@ ComPtr<IMMDevice> WasapiAudioCapture::Impl::OpenDevice(
                             needed);
       hr = enumerator->GetDevice(wide.c_str(), &device);
       if (SUCCEEDED(hr) && device != nullptr) {
-        return device;
+        DWORD state = 0;
+        if (SUCCEEDED(device->GetState(&state)) &&
+            state == DEVICE_STATE_UNPLUGGED) {
+          char buf[256];
+          std::snprintf(buf, sizeof(buf),
+                        "WasapiAudioCapture: selected mic is UNPLUGGED "
+                        "(state=0x%08lX) — falling back to default capture "
+                        "endpoint to avoid recording silence",
+                        static_cast<unsigned long>(state));
+          clingfy::bridge::devices::LogDeviceProbe(buf);
+          device.Reset();
+        } else {
+          return device;
+        }
       }
-      // Fall through to the default endpoint; a stale device id (e.g.
-      // headset unplugged) should not block the recording.
+      // Fall through to the default endpoint.
     }
   }
   hr = enumerator->GetDefaultAudioEndpoint(eCapture, eConsole, &device);
