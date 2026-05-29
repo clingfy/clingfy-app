@@ -1,5 +1,7 @@
 #include "Bridge/method_router.h"
 
+#include <windows.h>
+
 #include <gtest/gtest.h>
 
 #include <flutter/encodable_value.h>
@@ -385,9 +387,6 @@ TEST(StubShapesTest, GetExcludeMicFromSystemAudioReturnsTrue) {
 TEST(StubShapesTest, NullGettersReturnNull) {
   MethodRouter router;
   const std::vector<std::string> kNullGetters = {
-      "getSaveFolder",
-      "chooseSaveFolder",
-      "resetSaveFolder",
       "getTodayLogFilePath",
       "previewGetSourceDimensions",
       "pickImage",
@@ -400,6 +399,26 @@ TEST(StubShapesTest, NullGettersReturnNull) {
     EXPECT_TRUE(reply.success_value.IsNull())
         << "Method '" << method << "' should return null.";
   }
+}
+
+// getSaveFolder / resetSaveFolder return the default save folder path so
+// the settings UI and export dialog have a real directory to show and to
+// hand back as directoryOverride. (Before the Slice 2 follow-up they were
+// null stubs, which left every default export failing with kNoDestination.)
+// chooseSaveFolder is intentionally NOT exercised here: it opens a modal
+// IFileOpenDialog, which has no place in a headless test.
+TEST(StubShapesTest, SaveFolderGettersReturnDefaultPath) {
+  ::SetEnvironmentVariableW(L"CLINGFY_DEFAULT_SAVE_FOLDER",
+                            L"C:\\Tmp\\clingfy_stub_save_folder");
+  MethodRouter router;
+  for (const char* method : {"getSaveFolder", "resetSaveFolder"}) {
+    const RecordedReply reply = Dispatch(router, method);
+    EXPECT_TRUE(reply.success_called) << method << " did not succeed.";
+    const auto* path = std::get_if<std::string>(&reply.success_value);
+    ASSERT_NE(path, nullptr) << method << " should return a string path.";
+    EXPECT_EQ(*path, "C:\\Tmp\\clingfy_stub_save_folder") << method;
+  }
+  ::SetEnvironmentVariableW(L"CLINGFY_DEFAULT_SAVE_FOLDER", nullptr);
 }
 
 // === Specific shaped maps. =================================================

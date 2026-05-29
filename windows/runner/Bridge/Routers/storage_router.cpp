@@ -1,6 +1,9 @@
 #include "Bridge/Routers/storage_router.h"
 
+#include <windows.h>
+
 #include "Bridge/result_helpers.h"
+#include "Services/save_folder.h"
 
 namespace clingfy::bridge::routers::storage {
 
@@ -10,6 +13,50 @@ void HandleNoopSetter(
     const flutter::MethodCall<flutter::EncodableValue>& /*call*/,
     std::unique_ptr<flutter::MethodResult<flutter::EncodableValue>> result) {
   reply::Null(*result);
+}
+
+// Return the default export folder (%USERPROFILE%\Videos\Clingfy) as the
+// first-run seed. Dart persists whatever it gets in SharedPreferences, so
+// `getSaveFolder` is only consulted when no folder is cached yet. We do
+// NOT create the folder here — creation is lazy, on first export, matching
+// the macOS SaveFolderStore which returns ~/Movies/Clingfy without
+// touching disk.
+void HandleGetSaveFolder(
+    const flutter::MethodCall<flutter::EncodableValue>& /*call*/,
+    std::unique_ptr<flutter::MethodResult<flutter::EncodableValue>> result) {
+  const std::string folder = clingfy::storage::DefaultSaveFolderUtf8();
+  if (folder.empty()) {
+    reply::Null(*result);
+  } else {
+    reply::String(*result, folder);
+  }
+}
+
+// Show the native folder picker. Returns the chosen path, or null on
+// cancel — `WorkspaceSettingsController.chooseSaveFolderPath` treats null
+// as "user cancelled" and keeps the previous folder.
+void HandleChooseSaveFolder(
+    const flutter::MethodCall<flutter::EncodableValue>& /*call*/,
+    std::unique_ptr<flutter::MethodResult<flutter::EncodableValue>> result) {
+  const auto chosen =
+      clingfy::storage::ChooseSaveFolderDialog(::GetActiveWindow());
+  if (chosen.has_value() && !chosen->empty()) {
+    reply::String(*result, *chosen);
+  } else {
+    reply::Null(*result);
+  }
+}
+
+// Reset to the default folder. Dart re-caches whatever comes back.
+void HandleResetSaveFolder(
+    const flutter::MethodCall<flutter::EncodableValue>& /*call*/,
+    std::unique_ptr<flutter::MethodResult<flutter::EncodableValue>> result) {
+  const std::string folder = clingfy::storage::DefaultSaveFolderUtf8();
+  if (folder.empty()) {
+    reply::Null(*result);
+  } else {
+    reply::String(*result, folder);
+  }
 }
 
 // `clearCachedRecordings` is documented to return `{deletedCount: N}`.
@@ -66,9 +113,13 @@ void HandleNullString(
 }  // namespace
 
 void RegisterHandlers(HandlerTable& table) {
-  table["getSaveFolder"] = &HandleNullString;
-  table["chooseSaveFolder"] = &HandleNullString;
-  table["resetSaveFolder"] = &HandleNullString;
+  table["getSaveFolder"] = &HandleGetSaveFolder;
+  table["chooseSaveFolder"] = &HandleChooseSaveFolder;
+  table["resetSaveFolder"] = &HandleResetSaveFolder;
+  // openSaveFolder still a no-op: the chosen folder is persisted on the
+  // Dart side, so opening "the" folder needs Dart to pass a path. Tracked
+  // as a follow-up (open-folder-after-export). It is harmless today —
+  // Dart treats the null reply as "nothing opened".
   table["openSaveFolder"] = &HandleNoopSetter;
 
   table["getTodayLogFilePath"] = &HandleNullString;

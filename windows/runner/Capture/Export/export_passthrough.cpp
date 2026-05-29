@@ -10,6 +10,7 @@
 #include "Capture/Export/export_geometry.h"
 #include "Capture/Export/export_pipeline.h"
 #include "Capture/recording_project_reader.h"
+#include "Services/save_folder.h"
 
 namespace clingfy::capture::export_ {
 
@@ -145,12 +146,21 @@ PassthroughResult ExportPassthroughCopy(const PassthroughInput& input) {
     return out;
   }
 
-  const std::string dir = Trim(input.directory_override);
+  std::string dir = Trim(input.directory_override);
+  if (dir.empty()) {
+    // No explicit destination: fall back to the default save folder,
+    // created on demand. Mirrors macOS, where ExportEngine resolves the
+    // SaveFolderStore (~/Movies/Clingfy) when directoryOverride is empty.
+    const std::wstring fallback = clingfy::storage::DefaultSaveFolder();
+    if (!fallback.empty() && clingfy::storage::EnsureDirectoryExists(fallback)) {
+      dir = clingfy::storage::WideToUtf8(fallback);
+    }
+  }
   if (dir.empty()) {
     out.error = PassthroughError::kNoDestination;
     out.message =
-        "exportVideo: directoryOverride is required for Slice 1 — no default "
-        "save folder is wired up yet.";
+        "exportVideo: no directoryOverride supplied and the default save "
+        "folder could not be resolved or created.";
     return out;
   }
 
