@@ -1011,7 +1011,13 @@ class PostProcessingController extends ChangeNotifier {
         'autoNormalizeOnExport': autoNormalizeOnExport,
         'targetLoudnessDbfs': targetLoudnessDbfs,
         'filename': dialogResult.fileName.trim(),
-        'directoryOverride': dialogResult.directoryOverride,
+        // Fall back to the workspace save folder when the user didn't pick
+        // a folder in the export dialog itself, so a folder chosen in
+        // Settings → Workspace is honored without re-picking. Native
+        // resolves its own default if this is still null.
+        'directoryOverride':
+            dialogResult.directoryOverride ??
+            _settings.workspace.saveFolderPath,
         'sessionId': _activeSessionId,
         'format': _settings.export.exportFormat,
         'codec': _settings.export.exportCodec,

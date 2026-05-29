@@ -54,6 +54,7 @@ add_executable(runner_tests
   "recording_project_reader_test.cpp"
   "recording_project_writer_test.cpp"
   "recording_session_state_test.cpp"
+  "save_folder_test.cpp"
   "single_instance_test.cpp"
   "video_frame_queue_test.cpp"
   "windows_selection_state_test.cpp"

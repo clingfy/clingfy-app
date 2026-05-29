@@ -1,5 +1,7 @@
 #include "Capture/Export/export_passthrough.h"
 
+#include <windows.h>
+
 #include <gtest/gtest.h>
 
 #include <filesystem>
@@ -196,20 +198,38 @@ TEST(ExportPassthroughCopyTest, ReturnsInputMissingWhenProjectPathEmpty) {
   EXPECT_FALSE(outcome.message.empty());
 }
 
-TEST(ExportPassthroughCopyTest, ReturnsNoDestinationWhenDirOverrideEmpty) {
-  const auto project = StageProject("export-test-3", "x");
+TEST(ExportPassthroughCopyTest, FallsBackToDefaultSaveFolderWhenDirOverrideEmpty) {
+  // Empty directoryOverride no longer fails — it now falls back to the
+  // default save folder (mirroring macOS). Point the resolver at a temp
+  // dir via the env override so the test never touches the real
+  // %USERPROFILE%\Videos\Clingfy.
+  const auto fallback_root =
+      fs::temp_directory_path() / "clingfy_export_default_folder_test";
+  std::error_code ec;
+  fs::remove_all(fallback_root, ec);
+  ::SetEnvironmentVariableW(L"CLINGFY_DEFAULT_SAVE_FOLDER",
+                            fallback_root.wstring().c_str());
+
+  const auto project = StageProject("export-test-3", "DEFAULT_FOLDER_BYTES");
 
   PassthroughInput input;
   input.project_path = project.u8string();
-  input.directory_override = "";
-  input.filename = "x";
+  input.directory_override = "";  // user supplied no folder
+  input.filename = "FromDefault";
 
   const auto outcome = ExportPassthroughCopy(input);
-  EXPECT_EQ(outcome.error, PassthroughError::kNoDestination);
-  EXPECT_FALSE(outcome.message.empty());
+  ::SetEnvironmentVariableW(L"CLINGFY_DEFAULT_SAVE_FOLDER", nullptr);
 
-  std::error_code rm_ec;
-  fs::remove_all(project.parent_path(), rm_ec);
+  ASSERT_EQ(outcome.error, PassthroughError::kNone) << outcome.message;
+  EXPECT_FALSE(outcome.output_path.empty());
+  EXPECT_NE(outcome.output_path.find("clingfy_export_default_folder_test"),
+            std::string::npos)
+      << "expected output under the default folder, got: "
+      << outcome.output_path;
+  EXPECT_TRUE(fs::exists(fs::u8path(outcome.output_path)));
+
+  fs::remove_all(fallback_root, ec);
+  fs::remove_all(project.parent_path(), ec);
 }
 
 TEST(ExportPassthroughCopyTest, ReturnsInputMissingWhenProjectDoesNotExist) {

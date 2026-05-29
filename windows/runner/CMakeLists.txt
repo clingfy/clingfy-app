@@ -54,6 +54,7 @@ add_library(runner_bridge STATIC
   "Encoding/mf_sink_writer_encoder.cpp"
   "Graphics/d3d_device.cpp"
   "Permissions/permission_probe.cpp"
+  "Services/save_folder.cpp"
   "preview/frame_timing.cpp"
   "preview/preview_compositor.cpp"
   "preview/preview_engine.cpp"
@@ -117,6 +118,15 @@ target_link_libraries(runner_bridge PUBLIC
 # Phase 3B / 3C.
 target_link_libraries(runner_bridge PUBLIC
   "d2d1.lib"
+)
+
+# Phase 6 Slice 2 follow-up: the export save-folder resolver + folder
+# picker (Services/save_folder.cpp).
+#   * shell32 — SHGetKnownFolderPath (FOLDERID_Videos), IFileOpenDialog
+#   * ole32   — CoInitializeEx / CoCreateInstance / CoTaskMemFree
+target_link_libraries(runner_bridge PUBLIC
+  "shell32.lib"
+  "ole32.lib"
 )
 
 # C++/WinRT headers use the standard-layout `co_await`-friendly types but
