@@ -1,0 +1,466 @@
+#include "Capture/Export/export_pipeline.h"
+
+#include <d3d11.h>
+#include <d3d11_4.h>
+#include <d2d1_1.h>
+#include <d2d1_1helper.h>
+#include <dxgi.h>
+#include <mfapi.h>
+#include <mferror.h>
+#include <mfidl.h>
+#include <mfreadwrite.h>
+#include <wrl/client.h>
+
+#include <atomic>
+#include <cstring>
+#include <mutex>
+#include <vector>
+
+#include "Audio/audio_mixer.h"
+#include "Capture/Export/export_geometry.h"
+#include "Capture/captured_video_frame.h"
+#include "Encoding/mf_encoder_config.h"
+#include "Encoding/mf_sink_writer_encoder.h"
+#include "Graphics/d3d_device.h"
+
+namespace clingfy::capture::export_ {
+
+namespace {
+
+using Microsoft::WRL::ComPtr;
+
+// Sentinel for "stream not found" — distinguishable from any concrete
+// stream index (which start at 0) and from MF's symbolic selectors.
+constexpr DWORD kNoStream = 0xFFFFFFFFu;
+
+// Idempotent MF startup. Mirrors the encoder's pattern: paired with
+// MFShutdown only at process exit, so opening an export does not churn
+// global MF state. A second independent once_flag (the encoder has its
+// own) simply bumps MFStartup's internal refcount, which is harmless.
+void EnsureMediaFoundationStarted() {
+  static std::once_flag flag;
+  std::call_once(flag, [] { ::MFStartup(MF_VERSION, MFSTARTUP_LITE); });
+}
+
+RenderResult Failure(std::string message) {
+  RenderResult out;
+  out.ok = false;
+  out.message = std::move(message);
+  return out;
+}
+
+std::string Hr(const char* what, HRESULT hr) {
+  char buf[32];
+  std::snprintf(buf, sizeof(buf), " (hr=0x%08lX)", static_cast<unsigned long>(hr));
+  return std::string(what) + buf;
+}
+
+// Walk the source's streams, selecting only the first video stream (and
+// the first audio stream, if any) and recording their concrete indices.
+// Returns kNoStream for a track that is absent.
+void IdentifyStreams(IMFSourceReader* reader, DWORD* video_index,
+                     DWORD* audio_index) {
+  *video_index = kNoStream;
+  *audio_index = kNoStream;
+  reader->SetStreamSelection(static_cast<DWORD>(MF_SOURCE_READER_ALL_STREAMS),
+                             FALSE);
+  for (DWORD i = 0;; ++i) {
+    ComPtr<IMFMediaType> native;
+    const HRESULT hr = reader->GetNativeMediaType(i, 0, native.GetAddressOf());
+    if (hr == MF_E_INVALIDSTREAMNUMBER) {
+      break;
+    }
+    if (FAILED(hr) || native == nullptr) {
+      continue;
+    }
+    GUID major = GUID_NULL;
+    if (FAILED(native->GetGUID(MF_MT_MAJOR_TYPE, &major))) {
+      continue;
+    }
+    if (major == MFMediaType_Video && *video_index == kNoStream) {
+      *video_index = i;
+    } else if (major == MFMediaType_Audio && *audio_index == kNoStream) {
+      *audio_index = i;
+    }
+  }
+}
+
+// Copy one decoded BGRA video frame into a top-down, tightly-packed
+// buffer (`dest`, sized width*4*height) regardless of the source buffer's
+// stride sign. IMF2DBuffer::Lock2D hands back a pointer to the top row
+// plus a stride that may be negative for bottom-up layouts; indexing by
+// `scan0 + row * stride` always walks top-to-bottom either way. Returns
+// false on lock failure.
+bool ExtractTopDownBgra(IMFSample* sample, UINT width, UINT height,
+                        std::vector<BYTE>* dest) {
+  const size_t row_bytes = static_cast<size_t>(width) * 4u;
+  dest->resize(row_bytes * height);
+
+  ComPtr<IMFMediaBuffer> raw;
+  if (FAILED(sample->GetBufferByIndex(0, raw.GetAddressOf())) ||
+      raw == nullptr) {
+    return false;
+  }
+
+  ComPtr<IMF2DBuffer> buffer2d;
+  if (SUCCEEDED(raw.As(&buffer2d)) && buffer2d != nullptr) {
+    BYTE* scan0 = nullptr;
+    LONG stride = 0;
+    if (FAILED(buffer2d->Lock2D(&scan0, &stride)) || scan0 == nullptr) {
+      return false;
+    }
+    for (UINT row = 0; row < height; ++row) {
+      const BYTE* src_row = scan0 + static_cast<LONG>(row) * stride;
+      std::memcpy(dest->data() + row * row_bytes, src_row, row_bytes);
+    }
+    buffer2d->Unlock2D();
+    return true;
+  }
+
+  // Fallback: a plain contiguous buffer. Assume a top-down, tightly
+  // packed layout (the common case for a Video-Processor RGB32 output).
+  ComPtr<IMFMediaBuffer> contiguous;
+  if (FAILED(sample->ConvertToContiguousBuffer(contiguous.GetAddressOf())) ||
+      contiguous == nullptr) {
+    return false;
+  }
+  BYTE* data = nullptr;
+  DWORD max_len = 0;
+  DWORD cur_len = 0;
+  if (FAILED(contiguous->Lock(&data, &max_len, &cur_len)) || data == nullptr) {
+    return false;
+  }
+  const size_t copy_bytes =
+      (cur_len < dest->size()) ? cur_len : dest->size();
+  std::memcpy(dest->data(), data, copy_bytes);
+  contiguous->Unlock();
+  return true;
+}
+
+}  // namespace
+
+RenderResult RenderComposedExport(const RenderRequest& request) {
+  EnsureMediaFoundationStarted();
+
+  // --- D3D11 device shared by decode-upload, Direct2D, and the encoder.
+  clingfy::graphics::D3DDevice device;
+  if (auto err = device.Create()) {
+    return Failure("export: D3D11 device creation failed — " + err->message);
+  }
+  // The hardware H.264 MFT runs the encode on its own worker thread, so
+  // the device it shares with our Direct2D draws must be multithread
+  // protected. Best-effort: older feature levels may not expose the
+  // interface, in which case the software path still works.
+  {
+    ComPtr<ID3D11Multithread> multithread;
+    if (SUCCEEDED(device.context()->QueryInterface(
+            IID_PPV_ARGS(multithread.GetAddressOf()))) &&
+        multithread != nullptr) {
+      multithread->SetMultithreadProtected(TRUE);
+    }
+  }
+
+  // --- Source reader: decode video to BGRA system memory + audio to PCM.
+  ComPtr<IMFAttributes> reader_attrs;
+  if (FAILED(::MFCreateAttributes(reader_attrs.GetAddressOf(), 1))) {
+    return Failure("export: MFCreateAttributes failed for the source reader.");
+  }
+  reader_attrs->SetUINT32(MF_SOURCE_READER_ENABLE_VIDEO_PROCESSING, TRUE);
+
+  ComPtr<IMFSourceReader> reader;
+  HRESULT hr = ::MFCreateSourceReaderFromURL(request.source_video_path.c_str(),
+                                             reader_attrs.Get(),
+                                             reader.GetAddressOf());
+  if (FAILED(hr) || reader == nullptr) {
+    return Failure(Hr("export: MFCreateSourceReaderFromURL failed — the "
+                      "recording may be missing or unreadable",
+                      hr));
+  }
+
+  DWORD video_index = kNoStream;
+  DWORD audio_index = kNoStream;
+  IdentifyStreams(reader.Get(), &video_index, &audio_index);
+  if (video_index == kNoStream) {
+    return Failure("export: source has no decodable video stream.");
+  }
+  reader->SetStreamSelection(video_index, TRUE);
+
+  // Force the video stream to BGRA (ARGB32 in MF terms). The reader
+  // inserts a video processor to convert from NV12/etc.
+  {
+    ComPtr<IMFMediaType> rgb_type;
+    if (FAILED(::MFCreateMediaType(rgb_type.GetAddressOf()))) {
+      return Failure("export: MFCreateMediaType failed for the RGB32 output.");
+    }
+    rgb_type->SetGUID(MF_MT_MAJOR_TYPE, MFMediaType_Video);
+    rgb_type->SetGUID(MF_MT_SUBTYPE, MFVideoFormat_RGB32);
+    hr = reader->SetCurrentMediaType(video_index, nullptr, rgb_type.Get());
+    if (FAILED(hr)) {
+      return Failure(Hr("export: could not configure RGB32 video decode", hr));
+    }
+  }
+
+  // Read the true source dimensions from the negotiated type rather than
+  // trusting the project metadata.
+  UINT32 source_w = 0;
+  UINT32 source_h = 0;
+  {
+    ComPtr<IMFMediaType> current;
+    if (FAILED(reader->GetCurrentMediaType(video_index, current.GetAddressOf())) ||
+        FAILED(::MFGetAttributeSize(current.Get(), MF_MT_FRAME_SIZE, &source_w,
+                                    &source_h)) ||
+        source_w == 0 || source_h == 0) {
+      return Failure("export: could not determine source video dimensions.");
+    }
+  }
+
+  // Audio is optional. Try to pull it through as 48 kHz stereo int16 PCM;
+  // if the source has no audio or the type is refused, fall back to a
+  // video-only export rather than failing the whole render.
+  bool has_audio = false;
+  if (audio_index != kNoStream) {
+    reader->SetStreamSelection(audio_index, TRUE);
+    ComPtr<IMFMediaType> pcm_type;
+    if (SUCCEEDED(::MFCreateMediaType(pcm_type.GetAddressOf()))) {
+      pcm_type->SetGUID(MF_MT_MAJOR_TYPE, MFMediaType_Audio);
+      pcm_type->SetGUID(MF_MT_SUBTYPE, MFAudioFormat_PCM);
+      pcm_type->SetUINT32(MF_MT_AUDIO_BITS_PER_SAMPLE, 16);
+      pcm_type->SetUINT32(MF_MT_AUDIO_SAMPLES_PER_SECOND, 48'000);
+      pcm_type->SetUINT32(MF_MT_AUDIO_NUM_CHANNELS, 2);
+      if (SUCCEEDED(reader->SetCurrentMediaType(audio_index, nullptr,
+                                                pcm_type.Get()))) {
+        has_audio = true;
+      } else {
+        reader->SetStreamSelection(audio_index, FALSE);
+      }
+    }
+  }
+
+  // --- Geometry: output size + source placement, via the tested helpers.
+  const SizeF source_size{static_cast<double>(source_w),
+                          static_cast<double>(source_h)};
+  const PixelSize canvas =
+      ToEvenPixelSize(ResolveTargetSize(source_size, request.layout,
+                                        request.resolution));
+  const RectF content = ComputeContentRect(
+      SizeF{static_cast<double>(canvas.width),
+            static_cast<double>(canvas.height)},
+      source_size, ParseFitMode(request.fit));
+
+  // --- Direct2D device + context on the shared D3D11 device.
+  ComPtr<ID2D1Factory1> d2d_factory;
+  {
+    D2D1_FACTORY_OPTIONS options{};
+    hr = ::D2D1CreateFactory(D2D1_FACTORY_TYPE_SINGLE_THREADED,
+                             __uuidof(ID2D1Factory1), &options,
+                             reinterpret_cast<void**>(d2d_factory.GetAddressOf()));
+    if (FAILED(hr) || d2d_factory == nullptr) {
+      return Failure(Hr("export: D2D1CreateFactory failed", hr));
+    }
+  }
+  ComPtr<IDXGIDevice> dxgi_device;
+  if (FAILED(device.device()->QueryInterface(IID_PPV_ARGS(dxgi_device.GetAddressOf())))) {
+    return Failure("export: ID3D11Device has no IDXGIDevice (BGRA support "
+                   "flag missing?).");
+  }
+  ComPtr<ID2D1Device> d2d_device;
+  if (FAILED(d2d_factory->CreateDevice(dxgi_device.Get(),
+                                       d2d_device.GetAddressOf()))) {
+    return Failure("export: ID2D1Factory1::CreateDevice failed.");
+  }
+  ComPtr<ID2D1DeviceContext> d2d_ctx;
+  if (FAILED(d2d_device->CreateDeviceContext(D2D1_DEVICE_CONTEXT_OPTIONS_NONE,
+                                             d2d_ctx.GetAddressOf()))) {
+    return Failure("export: ID2D1Device::CreateDeviceContext failed.");
+  }
+
+  // Reusable source bitmap: a fresh decoded frame is uploaded into it via
+  // CopyFromMemory each iteration. Sized to the source; the fit/fill
+  // scale happens in the DrawBitmap dest rect, not here.
+  ComPtr<ID2D1Bitmap1> source_bitmap;
+  {
+    const D2D1_BITMAP_PROPERTIES1 props = D2D1::BitmapProperties1(
+        D2D1_BITMAP_OPTIONS_NONE,
+        D2D1::PixelFormat(DXGI_FORMAT_B8G8R8A8_UNORM, D2D1_ALPHA_MODE_IGNORE));
+    if (FAILED(d2d_ctx->CreateBitmap(D2D1::SizeU(source_w, source_h), nullptr,
+                                     0, &props, source_bitmap.GetAddressOf()))) {
+      return Failure("export: ID2D1DeviceContext::CreateBitmap failed for the "
+                     "source frame.");
+    }
+  }
+
+  // --- Output encoder at the target resolution.
+  clingfy::encoding::EncoderConfig enc_config;
+  enc_config.output_path = request.destination_path;
+  enc_config.width = canvas.width;
+  enc_config.height = canvas.height;
+  enc_config.fps = request.fps_hint != 0 ? request.fps_hint : 30u;
+
+  std::optional<clingfy::encoding::AudioEncoderConfig> audio_config;
+  if (has_audio) {
+    audio_config = clingfy::encoding::AudioEncoderConfig{};
+  }
+
+  clingfy::encoding::MfSinkWriterEncoder encoder;
+  if (auto err = encoder.Open(enc_config, device, audio_config)) {
+    return Failure("export: encoder open failed — " + err->message);
+  }
+
+  // --- Frame loop: pull samples interleaved by timestamp.
+  std::vector<BYTE> top_down;  // reused per video frame
+  const D2D1_RECT_F dest_rect = D2D1::RectF(
+      static_cast<float>(content.x), static_cast<float>(content.y),
+      static_cast<float>(content.x + content.width),
+      static_cast<float>(content.y + content.height));
+
+  std::uint64_t video_frames = 0;
+  std::uint64_t audio_packets = 0;
+  bool video_eos = false;
+  bool audio_eos = !has_audio;  // nothing to drain when there is no audio
+
+  while (!(video_eos && audio_eos)) {
+    DWORD actual_index = 0;
+    DWORD flags = 0;
+    LONGLONG timestamp = 0;
+    ComPtr<IMFSample> sample;
+    hr = reader->ReadSample(static_cast<DWORD>(MF_SOURCE_READER_ANY_STREAM), 0,
+                            &actual_index, &flags, &timestamp,
+                            sample.GetAddressOf());
+    if (FAILED(hr)) {
+      encoder.Cancel();
+      return Failure(Hr("export: IMFSourceReader::ReadSample failed", hr));
+    }
+    if (flags & MF_SOURCE_READERF_ENDOFSTREAM) {
+      if (actual_index == video_index) {
+        video_eos = true;
+      } else if (actual_index == audio_index) {
+        audio_eos = true;
+      }
+    }
+    if (sample == nullptr) {
+      continue;
+    }
+
+    if (actual_index == video_index) {
+      if (!ExtractTopDownBgra(sample.Get(), source_w, source_h, &top_down)) {
+        encoder.Cancel();
+        return Failure("export: failed to read a decoded video frame buffer.");
+      }
+      if (FAILED(source_bitmap->CopyFromMemory(nullptr, top_down.data(),
+                                               source_w * 4u))) {
+        encoder.Cancel();
+        return Failure("export: ID2D1Bitmap::CopyFromMemory failed.");
+      }
+
+      // Fresh output texture per frame: the encoder MFT may hold the
+      // previous frame's surface asynchronously, so reuse would risk
+      // overwriting a frame still in flight.
+      D3D11_TEXTURE2D_DESC desc{};
+      desc.Width = canvas.width;
+      desc.Height = canvas.height;
+      desc.MipLevels = 1;
+      desc.ArraySize = 1;
+      desc.Format = DXGI_FORMAT_B8G8R8A8_UNORM;
+      desc.SampleDesc.Count = 1;
+      desc.Usage = D3D11_USAGE_DEFAULT;
+      desc.BindFlags = D3D11_BIND_RENDER_TARGET | D3D11_BIND_SHADER_RESOURCE;
+      ComPtr<ID3D11Texture2D> out_texture;
+      if (FAILED(device.device()->CreateTexture2D(&desc, nullptr,
+                                                  out_texture.GetAddressOf()))) {
+        encoder.Cancel();
+        return Failure("export: CreateTexture2D failed for an output frame.");
+      }
+      ComPtr<IDXGISurface> out_surface;
+      if (FAILED(out_texture.As(&out_surface))) {
+        encoder.Cancel();
+        return Failure("export: output texture has no IDXGISurface.");
+      }
+      const D2D1_BITMAP_PROPERTIES1 target_props = D2D1::BitmapProperties1(
+          D2D1_BITMAP_OPTIONS_TARGET,
+          D2D1::PixelFormat(DXGI_FORMAT_B8G8R8A8_UNORM,
+                            D2D1_ALPHA_MODE_PREMULTIPLIED));
+      ComPtr<ID2D1Bitmap1> target_bitmap;
+      if (FAILED(d2d_ctx->CreateBitmapFromDxgiSurface(
+              out_surface.Get(), &target_props, target_bitmap.GetAddressOf()))) {
+        encoder.Cancel();
+        return Failure("export: CreateBitmapFromDxgiSurface failed.");
+      }
+
+      d2d_ctx->SetTarget(target_bitmap.Get());
+      d2d_ctx->BeginDraw();
+      d2d_ctx->Clear(D2D1::ColorF(0.0f, 0.0f, 0.0f, 1.0f));
+      d2d_ctx->DrawBitmap(source_bitmap.Get(), dest_rect, 1.0f,
+                          D2D1_BITMAP_INTERPOLATION_MODE_LINEAR, nullptr);
+      const HRESULT end_hr = d2d_ctx->EndDraw();
+      d2d_ctx->SetTarget(nullptr);
+      if (FAILED(end_hr)) {
+        encoder.Cancel();
+        return Failure(Hr("export: Direct2D EndDraw failed", end_hr));
+      }
+      // Flush so the composite completes before the encoder MFT reads the
+      // texture on its own thread.
+      device.context()->Flush();
+
+      clingfy::capture::CapturedVideoFrame frame;
+      frame.texture = out_texture;
+      frame.width = canvas.width;
+      frame.height = canvas.height;
+      frame.timestamp_hns = timestamp;
+      if (auto err = encoder.WriteVideoFrame(frame)) {
+        encoder.Cancel();
+        return Failure("export: encoder WriteVideoFrame failed — " +
+                       err->message);
+      }
+      ++video_frames;
+    } else if (has_audio && actual_index == audio_index) {
+      ComPtr<IMFMediaBuffer> audio_buffer;
+      if (SUCCEEDED(sample->ConvertToContiguousBuffer(
+              audio_buffer.GetAddressOf())) &&
+          audio_buffer != nullptr) {
+        BYTE* data = nullptr;
+        DWORD max_len = 0;
+        DWORD cur_len = 0;
+        if (SUCCEEDED(audio_buffer->Lock(&data, &max_len, &cur_len)) &&
+            data != nullptr && cur_len > 0) {
+          const std::uint32_t int16_count =
+              cur_len / static_cast<std::uint32_t>(sizeof(std::int16_t));
+          clingfy::audio::MixedPacket packet;
+          packet.samples.resize(int16_count);
+          std::memcpy(packet.samples.data(), data,
+                      static_cast<size_t>(int16_count) * sizeof(std::int16_t));
+          packet.frame_count = int16_count / 2u;  // stereo interleaved
+          packet.timestamp_hns = timestamp;
+          audio_buffer->Unlock();
+          if (auto err = encoder.WriteAudioPacket(packet)) {
+            encoder.Cancel();
+            return Failure("export: encoder WriteAudioPacket failed — " +
+                           err->message);
+          }
+          ++audio_packets;
+        } else if (data != nullptr) {
+          audio_buffer->Unlock();
+        }
+      }
+    }
+  }
+
+  if (video_frames == 0) {
+    encoder.Cancel();
+    return Failure("export: no video frames were decoded from the source.");
+  }
+
+  if (auto err = encoder.Finalize()) {
+    return Failure("export: encoder finalize failed — " + err->message);
+  }
+
+  RenderResult out;
+  out.ok = true;
+  out.output_width = canvas.width;
+  out.output_height = canvas.height;
+  out.video_frames_written = video_frames;
+  out.audio_packets_written = audio_packets;
+  out.had_audio = has_audio;
+  return out;
+}
+
+}  // namespace clingfy::capture::export_

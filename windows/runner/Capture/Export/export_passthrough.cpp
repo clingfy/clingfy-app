@@ -7,6 +7,8 @@
 #include <string>
 #include <system_error>
 
+#include "Capture/Export/export_geometry.h"
+#include "Capture/Export/export_pipeline.h"
 #include "Capture/recording_project_reader.h"
 
 namespace clingfy::capture::export_ {
@@ -178,16 +180,43 @@ PassthroughResult ExportPassthroughCopy(const PassthroughInput& input) {
   std::error_code ec;
   fs::create_directories(destination.parent_path(), ec);
 
-  // Copy. `overwrite_existing` would race with `UniqueDestination`'s
-  // collision avoidance so we deliberately omit it.
-  fs::copy_file(source, destination, fs::copy_options::none, ec);
-  if (ec) {
-    out.error = PassthroughError::kCopyFailed;
-    out.message =
-        "exportVideo: copy_file failed (" + ec.message() +
-        "); source=" + source.u8string() +
-        " destination=" + destination.u8string();
-    return out;
+  if (IsIdentityTransform(input.layout, input.resolution)) {
+    // Fast-path: layout=auto & resolution=auto means the output is
+    // pixel-for-pixel the source, so copy it byte-for-byte. Lossless,
+    // instant, and it keeps the original audio + container untouched —
+    // no point decoding and re-encoding a recording into an identical
+    // frame. `overwrite_existing` would race with `UniqueDestination`'s
+    // collision avoidance so we deliberately omit it.
+    fs::copy_file(source, destination, fs::copy_options::none, ec);
+    if (ec) {
+      out.error = PassthroughError::kCopyFailed;
+      out.message =
+          "exportVideo: copy_file failed (" + ec.message() +
+          "); source=" + source.u8string() +
+          " destination=" + destination.u8string();
+      return out;
+    }
+  } else {
+    // Composition path: decode the recording, composite each frame at the
+    // requested resolution / layout / fit, and re-encode. Source audio is
+    // carried through so the resized export is not silent (gain/normalize
+    // is Slice 4).
+    RenderRequest render;
+    render.source_video_path = read.project->screen_path;
+    render.destination_path = destination.u8string();
+    render.layout = input.layout;
+    render.resolution = input.resolution;
+    render.fit = input.fit;
+    render.fps_hint = read.project->metadata.has_value()
+                          ? read.project->metadata->fps
+                          : 0u;
+    const RenderResult render_result = RenderComposedExport(render);
+    if (!render_result.ok) {
+      out.error = PassthroughError::kRenderFailed;
+      out.message =
+          "exportVideo: composition render failed — " + render_result.message;
+      return out;
+    }
   }
 
   out.output_path = destination.u8string();

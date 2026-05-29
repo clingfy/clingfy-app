@@ -1,22 +1,34 @@
-// Slice 1 of Phase 6 (export) — straight passthrough copy of the project's
-// `capture/screen.mov` to a user-chosen destination path. No transcoding,
-// no composition, no audio post-processing. Future slices layer those on
-// top:
-//   Slice 2: resolution / layout / fit
-//   Slice 3: background + padding + corner radius (Direct2D composition)
+// Phase 6 (export) entry point. Slice 1 shipped a straight passthrough
+// copy of the project's `capture/screen.mov`; Slice 2 adds the real
+// resolution / layout / fit composition pass. Future slices layer the
+// rest on top:
+//   Slice 1: passthrough copy (auto/auto stays here as the fast-path)
+//   Slice 2: resolution / layout / fit (Media Foundation decode →
+//            Direct2D composite → re-encode), audio carried through
+//   Slice 3: background + padding + corner radius (extends the Slice 2
+//            Direct2D composite)
 //   Slice 4: audio gain + volume + normalize
 //   Slice 5: format / codec / bitrate + cleanup
 //
 // The handler in `Bridge/Routers/export_router.cpp` parses the 22-arg
-// `exportVideo` map, picks out the four args this slice actually uses
-// (projectPath, directoryOverride, filename, format), and calls into here.
-// Errors are mapped onto the existing `native_error_codes.h` strings so
-// the Dart side surfaces them through the same path macOS uses.
+// `exportVideo` map and fills a `PassthroughInput`. Errors are mapped
+// onto the existing `native_error_codes.h` strings so the Dart side
+// surfaces them through the same path macOS uses.
+//
+// Two output paths, chosen by `export_geometry::IsIdentityTransform`:
+//   * layout=auto & resolution=auto → no reframing is needed, so the
+//     source is copied byte-for-byte (lossless, instant, preserves the
+//     original audio + container). This is the Slice 1 behavior.
+//   * any other layout/resolution → the recording is decoded, composited
+//     at the chosen output resolution with the chosen fit mode, and
+//     re-encoded (see `export_pipeline.h`). The source audio is carried
+//     through so the resized export is not silent (gain/normalize is
+//     Slice 4).
 //
 // Why .mov extension forced: the recorder writes a QuickTime MOV
-// container (mp4-family); transcoding to a real MP4 or GIF needs a
-// Media Foundation Source Reader + Sink Writer pass, which Slice 5
-// adds. Until then, this slice forces the output extension to `.mov` so
+// container (mp4-family) and the re-encode pass writes the same
+// container. Honoring the user's mp4/gif choice needs the format matrix
+// Slice 5 adds; until then the output extension is forced to `.mov` so
 // what the user sees on disk matches what's actually in the file. The
 // `format` arg is still logged on a mismatch so we don't lose the
 // signal that the user picked something else.
@@ -43,10 +55,20 @@ struct PassthroughInput {
   // User-chosen file stem (no extension). Empty → "Untitled".
   std::string filename;
 
-  // The format the Dart side asked for ("mp4" / "mov" / "gif"). Slice 1
-  // always writes .mov regardless; the value is kept so the Result can
-  // report a mismatch back to the caller for logging.
+  // The format the Dart side asked for ("mp4" / "mov" / "gif"). Output
+  // is always written as .mov until Slice 5 wires the format matrix; the
+  // value is kept so the Result can report a mismatch back for logging.
   std::string format;
+
+  // Slice 2 composition args, straight from the `exportVideo` map. Empty
+  // / "auto" leaves the export on the copy fast-path; any concrete value
+  // routes through the decode → composite → re-encode pipeline.
+  //   layout     — auto | classic43 | square11 | youtube169 | reel916
+  //   resolution — auto | p1080 | p1440 | p2160 | p4320
+  //   fit        — fit | fill   (defaults to "fit" when empty)
+  std::string layout;
+  std::string resolution;
+  std::string fit;
 };
 
 enum class PassthroughError {
@@ -59,6 +81,10 @@ enum class PassthroughError {
   // std::filesystem::copy_file threw or returned an error code. Maps to
   // EXPORT_ERROR.
   kCopyFailed,
+  // The decode → composite → re-encode pipeline failed (bad source,
+  // unsupported media type, encoder/Direct2D error). Maps to
+  // EXPORT_ERROR. Carries the underlying detail in `message`.
+  kRenderFailed,
 };
 
 struct PassthroughResult {
@@ -84,12 +110,17 @@ struct PassthroughResult {
 std::string ResolveExportDestination(const std::string& directory,
                                      const std::string& filename_stem);
 
-// Slice 1 entry point. Reads the project, resolves the source video
-// path via `RecordingProjectReader`, and copies it to the destination
-// computed via `ResolveExportDestination`. Synchronous — the copy
-// completes before this returns. No progress event is emitted (a few-MB
-// file copies in tens of milliseconds; later slices that re-encode get
-// the real `updateExportProgress` plumbing).
+// Export entry point. Reads the project, resolves the source video path
+// via `RecordingProjectReader`, and computes the destination via
+// `ResolveExportDestination`. Then dispatches:
+//   * identity transform (layout=auto & resolution=auto) → copies the
+//     source byte-for-byte (Slice 1 behavior).
+//   * otherwise → decodes, composites at the requested resolution/layout/
+//     fit, and re-encodes via `export_pipeline.h`.
+// Synchronous — the work completes before this returns. The copy path is
+// sub-second; the re-encode path scales with clip length but Slice 2
+// does not yet emit `updateExportProgress` (that lands with cancel in
+// Slice 5).
 PassthroughResult ExportPassthroughCopy(const PassthroughInput& input);
 
 }  // namespace clingfy::capture::export_

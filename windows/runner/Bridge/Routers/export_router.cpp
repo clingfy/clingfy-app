@@ -38,18 +38,17 @@ void HandleSaveManualZoomSegments(
   reply::Bool(*result, false);
 }
 
-// ---- Phase 6 / Slice 1 ------------------------------------------------------
-// `exportVideo` and `processVideo` move off the NotImplemented stub. Slice 1
-// scope:
-//   - exportVideo: passthrough copy of `capture/screen.mov` to a Dart-chosen
-//     destination directory + filename, forcing a `.mov` extension. No
-//     composition, no audio post-processing, no progress event yet (the copy
-//     is sub-second on the recordings Slice 1 ships against).
+// ---- Phase 6 / Slice 1 + 2 --------------------------------------------------
+// `exportVideo` and `processVideo` are off the NotImplemented stub.
+//   - exportVideo: writes to a Dart-chosen destination directory + filename,
+//     forcing a `.mov` extension. layout=auto & resolution=auto take the
+//     Slice 1 byte-for-byte copy fast-path; any other layout/resolution/fit
+//     routes through the Slice 2 decode → composite → re-encode pipeline
+//     (`export_pipeline.h`), carrying the source audio through. No progress
+//     event yet (cancel + progress land in Slice 5).
 //   - processVideo: returns null (signals "no preview file was generated;
-//     re-use the original screen.mov"). The Dart-side Windows suppression in
-//     `lib/app/home/post_processing/post_processing_controller.dart` lifts in
-//     the same PR so the preview shell can call through. Future slices will
-//     wire processVideo to update the live PreviewCompositor's parameters.
+//     re-use the original screen.mov"). Future slices will wire processVideo
+//     to update the live PreviewCompositor's parameters.
 
 const flutter::EncodableMap* AsMap(
     const flutter::EncodableValue* arguments) {
@@ -80,6 +79,11 @@ void HandleExportVideo(
     input.directory_override = ReadString(*args, "directoryOverride");
     input.filename = ReadString(*args, "filename");
     input.format = ReadString(*args, "format");
+    // Slice 2 composition args. Absent/auto leaves the export on the copy
+    // fast-path; concrete values route through the re-encode pipeline.
+    input.layout = ReadString(*args, "layoutPreset");
+    input.resolution = ReadString(*args, "resolutionPreset");
+    input.fit = ReadString(*args, "fitMode");
   }
 
   const auto outcome =
