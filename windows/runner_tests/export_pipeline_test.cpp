@@ -376,11 +376,15 @@ TEST(ExportPipelineTest, CarriesSourceAudioThroughTheReEncode) {
 
 TEST(ExportPipelineTest, FillsBackgroundColorAndDrawsVideoOverIt) {
   // Slice 3 round-trip: a square11 reframe of a 64x48 source leaves
-  // letterbox bars, padding adds a margin, and the background color must
-  // fill both while the video is drawn (rounded) on top. H.264 is lossy, so
-  // the asserts compare dominant channels (red bg vs blue-ish source) with
-  // a wide tolerance rather than exact pixels, and only sample interior
-  // solid regions away from the rounded edges.
+  // letterbox bars, padding adds a margin, the background color fills both,
+  // and the video is drawn with rounded corners on top. Three pixel samples
+  // each pin a distinct effect so a regression in any one fails: a left
+  // padding-margin pixel (red only if padding reached the composite), the
+  // center (the source video over the bg), and a corner cut-away pixel (red
+  // only if the rounded clip carved the corner back to the background). A
+  // large corner radius makes the cut-away unambiguous, and H.264 loss is
+  // absorbed by comparing dominant channels (red bg vs blue-ish source)
+  // with a wide tolerance.
   clingfy::graphics::D3DDevice device;
   if (device.Create()) {
     GTEST_SKIP() << "no usable D3D11 device in this environment";
@@ -402,7 +406,7 @@ TEST(ExportPipelineTest, FillsBackgroundColorAndDrawsVideoOverIt) {
   request.fit = "fit";
   request.fps_hint = kFps;
   request.padding = 6.0;
-  request.corner_radius = 8.0;
+  request.corner_radius = 40.0;  // clamps to min(52,39)/2 = 19.5 px
   request.background_color = std::int64_t{0xFFFF0000};  // opaque red
 
   const RenderResult result = RenderComposedExport(request);
@@ -424,14 +428,29 @@ TEST(ExportPipelineTest, FillsBackgroundColorAndDrawsVideoOverIt) {
   const auto chan = [](std::uint32_t px, int shift) {
     return static_cast<int>((px >> shift) & 0xFFu);
   };
-  // Top-left margin: pure background (opaque red) — R clearly beats B.
-  const std::uint32_t margin = pixels[3u * w + 3u];
-  EXPECT_GT(chan(margin, 16) - chan(margin, 0), 40)
-      << "expected the red background to fill the padding margin";
-  // Center: the source frame (blue-ish 0x3366CC) drawn over the bg — B beats R.
+  // Padding: a mid-height pixel at x=2 is left of the padded content edge
+  // (x=6), so it is background red. Without padding the content spans the
+  // full width and this pixel would be the source video — so this pins that
+  // request.padding actually reaches the composite, not just the geometry
+  // helper.
+  const std::uint32_t pad_margin = pixels[(h / 2) * w + 2u];
+  EXPECT_GT(chan(pad_margin, 16) - chan(pad_margin, 0), 30)
+      << "expected red background in the left padding margin "
+         "(padding not applied in the pipeline?)";
+  // Placement: the center is the source frame (blue-ish 0x3366CC) drawn over
+  // the background — B beats R.
   const std::uint32_t center = pixels[(h / 2) * w + (w / 2)];
-  EXPECT_GT(chan(center, 0) - chan(center, 16), 40)
+  EXPECT_GT(chan(center, 0) - chan(center, 16), 30)
       << "expected the source video drawn over the background at center";
+  // Corner radius: (8,14) is inside the square content rect's top-left
+  // corner but outside the rounded arc (content corner (6,12.5), radius
+  // 19.5, arc center (25.5,32) — distance ~25px > 19.5), so the rounded clip
+  // carves it back to background red. Drop the clip and this pixel becomes
+  // source video blue.
+  const std::uint32_t corner = pixels[14u * w + 8u];
+  EXPECT_GT(chan(corner, 16) - chan(corner, 0), 30)
+      << "expected the background to show through the rounded corner "
+         "(corner-radius clip not applied?)";
 
   std::error_code ec;
   fs::remove_all(dir, ec);

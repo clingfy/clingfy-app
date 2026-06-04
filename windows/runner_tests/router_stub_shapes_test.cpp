@@ -6,7 +6,10 @@
 
 #include <flutter/encodable_value.h>
 
+#include <filesystem>
+#include <fstream>
 #include <string>
+#include <system_error>
 #include <vector>
 
 #include "Bridge/native_error_codes.h"
@@ -154,6 +157,70 @@ TEST(StubShapesTest, ProcessVideoReturnsNullPreviewPath) {
   const RecordedReply reply = Dispatch(router, "processVideo");
   EXPECT_TRUE(reply.success_called);
   EXPECT_TRUE(reply.success_value.IsNull());
+}
+
+// Regression guard: HandleExportVideo's switch must complete the
+// MethodResult for EVERY PassthroughError. kRenderFailed — the
+// decode -> composite -> re-encode path that Slice 3's padding / corner
+// radius / non-auto layout force every styled export through — previously
+// had no case and no default, so a render failure fell off the end of the
+// switch and left the result un-answered, hanging the Dart `exportVideo`
+// future forever (export UI stuck, _isExporting never cleared). This drives
+// a real render failure (a valid .clingfyproj whose screen.mov is not a
+// decodable video, plus padding>0 to force composition) and asserts the
+// call is completed as an EXPORT_ERROR rather than stranded. Works with or
+// without a GPU: a missing device fails the render just like a bad source,
+// and both surface as kRenderFailed.
+TEST(StubShapesTest, ExportVideoRenderFailureRepliesWithExportError) {
+  namespace fs = std::filesystem;
+  std::error_code ec;
+  const auto root = fs::temp_directory_path() / "clingfy_router_render_fail";
+  fs::remove_all(root, ec);
+  const auto project = root / "render-fail.clingfyproj";
+  fs::create_directories(project / "capture");
+  const auto out_dir = root / "out";
+  fs::create_directories(out_dir);
+
+  std::ofstream(project / "project.json") << R"({
+  "schemaVersion": 2,
+  "projectId": "render-fail",
+  "createdAt": "2026-06-04T00:00:00.000Z",
+  "capture": {
+    "screenVideo": "capture/screen.mov",
+    "screenMetadata": "capture/screen.meta.json"
+  }
+})";
+  // The file exists (so the project reader resolves) but is not a decodable
+  // video, so RenderComposedExport fails -> ExportPassthroughCopy returns
+  // kRenderFailed.
+  std::ofstream(project / "capture" / "screen.mov") << "NOT_A_REAL_VIDEO";
+  std::ofstream(project / "capture" / "screen.meta.json")
+      << R"({"width":1280,"height":720,"fps":30})";
+
+  MethodRouter router;
+  flutter::EncodableMap args{
+      {flutter::EncodableValue("projectPath"),
+       flutter::EncodableValue(project.u8string())},
+      {flutter::EncodableValue("directoryOverride"),
+       flutter::EncodableValue(out_dir.u8string())},
+      {flutter::EncodableValue("filename"),
+       flutter::EncodableValue(std::string("render-fail"))},
+      // padding>0 forces the composition path even under an otherwise
+      // auto/auto identity transform — the Slice 3 trigger for kRenderFailed.
+      {flutter::EncodableValue("padding"), flutter::EncodableValue(10.0)},
+  };
+  const RecordedReply reply =
+      DispatchWithArgs(router, "exportVideo", std::move(args));
+
+  // The defining symptom of the bug was NEITHER callback firing.
+  EXPECT_TRUE(reply.success_called || reply.error_called)
+      << "exportVideo must always complete the MethodResult — an "
+         "un-answered result hangs the Dart export future.";
+  EXPECT_TRUE(reply.error_called);
+  EXPECT_FALSE(reply.success_called);
+  EXPECT_EQ(reply.error_code, error::kExportError);
+
+  fs::remove_all(root, ec);
 }
 
 // === Empty-list getters. ===================================================

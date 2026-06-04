@@ -151,7 +151,25 @@ void HandleExportVideo(
                     flutter::EncodableValue(input.directory_override));
       return;
     case clingfy::capture::export_::PassthroughError::kCopyFailed:
+    case clingfy::capture::export_::PassthroughError::kRenderFailed:
+      // The composition (decode -> composite -> re-encode) path that
+      // Slice 3's padding / corner radius / non-auto layout force every
+      // styled export through reports failures as kRenderFailed; map it to
+      // the same generic EXPORT_ERROR macOS uses (export_passthrough.h
+      // documents kRenderFailed as "Maps to EXPORT_ERROR").
       result->Error(error::kExportError, outcome.message,
+                    flutter::EncodableValue(input.project_path));
+      return;
+    default:
+      // Every PassthroughError MUST complete the MethodResult. An
+      // un-answered result is destroyed silently and the Dart
+      // `exportVideo` future never resolves — the export UI hangs with no
+      // error. This default guards any future enum value from
+      // reintroducing that hang (MSVC's C4061/C4062 do not fire at /W4).
+      result->Error(error::kExportError,
+                    outcome.message.empty() ? "exportVideo: unknown export "
+                                              "failure"
+                                            : outcome.message,
                     flutter::EncodableValue(input.project_path));
       return;
   }
