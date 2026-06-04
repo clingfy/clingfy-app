@@ -22,7 +22,9 @@
 
 #include <gtest/gtest.h>
 
+#include <algorithm>
 #include <cstdint>
+#include <cstring>
 #include <filesystem>
 #include <string>
 #include <vector>
@@ -176,6 +178,126 @@ fs::path UniqueDir(const std::string& tag) {
   return dir;
 }
 
+// Decode the first video frame of `path` to top-down BGRA so a test can
+// sample rendered pixels (background color, video placement). Honors the
+// 2D-buffer stride sign (RGB32 output can be bottom-up). Returns false when
+// the environment can't decode, so the caller GTEST_SKIPs rather than fails.
+bool ReadFirstFrameBgra(const std::wstring& path, UINT* out_w, UINT* out_h,
+                        std::vector<std::uint32_t>* out_pixels) {
+  ComPtr<IMFAttributes> attrs;
+  if (FAILED(::MFCreateAttributes(attrs.GetAddressOf(), 1))) {
+    return false;
+  }
+  attrs->SetUINT32(MF_SOURCE_READER_ENABLE_VIDEO_PROCESSING, TRUE);
+  ComPtr<IMFSourceReader> reader;
+  if (FAILED(::MFCreateSourceReaderFromURL(path.c_str(), attrs.Get(),
+                                           reader.GetAddressOf())) ||
+      reader == nullptr) {
+    return false;
+  }
+
+  DWORD video_index = 0xFFFFFFFFu;
+  for (DWORD i = 0;; ++i) {
+    ComPtr<IMFMediaType> native;
+    const HRESULT hr = reader->GetNativeMediaType(i, 0, native.GetAddressOf());
+    if (hr == MF_E_INVALIDSTREAMNUMBER) {
+      break;
+    }
+    if (FAILED(hr) || native == nullptr) {
+      continue;
+    }
+    GUID major = GUID_NULL;
+    if (SUCCEEDED(native->GetGUID(MF_MT_MAJOR_TYPE, &major)) &&
+        major == MFMediaType_Video) {
+      video_index = i;
+      break;
+    }
+  }
+  if (video_index == 0xFFFFFFFFu) {
+    return false;
+  }
+  reader->SetStreamSelection(static_cast<DWORD>(MF_SOURCE_READER_ALL_STREAMS),
+                             FALSE);
+  reader->SetStreamSelection(video_index, TRUE);
+
+  ComPtr<IMFMediaType> rgb;
+  if (FAILED(::MFCreateMediaType(rgb.GetAddressOf()))) {
+    return false;
+  }
+  rgb->SetGUID(MF_MT_MAJOR_TYPE, MFMediaType_Video);
+  rgb->SetGUID(MF_MT_SUBTYPE, MFVideoFormat_RGB32);
+  if (FAILED(reader->SetCurrentMediaType(video_index, nullptr, rgb.Get()))) {
+    return false;
+  }
+
+  ComPtr<IMFMediaType> current;
+  UINT32 w = 0;
+  UINT32 h = 0;
+  if (FAILED(reader->GetCurrentMediaType(video_index, current.GetAddressOf())) ||
+      FAILED(::MFGetAttributeSize(current.Get(), MF_MT_FRAME_SIZE, &w, &h)) ||
+      w == 0 || h == 0) {
+    return false;
+  }
+
+  for (int guard = 0; guard < 64; ++guard) {
+    DWORD actual = 0;
+    DWORD flags = 0;
+    LONGLONG ts = 0;
+    ComPtr<IMFSample> sample;
+    if (FAILED(reader->ReadSample(video_index, 0, &actual, &flags, &ts,
+                                  sample.GetAddressOf()))) {
+      return false;
+    }
+    if (flags & MF_SOURCE_READERF_ENDOFSTREAM) {
+      return false;
+    }
+    if (sample == nullptr) {
+      continue;
+    }
+
+    const size_t row_bytes = static_cast<size_t>(w) * 4u;
+    out_pixels->assign(static_cast<size_t>(w) * h, 0u);
+    auto* dest = reinterpret_cast<BYTE*>(out_pixels->data());
+
+    ComPtr<IMFMediaBuffer> raw;
+    if (FAILED(sample->GetBufferByIndex(0, raw.GetAddressOf())) ||
+        raw == nullptr) {
+      return false;
+    }
+    ComPtr<IMF2DBuffer> buffer2d;
+    if (SUCCEEDED(raw.As(&buffer2d)) && buffer2d != nullptr) {
+      BYTE* scan0 = nullptr;
+      LONG stride = 0;
+      if (FAILED(buffer2d->Lock2D(&scan0, &stride)) || scan0 == nullptr) {
+        return false;
+      }
+      for (UINT row = 0; row < h; ++row) {
+        std::memcpy(dest + row * row_bytes,
+                    scan0 + static_cast<LONG>(row) * stride, row_bytes);
+      }
+      buffer2d->Unlock2D();
+    } else {
+      ComPtr<IMFMediaBuffer> contig;
+      if (FAILED(sample->ConvertToContiguousBuffer(contig.GetAddressOf())) ||
+          contig == nullptr) {
+        return false;
+      }
+      BYTE* data = nullptr;
+      DWORD max_len = 0;
+      DWORD cur_len = 0;
+      if (FAILED(contig->Lock(&data, &max_len, &cur_len)) || data == nullptr) {
+        return false;
+      }
+      std::memcpy(dest, data, std::min<size_t>(cur_len, row_bytes * h));
+      contig->Unlock();
+    }
+    *out_w = w;
+    *out_h = h;
+    return true;
+  }
+  return false;
+}
+
 TEST(ExportPipelineTest, VideoOnlyRoundTripProducesTargetResolution) {
   clingfy::graphics::D3DDevice device;
   if (device.Create()) {
@@ -247,6 +369,88 @@ TEST(ExportPipelineTest, CarriesSourceAudioThroughTheReEncode) {
   ASSERT_TRUE(probe.ok);
   EXPECT_TRUE(probe.has_audio)
       << "audio track was dropped during the re-encode";
+
+  std::error_code ec;
+  fs::remove_all(dir, ec);
+}
+
+TEST(ExportPipelineTest, FillsBackgroundColorAndDrawsVideoOverIt) {
+  // Slice 3 round-trip: a square11 reframe of a 64x48 source leaves
+  // letterbox bars, padding adds a margin, the background color fills both,
+  // and the video is drawn with rounded corners on top. Three pixel samples
+  // each pin a distinct effect so a regression in any one fails: a left
+  // padding-margin pixel (red only if padding reached the composite), the
+  // center (the source video over the bg), and a corner cut-away pixel (red
+  // only if the rounded clip carved the corner back to the background). A
+  // large corner radius makes the cut-away unambiguous, and H.264 loss is
+  // absorbed by comparing dominant channels (red bg vs blue-ish source)
+  // with a wide tolerance.
+  clingfy::graphics::D3DDevice device;
+  if (device.Create()) {
+    GTEST_SKIP() << "no usable D3D11 device in this environment";
+  }
+  const auto dir = UniqueDir("style");
+  const auto source = (dir / "source.mov").u8string();
+  const auto dest = (dir / "out.mov").u8string();
+
+  std::string skip_reason;
+  if (!SynthesizeSource(&device, source, /*with_audio=*/false, &skip_reason)) {
+    GTEST_SKIP() << skip_reason;
+  }
+
+  RenderRequest request;
+  request.source_video_path = fs::u8path(source).wstring();
+  request.destination_path = dest;
+  request.layout = "square11";  // 64x48 -> 64x64 (top/bottom letterbox bars)
+  request.resolution = "auto";
+  request.fit = "fit";
+  request.fps_hint = kFps;
+  request.padding = 6.0;
+  request.corner_radius = 40.0;  // clamps to min(52,39)/2 = 19.5 px
+  request.background_color = std::int64_t{0xFFFF0000};  // opaque red
+
+  const RenderResult result = RenderComposedExport(request);
+  ASSERT_TRUE(result.ok) << result.message;
+  EXPECT_EQ(result.output_width, 64u);
+  EXPECT_EQ(result.output_height, 64u);
+  EXPECT_GT(result.video_frames_written, 0u);
+
+  UINT w = 0;
+  UINT h = 0;
+  std::vector<std::uint32_t> pixels;
+  if (!ReadFirstFrameBgra(fs::u8path(dest).wstring(), &w, &h, &pixels)) {
+    GTEST_SKIP() << "could not decode the exported frame for pixel readback";
+  }
+  ASSERT_EQ(w, 64u);
+  ASSERT_EQ(h, 64u);
+
+  // BGRA-in-uint32 reads back as 0xAARRGGBB: R at bit 16, B at bit 0.
+  const auto chan = [](std::uint32_t px, int shift) {
+    return static_cast<int>((px >> shift) & 0xFFu);
+  };
+  // Padding: a mid-height pixel at x=2 is left of the padded content edge
+  // (x=6), so it is background red. Without padding the content spans the
+  // full width and this pixel would be the source video — so this pins that
+  // request.padding actually reaches the composite, not just the geometry
+  // helper.
+  const std::uint32_t pad_margin = pixels[(h / 2) * w + 2u];
+  EXPECT_GT(chan(pad_margin, 16) - chan(pad_margin, 0), 30)
+      << "expected red background in the left padding margin "
+         "(padding not applied in the pipeline?)";
+  // Placement: the center is the source frame (blue-ish 0x3366CC) drawn over
+  // the background — B beats R.
+  const std::uint32_t center = pixels[(h / 2) * w + (w / 2)];
+  EXPECT_GT(chan(center, 0) - chan(center, 16), 30)
+      << "expected the source video drawn over the background at center";
+  // Corner radius: (8,14) is inside the square content rect's top-left
+  // corner but outside the rounded arc (content corner (6,12.5), radius
+  // 19.5, arc center (25.5,32) — distance ~25px > 19.5), so the rounded clip
+  // carves it back to background red. Drop the clip and this pixel becomes
+  // source video blue.
+  const std::uint32_t corner = pixels[14u * w + 8u];
+  EXPECT_GT(chan(corner, 16) - chan(corner, 0), 30)
+      << "expected the background to show through the rounded corner "
+         "(corner-radius clip not applied?)";
 
   std::error_code ec;
   fs::remove_all(dir, ec);

@@ -1,5 +1,6 @@
 #include "Bridge/Routers/export_router.h"
 
+#include <cstdint>
 #include <optional>
 #include <string>
 
@@ -38,14 +39,16 @@ void HandleSaveManualZoomSegments(
   reply::Bool(*result, false);
 }
 
-// ---- Phase 6 / Slice 1 + 2 --------------------------------------------------
+// ---- Phase 6 / Slice 1 + 2 + 3 ----------------------------------------------
 // `exportVideo` and `processVideo` are off the NotImplemented stub.
 //   - exportVideo: writes to a Dart-chosen destination directory + filename,
-//     forcing a `.mov` extension. layout=auto & resolution=auto take the
-//     Slice 1 byte-for-byte copy fast-path; any other layout/resolution/fit
-//     routes through the Slice 2 decode → composite → re-encode pipeline
-//     (`export_pipeline.h`), carrying the source audio through. No progress
-//     event yet (cancel + progress land in Slice 5).
+//     forcing a `.mov` extension. layout=auto & resolution=auto with no
+//     padding / corner radius take the Slice 1 byte-for-byte copy fast-path;
+//     any other layout/resolution/fit — or a non-zero padding / corner
+//     radius — routes through the decode → composite → re-encode pipeline
+//     (`export_pipeline.h`), which applies the Slice 3 background color /
+//     padding / corner radius and carries the source audio through. No
+//     progress event yet (cancel + progress land in Slice 5).
 //   - processVideo: returns null (signals "no preview file was generated;
 //     re-use the original screen.mov"). Future slices will wire processVideo
 //     to update the live PreviewCompositor's parameters.
@@ -70,6 +73,46 @@ std::string ReadString(const flutter::EncodableMap& map,
   return {};
 }
 
+// Read a Dart `double` arg. The standard codec also lets an integer-valued
+// double arrive as int32/int64, so accept those too (a `0` would otherwise
+// silently zero the value); anything else returns `fallback`.
+double ReadDouble(const flutter::EncodableMap& map, const std::string& key,
+                  double fallback) {
+  const auto it = map.find(flutter::EncodableValue(key));
+  if (it == map.end()) {
+    return fallback;
+  }
+  if (const auto* d = std::get_if<double>(&it->second)) {
+    return *d;
+  }
+  if (const auto* i = std::get_if<std::int32_t>(&it->second)) {
+    return static_cast<double>(*i);
+  }
+  if (const auto* i64 = std::get_if<std::int64_t>(&it->second)) {
+    return static_cast<double>(*i64);
+  }
+  return fallback;
+}
+
+// Read a nullable Dart `int?` arg. Returns nullopt when the key is absent
+// or `null` (distinct from an explicit 0). Accepts both the int32 and int64
+// codec variants — an ARGB color with the alpha high bit set exceeds int32
+// range, so Flutter encodes it as int64.
+std::optional<std::int64_t> ReadOptionalInt(const flutter::EncodableMap& map,
+                                            const std::string& key) {
+  const auto it = map.find(flutter::EncodableValue(key));
+  if (it == map.end()) {
+    return std::nullopt;
+  }
+  if (const auto* i = std::get_if<std::int32_t>(&it->second)) {
+    return static_cast<std::int64_t>(*i);
+  }
+  if (const auto* i64 = std::get_if<std::int64_t>(&it->second)) {
+    return *i64;
+  }
+  return std::nullopt;
+}
+
 void HandleExportVideo(
     const flutter::MethodCall<flutter::EncodableValue>& call,
     std::unique_ptr<flutter::MethodResult<flutter::EncodableValue>> result) {
@@ -84,6 +127,13 @@ void HandleExportVideo(
     input.layout = ReadString(*args, "layoutPreset");
     input.resolution = ReadString(*args, "resolutionPreset");
     input.fit = ReadString(*args, "fitMode");
+    // Slice 3 canvas styling. Padding / corner radius are raw output pixels
+    // (passed through unscaled to match macOS); a non-zero value forces the
+    // composition path. backgroundColor is a nullable 0xAARRGGBB int —
+    // nullopt (Dart null) renders as opaque black.
+    input.padding = ReadDouble(*args, "padding", 0.0);
+    input.corner_radius = ReadDouble(*args, "cornerRadius", 0.0);
+    input.background_color = ReadOptionalInt(*args, "backgroundColor");
   }
 
   const auto outcome =
@@ -101,7 +151,25 @@ void HandleExportVideo(
                     flutter::EncodableValue(input.directory_override));
       return;
     case clingfy::capture::export_::PassthroughError::kCopyFailed:
+    case clingfy::capture::export_::PassthroughError::kRenderFailed:
+      // The composition (decode -> composite -> re-encode) path that
+      // Slice 3's padding / corner radius / non-auto layout force every
+      // styled export through reports failures as kRenderFailed; map it to
+      // the same generic EXPORT_ERROR macOS uses (export_passthrough.h
+      // documents kRenderFailed as "Maps to EXPORT_ERROR").
       result->Error(error::kExportError, outcome.message,
+                    flutter::EncodableValue(input.project_path));
+      return;
+    default:
+      // Every PassthroughError MUST complete the MethodResult. An
+      // un-answered result is destroyed silently and the Dart
+      // `exportVideo` future never resolves — the export UI hangs with no
+      // error. This default guards any future enum value from
+      // reintroducing that hang (MSVC's C4061/C4062 do not fire at /W4).
+      result->Error(error::kExportError,
+                    outcome.message.empty() ? "exportVideo: unknown export "
+                                              "failure"
+                                            : outcome.message,
                     flutter::EncodableValue(input.project_path));
       return;
   }

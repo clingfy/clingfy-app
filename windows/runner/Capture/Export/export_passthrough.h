@@ -15,15 +15,18 @@
 // onto the existing `native_error_codes.h` strings so the Dart side
 // surfaces them through the same path macOS uses.
 //
-// Two output paths, chosen by `export_geometry::IsIdentityTransform`:
-//   * layout=auto & resolution=auto → no reframing is needed, so the
-//     source is copied byte-for-byte (lossless, instant, preserves the
-//     original audio + container). This is the Slice 1 behavior.
-//   * any other layout/resolution → the recording is decoded, composited
-//     at the chosen output resolution with the chosen fit mode, and
-//     re-encoded (see `export_pipeline.h`). The source audio is carried
-//     through so the resized export is not silent (gain/normalize is
-//     Slice 4).
+// Two output paths:
+//   * No compositing needed — identity transform (layout=auto &
+//     resolution=auto) AND no Slice 3 styling (zero padding, zero corner
+//     radius) → the source is copied byte-for-byte (lossless, instant,
+//     preserves the original audio + container). This is the Slice 1
+//     behavior. (A background color alone is invisible without margins, so
+//     it does not by itself defeat the copy.)
+//   * Otherwise → the recording is decoded, composited at the chosen output
+//     resolution with the chosen fit mode, background color, padding, and
+//     corner radius, and re-encoded (see `export_pipeline.h`). The source
+//     audio is carried through so the resized export is not silent
+//     (gain/normalize is Slice 4).
 //
 // Why .mov extension forced: the recorder writes a QuickTime MOV
 // container (mp4-family) and the re-encode pass writes the same
@@ -36,6 +39,7 @@
 #ifndef RUNNER_CAPTURE_EXPORT_EXPORT_PASSTHROUGH_H_
 #define RUNNER_CAPTURE_EXPORT_EXPORT_PASSTHROUGH_H_
 
+#include <cstdint>
 #include <optional>
 #include <string>
 
@@ -69,6 +73,17 @@ struct PassthroughInput {
   std::string layout;
   std::string resolution;
   std::string fit;
+
+  // Slice 3 canvas styling args from the `exportVideo` map. `padding` and
+  // `corner_radius` are raw output pixels (the Dart slider ranges 0-100 /
+  // 0-50 are passed through unscaled, matching macOS). `background_color`
+  // is a packed 0xAARRGGBB int; nullopt (Dart `null`) => opaque black.
+  // Padding or a corner radius forces the composition path even under an
+  // otherwise-identity transform. Background image / preset are not handled
+  // yet (Slice 3 is solid color only).
+  double padding = 0.0;
+  double corner_radius = 0.0;
+  std::optional<std::int64_t> background_color;
 };
 
 enum class PassthroughError {

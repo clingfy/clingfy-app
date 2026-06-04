@@ -31,6 +31,7 @@
 #define RUNNER_CAPTURE_EXPORT_EXPORT_GEOMETRY_H_
 
 #include <cstdint>
+#include <optional>
 #include <string>
 
 namespace clingfy::capture::export_ {
@@ -57,6 +58,16 @@ struct RectF {
 struct PixelSize {
   std::uint32_t width = 0;
   std::uint32_t height = 0;
+};
+
+// Resolved background fill color, channels in [0, 1]. A Slice 3 helper
+// decodes the Dart-side ARGB int (or null) into this so the pure decode
+// rule can be pinned without standing up a Direct2D color type.
+struct RgbaColor {
+  double r = 0.0;
+  double g = 0.0;
+  double b = 0.0;
+  double a = 1.0;
 };
 
 enum class FitMode {
@@ -94,6 +105,23 @@ PixelSize ToEvenPixelSize(SizeF size);
 // rewrites this function).
 RectF ComputeContentRect(SizeF target, SizeF source, FitMode fit,
                          double padding = 0.0);
+
+// Slice 3 — pure background-color + corner-radius resolution, kept next to
+// the geometry so both can be pinned by `export_geometry_test.cpp` without
+// a GPU.
+
+// Decode the Dart `backgroundColor` arg (a packed 0xAARRGGBB int, or
+// nullopt when the user left it unset) into an RGBA color. Mirrors macOS
+// `VideoColorPipeline.cgColor(fromARGB:)`: nullopt => opaque black, and a
+// value with no high alpha byte (<= 0x00FFFFFF, e.g. 0x000000) is treated
+// as fully opaque rather than transparent.
+RgbaColor ResolveBackgroundColor(std::optional<std::int64_t> argb);
+
+// Clamp a requested corner radius (raw output pixels, from the Dart
+// `cornerRadius` arg) to a sane range for `content`: never negative, never
+// more than half the shorter side (a fully-rounded stadium / circle).
+// macOS leans on CoreGraphics' implicit clamp; Windows clamps explicitly.
+double ResolveCornerRadiusPx(double requested, RectF content);
 
 // True when the export needs no reframing at all: `layout` and
 // `resolution` are both "auto" (or empty), so the output is pixel-for-

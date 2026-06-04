@@ -2,6 +2,8 @@
 
 #include <algorithm>
 #include <cmath>
+#include <cstdint>
+#include <optional>
 
 namespace clingfy::capture::export_ {
 
@@ -111,6 +113,39 @@ RectF ComputeContentRect(SizeF target, SizeF source, FitMode fit,
   const double tx = (target.width - content_w) / 2.0;
   const double ty = (target.height - content_h) / 2.0;
   return RectF{tx, ty, content_w, content_h};
+}
+
+RgbaColor ResolveBackgroundColor(std::optional<std::int64_t> argb_opt) {
+  // Dart sends null when the user never picked a color; macOS resolves that
+  // (and a bare 0x000000) to opaque black.
+  if (!argb_opt.has_value()) {
+    return RgbaColor{0.0, 0.0, 0.0, 1.0};
+  }
+  // Mask to 32 bits so a sign-extended int32 (Flutter may encode an ARGB
+  // with the alpha high bit set as a negative int32) still reads as the
+  // intended 0xAARRGGBB.
+  const std::uint32_t argb =
+      static_cast<std::uint32_t>(*argb_opt & 0xFFFFFFFFLL);
+  const double r = static_cast<double>((argb >> 16) & 0xFFu) / 255.0;
+  const double g = static_cast<double>((argb >> 8) & 0xFFu) / 255.0;
+  const double b = static_cast<double>(argb & 0xFFu) / 255.0;
+  // Match VideoColorPipeline: only honor an alpha byte when the value
+  // carries one (> 0x00FFFFFF); otherwise treat it as fully opaque.
+  const double a = (argb > 0x00FFFFFFu)
+                       ? static_cast<double>((argb >> 24) & 0xFFu) / 255.0
+                       : 1.0;
+  return RgbaColor{r, g, b, a};
+}
+
+double ResolveCornerRadiusPx(double requested, RectF content) {
+  if (requested <= 0.0) {
+    return 0.0;
+  }
+  const double max_radius = std::min(content.width, content.height) / 2.0;
+  if (max_radius <= 0.0) {
+    return 0.0;
+  }
+  return std::min(requested, max_radius);
 }
 
 bool IsIdentityTransform(const std::string& layout,
