@@ -245,7 +245,7 @@ RenderResult RenderComposedExport(const RenderRequest& request) {
   const RectF content = ComputeContentRect(
       SizeF{static_cast<double>(canvas.width),
             static_cast<double>(canvas.height)},
-      source_size, ParseFitMode(request.fit));
+      source_size, ParseFitMode(request.fit), request.padding);
 
   // --- Direct2D device + context on the shared D3D11 device.
   ComPtr<ID2D1Factory1> d2d_factory;
@@ -312,6 +312,32 @@ RenderResult RenderComposedExport(const RenderRequest& request) {
       static_cast<float>(content.x), static_cast<float>(content.y),
       static_cast<float>(content.x + content.width),
       static_cast<float>(content.y + content.height));
+
+  // --- Slice 3 canvas styling. All loop-invariant (it depends only on the
+  // canvas / content rect / args, none of which change per frame), so the
+  // color, clamped radius, and the rounded-clip geometry + layer are
+  // resolved/built once here.
+  const RgbaColor bg = ResolveBackgroundColor(request.background_color);
+  const D2D1_COLOR_F clear_color =
+      D2D1::ColorF(static_cast<float>(bg.r), static_cast<float>(bg.g),
+                   static_cast<float>(bg.b), static_cast<float>(bg.a));
+  const double corner_radius_px =
+      ResolveCornerRadiusPx(request.corner_radius, content);
+  ComPtr<ID2D1RoundedRectangleGeometry> rounded_clip;
+  ComPtr<ID2D1Layer> rounded_layer;
+  if (corner_radius_px > 0.0) {
+    // Best-effort: if the geometry or layer can't be created, fall back to
+    // square corners rather than failing the whole export.
+    if (FAILED(d2d_factory->CreateRoundedRectangleGeometry(
+            D2D1::RoundedRect(dest_rect,
+                              static_cast<float>(corner_radius_px),
+                              static_cast<float>(corner_radius_px)),
+            rounded_clip.GetAddressOf())) ||
+        FAILED(d2d_ctx->CreateLayer(nullptr, rounded_layer.GetAddressOf()))) {
+      rounded_clip.Reset();
+      rounded_layer.Reset();
+    }
+  }
 
   std::uint64_t video_frames = 0;
   std::uint64_t audio_packets = 0;
@@ -388,9 +414,22 @@ RenderResult RenderComposedExport(const RenderRequest& request) {
 
       d2d_ctx->SetTarget(target_bitmap.Get());
       d2d_ctx->BeginDraw();
-      d2d_ctx->Clear(D2D1::ColorF(0.0f, 0.0f, 0.0f, 1.0f));
+      // Background first (fills the whole canvas, including padding margins
+      // and letterbox bars), then the video on top — clipped to a rounded
+      // rect so the corners reveal the background, matching the macOS
+      // bg-fill-then-rounded-video draw order.
+      d2d_ctx->Clear(clear_color);
+      if (rounded_clip != nullptr) {
+        d2d_ctx->PushLayer(
+            D2D1::LayerParameters1(D2D1::InfiniteRect(), rounded_clip.Get(),
+                                   D2D1_ANTIALIAS_MODE_PER_PRIMITIVE),
+            rounded_layer.Get());
+      }
       d2d_ctx->DrawBitmap(source_bitmap.Get(), dest_rect, 1.0f,
                           D2D1_BITMAP_INTERPOLATION_MODE_LINEAR, nullptr);
+      if (rounded_clip != nullptr) {
+        d2d_ctx->PopLayer();
+      }
       const HRESULT end_hr = d2d_ctx->EndDraw();
       d2d_ctx->SetTarget(nullptr);
       if (FAILED(end_hr)) {

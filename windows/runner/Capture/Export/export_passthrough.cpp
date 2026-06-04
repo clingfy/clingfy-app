@@ -190,13 +190,22 @@ PassthroughResult ExportPassthroughCopy(const PassthroughInput& input) {
   std::error_code ec;
   fs::create_directories(destination.parent_path(), ec);
 
-  if (IsIdentityTransform(input.layout, input.resolution)) {
-    // Fast-path: layout=auto & resolution=auto means the output is
-    // pixel-for-pixel the source, so copy it byte-for-byte. Lossless,
-    // instant, and it keeps the original audio + container untouched —
-    // no point decoding and re-encoding a recording into an identical
-    // frame. `overwrite_existing` would race with `UniqueDestination`'s
-    // collision avoidance so we deliberately omit it.
+  // The byte-for-byte copy is only valid when the export needs no
+  // compositing at all: an identity transform (auto/auto) AND no Slice 3
+  // canvas styling. Padding or a corner radius expose canvas that a plain
+  // copy can't produce, so either forces the decode → composite → re-encode
+  // path even under an otherwise-identity transform. A background color
+  // alone stays on the fast-path — with no margins it is never visible.
+  const bool needs_composition =
+      !IsIdentityTransform(input.layout, input.resolution) ||
+      input.padding > 0.0 || input.corner_radius > 0.0;
+
+  if (!needs_composition) {
+    // Fast-path: pixel-for-pixel the source, so copy it byte-for-byte.
+    // Lossless, instant, and it keeps the original audio + container
+    // untouched — no point decoding and re-encoding a recording into an
+    // identical frame. `overwrite_existing` would race with
+    // `UniqueDestination`'s collision avoidance so we deliberately omit it.
     fs::copy_file(source, destination, fs::copy_options::none, ec);
     if (ec) {
       out.error = PassthroughError::kCopyFailed;
@@ -217,6 +226,9 @@ PassthroughResult ExportPassthroughCopy(const PassthroughInput& input) {
     render.layout = input.layout;
     render.resolution = input.resolution;
     render.fit = input.fit;
+    render.padding = input.padding;
+    render.corner_radius = input.corner_radius;
+    render.background_color = input.background_color;
     render.fps_hint = read.project->metadata.has_value()
                           ? read.project->metadata->fps
                           : 0u;

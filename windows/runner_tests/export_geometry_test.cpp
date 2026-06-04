@@ -2,6 +2,8 @@
 
 #include <gtest/gtest.h>
 
+#include <cstdint>
+#include <optional>
 #include <string>
 
 namespace clingfy::capture::export_ {
@@ -180,6 +182,124 @@ TEST(ComputeContentRectTest, PaddingShrinksAndRecentersContent) {
   EXPECT_NEAR(r.height, 562.5, kEps);
   EXPECT_NEAR(r.x, 40.0, kEps);
   EXPECT_NEAR(r.y, (1080.0 - 562.5) / 2.0, kEps);
+}
+
+TEST(ComputeContentRectTest, PaddingWithFillCoversAvailableAndCropsWidth) {
+  // 40px padding, fill: available 1000x1000, scale = max(1000/1920,
+  // 1000/1080) = 1000/1080 -> content fills the available height (1000) and
+  // overflows width, so x goes negative (cropped) while the top/bottom land
+  // at the padding margin.
+  const RectF r = ComputeContentRect({1080.0, 1080.0}, {1920.0, 1080.0},
+                                     FitMode::kFill, 40.0);
+  const double scale = 1000.0 / 1080.0;
+  EXPECT_NEAR(r.width, 1920.0 * scale, kEps);
+  EXPECT_NEAR(r.height, 1000.0, kEps);
+  EXPECT_NEAR(r.y, 40.0, kEps);
+  EXPECT_NEAR(r.x, (1080.0 - 1920.0 * scale) / 2.0, kEps);
+}
+
+TEST(ComputeContentRectTest, OversizedPaddingClampsAvailableToFloor) {
+  // Padding larger than the canvas: each axis is clamped to the >= 1 floor
+  // rather than going negative, collapsing the content to a sliver instead
+  // of inverting it.
+  const RectF r = ComputeContentRect({1080.0, 1080.0}, {1920.0, 1080.0},
+                                     FitMode::kFit, 2000.0);
+  const double scale = 1.0 / 1920.0;  // available 1x1 -> min scale on width
+  EXPECT_NEAR(r.width, 1920.0 * scale, kEps);   // 1.0
+  EXPECT_NEAR(r.height, 1080.0 * scale, kEps);  // 0.5625
+}
+
+TEST(ComputeContentRectTest, PaddingOnPortraitCanvasInsetsBothAxes) {
+  // 30px padding on a 1080x1920 reel canvas, fit: available 1020x1860,
+  // scale = min(1020/1920, 1860/1080) = 1020/1920 -> the fitted (width)
+  // axis margin equals padding; the letterboxed axis is centered tall.
+  const RectF r = ComputeContentRect({1080.0, 1920.0}, {1920.0, 1080.0},
+                                     FitMode::kFit, 30.0);
+  const double scale = 1020.0 / 1920.0;
+  EXPECT_NEAR(r.width, 1020.0, kEps);
+  EXPECT_NEAR(r.height, 1080.0 * scale, kEps);  // 573.75
+  EXPECT_NEAR(r.x, 30.0, kEps);
+  EXPECT_NEAR(r.y, (1920.0 - 1080.0 * scale) / 2.0, kEps);
+}
+
+// ---- ResolveBackgroundColor: ARGB int -> RGBA (macOS parity) ----------------
+
+TEST(ResolveBackgroundColorTest, NulloptIsOpaqueBlack) {
+  const RgbaColor c = ResolveBackgroundColor(std::nullopt);
+  EXPECT_NEAR(c.r, 0.0, kEps);
+  EXPECT_NEAR(c.g, 0.0, kEps);
+  EXPECT_NEAR(c.b, 0.0, kEps);
+  EXPECT_NEAR(c.a, 1.0, kEps);
+}
+
+TEST(ResolveBackgroundColorTest, OpaqueArgbDecodesEachChannel) {
+  // 0xFF3366CC -> r=0x33/255, g=0x66/255, b=0xCC/255, a=1.
+  const RgbaColor c = ResolveBackgroundColor(std::int64_t{0xFF3366CC});
+  EXPECT_NEAR(c.r, 0x33 / 255.0, kEps);
+  EXPECT_NEAR(c.g, 0x66 / 255.0, kEps);
+  EXPECT_NEAR(c.b, 0xCC / 255.0, kEps);
+  EXPECT_NEAR(c.a, 1.0, kEps);
+}
+
+TEST(ResolveBackgroundColorTest, ValueWithoutAlphaByteIsTreatedOpaque) {
+  // 0x00FF00 (<= 0x00FFFFFF) -> opaque green, matching the macOS rule that
+  // a value with no high alpha byte is fully opaque, not transparent.
+  const RgbaColor c = ResolveBackgroundColor(std::int64_t{0x0000FF00});
+  EXPECT_NEAR(c.r, 0.0, kEps);
+  EXPECT_NEAR(c.g, 1.0, kEps);
+  EXPECT_NEAR(c.b, 0.0, kEps);
+  EXPECT_NEAR(c.a, 1.0, kEps);
+}
+
+TEST(ResolveBackgroundColorTest, ZeroIsOpaqueBlackNotTransparent) {
+  const RgbaColor c = ResolveBackgroundColor(std::int64_t{0});
+  EXPECT_NEAR(c.r, 0.0, kEps);
+  EXPECT_NEAR(c.a, 1.0, kEps);
+}
+
+TEST(ResolveBackgroundColorTest, HighAlphaByteDecodesTranslucency) {
+  // 0x80FF0000 carries a real alpha byte (value > 0x00FFFFFF) -> a≈0.502.
+  const RgbaColor c = ResolveBackgroundColor(std::int64_t{0x80FF0000});
+  EXPECT_NEAR(c.r, 1.0, kEps);
+  EXPECT_NEAR(c.g, 0.0, kEps);
+  EXPECT_NEAR(c.b, 0.0, kEps);
+  EXPECT_NEAR(c.a, 0x80 / 255.0, kEps);
+}
+
+TEST(ResolveBackgroundColorTest, SignExtendedInt32IsMaskedToArgb) {
+  // Flutter encodes an ARGB with the alpha high bit set as a negative
+  // int32; after sign-extension to int64 the low 32 bits must still read as
+  // 0xFF3366CC.
+  const std::int64_t sign_extended = static_cast<std::int32_t>(0xFF3366CCu);
+  const RgbaColor c = ResolveBackgroundColor(sign_extended);
+  EXPECT_NEAR(c.r, 0x33 / 255.0, kEps);
+  EXPECT_NEAR(c.g, 0x66 / 255.0, kEps);
+  EXPECT_NEAR(c.b, 0xCC / 255.0, kEps);
+  EXPECT_NEAR(c.a, 1.0, kEps);
+}
+
+// ---- ResolveCornerRadiusPx: clamp to a sane range ---------------------------
+
+TEST(ResolveCornerRadiusPxTest, ZeroAndNegativeClampToZero) {
+  const RectF rect{0.0, 0.0, 100.0, 80.0};
+  EXPECT_NEAR(ResolveCornerRadiusPx(0.0, rect), 0.0, kEps);
+  EXPECT_NEAR(ResolveCornerRadiusPx(-5.0, rect), 0.0, kEps);
+}
+
+TEST(ResolveCornerRadiusPxTest, SmallRadiusPassesThrough) {
+  const RectF rect{0.0, 0.0, 100.0, 80.0};
+  EXPECT_NEAR(ResolveCornerRadiusPx(10.0, rect), 10.0, kEps);
+}
+
+TEST(ResolveCornerRadiusPxTest, ClampsToHalfTheShorterSide) {
+  // Shorter side is 80 -> max radius 40.
+  const RectF rect{0.0, 0.0, 100.0, 80.0};
+  EXPECT_NEAR(ResolveCornerRadiusPx(60.0, rect), 40.0, kEps);
+}
+
+TEST(ResolveCornerRadiusPxTest, DegenerateRectClampsToZero) {
+  const RectF rect{0.0, 0.0, 0.0, 0.0};
+  EXPECT_NEAR(ResolveCornerRadiusPx(10.0, rect), 0.0, kEps);
 }
 
 // ---- ParseFitMode -----------------------------------------------------------

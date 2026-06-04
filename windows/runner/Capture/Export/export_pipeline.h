@@ -7,10 +7,11 @@
 //   1. IMFSourceReader decodes the recording's `screen.mov`:
 //        - the video stream to BGRA (ARGB32) system memory, and
 //        - the audio stream (if present) to 48 kHz stereo int16 PCM.
-//   2. For each decoded video frame, Direct2D clears a target-resolution
-//      BGRA render texture to black and draws the frame into the
-//      fit/fill content rect computed by `export_geometry.h`. (Slice 3
-//      extends this same draw with background / padding / corner radius.)
+//   2. For each decoded video frame, Direct2D fills a target-resolution
+//      BGRA render texture with the background color and draws the frame
+//      into the fit/fill content rect (inset by any padding) computed by
+//      `export_geometry.h`, clipping the draw to a rounded rect when a
+//      corner radius is set (Slice 3).
 //   3. The composited texture is handed to the existing
 //      `MfSinkWriterEncoder` (H.264 / .mov) configured at the output
 //      resolution. Audio packets are written straight through so the
@@ -28,6 +29,7 @@
 #define RUNNER_CAPTURE_EXPORT_EXPORT_PIPELINE_H_
 
 #include <cstdint>
+#include <optional>
 #include <string>
 
 namespace clingfy::capture::export_ {
@@ -54,6 +56,18 @@ struct RenderRequest {
   // 30 fps. The actual sample timing comes from the decoded timestamps —
   // this only seeds the encoder's rate attribute.
   std::uint32_t fps_hint = 0;
+
+  // Slice 3 canvas styling, verbatim from the export args (see
+  // `export_geometry.h` for the resolution rules):
+  //   padding        — symmetric inset in output pixels (0 = none).
+  //   corner_radius  — rounded-corner radius in output pixels applied to
+  //                    the video rect (0 = square); clamped to half the
+  //                    shorter content side.
+  //   background_color — packed 0xAARRGGBB fill behind/around the video;
+  //                    nullopt (the Dart default) => opaque black.
+  double padding = 0.0;
+  double corner_radius = 0.0;
+  std::optional<std::int64_t> background_color;
 };
 
 struct RenderResult {
