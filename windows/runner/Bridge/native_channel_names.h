@@ -31,4 +31,16 @@ inline constexpr const char* kUpdaterEvents = "com.clingfy/updater/events";
 
 }  // namespace clingfy::bridge::channel
 
+// Native -> Flutter method names invoked BY the runner ON the screen_recorder
+// method channel (the reverse direction of the router handlers). Keep in sync
+// with Dart `NativeToFlutterMethod` (lib/core/bridges/native_method_channel.dart)
+// and the macOS Swift counterpart.
+namespace clingfy::bridge::method {
+
+// Export progress: invoked with a bare double fraction (0.0..1.0). Dart's
+// NativeBridge handles it via `call.arguments as double?` (Slice 5A).
+inline constexpr const char* kUpdateExportProgress = "updateExportProgress";
+
+}  // namespace clingfy::bridge::method
+
 #endif  // RUNNER_BRIDGE_NATIVE_CHANNEL_NAMES_H_

@@ -740,6 +740,90 @@ TEST(ExportPipelineTest, NormalizeRaisesQuietSourceRms) {
   fs::remove_all(dir, ec);
 }
 
+// Slice 5A: an .mp4 destination yields a readable MP4 (the Sink Writer picks
+// the container from the extension), and a requested bitrate is plumbed in.
+TEST(ExportPipelineTest, Mp4DestinationProducesReadableFile) {
+  clingfy::graphics::D3DDevice device;
+  if (device.Create()) {
+    GTEST_SKIP() << "no usable D3D11 device in this environment";
+  }
+  const auto dir = UniqueDir("mp4");
+  const auto source = (dir / "source.mov").u8string();
+  const auto dest = (dir / "out.mp4").u8string();
+
+  std::string skip_reason;
+  if (!SynthesizeSource(&device, source, /*with_audio=*/false, &skip_reason)) {
+    GTEST_SKIP() << skip_reason;
+  }
+
+  RenderRequest request;
+  request.source_video_path = fs::u8path(source).wstring();
+  request.destination_path = dest;  // .mp4 -> MPEG-4 container
+  request.layout = "square11";      // 64x48 -> 64x64
+  request.resolution = "auto";
+  request.fit = "fit";
+  request.fps_hint = kFps;
+  request.bitrate = "medium";
+
+  const RenderResult result = RenderComposedExport(request);
+  ASSERT_TRUE(result.ok) << result.message;
+  EXPECT_EQ(result.output_width, 64u);
+  EXPECT_EQ(result.output_height, 64u);
+  ASSERT_TRUE(fs::exists(fs::u8path(dest)));
+
+  const ProbeResult probe = ProbeOutput(fs::u8path(dest).wstring());
+  ASSERT_TRUE(probe.ok) << "exported .mp4 is not a readable video";
+  EXPECT_EQ(probe.width, 64u);
+  EXPECT_EQ(probe.height, 64u);
+
+  std::error_code ec;
+  fs::remove_all(dir, ec);
+}
+
+// Slice 5A: progress is emitted as a non-decreasing 0..1 fraction and lands at
+// 1.0 on completion. (Per-frame ticks depend on the container reporting a
+// duration; the terminal 1.0 always fires, so the assertions hold either way.)
+TEST(ExportPipelineTest, ProgressIsMonotonicAndReachesOne) {
+  clingfy::graphics::D3DDevice device;
+  if (device.Create()) {
+    GTEST_SKIP() << "no usable D3D11 device in this environment";
+  }
+  const auto dir = UniqueDir("progress");
+  const auto source = (dir / "source.mov").u8string();
+  const auto dest = (dir / "out.mov").u8string();
+
+  std::string skip_reason;
+  if (!SynthesizeSource(&device, source, /*with_audio=*/false, &skip_reason)) {
+    GTEST_SKIP() << skip_reason;
+  }
+
+  std::vector<double> fractions;
+  RenderRequest request;
+  request.source_video_path = fs::u8path(source).wstring();
+  request.destination_path = dest;
+  request.layout = "youtube169";
+  request.resolution = "auto";
+  request.fit = "fit";
+  request.fps_hint = kFps;
+  request.on_progress = [&fractions](double f) { fractions.push_back(f); };
+
+  const RenderResult result = RenderComposedExport(request);
+  ASSERT_TRUE(result.ok) << result.message;
+
+  ASSERT_FALSE(fractions.empty()) << "no progress emitted";
+  for (double f : fractions) {
+    EXPECT_GE(f, 0.0);
+    EXPECT_LE(f, 1.0);
+  }
+  for (std::size_t i = 1; i < fractions.size(); ++i) {
+    EXPECT_GE(fractions[i], fractions[i - 1]) << "progress went backwards";
+  }
+  EXPECT_GE(fractions.back(), 0.999) << "progress did not reach 1.0";
+
+  std::error_code ec;
+  fs::remove_all(dir, ec);
+}
+
 TEST(ExportPipelineTest, MissingSourceFailsCleanly) {
   // No GPU needed for the failure path, but Create() gates the device the
   // pipeline builds internally; skip if unavailable so the assert below

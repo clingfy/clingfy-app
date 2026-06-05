@@ -13,6 +13,7 @@
 #include <vector>
 
 #include "Bridge/native_error_codes.h"
+#include "Capture/Export/export_session.h"
 #include "Capture/recording_engine.h"
 #include "test_support.h"
 
@@ -107,7 +108,6 @@ TEST(StubShapesTest, NoopSettersReturnSuccessWithNullValue) {
       "previewSetZoomSegments",
       "previewSetAudioMix",
       "previewSetAudioGainDb",
-      "cancelExport",
       "openAccessibilitySettings",
       "openScreenRecordingSettings",
       "openSystemSettings",
@@ -280,6 +280,44 @@ TEST(StubShapesTest, ExportVideoWithoutAudioArgsTakesCopyFastPath) {
   EXPECT_FALSE(reply.error_called);
 
   fs::remove_all(root, ec);
+}
+
+// Slice 5A: cancelExport replies immediately (like macOS `result(nil)`) AND
+// flips the shared cancel flag the in-flight export worker polls. (Moved off
+// the no-op setter list because it now has a real side effect.)
+TEST(StubShapesTest, CancelExportSignalsSessionAndRepliesNull) {
+  clingfy::capture::export_::ExportSession::Instance().ResetForTesting();
+  MethodRouter router;
+  const RecordedReply reply = Dispatch(router, "cancelExport");
+  EXPECT_TRUE(reply.success_called);
+  EXPECT_FALSE(reply.error_called);
+  EXPECT_TRUE(reply.success_value.IsNull());
+  EXPECT_TRUE(
+      clingfy::capture::export_::ExportSession::Instance().IsCancelled());
+  clingfy::capture::export_::ExportSession::Instance().ResetForTesting();
+}
+
+// Slice 5A: a second exportVideo while one is already running is rejected with
+// BAD_ARGS (the BeginExport reentrancy guard) rather than starting a concurrent
+// encoder. GPU-free — the guard fires before any export work, and replies
+// synchronously.
+TEST(StubShapesTest, ExportVideoWhileAnExportIsRunningReturnsBadArgs) {
+  auto& session = clingfy::capture::export_::ExportSession::Instance();
+  session.ResetForTesting();
+  ASSERT_TRUE(session.BeginExport());  // pretend an export is already running
+
+  MethodRouter router;
+  flutter::EncodableMap args{
+      {flutter::EncodableValue("projectPath"),
+       flutter::EncodableValue(std::string("/some/project.clingfyproj"))},
+  };
+  const RecordedReply reply =
+      DispatchWithArgs(router, "exportVideo", std::move(args));
+  EXPECT_TRUE(reply.error_called);
+  EXPECT_EQ(reply.error_code, error::kBadArgs);
+
+  session.EndExport();
+  session.ResetForTesting();
 }
 
 // === Empty-list getters. ===================================================

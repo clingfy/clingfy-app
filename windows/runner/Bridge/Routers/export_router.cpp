@@ -1,12 +1,18 @@
 #include "Bridge/Routers/export_router.h"
 
 #include <cstdint>
+#include <memory>
 #include <optional>
 #include <string>
+#include <thread>
+#include <utility>
 
+#include "Bridge/export_progress_publisher.h"
 #include "Bridge/native_error_codes.h"
+#include "Bridge/platform_thread_dispatcher.h"
 #include "Bridge/result_helpers.h"
 #include "Capture/Export/export_passthrough.h"
+#include "Capture/Export/export_session.h"
 
 namespace clingfy::bridge::routers::export_ {
 
@@ -16,12 +22,6 @@ void HandleNotImplemented(
     const flutter::MethodCall<flutter::EncodableValue>& call,
     std::unique_ptr<flutter::MethodResult<flutter::EncodableValue>> result) {
   reply::NotImplemented(*result, call.method_name());
-}
-
-void HandleNoopSetter(
-    const flutter::MethodCall<flutter::EncodableValue>& /*call*/,
-    std::unique_ptr<flutter::MethodResult<flutter::EncodableValue>> result) {
-  reply::Null(*result);
 }
 
 void HandleEmptyList(
@@ -39,16 +39,20 @@ void HandleSaveManualZoomSegments(
   reply::Bool(*result, false);
 }
 
-// ---- Phase 6 / Slice 1 + 2 + 3 ----------------------------------------------
+// ---- Phase 6 / Slice 1-5A ---------------------------------------------------
 // `exportVideo` and `processVideo` are off the NotImplemented stub.
-//   - exportVideo: writes to a Dart-chosen destination directory + filename,
-//     forcing a `.mov` extension. layout=auto & resolution=auto with no
-//     padding / corner radius take the Slice 1 byte-for-byte copy fast-path;
-//     any other layout/resolution/fit — or a non-zero padding / corner
-//     radius — routes through the decode → composite → re-encode pipeline
-//     (`export_pipeline.h`), which applies the Slice 3 background color /
-//     padding / corner radius and carries the source audio through. No
-//     progress event yet (cancel + progress land in Slice 5).
+//   - exportVideo: writes to a Dart-chosen destination directory + filename in
+//     the requested container (.mp4 or .mov, Slice 5A). layout=auto &
+//     resolution=auto with no padding / corner radius / audio change take the
+//     byte-for-byte copy fast-path; anything else routes through the
+//     decode → composite → re-encode pipeline (`export_pipeline.h`) with the
+//     Slice 3 styling, Slice 4 audio, and the Slice 5A bitrate. In production
+//     the export runs on a worker thread (so the platform thread can receive
+//     cancelExport + emit `updateExportProgress`); the reply is marshaled back
+//     via the platform-thread dispatcher. Every outcome — success, failure,
+//     and cancel — completes the MethodResult exactly once.
+//   - cancelExport: signals the in-flight export to stop and replies null
+//     immediately; the export then resolves its own future as a cancellation.
 //   - processVideo: returns null (signals "no preview file was generated;
 //     re-use the original screen.mov"). Future slices will wire processVideo
 //     to update the live PreviewCompositor's parameters.
@@ -128,6 +132,50 @@ bool ReadBool(const flutter::EncodableMap& map, const std::string& key,
   return fallback;
 }
 
+// Complete the exportVideo MethodResult for a finished export. Pulled out so
+// the SAME mapping runs whether the export ran synchronously (tests) or on a
+// worker thread (production, replied via PlatformThreadDispatcher::Post).
+void ReplyForExportOutcome(
+    flutter::MethodResult<flutter::EncodableValue>& result,
+    const clingfy::capture::export_::PassthroughResult& outcome,
+    const std::string& project_path, const std::string& directory_override) {
+  using clingfy::capture::export_::PassthroughError;
+  switch (outcome.error) {
+    case PassthroughError::kNone:
+      reply::String(result, outcome.output_path);
+      return;
+    case PassthroughError::kInputMissing:
+      result.Error(error::kExportInputMissing, outcome.message,
+                   flutter::EncodableValue(project_path));
+      return;
+    case PassthroughError::kNoDestination:
+      result.Error(error::kBadArgs, outcome.message,
+                   flutter::EncodableValue(directory_override));
+      return;
+    case PassthroughError::kCopyFailed:
+    case PassthroughError::kRenderFailed:
+    case PassthroughError::kCancelled:
+      // kCancelled carries a "cancelled" message so Dart classifies it as a
+      // clean user cancel (post_processing_controller._isLikelyCancellation
+      // Message), not a surfaced failure — matching macOS (EXPORT_ERROR +
+      // "Export cancelled"). kCopyFailed/kRenderFailed are generic failures.
+      result.Error(error::kExportError, outcome.message,
+                   flutter::EncodableValue(project_path));
+      return;
+    default:
+      // Every PassthroughError MUST complete the MethodResult. An un-answered
+      // result is destroyed silently and the Dart `exportVideo` future never
+      // resolves — the export UI hangs with no error. This default guards any
+      // future enum value (MSVC's C4061/C4062 do not fire at /W4).
+      result.Error(error::kExportError,
+                   outcome.message.empty() ? "exportVideo: unknown export "
+                                             "failure"
+                                           : outcome.message,
+                   flutter::EncodableValue(project_path));
+      return;
+  }
+}
+
 void HandleExportVideo(
     const flutter::MethodCall<flutter::EncodableValue>& call,
     std::unique_ptr<flutter::MethodResult<flutter::EncodableValue>> result) {
@@ -156,45 +204,68 @@ void HandleExportVideo(
     input.audio_volume_percent = ReadDouble(*args, "audioVolumePercent", 100.0);
     input.auto_normalize = ReadBool(*args, "autoNormalizeOnExport", false);
     input.target_loudness_dbfs = ReadDouble(*args, "targetLoudnessDbfs", -16.0);
+    // Slice 5A. Bitrate is a preset string resolved against the output size;
+    // format selects the container (.mp4 vs .mov).
+    input.bitrate = ReadString(*args, "bitrate");
   }
 
-  const auto outcome =
-      clingfy::capture::export_::ExportPassthroughCopy(input);
-  switch (outcome.error) {
-    case clingfy::capture::export_::PassthroughError::kNone:
-      reply::String(*result, outcome.output_path);
-      return;
-    case clingfy::capture::export_::PassthroughError::kInputMissing:
-      result->Error(error::kExportInputMissing, outcome.message,
-                    flutter::EncodableValue(input.project_path));
-      return;
-    case clingfy::capture::export_::PassthroughError::kNoDestination:
-      result->Error(error::kBadArgs, outcome.message,
-                    flutter::EncodableValue(input.directory_override));
-      return;
-    case clingfy::capture::export_::PassthroughError::kCopyFailed:
-    case clingfy::capture::export_::PassthroughError::kRenderFailed:
-      // The composition (decode -> composite -> re-encode) path that
-      // Slice 3's padding / corner radius / non-auto layout force every
-      // styled export through reports failures as kRenderFailed; map it to
-      // the same generic EXPORT_ERROR macOS uses (export_passthrough.h
-      // documents kRenderFailed as "Maps to EXPORT_ERROR").
-      result->Error(error::kExportError, outcome.message,
-                    flutter::EncodableValue(input.project_path));
-      return;
-    default:
-      // Every PassthroughError MUST complete the MethodResult. An
-      // un-answered result is destroyed silently and the Dart
-      // `exportVideo` future never resolves — the export UI hangs with no
-      // error. This default guards any future enum value from
-      // reintroducing that hang (MSVC's C4061/C4062 do not fire at /W4).
-      result->Error(error::kExportError,
-                    outcome.message.empty() ? "exportVideo: unknown export "
-                                              "failure"
-                                            : outcome.message,
-                    flutter::EncodableValue(input.project_path));
-      return;
+  // Defensive: refuse a second concurrent export (Dart's _isExporting guards
+  // the UI, but native must not run two encoders at once). BeginExport also
+  // clears any stale cancel flag from a prior run.
+  if (!clingfy::capture::export_::ExportSession::Instance().BeginExport()) {
+    result->Error(error::kBadArgs,
+                  "exportVideo: an export is already in progress.",
+                  flutter::EncodableValue(input.project_path));
+    return;
   }
+
+  // Stateless callbacks targeting process singletons — safe to copy into the
+  // worker thread and the export pipeline.
+  auto on_progress = [](double fraction) {
+    ExportProgressPublisher::Instance().EmitProgress(fraction);
+  };
+  auto is_cancelled = [] {
+    return clingfy::capture::export_::ExportSession::Instance().IsCancelled();
+  };
+
+  // Without the platform-thread dispatcher (tests / cold start) run the export
+  // synchronously so the reply is observable in-line. In production run it on a
+  // worker thread — otherwise the blocked platform thread could never receive
+  // cancelExport — and marshal the reply back via the dispatcher.
+  if (!PlatformThreadDispatcher::Instance().is_initialized()) {
+    const auto outcome = clingfy::capture::export_::ExportPassthroughCopy(
+        input, on_progress, is_cancelled);
+    clingfy::capture::export_::ExportSession::Instance().EndExport();
+    ReplyForExportOutcome(*result, outcome, input.project_path,
+                          input.directory_override);
+    return;
+  }
+
+  std::shared_ptr<flutter::MethodResult<flutter::EncodableValue>> shared_result(
+      std::move(result));
+  std::thread([input, shared_result, on_progress, is_cancelled]() {
+    const auto outcome = clingfy::capture::export_::ExportPassthroughCopy(
+        input, on_progress, is_cancelled);
+    clingfy::capture::export_::ExportSession::Instance().EndExport();
+    // Reply on the platform thread. shared_result keeps the MethodResult alive
+    // until the reply runs (never dropped -> never a hung Dart future).
+    PlatformThreadDispatcher::Instance().Post(
+        [shared_result, outcome, project_path = input.project_path,
+         directory_override = input.directory_override]() {
+          ReplyForExportOutcome(*shared_result, outcome, project_path,
+                                directory_override);
+        });
+  }).detach();
+}
+
+void HandleCancelExport(
+    const flutter::MethodCall<flutter::EncodableValue>& /*call*/,
+    std::unique_ptr<flutter::MethodResult<flutter::EncodableValue>> result) {
+  // Signal the in-flight export to stop at its next cancel check; it replies to
+  // its own exportVideo future with a cancellation. Reply immediately and
+  // independently (macOS does `result(nil)`).
+  clingfy::capture::export_::ExportSession::Instance().RequestCancel();
+  reply::Null(*result);
 }
 
 void HandleProcessVideo(
@@ -212,7 +283,7 @@ void HandleProcessVideo(
 void RegisterHandlers(HandlerTable& table) {
   table["exportVideo"] = &HandleExportVideo;
   table["processVideo"] = &HandleProcessVideo;
-  table["cancelExport"] = &HandleNoopSetter;
+  table["cancelExport"] = &HandleCancelExport;
 
   // `getRecordingSceneInfo` was a Phase 1 stub here; Step 5.2 moved it
   // into `Bridge/Routers/preview_router.cpp` where it now reads the

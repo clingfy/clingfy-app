@@ -8,38 +8,39 @@
 //   Slice 3: background + padding + corner radius (extends the Slice 2
 //            Direct2D composite)
 //   Slice 4: audio gain + volume + normalize
-//   Slice 5: format / codec / bitrate + cleanup
+//   Slice 5A: mp4 container + bitrate + progress + cancel
+//   Slice 5B (future): gif
 //
-// The handler in `Bridge/Routers/export_router.cpp` parses the 22-arg
-// `exportVideo` map and fills a `PassthroughInput`. Errors are mapped
-// onto the existing `native_error_codes.h` strings so the Dart side
-// surfaces them through the same path macOS uses.
+// The handler in `Bridge/Routers/export_router.cpp` parses the `exportVideo`
+// map and fills a `PassthroughInput`. Errors are mapped onto the existing
+// `native_error_codes.h` strings so the Dart side surfaces them through the
+// same path macOS uses.
 //
 // Two output paths:
 //   * No compositing needed — identity transform (layout=auto &
-//     resolution=auto) AND no Slice 3 styling (zero padding, zero corner
-//     radius) → the source is copied byte-for-byte (lossless, instant,
-//     preserves the original audio + container). This is the Slice 1
-//     behavior. (A background color alone is invisible without margins, so
-//     it does not by itself defeat the copy.)
+//     resolution=auto), no Slice 3 styling (zero padding/corner radius), no
+//     Slice 4 audio change, AND a .mov output (mp4 needs a real re-encode) →
+//     the source is copied byte-for-byte (lossless, instant, preserves the
+//     original audio + container). This is the Slice 1 behavior. (A background
+//     color alone is invisible without margins, so it does not by itself
+//     defeat the copy.)
 //   * Otherwise → the recording is decoded, composited at the chosen output
-//     resolution with the chosen fit mode, background color, padding, and
-//     corner radius, and re-encoded (see `export_pipeline.h`). The source
-//     audio is carried through so the resized export is not silent
-//     (gain/normalize is Slice 4).
+//     resolution / fit with the Slice 3 styling, the audio scaled by the
+//     Slice 4 gain/volume/normalize, and re-encoded (see `export_pipeline.h`)
+//     into the requested container (.mp4 / .mov) at the Slice 5A bitrate.
 //
-// Why .mov extension forced: the recorder writes a QuickTime MOV
-// container (mp4-family) and the re-encode pass writes the same
-// container. Honoring the user's mp4/gif choice needs the format matrix
-// Slice 5 adds; until then the output extension is forced to `.mov` so
-// what the user sees on disk matches what's actually in the file. The
-// `format` arg is still logged on a mismatch so we don't lose the
-// signal that the user picked something else.
+// Container: the output extension follows the `format` arg (.mp4 vs .mov,
+// `export_format.h`) and the Media Foundation Sink Writer picks the container
+// from it. gif is not supported yet (Slice 5B) — it falls back to a .mov copy
+// and sets `format_was_downgraded`. Codec stays H.264 on Windows (a Dart
+// `codec: hevc` request is currently rendered as H.264 — HEVC is a future
+// slice, not Slice 5A).
 
 #ifndef RUNNER_CAPTURE_EXPORT_EXPORT_PASSTHROUGH_H_
 #define RUNNER_CAPTURE_EXPORT_EXPORT_PASSTHROUGH_H_
 
 #include <cstdint>
+#include <functional>
 #include <optional>
 #include <string>
 
@@ -95,6 +96,10 @@ struct PassthroughInput {
   double audio_volume_percent = 100.0;
   bool auto_normalize = false;
   double target_loudness_dbfs = -16.0;
+
+  // Slice 5A: requested output bitrate preset ("auto"/"low"/"medium"/"high").
+  // The `format` field above selects the container (.mp4 vs .mov).
+  std::string bitrate;
 };
 
 enum class PassthroughError {
@@ -111,6 +116,11 @@ enum class PassthroughError {
   // unsupported media type, encoder/Direct2D error). Maps to
   // EXPORT_ERROR. Carries the underlying detail in `message`.
   kRenderFailed,
+  // Slice 5A: the export was cancelled by the user mid-flight. Maps to
+  // EXPORT_ERROR with a "cancelled" message so the Dart side classifies it as
+  // a clean cancel (returns null, lastExportWasCancelled=true) rather than a
+  // surfaced error.
+  kCancelled,
 };
 
 struct PassthroughResult {
@@ -132,22 +142,29 @@ struct PassthroughResult {
 // filesystem. `filename_stem` is normalized:
 //   - empty / whitespace → "Untitled"
 //   - any extension already present is stripped (so passing "foo.mp4"
-//     produces "foo.mov", matching the docstring "force .mov")
+//     produces "foo.mov" when format is mov/empty)
+// `format` ("mp4"/"mov"/...) selects the extension (.mp4 vs .mov) via
+// `export_format.h`; defaults to .mov.
 std::string ResolveExportDestination(const std::string& directory,
-                                     const std::string& filename_stem);
+                                     const std::string& filename_stem,
+                                     const std::string& format = "");
 
 // Export entry point. Reads the project, resolves the source video path
 // via `RecordingProjectReader`, and computes the destination via
 // `ResolveExportDestination`. Then dispatches:
-//   * identity transform (layout=auto & resolution=auto) → copies the
-//     source byte-for-byte (Slice 1 behavior).
-//   * otherwise → decodes, composites at the requested resolution/layout/
-//     fit, and re-encodes via `export_pipeline.h`.
-// Synchronous — the work completes before this returns. The copy path is
-// sub-second; the re-encode path scales with clip length but Slice 2
-// does not yet emit `updateExportProgress` (that lands with cancel in
-// Slice 5).
-PassthroughResult ExportPassthroughCopy(const PassthroughInput& input);
+//   * identity transform + no styling/audio → copies the source byte-for-byte
+//     (Slice 1 behavior).
+//   * otherwise → decodes, composites at the requested resolution/layout/fit
+//     with the Slice 3/4 styling + audio, and re-encodes via
+//     `export_pipeline.h` into the requested container/bitrate.
+// Synchronous — the work completes before this returns; the router runs it on
+// a worker thread so it can be cancelled. `on_progress` (optional) receives a
+// 0..1 fraction; `is_cancelled` (optional) is polled so a cancel aborts and
+// returns PassthroughError::kCancelled. Both default to no-ops.
+PassthroughResult ExportPassthroughCopy(
+    const PassthroughInput& input,
+    std::function<void(double)> on_progress = {},
+    std::function<bool()> is_cancelled = {});
 
 }  // namespace clingfy::capture::export_
 
