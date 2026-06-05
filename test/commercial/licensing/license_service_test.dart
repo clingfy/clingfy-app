@@ -153,4 +153,41 @@ void main() {
 
     expect(secondValue, firstValue);
   });
+
+  group('normalizeHardwareGuid', () {
+    test('strips braces and lower-cases a SQMClient-style GUID', () {
+      expect(
+        LicenseService.normalizeHardwareGuid(
+          '{372DD4A8-3A4A-4ED3-8CCD-6CDD5DE3F589}',
+        ),
+        '372dd4a8-3a4a-4ed3-8ccd-6cdd5de3f589',
+      );
+    });
+
+    test('passes through an already-canonical MachineGuid unchanged', () {
+      expect(
+        LicenseService.normalizeHardwareGuid(
+          'd13bbf9b-c256-4520-9613-d705beb21ec4',
+        ),
+        'd13bbf9b-c256-4520-9613-d705beb21ec4',
+      );
+    });
+
+    test('trims surrounding whitespace', () {
+      expect(
+        LicenseService.normalizeHardwareGuid('  ABCD-1234  '),
+        'abcd-1234',
+      );
+    });
+
+    test('returns null for null input', () {
+      expect(LicenseService.normalizeHardwareGuid(null), isNull);
+    });
+
+    test('returns null for empty or whitespace-only input', () {
+      expect(LicenseService.normalizeHardwareGuid(''), isNull);
+      expect(LicenseService.normalizeHardwareGuid('   '), isNull);
+      expect(LicenseService.normalizeHardwareGuid('{}'), isNull);
+    });
+  });
 }

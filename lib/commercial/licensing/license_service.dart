@@ -3,8 +3,11 @@ import 'dart:io';
 
 import 'package:clingfy/app/config/build_config.dart';
 import 'package:device_info_plus/device_info_plus.dart';
+import 'package:flutter/foundation.dart';
 import 'package:flutter_secure_storage/flutter_secure_storage.dart';
 import 'package:http/http.dart' as http;
+import 'package:uuid/uuid.dart';
+import 'package:win32_registry/win32_registry.dart';
 import 'package:clingfy/app/infrastructure/logging/logger_service.dart';
 import 'package:clingfy/commercial/licensing/license_error_codes.dart';
 import 'package:clingfy/commercial/licensing/models/license_plan.dart';
@@ -19,6 +22,7 @@ class LicenseService {
   static const String _licenseDataStorageKey = 'license_data';
   static const String _lastCheckStorageKey = 'last_check';
   static const String _firstActivatedAtStorageKey = 'first_activated_at';
+  static const String _fallbackHardwareIdStorageKey = 'fallback_hardware_id';
 
   final FlutterSecureStorage _storage;
   final DateTime _appBuildDate = BuildConfig.buildDate;
@@ -172,13 +176,90 @@ class LicenseService {
   }
 
   Future<String> _getHardwareId() async {
-    if (!Platform.isMacOS) {
-      return 'unknown_device';
+    if (Platform.isMacOS) {
+      final deviceInfo = DeviceInfoPlugin();
+      final macInfo = await deviceInfo.macOsInfo;
+      return macInfo.systemGUID ?? 'unavailable_guid';
     }
 
-    final deviceInfo = DeviceInfoPlugin();
-    final macInfo = await deviceInfo.macOsInfo;
-    return macInfo.systemGUID ?? 'unavailable_guid';
+    if (Platform.isWindows) {
+      return _getWindowsHardwareId();
+    }
+
+    return 'unknown_device';
+  }
+
+  /// Resolves a stable per-device id on Windows.
+  ///
+  /// Prefers `HKLM\SOFTWARE\Microsoft\Cryptography\MachineGuid`, which is
+  /// present on effectively every Windows install and independent of
+  /// telemetry — unlike the `SQMClient\MachineId` value that
+  /// `device_info_plus` exposes as `windowsInfo.deviceId`, which is empty on
+  /// telemetry-disabled/LTSC/Server images. Falls back to a persisted random
+  /// id so we never send a shared or empty identifier.
+  Future<String> _getWindowsHardwareId() async {
+    final normalized = normalizeHardwareGuid(_readWindowsMachineGuid());
+    if (normalized != null) {
+      return normalized;
+    }
+    return _persistedFallbackHardwareId();
+  }
+
+  /// Reads the raw MachineGuid from the registry, returning null on any
+  /// failure (missing key/value, off-Windows, access denied).
+  String? _readWindowsMachineGuid() {
+    try {
+      final key = Registry.openPath(
+        RegistryHive.localMachine,
+        path: r'SOFTWARE\Microsoft\Cryptography',
+      );
+      try {
+        return key.getValueAsString('MachineGuid');
+      } finally {
+        key.close();
+      }
+    } catch (_) {
+      return null;
+    }
+  }
+
+  /// Last-resort id: a random v4 generated once and persisted, so a machine
+  /// with no readable MachineGuid still reports a stable, unique value rather
+  /// than the shared `unknown_device` literal.
+  Future<String> _persistedFallbackHardwareId() async {
+    try {
+      final existing = await _storage.read(key: _fallbackHardwareIdStorageKey);
+      if (existing != null && existing.isNotEmpty) {
+        return existing;
+      }
+      final generated = const Uuid().v4();
+      await _storage.write(
+        key: _fallbackHardwareIdStorageKey,
+        value: generated,
+      );
+      return generated;
+    } catch (_) {
+      return 'unavailable_guid';
+    }
+  }
+
+  /// Canonicalizes a Windows GUID: strips braces, trims, and lower-cases.
+  /// Returns null for null/empty input so callers can fall back.
+  ///
+  /// The canonical form is locked once devices are bound on the backend — do
+  /// not change the source registry value or this normalization without a
+  /// server-side migration, or existing device bindings are orphaned.
+  @visibleForTesting
+  static String? normalizeHardwareGuid(String? raw) {
+    if (raw == null) {
+      return null;
+    }
+    final cleaned = raw
+        .replaceAll('{', '')
+        .replaceAll('}', '')
+        .trim()
+        .toLowerCase();
+    return cleaned.isEmpty ? null : cleaned;
   }
 
   Future<void> _saveLicenseLocally(
