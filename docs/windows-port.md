@@ -54,15 +54,90 @@ lifecycle, preview, and basic export.
 | 2     | Real device / target discovery                                | done   |
 | 3     | MVP recording (full display + mic + system audio → MP4)       | done   |
 | 4     | Lifecycle parity (state machine, pause/resume, recovery)      | done   |
-| 5     | Preview player + project reopen                               | POC done, design v2 next |
-| 6     | Basic export + post-processing (resolution, background, etc.) |
-| 7     | Window + area recording                                       |
+| 5     | Preview player + project reopen                               | done   |
+| 6     | Basic export + post-processing (resolution, background, etc.) | done   |
+| 7     | Window + area recording                                       | next   |
 | 8     | Cursor sidecar + smart zoom                                   |
 | 9     | Camera overlay (basic, then advanced compositing/chroma)      |
 | 10    | Permissions UX + installer + updater + Windows beta polish    |
 
 Detailed scope per phase is tracked in the session task list and in
 [../CLAUDE.md](../CLAUDE.md).
+
+## Current status — Phase 6 (export + post-processing) — COMPLETE
+
+Phase 6 is feature-complete: Windows now does the full **record → preview →
+export** loop. Export was built slice-by-slice; each slice is a merged PR with
+native tests, and the whole matrix has passed a manual GIF + no-regression smoke
+on a real Windows box.
+
+| Slice | Goal                                                                | PR(s)      |
+| ----- | ------------------------------------------------------------------- | ---------- |
+| 1     | Export baseline / fast byte-copy passthrough (auto/auto MOV)        | #125, #127 |
+| 2     | Resolution / layout / fit-fill composition                         | #126       |
+| 3     | Background color / padding / corner radius                         | #128       |
+| 4     | Audio gain / volume / normalize                                     | #130       |
+| 5A    | MP4 container + bitrate + progress events + cancel                  | #131       |
+| 5B    | Animated GIF export (WIC)                                           | #132       |
+
+### Architecture
+
+- **MOV / MP4** ride Media Foundation. The identity transform (auto/auto, no
+  Slice 3 styling, no Slice 4 audio change, `.mov` output) byte-copies the
+  source; anything else decodes with `IMFSourceReader`, composites each frame
+  with Direct2D (`export_geometry` + `export_pipeline`), and re-encodes H.264 via
+  `MfSinkWriterEncoder` (`.mp4` vs `.mov` is chosen by the destination
+  extension). Bitrate preset → H.264 average bitrate (`export_format`).
+- **GIF** is a separate output path: Media Foundation has no GIF sink, so GIF
+  reuses the same decode → Direct2D composite → progress/cancel loop but forks
+  the encoder to a WIC `IWICBitmapEncoder` (`GUID_ContainerFormatGif`,
+  `Encoding/gif_encoder.{h,cpp}`) — composited GPU texture read back to CPU via a
+  staging texture, 256-color adaptive palette per frame with error-diffusion
+  dither, NETSCAPE2.0 infinite loop, frames decimated to ~15 fps on an ideal grid
+  (`Capture/Export/gif_export_policy.{h,cpp}`).
+- **Progress / cancel** run the export on a worker thread (`export_session`,
+  `export_progress_publisher`); cancel aborts mid-flight, deletes any partial
+  output, and resolves the Dart future as a clean cancel. Every export result
+  path answers the Dart `MethodResult` exactly once (no hangs).
+
+### Known deliberate edges (not bugs)
+
+- **HEVC falls back to H.264.** A Dart `codec: hevc` request renders as H.264;
+  codec selection is a future slice.
+- **GIF is opaque — no partial alpha.** GIF cannot represent partial
+  transparency, so the GIF background (and rounded-corner / padding regions) is
+  forced fully opaque and shows the solid background color.
+- **GIF uses WIC; MP4/MOV use Media Foundation.** Two distinct encoder paths by
+  design.
+- **No background image yet.** Slice 3 is solid color only; image / preset
+  backgrounds are future work.
+- **No advanced export presets.** Bitrate is auto / low / medium / high; finer
+  preset surface area is later.
+
+### Manual smoke checklist (MOV / MP4 / GIF)
+
+Native tests cover the math plus a GPU round-trip, but visual correctness is a
+human check. On a real Windows box, record a short clip, then export and verify:
+
+**MOV**
+- [ ] auto/auto exports near-instantly (byte-copy fast path) and plays.
+- [ ] a resolution/layout change re-encodes with correct framing / letterboxing.
+
+**MP4**
+- [ ] output is a real `.mp4` that plays; low vs high bitrate changes file size.
+- [ ] progress advances to 100% on a longer export.
+
+**GIF**
+- [ ] output is a real animated `.gif` that loops in a browser / image viewer.
+- [ ] styling (resolution, background color, padding, corner radius) is
+      reflected; corners / margins show the solid background color (opaque).
+- [ ] ~15 fps and the file size is sane for the clip length.
+- [ ] progress reaches 100% on a longer GIF.
+
+**Cancel + cross-cutting**
+- [ ] cancel mid-export (any format) stops cleanly, leaves no stray / partial
+      file, and a new export starts afterward.
+- [ ] combined MP4 + styling + audio still works.
 
 ## Current status — Phase 4 (lifecycle parity)
 
@@ -707,7 +782,13 @@ Flutter engine.
 | `router_stub_shapes_test.cpp` | Per-method stub shapes: setters return success+null, getters return the documented list/map/bool/null, `startRecording` / `stopRecording` return `WINDOWS_NOT_IMPLEMENTED` in the stub router; the live Phase 6 `exportVideo` / `processVideo` handlers surface their documented shapes (input-missing error vs null preview). `getStorageSnapshot` carries all ten required keys, etc. The Phase 2 `DeviceListGettersReturnList` case checks `getDisplays` / `getAppWindows` / `getAudioSources` / `getVideoSources` shape (list-of-maps with the documented keys) without assuming any particular count. |
 | `device_record_test.cpp` | Pure formatters that translate the Phase 2 `DisplayRecord` / `AppWindowRecord` / `AudioSourceRecord` / `VideoSourceRecord` structs into the EncodableMap shape Dart parses. Bounds-omission for incomplete `AppWindowRecord`, int64 widths for ids, double widths for coordinates. |
 | `export_geometry_test.cpp` | Phase 6 Slice 2 resolution/layout/fit math: `ResolveTargetSize` (ported 1:1 from macOS `ExportPrepTests.swift`), `ToEvenPixelSize` (H.264 even-dimension rounding), `ComputeContentRect` (fit/fill scale + centering), `ParseFitMode`, and the `IsIdentityTransform` copy fast-path gate. Pure math, no GPU. |
-| `export_pipeline_test.cpp` | Phase 6 Slice 2 heavy round-trip: synthesizes a tiny source `.mov` with the real encoder, runs `RenderComposedExport` (decode → Direct2D composite → re-encode), and re-opens the output to assert target dimensions + audio carry-through. `GTEST_SKIP`s when no GPU / MF encoder is available. Visual correctness (orientation, letterbox placement, color) stays a human smoke-test. |
+| `export_audio_test.cpp` | Phase 6 Slice 4 audio math: `RequiresAudioProcessing` gate (volume `!= 100`, not `!= 0`), `ResolveAudioGainStages` (amplify-only gain dB→linear, attenuate-only volume %, peak-normalize toward target), and the two-stage `ApplyAudioGain` with intermediate int16 clamp + truncate-toward-zero (matches macOS `Int16()`). Pure, no GPU. |
+| `export_format_test.cpp` | Phase 6 Slice 5A/5B pure format/bitrate resolution: `ResolveExportExtension` (`mp4`→`.mp4`, `gif`→`.gif`, else `.mov`), `FormatWasDowngraded` (always false — Windows emits all three natively), and `ResolveVideoBitrateBps` (resolution-aware preset → H.264 bps, clamped). |
+| `gif_export_policy_test.cpp` | Phase 6 Slice 5B GIF sampling/timing: grid-anchored `ShouldKeepGifFrame` / `AdvanceGifEmitTarget` decimation to ~15 fps (incl. a jittered-timestamp regression case), `GifDelayCentiseconds` rounding + 2cs floor + 16-bit ceiling, and `IsGifDestination`. Pure, no GPU. |
+| `export_session_test.cpp` | Phase 6 Slice 5A export reentrancy/cancel singleton: `BeginExport` rejects a concurrent export and clears a stale cancel flag; `RequestCancel` / `IsCancelled`; a cancelled export does not pre-cancel the next one. |
+| `export_progress_publisher_test.cpp` | Phase 6 Slice 5A reverse-channel progress: `EmitProgress` is a safe no-op when no method channel is attached (the export worker can outlive teardown), guarding a late tick from dereferencing a freed channel. |
+| `export_passthrough_test.cpp` | Phase 6 Slices 1–5B routing: `ResolveExportDestination` extension/sanitization/collision rules (`.mov`/`.mp4`/`.gif`), the copy-vs-re-encode gate (mov auto/auto byte-copies; mp4 and gif force composition), the input-missing / default-save-folder / cancel-before-work paths. Filesystem-touching, no GPU. |
+| `export_pipeline_test.cpp` | Phase 6 Slices 2–5B heavy round-trip: synthesizes a tiny source `.mov` with the real encoder, runs `RenderComposedExport`, and re-opens the output to assert dimensions, audio carry-through (and gain/volume/normalize level deltas), the `.mp4` container, monotonic progress→1.0, and the GIF path (WIC-probed real `.gif`, audio dropped, frame decimation, cancel removes the partial file). `GTEST_SKIP`s when no GPU / MF encoder is available — visual correctness (orientation, color, dither) stays a human smoke-test. |
 
 ### Why a separate static library
 
