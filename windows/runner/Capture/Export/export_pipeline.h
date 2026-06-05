@@ -14,8 +14,9 @@
 //      corner radius is set (Slice 3).
 //   3. The composited texture is handed to the existing
 //      `MfSinkWriterEncoder` (H.264 / .mov) configured at the output
-//      resolution. Audio packets are written straight through so the
-//      resized export keeps its sound — gain / normalize is Slice 4.
+//      resolution. Audio packets are scaled by the resolved gain / volume /
+//      normalize multiplier (Slice 4, see `export_audio.h`) and written
+//      through, so the resized export keeps its sound at the chosen level.
 //   4. Streams are pulled interleaved by timestamp via
 //      `ReadSample(MF_SOURCE_READER_ANY_STREAM)` so the sink writer never
 //      sees one stream race far ahead of the other.
@@ -68,6 +69,16 @@ struct RenderRequest {
   double padding = 0.0;
   double corner_radius = 0.0;
   std::optional<std::int64_t> background_color;
+
+  // Slice 4 audio processing, verbatim from the export args (see
+  // `export_audio.h`). Gain amplifies (0..24 dB), volume attenuates
+  // (0..100%); when auto_normalize is set the export peak-normalizes toward
+  // target_loudness_dbfs. Defaults are the identity (no-op) values, so an
+  // export that requests none of them re-encodes the audio unchanged.
+  double audio_gain_db = 0.0;
+  double audio_volume_percent = 100.0;
+  bool auto_normalize = false;
+  double target_loudness_dbfs = -16.0;
 };
 
 struct RenderResult {

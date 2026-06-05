@@ -223,6 +223,65 @@ TEST(StubShapesTest, ExportVideoRenderFailureRepliesWithExportError) {
   fs::remove_all(root, ec);
 }
 
+// Regression guard for the Slice 4 "volume default" trap (export_router.cpp /
+// export_audio.h flag it as the #1 risk): an exportVideo with NO audio args
+// and an auto/auto transform must take the byte-for-byte copy fast-path. If
+// audioVolumePercent defaulted to 0 instead of 100, RequiresAudioProcessing
+// would read "volume < 100 -> processing requested", force the re-encode path,
+// and fail decoding this non-decodable test source. Success proves the absent
+// arg defaulted to 100 and stayed on the copy. GPU-independent (the fast-path
+// never opens a decoder), which the GPU round-trips can't guarantee on CI.
+TEST(StubShapesTest, ExportVideoWithoutAudioArgsTakesCopyFastPath) {
+  namespace fs = std::filesystem;
+  std::error_code ec;
+  const auto root = fs::temp_directory_path() / "clingfy_router_audio_fastpath";
+  fs::remove_all(root, ec);
+  const auto project = root / "fastpath.clingfyproj";
+  fs::create_directories(project / "capture");
+  const auto out_dir = root / "out";
+  fs::create_directories(out_dir);
+
+  std::ofstream(project / "project.json") << R"({
+  "schemaVersion": 2,
+  "projectId": "fastpath",
+  "createdAt": "2026-06-05T00:00:00.000Z",
+  "capture": {
+    "screenVideo": "capture/screen.mov",
+    "screenMetadata": "capture/screen.meta.json"
+  }
+})";
+  // Non-decodable bytes: the fast-path copy succeeds regardless; only a wrong
+  // re-encode (which a volume=0 default would trigger) would fail to decode.
+  std::ofstream(project / "capture" / "screen.mov") << "NOT_A_REAL_VIDEO";
+  std::ofstream(project / "capture" / "screen.meta.json")
+      << R"({"width":1280,"height":720,"fps":30})";
+
+  MethodRouter router;
+  flutter::EncodableMap args{
+      {flutter::EncodableValue("projectPath"),
+       flutter::EncodableValue(project.u8string())},
+      {flutter::EncodableValue("directoryOverride"),
+       flutter::EncodableValue(out_dir.u8string())},
+      {flutter::EncodableValue("filename"),
+       flutter::EncodableValue(std::string("fastpath"))},
+      // auto/auto, no styling, and crucially NO audio args at all.
+      {flutter::EncodableValue("layoutPreset"),
+       flutter::EncodableValue(std::string("auto"))},
+      {flutter::EncodableValue("resolutionPreset"),
+       flutter::EncodableValue(std::string("auto"))},
+  };
+  const RecordedReply reply =
+      DispatchWithArgs(router, "exportVideo", std::move(args));
+
+  EXPECT_TRUE(reply.success_called)
+      << "absent audio args must keep the byte-copy fast-path; a volume "
+         "default of 0 would force a re-encode that fails here. err="
+      << reply.error_code;
+  EXPECT_FALSE(reply.error_called);
+
+  fs::remove_all(root, ec);
+}
+
 // === Empty-list getters. ===================================================
 //
 // Phase 2 moved getDisplays / getAppWindows / getAudioSources /

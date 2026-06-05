@@ -7,6 +7,7 @@
 #include <string>
 #include <system_error>
 
+#include "Capture/Export/export_audio.h"
 #include "Capture/Export/export_geometry.h"
 #include "Capture/Export/export_pipeline.h"
 #include "Capture/recording_project_reader.h"
@@ -190,15 +191,19 @@ PassthroughResult ExportPassthroughCopy(const PassthroughInput& input) {
   std::error_code ec;
   fs::create_directories(destination.parent_path(), ec);
 
-  // The byte-for-byte copy is only valid when the export needs no
-  // compositing at all: an identity transform (auto/auto) AND no Slice 3
-  // canvas styling. Padding or a corner radius expose canvas that a plain
-  // copy can't produce, so either forces the decode → composite → re-encode
-  // path even under an otherwise-identity transform. A background color
-  // alone stays on the fast-path — with no margins it is never visible.
+  // The byte-for-byte copy is only valid when the export needs no work at
+  // all: an identity transform (auto/auto), no Slice 3 canvas styling, AND
+  // no Slice 4 audio processing. Padding or a corner radius expose canvas a
+  // plain copy can't produce; a gain/volume/normalize request rewrites the
+  // audio samples — any of them forces the decode → composite → re-encode
+  // path. A background color alone stays on the fast-path (with no margins
+  // it is never visible). Audio defaults (0 dB / 100% / no normalize) keep
+  // the copy alive; only a real change trips it.
   const bool needs_composition =
       !IsIdentityTransform(input.layout, input.resolution) ||
-      input.padding > 0.0 || input.corner_radius > 0.0;
+      input.padding > 0.0 || input.corner_radius > 0.0 ||
+      RequiresAudioProcessing(input.audio_gain_db, input.audio_volume_percent,
+                              input.auto_normalize);
 
   if (!needs_composition) {
     // Fast-path: pixel-for-pixel the source, so copy it byte-for-byte.
@@ -217,9 +222,8 @@ PassthroughResult ExportPassthroughCopy(const PassthroughInput& input) {
     }
   } else {
     // Composition path: decode the recording, composite each frame at the
-    // requested resolution / layout / fit, and re-encode. Source audio is
-    // carried through so the resized export is not silent (gain/normalize
-    // is Slice 4).
+    // requested resolution / layout / fit with the Slice 3 styling, scale the
+    // audio by the Slice 4 gain / volume / normalize multiplier, and re-encode.
     RenderRequest render;
     render.source_video_path = read.project->screen_path;
     render.destination_path = destination.u8string();
@@ -229,6 +233,10 @@ PassthroughResult ExportPassthroughCopy(const PassthroughInput& input) {
     render.padding = input.padding;
     render.corner_radius = input.corner_radius;
     render.background_color = input.background_color;
+    render.audio_gain_db = input.audio_gain_db;
+    render.audio_volume_percent = input.audio_volume_percent;
+    render.auto_normalize = input.auto_normalize;
+    render.target_loudness_dbfs = input.target_loudness_dbfs;
     render.fps_hint = read.project->metadata.has_value()
                           ? read.project->metadata->fps
                           : 0u;
