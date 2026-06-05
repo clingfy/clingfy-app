@@ -18,6 +18,7 @@
 #include <mferror.h>
 #include <mfidl.h>
 #include <mfreadwrite.h>
+#include <wincodec.h>
 #include <wrl/client.h>
 
 #include <gtest/gtest.h>
@@ -27,6 +28,7 @@
 #include <cstdint>
 #include <cstring>
 #include <filesystem>
+#include <fstream>
 #include <string>
 #include <vector>
 
@@ -425,6 +427,70 @@ AudioStats ReadAudioPeakRms(const std::wstring& path) {
   return out;
 }
 
+// True when the file begins with a GIF signature ("GIF87a"/"GIF89a"). Media
+// Foundation cannot open a .gif, so GIF output is validated with this magic-byte
+// check plus the WIC probe below rather than ProbeOutput / ReadFirstFrameBgra.
+bool FileStartsWithGifMagic(const std::string& path) {
+  std::ifstream f(fs::u8path(path), std::ios::binary);
+  char header[6] = {0};
+  f.read(header, sizeof(header));
+  if (f.gcount() < static_cast<std::streamsize>(sizeof(header))) {
+    return false;
+  }
+  return std::memcmp(header, "GIF87a", 6) == 0 ||
+         std::memcmp(header, "GIF89a", 6) == 0;
+}
+
+// Decode an exported .gif with WIC and report its frame count + first-frame
+// size. Returns ok=false when WIC can't open the file. COM is initialized
+// per-call and balanced; the WIC interfaces are released before CoUninitialize.
+struct GifProbeResult {
+  bool ok = false;
+  UINT width = 0;
+  UINT height = 0;
+  UINT frame_count = 0;
+};
+
+GifProbeResult ProbeGif(const std::wstring& path) {
+  GifProbeResult out;
+  const HRESULT co = ::CoInitializeEx(nullptr, COINIT_MULTITHREADED);
+  const bool balance = SUCCEEDED(co);
+  {
+    ComPtr<IWICImagingFactory> factory;
+    if (SUCCEEDED(::CoCreateInstance(CLSID_WICImagingFactory, nullptr,
+                                     CLSCTX_INPROC_SERVER,
+                                     IID_PPV_ARGS(factory.GetAddressOf()))) &&
+        factory != nullptr) {
+      ComPtr<IWICBitmapDecoder> decoder;
+      if (SUCCEEDED(factory->CreateDecoderFromFilename(
+              path.c_str(), nullptr, GENERIC_READ,
+              WICDecodeMetadataCacheOnDemand, decoder.GetAddressOf())) &&
+          decoder != nullptr) {
+        UINT count = 0;
+        if (SUCCEEDED(decoder->GetFrameCount(&count))) {
+          out.frame_count = count;
+          ComPtr<IWICBitmapFrameDecode> frame;
+          if (count > 0 &&
+              SUCCEEDED(decoder->GetFrame(0, frame.GetAddressOf())) &&
+              frame != nullptr) {
+            UINT w = 0;
+            UINT h = 0;
+            if (SUCCEEDED(frame->GetSize(&w, &h))) {
+              out.width = w;
+              out.height = h;
+              out.ok = true;
+            }
+          }
+        }
+      }
+    }
+  }
+  if (balance) {
+    ::CoUninitialize();
+  }
+  return out;
+}
+
 TEST(ExportPipelineTest, VideoOnlyRoundTripProducesTargetResolution) {
   clingfy::graphics::D3DDevice device;
   if (device.Create()) {
@@ -819,6 +885,137 @@ TEST(ExportPipelineTest, ProgressIsMonotonicAndReachesOne) {
     EXPECT_GE(fractions[i], fractions[i - 1]) << "progress went backwards";
   }
   EXPECT_GE(fractions.back(), 0.999) << "progress did not reach 1.0";
+
+  std::error_code ec;
+  fs::remove_all(dir, ec);
+}
+
+// Slice 5B: a .gif destination produces a real animated GIF via the WIC
+// encoder, decimated from the source frame rate. (No audio; the bitrate preset
+// is ignored.)
+TEST(ExportPipelineTest, GifDestinationProducesReadableAnimatedGif) {
+  clingfy::graphics::D3DDevice device;
+  if (device.Create()) {
+    GTEST_SKIP() << "no usable D3D11 device in this environment";
+  }
+  const auto dir = UniqueDir("gif");
+  const auto source = (dir / "source.mov").u8string();
+  const auto dest = (dir / "out.gif").u8string();
+
+  std::string skip_reason;
+  if (!SynthesizeSource(&device, source, /*with_audio=*/true, &skip_reason,
+                        /*audio_amplitude=*/4000)) {
+    GTEST_SKIP() << skip_reason;
+  }
+
+  RenderRequest request;
+  request.source_video_path = fs::u8path(source).wstring();
+  request.destination_path = dest;  // .gif -> WIC GIF encoder
+  request.layout = "square11";      // 64x48 -> 64x64
+  request.resolution = "auto";
+  request.fit = "fit";
+  request.fps_hint = kFps;
+
+  const RenderResult result = RenderComposedExport(request);
+  ASSERT_TRUE(result.ok) << result.message;
+  EXPECT_EQ(result.output_width, 64u);
+  EXPECT_EQ(result.output_height, 64u);
+  // GIF drops audio even when the source has it.
+  EXPECT_FALSE(result.had_audio);
+  EXPECT_EQ(result.audio_packets_written, 0u);
+  ASSERT_TRUE(fs::exists(fs::u8path(dest)));
+  EXPECT_TRUE(FileStartsWithGifMagic(dest)) << "output is not a GIF";
+
+  const GifProbeResult probe = ProbeGif(fs::u8path(dest).wstring());
+  ASSERT_TRUE(probe.ok) << "exported .gif is not a readable GIF";
+  EXPECT_EQ(probe.width, 64u);
+  EXPECT_EQ(probe.height, 64u);
+  // 8 source frames at 30 fps decimate toward 15 fps -> ~4 frames. Assert a
+  // tight band centered on 4 (tolerating +/-1 for decoder timestamp rounding)
+  // so the test catches both under- and over-decimation, not merely "fewer".
+  EXPECT_GE(probe.frame_count, 3u);
+  EXPECT_LE(probe.frame_count, 5u);
+
+  std::error_code ec;
+  fs::remove_all(dir, ec);
+}
+
+// Slice 5B: GIF reuses the shared progress emission, so it is monotonic and
+// lands at 1.0 just like the video path.
+TEST(ExportPipelineTest, GifProgressIsMonotonicAndReachesOne) {
+  clingfy::graphics::D3DDevice device;
+  if (device.Create()) {
+    GTEST_SKIP() << "no usable D3D11 device in this environment";
+  }
+  const auto dir = UniqueDir("gif_progress");
+  const auto source = (dir / "source.mov").u8string();
+  const auto dest = (dir / "out.gif").u8string();
+
+  std::string skip_reason;
+  if (!SynthesizeSource(&device, source, /*with_audio=*/false, &skip_reason)) {
+    GTEST_SKIP() << skip_reason;
+  }
+
+  std::vector<double> fractions;
+  RenderRequest request;
+  request.source_video_path = fs::u8path(source).wstring();
+  request.destination_path = dest;
+  request.layout = "youtube169";
+  request.resolution = "auto";
+  request.fit = "fit";
+  request.fps_hint = kFps;
+  request.on_progress = [&fractions](double f) { fractions.push_back(f); };
+
+  const RenderResult result = RenderComposedExport(request);
+  ASSERT_TRUE(result.ok) << result.message;
+
+  ASSERT_FALSE(fractions.empty()) << "no progress emitted";
+  for (double f : fractions) {
+    EXPECT_GE(f, 0.0);
+    EXPECT_LE(f, 1.0);
+  }
+  for (std::size_t i = 1; i < fractions.size(); ++i) {
+    EXPECT_GE(fractions[i], fractions[i - 1]) << "progress went backwards";
+  }
+  EXPECT_GE(fractions.back(), 0.999) << "progress did not reach 1.0";
+
+  std::error_code ec;
+  fs::remove_all(dir, ec);
+}
+
+// Slice 5B: a mid-export cancel aborts the GIF cleanly and removes the partial
+// .gif (the WIC stream is created on Open, so the file exists before cancel).
+TEST(ExportPipelineTest, GifCancelStopsAndRemovesPartialFile) {
+  clingfy::graphics::D3DDevice device;
+  if (device.Create()) {
+    GTEST_SKIP() << "no usable D3D11 device in this environment";
+  }
+  const auto dir = UniqueDir("gif_cancel");
+  const auto source = (dir / "source.mov").u8string();
+  const auto dest = (dir / "out.gif").u8string();
+
+  std::string skip_reason;
+  if (!SynthesizeSource(&device, source, /*with_audio=*/false, &skip_reason)) {
+    GTEST_SKIP() << skip_reason;
+  }
+
+  // is_cancelled is polled once before setup and then once per loop iteration;
+  // returning true on the third poll cancels a couple of frames in.
+  int polls = 0;
+  RenderRequest request;
+  request.source_video_path = fs::u8path(source).wstring();
+  request.destination_path = dest;
+  request.layout = "youtube169";
+  request.resolution = "auto";
+  request.fit = "fit";
+  request.fps_hint = kFps;
+  request.is_cancelled = [&polls]() { return ++polls >= 3; };
+
+  const RenderResult result = RenderComposedExport(request);
+  EXPECT_FALSE(result.ok);
+  EXPECT_TRUE(result.cancelled);
+  EXPECT_FALSE(fs::exists(fs::u8path(dest)))
+      << "a cancelled GIF export left a partial file behind";
 
   std::error_code ec;
   fs::remove_all(dir, ec);

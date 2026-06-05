@@ -12,11 +12,12 @@
 //      into the fit/fill content rect (inset by any padding) computed by
 //      `export_geometry.h`, clipping the draw to a rounded rect when a
 //      corner radius is set (Slice 3).
-//   3. The composited texture is handed to the existing
-//      `MfSinkWriterEncoder` (H.264 / .mov) configured at the output
-//      resolution. Audio packets are scaled by the resolved gain / volume /
-//      normalize multiplier (Slice 4, see `export_audio.h`) and written
-//      through, so the resized export keeps its sound at the chosen level.
+//   3. The composited texture is handed to an encoder configured at the output
+//      resolution: `MfSinkWriterEncoder` (H.264 in .mp4 / .mov) for video, or
+//      the WIC `GifEncoder` (Slice 5B) when the destination ends in .gif. Audio
+//      packets are scaled by the resolved gain / volume / normalize multiplier
+//      (Slice 4, see `export_audio.h`) and written through for video; GIF has no
+//      audio and decimates frames to ~`kGifTargetFps` (see `gif_export_policy.h`).
 //   4. Streams are pulled interleaved by timestamp via
 //      `ReadSample(MF_SOURCE_READER_ANY_STREAM)` so the sink writer never
 //      sees one stream race far ahead of the other.
@@ -44,8 +45,9 @@ struct RenderRequest {
   // Absolute path to the recorded source video (`capture/screen.mov`).
   std::wstring source_video_path;
 
-  // Absolute UTF-8 destination path (already .mov-forced + collision-
-  // avoided by `ResolveExportDestination`).
+  // Absolute UTF-8 destination path (extension already resolved — .mov / .mp4 /
+  // .gif — and collision-avoided by `ResolveExportDestination`). The pipeline
+  // selects the container/encoder from this extension (.gif => WIC GifEncoder).
   std::string destination_path;
 
   // Composition selectors, verbatim from the export args. Parsed through

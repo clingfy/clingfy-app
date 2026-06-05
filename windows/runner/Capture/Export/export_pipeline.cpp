@@ -22,7 +22,9 @@
 #include "Capture/Export/export_audio.h"
 #include "Capture/Export/export_format.h"
 #include "Capture/Export/export_geometry.h"
+#include "Capture/Export/gif_export_policy.h"
 #include "Capture/captured_video_frame.h"
+#include "Encoding/gif_encoder.h"
 #include "Encoding/mf_encoder_config.h"
 #include "Encoding/mf_sink_writer_encoder.h"
 #include "Graphics/d3d_device.h"
@@ -252,6 +254,12 @@ RenderResult RenderComposedExport(const RenderRequest& request) {
     return Cancelled(request.destination_path);
   }
 
+  // Slice 5B: a .gif destination is encoded with the WIC GIF encoder instead of
+  // the H.264 Sink Writer. GIF carries no audio and the frame loop decimates to
+  // ~kGifTargetFps; everything else (decode, Direct2D composition, progress,
+  // cancel) is shared with the video path.
+  const bool gif = IsGifDestination(request.destination_path);
+
   // --- D3D11 device shared by decode-upload, Direct2D, and the encoder.
   clingfy::graphics::D3DDevice device;
   if (auto err = device.Create()) {
@@ -343,8 +351,9 @@ RenderResult RenderComposedExport(const RenderRequest& request) {
   // Audio is optional. Try to pull it through as 48 kHz stereo int16 PCM;
   // if the source has no audio or the type is refused, fall back to a
   // video-only export rather than failing the whole render.
+  // GIF has no audio track, so skip audio selection/decode entirely for it.
   bool has_audio = false;
-  if (audio_index != kNoStream) {
+  if (!gif && audio_index != kNoStream) {
     reader->SetStreamSelection(audio_index, TRUE);
     ComPtr<IMFMediaType> pcm_type;
     if (SUCCEEDED(::MFCreateMediaType(pcm_type.GetAddressOf()))) {
@@ -428,26 +437,57 @@ RenderResult RenderComposedExport(const RenderRequest& request) {
     }
   }
 
-  // --- Output encoder at the target resolution. The container (.mp4 vs .mov)
-  // is chosen by the destination_path extension the caller resolved; Slice 5A
-  // resolves the requested bitrate preset against the output size.
-  clingfy::encoding::EncoderConfig enc_config;
-  enc_config.output_path = request.destination_path;
-  enc_config.width = canvas.width;
-  enc_config.height = canvas.height;
-  enc_config.fps = request.fps_hint != 0 ? request.fps_hint : 30u;
-  enc_config.avg_bitrate_bps = ResolveVideoBitrateBps(
-      request.bitrate, canvas.width, canvas.height, enc_config.fps);
-
-  std::optional<clingfy::encoding::AudioEncoderConfig> audio_config;
-  if (has_audio) {
-    audio_config = clingfy::encoding::AudioEncoderConfig{};
-  }
-
+  // --- Output encoder at the target resolution. A .gif destination uses the
+  // WIC GIF encoder (Slice 5B); otherwise the H.264 Sink Writer, whose
+  // container (.mp4 vs .mov) is chosen by the destination_path extension and
+  // whose bitrate comes from the Slice 5A preset (ignored by GIF, which is
+  // palette-indexed). Both encoders are declared; only the selected one is
+  // opened, and the lambdas below route every frame-loop call to it so the
+  // loop stays single-path.
   clingfy::encoding::MfSinkWriterEncoder encoder;
-  if (auto err = encoder.Open(enc_config, device, audio_config)) {
-    return Failure("export: encoder open failed — " + err->message);
+  clingfy::encoding::GifEncoder gif_encoder;
+  if (gif) {
+    clingfy::encoding::EncoderConfig gif_config;
+    gif_config.output_path = request.destination_path;
+    gif_config.width = canvas.width;
+    gif_config.height = canvas.height;
+    if (auto err = gif_encoder.Open(gif_config, device)) {
+      return Failure("export: GIF encoder open failed — " + err->message);
+    }
+  } else {
+    clingfy::encoding::EncoderConfig enc_config;
+    enc_config.output_path = request.destination_path;
+    enc_config.width = canvas.width;
+    enc_config.height = canvas.height;
+    enc_config.fps = request.fps_hint != 0 ? request.fps_hint : 30u;
+    enc_config.avg_bitrate_bps = ResolveVideoBitrateBps(
+        request.bitrate, canvas.width, canvas.height, enc_config.fps);
+
+    std::optional<clingfy::encoding::AudioEncoderConfig> audio_config;
+    if (has_audio) {
+      audio_config = clingfy::encoding::AudioEncoderConfig{};
+    }
+    if (auto err = encoder.Open(enc_config, device, audio_config)) {
+      return Failure("export: encoder open failed — " + err->message);
+    }
   }
+
+  auto write_video_frame =
+      [&](const clingfy::capture::CapturedVideoFrame& f)
+      -> std::optional<clingfy::encoding::EncoderError> {
+    return gif ? gif_encoder.WriteVideoFrame(f) : encoder.WriteVideoFrame(f);
+  };
+  auto cancel_encoder = [&]() {
+    if (gif) {
+      gif_encoder.Cancel();
+    } else {
+      encoder.Cancel();
+    }
+  };
+  auto finalize_encoder =
+      [&]() -> std::optional<clingfy::encoding::EncoderError> {
+    return gif ? gif_encoder.Finalize() : encoder.Finalize();
+  };
 
   // --- Frame loop: pull samples interleaved by timestamp.
   std::vector<BYTE> top_down;  // reused per video frame
@@ -461,9 +501,14 @@ RenderResult RenderComposedExport(const RenderRequest& request) {
   // color, clamped radius, and the rounded-clip geometry + layer are
   // resolved/built once here.
   const RgbaColor bg = ResolveBackgroundColor(request.background_color);
+  // GIF has no partial alpha, and the composited texture is premultiplied —
+  // feeding a translucent background through the WIC straight-alpha path would
+  // darken padding margins / anti-aliased corners. Force the GIF background
+  // fully opaque so those regions show the solid background color instead.
   const D2D1_COLOR_F clear_color =
       D2D1::ColorF(static_cast<float>(bg.r), static_cast<float>(bg.g),
-                   static_cast<float>(bg.b), static_cast<float>(bg.a));
+                   static_cast<float>(bg.b),
+                   gif ? 1.0f : static_cast<float>(bg.a));
   const double corner_radius_px =
       ResolveCornerRadiusPx(request.corner_radius, content);
   ComPtr<ID2D1RoundedRectangleGeometry> rounded_clip;
@@ -488,11 +533,32 @@ RenderResult RenderComposedExport(const RenderRequest& request) {
   bool audio_eos = !has_audio;  // nothing to drain when there is no audio
   double last_progress_emitted = -1.0;  // Slice 5A: throttle progress ticks
 
+  // Slice 5B GIF decimation: a running emit target on an ideal grid (see
+  // gif_export_policy.h). Seeded so the first decoded frame is always kept; a
+  // 30/60 fps source becomes a ~kGifTargetFps GIF, jitter-tolerant.
+  std::int64_t gif_emit_target_hns = kGifEmitTargetStart;
+
+  // Slice 5A: emit a 0..1 progress fraction from the video PTS, throttled to
+  // ~1% steps so a long clip doesn't flood the channel. Indeterminate (no emit)
+  // when the source reported no duration. Shared by the kept- and (GIF-)dropped-
+  // frame paths so the bar advances per decoded frame regardless of decimation.
+  auto emit_progress = [&](LONGLONG ts) {
+    if (request.on_progress && duration_hns > 0) {
+      double frac =
+          static_cast<double>(ts) / static_cast<double>(duration_hns);
+      frac = frac < 0.0 ? 0.0 : (frac > 1.0 ? 1.0 : frac);
+      if (frac >= last_progress_emitted + 0.01) {
+        last_progress_emitted = frac;
+        request.on_progress(frac);
+      }
+    }
+  };
+
   while (!(video_eos && audio_eos)) {
     // Slice 5A: cancel between samples — release the writer without
     // finalizing and delete the partial file, then reply cleanly.
     if (request.is_cancelled && request.is_cancelled()) {
-      encoder.Cancel();
+      cancel_encoder();
       return Cancelled(request.destination_path);
     }
     DWORD actual_index = 0;
@@ -503,7 +569,7 @@ RenderResult RenderComposedExport(const RenderRequest& request) {
                             &actual_index, &flags, &timestamp,
                             sample.GetAddressOf());
     if (FAILED(hr)) {
-      encoder.Cancel();
+      cancel_encoder();
       return Failure(Hr("export: IMFSourceReader::ReadSample failed", hr));
     }
     if (flags & MF_SOURCE_READERF_ENDOFSTREAM) {
@@ -518,13 +584,20 @@ RenderResult RenderComposedExport(const RenderRequest& request) {
     }
 
     if (actual_index == video_index) {
+      // Slice 5B: drop frames that fall inside the target GIF interval before
+      // any composite/encode work; still advance progress for the dropped
+      // frame so the bar tracks decode position. Non-GIF keeps every frame.
+      if (gif && !ShouldKeepGifFrame(timestamp, gif_emit_target_hns)) {
+        emit_progress(timestamp);
+        continue;
+      }
       if (!ExtractTopDownBgra(sample.Get(), source_w, source_h, &top_down)) {
-        encoder.Cancel();
+        cancel_encoder();
         return Failure("export: failed to read a decoded video frame buffer.");
       }
       if (FAILED(source_bitmap->CopyFromMemory(nullptr, top_down.data(),
                                                source_w * 4u))) {
-        encoder.Cancel();
+        cancel_encoder();
         return Failure("export: ID2D1Bitmap::CopyFromMemory failed.");
       }
 
@@ -543,12 +616,12 @@ RenderResult RenderComposedExport(const RenderRequest& request) {
       ComPtr<ID3D11Texture2D> out_texture;
       if (FAILED(device.device()->CreateTexture2D(&desc, nullptr,
                                                   out_texture.GetAddressOf()))) {
-        encoder.Cancel();
+        cancel_encoder();
         return Failure("export: CreateTexture2D failed for an output frame.");
       }
       ComPtr<IDXGISurface> out_surface;
       if (FAILED(out_texture.As(&out_surface))) {
-        encoder.Cancel();
+        cancel_encoder();
         return Failure("export: output texture has no IDXGISurface.");
       }
       const D2D1_BITMAP_PROPERTIES1 target_props = D2D1::BitmapProperties1(
@@ -558,7 +631,7 @@ RenderResult RenderComposedExport(const RenderRequest& request) {
       ComPtr<ID2D1Bitmap1> target_bitmap;
       if (FAILED(d2d_ctx->CreateBitmapFromDxgiSurface(
               out_surface.Get(), &target_props, target_bitmap.GetAddressOf()))) {
-        encoder.Cancel();
+        cancel_encoder();
         return Failure("export: CreateBitmapFromDxgiSurface failed.");
       }
 
@@ -583,7 +656,7 @@ RenderResult RenderComposedExport(const RenderRequest& request) {
       const HRESULT end_hr = d2d_ctx->EndDraw();
       d2d_ctx->SetTarget(nullptr);
       if (FAILED(end_hr)) {
-        encoder.Cancel();
+        cancel_encoder();
         return Failure(Hr("export: Direct2D EndDraw failed", end_hr));
       }
       // Flush so the composite completes before the encoder MFT reads the
@@ -595,24 +668,16 @@ RenderResult RenderComposedExport(const RenderRequest& request) {
       frame.width = canvas.width;
       frame.height = canvas.height;
       frame.timestamp_hns = timestamp;
-      if (auto err = encoder.WriteVideoFrame(frame)) {
-        encoder.Cancel();
+      if (auto err = write_video_frame(frame)) {
+        cancel_encoder();
         return Failure("export: encoder WriteVideoFrame failed — " +
                        err->message);
       }
       ++video_frames;
-      // Slice 5A: emit a 0..1 progress fraction from the video PTS, throttled
-      // to ~1% steps so a long clip doesn't flood the channel. Indeterminate
-      // (no emit) when the source reported no duration.
-      if (request.on_progress && duration_hns > 0) {
-        double frac = static_cast<double>(timestamp) /
-                      static_cast<double>(duration_hns);
-        frac = frac < 0.0 ? 0.0 : (frac > 1.0 ? 1.0 : frac);
-        if (frac >= last_progress_emitted + 0.01) {
-          last_progress_emitted = frac;
-          request.on_progress(frac);
-        }
+      if (gif) {
+        gif_emit_target_hns = AdvanceGifEmitTarget(gif_emit_target_hns, timestamp);
       }
+      emit_progress(timestamp);
     } else if (has_audio && actual_index == audio_index) {
       ComPtr<IMFMediaBuffer> audio_buffer;
       if (SUCCEEDED(sample->ConvertToContiguousBuffer(
@@ -638,7 +703,7 @@ RenderResult RenderComposedExport(const RenderRequest& request) {
           ApplyAudioGain(packet.samples.data(), packet.samples.size(),
                          audio_stages);
           if (auto err = encoder.WriteAudioPacket(packet)) {
-            encoder.Cancel();
+            cancel_encoder();
             return Failure("export: encoder WriteAudioPacket failed — " +
                            err->message);
           }
@@ -651,11 +716,11 @@ RenderResult RenderComposedExport(const RenderRequest& request) {
   }
 
   if (video_frames == 0) {
-    encoder.Cancel();
+    cancel_encoder();
     return Failure("export: no video frames were decoded from the source.");
   }
 
-  if (auto err = encoder.Finalize()) {
+  if (auto err = finalize_encoder()) {
     return Failure("export: encoder finalize failed — " + err->message);
   }
 

@@ -47,6 +47,7 @@ add_executable(runner_tests
   "export_pipeline_test.cpp"
   "export_progress_publisher_test.cpp"
   "export_session_test.cpp"
+  "gif_export_policy_test.cpp"
   "mf_encoder_config_test.cpp"
   "permission_probe_test.cpp"
   "platform_thread_dispatcher_test.cpp"

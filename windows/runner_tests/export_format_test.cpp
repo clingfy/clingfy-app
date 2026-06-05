@@ -20,22 +20,22 @@ TEST(ResolveExportExtensionTest, MovEmptyAndUnknownAreMov) {
   EXPECT_EQ(ResolveExportExtension("wat"), ".mov");
 }
 
-TEST(ResolveExportExtensionTest, GifFallsBackToMov) {
-  // gif is not supported yet (Slice 5B) -> .mov container.
-  EXPECT_EQ(ResolveExportExtension("gif"), ".mov");
+TEST(ResolveExportExtensionTest, GifIsGif) {
+  // Slice 5B: gif is a real animated GIF now, not a .mov fallback.
+  EXPECT_EQ(ResolveExportExtension("gif"), ".gif");
+  EXPECT_EQ(ResolveExportExtension("GIF"), ".gif");  // case-insensitive
 }
 
 // ---- FormatWasDowngraded ----------------------------------------------------
 
-TEST(FormatWasDowngradedTest, Mp4MovEmptyAreHonored) {
+TEST(FormatWasDowngradedTest, NothingIsDowngradedNow) {
+  // Windows emits .mov / .mp4 / .gif natively (Slices 5A/5B) — no format is
+  // silently written in a different container.
   EXPECT_FALSE(FormatWasDowngraded("mp4"));
   EXPECT_FALSE(FormatWasDowngraded("mov"));
   EXPECT_FALSE(FormatWasDowngraded(""));
-}
-
-TEST(FormatWasDowngradedTest, OnlyGifIsADowngrade) {
-  EXPECT_TRUE(FormatWasDowngraded("gif"));
-  EXPECT_TRUE(FormatWasDowngraded("GIF"));
+  EXPECT_FALSE(FormatWasDowngraded("gif"));
+  EXPECT_FALSE(FormatWasDowngraded("GIF"));
 }
 
 // ---- ResolveVideoBitrateBps -------------------------------------------------

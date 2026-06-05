@@ -15,6 +15,7 @@
 #include <optional>
 #include <string>
 
+#include "Encoding/encoder_error.h"
 #include "Encoding/mf_dxgi_manager.h"
 #include "Encoding/mf_encoder_config.h"
 
@@ -38,10 +39,9 @@ class D3DDevice;
 // Phase 3E expands the configuration matrix to match the macOS engine.
 namespace clingfy::encoding {
 
-struct EncoderError {
-  std::string message;
-  HRESULT hr = 0;
-};
+// `EncoderError` now lives in `Encoding/encoder_error.h` so the GIF encoder
+// (Slice 5B) can share the exact type without pulling in the Media Foundation
+// Sink Writer headers.
 
 class MfSinkWriterEncoder {
  public:

@@ -44,6 +44,7 @@ add_library(runner_bridge STATIC
   "Capture/Export/export_pipeline.cpp"
   "Capture/Export/export_passthrough.cpp"
   "Capture/Export/export_session.cpp"
+  "Capture/Export/gif_export_policy.cpp"
   "Capture/recording_clock.cpp"
   "Capture/recording_engine.cpp"
   "Capture/recording_project_reader.cpp"
@@ -53,6 +54,7 @@ add_library(runner_bridge STATIC
   "Capture/wgc_display_capture_backend.cpp"
   "Capture/windows_selection_state.cpp"
   "Encoding/encoder_output_path.cpp"
+  "Encoding/gif_encoder.cpp"
   "Encoding/mf_dxgi_manager.cpp"
   "Encoding/mf_encoder_config.cpp"
   "Encoding/mf_sink_writer_encoder.cpp"
@@ -131,6 +133,16 @@ target_link_libraries(runner_bridge PUBLIC
 target_link_libraries(runner_bridge PUBLIC
   "shell32.lib"
   "ole32.lib"
+)
+
+# Phase 6 Slice 5B: WIC (Windows Imaging Component) animated-GIF encoder
+# (Encoding/gif_encoder.cpp).
+#   * windowscodecs — IWICImagingFactory / IWICBitmapEncoder
+#                     (GUID_ContainerFormatGif) + the WIC format/CLSID GUIDs
+# propsys.lib (InitPropVariantFromBuffer for the loop/delay metadata) and
+# ole32.lib (CoInitializeEx) are already linked above.
+target_link_libraries(runner_bridge PUBLIC
+  "windowscodecs.lib"
 )
 
 # C++/WinRT headers use the standard-layout `co_await`-friendly types but
