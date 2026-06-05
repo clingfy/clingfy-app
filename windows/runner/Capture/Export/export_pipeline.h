@@ -30,6 +30,7 @@
 #define RUNNER_CAPTURE_EXPORT_EXPORT_PIPELINE_H_
 
 #include <cstdint>
+#include <functional>
 #include <optional>
 #include <string>
 
@@ -79,6 +80,16 @@ struct RenderRequest {
   double audio_volume_percent = 100.0;
   bool auto_normalize = false;
   double target_loudness_dbfs = -16.0;
+
+  // Slice 5A. `bitrate` is the requested preset ("auto"/"low"/"medium"/
+  // "high"), resolved to an H.264 average bitrate against the output size.
+  // The output container is chosen from `destination_path`'s extension
+  // (.mp4 vs .mov). `on_progress` receives a 0..1 fraction; `is_cancelled`
+  // is polled each frame so a cancel aborts the loop cleanly. Both default to
+  // no-ops — a synchronous export (or a test) needs neither.
+  std::string bitrate;
+  std::function<void(double)> on_progress;
+  std::function<bool()> is_cancelled;
 };
 
 struct RenderResult {
@@ -94,6 +105,10 @@ struct RenderResult {
   std::uint64_t audio_packets_written = 0;
   // True when the source carried an audio track that was carried through.
   bool had_audio = false;
+  // Slice 5A: true when the export was aborted by a cancel request (ok stays
+  // false). Lets the caller map it to a clean cancellation reply rather than a
+  // generic failure.
+  bool cancelled = false;
 };
 
 // Run the full decode → composite → re-encode pass. Synchronous; returns

@@ -2,7 +2,9 @@
 
 #include <optional>
 
+#include "Bridge/export_progress_publisher.h"
 #include "Bridge/platform_thread_dispatcher.h"
+#include "Capture/Export/export_session.h"
 #include "flutter/generated_plugin_registrant.h"
 #include "preview/preview_engine.h"
 
@@ -36,7 +38,15 @@ bool FlutterWindow::OnCreate() {
   // EventSink::Success call lands on the platform thread that runs
   // this constructor. We're already on that thread here, so this is
   // the right place to register the hidden message-only window.
-  clingfy::bridge::PlatformThreadDispatcher::Instance().Initialize();
+  if (!clingfy::bridge::PlatformThreadDispatcher::Instance().Initialize()) {
+    // Without the dispatcher, exportVideo falls back to a synchronous,
+    // non-cancellable run on the platform thread (export_router gates on
+    // is_initialized()). Surface the failure so a broken setup is
+    // diagnosable rather than silent.
+    OutputDebugStringW(
+        L"[clingfy] PlatformThreadDispatcher::Initialize failed; export will "
+        L"run synchronously and cannot be cancelled.\n");
+  }
 
   // Stand up the native bridge before the first frame. Methods called from
   // Flutter (NativeBridge.instance) must always have a registered handler —
@@ -46,6 +56,12 @@ bool FlutterWindow::OnCreate() {
       std::make_unique<clingfy::bridge::MethodDispatcher>(messenger);
   event_channel_stubs_ =
       std::make_unique<clingfy::bridge::EventChannelStubs>(messenger);
+
+  // Give the export-progress publisher the screen_recorder method channel so
+  // the (worker-thread) export can push `updateExportProgress` back to Dart.
+  // Cleared in OnDestroy before the dispatcher (and its channel) is torn down.
+  clingfy::bridge::ExportProgressPublisher::Instance().SetChannel(
+      method_dispatcher_->channel());
 
   // PreviewEngine (Phase 5). Initialized through the raw C registrar
   // ref to avoid pulling in the flutter_wrapper_plugin library (which
@@ -75,8 +91,19 @@ bool FlutterWindow::OnCreate() {
 }
 
 void FlutterWindow::OnDestroy() {
+  // Abort any in-flight export so its worker stops decoding/encoding and
+  // deletes its partial output instead of racing teardown. (The worker's
+  // terminal reply is safe regardless: the Flutter embedder drops a reply
+  // that arrives after the engine is destroyed — core_implementations.cc
+  // ForwardToHandler checks FlutterDesktopMessengerIsAvailable.)
+  clingfy::capture::export_::ExportSession::Instance().RequestCancel();
+
   // Tear bridges down before the engine so their channel handlers don't
-  // outlive the messenger they were registered against.
+  // outlive the messenger they were registered against. Drop the export
+  // progress publisher's borrowed channel pointer first — the in-flight export
+  // worker (if any) then emits into a null channel (no-op) instead of a freed
+  // one.
+  clingfy::bridge::ExportProgressPublisher::Instance().ClearChannel();
   event_channel_stubs_.reset();
   method_dispatcher_.reset();
 

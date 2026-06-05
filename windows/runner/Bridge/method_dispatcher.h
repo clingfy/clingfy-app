@@ -27,6 +27,13 @@ class MethodDispatcher {
   MethodDispatcher(const MethodDispatcher&) = delete;
   MethodDispatcher& operator=(const MethodDispatcher&) = delete;
 
+  // The screen_recorder method channel, for native -> Flutter reverse calls
+  // (e.g. export progress). Owned here; borrowers must not outlive the
+  // dispatcher. Returns nullptr only if construction failed.
+  flutter::MethodChannel<flutter::EncodableValue>* channel() const {
+    return channel_.get();
+  }
+
  private:
   MethodRouter router_;
   std::unique_ptr<flutter::MethodChannel<flutter::EncodableValue>> channel_;

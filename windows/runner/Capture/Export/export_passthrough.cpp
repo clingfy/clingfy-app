@@ -4,10 +4,12 @@
 
 #include <algorithm>
 #include <filesystem>
+#include <functional>
 #include <string>
 #include <system_error>
 
 #include "Capture/Export/export_audio.h"
+#include "Capture/Export/export_format.h"
 #include "Capture/Export/export_geometry.h"
 #include "Capture/Export/export_pipeline.h"
 #include "Capture/recording_project_reader.h"
@@ -71,20 +73,21 @@ std::string SanitizeFilename(const std::string& stem) {
 // `LetterboxExporter` collision-avoidance pattern so a user who
 // exports the same recording twice gets two files instead of an
 // overwrite. Caps at 999 attempts to avoid pathological loops.
-fs::path UniqueDestination(const fs::path& dir, const std::string& stem) {
-  fs::path candidate = dir / (stem + ".mov");
+fs::path UniqueDestination(const fs::path& dir, const std::string& stem,
+                           const std::string& ext) {
+  fs::path candidate = dir / (stem + ext);
   if (!fs::exists(candidate)) {
     return candidate;
   }
   for (int i = 1; i < 1000; ++i) {
-    candidate = dir / (stem + " (" + std::to_string(i) + ").mov");
+    candidate = dir / (stem + " (" + std::to_string(i) + ")" + ext);
     if (!fs::exists(candidate)) {
       return candidate;
     }
   }
   // Pathological: 1000 collisions. Caller will surface the eventual
   // copy_file failure as kCopyFailed.
-  return dir / (stem + " (overflow).mov");
+  return dir / (stem + " (overflow)" + ext);
 }
 
 std::string WideToUtf8(const std::wstring& wide) {
@@ -122,7 +125,8 @@ std::wstring Utf8ToWide(const std::string& utf8) {
 }  // namespace
 
 std::string ResolveExportDestination(const std::string& directory,
-                                     const std::string& filename_stem) {
+                                     const std::string& filename_stem,
+                                     const std::string& format) {
   const std::string trimmed_dir = Trim(directory);
   const std::string trimmed_stem = Trim(filename_stem);
 
@@ -133,12 +137,22 @@ std::string ResolveExportDestination(const std::string& directory,
   }
 
   fs::path dir_path = fs::u8path(trimmed_dir);
-  fs::path candidate = UniqueDestination(dir_path, stem);
+  fs::path candidate =
+      UniqueDestination(dir_path, stem, ResolveExportExtension(format));
   return candidate.u8string();
 }
 
-PassthroughResult ExportPassthroughCopy(const PassthroughInput& input) {
+PassthroughResult ExportPassthroughCopy(
+    const PassthroughInput& input, std::function<void(double)> on_progress,
+    std::function<bool()> is_cancelled) {
   PassthroughResult out;
+
+  // Slice 5A: honor a cancel that arrived before any work started.
+  if (is_cancelled && is_cancelled()) {
+    out.error = PassthroughError::kCancelled;
+    out.message = "exportVideo: cancelled by user";
+    return out;
+  }
 
   const std::string project = Trim(input.project_path);
   if (project.empty()) {
@@ -181,7 +195,7 @@ PassthroughResult ExportPassthroughCopy(const PassthroughInput& input) {
   // separately from the copy so the test can pin it without touching
   // the filesystem.
   const std::string destination_utf8 =
-      ResolveExportDestination(dir, input.filename);
+      ResolveExportDestination(dir, input.filename, input.format);
   const fs::path destination = fs::u8path(destination_utf8);
 
   // Ensure the destination directory exists. The user picked it via a
@@ -192,18 +206,22 @@ PassthroughResult ExportPassthroughCopy(const PassthroughInput& input) {
   fs::create_directories(destination.parent_path(), ec);
 
   // The byte-for-byte copy is only valid when the export needs no work at
-  // all: an identity transform (auto/auto), no Slice 3 canvas styling, AND
-  // no Slice 4 audio processing. Padding or a corner radius expose canvas a
-  // plain copy can't produce; a gain/volume/normalize request rewrites the
-  // audio samples — any of them forces the decode → composite → re-encode
-  // path. A background color alone stays on the fast-path (with no margins
-  // it is never visible). Audio defaults (0 dB / 100% / no normalize) keep
-  // the copy alive; only a real change trips it.
+  // all: an identity transform (auto/auto), no Slice 3 canvas styling, no
+  // Slice 4 audio processing, AND the output container matches the source.
+  // The recorder always writes a .mov (QuickTime); copying its bytes to a
+  // .mp4 path would mislabel the container, so an mp4 request (Slice 5A)
+  // forces the re-encode path even with auto/auto. Padding / corner radius /
+  // gain / volume / normalize each force it too; a background color alone
+  // stays on the fast-path (invisible without margins). The audio + format
+  // identity defaults keep the copy alive.
+  const bool wants_non_mov_container =
+      ResolveExportExtension(input.format) != ".mov";
   const bool needs_composition =
       !IsIdentityTransform(input.layout, input.resolution) ||
       input.padding > 0.0 || input.corner_radius > 0.0 ||
       RequiresAudioProcessing(input.audio_gain_db, input.audio_volume_percent,
-                              input.auto_normalize);
+                              input.auto_normalize) ||
+      wants_non_mov_container;
 
   if (!needs_composition) {
     // Fast-path: pixel-for-pixel the source, so copy it byte-for-byte.
@@ -219,6 +237,19 @@ PassthroughResult ExportPassthroughCopy(const PassthroughInput& input) {
           "); source=" + source.u8string() +
           " destination=" + destination.u8string();
       return out;
+    }
+    // A cancel that landed during/just after the (sub-second) copy: drop the
+    // copied file and report a clean cancel rather than leaving a stray output.
+    if (is_cancelled && is_cancelled()) {
+      std::error_code rm_ec;
+      fs::remove(destination, rm_ec);
+      out.error = PassthroughError::kCancelled;
+      out.message = "exportVideo: cancelled by user";
+      return out;
+    }
+    // The byte-copy is instant; report 100% so the UI completes.
+    if (on_progress) {
+      on_progress(1.0);
     }
   } else {
     // Composition path: decode the recording, composite each frame at the
@@ -237,31 +268,30 @@ PassthroughResult ExportPassthroughCopy(const PassthroughInput& input) {
     render.audio_volume_percent = input.audio_volume_percent;
     render.auto_normalize = input.auto_normalize;
     render.target_loudness_dbfs = input.target_loudness_dbfs;
+    render.bitrate = input.bitrate;
+    render.on_progress = on_progress;
+    render.is_cancelled = is_cancelled;
     render.fps_hint = read.project->metadata.has_value()
                           ? read.project->metadata->fps
                           : 0u;
     const RenderResult render_result = RenderComposedExport(render);
     if (!render_result.ok) {
-      out.error = PassthroughError::kRenderFailed;
-      out.message =
-          "exportVideo: composition render failed — " + render_result.message;
+      if (render_result.cancelled) {
+        out.error = PassthroughError::kCancelled;
+        out.message = "exportVideo: cancelled by user";
+      } else {
+        out.error = PassthroughError::kRenderFailed;
+        out.message = "exportVideo: composition render failed — " +
+                      render_result.message;
+      }
       return out;
     }
   }
 
   out.output_path = destination.u8string();
-  const std::string format_lower = [&] {
-    std::string lo = input.format;
-    std::transform(lo.begin(), lo.end(), lo.begin(),
-                   [](unsigned char c) {
-                     return static_cast<char>(std::tolower(c));
-                   });
-    return lo;
-  }();
-  // Treat empty / "mov" as honoring the request; anything else is a
-  // soft downgrade Slice 5 will fix.
-  out.format_was_downgraded =
-      !format_lower.empty() && format_lower != "mov";
+  // Slice 5A produces both .mp4 and .mov; only gif still falls back to .mov
+  // (Slice 5B). mp4/mov are honored, so neither is a downgrade.
+  out.format_was_downgraded = FormatWasDowngraded(input.format);
   return out;
 }
 

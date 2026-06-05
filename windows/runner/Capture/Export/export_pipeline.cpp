@@ -9,15 +9,18 @@
 #include <mferror.h>
 #include <mfidl.h>
 #include <mfreadwrite.h>
+#include <propidl.h>
 #include <wrl/client.h>
 
 #include <atomic>
 #include <cstring>
+#include <filesystem>
 #include <mutex>
 #include <vector>
 
 #include "Audio/audio_mixer.h"
 #include "Capture/Export/export_audio.h"
+#include "Capture/Export/export_format.h"
 #include "Capture/Export/export_geometry.h"
 #include "Capture/captured_video_frame.h"
 #include "Encoding/mf_encoder_config.h"
@@ -47,6 +50,22 @@ RenderResult Failure(std::string message) {
   RenderResult out;
   out.ok = false;
   out.message = std::move(message);
+  return out;
+}
+
+// Slice 5A: build a cancelled result and remove any partial output file. The
+// message contains "cancelled" so the Dart side classifies it as a clean
+// cancel (post_processing_controller._isLikelyCancellationMessage), not a
+// failure. `destination_path` is UTF-8.
+RenderResult Cancelled(const std::string& destination_path) {
+  if (!destination_path.empty()) {
+    std::error_code ec;
+    std::filesystem::remove(std::filesystem::u8path(destination_path), ec);
+  }
+  RenderResult out;
+  out.ok = false;
+  out.cancelled = true;
+  out.message = "export: cancelled by user";
   return out;
 }
 
@@ -145,7 +164,8 @@ bool ExtractTopDownBgra(IMFSample* sample, UINT width, UINT height,
 // audio or it can't be decoded — the caller then skips normalize and falls
 // back to the plain user gain. Decodes to the SAME 48 kHz stereo int16 PCM
 // the main pass scales, so the measured peak matches what gets scaled.
-double MeasureSourceAudioPeak(const std::wstring& source_path) {
+double MeasureSourceAudioPeak(const std::wstring& source_path,
+                              const std::function<bool()>& is_cancelled) {
   ComPtr<IMFSourceReader> reader;
   if (FAILED(::MFCreateSourceReaderFromURL(source_path.c_str(), nullptr,
                                            reader.GetAddressOf())) ||
@@ -178,6 +198,12 @@ double MeasureSourceAudioPeak(const std::wstring& source_path) {
 
   double peak = 0.0;
   for (;;) {
+    // Honor cancel during the (whole-track) loudness scan; the main loop's
+    // cancel check then aborts the export. Returning the peak-so-far is fine
+    // since a cancel discards the export.
+    if (is_cancelled && is_cancelled()) {
+      break;
+    }
     DWORD flags = 0;
     LONGLONG timestamp = 0;
     ComPtr<IMFSample> sample;
@@ -219,6 +245,12 @@ double MeasureSourceAudioPeak(const std::wstring& source_path) {
 
 RenderResult RenderComposedExport(const RenderRequest& request) {
   EnsureMediaFoundationStarted();
+
+  // Slice 5A: bail before any heavy GPU/MF setup if already cancelled. No
+  // output file exists yet, so Cancelled() just returns the clean result.
+  if (request.is_cancelled && request.is_cancelled()) {
+    return Cancelled(request.destination_path);
+  }
 
   // --- D3D11 device shared by decode-upload, Direct2D, and the encoder.
   clingfy::graphics::D3DDevice device;
@@ -292,6 +324,22 @@ RenderResult RenderComposedExport(const RenderRequest& request) {
     }
   }
 
+  // Total duration (HNS) for the progress fraction. Best-effort: some
+  // containers don't report it, in which case progress stays indeterminate
+  // (no per-frame fraction emitted) but a terminal 1.0 still fires on success.
+  LONGLONG duration_hns = 0;
+  {
+    PROPVARIANT duration_var;
+    PropVariantInit(&duration_var);
+    if (SUCCEEDED(reader->GetPresentationAttribute(
+            static_cast<DWORD>(MF_SOURCE_READER_MEDIASOURCE), MF_PD_DURATION,
+            &duration_var)) &&
+        duration_var.vt == VT_UI8) {
+      duration_hns = static_cast<LONGLONG>(duration_var.uhVal.QuadPart);
+    }
+    PropVariantClear(&duration_var);
+  }
+
   // Audio is optional. Try to pull it through as 48 kHz stereo int16 PCM;
   // if the source has no audio or the type is refused, fall back to a
   // video-only export rather than failing the whole render.
@@ -320,7 +368,8 @@ RenderResult RenderComposedExport(const RenderRequest& request) {
   // (matches macOS, which measures via its own reader). Loop-invariant.
   double audio_peak = 0.0;
   if (has_audio && request.auto_normalize) {
-    audio_peak = MeasureSourceAudioPeak(request.source_video_path);
+    audio_peak =
+        MeasureSourceAudioPeak(request.source_video_path, request.is_cancelled);
   }
   const AudioGainStages audio_stages = ResolveAudioGainStages(
       request.audio_gain_db, request.audio_volume_percent,
@@ -379,12 +428,16 @@ RenderResult RenderComposedExport(const RenderRequest& request) {
     }
   }
 
-  // --- Output encoder at the target resolution.
+  // --- Output encoder at the target resolution. The container (.mp4 vs .mov)
+  // is chosen by the destination_path extension the caller resolved; Slice 5A
+  // resolves the requested bitrate preset against the output size.
   clingfy::encoding::EncoderConfig enc_config;
   enc_config.output_path = request.destination_path;
   enc_config.width = canvas.width;
   enc_config.height = canvas.height;
   enc_config.fps = request.fps_hint != 0 ? request.fps_hint : 30u;
+  enc_config.avg_bitrate_bps = ResolveVideoBitrateBps(
+      request.bitrate, canvas.width, canvas.height, enc_config.fps);
 
   std::optional<clingfy::encoding::AudioEncoderConfig> audio_config;
   if (has_audio) {
@@ -433,8 +486,15 @@ RenderResult RenderComposedExport(const RenderRequest& request) {
   std::uint64_t audio_packets = 0;
   bool video_eos = false;
   bool audio_eos = !has_audio;  // nothing to drain when there is no audio
+  double last_progress_emitted = -1.0;  // Slice 5A: throttle progress ticks
 
   while (!(video_eos && audio_eos)) {
+    // Slice 5A: cancel between samples — release the writer without
+    // finalizing and delete the partial file, then reply cleanly.
+    if (request.is_cancelled && request.is_cancelled()) {
+      encoder.Cancel();
+      return Cancelled(request.destination_path);
+    }
     DWORD actual_index = 0;
     DWORD flags = 0;
     LONGLONG timestamp = 0;
@@ -541,6 +601,18 @@ RenderResult RenderComposedExport(const RenderRequest& request) {
                        err->message);
       }
       ++video_frames;
+      // Slice 5A: emit a 0..1 progress fraction from the video PTS, throttled
+      // to ~1% steps so a long clip doesn't flood the channel. Indeterminate
+      // (no emit) when the source reported no duration.
+      if (request.on_progress && duration_hns > 0) {
+        double frac = static_cast<double>(timestamp) /
+                      static_cast<double>(duration_hns);
+        frac = frac < 0.0 ? 0.0 : (frac > 1.0 ? 1.0 : frac);
+        if (frac >= last_progress_emitted + 0.01) {
+          last_progress_emitted = frac;
+          request.on_progress(frac);
+        }
+      }
     } else if (has_audio && actual_index == audio_index) {
       ComPtr<IMFMediaBuffer> audio_buffer;
       if (SUCCEEDED(sample->ConvertToContiguousBuffer(
@@ -585,6 +657,12 @@ RenderResult RenderComposedExport(const RenderRequest& request) {
 
   if (auto err = encoder.Finalize()) {
     return Failure("export: encoder finalize failed — " + err->message);
+  }
+
+  // Slice 5A: terminal 1.0 so the UI lands exactly at 100% (matches macOS,
+  // which emits the upper bound on completion).
+  if (request.on_progress) {
+    request.on_progress(1.0);
   }
 
   RenderResult out;

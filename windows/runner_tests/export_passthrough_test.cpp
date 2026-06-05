@@ -101,6 +101,25 @@ TEST(ResolveExportDestinationTest, AvoidsCollisionByAppendingNumber) {
   fs::remove_all(tmp);
 }
 
+TEST(ResolveExportDestinationTest, HonorsMp4Format) {
+  const std::string dest =
+      ResolveExportDestination("C:\\Users\\me\\Videos", "Clip", "mp4");
+  EXPECT_NE(dest.find("Clip.mp4"), std::string::npos);
+  EXPECT_EQ(dest.find(".mov"), std::string::npos);
+}
+
+TEST(ResolveExportDestinationTest, DefaultsToMovForMovEmptyOrGif) {
+  EXPECT_NE(
+      ResolveExportDestination("C:\\Videos", "Clip", "mov").find("Clip.mov"),
+      std::string::npos);
+  EXPECT_NE(ResolveExportDestination("C:\\Videos", "Clip").find("Clip.mov"),
+            std::string::npos);
+  // gif is unsupported -> .mov container.
+  EXPECT_NE(
+      ResolveExportDestination("C:\\Videos", "Clip", "gif").find("Clip.mov"),
+      std::string::npos);
+}
+
 // ---- ExportPassthroughCopy (filesystem-touching) ---------------------------
 //
 // These create a tiny .clingfyproj-shaped scaffold so the project reader
@@ -166,8 +185,45 @@ TEST(ExportPassthroughCopyTest, CopiesScreenMovToDestination) {
   fs::remove_all(project.parent_path(), rm_ec);
 }
 
-TEST(ExportPassthroughCopyTest, FlagsFormatDowngradeWhenRequestNotMov) {
-  const auto project = StageProject("export-test-2", "x");
+TEST(ExportPassthroughCopyTest, MovFastCopyIsNotDowngradedButGifIs) {
+  // Slice 5A: mov + auto/auto byte-copies and is honored (not a downgrade).
+  // gif is still unsupported, so it falls back to a .mov byte-copy and is
+  // flagged downgraded. Both stay on the fast-path (gif's resolved extension
+  // is .mov, matching the source container).
+  const auto project = StageProject("export-test-2", "MOCK_VIDEO_BYTES");
+  const auto dest_dir = project.parent_path() / "out";
+  fs::create_directories(dest_dir);
+
+  PassthroughInput base;
+  base.project_path = project.u8string();
+  base.directory_override = dest_dir.u8string();
+
+  PassthroughInput mov = base;
+  mov.format = "mov";
+  mov.filename = "MovExport";
+  const auto mov_out = ExportPassthroughCopy(mov);
+  ASSERT_EQ(mov_out.error, PassthroughError::kNone) << mov_out.message;
+  EXPECT_FALSE(mov_out.format_was_downgraded);
+  EXPECT_NE(mov_out.output_path.find(".mov"), std::string::npos);
+
+  PassthroughInput gif = base;
+  gif.format = "gif";
+  gif.filename = "GifExport";
+  const auto gif_out = ExportPassthroughCopy(gif);
+  ASSERT_EQ(gif_out.error, PassthroughError::kNone) << gif_out.message;
+  EXPECT_TRUE(gif_out.format_was_downgraded);
+  EXPECT_NE(gif_out.output_path.find(".mov"), std::string::npos);
+
+  std::error_code rm_ec;
+  fs::remove_all(project.parent_path(), rm_ec);
+}
+
+TEST(ExportPassthroughCopyTest, Mp4ForcesReencodeNotByteCopy) {
+  // An mp4 output can't be a byte-copy of the .mov source, so even auto/auto
+  // must route through the re-encode path. With a non-decodable source that
+  // path fails (kRenderFailed) instead of byte-copying a mislabeled .mp4 —
+  // GPU-independent (device or decode failure both yield kRenderFailed).
+  const auto project = StageProject("export-test-mp4", "NOT_A_REAL_VIDEO");
   const auto dest_dir = project.parent_path() / "out";
   fs::create_directories(dest_dir);
 
@@ -175,14 +231,31 @@ TEST(ExportPassthroughCopyTest, FlagsFormatDowngradeWhenRequestNotMov) {
   input.project_path = project.u8string();
   input.directory_override = dest_dir.u8string();
   input.filename = "MyExport";
-  input.format = "mp4";
+  input.format = "mp4";  // auto/auto, no styling -> only the format forces it
 
   const auto outcome = ExportPassthroughCopy(input);
-  ASSERT_EQ(outcome.error, PassthroughError::kNone) << outcome.message;
-  EXPECT_TRUE(outcome.format_was_downgraded);
-  // The output extension is forced to .mov regardless of requested format.
-  EXPECT_NE(outcome.output_path.find(".mov"), std::string::npos);
-  EXPECT_EQ(outcome.output_path.find(".mp4"), std::string::npos);
+  EXPECT_EQ(outcome.error, PassthroughError::kRenderFailed) << outcome.message;
+
+  std::error_code rm_ec;
+  fs::remove_all(project.parent_path(), rm_ec);
+}
+
+TEST(ExportPassthroughCopyTest, CancelledBeforeWorkReturnsCancelled) {
+  const auto project = StageProject("export-test-cancel", "MOCK_VIDEO_BYTES");
+  const auto dest_dir = project.parent_path() / "out";
+  fs::create_directories(dest_dir);
+
+  PassthroughInput input;
+  input.project_path = project.u8string();
+  input.directory_override = dest_dir.u8string();
+  input.filename = "MyExport";
+
+  // An is_cancelled that returns true immediately short-circuits to a clean
+  // kCancelled with a "cancelled" message before any copy/render — GPU-free.
+  const auto outcome =
+      ExportPassthroughCopy(input, {}, [] { return true; });
+  EXPECT_EQ(outcome.error, PassthroughError::kCancelled);
+  EXPECT_NE(outcome.message.find("cancel"), std::string::npos);
 
   std::error_code rm_ec;
   fs::remove_all(project.parent_path(), rm_ec);
