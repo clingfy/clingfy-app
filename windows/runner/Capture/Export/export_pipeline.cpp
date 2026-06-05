@@ -17,6 +17,7 @@
 #include <vector>
 
 #include "Audio/audio_mixer.h"
+#include "Capture/Export/export_audio.h"
 #include "Capture/Export/export_geometry.h"
 #include "Capture/captured_video_frame.h"
 #include "Encoding/mf_encoder_config.h"
@@ -137,6 +138,83 @@ bool ExtractTopDownBgra(IMFSample* sample, UINT width, UINT height,
   return true;
 }
 
+// Slice 4 normalize support: decode the whole audio track once (a second,
+// independent source reader, audio-only) and return the peak linear level in
+// [0, 1]. Mirrors macOS `estimateAudioPeakLinear`, which likewise opens its
+// own reader independent of the render decode. Returns 0.0 when there is no
+// audio or it can't be decoded — the caller then skips normalize and falls
+// back to the plain user gain. Decodes to the SAME 48 kHz stereo int16 PCM
+// the main pass scales, so the measured peak matches what gets scaled.
+double MeasureSourceAudioPeak(const std::wstring& source_path) {
+  ComPtr<IMFSourceReader> reader;
+  if (FAILED(::MFCreateSourceReaderFromURL(source_path.c_str(), nullptr,
+                                           reader.GetAddressOf())) ||
+      reader == nullptr) {
+    return 0.0;
+  }
+  DWORD video_index = kNoStream;
+  DWORD audio_index = kNoStream;
+  IdentifyStreams(reader.Get(), &video_index, &audio_index);
+  if (audio_index == kNoStream) {
+    return 0.0;
+  }
+  reader->SetStreamSelection(static_cast<DWORD>(MF_SOURCE_READER_ALL_STREAMS),
+                             FALSE);
+  reader->SetStreamSelection(audio_index, TRUE);
+
+  ComPtr<IMFMediaType> pcm_type;
+  if (FAILED(::MFCreateMediaType(pcm_type.GetAddressOf()))) {
+    return 0.0;
+  }
+  pcm_type->SetGUID(MF_MT_MAJOR_TYPE, MFMediaType_Audio);
+  pcm_type->SetGUID(MF_MT_SUBTYPE, MFAudioFormat_PCM);
+  pcm_type->SetUINT32(MF_MT_AUDIO_BITS_PER_SAMPLE, 16);
+  pcm_type->SetUINT32(MF_MT_AUDIO_SAMPLES_PER_SECOND, 48'000);
+  pcm_type->SetUINT32(MF_MT_AUDIO_NUM_CHANNELS, 2);
+  if (FAILED(reader->SetCurrentMediaType(audio_index, nullptr,
+                                         pcm_type.Get()))) {
+    return 0.0;
+  }
+
+  double peak = 0.0;
+  for (;;) {
+    DWORD flags = 0;
+    LONGLONG timestamp = 0;
+    ComPtr<IMFSample> sample;
+    if (FAILED(reader->ReadSample(audio_index, 0, nullptr, &flags, &timestamp,
+                                  sample.GetAddressOf()))) {
+      break;
+    }
+    if (flags & MF_SOURCE_READERF_ENDOFSTREAM) {
+      break;
+    }
+    if (sample == nullptr) {
+      continue;
+    }
+    ComPtr<IMFMediaBuffer> buffer;
+    if (FAILED(sample->ConvertToContiguousBuffer(buffer.GetAddressOf())) ||
+        buffer == nullptr) {
+      continue;
+    }
+    BYTE* data = nullptr;
+    DWORD max_len = 0;
+    DWORD cur_len = 0;
+    if (SUCCEEDED(buffer->Lock(&data, &max_len, &cur_len)) && data != nullptr &&
+        cur_len > 0) {
+      const std::size_t n = cur_len / sizeof(std::int16_t);
+      const double buffer_peak =
+          Int16PeakLinear(reinterpret_cast<const std::int16_t*>(data), n);
+      if (buffer_peak > peak) {
+        peak = buffer_peak;
+      }
+    }
+    if (data != nullptr) {
+      buffer->Unlock();
+    }
+  }
+  return peak;
+}
+
 }  // namespace
 
 RenderResult RenderComposedExport(const RenderRequest& request) {
@@ -235,6 +313,18 @@ RenderResult RenderComposedExport(const RenderRequest& request) {
       }
     }
   }
+
+  // --- Slice 4 audio level: resolve the single gain/volume/normalize
+  // multiplier applied to every decoded PCM sample. Normalize needs the
+  // whole-track peak, so it runs a separate audio-only decode pass first
+  // (matches macOS, which measures via its own reader). Loop-invariant.
+  double audio_peak = 0.0;
+  if (has_audio && request.auto_normalize) {
+    audio_peak = MeasureSourceAudioPeak(request.source_video_path);
+  }
+  const AudioGainStages audio_stages = ResolveAudioGainStages(
+      request.audio_gain_db, request.audio_volume_percent,
+      request.auto_normalize, request.target_loudness_dbfs, audio_peak);
 
   // --- Geometry: output size + source placement, via the tested helpers.
   const SizeF source_size{static_cast<double>(source_w),
@@ -470,6 +560,11 @@ RenderResult RenderComposedExport(const RenderRequest& request) {
           packet.frame_count = int16_count / 2u;  // stereo interleaved
           packet.timestamp_hns = timestamp;
           audio_buffer->Unlock();
+          // Slice 4: scale the decoded PCM by the resolved gain/volume/
+          // normalize stages (a no-op when both are 1.0). Touches sample
+          // values only — never frame_count or timestamp, so A/V sync holds.
+          ApplyAudioGain(packet.samples.data(), packet.samples.size(),
+                         audio_stages);
           if (auto err = encoder.WriteAudioPacket(packet)) {
             encoder.Cancel();
             return Failure("export: encoder WriteAudioPacket failed — " +

@@ -113,6 +113,21 @@ std::optional<std::int64_t> ReadOptionalInt(const flutter::EncodableMap& map,
   return std::nullopt;
 }
 
+// Read a Dart `bool` arg, returning `fallback` when the key is absent or not
+// a bool. (export_router has no shared codec util, so this mirrors the
+// recording_router helper of the same name.)
+bool ReadBool(const flutter::EncodableMap& map, const std::string& key,
+              bool fallback) {
+  const auto it = map.find(flutter::EncodableValue(key));
+  if (it == map.end()) {
+    return fallback;
+  }
+  if (const auto* value = std::get_if<bool>(&it->second)) {
+    return *value;
+  }
+  return fallback;
+}
+
 void HandleExportVideo(
     const flutter::MethodCall<flutter::EncodableValue>& call,
     std::unique_ptr<flutter::MethodResult<flutter::EncodableValue>> result) {
@@ -134,6 +149,13 @@ void HandleExportVideo(
     input.padding = ReadDouble(*args, "padding", 0.0);
     input.corner_radius = ReadDouble(*args, "cornerRadius", 0.0);
     input.background_color = ReadOptionalInt(*args, "backgroundColor");
+    // Slice 4 audio. Fallbacks MUST equal the macOS identity defaults
+    // (0 dB / 100% / off / -16 dBFS) so an absent arg is a no-op that keeps
+    // the byte-copy fast-path — volume 100.0 in particular, not 0.0.
+    input.audio_gain_db = ReadDouble(*args, "audioGainDb", 0.0);
+    input.audio_volume_percent = ReadDouble(*args, "audioVolumePercent", 100.0);
+    input.auto_normalize = ReadBool(*args, "autoNormalizeOnExport", false);
+    input.target_loudness_dbfs = ReadDouble(*args, "targetLoudnessDbfs", -16.0);
   }
 
   const auto outcome =

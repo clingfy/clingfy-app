@@ -84,6 +84,17 @@ struct PassthroughInput {
   double padding = 0.0;
   double corner_radius = 0.0;
   std::optional<std::int64_t> background_color;
+
+  // Slice 4 audio args from the `exportVideo` map. gain (dB, 0..24, amplify
+  // only) and volume (%, 0..100, attenuate only) scale the decoded PCM;
+  // auto_normalize peak-normalizes toward target_loudness_dbfs (dBFS,
+  // -24..-6). Any non-default value forces the re-encode path. Defaults are
+  // the identity values that keep the byte-for-byte copy fast-path alive —
+  // volume MUST default to 100.0 (not 0.0) or every export re-encodes.
+  double audio_gain_db = 0.0;
+  double audio_volume_percent = 100.0;
+  bool auto_normalize = false;
+  double target_loudness_dbfs = -16.0;
 };
 
 enum class PassthroughError {

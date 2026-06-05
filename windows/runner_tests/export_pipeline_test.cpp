@@ -23,6 +23,7 @@
 #include <gtest/gtest.h>
 
 #include <algorithm>
+#include <cmath>
 #include <cstdint>
 #include <cstring>
 #include <filesystem>
@@ -72,9 +73,14 @@ ComPtr<ID3D11Texture2D> MakeSolidTexture(ID3D11Device* dev, std::uint32_t bgra) 
 
 // Write a small source recording. Returns false (with skip_reason set)
 // when the environment can't encode, so the caller can GTEST_SKIP.
+// `audio_amplitude` (default 0 = silent, preserving existing callers) writes
+// a continuous 1 kHz sine at that int16 amplitude across packets so the AAC
+// encoder sees a real tone, not DC (which encoders high-pass away) — used by
+// the Slice 4 gain/normalize round-trips to measure output level.
 bool SynthesizeSource(clingfy::graphics::D3DDevice* device,
                       const std::string& path, bool with_audio,
-                      std::string* skip_reason) {
+                      std::string* skip_reason,
+                      std::int16_t audio_amplitude = 0) {
   clingfy::encoding::EncoderConfig cfg;
   cfg.output_path = path;
   cfg.width = kSourceWidth;
@@ -96,6 +102,7 @@ bool SynthesizeSource(clingfy::graphics::D3DDevice* device,
   constexpr std::uint32_t kAudioFramesPerPacket = 1024;
   const std::int64_t audio_dur_hns =
       static_cast<std::int64_t>(kAudioFramesPerPacket) * 10'000'000 / 48'000;
+  std::uint64_t audio_frame_index = 0;  // for a continuous sine across packets
 
   for (int i = 0; i < kFrameCount; ++i) {
     clingfy::capture::CapturedVideoFrame frame;
@@ -115,7 +122,17 @@ bool SynthesizeSource(clingfy::graphics::D3DDevice* device,
     if (with_audio) {
       clingfy::audio::MixedPacket packet;
       packet.frame_count = kAudioFramesPerPacket;
-      packet.samples.assign(static_cast<size_t>(kAudioFramesPerPacket) * 2u, 0);
+      packet.samples.resize(static_cast<size_t>(kAudioFramesPerPacket) * 2u);
+      constexpr double kPi = 3.14159265358979323846;
+      for (std::uint32_t f = 0; f < kAudioFramesPerPacket; ++f) {
+        const double t =
+            static_cast<double>(audio_frame_index + f) / 48'000.0;
+        const double sine = std::sin(2.0 * kPi * 1000.0 * t);
+        const auto v = static_cast<std::int16_t>(audio_amplitude * sine);
+        packet.samples[f * 2u] = v;       // L
+        packet.samples[f * 2u + 1u] = v;  // R
+      }
+      audio_frame_index += kAudioFramesPerPacket;
       packet.timestamp_hns = static_cast<std::int64_t>(i) * audio_dur_hns;
       if (auto err = encoder.WriteAudioPacket(packet)) {
         *skip_reason = "source WriteAudioPacket failed: " + err->message;
@@ -298,6 +315,116 @@ bool ReadFirstFrameBgra(const std::wstring& path, UINT* out_w, UINT* out_h,
   return false;
 }
 
+// Decode the exported audio track to 48 kHz stereo int16 PCM and report its
+// peak (0..1) and RMS (raw int16 units). Mirrors ReadFirstFrameBgra: returns
+// ok=false when the environment can't decode so the caller GTEST_SKIPs. Used
+// by the Slice 4 gain round-trips to compare OUTPUT-vs-OUTPUT levels (which
+// cancels the shared AAC loss); never assert against the source absolutely.
+struct AudioStats {
+  bool ok = false;
+  double peak = 0.0;  // max |sample| / 32767
+  double rms = 0.0;   // sqrt(mean(sample^2)) in raw int16 units
+  std::uint64_t samples = 0;
+};
+
+AudioStats ReadAudioPeakRms(const std::wstring& path) {
+  AudioStats out;
+  ComPtr<IMFSourceReader> reader;
+  if (FAILED(::MFCreateSourceReaderFromURL(path.c_str(), nullptr,
+                                           reader.GetAddressOf())) ||
+      reader == nullptr) {
+    return out;
+  }
+  DWORD audio_index = 0xFFFFFFFFu;
+  for (DWORD i = 0;; ++i) {
+    ComPtr<IMFMediaType> native;
+    const HRESULT hr = reader->GetNativeMediaType(i, 0, native.GetAddressOf());
+    if (hr == MF_E_INVALIDSTREAMNUMBER) {
+      break;
+    }
+    if (FAILED(hr) || native == nullptr) {
+      continue;
+    }
+    GUID major = GUID_NULL;
+    if (SUCCEEDED(native->GetGUID(MF_MT_MAJOR_TYPE, &major)) &&
+        major == MFMediaType_Audio) {
+      audio_index = i;
+      break;
+    }
+  }
+  if (audio_index == 0xFFFFFFFFu) {
+    return out;
+  }
+  reader->SetStreamSelection(static_cast<DWORD>(MF_SOURCE_READER_ALL_STREAMS),
+                             FALSE);
+  reader->SetStreamSelection(audio_index, TRUE);
+
+  ComPtr<IMFMediaType> pcm;
+  if (FAILED(::MFCreateMediaType(pcm.GetAddressOf()))) {
+    return out;
+  }
+  pcm->SetGUID(MF_MT_MAJOR_TYPE, MFMediaType_Audio);
+  pcm->SetGUID(MF_MT_SUBTYPE, MFAudioFormat_PCM);
+  pcm->SetUINT32(MF_MT_AUDIO_BITS_PER_SAMPLE, 16);
+  pcm->SetUINT32(MF_MT_AUDIO_SAMPLES_PER_SECOND, 48'000);
+  pcm->SetUINT32(MF_MT_AUDIO_NUM_CHANNELS, 2);
+  if (FAILED(reader->SetCurrentMediaType(audio_index, nullptr, pcm.Get()))) {
+    return out;
+  }
+
+  double sum_sq = 0.0;
+  double peak = 0.0;
+  std::uint64_t total = 0;
+  for (;;) {
+    DWORD flags = 0;
+    LONGLONG ts = 0;
+    ComPtr<IMFSample> sample;
+    if (FAILED(reader->ReadSample(audio_index, 0, nullptr, &flags, &ts,
+                                  sample.GetAddressOf()))) {
+      return out;
+    }
+    if (flags & MF_SOURCE_READERF_ENDOFSTREAM) {
+      break;
+    }
+    if (sample == nullptr) {
+      continue;
+    }
+    ComPtr<IMFMediaBuffer> buffer;
+    if (FAILED(sample->ConvertToContiguousBuffer(buffer.GetAddressOf())) ||
+        buffer == nullptr) {
+      continue;
+    }
+    BYTE* data = nullptr;
+    DWORD max_len = 0;
+    DWORD cur_len = 0;
+    if (SUCCEEDED(buffer->Lock(&data, &max_len, &cur_len)) && data != nullptr &&
+        cur_len > 0) {
+      const auto* s16 = reinterpret_cast<const std::int16_t*>(data);
+      const std::uint64_t n = cur_len / sizeof(std::int16_t);
+      for (std::uint64_t k = 0; k < n; ++k) {
+        const double v = static_cast<double>(s16[k]);
+        const double a = std::abs(v);
+        if (a > peak) {
+          peak = a;
+        }
+        sum_sq += v * v;
+      }
+      total += n;
+    }
+    if (data != nullptr) {
+      buffer->Unlock();
+    }
+  }
+  if (total == 0) {
+    return out;
+  }
+  out.ok = true;
+  out.samples = total;
+  out.peak = peak / 32767.0;
+  out.rms = std::sqrt(sum_sq / static_cast<double>(total));
+  return out;
+}
+
 TEST(ExportPipelineTest, VideoOnlyRoundTripProducesTargetResolution) {
   clingfy::graphics::D3DDevice device;
   if (device.Create()) {
@@ -451,6 +578,163 @@ TEST(ExportPipelineTest, FillsBackgroundColorAndDrawsVideoOverIt) {
   EXPECT_GT(chan(corner, 16) - chan(corner, 0), 30)
       << "expected the background to show through the rounded corner "
          "(corner-radius clip not applied?)";
+
+  std::error_code ec;
+  fs::remove_all(dir, ec);
+}
+
+// Slice 4 audio round-trips. Each renders the SAME synthesized source twice
+// (baseline vs modified) and compares OUTPUT RMS — the shared AAC encode loss
+// cancels, so a ratio assertion is robust where an absolute one would be
+// flaky. Source is a ~-12 dBFS sine (amplitude 8000) with headroom so a +6 dB
+// boost doesn't rail to full-scale.
+TEST(ExportPipelineTest, PositiveGainIncreasesOutputRmsAndKeepsVideo) {
+  clingfy::graphics::D3DDevice device;
+  if (device.Create()) {
+    GTEST_SKIP() << "no usable D3D11 device in this environment";
+  }
+  const auto dir = UniqueDir("audio_gain");
+  const auto source = (dir / "source.mov").u8string();
+  std::string skip_reason;
+  if (!SynthesizeSource(&device, source, /*with_audio=*/true, &skip_reason,
+                        /*audio_amplitude=*/8000)) {
+    GTEST_SKIP() << skip_reason;
+  }
+
+  const auto render = [&](const std::string& out, double gain, double vol) {
+    RenderRequest r;
+    r.source_video_path = fs::u8path(source).wstring();
+    r.destination_path = out;
+    r.layout = "youtube169";  // non-identity -> composition runs (64x48->86x48)
+    r.resolution = "auto";
+    r.fit = "fit";
+    r.fps_hint = kFps;
+    r.audio_gain_db = gain;
+    r.audio_volume_percent = vol;
+    return RenderComposedExport(r);
+  };
+
+  const auto base_out = (dir / "base.mov").u8string();
+  const auto gain_out = (dir / "gain.mov").u8string();
+  const RenderResult base = render(base_out, 0.0, 100.0);
+  const RenderResult gained = render(gain_out, 6.0, 100.0);
+  ASSERT_TRUE(base.ok) << base.message;
+  ASSERT_TRUE(gained.ok) << gained.message;
+  // Source audio survives the re-encode, and video dimensions are unaffected
+  // by audio processing.
+  EXPECT_TRUE(gained.had_audio);
+  EXPECT_GT(gained.audio_packets_written, 0u);
+  EXPECT_EQ(gained.output_width, 86u);
+  EXPECT_EQ(gained.output_height, 48u);
+
+  const AudioStats b = ReadAudioPeakRms(fs::u8path(base_out).wstring());
+  const AudioStats g = ReadAudioPeakRms(fs::u8path(gain_out).wstring());
+  if (!b.ok || !g.ok) {
+    GTEST_SKIP() << "could not decode exported audio for readback";
+  }
+  EXPECT_GT(b.rms, 50.0) << "baseline audio unexpectedly silent";
+  EXPECT_GT(b.peak, 0.0);
+  // +6 dB ~= x1.995; require a clear increase (a dropped-gain regression would
+  // leave the ratio ~1.0).
+  EXPECT_GT(g.rms, b.rms * 1.3)
+      << "expected +6 dB to raise output RMS (base=" << b.rms
+      << " gained=" << g.rms << ")";
+
+  std::error_code ec;
+  fs::remove_all(dir, ec);
+}
+
+TEST(ExportPipelineTest, VolumeAttenuationDecreasesOutputRms) {
+  clingfy::graphics::D3DDevice device;
+  if (device.Create()) {
+    GTEST_SKIP() << "no usable D3D11 device in this environment";
+  }
+  const auto dir = UniqueDir("audio_vol");
+  const auto source = (dir / "source.mov").u8string();
+  std::string skip_reason;
+  if (!SynthesizeSource(&device, source, /*with_audio=*/true, &skip_reason,
+                        /*audio_amplitude=*/8000)) {
+    GTEST_SKIP() << skip_reason;
+  }
+
+  const auto render = [&](const std::string& out, double vol) {
+    RenderRequest r;
+    r.source_video_path = fs::u8path(source).wstring();
+    r.destination_path = out;
+    r.layout = "youtube169";
+    r.resolution = "auto";
+    r.fit = "fit";
+    r.fps_hint = kFps;
+    r.audio_volume_percent = vol;
+    return RenderComposedExport(r);
+  };
+
+  const auto base_out = (dir / "base.mov").u8string();
+  const auto quiet_out = (dir / "quiet.mov").u8string();
+  const RenderResult base = render(base_out, 100.0);
+  const RenderResult quiet = render(quiet_out, 50.0);  // attenuation is volume
+  ASSERT_TRUE(base.ok) << base.message;
+  ASSERT_TRUE(quiet.ok) << quiet.message;
+
+  const AudioStats b = ReadAudioPeakRms(fs::u8path(base_out).wstring());
+  const AudioStats q = ReadAudioPeakRms(fs::u8path(quiet_out).wstring());
+  if (!b.ok || !q.ok) {
+    GTEST_SKIP() << "could not decode exported audio for readback";
+  }
+  EXPECT_GT(b.rms, 50.0) << "baseline audio unexpectedly silent";
+  // 50% volume ~= x0.5; require a clear decrease.
+  EXPECT_LT(q.rms, b.rms * 0.75)
+      << "expected 50% volume to lower output RMS (base=" << b.rms
+      << " quiet=" << q.rms << ")";
+
+  std::error_code ec;
+  fs::remove_all(dir, ec);
+}
+
+TEST(ExportPipelineTest, NormalizeRaisesQuietSourceRms) {
+  clingfy::graphics::D3DDevice device;
+  if (device.Create()) {
+    GTEST_SKIP() << "no usable D3D11 device in this environment";
+  }
+  const auto dir = UniqueDir("audio_norm");
+  const auto source = (dir / "source.mov").u8string();
+  std::string skip_reason;
+  // Quiet source (~-20 dBFS peak) so normalize toward -16 dBFS amplifies it.
+  if (!SynthesizeSource(&device, source, /*with_audio=*/true, &skip_reason,
+                        /*audio_amplitude=*/3000)) {
+    GTEST_SKIP() << skip_reason;
+  }
+
+  const auto render = [&](const std::string& out, bool normalize) {
+    RenderRequest r;
+    r.source_video_path = fs::u8path(source).wstring();
+    r.destination_path = out;
+    r.layout = "youtube169";
+    r.resolution = "auto";
+    r.fit = "fit";
+    r.fps_hint = kFps;
+    r.auto_normalize = normalize;
+    r.target_loudness_dbfs = -16.0;
+    return RenderComposedExport(r);
+  };
+
+  const auto base_out = (dir / "base.mov").u8string();
+  const auto norm_out = (dir / "norm.mov").u8string();
+  const RenderResult base = render(base_out, false);
+  const RenderResult norm = render(norm_out, true);
+  ASSERT_TRUE(base.ok) << base.message;
+  ASSERT_TRUE(norm.ok) << norm.message;
+
+  const AudioStats b = ReadAudioPeakRms(fs::u8path(base_out).wstring());
+  const AudioStats n = ReadAudioPeakRms(fs::u8path(norm_out).wstring());
+  if (!b.ok || !n.ok) {
+    GTEST_SKIP() << "could not decode exported audio for readback";
+  }
+  EXPECT_GT(b.rms, 20.0) << "baseline audio unexpectedly silent";
+  // peak ~0.0915 -> target 0.1585 means a ~x1.73 normalize boost.
+  EXPECT_GT(n.rms, b.rms * 1.3)
+      << "expected normalize to raise a quiet source's RMS (base=" << b.rms
+      << " norm=" << n.rms << ")";
 
   std::error_code ec;
   fs::remove_all(dir, ec);
