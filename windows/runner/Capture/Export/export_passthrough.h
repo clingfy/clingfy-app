@@ -9,7 +9,7 @@
 //            Direct2D composite)
 //   Slice 4: audio gain + volume + normalize
 //   Slice 5A: mp4 container + bitrate + progress + cancel
-//   Slice 5B (future): gif
+//   Slice 5B: gif (WIC animated GIF, frame-decimated to ~kGifTargetFps)
 //
 // The handler in `Bridge/Routers/export_router.cpp` parses the `exportVideo`
 // map and fills a `PassthroughInput`. Errors are mapped onto the existing
@@ -27,14 +27,15 @@
 //   * Otherwise → the recording is decoded, composited at the chosen output
 //     resolution / fit with the Slice 3 styling, the audio scaled by the
 //     Slice 4 gain/volume/normalize, and re-encoded (see `export_pipeline.h`)
-//     into the requested container (.mp4 / .mov) at the Slice 5A bitrate.
+//     into the requested container (.mp4 / .mov) at the Slice 5A bitrate, or
+//     written as an animated .gif (Slice 5B) when the format is "gif".
 //
-// Container: the output extension follows the `format` arg (.mp4 vs .mov,
-// `export_format.h`) and the Media Foundation Sink Writer picks the container
-// from it. gif is not supported yet (Slice 5B) — it falls back to a .mov copy
-// and sets `format_was_downgraded`. Codec stays H.264 on Windows (a Dart
-// `codec: hevc` request is currently rendered as H.264 — HEVC is a future
-// slice, not Slice 5A).
+// Container: the output extension follows the `format` arg (.mp4 / .mov / .gif,
+// `export_format.h`). For .mp4/.mov the Media Foundation Sink Writer picks the
+// container from the extension; for .gif the pipeline drives the WIC GifEncoder
+// (a real animated GIF, no longer a downgrade). Codec stays H.264 for video on
+// Windows (a Dart `codec: hevc` request is currently rendered as H.264 — HEVC
+// is a future slice).
 
 #ifndef RUNNER_CAPTURE_EXPORT_EXPORT_PASSTHROUGH_H_
 #define RUNNER_CAPTURE_EXPORT_EXPORT_PASSTHROUGH_H_
@@ -60,9 +61,10 @@ struct PassthroughInput {
   // User-chosen file stem (no extension). Empty → "Untitled".
   std::string filename;
 
-  // The format the Dart side asked for ("mp4" / "mov" / "gif"). Output
-  // is always written as .mov until Slice 5 wires the format matrix; the
-  // value is kept so the Result can report a mismatch back for logging.
+  // The format the Dart side asked for ("mp4" / "mov" / "gif"). Selects the
+  // output extension/encoder via `export_format.h`: .mp4/.mov (H.264 Sink
+  // Writer) or .gif (WIC GifEncoder, Slice 5B). For gif the Dart side still
+  // sends a stale codec/bitrate (the dialog hides them) — both are ignored.
   std::string format;
 
   // Slice 2 composition args, straight from the `exportVideo` map. Empty
@@ -130,9 +132,8 @@ struct PassthroughResult {
   std::string message;
   // Absolute path of the produced output file. Empty on error.
   std::string output_path;
-  // True when `format` was something other than "mov" — the handler
-  // logs a soft warning so a future Slice 5 user report ("I asked for
-  // MP4 but got MOV") is diagnosable from the existing log.
+  // Retained result-contract field. Windows now emits .mov/.mp4/.gif natively
+  // (Slices 5A/5B), so nothing is downgraded and this is always false.
   bool format_was_downgraded = false;
 };
 
@@ -143,8 +144,8 @@ struct PassthroughResult {
 //   - empty / whitespace → "Untitled"
 //   - any extension already present is stripped (so passing "foo.mp4"
 //     produces "foo.mov" when format is mov/empty)
-// `format` ("mp4"/"mov"/...) selects the extension (.mp4 vs .mov) via
-// `export_format.h`; defaults to .mov.
+// `format` ("mp4"/"mov"/"gif"/...) selects the extension (.mp4 / .mov / .gif)
+// via `export_format.h`; defaults to .mov.
 std::string ResolveExportDestination(const std::string& directory,
                                      const std::string& filename_stem,
                                      const std::string& format = "");

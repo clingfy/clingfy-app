@@ -209,11 +209,12 @@ PassthroughResult ExportPassthroughCopy(
   // all: an identity transform (auto/auto), no Slice 3 canvas styling, no
   // Slice 4 audio processing, AND the output container matches the source.
   // The recorder always writes a .mov (QuickTime); copying its bytes to a
-  // .mp4 path would mislabel the container, so an mp4 request (Slice 5A)
-  // forces the re-encode path even with auto/auto. Padding / corner radius /
-  // gain / volume / normalize each force it too; a background color alone
-  // stays on the fast-path (invisible without margins). The audio + format
-  // identity defaults keep the copy alive.
+  // .mp4 (Slice 5A) or .gif (Slice 5B) path would mislabel/garble the
+  // container, so any non-.mov request forces the composition path even with
+  // auto/auto — for .gif that path drives the WIC GifEncoder instead of the
+  // H.264 Sink Writer. Padding / corner radius / gain / volume / normalize each
+  // force it too; a background color alone stays on the fast-path (invisible
+  // without margins). The audio + format identity defaults keep the copy alive.
   const bool wants_non_mov_container =
       ResolveExportExtension(input.format) != ".mov";
   const bool needs_composition =
@@ -289,8 +290,9 @@ PassthroughResult ExportPassthroughCopy(
   }
 
   out.output_path = destination.u8string();
-  // Slice 5A produces both .mp4 and .mov; only gif still falls back to .mov
-  // (Slice 5B). mp4/mov are honored, so neither is a downgrade.
+  // Windows now produces .mov, .mp4, AND .gif natively (Slices 5A/5B), so
+  // nothing is downgraded; FormatWasDowngraded always returns false now but is
+  // kept as the result-contract field.
   out.format_was_downgraded = FormatWasDowngraded(input.format);
   return out;
 }

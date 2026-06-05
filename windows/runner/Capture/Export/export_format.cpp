@@ -22,13 +22,22 @@ std::string ToLowerAscii(std::string value) {
 }  // namespace
 
 std::string ResolveExportExtension(const std::string& format) {
-  return ToLowerAscii(format) == "mp4" ? ".mp4" : ".mov";
+  const std::string f = ToLowerAscii(format);
+  if (f == "mp4") {
+    return ".mp4";
+  }
+  if (f == "gif") {
+    // Slice 5B: real animated GIF (WIC), no longer a .mov fallback.
+    return ".gif";
+  }
+  return ".mov";  // "mov" / "" / unknown
 }
 
-bool FormatWasDowngraded(const std::string& format) {
-  // Windows can emit .mp4 and .mov; only gif is still unsupported and falls
-  // back to .mov. Empty / mov / mp4 are honored.
-  return ToLowerAscii(format) == "gif";
+bool FormatWasDowngraded(const std::string& /*format*/) {
+  // Windows now emits .mov, .mp4, and .gif natively (Slices 5A/5B), so no
+  // requested format is silently written in a different container. Kept as a
+  // contract point (the passthrough still reports it) but always false now.
+  return false;
 }
 
 std::uint32_t ResolveVideoBitrateBps(const std::string& bitrate,

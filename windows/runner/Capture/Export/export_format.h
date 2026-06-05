@@ -25,15 +25,14 @@
 namespace clingfy::capture::export_ {
 
 // Resolve the output-file extension (including the leading dot) for a Dart
-// `format` arg. "mp4" -> ".mp4"; "mov" / "" / unknown -> ".mov". "gif" is not
-// yet supported on Windows (Slice 5B) and falls back to ".mov" — see
-// FormatWasDowngraded. Case-insensitive.
+// `format` arg. "mp4" -> ".mp4"; "gif" -> ".gif" (Slice 5B, real animated GIF
+// via WIC); "mov" / "" / unknown -> ".mov". Case-insensitive.
 std::string ResolveExportExtension(const std::string& format);
 
 // True when the requested format could not be produced and the export was
-// written in a different container. Slice 5A produces both .mp4 and .mov, so
-// only "gif" is a downgrade now (it falls back to .mov). Case-insensitive;
-// empty / "mov" / "mp4" are NOT downgrades.
+// written in a different container. Windows now emits .mov, .mp4, AND .gif
+// natively (Slices 5A/5B), so this is always false — nothing is downgraded.
+// Retained as a contract point (the passthrough Result still carries the flag).
 bool FormatWasDowngraded(const std::string& format);
 
 // Resolve a Dart `bitrate` preset ("auto" | "low" | "medium" | "high") to an

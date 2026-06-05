@@ -108,16 +108,20 @@ TEST(ResolveExportDestinationTest, HonorsMp4Format) {
   EXPECT_EQ(dest.find(".mov"), std::string::npos);
 }
 
-TEST(ResolveExportDestinationTest, DefaultsToMovForMovEmptyOrGif) {
+TEST(ResolveExportDestinationTest, DefaultsToMovForMovOrEmpty) {
   EXPECT_NE(
       ResolveExportDestination("C:\\Videos", "Clip", "mov").find("Clip.mov"),
       std::string::npos);
   EXPECT_NE(ResolveExportDestination("C:\\Videos", "Clip").find("Clip.mov"),
             std::string::npos);
-  // gif is unsupported -> .mov container.
-  EXPECT_NE(
-      ResolveExportDestination("C:\\Videos", "Clip", "gif").find("Clip.mov"),
-      std::string::npos);
+}
+
+TEST(ResolveExportDestinationTest, HonorsGifFormat) {
+  // Slice 5B: gif resolves to a real .gif path (no longer a .mov fallback).
+  const std::string dest =
+      ResolveExportDestination("C:\\Users\\me\\Videos", "Clip", "gif");
+  EXPECT_NE(dest.find("Clip.gif"), std::string::npos);
+  EXPECT_EQ(dest.find(".mov"), std::string::npos);
 }
 
 // ---- ExportPassthroughCopy (filesystem-touching) ---------------------------
@@ -185,20 +189,15 @@ TEST(ExportPassthroughCopyTest, CopiesScreenMovToDestination) {
   fs::remove_all(project.parent_path(), rm_ec);
 }
 
-TEST(ExportPassthroughCopyTest, MovFastCopyIsNotDowngradedButGifIs) {
-  // Slice 5A: mov + auto/auto byte-copies and is honored (not a downgrade).
-  // gif is still unsupported, so it falls back to a .mov byte-copy and is
-  // flagged downgraded. Both stay on the fast-path (gif's resolved extension
-  // is .mov, matching the source container).
+TEST(ExportPassthroughCopyTest, MovFastCopyIsNotDowngraded) {
+  // mov + auto/auto byte-copies and is honored (not a downgrade).
   const auto project = StageProject("export-test-2", "MOCK_VIDEO_BYTES");
   const auto dest_dir = project.parent_path() / "out";
   fs::create_directories(dest_dir);
 
-  PassthroughInput base;
-  base.project_path = project.u8string();
-  base.directory_override = dest_dir.u8string();
-
-  PassthroughInput mov = base;
+  PassthroughInput mov;
+  mov.project_path = project.u8string();
+  mov.directory_override = dest_dir.u8string();
   mov.format = "mov";
   mov.filename = "MovExport";
   const auto mov_out = ExportPassthroughCopy(mov);
@@ -206,13 +205,29 @@ TEST(ExportPassthroughCopyTest, MovFastCopyIsNotDowngradedButGifIs) {
   EXPECT_FALSE(mov_out.format_was_downgraded);
   EXPECT_NE(mov_out.output_path.find(".mov"), std::string::npos);
 
-  PassthroughInput gif = base;
-  gif.format = "gif";
+  std::error_code rm_ec;
+  fs::remove_all(project.parent_path(), rm_ec);
+}
+
+TEST(ExportPassthroughCopyTest, GifForcesReencodeNotByteCopy) {
+  // Slice 5B: gif resolves to a .gif container, which can never be a byte-copy
+  // of the .mov source, so even auto/auto routes through the composition / GIF
+  // path. With a non-decodable source that path fails (kRenderFailed) instead
+  // of mislabeling a .mov copy as .gif — GPU-independent (device or decode
+  // failure both yield kRenderFailed). gif is no longer a downgrade.
+  const auto project = StageProject("export-test-gif", "NOT_A_REAL_VIDEO");
+  const auto dest_dir = project.parent_path() / "out";
+  fs::create_directories(dest_dir);
+
+  PassthroughInput gif;
+  gif.project_path = project.u8string();
+  gif.directory_override = dest_dir.u8string();
   gif.filename = "GifExport";
+  gif.format = "gif";  // auto/auto, no styling -> only the format forces it
+
   const auto gif_out = ExportPassthroughCopy(gif);
-  ASSERT_EQ(gif_out.error, PassthroughError::kNone) << gif_out.message;
-  EXPECT_TRUE(gif_out.format_was_downgraded);
-  EXPECT_NE(gif_out.output_path.find(".mov"), std::string::npos);
+  EXPECT_EQ(gif_out.error, PassthroughError::kRenderFailed) << gif_out.message;
+  EXPECT_FALSE(gif_out.format_was_downgraded);
 
   std::error_code rm_ec;
   fs::remove_all(project.parent_path(), rm_ec);
