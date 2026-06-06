@@ -56,13 +56,35 @@ lifecycle, preview, and basic export.
 | 4     | Lifecycle parity (state machine, pause/resume, recovery)      | done   |
 | 5     | Preview player + project reopen                               | done   |
 | 6     | Basic export + post-processing (resolution, background, etc.) | done   |
-| 7     | Window + area recording                                       | next   |
+| 7     | Window + area recording                                       | design locked (7.0); 7.1 next |
 | 8     | Cursor sidecar + smart zoom                                   |
 | 9     | Camera overlay (basic, then advanced compositing/chroma)      |
 | 10    | Permissions UX + installer + updater + Windows beta polish    |
 
 Detailed scope per phase is tracked in the session task list and in
 [../CLAUDE.md](../CLAUDE.md).
+
+## Current status — Phase 7.0 (window + area recording) — DESIGN LOCKED
+
+Phase 7 adds capture targeting (record a single window, or a dragged-out screen
+area) on top of the Phase 6 full-display loop. The architecture is locked in
+[decisions/windows-phase-7-capture-architecture.md](decisions/windows-phase-7-capture-architecture.md);
+no production capture code has been written yet.
+
+Decisions in brief: window capture uses WGC `IGraphicsCaptureItemInterop::CreateForWindow(HWND)`
+(the analog of the existing `CreateForMonitor`); area recording is full-monitor
+capture cropped with `CopySubresourceRegion` + a `D3D11_BOX` (mirroring macOS's
+`sourceRect` crop — there is no per-rectangle WGC item); the area picker is a new
+native per-monitor layered Win32 overlay returning `{displayId,x,y,width,height}`;
+cursor stays burned into the MVP video (explicit `IsCursorCaptureEnabled(true)`)
+until the Phase 8 sidecar; and target-loss (window closed/minimized, monitor
+unplug) gets an explicit clean-stop+finalize that macOS lacks. The Dart bridge is
+already fully wired — Phase 7 is mostly making `setAppWindowTarget` / the area
+methods real and lifting the `kBadMode` gate in `RecordingEngine::Start`.
+
+Slices: **7.1** window recording → **7.2** area recording (display + crop) →
+**7.3** native area-picker overlay → **7.4** target-loss + polish. Each has
+acceptance tests in the decision doc.
 
 ## Current status — Phase 6 (export + post-processing) — COMPLETE
 
