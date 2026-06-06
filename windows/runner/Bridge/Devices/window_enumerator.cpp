@@ -166,4 +166,19 @@ std::vector<AppWindowRecord> EnumerateAppWindows() {
   return windows;
 }
 
+std::optional<HWND> ResolveAppWindow(std::optional<std::int64_t> id) {
+  if (!id.has_value()) {
+    return std::nullopt;
+  }
+  // EnumerateAppWindows encodes the HWND as `window_id` via
+  // reinterpret_cast<std::uintptr_t>; reverse it and confirm the handle still
+  // names a live window. (HWNDs are only session-stable; a stale id from a
+  // closed window resolves to nullopt rather than a dangling handle.)
+  HWND hwnd = reinterpret_cast<HWND>(static_cast<std::uintptr_t>(*id));
+  if (::IsWindow(hwnd) == 0) {
+    return std::nullopt;
+  }
+  return hwnd;
+}
+
 }  // namespace clingfy::bridge::devices

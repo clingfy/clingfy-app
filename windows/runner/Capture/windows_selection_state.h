@@ -52,6 +52,15 @@ class WindowsSelectionState {
   void SetTargetMode(DisplayTargetMode mode);
   DisplayTargetMode TargetMode() const;
 
+  // Phase 7.1: selected window target from `setAppWindowTarget`. Stored as the
+  // HWND-as-int64 the window enumerator surfaces (`window_id`). Resolved back
+  // to a live HWND (and revalidated) at Start time, so a window closed between
+  // selection and recording fails cleanly rather than capturing a stale handle.
+  // `std::nullopt` means no window picked — the engine rejects a window-mode
+  // start with a friendly target error.
+  void SetAppWindowId(std::optional<std::int64_t> id);
+  std::optional<std::int64_t> AppWindowId() const;
+
   // Selected microphone endpoint id from `setAudioSource`. Phase 3D starts
   // consuming this; tracking it here in 3B lets the wiring land alongside
   // the rest of the engine plumbing rather than churning the router again.
@@ -70,6 +79,7 @@ class WindowsSelectionState {
 
   mutable std::mutex mutex_;
   std::optional<std::int64_t> display_id_;
+  std::optional<std::int64_t> app_window_id_;
   DisplayTargetMode target_mode_ = DisplayTargetMode::kExplicitId;
   std::optional<std::string> microphone_id_;
 };

@@ -79,6 +79,9 @@ class WgcDisplayCaptureBackend::Impl {
   std::optional<WgcCaptureError> Start(HMONITOR monitor,
                                        clingfy::graphics::D3DDevice& device,
                                        VideoFrameQueue& queue);
+  std::optional<WgcCaptureError> StartForWindow(
+      HWND window, clingfy::graphics::D3DDevice& device,
+      VideoFrameQueue& queue);
   void Stop();
   void Pause();
   void Resume();
@@ -87,6 +90,19 @@ class WgcDisplayCaptureBackend::Impl {
   bool Running() const;
 
  private:
+  // Shared tail of both Start paths: builds the WinRT device + frame pool from
+  // an already-resolved capture item, binds state, registers FrameArrived,
+  // enables cursor capture (Phase 7 MVP), and starts the session. Assumes
+  // `mutex_` is held and `running_ == false`. On a thrown WinRT error the
+  // caller's catch resets the partial state.
+  std::optional<WgcCaptureError> StartWithItem(
+      wgc::GraphicsCaptureItem item, clingfy::graphics::D3DDevice& device,
+      VideoFrameQueue& queue);
+
+  // Reset partial state so a follow-up Start is a clean retry. Assumes the
+  // mutex is held.
+  void ResetPartialState();
+
   void OnFrameArrived(
       wgc::Direct3D11CaptureFramePool const& sender,
       winrt::Windows::Foundation::IInspectable const& args);
@@ -114,6 +130,67 @@ class WgcDisplayCaptureBackend::Impl {
   std::atomic<std::uint32_t> last_width_{0};
   std::atomic<std::uint32_t> last_height_{0};
 };
+
+void WgcDisplayCaptureBackend::Impl::ResetPartialState() {
+  running_ = false;
+  queue_ = nullptr;
+  item_ = nullptr;
+  pool_ = nullptr;
+  session_ = nullptr;
+}
+
+std::optional<WgcCaptureError> WgcDisplayCaptureBackend::Impl::StartWithItem(
+    wgc::GraphicsCaptureItem item,
+    clingfy::graphics::D3DDevice& device,
+    VideoFrameQueue& queue) {
+  auto winrt_device = WinRTDeviceFromD3D11(device.device());
+  if (winrt_device == nullptr) {
+    return WgcCaptureError{
+        "Failed to construct IDirect3DDevice from D3D11 device.", E_FAIL};
+  }
+
+  // CreateFreeThreaded dispatches FrameArrived on the WinRT thread pool
+  // — no DispatcherQueue required. Two buffers is enough for the Phase
+  // 3B "frames just arrive" goal; Phase 3C retuned once the encoder
+  // consumes them. The item is already sized (monitor or window), so the
+  // pool / encoder pick up the right dimensions for either target.
+  auto pool = wgc::Direct3D11CaptureFramePool::CreateFreeThreaded(
+      winrt_device, dx::DirectXPixelFormat::B8G8R8A8UIntNormalized,
+      /*numberOfBuffers=*/2, item.Size());
+
+  // Bind state BEFORE registering the handler — the handler reads
+  // `running_` / `queue_` under the same mutex, and the handler can fire
+  // immediately after `StartCapture`.
+  item_ = item;
+  pool_ = pool;
+  queue_ = &queue;
+  // Keep refcounts on the D3D device / context so the FrameArrived
+  // copy path stays valid even if the engine's D3DDevice wrapper is
+  // released mid-flight (the encoder, which also holds a refcount,
+  // owns the actual device-lifetime contract).
+  d3d_device_ = device.device();
+  d3d_context_ = device.context();
+  running_ = true;
+
+  frame_token_ = pool_.FrameArrived(
+      [this](wgc::Direct3D11CaptureFramePool const& sender,
+             winrt::Windows::Foundation::IInspectable const& args) {
+        OnFrameArrived(sender, args);
+      });
+
+  session_ = pool_.CreateCaptureSession(item_);
+  // Phase 7 MVP: keep the OS cursor in the captured video. WGC's default is
+  // also cursor-on, but set it explicitly so the Phase 8 cursor-sidecar flip
+  // (to false) is a single greppable change. Best-effort — the property is
+  // Win10 1903+; on older hosts the default (cursor-on) already applies.
+  try {
+    session_.IsCursorCaptureEnabled(true);
+  } catch (winrt::hresult_error const&) {
+    // Older OS without the property — leave the default (cursor-on).
+  }
+  session_.StartCapture();
+  return std::nullopt;
+}
 
 std::optional<WgcCaptureError> WgcDisplayCaptureBackend::Impl::Start(
     HMONITOR monitor,
@@ -144,51 +221,46 @@ std::optional<WgcCaptureError> WgcDisplayCaptureBackend::Impl::Start(
       return WgcCaptureError{
           "GraphicsCaptureItem::CreateForMonitor failed.", hr};
     }
-
-    auto winrt_device = WinRTDeviceFromD3D11(device.device());
-    if (winrt_device == nullptr) {
-      return WgcCaptureError{
-          "Failed to construct IDirect3DDevice from D3D11 device.", E_FAIL};
-    }
-
-    // CreateFreeThreaded dispatches FrameArrived on the WinRT thread pool
-    // — no DispatcherQueue required. Two buffers is enough for the Phase
-    // 3B "frames just arrive" goal; Phase 3C will retune once the encoder
-    // is consuming them.
-    auto pool = wgc::Direct3D11CaptureFramePool::CreateFreeThreaded(
-        winrt_device, dx::DirectXPixelFormat::B8G8R8A8UIntNormalized,
-        /*numberOfBuffers=*/2, item.Size());
-
-    // Bind state BEFORE registering the handler — the handler reads
-    // `running_` / `queue_` under the same mutex, and the handler can fire
-    // immediately after `StartCapture`.
-    item_ = item;
-    pool_ = pool;
-    queue_ = &queue;
-    // Keep refcounts on the D3D device / context so the FrameArrived
-    // copy path stays valid even if the engine's D3DDevice wrapper is
-    // released mid-flight (the encoder, which also holds a refcount,
-    // owns the actual device-lifetime contract).
-    d3d_device_ = device.device();
-    d3d_context_ = device.context();
-    running_ = true;
-
-    frame_token_ = pool_.FrameArrived(
-        [this](wgc::Direct3D11CaptureFramePool const& sender,
-               winrt::Windows::Foundation::IInspectable const& args) {
-          OnFrameArrived(sender, args);
-        });
-
-    session_ = pool_.CreateCaptureSession(item_);
-    session_.StartCapture();
-    return std::nullopt;
+    return StartWithItem(std::move(item), device, queue);
   } catch (winrt::hresult_error const& ex) {
-    // Reset the partial state so a follow-up `Start` is a clean retry.
-    running_ = false;
-    queue_ = nullptr;
-    item_ = nullptr;
-    pool_ = nullptr;
-    session_ = nullptr;
+    ResetPartialState();
+    return WgcCaptureError{winrt::to_string(ex.message()), ex.code()};
+  }
+}
+
+std::optional<WgcCaptureError> WgcDisplayCaptureBackend::Impl::StartForWindow(
+    HWND window,
+    clingfy::graphics::D3DDevice& device,
+    VideoFrameQueue& queue) {
+  std::lock_guard<std::mutex> lock(mutex_);
+  if (running_) {
+    return WgcCaptureError{"WGC backend is already running.", S_FALSE};
+  }
+  if (window == nullptr || ::IsWindow(window) == 0 ||
+      device.device() == nullptr) {
+    return WgcCaptureError{
+        "The selected window is no longer available.", E_INVALIDARG};
+  }
+
+  // The window analog of CreateForMonitor — same classic COM interop
+  // interface, just CreateForWindow(HWND).
+  try {
+    auto interop_factory =
+        winrt::get_activation_factory<wgc::GraphicsCaptureItem,
+                                      IGraphicsCaptureItemInterop>();
+    wgc::GraphicsCaptureItem item{nullptr};
+    const HRESULT hr = interop_factory->CreateForWindow(
+        window, winrt::guid_of<wgc::GraphicsCaptureItem>(),
+        winrt::put_abi(item));
+    if (FAILED(hr) || item == nullptr) {
+      return WgcCaptureError{
+          "GraphicsCaptureItem::CreateForWindow failed for the selected "
+          "window.",
+          hr};
+    }
+    return StartWithItem(std::move(item), device, queue);
+  } catch (winrt::hresult_error const& ex) {
+    ResetPartialState();
     return WgcCaptureError{winrt::to_string(ex.message()), ex.code()};
   }
 }
@@ -202,15 +274,27 @@ WgcDisplayCaptureBackend::Impl::CopyIntoStagingTexture(
   D3D11_TEXTURE2D_DESC src_desc{};
   source->GetDesc(&src_desc);
 
-  // Mirror the source dimensions / format but force a fresh resource
-  // that the encoder can hold past the WGC frame's auto-close. We strip
-  // CPU-access flags because all consumption happens on the GPU, and
-  // request RenderTarget + ShaderResource bind so the H.264 MFT can
-  // attach the texture as input — both bind flags are widely supported
-  // and forgiving across drivers.
+  // Clamp the captured surface DOWN to even dimensions (H.264 needs even; WGC
+  // window content sizes are arbitrary). The same EvenCaptureDimension drives
+  // the engine's encoder config, so the staging surface always matches the
+  // encoder input — a 1px odd edge is cropped, never size-mismatched. For an
+  // even source (e.g. a monitor) the dims are unchanged and the copy below is
+  // equivalent to the prior full-surface CopyResource.
+  const UINT even_w = EvenCaptureDimension(src_desc.Width);
+  const UINT even_h = EvenCaptureDimension(src_desc.Height);
+  if (even_w == 0 || even_h == 0) {
+    return nullptr;  // degenerate (sub-2px) window — drop the frame.
+  }
+
+  // Mirror the (even-clamped) source dimensions / format but force a fresh
+  // resource that the encoder can hold past the WGC frame's auto-close. We
+  // strip CPU-access flags because all consumption happens on the GPU, and
+  // request RenderTarget + ShaderResource bind so the H.264 MFT can attach the
+  // texture as input — both bind flags are widely supported and forgiving
+  // across drivers.
   D3D11_TEXTURE2D_DESC dst_desc{};
-  dst_desc.Width = src_desc.Width;
-  dst_desc.Height = src_desc.Height;
+  dst_desc.Width = even_w;
+  dst_desc.Height = even_h;
   dst_desc.MipLevels = 1;
   dst_desc.ArraySize = 1;
   dst_desc.Format = src_desc.Format;
@@ -228,7 +312,18 @@ WgcDisplayCaptureBackend::Impl::CopyIntoStagingTexture(
   if (FAILED(hr) || staging == nullptr) {
     return nullptr;
   }
-  d3d_context_->CopyResource(staging.Get(), source);
+  // Copy the even top-left region. For an even source this box spans the whole
+  // surface (identical to CopyResource); for an odd source it drops the last
+  // row/column so the destination is fully written (no uninitialized border).
+  D3D11_BOX box{};
+  box.left = 0;
+  box.top = 0;
+  box.front = 0;
+  box.right = even_w;
+  box.bottom = even_h;
+  box.back = 1;
+  d3d_context_->CopySubresourceRegion(staging.Get(), 0, 0, 0, 0, source, 0,
+                                      &box);
   return staging;
 }
 
@@ -263,8 +358,6 @@ void WgcDisplayCaptureBackend::Impl::OnFrameArrived(
 
   const auto size = frame.ContentSize();
   const auto timestamp = frame.SystemRelativeTime();
-  last_width_.store(static_cast<std::uint32_t>(size.Width));
-  last_height_.store(static_cast<std::uint32_t>(size.Height));
   frames_received_.fetch_add(1);
 
   // Extract the underlying D3D11 texture from the WGC frame's
@@ -286,10 +379,24 @@ void WgcDisplayCaptureBackend::Impl::OnFrameArrived(
     }
   }
 
+  // Frame dimensions follow the (even-clamped) staging texture so they always
+  // match the encoder's even input type. Fall back to the raw content size only
+  // when the copy failed (texture is null -> the encoder skips the frame).
+  std::uint32_t out_width = static_cast<std::uint32_t>(size.Width);
+  std::uint32_t out_height = static_cast<std::uint32_t>(size.Height);
+  if (staging != nullptr) {
+    D3D11_TEXTURE2D_DESC staged_desc{};
+    staging->GetDesc(&staged_desc);
+    out_width = staged_desc.Width;
+    out_height = staged_desc.Height;
+  }
+  last_width_.store(out_width);
+  last_height_.store(out_height);
+
   if (queue_snapshot != nullptr) {
     CapturedVideoFrame out;
-    out.width = static_cast<std::uint32_t>(size.Width);
-    out.height = static_cast<std::uint32_t>(size.Height);
+    out.width = out_width;
+    out.height = out_height;
     out.timestamp_hns = timestamp.count();
     out.texture = staging;  // null if the copy failed -> encoder skips it.
     queue_snapshot->Push(std::move(out));
@@ -378,6 +485,49 @@ std::optional<WgcCaptureError> WgcDisplayCaptureBackend::Start(
     clingfy::graphics::D3DDevice& device,
     VideoFrameQueue& queue) {
   return impl_->Start(monitor, device, queue);
+}
+
+std::optional<WgcCaptureError> WgcDisplayCaptureBackend::StartForWindow(
+    HWND window,
+    clingfy::graphics::D3DDevice& device,
+    VideoFrameQueue& queue) {
+  return impl_->StartForWindow(window, device, queue);
+}
+
+std::optional<WgcTargetSize> ResolveWindowCaptureSize(HWND window) {
+  if (window == nullptr || ::IsWindow(window) == 0) {
+    return std::nullopt;
+  }
+  // Build a throwaway capture item just to read the size WGC will deliver for
+  // this window, so the engine can size the encoder to the window before the
+  // real StartForWindow item is created. (The window is assumed stable across
+  // the few microseconds between this probe and StartForWindow — resize-follow
+  // is Phase 7.4.)
+  try {
+    auto interop_factory =
+        winrt::get_activation_factory<wgc::GraphicsCaptureItem,
+                                      IGraphicsCaptureItemInterop>();
+    wgc::GraphicsCaptureItem item{nullptr};
+    const HRESULT hr = interop_factory->CreateForWindow(
+        window, winrt::guid_of<wgc::GraphicsCaptureItem>(),
+        winrt::put_abi(item));
+    if (FAILED(hr) || item == nullptr) {
+      return std::nullopt;
+    }
+    const auto size = item.Size();
+    if (size.Width <= 0 || size.Height <= 0) {
+      return std::nullopt;
+    }
+    return WgcTargetSize{static_cast<std::uint32_t>(size.Width),
+                         static_cast<std::uint32_t>(size.Height)};
+  } catch (winrt::hresult_error const&) {
+    return std::nullopt;
+  }
+}
+
+std::uint32_t EvenCaptureDimension(std::uint32_t value) {
+  // Clamp down to the nearest even value (H.264 even-dimension requirement).
+  return value & ~1u;
 }
 
 void WgcDisplayCaptureBackend::Stop() {

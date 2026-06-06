@@ -15,6 +15,7 @@
 #include "Bridge/native_error_codes.h"
 #include "Capture/Export/export_session.h"
 #include "Capture/recording_engine.h"
+#include "Capture/windows_selection_state.h"
 #include "test_support.h"
 
 namespace clingfy::bridge {
@@ -39,6 +40,49 @@ RecordedReply DispatchWithArgs(const MethodRouter& router,
   router.Dispatch(MakeCallWithArgs(method, std::move(args)),
                   MakeRecorder(reply));
   return reply;
+}
+
+// === Phase 7.1: setAppWindowTarget is a real consumer ======================
+//
+// It is also listed in the no-op-shape sweep below (no-args → clears → null
+// success), but that path never exercises the {windowId} parse. This drives the
+// handler end to end: parse the map → store into WindowsSelectionState → read
+// back. Covers the int64 codec branch (a real HWND ships as int64), the int32
+// branch, and the null-clears path.
+TEST(StubShapesTest, SetAppWindowTargetStoresAndClearsWindowId) {
+  clingfy::capture::WindowsSelectionState::Instance().ResetForTesting();
+  MethodRouter router;
+
+  const auto r_int64 = DispatchWithArgs(
+      router, "setAppWindowTarget",
+      {{flutter::EncodableValue("windowId"),
+        flutter::EncodableValue(std::int64_t{0x1234ABCD})}});
+  EXPECT_TRUE(r_int64.success_called);
+  EXPECT_FALSE(r_int64.error_called);
+  ASSERT_TRUE(
+      clingfy::capture::WindowsSelectionState::Instance().AppWindowId());
+  EXPECT_EQ(*clingfy::capture::WindowsSelectionState::Instance().AppWindowId(),
+            0x1234ABCD);
+
+  // A windowId that arrives as int32 still parses (ReadOptionalInt int32 branch).
+  const auto r_int32 = DispatchWithArgs(
+      router, "setAppWindowTarget",
+      {{flutter::EncodableValue("windowId"),
+        flutter::EncodableValue(std::int32_t{777})}});
+  EXPECT_TRUE(r_int32.success_called);
+  ASSERT_TRUE(
+      clingfy::capture::WindowsSelectionState::Instance().AppWindowId());
+  EXPECT_EQ(*clingfy::capture::WindowsSelectionState::Instance().AppWindowId(),
+            777);
+
+  // No / null windowId clears the selection.
+  const auto r_clear =
+      DispatchWithArgs(router, "setAppWindowTarget", flutter::EncodableMap{});
+  EXPECT_TRUE(r_clear.success_called);
+  EXPECT_FALSE(
+      clingfy::capture::WindowsSelectionState::Instance().AppWindowId());
+
+  clingfy::capture::WindowsSelectionState::Instance().ResetForTesting();
 }
 
 // === Setters return success with no value. =================================

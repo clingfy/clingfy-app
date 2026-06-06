@@ -150,6 +150,12 @@ class RecordingEngine {
   std::atomic<bool> encoder_stopped_{true};
   std::string current_output_path_;
 
+  // Phase 7.1: the capture target the active session resolved at Start, snapshot
+  // into the project manifest at Stop. "display" | "window" (area is a later
+  // slice); `current_window_id_` set only for window captures.
+  std::string current_target_type_ = "display";
+  std::optional<std::int64_t> current_window_id_;
+
   // Audio pipeline (Phase 3D). Two WASAPI captures (mic + loopback)
   // fill the matching packet queues; a dedicated mixer thread sums
   // both streams and forwards the mixed PCM packets into the encoder.

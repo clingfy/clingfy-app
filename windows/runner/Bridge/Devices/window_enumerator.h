@@ -1,6 +1,10 @@
 #ifndef RUNNER_BRIDGE_DEVICES_WINDOW_ENUMERATOR_H_
 #define RUNNER_BRIDGE_DEVICES_WINDOW_ENUMERATOR_H_
 
+#include <windows.h>
+
+#include <cstdint>
+#include <optional>
 #include <vector>
 
 #include "Bridge/Devices/device_record.h"
@@ -23,6 +27,14 @@
 namespace clingfy::bridge::devices {
 
 std::vector<AppWindowRecord> EnumerateAppWindows();
+
+// Phase 7.1 helper: resolve a `window_id` (the HWND-as-int64 that
+// `EnumerateAppWindows` surfaces) back to a live `HWND` for WGC
+// `CreateForWindow`. Returns `std::nullopt` when `id` is missing or the window
+// no longer exists (`IsWindow` is false) — the engine maps that to a friendly
+// "window no longer available" target error. The deeper capturability check is
+// left to `CreateForWindow` at Start time; this only validates the handle.
+std::optional<HWND> ResolveAppWindow(std::optional<std::int64_t> id);
 
 }  // namespace clingfy::bridge::devices
 

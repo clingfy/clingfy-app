@@ -5,17 +5,25 @@
 #include <string>
 
 #include "Bridge/native_error_codes.h"
+#include "Capture/wgc_display_capture_backend.h"
+#include "Capture/windows_selection_state.h"
 
 namespace clingfy::capture {
 namespace {
 
 // Engine is a process-level singleton. Each test resets it to a clean Idle
-// state so test ordering does not leak.
+// state so test ordering does not leak. The selection-state singleton is reset
+// too so a window/area-mode test cannot leak its target mode into the next
+// case (which assumes the default explicit-display mode).
 class RecordingEngineTest : public ::testing::Test {
  protected:
-  void SetUp() override { RecordingEngine::Instance().ForceResetForTesting(); }
+  void SetUp() override {
+    RecordingEngine::Instance().ForceResetForTesting();
+    WindowsSelectionState::Instance().ResetForTesting();
+  }
   void TearDown() override {
     RecordingEngine::Instance().ForceResetForTesting();
+    WindowsSelectionState::Instance().ResetForTesting();
   }
 };
 
@@ -100,6 +108,57 @@ TEST_F(RecordingEngineTest, StartAfterStopIsAllowed) {
   second.session_id = "sess-test-2";
   EXPECT_FALSE(RecordingEngine::Instance().Start(std::move(second)).has_value());
   EXPECT_EQ(RecordingEngine::Instance().session_id(), "sess-test-2");
+}
+
+// === Phase 7.1 window-mode target gating ===================================
+//
+// Window recording lifts the kBadMode gate for window modes but still resolves
+// + validates the target before any capture pipeline setup, so these paths are
+// GPU-independent (they fail before the D3D device is created).
+
+TEST_F(RecordingEngineTest, StartRejectsWindowModeWithNoTarget) {
+  WindowsSelectionState::Instance().SetTargetMode(
+      DisplayTargetMode::kSingleAppWindow);
+  // No window picked → friendly target error, not kBadMode (the gate IS lifted
+  // for window modes) and not a crash.
+  auto error = RecordingEngine::Instance().Start(ValidRequest());
+  ASSERT_TRUE(error.has_value());
+  EXPECT_EQ(error->code, clingfy::bridge::error::kTargetError);
+  EXPECT_FALSE(RecordingEngine::Instance().IsRecording());
+}
+
+TEST_F(RecordingEngineTest, StartRejectsWindowModeWithStaleHwnd) {
+  WindowsSelectionState::Instance().SetTargetMode(
+      DisplayTargetMode::kAppWindow);
+  // An int64 that does not name a live window → ResolveAppWindow returns
+  // nullopt → friendly target error (the gate was passed; resolution failed).
+  WindowsSelectionState::Instance().SetAppWindowId(std::int64_t{0xABCD1234});
+  auto error = RecordingEngine::Instance().Start(ValidRequest());
+  ASSERT_TRUE(error.has_value());
+  EXPECT_EQ(error->code, clingfy::bridge::error::kTargetError);
+  EXPECT_FALSE(RecordingEngine::Instance().IsRecording());
+}
+
+TEST_F(RecordingEngineTest, StartStillRejectsAreaModeAsUnsupported) {
+  // Area recording is a later slice — window modes are admitted, area is not.
+  WindowsSelectionState::Instance().SetTargetMode(
+      DisplayTargetMode::kAreaRecording);
+  auto error = RecordingEngine::Instance().Start(ValidRequest());
+  ASSERT_TRUE(error.has_value());
+  EXPECT_EQ(error->code, clingfy::bridge::error::kBadMode);
+}
+
+// The encoder config and the WGC frame copy both clamp capture dimensions to
+// even through this one helper, so an odd-sized window's encoder input always
+// equals the surface size it is handed (the Phase 7.1 odd-window fix). Pure,
+// no GPU.
+TEST(EvenCaptureDimensionTest, ClampsOddDownAndLeavesEvenUnchanged) {
+  EXPECT_EQ(EvenCaptureDimension(801u), 800u);
+  EXPECT_EQ(EvenCaptureDimension(1081u), 1080u);
+  EXPECT_EQ(EvenCaptureDimension(800u), 800u);
+  EXPECT_EQ(EvenCaptureDimension(1920u), 1920u);
+  EXPECT_EQ(EvenCaptureDimension(1u), 0u);
+  EXPECT_EQ(EvenCaptureDimension(0u), 0u);
 }
 
 // === Phase 4 pause / resume happy + sad paths ==============================
