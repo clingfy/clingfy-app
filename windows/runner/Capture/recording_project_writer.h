@@ -29,6 +29,16 @@
 // temp directory.
 namespace clingfy::capture {
 
+// Phase 7.2: the captured source region, in physical pixels. For area recording
+// this is the crop rect on the monitor; written into screen.meta.json so
+// downstream tooling knows the recording's origin/size within its display.
+struct SourceBounds {
+  std::int32_t x = 0;
+  std::int32_t y = 0;
+  std::int32_t width = 0;
+  std::int32_t height = 0;
+};
+
 struct ProjectWriterInput {
   // Caller-supplied sessionId from `StartRecordingRequest`. Used as the
   // project id AND as the manifest's `projectId` field; the Dart side
@@ -52,12 +62,14 @@ struct ProjectWriterInput {
   bool mic_active = false;
   bool loopback_active = false;
 
-  // Phase 7.1 capture target metadata, written into capture/screen.meta.json.
+  // Phase 7.1/7.2 capture target metadata, written into capture/screen.meta.json.
   // `target_type` is "display" | "window" | "area" (defaults to display).
   // `window_id` is the HWND-as-int64 for window captures (absent otherwise) —
   // session-only, recorded for diagnostics, not for re-resolution.
+  // `source_bounds` is the captured region within the display (area captures).
   std::string target_type = "display";
   std::optional<std::int64_t> window_id;
+  std::optional<SourceBounds> source_bounds;
 
   // ISO-8601 timestamp string for the manifest's createdAt / updatedAt.
   // Empty → writer fills in via `std::chrono::system_clock`. Mostly

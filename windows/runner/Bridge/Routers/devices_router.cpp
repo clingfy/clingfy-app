@@ -1,5 +1,7 @@
 #include "Bridge/Routers/devices_router.h"
 
+#include <windows.h>
+
 #include <cstdint>
 #include <optional>
 #include <string>
@@ -162,6 +164,98 @@ void HandleSetAppWindowTarget(
   reply::Null(*result);
 }
 
+// Phase 7.2 PLACEHOLDER: the native drag-to-select overlay is Phase 7.3. Until
+// then this picks a centered, half-size region on the currently-selected
+// display so area recording is exercisable end to end, stores it for Start, and
+// returns the macOS-shaped {displayId,x,y,width,height} map (or null when no
+// display is available, which Dart treats as a cancel). The region is stored in
+// display-local physical pixels; RecordingEngine::Start clamps + even-aligns it
+// against the monitor at capture time.
+void HandlePickAreaRecordingRegion(
+    const flutter::MethodCall<flutter::EncodableValue>& /*call*/,
+    std::unique_ptr<flutter::MethodResult<flutter::EncodableValue>> result) {
+  const auto display_id =
+      clingfy::capture::WindowsSelectionState::Instance().DisplayId();
+  const auto monitor = clingfy::bridge::devices::ResolveHMonitor(display_id);
+  if (!monitor) {
+    clingfy::capture::WindowsSelectionState::Instance().SetAreaRegion(
+        std::nullopt);
+    reply::Null(*result);
+    return;
+  }
+  MONITORINFO info{};
+  info.cbSize = sizeof(info);
+  std::int32_t mon_w = 0;
+  std::int32_t mon_h = 0;
+  if (::GetMonitorInfoW(*monitor, &info) != 0) {
+    mon_w = info.rcMonitor.right - info.rcMonitor.left;
+    mon_h = info.rcMonitor.bottom - info.rcMonitor.top;
+  }
+  if (mon_w <= 0 || mon_h <= 0) {
+    clingfy::capture::WindowsSelectionState::Instance().SetAreaRegion(
+        std::nullopt);
+    reply::Null(*result);
+    return;
+  }
+  const std::int32_t w = mon_w / 2;
+  const std::int32_t h = mon_h / 2;
+  const std::int32_t x = (mon_w - w) / 2;
+  const std::int32_t y = (mon_h - h) / 2;
+
+  clingfy::capture::AreaRegion region;
+  region.display_id = display_id;
+  region.x = x;
+  region.y = y;
+  region.width = w;
+  region.height = h;
+  clingfy::capture::WindowsSelectionState::Instance().SetAreaRegion(region);
+
+  // Resolve a concrete display id for the RETURN map. The Dart client
+  // force-unwraps result['displayId'] (overlay_controller), so a missing key on
+  // the common no-display-selected path throws and silently drops the
+  // selection. Mirror macOS, which always returns a concrete displayId (its
+  // CGMainDisplayID fallback): when no display is selected, use the primary
+  // monitor's id (the record at the virtual-desktop origin). The STORED region
+  // keeps the original (possibly nullopt => primary) id; the engine resolves it
+  // at Start, so capture targeting is unchanged.
+  std::int64_t resolved_display_id = 0;
+  if (display_id.has_value()) {
+    resolved_display_id = *display_id;
+  } else {
+    const auto displays = clingfy::bridge::devices::EnumerateDisplays();
+    for (const auto& d : displays) {
+      if (d.x == 0.0 && d.y == 0.0) {  // primary monitor sits at the origin
+        resolved_display_id = d.id;
+        break;
+      }
+    }
+    if (resolved_display_id == 0 && !displays.empty()) {
+      resolved_display_id = displays.front().id;
+    }
+  }
+
+  flutter::EncodableMap out;
+  out[flutter::EncodableValue("displayId")] =
+      flutter::EncodableValue(resolved_display_id);
+  out[flutter::EncodableValue("x")] =
+      flutter::EncodableValue(static_cast<std::int64_t>(x));
+  out[flutter::EncodableValue("y")] =
+      flutter::EncodableValue(static_cast<std::int64_t>(y));
+  out[flutter::EncodableValue("width")] =
+      flutter::EncodableValue(static_cast<std::int64_t>(w));
+  out[flutter::EncodableValue("height")] =
+      flutter::EncodableValue(static_cast<std::int64_t>(h));
+  reply::Map(*result, std::move(out));
+}
+
+void HandleClearAreaRecordingSelection(
+    const flutter::MethodCall<flutter::EncodableValue>& /*call*/,
+    std::unique_ptr<flutter::MethodResult<flutter::EncodableValue>> result) {
+  clingfy::capture::WindowsSelectionState::Instance().SetAreaRegion(
+      std::nullopt);
+  reply::Null(*result);
+}
+
 }  // namespace
 
 void RegisterHandlers(HandlerTable& table) {
@@ -188,11 +282,12 @@ void RegisterHandlers(HandlerTable& table) {
   table["setAudioMix"] = &HandleNoopSetter;
   table["setAudioGainDb"] = &HandleNoopSetter;
 
-  // Area selection lifecycle — no overlay UI yet, accept and succeed so the
-  // Dart flow that toggles area-mode does not surface an error.
-  table["pickAreaRecordingRegion"] = &HandleNoopSetter;
+  // Area selection lifecycle. Phase 7.2 makes pick/clear real (engine consumes
+  // the region); reveal (the post-select preview border) is overlay work, so it
+  // stays a no-op until Phase 7.3 brings the native overlay.
+  table["pickAreaRecordingRegion"] = &HandlePickAreaRecordingRegion;
   table["revealAreaRecordingRegion"] = &HandleNoopSetter;
-  table["clearAreaRecordingSelection"] = &HandleNoopSetter;
+  table["clearAreaRecordingSelection"] = &HandleClearAreaRecordingSelection;
 }
 
 }  // namespace clingfy::bridge::routers::devices

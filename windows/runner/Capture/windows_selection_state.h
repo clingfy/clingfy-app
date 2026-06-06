@@ -33,6 +33,17 @@ enum class DisplayTargetMode : std::int32_t {
   kFollowMouse = 5,
 };
 
+// Phase 7.2: a selected area-recording region. `display_id` is the hashed
+// display id (std::nullopt => primary, matching ResolveHMonitor); x/y/width/
+// height are monitor-local physical pixels. Resolved + clamped at Start time.
+struct AreaRegion {
+  std::optional<std::int64_t> display_id;
+  std::int32_t x = 0;
+  std::int32_t y = 0;
+  std::int32_t width = 0;
+  std::int32_t height = 0;
+};
+
 class WindowsSelectionState {
  public:
   static WindowsSelectionState& Instance();
@@ -61,6 +72,12 @@ class WindowsSelectionState {
   void SetAppWindowId(std::optional<std::int64_t> id);
   std::optional<std::int64_t> AppWindowId() const;
 
+  // Phase 7.2: selected area-recording region from pickAreaRecordingRegion.
+  // std::nullopt means no area selected — the engine rejects an area-mode start
+  // with a friendly target error.
+  void SetAreaRegion(std::optional<AreaRegion> region);
+  std::optional<AreaRegion> CurrentAreaRegion() const;
+
   // Selected microphone endpoint id from `setAudioSource`. Phase 3D starts
   // consuming this; tracking it here in 3B lets the wiring land alongside
   // the rest of the engine plumbing rather than churning the router again.
@@ -80,6 +97,7 @@ class WindowsSelectionState {
   mutable std::mutex mutex_;
   std::optional<std::int64_t> display_id_;
   std::optional<std::int64_t> app_window_id_;
+  std::optional<AreaRegion> area_region_;
   DisplayTargetMode target_mode_ = DisplayTargetMode::kExplicitId;
   std::optional<std::string> microphone_id_;
 };

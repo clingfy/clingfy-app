@@ -187,6 +187,12 @@ std::string BuildScreenMetaJson(const ProjectWriterInput& input) {
   if (input.window_id.has_value()) {
     out << "  \"windowId\": " << *input.window_id << ",\n";
   }
+  if (input.source_bounds.has_value()) {
+    const auto& b = *input.source_bounds;
+    out << "  \"sourceBounds\": {\"x\": " << b.x << ", \"y\": " << b.y
+        << ", \"width\": " << b.width << ", \"height\": " << b.height
+        << "},\n";
+  }
   out << "  \"platform\": \"windows\"\n";
   out << "}\n";
   return out.str();
