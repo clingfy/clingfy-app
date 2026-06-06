@@ -180,6 +180,13 @@ std::string BuildScreenMetaJson(const ProjectWriterInput& input) {
       << ",\n";
   out << "  \"loopbackActive\": "
       << (input.loopback_active ? "true" : "false") << ",\n";
+  // Phase 7.1: capture target type ("display" | "window" | "area") + the
+  // window id for window captures. Additive fields — the manifest reader
+  // ignores unknown keys, so schemaVersion stays 2.
+  out << "  \"targetType\": \"" << JsonEscape(input.target_type) << "\",\n";
+  if (input.window_id.has_value()) {
+    out << "  \"windowId\": " << *input.window_id << ",\n";
+  }
   out << "  \"platform\": \"windows\"\n";
   out << "}\n";
   return out.str();

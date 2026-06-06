@@ -52,6 +52,13 @@ struct ProjectWriterInput {
   bool mic_active = false;
   bool loopback_active = false;
 
+  // Phase 7.1 capture target metadata, written into capture/screen.meta.json.
+  // `target_type` is "display" | "window" | "area" (defaults to display).
+  // `window_id` is the HWND-as-int64 for window captures (absent otherwise) —
+  // session-only, recorded for diagnostics, not for re-resolution.
+  std::string target_type = "display";
+  std::optional<std::int64_t> window_id;
+
   // ISO-8601 timestamp string for the manifest's createdAt / updatedAt.
   // Empty → writer fills in via `std::chrono::system_clock`. Mostly
   // exposed so unit tests can pin a deterministic value.

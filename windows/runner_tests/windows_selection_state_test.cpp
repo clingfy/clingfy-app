@@ -20,6 +20,19 @@ TEST_F(WindowsSelectionStateTest, FreshStateHasNoDisplaySelection) {
   EXPECT_EQ(WindowsSelectionState::Instance().TargetMode(),
             DisplayTargetMode::kExplicitId);
   EXPECT_FALSE(WindowsSelectionState::Instance().MicrophoneId().has_value());
+  EXPECT_FALSE(WindowsSelectionState::Instance().AppWindowId().has_value());
+}
+
+TEST_F(WindowsSelectionStateTest, AppWindowIdRoundTrips) {
+  WindowsSelectionState::Instance().SetAppWindowId(std::int64_t{99887766});
+  ASSERT_TRUE(WindowsSelectionState::Instance().AppWindowId().has_value());
+  EXPECT_EQ(*WindowsSelectionState::Instance().AppWindowId(), 99887766);
+}
+
+TEST_F(WindowsSelectionStateTest, ClearingAppWindowIdResetsSelection) {
+  WindowsSelectionState::Instance().SetAppWindowId(std::int64_t{5});
+  WindowsSelectionState::Instance().SetAppWindowId(std::nullopt);
+  EXPECT_FALSE(WindowsSelectionState::Instance().AppWindowId().has_value());
 }
 
 TEST_F(WindowsSelectionStateTest, SetDisplayIdRoundTrips) {

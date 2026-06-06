@@ -38,6 +38,25 @@ struct WgcCaptureStats {
   std::uint64_t frames_dropped = 0;
 };
 
+// Phase 7.1: the pixel size WGC will deliver for a window-capture item. The
+// engine probes this BEFORE opening the encoder so the encoder is sized to the
+// window, not the monitor. Returns std::nullopt when the window is invalid or
+// WGC cannot build a capture item for it.
+struct WgcTargetSize {
+  std::uint32_t width = 0;
+  std::uint32_t height = 0;
+};
+std::optional<WgcTargetSize> ResolveWindowCaptureSize(HWND window);
+
+// Single source of truth for the capture-vs-encoder even-dimension contract.
+// H.264 requires even frame dimensions; monitor sizes are even in practice but
+// window content sizes are arbitrary (often odd). Both the encoder config (in
+// the engine) AND the captured frame (in this backend's frame copy) clamp DOWN
+// to even through THIS function, so the encoder input size always equals the
+// surface size it is handed — a 1px odd edge is dropped rather than mismatched.
+// Pure (no Win32) so it is unit-tested without a GPU.
+std::uint32_t EvenCaptureDimension(std::uint32_t value);
+
 class WgcDisplayCaptureBackend {
  public:
   WgcDisplayCaptureBackend();
@@ -55,6 +74,16 @@ class WgcDisplayCaptureBackend {
   std::optional<WgcCaptureError> Start(HMONITOR monitor,
                                        clingfy::graphics::D3DDevice& device,
                                        VideoFrameQueue& queue);
+
+  // Phase 7.1: window capture. Spins up a session for a top-level `window`
+  // (HWND) via `IGraphicsCaptureItemInterop::CreateForWindow` — the analog of
+  // the monitor path above. The window must be valid (the engine validates it
+  // first; this also re-checks `IsWindow`). Everything downstream (frame pool,
+  // FrameArrived copy, queue push, cursor-on) is identical to `Start(HMONITOR)`.
+  // Returns std::nullopt on success.
+  std::optional<WgcCaptureError> StartForWindow(
+      HWND window, clingfy::graphics::D3DDevice& device,
+      VideoFrameQueue& queue);
 
   // Stops the capture session, closes the frame pool, and waits for any
   // in-flight FrameArrived callbacks to drain before returning. Safe to

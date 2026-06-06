@@ -62,6 +62,7 @@ add_executable(runner_tests
   "save_folder_test.cpp"
   "single_instance_test.cpp"
   "video_frame_queue_test.cpp"
+  "window_enumerator_test.cpp"
   "windows_selection_state_test.cpp"
   "workflow_event_publisher_test.cpp"
   "zoom_easing_constants_test.cpp"

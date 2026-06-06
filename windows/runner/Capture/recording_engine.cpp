@@ -10,6 +10,7 @@
 #include "Audio/wasapi_audio_capture.h"
 #include "Bridge/Devices/device_probe_log.h"
 #include "Bridge/Devices/display_enumerator.h"
+#include "Bridge/Devices/window_enumerator.h"
 #include "Bridge/native_error_codes.h"
 #include "Bridge/workflow_event_publisher.h"
 #include "Capture/captured_video_frame.h"
@@ -23,18 +24,6 @@
 #include "Graphics/d3d_device.h"
 
 namespace clingfy::capture {
-
-namespace {
-
-// Round an odd dimension up to the next even value. H.264 requires even
-// frame dimensions; rather than refusing the recording when a monitor's
-// native size happens to be odd, the engine clamps up by one pixel so
-// the encoder configuration is always valid.
-std::uint32_t RoundUpToEven(std::uint32_t value) {
-  return value + (value & 1u);
-}
-
-}  // namespace
 
 RecordingEngine& RecordingEngine::Instance() {
   static RecordingEngine engine;
@@ -97,22 +86,51 @@ std::optional<RecordingError> RecordingEngine::Start(
 
   const DisplayTargetMode mode =
       WindowsSelectionState::Instance().TargetMode();
-  if (mode != DisplayTargetMode::kExplicitId) {
+  // Phase 7.1 lifts the gate for window modes. macOS distinguishes "app (all
+  // windows)" from "single window"; WGC captures one HWND, so both map to
+  // single-HWND capture of the selected window for the MVP. Area / mouse modes
+  // remain unsupported until their slices.
+  const bool is_window_mode = (mode == DisplayTargetMode::kAppWindow ||
+                               mode == DisplayTargetMode::kSingleAppWindow);
+  if (mode != DisplayTargetMode::kExplicitId && !is_window_mode) {
     return fail_start(
         clingfy::bridge::error::kBadMode,
         std::string("Target mode '") + TargetModeName(mode) +
-            "' is not supported on Windows yet. Phase 3E only supports "
-            "explicit-display recording.");
+            "' is not supported on Windows yet. Window recording is live; "
+            "area and mouse-follow modes land in later slices.");
   }
 
-  const auto display_id = WindowsSelectionState::Instance().DisplayId();
-  const auto monitor =
-      clingfy::bridge::devices::ResolveHMonitor(display_id);
-  if (!monitor) {
-    return fail_start(
-        clingfy::bridge::error::kTargetError,
-        "No display available to record. Plug in a monitor, or pick one "
-        "in the display selector.");
+  // Resolve the target BEFORE any pipeline setup so a missing / stale target
+  // fails cleanly. Display: an HMONITOR (nullopt selection => primary).
+  // Window: the selected HWND, revalidated (closed window => friendly error).
+  std::optional<HMONITOR> monitor;
+  std::optional<HWND> window_target;
+  if (is_window_mode) {
+    const auto window_id = WindowsSelectionState::Instance().AppWindowId();
+    if (!window_id) {
+      return fail_start(
+          clingfy::bridge::error::kTargetError,
+          "No window selected to record. Pick a window first.");
+    }
+    window_target = clingfy::bridge::devices::ResolveAppWindow(window_id);
+    if (!window_target) {
+      return fail_start(
+          clingfy::bridge::error::kTargetError,
+          "The selected window is no longer available. Pick it again.");
+    }
+    current_target_type_ = "window";
+    current_window_id_ = window_id;
+  } else {
+    const auto display_id = WindowsSelectionState::Instance().DisplayId();
+    monitor = clingfy::bridge::devices::ResolveHMonitor(display_id);
+    if (!monitor) {
+      return fail_start(
+          clingfy::bridge::error::kTargetError,
+          "No display available to record. Plug in a monitor, or pick one "
+          "in the display selector.");
+    }
+    current_target_type_ = "display";
+    current_window_id_.reset();
   }
 
   if (!session_.BeginStart(request.session_id)) {
@@ -129,22 +147,44 @@ std::optional<RecordingError> RecordingEngine::Start(
                       d3d_err->message);
   }
 
-  // Resolve monitor dimensions ahead of the encoder open so the
-  // recording resolution matches the source.
-  MONITORINFO info{};
-  info.cbSize = sizeof(info);
+  // Resolve capture dimensions ahead of the encoder open so the recording
+  // resolution matches the source. Display: the monitor rect. Window: the size
+  // WGC will deliver for the window item (NOT GetWindowRect, which differs from
+  // the WGC surface by the shadow/frame margin and would mis-size the encoder).
   std::uint32_t width = 1920;
   std::uint32_t height = 1080;
-  if (::GetMonitorInfoW(*monitor, &info) != 0) {
-    width = static_cast<std::uint32_t>(info.rcMonitor.right -
-                                        info.rcMonitor.left);
-    height = static_cast<std::uint32_t>(info.rcMonitor.bottom -
-                                         info.rcMonitor.top);
+  if (is_window_mode) {
+    const auto window_size =
+        clingfy::capture::ResolveWindowCaptureSize(*window_target);
+    if (!window_size) {
+      TeardownPipeline();
+      session_.MarkFailed();
+      session_.Reset();
+      return fail_start(
+          clingfy::bridge::error::kTargetError,
+          "Could not measure the selected window for capture. Pick it "
+          "again.");
+    }
+    width = window_size->width;
+    height = window_size->height;
+  } else {
+    MONITORINFO info{};
+    info.cbSize = sizeof(info);
+    if (::GetMonitorInfoW(*monitor, &info) != 0) {
+      width = static_cast<std::uint32_t>(info.rcMonitor.right -
+                                          info.rcMonitor.left);
+      height = static_cast<std::uint32_t>(info.rcMonitor.bottom -
+                                           info.rcMonitor.top);
+    }
   }
 
   clingfy::encoding::EncoderConfig encoder_config;
-  encoder_config.width = RoundUpToEven(width);
-  encoder_config.height = RoundUpToEven(height);
+  // Clamp to even (H.264). EvenCaptureDimension is the SAME helper the WGC
+  // backend applies to every captured frame, so the encoder input size always
+  // equals the surface it is handed — even for an odd-sized window (monitor
+  // sizes are already even, so the display path is unchanged).
+  encoder_config.width = EvenCaptureDimension(width);
+  encoder_config.height = EvenCaptureDimension(height);
   encoder_config.fps = static_cast<std::uint32_t>(request.frame_rate);
   encoder_config.output_path =
       clingfy::encoding::ResolveTempMp4Path(request.session_id);
@@ -173,8 +213,12 @@ std::optional<RecordingError> RecordingEngine::Start(
 
   frame_queue_ = std::make_unique<VideoFrameQueue>(/*capacity=*/60);
   capture_backend_ = std::make_unique<WgcDisplayCaptureBackend>();
-  if (auto wgc_err =
-          capture_backend_->Start(*monitor, *d3d_device_, *frame_queue_)) {
+  std::optional<WgcCaptureError> wgc_err =
+      is_window_mode
+          ? capture_backend_->StartForWindow(*window_target, *d3d_device_,
+                                             *frame_queue_)
+          : capture_backend_->Start(*monitor, *d3d_device_, *frame_queue_);
+  if (wgc_err) {
     TeardownPipeline();
     session_.MarkFailed();
     session_.Reset();
@@ -475,6 +519,8 @@ std::optional<RecordingError> RecordingEngine::Stop(
   ProjectWriterInput project_input;
   project_input.session_id = active_session_id;
   project_input.source_mp4_path = current_output_path_;
+  project_input.target_type = current_target_type_;
+  project_input.window_id = current_window_id_;
   if (capture_backend_) {
     const auto stats = capture_backend_->Stats();
     project_input.width = stats.frame_width;
@@ -655,6 +701,8 @@ void RecordingEngine::ForceResetForTesting() {
   session_ = RecordingSessionState{};
   clock_ = RecordingClock{};
   current_output_path_.clear();
+  current_target_type_ = "display";
+  current_window_id_.reset();
 }
 
 }  // namespace clingfy::capture

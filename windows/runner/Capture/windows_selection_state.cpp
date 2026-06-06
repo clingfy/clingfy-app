@@ -27,6 +27,16 @@ DisplayTargetMode WindowsSelectionState::TargetMode() const {
   return target_mode_;
 }
 
+void WindowsSelectionState::SetAppWindowId(std::optional<std::int64_t> id) {
+  std::lock_guard<std::mutex> lock(mutex_);
+  app_window_id_ = id;
+}
+
+std::optional<std::int64_t> WindowsSelectionState::AppWindowId() const {
+  std::lock_guard<std::mutex> lock(mutex_);
+  return app_window_id_;
+}
+
 void WindowsSelectionState::SetMicrophoneId(std::optional<std::string> id) {
   std::lock_guard<std::mutex> lock(mutex_);
   microphone_id_ = std::move(id);
@@ -40,6 +50,7 @@ std::optional<std::string> WindowsSelectionState::MicrophoneId() const {
 void WindowsSelectionState::ResetForTesting() {
   std::lock_guard<std::mutex> lock(mutex_);
   display_id_.reset();
+  app_window_id_.reset();
   target_mode_ = DisplayTargetMode::kExplicitId;
   microphone_id_.reset();
 }

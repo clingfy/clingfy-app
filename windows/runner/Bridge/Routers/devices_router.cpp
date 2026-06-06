@@ -148,6 +148,20 @@ void HandleSetAudioSource(
   reply::Null(*result);
 }
 
+// Phase 7.1: record the selected window target. Dart sends `{windowId: <int>}`
+// (the HWND-as-int64 from getAppWindows) or null to clear. The engine resolves
+// + revalidates the HWND at Start time, so a stale handle here is harmless.
+void HandleSetAppWindowTarget(
+    const flutter::MethodCall<flutter::EncodableValue>& call,
+    std::unique_ptr<flutter::MethodResult<flutter::EncodableValue>> result) {
+  std::optional<std::int64_t> window_id;
+  if (const auto* args = AsMap(call.arguments())) {
+    window_id = ReadOptionalInt(*args, "windowId");
+  }
+  clingfy::capture::WindowsSelectionState::Instance().SetAppWindowId(window_id);
+  reply::Null(*result);
+}
+
 }  // namespace
 
 void RegisterHandlers(HandlerTable& table) {
@@ -164,8 +178,9 @@ void RegisterHandlers(HandlerTable& table) {
   table["setDisplayTargetMode"] = &HandleSetDisplayTargetMode;
   table["setAudioSource"] = &HandleSetAudioSource;
 
+  // Phase 7.1: window target is now consumed by the engine (window recording).
+  table["setAppWindowTarget"] = &HandleSetAppWindowTarget;
   // Not yet consumed by the engine. Kept as no-op until later phases.
-  table["setAppWindowTarget"] = &HandleNoopSetter;
   table["setVideoSource"] = &HandleNoopSetter;
 
   // Audio gain / mix — accepted, no audible effect until Phase 3D.

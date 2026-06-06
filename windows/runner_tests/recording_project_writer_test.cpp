@@ -139,6 +139,26 @@ TEST_F(RecordingProjectWriterTest, ScreenMetaCarriesDiagnostics) {
   EXPECT_NE(meta.find("\"platform\": \"windows\""), std::string::npos);
 }
 
+TEST_F(RecordingProjectWriterTest, ScreenMetaCarriesCaptureTargetType) {
+  // Default: display capture records targetType "display" and no windowId.
+  ProjectWriterInput display_input;
+  display_input.session_id = "sess-target-display";
+  const std::string display_meta = BuildScreenMetaJson(display_input);
+  EXPECT_NE(display_meta.find("\"targetType\": \"display\""),
+            std::string::npos);
+  EXPECT_EQ(display_meta.find("\"windowId\""), std::string::npos)
+      << "display captures must not emit a windowId";
+
+  // Window capture (Phase 7.1) records the type + the HWND-as-int64.
+  ProjectWriterInput window_input;
+  window_input.session_id = "sess-target-window";
+  window_input.target_type = "window";
+  window_input.window_id = std::int64_t{123456};
+  const std::string window_meta = BuildScreenMetaJson(window_input);
+  EXPECT_NE(window_meta.find("\"targetType\": \"window\""), std::string::npos);
+  EXPECT_NE(window_meta.find("\"windowId\": 123456"), std::string::npos);
+}
+
 TEST(RecordingProjectWriterFreeFunctions, Iso8601TimestampShape) {
   const auto ts = CurrentIso8601Timestamp();
   // Length is fixed: "YYYY-MM-DDTHH:MM:SS.sssZ" → 24 chars.
