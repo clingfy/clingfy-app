@@ -3,6 +3,8 @@
 
 #include <string>
 
+#include "Permissions/camera_readiness.h"
+
 // Windows-side permission probe + settings deep-link helpers.
 //
 // Windows does NOT have a per-app screen-recording or accessibility
@@ -42,6 +44,15 @@ struct PermissionSnapshot {
 // API is unavailable (very old Windows hosts), so the bridge never
 // surfaces a parse error from the probe itself.
 PermissionSnapshot ProbePermissionStatus();
+
+// Phase 9.1: the detailed camera privacy status, mapped from the WinRT
+// `AppCapabilityAccessStatus`. `ProbePermissionStatus().camera` is exactly
+// `ProbeCameraPermission() == CameraPermission::kGranted` — this richer form
+// lets the camera-readiness check (and Phase 9.2's recording preflight)
+// distinguish a system/global denial from a per-app denial from a
+// not-yet-determined state. See `camera_readiness.h` for why the global vs.
+// desktop-apps toggles cannot be told apart.
+CameraPermission ProbeCameraPermission();
 
 // Pane id → `ms-settings:` URI. The Dart side calls
 // `openSystemSettings(pane)` with one of:

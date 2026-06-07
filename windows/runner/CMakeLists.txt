@@ -71,6 +71,7 @@ add_library(runner_bridge STATIC
   "Graphics/d3d_device.cpp"
   "Overlay/area_picker_geometry.cpp"
   "Overlay/area_picker_overlay.cpp"
+  "Permissions/camera_readiness.cpp"
   "Permissions/permission_probe.cpp"
   "Services/save_folder.cpp"
   "preview/frame_timing.cpp"

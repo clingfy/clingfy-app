@@ -42,10 +42,42 @@ bool ProbeCapability(winrt::hstring capability_name) {
 
 }  // namespace
 
+CameraPermission ProbeCameraPermission() {
+  try {
+    auto capability = cap::AppCapability::Create(L"webcam");
+    if (capability == nullptr) {
+      // No AppCapability API (very old Windows) — fail open. The real device
+      // activation in Phase 9.2 will surface a structured error if it turns
+      // out the camera cannot actually be opened.
+      return CameraPermission::kUnavailableApi;
+    }
+    switch (capability.CheckAccess()) {
+      case cap::AppCapabilityAccessStatus::Allowed:
+        return CameraPermission::kGranted;
+      case cap::AppCapabilityAccessStatus::DeniedByUser:
+        return CameraPermission::kDeniedByUser;
+      case cap::AppCapabilityAccessStatus::UserPromptRequired:
+        return CameraPermission::kNotDetermined;
+      case cap::AppCapabilityAccessStatus::DeniedBySystem:
+      // `NotDeclaredByApp` only applies to packaged apps with a missing
+      // manifest capability; for our non-packaged Win32 build it is a
+      // system-level denial in practice, so bucket it with DeniedBySystem.
+      default:
+        return CameraPermission::kDeniedBySystem;
+    }
+  } catch (winrt::hresult_error const&) {
+    return CameraPermission::kUnavailableApi;
+  }
+}
+
 PermissionSnapshot ProbePermissionStatus() {
   PermissionSnapshot out;
   out.microphone = ProbeCapability(L"microphone");
-  out.camera = ProbeCapability(L"webcam");
+  // The camera bool is the granted/not-granted reduction of the detailed
+  // probe, so the existing bridge contract (getPermissionStatus.camera: bool)
+  // stays byte-for-byte identical while the richer status is available to the
+  // readiness check.
+  out.camera = ProbeCameraPermission() == CameraPermission::kGranted;
   // Screen recording + accessibility stay at their defaults (true) —
   // Windows has no per-app gate for either.
   return out;

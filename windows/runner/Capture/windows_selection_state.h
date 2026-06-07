@@ -87,6 +87,17 @@ class WindowsSelectionState {
   void SetMicrophoneId(std::optional<std::string> id);
   std::optional<std::string> MicrophoneId() const;
 
+  // Phase 9.1: selected camera device from `setVideoSource`. Stored as the
+  // Media Foundation symbolic-link id the video-source enumerator surfaces.
+  // `std::nullopt` means no camera picked (or the picker was cleared) — the
+  // Phase 9.2 engine treats that as "no camera overlay" regardless of the
+  // `disableCameraOverlay` flag. The id is NOT validated against the live
+  // device list here; a device unplugged between selection and Start is caught
+  // at Start time via the camera-readiness check (matching how display / window
+  // ids are resolved fresh), so a stale id stored here is harmless.
+  void SetVideoSourceId(std::optional<std::string> id);
+  std::optional<std::string> VideoSourceId() const;
+
   // Test seam — used by `windows_selection_state_test.cpp` to start each
   // case from a clean slate.
   void ResetForTesting();
@@ -100,6 +111,7 @@ class WindowsSelectionState {
   std::optional<AreaRegion> area_region_;
   DisplayTargetMode target_mode_ = DisplayTargetMode::kExplicitId;
   std::optional<std::string> microphone_id_;
+  std::optional<std::string> video_source_id_;
 };
 
 // Convenience: clamp an arbitrary integer to a known `DisplayTargetMode`.

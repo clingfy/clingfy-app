@@ -57,6 +57,16 @@ std::optional<std::string> WindowsSelectionState::MicrophoneId() const {
   return microphone_id_;
 }
 
+void WindowsSelectionState::SetVideoSourceId(std::optional<std::string> id) {
+  std::lock_guard<std::mutex> lock(mutex_);
+  video_source_id_ = std::move(id);
+}
+
+std::optional<std::string> WindowsSelectionState::VideoSourceId() const {
+  std::lock_guard<std::mutex> lock(mutex_);
+  return video_source_id_;
+}
+
 void WindowsSelectionState::ResetForTesting() {
   std::lock_guard<std::mutex> lock(mutex_);
   display_id_.reset();
@@ -64,6 +74,7 @@ void WindowsSelectionState::ResetForTesting() {
   area_region_.reset();
   target_mode_ = DisplayTargetMode::kExplicitId;
   microphone_id_.reset();
+  video_source_id_.reset();
 }
 
 DisplayTargetMode TargetModeFromInt(std::int32_t raw) {

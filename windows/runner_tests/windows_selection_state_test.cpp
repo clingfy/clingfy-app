@@ -23,6 +23,7 @@ TEST_F(WindowsSelectionStateTest, FreshStateHasNoDisplaySelection) {
   EXPECT_FALSE(WindowsSelectionState::Instance().AppWindowId().has_value());
   EXPECT_FALSE(
       WindowsSelectionState::Instance().CurrentAreaRegion().has_value());
+  EXPECT_FALSE(WindowsSelectionState::Instance().VideoSourceId().has_value());
 }
 
 TEST_F(WindowsSelectionStateTest, AreaRegionRoundTripsAndClears) {
@@ -82,6 +83,20 @@ TEST_F(WindowsSelectionStateTest, MicrophoneIdRoundTrip) {
   WindowsSelectionState::Instance().SetMicrophoneId(std::string("{abc}"));
   ASSERT_TRUE(WindowsSelectionState::Instance().MicrophoneId().has_value());
   EXPECT_EQ(*WindowsSelectionState::Instance().MicrophoneId(), "{abc}");
+}
+
+TEST_F(WindowsSelectionStateTest, VideoSourceIdRoundTrips) {
+  WindowsSelectionState::Instance().SetVideoSourceId(
+      std::string("\\\\?\\usb#vid_046d&pid_0825"));
+  ASSERT_TRUE(WindowsSelectionState::Instance().VideoSourceId().has_value());
+  EXPECT_EQ(*WindowsSelectionState::Instance().VideoSourceId(),
+            "\\\\?\\usb#vid_046d&pid_0825");
+}
+
+TEST_F(WindowsSelectionStateTest, ClearingVideoSourceIdResetsSelection) {
+  WindowsSelectionState::Instance().SetVideoSourceId(std::string("{cam}"));
+  WindowsSelectionState::Instance().SetVideoSourceId(std::nullopt);
+  EXPECT_FALSE(WindowsSelectionState::Instance().VideoSourceId().has_value());
 }
 
 TEST(TargetModeMappingTest, TargetModeFromIntCoversAllValuesAndFallsBack) {
