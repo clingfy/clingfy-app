@@ -95,6 +95,7 @@ class WgcDisplayCaptureBackend::Impl {
   bool Running() const;
   void SetTargetLostCallback(std::function<void()> callback);
   std::function<void()> GetTargetLostCallbackForTesting();
+  void SetCursorCaptureEnabled(bool enabled);
 
  private:
   // Shared tail of both Start paths: builds the WinRT device + frame pool from
@@ -598,6 +599,19 @@ void WgcDisplayCaptureBackend::Impl::SetTargetLostCallback(
   target_lost_cb_ = std::move(callback);
 }
 
+void WgcDisplayCaptureBackend::Impl::SetCursorCaptureEnabled(bool enabled) {
+  std::lock_guard<std::mutex> lock(mutex_);
+  if (session_ == nullptr) {
+    return;
+  }
+  // Best-effort — the property is Win10 1903+. On older hosts the default
+  // (cursor-on) stays, which is the safe Phase 7 fallback.
+  try {
+    session_.IsCursorCaptureEnabled(enabled);
+  } catch (winrt::hresult_error const&) {
+  }
+}
+
 std::function<void()>
 WgcDisplayCaptureBackend::Impl::GetTargetLostCallbackForTesting() {
   // Return the callback a real Closed delivery would invoke — the live guard's
@@ -830,6 +844,12 @@ void WgcDisplayCaptureBackend::SetTargetLostCallback(
 std::function<void()> WgcDisplayCaptureBackend::GetTargetLostCallbackForTesting() {
   return impl_ ? impl_->GetTargetLostCallbackForTesting()
                : std::function<void()>{};
+}
+
+void WgcDisplayCaptureBackend::SetCursorCaptureEnabled(bool enabled) {
+  if (impl_) {
+    impl_->SetCursorCaptureEnabled(enabled);
+  }
 }
 
 }  // namespace clingfy::capture

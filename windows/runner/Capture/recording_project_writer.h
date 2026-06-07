@@ -71,6 +71,15 @@ struct ProjectWriterInput {
   std::optional<std::int64_t> window_id;
   std::optional<SourceBounds> source_bounds;
 
+  // Phase 8.1 cursor sidecar. `cursor_sidecar_path` is the temp `cursor.jsonl`
+  // the sampler streamed during recording; the writer moves it into
+  // `capture/cursor.jsonl` (best-effort) and, on success, sets the manifest
+  // `cursorData` pointer + `cursorEnabled` flag. `cursor_enabled` reflects the
+  // ENGINE's intent (the sampler ran + cursor was stripped from the video); the
+  // writer downgrades it to false if the file is missing / cannot be bundled.
+  std::string cursor_sidecar_path;
+  bool cursor_enabled = false;
+
   // ISO-8601 timestamp string for the manifest's createdAt / updatedAt.
   // Empty → writer fills in via `std::chrono::system_clock`. Mostly
   // exposed so unit tests can pin a deterministic value.

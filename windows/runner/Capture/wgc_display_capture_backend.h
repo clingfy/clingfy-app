@@ -150,6 +150,12 @@ class WgcDisplayCaptureBackend {
   void Resume();
   bool paused() const;
 
+  // Phase 8.1: toggle WGC cursor capture on the LIVE session. The session starts
+  // cursor-on (Phase 7 default); the engine calls this with `false` only after a
+  // cursor sidecar sampler is confirmed running, so we never ship a cursorless
+  // video when sampling fails. Best-effort + safe to call before/after Start.
+  void SetCursorCaptureEnabled(bool enabled);
+
   // Snapshot of frame counters for diagnostics / smoke-test logging.
   WgcCaptureStats Stats() const;
 

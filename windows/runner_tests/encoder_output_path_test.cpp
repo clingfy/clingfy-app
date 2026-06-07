@@ -53,5 +53,19 @@ TEST(EncoderOutputPathTest, ResolveSanitizesUnsafeSessionId) {
             "C:\\Temp\\clingfy_dir_.._escape.mp4");
 }
 
+TEST(EncoderOutputPathTest, ResolveCursorSidecarJoinsTempAndSession) {
+  EXPECT_EQ(ResolveTempCursorSidecarPath("session-42", "C:\\Temp"),
+            "C:\\Temp\\clingfy_session-42.cursor.jsonl");
+}
+
+TEST(EncoderOutputPathTest, ResolveCursorSidecarSanitizesAndIsAbsolute) {
+  EXPECT_EQ(ResolveTempCursorSidecarPath("dir/../escape", "C:\\Temp"),
+            "C:\\Temp\\clingfy_dir_.._escape.cursor.jsonl");
+  const auto path = ResolveTempCursorSidecarPath("env-test");
+  EXPECT_NE(path.find("clingfy_env-test.cursor.jsonl"), std::string::npos);
+  EXPECT_TRUE(path.size() > 3 &&
+              (path[1] == ':' || (path[0] == '\\' && path[1] == '\\')));
+}
+
 }  // namespace
 }  // namespace clingfy::encoding

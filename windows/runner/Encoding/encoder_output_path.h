@@ -30,6 +30,13 @@ std::string SanitizeSessionId(const std::string& session_id);
 std::string ResolveTempMp4Path(const std::string& session_id,
                                const std::string& temp_dir_override = "");
 
+// Phase 8.1: the cursor sidecar streams to
+// `%TEMP%\clingfy_<sanitized>.cursor.jsonl` during recording (mirroring the temp
+// MP4 flow), then the project writer bundles it into `capture/cursor.jsonl`.
+// Same sanitization + `temp_dir_override` testability as `ResolveTempMp4Path`.
+std::string ResolveTempCursorSidecarPath(const std::string& session_id,
+                                         const std::string& temp_dir_override = "");
+
 }  // namespace clingfy::encoding
 
 #endif  // RUNNER_ENCODING_ENCODER_OUTPUT_PATH_H_

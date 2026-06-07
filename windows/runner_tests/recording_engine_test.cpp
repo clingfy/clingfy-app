@@ -6,6 +6,7 @@
 
 #include <chrono>
 #include <cstdint>
+#include <filesystem>
 #include <memory>
 #include <string>
 #include <thread>
@@ -494,6 +495,49 @@ TEST_F(RecordingEngineTest, TargetLostWithMismatchedSessionKeepsRecording) {
   EXPECT_TRUE(RecordingEngine::Instance().IsRecording());
   EXPECT_EQ(RecordingEngine::Instance().state(), RecordingState::kRecording);
   ASSERT_FALSE(RecordingEngine::Instance().Stop("sess-test").has_value());
+}
+
+// === Phase 8.1 cursor sidecar ==============================================
+//
+// These drive the real capture pipeline (like StartTransitionsToRecording) so
+// the sampler actually opens its sidecar + the WGC cursor flip runs. They assert
+// the engine-level wiring; the sampler/mapper internals are unit-tested
+// separately (cursor_sampler_test / cursor_sample_mapper_test).
+
+TEST_F(RecordingEngineTest, StartOpensCursorSidecar) {
+  ASSERT_FALSE(RecordingEngine::Instance().Start(ValidRequest()).has_value());
+  EXPECT_TRUE(RecordingEngine::Instance().cursor_enabled_for_testing())
+      << "the sampler should start and the cursor be stripped on a healthy box";
+  const std::string path =
+      RecordingEngine::Instance().cursor_sidecar_path_for_testing();
+  ASSERT_FALSE(path.empty());
+  // The sampler wrote the header line on Open, so the temp sidecar exists now.
+  EXPECT_TRUE(std::filesystem::exists(std::filesystem::u8path(path)));
+  ASSERT_FALSE(RecordingEngine::Instance().Stop("sess-test").has_value());
+}
+
+TEST_F(RecordingEngineTest, StopMovesCursorSidecarOutOfTemp) {
+  ASSERT_FALSE(RecordingEngine::Instance().Start(ValidRequest()).has_value());
+  const std::string path =
+      RecordingEngine::Instance().cursor_sidecar_path_for_testing();
+  ASSERT_FALSE(path.empty());
+  ASSERT_FALSE(RecordingEngine::Instance().Stop("sess-test").has_value());
+  // TeardownPipeline stopped+flushed the sampler, then the project writer moved
+  // the sidecar into the bundle — so the temp file is gone.
+  EXPECT_FALSE(std::filesystem::exists(std::filesystem::u8path(path)))
+      << "the cursor sidecar should be flushed + moved into the project bundle";
+}
+
+TEST_F(RecordingEngineTest, TargetLossFinalizesCursorSidecar) {
+  ASSERT_FALSE(RecordingEngine::Instance().Start(ValidRequest()).has_value());
+  const std::string path =
+      RecordingEngine::Instance().cursor_sidecar_path_for_testing();
+  ASSERT_FALSE(path.empty());
+  // A target loss runs the same teardown→finalize, so the sidecar is flushed +
+  // bundled (keep-partial) — the temp file is gone, no crash, back to Idle.
+  RecordingEngine::Instance().HandleTargetLost("sess-test");
+  EXPECT_EQ(RecordingEngine::Instance().state(), RecordingState::kIdle);
+  EXPECT_FALSE(std::filesystem::exists(std::filesystem::u8path(path)));
 }
 
 TEST_F(RecordingEngineTest, TargetLostWhenIdleIsNoOp) {

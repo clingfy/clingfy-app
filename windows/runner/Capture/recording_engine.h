@@ -28,6 +28,7 @@ namespace clingfy::capture {
 class VideoFrameQueue;
 class WgcDisplayCaptureBackend;
 struct WgcCaptureStats;
+class CursorSampler;
 }
 
 // Singleton orchestrator for the Windows recording lifecycle.
@@ -143,6 +144,12 @@ class RecordingEngine {
   // No-op when no backend is active.
   void FireTargetLostForTesting();
 
+  // Test seams (Phase 8.1): whether the cursor sidecar sampler is active for the
+  // current recording (and thus the WGC cursor was stripped), and the temp
+  // sidecar path it streams to. Empty path / false when no sampler is running.
+  bool cursor_enabled_for_testing() const;
+  std::string cursor_sidecar_path_for_testing() const;
+
  private:
   RecordingEngine();
   ~RecordingEngine();
@@ -186,6 +193,15 @@ class RecordingEngine {
   std::string current_target_type_ = "display";
   std::optional<std::int64_t> current_window_id_;
   std::optional<SourceBounds> current_source_bounds_;
+
+  // Phase 8.1: cursor sidecar. The sampler streams `cursor.jsonl` to a temp path
+  // during recording; the project writer bundles it at finalize.
+  // `current_cursor_enabled_` records whether the sampler started (and thus
+  // whether the WGC cursor was stripped from the video) so the manifest reflects
+  // it on both the normal-Stop and target-loss finalize paths.
+  std::unique_ptr<CursorSampler> cursor_sampler_;
+  std::string current_cursor_sidecar_path_;
+  bool current_cursor_enabled_ = false;
 
   // Audio pipeline (Phase 3D). Two WASAPI captures (mic + loopback)
   // fill the matching packet queues; a dedicated mixer thread sums

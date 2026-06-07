@@ -172,6 +172,76 @@ TEST_F(RecordingProjectWriterTest, ScreenMetaCarriesCaptureTargetType) {
       << "area captures must not emit a windowId";
 }
 
+// === Phase 8.1 cursor sidecar bundling ====================================
+
+TEST_F(RecordingProjectWriterTest, BundlesCursorSidecarWhenEnabled) {
+  const auto fake_mp4 = WriteFakeMp4("src.mp4");
+  // A streamed cursor.jsonl temp file the writer should move into the bundle.
+  const fs::path cursor = base_ / "clingfy_x.cursor.jsonl";
+  { std::ofstream o(cursor, std::ios::binary); o << "{\"type\":\"header\"}\n"; }
+
+  ProjectWriterInput input;
+  input.session_id = "sess-cursor";
+  input.source_mp4_path = fake_mp4.string();
+  input.recordings_root_override = base_.string();
+  input.cursor_enabled = true;
+  input.cursor_sidecar_path = cursor.string();
+
+  auto result = WriteRecordingProject(input);
+  ASSERT_EQ(result.kind, ProjectWriterErrorKind::kNone) << result.message;
+  const fs::path project_root = result.project_path;
+  EXPECT_TRUE(fs::exists(project_root / "capture" / "cursor.jsonl"));
+  EXPECT_FALSE(fs::exists(cursor)) << "temp sidecar should be moved, not copied";
+
+  std::ifstream meta_in(project_root / "capture" / "screen.meta.json");
+  std::ostringstream meta_ss; meta_ss << meta_in.rdbuf();
+  EXPECT_NE(meta_ss.str().find("\"cursorEnabled\": true"), std::string::npos);
+
+  std::ifstream proj_in(project_root / "project.json");
+  std::ostringstream proj_ss; proj_ss << proj_in.rdbuf();
+  EXPECT_NE(proj_ss.str().find("\"cursorData\": \"capture/cursor.jsonl\""),
+            std::string::npos);
+}
+
+TEST_F(RecordingProjectWriterTest, NoCursorSidecarWhenDisabled) {
+  const auto fake_mp4 = WriteFakeMp4("src.mp4");
+  ProjectWriterInput input;
+  input.session_id = "sess-nocursor";
+  input.source_mp4_path = fake_mp4.string();
+  input.recordings_root_override = base_.string();
+  input.cursor_enabled = false;  // Phase 7 fallback / no sampler.
+
+  auto result = WriteRecordingProject(input);
+  ASSERT_EQ(result.kind, ProjectWriterErrorKind::kNone) << result.message;
+  const fs::path project_root = result.project_path;
+  EXPECT_FALSE(fs::exists(project_root / "capture" / "cursor.jsonl"));
+
+  std::ifstream meta_in(project_root / "capture" / "screen.meta.json");
+  std::ostringstream meta_ss; meta_ss << meta_in.rdbuf();
+  EXPECT_NE(meta_ss.str().find("\"cursorEnabled\": false"), std::string::npos);
+}
+
+TEST_F(RecordingProjectWriterTest, DowngradesCursorWhenSidecarMissing) {
+  // The engine said the sampler ran, but the temp sidecar is gone (e.g. a crash
+  // between flush and bundle). The writer must downgrade rather than claim a
+  // cursor file that is not there.
+  const auto fake_mp4 = WriteFakeMp4("src.mp4");
+  ProjectWriterInput input;
+  input.session_id = "sess-missing-cursor";
+  input.source_mp4_path = fake_mp4.string();
+  input.recordings_root_override = base_.string();
+  input.cursor_enabled = true;
+  input.cursor_sidecar_path = (base_ / "not-there.cursor.jsonl").string();
+
+  auto result = WriteRecordingProject(input);
+  ASSERT_EQ(result.kind, ProjectWriterErrorKind::kNone) << result.message;
+  const fs::path project_root = result.project_path;
+  EXPECT_FALSE(fs::exists(project_root / "capture" / "cursor.jsonl"));
+  std::ifstream meta_in(project_root / "capture" / "screen.meta.json");
+  std::ostringstream meta_ss; meta_ss << meta_in.rdbuf();
+  EXPECT_NE(meta_ss.str().find("\"cursorEnabled\": false"), std::string::npos);
+}
+
 TEST(RecordingProjectWriterFreeFunctions, Iso8601TimestampShape) {
   const auto ts = CurrentIso8601Timestamp();
   // Length is fixed: "YYYY-MM-DDTHH:MM:SS.sssZ" → 24 chars.

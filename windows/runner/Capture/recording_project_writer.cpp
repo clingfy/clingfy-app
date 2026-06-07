@@ -146,7 +146,11 @@ std::string BuildManifestJson(const ProjectWriterInput& input) {
   out << "  \"capture\": {\n";
   out << "    \"screenVideo\": \"capture/screen.mov\",\n";
   out << "    \"screenMetadata\": \"capture/screen.meta.json\",\n";
-  out << "    \"cursorData\": \"capture/cursor.json\",\n";
+  // Phase 8.1: point at the streamed `cursor.jsonl` when a sidecar was bundled;
+  // otherwise keep the macOS-default `cursor.json` placeholder name.
+  out << "    \"cursorData\": \""
+      << (input.cursor_enabled ? "capture/cursor.jsonl" : "capture/cursor.json")
+      << "\",\n";
   out << "    \"zoomManual\": \"capture/zoom.manual.json\"\n";
   out << "  },\n";
   out << "  \"camera\": {\n";
@@ -180,6 +184,10 @@ std::string BuildScreenMetaJson(const ProjectWriterInput& input) {
       << ",\n";
   out << "  \"loopbackActive\": "
       << (input.loopback_active ? "true" : "false") << ",\n";
+  // Phase 8.1: whether a cursor sidecar (capture/cursor.jsonl) accompanies this
+  // recording. Additive — the reader ignores unknown keys.
+  out << "  \"cursorEnabled\": "
+      << (input.cursor_enabled ? "true" : "false") << ",\n";
   // Phase 7.1: capture target type ("display" | "window" | "area") + the
   // window id for window captures. Additive fields — the manifest reader
   // ignores unknown keys, so schemaVersion stays 2.
@@ -249,15 +257,42 @@ ProjectWriterResult WriteRecordingProject(const ProjectWriterInput& input) {
     ec.clear();
   }
 
+  // Phase 8.1: bundle the cursor sidecar (best-effort). The recording is valid
+  // without it, so a missing / unmovable sidecar downgrades `cursor_enabled`
+  // rather than failing the whole project. `effective` carries the actual
+  // outcome into the manifest builders.
+  ProjectWriterInput effective = input;
+  effective.cursor_enabled = false;
+  if (input.cursor_enabled && !input.cursor_sidecar_path.empty()) {
+    const fs::path cursor_src = fs::u8path(input.cursor_sidecar_path);
+    std::error_code cursor_ec;
+    if (fs::exists(cursor_src, cursor_ec)) {
+      const fs::path cursor_dst = project_root / "capture" / "cursor.jsonl";
+      fs::rename(cursor_src, cursor_dst, cursor_ec);
+      if (cursor_ec) {
+        cursor_ec.clear();
+        fs::copy_file(cursor_src, cursor_dst,
+                      fs::copy_options::overwrite_existing, cursor_ec);
+        if (!cursor_ec) {
+          fs::remove(cursor_src, cursor_ec);
+          cursor_ec.clear();
+        }
+      }
+      if (fs::exists(cursor_dst, cursor_ec)) {
+        effective.cursor_enabled = true;
+      }
+    }
+  }
+
   // Write the three JSON files. We always overwrite (Phase 3E is the
   // first writer to ship; a partial earlier write should never persist).
   if (!WriteUtf8File(project_root / "project.json",
-                     BuildManifestJson(input))) {
+                     BuildManifestJson(effective))) {
     return {ProjectWriterErrorKind::kFilesystem,
             "Failed to write project.json.", {}};
   }
   if (!WriteUtf8File(project_root / "capture" / "screen.meta.json",
-                     BuildScreenMetaJson(input))) {
+                     BuildScreenMetaJson(effective))) {
     return {ProjectWriterErrorKind::kFilesystem,
             "Failed to write capture/screen.meta.json.", {}};
   }
