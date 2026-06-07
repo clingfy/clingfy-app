@@ -56,35 +56,119 @@ lifecycle, preview, and basic export.
 | 4     | Lifecycle parity (state machine, pause/resume, recovery)      | done   |
 | 5     | Preview player + project reopen                               | done   |
 | 6     | Basic export + post-processing (resolution, background, etc.) | done   |
-| 7     | Window + area recording                                       | design locked (7.0); 7.1 next |
-| 8     | Cursor sidecar + smart zoom                                   |
+| 7     | Window + area recording                                       | done   |
+| 8     | Cursor sidecar + smart zoom                                   | next   |
 | 9     | Camera overlay (basic, then advanced compositing/chroma)      |
 | 10    | Permissions UX + installer + updater + Windows beta polish    |
 
 Detailed scope per phase is tracked in the session task list and in
 [../CLAUDE.md](../CLAUDE.md).
 
-## Current status — Phase 7.0 (window + area recording) — DESIGN LOCKED
+## Current status — Phase 7 (window + area recording) — COMPLETE
 
-Phase 7 adds capture targeting (record a single window, or a dragged-out screen
-area) on top of the Phase 6 full-display loop. The architecture is locked in
+Phase 7 adds capture targeting on top of the Phase 6 full-display loop: record a
+single **window**, a dragged-out screen **area**, plus clean handling when the
+captured target disappears. The architecture is locked in
 [decisions/windows-phase-7-capture-architecture.md](decisions/windows-phase-7-capture-architecture.md);
-no production capture code has been written yet.
+every slice is a merged PR with native tests, and the whole matrix has passed a
+manual smoke on a real Windows box.
 
-Decisions in brief: window capture uses WGC `IGraphicsCaptureItemInterop::CreateForWindow(HWND)`
-(the analog of the existing `CreateForMonitor`); area recording is full-monitor
-capture cropped with `CopySubresourceRegion` + a `D3D11_BOX` (mirroring macOS's
-`sourceRect` crop — there is no per-rectangle WGC item); the area picker is a new
-native per-monitor layered Win32 overlay returning `{displayId,x,y,width,height}`;
-cursor stays burned into the MVP video (explicit `IsCursorCaptureEnabled(true)`)
-until the Phase 8 sidecar; and target-loss (window closed/minimized, monitor
-unplug) gets an explicit clean-stop+finalize that macOS lacks. The Dart bridge is
-already fully wired — Phase 7 is mostly making `setAppWindowTarget` / the area
-methods real and lifting the `kBadMode` gate in `RecordingEngine::Start`.
+| Slice | Goal                                                              | PR    |
+| ----- | --------------------------------------------------------------- | ----- |
+| 7.0   | Design / inventory (architecture decisions, slice plan)         | #134  |
+| 7.1   | Window recording via WGC `CreateForWindow(HWND)`                | #135  |
+| 7.2   | Area recording (full-monitor capture + GPU crop)               | #136  |
+| 7.3   | Native per-monitor area-picker overlay                          | #137  |
+| 7.4   | Target-loss + polish (window close / monitor unplug)           | #138  |
 
-Slices: **7.1** window recording → **7.2** area recording (display + crop) →
-**7.3** native area-picker overlay → **7.4** target-loss + polish. Each has
-acceptance tests in the decision doc.
+### Architecture
+
+- **Window capture** uses WGC `IGraphicsCaptureItemInterop::CreateForWindow(HWND)`
+  (the analog of the existing `CreateForMonitor`). `kAppWindow` and
+  `kSingleAppWindow` both map to single-HWND capture for the MVP. The encoder is
+  sized from `GraphicsCaptureItem.Size()`, not the monitor.
+- **Area capture** is full-monitor WGC capture cropped per frame with
+  `CopySubresourceRegion` + a `D3D11_BOX` into an encoder-sized staging texture
+  (mirroring macOS's `sourceRect` crop — there is no per-rectangle WGC item).
+- **`EvenCaptureDimension` + `ResolveCropBox`** are the single source of truth for
+  the encoder-vs-frame even-size and crop contract, shared by the engine
+  (encoder config) and the backend (frame copy), so the two agree by construction
+  (H.264 needs even, fixed dimensions — a 1px drift corrupts the stream).
+- **Area picker** is a native per-monitor layered Win32 overlay
+  (`WS_POPUP|WS_EX_TOPMOST|WS_EX_LAYERED`), modal drag-select with Esc / right-click
+  cancel, returning `{displayId,x,y,width,height}` into `WindowsSelectionState`,
+  reusing the 7.2 crop path. The selection geometry (`area_picker_geometry`) is
+  pure and unit-tested; the overlay itself is human-smoked.
+- **Target-loss** subscribes to `GraphicsCaptureItem.Closed` — one signal that
+  fires for a window close AND a captured-monitor unplug (display / area /
+  window). The backend forwards it (a lifetime-independent shared guard, never a
+  raw `this`, and the token is never revoked) → `PlatformThreadDispatcher::Post` →
+  `RecordingEngine::HandleTargetLost`, which finalizes the partial **exactly once**
+  (engine mutex + session-id re-check, so a racing user Stop / stale close is a
+  no-op).
+
+### Known deliberate edges (not bugs)
+
+- **Cursor is burned into the video.** Windows has no cursor sidecar yet, so the
+  OS cursor is captured into the MVP recording (explicit
+  `IsCursorCaptureEnabled(true)`). The Phase 8 sidecar flips this to `false`.
+- **`kAppWindow` == single-window capture.** macOS captures all of an app's
+  windows; the Windows MVP captures the one selected HWND.
+- **Target-loss keeps the partial (better than macOS).** When the captured target
+  is lost mid-recording, Windows finalizes and KEEPS what was recorded
+  (`recordingWarning` + `recordingFinalized` → the partial opens into
+  preview/export); only a zero-frame loss or a writer failure surfaces
+  `recordingFailed`. macOS discards on target loss — this is a deliberate
+  divergence from the original D9 (which also discarded).
+- **Window resize mid-recording keeps the initial size.** The frame pool is
+  fixed-size and the copy box is pinned to the even initial capture size, so a
+  resized window never changes the encoder dims (a grown window is cropped to the
+  original rect; resize-follow is out of MVP scope). Output is never corrupted.
+- **Area selection is a dimmed box, not a transparent cut-out.** The picker dims
+  the screen and draws a bright-bordered selection rectangle (not a clear hole).
+
+### Deferred (tracked for closeout / a follow-up, not blocking Phase 7)
+
+- **Area selection does not survive an app restart.** The native area region
+  (`WindowsSelectionState::AreaRegion`) is process-memory only, so a Dart-restored
+  selection passes the UI gate but `RecordingEngine::Start` fails ("pick an area
+  first") after a relaunch — re-pick to record. Fix by persisting/rehydrating the
+  region natively, or clearing the Dart prefs on launch.
+- **Yellow capture border not yet disabled (D8).** Best-effort
+  `IsBorderRequired=false` behind a capability check is not wired up.
+- **No selection-clear for a *non-captured* monitor on display change.** A
+  `WM_DISPLAYCHANGE`-driven clear of a stale selection (macOS's
+  `screenParamsChanged`) is not implemented; the captured-target-loss case is fully
+  handled via `GraphicsCaptureItem.Closed`.
+
+### Manual smoke checklist (window / area / target-loss)
+
+Native tests cover the engine lifecycle, exactly-once finalize, the pure picker
+geometry, and a real GPU capture round-trip, but visual correctness and the modal
+overlay are human checks. On a real Windows box:
+
+**Window**
+- [ ] Recording a selected window produces an MP4 of that window's content at its
+      size; full-display recording is unaffected.
+- [ ] A stale/closed window picked before Start fails with a friendly error (no
+      crash, no empty file).
+- [ ] Closing the window mid-recording stops cleanly, shows a "the window you were
+      recording closed; your recording was saved" notice, and opens the partial
+      into preview/export (which plays and exports).
+- [ ] Minimizing / resizing the window mid-recording does not crash or corrupt the
+      output (video holds the original size).
+
+**Area**
+- [ ] Drag-select on any monitor (incl. a secondary / negative-origin display)
+      records exactly that region; Esc and right-click cancel cleanly with no stray
+      overlay; a tiny (<16px) drag is rejected.
+- [ ] The overlay is torn down before capture (not visible in the recording).
+
+**Display / target-loss**
+- [ ] Unplugging the captured monitor mid-recording stops + finalizes cleanly
+      (same keep-partial flow).
+- [ ] Pressing Stop normally still finalizes exactly one recording (no duplicate
+      preview / error).
 
 ## Current status — Phase 6 (export + post-processing) — COMPLETE
 
