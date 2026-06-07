@@ -29,6 +29,7 @@ class VideoFrameQueue;
 class WgcDisplayCaptureBackend;
 struct WgcCaptureStats;
 class CursorSampler;
+class CameraRecorder;
 }
 
 // Singleton orchestrator for the Windows recording lifecycle.
@@ -150,6 +151,11 @@ class RecordingEngine {
   bool cursor_enabled_for_testing() const;
   std::string cursor_sidecar_path_for_testing() const;
 
+  // Test seam (Phase 9.2): whether the camera recorder was started for the
+  // current recording (the engine's camera-capture intent). False when no
+  // camera was selected, the overlay was disabled, or permission was denied.
+  bool camera_recording_for_testing() const;
+
  private:
   RecordingEngine();
   ~RecordingEngine();
@@ -164,6 +170,19 @@ class RecordingEngine {
   // HandleTargetLost so the two finalize paths cannot drift. Assumes the mutex
   // is held; `session_id` is the active session id to stamp on the manifest.
   ProjectWriterInput SnapshotProjectWriterInput(const std::string& session_id);
+
+  // Phase 9.2: stop the camera recorder (if any), recompute the final
+  // `current_camera_enabled_` (recorder ran AND produced frames), and build the
+  // camera.meta.json string from its result. Idempotent (no-op when no recorder
+  // is active). Called from TeardownPipeline so both finalize paths see the same
+  // post-stop camera state. Assumes the mutex is held.
+  void StopCameraRecorder();
+
+  // Copies the post-teardown camera fields into a project-writer input. Called
+  // by Stop / HandleTargetLost after TeardownPipeline (the camera result is only
+  // known once the recorder is stopped, which happens inside TeardownPipeline —
+  // after SnapshotProjectWriterInput has already run). Assumes the mutex held.
+  void FillCameraWriterFields(ProjectWriterInput& input) const;
 
   mutable std::mutex mutex_;
   RecordingSessionState session_;
@@ -202,6 +221,20 @@ class RecordingEngine {
   std::unique_ptr<CursorSampler> cursor_sampler_;
   std::string current_cursor_sidecar_path_;
   bool current_cursor_enabled_ = false;
+
+  // Phase 9.2: camera capture. The recorder streams a raw `.mp4` to a temp path
+  // during recording; the project writer bundles it into `camera/raw.mov` +
+  // `camera/camera.meta.json` at finalize. `current_camera_enabled_` is the
+  // INTENT at Start (the recorder started); it is recomputed in TeardownPipeline
+  // to the final outcome (frames > 0) once the recorder is stopped and its
+  // result is known. `current_camera_meta_json_` is built in TeardownPipeline
+  // from the recorder's result. Independent of the screen pipeline — a camera
+  // failure or device loss never affects the screen recording.
+  std::unique_ptr<CameraRecorder> camera_recorder_;
+  std::string current_camera_raw_path_;
+  std::string current_camera_device_id_;
+  bool current_camera_enabled_ = false;
+  std::string current_camera_meta_json_;
 
   // Audio pipeline (Phase 3D). Two WASAPI captures (mic + loopback)
   // fill the matching packet queues; a dedicated mixer thread sums

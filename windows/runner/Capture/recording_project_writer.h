@@ -80,6 +80,18 @@ struct ProjectWriterInput {
   std::string cursor_sidecar_path;
   bool cursor_enabled = false;
 
+  // Phase 9.2 camera capture. `camera_raw_path` is the temp `.mp4` the camera
+  // recorder streamed; the writer moves it into `camera/raw.mov` (best-effort)
+  // and writes `camera/camera.meta.json` from `camera_meta_json`. `camera_enabled`
+  // reflects the engine's outcome (the recorder ran AND produced >0 frames); the
+  // writer downgrades it to false (and omits the manifest `camera` block) if the
+  // raw file is missing / cannot be bundled. When false, NO camera block is
+  // emitted — the reader treats an absent block as "no camera", same as a
+  // recording made without one.
+  std::string camera_raw_path;
+  std::string camera_meta_json;
+  bool camera_enabled = false;
+
   // ISO-8601 timestamp string for the manifest's createdAt / updatedAt.
   // Empty → writer fills in via `std::chrono::system_clock`. Mostly
   // exposed so unit tests can pin a deterministic value.

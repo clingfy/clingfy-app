@@ -242,6 +242,80 @@ TEST_F(RecordingProjectWriterTest, DowngradesCursorWhenSidecarMissing) {
   EXPECT_NE(meta_ss.str().find("\"cursorEnabled\": false"), std::string::npos);
 }
 
+// === Phase 9.2 camera bundling ============================================
+
+TEST_F(RecordingProjectWriterTest, BundlesCameraRawAndMetaWhenEnabled) {
+  const auto fake_mp4 = WriteFakeMp4("src.mp4");
+  // The camera recorder's temp raw .mp4 the writer should move into the bundle.
+  const fs::path camera_raw = base_ / "clingfy_x.camera.mp4";
+  { std::ofstream o(camera_raw, std::ios::binary); o << "fake camera bytes"; }
+
+  ProjectWriterInput input;
+  input.session_id = "sess-cam";
+  input.source_mp4_path = fake_mp4.string();
+  input.recordings_root_override = base_.string();
+  input.camera_enabled = true;
+  input.camera_raw_path = camera_raw.string();
+  input.camera_meta_json = "{\n  \"version\": 1\n}\n";
+
+  auto result = WriteRecordingProject(input);
+  ASSERT_EQ(result.kind, ProjectWriterErrorKind::kNone) << result.message;
+  const fs::path project_root = result.project_path;
+  EXPECT_TRUE(fs::exists(project_root / "camera" / "raw.mov"));
+  EXPECT_TRUE(fs::exists(project_root / "camera" / "camera.meta.json"));
+  EXPECT_FALSE(fs::exists(camera_raw)) << "temp raw should be moved, not copied";
+
+  std::ifstream proj_in(project_root / "project.json");
+  std::ostringstream proj_ss; proj_ss << proj_in.rdbuf();
+  const std::string manifest = proj_ss.str();
+  EXPECT_NE(manifest.find("\"rawVideo\": \"camera/raw.mov\""),
+            std::string::npos);
+  EXPECT_NE(manifest.find("\"metadata\": \"camera/camera.meta.json\""),
+            std::string::npos);
+}
+
+TEST_F(RecordingProjectWriterTest, OmitsCameraBlockWhenDisabled) {
+  const auto fake_mp4 = WriteFakeMp4("src.mp4");
+  ProjectWriterInput input;
+  input.session_id = "sess-nocam";
+  input.source_mp4_path = fake_mp4.string();
+  input.recordings_root_override = base_.string();
+  input.camera_enabled = false;  // No camera recorded.
+
+  auto result = WriteRecordingProject(input);
+  ASSERT_EQ(result.kind, ProjectWriterErrorKind::kNone) << result.message;
+  const fs::path project_root = result.project_path;
+  EXPECT_FALSE(fs::exists(project_root / "camera"));
+
+  std::ifstream proj_in(project_root / "project.json");
+  std::ostringstream proj_ss; proj_ss << proj_in.rdbuf();
+  const std::string manifest = proj_ss.str();
+  EXPECT_EQ(manifest.find("\"camera\":"), std::string::npos)
+      << "a camera-less recording must omit the manifest camera block";
+  EXPECT_EQ(manifest.find("camera/raw.mov"), std::string::npos);
+}
+
+TEST_F(RecordingProjectWriterTest, DowngradesCameraWhenRawMissing) {
+  // The engine flagged the camera enabled, but the temp raw is gone. The writer
+  // must omit the camera block rather than point at a file that is not there.
+  const auto fake_mp4 = WriteFakeMp4("src.mp4");
+  ProjectWriterInput input;
+  input.session_id = "sess-missing-cam";
+  input.source_mp4_path = fake_mp4.string();
+  input.recordings_root_override = base_.string();
+  input.camera_enabled = true;
+  input.camera_raw_path = (base_ / "not-there.camera.mp4").string();
+  input.camera_meta_json = "{}\n";
+
+  auto result = WriteRecordingProject(input);
+  ASSERT_EQ(result.kind, ProjectWriterErrorKind::kNone) << result.message;
+  const fs::path project_root = result.project_path;
+  EXPECT_FALSE(fs::exists(project_root / "camera" / "raw.mov"));
+  std::ifstream proj_in(project_root / "project.json");
+  std::ostringstream proj_ss; proj_ss << proj_in.rdbuf();
+  EXPECT_EQ(proj_ss.str().find("\"camera\":"), std::string::npos);
+}
+
 TEST(RecordingProjectWriterFreeFunctions, Iso8601TimestampShape) {
   const auto ts = CurrentIso8601Timestamp();
   // Length is fixed: "YYYY-MM-DDTHH:MM:SS.sssZ" → 24 chars.

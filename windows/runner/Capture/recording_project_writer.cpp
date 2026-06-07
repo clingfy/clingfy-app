@@ -153,11 +153,19 @@ std::string BuildManifestJson(const ProjectWriterInput& input) {
       << "\",\n";
   out << "    \"zoomManual\": \"capture/zoom.manual.json\"\n";
   out << "  },\n";
-  out << "  \"camera\": {\n";
-  out << "    \"rawVideo\": \"camera/raw.mov\",\n";
-  out << "    \"metadata\": \"camera/meta.json\",\n";
-  out << "    \"segmentsDirectory\": \"camera/segments\"\n";
-  out << "  },\n";
+  // Phase 9.2: the camera block is emitted ONLY when a camera was actually
+  // recorded (recorder ran + produced frames + the raw was bundled). The reader
+  // treats an absent block as "no camera", so omitting it for camera-less
+  // recordings is correct — and avoids the old placeholder that pointed at
+  // files that never existed. `metadata` matches the camera/camera.meta.json the
+  // writer emits below.
+  if (input.camera_enabled) {
+    out << "  \"camera\": {\n";
+    out << "    \"rawVideo\": \"camera/raw.mov\",\n";
+    out << "    \"metadata\": \"camera/camera.meta.json\",\n";
+    out << "    \"segmentsDirectory\": \"camera/segments\"\n";
+    out << "  },\n";
+  }
   out << "  \"post\": {\n";
   out << "    \"state\": \"post/state.json\",\n";
   out << "    \"thumbnail\": \"post/thumbnail.jpg\"\n";
@@ -280,6 +288,43 @@ ProjectWriterResult WriteRecordingProject(const ProjectWriterInput& input) {
       }
       if (fs::exists(cursor_dst, cursor_ec)) {
         effective.cursor_enabled = true;
+      }
+    }
+  }
+
+  // Phase 9.2: bundle the camera raw + write its metadata sidecar (best-effort,
+  // same discipline as the cursor sidecar). The recording is valid without a
+  // camera, so any failure here downgrades `camera_enabled` (the manifest then
+  // omits the camera block) rather than failing the whole project.
+  effective.camera_enabled = false;
+  if (input.camera_enabled && !input.camera_raw_path.empty()) {
+    const fs::path camera_src = fs::u8path(input.camera_raw_path);
+    std::error_code cam_ec;
+    if (fs::exists(camera_src, cam_ec)) {
+      fs::create_directories(project_root / "camera", cam_ec);
+      const fs::path camera_dst = project_root / "camera" / "raw.mov";
+      cam_ec.clear();
+      fs::rename(camera_src, camera_dst, cam_ec);
+      if (cam_ec) {
+        cam_ec.clear();
+        fs::copy_file(camera_src, camera_dst,
+                      fs::copy_options::overwrite_existing, cam_ec);
+        if (!cam_ec) {
+          fs::remove(camera_src, cam_ec);
+          cam_ec.clear();
+        }
+      }
+      // Both the raw AND the metadata must land for the reader's
+      // present-together rule; write the sidecar only after the raw is in place.
+      if (fs::exists(camera_dst, cam_ec)) {
+        if (WriteUtf8File(project_root / "camera" / "camera.meta.json",
+                          input.camera_meta_json)) {
+          effective.camera_enabled = true;
+        } else {
+          // Meta write failed — drop the now-orphan raw so the bundle never
+          // contains exactly one of the pair (and stays clean of dead weight).
+          fs::remove(camera_dst, cam_ec);
+        }
       }
     }
   }
