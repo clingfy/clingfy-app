@@ -102,6 +102,14 @@ struct PassthroughInput {
   // Slice 5A: requested output bitrate preset ("auto"/"low"/"medium"/"high").
   // The `format` field above selects the container (.mp4 vs .mov).
   std::string bitrate;
+
+  // Phase 8.2 cursor rendering. `show_cursor` (Dart default true) draws the
+  // recorded cursor sidecar into the export; `cursor_size` (0.5..3.0, default
+  // 1.5) scales it. When the recording has a `capture/cursor.jsonl` and
+  // show_cursor is on, the export takes the composition path (a byte-copy cannot
+  // draw the cursor) — the recording itself stays cursorless.
+  bool show_cursor = true;
+  double cursor_size = 1.5;
 };
 
 enum class PassthroughError {

@@ -1021,6 +1021,193 @@ TEST(ExportPipelineTest, GifCancelStopsAndRemovesPartialFile) {
   fs::remove_all(dir, ec);
 }
 
+// === Phase 8.2 cursor rendering ============================================
+
+// Write a cursor.jsonl with a constant visible cursor at (x,y) across a short
+// timeline, so any decoded frame shows the cursor.
+void WriteConstantCursorSidecar(const fs::path& path, int x, int y, int w,
+                                int h) {
+  std::ofstream o(path, std::ios::binary);
+  o << "{\"type\":\"header\",\"schemaVersion\":1,\"sampleRateHz\":60,"
+       "\"targetType\":\"display\",\"width\":"
+    << w << ",\"height\":" << h << ",\"originX\":0,\"originY\":0}\n";
+  for (int t = 0; t <= 400; t += 16) {
+    o << "{\"type\":\"sample\",\"tMs\":" << t << ",\"screenX\":" << x
+      << ",\"screenY\":" << y << ",\"x\":" << x << ",\"y\":" << y
+      << ",\"visible\":true}\n";
+  }
+}
+
+// The cursor glyph is white; the synthesized source is solid blue (0x3366CC) and
+// the letterbox/background is black — so a near-white pixel exists only if the
+// cursor was drawn. Pixels read back as 0xAARRGGBB.
+bool HasNearWhitePixel(const std::vector<std::uint32_t>& pixels) {
+  for (std::uint32_t p : pixels) {
+    const int r = static_cast<int>((p >> 16) & 0xFFu);
+    const int g = static_cast<int>((p >> 8) & 0xFFu);
+    const int b = static_cast<int>(p & 0xFFu);
+    if (r > 170 && g > 170 && b > 170) {
+      return true;
+    }
+  }
+  return false;
+}
+
+TEST(ExportPipelineTest, CursorRenderedWhenShowCursorOn) {
+  clingfy::graphics::D3DDevice device;
+  if (device.Create()) {
+    GTEST_SKIP() << "no usable D3D11 device in this environment";
+  }
+  const auto dir = UniqueDir("cursor_on");
+  const auto source = (dir / "source.mov").u8string();
+  const auto dest = (dir / "out.mov").u8string();
+  std::string skip_reason;
+  if (!SynthesizeSource(&device, source, /*with_audio=*/false, &skip_reason)) {
+    GTEST_SKIP() << skip_reason;
+  }
+  WriteConstantCursorSidecar(dir / "cursor.jsonl", 20, 20, kSourceWidth,
+                             kSourceHeight);
+
+  RenderRequest request;
+  request.source_video_path = fs::u8path(source).wstring();
+  request.destination_path = dest;
+  request.layout = "square11";  // non-identity → composition runs
+  request.resolution = "auto";
+  request.fit = "fit";
+  request.fps_hint = kFps;
+  request.show_cursor = true;
+  request.cursor_size = 3.0;  // big arrow so its white center survives H.264
+  request.cursor_sidecar_path = (dir / "cursor.jsonl").wstring();
+
+  const RenderResult result = RenderComposedExport(request);
+  ASSERT_TRUE(result.ok) << result.message;
+
+  UINT w = 0;
+  UINT h = 0;
+  std::vector<std::uint32_t> pixels;
+  if (!ReadFirstFrameBgra(fs::u8path(dest).wstring(), &w, &h, &pixels)) {
+    GTEST_SKIP() << "could not decode the exported frame for pixel readback";
+  }
+  EXPECT_TRUE(HasNearWhitePixel(pixels))
+      << "expected the white cursor glyph in the exported frame";
+
+  std::error_code ec;
+  fs::remove_all(dir, ec);
+}
+
+TEST(ExportPipelineTest, NoCursorWhenShowCursorOff) {
+  clingfy::graphics::D3DDevice device;
+  if (device.Create()) {
+    GTEST_SKIP() << "no usable D3D11 device in this environment";
+  }
+  const auto dir = UniqueDir("cursor_off");
+  const auto source = (dir / "source.mov").u8string();
+  const auto dest = (dir / "out.mov").u8string();
+  std::string skip_reason;
+  if (!SynthesizeSource(&device, source, /*with_audio=*/false, &skip_reason)) {
+    GTEST_SKIP() << skip_reason;
+  }
+  WriteConstantCursorSidecar(dir / "cursor.jsonl", 20, 20, kSourceWidth,
+                             kSourceHeight);
+
+  RenderRequest request;
+  request.source_video_path = fs::u8path(source).wstring();
+  request.destination_path = dest;
+  request.layout = "square11";
+  request.resolution = "auto";
+  request.fit = "fit";
+  request.fps_hint = kFps;
+  request.show_cursor = false;  // OFF — even with a sidecar present.
+  request.cursor_size = 3.0;
+  request.cursor_sidecar_path = (dir / "cursor.jsonl").wstring();
+
+  const RenderResult result = RenderComposedExport(request);
+  ASSERT_TRUE(result.ok) << result.message;
+
+  UINT w = 0;
+  UINT h = 0;
+  std::vector<std::uint32_t> pixels;
+  if (!ReadFirstFrameBgra(fs::u8path(dest).wstring(), &w, &h, &pixels)) {
+    GTEST_SKIP() << "could not decode the exported frame for pixel readback";
+  }
+  EXPECT_FALSE(HasNearWhitePixel(pixels))
+      << "no cursor should be drawn when showCursor is false";
+
+  std::error_code ec;
+  fs::remove_all(dir, ec);
+}
+
+TEST(ExportPipelineTest, MissingCursorSidecarStillExports) {
+  clingfy::graphics::D3DDevice device;
+  if (device.Create()) {
+    GTEST_SKIP() << "no usable D3D11 device in this environment";
+  }
+  const auto dir = UniqueDir("cursor_missing");
+  const auto source = (dir / "source.mov").u8string();
+  const auto dest = (dir / "out.mov").u8string();
+  std::string skip_reason;
+  if (!SynthesizeSource(&device, source, /*with_audio=*/false, &skip_reason)) {
+    GTEST_SKIP() << skip_reason;
+  }
+
+  RenderRequest request;
+  request.source_video_path = fs::u8path(source).wstring();
+  request.destination_path = dest;
+  request.layout = "square11";
+  request.resolution = "auto";
+  request.fit = "fit";
+  request.fps_hint = kFps;
+  request.show_cursor = true;
+  request.cursor_size = 1.5;
+  // Points at a file that does not exist → renders no cursor, never fails.
+  request.cursor_sidecar_path = (dir / "does-not-exist.jsonl").wstring();
+
+  const RenderResult result = RenderComposedExport(request);
+  EXPECT_TRUE(result.ok) << "a missing sidecar must not fail the export — "
+                         << result.message;
+  EXPECT_TRUE(fs::exists(fs::u8path(dest)));
+
+  std::error_code ec;
+  fs::remove_all(dir, ec);
+}
+
+TEST(ExportPipelineTest, GifWithCursorExports) {
+  clingfy::graphics::D3DDevice device;
+  if (device.Create()) {
+    GTEST_SKIP() << "no usable D3D11 device in this environment";
+  }
+  const auto dir = UniqueDir("cursor_gif");
+  const auto source = (dir / "source.mov").u8string();
+  const auto dest = (dir / "out.gif").u8string();
+  std::string skip_reason;
+  if (!SynthesizeSource(&device, source, /*with_audio=*/false, &skip_reason)) {
+    GTEST_SKIP() << skip_reason;
+  }
+  WriteConstantCursorSidecar(dir / "cursor.jsonl", 20, 20, kSourceWidth,
+                             kSourceHeight);
+
+  RenderRequest request;
+  request.source_video_path = fs::u8path(source).wstring();
+  request.destination_path = dest;  // .gif → WIC encoder, cursor still composited
+  request.layout = "square11";
+  request.resolution = "auto";
+  request.fit = "fit";
+  request.fps_hint = kFps;
+  request.show_cursor = true;
+  request.cursor_size = 2.0;
+  request.cursor_sidecar_path = (dir / "cursor.jsonl").wstring();
+
+  const RenderResult result = RenderComposedExport(request);
+  ASSERT_TRUE(result.ok) << result.message;
+  ASSERT_TRUE(fs::exists(fs::u8path(dest)));
+  EXPECT_TRUE(FileStartsWithGifMagic(dest)) << "output is not a GIF";
+  const GifProbeResult probe = ProbeGif(fs::u8path(dest).wstring());
+  EXPECT_TRUE(probe.ok) << "GIF-with-cursor is not a readable GIF";
+
+  std::error_code ec;
+  fs::remove_all(dir, ec);
+}
+
 TEST(ExportPipelineTest, MissingSourceFailsCleanly) {
   // No GPU needed for the failure path, but Create() gates the device the
   // pipeline builds internally; skip if unavailable so the assert below

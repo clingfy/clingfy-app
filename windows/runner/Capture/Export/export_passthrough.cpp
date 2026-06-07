@@ -191,6 +191,21 @@ PassthroughResult ExportPassthroughCopy(
   }
   const fs::path source = fs::path(read.project->screen_path);
 
+  // Phase 8.2: the cursor sidecar sits beside the screen video in the bundle.
+  // The export renders the cursor when the user wants it AND the recording has a
+  // sidecar — which forces the composition path below (a byte-copy can't draw
+  // it). A missing sidecar (older recording / cursor-on fallback) simply renders
+  // no cursor.
+  //
+  // The name is the sibling `cursor.jsonl` written by the project writer (kept in
+  // sync with `recording_project_writer.cpp`'s manifest `cursorData` →
+  // "capture/cursor.jsonl"). `screen_path` is `<root>/capture/screen.mov`, so its
+  // parent is the `capture/` dir.
+  const fs::path cursor_sidecar = source.parent_path() / "cursor.jsonl";
+  std::error_code cursor_ec;
+  const bool wants_cursor_render =
+      input.show_cursor && fs::exists(cursor_sidecar, cursor_ec);
+
   // Compute the destination (collision-avoided, .mov-forced). Done
   // separately from the copy so the test can pin it without touching
   // the filesystem.
@@ -222,7 +237,7 @@ PassthroughResult ExportPassthroughCopy(
       input.padding > 0.0 || input.corner_radius > 0.0 ||
       RequiresAudioProcessing(input.audio_gain_db, input.audio_volume_percent,
                               input.auto_normalize) ||
-      wants_non_mov_container;
+      wants_non_mov_container || wants_cursor_render;
 
   if (!needs_composition) {
     // Fast-path: pixel-for-pixel the source, so copy it byte-for-byte.
@@ -270,6 +285,11 @@ PassthroughResult ExportPassthroughCopy(
     render.auto_normalize = input.auto_normalize;
     render.target_loudness_dbfs = input.target_loudness_dbfs;
     render.bitrate = input.bitrate;
+    // Phase 8.2: render the cursor only when wanted + a sidecar exists.
+    render.show_cursor = wants_cursor_render;
+    render.cursor_size = input.cursor_size;
+    render.cursor_sidecar_path =
+        wants_cursor_render ? cursor_sidecar.wstring() : std::wstring();
     render.on_progress = on_progress;
     render.is_cancelled = is_cancelled;
     render.fps_hint = read.project->metadata.has_value()
