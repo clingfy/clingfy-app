@@ -157,6 +157,19 @@ TEST_F(RecordingProjectWriterTest, ScreenMetaCarriesCaptureTargetType) {
   const std::string window_meta = BuildScreenMetaJson(window_input);
   EXPECT_NE(window_meta.find("\"targetType\": \"window\""), std::string::npos);
   EXPECT_NE(window_meta.find("\"windowId\": 123456"), std::string::npos);
+
+  // Area capture (Phase 7.2) records the type + the crop as sourceBounds.
+  ProjectWriterInput area_input;
+  area_input.session_id = "sess-target-area";
+  area_input.target_type = "area";
+  area_input.source_bounds = SourceBounds{40, 30, 800, 600};
+  const std::string area_meta = BuildScreenMetaJson(area_input);
+  EXPECT_NE(area_meta.find("\"targetType\": \"area\""), std::string::npos);
+  EXPECT_NE(area_meta.find("\"sourceBounds\""), std::string::npos);
+  EXPECT_NE(area_meta.find("\"x\": 40"), std::string::npos);
+  EXPECT_NE(area_meta.find("\"width\": 800"), std::string::npos);
+  EXPECT_EQ(area_meta.find("\"windowId\""), std::string::npos)
+      << "area captures must not emit a windowId";
 }
 
 TEST(RecordingProjectWriterFreeFunctions, Iso8601TimestampShape) {

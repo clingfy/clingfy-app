@@ -21,6 +21,30 @@ TEST_F(WindowsSelectionStateTest, FreshStateHasNoDisplaySelection) {
             DisplayTargetMode::kExplicitId);
   EXPECT_FALSE(WindowsSelectionState::Instance().MicrophoneId().has_value());
   EXPECT_FALSE(WindowsSelectionState::Instance().AppWindowId().has_value());
+  EXPECT_FALSE(
+      WindowsSelectionState::Instance().CurrentAreaRegion().has_value());
+}
+
+TEST_F(WindowsSelectionStateTest, AreaRegionRoundTripsAndClears) {
+  AreaRegion region;
+  region.display_id = std::int64_t{42};
+  region.x = 10;
+  region.y = 20;
+  region.width = 640;
+  region.height = 480;
+  WindowsSelectionState::Instance().SetAreaRegion(region);
+
+  const auto stored = WindowsSelectionState::Instance().CurrentAreaRegion();
+  ASSERT_TRUE(stored.has_value());
+  EXPECT_EQ(stored->display_id, std::optional<std::int64_t>(42));
+  EXPECT_EQ(stored->x, 10);
+  EXPECT_EQ(stored->y, 20);
+  EXPECT_EQ(stored->width, 640);
+  EXPECT_EQ(stored->height, 480);
+
+  WindowsSelectionState::Instance().SetAreaRegion(std::nullopt);
+  EXPECT_FALSE(
+      WindowsSelectionState::Instance().CurrentAreaRegion().has_value());
 }
 
 TEST_F(WindowsSelectionStateTest, AppWindowIdRoundTrips) {

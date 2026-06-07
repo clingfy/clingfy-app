@@ -10,6 +10,7 @@
 #include <thread>
 
 #include "Capture/recording_clock.h"
+#include "Capture/recording_project_writer.h"
 #include "Capture/recording_session_state.h"
 
 namespace clingfy::audio {
@@ -150,11 +151,13 @@ class RecordingEngine {
   std::atomic<bool> encoder_stopped_{true};
   std::string current_output_path_;
 
-  // Phase 7.1: the capture target the active session resolved at Start, snapshot
-  // into the project manifest at Stop. "display" | "window" (area is a later
-  // slice); `current_window_id_` set only for window captures.
+  // Phase 7.1/7.2: the capture target the active session resolved at Start,
+  // snapshot into the project manifest at Stop. "display" | "window" | "area".
+  // `current_window_id_` is set only for window captures; `current_source_bounds_`
+  // only for area captures (the resolved crop rect).
   std::string current_target_type_ = "display";
   std::optional<std::int64_t> current_window_id_;
+  std::optional<SourceBounds> current_source_bounds_;
 
   // Audio pipeline (Phase 3D). Two WASAPI captures (mic + loopback)
   // fill the matching packet queues; a dedicated mixer thread sums

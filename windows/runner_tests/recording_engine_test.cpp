@@ -139,13 +139,46 @@ TEST_F(RecordingEngineTest, StartRejectsWindowModeWithStaleHwnd) {
   EXPECT_FALSE(RecordingEngine::Instance().IsRecording());
 }
 
-TEST_F(RecordingEngineTest, StartStillRejectsAreaModeAsUnsupported) {
-  // Area recording is a later slice — window modes are admitted, area is not.
+TEST_F(RecordingEngineTest, StartRejectsAreaModeWithNoRegion) {
+  // The area gate is lifted (Phase 7.2), but with no region picked Start fails
+  // with a friendly target error, not kBadMode — GPU-free (fails before D3D).
   WindowsSelectionState::Instance().SetTargetMode(
       DisplayTargetMode::kAreaRecording);
   auto error = RecordingEngine::Instance().Start(ValidRequest());
   ASSERT_TRUE(error.has_value());
+  EXPECT_EQ(error->code, clingfy::bridge::error::kTargetError);
+  EXPECT_FALSE(RecordingEngine::Instance().IsRecording());
+}
+
+TEST_F(RecordingEngineTest, StartStillRejectsMouseFollowMode) {
+  // Mouse-follow modes remain unsupported (kBadMode) — only display, window,
+  // and area are live.
+  WindowsSelectionState::Instance().SetTargetMode(
+      DisplayTargetMode::kFollowMouse);
+  auto error = RecordingEngine::Instance().Start(ValidRequest());
+  ASSERT_TRUE(error.has_value());
   EXPECT_EQ(error->code, clingfy::bridge::error::kBadMode);
+}
+
+TEST_F(RecordingEngineTest, StartAcceptsAreaModeWithValidRegion) {
+  // End-to-end area capture: record a small region of the primary monitor. Like
+  // StartTransitionsToRecording this drives the real WGC + crop + encoder
+  // pipeline, so it needs a usable GPU/encoder (it is not a GTEST_SKIP-gated
+  // test; the existing display test already proves the box has one).
+  WindowsSelectionState::Instance().SetTargetMode(
+      DisplayTargetMode::kAreaRecording);
+  AreaRegion region;
+  region.display_id = std::nullopt;  // primary
+  region.x = 0;
+  region.y = 0;
+  region.width = 320;
+  region.height = 240;
+  WindowsSelectionState::Instance().SetAreaRegion(region);
+
+  auto error = RecordingEngine::Instance().Start(ValidRequest());
+  ASSERT_FALSE(error.has_value()) << error->message;
+  EXPECT_TRUE(RecordingEngine::Instance().IsRecording());
+  ASSERT_FALSE(RecordingEngine::Instance().Stop("sess-test").has_value());
 }
 
 // The encoder config and the WGC frame copy both clamp capture dimensions to
@@ -159,6 +192,46 @@ TEST(EvenCaptureDimensionTest, ClampsOddDownAndLeavesEvenUnchanged) {
   EXPECT_EQ(EvenCaptureDimension(1920u), 1920u);
   EXPECT_EQ(EvenCaptureDimension(1u), 0u);
   EXPECT_EQ(EvenCaptureDimension(0u), 0u);
+}
+
+// ResolveCropBox is the single source of truth shared by the engine encoder
+// sizing and the backend frame crop (Phase 7.2 area recording): clamp the
+// requested rect into the surface, then even-align. Pure, no GPU.
+TEST(ResolveCropBoxTest, ClampsToBoundsAndEvenAligns) {
+  // Fully inside, even dims preserved.
+  const auto inside = ResolveCropBox(1920, 1080, 100, 50, 640, 480);
+  EXPECT_EQ(inside.x, 100u);
+  EXPECT_EQ(inside.y, 50u);
+  EXPECT_EQ(inside.width, 640u);
+  EXPECT_EQ(inside.height, 480u);
+
+  // Odd request dims clamp down to even.
+  const auto odd = ResolveCropBox(1920, 1080, 0, 0, 801, 601);
+  EXPECT_EQ(odd.width, 800u);
+  EXPECT_EQ(odd.height, 600u);
+
+  // Oversized request clamps to what fits from the (in-bounds) origin.
+  const auto over = ResolveCropBox(1920, 1080, 1900, 1070, 500, 500);
+  EXPECT_EQ(over.x, 1900u);
+  EXPECT_EQ(over.y, 1070u);
+  EXPECT_EQ(over.width, 20u);
+  EXPECT_EQ(over.height, 10u);
+
+  // Negative origin clamps to 0.
+  const auto neg = ResolveCropBox(1920, 1080, -50, -30, 400, 300);
+  EXPECT_EQ(neg.x, 0u);
+  EXPECT_EQ(neg.y, 0u);
+  EXPECT_EQ(neg.width, 400u);
+  EXPECT_EQ(neg.height, 300u);
+
+  // Origin past the edge -> empty region.
+  const auto off = ResolveCropBox(1920, 1080, 5000, 0, 100, 100);
+  EXPECT_EQ(off.width, 0u);
+
+  // Empty surface -> empty box.
+  const auto none = ResolveCropBox(0, 0, 0, 0, 100, 100);
+  EXPECT_EQ(none.width, 0u);
+  EXPECT_EQ(none.height, 0u);
 }
 
 // === Phase 4 pause / resume happy + sad paths ==============================

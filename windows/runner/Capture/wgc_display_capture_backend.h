@@ -57,6 +57,27 @@ std::optional<WgcTargetSize> ResolveWindowCaptureSize(HWND window);
 // Pure (no Win32) so it is unit-tested without a GPU.
 std::uint32_t EvenCaptureDimension(std::uint32_t value);
 
+// Phase 7.2: a resolved area-recording crop box on a captured monitor surface,
+// in monitor-local physical pixels (origin = monitor top-left). width/height
+// are even (H.264); width/height == 0 means the requested region was empty / off
+// the surface.
+struct CaptureCropBox {
+  std::uint32_t x = 0;
+  std::uint32_t y = 0;
+  std::uint32_t width = 0;
+  std::uint32_t height = 0;
+};
+
+// Resolve a requested area rectangle (monitor-local px) against the captured
+// surface size: clamp the origin into the surface, clamp the size to what fits,
+// and even-align width/height via EvenCaptureDimension. Pure (no Win32) — the
+// SAME function sizes the encoder (engine) and the crop box (backend), so they
+// agree by construction. A degenerate / off-surface request yields width or
+// height == 0.
+CaptureCropBox ResolveCropBox(std::uint32_t src_width, std::uint32_t src_height,
+                              std::int64_t req_x, std::int64_t req_y,
+                              std::int64_t req_width, std::int64_t req_height);
+
 class WgcDisplayCaptureBackend {
  public:
   WgcDisplayCaptureBackend();
@@ -84,6 +105,16 @@ class WgcDisplayCaptureBackend {
   std::optional<WgcCaptureError> StartForWindow(
       HWND window, clingfy::graphics::D3DDevice& device,
       VideoFrameQueue& queue);
+
+  // Phase 7.2: area capture. Captures the full `monitor` (the existing display
+  // path) but crops every frame to `crop` (a resolved CaptureCropBox in
+  // monitor-local physical pixels) before pushing it downstream, so the encoder
+  // — sized to crop.width/height by the engine — receives exactly the cropped
+  // region. `crop` must be non-empty (width/height > 0). Returns std::nullopt on
+  // success.
+  std::optional<WgcCaptureError> StartForArea(
+      HMONITOR monitor, CaptureCropBox crop,
+      clingfy::graphics::D3DDevice& device, VideoFrameQueue& queue);
 
   // Stops the capture session, closes the frame pool, and waits for any
   // in-flight FrameArrived callbacks to drain before returning. Safe to

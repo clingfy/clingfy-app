@@ -37,6 +37,16 @@ std::optional<std::int64_t> WindowsSelectionState::AppWindowId() const {
   return app_window_id_;
 }
 
+void WindowsSelectionState::SetAreaRegion(std::optional<AreaRegion> region) {
+  std::lock_guard<std::mutex> lock(mutex_);
+  area_region_ = region;
+}
+
+std::optional<AreaRegion> WindowsSelectionState::CurrentAreaRegion() const {
+  std::lock_guard<std::mutex> lock(mutex_);
+  return area_region_;
+}
+
 void WindowsSelectionState::SetMicrophoneId(std::optional<std::string> id) {
   std::lock_guard<std::mutex> lock(mutex_);
   microphone_id_ = std::move(id);
@@ -51,6 +61,7 @@ void WindowsSelectionState::ResetForTesting() {
   std::lock_guard<std::mutex> lock(mutex_);
   display_id_.reset();
   app_window_id_.reset();
+  area_region_.reset();
   target_mode_ = DisplayTargetMode::kExplicitId;
   microphone_id_.reset();
 }

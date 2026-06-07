@@ -92,19 +92,23 @@ std::optional<RecordingError> RecordingEngine::Start(
   // remain unsupported until their slices.
   const bool is_window_mode = (mode == DisplayTargetMode::kAppWindow ||
                                mode == DisplayTargetMode::kSingleAppWindow);
-  if (mode != DisplayTargetMode::kExplicitId && !is_window_mode) {
+  const bool is_area_mode = (mode == DisplayTargetMode::kAreaRecording);
+  if (mode != DisplayTargetMode::kExplicitId && !is_window_mode &&
+      !is_area_mode) {
     return fail_start(
         clingfy::bridge::error::kBadMode,
         std::string("Target mode '") + TargetModeName(mode) +
-            "' is not supported on Windows yet. Window recording is live; "
-            "area and mouse-follow modes land in later slices.");
+            "' is not supported on Windows yet. Window and area recording are "
+            "live; mouse-follow modes land in a later slice.");
   }
 
   // Resolve the target BEFORE any pipeline setup so a missing / stale target
-  // fails cleanly. Display: an HMONITOR (nullopt selection => primary).
-  // Window: the selected HWND, revalidated (closed window => friendly error).
+  // fails cleanly. Display: an HMONITOR (nullopt selection => primary). Window:
+  // the selected HWND, revalidated. Area: the selected region's monitor + a crop
+  // box resolved/clamped against the monitor size.
   std::optional<HMONITOR> monitor;
   std::optional<HWND> window_target;
+  std::optional<CaptureCropBox> area_crop;
   if (is_window_mode) {
     const auto window_id = WindowsSelectionState::Instance().AppWindowId();
     if (!window_id) {
@@ -120,6 +124,44 @@ std::optional<RecordingError> RecordingEngine::Start(
     }
     current_target_type_ = "window";
     current_window_id_ = window_id;
+    current_source_bounds_.reset();
+  } else if (is_area_mode) {
+    const auto region = WindowsSelectionState::Instance().CurrentAreaRegion();
+    if (!region) {
+      return fail_start(
+          clingfy::bridge::error::kTargetError,
+          "No area selected to record. Pick an area first.");
+    }
+    monitor = clingfy::bridge::devices::ResolveHMonitor(region->display_id);
+    if (!monitor) {
+      return fail_start(
+          clingfy::bridge::error::kTargetError,
+          "The display for the selected area is no longer available.");
+    }
+    MONITORINFO area_info{};
+    area_info.cbSize = sizeof(area_info);
+    std::uint32_t mon_w = 0;
+    std::uint32_t mon_h = 0;
+    if (::GetMonitorInfoW(*monitor, &area_info) != 0) {
+      mon_w = static_cast<std::uint32_t>(area_info.rcMonitor.right -
+                                         area_info.rcMonitor.left);
+      mon_h = static_cast<std::uint32_t>(area_info.rcMonitor.bottom -
+                                         area_info.rcMonitor.top);
+    }
+    const CaptureCropBox crop = clingfy::capture::ResolveCropBox(
+        mon_w, mon_h, region->x, region->y, region->width, region->height);
+    if (crop.width == 0 || crop.height == 0) {
+      return fail_start(
+          clingfy::bridge::error::kTargetError,
+          "The selected area is empty or off-screen. Pick it again.");
+    }
+    area_crop = crop;
+    current_target_type_ = "area";
+    current_window_id_.reset();
+    current_source_bounds_ = SourceBounds{
+        static_cast<std::int32_t>(crop.x), static_cast<std::int32_t>(crop.y),
+        static_cast<std::int32_t>(crop.width),
+        static_cast<std::int32_t>(crop.height)};
   } else {
     const auto display_id = WindowsSelectionState::Instance().DisplayId();
     monitor = clingfy::bridge::devices::ResolveHMonitor(display_id);
@@ -131,6 +173,7 @@ std::optional<RecordingError> RecordingEngine::Start(
     }
     current_target_type_ = "display";
     current_window_id_.reset();
+    current_source_bounds_.reset();
   }
 
   if (!session_.BeginStart(request.session_id)) {
@@ -167,6 +210,11 @@ std::optional<RecordingError> RecordingEngine::Start(
     }
     width = window_size->width;
     height = window_size->height;
+  } else if (is_area_mode) {
+    // The crop box is already clamped + even-aligned; the backend crops every
+    // frame to exactly this size, so the encoder must match it.
+    width = area_crop->width;
+    height = area_crop->height;
   } else {
     MONITORINFO info{};
     info.cbSize = sizeof(info);
@@ -213,11 +261,16 @@ std::optional<RecordingError> RecordingEngine::Start(
 
   frame_queue_ = std::make_unique<VideoFrameQueue>(/*capacity=*/60);
   capture_backend_ = std::make_unique<WgcDisplayCaptureBackend>();
-  std::optional<WgcCaptureError> wgc_err =
-      is_window_mode
-          ? capture_backend_->StartForWindow(*window_target, *d3d_device_,
-                                             *frame_queue_)
-          : capture_backend_->Start(*monitor, *d3d_device_, *frame_queue_);
+  std::optional<WgcCaptureError> wgc_err;
+  if (is_window_mode) {
+    wgc_err = capture_backend_->StartForWindow(*window_target, *d3d_device_,
+                                               *frame_queue_);
+  } else if (is_area_mode) {
+    wgc_err = capture_backend_->StartForArea(*monitor, *area_crop, *d3d_device_,
+                                             *frame_queue_);
+  } else {
+    wgc_err = capture_backend_->Start(*monitor, *d3d_device_, *frame_queue_);
+  }
   if (wgc_err) {
     TeardownPipeline();
     session_.MarkFailed();
@@ -521,6 +574,7 @@ std::optional<RecordingError> RecordingEngine::Stop(
   project_input.source_mp4_path = current_output_path_;
   project_input.target_type = current_target_type_;
   project_input.window_id = current_window_id_;
+  project_input.source_bounds = current_source_bounds_;
   if (capture_backend_) {
     const auto stats = capture_backend_->Stats();
     project_input.width = stats.frame_width;
@@ -703,6 +757,7 @@ void RecordingEngine::ForceResetForTesting() {
   current_output_path_.clear();
   current_target_type_ = "display";
   current_window_id_.reset();
+  current_source_bounds_.reset();
 }
 
 }  // namespace clingfy::capture

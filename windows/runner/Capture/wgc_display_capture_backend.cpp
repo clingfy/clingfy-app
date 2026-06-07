@@ -82,6 +82,9 @@ class WgcDisplayCaptureBackend::Impl {
   std::optional<WgcCaptureError> StartForWindow(
       HWND window, clingfy::graphics::D3DDevice& device,
       VideoFrameQueue& queue);
+  std::optional<WgcCaptureError> StartForArea(
+      HMONITOR monitor, CaptureCropBox crop,
+      clingfy::graphics::D3DDevice& device, VideoFrameQueue& queue);
   void Stop();
   void Pause();
   void Resume();
@@ -117,6 +120,9 @@ class WgcDisplayCaptureBackend::Impl {
   mutable std::mutex mutex_;
   bool running_ = false;
   std::atomic<bool> paused_{false};
+  // Phase 7.2: when set, every captured frame is cropped to this box (area
+  // recording). Unset for full display / window capture.
+  std::optional<CaptureCropBox> crop_;
   VideoFrameQueue* queue_ = nullptr;
   Microsoft::WRL::ComPtr<ID3D11Device> d3d_device_;
   Microsoft::WRL::ComPtr<ID3D11DeviceContext> d3d_context_;
@@ -137,6 +143,7 @@ void WgcDisplayCaptureBackend::Impl::ResetPartialState() {
   item_ = nullptr;
   pool_ = nullptr;
   session_ = nullptr;
+  crop_.reset();
 }
 
 std::optional<WgcCaptureError> WgcDisplayCaptureBackend::Impl::StartWithItem(
@@ -204,6 +211,7 @@ std::optional<WgcCaptureError> WgcDisplayCaptureBackend::Impl::Start(
     return WgcCaptureError{
         "Invalid HMONITOR or D3D device for WGC capture.", E_INVALIDARG};
   }
+  crop_.reset();  // full-display capture is never cropped.
 
   // Resolve the GraphicsCaptureItem from HMONITOR through the interop
   // activation factory. C++/WinRT has no projected `CreateForMonitor`
@@ -241,6 +249,7 @@ std::optional<WgcCaptureError> WgcDisplayCaptureBackend::Impl::StartForWindow(
     return WgcCaptureError{
         "The selected window is no longer available.", E_INVALIDARG};
   }
+  crop_.reset();  // window capture is not cropped.
 
   // The window analog of CreateForMonitor — same classic COM interop
   // interface, just CreateForWindow(HWND).
@@ -265,6 +274,48 @@ std::optional<WgcCaptureError> WgcDisplayCaptureBackend::Impl::StartForWindow(
   }
 }
 
+std::optional<WgcCaptureError> WgcDisplayCaptureBackend::Impl::StartForArea(
+    HMONITOR monitor,
+    CaptureCropBox crop,
+    clingfy::graphics::D3DDevice& device,
+    VideoFrameQueue& queue) {
+  std::lock_guard<std::mutex> lock(mutex_);
+  if (running_) {
+    return WgcCaptureError{"WGC backend is already running.", S_FALSE};
+  }
+  if (monitor == nullptr || device.device() == nullptr) {
+    return WgcCaptureError{
+        "Invalid HMONITOR or D3D device for WGC capture.", E_INVALIDARG};
+  }
+  if (crop.width == 0 || crop.height == 0) {
+    return WgcCaptureError{"Empty area crop region.", E_INVALIDARG};
+  }
+
+  // Area capture = full-monitor capture (the display path) plus a per-frame
+  // crop. Capture the monitor exactly as Start(HMONITOR) does, but stamp the
+  // crop box so CopyIntoStagingTexture copies only the selected region.
+  try {
+    auto interop_factory =
+        winrt::get_activation_factory<wgc::GraphicsCaptureItem,
+                                      IGraphicsCaptureItemInterop>();
+    wgc::GraphicsCaptureItem item{nullptr};
+    const HRESULT hr = interop_factory->CreateForMonitor(
+        monitor, winrt::guid_of<wgc::GraphicsCaptureItem>(),
+        winrt::put_abi(item));
+    if (FAILED(hr) || item == nullptr) {
+      return WgcCaptureError{
+          "GraphicsCaptureItem::CreateForMonitor failed.", hr};
+    }
+    // Set the crop BEFORE StartWithItem so a FrameArrived firing right after
+    // StartCapture already crops.
+    crop_ = crop;
+    return StartWithItem(std::move(item), device, queue);
+  } catch (winrt::hresult_error const& ex) {
+    ResetPartialState();
+    return WgcCaptureError{winrt::to_string(ex.message()), ex.code()};
+  }
+}
+
 Microsoft::WRL::ComPtr<ID3D11Texture2D>
 WgcDisplayCaptureBackend::Impl::CopyIntoStagingTexture(
     ID3D11Texture2D* source) {
@@ -274,27 +325,46 @@ WgcDisplayCaptureBackend::Impl::CopyIntoStagingTexture(
   D3D11_TEXTURE2D_DESC src_desc{};
   source->GetDesc(&src_desc);
 
-  // Clamp the captured surface DOWN to even dimensions (H.264 needs even; WGC
-  // window content sizes are arbitrary). The same EvenCaptureDimension drives
-  // the engine's encoder config, so the staging surface always matches the
-  // encoder input — a 1px odd edge is cropped, never size-mismatched. For an
-  // even source (e.g. a monitor) the dims are unchanged and the copy below is
-  // equivalent to the prior full-surface CopyResource.
-  const UINT even_w = EvenCaptureDimension(src_desc.Width);
-  const UINT even_h = EvenCaptureDimension(src_desc.Height);
-  if (even_w == 0 || even_h == 0) {
-    return nullptr;  // degenerate (sub-2px) window — drop the frame.
+  // Decide the source region to copy:
+  //   * Area recording (crop_ set): the resolved crop box (monitor-local px,
+  //     already even via ResolveCropBox). Defensively confirm it fits this
+  //     frame's surface — it does when WGC delivers the monitor at its native
+  //     size, which is what the engine sized the crop against.
+  //   * Display / window: the full surface clamped DOWN to even (H.264 needs
+  //     even; WGC window content sizes are arbitrary). The same
+  //     EvenCaptureDimension drives the encoder config, so the staging surface
+  //     always matches the encoder input — a 1px odd edge is cropped, never
+  //     size-mismatched. For an even source this box spans the whole surface
+  //     (identical to the prior CopyResource).
+  UINT box_x = 0;
+  UINT box_y = 0;
+  UINT box_w = 0;
+  UINT box_h = 0;
+  if (crop_) {
+    box_x = crop_->x;
+    box_y = crop_->y;
+    box_w = crop_->width;
+    box_h = crop_->height;
+    if (box_w == 0 || box_h == 0 || box_x + box_w > src_desc.Width ||
+        box_y + box_h > src_desc.Height) {
+      return nullptr;  // crop does not fit this surface — drop the frame.
+    }
+  } else {
+    box_w = EvenCaptureDimension(src_desc.Width);
+    box_h = EvenCaptureDimension(src_desc.Height);
+    if (box_w == 0 || box_h == 0) {
+      return nullptr;  // degenerate (sub-2px) surface — drop the frame.
+    }
   }
 
-  // Mirror the (even-clamped) source dimensions / format but force a fresh
-  // resource that the encoder can hold past the WGC frame's auto-close. We
+  // A fresh resource the encoder can hold past the WGC frame's auto-close. We
   // strip CPU-access flags because all consumption happens on the GPU, and
   // request RenderTarget + ShaderResource bind so the H.264 MFT can attach the
   // texture as input — both bind flags are widely supported and forgiving
   // across drivers.
   D3D11_TEXTURE2D_DESC dst_desc{};
-  dst_desc.Width = even_w;
-  dst_desc.Height = even_h;
+  dst_desc.Width = box_w;
+  dst_desc.Height = box_h;
   dst_desc.MipLevels = 1;
   dst_desc.ArraySize = 1;
   dst_desc.Format = src_desc.Format;
@@ -312,15 +382,12 @@ WgcDisplayCaptureBackend::Impl::CopyIntoStagingTexture(
   if (FAILED(hr) || staging == nullptr) {
     return nullptr;
   }
-  // Copy the even top-left region. For an even source this box spans the whole
-  // surface (identical to CopyResource); for an odd source it drops the last
-  // row/column so the destination is fully written (no uninitialized border).
   D3D11_BOX box{};
-  box.left = 0;
-  box.top = 0;
+  box.left = box_x;
+  box.top = box_y;
   box.front = 0;
-  box.right = even_w;
-  box.bottom = even_h;
+  box.right = box_x + box_w;
+  box.bottom = box_y + box_h;
   box.back = 1;
   d3d_context_->CopySubresourceRegion(staging.Get(), 0, 0, 0, 0, source, 0,
                                       &box);
@@ -366,6 +433,9 @@ void WgcDisplayCaptureBackend::Impl::OnFrameArrived(
   // `frame`'s auto-close. The leading `::` on the COM interface name
   // disambiguates it from any C++/WinRT projection of the same name.
   Microsoft::WRL::ComPtr<ID3D11Texture2D> staging;
+  bool has_crop = false;
+  std::uint32_t crop_w = 0;
+  std::uint32_t crop_h = 0;
   {
     auto surface = frame.Surface();
     auto access = surface.as<::IDirect3DDxgiInterfaceAccess>();
@@ -375,15 +445,26 @@ void WgcDisplayCaptureBackend::Impl::OnFrameArrived(
             reinterpret_cast<void**>(source.GetAddressOf()))) &&
         source != nullptr) {
       std::lock_guard<std::mutex> lock(mutex_);
+      // Snapshot the crop intent under the lock so the reported dimensions are
+      // the cropped size even on a (defensive) dropped frame — otherwise a
+      // dropped area frame would report the full-monitor size, contradicting
+      // the crop-sized output the encoder is configured for.
+      if (crop_) {
+        has_crop = true;
+        crop_w = crop_->width;
+        crop_h = crop_->height;
+      }
       staging = CopyIntoStagingTexture(source.Get());
     }
   }
 
   // Frame dimensions follow the (even-clamped) staging texture so they always
-  // match the encoder's even input type. Fall back to the raw content size only
-  // when the copy failed (texture is null -> the encoder skips the frame).
-  std::uint32_t out_width = static_cast<std::uint32_t>(size.Width);
-  std::uint32_t out_height = static_cast<std::uint32_t>(size.Height);
+  // match the encoder's even input type. When the copy is dropped (null
+  // texture, encoder skips it), fall back to the intended output size: the crop
+  // box for area capture, else the raw content size.
+  std::uint32_t out_width = has_crop ? crop_w : static_cast<std::uint32_t>(size.Width);
+  std::uint32_t out_height =
+      has_crop ? crop_h : static_cast<std::uint32_t>(size.Height);
   if (staging != nullptr) {
     D3D11_TEXTURE2D_DESC staged_desc{};
     staging->GetDesc(&staged_desc);
@@ -494,6 +575,14 @@ std::optional<WgcCaptureError> WgcDisplayCaptureBackend::StartForWindow(
   return impl_->StartForWindow(window, device, queue);
 }
 
+std::optional<WgcCaptureError> WgcDisplayCaptureBackend::StartForArea(
+    HMONITOR monitor,
+    CaptureCropBox crop,
+    clingfy::graphics::D3DDevice& device,
+    VideoFrameQueue& queue) {
+  return impl_->StartForArea(monitor, crop, device, queue);
+}
+
 std::optional<WgcTargetSize> ResolveWindowCaptureSize(HWND window) {
   if (window == nullptr || ::IsWindow(window) == 0) {
     return std::nullopt;
@@ -528,6 +617,36 @@ std::optional<WgcTargetSize> ResolveWindowCaptureSize(HWND window) {
 std::uint32_t EvenCaptureDimension(std::uint32_t value) {
   // Clamp down to the nearest even value (H.264 even-dimension requirement).
   return value & ~1u;
+}
+
+CaptureCropBox ResolveCropBox(std::uint32_t src_width, std::uint32_t src_height,
+                              std::int64_t req_x, std::int64_t req_y,
+                              std::int64_t req_width, std::int64_t req_height) {
+  CaptureCropBox box;
+  if (src_width == 0 || src_height == 0) {
+    return box;  // no surface — empty box.
+  }
+  const std::int64_t sw = static_cast<std::int64_t>(src_width);
+  const std::int64_t sh = static_cast<std::int64_t>(src_height);
+
+  // Clamp the origin into the surface.
+  std::int64_t x = req_x < 0 ? 0 : (req_x > sw ? sw : req_x);
+  std::int64_t y = req_y < 0 ? 0 : (req_y > sh ? sh : req_y);
+  // Clamp the size to what remains from the (clamped) origin.
+  std::int64_t w = req_width < 0 ? 0 : req_width;
+  std::int64_t h = req_height < 0 ? 0 : req_height;
+  if (x + w > sw) {
+    w = sw - x;
+  }
+  if (y + h > sh) {
+    h = sh - y;
+  }
+
+  box.x = static_cast<std::uint32_t>(x);
+  box.y = static_cast<std::uint32_t>(y);
+  box.width = EvenCaptureDimension(static_cast<std::uint32_t>(w));
+  box.height = EvenCaptureDimension(static_cast<std::uint32_t>(h));
+  return box;
 }
 
 void WgcDisplayCaptureBackend::Stop() {
