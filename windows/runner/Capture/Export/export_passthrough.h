@@ -110,6 +110,14 @@ struct PassthroughInput {
   // draw the cursor) — the recording itself stays cursorless.
   bool show_cursor = true;
   double cursor_size = 1.5;
+
+  // Phase 8.3 smart zoom. `zoom_effect_enabled` (Dart default true) auto-zooms
+  // the export from the recorded clicks + cursor path; `zoom_factor` (1.0..3.0,
+  // default 1.5) is the magnification. Like the cursor, an active zoom needs the
+  // sidecar and forces the composition path. Manual zoom segments are not
+  // consumed yet (deferred — Windows getZoomSegments is a stub).
+  bool zoom_effect_enabled = true;
+  double zoom_factor = 1.5;
 };
 
 enum class PassthroughError {

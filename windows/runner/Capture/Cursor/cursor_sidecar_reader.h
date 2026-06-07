@@ -23,11 +23,18 @@ struct CursorSidecarSample {
   bool visible = false;
 };
 
+// A recorded click edge (Phase 8.1 writes press + release; Phase 8.3 smart zoom
+// uses the timestamps to decide when to zoom). Button/down are kept for 8.4.
+struct CursorSidecarClick {
+  std::int64_t t_ms = 0;
+};
+
 struct CursorSidecarData {
   std::int32_t width = 0;    // header capture dims (informational).
   std::int32_t height = 0;
   std::string target_type;   // "display" | "window" | "area".
   std::vector<CursorSidecarSample> samples;  // sorted by t_ms.
+  std::vector<CursorSidecarClick> clicks;    // sorted by t_ms.
 };
 
 // Parse the full `cursor.jsonl` contents. Returns std::nullopt when the header

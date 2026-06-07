@@ -100,7 +100,19 @@ struct RenderRequest {
   // no cursor. A missing or malformed sidecar is non-fatal (renders no cursor).
   bool show_cursor = false;
   double cursor_size = 1.5;
+  // The shared cursor sidecar (`capture/cursor.jsonl`); used by BOTH the cursor
+  // renderer (8.2) and the smart-zoom controller (8.3). Set whenever either
+  // feature is active.
   std::wstring cursor_sidecar_path;
+
+  // Phase 8.3 smart zoom. When `zoom_enabled` and a sidecar is present, the
+  // export auto-generates zoom segments from the recorded clicks + cursor path
+  // and applies a smoothed zoom transform (magnified by `zoom_factor`, 1.0..3.0;
+  // <= 1 → no zoom). Soft-fail: missing/malformed sidecar or no segments → no
+  // zoom. Manual zoom segments are NOT consumed yet (Windows getZoomSegments is a
+  // stub — deferred).
+  bool zoom_enabled = false;
+  double zoom_factor = 1.5;
 };
 
 struct RenderResult {

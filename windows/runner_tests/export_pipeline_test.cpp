@@ -1208,6 +1208,168 @@ TEST(ExportPipelineTest, GifWithCursorExports) {
   fs::remove_all(dir, ec);
 }
 
+// === Phase 8.3 smart zoom ==================================================
+
+// Sidecar with a visible cursor + one click (so the zoom timeline builder
+// generates a segment around the click).
+void WriteCursorSidecarWithClick(const fs::path& path, int x, int y,
+                                 int click_ms, int w, int h) {
+  std::ofstream o(path, std::ios::binary);
+  o << "{\"type\":\"header\",\"schemaVersion\":1,\"sampleRateHz\":60,"
+       "\"targetType\":\"display\",\"width\":"
+    << w << ",\"height\":" << h << ",\"originX\":0,\"originY\":0}\n";
+  for (int t = 0; t <= 400; t += 16) {
+    o << "{\"type\":\"sample\",\"tMs\":" << t << ",\"screenX\":" << x
+      << ",\"screenY\":" << y << ",\"x\":" << x << ",\"y\":" << y
+      << ",\"visible\":true}\n";
+  }
+  o << "{\"type\":\"click\",\"tMs\":" << click_ms << ",\"screenX\":" << x
+    << ",\"screenY\":" << y << ",\"button\":\"left\",\"action\":\"down\"}\n";
+}
+
+TEST(ExportPipelineTest, ZoomRoundTripExports) {
+  clingfy::graphics::D3DDevice device;
+  if (device.Create()) {
+    GTEST_SKIP() << "no usable D3D11 device in this environment";
+  }
+  const auto dir = UniqueDir("zoom_mov");
+  const auto source = (dir / "source.mov").u8string();
+  const auto dest = (dir / "out.mov").u8string();
+  std::string skip_reason;
+  if (!SynthesizeSource(&device, source, /*with_audio=*/false, &skip_reason)) {
+    GTEST_SKIP() << skip_reason;
+  }
+  WriteCursorSidecarWithClick(dir / "cursor.jsonl", 20, 20, 50, kSourceWidth,
+                              kSourceHeight);
+
+  RenderRequest request;
+  request.source_video_path = fs::u8path(source).wstring();
+  request.destination_path = dest;
+  request.layout = "square11";
+  request.resolution = "auto";
+  request.fit = "fit";
+  request.fps_hint = kFps;
+  request.zoom_enabled = true;
+  request.zoom_factor = 2.0;
+  request.cursor_sidecar_path = (dir / "cursor.jsonl").wstring();
+
+  const RenderResult result = RenderComposedExport(request);
+  ASSERT_TRUE(result.ok) << result.message;
+  EXPECT_GT(result.video_frames_written, 0u);
+  const ProbeResult probe = ProbeOutput(fs::u8path(dest).wstring());
+  ASSERT_TRUE(probe.ok) << "zoomed export is not a readable video";
+  EXPECT_EQ(probe.width, 64u);
+  EXPECT_EQ(probe.height, 64u);
+
+  std::error_code ec;
+  fs::remove_all(dir, ec);
+}
+
+TEST(ExportPipelineTest, ZoomGifExports) {
+  clingfy::graphics::D3DDevice device;
+  if (device.Create()) {
+    GTEST_SKIP() << "no usable D3D11 device in this environment";
+  }
+  const auto dir = UniqueDir("zoom_gif");
+  const auto source = (dir / "source.mov").u8string();
+  const auto dest = (dir / "out.gif").u8string();
+  std::string skip_reason;
+  if (!SynthesizeSource(&device, source, /*with_audio=*/false, &skip_reason)) {
+    GTEST_SKIP() << skip_reason;
+  }
+  WriteCursorSidecarWithClick(dir / "cursor.jsonl", 20, 20, 50, kSourceWidth,
+                              kSourceHeight);
+
+  RenderRequest request;
+  request.source_video_path = fs::u8path(source).wstring();
+  request.destination_path = dest;
+  request.layout = "square11";
+  request.resolution = "auto";
+  request.fit = "fit";
+  request.fps_hint = kFps;
+  request.zoom_enabled = true;
+  request.zoom_factor = 2.0;
+  request.cursor_sidecar_path = (dir / "cursor.jsonl").wstring();
+
+  const RenderResult result = RenderComposedExport(request);
+  ASSERT_TRUE(result.ok) << result.message;
+  ASSERT_TRUE(fs::exists(fs::u8path(dest)));
+  EXPECT_TRUE(FileStartsWithGifMagic(dest)) << "zoomed GIF output is not a GIF";
+
+  std::error_code ec;
+  fs::remove_all(dir, ec);
+}
+
+TEST(ExportPipelineTest, ZoomWithMissingSidecarSoftFails) {
+  clingfy::graphics::D3DDevice device;
+  if (device.Create()) {
+    GTEST_SKIP() << "no usable D3D11 device in this environment";
+  }
+  const auto dir = UniqueDir("zoom_nosidecar");
+  const auto source = (dir / "source.mov").u8string();
+  const auto dest = (dir / "out.mov").u8string();
+  std::string skip_reason;
+  if (!SynthesizeSource(&device, source, /*with_audio=*/false, &skip_reason)) {
+    GTEST_SKIP() << skip_reason;
+  }
+
+  RenderRequest request;
+  request.source_video_path = fs::u8path(source).wstring();
+  request.destination_path = dest;
+  request.layout = "square11";
+  request.resolution = "auto";
+  request.fit = "fit";
+  request.fps_hint = kFps;
+  request.zoom_enabled = true;  // requested, but no sidecar → no zoom, no failure
+  request.zoom_factor = 2.0;
+  request.cursor_sidecar_path = (dir / "missing.jsonl").wstring();
+
+  const RenderResult result = RenderComposedExport(request);
+  EXPECT_TRUE(result.ok) << "missing sidecar must soft-fail to no-zoom — "
+                         << result.message;
+  EXPECT_TRUE(fs::exists(fs::u8path(dest)));
+
+  std::error_code ec;
+  fs::remove_all(dir, ec);
+}
+
+TEST(ExportPipelineTest, ZoomProgressReachesOne) {
+  clingfy::graphics::D3DDevice device;
+  if (device.Create()) {
+    GTEST_SKIP() << "no usable D3D11 device in this environment";
+  }
+  const auto dir = UniqueDir("zoom_progress");
+  const auto source = (dir / "source.mov").u8string();
+  const auto dest = (dir / "out.mov").u8string();
+  std::string skip_reason;
+  if (!SynthesizeSource(&device, source, /*with_audio=*/false, &skip_reason)) {
+    GTEST_SKIP() << skip_reason;
+  }
+  WriteCursorSidecarWithClick(dir / "cursor.jsonl", 20, 20, 50, kSourceWidth,
+                              kSourceHeight);
+
+  std::vector<double> fractions;
+  RenderRequest request;
+  request.source_video_path = fs::u8path(source).wstring();
+  request.destination_path = dest;
+  request.layout = "youtube169";
+  request.resolution = "auto";
+  request.fit = "fit";
+  request.fps_hint = kFps;
+  request.zoom_enabled = true;
+  request.zoom_factor = 2.0;
+  request.cursor_sidecar_path = (dir / "cursor.jsonl").wstring();
+  request.on_progress = [&fractions](double f) { fractions.push_back(f); };
+
+  const RenderResult result = RenderComposedExport(request);
+  ASSERT_TRUE(result.ok) << result.message;
+  ASSERT_FALSE(fractions.empty()) << "no progress emitted with zoom on";
+  EXPECT_GE(fractions.back(), 0.999) << "zoom export progress did not reach 1.0";
+
+  std::error_code ec;
+  fs::remove_all(dir, ec);
+}
+
 TEST(ExportPipelineTest, MissingSourceFailsCleanly) {
   // No GPU needed for the failure path, but Create() gates the device the
   // pipeline builds internally; skip if unavailable so the assert below

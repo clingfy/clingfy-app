@@ -21,6 +21,7 @@
 
 #include "Audio/audio_mixer.h"
 #include "Capture/Cursor/cursor_export_renderer.h"
+#include "Capture/Zoom/zoom_export_controller.h"
 #include "Capture/Export/export_audio.h"
 #include "Capture/Export/export_format.h"
 #include "Capture/Export/export_geometry.h"
@@ -437,6 +438,15 @@ RenderResult RenderComposedExport(const RenderRequest& request) {
     }
   }
 
+  // Phase 8.3: optional smart-zoom controller. Builds auto-zoom segments from the
+  // sidecar (clicks + cursor) and produces a smoothed per-frame transform. Same
+  // soft-fail discipline as the cursor renderer — null → no zoom.
+  std::unique_ptr<ZoomExportController> zoom_controller;
+  if (request.zoom_enabled && !request.cursor_sidecar_path.empty()) {
+    zoom_controller = ZoomExportController::Create(
+        request.cursor_sidecar_path, duration_hns / 10000, request.zoom_factor);
+  }
+
   // Reusable source bitmap: a fresh decoded frame is uploaded into it via
   // CopyFromMemory each iteration. Sized to the source; the fit/fill
   // scale happens in the DrawBitmap dest rect, not here.
@@ -548,6 +558,8 @@ RenderResult RenderComposedExport(const RenderRequest& request) {
   // sidecar's recording-relative tMs lines up with the file's PTS regardless of
   // the container's absolute PTS base.
   std::int64_t first_video_hns = -1;
+  // Phase 8.3: previous KEPT video frame's PTS, for the smoother's dt.
+  std::int64_t prev_frame_hns = -1;
   bool video_eos = false;
   bool audio_eos = !has_audio;  // nothing to drain when there is no audio
   double last_progress_emitted = -1.0;  // Slice 5A: throttle progress ticks
@@ -666,31 +678,78 @@ RenderResult RenderComposedExport(const RenderRequest& request) {
       // rect so the corners reveal the background, matching the macOS
       // bg-fill-then-rounded-video draw order.
       d2d_ctx->Clear(clear_color);
+
+      // The frame's recording-relative ms (rebased to the first decoded frame),
+      // shared by the cursor lookup and the zoom controller.
+      const std::int64_t frame_ms =
+          first_video_hns >= 0 ? (timestamp - first_video_hns) / 10000 : 0;
+
+      // Phase 8.3: advance the smart-zoom transform for this frame. The cursor
+      // (8.2) is drawn UNDER the same transform, so the cursor and the magnified
+      // video share one coordinate space.
+      ZoomExportController::Frame zf;
+      if (zoom_controller != nullptr) {
+        const double dt_seconds =
+            prev_frame_hns >= 0
+                ? static_cast<double>(timestamp - prev_frame_hns) / 10'000'000.0
+                : 1.0 / static_cast<double>(
+                            request.fps_hint != 0 ? request.fps_hint : 30u);
+        zf = zoom_controller->Advance(frame_ms, dt_seconds);
+      }
+      prev_frame_hns = timestamp;
+      const bool zooming = zf.active && zf.zoom > 1.0;
+
+      // Content clip: rounded layer when a corner radius is set, else an
+      // axis-aligned clip to the content rect when drawing a cursor or a zoom (so
+      // neither bleeds into the padding/background). No clip otherwise — the
+      // plain composition path stays byte-identical to before.
+      bool pushed_layer = false;
+      bool pushed_clip = false;
       if (rounded_clip != nullptr) {
         d2d_ctx->PushLayer(
             D2D1::LayerParameters1(D2D1::InfiniteRect(), rounded_clip.Get(),
                                    D2D1_ANTIALIAS_MODE_PER_PRIMITIVE),
             rounded_layer.Get());
+        pushed_layer = true;
+      } else if (zooming || cursor_renderer != nullptr) {
+        d2d_ctx->PushAxisAlignedClip(dest_rect, D2D1_ANTIALIAS_MODE_ALIASED);
+        pushed_clip = true;
       }
+
+      // Apply the zoom transform (identity when not zooming). The clip above was
+      // pushed under the identity transform, so it stays in canvas space while
+      // the content below is magnified about the (clamped) focus center.
+      if (zooming) {
+        const double cw = content.width;
+        const double ch = content.height;
+        const double half = 0.5 / zf.zoom;
+        const double window_left = (zf.center_x - half) * cw;
+        const double window_top = (zf.center_y - half) * ch;
+        const D2D1_MATRIX_3X2_F zoom_m =
+            D2D1::Matrix3x2F::Translation(
+                -(static_cast<float>(content.x + window_left)),
+                -(static_cast<float>(content.y + window_top))) *
+            D2D1::Matrix3x2F::Scale(static_cast<float>(zf.zoom),
+                                    static_cast<float>(zf.zoom)) *
+            D2D1::Matrix3x2F::Translation(static_cast<float>(content.x),
+                                          static_cast<float>(content.y));
+        d2d_ctx->SetTransform(zoom_m);
+      }
+
       d2d_ctx->DrawBitmap(source_bitmap.Get(), dest_rect, 1.0f,
                           D2D1_BITMAP_INTERPOLATION_MODE_LINEAR, nullptr);
-      if (rounded_clip != nullptr) {
-        d2d_ctx->PopLayer();
-      }
-      // Phase 8.2: draw the cursor on top of the video, clipped to the content
-      // rect so it never bleeds into the padding/background. Same composite for
-      // MP4/MOV and GIF. The clip is the square content rect (not the rounded-
-      // corner geometry), so a cursor sitting in the few px between the square
-      // edge and a rounded corner could paint over background — a negligible
-      // cosmetic edge accepted for MVP.
       if (cursor_renderer != nullptr) {
-        const std::int64_t frame_ms =
-            first_video_hns >= 0 ? (timestamp - first_video_hns) / 10000 : 0;
-        d2d_ctx->PushAxisAlignedClip(dest_rect, D2D1_ANTIALIAS_MODE_ALIASED);
         cursor_renderer->Draw(d2d_ctx.Get(), frame_ms, dest_rect,
                               static_cast<double>(source_w),
                               static_cast<double>(source_h),
                               request.cursor_size);
+      }
+      if (zooming) {
+        d2d_ctx->SetTransform(D2D1::Matrix3x2F::Identity());
+      }
+      if (pushed_layer) {
+        d2d_ctx->PopLayer();
+      } else if (pushed_clip) {
         d2d_ctx->PopAxisAlignedClip();
       }
       const HRESULT end_hr = d2d_ctx->EndDraw();

@@ -233,6 +233,69 @@ TEST(ExportPassthroughCopyTest, GifForcesReencodeNotByteCopy) {
   fs::remove_all(project.parent_path(), rm_ec);
 }
 
+// Phase 8.2/8.3: a recording with a cursor sidecar + cursor/zoom enabled (the
+// defaults) must take the composition path even for auto/auto .mov (a byte-copy
+// can't draw the cursor or apply zoom). Verified GPU-independently: composition
+// on a non-decodable source yields kRenderFailed rather than a byte-copy
+// (kNone). Staging a cursor.jsonl beside the screen video is what flips it.
+void StageCursorSidecar(const fs::path& project) {
+  std::ofstream(project / "capture" / "cursor.jsonl")
+      << "{\"type\":\"header\",\"schemaVersion\":1,\"sampleRateHz\":60,"
+         "\"targetType\":\"display\",\"width\":1600,\"height\":900,"
+         "\"originX\":0,\"originY\":0}\n"
+         "{\"type\":\"sample\",\"tMs\":0,\"x\":10,\"y\":10,\"visible\":true}\n"
+         "{\"type\":\"click\",\"tMs\":50,\"screenX\":10,\"screenY\":10,"
+         "\"button\":\"left\",\"action\":\"down\"}\n";
+}
+
+TEST(ExportPassthroughCopyTest, CursorOrZoomSidecarForcesReencode) {
+  const auto project = StageProject("export-test-sidecar", "NOT_A_REAL_VIDEO");
+  StageCursorSidecar(project);
+  const auto dest_dir = project.parent_path() / "out";
+  fs::create_directories(dest_dir);
+
+  PassthroughInput input;
+  input.project_path = project.u8string();
+  input.directory_override = dest_dir.u8string();
+  input.format = "mov";  // auto/auto: only the sidecar (cursor/zoom) forces it
+  input.filename = "SidecarExport";
+  // show_cursor / zoom_effect_enabled default to true.
+
+  const auto out = ExportPassthroughCopy(input);
+  EXPECT_EQ(out.error, PassthroughError::kRenderFailed)
+      << "a cursor/zoom-bearing recording must re-encode, not byte-copy — "
+      << out.message;
+
+  std::error_code rm_ec;
+  fs::remove_all(project.parent_path(), rm_ec);
+}
+
+TEST(ExportPassthroughCopyTest, SidecarWithCursorAndZoomOffStaysByteCopy) {
+  const auto project = StageProject("export-test-sidecar-off", "MOCK_BYTES");
+  StageCursorSidecar(project);
+  const auto dest_dir = project.parent_path() / "out";
+  fs::create_directories(dest_dir);
+
+  PassthroughInput input;
+  input.project_path = project.u8string();
+  input.directory_override = dest_dir.u8string();
+  input.format = "mov";
+  input.filename = "NoEffects";
+  input.show_cursor = false;          // both effects off → sidecar unused →
+  input.zoom_effect_enabled = false;  // the byte-copy fast-path survives.
+
+  const auto out = ExportPassthroughCopy(input);
+  ASSERT_EQ(out.error, PassthroughError::kNone) << out.message;
+  EXPECT_TRUE(fs::exists(fs::u8path(out.output_path)));
+  std::ifstream ifs(fs::u8path(out.output_path));
+  const std::string content((std::istreambuf_iterator<char>(ifs)),
+                            std::istreambuf_iterator<char>());
+  EXPECT_EQ(content, "MOCK_BYTES") << "expected a byte-for-byte copy";
+
+  std::error_code rm_ec;
+  fs::remove_all(project.parent_path(), rm_ec);
+}
+
 TEST(ExportPassthroughCopyTest, Mp4ForcesReencodeNotByteCopy) {
   // An mp4 output can't be a byte-copy of the .mov source, so even auto/auto
   // must route through the re-encode path. With a non-decodable source that
