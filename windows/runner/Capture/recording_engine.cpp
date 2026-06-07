@@ -1,5 +1,8 @@
 #include "Capture/recording_engine.h"
 
+#include <windows.h>
+#include <dwmapi.h>
+
 #include <cstdio>
 #include <functional>
 #include <thread>
@@ -16,6 +19,7 @@
 #include "Bridge/platform_thread_dispatcher.h"
 #include "Bridge/workflow_event_publisher.h"
 #include "Capture/captured_video_frame.h"
+#include "Capture/Cursor/cursor_sampler.h"
 #include "Capture/recording_project_writer.h"
 #include "Capture/video_frame_queue.h"
 #include "Capture/wgc_display_capture_backend.h"
@@ -437,6 +441,97 @@ std::optional<RecordingError> RecordingEngine::Start(
 
   clock_.MarkStart();
 
+  // Phase 8.1: start the cursor sidecar sampler. We only flip the WGC cursor
+  // capture OFF after the sampler is confirmed running, so a sampler failure
+  // falls back to the Phase 7 burned-in cursor (D1). The sampler maps the cursor
+  // into capture-local px per target mode; window mode recomputes the origin each
+  // tick from the DWM extended frame bounds (the window may move).
+  current_cursor_sidecar_path_.clear();
+  current_cursor_enabled_ = false;
+  {
+    CursorSampler::Config cfg;
+    cfg.sidecar_path =
+        clingfy::encoding::ResolveTempCursorSidecarPath(request.session_id);
+    cfg.target_type = current_target_type_;
+    cfg.width = static_cast<std::int32_t>(encoder_config.width);
+    cfg.height = static_cast<std::int32_t>(encoder_config.height);
+    cfg.sample_rate_hz = 60;
+    cfg.heartbeat_ms = 1000;
+    cfg.enable_click_hook = true;
+
+    CursorSampler::OriginFn origin_fn;
+    if (is_window_mode) {
+      const HWND hwnd = *window_target;
+      RECT frame{};
+      if (::DwmGetWindowAttribute(hwnd, DWMWA_EXTENDED_FRAME_BOUNDS, &frame,
+                                  sizeof(frame)) == S_OK ||
+          ::GetWindowRect(hwnd, &frame) != 0) {
+        cfg.header_origin_x = frame.left;
+        cfg.header_origin_y = frame.top;
+      }
+      origin_fn = [hwnd](std::int32_t& x, std::int32_t& y) {
+        RECT r{};
+        if (::DwmGetWindowAttribute(hwnd, DWMWA_EXTENDED_FRAME_BOUNDS, &r,
+                                    sizeof(r)) == S_OK ||
+            ::GetWindowRect(hwnd, &r) != 0) {
+          x = r.left;
+          y = r.top;
+        }
+      };
+    } else {
+      std::int32_t mon_left = 0;
+      std::int32_t mon_top = 0;
+      if (monitor.has_value()) {
+        MONITORINFO mi{};
+        mi.cbSize = sizeof(mi);
+        if (::GetMonitorInfoW(*monitor, &mi) != 0) {
+          mon_left = mi.rcMonitor.left;
+          mon_top = mi.rcMonitor.top;
+        }
+      }
+      if (is_area_mode && area_crop.has_value()) {
+        cfg.header_origin_x =
+            mon_left + static_cast<std::int32_t>(area_crop->x);
+        cfg.header_origin_y =
+            mon_top + static_cast<std::int32_t>(area_crop->y);
+      } else {
+        cfg.header_origin_x = mon_left;
+        cfg.header_origin_y = mon_top;
+      }
+      const std::int32_t origin_x = cfg.header_origin_x;
+      const std::int32_t origin_y = cfg.header_origin_y;
+      origin_fn = [origin_x, origin_y](std::int32_t& x, std::int32_t& y) {
+        x = origin_x;
+        y = origin_y;
+      };
+    }
+
+    auto probe = []() -> CursorSampler::Probe {
+      CURSORINFO ci{};
+      ci.cbSize = sizeof(ci);
+      if (::GetCursorInfo(&ci) != 0) {
+        return CursorSampler::Probe{static_cast<std::int32_t>(ci.ptScreenPos.x),
+                                    static_cast<std::int32_t>(ci.ptScreenPos.y),
+                                    (ci.flags & CURSOR_SHOWING) != 0};
+      }
+      return CursorSampler::Probe{0, 0, false};
+    };
+
+    cursor_sampler_ = std::make_unique<CursorSampler>();
+    if (cursor_sampler_->Start(cfg, std::move(probe), std::move(origin_fn))) {
+      // Sidecar is live → strip the cursor from the captured video.
+      capture_backend_->SetCursorCaptureEnabled(false);
+      current_cursor_sidecar_path_ = cfg.sidecar_path;
+      current_cursor_enabled_ = true;
+    } else {
+      // Fallback: keep the Phase 7 burned-in cursor; no sidecar.
+      cursor_sampler_.reset();
+      clingfy::bridge::devices::LogDeviceProbe(
+          "RecordingEngine: cursor sidecar init failed; keeping cursor-on "
+          "fallback");
+    }
+  }
+
   if (!session_.MarkStarted()) {
     TeardownPipeline();
     session_.MarkFailed();
@@ -489,6 +584,9 @@ std::optional<RecordingError> RecordingEngine::Pause(
   clock_.Pause();
   if (capture_backend_) {
     capture_backend_->Pause();
+  }
+  if (cursor_sampler_) {
+    cursor_sampler_->Pause();
   }
   if (mic_capture_) {
     mic_capture_->Pause();
@@ -547,6 +645,9 @@ std::optional<RecordingError> RecordingEngine::Resume(
   }
   if (capture_backend_) {
     capture_backend_->Resume();
+  }
+  if (cursor_sampler_) {
+    cursor_sampler_->Resume();
   }
   clock_.Resume();
   if (!session_.MarkResumed()) {
@@ -673,6 +774,8 @@ ProjectWriterInput RecordingEngine::SnapshotProjectWriterInput(
   project_input.target_type = current_target_type_;
   project_input.window_id = current_window_id_;
   project_input.source_bounds = current_source_bounds_;
+  project_input.cursor_sidecar_path = current_cursor_sidecar_path_;
+  project_input.cursor_enabled = current_cursor_enabled_;
   if (capture_backend_) {
     const auto stats = capture_backend_->Stats();
     project_input.width = stats.frame_width;
@@ -797,6 +900,13 @@ void RecordingEngine::TeardownPipeline() {
   // drain / mixer consumer threads via queue Close, join them, then
   // finalize the encoder so the MP4 footer is written before the
   // device that backs its DXGI manager goes away.
+  // Phase 8.1: stop the cursor sampler first of all so the sidecar is flushed +
+  // closed before the project writer (which runs after this on both the normal
+  // Stop and target-loss finalize paths) bundles it.
+  if (cursor_sampler_) {
+    cursor_sampler_->Stop();
+    cursor_sampler_.reset();
+  }
   if (capture_backend_) {
     capture_backend_->Stop();
     capture_backend_.reset();
@@ -896,6 +1006,16 @@ void RecordingEngine::FireTargetLostForTesting() {
   }
 }
 
+bool RecordingEngine::cursor_enabled_for_testing() const {
+  std::lock_guard<std::mutex> lock(mutex_);
+  return current_cursor_enabled_;
+}
+
+std::string RecordingEngine::cursor_sidecar_path_for_testing() const {
+  std::lock_guard<std::mutex> lock(mutex_);
+  return current_cursor_sidecar_path_;
+}
+
 void RecordingEngine::ForceResetForTesting() {
   std::lock_guard<std::mutex> lock(mutex_);
   TeardownPipeline();
@@ -905,6 +1025,8 @@ void RecordingEngine::ForceResetForTesting() {
   current_target_type_ = "display";
   current_window_id_.reset();
   current_source_bounds_.reset();
+  current_cursor_sidecar_path_.clear();
+  current_cursor_enabled_ = false;
 }
 
 }  // namespace clingfy::capture

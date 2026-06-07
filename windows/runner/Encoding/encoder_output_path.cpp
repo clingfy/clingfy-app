@@ -23,33 +23,13 @@ std::string TrimTrailingSlash(std::string value) {
   return value;
 }
 
-}  // namespace
-
-std::string SanitizeSessionId(const std::string& session_id) {
-  std::string out;
-  out.reserve(session_id.size());
-  for (char ch : session_id) {
-    out.push_back(IsSafeChar(ch) ? ch : '_');
-  }
-  if (out.empty()) {
-    return "session";
-  }
-  return out;
-}
-
-std::string ResolveTempMp4Path(const std::string& session_id,
-                               const std::string& temp_dir_override) {
+// Resolve the temp directory (override → %TEMP% → %TMP% → fallback), trimmed.
+std::string ResolveTempDir(const std::string& temp_dir_override) {
   std::string temp_dir;
   if (!temp_dir_override.empty()) {
     temp_dir = temp_dir_override;
   } else {
 #ifdef _WIN32
-    // `%TEMP%` is the canonical Windows temp directory environment
-    // variable; fall back to `%TMP%` and finally `C:\Windows\Temp` so we
-    // never produce an empty path. `_dupenv_s` is the MSVC-safe variant
-    // of getenv (the bridge is built with /WX so the deprecated getenv
-    // warning would fail the build); we free the duplicated buffer
-    // before the function returns.
     auto read_env = [](const char* name) -> std::string {
       char* value = nullptr;
       size_t size = 0;
@@ -71,11 +51,15 @@ std::string ResolveTempMp4Path(const std::string& session_id,
     temp_dir = "/tmp";
 #endif
   }
+  return TrimTrailingSlash(std::move(temp_dir));
+}
 
-  temp_dir = TrimTrailingSlash(std::move(temp_dir));
-  const std::string sanitized = SanitizeSessionId(session_id);
+// Join `<temp>/clingfy_<sanitized><suffix>`.
+std::string JoinTempClingfyFile(const std::string& temp_dir,
+                                const std::string& sanitized,
+                                const char* suffix) {
   std::string out;
-  out.reserve(temp_dir.size() + 1 + 9 + sanitized.size() + 4);
+  out.reserve(temp_dir.size() + 1 + 8 + sanitized.size() + 16);
   out.append(temp_dir);
 #ifdef _WIN32
   out.push_back('\\');
@@ -84,8 +68,38 @@ std::string ResolveTempMp4Path(const std::string& session_id,
 #endif
   out.append("clingfy_");
   out.append(sanitized);
-  out.append(".mp4");
+  out.append(suffix);
   return out;
+}
+
+}  // namespace
+
+std::string SanitizeSessionId(const std::string& session_id) {
+  std::string out;
+  out.reserve(session_id.size());
+  for (char ch : session_id) {
+    out.push_back(IsSafeChar(ch) ? ch : '_');
+  }
+  if (out.empty()) {
+    return "session";
+  }
+  return out;
+}
+
+std::string ResolveTempMp4Path(const std::string& session_id,
+                               const std::string& temp_dir_override) {
+  // `%TEMP%` is the canonical Windows temp directory; the fallbacks (`%TMP%`,
+  // `C:\Windows\Temp`) and `_dupenv_s` (MSVC-safe getenv; the bridge is /WX) are
+  // in `ResolveTempDir`.
+  const std::string temp_dir = ResolveTempDir(temp_dir_override);
+  return JoinTempClingfyFile(temp_dir, SanitizeSessionId(session_id), ".mp4");
+}
+
+std::string ResolveTempCursorSidecarPath(const std::string& session_id,
+                                         const std::string& temp_dir_override) {
+  const std::string temp_dir = ResolveTempDir(temp_dir_override);
+  return JoinTempClingfyFile(temp_dir, SanitizeSessionId(session_id),
+                             ".cursor.jsonl");
 }
 
 }  // namespace clingfy::encoding
