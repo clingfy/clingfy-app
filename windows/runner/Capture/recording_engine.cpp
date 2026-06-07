@@ -14,10 +14,13 @@
 #include "Audio/wasapi_audio_capture.h"
 #include "Bridge/Devices/device_probe_log.h"
 #include "Bridge/Devices/display_enumerator.h"
+#include "Bridge/Devices/video_source_enumerator.h"
 #include "Bridge/Devices/window_enumerator.h"
 #include "Bridge/native_error_codes.h"
 #include "Bridge/platform_thread_dispatcher.h"
 #include "Bridge/workflow_event_publisher.h"
+#include "Capture/Camera/camera_meta.h"
+#include "Capture/Camera/camera_recorder.h"
 #include "Capture/captured_video_frame.h"
 #include "Capture/Cursor/cursor_sampler.h"
 #include "Capture/recording_project_writer.h"
@@ -28,6 +31,8 @@
 #include "Encoding/mf_encoder_config.h"
 #include "Encoding/mf_sink_writer_encoder.h"
 #include "Graphics/d3d_device.h"
+#include "Permissions/camera_readiness.h"
+#include "Permissions/permission_probe.h"
 
 namespace clingfy::capture {
 
@@ -532,6 +537,76 @@ std::optional<RecordingError> RecordingEngine::Start(
     }
   }
 
+  // Phase 9.2: start the camera recorder when the user wants a camera overlay
+  // AND a usable camera is selected + permitted. Everything is soft-fail — any
+  // problem (overlay disabled, no/unavailable device, permission denied, open
+  // failure) leaves the screen recording running camera-less. The camera is an
+  // independent producer (its own thread + sink writer), so it cannot affect the
+  // screen pipeline.
+  current_camera_raw_path_.clear();
+  current_camera_device_id_.clear();
+  current_camera_enabled_ = false;
+  current_camera_meta_json_.clear();
+  // Only probe permission + enumerate devices when the user actually wants a
+  // camera — a screen-only recording (the default) must not pay for camera
+  // enumeration or briefly open a camera device.
+  if (!request.disable_camera_overlay) {
+    const clingfy::permissions::CameraPermission cam_permission =
+        clingfy::permissions::ProbeCameraPermission();
+    const std::optional<std::string> selected =
+        WindowsSelectionState::Instance().VideoSourceId();
+    std::vector<std::string> available_ids;
+    for (const auto& rec : clingfy::bridge::devices::EnumerateVideoInputs()) {
+      available_ids.push_back(rec.id);
+    }
+    const clingfy::permissions::CameraReadinessResult readiness =
+        clingfy::permissions::ResolveCameraReadiness(cam_permission, selected,
+                                                     available_ids);
+    if (clingfy::permissions::ShouldAttemptCameraCapture(
+            request.disable_camera_overlay, readiness)) {
+      const std::string sid = request.session_id;
+      CameraRecorder::Config cam_cfg;
+      cam_cfg.device_symlink = *selected;
+      cam_cfg.temp_raw_path =
+          clingfy::encoding::ResolveTempCameraRawPath(request.session_id);
+      cam_cfg.target_fps = 30;
+      // Anchor the camera's first-frame offset to the engine timeline: the
+      // engine clock was marked above, so its elapsed-now is the screen-relative
+      // time at which the camera begins. The camera adds its own warm-up +
+      // first-frame latency on top.
+      cam_cfg.base_offset_hns = clock_.ElapsedHns();
+      // Device loss mid-record: post a non-fatal warning onto the platform
+      // thread (the proven-safe marshal — captures only the session id + the
+      // singleton publisher, never `this`, so it cannot outlive-dangle). The
+      // recorder finalizes the partial raw.mov itself; the screen keeps going.
+      cam_cfg.on_device_lost = [sid]() {
+        clingfy::bridge::PlatformThreadDispatcher::Instance().Post([sid]() {
+          clingfy::bridge::WorkflowEventPublisher::Instance()
+              .EmitRecordingWarning(
+                  sid,
+                  "Your camera was disconnected. Recording continues without "
+                  "it.");
+        });
+      };
+      camera_recorder_ = std::make_unique<CameraRecorder>();
+      if (camera_recorder_->Start(cam_cfg)) {
+        current_camera_raw_path_ = cam_cfg.temp_raw_path;
+        current_camera_device_id_ = *selected;
+        current_camera_enabled_ = true;  // intent; finalized in teardown.
+      } else {
+        camera_recorder_.reset();
+        clingfy::bridge::devices::LogDeviceProbe(
+            "RecordingEngine: camera init failed; continuing screen-only");
+      }
+    } else {
+      // The user wanted a camera but it is not ready — surface why in the log.
+      const std::string camera_reason =
+          std::string("RecordingEngine: camera overlay requested but ") +
+          clingfy::permissions::CameraReadinessReason(readiness.code);
+      clingfy::bridge::devices::LogDeviceProbe(camera_reason.c_str());
+    }
+  }
+
   if (!session_.MarkStarted()) {
     TeardownPipeline();
     session_.MarkFailed();
@@ -587,6 +662,9 @@ std::optional<RecordingError> RecordingEngine::Pause(
   }
   if (cursor_sampler_) {
     cursor_sampler_->Pause();
+  }
+  if (camera_recorder_) {
+    camera_recorder_->Pause();
   }
   if (mic_capture_) {
     mic_capture_->Pause();
@@ -648,6 +726,9 @@ std::optional<RecordingError> RecordingEngine::Resume(
   }
   if (cursor_sampler_) {
     cursor_sampler_->Resume();
+  }
+  if (camera_recorder_) {
+    camera_recorder_->Resume();
   }
   clock_.Resume();
   if (!session_.MarkResumed()) {
@@ -737,6 +818,10 @@ std::optional<RecordingError> RecordingEngine::Stop(
   }
 
   TeardownPipeline();
+  // Camera result is known only after TeardownPipeline stops the recorder, so
+  // fill the camera fields here (the rest of project_input was snapshotted
+  // pre-teardown when the screen pipeline was still live).
+  FillCameraWriterFields(project_input);
 
   if (!session_.MarkStopped()) {
     session_.MarkFailed();
@@ -798,6 +883,40 @@ ProjectWriterInput RecordingEngine::SnapshotProjectWriterInput(
   return project_input;
 }
 
+void RecordingEngine::StopCameraRecorder() {
+  if (!camera_recorder_) {
+    return;
+  }
+  const CameraRecorder::Result result = camera_recorder_->Stop();
+  camera_recorder_.reset();
+  // Final outcome: a camera is bundled only if it actually produced frames. A
+  // camera that started but delivered nothing (instant device loss) leaves no
+  // usable clip, so the manifest omits the camera block.
+  current_camera_enabled_ = result.frames_written > 0;
+  if (current_camera_enabled_) {
+    CameraMetaFields meta;
+    meta.recording_id = std::string(session_.session_id());
+    meta.device_id = result.device_id.empty() ? current_camera_device_id_
+                                              : result.device_id;
+    meta.width = result.width;
+    meta.height = result.height;
+    meta.fps = result.fps;
+    meta.start_offset_ms = result.start_offset_ms;
+    meta.frames_written = result.frames_written;
+    meta.mirrored_raw = false;
+    meta.device_lost = result.device_lost;
+    current_camera_meta_json_ = BuildCameraMetaJson(meta);
+  } else {
+    current_camera_meta_json_.clear();
+  }
+}
+
+void RecordingEngine::FillCameraWriterFields(ProjectWriterInput& input) const {
+  input.camera_enabled = current_camera_enabled_;
+  input.camera_raw_path = current_camera_raw_path_;
+  input.camera_meta_json = current_camera_meta_json_;
+}
+
 void RecordingEngine::HandleTargetLost(const std::string& session_id) {
   std::lock_guard<std::mutex> lock(mutex_);
 
@@ -840,6 +959,7 @@ void RecordingEngine::HandleTargetLost(const std::string& session_id) {
   }
 
   TeardownPipeline();
+  FillCameraWriterFields(project_input);
 
   if (!session_.MarkStopped()) {
     session_.MarkFailed();
@@ -907,6 +1027,10 @@ void RecordingEngine::TeardownPipeline() {
     cursor_sampler_->Stop();
     cursor_sampler_.reset();
   }
+  // Phase 9.2: stop the camera recorder + finalize its raw.mov before the
+  // project writer bundles it. Recomputes the final camera-enabled flag and
+  // builds the metadata from the recorder's result.
+  StopCameraRecorder();
   if (capture_backend_) {
     capture_backend_->Stop();
     capture_backend_.reset();
@@ -1016,6 +1140,11 @@ std::string RecordingEngine::cursor_sidecar_path_for_testing() const {
   return current_cursor_sidecar_path_;
 }
 
+bool RecordingEngine::camera_recording_for_testing() const {
+  std::lock_guard<std::mutex> lock(mutex_);
+  return camera_recorder_ != nullptr;
+}
+
 void RecordingEngine::ForceResetForTesting() {
   std::lock_guard<std::mutex> lock(mutex_);
   TeardownPipeline();
@@ -1027,6 +1156,10 @@ void RecordingEngine::ForceResetForTesting() {
   current_source_bounds_.reset();
   current_cursor_sidecar_path_.clear();
   current_cursor_enabled_ = false;
+  current_camera_raw_path_.clear();
+  current_camera_device_id_.clear();
+  current_camera_enabled_ = false;
+  current_camera_meta_json_.clear();
 }
 
 }  // namespace clingfy::capture

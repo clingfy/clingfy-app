@@ -102,4 +102,11 @@ std::string ResolveTempCursorSidecarPath(const std::string& session_id,
                              ".cursor.jsonl");
 }
 
+std::string ResolveTempCameraRawPath(const std::string& session_id,
+                                     const std::string& temp_dir_override) {
+  const std::string temp_dir = ResolveTempDir(temp_dir_override);
+  return JoinTempClingfyFile(temp_dir, SanitizeSessionId(session_id),
+                             ".camera.mp4");
+}
+
 }  // namespace clingfy::encoding

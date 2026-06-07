@@ -37,6 +37,14 @@ std::string ResolveTempMp4Path(const std::string& session_id,
 std::string ResolveTempCursorSidecarPath(const std::string& session_id,
                                          const std::string& temp_dir_override = "");
 
+// Phase 9.2: the camera records its raw H.264 video to
+// `%TEMP%\clingfy_<sanitized>.camera.mp4` during recording (a `.mp4` extension
+// the MF sink writer accepts), then the project writer bundles it into
+// `camera/raw.mov` (Dart does not parse the extension, mirroring screen.mov).
+// Same sanitization + `temp_dir_override` testability as `ResolveTempMp4Path`.
+std::string ResolveTempCameraRawPath(const std::string& session_id,
+                                     const std::string& temp_dir_override = "");
+
 }  // namespace clingfy::encoding
 
 #endif  // RUNNER_ENCODING_ENCODER_OUTPUT_PATH_H_
