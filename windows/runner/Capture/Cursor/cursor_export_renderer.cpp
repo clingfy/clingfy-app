@@ -17,7 +17,29 @@ constexpr D2D1_POINT_2F kArrowPoints[] = {
     {8.7f, 18.7f},  {6.1f, 13.0f}, {11.2f, 13.0f},
 };
 
+// Phase 8.4 click-ripple shape/timing. Windows-specific (macOS has no click-
+// ripple constant — its highlighter is a live-recording overlay). The ring
+// expands from min→max capture px over its lifetime and fades out; sizes scale
+// with the content like the cursor glyph.
+constexpr std::int64_t kClickRippleMs = 450;
+constexpr double kClickRippleMinPx = 6.0;
+constexpr double kClickRippleMaxPx = 30.0;
+constexpr double kClickRippleStrokePx = 2.5;
+constexpr float kClickRippleOpacity = 0.8f;
+
 }  // namespace
+
+double ClickRippleProgress(std::int64_t click_t_ms, std::int64_t frame_ms,
+                           std::int64_t ripple_ms) {
+  if (ripple_ms <= 0) {
+    return -1.0;
+  }
+  const std::int64_t age = frame_ms - click_t_ms;
+  if (age < 0 || age > ripple_ms) {
+    return -1.0;  // not animating at this frame.
+  }
+  return static_cast<double>(age) / static_cast<double>(ripple_ms);
+}
 
 std::unique_ptr<CursorExportRenderer> CursorExportRenderer::Create(
     const std::wstring& sidecar_path) {
@@ -71,9 +93,61 @@ bool CursorExportRenderer::Prepare(ID2D1Factory1* factory,
                                         stroke_brush_.GetAddressOf()))) {
     return false;
   }
+  // Click-ripple brush (white; per-ripple opacity is set at draw time). A
+  // failure here only disables the click animation, not the cursor.
+  ctx->CreateSolidColorBrush(D2D1::ColorF(1.0f, 1.0f, 1.0f, 1.0f),
+                             ripple_brush_.GetAddressOf());
   arrow_ = std::move(geometry);
   ready_ = true;
   return true;
+}
+
+void CursorExportRenderer::DrawClicks(ID2D1DeviceContext* ctx,
+                                      std::int64_t frame_ms,
+                                      const D2D1_RECT_F& content_rect,
+                                      double source_w, double source_h) {
+  if (!ready_ || ctx == nullptr || ripple_brush_ == nullptr ||
+      data_.clicks.empty()) {
+    return;
+  }
+  const double content_w =
+      static_cast<double>(content_rect.right - content_rect.left);
+  const double content_h =
+      static_cast<double>(content_rect.bottom - content_rect.top);
+  for (const auto& click : data_.clicks) {
+    const double progress =
+        ClickRippleProgress(click.t_ms, frame_ms, kClickRippleMs);
+    // progress < 0 → not animating; progress == 1 → fully faded (opacity 0), so
+    // skip the invisible terminal-frame draw.
+    if (progress < 0.0 || progress >= 1.0) {
+      continue;
+    }
+    // The ripple sits where the cursor was at the click instant.
+    const CursorAtResult at = SampleCursorAt(data_.samples, click.t_ms);
+    if (!at.has || !at.visible) {
+      continue;
+    }
+    // cursor_size = 1.0 → glyph_scale is the pure content scale, so the ring is
+    // sized in capture px (matching the cursor's coordinate space).
+    const CursorPlacement place = ResolveCursorPlacement(
+        at.x, at.y, content_rect.left, content_rect.top, content_w, content_h,
+        source_w, source_h, 1.0);
+    if (place.glyph_scale <= 0.0) {
+      continue;
+    }
+    const double radius =
+        (kClickRippleMinPx + (kClickRippleMaxPx - kClickRippleMinPx) * progress) *
+        place.glyph_scale;
+    ripple_brush_->SetOpacity(
+        static_cast<float>((1.0 - progress)) * kClickRippleOpacity);
+    const D2D1_ELLIPSE ellipse = D2D1::Ellipse(
+        D2D1::Point2F(static_cast<float>(place.canvas_x),
+                      static_cast<float>(place.canvas_y)),
+        static_cast<float>(radius), static_cast<float>(radius));
+    ctx->DrawEllipse(
+        ellipse, ripple_brush_.Get(),
+        static_cast<float>(kClickRippleStrokePx * place.glyph_scale));
+  }
 }
 
 void CursorExportRenderer::Draw(ID2D1DeviceContext* ctx, std::int64_t frame_ms,

@@ -36,6 +36,7 @@ add_executable(runner_tests
   "router_stub_shapes_test.cpp"
   "area_picker_geometry_test.cpp"
   "argv_project_path_test.cpp"
+  "cursor_export_renderer_test.cpp"
   "cursor_sample_mapper_test.cpp"
   "cursor_sampler_test.cpp"
   "cursor_sidecar_reader_test.cpp"
