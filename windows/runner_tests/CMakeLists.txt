@@ -34,6 +34,7 @@ add_executable(runner_tests
   "method_router_test.cpp"
   "bridge_contract_coverage_test.cpp"
   "router_stub_shapes_test.cpp"
+  "area_picker_geometry_test.cpp"
   "argv_project_path_test.cpp"
   "audio_format_test.cpp"
   "audio_mixer_test.cpp"

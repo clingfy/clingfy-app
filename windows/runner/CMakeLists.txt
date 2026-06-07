@@ -59,6 +59,8 @@ add_library(runner_bridge STATIC
   "Encoding/mf_encoder_config.cpp"
   "Encoding/mf_sink_writer_encoder.cpp"
   "Graphics/d3d_device.cpp"
+  "Overlay/area_picker_geometry.cpp"
+  "Overlay/area_picker_overlay.cpp"
   "Permissions/permission_probe.cpp"
   "Services/save_folder.cpp"
   "preview/frame_timing.cpp"

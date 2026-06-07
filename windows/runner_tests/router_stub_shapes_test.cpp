@@ -85,46 +85,27 @@ TEST(StubShapesTest, SetAppWindowTargetStoresAndClearsWindowId) {
   clingfy::capture::WindowsSelectionState::Instance().ResetForTesting();
 }
 
-// === Phase 7.2: area selection lifecycle ===================================
+// === Phase 7.2/7.3: area selection lifecycle ===============================
 //
-// pickAreaRecordingRegion (placeholder until the 7.3 overlay) returns a region
-// map and stores it; clearAreaRecordingSelection clears it.
-TEST(StubShapesTest, AreaSelectionPickStoresRegionAndClearClears) {
+// pickAreaRecordingRegion is intentionally NOT dispatched here: Phase 7.3 makes
+// it launch a modal native overlay with its own message loop, which would hang a
+// unit test (no user to drag/cancel). Its selection math is covered by
+// area_picker_geometry_test; the modal overlay itself is human-smoke-tested.
+// This pins clearAreaRecordingSelection: it clears the stored region and replies
+// null. The region is seeded directly (the picker can't run in a test).
+TEST(StubShapesTest, ClearAreaRecordingSelectionClearsStoredRegion) {
   clingfy::capture::WindowsSelectionState::Instance().ResetForTesting();
+  clingfy::capture::AreaRegion region;
+  region.x = 10;
+  region.y = 20;
+  region.width = 320;
+  region.height = 240;
+  clingfy::capture::WindowsSelectionState::Instance().SetAreaRegion(region);
+  ASSERT_TRUE(clingfy::capture::WindowsSelectionState::Instance()
+                  .CurrentAreaRegion()
+                  .has_value());
+
   MethodRouter router;
-
-  const auto picked = Dispatch(router, "pickAreaRecordingRegion");
-  EXPECT_TRUE(picked.success_called);
-  EXPECT_FALSE(picked.error_called);
-  // On a box with a display the picker returns a region map and stores it; on a
-  // headless host it returns null (cancel) with no region. Assert the two stay
-  // consistent rather than assuming a display exists.
-  const bool returned_map =
-      std::holds_alternative<flutter::EncodableMap>(picked.success_value);
-  const bool has_region =
-      clingfy::capture::WindowsSelectionState::Instance()
-          .CurrentAreaRegion()
-          .has_value();
-  EXPECT_EQ(returned_map, has_region);
-  if (returned_map) {
-    const auto& m = std::get<flutter::EncodableMap>(picked.success_value);
-    // The full macOS-shaped map. displayId MUST be present even on this
-    // no-display-selected path (the fixture reset leaves DisplayId() nullopt) —
-    // the Dart client force-unwraps result['displayId'] and would throw on a
-    // missing key.
-    EXPECT_NE(m.find(flutter::EncodableValue("displayId")), m.end())
-        << "displayId must be present on every region map";
-    EXPECT_NE(m.find(flutter::EncodableValue("x")), m.end());
-    EXPECT_NE(m.find(flutter::EncodableValue("y")), m.end());
-    EXPECT_NE(m.find(flutter::EncodableValue("width")), m.end());
-    EXPECT_NE(m.find(flutter::EncodableValue("height")), m.end());
-    const auto region =
-        clingfy::capture::WindowsSelectionState::Instance().CurrentAreaRegion();
-    ASSERT_TRUE(region.has_value());
-    EXPECT_GT(region->width, 0);
-    EXPECT_GT(region->height, 0);
-  }
-
   const auto cleared = Dispatch(router, "clearAreaRecordingSelection");
   EXPECT_TRUE(cleared.success_called);
   EXPECT_TRUE(cleared.success_value.IsNull());
