@@ -57,42 +57,101 @@ lifecycle, preview, and basic export.
 | 5     | Preview player + project reopen                               | done   |
 | 6     | Basic export + post-processing (resolution, background, etc.) | done   |
 | 7     | Window + area recording                                       | done   |
-| 8     | Cursor sidecar + smart zoom                                   | design locked (8.0); 8.1 next |
-| 9     | Camera overlay (basic, then advanced compositing/chroma)      |
+| 8     | Cursor sidecar + smart zoom                                   | done   |
+| 9     | Camera overlay (basic, then advanced compositing/chroma)      | next   |
 | 10    | Permissions UX + installer + updater + Windows beta polish    |
 
 Detailed scope per phase is tracked in the session task list and in
 [../CLAUDE.md](../CLAUDE.md).
 
-## Current status — Phase 8.0 (cursor sidecar + smart zoom) — DESIGN LOCKED
+## Current status — Phase 8 (cursor sidecar + smart zoom) — COMPLETE
 
-Phase 8 stops burning the OS cursor into the captured frame and switches to
-Clingfy's editable-cursor model: record a **cursor sidecar** (position + clicks +
-shape), render the cursor back at **export** time (so size/visibility/highlight are
-editable), and drive **smart zoom** from the cursor track. The architecture is
-locked in
-[decisions/windows-phase-8-cursor-zoom-architecture.md](decisions/windows-phase-8-cursor-zoom-architecture.md);
-no production capture/export code has been written yet.
+Phase 8 switches Windows to Clingfy's editable-cursor model: the OS cursor is no
+longer burned into the recording; instead a **cursor sidecar** is recorded and the
+cursor, **click animation**, and **smart zoom** are rendered at **export** time
+(so they stay editable). Architecture:
+[decisions/windows-phase-8-cursor-zoom-architecture.md](decisions/windows-phase-8-cursor-zoom-architecture.md).
+Every slice is a merged PR with native tests, smoked on a real Windows box.
 
-Decisions in brief: the cursor flip (`IsCursorCaptureEnabled(true)→false`) happens
-in 8.1 only once a reliable sidecar exists (cursor-on fallback otherwise); the
-sidecar is a streaming, crash-robust `capture/cursor.jsonl` (header + deduped sprite
-lines + per-sample lines, capture-local physical px) sampled at 60 Hz off the
-existing pause-aware `RecordingClock`; position comes from `GetCursorPos` on a
-sampler thread, clicks from a `WH_MOUSE_LL` hook on its own message-loop thread
-(Windows records clicks — macOS does not), and cursor shape from `GetCursorInfo`
-rasterized into a sprite table; export renders the cursor in the existing Direct2D
-composite honoring the Dart `showCursor`/`cursorSize` args; smart zoom **reuses the
-Dart zoom model + the already-ported `zoom_easing_constants.h`** — Windows fills the
-native gaps (`previewGetCursorSamples` from the sidecar, a C++ port of
-`ZoomTimelineBuilder`/`ZoomHysteresis` for `getZoomSegments`, manual-segment
-persistence, and a zoom transform in export via `ZoomFollowSmoother`). The biggest
-correctness risk is screen→capture-local coordinate mapping (window DWM-frame offset,
-area crop offset, per-monitor DPI), gated behind one tested pure helper.
+| Slice | Goal                                                              | PR    |
+| ----- | --------------------------------------------------------------- | ----- |
+| 8.0   | Design / inventory                                              | #140  |
+| 8.1   | Cursor sidecar recording (record `cursor.jsonl`, flip cursor off) | #141  |
+| 8.2   | Cursor rendering in export                                      | #142  |
+| 8.3   | Smart zoom export                                               | #143  |
+| 8.4   | Click animation + Phase 8 closeout                             | (this) |
 
-Slices: **8.1** cursor sidecar recording → **8.2** cursor rendering in export →
-**8.3** smart zoom export → **8.4** live cursor highlight / click animation / polish.
-Each has acceptance tests in the decision doc.
+### Architecture
+
+- **Recording (8.1):** a 60 Hz `CursorSampler` thread polls `GetCursorPos`,
+  maps each position into capture-local px (display monitor-origin / area
+  monitor+crop / window DWM extended-frame content-origin) via the pure
+  `cursor_sample_mapper`, and streams a crash-robust `capture/cursor.jsonl`
+  (header + per-sample lines, deduped). A `WH_MOUSE_LL` hook on its own
+  message-loop thread records clicks. Timestamps come from the sampler's own
+  pause-aware `RecordingClock`. `IsCursorCaptureEnabled(false)` is flipped on the
+  live WGC session only after the sampler is confirmed running — else the Phase 7
+  burned-in cursor stays (no cursorless video).
+- **Cursor render (8.2):** `cursor_export_renderer` parses the sidecar and draws a
+  standard vector arrow at the interpolated cursor position each frame in the
+  existing Direct2D composite, mapped into the content rect, honoring
+  `showCursor` / `cursorSize`.
+- **Smart zoom (8.3):** pure ports of `ZoomHysteresis` / `ZoomFollowSmoother` /
+  `ZoomTimelineBuilder` (reusing `preview/zoom_easing_constants.h`), driven by a
+  **click-based** "zoom wanted" signal (macOS uses cursor-shape changes; Windows
+  has no sprite data, so it zooms around clicks). `zoom_export_controller` builds
+  segments, assigns each a focus mode (12px heuristic → fixed-target at the click
+  point vs follow-cursor), and emits a per-frame smoothed `{zoom, center}` applied
+  as a Direct2D transform to **both the video and the cursor** (one transformed
+  space). Gated by `zoomEffectEnabled` / `zoomFactor`.
+- **Click animation (8.4):** `cursor_export_renderer::DrawClicks` draws an
+  expanding/fading ring at each click point (the cursor position at the click
+  time), under the same zoom transform so it stays aligned.
+- **Soft-fail everywhere:** a missing/malformed sidecar, no clicks, or no zoom
+  segments → that effect simply doesn't render; the export never fails because of
+  cursor/zoom. Cursor or zoom being active forces the composition path (a
+  byte-copy can't draw them).
+
+### Known deliberate edges / divergences from macOS (not bugs)
+
+- **Cursor shape is a standard arrow, not the real per-frame cursor bitmap.**
+  Sprite-accurate shapes (I-beam/hand) need record-time sprite capture, deferred
+  from 8.1/8.2 — a future enhancement to the sampler.
+- **Clicks are recorded and drive zoom + click animation; macOS records no
+  clicks** (it triggers zoom from cursor-shape changes). This is a deliberate
+  Windows substitute because sprite data isn't captured.
+- **Cursor/zoom/click are export-rendered only.** The live preview player does not
+  draw them yet.
+- **Auto-zoom only.** Manual zoom-segment editing is not wired — the
+  `getZoomSegments` / `saveManualZoomSegments` bridge methods remain stubs.
+- **No export-time cursor-highlight halo.** The `cursorHighlight` setting is a
+  live-recording feature ("active only when recording"); no export setting exposes
+  a halo, so none is rendered (8.4 ships the click animation instead).
+- **With cursor/zoom on (the defaults), an auto/auto export re-encodes** instead of
+  byte-copying — necessary to draw them.
+
+### Manual smoke checklist (cursor / zoom / click)
+
+On a real Windows box, record a clip (move the mouse, click a few things), then
+export and verify:
+
+**Recording**
+- [ ] The raw recording has NO cursor in the pixels; `capture/cursor.jsonl` exists
+      with header + sample + click lines; `screen.meta.json` has `cursorEnabled`.
+- [ ] Pause/resume: sidecar `tMs` excludes paused time; a target-loss partial still
+      has a valid `cursor.jsonl`.
+
+**Export**
+- [ ] The cursor appears in the export (arrow), tracking the recorded path;
+      `showCursor=false` hides it; `cursorSize` scales it.
+- [ ] Smart zoom zooms toward clicks, holds, and eases back out; follow vs fixed
+      behaves; the cursor stays glued inside the zoomed view.
+- [ ] Clicks produce a visible expanding ring at the click point, aligned under
+      zoom.
+- [ ] MP4, MOV, AND GIF all render cursor + zoom + clicks; progress + cancel work;
+      audio unaffected.
+- [ ] An older recording with no sidecar (or effects off) exports cleanly with no
+      cursor/zoom/clicks.
 
 ## Current status — Phase 7 (window + area recording) — COMPLETE
 

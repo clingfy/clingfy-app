@@ -743,6 +743,11 @@ RenderResult RenderComposedExport(const RenderRequest& request) {
                               static_cast<double>(source_w),
                               static_cast<double>(source_h),
                               request.cursor_size);
+        // Phase 8.4: click ripples, drawn under the same transform so they stay
+        // aligned with the cursor + smart zoom.
+        cursor_renderer->DrawClicks(d2d_ctx.Get(), frame_ms, dest_rect,
+                                    static_cast<double>(source_w),
+                                    static_cast<double>(source_h));
       }
       if (zooming) {
         d2d_ctx->SetTransform(D2D1::Matrix3x2F::Identity());

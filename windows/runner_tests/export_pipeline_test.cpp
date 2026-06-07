@@ -1053,6 +1053,73 @@ bool HasNearWhitePixel(const std::vector<std::uint32_t>& pixels) {
   return false;
 }
 
+int CountNearWhite(const std::vector<std::uint32_t>& pixels) {
+  int n = 0;
+  for (std::uint32_t p : pixels) {
+    const int r = static_cast<int>((p >> 16) & 0xFFu);
+    const int g = static_cast<int>((p >> 8) & 0xFFu);
+    const int b = static_cast<int>(p & 0xFFu);
+    if (r > 170 && g > 170 && b > 170) {
+      ++n;
+    }
+  }
+  return n;
+}
+
+// Sidecar with a constant visible cursor and an optional click at t=0 (so the
+// ripple is active on the first decoded frame).
+void WriteCursorSidecarMaybeClick(const fs::path& path, int x, int y, int w,
+                                  int h, bool with_click) {
+  std::ofstream o(path, std::ios::binary);
+  o << "{\"type\":\"header\",\"schemaVersion\":1,\"sampleRateHz\":60,"
+       "\"targetType\":\"display\",\"width\":"
+    << w << ",\"height\":" << h << ",\"originX\":0,\"originY\":0}\n";
+  for (int t = 0; t <= 400; t += 16) {
+    o << "{\"type\":\"sample\",\"tMs\":" << t << ",\"screenX\":" << x
+      << ",\"screenY\":" << y << ",\"x\":" << x << ",\"y\":" << y
+      << ",\"visible\":true}\n";
+  }
+  if (with_click) {
+    o << "{\"type\":\"click\",\"tMs\":0,\"screenX\":" << x << ",\"screenY\":" << y
+      << ",\"button\":\"left\",\"action\":\"down\"}\n";
+  }
+}
+
+// Render one frame-0 readback for a sidecar (cursor on), returning the near-white
+// pixel count, or -1 when the environment couldn't render/decode.
+int RenderAndCountWhite(clingfy::graphics::D3DDevice* device,
+                        const fs::path& dir, bool with_click) {
+  const auto source = (dir / "source.mov").u8string();
+  const auto dest = (dir / "out.mov").u8string();
+  std::string skip_reason;
+  if (!SynthesizeSource(device, source, /*with_audio=*/false, &skip_reason)) {
+    return -1;
+  }
+  WriteCursorSidecarMaybeClick(dir / "cursor.jsonl", 32, 24, kSourceWidth,
+                               kSourceHeight, with_click);
+  RenderRequest request;
+  request.source_video_path = fs::u8path(source).wstring();
+  request.destination_path = dest;
+  request.layout = "square11";
+  request.resolution = "auto";
+  request.fit = "fit";
+  request.fps_hint = kFps;
+  request.show_cursor = true;
+  request.cursor_size = 2.0;
+  request.cursor_sidecar_path = (dir / "cursor.jsonl").wstring();
+  const RenderResult result = RenderComposedExport(request);
+  if (!result.ok) {
+    return -1;
+  }
+  UINT w = 0;
+  UINT h = 0;
+  std::vector<std::uint32_t> pixels;
+  if (!ReadFirstFrameBgra(fs::u8path(dest).wstring(), &w, &h, &pixels)) {
+    return -1;
+  }
+  return CountNearWhite(pixels);
+}
+
 TEST(ExportPipelineTest, CursorRenderedWhenShowCursorOn) {
   clingfy::graphics::D3DDevice device;
   if (device.Create()) {
@@ -1365,6 +1432,84 @@ TEST(ExportPipelineTest, ZoomProgressReachesOne) {
   ASSERT_TRUE(result.ok) << result.message;
   ASSERT_FALSE(fractions.empty()) << "no progress emitted with zoom on";
   EXPECT_GE(fractions.back(), 0.999) << "zoom export progress did not reach 1.0";
+
+  std::error_code ec;
+  fs::remove_all(dir, ec);
+}
+
+// === Phase 8.4 click animation =============================================
+
+TEST(ExportPipelineTest, ClickAnimationAddsVisiblePixels) {
+  clingfy::graphics::D3DDevice device;
+  if (device.Create()) {
+    GTEST_SKIP() << "no usable D3D11 device in this environment";
+  }
+  const auto dir_click = UniqueDir("click_on");
+  const auto dir_none = UniqueDir("click_off");
+
+  const int with_click = RenderAndCountWhite(&device, dir_click, true);
+  const int no_click = RenderAndCountWhite(&device, dir_none, false);
+  if (with_click < 0 || no_click < 0) {
+    GTEST_SKIP() << "environment could not render/decode for the pixel readback";
+  }
+  // Same source + same cursor in both; the only difference is the click ripple,
+  // which adds a white ring → strictly more near-white pixels. (Frame 0 is the
+  // thinnest-ring worst case, but at 0.8 opacity over the blue source the ring
+  // pixels still read ~215 > the 170 threshold with margin.)
+  EXPECT_GT(with_click, no_click)
+      << "click ripple should add visible pixels (with=" << with_click
+      << " without=" << no_click << ")";
+
+  std::error_code ec;
+  fs::remove_all(dir_click, ec);
+  fs::remove_all(dir_none, ec);
+}
+
+TEST(ExportPipelineTest, NoClicksNoAnimationStillExports) {
+  clingfy::graphics::D3DDevice device;
+  if (device.Create()) {
+    GTEST_SKIP() << "no usable D3D11 device in this environment";
+  }
+  const auto dir = UniqueDir("click_none");
+  // A sidecar with samples but NO click lines → DrawClicks is a no-op; export
+  // still succeeds (soft-fail to no animation).
+  const int count = RenderAndCountWhite(&device, dir, /*with_click=*/false);
+  EXPECT_GE(count, 0) << "export with a clickless sidecar must still succeed";
+
+  std::error_code ec;
+  fs::remove_all(dir, ec);
+}
+
+TEST(ExportPipelineTest, ClickAnimationGifExports) {
+  clingfy::graphics::D3DDevice device;
+  if (device.Create()) {
+    GTEST_SKIP() << "no usable D3D11 device in this environment";
+  }
+  const auto dir = UniqueDir("click_gif");
+  const auto source = (dir / "source.mov").u8string();
+  const auto dest = (dir / "out.gif").u8string();
+  std::string skip_reason;
+  if (!SynthesizeSource(&device, source, /*with_audio=*/false, &skip_reason)) {
+    GTEST_SKIP() << skip_reason;
+  }
+  WriteCursorSidecarMaybeClick(dir / "cursor.jsonl", 32, 24, kSourceWidth,
+                               kSourceHeight, /*with_click=*/true);
+
+  RenderRequest request;
+  request.source_video_path = fs::u8path(source).wstring();
+  request.destination_path = dest;
+  request.layout = "square11";
+  request.resolution = "auto";
+  request.fit = "fit";
+  request.fps_hint = kFps;
+  request.show_cursor = true;
+  request.cursor_size = 2.0;
+  request.cursor_sidecar_path = (dir / "cursor.jsonl").wstring();
+
+  const RenderResult result = RenderComposedExport(request);
+  ASSERT_TRUE(result.ok) << result.message;
+  ASSERT_TRUE(fs::exists(fs::u8path(dest)));
+  EXPECT_TRUE(FileStartsWithGifMagic(dest)) << "click-animated GIF is not a GIF";
 
   std::error_code ec;
   fs::remove_all(dir, ec);

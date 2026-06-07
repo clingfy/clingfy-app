@@ -24,6 +24,13 @@
 // failure yields no cursor (never a failed export).
 namespace clingfy::capture {
 
+// Phase 8.4: progress (0..1) of a click ripple at `frame_ms`, or -1 when the
+// click is not animating (before it, or past `ripple_ms` after it). Pure +
+// testable. The ripple's location is the cursor position at the click time (you
+// click where the cursor is), so a click line only needs its timestamp.
+double ClickRippleProgress(std::int64_t click_t_ms, std::int64_t frame_ms,
+                           std::int64_t ripple_ms);
+
 class CursorExportRenderer {
  public:
   // Load + parse the sidecar. Returns nullptr when the file is missing or
@@ -42,6 +49,14 @@ class CursorExportRenderer {
             const D2D1_RECT_F& content_rect, double source_w, double source_h,
             double cursor_size);
 
+  // Phase 8.4: draw an expanding/fading ring at each recently-clicked point
+  // (the cursor position at the click time), under the caller's current
+  // transform (so it stays aligned with the cursor + smart zoom). No-op when
+  // there are no clicks. Call after Draw, inside the same clip/zoom transform.
+  void DrawClicks(ID2D1DeviceContext* ctx, std::int64_t frame_ms,
+                  const D2D1_RECT_F& content_rect, double source_w,
+                  double source_h);
+
   bool ready() const { return ready_; }
 
  private:
@@ -51,6 +66,7 @@ class CursorExportRenderer {
   Microsoft::WRL::ComPtr<ID2D1PathGeometry> arrow_;
   Microsoft::WRL::ComPtr<ID2D1SolidColorBrush> fill_brush_;
   Microsoft::WRL::ComPtr<ID2D1SolidColorBrush> stroke_brush_;
+  Microsoft::WRL::ComPtr<ID2D1SolidColorBrush> ripple_brush_;  // click animation
   bool ready_ = false;
 };
 
