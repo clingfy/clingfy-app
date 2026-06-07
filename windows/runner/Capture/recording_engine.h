@@ -90,6 +90,21 @@ class RecordingEngine {
   std::optional<RecordingError> Pause(const std::string& session_id);
   std::optional<RecordingError> Resume(const std::string& session_id);
 
+  // Phase 7.4: the active capture target was lost mid-recording — the captured
+  // window was closed or the captured monitor was unplugged (WGC raised
+  // GraphicsCaptureItem.Closed). Stops the pipeline and finalizes the partial
+  // recording exactly once: it re-checks the session under the lock and no-ops
+  // when `session_id` is not the live session (a user Stop already won the race,
+  // or a stale close from a previous target fired late). When the partial is
+  // usable it emits `recordingWarning` + `recordingFinalized` so the user keeps
+  // what they recorded with a friendly notice; when nothing usable was captured
+  // it emits `recordingFailed` (TARGET_ERROR). Normally invoked on the platform
+  // thread (the backend's Closed callback is marshaled via
+  // PlatformThreadDispatcher); safe even if that marshal runs inline on the WinRT
+  // thread, because the backend's target-loss teardown no longer revokes its own
+  // Closed handler, so there is no self-join.
+  void HandleTargetLost(const std::string& session_id);
+
   bool IsRecording() const;
   RecordingState state() const;
   std::string session_id() const;
@@ -121,6 +136,13 @@ class RecordingEngine {
   // capture pipelines must avoid this from production code).
   void ForceResetForTesting();
 
+  // Test seam (Phase 7.4): fire the active capture backend's target-lost
+  // callback exactly as a real GraphicsCaptureItem.Closed would, exercising the
+  // full Start -> SetTargetLostCallback -> PlatformThreadDispatcher::Post ->
+  // HandleTargetLost wiring (which the direct HandleTargetLost tests bypass).
+  // No-op when no backend is active.
+  void FireTargetLostForTesting();
+
  private:
   RecordingEngine();
   ~RecordingEngine();
@@ -129,6 +151,12 @@ class RecordingEngine {
   // touching state-machine state. Called from Stop / failure paths so the
   // caller does not have to hand-roll the teardown order.
   void TeardownPipeline();
+
+  // Snapshots the project-writer inputs (target metadata + capture / audio
+  // diagnostics) BEFORE TeardownPipeline clears them. Shared by Stop and
+  // HandleTargetLost so the two finalize paths cannot drift. Assumes the mutex
+  // is held; `session_id` is the active session id to stamp on the manifest.
+  ProjectWriterInput SnapshotProjectWriterInput(const std::string& session_id);
 
   mutable std::mutex mutex_;
   RecordingSessionState session_;

@@ -18,6 +18,8 @@
 #include <winrt/Windows.Graphics.DirectX.Direct3D11.h>
 
 #include <atomic>
+#include <functional>
+#include <memory>
 #include <mutex>
 #include <utility>
 
@@ -91,6 +93,8 @@ class WgcDisplayCaptureBackend::Impl {
   bool Paused() const;
   WgcCaptureStats Stats() const;
   bool Running() const;
+  void SetTargetLostCallback(std::function<void()> callback);
+  std::function<void()> GetTargetLostCallbackForTesting();
 
  private:
   // Shared tail of both Start paths: builds the WinRT device + frame pool from
@@ -132,6 +136,41 @@ class WgcDisplayCaptureBackend::Impl {
   wgc::GraphicsCaptureSession session_{nullptr};
   winrt::event_token frame_token_{};
 
+  // Phase 7.4: GraphicsCaptureItem.Closed handling. The Closed event raises a
+  // hard re-entrancy problem the FrameArrived path does not have: closing the
+  // target is what INITIATES teardown, so a naive "revoke the token in Stop"
+  // would block forever — revoking a WinRT event waits for the in-flight
+  // handler, and that handler is the one driving the teardown (directly when the
+  // marshal runs inline, e.g. an uninitialized dispatcher or a saturated message
+  // queue). It also can't safely capture a raw `this`: a Start that throws after
+  // registration could destroy the Impl while a Closed delivery is still in
+  // flight (use-after-free on the Impl mutex).
+  //
+  // So the handler captures a lifetime-independent shared guard instead of
+  // `this`, and we NEVER revoke the token. A Closed delivery locks the guard,
+  // bails if `alive` is false (Stop / failed-Start cleared it), else copies and
+  // invokes the callback OUTSIDE the guard lock. The guard outlives the Impl via
+  // the lambda's shared_ptr copy, so any late delivery is a safe no-op and there
+  // is nothing to self-join. `target_lost_cb_` is the value installed before
+  // Start; it is copied into the per-session guard in StartWithItem.
+  struct ClosedHandlerState {
+    std::mutex mutex;
+    bool alive = false;
+    std::function<void()> cb;
+  };
+  std::shared_ptr<ClosedHandlerState> closed_state_;
+  std::function<void()> target_lost_cb_;
+
+  // Phase 7.4: the fixed, even-clamped capture size resolved from the item at
+  // Start. The non-crop (display / window) copy path pins the staging texture to
+  // THIS size rather than the live surface size, so a window resized mid-
+  // recording can never change the encoder input dims (the frame pool is fixed-
+  // size — never Recreate()'d — so the surface stays this size anyway; pinning
+  // makes "keep the original capture size" robust against driver variance and
+  // never silently corrupts the output). Unused for area capture (crop_ wins).
+  std::uint32_t capture_w_ = 0;
+  std::uint32_t capture_h_ = 0;
+
   std::atomic<std::uint64_t> frames_received_{0};
   std::atomic<std::uint32_t> last_width_{0};
   std::atomic<std::uint32_t> last_height_{0};
@@ -144,6 +183,19 @@ void WgcDisplayCaptureBackend::Impl::ResetPartialState() {
   pool_ = nullptr;
   session_ = nullptr;
   crop_.reset();
+  // Disarm the Closed guard so a delivery in flight during a throwing Start (the
+  // exact moment the target vanishes) is a safe no-op and never touches this
+  // Impl after it is destroyed. The lambda still holds its own shared_ptr to the
+  // guard, so this is lifetime-safe without revoking the token (which would
+  // block on the very handler that may be in flight).
+  if (closed_state_) {
+    std::lock_guard<std::mutex> guard(closed_state_->mutex);
+    closed_state_->alive = false;
+    closed_state_->cb = nullptr;
+  }
+  closed_state_.reset();
+  capture_w_ = 0;
+  capture_h_ = 0;
 }
 
 std::optional<WgcCaptureError> WgcDisplayCaptureBackend::Impl::StartWithItem(
@@ -177,6 +229,17 @@ std::optional<WgcCaptureError> WgcDisplayCaptureBackend::Impl::StartWithItem(
   // owns the actual device-lifetime contract).
   d3d_device_ = device.device();
   d3d_context_ = device.context();
+  // Pin the fixed, even capture size from the item now (Phase 7.4). For
+  // display/window this is the surface size the non-crop copy path will use for
+  // every frame, so a later resize cannot change the encoder input dims. For
+  // area capture crop_ is already set and takes precedence, so this is unused.
+  const auto item_size = item_.Size();
+  capture_w_ = item_size.Width > 0
+                   ? EvenCaptureDimension(static_cast<std::uint32_t>(item_size.Width))
+                   : 0;
+  capture_h_ = item_size.Height > 0
+                   ? EvenCaptureDimension(static_cast<std::uint32_t>(item_size.Height))
+                   : 0;
   running_ = true;
 
   frame_token_ = pool_.FrameArrived(
@@ -184,6 +247,36 @@ std::optional<WgcCaptureError> WgcDisplayCaptureBackend::Impl::StartWithItem(
              winrt::Windows::Foundation::IInspectable const& args) {
         OnFrameArrived(sender, args);
       });
+
+  // Phase 7.4: target-loss. GraphicsCaptureItem.Closed fires when the captured
+  // window is closed or the captured monitor is unplugged. Register BEFORE
+  // StartCapture so an immediate close is not missed. The handler captures a
+  // lifetime-independent shared guard (NOT `this`) so a delivery that races
+  // teardown — or arrives after this Impl is destroyed — is always safe: it
+  // checks `alive` and copies the callback under the guard's own mutex, then
+  // invokes it OUTSIDE that lock (the callback marshals to the platform thread).
+  // We deliberately do not retain/revoke the token: revoking would block on the
+  // in-flight handler, and the handler is exactly what initiates teardown.
+  closed_state_ = std::make_shared<ClosedHandlerState>();
+  closed_state_->alive = true;
+  closed_state_->cb = target_lost_cb_;
+  {
+    auto state = closed_state_;  // shared_ptr copy keeps the guard alive.
+    item_.Closed([state](wgc::GraphicsCaptureItem const&,
+                         winrt::Windows::Foundation::IInspectable const&) {
+      std::function<void()> cb;
+      {
+        std::lock_guard<std::mutex> guard(state->mutex);
+        if (!state->alive) {
+          return;
+        }
+        cb = state->cb;
+      }
+      if (cb) {
+        cb();
+      }
+    });
+  }
 
   session_ = pool_.CreateCaptureSession(item_);
   // Phase 7 MVP: keep the OS cursor in the captured video. WGC's default is
@@ -350,10 +443,21 @@ WgcDisplayCaptureBackend::Impl::CopyIntoStagingTexture(
       return nullptr;  // crop does not fit this surface — drop the frame.
     }
   } else {
-    box_w = EvenCaptureDimension(src_desc.Width);
-    box_h = EvenCaptureDimension(src_desc.Height);
-    if (box_w == 0 || box_h == 0) {
-      return nullptr;  // degenerate (sub-2px) surface — drop the frame.
+    // Phase 7.4: pin to the fixed initial capture size so a window resized
+    // mid-recording keeps the encoder's input dims constant (H.264 needs fixed,
+    // even dims — a drift here corrupts the stream). Fall back to the live
+    // even-clamped surface size only if the initial probe came back empty.
+    box_w = capture_w_ != 0 ? capture_w_ : EvenCaptureDimension(src_desc.Width);
+    box_h = capture_h_ != 0 ? capture_h_ : EvenCaptureDimension(src_desc.Height);
+    if (box_w == 0 || box_h == 0 || box_x + box_w > src_desc.Width ||
+        box_y + box_h > src_desc.Height) {
+      // Defensive invariant. With the fixed-size pool (never Recreate()'d) the
+      // surface stays at the initial size, so the pinned box always fits and this
+      // guard does not normally trip — it only fires on a degenerate surface or
+      // if a future change (driver variance / pool Recreate) ever delivered a
+      // smaller surface. Dropping the frame is the safe outcome: never emit a
+      // size-mismatched frame to the encoder.
+      return nullptr;
     }
   }
 
@@ -488,6 +592,24 @@ void WgcDisplayCaptureBackend::Impl::OnFrameArrived(
   // returns to the pool for reuse.
 }
 
+void WgcDisplayCaptureBackend::Impl::SetTargetLostCallback(
+    std::function<void()> callback) {
+  std::lock_guard<std::mutex> lock(mutex_);
+  target_lost_cb_ = std::move(callback);
+}
+
+std::function<void()>
+WgcDisplayCaptureBackend::Impl::GetTargetLostCallbackForTesting() {
+  // Return the callback a real Closed delivery would invoke — the live guard's
+  // copy when a session is running, else the pending one. The caller invokes it.
+  std::lock_guard<std::mutex> lock(mutex_);
+  if (closed_state_) {
+    std::lock_guard<std::mutex> guard(closed_state_->mutex);
+    return closed_state_->alive ? closed_state_->cb : std::function<void()>{};
+  }
+  return target_lost_cb_;
+}
+
 void WgcDisplayCaptureBackend::Impl::Stop() {
   // Snapshot the WinRT objects under the lock, clear them inside the
   // lock so the FrameArrived handler sees `running_ == false`, then
@@ -495,6 +617,7 @@ void WgcDisplayCaptureBackend::Impl::Stop() {
   // that's already running and waiting on the same mutex.
   wgc::Direct3D11CaptureFramePool pool{nullptr};
   wgc::GraphicsCaptureSession session{nullptr};
+  std::shared_ptr<ClosedHandlerState> closed_state;
   winrt::event_token token{};
   {
     std::lock_guard<std::mutex> lock(mutex_);
@@ -510,6 +633,24 @@ void WgcDisplayCaptureBackend::Impl::Stop() {
     session_ = nullptr;
     item_ = nullptr;
     frame_token_ = winrt::event_token{};
+    // Disarm the Closed guard INSIDE the lock: once `alive` is false (under the
+    // guard's own mutex), any later Closed delivery is a no-op. We do NOT revoke
+    // the Closed token — revoking blocks on the in-flight handler, and when a
+    // target loss is what drove this Stop, that handler IS our caller (a self-
+    // join). The guard outlives us via the lambda's shared_ptr, so dropping our
+    // reference here is safe. Lock order is always Impl-mutex → guard-mutex (the
+    // handler only ever takes the guard mutex), so this nested lock cannot
+    // deadlock.
+    closed_state = closed_state_;
+    if (closed_state) {
+      std::lock_guard<std::mutex> guard(closed_state->mutex);
+      closed_state->alive = false;
+      closed_state->cb = nullptr;
+    }
+    closed_state_.reset();
+    target_lost_cb_ = nullptr;
+    capture_w_ = 0;
+    capture_h_ = 0;
     d3d_context_.Reset();
     d3d_device_.Reset();
   }
@@ -677,6 +818,18 @@ WgcCaptureStats WgcDisplayCaptureBackend::Stats() const {
 
 bool WgcDisplayCaptureBackend::running() const {
   return impl_ && impl_->Running();
+}
+
+void WgcDisplayCaptureBackend::SetTargetLostCallback(
+    std::function<void()> callback) {
+  if (impl_) {
+    impl_->SetTargetLostCallback(std::move(callback));
+  }
+}
+
+std::function<void()> WgcDisplayCaptureBackend::GetTargetLostCallbackForTesting() {
+  return impl_ ? impl_->GetTargetLostCallbackForTesting()
+               : std::function<void()>{};
 }
 
 }  // namespace clingfy::capture

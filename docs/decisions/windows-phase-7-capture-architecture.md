@@ -150,15 +150,42 @@ check (`ApiInformation` / `GraphicsCaptureSession2`); leave the border on older
 Win10. Document the min-OS. Acceptable to ship MVP with the border if the
 capability is absent.
 
-**D9 — Target-loss (7.4): add what macOS lacks.** Subscribe to
-`GraphicsCaptureItem.Closed` (window mode). On close/minimize-to-no-frames →
-**clean stop + finalize** the partial MP4 and emit a structured
-`recordingFailed` (dedicated "target lost" code) rather than a truncated file.
-Reuse `Stop()`'s snapshot-under-lock / close-outside-lock discipline
-(`wgc_display_capture_backend.cpp:303`) to avoid the `FrameArrived` deadlock.
-Window resize/DPI-change mid-recording: capture at the **initial** size, hold
-fixed encoder dims (H.264 needs even, fixed dimensions) — resize-follow is out of
-MVP scope. Monitor unplug for display/area → stop with a clear error.
+**D9 — Target-loss (7.4): add what macOS lacks. — IMPLEMENTED (7.4).** Subscribe
+to `GraphicsCaptureItem.Closed` for **every** kind (it also fires when a captured
+*monitor* is unplugged, so display + area + window are all covered by one
+signal). The backend forwards the close to the engine
+(`WgcDisplayCaptureBackend::SetTargetLostCallback`), marshaled onto the platform
+thread via `PlatformThreadDispatcher`; the engine's `RecordingEngine::HandleTargetLost`
+does a **clean stop + finalize**, re-validating the session under the mutex so it
+is **exactly-once** vs. a racing user `Stop` (whoever wins resets the state; the
+loser no-ops).
+
+The original plan said emit `recordingFailed` and discard. The **shipped
+behavior keeps the partial** (user decision, 2026-06-07): when at least one frame
+was captured and the project writer succeeds, emit `recordingWarning` (friendly
+"the window/display you were recording closed; your recording was saved") **then**
+`recordingFinalized` so the app opens the partial into preview/export. Only when
+nothing usable was captured (zero frames or a writer failure) does it fall back
+to `recordingFailed` (`TARGET_ERROR`). This is strictly better UX than macOS,
+which discards.
+
+The Closed token is revoked in `Stop` with the same snapshot-under-lock /
+revoke-outside-lock discipline as `FrameArrived` (revoking from the platform
+thread, never from inside the Closed handler, so no deadlock).
+
+**Window resize/DPI-change mid-recording: keep the initial size — IMPLEMENTED.**
+The free-threaded frame pool is fixed-size (never `Recreate()`'d), and the
+non-crop copy path now pins the staging texture to the even-clamped **initial**
+capture size (`capture_w_/capture_h_`), so the encoder input dims never drift.
+A window that grows is cropped to the original rect; one that shrinks below it
+drops frames (the last good frame holds) — never a corrupt/mismatched frame.
+Resize-follow remains out of MVP scope.
+
+> Deferred from this slice (not in the 7.4 spec, low risk, separable): the
+> best-effort yellow-border disable (D8) and a `WM_DISPLAYCHANGE`-driven
+> *selection*-clear for a non-captured monitor (macOS's `screenParamsChanged`).
+> The captured-target-loss case — what the spec asked for — is fully handled by
+> `GraphicsCaptureItem.Closed`.
 
 **D10 — Manifest: add `targetType` + `sourceBounds`, schemaVersion stays 2.**
 Write `targetType` (`"display"|"window"|"area"`) and `sourceBounds`
@@ -184,7 +211,8 @@ to `native_channel_names.h` + a contract-test entry.
 2. **`kAppWindow` == single-window capture** on Windows MVP (D3); macOS captures
    all of an app's windows.
 3. **Target-loss is handled** (D9); macOS just fails generically. Windows is
-   strictly better here.
+   strictly better here — it **keeps** the partial recording (warning +
+   `recordingFinalized`) instead of discarding it.
 4. **HWND is session-only** — do not persist a window selection across app
    restarts (a relaunched HWND is meaningless); drop/re-match `selectedAppWindowId`
    on launch.
