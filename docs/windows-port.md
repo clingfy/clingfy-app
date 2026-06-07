@@ -58,11 +58,88 @@ lifecycle, preview, and basic export.
 | 6     | Basic export + post-processing (resolution, background, etc.) | done   |
 | 7     | Window + area recording                                       | done   |
 | 8     | Cursor sidecar + smart zoom                                   | done   |
-| 9     | Camera overlay (basic, then advanced compositing/chroma)      | next   |
+| 9     | Camera overlay (basic, then advanced compositing/chroma)      | design locked (9.0); 9.1 next |
 | 10    | Permissions UX + installer + updater + Windows beta polish    |
 
 Detailed scope per phase is tracked in the session task list and in
 [../CLAUDE.md](../CLAUDE.md).
+
+## Current status — Phase 9.0 (camera overlay) — DESIGN LOCKED
+
+Phase 9 adds the camera overlay — the biggest remaining macOS-parity feature. It
+touches camera capture, a second media track + sync, a live preview overlay,
+project persistence, export composition, styling, chroma key, and animations.
+**9.0 is a docs-only design slice — no production camera code.** The locked
+architecture + slice plan lives in
+[decisions/windows-phase-9-camera-overlay-architecture.md](decisions/windows-phase-9-camera-overlay-architecture.md);
+this section is the short version.
+
+### What already exists (don't rebuild)
+
+- **Camera enumeration** — `getVideoSources` is a real Phase-2 `MFEnumDeviceSources`
+  enumerator returning `{id (symbolic link), name}`.
+- **Camera permission** — `getPermissionStatus.camera` / `requestCameraPermission`
+  / `ms-settings:privacy-webcam` all work via WinRT `AppCapabilityAccess`. Windows
+  privacy is a **global** "let desktop apps access your camera" toggle (no per-app
+  prompt).
+- **MF encoder + decode** — `MfSinkWriterEncoder` (H.264) and the export
+  `IMFSourceReader` decode path exist; the export D2D composite loop (screen +
+  cursor + zoom) is the hook for the camera bubble.
+- **Dart contract** — fully wired: `CameraCompositionState` (24 `camera*` keys),
+  `setVideoSource`, `getRecordingSceneInfo` (returns `cameraPath` + camera state +
+  a `CameraExportCapabilities` map), and `exportVideo` spreading the `camera*` args.
+
+The genuinely new build is **camera capture**, **export composition**, and the
+**live preview overlay**. The manifest `camera` block, `PreviewEngine.camera_path`,
+and `setVideoSource` / `setCameraOverlay*` are present as placeholders/stubs to
+fill in.
+
+### Locked decisions (D1–D9)
+
+- **D1** Capture via `IMFSourceReader` on the device (dedicated thread) → a second
+  `MfSinkWriterEncoder` (reuses the encoder; avoids the heavier `IMFCaptureEngine`).
+- **D2** One `camera/raw.mov`, **no** macOS-style segment files + merge — the
+  pause-aware `RecordingClock` stamps frames in recording-time, so pause/resume
+  needs no segments.
+- **D3** Sync via the **shared recording clock**, not wall-clock overlap — the
+  camera sample for screen-time `tMs` is just the camera sample at `tMs`.
+- **D4** Ship styling **incrementally via `CameraExportCapabilities`** — each slice
+  returns an honest capabilities map so the Dart UI only exposes what Windows
+  renders; unsupported `camera*` args are accepted but ignored until their slice.
+- **D5** Export = a second source reader + a **masked D2D draw** in the existing
+  loop; the camera is **not** under the smart-zoom transform unless
+  `zoomBehavior == scaleWithScreenZoom`; cursor/zoom soft-fail discipline reused.
+- **D6** Live preview bubble = a native **Win32 layered overlay** (area-picker
+  pattern); post-record preview-player camera compositing is deferred.
+- **D7** Capture **raw + unstyled**; all styling (mirror/shape/border/shadow/chroma)
+  is applied at **export** so it stays editable (matches the cursor/zoom model).
+- **D8** Make `setVideoSource` real → `WindowsSelectionState`; emit the manifest
+  `camera` block **conditionally** (only when a camera was actually recorded).
+- **D9** Camera device loss mid-record = clean stop of the **camera only** —
+  finalize `camera/raw.mov`, continue the screen recording (mirrors Phase 7.4).
+
+### Deliberate divergences from macOS
+
+Single `camera/raw.mov` + pause-aware timestamps (vs segments + merge);
+shared-clock sync (vs wall-clock overlap); incremental styling via capabilities (vs
+all-at-once); camera not under smart zoom unless `scaleWithScreenZoom`; no
+hexagon/star shapes in MVP (circle/rounded/square/squircle only).
+
+### Slice plan
+
+| Slice | Goal                                                          | PR     |
+| ----- | ------------------------------------------------------------- | ------ |
+| 9.0   | Design / inventory                                           | (this) |
+| 9.1   | Camera device selection + permission readiness              | next   |
+| 9.2   | Camera recording to a separate file (`camera/raw.mov`)       |        |
+| 9.3   | Live camera preview bubble during recording                  |        |
+| 9.4   | Export: simple circular/rounded camera bubble                |        |
+| 9.5   | Styling: mirror / opacity / border / shadow                  |        |
+| 9.6   | Chroma key + intro/outro/zoom-emphasis animations            |        |
+| 9.7   | Closeout / stress / smoke                                    |        |
+
+**MVP path:** 9.1 → 9.2 → 9.4 (screen + camera recorded → camera file in the
+project → export with a simple bubble). Preview (9.3) and styling (9.5/9.6) follow.
 
 ## Current status — Phase 8 (cursor sidecar + smart zoom) — COMPLETE
 
