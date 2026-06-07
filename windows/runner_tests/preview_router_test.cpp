@@ -272,7 +272,10 @@ TEST_F(PreviewRouterSceneInfoTest, HappyPathWithoutCamera) {
   // camera key intentionally NOT emitted; matches macOS gotcha #7.
   EXPECT_EQ(find("camera"), nullptr);
 
-  // cameraExportCapabilities map — all five capabilities true.
+  // cameraExportCapabilities map — Phase 9.1 advertises every styling
+  // capability as FALSE (Windows does not composite the camera at export until
+  // 9.4; the flags flip on per slice). The keys must still all be present so
+  // the Dart parser reads explicit falses rather than defaulting to true.
   ASSERT_NE(find("cameraExportCapabilities"), nullptr);
   ASSERT_TRUE(std::holds_alternative<flutter::EncodableMap>(
       *find("cameraExportCapabilities")));
@@ -283,7 +286,7 @@ TEST_F(PreviewRouterSceneInfoTest, HappyPathWithoutCamera) {
     auto it = caps.find(flutter::EncodableValue(name));
     ASSERT_NE(it, caps.end()) << name << " missing";
     ASSERT_TRUE(std::holds_alternative<bool>(it->second)) << name;
-    EXPECT_TRUE(std::get<bool>(it->second)) << name << " was false";
+    EXPECT_FALSE(std::get<bool>(it->second)) << name << " was true";
   }
 }
 

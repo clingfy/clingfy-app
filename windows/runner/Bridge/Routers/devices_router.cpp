@@ -109,11 +109,12 @@ void HandleNoopSetter(
   reply::Null(*result);
 }
 
-// ---- Phase 3B selection setters --------------------------------------------
+// ---- Phase 3B / 7 / 9 selection setters ------------------------------------
 //
-// These four setters now feed `WindowsSelectionState`, which the
-// `RecordingEngine` reads at Start time. Older setters that the engine
-// does not consume yet (camera, area) stay as the Phase-1 no-op pattern.
+// These setters feed `WindowsSelectionState`, which the `RecordingEngine`
+// reads at Start time (display / target mode / audio in 3B, window / area in
+// 7, camera in 9). Setters the engine still does not consume (audio gain /
+// mix, area reveal) stay as the Phase-1 no-op pattern.
 
 void HandleSetDisplay(
     const flutter::MethodCall<flutter::EncodableValue>& call,
@@ -148,6 +149,23 @@ void HandleSetAudioSource(
     id = ReadOptionalString(*args, "id");
   }
   clingfy::capture::WindowsSelectionState::Instance().SetMicrophoneId(id);
+  reply::Null(*result);
+}
+
+// Phase 9.1: record the selected camera device. Dart sends `{id: <symbolic
+// link>}` (the Media Foundation id from getVideoSources) or null / "" to clear.
+// The empty-string → nullopt mapping in ReadOptionalString means deselecting in
+// the UI clears the native selection. The id is resolved + revalidated against
+// the live device list at Start time (Phase 9.2), so storing a stale id here is
+// harmless — mirroring how the window / display ids are handled.
+void HandleSetVideoSource(
+    const flutter::MethodCall<flutter::EncodableValue>& call,
+    std::unique_ptr<flutter::MethodResult<flutter::EncodableValue>> result) {
+  std::optional<std::string> id;
+  if (const auto* args = AsMap(call.arguments())) {
+    id = ReadOptionalString(*args, "id");
+  }
+  clingfy::capture::WindowsSelectionState::Instance().SetVideoSourceId(id);
   reply::Null(*result);
 }
 
@@ -238,8 +256,9 @@ void RegisterHandlers(HandlerTable& table) {
 
   // Phase 7.1: window target is now consumed by the engine (window recording).
   table["setAppWindowTarget"] = &HandleSetAppWindowTarget;
-  // Not yet consumed by the engine. Kept as no-op until later phases.
-  table["setVideoSource"] = &HandleNoopSetter;
+  // Phase 9.1: camera selection is now stored in WindowsSelectionState. The
+  // engine starts consuming it in Phase 9.2 (camera capture).
+  table["setVideoSource"] = &HandleSetVideoSource;
 
   // Audio gain / mix — accepted, no audible effect until Phase 3D.
   table["updateAudioPreview"] = &HandleNoopSetter;
