@@ -1,6 +1,7 @@
 #include "Capture/recording_engine.h"
 
 #include <cstdio>
+#include <functional>
 #include <thread>
 #include <utility>
 
@@ -12,6 +13,7 @@
 #include "Bridge/Devices/display_enumerator.h"
 #include "Bridge/Devices/window_enumerator.h"
 #include "Bridge/native_error_codes.h"
+#include "Bridge/platform_thread_dispatcher.h"
 #include "Bridge/workflow_event_publisher.h"
 #include "Capture/captured_video_frame.h"
 #include "Capture/recording_project_writer.h"
@@ -261,6 +263,27 @@ std::optional<RecordingError> RecordingEngine::Start(
 
   frame_queue_ = std::make_unique<VideoFrameQueue>(/*capacity=*/60);
   capture_backend_ = std::make_unique<WgcDisplayCaptureBackend>();
+  // Phase 7.4: target-loss. WGC raises GraphicsCaptureItem.Closed when the
+  // captured window closes or the captured monitor is unplugged. It fires on a
+  // WinRT thread, so we marshal onto the platform thread (where Start / Stop run)
+  // before the stop+finalize — `HandleTargetLost` re-validates the session under
+  // the engine mutex, so a stale or duplicate post is a no-op.
+  //
+  // `PlatformThreadDispatcher::Post` may run the task INLINE on the calling
+  // (WinRT) thread — when the dispatcher is uninitialized OR when PostMessage
+  // fails on a saturated queue. That is tolerated here: the backend's Closed
+  // handler does NOT revoke its own token (the guard-disarm in
+  // WgcDisplayCaptureBackend::Stop replaces the revoke), so running HandleTargetLost
+  // inline inside the Closed handler can no longer self-join. The engine mutex it
+  // takes may briefly contend with a racing user Stop, but never deadlocks.
+  {
+    const std::string sid = request.session_id;
+    capture_backend_->SetTargetLostCallback([sid]() {
+      clingfy::bridge::PlatformThreadDispatcher::Instance().Post([sid]() {
+        RecordingEngine::Instance().HandleTargetLost(sid);
+      });
+    });
+  }
   std::optional<WgcCaptureError> wgc_err;
   if (is_window_mode) {
     wgc_err = capture_backend_->StartForWindow(*window_target, *d3d_device_,
@@ -569,31 +592,8 @@ std::optional<RecordingError> RecordingEngine::Stop(
   // post-teardown, and `recordingFinalized` carries the original
   // session id.
   const std::string active_session_id(session_.session_id());
-  ProjectWriterInput project_input;
-  project_input.session_id = active_session_id;
-  project_input.source_mp4_path = current_output_path_;
-  project_input.target_type = current_target_type_;
-  project_input.window_id = current_window_id_;
-  project_input.source_bounds = current_source_bounds_;
-  if (capture_backend_) {
-    const auto stats = capture_backend_->Stats();
-    project_input.width = stats.frame_width;
-    project_input.height = stats.frame_height;
-    project_input.frames_received = stats.frames_received;
-  }
-  if (frame_queue_) {
-    project_input.frames_dropped = frame_queue_->dropped_frame_count();
-  }
-  if (encoder_) {
-    project_input.audio_samples_written =
-        encoder_->audio_samples_written_count();
-  }
-  if (mic_capture_) {
-    project_input.mic_active = mic_capture_->running();
-  }
-  if (loopback_capture_) {
-    project_input.loopback_active = loopback_capture_->running();
-  }
+  ProjectWriterInput project_input =
+      SnapshotProjectWriterInput(active_session_id);
 
   // We populate `fps` from the encoder's config so the meta.json
   // reflects the *configured* rate, not whatever the capture happened
@@ -663,6 +663,133 @@ std::optional<RecordingError> RecordingEngine::Stop(
         clingfy::bridge::error::kRecordingError, writer_result.message);
   }
   return std::nullopt;
+}
+
+ProjectWriterInput RecordingEngine::SnapshotProjectWriterInput(
+    const std::string& session_id) {
+  ProjectWriterInput project_input;
+  project_input.session_id = session_id;
+  project_input.source_mp4_path = current_output_path_;
+  project_input.target_type = current_target_type_;
+  project_input.window_id = current_window_id_;
+  project_input.source_bounds = current_source_bounds_;
+  if (capture_backend_) {
+    const auto stats = capture_backend_->Stats();
+    project_input.width = stats.frame_width;
+    project_input.height = stats.frame_height;
+    project_input.frames_received = stats.frames_received;
+  }
+  if (frame_queue_) {
+    project_input.frames_dropped = frame_queue_->dropped_frame_count();
+  }
+  if (encoder_) {
+    project_input.audio_samples_written =
+        encoder_->audio_samples_written_count();
+  }
+  if (mic_capture_) {
+    project_input.mic_active = mic_capture_->running();
+  }
+  if (loopback_capture_) {
+    project_input.loopback_active = loopback_capture_->running();
+  }
+  return project_input;
+}
+
+void RecordingEngine::HandleTargetLost(const std::string& session_id) {
+  std::lock_guard<std::mutex> lock(mutex_);
+
+  // Exactly-once. Only a live, mid-flight session can be finalized by a target
+  // loss. If the user's Stop (or a prior loss) already finalized, the session is
+  // back to Idle and there is nothing — and nobody — to finalize. This is the
+  // race guard that prevents a double finalize / double event with Stop().
+  if (!session_.IsActive()) {
+    return;
+  }
+  // A close from a previous target can fire late (the backend revokes on Stop,
+  // but a delivery already in flight slips through). Ignore it unless it names
+  // the session that is actually recording right now.
+  if (!session_id.empty() && !session_.session_id().empty() &&
+      session_id != session_.session_id()) {
+    return;
+  }
+
+  const std::string active_session_id(session_.session_id());
+  // Snapshot the target kind for the user-facing message BEFORE teardown (the
+  // type fields survive teardown, but read it here for clarity).
+  const bool was_window = current_target_type_ == "window";
+  ProjectWriterInput project_input =
+      SnapshotProjectWriterInput(active_session_id);
+
+  if (!session_.BeginStop()) {
+    // Mid-start / mid-stop — cannot cleanly finalize from here. Surface a
+    // failure rather than leaving the UI stuck on a recording that is gone.
+    session_.MarkFailed();
+    session_.Reset();
+    TeardownPipeline();
+    clingfy::bridge::WorkflowEventPublisher::Instance().EmitRecordingFailed(
+        active_session_id, "finalize", clingfy::bridge::error::kTargetError,
+        was_window
+            ? "The window you were recording closed before the recording could "
+              "be finalized."
+            : "The display you were recording was disconnected before the "
+              "recording could be finalized.");
+    return;
+  }
+
+  TeardownPipeline();
+
+  if (!session_.MarkStopped()) {
+    session_.MarkFailed();
+    session_.Reset();
+    clingfy::bridge::WorkflowEventPublisher::Instance().EmitRecordingFailed(
+        active_session_id, "finalize",
+        clingfy::bridge::error::kInvalidRecordingState,
+        "Engine refused to enter Stopped state after target loss.");
+    return;
+  }
+  session_.Reset();
+
+  // Finalize the partial recording. The user chose "keep what I recorded": if a
+  // playable project comes out (at least one frame AND the writer succeeded),
+  // emit a friendly warning then `recordingFinalized` so the app opens the
+  // partial into preview/export. If nothing usable was captured (the target
+  // vanished instantly, or the writer failed), there is no recording to keep —
+  // emit `recordingFailed` so the UI returns to idle with a clear reason.
+  const std::string warn_msg =
+      was_window
+          ? "Recording stopped: the window you were recording was closed. Your "
+            "recording up to that point has been saved."
+          : "Recording stopped: the display you were recording was "
+            "disconnected. Your recording up to that point has been saved.";
+  const std::string fail_msg =
+      was_window
+          ? "The window you were recording closed before anything could be "
+            "captured."
+          : "The display you were recording was disconnected before anything "
+            "could be captured.";
+
+  auto writer_result = WriteRecordingProject(project_input);
+  const bool writer_ok = writer_result.kind == ProjectWriterErrorKind::kNone;
+  const bool kept = writer_ok && project_input.frames_received > 0;
+  if (kept) {
+    clingfy::bridge::WorkflowEventPublisher::Instance().EmitRecordingWarning(
+        active_session_id, warn_msg);
+    clingfy::bridge::WorkflowEventPublisher::Instance().EmitRecordingFinalized(
+        active_session_id, writer_result.project_path);
+  } else if (writer_ok) {
+    // The writer succeeded but nothing was captured (the target vanished before
+    // a frame arrived) — the cause genuinely is the lost target.
+    clingfy::bridge::WorkflowEventPublisher::Instance().EmitRecordingFailed(
+        active_session_id, "finalize", clingfy::bridge::error::kTargetError,
+        fail_msg);
+  } else {
+    // The writer itself failed (disk / filesystem). Report it the same way Stop
+    // does — a write failure is a RECORDING_ERROR, not a target error — so the
+    // two finalize paths stay consistent.
+    clingfy::bridge::WorkflowEventPublisher::Instance().EmitRecordingFailed(
+        active_session_id, "finalize", clingfy::bridge::error::kRecordingError,
+        writer_result.message);
+  }
 }
 
 void RecordingEngine::TeardownPipeline() {
@@ -747,6 +874,26 @@ RecordingEngine::CaptureDiagnostics RecordingEngine::Diagnostics() const {
     out.loopback_packets = loopback_capture_->packets_emitted();
   }
   return out;
+}
+
+void RecordingEngine::FireTargetLostForTesting() {
+  // Copy the installed callback out of the backend, then invoke it OUTSIDE the
+  // engine lock AND outside any backend method. In tests the dispatcher is
+  // uninitialized, so the callback runs HandleTargetLost inline — which re-takes
+  // the engine mutex (so we must not hold it) and tears down the backend (so no
+  // backend method may be on the stack). The copied std::function is
+  // self-contained and stays valid after the backend is destroyed, exactly like
+  // the real Closed lambda's captured copy.
+  std::function<void()> cb;
+  {
+    std::lock_guard<std::mutex> lock(mutex_);
+    if (capture_backend_) {
+      cb = capture_backend_->GetTargetLostCallbackForTesting();
+    }
+  }
+  if (cb) {
+    cb();
+  }
 }
 
 void RecordingEngine::ForceResetForTesting() {

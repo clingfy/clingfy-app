@@ -4,6 +4,7 @@
 #include <windows.h>
 
 #include <cstdint>
+#include <functional>
 #include <memory>
 #include <optional>
 #include <string>
@@ -85,6 +86,24 @@ class WgcDisplayCaptureBackend {
 
   WgcDisplayCaptureBackend(const WgcDisplayCaptureBackend&) = delete;
   WgcDisplayCaptureBackend& operator=(const WgcDisplayCaptureBackend&) = delete;
+
+  // Phase 7.4: install a "the capture target was lost" callback BEFORE any
+  // Start*. WGC raises `GraphicsCaptureItem.Closed` when the captured window is
+  // closed OR the captured monitor is unplugged; this backend forwards that
+  // single signal to `callback`. The callback fires at most once per session,
+  // on a WinRT thread-pool thread — it MUST NOT call back into this backend
+  // synchronously (the engine marshals to the platform thread and then runs the
+  // stop+finalize). Passing an empty std::function disables the notification.
+  void SetTargetLostCallback(std::function<void()> callback);
+
+  // Test seam: return a COPY of the target-lost callback that a real
+  // GraphicsCaptureItem.Closed delivery would invoke (the live session guard's
+  // copy when running, else the pending one). The caller invokes it itself,
+  // OUTSIDE any backend method, so the teardown it triggers does not destroy
+  // this backend while a method of it is still on the stack — mirroring how the
+  // real Closed lambda (which captures a shared guard, not `this`) stays valid.
+  // Returns an empty std::function when none is installed.
+  std::function<void()> GetTargetLostCallbackForTesting();
 
   // Spins up a capture session for `monitor`, using `device` for surface
   // allocation. Captured frames are pushed into `queue` (the engine owns

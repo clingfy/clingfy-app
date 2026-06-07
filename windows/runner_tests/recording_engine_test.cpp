@@ -2,11 +2,20 @@
 
 #include <gtest/gtest.h>
 
+#include <flutter/event_sink.h>
+
+#include <chrono>
+#include <cstdint>
+#include <memory>
 #include <string>
+#include <thread>
+#include <vector>
 
 #include "Bridge/native_error_codes.h"
+#include "Bridge/workflow_event_publisher.h"
 #include "Capture/wgc_display_capture_backend.h"
 #include "Capture/windows_selection_state.h"
+#include "test_support.h"
 
 namespace clingfy::capture {
 namespace {
@@ -24,8 +33,54 @@ class RecordingEngineTest : public ::testing::Test {
   void TearDown() override {
     RecordingEngine::Instance().ForceResetForTesting();
     WindowsSelectionState::Instance().ResetForTesting();
+    // Drop any workflow-event sink a target-loss test installed so it cannot
+    // leak into the next case (an ASSERT early-return skips a test's own
+    // ClearSink). Idempotent when no sink is set.
+    clingfy::bridge::WorkflowEventPublisher::Instance().ClearSink();
   }
 };
+
+// Captures workflow events emitted during a finalize so target-loss tests can
+// assert the exact recordingWarning / recordingFinalized / recordingFailed
+// shapes. Mirrors the sink in workflow_event_publisher_test.cpp; the captured
+// list lives in a shared_ptr so it outlives the sink the publisher owns.
+class EngineEventSink : public flutter::EventSink<flutter::EncodableValue> {
+ public:
+  using EventList = std::vector<flutter::EncodableValue>;
+  explicit EngineEventSink(std::shared_ptr<EventList> events)
+      : events_(std::move(events)) {}
+
+ protected:
+  void SuccessInternal(const flutter::EncodableValue* event) override {
+    events_->push_back(event != nullptr ? *event : flutter::EncodableValue());
+  }
+  void ErrorInternal(const std::string&, const std::string&,
+                     const flutter::EncodableValue*) override {}
+  void EndOfStreamInternal() override {}
+
+ private:
+  std::shared_ptr<EventList> events_;
+};
+
+std::shared_ptr<EngineEventSink::EventList> InstallEngineSink() {
+  auto events = std::make_shared<EngineEventSink::EventList>();
+  clingfy::bridge::WorkflowEventPublisher::Instance().SetSink(
+      std::make_unique<EngineEventSink>(events));
+  return events;
+}
+
+bool HasEventType(const std::shared_ptr<EngineEventSink::EventList>& events,
+                  const std::string& type) {
+  for (const auto& value : *events) {
+    const auto* map = std::get_if<flutter::EncodableMap>(&value);
+    if (map == nullptr) continue;
+    const auto it = map->find(flutter::EncodableValue(std::string("type")));
+    if (it == map->end()) continue;
+    const auto* s = std::get_if<std::string>(&it->second);
+    if (s != nullptr && *s == type) return true;
+  }
+  return false;
+}
 
 StartRecordingRequest ValidRequest() {
   StartRecordingRequest request;
@@ -304,6 +359,150 @@ TEST_F(RecordingEngineTest, StopFromPausedFinalizesCleanly) {
   EXPECT_FALSE(RecordingEngine::Instance().Stop("sess-test").has_value());
   EXPECT_EQ(RecordingEngine::Instance().state(),
             RecordingState::kIdle);
+}
+
+// === Phase 7.4 target-loss (window closed / monitor unplugged mid-record) ===
+//
+// The backend raises GraphicsCaptureItem.Closed on target loss; the engine
+// finalizes the partial recording exactly once. Firing a real OS window-close
+// is not deterministic in a unit test, so these drive the real WGC + encoder
+// pipeline (like StartTransitionsToRecording) and then invoke the engine's
+// target-loss entry point directly — the finalize / exactly-once race logic is
+// the part that matters and is fully exercised here.
+
+TEST_F(RecordingEngineTest, TargetLostReturnsToIdle) {
+  ASSERT_FALSE(RecordingEngine::Instance().Start(ValidRequest()).has_value());
+  ASSERT_TRUE(RecordingEngine::Instance().IsRecording());
+  RecordingEngine::Instance().HandleTargetLost("sess-test");
+  EXPECT_EQ(RecordingEngine::Instance().state(), RecordingState::kIdle);
+  EXPECT_FALSE(RecordingEngine::Instance().IsRecording());
+}
+
+TEST_F(RecordingEngineTest, TargetLostKeepsPartialWhenFramesCaptured) {
+  ASSERT_FALSE(RecordingEngine::Instance().Start(ValidRequest()).has_value());
+  // Wait for the real display capture to deliver at least one frame so the
+  // partial is "keepable" — the user-chosen behavior is to keep what was
+  // recorded with a friendly notice rather than discard it.
+  std::uint64_t frames = 0;
+  for (int i = 0; i < 300 && frames == 0; ++i) {
+    frames = RecordingEngine::Instance().Diagnostics().frames_received;
+    if (frames == 0) {
+      std::this_thread::sleep_for(std::chrono::milliseconds(10));
+    }
+  }
+  ASSERT_GT(frames, 0u)
+      << "display capture delivered no frames within 3s; cannot exercise the "
+         "keep-the-partial path";
+
+  auto events = InstallEngineSink();
+  RecordingEngine::Instance().HandleTargetLost("sess-test");
+  clingfy::bridge::test_support::PumpMessages();
+
+  EXPECT_TRUE(HasEventType(events, "recordingWarning"))
+      << "the user is told why recording stopped";
+  EXPECT_TRUE(HasEventType(events, "recordingFinalized"))
+      << "the partial opens into preview/export";
+  EXPECT_FALSE(HasEventType(events, "recordingFailed"));
+  EXPECT_EQ(RecordingEngine::Instance().state(), RecordingState::kIdle);
+}
+
+TEST_F(RecordingEngineTest, TargetLostReportsEvenCaptureDimensions) {
+  // The non-crop copy path pins the staging texture to the even-clamped initial
+  // size, so the dims surfaced to the project manifest are always even (H.264).
+  ASSERT_FALSE(RecordingEngine::Instance().Start(ValidRequest()).has_value());
+  std::uint64_t frames = 0;
+  for (int i = 0; i < 300 && frames == 0; ++i) {
+    frames = RecordingEngine::Instance().Diagnostics().frames_received;
+    if (frames == 0) {
+      std::this_thread::sleep_for(std::chrono::milliseconds(10));
+    }
+  }
+  ASSERT_GT(frames, 0u);
+  const auto diag = RecordingEngine::Instance().Diagnostics();
+  EXPECT_GT(diag.frame_width, 0u);
+  EXPECT_GT(diag.frame_height, 0u);
+  EXPECT_EQ(diag.frame_width % 2, 0u);
+  EXPECT_EQ(diag.frame_height % 2, 0u);
+  ASSERT_FALSE(RecordingEngine::Instance().Stop("sess-test").has_value());
+}
+
+TEST_F(RecordingEngineTest, BackendTargetLostCallbackRoutesToFinalize) {
+  // Drives the REAL production wiring the direct-HandleTargetLost tests bypass:
+  // Start installs SetTargetLostCallback on the backend; firing it must route
+  // through PlatformThreadDispatcher::Post -> HandleTargetLost and finalize.
+  ASSERT_FALSE(RecordingEngine::Instance().Start(ValidRequest()).has_value());
+  ASSERT_TRUE(RecordingEngine::Instance().IsRecording());
+  RecordingEngine::Instance().FireTargetLostForTesting();
+  clingfy::bridge::test_support::PumpMessages();
+  EXPECT_EQ(RecordingEngine::Instance().state(), RecordingState::kIdle);
+  EXPECT_FALSE(RecordingEngine::Instance().IsRecording());
+}
+
+TEST_F(RecordingEngineTest, BackendTargetLostCallbackIsExactlyOnceVsUserStop) {
+  // Fire the backend callback (real wiring) then a user Stop: exactly one
+  // terminal outcome, no duplicate event, no double finalize.
+  ASSERT_FALSE(RecordingEngine::Instance().Start(ValidRequest()).has_value());
+  auto events = InstallEngineSink();
+  RecordingEngine::Instance().FireTargetLostForTesting();
+  clingfy::bridge::test_support::PumpMessages();
+  const std::size_t after_loss = events->size();
+  ASSERT_GT(after_loss, 0u);
+  EXPECT_FALSE(RecordingEngine::Instance().Stop("sess-test").has_value());
+  clingfy::bridge::test_support::PumpMessages();
+  EXPECT_EQ(events->size(), after_loss);
+  EXPECT_EQ(RecordingEngine::Instance().state(), RecordingState::kIdle);
+}
+
+TEST_F(RecordingEngineTest, TargetLostThenUserStopEmitsNoDuplicateEvents) {
+  ASSERT_FALSE(RecordingEngine::Instance().Start(ValidRequest()).has_value());
+  auto events = InstallEngineSink();
+
+  RecordingEngine::Instance().HandleTargetLost("sess-test");
+  clingfy::bridge::test_support::PumpMessages();
+  const std::size_t after_loss = events->size();
+  ASSERT_GT(after_loss, 0u) << "target loss emits a terminal outcome";
+
+  // The user then presses Stop on the already-finalized session: a clean no-op
+  // that emits nothing more. This is the exactly-once / no-double-finalize gate.
+  EXPECT_FALSE(RecordingEngine::Instance().Stop("sess-test").has_value());
+  clingfy::bridge::test_support::PumpMessages();
+  EXPECT_EQ(events->size(), after_loss);
+  EXPECT_EQ(RecordingEngine::Instance().state(), RecordingState::kIdle);
+}
+
+TEST_F(RecordingEngineTest, UserStopThenTargetLostEmitsNoDuplicateEvents) {
+  ASSERT_FALSE(RecordingEngine::Instance().Start(ValidRequest()).has_value());
+  auto events = InstallEngineSink();
+
+  ASSERT_FALSE(RecordingEngine::Instance().Stop("sess-test").has_value());
+  clingfy::bridge::test_support::PumpMessages();
+  const std::size_t after_stop = events->size();  // recordingFinalized.
+
+  // A Closed delivery that slipped through after the user's Stop must be a no-op
+  // (the backend revokes on Stop, but an in-flight delivery can still land).
+  RecordingEngine::Instance().HandleTargetLost("sess-test");
+  clingfy::bridge::test_support::PumpMessages();
+  EXPECT_EQ(events->size(), after_stop);
+  EXPECT_EQ(RecordingEngine::Instance().state(), RecordingState::kIdle);
+}
+
+TEST_F(RecordingEngineTest, TargetLostWithMismatchedSessionKeepsRecording) {
+  ASSERT_FALSE(RecordingEngine::Instance().Start(ValidRequest()).has_value());
+  // A stale Closed from a previous target names a different session — ignore it
+  // so the live recording is untouched.
+  RecordingEngine::Instance().HandleTargetLost("some-old-session");
+  EXPECT_TRUE(RecordingEngine::Instance().IsRecording());
+  EXPECT_EQ(RecordingEngine::Instance().state(), RecordingState::kRecording);
+  ASSERT_FALSE(RecordingEngine::Instance().Stop("sess-test").has_value());
+}
+
+TEST_F(RecordingEngineTest, TargetLostWhenIdleIsNoOp) {
+  // No active session → nothing to finalize, no crash, no events.
+  auto events = InstallEngineSink();
+  RecordingEngine::Instance().HandleTargetLost("whatever");
+  clingfy::bridge::test_support::PumpMessages();
+  EXPECT_TRUE(events->empty());
+  EXPECT_EQ(RecordingEngine::Instance().state(), RecordingState::kIdle);
 }
 
 }  // namespace
