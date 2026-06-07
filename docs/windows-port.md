@@ -57,12 +57,42 @@ lifecycle, preview, and basic export.
 | 5     | Preview player + project reopen                               | done   |
 | 6     | Basic export + post-processing (resolution, background, etc.) | done   |
 | 7     | Window + area recording                                       | done   |
-| 8     | Cursor sidecar + smart zoom                                   | next   |
+| 8     | Cursor sidecar + smart zoom                                   | design locked (8.0); 8.1 next |
 | 9     | Camera overlay (basic, then advanced compositing/chroma)      |
 | 10    | Permissions UX + installer + updater + Windows beta polish    |
 
 Detailed scope per phase is tracked in the session task list and in
 [../CLAUDE.md](../CLAUDE.md).
+
+## Current status — Phase 8.0 (cursor sidecar + smart zoom) — DESIGN LOCKED
+
+Phase 8 stops burning the OS cursor into the captured frame and switches to
+Clingfy's editable-cursor model: record a **cursor sidecar** (position + clicks +
+shape), render the cursor back at **export** time (so size/visibility/highlight are
+editable), and drive **smart zoom** from the cursor track. The architecture is
+locked in
+[decisions/windows-phase-8-cursor-zoom-architecture.md](decisions/windows-phase-8-cursor-zoom-architecture.md);
+no production capture/export code has been written yet.
+
+Decisions in brief: the cursor flip (`IsCursorCaptureEnabled(true)→false`) happens
+in 8.1 only once a reliable sidecar exists (cursor-on fallback otherwise); the
+sidecar is a streaming, crash-robust `capture/cursor.jsonl` (header + deduped sprite
+lines + per-sample lines, capture-local physical px) sampled at 60 Hz off the
+existing pause-aware `RecordingClock`; position comes from `GetCursorPos` on a
+sampler thread, clicks from a `WH_MOUSE_LL` hook on its own message-loop thread
+(Windows records clicks — macOS does not), and cursor shape from `GetCursorInfo`
+rasterized into a sprite table; export renders the cursor in the existing Direct2D
+composite honoring the Dart `showCursor`/`cursorSize` args; smart zoom **reuses the
+Dart zoom model + the already-ported `zoom_easing_constants.h`** — Windows fills the
+native gaps (`previewGetCursorSamples` from the sidecar, a C++ port of
+`ZoomTimelineBuilder`/`ZoomHysteresis` for `getZoomSegments`, manual-segment
+persistence, and a zoom transform in export via `ZoomFollowSmoother`). The biggest
+correctness risk is screen→capture-local coordinate mapping (window DWM-frame offset,
+area crop offset, per-monitor DPI), gated behind one tested pure helper.
+
+Slices: **8.1** cursor sidecar recording → **8.2** cursor rendering in export →
+**8.3** smart zoom export → **8.4** live cursor highlight / click animation / polish.
+Each has acceptance tests in the decision doc.
 
 ## Current status — Phase 7 (window + area recording) — COMPLETE
 
