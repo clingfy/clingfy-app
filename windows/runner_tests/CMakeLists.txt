@@ -38,6 +38,7 @@ add_executable(runner_tests
   "argv_project_path_test.cpp"
   "cursor_sample_mapper_test.cpp"
   "cursor_sampler_test.cpp"
+  "cursor_sidecar_reader_test.cpp"
   "cursor_sidecar_writer_test.cpp"
   "audio_format_test.cpp"
   "audio_mixer_test.cpp"

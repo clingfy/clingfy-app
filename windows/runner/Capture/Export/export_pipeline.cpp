@@ -15,10 +15,12 @@
 #include <atomic>
 #include <cstring>
 #include <filesystem>
+#include <memory>
 #include <mutex>
 #include <vector>
 
 #include "Audio/audio_mixer.h"
+#include "Capture/Cursor/cursor_export_renderer.h"
 #include "Capture/Export/export_audio.h"
 #include "Capture/Export/export_format.h"
 #include "Capture/Export/export_geometry.h"
@@ -422,6 +424,19 @@ RenderResult RenderComposedExport(const RenderRequest& request) {
     return Failure("export: ID2D1Device::CreateDeviceContext failed.");
   }
 
+  // Phase 8.2: optional cursor renderer. Draws the sidecar cursor on top of the
+  // composited video each frame. Soft-fail at every step — a missing / malformed
+  // sidecar or a geometry/brush failure simply renders no cursor; the export
+  // never fails because of the cursor.
+  std::unique_ptr<CursorExportRenderer> cursor_renderer;
+  if (request.show_cursor && !request.cursor_sidecar_path.empty()) {
+    cursor_renderer = CursorExportRenderer::Create(request.cursor_sidecar_path);
+    if (cursor_renderer != nullptr &&
+        !cursor_renderer->Prepare(d2d_factory.Get(), d2d_ctx.Get())) {
+      cursor_renderer.reset();
+    }
+  }
+
   // Reusable source bitmap: a fresh decoded frame is uploaded into it via
   // CopyFromMemory each iteration. Sized to the source; the fit/fill
   // scale happens in the DrawBitmap dest rect, not here.
@@ -529,6 +544,10 @@ RenderResult RenderComposedExport(const RenderRequest& request) {
 
   std::uint64_t video_frames = 0;
   std::uint64_t audio_packets = 0;
+  // Phase 8.2: rebase cursor lookups to the first decoded video frame, so the
+  // sidecar's recording-relative tMs lines up with the file's PTS regardless of
+  // the container's absolute PTS base.
+  std::int64_t first_video_hns = -1;
   bool video_eos = false;
   bool audio_eos = !has_audio;  // nothing to drain when there is no audio
   double last_progress_emitted = -1.0;  // Slice 5A: throttle progress ticks
@@ -584,6 +603,11 @@ RenderResult RenderComposedExport(const RenderRequest& request) {
     }
 
     if (actual_index == video_index) {
+      // Anchor the cursor-time rebase to the first decoded video frame (before
+      // any GIF decimation) so it tracks the true start of the timeline.
+      if (first_video_hns < 0) {
+        first_video_hns = timestamp;
+      }
       // Slice 5B: drop frames that fall inside the target GIF interval before
       // any composite/encode work; still advance progress for the dropped
       // frame so the bar tracks decode position. Non-GIF keeps every frame.
@@ -652,6 +676,22 @@ RenderResult RenderComposedExport(const RenderRequest& request) {
                           D2D1_BITMAP_INTERPOLATION_MODE_LINEAR, nullptr);
       if (rounded_clip != nullptr) {
         d2d_ctx->PopLayer();
+      }
+      // Phase 8.2: draw the cursor on top of the video, clipped to the content
+      // rect so it never bleeds into the padding/background. Same composite for
+      // MP4/MOV and GIF. The clip is the square content rect (not the rounded-
+      // corner geometry), so a cursor sitting in the few px between the square
+      // edge and a rounded corner could paint over background — a negligible
+      // cosmetic edge accepted for MVP.
+      if (cursor_renderer != nullptr) {
+        const std::int64_t frame_ms =
+            first_video_hns >= 0 ? (timestamp - first_video_hns) / 10000 : 0;
+        d2d_ctx->PushAxisAlignedClip(dest_rect, D2D1_ANTIALIAS_MODE_ALIASED);
+        cursor_renderer->Draw(d2d_ctx.Get(), frame_ms, dest_rect,
+                              static_cast<double>(source_w),
+                              static_cast<double>(source_h),
+                              request.cursor_size);
+        d2d_ctx->PopAxisAlignedClip();
       }
       const HRESULT end_hr = d2d_ctx->EndDraw();
       d2d_ctx->SetTarget(nullptr);

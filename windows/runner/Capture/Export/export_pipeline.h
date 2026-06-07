@@ -92,6 +92,15 @@ struct RenderRequest {
   std::string bitrate;
   std::function<void(double)> on_progress;
   std::function<bool()> is_cancelled;
+
+  // Phase 8.2 cursor rendering. When `show_cursor` is true and
+  // `cursor_sidecar_path` names a readable `cursor.jsonl`, the composite draws
+  // the cursor (a standard arrow) at the sidecar position interpolated to each
+  // frame's timestamp, scaled by `cursor_size` (0.5..3.0). Empty path / false =
+  // no cursor. A missing or malformed sidecar is non-fatal (renders no cursor).
+  bool show_cursor = false;
+  double cursor_size = 1.5;
+  std::wstring cursor_sidecar_path;
 };
 
 struct RenderResult {
