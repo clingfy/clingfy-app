@@ -130,8 +130,17 @@ std::optional<CursorSidecarData> ParseCursorSidecar(const std::string& jsonl) {
       sample.y = static_cast<std::int32_t>(y);
       sample.visible = vis;
       data.samples.push_back(sample);
+    } else if (type == "click") {
+      // Phase 8.3: smart zoom triggers on clicks. Only the timestamp is needed
+      // here; button/action are kept in the file for 8.4's click animation.
+      std::int64_t t = 0;
+      if (FindIntField(line, "tMs", &t)) {
+        CursorSidecarClick click;
+        click.t_ms = t;
+        data.clicks.push_back(click);
+      }
     }
-    // "click" and unknown line types are ignored in 8.2.
+    // Unknown line types are ignored.
   }
 
   if (!have_header) {
@@ -140,6 +149,10 @@ std::optional<CursorSidecarData> ParseCursorSidecar(const std::string& jsonl) {
   std::stable_sort(data.samples.begin(), data.samples.end(),
                    [](const CursorSidecarSample& a,
                       const CursorSidecarSample& b) { return a.t_ms < b.t_ms; });
+  std::stable_sort(data.clicks.begin(), data.clicks.end(),
+                   [](const CursorSidecarClick& a, const CursorSidecarClick& b) {
+                     return a.t_ms < b.t_ms;
+                   });
   return data;
 }
 

@@ -213,6 +213,11 @@ void HandleExportVideo(
     // (which forces the composition path — a byte-copy can't draw it).
     input.show_cursor = ReadBool(*args, "showCursor", true);
     input.cursor_size = ReadDouble(*args, "cursorSize", 1.5);
+    // Phase 8.3: smart zoom. zoomEffectEnabled (default true) + zoomFactor
+    // (1.0..3.0, default 1.5) match the Dart export args. Auto-zoom is generated
+    // natively from the cursor sidecar; manual zoomSegments are not consumed yet.
+    input.zoom_effect_enabled = ReadBool(*args, "zoomEffectEnabled", true);
+    input.zoom_factor = ReadDouble(*args, "zoomFactor", 1.5);
   }
 
   // Defensive: refuse a second concurrent export (Dart's _isExporting guards
