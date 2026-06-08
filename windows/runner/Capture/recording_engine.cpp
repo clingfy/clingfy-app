@@ -549,6 +549,20 @@ std::optional<RecordingError> RecordingEngine::Start(
   current_camera_device_id_.clear();
   current_camera_enabled_ = false;
   current_camera_meta_json_.clear();
+  // Unconditional gate log: the camera decision was previously silent on the
+  // skip + happy paths, so an "overlay enabled but no bubble" report could not
+  // be diagnosed from the log. This shows exactly why the camera block runs or
+  // is skipped (the disableCameraOverlay flag Dart sends + whether a device is
+  // selected natively).
+  {
+    char gate[160];
+    std::snprintf(
+        gate, sizeof(gate),
+        "RecordingEngine: camera gate disableOverlay=%d deviceSelected=%d",
+        request.disable_camera_overlay ? 1 : 0,
+        WindowsSelectionState::Instance().VideoSourceId().has_value() ? 1 : 0);
+    clingfy::bridge::devices::LogDeviceProbe(gate);
+  }
   // Only probe permission + enumerate devices when the user actually wants a
   // camera — a screen-only recording (the default) must not pay for camera
   // enumeration or briefly open a camera device.
@@ -630,6 +644,10 @@ std::optional<RecordingError> RecordingEngine::Start(
         current_camera_raw_path_ = cam_cfg.temp_raw_path;
         current_camera_device_id_ = *selected;
         current_camera_enabled_ = true;  // intent; finalized in teardown.
+        clingfy::bridge::devices::LogDeviceProbe(
+            camera_preview_ != nullptr
+                ? "RecordingEngine: camera capture + preview bubble started"
+                : "RecordingEngine: camera capture started (no preview bubble)");
       } else {
         camera_recorder_.reset();
         // No recording → no bubble. Tear the preview down too.
