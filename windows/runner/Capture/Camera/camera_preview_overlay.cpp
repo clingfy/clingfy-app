@@ -149,20 +149,22 @@ void CameraPreviewOverlay::ThreadMain(BubblePlacement placement,
     return;
   }
 
-  // Exclude the bubble from screen capture so it is visible to the USER but NOT
-  // burned into the recorded screen video (the camera is composited from
-  // raw.mov at export — a captured preview would double it up). Best-effort:
-  // WDA_EXCLUDEFROMCAPTURE needs Windows 10 2004+. Log the result so an
-  // invisible-bubble report can tell whether the affinity call is implicated.
-  const BOOL excluded =
-      ::SetWindowDisplayAffinity(hwnd, WDA_EXCLUDEFROMCAPTURE);
+  // NOTE: we deliberately do NOT call
+  // SetWindowDisplayAffinity(WDA_EXCLUDEFROMCAPTURE) here. It was confirmed to
+  // render the window fully INVISIBLE on a hybrid-GPU laptop (the log showed
+  // excludeFromCapture=1 + a valid on-screen rect, yet nothing was visible) —
+  // a documented failure mode of capture-exclusion on some Intel+discrete GPU
+  // configs. For Phase 9.3 the live bubble is therefore visible in the recording
+  // too. That is acceptable for now: there is no export camera composition yet
+  // (Phase 9.4), so the burned-in preview is currently the only way the camera
+  // appears in the output. Phase 9.4 will re-introduce capture-exclusion where
+  // it matters, with a visibility fallback for this hardware.
   {
     char b[128];
     std::snprintf(b, sizeof(b),
                   "CameraPreviewOverlay: window created at (%d,%d) %dx%d "
-                  "excludeFromCapture=%d",
-                  placement.x, placement.y, placement.width, placement.height,
-                  excluded ? 1 : 0);
+                  "(not capture-excluded in 9.3)",
+                  placement.x, placement.y, placement.width, placement.height);
     clingfy::bridge::devices::LogDeviceProbe(b);
   }
 
