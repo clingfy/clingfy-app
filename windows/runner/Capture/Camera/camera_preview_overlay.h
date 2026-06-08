@@ -12,15 +12,16 @@
 
 #include "Capture/Camera/camera_preview_support.h"
 
-// Phase 9.3 — live camera preview bubble: a Win32 layered, topmost,
+// Phase 9.3 — live camera preview bubble: a Win32 opaque, topmost,
 // non-activating window that paints the latest camera frame while recording.
 //
 // It runs on its OWN thread with its own message loop (so it never blocks the
 // platform thread). The 9.2 CameraRecorder publishes downscaled BGRA frames via
-// PublishBgra (thread-safe); a paint timer blits the latest one. The window is
-// created with WS_EX_LAYERED and made visible via SetLayeredWindowAttributes
-// (per the Win32 docs a layered window stays invisible until that call), and an
-// optional rounded region gives a soft-cornered bubble.
+// PublishBgra (thread-safe); a paint timer blits the latest one. The window is a
+// plain opaque popup (NOT layered — the bubble is opaque video; a layered window
+// plus a region plus display-affinity rendered nothing on a hybrid-GPU laptop),
+// shaped by an optional rounded SetWindowRgn, and excluded from screen capture
+// via SetWindowDisplayAffinity(WDA_EXCLUDEFROMCAPTURE).
 //
 // Everything is best-effort: if the window cannot be created, Start returns
 // false and the caller continues recording without a bubble. The class owns no
