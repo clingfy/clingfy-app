@@ -38,6 +38,7 @@ add_executable(runner_tests
   "argv_project_path_test.cpp"
   "camera_format_test.cpp"
   "camera_meta_test.cpp"
+  "camera_preview_support_test.cpp"
   "camera_readiness_test.cpp"
   "camera_recorder_test.cpp"
   "cursor_export_renderer_test.cpp"
