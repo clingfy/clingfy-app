@@ -19,6 +19,8 @@ class HeroPanel extends StatelessWidget {
     required this.onPause,
     required this.onResume,
     this.cameraOverlayEnabled = false,
+    this.cameraFloatingPreview = true,
+    this.onToggleCameraPreviewMode,
     this.startRecordingButtonKey,
   });
 
@@ -31,6 +33,10 @@ class HeroPanel extends StatelessWidget {
   final VoidCallback onPause;
   final VoidCallback onResume;
   final bool cameraOverlayEnabled;
+  // Phase 9.3.2: true = floating native bubble (in-app texture hidden); false =
+  // in-app texture preview. The toggle callback flips it (null hides the toggle).
+  final bool cameraFloatingPreview;
+  final VoidCallback? onToggleCameraPreviewMode;
   final Key? startRecordingButtonKey;
 
   @override
@@ -109,12 +115,35 @@ class HeroPanel extends StatelessWidget {
                       ),
                     ),
                     SizedBox(height: xxlGap),
-                    // Phase 9.3.1: live camera bubble (Flutter texture; only
-                    // shows while recording with the camera overlay enabled).
+                    // Phase 9.3.1/9.3.2: in-app camera texture — shown only in
+                    // in-app preview mode (in floating mode the native bubble
+                    // shows it instead).
                     LiveCameraPreview(
                       isRecording: isRecording,
-                      cameraEnabled: cameraOverlayEnabled,
+                      cameraEnabled:
+                          cameraOverlayEnabled && !cameraFloatingPreview,
                     ),
+                    // Phase 9.3.2: 1-click switch between floating + in-app, for
+                    // GPUs where the floating bubble is invisible.
+                    if (isRecording &&
+                        cameraOverlayEnabled &&
+                        onToggleCameraPreviewMode != null) ...[
+                      TextButton.icon(
+                        onPressed: onToggleCameraPreviewMode,
+                        icon: Icon(
+                          cameraFloatingPreview
+                              ? Icons.picture_in_picture_alt
+                              : Icons.open_in_new,
+                          size: 16,
+                        ),
+                        label: Text(
+                          cameraFloatingPreview
+                              ? "Can't see the camera? Use in-app preview"
+                              : 'Use floating camera bubble',
+                        ),
+                      ),
+                      SizedBox(height: lgGap),
+                    ],
                     if (!isRecording)
                       FilledButton.icon(
                         key: startRecordingButtonKey,

@@ -4,6 +4,7 @@
 
 #include "Bridge/result_helpers.h"
 #include "Capture/Camera/live_camera_texture.h"
+#include "Capture/recording_engine.h"
 
 namespace clingfy::bridge::routers::camera_overlay {
 
@@ -27,6 +28,33 @@ void HandleGetCameraPreviewTextureId(
   reply::Map(*result, flutter::EncodableMap{
                           {flutter::EncodableValue("textureId"),
                            flutter::EncodableValue(id)},
+                      });
+}
+
+// Phase 9.3.2: select the live camera preview mode for the current recording.
+// Dart sends {floating: bool}; the engine shows the floating bubble only if it
+// exists AND capture-exclusion succeeded. Replies {floating: <resulting>} —
+// false means Dart should use the in-app texture (floating requested but
+// unavailable, or in-app requested).
+void HandleSetCameraPreviewMode(
+    const flutter::MethodCall<flutter::EncodableValue>& call,
+    std::unique_ptr<flutter::MethodResult<flutter::EncodableValue>> result) {
+  bool floating = false;
+  if (const auto* args =
+          std::get_if<flutter::EncodableMap>(call.arguments())) {
+    const auto it = args->find(flutter::EncodableValue("floating"));
+    if (it != args->end()) {
+      if (const auto* b = std::get_if<bool>(&it->second)) {
+        floating = *b;
+      }
+    }
+  }
+  const bool resulting =
+      clingfy::capture::RecordingEngine::Instance().SetCameraPreviewFloating(
+          floating);
+  reply::Map(*result, flutter::EncodableMap{
+                          {flutter::EncodableValue("floating"),
+                           flutter::EncodableValue(resulting)},
                       });
 }
 
@@ -71,6 +99,8 @@ void RegisterHandlers(HandlerTable& table) {
 
   // Phase 9.3.1: live camera preview texture id (real handler).
   table["getCameraPreviewTextureId"] = &HandleGetCameraPreviewTextureId;
+  // Phase 9.3.2: floating vs in-app preview mode (real handler).
+  table["setCameraPreviewMode"] = &HandleSetCameraPreviewMode;
 }
 
 }  // namespace clingfy::bridge::routers::camera_overlay

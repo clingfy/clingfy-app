@@ -3,6 +3,7 @@
 #include <windows.h>
 #include <dwmapi.h>
 
+#include <algorithm>
 #include <cstdio>
 #include <functional>
 #include <thread>
@@ -19,6 +20,7 @@
 #include "Bridge/native_error_codes.h"
 #include "Bridge/platform_thread_dispatcher.h"
 #include "Bridge/workflow_event_publisher.h"
+#include "Capture/Camera/camera_floating_overlay.h"
 #include "Capture/Camera/camera_meta.h"
 #include "Capture/Camera/camera_recorder.h"
 #include "Capture/Camera/live_camera_texture.h"
@@ -604,13 +606,48 @@ std::optional<RecordingError> RecordingEngine::Start(
         });
       };
 
-      // Phase 9.3.1: feed the recorder's preview frames into the app-lifetime
-      // Flutter texture (NOT a captured topmost overlay), so the live preview is
-      // shown inside the app window and is NOT burned into screen.mov. The
-      // texture is registered once at startup; here we just route frames to it
-      // while recording. Dart shows the Texture widget during recording.
-      cam_cfg.on_preview_frame = [](const std::uint8_t* bgra, int w, int h) {
+      // Phase 9.3.2: create the floating bubble (hidden + capture-excluded) and
+      // feed BOTH it and the app-lifetime in-app texture, so the user can switch
+      // preview modes instantly. The floating bubble is Shown only when Dart
+      // selects floating mode AND exclusion succeeded (SetCameraPreviewFloating);
+      // it is NEVER burned into screen.mov (WDA_EXCLUDEFROMCAPTURE), and neither
+      // is the in-app texture (it lives in the app window). previewBurnedIn stays
+      // false in both modes.
+      {
+        RECT work{0, 0, ::GetSystemMetrics(SM_CXSCREEN),
+                  ::GetSystemMetrics(SM_CYSCREEN)};
+        ::SystemParametersInfoW(SPI_GETWORKAREA, 0, &work, 0);
+        if (monitor.has_value()) {
+          MONITORINFO mi{};
+          mi.cbSize = sizeof(mi);
+          if (::GetMonitorInfoW(*monitor, &mi) != 0) {
+            work = mi.rcWork;
+          }
+        }
+        const int work_w = work.right - work.left;
+        const int work_h = work.bottom - work.top;
+        FloatingPlacement place;
+        place.width = std::max(160, work_w * 22 / 100);
+        place.height = place.width * 9 / 16;
+        const int margin = std::max(8, work_w * 3 / 100);
+        place.x = work.left + std::max(0, work_w - place.width - margin);
+        place.y = work.top + std::max(0, work_h - place.height - margin);
+        place.rounded = true;
+        camera_floating_ = std::make_unique<CameraFloatingOverlay>();
+        if (!camera_floating_->Start(place)) {
+          camera_floating_.reset();
+          clingfy::bridge::devices::LogDeviceProbe(
+              "RecordingEngine: floating camera overlay create failed; in-app "
+              "preview only");
+        }
+      }
+      CameraFloatingOverlay* floating = camera_floating_.get();
+      cam_cfg.on_preview_frame = [floating](const std::uint8_t* bgra, int w,
+                                            int h) {
         LiveCameraTexture::Instance().PublishBgra(bgra, w, h);
+        if (floating != nullptr) {
+          floating->PublishBgra(bgra, w, h);
+        }
       };
 
       camera_recorder_ = std::make_unique<CameraRecorder>();
@@ -619,9 +656,14 @@ std::optional<RecordingError> RecordingEngine::Start(
         current_camera_device_id_ = *selected;
         current_camera_enabled_ = true;  // intent; finalized in teardown.
         clingfy::bridge::devices::LogDeviceProbe(
-            "RecordingEngine: camera capture + live texture preview started");
+            "RecordingEngine: camera capture + preview started (floating "
+            "available + in-app texture)");
       } else {
         camera_recorder_.reset();
+        if (camera_floating_) {
+          camera_floating_->Stop();
+          camera_floating_.reset();
+        }
         clingfy::bridge::devices::LogDeviceProbe(
             "RecordingEngine: camera init failed; continuing screen-only");
       }
@@ -948,6 +990,22 @@ void RecordingEngine::FillCameraWriterFields(ProjectWriterInput& input) const {
   input.camera_meta_json = current_camera_meta_json_;
 }
 
+bool RecordingEngine::SetCameraPreviewFloating(bool floating) {
+  std::lock_guard<std::mutex> lock(mutex_);
+  // Show the floating bubble only when requested AND it exists AND capture-
+  // exclusion succeeded — never show a non-excluded floating window (it would
+  // burn the camera into screen.mov + double it at export).
+  if (floating && camera_floating_ != nullptr &&
+      camera_floating_->wda_excluded()) {
+    camera_floating_->Show();
+    return true;
+  }
+  if (camera_floating_ != nullptr) {
+    camera_floating_->Hide();
+  }
+  return false;  // in-app preview (requested, or floating unavailable).
+}
+
 void RecordingEngine::HandleTargetLost(const std::string& session_id) {
   std::lock_guard<std::mutex> lock(mutex_);
 
@@ -1062,10 +1120,14 @@ void RecordingEngine::TeardownPipeline() {
   // project writer bundles it. Recomputes the final camera-enabled flag and
   // builds the metadata from the recorder's result.
   StopCameraRecorder();
-  // Phase 9.3.1: the live preview is an app-lifetime Flutter texture, not a
-  // per-recording window — there is nothing to tear down here. The recorder's
-  // capture thread (the only PublishBgra caller) is already joined by
-  // StopCameraRecorder, so no more frames are routed to the texture.
+  // Phase 9.3.2: tear down the floating bubble AFTER the recorder is stopped —
+  // the recorder's capture thread (the only PublishBgra caller) is joined by
+  // StopCameraRecorder, so no frame can race the overlay's destruction. The
+  // in-app texture is app-lifetime and just stops being fed.
+  if (camera_floating_) {
+    camera_floating_->Stop();
+    camera_floating_.reset();
+  }
   if (capture_backend_) {
     capture_backend_->Stop();
     capture_backend_.reset();

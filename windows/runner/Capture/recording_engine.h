@@ -30,6 +30,7 @@ class WgcDisplayCaptureBackend;
 struct WgcCaptureStats;
 class CursorSampler;
 class CameraRecorder;
+class CameraFloatingOverlay;
 }
 
 // Singleton orchestrator for the Windows recording lifecycle.
@@ -91,6 +92,14 @@ class RecordingEngine {
   // succeeding.
   std::optional<RecordingError> Pause(const std::string& session_id);
   std::optional<RecordingError> Resume(const std::string& session_id);
+
+  // Phase 9.3.2: select the live camera preview mode for the active recording.
+  // `floating` true → show the topmost floating bubble IF it exists AND capture-
+  // exclusion succeeded; false → hide it (the Dart in-app texture takes over).
+  // Returns the RESULTING floating state: false when floating was requested but
+  // is unavailable (no overlay / WDA exclusion failed), so Dart falls back to
+  // the in-app preview. A no-op (returns false) when no camera is recording.
+  bool SetCameraPreviewFloating(bool floating);
 
   // Phase 7.4: the active capture target was lost mid-recording — the captured
   // window was closed or the captured monitor was unplugged (WGC raised
@@ -237,6 +246,12 @@ class RecordingEngine {
   std::string current_camera_device_id_;
   bool current_camera_enabled_ = false;
   std::string current_camera_meta_json_;
+
+  // Phase 9.3.2: the floating camera bubble (topmost, capture-excluded,
+  // draggable). Created hidden at camera start and fed frames alongside the
+  // in-app texture; SetCameraPreviewFloating shows/hides it. Torn down after the
+  // recorder (the frame producer) is stopped.
+  std::unique_ptr<CameraFloatingOverlay> camera_floating_;
 
   // Audio pipeline (Phase 3D). Two WASAPI captures (mic + loopback)
   // fill the matching packet queues; a dedicated mixer thread sums
