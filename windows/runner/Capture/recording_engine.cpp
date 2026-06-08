@@ -20,6 +20,8 @@
 #include "Bridge/platform_thread_dispatcher.h"
 #include "Bridge/workflow_event_publisher.h"
 #include "Capture/Camera/camera_meta.h"
+#include "Capture/Camera/camera_preview_overlay.h"
+#include "Capture/Camera/camera_preview_support.h"
 #include "Capture/Camera/camera_recorder.h"
 #include "Capture/captured_video_frame.h"
 #include "Capture/Cursor/cursor_sampler.h"
@@ -588,6 +590,41 @@ std::optional<RecordingError> RecordingEngine::Start(
                   "it.");
         });
       };
+
+      // Phase 9.3: start the live preview bubble BEFORE the recorder so the
+      // recorder can publish frames straight into it. Best-effort — a preview
+      // failure leaves recording running with no bubble (D6).
+      {
+        // Use the work area (excludes the taskbar) so the bubble doesn't tuck
+        // under it. Fall back to the full virtual screen if unavailable.
+        RECT mon_rect{0, 0, ::GetSystemMetrics(SM_CXSCREEN),
+                      ::GetSystemMetrics(SM_CYSCREEN)};
+        ::SystemParametersInfoW(SPI_GETWORKAREA, 0, &mon_rect, 0);
+        if (monitor.has_value()) {
+          MONITORINFO mi{};
+          mi.cbSize = sizeof(mi);
+          if (::GetMonitorInfoW(*monitor, &mi) != 0) {
+            mon_rect = mi.rcWork;
+          }
+        }
+        const BubblePlacement place = ComputeDefaultBubblePlacement(
+            mon_rect.left, mon_rect.top, mon_rect.right - mon_rect.left,
+            mon_rect.bottom - mon_rect.top);
+        camera_preview_ = std::make_unique<CameraPreviewOverlay>();
+        if (camera_preview_->Start(place)) {
+          CameraPreviewOverlay* preview = camera_preview_.get();
+          cam_cfg.on_preview_frame = [preview](const std::uint8_t* bgra, int w,
+                                               int h) {
+            preview->PublishBgra(bgra, w, h);
+          };
+        } else {
+          camera_preview_.reset();
+          clingfy::bridge::devices::LogDeviceProbe(
+              "RecordingEngine: camera preview overlay failed; recording "
+              "without a bubble");
+        }
+      }
+
       camera_recorder_ = std::make_unique<CameraRecorder>();
       if (camera_recorder_->Start(cam_cfg)) {
         current_camera_raw_path_ = cam_cfg.temp_raw_path;
@@ -595,6 +632,11 @@ std::optional<RecordingError> RecordingEngine::Start(
         current_camera_enabled_ = true;  // intent; finalized in teardown.
       } else {
         camera_recorder_.reset();
+        // No recording → no bubble. Tear the preview down too.
+        if (camera_preview_) {
+          camera_preview_->Stop();
+          camera_preview_.reset();
+        }
         clingfy::bridge::devices::LogDeviceProbe(
             "RecordingEngine: camera init failed; continuing screen-only");
       }
@@ -1031,6 +1073,13 @@ void RecordingEngine::TeardownPipeline() {
   // project writer bundles it. Recomputes the final camera-enabled flag and
   // builds the metadata from the recorder's result.
   StopCameraRecorder();
+  // Phase 9.3: tear down the preview overlay AFTER the recorder is stopped —
+  // the recorder's capture thread is the frame producer, so once it is joined
+  // no PublishBgra can race the overlay's destruction.
+  if (camera_preview_) {
+    camera_preview_->Stop();
+    camera_preview_.reset();
+  }
   if (capture_backend_) {
     capture_backend_->Stop();
     capture_backend_.reset();
@@ -1143,6 +1192,11 @@ std::string RecordingEngine::cursor_sidecar_path_for_testing() const {
 bool RecordingEngine::camera_recording_for_testing() const {
   std::lock_guard<std::mutex> lock(mutex_);
   return camera_recorder_ != nullptr;
+}
+
+bool RecordingEngine::camera_preview_active_for_testing() const {
+  std::lock_guard<std::mutex> lock(mutex_);
+  return camera_preview_ != nullptr;
 }
 
 void RecordingEngine::ForceResetForTesting() {

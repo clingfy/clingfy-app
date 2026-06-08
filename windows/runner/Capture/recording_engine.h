@@ -30,6 +30,7 @@ class WgcDisplayCaptureBackend;
 struct WgcCaptureStats;
 class CursorSampler;
 class CameraRecorder;
+class CameraPreviewOverlay;
 }
 
 // Singleton orchestrator for the Windows recording lifecycle.
@@ -156,6 +157,11 @@ class RecordingEngine {
   // camera was selected, the overlay was disabled, or permission was denied.
   bool camera_recording_for_testing() const;
 
+  // Test seam (Phase 9.3): whether the live camera preview overlay is active for
+  // the current recording. False when no camera is recording or the overlay
+  // failed to start (preview is best-effort).
+  bool camera_preview_active_for_testing() const;
+
  private:
   RecordingEngine();
   ~RecordingEngine();
@@ -235,6 +241,13 @@ class RecordingEngine {
   std::string current_camera_device_id_;
   bool current_camera_enabled_ = false;
   std::string current_camera_meta_json_;
+
+  // Phase 9.3: live camera preview bubble. A topmost layered window shown while
+  // recording; the camera recorder publishes frames into it. Best-effort — a
+  // preview failure never stops recording. Torn down AFTER the recorder (so its
+  // capture thread, the frame producer, is already stopped) on every finalize
+  // path.
+  std::unique_ptr<CameraPreviewOverlay> camera_preview_;
 
   // Audio pipeline (Phase 3D). Two WASAPI captures (mic + loopback)
   // fill the matching packet queues; a dedicated mixer thread sums

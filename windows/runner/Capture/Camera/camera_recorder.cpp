@@ -84,6 +84,7 @@ bool CameraRecorder::Start(const Config& config) {
   frames_written_.store(0);
   first_frame_hns_ = -1;
   last_sample_hns_ = -1;
+  last_preview_hns_ = -1;
   stopped_ = false;
   result_ = Result{};
 
@@ -359,6 +360,22 @@ void CameraRecorder::ThreadMain(std::function<void(bool)> report_open) {
   height_ = height;
   fps_ = fps;
 
+  // Phase 9.3: prepare the live-preview scratch buffer (only when a sink is
+  // attached — no sink means zero preview cost). RGB32 from MF is BGRA in
+  // memory; everything else here is NV12.
+  preview_format_ = (input_subtype == MFVideoFormat_NV12)
+                        ? CameraPixelFormat::kNv12
+                        : CameraPixelFormat::kBgra32;
+  if (config_.on_preview_frame) {
+    const PreviewSize ps = ComputePreviewSize(
+        static_cast<int>(width_), static_cast<int>(height_),
+        config_.preview_max_dim);
+    preview_w_ = ps.width;
+    preview_h_ = ps.height;
+    preview_bgra_.assign(
+        static_cast<size_t>(preview_w_) * preview_h_ * 4, 0);
+  }
+
   opened = true;
   report_open(true);
 
@@ -396,6 +413,39 @@ void CameraRecorder::ThreadMain(std::function<void(bool)> report_open) {
     sample->SetSampleDuration(sample_duration);
     if (SUCCEEDED(writer->WriteSample(writer_stream, sample.Get()))) {
       frames_written_.fetch_add(1, std::memory_order_relaxed);
+    }
+
+    // Phase 9.3: best-effort live preview. AFTER WriteSample (so the encode is
+    // never delayed) and throttled to ~15fps, convert the frame to downscaled
+    // BGRA and hand it to the overlay. Any failure here simply skips a preview
+    // frame — recording is never affected.
+    if (config_.on_preview_frame && preview_w_ > 0 && preview_h_ > 0) {
+      constexpr std::int64_t kPreviewIntervalHns = kHundredNanosPerSecond / 15;
+      if (last_preview_hns_ < 0 ||
+          elapsed - last_preview_hns_ >= kPreviewIntervalHns) {
+        ComPtr<IMFMediaBuffer> buf;
+        if (SUCCEEDED(sample->GetBufferByIndex(0, buf.GetAddressOf())) && buf) {
+          BYTE* data = nullptr;
+          DWORD cur = 0;
+          if (SUCCEEDED(buf->Lock(&data, nullptr, &cur)) && data != nullptr) {
+            const bool is_bgra = preview_format_ == CameraPixelFormat::kBgra32;
+            const int src_stride = is_bgra ? static_cast<int>(width_) * 4
+                                           : static_cast<int>(width_);
+            const size_t needed =
+                is_bgra ? static_cast<size_t>(width_) * 4 * height_
+                        : static_cast<size_t>(width_) * height_ * 3 / 2;
+            if (cur >= needed &&
+                ConvertToBgra(preview_format_, data, static_cast<int>(width_),
+                              static_cast<int>(height_), src_stride,
+                              preview_bgra_.data(), preview_w_, preview_h_)) {
+              config_.on_preview_frame(preview_bgra_.data(), preview_w_,
+                                       preview_h_);
+              last_preview_hns_ = elapsed;
+            }
+            buf->Unlock();
+          }
+        }
+      }
     }
   }
 

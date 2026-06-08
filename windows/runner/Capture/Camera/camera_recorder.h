@@ -8,6 +8,9 @@
 #include <string>
 #include <thread>
 
+#include <vector>
+
+#include "Capture/Camera/camera_preview_support.h"
 #include "Capture/recording_clock.h"
 
 // Phase 9.2 — records the selected camera to a standalone raw.mov.
@@ -58,6 +61,18 @@ class CameraRecorder {
     // mid-recording. Must not block or call back into the recorder. The engine
     // uses it to post a user-facing warning. Captured by value.
     std::function<void()> on_device_lost;
+
+    // Phase 9.3: optional live-preview sink. When set, the recorder converts the
+    // latest captured frame to downscaled BGRA (off the encode path, after
+    // WriteSample, throttled) and hands it here for the preview overlay to
+    // paint. Unset → zero preview cost (no conversion). The buffer is reused, so
+    // the callee must copy. Called from the capture thread; must not block or
+    // re-enter the recorder.
+    std::function<void(const std::uint8_t* bgra, int width, int height)>
+        on_preview_frame;
+    // Longest-side cap for the downscaled preview frame (px). The bubble is
+    // small, so a modest cap keeps the conversion cheap.
+    int preview_max_dim = 384;
   };
 
   struct Result {
@@ -133,6 +148,14 @@ class CameraRecorder {
   // the capture thread.
   std::int64_t first_frame_hns_ = -1;
   std::int64_t last_sample_hns_ = -1;
+
+  // Phase 9.3 preview state (capture thread only). Set during open; the BGRA
+  // scratch buffer is reused each published frame.
+  CameraPixelFormat preview_format_ = CameraPixelFormat::kNv12;
+  int preview_w_ = 0;
+  int preview_h_ = 0;
+  std::int64_t last_preview_hns_ = -1;
+  std::vector<std::uint8_t> preview_bgra_;
 
   bool started_ = false;
   bool stopped_ = false;
