@@ -393,5 +393,44 @@ TEST(ExportPassthroughCopyTest, ReturnsInputMissingWhenProjectDoesNotExist) {
   EXPECT_EQ(outcome.error, PassthroughError::kInputMissing);
 }
 
+// ---- Phase 9.4 ShouldCompositeCamera ---------------------------------------
+//
+// Pure gate: the export draws the camera only when ALL conditions hold. The
+// integration (real raw.mov decode + D2D draw) is a CI-only heavy test; this
+// pins the decision matrix the spec calls out.
+
+TEST(ShouldCompositeCameraTest, DrawsWhenEverythingPasses) {
+  EXPECT_TRUE(ShouldCompositeCamera(/*visible=*/true, /*assets=*/true,
+                                    /*meta_parsed=*/true,
+                                    /*preview_burned_in=*/false,
+                                    /*frames=*/900));
+}
+
+TEST(ShouldCompositeCameraTest, SkipsWhenPreviewBurnedIn) {
+  // The live preview was already in screen.mov → drawing again doubles it.
+  EXPECT_FALSE(ShouldCompositeCamera(true, true, true,
+                                     /*preview_burned_in=*/true, 900));
+}
+
+TEST(ShouldCompositeCameraTest, SkipsWhenCameraHidden) {
+  EXPECT_FALSE(ShouldCompositeCamera(/*visible=*/false, true, true, false, 900));
+}
+
+TEST(ShouldCompositeCameraTest, SkipsWhenNoAssets) {
+  EXPECT_FALSE(
+      ShouldCompositeCamera(true, /*assets=*/false, false, false, 0));
+}
+
+TEST(ShouldCompositeCameraTest, SkipsWhenMetaUnparsed) {
+  // Assets present but camera.meta.json malformed → meta_parsed=false.
+  EXPECT_FALSE(
+      ShouldCompositeCamera(true, true, /*meta_parsed=*/false, false, 900));
+}
+
+TEST(ShouldCompositeCameraTest, SkipsWhenZeroFrames) {
+  // Device lost immediately / never produced a frame.
+  EXPECT_FALSE(ShouldCompositeCamera(true, true, true, false, /*frames=*/0));
+}
+
 }  // namespace
 }  // namespace clingfy::capture::export_

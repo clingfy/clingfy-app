@@ -45,6 +45,8 @@ add_library(runner_bridge STATIC
   "Capture/Export/export_passthrough.cpp"
   "Capture/Export/export_session.cpp"
   "Capture/Export/gif_export_policy.cpp"
+  "Capture/Camera/camera_export_layout.cpp"
+  "Capture/Camera/camera_export_renderer.cpp"
   "Capture/Camera/camera_floating_overlay.cpp"
   "Capture/Camera/camera_format.cpp"
   "Capture/Camera/camera_meta.cpp"

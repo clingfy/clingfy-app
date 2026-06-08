@@ -134,8 +134,9 @@ hexagon/star shapes in MVP (circle/rounded/square/squircle only).
 | 9.2   | Camera recording to a separate file (`camera/raw.mov`)       | #147   |
 | 9.3   | Live camera preview bubble during recording                  | #150   |
 | 9.3.1 | Preview reconciliation: in-app Flutter texture (screen.mov camera-free) | #154 |
-| 9.3.2 | Floating native bubble (default) + capture-exclusion + 1-click in-app fallback | (this) |
-| 9.4   | Export: simple circular/rounded camera bubble                |        |
+| 9.3.2 | Floating native bubble + capture-exclusion + 1-click in-app fallback | #155 |
+| 9.3.3 | In-app preview is the Windows default (floating opt-in)      | #156   |
+| 9.4   | Export: simple circular/rounded camera bubble                | (this) |
 | 9.5   | Styling: mirror / opacity / border / shadow                  |        |
 | 9.6   | Chroma key + intro/outro/zoom-emphasis animations            |        |
 | 9.7   | Closeout / stress / smoke                                    |        |

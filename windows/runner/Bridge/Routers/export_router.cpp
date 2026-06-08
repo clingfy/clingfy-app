@@ -218,6 +218,30 @@ void HandleExportVideo(
     // natively from the cursor sidecar; manual zoomSegments are not consumed yet.
     input.zoom_effect_enabled = ReadBool(*args, "zoomEffectEnabled", true);
     input.zoom_factor = ReadDouble(*args, "zoomFactor", 1.5);
+    // Phase 9.4: camera bubble. The Dart side spreads CameraCompositionState
+    // .toMap() into the export args (cameraVisible, cameraNormalizedCenter {x,y}
+    // or null, cameraLayoutPreset, cameraSizeFactor, cameraShape,
+    // cameraCornerRadius, cameraContentMode). Whether the camera is actually
+    // drawn also depends on the project assets + camera.meta.json, resolved in
+    // ExportPassthroughCopy. Styling we don't support yet (mirror / opacity /
+    // border / shadow / chroma) is accepted-but-ignored per the capabilities map.
+    input.camera_visible = ReadBool(*args, "cameraVisible", false);
+    input.camera_layout_preset = ReadString(*args, "cameraLayoutPreset");
+    input.camera_size_factor = ReadDouble(*args, "cameraSizeFactor", 0.18);
+    input.camera_shape = ReadString(*args, "cameraShape");
+    input.camera_corner_radius = ReadDouble(*args, "cameraCornerRadius", 0.0);
+    input.camera_content_mode = ReadString(*args, "cameraContentMode");
+    // cameraNormalizedCenter is a nested {x,y} map (or null when the bubble is
+    // auto-placed by preset). Present → manual placement.
+    if (const auto it = args->find(flutter::EncodableValue(
+            "cameraNormalizedCenter"));
+        it != args->end()) {
+      if (const auto* center = std::get_if<flutter::EncodableMap>(&it->second)) {
+        input.camera_has_center = true;
+        input.camera_center_x = ReadDouble(*center, "x", 0.0);
+        input.camera_center_y = ReadDouble(*center, "y", 0.0);
+      }
+    }
   }
 
   // Defensive: refuse a second concurrent export (Dart's _isExporting guards

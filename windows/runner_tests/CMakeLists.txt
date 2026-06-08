@@ -36,6 +36,7 @@ add_executable(runner_tests
   "router_stub_shapes_test.cpp"
   "area_picker_geometry_test.cpp"
   "argv_project_path_test.cpp"
+  "camera_export_layout_test.cpp"
   "camera_format_test.cpp"
   "camera_meta_test.cpp"
   "camera_preview_support_test.cpp"

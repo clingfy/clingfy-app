@@ -118,7 +118,39 @@ struct PassthroughInput {
   // consumed yet (deferred — Windows getZoomSegments is a stub).
   bool zoom_effect_enabled = true;
   double zoom_factor = 1.5;
+
+  // Phase 9.4 camera bubble args from the `exportVideo` map (the Dart
+  // `CameraCompositionState.toMap()` keys). These describe HOW to draw the
+  // camera; WHETHER to draw it also depends on the project assets + the
+  // camera.meta.json `previewBurnedIn` flag, resolved in ExportPassthroughCopy.
+  //   camera_visible        — `cameraVisible`; user toggle. False → no camera.
+  //   camera_has_center     — true when `cameraNormalizedCenter` is a {x,y} map.
+  //   camera_center_x/y     — that manual normalized center (0..1).
+  //   camera_layout_preset  — `cameraLayoutPreset` enum name (preset corner).
+  //   camera_size_factor    — `cameraSizeFactor` (0.08..0.45 of the short side).
+  //   camera_shape          — `cameraShape` enum name.
+  //   camera_corner_radius  — `cameraCornerRadius` (0..0.5 fraction).
+  //   camera_content_mode   — `cameraContentMode` ("fill" / "fit").
+  bool camera_visible = false;
+  bool camera_has_center = false;
+  double camera_center_x = 0.0;
+  double camera_center_y = 0.0;
+  std::string camera_layout_preset;
+  double camera_size_factor = 0.18;
+  std::string camera_shape;
+  double camera_corner_radius = 0.0;
+  std::string camera_content_mode;
 };
+
+// Phase 9.4 — pure decision: should the export composite the camera bubble?
+// True only when the user wants it (`camera_visible`), the project actually has
+// the camera assets (raw.mov + camera.meta.json present-together), the metadata
+// parsed, the live preview was NOT burned into screen.mov (`preview_burned_in`
+// false — else drawing again would double the camera), and at least one camera
+// frame was recorded (`frames_written` > 0). Exposed for unit tests.
+bool ShouldCompositeCamera(bool camera_visible, bool has_camera_assets,
+                           bool meta_parsed, bool preview_burned_in,
+                           std::uint64_t frames_written);
 
 enum class PassthroughError {
   kNone = 0,
