@@ -692,6 +692,26 @@ class NativeBridge {
     }
   }
 
+  /// Phase 9.3.2: select the live camera preview mode for the current recording.
+  /// [floating] true requests the topmost floating bubble; the native side only
+  /// honors it when the bubble exists AND capture-exclusion succeeded. Returns
+  /// the RESULTING floating state — false means use the in-app texture (floating
+  /// unavailable, in-app requested, or no Windows handler). Never throws.
+  Future<bool> setCameraPreviewMode({required bool floating}) async {
+    try {
+      final result = await _nativeBridge.invokeMethod<Map>(
+        'setCameraPreviewMode',
+        {'floating': floating},
+      );
+      return (result?['floating'] as bool?) ?? false;
+    } on MissingPluginException {
+      return false;
+    } catch (e) {
+      Log.e('NativeBridge', 'setCameraPreviewMode failed: $e');
+      return false;
+    }
+  }
+
   Future<Map<String, bool>> getPermissionStatus() async {
     final Map? result = await _nativeBridge.invokeMethod<Map>(
       'getPermissionStatus',

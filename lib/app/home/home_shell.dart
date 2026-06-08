@@ -482,9 +482,13 @@ class _HomeShellState extends State<HomeShell> {
     final showTimelineBar = context.select<RecordingController, bool>(
       (r) => r.showTimelineBar,
     );
-    // Phase 9.3.1: drives the in-app live camera preview (Flutter texture).
+    // Phase 9.3.1/9.3.2: drives the live camera preview (floating bubble vs
+    // in-app Flutter texture).
     final cameraOverlayEnabled = context.select<OverlayController, bool>(
       (o) => o.cameraOverlayEnabled,
+    );
+    final cameraFloatingPreview = context.select<OverlayController, bool>(
+      (o) => o.cameraFloatingPreview,
     );
     final showPreviewShell = context.select<RecordingController, bool>(
       (r) => r.showPreviewShell,
@@ -697,6 +701,16 @@ class _HomeShellState extends State<HomeShell> {
                                                       canResume: canResume,
                                                       cameraOverlayEnabled:
                                                           cameraOverlayEnabled,
+                                                      cameraFloatingPreview:
+                                                          cameraFloatingPreview,
+                                                      onToggleCameraPreviewMode:
+                                                          () => context
+                                                              .read<
+                                                                OverlayController
+                                                              >()
+                                                              .setCameraFloatingPreview(
+                                                                !cameraFloatingPreview,
+                                                              ),
                                                       onToggleRecording: () =>
                                                           _toggleRecordingFromUi(
                                                             context,

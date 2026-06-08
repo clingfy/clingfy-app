@@ -88,4 +88,96 @@ void main() {
       ]);
     },
   );
+
+  group('camera preview bridge (Phase 9.3.1/9.3.2)', () {
+    void overrideScreenRecorder(
+      Future<Object?> Function(MethodCall call) handler,
+    ) {
+      TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger
+          .setMockMethodCallHandler(screenRecorderChannel, handler);
+    }
+
+    void clearScreenRecorder() {
+      TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger
+          .setMockMethodCallHandler(screenRecorderChannel, null);
+    }
+
+    test(
+      'setCameraPreviewMode forwards floating + parses resulting true',
+      () async {
+        MethodCall? captured;
+        overrideScreenRecorder((call) async {
+          captured = call;
+          return <String, Object?>{'floating': true};
+        });
+
+        final result = await NativeBridge.instance.setCameraPreviewMode(
+          floating: true,
+        );
+
+        expect(result, isTrue);
+        expect(captured?.method, 'setCameraPreviewMode');
+        expect((captured?.arguments as Map)['floating'], isTrue);
+      },
+    );
+
+    test(
+      'setCameraPreviewMode parses resulting false (floating refused)',
+      () async {
+        overrideScreenRecorder(
+          (call) async => <String, Object?>{'floating': false},
+        );
+
+        final result = await NativeBridge.instance.setCameraPreviewMode(
+          floating: true,
+        );
+
+        expect(result, isFalse);
+      },
+    );
+
+    test(
+      'setCameraPreviewMode returns false on MissingPluginException',
+      () async {
+        // No handler registered → channel throws MissingPluginException (macOS /
+        // builds without the Windows handler). Must degrade to false, not throw.
+        clearScreenRecorder();
+
+        final result = await NativeBridge.instance.setCameraPreviewMode(
+          floating: true,
+        );
+
+        expect(result, isFalse);
+      },
+    );
+
+    test('getCameraPreviewTextureId parses a valid texture id', () async {
+      overrideScreenRecorder((call) async => <String, Object?>{'textureId': 7});
+
+      final id = await NativeBridge.instance.getCameraPreviewTextureId();
+
+      expect(id, 7);
+    });
+
+    test('getCameraPreviewTextureId returns null for a negative id', () async {
+      overrideScreenRecorder(
+        (call) async => <String, Object?>{'textureId': -1},
+      );
+
+      final id = await NativeBridge.instance.getCameraPreviewTextureId();
+
+      expect(id, isNull);
+    });
+
+    test(
+      'getCameraPreviewTextureId returns null on MissingPluginException',
+      () async {
+        clearScreenRecorder();
+
+        final id = await NativeBridge.instance.getCameraPreviewTextureId();
+
+        expect(id, isNull);
+      },
+    );
+  });
 }

@@ -53,6 +53,11 @@ class OverlayController extends ChangeNotifier {
 
   bool _isRecording = false; // Transient state from main app
 
+  // Phase 9.3.2: live preview mode. true = floating draggable bubble (default,
+  // macOS-like); false = in-app Flutter texture preview (the fallback for GPUs
+  // where the floating bubble is invisible under capture-exclusion). Persisted.
+  bool _cameraFloatingPreview = true;
+
   bool _chromaKeyEnabled = false;
   double _chromaKeyStrength = 0.4;
   int _chromaKeyColor = 0xFF00FF00; // Green
@@ -66,6 +71,7 @@ class OverlayController extends ChangeNotifier {
 
   // --- Getters ---
   bool get cameraOverlayEnabled => _cameraOverlayEnabled;
+  bool get cameraFloatingPreview => _cameraFloatingPreview;
   bool get linkOverlayToRecording => _linkOverlayToRecording;
   OverlayShape get overlayShape => _overlayShape;
   double get overlaySize => _overlaySize;
@@ -124,6 +130,8 @@ class OverlayController extends ChangeNotifier {
       final sp = await SharedPreferences.getInstance();
 
       _cameraOverlayEnabled = sp.getBool('overlayEnabled') ?? false;
+      _cameraFloatingPreview =
+          (sp.getString('cameraPreviewMode') ?? 'floating') == 'floating';
       _linkOverlayToRecording = sp.getBool('overlayLinked') ?? true;
       _overlayShape = await _loadOverlayShape(sp);
       _overlaySize = sp.getDouble('overlaySize') ?? 220.0;
@@ -648,6 +656,52 @@ class OverlayController extends ChangeNotifier {
       _isRecording = isRecording;
       // notifyListeners(); // Not strictly needed if only used for internal logic
       _updateNativeHighlight();
+      // Phase 9.3.2: when recording starts with the camera on, apply the saved
+      // preview mode to native. If floating is requested but unavailable on this
+      // GPU, native reports false and we fall back to the in-app texture.
+      if (isRecording && _cameraOverlayEnabled) {
+        unawaited(_applyCameraPreviewMode());
+      }
+    }
+  }
+
+  Future<void> _applyCameraPreviewMode() async {
+    final requested = _cameraFloatingPreview;
+    final resulting = await _nativeBridge.setCameraPreviewMode(
+      floating: requested,
+    );
+    // Re-guard against the post-await state: the user may have toggled the mode
+    // (setCameraFloatingPreview) while this call was in flight. Only fall back
+    // if we asked for floating, native refused, and floating is still wanted.
+    if (requested && !resulting && _cameraFloatingPreview) {
+      // Floating requested but the bubble is unavailable (no exclusion) → use
+      // the in-app texture instead, and remember it.
+      _cameraFloatingPreview = false;
+      final sp = await SharedPreferences.getInstance();
+      await sp.setString('cameraPreviewMode', 'inApp');
+      notifyListeners();
+    }
+  }
+
+  /// Phase 9.3.2: switch the live preview between the floating bubble and the
+  /// in-app texture (the "Can't see the camera? Use in-app preview" action and
+  /// its inverse). Persists the choice and applies it immediately if recording.
+  Future<void> setCameraFloatingPreview(bool floating) async {
+    if (_cameraFloatingPreview == floating) return;
+    _cameraFloatingPreview = floating;
+    notifyListeners();
+    final sp = await SharedPreferences.getInstance();
+    await sp.setString('cameraPreviewMode', floating ? 'floating' : 'inApp');
+    if (_isRecording && _cameraOverlayEnabled) {
+      final resulting = await _nativeBridge.setCameraPreviewMode(
+        floating: floating,
+      );
+      if (floating && !resulting && _cameraFloatingPreview) {
+        // Asked for floating but it's unavailable on this GPU → revert to in-app.
+        _cameraFloatingPreview = false;
+        await sp.setString('cameraPreviewMode', 'inApp');
+        notifyListeners();
+      }
     }
   }
 

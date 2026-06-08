@@ -135,11 +135,75 @@ void main() {
     expect(args['normalizedX'], closeTo(0.25, 0.0001));
     expect(args['normalizedY'], closeTo(0.8, 0.0001));
   });
+
+  testWidgets(
+    'Phase 9.3.2: floating preview falls back to in-app when native refuses',
+    (tester) async {
+      // Camera on + floating preference, but native reports the floating bubble
+      // is unavailable (no capture-exclusion). The controller must switch to the
+      // in-app texture and persist the choice so it survives restarts.
+      final harness = await _createControllerHarness(
+        tester,
+        initialPrefs: const {
+          'overlayEnabled': true,
+          'cameraPreviewMode': 'floating',
+        },
+        onCall: (call) async {
+          if (call.method == 'setCameraPreviewMode') {
+            return <String, Object?>{'floating': false};
+          }
+          return null;
+        },
+      );
+
+      expect(harness.controller.cameraFloatingPreview, isTrue);
+
+      harness.controller.updateRecordingState(true);
+      for (var i = 0; i < 50 && harness.controller.cameraFloatingPreview; i++) {
+        await tester.pump(const Duration(milliseconds: 10));
+      }
+
+      expect(harness.controller.cameraFloatingPreview, isFalse);
+      final prefs = await SharedPreferences.getInstance();
+      expect(prefs.getString('cameraPreviewMode'), 'inApp');
+
+      final modeCall = _lastMethodCall(harness.calls, 'setCameraPreviewMode');
+      expect(_callArguments(modeCall)['floating'], isTrue);
+    },
+  );
+
+  testWidgets('Phase 9.3.2: floating preview is kept when native honors it', (
+    tester,
+  ) async {
+    final harness = await _createControllerHarness(
+      tester,
+      initialPrefs: const {
+        'overlayEnabled': true,
+        'cameraPreviewMode': 'floating',
+      },
+      onCall: (call) async {
+        if (call.method == 'setCameraPreviewMode') {
+          return <String, Object?>{'floating': true};
+        }
+        return null;
+      },
+    );
+
+    harness.controller.updateRecordingState(true);
+    for (var i = 0; i < 20; i++) {
+      await tester.pump(const Duration(milliseconds: 10));
+    }
+
+    expect(harness.controller.cameraFloatingPreview, isTrue);
+    final prefs = await SharedPreferences.getInstance();
+    expect(prefs.getString('cameraPreviewMode'), 'floating');
+  });
 }
 
 Future<_OverlayControllerHarness> _createControllerHarness(
   WidgetTester tester, {
   Map<String, Object> initialPrefs = const {},
+  Future<Object?> Function(MethodCall call)? onCall,
 }) async {
   SharedPreferences.setMockInitialValues(initialPrefs);
   final calls = <MethodCall>[];
@@ -148,6 +212,7 @@ Future<_OverlayControllerHarness> _createControllerHarness(
 
   messenger.setMockMethodCallHandler(screenRecorderChannel, (call) async {
     calls.add(call);
+    if (onCall != null) return onCall(call);
     return null;
   });
 
