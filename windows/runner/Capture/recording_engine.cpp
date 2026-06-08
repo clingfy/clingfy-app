@@ -20,9 +20,8 @@
 #include "Bridge/platform_thread_dispatcher.h"
 #include "Bridge/workflow_event_publisher.h"
 #include "Capture/Camera/camera_meta.h"
-#include "Capture/Camera/camera_preview_overlay.h"
-#include "Capture/Camera/camera_preview_support.h"
 #include "Capture/Camera/camera_recorder.h"
+#include "Capture/Camera/live_camera_texture.h"
 #include "Capture/captured_video_frame.h"
 #include "Capture/Cursor/cursor_sampler.h"
 #include "Capture/recording_project_writer.h"
@@ -605,39 +604,14 @@ std::optional<RecordingError> RecordingEngine::Start(
         });
       };
 
-      // Phase 9.3: start the live preview bubble BEFORE the recorder so the
-      // recorder can publish frames straight into it. Best-effort — a preview
-      // failure leaves recording running with no bubble (D6).
-      {
-        // Use the work area (excludes the taskbar) so the bubble doesn't tuck
-        // under it. Fall back to the full virtual screen if unavailable.
-        RECT mon_rect{0, 0, ::GetSystemMetrics(SM_CXSCREEN),
-                      ::GetSystemMetrics(SM_CYSCREEN)};
-        ::SystemParametersInfoW(SPI_GETWORKAREA, 0, &mon_rect, 0);
-        if (monitor.has_value()) {
-          MONITORINFO mi{};
-          mi.cbSize = sizeof(mi);
-          if (::GetMonitorInfoW(*monitor, &mi) != 0) {
-            mon_rect = mi.rcWork;
-          }
-        }
-        const BubblePlacement place = ComputeDefaultBubblePlacement(
-            mon_rect.left, mon_rect.top, mon_rect.right - mon_rect.left,
-            mon_rect.bottom - mon_rect.top);
-        camera_preview_ = std::make_unique<CameraPreviewOverlay>();
-        if (camera_preview_->Start(place)) {
-          CameraPreviewOverlay* preview = camera_preview_.get();
-          cam_cfg.on_preview_frame = [preview](const std::uint8_t* bgra, int w,
-                                               int h) {
-            preview->PublishBgra(bgra, w, h);
-          };
-        } else {
-          camera_preview_.reset();
-          clingfy::bridge::devices::LogDeviceProbe(
-              "RecordingEngine: camera preview overlay failed; recording "
-              "without a bubble");
-        }
-      }
+      // Phase 9.3.1: feed the recorder's preview frames into the app-lifetime
+      // Flutter texture (NOT a captured topmost overlay), so the live preview is
+      // shown inside the app window and is NOT burned into screen.mov. The
+      // texture is registered once at startup; here we just route frames to it
+      // while recording. Dart shows the Texture widget during recording.
+      cam_cfg.on_preview_frame = [](const std::uint8_t* bgra, int w, int h) {
+        LiveCameraTexture::Instance().PublishBgra(bgra, w, h);
+      };
 
       camera_recorder_ = std::make_unique<CameraRecorder>();
       if (camera_recorder_->Start(cam_cfg)) {
@@ -645,16 +619,9 @@ std::optional<RecordingError> RecordingEngine::Start(
         current_camera_device_id_ = *selected;
         current_camera_enabled_ = true;  // intent; finalized in teardown.
         clingfy::bridge::devices::LogDeviceProbe(
-            camera_preview_ != nullptr
-                ? "RecordingEngine: camera capture + preview bubble started"
-                : "RecordingEngine: camera capture started (no preview bubble)");
+            "RecordingEngine: camera capture + live texture preview started");
       } else {
         camera_recorder_.reset();
-        // No recording → no bubble. Tear the preview down too.
-        if (camera_preview_) {
-          camera_preview_->Stop();
-          camera_preview_.reset();
-        }
         clingfy::bridge::devices::LogDeviceProbe(
             "RecordingEngine: camera init failed; continuing screen-only");
       }
@@ -965,6 +932,10 @@ void RecordingEngine::StopCameraRecorder() {
     meta.frames_written = result.frames_written;
     meta.mirrored_raw = false;
     meta.device_lost = result.device_lost;
+    // Phase 9.3.1: the live preview is a Flutter texture, never burned into
+    // screen.mov — so the camera is NOT already in the screen video, and the
+    // Phase 9.4 export should composite it from camera/raw.mov.
+    meta.preview_burned_in = false;
     current_camera_meta_json_ = BuildCameraMetaJson(meta);
   } else {
     current_camera_meta_json_.clear();
@@ -1091,13 +1062,10 @@ void RecordingEngine::TeardownPipeline() {
   // project writer bundles it. Recomputes the final camera-enabled flag and
   // builds the metadata from the recorder's result.
   StopCameraRecorder();
-  // Phase 9.3: tear down the preview overlay AFTER the recorder is stopped —
-  // the recorder's capture thread is the frame producer, so once it is joined
-  // no PublishBgra can race the overlay's destruction.
-  if (camera_preview_) {
-    camera_preview_->Stop();
-    camera_preview_.reset();
-  }
+  // Phase 9.3.1: the live preview is an app-lifetime Flutter texture, not a
+  // per-recording window — there is nothing to tear down here. The recorder's
+  // capture thread (the only PublishBgra caller) is already joined by
+  // StopCameraRecorder, so no more frames are routed to the texture.
   if (capture_backend_) {
     capture_backend_->Stop();
     capture_backend_.reset();
@@ -1210,11 +1178,6 @@ std::string RecordingEngine::cursor_sidecar_path_for_testing() const {
 bool RecordingEngine::camera_recording_for_testing() const {
   std::lock_guard<std::mutex> lock(mutex_);
   return camera_recorder_ != nullptr;
-}
-
-bool RecordingEngine::camera_preview_active_for_testing() const {
-  std::lock_guard<std::mutex> lock(mutex_);
-  return camera_preview_ != nullptr;
 }
 
 void RecordingEngine::ForceResetForTesting() {

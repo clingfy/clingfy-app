@@ -37,6 +37,12 @@ struct CameraMetaFields {
   // The capture ended early because the device was lost mid-recording. The
   // raw.mov is still a valid (shorter) clip.
   bool device_lost = false;
+  // Phase 9.3.1: whether the live preview was burned into screen.mov during
+  // recording. False for the Flutter-texture preview path (the camera is NOT in
+  // the screen video) → Phase 9.4 export composites it from raw.mov. True only
+  // if a captured topmost overlay path was used. The reader/export uses this to
+  // avoid double-drawing the camera.
+  bool preview_burned_in = false;
 };
 
 std::string BuildCameraMetaJson(const CameraMetaFields& fields);

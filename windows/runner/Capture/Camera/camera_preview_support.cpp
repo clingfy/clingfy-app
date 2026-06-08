@@ -90,24 +90,4 @@ bool ConvertToBgra(CameraPixelFormat format, const std::uint8_t* src, int src_w,
   return true;
 }
 
-BubblePlacement ComputeDefaultBubblePlacement(int monitor_x, int monitor_y,
-                                              int monitor_w, int monitor_h) {
-  BubblePlacement out;
-  if (monitor_w <= 0 || monitor_h <= 0) {
-    return out;
-  }
-  int width = std::max(160, (monitor_w * 22) / 100);
-  int height = (width * 9) / 16;
-  // Never let the bubble exceed the monitor.
-  width = std::min(width, monitor_w);
-  height = std::min(height, monitor_h);
-  const int margin = std::max(8, (monitor_w * 3) / 100);
-  out.width = width;
-  out.height = height;
-  out.x = monitor_x + monitor_w - width - margin;
-  out.y = monitor_y + monitor_h - height - margin;
-  out.rounded = true;
-  return out;
-}
-
 }  // namespace clingfy::capture

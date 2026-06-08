@@ -91,37 +91,5 @@ TEST(CameraPreviewSupportTest, ConvertRejectsBadArgs) {
                              buf.data(), 2, 0));
 }
 
-// ---- ComputeDefaultBubblePlacement -----------------------------------------
-
-TEST(CameraPreviewSupportTest, DefaultPlacementSitsBottomRightInsideMonitor) {
-  const auto p = ComputeDefaultBubblePlacement(0, 0, 1920, 1080);
-  EXPECT_GT(p.width, 0);
-  EXPECT_GT(p.height, 0);
-  // 16:9 bubble.
-  EXPECT_NEAR(static_cast<double>(p.width) / p.height, 16.0 / 9.0, 0.1);
-  // Fully inside the monitor.
-  EXPECT_GE(p.x, 0);
-  EXPECT_GE(p.y, 0);
-  EXPECT_LE(p.x + p.width, 1920);
-  EXPECT_LE(p.y + p.height, 1080);
-  // Bottom-right-ish (past the horizontal + vertical midpoint).
-  EXPECT_GT(p.x, 960);
-  EXPECT_GT(p.y, 540);
-  EXPECT_TRUE(p.rounded);
-}
-
-TEST(CameraPreviewSupportTest, DefaultPlacementHonorsMonitorOrigin) {
-  // Secondary monitor offset to the right.
-  const auto p = ComputeDefaultBubblePlacement(1920, 0, 1280, 720);
-  EXPECT_GE(p.x, 1920);
-  EXPECT_LE(p.x + p.width, 1920 + 1280);
-}
-
-TEST(CameraPreviewSupportTest, DefaultPlacementRejectsBadMonitor) {
-  const auto p = ComputeDefaultBubblePlacement(0, 0, 0, 0);
-  EXPECT_EQ(p.width, 0);
-  EXPECT_EQ(p.height, 0);
-}
-
 }  // namespace
 }  // namespace clingfy::capture

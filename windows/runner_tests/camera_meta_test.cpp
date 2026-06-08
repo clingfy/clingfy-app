@@ -58,5 +58,15 @@ TEST(CameraMetaTest, MirrorAndDeviceLostReflectFlags) {
   EXPECT_NE(json2.find("\"deviceLost\": false"), std::string::npos);
 }
 
+TEST(CameraMetaTest, PreviewBurnedInReflectsFlag) {
+  // Flutter-texture preview path → not burned into screen.mov.
+  EXPECT_NE(BuildCameraMetaJson(SampleFields()).find("\"previewBurnedIn\": false"),
+            std::string::npos);
+  CameraMetaFields f = SampleFields();
+  f.preview_burned_in = true;
+  EXPECT_NE(BuildCameraMetaJson(f).find("\"previewBurnedIn\": true"),
+            std::string::npos);
+}
+
 }  // namespace
 }  // namespace clingfy::capture

@@ -9,6 +9,7 @@ import 'package:clingfy/app/home/guide/home_guide_step.dart';
 import 'package:clingfy/app/home/home_ui_state.dart';
 import 'package:clingfy/app/home/preview/widgets/video_timeline.dart';
 import 'package:clingfy/app/home/recording/countdown_controller.dart';
+import 'package:clingfy/app/home/overlay/overlay_controller.dart';
 import 'package:clingfy/app/home/recording/recording_controller.dart';
 import 'package:clingfy/app/home/widgets/countdown_overlay.dart';
 import 'package:clingfy/app/home/widgets/export_progress_dock.dart';
@@ -481,6 +482,10 @@ class _HomeShellState extends State<HomeShell> {
     final showTimelineBar = context.select<RecordingController, bool>(
       (r) => r.showTimelineBar,
     );
+    // Phase 9.3.1: drives the in-app live camera preview (Flutter texture).
+    final cameraOverlayEnabled = context.select<OverlayController, bool>(
+      (o) => o.cameraOverlayEnabled,
+    );
     final showPreviewShell = context.select<RecordingController, bool>(
       (r) => r.showPreviewShell,
     );
@@ -690,6 +695,8 @@ class _HomeShellState extends State<HomeShell> {
                                                       isBusy: isBusy,
                                                       canPause: canPause,
                                                       canResume: canResume,
+                                                      cameraOverlayEnabled:
+                                                          cameraOverlayEnabled,
                                                       onToggleRecording: () =>
                                                           _toggleRecordingFromUi(
                                                             context,
