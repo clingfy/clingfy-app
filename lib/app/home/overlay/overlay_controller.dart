@@ -53,10 +53,12 @@ class OverlayController extends ChangeNotifier {
 
   bool _isRecording = false; // Transient state from main app
 
-  // Phase 9.3.2: live preview mode. true = floating draggable bubble (default,
-  // macOS-like); false = in-app Flutter texture preview (the fallback for GPUs
-  // where the floating bubble is invisible under capture-exclusion). Persisted.
-  bool _cameraFloatingPreview = true;
+  // Phase 9.3.2 live preview mode. true = floating draggable bubble (macOS-like);
+  // false = in-app Flutter texture preview. Phase 9.3.3: in-app is the Windows
+  // DEFAULT because a capture-excluded floating window is invisible on hybrid
+  // GPUs (WDA reports success but never composites to the display — see #153).
+  // Floating is opt-in via the recording-panel toggle. Persisted.
+  bool _cameraFloatingPreview = false;
 
   bool _chromaKeyEnabled = false;
   double _chromaKeyStrength = 0.4;
@@ -130,8 +132,9 @@ class OverlayController extends ChangeNotifier {
       final sp = await SharedPreferences.getInstance();
 
       _cameraOverlayEnabled = sp.getBool('overlayEnabled') ?? false;
-      _cameraFloatingPreview =
-          (sp.getString('cameraPreviewMode') ?? 'floating') == 'floating';
+      // Default to in-app preview (see _cameraFloatingPreview docs); only the
+      // explicit 'floating' opt-in turns on the native bubble.
+      _cameraFloatingPreview = sp.getString('cameraPreviewMode') == 'floating';
       _linkOverlayToRecording = sp.getBool('overlayLinked') ?? true;
       _overlayShape = await _loadOverlayShape(sp);
       _overlaySize = sp.getDouble('overlaySize') ?? 220.0;

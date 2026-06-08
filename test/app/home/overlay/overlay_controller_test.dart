@@ -172,6 +172,36 @@ void main() {
     },
   );
 
+  testWidgets(
+    'Phase 9.3.3: in-app is the default preview mode (no floating opt-in)',
+    (tester) async {
+      // No cameraPreviewMode pref → in-app preview, not the floating bubble.
+      final harness = await _createControllerHarness(
+        tester,
+        initialPrefs: const {'overlayEnabled': true},
+        onCall: (call) async {
+          if (call.method == 'setCameraPreviewMode') {
+            // Native echoes the requested mode; for in-app it returns false.
+            return <String, Object?>{'floating': false};
+          }
+          return null;
+        },
+      );
+
+      expect(harness.controller.cameraFloatingPreview, isFalse);
+
+      harness.controller.updateRecordingState(true);
+      for (var i = 0; i < 20; i++) {
+        await tester.pump(const Duration(milliseconds: 10));
+      }
+
+      // Recording applies the default mode to native as floating:false.
+      final modeCall = _lastMethodCall(harness.calls, 'setCameraPreviewMode');
+      expect(_callArguments(modeCall)['floating'], isFalse);
+      expect(harness.controller.cameraFloatingPreview, isFalse);
+    },
+  );
+
   testWidgets('Phase 9.3.2: floating preview is kept when native honors it', (
     tester,
   ) async {
