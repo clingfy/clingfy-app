@@ -22,7 +22,7 @@ class HomeRightPanel extends StatelessWidget {
     required this.onResumeRecording,
     required this.onClosePreview,
     this.cameraOverlayEnabled = false,
-    this.cameraFloatingPreview = true,
+    this.cameraFloatingPreview = false,
     this.onToggleCameraPreviewMode,
     this.previewHostBuilder,
     this.startRecordingButtonKey,
