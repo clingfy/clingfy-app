@@ -1,7 +1,10 @@
 #include "Capture/Camera/camera_preview_overlay.h"
 
 #include <algorithm>
+#include <cstdio>
 #include <utility>
+
+#include "Bridge/Devices/device_probe_log.h"
 
 namespace clingfy::capture {
 
@@ -131,9 +134,14 @@ void CameraPreviewOverlay::ThreadMain(BubblePlacement placement,
   thread_id_ = ::GetCurrentThreadId();
   EnsureClassRegistered();
 
+  // A plain opaque topmost tool window — NOT layered. The bubble is opaque
+  // video, so it needs no per-pixel alpha; a layered window plus SetWindowRgn
+  // plus display-affinity is a fragile combo that rendered nothing on at least
+  // one hybrid-GPU laptop (the bubble's window was created but never visible).
+  // Shape comes from SetWindowRgn below; content from WM_PAINT/StretchDIBits.
   HWND hwnd = ::CreateWindowExW(
-      WS_EX_LAYERED | WS_EX_TOPMOST | WS_EX_TOOLWINDOW | WS_EX_NOACTIVATE,
-      kWindowClassName, L"Clingfy Camera", WS_POPUP, placement.x, placement.y,
+      WS_EX_TOPMOST | WS_EX_TOOLWINDOW | WS_EX_NOACTIVATE, kWindowClassName,
+      L"Clingfy Camera", WS_POPUP, placement.x, placement.y,
       std::max(1, placement.width), std::max(1, placement.height), nullptr,
       nullptr, ::GetModuleHandleW(nullptr), this);
   if (hwnd == nullptr) {
@@ -144,14 +152,19 @@ void CameraPreviewOverlay::ThreadMain(BubblePlacement placement,
   // Exclude the bubble from screen capture so it is visible to the USER but NOT
   // burned into the recorded screen video (the camera is composited from
   // raw.mov at export — a captured preview would double it up). Best-effort:
-  // WDA_EXCLUDEFROMCAPTURE needs Windows 10 2004+; it fails harmlessly on older
-  // builds (the bubble would then appear in the recording on those).
-  ::SetWindowDisplayAffinity(hwnd, WDA_EXCLUDEFROMCAPTURE);
-
-  // A layered window stays invisible until SetLayeredWindowAttributes /
-  // UpdateLayeredWindow is called. Fully opaque (alpha 255) — the bubble is
-  // opaque video; opacity styling is a later slice.
-  ::SetLayeredWindowAttributes(hwnd, 0, 255, LWA_ALPHA);
+  // WDA_EXCLUDEFROMCAPTURE needs Windows 10 2004+. Log the result so an
+  // invisible-bubble report can tell whether the affinity call is implicated.
+  const BOOL excluded =
+      ::SetWindowDisplayAffinity(hwnd, WDA_EXCLUDEFROMCAPTURE);
+  {
+    char b[128];
+    std::snprintf(b, sizeof(b),
+                  "CameraPreviewOverlay: window created at (%d,%d) %dx%d "
+                  "excludeFromCapture=%d",
+                  placement.x, placement.y, placement.width, placement.height,
+                  excluded ? 1 : 0);
+    clingfy::bridge::devices::LogDeviceProbe(b);
+  }
 
   if (placement.rounded) {
     const int radius =
