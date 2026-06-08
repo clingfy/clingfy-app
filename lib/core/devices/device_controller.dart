@@ -217,13 +217,18 @@ class DeviceController extends ChangeNotifier {
       final raw =
           await _nativeBridge.invokeMethod<List<dynamic>>('getVideoSources') ??
           [];
-      // Mirror reloadDisplays: surface the camera enumeration result in the app
-      // log so an empty dropdown is diagnosable from the Flutter log alone
-      // (the native MF probe detail lives in the device_probe.log sidecar).
-      Log.i("Device", "Cameras: $raw");
       final cams = raw
           .map((e) => CamSource.fromMap(Map<dynamic, dynamic>.from(e as Map)))
           .toList();
+      // Surface the enumeration result in the app log so an empty dropdown is
+      // diagnosable from the Flutter log alone. Log names + count, NOT the raw
+      // maps: the MF symbolic-link ids are long and backslash-heavy (each `\`
+      // is JSON-escaped to `\\` in the .jsonl), which clutters the line. The
+      // full ids live in the native device_probe.log sidecar if needed.
+      Log.i(
+        "Device",
+        "Cameras (${cams.length}): ${cams.map((c) => c.name).join(', ')}",
+      );
 
       final sp = await SharedPreferences.getInstance();
       final savedCamId = sp.getString(_prefVideoDeviceId);
