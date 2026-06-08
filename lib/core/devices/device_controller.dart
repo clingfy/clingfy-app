@@ -217,6 +217,10 @@ class DeviceController extends ChangeNotifier {
       final raw =
           await _nativeBridge.invokeMethod<List<dynamic>>('getVideoSources') ??
           [];
+      // Mirror reloadDisplays: surface the camera enumeration result in the app
+      // log so an empty dropdown is diagnosable from the Flutter log alone
+      // (the native MF probe detail lives in the device_probe.log sidecar).
+      Log.i("Device", "Cameras: $raw");
       final cams = raw
           .map((e) => CamSource.fromMap(Map<dynamic, dynamic>.from(e as Map)))
           .toList();
