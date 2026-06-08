@@ -7,6 +7,7 @@
 #include <mfobjects.h>
 
 #include <atomic>
+#include <chrono>
 #include <cstdio>
 #include <ctime>
 #include <filesystem>
@@ -14,6 +15,7 @@
 #include <mutex>
 #include <string>
 #include <system_error>
+#include <thread>
 
 namespace clingfy::bridge::devices {
 
@@ -115,33 +117,49 @@ std::string ReadStringAttribute(IMFActivate& activate, REFGUID key) {
   return value;
 }
 
-}  // namespace
-
-std::vector<VideoSourceRecord> EnumerateVideoInputs() {
-  std::vector<VideoSourceRecord> sources;
-  EnsureMediaFoundationStarted();
-
+// The actual Media Foundation enumeration. MUST run on an MTA thread (see
+// EnumerateVideoInputs). Appends discovered cameras to `sources`.
+void EnumerateVideoInputsMf(std::vector<VideoSourceRecord>& sources) {
   ScopedCom<IMFAttributes> config;
   if (FAILED(::MFCreateAttributes(config.ReleaseAndGetAddressOf(), 1)) ||
       !config) {
-    return sources;
+    LogDeviceProbe("EnumerateVideoInputs: MFCreateAttributes failed");
+    return;
   }
   if (FAILED(config->SetGUID(MF_DEVSOURCE_ATTRIBUTE_SOURCE_TYPE,
                              MF_DEVSOURCE_ATTRIBUTE_SOURCE_TYPE_VIDCAP_GUID))) {
-    return sources;
+    LogDeviceProbe("EnumerateVideoInputs: SetGUID(VIDCAP) failed");
+    return;
   }
 
   IMFActivate** raw_devices = nullptr;
   UINT32 count = 0;
   const HRESULT hr =
       ::MFEnumDeviceSources(config.Get(), &raw_devices, &count);
-  if (FAILED(hr) || raw_devices == nullptr) {
+  if (FAILED(hr)) {
     char buf[160];
     std::snprintf(buf, sizeof(buf),
-                  "EnumerateVideoInputs: MFEnumDeviceSources failed hr=0x%08X",
-                  hr);
+                  "EnumerateVideoInputs: MFEnumDeviceSources FAILED hr=0x%08X",
+                  static_cast<unsigned>(hr));
     LogDeviceProbe(buf);
-    return sources;
+    return;
+  }
+  if (raw_devices == nullptr || count == 0) {
+    // S_OK with zero devices — NOT an error. The Camera Frame Server reported
+    // no camera on this attempt: the device may be disabled, in use by another
+    // app, blocked by privacy, or the Frame Server is still cold-starting. The
+    // caller retries a few times to ride out the cold-start race.
+    char buf[200];
+    std::snprintf(
+        buf, sizeof(buf),
+        "EnumerateVideoInputs: 0 cameras (hr=0x%08X count=%u) — none "
+        "enumerated this attempt (disabled / in-use / privacy / cold-start)",
+        static_cast<unsigned>(hr), count);
+    LogDeviceProbe(buf);
+    if (raw_devices != nullptr) {
+      ::CoTaskMemFree(raw_devices);
+    }
+    return;
   }
 
   for (UINT32 i = 0; i < count; ++i) {
@@ -160,16 +178,21 @@ std::vector<VideoSourceRecord> EnumerateVideoInputs() {
 
     if (record.id.empty()) {
       // Without a stable identifier the entry is useless to Phase 9, which
-      // re-opens the device by symbolic link. Skip.
+      // re-opens the device by symbolic link. Skip — but log it, because a
+      // camera the user sees in Windows but that has no symbolic link is a
+      // distinct failure mode worth spotting.
+      char skip[160];
+      std::snprintf(skip, sizeof(skip),
+                    "EnumerateVideoInputs: #%u skipped (no symbolic link)", i);
+      LogDeviceProbe(skip);
       continue;
     }
     if (record.name.empty()) {
       record.name = "Camera";
     }
     char buf[256];
-    std::snprintf(buf, sizeof(buf),
-                  "EnumerateVideoInputs: #%u name=%s",
-                  i, record.name.c_str());
+    std::snprintf(buf, sizeof(buf), "EnumerateVideoInputs: #%u name=%s", i,
+                  record.name.c_str());
     LogDeviceProbe(buf);
     sources.push_back(std::move(record));
   }
@@ -180,7 +203,44 @@ std::vector<VideoSourceRecord> EnumerateVideoInputs() {
                 "EnumerateVideoInputs: MF reported %u device(s); returning %zu",
                 count, sources.size());
   LogDeviceProbe(summary);
+}
 
+}  // namespace
+
+std::vector<VideoSourceRecord> EnumerateVideoInputs() {
+  EnsureMediaFoundationStarted();
+  std::vector<VideoSourceRecord> sources;
+
+  // Run the enumeration on a dedicated MTA thread. MFEnumDeviceSources resolves
+  // cameras through the Windows Camera Frame Server, which marshals unreliably
+  // when called from the Flutter platform thread (an STA apartment) and
+  // intermittently returns S_OK with zero devices even when a camera exists.
+  // An MTA apartment — the same apartment the camera capture thread uses —
+  // makes it reliable. We also retry a few times to ride out a Frame Server
+  // cold-start (the device can take a beat to appear after the service spins
+  // up). This matches the audio enumerator's reliability without forcing the
+  // platform thread into MTA.
+  std::thread worker([&sources]() {
+    const HRESULT co = ::CoInitializeEx(nullptr, COINIT_MULTITHREADED);
+    LogDeviceProbe("EnumerateVideoInputs: begin (MTA worker)");
+    constexpr int kMaxAttempts = 3;
+    for (int attempt = 0; attempt < kMaxAttempts; ++attempt) {
+      sources.clear();
+      EnumerateVideoInputsMf(sources);
+      if (!sources.empty()) {
+        break;
+      }
+      if (attempt + 1 < kMaxAttempts) {
+        LogDeviceProbe(
+            "EnumerateVideoInputs: 0 cameras, retrying after 200ms");
+        std::this_thread::sleep_for(std::chrono::milliseconds(200));
+      }
+    }
+    if (SUCCEEDED(co)) {
+      ::CoUninitialize();
+    }
+  });
+  worker.join();
   return sources;
 }
 
