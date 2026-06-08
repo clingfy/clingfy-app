@@ -558,23 +558,21 @@ TEST_F(RecordingEngineTest, TargetLostWhenIdleIsNoOp) {
 
 TEST_F(RecordingEngineTest, NoCameraWhenOverlayDisabled) {
   // ValidRequest defaults disable_camera_overlay = true → the camera block is
-  // skipped entirely: no recorder, no preview bubble, no camera file.
+  // skipped entirely: no recorder, no live preview, no camera file.
   ASSERT_FALSE(RecordingEngine::Instance().Start(ValidRequest()).has_value());
   EXPECT_FALSE(RecordingEngine::Instance().camera_recording_for_testing());
-  EXPECT_FALSE(RecordingEngine::Instance().camera_preview_active_for_testing());
   ASSERT_FALSE(RecordingEngine::Instance().Stop("sess-test").has_value());
 }
 
 TEST_F(RecordingEngineTest, NoCameraWhenOverlayEnabledButNoDeviceSelected) {
   // Overlay enabled, but no camera selected in WindowsSelectionState → the
   // readiness gate (kNoDeviceSelected / kNoDevicesAvailable) blocks capture, so
-  // again no recorder and no preview. Screen recording proceeds normally.
+  // again no recorder. Screen recording proceeds normally.
   auto request = ValidRequest();
   request.disable_camera_overlay = false;
   ASSERT_FALSE(RecordingEngine::Instance().Start(request).has_value());
   EXPECT_TRUE(RecordingEngine::Instance().IsRecording());
   EXPECT_FALSE(RecordingEngine::Instance().camera_recording_for_testing());
-  EXPECT_FALSE(RecordingEngine::Instance().camera_preview_active_for_testing());
   ASSERT_FALSE(RecordingEngine::Instance().Stop("sess-test").has_value());
 }
 

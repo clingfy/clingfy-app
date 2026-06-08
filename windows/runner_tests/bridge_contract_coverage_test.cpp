@@ -82,6 +82,7 @@ const std::vector<std::string>& BridgeContractMethods() {
       "setChromaKeyEnabled",
       "setChromaKeyColor",
       "setChromaKeyStrength",
+      "getCameraPreviewTextureId",
 
       // Recording indicator + pre-recording bar.
       "setRecordingIndicatorPinned",

@@ -56,6 +56,8 @@ std::string BuildCameraMetaJson(const CameraMetaFields& fields) {
       << ",\n";
   out << "  \"deviceLost\": " << (fields.device_lost ? "true" : "false")
       << ",\n";
+  out << "  \"previewBurnedIn\": "
+      << (fields.preview_burned_in ? "true" : "false") << ",\n";
   // Windows uses a single raw.mov; segments stays empty for macOS parity.
   out << "  \"segments\": [],\n";
   out << "  \"platform\": \"windows\"\n";

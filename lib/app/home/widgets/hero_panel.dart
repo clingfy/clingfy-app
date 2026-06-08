@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 import 'package:clingfy/app/home/widgets/grid_painter.dart';
+import 'package:clingfy/app/home/widgets/live_camera_preview.dart';
 import 'package:clingfy/l10n/app_localizations.dart';
 import 'package:clingfy/ui/platform/widgets/responsive_shell_scope.dart';
 import 'package:clingfy/ui/theme/app_theme.dart';
@@ -17,6 +18,7 @@ class HeroPanel extends StatelessWidget {
     required this.onToggle,
     required this.onPause,
     required this.onResume,
+    this.cameraOverlayEnabled = false,
     this.startRecordingButtonKey,
   });
 
@@ -28,6 +30,7 @@ class HeroPanel extends StatelessWidget {
   final VoidCallback onToggle;
   final VoidCallback onPause;
   final VoidCallback onResume;
+  final bool cameraOverlayEnabled;
   final Key? startRecordingButtonKey;
 
   @override
@@ -106,6 +109,12 @@ class HeroPanel extends StatelessWidget {
                       ),
                     ),
                     SizedBox(height: xxlGap),
+                    // Phase 9.3.1: live camera bubble (Flutter texture; only
+                    // shows while recording with the camera overlay enabled).
+                    LiveCameraPreview(
+                      isRecording: isRecording,
+                      cameraEnabled: cameraOverlayEnabled,
+                    ),
                     if (!isRecording)
                       FilledButton.icon(
                         key: startRecordingButtonKey,

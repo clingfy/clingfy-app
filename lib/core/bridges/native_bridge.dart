@@ -668,6 +668,30 @@ class NativeBridge {
     });
   }
 
+  /// Phase 9.3.1: the id of the app-lifetime live-camera preview texture, or
+  /// null when unavailable (registration failed, or not a Windows build with the
+  /// texture). The recording UI mounts a `Texture(textureId:)` for it while
+  /// recording with the camera enabled. The texture is fed by the recorder; it
+  /// shows nothing until camera frames arrive.
+  Future<int?> getCameraPreviewTextureId() async {
+    // Windows-only. On macOS (and any build without the handler) the channel
+    // throws MissingPluginException — degrade to null so the cross-platform
+    // recording UI simply shows no live preview rather than crashing.
+    try {
+      final result = await _nativeBridge.invokeMethod<Map>(
+        'getCameraPreviewTextureId',
+      );
+      final id = (result?['textureId'] as num?)?.toInt();
+      if (id == null || id < 0) return null;
+      return id;
+    } on MissingPluginException {
+      return null;
+    } catch (e) {
+      Log.e('NativeBridge', 'getCameraPreviewTextureId failed: $e');
+      return null;
+    }
+  }
+
   Future<Map<String, bool>> getPermissionStatus() async {
     final Map? result = await _nativeBridge.invokeMethod<Map>(
       'getPermissionStatus',

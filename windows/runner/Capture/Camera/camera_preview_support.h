@@ -41,21 +41,6 @@ bool ConvertToBgra(CameraPixelFormat format, const std::uint8_t* src,
                    int src_w, int src_h, int src_stride, std::uint8_t* dst_bgra,
                    int dst_w, int dst_h);
 
-struct BubblePlacement {
-  int x = 0;
-  int y = 0;
-  int width = 0;
-  int height = 0;
-  bool rounded = true;
-};
-
-// Default placement for the preview bubble: a 16:9 rectangle ~22% of the
-// monitor width, inset from the bottom-right corner. Used until live
-// position/size from the camera-overlay state is wired (the setCameraOverlay*
-// setters are still no-ops). Monitor rect is in virtual-desktop pixels.
-BubblePlacement ComputeDefaultBubblePlacement(int monitor_x, int monitor_y,
-                                              int monitor_w, int monitor_h);
-
 }  // namespace clingfy::capture
 
 #endif  // RUNNER_CAPTURE_CAMERA_CAMERA_PREVIEW_SUPPORT_H_

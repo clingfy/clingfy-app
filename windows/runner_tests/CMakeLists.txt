@@ -41,6 +41,7 @@ add_executable(runner_tests
   "camera_preview_support_test.cpp"
   "camera_readiness_test.cpp"
   "camera_recorder_test.cpp"
+  "live_camera_texture_test.cpp"
   "cursor_export_renderer_test.cpp"
   "cursor_sample_mapper_test.cpp"
   "cursor_sampler_test.cpp"
