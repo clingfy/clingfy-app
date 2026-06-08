@@ -2,6 +2,7 @@
 #define RUNNER_CAPTURE_CAMERA_CAMERA_META_H_
 
 #include <cstdint>
+#include <optional>
 #include <string>
 
 // Phase 9.2 — the camera/camera.meta.json sidecar.
@@ -46,6 +47,14 @@ struct CameraMetaFields {
 };
 
 std::string BuildCameraMetaJson(const CameraMetaFields& fields);
+
+// Phase 9.4 — parse a `camera/camera.meta.json` document back into its fields.
+// Tolerant of unknown keys and the (always-empty) `segments` array, but returns
+// nullopt when the input is not a JSON object (empty / no balanced braces) so a
+// malformed sidecar makes the export fall back to screen-only rather than draw a
+// garbage camera. Missing scalar keys take the `CameraMetaFields` defaults. Pure
+// — no filesystem; the caller reads the file and hands the text in.
+std::optional<CameraMetaFields> ParseCameraMetaJson(const std::string& json);
 
 }  // namespace clingfy::capture
 

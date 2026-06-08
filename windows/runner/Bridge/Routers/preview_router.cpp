@@ -125,21 +125,22 @@ std::string WideToUtf8(const std::wstring& w) {
 // ---------------------------------------------------------------------
 
 flutter::EncodableMap BuildCameraExportCapabilities() {
-  // Phase 9.1: advertise honestly. These flags gate camera-overlay *export
-  // styling* in the Dart editor, and Windows does not composite the camera at
-  // export yet (that begins in 9.4), so every styling capability is false. The
+  // These flags gate camera-overlay *export styling* in the Dart editor. The
   // slice plan flips them on as each lands:
-  //   * 9.4 → shapeMask + cornerRadius (the basic circle / rounded bubble)
+  //   * 9.4 → shapeMask + cornerRadius (the basic circle / rounded bubble) ✅
   //   * 9.5 → border + shadow
   //   * 9.6 → chromaKey
+  // Phase 9.4 composites the camera from camera/raw.mov as a masked circle /
+  // rounded-rect / square bubble, so shapeMask + cornerRadius are now true.
+  // border / shadow / chromaKey stay false until their slices; the Dart side
+  // hides those controls and the export accepts-but-ignores their args.
   // (Camera *device selection* readiness is a separate concern, surfaced via
   // getVideoSources / setVideoSource + the camera-readiness check, not through
   // this export-styling capabilities map.) The Dart parser defaults a missing
-  // key to true, so we emit every key explicitly to force the false.
+  // key to true, so we emit every key explicitly.
   return flutter::EncodableMap{
-      {flutter::EncodableValue("shapeMask"), flutter::EncodableValue(false)},
-      {flutter::EncodableValue("cornerRadius"),
-       flutter::EncodableValue(false)},
+      {flutter::EncodableValue("shapeMask"), flutter::EncodableValue(true)},
+      {flutter::EncodableValue("cornerRadius"), flutter::EncodableValue(true)},
       {flutter::EncodableValue("border"), flutter::EncodableValue(false)},
       {flutter::EncodableValue("shadow"), flutter::EncodableValue(false)},
       {flutter::EncodableValue("chromaKey"), flutter::EncodableValue(false)},

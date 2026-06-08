@@ -113,6 +113,32 @@ struct RenderRequest {
   // stub — deferred).
   bool zoom_enabled = false;
   double zoom_factor = 1.5;
+
+  // Phase 9.4 camera bubble. When `draw_camera` is true and `camera_video_path`
+  // names a readable `camera/raw.mov`, the composite draws the camera as a
+  // masked bubble in CANVAS space (on top of everything, NOT under the smart-
+  // zoom transform). All gating — camera visible, previewBurnedIn == false,
+  // frames > 0, assets present-together — happens upstream in
+  // `export_passthrough`; the pipeline just renders what it is handed and
+  // soft-fails (no camera) on any reader / D2D resource failure.
+  bool draw_camera = false;
+  std::wstring camera_video_path;
+  // Recording-relative ms of the camera's first frame (camera.meta.json sync
+  // key): the camera frame for screen-time `tMs` is at `tMs - startOffsetMs`.
+  std::int64_t camera_start_offset_ms = 0;
+  // Bubble placement, from the Dart `camera*` export args. `has_center` true
+  // uses the manual normalized center; otherwise the layout preset's default
+  // corner is used. size_factor is the fraction of the shorter canvas side.
+  bool camera_has_center = false;
+  double camera_center_x = 0.0;
+  double camera_center_y = 0.0;
+  std::string camera_layout_preset;
+  double camera_size_factor = 0.18;
+  // Shape ("circle" / "roundedRect" / "square" / "squircle"), corner radius
+  // (Dart 0..0.5 fraction), and content mode ("fill" cover / "fit" contain).
+  std::string camera_shape;
+  double camera_corner_radius = 0.0;
+  std::string camera_content_mode;
 };
 
 struct RenderResult {

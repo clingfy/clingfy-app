@@ -4,10 +4,14 @@
 
 #include <algorithm>
 #include <filesystem>
+#include <fstream>
 #include <functional>
+#include <optional>
+#include <sstream>
 #include <string>
 #include <system_error>
 
+#include "Capture/Camera/camera_meta.h"
 #include "Capture/Export/export_audio.h"
 #include "Capture/Export/export_format.h"
 #include "Capture/Export/export_geometry.h"
@@ -122,7 +126,27 @@ std::wstring Utf8ToWide(const std::string& utf8) {
   return out;
 }
 
+// Read a small text file (camera.meta.json) fully into a UTF-8 string. Returns
+// nullopt when the file can't be opened. Binary mode so byte offsets in the JSON
+// parser match the on-disk content exactly.
+std::optional<std::string> ReadFileToString(const fs::path& path) {
+  std::ifstream f(path, std::ios::in | std::ios::binary);
+  if (!f.is_open()) {
+    return std::nullopt;
+  }
+  std::ostringstream ss;
+  ss << f.rdbuf();
+  return ss.str();
+}
+
 }  // namespace
+
+bool ShouldCompositeCamera(bool camera_visible, bool has_camera_assets,
+                           bool meta_parsed, bool preview_burned_in,
+                           std::uint64_t frames_written) {
+  return camera_visible && has_camera_assets && meta_parsed &&
+         !preview_burned_in && frames_written > 0;
+}
 
 std::string ResolveExportDestination(const std::string& directory,
                                      const std::string& filename_stem,
@@ -209,6 +233,28 @@ PassthroughResult ExportPassthroughCopy(
   const bool wants_zoom = input.zoom_effect_enabled && sidecar_exists;
   const bool wants_sidecar = wants_cursor_render || wants_zoom;
 
+  // Phase 9.4: resolve the camera bubble. The project reader only sets
+  // camera_video_path/camera_metadata_path when BOTH exist on disk (present-
+  // together), so a half-broken bundle never reaches here. We parse the metadata
+  // for the startOffsetMs sync key + previewBurnedIn guard, then gate via
+  // ShouldCompositeCamera. Any miss (no assets, unparseable meta, burned-in
+  // preview, zero frames, or the user hid the camera) → screen-only export, no
+  // failure. When it passes, the camera forces the composition path.
+  const bool has_camera_assets =
+      read.project->camera_video_path.has_value() &&
+      read.project->camera_metadata_path.has_value();
+  std::optional<clingfy::capture::CameraMetaFields> camera_meta;
+  if (has_camera_assets) {
+    if (const auto meta_json =
+            ReadFileToString(fs::path(*read.project->camera_metadata_path))) {
+      camera_meta = clingfy::capture::ParseCameraMetaJson(*meta_json);
+    }
+  }
+  const bool wants_camera = ShouldCompositeCamera(
+      input.camera_visible, has_camera_assets, camera_meta.has_value(),
+      camera_meta.has_value() && camera_meta->preview_burned_in,
+      camera_meta.has_value() ? camera_meta->frames_written : 0u);
+
   // Compute the destination (collision-avoided, .mov-forced). Done
   // separately from the copy so the test can pin it without touching
   // the filesystem.
@@ -240,7 +286,7 @@ PassthroughResult ExportPassthroughCopy(
       input.padding > 0.0 || input.corner_radius > 0.0 ||
       RequiresAudioProcessing(input.audio_gain_db, input.audio_volume_percent,
                               input.auto_normalize) ||
-      wants_non_mov_container || wants_sidecar;
+      wants_non_mov_container || wants_sidecar || wants_camera;
 
   if (!needs_composition) {
     // Fast-path: pixel-for-pixel the source, so copy it byte-for-byte.
@@ -296,6 +342,21 @@ PassthroughResult ExportPassthroughCopy(
     render.zoom_factor = input.zoom_factor;
     render.cursor_sidecar_path =
         wants_sidecar ? cursor_sidecar.wstring() : std::wstring();
+    // Phase 9.4: camera bubble. Only set when the gate passed; the pipeline
+    // still soft-fails internally if the reader/D2D resources can't be built.
+    if (wants_camera) {
+      render.draw_camera = true;
+      render.camera_video_path = *read.project->camera_video_path;
+      render.camera_start_offset_ms = camera_meta->start_offset_ms;
+      render.camera_has_center = input.camera_has_center;
+      render.camera_center_x = input.camera_center_x;
+      render.camera_center_y = input.camera_center_y;
+      render.camera_layout_preset = input.camera_layout_preset;
+      render.camera_size_factor = input.camera_size_factor;
+      render.camera_shape = input.camera_shape;
+      render.camera_corner_radius = input.camera_corner_radius;
+      render.camera_content_mode = input.camera_content_mode;
+    }
     render.on_progress = on_progress;
     render.is_cancelled = is_cancelled;
     render.fps_hint = read.project->metadata.has_value()

@@ -272,22 +272,26 @@ TEST_F(PreviewRouterSceneInfoTest, HappyPathWithoutCamera) {
   // camera key intentionally NOT emitted; matches macOS gotcha #7.
   EXPECT_EQ(find("camera"), nullptr);
 
-  // cameraExportCapabilities map — Phase 9.1 advertises every styling
-  // capability as FALSE (Windows does not composite the camera at export until
-  // 9.4; the flags flip on per slice). The keys must still all be present so
-  // the Dart parser reads explicit falses rather than defaulting to true.
+  // cameraExportCapabilities map. Phase 9.4 composites the camera as a masked
+  // circle / rounded / square bubble, so shapeMask + cornerRadius are now TRUE;
+  // border / shadow / chromaKey stay FALSE until 9.5/9.6. All keys must be
+  // present so the Dart parser reads explicit values rather than defaulting.
   ASSERT_NE(find("cameraExportCapabilities"), nullptr);
   ASSERT_TRUE(std::holds_alternative<flutter::EncodableMap>(
       *find("cameraExportCapabilities")));
   const auto& caps = std::get<flutter::EncodableMap>(
       *find("cameraExportCapabilities"));
-  for (const char* name :
-       {"shapeMask", "cornerRadius", "border", "shadow", "chromaKey"}) {
+  auto cap = [&](const char* name) -> bool {
     auto it = caps.find(flutter::EncodableValue(name));
-    ASSERT_NE(it, caps.end()) << name << " missing";
-    ASSERT_TRUE(std::holds_alternative<bool>(it->second)) << name;
-    EXPECT_FALSE(std::get<bool>(it->second)) << name << " was true";
-  }
+    EXPECT_NE(it, caps.end()) << name << " missing";
+    EXPECT_TRUE(std::holds_alternative<bool>(it->second)) << name;
+    return std::get<bool>(it->second);
+  };
+  EXPECT_TRUE(cap("shapeMask"));
+  EXPECT_TRUE(cap("cornerRadius"));
+  EXPECT_FALSE(cap("border"));
+  EXPECT_FALSE(cap("shadow"));
+  EXPECT_FALSE(cap("chromaKey"));
 }
 
 TEST_F(PreviewRouterSceneInfoTest, HappyPathWithCameraEmitsCameraPath) {

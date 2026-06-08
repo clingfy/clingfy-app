@@ -20,6 +20,8 @@
 #include <vector>
 
 #include "Audio/audio_mixer.h"
+#include "Capture/Camera/camera_export_layout.h"
+#include "Capture/Camera/camera_export_renderer.h"
 #include "Capture/Cursor/cursor_export_renderer.h"
 #include "Capture/Zoom/zoom_export_controller.h"
 #include "Capture/Export/export_audio.h"
@@ -447,6 +449,30 @@ RenderResult RenderComposedExport(const RenderRequest& request) {
         request.cursor_sidecar_path, duration_hns / 10000, request.zoom_factor);
   }
 
+  // Phase 9.4: optional camera bubble. Opens camera/raw.mov on its own reader
+  // and draws a masked bubble on top of the composite in canvas space (NOT under
+  // the smart-zoom transform). Soft-fail: Create/Prepare returning null/false
+  // simply renders no camera and the export proceeds screen-only. The bubble
+  // rect is resolved once from the (loop-invariant) canvas + Dart geometry args.
+  std::unique_ptr<CameraExportRenderer> camera_renderer;
+  if (request.draw_camera && !request.camera_video_path.empty()) {
+    camera_renderer = CameraExportRenderer::Create(
+        request.camera_video_path, request.camera_start_offset_ms);
+    if (camera_renderer != nullptr) {
+      const CameraBubbleRect bubble = ComputeCameraBubbleRect(
+          static_cast<double>(canvas.width), static_cast<double>(canvas.height),
+          request.camera_has_center, request.camera_center_x,
+          request.camera_center_y, request.camera_layout_preset,
+          request.camera_size_factor);
+      if (!camera_renderer->Prepare(d2d_factory.Get(), d2d_ctx.Get(), bubble,
+                                    request.camera_shape,
+                                    request.camera_corner_radius,
+                                    request.camera_content_mode)) {
+        camera_renderer.reset();
+      }
+    }
+  }
+
   // Reusable source bitmap: a fresh decoded frame is uploaded into it via
   // CopyFromMemory each iteration. Sized to the source; the fit/fill
   // scale happens in the DrawBitmap dest rect, not here.
@@ -637,6 +663,15 @@ RenderResult RenderComposedExport(const RenderRequest& request) {
         return Failure("export: ID2D1Bitmap::CopyFromMemory failed.");
       }
 
+      // Phase 9.4: advance the camera's held frame BEFORE BeginDraw (the upload
+      // is a CopyFromMemory, kept outside the draw like the screen frame above).
+      // frame_ms is recording-relative, rebased to the first decoded frame.
+      if (camera_renderer != nullptr) {
+        const std::int64_t cam_frame_ms =
+            first_video_hns >= 0 ? (timestamp - first_video_hns) / 10000 : 0;
+        camera_renderer->Advance(cam_frame_ms);
+      }
+
       // Fresh output texture per frame: the encoder MFT may hold the
       // previous frame's surface asynchronously, so reuse would risk
       // overwriting a frame still in flight.
@@ -756,6 +791,13 @@ RenderResult RenderComposedExport(const RenderRequest& request) {
         d2d_ctx->PopLayer();
       } else if (pushed_clip) {
         d2d_ctx->PopAxisAlignedClip();
+      }
+      // Phase 9.4: the camera bubble draws LAST, in canvas space with an
+      // identity transform (the zoom transform was reset above and the content
+      // clip/layer popped), so it sits on top of the screen + cursor + clicks
+      // and is NOT magnified by smart zoom. Its own mask clips the bubble.
+      if (camera_renderer != nullptr) {
+        camera_renderer->Draw(d2d_ctx.Get());
       }
       const HRESULT end_hr = d2d_ctx->EndDraw();
       d2d_ctx->SetTarget(nullptr);
