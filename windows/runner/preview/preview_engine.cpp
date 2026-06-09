@@ -272,6 +272,9 @@ struct PreviewEngine::Impl {
   clingfy::preview::ZoomState zoom;
   bool cursor_mode = false;
 
+  // ---- Phase 9.6 camera bubble (null when the project has no usable camera).
+  std::unique_ptr<clingfy::preview::PreviewCameraRenderer> camera_renderer;
+
   // ---- Stats ----
   clingfy::preview::FrameTimingCollector timing_total;   // whole VideoFrameAvailable handler
   clingfy::preview::FrameTimingCollector timing_copy;    // CopyFrameToVideoSurface
@@ -642,6 +645,18 @@ OpenResult PreviewEngine::Open(const OpenArgs& args) {
     LogNative(buf);
   }
 
+  // ---- 5b. Phase 9.6: camera bubble. The router only sets camera_path when the
+  //         project has a usable, non-burned-in camera. The composition (visible,
+  //         placement, styling) arrives separately via SetCameraComposition.
+  if (!args.camera_path.empty()) {
+    impl_->camera_renderer = clingfy::preview::PreviewCameraRenderer::Create(
+        args.camera_path, args.camera_start_offset_ms);
+    LogNative(impl_->camera_renderer != nullptr
+                  ? "PreviewCameraRenderer: created for camera/raw.mov"
+                  : "PreviewCameraRenderer: create FAILED (preview stays "
+                    "camera-free)");
+  }
+
   // ---- 6. Register the external texture. ----
   LogNative("Registering external texture via C API...");
   FlutterDesktopTextureInfo info{};
@@ -912,14 +927,33 @@ void PreviewEngine::HandleVideoFrame(
   const D2D1_RECT_F dest = clingfy::preview::LetterboxRect(
       static_cast<UINT>(kTextureWidth), static_cast<UINT>(kTextureHeight),
       impl->compositor.video_width(), impl->compositor.video_height());
+  const bool need_playback_us = impl->cursor_mode || impl->camera_renderer;
   const std::int64_t playback_us =
-      impl->cursor_mode ? CurrentPlaybackUs(sender) : -1;
+      need_playback_us ? CurrentPlaybackUs(sender) : -1;
+
+  // Phase 9.6: advance/seek the camera frame BEFORE BeginDraw (the painter's
+  // shadow bake does SetTarget round-trips, illegal inside BeginDraw).
+  if (impl->camera_renderer) {
+    impl->camera_renderer->PrepareAndAdvance(
+        impl->d2d_context.Get(), static_cast<UINT>(kTextureWidth),
+        static_cast<UINT>(kTextureHeight), playback_us);
+  }
 
   impl->timing_render.BeginFrame();
+  // Re-bind the shared target every frame. The target is bound once at Open, but
+  // the camera painter's shadow bake (PrepareAndAdvance, above) does SetTarget
+  // round-trips that leave the context target = nullptr; without this re-bind the
+  // BeginDraw below would draw to no target and EndDraw would fail permanently.
+  // (The export pipeline re-binds per frame for the same reason.)
+  impl->d2d_context->SetTarget(impl->shared_bitmap.Get());
   impl->d2d_context->BeginDraw();
   impl->compositor.ComposeFrame(impl->d2d_context.Get(), dest,
                                 impl->cursor_events, playback_us,
                                 NowSeconds(), impl->zoom);
+  // Camera bubble draws on top of the composited screen frame, in canvas space.
+  if (impl->camera_renderer) {
+    impl->camera_renderer->Draw(impl->d2d_context.Get());
+  }
   const HRESULT end_hr = impl->d2d_context->EndDraw();
   impl->timing_render.EndFrame();
   if (FAILED(end_hr)) {
@@ -1620,6 +1654,25 @@ void PreviewEngine::SeekTo(const std::string& session_id,
   } catch (winrt::hresult_error const&) {
     // Best-effort. MediaFailed will report deeper issues; routine
     // seek failures (e.g. past end of stream) just no-op.
+  }
+}
+
+void PreviewEngine::SetCameraComposition(
+    const std::string& session_id,
+    const PreviewCameraComposition& composition) {
+  std::lock_guard<std::mutex> lock(mutex_);
+  // Stale-session calls (a previous preview, or a placement update racing a
+  // Close) are silently ignored, matching the Play/Pause/Seek contract. An empty
+  // session_id is treated as a wildcard for symmetry with Close.
+  if (!session_id.empty() && session_id != active_session_id_) {
+    return;
+  }
+  if (impl_ && impl_->camera_renderer) {
+    // SetComposition is internally synchronized and does no D2D work, so holding
+    // mutex_ here is cheap and cannot deadlock against the frame thread (which
+    // takes mutex_ -> render_mutex -> renderer lock; we take mutex_ -> renderer
+    // lock, so the renderer lock is always acquired last).
+    impl_->camera_renderer->SetComposition(composition);
   }
 }
 

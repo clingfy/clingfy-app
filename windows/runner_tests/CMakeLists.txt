@@ -70,6 +70,7 @@ add_executable(runner_tests
   "permission_probe_test.cpp"
   "platform_thread_dispatcher_test.cpp"
   "player_event_publisher_test.cpp"
+  "preview_camera_renderer_test.cpp"
   "preview_router_test.cpp"
   "project_open_coordinator_test.cpp"
   "recording_clock_test.cpp"

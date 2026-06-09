@@ -45,6 +45,7 @@ add_library(runner_bridge STATIC
   "Capture/Export/export_passthrough.cpp"
   "Capture/Export/export_session.cpp"
   "Capture/Export/gif_export_policy.cpp"
+  "Capture/Camera/camera_bubble_painter.cpp"
   "Capture/Camera/camera_export_layout.cpp"
   "Capture/Camera/camera_export_renderer.cpp"
   "Capture/Camera/camera_floating_overlay.cpp"
@@ -83,6 +84,7 @@ add_library(runner_bridge STATIC
   "Permissions/permission_probe.cpp"
   "Services/save_folder.cpp"
   "preview/frame_timing.cpp"
+  "preview/preview_camera_renderer.cpp"
   "preview/preview_compositor.cpp"
   "preview/preview_engine.cpp"
 )
