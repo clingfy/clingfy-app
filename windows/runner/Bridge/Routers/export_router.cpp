@@ -231,6 +231,15 @@ void HandleExportVideo(
     input.camera_shape = ReadString(*args, "cameraShape");
     input.camera_corner_radius = ReadDouble(*args, "cameraCornerRadius", 0.0);
     input.camera_content_mode = ReadString(*args, "cameraContentMode");
+    // Phase 9.5 styling. cameraBorderColorArgb is a nullable ARGB int (null →
+    // no border even if width > 0); the others have identity-ish defaults.
+    input.camera_mirror = ReadBool(*args, "cameraMirror", false);
+    input.camera_opacity = ReadDouble(*args, "cameraOpacity", 1.0);
+    input.camera_border_width = ReadDouble(*args, "cameraBorderWidth", 0.0);
+    input.camera_border_color_argb =
+        ReadOptionalInt(*args, "cameraBorderColorArgb");
+    input.camera_shadow_preset =
+        static_cast<int>(ReadDouble(*args, "cameraShadowPreset", 0.0));
     // cameraNormalizedCenter is a nested {x,y} map (or null when the bubble is
     // auto-placed by preset). Present → manual placement.
     if (const auto it = args->find(flutter::EncodableValue(

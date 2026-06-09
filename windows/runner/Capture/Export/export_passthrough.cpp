@@ -356,6 +356,11 @@ PassthroughResult ExportPassthroughCopy(
       render.camera_shape = input.camera_shape;
       render.camera_corner_radius = input.camera_corner_radius;
       render.camera_content_mode = input.camera_content_mode;
+      render.camera_mirror = input.camera_mirror;
+      render.camera_opacity = input.camera_opacity;
+      render.camera_border_width = input.camera_border_width;
+      render.camera_border_color_argb = input.camera_border_color_argb;
+      render.camera_shadow_preset = input.camera_shadow_preset;
     }
     render.on_progress = on_progress;
     render.is_cancelled = is_cancelled;

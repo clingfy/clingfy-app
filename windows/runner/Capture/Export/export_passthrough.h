@@ -140,6 +140,14 @@ struct PassthroughInput {
   std::string camera_shape;
   double camera_corner_radius = 0.0;
   std::string camera_content_mode;
+  // Phase 9.5 styling (Dart cameraMirror / cameraOpacity / cameraBorderWidth /
+  // cameraBorderColorArgb [nullable] / cameraShadowPreset). Soft-failed at the
+  // renderer; an absent/invalid value just means that style is off.
+  bool camera_mirror = false;
+  double camera_opacity = 1.0;
+  double camera_border_width = 0.0;
+  std::optional<std::int64_t> camera_border_color_argb;
+  int camera_shadow_preset = 0;
 };
 
 // Phase 9.4 — pure decision: should the export composite the camera bubble?

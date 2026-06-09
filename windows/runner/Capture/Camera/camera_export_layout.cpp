@@ -72,6 +72,25 @@ CameraBubbleRect ComputeCameraBubbleRect(double canvas_w, double canvas_h,
   return rect;
 }
 
+CameraShadowStyle ResolveCameraShadowStyle(int preset) {
+  CameraShadowStyle s;
+  switch (preset) {
+    case 1:
+      s = {true, 0.18, 10.0, 0.0, 2.0};
+      break;
+    case 2:
+      s = {true, 0.24, 16.0, 0.0, 4.0};
+      break;
+    case 3:
+      s = {true, 0.32, 22.0, 0.0, 6.0};
+      break;
+    default:
+      s = {false, 0.0, 0.0, 0.0, 0.0};
+      break;
+  }
+  return s;
+}
+
 int SelectHeldCameraFrameIndex(std::int64_t camera_ms,
                                const std::vector<std::int64_t>& frame_ms_list) {
   if (camera_ms < 0) {
