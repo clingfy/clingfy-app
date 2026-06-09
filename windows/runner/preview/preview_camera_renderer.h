@@ -60,6 +60,13 @@ struct PreviewCameraComposition {
   bool has_border_color = false;
   std::uint32_t border_argb = 0;
   int shadow_preset = 0;
+  // Phase 9.7 chroma key, mirrored into the inline preview for WYSIWYG with the
+  // export. (Intro/outro animations are NOT previewed — the player has no export
+  // timeline; they are an export-only effect.)
+  bool chroma_enabled = false;
+  double chroma_strength = 0.4;
+  bool has_chroma_color = false;
+  std::uint32_t chroma_argb = 0;
 };
 
 class PreviewCameraRenderer {

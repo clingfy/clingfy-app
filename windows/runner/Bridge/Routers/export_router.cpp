@@ -241,6 +241,20 @@ void HandleExportVideo(
         ReadOptionalInt(*args, "cameraBorderColorArgb");
     input.camera_shadow_preset =
         static_cast<int>(ReadDouble(*args, "cameraShadowPreset", 0.0));
+    // Phase 9.7 chroma key + intro/outro animation. chromaKeyColorArgb is a
+    // nullable ARGB int (null → default green); strength is the keying tolerance.
+    // The intro/outro preset strings parse natively (unknown → static bubble).
+    input.camera_chroma_enabled = ReadBool(*args, "cameraChromaKeyEnabled", false);
+    input.camera_chroma_strength =
+        ReadDouble(*args, "cameraChromaKeyStrength", 0.4);
+    input.camera_chroma_color_argb =
+        ReadOptionalInt(*args, "cameraChromaKeyColorArgb");
+    input.camera_intro_preset = ReadString(*args, "cameraIntroPreset");
+    input.camera_outro_preset = ReadString(*args, "cameraOutroPreset");
+    input.camera_intro_duration_ms =
+        static_cast<int>(ReadDouble(*args, "cameraIntroDurationMs", 0.0));
+    input.camera_outro_duration_ms =
+        static_cast<int>(ReadDouble(*args, "cameraOutroDurationMs", 0.0));
     // cameraNormalizedCenter is a nested {x,y} map (or null when the bubble is
     // auto-placed by preset). Present → manual placement.
     if (const auto it = args->find(flutter::EncodableValue(
@@ -341,6 +355,15 @@ void HandleProcessVideo(
     }
     c.shadow_preset =
         static_cast<int>(ReadDouble(*args, "cameraShadowPreset", 0.0));
+    // Phase 9.7 chroma key — kept in sync with preview_router's
+    // ReadCameraComposition so a chroma edit (which arrives via processVideo)
+    // shows in the inline preview, WYSIWYG with the export.
+    c.chroma_enabled = ReadBool(*args, "cameraChromaKeyEnabled", false);
+    c.chroma_strength = ReadDouble(*args, "cameraChromaKeyStrength", 0.4);
+    if (const auto argb = ReadOptionalInt(*args, "cameraChromaKeyColorArgb")) {
+      c.has_chroma_color = true;
+      c.chroma_argb = static_cast<std::uint32_t>(*argb);
+    }
     if (const auto it =
             args->find(flutter::EncodableValue("cameraNormalizedCenter"));
         it != args->end()) {

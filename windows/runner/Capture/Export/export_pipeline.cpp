@@ -472,10 +472,29 @@ RenderResult RenderComposedExport(const RenderRequest& request) {
       cam_style.border_argb = static_cast<std::uint32_t>(
           request.camera_border_color_argb.value_or(0));
       cam_style.shadow_preset = request.camera_shadow_preset;
-      if (!camera_renderer->Prepare(d2d_factory.Get(), d2d_ctx.Get(), bubble,
-                                    request.camera_shape,
-                                    request.camera_corner_radius,
-                                    request.camera_content_mode, cam_style)) {
+      // Phase 9.7 chroma key.
+      cam_style.chroma_enabled = request.camera_chroma_enabled;
+      cam_style.chroma_strength = request.camera_chroma_strength;
+      cam_style.has_chroma_color =
+          request.camera_chroma_color_argb.has_value();
+      cam_style.chroma_argb = static_cast<std::uint32_t>(
+          request.camera_chroma_color_argb.value_or(0));
+      // Phase 9.7 intro/outro animation. Edge resolved once from the (loop-
+      // invariant) placement; unknown presets parse to kNone (static bubble).
+      CameraAnimationParams cam_anim;
+      cam_anim.intro = ParseCameraIntroKind(request.camera_intro_preset);
+      cam_anim.outro = ParseCameraOutroKind(request.camera_outro_preset);
+      cam_anim.intro_duration_ms = request.camera_intro_duration_ms;
+      cam_anim.outro_duration_ms = request.camera_outro_duration_ms;
+      const CameraSlideEdge cam_edge = ResolveCameraSlideEdge(
+          request.camera_layout_preset, request.camera_has_center, bubble,
+          static_cast<double>(canvas.width),
+          static_cast<double>(canvas.height));
+      if (!camera_renderer->Prepare(
+              d2d_factory.Get(), d2d_ctx.Get(), bubble, request.camera_shape,
+              request.camera_corner_radius, request.camera_content_mode,
+              cam_style, cam_anim, static_cast<double>(canvas.width),
+              static_cast<double>(canvas.height), cam_edge)) {
         camera_renderer.reset();
       }
     }
@@ -805,7 +824,7 @@ RenderResult RenderComposedExport(const RenderRequest& request) {
       // clip/layer popped), so it sits on top of the screen + cursor + clicks
       // and is NOT magnified by smart zoom. Its own mask clips the bubble.
       if (camera_renderer != nullptr) {
-        camera_renderer->Draw(d2d_ctx.Get());
+        camera_renderer->Draw(d2d_ctx.Get(), frame_ms, duration_hns / 10000);
       }
       const HRESULT end_hr = d2d_ctx->EndDraw();
       d2d_ctx->SetTarget(nullptr);

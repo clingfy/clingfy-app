@@ -1,6 +1,7 @@
 #include "Capture/Camera/camera_export_layout.h"
 
 #include <algorithm>
+#include <cmath>
 
 namespace clingfy::capture {
 
@@ -105,6 +106,165 @@ int SelectHeldCameraFrameIndex(std::int64_t camera_ms,
     }
   }
   return held;
+}
+
+namespace {
+
+// Slide travel margin (px) past the named edge, matching macOS `slideMargin`.
+constexpr double kSlideMarginPx = 1.0;
+
+double Lerp(double from, double to, double progress) {
+  return from + ((to - from) * progress);
+}
+
+double EaseOutCubic(double v) { return 1.0 - std::pow(1.0 - v, 3.0); }
+double EaseInCubic(double v) { return std::pow(v, 3.0); }
+
+// Normalized 0..1 progress through the intro window.
+double IntroProgress(std::int64_t frame_ms, int duration_ms) {
+  const double denom = std::max(static_cast<double>(duration_ms), 0.0001);
+  return Clamp(static_cast<double>(frame_ms) / denom, 0.0, 1.0);
+}
+
+// Normalized 0..1 progress through the trailing outro window.
+double OutroProgress(std::int64_t frame_ms, std::int64_t total_duration_ms,
+                     int duration_ms) {
+  const double denom = std::max(static_cast<double>(duration_ms), 0.0001);
+  const double start =
+      std::max(static_cast<double>(total_duration_ms) - denom, 0.0);
+  return Clamp((static_cast<double>(frame_ms) - start) / denom, 0.0, 1.0);
+}
+
+// Offset (canvas px) that pushes `bubble` fully past `edge`, in D2D y-DOWN
+// space. Returned as the destination offset relative to the resting position.
+void OffscreenOffset(CameraSlideEdge edge, const CameraBubbleRect& bubble,
+                     double canvas_w, double canvas_h, double* dx, double* dy) {
+  *dx = 0.0;
+  *dy = 0.0;
+  switch (edge) {
+    case CameraSlideEdge::kLeft:
+      *dx = -(bubble.x + bubble.width + kSlideMarginPx);
+      break;
+    case CameraSlideEdge::kRight:
+      *dx = canvas_w + kSlideMarginPx - bubble.x;
+      break;
+    case CameraSlideEdge::kTop:
+      *dy = -(bubble.y + bubble.height + kSlideMarginPx);
+      break;
+    case CameraSlideEdge::kBottom:
+      *dy = canvas_h + kSlideMarginPx - bubble.y;
+      break;
+  }
+}
+
+}  // namespace
+
+CameraIntroKind ParseCameraIntroKind(const std::string& name) {
+  if (name == "fade") return CameraIntroKind::kFade;
+  if (name == "pop") return CameraIntroKind::kPop;
+  if (name == "slide") return CameraIntroKind::kSlide;
+  return CameraIntroKind::kNone;
+}
+
+CameraOutroKind ParseCameraOutroKind(const std::string& name) {
+  if (name == "fade") return CameraOutroKind::kFade;
+  if (name == "shrink") return CameraOutroKind::kShrink;
+  if (name == "slide") return CameraOutroKind::kSlide;
+  return CameraOutroKind::kNone;
+}
+
+CameraSlideEdge ResolveCameraSlideEdge(const std::string& layout_preset,
+                                       bool has_center,
+                                       const CameraBubbleRect& bubble,
+                                       double canvas_w, double canvas_h) {
+  if (!has_center) {
+    if (layout_preset == "overlayTopLeft" ||
+        layout_preset == "overlayBottomLeft" ||
+        layout_preset == "sideBySideLeft") {
+      return CameraSlideEdge::kLeft;
+    }
+    if (layout_preset == "stackedTop") {
+      return CameraSlideEdge::kTop;
+    }
+    if (layout_preset == "stackedBottom") {
+      return CameraSlideEdge::kBottom;
+    }
+    // overlayTopRight / overlayBottomRight / sideBySideRight / backgroundBehind
+    // / hidden / unknown → the right edge (macOS default).
+    return CameraSlideEdge::kRight;
+  }
+
+  // Manual placement: nearest visual edge to the bubble center (y-DOWN).
+  const double cx = bubble.x + bubble.width / 2.0;
+  const double cy = bubble.y + bubble.height / 2.0;
+  const double left_dist = cx;
+  const double right_dist = std::max(canvas_w - cx, 0.0);
+  const double top_dist = cy;
+  const double bottom_dist = std::max(canvas_h - cy, 0.0);
+  const double min_horizontal = std::min(left_dist, right_dist);
+  const double min_vertical = std::min(top_dist, bottom_dist);
+  if (min_horizontal <= min_vertical) {
+    return left_dist <= right_dist ? CameraSlideEdge::kLeft
+                                   : CameraSlideEdge::kRight;
+  }
+  return top_dist <= bottom_dist ? CameraSlideEdge::kTop
+                                 : CameraSlideEdge::kBottom;
+}
+
+CameraAnimationOutput ResolveCameraAnimation(const CameraAnimationParams& params,
+                                             std::int64_t frame_ms,
+                                             std::int64_t total_duration_ms,
+                                             const CameraBubbleRect& bubble,
+                                             double canvas_w, double canvas_h,
+                                             CameraSlideEdge edge) {
+  CameraAnimationOutput out;
+  if (!CameraHasPresentationEffects(params) || total_duration_ms <= 0) {
+    return out;  // identity
+  }
+
+  const std::int64_t t =
+      std::max<std::int64_t>(0, std::min(frame_ms, total_duration_ms));
+
+  // --- Opacity: fade/pop/slide ramp in; fade/shrink/slide ramp out. ---
+  double opacity = 1.0;
+  if (params.intro != CameraIntroKind::kNone) {
+    opacity *= IntroProgress(t, params.intro_duration_ms);
+  }
+  if (params.outro != CameraOutroKind::kNone) {
+    opacity *= 1.0 - OutroProgress(t, total_duration_ms, params.outro_duration_ms);
+  }
+  out.opacity = Clamp(opacity, 0.0, 1.0);
+
+  // --- Scale: only `pop` (intro) and `shrink` (outro) scale. ---
+  double scale = 1.0;
+  if (params.intro == CameraIntroKind::kPop) {
+    const double eased = EaseOutCubic(IntroProgress(t, params.intro_duration_ms));
+    scale *= Lerp(0.90, 1.0, eased);
+  }
+  if (params.outro == CameraOutroKind::kShrink) {
+    const double eased =
+        EaseInCubic(OutroProgress(t, total_duration_ms, params.outro_duration_ms));
+    scale *= Lerp(1.0, 0.90, eased);
+  }
+  out.scale = scale;
+
+  // --- Translation: only `slide` moves; intro eases in from offscreen, outro
+  // eases out to offscreen. The two never overlap in time. ---
+  double off_dx = 0.0;
+  double off_dy = 0.0;
+  OffscreenOffset(edge, bubble, canvas_w, canvas_h, &off_dx, &off_dy);
+  if (params.intro == CameraIntroKind::kSlide) {
+    const double eased = EaseOutCubic(IntroProgress(t, params.intro_duration_ms));
+    out.translate_x += Lerp(off_dx, 0.0, eased);
+    out.translate_y += Lerp(off_dy, 0.0, eased);
+  }
+  if (params.outro == CameraOutroKind::kSlide) {
+    const double eased =
+        EaseInCubic(OutroProgress(t, total_duration_ms, params.outro_duration_ms));
+    out.translate_x += Lerp(0.0, off_dx, eased);
+    out.translate_y += Lerp(0.0, off_dy, eased);
+  }
+  return out;
 }
 
 }  // namespace clingfy::capture

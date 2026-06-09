@@ -361,6 +361,13 @@ PassthroughResult ExportPassthroughCopy(
       render.camera_border_width = input.camera_border_width;
       render.camera_border_color_argb = input.camera_border_color_argb;
       render.camera_shadow_preset = input.camera_shadow_preset;
+      render.camera_chroma_enabled = input.camera_chroma_enabled;
+      render.camera_chroma_strength = input.camera_chroma_strength;
+      render.camera_chroma_color_argb = input.camera_chroma_color_argb;
+      render.camera_intro_preset = input.camera_intro_preset;
+      render.camera_outro_preset = input.camera_outro_preset;
+      render.camera_intro_duration_ms = input.camera_intro_duration_ms;
+      render.camera_outro_duration_ms = input.camera_outro_duration_ms;
     }
     render.on_progress = on_progress;
     render.is_cancelled = is_cancelled;

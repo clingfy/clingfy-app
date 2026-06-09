@@ -40,16 +40,20 @@ class CameraExportRenderer {
   bool Prepare(ID2D1Factory1* factory, ID2D1DeviceContext* ctx,
                const CameraBubbleRect& bubble, const std::string& shape,
                double corner_radius, const std::string& content_mode,
-               const Style& style);
+               const Style& style, const CameraAnimationParams& anim,
+               double canvas_w, double canvas_h, CameraSlideEdge slide_edge);
 
   // Advance the held camera frame forward to `frame_ms - startOffsetMs`, decoding
   // + uploading the new frame. Call OUTSIDE BeginDraw/EndDraw. No-op before the
   // camera's first frame; holds the final frame after EOS.
   void Advance(std::int64_t frame_ms);
 
-  // Draw the held camera frame as a styled bubble. Call INSIDE BeginDraw/EndDraw
-  // in canvas space (NOT under smart zoom). No-op before the first frame.
-  void Draw(ID2D1DeviceContext* ctx);
+  // Draw the held camera frame as a styled bubble, applying the Phase 9.7
+  // intro/outro animation for recording-relative `frame_ms` of a
+  // `total_duration_ms` clip. Call INSIDE BeginDraw/EndDraw in canvas space (NOT
+  // under smart zoom). No-op before the first frame.
+  void Draw(ID2D1DeviceContext* ctx, std::int64_t frame_ms,
+            std::int64_t total_duration_ms);
 
   bool ready() const { return ready_; }
 
@@ -63,6 +67,13 @@ class CameraExportRenderer {
   UINT cam_w_ = 0;
   UINT cam_h_ = 0;
   std::int64_t start_offset_ms_ = 0;
+
+  // Phase 9.7 animation context, resolved once at Prepare.
+  CameraAnimationParams anim_params_{};
+  CameraBubbleRect bubble_{};
+  double canvas_w_ = 0.0;
+  double canvas_h_ = 0.0;
+  CameraSlideEdge slide_edge_ = CameraSlideEdge::kRight;
 
   Microsoft::WRL::ComPtr<IMFSample> pending_sample_;
   std::int64_t pending_pts_hns_ = 0;

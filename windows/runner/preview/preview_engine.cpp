@@ -1660,19 +1660,54 @@ void PreviewEngine::SeekTo(const std::string& session_id,
 void PreviewEngine::SetCameraComposition(
     const std::string& session_id,
     const PreviewCameraComposition& composition) {
-  std::lock_guard<std::mutex> lock(mutex_);
-  // Stale-session calls (a previous preview, or a placement update racing a
-  // Close) are silently ignored, matching the Play/Pause/Seek contract. An empty
-  // session_id is treated as a wildcard for symmetry with Close.
-  if (!session_id.empty() && session_id != active_session_id_) {
-    return;
-  }
-  if (impl_ && impl_->camera_renderer) {
+  winrt_playback::MediaPlayer player_snapshot{nullptr};
+  {
+    std::lock_guard<std::mutex> lock(mutex_);
+    // Stale-session calls (a previous preview, or a placement update racing a
+    // Close) are silently ignored, matching the Play/Pause/Seek contract. An empty
+    // session_id is treated as a wildcard for symmetry with Close.
+    if (!session_id.empty() && session_id != active_session_id_) {
+      return;
+    }
+    if (impl_ == nullptr || impl_->camera_renderer == nullptr) {
+      return;
+    }
     // SetComposition is internally synchronized and does no D2D work, so holding
     // mutex_ here is cheap and cannot deadlock against the frame thread (which
     // takes mutex_ -> render_mutex -> renderer lock; we take mutex_ -> renderer
-    // lock, so the renderer lock is always acquired last).
+    // lock, so the renderer lock is always acquired last). We snapshot the player
+    // and do the WinRT nudge AFTER releasing mutex_, matching the
+    // snapshot-then-release discipline of SeekTo/Pause.
     impl_->camera_renderer->SetComposition(composition);
+    player_snapshot = impl_->player;
+  }
+
+  // Reflect the change immediately in a PAUSED preview. The compositor only
+  // re-runs on a frame-server callback, which a paused MediaPlayer does not emit,
+  // so without this the new camera settings (placement, shape, opacity, border,
+  // shadow, mirror, chroma) would not appear until the user pressed play. Seeking
+  // forces the frame server to re-deliver a frame, recompositing with the new
+  // settings. A SAME-position seek can be coalesced to a no-op, so nudge by 1ms:
+  // that is a distinct position (always honored) yet well under one frame at any
+  // fps, so the same image is shown with no visible jump. No-op while playing —
+  // the next natural frame already picks the change up and nudging would stutter.
+  // Best-effort: a failed nudge just defers the change to the next frame.
+  if (player_snapshot == nullptr) {
+    return;
+  }
+  try {
+    auto session = player_snapshot.PlaybackSession();
+    if (session.PlaybackState() !=
+        winrt_playback::MediaPlaybackState::Playing) {
+      const auto cur_ms = std::chrono::duration_cast<std::chrono::milliseconds>(
+                              session.Position())
+                              .count();
+      const std::int64_t nudge_ms = cur_ms > 0 ? cur_ms - 1 : 1;
+      session.Position(std::chrono::duration_cast<winrt_foundation::TimeSpan>(
+          std::chrono::milliseconds(nudge_ms)));
+    }
+  } catch (winrt::hresult_error const&) {
+    // Best-effort; the change will appear on the next frame instead.
   }
 }
 

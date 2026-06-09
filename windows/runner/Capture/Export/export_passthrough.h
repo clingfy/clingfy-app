@@ -148,6 +148,17 @@ struct PassthroughInput {
   double camera_border_width = 0.0;
   std::optional<std::int64_t> camera_border_color_argb;
   int camera_shadow_preset = 0;
+  // Phase 9.7 chroma key + intro/outro animation (Dart cameraChromaKeyEnabled /
+  // cameraChromaKeyStrength / cameraChromaKeyColorArgb [nullable] +
+  // cameraIntro/OutroPreset / cameraIntro/OutroDurationMs). Soft-failed
+  // downstream; an absent/invalid value just means that effect is off.
+  bool camera_chroma_enabled = false;
+  double camera_chroma_strength = 0.4;
+  std::optional<std::int64_t> camera_chroma_color_argb;
+  std::string camera_intro_preset;
+  std::string camera_outro_preset;
+  int camera_intro_duration_ms = 0;
+  int camera_outro_duration_ms = 0;
 };
 
 // Phase 9.4 — pure decision: should the export composite the camera bubble?
