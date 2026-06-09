@@ -139,6 +139,16 @@ struct RenderRequest {
   std::string camera_shape;
   double camera_corner_radius = 0.0;
   std::string camera_content_mode;
+  // Phase 9.5 styling. mirror flips the camera content horizontally; opacity
+  // (0..1) fades it; border_width (px) + border_color_argb (0xAARRGGBB, nullopt
+  // = no border) stroke the bubble; shadow_preset (0 none, 1/2/3) drops a
+  // blurred shadow. Unsupported/malformed values soft-fail (no styling), never a
+  // failed export.
+  bool camera_mirror = false;
+  double camera_opacity = 1.0;
+  double camera_border_width = 0.0;
+  std::optional<std::int64_t> camera_border_color_argb;
+  int camera_shadow_preset = 0;
 };
 
 struct RenderResult {

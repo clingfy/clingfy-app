@@ -48,6 +48,23 @@ inline std::int64_t CameraTimeMsForFrame(std::int64_t frame_ms,
   return frame_ms - start_offset_ms;
 }
 
+// --- Phase 9.5 camera shadow styling (parity with macOS shadowStyle) ---------
+
+struct CameraShadowStyle {
+  bool enabled = false;
+  double opacity = 0.0;      // 0..1 black shadow alpha
+  double blur_radius = 0.0;  // px (used as the D2D blur input radius)
+  double offset_x = 0.0;     // px, canvas space (D2D y-DOWN)
+  double offset_y = 0.0;     // px, canvas space (D2D y-DOWN, so + is downward)
+};
+
+// Map the Dart `cameraShadowPreset` (0 = none, 1/2/3 = soft/medium/strong) to a
+// concrete shadow style. Values mirror the macOS `shadowStyle(for:)` table; the
+// macOS y-offsets are in a y-UP space (negative = down), so they are sign-
+// flipped here for D2D's y-DOWN canvas (shadow drops downward). Preset <=0 or
+// unknown → disabled. Pure + unit-tested.
+CameraShadowStyle ResolveCameraShadowStyle(int preset);
+
 // Index of the camera frame to HOLD at camera-file time `camera_ms`: the latest
 // frame whose timestamp is <= `camera_ms`, or -1 when `camera_ms` is negative or
 // before the first frame. `frame_ms_list` must be ascending. This is the pure

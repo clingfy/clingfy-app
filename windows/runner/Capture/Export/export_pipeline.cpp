@@ -464,10 +464,18 @@ RenderResult RenderComposedExport(const RenderRequest& request) {
           request.camera_has_center, request.camera_center_x,
           request.camera_center_y, request.camera_layout_preset,
           request.camera_size_factor);
+      CameraExportRenderer::Style cam_style;
+      cam_style.mirror = request.camera_mirror;
+      cam_style.opacity = request.camera_opacity;
+      cam_style.border_width = request.camera_border_width;
+      cam_style.has_border_color = request.camera_border_color_argb.has_value();
+      cam_style.border_argb = static_cast<std::uint32_t>(
+          request.camera_border_color_argb.value_or(0));
+      cam_style.shadow_preset = request.camera_shadow_preset;
       if (!camera_renderer->Prepare(d2d_factory.Get(), d2d_ctx.Get(), bubble,
                                     request.camera_shape,
                                     request.camera_corner_radius,
-                                    request.camera_content_mode)) {
+                                    request.camera_content_mode, cam_style)) {
         camera_renderer.reset();
       }
     }

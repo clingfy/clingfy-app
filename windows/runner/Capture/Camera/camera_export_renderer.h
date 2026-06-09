@@ -39,14 +39,28 @@ class CameraExportRenderer {
   static std::unique_ptr<CameraExportRenderer> Create(
       const std::wstring& camera_path, std::int64_t start_offset_ms);
 
+  // Phase 9.5 camera styling, resolved by the caller from the Dart args.
+  struct Style {
+    bool mirror = false;             // horizontally flip the camera content only
+    double opacity = 1.0;            // camera content alpha, 0..1
+    double border_width = 0.0;       // px; <=0 → no border
+    bool has_border_color = false;   // false → no border even if width > 0
+    std::uint32_t border_argb = 0;   // 0xAARRGGBB
+    int shadow_preset = 0;           // 0 none, 1/2/3 soft/medium/strong
+  };
+
   // Build the bubble mask + the source bitmap + the cover/contain dest rect on
-  // this device. `shape` is the CameraShape enum name ("circle" / "roundedRect"
-  // / "square" / "squircle"); `corner_radius` is the Dart 0..0.5 fraction;
-  // `content_mode` is "fill" (cover, default) or "fit" (contain). Returns false
-  // if a resource could not be created (caller then skips the camera). Call once.
+  // this device, plus the Phase 9.5 styling resources (border brush, baked
+  // blurred shadow). `shape` is the CameraShape enum name ("circle" /
+  // "roundedRect" / "square" / "squircle"); `corner_radius` is the Dart 0..0.5
+  // fraction; `content_mode` is "fill" (cover, default) or "fit" (contain).
+  // Returns false if a core resource could not be created (caller then skips the
+  // camera). A styling sub-resource that fails to build is skipped individually
+  // (soft-fail) without failing the whole camera. Call once.
   bool Prepare(ID2D1Factory1* factory, ID2D1DeviceContext* ctx,
                const CameraBubbleRect& bubble, const std::string& shape,
-               double corner_radius, const std::string& content_mode);
+               double corner_radius, const std::string& content_mode,
+               const Style& style);
 
   // Advance the held camera frame forward to `frame_ms - startOffsetMs` (the
   // 9.2 sync key), decoding + uploading the new frame into the source bitmap.
@@ -69,6 +83,12 @@ class CameraExportRenderer {
   // lock / copy failure (the previous held frame, if any, stays).
   bool UploadSample(IMFSample* sample);
 
+  // Phase 9.5: bake the static blurred drop-shadow once (called from Prepare,
+  // before the frame loop). Soft-fail leaves shadow_bitmap_ null.
+  void PrepareShadow(ID2D1Factory1* factory, ID2D1DeviceContext* ctx,
+                     const std::string& shape, double corner_radius,
+                     double side, double bubble_x, double bubble_y);
+
   Microsoft::WRL::ComPtr<IMFSourceReader> reader_;
   DWORD stream_index_ = 0;
   UINT cam_w_ = 0;
@@ -89,6 +109,17 @@ class CameraExportRenderer {
   Microsoft::WRL::ComPtr<ID2D1Layer> mask_layer_;
   D2D1_RECT_F bubble_rect_{};  // the square bubble on the canvas
   D2D1_RECT_F dest_rect_{};    // where the camera bitmap draws (cover/contain)
+
+  // Phase 9.5 styling.
+  Style style_{};
+  float bubble_cx_ = 0.0f;  // bubble center (for the mirror flip)
+  float bubble_cy_ = 0.0f;
+  Microsoft::WRL::ComPtr<ID2D1SolidColorBrush> border_brush_;
+  float border_width_px_ = 0.0f;  // 0 → no border
+  // Baked, pre-blurred shadow drawn each frame into shadow_dest_ (canvas space).
+  Microsoft::WRL::ComPtr<ID2D1Bitmap1> shadow_bitmap_;
+  D2D1_RECT_F shadow_dest_{};
+
   bool ready_ = false;
 };
 

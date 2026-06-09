@@ -147,6 +147,13 @@ target_link_libraries(runner_bridge PUBLIC
   "d2d1.lib"
 )
 
+# Phase 9.5: the Direct2D built-in effect CLSIDs (CLSID_D2D1GaussianBlur, used by
+# the camera drop-shadow) are GUID definitions provided by dxguid.lib; without it
+# the linker reports them as unresolved externals.
+target_link_libraries(runner_bridge PUBLIC
+  "dxguid.lib"
+)
+
 # Phase 6 Slice 2 follow-up: the export save-folder resolver + folder
 # picker (Services/save_folder.cpp).
 #   * shell32 — SHGetKnownFolderPath (FOLDERID_Videos), IFileOpenDialog

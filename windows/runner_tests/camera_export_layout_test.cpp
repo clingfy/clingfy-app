@@ -116,5 +116,44 @@ TEST(CameraExportSyncTest, AlignmentAcrossPauseGapHolds) {
   EXPECT_EQ(SelectHeldCameraFrameIndex(500, frames), 3);   // resume frame
 }
 
+// --- shadow style (Phase 9.5) -----------------------------------------------
+
+TEST(CameraShadowStyleTest, PresetZeroAndUnknownDisabled) {
+  EXPECT_FALSE(ResolveCameraShadowStyle(0).enabled);
+  EXPECT_FALSE(ResolveCameraShadowStyle(-1).enabled);
+  EXPECT_FALSE(ResolveCameraShadowStyle(99).enabled);
+}
+
+TEST(CameraShadowStyleTest, PresetsMatchMacOsParityWithFlippedY) {
+  // macOS uses a y-UP space (offset.height -2/-4/-6); D2D is y-DOWN so the
+  // shadow drops with a POSITIVE y. Opacity/radius mirror macOS shadowStyle.
+  const auto s1 = ResolveCameraShadowStyle(1);
+  EXPECT_TRUE(s1.enabled);
+  EXPECT_DOUBLE_EQ(s1.opacity, 0.18);
+  EXPECT_DOUBLE_EQ(s1.blur_radius, 10.0);
+  EXPECT_DOUBLE_EQ(s1.offset_x, 0.0);
+  EXPECT_DOUBLE_EQ(s1.offset_y, 2.0);
+
+  const auto s2 = ResolveCameraShadowStyle(2);
+  EXPECT_DOUBLE_EQ(s2.opacity, 0.24);
+  EXPECT_DOUBLE_EQ(s2.blur_radius, 16.0);
+  EXPECT_DOUBLE_EQ(s2.offset_y, 4.0);
+
+  const auto s3 = ResolveCameraShadowStyle(3);
+  EXPECT_DOUBLE_EQ(s3.opacity, 0.32);
+  EXPECT_DOUBLE_EQ(s3.blur_radius, 22.0);
+  EXPECT_DOUBLE_EQ(s3.offset_y, 6.0);
+}
+
+TEST(CameraShadowStyleTest, StrongerPresetMeansMoreOpacityAndBlur) {
+  const auto s1 = ResolveCameraShadowStyle(1);
+  const auto s2 = ResolveCameraShadowStyle(2);
+  const auto s3 = ResolveCameraShadowStyle(3);
+  EXPECT_LT(s1.opacity, s2.opacity);
+  EXPECT_LT(s2.opacity, s3.opacity);
+  EXPECT_LT(s1.blur_radius, s2.blur_radius);
+  EXPECT_LT(s2.blur_radius, s3.blur_radius);
+}
+
 }  // namespace
 }  // namespace clingfy::capture
