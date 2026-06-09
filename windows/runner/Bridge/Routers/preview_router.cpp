@@ -2,10 +2,14 @@
 
 #include <windows.h>
 
+#include <fstream>
+#include <optional>
+#include <sstream>
 #include <string>
 
 #include "Bridge/native_error_codes.h"
 #include "Bridge/result_helpers.h"
+#include "Capture/Camera/camera_meta.h"
 #include "Capture/recording_project_reader.h"
 #include "preview/preview_engine.h"
 
@@ -102,6 +106,80 @@ std::string WideToUtf8(const std::wstring& w) {
   ::WideCharToMultiByte(CP_UTF8, 0, w.c_str(), static_cast<int>(w.size()),
                         out.data(), needed, nullptr, nullptr);
   return out;
+}
+
+double ReadDouble(const flutter::EncodableMap& map, const char* key,
+                  double fallback) {
+  auto it = map.find(flutter::EncodableValue(key));
+  if (it == map.end()) return fallback;
+  if (const auto* d = std::get_if<double>(&it->second)) return *d;
+  if (const auto* i = std::get_if<std::int32_t>(&it->second)) {
+    return static_cast<double>(*i);
+  }
+  if (const auto* i64 = std::get_if<std::int64_t>(&it->second)) {
+    return static_cast<double>(*i64);
+  }
+  return fallback;
+}
+
+bool ReadBool(const flutter::EncodableMap& map, const char* key,
+              bool fallback) {
+  auto it = map.find(flutter::EncodableValue(key));
+  if (it == map.end()) return fallback;
+  if (const auto* b = std::get_if<bool>(&it->second)) return *b;
+  return fallback;
+}
+
+std::optional<std::int64_t> ReadOptionalInt(const flutter::EncodableMap& map,
+                                            const char* key) {
+  auto it = map.find(flutter::EncodableValue(key));
+  if (it == map.end()) return std::nullopt;
+  if (const auto* i = std::get_if<std::int32_t>(&it->second)) {
+    return static_cast<std::int64_t>(*i);
+  }
+  if (const auto* i64 = std::get_if<std::int64_t>(&it->second)) return *i64;
+  return std::nullopt;
+}
+
+// Read `<dir>/camera.meta.json` content. nullopt when unreadable.
+std::optional<std::string> ReadFileUtf8(const std::wstring& path) {
+  std::ifstream f(path, std::ios::in | std::ios::binary);
+  if (!f.is_open()) return std::nullopt;
+  std::ostringstream ss;
+  ss << f.rdbuf();
+  return ss.str();
+}
+
+// Build the live preview camera composition from a Dart `camera*` arg map (the
+// keys CameraCompositionState.toMap() emits, shared by processVideo +
+// previewSetCameraPlacement). Same shape the export router parses.
+clingfy::preview::PreviewCameraComposition ReadCameraComposition(
+    const flutter::EncodableMap& args) {
+  clingfy::preview::PreviewCameraComposition c;
+  c.visible = ReadBool(args, "cameraVisible", false);
+  c.layout_preset = ReadString(args, "cameraLayoutPreset");
+  c.size_factor = ReadDouble(args, "cameraSizeFactor", 0.18);
+  c.shape = ReadString(args, "cameraShape");
+  c.corner_radius = ReadDouble(args, "cameraCornerRadius", 0.0);
+  c.content_mode = ReadString(args, "cameraContentMode");
+  c.mirror = ReadBool(args, "cameraMirror", false);
+  c.opacity = ReadDouble(args, "cameraOpacity", 1.0);
+  c.border_width = ReadDouble(args, "cameraBorderWidth", 0.0);
+  if (const auto argb = ReadOptionalInt(args, "cameraBorderColorArgb")) {
+    c.has_border_color = true;
+    c.border_argb = static_cast<std::uint32_t>(*argb);
+  }
+  c.shadow_preset =
+      static_cast<int>(ReadDouble(args, "cameraShadowPreset", 0.0));
+  if (const auto it = args.find(flutter::EncodableValue("cameraNormalizedCenter"));
+      it != args.end()) {
+    if (const auto* center = std::get_if<flutter::EncodableMap>(&it->second)) {
+      c.has_center = true;
+      c.center_x = ReadDouble(*center, "x", 0.0);
+      c.center_y = ReadDouble(*center, "y", 0.0);
+    }
+  }
+  return c;
 }
 
 // ---------------------------------------------------------------------
@@ -279,7 +357,6 @@ void HandlePreviewOpen(
   }
   const std::string session_id = ReadString(*args, "sessionId");
   const std::string project_path_utf8 = ReadString(*args, "projectPath");
-  const std::string camera_path_override = ReadString(*args, "cameraPath");
 
   if (session_id.empty() || project_path_utf8.empty()) {
     result->Error(
@@ -310,13 +387,24 @@ void HandlePreviewOpen(
   if (read.project->cursor_path.has_value()) {
     open_args.cursor_path = *read.project->cursor_path;
   }
-  // The Dart-side override wins when present; otherwise fall back to
-  // whatever the reader resolved. Plumbed through Step 5.3; camera
-  // compositing itself lands in Phase 9.
-  if (!camera_path_override.empty()) {
-    open_args.camera_path = Utf8ToWide(camera_path_override);
-  } else if (read.project->camera_video_path.has_value()) {
-    open_args.camera_path = *read.project->camera_video_path;
+  // Phase 9.6: composite the camera in the preview ONLY when the project has a
+  // usable, non-burned-in camera — raw.mov + camera.meta.json present-together
+  // (the reader guarantees this), the metadata parses, the live preview was NOT
+  // burned into screen.mov, and at least one frame was recorded. Mirrors the
+  // export's ShouldCompositeCamera gate so preview and export agree. Otherwise
+  // the preview stays camera-free (camera_path left empty).
+  if (read.project->camera_video_path.has_value() &&
+      read.project->camera_metadata_path.has_value()) {
+    if (const auto meta_json =
+            ReadFileUtf8(*read.project->camera_metadata_path)) {
+      if (const auto meta =
+              clingfy::capture::ParseCameraMetaJson(*meta_json);
+          meta.has_value() && !meta->preview_burned_in &&
+          meta->frames_written > 0) {
+        open_args.camera_path = *read.project->camera_video_path;
+        open_args.camera_start_offset_ms = meta->start_offset_ms;
+      }
+    }
   }
 
   auto* engine = PreviewEngine::Instance();
@@ -453,6 +541,23 @@ void HandlePreviewSeekTo(
   reply::Null(*result);
 }
 
+// Phase 9.6: live camera-bubble composition for the inline preview. Dart calls
+// this on placement drags + styling changes (and processVideo forwards the same
+// shape on open). Parses the camera* args and pushes them to the engine, which
+// rebuilds the bubble on the next composited frame. Stale-session calls are
+// dropped engine-side. Always replies null (matches the void Dart contract).
+void HandlePreviewSetCameraPlacement(
+    const flutter::MethodCall<flutter::EncodableValue>& call,
+    std::unique_ptr<flutter::MethodResult<flutter::EncodableValue>> result) {
+  if (const auto* args =
+          std::get_if<flutter::EncodableMap>(call.arguments())) {
+    const std::string session_id = ReadString(*args, "sessionId");
+    PreviewEngine::Instance()->SetCameraComposition(
+        session_id, ReadCameraComposition(*args));
+  }
+  reply::Null(*result);
+}
+
 }  // namespace
 
 void RegisterHandlers(HandlerTable& table) {
@@ -473,7 +578,7 @@ void RegisterHandlers(HandlerTable& table) {
   table["playerSeekTo"] = &HandleNoopSetter;
   table["inlinePreviewStop"] = &HandleNoopSetter;
 
-  table["previewSetCameraPlacement"] = &HandleNoopSetter;
+  table["previewSetCameraPlacement"] = &HandlePreviewSetCameraPlacement;
   table["previewSetZoomSegments"] = &HandleNoopSetter;
   table["previewSetAudioMix"] = &HandleNoopSetter;
   table["previewSetAudioGainDb"] = &HandleNoopSetter;

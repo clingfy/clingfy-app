@@ -137,9 +137,10 @@ hexagon/star shapes in MVP (circle/rounded/square/squircle only).
 | 9.3.2 | Floating native bubble + capture-exclusion + 1-click in-app fallback | #155 |
 | 9.3.3 | In-app preview is the Windows default (floating opt-in)      | #156   |
 | 9.4   | Export: simple circular/rounded camera bubble                | #157   |
-| 9.5   | Styling: mirror / opacity / border / shadow                  | (this) |
-| 9.6   | Chroma key + intro/outro/zoom-emphasis animations            |        |
-| 9.7   | Closeout / stress / smoke                                    |        |
+| 9.5   | Styling: mirror / opacity / border / shadow                  | #158   |
+| 9.6   | Inline preview camera compositing (WYSIWYG before export)    | (this) |
+| 9.7   | Chroma key + intro/outro/zoom-emphasis animations            |        |
+| 9.8   | Closeout / stress / smoke                                    |        |
 
 **MVP path:** 9.1 → 9.2 → 9.4 (screen + camera recorded → camera file in the
 project → export with a simple bubble). Preview (9.3) and styling (9.5/9.6) follow.

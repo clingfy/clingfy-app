@@ -36,6 +36,8 @@
 #include <flutter_plugin_registrar.h>
 #include <flutter_texture_registrar.h>
 
+#include "Preview/preview_camera_renderer.h"
+
 #include <atomic>
 #include <chrono>
 #include <cstdint>
@@ -65,9 +67,13 @@ struct OpenArgs {
   std::string project_path;
   std::wstring video_path;   // required; empty → open fails with error
   std::wstring cursor_path;  // optional; empty → video-only (no zoom/halo)
-  // Optional; plumbed-but-not-composited in Step 5.3. Phase 9 picks
-  // up camera compositing on top of the same PreviewCompositor.
+  // Phase 9.6: camera bubble compositing in the preview. The router sets
+  // `camera_path` ONLY when the project has a usable camera (raw.mov +
+  // camera.meta.json present, parsed, and previewBurnedIn == false). Empty →
+  // no camera in the preview. `camera_start_offset_ms` is the camera.meta.json
+  // sync key (cameraTime = playbackTime - startOffset).
   std::wstring camera_path;
+  std::int64_t camera_start_offset_ms = 0;
 };
 
 struct OpenResult {
@@ -169,6 +175,14 @@ class PreviewEngine {
   void Play(const std::string& session_id);
   void Pause(const std::string& session_id);
   void SeekTo(const std::string& session_id, std::int64_t position_ms);
+
+  // Phase 9.6: update the live camera-bubble composition for the inline preview
+  // (visibility, placement, shape, and 9.5 styling). Driven by Dart's
+  // processVideo / previewSetCameraPlacement on open and on every editor change.
+  // A stale session_id (mismatching the active preview) is a silent no-op. Cheap
+  // and thread-safe; the actual D2D rebuild happens on the next composited frame.
+  void SetCameraComposition(const std::string& session_id,
+                            const PreviewCameraComposition& composition);
 
   // For tests / observability.
   std::int64_t current_texture_id() const;

@@ -13,6 +13,7 @@
 #include "Bridge/result_helpers.h"
 #include "Capture/Export/export_passthrough.h"
 #include "Capture/Export/export_session.h"
+#include "preview/preview_engine.h"
 
 namespace clingfy::bridge::routers::export_ {
 
@@ -313,12 +314,46 @@ void HandleCancelExport(
 }
 
 void HandleProcessVideo(
-    const flutter::MethodCall<flutter::EncodableValue>& /*call*/,
+    const flutter::MethodCall<flutter::EncodableValue>& call,
     std::unique_ptr<flutter::MethodResult<flutter::EncodableValue>> result) {
-  // Slice 1: return null so the Dart caller falls back to using the
-  // original screen.mov as the preview source (its current behavior on
-  // Windows anyway). Slices 2+ extend the PreviewCompositor with
-  // composition params and start updating the live preview here.
+  // Phase 9.6: the Windows preview does NOT pre-render a composited file, so we
+  // still return null (Dart keeps using the live preview texture). But the call
+  // carries the camera composition (visible / placement / shape / 9.5 styling),
+  // which we forward to the PreviewEngine so the inline preview draws the bubble
+  // live — WYSIWYG with the export. This fires at preview open and on every
+  // layout/styling change; placement drags additionally use
+  // previewSetCameraPlacement. Stale-session calls are dropped engine-side.
+  if (const auto* args =
+          std::get_if<flutter::EncodableMap>(call.arguments())) {
+    clingfy::preview::PreviewCameraComposition c;
+    c.visible = ReadBool(*args, "cameraVisible", false);
+    c.layout_preset = ReadString(*args, "cameraLayoutPreset");
+    c.size_factor = ReadDouble(*args, "cameraSizeFactor", 0.18);
+    c.shape = ReadString(*args, "cameraShape");
+    c.corner_radius = ReadDouble(*args, "cameraCornerRadius", 0.0);
+    c.content_mode = ReadString(*args, "cameraContentMode");
+    c.mirror = ReadBool(*args, "cameraMirror", false);
+    c.opacity = ReadDouble(*args, "cameraOpacity", 1.0);
+    c.border_width = ReadDouble(*args, "cameraBorderWidth", 0.0);
+    if (const auto argb = ReadOptionalInt(*args, "cameraBorderColorArgb")) {
+      c.has_border_color = true;
+      c.border_argb = static_cast<std::uint32_t>(*argb);
+    }
+    c.shadow_preset =
+        static_cast<int>(ReadDouble(*args, "cameraShadowPreset", 0.0));
+    if (const auto it =
+            args->find(flutter::EncodableValue("cameraNormalizedCenter"));
+        it != args->end()) {
+      if (const auto* center =
+              std::get_if<flutter::EncodableMap>(&it->second)) {
+        c.has_center = true;
+        c.center_x = ReadDouble(*center, "x", 0.0);
+        c.center_y = ReadDouble(*center, "y", 0.0);
+      }
+    }
+    clingfy::preview::PreviewEngine::Instance()->SetCameraComposition(
+        ReadString(*args, "sessionId"), c);
+  }
   reply::Null(*result);
 }
 
