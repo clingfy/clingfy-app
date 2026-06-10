@@ -54,13 +54,20 @@ PermissionSnapshot ProbePermissionStatus();
 // desktop-apps toggles cannot be told apart.
 CameraPermission ProbeCameraPermission();
 
+// Phase 10.2: the same detailed probe for the microphone capability. The
+// enum is named for its Phase 9.1 camera origin, but the buckets are
+// capability-agnostic AppCapabilityAccess states — reusing it keeps the
+// mic and camera detail mappings (and their Dart wire names) identical.
+CameraPermission ProbeMicrophonePermission();
+
 // Pane id → `ms-settings:` URI. The Dart side calls
 // `openSystemSettings(pane)` with one of:
 //   * `"microphone"` → `ms-settings:privacy-microphone`
 //   * `"camera"`     → `ms-settings:privacy-webcam`
-//   * `"screenRecording"` → `ms-settings:privacy-broadFileSystemAccess`
-//                          (no dedicated page; broad privacy is the
-//                          closest Windows analogue)
+//   * `"sound"`      → `ms-settings:sound` (input/output device settings —
+//                      Phase 10.2, for system-audio guidance)
+//   * `"screenRecording"` → `ms-settings:privacy` (no dedicated page; the
+//                          general privacy hub is the closest analogue)
 //   * `"accessibility"` → `ms-settings:easeofaccess` (closest analogue —
 //                          Windows has no AX trust gate per app)
 // Returns an empty string for unknown panes so the caller can short-

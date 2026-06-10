@@ -42,13 +42,17 @@ bool ProbeCapability(winrt::hstring capability_name) {
 
 }  // namespace
 
-CameraPermission ProbeCameraPermission() {
+namespace {
+
+// Shared detailed mapper for any AppCapability name — the buckets are
+// capability-agnostic (see the header note on the enum's camera-era name).
+CameraPermission ProbeCapabilityDetailed(winrt::hstring capability_name) {
   try {
-    auto capability = cap::AppCapability::Create(L"webcam");
+    auto capability = cap::AppCapability::Create(capability_name);
     if (capability == nullptr) {
       // No AppCapability API (very old Windows) — fail open. The real device
-      // activation in Phase 9.2 will surface a structured error if it turns
-      // out the camera cannot actually be opened.
+      // activation will surface a structured error if it turns out the
+      // device cannot actually be opened.
       return CameraPermission::kUnavailableApi;
     }
     switch (capability.CheckAccess()) {
@@ -68,6 +72,16 @@ CameraPermission ProbeCameraPermission() {
   } catch (winrt::hresult_error const&) {
     return CameraPermission::kUnavailableApi;
   }
+}
+
+}  // namespace
+
+CameraPermission ProbeCameraPermission() {
+  return ProbeCapabilityDetailed(L"webcam");
+}
+
+CameraPermission ProbeMicrophonePermission() {
+  return ProbeCapabilityDetailed(L"microphone");
 }
 
 PermissionSnapshot ProbePermissionStatus() {
@@ -93,6 +107,11 @@ std::wstring ResolveSettingsUri(const std::string& pane) {
   }
   if (pane == "camera" || pane == "webcam") {
     return L"ms-settings:privacy-webcam";
+  }
+  if (pane == "sound") {
+    // Input/output device settings — Phase 10.2 guidance target for
+    // "system audio unavailable" / "selected mic unavailable" states.
+    return L"ms-settings:sound";
   }
   if (pane == "screenRecording") {
     // Windows has no dedicated screen-recording page. The closest

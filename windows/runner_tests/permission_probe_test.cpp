@@ -48,5 +48,23 @@ TEST(PermissionProbeTest, LaunchSettingsUriRejectsEmpty) {
   EXPECT_FALSE(LaunchSettingsUri(L""));
 }
 
+
+TEST(PermissionProbeTest, ResolveSettingsUriSound) {
+  // Phase 10.2: input/output device settings — the guidance target for
+  // "system audio unavailable" / "selected mic unavailable" states.
+  EXPECT_EQ(ResolveSettingsUri("sound"), L"ms-settings:sound");
+}
+
+TEST(PermissionProbeTest, ProbeMicrophonePermissionReturnsAValidBucket) {
+  // Live privacy state is host-dependent; the contract under test is that
+  // the detailed mic probe always lands in a defined enum bucket.
+  const CameraPermission p = ProbeMicrophonePermission();
+  EXPECT_TRUE(p == CameraPermission::kGranted ||
+              p == CameraPermission::kDeniedBySystem ||
+              p == CameraPermission::kDeniedByUser ||
+              p == CameraPermission::kNotDetermined ||
+              p == CameraPermission::kUnavailableApi);
+}
+
 }  // namespace
 }  // namespace clingfy::permissions

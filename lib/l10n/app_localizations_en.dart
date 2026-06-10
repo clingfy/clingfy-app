@@ -1958,11 +1958,6 @@ class AppLocalizationsEn extends AppLocalizations {
   String get permissionsOnboardingMicCameraRail => 'Mic + Camera';
 
   @override
-  String permissionsOnboardingStepLabel(int current) {
-    return 'Step $current of 4';
-  }
-
-  @override
   String get permissionsOnboardingWelcomeTitle => 'Welcome to Clingfy';
 
   @override
@@ -2344,4 +2339,111 @@ class AppLocalizationsEn extends AppLocalizations {
 
   @override
   String get licenseNotEntitled => 'This license does not unlock Pro features.';
+
+  @override
+  String get warnMicOpenFailed =>
+      'Your microphone couldn\'t be started — check microphone access in Windows privacy settings. Recording continues without it.';
+
+  @override
+  String get warnMicDisconnected =>
+      'Your microphone was disconnected. Recording continues without it.';
+
+  @override
+  String get warnSystemAudioOpenFailed =>
+      'System audio couldn\'t be captured — check your output device in Windows sound settings. Recording continues without it.';
+
+  @override
+  String get warnSystemAudioStopped =>
+      'System audio capture stopped. Recording continues without it.';
+
+  @override
+  String get warnCameraUnavailable =>
+      'Your camera isn\'t available right now. Recording continues without the camera overlay.';
+
+  @override
+  String get warnCameraOpenFailed =>
+      'Your camera couldn\'t be started — check camera access in Windows privacy settings. Recording continues without the overlay.';
+
+  @override
+  String get warnCameraDisconnected =>
+      'Your camera was disconnected. Recording continues without it.';
+
+  @override
+  String get warnEncoderVideoError =>
+      'Recording hit an encoder problem — the video may be incomplete.';
+
+  @override
+  String get warnEncoderAudioError =>
+      'Recording hit an audio encoding problem — the audio may be incomplete.';
+
+  @override
+  String get errMicrophonePermissionRequiredWindows =>
+      'Enable microphone access in Windows Settings > Privacy & security > Microphone, then try again.';
+
+  @override
+  String get errCameraPermissionDeniedWindows =>
+      'Enable camera access in Windows Settings > Privacy & security > Camera.';
+
+  @override
+  String get permissionsHelpTextWindows =>
+      'Review what Clingfy can use and jump straight to the right Windows Settings page.';
+
+  @override
+  String get permissionsChangedHintWindows =>
+      'If you change a setting in Windows Settings, return to Clingfy and refresh this page to see the latest status.';
+
+  @override
+  String get permissionsScreenRecordingHelpWindows =>
+      'Windows doesn\'t require a screen-recording permission — display, window, and area capture work out of the box.';
+
+  @override
+  String get permissionsNoGrantNeeded => 'No permission needed';
+
+  @override
+  String get permissionsDetailMicAccessOffWindows =>
+      'Microphone access is turned off in Windows privacy settings. Turn it on in Windows Settings > Privacy & security > Microphone.';
+
+  @override
+  String get permissionsDetailMicMissingWindows =>
+      'The selected microphone isn\'t connected. Plug it back in or choose another one.';
+
+  @override
+  String get permissionsDetailCameraAccessOffWindows =>
+      'Camera access is turned off in Windows privacy settings. Turn it on in Windows Settings > Privacy & security > Camera.';
+
+  @override
+  String get permissionsDetailCameraMissingWindows =>
+      'The selected camera isn\'t connected. Plug it back in or choose another one.';
+
+  @override
+  String get permissionsDetailNoCamerasWindows =>
+      'No camera was detected on this PC.';
+
+  @override
+  String get permissionsOpenSoundSettings => 'Open Sound Settings';
+
+  @override
+  String get permissionsOnboardingTrustLocalFirstWindows =>
+      'Local-first: your recordings stay on your PC.';
+
+  @override
+  String get permissionsOnboardingTrustPermissionControlWindows =>
+      'You control mic and camera access anytime in Windows Settings.';
+
+  @override
+  String get permissionsOnboardingWindowsNoScreenGrant =>
+      'No screen-recording permission needed on Windows — capture works out of the box.';
+
+  @override
+  String permissionsOnboardingStepCount(int current, int total) {
+    return 'Step $current of $total';
+  }
+
+  @override
+  String get warnWindowClosedPartialSaved =>
+      'Recording stopped: the window you were recording was closed. Your recording up to that point has been saved.';
+
+  @override
+  String get warnDisplayDisconnectedPartialSaved =>
+      'Recording stopped: the display you were recording was disconnected. Your recording up to that point has been saved.';
 }

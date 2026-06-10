@@ -85,4 +85,40 @@ const char* CameraReadinessReason(CameraReadinessCode code) {
   return "camera unavailable";
 }
 
+const char* CameraReadinessCodeName(CameraReadinessCode code) {
+  switch (code) {
+    case CameraReadinessCode::kReady:
+      return "ready";
+    case CameraReadinessCode::kPermissionDeniedSystem:
+      return "permissionDeniedSystem";
+    case CameraReadinessCode::kPermissionDeniedUser:
+      return "permissionDeniedUser";
+    case CameraReadinessCode::kPermissionNotDetermined:
+      return "permissionNotDetermined";
+    case CameraReadinessCode::kNoDevicesAvailable:
+      return "noDevicesAvailable";
+    case CameraReadinessCode::kNoDeviceSelected:
+      return "noDeviceSelected";
+    case CameraReadinessCode::kSelectedDeviceMissing:
+      return "selectedDeviceMissing";
+  }
+  return "unknown";
+}
+
+const char* CameraPermissionName(CameraPermission permission) {
+  switch (permission) {
+    case CameraPermission::kGranted:
+      return "granted";
+    case CameraPermission::kDeniedBySystem:
+      return "deniedBySystem";
+    case CameraPermission::kDeniedByUser:
+      return "deniedByUser";
+    case CameraPermission::kNotDetermined:
+      return "notDetermined";
+    case CameraPermission::kUnavailableApi:
+      return "unavailableApi";
+  }
+  return "unknown";
+}
+
 }  // namespace clingfy::permissions

@@ -65,8 +65,19 @@ class WorkflowEventPublisher {
                            const std::string& code,
                            const std::string& message);
 
+  // `code` (Phase 10.2, optional) is a stable machine-readable id —
+  // MIC_OPEN_FAILED / MIC_DISCONNECTED / SYSTEM_AUDIO_OPEN_FAILED /
+  // SYSTEM_AUDIO_STOPPED / CAMERA_UNAVAILABLE / CAMERA_OPEN_FAILED /
+  // CAMERA_DISCONNECTED / ENCODER_VIDEO_ERROR / ENCODER_AUDIO_ERROR /
+  // WINDOW_CLOSED_PARTIAL_SAVED / DISPLAY_DISCONNECTED_PARTIAL_SAVED —
+  // letting Dart localize the toast and attach the right settings deep
+  // link. Empty = legacy message-only payload (macOS localizes natively
+  // and never sends a code). Keep the id list in sync with the constants
+  // in lib/core/bridges/recording_warning_codes.dart and the code→toast
+  // mapping in lib/app/home/home_error_mapper.dart.
   void EmitRecordingWarning(const std::string& session_id,
-                            const std::string& message);
+                            const std::string& message,
+                            const std::string& code = std::string());
 
   // Preview lifecycle events (Step 5.5.3). macOS emits these from
   // InlinePreviewView.swift to drive the Dart workflow state machine

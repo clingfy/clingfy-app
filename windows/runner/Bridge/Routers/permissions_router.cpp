@@ -2,9 +2,15 @@
 
 #include <flutter/encodable_value.h>
 
+#include <algorithm>
 #include <string>
+#include <vector>
 
+#include "Bridge/Devices/audio_source_enumerator.h"
+#include "Bridge/Devices/video_source_enumerator.h"
 #include "Bridge/result_helpers.h"
+#include "Capture/windows_selection_state.h"
+#include "Permissions/camera_readiness.h"
 #include "Permissions/permission_probe.h"
 
 namespace clingfy::bridge::routers::permissions {
@@ -146,10 +152,101 @@ void HandleRelaunchApp(
   reply::Null(*result);
 }
 
+// ---- getWindowsPermissionDetails (Phase 10.2) ------------------------------
+//
+// The rich permission/device picture the Windows-specific UI renders.
+// `getPermissionStatus` stays the flat cross-platform bool map; this method
+// is Windows-only (Dart guards it with a MissingPluginException fallback, so
+// macOS/legacy-native simply yields null and the UI falls back to booleans).
+// Wire names come from CameraReadinessCodeName / CameraPermissionName — keep
+// in sync with lib/core/permissions/models/windows_permission_details.dart.
+//
+// Reply shape:
+//   { camera:        { code, reason, deviceSelected, devicesAvailable },
+//     microphone:    { access, deviceSelected, selectedDeviceMissing },
+//     screenRecording: { required: false } }
+void HandleGetWindowsPermissionDetails(
+    const flutter::MethodCall<flutter::EncodableValue>& /*call*/,
+    std::unique_ptr<flutter::MethodResult<flutter::EncodableValue>> result) {
+  namespace perms = clingfy::permissions;
+  namespace devices = clingfy::bridge::devices;
+  auto& selection = clingfy::capture::WindowsSelectionState::Instance();
+
+  // Camera: privacy probe + live enumeration → the Phase 9.1 resolver.
+  // Two platform-thread-stall guards (this handler runs on every panel
+  // open / onboarding boot / app resume): the enumeration is SKIPPED when
+  // the privacy gate already fails (the resolver returns before consulting
+  // ids anyway), and otherwise runs with a single attempt — the 3-attempt
+  // retry budget exists for capture cold-starts, and on a camera-less
+  // machine it would sleep ~400ms per refresh.
+  const perms::CameraPermission cam_permission = perms::ProbeCameraPermission();
+  const std::optional<std::string> cam_selected = selection.VideoSourceId();
+  std::vector<std::string> cam_ids;
+  const bool cam_privacy_open =
+      cam_permission == perms::CameraPermission::kGranted ||
+      cam_permission == perms::CameraPermission::kUnavailableApi;
+  if (cam_privacy_open) {
+    for (const auto& rec : devices::EnumerateVideoInputs(/*max_attempts=*/1)) {
+      cam_ids.push_back(rec.id);
+    }
+  }
+  const perms::CameraReadinessResult cam_readiness =
+      perms::ResolveCameraReadiness(cam_permission, cam_selected, cam_ids);
+
+  // Microphone: detailed privacy bucket + does the selected endpoint still
+  // exist (empty selection = system default, which is never "missing").
+  const perms::CameraPermission mic_access = perms::ProbeMicrophonePermission();
+  const std::optional<std::string> mic_selected = selection.MicrophoneId();
+  bool mic_selected_missing = false;
+  if (mic_selected.has_value() && !mic_selected->empty()) {
+    const auto mics = devices::EnumerateAudioInputs();
+    mic_selected_missing =
+        std::none_of(mics.begin(), mics.end(), [&](const auto& rec) {
+          return rec.id == *mic_selected;
+        });
+  }
+
+  reply::Map(
+      *result,
+      flutter::EncodableMap{
+          {flutter::EncodableValue("camera"),
+           flutter::EncodableValue(flutter::EncodableMap{
+               {flutter::EncodableValue("code"),
+                flutter::EncodableValue(
+                    perms::CameraReadinessCodeName(cam_readiness.code))},
+               {flutter::EncodableValue("reason"),
+                flutter::EncodableValue(
+                    perms::CameraReadinessReason(cam_readiness.code))},
+               {flutter::EncodableValue("deviceSelected"),
+                flutter::EncodableValue(cam_selected.has_value())},
+               {flutter::EncodableValue("devicesAvailable"),
+                flutter::EncodableValue(static_cast<int>(cam_ids.size()))},
+           })},
+          {flutter::EncodableValue("microphone"),
+           flutter::EncodableValue(flutter::EncodableMap{
+               {flutter::EncodableValue("access"),
+                flutter::EncodableValue(
+                    perms::CameraPermissionName(mic_access))},
+               {flutter::EncodableValue("deviceSelected"),
+                flutter::EncodableValue(mic_selected.has_value() &&
+                                        !mic_selected->empty())},
+               {flutter::EncodableValue("selectedDeviceMissing"),
+                flutter::EncodableValue(mic_selected_missing)},
+           })},
+          // Explicit truth for the UI: Windows needs no screen-capture grant.
+          {flutter::EncodableValue("screenRecording"),
+           flutter::EncodableValue(flutter::EncodableMap{
+               {flutter::EncodableValue("required"),
+                flutter::EncodableValue(false)},
+           })},
+      });
+}
+
 }  // namespace
 
 void RegisterHandlers(HandlerTable& table) {
   table["getPermissionStatus"] = &HandleGetPermissionStatus;
+  table["getWindowsPermissionDetails"] = &HandleGetWindowsPermissionDetails;
   table["requestScreenRecordingPermission"] = &HandleRequestScreenRecording;
   table["requestMicrophonePermission"] = &HandleRequestMicrophone;
   table["requestCameraPermission"] = &HandleRequestCamera;

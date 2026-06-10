@@ -1976,11 +1976,6 @@ class AppLocalizationsRo extends AppLocalizations {
   String get permissionsOnboardingMicCameraRail => 'Mic + Cameră';
 
   @override
-  String permissionsOnboardingStepLabel(int current) {
-    return 'Pasul $current din 4';
-  }
-
-  @override
   String get permissionsOnboardingWelcomeTitle => 'Bun venit la Clingfy';
 
   @override
@@ -2371,4 +2366,111 @@ class AppLocalizationsRo extends AppLocalizations {
   @override
   String get licenseNotEntitled =>
       'Această licență nu deblochează funcțiile Pro.';
+
+  @override
+  String get warnMicOpenFailed =>
+      'Microfonul nu a putut porni — verifică accesul la microfon în setările de confidențialitate Windows. Înregistrarea continuă fără el.';
+
+  @override
+  String get warnMicDisconnected =>
+      'Microfonul a fost deconectat. Înregistrarea continuă fără el.';
+
+  @override
+  String get warnSystemAudioOpenFailed =>
+      'Sunetul sistemului nu a putut fi captat — verifică dispozitivul de ieșire în setările de sunet Windows. Înregistrarea continuă fără el.';
+
+  @override
+  String get warnSystemAudioStopped =>
+      'Captarea sunetului de sistem s-a oprit. Înregistrarea continuă fără el.';
+
+  @override
+  String get warnCameraUnavailable =>
+      'Camera nu este disponibilă acum. Înregistrarea continuă fără suprapunerea camerei.';
+
+  @override
+  String get warnCameraOpenFailed =>
+      'Camera nu a putut porni — verifică accesul la cameră în setările de confidențialitate Windows. Înregistrarea continuă fără suprapunere.';
+
+  @override
+  String get warnCameraDisconnected =>
+      'Camera a fost deconectată. Înregistrarea continuă fără ea.';
+
+  @override
+  String get warnEncoderVideoError =>
+      'Înregistrarea a întâmpinat o problemă de codare — videoclipul poate fi incomplet.';
+
+  @override
+  String get warnEncoderAudioError =>
+      'Înregistrarea a întâmpinat o problemă de codare audio — sunetul poate fi incomplet.';
+
+  @override
+  String get errMicrophonePermissionRequiredWindows =>
+      'Activează accesul la microfon în Setări Windows > Confidențialitate și securitate > Microfon, apoi încearcă din nou.';
+
+  @override
+  String get errCameraPermissionDeniedWindows =>
+      'Activează accesul la cameră în Setări Windows > Confidențialitate și securitate > Cameră.';
+
+  @override
+  String get permissionsHelpTextWindows =>
+      'Vezi ce poate folosi Clingfy și sari direct la pagina potrivită din Setări Windows.';
+
+  @override
+  String get permissionsChangedHintWindows =>
+      'Dacă schimbi o setare în Setări Windows, revino la Clingfy și reîmprospătează pagina pentru starea curentă.';
+
+  @override
+  String get permissionsScreenRecordingHelpWindows =>
+      'Windows nu cere o permisiune de înregistrare a ecranului — captarea ecranului, ferestrelor și zonelor funcționează din start.';
+
+  @override
+  String get permissionsNoGrantNeeded => 'Nu necesită permisiune';
+
+  @override
+  String get permissionsDetailMicAccessOffWindows =>
+      'Accesul la microfon este oprit în setările de confidențialitate Windows. Pornește-l din Setări Windows > Confidențialitate și securitate > Microfon.';
+
+  @override
+  String get permissionsDetailMicMissingWindows =>
+      'Microfonul selectat nu este conectat. Reconectează-l sau alege altul.';
+
+  @override
+  String get permissionsDetailCameraAccessOffWindows =>
+      'Accesul la cameră este oprit în setările de confidențialitate Windows. Pornește-l din Setări Windows > Confidențialitate și securitate > Cameră.';
+
+  @override
+  String get permissionsDetailCameraMissingWindows =>
+      'Camera selectată nu este conectată. Reconecteaz-o sau alege alta.';
+
+  @override
+  String get permissionsDetailNoCamerasWindows =>
+      'Nu a fost detectată nicio cameră pe acest PC.';
+
+  @override
+  String get permissionsOpenSoundSettings => 'Deschide setările de sunet';
+
+  @override
+  String get permissionsOnboardingTrustLocalFirstWindows =>
+      'Local mai întâi: înregistrările rămân pe PC-ul tău.';
+
+  @override
+  String get permissionsOnboardingTrustPermissionControlWindows =>
+      'Controlezi oricând accesul la microfon și cameră din Setări Windows.';
+
+  @override
+  String get permissionsOnboardingWindowsNoScreenGrant =>
+      'Nicio permisiune de înregistrare a ecranului nu este necesară pe Windows — captarea funcționează din start.';
+
+  @override
+  String permissionsOnboardingStepCount(int current, int total) {
+    return 'Pasul $current din $total';
+  }
+
+  @override
+  String get warnWindowClosedPartialSaved =>
+      'Înregistrarea s-a oprit: fereastra pe care o înregistrai a fost închisă. Înregistrarea de până atunci a fost salvată.';
+
+  @override
+  String get warnDisplayDisconnectedPartialSaved =>
+      'Înregistrarea s-a oprit: ecranul pe care îl înregistrai a fost deconectat. Înregistrarea de până atunci a fost salvată.';
 }

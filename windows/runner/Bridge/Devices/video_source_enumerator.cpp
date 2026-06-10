@@ -185,7 +185,7 @@ void EnumerateVideoInputsMf(std::vector<VideoSourceRecord>& sources) {
 
 }  // namespace
 
-std::vector<VideoSourceRecord> EnumerateVideoInputs() {
+std::vector<VideoSourceRecord> EnumerateVideoInputs(int max_attempts) {
   EnsureMediaFoundationStarted();
   std::vector<VideoSourceRecord> sources;
 
@@ -198,17 +198,17 @@ std::vector<VideoSourceRecord> EnumerateVideoInputs() {
   // cold-start (the device can take a beat to appear after the service spins
   // up). This matches the audio enumerator's reliability without forcing the
   // platform thread into MTA.
-  std::thread worker([&sources]() {
+  std::thread worker([&sources, max_attempts]() {
     const HRESULT co = ::CoInitializeEx(nullptr, COINIT_MULTITHREADED);
     LogDeviceProbe("EnumerateVideoInputs: begin (MTA worker)");
-    constexpr int kMaxAttempts = 3;
-    for (int attempt = 0; attempt < kMaxAttempts; ++attempt) {
+    const int attempts_budget = max_attempts < 1 ? 1 : max_attempts;
+    for (int attempt = 0; attempt < attempts_budget; ++attempt) {
       sources.clear();
       EnumerateVideoInputsMf(sources);
       if (!sources.empty()) {
         break;
       }
-      if (attempt + 1 < kMaxAttempts) {
+      if (attempt + 1 < attempts_budget) {
         LogDeviceProbe(
             "EnumerateVideoInputs: 0 cameras, retrying after 200ms");
         std::this_thread::sleep_for(std::chrono::milliseconds(200));

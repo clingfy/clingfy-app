@@ -13,6 +13,15 @@ import 'package:clingfy/app/settings/settings_controller.dart';
 
 enum _PreviewOpenSource { recordingFinalized, externalProject }
 
+/// A recordingWarning waiting to be shown, with the optional Windows
+/// machine-readable code (see RecordingWarningCode).
+class PendingRecordingWarning {
+  const PendingRecordingWarning({required this.message, this.code});
+
+  final String message;
+  final String? code;
+}
+
 class RecordingController extends ChangeNotifier {
   static const List<String> _recordingStartFailureContextKeys = [
     'failingCall',
@@ -66,6 +75,7 @@ class RecordingController extends ChangeNotifier {
   String? _openingExternalProjectPath;
   String? _failedExternalProjectOpenPath;
   String? _pendingWarningMessage;
+  String? _pendingWarningCode;
   RecordingPauseResumeCapabilities _pauseResumeCapabilities =
       const RecordingPauseResumeCapabilities.unsupported();
   final RecordedDurationTracker _durationTracker = RecordedDurationTracker();
@@ -292,13 +302,26 @@ class RecordingController extends ChangeNotifier {
       sessionId: nextSessionId,
     );
     _pendingWarningMessage = null;
+    _pendingWarningCode = null;
     notifyListeners();
   }
 
   String? consumePendingWarningMessage() {
     final warning = _pendingWarningMessage;
     _pendingWarningMessage = null;
+    _pendingWarningCode = null;
     return warning;
+  }
+
+  /// Phase 10.2: read-and-clear the pending warning together with its
+  /// optional machine-readable code (Windows-only; null on macOS).
+  PendingRecordingWarning? consumePendingWarning() {
+    final message = _pendingWarningMessage;
+    final code = _pendingWarningCode;
+    _pendingWarningMessage = null;
+    _pendingWarningCode = null;
+    if (message == null || message.isEmpty) return null;
+    return PendingRecordingWarning(message: message, code: code);
   }
 
   void cancelPendingStartIntent() {
@@ -885,7 +908,12 @@ class RecordingController extends ChangeNotifier {
       return;
     }
 
+    // Phase 10.2: Windows attaches a machine-readable code (see
+    // RecordingWarningCode) so the UI can localize the toast and offer the
+    // right settings action. Absent on macOS — message renders verbatim.
+    final code = event['code']?.toString();
     _pendingWarningMessage = message;
+    _pendingWarningCode = (code == null || code.trim().isEmpty) ? null : code;
     notifyListeners();
   }
 
@@ -1056,6 +1084,7 @@ class RecordingController extends ChangeNotifier {
     _pendingExternalProjectReplacementPath = null;
     _openingExternalProjectPath = null;
     _pendingWarningMessage = null;
+    _pendingWarningCode = null;
     Log.recordingId = null;
     _state = RecordingWorkflowState(
       phase: WorkflowPhase.idle,

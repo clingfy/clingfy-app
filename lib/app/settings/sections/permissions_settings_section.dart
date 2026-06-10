@@ -1,6 +1,8 @@
 import 'package:clingfy/app/permissions/permissions_controller.dart';
 import 'package:clingfy/l10n/app_localizations.dart';
 import 'package:clingfy/core/bridges/native_bridge.dart';
+import 'package:clingfy/core/permissions/models/windows_permission_details.dart';
+import 'package:clingfy/ui/platform/platform_kind.dart';
 import 'package:clingfy/app/settings/sections/section_helpers.dart';
 import 'package:clingfy/ui/platform/widgets/app_button.dart';
 import 'package:clingfy/ui/platform/widgets/app_inline_notice.dart';
@@ -66,7 +68,9 @@ class _PermissionsSettingsSectionState extends State<PermissionsSettingsSection>
           children: [
             SettingsCard(
               title: l10n.permissionsTitle,
-              infoTooltip: l10n.permissionsHelpText,
+              infoTooltip: isWindows()
+                  ? l10n.permissionsHelpTextWindows
+                  : l10n.permissionsHelpText,
               child: Column(
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
@@ -95,7 +99,11 @@ class _PermissionsSettingsSectionState extends State<PermissionsSettingsSection>
                           .toList(),
                     ),
                     const SizedBox(height: 16),
-                    AppInlineNotice(message: l10n.permissionsChangedHint),
+                    AppInlineNotice(
+                      message: isWindows()
+                          ? l10n.permissionsChangedHintWindows
+                          : l10n.permissionsChangedHint,
+                    ),
                   ],
                 ],
               ),
@@ -108,6 +116,9 @@ class _PermissionsSettingsSectionState extends State<PermissionsSettingsSection>
 
   List<_PermissionCardData> _buildPermissionCards(BuildContext context) {
     final l10n = AppLocalizations.of(context)!;
+    if (isWindows()) {
+      return _buildWindowsPermissionCards(l10n);
+    }
     return [
       _PermissionCardData(
         id: 'screenRecording',
@@ -162,6 +173,93 @@ class _PermissionsSettingsSectionState extends State<PermissionsSettingsSection>
         granted: _controller.accessibility,
         primaryLabel: l10n.openSettings,
         onPrimaryPressed: _controller.openAccessibility,
+      ),
+    ];
+  }
+
+  /// Phase 10.2 — the Windows panel tells the Windows truth: no
+  /// screen-recording or accessibility gates exist (one informational row
+  /// instead of two fake cards), and the mic/camera cards surface the rich
+  /// readiness states (desktop-apps access off, selected device missing)
+  /// with deep links to the right Windows Settings page. Copy points at
+  /// privacy PAGES, never a specific toggle — WinRT can't tell the global
+  /// switch from the desktop-apps switch apart.
+  List<_PermissionCardData> _buildWindowsPermissionCards(
+    AppLocalizations l10n,
+  ) {
+    final details = _controller.windowsDetails;
+
+    String? micDetail;
+    String? micExtraLabel;
+    VoidCallback? micExtraAction;
+    final micAccess = details?.microphone.access;
+    if (micAccess == WindowsCapabilityAccess.deniedBySystem ||
+        micAccess == WindowsCapabilityAccess.deniedByUser ||
+        micAccess == WindowsCapabilityAccess.notDetermined) {
+      micDetail = l10n.permissionsDetailMicAccessOffWindows;
+    } else if (details?.microphone.selectedDeviceMissing == true) {
+      micDetail = l10n.permissionsDetailMicMissingWindows;
+      micExtraLabel = l10n.permissionsOpenSoundSettings;
+      micExtraAction = () => _controller.openSoundSettings();
+    }
+
+    String? cameraDetail;
+    switch (details?.camera.readiness) {
+      case WindowsCameraReadiness.permissionDeniedSystem:
+      case WindowsCameraReadiness.permissionDeniedUser:
+      case WindowsCameraReadiness.permissionNotDetermined:
+        cameraDetail = l10n.permissionsDetailCameraAccessOffWindows;
+      case WindowsCameraReadiness.selectedDeviceMissing:
+        cameraDetail = l10n.permissionsDetailCameraMissingWindows;
+      case WindowsCameraReadiness.noDevicesAvailable:
+        cameraDetail = l10n.permissionsDetailNoCamerasWindows;
+      case WindowsCameraReadiness.ready:
+      case WindowsCameraReadiness.noDeviceSelected:
+      case WindowsCameraReadiness.unknown:
+      case null:
+        cameraDetail = null;
+    }
+
+    return [
+      // Informational, always-satisfied: Windows needs no capture grant.
+      _PermissionCardData(
+        id: 'screenRecording',
+        icon: CupertinoIcons.desktopcomputer,
+        title: l10n.permissionsScreenRecording,
+        helpText: l10n.permissionsScreenRecordingHelpWindows,
+        required: true,
+        granted: true,
+        grantedPillLabel: l10n.permissionsNoGrantNeeded,
+      ),
+      _PermissionCardData(
+        id: 'microphone',
+        icon: CupertinoIcons.mic,
+        title: l10n.permissionsMicrophone,
+        helpText: l10n.permissionsMicrophoneHelp,
+        statusDetail: micDetail,
+        required: false,
+        granted: _controller.microphone,
+        primaryLabel: _controller.microphone
+            ? micExtraLabel
+            : l10n.permissionsGrantAccess,
+        onPrimaryPressed: _controller.microphone
+            ? micExtraAction
+            : _controller.requestMic,
+        secondaryLabel: l10n.openSettings,
+        onSecondaryPressed: _controller.openMicrophoneSettings,
+      ),
+      _PermissionCardData(
+        id: 'camera',
+        icon: CupertinoIcons.video_camera_solid,
+        title: l10n.permissionsCamera,
+        helpText: l10n.permissionsCameraHelp,
+        statusDetail: cameraDetail,
+        required: false,
+        granted: _controller.camera,
+        primaryLabel: _controller.camera ? null : l10n.permissionsGrantAccess,
+        onPrimaryPressed: _controller.camera ? null : _controller.requestCam,
+        secondaryLabel: l10n.openSettings,
+        onSecondaryPressed: _controller.openCameraSettings,
       ),
     ];
   }
@@ -312,6 +410,18 @@ class _PermissionCard extends StatelessWidget {
                         height: 1.35,
                       ),
                     ),
+                    if (data.statusDetail != null) ...[
+                      const SizedBox(height: 6),
+                      Text(
+                        data.statusDetail!,
+                        key: ValueKey('permission-detail-${data.id}'),
+                        style: theme.textTheme.bodySmall?.copyWith(
+                          color: Colors.orange.shade800,
+                          fontWeight: FontWeight.w600,
+                          height: 1.35,
+                        ),
+                      ),
+                    ],
                   ],
                 ),
               ),
@@ -324,7 +434,7 @@ class _PermissionCard extends StatelessWidget {
             children: [
               _PermissionPill(
                 label: granted
-                    ? l10n.permissionsGranted
+                    ? (data.grantedPillLabel ?? l10n.permissionsGranted)
                     : l10n.permissionsNotGranted,
                 backgroundColor: granted
                     ? Colors.green.withValues(alpha: 0.12)
@@ -414,6 +524,8 @@ class _PermissionCardData {
     required this.helpText,
     required this.required,
     required this.granted,
+    this.statusDetail,
+    this.grantedPillLabel,
     this.primaryLabel,
     this.onPrimaryPressed,
     this.secondaryLabel,
@@ -424,6 +536,14 @@ class _PermissionCardData {
   final IconData icon;
   final String title;
   final String helpText;
+
+  /// Phase 10.2: a state-specific line under the help text (e.g. "the
+  /// selected microphone isn't connected"), rendered in a warning color.
+  final String? statusDetail;
+
+  /// Phase 10.2: overrides the "Granted" pill label (the Windows
+  /// screen-capture row reads "No permission needed").
+  final String? grantedPillLabel;
   final bool required;
   final bool granted;
   final String? primaryLabel;

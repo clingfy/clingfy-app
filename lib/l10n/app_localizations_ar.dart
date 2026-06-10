@@ -1940,11 +1940,6 @@ class AppLocalizationsAr extends AppLocalizations {
   String get permissionsOnboardingMicCameraRail => 'الميكروفون + الكاميرا';
 
   @override
-  String permissionsOnboardingStepLabel(int current) {
-    return 'الخطوة $current من 4';
-  }
-
-  @override
   String get permissionsOnboardingWelcomeTitle => 'مرحبًا بك في Clingfy';
 
   @override
@@ -2332,4 +2327,109 @@ class AppLocalizationsAr extends AppLocalizations {
 
   @override
   String get licenseNotEntitled => 'هذا الترخيص لا يفعّل مزايا Pro.';
+
+  @override
+  String get warnMicOpenFailed =>
+      'تعذر تشغيل الميكروفون — تحقق من وصول الميكروفون في إعدادات خصوصية ويندوز. يستمر التسجيل بدونه.';
+
+  @override
+  String get warnMicDisconnected => 'تم فصل الميكروفون. يستمر التسجيل بدونه.';
+
+  @override
+  String get warnSystemAudioOpenFailed =>
+      'تعذر التقاط صوت النظام — تحقق من جهاز الإخراج في إعدادات الصوت في ويندوز. يستمر التسجيل بدونه.';
+
+  @override
+  String get warnSystemAudioStopped =>
+      'توقف التقاط صوت النظام. يستمر التسجيل بدونه.';
+
+  @override
+  String get warnCameraUnavailable =>
+      'الكاميرا غير متاحة الآن. يستمر التسجيل بدون نافذة الكاميرا.';
+
+  @override
+  String get warnCameraOpenFailed =>
+      'تعذر تشغيل الكاميرا — تحقق من وصول الكاميرا في إعدادات خصوصية ويندوز. يستمر التسجيل بدون النافذة.';
+
+  @override
+  String get warnCameraDisconnected => 'تم فصل الكاميرا. يستمر التسجيل بدونها.';
+
+  @override
+  String get warnEncoderVideoError =>
+      'واجه التسجيل مشكلة في الترميز — قد يكون الفيديو غير مكتمل.';
+
+  @override
+  String get warnEncoderAudioError =>
+      'واجه التسجيل مشكلة في ترميز الصوت — قد يكون الصوت غير مكتمل.';
+
+  @override
+  String get errMicrophonePermissionRequiredWindows =>
+      'فعّل وصول الميكروفون في إعدادات ويندوز > الخصوصية والأمان > الميكروفون، ثم حاول مجددًا.';
+
+  @override
+  String get errCameraPermissionDeniedWindows =>
+      'فعّل وصول الكاميرا في إعدادات ويندوز > الخصوصية والأمان > الكاميرا.';
+
+  @override
+  String get permissionsHelpTextWindows =>
+      'راجع ما يمكن لـ Clingfy استخدامه وانتقل مباشرة إلى صفحة إعدادات ويندوز المناسبة.';
+
+  @override
+  String get permissionsChangedHintWindows =>
+      'إذا غيّرت إعدادًا في إعدادات ويندوز، عُد إلى Clingfy وحدّث هذه الصفحة لرؤية أحدث حالة.';
+
+  @override
+  String get permissionsScreenRecordingHelpWindows =>
+      'لا يتطلب ويندوز إذن تسجيل الشاشة — يعمل التقاط الشاشة والنوافذ والمناطق مباشرة.';
+
+  @override
+  String get permissionsNoGrantNeeded => 'لا حاجة لإذن';
+
+  @override
+  String get permissionsDetailMicAccessOffWindows =>
+      'وصول الميكروفون متوقف في إعدادات خصوصية ويندوز. فعّله في إعدادات ويندوز > الخصوصية والأمان > الميكروفون.';
+
+  @override
+  String get permissionsDetailMicMissingWindows =>
+      'الميكروفون المحدد غير متصل. أعد توصيله أو اختر آخر.';
+
+  @override
+  String get permissionsDetailCameraAccessOffWindows =>
+      'وصول الكاميرا متوقف في إعدادات خصوصية ويندوز. فعّله في إعدادات ويندوز > الخصوصية والأمان > الكاميرا.';
+
+  @override
+  String get permissionsDetailCameraMissingWindows =>
+      'الكاميرا المحددة غير متصلة. أعد توصيلها أو اختر أخرى.';
+
+  @override
+  String get permissionsDetailNoCamerasWindows =>
+      'لم يتم العثور على كاميرا على هذا الكمبيوتر.';
+
+  @override
+  String get permissionsOpenSoundSettings => 'افتح إعدادات الصوت';
+
+  @override
+  String get permissionsOnboardingTrustLocalFirstWindows =>
+      'محلي أولًا: تبقى تسجيلاتك على جهازك.';
+
+  @override
+  String get permissionsOnboardingTrustPermissionControlWindows =>
+      'تتحكم في وصول الميكروفون والكاميرا في أي وقت من إعدادات ويندوز.';
+
+  @override
+  String get permissionsOnboardingWindowsNoScreenGrant =>
+      'لا حاجة لإذن تسجيل الشاشة على ويندوز — يعمل الالتقاط مباشرة.';
+
+  @override
+  String permissionsOnboardingStepCount(int current, int total) {
+    return 'الخطوة $current من $total';
+  }
+
+  @override
+  String get warnWindowClosedPartialSaved =>
+      'توقف التسجيل: النافذة التي كنت تسجلها أُغلقت. تم حفظ تسجيلك حتى تلك اللحظة.';
+
+  @override
+  String get warnDisplayDisconnectedPartialSaved =>
+      'توقف التسجيل: الشاشة التي كنت تسجلها فُصلت. تم حفظ تسجيلك حتى تلك اللحظة.';
 }

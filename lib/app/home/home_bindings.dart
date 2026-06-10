@@ -73,10 +73,17 @@ class HomeBindings {
     if (failedExternalProjectPath != null) {
       onExternalProjectOpenFailed(failedExternalProjectPath);
     }
-    final recordingWarning = recordingController.consumePendingWarningMessage();
-    if (recordingWarning != null && recordingWarning.isNotEmpty) {
+    final recordingWarning = recordingController.consumePendingWarning();
+    if (recordingWarning != null) {
+      // Phase 10.2: when a code rides along (Windows), the toolbar maps it
+      // to a localized message + the right settings action; the raw native
+      // message stays as the fallback for unknown/absent codes (macOS).
       uiState.setNotice(
-        HomeUiNotice(message: recordingWarning, tone: HomeUiNoticeTone.warning),
+        HomeUiNotice(
+          message: recordingWarning.message,
+          rawErrorCode: recordingWarning.code,
+          tone: HomeUiNoticeTone.warning,
+        ),
       );
     }
 

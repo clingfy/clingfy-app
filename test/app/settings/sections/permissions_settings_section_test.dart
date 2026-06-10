@@ -1,6 +1,7 @@
 import 'package:clingfy/core/bridges/native_method_channel.dart';
 import 'package:clingfy/l10n/app_localizations.dart';
 import 'package:clingfy/app/settings/sections/permissions_settings_section.dart';
+import 'package:clingfy/ui/platform/platform_kind.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_test/flutter_test.dart';
@@ -47,6 +48,9 @@ void main() {
   }
 
   setUp(() {
+    // Phase 10.2 forked the panel by platform; these tests pin the macOS
+    // branch regardless of the host OS the runner is on.
+    debugPlatformKindOverride = PlatformKind.macos;
     status = <String, bool>{
       'screenRecording': true,
       'microphone': false,
@@ -84,8 +88,127 @@ void main() {
   });
 
   tearDown(() {
+    debugPlatformKindOverride = null;
     TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger
         .setMockMethodCallHandler(channel, null);
+  });
+
+  group('Windows panel (Phase 10.2)', () {
+    late Map<String, dynamic> windowsDetails;
+
+    setUp(() {
+      debugPlatformKindOverride = PlatformKind.windows;
+      windowsDetails = <String, dynamic>{
+        'camera': <String, dynamic>{
+          'code': 'ready',
+          'reason': 'camera ready',
+          'deviceSelected': true,
+          'devicesAvailable': 1,
+        },
+        'microphone': <String, dynamic>{
+          'access': 'granted',
+          'deviceSelected': false,
+          'selectedDeviceMissing': false,
+        },
+        'screenRecording': <String, dynamic>{'required': false},
+      };
+      TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger
+          .setMockMethodCallHandler(channel, (call) async {
+            calls.add(call);
+            switch (call.method) {
+              case 'getPermissionStatus':
+                return Map<String, bool>.from(status);
+              case 'getWindowsPermissionDetails':
+                return windowsDetails;
+              case 'requestMicrophonePermission':
+                status['microphone'] = true;
+                return true;
+              case 'requestCameraPermission':
+                status['camera'] = true;
+                return true;
+              case 'openSystemSettings':
+                return null;
+              default:
+                return null;
+            }
+          });
+    });
+
+    testWidgets('shows mic + camera + informational screen row, '
+        'no accessibility card', (tester) async {
+      await pumpSection(tester);
+
+      expect(
+        find.byKey(const ValueKey('permission-card-screenRecording')),
+        findsOneWidget,
+      );
+      expect(
+        find.byKey(const ValueKey('permission-card-microphone')),
+        findsOneWidget,
+      );
+      expect(
+        find.byKey(const ValueKey('permission-card-camera')),
+        findsOneWidget,
+      );
+      expect(
+        find.byKey(const ValueKey('permission-card-accessibility')),
+        findsNothing,
+      );
+      // The screen row is informational: "No permission needed" pill,
+      // no Grant Access / Open Settings buttons.
+      expect(find.text('No permission needed'), findsOneWidget);
+      expect(
+        find.byKey(const ValueKey('permission-primary-screenRecording')),
+        findsNothing,
+      );
+      expect(
+        find.byKey(const ValueKey('permission-secondary-screenRecording')),
+        findsNothing,
+      );
+      // Windows-specific hint copy, not the macOS "System Settings" text.
+      expect(find.textContaining('Windows Settings'), findsWidgets);
+    });
+
+    testWidgets('selected-mic-missing surfaces a detail line and a sound '
+        'settings action', (tester) async {
+      status['microphone'] = true;
+      windowsDetails['microphone'] = <String, dynamic>{
+        'access': 'granted',
+        'deviceSelected': true,
+        'selectedDeviceMissing': true,
+      };
+      await pumpSection(tester);
+
+      expect(
+        find.byKey(const ValueKey('permission-detail-microphone')),
+        findsOneWidget,
+      );
+      await tapVisible(
+        tester,
+        find.byKey(const ValueKey('permission-primary-microphone')),
+      );
+      final soundCalls = methodCalls(
+        'openSystemSettings',
+      ).where((c) => (c.arguments as Map)['pane'] == 'sound');
+      expect(soundCalls.length, 1);
+    });
+
+    testWidgets('camera readiness states render a detail line', (tester) async {
+      status['camera'] = true;
+      windowsDetails['camera'] = <String, dynamic>{
+        'code': 'noDevicesAvailable',
+        'reason': 'no camera devices are available',
+        'deviceSelected': false,
+        'devicesAvailable': 0,
+      };
+      await pumpSection(tester);
+
+      expect(
+        find.byKey(const ValueKey('permission-detail-camera')),
+        findsOneWidget,
+      );
+      expect(find.text('No camera was detected on this PC.'), findsOneWidget);
+    });
   });
 
   testWidgets('renders all permission cards, pills, and help notice', (

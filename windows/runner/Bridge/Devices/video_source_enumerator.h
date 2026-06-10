@@ -26,7 +26,11 @@
 // `MFStartup` is the documented pattern.
 namespace clingfy::bridge::devices {
 
-std::vector<VideoSourceRecord> EnumerateVideoInputs();
+// `max_attempts` (Phase 10.2): the 3-attempt/200ms-sleep retry exists to
+// ride out a Frame Server cold-start before CAPTURE. Informational callers
+// (the permissions UI) pass 1 — on a camera-less machine the full retry
+// budget would stall the platform thread ~400ms on every refresh/resume.
+std::vector<VideoSourceRecord> EnumerateVideoInputs(int max_attempts = 3);
 
 }  // namespace clingfy::bridge::devices
 
