@@ -58,92 +58,124 @@ lifecycle, preview, and basic export.
 | 6     | Basic export + post-processing (resolution, background, etc.) | done   |
 | 7     | Window + area recording                                       | done   |
 | 8     | Cursor sidecar + smart zoom                                   | done   |
-| 9     | Camera overlay (basic, then advanced compositing/chroma)      | design locked (9.0); 9.1 next |
-| 10    | Permissions UX + installer + updater + Windows beta polish    |
+| 9     | Camera overlay (basic, then advanced compositing/chroma)      | done   |
+| 10    | Permissions UX + installer + updater + Windows beta polish    | next   |
 
 Detailed scope per phase is tracked in the session task list and in
 [../CLAUDE.md](../CLAUDE.md).
 
-## Current status — Phase 9.0 (camera overlay) — DESIGN LOCKED
+## Current status — Phase 9 (camera overlay) — COMPLETE
 
-Phase 9 adds the camera overlay — the biggest remaining macOS-parity feature. It
-touches camera capture, a second media track + sync, a live preview overlay,
-project persistence, export composition, styling, chroma key, and animations.
-**9.0 is a docs-only design slice — no production camera code.** The locked
-architecture + slice plan lives in
-[decisions/windows-phase-9-camera-overlay-architecture.md](decisions/windows-phase-9-camera-overlay-architecture.md);
-this section is the short version.
+Phase 9 brought the camera overlay — the biggest macOS-parity feature — to
+Windows: camera capture to a second track, sync, live preview, project
+persistence, export composition, styling, chroma key, and intro/outro
+animations. The locked architecture (decisions D1–D9) lives in
+[decisions/windows-phase-9-camera-overlay-architecture.md](decisions/windows-phase-9-camera-overlay-architecture.md).
+Every code slice is a merged PR with native tests, smoked on a real Windows box
+(9.0 and 9.8 are the docs-only bookends).
 
-### What already exists (don't rebuild)
+| Slice | Goal                                                                     | PR     |
+| ----- | ------------------------------------------------------------------------ | ------ |
+| 9.0   | Camera architecture design / inventory                                   | #145   |
+| 9.1   | Camera device selection + permission readiness                           | #146   |
+| 9.2   | Camera capture to a separate file (`camera/raw.mov`)                     | #147   |
+| 9.3   | Live camera preview bubble during recording                              | #150 (+ smoke fixes #148–#149, #151–#153) |
+| 9.3.1 | In-app preview reconciliation: Flutter texture (screen.mov camera-free)  | #154   |
+| 9.3.2 | Floating native bubble parity + capture-exclusion + 1-click in-app fallback | #155 |
+| 9.3.3 | In-app preview is the Windows default (floating opt-in)                  | #156   |
+| 9.4   | Export: editable circular/rounded camera bubble                          | #157   |
+| 9.5   | Styling: mirror / opacity / border / shadow                              | #158   |
+| 9.6   | Inline preview camera compositing (WYSIWYG before export)                | #159   |
+| 9.7   | Chroma key + intro/outro animations                                      | #160   |
+| 9.8   | Closeout (docs / checklist / memory)                                     | (this) |
 
-- **Camera enumeration** — `getVideoSources` is a real Phase-2 `MFEnumDeviceSources`
-  enumerator returning `{id (symbolic link), name}`.
-- **Camera permission** — `getPermissionStatus.camera` / `requestCameraPermission`
-  / `ms-settings:privacy-webcam` all work via WinRT `AppCapabilityAccess`. Windows
-  privacy is a **global** "let desktop apps access your camera" toggle (no per-app
-  prompt).
-- **MF encoder + decode** — `MfSinkWriterEncoder` (H.264) and the export
-  `IMFSourceReader` decode path exist; the export D2D composite loop (screen +
-  cursor + zoom) is the hook for the camera bubble.
-- **Dart contract** — fully wired: `CameraCompositionState` (24 `camera*` keys),
-  `setVideoSource`, `getRecordingSceneInfo` (returns `cameraPath` + camera state +
-  a `CameraExportCapabilities` map), and `exportVideo` spreading the `camera*` args.
+### Architecture
 
-The genuinely new build is **camera capture**, **export composition**, and the
-**live preview overlay**. The manifest `camera` block, `PreviewEngine.camera_path`,
-and `setVideoSource` / `setCameraOverlay*` are present as placeholders/stubs to
-fill in.
+- **`screen.mov` stays camera-free.** Since 9.3.1 the live preview never draws
+  into the captured pixels: the recorder shares frames with an in-app Flutter
+  texture (and, opt-in, a capture-excluded floating window), so the screen
+  recording contains no burned-in bubble.
+- **`camera/raw.mov` is the editable camera source.** Captured raw + unstyled
+  (D7); every visual decision — placement, shape, mirror, opacity, border,
+  shadow, chroma, animations — is applied at composite time and stays editable
+  after recording.
+- **The `previewBurnedIn` guard prevents a double camera.** `camera.meta.json`
+  records whether a live bubble was burned into the screen pixels; the export
+  and inline-preview compositors refuse to draw the bubble when it is `true`.
+  Windows always records it as `false` today (both preview modes are
+  non-burning); the guard exists so no future mode can double-composite.
+- **Inline preview and export composite from the same source and code.** Both
+  read `camera/raw.mov`, align it via `startOffsetMs`
+  (camera time = screen `tMs` − `startOffsetMs`, both clocks pause-aware), and
+  draw through the shared `CameraBubblePainter` — so the preview is WYSIWYG
+  with the export (chroma included; intro/outro are export-only by design).
+- **In-app preview is the Windows default; floating is opt-in.**
+  `SetWindowDisplayAffinity(WDA_EXCLUDEFROMCAPTURE)` can report success while
+  the window is never composited on some hybrid-GPU machines (undetectable in
+  code), so the floating bubble is never shown unless exclusion took effect,
+  and the default experience lives inside the app window with a 1-click
+  switch.
+- **Honest capabilities, soft-fail everywhere.** `CameraExportCapabilities`
+  gated each styling feature per slice (all true as of 9.7). Any camera
+  sub-resource failure (device, reader, brush, effect, chroma) degrades to
+  screen-only or unstyled rendering — the recording and the export never fail
+  because of the camera.
 
-### Locked decisions (D1–D9)
+### Manual smoke checklist (camera)
 
-- **D1** Capture via `IMFSourceReader` on the device (dedicated thread) → a second
-  `MfSinkWriterEncoder` (reuses the encoder; avoids the heavier `IMFCaptureEngine`).
-- **D2** One `camera/raw.mov`, **no** macOS-style segment files + merge — the
-  pause-aware `RecordingClock` stamps frames in recording-time, so pause/resume
-  needs no segments.
-- **D3** Sync via the **shared recording clock**, not wall-clock overlap — the
-  camera sample for screen-time `tMs` is just the camera sample at `tMs`.
-- **D4** Ship styling **incrementally via `CameraExportCapabilities`** — each slice
-  returns an honest capabilities map so the Dart UI only exposes what Windows
-  renders; unsupported `camera*` args are accepted but ignored until their slice.
-- **D5** Export = a second source reader + a **masked D2D draw** in the existing
-  loop; the camera is **not** under the smart-zoom transform unless
-  `zoomBehavior == scaleWithScreenZoom`; cursor/zoom soft-fail discipline reused.
-- **D6** Live preview bubble = a native **Win32 layered overlay** (area-picker
-  pattern); post-record preview-player camera compositing is deferred.
-- **D7** Capture **raw + unstyled**; all styling (mirror/shape/border/shadow/chroma)
-  is applied at **export** so it stays editable (matches the cursor/zoom model).
-- **D8** Make `setVideoSource` real → `WindowsSelectionState`; emit the manifest
-  `camera` block **conditionally** (only when a camera was actually recorded).
-- **D9** Camera device loss mid-record = clean stop of the **camera only** —
-  finalize `camera/raw.mov`, continue the screen recording (mirrors Phase 7.4).
+On a real Windows box, record a clip with the camera enabled, then verify:
 
-### Deliberate divergences from macOS
+**Recording**
+- [ ] Recording with a camera produces `camera/raw.mov` + `camera/camera.meta.json`
+      (with `startOffsetMs`, `previewBurnedIn: false`) and a camera-free
+      `screen.mov`; pause/resume keeps the two tracks aligned.
+- [ ] The in-app preview shows the live camera while recording; the floating
+      bubble works where the GPU honors capture-exclusion, with the 1-click
+      in-app fallback.
+- [ ] Unplugging the camera mid-record stops the camera only (warning, partial
+      `raw.mov`); the screen recording continues.
 
-Single `camera/raw.mov` + pause-aware timestamps (vs segments + merge);
-shared-clock sync (vs wall-clock overlap); incremental styling via capabilities (vs
-all-at-once); camera not under smart zoom unless `scaleWithScreenZoom`; no
-hexagon/star shapes in MVP (circle/rounded/square/squircle only).
+**Post-processing / preview**
+- [ ] The inline preview composites the camera bubble (position, shape, styling,
+      chroma) identically to the export; changing camera settings while paused
+      updates the held frame without pressing play (and without the playhead
+      drifting).
 
-### Slice plan
+**Export**
+- [ ] MOV, MP4, AND GIF all composite the camera bubble; progress + cancel work.
+- [ ] Mirror, opacity, border, and shadow render as configured.
+- [ ] Chroma key makes the keyed color transparent (camera pixels only — border
+      and shadow are never keyed).
+- [ ] Intro/outro animations (fade/pop/slide in; fade/shrink/slide out) play and
+      the outro completes at the end of the clip.
+- [ ] A recording with no camera (or camera disabled) previews and exports
+      cleanly with no bubble.
 
-| Slice | Goal                                                          | PR     |
-| ----- | ------------------------------------------------------------- | ------ |
-| 9.0   | Design / inventory                                           | (this) |
-| 9.1   | Camera device selection + permission readiness              | next   |
-| 9.2   | Camera recording to a separate file (`camera/raw.mov`)       | #147   |
-| 9.3   | Live camera preview bubble during recording                  | #150   |
-| 9.3.1 | Preview reconciliation: in-app Flutter texture (screen.mov camera-free) | #154 |
-| 9.3.2 | Floating native bubble + capture-exclusion + 1-click in-app fallback | #155 |
-| 9.3.3 | In-app preview is the Windows default (floating opt-in)      | #156   |
-| 9.4   | Export: simple circular/rounded camera bubble                | #157   |
-| 9.5   | Styling: mirror / opacity / border / shadow                  | #158   |
-| 9.6   | Inline preview camera compositing (WYSIWYG before export)    | #159   |
-| 9.7   | Chroma key + intro/outro animations                          | (this) |
-| 9.8   | Closeout / stress / smoke                                    |        |
+### Deferred / known edges (tracked, not blocking Phase 9)
 
-**MVP path:** 9.1 → 9.2 → 9.4 (screen + camera recorded → camera file in the
-project → export with a simple bubble). Preview (9.3) and styling (9.5/9.6) follow.
+- **True squircle (superellipse) mask** — the `squircle` shape currently renders
+  as a rounded rect.
+- **`zoomBehavior == scaleWithScreenZoom`** — the camera never scales with smart
+  zoom yet; it always draws in canvas space on top (D5's default branch).
+- **Experimental burned-in desktop bubble mode** — a deliberate "burn the live
+  bubble into screen.mov" mode (with `previewBurnedIn: true` honored by the
+  compositors) was considered and shelved; the guard makes it safe to add later.
+- **Chroma + shadow veil tuning** — with chroma on and a shadow preset set, the
+  keyed-transparent region shows the baked shadow interior as an 18–32% tint
+  (consistent with how opacity < 1 behaves today). Whether to suppress or mask
+  the shadow under chroma is an open product call.
+- **First `startOffsetMs` of a clip has no camera — expected.** The camera
+  starts after the screen capture, so the bubble appears once its first frame
+  exists (matches macOS).
+- **Floating-preview parity is limited by WDA/GPU behavior.** On machines where
+  capture-exclusion silently fails to composite, floating mode is unavailable
+  by design (the gate refuses to show a window that would burn in).
+- **Camera-composition arg parsing is duplicated** in
+  `preview_router ReadCameraComposition` and `export_router HandleProcessVideo`
+  (the duplication hid a missing-chroma bug in 9.7 review). Optional cleanup:
+  dedupe into one shared helper.
+- **Zoom-emphasis "pulse" animation not ported** — it is gated on live zoom
+  events and the camera sits outside the zoom transform on Windows.
 
 ## Current status — Phase 8 (cursor sidecar + smart zoom) — COMPLETE
 
