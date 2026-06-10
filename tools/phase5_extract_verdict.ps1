@@ -56,8 +56,17 @@ param(
 $ErrorActionPreference = 'Stop'
 
 if (-not $LogPath) {
-    $repoRoot = Split-Path -Parent $PSScriptRoot
-    $LogPath = Join-Path $repoRoot 'build\windows-poc\phase5_cycles.log'
+    # Phase 10.1 moved native logs to %LOCALAPPDATA%\Clingfy\Logs
+    # (CLINGFY_NATIVE_LOG_DIR overrides). Fall back to the legacy
+    # repo-relative location for logs produced by older builds.
+    $nativeLogDir = if ($env:CLINGFY_NATIVE_LOG_DIR) { $env:CLINGFY_NATIVE_LOG_DIR }
+                    else { Join-Path $env:LOCALAPPDATA 'Clingfy\Logs' }
+    $LogPath = Join-Path $nativeLogDir 'phase5_cycles.log'
+    if (-not (Test-Path -LiteralPath $LogPath)) {
+        $repoRoot = Split-Path -Parent $PSScriptRoot
+        $legacy = Join-Path $repoRoot 'build\windows-poc\phase5_cycles.log'
+        if (Test-Path -LiteralPath $legacy) { $LogPath = $legacy }
+    }
 }
 
 if (-not (Test-Path -LiteralPath $LogPath)) {

@@ -4,6 +4,7 @@
 #include <windows.h>
 
 #include <cstdint>
+#include <functional>
 #include <memory>
 #include <optional>
 #include <string>
@@ -51,6 +52,15 @@ class WasapiAudioCapture {
   std::optional<WasapiCaptureError> Start(WasapiCaptureKind kind,
                                           const std::string& device_id,
                                           AudioPacketQueue& queue);
+
+  // Phase 10.1: one-shot notification when the capture THREAD hits a WASAPI
+  // failure mid-record — the classic case is AUDCLNT_E_DEVICE_INVALIDATED
+  // after the endpoint unplugs, which previously degraded to a fully silent
+  // recording with zero signal. Fired at most once, from the capture thread
+  // (marshal in the callback if needed). Set BEFORE Start; setting it later
+  // races the capture thread. Surfacing only: loop behavior is unchanged.
+  void SetOnCaptureError(
+      std::function<void(WasapiCaptureKind, HRESULT)> callback);
 
   // Stop the capture thread, signal the WASAPI client to stop, and
   // wait for everything to drain. Safe to call multiple times.

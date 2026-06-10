@@ -188,12 +188,9 @@ TEST(StubShapesTest, NoopSettersReturnSuccessWithNullValue) {
       "openScreenRecordingSettings",
       "openSystemSettings",
       "relaunchApp",
-      "openSaveFolder",
-      "revealTodayLogFile",
-      "revealLogsFolder",
-      "revealRecordingsFolder",
-      "revealTempFolder",
-      "revealFile",
+      // Phase 10.1: openSaveFolder + the reveal*/log methods are real now —
+      // their contract (success/error gating) is pinned in
+      // storage_router_reveal_test.cpp.
       "cacheLocalizedStrings",
   };
 
@@ -626,8 +623,10 @@ TEST(StubShapesTest, GetExcludeMicFromSystemAudioReturnsTrue) {
 
 TEST(StubShapesTest, NullGettersReturnNull) {
   MethodRouter router;
+  // Phase 10.1: getTodayLogFilePath is real now (path or
+  // LOG_FILE_NOT_FOUND/UNAVAILABLE) — pinned in
+  // storage_router_reveal_test.cpp.
   const std::vector<std::string> kNullGetters = {
-      "getTodayLogFilePath",
       "previewGetSourceDimensions",
       "pickImage",
   };

@@ -105,6 +105,24 @@ class _DiagnosticsSettingsSectionState
                       }
                     },
                   ),
+                  AppButton(
+                    label: l10n.exportDiagnostics,
+                    icon: CupertinoIcons.archivebox,
+                    variant: AppButtonVariant.secondary,
+                    onPressed: () async {
+                      final path = await widget.controller.workspace
+                          .exportDiagnosticsPackage();
+                      if (!mounted) return;
+                      _setNotice(
+                        path != null
+                            ? l10n.diagnosticsExported
+                            : l10n.diagnosticsActionFailed,
+                        path != null
+                            ? AppInlineNoticeVariant.success
+                            : AppInlineNoticeVariant.error,
+                      );
+                    },
+                  ),
                 ],
               ),
             ],

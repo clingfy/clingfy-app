@@ -2,17 +2,62 @@
 
 #include <windows.h>
 
+#include <filesystem>
+#include <optional>
+#include <string>
+#include <system_error>
+
 #include "Bridge/result_helpers.h"
+#include "Capture/recording_project_writer.h"
+#include "Services/log_locations.h"
 #include "Services/save_folder.h"
+#include "Services/shell_reveal.h"
 
 namespace clingfy::bridge::routers::storage {
 
 namespace {
 
-void HandleNoopSetter(
-    const flutter::MethodCall<flutter::EncodableValue>& /*call*/,
-    std::unique_ptr<flutter::MethodResult<flutter::EncodableValue>> result) {
-  reply::Null(*result);
+namespace fs = std::filesystem;
+
+std::optional<std::string> ReadOptionalString(
+    const flutter::EncodableMap& map, const std::string& key) {
+  const auto it = map.find(flutter::EncodableValue(key));
+  if (it == map.end()) {
+    return std::nullopt;
+  }
+  if (const auto* value = std::get_if<std::string>(&it->second)) {
+    if (value->empty()) {
+      return std::nullopt;
+    }
+    return *value;
+  }
+  return std::nullopt;
+}
+
+bool ExistsDir(const std::wstring& path) {
+  if (path.empty()) {
+    return false;
+  }
+  std::error_code ec;
+  return fs::is_directory(fs::path(path), ec);
+}
+
+bool ExistsFile(const std::wstring& path) {
+  if (path.empty()) {
+    return false;
+  }
+  std::error_code ec;
+  return fs::is_regular_file(fs::path(path), ec);
+}
+
+// %TEMP% — where in-flight recordings (`clingfy_<id>.*`) live.
+std::wstring TempRoot() {
+  wchar_t buf[MAX_PATH + 1] = {};
+  const DWORD len = ::GetTempPathW(MAX_PATH + 1, buf);
+  if (len == 0 || len > MAX_PATH) {
+    return {};
+  }
+  return std::wstring(buf, len);
 }
 
 // Return the default export folder (%USERPROFILE%\Videos\Clingfy) as the
@@ -102,11 +147,142 @@ void HandleGetStorageSnapshot(
   reply::Map(*result, std::move(value));
 }
 
-void HandleNullString(
+// Phase 10.1 — the log/reveal handlers below are real (they were silent
+// no-ops; revealTodayLogFile even produced a fake success toast in the
+// diagnostics settings). Error codes mirror the macOS MainFlutterWindow
+// contract exactly so the shared Dart UI maps them to the same localized
+// messages: LOG_FILE_UNAVAILABLE / LOG_FILE_NOT_FOUND /
+// RECORDINGS_FOLDER_UNAVAILABLE / TEMP_FOLDER_UNAVAILABLE / FILE_NOT_FOUND.
+
+void HandleGetTodayLogFilePath(
     const flutter::MethodCall<flutter::EncodableValue>& /*call*/,
     std::unique_ptr<flutter::MethodResult<flutter::EncodableValue>> result) {
-  // Returning null tells the settings UI "there is no persisted save folder"
-  // -- Dart then falls back to its default path resolver.
+  const std::wstring logs_dir = clingfy::storage::DartLogsDirectory();
+  if (!ExistsDir(logs_dir)) {
+    result->Error("LOG_FILE_UNAVAILABLE",
+                  "Log storage directory is unavailable");
+    return;
+  }
+  const std::wstring today = clingfy::storage::TodayDartLogFilePath();
+  if (!ExistsFile(today)) {
+    result->Error("LOG_FILE_NOT_FOUND", "Today's log file does not exist yet.");
+    return;
+  }
+  reply::String(*result, clingfy::storage::WideToUtf8(today));
+}
+
+void HandleRevealTodayLogFile(
+    const flutter::MethodCall<flutter::EncodableValue>& /*call*/,
+    std::unique_ptr<flutter::MethodResult<flutter::EncodableValue>> result) {
+  const std::wstring logs_dir = clingfy::storage::DartLogsDirectory();
+  if (!ExistsDir(logs_dir)) {
+    result->Error("LOG_FILE_UNAVAILABLE",
+                  "Log storage directory is unavailable");
+    return;
+  }
+  const std::wstring today = clingfy::storage::TodayDartLogFilePath();
+  if (!ExistsFile(today)) {
+    result->Error("LOG_FILE_NOT_FOUND", "Today's log file does not exist yet.");
+    return;
+  }
+  clingfy::storage::SelectInExplorer(today);
+  reply::Null(*result);
+}
+
+void HandleRevealLogsFolder(
+    const flutter::MethodCall<flutter::EncodableValue>& /*call*/,
+    std::unique_ptr<flutter::MethodResult<flutter::EncodableValue>> result) {
+  const std::wstring logs_dir = clingfy::storage::DartLogsDirectory();
+  if (!ExistsDir(logs_dir)) {
+    result->Error("LOG_FILE_UNAVAILABLE",
+                  "Log storage directory is unavailable");
+    return;
+  }
+  clingfy::storage::OpenFolderInExplorer(logs_dir);
+  reply::Null(*result);
+}
+
+void HandleRevealRecordingsFolder(
+    const flutter::MethodCall<flutter::EncodableValue>& /*call*/,
+    std::unique_ptr<flutter::MethodResult<flutter::EncodableValue>> result) {
+  const std::wstring root = clingfy::storage::Utf8ToWide(
+      clingfy::capture::ResolveDefaultRecordingsRoot());
+  if (!ExistsDir(root)) {
+    result->Error("RECORDINGS_FOLDER_UNAVAILABLE",
+                  "Recordings storage directory is unavailable");
+    return;
+  }
+  clingfy::storage::OpenFolderInExplorer(root);
+  reply::Null(*result);
+}
+
+void HandleRevealTempFolder(
+    const flutter::MethodCall<flutter::EncodableValue>& /*call*/,
+    std::unique_ptr<flutter::MethodResult<flutter::EncodableValue>> result) {
+  const std::wstring temp = TempRoot();
+  if (!ExistsDir(temp)) {
+    result->Error("TEMP_FOLDER_UNAVAILABLE",
+                  "Temporary storage directory is unavailable");
+    return;
+  }
+  clingfy::storage::OpenFolderInExplorer(temp);
+  reply::Null(*result);
+}
+
+void HandleRevealFile(
+    const flutter::MethodCall<flutter::EncodableValue>& call,
+    std::unique_ptr<flutter::MethodResult<flutter::EncodableValue>> result) {
+  const auto* args = std::get_if<flutter::EncodableMap>(call.arguments());
+  std::optional<std::string> path;
+  if (args != nullptr) {
+    path = ReadOptionalString(*args, "path");
+  }
+  if (!path.has_value()) {
+    reply::BadArgs(*result, "revealFile requires a 'path' argument.");
+    return;
+  }
+  const std::wstring wide = clingfy::storage::Utf8ToWide(*path);
+  std::error_code ec;
+  if (!fs::exists(fs::path(wide), ec)) {
+    result->Error(error::kFileNotFound, "File not found");
+    return;
+  }
+  // Files get select-in-folder; directories open directly.
+  const auto action = clingfy::storage::ResolveRevealAction(
+      true, fs::is_directory(fs::path(wide), ec));
+  if (action == clingfy::storage::RevealAction::kOpenFolder) {
+    clingfy::storage::OpenFolderInExplorer(wide);
+  } else {
+    clingfy::storage::SelectInExplorer(wide);
+  }
+  reply::Null(*result);
+}
+
+// Open the user's save folder. The chosen folder is persisted on the Dart
+// side (SharedPreferences), so Dart passes it as an optional `path` arg —
+// macOS ignores the extra argument (it persists the folder natively).
+// Falls back to the default save folder when no path arrives.
+void HandleOpenSaveFolder(
+    const flutter::MethodCall<flutter::EncodableValue>& call,
+    std::unique_ptr<flutter::MethodResult<flutter::EncodableValue>> result) {
+  const auto* args = std::get_if<flutter::EncodableMap>(call.arguments());
+  std::optional<std::string> path;
+  if (args != nullptr) {
+    path = ReadOptionalString(*args, "path");
+  }
+  std::wstring folder = path.has_value()
+                            ? clingfy::storage::Utf8ToWide(*path)
+                            : clingfy::storage::DefaultSaveFolder();
+  if (!ExistsDir(folder)) {
+    // A customized-but-deleted folder still has the default to fall back to.
+    folder = clingfy::storage::DefaultSaveFolder();
+  }
+  if (!ExistsDir(folder)) {
+    result->Error("SAVE_FOLDER_UNAVAILABLE",
+                  "Save folder is unavailable");
+    return;
+  }
+  clingfy::storage::OpenFolderInExplorer(folder);
   reply::Null(*result);
 }
 
@@ -116,18 +292,14 @@ void RegisterHandlers(HandlerTable& table) {
   table["getSaveFolder"] = &HandleGetSaveFolder;
   table["chooseSaveFolder"] = &HandleChooseSaveFolder;
   table["resetSaveFolder"] = &HandleResetSaveFolder;
-  // openSaveFolder still a no-op: the chosen folder is persisted on the
-  // Dart side, so opening "the" folder needs Dart to pass a path. Tracked
-  // as a follow-up (open-folder-after-export). It is harmless today —
-  // Dart treats the null reply as "nothing opened".
-  table["openSaveFolder"] = &HandleNoopSetter;
+  table["openSaveFolder"] = &HandleOpenSaveFolder;
 
-  table["getTodayLogFilePath"] = &HandleNullString;
-  table["revealTodayLogFile"] = &HandleNoopSetter;
-  table["revealLogsFolder"] = &HandleNoopSetter;
-  table["revealRecordingsFolder"] = &HandleNoopSetter;
-  table["revealTempFolder"] = &HandleNoopSetter;
-  table["revealFile"] = &HandleNoopSetter;
+  table["getTodayLogFilePath"] = &HandleGetTodayLogFilePath;
+  table["revealTodayLogFile"] = &HandleRevealTodayLogFile;
+  table["revealLogsFolder"] = &HandleRevealLogsFolder;
+  table["revealRecordingsFolder"] = &HandleRevealRecordingsFolder;
+  table["revealTempFolder"] = &HandleRevealTempFolder;
+  table["revealFile"] = &HandleRevealFile;
 
   table["clearCachedRecordings"] = &HandleClearCachedRecordings;
   table["getStorageSnapshot"] = &HandleGetStorageSnapshot;

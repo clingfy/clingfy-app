@@ -660,6 +660,8 @@
   "diagnosticsLogFileUnavailable": "Log file path is unavailable right now.",
   "diagnosticsActionFailed": "Could not complete that action.",
   "diagnosticsLogRevealed": "Revealed today's log file.",
+  "exportDiagnostics": "Export Diagnostics",
+  "diagnosticsExported": "Diagnostics package created — revealed in your file manager.",
   "recordingSystemAudio": "System audio",
   "recordingExcludeMicFromSystemAudio": "Exclude my mic from system audio",
   "restartApp": "Restart App",

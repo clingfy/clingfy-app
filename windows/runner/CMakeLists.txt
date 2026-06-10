@@ -13,6 +13,7 @@ add_library(runner_bridge STATIC
   "Bridge/method_router.cpp"
   "Bridge/event_channel_stubs.cpp"
   "Bridge/export_progress_publisher.cpp"
+  "Bridge/native_log_publisher.cpp"
   "Bridge/platform_thread_dispatcher.cpp"
   "Bridge/player_event_publisher.cpp"
   "Bridge/project_open_coordinator.cpp"
@@ -82,7 +83,10 @@ add_library(runner_bridge STATIC
   "Overlay/area_picker_overlay.cpp"
   "Permissions/camera_readiness.cpp"
   "Permissions/permission_probe.cpp"
+  "Services/log_locations.cpp"
   "Services/save_folder.cpp"
+  "Services/shell_reveal.cpp"
+  "Services/temp_orphan_scan.cpp"
   "preview/frame_timing.cpp"
   "preview/preview_camera_renderer.cpp"
   "preview/preview_compositor.cpp"
@@ -173,6 +177,17 @@ target_link_libraries(runner_bridge PUBLIC
 # ole32.lib (CoInitializeEx) are already linked above.
 target_link_libraries(runner_bridge PUBLIC
   "windowscodecs.lib"
+)
+
+# Phase 10.1: stable log locations (Services/log_locations.cpp).
+#   * version — GetFileVersionInfoW / VerQueryValueW, used to read
+#               CompanyName/ProductName from the exe's version resource so
+#               the native side resolves the same app-support directory
+#               path_provider does on Windows.
+# shell32.lib (SHGetKnownFolderPath) and ole32.lib (CoTaskMemFree) are
+# already linked above.
+target_link_libraries(runner_bridge PUBLIC
+  "version.lib"
 )
 
 # C++/WinRT headers use the standard-layout `co_await`-friendly types but

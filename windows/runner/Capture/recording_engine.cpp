@@ -8,6 +8,7 @@
 #include <functional>
 #include <thread>
 #include <utility>
+#include <vector>
 
 #include "Audio/audio_mixer.h"
 #include "Audio/audio_packet.h"
@@ -18,6 +19,7 @@
 #include "Bridge/Devices/video_source_enumerator.h"
 #include "Bridge/Devices/window_enumerator.h"
 #include "Bridge/native_error_codes.h"
+#include "Bridge/native_log_publisher.h"
 #include "Bridge/platform_thread_dispatcher.h"
 #include "Bridge/workflow_event_publisher.h"
 #include "Capture/Camera/camera_floating_overlay.h"
@@ -319,10 +321,43 @@ std::optional<RecordingError> RecordingEngine::Start(
   // only. Both failing isn't a hard error either — the recording still
   // produces a video-only MP4, which is the macOS engine's behavior on
   // a host with no audio devices.
+  //
+  // Phase 10.1 — zero silent degradation: every best-effort fallback below
+  // ALSO queues a user-visible recordingWarning (delivered after
+  // recordingStarted so the workflow ordering stays sane) and forwards an
+  // ERROR line over the native→Dart log bridge so the degradation reaches
+  // the JSONL logs and Sentry. Behavior is otherwise unchanged.
+  std::vector<std::string> start_warnings;
+  // Mid-record WASAPI failure (device unplug → AUDCLNT_E_DEVICE_INVALIDATED)
+  // used to be a fully silent forever-spin. The callback fires once, from
+  // the capture thread; both the warning publisher and the log publisher
+  // marshal internally, and the lambda captures only the session id.
+  const std::string warn_sid = request.session_id;
+  const auto on_audio_capture_error = [warn_sid](
+                                          clingfy::audio::WasapiCaptureKind k,
+                                          HRESULT hr) {
+    const bool is_mic = k == clingfy::audio::WasapiCaptureKind::kMicrophone;
+    {
+      char buf[256];
+      std::snprintf(buf, sizeof(buf),
+                    "RecordingEngine: %s capture FAILED mid-record "
+                    "hr=0x%08lX",
+                    is_mic ? "mic" : "loopback",
+                    static_cast<unsigned long>(hr));
+      clingfy::bridge::devices::LogDeviceProbe(buf);
+      clingfy::bridge::NativeLogPublisher::Instance().Error("Recording", buf);
+    }
+    clingfy::bridge::WorkflowEventPublisher::Instance().EmitRecordingWarning(
+        warn_sid,
+        is_mic ? "Your microphone was disconnected. Recording continues "
+                 "without it."
+               : "System audio stopped. Recording continues without it.");
+  };
   if (want_mic) {
     mic_queue_ = std::make_unique<clingfy::audio::AudioPacketQueue>();
     mic_capture_ =
         std::make_unique<clingfy::audio::WasapiAudioCapture>();
+    mic_capture_->SetOnCaptureError(on_audio_capture_error);
     const auto mic_id =
         WindowsSelectionState::Instance().MicrophoneId().value_or("");
     {
@@ -341,6 +376,10 @@ std::optional<RecordingError> RecordingEngine::Start(
                     static_cast<unsigned long>(mic_err->hr),
                     mic_err->message.c_str());
       clingfy::bridge::devices::LogDeviceProbe(buf);
+      clingfy::bridge::NativeLogPublisher::Instance().Error("Recording", buf);
+      start_warnings.push_back(
+          "Your microphone couldn't be started. Recording continues without "
+          "microphone audio.");
       mic_capture_.reset();
       mic_queue_.reset();
     } else {
@@ -353,6 +392,7 @@ std::optional<RecordingError> RecordingEngine::Start(
         std::make_unique<clingfy::audio::AudioPacketQueue>();
     loopback_capture_ =
         std::make_unique<clingfy::audio::WasapiAudioCapture>();
+    loopback_capture_->SetOnCaptureError(on_audio_capture_error);
     auto loopback_err = loopback_capture_->Start(
         clingfy::audio::WasapiCaptureKind::kSystemLoopback, "",
         *loopback_queue_);
@@ -363,6 +403,10 @@ std::optional<RecordingError> RecordingEngine::Start(
                     static_cast<unsigned long>(loopback_err->hr),
                     loopback_err->message.c_str());
       clingfy::bridge::devices::LogDeviceProbe(buf);
+      clingfy::bridge::NativeLogPublisher::Instance().Error("Recording", buf);
+      start_warnings.push_back(
+          "System audio couldn't be captured. Recording continues without "
+          "system audio.");
       loopback_capture_.reset();
       loopback_queue_.reset();
     } else {
@@ -374,7 +418,8 @@ std::optional<RecordingError> RecordingEngine::Start(
   // Drain thread: pulls captured frames off the queue and writes them
   // to the encoder.
   encoder_stopped_.store(false);
-  encoder_thread_ = std::thread([this] {
+  video_write_logged_first_error_.store(false);
+  encoder_thread_ = std::thread([this, warn_sid] {
     auto* queue = frame_queue_.get();
     auto* encoder = encoder_.get();
     if (queue == nullptr || encoder == nullptr) {
@@ -384,7 +429,31 @@ std::optional<RecordingError> RecordingEngine::Start(
       if (encoder_stopped_.load()) {
         break;
       }
-      encoder->WriteVideoFrame(*frame);
+      // Phase 10.1: an encoder write failure mid-record used to be
+      // discarded — a dead encoder kept "recording" with no signal until
+      // Stop. Surface the FIRST failure as a warning; the drain loop keeps
+      // its existing behavior (no early abort) so this stays
+      // surfacing-only.
+      if (auto write_err = encoder->WriteVideoFrame(*frame)) {
+        bool expected = false;
+        if (video_write_logged_first_error_.compare_exchange_strong(expected,
+                                                                    true)) {
+          char buf[640];
+          std::snprintf(buf, sizeof(buf),
+                        "RecordingEngine: WriteVideoFrame FAILED (first "
+                        "error) hr=0x%08lX msg=%s",
+                        static_cast<unsigned long>(write_err->hr),
+                        write_err->message.c_str());
+          clingfy::bridge::devices::LogDeviceProbe(buf);
+          clingfy::bridge::NativeLogPublisher::Instance().Error("Recording",
+                                                                buf);
+          clingfy::bridge::WorkflowEventPublisher::Instance()
+              .EmitRecordingWarning(
+                  warn_sid,
+                  "Recording ran into an encoder problem. The recording may "
+                  "be incomplete.");
+        }
+      }
     }
   });
 
@@ -396,7 +465,7 @@ std::optional<RecordingError> RecordingEngine::Start(
   audio_write_logged_first_error_.store(false);
   if (mic_capture_ != nullptr || loopback_capture_ != nullptr) {
     audio_mixer_stopped_.store(false);
-    audio_mixer_thread_ = std::thread([this] {
+    audio_mixer_thread_ = std::thread([this, warn_sid] {
       clingfy::bridge::devices::LogDeviceProbe(
           "RecordingEngine: audio mixer thread start");
       clingfy::audio::AudioMixer mixer;
@@ -438,6 +507,15 @@ std::optional<RecordingError> RecordingEngine::Start(
                             static_cast<unsigned long>(write_err->hr),
                             write_err->message.c_str());
               clingfy::bridge::devices::LogDeviceProbe(buf);
+              // Phase 10.1: the file-only breadcrumb above never reached
+              // the user or Sentry — surface the first audio write error.
+              clingfy::bridge::NativeLogPublisher::Instance().Error(
+                  "Recording", buf);
+              clingfy::bridge::WorkflowEventPublisher::Instance()
+                  .EmitRecordingWarning(
+                      warn_sid,
+                      "Recording ran into an audio encoding problem. The "
+                      "recording's audio may be incomplete.");
             }
           }
         }
@@ -666,6 +744,14 @@ std::optional<RecordingError> RecordingEngine::Start(
         }
         clingfy::bridge::devices::LogDeviceProbe(
             "RecordingEngine: camera init failed; continuing screen-only");
+        // Phase 10.1: the user enabled the overlay and got no bubble — that
+        // must never be silent.
+        clingfy::bridge::NativeLogPublisher::Instance().Error(
+            "Recording",
+            "camera init failed at recording start; continuing screen-only");
+        start_warnings.push_back(
+            "Your camera couldn't be started. Recording continues without "
+            "the camera overlay.");
       }
     } else {
       // The user wanted a camera but it is not ready — surface why in the log.
@@ -673,6 +759,20 @@ std::optional<RecordingError> RecordingEngine::Start(
           std::string("RecordingEngine: camera overlay requested but ") +
           clingfy::permissions::CameraReadinessReason(readiness.code);
       clingfy::bridge::devices::LogDeviceProbe(camera_reason.c_str());
+      // Phase 10.1: a USER-VISIBLE warning fires only when a camera device
+      // was explicitly selected — on Windows "no camera selected" IS the
+      // normal screen-only flow (Dart's disableCameraOverlay flag only goes
+      // true on missing permission), so warning on kNoDeviceSelected /
+      // kNoDevicesAvailable would toast every default recording. With a
+      // selection in place, any not-ready reason (device vanished,
+      // permission revoked) is a real degradation of an explicit request.
+      if (selected.has_value()) {
+        clingfy::bridge::NativeLogPublisher::Instance().Warn("Recording",
+                                                             camera_reason);
+        start_warnings.push_back(
+            "Your camera isn't available right now. Recording continues "
+            "without the camera overlay.");
+      }
     }
   }
 
@@ -689,6 +789,13 @@ std::optional<RecordingError> RecordingEngine::Start(
   // and only then enables the stop button.
   clingfy::bridge::WorkflowEventPublisher::Instance().EmitRecordingStarted(
       request.session_id);
+  // Phase 10.1: deliver the start-time degradation warnings AFTER
+  // recordingStarted so Dart's workflow state machine sees the lifecycle
+  // event first (EmitMap preserves order through the dispatcher queue).
+  for (const auto& warning : start_warnings) {
+    clingfy::bridge::WorkflowEventPublisher::Instance().EmitRecordingWarning(
+        request.session_id, warning);
+  }
   return std::nullopt;
 }
 

@@ -63,10 +63,21 @@ class WasapiAudioCapture::Impl {
   std::uint64_t packets_emitted() const { return packets_emitted_.load(); }
   bool running() const { return running_.load(); }
 
+  // Phase 10.1: set before Start (read by the capture thread without a
+  // lock). Fired at most once.
+  void SetOnCaptureError(std::function<void(WasapiCaptureKind, HRESULT)> cb) {
+    on_capture_error_ = std::move(cb);
+  }
+
   ~Impl() { Stop(); }
 
  private:
   void CaptureLoop();
+  // Phase 10.1: surface a capture-thread WASAPI failure (the classic case
+  // is AUDCLNT_E_DEVICE_INVALIDATED when the device unplugs mid-record —
+  // previously a fully silent forever-spin). One-shot: the loop keeps its
+  // existing behavior, only the visibility is new.
+  void ReportCaptureError(HRESULT hr);
   ComPtr<IMMDevice> OpenDevice(WasapiCaptureKind kind,
                                const std::string& device_id,
                                WasapiCaptureError* out_error);
@@ -83,6 +94,8 @@ class WasapiAudioCapture::Impl {
   std::atomic<bool> running_{false};
   std::atomic<bool> paused_{false};
   std::atomic<std::uint64_t> packets_emitted_{0};
+  std::function<void(WasapiCaptureKind, HRESULT)> on_capture_error_;
+  std::atomic<bool> capture_error_reported_{false};
 };
 
 ComPtr<IMMDevice> WasapiAudioCapture::Impl::OpenDevice(
@@ -280,8 +293,16 @@ void WasapiAudioCapture::Impl::CaptureLoop() {
     }
 
     UINT32 packet_length = 0;
-    while (SUCCEEDED(capture_client_->GetNextPacketSize(&packet_length)) &&
-           packet_length > 0) {
+    for (;;) {
+      const HRESULT size_hr =
+          capture_client_->GetNextPacketSize(&packet_length);
+      if (FAILED(size_hr)) {
+        ReportCaptureError(size_hr);
+        break;
+      }
+      if (packet_length == 0) {
+        break;
+      }
       BYTE* data = nullptr;
       UINT32 frames = 0;
       DWORD flags = 0;
@@ -290,6 +311,7 @@ void WasapiAudioCapture::Impl::CaptureLoop() {
       HRESULT hr = capture_client_->GetBuffer(&data, &frames, &flags,
                                                &device_position, &qpc_position);
       if (FAILED(hr)) {
+        ReportCaptureError(hr);
         break;
       }
 
@@ -315,6 +337,15 @@ void WasapiAudioCapture::Impl::CaptureLoop() {
 
   if (mmcss != nullptr) {
     ::AvRevertMmThreadCharacteristics(mmcss);
+  }
+}
+
+void WasapiAudioCapture::Impl::ReportCaptureError(HRESULT hr) {
+  if (capture_error_reported_.exchange(true)) {
+    return;
+  }
+  if (on_capture_error_) {
+    on_capture_error_(kind_, hr);
   }
 }
 
@@ -382,6 +413,11 @@ std::optional<WasapiCaptureError> WasapiAudioCapture::Start(
     const std::string& device_id,
     AudioPacketQueue& queue) {
   return impl_->Start(kind, device_id, queue);
+}
+
+void WasapiAudioCapture::SetOnCaptureError(
+    std::function<void(WasapiCaptureKind, HRESULT)> callback) {
+  impl_->SetOnCaptureError(std::move(callback));
 }
 
 void WasapiAudioCapture::Stop() {
