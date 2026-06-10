@@ -13,6 +13,7 @@ import 'package:clingfy/l10n/app_localizations.dart';
 import 'package:clingfy/ui/platform/widgets/responsive_shell_scope.dart';
 import 'package:clingfy/ui/theme/app_theme.dart';
 import 'package:flutter/material.dart';
+import 'package:clingfy/ui/platform/platform_kind.dart';
 import 'package:flutter/services.dart';
 import 'package:provider/provider.dart';
 
@@ -233,9 +234,15 @@ class _VideoTimelineState extends State<VideoTimeline> {
     final tokens = theme.appTokens;
     final metrics = context.shellMetricsOrNull;
     final shellGap = metrics?.timelineShellGap ?? (theme.appSpacing.xs + 2);
-    final editor = context.select<PlayerController, ZoomEditorController?>(
+    final rawEditor = context.select<PlayerController, ZoomEditorController?>(
       (player) => player.zoomEditor,
     );
+    // Phase 10.3: Windows zoom is display-only — manual segments were never
+    // persisted (saveManualZoomSegments is a stub), previewed, or exported,
+    // so an editable track was a lie. The lane still RENDERS the real auto
+    // segments (playerSegments, fed by the native getZoomSegments); nulling
+    // the local editor disables every edit affordance in one move.
+    final editor = isWindows() ? null : rawEditor;
     final playerSegments = context.select<PlayerController, List<ZoomSegment>>(
       (player) => player.zoomSegments,
     );

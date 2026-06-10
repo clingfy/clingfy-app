@@ -405,6 +405,8 @@ TEST(StubShapesTest, ExportVideoWhileAnExportIsRunningReturnsBadArgs) {
 TEST(StubShapesTest, ListGettersReturnEmptyList) {
   MethodRouter router;
   const std::vector<std::string> kListGetters = {
+      // getZoomSegments is REAL since Phase 10.3 — listed here because
+      // an arg-less call (no projectPath) still contracts to [].
       "getZoomSegments",
       "getManualZoomSegments",
   };
@@ -751,8 +753,19 @@ TEST(StubShapesTest, GetRecordingSceneInfoBundleMissingReturnsSceneInputMissing)
 }
 
 TEST(StubShapesTest, ClearCachedRecordingsReturnsZeroDeleted) {
+  // Phase 10.3: the handler is REAL (deletes project dirs under the
+  // recordings root). Sandbox it to an empty temp dir — zero projects →
+  // zero deletions; richer behavior is pinned in storage_truth_test.cpp.
+  const auto sandbox = std::filesystem::temp_directory_path() /
+                       L"clingfy_stub_clear_sandbox";
+  std::filesystem::create_directories(sandbox);
+  ::SetEnvironmentVariableW(L"CLINGFY_RECORDINGS_ROOT",
+                            sandbox.wstring().c_str());
   MethodRouter router;
   const RecordedReply reply = Dispatch(router, "clearCachedRecordings");
+  ::SetEnvironmentVariableW(L"CLINGFY_RECORDINGS_ROOT", nullptr);
+  std::error_code cleanup_ec;
+  std::filesystem::remove_all(sandbox, cleanup_ec);
   ASSERT_TRUE(reply.success_called);
   const auto* map = std::get_if<flutter::EncodableMap>(&reply.success_value);
   ASSERT_NE(map, nullptr);

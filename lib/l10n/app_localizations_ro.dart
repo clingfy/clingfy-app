@@ -2473,4 +2473,32 @@ class AppLocalizationsRo extends AppLocalizations {
   @override
   String get warnDisplayDisconnectedPartialSaved =>
       'Înregistrarea s-a oprit: ecranul pe care îl înregistrai a fost deconectat. Înregistrarea de până atunci a fost salvată.';
+
+  @override
+  String get cameraPreviewUseInApp =>
+      'Nu vezi camera? Folosește previzualizarea din aplicație';
+
+  @override
+  String get cameraPreviewUseFloating => 'Folosește bula plutitoare a camerei';
+
+  @override
+  String get appliedOnExportNoticeWindows =>
+      'Se aplică la export — previzualizarea din aplicație nu arată încă acest efect.';
+
+  @override
+  String get errBadMode =>
+      'Acest mod de înregistrare nu este încă disponibil pe Windows.';
+
+  @override
+  String get errNoCamera => 'Nicio cameră disponibilă.';
+
+  @override
+  String get errCameraInputError => 'Camera a încetat să funcționeze.';
+
+  @override
+  String get errFileNotFound => 'Fișierul nu a fost găsit.';
+
+  @override
+  String get errWindowsNotImplemented =>
+      'Această funcție nu este încă disponibilă pe Windows.';
 }

@@ -73,6 +73,12 @@ class RecordingEngine {
   RecordingEngine(const RecordingEngine&) = delete;
   RecordingEngine& operator=(const RecordingEngine&) = delete;
 
+  // Phase 10.3: is any recording session in flight? Used by
+  // clearCachedRecordings to refuse deleting project bundles while one is
+  // being written (mirrors macOS canClearCachedRecordings →
+  // RECORDINGS_IN_USE).
+  bool IsSessionActive() const;
+
   // Starts a session. Returns std::nullopt on success; otherwise a
   // structured error the router forwards verbatim to Flutter. The session
   // id is what the Dart caller will quote back to `Stop`.

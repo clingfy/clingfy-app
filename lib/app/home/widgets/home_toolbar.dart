@@ -142,20 +142,34 @@ class HomeToolbar extends StatelessWidget {
 
         return Selector<
           RecordingController,
-          (String? elapsed, String? countdown, String? recError)
+          (
+            String? elapsed,
+            String? countdown,
+            String? recError,
+            String? recErrorFallback,
+          )
         >(
           selector: (_, r) => (
             r.isRecording ? r.formattedElapsed : null,
             r.countdownText,
-            r.errorMessage,
+            r.displayError,
+            r.displayErrorFallback,
           ),
           builder: (context, d, _) {
             final notice = uiState.notice;
             final rawError =
                 notice?.rawErrorCode ?? d.$3 ?? deviceError ?? overlayError;
+            // The prose fallback belongs ONLY to the recording error it
+            // came with — when rawError is a warning-notice code or a
+            // device/overlay code, passing it would break the mapper's
+            // raw-echo default (which resolveToolbarNotice uses as its
+            // "code recognized?" sentinel) and show unrelated prose.
+            final recordingErrorShown =
+                notice?.rawErrorCode == null && d.$3 != null;
             final mapped = HomeErrorMapper.map(
               context,
               rawError,
+              verbatimFallback: recordingErrorShown ? d.$4 : null,
               openSystemSettings: (pane) {
                 unawaited(onOpenSystemSettings(pane));
               },

@@ -85,6 +85,7 @@ add_executable(runner_tests
   "save_folder_test.cpp"
   "single_instance_test.cpp"
   "storage_router_reveal_test.cpp"
+  "storage_zoom_truth_test.cpp"
   "temp_orphan_scan_test.cpp"
   "video_frame_queue_test.cpp"
   "window_enumerator_test.cpp"

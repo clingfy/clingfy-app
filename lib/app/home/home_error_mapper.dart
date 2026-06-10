@@ -17,6 +17,10 @@ class HomeErrorMapper {
     BuildContext context,
     String? rawError, {
     required void Function(String pane) openSystemSettings,
+    // Phase 10.3: native prose to render when [rawError] is an
+    // unrecognized CODE (Windows feeds codes first so they localize; the
+    // prose beats showing a raw token like "BAD_ARGS").
+    String? verbatimFallback,
   }) {
     final l10n = AppLocalizations.of(context)!;
 
@@ -147,8 +151,26 @@ class HomeErrorMapper {
         message = l10n.warnWindowClosedPartialSaved;
       case RecordingWarningCode.displayDisconnectedPartialSaved:
         message = l10n.warnDisplayDisconnectedPartialSaved;
+
+      // Phase 10.3 — codes that previously fell through to the default
+      // branch and rendered as raw tokens.
+      case NativeErrorCode.badMode:
+        message = l10n.errBadMode;
+      case NativeErrorCode.noCamera:
+        message = l10n.errNoCamera;
+      case NativeErrorCode.cameraInputError:
+        message = l10n.errCameraInputError;
+      case NativeErrorCode.fileNotFound:
+        message = l10n.errFileNotFound;
+      case NativeErrorCode.windowsNotImplemented:
+        message = l10n.errWindowsNotImplemented;
+      case NativeErrorCode.exportDiskFull:
+        message = l10n.errExportDiskFullFallback;
+      case 'PREVIEW_INPUT_MISSING':
+      case 'SCENE_INPUT_MISSING':
+        message = l10n.errExportInputMissing;
       default:
-        message = rawError;
+        message = verbatimFallback ?? rawError;
     }
 
     return HomeErrorPresentation(message: message, action: action);
