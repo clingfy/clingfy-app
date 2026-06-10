@@ -2,8 +2,10 @@
 
 #include <d2d1_1helper.h>
 // d2d1effects.h declares the built-in effect CLSIDs (CLSID_D2D1GaussianBlur);
-// their GUID definitions come from dxguid.lib (linked in CMakeLists).
+// d2d1effects_2.h adds CLSID_D2D1ChromaKey + D2D1_CHROMAKEY_PROP_*. Their GUID
+// definitions come from dxguid.lib (linked in CMakeLists).
 #include <d2d1effects.h>
+#include <d2d1effects_2.h>
 
 #include <algorithm>
 #include <cmath>
@@ -117,6 +119,8 @@ bool CameraBubblePainter::Prepare(ID2D1Factory1* factory,
   style_ = style;
   style_.opacity =
       style_.opacity < 0.0 ? 0.0 : (style_.opacity > 1.0 ? 1.0 : style_.opacity);
+  cam_w_ = cam_w;
+  cam_h_ = cam_h;
 
   bubble_rect_ = D2D1::RectF(static_cast<float>(bubble.x),
                              static_cast<float>(bubble.y),
@@ -142,6 +146,10 @@ bool CameraBubblePainter::Prepare(ID2D1Factory1* factory,
                            static_cast<float>(bubble_cy + draw_h / 2.0));
 
   // Mask geometry by shape (canvas space). null for "square" → axis-aligned clip.
+  // Reset the layer first: GetAddressOf() overwrites the raw pointer without
+  // releasing, so re-Prepare (every composition change) would leak the old
+  // ID2D1Layer otherwise.
+  mask_layer_.Reset();
   mask_geometry_ =
       CreateShapeGeometry(factory, shape, corner_radius, bubble_rect_);
   if (mask_geometry_ != nullptr) {
@@ -170,6 +178,36 @@ bool CameraBubblePainter::Prepare(ID2D1Factory1* factory,
   // no shadow.
   shadow_bitmap_.Reset();
   PrepareShadow(factory, ctx, shape, corner_radius, side, bubble.x, bubble.y);
+
+  // Chroma key (Phase 9.7). Build the effect once; the enhanced draw path sets
+  // its input per frame. Soft-fail (no effect) → the camera draws unkeyed.
+  chroma_effect_.Reset();
+  if (style_.chroma_enabled) {
+    ComPtr<ID2D1Effect> fx;
+    if (SUCCEEDED(ctx->CreateEffect(CLSID_D2D1ChromaKey, fx.GetAddressOf())) &&
+        fx != nullptr) {
+      float kr = 0.0f, kg = 1.0f, kb = 0.0f;  // default green screen
+      if (style_.has_chroma_color) {
+        kr = ((style_.chroma_argb >> 16) & 0xFF) / 255.0f;
+        kg = ((style_.chroma_argb >> 8) & 0xFF) / 255.0f;
+        kb = (style_.chroma_argb & 0xFF) / 255.0f;
+      }
+      const float tol = static_cast<float>(
+          style_.chroma_strength < 0.0
+              ? 0.0
+              : (style_.chroma_strength > 1.0 ? 1.0 : style_.chroma_strength));
+      fx->SetValue(D2D1_CHROMAKEY_PROP_COLOR, D2D1::Vector3F(kr, kg, kb));
+      fx->SetValue(D2D1_CHROMAKEY_PROP_TOLERANCE, tol);
+      fx->SetValue(D2D1_CHROMAKEY_PROP_INVERT_ALPHA, FALSE);
+      fx->SetValue(D2D1_CHROMAKEY_PROP_FEATHER, TRUE);  // soften the matte edge
+      chroma_effect_ = fx;
+    }
+  }
+
+  // Opacity layer for the enhanced (keyed/animated) draw path. Soft-fail → the
+  // enhanced path skips the opacity layer (square fallback) but still draws.
+  content_layer_.Reset();
+  ctx->CreateLayer(nullptr, content_layer_.GetAddressOf());
 
   ready_ = true;
   return true;
@@ -263,7 +301,21 @@ void CameraBubblePainter::PrepareShadow(ID2D1Factory1* factory,
 }
 
 void CameraBubblePainter::Draw(ID2D1DeviceContext* ctx, ID2D1Bitmap1* source) {
+  Draw(ctx, source, Frame{});
+}
+
+void CameraBubblePainter::Draw(ID2D1DeviceContext* ctx, ID2D1Bitmap1* source,
+                               const Frame& frame) {
   if (!ready_ || ctx == nullptr || source == nullptr) {
+    return;
+  }
+
+  // Anything to animate or key? If not, fall through to the Phase 9.6 fast path
+  // below, which the inline preview's static bubble depends on staying identical.
+  const bool animated = frame.scale != 1.0 || frame.translate_x != 0.0 ||
+                        frame.translate_y != 0.0 || frame.opacity_mul != 1.0;
+  if (chroma_effect_ != nullptr || animated) {
+    DrawEnhanced(ctx, source, frame);
     return;
   }
 
@@ -313,6 +365,119 @@ void CameraBubblePainter::Draw(ID2D1DeviceContext* ctx, ID2D1Bitmap1* source) {
     } else {
       ctx->DrawRectangle(bubble_rect_, border_brush_.Get(), border_width_px_);
     }
+  }
+}
+
+void CameraBubblePainter::DrawEnhanced(ID2D1DeviceContext* ctx,
+                                       ID2D1Bitmap1* source,
+                                       const Frame& frame) {
+  using D2D1::Matrix3x2F;
+
+  auto clamp01 = [](double v) {
+    return static_cast<float>(v < 0.0 ? 0.0 : (v > 1.0 ? 1.0 : v));
+  };
+  const float content_opacity = clamp01(style_.opacity * frame.opacity_mul);
+  const float fade = clamp01(frame.opacity_mul);  // shadow + border fade only
+
+  // Animation base transform: extra uniform scale about the bubble center, then
+  // the canvas-space translation. Identity when frame is identity.
+  const Matrix3x2F anim =
+      Matrix3x2F::Scale(D2D1::SizeF(static_cast<float>(frame.scale),
+                                    static_cast<float>(frame.scale)),
+                        D2D1::Point2F(bubble_cx_, bubble_cy_)) *
+      Matrix3x2F::Translation(static_cast<float>(frame.translate_x),
+                              static_cast<float>(frame.translate_y));
+
+  // 1) Shadow, behind everything, riding the animation transform + fade.
+  if (shadow_bitmap_ != nullptr) {
+    ctx->SetTransform(anim);
+    ctx->DrawBitmap(shadow_bitmap_.Get(), shadow_dest_, fade,
+                    D2D1_BITMAP_INTERPOLATION_MODE_LINEAR, nullptr);
+    ctx->SetTransform(Matrix3x2F::Identity());
+  }
+
+  // 2) Camera content (optionally chroma-keyed), masked, mirrored, scaled into
+  // the bubble, faded by an opacity layer.
+  ID2D1Image* content = source;
+  ComPtr<ID2D1Image> chroma_out;
+  if (chroma_effect_ != nullptr) {
+    chroma_effect_->SetInput(0, source);
+    chroma_effect_->GetOutput(chroma_out.GetAddressOf());
+    if (chroma_out != nullptr) {
+      content = chroma_out.Get();
+    }
+  }
+
+  // Map source-pixel space → the resting dest rect (cover/contain already baked
+  // in), then mirror about the bubble center, then ride the animation transform.
+  const float dest_w = dest_rect_.right - dest_rect_.left;
+  const float dest_h = dest_rect_.bottom - dest_rect_.top;
+  Matrix3x2F content_m =
+      Matrix3x2F::Scale(D2D1::SizeF(dest_w / static_cast<float>(cam_w_),
+                                    dest_h / static_cast<float>(cam_h_)),
+                        D2D1::Point2F(0.0f, 0.0f)) *
+      Matrix3x2F::Translation(dest_rect_.left, dest_rect_.top);
+  if (style_.mirror) {
+    content_m = content_m * Matrix3x2F::Scale(D2D1::SizeF(-1.0f, 1.0f),
+                                              D2D1::Point2F(bubble_cx_,
+                                                            bubble_cy_));
+  }
+  content_m = content_m * anim;
+
+  bool pushed_layer = false;
+  bool pushed_clip = false;
+  // The mask geometry / clip is established in the animated bubble space so it
+  // scales and translates with the content it bounds.
+  ctx->SetTransform(anim);
+  if (mask_geometry_ != nullptr && content_layer_ != nullptr) {
+    ctx->PushLayer(
+        D2D1::LayerParameters1(D2D1::InfiniteRect(), mask_geometry_.Get(),
+                               D2D1_ANTIALIAS_MODE_PER_PRIMITIVE,
+                               Matrix3x2F::Identity(), content_opacity),
+        content_layer_.Get());
+    pushed_layer = true;
+  } else if (content_layer_ != nullptr) {
+    ctx->PushAxisAlignedClip(bubble_rect_, D2D1_ANTIALIAS_MODE_ALIASED);
+    ctx->PushLayer(
+        D2D1::LayerParameters1(D2D1::InfiniteRect(), nullptr,
+                               D2D1_ANTIALIAS_MODE_PER_PRIMITIVE,
+                               Matrix3x2F::Identity(), content_opacity),
+        content_layer_.Get());
+    pushed_clip = true;
+    pushed_layer = true;
+  } else {
+    // Layer creation soft-failed; clip only (opacity not applied in this rare
+    // path, which only matters when style/anim opacity < 1).
+    ctx->PushAxisAlignedClip(bubble_rect_, D2D1_ANTIALIAS_MODE_ALIASED);
+    pushed_clip = true;
+  }
+
+  ctx->SetTransform(content_m);
+  ctx->DrawImage(content, nullptr, nullptr, D2D1_INTERPOLATION_MODE_LINEAR,
+                 D2D1_COMPOSITE_MODE_SOURCE_OVER);
+
+  // Restore an axis-aligned transform before popping the clip (kept matched).
+  ctx->SetTransform(anim);
+  if (pushed_layer) {
+    ctx->PopLayer();
+  }
+  if (pushed_clip) {
+    ctx->PopAxisAlignedClip();
+  }
+  ctx->SetTransform(Matrix3x2F::Identity());
+
+  // 3) Border, stroked on the (animated) bubble outline, faded with the bubble.
+  if (border_brush_ != nullptr && border_width_px_ > 0.0f) {
+    border_brush_->SetOpacity(fade);
+    ctx->SetTransform(anim);
+    if (mask_geometry_ != nullptr) {
+      ctx->DrawGeometry(mask_geometry_.Get(), border_brush_.Get(),
+                        border_width_px_);
+    } else {
+      ctx->DrawRectangle(bubble_rect_, border_brush_.Get(), border_width_px_);
+    }
+    ctx->SetTransform(Matrix3x2F::Identity());
+    border_brush_->SetOpacity(1.0f);  // restore for the next frame's fast/enh path
   }
 }
 

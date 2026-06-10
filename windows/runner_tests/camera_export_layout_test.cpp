@@ -155,5 +155,180 @@ TEST(CameraShadowStyleTest, StrongerPresetMeansMoreOpacityAndBlur) {
   EXPECT_LT(s2.blur_radius, s3.blur_radius);
 }
 
+// --- intro/outro animation timeline (Phase 9.7) -----------------------------
+
+namespace {
+// A representative bottom-right bubble on a 1920x1080 canvas.
+const CameraBubbleRect kBubble{/*x=*/1600.0, /*y=*/800.0, /*w=*/200.0,
+                               /*h=*/200.0};
+constexpr double kCanvasW = 1920.0;
+constexpr double kCanvasH = 1080.0;
+constexpr std::int64_t kTotalMs = 1000;
+
+CameraAnimationParams MakeParams(CameraIntroKind intro, CameraOutroKind outro,
+                                 int intro_ms = 200, int outro_ms = 200) {
+  CameraAnimationParams p;
+  p.intro = intro;
+  p.outro = outro;
+  p.intro_duration_ms = intro_ms;
+  p.outro_duration_ms = outro_ms;
+  return p;
+}
+
+CameraAnimationOutput Resolve(const CameraAnimationParams& p, std::int64_t t,
+                              CameraSlideEdge edge = CameraSlideEdge::kRight) {
+  return ResolveCameraAnimation(p, t, kTotalMs, kBubble, kCanvasW, kCanvasH,
+                                edge);
+}
+}  // namespace
+
+TEST(CameraIntroKindTest, ParsesKnownNamesAndSoftFails) {
+  EXPECT_EQ(ParseCameraIntroKind("fade"), CameraIntroKind::kFade);
+  EXPECT_EQ(ParseCameraIntroKind("pop"), CameraIntroKind::kPop);
+  EXPECT_EQ(ParseCameraIntroKind("slide"), CameraIntroKind::kSlide);
+  EXPECT_EQ(ParseCameraIntroKind("none"), CameraIntroKind::kNone);
+  EXPECT_EQ(ParseCameraIntroKind(""), CameraIntroKind::kNone);
+  EXPECT_EQ(ParseCameraIntroKind("garbage"), CameraIntroKind::kNone);
+  // `shrink` is an OUTRO preset; it is not a valid intro → soft-fail to none.
+  EXPECT_EQ(ParseCameraIntroKind("shrink"), CameraIntroKind::kNone);
+}
+
+TEST(CameraOutroKindTest, ParsesKnownNamesAndSoftFails) {
+  EXPECT_EQ(ParseCameraOutroKind("fade"), CameraOutroKind::kFade);
+  EXPECT_EQ(ParseCameraOutroKind("shrink"), CameraOutroKind::kShrink);
+  EXPECT_EQ(ParseCameraOutroKind("slide"), CameraOutroKind::kSlide);
+  EXPECT_EQ(ParseCameraOutroKind("none"), CameraOutroKind::kNone);
+  EXPECT_EQ(ParseCameraOutroKind("pop"), CameraOutroKind::kNone);  // intro-only
+  EXPECT_EQ(ParseCameraOutroKind("garbage"), CameraOutroKind::kNone);
+}
+
+TEST(CameraSlideEdgeTest, PresetMapping) {
+  auto edge = [](const char* preset) {
+    return ResolveCameraSlideEdge(preset, /*has_center=*/false, kBubble,
+                                  kCanvasW, kCanvasH);
+  };
+  EXPECT_EQ(edge("overlayTopLeft"), CameraSlideEdge::kLeft);
+  EXPECT_EQ(edge("overlayBottomLeft"), CameraSlideEdge::kLeft);
+  EXPECT_EQ(edge("overlayTopRight"), CameraSlideEdge::kRight);
+  EXPECT_EQ(edge("overlayBottomRight"), CameraSlideEdge::kRight);
+  EXPECT_EQ(edge("stackedTop"), CameraSlideEdge::kTop);
+  EXPECT_EQ(edge("stackedBottom"), CameraSlideEdge::kBottom);
+  EXPECT_EQ(edge("hidden"), CameraSlideEdge::kRight);  // default
+}
+
+TEST(CameraSlideEdgeTest, ManualUsesNearestEdge) {
+  // Bubble hugging the left edge → slides from the left.
+  const CameraBubbleRect left{0.0, 480.0, 120.0, 120.0};
+  EXPECT_EQ(ResolveCameraSlideEdge("", true, left, kCanvasW, kCanvasH),
+            CameraSlideEdge::kLeft);
+  // Bubble hugging the top edge → slides from the top (y-DOWN).
+  const CameraBubbleRect top{900.0, 0.0, 120.0, 120.0};
+  EXPECT_EQ(ResolveCameraSlideEdge("", true, top, kCanvasW, kCanvasH),
+            CameraSlideEdge::kTop);
+  // Bubble hugging the bottom edge → slides from the bottom.
+  const CameraBubbleRect bottom{900.0, 960.0, 120.0, 120.0};
+  EXPECT_EQ(ResolveCameraSlideEdge("", true, bottom, kCanvasW, kCanvasH),
+            CameraSlideEdge::kBottom);
+}
+
+TEST(CameraSlideEdgeTest, ManualVerticalTieMatchesMacOSBottom) {
+  // Dead-center bubble on a landscape canvas: the vertical pair wins
+  // (min_vertical 540 < min_horizontal 960) and top/bottom tie exactly.
+  // macOS resolves the tie to the visual bottom (y-UP `bottomDistance <=
+  // topDistance → .bottom`); the y-DOWN port must agree.
+  const CameraBubbleRect centered{kCanvasW / 2.0 - 100.0,
+                                  kCanvasH / 2.0 - 100.0, 200.0, 200.0};
+  EXPECT_EQ(ResolveCameraSlideEdge("", true, centered, kCanvasW, kCanvasH),
+            CameraSlideEdge::kBottom);
+}
+
+TEST(CameraAnimationTest, NoPresetsIsIdentity) {
+  const auto a =
+      Resolve(MakeParams(CameraIntroKind::kNone, CameraOutroKind::kNone), 0);
+  EXPECT_DOUBLE_EQ(a.opacity, 1.0);
+  EXPECT_DOUBLE_EQ(a.scale, 1.0);
+  EXPECT_DOUBLE_EQ(a.translate_x, 0.0);
+  EXPECT_DOUBLE_EQ(a.translate_y, 0.0);
+}
+
+TEST(CameraAnimationTest, ZeroDurationClipIsIdentity) {
+  // Guards the division in the progress helpers.
+  const auto a = ResolveCameraAnimation(
+      MakeParams(CameraIntroKind::kFade, CameraOutroKind::kFade), 0, 0, kBubble,
+      kCanvasW, kCanvasH, CameraSlideEdge::kRight);
+  EXPECT_DOUBLE_EQ(a.opacity, 1.0);
+}
+
+TEST(CameraAnimationTest, IntroFadeRampsOpacity) {
+  const auto p = MakeParams(CameraIntroKind::kFade, CameraOutroKind::kNone);
+  EXPECT_NEAR(Resolve(p, 0).opacity, 0.0, 1e-6);     // start fully transparent
+  EXPECT_NEAR(Resolve(p, 100).opacity, 0.5, 1e-6);   // half through 200ms intro
+  EXPECT_NEAR(Resolve(p, 200).opacity, 1.0, 1e-6);   // intro complete
+  EXPECT_NEAR(Resolve(p, 500).opacity, 1.0, 1e-6);   // resting
+  // Fade does not scale or translate.
+  EXPECT_DOUBLE_EQ(Resolve(p, 100).scale, 1.0);
+  EXPECT_DOUBLE_EQ(Resolve(p, 100).translate_x, 0.0);
+}
+
+TEST(CameraAnimationTest, IntroPopScalesUpAndFadesIn) {
+  const auto p = MakeParams(CameraIntroKind::kPop, CameraOutroKind::kNone);
+  const auto start = Resolve(p, 0);
+  EXPECT_NEAR(start.scale, 0.90, 1e-6);    // pops from 90%
+  EXPECT_NEAR(start.opacity, 0.0, 1e-6);   // pop also fades in
+  const auto end = Resolve(p, 200);
+  EXPECT_NEAR(end.scale, 1.0, 1e-6);
+  EXPECT_NEAR(end.opacity, 1.0, 1e-6);
+}
+
+TEST(CameraAnimationTest, OutroFadeAndShrinkPlayAtEnd) {
+  // Resting at mid-clip: nothing applied yet.
+  const auto fade = MakeParams(CameraIntroKind::kNone, CameraOutroKind::kFade);
+  EXPECT_NEAR(Resolve(fade, 500).opacity, 1.0, 1e-6);
+  EXPECT_NEAR(Resolve(fade, 900).opacity, 0.5, 1e-6);  // half through 200ms outro
+  EXPECT_NEAR(Resolve(fade, 1000).opacity, 0.0, 1e-6);  // fully gone at the end
+
+  const auto shrink =
+      MakeParams(CameraIntroKind::kNone, CameraOutroKind::kShrink);
+  EXPECT_NEAR(Resolve(shrink, 500).scale, 1.0, 1e-6);   // resting
+  EXPECT_NEAR(Resolve(shrink, 1000).scale, 0.90, 1e-6);  // shrunk at the end
+}
+
+TEST(CameraAnimationTest, SlideIntroEntersFromEdgeThenRests) {
+  const auto p = MakeParams(CameraIntroKind::kSlide, CameraOutroKind::kNone);
+  // Right edge offscreen offset = canvasW + margin - bubble.x.
+  const double off = kCanvasW + 1.0 - kBubble.x;  // 321
+  const auto start = Resolve(p, 0, CameraSlideEdge::kRight);
+  EXPECT_NEAR(start.translate_x, off, 1e-6);  // starts fully off the right edge
+  EXPECT_NEAR(start.translate_y, 0.0, 1e-6);
+  const auto end = Resolve(p, 200, CameraSlideEdge::kRight);
+  EXPECT_NEAR(end.translate_x, 0.0, 1e-6);  // settled into place
+  // Slide ramps opacity in too (matches macOS).
+  EXPECT_NEAR(start.opacity, 0.0, 1e-6);
+  EXPECT_NEAR(end.opacity, 1.0, 1e-6);
+}
+
+TEST(CameraAnimationTest, SlideOutroExitsTowardEdge) {
+  const auto p = MakeParams(CameraIntroKind::kNone, CameraOutroKind::kSlide);
+  const double off = kCanvasW + 1.0 - kBubble.x;
+  EXPECT_NEAR(Resolve(p, 500, CameraSlideEdge::kRight).translate_x, 0.0, 1e-6);
+  EXPECT_NEAR(Resolve(p, 1000, CameraSlideEdge::kRight).translate_x, off, 1e-6);
+}
+
+TEST(CameraAnimationTest, SlideTopOutroMovesUpInYDown) {
+  const auto p = MakeParams(CameraIntroKind::kNone, CameraOutroKind::kSlide);
+  // Top edge in y-DOWN pushes the bubble to a NEGATIVE y offset.
+  const auto end = Resolve(p, 1000, CameraSlideEdge::kTop);
+  EXPECT_LT(end.translate_y, 0.0);
+  EXPECT_NEAR(end.translate_x, 0.0, 1e-6);
+}
+
+TEST(CameraAnimationTest, FrameTimeIsClampedToClip) {
+  const auto p = MakeParams(CameraIntroKind::kFade, CameraOutroKind::kFade);
+  // Past the end clamps to the final outro state, not beyond.
+  EXPECT_NEAR(Resolve(p, 5000).opacity, 0.0, 1e-6);
+  // Negative time clamps to the intro start.
+  EXPECT_NEAR(Resolve(p, -100).opacity, 0.0, 1e-6);
+}
+
 }  // namespace
 }  // namespace clingfy::capture

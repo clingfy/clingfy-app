@@ -80,10 +80,19 @@ bool CameraExportRenderer::Prepare(ID2D1Factory1* factory,
                                    const std::string& shape,
                                    double corner_radius,
                                    const std::string& content_mode,
-                                   const Style& style) {
+                                   const Style& style,
+                                   const CameraAnimationParams& anim,
+                                   double canvas_w, double canvas_h,
+                                   CameraSlideEdge slide_edge) {
   if (factory == nullptr || ctx == nullptr || cam_w_ == 0 || cam_h_ == 0) {
     return false;
   }
+
+  anim_params_ = anim;
+  bubble_ = bubble;
+  canvas_w_ = canvas_w;
+  canvas_h_ = canvas_h;
+  slide_edge_ = slide_edge;
 
   // Source bitmap holds the latest decoded camera frame (system-memory upload).
   const D2D1_BITMAP_PROPERTIES1 props = D2D1::BitmapProperties1(
@@ -163,11 +172,21 @@ void CameraExportRenderer::Advance(std::int64_t frame_ms) {
   }
 }
 
-void CameraExportRenderer::Draw(ID2D1DeviceContext* ctx) {
+void CameraExportRenderer::Draw(ID2D1DeviceContext* ctx,
+                                std::int64_t frame_ms,
+                                std::int64_t total_duration_ms) {
   if (!ready_ || !has_held_frame_) {
     return;
   }
-  painter_.Draw(ctx, frame_bitmap_.Get());
+  const CameraAnimationOutput a =
+      ResolveCameraAnimation(anim_params_, frame_ms, total_duration_ms, bubble_,
+                             canvas_w_, canvas_h_, slide_edge_);
+  CameraBubblePainter::Frame frame;
+  frame.opacity_mul = a.opacity;
+  frame.scale = a.scale;
+  frame.translate_x = a.translate_x;
+  frame.translate_y = a.translate_y;
+  painter_.Draw(ctx, frame_bitmap_.Get(), frame);
 }
 
 }  // namespace clingfy::capture

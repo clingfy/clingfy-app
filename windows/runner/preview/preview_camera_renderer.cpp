@@ -215,6 +215,10 @@ void PreviewCameraRenderer::PrepareAndAdvance(ID2D1DeviceContext* ctx,
       style.has_border_color = comp.has_border_color;
       style.border_argb = comp.border_argb;
       style.shadow_preset = comp.shadow_preset;
+      style.chroma_enabled = comp.chroma_enabled;
+      style.chroma_strength = comp.chroma_strength;
+      style.has_chroma_color = comp.has_chroma_color;
+      style.chroma_argb = comp.chroma_argb;
       painter_ready_ = painter_.Prepare(factory1.Get(), ctx, bubble, comp.shape,
                                         comp.corner_radius, comp.content_mode,
                                         style, cam_w_, cam_h_);

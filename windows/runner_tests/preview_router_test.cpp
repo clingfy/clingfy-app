@@ -273,8 +273,8 @@ TEST_F(PreviewRouterSceneInfoTest, HappyPathWithoutCamera) {
   EXPECT_EQ(find("camera"), nullptr);
 
   // cameraExportCapabilities map. Phase 9.4 added shapeMask + cornerRadius; 9.5
-  // adds border + shadow. chromaKey stays FALSE until 9.6. All keys must be
-  // present so the Dart parser reads explicit values rather than defaulting.
+  // adds border + shadow; 9.7 adds chromaKey. All keys must be present so the
+  // Dart parser reads explicit values rather than defaulting.
   ASSERT_NE(find("cameraExportCapabilities"), nullptr);
   ASSERT_TRUE(std::holds_alternative<flutter::EncodableMap>(
       *find("cameraExportCapabilities")));
@@ -290,7 +290,7 @@ TEST_F(PreviewRouterSceneInfoTest, HappyPathWithoutCamera) {
   EXPECT_TRUE(cap("cornerRadius"));
   EXPECT_TRUE(cap("border"));
   EXPECT_TRUE(cap("shadow"));
-  EXPECT_FALSE(cap("chromaKey"));
+  EXPECT_TRUE(cap("chromaKey"));
 }
 
 TEST_F(PreviewRouterSceneInfoTest, HappyPathWithCameraEmitsCameraPath) {

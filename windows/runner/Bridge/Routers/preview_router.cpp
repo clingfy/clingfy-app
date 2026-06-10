@@ -171,6 +171,13 @@ clingfy::preview::PreviewCameraComposition ReadCameraComposition(
   }
   c.shadow_preset =
       static_cast<int>(ReadDouble(args, "cameraShadowPreset", 0.0));
+  // Phase 9.7 chroma key (previewed for WYSIWYG with the export).
+  c.chroma_enabled = ReadBool(args, "cameraChromaKeyEnabled", false);
+  c.chroma_strength = ReadDouble(args, "cameraChromaKeyStrength", 0.4);
+  if (const auto argb = ReadOptionalInt(args, "cameraChromaKeyColorArgb")) {
+    c.has_chroma_color = true;
+    c.chroma_argb = static_cast<std::uint32_t>(*argb);
+  }
   if (const auto it = args.find(flutter::EncodableValue("cameraNormalizedCenter"));
       it != args.end()) {
     if (const auto* center = std::get_if<flutter::EncodableMap>(&it->second)) {
@@ -207,22 +214,23 @@ flutter::EncodableMap BuildCameraExportCapabilities() {
   // slice plan flips them on as each lands:
   //   * 9.4 → shapeMask + cornerRadius (the basic circle / rounded bubble) ✅
   //   * 9.5 → border + shadow ✅
-  //   * 9.6 → chromaKey
+  //   * 9.7 → chromaKey ✅
   // Phase 9.4 composites the camera as a masked circle / rounded-rect / square
   // bubble; Phase 9.5 adds mirror, opacity, a stroked border, and a blurred drop
-  // shadow. So shapeMask + cornerRadius + border + shadow are true; chromaKey
-  // stays false until 9.6 (the Dart side hides it and the export ignores its
-  // args). (mirror / opacity are always-on transforms, not gated by this map.)
-  // (Camera *device selection* readiness is a separate concern, surfaced via
-  // getVideoSources / setVideoSource + the camera-readiness check, not through
-  // this export-styling capabilities map.) The Dart parser defaults a missing
-  // key to true, so we emit every key explicitly.
+  // shadow; Phase 9.7 adds a Direct2D chroma key (and export-only intro/outro
+  // animations, which are not gated by this map). So shapeMask + cornerRadius +
+  // border + shadow + chromaKey are all true. (mirror / opacity are always-on
+  // transforms, not gated by this map.) (Camera *device selection* readiness is a
+  // separate concern, surfaced via getVideoSources / setVideoSource + the
+  // camera-readiness check, not through this export-styling capabilities map.)
+  // The Dart parser defaults a missing key to true, so we emit every key
+  // explicitly.
   return flutter::EncodableMap{
       {flutter::EncodableValue("shapeMask"), flutter::EncodableValue(true)},
       {flutter::EncodableValue("cornerRadius"), flutter::EncodableValue(true)},
       {flutter::EncodableValue("border"), flutter::EncodableValue(true)},
       {flutter::EncodableValue("shadow"), flutter::EncodableValue(true)},
-      {flutter::EncodableValue("chromaKey"), flutter::EncodableValue(false)},
+      {flutter::EncodableValue("chromaKey"), flutter::EncodableValue(true)},
   };
 }
 
