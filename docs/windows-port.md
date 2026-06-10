@@ -59,10 +59,44 @@ lifecycle, preview, and basic export.
 | 7     | Window + area recording                                       | done   |
 | 8     | Cursor sidecar + smart zoom                                   | done   |
 | 9     | Camera overlay (basic, then advanced compositing/chroma)      | done   |
-| 10    | Permissions UX + installer + updater + Windows beta polish    | next   |
+| 10    | Permissions UX + installer + updater + Windows beta polish    | design locked (10.0); 10.1 next |
 
 Detailed scope per phase is tracked in the session task list and in
 [../CLAUDE.md](../CLAUDE.md).
+
+## Current status — Phase 10.0 (beta readiness) — DESIGN LOCKED
+
+Phase 10 takes the Windows app from "a Release folder that works on the dev
+box" to a private/public-beta-ready product. **10.0 is a docs-only design
+slice — no production code.** The full inventory, locked decisions (D1–D10),
+slice plan, smoke matrix, and beta release checklist live in
+[decisions/windows-phase-10-beta-readiness-plan.md](decisions/windows-phase-10-beta-readiness-plan.md);
+this section is the short version.
+
+Headline decisions: **Inno Setup per-user installer, not MSIX** (preserves
+the unpackaged-Win32 permission/licensing/WGC assumptions); **static-feed
+manual update check for private beta, WinSparkle at public beta**; native
+logs move off CWD-relative `build\windows-poc\` to `%LOCALAPPDATA%` with a
+native→Dart log bridge and a one-click diagnostics zip; **no silent
+degradation** (mic/camera/encoder/disk failures all surface);
+platform-forked permissions onboarding; an honest-UI sweep (no dead buttons,
+zoom track shows what exports); dev/prod installer identities; and hard
+release gates — NVIDIA/AMD preview verdicts, a forced-native-crash → Sentry
+round-trip, and a clean-box licensing smoke — before any invite goes out.
+
+### Slice plan
+
+| Slice | Goal                                                              | PR     |
+| ----- | ----------------------------------------------------------------- | ------ |
+| 10.0  | Beta-readiness design / inventory                                 | (this) |
+| 10.1  | Diagnostics + failure visibility (logs, disk, warnings, export-diagnostics zip) | next |
+| 10.2  | Windows permissions UX (forked onboarding, Windows copy, readiness surfacing) | |
+| 10.3  | Honest-UI sweep (zoom track truth, no-op settings, area persistence, l10n) | |
+| 10.4  | Crash salvage + symbol pipeline (interrupted-recording recovery, PDB upload) | |
+| 10.5  | Branding + installer (icon/name, Inno Setup, signing, dev/prod identity) | |
+| 10.6  | Updater (static feed check, UpdaterEventPublisher, honest About button) | |
+| 10.7  | Beta closeout (smoke matrix, licensing + consent, tester guide)   |        |
+| P     | Hardware verdicts: NVIDIA/AMD preview stress, encoder, soak (any time; gates invites) | |
 
 ## Current status — Phase 9 (camera overlay) — COMPLETE
 
