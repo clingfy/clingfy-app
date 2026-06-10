@@ -1935,6 +1935,13 @@ class AppLocalizationsEn extends AppLocalizations {
   String get diagnosticsLogRevealed => 'Revealed today\'s log file.';
 
   @override
+  String get exportDiagnostics => 'Export Diagnostics';
+
+  @override
+  String get diagnosticsExported =>
+      'Diagnostics package created — revealed in your file manager.';
+
+  @override
   String get recordingSystemAudio => 'System audio';
 
   @override

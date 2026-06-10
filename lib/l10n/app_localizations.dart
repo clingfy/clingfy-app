@@ -3628,6 +3628,18 @@ abstract class AppLocalizations {
   /// **'Revealed today\'s log file.'**
   String get diagnosticsLogRevealed;
 
+  /// No description provided for @exportDiagnostics.
+  ///
+  /// In en, this message translates to:
+  /// **'Export Diagnostics'**
+  String get exportDiagnostics;
+
+  /// No description provided for @diagnosticsExported.
+  ///
+  /// In en, this message translates to:
+  /// **'Diagnostics package created — revealed in your file manager.'**
+  String get diagnosticsExported;
+
   /// No description provided for @recordingSystemAudio.
   ///
   /// In en, this message translates to:

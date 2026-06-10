@@ -28,6 +28,7 @@
 
 #include "Bridge/player_event_publisher.h"
 #include "Bridge/workflow_event_publisher.h"
+#include "Services/log_locations.h"
 #include "preview/frame_timing.h"
 #include "preview/preview_compositor.h"
 
@@ -51,25 +52,45 @@ namespace {
 // Flutter-widget-sized surface.
 constexpr int kTextureWidth = 1280;
 constexpr int kTextureHeight = 720;
-constexpr wchar_t kArtifactPath[] =
-    L"build\\windows-poc\\stage2a_2_result.md";
-constexpr wchar_t kNativeLogPath[] =
-    L"build\\windows-poc\\stage2a_2_native.log";
-// Step 5.7.1: process-lifetime append-only log for PHASE5-OPEN /
-// PHASE5-CYCLE structured lines. Separate from kNativeLogPath because
-// that file is truncated at every Open() for crash-breadcrumb
-// localisation — truncation would defeat the stress verdict tool,
-// which needs cross-cycle history to compute aggregate stats.
-constexpr wchar_t kPhase5CycleLogPath[] =
-    L"build\\windows-poc\\phase5_cycles.log";
+
+// Phase 10.1: these diagnostics moved from the CWD-relative
+// build\windows-poc\ to %LOCALAPPDATA%\Clingfy\Logs (see
+// Services/log_locations.h) so installed builds keep their breadcrumbs.
+// File roles are unchanged:
+//   * stage2a_2_native.log — truncated at every Open() for
+//     crash-breadcrumb localisation.
+//   * phase5_cycles.log — append-only across the process lifetime;
+//     truncation would defeat the stress verdict tool, which needs
+//     cross-cycle history to compute aggregate stats.
+//   * stage2a_2_result.md — the Stage 2A-2 verdict artifact.
+std::wstring NativeLogFilePath(const wchar_t* file_name) {
+  const std::wstring dir = clingfy::storage::NativeLogsDirectory();
+  if (dir.empty()) {
+    return {};
+  }
+  return dir + L"\\" + file_name;
+}
+
+std::wstring ArtifactPath() {
+  return NativeLogFilePath(L"stage2a_2_result.md");
+}
+std::wstring NativeLogPath() {
+  return NativeLogFilePath(L"stage2a_2_native.log");
+}
+std::wstring Phase5CycleLogPath() {
+  return NativeLogFilePath(L"phase5_cycles.log");
+}
 
 void EnsureLogParentDir() {
-  // Both log files live under build\windows-poc\. Create the dir if it
-  // doesn't exist yet — on a fresh checkout the directory is gitignored
-  // and missing, which would otherwise cause `std::ofstream` to fail
-  // silently and the stress verdict tool to find nothing.
+  // Create the resolved logs dir if it doesn't exist yet — on a fresh
+  // profile it is missing, which would otherwise cause `std::ofstream`
+  // to fail silently and the stress verdict tool to find nothing.
+  const std::wstring dir = clingfy::storage::NativeLogsDirectory();
+  if (dir.empty()) {
+    return;
+  }
   std::error_code ec;
-  std::filesystem::create_directories(L"build\\windows-poc", ec);
+  std::filesystem::create_directories(dir, ec);
 }
 
 // Step 5.7: process-lifetime monotonic counter incremented at every
@@ -103,8 +124,12 @@ std::int64_t QpcDeltaMs(std::int64_t start, std::int64_t end,
 // Open(); each line carries an HRESULT-style breadcrumb so a crash
 // can be localised by inspecting the last surviving line.
 void LogNative(const char* msg) {
+  const std::wstring log_path = NativeLogPath();
+  if (log_path.empty()) {
+    return;
+  }
   EnsureLogParentDir();
-  std::ofstream f(kNativeLogPath,
+  std::ofstream f(std::filesystem::path(log_path),
                   std::ios::out | std::ios::app | std::ios::binary);
   if (f.is_open()) {
     std::time_t now = std::time(nullptr);
@@ -122,14 +147,18 @@ void LogNative(const char* msg) {
 }
 
 // Step 5.7.1: append-only cycle log. Lives separately from
-// kNativeLogPath because that file is truncated on every Open() — a
+// stage2a_2_native.log because that file is truncated on every Open() — a
 // design constraint for crash-breadcrumb localisation but lethal for
 // cross-cycle aggregation. The stress verdict tool reads from this
 // file. Format-wise identical to LogNative; differences are scope
 // (which file) and the no-truncate guarantee.
 void LogPhase5Cycle(const char* msg) {
+  const std::wstring log_path = Phase5CycleLogPath();
+  if (log_path.empty()) {
+    return;
+  }
   EnsureLogParentDir();
-  std::ofstream f(kPhase5CycleLogPath,
+  std::ofstream f(std::filesystem::path(log_path),
                   std::ios::out | std::ios::app | std::ios::binary);
   if (!f.is_open()) return;
   std::time_t now = std::time(nullptr);
@@ -370,8 +399,12 @@ OpenResult PreviewEngine::Open(const OpenArgs& args) {
   // Truncate the log file at the top of every Open() so its tail
   // localises the most recent crash if there is one.
   {
-    std::ofstream f(kNativeLogPath,
-                    std::ios::out | std::ios::trunc | std::ios::binary);
+    const std::wstring log_path = NativeLogPath();
+    if (!log_path.empty()) {
+      EnsureLogParentDir();
+      std::ofstream f(std::filesystem::path(log_path),
+                      std::ios::out | std::ios::trunc | std::ios::binary);
+    }
   }
   LogNative("Open() entered");
   std::lock_guard<std::mutex> lock(mutex_);
@@ -1498,8 +1531,10 @@ void PreviewEngine::Close(const CloseArgs& args) {
     }
   }
   std::ofstream f;
-  if (write_artifact) {
-    f.open(kArtifactPath,
+  const std::wstring artifact_path = ArtifactPath();
+  if (write_artifact && !artifact_path.empty()) {
+    EnsureLogParentDir();
+    f.open(std::filesystem::path(artifact_path),
            std::ios::out | std::ios::trunc | std::ios::binary);
   }
   if (f.is_open()) {
@@ -1557,7 +1592,8 @@ void PreviewEngine::Close(const CloseArgs& args) {
     // dart-define. The native producer-side table above continues to
     // be the lifecycle-validation signal in the interim.
     f << "Closed session: " << closing_session << "\n";
-    std::fprintf(stderr, "STAGE2A_2_ARTIFACT wrote %ls\n", kArtifactPath);
+    std::fprintf(stderr, "STAGE2A_2_ARTIFACT wrote %ls\n",
+                 artifact_path.c_str());
     std::fflush(stderr);
   }
 }

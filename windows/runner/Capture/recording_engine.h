@@ -275,6 +275,10 @@ class RecordingEngine {
   // error log) covers the third. All best-effort — never gates teardown.
   std::atomic<std::uint64_t> audio_write_errors_{0};
   std::atomic<bool> audio_write_logged_first_error_{false};
+  // Phase 10.1: same one-shot pattern for the video drain thread, whose
+  // WriteVideoFrame errors were previously discarded entirely — an encoder
+  // death mid-record produced no signal until Stop. Surfacing only.
+  std::atomic<bool> video_write_logged_first_error_{false};
 };
 
 }  // namespace clingfy::capture

@@ -1917,6 +1917,13 @@ class AppLocalizationsAr extends AppLocalizations {
   String get diagnosticsLogRevealed => 'تم إظهار ملف سجل اليوم.';
 
   @override
+  String get exportDiagnostics => 'تصدير بيانات التشخيص';
+
+  @override
+  String get diagnosticsExported =>
+      'تم إنشاء حزمة التشخيص وإظهارها في مدير الملفات.';
+
+  @override
   String get recordingSystemAudio => 'صوت النظام';
 
   @override

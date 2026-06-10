@@ -9,41 +9,19 @@
 #include <atomic>
 #include <chrono>
 #include <cstdio>
-#include <ctime>
-#include <filesystem>
-#include <fstream>
 #include <mutex>
 #include <string>
-#include <system_error>
 #include <thread>
+
+// Phase 10.1: the duplicated private LogDeviceProbe copy is gone — both
+// enumerators now share Bridge/Devices/device_probe_log.h, which also owns
+// the %LOCALAPPDATA% relocation. (The old duplication hid a path change
+// exactly like this one.)
+#include "Bridge/Devices/device_probe_log.h"
 
 namespace clingfy::bridge::devices {
 
 namespace {
-
-// Same diagnostic logger as audio_source_enumerator's — duplicated
-// rather than shared because the two enumerators have disjoint header
-// trees and a shared utility header would force both into every TU.
-// See the matching block in audio_source_enumerator.cpp for the
-// rationale on why this exists at all.
-void LogDeviceProbe(const char* msg) {
-  std::error_code ec;
-  std::filesystem::create_directories(L"build\\windows-poc", ec);
-  std::ofstream f(L"build\\windows-poc\\device_probe.log",
-                  std::ios::out | std::ios::app | std::ios::binary);
-  if (!f.is_open()) return;
-  std::time_t now = std::time(nullptr);
-  std::tm tm_utc{};
-#if defined(_MSC_VER)
-  ::gmtime_s(&tm_utc, &now);
-#else
-  tm_utc = *std::gmtime(&now);
-#endif
-  char ts[32];
-  std::snprintf(ts, sizeof(ts), "%02d:%02d:%02d ",
-                tm_utc.tm_hour, tm_utc.tm_min, tm_utc.tm_sec);
-  f << ts << msg << "\n";
-}
 
 std::string Utf8FromWide(LPCWSTR wide, UINT32 length) {
   if (wide == nullptr || length == 0) {

@@ -1953,6 +1953,13 @@ class AppLocalizationsRo extends AppLocalizations {
   String get diagnosticsLogRevealed => 'Fișierul log de astăzi a fost afișat.';
 
   @override
+  String get exportDiagnostics => 'Exportă diagnosticele';
+
+  @override
+  String get diagnosticsExported =>
+      'Pachetul de diagnostic a fost creat și afișat în managerul de fișiere.';
+
+  @override
   String get recordingSystemAudio => 'Audio de sistem';
 
   @override

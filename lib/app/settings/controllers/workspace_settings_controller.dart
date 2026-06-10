@@ -1,7 +1,12 @@
+import 'dart:io';
+
 import 'package:flutter/foundation.dart';
 import 'package:flutter/services.dart';
+import 'package:package_info_plus/package_info_plus.dart';
+import 'package:path_provider/path_provider.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
+import 'package:clingfy/app/infrastructure/diagnostics/diagnostics_package_service.dart';
 import 'package:clingfy/app/infrastructure/logging/logger_service.dart';
 import 'package:clingfy/core/bridges/native_bridge.dart';
 
@@ -167,7 +172,12 @@ class WorkspaceSettingsController extends ChangeNotifier {
 
   Future<bool> _openSaveFolderNative() async {
     try {
-      await _nativeBridge.invokeMethod<void>('openSaveFolder');
+      // The chosen folder is persisted Dart-side, so pass it along: Windows
+      // opens exactly this path (falling back to its default when absent);
+      // macOS persists the folder natively and ignores the argument.
+      await _nativeBridge.invokeMethod<void>('openSaveFolder', {
+        if (_saveFolderPath != null) 'path': _saveFolderPath,
+      });
       return true;
     } catch (e, st) {
       Log.e('Settings', 'Error opening save folder', e, st);
@@ -212,7 +222,12 @@ class WorkspaceSettingsController extends ChangeNotifier {
     try {
       await _nativeBridge.invokeMethod<void>('revealTodayLogFile');
     } on PlatformException catch (e) {
-      throw StateError(e.message ?? logFileNotFoundErrorCode);
+      // Rethrow the CODE, not the human message — the diagnostics section
+      // matches StateError.message against the LOG_FILE_* code constants to
+      // pick the specific localized string. (Previously this threw
+      // e.message, so the specific messages were unreachable on both
+      // platforms and every error rendered the generic fallback.)
+      throw StateError(e.code);
     } catch (e, st) {
       Log.e('Settings', 'Error revealing today log file', e, st);
       rethrow;
@@ -233,6 +248,75 @@ class WorkspaceSettingsController extends ChangeNotifier {
       await Clipboard.setData(ClipboardData(text: path));
     } else {
       throw StateError(logFileUnavailableErrorCode);
+    }
+  }
+
+  /// Phase 10.1: build the one-click diagnostics zip and reveal it.
+  /// Returns the zip path, or null on failure (logged).
+  Future<String?> exportDiagnosticsPackage() async {
+    try {
+      final support = await getApplicationSupportDirectory();
+      final dartLogs = Directory(
+        '${support.path}${Platform.pathSeparator}Logs',
+      );
+      Directory? nativeLogs;
+      Directory? recordingsRoot;
+      if (Platform.isWindows) {
+        // Mirrors the native Services/log_locations.cpp resolution
+        // (CLINGFY_NATIVE_LOG_DIR override → %LOCALAPPDATA%\Clingfy\Logs).
+        final overrideDir = Platform.environment['CLINGFY_NATIVE_LOG_DIR'];
+        final localAppData = Platform.environment['LOCALAPPDATA'];
+        if (overrideDir != null && overrideDir.isNotEmpty) {
+          nativeLogs = Directory(overrideDir);
+        } else if (localAppData != null && localAppData.isNotEmpty) {
+          nativeLogs = Directory('$localAppData\\Clingfy\\Logs');
+        }
+        if (localAppData != null && localAppData.isNotEmpty) {
+          recordingsRoot = Directory('$localAppData\\Clingfy\\recordings');
+        }
+      }
+
+      Future<Object?> tryInvokeList(String method) async {
+        try {
+          return await _nativeBridge.invokeMethod<List<dynamic>>(method);
+        } catch (e) {
+          return 'unavailable: $e';
+        }
+      }
+
+      final service = DiagnosticsPackageService(
+        captureDiagnostics: () async =>
+            (await _nativeBridge.invokeMethod<Map<dynamic, dynamic>>(
+              'getCaptureDiagnostics',
+            ))?.map<String, dynamic>((k, v) => MapEntry(k.toString(), v)),
+        permissionStatus: () async => _nativeBridge.getPermissionStatus(),
+        deviceInventory: () async => <String, dynamic>{
+          'displays': await tryInvokeList('getDisplays'),
+          'cameras': await tryInvokeList('getVideoSources'),
+          'audioInputs': await tryInvokeList('getAudioSources'),
+        },
+        appInfo: () async {
+          final info = await PackageInfo.fromPlatform();
+          return <String, dynamic>{
+            'appName': info.appName,
+            'version': info.version,
+            'buildNumber': info.buildNumber,
+            'os': Platform.operatingSystem,
+            'osVersion': Platform.operatingSystemVersion,
+          };
+        },
+        dartLogsDir: dartLogs,
+        nativeLogsDir: nativeLogs,
+        recordingsRoot: recordingsRoot,
+        tempDir: Directory.systemTemp,
+        outputDir: Directory.systemTemp,
+      );
+      final zip = await service.buildPackage();
+      await revealFile(zip.path);
+      return zip.path;
+    } catch (e, st) {
+      Log.e('Settings', 'Error exporting diagnostics package', e, st);
+      return null;
     }
   }
 }

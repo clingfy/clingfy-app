@@ -651,6 +651,8 @@
   "diagnosticsLogFileUnavailable": "مسار ملف السجل غير متاح الآن.",
   "diagnosticsActionFailed": "تعذر إكمال هذا الإجراء.",
   "diagnosticsLogRevealed": "تم إظهار ملف سجل اليوم.",
+  "exportDiagnostics": "تصدير بيانات التشخيص",
+  "diagnosticsExported": "تم إنشاء حزمة التشخيص وإظهارها في مدير الملفات.",
   "recordingSystemAudio": "صوت النظام",
   "recordingExcludeMicFromSystemAudio": "استبعاد الميكروفون الخاص بي من صوت النظام",
   "restartApp": "أعد تشغيل التطبيق",

@@ -651,6 +651,8 @@
   "diagnosticsLogFileUnavailable": "Calea fișierului log nu este disponibilă momentan.",
   "diagnosticsActionFailed": "Acțiunea nu a putut fi finalizată.",
   "diagnosticsLogRevealed": "Fișierul log de astăzi a fost afișat.",
+  "exportDiagnostics": "Exportă diagnosticele",
+  "diagnosticsExported": "Pachetul de diagnostic a fost creat și afișat în managerul de fișiere.",
   "recordingSystemAudio": "Audio de sistem",
   "recordingExcludeMicFromSystemAudio": "Exclude microfonul meu din audio de sistem",
   "restartApp": "Repornește aplicația",

@@ -3,9 +3,11 @@
 #include <optional>
 
 #include "Bridge/export_progress_publisher.h"
+#include "Bridge/native_log_publisher.h"
 #include "Bridge/platform_thread_dispatcher.h"
 #include "Capture/Camera/live_camera_texture.h"
 #include "Capture/Export/export_session.h"
+#include "Services/temp_orphan_scan.h"
 #include "flutter/generated_plugin_registrant.h"
 #include "preview/preview_engine.h"
 
@@ -64,6 +66,18 @@ bool FlutterWindow::OnCreate() {
   clingfy::bridge::ExportProgressPublisher::Instance().SetChannel(
       method_dispatcher_->channel());
 
+  // Phase 10.1: same channel for the native→Dart log bridge, so native
+  // WARN/ERROR lines reach the Dart JSONL logs and Sentry (the Windows
+  // counterpart of macOS NativeLogger). Cleared alongside the export
+  // publisher in OnDestroy.
+  clingfy::bridge::NativeLogPublisher::Instance().SetChannel(
+      method_dispatcher_->channel());
+
+  // Phase 10.1: detect recordings stranded in %TEMP% by a crash/kill in a
+  // previous session (detection + reporting only; salvage is Phase 10.4).
+  // Runs on its own short-lived thread, off the startup path.
+  clingfy::storage::StartTempOrphanScanAsync();
+
   // PreviewEngine (Phase 5). Initialized through the raw C registrar
   // ref to avoid pulling in the flutter_wrapper_plugin library (which
   // conflicts on core_implementations.cc with flutter_wrapper_app, the
@@ -112,6 +126,7 @@ void FlutterWindow::OnDestroy() {
   // worker (if any) then emits into a null channel (no-op) instead of a freed
   // one.
   clingfy::bridge::ExportProgressPublisher::Instance().ClearChannel();
+  clingfy::bridge::NativeLogPublisher::Instance().ClearChannel();
   event_channel_stubs_.reset();
   method_dispatcher_.reset();
 
