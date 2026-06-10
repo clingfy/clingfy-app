@@ -2,6 +2,7 @@ import 'package:clingfy/l10n/app_localizations.dart';
 import 'package:clingfy/app/settings/widgets/about_section.dart';
 import 'package:clingfy/app/settings/sections/section_helpers.dart';
 import 'package:clingfy/core/bridges/native_bridge.dart';
+import 'package:clingfy/ui/platform/platform_kind.dart';
 import 'package:clingfy/ui/platform/widgets/app_button.dart';
 import 'package:flutter/cupertino.dart' show CupertinoIcons;
 import 'package:flutter/material.dart';
@@ -84,13 +85,17 @@ class _AboutSettingsSectionState extends State<AboutSettingsSection> {
               const SizedBox(height: 20),
               AboutSection(packageInfo: _packageInfo),
               const SizedBox(height: 20),
-              AppButton(
-                label: l10n.checkForUpdates,
-                icon: CupertinoIcons.arrow_clockwise,
-                variant: AppButtonVariant.primary,
-                size: AppButtonSize.regular,
-                onPressed: () => NativeBridge.instance.checkForUpdates(),
-              ),
+              // Phase 10.3 honesty: the Windows updater lands in Phase 10.6
+              // (checkForUpdates is a hardcoded-false stub until then) — a
+              // button that silently does nothing is worse than no button.
+              if (!isWindows())
+                AppButton(
+                  label: l10n.checkForUpdates,
+                  icon: CupertinoIcons.arrow_clockwise,
+                  variant: AppButtonVariant.primary,
+                  size: AppButtonSize.regular,
+                  onPressed: () => NativeBridge.instance.checkForUpdates(),
+                ),
             ],
           ),
         ),

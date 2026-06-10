@@ -7,6 +7,7 @@ import 'package:clingfy/ui/theme/app_theme.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:macos_ui/macos_ui.dart';
+import 'package:clingfy/ui/platform/platform_kind.dart';
 
 Widget _buildSection({
   DisplayTargetMode targetMode = DisplayTargetMode.explicitId,
@@ -95,6 +96,18 @@ double _dropdownMenuRowWidth(WidgetTester tester, int index) {
 }
 
 void main() {
+  // Phase 10.3 forked this surface's widget tree by platform (no-op
+  // controls hidden / zoom editing disabled on Windows). These legacy
+  // assertions pin the macOS branch regardless of the host OS. Windows
+  // hide-coverage: windows_control_hides_test.dart covers the standalone
+  // sections; sidebar-level hides are pinned by the isWindows() gates.
+  setUp(() {
+    debugPlatformKindOverride = PlatformKind.macos;
+  });
+  tearDown(() {
+    debugPlatformKindOverride = null;
+  });
+
   testWidgets(
     'capture source title is hidden and display refresh moves inline',
     (tester) async {

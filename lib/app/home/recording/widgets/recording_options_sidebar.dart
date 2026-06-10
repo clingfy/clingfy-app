@@ -15,6 +15,7 @@ import 'package:clingfy/app/home/recording/widgets/recording_source_section.dart
 import 'package:clingfy/app/home/recording/widgets/overlay_segmented.dart';
 import 'package:clingfy/l10n/app_localizations.dart';
 import 'package:clingfy/ui/platform/widgets/app_pane_header.dart';
+import 'package:clingfy/ui/platform/platform_kind.dart';
 
 class RecordingSidebarRail extends StatelessWidget {
   const RecordingSidebarRail({
@@ -407,27 +408,31 @@ class RecordingOptionsSidebar extends StatelessWidget {
         onSystemAudioEnabledChanged: onSystemAudioEnabledChanged,
         onExcludeMicFromSystemAudioChanged: onExcludeMicFromSystemAudioChanged,
       ),
-      AppSettingsGroup(
-        title: l10n.pointer,
-        showHeader: false,
-        children: [
-          AppFormRow(
-            label: l10n.cursorHighlightVisibility,
-            infoTooltip:
-                cursorEnabled && cursorLinkedToRecording && !isRecording
-                ? l10n.cursorHint
-                : null,
-            control: _buildSegmentedControl(
-              mode: cursorEnabled
-                  ? (cursorLinkedToRecording
-                        ? OverlayMode.whileRecording
-                        : OverlayMode.alwaysOn)
-                  : OverlayMode.off,
-              onChanged: onCursorModeChanged,
+      // Phase 10.3 (Windows): the live cursor-highlight overlay does not
+      // exist (setCursorHighlightEnabled is a no-op) — hide its control.
+      // Post-processing cursor rendering is separate and real.
+      if (!isWindows())
+        AppSettingsGroup(
+          title: l10n.pointer,
+          showHeader: false,
+          children: [
+            AppFormRow(
+              label: l10n.cursorHighlightVisibility,
+              infoTooltip:
+                  cursorEnabled && cursorLinkedToRecording && !isRecording
+                  ? l10n.cursorHint
+                  : null,
+              control: _buildSegmentedControl(
+                mode: cursorEnabled
+                    ? (cursorLinkedToRecording
+                          ? OverlayMode.whileRecording
+                          : OverlayMode.alwaysOn)
+                    : OverlayMode.off,
+                onChanged: onCursorModeChanged,
+              ),
             ),
-          ),
-        ],
-      ),
+          ],
+        ),
     ];
   }
 
@@ -504,7 +509,10 @@ class RecordingOptionsSidebar extends StatelessWidget {
         onCountdownEnabledChanged: onCountdownEnabledChanged,
         onCountdownDurationChanged: onCountdownDurationChanged,
       ),
-      if (targetMode != DisplayTargetMode.singleAppWindow)
+      // Phase 10.3 (Windows): setExcludeRecorderApp is a native no-op (and
+      // the obvious implementation inherits the hybrid-GPU WDA trap), so the
+      // toggle is hidden rather than silently ignored.
+      if (targetMode != DisplayTargetMode.singleAppWindow && !isWindows())
         RecordingCaptureSettingsSection(
           isRecording: isRecording,
           excludeRecorderAppFromCapture: excludeRecorderAppFromCapture,

@@ -4491,6 +4491,54 @@ abstract class AppLocalizations {
   /// In en, this message translates to:
   /// **'Recording stopped: the display you were recording was disconnected. Your recording up to that point has been saved.'**
   String get warnDisplayDisconnectedPartialSaved;
+
+  /// No description provided for @cameraPreviewUseInApp.
+  ///
+  /// In en, this message translates to:
+  /// **'Can\'t see the camera? Use in-app preview'**
+  String get cameraPreviewUseInApp;
+
+  /// No description provided for @cameraPreviewUseFloating.
+  ///
+  /// In en, this message translates to:
+  /// **'Use floating camera bubble'**
+  String get cameraPreviewUseFloating;
+
+  /// No description provided for @appliedOnExportNoticeWindows.
+  ///
+  /// In en, this message translates to:
+  /// **'Applied on export — the inline preview doesn\'t show this effect yet.'**
+  String get appliedOnExportNoticeWindows;
+
+  /// No description provided for @errBadMode.
+  ///
+  /// In en, this message translates to:
+  /// **'This recording mode isn\'t available on Windows yet.'**
+  String get errBadMode;
+
+  /// No description provided for @errNoCamera.
+  ///
+  /// In en, this message translates to:
+  /// **'No camera is available.'**
+  String get errNoCamera;
+
+  /// No description provided for @errCameraInputError.
+  ///
+  /// In en, this message translates to:
+  /// **'The camera stopped working.'**
+  String get errCameraInputError;
+
+  /// No description provided for @errFileNotFound.
+  ///
+  /// In en, this message translates to:
+  /// **'File not found.'**
+  String get errFileNotFound;
+
+  /// No description provided for @errWindowsNotImplemented.
+  ///
+  /// In en, this message translates to:
+  /// **'This feature isn\'t available on Windows yet.'**
+  String get errWindowsNotImplemented;
 }
 
 class _AppLocalizationsDelegate

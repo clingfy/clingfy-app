@@ -108,6 +108,22 @@ std::string CurrentIso8601Timestamp() {
 
 std::string ResolveDefaultRecordingsRoot() {
 #ifdef _WIN32
+  // Phase 10.3 test/support seam (mirrors CLINGFY_DEFAULT_SAVE_FOLDER):
+  // lets the storage-router tests point the snapshot/clear handlers at a
+  // temp directory instead of the real per-user recordings root.
+  {
+    const DWORD needed =
+        ::GetEnvironmentVariableW(L"CLINGFY_RECORDINGS_ROOT", nullptr, 0);
+    if (needed > 1) {
+      std::wstring value(needed, L'\0');
+      const DWORD written = ::GetEnvironmentVariableW(
+          L"CLINGFY_RECORDINGS_ROOT", value.data(), needed);
+      if (written > 0 && written < needed) {
+        value.resize(written);
+        return Utf8FromWide(value);
+      }
+    }
+  }
   PWSTR raw_path = nullptr;
   HRESULT hr = ::SHGetKnownFolderPath(FOLDERID_LocalAppData, 0, nullptr,
                                        &raw_path);

@@ -139,8 +139,12 @@ class HeroPanel extends StatelessWidget {
                         ),
                         label: Text(
                           cameraFloatingPreview
-                              ? "Can't see the camera? Use in-app preview"
-                              : 'Use floating camera bubble',
+                              ? AppLocalizations.of(
+                                  context,
+                                )!.cameraPreviewUseInApp
+                              : AppLocalizations.of(
+                                  context,
+                                )!.cameraPreviewUseFloating,
                         ),
                       ),
                       SizedBox(height: lgGap),

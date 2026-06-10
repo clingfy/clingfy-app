@@ -9,6 +9,7 @@ import 'package:flutter/services.dart';
 import 'package:flutter_test/flutter_test.dart';
 
 import '../../../test_helpers/native_test_setup.dart';
+import 'package:clingfy/ui/platform/platform_kind.dart';
 
 Future<void> _emitWorkflowEvent(Map<String, Object?> event) async {
   final messenger =
@@ -252,6 +253,65 @@ void main() {
       expect(harness.recording.consumePendingWarningMessage(), isNull);
     },
   );
+
+  test(
+    'previewFailed reads the Windows `code` key (macOS sends `reason`)',
+    () async {
+      final harness = await createHarness();
+      addTearDown(harness.recording.dispose);
+      addTearDown(harness.settings.dispose);
+
+      harness.recording.beginRecordingStartIntent();
+      final sessionId = harness.recording.sessionId!;
+      await _emitWorkflowEvent({
+        'type': 'recordingStarted',
+        'sessionId': sessionId,
+      });
+      await _emitWorkflowEvent({
+        'type': 'previewFailed',
+        'sessionId': sessionId,
+        'code': 'VIDEO_FILE_MISSING',
+        'error': 'MediaPlayer reported a media failure.',
+      });
+
+      // Phase 10.3: the Windows `code` key used to be dropped (only macOS's
+      // `reason` was read), degrading every preview failure to PREVIEW_ERROR.
+      expect(harness.recording.errorCode, 'VIDEO_FILE_MISSING');
+    },
+  );
+
+  test('displayError prefers the code on Windows, prose on macOS', () async {
+    final harness = await createHarness();
+    addTearDown(harness.recording.dispose);
+    addTearDown(harness.settings.dispose);
+    addTearDown(() => debugPlatformKindOverride = null);
+
+    harness.recording.beginRecordingStartIntent();
+    final sessionId = harness.recording.sessionId!;
+    await _emitWorkflowEvent({
+      'type': 'recordingFailed',
+      'sessionId': sessionId,
+      'stage': 'start',
+      'code': 'TARGET_ERROR',
+      'error': 'No area selected to record. Pick an area first.',
+    });
+
+    // Windows: the code wins so the mapper can localize; the native prose
+    // stays available as the unmapped-code fallback.
+    debugPlatformKindOverride = PlatformKind.windows;
+    expect(harness.recording.displayError, 'TARGET_ERROR');
+    expect(
+      harness.recording.displayErrorFallback,
+      'No area selected to record. Pick an area first.',
+    );
+
+    // macOS: natively-localized prose keeps winning (legacy behavior).
+    debugPlatformKindOverride = PlatformKind.macos;
+    expect(
+      harness.recording.displayError,
+      'No area selected to record. Pick an area first.',
+    );
+  });
 
   test(
     'pause then resume returns to recording and stop still finalizes',
@@ -1144,5 +1204,49 @@ void main() {
         expect(harness.recording.inlinePreviewTextureId, isNull);
       },
     );
+
+    test('previewOpen PlatformException keeps its structured code after the '
+        'controller settles to idle', () async {
+      final harness = await createHarness();
+      addTearDown(harness.recording.dispose);
+      addTearDown(harness.settings.dispose);
+
+      final messenger =
+          TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger;
+      messenger.setMockMethodCallHandler(screenRecorderChannel, (call) async {
+        if (call.method == 'previewOpen') {
+          throw PlatformException(
+            code: 'PREVIEW_INPUT_MISSING',
+            message: 'screen.mov is missing from the project bundle',
+          );
+        }
+        return null;
+      });
+
+      harness.recording.beginRecordingStartIntent();
+      final sessionId = harness.recording.sessionId!;
+      await _emitWorkflowEvent({
+        'type': 'recordingStarted',
+        'sessionId': sessionId,
+      });
+      await harness.recording.stopRecording();
+      await _emitWorkflowEvent({
+        'type': 'recordingFinalized',
+        'sessionId': sessionId,
+        'projectPath': '/tmp/test.clingfyproj',
+      });
+
+      await harness.recording.handlePreviewHostMounted();
+
+      // Phase 10.3 regression: _transitionToIdle used to overwrite the
+      // structured code with the generic PREVIEW_OPEN_ERROR, making the
+      // mapper's PREVIEW_INPUT_MISSING case unreachable.
+      expect(harness.recording.phase, WorkflowPhase.idle);
+      expect(harness.recording.errorCode, 'PREVIEW_INPUT_MISSING');
+      expect(
+        harness.recording.errorMessage,
+        'screen.mov is missing from the project bundle',
+      );
+    });
   });
 }

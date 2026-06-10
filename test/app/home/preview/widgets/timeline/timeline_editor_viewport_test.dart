@@ -10,8 +10,20 @@ import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 
 import '../../../../../test_helpers/native_test_setup.dart';
+import 'package:clingfy/ui/platform/platform_kind.dart';
 
 void main() {
+  // Phase 10.3 forked this surface's widget tree by platform (no-op
+  // controls hidden / zoom editing disabled on Windows). These legacy
+  // assertions pin the macOS branch regardless of the host OS; Windows
+  // branches are covered by dedicated 10.3 tests.
+  setUp(() {
+    debugPlatformKindOverride = PlatformKind.macos;
+  });
+  tearDown(() {
+    debugPlatformKindOverride = null;
+  });
+
   TestWidgetsFlutterBinding.ensureInitialized();
 
   setUp(() async {

@@ -7,6 +7,7 @@ import 'package:clingfy/ui/platform/widgets/app_inset_group.dart';
 import 'package:clingfy/ui/platform/widgets/app_settings_group.dart';
 import 'package:clingfy/ui/platform/widgets/app_sidebar_tokens.dart';
 import 'package:clingfy/ui/platform/widgets/platform_dropdown.dart';
+import 'package:clingfy/ui/platform/platform_kind.dart';
 import 'package:flutter/material.dart' hide PlatformMenuItem;
 
 class RecordingSourceSection extends StatelessWidget {
@@ -229,13 +230,16 @@ class RecordingSourceSection extends StatelessWidget {
                 label: l10n.changeArea,
                 onPressed: isRecording ? null : onPickArea,
               ),
-              AppButton(
-                size: AppButtonSize.regular,
-                variant: AppButtonVariant.secondary,
-                icon: Icons.visibility_outlined,
-                label: l10n.revealArea,
-                onPressed: onRevealArea,
-              ),
+              // Phase 10.3 (Windows): revealAreaRecordingRegion is a
+              // native no-op — no reveal overlay exists yet.
+              if (!isWindows())
+                AppButton(
+                  size: AppButtonSize.regular,
+                  variant: AppButtonVariant.secondary,
+                  icon: Icons.visibility_outlined,
+                  label: l10n.revealArea,
+                  onPressed: onRevealArea,
+                ),
               AppButton(
                 size: AppButtonSize.regular,
                 variant: AppButtonVariant.secondary,

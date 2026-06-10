@@ -812,5 +812,13 @@
     }
   },
   "warnWindowClosedPartialSaved": "Înregistrarea s-a oprit: fereastra pe care o înregistrai a fost închisă. Înregistrarea de până atunci a fost salvată.",
-  "warnDisplayDisconnectedPartialSaved": "Înregistrarea s-a oprit: ecranul pe care îl înregistrai a fost deconectat. Înregistrarea de până atunci a fost salvată."
+  "warnDisplayDisconnectedPartialSaved": "Înregistrarea s-a oprit: ecranul pe care îl înregistrai a fost deconectat. Înregistrarea de până atunci a fost salvată.",
+  "cameraPreviewUseInApp": "Nu vezi camera? Folosește previzualizarea din aplicație",
+  "cameraPreviewUseFloating": "Folosește bula plutitoare a camerei",
+  "appliedOnExportNoticeWindows": "Se aplică la export — previzualizarea din aplicație nu arată încă acest efect.",
+  "errBadMode": "Acest mod de înregistrare nu este încă disponibil pe Windows.",
+  "errNoCamera": "Nicio cameră disponibilă.",
+  "errCameraInputError": "Camera a încetat să funcționeze.",
+  "errFileNotFound": "Fișierul nu a fost găsit.",
+  "errWindowsNotImplemented": "Această funcție nu este încă disponibilă pe Windows."
 }

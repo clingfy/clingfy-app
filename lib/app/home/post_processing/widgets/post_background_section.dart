@@ -14,6 +14,7 @@ import 'package:clingfy/ui/platform/widgets/app_slider.dart';
 import 'package:clingfy/ui/platform/widgets/app_slider_row.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_colorpicker/flutter_colorpicker.dart';
+import 'package:clingfy/ui/platform/platform_kind.dart';
 
 /// Localized display name for a procedural preset id.
 String _presetDisplayName(AppLocalizations l10n, String presetId) {
@@ -62,6 +63,17 @@ class PostBackgroundSection extends StatelessWidget {
 
   final Future<String?> Function() onPickImage;
 
+  /// Phase 10.3 (Windows): image/preset backgrounds are hidden (the
+  /// export renders only backgroundColor), but a project saved on macOS or
+  /// a pre-10.3 build can still carry those kinds — coerce the DISPLAYED
+  /// mode to color so the segmented control has a valid selection and the
+  /// dead pick-image/preset UI never renders. Persisted state is left
+  /// untouched (the export ignores it anyway).
+  BackgroundKind get _effectiveBackgroundKind =>
+      isWindows() && backgroundKind != BackgroundKind.color
+      ? BackgroundKind.color
+      : backgroundKind;
+
   @override
   Widget build(BuildContext context) {
     final l10n = AppLocalizations.of(context)!;
@@ -74,7 +86,7 @@ class PostBackgroundSection extends StatelessWidget {
           showHeader: false,
           children: [
             AppSegmented<BackgroundKind>(
-              value: backgroundKind,
+              value: _effectiveBackgroundKind,
               onChanged: isProcessing ? null : onBackgroundKindChanged,
               compact: true,
               items: [
@@ -83,16 +95,22 @@ class PostBackgroundSection extends StatelessWidget {
                   label: l10n.backgroundModeColor,
                   icon: Icons.format_color_fill_outlined,
                 ),
-                AppSegmentedItem(
-                  value: BackgroundKind.image,
-                  label: l10n.backgroundModeImage,
-                  icon: Icons.image_outlined,
-                ),
-                AppSegmentedItem(
-                  value: BackgroundKind.preset,
-                  label: l10n.backgroundModePreset,
-                  icon: Icons.auto_awesome_outlined,
-                ),
+                // Phase 10.3 (Windows): the export renders only
+                // backgroundColor (image/preset args are ignored and
+                // pickImage is a native null stub) — offering the modes
+                // produced silent no-ops.
+                if (!isWindows()) ...[
+                  AppSegmentedItem(
+                    value: BackgroundKind.image,
+                    label: l10n.backgroundModeImage,
+                    icon: Icons.image_outlined,
+                  ),
+                  AppSegmentedItem(
+                    value: BackgroundKind.preset,
+                    label: l10n.backgroundModePreset,
+                    icon: Icons.auto_awesome_outlined,
+                  ),
+                ],
               ],
             ),
             const SizedBox(height: AppSidebarTokens.optionsSubgroupGap),
@@ -104,7 +122,7 @@ class PostBackgroundSection extends StatelessWidget {
   }
 
   List<Widget> _modeChildren(BuildContext context, AppLocalizations l10n) {
-    switch (backgroundKind) {
+    switch (_effectiveBackgroundKind) {
       case BackgroundKind.color:
         return _colorChildren(context, l10n);
       case BackgroundKind.image:

@@ -1,9 +1,13 @@
 #include "Bridge/Routers/export_router.h"
 
 #include <cstdint>
+#include <filesystem>
+#include <fstream>
 #include <memory>
 #include <optional>
+#include <sstream>
 #include <string>
+#include <system_error>
 #include <thread>
 #include <utility>
 
@@ -11,8 +15,12 @@
 #include "Bridge/native_error_codes.h"
 #include "Bridge/platform_thread_dispatcher.h"
 #include "Bridge/result_helpers.h"
+#include "Capture/Cursor/cursor_sidecar_reader.h"
 #include "Capture/Export/export_passthrough.h"
 #include "Capture/Export/export_session.h"
+#include "Capture/Zoom/zoom_timeline_builder.h"
+#include "Capture/recording_project_reader.h"
+#include "Services/shell_reveal.h"
 #include "preview/preview_engine.h"
 
 namespace clingfy::bridge::routers::export_ {
@@ -35,8 +43,8 @@ void HandleSaveManualZoomSegments(
     const flutter::MethodCall<flutter::EncodableValue>& /*call*/,
     std::unique_ptr<flutter::MethodResult<flutter::EncodableValue>> result) {
   // Dart treats `false` as "save failed"; the manual-zoom workflow falls
-  // back gracefully. Real persistence lands once Phase 6 wires up the
-  // project-bundle writer.
+  // back gracefully. Manual zoom editing is hidden on Windows (Phase 10.3)
+  // until real persistence lands.
   reply::Bool(*result, false);
 }
 
@@ -175,6 +183,96 @@ void ReplyForExportOutcome(
                    flutter::EncodableValue(project_path));
       return;
   }
+}
+
+// ---- getZoomSegments (Phase 10.3) -------------------------------------------
+//
+// Returns the SAME auto-zoom segment list the export will render, computed
+// the same way ExportPassthrough/ZoomExportController do it: project bundle
+// → cursor sidecar → BuildZoomSegments over its samples + clicks. This is
+// what makes the editor's zoom track honest on Windows — before this, the
+// track was empty while the default export auto-zoomed anyway.
+//
+// Reply shape matches macOS ZoomQueryService exactly:
+//   [{id: "auto_<i>", startMs: int, endMs: int, source: "auto"}]
+// Every failure (missing project, no sidecar, parse error) replies [] —
+// the macOS contract for "nothing to show".
+//
+// duration_ms is passed as 0, which derives the timeline end from the last
+// sidecar event (zoom_timeline_builder.cpp): start times and interior end
+// times are identical to the export's; only a final still-active segment's
+// endMs can differ from the export's MF-duration-clamped value.
+void HandleGetZoomSegments(
+    const flutter::MethodCall<flutter::EncodableValue>& call,
+    std::unique_ptr<flutter::MethodResult<flutter::EncodableValue>> result) {
+  std::string project_path;
+  if (const auto* args = AsMap(call.arguments())) {
+    project_path = ReadString(*args, "projectPath");
+  }
+  if (project_path.empty()) {
+    reply::EmptyList(*result);
+    return;
+  }
+
+  // The channel string is UTF-8; fs::path(std::string) would decode it
+  // with the legacy ACP (this exe does not opt into the UTF-8 code page),
+  // silently failing for non-ASCII user names. Use the same CP_UTF8
+  // conversion every other ReadRecordingProject call site uses.
+  auto read = clingfy::capture::ReadRecordingProject(
+      clingfy::storage::Utf8ToWide(project_path));
+  if (read.error != clingfy::capture::ReadError::kNone ||
+      !read.project.has_value()) {
+    reply::EmptyList(*result);
+    return;
+  }
+
+  // Same sidecar resolution as export_passthrough: prefer the manifest's
+  // cursor path, else the conventional sibling of the screen video.
+  std::filesystem::path sidecar_path;
+  if (read.project->cursor_path.has_value()) {
+    sidecar_path = std::filesystem::path(*read.project->cursor_path);
+  } else {
+    sidecar_path = std::filesystem::path(read.project->screen_path)
+                       .parent_path() /
+                   L"cursor.jsonl";
+  }
+  std::error_code ec;
+  if (!std::filesystem::exists(sidecar_path, ec)) {
+    reply::EmptyList(*result);
+    return;
+  }
+  std::ifstream file(sidecar_path, std::ios::in | std::ios::binary);
+  if (!file.is_open()) {
+    reply::EmptyList(*result);
+    return;
+  }
+  std::stringstream buffer;
+  buffer << file.rdbuf();
+  const auto sidecar =
+      clingfy::capture::ParseCursorSidecar(buffer.str());
+  if (!sidecar.has_value()) {
+    reply::EmptyList(*result);
+    return;
+  }
+
+  const auto segments = clingfy::capture::BuildZoomSegments(
+      sidecar->samples, sidecar->clicks, /*duration_ms=*/0);
+  flutter::EncodableList out;
+  out.reserve(segments.size());
+  for (size_t i = 0; i < segments.size(); ++i) {
+    out.push_back(flutter::EncodableValue(flutter::EncodableMap{
+        {flutter::EncodableValue("id"),
+         flutter::EncodableValue("auto_" + std::to_string(i))},
+        {flutter::EncodableValue("startMs"),
+         flutter::EncodableValue(static_cast<std::int64_t>(
+             segments[i].start_ms))},
+        {flutter::EncodableValue("endMs"),
+         flutter::EncodableValue(static_cast<std::int64_t>(
+             segments[i].end_ms))},
+        {flutter::EncodableValue("source"), flutter::EncodableValue("auto")},
+    }));
+  }
+  reply::List(*result, std::move(out));
 }
 
 void HandleExportVideo(
@@ -392,7 +490,7 @@ void RegisterHandlers(HandlerTable& table) {
   // .clingfyproj manifest via `clingfy::capture::RecordingProjectReader`
   // and returns the macOS-shaped map.
 
-  table["getZoomSegments"] = &HandleEmptyList;
+  table["getZoomSegments"] = &HandleGetZoomSegments;
   table["getManualZoomSegments"] = &HandleEmptyList;
   table["saveManualZoomSegments"] = &HandleSaveManualZoomSegments;
 }

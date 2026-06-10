@@ -826,5 +826,13 @@
     }
   },
   "warnWindowClosedPartialSaved": "Recording stopped: the window you were recording was closed. Your recording up to that point has been saved.",
-  "warnDisplayDisconnectedPartialSaved": "Recording stopped: the display you were recording was disconnected. Your recording up to that point has been saved."
+  "warnDisplayDisconnectedPartialSaved": "Recording stopped: the display you were recording was disconnected. Your recording up to that point has been saved.",
+  "cameraPreviewUseInApp": "Can't see the camera? Use in-app preview",
+  "cameraPreviewUseFloating": "Use floating camera bubble",
+  "appliedOnExportNoticeWindows": "Applied on export — the inline preview doesn't show this effect yet.",
+  "errBadMode": "This recording mode isn't available on Windows yet.",
+  "errNoCamera": "No camera is available.",
+  "errCameraInputError": "The camera stopped working.",
+  "errFileNotFound": "File not found.",
+  "errWindowsNotImplemented": "This feature isn't available on Windows yet."
 }

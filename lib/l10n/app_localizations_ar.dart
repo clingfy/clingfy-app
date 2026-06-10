@@ -2432,4 +2432,30 @@ class AppLocalizationsAr extends AppLocalizations {
   @override
   String get warnDisplayDisconnectedPartialSaved =>
       'توقف التسجيل: الشاشة التي كنت تسجلها فُصلت. تم حفظ تسجيلك حتى تلك اللحظة.';
+
+  @override
+  String get cameraPreviewUseInApp =>
+      'لا ترى الكاميرا؟ استخدم المعاينة داخل التطبيق';
+
+  @override
+  String get cameraPreviewUseFloating => 'استخدم فقاعة الكاميرا العائمة';
+
+  @override
+  String get appliedOnExportNoticeWindows =>
+      'يُطبَّق عند التصدير — المعاينة الداخلية لا تعرض هذا التأثير بعد.';
+
+  @override
+  String get errBadMode => 'وضع التسجيل هذا غير متاح على ويندوز بعد.';
+
+  @override
+  String get errNoCamera => 'لا توجد كاميرا متاحة.';
+
+  @override
+  String get errCameraInputError => 'توقفت الكاميرا عن العمل.';
+
+  @override
+  String get errFileNotFound => 'الملف غير موجود.';
+
+  @override
+  String get errWindowsNotImplemented => 'هذه الميزة غير متاحة على ويندوز بعد.';
 }

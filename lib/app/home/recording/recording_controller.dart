@@ -10,6 +10,7 @@ import 'package:clingfy/app/infrastructure/observability/telemetry_service.dart'
 import 'package:clingfy/app/infrastructure/logging/logger_service.dart';
 import 'package:clingfy/core/models/app_models.dart';
 import 'package:clingfy/app/settings/settings_controller.dart';
+import 'package:clingfy/ui/platform/platform_kind.dart';
 
 enum _PreviewOpenSource { recordingFinalized, externalProject }
 
@@ -90,6 +91,19 @@ class RecordingController extends ChangeNotifier {
   String? get originalRecordingPath => _state.projectPath;
   String? get errorCode => _state.errorCode;
   String? get errorMessage => _state.errorMessage ?? _state.errorCode;
+
+  /// Phase 10.3: what the toolbar should feed the error mapper. On Windows
+  /// the CODE wins (native messages are hardcoded English; the mapper
+  /// localizes codes), with the prose kept as [displayErrorFallback] for
+  /// unmapped codes. On macOS native messages are already localized, so
+  /// prose keeps winning.
+  String? get displayError => isWindows()
+      ? (_state.errorCode ?? _state.errorMessage)
+      : (_state.errorMessage ?? _state.errorCode);
+
+  /// The native prose to show when [displayError] is a code the mapper
+  /// doesn't recognize (better than rendering the raw token).
+  String? get displayErrorFallback => _state.errorMessage;
   String? get pendingWarningMessage => _pendingWarningMessage;
 
   bool get isRecording =>
@@ -647,15 +661,25 @@ class RecordingController extends ChangeNotifier {
     } catch (e, st) {
       Log.e("Recording", "Failed to open preview: $e", e, st);
       _recordExternalProjectOpenFailureIfNeeded();
+      // Keep the structured PlatformException code (PREVIEW_INPUT_MISSING
+      // etc.) so the mapper can localize it; the full toString was an
+      // unlocalizable wall of text.
       _state = _state.copyWith(
-        errorCode: 'PREVIEW_OPEN_ERROR',
-        errorMessage: e.toString(),
+        errorCode: e is PlatformException ? e.code : 'PREVIEW_OPEN_ERROR',
+        errorMessage: e is PlatformException
+            ? _normalizedPlatformErrorMessage(e)
+            : e.toString(),
       );
       notifyListeners();
       await _beginPreviewClose(requestNativeClose: false);
+      // Thread the SAME structured values — passing the generic
+      // PREVIEW_OPEN_ERROR/toString here would clobber the code set above
+      // and make the PREVIEW_INPUT_MISSING mapper case unreachable.
       _transitionToIdle(
-        errorCode: 'PREVIEW_OPEN_ERROR',
-        errorMessage: e.toString(),
+        errorCode: e is PlatformException ? e.code : 'PREVIEW_OPEN_ERROR',
+        errorMessage: e is PlatformException
+            ? _normalizedPlatformErrorMessage(e)
+            : e.toString(),
       );
     }
   }
@@ -983,7 +1007,12 @@ class RecordingController extends ChangeNotifier {
     final eventSessionId = event['sessionId']?.toString();
     if (_isStaleSession(eventSessionId)) return;
 
-    final errorCode = event['reason']?.toString() ?? 'PREVIEW_ERROR';
+    // Windows sends `code` (workflow_event_publisher.cpp); macOS sends
+    // `reason`. Reading only `reason` dropped the Windows code entirely.
+    final errorCode =
+        event['code']?.toString() ??
+        event['reason']?.toString() ??
+        'PREVIEW_ERROR';
     final errorMessage =
         event['error']?.toString() ?? event['reason']?.toString();
     Log.w('Recording', 'Preview failed', null, null, {

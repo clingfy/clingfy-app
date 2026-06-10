@@ -13,6 +13,7 @@ import 'package:clingfy/core/models/app_models.dart';
 
 import 'package:clingfy/core/bridges/native_bridge.dart';
 import 'package:clingfy/app/infrastructure/observability/telemetry_service.dart';
+import 'package:clingfy/ui/platform/platform_kind.dart';
 
 const _prefOverlayShapeId = 'pref.overlayShapeId';
 const _legacyPrefOverlayShape = 'overlayShape';
@@ -257,13 +258,22 @@ class OverlayController extends ChangeNotifier {
       }
 
       final prefs = await SharedPreferences.getInstance();
-      _areaDisplayId = prefs.getInt('pref.areaDisplayId');
-      final areaX = prefs.getDouble('pref.areaRect.x');
-      final areaY = prefs.getDouble('pref.areaRect.y');
-      final areaW = prefs.getDouble('pref.areaRect.width');
-      final areaH = prefs.getDouble('pref.areaRect.height');
-      if (areaX != null && areaY != null && areaW != null && areaH != null) {
-        _areaRect = Rect.fromLTWH(areaX, areaY, areaW, areaH);
+      if (isWindows()) {
+        // Phase 10.3: the Windows native crop region lives in process
+        // memory only — restoring the Dart half after a restart made the
+        // sidebar claim a selection that RecordingEngine::Start would
+        // reject with TARGET_ERROR. Clear honestly; the user re-picks.
+        // (macOS persists the region natively, so its restore is real.)
+        await _clearStaleAreaSelectionOnStartup(prefs);
+      } else {
+        _areaDisplayId = prefs.getInt('pref.areaDisplayId');
+        final areaX = prefs.getDouble('pref.areaRect.x');
+        final areaY = prefs.getDouble('pref.areaRect.y');
+        final areaW = prefs.getDouble('pref.areaRect.width');
+        final areaH = prefs.getDouble('pref.areaRect.height');
+        if (areaX != null && areaY != null && areaW != null && areaH != null) {
+          _areaRect = Rect.fromLTWH(areaX, areaY, areaW, areaH);
+        }
       }
       notifyListeners();
     } catch (e, st) {
@@ -902,6 +912,22 @@ class OverlayController extends ChangeNotifier {
     await prefs.remove('pref.areaRect.width');
     await prefs.remove('pref.areaRect.height');
     notifyListeners();
+  }
+
+  /// Phase 10.3 (Windows): drop a persisted area selection at startup —
+  /// the native crop region is process-memory only, so the restored Dart
+  /// half would claim a selection that recording can't honor. No native
+  /// clear call needed: a fresh process has no region to clear.
+  Future<void> _clearStaleAreaSelectionOnStartup(
+    SharedPreferences prefs,
+  ) async {
+    _areaDisplayId = null;
+    _areaRect = null;
+    await prefs.remove('pref.areaDisplayId');
+    await prefs.remove('pref.areaRect.x');
+    await prefs.remove('pref.areaRect.y');
+    await prefs.remove('pref.areaRect.width');
+    await prefs.remove('pref.areaRect.height');
   }
 
   void _onAreaSelectionClearedFromNative() {

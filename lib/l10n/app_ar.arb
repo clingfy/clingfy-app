@@ -812,5 +812,13 @@
     }
   },
   "warnWindowClosedPartialSaved": "توقف التسجيل: النافذة التي كنت تسجلها أُغلقت. تم حفظ تسجيلك حتى تلك اللحظة.",
-  "warnDisplayDisconnectedPartialSaved": "توقف التسجيل: الشاشة التي كنت تسجلها فُصلت. تم حفظ تسجيلك حتى تلك اللحظة."
+  "warnDisplayDisconnectedPartialSaved": "توقف التسجيل: الشاشة التي كنت تسجلها فُصلت. تم حفظ تسجيلك حتى تلك اللحظة.",
+  "cameraPreviewUseInApp": "لا ترى الكاميرا؟ استخدم المعاينة داخل التطبيق",
+  "cameraPreviewUseFloating": "استخدم فقاعة الكاميرا العائمة",
+  "appliedOnExportNoticeWindows": "يُطبَّق عند التصدير — المعاينة الداخلية لا تعرض هذا التأثير بعد.",
+  "errBadMode": "وضع التسجيل هذا غير متاح على ويندوز بعد.",
+  "errNoCamera": "لا توجد كاميرا متاحة.",
+  "errCameraInputError": "توقفت الكاميرا عن العمل.",
+  "errFileNotFound": "الملف غير موجود.",
+  "errWindowsNotImplemented": "هذه الميزة غير متاحة على ويندوز بعد."
 }

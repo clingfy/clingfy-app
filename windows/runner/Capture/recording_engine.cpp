@@ -46,6 +46,11 @@ RecordingEngine& RecordingEngine::Instance() {
   return engine;
 }
 
+bool RecordingEngine::IsSessionActive() const {
+  std::lock_guard<std::mutex> lock(mutex_);
+  return session_.IsActive();
+}
+
 RecordingEngine::RecordingEngine() = default;
 
 RecordingEngine::~RecordingEngine() {

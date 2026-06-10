@@ -5,7 +5,9 @@ import 'package:clingfy/ui/platform/widgets/app_sidebar_tokens.dart';
 import 'package:clingfy/ui/platform/widgets/app_slider.dart';
 import 'package:clingfy/ui/platform/widgets/app_slider_row.dart';
 import 'package:clingfy/ui/platform/widgets/app_toggle_row.dart';
+import 'package:clingfy/ui/platform/widgets/app_inline_notice.dart';
 import 'package:flutter/material.dart';
+import 'package:clingfy/ui/platform/platform_kind.dart';
 
 class PostZoomSection extends StatelessWidget {
   const PostZoomSection({
@@ -45,6 +47,15 @@ class PostZoomSection extends StatelessWidget {
               value: zoomEffectEnabled,
               onChanged: isProcessing ? null : onZoomEffectEnabledChanged,
             ),
+            // Phase 10.3 (Windows): the inline preview doesn't render the
+            // zoom effect — say so instead of looking like a dead toggle.
+            if (isWindows()) ...[
+              const SizedBox(height: AppSidebarTokens.compactGap),
+              AppInlineNotice(
+                key: const ValueKey('post_zoom_export_notice'),
+                message: l10n.appliedOnExportNoticeWindows,
+              ),
+            ],
             if (zoomEffectEnabled) ...[
               const SizedBox(
                 key: Key('post_zoom_intensity_gap'),

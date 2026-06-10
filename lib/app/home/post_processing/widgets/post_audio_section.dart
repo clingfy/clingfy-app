@@ -5,6 +5,7 @@ import 'package:clingfy/ui/platform/widgets/app_sidebar_tokens.dart';
 import 'package:clingfy/ui/platform/widgets/app_slider.dart';
 import 'package:clingfy/ui/platform/widgets/app_slider_row.dart';
 import 'package:flutter/material.dart';
+import 'package:clingfy/ui/platform/platform_kind.dart';
 
 class PostAudioSection extends StatelessWidget {
   const PostAudioSection({
@@ -69,6 +70,15 @@ class PostAudioSection extends StatelessWidget {
             if (!hasAudio) ...[
               const SizedBox(height: AppSidebarTokens.compactGap),
               AppInlineNotice(message: l10n.noMicAudioFound),
+            ],
+            // Phase 10.3 (Windows): gain/volume ARE honored by the export,
+            // but the preview player has no audio-mix path yet.
+            if (hasAudio && isWindows()) ...[
+              const SizedBox(height: AppSidebarTokens.compactGap),
+              AppInlineNotice(
+                key: const ValueKey('post_audio_export_notice'),
+                message: l10n.appliedOnExportNoticeWindows,
+              ),
             ],
           ],
         ),
