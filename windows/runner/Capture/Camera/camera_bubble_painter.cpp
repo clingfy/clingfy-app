@@ -146,6 +146,10 @@ bool CameraBubblePainter::Prepare(ID2D1Factory1* factory,
                            static_cast<float>(bubble_cy + draw_h / 2.0));
 
   // Mask geometry by shape (canvas space). null for "square" → axis-aligned clip.
+  // Reset the layer first: GetAddressOf() overwrites the raw pointer without
+  // releasing, so re-Prepare (every composition change) would leak the old
+  // ID2D1Layer otherwise.
+  mask_layer_.Reset();
   mask_geometry_ =
       CreateShapeGeometry(factory, shape, corner_radius, bubble_rect_);
   if (mask_geometry_ != nullptr) {

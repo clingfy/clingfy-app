@@ -231,6 +231,17 @@ TEST(CameraSlideEdgeTest, ManualUsesNearestEdge) {
             CameraSlideEdge::kBottom);
 }
 
+TEST(CameraSlideEdgeTest, ManualVerticalTieMatchesMacOSBottom) {
+  // Dead-center bubble on a landscape canvas: the vertical pair wins
+  // (min_vertical 540 < min_horizontal 960) and top/bottom tie exactly.
+  // macOS resolves the tie to the visual bottom (y-UP `bottomDistance <=
+  // topDistance → .bottom`); the y-DOWN port must agree.
+  const CameraBubbleRect centered{kCanvasW / 2.0 - 100.0,
+                                  kCanvasH / 2.0 - 100.0, 200.0, 200.0};
+  EXPECT_EQ(ResolveCameraSlideEdge("", true, centered, kCanvasW, kCanvasH),
+            CameraSlideEdge::kBottom);
+}
+
 TEST(CameraAnimationTest, NoPresetsIsIdentity) {
   const auto a =
       Resolve(MakeParams(CameraIntroKind::kNone, CameraOutroKind::kNone), 0);

@@ -824,7 +824,18 @@ RenderResult RenderComposedExport(const RenderRequest& request) {
       // clip/layer popped), so it sits on top of the screen + cursor + clicks
       // and is NOT magnified by smart zoom. Its own mask clips the bubble.
       if (camera_renderer != nullptr) {
-        camera_renderer->Draw(d2d_ctx.Get(), frame_ms, duration_hns / 10000);
+        // The animation timeline must share frame_ms's time base (rebased to
+        // the first video PTS). Raw MF_PD_DURATION keeps the container's PTS
+        // base, so passing it unrebased would put the outro window past the
+        // last reachable frame_ms and the outro would never finish. (An audio
+        // tail outlasting the video still inflates the duration by that tail
+        // — unknowable in a single pass — but recorder tails are well under
+        // one outro, so the outro now completes to within that sliver.)
+        const std::int64_t camera_total_ms =
+            duration_hns > first_video_hns
+                ? (duration_hns - first_video_hns) / 10000
+                : 0;
+        camera_renderer->Draw(d2d_ctx.Get(), frame_ms, camera_total_ms);
       }
       const HRESULT end_hr = d2d_ctx->EndDraw();
       d2d_ctx->SetTarget(nullptr);

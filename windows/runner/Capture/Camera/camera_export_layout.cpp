@@ -207,8 +207,11 @@ CameraSlideEdge ResolveCameraSlideEdge(const std::string& layout_preset,
     return left_dist <= right_dist ? CameraSlideEdge::kLeft
                                    : CameraSlideEdge::kRight;
   }
-  return top_dist <= bottom_dist ? CameraSlideEdge::kTop
-                                 : CameraSlideEdge::kBottom;
+  // Strict <: a vertical tie resolves to the bottom edge, matching macOS
+  // (y-UP `bottomDistance <= topDistance → .bottom` in
+  // CameraAnimationTimelineBuilder.resolvedSlideEdge).
+  return top_dist < bottom_dist ? CameraSlideEdge::kTop
+                                : CameraSlideEdge::kBottom;
 }
 
 CameraAnimationOutput ResolveCameraAnimation(const CameraAnimationParams& params,

@@ -115,6 +115,24 @@ struct CloseArgs {
   std::string session_id;
 };
 
+// Phase 9.7: seek plan for the paused-preview camera nudge. A paused
+// MediaPlayer emits no frame-server callbacks, so reflecting a camera
+// settings change requires a seek — but a same-position seek can be
+// coalesced to a no-op, and naively seeking to current-1 on every call
+// drifts the playhead 1ms further back per camera edit (a bubble drag is
+// ~60 calls/sec). The plan instead alternates between an anchor (the
+// position where the user actually parked the playhead) and its 1ms
+// neighbor, so any number of consecutive nudges stays within 1ms of the
+// anchor. Any external seek (current position no longer at the anchor or
+// its neighbor) re-anchors. Pure and lock-free for unit testing; the
+// engine persists anchor_ms between calls.
+struct CameraNudgePlan {
+  std::int64_t anchor_ms = 0;  // remember as the next call's previous anchor
+  std::int64_t target_ms = 0;  // position to seek to for this nudge
+};
+CameraNudgePlan ResolveCameraNudgeTarget(std::int64_t current_ms,
+                                         std::int64_t previous_anchor_ms);
+
 class PreviewEngine {
  public:
   // Process-wide singleton accessor used by the bridge router handlers.
@@ -279,6 +297,13 @@ class PreviewEngine {
   // ticks naturally. Atomic so the heartbeat can read without taking
   // the singleton mutex.
   std::atomic<std::int64_t> last_frame_ms_{0};
+
+  // Phase 9.7: anchor for the paused-preview camera nudge (see
+  // CameraNudgePlan above). -1 = no nudge has happened yet. Never reset:
+  // a stale anchor is self-correcting (the plan re-anchors as soon as the
+  // current position is not the anchor or its 1ms neighbor), and the
+  // worst case is a single 1ms-off seek. Guarded by mutex_.
+  std::int64_t camera_nudge_anchor_ms_ = -1;
 
   // Heartbeat thread + its lifecycle flag. Heartbeat runs while
   // running_ is true and emits a playerTick every ~100ms when the

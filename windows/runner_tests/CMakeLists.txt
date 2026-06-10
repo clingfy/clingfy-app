@@ -39,6 +39,7 @@ add_executable(runner_tests
   "camera_export_layout_test.cpp"
   "camera_format_test.cpp"
   "camera_meta_test.cpp"
+  "camera_nudge_plan_test.cpp"
   "camera_preview_support_test.cpp"
   "camera_readiness_test.cpp"
   "camera_recorder_test.cpp"
