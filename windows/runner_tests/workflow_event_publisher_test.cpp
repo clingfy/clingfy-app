@@ -148,6 +148,26 @@ TEST_F(WorkflowEventPublisherTest, RecordingWarningShape) {
   EXPECT_EQ(ReadString(*map, "sessionId"), "sess-q");
   EXPECT_EQ(ReadString(*map, "message"),
             "loopback endpoint silenced for 3s");
+  // Phase 10.2: the legacy no-code call must NOT grow a code key — macOS
+  // never sends one and Dart treats its absence as "render message".
+  EXPECT_EQ(map->find(flutter::EncodableValue("code")), map->end());
+}
+
+TEST_F(WorkflowEventPublisherTest, RecordingWarningShapeWithCode) {
+  // Phase 10.2: coded warnings let Dart localize + attach a settings
+  // action. The code travels verbatim next to the legacy message.
+  auto events = InstallRecordingSink();
+  WorkflowEventPublisher::Instance().EmitRecordingWarning(
+      "sess-q",
+      "Your microphone was disconnected. Recording continues without it.",
+      "MIC_DISCONNECTED");
+  test_support::PumpMessages();
+  ASSERT_EQ(events->size(), 1u);
+  const auto* map = AsMap((*events)[0]);
+  ASSERT_NE(map, nullptr);
+  EXPECT_EQ(ReadString(*map, "type"), "recordingWarning");
+  EXPECT_EQ(ReadString(*map, "code"), "MIC_DISCONNECTED");
+  EXPECT_FALSE(ReadString(*map, "message").empty());
 }
 
 TEST_F(WorkflowEventPublisherTest, ClearSinkStopsEmissions) {

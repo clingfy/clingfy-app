@@ -27,11 +27,26 @@ class PermissionsOnboardingScreen extends StatefulWidget {
       _PermissionsOnboardingScreenState();
 }
 
+/// Phase 10.2: the onboarding journey is a per-platform step list. Windows
+/// has no screen-recording or accessibility permission, so its journey is
+/// Welcome -> Mic + Camera; showing the macOS steps there meant a dead
+/// "Restart App" button and "macOS requires this" copy on Windows.
+enum _OnboardingStep { welcome, screen, audioCamera, cursorMagic }
+
 class _PermissionsOnboardingScreenState
     extends State<PermissionsOnboardingScreen>
     with WidgetsBindingObserver, SingleTickerProviderStateMixin {
   late final PageController _page;
   late final AnimationController _animController;
+
+  final List<_OnboardingStep> _steps = isWindows()
+      ? const [_OnboardingStep.welcome, _OnboardingStep.audioCamera]
+      : const [
+          _OnboardingStep.welcome,
+          _OnboardingStep.screen,
+          _OnboardingStep.audioCamera,
+          _OnboardingStep.cursorMagic,
+        ];
 
   late int _index;
 
@@ -52,7 +67,9 @@ class _PermissionsOnboardingScreenState
   @override
   void initState() {
     super.initState();
-    _index = widget.initialStep;
+    // Clamp the persisted step: the saved index may exceed the shorter
+    // Windows journey (or a journey that shrank between versions).
+    _index = widget.initialStep.clamp(0, _steps.length - 1).toInt();
     _page = PageController(initialPage: _index);
     _animController = AnimationController(
       vsync: this,
@@ -101,33 +118,58 @@ class _PermissionsOnboardingScreenState
   }
 
   bool _isStepDone(int idx) {
-    switch (idx) {
-      case 0:
+    if (idx < 0 || idx >= _steps.length) return false;
+    switch (_steps[idx]) {
+      case _OnboardingStep.welcome:
         return true;
-      case 1:
+      case _OnboardingStep.screen:
         return c.screenRecording;
-      case 2:
+      case _OnboardingStep.audioCamera:
         return _studioSkipped || c.microphone || c.camera;
-      case 3:
+      case _OnboardingStep.cursorMagic:
         return _magicSkipped || c.accessibility;
-      default:
-        return false;
     }
   }
 
   String _stepLabel(BuildContext context) {
     final l10n = _l10n(context);
-    return l10n.permissionsOnboardingStepLabel(_index + 1);
+    return l10n.permissionsOnboardingStepCount(_index + 1, _steps.length);
+  }
+
+  IconData _railIconFor(_OnboardingStep step) {
+    switch (step) {
+      case _OnboardingStep.welcome:
+        return CupertinoIcons.hand_raised;
+      case _OnboardingStep.screen:
+        return CupertinoIcons.desktopcomputer;
+      case _OnboardingStep.audioCamera:
+        return CupertinoIcons.mic;
+      case _OnboardingStep.cursorMagic:
+        return Icons.mouse_rounded;
+    }
+  }
+
+  String _railLabelFor(BuildContext context, _OnboardingStep step) {
+    final l10n = _l10n(context);
+    switch (step) {
+      case _OnboardingStep.welcome:
+        return l10n.permissionsOnboardingWelcomeRail;
+      case _OnboardingStep.screen:
+        return l10n.permissionsScreenRecording;
+      case _OnboardingStep.audioCamera:
+        return l10n.permissionsOnboardingMicCameraRail;
+      case _OnboardingStep.cursorMagic:
+        return l10n.permissionsAccessibility;
+    }
   }
 
   @override
   Widget build(BuildContext context) {
     final canGoNext = true;
-    final isLast = _index == 3;
+    final isLast = _index == _steps.length - 1;
 
     final theme = Theme.of(context);
     final spacing = theme.appSpacing;
-    final l10n = _l10n(context);
     final railColor = theme.colorScheme.surface;
     final accentColor = theme.colorScheme.primary;
 
@@ -154,33 +196,15 @@ class _PermissionsOnboardingScreenState
                   child: Column(
                     children: [
                       SizedBox(height: spacing.xxl + spacing.sm),
-                      _buildRailItem(
-                        icon: CupertinoIcons.hand_raised,
-                        label: l10n.permissionsOnboardingWelcomeRail,
-                        index: 0,
-                        accentColor: accentColor,
-                      ),
-                      _railDivider(),
-                      _buildRailItem(
-                        icon: CupertinoIcons.desktopcomputer,
-                        label: l10n.permissionsScreenRecording,
-                        index: 1,
-                        accentColor: accentColor,
-                      ),
-                      _railDivider(),
-                      _buildRailItem(
-                        icon: CupertinoIcons.mic,
-                        label: l10n.permissionsOnboardingMicCameraRail,
-                        index: 2,
-                        accentColor: accentColor,
-                      ),
-                      _railDivider(),
-                      _buildRailItem(
-                        icon: Icons.mouse_rounded,
-                        label: l10n.permissionsAccessibility,
-                        index: 3,
-                        accentColor: accentColor,
-                      ),
+                      for (var i = 0; i < _steps.length; i++) ...[
+                        if (i > 0) _railDivider(),
+                        _buildRailItem(
+                          icon: _railIconFor(_steps[i]),
+                          label: _railLabelFor(context, _steps[i]),
+                          index: i,
+                          accentColor: accentColor,
+                        ),
+                      ],
                     ],
                   ),
                 ),
@@ -201,10 +225,19 @@ class _PermissionsOnboardingScreenState
                             unawaited(c.setOnboardingStep(i));
                           },
                           children: [
-                            _welcome(context),
-                            _screenPermission(context),
-                            _audioCamera(context),
-                            _cursorMagic(context),
+                            for (final step in _steps)
+                              switch (step) {
+                                _OnboardingStep.welcome => _welcome(context),
+                                _OnboardingStep.screen => _screenPermission(
+                                  context,
+                                ),
+                                _OnboardingStep.audioCamera => _audioCamera(
+                                  context,
+                                ),
+                                _OnboardingStep.cursorMagic => _cursorMagic(
+                                  context,
+                                ),
+                              },
                           ],
                         ),
                       ),
@@ -666,16 +699,26 @@ class _PermissionsOnboardingScreenState
       emoji: '👋',
       title: l10n.permissionsOnboardingWelcomeTitle,
       subtitle: l10n.permissionsOnboardingWelcomeSubtitle,
-      heroAsset: 'assets/images/app-banner-macos.png',
+      heroAsset: isWindows()
+          ? 'assets/images/app-banner-windows.png'
+          : 'assets/images/app-banner-macos.png',
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.stretch,
         children: [
           _trustBlock(
             context,
-            lines: [
-              l10n.permissionsOnboardingTrustLocalFirst,
-              l10n.permissionsOnboardingTrustPermissionControl,
-            ],
+            lines: isWindows()
+                ? [
+                    l10n.permissionsOnboardingTrustLocalFirstWindows,
+                    l10n.permissionsOnboardingTrustPermissionControlWindows,
+                    // The headline Windows truth: no screen-recording
+                    // permission exists; recording works immediately.
+                    l10n.permissionsOnboardingWindowsNoScreenGrant,
+                  ]
+                : [
+                    l10n.permissionsOnboardingTrustLocalFirst,
+                    l10n.permissionsOnboardingTrustPermissionControl,
+                  ],
           ),
           const Divider(height: 28),
           _featureListTile(

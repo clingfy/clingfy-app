@@ -325,7 +325,6 @@
   "zoom": "Zoom",
   "intensity": "Intensitate",
   "layout": "Aspect",
-  "effects": "Efecte",
   "loudness": "Volum",
   "placement": "Poziționare",
   "motion": "Mișcare",
@@ -500,7 +499,6 @@
   "warnBeforeClosingUnexportedRecordingDescription": "Afișează o confirmare înainte de a închide înregistrarea curentă dacă nu a fost exportată încă.",
   "closeUnexportedRecordingTitle": "Închizi înregistrarea fără export?",
   "closeUnexportedRecordingMessage": "Această înregistrare nu a fost încă exportată. Dacă o închizi acum, vei pierde accesul la ea în sesiunea curentă.",
-  "keepEditing": "Continuă editarea",
   "closeWithoutExporting": "Închide fără export",
   "doNotShowAgain": "Nu mai arăta",
   "aboutThisApp": "Despre această aplicație",
@@ -658,14 +656,6 @@
   "restartApp": "Repornește aplicația",
   "permissionsOnboardingWelcomeRail": "Bun venit",
   "permissionsOnboardingMicCameraRail": "Mic + Cameră",
-  "permissionsOnboardingStepLabel": "Pasul {current} din 4",
-  "@permissionsOnboardingStepLabel": {
-    "placeholders": {
-      "current": {
-        "type": "int"
-      }
-    }
-  },
   "permissionsOnboardingWelcomeTitle": "Bun venit la Clingfy",
   "permissionsOnboardingWelcomeSubtitle": "O configurare rapidă și ești gata să înregistrezi în câteva minute.",
   "permissionsOnboardingTrustLocalFirst": "Local-first: înregistrările rămân pe Mac-ul tău.",
@@ -785,5 +775,42 @@
   "licenseNetworkUnavailableWhileConsumingTrial": "Rețeaua nu este disponibilă în timpul sincronizării utilizării trial.",
   "licenseNetworkUnavailableWhileDeactivatingDevice": "Rețeaua nu este disponibilă în timpul dezactivării dispozitivului.",
   "licenseValidated": "Licența a fost validată.",
-  "licenseNotEntitled": "Această licență nu deblochează funcțiile Pro."
+  "licenseNotEntitled": "Această licență nu deblochează funcțiile Pro.",
+  "warnMicOpenFailed": "Microfonul nu a putut porni — verifică accesul la microfon în setările de confidențialitate Windows. Înregistrarea continuă fără el.",
+  "warnMicDisconnected": "Microfonul a fost deconectat. Înregistrarea continuă fără el.",
+  "warnSystemAudioOpenFailed": "Sunetul sistemului nu a putut fi captat — verifică dispozitivul de ieșire în setările de sunet Windows. Înregistrarea continuă fără el.",
+  "warnSystemAudioStopped": "Captarea sunetului de sistem s-a oprit. Înregistrarea continuă fără el.",
+  "warnCameraUnavailable": "Camera nu este disponibilă acum. Înregistrarea continuă fără suprapunerea camerei.",
+  "warnCameraOpenFailed": "Camera nu a putut porni — verifică accesul la cameră în setările de confidențialitate Windows. Înregistrarea continuă fără suprapunere.",
+  "warnCameraDisconnected": "Camera a fost deconectată. Înregistrarea continuă fără ea.",
+  "warnEncoderVideoError": "Înregistrarea a întâmpinat o problemă de codare — videoclipul poate fi incomplet.",
+  "warnEncoderAudioError": "Înregistrarea a întâmpinat o problemă de codare audio — sunetul poate fi incomplet.",
+  "errMicrophonePermissionRequiredWindows": "Activează accesul la microfon în Setări Windows > Confidențialitate și securitate > Microfon, apoi încearcă din nou.",
+  "errCameraPermissionDeniedWindows": "Activează accesul la cameră în Setări Windows > Confidențialitate și securitate > Cameră.",
+  "permissionsHelpTextWindows": "Vezi ce poate folosi Clingfy și sari direct la pagina potrivită din Setări Windows.",
+  "permissionsChangedHintWindows": "Dacă schimbi o setare în Setări Windows, revino la Clingfy și reîmprospătează pagina pentru starea curentă.",
+  "permissionsScreenRecordingHelpWindows": "Windows nu cere o permisiune de înregistrare a ecranului — captarea ecranului, ferestrelor și zonelor funcționează din start.",
+  "permissionsNoGrantNeeded": "Nu necesită permisiune",
+  "permissionsDetailMicAccessOffWindows": "Accesul la microfon este oprit în setările de confidențialitate Windows. Pornește-l din Setări Windows > Confidențialitate și securitate > Microfon.",
+  "permissionsDetailMicMissingWindows": "Microfonul selectat nu este conectat. Reconectează-l sau alege altul.",
+  "permissionsDetailCameraAccessOffWindows": "Accesul la cameră este oprit în setările de confidențialitate Windows. Pornește-l din Setări Windows > Confidențialitate și securitate > Cameră.",
+  "permissionsDetailCameraMissingWindows": "Camera selectată nu este conectată. Reconecteaz-o sau alege alta.",
+  "permissionsDetailNoCamerasWindows": "Nu a fost detectată nicio cameră pe acest PC.",
+  "permissionsOpenSoundSettings": "Deschide setările de sunet",
+  "permissionsOnboardingTrustLocalFirstWindows": "Local mai întâi: înregistrările rămân pe PC-ul tău.",
+  "permissionsOnboardingTrustPermissionControlWindows": "Controlezi oricând accesul la microfon și cameră din Setări Windows.",
+  "permissionsOnboardingWindowsNoScreenGrant": "Nicio permisiune de înregistrare a ecranului nu este necesară pe Windows — captarea funcționează din start.",
+  "permissionsOnboardingStepCount": "Pasul {current} din {total}",
+  "@permissionsOnboardingStepCount": {
+    "placeholders": {
+      "current": {
+        "type": "int"
+      },
+      "total": {
+        "type": "int"
+      }
+    }
+  },
+  "warnWindowClosedPartialSaved": "Înregistrarea s-a oprit: fereastra pe care o înregistrai a fost închisă. Înregistrarea de până atunci a fost salvată.",
+  "warnDisplayDisconnectedPartialSaved": "Înregistrarea s-a oprit: ecranul pe care îl înregistrai a fost deconectat. Înregistrarea de până atunci a fost salvată."
 }

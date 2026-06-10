@@ -3670,12 +3670,6 @@ abstract class AppLocalizations {
   /// **'Mic + Camera'**
   String get permissionsOnboardingMicCameraRail;
 
-  /// No description provided for @permissionsOnboardingStepLabel.
-  ///
-  /// In en, this message translates to:
-  /// **'Step {current} of 4'**
-  String permissionsOnboardingStepLabel(int current);
-
   /// No description provided for @permissionsOnboardingWelcomeTitle.
   ///
   /// In en, this message translates to:
@@ -4335,6 +4329,168 @@ abstract class AppLocalizations {
   /// In en, this message translates to:
   /// **'This license does not unlock Pro features.'**
   String get licenseNotEntitled;
+
+  /// No description provided for @warnMicOpenFailed.
+  ///
+  /// In en, this message translates to:
+  /// **'Your microphone couldn\'t be started — check microphone access in Windows privacy settings. Recording continues without it.'**
+  String get warnMicOpenFailed;
+
+  /// No description provided for @warnMicDisconnected.
+  ///
+  /// In en, this message translates to:
+  /// **'Your microphone was disconnected. Recording continues without it.'**
+  String get warnMicDisconnected;
+
+  /// No description provided for @warnSystemAudioOpenFailed.
+  ///
+  /// In en, this message translates to:
+  /// **'System audio couldn\'t be captured — check your output device in Windows sound settings. Recording continues without it.'**
+  String get warnSystemAudioOpenFailed;
+
+  /// No description provided for @warnSystemAudioStopped.
+  ///
+  /// In en, this message translates to:
+  /// **'System audio capture stopped. Recording continues without it.'**
+  String get warnSystemAudioStopped;
+
+  /// No description provided for @warnCameraUnavailable.
+  ///
+  /// In en, this message translates to:
+  /// **'Your camera isn\'t available right now. Recording continues without the camera overlay.'**
+  String get warnCameraUnavailable;
+
+  /// No description provided for @warnCameraOpenFailed.
+  ///
+  /// In en, this message translates to:
+  /// **'Your camera couldn\'t be started — check camera access in Windows privacy settings. Recording continues without the overlay.'**
+  String get warnCameraOpenFailed;
+
+  /// No description provided for @warnCameraDisconnected.
+  ///
+  /// In en, this message translates to:
+  /// **'Your camera was disconnected. Recording continues without it.'**
+  String get warnCameraDisconnected;
+
+  /// No description provided for @warnEncoderVideoError.
+  ///
+  /// In en, this message translates to:
+  /// **'Recording hit an encoder problem — the video may be incomplete.'**
+  String get warnEncoderVideoError;
+
+  /// No description provided for @warnEncoderAudioError.
+  ///
+  /// In en, this message translates to:
+  /// **'Recording hit an audio encoding problem — the audio may be incomplete.'**
+  String get warnEncoderAudioError;
+
+  /// No description provided for @errMicrophonePermissionRequiredWindows.
+  ///
+  /// In en, this message translates to:
+  /// **'Enable microphone access in Windows Settings > Privacy & security > Microphone, then try again.'**
+  String get errMicrophonePermissionRequiredWindows;
+
+  /// No description provided for @errCameraPermissionDeniedWindows.
+  ///
+  /// In en, this message translates to:
+  /// **'Enable camera access in Windows Settings > Privacy & security > Camera.'**
+  String get errCameraPermissionDeniedWindows;
+
+  /// No description provided for @permissionsHelpTextWindows.
+  ///
+  /// In en, this message translates to:
+  /// **'Review what Clingfy can use and jump straight to the right Windows Settings page.'**
+  String get permissionsHelpTextWindows;
+
+  /// No description provided for @permissionsChangedHintWindows.
+  ///
+  /// In en, this message translates to:
+  /// **'If you change a setting in Windows Settings, return to Clingfy and refresh this page to see the latest status.'**
+  String get permissionsChangedHintWindows;
+
+  /// No description provided for @permissionsScreenRecordingHelpWindows.
+  ///
+  /// In en, this message translates to:
+  /// **'Windows doesn\'t require a screen-recording permission — display, window, and area capture work out of the box.'**
+  String get permissionsScreenRecordingHelpWindows;
+
+  /// No description provided for @permissionsNoGrantNeeded.
+  ///
+  /// In en, this message translates to:
+  /// **'No permission needed'**
+  String get permissionsNoGrantNeeded;
+
+  /// No description provided for @permissionsDetailMicAccessOffWindows.
+  ///
+  /// In en, this message translates to:
+  /// **'Microphone access is turned off in Windows privacy settings. Turn it on in Windows Settings > Privacy & security > Microphone.'**
+  String get permissionsDetailMicAccessOffWindows;
+
+  /// No description provided for @permissionsDetailMicMissingWindows.
+  ///
+  /// In en, this message translates to:
+  /// **'The selected microphone isn\'t connected. Plug it back in or choose another one.'**
+  String get permissionsDetailMicMissingWindows;
+
+  /// No description provided for @permissionsDetailCameraAccessOffWindows.
+  ///
+  /// In en, this message translates to:
+  /// **'Camera access is turned off in Windows privacy settings. Turn it on in Windows Settings > Privacy & security > Camera.'**
+  String get permissionsDetailCameraAccessOffWindows;
+
+  /// No description provided for @permissionsDetailCameraMissingWindows.
+  ///
+  /// In en, this message translates to:
+  /// **'The selected camera isn\'t connected. Plug it back in or choose another one.'**
+  String get permissionsDetailCameraMissingWindows;
+
+  /// No description provided for @permissionsDetailNoCamerasWindows.
+  ///
+  /// In en, this message translates to:
+  /// **'No camera was detected on this PC.'**
+  String get permissionsDetailNoCamerasWindows;
+
+  /// No description provided for @permissionsOpenSoundSettings.
+  ///
+  /// In en, this message translates to:
+  /// **'Open Sound Settings'**
+  String get permissionsOpenSoundSettings;
+
+  /// No description provided for @permissionsOnboardingTrustLocalFirstWindows.
+  ///
+  /// In en, this message translates to:
+  /// **'Local-first: your recordings stay on your PC.'**
+  String get permissionsOnboardingTrustLocalFirstWindows;
+
+  /// No description provided for @permissionsOnboardingTrustPermissionControlWindows.
+  ///
+  /// In en, this message translates to:
+  /// **'You control mic and camera access anytime in Windows Settings.'**
+  String get permissionsOnboardingTrustPermissionControlWindows;
+
+  /// No description provided for @permissionsOnboardingWindowsNoScreenGrant.
+  ///
+  /// In en, this message translates to:
+  /// **'No screen-recording permission needed on Windows — capture works out of the box.'**
+  String get permissionsOnboardingWindowsNoScreenGrant;
+
+  /// No description provided for @permissionsOnboardingStepCount.
+  ///
+  /// In en, this message translates to:
+  /// **'Step {current} of {total}'**
+  String permissionsOnboardingStepCount(int current, int total);
+
+  /// No description provided for @warnWindowClosedPartialSaved.
+  ///
+  /// In en, this message translates to:
+  /// **'Recording stopped: the window you were recording was closed. Your recording up to that point has been saved.'**
+  String get warnWindowClosedPartialSaved;
+
+  /// No description provided for @warnDisplayDisconnectedPartialSaved.
+  ///
+  /// In en, this message translates to:
+  /// **'Recording stopped: the display you were recording was disconnected. Your recording up to that point has been saved.'**
+  String get warnDisplayDisconnectedPartialSaved;
 }
 
 class _AppLocalizationsDelegate

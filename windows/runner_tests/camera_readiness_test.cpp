@@ -126,5 +126,40 @@ TEST(CameraReadinessTest, EveryCodeHasANonEmptyDistinctReason) {
   }
 }
 
+
+TEST(CameraReadinessTest, WireNamesAreStableAndUnique) {
+  // Phase 10.2: these strings ARE the getWindowsPermissionDetails wire
+  // contract with lib/core/permissions/models/windows_permission_details.dart
+  // — renaming one silently breaks Dart's state mapping.
+  EXPECT_STREQ(CameraReadinessCodeName(CameraReadinessCode::kReady), "ready");
+  EXPECT_STREQ(
+      CameraReadinessCodeName(CameraReadinessCode::kPermissionDeniedSystem),
+      "permissionDeniedSystem");
+  EXPECT_STREQ(
+      CameraReadinessCodeName(CameraReadinessCode::kPermissionDeniedUser),
+      "permissionDeniedUser");
+  EXPECT_STREQ(
+      CameraReadinessCodeName(CameraReadinessCode::kPermissionNotDetermined),
+      "permissionNotDetermined");
+  EXPECT_STREQ(
+      CameraReadinessCodeName(CameraReadinessCode::kNoDevicesAvailable),
+      "noDevicesAvailable");
+  EXPECT_STREQ(CameraReadinessCodeName(CameraReadinessCode::kNoDeviceSelected),
+               "noDeviceSelected");
+  EXPECT_STREQ(
+      CameraReadinessCodeName(CameraReadinessCode::kSelectedDeviceMissing),
+      "selectedDeviceMissing");
+
+  EXPECT_STREQ(CameraPermissionName(CameraPermission::kGranted), "granted");
+  EXPECT_STREQ(CameraPermissionName(CameraPermission::kDeniedBySystem),
+               "deniedBySystem");
+  EXPECT_STREQ(CameraPermissionName(CameraPermission::kDeniedByUser),
+               "deniedByUser");
+  EXPECT_STREQ(CameraPermissionName(CameraPermission::kNotDetermined),
+               "notDetermined");
+  EXPECT_STREQ(CameraPermissionName(CameraPermission::kUnavailableApi),
+               "unavailableApi");
+}
+
 }  // namespace
 }  // namespace clingfy::permissions

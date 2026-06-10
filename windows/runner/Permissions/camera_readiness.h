@@ -82,6 +82,12 @@ bool ShouldAttemptCameraCapture(bool disable_camera_overlay,
 // trailing punctuation). Used to surface *why* the camera is unavailable.
 const char* CameraReadinessReason(CameraReadinessCode code);
 
+// Phase 10.2 — stable wire names for the Dart bridge
+// (`getWindowsPermissionDetails`). Keep in sync with the Dart parser in
+// lib/core/permissions/models/windows_permission_details.dart.
+const char* CameraReadinessCodeName(CameraReadinessCode code);
+const char* CameraPermissionName(CameraPermission permission);
+
 }  // namespace clingfy::permissions
 
 #endif  // RUNNER_PERMISSIONS_CAMERA_READINESS_H_

@@ -327,7 +327,9 @@ std::optional<RecordingError> RecordingEngine::Start(
   // recordingStarted so the workflow ordering stays sane) and forwards an
   // ERROR line over the native→Dart log bridge so the degradation reaches
   // the JSONL logs and Sentry. Behavior is otherwise unchanged.
-  std::vector<std::string> start_warnings;
+  // (message, code) pairs — the code lets Dart localize + attach the
+  // right settings action (see workflow_event_publisher.h).
+  std::vector<std::pair<std::string, std::string>> start_warnings;
   // Mid-record WASAPI failure (device unplug → AUDCLNT_E_DEVICE_INVALIDATED)
   // used to be a fully silent forever-spin. The callback fires once, from
   // the capture thread; both the warning publisher and the log publisher
@@ -351,7 +353,8 @@ std::optional<RecordingError> RecordingEngine::Start(
         warn_sid,
         is_mic ? "Your microphone was disconnected. Recording continues "
                  "without it."
-               : "System audio stopped. Recording continues without it.");
+               : "System audio stopped. Recording continues without it.",
+        is_mic ? "MIC_DISCONNECTED" : "SYSTEM_AUDIO_STOPPED");
   };
   if (want_mic) {
     mic_queue_ = std::make_unique<clingfy::audio::AudioPacketQueue>();
@@ -377,9 +380,10 @@ std::optional<RecordingError> RecordingEngine::Start(
                     mic_err->message.c_str());
       clingfy::bridge::devices::LogDeviceProbe(buf);
       clingfy::bridge::NativeLogPublisher::Instance().Error("Recording", buf);
-      start_warnings.push_back(
+      start_warnings.emplace_back(
           "Your microphone couldn't be started. Recording continues without "
-          "microphone audio.");
+          "microphone audio.",
+          "MIC_OPEN_FAILED");
       mic_capture_.reset();
       mic_queue_.reset();
     } else {
@@ -404,9 +408,10 @@ std::optional<RecordingError> RecordingEngine::Start(
                     loopback_err->message.c_str());
       clingfy::bridge::devices::LogDeviceProbe(buf);
       clingfy::bridge::NativeLogPublisher::Instance().Error("Recording", buf);
-      start_warnings.push_back(
+      start_warnings.emplace_back(
           "System audio couldn't be captured. Recording continues without "
-          "system audio.");
+          "system audio.",
+          "SYSTEM_AUDIO_OPEN_FAILED");
       loopback_capture_.reset();
       loopback_queue_.reset();
     } else {
@@ -451,7 +456,8 @@ std::optional<RecordingError> RecordingEngine::Start(
               .EmitRecordingWarning(
                   warn_sid,
                   "Recording ran into an encoder problem. The recording may "
-                  "be incomplete.");
+                  "be incomplete.",
+                  "ENCODER_VIDEO_ERROR");
         }
       }
     }
@@ -515,7 +521,8 @@ std::optional<RecordingError> RecordingEngine::Start(
                   .EmitRecordingWarning(
                       warn_sid,
                       "Recording ran into an audio encoding problem. The "
-                      "recording's audio may be incomplete.");
+                      "recording's audio may be incomplete.",
+                      "ENCODER_AUDIO_ERROR");
             }
           }
         }
@@ -680,7 +687,8 @@ std::optional<RecordingError> RecordingEngine::Start(
               .EmitRecordingWarning(
                   sid,
                   "Your camera was disconnected. Recording continues without "
-                  "it.");
+                  "it.",
+                  "CAMERA_DISCONNECTED");
         });
       };
 
@@ -749,9 +757,10 @@ std::optional<RecordingError> RecordingEngine::Start(
         clingfy::bridge::NativeLogPublisher::Instance().Error(
             "Recording",
             "camera init failed at recording start; continuing screen-only");
-        start_warnings.push_back(
+        start_warnings.emplace_back(
             "Your camera couldn't be started. Recording continues without "
-            "the camera overlay.");
+            "the camera overlay.",
+            "CAMERA_OPEN_FAILED");
       }
     } else {
       // The user wanted a camera but it is not ready — surface why in the log.
@@ -769,9 +778,10 @@ std::optional<RecordingError> RecordingEngine::Start(
       if (selected.has_value()) {
         clingfy::bridge::NativeLogPublisher::Instance().Warn("Recording",
                                                              camera_reason);
-        start_warnings.push_back(
+        start_warnings.emplace_back(
             "Your camera isn't available right now. Recording continues "
-            "without the camera overlay.");
+            "without the camera overlay.",
+            "CAMERA_UNAVAILABLE");
       }
     }
   }
@@ -792,9 +802,9 @@ std::optional<RecordingError> RecordingEngine::Start(
   // Phase 10.1: deliver the start-time degradation warnings AFTER
   // recordingStarted so Dart's workflow state machine sees the lifecycle
   // event first (EmitMap preserves order through the dispatcher queue).
-  for (const auto& warning : start_warnings) {
+  for (const auto& [warning_message, warning_code] : start_warnings) {
     clingfy::bridge::WorkflowEventPublisher::Instance().EmitRecordingWarning(
-        request.session_id, warning);
+        request.session_id, warning_message, warning_code);
   }
   return std::nullopt;
 }
@@ -1192,7 +1202,9 @@ void RecordingEngine::HandleTargetLost(const std::string& session_id) {
   const bool kept = writer_ok && project_input.frames_received > 0;
   if (kept) {
     clingfy::bridge::WorkflowEventPublisher::Instance().EmitRecordingWarning(
-        active_session_id, warn_msg);
+        active_session_id, warn_msg,
+        was_window ? "WINDOW_CLOSED_PARTIAL_SAVED"
+                   : "DISPLAY_DISCONNECTED_PARTIAL_SAVED");
     clingfy::bridge::WorkflowEventPublisher::Instance().EmitRecordingFinalized(
         active_session_id, writer_result.project_path);
   } else if (writer_ok) {

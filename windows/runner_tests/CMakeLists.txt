@@ -71,6 +71,7 @@ add_executable(runner_tests
   "mf_encoder_config_test.cpp"
   "native_log_publisher_test.cpp"
   "permission_probe_test.cpp"
+  "permissions_details_router_test.cpp"
   "platform_thread_dispatcher_test.cpp"
   "player_event_publisher_test.cpp"
   "preview_camera_renderer_test.cpp"

@@ -109,10 +109,19 @@ void WorkflowEventPublisher::EmitRecordingFailed(
 }
 
 void WorkflowEventPublisher::EmitRecordingWarning(
-    const std::string& session_id, const std::string& message) {
+    const std::string& session_id, const std::string& message,
+    const std::string& code) {
   auto event = MakeEvent("recordingWarning", session_id);
   event[flutter::EncodableValue("message")] =
       flutter::EncodableValue(message);
+  // Phase 10.2: optional machine-readable code so Dart can localize the
+  // warning and attach the right action (settings deep link) instead of
+  // rendering the native English message verbatim. Omitted when empty —
+  // the legacy payload shape stays byte-identical, and macOS (which
+  // localizes natively) never sends one.
+  if (!code.empty()) {
+    event[flutter::EncodableValue("code")] = flutter::EncodableValue(code);
+  }
   EmitMap(std::move(event));
 }
 

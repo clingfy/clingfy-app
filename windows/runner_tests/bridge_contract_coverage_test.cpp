@@ -123,6 +123,7 @@ const std::vector<std::string>& BridgeContractMethods() {
 
       // Permissions + system shortcuts.
       "getPermissionStatus",
+      "getWindowsPermissionDetails",
       "requestScreenRecordingPermission",
       "requestMicrophonePermission",
       "requestCameraPermission",

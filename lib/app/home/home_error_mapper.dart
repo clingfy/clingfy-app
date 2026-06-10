@@ -1,6 +1,8 @@
 import 'package:clingfy/core/bridges/native_error_codes.dart';
+import 'package:clingfy/core/bridges/recording_warning_codes.dart';
 import 'package:clingfy/l10n/app_localizations.dart';
 import 'package:clingfy/app/home/widgets/desktop_toolbar.dart';
+import 'package:clingfy/ui/platform/platform_kind.dart';
 import 'package:flutter/widgets.dart';
 
 class HomeErrorPresentation {
@@ -51,7 +53,12 @@ class HomeErrorMapper {
           onPressed: () => openSystemSettings('screen'),
         );
       case NativeErrorCode.microphonePermissionRequired:
-        message = l10n.errMicrophonePermissionRequired;
+        // Windows variant points at "Windows Settings > Privacy & security"
+        // — the macOS copy names System Settings panes that don't exist
+        // there.
+        message = isWindows()
+            ? l10n.errMicrophonePermissionRequiredWindows
+            : l10n.errMicrophonePermissionRequired;
         action = ToolbarMessageAction(
           label: l10n.openSettings,
           onPressed: () => openSystemSettings('microphone'),
@@ -69,7 +76,9 @@ class HomeErrorMapper {
       case NativeErrorCode.exportError:
         message = l10n.errExportError('');
       case NativeErrorCode.cameraPermissionDenied:
-        message = l10n.errCameraPermissionDenied;
+        message = isWindows()
+            ? l10n.errCameraPermissionDeniedWindows
+            : l10n.errCameraPermissionDenied;
         action = ToolbarMessageAction(
           label: l10n.openSettings,
           onPressed: () => openSystemSettings('camera'),
@@ -86,6 +95,58 @@ class HomeErrorMapper {
         message = l10n.errCursorFileMissing;
       case NativeErrorCode.assetInvalid:
         message = l10n.errAssetInvalid;
+
+      // Phase 10.2 — recordingWarning codes (Windows-only emitters; see
+      // RecordingWarningCode). Each maps to a localized toast and, where a
+      // settings page can actually help, an Open Settings action. The
+      // toolbar keeps the warning tone for these.
+      case RecordingWarningCode.micOpenFailed:
+        message = l10n.warnMicOpenFailed;
+        action = ToolbarMessageAction(
+          label: l10n.openSettings,
+          onPressed: () => openSystemSettings('microphone'),
+        );
+      case RecordingWarningCode.micDisconnected:
+        message = l10n.warnMicDisconnected;
+        action = ToolbarMessageAction(
+          label: l10n.openSettings,
+          onPressed: () => openSystemSettings('sound'),
+        );
+      case RecordingWarningCode.systemAudioOpenFailed:
+        message = l10n.warnSystemAudioOpenFailed;
+        action = ToolbarMessageAction(
+          label: l10n.openSettings,
+          onPressed: () => openSystemSettings('sound'),
+        );
+      case RecordingWarningCode.systemAudioStopped:
+        message = l10n.warnSystemAudioStopped;
+        action = ToolbarMessageAction(
+          label: l10n.openSettings,
+          onPressed: () => openSystemSettings('sound'),
+        );
+      case RecordingWarningCode.cameraUnavailable:
+        message = l10n.warnCameraUnavailable;
+        action = ToolbarMessageAction(
+          label: l10n.openSettings,
+          onPressed: () => openSystemSettings('camera'),
+        );
+      case RecordingWarningCode.cameraOpenFailed:
+        message = l10n.warnCameraOpenFailed;
+        action = ToolbarMessageAction(
+          label: l10n.openSettings,
+          onPressed: () => openSystemSettings('camera'),
+        );
+      case RecordingWarningCode.cameraDisconnected:
+        // Unplugged hardware — no settings page helps; message only.
+        message = l10n.warnCameraDisconnected;
+      case RecordingWarningCode.encoderVideoError:
+        message = l10n.warnEncoderVideoError;
+      case RecordingWarningCode.encoderAudioError:
+        message = l10n.warnEncoderAudioError;
+      case RecordingWarningCode.windowClosedPartialSaved:
+        message = l10n.warnWindowClosedPartialSaved;
+      case RecordingWarningCode.displayDisconnectedPartialSaved:
+        message = l10n.warnDisplayDisconnectedPartialSaved;
       default:
         message = rawError;
     }

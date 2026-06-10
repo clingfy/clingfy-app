@@ -3,6 +3,7 @@ import 'package:clingfy/core/bridges/native_method_channel.dart';
 import 'package:clingfy/app/infrastructure/logging/logger_service.dart';
 import 'package:clingfy/core/models/app_models.dart';
 import 'package:clingfy/core/models/storage_snapshot.dart';
+import 'package:clingfy/core/permissions/models/windows_permission_details.dart';
 import 'package:flutter/foundation.dart';
 
 class NativeBridge {
@@ -747,6 +748,25 @@ class NativeBridge {
     });
 
     return out;
+  }
+
+  /// Phase 10.2 (Windows-only): the rich permission/device picture —
+  /// camera readiness code + reason, detailed mic privacy bucket, and
+  /// whether a selected device has gone missing. Returns null on macOS
+  /// (MissingPluginException) and on any failure; callers fall back to
+  /// the flat boolean snapshot. Never throws.
+  Future<WindowsPermissionDetails?> getWindowsPermissionDetails() async {
+    try {
+      final Map? result = await _nativeBridge.invokeMethod<Map>(
+        'getWindowsPermissionDetails',
+      );
+      return WindowsPermissionDetails.fromMap(result);
+    } on MissingPluginException {
+      return null;
+    } catch (e) {
+      Log.e('NativeBridge', 'getWindowsPermissionDetails failed', e);
+      return null;
+    }
   }
 
   Future<bool> requestScreenRecordingPermission() async {

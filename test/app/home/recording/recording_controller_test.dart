@@ -224,6 +224,36 @@ void main() {
   );
 
   test(
+    'recordingWarning code rides along and is consumed exactly once',
+    () async {
+      final harness = await createHarness();
+      addTearDown(harness.recording.dispose);
+      addTearDown(harness.settings.dispose);
+
+      harness.recording.beginRecordingStartIntent();
+      final sessionId = harness.recording.sessionId!;
+
+      // Phase 10.2: Windows attaches a machine-readable code so the UI can
+      // localize the toast and attach a settings action; macOS payloads
+      // (no code) keep the message-only behavior above.
+      await _emitWorkflowEvent({
+        'type': 'recordingWarning',
+        'sessionId': sessionId,
+        'message': 'Your microphone was disconnected.',
+        'code': 'MIC_DISCONNECTED',
+      });
+
+      final warning = harness.recording.consumePendingWarning();
+      expect(warning, isNotNull);
+      expect(warning!.message, 'Your microphone was disconnected.');
+      expect(warning.code, 'MIC_DISCONNECTED');
+      // Read-and-clear: a second consume yields nothing.
+      expect(harness.recording.consumePendingWarning(), isNull);
+      expect(harness.recording.consumePendingWarningMessage(), isNull);
+    },
+  );
+
+  test(
     'pause then resume returns to recording and stop still finalizes',
     () async {
       final harness = await createHarness();

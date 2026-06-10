@@ -263,7 +263,6 @@
   "zoom": "Zoom",
   "intensity": "Intensity",
   "layout": "Layout",
-  "effects": "Effects",
   "loudness": "Loudness",
   "placement": "Placement",
   "motion": "Motion",
@@ -300,7 +299,7 @@
   "newRecordingTooltip": "Discard current preview and start a new recording",
   "startNewRecordingTitle": "Start a new recording?",
   "startNewRecordingBody": "This will close the current preview and remove any unsaved edits. Export first if you want to keep this recording.",
-  "keepEditing": "Keep editing",
+  "keepEditing": "Keep Editing",
   "discardPreview": "Discard preview",
   "play": "Play",
   "pausePlayback": "Pause",
@@ -352,7 +351,6 @@
   "zoomChangeSelectionRange": "Change selection range",
   "stopIn": "Stop in {value}",
   "recording": "Recording",
-  "auto": "Auto",
   "classic43": "Classic (4:3)",
   "classic": "Classic",
   "square11": "Square (1:1)",
@@ -445,7 +443,6 @@
   "warnBeforeClosingUnexportedRecordingDescription": "Show a confirmation before closing the current recording if it has not been exported yet.",
   "closeUnexportedRecordingTitle": "Close recording without exporting?",
   "closeUnexportedRecordingMessage": "This recording hasn’t been exported yet. If you close it now, you’ll lose access to it in the current session.",
-  "keepEditing": "Keep Editing",
   "closeWithoutExporting": "Close Without Exporting",
   "doNotShowAgain": "Do not show again",
   "aboutThisApp": "About this app",
@@ -570,9 +567,15 @@
   "@errExportDiskFull": {
     "description": "Friendly disk-space-exhausted message shown when the screen pre-pass cannot fit on disk. Shows formatted byte counts.",
     "placeholders": {
-      "required": {"type": "String"},
-      "available": {"type": "String"},
-      "shortfall": {"type": "String"}
+      "required": {
+        "type": "String"
+      },
+      "available": {
+        "type": "String"
+      },
+      "shortfall": {
+        "type": "String"
+      }
     }
   },
   "errExportDiskFullFallback": "Not enough free disk space to export. Free up some disk space, or pick a lower output resolution, and try again.",
@@ -667,14 +670,6 @@
   "restartApp": "Restart App",
   "permissionsOnboardingWelcomeRail": "Welcome",
   "permissionsOnboardingMicCameraRail": "Mic + Camera",
-  "permissionsOnboardingStepLabel": "Step {current} of 4",
-  "@permissionsOnboardingStepLabel": {
-    "placeholders": {
-      "current": {
-        "type": "int"
-      }
-    }
-  },
   "permissionsOnboardingWelcomeTitle": "Welcome to Clingfy",
   "permissionsOnboardingWelcomeSubtitle": "A quick studio setup and you’re ready to record in minutes.",
   "permissionsOnboardingTrustLocalFirst": "Local-first: your recordings stay on your Mac.",
@@ -794,5 +789,42 @@
   "licenseNetworkUnavailableWhileConsumingTrial": "Network unavailable while syncing trial usage.",
   "licenseNetworkUnavailableWhileDeactivatingDevice": "Network unavailable while deactivating device.",
   "licenseValidated": "License validated.",
-  "licenseNotEntitled": "This license does not unlock Pro features."
+  "licenseNotEntitled": "This license does not unlock Pro features.",
+  "warnMicOpenFailed": "Your microphone couldn't be started — check microphone access in Windows privacy settings. Recording continues without it.",
+  "warnMicDisconnected": "Your microphone was disconnected. Recording continues without it.",
+  "warnSystemAudioOpenFailed": "System audio couldn't be captured — check your output device in Windows sound settings. Recording continues without it.",
+  "warnSystemAudioStopped": "System audio capture stopped. Recording continues without it.",
+  "warnCameraUnavailable": "Your camera isn't available right now. Recording continues without the camera overlay.",
+  "warnCameraOpenFailed": "Your camera couldn't be started — check camera access in Windows privacy settings. Recording continues without the overlay.",
+  "warnCameraDisconnected": "Your camera was disconnected. Recording continues without it.",
+  "warnEncoderVideoError": "Recording hit an encoder problem — the video may be incomplete.",
+  "warnEncoderAudioError": "Recording hit an audio encoding problem — the audio may be incomplete.",
+  "errMicrophonePermissionRequiredWindows": "Enable microphone access in Windows Settings > Privacy & security > Microphone, then try again.",
+  "errCameraPermissionDeniedWindows": "Enable camera access in Windows Settings > Privacy & security > Camera.",
+  "permissionsHelpTextWindows": "Review what Clingfy can use and jump straight to the right Windows Settings page.",
+  "permissionsChangedHintWindows": "If you change a setting in Windows Settings, return to Clingfy and refresh this page to see the latest status.",
+  "permissionsScreenRecordingHelpWindows": "Windows doesn't require a screen-recording permission — display, window, and area capture work out of the box.",
+  "permissionsNoGrantNeeded": "No permission needed",
+  "permissionsDetailMicAccessOffWindows": "Microphone access is turned off in Windows privacy settings. Turn it on in Windows Settings > Privacy & security > Microphone.",
+  "permissionsDetailMicMissingWindows": "The selected microphone isn't connected. Plug it back in or choose another one.",
+  "permissionsDetailCameraAccessOffWindows": "Camera access is turned off in Windows privacy settings. Turn it on in Windows Settings > Privacy & security > Camera.",
+  "permissionsDetailCameraMissingWindows": "The selected camera isn't connected. Plug it back in or choose another one.",
+  "permissionsDetailNoCamerasWindows": "No camera was detected on this PC.",
+  "permissionsOpenSoundSettings": "Open Sound Settings",
+  "permissionsOnboardingTrustLocalFirstWindows": "Local-first: your recordings stay on your PC.",
+  "permissionsOnboardingTrustPermissionControlWindows": "You control mic and camera access anytime in Windows Settings.",
+  "permissionsOnboardingWindowsNoScreenGrant": "No screen-recording permission needed on Windows — capture works out of the box.",
+  "permissionsOnboardingStepCount": "Step {current} of {total}",
+  "@permissionsOnboardingStepCount": {
+    "placeholders": {
+      "current": {
+        "type": "int"
+      },
+      "total": {
+        "type": "int"
+      }
+    }
+  },
+  "warnWindowClosedPartialSaved": "Recording stopped: the window you were recording was closed. Your recording up to that point has been saved.",
+  "warnDisplayDisconnectedPartialSaved": "Recording stopped: the display you were recording was disconnected. Your recording up to that point has been saved."
 }
