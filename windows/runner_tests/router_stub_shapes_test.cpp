@@ -6,13 +6,17 @@
 
 #include <flutter/encodable_value.h>
 
+#include <cstdint>
 #include <filesystem>
 #include <fstream>
 #include <string>
 #include <system_error>
+#include <variant>
 #include <vector>
 
 #include "Bridge/native_error_codes.h"
+#include "Bridge/Routers/export_router.h"
+#include "Capture/Export/export_passthrough.h"
 #include "Capture/Export/export_session.h"
 #include "Capture/recording_engine.h"
 #include "Capture/windows_selection_state.h"
@@ -391,6 +395,151 @@ TEST(StubShapesTest, ExportVideoWhileAnExportIsRunningReturnsBadArgs) {
 
   session.EndExport();
   session.ResetForTesting();
+}
+
+// === Phase 10.4: ReplyForExportOutcome contract =============================
+//
+// The per-outcome error-code mapping is exposed (export_router.h) so these
+// can pin the bridge contract without staging a real disk-full volume or a
+// mid-export cancel race. The same function runs on both the synchronous and
+// the worker-thread reply paths.
+
+// A user cancel replies with the stable EXPORT_CANCELLED code and the fixed
+// "Export cancelled." message (previously EXPORT_ERROR + message sniffing).
+TEST(StubShapesTest, ReplyForExportOutcomeMapsCancelToExportCancelled) {
+  clingfy::capture::export_::PassthroughResult outcome;
+  outcome.error = clingfy::capture::export_::PassthroughError::kCancelled;
+  outcome.message = "exportVideo: cancelled by user";
+
+  RecordedReply reply;
+  const auto recorder = MakeRecorder(reply);
+  routers::export_::ReplyForExportOutcome(
+      *recorder, outcome, "C:\\p\\x.clingfyproj", "C:\\out");
+
+  EXPECT_FALSE(reply.success_called);
+  EXPECT_TRUE(reply.error_called);
+  EXPECT_EQ(reply.error_code, error::kExportCancelled);
+  EXPECT_EQ(reply.error_message, "Export cancelled.")
+      << "the message still contains 'cancelled' so an older Dart "
+         "message-classifier also reads it as a clean cancel";
+}
+
+// A preflight disk-full replies EXPORT_DISK_FULL with the macOS-shaped
+// details map: {stage, reason, context:{tempPath, *TempBytes int64,
+// *TempFormatted strings}} — the exact shape ExportPrep.swift emits and
+// Dart's ExportDiskFullMessage parses.
+TEST(StubShapesTest, ReplyForExportOutcomeDiskFullEmitsMacShapedDetails) {
+  clingfy::capture::export_::PassthroughResult outcome;
+  outcome.error = clingfy::capture::export_::PassthroughError::kDiskFull;
+  outcome.message = "Not enough free disk space to export this recording.";
+  outcome.disk_required_bytes = 2'000'000'000;  // 2.0 GB
+  outcome.disk_available_bytes = 500'000'000;   // 0.5 GB
+  outcome.disk_checked_path = "D:\\Exports";
+
+  RecordedReply reply;
+  const auto recorder = MakeRecorder(reply);
+  routers::export_::ReplyForExportOutcome(
+      *recorder, outcome, "C:\\p\\x.clingfyproj", "D:\\Exports");
+
+  EXPECT_TRUE(reply.error_called);
+  EXPECT_EQ(reply.error_code, error::kExportDiskFull);
+  EXPECT_EQ(reply.error_message, outcome.message);
+
+  const auto* details =
+      std::get_if<flutter::EncodableMap>(&reply.error_details);
+  ASSERT_NE(details, nullptr) << "details must be a map";
+
+  const auto stage_it = details->find(flutter::EncodableValue("stage"));
+  ASSERT_NE(stage_it, details->end());
+  EXPECT_EQ(std::get<std::string>(stage_it->second), "export_preflight");
+
+  const auto reason_it = details->find(flutter::EncodableValue("reason"));
+  ASSERT_NE(reason_it, details->end());
+  EXPECT_EQ(std::get<std::string>(reason_it->second), outcome.message);
+
+  const auto context_it = details->find(flutter::EncodableValue("context"));
+  ASSERT_NE(context_it, details->end());
+  const auto* context = std::get_if<flutter::EncodableMap>(&context_it->second);
+  ASSERT_NE(context, nullptr) << "details.context must be a map";
+
+  // Byte counts: int64, shortfall = required - available.
+  const auto get_i64 = [context](const char* key) {
+    const auto it = context->find(flutter::EncodableValue(key));
+    EXPECT_NE(it, context->end()) << "missing context key: " << key;
+    return it != context->end() ? std::get<std::int64_t>(it->second)
+                                : std::int64_t{-1};
+  };
+  EXPECT_EQ(get_i64("estimatedRequiredTempBytes"), 2'000'000'000);
+  EXPECT_EQ(get_i64("availableTempBytes"), 500'000'000);
+  EXPECT_EQ(get_i64("shortfallTempBytes"), 1'500'000'000);
+
+  // Formatted strings: non-empty, GB/MB units — the three keys Dart's
+  // ExportDiskFullMessage requires to render the localized message.
+  const auto get_str = [context](const char* key) {
+    const auto it = context->find(flutter::EncodableValue(key));
+    EXPECT_NE(it, context->end()) << "missing context key: " << key;
+    return it != context->end() ? std::get<std::string>(it->second)
+                                : std::string();
+  };
+  EXPECT_EQ(get_str("estimatedRequiredTempFormatted"), "2.0 GB");
+  EXPECT_EQ(get_str("availableTempFormatted"), "500.0 MB");
+  EXPECT_EQ(get_str("shortfallTempFormatted"), "1.5 GB");
+  EXPECT_EQ(get_str("tempPath"), "D:\\Exports");
+}
+
+// A mid-write disk-full (no preflight estimate) still uses the stable code;
+// the context omits the byte counts, so Dart falls back to the
+// self-contained native message — which must therefore be non-empty.
+TEST(StubShapesTest, ReplyForExportOutcomeMidWriteDiskFullFallsBackToMessage) {
+  clingfy::capture::export_::PassthroughResult outcome;
+  outcome.error = clingfy::capture::export_::PassthroughError::kDiskFull;
+  outcome.message =
+      "Not enough free disk space to finish this export — the destination "
+      "disk filled up while writing.";
+  // disk_required_bytes / disk_available_bytes stay -1 (unknown).
+  outcome.disk_checked_path = "D:\\Exports";
+
+  RecordedReply reply;
+  const auto recorder = MakeRecorder(reply);
+  routers::export_::ReplyForExportOutcome(
+      *recorder, outcome, "C:\\p\\x.clingfyproj", "D:\\Exports");
+
+  EXPECT_TRUE(reply.error_called);
+  EXPECT_EQ(reply.error_code, error::kExportDiskFull);
+  EXPECT_FALSE(reply.error_message.empty());
+
+  const auto* details =
+      std::get_if<flutter::EncodableMap>(&reply.error_details);
+  ASSERT_NE(details, nullptr);
+  const auto stage_it = details->find(flutter::EncodableValue("stage"));
+  ASSERT_NE(stage_it, details->end());
+  EXPECT_EQ(std::get<std::string>(stage_it->second), "export_write");
+  const auto context_it = details->find(flutter::EncodableValue("context"));
+  ASSERT_NE(context_it, details->end());
+  const auto* context = std::get_if<flutter::EncodableMap>(&context_it->second);
+  ASSERT_NE(context, nullptr);
+  EXPECT_EQ(context->find(flutter::EncodableValue(
+                "estimatedRequiredTempFormatted")),
+            context->end())
+      << "an unknown estimate must omit the formatted keys (Dart then falls "
+         "back to e.message) rather than send empty strings";
+}
+
+// The default: guard must keep completing the MethodResult for any future
+// PassthroughError value (an un-answered result hangs the Dart future).
+TEST(StubShapesTest, ReplyForExportOutcomeDefaultGuardStillRepliesExportError) {
+  clingfy::capture::export_::PassthroughResult outcome;
+  outcome.error = static_cast<clingfy::capture::export_::PassthroughError>(999);
+  outcome.message.clear();
+
+  RecordedReply reply;
+  const auto recorder = MakeRecorder(reply);
+  routers::export_::ReplyForExportOutcome(
+      *recorder, outcome, "C:\\p\\x.clingfyproj", "C:\\out");
+
+  EXPECT_TRUE(reply.error_called);
+  EXPECT_EQ(reply.error_code, error::kExportError);
+  EXPECT_FALSE(reply.error_message.empty());
 }
 
 // === Empty-list getters. ===================================================

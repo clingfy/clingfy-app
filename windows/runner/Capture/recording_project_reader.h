@@ -84,6 +84,14 @@ struct RecordingProject {
   // 2 — exposed here so future log lines / metrics can carry the
   // exact value the manifest claimed.
   int schema_version = 0;
+
+  // Phase 10.4: manifest `status` (macOS `RecordingProjectStatus` parity).
+  // Missing → "ready" (every pre-10.4 Windows bundle was written with
+  // "ready"; tolerating absence keeps old bundles opening). The reader
+  // only ever returns a project whose status passed the openable gate
+  // (ready/cancelled/failed) — capturing/finalizing/deleted bundles fail
+  // with `kProjectNotOpenable`.
+  std::string status = "ready";
 };
 
 enum class ReadError {
@@ -100,6 +108,12 @@ enum class ReadError {
   // `capture.screenVideo` and `capture.screenMetadata`; applies to the
   // camera pair only when one exists without the other.
   kRequiredFileMissing,
+  // Phase 10.4: manifest `status` is not openable. Mirrors macOS
+  // `ProjectOpenValidator.isOpenableStatus` — "ready"/"cancelled"/"failed"
+  // open; "capturing"/"finalizing"/"deleted" (and unknown future values)
+  // do not. Keeps an in-flight or swept-away recording from silently
+  // opening in preview/export.
+  kProjectNotOpenable,
 };
 
 struct ReadResult {
@@ -137,6 +151,19 @@ ReadResult ParseManifestJson(const std::string& manifest_json);
 // parse failure (matches the lenient behavior of the full reader).
 std::optional<RecordingMetadata> ParseScreenMetaJson(
     const std::string& meta_json);
+
+// Phase 10.4: tolerant, gate-free probe of the lifecycle fields the
+// startup recovery sweep needs. Unlike `ReadRecordingProject` /
+// `ParseManifestJson` this never rejects a non-openable status (the whole
+// point is to find "capturing" bundles) and ignores schemaVersion.
+// `parsed` is false only when the JSON itself doesn't parse.
+struct ManifestStatusProbe {
+  bool parsed = false;
+  std::string status;      // empty when the manifest has no status key
+  std::string project_id;  // empty when absent
+  std::uint32_t owner_pid = 0;  // 0 when absent
+};
+ManifestStatusProbe ProbeManifestStatus(const std::string& manifest_json);
 
 }  // namespace clingfy::capture
 

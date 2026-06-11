@@ -29,6 +29,13 @@ TEST(PermissionProbeTest, ResolveSettingsUriAccessibility) {
             L"ms-settings:easeofaccess");
 }
 
+TEST(PermissionProbeTest, ResolveSettingsUriStorage) {
+  // Phase 10.4: the RECORDING_DISK_FULL toast's "Open Storage Settings"
+  // action deep-links here; without this pane the action was a silent
+  // no-op (review finding).
+  EXPECT_EQ(ResolveSettingsUri("storage"), L"ms-settings:storagesense");
+}
+
 TEST(PermissionProbeTest, ResolveSettingsUriUnknownReturnsEmpty) {
   EXPECT_TRUE(ResolveSettingsUri("nonsense").empty());
   EXPECT_TRUE(ResolveSettingsUri("").empty());

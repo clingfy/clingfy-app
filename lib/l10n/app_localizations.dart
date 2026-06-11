@@ -4539,6 +4539,60 @@ abstract class AppLocalizations {
   /// In en, this message translates to:
   /// **'This feature isn\'t available on Windows yet.'**
   String get errWindowsNotImplemented;
+
+  /// No description provided for @errRecordingDiskFull.
+  ///
+  /// In en, this message translates to:
+  /// **'Not enough disk space to start recording.'**
+  String get errRecordingDiskFull;
+
+  /// No description provided for @errPreviewOpenFailed.
+  ///
+  /// In en, this message translates to:
+  /// **'Preview failed to open.'**
+  String get errPreviewOpenFailed;
+
+  /// No description provided for @errPreviewRenderFailed.
+  ///
+  /// In en, this message translates to:
+  /// **'Preview stopped rendering. Close and reopen the recording.'**
+  String get errPreviewRenderFailed;
+
+  /// No description provided for @errRecordingStartTimeout.
+  ///
+  /// In en, this message translates to:
+  /// **'Recording did not start in time.'**
+  String get errRecordingStartTimeout;
+
+  /// No description provided for @errRecordingFinalizeTimeout.
+  ///
+  /// In en, this message translates to:
+  /// **'Saving the recording timed out.'**
+  String get errRecordingFinalizeTimeout;
+
+  /// No description provided for @errPreviewTimeout.
+  ///
+  /// In en, this message translates to:
+  /// **'Preview took too long to load.'**
+  String get errPreviewTimeout;
+
+  /// No description provided for @errInternalError.
+  ///
+  /// In en, this message translates to:
+  /// **'An internal error occurred.'**
+  String get errInternalError;
+
+  /// Startup salvage toast shown after the native crash-recovery sweep finds recordings that were interrupted by a crash.
+  ///
+  /// In en, this message translates to:
+  /// **'{count, plural, one{1 recording was interrupted and could not be recovered.} other{{count} recordings were interrupted and could not be recovered.}}'**
+  String recordingInterruptedNotice(int count);
+
+  /// No description provided for @forceNativeCrashLabel.
+  ///
+  /// In en, this message translates to:
+  /// **'Force native crash (test)'**
+  String get forceNativeCrashLabel;
 }
 
 class _AppLocalizationsDelegate

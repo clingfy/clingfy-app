@@ -365,5 +365,57 @@ TEST(RecordingProjectReaderJson, ParseScreenMetaReturnsEmptyOnMalformed) {
   EXPECT_FALSE(meta.has_value());
 }
 
+
+// === Phase 10.4: status gate + recovery-sweep probe =========================
+
+TEST(RecordingProjectReaderStatus, CapturingStatusIsNotOpenable) {
+  const auto result = ParseManifestJson(
+      "{\"schemaVersion\": 2, \"status\": \"capturing\"}");
+  EXPECT_EQ(result.error, ReadError::kProjectNotOpenable);
+}
+
+TEST(RecordingProjectReaderStatus, FailedAndCancelledStatusesOpen) {
+  for (const char* status : {"ready", "cancelled", "failed"}) {
+    const auto result = ParseManifestJson(
+        std::string("{\"schemaVersion\": 2, \"status\": \"") + status +
+        "\"}");
+    EXPECT_EQ(result.error, ReadError::kNone) << status;
+    ASSERT_TRUE(result.project.has_value()) << status;
+    EXPECT_EQ(result.project->status, status);
+  }
+}
+
+TEST(RecordingProjectReaderStatus, MissingStatusDefaultsToReady) {
+  // Pre-10.4 bundles never carried the key on Windows; they must keep
+  // opening.
+  const auto result = ParseManifestJson("{\"schemaVersion\": 2}");
+  EXPECT_EQ(result.error, ReadError::kNone);
+  ASSERT_TRUE(result.project.has_value());
+  EXPECT_EQ(result.project->status, "ready");
+}
+
+TEST(RecordingProjectReaderStatus, UnknownStatusFailsClosed) {
+  const auto result = ParseManifestJson(
+      "{\"schemaVersion\": 2, \"status\": \"exploded\"}");
+  EXPECT_EQ(result.error, ReadError::kProjectNotOpenable);
+}
+
+TEST(RecordingProjectReaderStatus, ProbeIsGateFreeAndTolerant) {
+  const auto probe = ProbeManifestStatus(
+      "{\"schemaVersion\": 2, \"status\": \"capturing\", "
+      "\"projectId\": \"sess-9\", \"ownerPid\": 555}");
+  EXPECT_TRUE(probe.parsed);
+  EXPECT_EQ(probe.status, "capturing");
+  EXPECT_EQ(probe.project_id, "sess-9");
+  EXPECT_EQ(probe.owner_pid, 555u);
+
+  const auto sparse = ProbeManifestStatus("{}");
+  EXPECT_TRUE(sparse.parsed);
+  EXPECT_TRUE(sparse.status.empty());
+  EXPECT_EQ(sparse.owner_pid, 0u);
+
+  EXPECT_FALSE(ProbeManifestStatus("not json").parsed);
+}
+
 }  // namespace
 }  // namespace clingfy::capture

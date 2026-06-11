@@ -100,6 +100,20 @@ struct ProjectWriterInput {
   // Override for the recordings root directory. Empty → resolved from
   // `%LOCALAPPDATA%\Clingfy\recordings`. Tests pass a temp directory.
   std::string recordings_root_override;
+
+  // Phase 10.4: manifest lifecycle status, mirroring macOS
+  // `RecordingProjectStatus` ("capturing" | "finalizing" | "ready" |
+  // "cancelled" | "failed" | "deleted"). The Stop path writes "ready";
+  // the finalize-failure rescue path writes "failed". Only
+  // "ready"/"cancelled"/"failed" are openable (see ProjectOpenValidator on
+  // macOS and the Windows reader's status gate).
+  std::string status = "ready";
+
+  // Phase 10.4: PID of the recording process, emitted as `ownerPid` when
+  // non-zero. The startup recovery sweep uses it to distinguish a bundle
+  // owned by a LIVE process (dev + prod builds share the recordings root
+  // until Phase 10.5 splits identities) from one stranded by a crash.
+  std::uint32_t owner_pid = 0;
 };
 
 enum class ProjectWriterErrorKind {
@@ -112,12 +126,40 @@ enum class ProjectWriterErrorKind {
 struct ProjectWriterResult {
   ProjectWriterErrorKind kind = ProjectWriterErrorKind::kNone;
   std::string message;
-  // On success, absolute path to the `.clingfyproj` folder. Empty
-  // otherwise.
+  // On success, absolute path to the `.clingfyproj` folder (UTF-8 — the
+  // writer builds and reports paths as UTF-8 so the recovery/cleanup
+  // consumers' fs::u8path round-trips are exact on non-ASCII roots).
+  // Empty otherwise.
   std::string project_path;
+  // Phase 10.4 (review fix): best-effort sidecar bundling DOWNGRADES — the
+  // input requested the sidecar but the file could not be moved into the
+  // bundle, so it is still sitting in %TEMP%. The engine must not treat
+  // that leftover as a deletable straggler: for the camera it is the only
+  // copy of finalized, playable footage.
+  bool cursor_downgraded = false;
+  bool camera_downgraded = false;
 };
 
 ProjectWriterResult WriteRecordingProject(const ProjectWriterInput& input);
+
+// Phase 10.4: writes the PROVISIONAL project bundle at recording start —
+// the bundle directory plus a `project.json` with `status: "capturing"` and
+// `ownerPid`, mirroring macOS `RecordingProjectService.writeProjectFiles`.
+// If the process dies mid-recording, the next-launch recovery sweep finds
+// this manifest and marks the project failed instead of leaving the user
+// with nothing but a stranded `%TEMP%` file. Best-effort by design: the
+// engine logs a failure but never refuses to record because of it.
+// The Stop path's `WriteRecordingProject` later overwrites this manifest
+// with the full `status: "ready"` one.
+struct ProvisionalProjectInput {
+  std::string session_id;
+  std::string recordings_root_override;  // empty → default root
+  std::string created_at_iso8601;        // empty → now
+  std::uint32_t owner_pid = 0;           // 0 → GetCurrentProcessId()
+};
+
+ProjectWriterResult WriteProvisionalProject(
+    const ProvisionalProjectInput& input);
 
 // Exposed for unit tests: builds the JSON string for `project.json` so
 // the manifest contract can be pinned without touching the filesystem.

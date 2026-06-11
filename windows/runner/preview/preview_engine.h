@@ -223,6 +223,14 @@ class PreviewEngine {
   void HandleMediaFailed(const void* sender_media_player_ptr,
                          const void* args_failed_event_args_ptr);
 
+  // Phase 10.4: releases a texture registered during an Open attempt that
+  // failed AFTER RegisterExternalTexture (path-resolution / MediaPlayer
+  // setup). Routes through the same async-unregister path as Close so
+  // Flutter can never call ObtainSurfaceDescriptor against a freed Impl
+  // (use-after-free) and the texture id is not leaked. Clears texture_id_
+  // and shared_handle_ok_; moves impl_ into the teardown context.
+  void UnwindFailedOpenTexture(const std::string& session_id);
+
   // Paused heartbeat thread body. Loops until shutting_down_; while
   // running, emits a playerTick at ~10 Hz, but only when the player
   // is not actively producing frames (paused / scrubbing). When the
@@ -239,6 +247,15 @@ class PreviewEngine {
   struct Impl;
 
  private:
+  // Phase 10.4: counts a per-frame render failure (EnsureResources /
+  // frame-copy / EndDraw). After a run of consecutive failures it emits
+  // PREVIEW_RENDER_ERROR as playerError + previewFailed exactly once per
+  // session — before this, a permanently dead render loop froze the image
+  // while the heartbeat kept the playhead moving and the user got no
+  // signal at all. The counter lives on the Impl; the success path resets
+  // it. (Declared after `struct Impl;` — the parameter needs the name.)
+  void NoteRenderFailure(Impl* impl, const char* stage);
+
   std::unique_ptr<Impl> impl_;
 
   // Plugin registrar + texture registrar are owned by the engine and
@@ -277,6 +294,15 @@ class PreviewEngine {
   // `previewReady` event for every VideoFrameAvailable (~30Hz),
   // wedging the workflow state machine.
   bool emitted_preview_ready_ = false;
+
+  // Phase 10.4: one-shot latches for the two mid-preview failure emitters.
+  // `render_error_emitted_` gates the consecutive-frame-failure
+  // PREVIEW_RENDER_ERROR pair (playerError + previewFailed);
+  // `media_failed_emitted_` dedupes MediaFailed (MediaPlayer can fire it
+  // repeatedly, and the pre-10.4 handler re-ran the whole close flow each
+  // time). Both reset in Open / Close. Guarded by mutex_.
+  bool render_error_emitted_ = false;
+  bool media_failed_emitted_ = false;
 
   // Step 5.7: monotonic open/close cycle index assigned in Open and
   // copied into TearDownContext at Close so the

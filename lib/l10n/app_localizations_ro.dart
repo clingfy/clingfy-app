@@ -2501,4 +2501,45 @@ class AppLocalizationsRo extends AppLocalizations {
   @override
   String get errWindowsNotImplemented =>
       'Această funcție nu este încă disponibilă pe Windows.';
+
+  @override
+  String get errRecordingDiskFull =>
+      'Spațiu insuficient pe disc pentru a începe înregistrarea.';
+
+  @override
+  String get errPreviewOpenFailed => 'Previzualizarea nu a putut fi deschisă.';
+
+  @override
+  String get errPreviewRenderFailed =>
+      'Previzualizarea a încetat să se redea. Închide și redeschide înregistrarea.';
+
+  @override
+  String get errRecordingStartTimeout => 'Înregistrarea nu a pornit la timp.';
+
+  @override
+  String get errRecordingFinalizeTimeout => 'Salvarea înregistrării a expirat.';
+
+  @override
+  String get errPreviewTimeout =>
+      'Previzualizarea a durat prea mult să se încarce.';
+
+  @override
+  String get errInternalError => 'A apărut o eroare internă.';
+
+  @override
+  String recordingInterruptedNotice(int count) {
+    String _temp0 = intl.Intl.pluralLogic(
+      count,
+      locale: localeName,
+      other:
+          '$count de înregistrări au fost întrerupte și nu au putut fi recuperate.',
+      few:
+          '$count înregistrări au fost întrerupte și nu au putut fi recuperate.',
+      one: 'O înregistrare a fost întreruptă și nu a putut fi recuperată.',
+    );
+    return '$_temp0';
+  }
+
+  @override
+  String get forceNativeCrashLabel => 'Forțează blocarea nativă (test)';
 }

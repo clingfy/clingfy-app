@@ -2,6 +2,7 @@ import 'package:flutter/services.dart';
 import 'package:clingfy/core/bridges/native_method_channel.dart';
 import 'package:clingfy/app/infrastructure/logging/logger_service.dart';
 import 'package:clingfy/core/models/app_models.dart';
+import 'package:clingfy/core/models/startup_recovery_report.dart';
 import 'package:clingfy/core/models/storage_snapshot.dart';
 import 'package:clingfy/core/permissions/models/windows_permission_details.dart';
 import 'package:flutter/foundation.dart';
@@ -70,7 +71,7 @@ class NativeBridge {
     _workflowEventStream.listen(
       (event) {
         final type = event['type'] as String?;
-        if (type != 'openProjectRequest') {
+        if (type != WorkflowEventType.openProjectRequest) {
           return;
         }
 
@@ -815,6 +816,46 @@ class NativeBridge {
     } catch (e, st) {
       Log.e("NativeBridge", "Failed to invoke checkForUpdates", e, st);
       return false;
+    }
+  }
+
+  /// Phase 10.4 (Windows-only): runs the native startup crash-recovery
+  /// sweep and reports what it found — interrupted recording projects plus
+  /// how many orphaned temp files/bytes were cleaned.
+  ///
+  /// Returns null on macOS (MissingPluginException), when the native side
+  /// rejects the call (any PlatformException), or on any other failure —
+  /// callers simply skip the salvage notice. Never throws.
+  Future<StartupRecoveryReport?> getStartupRecoveryReport() async {
+    try {
+      final raw = await _nativeBridge.invokeMethod<Map<dynamic, dynamic>>(
+        NativeMethod.getStartupRecoveryReport,
+      );
+      if (raw == null) return null;
+      return StartupRecoveryReport.fromMap(raw);
+    } on MissingPluginException {
+      return null;
+    } on PlatformException catch (e) {
+      Log.e('NativeBridge', 'getStartupRecoveryReport failed', e);
+      return null;
+    } catch (e) {
+      Log.e('NativeBridge', 'getStartupRecoveryReport failed: $e');
+      return null;
+    }
+  }
+
+  /// Phase 10.4 (Windows, dev-only): asks native to crash the process so
+  /// the crash-salvage + PDB pipeline can be tested end-to-end. Native
+  /// refuses (replies with an error) unless CLINGFY_CRASH_TEST=1 is set in
+  /// the environment. Fire-and-forget: every failure is swallowed because
+  /// the only success signal is the process dying.
+  Future<void> debugForceNativeCrash() async {
+    try {
+      await _nativeBridge.invokeMethod<void>(
+        NativeMethod.debugForceNativeCrash,
+      );
+    } catch (e) {
+      Log.w('NativeBridge', 'debugForceNativeCrash refused/failed: $e');
     }
   }
 }

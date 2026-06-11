@@ -122,6 +122,11 @@ std::wstring ResolveSettingsUri(const std::string& pane) {
   if (pane == "accessibility") {
     return L"ms-settings:easeofaccess";
   }
+  if (pane == "storage") {
+    // Phase 10.4: target of the RECORDING_DISK_FULL toast action. Storage
+    // Sense is the canonical free-up-space page.
+    return L"ms-settings:storagesense";
+  }
   return {};
 }
 

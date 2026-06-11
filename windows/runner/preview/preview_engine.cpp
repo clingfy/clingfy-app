@@ -26,6 +26,8 @@
 #include <limits>
 #include <system_error>
 
+#include "Bridge/native_error_codes.h"
+#include "Bridge/native_log_publisher.h"
 #include "Bridge/player_event_publisher.h"
 #include "Bridge/workflow_event_publisher.h"
 #include "Services/log_locations.h"
@@ -310,6 +312,11 @@ struct PreviewEngine::Impl {
   clingfy::preview::FrameTimingCollector timing_render;  // BeginDraw → EndDraw
   clingfy::preview::FrameTimingCollector timing_handoff; // Flush + MarkExternalTextureFrameAvailable
   std::atomic<std::uint64_t> dropped_frames{0};
+  // Phase 10.4: consecutive per-frame failures (EnsureResources / copy /
+  // EndDraw). Reset to 0 by every successful frame; when it crosses the
+  // threshold the engine emits PREVIEW_RENDER_ERROR once (see
+  // NoteRenderFailure).
+  std::atomic<std::uint32_t> consecutive_render_failures{0};
 
   // ---- Discovered after the first frame ----
   std::atomic<UINT> last_video_width{0};
@@ -743,11 +750,13 @@ OpenResult PreviewEngine::Open(const OpenArgs& args) {
     if (n == 0 || n >= ARRAYSIZE(full)) {
       result.error = "Could not resolve video path to an absolute URI.";
       last_error_ = result.error;
-      // Unwind partial state.
+      // Unwind partial state. Phase 10.4: the texture is already
+      // registered at this point — release it through the async-unregister
+      // path (a bare impl_.reset() left Flutter holding a descriptor
+      // callback whose user_data pointed at the freed Impl).
       impl_->player = nullptr;
       impl_->shared_handle = nullptr;
-      impl_.reset();
-      shared_handle_ok_ = false;
+      UnwindFailedOpenTexture(args.session_id);
       return result;
     }
     std::wstring uri = L"file:///";
@@ -806,16 +815,23 @@ OpenResult PreviewEngine::Open(const OpenArgs& args) {
     result.error =
         "MediaPlayer setup failed: " + WideToUtf8(e.message().c_str());
     last_error_ = result.error;
+    // Phase 10.4: same async-unregister unwind as the path-resolution
+    // failure above — see UnwindFailedOpenTexture.
     impl_->player = nullptr;
     impl_->shared_handle = nullptr;
-    impl_.reset();
-    shared_handle_ok_ = false;
+    UnwindFailedOpenTexture(args.session_id);
     return result;
   }
 
+  // These assignments are already protected: Open() holds `mutex_` for its
+  // entire body (the lock_guard at the top of the function), so the live
+  // MediaPlayer callbacks — which take mutex_ before reading these fields —
+  // serialize against the remainder of Open.
   active_session_id_ = args.session_id;
   active_project_path_ = args.project_path;
   emitted_preview_ready_ = false;
+  render_error_emitted_ = false;
+  media_failed_emitted_ = false;
   running_.store(true);
 
   // Step 5.5.3: announce that native is warming up the preview. macOS
@@ -938,6 +954,7 @@ void PreviewEngine::HandleVideoFrame(
                                               impl->d2d_context.Get(),
                                               vw, vh))) {
     impl->dropped_frames.fetch_add(1, std::memory_order_relaxed);
+    NoteRenderFailure(impl, "ensure_resources");
     impl->timing_total.EndFrame();
     return;
   }
@@ -948,6 +965,7 @@ void PreviewEngine::HandleVideoFrame(
     sender.CopyFrameToVideoSurface(impl->compositor.winrt_video_surface());
   } catch (winrt::hresult_error const&) {
     impl->dropped_frames.fetch_add(1, std::memory_order_relaxed);
+    NoteRenderFailure(impl, "frame_copy");
     impl->timing_copy.EndFrame();
     impl->timing_total.EndFrame();
     return;
@@ -990,14 +1008,17 @@ void PreviewEngine::HandleVideoFrame(
   const HRESULT end_hr = impl->d2d_context->EndDraw();
   impl->timing_render.EndFrame();
   if (FAILED(end_hr)) {
-    // D2DERR_RECREATE_TARGET would be the typical failure here; we
-    // don't recover yet (the descriptor + bitmap are bound once at
-    // Open). Production recovery lands in Step 5.3 along with the
-    // texture-unregister fix. Drop the frame and move on.
+    // D2DERR_RECREATE_TARGET would be the typical failure here; we don't
+    // recover the target (the descriptor + bitmap are bound at Open), but
+    // Phase 10.4 at least makes a PERMANENT failure loud: NoteRenderFailure
+    // emits PREVIEW_RENDER_ERROR after a run of consecutive failures
+    // instead of freezing the image under a moving playhead forever.
     impl->dropped_frames.fetch_add(1, std::memory_order_relaxed);
+    NoteRenderFailure(impl, "end_draw");
     impl->timing_total.EndFrame();
     return;
   }
+  impl->consecutive_render_failures.store(0, std::memory_order_relaxed);
 
   // ---- handoff bucket ----
   // Flush the D3D11 command queue so the writes against the shared
@@ -1139,31 +1160,58 @@ void PreviewEngine::HandleMediaFailed(
       static_cast<winrt_playback::MediaPlayerFailedEventArgs const*>(
           args_failed_event_args_ptr);
   std::string message = "MediaPlayer reported a media failure.";
+  // Phase 10.4: map the MediaPlayerError cause to a meaningful code. The
+  // pre-10.4 handler hardcoded VIDEO_FILE_MISSING for everything, so a
+  // codec/decode failure told the user their file was "missing".
+  std::string code = clingfy::bridge::error::kVideoFileMissing;
   if (failed_args != nullptr) {
     try {
       const std::wstring w = failed_args->ErrorMessage().c_str();
       if (!w.empty()) message = WideToUtf8(w);
+      switch (failed_args->Error()) {
+        case winrt_playback::MediaPlayerError::DecodingError:
+        case winrt_playback::MediaPlayerError::SourceNotSupported:
+          code = clingfy::bridge::error::kAssetInvalid;
+          break;
+        case winrt_playback::MediaPlayerError::NetworkError:
+          // The source became unreachable mid-playback (file deleted,
+          // share dropped) — the closest existing semantic.
+          code = clingfy::bridge::error::kVideoFileMissing;
+          break;
+        case winrt_playback::MediaPlayerError::Aborted:
+        case winrt_playback::MediaPlayerError::Unknown:
+        default:
+          code = clingfy::bridge::error::kPreviewRenderError;
+          break;
+      }
     } catch (winrt::hresult_error const&) {
-      // Best effort — keep the generic message.
+      // Best effort — keep the generic message + legacy code.
     }
   }
   std::string session_snapshot;
   std::string project_path_snapshot;
   {
     std::lock_guard<std::mutex> lock(mutex_);
+    // Phase 10.4: MediaPlayer can fire MediaFailed repeatedly; each emit
+    // used to re-run Dart's whole close flow and overwrite the errorCode.
+    if (media_failed_emitted_) return;
+    media_failed_emitted_ = true;
     session_snapshot = active_session_id_;
     project_path_snapshot = active_project_path_;
   }
   if (!session_snapshot.empty()) {
+    // Phase 10.4: over the log bridge too — the engine's own LogNative
+    // side file never reaches JSONL/Sentry.
+    clingfy::bridge::NativeLogPublisher::Instance().Error(
+        "Preview", "MediaFailed (" + code + "): " + message);
     clingfy::bridge::PlayerEventPublisher::Instance().EmitPlayerError(
-        session_snapshot, "VIDEO_FILE_MISSING", message);
+        session_snapshot, code, message);
     // Step 5.5.3: also emit `previewFailed` on the workflow channel so
     // Dart's RecordingController transitions out of `previewLoading` /
     // `previewReady` into the closing/error flow (matches macOS, which
     // fires this from `KVO`'d AVPlayer status observers).
     clingfy::bridge::WorkflowEventPublisher::Instance().EmitPreviewFailed(
-        session_snapshot, project_path_snapshot, "VIDEO_FILE_MISSING",
-        message);
+        session_snapshot, project_path_snapshot, code, message);
   }
 }
 
@@ -1297,6 +1345,64 @@ void CALLBACK OnUnregisterComplete(void* user_data) {
 
 }  // namespace
 
+void PreviewEngine::UnwindFailedOpenTexture(const std::string& session_id) {
+  if (texture_registrar_ != nullptr && texture_id_ >= 0 && impl_) {
+    auto* teardown = new TearDownContext{};
+    teardown->dying_impl = std::move(impl_);
+    teardown->texture_id = texture_id_;
+    teardown->session_id = session_id;
+    teardown->close_qpc = NowQpc();
+    teardown->qpc_frequency = QueryQpcFrequencyHz();
+    LogNative(
+        "UnwindFailedOpenTexture: async-unregistering the texture after a "
+        "failed Open");
+    FlutterDesktopTextureRegistrarUnregisterExternalTexture(
+        texture_registrar_, texture_id_, &OnUnregisterComplete, teardown);
+  } else {
+    impl_.reset();
+  }
+  texture_id_ = -1;
+  shared_handle_ok_ = false;
+}
+
+void PreviewEngine::NoteRenderFailure(Impl* impl, const char* stage) {
+  // Threshold ≈ 1.5–3 s of consecutive failures at 30–60 fps: long enough
+  // that a transient device hiccup (which recovers and resets the counter)
+  // never fires, short enough that a permanently dead render loop is
+  // reported while the user is still looking at the frozen frame.
+  constexpr std::uint32_t kConsecutiveRenderFailureThreshold = 90;
+  const std::uint32_t failures =
+      impl->consecutive_render_failures.fetch_add(
+          1, std::memory_order_relaxed) +
+      1;
+  if (failures != kConsecutiveRenderFailureThreshold) return;
+
+  std::string session_snapshot;
+  std::string project_path_snapshot;
+  {
+    std::lock_guard<std::mutex> lock(mutex_);
+    if (render_error_emitted_ || shutting_down_.load()) return;
+    render_error_emitted_ = true;
+    session_snapshot = active_session_id_;
+    project_path_snapshot = active_project_path_;
+  }
+  if (session_snapshot.empty()) return;
+
+  const std::string message =
+      std::string("The preview stopped rendering (stage: ") + stage +
+      "). Close and reopen the preview; the recording file itself is "
+      "unaffected.";
+  LogNative(("PREVIEW_RENDER_ERROR emitted: " + message).c_str());
+  clingfy::bridge::NativeLogPublisher::Instance().Error(
+      "Preview", "render loop died (" + std::string(stage) +
+                     "); emitting PREVIEW_RENDER_ERROR");
+  clingfy::bridge::PlayerEventPublisher::Instance().EmitPlayerError(
+      session_snapshot, clingfy::bridge::error::kPreviewRenderError, message);
+  clingfy::bridge::WorkflowEventPublisher::Instance().EmitPreviewFailed(
+      session_snapshot, project_path_snapshot,
+      clingfy::bridge::error::kPreviewRenderError, message);
+}
+
 void PreviewEngine::Close(const CloseArgs& args) {
   LogNative("Close() entered");
   if (!running_.load()) {
@@ -1407,6 +1513,8 @@ void PreviewEngine::Close(const CloseArgs& args) {
     active_session_id_.clear();
     active_project_path_.clear();
     emitted_preview_ready_ = false;
+    render_error_emitted_ = false;
+    media_failed_emitted_ = false;
     current_cycle_index_ = 0;
   }
   if (dying_impl) {

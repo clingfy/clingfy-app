@@ -42,12 +42,59 @@ void main() {
       'EXPORT_DISK_FULL',
       'PREVIEW_INPUT_MISSING',
       'SCENE_INPUT_MISSING',
+      // Phase 10.4 — native crash/error codes + Dart-synthesized watchdog
+      // codes.
+      'RECORDING_DISK_FULL',
+      'PREVIEW_OPEN_ERROR',
+      'PREVIEW_RENDER_ERROR',
+      'INTERNAL_ERROR',
+      'RECORDING_START_TIMEOUT',
+      'RECORDING_FINALIZE_TIMEOUT',
+      'PREVIEW_TIMEOUT',
     ]) {
       final presentation = await mapCode(tester, code);
       expect(presentation.message, isNotNull, reason: code);
       // Localized — never the raw token.
       expect(presentation.message, isNot(code), reason: code);
     }
+  });
+
+  testWidgets('RECORDING_DISK_FULL offers the storage settings action', (
+    tester,
+  ) async {
+    final presentation = await mapCode(tester, 'RECORDING_DISK_FULL');
+    expect(presentation.message, isNotNull);
+    expect(presentation.action, isNotNull);
+  });
+
+  testWidgets('PREVIEW_OPEN_ERROR and the watchdog codes are message-only', (
+    tester,
+  ) async {
+    for (final code in const [
+      'PREVIEW_OPEN_ERROR',
+      'PREVIEW_RENDER_ERROR',
+      'INTERNAL_ERROR',
+      'RECORDING_START_TIMEOUT',
+      'RECORDING_FINALIZE_TIMEOUT',
+      'PREVIEW_TIMEOUT',
+    ]) {
+      final presentation = await mapCode(tester, code);
+      expect(presentation.action, isNull, reason: code);
+    }
+  });
+
+  testWidgets('EXPORT_CANCELLED has NO mapper case — clean cancels are '
+      'classified upstream, never toasted', (tester) async {
+    // Falls through to the default branch: verbatim fallback (or the raw
+    // token) — proof there is no localized mapping that could surface a
+    // cancel as an error toast.
+    final presentation = await mapCode(
+      tester,
+      'EXPORT_CANCELLED',
+      fallback: 'native cancel prose',
+    );
+    expect(presentation.message, 'native cancel prose');
+    expect(presentation.action, isNull);
   });
 
   testWidgets('unknown code prefers the native prose fallback', (tester) async {

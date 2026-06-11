@@ -1535,6 +1535,86 @@ TEST(ExportPipelineTest, MissingSourceFailsCleanly) {
   const RenderResult result = RenderComposedExport(request);
   EXPECT_FALSE(result.ok);
   EXPECT_FALSE(result.message.empty());
+  // Phase 10.4: every failure outcome leaves NO file at the destination.
+  EXPECT_FALSE(
+      fs::exists(fs::u8path(request.destination_path)));
+}
+
+// === Phase 10.4: failure cleanup + disk-full classification =================
+
+// Pure classifier — GPU-free. Only the two Win32 disk-full codes (mapped
+// through HRESULT_FROM_WIN32) flag a mid-write disk-full; everything else
+// stays a generic render failure.
+TEST(ExportPipelineTest, IsDiskFullHresultClassifiesOnlyDiskFullCodes) {
+  EXPECT_TRUE(IsDiskFullHresult(HRESULT_FROM_WIN32(ERROR_DISK_FULL)));
+  EXPECT_TRUE(IsDiskFullHresult(HRESULT_FROM_WIN32(ERROR_HANDLE_DISK_FULL)));
+  EXPECT_FALSE(IsDiskFullHresult(S_OK));
+  EXPECT_FALSE(IsDiskFullHresult(E_FAIL));
+  EXPECT_FALSE(IsDiskFullHresult(HRESULT_FROM_WIN32(ERROR_ACCESS_DENIED)));
+  EXPECT_FALSE(IsDiskFullHresult(HRESULT_FROM_WIN32(ERROR_FILE_NOT_FOUND)));
+}
+
+// Phase 10.4 fixture: a source .mov whose video track has ZERO samples. The
+// source reader opens it fine, but the export's frame loop hits EOS
+// immediately and fails ("no video frames were decoded") — a failure that
+// occurs AFTER the output encoder has been opened, i.e. after the
+// destination file exists on disk for the GIF path (the WIC stream is
+// created on Open).
+bool SynthesizeEmptySource(clingfy::graphics::D3DDevice* device,
+                           const std::string& path, std::string* skip_reason) {
+  clingfy::encoding::EncoderConfig cfg;
+  cfg.output_path = path;
+  cfg.width = kSourceWidth;
+  cfg.height = kSourceHeight;
+  cfg.fps = kFps;
+  clingfy::encoding::MfSinkWriterEncoder encoder;
+  if (auto err = encoder.Open(cfg, *device)) {
+    *skip_reason = "source encoder open failed: " + err->message;
+    return false;
+  }
+  if (auto err = encoder.Finalize()) {
+    *skip_reason = "zero-frame source finalize failed: " + err->message;
+    return false;
+  }
+  return true;
+}
+
+// A render failure must remove any partial output: previously a failed
+// export left a corrupt file (truncated GIF / moov-less MP4) at the
+// user-chosen destination. The destination is freshly collision-avoided, so
+// deleting it is always safe.
+TEST(ExportPipelineTest, RenderFailureRemovesPartialDestination) {
+  clingfy::graphics::D3DDevice device;
+  if (device.Create()) {
+    GTEST_SKIP() << "no usable D3D11 device in this environment";
+  }
+  const auto dir = UniqueDir("fail_cleanup");
+  const auto source = (dir / "source.mov").u8string();
+  const auto dest = (dir / "out.gif").u8string();
+  std::string skip_reason;
+  if (!SynthesizeEmptySource(&device, source, &skip_reason)) {
+    GTEST_SKIP() << skip_reason;
+  }
+
+  RenderRequest request;
+  request.source_video_path = fs::u8path(source).wstring();
+  // .gif destination: the WIC encoder creates the file on Open, BEFORE the
+  // frame loop — so this exercises cleanup of an actually-created output.
+  request.destination_path = dest;
+  request.layout = "auto";
+  request.resolution = "auto";
+  request.fit = "fit";
+  request.fps_hint = kFps;
+
+  const RenderResult result = RenderComposedExport(request);
+  ASSERT_FALSE(result.ok) << "a zero-frame source must fail the render";
+  EXPECT_FALSE(result.cancelled);
+  EXPECT_FALSE(fs::exists(fs::u8path(dest)))
+      << "a failed render left a partial file at the destination — "
+      << result.message;
+
+  std::error_code ec;
+  fs::remove_all(dir, ec);
 }
 
 }  // namespace

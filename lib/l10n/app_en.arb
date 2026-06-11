@@ -834,5 +834,22 @@
   "errNoCamera": "No camera is available.",
   "errCameraInputError": "The camera stopped working.",
   "errFileNotFound": "File not found.",
-  "errWindowsNotImplemented": "This feature isn't available on Windows yet."
+  "errWindowsNotImplemented": "This feature isn't available on Windows yet.",
+  "errRecordingDiskFull": "Not enough disk space to start recording.",
+  "errPreviewOpenFailed": "Preview failed to open.",
+  "errPreviewRenderFailed": "Preview stopped rendering. Close and reopen the recording.",
+  "errRecordingStartTimeout": "Recording did not start in time.",
+  "errRecordingFinalizeTimeout": "Saving the recording timed out.",
+  "errPreviewTimeout": "Preview took too long to load.",
+  "errInternalError": "An internal error occurred.",
+  "recordingInterruptedNotice": "{count, plural, one{1 recording was interrupted and could not be recovered.} other{{count} recordings were interrupted and could not be recovered.}}",
+  "@recordingInterruptedNotice": {
+    "description": "Startup salvage toast shown after the native crash-recovery sweep finds recordings that were interrupted by a crash.",
+    "placeholders": {
+      "count": {
+        "type": "int"
+      }
+    }
+  },
+  "forceNativeCrashLabel": "Force native crash (test)"
 }

@@ -51,12 +51,30 @@ inline constexpr const char* kCameraPermissionDenied =
 
 // Recording / export errors.
 inline constexpr const char* kRecordingError = "RECORDING_ERROR";
+inline constexpr const char* kRecordingDiskFull = "RECORDING_DISK_FULL";
 inline constexpr const char* kOutputUrlError = "OUTPUT_URL_ERROR";
 inline constexpr const char* kExportError = "EXPORT_ERROR";
+inline constexpr const char* kExportCancelled = "EXPORT_CANCELLED";
 inline constexpr const char* kExportInputMissing = "EXPORT_INPUT_MISSING";
 inline constexpr const char* kExportDiskFull = "EXPORT_DISK_FULL";
 inline constexpr const char* kAdvancedCameraExportFailed =
     "ADVANCED_CAMERA_EXPORT_FAILED";
+
+// Preview errors. `PREVIEW_INPUT_MISSING`/`SCENE_INPUT_MISSING` mean the
+// project bundle (or a required file inside it) could not be read;
+// `PREVIEW_OPEN_ERROR` means the bundle was fine but the preview engine
+// itself failed to open (D3D/D2D/texture/MediaPlayer setup).
+inline constexpr const char* kPreviewInputMissing = "PREVIEW_INPUT_MISSING";
+inline constexpr const char* kSceneInputMissing = "SCENE_INPUT_MISSING";
+inline constexpr const char* kPreviewOpenError = "PREVIEW_OPEN_ERROR";
+// The preview opened fine but rendering died mid-flight (device loss /
+// D2DERR_RECREATE_TARGET class) — emitted once per session after a run of
+// consecutive frame failures.
+inline constexpr const char* kPreviewRenderError = "PREVIEW_RENDER_ERROR";
+
+// A handler threw an unexpected C++ exception; the MethodRouter dispatch
+// barrier converts it into this error instead of killing the process.
+inline constexpr const char* kInternalError = "INTERNAL_ERROR";
 
 // File errors.
 inline constexpr const char* kVideoFileMissing = "VIDEO_FILE_MISSING";

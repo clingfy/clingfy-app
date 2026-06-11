@@ -9,6 +9,7 @@
 #include <wrl/client.h>
 
 #include <algorithm>
+#include <chrono>
 #include <future>
 #include <memory>
 #include <utility>
@@ -108,6 +109,26 @@ bool CameraRecorder::Start(const Config& config) {
   };
 
   thread_ = std::thread(&CameraRecorder::ThreadMain, this, std::move(report_open));
+
+  // Phase 10.4: bounded wait. A wedged MF Frame Server can block the open
+  // sequence (MFCreateDeviceSource et al.) indefinitely; without a deadline
+  // that wedges startRecording — and the engine mutex — forever. On timeout
+  // the worker cannot be joined (it is blocked inside MF), so it is DETACHED
+  // and this object must be kept alive by the caller for the process
+  // lifetime (see open_timed_out()). The worker self-terminates when the
+  // open eventually completes and it notices `abandoned_`.
+  const auto timeout = std::chrono::milliseconds(
+      config_.open_timeout_ms > 0 ? config_.open_timeout_ms : 10000);
+  if (open_future.wait_for(timeout) == std::future_status::timeout) {
+    clingfy::bridge::devices::LogDeviceProbe(
+        "CameraRecorder: device open timed out; abandoning the camera "
+        "(screen recording continues)");
+    abandoned_.store(true);
+    open_timed_out_ = true;
+    thread_.detach();
+    started_ = false;
+    return false;
+  }
 
   const bool ok = open_future.get();
   if (!ok) {
@@ -379,10 +400,20 @@ void CameraRecorder::ThreadMain(std::function<void(bool)> report_open) {
   opened = true;
   report_open(true);
 
+  // Phase 10.4: Start() may have timed out a moment before the open report
+  // landed. An abandoned recorder has no consumer — close our own resources
+  // and exit instead of capturing into the void (nobody will ever Stop us).
+  if (abandoned_.load()) {
+    clingfy::bridge::devices::LogDeviceProbe(
+        "CameraRecorder: open completed after abandonment; exiting");
+    cleanup();
+    return;
+  }
+
   // ---- Capture loop -------------------------------------------------------
   const std::int64_t sample_duration = kHundredNanosPerSecond / std::max(fps, 1u);
   bool warned_lost = false;
-  while (!stop_.load()) {
+  while (!stop_.load() && !abandoned_.load()) {
     DWORD flags = 0;
     LONGLONG ts = 0;
     ComPtr<IMFSample> sample;

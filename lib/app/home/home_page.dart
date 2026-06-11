@@ -132,6 +132,10 @@ class _HomePageState extends State<HomePage> {
       );
       await actions.applyInitialFileTemplate();
       actions.updateNativeBarState();
+      if (!mounted) return;
+      // Phase 10.4 (Windows): one-shot crash-recovery sweep + salvage
+      // notice once the home shell is ready.
+      unawaited(actions.announceStartupRecovery(context));
     });
   }
 

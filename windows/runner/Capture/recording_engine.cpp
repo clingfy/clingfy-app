@@ -5,7 +5,11 @@
 
 #include <algorithm>
 #include <cstdio>
+#include <filesystem>
+#include <fstream>
 #include <functional>
+#include <memory>
+#include <sstream>
 #include <thread>
 #include <utility>
 #include <vector>
@@ -21,7 +25,9 @@
 #include "Bridge/native_error_codes.h"
 #include "Bridge/native_log_publisher.h"
 #include "Bridge/platform_thread_dispatcher.h"
+#include "Bridge/recording_warning_codes.h"
 #include "Bridge/workflow_event_publisher.h"
+#include "Services/recovery_sweep.h"
 #include "Capture/Camera/camera_floating_overlay.h"
 #include "Capture/Camera/camera_meta.h"
 #include "Capture/Camera/camera_recorder.h"
@@ -40,6 +46,73 @@
 #include "Permissions/permission_probe.h"
 
 namespace clingfy::capture {
+
+namespace {
+
+// Phase 10.4: keepalive for camera recorders whose device-open wedged inside
+// Media Foundation (see CameraRecorder::open_timed_out()). Their detached
+// thread may unblock at any time and touch the object, so destruction is
+// never safe — park them for the process lifetime. Intentionally leaked
+// (heap-allocated, never freed) so CRT static-destruction order can't race
+// a worker that unwedges during exit. One leaked thread+object per
+// occurrence beats an unbounded startRecording hang or a UAF.
+std::vector<std::unique_ptr<CameraRecorder>>& AbandonedCameraRecorders() {
+  static auto* recorders =
+      new std::vector<std::unique_ptr<CameraRecorder>>();
+  return *recorders;
+}
+
+// Phase 10.4: rewrite a bundle's manifest `status` to "failed" in place.
+// Value-agnostic (works for "capturing" provisionals and zero-frame "ready"
+// bundles). Best-effort; returns false when the manifest is unreadable or
+// the status key wasn't found.
+bool StampBundleFailed(const std::string& bundle_path) {
+  if (bundle_path.empty()) return false;
+  const std::filesystem::path manifest =
+      std::filesystem::u8path(bundle_path) / "project.json";
+  std::ifstream in(manifest, std::ios::binary);
+  if (!in.is_open()) return false;
+  std::ostringstream buffer;
+  buffer << in.rdbuf();
+  in.close();
+  const auto rewritten = clingfy::services::ReplaceJsonStringValue(
+      buffer.str(), "status", "failed");
+  if (!rewritten) return false;
+  std::ofstream out(manifest, std::ios::binary | std::ios::trunc);
+  if (!out.is_open()) return false;
+  out.write(rewritten->data(),
+            static_cast<std::streamsize>(rewritten->size()));
+  return out.good();
+}
+
+// Free bytes on the volume containing `directory`; empty when the query
+// fails (the gate fails OPEN in that case).
+std::optional<std::uint64_t> FreeBytesForDirectory(
+    const std::filesystem::path& directory) {
+  if (directory.empty()) return std::nullopt;
+  ULARGE_INTEGER available{};
+  if (::GetDiskFreeSpaceExW(directory.c_str(), &available, nullptr,
+                            nullptr) == 0) {
+    return std::nullopt;
+  }
+  return static_cast<std::uint64_t>(available.QuadPart);
+}
+
+}  // namespace
+
+StartDiskGate EvaluateStartDiskGate(std::optional<std::uint64_t> free_bytes,
+                                    bool allow_low_storage_bypass) {
+  if (!free_bytes.has_value()) {
+    return StartDiskGate::kOk;  // never block on a failed QUERY
+  }
+  if (*free_bytes < kStartDiskHardFloorBytes) {
+    return StartDiskGate::kBlocked;  // bypass does not apply below the floor
+  }
+  if (*free_bytes < kStartDiskSoftFloorBytes && !allow_low_storage_bypass) {
+    return StartDiskGate::kBlocked;
+  }
+  return StartDiskGate::kOk;
+}
 
 RecordingEngine& RecordingEngine::Instance() {
   static RecordingEngine engine;
@@ -81,6 +154,12 @@ std::optional<RecordingError> RecordingEngine::Start(
   // recording never actually became visible to the user.
   auto fail_start = [&](const std::string& code,
                         const std::string& msg) -> RecordingError {
+    // Phase 10.4: hard start failures used to be invisible to the JSONL
+    // logs and Sentry (the Dart toast was the only trace). The publisher
+    // promotes native ERROR lines to Sentry events, so every refused start
+    // now leaves a diagnosable trail.
+    clingfy::bridge::NativeLogPublisher::Instance().Error(
+        "Recording", "startRecording failed code=" + code + ": " + msg);
     clingfy::bridge::WorkflowEventPublisher::Instance().EmitRecordingFailed(
         request.session_id, "start", code, msg);
     return RecordingError{code, msg};
@@ -103,6 +182,34 @@ std::optional<RecordingError> RecordingEngine::Start(
         clingfy::bridge::error::kAlreadyRecording,
         "A recording session is already in flight; stop it before "
         "starting another.");
+  }
+
+  // Phase 10.4: native disk preflight (D6 — the Dart-side storage dialog is
+  // advisory and silently skipped when its snapshot fetch fails; this is
+  // the engine-side floor). The encoder writes to %TEMP% and the bundle
+  // lands under the recordings root — gate on the tighter of the two.
+  {
+    std::error_code disk_ec;
+    const auto temp_free =
+        FreeBytesForDirectory(std::filesystem::temp_directory_path(disk_ec));
+    const auto recordings_free = FreeBytesForDirectory(
+        std::filesystem::u8path(ResolveDefaultRecordingsRoot()));
+    std::optional<std::uint64_t> free_bytes;
+    if (temp_free && recordings_free) {
+      free_bytes = std::min(*temp_free, *recordings_free);
+    } else if (temp_free) {
+      free_bytes = temp_free;
+    } else {
+      free_bytes = recordings_free;
+    }
+    if (EvaluateStartDiskGate(free_bytes, request.allow_low_storage_bypass) ==
+        StartDiskGate::kBlocked) {
+      return fail_start(
+          clingfy::bridge::error::kRecordingDiskFull,
+          "Not enough free disk space to start recording (free: " +
+              std::to_string(free_bytes.value_or(0) / (1024 * 1024)) +
+              " MiB).");
+    }
   }
 
   const DisplayTargetMode mode =
@@ -133,14 +240,16 @@ std::optional<RecordingError> RecordingEngine::Start(
   if (is_window_mode) {
     const auto window_id = WindowsSelectionState::Instance().AppWindowId();
     if (!window_id) {
+      // Phase 10.4: the specific macOS-parity codes (already mapped with
+      // better copy in HomeErrorMapper) instead of blanket TARGET_ERROR.
       return fail_start(
-          clingfy::bridge::error::kTargetError,
+          clingfy::bridge::error::kNoWindowSelected,
           "No window selected to record. Pick a window first.");
     }
     window_target = clingfy::bridge::devices::ResolveAppWindow(window_id);
     if (!window_target) {
       return fail_start(
-          clingfy::bridge::error::kTargetError,
+          clingfy::bridge::error::kWindowNotAvailable,
           "The selected window is no longer available. Pick it again.");
     }
     current_target_type_ = "window";
@@ -150,7 +259,7 @@ std::optional<RecordingError> RecordingEngine::Start(
     const auto region = WindowsSelectionState::Instance().CurrentAreaRegion();
     if (!region) {
       return fail_start(
-          clingfy::bridge::error::kTargetError,
+          clingfy::bridge::error::kNoAreaSelected,
           "No area selected to record. Pick an area first.");
     }
     monitor = clingfy::bridge::devices::ResolveHMonitor(region->display_id);
@@ -204,7 +313,8 @@ std::optional<RecordingError> RecordingEngine::Start(
 
   d3d_device_ = std::make_unique<clingfy::graphics::D3DDevice>();
   if (auto d3d_err = d3d_device_->Create()) {
-    TeardownPipeline();
+    TeardownPipeline(/*finalize_encoder=*/false);
+    CleanupFailedStartArtifacts(request.session_id);
     session_.MarkFailed();
     session_.Reset();
     return fail_start(clingfy::bridge::error::kRecordingError,
@@ -221,11 +331,12 @@ std::optional<RecordingError> RecordingEngine::Start(
     const auto window_size =
         clingfy::capture::ResolveWindowCaptureSize(*window_target);
     if (!window_size) {
-      TeardownPipeline();
+      TeardownPipeline(/*finalize_encoder=*/false);
+      CleanupFailedStartArtifacts(request.session_id);
       session_.MarkFailed();
       session_.Reset();
       return fail_start(
-          clingfy::bridge::error::kTargetError,
+          clingfy::bridge::error::kWindowNotAvailable,
           "Could not measure the selected window for capture. Pick it "
           "again.");
     }
@@ -272,11 +383,15 @@ std::optional<RecordingError> RecordingEngine::Start(
       std::make_unique<clingfy::encoding::MfSinkWriterEncoder>();
   if (auto enc_err = encoder_->Open(encoder_config, *d3d_device_,
                                       audio_config)) {
-    TeardownPipeline();
+    TeardownPipeline(/*finalize_encoder=*/false);
+    CleanupFailedStartArtifacts(request.session_id);
     session_.MarkFailed();
     session_.Reset();
+    char hr_buf[32];
+    std::snprintf(hr_buf, sizeof(hr_buf), " (hr=0x%08lX)",
+                  static_cast<unsigned long>(enc_err->hr));
     return fail_start(clingfy::bridge::error::kRecordingError,
-                      enc_err->message);
+                      enc_err->message + hr_buf);
   }
   current_output_path_ = encoder_config.output_path;
 
@@ -314,11 +429,15 @@ std::optional<RecordingError> RecordingEngine::Start(
     wgc_err = capture_backend_->Start(*monitor, *d3d_device_, *frame_queue_);
   }
   if (wgc_err) {
-    TeardownPipeline();
+    TeardownPipeline(/*finalize_encoder=*/false);
+    CleanupFailedStartArtifacts(request.session_id);
     session_.MarkFailed();
     session_.Reset();
+    char hr_buf[32];
+    std::snprintf(hr_buf, sizeof(hr_buf), " (hr=0x%08lX)",
+                  static_cast<unsigned long>(wgc_err->hr));
     return fail_start(clingfy::bridge::error::kRecordingError,
-                      wgc_err->message);
+                      wgc_err->message + hr_buf);
   }
 
   // Audio captures: each is best-effort. If mic open fails we log and
@@ -359,7 +478,8 @@ std::optional<RecordingError> RecordingEngine::Start(
         is_mic ? "Your microphone was disconnected. Recording continues "
                  "without it."
                : "System audio stopped. Recording continues without it.",
-        is_mic ? "MIC_DISCONNECTED" : "SYSTEM_AUDIO_STOPPED");
+        is_mic ? clingfy::bridge::warning::kMicDisconnected
+               : clingfy::bridge::warning::kSystemAudioStopped);
   };
   if (want_mic) {
     mic_queue_ = std::make_unique<clingfy::audio::AudioPacketQueue>();
@@ -388,7 +508,7 @@ std::optional<RecordingError> RecordingEngine::Start(
       start_warnings.emplace_back(
           "Your microphone couldn't be started. Recording continues without "
           "microphone audio.",
-          "MIC_OPEN_FAILED");
+          clingfy::bridge::warning::kMicOpenFailed);
       mic_capture_.reset();
       mic_queue_.reset();
     } else {
@@ -416,7 +536,7 @@ std::optional<RecordingError> RecordingEngine::Start(
       start_warnings.emplace_back(
           "System audio couldn't be captured. Recording continues without "
           "system audio.",
-          "SYSTEM_AUDIO_OPEN_FAILED");
+          clingfy::bridge::warning::kSystemAudioOpenFailed);
       loopback_capture_.reset();
       loopback_queue_.reset();
     } else {
@@ -462,7 +582,7 @@ std::optional<RecordingError> RecordingEngine::Start(
                   warn_sid,
                   "Recording ran into an encoder problem. The recording may "
                   "be incomplete.",
-                  "ENCODER_VIDEO_ERROR");
+                  clingfy::bridge::warning::kEncoderVideoError);
         }
       }
     }
@@ -527,7 +647,7 @@ std::optional<RecordingError> RecordingEngine::Start(
                       warn_sid,
                       "Recording ran into an audio encoding problem. The "
                       "recording's audio may be incomplete.",
-                      "ENCODER_AUDIO_ERROR");
+                      clingfy::bridge::warning::kEncoderAudioError);
             }
           }
         }
@@ -627,6 +747,13 @@ std::optional<RecordingError> RecordingEngine::Start(
       clingfy::bridge::devices::LogDeviceProbe(
           "RecordingEngine: cursor sidecar init failed; keeping cursor-on "
           "fallback");
+      // Phase 10.4: surface the degradation to JSONL/Sentry (no toast — the
+      // burned-in fallback still records the cursor; smart zoom and cursor
+      // effects are what silently degrade).
+      clingfy::bridge::NativeLogPublisher::Instance().Warn(
+          "Recording",
+          "cursor sidecar init failed; falling back to burned-in cursor "
+          "(export cursor/zoom effects unavailable for this recording)");
     }
   }
 
@@ -688,12 +815,18 @@ std::optional<RecordingError> RecordingEngine::Start(
       // recorder finalizes the partial raw.mov itself; the screen keeps going.
       cam_cfg.on_device_lost = [sid]() {
         clingfy::bridge::PlatformThreadDispatcher::Instance().Post([sid]() {
+          // Phase 10.4: device loss previously emitted only the toast — no
+          // log line, invisible to JSONL/Sentry.
+          clingfy::bridge::NativeLogPublisher::Instance().Error(
+              "Recording",
+              "camera device lost mid-recording (session " + sid +
+                  "); camera capture stopped, screen recording continues");
           clingfy::bridge::WorkflowEventPublisher::Instance()
               .EmitRecordingWarning(
                   sid,
                   "Your camera was disconnected. Recording continues without "
                   "it.",
-                  "CAMERA_DISCONNECTED");
+                  clingfy::bridge::warning::kCameraDisconnected);
         });
       };
 
@@ -724,7 +857,7 @@ std::optional<RecordingError> RecordingEngine::Start(
         place.x = work.left + std::max(0, work_w - place.width - margin);
         place.y = work.top + std::max(0, work_h - place.height - margin);
         place.rounded = true;
-        camera_floating_ = std::make_unique<CameraFloatingOverlay>();
+        camera_floating_ = std::make_shared<CameraFloatingOverlay>();
         if (!camera_floating_->Start(place)) {
           camera_floating_.reset();
           clingfy::bridge::devices::LogDeviceProbe(
@@ -732,11 +865,15 @@ std::optional<RecordingError> RecordingEngine::Start(
               "preview only");
         }
       }
-      CameraFloatingOverlay* floating = camera_floating_.get();
-      cam_cfg.on_preview_frame = [floating](const std::uint8_t* bgra, int w,
-                                            int h) {
+      // Phase 10.4: weak capture (was a raw pointer). An ABANDONED camera
+      // recorder (open timeout) keeps a detached thread that may deliver
+      // frames long after the engine tears the overlay down; the weak_ptr
+      // makes that a no-op instead of a use-after-free.
+      std::weak_ptr<CameraFloatingOverlay> floating_weak = camera_floating_;
+      cam_cfg.on_preview_frame = [floating_weak](const std::uint8_t* bgra,
+                                                 int w, int h) {
         LiveCameraTexture::Instance().PublishBgra(bgra, w, h);
-        if (floating != nullptr) {
+        if (auto floating = floating_weak.lock()) {
           floating->PublishBgra(bgra, w, h);
         }
       };
@@ -750,6 +887,23 @@ std::optional<RecordingError> RecordingEngine::Start(
             "RecordingEngine: camera capture + preview started (floating "
             "available + in-app texture)");
       } else {
+        if (camera_recorder_->open_timed_out()) {
+          // Phase 10.4: the open wedged inside Media Foundation (#148
+          // pathology class). The recorder cannot be joined or destroyed —
+          // park it for the process lifetime and continue screen-only.
+          // Its stranded temp file is removed by the next launch's
+          // recovery sweep.
+          clingfy::bridge::NativeLogPublisher::Instance().Error(
+              "Recording",
+              "camera device open timed out at recording start; camera "
+              "abandoned, continuing screen-only");
+          AbandonedCameraRecorders().push_back(std::move(camera_recorder_));
+        } else {
+          clingfy::bridge::NativeLogPublisher::Instance().Error(
+              "Recording",
+              "camera init failed at recording start; continuing "
+              "screen-only");
+        }
         camera_recorder_.reset();
         if (camera_floating_) {
           camera_floating_->Stop();
@@ -759,13 +913,10 @@ std::optional<RecordingError> RecordingEngine::Start(
             "RecordingEngine: camera init failed; continuing screen-only");
         // Phase 10.1: the user enabled the overlay and got no bubble — that
         // must never be silent.
-        clingfy::bridge::NativeLogPublisher::Instance().Error(
-            "Recording",
-            "camera init failed at recording start; continuing screen-only");
         start_warnings.emplace_back(
             "Your camera couldn't be started. Recording continues without "
             "the camera overlay.",
-            "CAMERA_OPEN_FAILED");
+            clingfy::bridge::warning::kCameraOpenFailed);
       }
     } else {
       // The user wanted a camera but it is not ready — surface why in the log.
@@ -786,13 +937,34 @@ std::optional<RecordingError> RecordingEngine::Start(
         start_warnings.emplace_back(
             "Your camera isn't available right now. Recording continues "
             "without the camera overlay.",
-            "CAMERA_UNAVAILABLE");
+            clingfy::bridge::warning::kCameraUnavailable);
       }
     }
   }
 
+  // Phase 10.4: provisional project bundle (status "capturing" + ownerPid),
+  // macOS RecordingProjectService parity. If the process dies mid-recording
+  // the next launch's recovery sweep finds this manifest, marks the project
+  // failed, and tells the user — instead of leaving nothing but an
+  // unplayable %TEMP% strand. Best-effort: a failure here must never refuse
+  // the recording.
+  {
+    ProvisionalProjectInput provisional;
+    provisional.session_id = request.session_id;
+    const auto provisional_result = WriteProvisionalProject(provisional);
+    if (provisional_result.kind == ProjectWriterErrorKind::kNone) {
+      current_provisional_project_path_ = provisional_result.project_path;
+    } else {
+      current_provisional_project_path_.clear();
+      clingfy::bridge::NativeLogPublisher::Instance().Warn(
+          "Recording", "provisional project manifest write failed: " +
+                           provisional_result.message);
+    }
+  }
+
   if (!session_.MarkStarted()) {
-    TeardownPipeline();
+    TeardownPipeline(/*finalize_encoder=*/false);
+    CleanupFailedStartArtifacts(request.session_id);
     session_.MarkFailed();
     session_.Reset();
     return fail_start(clingfy::bridge::error::kInvalidRecordingState,
@@ -1016,6 +1188,7 @@ std::optional<RecordingError> RecordingEngine::Stop(
 
   if (!session_.MarkStopped()) {
     session_.MarkFailed();
+    MarkProvisionalProjectFailed();
     clingfy::bridge::WorkflowEventPublisher::Instance().EmitRecordingFailed(
         active_session_id, "finalize",
         clingfy::bridge::error::kInvalidRecordingState,
@@ -1025,16 +1198,70 @@ std::optional<RecordingError> RecordingEngine::Stop(
   }
   session_.Reset();
 
+  // Phase 10.4: gate the finalize on the ENCODER's outcome, not on WGC
+  // delivery stats. A Finalize() failure means the MP4 has no usable moov
+  // atom; zero written samples means the file is empty — either way there
+  // is no recording to keep, and shipping it as `recordingFinalized` (the
+  // pre-10.4 behavior) handed the user a corrupt project.
+  if (!teardown_finalize_ok_ || teardown_samples_written_ == 0) {
+    const std::string reason =
+        !teardown_finalize_ok_
+            ? "The recording file could not be finalized and is not "
+              "playable."
+            : "No video was captured before the recording stopped.";
+    clingfy::bridge::NativeLogPublisher::Instance().Error(
+        "Recording",
+        "stop finalize refused: " + reason + " (samples_written=" +
+            std::to_string(teardown_samples_written_) + ")");
+    MarkProvisionalProjectFailed();
+    // The SCREEN temp is unplayable garbage at this point — clean it now.
+    // Review fix: the camera raw is finalized by its OWN sink writer; when
+    // it has frames it is playable footage and must survive (the
+    // tombstoned bundle protects it from the next-launch sweep).
+    CleanupSessionTempFiles(active_session_id,
+                            /*include_camera=*/!current_camera_enabled_);
+    clingfy::bridge::WorkflowEventPublisher::Instance().EmitRecordingFailed(
+        active_session_id, "finalize",
+        clingfy::bridge::error::kRecordingError, reason);
+    return std::nullopt;
+  }
+
   // Project finalize: reshape the encoder's temp MP4 into a
   // `.clingfyproj` bundle Dart can open. On failure we still consider
-  // the stopRecording call successful (the file exists in %TEMP%) but
-  // emit a `recordingFailed` event so the UI surfaces the issue.
+  // the stopRecording call successful but emit a `recordingFailed` event
+  // so the UI surfaces the issue.
   auto writer_result = WriteRecordingProject(project_input);
   if (writer_result.kind == ProjectWriterErrorKind::kNone) {
+    current_provisional_project_path_.clear();
+    // Best-effort bundling can leave cursor/camera temps behind (the screen
+    // mp4 was moved by the writer). Clean the stragglers now — EXCEPT a
+    // downgraded camera raw: that file is the only copy of playable camera
+    // footage the writer could not move (review fix). Surface the drop
+    // instead of deleting it silently.
+    CleanupSessionTempFiles(active_session_id,
+                            /*include_camera=*/!writer_result.camera_downgraded);
+    if (writer_result.camera_downgraded) {
+      clingfy::bridge::NativeLogPublisher::Instance().Error(
+          "Recording",
+          "camera raw could not be bundled into the project; the raw file "
+          "remains in the temp folder: " +
+              clingfy::encoding::ResolveTempCameraRawPath(active_session_id));
+      clingfy::bridge::WorkflowEventPublisher::Instance().EmitRecordingWarning(
+          active_session_id,
+          "Your camera footage couldn't be attached to this recording. The "
+          "raw camera file was kept in the temporary folder.");
+    }
     clingfy::bridge::WorkflowEventPublisher::Instance()
         .EmitRecordingFinalized(active_session_id,
                                  writer_result.project_path);
   } else {
+    // Writer failure: keep the temp files (the screen mp4 is finalized and
+    // playable — deleting it here would destroy the only copy; the recovery
+    // sweep ages ownerless temps out later) and tombstone the bundle.
+    clingfy::bridge::NativeLogPublisher::Instance().Error(
+        "Recording", "project writer failed at stop: " +
+                         writer_result.message);
+    MarkProvisionalProjectFailed();
     clingfy::bridge::WorkflowEventPublisher::Instance().EmitRecordingFailed(
         active_session_id, "finalize",
         clingfy::bridge::error::kRecordingError, writer_result.message);
@@ -1153,12 +1380,22 @@ void RecordingEngine::HandleTargetLost(const std::string& session_id) {
   ProjectWriterInput project_input =
       SnapshotProjectWriterInput(active_session_id);
 
+  // Phase 10.4: target loss previously emitted events only — zero log
+  // lines, invisible to JSONL/Sentry.
+  clingfy::bridge::NativeLogPublisher::Instance().Warn(
+      "Recording",
+      std::string("capture target lost mid-recording (") +
+          (was_window ? "window closed" : "display disconnected") +
+          "); finalizing partial recording for session " + active_session_id);
+
   if (!session_.BeginStop()) {
     // Mid-start / mid-stop — cannot cleanly finalize from here. Surface a
     // failure rather than leaving the UI stuck on a recording that is gone.
     session_.MarkFailed();
     session_.Reset();
-    TeardownPipeline();
+    TeardownPipeline(/*finalize_encoder=*/false);
+    MarkProvisionalProjectFailed();
+    CleanupSessionTempFiles(active_session_id);
     clingfy::bridge::WorkflowEventPublisher::Instance().EmitRecordingFailed(
         active_session_id, "finalize", clingfy::bridge::error::kTargetError,
         was_window
@@ -1175,6 +1412,7 @@ void RecordingEngine::HandleTargetLost(const std::string& session_id) {
   if (!session_.MarkStopped()) {
     session_.MarkFailed();
     session_.Reset();
+    MarkProvisionalProjectFailed();
     clingfy::bridge::WorkflowEventPublisher::Instance().EmitRecordingFailed(
         active_session_id, "finalize",
         clingfy::bridge::error::kInvalidRecordingState,
@@ -1202,33 +1440,75 @@ void RecordingEngine::HandleTargetLost(const std::string& session_id) {
           : "The display you were recording was disconnected before anything "
             "could be captured.";
 
+  // Phase 10.4: same encoder-outcome gate as Stop — a failed Finalize()
+  // means the temp MP4 is unplayable, so there is nothing to bundle.
+  if (!teardown_finalize_ok_) {
+    clingfy::bridge::NativeLogPublisher::Instance().Error(
+        "Recording",
+        "target-loss finalize refused: encoder finalize failed; the partial "
+        "recording is not playable");
+    MarkProvisionalProjectFailed();
+    // Review fix: spare a camera raw with frames — it is finalized by its
+    // own sink writer and playable; the tombstoned bundle protects it.
+    CleanupSessionTempFiles(active_session_id,
+                            /*include_camera=*/!current_camera_enabled_);
+    clingfy::bridge::WorkflowEventPublisher::Instance().EmitRecordingFailed(
+        active_session_id, "finalize", clingfy::bridge::error::kRecordingError,
+        "The recording file could not be finalized after the capture target "
+        "was lost.");
+    return;
+  }
+
   auto writer_result = WriteRecordingProject(project_input);
   const bool writer_ok = writer_result.kind == ProjectWriterErrorKind::kNone;
-  const bool kept = writer_ok && project_input.frames_received > 0;
+  // Phase 10.4: "kept" gates on the encoder's written samples, not WGC
+  // delivery stats — frames_received counts arrivals, not what made it into
+  // the file.
+  const bool kept = writer_ok && teardown_samples_written_ > 0;
   if (kept) {
+    current_provisional_project_path_.clear();
+    // Review fix: same downgraded-camera sparing as the Stop path.
+    CleanupSessionTempFiles(active_session_id,
+                            /*include_camera=*/!writer_result.camera_downgraded);
     clingfy::bridge::WorkflowEventPublisher::Instance().EmitRecordingWarning(
         active_session_id, warn_msg,
-        was_window ? "WINDOW_CLOSED_PARTIAL_SAVED"
-                   : "DISPLAY_DISCONNECTED_PARTIAL_SAVED");
+        was_window
+            ? clingfy::bridge::warning::kWindowClosedPartialSaved
+            : clingfy::bridge::warning::kDisplayDisconnectedPartialSaved);
     clingfy::bridge::WorkflowEventPublisher::Instance().EmitRecordingFinalized(
         active_session_id, writer_result.project_path);
   } else if (writer_ok) {
-    // The writer succeeded but nothing was captured (the target vanished before
-    // a frame arrived) — the cause genuinely is the lost target.
+    // The writer succeeded but nothing was captured (the target vanished
+    // before a sample landed). The bundle it wrote claims status "ready" —
+    // stamp it failed so it can't masquerade as an openable recording
+    // (pre-10.4 this orphaned a zero-frame "ready" bundle forever).
+    if (!StampBundleFailed(writer_result.project_path)) {
+      clingfy::bridge::NativeLogPublisher::Instance().Warn(
+          "Recording",
+          "could not stamp the zero-frame bundle failed: " +
+              writer_result.project_path);
+    }
+    current_provisional_project_path_.clear();
+    CleanupSessionTempFiles(active_session_id);
     clingfy::bridge::WorkflowEventPublisher::Instance().EmitRecordingFailed(
         active_session_id, "finalize", clingfy::bridge::error::kTargetError,
         fail_msg);
   } else {
     // The writer itself failed (disk / filesystem). Report it the same way Stop
     // does — a write failure is a RECORDING_ERROR, not a target error — so the
-    // two finalize paths stay consistent.
+    // two finalize paths stay consistent. Temps are kept (the screen mp4 is
+    // finalized and playable; the sweep ages them out if never recovered).
+    clingfy::bridge::NativeLogPublisher::Instance().Error(
+        "Recording",
+        "project writer failed after target loss: " + writer_result.message);
+    MarkProvisionalProjectFailed();
     clingfy::bridge::WorkflowEventPublisher::Instance().EmitRecordingFailed(
         active_session_id, "finalize", clingfy::bridge::error::kRecordingError,
         writer_result.message);
   }
 }
 
-void RecordingEngine::TeardownPipeline() {
+void RecordingEngine::TeardownPipeline(bool finalize_encoder) {
   // Strict ordering: stop the capture producers first, then signal the
   // drain / mixer consumer threads via queue Close, join them, then
   // finalize the encoder so the MP4 footer is written before the
@@ -1273,8 +1553,30 @@ void RecordingEngine::TeardownPipeline() {
   if (encoder_thread_.joinable()) encoder_thread_.join();
   if (audio_mixer_thread_.joinable()) audio_mixer_thread_.join();
 
+  // Phase 10.4: capture the encoder outcome for the finalize paths' gating
+  // BEFORE the encoder is destroyed. The Finalize() result used to be
+  // discarded — a moov-less MP4 shipped as `recordingFinalized`.
+  teardown_samples_written_ = 0;
+  teardown_finalize_ok_ = true;
   if (encoder_) {
-    encoder_->Finalize();
+    teardown_samples_written_ = encoder_->samples_written();
+    if (finalize_encoder) {
+      if (auto finalize_err = encoder_->Finalize()) {
+        teardown_finalize_ok_ = false;
+        char buf[640];
+        std::snprintf(buf, sizeof(buf),
+                      "RecordingEngine: encoder Finalize FAILED hr=0x%08lX "
+                      "msg=%s",
+                      static_cast<unsigned long>(finalize_err->hr),
+                      finalize_err->message.c_str());
+        clingfy::bridge::devices::LogDeviceProbe(buf);
+        clingfy::bridge::NativeLogPublisher::Instance().Error("Recording",
+                                                              buf);
+      }
+    }
+    // Failed-start paths skip Finalize: destroying the writer un-finalized
+    // is a Cancel (see ~MfSinkWriterEncoder) — no zero-sample footer gets
+    // written to %TEMP%.
     encoder_.reset();
   }
   if (frame_queue_) frame_queue_.reset();
@@ -1284,6 +1586,66 @@ void RecordingEngine::TeardownPipeline() {
     d3d_device_->Reset();
     d3d_device_.reset();
   }
+}
+
+void RecordingEngine::CleanupSessionTempFiles(const std::string& session_id,
+                                              bool include_camera) {
+  std::vector<std::string> paths = {
+      clingfy::encoding::ResolveTempMp4Path(session_id),
+      clingfy::encoding::ResolveTempCursorSidecarPath(session_id),
+  };
+  if (include_camera) {
+    paths.push_back(clingfy::encoding::ResolveTempCameraRawPath(session_id));
+  }
+  for (const auto& path : paths) {
+    if (path.empty()) continue;
+    std::error_code ec;
+    std::filesystem::remove(std::filesystem::u8path(path), ec);
+  }
+}
+
+void RecordingEngine::CleanupFailedStartArtifacts(
+    const std::string& session_id) {
+  CleanupSessionTempFiles(session_id);
+  if (!current_provisional_project_path_.empty()) {
+    // No media has been moved into the provisional bundle on a failed start
+    // — removing it entirely beats leaving a "capturing" tombstone for a
+    // recording the user was already told never started.
+    std::error_code ec;
+    std::filesystem::remove_all(
+        std::filesystem::u8path(current_provisional_project_path_), ec);
+    current_provisional_project_path_.clear();
+  }
+}
+
+void RecordingEngine::MarkProvisionalProjectFailed() {
+  if (current_provisional_project_path_.empty()) {
+    return;
+  }
+  if (!StampBundleFailed(current_provisional_project_path_)) {
+    clingfy::bridge::NativeLogPublisher::Instance().Warn(
+        "Recording", "could not stamp the provisional bundle failed: " +
+                         current_provisional_project_path_);
+  }
+  current_provisional_project_path_.clear();
+}
+
+void RecordingEngine::StopActiveSessionForShutdown() {
+  std::string active_session_id;
+  {
+    std::lock_guard<std::mutex> lock(mutex_);
+    if (!session_.IsActive()) {
+      return;
+    }
+    active_session_id = std::string(session_.session_id());
+  }
+  clingfy::bridge::NativeLogPublisher::Instance().Warn(
+      "Recording",
+      "app shutting down mid-recording; finalizing session " +
+          active_session_id);
+  // Stop takes the mutex itself. The tiny unlock window is fine: a racing
+  // user Stop just wins, and this call becomes the idempotent no-op.
+  Stop(active_session_id);
 }
 
 bool RecordingEngine::IsRecording() const {

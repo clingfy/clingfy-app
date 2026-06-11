@@ -3,6 +3,7 @@
 #include <windows.h>
 
 #include <algorithm>
+#include <cstdio>
 #include <filesystem>
 #include <fstream>
 #include <functional>
@@ -79,13 +80,21 @@ std::string SanitizeFilename(const std::string& stem) {
 // overwrite. Caps at 999 attempts to avoid pathological loops.
 fs::path UniqueDestination(const fs::path& dir, const std::string& stem,
                            const std::string& ext) {
+  // Non-throwing fs::exists only (Phase 10.4): the runner builds with
+  // _HAS_EXCEPTIONS=0, so a THROWING overload that hits a real error (e.g.
+  // an access-denied destination dir) fail-fasts and kills the process
+  // instead of raising a catchable filesystem_error. An errored probe reads
+  // as "does not exist" and the export proceeds — the real failure then
+  // surfaces downstream as a clean kCopyFailed / kRenderFailed.
+  std::error_code ec;
   fs::path candidate = dir / (stem + ext);
-  if (!fs::exists(candidate)) {
+  if (!fs::exists(candidate, ec)) {
     return candidate;
   }
   for (int i = 1; i < 1000; ++i) {
     candidate = dir / (stem + " (" + std::to_string(i) + ")" + ext);
-    if (!fs::exists(candidate)) {
+    ec.clear();
+    if (!fs::exists(candidate, ec)) {
       return candidate;
     }
   }
@@ -146,6 +155,41 @@ bool ShouldCompositeCamera(bool camera_visible, bool has_camera_assets,
                            std::uint64_t frames_written) {
   return camera_visible && has_camera_assets && meta_parsed &&
          !preview_burned_in && frames_written > 0;
+}
+
+std::int64_t EstimateRequiredExportBytes(std::int64_t source_size_bytes,
+                                         bool composition) {
+  if (source_size_bytes < 0) {
+    return -1;
+  }
+  return source_size_bytes + (composition ? kCompositionDiskHeadroomBytes
+                                          : kPassthroughDiskHeadroomBytes);
+}
+
+bool ExportDiskPreflightFits(std::int64_t required_bytes,
+                             std::int64_t available_bytes) {
+  if (required_bytes <= 0 || available_bytes < 0) {
+    // Unknown estimate / failed free-space probe: never block the export on
+    // a probe failure — a genuinely full disk still fails downstream and is
+    // classified by its disk-full HRESULT / errno.
+    return true;
+  }
+  return available_bytes >= required_bytes;
+}
+
+std::string FormatBytesForUser(std::int64_t bytes) {
+  if (bytes < 0) {
+    bytes = 0;
+  }
+  char buf[32];
+  if (bytes >= 1'000'000'000) {
+    std::snprintf(buf, sizeof(buf), "%.1f GB",
+                  static_cast<double>(bytes) / 1'000'000'000.0);
+  } else {
+    std::snprintf(buf, sizeof(buf), "%.1f MB",
+                  static_cast<double>(bytes) / 1'000'000.0);
+  }
+  return std::string(buf);
 }
 
 std::string ResolveExportDestination(const std::string& directory,
@@ -288,6 +332,43 @@ PassthroughResult ExportPassthroughCopy(
                               input.auto_normalize) ||
       wants_non_mov_container || wants_sidecar || wants_camera;
 
+  // Phase 10.4 disk-full preflight: estimate the bytes the export needs at
+  // the destination (source size + headroom for the chosen path) and compare
+  // against the destination volume's free space. A failed probe soft-fails
+  // (never blocks); a confident "won't fit" is surfaced as kDiskFull BEFORE
+  // any partial output is written.
+  {
+    std::error_code size_ec;
+    const auto source_size = fs::file_size(source, size_ec);
+    const std::int64_t source_bytes =
+        size_ec ? -1 : static_cast<std::int64_t>(source_size);
+    const std::int64_t required =
+        EstimateRequiredExportBytes(source_bytes, needs_composition);
+    ULARGE_INTEGER free_bytes{};
+    std::int64_t available = -1;
+    if (::GetDiskFreeSpaceExW(destination.parent_path().c_str(), &free_bytes,
+                              nullptr, nullptr) != FALSE) {
+      available = static_cast<std::int64_t>(free_bytes.QuadPart);
+    }
+    if (!ExportDiskPreflightFits(required, available)) {
+      out.error = PassthroughError::kDiskFull;
+      out.disk_required_bytes = required;
+      out.disk_available_bytes = available;
+      out.disk_checked_path = destination.parent_path().u8string();
+      // Self-contained human string (mirrors the macOS disk-full reason):
+      // it must stand on its own in logs / Sentry / fallback dialogs even
+      // though Dart re-renders a localized message from the details payload.
+      out.message =
+          "Not enough free disk space to export this recording. About " +
+          FormatBytesForUser(required) +
+          " is needed at the destination, only " +
+          FormatBytesForUser(available) + " is available (short by " +
+          FormatBytesForUser(required - available) +
+          "). Free up some space and try again.";
+      return out;
+    }
+  }
+
   if (!needs_composition) {
     // Fast-path: pixel-for-pixel the source, so copy it byte-for-byte.
     // Lossless, instant, and it keeps the original audio + container
@@ -296,11 +377,27 @@ PassthroughResult ExportPassthroughCopy(
     // `UniqueDestination`'s collision avoidance so we deliberately omit it.
     fs::copy_file(source, destination, fs::copy_options::none, ec);
     if (ec) {
-      out.error = PassthroughError::kCopyFailed;
-      out.message =
-          "exportVideo: copy_file failed (" + ec.message() +
-          "); source=" + source.u8string() +
-          " destination=" + destination.u8string();
+      // Phase 10.4: a failed copy can leave a partial destination file —
+      // never leave corrupt output at the user-chosen path. The destination
+      // was freshly created by UniqueDestination, so removal can never
+      // clobber a pre-existing user file.
+      std::error_code rm_ec;
+      fs::remove(destination, rm_ec);
+      if (ec == std::errc::no_space_on_device) {
+        out.error = PassthroughError::kDiskFull;
+        out.disk_checked_path = destination.parent_path().u8string();
+        out.message =
+            "Not enough free disk space to finish this export — the "
+            "destination disk filled up while copying. Free up some space "
+            "and try again. (destination=" +
+            destination.u8string() + ")";
+      } else {
+        out.error = PassthroughError::kCopyFailed;
+        out.message =
+            "exportVideo: copy_file failed (" + ec.message() +
+            "); source=" + source.u8string() +
+            " destination=" + destination.u8string();
+      }
       return out;
     }
     // A cancel that landed during/just after the (sub-second) copy: drop the
@@ -377,8 +474,32 @@ PassthroughResult ExportPassthroughCopy(
     const RenderResult render_result = RenderComposedExport(render);
     if (!render_result.ok) {
       if (render_result.cancelled) {
+        // Cancel cleanup is owned by the pipeline (Cancelled() removed the
+        // partial output before returning).
         out.error = PassthroughError::kCancelled;
         out.message = "exportVideo: cancelled by user";
+        return out;
+      }
+      // Phase 10.4: never leave a corrupt file (e.g. a moov-less MP4 after a
+      // failed Finalize) at the user-chosen destination. The pipeline already
+      // removes it best-effort; retry here because its encoder objects are
+      // destroyed by now, so a removal that lost a file-handle race inside
+      // the pipeline succeeds on this second attempt. The destination is
+      // always freshly created via UniqueDestination, so this can never
+      // delete a pre-existing user file.
+      std::error_code rm_ec;
+      fs::remove(destination, rm_ec);
+      if (render_result.disk_full) {
+        // The encoder hit a disk-full HRESULT mid-write. No preflight
+        // estimate exists at this point (required stays -1); the router
+        // falls back to this self-contained message.
+        out.error = PassthroughError::kDiskFull;
+        out.disk_checked_path = destination.parent_path().u8string();
+        out.message =
+            "Not enough free disk space to finish this export — the "
+            "destination disk filled up while writing. Free up some space "
+            "and try again. (" +
+            render_result.message + ")";
       } else {
         out.error = PassthroughError::kRenderFailed;
         out.message = "exportVideo: composition render failed — " +

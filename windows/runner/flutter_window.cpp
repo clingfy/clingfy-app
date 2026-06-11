@@ -7,6 +7,7 @@
 #include "Bridge/platform_thread_dispatcher.h"
 #include "Capture/Camera/live_camera_texture.h"
 #include "Capture/Export/export_session.h"
+#include "Capture/recording_engine.h"
 #include "Services/temp_orphan_scan.h"
 #include "flutter/generated_plugin_registrant.h"
 #include "preview/preview_engine.h"
@@ -113,6 +114,15 @@ bool FlutterWindow::OnCreate() {
 }
 
 void FlutterWindow::OnDestroy() {
+  // Phase 10.4: closing the window mid-recording used to kill the process
+  // with the encoder unfinalized — a moov-less, unplayable %TEMP% strand
+  // that only the next launch's recovery sweep could (partially) explain.
+  // Finalize the active session synchronously instead (typically <2s); the
+  // user keeps the recording and finds the bundle in the recordings folder.
+  // Workflow events emitted during this teardown may not reach Dart (the
+  // channel is going away) — the on-disk project is the point.
+  clingfy::capture::RecordingEngine::Instance().StopActiveSessionForShutdown();
+
   // Abort any in-flight export so its worker stops decoding/encoding and
   // deletes its partial output instead of racing teardown. (The worker's
   // terminal reply is safe regardless: the Flutter embedder drops a reply

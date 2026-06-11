@@ -2474,4 +2474,41 @@ class AppLocalizationsEn extends AppLocalizations {
   @override
   String get errWindowsNotImplemented =>
       'This feature isn\'t available on Windows yet.';
+
+  @override
+  String get errRecordingDiskFull =>
+      'Not enough disk space to start recording.';
+
+  @override
+  String get errPreviewOpenFailed => 'Preview failed to open.';
+
+  @override
+  String get errPreviewRenderFailed =>
+      'Preview stopped rendering. Close and reopen the recording.';
+
+  @override
+  String get errRecordingStartTimeout => 'Recording did not start in time.';
+
+  @override
+  String get errRecordingFinalizeTimeout => 'Saving the recording timed out.';
+
+  @override
+  String get errPreviewTimeout => 'Preview took too long to load.';
+
+  @override
+  String get errInternalError => 'An internal error occurred.';
+
+  @override
+  String recordingInterruptedNotice(int count) {
+    String _temp0 = intl.Intl.pluralLogic(
+      count,
+      locale: localeName,
+      other: '$count recordings were interrupted and could not be recovered.',
+      one: '1 recording was interrupted and could not be recovered.',
+    );
+    return '$_temp0';
+  }
+
+  @override
+  String get forceNativeCrashLabel => 'Force native crash (test)';
 }

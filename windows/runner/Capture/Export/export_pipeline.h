@@ -30,6 +30,8 @@
 #ifndef RUNNER_CAPTURE_EXPORT_EXPORT_PIPELINE_H_
 #define RUNNER_CAPTURE_EXPORT_EXPORT_PIPELINE_H_
 
+#include <windows.h>  // HRESULT (Phase 10.4 disk-full classification)
+
 #include <cstdint>
 #include <functional>
 #include <optional>
@@ -181,12 +183,23 @@ struct RenderResult {
   // false). Lets the caller map it to a clean cancellation reply rather than a
   // generic failure.
   bool cancelled = false;
+  // Phase 10.4: true when the failure was classified as the destination
+  // volume running out of space mid-write (the encoder error carried a
+  // disk-full HRESULT). Lets the caller map it to EXPORT_DISK_FULL instead
+  // of a generic render failure.
+  bool disk_full = false;
 };
 
+// Phase 10.4 — pure classifier: does this encoder HRESULT mean the
+// destination volume ran out of space mid-write? (ERROR_DISK_FULL /
+// ERROR_HANDLE_DISK_FULL via HRESULT_FROM_WIN32.) Exposed for unit tests.
+bool IsDiskFullHresult(HRESULT hr);
+
 // Run the full decode → composite → re-encode pass. Synchronous; returns
-// only after the output file is finalized (or a failure leaves no usable
-// file). Never throws — all Media Foundation / Direct2D failures are
-// reported through `RenderResult::ok` + `message`.
+// only after the output file is finalized (or a failure removes the partial
+// output and leaves NO file at the destination — Phase 10.4). Never throws —
+// all Media Foundation / Direct2D failures are reported through
+// `RenderResult::ok` + `message`.
 RenderResult RenderComposedExport(const RenderRequest& request);
 
 }  // namespace clingfy::capture::export_

@@ -1,7 +1,11 @@
+import 'dart:io' show Platform;
+
+import 'package:clingfy/core/bridges/native_bridge.dart';
 import 'package:clingfy/l10n/app_localizations.dart';
 import 'package:clingfy/app/settings/controllers/workspace_settings_controller.dart';
 import 'package:clingfy/app/settings/sections/section_helpers.dart';
 import 'package:clingfy/app/settings/settings_controller.dart';
+import 'package:clingfy/ui/platform/platform_kind.dart';
 import 'package:clingfy/ui/platform/widgets/app_button.dart';
 import 'package:clingfy/ui/platform/widgets/app_inline_notice.dart';
 import 'package:flutter/cupertino.dart' show CupertinoIcons;
@@ -21,6 +25,12 @@ class _DiagnosticsSettingsSectionState
     extends State<DiagnosticsSettingsSection> {
   String? _noticeText;
   AppInlineNoticeVariant _noticeVariant = AppInlineNoticeVariant.info;
+
+  /// Phase 10.4: the crash-test button only exists on Windows AND when the
+  /// tester explicitly opted in via CLINGFY_CRASH_TEST=1 — the same env var
+  /// native checks before actually crashing the process.
+  bool get _showForceCrashButton =>
+      isWindows() && Platform.environment['CLINGFY_CRASH_TEST'] == '1';
 
   void _setNotice(String message, AppInlineNoticeVariant variant) {
     setState(() {
@@ -123,6 +133,15 @@ class _DiagnosticsSettingsSectionState
                       );
                     },
                   ),
+                  if (_showForceCrashButton)
+                    AppButton(
+                      label: l10n.forceNativeCrashLabel,
+                      icon: CupertinoIcons.exclamationmark_triangle,
+                      variant: AppButtonVariant.secondary,
+                      onPressed: () {
+                        NativeBridge.instance.debugForceNativeCrash();
+                      },
+                    ),
                 ],
               ),
             ],

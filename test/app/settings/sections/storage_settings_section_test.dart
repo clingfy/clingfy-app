@@ -6,6 +6,7 @@ import 'package:clingfy/app/settings/settings_controller.dart';
 import 'package:clingfy/core/bridges/native_bridge.dart';
 import 'package:clingfy/core/bridges/native_method_channel.dart';
 import 'package:clingfy/l10n/app_localizations.dart';
+import 'package:clingfy/ui/platform/platform_kind.dart';
 import 'package:clingfy/ui/theme/app_theme.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
@@ -15,6 +16,18 @@ import 'package:provider/provider.dart';
 
 void main() {
   TestWidgetsFlutterBinding.ensureInitialized();
+
+  // Pin the macOS branch (Phase 10.4): the Windows-only workflow watchdogs
+  // arm a real Timer when a test parks the controller in a non-idle phase,
+  // and flutter_test's pending-timer invariant fires BEFORE addTearDown
+  // disposal can cancel it. This file tests platform-generic storage
+  // gating, so the 10.3 pin pattern applies.
+  setUp(() {
+    debugPlatformKindOverride = PlatformKind.macos;
+  });
+  tearDown(() {
+    debugPlatformKindOverride = null;
+  });
 
   const channel = MethodChannel(NativeChannel.screenRecorder);
 

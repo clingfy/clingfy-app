@@ -820,5 +820,21 @@
   "errNoCamera": "لا توجد كاميرا متاحة.",
   "errCameraInputError": "توقفت الكاميرا عن العمل.",
   "errFileNotFound": "الملف غير موجود.",
-  "errWindowsNotImplemented": "هذه الميزة غير متاحة على ويندوز بعد."
+  "errWindowsNotImplemented": "هذه الميزة غير متاحة على ويندوز بعد.",
+  "errRecordingDiskFull": "لا توجد مساحة كافية على القرص لبدء التسجيل.",
+  "errPreviewOpenFailed": "تعذّر فتح المعاينة.",
+  "errPreviewRenderFailed": "توقفت المعاينة عن العرض. أغلق التسجيل وأعد فتحه.",
+  "errRecordingStartTimeout": "لم يبدأ التسجيل في الوقت المحدد.",
+  "errRecordingFinalizeTimeout": "انتهت مهلة حفظ التسجيل.",
+  "errPreviewTimeout": "استغرق تحميل المعاينة وقتًا طويلًا.",
+  "errInternalError": "حدث خطأ داخلي.",
+  "recordingInterruptedNotice": "{count, plural, one{انقطع تسجيل واحد ولم يكن من الممكن استرداده.} two{انقطع تسجيلان ولم يكن من الممكن استردادهما.} few{انقطعت {count} تسجيلات ولم يكن من الممكن استردادها.} many{انقطع {count} تسجيلًا ولم يكن من الممكن استرداده.} other{انقطع {count} تسجيل ولم يكن من الممكن استرداده.}}",
+  "@recordingInterruptedNotice": {
+    "placeholders": {
+      "count": {
+        "type": "int"
+      }
+    }
+  },
+  "forceNativeCrashLabel": "فرض انهيار أصلي (اختبار)"
 }

@@ -328,5 +328,79 @@ TEST(RecordingProjectWriterFreeFunctions, Iso8601TimestampShape) {
   EXPECT_EQ(ts.back(), 'Z');
 }
 
+
+// === Phase 10.4: provisional manifest + status lifecycle ====================
+
+TEST(RecordingProjectWriterManifest, ManifestCarriesStatusAndOwnerPid) {
+  ProjectWriterInput input;
+  input.session_id = "sess-status";
+  input.status = "capturing";
+  input.owner_pid = 1234;
+  const std::string json = BuildManifestJson(input);
+  EXPECT_NE(json.find("\"status\": \"capturing\""), std::string::npos);
+  EXPECT_NE(json.find("\"ownerPid\": 1234"), std::string::npos);
+}
+
+TEST(RecordingProjectWriterManifest, ManifestDefaultsToReadyWithoutPid) {
+  ProjectWriterInput input;
+  input.session_id = "sess-default";
+  const std::string json = BuildManifestJson(input);
+  EXPECT_NE(json.find("\"status\": \"ready\""), std::string::npos);
+  EXPECT_EQ(json.find("ownerPid"), std::string::npos);
+}
+
+TEST_F(RecordingProjectWriterTest, WritesProvisionalCapturingBundle) {
+  ProvisionalProjectInput input;
+  input.session_id = "sess-prov";
+  input.recordings_root_override = base_.string();
+  input.owner_pid = 4321;
+  const auto result = WriteProvisionalProject(input);
+  ASSERT_EQ(result.kind, ProjectWriterErrorKind::kNone);
+
+  const fs::path bundle = fs::u8path(result.project_path);
+  EXPECT_EQ(bundle.filename(), fs::path("sess-prov.clingfyproj"));
+  std::ifstream in(bundle / "project.json", std::ios::binary);
+  ASSERT_TRUE(in.is_open());
+  std::ostringstream ss;
+  ss << in.rdbuf();
+  EXPECT_NE(ss.str().find("\"status\": \"capturing\""), std::string::npos);
+  EXPECT_NE(ss.str().find("\"ownerPid\": 4321"), std::string::npos);
+  EXPECT_NE(ss.str().find("\"projectId\": \"sess-prov\""),
+            std::string::npos);
+}
+
+TEST_F(RecordingProjectWriterTest, ProvisionalRequiresSessionId) {
+  ProvisionalProjectInput input;
+  input.recordings_root_override = base_.string();
+  EXPECT_EQ(WriteProvisionalProject(input).kind,
+            ProjectWriterErrorKind::kBadInput);
+}
+
+TEST_F(RecordingProjectWriterTest, FullWriteOverwritesProvisionalToReady) {
+  // The engine writes the provisional bundle at Start; the Stop-path
+  // WriteRecordingProject must replace it with a status:"ready" manifest.
+  ProvisionalProjectInput provisional;
+  provisional.session_id = "sess-cycle";
+  provisional.recordings_root_override = base_.string();
+  provisional.owner_pid = 99;
+  ASSERT_EQ(WriteProvisionalProject(provisional).kind,
+            ProjectWriterErrorKind::kNone);
+
+  ProjectWriterInput input;
+  input.session_id = "sess-cycle";
+  input.source_mp4_path = WriteFakeMp4("cycle.mp4").string();
+  input.recordings_root_override = base_.string();
+  const auto result = WriteRecordingProject(input);
+  ASSERT_EQ(result.kind, ProjectWriterErrorKind::kNone);
+
+  std::ifstream in(fs::u8path(result.project_path) / "project.json",
+                   std::ios::binary);
+  std::ostringstream ss;
+  ss << in.rdbuf();
+  EXPECT_NE(ss.str().find("\"status\": \"ready\""), std::string::npos);
+  EXPECT_EQ(ss.str().find("capturing"), std::string::npos);
+  EXPECT_EQ(ss.str().find("ownerPid"), std::string::npos);
+}
+
 }  // namespace
 }  // namespace clingfy::capture
