@@ -1,6 +1,6 @@
 # Release Tooling
 
-This directory contains the secret-free operational tooling used to build, sign, notarize, package, and publish Clingfy macOS releases.
+This directory contains the secret-free operational tooling used to build, sign, notarize, package, and publish Clingfy macOS releases. The Windows release lane lives in `windows/` (PowerShell, fully independent of the macOS scripts) — see `windows/README.md`.
 
 The scripts in this directory are public. Private credentials, signing assets, and hosted service configuration are intentionally kept outside the repository and injected through local environment files or CI secure files.
 
@@ -21,6 +21,7 @@ The scripts in this directory are public. Private credentials, signing assets, a
 - `workflows/local_release.sh` - local release workflow with optional restore/publish steps
 - `lib/` - shared helpers for Apple signing/notary, Azure, environment loading, Sparkle, and common shell helpers
 - `docs/sparkle.md` - notes specific to the Sparkle updater integration
+- `windows/` - Windows release lane (PowerShell): build/stage, Inno Setup packaging, signing, Azure publish, smoke - see `windows/README.md`
 
 ## What is safe to keep public
 
