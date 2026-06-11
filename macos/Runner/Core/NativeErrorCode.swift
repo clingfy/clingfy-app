@@ -36,11 +36,23 @@ enum NativeErrorCode {
 
   // Recording/export errors
   static let recordingError = "RECORDING_ERROR"
+  static let recordingDiskFull = "RECORDING_DISK_FULL"
   static let outputUrlError = "OUTPUT_URL_ERROR"
   static let exportError = "EXPORT_ERROR"
+  static let exportCancelled = "EXPORT_CANCELLED"
   static let exportInputMissing = "EXPORT_INPUT_MISSING"
   static let exportDiskFull = "EXPORT_DISK_FULL"
   static let advancedCameraExportFailed = "ADVANCED_CAMERA_EXPORT_FAILED"
+
+  // Preview errors (Phase 10.4: Windows emits these; listed here to keep the
+  // three-way contract identical).
+  static let previewInputMissing = "PREVIEW_INPUT_MISSING"
+  static let sceneInputMissing = "SCENE_INPUT_MISSING"
+  static let previewOpenError = "PREVIEW_OPEN_ERROR"
+  static let previewRenderError = "PREVIEW_RENDER_ERROR"
+
+  // A native handler failed unexpectedly (Windows dispatch barrier).
+  static let internalError = "INTERNAL_ERROR"
 
   // File errors
   static let videoFileMissing = "VIDEO_FILE_MISSING"

@@ -180,4 +180,131 @@ void main() {
       },
     );
   });
+
+  group('startup recovery report (Phase 10.4)', () {
+    void overrideScreenRecorder(
+      Future<Object?> Function(MethodCall call) handler,
+    ) {
+      TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger
+          .setMockMethodCallHandler(screenRecorderChannel, handler);
+    }
+
+    void clearScreenRecorder() {
+      TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger
+          .setMockMethodCallHandler(screenRecorderChannel, null);
+    }
+
+    test('getStartupRecoveryReport parses a well-formed report', () async {
+      overrideScreenRecorder((call) async {
+        expect(call.method, NativeMethod.getStartupRecoveryReport);
+        return <String, Object?>{
+          'interruptedProjects': [
+            {'projectPath': r'C:\rec\one.clingfyproj', 'sessionId': 'rec_1'},
+            {'projectPath': r'C:\rec\two.clingfyproj', 'sessionId': 'rec_2'},
+          ],
+          'cleanedTempFileCount': 3,
+          'cleanedTempBytes': 1024,
+        };
+      });
+
+      final report = await NativeBridge.instance.getStartupRecoveryReport();
+
+      expect(report, isNotNull);
+      expect(report!.interruptedProjects, hasLength(2));
+      expect(
+        report.interruptedProjects.first.projectPath,
+        r'C:\rec\one.clingfyproj',
+      );
+      expect(report.interruptedProjects.first.sessionId, 'rec_1');
+      expect(report.cleanedTempFileCount, 3);
+      expect(report.cleanedTempBytes, 1024);
+      expect(report.hasInterruptedProjects, isTrue);
+      expect(report.hasCleanedTempFiles, isTrue);
+    });
+
+    test('getStartupRecoveryReport degrades malformed payloads to '
+        'empty/zero instead of throwing', () async {
+      overrideScreenRecorder(
+        (call) async => <String, Object?>{
+          'interruptedProjects': [
+            'not-a-map',
+            {'sessionId': 'rec_no_path'},
+            {'projectPath': ''},
+            {'projectPath': r'C:\rec\ok.clingfyproj', 'sessionId': 42},
+          ],
+          'cleanedTempFileCount': 'three',
+          'cleanedTempBytes': 2.5,
+        },
+      );
+
+      final report = await NativeBridge.instance.getStartupRecoveryReport();
+
+      expect(report, isNotNull);
+      // Only the entry with a usable projectPath survives; its non-string
+      // sessionId degrades to ''.
+      expect(report!.interruptedProjects, hasLength(1));
+      expect(
+        report.interruptedProjects.single.projectPath,
+        r'C:\rec\ok.clingfyproj',
+      );
+      expect(report.interruptedProjects.single.sessionId, '');
+      expect(report.cleanedTempFileCount, 0);
+      expect(report.cleanedTempBytes, 2);
+    });
+
+    test('getStartupRecoveryReport returns null on MissingPluginException '
+        '(macOS has no handler)', () async {
+      clearScreenRecorder();
+
+      final report = await NativeBridge.instance.getStartupRecoveryReport();
+
+      expect(report, isNull);
+    });
+
+    test(
+      'getStartupRecoveryReport returns null on PlatformException',
+      () async {
+        overrideScreenRecorder((call) async {
+          throw PlatformException(code: 'INTERNAL_ERROR', message: 'boom');
+        });
+
+        final report = await NativeBridge.instance.getStartupRecoveryReport();
+
+        expect(report, isNull);
+      },
+    );
+
+    test(
+      'getStartupRecoveryReport returns null when native replies null',
+      () async {
+        overrideScreenRecorder((call) async => null);
+
+        final report = await NativeBridge.instance.getStartupRecoveryReport();
+
+        expect(report, isNull);
+      },
+    );
+
+    test('debugForceNativeCrash swallows native refusal errors', () async {
+      overrideScreenRecorder((call) async {
+        expect(call.method, NativeMethod.debugForceNativeCrash);
+        throw PlatformException(
+          code: 'BAD_ARGS',
+          message: 'CLINGFY_CRASH_TEST is not set',
+        );
+      });
+
+      // Must not throw — fire-and-forget by contract.
+      await NativeBridge.instance.debugForceNativeCrash();
+    });
+
+    test(
+      'debugForceNativeCrash swallows MissingPluginException (macOS)',
+      () async {
+        clearScreenRecorder();
+
+        await NativeBridge.instance.debugForceNativeCrash();
+      },
+    );
+  });
 }

@@ -15,6 +15,8 @@ import 'package:clingfy/app/home/recording/recording_controller.dart';
 import 'package:clingfy/app/home/home_prefs_store.dart';
 import 'package:clingfy/app/home/home_scope.dart';
 import 'package:clingfy/app/home/home_ui_state.dart';
+import 'package:clingfy/app/home/startup_recovery_notice.dart';
+import 'package:clingfy/ui/platform/platform_kind.dart';
 import 'package:clingfy/core/permissions/models/recording_start_preflight.dart';
 import 'package:clingfy/ui/platform/widgets/desktop_pane_layout.dart';
 import 'package:clingfy/app/permissions/widgets/start_recording_permission_dialog.dart';
@@ -66,6 +68,56 @@ class HomeActions {
 
   Future<void> applyInitialFileTemplate() async {
     await nativeBridge.setFileNameTemplate('{appname}_{date}_{time}');
+  }
+
+  /// Phase 10.4 (Windows-only): runs once after home is ready. Asks native
+  /// for the startup crash-recovery report; surfaces a warning toast when
+  /// recordings were interrupted (same HomeUiNotice pattern 10.2 uses for
+  /// pending recording warnings). Temp-file cleanup alone is log-only.
+  static bool _startupRecoveryAnnounced = false;
+
+  @visibleForTesting
+  static void debugResetStartupRecoveryAnnouncement() {
+    _startupRecoveryAnnounced = false;
+  }
+
+  Future<void> announceStartupRecovery(BuildContext context) async {
+    if (!isWindows() || _startupRecoveryAnnounced) return;
+    _startupRecoveryAnnounced = true;
+
+    final report = await nativeBridge.getStartupRecoveryReport();
+    if (report == null) return;
+
+    if (report.hasCleanedTempFiles || report.cleanedTempBytes > 0) {
+      Log.i('HomeActions', 'Startup recovery cleaned temp files', null, null, {
+        'cleanedTempFileCount': report.cleanedTempFileCount,
+        'cleanedTempBytes': report.cleanedTempBytes,
+      });
+    }
+    if (report.hasInterruptedProjects) {
+      Log.i(
+        'HomeActions',
+        'Startup recovery found interrupted recordings',
+        null,
+        null,
+        {
+          'count': report.interruptedProjects.length,
+          'projectPaths': report.interruptedProjects
+              .map((p) => p.projectPath)
+              .toList(),
+        },
+      );
+    }
+
+    if (!context.mounted) return;
+    final l10n = AppLocalizations.of(context)!;
+    final notice = buildStartupRecoveryNotice(
+      report,
+      interruptedMessage: l10n.recordingInterruptedNotice,
+    );
+    if (notice != null) {
+      uiState.setNotice(notice);
+    }
   }
 
   void clearToolbarErrors() {

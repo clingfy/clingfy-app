@@ -88,15 +88,89 @@ round-trip, and a clean-box licensing smoke — before any invite goes out.
 
 | Slice | Goal                                                              | PR     |
 | ----- | ----------------------------------------------------------------- | ------ |
-| 10.0  | Beta-readiness design / inventory                                 | (this) |
-| 10.1  | Diagnostics + failure visibility (logs, disk, warnings, export-diagnostics zip) | next |
-| 10.2  | Windows permissions UX (forked onboarding, Windows copy, readiness surfacing) | |
-| 10.3  | Honest-UI sweep (zoom track truth, no-op settings, area persistence, l10n) | |
-| 10.4  | Crash salvage + symbol pipeline (interrupted-recording recovery, PDB upload) | |
+| 10.0  | Beta-readiness design / inventory                                 | #162   |
+| 10.1  | Diagnostics + failure visibility (logs, disk, warnings, export-diagnostics zip) | #163 |
+| 10.2  | Windows permissions UX (forked onboarding, Windows copy, readiness surfacing) | #164 |
+| 10.3  | Honest-UI sweep (zoom track truth, no-op settings, area persistence, l10n) | #165 |
+| 10.4  | Crash salvage + error recovery polish (interrupted-recording recovery, watchdogs, PDB/symbol pipeline) | (this) |
 | 10.5  | Branding + installer (icon/name, Inno Setup, signing, dev/prod identity) | |
 | 10.6  | Updater (static feed check, UpdaterEventPublisher, honest About button) | |
 | 10.7  | Beta closeout (smoke matrix, licensing + consent, tester guide)   |        |
 | P     | Hardware verdicts: NVIDIA/AMD preview stress, encoder, soak (any time; gates invites) | |
+
+### Phase 10.4 — crash salvage + error recovery polish
+
+Recording lifecycle now mirrors macOS `RecordingProjectStatus`: a
+provisional `project.json` with `status: "capturing"` + `ownerPid` is
+written at record start, the Stop path overwrites it with `"ready"`, and
+every finalize-failure path stamps `"failed"`. The reader gates opens on
+`ready`/`cancelled`/`failed` (missing status = pre-10.4 bundle = ready).
+At startup, Dart calls `getStartupRecoveryReport`: the native recovery
+sweep (`Services/recovery_sweep.cpp`) marks crash-interrupted bundles
+failed and deletes stranded `%TEMP%\clingfy_*` files, and the UI shows a
+one-time "recording was interrupted" notice. Two guards make the sweep
+safe while dev + prod still share the recordings root and `%TEMP%`
+namespace (until 10.5 splits identities): a `capturing` bundle is only
+swept when its `ownerPid` is not a live Clingfy process (our own pid
+counts as live — a recording can legitimately start while the sweep walks
+the disk on its worker thread); bundles in any settled status protect
+their session's temp files (the engine deliberately keeps a finalized,
+playable temp when bundling fails — that file is the only copy of the
+recording, never a "strand"); and ownerless temp files are only deleted
+when older than 5 minutes. `clearCachedRecordings` got the same
+live-owner guard.
+
+Recovery hardening shipped alongside: failed starts cancel the encoder
+(no zero-sample MP4 footer) and delete their temps + provisional bundle;
+`Finalize()` failures and zero-written-samples sessions emit
+`recordingFailed` instead of handing the user a corrupt "finalized"
+project; the kept/failed gate now uses encoder samples-written, not WGC
+delivery stats; closing the app window mid-recording finalizes the
+session instead of strand-killing it; camera device-open is bounded by a
+10 s timeout (the wedged-Frame-Server class — abandoned recorders are
+parked, never joined); export gained a dispatch barrier
+(`INTERNAL_ERROR`), a stable `EXPORT_CANCELLED` code, an
+`EXPORT_DISK_FULL` pre-pass + mid-write classification, and
+failure-path destination cleanup; the preview engine reports mid-flight
+render death (`PREVIEW_RENDER_ERROR` after ~90 consecutive frame
+failures) instead of freezing under a moving playhead, distinguishes
+engine-open failures (`PREVIEW_OPEN_ERROR`) from missing-input ones, and
+unwinds its texture registration on failed opens. Dart arms Windows-only
+watchdogs for the start/finalize/preview-load/preview-close phases
+(30/120/30/15 s) so no native silence can strand the UI in a spinner.
+Release builds now produce full PDBs (`/Z7` + `/DEBUG:FULL`);
+`ops/release/windows/upload_symbols.ps1` uploads them with sentry-cli;
+`debugForceNativeCrash` (env-gated: `CLINGFY_CRASH_TEST=1`) is the
+crashpad→Sentry round-trip trigger, exposed as a hidden diagnostics
+button.
+
+**Open product call (deferred):** the MF sink writer produces
+non-fragmented MP4, so a hard-crash strand has no moov atom and is
+unplayable — 10.4 salvage is honest tombstone + cleanup, not media
+recovery. True macOS-parity media salvage needs
+`MFTranscodeContainerType_FMPEG4` (fragmented output), whose
+HW-encoder/preview compatibility is unverified — decide before or after
+beta based on crash telemetry.
+
+**Application Recovery/Restart APIs (design note, deliberately not
+built):** `RegisterApplicationRecoveryCallback` could flush a salvage
+marker and `RegisterApplicationRestart` could relaunch after a crash,
+but both only fire for WER-visible crashes (not kill/power-loss), the
+recovery callback gets ~2 minutes inside a dying process where touching
+MF/D3D is unsafe, and the provisional-manifest sweep already covers
+every termination class at next launch. Revisit only if crash telemetry
+shows long-recording loss where an in-crash flush would have added
+value beyond the manifest (it currently would not — the manifest is
+written before the first frame).
+
+Smoke checklist (10.4): kill the app (Task Manager) mid-recording →
+relaunch → "recording was interrupted" notice appears, bundle shows
+`status: "failed"`, and that session's `%TEMP%` strands are deleted in
+the same sweep (the owner pid is provably dead — no age guard applies);
+close the window mid-recording → recording finalizes and the bundle
+opens; `CLINGFY_CRASH_TEST=1` + diagnostics button → process dies →
+relaunch → crash event appears in Sentry symbolicated (after running
+`upload_symbols.ps1` on the same build).
 
 ## Current status — Phase 9 (camera overlay) — COMPLETE
 

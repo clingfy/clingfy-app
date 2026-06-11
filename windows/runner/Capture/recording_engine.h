@@ -66,6 +66,21 @@ struct RecordingError {
   std::string message;
 };
 
+// Phase 10.4: native disk preflight decision for recording start. Pure so
+// the gate is unit-testable; the engine feeds it GetDiskFreeSpaceExW
+// results. `free_bytes` empty (query failed) → allow — never block a
+// recording because a disk QUERY failed. The hard floor applies even with
+// the user's low-storage bypass (below it the encoder will fail within
+// seconds anyway); the soft floor mirrors the Dart-side storage gate's
+// critical threshold and is what `allowLowStorageBypass` bypasses.
+enum class StartDiskGate { kOk, kBlocked };
+inline constexpr std::uint64_t kStartDiskHardFloorBytes =
+    256ull * 1024 * 1024;  // 256 MiB
+inline constexpr std::uint64_t kStartDiskSoftFloorBytes =
+    10ull * 1024 * 1024 * 1024;  // 10 GiB — Dart critical threshold parity
+StartDiskGate EvaluateStartDiskGate(std::optional<std::uint64_t> free_bytes,
+                                    bool allow_low_storage_bypass);
+
 class RecordingEngine {
  public:
   static RecordingEngine& Instance();
@@ -121,6 +136,14 @@ class RecordingEngine {
   // thread, because the backend's target-loss teardown no longer revokes its own
   // Closed handler, so there is no self-join.
   void HandleTargetLost(const std::string& session_id);
+
+  // Phase 10.4: best-effort graceful stop for app shutdown (window close
+  // mid-recording). Before this, OnDestroy killed the process with the
+  // encoder unfinalized — a moov-less, unplayable strand. Synchronous (the
+  // close waits for the finalize, typically <2s); a no-op when nothing is
+  // recording. Events emitted during teardown may not reach Dart (the
+  // channel is going away) — the point is the finalized file on disk.
+  void StopActiveSessionForShutdown();
 
   bool IsRecording() const;
   RecordingState state() const;
@@ -180,7 +203,37 @@ class RecordingEngine {
   // Tears the capture pipeline down (backend → D3D device → queue) without
   // touching state-machine state. Called from Stop / failure paths so the
   // caller does not have to hand-roll the teardown order.
-  void TeardownPipeline();
+  //
+  // Phase 10.4: `finalize_encoder` false (failed-start paths) skips
+  // `Finalize()` — destroying the encoder un-finalized is a Cancel by
+  // design (see ~MfSinkWriterEncoder), so a refused start no longer writes
+  // a zero-sample MP4 footer to %TEMP%. The finalize outcome and the
+  // encoder's video-sample count are captured into
+  // `teardown_finalize_ok_` / `teardown_samples_written_` for the
+  // finalize paths' kept/failed gating.
+  void TeardownPipeline(bool finalize_encoder = true);
+
+  // Phase 10.4: removes the artifacts a FAILED start leaves behind — the
+  // three resolved `%TEMP%\clingfy_<sid>.*` files and the provisional
+  // project bundle (no media has been moved into it at that point).
+  // Best-effort; assumes the mutex is held.
+  void CleanupFailedStartArtifacts(const std::string& session_id);
+
+  // Phase 10.4: removes the session's `%TEMP%\clingfy_<sid>.*` temp files
+  // (screen mp4 / cursor jsonl / camera mp4). Used after a successful
+  // finalize (stragglers the writer's best-effort bundling left behind) and
+  // after an unplayable-finalize failure (garbage). `include_camera` false
+  // spares the camera raw (review fix): the camera finalizes its OWN sink
+  // writer, so its temp is playable footage whenever it has frames — and
+  // when the writer downgraded camera bundling, it is the ONLY copy.
+  // Best-effort.
+  void CleanupSessionTempFiles(const std::string& session_id,
+                               bool include_camera = true);
+
+  // Phase 10.4: stamps the provisional bundle (if any) `status: "failed"`
+  // and clears `current_provisional_project_path_`. The tombstone is what
+  // the startup recovery sweep / a future recordings list shows the user.
+  void MarkProvisionalProjectFailed();
 
   // Snapshots the project-writer inputs (target metadata + capture / audio
   // diagnostics) BEFORE TeardownPipeline clears them. Shared by Stop and
@@ -222,6 +275,19 @@ class RecordingEngine {
   std::atomic<bool> encoder_stopped_{true};
   std::string current_output_path_;
 
+  // Phase 10.4: provisional bundle written at Start (status "capturing");
+  // empty when the provisional write failed (best-effort). Cleared on
+  // teardown. Used by CleanupFailedStartArtifacts and the failed-finalize
+  // paths.
+  std::string current_provisional_project_path_;
+  // Phase 10.4: captured by TeardownPipeline before the encoder is
+  // destroyed — the finalize paths gate "keep the recording" on the encoder
+  // having actually WRITTEN samples and finalized cleanly, not on WGC
+  // delivery stats (a dead-from-frame-1 encoder used to finalize as
+  // success).
+  std::uint64_t teardown_samples_written_ = 0;
+  bool teardown_finalize_ok_ = true;
+
   // Phase 7.1/7.2: the capture target the active session resolved at Start,
   // snapshot into the project manifest at Stop. "display" | "window" | "area".
   // `current_window_id_` is set only for window captures; `current_source_bounds_`
@@ -257,7 +323,11 @@ class RecordingEngine {
   // draggable). Created hidden at camera start and fed frames alongside the
   // in-app texture; SetCameraPreviewFloating shows/hides it. Torn down after the
   // recorder (the frame producer) is stopped.
-  std::unique_ptr<CameraFloatingOverlay> camera_floating_;
+  // Phase 10.4: shared_ptr (was unique_ptr) so the camera preview hook can
+  // capture a weak_ptr — an ABANDONED camera recorder's thread may deliver
+  // frames long after the engine tore the overlay down, and a raw pointer
+  // there would be a use-after-free.
+  std::shared_ptr<CameraFloatingOverlay> camera_floating_;
 
   // Audio pipeline (Phase 3D). Two WASAPI captures (mic + loopback)
   // fill the matching packet queues; a dedicated mixer thread sums

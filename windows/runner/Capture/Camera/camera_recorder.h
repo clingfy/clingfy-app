@@ -73,6 +73,15 @@ class CameraRecorder {
     // Longest-side cap for the downscaled preview frame (px). The bubble is
     // small, so a modest cap keeps the conversion cheap.
     int preview_max_dim = 384;
+
+    // Phase 10.4: ceiling on how long Start() blocks waiting for the capture
+    // thread to report device-open success/failure. A wedged MF Frame Server
+    // (the #148 pathology class) can block MFCreateDeviceSource forever —
+    // without this cap, startRecording hangs the platform thread with the
+    // engine mutex held and the whole app freezes. On timeout Start() returns
+    // false with `open_timed_out()` true and the recorder must be treated as
+    // ABANDONED (see Abandon()).
+    std::uint32_t open_timeout_ms = 10000;
   };
 
   struct Result {
@@ -110,6 +119,17 @@ class CameraRecorder {
   std::uint64_t frames_written() const { return frames_written_.load(); }
   bool device_lost() const { return device_lost_.load(); }
 
+  // Phase 10.4: true when the last Start() returned false because the
+  // device-open thread never reported within `open_timeout_ms` (it is most
+  // likely blocked inside Media Foundation). The recorder's thread was
+  // DETACHED and may unblock at any time, so the OBJECT must stay alive for
+  // the rest of the process — the engine parks abandoned recorders in a
+  // process-lifetime keepalive list and never calls Stop()/Pause()/Resume()
+  // on them. The worker self-terminates (without finalizing its raw file)
+  // as soon as it notices `abandoned_`; the stranded temp file is removed
+  // by the next launch's recovery sweep.
+  bool open_timed_out() const { return open_timed_out_; }
+
   // Pure, testable timestamp helper: rebase a pause-aware recording-clock
   // timestamp (100-ns units) to the first camera frame and enforce strictly
   // increasing output timestamps. `first_hns` (< 0 until the first frame) and
@@ -138,6 +158,11 @@ class CameraRecorder {
   std::atomic<bool> paused_{false};
   std::atomic<bool> device_lost_{false};
   std::atomic<std::uint64_t> frames_written_{0};
+  // Phase 10.4: set when Start() gave up waiting for the open report. The
+  // (detached) worker checks it right after reporting open and inside the
+  // capture loop, closes its own COM/MF resources, and exits.
+  std::atomic<bool> abandoned_{false};
+  bool open_timed_out_ = false;
 
   // Negotiated capture parameters — written by the capture thread before the
   // open result is reported, read after Stop() joins (a clean sync point).

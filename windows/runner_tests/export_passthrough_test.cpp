@@ -432,5 +432,85 @@ TEST(ShouldCompositeCameraTest, SkipsWhenZeroFrames) {
   EXPECT_FALSE(ShouldCompositeCamera(true, true, true, false, /*frames=*/0));
 }
 
+// ---- Phase 10.4 disk-full preflight (pure helpers) --------------------------
+//
+// The decision + estimate are pure so the EXPORT_DISK_FULL path can be pinned
+// with injected values — no need to actually fill a volume.
+
+TEST(ExportDiskPreflightTest, EstimateAddsPassthroughHeadroom) {
+  EXPECT_EQ(EstimateRequiredExportBytes(1'000, /*composition=*/false),
+            1'000 + kPassthroughDiskHeadroomBytes);
+}
+
+TEST(ExportDiskPreflightTest, EstimateAddsLargerCompositionHeadroom) {
+  EXPECT_EQ(EstimateRequiredExportBytes(1'000, /*composition=*/true),
+            1'000 + kCompositionDiskHeadroomBytes);
+  EXPECT_GT(kCompositionDiskHeadroomBytes, kPassthroughDiskHeadroomBytes)
+      << "the re-encode path must reserve more than the byte-copy";
+}
+
+TEST(ExportDiskPreflightTest, UnknownSourceSizeDisablesTheEstimate) {
+  // A failed file_size probe must never block the export (soft-fail).
+  EXPECT_EQ(EstimateRequiredExportBytes(-1, false), -1);
+  EXPECT_EQ(EstimateRequiredExportBytes(-1, true), -1);
+}
+
+TEST(ExportDiskPreflightTest, FitsWhenAvailableCoversRequired) {
+  EXPECT_TRUE(ExportDiskPreflightFits(/*required=*/100, /*available=*/100));
+  EXPECT_TRUE(ExportDiskPreflightFits(/*required=*/100, /*available=*/101));
+}
+
+TEST(ExportDiskPreflightTest, BlocksWhenAvailableIsShort) {
+  EXPECT_FALSE(ExportDiskPreflightFits(/*required=*/100, /*available=*/99));
+  EXPECT_FALSE(ExportDiskPreflightFits(
+      /*required=*/5'000'000'000, /*available=*/0));
+}
+
+TEST(ExportDiskPreflightTest, SoftFailsOnUnknownProbes) {
+  // Unknown estimate or failed free-space query → never block.
+  EXPECT_TRUE(ExportDiskPreflightFits(/*required=*/-1, /*available=*/0));
+  EXPECT_TRUE(ExportDiskPreflightFits(/*required=*/0, /*available=*/0));
+  EXPECT_TRUE(ExportDiskPreflightFits(/*required=*/100, /*available=*/-1));
+}
+
+TEST(ExportDiskPreflightTest, FormatBytesForUserUsesDecimalMbAndGb) {
+  // Mirrors the macOS ByteCountFormatter contract: decimal units, GB or MB,
+  // unit included. These strings land verbatim in the EXPORT_DISK_FULL
+  // details context that Dart re-renders.
+  EXPECT_EQ(FormatBytesForUser(1'500'000'000), "1.5 GB");
+  EXPECT_EQ(FormatBytesForUser(2'000'000'000), "2.0 GB");
+  EXPECT_EQ(FormatBytesForUser(500'000'000), "500.0 MB");
+  EXPECT_EQ(FormatBytesForUser(64ll * 1024 * 1024), "67.1 MB");
+  EXPECT_EQ(FormatBytesForUser(0), "0.0 MB");
+  EXPECT_EQ(FormatBytesForUser(-5), "0.0 MB");  // defensive clamp
+}
+
+// ---- Phase 10.4: failed exports leave no file at the destination ------------
+
+TEST(ExportPassthroughCopyTest, RenderFailureLeavesNoFileAtDestination) {
+  // Non-decodable source + mp4 forces the composition path, which fails
+  // (kRenderFailed) with or without a GPU. Whatever partial output the
+  // pipeline may have created must be gone afterwards — the destination is
+  // deterministic here because the fresh out dir has no collisions.
+  const auto project = StageProject("export-test-fail-clean", "NOT_A_VIDEO");
+  const auto dest_dir = project.parent_path() / "out";
+  fs::create_directories(dest_dir);
+
+  PassthroughInput input;
+  input.project_path = project.u8string();
+  input.directory_override = dest_dir.u8string();
+  input.filename = "FailClean";
+  input.format = "mp4";
+
+  const auto outcome = ExportPassthroughCopy(input);
+  EXPECT_EQ(outcome.error, PassthroughError::kRenderFailed) << outcome.message;
+  EXPECT_TRUE(outcome.output_path.empty());
+  EXPECT_FALSE(fs::exists(dest_dir / "FailClean.mp4"))
+      << "a failed export must not leave a corrupt file at the destination";
+
+  std::error_code rm_ec;
+  fs::remove_all(project.parent_path(), rm_ec);
+}
+
 }  // namespace
 }  // namespace clingfy::capture::export_

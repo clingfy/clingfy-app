@@ -2458,4 +2458,44 @@ class AppLocalizationsAr extends AppLocalizations {
 
   @override
   String get errWindowsNotImplemented => 'هذه الميزة غير متاحة على ويندوز بعد.';
+
+  @override
+  String get errRecordingDiskFull =>
+      'لا توجد مساحة كافية على القرص لبدء التسجيل.';
+
+  @override
+  String get errPreviewOpenFailed => 'تعذّر فتح المعاينة.';
+
+  @override
+  String get errPreviewRenderFailed =>
+      'توقفت المعاينة عن العرض. أغلق التسجيل وأعد فتحه.';
+
+  @override
+  String get errRecordingStartTimeout => 'لم يبدأ التسجيل في الوقت المحدد.';
+
+  @override
+  String get errRecordingFinalizeTimeout => 'انتهت مهلة حفظ التسجيل.';
+
+  @override
+  String get errPreviewTimeout => 'استغرق تحميل المعاينة وقتًا طويلًا.';
+
+  @override
+  String get errInternalError => 'حدث خطأ داخلي.';
+
+  @override
+  String recordingInterruptedNotice(int count) {
+    String _temp0 = intl.Intl.pluralLogic(
+      count,
+      locale: localeName,
+      other: 'انقطع $count تسجيل ولم يكن من الممكن استرداده.',
+      many: 'انقطع $count تسجيلًا ولم يكن من الممكن استرداده.',
+      few: 'انقطعت $count تسجيلات ولم يكن من الممكن استردادها.',
+      two: 'انقطع تسجيلان ولم يكن من الممكن استردادهما.',
+      one: 'انقطع تسجيل واحد ولم يكن من الممكن استرداده.',
+    );
+    return '$_temp0';
+  }
+
+  @override
+  String get forceNativeCrashLabel => 'فرض انهيار أصلي (اختبار)';
 }

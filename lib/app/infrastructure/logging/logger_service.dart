@@ -142,38 +142,51 @@ class Log {
   /// Entry point for logs coming from Native side
   static void nativeEvent(Map<String, dynamic> payload) {
     try {
-      final ts = payload['ts'] as String? ?? DateTime.now().toIso8601String();
-      final levelRaw = payload['level'] as String? ?? 'DEBUG';
-      final category = payload['category'] as String? ?? 'Native';
-      final message = payload['message'] as String? ?? '';
-      final file = payload['file'] as String?;
-      final line = payload['line'] as int?;
-      final ctx = payload['context'] as Map<dynamic, dynamic>?;
-
-      // Coerce context keys to String
-      final Map<String, dynamic>? contextMap = ctx?.map(
-        (key, value) => MapEntry(key.toString(), value),
-      );
-
-      final event = LogEvent(
-        ts: ts,
-        level: levelRaw,
-        origin: 'native',
-        category: category,
-        message: message,
-        sessionId: sessionId,
-        recordingId: recordingId,
-        file: file,
-        line: line,
-        context: contextMap,
-      );
-
-      _processEvent(event);
+      _processEvent(parseNativeEvent(payload));
     } catch (e) {
       if (kDebugMode) {
         debugPrint("Error parsing native log event: $e");
       }
     }
+  }
+
+  /// Builds a [LogEvent] from a native `log` method-channel payload.
+  ///
+  /// Phase 10.4: also threads the optional `error`, `stack`, and `context`
+  /// keys onto the event — previously `error`/`stack` were dropped, which
+  /// kept the Sentry sink's exception-promotion path (event.error /
+  /// event.stack) from ever firing for native ERROR logs.
+  @visibleForTesting
+  static LogEvent parseNativeEvent(Map<String, dynamic> payload) {
+    final ts = payload['ts'] as String? ?? DateTime.now().toIso8601String();
+    final levelRaw = payload['level'] as String? ?? 'DEBUG';
+    final category = payload['category'] as String? ?? 'Native';
+    final message = payload['message'] as String? ?? '';
+    final file = payload['file'] as String?;
+    final line = payload['line'] as int?;
+    final ctx = payload['context'] as Map<dynamic, dynamic>?;
+    final error = payload['error'];
+    final stack = payload['stack'];
+
+    // Coerce context keys to String
+    final Map<String, dynamic>? contextMap = ctx?.map(
+      (key, value) => MapEntry(key.toString(), value),
+    );
+
+    return LogEvent(
+      ts: ts,
+      level: levelRaw,
+      origin: 'native',
+      category: category,
+      message: message,
+      sessionId: sessionId,
+      recordingId: recordingId,
+      file: file,
+      line: line,
+      context: contextMap,
+      error: error is String && error.isNotEmpty ? error : null,
+      stack: stack is String && stack.isNotEmpty ? stack : null,
+    );
   }
 
   // --- Internal Pipeline ---

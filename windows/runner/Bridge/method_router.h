@@ -41,10 +41,23 @@ class MethodRouter {
   // Look the call up in the handler table. If found, forward to the
   // registered handler. If not, reply with a structured
   // `WINDOWS_NOT_IMPLEMENTED` error so any bridge drift stays visible.
+  //
+  // Phase 10.4 dispatch barrier: the handler call is wrapped in try/catch.
+  // An uncaught C++ exception in a handler would otherwise unwind out of the
+  // platform-channel callback and kill the whole process; the barrier
+  // converts it into an `INTERNAL_ERROR` reply instead — but only when the
+  // handler had not already resolved the result (a reply that was sent
+  // before the throw is preserved, never doubled).
   void Dispatch(
       const flutter::MethodCall<flutter::EncodableValue>& call,
       std::unique_ptr<flutter::MethodResult<flutter::EncodableValue>> result)
       const;
+
+  // Test-only: install (or override) a handler. Lets unit tests exercise the
+  // dispatch barrier with a deliberately-throwing handler without wiring a
+  // synthetic method into a production router file.
+  void RegisterHandlerForTesting(const std::string& method,
+                                 MethodHandler handler);
 
   // True when `method` has an explicit registered handler -- i.e. it would
   // not fall through to the WINDOWS_NOT_IMPLEMENTED fallback. Used by tests

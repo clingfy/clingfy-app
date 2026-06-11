@@ -23,6 +23,22 @@ else()
       "Debug" "Profile" "Release")
   endif()
 endif()
+# Phase 10.4 (crash pipeline): emit full linker PDBs for optimized builds so
+# native crashes from beta Release copies can be symbolicated in Sentry
+# (uploaded by ops/release/windows/upload_symbols.ps1). CMake's MSVC Release
+# defaults include neither /Zi nor /DEBUG, so without this no PDB exists for
+# the runner at all. /DEBUG:FULL is explicit because FASTLINK-style PDBs are
+# not portable (sentry-cli cannot use them). /DEBUG flips the linker's
+# defaults to /OPT:NOREF,NOICF, so /OPT:REF /OPT:ICF are restored explicitly
+# -- the linked binary stays byte-comparable to a PDB-less Release link.
+# Appended BEFORE the Profile block below so Profile inherits the same flags
+# via the copy. The matching compiler-side /Z7 lives in
+# APPLY_STANDARD_SETTINGS.
+set(CMAKE_EXE_LINKER_FLAGS_RELEASE
+  "${CMAKE_EXE_LINKER_FLAGS_RELEASE} /DEBUG:FULL /OPT:REF /OPT:ICF")
+set(CMAKE_SHARED_LINKER_FLAGS_RELEASE
+  "${CMAKE_SHARED_LINKER_FLAGS_RELEASE} /DEBUG:FULL /OPT:REF /OPT:ICF")
+
 # Define settings for the Profile build mode.
 set(CMAKE_EXE_LINKER_FLAGS_PROFILE "${CMAKE_EXE_LINKER_FLAGS_RELEASE}")
 set(CMAKE_SHARED_LINKER_FLAGS_PROFILE "${CMAKE_SHARED_LINKER_FLAGS_RELEASE}")
@@ -41,6 +57,16 @@ function(APPLY_STANDARD_SETTINGS TARGET)
   target_compile_features(${TARGET} PUBLIC cxx_std_17)
   target_compile_options(${TARGET} PRIVATE /W4 /WX /wd"4100")
   target_compile_options(${TARGET} PRIVATE /EHsc)
+  # Phase 10.4 (crash pipeline): compile optimized configs with /Z7 so debug
+  # info is embedded in every .obj; the linker's /DEBUG:FULL pass (configured
+  # above) folds it into one complete PDB next to each binary. /Z7 is chosen
+  # over /Zi because runner_bridge is a static library -- with /Zi its debug
+  # info lives in an intermediate vcNNN.pdb that must survive until the final
+  # link, while /Z7 carries it inside the .lib itself, and /Z7 has no
+  # parallel-compile PDB write contention. Debug keeps CMake's default /Zi.
+  target_compile_options(${TARGET} PRIVATE
+    "$<$<CONFIG:Release>:/Z7>"
+    "$<$<CONFIG:Profile>:/Z7>")
   target_compile_definitions(${TARGET} PRIVATE "_HAS_EXCEPTIONS=0")
   target_compile_definitions(${TARGET} PRIVATE "$<$<CONFIG:Debug>:_DEBUG>")
 endfunction()

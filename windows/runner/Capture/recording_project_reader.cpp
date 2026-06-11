@@ -414,12 +414,54 @@ ReadResult ParseManifestJson(const std::string& manifest_json) {
     return result;
   }
 
+  // Phase 10.4: openable-status gate (macOS ProjectOpenValidator parity).
+  // Missing status → "ready" so pre-10.4 bundles keep opening; unknown
+  // values fail closed.
+  std::string status = "ready";
+  if (const auto status_field = GetStringField(obj, "status"); status_field) {
+    status = *status_field;
+  }
+  const bool openable =
+      status == "ready" || status == "cancelled" || status == "failed";
+  if (!openable) {
+    result.error = ReadError::kProjectNotOpenable;
+    result.message =
+        "project status is not openable: " + status;
+    return result;
+  }
+
   RecordingProject project;
   project.schema_version = schema;
+  project.status = status;
   result.project = std::move(project);
-  // Tests only care about schema_version + the kNone status. The
+  // Tests only care about schema_version/status + the kNone status. The
   // full reader fills the path fields against a real filesystem.
   return result;
+}
+
+// ---------------------------------------------------------------------
+// Recovery-sweep status probe (Phase 10.4) — tolerant by design.
+// ---------------------------------------------------------------------
+
+ManifestStatusProbe ProbeManifestStatus(const std::string& manifest_json) {
+  ManifestStatusProbe probe;
+  JsonValue root;
+  std::string err;
+  if (!ParseJson(manifest_json, root, err) || !root.is_object()) {
+    return probe;
+  }
+  const auto& obj = root.as_object();
+  probe.parsed = true;
+  if (const auto status = GetStringField(obj, "status"); status) {
+    probe.status = *status;
+  }
+  if (const auto id = GetStringField(obj, "projectId"); id) {
+    probe.project_id = *id;
+  }
+  if (const auto pid = GetNumberField(obj, "ownerPid"); pid && *pid > 0) {
+    probe.owner_pid = static_cast<std::uint32_t>(*pid);
+  }
+  return probe;
 }
 
 // ---------------------------------------------------------------------
@@ -507,6 +549,11 @@ ReadResult ReadRecordingProject(const std::wstring& project_path) {
   RecordingProject project;
   project.project_path = root_path.wstring();
   project.schema_version = 2;
+  // ParseManifestJson above already enforced the openable gate; carry the
+  // accepted status through (defaulting matches the gate's tolerance).
+  if (const auto status_field = GetStringField(obj, "status"); status_field) {
+    project.status = *status_field;
+  }
 
   // capture/screen* paths — required.
   const JsonObject* capture = GetObjectField(obj, "capture");

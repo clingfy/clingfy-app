@@ -156,9 +156,20 @@ std::string BuildManifestJson(const ProjectWriterInput& input) {
   out << "  \"createdAt\": \"" << JsonEscape(created_at) << "\",\n";
   out << "  \"updatedAt\": \"" << JsonEscape(created_at) << "\",\n";
   out << "  \"displayName\": \"" << JsonEscape(input.session_id) << "\",\n";
-  // `status:"ready"` is the only value Dart will open — see
-  // `RecordingProjectManifestError.projectStatusNotOpenable`.
-  out << "  \"status\": \"ready\",\n";
+  // Phase 10.4 status lifecycle (macOS `RecordingProjectStatus` parity):
+  // "capturing" while recording, "ready" after a successful Stop, "failed"
+  // for interrupted/unfinalizable recordings. Openable statuses are
+  // ready/cancelled/failed — see `RecordingProjectManifestError
+  // .projectStatusNotOpenable` (Dart) and the Windows reader's status gate.
+  out << "  \"status\": \""
+      << JsonEscape(input.status.empty() ? "ready" : input.status)
+      << "\",\n";
+  // Phase 10.4: PID of the recording process. The startup recovery sweep
+  // skips "capturing" bundles whose owner is still alive (dev + prod share
+  // the recordings root until 10.5). Readers ignore unknown keys.
+  if (input.owner_pid != 0) {
+    out << "  \"ownerPid\": " << input.owner_pid << ",\n";
+  }
   out << "  \"capture\": {\n";
   out << "    \"screenVideo\": \"capture/screen.mov\",\n";
   out << "    \"screenMetadata\": \"capture/screen.meta.json\",\n";
@@ -245,8 +256,13 @@ ProjectWriterResult WriteRecordingProject(const ProjectWriterInput& input) {
                                 : input.recordings_root_override;
 
   std::error_code ec;
+  // Phase 10.4 (review fix): the root string is UTF-8
+  // (ResolveDefaultRecordingsRoot / the env seam) — decode it as such.
+  // `fs::path(std::string)` uses the ACTIVE CODE PAGE on MSVC, which sent
+  // the bundle to a different directory than the UTF-8-decoding recovery
+  // sweep / storage router on non-ASCII user profiles.
   fs::path project_root =
-      fs::path(root) / (input.session_id + ".clingfyproj");
+      fs::u8path(root) / (input.session_id + ".clingfyproj");
   fs::create_directories(project_root, ec);
   if (ec) {
     return {ProjectWriterErrorKind::kFilesystem,
@@ -345,27 +361,91 @@ ProjectWriterResult WriteRecordingProject(const ProjectWriterInput& input) {
     }
   }
 
+  // Phase 10.4: by this point the screen video has been moved INTO the
+  // bundle (the %TEMP% original is gone), so a failure below would strand a
+  // half-built bundle with no usable manifest — invisible to the recovery
+  // sweep and unopenable forever. Before returning such an error, make a
+  // best-effort attempt to stamp the bundle `status: "failed"` so it at
+  // least becomes a recognizable tombstone.
+  const auto fail_with_rescue =
+      [&](const std::string& message) -> ProjectWriterResult {
+    ProjectWriterInput failed = effective;
+    failed.status = "failed";
+    WriteUtf8File(project_root / "project.json", BuildManifestJson(failed));
+    return {ProjectWriterErrorKind::kFilesystem, message, {}};
+  };
+
   // Write the three JSON files. We always overwrite (Phase 3E is the
   // first writer to ship; a partial earlier write should never persist).
   if (!WriteUtf8File(project_root / "project.json",
                      BuildManifestJson(effective))) {
-    return {ProjectWriterErrorKind::kFilesystem,
-            "Failed to write project.json.", {}};
+    return fail_with_rescue("Failed to write project.json.");
   }
   if (!WriteUtf8File(project_root / "capture" / "screen.meta.json",
                      BuildScreenMetaJson(effective))) {
-    return {ProjectWriterErrorKind::kFilesystem,
-            "Failed to write capture/screen.meta.json.", {}};
+    return fail_with_rescue("Failed to write capture/screen.meta.json.");
   }
   // post/state.json placeholder for Phase 6+'s post-processing
   // pipeline. The empty `{}` body is enough to satisfy the manifest
   // pointer; the Dart side reads this lazily.
   if (!WriteUtf8File(project_root / "post" / "state.json", std::string("{}\n"))) {
-    return {ProjectWriterErrorKind::kFilesystem,
-            "Failed to write post/state.json.", {}};
+    return fail_with_rescue("Failed to write post/state.json.");
   }
 
-  return {ProjectWriterErrorKind::kNone, {}, project_root.string()};
+  ProjectWriterResult ok;
+  ok.kind = ProjectWriterErrorKind::kNone;
+  ok.project_path = project_root.u8string();
+  // Phase 10.4 (review fix): report sidecar downgrades so the engine knows
+  // the leftover temp is NOT a deletable straggler.
+  ok.cursor_downgraded = input.cursor_enabled && !effective.cursor_enabled;
+  ok.camera_downgraded = input.camera_enabled && !effective.camera_enabled;
+  return ok;
+}
+
+ProjectWriterResult WriteProvisionalProject(
+    const ProvisionalProjectInput& input) {
+  if (input.session_id.empty()) {
+    return {ProjectWriterErrorKind::kBadInput,
+            "session_id is required for the provisional project writer.",
+            {}};
+  }
+
+  const std::string root = input.recordings_root_override.empty()
+                                ? ResolveDefaultRecordingsRoot()
+                                : input.recordings_root_override;
+
+  std::error_code ec;
+  // UTF-8 decode — see the matching comment in WriteRecordingProject.
+  fs::path project_root =
+      fs::u8path(root) / (input.session_id + ".clingfyproj");
+  fs::create_directories(project_root, ec);
+  if (ec) {
+    return {ProjectWriterErrorKind::kFilesystem,
+            "Failed to create provisional project root: " + ec.message(),
+            {}};
+  }
+
+  ProjectWriterInput manifest_input;
+  manifest_input.session_id = input.session_id;
+  manifest_input.created_at_iso8601 = input.created_at_iso8601;
+  manifest_input.status = "capturing";
+#ifdef _WIN32
+  manifest_input.owner_pid =
+      input.owner_pid != 0 ? input.owner_pid : ::GetCurrentProcessId();
+#else
+  manifest_input.owner_pid = input.owner_pid;
+#endif
+
+  if (!WriteUtf8File(project_root / "project.json",
+                     BuildManifestJson(manifest_input))) {
+    return {ProjectWriterErrorKind::kFilesystem,
+            "Failed to write provisional project.json.", {}};
+  }
+
+  ProjectWriterResult ok;
+  ok.kind = ProjectWriterErrorKind::kNone;
+  ok.project_path = project_root.u8string();
+  return ok;
 }
 
 }  // namespace clingfy::capture

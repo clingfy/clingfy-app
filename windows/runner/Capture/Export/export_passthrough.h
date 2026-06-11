@@ -185,10 +185,15 @@ enum class PassthroughError {
   // unsupported media type, encoder/Direct2D error). Maps to
   // EXPORT_ERROR. Carries the underlying detail in `message`.
   kRenderFailed,
+  // Phase 10.4: the destination volume cannot hold the export — either the
+  // preflight estimate did not fit (required/available byte counts populated
+  // on the result) or a mid-write failure carried a disk-full HRESULT /
+  // errno. Maps to EXPORT_DISK_FULL with the macOS-shaped details payload.
+  kDiskFull,
   // Slice 5A: the export was cancelled by the user mid-flight. Maps to
-  // EXPORT_ERROR with a "cancelled" message so the Dart side classifies it as
-  // a clean cancel (returns null, lastExportWasCancelled=true) rather than a
-  // surfaced error.
+  // EXPORT_CANCELLED (Phase 10.4 — previously EXPORT_ERROR with a
+  // "cancelled" message) so the Dart side classifies a clean user cancel by
+  // stable code rather than by message sniffing.
   kCancelled,
 };
 
@@ -202,7 +207,47 @@ struct PassthroughResult {
   // Retained result-contract field. Windows now emits .mov/.mp4/.gif natively
   // (Slices 5A/5B), so nothing is downgraded and this is always false.
   bool format_was_downgraded = false;
+  // Phase 10.4: populated when error == kDiskFull. `disk_required_bytes` is
+  // the preflight estimate (source size + headroom); -1 when the failure was
+  // classified mid-write (no estimate exists, the router then falls back to
+  // the self-contained message). `disk_available_bytes` is the destination
+  // volume's free space at check time (-1 unknown). `disk_checked_path` is
+  // the UTF-8 destination directory whose volume was checked.
+  std::int64_t disk_required_bytes = -1;
+  std::int64_t disk_available_bytes = -1;
+  std::string disk_checked_path;
 };
+
+// ---- Phase 10.4 disk-full preflight (pure, unit-testable) -------------------
+
+// Headroom added on top of the source size when estimating the bytes an
+// export needs at the destination. The passthrough copy writes exactly the
+// source bytes (64 MiB covers filesystem slack); the composition path
+// re-encodes at an output size unknown up front, so it reserves more.
+inline constexpr std::int64_t kPassthroughDiskHeadroomBytes =
+    64ll * 1024 * 1024;
+inline constexpr std::int64_t kCompositionDiskHeadroomBytes =
+    256ll * 1024 * 1024;
+
+// Required-bytes estimate for an export: source file size plus the headroom
+// for the chosen path. A negative `source_size_bytes` (size probe failed)
+// returns -1, which disables the preflight (soft-fail — never block an
+// export on a failed probe).
+std::int64_t EstimateRequiredExportBytes(std::int64_t source_size_bytes,
+                                         bool composition);
+
+// Pure decision: does the destination volume have room for the export?
+// True (fits / don't block) when `required_bytes` <= 0 (unknown estimate) or
+// `available_bytes` < 0 (free-space query failed) — the soft-fail idiom —
+// otherwise a plain `available >= required` comparison.
+bool ExportDiskPreflightFits(std::int64_t required_bytes,
+                             std::int64_t available_bytes);
+
+// Human-readable decimal byte count ("67.1 MB" / "1.5 GB") — the Windows
+// analogue of the macOS ByteCountFormatter strings embedded in the
+// EXPORT_DISK_FULL details payload (GB/MB units, decimal, unit included).
+// Negative values render as "0.0 MB".
+std::string FormatBytesForUser(std::int64_t bytes);
 
 // Pure path resolver: combines directory + filename + a forced .mov
 // extension into an absolute output path. Exposed for tests so the

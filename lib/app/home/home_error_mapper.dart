@@ -166,9 +166,32 @@ class HomeErrorMapper {
         message = l10n.errWindowsNotImplemented;
       case NativeErrorCode.exportDiskFull:
         message = l10n.errExportDiskFullFallback;
-      case 'PREVIEW_INPUT_MISSING':
-      case 'SCENE_INPUT_MISSING':
+      case NativeErrorCode.previewInputMissing:
+      case NativeErrorCode.sceneInputMissing:
         message = l10n.errExportInputMissing;
+
+      // Phase 10.4 — crash/error mapping. Native codes first, then the
+      // Dart-synthesized watchdog codes. EXPORT_CANCELLED deliberately has
+      // NO case: a clean cancel is classified upstream
+      // (PostProcessingController) and never reaches a toast.
+      case NativeErrorCode.recordingDiskFull:
+        message = l10n.errRecordingDiskFull;
+        action = ToolbarMessageAction(
+          label: l10n.openStorageSettings,
+          onPressed: () => openSystemSettings('storage'),
+        );
+      case NativeErrorCode.previewOpenError:
+        message = l10n.errPreviewOpenFailed;
+      case NativeErrorCode.previewRenderError:
+        message = l10n.errPreviewRenderFailed;
+      case NativeErrorCode.internalError:
+        message = l10n.errInternalError;
+      case DartSynthesizedErrorCode.recordingStartTimeout:
+        message = l10n.errRecordingStartTimeout;
+      case DartSynthesizedErrorCode.recordingFinalizeTimeout:
+        message = l10n.errRecordingFinalizeTimeout;
+      case DartSynthesizedErrorCode.previewTimeout:
+        message = l10n.errPreviewTimeout;
       default:
         message = verbatimFallback ?? rawError;
     }

@@ -84,6 +84,7 @@ add_library(runner_bridge STATIC
   "Permissions/camera_readiness.cpp"
   "Permissions/permission_probe.cpp"
   "Services/log_locations.cpp"
+  "Services/recovery_sweep.cpp"
   "Services/save_folder.cpp"
   "Services/shell_reveal.cpp"
   "Services/temp_orphan_scan.cpp"

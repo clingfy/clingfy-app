@@ -121,6 +121,10 @@ const std::vector<std::string>& BridgeContractMethods() {
       "getManualZoomSegments",
       "saveManualZoomSegments",
 
+      // Phase 10.4 crash salvage + crash-pipeline verification.
+      "getStartupRecoveryReport",
+      "debugForceNativeCrash",
+
       // Permissions + system shortcuts.
       "getPermissionStatus",
       "getWindowsPermissionDetails",

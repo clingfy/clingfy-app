@@ -2,12 +2,18 @@
 
 #include <flutter/encodable_value.h>
 
+#include <atomic>
+#include <memory>
 #include <optional>
 #include <string>
+#include <thread>
+#include <utility>
 
 #include "Bridge/native_error_codes.h"
+#include "Bridge/platform_thread_dispatcher.h"
 #include "Bridge/result_helpers.h"
 #include "Capture/recording_engine.h"
+#include "Services/recovery_sweep.h"
 
 namespace clingfy::bridge::routers::recording {
 
@@ -273,11 +279,121 @@ void HandleGetCaptureDiagnostics(
   reply::Map(*result, std::move(map));
 }
 
+// Phase 10.4 (review fix): the sweep worker must NOT outlive CRT static
+// destruction — it touches Meyers singletons (NativeLogPublisher, the
+// dispatcher). Same shape as temp_orphan_scan's ScanThreadHolder: a
+// function-local static joins the worker at process teardown, with a
+// cancel flag the sweep polls between filesystem entries. `running` keeps
+// a defensive second call from blocking the platform thread on a join of a
+// still-working sweep.
+struct SweepThreadHolder {
+  std::atomic<bool> cancel{false};
+  std::atomic<bool> running{false};
+  std::thread worker;
+  ~SweepThreadHolder() {
+    cancel.store(true);
+    if (worker.joinable()) worker.join();
+  }
+};
+
+SweepThreadHolder& SweepHolder() {
+  static SweepThreadHolder holder;
+  return holder;
+}
+
 }  // namespace
+
+// Phase 10.4: the startup recovery sweep. Marks crash-interrupted projects
+// failed (provisional `status: "capturing"` manifests whose owner process is
+// dead) and deletes stranded `%TEMP%\clingfy_*` files, then reports what it
+// found so Dart can show the user a notice. Dart calls this once after the
+// home shell mounts. The filesystem walks run on a worker thread; the reply
+// is marshaled back to the platform thread (the export_router pattern).
+void HandleGetStartupRecoveryReport(
+    const flutter::MethodCall<flutter::EncodableValue>& call,
+    std::unique_ptr<flutter::MethodResult<flutter::EncodableValue>> result) {
+  (void)call;
+
+  const auto run_sweep = []() -> flutter::EncodableValue {
+    clingfy::services::RecoverySweepOptions options;
+    options.cancel = &SweepHolder().cancel;
+    const clingfy::services::RecoverySweepResult sweep =
+        clingfy::services::RunRecoverySweep(options);
+    flutter::EncodableList interrupted;
+    for (const auto& project : sweep.interrupted) {
+      interrupted.push_back(flutter::EncodableValue(flutter::EncodableMap{
+          {flutter::EncodableValue("projectPath"),
+           flutter::EncodableValue(project.project_path)},
+          {flutter::EncodableValue("sessionId"),
+           flutter::EncodableValue(project.session_id)},
+      }));
+    }
+    return flutter::EncodableValue(flutter::EncodableMap{
+        {flutter::EncodableValue("interruptedProjects"),
+         flutter::EncodableValue(interrupted)},
+        {flutter::EncodableValue("cleanedTempFileCount"),
+         flutter::EncodableValue(
+             static_cast<std::int32_t>(sweep.cleaned_temp_files))},
+        {flutter::EncodableValue("cleanedTempBytes"),
+         flutter::EncodableValue(
+             static_cast<std::int64_t>(sweep.cleaned_temp_bytes))},
+    });
+  };
+
+  // Defense in depth: never sweep while a recording is in flight (Dart only
+  // calls this at startup, but a slow startup can race a fast user).
+  if (clingfy::capture::RecordingEngine::Instance().IsSessionActive()) {
+    result->Success(flutter::EncodableValue(flutter::EncodableMap{
+        {flutter::EncodableValue("interruptedProjects"),
+         flutter::EncodableValue(flutter::EncodableList{})},
+        {flutter::EncodableValue("cleanedTempFileCount"),
+         flutter::EncodableValue(0)},
+        {flutter::EncodableValue("cleanedTempBytes"),
+         flutter::EncodableValue(static_cast<std::int64_t>(0))},
+    }));
+    return;
+  }
+
+  auto& dispatcher = clingfy::bridge::PlatformThreadDispatcher::Instance();
+  if (!dispatcher.is_initialized()) {
+    // Test / cold-start fallback: run synchronously on the calling thread.
+    result->Success(run_sweep());
+    return;
+  }
+
+  auto& holder = SweepHolder();
+  if (holder.running.load()) {
+    // A sweep is already in flight (defensive — Dart calls once). Reply an
+    // empty report instead of joining (which would block the platform
+    // thread) or racing two sweeps.
+    result->Success(flutter::EncodableValue(flutter::EncodableMap{
+        {flutter::EncodableValue("interruptedProjects"),
+         flutter::EncodableValue(flutter::EncodableList{})},
+        {flutter::EncodableValue("cleanedTempFileCount"),
+         flutter::EncodableValue(0)},
+        {flutter::EncodableValue("cleanedTempBytes"),
+         flutter::EncodableValue(static_cast<std::int64_t>(0))},
+    }));
+    return;
+  }
+  if (holder.worker.joinable()) {
+    holder.worker.join();  // previous sweep finished; reclaim the thread
+  }
+  holder.running.store(true);
+  std::shared_ptr<flutter::MethodResult<flutter::EncodableValue>>
+      shared_result = std::move(result);
+  holder.worker = std::thread([run_sweep, shared_result]() {
+    const flutter::EncodableValue payload = run_sweep();
+    clingfy::bridge::PlatformThreadDispatcher::Instance().Post(
+        [shared_result, payload]() { shared_result->Success(payload); });
+    SweepHolder().running.store(false);
+  });
+}
 
 void RegisterHandlers(HandlerTable& table) {
   table["startRecording"] = &HandleStartRecording;
   table["stopRecording"] = &HandleStopRecording;
+  table["getStartupRecoveryReport"] = &HandleGetStartupRecoveryReport;
   table["pauseRecording"] = &HandlePauseRecording;
   table["resumeRecording"] = &HandleResumeRecording;
   table["togglePauseRecording"] = &HandleTogglePauseRecording;

@@ -30,6 +30,19 @@ class RecordingEngineTest : public ::testing::Test {
   void SetUp() override {
     RecordingEngine::Instance().ForceResetForTesting();
     WindowsSelectionState::Instance().ResetForTesting();
+    // Phase 10.4: sandbox the recordings root. Full Start/Stop cycles write
+    // REAL project bundles (and, since 10.4, a provisional `capturing`
+    // manifest at Start) — without the env seam those land in the
+    // developer's real `%LOCALAPPDATA%\Clingfy\recordings`, and a test that
+    // starts without stopping would leave a `capturing` tombstone the app's
+    // next-launch recovery sweep dutifully reports to the user.
+    sandbox_root_ = std::filesystem::temp_directory_path() /
+                    L"clingfy_engine_test_recordings";
+    std::error_code ec;
+    std::filesystem::remove_all(sandbox_root_, ec);
+    std::filesystem::create_directories(sandbox_root_, ec);
+    ::SetEnvironmentVariableW(L"CLINGFY_RECORDINGS_ROOT",
+                              sandbox_root_.c_str());
   }
   void TearDown() override {
     RecordingEngine::Instance().ForceResetForTesting();
@@ -38,7 +51,12 @@ class RecordingEngineTest : public ::testing::Test {
     // leak into the next case (an ASSERT early-return skips a test's own
     // ClearSink). Idempotent when no sink is set.
     clingfy::bridge::WorkflowEventPublisher::Instance().ClearSink();
+    ::SetEnvironmentVariableW(L"CLINGFY_RECORDINGS_ROOT", nullptr);
+    std::error_code ec;
+    std::filesystem::remove_all(sandbox_root_, ec);
   }
+
+  std::filesystem::path sandbox_root_;
 };
 
 // Captures workflow events emitted during a finalize so target-loss tests can
@@ -175,11 +193,12 @@ TEST_F(RecordingEngineTest, StartAfterStopIsAllowed) {
 TEST_F(RecordingEngineTest, StartRejectsWindowModeWithNoTarget) {
   WindowsSelectionState::Instance().SetTargetMode(
       DisplayTargetMode::kSingleAppWindow);
-  // No window picked → friendly target error, not kBadMode (the gate IS lifted
-  // for window modes) and not a crash.
+  // No window picked → the SPECIFIC macOS-parity code (Phase 10.4; was the
+  // blanket kTargetError), not kBadMode (the gate IS lifted for window
+  // modes) and not a crash.
   auto error = RecordingEngine::Instance().Start(ValidRequest());
   ASSERT_TRUE(error.has_value());
-  EXPECT_EQ(error->code, clingfy::bridge::error::kTargetError);
+  EXPECT_EQ(error->code, clingfy::bridge::error::kNoWindowSelected);
   EXPECT_FALSE(RecordingEngine::Instance().IsRecording());
 }
 
@@ -187,22 +206,24 @@ TEST_F(RecordingEngineTest, StartRejectsWindowModeWithStaleHwnd) {
   WindowsSelectionState::Instance().SetTargetMode(
       DisplayTargetMode::kAppWindow);
   // An int64 that does not name a live window → ResolveAppWindow returns
-  // nullopt → friendly target error (the gate was passed; resolution failed).
+  // nullopt → kWindowNotAvailable (Phase 10.4 specific code; the gate was
+  // passed; resolution failed).
   WindowsSelectionState::Instance().SetAppWindowId(std::int64_t{0xABCD1234});
   auto error = RecordingEngine::Instance().Start(ValidRequest());
   ASSERT_TRUE(error.has_value());
-  EXPECT_EQ(error->code, clingfy::bridge::error::kTargetError);
+  EXPECT_EQ(error->code, clingfy::bridge::error::kWindowNotAvailable);
   EXPECT_FALSE(RecordingEngine::Instance().IsRecording());
 }
 
 TEST_F(RecordingEngineTest, StartRejectsAreaModeWithNoRegion) {
-  // The area gate is lifted (Phase 7.2), but with no region picked Start fails
-  // with a friendly target error, not kBadMode — GPU-free (fails before D3D).
+  // The area gate is lifted (Phase 7.2), but with no region picked Start
+  // fails with kNoAreaSelected (Phase 10.4 specific code), not kBadMode —
+  // GPU-free (fails before D3D).
   WindowsSelectionState::Instance().SetTargetMode(
       DisplayTargetMode::kAreaRecording);
   auto error = RecordingEngine::Instance().Start(ValidRequest());
   ASSERT_TRUE(error.has_value());
-  EXPECT_EQ(error->code, clingfy::bridge::error::kTargetError);
+  EXPECT_EQ(error->code, clingfy::bridge::error::kNoAreaSelected);
   EXPECT_FALSE(RecordingEngine::Instance().IsRecording());
 }
 
@@ -574,6 +595,32 @@ TEST_F(RecordingEngineTest, NoCameraWhenOverlayEnabledButNoDeviceSelected) {
   EXPECT_TRUE(RecordingEngine::Instance().IsRecording());
   EXPECT_FALSE(RecordingEngine::Instance().camera_recording_for_testing());
   ASSERT_FALSE(RecordingEngine::Instance().Stop("sess-test").has_value());
+}
+
+
+// === Phase 10.4: native disk preflight gate (pure) ==========================
+
+TEST(StartDiskGateTest, FailedQueryNeverBlocks) {
+  EXPECT_EQ(EvaluateStartDiskGate(std::nullopt, false), StartDiskGate::kOk);
+  EXPECT_EQ(EvaluateStartDiskGate(std::nullopt, true), StartDiskGate::kOk);
+}
+
+TEST(StartDiskGateTest, HardFloorBlocksEvenWithBypass) {
+  EXPECT_EQ(EvaluateStartDiskGate(kStartDiskHardFloorBytes - 1, true),
+            StartDiskGate::kBlocked);
+  EXPECT_EQ(EvaluateStartDiskGate(kStartDiskHardFloorBytes - 1, false),
+            StartDiskGate::kBlocked);
+}
+
+TEST(StartDiskGateTest, SoftFloorRespectsBypass) {
+  const std::uint64_t between = kStartDiskSoftFloorBytes - 1;
+  EXPECT_EQ(EvaluateStartDiskGate(between, false), StartDiskGate::kBlocked);
+  EXPECT_EQ(EvaluateStartDiskGate(between, true), StartDiskGate::kOk);
+}
+
+TEST(StartDiskGateTest, PlentyOfSpacePasses) {
+  EXPECT_EQ(EvaluateStartDiskGate(kStartDiskSoftFloorBytes, false),
+            StartDiskGate::kOk);
 }
 
 }  // namespace

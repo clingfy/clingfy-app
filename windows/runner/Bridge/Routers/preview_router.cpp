@@ -8,6 +8,7 @@
 #include <string>
 
 #include "Bridge/native_error_codes.h"
+#include "Bridge/native_log_publisher.h"
 #include "Bridge/result_helpers.h"
 #include "Capture/Camera/camera_meta.h"
 #include "Capture/recording_project_reader.h"
@@ -245,6 +246,8 @@ const char* ReadErrorVariantName(clingfy::capture::ReadError e) {
       return "PROJECT_SCHEMA_VERSION_MISMATCH";
     case ReadError::kRequiredFileMissing:
       return "PROJECT_REQUIRED_FILE_MISSING";
+    case ReadError::kProjectNotOpenable:
+      return "PROJECT_STATUS_NOT_OPENABLE";
   }
   return "PROJECT_UNKNOWN_ERROR";
 }
@@ -299,7 +302,7 @@ void HandleGetRecordingSceneInfo(
     //     message: "Recording project not found. It may have been moved or deleted.",
     //     details: projectPath)
     result->Error(
-        "SCENE_INPUT_MISSING",
+        error::kSceneInputMissing,
         "Recording project not found. It may have been moved or deleted.",
         flutter::EncodableValue(project_path_utf8));
     return;
@@ -378,11 +381,17 @@ void HandlePreviewOpen(
       clingfy::capture::ReadRecordingProject(project_path_w);
   if (read.error != clingfy::capture::ReadError::kNone) {
     LogSceneInfoReaderError(project_path_utf8, read);
+    // Phase 10.4: reader errors also go over the native→Dart log bridge —
+    // OutputDebugStringW alone is lost in installed builds.
+    clingfy::bridge::NativeLogPublisher::Instance().Error(
+        "Preview", std::string("previewOpen reader failed: ") +
+                       ReadErrorVariantName(read.error) + " — " +
+                       read.message);
     // Match the macOS PreviewSceneResolver error code + message
     // shape; details echoes the projectPath so the Dart layer can
     // surface "<path> could not be opened" without re-deriving it.
     result->Error(
-        "PREVIEW_INPUT_MISSING",
+        error::kPreviewInputMissing,
         "Recording project not found. It may have been moved or deleted.",
         flutter::EncodableValue(project_path_utf8));
     return;
@@ -418,12 +427,15 @@ void HandlePreviewOpen(
   auto* engine = PreviewEngine::Instance();
   const auto r = engine->Open(open_args);
   if (!r.error.empty()) {
-    // Engine-side validation rejection (e.g. another session already
-    // open, texture allocation failed). Map to the same user-visible
-    // code Dart already handles for PREVIEW_INPUT_MISSING — but
-    // surface the engine's message in details for triage.
+    // Phase 10.4: engine-side failures (D3D/D2D/texture/MediaPlayer setup)
+    // get their OWN code. They used to collapse into PREVIEW_INPUT_MISSING,
+    // so a GPU failure rendered as "recording files missing" — wrong
+    // diagnosis, wrong user action. Also surfaced over the log bridge: the
+    // engine's own logging goes only to its side file.
+    clingfy::bridge::NativeLogPublisher::Instance().Error(
+        "Preview", "previewOpen engine failed: " + r.error);
     result->Error(
-        "PREVIEW_INPUT_MISSING",
+        error::kPreviewOpenError,
         r.error,
         flutter::EncodableValue(project_path_utf8));
     return;

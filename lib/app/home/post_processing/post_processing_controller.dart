@@ -1079,8 +1079,10 @@ class PostProcessingController extends ChangeNotifier {
       );
       rethrow;
     } catch (e, st) {
-      if (_isExportCancelRequested ||
-          _isLikelyCancellationMessage(e.toString())) {
+      // Phase 10.4: a requested cancel alone no longer classifies the
+      // failure — only an explicit cancellation signal does. Real errors
+      // that race the user's cancel must still surface and be logged.
+      if (isExportCancellationError(e)) {
         _lastExportWasCancelled = true;
         exportStatus = const SpanStatus.cancelled();
         return null;
@@ -1198,17 +1200,30 @@ class PostProcessingController extends ChangeNotifier {
     await span.finish(status: status);
   }
 
+  /// Phase 10.4: the structured EXPORT_CANCELLED code is the primary
+  /// cancellation signal (Windows emits it); the legacy message sniffing
+  /// stays as the fallback because macOS still cancels with prose-only
+  /// errors. CRITICAL audit fix: this no longer consults
+  /// `_isExportCancelRequested` — pressing Cancel used to turn ANY
+  /// subsequent failure into a silent "clean cancel", eating real errors.
   bool _isExportCancellationException(PlatformException e) {
-    if (_isExportCancelRequested) return true;
-    if (_isLikelyCancellationMessage(e.message) ||
-        _isLikelyCancellationMessage(e.details?.toString())) {
-      return true;
-    }
-    final code = e.code.toLowerCase();
-    return code.contains('cancel');
+    return isExportCancellationError(e);
   }
 
-  bool _isLikelyCancellationMessage(String? message) {
+  @visibleForTesting
+  static bool isExportCancellationError(Object error) {
+    if (error is PlatformException) {
+      if (error.code == NativeErrorCode.exportCancelled) return true;
+      if (_isLikelyCancellationMessage(error.message) ||
+          _isLikelyCancellationMessage(error.details?.toString())) {
+        return true;
+      }
+      return error.code.toLowerCase().contains('cancel');
+    }
+    return _isLikelyCancellationMessage(error.toString());
+  }
+
+  static bool _isLikelyCancellationMessage(String? message) {
     if (message == null || message.isEmpty) return false;
     final normalized = message.toLowerCase();
     return normalized.contains('cancel') ||

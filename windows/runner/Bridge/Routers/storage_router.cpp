@@ -13,6 +13,7 @@
 #include "Capture/recording_engine.h"
 #include "Capture/recording_project_writer.h"
 #include "Services/log_locations.h"
+#include "Services/recovery_sweep.h"
 #include "Services/save_folder.h"
 #include "Services/shell_reveal.h"
 
@@ -212,6 +213,13 @@ int HandleClearProjects(const std::wstring& recordings_root) {
     std::error_code entry_ec;
     if (it->is_directory(entry_ec) &&
         it->path().extension() == L".clingfyproj") {
+      // Phase 10.4: dev + prod share the recordings root until 10.5 splits
+      // installer identities — the engine's IsSessionActive guard only
+      // covers THIS process. Skip a bundle that a live sibling Clingfy
+      // process is capturing into right now.
+      if (clingfy::services::BundleOwnedByLiveProcess(it->path())) {
+        continue;
+      }
       projects.push_back(it->path());
     }
   }

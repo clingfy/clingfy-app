@@ -1,6 +1,7 @@
 #include "Bridge/Routers/export_router.h"
 
 #include <cstdint>
+#include <exception>
 #include <filesystem>
 #include <fstream>
 #include <memory>
@@ -13,6 +14,7 @@
 
 #include "Bridge/export_progress_publisher.h"
 #include "Bridge/native_error_codes.h"
+#include "Bridge/native_log_publisher.h"
 #include "Bridge/platform_thread_dispatcher.h"
 #include "Bridge/result_helpers.h"
 #include "Capture/Cursor/cursor_sidecar_reader.h"
@@ -139,50 +141,6 @@ bool ReadBool(const flutter::EncodableMap& map, const std::string& key,
     return *value;
   }
   return fallback;
-}
-
-// Complete the exportVideo MethodResult for a finished export. Pulled out so
-// the SAME mapping runs whether the export ran synchronously (tests) or on a
-// worker thread (production, replied via PlatformThreadDispatcher::Post).
-void ReplyForExportOutcome(
-    flutter::MethodResult<flutter::EncodableValue>& result,
-    const clingfy::capture::export_::PassthroughResult& outcome,
-    const std::string& project_path, const std::string& directory_override) {
-  using clingfy::capture::export_::PassthroughError;
-  switch (outcome.error) {
-    case PassthroughError::kNone:
-      reply::String(result, outcome.output_path);
-      return;
-    case PassthroughError::kInputMissing:
-      result.Error(error::kExportInputMissing, outcome.message,
-                   flutter::EncodableValue(project_path));
-      return;
-    case PassthroughError::kNoDestination:
-      result.Error(error::kBadArgs, outcome.message,
-                   flutter::EncodableValue(directory_override));
-      return;
-    case PassthroughError::kCopyFailed:
-    case PassthroughError::kRenderFailed:
-    case PassthroughError::kCancelled:
-      // kCancelled carries a "cancelled" message so Dart classifies it as a
-      // clean user cancel (post_processing_controller._isLikelyCancellation
-      // Message), not a surfaced failure — matching macOS (EXPORT_ERROR +
-      // "Export cancelled"). kCopyFailed/kRenderFailed are generic failures.
-      result.Error(error::kExportError, outcome.message,
-                   flutter::EncodableValue(project_path));
-      return;
-    default:
-      // Every PassthroughError MUST complete the MethodResult. An un-answered
-      // result is destroyed silently and the Dart `exportVideo` future never
-      // resolves — the export UI hangs with no error. This default guards any
-      // future enum value (MSVC's C4061/C4062 do not fire at /W4).
-      result.Error(error::kExportError,
-                   outcome.message.empty() ? "exportVideo: unknown export "
-                                             "failure"
-                                           : outcome.message,
-                   flutter::EncodableValue(project_path));
-      return;
-  }
 }
 
 // ---- getZoomSegments (Phase 10.3) -------------------------------------------
@@ -390,8 +348,24 @@ void HandleExportVideo(
   // worker thread — otherwise the blocked platform thread could never receive
   // cancelExport — and marshal the reply back via the dispatcher.
   if (!PlatformThreadDispatcher::Instance().is_initialized()) {
-    const auto outcome = clingfy::capture::export_::ExportPassthroughCopy(
-        input, on_progress, is_cancelled);
+    // Same exception mapping as the worker path below. The MethodRouter
+    // dispatch barrier would catch a throw here too, but it cannot know to
+    // call EndExport() — without this catch the session would stay
+    // "running" forever and every later export would be rejected.
+    clingfy::capture::export_::PassthroughResult outcome;
+    try {
+      outcome = clingfy::capture::export_::ExportPassthroughCopy(
+          input, on_progress, is_cancelled);
+    } catch (const std::exception& e) {
+      outcome.error =
+          clingfy::capture::export_::PassthroughError::kRenderFailed;
+      outcome.message =
+          std::string("Unhandled exception during export: ") + e.what();
+    } catch (...) {
+      outcome.error =
+          clingfy::capture::export_::PassthroughError::kRenderFailed;
+      outcome.message = "Unhandled exception during export: unknown exception.";
+    }
     clingfy::capture::export_::ExportSession::Instance().EndExport();
     ReplyForExportOutcome(*result, outcome, input.project_path,
                           input.directory_override);
@@ -401,8 +375,25 @@ void HandleExportVideo(
   std::shared_ptr<flutter::MethodResult<flutter::EncodableValue>> shared_result(
       std::move(result));
   std::thread([input, shared_result, on_progress, is_cancelled]() {
-    const auto outcome = clingfy::capture::export_::ExportPassthroughCopy(
-        input, on_progress, is_cancelled);
+    // Phase 10.4 worker barrier: an exception escaping a detached thread
+    // calls std::terminate and kills the whole process — and this thread is
+    // OUTSIDE the MethodRouter dispatch barrier (which only covers the
+    // synchronous handler call). Convert any throw into a normal failed
+    // outcome so the shared reply path below still resolves the Dart future
+    // exactly once (EXPORT_ERROR via ReplyForExportOutcome, which also emits
+    // the native log line).
+    clingfy::capture::export_::PassthroughResult outcome;
+    try {
+      outcome = clingfy::capture::export_::ExportPassthroughCopy(
+          input, on_progress, is_cancelled);
+    } catch (const std::exception& e) {
+      outcome.error = clingfy::capture::export_::PassthroughError::kRenderFailed;
+      outcome.message =
+          std::string("Unhandled exception during export: ") + e.what();
+    } catch (...) {
+      outcome.error = clingfy::capture::export_::PassthroughError::kRenderFailed;
+      outcome.message = "Unhandled exception during export: unknown exception.";
+    }
     clingfy::capture::export_::ExportSession::Instance().EndExport();
     // Reply on the platform thread. shared_result keeps the MethodResult alive
     // until the reply runs (never dropped -> never a hung Dart future).
@@ -479,6 +470,116 @@ void HandleProcessVideo(
 }
 
 }  // namespace
+
+// Complete the exportVideo MethodResult for a finished export. Pulled out so
+// the SAME mapping runs whether the export ran synchronously (tests) or on a
+// worker thread (production, replied via PlatformThreadDispatcher::Post).
+// Declared in export_router.h so unit tests can pin the per-outcome contract.
+void ReplyForExportOutcome(
+    flutter::MethodResult<flutter::EncodableValue>& result,
+    const clingfy::capture::export_::PassthroughResult& outcome,
+    const std::string& project_path, const std::string& directory_override) {
+  using clingfy::capture::export_::FormatBytesForUser;
+  using clingfy::capture::export_::PassthroughError;
+  // Phase 10.4: every failed export emits ONE native log line so beta
+  // reports show the failure (no-op when no channel is attached — tests).
+  // Errors become Sentry exceptions via Dart's telemetry sink; a user cancel
+  // is a Warn, not a failure.
+  const auto log_failure = [](const char* code, const std::string& message) {
+    NativeLogPublisher::Instance().Error("Export",
+                                         std::string(code) + ": " + message);
+  };
+  switch (outcome.error) {
+    case PassthroughError::kNone:
+      reply::String(result, outcome.output_path);
+      return;
+    case PassthroughError::kInputMissing:
+      log_failure(error::kExportInputMissing, outcome.message);
+      result.Error(error::kExportInputMissing, outcome.message,
+                   flutter::EncodableValue(project_path));
+      return;
+    case PassthroughError::kNoDestination:
+      log_failure(error::kBadArgs, outcome.message);
+      result.Error(error::kBadArgs, outcome.message,
+                   flutter::EncodableValue(directory_override));
+      return;
+    case PassthroughError::kDiskFull: {
+      // Phase 10.4: stable EXPORT_DISK_FULL code with a details payload
+      // shaped EXACTLY like macOS ExportPrep.flutterExportFailure emits —
+      // {stage, reason, context} where context carries the byte counts.
+      // Dart's ExportDiskFullMessage re-renders a localized message from
+      // context.{estimatedRequiredTemp,availableTemp,shortfallTemp}Formatted
+      // and falls back to `message` when those are absent (the mid-write
+      // classification, which has no preflight estimate).
+      const std::int64_t required = outcome.disk_required_bytes;
+      const std::int64_t available = outcome.disk_available_bytes;
+      flutter::EncodableMap context{
+          {flutter::EncodableValue("tempPath"),
+           flutter::EncodableValue(outcome.disk_checked_path)},
+      };
+      if (required >= 0 && available >= 0) {
+        const std::int64_t shortfall =
+            required > available ? required - available : 0;
+        context[flutter::EncodableValue("availableTempBytes")] =
+            flutter::EncodableValue(available);
+        context[flutter::EncodableValue("estimatedRequiredTempBytes")] =
+            flutter::EncodableValue(required);
+        context[flutter::EncodableValue("shortfallTempBytes")] =
+            flutter::EncodableValue(shortfall);
+        context[flutter::EncodableValue("availableTempFormatted")] =
+            flutter::EncodableValue(FormatBytesForUser(available));
+        context[flutter::EncodableValue("estimatedRequiredTempFormatted")] =
+            flutter::EncodableValue(FormatBytesForUser(required));
+        context[flutter::EncodableValue("shortfallTempFormatted")] =
+            flutter::EncodableValue(FormatBytesForUser(shortfall));
+      }
+      flutter::EncodableMap details{
+          {flutter::EncodableValue("stage"),
+           flutter::EncodableValue(std::string(
+               required >= 0 ? "export_preflight" : "export_write"))},
+          {flutter::EncodableValue("reason"),
+           flutter::EncodableValue(outcome.message)},
+          {flutter::EncodableValue("context"),
+           flutter::EncodableValue(std::move(context))},
+      };
+      log_failure(error::kExportDiskFull, outcome.message);
+      result.Error(error::kExportDiskFull, outcome.message,
+                   flutter::EncodableValue(std::move(details)));
+      return;
+    }
+    case PassthroughError::kCancelled:
+      // Phase 10.4: a clean user cancel replies with the stable
+      // EXPORT_CANCELLED code (Dart classifies by code, not by sniffing a
+      // "cancelled" message out of EXPORT_ERROR). The message still contains
+      // "cancelled" so an older Dart message-classifier also reads it as a
+      // cancel.
+      NativeLogPublisher::Instance().Warn(
+          "Export",
+          std::string(error::kExportCancelled) + ": Export cancelled.");
+      result.Error(error::kExportCancelled, "Export cancelled.",
+                   flutter::EncodableValue(project_path));
+      return;
+    case PassthroughError::kCopyFailed:
+    case PassthroughError::kRenderFailed:
+      log_failure(error::kExportError, outcome.message);
+      result.Error(error::kExportError, outcome.message,
+                   flutter::EncodableValue(project_path));
+      return;
+    default: {
+      // Every PassthroughError MUST complete the MethodResult. An un-answered
+      // result is destroyed silently and the Dart `exportVideo` future never
+      // resolves — the export UI hangs with no error. This default guards any
+      // future enum value (MSVC's C4061/C4062 do not fire at /W4).
+      const std::string message = outcome.message.empty()
+                                      ? "exportVideo: unknown export failure"
+                                      : outcome.message;
+      log_failure(error::kExportError, message);
+      result.Error(error::kExportError, message,
+                   flutter::EncodableValue(project_path));
+      return;
+    }
+  }
+}
 
 void RegisterHandlers(HandlerTable& table) {
   table["exportVideo"] = &HandleExportVideo;

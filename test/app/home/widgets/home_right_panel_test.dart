@@ -13,6 +13,7 @@ import 'package:clingfy/core/bridges/native_method_channel.dart';
 import 'package:clingfy/core/models/app_models.dart';
 import 'package:clingfy/core/preview/player_controller.dart';
 import 'package:clingfy/l10n/app_localizations.dart';
+import 'package:clingfy/ui/platform/platform_kind.dart';
 import 'package:clingfy/ui/theme/app_theme.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter/material.dart';
@@ -87,11 +88,18 @@ class _FakePreviewHostState extends State<_FakePreviewHost> {
 void main() {
   TestWidgetsFlutterBinding.ensureInitialized();
 
+  // Pin the macOS branch (Phase 10.4): the Windows-only workflow watchdogs
+  // arm a real Timer when a test parks the controller mid-phase (e.g.
+  // finalizingRecording), and flutter_test's pending-timer invariant fires
+  // BEFORE addTearDown disposal can cancel it. This file tests
+  // platform-generic panel behavior, so the 10.3 pin pattern applies.
   setUp(() async {
+    debugPlatformKindOverride = PlatformKind.macos;
     await installCommonNativeMocks();
   });
 
   tearDown(() async {
+    debugPlatformKindOverride = null;
     await clearCommonNativeMocks();
   });
 
