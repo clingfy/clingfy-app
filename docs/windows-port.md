@@ -59,7 +59,7 @@ lifecycle, preview, and basic export.
 | 7     | Window + area recording                                       | done   |
 | 8     | Cursor sidecar + smart zoom                                   | done   |
 | 9     | Camera overlay (basic, then advanced compositing/chroma)      | done   |
-| 10    | Permissions UX + installer + updater + Windows beta polish    | design locked (10.0); 10.1 next |
+| 10    | Permissions UX + installer + updater + Windows beta polish    | in progress (10.0–10.5 shipped; 10.6 updater next) |
 
 Detailed scope per phase is tracked in the session task list and in
 [../CLAUDE.md](../CLAUDE.md).
@@ -92,8 +92,8 @@ round-trip, and a clean-box licensing smoke — before any invite goes out.
 | 10.1  | Diagnostics + failure visibility (logs, disk, warnings, export-diagnostics zip) | #163 |
 | 10.2  | Windows permissions UX (forked onboarding, Windows copy, readiness surfacing) | #164 |
 | 10.3  | Honest-UI sweep (zoom track truth, no-op settings, area persistence, l10n) | #165 |
-| 10.4  | Crash salvage + error recovery polish (interrupted-recording recovery, watchdogs, PDB/symbol pipeline) | (this) |
-| 10.5  | Branding + installer (icon/name, Inno Setup, signing, dev/prod identity) | |
+| 10.4  | Crash salvage + error recovery polish (interrupted-recording recovery, watchdogs, PDB/symbol pipeline) | #166 |
+| 10.5  | Installer + release pipeline (Inno Setup per-user, signing lane, Azure publish; branding icon/name deferred) | (this) |
 | 10.6  | Updater (static feed check, UpdaterEventPublisher, honest About button) | |
 | 10.7  | Beta closeout (smoke matrix, licensing + consent, tester guide)   |        |
 | P     | Hardware verdicts: NVIDIA/AMD preview stress, encoder, soak (any time; gates invites) | |
@@ -171,6 +171,75 @@ close the window mid-recording → recording finalizes and the bundle
 opens; `CLINGFY_CRASH_TEST=1` + diagnostics button → process dies →
 relaunch → crash event appears in Sentry symbolicated (after running
 `upload_symbols.ps1` on the same build).
+
+### Phase 10.5 — installer + release pipeline
+
+The Windows release lane lives at `ops/release/windows/` (PowerShell 7),
+fully independent of the macOS bash lane — nothing there is sourced or
+invoked by the macOS scripts, and the lane never writes outside its own
+artifact locations (`dist/windows/`, blob prefix `downloads/windows/`).
+It mirrors the macOS lane's concepts: channel switch (prod "Clingfy" /
+dev "Clingfy Dev" / local), pubspec `version: X.Y.Z+N` as the version
+source of truth, `release/*` branch version guard, artifact naming
+(`Clingfy_Setup_1.0.4.exe` prod, `Clingfy_Dev_Setup_1.0.4+5.exe` dev),
+Azure CLI upload with `--auth-mode login`, Front Door purge of exactly
+the touched paths, and a retried post-publish smoke (plus a SHA-256
+download comparison the macOS lane doesn't need — there is no Sparkle
+signature on Windows yet). See `ops/release/windows/README.md` for the
+full script inventory and credential categories.
+
+Pipeline: `00_version_guard` → `01_build` (release build, stage to
+`dist/windows/app` excluding PDBs/`runner_bridge.lib`/
+`native_assets.json`, bundle the VC++ CRT app-locally, verify required
+runtime files incl. the crashpad trio) → `03_sign -Target app` →
+`02_package_inno` → `03_sign -Target installer` → `04_publish_azure`
+(installer + `.sha256` + `latest-windows.json`) → `upload_symbols.ps1`
+(non-blocking) → `05_smoke`. Workflow wrappers: `workflows/
+local_release.ps1` (publish opt-in, optional analyze+ctest gate) and
+`workflows/ci_release.ps1` (fixed full sequence; like macOS, nothing
+in-repo invokes it — release runs out-of-repo with secure variables).
+
+The installer (`installer/Clingfy.iss`) implements decision D1: Inno
+Setup per-user (`PrivilegesRequired=lowest`, `{userpf}` =
+`%LOCALAPPDATA%\Programs`), Win10 1903+/x64-only, Start Menu shortcut +
+optional desktop shortcut, Restart-Manager-clean upgrades
+(`CloseApplications=yes`), and the HKCU `.clingfyproj` association —
+the runner's argv/WM_COPYDATA project-open plumbing existed since
+Phase 5.6, so double-click works end to end with zero runtime changes.
+Uninstall removes only the install dir, shortcuts, and association;
+recordings (`%LOCALAPPDATA%\Clingfy`), prefs/logs
+(`%APPDATA%\com.clingfy\clingfy`), and exported videos are preserved.
+Channels get distinct AppId GUIDs/names/dirs/ProgIds, so dev + prod
+install side by side — but they still share the single-instance mutex
+and data dirs until the D9 per-config identity plumbing lands.
+
+Signing (decision D3): material is environment-only (`WIN_SIGN_CERT_PFX`
++ `WIN_SIGN_CERT_PASSWORD`, or `WIN_SIGN_CERT_THUMBPRINT`), never in
+`.env` files. With nothing configured, `03_sign` warns loudly and skips
+— the private beta may ship unsigned with SmartScreen instructions;
+pass `-RequireSignature` once the certificate decision lands.
+
+**Deferred from the original 10.5 scope, deliberately:** branding (real
+`app_icon.ico` + `Runner.rc` strings → "Clingfy") — running
+`flutter_launcher_icons` would regenerate the macOS icons too, and
+`Runner.rc` ProductName is load-bearing for the Dart log path, so it
+needs its own small slice; the D9 per-config mutex/receiver identity
+(runner change); `version_bump` porting (the macOS CI-build-id/epoch
+build numbers overflow the 16-bit Windows `FILEVERSION` parts — keep
+pubspec build numbers ≤ 65535); git tagging (owned by the macOS prod
+release); the in-app updater (10.6 — `latest-windows.json` is already
+published so 10.6 is client-only).
+
+Smoke checklist (10.5): `workflows/local_release.ps1` on a dev box →
+installer lands in `dist/windows/installer`; silent install
+(`/VERYSILENT /SUPPRESSMSGBOXES /NORESTART`) → app at
+`%LOCALAPPDATA%\Programs\Clingfy Dev\clingfy.exe`, Start Menu entry
+exists, `.clingfyproj` double-click opens the app; record → export →
+logs land in the usual `%LOCALAPPDATA%`/`%APPDATA%` locations (no
+install-dir writes); uninstall → binaries + association gone,
+recordings/logs/prefs still present; reinstall over an existing install
+upgrades in place; on a clean VM (no Visual Studio) the installed app
+launches (app-local CRT proof).
 
 ## Current status — Phase 9 (camera overlay) — COMPLETE
 
