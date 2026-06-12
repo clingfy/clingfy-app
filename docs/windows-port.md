@@ -59,7 +59,7 @@ lifecycle, preview, and basic export.
 | 7     | Window + area recording                                       | done   |
 | 8     | Cursor sidecar + smart zoom                                   | done   |
 | 9     | Camera overlay (basic, then advanced compositing/chroma)      | done   |
-| 10    | Permissions UX + installer + updater + Windows beta polish    | in progress (10.0–10.6 shipped; 10.7 closeout next) |
+| 10    | Permissions UX + installer + updater + Windows beta polish    | done (10.0–10.7 shipped; beta invite gates tracked in `windows-beta-release-checklist.md`) |
 
 Detailed scope per phase is tracked in the session task list and in
 [../CLAUDE.md](../CLAUDE.md).
@@ -94,8 +94,8 @@ round-trip, and a clean-box licensing smoke — before any invite goes out.
 | 10.3  | Honest-UI sweep (zoom track truth, no-op settings, area persistence, l10n) | #165 |
 | 10.4  | Crash salvage + error recovery polish (interrupted-recording recovery, watchdogs, PDB/symbol pipeline) | #166 |
 | 10.5  | Installer + release pipeline (Inno Setup per-user, signing lane, Azure publish; icon #171, folder-open verb #172, RC name strings still deferred) | #167 |
-| 10.6  | Updater (static feed check, UpdaterEventPublisher, honest About button) | (this) |
-| 10.7  | Beta closeout (smoke matrix, licensing + consent, tester guide)   |        |
+| 10.6  | Updater (static feed check, UpdaterEventPublisher, honest About button) | #173 |
+| 10.7  | Beta closeout (smoke matrix, tester guide, release gates)         | (this) |
 | P     | Hardware verdicts: NVIDIA/AMD preview stress, encoder, soak (any time; gates invites) | |
 
 ### Phase 10.4 — crash salvage + error recovery polish
@@ -301,6 +301,35 @@ Check for Updates with the published feed advertising the SAME version →
 `version`/`build` (or install an older build) → update dialog +
 Download opens the installer URL in the browser; point
 `AZ_CDN_ENDPOINT` at a dead domain and rebuild → "update check failed".
+
+### Phase 10.7 — beta closeout (docs)
+
+Closes the beta-readiness phase's documentation: everything a tester or
+release operator needs now lives in two dedicated files —
+
+- **`docs/windows-beta-tester-guide.md`** — requirements (Win10 1903+
+  x64, Media Feature Pack on N/KN), install + SmartScreen bypass for
+  unsigned builds, license activation, data/log locations, diagnostics
+  export, what to report, and the user-visible known-limitations list.
+- **`docs/windows-beta-release-checklist.md`** — the 13-row final smoke
+  matrix (re-run on gate hardware from installed builds), the hardware
+  verdict checklist (Intel ✔ / NVIDIA / AMD / mixed-DPI / peripherals),
+  and the release gates with their true state.
+
+Closeout findings worth naming here: a live probe (2026-06-12) showed
+the **Windows feed has never been published** — the dev Front Door
+serves the macOS `appcast.xml` but `downloads/windows/*` is all 404, so
+Check for Updates fails on installed builds until the first real
+`-Publish` run (now a release gate). Open product calls carried into the
+gates: beta entitlement provisioning, telemetry consent/disclosure, and
+the signing decision. Internal (not tester-facing): the Dart widget-test
+suite carries a flaky pre-existing baseline of ~93–164
+"No FluentLocalizations found" failures in a fixed set of harness files
+— validate changes by set-diff against that baseline, never raw counts;
+fixing the harness backlog is tracked as its own task. Also deferred:
+the Runner.rc cosmetic strings PR (`CompanyName`/`ProductName` are
+frozen as the path_provider data identity) and D9 per-channel
+mutex/data-dir identity.
 
 ## Current status — Phase 9 (camera overlay) — COMPLETE
 
