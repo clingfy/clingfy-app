@@ -4,8 +4,11 @@ This directory contains the secret-free operational tooling used to build, packa
 
 Like the parent lane, these scripts are public. Private credentials (Azure identities, signing certificates, Sentry tokens) are injected through the environment or local `.env.*` files that are never committed.
 
+For the complete operator walkthrough — machine requirements, every secret and where to obtain it, step-by-step commands, and the exact Azure blob/URL layout — see `RUNBOOK.md`.
+
 ## Structure
 
+- `RUNBOOK.md` - end-to-end signed-release runbook (requirements, secrets, steps, Azure locations)
 - `_config.ps1` - shared context dot-sourced by every script: channel/version/name/path resolution, Azure defaults, dotenv fallback loading, tool discovery
 - `00_version_guard.ps1` - verify a `release/*` branch name matches the semantic version in `pubspec.yaml`
 - `01_build.ps1` - `flutter build windows --release` and stage a clean app folder into `dist/windows/app` (excludes PDBs/`runner_bridge.lib`/`native_assets.json`, bundles the VC++ CRT app-locally, verifies required runtime files)
