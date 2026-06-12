@@ -42,6 +42,9 @@
 #ifndef MyProgId
   #define MyProgId "ClingfyDev.Project"
 #endif
+; Channel-unique key for the Directory right-click verb ("Open in <app>").
+; Derived from MyProgId so 02_package_inno.ps1 needs no extra define.
+#define MyDirVerbKey MyProgId + ".OpenFolder"
 #ifndef StagingDir
   #define StagingDir SourcePath + "\..\..\..\..\dist\windows\app"
 #endif
@@ -126,6 +129,21 @@ Root: HKA; Subkey: "Software\Classes\.clingfyproj"; ValueType: string; ValueName
 Root: HKA; Subkey: "Software\Classes\{#MyProgId}"; ValueType: string; ValueName: ""; ValueData: "Clingfy Project"; Flags: uninsdeletekey
 Root: HKA; Subkey: "Software\Classes\{#MyProgId}\DefaultIcon"; ValueType: string; ValueName: ""; ValueData: "{app}\clingfy.exe,0"
 Root: HKA; Subkey: "Software\Classes\{#MyProgId}\shell\open\command"; ValueType: string; ValueName: ""; ValueData: """{app}\clingfy.exe"" ""%1"""
+;
+; Right-click "Open in {#MyAppName}" on .clingfyproj bundle FOLDERS.
+; Recordings are directories, and Windows extension associations fire for
+; FILES only — Explorer double-click on a bundle folder navigates into it
+; (macOS gets folder-as-document behavior from com.apple.package semantics
+; that Windows lacks). This verb is the Windows-native way in: AppliesTo
+; filters it to *.clingfyproj folders, and the runner already accepts a
+; bundle directory path via argv (Core/argv_project_path.cpp has no
+; file/dir check). On Windows 11 classic verbs sit under "Show more
+; options". The key name is channel-unique, so plain uninsdeletekey is
+; safe here (unlike the shared .clingfyproj extension value above).
+Root: HKA; Subkey: "Software\Classes\Directory\shell\{#MyDirVerbKey}"; ValueType: string; ValueName: "MUIVerb"; ValueData: "Open in {#MyAppName}"; Flags: uninsdeletekey
+Root: HKA; Subkey: "Software\Classes\Directory\shell\{#MyDirVerbKey}"; ValueType: string; ValueName: "AppliesTo"; ValueData: "System.FileName:""*.clingfyproj"""
+Root: HKA; Subkey: "Software\Classes\Directory\shell\{#MyDirVerbKey}"; ValueType: string; ValueName: "Icon"; ValueData: """{app}\clingfy.exe"",0"
+Root: HKA; Subkey: "Software\Classes\Directory\shell\{#MyDirVerbKey}\command"; ValueType: string; ValueName: ""; ValueData: """{app}\clingfy.exe"" ""%1"""
 
 [Run]
 Filename: "{app}\clingfy.exe"; Description: "{cm:LaunchProgram,{#MyAppName}}"; Flags: nowait postinstall skipifsilent

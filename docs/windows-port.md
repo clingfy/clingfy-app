@@ -203,9 +203,16 @@ The installer (`installer/Clingfy.iss`) implements decision D1: Inno
 Setup per-user (`PrivilegesRequired=lowest`, `{userpf}` =
 `%LOCALAPPDATA%\Programs`), Win10 1903+/x64-only, Start Menu shortcut +
 optional desktop shortcut, Restart-Manager-clean upgrades
-(`CloseApplications=yes`), and the HKCU `.clingfyproj` association —
-the runner's argv/WM_COPYDATA project-open plumbing existed since
-Phase 5.6, so double-click works end to end with zero runtime changes.
+(`CloseApplications=yes`), and two Explorer entry points wired to the
+runner's argv/WM_COPYDATA project-open plumbing (existing since Phase
+5.6, zero runtime changes): the HKCU `.clingfyproj` file association,
+and a right-click "Open in Clingfy" verb on `.clingfyproj` bundle
+folders (`Directory\shell` verb with an `AppliesTo` name filter). The
+verb exists because recordings are *directories*, and Windows extension
+associations fire for files only — double-clicking a bundle folder
+navigates into it (macOS gets folder-as-document behavior from
+`com.apple.package` semantics that Windows lacks). On Windows 11 the
+verb sits under "Show more options".
 Uninstall removes only the install dir, shortcuts, and association;
 recordings (`%LOCALAPPDATA%\Clingfy`), prefs/logs
 (`%APPDATA%\com.clingfy\clingfy`), and exported videos are preserved.
@@ -219,11 +226,13 @@ Signing (decision D3): material is environment-only (`WIN_SIGN_CERT_PFX`
 — the private beta may ship unsigned with SmartScreen instructions;
 pass `-RequireSignature` once the certificate decision lands.
 
-**Deferred from the original 10.5 scope, deliberately:** branding (real
-`app_icon.ico` + `Runner.rc` strings → "Clingfy") — running
-`flutter_launcher_icons` would regenerate the macOS icons too, and
-`Runner.rc` ProductName is load-bearing for the Dart log path, so it
-needs its own small slice; the D9 per-config mutex/receiver identity
+**Deferred from the original 10.5 scope, deliberately:** `Runner.rc`
+strings → "Clingfy" — ProductName is load-bearing for the Dart log
+path, so it needs its own small slice (the icon half shipped in #171:
+a 10-resolution `app_icon.ico` assembled directly from the macOS
+`AppIcon.appiconset` art, deliberately not `flutter_launcher_icons`,
+whose Windows output is single-resolution and which would regenerate
+the macOS icons too); the D9 per-config mutex/receiver identity
 (runner change); `version_bump` porting (the macOS CI-build-id/epoch
 build numbers overflow the 16-bit Windows `FILEVERSION` parts — keep
 pubspec build numbers ≤ 65535); git tagging (owned by the macOS prod
@@ -234,7 +243,11 @@ Smoke checklist (10.5): `workflows/local_release.ps1` on a dev box →
 installer lands in `dist/windows/installer`; silent install
 (`/VERYSILENT /SUPPRESSMSGBOXES /NORESTART`) → app at
 `%LOCALAPPDATA%\Programs\Clingfy Dev\clingfy.exe`, Start Menu entry
-exists, `.clingfyproj` double-click opens the app; record → export →
+exists, right-click a `.clingfyproj` recording folder → "Open in
+Clingfy Dev" opens it (Windows 11: under "Show more options";
+double-click navigates into the folder by design — directories can't
+trigger file associations), and the verb does NOT appear on ordinary
+folders; record → export →
 logs land in the usual `%LOCALAPPDATA%`/`%APPDATA%` locations (no
 install-dir writes); uninstall → binaries + association gone,
 recordings/logs/prefs still present; reinstall over an existing install
