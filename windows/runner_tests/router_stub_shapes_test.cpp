@@ -737,10 +737,11 @@ TEST(StubShapesTest, BoolGettersReturnFalse) {
   // `isAccessibilityTrusted`) used to land here as Phase-1 false-stubs.
   // The permissions PR moved them onto the real probe — see
   // `PermissionRoutingTest.*` below.
+  // checkForUpdates left this list in Phase 10.6 — it is the real D2
+  // update check now (UpdaterRouterTest covers its behavior).
   MethodRouter router;
   const std::vector<std::string> kFalseGetters = {
       "getExcludeRecorderApp",
-      "checkForUpdates",
       "saveManualZoomSegments",
   };
 

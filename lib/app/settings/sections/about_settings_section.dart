@@ -1,7 +1,10 @@
+import 'dart:async';
+
 import 'package:clingfy/l10n/app_localizations.dart';
 import 'package:clingfy/app/settings/widgets/about_section.dart';
 import 'package:clingfy/app/settings/sections/section_helpers.dart';
 import 'package:clingfy/core/bridges/native_bridge.dart';
+import 'package:clingfy/core/updater/update_check_events.dart';
 import 'package:clingfy/ui/platform/platform_kind.dart';
 import 'package:clingfy/ui/platform/widgets/app_button.dart';
 import 'package:flutter/cupertino.dart' show CupertinoIcons;
@@ -19,10 +22,101 @@ class AboutSettingsSection extends StatefulWidget {
 class _AboutSettingsSectionState extends State<AboutSettingsSection> {
   PackageInfo? _packageInfo;
 
+  // Phase 10.6 (Windows): the update check reports through the updater
+  // event channel; this section renders the honest status inline and pops
+  // the update-available dialog for checks the user started here. macOS
+  // never reaches this state machine — Sparkle owns the whole flow.
+  StreamSubscription<Map<String, dynamic>>? _updaterSubscription;
+  UpdateCheckEvent? _updateState;
+  bool _checkInFlight = false;
+
   @override
   void initState() {
     super.initState();
     _initPackageInfo();
+    if (isWindows()) {
+      _updaterSubscription = NativeBridge.instance.updaterEvents.listen(
+        _handleUpdaterEvent,
+      );
+    }
+  }
+
+  @override
+  void dispose() {
+    _updaterSubscription?.cancel();
+    super.dispose();
+  }
+
+  void _handleUpdaterEvent(Map<String, dynamic> raw) {
+    final event = UpdateCheckEvent.fromMap(raw);
+    if (event == null || !mounted) {
+      return;
+    }
+    setState(() {
+      _updateState = event;
+    });
+    if (event.status == UpdateCheckStatus.updateAvailable && _checkInFlight) {
+      _checkInFlight = false;
+      _showUpdateAvailableDialog(event);
+    } else if (event.status != UpdateCheckStatus.checking) {
+      _checkInFlight = false;
+    }
+  }
+
+  Future<void> _checkForUpdatesWindows() async {
+    setState(() {
+      _checkInFlight = true;
+      // Render "checking" immediately; the native `checking` event keeps it.
+      _updateState = UpdateCheckEvent.fromMap(const {'type': 'checking'});
+    });
+    final started = await NativeBridge.instance.checkForUpdates();
+    if (!started && mounted) {
+      setState(() {
+        _checkInFlight = false;
+        _updateState = UpdateCheckEvent.fromMap(const {
+          'type': 'updateError',
+          'code': UpdateCheckErrorCodes.feedNotConfigured,
+        });
+      });
+    }
+  }
+
+  Future<void> _openInstallerUrl(String? url) async {
+    if (url == null) {
+      return;
+    }
+    final uri = Uri.tryParse(url);
+    // The native check already enforces https; re-check here so a future
+    // feed regression can never hand the shell a non-https target.
+    if (uri == null || uri.scheme != 'https') {
+      return;
+    }
+    await launchUrl(uri);
+  }
+
+  void _showUpdateAvailableDialog(UpdateCheckEvent event) {
+    final l10n = AppLocalizations.of(context)!;
+    final versionLabel = event.versionFull ?? event.version ?? '';
+    showDialog<void>(
+      context: context,
+      builder: (dialogContext) => AlertDialog(
+        title: Text(l10n.updateAvailableTitle),
+        content: Text(l10n.updateAvailableBody(versionLabel)),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.of(dialogContext).pop(),
+            child: Text(l10n.updateLater),
+          ),
+          FilledButton(
+            onPressed: () {
+              Navigator.of(dialogContext).pop();
+              _openInstallerUrl(event.url);
+            },
+            child: Text(l10n.updateDownload),
+          ),
+        ],
+      ),
+    );
   }
 
   Future<void> _initPackageInfo() async {
@@ -85,17 +179,23 @@ class _AboutSettingsSectionState extends State<AboutSettingsSection> {
               const SizedBox(height: 20),
               AboutSection(packageInfo: _packageInfo),
               const SizedBox(height: 20),
-              // Phase 10.3 honesty: the Windows updater lands in Phase 10.6
-              // (checkForUpdates is a hardcoded-false stub until then) — a
-              // button that silently does nothing is worse than no button.
-              if (!isWindows())
-                AppButton(
-                  label: l10n.checkForUpdates,
-                  icon: CupertinoIcons.arrow_clockwise,
-                  variant: AppButtonVariant.primary,
-                  size: AppButtonSize.regular,
-                  onPressed: () => NativeBridge.instance.checkForUpdates(),
-                ),
+              // Restored on Windows in Phase 10.6: checkForUpdates is the
+              // real D2 feed check now (the 10.3 hide existed because it was
+              // a hardcoded-false stub). macOS keeps the Sparkle flow, which
+              // drives its own dialogs — no inline status there.
+              AppButton(
+                label: l10n.checkForUpdates,
+                icon: CupertinoIcons.arrow_clockwise,
+                variant: AppButtonVariant.primary,
+                size: AppButtonSize.regular,
+                onPressed: isWindows()
+                    ? _checkForUpdatesWindows
+                    : () => NativeBridge.instance.checkForUpdates(),
+              ),
+              if (isWindows() && _updateState != null) ...[
+                const SizedBox(height: 12),
+                _buildUpdateStatus(context, l10n, _updateState!),
+              ],
             ],
           ),
         ),
@@ -125,6 +225,62 @@ class _AboutSettingsSectionState extends State<AboutSettingsSection> {
         ),
       ],
     );
+  }
+
+  Widget _buildUpdateStatus(
+    BuildContext context,
+    AppLocalizations l10n,
+    UpdateCheckEvent state,
+  ) {
+    final theme = Theme.of(context);
+    switch (state.status) {
+      case UpdateCheckStatus.checking:
+        return Row(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            const SizedBox(
+              width: 14,
+              height: 14,
+              child: CircularProgressIndicator(strokeWidth: 2),
+            ),
+            const SizedBox(width: 8),
+            Text(l10n.updateChecking, style: theme.textTheme.bodySmall),
+          ],
+        );
+      case UpdateCheckStatus.noUpdateAvailable:
+        return Text(
+          l10n.updateUpToDate,
+          key: const Key('about_update_up_to_date'),
+          style: theme.textTheme.bodySmall,
+        );
+      case UpdateCheckStatus.error:
+        return Text(
+          l10n.updateCheckFailed,
+          key: const Key('about_update_check_failed'),
+          style: theme.textTheme.bodySmall?.copyWith(
+            color: theme.colorScheme.error,
+          ),
+        );
+      case UpdateCheckStatus.updateAvailable:
+        final versionLabel = state.versionFull ?? state.version ?? '';
+        return Column(
+          children: [
+            Text(
+              l10n.updateAvailableBody(versionLabel),
+              key: const Key('about_update_available'),
+              style: theme.textTheme.bodySmall,
+            ),
+            const SizedBox(height: 8),
+            AppButton(
+              label: l10n.updateDownload,
+              icon: CupertinoIcons.cloud_download,
+              variant: AppButtonVariant.secondary,
+              size: AppButtonSize.regular,
+              onPressed: () => _openInstallerUrl(state.url),
+            ),
+          ],
+        );
+    }
   }
 
   Widget _buildLinkCard(BuildContext context, _LinkItem link) {

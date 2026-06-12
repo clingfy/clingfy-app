@@ -18,12 +18,6 @@ void HandleNull(
   reply::Null(*result);
 }
 
-void HandleFalse(
-    const flutter::MethodCall<flutter::EncodableValue>& /*call*/,
-    std::unique_ptr<flutter::MethodResult<flutter::EncodableValue>> result) {
-  reply::Bool(*result, false);
-}
-
 // Raw `CLINGFY_CRASH_TEST` value: `nullopt` when the variable is unset, the
 // (possibly empty) string otherwise. Mirrors the `ReadEnv` helpers in
 // Services/log_locations.cpp / Services/save_folder.cpp.
@@ -87,7 +81,8 @@ void HandleDebugForceNativeCrash(
 void RegisterHandlers(HandlerTable& table) {
   table["pickImage"] = &HandleNull;
   table["cacheLocalizedStrings"] = &HandleNull;
-  table["checkForUpdates"] = &HandleFalse;
+  // checkForUpdates moved to updater_router.cpp in Phase 10.6 (real D2
+  // implementation; was a hardcoded-false stub here).
   table["debugForceNativeCrash"] = &HandleDebugForceNativeCrash;
 }
 

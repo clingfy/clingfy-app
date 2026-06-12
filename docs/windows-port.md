@@ -39,7 +39,7 @@ When adding or changing anything on the boundary, update all three sides:
 | Preview playback       | Media Foundation MediaEngine                |
 | Overlays               | Win32 topmost layered windows               |
 | File dialogs           | Common Item Dialog (IFileDialog)            |
-| Updater                | WinSparkle                                  |
+| Updater                | static `latest-windows.json` check (10.6); WinSparkle at public beta |
 
 ## Roadmap (phased)
 
@@ -59,7 +59,7 @@ lifecycle, preview, and basic export.
 | 7     | Window + area recording                                       | done   |
 | 8     | Cursor sidecar + smart zoom                                   | done   |
 | 9     | Camera overlay (basic, then advanced compositing/chroma)      | done   |
-| 10    | Permissions UX + installer + updater + Windows beta polish    | in progress (10.0–10.5 shipped; 10.6 updater next) |
+| 10    | Permissions UX + installer + updater + Windows beta polish    | in progress (10.0–10.6 shipped; 10.7 closeout next) |
 
 Detailed scope per phase is tracked in the session task list and in
 [../CLAUDE.md](../CLAUDE.md).
@@ -93,8 +93,8 @@ round-trip, and a clean-box licensing smoke — before any invite goes out.
 | 10.2  | Windows permissions UX (forked onboarding, Windows copy, readiness surfacing) | #164 |
 | 10.3  | Honest-UI sweep (zoom track truth, no-op settings, area persistence, l10n) | #165 |
 | 10.4  | Crash salvage + error recovery polish (interrupted-recording recovery, watchdogs, PDB/symbol pipeline) | #166 |
-| 10.5  | Installer + release pipeline (Inno Setup per-user, signing lane, Azure publish; branding icon/name deferred) | (this) |
-| 10.6  | Updater (static feed check, UpdaterEventPublisher, honest About button) | |
+| 10.5  | Installer + release pipeline (Inno Setup per-user, signing lane, Azure publish; icon #171, folder-open verb #172, RC name strings still deferred) | #167 |
+| 10.6  | Updater (static feed check, UpdaterEventPublisher, honest About button) | (this) |
 | 10.7  | Beta closeout (smoke matrix, licensing + consent, tester guide)   |        |
 | P     | Hardware verdicts: NVIDIA/AMD preview stress, encoder, soak (any time; gates invites) | |
 
@@ -253,6 +253,54 @@ install-dir writes); uninstall → binaries + association gone,
 recordings/logs/prefs still present; reinstall over an existing install
 upgrades in place; on a clean VM (no Visual Studio) the installed app
 launches (app-local CRT proof).
+
+### Phase 10.6 — updater (private-beta static feed check)
+
+Implements decision D2's private-beta half: `checkForUpdates` is a real
+manual check against the per-channel `latest-windows.json` the 10.5
+pipeline already publishes; full WinSparkle (background checks, its own
+dialogs, EdDSA enclosures) stays the public-beta endpoint. The Windows
+feed is deliberately separate from the macOS `appcast.xml` — Sparkle's
+own docs recommend per-platform feeds, and the split means a `.dmg` can
+never be offered to Windows.
+
+Architecture: the feed URL travels as a `checkForUpdates` argument
+("Dart handoff" — the per-channel Front Door domain is already a
+dart-define via `AZ_CDN_ENDPOINT`, composed by
+`lib/core/updater/windows_update_feed.dart`; channel = `APP_ENV`).
+`Bridge/Routers/updater_router.cpp` validates and starts
+`Updater/update_checker.cpp`: a single-flight worker thread fetches the
+feed over WinHTTP (https-only, 256 KB cap, timeouts that also bound the
+CRT-exit join), reads the running version from `VS_FIXEDFILEINFO`
+(Runner.rc packs pubspec's `x.y.z+build`), and hands both to the pure
+parse/compare/decide layer in `Updater/update_feed.cpp` (string- and
+depth-aware key scan — remote text cannot masquerade as a JSON key).
+Results stream through `UpdaterEventPublisher` on
+`com.clingfy/updater/events`: `updateAvailable` keeps the exact macOS
+Sparkle payload (`version`/`build` as strings) plus `url`/`versionFull`,
+and the Windows-only `checking` / `noUpdateAvailable` / `updateError`
+events drive an honest inline status in Settings → About (button
+restored after the 10.3 hide; opening the installer URL re-checks https
+in Dart before `launchUrl`). Channel isolation is primarily the
+per-channel Front Door domains; the native check additionally rejects a
+feed whose `channel`/`platform` fields contradict the build. A build
+without `AZ_CDN_ENDPOINT` replies false + `UPDATE_FEED_NOT_CONFIGURED`
+— never a silent no-op.
+
+Deliberately out of scope: in-app download/SHA verify (the browser gets
+the trusted https URL; the installer is the signed artifact),
+`relaunchApp` (nothing to relaunch in a browser-open flow), release
+notes (the feed has no such field yet), WinSparkle (public beta), and
+the pre-recording-bar update chip — the bar is a macOS overlay
+(`setPreRecordingBarState` is a no-op on Windows), so
+`isUpdateAvailable` has no Windows consumer outside Settings → About.
+
+Smoke checklist (10.6): on an installed dev build, Settings → About →
+Check for Updates with the published feed advertising the SAME version →
+"You're on the latest version"; republish the feed with a higher
+`version`/`build` (or install an older build) → update dialog +
+Download opens the installer URL in the browser; point
+`AZ_CDN_ENDPOINT` at a dead domain and rebuild → "update check failed".
 
 ## Current status — Phase 9 (camera overlay) — COMPLETE
 

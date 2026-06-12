@@ -5,6 +5,7 @@ import 'package:clingfy/core/models/app_models.dart';
 import 'package:clingfy/core/models/startup_recovery_report.dart';
 import 'package:clingfy/core/models/storage_snapshot.dart';
 import 'package:clingfy/core/permissions/models/windows_permission_details.dart';
+import 'package:clingfy/core/updater/windows_update_feed.dart';
 import 'package:flutter/foundation.dart';
 
 class NativeBridge {
@@ -12,6 +13,7 @@ class NativeBridge {
   late final EventChannel _updaterEvents;
   late final EventChannel _workflowEvents;
   late final EventChannel _playerEvents;
+  late final Stream<Map<String, dynamic>> _updaterEventStream;
   late final Stream<Map<String, dynamic>> _workflowEventStream;
   late final Stream<Map<String, dynamic>> _playerEventStream;
 
@@ -53,13 +55,19 @@ class NativeBridge {
         .where((event) => event is Map)
         .map((event) => (event as Map).cast<String, dynamic>())
         .asBroadcastStream();
+    _updaterEventStream = _updaterEvents
+        .receiveBroadcastStream()
+        .where((event) => event is Map)
+        .map((event) => (event as Map).cast<String, dynamic>())
+        .asBroadcastStream();
     _nativeBridge.setMethodCallHandler(_handleMethodCall);
 
-    // Listen to updater events
-    _updaterEvents.receiveBroadcastStream().listen(
+    // Listen to updater events (macOS Sparkle and the Windows 10.6 update
+    // check share this channel; both emit type=updateAvailable).
+    _updaterEventStream.listen(
       (event) {
-        if (event is Map && event['type'] == 'updateAvailable') {
-          Log.i("NativeBridge", "Sparkle: update available (event stream)");
+        if (event['type'] == 'updateAvailable') {
+          Log.i("NativeBridge", "Updater: update available (event stream)");
           isUpdateAvailable.value = true;
         }
       },
@@ -106,6 +114,12 @@ class NativeBridge {
 
   Stream<Map<String, dynamic>> get workflowEvents => _workflowEventStream;
   Stream<Map<String, dynamic>> get playerEvents => _playerEventStream;
+
+  /// Raw updater-channel events. Windows emits `checking` /
+  /// `updateAvailable` / `noUpdateAvailable` / `updateError` (Phase 10.6);
+  /// macOS Sparkle emits only `updateAvailable`. Parse with
+  /// `UpdateCheckEvent.fromMap`.
+  Stream<Map<String, dynamic>> get updaterEvents => _updaterEventStream;
 
   void setOnIndicatorPauseTapped(VoidCallback? cb) {
     _onIndicatorPauseTapped = cb;
@@ -809,9 +823,33 @@ class NativeBridge {
     await _nativeBridge.invokeMethod<void>('relaunchApp');
   }
 
-  Future<bool> checkForUpdates() async {
+  /// Starts an update check. Returns true when the check STARTED (results
+  /// arrive asynchronously: Sparkle UI on macOS, [updaterEvents] on
+  /// Windows).
+  ///
+  /// On Windows the feed URL + channel travel as arguments (Phase 10.6,
+  /// D2's Dart handoff); both default from the build's dart-defines so
+  /// every call site — the About button, the pre-recording bar's update
+  /// tap — gets the same behavior. macOS sends no arguments and Sparkle
+  /// owns the feed. A Windows build without AZ_CDN_ENDPOINT sends no
+  /// arguments either, and native replies false + an `updateError` event
+  /// instead of a silent no-op.
+  Future<bool> checkForUpdates({String? feedUrl, String? channel}) async {
     try {
-      final result = await _nativeBridge.invokeMethod<bool>('checkForUpdates');
+      Map<String, dynamic>? args;
+      if (defaultTargetPlatform == TargetPlatform.windows) {
+        final url = feedUrl ?? defaultWindowsUpdateFeedUrl();
+        if (url != null) {
+          args = <String, dynamic>{
+            'feedUrl': url,
+            'channel': channel ?? windowsUpdateChannelDefine,
+          };
+        }
+      }
+      final result = await _nativeBridge.invokeMethod<bool>(
+        'checkForUpdates',
+        args,
+      );
       return result ?? false;
     } catch (e, st) {
       Log.e("NativeBridge", "Failed to invoke checkForUpdates", e, st);

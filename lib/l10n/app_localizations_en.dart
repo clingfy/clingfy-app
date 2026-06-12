@@ -1345,6 +1345,29 @@ class AppLocalizationsEn extends AppLocalizations {
   String get checkForUpdates => 'Check for Updates';
 
   @override
+  String get updateChecking => 'Checking for updates…';
+
+  @override
+  String get updateUpToDate => 'You\'re on the latest version.';
+
+  @override
+  String get updateCheckFailed => 'The update check failed. Try again later.';
+
+  @override
+  String get updateAvailableTitle => 'Update available';
+
+  @override
+  String updateAvailableBody(Object version) {
+    return 'Clingfy $version is available for download.';
+  }
+
+  @override
+  String get updateDownload => 'Download update';
+
+  @override
+  String get updateLater => 'Later';
+
+  @override
   String get escToCancel => 'Esc to cancel';
 
   @override

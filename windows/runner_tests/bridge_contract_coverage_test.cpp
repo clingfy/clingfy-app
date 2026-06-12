@@ -154,6 +154,8 @@ const std::vector<std::string>& BridgeContractMethods() {
       // Misc.
       "pickImage",
       "cacheLocalizedStrings",
+
+      // Updater (Phase 10.6 — updater_router.cpp).
       "checkForUpdates",
 
       // (Stage 2A POC aliases pocStage2aStart / pocStage2aStop were

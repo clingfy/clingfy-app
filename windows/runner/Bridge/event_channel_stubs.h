@@ -43,6 +43,12 @@ class EventChannelStubs {
   // / playerWarning events back to Dart's PlayerController.
   void RegisterPlayer(flutter::BinaryMessenger* messenger);
 
+  // Phase 10.6: updater/events is no longer a stub. Forwards sinks into
+  // `UpdaterEventPublisher` so the update checker's worker thread can push
+  // checking / updateAvailable / noUpdateAvailable / updateError back to
+  // Dart's NativeBridge.
+  void RegisterUpdater(flutter::BinaryMessenger* messenger);
+
   std::vector<std::unique_ptr<flutter::EventChannel<flutter::EncodableValue>>>
       channels_;
 };

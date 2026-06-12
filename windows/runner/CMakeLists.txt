@@ -39,6 +39,8 @@ add_library(runner_bridge STATIC
   "Bridge/Routers/preview_router.cpp"
   "Bridge/Routers/recording_router.cpp"
   "Bridge/Routers/storage_router.cpp"
+  "Bridge/Routers/updater_router.cpp"
+  "Bridge/updater_event_publisher.cpp"
   "Capture/Export/export_audio.cpp"
   "Capture/Export/export_format.cpp"
   "Capture/Export/export_geometry.cpp"
@@ -85,6 +87,8 @@ add_library(runner_bridge STATIC
   "Permissions/permission_probe.cpp"
   "Services/log_locations.cpp"
   "Services/recovery_sweep.cpp"
+  "Updater/update_checker.cpp"
+  "Updater/update_feed.cpp"
   "Services/save_folder.cpp"
   "Services/shell_reveal.cpp"
   "Services/temp_orphan_scan.cpp"
@@ -189,6 +193,15 @@ target_link_libraries(runner_bridge PUBLIC
 # already linked above.
 target_link_libraries(runner_bridge PUBLIC
   "version.lib"
+)
+
+# Phase 10.6: the private-beta update check (Updater/update_checker.cpp).
+#   * winhttp — WinHttpOpen/Connect/OpenRequest/SendRequest/ReadData, the
+#               https fetch of latest-windows.json. version.lib (the
+#               VS_FIXEDFILEINFO current-version read) is already linked
+#               above for Phase 10.1.
+target_link_libraries(runner_bridge PUBLIC
+  "winhttp.lib"
 )
 
 # C++/WinRT headers use the standard-layout `co_await`-friendly types but

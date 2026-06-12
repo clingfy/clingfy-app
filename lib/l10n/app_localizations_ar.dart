@@ -1334,6 +1334,30 @@ class AppLocalizationsAr extends AppLocalizations {
   String get checkForUpdates => 'التحقق من التحديثات';
 
   @override
+  String get updateChecking => 'جارٍ التحقق من التحديثات…';
+
+  @override
+  String get updateUpToDate => 'أنت على أحدث إصدار.';
+
+  @override
+  String get updateCheckFailed =>
+      'فشل التحقق من التحديثات. حاول مرة أخرى لاحقًا.';
+
+  @override
+  String get updateAvailableTitle => 'تحديث متاح';
+
+  @override
+  String updateAvailableBody(Object version) {
+    return 'الإصدار $version من Clingfy متاح للتنزيل.';
+  }
+
+  @override
+  String get updateDownload => 'تنزيل التحديث';
+
+  @override
+  String get updateLater => 'لاحقًا';
+
+  @override
   String get escToCancel => 'Esc للإلغاء';
 
   @override
