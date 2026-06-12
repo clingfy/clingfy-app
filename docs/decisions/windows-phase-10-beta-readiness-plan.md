@@ -261,8 +261,12 @@ Real `app_icon.ico` from `assets/icons/app-logo-1024.png`
 Inno Setup per-user installer per D1, dev/prod identity per D9, signing per
 D3, local PowerShell publish script to the existing Azure release storage.
 **Accept:** on a clean VM with no VS: install → record → export → uninstall;
-`.clingfyproj` double-click opens the app; Task Manager/taskbar/file
-Properties all say "Clingfy"; uninstall leaves only the documented leftovers.
+right-click "Open in Clingfy" on a `.clingfyproj` recording folder opens the
+app (revised during the 10.5 smoke: recordings are directories and Windows
+fires extension associations for files only, so the original "double-click
+opens the app" criterion is unsatisfiable as written); Task Manager/taskbar/
+file Properties all say "Clingfy"; uninstall leaves only the documented
+leftovers.
 
 ### 10.6 — Updater  (`feature/windows-phase-10-6-updater`)
 
