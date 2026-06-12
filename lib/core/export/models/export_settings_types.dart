@@ -13,6 +13,8 @@ ExportFormat exportFormatFromWire(
       return ExportFormat.mov;
     case 'mp4':
       return ExportFormat.mp4;
+    case 'gif':
+      return ExportFormat.gif;
     default:
       return fallback;
   }
