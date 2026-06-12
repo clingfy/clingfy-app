@@ -77,6 +77,9 @@ OutputDir={#SourcePath}\..\..\..\..\dist\windows\installer
 OutputBaseFilename={#MyOutputBaseFilename}
 UninstallDisplayName={#MyAppName}
 UninstallDisplayIcon={app}\clingfy.exe
+; Brand the setup/uninstall executables with the app icon (same multi-size
+; .ico the runner embeds, generated from the macOS AppIcon.appiconset art).
+SetupIconFile={#SourcePath}\..\..\..\..\windows\runner\resources\app_icon.ico
 ; Use the Restart Manager so upgrading over a running Clingfy closes it
 ; cleanly instead of failing on locked files (update-over-update gate, D2).
 CloseApplications=yes
