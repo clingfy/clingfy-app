@@ -17,6 +17,7 @@
 #include "Bridge/Routers/preview_router.h"
 #include "Bridge/Routers/recording_router.h"
 #include "Bridge/Routers/storage_router.h"
+#include "Bridge/Routers/updater_router.h"
 
 namespace clingfy::bridge {
 
@@ -88,6 +89,7 @@ MethodRouter::MethodRouter() {
   routers::export_::RegisterHandlers(handlers_);
   routers::permissions::RegisterHandlers(handlers_);
   routers::storage::RegisterHandlers(handlers_);
+  routers::updater::RegisterHandlers(handlers_);
   routers::misc::RegisterHandlers(handlers_);
   // Note: pocStage2aStart / pocStage2aStop are now registered as
   // deprecated aliases inside preview_router.cpp — they forward into

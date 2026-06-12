@@ -1355,6 +1355,30 @@ class AppLocalizationsRo extends AppLocalizations {
   String get checkForUpdates => 'Verifică actualizările';
 
   @override
+  String get updateChecking => 'Se verifică actualizările…';
+
+  @override
+  String get updateUpToDate => 'Folosești cea mai recentă versiune.';
+
+  @override
+  String get updateCheckFailed =>
+      'Verificarea actualizărilor a eșuat. Încearcă din nou mai târziu.';
+
+  @override
+  String get updateAvailableTitle => 'Actualizare disponibilă';
+
+  @override
+  String updateAvailableBody(Object version) {
+    return 'Clingfy $version este disponibil pentru descărcare.';
+  }
+
+  @override
+  String get updateDownload => 'Descarcă actualizarea';
+
+  @override
+  String get updateLater => 'Mai târziu';
+
+  @override
   String get escToCancel => 'Esc pentru anulare';
 
   @override

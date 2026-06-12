@@ -5,6 +5,7 @@
 #include "Bridge/native_channel_names.h"
 #include "Bridge/player_event_publisher.h"
 #include "Bridge/project_open_coordinator.h"
+#include "Bridge/updater_event_publisher.h"
 #include "Bridge/workflow_event_publisher.h"
 
 namespace clingfy::bridge {
@@ -90,13 +91,38 @@ class PlayerStreamHandler
   }
 };
 
+// Phase 10.6 wires updater/events onto UpdaterEventPublisher (was a
+// NoopStreamHandler). The update checker's worker thread emits checking /
+// updateAvailable / noUpdateAvailable / updateError through the publisher.
+class UpdaterStreamHandler
+    : public flutter::StreamHandler<flutter::EncodableValue> {
+ public:
+  UpdaterStreamHandler() = default;
+
+ protected:
+  std::unique_ptr<flutter::StreamHandlerError<flutter::EncodableValue>>
+  OnListenInternal(
+      const flutter::EncodableValue* /*arguments*/,
+      std::unique_ptr<flutter::EventSink<flutter::EncodableValue>>&& events)
+      override {
+    UpdaterEventPublisher::Instance().SetSink(std::move(events));
+    return nullptr;
+  }
+
+  std::unique_ptr<flutter::StreamHandlerError<flutter::EncodableValue>>
+  OnCancelInternal(const flutter::EncodableValue* /*arguments*/) override {
+    UpdaterEventPublisher::Instance().ClearSink();
+    return nullptr;
+  }
+};
+
 }  // namespace
 
 EventChannelStubs::EventChannelStubs(flutter::BinaryMessenger* messenger) {
   Register(messenger, channel::kScreenRecorderEvents);
   RegisterPlayer(messenger);
   RegisterWorkflow(messenger);
-  Register(messenger, channel::kUpdaterEvents);
+  RegisterUpdater(messenger);
 }
 
 EventChannelStubs::~EventChannelStubs() {
@@ -110,6 +136,7 @@ EventChannelStubs::~EventChannelStubs() {
   // tries to use them on the next launch.
   PlayerEventPublisher::Instance().ClearSink();
   WorkflowEventPublisher::Instance().ClearSink();
+  UpdaterEventPublisher::Instance().ClearSink();
 }
 
 void EventChannelStubs::Register(flutter::BinaryMessenger* messenger,
@@ -136,6 +163,15 @@ void EventChannelStubs::RegisterPlayer(flutter::BinaryMessenger* messenger) {
           messenger, channel::kPlayerEvents,
           &flutter::StandardMethodCodec::GetInstance());
   channel->SetStreamHandler(std::make_unique<PlayerStreamHandler>());
+  channels_.push_back(std::move(channel));
+}
+
+void EventChannelStubs::RegisterUpdater(flutter::BinaryMessenger* messenger) {
+  auto channel =
+      std::make_unique<flutter::EventChannel<flutter::EncodableValue>>(
+          messenger, channel::kUpdaterEvents,
+          &flutter::StandardMethodCodec::GetInstance());
+  channel->SetStreamHandler(std::make_unique<UpdaterStreamHandler>());
   channels_.push_back(std::move(channel));
 }
 
