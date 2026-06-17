@@ -84,6 +84,80 @@ private func makeCaptureSegment(
   )
 }
 
+final class RenamedRecordingProjectOpenTests: XCTestCase {
+  private func makeTemporaryDirectory() -> URL {
+    let url = URL(fileURLWithPath: NSTemporaryDirectory(), isDirectory: true)
+      .appendingPathComponent("renamed-project-\(UUID().uuidString)", isDirectory: true)
+    try? FileManager.default.createDirectory(at: url, withIntermediateDirectories: true)
+    return url
+  }
+
+  /// Builds a project whose on-disk folder name differs from the `projectId`
+  /// stored in its manifest — exactly what happens when a user renames a
+  /// `.clingfyproj` package in Finder. The required durable capture artifacts
+  /// are written so the open validator's missing-files check passes.
+  private func makeRenamedReadyProject(
+    folderName: String,
+    manifestProjectID: String,
+    in parent: URL
+  ) throws -> URL {
+    let projectRoot = parent.appendingPathComponent(
+      "\(folderName).\(RecordingProjectPaths.projectExtension)",
+      isDirectory: true
+    )
+    let fileManager = FileManager.default
+    try fileManager.createDirectory(
+      at: RecordingProjectPaths.captureDirectoryURL(for: projectRoot),
+      withIntermediateDirectories: true
+    )
+    try Data("screen".utf8).write(to: RecordingProjectPaths.screenVideoURL(for: projectRoot))
+    try Data("{}".utf8).write(to: RecordingProjectPaths.screenMetadataURL(for: projectRoot))
+
+    var manifest = RecordingProjectManifest.create(
+      projectId: manifestProjectID,
+      displayName: "Renamed Clip",
+      includeCamera: false
+    )
+    manifest.updateStatus(.ready)
+    try manifest.write(to: RecordingProjectPaths.manifestURL(for: projectRoot))
+    return projectRoot
+  }
+
+  func testOpenUsesFolderIdentityWhenManifestProjectIdIsStaleAfterRename() throws {
+    let tempDir = makeTemporaryDirectory()
+    defer { try? FileManager.default.removeItem(at: tempDir) }
+
+    let staleManifestID = "rec_2026-06-14_19-10-39_eed21a02"
+    let projectRoot = try makeRenamedReadyProject(
+      folderName: "pause-resume",
+      manifestProjectID: staleManifestID,
+      in: tempDir
+    )
+
+    let ref = try RecordingProjectRef.open(projectRoot: projectRoot)
+
+    // The folder is authoritative for identity.
+    XCTAssertEqual(ref.projectId, "pause-resume")
+    XCTAssertEqual(ref.rootURL.standardizedFileURL, projectRoot.standardizedFileURL)
+    // The manifest keeps its (now stale) recorded id; it is not used for identity.
+    XCTAssertEqual(ref.manifest.projectId, staleManifestID)
+  }
+
+  func testValidatorAcceptsRenamedReadyProject() throws {
+    let tempDir = makeTemporaryDirectory()
+    defer { try? FileManager.default.removeItem(at: tempDir) }
+
+    let projectRoot = try makeRenamedReadyProject(
+      folderName: "remix2",
+      manifestProjectID: "rec_2026-06-14_18-54-32_39db0d21",
+      in: tempDir
+    )
+
+    let ref = try ProjectOpenValidator.validateProjectURL(projectRoot)
+    XCTAssertEqual(ref.projectId, "remix2")
+  }
+}
+
 final class RecordingProjectPathsTests: XCTestCase {
   func testProjectArtifactsUseExpectedDirectoryLayout() {
     let projectRoot = URL(

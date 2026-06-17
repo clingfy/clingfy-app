@@ -11,7 +11,6 @@ enum RecordingProjectStatus: String, Codable {
 
 enum RecordingProjectManifestError: LocalizedError {
   case invalidProjectDirectory(String)
-  case projectDirectoryMismatch(expectedProjectID: String, actualProjectID: String)
   case unsupportedSchemaVersion(Int)
   case projectStatusNotOpenable(RecordingProjectStatus)
   case missingRequiredProjectFiles([String])
@@ -20,9 +19,6 @@ enum RecordingProjectManifestError: LocalizedError {
     switch self {
     case .invalidProjectDirectory(let path):
       return "Invalid recording project directory: \(path)"
-    case .projectDirectoryMismatch(let expectedProjectID, let actualProjectID):
-      return
-        "Recording project directory mismatch: expected \(expectedProjectID), got \(actualProjectID)"
     case .unsupportedSchemaVersion(let version):
       return "Unsupported recording project schema version \(version)"
     case .projectStatusNotOpenable(let status):
@@ -241,15 +237,14 @@ struct RecordingProjectRef {
     let manifest = try RecordingProjectManifest.read(
       from: RecordingProjectPaths.manifestURL(for: projectRoot)
     )
-    let expectedProjectID = RecordingProjectPaths.projectID(for: projectRoot)
-    guard manifest.projectId == expectedProjectID else {
-      throw RecordingProjectManifestError.projectDirectoryMismatch(
-        expectedProjectID: expectedProjectID,
-        actualProjectID: manifest.projectId
-      )
-    }
+    // The on-disk folder is authoritative for a project's identity. A user can
+    // rename a `.clingfyproj` package in Finder, which leaves the manifest's
+    // stored `projectId` stale. That does not invalidate the project: every
+    // media artifact is resolved relative to `projectRoot` (see `mediaSources`),
+    // never via `projectId`. Use the directory name as the id instead of
+    // rejecting the open on a name mismatch.
     return RecordingProjectRef(
-      projectId: manifest.projectId,
+      projectId: RecordingProjectPaths.projectID(for: projectRoot),
       rootURL: projectRoot,
       manifest: manifest
     )

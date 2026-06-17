@@ -323,14 +323,11 @@ final class RecordingStore {
     let manifestURL = RecordingProjectPaths.manifestURL(for: projectRootURL)
 
     do {
+      // The folder is authoritative for identity. A user may rename a
+      // `.clingfyproj` package in Finder, leaving `manifest.projectId` stale;
+      // that does not make the project invalid (all callers operate on
+      // `projectRootURL`), so don't skip it on a directory-name mismatch.
       let manifest = try RecordingProjectManifest.read(from: manifestURL)
-      let expectedProjectID = RecordingProjectPaths.projectID(for: projectRootURL)
-      guard manifest.projectId == expectedProjectID else {
-        throw RecordingProjectManifestError.projectDirectoryMismatch(
-          expectedProjectID: expectedProjectID,
-          actualProjectID: manifest.projectId
-        )
-      }
       return (manifestURL, manifest)
     } catch {
       if shouldLogInvalidProjects {
