@@ -28,13 +28,12 @@ three-way sync (Dart / Swift / Windows C++).
 
 ## The four features driving this work
 
-A user asked for these so they could drop a paid editor (CapCut). In priority of
-*self-containedness* (see roadmap for the build order):
+A user asked for these so they could drop a paid editor (CapCut):
 
 1. **Auto-subtitles + translate** — local speech-to-text, same-language captions,
    translate where supported, editable caption track, sidecar/burn-in export.
 2. **Split & cut** — split at the playhead, trim, enable/disable clips.
-3. **Audio** — volume boost / normalize (mostly exists) + local noise reduction.
+3. **Audio** — volume boost / normalize + local voice cleanup (noise reduction).
 4. **Color improvement** — one-tap auto plus manual grade.
 
 ## Status
@@ -42,19 +41,26 @@ A user asked for these so they could drop a paid editor (CapCut). In priority of
 - [x] Architecture mapped; extension points identified.
 - [x] Engine decisions locked (below).
 - [x] Foundation design chosen (incremental, immutable tree, global undo).
+- [x] Plan reviewed; audio/ASR adjustments folded in (audio source separation,
+      resampling, pluggable enhancement, model manager).
 - [ ] **Phase 0 — foundation** (next; start with PR-0a).
 - [ ] Phases 1–5 (features).
 
-## Locked decisions (2026-06-21)
+## Locked decisions
 
 | Area | Decision |
 |---|---|
 | **Subtitle ASR engine** | WhisperKit on macOS, whisper.cpp on Windows — both on-device, MIT, free. |
 | **Whisper model** | User-selectable quality, default **Auto** (large-v3-turbo when hardware allows; small/medium fallback on low-end Windows). |
-| **Translation (v1)** | Local transcription + same-language captions + Whisper's **English-only** translation where supported. |
+| **Whisper translation caveat** | `large-v3-turbo` returns the original language even with `--task translate` — **it cannot translate**. English translation requires a **medium or large** model. If Auto picked turbo, translation prompts a translation-capable model download (see §C). |
+| **Translation (v1)** | Local transcription + same-language captions + Whisper's **English-only** translation, and only on a medium/large model. |
 | **Translation (deferred)** | Arbitrary target language via Apple Translation framework (macOS 15+, *only after a prototype proves the batch/headless flow*) and an optional M2M-100 download (Windows / macOS 14, MIT). NLLB-200 rejected (CC-BY-NC). Cloud translation is **not** default — a possible future Clingfy.ai paid/studio feature. |
+| **Audio source separation** | **Keep mic and system audio as separate sources inside the `.clingfyproj` bundle until export.** Never denoise a pre-mixed track — that damages system/music/game/app audio. (See Phase 1.5.) |
+| **Audio format** | One internal format — **48 kHz float32** — converted at the edges with platform-native resamplers (Media Foundation Audio Resampler DSP on Windows, `AVAudioConverter` on macOS). Mic enhancement runs on a 48 kHz **mono** copy; the final mix is 48 kHz **stereo**. (See Phase 3.5.) |
+| **Voice cleanup (noise reduction)** | A **pluggable `AudioEnhancementPipeline`**. v1 engine = **RNNoise** (small, local, C, 48 kHz). Future local **High-Quality** engine = **DeepFilterNet** (full-band 48 kHz). Optional future cloud = Clingfy.ai add-on. **The UI never names engines** — it exposes `Voice Cleanup: Off / Light / Balanced / High Quality`; internally Light/Balanced → RNNoise, High Quality → DeepFilterNet (later). |
 | **Subtitle export** | Default = video + `.srt` + `.vtt` sidecars. Burn-in is an opt-in export mode; "both sidecar + burned-in" is an optional checkbox, never automatic. |
-| **Noise reduction** | RNNoise (open-source, cross-platform C), as a pre-mix filter on the mic source. |
+| **Local models** | A first-class `LocalModelManager` (download-on-first-use, hash verify, version, disk usage, delete, offline state, per-model license note) for WhisperKit / whisper.cpp models and, later, DeepFilterNet / M2M-100. Built early, not as an afterthought (see §A.7). |
+| **Export quality** | Audio presets — Standard (AAC 128 kbps), High (192 kbps), Best (256 kbps). Video keeps existing presets, with one rule: when effects force a re-encode of text/UI-heavy screen video, bump one step higher than the camera-footage default (see §B, Export quality). |
 | **Build order** | Foundation first; then features easiest/most-self-contained first. |
 | **Pricing / gating** | **No separate Pro gates inside the local editor for v1.** All local editing rides the existing app-level trial/license gate. Trial = 14 days OR 3 exports with all local editing available. The paid license covers all local editing. Future cloud features (batch, team, hosted Clingfy.ai processing, cloud translation, studio-enhance) become paid add-ons / subscription / credits later. **Windows: keep gating disabled / feature-flagged until licensing smoke tests pass.** |
 
@@ -72,8 +78,9 @@ separate from the editor features.
 >   `macos/Runner/Capture/Export/CompositionBuilder.swift` and
 >   `LetterboxExporter.swift`. There is **no** `AudioMixEngine.swift`;
 >   `macos/Runner/Capture/Audio/` currently holds only level estimators.
-> - Windows audio = `windows/runner/Audio/audio_mixer.cpp`; export =
->   `windows/runner/Encoding/mf_sink_writer_encoder.cpp` +
+> - Windows audio = `windows/runner/Audio/audio_mixer.cpp` (today
+>   `AudioMixer::Mix` *sums* mic + system into one stream — see Phase 1.5);
+>   export = `windows/runner/Encoding/mf_sink_writer_encoder.cpp` +
 >   `windows/runner/preview/preview_compositor.cpp` (there is no
 >   `export_pipeline.cpp`; the *test* `export_pipeline_test.cpp` exists).
 > - Bridge command names are **inline string literals** in
@@ -118,7 +125,7 @@ lib/core/timeline/
     zoom_track.dart           # ZoomTrack (wraps existing auto/manual ZoomSegment)
     clip_track.dart           # ClipTrack + Clip
     caption_track.dart        # CaptionTrack + Caption + CaptionStyle
-    audio_track.dart          # AudioTrack
+    audio_track.dart          # AudioTrack with SEPARATED mic/system sources
     color_grade.dart          # ColorGrade (canvas-wide, lives on Timeline)
   codec/
     timeline_codec.dart       # single read/write path -> post/state.json
@@ -196,6 +203,33 @@ Two fixes fall out: **transactions** collapse a slider drag into one undo entry,
 and **dirty-domain flush** replaces "every setter calls full `processVideo`" with
 per-effect `previewSet*` routing.
 
+### Audio model — separated sources from day one
+
+`AudioTrack` models mic and system as **separate sources** so the mic can be
+denoised/boosted without touching system audio. Older recordings without
+separated capture fall back to a single mixed path.
+
+```dart
+class AudioSource {
+  final String? path;        // capture/mic.wav | capture/system.wav (null if absent)
+  final double gainDb;
+  final bool normalize;
+  final VoiceCleanup? cleanup;   // mic only in practice
+}
+class VoiceCleanup {
+  final bool enabled;
+  final CleanupMode mode;    // light | balanced | highQuality  (UI labels)
+  // engine is chosen internally by AudioEnhancementPipeline, never shown.
+}
+class AudioTrack extends EditTrack {
+  final AudioSource? mic;
+  final AudioSource? system;
+  final String? mixedFallbackPath;   // for legacy recordings (no separation)
+  final double masterGainDb;
+  final bool limiter;
+}
+```
+
 ### `post/state.json` schema (v2)
 
 ```jsonc
@@ -208,8 +242,16 @@ per-effect `previewSet*` routing.
     "tracks": [
       { "kind": "zoom",    "auto": [/* ZoomSegment.toMap() */], "manual": [/* ... */] },
       { "kind": "clip",    "clips": [ {"id":"","sourceInMs":0,"sourceOutMs":0,"timelineStartMs":0,"enabled":true} ] },
-      { "kind": "audio",   "source": "mixed", "gainDb": 0, "volumePercent": 100,
-                           "normalize": false, "noise": {"enabled": false, "strength": 0.6} },
+      {
+        "kind": "audio",
+        "sources": {
+          "mic":    { "path": "capture/mic.wav", "gainDb": 0, "normalize": true,
+                      "voiceCleanup": { "enabled": false, "mode": "balanced" } },
+          "system": { "path": "capture/system.wav", "gainDb": 0 }
+        },
+        "mixedFallbackPath": null,
+        "mix": { "masterGainDb": 0, "limiter": true }
+      },
       { "kind": "caption", "language": "en", "sourceLanguage": "en",
                            "style": {}, "captions": [ {"id":"","startMs":0,"endMs":0,"text":""} ] }
     ]
@@ -252,15 +294,41 @@ note it in the UI.
    stub the same day as macOS, capability-gated like `ZoomNativeCapabilities`.
    Windows never silently diverges per-feature again (the Phase 8.3 wound).
 
+### A.7 Local model manager (built early)
+
+Because the app ships several on-device models, a `LocalModelManager` is a
+first-class subsystem, not an afterthought:
+
+```
+lib/core/models/local_model_manifest.dart   # model ids, sizes, hashes, licenses, capabilities
+lib/core/models/model_download_manager.dart  # download-on-first-use, verify, version, delete
+```
+
+Native model caches:
+
+- macOS: `Application Support / Clingfy / Models`
+- Windows: `%LOCALAPPDATA% / Clingfy / Models`
+
+Responsibilities: download on first use, hash verification, disk-usage reporting,
+delete-model, model versioning, offline-unavailable state, and a per-model
+license note (e.g. transcription-capable vs translation-capable Whisper builds,
+DeepFilterNet, M2M-100). It backs the ASR model picker (§C) and, later, the
+High-Quality voice-cleanup and translation downloads. The official signed app
+should make all of this feel reliable and easy even though the project is
+open-source and local-first.
+
 ## B. Phased roadmap (Mac-first, then Windows)
 
 Order is easiest/most-self-contained first, **with one deviation:** split/cut
-moves *ahead* of noise reduction because `ClipTrack` defines the authoritative
+moves *ahead* of voice cleanup because `ClipTrack` defines the authoritative
 `durationMs` that captions and zoom re-clamp against, and it is the lowest native
-risk (AVFoundation `insertTimeRange`, no new render pass).
+risk (AVFoundation `insertTimeRange`, no new render pass). Two audio-quality
+sub-phases (1.5 source separation, 3.5 format normalization) are sequenced so
+that by the time voice cleanup lands, the audio pipeline is clean.
 
-**Final order:** (1) volume/normalize UI → (2) color → (3) split & cut →
-(4) noise reduction → (5) subtitles + translate.
+**Final order:** (1) volume/normalize → (1.5) audio source separation →
+(2) color → (3) split & cut → (3.5) audio format normalization →
+(4) voice cleanup → (5) subtitles + translate.
 
 Each phase ships across Dart core (`lib/core/timeline/…`), Dart app (panel UI +
 route setters through `EditSession`), macOS Swift, Windows C++ (stub day-one), the
@@ -269,14 +337,32 @@ constant ② Swift constant ③ Windows constant ④ `NativeBridge` method/regis
 ⑤ Swift handler ⑥ Windows handler/stub ⑦ keep the "sync with Swift" comment honest
 ⑧ tests both sides.
 
-### Phase 1 — volume / normalize UI *(mostly exists)*
+### Phase 1 — volume / normalize *(mostly exists)*
 
-Route the existing `postAudioGainDb` / `postAudioVolumePercent` setters through
-`EditSession` (kills two eager setters) and add a `normalize` toggle. Additive to
-the existing `setAudioMix` args; no new method. macOS: consume `normalize` in the
-audio-mix path of `CompositionBuilder.swift` / `LetterboxExporter.swift`. Windows:
-`normalize` branch in `audio_mixer.cpp`. Tests: `test/core/timeline/audio_track_test.dart`,
-macOS audio-mix assertion, Windows `audio_mixer_test.cpp` (extend).
+Route the existing gain/volume setters through `EditSession` (kills two eager
+setters) and add a `normalize` toggle, modelled on the new `AudioTrack`
+(master gain initially; per-source once 1.5 lands). Additive to the existing
+audio-mix args; no new method. macOS: consume in the audio-mix path of
+`CompositionBuilder.swift` / `LetterboxExporter.swift`. Windows: in
+`audio_mixer.cpp`. Tests: `audio_track_test.dart`, macOS audio-mix assertion,
+`audio_mixer_test.cpp` (extend).
+
+### Phase 1.5 — audio source separation *(quality-critical)*
+
+**Preserve raw mic and raw system audio separately** in the `.clingfyproj`
+bundle so downstream stages (cleanup, voice boost, voice-only export) never have
+to un-mix.
+
+- **Capture:** write `capture/mic.wav` (or `.m4a`) and `capture/system.wav`
+  separately; keep an optional `capture/mixed_preview.m4a` for cheap playback.
+  macOS: split the capture tap. Windows: stop `AudioMixer::Mix` from summing into
+  one stream during recording — persist both sources, mix only at export/preview.
+- **Model:** the `AudioTrack` separated-source schema (above) becomes the live
+  shape; legacy recordings use `mixedFallbackPath`.
+- **Export chain becomes:** `raw mic → cleanup → normalize/boost/limiter → mix
+  with system → final AAC`.
+- Tests: capture writes two sources; codec round-trips separated sources; legacy
+  fallback path still opens.
 
 ### Phase 2 — color: one-tap auto + manual grade
 
@@ -299,18 +385,43 @@ segment ranges in the MF encoder + preview engine. Cross-track re-clamp consults
 `TimelineTimebase.durationMs`. Tests: clip track + split/trim + re-clamp (Dart),
 composition-range (macOS), `export_pipeline_test.cpp` (extend).
 
-### Phase 4 — noise reduction (RNNoise)
+### Phase 3.5 — audio format normalization *(quality-critical)*
 
-RNNoise as a pre-mix filter on the mic source. macOS: new
-`macos/Runner/Capture/Audio/NoiseReducer.swift` wrapping vendored RNNoise C,
-invoked in the mic-mix stage. Windows: new `windows/runner/Audio/noise_reducer.cpp`
-invoked pre-mix in `audio_mixer.cpp`. RNNoise wants **48 kHz mono, 480-sample
-frames** — on Windows the native 48 kHz f32 format already matches (only mono
-framing + float↔int16 conversion needed, no resampler). Extend the `setAudioMix`
-args with `noise{enabled,strength}` (additive). Vendor RNNoise as a submodule +
-CMake / SPM-or-bridged C target (build-system task in the Phase-4 PR). Tests:
-command (Dart), `NoiseReducerTests.swift` (frame size/passthrough), `audio_mixer_test.cpp`
-(denoise branch).
+A small internal audio-conversion layer so cleanup, ASR, and any future import
+all see one clean format:
+
+```
+any input format
+  -> convert to internal 48 kHz float32
+  -> 48 kHz MONO copy for mic enhancement
+  -> 48 kHz STEREO for the final mix/export
+```
+
+- **Windows:** Media Foundation **Audio Resampler DSP** (`Wmcodecdsp.h`) to
+  change sample rate / channel count — native, no heavy dependency. Removes the
+  current "drop unsupported formats with a warning" behavior.
+- **macOS:** `AVAudioConverter` equivalent.
+- Tests: resample correctness (rate + channel count), mono/stereo split, a
+  non-48 kHz input no longer dropped.
+
+### Phase 4 — voice cleanup (noise reduction)
+
+A **pluggable `AudioEnhancementPipeline`** applied to the **mic source only**
+(after 1.5/3.5 there is a clean 48 kHz mono mic copy to feed it).
+
+- **v1 engine:** RNNoise (vendored as a submodule + CMake / SPM-or-bridged C
+  target — a build-system task in this PR). 48 kHz, 480-sample mono frames.
+- **Future High-Quality engine:** DeepFilterNet (full-band 48 kHz), downloaded
+  via the `LocalModelManager`. The pipeline interface is engine-agnostic so this
+  drops in later without touching callers.
+- **UI:** `Voice Cleanup: Off / Light / Balanced / High Quality` — **no engine
+  names.** Light/Balanced → RNNoise; High Quality → DeepFilterNet (later).
+- macOS: new `macos/Runner/Capture/Audio/AudioEnhancementPipeline.swift` +
+  `RNNoiseEngine.swift`. Windows: new `windows/runner/Audio/audio_enhancement.cpp`
+  invoked pre-mix in `audio_mixer.cpp`. Extend audio args with
+  `voiceCleanup{enabled,mode}` (additive).
+- Tests: pipeline mode→engine routing (Dart), `RNNoiseEngineTests.swift`
+  (frame size/passthrough), `audio_mixer_test.cpp` (cleanup branch).
 
 ### Phase 5 — subtitles + translate *(the big one)*
 
@@ -321,10 +432,10 @@ See section C.
 ### Pipeline
 
 ```
-audio (from .clingfyproj capture/)
+mic source (from .clingfyproj capture/, post-cleanup)
   -> ASR: WhisperKit (mac) / whisper.cpp (win)   [MIT, on-device, free, batch]
   -> timestamped Caption[] (segment + word timings)
-  -> [optional] translate to English (Whisper) ; arbitrary target deferred
+  -> [optional] translate to English (medium/large model only)
   -> editable CaptionTrack on the timeline (undoable via EditSession)
   -> render:  .srt/.vtt sidecar (default)  AND/OR  burn-in (opt-in)
 ```
@@ -332,22 +443,39 @@ audio (from .clingfyproj capture/)
 ### ASR
 
 - **macOS:** WhisperKit (Argmax, MIT), SPM, min macOS 14, Core ML on ANE/GPU.
-  Default model **Auto** → large-v3-turbo (~626 MB) when hardware allows,
-  downloaded on first use. Exposes segment + word timestamps.
 - **Windows:** whisper.cpp (MIT), Vulkan default GPU backend (cross-vendor) + CPU
-  fallback, ggml `.bin` models; emits SRT/VTT natively.
+  fallback, ggml `.bin` models.
+- **Model selection (Auto):** Best Accuracy → large-v3-turbo when hardware
+  allows; Fast/Balanced → small/medium. Models are managed by the
+  `LocalModelManager` (§A.7).
 - Batch on a finished recording, so real-time factor is not a blocker.
 
-### Translation
+### Translation (with the turbo caveat)
 
-Whisper only translates **to English** (both platforms). v1 ships transcription +
-same-language captions + English-only translation. Arbitrary target language is
-deferred:
+Whisper only translates **to English** (both platforms), and **`large-v3-turbo`
+cannot translate at all** — it returns the original language even with the
+translate task. So:
+
+```
+Transcription model (Auto):
+  - Best Accuracy: large-v3-turbo when hardware allows
+  - Fast/Balanced: small/medium
+
+English translation:
+  - NOT supported by turbo
+  - Requires a medium or large model
+  - If the user is on turbo, show:
+    "English translation requires downloading a translation-capable Whisper model."
+    (download via LocalModelManager)
+```
+
+This avoids the confusing bug where transcription works but translation silently
+returns the source language. Arbitrary target language stays deferred:
 
 | Tier | Engine | Notes |
 |---|---|---|
 | macOS 15+ | **Apple Translation framework** | on-device, free, zero app weight — *prototype the headless/batch flow before committing* (it is SwiftUI-coupled; this is the largest unknown). |
-| Windows / macOS 14 | **M2M-100 418M** (MIT, ~1.5 GB, any→any) | optional download. |
+| Windows / macOS 14 | **M2M-100 418M** (MIT, ~1.5 GB, any→any) | optional download via `LocalModelManager`. |
 | Rejected | NLLB-200 | CC-BY-NC — disqualified for a paid product. |
 | Future paid | DeepL/Google cloud | not default; possible Clingfy.ai studio feature. |
 
@@ -387,9 +515,25 @@ class CaptionTrack extends EditTrack {
 
 ### Model picker (decision #3)
 
-Small addition: a quality setting (default **Auto**) plus a portable
+A quality setting (default **Auto**) plus a portable
 `lib/core/captions/model_picker.dart` heuristic (RAM/GPU → turbo vs small/medium),
-surfaced as one settings widget.
+surfaced as one settings widget and backed by the `LocalModelManager` (§A.7),
+which also enforces the translation-capable-model rule above.
+
+## Export quality
+
+Add an export-quality setting alongside the existing presets:
+
+| Preset | Audio |
+|---|---|
+| Standard | AAC 128 kbps stereo (today's default) |
+| High | AAC 192 kbps stereo |
+| Best | AAC 256 kbps stereo |
+
+Video keeps the existing bitrate presets, with one rule: **when effects force a
+re-encode of text/UI/code-heavy screen video, default one step higher than the
+camera-footage bitrate** — text and sharp UI edges show compression artifacts
+faster than camera footage.
 
 ## D. Cross-cutting risks
 
@@ -401,9 +545,13 @@ surfaced as one settings widget.
   caption layer + a single CIFilter color pass + sidecar-default subtitles. If
   heavy stacks still degrade, the long-term fix is a Metal/`CIImage` render path
   replacing `CoreAnimationTool` — a future spike, not a Phase-5 blocker.
-- **Windows audio rigidity (48 kHz f32 stereo, no resampler):** *helps* RNNoise
-  (rate already matches). Would *block* future TTS/music import (needs a
-  resampler) — out of scope for these four features.
+- **Windows audio rigidity (48 kHz f32 stereo, no resampler):** addressed by
+  **Phase 3.5** (internal resampler via the Media Foundation Audio Resampler DSP).
+  Until then, RNNoise is unaffected (its 48 kHz rate already matches), but
+  non-48 kHz import stays unsupported.
+- **Pre-mixed legacy audio:** recordings made before Phase 1.5 have no separated
+  sources — cleanup/voice-boost on those is best-effort via `mixedFallbackPath`
+  and the UI should say so.
 - **Licensing untested on Windows:** keep editing free/feature-flagged on Windows
   until a licensing smoke pass on the existing entitlement UI
   (`lib/commercial/licensing/`) passes.
