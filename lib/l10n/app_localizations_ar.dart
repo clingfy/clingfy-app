@@ -979,6 +979,9 @@ class AppLocalizationsAr extends AppLocalizations {
   String get zoomUndoLastAction => 'تراجع عن آخر إجراء';
 
   @override
+  String get zoomRedoLastAction => 'إعادة آخر إجراء';
+
+  @override
   String get zoomSelectionCleared => 'تم مسح التحديد';
 
   @override

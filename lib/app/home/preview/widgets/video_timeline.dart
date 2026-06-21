@@ -272,6 +272,7 @@ class _VideoTimelineState extends State<VideoTimeline> {
                   canEditZoom: canEditZoom,
                   canDelete: activeEditor?.hasSelection ?? false,
                   canUndo: activeEditor?.canUndo ?? false,
+                  canRedo: activeEditor?.canRedo ?? false,
                   showZoomLane: _showZoomLane,
                   showMarkersLane: _showMarkersLane,
                   onToggleSnap: canEditZoom ? () => _toggleSnap(editor) : null,
@@ -285,6 +286,7 @@ class _VideoTimelineState extends State<VideoTimeline> {
                       ? () => _handleDeleteSelected(editor)
                       : null,
                   onUndo: activeEditor?.undo,
+                  onRedo: activeEditor?.redo,
                   onToggleZoomLaneVisibility: _toggleZoomLaneVisibility,
                   onToggleMarkersLaneVisibility: _toggleMarkersLaneVisibility,
                 ),

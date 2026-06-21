@@ -13,6 +13,7 @@ class TimelineHeaderBar extends StatelessWidget {
     required this.canEditZoom,
     required this.canDelete,
     required this.canUndo,
+    required this.canRedo,
     required this.showZoomLane,
     required this.showMarkersLane,
     required this.onToggleSnap,
@@ -20,6 +21,7 @@ class TimelineHeaderBar extends StatelessWidget {
     required this.onSelectAfterPlayhead,
     required this.onDeleteSelected,
     required this.onUndo,
+    required this.onRedo,
     required this.onToggleZoomLaneVisibility,
     required this.onToggleMarkersLaneVisibility,
   });
@@ -28,6 +30,7 @@ class TimelineHeaderBar extends StatelessWidget {
   final bool canEditZoom;
   final bool canDelete;
   final bool canUndo;
+  final bool canRedo;
   final bool showZoomLane;
   final bool showMarkersLane;
   final VoidCallback? onToggleSnap;
@@ -35,6 +38,7 @@ class TimelineHeaderBar extends StatelessWidget {
   final VoidCallback? onSelectAfterPlayhead;
   final VoidCallback? onDeleteSelected;
   final VoidCallback? onUndo;
+  final VoidCallback? onRedo;
   final VoidCallback onToggleZoomLaneVisibility;
   final VoidCallback onToggleMarkersLaneVisibility;
 
@@ -125,6 +129,16 @@ class TimelineHeaderBar extends StatelessWidget {
                     tooltip: l10n.zoomUndoLastAction,
                     onPressed: canUndo ? onUndo : null,
                     color: canUndo
+                        ? theme.colorScheme.onSurface.withValues(alpha: 0.85)
+                        : theme.colorScheme.onSurface.withValues(alpha: 0.35),
+                  ),
+                  SizedBox(width: controlGap),
+                  AppIconButton(
+                    key: const Key('timeline_redo_button'),
+                    icon: Icons.redo_rounded,
+                    tooltip: l10n.zoomRedoLastAction,
+                    onPressed: canRedo ? onRedo : null,
+                    color: canRedo
                         ? theme.colorScheme.onSurface.withValues(alpha: 0.85)
                         : theme.colorScheme.onSurface.withValues(alpha: 0.35),
                   ),

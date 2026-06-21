@@ -409,6 +409,7 @@
   },
   "zoomSelectAllVisible": "تحديد كل الظاهر",
   "zoomUndoLastAction": "تراجع عن آخر إجراء",
+  "zoomRedoLastAction": "إعادة آخر إجراء",
   "zoomSelectionCleared": "تم مسح التحديد",
   "zoomChangeSelectionRange": "تغيير نطاق التحديد",
   "stopIn": "توقف خلال {value}",

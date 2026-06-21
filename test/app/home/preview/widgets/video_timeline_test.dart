@@ -50,6 +50,35 @@ void main() {
     expect(find.byKey(const Key('timeline_status_line')), findsNothing);
   });
 
+  testWidgets('redo button re-applies an undone zoom edit', (tester) async {
+    final editor = await _createEditor(tester);
+    final player = _FakePlayerController(editor: editor);
+    addTearDown(player.dispose);
+
+    await tester.pumpWidget(_buildTimeline(player: player));
+
+    final redoButton = find.byKey(const Key('timeline_redo_button'));
+    expect(redoButton, findsOneWidget);
+
+    // Create a manual zoom segment, then undo it.
+    editor.enterOneShotAddMode();
+    editor.updateDraft(1000, 4000);
+    editor.commitDraft();
+    await tester.pump();
+    expect(editor.manualSegments, hasLength(1));
+
+    editor.undo();
+    await tester.pump();
+    expect(editor.manualSegments, isEmpty);
+
+    // The redo button is now enabled; tapping it restores the segment.
+    await tester.ensureVisible(redoButton);
+    await tester.pump();
+    await tester.tap(redoButton);
+    await tester.pump();
+    expect(editor.manualSegments, hasLength(1));
+  });
+
   testWidgets('header shows title and no close action', (tester) async {
     final editor = await _createEditor(tester);
     final player = _FakePlayerController(editor: editor);
