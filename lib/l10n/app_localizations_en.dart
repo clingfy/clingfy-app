@@ -988,6 +988,9 @@ class AppLocalizationsEn extends AppLocalizations {
   String get zoomUndoLastAction => 'Undo last action';
 
   @override
+  String get zoomRedoLastAction => 'Redo last action';
+
+  @override
   String get zoomSelectionCleared => 'Selection cleared';
 
   @override

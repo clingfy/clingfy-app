@@ -409,6 +409,7 @@
   },
   "zoomSelectAllVisible": "Selectează tot ce este vizibil",
   "zoomUndoLastAction": "Anulează ultima acțiune",
+  "zoomRedoLastAction": "Refă ultima acțiune",
   "zoomSelectionCleared": "Selecția a fost ștearsă",
   "zoomChangeSelectionRange": "Schimbă intervalul selecției",
   "stopIn": "Oprește în {value}",

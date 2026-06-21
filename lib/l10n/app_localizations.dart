@@ -1942,6 +1942,12 @@ abstract class AppLocalizations {
   /// **'Undo last action'**
   String get zoomUndoLastAction;
 
+  /// No description provided for @zoomRedoLastAction.
+  ///
+  /// In en, this message translates to:
+  /// **'Redo last action'**
+  String get zoomRedoLastAction;
+
   /// No description provided for @zoomSelectionCleared.
   ///
   /// In en, this message translates to:

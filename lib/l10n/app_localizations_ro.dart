@@ -996,6 +996,9 @@ class AppLocalizationsRo extends AppLocalizations {
   String get zoomUndoLastAction => 'Anulează ultima acțiune';
 
   @override
+  String get zoomRedoLastAction => 'Refă ultima acțiune';
+
+  @override
   String get zoomSelectionCleared => 'Selecția a fost ștearsă';
 
   @override

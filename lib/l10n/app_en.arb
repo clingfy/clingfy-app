@@ -347,6 +347,7 @@
   },
   "zoomSelectAllVisible": "Select all visible",
   "zoomUndoLastAction": "Undo last action",
+  "zoomRedoLastAction": "Redo last action",
   "zoomSelectionCleared": "Selection cleared",
   "zoomChangeSelectionRange": "Change selection range",
   "stopIn": "Stop in {value}",
