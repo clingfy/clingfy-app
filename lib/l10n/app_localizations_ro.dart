@@ -999,6 +999,27 @@ class AppLocalizationsRo extends AppLocalizations {
   String get zoomRedoLastAction => 'Refă ultima acțiune';
 
   @override
+  String get colorCorrection => 'Corecție culoare';
+
+  @override
+  String get autoEnhance => 'Auto-îmbunătățire';
+
+  @override
+  String get exposure => 'Expunere';
+
+  @override
+  String get contrast => 'Contrast';
+
+  @override
+  String get saturation => 'Saturație';
+
+  @override
+  String get temperature => 'Temperatură';
+
+  @override
+  String get tint => 'Nuanță';
+
+  @override
   String get zoomSelectionCleared => 'Selecția a fost ștearsă';
 
   @override

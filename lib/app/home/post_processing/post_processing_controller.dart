@@ -9,6 +9,8 @@ import 'package:clingfy/core/export/models/export_settings_types.dart';
 import 'package:clingfy/l10n/app_localizations.dart';
 import 'package:clingfy/app/infrastructure/logging/logger_service.dart';
 import 'package:clingfy/core/models/app_models.dart';
+import 'package:clingfy/core/timeline/model/color_grade.dart';
+import 'package:clingfy/core/color/auto_grade_heuristic.dart';
 import 'package:clingfy/core/models/background_preset_catalog.dart';
 import 'package:clingfy/app/settings/settings_controller.dart';
 import 'package:clingfy/core/bridges/native_bridge.dart';
@@ -46,6 +48,7 @@ class PostProcessingController extends ChangeNotifier {
     _warningSub?.cancel();
     _cameraManualPositionSub?.cancel();
     _audioPreviewDebouncer.dispose();
+    _colorGradePreviewDebouncer.dispose();
     _cameraManualPreviewThrottler.dispose();
     super.dispose();
   }
@@ -112,6 +115,10 @@ class PostProcessingController extends ChangeNotifier {
   final AudioDebouncer _audioPreviewDebouncer = AudioDebouncer(
     delay: Duration(milliseconds: 150),
   );
+  ColorGrade _colorGrade = const ColorGrade();
+  final AudioDebouncer _colorGradePreviewDebouncer = AudioDebouncer(
+    delay: Duration(milliseconds: 120),
+  );
   final ActionThrottler _cameraManualPreviewThrottler = ActionThrottler();
   CameraPreviewChangeKind _pendingCameraPreviewChangeKind =
       CameraPreviewChangeKind.none;
@@ -141,6 +148,7 @@ class PostProcessingController extends ChangeNotifier {
   bool get cursorAvailable => _cursorAvailable;
   double get audioGainDb => _audioGainDb;
   double get audioVolumePercent => _audioVolumePercent;
+  ColorGrade get colorGrade => _colorGrade;
   String? get cameraPath => _cameraPath;
   bool get hasCameraAsset => _cameraPath != null && _cameraPath!.isNotEmpty;
   CameraCompositionState? get cameraState => _cameraState;
@@ -557,6 +565,70 @@ class PostProcessingController extends ChangeNotifier {
     );
   }
 
+  // --- Color grade ---
+
+  void setColorGradeExposure(double v) {
+    _colorGrade = _colorGrade.copyWith(exposure: v.clamp(-1.0, 1.0));
+    notifyListeners();
+    _schedulePreviewColorGrade();
+  }
+
+  void setColorGradeContrast(double v) {
+    _colorGrade = _colorGrade.copyWith(contrast: v.clamp(-1.0, 1.0));
+    notifyListeners();
+    _schedulePreviewColorGrade();
+  }
+
+  void setColorGradeSaturation(double v) {
+    _colorGrade = _colorGrade.copyWith(saturation: v.clamp(-1.0, 1.0));
+    notifyListeners();
+    _schedulePreviewColorGrade();
+  }
+
+  void setColorGradeTemperature(double v) {
+    _colorGrade = _colorGrade.copyWith(temperature: v.clamp(-1.0, 1.0));
+    notifyListeners();
+    _schedulePreviewColorGrade();
+  }
+
+  void setColorGradeTint(double v) {
+    _colorGrade = _colorGrade.copyWith(tint: v.clamp(-1.0, 1.0));
+    notifyListeners();
+    _schedulePreviewColorGrade();
+  }
+
+  /// Flush the debounce and push the final grade immediately (slider release).
+  void commitColorGrade() {
+    _colorGradePreviewDebouncer.cancel();
+    _pushPreviewColorGrade();
+  }
+
+  /// One-tap auto enhance: apply a tasteful preset, or clear back to neutral.
+  void setColorGradeAutoEnhance(bool enabled) {
+    _colorGrade = enabled ? autoEnhanceGrade() : const ColorGrade();
+    notifyListeners();
+    _colorGradePreviewDebouncer.cancel();
+    _pushPreviewColorGrade();
+  }
+
+  void _schedulePreviewColorGrade() {
+    _colorGradePreviewDebouncer.run(_pushPreviewColorGrade);
+  }
+
+  void _pushPreviewColorGrade() {
+    if (_previewPath == null) return;
+    unawaited(
+      _nativeBridge
+          .previewSetColorGrade(
+            colorGrade: _colorGrade,
+            sessionId: _activeSessionId,
+          )
+          .catchError((Object e, StackTrace st) {
+            Log.e("PostProcessing", "Failed to update color preview", e, st);
+          }),
+    );
+  }
+
   Map<String, dynamic>? _cameraPreviewMethodArgs(
     CameraPreviewChangeKind changeKind,
   ) {
@@ -644,6 +716,7 @@ class PostProcessingController extends ChangeNotifier {
     _cursorAvailable = true;
     _audioGainDb = _settings.post.postAudioGainDb;
     _audioVolumePercent = _settings.post.postAudioVolumePercent;
+    _colorGrade = const ColorGrade();
     _cameraPath = null;
     _cameraState = null;
     _cameraExportCapabilities = const CameraExportCapabilities.allSupported();

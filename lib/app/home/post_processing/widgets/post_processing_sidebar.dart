@@ -11,6 +11,8 @@ import 'package:clingfy/app/home/post_processing/widgets/post_cursor_section.dar
 import 'package:clingfy/app/home/post_processing/widgets/post_export_settings_section.dart';
 import 'package:clingfy/app/home/post_processing/widgets/post_layout_section.dart';
 import 'package:clingfy/app/home/post_processing/widgets/post_zoom_section.dart';
+import 'package:clingfy/app/home/post_processing/widgets/post_color_grade_section.dart';
+import 'package:clingfy/core/timeline/model/color_grade.dart';
 import 'package:flutter/material.dart' hide PlatformMenuItem;
 
 class PostProcessingSidebarRail extends StatelessWidget {
@@ -181,6 +183,14 @@ class PostProcessingSidebar extends StatelessWidget {
   final ValueChanged<Offset> onCameraManualCenterSnapped;
   final Function(double) onAudioGainChanged;
   final Function(double) onAudioGainChangeEnd;
+  final ColorGrade colorGrade;
+  final ValueChanged<bool> onColorAutoEnhanceChanged;
+  final ValueChanged<double> onColorExposureChanged;
+  final ValueChanged<double> onColorContrastChanged;
+  final ValueChanged<double> onColorSaturationChanged;
+  final ValueChanged<double> onColorTemperatureChanged;
+  final ValueChanged<double> onColorTintChanged;
+  final VoidCallback onColorChangeEnd;
   final Function(double) onAudioVolumeChanged;
   final Function(double) onAudioVolumeChangeEnd;
   final Function(bool) onAutoNormalizeOnExportChanged;
@@ -223,6 +233,14 @@ class PostProcessingSidebar extends StatelessWidget {
     required this.onZoomFactorChanged,
     required this.onZoomFactorChangeEnd,
     required this.onZoomEffectEnabledChanged,
+    required this.colorGrade,
+    required this.onColorAutoEnhanceChanged,
+    required this.onColorExposureChanged,
+    required this.onColorContrastChanged,
+    required this.onColorSaturationChanged,
+    required this.onColorTemperatureChanged,
+    required this.onColorTintChanged,
+    required this.onColorChangeEnd,
     required this.onPickImage,
     required this.hasCameraAsset,
     required this.cameraExportCapabilities,
@@ -421,6 +439,16 @@ class PostProcessingSidebar extends StatelessWidget {
         onZoomEffectEnabledChanged: onZoomEffectEnabledChanged,
         onZoomFactorChanged: onZoomFactorChanged,
         onZoomFactorChangeEnd: onZoomFactorChangeEnd,
+      ),
+      PostColorGradeSection(
+        colorGrade: colorGrade,
+        onAutoEnhanceChanged: onColorAutoEnhanceChanged,
+        onExposureChanged: onColorExposureChanged,
+        onContrastChanged: onColorContrastChanged,
+        onSaturationChanged: onColorSaturationChanged,
+        onTemperatureChanged: onColorTemperatureChanged,
+        onTintChanged: onColorTintChanged,
+        onChangeEnd: onColorChangeEnd,
       ),
     ];
   }

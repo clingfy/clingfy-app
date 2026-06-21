@@ -2,6 +2,7 @@ import 'dart:async';
 
 import 'package:clingfy/core/bridges/native_bridge.dart';
 import 'package:clingfy/core/bridges/native_method_channel.dart';
+import 'package:clingfy/core/timeline/model/color_grade.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_test/flutter_test.dart';
 
@@ -306,5 +307,61 @@ void main() {
         await NativeBridge.instance.debugForceNativeCrash();
       },
     );
+  });
+
+  group('color grade bridge', () {
+    const channel = MethodChannel(NativeChannel.screenRecorder);
+    final messenger =
+        TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger;
+
+    tearDown(() {
+      messenger.setMockMethodCallHandler(channel, null);
+    });
+
+    test('previewSetColorGrade forwards the grade map and sessionId', () async {
+      MethodCall? captured;
+      messenger.setMockMethodCallHandler(channel, (call) async {
+        captured = call;
+        return null;
+      });
+
+      await NativeBridge.instance.previewSetColorGrade(
+        colorGrade: const ColorGrade(
+          autoEnabled: true,
+          exposure: 0.2,
+          contrast: -0.1,
+          saturation: 0.3,
+          temperature: 0.05,
+          tint: -0.02,
+        ),
+        sessionId: 'sess-1',
+      );
+
+      expect(captured?.method, 'previewSetColorGrade');
+      final args = captured?.arguments as Map;
+      expect(args['sessionId'], 'sess-1');
+      final grade = args['colorGrade'] as Map;
+      expect(grade['autoEnabled'], isTrue);
+      expect(grade['exposure'], 0.2);
+      expect(grade['contrast'], -0.1);
+      expect(grade['saturation'], 0.3);
+    });
+
+    test('previewSetColorGrade omits sessionId when null', () async {
+      MethodCall? captured;
+      messenger.setMockMethodCallHandler(channel, (call) async {
+        captured = call;
+        return null;
+      });
+
+      await NativeBridge.instance.previewSetColorGrade(
+        colorGrade: const ColorGrade(exposure: 0.5),
+        sessionId: null,
+      );
+
+      final args = captured?.arguments as Map;
+      expect(args.containsKey('sessionId'), isFalse);
+      expect((args['colorGrade'] as Map)['exposure'], 0.5);
+    });
   });
 }

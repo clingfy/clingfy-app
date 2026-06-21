@@ -6,6 +6,7 @@
 //
 
 import AVFoundation
+import CoreImage
 import Cocoa
 import FlutterMacOS
 import Foundation
@@ -1666,6 +1667,10 @@ final class InlinePreviewView: NSView {
   private var cursorLayer: CALayer?
   private var currentScene: PreviewScene?
   private var currentCompositionParams: CompositionParams?
+  /// Live color grade applied to the preview composition. Kept separate from
+  /// `currentCompositionParams` so audio/zoom tweaks (which rebuild params)
+  /// don't drop it; re-applied on every composition (re)build.
+  private var currentColorGrade: ColorGrade = .identity
   private var currentCameraCompositionParams: CameraCompositionParams?
   private var currentLayout: CompositionBuilder.PreviewCompositionResult?
   private var pendingCompositionParams: CompositionParams?
@@ -2074,7 +2079,10 @@ final class InlinePreviewView: NSView {
     pendingCameraCompositionParams = nil
 
     if let item = player?.currentItem {
-      item.videoComposition = layout.composition
+      item.videoComposition = makeGradedComposition(
+        layout: layout,
+        grade: currentColorGrade
+      )
       if #available(macOS 10.15, *) {
         item.preferredMaximumResolution = layout.renderSize
       }
@@ -2546,6 +2554,52 @@ final class InlinePreviewView: NSView {
         "gainDb": gainDb,
         "volumePercent": volumePercent,
         "tracks": item.asset.tracks(withMediaType: .audio).count,
+      ])
+  }
+
+  /// Builds the player composition for [layout], inserting the color-grade
+  /// CIFilter pass when [grade] is non-identity. Returns the layout's own
+  /// composition unchanged when there is nothing to grade, so color-off is a
+  /// zero-cost passthrough.
+  private func makeGradedComposition(
+    layout: CompositionBuilder.PreviewCompositionResult,
+    grade: ColorGrade
+  ) -> AVVideoComposition {
+    guard !grade.isIdentity, let asset = player?.currentItem?.asset else {
+      return layout.composition
+    }
+    let base = layout.composition
+    let graded = AVMutableVideoComposition(asset: asset) { request in
+      let output = ColorGradeRenderer.apply(request.sourceImage, grade: grade)
+      request.finish(with: output, context: nil)
+    }
+    graded.renderSize = base.renderSize
+    graded.frameDuration = base.frameDuration
+    VideoColorPipeline.applyOutputColorProperties(to: graded)
+    return graded
+  }
+
+  /// Live-updates the preview color grade as the user drags the sliders.
+  /// Stores the grade and swaps the player item's videoComposition so the next
+  /// frame reflects it. No-op storage when no preview item exists yet.
+  func updateColorGradeOnly(_ grade: ColorGrade) {
+    currentColorGrade = grade
+    guard let item = player?.currentItem, let layout = currentLayout else {
+      NativeLogger.d(
+        "Player", "updateColorGradeOnly: stored (no live item yet)",
+        context: ["identity": grade.isIdentity])
+      return
+    }
+    item.videoComposition = makeGradedComposition(layout: layout, grade: grade)
+    needsDisplay = true
+    NativeLogger.d(
+      "Player", "updateColorGradeOnly: applied",
+      context: [
+        "exposure": grade.exposure,
+        "contrast": grade.contrast,
+        "saturation": grade.saturation,
+        "temperature": grade.temperature,
+        "tint": grade.tint,
       ])
   }
 

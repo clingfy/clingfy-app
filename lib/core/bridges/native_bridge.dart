@@ -2,6 +2,7 @@ import 'package:flutter/services.dart';
 import 'package:clingfy/core/bridges/native_method_channel.dart';
 import 'package:clingfy/app/infrastructure/logging/logger_service.dart';
 import 'package:clingfy/core/models/app_models.dart';
+import 'package:clingfy/core/timeline/model/color_grade.dart';
 import 'package:clingfy/core/models/startup_recovery_report.dart';
 import 'package:clingfy/core/models/storage_snapshot.dart';
 import 'package:clingfy/core/permissions/models/windows_permission_details.dart';
@@ -386,6 +387,19 @@ class NativeBridge {
       if (cameraPath != null) 'cameraPath': cameraPath,
       'cameraPreviewChangeKind': changeKind.name,
       ...?cameraState?.toMap(),
+    });
+  }
+
+  /// Pushes the canvas-wide color grade to the live macOS preview. No-op on
+  /// platforms whose native side stubs the method (Windows). Keep the method
+  /// name in sync with the Swift `previewSetColorGrade` handler.
+  Future<void> previewSetColorGrade({
+    required ColorGrade colorGrade,
+    required String? sessionId,
+  }) async {
+    await _nativeBridge.invokeMethod<void>('previewSetColorGrade', {
+      'colorGrade': colorGrade.toMap(),
+      if (sessionId != null) 'sessionId': sessionId,
     });
   }
 

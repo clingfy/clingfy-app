@@ -1948,6 +1948,48 @@ abstract class AppLocalizations {
   /// **'Redo last action'**
   String get zoomRedoLastAction;
 
+  /// No description provided for @colorCorrection.
+  ///
+  /// In en, this message translates to:
+  /// **'Color Correction'**
+  String get colorCorrection;
+
+  /// No description provided for @autoEnhance.
+  ///
+  /// In en, this message translates to:
+  /// **'Auto-enhance'**
+  String get autoEnhance;
+
+  /// No description provided for @exposure.
+  ///
+  /// In en, this message translates to:
+  /// **'Exposure'**
+  String get exposure;
+
+  /// No description provided for @contrast.
+  ///
+  /// In en, this message translates to:
+  /// **'Contrast'**
+  String get contrast;
+
+  /// No description provided for @saturation.
+  ///
+  /// In en, this message translates to:
+  /// **'Saturation'**
+  String get saturation;
+
+  /// No description provided for @temperature.
+  ///
+  /// In en, this message translates to:
+  /// **'Temperature'**
+  String get temperature;
+
+  /// No description provided for @tint.
+  ///
+  /// In en, this message translates to:
+  /// **'Tint'**
+  String get tint;
+
   /// No description provided for @zoomSelectionCleared.
   ///
   /// In en, this message translates to:

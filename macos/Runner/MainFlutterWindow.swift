@@ -965,6 +965,24 @@ class MainFlutterWindow: NSWindow {
             FlutterError(code: NativeErrorCode.badArgs, message: "Missing segments", details: nil))
         }
 
+      case "previewSetColorGrade":
+        if let args = call.arguments as? [String: Any],
+          let gradeDict = args["colorGrade"] as? [String: Any]
+        {
+          let sessionId = args["sessionId"] as? String
+          let grade = ColorGrade.fromFlutter(gradeDict)
+          if let previewView = inlinePreviewViewInstance,
+            sessionId == nil || previewView.currentSessionId == sessionId
+          {
+            previewView.updateColorGradeOnly(grade)
+          }
+          result(nil)
+        } else {
+          result(
+            FlutterError(
+              code: NativeErrorCode.badArgs, message: "Missing colorGrade", details: nil))
+        }
+
       case "previewGetZoomCapabilities":
         // Phase 1 contract: this build supports the cursor-samples
         // query, fixed-target preview rendering, and fixed-target

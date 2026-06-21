@@ -982,6 +982,27 @@ class AppLocalizationsAr extends AppLocalizations {
   String get zoomRedoLastAction => 'إعادة آخر إجراء';
 
   @override
+  String get colorCorrection => 'تصحيح الألوان';
+
+  @override
+  String get autoEnhance => 'تحسين تلقائي';
+
+  @override
+  String get exposure => 'التعريض';
+
+  @override
+  String get contrast => 'التباين';
+
+  @override
+  String get saturation => 'التشبع';
+
+  @override
+  String get temperature => 'الحرارة';
+
+  @override
+  String get tint => 'الصبغة';
+
+  @override
   String get zoomSelectionCleared => 'تم مسح التحديد';
 
   @override
