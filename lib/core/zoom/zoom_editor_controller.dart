@@ -6,6 +6,7 @@ import 'package:clingfy/core/models/app_models.dart';
 import 'package:clingfy/core/bridges/native_bridge.dart';
 import 'package:clingfy/core/zoom/zoom_focus_heuristic.dart';
 import 'package:clingfy/core/zoom/zoom_segment_merge.dart';
+import 'package:clingfy/core/timeline/timeline_timebase.dart';
 import 'package:clingfy/app/infrastructure/logging/logger_service.dart';
 import 'package:uuid/uuid.dart';
 
@@ -216,13 +217,15 @@ class ZoomEditorController extends ChangeNotifier {
   final String videoPath;
   final int durationMs;
   final String? sessionId;
+  final TimelineTimebase _timebase;
 
   ZoomEditorController({
     required NativeBridge nativeBridge,
     required this.videoPath,
     required this.durationMs,
     this.sessionId,
-  }) : _nativeBridge = nativeBridge;
+  }) : _nativeBridge = nativeBridge,
+       _timebase = TimelineTimebase(durationMs);
 
   List<ZoomSegment> _autoSegments = [];
   List<ZoomSegment> _manualSegments = [];
@@ -293,8 +296,8 @@ class ZoomEditorController extends ChangeNotifier {
 
   String? get primarySelectedSegmentId => _primarySelectedSegmentId;
 
-  static const double frameMs = 1000 / 60;
-  static int get minDurationMs => (frameMs * 2).round();
+  static const double frameMs = TimelineTimebase.frameMs;
+  static int get minDurationMs => TimelineTimebase.minDurationMs;
 
   bool _isTombstone(ZoomSegment s) =>
       s.baseId != null && (s.endMs <= s.startMs);
@@ -1640,16 +1643,8 @@ class ZoomEditorController extends ChangeNotifier {
     return merged;
   }
 
-  int _snapToGrid(int ms) {
-    final snapped = (ms / frameMs).round() * frameMs;
-    return snapped.round().clamp(0, durationMs);
-  }
-
-  int _normalizeEditableMs(int ms) {
-    final clamped = ms.clamp(0, durationMs);
-    if (!_snappingEnabled) return clamped;
-    return _snapToGrid(clamped);
-  }
+  int _normalizeEditableMs(int ms) =>
+      _timebase.normalizeEditableMs(ms, snapping: _snappingEnabled);
 
   /// Public accessor mirroring [_normalizeEditableMs]. UI surfaces such as
   /// hover ghosts can use this to preview the same ms the controller would
