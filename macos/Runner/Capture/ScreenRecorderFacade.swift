@@ -1366,6 +1366,7 @@ final class ScreenRecorderFacade: NSObject {
     targetLoudnessDbfs: Double,
     cameraPath: String?,
     cameraParams: CameraCompositionParams?,
+    colorGrade: ColorGrade = .identity,
     onProgress: ((Double) -> Void)? = nil,
     result: @escaping FlutterResult
   ) {
@@ -1398,7 +1399,8 @@ final class ScreenRecorderFacade: NSObject {
         autoNormalizeOnExport: autoNormalizeOnExport,
         targetLoudnessDbfs: targetLoudnessDbfs,
         cameraPath: cameraPath,
-        cameraParams: cameraParams
+        cameraParams: cameraParams,
+        colorGrade: colorGrade
       ),
       dependencies: .init(
         loadRecordingProject: { [unowned self] path in

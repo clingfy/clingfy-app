@@ -1068,6 +1068,10 @@ class PostProcessingController extends ChangeNotifier {
         'audio.target_loudness_dbfs',
         targetLoudnessDbfs.toStringAsFixed(1),
       );
+      _activeExportTransaction!.setTag(
+        'color.grade_active',
+        _colorGrade.isIdentity ? 'false' : 'true',
+      );
       if (diagnostics.backend != null && diagnostics.backend!.isNotEmpty) {
         _activeExportTransaction!.setTag(
           'recording.backend',
@@ -1102,6 +1106,10 @@ class PostProcessingController extends ChangeNotifier {
         'showCursor': _showCursor,
         'audioGainDb': _audioGainDb,
         'audioVolumePercent': _audioVolumePercent,
+        // Bake the same grade the user sees in the live preview into the
+        // exported file. Identity (no adjustment) is a no-op on the native
+        // side, so it's always safe to send.
+        'colorGrade': _colorGrade.toMap(),
         'autoNormalizeOnExport': autoNormalizeOnExport,
         'targetLoudnessDbfs': targetLoudnessDbfs,
         'filename': dialogResult.fileName.trim(),

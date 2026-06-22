@@ -1398,6 +1398,7 @@ final class LetterboxExporter {
     backgroundColor: Int? = nil,
     backgroundImagePath: String? = nil,
     backgroundPreset: CanvasBackgroundPreset? = nil,
+    colorGrade: ColorGrade = .identity,
     logOutputInfo: Bool = false,
     completion: @escaping (Result<URL, Error>) -> Void
   ) {
@@ -1650,6 +1651,19 @@ final class LetterboxExporter {
     var didLogScreenSourceColorMetadata = false
     var didLogCameraSourceColorMetadata = false
     let directRenderContext = VideoColorPipeline.makeCIContext()
+    if !colorGrade.isIdentity {
+      NativeLogger.i(
+        "Export", "Manual render applying color grade",
+        context: [
+          "renderPath": "manual_reader_writer",
+          "hasInlineCamera": inlineCameraRenderPlan != nil,
+          "exposure": colorGrade.exposure,
+          "contrast": colorGrade.contrast,
+          "saturation": colorGrade.saturation,
+          "temperature": colorGrade.temperature,
+          "tint": colorGrade.tint,
+        ])
+    }
     let inlineCameraRenderer = inlineCameraRenderPlan.map { _ in
       InlineCameraRenderer(
         renderSize: renderSize,
@@ -1914,6 +1928,7 @@ final class LetterboxExporter {
               cameraTrack: inlineCameraTrack!,
               presentationTime: sampleTime,
               plan: inlineCameraRenderPlan,
+              screenColorGrade: colorGrade,
               to: renderedPixelBuffer
             )
           } else {
@@ -1940,9 +1955,16 @@ final class LetterboxExporter {
               )
             }
 
+            // Bake the canvas-wide color grade into the composed frame. Identity
+            // is a passthrough, so this is a no-op unless the user adjusted color.
+            let gradedImage =
+              colorGrade.isIdentity
+              ? imageToRender
+              : ColorGradeRenderer.apply(imageToRender, grade: colorGrade)
+
             self.clearPixelBuffer(renderedPixelBuffer)
             directRenderContext.render(
-              imageToRender,
+              gradedImage,
               to: renderedPixelBuffer,
               bounds: renderBounds,
               colorSpace: VideoColorPipeline.workingColorSpace
@@ -2051,6 +2073,7 @@ final class LetterboxExporter {
     autoNormalizeOnExport: Bool = false,
     targetLoudnessDbfs: Double = -16.0,
     cameraParams: CameraCompositionParams? = nil,
+    colorGrade: ColorGrade = .identity,
     onProgress: ((Double) -> Void)? = nil,
     completion: @escaping (Result<URL, Error>) -> Void
   ) {
@@ -2165,6 +2188,7 @@ final class LetterboxExporter {
     )
     params.zoomSegments = effectiveSegments
     params.backgroundPreset = backgroundPreset
+    params.colorGrade = colorGrade.isIdentity ? nil : colorGrade
 
     let resolvedAudioMix = resolveAudioMixControls(
       asset: asset,
@@ -2426,11 +2450,17 @@ final class LetterboxExporter {
         "finalURL": finalURL.path,
       ]
       exportColorContext.forEach { exportStartContext[$0.key] = $0.value }
+      // A non-identity color grade forces the manual reader/writer path: the
+      // fast AVAssetExportSession can only run an instruction/animation-tool
+      // composition, not the per-frame CIFilter pass the grade needs.
+      let hasColorGrade = !colorGrade.isIdentity
       let shouldUseManualRenderExport =
         cameraAssetIsPreStyled
         || comp.inlineCameraRenderPlan != nil
         || comp.videoComposition.animationTool != nil
+        || hasColorGrade
       exportStartContext["finalRenderPath"] = shouldUseManualRenderExport ? "manual_reader_writer" : "asset_export_session"
+      exportStartContext["colorGradeActive"] = hasColorGrade
       NativeLogger.i(
         "Export",
         "Starting final export session",
@@ -2465,6 +2495,7 @@ final class LetterboxExporter {
             backgroundColor: backgroundColor,
             backgroundImagePath: backgroundImagePath,
             backgroundPreset: backgroundPreset,
+            colorGrade: colorGrade,
             logOutputInfo: true,
             completion: completion
           )

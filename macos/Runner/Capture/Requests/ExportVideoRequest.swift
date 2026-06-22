@@ -38,6 +38,9 @@ struct ExportVideoRequest: Equatable {
   let autoNormalizeOnExport: Bool
   let targetLoudnessDbfs: Double
   let cameraPath: String?
+  /// Canvas-wide color grade baked into the exported screen content. Defaults
+  /// to `.identity` (no adjustment) for older Flutter payloads that omit it.
+  let colorGrade: ColorGrade
 
   /// The effective zoom factor after applying the legacy/explicit enable contract.
   var zoomFactor: Double { zoomEffectEnabled ? rawZoomFactor : 1.0 }
@@ -78,7 +81,8 @@ struct ExportVideoRequest: Equatable {
       audioVolumePercent: (args["audioVolumePercent"] as? Double) ?? 100.0,
       autoNormalizeOnExport: (args["autoNormalizeOnExport"] as? Bool) ?? false,
       targetLoudnessDbfs: (args["targetLoudnessDbfs"] as? Double) ?? -16.0,
-      cameraPath: args["cameraPath"] as? String
+      cameraPath: args["cameraPath"] as? String,
+      colorGrade: ColorGrade.fromFlutter(args["colorGrade"] as? [String: Any])
     )
   }
 }
