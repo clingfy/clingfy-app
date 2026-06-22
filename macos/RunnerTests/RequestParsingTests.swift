@@ -78,6 +78,8 @@ final class ExportVideoRequestParsingTests: XCTestCase {
     XCTAssertFalse(r.autoNormalizeOnExport)
     XCTAssertEqual(r.targetLoudnessDbfs, -16.0)
     XCTAssertNil(r.cameraPath)
+    XCTAssertEqual(r.colorGrade, .identity)
+    XCTAssertTrue(r.colorGrade.isIdentity)
   }
 
   func testFullyPopulated() {
@@ -89,6 +91,10 @@ final class ExportVideoRequestParsingTests: XCTestCase {
       "format": "mp4", "codec": "h264", "bitrate": "high", "audioGainDb": -3.0,
       "audioVolumePercent": 80.0, "autoNormalizeOnExport": true, "targetLoudnessDbfs": -14.0,
       "cameraPath": "/cam.mov",
+      "colorGrade": [
+        "autoEnabled": true, "exposure": 0.2, "contrast": -0.1,
+        "saturation": 0.3, "temperature": 0.05, "tint": -0.02,
+      ],
     ])!
     XCTAssertEqual(r.layout, "16:9")
     XCTAssertEqual(r.resolution, "1080p")
@@ -110,6 +116,13 @@ final class ExportVideoRequestParsingTests: XCTestCase {
     XCTAssertTrue(r.autoNormalizeOnExport)
     XCTAssertEqual(r.targetLoudnessDbfs, -14.0)
     XCTAssertEqual(r.cameraPath, "/cam.mov")
+    XCTAssertTrue(r.colorGrade.autoEnabled)
+    XCTAssertEqual(r.colorGrade.exposure, 0.2, accuracy: 1e-9)
+    XCTAssertEqual(r.colorGrade.contrast, -0.1, accuracy: 1e-9)
+    XCTAssertEqual(r.colorGrade.saturation, 0.3, accuracy: 1e-9)
+    XCTAssertEqual(r.colorGrade.temperature, 0.05, accuracy: 1e-9)
+    XCTAssertEqual(r.colorGrade.tint, -0.02, accuracy: 1e-9)
+    XCTAssertFalse(r.colorGrade.isIdentity)
   }
 
   // The zoom-effect derivation contract is load-bearing — pin every branch.
