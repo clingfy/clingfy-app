@@ -1,5 +1,6 @@
 import AVFoundation
 import Cocoa
+import CoreImage
 import FlutterMacOS
 import ScreenCaptureKit
 import XCTest
@@ -7593,5 +7594,75 @@ final class ScreenRecorderFacadeSeparateCameraTests: XCTestCase {
       cameraChromaKeyStrength: 0.4,
       cameraChromaKeyColorArgb: nil
     )
+  }
+}
+
+final class ColorGradeTests: XCTestCase {
+  func testFromFlutterParsesAllFields() {
+    let grade = ColorGrade.fromFlutter([
+      "autoEnabled": true,
+      "exposure": 0.2,
+      "contrast": -0.1,
+      "saturation": 0.3,
+      "temperature": 0.05,
+      "tint": -0.02,
+    ])
+    XCTAssertTrue(grade.autoEnabled)
+    XCTAssertEqual(grade.exposure, 0.2, accuracy: 1e-9)
+    XCTAssertEqual(grade.contrast, -0.1, accuracy: 1e-9)
+    XCTAssertEqual(grade.saturation, 0.3, accuracy: 1e-9)
+    XCTAssertEqual(grade.temperature, 0.05, accuracy: 1e-9)
+    XCTAssertEqual(grade.tint, -0.02, accuracy: 1e-9)
+    XCTAssertFalse(grade.isIdentity)
+  }
+
+  func testFromFlutterDefaultsOnNilAndMissingKeys() {
+    XCTAssertTrue(ColorGrade.fromFlutter(nil).isIdentity)
+    let partial = ColorGrade.fromFlutter(["exposure": 0.5])
+    XCTAssertEqual(partial.exposure, 0.5, accuracy: 1e-9)
+    XCTAssertEqual(partial.contrast, 0, accuracy: 1e-9)
+    XCTAssertFalse(partial.autoEnabled)
+  }
+
+  func testIsIdentityIgnoresAutoFlagWhenNumbersAreNeutral() {
+    // The Dart auto-enhance bakes deltas into the numbers, so auto-on with all
+    // zeros has no visual effect and must be treated as identity (skip pass).
+    let grade = ColorGrade(
+      autoEnabled: true, exposure: 0, contrast: 0,
+      saturation: 0, temperature: 0, tint: 0)
+    XCTAssertTrue(grade.isIdentity)
+  }
+
+  func testApplyIdentityPreservesExtent() {
+    let extent = CGRect(x: 0, y: 0, width: 4, height: 4)
+    let source = CIImage(color: CIColor(red: 0.5, green: 0.5, blue: 0.5))
+      .cropped(to: extent)
+    let out = ColorGradeRenderer.apply(source, grade: .identity)
+    XCTAssertEqual(out.extent, extent)
+  }
+
+  func testApplyNonIdentityChangesPixelsAndKeepsExtent() {
+    let extent = CGRect(x: 0, y: 0, width: 4, height: 4)
+    let source = CIImage(color: CIColor(red: 0.4, green: 0.4, blue: 0.4))
+      .cropped(to: extent)
+    let grade = ColorGrade(
+      autoEnabled: false, exposure: 0, contrast: 0.6,
+      saturation: 0, temperature: 0, tint: 0)
+    let out = ColorGradeRenderer.apply(source, grade: grade)
+    XCTAssertEqual(out.extent, extent, "color pass must preserve extent")
+
+    let ctx = CIContext(options: [.workingColorSpace: NSNull()])
+    let space = CGColorSpaceCreateDeviceRGB()
+    let pixelBounds = CGRect(x: 0, y: 0, width: 1, height: 1)
+    var srcPixel = [UInt8](repeating: 0, count: 4)
+    var outPixel = [UInt8](repeating: 0, count: 4)
+    ctx.render(
+      source, toBitmap: &srcPixel, rowBytes: 4, bounds: pixelBounds,
+      format: .RGBA8, colorSpace: space)
+    ctx.render(
+      out, toBitmap: &outPixel, rowBytes: 4, bounds: pixelBounds,
+      format: .RGBA8, colorSpace: space)
+    XCTAssertNotEqual(
+      srcPixel, outPixel, "contrast adjustment should change pixel values")
   }
 }

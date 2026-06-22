@@ -5,6 +5,7 @@ import 'package:clingfy/app/home/recording/recording_controller.dart';
 import 'package:clingfy/app/home/post_processing/widgets/post_processing_sidebar.dart';
 import 'package:clingfy/app/settings/settings_controller.dart';
 import 'package:clingfy/core/models/app_models.dart';
+import 'package:clingfy/core/timeline/model/color_grade.dart';
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 
@@ -60,6 +61,7 @@ class PostProcessingSidebarContainer extends StatelessWidget {
         bool zoomEffectEnabled,
         double gain,
         double volume,
+        ColorGrade colorGrade,
         bool hasCameraAsset,
         CameraCompositionState? cameraState,
         CameraExportCapabilities cameraExportCapabilities,
@@ -80,6 +82,10 @@ class PostProcessingSidebarContainer extends StatelessWidget {
         zoomEffectEnabled: p.zoomEffectEnabled,
         gain: p.audioGainDb,
         volume: p.audioVolumePercent,
+        // Part of the record so the sidebar rebuilds when the grade changes —
+        // relies on ColorGrade value equality. Without it the color sliders
+        // stayed frozen even though the preview updated.
+        colorGrade: p.colorGrade,
         hasCameraAsset: p.hasCameraAsset,
         cameraState: p.cameraState,
         cameraExportCapabilities: p.cameraExportCapabilities,
@@ -144,6 +150,14 @@ class PostProcessingSidebarContainer extends StatelessWidget {
               onZoomEffectEnabledChanged: post.setZoomEffectEnabled,
               onAudioGainChanged: post.setAudioGainDb,
               onAudioGainChangeEnd: post.setAudioGainDbEnd,
+              colorGrade: vm.colorGrade,
+              onColorAutoEnhanceChanged: post.setColorGradeAutoEnhance,
+              onColorExposureChanged: post.setColorGradeExposure,
+              onColorContrastChanged: post.setColorGradeContrast,
+              onColorSaturationChanged: post.setColorGradeSaturation,
+              onColorTemperatureChanged: post.setColorGradeTemperature,
+              onColorTintChanged: post.setColorGradeTint,
+              onColorChangeEnd: post.commitColorGrade,
               onAudioVolumeChanged: post.setAudioVolumePercent,
               onAudioVolumeChangeEnd: post.setAudioVolumePercentEnd,
               onCameraVisibleChanged: post.setCameraVisible,

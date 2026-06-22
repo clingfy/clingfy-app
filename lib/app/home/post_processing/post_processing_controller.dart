@@ -9,6 +9,8 @@ import 'package:clingfy/core/export/models/export_settings_types.dart';
 import 'package:clingfy/l10n/app_localizations.dart';
 import 'package:clingfy/app/infrastructure/logging/logger_service.dart';
 import 'package:clingfy/core/models/app_models.dart';
+import 'package:clingfy/core/timeline/model/color_grade.dart';
+import 'package:clingfy/core/color/auto_grade_heuristic.dart';
 import 'package:clingfy/core/models/background_preset_catalog.dart';
 import 'package:clingfy/app/settings/settings_controller.dart';
 import 'package:clingfy/core/bridges/native_bridge.dart';
@@ -46,6 +48,7 @@ class PostProcessingController extends ChangeNotifier {
     _warningSub?.cancel();
     _cameraManualPositionSub?.cancel();
     _audioPreviewDebouncer.dispose();
+    _colorGradePreviewThrottler.dispose();
     _cameraManualPreviewThrottler.dispose();
     super.dispose();
   }
@@ -112,6 +115,16 @@ class PostProcessingController extends ChangeNotifier {
   final AudioDebouncer _audioPreviewDebouncer = AudioDebouncer(
     delay: Duration(milliseconds: 150),
   );
+  ColorGrade _colorGrade = const ColorGrade();
+  // Color edits stream live while the slider is dragged. A *throttle*
+  // (leading + trailing) pushes the first change immediately and then at most
+  // once per interval, so the preview tracks the drag. A trailing debounce kept
+  // deferring the push until the drag settled, which is why color only appeared
+  // once the slider was dropped. The slider's onChangeEnd still flushes the
+  // final value via [commitColorGrade].
+  final ActionThrottler _colorGradePreviewThrottler = ActionThrottler(
+    interval: Duration(milliseconds: 40),
+  );
   final ActionThrottler _cameraManualPreviewThrottler = ActionThrottler();
   CameraPreviewChangeKind _pendingCameraPreviewChangeKind =
       CameraPreviewChangeKind.none;
@@ -141,6 +154,7 @@ class PostProcessingController extends ChangeNotifier {
   bool get cursorAvailable => _cursorAvailable;
   double get audioGainDb => _audioGainDb;
   double get audioVolumePercent => _audioVolumePercent;
+  ColorGrade get colorGrade => _colorGrade;
   String? get cameraPath => _cameraPath;
   bool get hasCameraAsset => _cameraPath != null && _cameraPath!.isNotEmpty;
   CameraCompositionState? get cameraState => _cameraState;
@@ -557,6 +571,85 @@ class PostProcessingController extends ChangeNotifier {
     );
   }
 
+  // --- Color grade ---
+
+  void setColorGradeExposure(double v) {
+    _colorGrade = _colorGrade.copyWith(exposure: v.clamp(-1.0, 1.0));
+    notifyListeners();
+    _schedulePreviewColorGrade();
+  }
+
+  void setColorGradeContrast(double v) {
+    _colorGrade = _colorGrade.copyWith(contrast: v.clamp(-1.0, 1.0));
+    notifyListeners();
+    _schedulePreviewColorGrade();
+  }
+
+  void setColorGradeSaturation(double v) {
+    _colorGrade = _colorGrade.copyWith(saturation: v.clamp(-1.0, 1.0));
+    notifyListeners();
+    _schedulePreviewColorGrade();
+  }
+
+  void setColorGradeTemperature(double v) {
+    _colorGrade = _colorGrade.copyWith(temperature: v.clamp(-1.0, 1.0));
+    notifyListeners();
+    _schedulePreviewColorGrade();
+  }
+
+  void setColorGradeTint(double v) {
+    _colorGrade = _colorGrade.copyWith(tint: v.clamp(-1.0, 1.0));
+    notifyListeners();
+    _schedulePreviewColorGrade();
+  }
+
+  /// Flush the debounce and push the final grade immediately (slider release).
+  void commitColorGrade() {
+    _colorGradePreviewThrottler.cancel();
+    _pushPreviewColorGrade();
+  }
+
+  /// One-tap auto enhance: apply a tasteful preset, or clear back to neutral.
+  void setColorGradeAutoEnhance(bool enabled) {
+    _colorGrade = enabled ? autoEnhanceGrade() : const ColorGrade();
+    notifyListeners();
+    _colorGradePreviewThrottler.cancel();
+    _pushPreviewColorGrade();
+  }
+
+  void _schedulePreviewColorGrade() {
+    _colorGradePreviewThrottler.run(_pushPreviewColorGrade);
+  }
+
+  void _pushPreviewColorGrade() {
+    if (_previewPath == null) {
+      Log.d(
+        "PostProcessing",
+        "Skipping color preview push (no preview path yet)",
+      );
+      return;
+    }
+    Log.d("PostProcessing", "Pushing color grade to preview", null, null, {
+      'sessionId': _activeSessionId,
+      'autoEnabled': _colorGrade.autoEnabled,
+      'exposure': _colorGrade.exposure,
+      'contrast': _colorGrade.contrast,
+      'saturation': _colorGrade.saturation,
+      'temperature': _colorGrade.temperature,
+      'tint': _colorGrade.tint,
+    });
+    unawaited(
+      _nativeBridge
+          .previewSetColorGrade(
+            colorGrade: _colorGrade,
+            sessionId: _activeSessionId,
+          )
+          .catchError((Object e, StackTrace st) {
+            Log.e("PostProcessing", "Failed to update color preview", e, st);
+          }),
+    );
+  }
+
   Map<String, dynamic>? _cameraPreviewMethodArgs(
     CameraPreviewChangeKind changeKind,
   ) {
@@ -644,6 +737,7 @@ class PostProcessingController extends ChangeNotifier {
     _cursorAvailable = true;
     _audioGainDb = _settings.post.postAudioGainDb;
     _audioVolumePercent = _settings.post.postAudioVolumePercent;
+    _colorGrade = const ColorGrade();
     _cameraPath = null;
     _cameraState = null;
     _cameraExportCapabilities = const CameraExportCapabilities.allSupported();

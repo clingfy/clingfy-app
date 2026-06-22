@@ -600,6 +600,9 @@ void RegisterHandlers(HandlerTable& table) {
 
   table["previewSetCameraPlacement"] = &HandlePreviewSetCameraPlacement;
   table["previewSetZoomSegments"] = &HandleNoopSetter;
+  // Color grade: macOS renders it live; Windows accepts + ignores it for now
+  // (capability-gated at the Dart/model layer) so the contract stays in sync.
+  table["previewSetColorGrade"] = &HandleNoopSetter;
   table["previewSetAudioMix"] = &HandleNoopSetter;
   table["previewSetAudioGainDb"] = &HandleNoopSetter;
 

@@ -991,6 +991,27 @@ class AppLocalizationsEn extends AppLocalizations {
   String get zoomRedoLastAction => 'Redo last action';
 
   @override
+  String get colorCorrection => 'Color Correction';
+
+  @override
+  String get autoEnhance => 'Auto-enhance';
+
+  @override
+  String get exposure => 'Exposure';
+
+  @override
+  String get contrast => 'Contrast';
+
+  @override
+  String get saturation => 'Saturation';
+
+  @override
+  String get temperature => 'Temperature';
+
+  @override
+  String get tint => 'Tint';
+
+  @override
   String get zoomSelectionCleared => 'Selection cleared';
 
   @override

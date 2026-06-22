@@ -62,4 +62,36 @@ class ColorGrade {
     temperature: temperature ?? this.temperature,
     tint: tint ?? this.tint,
   );
+
+  // Value equality so listeners (e.g. provider `Selector`s) can detect when a
+  // grade actually changed and rebuild the controls. Without this, every
+  // `copyWith` produces an instance that compares unequal by identity, which is
+  // what left the color sliders stuck while the preview still updated.
+  @override
+  bool operator ==(Object other) =>
+      identical(this, other) ||
+      other is ColorGrade &&
+          runtimeType == other.runtimeType &&
+          autoEnabled == other.autoEnabled &&
+          exposure == other.exposure &&
+          contrast == other.contrast &&
+          saturation == other.saturation &&
+          temperature == other.temperature &&
+          tint == other.tint;
+
+  @override
+  int get hashCode => Object.hash(
+    autoEnabled,
+    exposure,
+    contrast,
+    saturation,
+    temperature,
+    tint,
+  );
+
+  @override
+  String toString() =>
+      'ColorGrade(autoEnabled: $autoEnabled, exposure: $exposure, '
+      'contrast: $contrast, saturation: $saturation, '
+      'temperature: $temperature, tint: $tint)';
 }

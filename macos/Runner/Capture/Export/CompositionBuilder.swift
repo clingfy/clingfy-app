@@ -804,6 +804,98 @@ extension Array where Element == ZoomTimelineSegment {
   }
 }
 
+/// Canvas-wide color correction applied to the screen content in both the live
+/// preview and the export so the look matches. Fields are normalized to
+/// `[-1, 1]` (0 = neutral), mirroring the Dart `ColorGrade` model. `autoEnabled`
+/// is informational only — the Dart auto-enhance bakes its deltas into the
+/// numeric fields, so the renderer just applies the numbers.
+struct ColorGrade: Equatable {
+  var autoEnabled: Bool
+  var exposure: Double
+  var contrast: Double
+  var saturation: Double
+  var temperature: Double
+  var tint: Double
+
+  static let identity = ColorGrade(
+    autoEnabled: false,
+    exposure: 0,
+    contrast: 0,
+    saturation: 0,
+    temperature: 0,
+    tint: 0
+  )
+
+  /// True when no numeric adjustment is set, so the render pass can be skipped.
+  var isIdentity: Bool {
+    exposure == 0 && contrast == 0 && saturation == 0 && temperature == 0
+      && tint == 0
+  }
+
+  /// Parses the Dart `ColorGrade.toMap()` payload; tolerates missing keys.
+  static func fromFlutter(_ map: [String: Any]?) -> ColorGrade {
+    guard let map else { return .identity }
+    func number(_ key: String) -> Double {
+      if let n = map[key] as? NSNumber { return n.doubleValue }
+      if let d = map[key] as? Double { return d }
+      return 0
+    }
+    return ColorGrade(
+      autoEnabled: (map["autoEnabled"] as? Bool) ?? false,
+      exposure: number("exposure"),
+      contrast: number("contrast"),
+      saturation: number("saturation"),
+      temperature: number("temperature"),
+      tint: number("tint")
+    )
+  }
+}
+
+/// Applies a [ColorGrade] to a `CIImage` as a chained CIFilter pass. Shared by
+/// the live preview composition and the manual export render loop so the graded
+/// look is identical. Returns the input unchanged when the grade is identity.
+enum ColorGradeRenderer {
+  static func apply(_ image: CIImage, grade: ColorGrade) -> CIImage {
+    if grade.isIdentity { return image }
+    var result = image
+
+    if grade.exposure != 0 {
+      let filter = CIFilter(name: "CIExposureAdjust")
+      filter?.setValue(result, forKey: kCIInputImageKey)
+      // Map [-1, 1] -> [-1.5, +1.5] EV.
+      filter?.setValue(grade.exposure * 1.5, forKey: kCIInputEVKey)
+      if let out = filter?.outputImage { result = out }
+    }
+
+    if grade.contrast != 0 || grade.saturation != 0 {
+      let filter = CIFilter(name: "CIColorControls")
+      filter?.setValue(result, forKey: kCIInputImageKey)
+      // contrast: 1.0 neutral, map [-1, 1] -> [0.5, 1.5].
+      filter?.setValue(1.0 + grade.contrast * 0.5, forKey: kCIInputContrastKey)
+      // saturation: 1.0 neutral, map [-1, 1] -> [0.0, 2.0].
+      filter?.setValue(1.0 + grade.saturation, forKey: kCIInputSaturationKey)
+      if let out = filter?.outputImage { result = out }
+    }
+
+    if grade.temperature != 0 || grade.tint != 0 {
+      let filter = CIFilter(name: "CITemperatureAndTint")
+      filter?.setValue(result, forKey: kCIInputImageKey)
+      filter?.setValue(CIVector(x: 6500, y: 0), forKey: "inputNeutral")
+      // Positive temperature = warmer; positive tint = magenta. Raising the
+      // target neutral temperature warms the image.
+      filter?.setValue(
+        CIVector(x: 6500 + grade.temperature * 3000, y: grade.tint * 100),
+        forKey: "inputTargetNeutral"
+      )
+      if let out = filter?.outputImage { result = out }
+    }
+
+    // Filters can nudge the extent; keep the original so downstream render
+    // bounds stay correct (skip when the source extent is infinite).
+    return image.extent.isInfinite ? result : result.cropped(to: image.extent)
+  }
+}
+
 struct CompositionParams: Equatable {
   let targetSize: CGSize
   let padding: Double
@@ -826,6 +918,10 @@ struct CompositionParams: Equatable {
   /// `zoomSegments`) so existing `CompositionParams(...)` call sites that
   /// predate the preset feature compile unchanged.
   var backgroundPreset: CanvasBackgroundPreset?
+  /// Canvas-wide color grade baked into the screen content. Defaulted `var`
+  /// (like `zoomSegments` / `backgroundPreset`) so existing call sites compile
+  /// unchanged. `nil` or identity = no color pass.
+  var colorGrade: ColorGrade?
 }
 
 private enum AudioTapSampleType {
