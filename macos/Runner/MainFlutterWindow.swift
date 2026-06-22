@@ -971,6 +971,22 @@ class MainFlutterWindow: NSWindow {
         {
           let sessionId = args["sessionId"] as? String
           let grade = ColorGrade.fromFlutter(gradeDict)
+          let hasView = inlinePreviewViewInstance != nil
+          let sessionMatches =
+            sessionId == nil || inlinePreviewViewInstance?.currentSessionId == sessionId
+          NativeLogger.d(
+            "Player", "previewSetColorGrade received",
+            context: [
+              "sessionId": sessionId ?? "nil",
+              "hasPreviewView": hasView,
+              "sessionMatches": sessionMatches,
+              "identity": grade.isIdentity,
+              "exposure": grade.exposure,
+              "contrast": grade.contrast,
+              "saturation": grade.saturation,
+              "temperature": grade.temperature,
+              "tint": grade.tint,
+            ])
           if let previewView = inlinePreviewViewInstance,
             sessionId == nil || previewView.currentSessionId == sessionId
           {

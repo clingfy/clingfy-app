@@ -2569,13 +2569,43 @@ final class InlinePreviewView: NSView {
       return layout.composition
     }
     let base = layout.composition
+    let targetRenderSize = base.renderSize
     let graded = AVMutableVideoComposition(asset: asset) { request in
-      let output = ColorGradeRenderer.apply(request.sourceImage, grade: grade)
+      let source = request.sourceImage
+      let colorGraded = ColorGradeRenderer.apply(source, grade: grade)
+      // The base preview composition scales the source video track up into
+      // `renderSize` via a layer-instruction transform (s * renderScale). The
+      // CIFilter handler instead receives `sourceImage` at the track's *natural*
+      // extent and does not scale it. Without re-fitting, the graded frame fills
+      // only a sub-rect of `renderSize`, so the player layer's aspect-fill zooms
+      // into a corner (the reported "zooms to the bottom-right corner" bug).
+      // Re-fit the source extent onto `renderSize` so the graded frame matches
+      // the un-graded passthrough exactly.
+      let extent = source.extent
+      let output: CIImage
+      if extent.isInfinite || extent.width <= 0 || extent.height <= 0
+        || targetRenderSize.width <= 0 || targetRenderSize.height <= 0
+      {
+        output = colorGraded
+      } else {
+        let scaleX = targetRenderSize.width / extent.width
+        let scaleY = targetRenderSize.height / extent.height
+        let fit = CGAffineTransform(translationX: -extent.origin.x, y: -extent.origin.y)
+          .concatenating(CGAffineTransform(scaleX: scaleX, y: scaleY))
+        output = colorGraded.transformed(by: fit)
+      }
       request.finish(with: output, context: nil)
     }
-    graded.renderSize = base.renderSize
+    graded.renderSize = targetRenderSize
     graded.frameDuration = base.frameDuration
     VideoColorPipeline.applyOutputColorProperties(to: graded)
+    NativeLogger.d(
+      "Player", "makeGradedComposition: built CIFilter composition",
+      context: [
+        "renderSize":
+          "\(Int(targetRenderSize.width))x\(Int(targetRenderSize.height))",
+        "frameDurationSeconds": base.frameDuration.seconds,
+      ])
     return graded
   }
 

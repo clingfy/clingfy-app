@@ -48,7 +48,7 @@ class PostProcessingController extends ChangeNotifier {
     _warningSub?.cancel();
     _cameraManualPositionSub?.cancel();
     _audioPreviewDebouncer.dispose();
-    _colorGradePreviewDebouncer.dispose();
+    _colorGradePreviewThrottler.dispose();
     _cameraManualPreviewThrottler.dispose();
     super.dispose();
   }
@@ -116,8 +116,14 @@ class PostProcessingController extends ChangeNotifier {
     delay: Duration(milliseconds: 150),
   );
   ColorGrade _colorGrade = const ColorGrade();
-  final AudioDebouncer _colorGradePreviewDebouncer = AudioDebouncer(
-    delay: Duration(milliseconds: 120),
+  // Color edits stream live while the slider is dragged. A *throttle*
+  // (leading + trailing) pushes the first change immediately and then at most
+  // once per interval, so the preview tracks the drag. A trailing debounce kept
+  // deferring the push until the drag settled, which is why color only appeared
+  // once the slider was dropped. The slider's onChangeEnd still flushes the
+  // final value via [commitColorGrade].
+  final ActionThrottler _colorGradePreviewThrottler = ActionThrottler(
+    interval: Duration(milliseconds: 40),
   );
   final ActionThrottler _cameraManualPreviewThrottler = ActionThrottler();
   CameraPreviewChangeKind _pendingCameraPreviewChangeKind =
@@ -599,7 +605,7 @@ class PostProcessingController extends ChangeNotifier {
 
   /// Flush the debounce and push the final grade immediately (slider release).
   void commitColorGrade() {
-    _colorGradePreviewDebouncer.cancel();
+    _colorGradePreviewThrottler.cancel();
     _pushPreviewColorGrade();
   }
 
@@ -607,16 +613,31 @@ class PostProcessingController extends ChangeNotifier {
   void setColorGradeAutoEnhance(bool enabled) {
     _colorGrade = enabled ? autoEnhanceGrade() : const ColorGrade();
     notifyListeners();
-    _colorGradePreviewDebouncer.cancel();
+    _colorGradePreviewThrottler.cancel();
     _pushPreviewColorGrade();
   }
 
   void _schedulePreviewColorGrade() {
-    _colorGradePreviewDebouncer.run(_pushPreviewColorGrade);
+    _colorGradePreviewThrottler.run(_pushPreviewColorGrade);
   }
 
   void _pushPreviewColorGrade() {
-    if (_previewPath == null) return;
+    if (_previewPath == null) {
+      Log.d(
+        "PostProcessing",
+        "Skipping color preview push (no preview path yet)",
+      );
+      return;
+    }
+    Log.d("PostProcessing", "Pushing color grade to preview", null, null, {
+      'sessionId': _activeSessionId,
+      'autoEnabled': _colorGrade.autoEnabled,
+      'exposure': _colorGrade.exposure,
+      'contrast': _colorGrade.contrast,
+      'saturation': _colorGrade.saturation,
+      'temperature': _colorGrade.temperature,
+      'tint': _colorGrade.tint,
+    });
     unawaited(
       _nativeBridge
           .previewSetColorGrade(
