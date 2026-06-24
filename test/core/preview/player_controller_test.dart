@@ -208,4 +208,30 @@ void main() {
       harness.sessionId,
     );
   });
+
+  test(
+    'attaches a clip editor seeded with the raw duration once ready',
+    () async {
+      final harness = await createReadyPreviewHarness();
+      addTearDown(harness.recording.dispose);
+      addTearDown(harness.player.dispose);
+      addTearDown(harness.settings.dispose);
+
+      expect(harness.player.clipEditor, isNull);
+
+      await _emitPlayerEvent({
+        'type': 'playerTick',
+        'sessionId': harness.sessionId,
+        'positionMs': 0,
+        'durationMs': 5000,
+      });
+
+      final editor = harness.player.clipEditor;
+      expect(editor, isNotNull);
+      // Seeded with the raw recording duration as a single whole-recording clip.
+      expect(editor!.recordingDurationMs, 5000);
+      expect(editor.clips, hasLength(1));
+      expect(editor.hasCuts, isFalse);
+    },
+  );
 }

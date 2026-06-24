@@ -7,6 +7,7 @@ import 'package:clingfy/core/models/app_models.dart';
 import 'package:clingfy/app/home/recording/recording_controller.dart';
 import 'package:clingfy/app/infrastructure/logging/logger_service.dart';
 import 'package:clingfy/core/zoom/zoom_editor_controller.dart';
+import 'package:clingfy/core/clips/clip_editor_controller.dart';
 
 class PlayerController extends ChangeNotifier {
   PlayerController({required NativeBridge nativeBridge})
@@ -38,6 +39,9 @@ class PlayerController extends ChangeNotifier {
   ZoomEditorController? _zoomEditor;
   VoidCallback? _zoomEditorListener;
 
+  ClipEditorController? _clipEditor;
+  VoidCallback? _clipEditorListener;
+
   int get positionMs => _posMs;
   int get durationMs => _durMs;
   bool get isScrubbing => _scrubbing;
@@ -50,6 +54,12 @@ class PlayerController extends ChangeNotifier {
   Stream<Offset> get cameraManualPositionStream =>
       _cameraManualPositionController.stream;
   ZoomEditorController? get zoomEditor => _zoomEditor;
+
+  /// The clip (split/cut/trim/arrange) editor for the active preview, or null
+  /// before the preview is ready. Seeded with the raw recording duration, which
+  /// is known once the first `playerTick` arrives (before any cuts exist, the
+  /// emitted duration is the raw duration).
+  ClipEditorController? get clipEditor => _clipEditor;
   List<ZoomSegment> get zoomSegments => _zoomSegments;
   List<ZoomSegment>? get previewCompositionZoomSegments => _zoomEditor == null
       ? null
@@ -78,14 +88,20 @@ class PlayerController extends ChangeNotifier {
             _durMs = (event['durationMs'] as num?)?.toInt() ?? 0;
             _playerReady = _durMs > 0;
             if (_playerReady &&
-                _zoomEditor == null &&
                 _activeSessionId != null &&
                 _activePreviewPath != null &&
                 (_workflow?.phase == WorkflowPhase.previewReady ||
                     _workflow?.phase == WorkflowPhase.exporting)) {
-              unawaited(
-                _attachZoomEditor(_activeSessionId!, _activePreviewPath!),
-              );
+              if (_zoomEditor == null) {
+                unawaited(
+                  _attachZoomEditor(_activeSessionId!, _activePreviewPath!),
+                );
+              }
+              // Seed the clip editor with the raw recording duration. This first
+              // tick predates any cut, so `_durMs` is still the raw duration.
+              if (_clipEditor == null) {
+                _attachClipEditor(_activeSessionId!);
+              }
             }
             notifyListeners();
           }
@@ -184,6 +200,10 @@ class PlayerController extends ChangeNotifier {
       } else {
         _detachZoomEditor();
       }
+      // Always drop the clip editor on a session switch so the next tick
+      // re-seeds a fresh one with the new recording's raw duration (its own
+      // attach guard would otherwise keep the stale editor).
+      _detachClipEditor();
       notifyListeners();
       return;
     }
@@ -246,6 +266,39 @@ class PlayerController extends ChangeNotifier {
     _zoomSegments = [];
   }
 
+  void _attachClipEditor(String sessionId) {
+    _detachClipEditor();
+
+    final editor = ClipEditorController(
+      nativeBridge: _nativeBridge,
+      durationMs: _durMs,
+      sessionId: sessionId,
+    );
+    _clipEditor = editor;
+
+    void listener() {
+      if (_clipEditor != editor) return;
+      notifyListeners();
+    }
+
+    _clipEditorListener = listener;
+    editor.addListener(listener);
+    notifyListeners();
+  }
+
+  void _detachClipEditor() {
+    final editor = _clipEditor;
+    final listener = _clipEditorListener;
+
+    if (editor != null && listener != null) {
+      editor.removeListener(listener);
+    }
+
+    editor?.dispose();
+    _clipEditor = null;
+    _clipEditorListener = null;
+  }
+
   void _clearPlaybackState({required bool detachZoomEditor}) {
     _blockingError = null;
     _blockingErrorCode = null;
@@ -257,6 +310,7 @@ class PlayerController extends ChangeNotifier {
     _isPeeking = false;
     if (detachZoomEditor) {
       _detachZoomEditor();
+      _detachClipEditor();
     }
     notifyListeners();
   }
