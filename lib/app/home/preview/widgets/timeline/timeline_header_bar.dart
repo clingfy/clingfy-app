@@ -24,6 +24,15 @@ class TimelineHeaderBar extends StatelessWidget {
     required this.onRedo,
     required this.onToggleZoomLaneVisibility,
     required this.onToggleMarkersLaneVisibility,
+    this.showClipsControls = false,
+    this.canSplitClip = false,
+    this.canDeleteClip = false,
+    this.canUndoClips = false,
+    this.canRedoClips = false,
+    this.onSplitClip,
+    this.onDeleteClip,
+    this.onUndoClips,
+    this.onRedoClips,
   });
 
   final bool snappingEnabled;
@@ -41,6 +50,18 @@ class TimelineHeaderBar extends StatelessWidget {
   final VoidCallback? onRedo;
   final VoidCallback onToggleZoomLaneVisibility;
   final VoidCallback onToggleMarkersLaneVisibility;
+
+  // Clip (split/cut) controls — a distinct trailing group, shown only when the
+  // clip lane is live so zoom-only users see no change.
+  final bool showClipsControls;
+  final bool canSplitClip;
+  final bool canDeleteClip;
+  final bool canUndoClips;
+  final bool canRedoClips;
+  final VoidCallback? onSplitClip;
+  final VoidCallback? onDeleteClip;
+  final VoidCallback? onUndoClips;
+  final VoidCallback? onRedoClips;
 
   @override
   Widget build(BuildContext context) {
@@ -142,6 +163,57 @@ class TimelineHeaderBar extends StatelessWidget {
                         ? theme.colorScheme.onSurface.withValues(alpha: 0.85)
                         : theme.colorScheme.onSurface.withValues(alpha: 0.35),
                   ),
+                  if (showClipsControls) ...[
+                    SizedBox(width: sectionGap),
+                    Container(
+                      key: const Key('timeline_clip_controls_divider'),
+                      width: 1,
+                      height: 22,
+                      color: theme.dividerColor.withValues(alpha: 0.2),
+                    ),
+                    SizedBox(width: sectionGap),
+                    Tooltip(
+                      message: l10n.clipSplitTooltip,
+                      child: AppButton(
+                        key: const Key('timeline_clip_split_button'),
+                        label: l10n.clipSplit,
+                        icon: Icons.content_cut_rounded,
+                        size: AppButtonSize.compact,
+                        variant: AppButtonVariant.secondary,
+                        onPressed: canSplitClip ? onSplitClip : null,
+                      ),
+                    ),
+                    SizedBox(width: controlGap),
+                    AppIconButton(
+                      key: const Key('timeline_clip_delete_button'),
+                      icon: Icons.backspace_outlined,
+                      tooltip: l10n.clipRemoveSelected,
+                      onPressed: canDeleteClip ? onDeleteClip : null,
+                      color: canDeleteClip
+                          ? theme.colorScheme.error
+                          : theme.colorScheme.onSurface.withValues(alpha: 0.35),
+                    ),
+                    SizedBox(width: controlGap),
+                    AppIconButton(
+                      key: const Key('timeline_clip_undo_button'),
+                      icon: Icons.undo_rounded,
+                      tooltip: l10n.clipUndo,
+                      onPressed: canUndoClips ? onUndoClips : null,
+                      color: canUndoClips
+                          ? theme.colorScheme.onSurface.withValues(alpha: 0.85)
+                          : theme.colorScheme.onSurface.withValues(alpha: 0.35),
+                    ),
+                    SizedBox(width: controlGap),
+                    AppIconButton(
+                      key: const Key('timeline_clip_redo_button'),
+                      icon: Icons.redo_rounded,
+                      tooltip: l10n.clipRedo,
+                      onPressed: canRedoClips ? onRedoClips : null,
+                      color: canRedoClips
+                          ? theme.colorScheme.onSurface.withValues(alpha: 0.85)
+                          : theme.colorScheme.onSurface.withValues(alpha: 0.35),
+                    ),
+                  ],
                 ],
               ),
             ),

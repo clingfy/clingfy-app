@@ -899,6 +899,24 @@ class AppLocalizationsEn extends AppLocalizations {
   String get snap => 'Snap';
 
   @override
+  String get clips => 'Clips';
+
+  @override
+  String get clipSplit => 'Split';
+
+  @override
+  String get clipSplitTooltip => 'Split clip at playhead';
+
+  @override
+  String get clipRemoveSelected => 'Remove selected clip';
+
+  @override
+  String get clipUndo => 'Undo clip edit';
+
+  @override
+  String get clipRedo => 'Redo clip edit';
+
+  @override
   String get zoomBehavior => 'Zoom behavior';
 
   @override

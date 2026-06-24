@@ -906,6 +906,24 @@ class AppLocalizationsRo extends AppLocalizations {
   String get snap => 'Fixare';
 
   @override
+  String get clips => 'Clipuri';
+
+  @override
+  String get clipSplit => 'Împarte';
+
+  @override
+  String get clipSplitTooltip => 'Împarte clipul la cursor';
+
+  @override
+  String get clipRemoveSelected => 'Elimină clipul selectat';
+
+  @override
+  String get clipUndo => 'Anulează editarea clipului';
+
+  @override
+  String get clipRedo => 'Refă editarea clipului';
+
+  @override
   String get zoomBehavior => 'Comportament zoom';
 
   @override
