@@ -5,7 +5,9 @@ import 'package:clingfy/app/home/preview/widgets/timeline/timeline_editor_viewpo
 import 'package:clingfy/app/home/preview/widgets/timeline/timeline_header_bar.dart';
 import 'package:clingfy/app/home/preview/widgets/timeline/timeline_transport_bar.dart';
 import 'package:clingfy/app/home/preview/widgets/timeline/timeline_viewport_controller.dart';
+import 'package:clingfy/app/infrastructure/logging/logger_service.dart';
 import 'package:clingfy/core/bridges/native_bridge.dart';
+import 'package:clingfy/core/clips/clip_editor_controller.dart';
 import 'package:clingfy/core/models/app_models.dart';
 import 'package:clingfy/core/preview/player_controller.dart';
 import 'package:clingfy/core/zoom/zoom_editor_controller.dart';
@@ -81,7 +83,13 @@ class _VideoTimelineState extends State<VideoTimeline> {
   int? _hoverPositionMs;
   bool _showZoomLane = true;
   bool _showMarkersLane = false;
+  // Clips lane defaults on (cutting is a core edit); no toggle yet — a later PR
+  // adds lane-visibility controls alongside the zoom/markers toggles.
+  final bool _showClipsLane = true;
   bool _panModeEnabled = false;
+  // Tracks whether the clip editor was attached on the previous build, so the
+  // attach/detach transition is logged once (not on every rebuild).
+  bool _clipEditorAttached = false;
 
   @override
   void initState() {
@@ -191,6 +199,64 @@ class _VideoTimelineState extends State<VideoTimeline> {
     editor.setSnappingEnabled(!editor.snappingEnabled);
   }
 
+  // --- Clip (split / cut) handlers ---
+  //
+  // All clip mutations funnel through here so each one leaves a breadcrumb in
+  // the logs (clip edits are a critical new surface; a desynced cut is the
+  // exact kind of bug we want a trail for).
+
+  void _handleSplitClip(ClipEditorController? clip) {
+    if (clip == null) return;
+    final before = clip.clips.length;
+    clip.splitAtPlayhead(widget.positionMs);
+    final after = clip.clips.length;
+    if (after == before) {
+      // Split rejected: the playhead sits on a clip boundary or a piece would
+      // fall below the minimum duration. Surface it distinctly so a no-op is
+      // never mistaken for a successful cut in the logs.
+      Log.w(
+        'ClipsLane',
+        'split no-op at playhead ${widget.positionMs}ms '
+            '(boundary or below min duration); still $after clips',
+      );
+      return;
+    }
+    Log.d(
+      'ClipsLane',
+      'split at playhead ${widget.positionMs}ms: $before -> $after clips '
+          '(editedDur=${clip.editedDurationMs}ms)',
+    );
+  }
+
+  void _handleDeleteClip(ClipEditorController? clip) {
+    if (clip == null || !clip.canDeleteSelected) return;
+    final removed = clip.selectedClipId;
+    clip.deleteSelected();
+    Log.d(
+      'ClipsLane',
+      'deleted clip $removed: ${clip.clips.length} clips remain '
+          '(editedDur=${clip.editedDurationMs}ms)',
+    );
+  }
+
+  void _handleSelectClip(ClipEditorController? clip, String? id) {
+    if (clip == null || clip.selectedClipId == id) return;
+    clip.selectClip(id);
+    Log.d('ClipsLane', 'selected clip ${id ?? '(none)'}');
+  }
+
+  void _handleUndoClip(ClipEditorController? clip) {
+    if (clip == null || !clip.canUndo) return;
+    clip.undo();
+    Log.d('ClipsLane', 'undo: now ${clip.clips.length} clips');
+  }
+
+  void _handleRedoClip(ClipEditorController? clip) {
+    if (clip == null || !clip.canRedo) return;
+    clip.redo();
+    Log.d('ClipsLane', 'redo: now ${clip.clips.length} clips');
+  }
+
   void _toggleZoomLaneVisibility() {
     if (_showZoomLane && !_showMarkersLane) return;
     setState(() => _showZoomLane = !_showZoomLane);
@@ -249,16 +315,43 @@ class _VideoTimelineState extends State<VideoTimeline> {
     final isPlaying = context.select<PlayerController, bool>(
       (player) => player.isPlaying,
     );
+    // The clip editor attaches once the preview is ready (PR-3c2). It is null
+    // until then and on Windows (clips are macOS-only for now, like zoom edits).
+    final clipEditor = isWindows()
+        ? null
+        : context.select<PlayerController, ClipEditorController?>(
+            (player) => player.clipEditor,
+          );
+    // Log the attach/detach edge once so "why is the clip lane missing?" leaves
+    // a trail. The editor attaches when the preview becomes ready (PR-3c2) and
+    // is absent while loading or on Windows.
+    if ((clipEditor != null) != _clipEditorAttached) {
+      _clipEditorAttached = clipEditor != null;
+      Log.d(
+        'ClipsLane',
+        _clipEditorAttached
+            ? 'clip editor attached '
+                  '(${clipEditor!.clips.length} clips, '
+                  'dur=${clipEditor.recordingDurationMs}ms)'
+            : 'clip editor detached',
+      );
+    }
 
     final dockContent = ListenableBuilder(
       listenable: Listenable.merge([
         _viewportController,
         if (editor != null) editor,
+        if (clipEditor != null) clipEditor,
       ]),
       builder: (context, _) {
         final canEditZoom = ready && editor != null && _showZoomLane;
         final activeEditor = canEditZoom ? editor : null;
         final modeText = _buildModeText(l10n, editor);
+
+        // The clip lane and its controls appear only with a live editor, so a
+        // recording that is still loading (or Windows) shows no clip affordances.
+        final showClipsLane = _showClipsLane && clipEditor != null;
+        final canEditClips = ready && showClipsLane;
 
         return Stack(
           clipBehavior: Clip.none,
@@ -289,6 +382,15 @@ class _VideoTimelineState extends State<VideoTimeline> {
                   onRedo: activeEditor?.redo,
                   onToggleZoomLaneVisibility: _toggleZoomLaneVisibility,
                   onToggleMarkersLaneVisibility: _toggleMarkersLaneVisibility,
+                  showClipsControls: canEditClips,
+                  canSplitClip: canEditClips,
+                  canDeleteClip: canEditClips && clipEditor.canDeleteSelected,
+                  canUndoClips: canEditClips && clipEditor.canUndo,
+                  canRedoClips: canEditClips && clipEditor.canRedo,
+                  onSplitClip: () => _handleSplitClip(clipEditor),
+                  onDeleteClip: () => _handleDeleteClip(clipEditor),
+                  onUndoClips: () => _handleUndoClip(clipEditor),
+                  onRedoClips: () => _handleRedoClip(clipEditor),
                 ),
                 SizedBox(height: shellGap),
                 TimelineTransportBar(
@@ -320,6 +422,9 @@ class _VideoTimelineState extends State<VideoTimeline> {
                   viewportController: _viewportController,
                   segments: playerSegments,
                   editorController: editor,
+                  showClipsLane: showClipsLane,
+                  clipEditor: clipEditor,
+                  onSelectClip: (id) => _handleSelectClip(clipEditor, id),
                   showZoomLane: _showZoomLane,
                   showMarkersLane: _showMarkersLane,
                   panModeEnabled: _panModeEnabled,

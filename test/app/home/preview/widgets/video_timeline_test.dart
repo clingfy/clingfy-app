@@ -1,8 +1,10 @@
 import 'package:clingfy/app/home/preview/widgets/video_timeline.dart';
 import 'package:clingfy/core/bridges/native_bridge.dart';
+import 'package:clingfy/core/clips/clip_editor_controller.dart';
 import 'package:clingfy/core/preview/player_controller.dart';
 import 'package:clingfy/core/zoom/zoom_editor_controller.dart';
 import 'package:clingfy/l10n/app_localizations.dart';
+import 'package:clingfy/ui/platform/widgets/app_icon_button.dart';
 import 'package:clingfy/ui/theme/app_theme.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
@@ -336,6 +338,163 @@ void main() {
       expect(tester.getSize(shellFinder).height, heightDeselected);
     },
   );
+
+  testWidgets('clip lane and split control render with a live clip editor', (
+    tester,
+  ) async {
+    final editor = await _createEditor(tester);
+    final clipEditor = _makeClipEditor();
+    final player = _FakePlayerController(
+      editor: editor,
+      clipEditor: clipEditor,
+    );
+    addTearDown(player.dispose);
+    addTearDown(clipEditor.dispose);
+
+    await tester.pumpWidget(_buildTimeline(player: player));
+
+    expect(find.byKey(const Key('clips_timeline_lane')), findsOneWidget);
+    expect(find.byKey(const Key('timeline_lane_header_clips')), findsOneWidget);
+    expect(find.byKey(const Key('timeline_clip_split_button')), findsOneWidget);
+  });
+
+  testWidgets('split button cuts the clip at the playhead', (tester) async {
+    final editor = await _createEditor(tester);
+    final clipEditor = _makeClipEditor();
+    final player = _FakePlayerController(
+      editor: editor,
+      clipEditor: clipEditor,
+    );
+    addTearDown(player.dispose);
+    addTearDown(clipEditor.dispose);
+
+    await tester.pumpWidget(_buildTimeline(player: player));
+    expect(clipEditor.clips, hasLength(1));
+
+    final splitButton = find.byKey(const Key('timeline_clip_split_button'));
+    await tester.ensureVisible(splitButton);
+    await tester.pump();
+    await tester.tap(splitButton);
+    await tester.pump();
+
+    // Playhead is at 15000ms of a 60000ms recording → two clips.
+    expect(clipEditor.clips, hasLength(2));
+    expect(clipEditor.clips.first.sourceOutMs, 15000);
+    expect(
+      find.byKey(const Key('clips_timeline_lane_clip_clip_0')),
+      findsOneWidget,
+    );
+    expect(
+      find.byKey(const Key('clips_timeline_lane_clip_clip_1')),
+      findsOneWidget,
+    );
+  });
+
+  testWidgets('selecting a clip then deleting it removes the clip', (
+    tester,
+  ) async {
+    final editor = await _createEditor(tester);
+    final clipEditor = _makeClipEditor();
+    final player = _FakePlayerController(
+      editor: editor,
+      clipEditor: clipEditor,
+    );
+    addTearDown(player.dispose);
+    addTearDown(clipEditor.dispose);
+
+    await tester.pumpWidget(_buildTimeline(player: player));
+
+    final splitButton = find.byKey(const Key('timeline_clip_split_button'));
+    await tester.ensureVisible(splitButton);
+    await tester.pump();
+    await tester.tap(splitButton);
+    await tester.pump();
+    expect(clipEditor.clips, hasLength(2));
+
+    // Tap the first clip box to select it.
+    await tester.tap(find.byKey(const Key('clips_timeline_lane_clip_clip_0')));
+    await tester.pump();
+    expect(clipEditor.selectedClipId, 'clip_0');
+
+    final deleteButton = find.byKey(const Key('timeline_clip_delete_button'));
+    await tester.ensureVisible(deleteButton);
+    await tester.pump();
+    await tester.tap(deleteButton);
+    await tester.pump();
+
+    expect(clipEditor.clips, hasLength(1));
+    expect(clipEditor.clips.single.id, 'clip_1');
+  });
+
+  testWidgets('clip undo and redo buttons walk the clip history', (
+    tester,
+  ) async {
+    final editor = await _createEditor(tester);
+    final clipEditor = _makeClipEditor();
+    final player = _FakePlayerController(
+      editor: editor,
+      clipEditor: clipEditor,
+    );
+    addTearDown(player.dispose);
+    addTearDown(clipEditor.dispose);
+
+    await tester.pumpWidget(_buildTimeline(player: player));
+
+    final undoButton = find.byKey(const Key('timeline_clip_undo_button'));
+    final redoButton = find.byKey(const Key('timeline_clip_redo_button'));
+
+    // Nothing to undo/redo yet — both disabled.
+    expect(tester.widget<AppIconButton>(undoButton).onPressed, isNull);
+    expect(tester.widget<AppIconButton>(redoButton).onPressed, isNull);
+
+    final splitButton = find.byKey(const Key('timeline_clip_split_button'));
+    await tester.ensureVisible(splitButton);
+    await tester.pump();
+    await tester.tap(splitButton);
+    await tester.pump();
+    expect(clipEditor.clips, hasLength(2));
+
+    // Undo collapses the split back to one clip.
+    await tester.ensureVisible(undoButton);
+    await tester.pump();
+    await tester.tap(undoButton);
+    await tester.pump();
+    expect(clipEditor.clips, hasLength(1));
+
+    // Redo re-applies it.
+    await tester.ensureVisible(redoButton);
+    await tester.pump();
+    await tester.tap(redoButton);
+    await tester.pump();
+    expect(clipEditor.clips, hasLength(2));
+  });
+
+  testWidgets(
+    'clip lane and controls are hidden when no clip editor attached',
+    (tester) async {
+      final editor = await _createEditor(tester);
+      // clipEditor omitted → null, mimicking a still-loading preview.
+      final player = _FakePlayerController(editor: editor);
+      addTearDown(player.dispose);
+
+      await tester.pumpWidget(_buildTimeline(player: player));
+
+      expect(find.byKey(const Key('clips_timeline_lane')), findsNothing);
+      expect(find.byKey(const Key('timeline_lane_header_clips')), findsNothing);
+      expect(find.byKey(const Key('timeline_clip_split_button')), findsNothing);
+      // The zoom lane is unaffected.
+      expect(find.byKey(const Key('zoom_timeline_lane')), findsOneWidget);
+    },
+  );
+}
+
+ClipEditorController _makeClipEditor() {
+  final controller = ClipEditorController(
+    nativeBridge: NativeBridge.instance,
+    durationMs: 60000,
+    sessionId: 'clip-session',
+  );
+  return controller;
 }
 
 Future<ZoomEditorController> _createEditor(
@@ -429,15 +588,21 @@ class _FakePlayerController extends PlayerController {
   _FakePlayerController({
     required ZoomEditorController? editor,
     bool isPlaying = false,
+    ClipEditorController? clipEditor,
   }) : _editor = editor,
        _isPlaying = isPlaying,
+       _clipEditor = clipEditor,
        super(nativeBridge: NativeBridge.instance);
 
   final ZoomEditorController? _editor;
+  final ClipEditorController? _clipEditor;
   bool _isPlaying;
 
   @override
   ZoomEditorController? get zoomEditor => _editor;
+
+  @override
+  ClipEditorController? get clipEditor => _clipEditor;
 
   @override
   bool get isPlaying => _isPlaying;

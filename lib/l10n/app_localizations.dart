@@ -1780,6 +1780,42 @@ abstract class AppLocalizations {
   /// **'Snap'**
   String get snap;
 
+  /// No description provided for @clips.
+  ///
+  /// In en, this message translates to:
+  /// **'Clips'**
+  String get clips;
+
+  /// No description provided for @clipSplit.
+  ///
+  /// In en, this message translates to:
+  /// **'Split'**
+  String get clipSplit;
+
+  /// No description provided for @clipSplitTooltip.
+  ///
+  /// In en, this message translates to:
+  /// **'Split clip at playhead'**
+  String get clipSplitTooltip;
+
+  /// No description provided for @clipRemoveSelected.
+  ///
+  /// In en, this message translates to:
+  /// **'Remove selected clip'**
+  String get clipRemoveSelected;
+
+  /// No description provided for @clipUndo.
+  ///
+  /// In en, this message translates to:
+  /// **'Undo clip edit'**
+  String get clipUndo;
+
+  /// No description provided for @clipRedo.
+  ///
+  /// In en, this message translates to:
+  /// **'Redo clip edit'**
+  String get clipRedo;
+
   /// No description provided for @zoomBehavior.
   ///
   /// In en, this message translates to:

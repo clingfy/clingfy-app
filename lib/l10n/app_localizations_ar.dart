@@ -891,6 +891,24 @@ class AppLocalizationsAr extends AppLocalizations {
   String get snap => 'المحاذاة';
 
   @override
+  String get clips => 'المقاطع';
+
+  @override
+  String get clipSplit => 'تقسيم';
+
+  @override
+  String get clipSplitTooltip => 'تقسيم المقطع عند المؤشر';
+
+  @override
+  String get clipRemoveSelected => 'حذف المقطع المحدد';
+
+  @override
+  String get clipUndo => 'تراجع عن تعديل المقطع';
+
+  @override
+  String get clipRedo => 'إعادة تعديل المقطع';
+
+  @override
   String get zoomBehavior => 'سلوك التكبير';
 
   @override

@@ -2,7 +2,9 @@ import 'dart:ui';
 
 import 'package:clingfy/app/home/preview/widgets/timeline/timeline_editor_viewport.dart';
 import 'package:clingfy/app/home/preview/widgets/timeline/timeline_viewport_controller.dart';
+import 'package:clingfy/app/home/preview/widgets/timeline/zoom_timeline_lane.dart';
 import 'package:clingfy/core/bridges/native_bridge.dart';
+import 'package:clingfy/core/clips/clip_editor_controller.dart';
 import 'package:clingfy/core/zoom/zoom_editor_controller.dart';
 import 'package:clingfy/l10n/app_localizations.dart';
 import 'package:clingfy/ui/theme/app_theme.dart';
@@ -182,6 +184,77 @@ void main() {
     expect(viewportController.scrollOffset, greaterThan(0));
   });
 
+  testWidgets(
+    'header cells stay row-aligned with their lanes across all three lanes',
+    (tester) async {
+      final viewportController = TimelineViewportController(durationMs: 60000);
+      final editor = await _createEditor(tester);
+      final clipEditor = _makeClipEditor();
+      addTearDown(clipEditor.dispose);
+
+      await tester.pumpWidget(
+        _buildViewport(
+          viewportController: viewportController,
+          panModeEnabled: false,
+          editor: editor,
+          clipEditor: clipEditor,
+          showClipsLane: true,
+        ),
+      );
+
+      // All three lanes render (clips on top, then zoom, then markers).
+      expect(find.byKey(const Key('clips_timeline_lane')), findsOneWidget);
+      expect(find.byKey(const Key('zoom_timeline_lane')), findsOneWidget);
+      expect(find.byKey(const Key('markers_timeline_lane')), findsOneWidget);
+      expect(
+        find.byKey(const Key('timeline_lane_header_clips')),
+        findsOneWidget,
+      );
+
+      // Each header cell shares the vertical centre of its matching lane — the
+      // load-bearing invariant of the two generalized header/canvas loops.
+      void expectRowAligned(Key headerKey, Key laneKey) {
+        final headerDy = tester.getRect(find.byKey(headerKey)).center.dy;
+        final laneDy = tester.getRect(find.byKey(laneKey)).center.dy;
+        expect(
+          laneDy,
+          closeTo(headerDy, 0.5),
+          reason: '$headerKey should be row-aligned with $laneKey',
+        );
+      }
+
+      expectRowAligned(
+        const Key('timeline_lane_header_clips'),
+        const Key('clips_timeline_lane'),
+      );
+      expectRowAligned(
+        const Key('timeline_lane_header_zoom'),
+        const Key('zoom_timeline_lane'),
+      );
+      expectRowAligned(
+        const Key('timeline_lane_header_markers'),
+        const Key('markers_timeline_lane'),
+      );
+
+      // The zoom row is taller than the others by kZoomLaneHeightBoost on BOTH
+      // sides, so a one-sided height override can never drift the rows.
+      final clipsLaneH = tester
+          .getSize(find.byKey(const Key('clips_timeline_lane')))
+          .height;
+      final zoomLaneH = tester
+          .getSize(find.byKey(const Key('zoom_timeline_lane')))
+          .height;
+      final clipsHeaderH = tester
+          .getSize(find.byKey(const Key('timeline_lane_header_clips')))
+          .height;
+      final zoomHeaderH = tester
+          .getSize(find.byKey(const Key('timeline_lane_header_zoom')))
+          .height;
+      expect(zoomLaneH - clipsLaneH, closeTo(kZoomLaneHeightBoost, 0.5));
+      expect(zoomHeaderH - clipsHeaderH, closeTo(kZoomLaneHeightBoost, 0.5));
+    },
+  );
+
   testWidgets('without pan mode ruler drag still seeks normally', (
     tester,
   ) async {
@@ -245,6 +318,8 @@ Widget _buildViewport({
   required TimelineViewportController viewportController,
   required bool panModeEnabled,
   ZoomEditorController? editor,
+  ClipEditorController? clipEditor,
+  bool showClipsLane = false,
   ValueChanged<int>? onSeek,
   ValueChanged<int>? onHoverSeek,
 }) {
@@ -264,6 +339,9 @@ Widget _buildViewport({
             viewportController: viewportController,
             segments: editor?.displaySegments ?? const [],
             editorController: editor,
+            showClipsLane: showClipsLane,
+            clipEditor: clipEditor,
+            onSelectClip: (_) {},
             showZoomLane: true,
             showMarkersLane: true,
             panModeEnabled: panModeEnabled,
@@ -279,6 +357,12 @@ Widget _buildViewport({
     ),
   );
 }
+
+ClipEditorController _makeClipEditor() => ClipEditorController(
+  nativeBridge: NativeBridge.instance,
+  durationMs: 60000,
+  sessionId: 'viewport-clip-session',
+);
 
 BoxDecoration _decorationFor(WidgetTester tester, Finder finder) {
   final container = tester.widget<Container>(finder);
