@@ -107,6 +107,7 @@ const std::vector<std::string>& BridgeContractMethods() {
       "previewSetCameraPlacement",
       "previewSetZoomSegments",
       "previewSetColorGrade",
+      "previewSetClips",
       "previewSetAudioMix",
       "previewSetAudioGainDb",
       "previewGetZoomCapabilities",

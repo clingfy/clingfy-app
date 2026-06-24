@@ -603,6 +603,9 @@ void RegisterHandlers(HandlerTable& table) {
   // Color grade: macOS renders it live; Windows accepts + ignores it for now
   // (capability-gated at the Dart/model layer) so the contract stays in sync.
   table["previewSetColorGrade"] = &HandleNoopSetter;
+  // Clip split/cut/trim/arrange: macOS skips cut regions live; Windows accepts
+  // + ignores the clip list for now so the bridge contract stays in sync.
+  table["previewSetClips"] = &HandleNoopSetter;
   table["previewSetAudioMix"] = &HandleNoopSetter;
   table["previewSetAudioGainDb"] = &HandleNoopSetter;
 
