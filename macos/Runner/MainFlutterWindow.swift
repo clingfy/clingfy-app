@@ -1000,6 +1000,34 @@ class MainFlutterWindow: NSWindow {
               code: NativeErrorCode.badArgs, message: "Missing colorGrade", details: nil))
         }
 
+      case "previewSetClips":
+        if let args = call.arguments as? [String: Any] {
+          let clipMaps = args["clips"] as? [[String: Any]]
+          let sessionId = args["sessionId"] as? String
+          let ranges = ClipKeptRange.fromFlutter(clipMaps)
+          let hasView = inlinePreviewViewInstance != nil
+          let sessionMatches =
+            sessionId == nil || inlinePreviewViewInstance?.currentSessionId == sessionId
+          NativeLogger.d(
+            "Player", "previewSetClips received",
+            context: [
+              "sessionId": sessionId ?? "nil",
+              "hasPreviewView": hasView,
+              "sessionMatches": sessionMatches,
+              "clipCount": clipMaps?.count ?? 0,
+              "keptRangeCount": ranges.count,
+            ])
+          if let previewView = inlinePreviewViewInstance,
+            sessionId == nil || previewView.currentSessionId == sessionId
+          {
+            previewView.updateClipsOnly(ranges)
+          }
+          result(nil)
+        } else {
+          result(
+            FlutterError(code: NativeErrorCode.badArgs, message: "Missing clips", details: nil))
+        }
+
       case "previewGetZoomCapabilities":
         // Phase 1 contract: this build supports the cursor-samples
         // query, fixed-target preview rendering, and fixed-target

@@ -3,6 +3,7 @@ import 'package:clingfy/core/bridges/native_method_channel.dart';
 import 'package:clingfy/app/infrastructure/logging/logger_service.dart';
 import 'package:clingfy/core/models/app_models.dart';
 import 'package:clingfy/core/timeline/model/color_grade.dart';
+import 'package:clingfy/core/timeline/model/edit_track.dart';
 import 'package:clingfy/core/models/startup_recovery_report.dart';
 import 'package:clingfy/core/models/storage_snapshot.dart';
 import 'package:clingfy/core/permissions/models/windows_permission_details.dart';
@@ -399,6 +400,20 @@ class NativeBridge {
   }) async {
     await _nativeBridge.invokeMethod<void>('previewSetColorGrade', {
       'colorGrade': colorGrade.toMap(),
+      if (sessionId != null) 'sessionId': sessionId,
+    });
+  }
+
+  /// Pushes the edited clip list (split / cut / trim / arrange) to the live
+  /// macOS preview so playback skips the cut regions. No-op on platforms whose
+  /// native side stubs the method (Windows). Keep the method name in sync with
+  /// the Swift `previewSetClips` handler.
+  Future<void> previewSetClips({
+    required List<Clip> clips,
+    required String? sessionId,
+  }) async {
+    await _nativeBridge.invokeMethod<void>('previewSetClips', {
+      'clips': [for (final c in clips) c.toMap()],
       if (sessionId != null) 'sessionId': sessionId,
     });
   }

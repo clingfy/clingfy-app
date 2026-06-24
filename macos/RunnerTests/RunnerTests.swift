@@ -7666,3 +7666,109 @@ final class ColorGradeTests: XCTestCase {
       srcPixel, outPixel, "contrast adjustment should change pixel values")
   }
 }
+
+final class ClipKeptRangeTests: XCTestCase {
+  func testFromFlutterParsesEnabledRangesInOrder() {
+    let ranges = ClipKeptRange.fromFlutter([
+      ["sourceInMs": 0, "sourceOutMs": 3000, "enabled": true],
+      ["sourceInMs": 7000, "sourceOutMs": 9000, "enabled": true],
+    ])
+    XCTAssertEqual(ranges.count, 2)
+    XCTAssertEqual(ranges[0], ClipKeptRange(sourceInMs: 0, sourceOutMs: 3000))
+    XCTAssertEqual(ranges[1], ClipKeptRange(sourceInMs: 7000, sourceOutMs: 9000))
+  }
+
+  func testFromFlutterSkipsDisabledAndZeroLength() {
+    let ranges = ClipKeptRange.fromFlutter([
+      ["sourceInMs": 0, "sourceOutMs": 3000, "enabled": false],
+      ["sourceInMs": 4000, "sourceOutMs": 4000, "enabled": true],  // zero length
+      ["sourceInMs": 5000, "sourceOutMs": 1000, "enabled": true],  // inverted
+      ["sourceInMs": 6000, "sourceOutMs": 8000, "enabled": true],
+    ])
+    XCTAssertEqual(ranges, [ClipKeptRange(sourceInMs: 6000, sourceOutMs: 8000)])
+  }
+
+  func testFromFlutterNilIsEmpty() {
+    XCTAssertEqual(ClipKeptRange.fromFlutter(nil), [])
+  }
+}
+
+final class ClipPlaybackPlannerTests: XCTestCase {
+  private func ranges(_ pairs: [(Int, Int)]) -> [ClipKeptRange] {
+    pairs.map { ClipKeptRange(sourceInMs: $0.0, sourceOutMs: $0.1) }
+  }
+
+  func testIsPassthroughForEmptyOrWholeAsset() {
+    XCTAssertTrue(ClipPlaybackPlanner.isPassthrough(ranges: [], assetDurationMs: 10000))
+    XCTAssertTrue(
+      ClipPlaybackPlanner.isPassthrough(
+        ranges: ranges([(0, 10000)]), assetDurationMs: 10000))
+    XCTAssertFalse(
+      ClipPlaybackPlanner.isPassthrough(
+        ranges: ranges([(0, 4000), (6000, 10000)]), assetDurationMs: 10000))
+    XCTAssertFalse(
+      ClipPlaybackPlanner.isPassthrough(
+        ranges: ranges([(2000, 10000)]), assetDurationMs: 10000))
+  }
+
+  func testDecideProceedsInsideActiveRange() {
+    let r = ranges([(0, 4000), (6000, 10000)])
+    XCTAssertEqual(
+      ClipPlaybackPlanner.decide(sourceMs: 2000, activeIndex: 0, ranges: r), .proceed)
+  }
+
+  func testDecideAdvancesAtCutBoundary() {
+    let r = ranges([(0, 4000), (6000, 10000)])
+    // Reaching the end of range 0 jumps to the start of range 1 (skips 4000-6000).
+    XCTAssertEqual(
+      ClipPlaybackPlanner.decide(sourceMs: 4000, activeIndex: 0, ranges: r),
+      .advance(toIndex: 1, seekSourceMs: 6000))
+  }
+
+  func testDecideEndsAfterLastRange() {
+    let r = ranges([(0, 4000), (6000, 10000)])
+    XCTAssertEqual(
+      ClipPlaybackPlanner.decide(sourceMs: 10000, activeIndex: 1, ranges: r), .end)
+  }
+
+  func testDecideEpsilonTriggersJumpEarly() {
+    let r = ranges([(0, 4000), (6000, 10000)])
+    // 3990 is within a 17ms epsilon of the 4000 cut, so it advances early.
+    XCTAssertEqual(
+      ClipPlaybackPlanner.decide(sourceMs: 3990, activeIndex: 0, ranges: r, epsilonMs: 17),
+      .advance(toIndex: 1, seekSourceMs: 6000))
+  }
+
+  func testActiveIndexResolution() {
+    let r = ranges([(0, 4000), (6000, 10000)])
+    XCTAssertEqual(ClipPlaybackPlanner.activeIndex(forSourceMs: 2000, ranges: r), 0)
+    XCTAssertEqual(ClipPlaybackPlanner.activeIndex(forSourceMs: 7000, ranges: r), 1)
+    // In the cut gap (4000-6000) -> the next range that starts after.
+    XCTAssertEqual(ClipPlaybackPlanner.activeIndex(forSourceMs: 5000, ranges: r), 1)
+    // Past everything -> last.
+    XCTAssertEqual(ClipPlaybackPlanner.activeIndex(forSourceMs: 99999, ranges: r), 1)
+  }
+
+  func testEditedDurationSumsKeptRanges() {
+    let r = ranges([(0, 4000), (6000, 10000)])
+    XCTAssertEqual(ClipPlaybackPlanner.editedDurationMs(ranges: r), 8000)
+  }
+
+  func testEditedMsMapsSourceToTimeline() {
+    let r = ranges([(0, 4000), (6000, 10000)])
+    // In range 0: identity.
+    XCTAssertEqual(
+      ClipPlaybackPlanner.editedMs(forSourceMs: 2000, activeIndex: 0, ranges: r), 2000)
+    // In range 1 at source 7000: 4000 (range 0) + (7000-6000) = 5000.
+    XCTAssertEqual(
+      ClipPlaybackPlanner.editedMs(forSourceMs: 7000, activeIndex: 1, ranges: r), 5000)
+  }
+
+  func testEditedMsHandlesArrangeReorder() {
+    // Timeline order B then A; source order A before B.
+    let r = ranges([(6000, 8000), (0, 2000)])
+    // Active range 1 (source 0-2000) plays second; source 1000 -> edited 3000.
+    XCTAssertEqual(
+      ClipPlaybackPlanner.editedMs(forSourceMs: 1000, activeIndex: 1, ranges: r), 3000)
+  }
+}

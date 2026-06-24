@@ -3,6 +3,7 @@ import 'dart:async';
 import 'package:clingfy/core/bridges/native_bridge.dart';
 import 'package:clingfy/core/bridges/native_method_channel.dart';
 import 'package:clingfy/core/timeline/model/color_grade.dart';
+import 'package:clingfy/core/timeline/model/edit_track.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_test/flutter_test.dart';
 
@@ -362,6 +363,65 @@ void main() {
       final args = captured?.arguments as Map;
       expect(args.containsKey('sessionId'), isFalse);
       expect((args['colorGrade'] as Map)['exposure'], 0.5);
+    });
+  });
+
+  group('clip bridge', () {
+    const channel = MethodChannel(NativeChannel.screenRecorder);
+    final messenger =
+        TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger;
+
+    tearDown(() {
+      messenger.setMockMethodCallHandler(channel, null);
+    });
+
+    test('previewSetClips forwards the clip maps and sessionId', () async {
+      MethodCall? captured;
+      messenger.setMockMethodCallHandler(channel, (call) async {
+        captured = call;
+        return null;
+      });
+
+      await NativeBridge.instance.previewSetClips(
+        clips: const [
+          Clip(id: 'a', sourceInMs: 0, sourceOutMs: 3000, timelineStartMs: 0),
+          Clip(
+            id: 'b',
+            sourceInMs: 7000,
+            sourceOutMs: 9000,
+            timelineStartMs: 3000,
+          ),
+        ],
+        sessionId: 'sess-1',
+      );
+
+      expect(captured?.method, 'previewSetClips');
+      final args = captured?.arguments as Map;
+      expect(args['sessionId'], 'sess-1');
+      final clips = args['clips'] as List;
+      expect(clips, hasLength(2));
+      expect((clips.first as Map)['sourceInMs'], 0);
+      expect((clips.first as Map)['sourceOutMs'], 3000);
+      expect((clips.last as Map)['sourceInMs'], 7000);
+    });
+
+    test('previewSetClips omits sessionId when null', () async {
+      MethodCall? captured;
+      messenger.setMockMethodCallHandler(channel, (call) async {
+        captured = call;
+        return null;
+      });
+
+      await NativeBridge.instance.previewSetClips(
+        clips: const [
+          Clip(id: 'a', sourceInMs: 0, sourceOutMs: 5000, timelineStartMs: 0),
+        ],
+        sessionId: null,
+      );
+
+      final args = captured?.arguments as Map;
+      expect(args.containsKey('sessionId'), isFalse);
+      expect((args['clips'] as List), hasLength(1));
     });
   });
 }

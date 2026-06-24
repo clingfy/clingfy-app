@@ -814,6 +814,8 @@ final class InlinePreviewView: NSView {
     currentPreviewProfile = nil
     lastGeometryOnlyBoundsRefreshSignature = nil
     cancelCameraPreviewPlacementTransition()
+    clipKeptRanges = []
+    activeClipRangeIndex = 0
     pendingPlaybackSnapshotToRestore = initialPlaybackSnapshot
     setPreviewContentVisible(false)
 
@@ -1194,6 +1196,8 @@ final class InlinePreviewView: NSView {
     pendingCameraPreviewChangeKind = .none
     pendingZoomSegments = nil
     pendingPlaybackSnapshotToRestore = nil
+    clipKeptRanges = []
+    activeClipRangeIndex = 0
     cancelCameraPreviewPlacementTransition()
 
     cursorLayer?.removeFromSuperlayer()
@@ -1591,6 +1595,16 @@ final class InlinePreviewView: NSView {
     let posMs = (posSeconds.isNaN || posSeconds.isInfinite) ? 0 : Int(posSeconds * 1000)
     let durMs = (durSeconds.isNaN || durSeconds.isInfinite) ? 0 : Int(durSeconds * 1000)
 
+    // "Play through the cuts": when the real playhead reaches the end of the
+    // active kept range, jump to the next range (or stop at the trimmed end).
+    // Returning early skips this tick's overlay work — the post-seek tick
+    // handles it from the new position.
+    if !clipKeptRanges.isEmpty,
+      handleClipPlaybackAdvance(atSourceMs: posMs)
+    {
+      return
+    }
+
     let t = (posSeconds.isNaN || posSeconds.isInfinite) ? 0 : posSeconds
     let tickState = PreviewTickState(time: t, frame: cursorFrameResolver.frame(at: t))
 
@@ -1601,15 +1615,94 @@ final class InlinePreviewView: NSView {
     let screenZoom = updateZoom(tick: tickState)
     updateCameraPreviewGeometry(time: t, screenZoom: screenZoom)
 
+    // Report edited-timeline position/duration to Flutter when cuts are active
+    // so the scrubber and time labels reflect the trimmed video, not the raw
+    // asset. With no cuts these equal the raw source values.
+    let emittedPosMs =
+      clipKeptRanges.isEmpty
+      ? posMs
+      : ClipPlaybackPlanner.editedMs(
+        forSourceMs: posMs, activeIndex: activeClipRangeIndex, ranges: clipKeptRanges)
+    let emittedDurMs =
+      clipKeptRanges.isEmpty
+      ? durMs
+      : ClipPlaybackPlanner.editedDurationMs(ranges: clipKeptRanges)
+
     emitPlayerEvent([
       "type": "playerTick",
-      "positionMs": posMs,
-      "durationMs": durMs,
+      "positionMs": emittedPosMs,
+      "durationMs": emittedDurMs,
     ])
     updateActiveInlinePreviewPlaybackSnapshot(
       sessionId: currentSessionId,
-      positionMs: posMs
+      positionMs: emittedPosMs
     )
+  }
+
+  /// Acts on the [ClipPlaybackPlanner] decision for the current source position.
+  /// Returns true when it consumed the tick (seeked across a cut, or stopped at
+  /// the trimmed end) so the caller skips the rest of this tick.
+  private func handleClipPlaybackAdvance(atSourceMs sourceMs: Int) -> Bool {
+    switch ClipPlaybackPlanner.decide(
+      sourceMs: sourceMs,
+      activeIndex: activeClipRangeIndex,
+      ranges: clipKeptRanges,
+      epsilonMs: clipJumpEpsilonMs
+    ) {
+    case .proceed:
+      return false
+    case .advance(let toIndex, let seekSourceMs):
+      activeClipRangeIndex = toIndex
+      let seekTime = CMTime(seconds: Double(seekSourceMs) / 1000.0, preferredTimescale: 600)
+      player?.seek(to: seekTime, toleranceBefore: .zero, toleranceAfter: .zero)
+      syncCameraPlayback(to: seekTime, force: true)
+      return true
+    case .end:
+      // Trimmed tail: stop at the edited end instead of playing into cut
+      // footage. Park on the last kept frame and report completion.
+      player?.pause()
+      cameraPlayer?.pause()
+      if let last = clipKeptRanges.last {
+        let endTime = CMTime(seconds: Double(last.sourceOutMs) / 1000.0, preferredTimescale: 600)
+        player?.seek(to: endTime, toleranceBefore: .zero, toleranceAfter: .zero)
+      }
+      sendState(state: "completed")
+      return true
+    }
+  }
+
+  /// Stores the kept clip ranges and refreshes the active index. A passthrough
+  /// list (no cuts) clears clip handling entirely. If the current frame now
+  /// sits inside a cut region, snaps to the active range start so the preview
+  /// never shows removed footage.
+  func updateClipsOnly(_ ranges: [ClipKeptRange]) {
+    let assetDurMs = Int((player?.currentItem?.duration.seconds ?? 0) * 1000)
+    if ClipPlaybackPlanner.isPassthrough(ranges: ranges, assetDurationMs: assetDurMs) {
+      clipKeptRanges = []
+      activeClipRangeIndex = 0
+      NativeLogger.d("Player", "updateClipsOnly: passthrough (no cuts)")
+      return
+    }
+
+    clipKeptRanges = ranges
+    let curMs = Int((player?.currentTime().seconds ?? 0) * 1000)
+    activeClipRangeIndex = ClipPlaybackPlanner.activeIndex(forSourceMs: curMs, ranges: ranges)
+
+    let active = ranges[activeClipRangeIndex]
+    if curMs < active.sourceInMs || curMs >= active.sourceOutMs {
+      // Current frame is in a removed gap — snap to the kept range start.
+      let snap = CMTime(seconds: Double(active.sourceInMs) / 1000.0, preferredTimescale: 600)
+      player?.seek(to: snap, toleranceBefore: .zero, toleranceAfter: .zero)
+      syncCameraPlayback(to: snap, force: true)
+    }
+
+    NativeLogger.d(
+      "Player", "updateClipsOnly: applied",
+      context: [
+        "rangeCount": ranges.count,
+        "activeIndex": activeClipRangeIndex,
+        "editedDurationMs": ClipPlaybackPlanner.editedDurationMs(ranges: ranges),
+      ])
   }
 
   private func sendState(state: String) {
@@ -1671,6 +1764,16 @@ final class InlinePreviewView: NSView {
   /// `currentCompositionParams` so audio/zoom tweaks (which rebuild params)
   /// don't drop it; re-applied on every composition (re)build.
   private var currentColorGrade: ColorGrade = .identity
+  /// Kept source ranges (timeline order) for "play through the cuts" preview.
+  /// Empty means no cuts — playback runs the full asset untouched. The player
+  /// stays on the original asset; `sendTick` jumps the playhead across cut
+  /// regions via `ClipPlaybackPlanner`. `activeClipRangeIndex` tracks which
+  /// kept range is currently playing (needed for arrange/reorder).
+  private var clipKeptRanges: [ClipKeptRange] = []
+  private var activeClipRangeIndex: Int = 0
+  /// Jump a hair before the exact cut so we don't flash a frame of cut footage
+  /// (one 60 fps frame of the periodic observer's overshoot).
+  private let clipJumpEpsilonMs = 17
   private var currentCameraCompositionParams: CameraCompositionParams?
   private var currentLayout: CompositionBuilder.PreviewCompositionResult?
   private var pendingCompositionParams: CompositionParams?

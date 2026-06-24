@@ -896,6 +896,130 @@ enum ColorGradeRenderer {
   }
 }
 
+/// A kept source range on the edited timeline, listed in TIMELINE order. Cut
+/// regions are simply the gaps between consecutive ranges' source windows.
+/// Mirrors the Dart `Clip` (enabled clips only); the Dart side normalizes the
+/// list so timeline positions tile contiguously from zero, so the native side
+/// only needs the source windows in order.
+struct ClipKeptRange: Equatable {
+  let sourceInMs: Int
+  let sourceOutMs: Int
+
+  var durationMs: Int { max(0, sourceOutMs - sourceInMs) }
+
+  /// Parses the Dart `Clip.toMap()` payload list, dropping disabled clips and
+  /// any zero/negative-length window. Order is preserved (timeline order).
+  static func fromFlutter(_ list: [[String: Any]]?) -> [ClipKeptRange] {
+    guard let list else { return [] }
+    var ranges: [ClipKeptRange] = []
+    for item in list {
+      let enabled = (item["enabled"] as? Bool) ?? true
+      guard enabled else { continue }
+      let inMs = intValue(item["sourceInMs"])
+      let outMs = intValue(item["sourceOutMs"])
+      if outMs > inMs {
+        ranges.append(ClipKeptRange(sourceInMs: inMs, sourceOutMs: outMs))
+      }
+    }
+    return ranges
+  }
+
+  private static func intValue(_ any: Any?) -> Int {
+    if let n = any as? NSNumber { return n.intValue }
+    if let i = any as? Int { return i }
+    if let d = any as? Double { return Int(d) }
+    return 0
+  }
+}
+
+/// Pure decision logic for "play through the cuts" preview playback.
+///
+/// The preview player stays on the original full asset, so cursor / zoom /
+/// camera keep sampling real recording time and need no remapping. This planner
+/// decides, from the player's real source position, when the playhead must jump
+/// across a cut region (or stop at the trimmed end). It owns no state and no
+/// AVPlayer, so it is exhaustively unit testable; the view holds the active
+/// index and acts on the returned [Decision].
+enum ClipPlaybackPlanner {
+  enum Decision: Equatable {
+    /// Keep playing — still inside the active kept range.
+    case proceed
+    /// Jump to the next kept range (a cut boundary was reached).
+    case advance(toIndex: Int, seekSourceMs: Int)
+    /// Reached the end of the edited timeline — stop.
+    case end
+  }
+
+  /// True when the ranges need no skipping: absent, or a single window that
+  /// already covers the whole asset from 0. Lets the view skip all planner work
+  /// (a zero-cost passthrough, like an identity color grade).
+  static func isPassthrough(ranges: [ClipKeptRange], assetDurationMs: Int) -> Bool {
+    if ranges.isEmpty { return true }
+    guard ranges.count == 1 else { return false }
+    let only = ranges[0]
+    return only.sourceInMs <= 0 && only.sourceOutMs >= assetDurationMs
+  }
+
+  /// From the current player source position and the active range index, decide
+  /// whether to keep playing, jump to the next range, or stop. [epsilonMs]
+  /// absorbs the periodic observer's overshoot so the jump fires a hair before
+  /// the exact cut instead of flashing a frame of cut footage.
+  static func decide(
+    sourceMs: Int,
+    activeIndex: Int,
+    ranges: [ClipKeptRange],
+    epsilonMs: Int = 0
+  ) -> Decision {
+    guard !ranges.isEmpty else { return .proceed }
+    let idx = min(max(activeIndex, 0), ranges.count - 1)
+    let active = ranges[idx]
+    if sourceMs < active.sourceOutMs - epsilonMs {
+      return .proceed
+    }
+    let nextIndex = idx + 1
+    if nextIndex < ranges.count {
+      return .advance(toIndex: nextIndex, seekSourceMs: ranges[nextIndex].sourceInMs)
+    }
+    return .end
+  }
+
+  /// The active range index for a source position: the range containing it,
+  /// else the first range starting after it, else the last. Used when the clip
+  /// list changes or the user seeks.
+  static func activeIndex(forSourceMs sourceMs: Int, ranges: [ClipKeptRange]) -> Int {
+    if ranges.isEmpty { return 0 }
+    for (i, r) in ranges.enumerated() where sourceMs >= r.sourceInMs && sourceMs < r.sourceOutMs {
+      return i
+    }
+    for (i, r) in ranges.enumerated() where sourceMs < r.sourceInMs {
+      return i
+    }
+    return ranges.count - 1
+  }
+
+  /// Total edited-timeline duration (sum of kept range durations).
+  static func editedDurationMs(ranges: [ClipKeptRange]) -> Int {
+    ranges.reduce(0) { $0 + $1.durationMs }
+  }
+
+  /// Maps a real source position to its edited-timeline position given the
+  /// active range index (handles arrange, where source order need not match
+  /// timeline order): the durations of all preceding ranges plus the offset
+  /// into the active range.
+  static func editedMs(
+    forSourceMs sourceMs: Int,
+    activeIndex: Int,
+    ranges: [ClipKeptRange]
+  ) -> Int {
+    guard !ranges.isEmpty else { return sourceMs }
+    let idx = min(max(activeIndex, 0), ranges.count - 1)
+    var base = 0
+    for i in 0..<idx { base += ranges[i].durationMs }
+    let offset = max(0, sourceMs - ranges[idx].sourceInMs)
+    return base + min(offset, ranges[idx].durationMs)
+  }
+}
+
 struct CompositionParams: Equatable {
   let targetSize: CGSize
   let padding: Double
