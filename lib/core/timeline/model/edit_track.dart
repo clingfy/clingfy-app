@@ -117,6 +117,42 @@ class Clip {
     timelineStartMs: (m['timelineStartMs'] as num?)?.toInt() ?? 0,
     enabled: m['enabled'] as bool? ?? true,
   );
+
+  Clip copyWith({
+    String? id,
+    int? sourceInMs,
+    int? sourceOutMs,
+    int? timelineStartMs,
+    bool? enabled,
+  }) => Clip(
+    id: id ?? this.id,
+    sourceInMs: sourceInMs ?? this.sourceInMs,
+    sourceOutMs: sourceOutMs ?? this.sourceOutMs,
+    timelineStartMs: timelineStartMs ?? this.timelineStartMs,
+    enabled: enabled ?? this.enabled,
+  );
+
+  // Value equality so undo/redo snapshots and provider listeners can detect a
+  // real change to the clip list. Mirrors the ColorGrade pattern.
+  @override
+  bool operator ==(Object other) =>
+      identical(this, other) ||
+      other is Clip &&
+          runtimeType == other.runtimeType &&
+          id == other.id &&
+          sourceInMs == other.sourceInMs &&
+          sourceOutMs == other.sourceOutMs &&
+          timelineStartMs == other.timelineStartMs &&
+          enabled == other.enabled;
+
+  @override
+  int get hashCode =>
+      Object.hash(id, sourceInMs, sourceOutMs, timelineStartMs, enabled);
+
+  @override
+  String toString() =>
+      'Clip($id, src=$sourceInMs..$sourceOutMs, tl=$timelineStartMs, '
+      'enabled=$enabled)';
 }
 
 /// Clip track — split/trim/arrange. Defines the authoritative timeline duration
