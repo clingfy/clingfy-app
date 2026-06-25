@@ -117,6 +117,11 @@ class ClipEditorController extends ChangeNotifier {
   // --- Trim drag lifecycle (live preview, one undo entry) ---
 
   void beginTrim(String id, ClipTrimEdge edge) {
+    // Self-heal a stranded trim: if a prior drag never committed/cancelled (e.g.
+    // its gesture recognizer was disposed mid-drag when the lane rebuilt with
+    // trim disabled), cancel it first so its live mutation is reverted instead
+    // of being silently baked into this fresh snapshot with no undo entry.
+    if (_trimmingClipId != null) cancelTrim();
     _trimOriginalClips = List<Clip>.of(_clips);
     _trimmingClipId = id;
     _trimEdge = edge;
@@ -166,24 +171,28 @@ class ClipEditorController extends ChangeNotifier {
   }
 
   /// Commits the trim as a single undo entry (or syncs without history if the
-  /// drag was a no-op).
-  void commitTrim() {
+  /// drag was a no-op). Returns true when the drag actually changed the clips
+  /// (an undo entry was pushed), false on a no-op — so callers can log the two
+  /// cases distinctly.
+  bool commitTrim() {
     final original = _trimOriginalClips;
     if (original == null) {
       _clearTrim();
-      return;
+      return false;
     }
     _liveSyncTimer?.cancel();
     final dragged = _clips;
     // Restore the pre-drag list so the command snapshots the right "previous",
     // then execute — apply() puts the dragged result back.
     _clips = original;
-    if (_sameClips(dragged, original)) {
-      unawaited(_syncToNative());
-    } else {
+    final changed = !_sameClips(dragged, original);
+    if (changed) {
       _execute(dragged, 'Trim');
+    } else {
+      unawaited(_syncToNative());
     }
     _clearTrim();
+    return changed;
   }
 
   void cancelTrim() {
