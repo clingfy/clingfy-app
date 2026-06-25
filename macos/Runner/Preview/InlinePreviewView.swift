@@ -1109,7 +1109,31 @@ final class InlinePreviewView: NSView {
 
   func seekTo(milliseconds: Int) {
     guard let player = player else { return }
-    let seconds = Double(milliseconds) / 1000.0
+
+    // Flutter seeks/scrubs on the EDITED timeline. With cuts active, map the
+    // edited position back to a real source position and refresh the active
+    // kept range so the player lands on the right frame AND the next tick
+    // reports the matching edited position. Without this, a backward seek
+    // across a cut keeps the stale (later) active range, parking the playhead
+    // at the cut until real playback catches up.
+    let sourceMs: Int
+    if clipKeptRanges.isEmpty {
+      sourceMs = milliseconds
+    } else {
+      sourceMs = ClipPlaybackPlanner.sourceMs(
+        forEditedMs: milliseconds, ranges: clipKeptRanges)
+      activeClipRangeIndex = ClipPlaybackPlanner.activeIndex(
+        forEditedMs: milliseconds, ranges: clipKeptRanges)
+      NativeLogger.d(
+        "Player", "seekTo across cuts",
+        context: [
+          "editedMs": milliseconds,
+          "sourceMs": sourceMs,
+          "activeIndex": activeClipRangeIndex,
+        ])
+    }
+
+    let seconds = Double(sourceMs) / 1000.0
 
     /// If seeking backwards, reset zoom/hysteresis
     if seconds + 0.0001 < lastZoomTime {

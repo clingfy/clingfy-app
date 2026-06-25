@@ -7771,4 +7771,56 @@ final class ClipPlaybackPlannerTests: XCTestCase {
     XCTAssertEqual(
       ClipPlaybackPlanner.editedMs(forSourceMs: 1000, activeIndex: 1, ranges: r), 3000)
   }
+
+  func testSourceMsInvertsEditedMs() {
+    let r = ranges([(0, 4000), (6000, 10000)])
+    // Before the cut: identity.
+    XCTAssertEqual(ClipPlaybackPlanner.sourceMs(forEditedMs: 2000, ranges: r), 2000)
+    // After the cut: edited 5000 -> 4000 (range 0) + 1000 into range 1 = source 7000.
+    XCTAssertEqual(ClipPlaybackPlanner.sourceMs(forEditedMs: 5000, ranges: r), 7000)
+    // The cut boundary maps to the start of range 1 (skips the removed gap).
+    XCTAssertEqual(ClipPlaybackPlanner.sourceMs(forEditedMs: 4000, ranges: r), 6000)
+    // Past the edited end parks on the last kept frame.
+    XCTAssertEqual(ClipPlaybackPlanner.sourceMs(forEditedMs: 99999, ranges: r), 10000)
+  }
+
+  func testActiveIndexForEditedMs() {
+    let r = ranges([(0, 4000), (6000, 10000)])
+    XCTAssertEqual(ClipPlaybackPlanner.activeIndex(forEditedMs: 2000, ranges: r), 0)
+    XCTAssertEqual(ClipPlaybackPlanner.activeIndex(forEditedMs: 5000, ranges: r), 1)
+    // The cut boundary belongs to the second range.
+    XCTAssertEqual(ClipPlaybackPlanner.activeIndex(forEditedMs: 4000, ranges: r), 1)
+  }
+
+  func testSeekBackBeforeCutResolvesEditedPositionNotCut() {
+    // Regression: after playing past the cut (active index 1), seeking back to
+    // an edited position before the cut must re-resolve the active range so the
+    // emitted edited position equals the target — not clamp to the cut point.
+    let r = ranges([(0, 4000), (6000, 10000)])
+    let editedTarget = 2000
+    let src = ClipPlaybackPlanner.sourceMs(forEditedMs: editedTarget, ranges: r)
+    let idx = ClipPlaybackPlanner.activeIndex(forEditedMs: editedTarget, ranges: r)
+    XCTAssertEqual(src, 2000)
+    XCTAssertEqual(idx, 0)
+    XCTAssertEqual(
+      ClipPlaybackPlanner.editedMs(forSourceMs: src, activeIndex: idx, ranges: r),
+      editedTarget,
+      "edited->source->edited must round-trip, not stick at the cut")
+
+    // The stale-index bug: with the OLD active index (1), the same source maps
+    // to the cut point (4000) instead of 2000 — the symptom we fixed.
+    XCTAssertEqual(
+      ClipPlaybackPlanner.editedMs(forSourceMs: src, activeIndex: 1, ranges: r), 4000)
+  }
+
+  func testEditedSourceRoundTripAcrossCut() {
+    let r = ranges([(0, 4000), (6000, 10000)])
+    for edited in [0, 1500, 3999, 4000, 4001, 6000, 8000] {
+      let src = ClipPlaybackPlanner.sourceMs(forEditedMs: edited, ranges: r)
+      let idx = ClipPlaybackPlanner.activeIndex(forEditedMs: edited, ranges: r)
+      XCTAssertEqual(
+        ClipPlaybackPlanner.editedMs(forSourceMs: src, activeIndex: idx, ranges: r),
+        edited, "round-trip failed at edited \(edited)")
+    }
+  }
 }

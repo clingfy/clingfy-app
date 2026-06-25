@@ -1018,6 +1018,40 @@ enum ClipPlaybackPlanner {
     let offset = max(0, sourceMs - ranges[idx].sourceInMs)
     return base + min(offset, ranges[idx].durationMs)
   }
+
+  /// The kept-range index that an edited-timeline position falls in — the
+  /// inverse counterpart to [activeIndex(forSourceMs:)]. A position at or past
+  /// the edited end resolves to the last range. Used when the user seeks/scrubs
+  /// on the edited timeline so the active range is refreshed to match.
+  static func activeIndex(forEditedMs editedMs: Int, ranges: [ClipKeptRange]) -> Int {
+    guard !ranges.isEmpty else { return 0 }
+    let target = max(0, editedMs)
+    var base = 0
+    for (i, r) in ranges.enumerated() {
+      if target < base + r.durationMs { return i }
+      base += r.durationMs
+    }
+    return ranges.count - 1
+  }
+
+  /// Maps an edited-timeline position back to a real source position — the
+  /// inverse of [editedMs]. A position past the edited end parks on the last
+  /// kept frame. This is what lets a seek/scrub on the edited timeline land on
+  /// the correct source frame across cuts (and, paired with
+  /// [activeIndex(forEditedMs:)], stops a backward seek from parking the
+  /// playhead at the cut).
+  static func sourceMs(forEditedMs editedMs: Int, ranges: [ClipKeptRange]) -> Int {
+    guard !ranges.isEmpty else { return editedMs }
+    let target = max(0, editedMs)
+    var base = 0
+    for r in ranges {
+      if target < base + r.durationMs {
+        return r.sourceInMs + (target - base)
+      }
+      base += r.durationMs
+    }
+    return ranges.last?.sourceOutMs ?? editedMs
+  }
 }
 
 struct CompositionParams: Equatable {
