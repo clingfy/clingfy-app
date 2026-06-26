@@ -275,4 +275,37 @@ void main() {
       expect(harness.player.positionMs, 1500);
     },
   );
+
+  test(
+    'a hover landing during the play() await cannot re-freeze the playhead',
+    () async {
+      final harness = await createReadyPreviewHarness();
+      addTearDown(harness.recording.dispose);
+      addTearDown(harness.player.dispose);
+      addTearDown(harness.settings.dispose);
+
+      await _emitPlayerEvent({
+        'type': 'playerTick',
+        'sessionId': harness.sessionId,
+        'positionMs': 1000,
+        'durationMs': 5000,
+      });
+
+      // Begin playback, then — before the native previewPlay round-trip
+      // resolves — a stray hover fires. previewPeekTo must bail because we are
+      // already playing; otherwise it would re-arm the peek and freeze ticks.
+      final playFuture = harness.player.play();
+      await harness.player.previewPeekTo(3000);
+      await playFuture;
+
+      expect(harness.player.isPlaying, isTrue);
+      await _emitPlayerEvent({
+        'type': 'playerTick',
+        'sessionId': harness.sessionId,
+        'positionMs': 1800,
+        'durationMs': 5000,
+      });
+      expect(harness.player.positionMs, 1800);
+    },
+  );
 }
