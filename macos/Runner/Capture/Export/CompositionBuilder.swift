@@ -1052,6 +1052,26 @@ enum ClipPlaybackPlanner {
     }
     return ranges.last?.sourceOutMs ?? editedMs
   }
+
+  /// Merges source-adjacent kept ranges (where `range[i].sourceOutMs ==
+  /// range[i+1].sourceInMs`) into one. A split with no deletion produces
+  /// contiguous ranges that cover the asset with no removed footage; coalescing
+  /// turns that back into a single passthrough range so playback and seeking
+  /// skip all clip handling. Reordered (arrange) ranges are not source-adjacent,
+  /// so they are left intact.
+  static func coalesce(ranges: [ClipKeptRange]) -> [ClipKeptRange] {
+    guard ranges.count > 1 else { return ranges }
+    var out: [ClipKeptRange] = []
+    for r in ranges {
+      if let last = out.last, last.sourceOutMs == r.sourceInMs {
+        out[out.count - 1] = ClipKeptRange(
+          sourceInMs: last.sourceInMs, sourceOutMs: r.sourceOutMs)
+      } else {
+        out.append(r)
+      }
+    }
+    return out
+  }
 }
 
 struct CompositionParams: Equatable {

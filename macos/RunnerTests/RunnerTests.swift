@@ -7823,4 +7823,41 @@ final class ClipPlaybackPlannerTests: XCTestCase {
         edited, "round-trip failed at edited \(edited)")
     }
   }
+
+  func testCoalesceMergesSourceContiguousRanges() {
+    // A split with no deletion: two source-adjacent ranges collapse into one.
+    XCTAssertEqual(
+      ClipPlaybackPlanner.coalesce(ranges: ranges([(0, 8400), (8400, 12000)])),
+      ranges([(0, 12000)]))
+    // ...which then reads as a passthrough (no removed footage).
+    XCTAssertTrue(
+      ClipPlaybackPlanner.isPassthrough(
+        ranges: ClipPlaybackPlanner.coalesce(ranges: ranges([(0, 8400), (8400, 12000)])),
+        assetDurationMs: 12000))
+  }
+
+  func testCoalesceLeavesRealGapsAndReorderIntact() {
+    // A real delete leaves a gap — not merged.
+    XCTAssertEqual(
+      ClipPlaybackPlanner.coalesce(ranges: ranges([(0, 4000), (6000, 10000)])),
+      ranges([(0, 4000), (6000, 10000)]))
+    // Reordered ranges are not source-adjacent — left intact.
+    XCTAssertEqual(
+      ClipPlaybackPlanner.coalesce(ranges: ranges([(6000, 8000), (0, 2000)])),
+      ranges([(6000, 8000), (0, 2000)]))
+  }
+
+  func testReportedEditedPositionResolvesFromSourceNotStaleIndex() {
+    // The fix for "scrub sticks at the cut": the reported edited position uses
+    // the range CONTAINING the source, so a stale playback index can't park it
+    // at the cut. Source 2000 (before the cut) reports 2000 — even though the
+    // stale later index would clamp it to the cut point (4000).
+    let r = ranges([(0, 4000), (6000, 10000)])
+    let reportIndex = ClipPlaybackPlanner.activeIndex(forSourceMs: 2000, ranges: r)
+    XCTAssertEqual(reportIndex, 0)
+    XCTAssertEqual(
+      ClipPlaybackPlanner.editedMs(forSourceMs: 2000, activeIndex: reportIndex, ranges: r), 2000)
+    XCTAssertEqual(
+      ClipPlaybackPlanner.editedMs(forSourceMs: 2000, activeIndex: 1, ranges: r), 4000)
+  }
 }
