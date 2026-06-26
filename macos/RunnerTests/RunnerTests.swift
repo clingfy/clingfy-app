@@ -7860,6 +7860,19 @@ final class ClipPlaybackPlannerTests: XCTestCase {
     XCTAssertEqual(
       ClipPlaybackPlanner.editedMs(forSourceMs: 2000, activeIndex: 1, ranges: r), 4000)
   }
+
+  func testIsAtEndDetectsTheCompletionParkSpot() {
+    let r = ranges([(0, 4000), (6000, 10000)])
+    // At/after the last kept range's end → parked (so play() should restart).
+    XCTAssertTrue(ClipPlaybackPlanner.isAtEnd(sourceMs: 10000, ranges: r))
+    XCTAssertTrue(
+      ClipPlaybackPlanner.isAtEnd(sourceMs: 9985, ranges: r, epsilonMs: 17))
+    // Comfortably inside → not parked.
+    XCTAssertFalse(ClipPlaybackPlanner.isAtEnd(sourceMs: 8000, ranges: r))
+    XCTAssertFalse(ClipPlaybackPlanner.isAtEnd(sourceMs: 0, ranges: r))
+    // No ranges → this helper never reports "at end" (the no-cut path handles it).
+    XCTAssertFalse(ClipPlaybackPlanner.isAtEnd(sourceMs: 99999, ranges: []))
+  }
 }
 
 final class NativeLoggerTests: XCTestCase {

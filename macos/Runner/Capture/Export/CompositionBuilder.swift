@@ -1072,6 +1072,15 @@ enum ClipPlaybackPlanner {
     }
     return out
   }
+
+  /// True when a source position sits at/after the last kept range's end (within
+  /// [epsilonMs]) — i.e. the player is parked at the edited end, the spot where
+  /// playback completes. Used so play() restarts from the beginning instead of
+  /// no-op'ing on the last frame.
+  static func isAtEnd(sourceMs: Int, ranges: [ClipKeptRange], epsilonMs: Int = 0) -> Bool {
+    guard let lastOut = ranges.last?.sourceOutMs else { return false }
+    return sourceMs >= lastOut - epsilonMs
+  }
 }
 
 struct CompositionParams: Equatable {
