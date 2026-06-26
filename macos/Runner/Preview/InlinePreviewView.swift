@@ -1109,7 +1109,31 @@ final class InlinePreviewView: NSView {
 
   func seekTo(milliseconds: Int) {
     guard let player = player else { return }
-    let seconds = Double(milliseconds) / 1000.0
+
+    // Flutter seeks/scrubs on the EDITED timeline. With cuts active, map the
+    // edited position back to a real source position and refresh the active
+    // kept range so the player lands on the right frame AND the next tick
+    // reports the matching edited position. Without this, a backward seek
+    // across a cut keeps the stale (later) active range, parking the playhead
+    // at the cut until real playback catches up.
+    let sourceMs: Int
+    if clipKeptRanges.isEmpty {
+      sourceMs = milliseconds
+    } else {
+      sourceMs = ClipPlaybackPlanner.sourceMs(
+        forEditedMs: milliseconds, ranges: clipKeptRanges)
+      activeClipRangeIndex = ClipPlaybackPlanner.activeIndex(
+        forEditedMs: milliseconds, ranges: clipKeptRanges)
+      NativeLogger.d(
+        "Player", "seekTo across cuts",
+        context: [
+          "editedMs": milliseconds,
+          "sourceMs": sourceMs,
+          "activeIndex": activeClipRangeIndex,
+        ])
+    }
+
+    let seconds = Double(sourceMs) / 1000.0
 
     /// If seeking backwards, reset zoom/hysteresis
     if seconds + 0.0001 < lastZoomTime {
@@ -1618,11 +1642,21 @@ final class InlinePreviewView: NSView {
     // Report edited-timeline position/duration to Flutter when cuts are active
     // so the scrubber and time labels reflect the trimmed video, not the raw
     // asset. With no cuts these equal the raw source values.
+    //
+    // Derive the reporting range from the CURRENT source position rather than
+    // the playback-advance index: the advance index can momentarily lag a seek,
+    // and a stale (later) index clamps the reported position to that range's
+    // start — i.e. parks the playhead at the cut. Resolving from the source is
+    // unambiguous for cut/split/trim (ranges are in source order); a future
+    // timeline reorder (arrange) would need the playback index to disambiguate
+    // repeated source windows.
+    let reportIndex = ClipPlaybackPlanner.activeIndex(
+      forSourceMs: posMs, ranges: clipKeptRanges)
     let emittedPosMs =
       clipKeptRanges.isEmpty
       ? posMs
       : ClipPlaybackPlanner.editedMs(
-        forSourceMs: posMs, activeIndex: activeClipRangeIndex, ranges: clipKeptRanges)
+        forSourceMs: posMs, activeIndex: reportIndex, ranges: clipKeptRanges)
     let emittedDurMs =
       clipKeptRanges.isEmpty
       ? durMs
@@ -1676,15 +1710,20 @@ final class InlinePreviewView: NSView {
   /// sits inside a cut region, snaps to the active range start so the preview
   /// never shows removed footage.
   func updateClipsOnly(_ ranges: [ClipKeptRange]) {
+    // Coalesce source-adjacent ranges first: a split with no deletion is
+    // contiguous footage, so it collapses to a single passthrough range and
+    // never engages clip handling (which otherwise parks the playhead at the
+    // split when a backward seek leaves a stale active range).
+    let coalesced = ClipPlaybackPlanner.coalesce(ranges: ranges)
     let assetDurMs = Int((player?.currentItem?.duration.seconds ?? 0) * 1000)
-    if ClipPlaybackPlanner.isPassthrough(ranges: ranges, assetDurationMs: assetDurMs) {
+    if ClipPlaybackPlanner.isPassthrough(ranges: coalesced, assetDurationMs: assetDurMs) {
       clipKeptRanges = []
       activeClipRangeIndex = 0
       NativeLogger.d("Player", "updateClipsOnly: passthrough (no cuts)")
       return
     }
 
-    clipKeptRanges = ranges
+    clipKeptRanges = coalesced
     let curMs = Int((player?.currentTime().seconds ?? 0) * 1000)
     activeClipRangeIndex = ClipPlaybackPlanner.activeIndex(forSourceMs: curMs, ranges: ranges)
 

@@ -83,7 +83,12 @@ class PlayerController extends ChangeNotifier {
 
       switch (type) {
         case 'playerTick':
-          if (!_scrubbing && !_isPeeking) {
+          // While playing, the playhead must always track — peeking is a
+          // paused-only affordance, so `_playerPlaying` overrides a stale
+          // `_isPeeking` that a hover left set. This is the load-bearing guard
+          // against the "resume leaves the scrubber frozen until the cursor
+          // exits the timeline" bug.
+          if (_playerPlaying || (!_scrubbing && !_isPeeking)) {
             _posMs = (event['positionMs'] as num?)?.toInt() ?? 0;
             _durMs = (event['durationMs'] as num?)?.toInt() ?? 0;
             _playerReady = _durMs > 0;
@@ -110,6 +115,9 @@ class PlayerController extends ChangeNotifier {
           final state = event['state'] as String?;
           if (state == 'playing') {
             _playerPlaying = true;
+            // Defense in depth: playback (however it started) ends any peek, so
+            // position ticks must flow to the playhead again.
+            _isPeeking = false;
           } else if (state == 'paused') {
             _playerPlaying = false;
           } else if (state == 'completed') {
@@ -318,9 +326,15 @@ class PlayerController extends ChangeNotifier {
   Future<void> play() async {
     final sessionId = _activeSessionId;
     if (sessionId == null) return;
-    await _nativeBridge.invokeMethod('previewPlay', {'sessionId': sessionId});
+    // Commit any in-progress hover-peek AND mark playing BEFORE the await: a
+    // hover landing during the await calls previewPeekTo, which only bails when
+    // `_playerPlaying` is already true — so setting it after the await would let
+    // that hover re-arm `_isPeeking` and re-freeze the playhead. Set both up
+    // front. (The tick handler also treats `_playerPlaying` as authoritative.)
+    _isPeeking = false;
     _playerPlaying = true;
     notifyListeners();
+    await _nativeBridge.invokeMethod('previewPlay', {'sessionId': sessionId});
   }
 
   Future<void> pause() async {
