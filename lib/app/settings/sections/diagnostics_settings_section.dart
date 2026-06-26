@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'dart:io' show Platform;
 
 import 'package:clingfy/core/bridges/native_bridge.dart';
@@ -8,6 +9,7 @@ import 'package:clingfy/app/settings/settings_controller.dart';
 import 'package:clingfy/ui/platform/platform_kind.dart';
 import 'package:clingfy/ui/platform/widgets/app_button.dart';
 import 'package:clingfy/ui/platform/widgets/app_inline_notice.dart';
+import 'package:clingfy/ui/platform/widgets/app_toggle_row.dart';
 import 'package:flutter/cupertino.dart' show CupertinoIcons;
 import 'package:flutter/material.dart';
 
@@ -67,6 +69,19 @@ class _DiagnosticsSettingsSectionState
                 AppInlineNotice(message: _noticeText!, variant: _noticeVariant),
                 const SizedBox(height: 12),
               ],
+              ListenableBuilder(
+                listenable: widget.controller.workspace,
+                builder: (context, _) => AppToggleRow(
+                  key: const Key('diagnostics_verbose_logging_toggle'),
+                  title: l10n.diagnosticsVerboseLogging,
+                  helperText: l10n.diagnosticsVerboseLoggingHelp,
+                  value: widget.controller.workspace.verboseLogging,
+                  onChanged: (value) => unawaited(
+                    widget.controller.workspace.setVerboseLogging(value),
+                  ),
+                ),
+              ),
+              const SizedBox(height: 12),
               Wrap(
                 spacing: 8,
                 runSpacing: 8,

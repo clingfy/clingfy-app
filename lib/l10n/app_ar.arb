@@ -622,6 +622,8 @@
   "borderWidthLabel": "عرض الحدود",
   "diagnosticsTitle": "التشخيص",
   "diagnosticsHelpText": "في حال حدوث خطأ ما، افتح مجلد السجلات وأرسل ملف سجل اليوم للدعم.",
+  "diagnosticsVerboseLogging": "تسجيل مفصّل",
+  "diagnosticsVerboseLoggingHelp": "سجّل سجلات تصحيح مفصّلة للمساعدة في إعادة إنتاج مشكلة يصعب تتبّعها. فعّله، ثم أعد إنتاج المشكلة، ثم صدّر التشخيصات وأرسل الملفات. اتركه مُطفأً للاستخدام اليومي.",
   "openLogsFolder": "افتتاح مجلد السجلات",
   "revealTodayLog": "إظهار ملف سجل اليوم",
   "copyLogPath": "نسخ المسار",

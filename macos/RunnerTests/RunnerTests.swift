@@ -7861,3 +7861,58 @@ final class ClipPlaybackPlannerTests: XCTestCase {
       ClipPlaybackPlanner.editedMs(forSourceMs: 2000, activeIndex: 1, ranges: r), 4000)
   }
 }
+
+final class NativeLoggerTests: XCTestCase {
+  override func tearDown() {
+    // Restore the build default (DEBUG test build → debug) so the shared
+    // static threshold doesn't leak into other test classes.
+    NativeLogger.setMinLevel("debug")
+    super.tearDown()
+  }
+
+  func testInfoThresholdGatesDebug() {
+    NativeLogger.setMinLevel("info")
+    XCTAssertEqual(NativeLogger.minLevelRank, 1)
+    XCTAssertFalse(NativeLogger.shouldSend(level: "DEBUG"))
+    XCTAssertTrue(NativeLogger.shouldSend(level: "INFO"))
+    XCTAssertTrue(NativeLogger.shouldSend(level: "WARNING"))
+    XCTAssertTrue(NativeLogger.shouldSend(level: "ERROR"))
+  }
+
+  func testDebugThresholdSendsEverything() {
+    NativeLogger.setMinLevel("debug")
+    XCTAssertTrue(NativeLogger.shouldSend(level: "DEBUG"))
+    XCTAssertTrue(NativeLogger.shouldSend(level: "INFO"))
+    XCTAssertTrue(NativeLogger.shouldSend(level: "ERROR"))
+  }
+
+  func testErrorThresholdGatesAllButErrors() {
+    NativeLogger.setMinLevel("error")
+    XCTAssertFalse(NativeLogger.shouldSend(level: "DEBUG"))
+    XCTAssertFalse(NativeLogger.shouldSend(level: "INFO"))
+    XCTAssertFalse(NativeLogger.shouldSend(level: "WARNING"))
+    XCTAssertTrue(NativeLogger.shouldSend(level: "ERROR"))
+  }
+
+  func testUnknownLevelNameIsIgnored() {
+    NativeLogger.setMinLevel("warning")
+    NativeLogger.setMinLevel("totally-bogus")
+    XCTAssertEqual(NativeLogger.minLevelRank, 2)
+  }
+
+  func testLevelNameAliasesParse() {
+    NativeLogger.setMinLevel("warn")
+    XCTAssertEqual(NativeLogger.minLevelRank, 2)
+    NativeLogger.setMinLevel("  Verbose  ")
+    XCTAssertEqual(NativeLogger.minLevelRank, 0)
+  }
+
+  func testUnknownEmittedLevelTreatedAsDebug() {
+    // Matches the Dart `nativeEvent` fallback: an unparseable emitted level is
+    // treated as debug (lowest rank), so it is dropped above a debug threshold.
+    NativeLogger.setMinLevel("info")
+    XCTAssertFalse(NativeLogger.shouldSend(level: "BOGUS"))
+    NativeLogger.setMinLevel("debug")
+    XCTAssertTrue(NativeLogger.shouldSend(level: "BOGUS"))
+  }
+}

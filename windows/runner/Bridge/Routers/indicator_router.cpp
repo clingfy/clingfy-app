@@ -25,6 +25,11 @@ void RegisterHandlers(HandlerTable& table) {
   table["showPreRecordingBar"] = &HandleNoopSetter;
   table["togglePreRecordingBar"] = &HandleNoopSetter;
   table["setPreRecordingBarState"] = &HandleNoopSetter;
+
+  // Runtime log-verbosity push from the Settings "verbose logging" toggle.
+  // No-op on Windows for now (Windows logging honors the CLINGFY_LOG_LEVEL env
+  // var at startup; a runtime level set is a future task).
+  table["setNativeLogLevel"] = &HandleNoopSetter;
 }
 
 }  // namespace clingfy::bridge::routers::indicator

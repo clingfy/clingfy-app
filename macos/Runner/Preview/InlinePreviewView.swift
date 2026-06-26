@@ -280,8 +280,11 @@ final class InlinePreviewView: NSView {
   /// mask is honored.
   func applyRootCornerRadius(_ radius: CGFloat) {
     rootCornerRadius = max(0, radius)
-    NSLog(
-      "[Preview] InlinePreviewView.applyRootCornerRadius radius=\(rootCornerRadius) bounds=\(bounds.size)"
+    // Route through NativeLogger so this obeys the runtime log level (it was a
+    // raw NSLog that stayed on in every build).
+    NativeLogger.d(
+      "Preview",
+      "InlinePreviewView.applyRootCornerRadius radius=\(rootCornerRadius) bounds=\(bounds.size)"
     )
     refreshRootCornerMask()
   }

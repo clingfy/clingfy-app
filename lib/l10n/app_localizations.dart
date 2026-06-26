@@ -3466,6 +3466,18 @@ abstract class AppLocalizations {
   /// **'If something goes wrong, open the logs folder and send today\'s log file to support.'**
   String get diagnosticsHelpText;
 
+  /// No description provided for @diagnosticsVerboseLogging.
+  ///
+  /// In en, this message translates to:
+  /// **'Verbose logging'**
+  String get diagnosticsVerboseLogging;
+
+  /// No description provided for @diagnosticsVerboseLoggingHelp.
+  ///
+  /// In en, this message translates to:
+  /// **'Record detailed debug logs to help reproduce a hard-to-find issue. Turn it on, reproduce the problem, then export diagnostics and send the files. Leave it off for everyday use.'**
+  String get diagnosticsVerboseLoggingHelp;
+
   /// No description provided for @openLogsFolder.
   ///
   /// In en, this message translates to:

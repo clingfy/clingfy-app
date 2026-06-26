@@ -1841,6 +1841,13 @@ class AppLocalizationsEn extends AppLocalizations {
       'If something goes wrong, open the logs folder and send today\'s log file to support.';
 
   @override
+  String get diagnosticsVerboseLogging => 'Verbose logging';
+
+  @override
+  String get diagnosticsVerboseLoggingHelp =>
+      'Record detailed debug logs to help reproduce a hard-to-find issue. Turn it on, reproduce the problem, then export diagnostics and send the files. Leave it off for everyday use.';
+
+  @override
   String get openLogsFolder => 'Open Logs Folder';
 
   @override

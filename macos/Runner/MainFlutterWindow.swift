@@ -883,6 +883,13 @@ class MainFlutterWindow: NSWindow {
         self.setPreRecordingBarEnabled(enabled)
         result(nil)
 
+      case "setNativeLogLevel":
+        let args = call.arguments as? [String: Any]
+        if let level = args?["level"] as? String {
+          NativeLogger.setMinLevel(level)
+        }
+        result(nil)
+
       case "showPreRecordingBar":
         self.explicitlyShowPreRecordingBar()
         result(nil)
