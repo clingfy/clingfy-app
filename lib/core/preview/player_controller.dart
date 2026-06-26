@@ -110,6 +110,9 @@ class PlayerController extends ChangeNotifier {
           final state = event['state'] as String?;
           if (state == 'playing') {
             _playerPlaying = true;
+            // Defense in depth: playback (however it started) ends any peek, so
+            // position ticks must flow to the playhead again.
+            _isPeeking = false;
           } else if (state == 'paused') {
             _playerPlaying = false;
           } else if (state == 'completed') {
@@ -318,6 +321,11 @@ class PlayerController extends ChangeNotifier {
   Future<void> play() async {
     final sessionId = _activeSessionId;
     if (sessionId == null) return;
+    // Starting playback commits any in-progress hover-peek. Otherwise a cursor
+    // left hovering over the timeline keeps `_isPeeking` true, which suppresses
+    // playhead ticks — the playhead would freeze until the cursor exits the
+    // timeline. Clear it here, before any tick arrives.
+    _isPeeking = false;
     await _nativeBridge.invokeMethod('previewPlay', {'sessionId': sessionId});
     _playerPlaying = true;
     notifyListeners();

@@ -234,4 +234,45 @@ void main() {
       expect(editor.hasCuts, isFalse);
     },
   );
+
+  test(
+    'starting playback clears a hover-peek so the playhead tracks again',
+    () async {
+      final harness = await createReadyPreviewHarness();
+      addTearDown(harness.recording.dispose);
+      addTearDown(harness.player.dispose);
+      addTearDown(harness.settings.dispose);
+
+      // Ready and paused at 1000ms.
+      await _emitPlayerEvent({
+        'type': 'playerTick',
+        'sessionId': harness.sessionId,
+        'positionMs': 1000,
+        'durationMs': 5000,
+      });
+      expect(harness.player.positionMs, 1000);
+
+      // Hover the timeline → peeking suppresses position ticks while paused, so
+      // the committed playhead stays put even as the preview frame peeks ahead.
+      await harness.player.previewPeekTo(2000);
+      await _emitPlayerEvent({
+        'type': 'playerTick',
+        'sessionId': harness.sessionId,
+        'positionMs': 2000,
+        'durationMs': 5000,
+      });
+      expect(harness.player.positionMs, 1000);
+
+      // Starting playback must end the peek so ticks flow to the playhead again
+      // (the regression: it stayed frozen until the cursor left the timeline).
+      await harness.player.play();
+      await _emitPlayerEvent({
+        'type': 'playerTick',
+        'sessionId': harness.sessionId,
+        'positionMs': 1500,
+        'durationMs': 5000,
+      });
+      expect(harness.player.positionMs, 1500);
+    },
+  );
 }
