@@ -7860,4 +7860,72 @@ final class ClipPlaybackPlannerTests: XCTestCase {
     XCTAssertEqual(
       ClipPlaybackPlanner.editedMs(forSourceMs: 2000, activeIndex: 1, ranges: r), 4000)
   }
+
+  func testIsAtEndDetectsTheCompletionParkSpot() {
+    let r = ranges([(0, 4000), (6000, 10000)])
+    // At/after the last kept range's end → parked (so play() should restart).
+    XCTAssertTrue(ClipPlaybackPlanner.isAtEnd(sourceMs: 10000, ranges: r))
+    XCTAssertTrue(
+      ClipPlaybackPlanner.isAtEnd(sourceMs: 9985, ranges: r, epsilonMs: 17))
+    // Comfortably inside → not parked.
+    XCTAssertFalse(ClipPlaybackPlanner.isAtEnd(sourceMs: 8000, ranges: r))
+    XCTAssertFalse(ClipPlaybackPlanner.isAtEnd(sourceMs: 0, ranges: r))
+    // No ranges → this helper never reports "at end" (the no-cut path handles it).
+    XCTAssertFalse(ClipPlaybackPlanner.isAtEnd(sourceMs: 99999, ranges: []))
+  }
+}
+
+final class NativeLoggerTests: XCTestCase {
+  override func tearDown() {
+    // Restore the build default (DEBUG test build → debug) so the shared
+    // static threshold doesn't leak into other test classes.
+    NativeLogger.setMinLevel("debug")
+    super.tearDown()
+  }
+
+  func testInfoThresholdGatesDebug() {
+    NativeLogger.setMinLevel("info")
+    XCTAssertEqual(NativeLogger.minLevelRank, 1)
+    XCTAssertFalse(NativeLogger.shouldSend(level: "DEBUG"))
+    XCTAssertTrue(NativeLogger.shouldSend(level: "INFO"))
+    XCTAssertTrue(NativeLogger.shouldSend(level: "WARNING"))
+    XCTAssertTrue(NativeLogger.shouldSend(level: "ERROR"))
+  }
+
+  func testDebugThresholdSendsEverything() {
+    NativeLogger.setMinLevel("debug")
+    XCTAssertTrue(NativeLogger.shouldSend(level: "DEBUG"))
+    XCTAssertTrue(NativeLogger.shouldSend(level: "INFO"))
+    XCTAssertTrue(NativeLogger.shouldSend(level: "ERROR"))
+  }
+
+  func testErrorThresholdGatesAllButErrors() {
+    NativeLogger.setMinLevel("error")
+    XCTAssertFalse(NativeLogger.shouldSend(level: "DEBUG"))
+    XCTAssertFalse(NativeLogger.shouldSend(level: "INFO"))
+    XCTAssertFalse(NativeLogger.shouldSend(level: "WARNING"))
+    XCTAssertTrue(NativeLogger.shouldSend(level: "ERROR"))
+  }
+
+  func testUnknownLevelNameIsIgnored() {
+    NativeLogger.setMinLevel("warning")
+    NativeLogger.setMinLevel("totally-bogus")
+    XCTAssertEqual(NativeLogger.minLevelRank, 2)
+  }
+
+  func testLevelNameAliasesParse() {
+    NativeLogger.setMinLevel("warn")
+    XCTAssertEqual(NativeLogger.minLevelRank, 2)
+    NativeLogger.setMinLevel("  Verbose  ")
+    XCTAssertEqual(NativeLogger.minLevelRank, 0)
+  }
+
+  func testUnknownEmittedLevelTreatedAsDebug() {
+    // Matches the Dart `nativeEvent` fallback: an unparseable emitted level is
+    // treated as debug (lowest rank), so it is dropped above a debug threshold.
+    NativeLogger.setMinLevel("info")
+    XCTAssertFalse(NativeLogger.shouldSend(level: "BOGUS"))
+    NativeLogger.setMinLevel("debug")
+    XCTAssertTrue(NativeLogger.shouldSend(level: "BOGUS"))
+  }
 }

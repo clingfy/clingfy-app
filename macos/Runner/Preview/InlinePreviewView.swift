@@ -280,8 +280,11 @@ final class InlinePreviewView: NSView {
   /// mask is honored.
   func applyRootCornerRadius(_ radius: CGFloat) {
     rootCornerRadius = max(0, radius)
-    NSLog(
-      "[Preview] InlinePreviewView.applyRootCornerRadius radius=\(rootCornerRadius) bounds=\(bounds.size)"
+    // Route through NativeLogger so this obeys the runtime log level (it was a
+    // raw NSLog that stayed on in every build).
+    NativeLogger.d(
+      "Preview",
+      "InlinePreviewView.applyRootCornerRadius radius=\(rootCornerRadius) bounds=\(bounds.size)"
     )
     refreshRootCornerMask()
   }
@@ -1096,9 +1099,44 @@ final class InlinePreviewView: NSView {
   }
 
   func play() {
+    // Replaying after the preview finishes: with cuts, completion parks the
+    // player on the last kept frame (the `.end` branch), and AVPlayer will not
+    // resume from the end on play(). Detect that and restart from the edited
+    // start so play() actually replays instead of doing nothing at the tail.
+    if let player = player {
+      let curMs = Int(
+        (player.currentTime().seconds.isFinite ? player.currentTime().seconds : 0) * 1000)
+      if isParkedAtEditedEnd(curMs) {
+        let startSource = clipKeptRanges.first?.sourceInMs ?? 0
+        activeClipRangeIndex = 0
+        let startTime = CMTime(seconds: Double(startSource) / 1000.0, preferredTimescale: 600)
+        player.seek(to: startTime, toleranceBefore: .zero, toleranceAfter: .zero)
+        syncCameraPlayback(to: startTime, force: true)
+        NativeLogger.d(
+          "Player", "play() restarted from edited start (was parked at the end)",
+          context: ["fromMs": curMs, "startSourceMs": startSource])
+      } else {
+        NativeLogger.d(
+          "Player", "play()",
+          context: ["curMs": curMs, "cuts": !clipKeptRanges.isEmpty])
+      }
+    }
     player?.play()
     syncCameraPlayback(force: true)
     sendState(state: "playing")
+  }
+
+  /// Whether the current source position is parked at the edited end (so play()
+  /// should restart). With cuts, that's the last kept range's end; without cuts,
+  /// the asset end.
+  private func isParkedAtEditedEnd(_ curMs: Int) -> Bool {
+    if clipKeptRanges.isEmpty {
+      let durSeconds = player?.currentItem?.duration.seconds ?? 0
+      guard durSeconds.isFinite, durSeconds > 0 else { return false }
+      return curMs >= Int(durSeconds * 1000) - clipJumpEpsilonMs
+    }
+    return ClipPlaybackPlanner.isAtEnd(
+      sourceMs: curMs, ranges: clipKeptRanges, epsilonMs: clipJumpEpsilonMs)
   }
 
   func pause() {

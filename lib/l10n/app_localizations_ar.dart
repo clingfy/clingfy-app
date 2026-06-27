@@ -1826,6 +1826,13 @@ class AppLocalizationsAr extends AppLocalizations {
       'في حال حدوث خطأ ما، افتح مجلد السجلات وأرسل ملف سجل اليوم للدعم.';
 
   @override
+  String get diagnosticsVerboseLogging => 'تسجيل مفصّل';
+
+  @override
+  String get diagnosticsVerboseLoggingHelp =>
+      'سجّل سجلات تصحيح مفصّلة للمساعدة في إعادة إنتاج مشكلة يصعب تتبّعها. فعّله، ثم أعد إنتاج المشكلة، ثم صدّر التشخيصات وأرسل الملفات. اتركه مُطفأً للاستخدام اليومي.';
+
+  @override
   String get openLogsFolder => 'افتتاح مجلد السجلات';
 
   @override

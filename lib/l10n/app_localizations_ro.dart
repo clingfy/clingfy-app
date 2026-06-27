@@ -1857,6 +1857,13 @@ class AppLocalizationsRo extends AppLocalizations {
       'Dacă ceva nu merge bine, deschideți folderul de loguri și trimiteți logul de astăzi la suport.';
 
   @override
+  String get diagnosticsVerboseLogging => 'Jurnalizare detaliată';
+
+  @override
+  String get diagnosticsVerboseLoggingHelp =>
+      'Înregistrează loguri de depanare detaliate pentru a ajuta la reproducerea unei probleme greu de găsit. Activează-l, reprodu problema, apoi exportă diagnosticarea și trimite fișierele. Lasă-l dezactivat pentru utilizarea zilnică.';
+
+  @override
   String get openLogsFolder => 'Deschide folderul de loguri';
 
   @override

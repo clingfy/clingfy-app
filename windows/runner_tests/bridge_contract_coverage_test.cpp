@@ -93,6 +93,9 @@ const std::vector<std::string>& BridgeContractMethods() {
       "togglePreRecordingBar",
       "setPreRecordingBarState",
 
+      // Diagnostics.
+      "setNativeLogLevel",
+
       // Preview / player / zoom.
       "previewOpen",
       "previewClose",

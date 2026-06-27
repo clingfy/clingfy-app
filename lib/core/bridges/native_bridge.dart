@@ -299,6 +299,17 @@ class NativeBridge {
     });
   }
 
+  /// Pushes the runtime log threshold to the native logger so the Settings
+  /// "verbose logging" toggle also raises/lowers native log verbosity. [level]
+  /// is a level name (debug/info/warning/error); native ignores unknown values.
+  /// Keep this in sync with Swift `NativeLogger.setMinLevel` / the
+  /// `setNativeLogLevel` handler.
+  Future<void> setNativeLogLevel(String level) async {
+    await _nativeBridge.invokeMethod<void>('setNativeLogLevel', {
+      'level': level,
+    });
+  }
+
   Future<void> showPreRecordingBar() async {
     await _nativeBridge.invokeMethod<void>('showPreRecordingBar');
   }

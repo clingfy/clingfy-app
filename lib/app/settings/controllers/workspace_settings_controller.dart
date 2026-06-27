@@ -23,11 +23,13 @@ class WorkspaceSettingsController extends ChangeNotifier {
       'warnBeforeClosingUnexportedRecording';
   static const String _prefShowPreRecordingActionBar =
       'showPreRecordingActionBar';
+  static const String _prefVerboseLogging = 'verboseLogging';
 
   bool _openFolderAfterStop = false;
   bool _openFolderAfterExport = true;
   bool _warnBeforeClosingUnexportedRecording = true;
   bool _showPreRecordingActionBar = true;
+  bool _verboseLogging = false;
   String? _saveFolderPath;
   bool _didAutoOpenSaveFolderThisSession = false;
 
@@ -36,6 +38,12 @@ class WorkspaceSettingsController extends ChangeNotifier {
   bool get warnBeforeClosingUnexportedRecording =>
       _warnBeforeClosingUnexportedRecording;
   bool get showPreRecordingActionBar => _showPreRecordingActionBar;
+
+  /// When on, logging drops to DEBUG verbosity on both the Dart and native
+  /// sides — for capturing a hard-to-reproduce issue on a release build without
+  /// a custom build. Persisted; the env var [Log.logLevelEnvVar] is the other
+  /// way to enable it.
+  bool get verboseLogging => _verboseLogging;
   String? get saveFolderPath => _saveFolderPath;
 
   Future<void> loadPreferences(SharedPreferences prefs) async {
@@ -45,11 +53,43 @@ class WorkspaceSettingsController extends ChangeNotifier {
         prefs.getBool(_prefWarnBeforeClosingUnexportedRecording) ?? true;
     _showPreRecordingActionBar =
         prefs.getBool(_prefShowPreRecordingActionBar) ?? true;
+    _verboseLogging = prefs.getBool(_prefVerboseLogging) ?? false;
+    // Only force verbose here: when off we leave the level resolved at startup
+    // (which already honors the env var / build default) untouched.
+    if (_verboseLogging) {
+      await _applyLogVerbosity(true);
+    }
     _saveFolderPath = prefs.getString(_prefSaveFolderPath);
     if (_saveFolderPath == null || _saveFolderPath!.isEmpty) {
       await _loadSaveFolder(prefs);
     }
     notifyListeners();
+  }
+
+  /// Sets the Dart log threshold and mirrors it to the native logger so both
+  /// sides agree.
+  Future<void> _applyLogVerbosity(bool enabled) async {
+    final level = Log.setVerbose(enabled);
+    try {
+      await _nativeBridge.setNativeLogLevel(level.name);
+    } catch (e, st) {
+      Log.e('Settings', 'Failed to push native log level', e, st);
+    }
+  }
+
+  Future<void> setVerboseLogging(bool value) async {
+    if (value == _verboseLogging) return;
+    _verboseLogging = value;
+    notifyListeners();
+
+    final prefs = await SharedPreferences.getInstance();
+    try {
+      await prefs.setBool(_prefVerboseLogging, value);
+    } catch (e, st) {
+      Log.e('Settings', 'Failed to persist verbose logging preference', e, st);
+    }
+
+    await _applyLogVerbosity(value);
   }
 
   Future<void> _cacheSaveFolderPath(String? path) async {
