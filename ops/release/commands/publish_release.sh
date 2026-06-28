@@ -242,14 +242,18 @@ else
   log_warn "Sentry env vars missing. Skipping Sentry upload."
 fi
 
-log_info "Purging Azure Front Door cache"
-purge_frontdoor_paths \
-  "$AZ_RESOURCE_GROUP" \
-  "$AZ_CDN_PROFILE" \
-  "$AZ_FRONTDOOR_ENDPOINT_NAME" \
-  "$AZ_CDN_ENDPOINT" \
-  "/${FEED_PATH}" \
-  "/${AZ_BINARIES_FOLDER}/${FINAL_DMG_NAME}"
+if [[ -n "$AZ_FRONTDOOR_ENDPOINT_NAME" ]]; then
+  log_info "Purging Azure Front Door cache"
+  purge_frontdoor_paths \
+    "$AZ_RESOURCE_GROUP" \
+    "$AZ_CDN_PROFILE" \
+    "$AZ_FRONTDOOR_ENDPOINT_NAME" \
+    "$AZ_CDN_ENDPOINT" \
+    "/${FEED_PATH}" \
+    "/${AZ_BINARIES_FOLDER}/${FINAL_DMG_NAME}"
+else
+  log_info "No Front Door configured (blob-direct); skipping cache purge"
+fi
 
 log_info "Smoke testing published assets"
 
