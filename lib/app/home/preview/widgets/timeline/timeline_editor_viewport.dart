@@ -2,6 +2,7 @@ import 'dart:math' as math;
 
 import 'package:clingfy/app/home/preview/widgets/timeline/clips_timeline_lane.dart';
 import 'package:clingfy/app/home/preview/widgets/timeline/markers_timeline_lane.dart';
+import 'package:clingfy/app/home/preview/widgets/timeline/scissors_cut_layer.dart';
 import 'package:clingfy/app/home/preview/widgets/timeline/timeline_ruler_metrics.dart';
 import 'package:clingfy/app/home/preview/widgets/timeline/timeline_viewport_controller.dart';
 import 'package:clingfy/app/home/preview/widgets/timeline/zoom_timeline_lane.dart';
@@ -34,6 +35,8 @@ class TimelineEditorViewport extends StatefulWidget {
     this.clipEditor,
     this.onSelectClip,
     this.clipTrimCallbacks,
+    this.cutModeArmed = false,
+    this.onCutAt,
   });
 
   final int durationMs;
@@ -62,6 +65,12 @@ class TimelineEditorViewport extends StatefulWidget {
   final ValueChanged<int?> onHoverChanged;
   final int? hoverPositionMs;
   final VoidCallback onFocusRequested;
+
+  /// Whether the scissors cut tool is armed (Option held over the timeline).
+  final bool cutModeArmed;
+
+  /// Called with the timeline ms under the pointer when the user clicks to cut.
+  final ValueChanged<int>? onCutAt;
 
   @override
   State<TimelineEditorViewport> createState() => _TimelineEditorViewportState();
@@ -202,6 +211,8 @@ class _TimelineEditorViewportState extends State<TimelineEditorViewport> {
                               clipEditor: widget.clipEditor,
                               onSelectClip: widget.onSelectClip,
                               clipTrimCallbacks: widget.clipTrimCallbacks,
+                              cutModeArmed: widget.cutModeArmed,
+                              onCutAt: widget.onCutAt,
                               hoverPositionMs: widget.hoverPositionMs,
                               onSeek: widget.onSeek,
                               onHoverSeek: widget.onHoverSeek,
@@ -351,6 +362,8 @@ class TimelineScrollableCanvas extends StatelessWidget {
     this.clipEditor,
     this.onSelectClip,
     this.clipTrimCallbacks,
+    this.cutModeArmed = false,
+    this.onCutAt,
   });
 
   final double width;
@@ -371,6 +384,13 @@ class TimelineScrollableCanvas extends StatelessWidget {
   final VoidCallback? onHoverEnd;
   final ValueChanged<int?> onHoverChanged;
   final VoidCallback onFocusRequested;
+
+  /// Whether the scissors cut tool is armed (Option held over the timeline).
+  /// When true a transient [ScissorsCutLayer] mounts over the canvas.
+  final bool cutModeArmed;
+
+  /// Called with the timeline ms under the pointer when the user clicks to cut.
+  final ValueChanged<int>? onCutAt;
 
   @override
   Widget build(BuildContext context) {
@@ -451,6 +471,14 @@ class TimelineScrollableCanvas extends StatelessWidget {
               viewportController: viewportController,
             ),
           ),
+          // Mounted only while the cut tool is armed (Option held). On top of
+          // the lanes + playhead so a click anywhere cuts; absent otherwise so
+          // normal seek/select/scroll/trim gestures are untouched.
+          if (cutModeArmed && onCutAt != null)
+            ScissorsCutLayer(
+              viewportController: viewportController,
+              onCutAt: onCutAt!,
+            ),
         ],
       ),
     );

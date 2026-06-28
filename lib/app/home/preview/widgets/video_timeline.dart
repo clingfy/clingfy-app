@@ -88,6 +88,15 @@ class _VideoTimelineState extends State<VideoTimeline> {
   // adds lane-visibility controls alongside the zoom/markers toggles.
   final bool _showClipsLane = true;
   bool _panModeEnabled = false;
+  // Scissors cut tool: armed while Option (Alt) is held alone over the timeline
+  // (Alt+Space is pan, which suppresses it). Local view state, like
+  // [_panModeEnabled] — it mutates nothing, so it does not belong in the clip
+  // editor (a notifyListeners there would rebuild the whole timeline).
+  bool _cutModeArmed = false;
+  // Cut arming is keyboard-driven, so it must respect focus: arm only while the
+  // timeline holds focus (re-synced on focus gain so holding Option then
+  // clicking in works without releasing the key first), and never while blurred.
+  bool _timelineHasFocus = false;
   // Tracks whether the clip editor was attached on the previous build, so the
   // attach/detach transition is logged once (not on every rebuild).
   bool _clipEditorAttached = false;
@@ -151,25 +160,60 @@ class _VideoTimelineState extends State<VideoTimeline> {
       _clearHoverPreview();
     }
     setState(() => _panModeEnabled = enabled);
+    // Pan (Alt+Space) takes over from the cut tool while it is engaged.
+    _syncCutModeFromKeyboard();
+  }
+
+  void _setCutModeArmed(bool armed) {
+    if (_cutModeArmed == armed) return;
+    setState(() => _cutModeArmed = armed);
+  }
+
+  /// Recomputes the cut-tool armed state from the live keyboard. The tool is
+  /// armed while the timeline has focus and Option (Alt) is held alone — Alt+Space
+  /// is pan, which suppresses it. Reading [HardwareKeyboard] (not just tracking
+  /// key events) means a missed key-up can't strand the tool armed, and gating on
+  /// focus means a sync while blurred can never (re-)arm it.
+  void _syncCutModeFromKeyboard() {
+    final armed =
+        _timelineHasFocus &&
+        HardwareKeyboard.instance.isAltPressed &&
+        !_panModeEnabled;
+    _setCutModeArmed(armed);
   }
 
   KeyEventResult _handleTimelineKeyEvent(FocusNode node, KeyEvent event) {
     final isSpace = event.logicalKey == LogicalKeyboardKey.space;
     final isAltSpace = isSpace && HardwareKeyboard.instance.isAltPressed;
 
-    if (!isAltSpace) {
-      return KeyEventResult.ignored;
+    if (isAltSpace) {
+      if (event is KeyDownEvent || event is KeyRepeatEvent) {
+        _setPanModeEnabled(true);
+        return KeyEventResult.handled;
+      }
+      if (event is KeyUpEvent) {
+        _setPanModeEnabled(false);
+        return KeyEventResult.handled;
+      }
     }
 
-    if (event is KeyDownEvent || event is KeyRepeatEvent) {
-      _setPanModeEnabled(true);
-      return KeyEventResult.handled;
-    }
-    if (event is KeyUpEvent) {
+    // Self-heal pan if a release broke the Alt+Space combo out of order (e.g.
+    // Alt up before Space): pan requires BOTH physically held, else the opaque
+    // pan overlay would wedge the timeline until focus loss.
+    if (_panModeEnabled &&
+        !(HardwareKeyboard.instance.isAltPressed &&
+            HardwareKeyboard.instance.isLogicalKeyPressed(
+              LogicalKeyboardKey.space,
+            ))) {
       _setPanModeEnabled(false);
-      return KeyEventResult.handled;
     }
-    return KeyEventResult.ignored;
+
+    // Any other key transition (notably Option down/up) may flip the cut tool.
+    final wasArmed = _cutModeArmed;
+    _syncCutModeFromKeyboard();
+    return _cutModeArmed != wasArmed
+        ? KeyEventResult.handled
+        : KeyEventResult.ignored;
   }
 
   void _handleDeleteSelected(ZoomEditorController? editor) {
@@ -206,27 +250,46 @@ class _VideoTimelineState extends State<VideoTimeline> {
   // the logs (clip edits are a critical new surface; a desynced cut is the
   // exact kind of bug we want a trail for).
 
-  void _handleSplitClip(ClipEditorController? clip) {
-    if (clip == null) return;
+  /// Shared split core for both the playhead button and the scissors tool, so
+  /// the no-op-vs-success logging stays identical for either entry point.
+  /// [source] tags the log line ('playhead' | 'scissors').
+  void _performSplit(ClipEditorController clip, int timelineMs, String source) {
     final before = clip.clips.length;
-    clip.splitAtPlayhead(widget.positionMs);
+    clip.splitAtPlayhead(timelineMs);
     final after = clip.clips.length;
     if (after == before) {
-      // Split rejected: the playhead sits on a clip boundary or a piece would
+      // Split rejected: the cut point sits on a clip boundary or a piece would
       // fall below the minimum duration. Surface it distinctly so a no-op is
       // never mistaken for a successful cut in the logs.
       Log.w(
         'ClipsLane',
-        'split no-op at playhead ${widget.positionMs}ms '
+        'split no-op ($source) at ${timelineMs}ms '
             '(boundary or below min duration); still $after clips',
       );
       return;
     }
     Log.d(
       'ClipsLane',
-      'split at playhead ${widget.positionMs}ms: $before -> $after clips '
+      'split ($source) at ${timelineMs}ms: $before -> $after clips '
           '(editedDur=${clip.editedDurationMs}ms)',
     );
+  }
+
+  void _handleSplitClip(ClipEditorController? clip) {
+    if (clip == null) return;
+    _performSplit(clip, widget.positionMs, 'playhead');
+  }
+
+  /// Scissors tool: cut at the clicked timeline ms. Backstops on the live
+  /// modifier so a stranded armed state (missed key-up) self-heals instead of
+  /// cutting on a stray click.
+  void _handleScissorsCut(ClipEditorController? clip, int timelineMs) {
+    if (clip == null) return;
+    if (!HardwareKeyboard.instance.isAltPressed) {
+      _setCutModeArmed(false);
+      return;
+    }
+    _performSplit(clip, timelineMs, 'scissors');
   }
 
   void _handleDeleteClip(ClipEditorController? clip) {
@@ -477,6 +540,8 @@ class _VideoTimelineState extends State<VideoTimeline> {
                   showZoomLane: _showZoomLane,
                   showMarkersLane: _showMarkersLane,
                   panModeEnabled: _panModeEnabled,
+                  cutModeArmed: _cutModeArmed && canEditClips,
+                  onCutAt: (ms) => _handleScissorsCut(clipEditor, ms),
                   onSeek: widget.onSeek,
                   onHoverSeek: widget.onHoverSeek,
                   onHoverEnd: widget.onHoverEnd,
@@ -541,9 +606,14 @@ class _VideoTimelineState extends State<VideoTimeline> {
           focusNode: _zoomEditorFocusNode,
           canRequestFocus: true,
           onFocusChange: (hasFocus) {
+            _timelineHasFocus = hasFocus;
             if (!hasFocus) {
               _setPanModeEnabled(false);
             }
+            // Re-derive the cut tool from the live keyboard + new focus state:
+            // on gain it arms if Option is already held (so hold-then-click works
+            // without releasing the key); on loss it disarms (focus gates it).
+            _syncCutModeFromKeyboard();
           },
           onKeyEvent: _handleTimelineKeyEvent,
           child: Listener(

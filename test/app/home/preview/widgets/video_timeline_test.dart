@@ -283,6 +283,36 @@ void main() {
     expect(find.byKey(const Key('timeline_pan_overlay')), findsNothing);
   });
 
+  testWidgets('releasing Alt before Space exits pan mode (no stuck overlay)', (
+    tester,
+  ) async {
+    final editor = await _createEditor(tester);
+    final player = _FakePlayerController(editor: editor);
+    addTearDown(player.dispose);
+
+    await tester.pumpWidget(_buildTimeline(player: player));
+    await tester.tap(find.byKey(const Key('timeline_shell')));
+    await tester.pump();
+
+    final overlay = find.byKey(const Key('timeline_pan_overlay'));
+
+    // Alt+Space → pan on.
+    await tester.sendKeyDownEvent(LogicalKeyboardKey.altLeft);
+    await tester.sendKeyDownEvent(LogicalKeyboardKey.space);
+    await tester.pump();
+    expect(overlay, findsOneWidget);
+
+    // Release Alt BEFORE Space — the out-of-order release must still exit pan,
+    // not wedge the opaque overlay over the timeline.
+    await tester.sendKeyUpEvent(LogicalKeyboardKey.altLeft);
+    await tester.pump();
+    expect(overlay, findsNothing);
+
+    await tester.sendKeyUpEvent(LogicalKeyboardKey.space);
+    await tester.pump();
+    expect(overlay, findsNothing);
+  });
+
   testWidgets('playhead cap uses the slimmer V1 polish geometry', (
     tester,
   ) async {
@@ -388,6 +418,92 @@ void main() {
       find.byKey(const Key('clips_timeline_lane_clip_clip_1')),
       findsOneWidget,
     );
+  });
+
+  testWidgets('holding Option arms the scissors cut layer; releasing disarms', (
+    tester,
+  ) async {
+    final editor = await _createEditor(tester);
+    final clipEditor = _makeClipEditor();
+    final player = _FakePlayerController(
+      editor: editor,
+      clipEditor: clipEditor,
+    );
+    addTearDown(player.dispose);
+    addTearDown(clipEditor.dispose);
+
+    await tester.pumpWidget(_buildTimeline(player: player));
+    await tester.tap(find.byKey(const Key('timeline_shell')));
+    await tester.pump();
+
+    final layer = find.byKey(const Key('timeline_scissors_cut_layer'));
+    expect(layer, findsNothing);
+
+    await tester.sendKeyDownEvent(LogicalKeyboardKey.altLeft);
+    await tester.pump();
+    expect(layer, findsOneWidget);
+
+    await tester.sendKeyUpEvent(LogicalKeyboardKey.altLeft);
+    await tester.pump();
+    expect(layer, findsNothing);
+  });
+
+  testWidgets('clicking the armed cut layer splits the clip at the pointer', (
+    tester,
+  ) async {
+    final editor = await _createEditor(tester);
+    final clipEditor = _makeClipEditor();
+    final player = _FakePlayerController(
+      editor: editor,
+      clipEditor: clipEditor,
+    );
+    addTearDown(player.dispose);
+    addTearDown(clipEditor.dispose);
+
+    await tester.pumpWidget(_buildTimeline(player: player));
+    await tester.tap(find.byKey(const Key('timeline_shell')));
+    await tester.pump();
+    expect(clipEditor.clips, hasLength(1));
+
+    await tester.sendKeyDownEvent(LogicalKeyboardKey.altLeft);
+    await tester.pump();
+
+    // Click mid-layer → cut inside the single clip → two clips.
+    await tester.tap(find.byKey(const Key('timeline_scissors_cut_layer')));
+    await tester.pump();
+    expect(clipEditor.clips, hasLength(2));
+
+    await tester.sendKeyUpEvent(LogicalKeyboardKey.altLeft);
+    await tester.pump();
+  });
+
+  testWidgets('clicking the armed cut layer at the start is a no-op', (
+    tester,
+  ) async {
+    final editor = await _createEditor(tester);
+    final clipEditor = _makeClipEditor();
+    final player = _FakePlayerController(
+      editor: editor,
+      clipEditor: clipEditor,
+    );
+    addTearDown(player.dispose);
+    addTearDown(clipEditor.dispose);
+
+    await tester.pumpWidget(_buildTimeline(player: player));
+    await tester.tap(find.byKey(const Key('timeline_shell')));
+    await tester.pump();
+
+    await tester.sendKeyDownEvent(LogicalKeyboardKey.altLeft);
+    await tester.pump();
+
+    final layer = find.byKey(const Key('timeline_scissors_cut_layer'));
+    // Tap the very start → ms 0 → boundary → rejected, still one clip.
+    await tester.tapAt(tester.getTopLeft(layer) + const Offset(0, 20));
+    await tester.pump();
+    expect(clipEditor.clips, hasLength(1));
+
+    await tester.sendKeyUpEvent(LogicalKeyboardKey.altLeft);
+    await tester.pump();
   });
 
   testWidgets('selecting a clip then deleting it removes the clip', (
