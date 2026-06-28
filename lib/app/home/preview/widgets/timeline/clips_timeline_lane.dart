@@ -314,6 +314,19 @@ class _ClipsTimelineLaneState extends State<ClipsTimelineLane> {
                     borderRadius: BorderRadius.circular(
                       _kTrimHandleBarWidth / 2,
                     ),
+                    // A light outline + soft shadow so the handle reads as a
+                    // distinct grab affordance against the accent-tinted,
+                    // accent-bordered selected clip (otherwise it blends in).
+                    border: Border.all(
+                      color: Colors.white.withValues(alpha: 0.92),
+                      width: 1,
+                    ),
+                    boxShadow: [
+                      BoxShadow(
+                        color: Colors.black.withValues(alpha: 0.28),
+                        blurRadius: 3,
+                      ),
+                    ],
                   ),
                 ),
               ),
@@ -347,6 +360,8 @@ class _ClipGeometry {
 const double _kMinClipBoxWidth = 8.0;
 
 /// The grab width of a trim handle (wider than the visible bar for easy
-/// targeting) and the visible bar width.
-const double _kTrimHandleHitWidth = 14.0;
-const double _kTrimHandleBarWidth = 4.0;
+/// targeting) and the visible bar width. The hit area is generous because the
+/// handle only shows on the selected clip and must be findable + grabbable with
+/// a mouse on a dense timeline; the visible bar is wide enough to actually spot.
+const double _kTrimHandleHitWidth = 22.0;
+const double _kTrimHandleBarWidth = 6.0;
