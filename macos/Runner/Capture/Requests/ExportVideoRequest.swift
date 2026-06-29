@@ -41,6 +41,11 @@ struct ExportVideoRequest: Equatable {
   /// Canvas-wide color grade baked into the exported screen content. Defaults
   /// to `.identity` (no adjustment) for older Flutter payloads that omit it.
   let colorGrade: ColorGrade
+  /// Kept source ranges (enabled clips, in timeline order) the export must bake
+  /// in — cut footage is the gaps between consecutive ranges. Empty for older
+  /// Flutter payloads or an unedited recording, in which case the export keeps
+  /// the whole source (a passthrough, no cutting).
+  let clips: [ClipKeptRange]
 
   /// The effective zoom factor after applying the legacy/explicit enable contract.
   var zoomFactor: Double { zoomEffectEnabled ? rawZoomFactor : 1.0 }
@@ -82,7 +87,8 @@ struct ExportVideoRequest: Equatable {
       autoNormalizeOnExport: (args["autoNormalizeOnExport"] as? Bool) ?? false,
       targetLoudnessDbfs: (args["targetLoudnessDbfs"] as? Double) ?? -16.0,
       cameraPath: args["cameraPath"] as? String,
-      colorGrade: ColorGrade.fromFlutter(args["colorGrade"] as? [String: Any])
+      colorGrade: ColorGrade.fromFlutter(args["colorGrade"] as? [String: Any]),
+      clips: ClipKeptRange.fromFlutter(args["clips"] as? [[String: Any]])
     )
   }
 }

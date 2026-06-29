@@ -1367,6 +1367,7 @@ final class ScreenRecorderFacade: NSObject {
     cameraPath: String?,
     cameraParams: CameraCompositionParams?,
     colorGrade: ColorGrade = .identity,
+    clips: [ClipKeptRange] = [],
     onProgress: ((Double) -> Void)? = nil,
     result: @escaping FlutterResult
   ) {
@@ -1400,7 +1401,8 @@ final class ScreenRecorderFacade: NSObject {
         targetLoudnessDbfs: targetLoudnessDbfs,
         cameraPath: cameraPath,
         cameraParams: cameraParams,
-        colorGrade: colorGrade
+        colorGrade: colorGrade,
+        clips: clips
       ),
       dependencies: .init(
         loadRecordingProject: { [unowned self] path in

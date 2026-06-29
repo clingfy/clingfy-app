@@ -1081,6 +1081,43 @@ enum ClipPlaybackPlanner {
     guard let lastOut = ranges.last?.sourceOutMs else { return false }
     return sourceMs >= lastOut - epsilonMs
   }
+
+  /// The edited-timeline position for a source moment that lies strictly inside
+  /// a kept range, or `nil` when the moment was removed by a cut. This is what
+  /// the export writer uses to drive "cut at the writer": for each source frame
+  /// it pulls, a `nil` means drop the frame (it is in a cut gap), and a value
+  /// means re-stamp the frame onto the compacted edited timeline at that
+  /// position. Unlike [editedMs] it never clamps a cut-gap moment to a boundary
+  /// — a dropped frame must be reported as dropped, not snapped to the edge.
+  ///
+  /// Empty `ranges` is a passthrough (no cuts): every source moment is kept and
+  /// maps to itself, so the writer behaves exactly as it did before cuts.
+  static func editedMsForKeptSourceMs(_ sourceMs: Int, ranges: [ClipKeptRange]) -> Int? {
+    guard !ranges.isEmpty else { return sourceMs }
+    var base = 0
+    for r in ranges {
+      if sourceMs >= r.sourceInMs && sourceMs < r.sourceOutMs {
+        return base + (sourceMs - r.sourceInMs)
+      }
+      base += r.durationMs
+    }
+    return nil
+  }
+
+  /// True when the kept ranges are listed in non-decreasing source order, i.e.
+  /// reading the source asset forward yields frames in edited-timeline order.
+  /// "Cut at the writer" forward-reads the source once and re-stamps kept frames
+  /// onto the compacted timeline, so it requires this property to emit a
+  /// monotonically increasing output PTS. Split / cut / trim always preserve it
+  /// (timeline order == source order); only clip *reorder* (arrange) can break
+  /// it, and reorder export is handled separately by the caller.
+  static func isSourceMonotonic(_ ranges: [ClipKeptRange]) -> Bool {
+    guard ranges.count > 1 else { return true }
+    for i in 1..<ranges.count where ranges[i].sourceInMs < ranges[i - 1].sourceInMs {
+      return false
+    }
+    return true
+  }
 }
 
 struct CompositionParams: Equatable {
