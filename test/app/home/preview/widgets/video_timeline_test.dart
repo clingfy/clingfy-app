@@ -585,6 +585,90 @@ void main() {
     expect(clipEditor.clips, hasLength(2));
   });
 
+  testWidgets('dragging a clip edge handle trims it live and is undoable', (
+    tester,
+  ) async {
+    final editor = await _createEditor(tester);
+    final clipEditor = _makeClipEditor();
+    final player = _FakePlayerController(
+      editor: editor,
+      clipEditor: clipEditor,
+    );
+    addTearDown(player.dispose);
+    addTearDown(clipEditor.dispose);
+
+    await tester.pumpWidget(_buildTimeline(player: player));
+
+    // Split first so there's an interior edge mid-lane (a whole-clip end handle
+    // sits at the clipped right edge of the lane).
+    final splitButton = find.byKey(const Key('timeline_clip_split_button'));
+    await tester.ensureVisible(splitButton);
+    await tester.pump();
+    await tester.tap(splitButton);
+    await tester.pump();
+    expect(clipEditor.clips, hasLength(2));
+    expect(clipEditor.editedDurationMs, 60000);
+
+    // Select the first clip; its end handle is at the cut (~25% across).
+    await tester.tap(find.byKey(const Key('clips_timeline_lane_clip_clip_0')));
+    await tester.pump();
+
+    await tester.drag(
+      find.byKey(const Key('clips_timeline_lane_trim_end_clip_0')),
+      const Offset(-60, 0),
+    );
+    await tester.pump();
+
+    // The clip was trimmed shorter, live.
+    expect(clipEditor.editedDurationMs, lessThan(60000));
+    expect(clipEditor.canUndo, isTrue);
+
+    // The whole drag is a single undo entry distinct from the split: undoing
+    // once restores the duration while leaving the two clips in place.
+    clipEditor.undo();
+    expect(clipEditor.editedDurationMs, 60000);
+    expect(clipEditor.clips, hasLength(2));
+  });
+
+  testWidgets('over-dragging an edge clamps at min duration without inverting', (
+    tester,
+  ) async {
+    final editor = await _createEditor(tester);
+    final clipEditor = _makeClipEditor();
+    final player = _FakePlayerController(
+      editor: editor,
+      clipEditor: clipEditor,
+    );
+    addTearDown(player.dispose);
+    addTearDown(clipEditor.dispose);
+
+    await tester.pumpWidget(_buildTimeline(player: player));
+
+    final splitButton = find.byKey(const Key('timeline_clip_split_button'));
+    await tester.ensureVisible(splitButton);
+    await tester.pump();
+    await tester.tap(splitButton);
+    await tester.pump();
+
+    await tester.tap(find.byKey(const Key('clips_timeline_lane_clip_clip_0')));
+    await tester.pump();
+
+    // Drag the end handle far past the clip's own start.
+    await tester.drag(
+      find.byKey(const Key('clips_timeline_lane_trim_end_clip_0')),
+      const Offset(-2000, 0),
+    );
+    await tester.pump();
+
+    // Both clips survive; the trimmed clip never inverts (out > in) and the
+    // edited timeline stays positive — the min-duration clamp held end to end.
+    expect(clipEditor.clips, hasLength(2));
+    final first = clipEditor.clips.first;
+    expect(first.sourceOutMs, greaterThan(first.sourceInMs));
+    expect(clipEditor.editedDurationMs, greaterThan(0));
+    expect(clipEditor.editedDurationMs, lessThan(60000));
+  });
+
   testWidgets(
     'clip lane and controls are hidden when no clip editor attached',
     (tester) async {

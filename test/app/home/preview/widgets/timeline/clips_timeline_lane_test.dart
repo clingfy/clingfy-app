@@ -1,5 +1,6 @@
 import 'package:clingfy/app/home/preview/widgets/timeline/clips_timeline_lane.dart';
 import 'package:clingfy/app/home/preview/widgets/timeline/timeline_viewport_controller.dart';
+import 'package:clingfy/core/clips/clip_editor_controller.dart';
 import 'package:clingfy/core/timeline/model/edit_track.dart';
 import 'package:clingfy/l10n/app_localizations.dart';
 import 'package:clingfy/ui/theme/app_theme.dart';
@@ -42,6 +43,7 @@ void main() {
     String? selectedClipId,
     required TimelineViewportController controller,
     required ValueChanged<String?> onSelectClip,
+    ClipTrimCallbacks? trimCallbacks,
   }) {
     return tester.pumpWidget(
       MaterialApp(
@@ -57,6 +59,7 @@ void main() {
                 selectedClipId: selectedClipId,
                 viewportController: controller,
                 onSelectClip: onSelectClip,
+                trimCallbacks: trimCallbacks,
               ),
             ),
           ),
@@ -226,4 +229,223 @@ void main() {
       expect(selected, 'clip_0');
     },
   );
+
+  ClipTrimCallbacks noopTrimCallbacks() => ClipTrimCallbacks(
+    onBegin: (_, _) {},
+    onUpdate: (_) {},
+    onCommit: () {},
+    onCancel: () {},
+  );
+
+  testWidgets(
+    'only the selected clip gets an end handle, and no start handle',
+    (tester) async {
+      final controller = makeController();
+      addTearDown(controller.dispose);
+
+      await pumpLane(
+        tester,
+        clips: twoClips,
+        selectedClipId: 'clip_0',
+        controller: controller,
+        onSelectClip: (_) {},
+        trimCallbacks: noopTrimCallbacks(),
+      );
+
+      expect(
+        find.byKey(const Key('clips_timeline_lane_trim_end_clip_0')),
+        findsOneWidget,
+      );
+      // Start-edge trim is intentionally not a drag handle on this gapless
+      // timeline.
+      expect(
+        find.byKey(const Key('clips_timeline_lane_trim_start_clip_0')),
+        findsNothing,
+      );
+      // The unselected clip has no handle.
+      expect(
+        find.byKey(const Key('clips_timeline_lane_trim_end_clip_1')),
+        findsNothing,
+      );
+    },
+  );
+
+  testWidgets('no trim handles render without trim callbacks', (tester) async {
+    final controller = makeController();
+    addTearDown(controller.dispose);
+
+    await pumpLane(
+      tester,
+      clips: twoClips,
+      selectedClipId: 'clip_0',
+      controller: controller,
+      onSelectClip: (_) {},
+      // trimCallbacks omitted → trim disabled.
+    );
+
+    expect(
+      find.byKey(const Key('clips_timeline_lane_trim_end_clip_0')),
+      findsNothing,
+    );
+  });
+
+  testWidgets('the end handle disappears when the selection clears', (
+    tester,
+  ) async {
+    final controller = makeController();
+    addTearDown(controller.dispose);
+
+    await pumpLane(
+      tester,
+      clips: twoClips,
+      selectedClipId: 'clip_0',
+      controller: controller,
+      onSelectClip: (_) {},
+      trimCallbacks: noopTrimCallbacks(),
+    );
+    expect(
+      find.byKey(const Key('clips_timeline_lane_trim_end_clip_0')),
+      findsOneWidget,
+    );
+
+    // Clear the selection → the previously selected clip's handle is gone.
+    await pumpLane(
+      tester,
+      clips: twoClips,
+      selectedClipId: null,
+      controller: controller,
+      onSelectClip: (_) {},
+      trimCallbacks: noopTrimCallbacks(),
+    );
+    expect(
+      find.byKey(const Key('clips_timeline_lane_trim_end_clip_0')),
+      findsNothing,
+    );
+  });
+
+  testWidgets(
+    'the last clip end handle (at the clipped lane edge) is grabbable',
+    (tester) async {
+      final controller = makeController();
+      addTearDown(controller.dispose);
+
+      String? begunClip;
+      var updates = 0;
+
+      // Select clip_1, whose end sits at the very right edge of the lane.
+      await pumpLane(
+        tester,
+        clips: twoClips,
+        selectedClipId: 'clip_1',
+        controller: controller,
+        onSelectClip: (_) {},
+        trimCallbacks: ClipTrimCallbacks(
+          onBegin: (id, _) => begunClip = id,
+          onUpdate: (_) => updates += 1,
+          onCommit: () {},
+          onCancel: () {},
+        ),
+      );
+
+      // Drag from the handle's centre — it must be fully inside the clipped
+      // lane, not half-dead past the right edge.
+      await tester.drag(
+        find.byKey(const Key('clips_timeline_lane_trim_end_clip_1')),
+        const Offset(-80, 0),
+      );
+      await tester.pump();
+
+      expect(begunClip, 'clip_1');
+      expect(updates, greaterThan(0));
+    },
+  );
+
+  testWidgets('dragging a clip edge handle drives the trim lifecycle', (
+    tester,
+  ) async {
+    final controller = makeController();
+    addTearDown(controller.dispose);
+
+    String? begunClip;
+    ClipTrimEdge? begunEdge;
+    var updates = 0;
+    int? lastMs;
+    var commits = 0;
+
+    // Select clip_0 (spans 0..4000ms → its end handle sits mid-lane at ~240px,
+    // safely clear of the clipped right edge).
+    await pumpLane(
+      tester,
+      clips: twoClips,
+      selectedClipId: 'clip_0',
+      controller: controller,
+      onSelectClip: (_) {},
+      trimCallbacks: ClipTrimCallbacks(
+        onBegin: (id, edge) {
+          begunClip = id;
+          begunEdge = edge;
+        },
+        onUpdate: (ms) {
+          updates += 1;
+          lastMs = ms;
+        },
+        onCommit: () => commits += 1,
+        onCancel: () {},
+      ),
+    );
+
+    // Drag the end handle left by 120px.
+    await tester.drag(
+      find.byKey(const Key('clips_timeline_lane_trim_end_clip_0')),
+      const Offset(-120, 0),
+    );
+    await tester.pump();
+
+    expect(begunClip, 'clip_0');
+    expect(begunEdge, ClipTrimEdge.end);
+    expect(updates, greaterThan(0));
+    expect(commits, 1);
+    // The end edge moved left → the reported ms is below the original 4000ms
+    // end and still within the timeline.
+    expect(lastMs, isNotNull);
+    expect(lastMs, lessThan(4000));
+    expect(lastMs, greaterThanOrEqualTo(0));
+  });
+
+  testWidgets('a cancelled gesture fires onCancel, not onCommit', (
+    tester,
+  ) async {
+    final controller = makeController();
+    addTearDown(controller.dispose);
+
+    var commits = 0;
+    var cancels = 0;
+
+    await pumpLane(
+      tester,
+      clips: twoClips,
+      selectedClipId: 'clip_0',
+      controller: controller,
+      onSelectClip: (_) {},
+      trimCallbacks: ClipTrimCallbacks(
+        onBegin: (_, _) {},
+        onUpdate: (_) {},
+        onCommit: () => commits += 1,
+        onCancel: () => cancels += 1,
+      ),
+    );
+
+    // Press the handle then cancel the pointer before a drag is recognized —
+    // the down-without-drag path routes to onHorizontalDragCancel.
+    final gesture = await tester.startGesture(
+      tester.getCenter(
+        find.byKey(const Key('clips_timeline_lane_trim_end_clip_0')),
+      ),
+    );
+    await gesture.cancel();
+    await tester.pump();
+
+    expect(cancels, 1);
+    expect(commits, 0);
+  });
 }

@@ -34,6 +34,7 @@ class TimelineEditorViewport extends StatefulWidget {
     this.showClipsLane = false,
     this.clipEditor,
     this.onSelectClip,
+    this.clipTrimCallbacks,
     this.cutModeArmed = false,
     this.onCutAt,
   });
@@ -55,6 +56,9 @@ class TimelineEditorViewport extends StatefulWidget {
 
   /// Called when a clip is tapped (id), or null when the empty lane is tapped.
   final ValueChanged<String?>? onSelectClip;
+
+  /// Trim drag hooks for the clip lane; null disables trim handles.
+  final ClipTrimCallbacks? clipTrimCallbacks;
   final ValueChanged<int> onSeek;
   final ValueChanged<int>? onHoverSeek;
   final VoidCallback? onHoverEnd;
@@ -206,6 +210,7 @@ class _TimelineEditorViewportState extends State<TimelineEditorViewport> {
                               editorController: widget.editorController,
                               clipEditor: widget.clipEditor,
                               onSelectClip: widget.onSelectClip,
+                              clipTrimCallbacks: widget.clipTrimCallbacks,
                               cutModeArmed: widget.cutModeArmed,
                               onCutAt: widget.onCutAt,
                               hoverPositionMs: widget.hoverPositionMs,
@@ -356,6 +361,7 @@ class TimelineScrollableCanvas extends StatelessWidget {
     this.showClipsLane = false,
     this.clipEditor,
     this.onSelectClip,
+    this.clipTrimCallbacks,
     this.cutModeArmed = false,
     this.onCutAt,
   });
@@ -371,6 +377,7 @@ class TimelineScrollableCanvas extends StatelessWidget {
   final ZoomEditorController? editorController;
   final ClipEditorController? clipEditor;
   final ValueChanged<String?>? onSelectClip;
+  final ClipTrimCallbacks? clipTrimCallbacks;
   final int? hoverPositionMs;
   final ValueChanged<int> onSeek;
   final ValueChanged<int>? onHoverSeek;
@@ -414,6 +421,7 @@ class TimelineScrollableCanvas extends StatelessWidget {
           selectedClipId: clipEditor?.selectedClipId,
           viewportController: viewportController,
           onSelectClip: onSelectClip ?? (_) {},
+          trimCallbacks: clipTrimCallbacks,
         ),
       if (showZoomLane)
         ZoomTimelineLane(

@@ -146,6 +146,45 @@ void main() {
     expect(c.canUndo, isFalse);
   });
 
+  test('commitTrim returns true on a real change and false on a no-op', () {
+    final c = make();
+    addTearDown(c.dispose);
+
+    // Grabbed and released with no movement → no-op.
+    c.beginTrim('clip_0', ClipTrimEdge.end);
+    expect(c.commitTrim(), isFalse);
+    expect(c.canUndo, isFalse);
+
+    // A real edge move → committed as one undo entry.
+    c.beginTrim('clip_0', ClipTrimEdge.end);
+    c.updateTrimTo(6000);
+    expect(c.commitTrim(), isTrue);
+    expect(c.canUndo, isTrue);
+  });
+
+  test('beginTrim self-heals a stranded prior trim instead of baking it in', () {
+    final c = make();
+    addTearDown(c.dispose);
+
+    // A trim that is live-mutated but never committed/cancelled (stranded).
+    c.beginTrim('clip_0', ClipTrimEdge.end);
+    c.updateTrimTo(6000);
+    expect(c.clips.first.sourceOutMs, 6000);
+    expect(c.canUndo, isFalse);
+
+    // Starting a fresh trim must roll the stranded drag back first, not snapshot
+    // the already-trimmed clips as the new baseline.
+    c.beginTrim('clip_0', ClipTrimEdge.end);
+    expect(c.clips.first.sourceOutMs, 10000);
+
+    c.updateTrimTo(7000);
+    c.commitTrim();
+    // Undo restores the TRUE original (10000) — proving the stranded 6000 was
+    // never silently folded into history.
+    c.undo();
+    expect(c.clips.first.sourceOutMs, 10000);
+  });
+
   test(
     'undo/redo walks the clip history and pushes native each step',
     () async {

@@ -1,6 +1,7 @@
 import 'dart:async';
 
 import 'package:clingfy/app/home/post_processing/widgets/zoom_segment_behavior_floating_toolbar.dart';
+import 'package:clingfy/app/home/preview/widgets/timeline/clips_timeline_lane.dart';
 import 'package:clingfy/app/home/preview/widgets/timeline/timeline_editor_viewport.dart';
 import 'package:clingfy/app/home/preview/widgets/timeline/timeline_header_bar.dart';
 import 'package:clingfy/app/home/preview/widgets/timeline/timeline_transport_bar.dart';
@@ -308,6 +309,44 @@ class _VideoTimelineState extends State<VideoTimeline> {
     Log.d('ClipsLane', 'selected clip ${id ?? '(none)'}');
   }
 
+  void _handleBeginTrimClip(
+    ClipEditorController? clip,
+    String clipId,
+    ClipTrimEdge edge,
+  ) {
+    if (clip == null) return;
+    clip.beginTrim(clipId, edge);
+    Log.d('ClipsLane', 'begin trim ${edge.name} of clip $clipId');
+  }
+
+  void _handleUpdateTrimClip(ClipEditorController? clip, int timelineMs) {
+    // High-frequency drag path — no per-update log (begin/commit bracket it).
+    clip?.updateTrimTo(timelineMs);
+  }
+
+  void _handleCommitTrimClip(ClipEditorController? clip) {
+    if (clip == null || !clip.isTrimming) return;
+    final changed = clip.commitTrim();
+    if (changed) {
+      Log.d(
+        'ClipsLane',
+        'commit trim: editedDur=${clip.editedDurationMs}ms, '
+            'canUndo=${clip.canUndo}',
+      );
+    } else {
+      // Grabbed and released with no net move, or dragged entirely within an
+      // already min-duration-clamped range — surface it so a no-op trim is
+      // never read as a successful edit (mirrors the no-op split log).
+      Log.d('ClipsLane', 'commit trim: no-op (edge unchanged or clamped)');
+    }
+  }
+
+  void _handleCancelTrimClip(ClipEditorController? clip) {
+    if (clip == null || !clip.isTrimming) return;
+    clip.cancelTrim();
+    Log.d('ClipsLane', 'cancel trim');
+  }
+
   void _handleUndoClip(ClipEditorController? clip) {
     if (clip == null || !clip.canUndo) return;
     clip.undo();
@@ -488,6 +527,16 @@ class _VideoTimelineState extends State<VideoTimeline> {
                   showClipsLane: showClipsLane,
                   clipEditor: clipEditor,
                   onSelectClip: (id) => _handleSelectClip(clipEditor, id),
+                  clipTrimCallbacks: canEditClips
+                      ? ClipTrimCallbacks(
+                          onBegin: (id, edge) =>
+                              _handleBeginTrimClip(clipEditor, id, edge),
+                          onUpdate: (ms) =>
+                              _handleUpdateTrimClip(clipEditor, ms),
+                          onCommit: () => _handleCommitTrimClip(clipEditor),
+                          onCancel: () => _handleCancelTrimClip(clipEditor),
+                        )
+                      : null,
                   showZoomLane: _showZoomLane,
                   showMarkersLane: _showMarkersLane,
                   panModeEnabled: _panModeEnabled,
