@@ -1126,6 +1126,12 @@ class PostProcessingController extends ChangeNotifier {
         'bitrate': _settings.export.exportBitrate,
         if (_cameraPath != null) 'cameraPath': _cameraPath,
         ...?_cameraState?.toMap(),
+        // PR-3d: the kept clip ranges (split / cut / trim) so native bakes the
+        // cuts into the exported file. An unedited recording sends the whole
+        // span, which is a passthrough (no cutting) on the native side.
+        'clips':
+            _player.clipEditor?.clips.map((c) => c.toMap()).toList() ??
+            const <Map<String, dynamic>>[],
       };
 
       _activeExportInvokeSpan = _activeExportTransaction!.startChild(

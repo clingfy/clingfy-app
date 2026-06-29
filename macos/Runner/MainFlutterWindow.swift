@@ -816,6 +816,7 @@ class MainFlutterWindow: NSWindow {
             cameraPath: req.cameraPath,
             cameraParams: cameraParams,
             colorGrade: req.colorGrade,
+            clips: req.clips,
             onProgress: { [weak self] progress in
               self?.channel?.invokeMethod("updateExportProgress", arguments: progress)
             },

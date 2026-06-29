@@ -125,6 +125,30 @@ final class ExportVideoRequestParsingTests: XCTestCase {
     XCTAssertFalse(r.colorGrade.isIdentity)
   }
 
+  func testDefaultsToNoClips() {
+    let r = ExportVideoRequest.fromFlutter(["projectPath": "/p"])!
+    XCTAssertTrue(r.clips.isEmpty)
+  }
+
+  func testParsesClips() {
+    // Dart Clip.toMap() payload: enabled clips become kept ranges in order;
+    // disabled clips and zero/negative windows are dropped.
+    let r = ExportVideoRequest.fromFlutter([
+      "projectPath": "/p",
+      "clips": [
+        ["sourceInMs": 0, "sourceOutMs": 4000, "timelineStartMs": 0, "enabled": true],
+        ["sourceInMs": 4000, "sourceOutMs": 5000, "timelineStartMs": 4000, "enabled": false],
+        ["sourceInMs": 7000, "sourceOutMs": 10000, "timelineStartMs": 4000, "enabled": true],
+      ],
+    ])!
+    XCTAssertEqual(
+      r.clips,
+      [
+        ClipKeptRange(sourceInMs: 0, sourceOutMs: 4000),
+        ClipKeptRange(sourceInMs: 7000, sourceOutMs: 10000),
+      ])
+  }
+
   // The zoom-effect derivation contract is load-bearing — pin every branch.
   func testZoomContractExplicitlyDisabledOverridesHighRawFactor() {
     let r = ExportVideoRequest.fromFlutter([

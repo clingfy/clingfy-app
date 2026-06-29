@@ -7784,6 +7784,43 @@ final class ClipPlaybackPlannerTests: XCTestCase {
     XCTAssertEqual(ClipPlaybackPlanner.sourceMs(forEditedMs: 99999, ranges: r), 10000)
   }
 
+  // editedMsForKeptSourceMs drives "cut at the writer": kept -> edited position,
+  // a source moment in a cut gap -> nil (drop the frame).
+  func testEditedMsForKeptSourceMsKeepsAndCompacts() {
+    let r = ranges([(0, 4000), (6000, 10000)])
+    // Inside range 0: identity.
+    XCTAssertEqual(ClipPlaybackPlanner.editedMsForKeptSourceMs(0, ranges: r), 0)
+    XCTAssertEqual(ClipPlaybackPlanner.editedMsForKeptSourceMs(3999, ranges: r), 3999)
+    // Inside range 1: compacted by the removed 4000-6000 gap.
+    XCTAssertEqual(ClipPlaybackPlanner.editedMsForKeptSourceMs(6000, ranges: r), 4000)
+    XCTAssertEqual(ClipPlaybackPlanner.editedMsForKeptSourceMs(7000, ranges: r), 5000)
+  }
+
+  func testEditedMsForKeptSourceMsDropsCutGapAndBoundary() {
+    let r = ranges([(0, 4000), (6000, 10000)])
+    // Squarely in the removed gap -> dropped.
+    XCTAssertNil(ClipPlaybackPlanner.editedMsForKeptSourceMs(5000, ranges: r))
+    // The exclusive end of a kept range is itself a cut -> dropped (the next
+    // kept frame re-enters at the following range's start).
+    XCTAssertNil(ClipPlaybackPlanner.editedMsForKeptSourceMs(4000, ranges: r))
+    // Past the very end -> dropped.
+    XCTAssertNil(ClipPlaybackPlanner.editedMsForKeptSourceMs(10000, ranges: r))
+  }
+
+  func testEditedMsForKeptSourceMsPassthroughKeepsEverything() {
+    // Empty ranges == no cuts: every source moment maps to itself.
+    XCTAssertEqual(ClipPlaybackPlanner.editedMsForKeptSourceMs(1234, ranges: []), 1234)
+  }
+
+  func testIsSourceMonotonic() {
+    XCTAssertTrue(ClipPlaybackPlanner.isSourceMonotonic([]))
+    XCTAssertTrue(ClipPlaybackPlanner.isSourceMonotonic(ranges([(0, 4000)])))
+    // Split / cut / trim keep timeline order == source order.
+    XCTAssertTrue(ClipPlaybackPlanner.isSourceMonotonic(ranges([(0, 4000), (6000, 10000)])))
+    // Reordered (arrange) clips run source-backwards in places.
+    XCTAssertFalse(ClipPlaybackPlanner.isSourceMonotonic(ranges([(6000, 8000), (0, 2000)])))
+  }
+
   func testActiveIndexForEditedMs() {
     let r = ranges([(0, 4000), (6000, 10000)])
     XCTAssertEqual(ClipPlaybackPlanner.activeIndex(forEditedMs: 2000, ranges: r), 0)
