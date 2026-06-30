@@ -29,6 +29,29 @@ void main() {
     ),
   ];
 
+  // Three contiguous clips, so reorder has neighbours to cross. On a 600px lane
+  // their centres sit at ~90 (clip_0), ~270 (clip_1), ~480 (clip_2) px.
+  final threeClips = <Clip>[
+    const Clip(
+      id: 'clip_0',
+      sourceInMs: 0,
+      sourceOutMs: 3000,
+      timelineStartMs: 0,
+    ),
+    const Clip(
+      id: 'clip_1',
+      sourceInMs: 3000,
+      sourceOutMs: 6000,
+      timelineStartMs: 3000,
+    ),
+    const Clip(
+      id: 'clip_2',
+      sourceInMs: 6000,
+      sourceOutMs: 10000,
+      timelineStartMs: 6000,
+    ),
+  ];
+
   TimelineViewportController makeController() {
     final controller = TimelineViewportController(durationMs: editedDurationMs);
     // The lane does not configure the controller itself; the parent viewport
@@ -44,6 +67,7 @@ void main() {
     required TimelineViewportController controller,
     required ValueChanged<String?> onSelectClip,
     ClipTrimCallbacks? trimCallbacks,
+    ClipReorderCallbacks? reorderCallbacks,
   }) {
     return tester.pumpWidget(
       MaterialApp(
@@ -60,6 +84,7 @@ void main() {
                 viewportController: controller,
                 onSelectClip: onSelectClip,
                 trimCallbacks: trimCallbacks,
+                reorderCallbacks: reorderCallbacks,
               ),
             ),
           ),
@@ -448,4 +473,268 @@ void main() {
     expect(cancels, 1);
     expect(commits, 0);
   });
+
+  // --- Reorder ---
+
+  testWidgets(
+    'dragging a clip right past a neighbour reorders it to a higher index',
+    (tester) async {
+      final controller = makeController();
+      addTearDown(controller.dispose);
+
+      String? begun;
+      (String, int)? committed;
+      var cancels = 0;
+
+      await pumpLane(
+        tester,
+        clips: threeClips,
+        controller: controller,
+        onSelectClip: (_) {},
+        reorderCallbacks: ClipReorderCallbacks(
+          onBegin: (id) => begun = id,
+          onCommit: (id, index) => committed = (id, index),
+          onCancel: () => cancels += 1,
+        ),
+      );
+
+      // Drag the middle clip (centre ~270) right past clip_2's centre (~480).
+      await tester.drag(
+        find.byKey(const Key('clips_timeline_lane_clip_clip_1')),
+        const Offset(300, 0),
+      );
+      await tester.pump();
+
+      expect(begun, 'clip_1');
+      // Lands after both neighbours → [clip_0, clip_2, clip_1].
+      expect(committed, ('clip_1', 2));
+      expect(cancels, 0);
+    },
+  );
+
+  testWidgets('dragging a clip left past a neighbour reorders it to index 0', (
+    tester,
+  ) async {
+    final controller = makeController();
+    addTearDown(controller.dispose);
+
+    String? begun;
+    (String, int)? committed;
+
+    await pumpLane(
+      tester,
+      clips: threeClips,
+      controller: controller,
+      onSelectClip: (_) {},
+      reorderCallbacks: ClipReorderCallbacks(
+        onBegin: (id) => begun = id,
+        onCommit: (id, index) => committed = (id, index),
+        onCancel: () {},
+      ),
+    );
+
+    // Drag the middle clip (centre ~270) left past clip_0's centre (~90).
+    await tester.drag(
+      find.byKey(const Key('clips_timeline_lane_clip_clip_1')),
+      const Offset(-300, 0),
+    );
+    await tester.pump();
+
+    expect(begun, 'clip_1');
+    // Lands before both neighbours → [clip_1, clip_0, clip_2].
+    expect(committed, ('clip_1', 0));
+  });
+
+  testWidgets('a tap selects the clip and does not reorder', (tester) async {
+    final controller = makeController();
+    addTearDown(controller.dispose);
+
+    String? selected = 'unset';
+    String? begun;
+    (String, int)? committed;
+
+    await pumpLane(
+      tester,
+      clips: threeClips,
+      controller: controller,
+      onSelectClip: (id) => selected = id,
+      reorderCallbacks: ClipReorderCallbacks(
+        onBegin: (id) => begun = id,
+        onCommit: (id, index) => committed = (id, index),
+        onCancel: () {},
+      ),
+    );
+
+    await tester.tap(find.byKey(const Key('clips_timeline_lane_clip_clip_1')));
+    await tester.pump();
+
+    expect(selected, 'clip_1');
+    expect(begun, isNull);
+    expect(committed, isNull);
+  });
+
+  testWidgets('a drag that stays within the clip fires no commit', (
+    tester,
+  ) async {
+    final controller = makeController();
+    addTearDown(controller.dispose);
+
+    String? begun;
+    (String, int)? committed;
+
+    await pumpLane(
+      tester,
+      clips: threeClips,
+      controller: controller,
+      onSelectClip: (_) {},
+      reorderCallbacks: ClipReorderCallbacks(
+        onBegin: (id) => begun = id,
+        onCommit: (id, index) => committed = (id, index),
+        onCancel: () {},
+      ),
+    );
+
+    // A small drag that never crosses a neighbour's centre keeps the target at
+    // the original index → an in-place drop, which commits nothing.
+    await tester.drag(
+      find.byKey(const Key('clips_timeline_lane_clip_clip_1')),
+      const Offset(20, 0),
+    );
+    await tester.pump();
+
+    // The drag is recognized (begin fires) but resolves to no move.
+    expect(begun, 'clip_1');
+    expect(committed, isNull);
+  });
+
+  testWidgets('with a single clip, dragging does not reorder', (tester) async {
+    final controller = makeController();
+    addTearDown(controller.dispose);
+
+    String? begun;
+    (String, int)? committed;
+
+    await pumpLane(
+      tester,
+      clips: const [
+        Clip(
+          id: 'clip_0',
+          sourceInMs: 0,
+          sourceOutMs: 10000,
+          timelineStartMs: 0,
+        ),
+      ],
+      controller: controller,
+      onSelectClip: (_) {},
+      reorderCallbacks: ClipReorderCallbacks(
+        onBegin: (id) => begun = id,
+        onCommit: (id, index) => committed = (id, index),
+        onCancel: () {},
+      ),
+    );
+
+    // Only one clip → reorder is disabled (no drag handlers wired), so the
+    // horizontal drag is never claimed by the clip box.
+    await tester.drag(
+      find.byKey(const Key('clips_timeline_lane_clip_clip_0')),
+      const Offset(200, 0),
+    );
+    await tester.pump();
+
+    expect(begun, isNull);
+    expect(committed, isNull);
+  });
+
+  testWidgets('without reorder callbacks, dragging a clip does not reorder', (
+    tester,
+  ) async {
+    final controller = makeController();
+    addTearDown(controller.dispose);
+
+    String? selected = 'unset';
+
+    await pumpLane(
+      tester,
+      clips: threeClips,
+      controller: controller,
+      onSelectClip: (id) => selected = id,
+      // reorderCallbacks omitted → drag-to-reorder disabled.
+    );
+
+    // A horizontal drag is not claimed by the box (no handlers) and is not a
+    // tap, so nothing changes and no indicator appears.
+    await tester.drag(
+      find.byKey(const Key('clips_timeline_lane_clip_clip_1')),
+      const Offset(300, 0),
+    );
+    await tester.pump();
+
+    expect(selected, 'unset');
+    expect(
+      find.byKey(const Key('clips_timeline_lane_reorder_indicator')),
+      findsNothing,
+    );
+  });
+
+  testWidgets(
+    'a selected narrow clip still reorders from its body (trim handle does not '
+    'swallow the whole box)',
+    (tester) async {
+      final controller = makeController();
+      addTearDown(controller.dispose);
+
+      // A 300ms clip renders ~16px wide on the 600px lane — narrow enough that
+      // the full 22px end-trim handle would otherwise blanket its body and trap
+      // a reorder drag. Capping the handle hit width keeps a body grab strip.
+      final narrowFirst = <Clip>[
+        const Clip(
+          id: 'clip_0',
+          sourceInMs: 0,
+          sourceOutMs: 300,
+          timelineStartMs: 0,
+        ),
+        const Clip(
+          id: 'clip_1',
+          sourceInMs: 300,
+          sourceOutMs: 10000,
+          timelineStartMs: 300,
+        ),
+      ];
+
+      String? trimBegun;
+      String? reorderBegun;
+      (String, int)? reorderCommitted;
+
+      await pumpLane(
+        tester,
+        clips: narrowFirst,
+        selectedClipId: 'clip_0',
+        controller: controller,
+        onSelectClip: (_) {},
+        trimCallbacks: ClipTrimCallbacks(
+          onBegin: (id, _) => trimBegun = id,
+          onUpdate: (_) {},
+          onCommit: () {},
+          onCancel: () {},
+        ),
+        reorderCallbacks: ClipReorderCallbacks(
+          onBegin: (id) => reorderBegun = id,
+          onCommit: (id, index) => reorderCommitted = (id, index),
+          onCancel: () {},
+        ),
+      );
+
+      // Drag the narrow selected clip's body right, past clip_1's centre.
+      await tester.drag(
+        find.byKey(const Key('clips_timeline_lane_clip_clip_0')),
+        const Offset(400, 0),
+      );
+      await tester.pump();
+
+      // The body drag reordered the clip; the trim handle never claimed it.
+      expect(trimBegun, isNull);
+      expect(reorderBegun, 'clip_0');
+      expect(reorderCommitted, ('clip_0', 1));
+    },
+  );
 }

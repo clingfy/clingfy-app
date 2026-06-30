@@ -149,6 +149,25 @@ final class ExportVideoRequestParsingTests: XCTestCase {
       ])
   }
 
+  func testParsesReorderedClipsPreservingTimelineOrder() {
+    // After an arrange/reorder the timeline order no longer matches source order.
+    // The parser must preserve the given (timeline) order so the export bakes the
+    // reordered playback rather than a re-sorted one.
+    let r = ExportVideoRequest.fromFlutter([
+      "projectPath": "/p",
+      "clips": [
+        ["sourceInMs": 6000, "sourceOutMs": 8000, "timelineStartMs": 0, "enabled": true],
+        ["sourceInMs": 0, "sourceOutMs": 2000, "timelineStartMs": 2000, "enabled": true],
+      ],
+    ])!
+    XCTAssertEqual(
+      r.clips,
+      [
+        ClipKeptRange(sourceInMs: 6000, sourceOutMs: 8000),
+        ClipKeptRange(sourceInMs: 0, sourceOutMs: 2000),
+      ])
+  }
+
   // The zoom-effect derivation contract is load-bearing — pin every branch.
   func testZoomContractExplicitlyDisabledOverridesHighRawFactor() {
     let r = ExportVideoRequest.fromFlutter([

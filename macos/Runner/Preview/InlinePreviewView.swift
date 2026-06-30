@@ -1135,6 +1135,17 @@ final class InlinePreviewView: NSView {
       guard durSeconds.isFinite, durSeconds > 0 else { return false }
       return curMs >= Int(durSeconds * 1000) - clipJumpEpsilonMs
     }
+    // For a reorder, "parked at the edited end" means the LAST timeline slot is
+    // the one playing and it reached its source end — a raw source compare is
+    // ambiguous because a non-last slot can hold higher source than the last
+    // slot's end (which would falsely read as parked, restarting playback from a
+    // mid-clip pause). Source order == timeline order for plain cuts, so the
+    // source compare in isAtEnd is correct there.
+    if clipRangesAreReordered {
+      guard let last = clipKeptRanges.last else { return false }
+      return activeClipRangeIndex >= clipKeptRanges.count - 1
+        && curMs >= last.sourceOutMs - clipJumpEpsilonMs
+    }
     return ClipPlaybackPlanner.isAtEnd(
       sourceMs: curMs, ranges: clipKeptRanges, epsilonMs: clipJumpEpsilonMs)
   }
@@ -1147,6 +1158,9 @@ final class InlinePreviewView: NSView {
 
   func seekTo(milliseconds: Int) {
     guard let player = player else { return }
+    // A manual scrub supersedes any in-flight backward advance seek; clear the
+    // gate so this seek isn't ignored as stale.
+    awaitingClipSeek = false
 
     // Flutter seeks/scrubs on the EDITED timeline. With cuts active, map the
     // edited position back to a real source position and refresh the active
@@ -1193,6 +1207,7 @@ final class InlinePreviewView: NSView {
   /// Fully tears down observers and notifications from previous player item
   private func teardownPlayerObservers() {
     cancelCursorRetry()
+    awaitingClipSeek = false
     pendingCompositionWorkItem?.cancel()
     pendingCompositionWorkItem = nil
 
@@ -1681,15 +1696,20 @@ final class InlinePreviewView: NSView {
     // so the scrubber and time labels reflect the trimmed video, not the raw
     // asset. With no cuts these equal the raw source values.
     //
-    // Derive the reporting range from the CURRENT source position rather than
-    // the playback-advance index: the advance index can momentarily lag a seek,
-    // and a stale (later) index clamps the reported position to that range's
-    // start — i.e. parks the playhead at the cut. Resolving from the source is
-    // unambiguous for cut/split/trim (ranges are in source order); a future
-    // timeline reorder (arrange) would need the playback index to disambiguate
-    // repeated source windows.
-    let reportIndex = ClipPlaybackPlanner.activeIndex(
-      forSourceMs: posMs, ranges: clipKeptRanges)
+    // Pick the reporting range. For cut/split/trim (source order == timeline
+    // order) derive it from the CURRENT source position: the advance index can
+    // momentarily lag a seek, and a stale index would clamp the report to a
+    // range's start (parking the playhead at the cut), whereas the source is
+    // unambiguous. For a reorder (arrange) the source is NOT unambiguous — a
+    // position overshooting into a removed gap resolves to the next *source*
+    // range, which is an earlier *timeline* slot, snapping the playhead backward.
+    // So there, trust the actively-playing slot ([activeClipRangeIndex], which
+    // `editedMs` clamps within that slot); the backward-seek gate keeps it from
+    // being read stale.
+    let reportIndex =
+      clipRangesAreReordered
+      ? activeClipRangeIndex
+      : ClipPlaybackPlanner.activeIndex(forSourceMs: posMs, ranges: clipKeptRanges)
     let emittedPosMs =
       clipKeptRanges.isEmpty
       ? posMs
@@ -1715,6 +1735,15 @@ final class InlinePreviewView: NSView {
   /// Returns true when it consumed the tick (seeked across a cut, or stopped at
   /// the trimmed end) so the caller skips the rest of this tick.
   private func handleClipPlaybackAdvance(atSourceMs sourceMs: Int) -> Bool {
+    // A reorder (arrange) advance can seek BACKWARD in source time. AVPlayer
+    // seeks asynchronously, so the next periodic ticks still report the pre-seek
+    // (later) position until it lands — and decide() would read that stale
+    // position as "the earlier range we just entered is already past its end"
+    // and skip straight over it to the following range (the symptom: playing
+    // pieces …, 4, then jumping past 3 to 5). Gate cut decisions until the
+    // backward seek settles; its completion clears the gate. Forward advances
+    // (plain cut/split/trim) never seek backward, so they keep the original path.
+    if awaitingClipSeek { return true }
     switch ClipPlaybackPlanner.decide(
       sourceMs: sourceMs,
       activeIndex: activeClipRangeIndex,
@@ -1724,9 +1753,30 @@ final class InlinePreviewView: NSView {
     case .proceed:
       return false
     case .advance(let toIndex, let seekSourceMs):
+      let fromIndex = activeClipRangeIndex
       activeClipRangeIndex = toIndex
       let seekTime = CMTime(seconds: Double(seekSourceMs) / 1000.0, preferredTimescale: 600)
-      player?.seek(to: seekTime, toleranceBefore: .zero, toleranceAfter: .zero)
+      let isBackwardSeek = seekSourceMs < sourceMs
+      NativeLogger.d(
+        "Player", "clip advance",
+        context: [
+          "fromIndex": fromIndex,
+          "toIndex": toIndex,
+          "atSourceMs": sourceMs,
+          "seekSourceMs": seekSourceMs,
+          "backward": isBackwardSeek,
+        ])
+      if isBackwardSeek {
+        // Hold further cut decisions until the backward seek lands so a stale
+        // (later) tick cannot skip the freshly-entered earlier range.
+        awaitingClipSeek = true
+        player?.seek(to: seekTime, toleranceBefore: .zero, toleranceAfter: .zero) {
+          [weak self] _ in
+          self?.awaitingClipSeek = false
+        }
+      } else {
+        player?.seek(to: seekTime, toleranceBefore: .zero, toleranceAfter: .zero)
+      }
       syncCameraPlayback(to: seekTime, force: true)
       return true
     case .end:
@@ -1753,15 +1803,19 @@ final class InlinePreviewView: NSView {
     // never engages clip handling (which otherwise parks the playhead at the
     // split when a backward seek leaves a stale active range).
     let coalesced = ClipPlaybackPlanner.coalesce(ranges: ranges)
+    // The kept ranges changed; any in-flight advance seek no longer applies.
+    awaitingClipSeek = false
     let assetDurMs = Int((player?.currentItem?.duration.seconds ?? 0) * 1000)
     if ClipPlaybackPlanner.isPassthrough(ranges: coalesced, assetDurationMs: assetDurMs) {
       clipKeptRanges = []
       activeClipRangeIndex = 0
+      clipRangesAreReordered = false
       NativeLogger.d("Player", "updateClipsOnly: passthrough (no cuts)")
       return
     }
 
     clipKeptRanges = coalesced
+    clipRangesAreReordered = !ClipPlaybackPlanner.isSourceMonotonic(coalesced)
     let curMs = Int((player?.currentTime().seconds ?? 0) * 1000)
     activeClipRangeIndex = ClipPlaybackPlanner.activeIndex(forSourceMs: curMs, ranges: ranges)
 
@@ -1848,6 +1902,20 @@ final class InlinePreviewView: NSView {
   /// kept range is currently playing (needed for arrange/reorder).
   private var clipKeptRanges: [ClipKeptRange] = []
   private var activeClipRangeIndex: Int = 0
+  /// True when the kept ranges are not in source order (a timeline reorder /
+  /// arrange). Source order == timeline order for plain cut/split/trim, so this
+  /// stays false there. When true, the reported edited position must be derived
+  /// from the actively-playing slot ([activeClipRangeIndex]), because a raw
+  /// source position can fall in a removed gap that resolves to a *different*
+  /// (earlier) timeline slot and jump the playhead backward. Cached when the
+  /// ranges change so the per-tick report stays cheap.
+  private var clipRangesAreReordered = false
+  /// True while an advance's backward (reorder/arrange) seek is in flight.
+  /// AVPlayer seeks asynchronously, so until the seek lands the periodic ticks
+  /// still report the pre-seek (later) source position; gating cut decisions on
+  /// this flag stops `decide()` from reading that stale position as "the earlier
+  /// range we just entered is already finished" and skipping straight over it.
+  private var awaitingClipSeek = false
   /// Jump a hair before the exact cut so we don't flash a frame of cut footage
   /// (one 60 fps frame of the periodic observer's overshoot).
   private let clipJumpEpsilonMs = 17
