@@ -97,14 +97,27 @@ void main() {
     expect(c.clips, hasLength(1));
   });
 
-  test('moveClipToIndex reorders the clips', () {
+  test('moveClipToIndex reorders, records one undo, and skips no-ops', () {
     final c = make();
     addTearDown(c.dispose);
 
-    c.splitAtPlayhead(4000);
+    c.splitAtPlayhead(4000); // clip_0 [0..4000], clip_1 [4000..10000]
     c.moveClipToIndex('clip_1', 0);
-
     expect(c.clips.map((e) => e.id), ['clip_1', 'clip_0']);
+    expect(c.canUndo, isTrue);
+
+    // The whole reorder is one undo step that restores the original order.
+    c.undo();
+    expect(c.clips.map((e) => e.id), ['clip_0', 'clip_1']);
+
+    c.redo();
+    expect(c.clips.map((e) => e.id), ['clip_1', 'clip_0']);
+
+    // Moving a clip to where it already is changes nothing → no history entry.
+    final canUndoBefore = c.canUndo;
+    c.moveClipToIndex('clip_1', 0);
+    expect(c.clips.map((e) => e.id), ['clip_1', 'clip_0']);
+    expect(c.canUndo, canUndoBefore);
   });
 
   test(

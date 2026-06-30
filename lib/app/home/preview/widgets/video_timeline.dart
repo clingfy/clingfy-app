@@ -347,6 +347,36 @@ class _VideoTimelineState extends State<VideoTimeline> {
     Log.d('ClipsLane', 'cancel trim');
   }
 
+  void _handleBeginReorderClip(ClipEditorController? clip, String clipId) {
+    if (clip == null) return;
+    // Selecting the clip the drag started on mirrors _handleSelectClip;
+    // selectClip self-guards an already-selected id.
+    clip.selectClip(clipId);
+    Log.d('ClipsLane', 'begin reorder of clip $clipId');
+  }
+
+  void _handleCommitReorderClip(
+    ClipEditorController? clip,
+    String clipId,
+    int newIndex,
+  ) {
+    if (clip == null) return;
+    // Capture the old position before the move re-tiles the list, so the log
+    // shows the actual reorder (from -> to).
+    final from = clip.clips.indexWhere((c) => c.id == clipId);
+    clip.moveClipToIndex(clipId, newIndex);
+    Log.d(
+      'ClipsLane',
+      'reorder clip $clipId from index $from -> $newIndex '
+          '(now ${clip.clips.length} clips, canUndo=${clip.canUndo})',
+    );
+  }
+
+  void _handleCancelReorderClip(ClipEditorController? clip) {
+    if (clip == null) return;
+    Log.d('ClipsLane', 'cancel reorder');
+  }
+
   void _handleUndoClip(ClipEditorController? clip) {
     if (clip == null || !clip.canUndo) return;
     clip.undo();
@@ -535,6 +565,15 @@ class _VideoTimelineState extends State<VideoTimeline> {
                               _handleUpdateTrimClip(clipEditor, ms),
                           onCommit: () => _handleCommitTrimClip(clipEditor),
                           onCancel: () => _handleCancelTrimClip(clipEditor),
+                        )
+                      : null,
+                  clipReorderCallbacks: canEditClips
+                      ? ClipReorderCallbacks(
+                          onBegin: (id) =>
+                              _handleBeginReorderClip(clipEditor, id),
+                          onCommit: (id, index) =>
+                              _handleCommitReorderClip(clipEditor, id, index),
+                          onCancel: () => _handleCancelReorderClip(clipEditor),
                         )
                       : null,
                   showZoomLane: _showZoomLane,

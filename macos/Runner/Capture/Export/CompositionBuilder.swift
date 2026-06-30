@@ -1118,6 +1118,50 @@ enum ClipPlaybackPlanner {
     }
     return true
   }
+
+  /// One kept range's placement in the edited-timeline audio composition. The
+  /// slot begins at `editedStartMs` (the cumulative *full* duration of the
+  /// earlier ranges — the same offset the video re-stamp uses as
+  /// `currentEditedBaseMs`) and spans the range's full `durationMs`. Only
+  /// `copyDurationMs` of real source audio is available from `sourceInMs` — the
+  /// captured audio track can run shorter than the video — and the rest of the
+  /// slot is silence.
+  ///
+  /// The load-bearing rule is that each slot advances by the FULL range duration,
+  /// not by however much audio was actually copied. A clamped (short-tail) or
+  /// entirely-absent range therefore leaves trailing silence *inside its own
+  /// slot* instead of pulling every later range earlier. For source-monotonic
+  /// cuts only the last range can ever be clamped, so the distinction was
+  /// invisible; under arrange/reorder a clamped range can sit mid-timeline, where
+  /// advancing by the copied (short) length would desync all downstream audio.
+  struct AudioSlot: Equatable {
+    let sourceInMs: Int
+    let editedStartMs: Int
+    let copyDurationMs: Int
+    let durationMs: Int
+  }
+
+  /// Tiles the kept ranges (in timeline order) into edited-timeline audio slots,
+  /// clamping each range's copied length to what a source audio track of
+  /// `audioDurationMs` actually covers. The slots tile `[0, editedDurationMs)`
+  /// contiguously regardless of source order.
+  static func audioSlots(ranges: [ClipKeptRange], audioDurationMs: Int) -> [AudioSlot] {
+    let audioMs = max(0, audioDurationMs)
+    var base = 0
+    var slots: [AudioSlot] = []
+    for r in ranges {
+      let copyEndMs = min(r.sourceOutMs, audioMs)
+      let copyMs = max(0, copyEndMs - r.sourceInMs)
+      slots.append(
+        AudioSlot(
+          sourceInMs: r.sourceInMs,
+          editedStartMs: base,
+          copyDurationMs: copyMs,
+          durationMs: r.durationMs))
+      base += r.durationMs
+    }
+    return slots
+  }
 }
 
 struct CompositionParams: Equatable {

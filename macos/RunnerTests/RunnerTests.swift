@@ -7884,6 +7884,101 @@ final class ClipPlaybackPlannerTests: XCTestCase {
       ranges([(6000, 8000), (0, 2000)]))
   }
 
+  // The export reorder path (PR-3c5) reads each kept range's source window in
+  // TIMELINE order and re-stamps its frames onto `base + offset`, where `base` is
+  // the sum of the earlier ranges' durations. This must tile [0, editedDuration)
+  // with strictly increasing, gapless edited starts regardless of source order —
+  // otherwise the writer would emit a non-monotonic (rejected) output PTS.
+  func testReorderRestampTilesEditedTimelineMonotonically() {
+    let r = ranges([(6000, 8000), (0, 2000), (10000, 11000)])  // reordered
+    XCTAssertFalse(ClipPlaybackPlanner.isSourceMonotonic(r))
+    var base = 0
+    for (i, range) in r.enumerated() {
+      // Each range's edited start abuts the previous range's edited end (no gap,
+      // no overlap) and equals the planner's source->edited map at this index.
+      XCTAssertEqual(
+        ClipPlaybackPlanner.editedMs(forSourceMs: range.sourceInMs, activeIndex: i, ranges: r),
+        base, "range \(i) edited start")
+      base += range.durationMs
+    }
+    XCTAssertEqual(base, ClipPlaybackPlanner.editedDurationMs(ranges: r))
+  }
+
+  func testEditedSourceRoundTripAcrossReorder() {
+    // Timeline order B(6000-8000) then A(0-2000): the inverse map must follow the
+    // reordered timeline, not source order.
+    let r = ranges([(6000, 8000), (0, 2000)])
+    XCTAssertEqual(ClipPlaybackPlanner.sourceMs(forEditedMs: 0, ranges: r), 6000)
+    XCTAssertEqual(ClipPlaybackPlanner.sourceMs(forEditedMs: 1999, ranges: r), 7999)
+    XCTAssertEqual(ClipPlaybackPlanner.sourceMs(forEditedMs: 2000, ranges: r), 0)
+    XCTAssertEqual(ClipPlaybackPlanner.sourceMs(forEditedMs: 3500, ranges: r), 1500)
+  }
+
+  // The kept-range audio composition must advance by each range's FULL duration
+  // (matching the video re-stamp's editedBase), copying only the audio that
+  // exists and leaving the shortfall silent — otherwise a clamped/absent range
+  // sitting mid-timeline under reorder pulls every later range's audio earlier.
+  func testAudioSlotsAlignReorderedRangesToFullDurations() {
+    // Reordered ranges against a short 4000ms audio track (mic stopped before the
+    // screen recording ended, then the tail clip dragged earlier).
+    let r = ranges([(6000, 10000), (0, 3000), (3000, 6000)])
+    let slots = ClipPlaybackPlanner.audioSlots(ranges: r, audioDurationMs: 4000)
+    XCTAssertEqual(
+      slots,
+      [
+        // Source 6000-10000 is entirely past the 4000ms audio -> fully silent,
+        // but still occupies its full 4000ms slot.
+        ClipPlaybackPlanner.AudioSlot(
+          sourceInMs: 6000, editedStartMs: 0, copyDurationMs: 0, durationMs: 4000),
+        // Source 0-3000 is fully available; slot starts at the cumulative full
+        // duration (4000), not at where the copied audio happened to end.
+        ClipPlaybackPlanner.AudioSlot(
+          sourceInMs: 0, editedStartMs: 4000, copyDurationMs: 3000, durationMs: 3000),
+        // Source 3000-6000: audio only reaches 4000 -> copy 1000ms, 2000ms silent.
+        ClipPlaybackPlanner.AudioSlot(
+          sourceInMs: 3000, editedStartMs: 7000, copyDurationMs: 1000, durationMs: 3000),
+      ])
+    // Slots tile the full edited timeline contiguously with no gap or overlap.
+    XCTAssertEqual(
+      slots.last!.editedStartMs + slots.last!.durationMs,
+      ClipPlaybackPlanner.editedDurationMs(ranges: r))
+  }
+
+  func testAudioSlotsFullLengthAudioCopiesEveryRange() {
+    // Audio at least as long as the video: every reordered slot copies its whole
+    // range with no silence, still tiled by full durations in timeline order.
+    let r = ranges([(6000, 8000), (0, 2000)])
+    let slots = ClipPlaybackPlanner.audioSlots(ranges: r, audioDurationMs: 10000)
+    XCTAssertEqual(
+      slots,
+      [
+        ClipPlaybackPlanner.AudioSlot(
+          sourceInMs: 6000, editedStartMs: 0, copyDurationMs: 2000, durationMs: 2000),
+        ClipPlaybackPlanner.AudioSlot(
+          sourceInMs: 0, editedStartMs: 2000, copyDurationMs: 2000, durationMs: 2000),
+      ])
+    for s in slots { XCTAssertEqual(s.copyDurationMs, s.durationMs) }
+  }
+
+  // Why preview reporting must use the PLAYING slot (not activeIndex(forSourceMs:))
+  // once clips are reordered: a source position overshooting a slot's end into a
+  // removed gap resolves by source to the next SOURCE range, which after a
+  // reorder is an EARLIER timeline slot — snapping the reported playhead backward.
+  func testReorderGapOvershootResolvesToEarlierSlotBySource() {
+    // Timeline [r0, r1, r2]; source order is r0, r2, r1 (middle two swapped).
+    let r = ranges([(0, 2301), (3615, 5233), (2301, 3600)])
+    XCTAssertFalse(ClipPlaybackPlanner.isSourceMonotonic(r))
+    // Inside r2, the source resolves to slot 2 correctly.
+    XCTAssertEqual(ClipPlaybackPlanner.activeIndex(forSourceMs: 3000, ranges: r), 2)
+    // Overshooting r2's end (3600) into the gap [3600, 3615) resolves to slot 1
+    // (earlier in the edited timeline) — the backward-snap the reporter must avoid.
+    XCTAssertEqual(ClipPlaybackPlanner.activeIndex(forSourceMs: 3607, ranges: r), 1)
+    // Reporting from the playing slot (2) instead clamps within that slot, so the
+    // edited position climbs to the slot end and never jumps backward.
+    XCTAssertEqual(ClipPlaybackPlanner.editedMs(forSourceMs: 3590, activeIndex: 2, ranges: r), 5208)
+    XCTAssertEqual(ClipPlaybackPlanner.editedMs(forSourceMs: 3607, activeIndex: 2, ranges: r), 5218)
+  }
+
   func testReportedEditedPositionResolvesFromSourceNotStaleIndex() {
     // The fix for "scrub sticks at the cut": the reported edited position uses
     // the range CONTAINING the source, so a stale playback index can't park it

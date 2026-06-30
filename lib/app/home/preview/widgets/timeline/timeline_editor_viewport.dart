@@ -35,6 +35,7 @@ class TimelineEditorViewport extends StatefulWidget {
     this.clipEditor,
     this.onSelectClip,
     this.clipTrimCallbacks,
+    this.clipReorderCallbacks,
     this.cutModeArmed = false,
     this.onCutAt,
   });
@@ -59,6 +60,9 @@ class TimelineEditorViewport extends StatefulWidget {
 
   /// Trim drag hooks for the clip lane; null disables trim handles.
   final ClipTrimCallbacks? clipTrimCallbacks;
+
+  /// Reorder drag hooks for the clip lane; null disables drag-to-reorder.
+  final ClipReorderCallbacks? clipReorderCallbacks;
   final ValueChanged<int> onSeek;
   final ValueChanged<int>? onHoverSeek;
   final VoidCallback? onHoverEnd;
@@ -211,6 +215,7 @@ class _TimelineEditorViewportState extends State<TimelineEditorViewport> {
                               clipEditor: widget.clipEditor,
                               onSelectClip: widget.onSelectClip,
                               clipTrimCallbacks: widget.clipTrimCallbacks,
+                              clipReorderCallbacks: widget.clipReorderCallbacks,
                               cutModeArmed: widget.cutModeArmed,
                               onCutAt: widget.onCutAt,
                               hoverPositionMs: widget.hoverPositionMs,
@@ -362,6 +367,7 @@ class TimelineScrollableCanvas extends StatelessWidget {
     this.clipEditor,
     this.onSelectClip,
     this.clipTrimCallbacks,
+    this.clipReorderCallbacks,
     this.cutModeArmed = false,
     this.onCutAt,
   });
@@ -378,6 +384,7 @@ class TimelineScrollableCanvas extends StatelessWidget {
   final ClipEditorController? clipEditor;
   final ValueChanged<String?>? onSelectClip;
   final ClipTrimCallbacks? clipTrimCallbacks;
+  final ClipReorderCallbacks? clipReorderCallbacks;
   final int? hoverPositionMs;
   final ValueChanged<int> onSeek;
   final ValueChanged<int>? onHoverSeek;
@@ -422,6 +429,7 @@ class TimelineScrollableCanvas extends StatelessWidget {
           viewportController: viewportController,
           onSelectClip: onSelectClip ?? (_) {},
           trimCallbacks: clipTrimCallbacks,
+          reorderCallbacks: clipReorderCallbacks,
         ),
       if (showZoomLane)
         ZoomTimelineLane(
