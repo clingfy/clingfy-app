@@ -624,7 +624,14 @@ class _VideoTimelineState extends State<VideoTimeline> {
         actions: <Type, Action<Intent>>{
           DeleteSelectedZoomIntent: CallbackAction<DeleteSelectedZoomIntent>(
             onInvoke: (_) {
-              _handleDeleteSelected(editor);
+              // Backspace/Delete removes the selected CLIP first — that's what
+              // the key usually means over the clip lane — falling back to the
+              // selected zoom segment when no (deletable) clip is selected.
+              if (clipEditor?.canDeleteSelected ?? false) {
+                _handleDeleteClip(clipEditor);
+              } else {
+                _handleDeleteSelected(editor);
+              }
               return null;
             },
           ),

@@ -479,7 +479,7 @@ final class InlinePreviewView: NSView {
       x: canvasPoint.x - dragState.pointerOffsetFromCenter.x,
       y: canvasPoint.y - dragState.pointerOffsetFromCenter.y
     )
-    let currentTime = player?.currentTime().seconds ?? 0.0
+    let currentTime = currentSourceSeconds()
     let totalDuration = player?.currentItem?.duration.seconds ?? 0.0
     let fallbackCenter = CGPoint(
       x: min(max(desiredCenter.x / canvasSize.width, 0.0), 1.0),
@@ -728,7 +728,16 @@ final class InlinePreviewView: NSView {
 
   private func syncCameraPlayback(to time: CMTime? = nil, force: Bool = false) {
     guard let cameraPlayer, cameraPlayer.currentItem != nil else { return }
-    let screenTime = time ?? player?.currentTime() ?? .zero
+    // The screen player plays the edited timeline; the camera syncs to SOURCE
+    // time (via the camera sync timeline), so map the screen time back to source
+    // (identity when there are no cuts).
+    let rawScreenTime = time ?? player?.currentTime() ?? .zero
+    let screenTime =
+      clipKeptRanges.isEmpty
+      ? rawScreenTime
+      : CMTime(
+        seconds: sourceSeconds(forPlayerSeconds: rawScreenTime.seconds),
+        preferredTimescale: rawScreenTime.timescale > 0 ? rawScreenTime.timescale : 600)
     guard let targetTime = configuredTimeForCameraSeek(screenTime) else {
       if force || lastCameraSyncVisibility != false {
         NativeLogger.d(
@@ -818,7 +827,10 @@ final class InlinePreviewView: NSView {
     lastGeometryOnlyBoundsRefreshSignature = nil
     cancelCameraPreviewPlacementTransition()
     clipKeptRanges = []
-    activeClipRangeIndex = 0
+    sourceScreenAsset = nil
+    clipRebuildWorkItem?.cancel()
+    clipRebuildWorkItem = nil
+    pendingClipRebuildRanges = nil
     pendingPlaybackSnapshotToRestore = initialPlaybackSnapshot
     setPreviewContentVisible(false)
 
@@ -869,6 +881,10 @@ final class InlinePreviewView: NSView {
 
     // Create new asset and player item
     let asset = AVURLAsset(url: url)
+    // Remember the raw screen asset: the smooth cut preview stitches kept ranges
+    // of THIS asset into a composition; the player item is this asset directly
+    // when there are no cuts, or a kept-range composition when there are.
+    sourceScreenAsset = asset
     let item = AVPlayerItem(asset: asset)
 
     // Make seeking wait for video composition rendering (improves seek accuracy)
@@ -1099,22 +1115,18 @@ final class InlinePreviewView: NSView {
   }
 
   func play() {
-    // Replaying after the preview finishes: with cuts, completion parks the
-    // player on the last kept frame (the `.end` branch), and AVPlayer will not
-    // resume from the end on play(). Detect that and restart from the edited
-    // start so play() actually replays instead of doing nothing at the tail.
+    // Replaying after the preview finishes: AVPlayer won't resume from the end
+    // on play(), so detect "parked at the edited end" and restart from the
+    // beginning. The player plays the edited timeline, so the edited start is 0.
     if let player = player {
       let curMs = Int(
         (player.currentTime().seconds.isFinite ? player.currentTime().seconds : 0) * 1000)
       if isParkedAtEditedEnd(curMs) {
-        let startSource = clipKeptRanges.first?.sourceInMs ?? 0
-        activeClipRangeIndex = 0
-        let startTime = CMTime(seconds: Double(startSource) / 1000.0, preferredTimescale: 600)
-        player.seek(to: startTime, toleranceBefore: .zero, toleranceAfter: .zero)
-        syncCameraPlayback(to: startTime, force: true)
+        player.seek(to: .zero, toleranceBefore: .zero, toleranceAfter: .zero)
+        syncCameraPlayback(to: .zero, force: true)
         NativeLogger.d(
           "Player", "play() restarted from edited start (was parked at the end)",
-          context: ["fromMs": curMs, "startSourceMs": startSource])
+          context: ["fromMs": curMs])
       } else {
         NativeLogger.d(
           "Player", "play()",
@@ -1126,28 +1138,14 @@ final class InlinePreviewView: NSView {
     sendState(state: "playing")
   }
 
-  /// Whether the current source position is parked at the edited end (so play()
-  /// should restart). With cuts, that's the last kept range's end; without cuts,
-  /// the asset end.
+  /// Whether the playhead is parked at the edited end (so play() should restart).
+  /// The player plays the edited timeline — its item duration is the edited
+  /// duration (the kept-range composition's length, or the asset's with no cuts)
+  /// — so a single edited-position compare covers both cases.
   private func isParkedAtEditedEnd(_ curMs: Int) -> Bool {
-    if clipKeptRanges.isEmpty {
-      let durSeconds = player?.currentItem?.duration.seconds ?? 0
-      guard durSeconds.isFinite, durSeconds > 0 else { return false }
-      return curMs >= Int(durSeconds * 1000) - clipJumpEpsilonMs
-    }
-    // For a reorder, "parked at the edited end" means the LAST timeline slot is
-    // the one playing and it reached its source end — a raw source compare is
-    // ambiguous because a non-last slot can hold higher source than the last
-    // slot's end (which would falsely read as parked, restarting playback from a
-    // mid-clip pause). Source order == timeline order for plain cuts, so the
-    // source compare in isAtEnd is correct there.
-    if clipRangesAreReordered {
-      guard let last = clipKeptRanges.last else { return false }
-      return activeClipRangeIndex >= clipKeptRanges.count - 1
-        && curMs >= last.sourceOutMs - clipJumpEpsilonMs
-    }
-    return ClipPlaybackPlanner.isAtEnd(
-      sourceMs: curMs, ranges: clipKeptRanges, epsilonMs: clipJumpEpsilonMs)
+    let durSeconds = player?.currentItem?.duration.seconds ?? 0
+    guard durSeconds.isFinite, durSeconds > 0 else { return false }
+    return curMs >= Int(durSeconds * 1000.0) - clipJumpEpsilonMs
   }
 
   func pause() {
@@ -1158,46 +1156,23 @@ final class InlinePreviewView: NSView {
 
   func seekTo(milliseconds: Int) {
     guard let player = player else { return }
-    // A manual scrub supersedes any in-flight backward advance seek; clear the
-    // gate so this seek isn't ignored as stale.
-    awaitingClipSeek = false
 
-    // Flutter seeks/scrubs on the EDITED timeline. With cuts active, map the
-    // edited position back to a real source position and refresh the active
-    // kept range so the player lands on the right frame AND the next tick
-    // reports the matching edited position. Without this, a backward seek
-    // across a cut keeps the stale (later) active range, parking the playhead
-    // at the cut until real playback catches up.
-    let sourceMs: Int
-    if clipKeptRanges.isEmpty {
-      sourceMs = milliseconds
-    } else {
-      sourceMs = ClipPlaybackPlanner.sourceMs(
-        forEditedMs: milliseconds, ranges: clipKeptRanges)
-      activeClipRangeIndex = ClipPlaybackPlanner.activeIndex(
-        forEditedMs: milliseconds, ranges: clipKeptRanges)
-      NativeLogger.d(
-        "Player", "seekTo across cuts",
-        context: [
-          "editedMs": milliseconds,
-          "sourceMs": sourceMs,
-          "activeIndex": activeClipRangeIndex,
-        ])
-    }
-
-    let seconds = Double(sourceMs) / 1000.0
-
-    /// If seeking backwards, reset zoom/hysteresis
-    if seconds + 0.0001 < lastZoomTime {
+    // Flutter seeks/scrubs on the EDITED timeline, and the player plays the
+    // edited timeline directly (raw asset when there are no cuts, a kept-range
+    // composition when there are), so seek straight to the edited position. The
+    // overlays sample SOURCE time, so reset the zoom smoother on a backward jump
+    // in *source* time (a reorder boundary moves backward in source while edited
+    // moves forward), and let syncCameraPlayback map back to source.
+    let editedTime = CMTime(value: CMTimeValue(milliseconds), timescale: 1000)
+    let sourceSecs = sourceSeconds(forPlayerSeconds: Double(milliseconds) / 1000.0)
+    if sourceSecs + 0.0001 < lastZoomTime {
       resetZoomState()
     }
-    lastZoomTime = seconds
-    ///
+    lastZoomTime = sourceSecs
 
-    let time = CMTime(seconds: seconds, preferredTimescale: 600)
-    player.seek(to: time, toleranceBefore: .zero, toleranceAfter: .zero)
-    syncCameraPlayback(to: time, force: true)
-    sendTick(position: time)
+    player.seek(to: editedTime, toleranceBefore: .zero, toleranceAfter: .zero)
+    syncCameraPlayback(to: editedTime, force: true)
+    sendTick(position: editedTime)
   }
 
   func queuePlaybackRestore(_ snapshot: PreviewPlaybackSnapshot) {
@@ -1207,7 +1182,9 @@ final class InlinePreviewView: NSView {
   /// Fully tears down observers and notifications from previous player item
   private func teardownPlayerObservers() {
     cancelCursorRetry()
-    awaitingClipSeek = false
+    clipRebuildWorkItem?.cancel()
+    clipRebuildWorkItem = nil
+    pendingClipRebuildRanges = nil
     pendingCompositionWorkItem?.cancel()
     pendingCompositionWorkItem = nil
 
@@ -1274,7 +1251,10 @@ final class InlinePreviewView: NSView {
     pendingZoomSegments = nil
     pendingPlaybackSnapshotToRestore = nil
     clipKeptRanges = []
-    activeClipRangeIndex = 0
+    sourceScreenAsset = nil
+    clipRebuildWorkItem?.cancel()
+    clipRebuildWorkItem = nil
+    pendingClipRebuildRanges = nil
     cancelCameraPreviewPlacementTransition()
 
     cursorLayer?.removeFromSuperlayer()
@@ -1443,7 +1423,11 @@ final class InlinePreviewView: NSView {
       }
     }
 
-    // Add completion observer
+    // Add completion observer. Drop any prior end-time registration first so a
+    // clip-composition rebuild (which re-observes the swapped item) doesn't
+    // accumulate one per edit — only the current item should post completion.
+    NotificationCenter.default.removeObserver(
+      self, name: .AVPlayerItemDidPlayToEndTime, object: nil)
     NotificationCenter.default.addObserver(
       self,
       selector: #selector(playerDidFinishPlaying),
@@ -1672,17 +1656,13 @@ final class InlinePreviewView: NSView {
     let posMs = (posSeconds.isNaN || posSeconds.isInfinite) ? 0 : Int(posSeconds * 1000)
     let durMs = (durSeconds.isNaN || durSeconds.isInfinite) ? 0 : Int(durSeconds * 1000)
 
-    // "Play through the cuts": when the real playhead reaches the end of the
-    // active kept range, jump to the next range (or stop at the trimmed end).
-    // Returning early skips this tick's overlay work — the post-seek tick
-    // handles it from the new position.
-    if !clipKeptRanges.isEmpty,
-      handleClipPlaybackAdvance(atSourceMs: posMs)
-    {
-      return
-    }
-
-    let t = (posSeconds.isNaN || posSeconds.isInfinite) ? 0 : posSeconds
+    // The player plays the edited timeline directly — the raw asset when there
+    // are no cuts, a kept-range composition when there are — so its position and
+    // duration ARE the edited values; report them straight to Flutter. The
+    // cursor/zoom/camera overlays are keyed to SOURCE time, so map the player
+    // time back to source for them (identity when there are no cuts).
+    let sourceSecs = sourceSeconds(forPlayerSeconds: posSeconds)
+    let t = (sourceSecs.isNaN || sourceSecs.isInfinite) ? 0 : sourceSecs
     let tickState = PreviewTickState(time: t, frame: cursorFrameResolver.frame(at: t))
 
     CATransaction.begin()
@@ -1692,148 +1672,214 @@ final class InlinePreviewView: NSView {
     let screenZoom = updateZoom(tick: tickState)
     updateCameraPreviewGeometry(time: t, screenZoom: screenZoom)
 
-    // Report edited-timeline position/duration to Flutter when cuts are active
-    // so the scrubber and time labels reflect the trimmed video, not the raw
-    // asset. With no cuts these equal the raw source values.
-    //
-    // Pick the reporting range. For cut/split/trim (source order == timeline
-    // order) derive it from the CURRENT source position: the advance index can
-    // momentarily lag a seek, and a stale index would clamp the report to a
-    // range's start (parking the playhead at the cut), whereas the source is
-    // unambiguous. For a reorder (arrange) the source is NOT unambiguous — a
-    // position overshooting into a removed gap resolves to the next *source*
-    // range, which is an earlier *timeline* slot, snapping the playhead backward.
-    // So there, trust the actively-playing slot ([activeClipRangeIndex], which
-    // `editedMs` clamps within that slot); the backward-seek gate keeps it from
-    // being read stale.
-    let reportIndex =
-      clipRangesAreReordered
-      ? activeClipRangeIndex
-      : ClipPlaybackPlanner.activeIndex(forSourceMs: posMs, ranges: clipKeptRanges)
-    let emittedPosMs =
-      clipKeptRanges.isEmpty
-      ? posMs
-      : ClipPlaybackPlanner.editedMs(
-        forSourceMs: posMs, activeIndex: reportIndex, ranges: clipKeptRanges)
-    let emittedDurMs =
-      clipKeptRanges.isEmpty
-      ? durMs
-      : ClipPlaybackPlanner.editedDurationMs(ranges: clipKeptRanges)
-
     emitPlayerEvent([
       "type": "playerTick",
-      "positionMs": emittedPosMs,
-      "durationMs": emittedDurMs,
+      "positionMs": posMs,
+      "durationMs": durMs,
     ])
     updateActiveInlinePreviewPlaybackSnapshot(
       sessionId: currentSessionId,
-      positionMs: emittedPosMs
+      positionMs: posMs
     )
   }
 
-  /// Acts on the [ClipPlaybackPlanner] decision for the current source position.
-  /// Returns true when it consumed the tick (seeked across a cut, or stopped at
-  /// the trimmed end) so the caller skips the rest of this tick.
-  private func handleClipPlaybackAdvance(atSourceMs sourceMs: Int) -> Bool {
-    // A reorder (arrange) advance can seek BACKWARD in source time. AVPlayer
-    // seeks asynchronously, so the next periodic ticks still report the pre-seek
-    // (later) position until it lands — and decide() would read that stale
-    // position as "the earlier range we just entered is already past its end"
-    // and skip straight over it to the following range (the symptom: playing
-    // pieces …, 4, then jumping past 3 to 5). Gate cut decisions until the
-    // backward seek settles; its completion clears the gate. Forward advances
-    // (plain cut/split/trim) never seek backward, so they keep the original path.
-    if awaitingClipSeek { return true }
-    switch ClipPlaybackPlanner.decide(
-      sourceMs: sourceMs,
-      activeIndex: activeClipRangeIndex,
-      ranges: clipKeptRanges,
-      epsilonMs: clipJumpEpsilonMs
-    ) {
-    case .proceed:
-      return false
-    case .advance(let toIndex, let seekSourceMs):
-      let fromIndex = activeClipRangeIndex
-      activeClipRangeIndex = toIndex
-      let seekTime = CMTime(seconds: Double(seekSourceMs) / 1000.0, preferredTimescale: 600)
-      let isBackwardSeek = seekSourceMs < sourceMs
-      NativeLogger.d(
-        "Player", "clip advance",
-        context: [
-          "fromIndex": fromIndex,
-          "toIndex": toIndex,
-          "atSourceMs": sourceMs,
-          "seekSourceMs": seekSourceMs,
-          "backward": isBackwardSeek,
-        ])
-      if isBackwardSeek {
-        // Hold further cut decisions until the backward seek lands so a stale
-        // (later) tick cannot skip the freshly-entered earlier range.
-        awaitingClipSeek = true
-        player?.seek(to: seekTime, toleranceBefore: .zero, toleranceAfter: .zero) {
-          [weak self] _ in
-          self?.awaitingClipSeek = false
-        }
-      } else {
-        player?.seek(to: seekTime, toleranceBefore: .zero, toleranceAfter: .zero)
-      }
-      syncCameraPlayback(to: seekTime, force: true)
-      return true
-    case .end:
-      // Trimmed tail: stop at the edited end instead of playing into cut
-      // footage. Park on the last kept frame and report completion.
-      player?.pause()
-      cameraPlayer?.pause()
-      if let last = clipKeptRanges.last {
-        let endTime = CMTime(seconds: Double(last.sourceOutMs) / 1000.0, preferredTimescale: 600)
-        player?.seek(to: endTime, toleranceBefore: .zero, toleranceAfter: .zero)
-      }
-      sendState(state: "completed")
-      return true
-    }
+  // MARK: - Smooth cut playback (kept-range composition)
+  //
+  // Instead of playing the raw asset and SEEKING across each cut (which stalls
+  // on a precise decode at every boundary), the preview plays an
+  // `AVMutableComposition` that stitches the kept ranges contiguously onto the
+  // edited timeline. Playback is then naturally smooth — no per-cut seeks — and
+  // the player's current time IS edited time. The cursor/zoom/camera overlays
+  // stay keyed to SOURCE time, so each tick maps edited→source once via
+  // `sourceSeconds(forPlayerSeconds:)`.
+
+  func updateClipsOnly(_ ranges: [ClipKeptRange]) {
+    // Coalesce source-adjacent ranges: a split with no deletion is contiguous
+    // footage that collapses to a single passthrough range (no cuts).
+    let coalesced = ClipPlaybackPlanner.coalesce(ranges: ranges)
+    let assetDurMs = Int((sourceScreenAsset?.duration.seconds ?? 0) * 1000.0)
+    let passthrough = ClipPlaybackPlanner.isPassthrough(
+      ranges: coalesced, assetDurationMs: assetDurMs)
+    // Debounce the rebuild. A live trim drag streams ranges ~60×/s; rebuilding +
+    // swapping the player item that fast would thrash playback, so coalesce into
+    // one rebuild after a short quiescence. The clip lane stays live in Flutter
+    // meanwhile; a discrete edit (split/cut/reorder) fires one update and
+    // rebuilds a beat later. Empty target ⇒ back to the raw passthrough asset.
+    pendingClipRebuildRanges = passthrough ? [] : coalesced
+    clipRebuildWorkItem?.cancel()
+    let work = DispatchWorkItem { [weak self] in self?.performPendingClipRebuild() }
+    clipRebuildWorkItem = work
+    DispatchQueue.main.asyncAfter(deadline: .now() + clipRebuildDebounce, execute: work)
   }
 
-  /// Stores the kept clip ranges and refreshes the active index. A passthrough
-  /// list (no cuts) clears clip handling entirely. If the current frame now
-  /// sits inside a cut region, snaps to the active range start so the preview
-  /// never shows removed footage.
-  func updateClipsOnly(_ ranges: [ClipKeptRange]) {
-    // Coalesce source-adjacent ranges first: a split with no deletion is
-    // contiguous footage, so it collapses to a single passthrough range and
-    // never engages clip handling (which otherwise parks the playhead at the
-    // split when a backward seek leaves a stale active range).
-    let coalesced = ClipPlaybackPlanner.coalesce(ranges: ranges)
-    // The kept ranges changed; any in-flight advance seek no longer applies.
-    awaitingClipSeek = false
-    let assetDurMs = Int((player?.currentItem?.duration.seconds ?? 0) * 1000)
-    if ClipPlaybackPlanner.isPassthrough(ranges: coalesced, assetDurationMs: assetDurMs) {
-      clipKeptRanges = []
-      activeClipRangeIndex = 0
-      clipRangesAreReordered = false
-      NativeLogger.d("Player", "updateClipsOnly: passthrough (no cuts)")
+  private func performPendingClipRebuild() {
+    guard let target = pendingClipRebuildRanges else { return }
+    pendingClipRebuildRanges = nil
+    clipRebuildWorkItem = nil
+    rebuildClipComposition(target)
+  }
+
+  /// Swaps the player item to a kept-range composition (or back to the raw asset
+  /// when `targetRanges` is empty), preserving the source frame currently shown.
+  private func rebuildClipComposition(_ targetRanges: [ClipKeptRange]) {
+    guard let sourceAsset = sourceScreenAsset else { return }
+    if targetRanges == clipKeptRanges { return }  // no change
+    guard let params = currentCompositionParams, let profile = currentPreviewProfile else {
+      // Composition not applied yet (pre-ready). Leave `clipKeptRanges` empty so
+      // the overlays stay consistent with the raw-asset player; in practice the
+      // clip editor seeds passthrough at ready and re-syncs on every edit.
       return
     }
 
-    clipKeptRanges = coalesced
-    clipRangesAreReordered = !ClipPlaybackPlanner.isSourceMonotonic(coalesced)
-    let curMs = Int((player?.currentTime().seconds ?? 0) * 1000)
-    activeClipRangeIndex = ClipPlaybackPlanner.activeIndex(forSourceMs: curMs, ranges: ranges)
+    // Preserve the SOURCE frame currently shown so the playhead stays put across
+    // the rebuild (edits usually happen while paused).
+    let playerSecs = player?.currentTime().seconds ?? 0
+    let oldSourceMs = Int(
+      sourceSeconds(forPlayerSeconds: playerSecs.isFinite ? playerSecs : 0) * 1000.0)
 
-    let active = ranges[activeClipRangeIndex]
-    if curMs < active.sourceInMs || curMs >= active.sourceOutMs {
-      // Current frame is in a removed gap — snap to the kept range start.
-      let snap = CMTime(seconds: Double(active.sourceInMs) / 1000.0, preferredTimescale: 600)
-      player?.seek(to: snap, toleranceBefore: .zero, toleranceAfter: .zero)
-      syncCameraPlayback(to: snap, force: true)
+    let newAsset: AVAsset
+    let restoreEditedMs: Int
+    if targetRanges.isEmpty {
+      // → passthrough: edited == source, play the raw asset directly.
+      newAsset = sourceAsset
+      restoreEditedMs = oldSourceMs
+    } else {
+      guard let comp = makeKeptRangeComposition(from: sourceAsset, ranges: targetRanges) else {
+        NativeLogger.w("Player", "rebuildClipComposition: failed to build composition")
+        return
+      }
+      newAsset = comp
+      // Where the preserved source frame now lives on the edited timeline; if it
+      // was cut away, the inverse map lands on the nearest kept frame.
+      restoreEditedMs =
+        ClipPlaybackPlanner.editedMsForKeptSourceMs(oldSourceMs, ranges: targetRanges)
+        ?? ClipPlaybackPlanner.editedMs(
+          forSourceMs: oldSourceMs,
+          activeIndex: ClipPlaybackPlanner.activeIndex(
+            forSourceMs: oldSourceMs, ranges: targetRanges),
+          ranges: targetRanges)
     }
+    clipKeptRanges = targetRanges
 
-    NativeLogger.d(
-      "Player", "updateClipsOnly: applied",
+    let item = AVPlayerItem(asset: newAsset)
+    if #available(macOS 10.13, *) { item.seekingWaitsForVideoCompositionRendering = true }
+    // Give the swapped item a fresh failure-recovery window: the status
+    // observer's safety-net retry is gated on a recent `lastOpenRequestTime`
+    // (set only at the initial open), so without this a rare async decode
+    // failure on the rebuilt composition would freeze the preview with no retry.
+    openRetryCount = 0
+    lastOpenRequestTime = Date()
+    player?.replaceCurrentItem(with: item)
+    if let token = currentOpenToken { observeCurrentItem(for: token) }
+
+    // Re-build the layout / graded video composition / audio mix for the new
+    // asset and restore the playhead. applyCompositionNow won't re-emit
+    // previewReady (already emitted this session).
+    let restoreTime = CMTime(value: CMTimeValue(restoreEditedMs), timescale: 1000)
+    applyCompositionNow(
+      params: params,
+      cameraParams: currentCameraCompositionParams,
+      cameraPreviewChangeKind: .none,
+      profile: profile,
+      asset: newAsset,
+      reason: targetRanges.isEmpty ? "clipsPassthrough" : "clipComposition",
+      restorePositionOverride: restoreTime
+    )
+    // The source frame may have jumped (reorder / re-tile); reset the zoom
+    // smoother so it doesn't lerp across the discontinuity.
+    resetZoomState()
+    lastZoomTime = sourceSeconds(forPlayerSeconds: Double(restoreEditedMs) / 1000.0)
+
+    NativeLogger.i(
+      "Player", "Rebuilt clip composition preview",
       context: [
-        "rangeCount": ranges.count,
-        "activeIndex": activeClipRangeIndex,
-        "editedDurationMs": ClipPlaybackPlanner.editedDurationMs(ranges: ranges),
+        "rangeCount": targetRanges.count,
+        "passthrough": targetRanges.isEmpty,
+        "editedDurationMs": ClipPlaybackPlanner.editedDurationMs(ranges: targetRanges),
+        "restoreEditedMs": restoreEditedMs,
       ])
+  }
+
+  /// Maps the player's current time to SOURCE seconds for overlay/camera
+  /// sampling. When a kept-range composition is playing the player time is
+  /// EDITED time and is inverted through the kept ranges; with no cuts the
+  /// player is on the raw asset, so it is already source time (identity).
+  private func sourceSeconds(forPlayerSeconds playerSeconds: Double) -> Double {
+    guard !clipKeptRanges.isEmpty, playerSeconds.isFinite else { return playerSeconds }
+    let editedMs = Int(playerSeconds * 1000.0)
+    let sourceMs = ClipPlaybackPlanner.sourceMs(forEditedMs: editedMs, ranges: clipKeptRanges)
+    return Double(sourceMs) / 1000.0
+  }
+
+  /// The player's current time mapped to SOURCE seconds — for camera/overlay
+  /// geometry sampled OFF the periodic-tick path (window relayout, camera-param
+  /// changes, the placement transition timer), which otherwise pass raw edited
+  /// player time to the source-keyed camera resolvers.
+  private func currentSourceSeconds() -> Double {
+    sourceSeconds(forPlayerSeconds: player?.currentTime().seconds ?? 0)
+  }
+
+  /// Inserts the kept ranges of `sourceTrack` (timeline order) contiguously into
+  /// `destTrack`, filling any clamped/absent/failed tail with silence so the
+  /// track spans the full edited duration and stays aligned with the others.
+  /// Mirrors the export's kept-range audio stitch (reuses the same slot tiling).
+  private func stitchKeptRanges(
+    into destTrack: AVMutableCompositionTrack,
+    from sourceTrack: AVAssetTrack,
+    ranges: [ClipKeptRange]
+  ) {
+    let trackDurationMs = Int(sourceTrack.timeRange.duration.seconds * 1000.0)
+    for slot in ClipPlaybackPlanner.audioSlots(ranges: ranges, audioDurationMs: trackDurationMs) {
+      var insertedMs = 0
+      if slot.copyDurationMs > 0 {
+        let start = CMTime(value: CMTimeValue(slot.sourceInMs), timescale: 1000)
+        let end = CMTime(
+          value: CMTimeValue(slot.sourceInMs + slot.copyDurationMs), timescale: 1000)
+        do {
+          try destTrack.insertTimeRange(
+            CMTimeRange(start: start, end: end), of: sourceTrack,
+            at: CMTime(value: CMTimeValue(slot.editedStartMs), timescale: 1000))
+          insertedMs = slot.copyDurationMs
+        } catch {
+          NativeLogger.i(
+            "Player", "kept-range stitch insert failed; leaving silence",
+            context: [
+              "mediaType": sourceTrack.mediaType.rawValue,
+              "error": error.localizedDescription,
+            ])
+        }
+      }
+      let silenceMs = slot.durationMs - insertedMs
+      if silenceMs > 0 {
+        destTrack.insertEmptyTimeRange(
+          CMTimeRange(
+            start: CMTime(value: CMTimeValue(slot.editedStartMs + insertedMs), timescale: 1000),
+            duration: CMTime(value: CMTimeValue(silenceMs), timescale: 1000)))
+      }
+    }
+  }
+
+  /// Builds a composition stitching the kept ranges (timeline order) of the
+  /// source asset's video + audio onto a contiguous edited timeline, so the
+  /// preview plays through cuts smoothly. Returns nil without a video track.
+  private func makeKeptRangeComposition(
+    from asset: AVAsset, ranges: [ClipKeptRange]
+  ) -> AVMutableComposition? {
+    guard let sourceVideo = asset.tracks(withMediaType: .video).first else { return nil }
+    let composition = AVMutableComposition()
+    guard
+      let videoTrack = composition.addMutableTrack(
+        withMediaType: .video, preferredTrackID: kCMPersistentTrackID_Invalid)
+    else { return nil }
+    videoTrack.preferredTransform = sourceVideo.preferredTransform
+    stitchKeptRanges(into: videoTrack, from: sourceVideo, ranges: ranges)
+    if let sourceAudio = asset.tracks(withMediaType: .audio).first,
+      let audioTrack = composition.addMutableTrack(
+        withMediaType: .audio, preferredTrackID: kCMPersistentTrackID_Invalid)
+    {
+      stitchKeptRanges(into: audioTrack, from: sourceAudio, ranges: ranges)
+    }
+    return composition
   }
 
   private func sendState(state: String) {
@@ -1897,27 +1943,20 @@ final class InlinePreviewView: NSView {
   private var currentColorGrade: ColorGrade = .identity
   /// Kept source ranges (timeline order) for "play through the cuts" preview.
   /// Empty means no cuts — playback runs the full asset untouched. The player
-  /// stays on the original asset; `sendTick` jumps the playhead across cut
-  /// regions via `ClipPlaybackPlanner`. `activeClipRangeIndex` tracks which
-  /// kept range is currently playing (needed for arrange/reorder).
+  /// plays a kept-range composition (the edited timeline, contiguous), so the
+  /// player's time IS edited time and `sendTick` maps it back to source for the
+  /// overlays. Empty means no cuts — the player is on the raw asset untouched.
   private var clipKeptRanges: [ClipKeptRange] = []
-  private var activeClipRangeIndex: Int = 0
-  /// True when the kept ranges are not in source order (a timeline reorder /
-  /// arrange). Source order == timeline order for plain cut/split/trim, so this
-  /// stays false there. When true, the reported edited position must be derived
-  /// from the actively-playing slot ([activeClipRangeIndex]), because a raw
-  /// source position can fall in a removed gap that resolves to a *different*
-  /// (earlier) timeline slot and jump the playhead backward. Cached when the
-  /// ranges change so the per-tick report stays cheap.
-  private var clipRangesAreReordered = false
-  /// True while an advance's backward (reorder/arrange) seek is in flight.
-  /// AVPlayer seeks asynchronously, so until the seek lands the periodic ticks
-  /// still report the pre-seek (later) source position; gating cut decisions on
-  /// this flag stops `decide()` from reading that stale position as "the earlier
-  /// range we just entered is already finished" and skipping straight over it.
-  private var awaitingClipSeek = false
-  /// Jump a hair before the exact cut so we don't flash a frame of cut footage
-  /// (one 60 fps frame of the periodic observer's overshoot).
+  /// The raw screen asset (set in `open`). The kept-range composition stitches
+  /// from this; the player item is this asset when there are no cuts.
+  private var sourceScreenAsset: AVURLAsset?
+  /// The latest kept ranges awaiting a debounced composition rebuild, and the
+  /// scheduled work. Coalesces a live trim drag's ~60×/s stream into one rebuild.
+  private var pendingClipRebuildRanges: [ClipKeptRange]?
+  private var clipRebuildWorkItem: DispatchWorkItem?
+  private let clipRebuildDebounce: TimeInterval = 0.12
+  /// Jump a hair before the exact end so play()'s restart detection isn't fooled
+  /// by the periodic observer overshooting the edited duration by a frame.
   private let clipJumpEpsilonMs = 17
   private var currentCameraCompositionParams: CameraCompositionParams?
   private var currentLayout: CompositionBuilder.PreviewCompositionResult?
@@ -1990,7 +2029,7 @@ final class InlinePreviewView: NSView {
 
     applyCameraPreviewChangeKind(
       changeKind,
-      currentTime: player?.currentTime().seconds ?? 0,
+      currentTime: currentSourceSeconds(),
       screenZoom: smoothZoom
     )
     updateCameraPreviewLayout()
@@ -2130,7 +2169,7 @@ final class InlinePreviewView: NSView {
     }
     applyCameraPreviewChangeKind(
       changeKind,
-      currentTime: player?.currentTime().seconds ?? 0,
+      currentTime: currentSourceSeconds(),
       screenZoom: smoothZoom
     )
 
@@ -2170,12 +2209,16 @@ final class InlinePreviewView: NSView {
     profile: PreviewProfile,
     asset: AVAsset,
     reason: String,
+    restorePositionOverride: CMTime? = nil,
     onApplied: ((Bool) -> Void)? = nil
   ) {
     pendingCompositionWorkItem = nil
     pendingCameraPreviewChangeKind = .none
 
-    let currentTime = player?.currentTime() ?? .zero
+    // When swapping the player item (clip composition rebuild) the player's
+    // current time has reset to zero, so the caller passes the edited position to
+    // restore the playhead onto the new timeline.
+    let currentTime = restorePositionOverride ?? player?.currentTime() ?? .zero
     let wasPlaying = (player?.rate ?? 0) != 0
     let hadExistingLayout = currentLayout != nil
     if wasPlaying {
@@ -2425,7 +2468,7 @@ final class InlinePreviewView: NSView {
       params.mirror ? CGAffineTransform(scaleX: -1.0, y: 1.0) : .identity
     )
     updateCameraPreviewGeometry(
-      time: player?.currentTime().seconds ?? 0,
+      time: currentSourceSeconds(),
       screenZoom: smoothZoom
     )
   }
@@ -2578,7 +2621,7 @@ final class InlinePreviewView: NSView {
     CATransaction.begin()
     CATransaction.setDisableActions(true)
     updateCameraPreviewGeometry(
-      time: player?.currentTime().seconds ?? 0,
+      time: currentSourceSeconds(),
       screenZoom: smoothZoom
     )
     CATransaction.commit()
@@ -2903,8 +2946,11 @@ final class InlinePreviewView: NSView {
       context: ["count": segments.count])
   }
 
+  /// `time` is the player's current time (EDITED time when a kept-range
+  /// composition is playing). The overlays sample SOURCE time, so map it back.
   private func applyPreviewOverlayState(at time: Double, snap: Bool) {
-    let normalizedTime = time.isFinite ? time : 0
+    let sourceTime = sourceSeconds(forPlayerSeconds: time)
+    let normalizedTime = sourceTime.isFinite ? sourceTime : 0
     let tick = PreviewTickState(
       time: normalizedTime,
       frame: cursorFrameResolver.frame(at: normalizedTime)
