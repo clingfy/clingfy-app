@@ -31,6 +31,11 @@ class PlayerController extends ChangeNotifier {
   String? _blockingErrorCode;
   String? _activeSessionId;
   String? _activePreviewPath;
+  // The `.clingfyproj` bundle path for the active preview — the persistence key
+  // for clip edits. Tracked alongside `_activePreviewPath` (which is the
+  // generated preview file, not the project) so the clip editor can load/save
+  // `clips_state.json` in the bundle.
+  String? _activeProjectPath;
 
   final _warningController = StreamController<String>.broadcast();
   final _warningCodeController = StreamController<String>.broadcast();
@@ -104,8 +109,9 @@ class PlayerController extends ChangeNotifier {
               }
               // Seed the clip editor with the raw recording duration. This first
               // tick predates any cut, so `_durMs` is still the raw duration.
+              // The project path lets it restore/persist per-recording cuts.
               if (_clipEditor == null) {
-                _attachClipEditor(_activeSessionId!);
+                _attachClipEditor(_activeSessionId!, _activeProjectPath);
               }
             }
             notifyListeners();
@@ -200,6 +206,7 @@ class PlayerController extends ChangeNotifier {
             _activePreviewPath != nextPreviewPath)) {
       _activeSessionId = nextSessionId;
       _activePreviewPath = nextPreviewPath;
+      _activeProjectPath = nextProjectPath;
       _blockingError = null;
       _blockingErrorCode = null;
       _playerReady = false;
@@ -222,6 +229,7 @@ class PlayerController extends ChangeNotifier {
         _clearPlaybackState(detachZoomEditor: true);
         _activeSessionId = nextSessionId;
         _activePreviewPath = nextPreviewPath;
+        _activeProjectPath = nextProjectPath;
       }
       return;
     }
@@ -231,6 +239,7 @@ class PlayerController extends ChangeNotifier {
       if (_activeSessionId != null || _zoomEditor != null || _playerReady) {
         _activeSessionId = null;
         _activePreviewPath = null;
+        _activeProjectPath = null;
         _clearPlaybackState(detachZoomEditor: true);
       }
     }
@@ -274,13 +283,14 @@ class PlayerController extends ChangeNotifier {
     _zoomSegments = [];
   }
 
-  void _attachClipEditor(String sessionId) {
+  void _attachClipEditor(String sessionId, String? projectPath) {
     _detachClipEditor();
 
     final editor = ClipEditorController(
       nativeBridge: _nativeBridge,
       durationMs: _durMs,
       sessionId: sessionId,
+      projectPath: projectPath,
     );
     _clipEditor = editor;
 
