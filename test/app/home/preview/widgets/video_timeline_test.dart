@@ -542,6 +542,43 @@ void main() {
     expect(clipEditor.clips.single.id, 'clip_1');
   });
 
+  testWidgets(
+    'Backspace deletes the selected clip (not just the zoom segment)',
+    (tester) async {
+      final editor = await _createEditor(tester);
+      final clipEditor = _makeClipEditor();
+      final player = _FakePlayerController(
+        editor: editor,
+        clipEditor: clipEditor,
+      );
+      addTearDown(player.dispose);
+      addTearDown(clipEditor.dispose);
+
+      await tester.pumpWidget(_buildTimeline(player: player));
+
+      final splitButton = find.byKey(const Key('timeline_clip_split_button'));
+      await tester.ensureVisible(splitButton);
+      await tester.pump();
+      await tester.tap(splitButton);
+      await tester.pump();
+      expect(clipEditor.clips, hasLength(2));
+
+      // Tapping the clip box selects it AND focuses the timeline (pointer-down),
+      // so the Backspace shortcut resolves to the clip-delete action.
+      await tester.tap(
+        find.byKey(const Key('clips_timeline_lane_clip_clip_0')),
+      );
+      await tester.pump();
+      expect(clipEditor.selectedClipId, 'clip_0');
+
+      await tester.sendKeyEvent(LogicalKeyboardKey.backspace);
+      await tester.pump();
+
+      expect(clipEditor.clips, hasLength(1));
+      expect(clipEditor.clips.single.id, 'clip_1');
+    },
+  );
+
   testWidgets('clip undo and redo buttons walk the clip history', (
     tester,
   ) async {
