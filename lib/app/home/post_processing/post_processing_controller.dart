@@ -604,9 +604,12 @@ class PostProcessingController extends ChangeNotifier {
   }
 
   /// Flush the debounce and push the final grade immediately (slider release).
+  /// This is the color-edit commit point, so it is also where the grade is
+  /// persisted to the project bundle (drag ticks only update the preview).
   void commitColorGrade() {
     _colorGradePreviewThrottler.cancel();
     _pushPreviewColorGrade();
+    _persistEditorStateIfActive();
   }
 
   /// One-tap auto enhance: apply a tasteful preset, or clear back to neutral.
@@ -615,6 +618,7 @@ class PostProcessingController extends ChangeNotifier {
     notifyListeners();
     _colorGradePreviewThrottler.cancel();
     _pushPreviewColorGrade();
+    _persistEditorStateIfActive();
   }
 
   void _schedulePreviewColorGrade() {
@@ -754,10 +758,18 @@ class PostProcessingController extends ChangeNotifier {
       _cameraState = sceneInfo.camera;
       _cameraExportCapabilities = sceneInfo.cameraExportCapabilities;
       // Restore persisted canvas appearance (padding / corner radius /
-      // background) before the first preview render, so the recording
-      // reopens exactly as it was last edited. Synchronous — keeps the
-      // scene-load → applyProcessing ordering unchanged.
+      // background / color grade) before the first preview render, so the
+      // recording reopens exactly as it was last edited. Synchronous — keeps
+      // the scene-load → applyProcessing ordering unchanged.
       _loadCanvasAppearance(projectPath);
+      // Push the restored grade to the preview. The native side stores it and
+      // applies it to whatever preview item loads (deferred if the item isn't
+      // live yet), so the reopened recording shows the last color adjustment.
+      // Guarded like [_loadCanvasAppearance] so a session swap mid-load never
+      // pushes this recording's grade onto a different one.
+      if (_projectPath == projectPath) {
+        _pushPreviewColorGrade();
+      }
       notifyListeners();
       await applyProcessing();
     } catch (e, st) {
@@ -777,11 +789,12 @@ class PostProcessingController extends ChangeNotifier {
     _backgroundColor = state.backgroundColorArgb;
     _backgroundImagePath = state.backgroundImagePath;
     _backgroundPreset = state.backgroundPreset;
+    _colorGrade = state.colorGrade;
   }
 
-  /// Persists the current canvas appearance to the project bundle.
-  /// Fire-and-forget — invoked from [applyProcessing] on every committed
-  /// canvas edit.
+  /// Persists the current editor state (canvas appearance + color grade) to the
+  /// project bundle. Fire-and-forget — invoked from [applyProcessing] on every
+  /// committed canvas edit and from the color-grade commit points.
   void _persistCanvasAppearance(String projectPath) {
     unawaited(
       CanvasAppearanceStore.save(
@@ -793,9 +806,19 @@ class PostProcessingController extends ChangeNotifier {
           backgroundColorArgb: _backgroundColor,
           backgroundImagePath: _backgroundImagePath,
           backgroundPreset: _backgroundPreset,
+          colorGrade: _colorGrade,
         ),
       ),
     );
+  }
+
+  /// Persists the editor state only when a recording is attached. Used by the
+  /// color-grade commit points, which (unlike canvas edits) do not route
+  /// through [applyProcessing].
+  void _persistEditorStateIfActive() {
+    final projectPath = _projectPath;
+    if (projectPath == null) return;
+    _persistCanvasAppearance(projectPath);
   }
 
   void togglePlayback() {
