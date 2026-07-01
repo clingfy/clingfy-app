@@ -16,46 +16,62 @@ class is exercised and re-confirmed.
 ## How to run a session
 
 The runner instruments every open/close cycle with two structured
-lines in `build/windows-poc/phase5_cycles.log` (an append-only log
-separate from the per-Open-truncated crash-breadcrumb log at
-`stage2a_2_native.log`):
+lines in the append-only cycle log at
+`%LOCALAPPDATA%\Clingfy\Logs\phase5_cycles.log` (`CLINGFY_NATIVE_LOG_DIR`
+overrides the directory). It is separate from the per-Open-truncated
+crash-breadcrumb log at `stage2a_2_native.log`:
 
 ```
 PHASE5-OPEN cycle=<n> session=<id> texture_id=<id>
 PHASE5-CYCLE cycle=<n> session=<id> frames=<count> close_to_unregister_ms=<ms>
 ```
 
-To exercise the engine:
+### Recommended: the one-command driver
 
-1. Build a Debug or Release runner:
-   ```powershell
-   flutter build windows --flavor dev --dart-define-from-file=.env.dev
-   ```
-2. Launch it (`flutter run -d windows --flavor dev …` or run the
-   built `.exe`). Make at least one Record → Stop so a `.clingfyproj`
-   exists under `%LOCALAPPDATA%\Clingfy\recordings\`.
-3. Drive open/close cycles. Each of these counts as one cycle:
-   - Stop a recording → preview opens automatically (cycle 1).
-   - Click "Close preview" → cycle ends.
-   - From Explorer: drag a `.clingfyproj` folder onto the running
-     app, or right-click → "Open in Clingfy" (Step 5.6 forward). Each
-     drop is another cycle.
-   - Programmatic cold-start: `& "<exe>" "<path>.clingfyproj"` from
-     PowerShell. Each launch is a new cycle.
-4. After N cycles, extract the verdict:
-   ```powershell
-   .\tools\phase5_extract_verdict.ps1 -MinCycles 10
-   ```
-   Pipe to a file with `-OutFile` and paste under the relevant GPU
-   section below.
+Install the build (the release gate uses an INSTALLED build, never
+`flutter run`), then:
 
-The ADR's ship-gate threshold is 200 cycles per GPU. Lower counts
-record as `WARN`; threshold breaches record as `FAIL` (the script
-spells out which gate was missed in its output).
+```powershell
+flutter build windows --release --dart-define-from-file=.env.dev
+# run the generated dist\windows\installer\Clingfy_Dev_Setup_<ver>.exe, then:
+.\tools\phase5_run_cycles.ps1 -Channel dev            # 200 cycles by default
+```
+
+`phase5_run_cycles.ps1` **rotates the old log first** (so stale cycles
+from a prior run can't inflate the count or carry a bad MAX into a fresh
+verdict), reminds you to **force the discrete GPU** — the engine uses the
+default D3D adapter, so on a hybrid laptop the whole run can silently
+execute on the iGPU and prove nothing about NVIDIA/AMD — drives the
+cold-start cycles, waits for the final pairs, and runs the verdict tool.
+Use `-Cycles 10` for a quick smoke and `-DryRun` to preview paths.
+
+### Manual (each of these counts as one cycle)
+
+1. Stop a recording → preview opens automatically (cycle 1); click
+   "Close preview" → cycle ends.
+2. From Explorer: drag a `.clingfyproj` folder onto the running app, or
+   right-click → "Open in Clingfy" (Step 5.6 forward). Each drop is a cycle.
+3. Programmatic cold-start: `& "<exe>" "<path>.clingfyproj"` from
+   PowerShell. Each launch is a new cycle.
+
+Rotate the log between GPU runs by hand if you drive cycles manually
+(`Move-Item %LOCALAPPDATA%\Clingfy\Logs\phase5_cycles.log …`), then score:
+
+```powershell
+.\tools\phase5_extract_verdict.ps1 -MinCycles 200 |
+  Out-File -Encoding utf8 build\windows-phase-5\stage5_lifecycle_result.md
+```
+
+(The tool has no `-OutFile` parameter — pipe to `Out-File`.) The ADR's
+ship-gate threshold is 200 cycles per GPU. Lower counts record as `WARN`;
+threshold breaches record as `FAIL` (the script spells out which gate was
+missed in its output).
 
 ## Pass criteria
 
-- `close_to_unregister_ms` p99 ≤ **1000 ms** across all cycles.
+- `close_to_unregister_ms` **max** ≤ **1000 ms** across all cycles.
+  (`phase5_extract_verdict.ps1` fails on the **maximum**, not p99 — one
+  slow cycle fails the gate; p99 is still reported for context.)
 - Zero cycles with `frames = 0` (MediaPlayer must have produced at
   least one frame before close fires).
 - No crash / app exit during the session (recorded out-of-band — the
