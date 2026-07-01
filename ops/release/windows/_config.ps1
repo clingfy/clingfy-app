@@ -139,13 +139,21 @@ function Find-SignTool {
 }
 
 # --- Context ----------------------------------------------------------------------
-# The five Azure settings that exist in the real .env files. Container/folder
-# names are defaults below (same values as lib/env.sh), not env-file keys.
-$script:AzureEnvKeys = @(
+# The Azure settings that exist in the real .env files. Container/folder names
+# are defaults below (same values as lib/env.sh), not env-file keys.
+#
+# Split into two groups: the settings every publish needs (blob upload target +
+# public URL composition), and the settings used ONLY by the Front Door cache
+# purge. The purge group is optional — dev and prod are blob-direct (no Front
+# Door) as of 2026-07, so those keys are empty and the purge is skipped. This
+# mirrors the macOS lane's publish_release.sh Front Door guard.
+$script:AzureRequiredKeys = @(
   'AZ_STORAGE_ACCOUNT',
+  'AZ_CDN_ENDPOINT'
+)
+$script:AzurePurgeKeys = @(
   'AZ_RESOURCE_GROUP',
   'AZ_CDN_PROFILE',
-  'AZ_CDN_ENDPOINT',
   'AZ_FRONTDOOR_ENDPOINT_NAME'
 )
 
@@ -254,11 +262,15 @@ function Initialize-WindowsReleaseContext {
 }
 
 # Resolves the Azure publish settings (environment first, .env fallback) and
-# fails with the full list of missing keys. Only publish/smoke steps call
-# this, so build/package work offline without any Azure configuration.
+# fails with the full list of missing REQUIRED keys. Only publish/smoke steps
+# call this, so build/package work offline without any Azure configuration.
+#
+# The purge-only keys (AZ_RESOURCE_GROUP / AZ_CDN_PROFILE /
+# AZ_FRONTDOOR_ENDPOINT_NAME) are optional: when no Front Door is configured
+# (blob-direct), they stay empty and 04_publish_azure.ps1 skips the purge.
 function Import-AzurePublishSettings([pscustomobject]$Context) {
-  Import-DotenvFallback $Context.EnvFile $script:AzureEnvKeys
-  $missing = $script:AzureEnvKeys | Where-Object { -not [Environment]::GetEnvironmentVariable($_) }
+  Import-DotenvFallback $Context.EnvFile ($script:AzureRequiredKeys + $script:AzurePurgeKeys)
+  $missing = $script:AzureRequiredKeys | Where-Object { -not [Environment]::GetEnvironmentVariable($_) }
   if ($missing) {
     Fail ("Missing Azure publish settings: $($missing -join ', '). " +
       "Set them in the environment or provide them in $($Context.EnvFile).")
@@ -270,6 +282,9 @@ function Import-AzurePublishSettings([pscustomobject]$Context) {
   $Context.AzFrontDoorEndpointName = $env:AZ_FRONTDOOR_ENDPOINT_NAME
   Write-Info "Storage account: $($Context.AzStorageAccount)"
   Write-Info "Blob path:       $($Context.AzContainer)/$($Context.WindowsBlobPrefix)/"
+  if (-not $Context.AzFrontDoorEndpointName) {
+    Write-Info 'Front Door:      none (blob-direct; cache purge will be skipped)'
+  }
 }
 
 # Public download base for published Windows artifacts, e.g.

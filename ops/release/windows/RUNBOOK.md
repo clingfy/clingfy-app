@@ -36,11 +36,11 @@ Gitignored (`.gitignore` line 66); obtained per `docs/development.md`. The relea
 
 | Key | Used by | Purpose |
 |---|---|---|
-| `AZ_STORAGE_ACCOUNT` | `04_publish_azure.ps1`, `05_smoke.ps1` | target storage account — **dev and prod use different accounts**; that is the channel isolation model |
-| `AZ_RESOURCE_GROUP` | `04_publish_azure.ps1` | Front Door purge identity |
-| `AZ_CDN_PROFILE` | `04_publish_azure.ps1` | Front Door purge identity |
-| `AZ_FRONTDOOR_ENDPOINT_NAME` | `04_publish_azure.ps1` | Front Door purge identity |
-| `AZ_CDN_ENDPOINT` | `04_publish_azure.ps1`, `05_smoke.ps1` | public download hostname (builds the URLs above) |
+| `AZ_STORAGE_ACCOUNT` | `04_publish_azure.ps1`, `05_smoke.ps1` | **required** — target storage account — **dev and prod use different accounts**; that is the channel isolation model |
+| `AZ_CDN_ENDPOINT` | `04_publish_azure.ps1`, `05_smoke.ps1` | **required** — public download hostname (builds the URLs above); a Front Door host when there is one, or the blob endpoint directly |
+| `AZ_RESOURCE_GROUP` | `04_publish_azure.ps1` | Front Door purge identity — **optional** (purge-only) |
+| `AZ_CDN_PROFILE` | `04_publish_azure.ps1` | Front Door purge identity — **optional** (purge-only) |
+| `AZ_FRONTDOOR_ENDPOINT_NAME` | `04_publish_azure.ps1` | Front Door purge identity — **optional**; empty = blob-direct, purge skipped. dev and prod are blob-direct as of 2026-07 |
 | `SENTRY_AUTH_TOKEN`, `SENTRY_ORG`, `SENTRY_PROJECT` | `upload_symbols.ps1` | symbol upload (optional; missing → warn + continue) |
 
 The same file also feeds the app itself via `--dart-define-from-file` (`API_BASE_URL`, `CLINGFY_SITE_URL`, `SENTRY_DSN`, …) — the build step passes it through verbatim.
@@ -105,7 +105,7 @@ Rehearsal without touching prod infrastructure: `-Channel dev` (different storag
 | 3 | `pwsh ops/release/windows/03_sign.ps1 -Channel prod -Target app -RequireSignature` | signs + verifies `clingfy.exe`, `crashpad_handler.exe` in the staging folder |
 | 4 | `pwsh ops/release/windows/02_package_inno.ps1 -Channel prod` | compiles `installer/Clingfy.iss` → `dist/windows/installer/Clingfy_Setup_<ver>.exe`; refuses a channel/version-mismatched staging folder |
 | 5 | `pwsh ops/release/windows/03_sign.ps1 -Channel prod -Target installer -RequireSignature` | signs + verifies the installer exe |
-| 6 | `pwsh ops/release/windows/04_publish_azure.ps1 -Channel prod` | generates `.sha256` + `latest-windows.json`, uploads all three blobs, purges Front Door for exactly those paths, prints the download URL |
+| 6 | `pwsh ops/release/windows/04_publish_azure.ps1 -Channel prod` | generates `.sha256` + `latest-windows.json`, uploads all three blobs, purges Front Door for exactly those paths (skipped when `AZ_FRONTDOOR_ENDPOINT_NAME` is empty — blob-direct), prints the download URL |
 | 7 | `pwsh ops/release/windows/upload_symbols.ps1 -EnvFile .env.prod` | PDBs (`build/windows/x64/runner/Release`), Flutter engine PDB, `app.so` → Sentry (non-blocking) |
 | 8 | `pwsh ops/release/windows/05_smoke.ps1 -Channel prod` | feed advertises this installer (9×5 s retries for CDN propagation), installer URL = HTTP 200, downloaded bytes hash-match the published sha256 |
 
@@ -138,7 +138,7 @@ https://<AZ_CDN_ENDPOINT>/downloads/windows/Clingfy_Setup_<ver>.exe
 https://<AZ_CDN_ENDPOINT>/downloads/windows/latest-windows.json
 ```
 
-Front Door purge targets exactly the three uploaded paths (resource group `AZ_RESOURCE_GROUP`, profile `AZ_CDN_PROFILE`, endpoint `AZ_FRONTDOOR_ENDPOINT_NAME`, domain `AZ_CDN_ENDPOINT`).
+Front Door purge targets exactly the three uploaded paths (resource group `AZ_RESOURCE_GROUP`, profile `AZ_CDN_PROFILE`, endpoint `AZ_FRONTDOOR_ENDPOINT_NAME`, domain `AZ_CDN_ENDPOINT`) — and is skipped entirely when `AZ_FRONTDOOR_ENDPOINT_NAME` is empty, i.e. when the channel serves straight from blob storage (dev and prod, as of 2026-07).
 
 **Never touched by this lane:** `updates/appcast.xml` (macOS Sparkle feed), `downloads/*.dmg`, `downloads/*.delta`, the `symbols` container — the Windows lane writes only under its `windows/` prefix.
 
