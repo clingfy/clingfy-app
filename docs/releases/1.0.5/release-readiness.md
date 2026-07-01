@@ -18,10 +18,10 @@ Fill this section before starting verification.
 - Channel: `prod`
 - Date: `2026-07-01`
 - Verified by: `Nabil`
-- Commit: `TBD`
+- Commit: `32f3398e0c8514987f6ded9d515eca45fdcc3f67`
 - Tag: `v1.0.5`
-- Build: `TBD (set by pipeline at build)`
-- Status: `In progress`
+- Build: `#20260701.1 • chore(release): prepare 1.0.5 (version bump + changelog + readiness + runbook)`
+- Status: `Released`
 
 Possible status values:
 
@@ -46,11 +46,11 @@ flutter build macos --flavor prod
 
 Checklist:
 
-* [ ] `dart format --output=none --set-exit-if-changed .`
-* [ ] `flutter analyze test`
-* [ ] `flutter analyze lib`
-* [ ] `flutter build macos --flavor dev`
-* [ ] `flutter build macos --flavor prod`
+* [x] `dart format --output=none --set-exit-if-changed .`
+* [x] `flutter analyze test`
+* [x] `flutter analyze lib`
+* [x] `flutter build macos --flavor dev`
+* [x] `flutter build macos --flavor prod`
 
 Notes:
 
@@ -187,12 +187,17 @@ Notes:
 
 Complete this section after all checks.
 
-* [ ] Approved for release
+* [x] Approved for release
 * [ ] Blocked from release
 
 Blocking issues:
 
 * None
+
+Released via the macOS release pipeline on 2026-07-01 — build green, DMG
+notarized/stapled, Sparkle appcast published, tag `v1.0.5` pushed. Automated
+checks passed in CI; manual recording / export / permissions / licensing /
+updater flows verified during the release-candidate cycle.
 
 Follow-up issues after release:
 
