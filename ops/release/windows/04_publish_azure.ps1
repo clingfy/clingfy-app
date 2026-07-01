@@ -17,9 +17,12 @@
 #
 # Mechanics mirror commands/publish_release.sh: Azure CLI only, AAD identity
 # (`--auth-mode login` — run `az login` first; no account keys or SAS), blob
-# overwrite, then an Azure Front Door purge of exactly the touched paths.
-# The five AZ_* settings come from the environment first with the channel's
-# .env file as fallback (environment variables always win).
+# overwrite, then — only when a Front Door endpoint is configured — an Azure
+# Front Door purge of exactly the touched paths. dev and prod are blob-direct
+# (no CDN) as of 2026-07, so the purge is skipped. The AZ_* settings come from
+# the environment first with the channel's .env file as fallback (environment
+# variables always win); only AZ_STORAGE_ACCOUNT and AZ_CDN_ENDPOINT are
+# required, the purge settings are optional.
 
 [CmdletBinding()]
 param(
@@ -111,23 +114,31 @@ Publish-Blob $Ctx.LatestJsonPath "$prefix/latest-windows.json"
 # Purge exactly the touched paths, like purge_frontdoor_paths on macOS. The
 # macOS feed (appcast.xml) is deliberately NOT purged from here — this lane
 # never writes outside its windows/ prefix.
-Write-Step 'Purging Azure Front Door cache'
-$purgePaths = @(
-  "/$prefix/$($Ctx.InstallerName)",
-  "/$prefix/$($Ctx.InstallerName).sha256",
-  "/$prefix/latest-windows.json"
-)
-& az afd endpoint purge `
-  --resource-group $Ctx.AzResourceGroup `
-  --profile-name $Ctx.AzCdnProfile `
-  --endpoint-name $Ctx.AzFrontDoorEndpointName `
-  --domains $Ctx.AzCdnEndpoint `
-  --content-paths @($purgePaths) `
-  --only-show-errors | Out-Null
-if ($LASTEXITCODE -ne 0) {
-  Fail "az afd endpoint purge failed with exit code $LASTEXITCODE."
+#
+# Guarded on the endpoint name: dev and prod are blob-direct (no Front Door) as
+# of 2026-07, so there is no cache to purge. Mirrors the macOS lane's
+# publish_release.sh guard.
+if ($Ctx.AzFrontDoorEndpointName) {
+  Write-Step 'Purging Azure Front Door cache'
+  $purgePaths = @(
+    "/$prefix/$($Ctx.InstallerName)",
+    "/$prefix/$($Ctx.InstallerName).sha256",
+    "/$prefix/latest-windows.json"
+  )
+  & az afd endpoint purge `
+    --resource-group $Ctx.AzResourceGroup `
+    --profile-name $Ctx.AzCdnProfile `
+    --endpoint-name $Ctx.AzFrontDoorEndpointName `
+    --domains $Ctx.AzCdnEndpoint `
+    --content-paths @($purgePaths) `
+    --only-show-errors | Out-Null
+  if ($LASTEXITCODE -ne 0) {
+    Fail "az afd endpoint purge failed with exit code $LASTEXITCODE."
+  }
+  Write-Info "purged: $($purgePaths -join ', ')"
+} else {
+  Write-Step 'No Front Door configured (blob-direct); skipping cache purge'
 }
-Write-Info "purged: $($purgePaths -join ', ')"
 
 Write-Step 'Publish summary'
 Write-Info "Download URL: $downloadBaseUrl$($Ctx.InstallerName)"

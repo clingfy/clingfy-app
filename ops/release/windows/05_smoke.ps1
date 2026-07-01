@@ -3,12 +3,13 @@
 # 05_smoke.ps1
 #
 # Phase 10.5 (Windows installer + release pipeline): post-publish smoke test.
-# Verifies, through the public Front Door endpoint (the same path testers
-# download through):
+# Verifies, through the public download endpoint (AZ_CDN_ENDPOINT — a Front
+# Door host when configured, or the blob endpoint directly; the same path
+# testers download through):
 #
 #   1. latest-windows.json is reachable, parses, and advertises this
-#      version + installer (retried, like the macOS appcast smoke — the CDN
-#      purge takes a moment to propagate)
+#      version + installer (retried, like the macOS appcast smoke — a CDN
+#      purge, when there is one, takes a moment to propagate)
 #   2. the installer URL answers HTTP 200
 #   3. the downloaded installer's SHA-256 matches the published .sha256
 #      (skippable with -SkipDownload on slow links)
