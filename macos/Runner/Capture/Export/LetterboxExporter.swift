@@ -1385,6 +1385,84 @@ final class LetterboxExporter {
     ]
   }
 
+  /// Builds an audio-only composition holding just the kept clip ranges,
+  /// inserted back-to-back so the result is the cut audio compacted onto the
+  /// edited timeline (gaps removed). AVFoundation does the cutting and re-timing
+  /// sample-accurately, which keeps audio in sync with the video the render
+  /// loop re-stamps onto the same edited timeline. Returns `nil` when the source
+  /// has no audio track or nothing landed inside the audio's real extent.
+  private func makeKeptRangeAudioComposition(
+    from sourceAsset: AVAsset,
+    ranges: [ClipKeptRange]
+  ) -> AVAsset? {
+    guard let sourceAudioTrack = sourceAsset.tracks(withMediaType: .audio).first else {
+      return nil
+    }
+    let composition = AVMutableComposition()
+    guard
+      let audioTrack = composition.addMutableTrack(
+        withMediaType: .audio,
+        preferredTrackID: kCMPersistentTrackID_Invalid)
+    else {
+      return nil
+    }
+
+    // Truncate to match the integer-millisecond edited timeline the video
+    // re-stamp works in; clamping the copy to this never inserts past the real
+    // audio end (which throws). Audio can run a hair shorter than the video.
+    let sourceDuration = sourceAudioTrack.timeRange.duration
+    let audioDurationMs = Int(sourceDuration.seconds * 1000.0)
+    var insertedAny = false
+    // Each slot occupies its full edited duration starting at the cumulative full
+    // duration of the earlier ranges — exactly the video re-stamp's
+    // `currentEditedBaseMs`. Within a slot, the available source audio is copied
+    // and any shortfall (a clamped tail, an absent range, or a failed copy) is
+    // filled with explicit silence, so later ranges stay A/V-aligned even when a
+    // clamped range sits mid-timeline under reorder. Slots tile contiguously, so
+    // every insert targets the current track end (no reliance on inserting past
+    // the track's duration). Integer-ms timescale keeps the boundaries exact.
+    for slot in ClipPlaybackPlanner.audioSlots(ranges: ranges, audioDurationMs: audioDurationMs) {
+      let editedStart = CMTime(value: CMTimeValue(slot.editedStartMs), timescale: 1000)
+      // The amount of source audio actually copied into this slot — 0 if there
+      // was none available or the copy threw — so the silence below fills exactly
+      // the rest of the slot and the track stays contiguous (each insert targets
+      // the current track end).
+      var insertedMs = 0
+      if slot.copyDurationMs > 0 {
+        let start = CMTime(value: CMTimeValue(slot.sourceInMs), timescale: 1000)
+        let end = CMTime(
+          value: CMTimeValue(slot.sourceInMs + slot.copyDurationMs), timescale: 1000)
+        do {
+          try audioTrack.insertTimeRange(
+            CMTimeRange(start: start, end: end), of: sourceAudioTrack, at: editedStart)
+          insertedMs = slot.copyDurationMs
+          insertedAny = true
+        } catch {
+          NativeLogger.i(
+            "Export", "Inserting silence for a kept audio range that failed to copy",
+            context: [
+              "startMs": slot.sourceInMs,
+              "endMs": slot.sourceInMs + slot.copyDurationMs,
+              "error": error.localizedDescription,
+            ])
+        }
+      }
+      let silenceMs = slot.durationMs - insertedMs
+      if silenceMs > 0 {
+        let silenceStart = CMTime(
+          value: CMTimeValue(slot.editedStartMs + insertedMs), timescale: 1000)
+        audioTrack.insertEmptyTimeRange(
+          CMTimeRange(
+            start: silenceStart,
+            duration: CMTime(value: CMTimeValue(silenceMs), timescale: 1000)))
+      }
+    }
+    // No real audio landed anywhere (every range was past the audio end or failed
+    // to copy): return nil so the export simply has no audio track rather than an
+    // all-silent one.
+    return insertedAny ? composition : nil
+  }
+
   private func runRenderedExportSession(
     asset: AVAsset,
     videoComposition: AVVideoComposition,
@@ -1398,6 +1476,10 @@ final class LetterboxExporter {
     backgroundColor: Int? = nil,
     backgroundImagePath: String? = nil,
     backgroundPreset: CanvasBackgroundPreset? = nil,
+    colorGrade: ColorGrade = .identity,
+    keptRanges: [ClipKeptRange] = [],
+    audioAsset: AVAsset? = nil,
+    editedDurationSeconds: Double? = nil,
     logOutputInfo: Bool = false,
     completion: @escaping (Result<URL, Error>) -> Void
   ) {
@@ -1430,10 +1512,8 @@ final class LetterboxExporter {
       )
       return
     }
-    let reader: AVAssetReader
     let writer: AVAssetWriter
     do {
-      reader = try AVAssetReader(asset: asset)
       writer = try AVAssetWriter(outputURL: outputURL, fileType: outputFileType)
     } catch {
       completion(
@@ -1451,52 +1531,111 @@ final class LetterboxExporter {
       return
     }
 
-    let videoOutput = AVAssetReaderVideoCompositionOutput(
-      videoTracks: videoTracks,
-      videoSettings: [
-        kCVPixelBufferPixelFormatTypeKey as String: kCVPixelFormatType_32BGRA
-      ]
-    )
-    videoOutput.videoComposition = videoComposition
-    videoOutput.alwaysCopiesSampleData = false
-    guard reader.canAdd(videoOutput) else {
-      completion(
-        .failure(
+    // Reorder (arrange) export reads each kept range's source window in timeline
+    // order through its own reader, re-stamping its frames onto consecutive
+    // edited PTS. That keeps the source-time-keyed effect composition (zoom /
+    // cursor / camera / color) glued to the right original moment while still
+    // emitting a monotonically increasing output PTS. Source-monotonic cuts (and
+    // the no-cut passthrough) keep the single forward-read path unchanged: one
+    // reader spanning the whole asset, gap frames dropped at the writer.
+    let rangeSequenced =
+      !keptRanges.isEmpty && !ClipPlaybackPlanner.isSourceMonotonic(keptRanges)
+
+    func sourceWindow(for range: ClipKeptRange) -> CMTimeRange {
+      let start = CMTime(value: CMTimeValue(range.sourceInMs), timescale: 1000)
+      let end = CMTime(value: CMTimeValue(range.sourceOutMs), timescale: 1000)
+      return CMTimeRange(start: start, end: end)
+    }
+
+    // Builds a reader — optionally bounded to a single source window — wired with
+    // the same video-composition output and inline-camera output the forward path
+    // uses, so every kept range renders effects identically. `nil` reads the
+    // whole asset (the forward path); a window reads just that kept range.
+    func makeWindowReader(
+      timeRange: CMTimeRange?
+    ) -> Result<
+      (AVAssetReader, AVAssetReaderVideoCompositionOutput, AVAssetReaderTrackOutput?), NSError
+    > {
+      let windowReader: AVAssetReader
+      do {
+        windowReader = try AVAssetReader(asset: asset)
+      } catch {
+        return .failure(
+          NSError(
+            domain: "Letterbox",
+            code: -12,
+            userInfo: [
+              NSLocalizedDescriptionKey: "Manual export renderer could not be initialized",
+              NSUnderlyingErrorKey: error,
+            ]
+          )
+        )
+      }
+      if let timeRange { windowReader.timeRange = timeRange }
+
+      let windowVideoOutput = AVAssetReaderVideoCompositionOutput(
+        videoTracks: videoTracks,
+        videoSettings: [
+          kCVPixelBufferPixelFormatTypeKey as String: kCVPixelFormatType_32BGRA
+        ]
+      )
+      windowVideoOutput.videoComposition = videoComposition
+      windowVideoOutput.alwaysCopiesSampleData = false
+      guard windowReader.canAdd(windowVideoOutput) else {
+        return .failure(
           NSError(
             domain: "Letterbox",
             code: -13,
             userInfo: [NSLocalizedDescriptionKey: "Manual export renderer could not configure the video reader output"]
           )
         )
-      )
-      return
-    }
-    reader.add(videoOutput)
+      }
+      windowReader.add(windowVideoOutput)
 
-    var cameraOutput: AVAssetReaderTrackOutput?
-    if let inlineCameraTrack {
-      let candidateOutput = AVAssetReaderTrackOutput(
-        track: inlineCameraTrack,
-        outputSettings: [
-          kCVPixelBufferPixelFormatTypeKey as String: kCVPixelFormatType_32BGRA
-        ]
-      )
-      candidateOutput.alwaysCopiesSampleData = false
-      guard reader.canAdd(candidateOutput) else {
-        completion(
-          .failure(
+      var windowCameraOutput: AVAssetReaderTrackOutput?
+      if let inlineCameraTrack {
+        let candidateOutput = AVAssetReaderTrackOutput(
+          track: inlineCameraTrack,
+          outputSettings: [
+            kCVPixelBufferPixelFormatTypeKey as String: kCVPixelFormatType_32BGRA
+          ]
+        )
+        candidateOutput.alwaysCopiesSampleData = false
+        guard windowReader.canAdd(candidateOutput) else {
+          return .failure(
             NSError(
               domain: "Letterbox",
               code: -30,
               userInfo: [NSLocalizedDescriptionKey: "Manual export renderer could not configure the inline camera reader output"]
             )
           )
-        )
-        return
+        }
+        windowReader.add(candidateOutput)
+        windowCameraOutput = candidateOutput
       }
-      reader.add(candidateOutput)
-      cameraOutput = candidateOutput
+      return .success((windowReader, windowVideoOutput, windowCameraOutput))
     }
+
+    var currentVideoReader: AVAssetReader
+    var currentVideoOutput: AVAssetReaderVideoCompositionOutput
+    var currentCameraOutput: AVAssetReaderTrackOutput?
+    switch makeWindowReader(timeRange: rangeSequenced ? sourceWindow(for: keptRanges[0]) : nil) {
+    case .failure(let error):
+      completion(.failure(error))
+      return
+    case .success(let (r, vo, co)):
+      currentVideoReader = r
+      currentVideoOutput = vo
+      currentCameraOutput = co
+    }
+    // Reorder bookkeeping: which kept range is being read and the cumulative
+    // edited-timeline offset (sum of earlier ranges' durations) its frames
+    // re-stamp onto. Every reader built across range advances is tracked so
+    // fail()/finishIfReady() can cancel each one regardless of which is active.
+    var currentRangeIndex = 0
+    var currentEditedBaseMs = 0
+    var videoReaders: [AVAssetReader] = [currentVideoReader]
+    let hasSeparateAudioReader = audioAsset != nil
 
     let renderSize = videoComposition.renderSize
     let videoInput: AVAssetWriterInput
@@ -1568,9 +1707,35 @@ final class LetterboxExporter {
     }
     writer.add(videoInput)
 
+    // Audio source: when cutting, audio is read from a dedicated kept-range
+    // composition (already compacted to edited time) via its own reader, so it
+    // stays sample-accurate and A/V-synced with the re-stamped video; otherwise
+    // it shares the video reader and asset exactly as before.
+    let audioSourceAsset = audioAsset ?? asset
+    var audioSourceReader = currentVideoReader
+    if audioAsset != nil {
+      do {
+        audioSourceReader = try AVAssetReader(asset: audioSourceAsset)
+      } catch {
+        completion(
+          .failure(
+            NSError(
+              domain: "Letterbox",
+              code: -36,
+              userInfo: [
+                NSLocalizedDescriptionKey: "Manual export renderer could not initialize the cut-audio reader",
+                NSUnderlyingErrorKey: error,
+              ]
+            )
+          )
+        )
+        return
+      }
+    }
+
     var audioOutput: AVAssetReaderAudioMixOutput?
     var audioInput: AVAssetWriterInput?
-    if let audioTrack = asset.tracks(withMediaType: .audio).first {
+    if let audioTrack = audioSourceAsset.tracks(withMediaType: .audio).first {
       let candidateOutput = AVAssetReaderAudioMixOutput(
         audioTracks: [audioTrack],
         audioSettings: manualAudioOutputSettings()
@@ -1584,8 +1749,8 @@ final class LetterboxExporter {
       )
       candidateInput.expectsMediaDataInRealTime = false
 
-      if reader.canAdd(candidateOutput), writer.canAdd(candidateInput) {
-        reader.add(candidateOutput)
+      if audioSourceReader.canAdd(candidateOutput), writer.canAdd(candidateInput) {
+        audioSourceReader.add(candidateOutput)
         writer.add(candidateInput)
         audioOutput = candidateOutput
         audioInput = candidateInput
@@ -1619,11 +1784,11 @@ final class LetterboxExporter {
       return
     }
 
-    guard reader.startReading() else {
+    guard currentVideoReader.startReading() else {
       writer.cancelWriting()
       completion(
         .failure(
-          reader.error
+          currentVideoReader.error
             ?? NSError(
               domain: "Letterbox",
               code: -19,
@@ -1634,7 +1799,28 @@ final class LetterboxExporter {
       return
     }
 
+    if hasSeparateAudioReader {
+      guard audioSourceReader.startReading() else {
+        currentVideoReader.cancelReading()
+        writer.cancelWriting()
+        completion(
+          .failure(
+            audioSourceReader.error
+              ?? NSError(
+                domain: "Letterbox",
+                code: -37,
+                userInfo: [NSLocalizedDescriptionKey: "Manual export cut-audio reader could not start"]
+              )
+          )
+        )
+        return
+      }
+    }
+
     let durationSeconds = max(asset.duration.seconds, 0.001)
+    // With cuts, progress is paced against the compacted (edited) duration so
+    // the bar still reaches 100% — the video reader only writes kept frames.
+    let progressDurationSeconds = max(editedDurationSeconds ?? durationSeconds, 0.001)
     let lower = progressRange.lowerBound
     let span = progressRange.upperBound - progressRange.lowerBound
     let stageStart = CFAbsoluteTimeGetCurrent()
@@ -1650,6 +1836,19 @@ final class LetterboxExporter {
     var didLogScreenSourceColorMetadata = false
     var didLogCameraSourceColorMetadata = false
     let directRenderContext = VideoColorPipeline.makeCIContext()
+    if !colorGrade.isIdentity {
+      NativeLogger.i(
+        "Export", "Manual render applying color grade",
+        context: [
+          "renderPath": "manual_reader_writer",
+          "hasInlineCamera": inlineCameraRenderPlan != nil,
+          "exposure": colorGrade.exposure,
+          "contrast": colorGrade.contrast,
+          "saturation": colorGrade.saturation,
+          "temperature": colorGrade.temperature,
+          "tint": colorGrade.tint,
+        ])
+    }
     let inlineCameraRenderer = inlineCameraRenderPlan.map { _ in
       InlineCameraRenderer(
         renderSize: renderSize,
@@ -1705,7 +1904,8 @@ final class LetterboxExporter {
       }
       guard shouldFinish else { return }
 
-      reader.cancelReading()
+      stateQueue.sync { videoReaders }.forEach { $0.cancelReading() }
+      if hasSeparateAudioReader { audioSourceReader.cancelReading() }
       videoInput.markAsFinished()
       audioInput?.markAsFinished()
       writer.cancelWriting()
@@ -1723,7 +1923,8 @@ final class LetterboxExporter {
         completed = true
 
         writer.finishWriting {
-          reader.cancelReading()
+          stateQueue.sync { videoReaders }.forEach { $0.cancelReading() }
+          if hasSeparateAudioReader { audioSourceReader.cancelReading() }
           invalidateCameraSamples()
           DispatchQueue.main.async {
             if writer.status == .completed {
@@ -1756,8 +1957,8 @@ final class LetterboxExporter {
       }
     }
 
-    if let cameraOutput {
-      nextCameraSampleBuffer = cameraOutput.copyNextSampleBuffer()
+    if let currentCameraOutput {
+      nextCameraSampleBuffer = currentCameraOutput.copyNextSampleBuffer()
     }
 
     writer.startSession(atSourceTime: .zero)
@@ -1805,10 +2006,10 @@ final class LetterboxExporter {
             return false
           }
 
-          guard let sampleBuffer = videoOutput.copyNextSampleBuffer() else {
-            if reader.status == .failed {
+          guard let sampleBuffer = currentVideoOutput.copyNextSampleBuffer() else {
+            if currentVideoReader.status == .failed {
               fail(
-                reader.error
+                currentVideoReader.error
                   ?? NSError(
                     domain: "Letterbox",
                     code: -21,
@@ -1816,6 +2017,44 @@ final class LetterboxExporter {
                   )
               )
               return false
+            }
+
+            // Reorder: this kept range is fully read — advance to the next one's
+            // source window (re-stamping onto the next edited slot) and keep
+            // pulling. The last range falls through to the normal finish.
+            if rangeSequenced, currentRangeIndex + 1 < keptRanges.count {
+              currentEditedBaseMs += keptRanges[currentRangeIndex].durationMs
+              currentRangeIndex += 1
+              switch makeWindowReader(
+                timeRange: sourceWindow(for: keptRanges[currentRangeIndex]))
+              {
+              case .failure(let error):
+                fail(error)
+                return false
+              case .success(let (nextReader, nextVideoOutput, nextCameraOutput)):
+                guard nextReader.startReading() else {
+                  fail(
+                    nextReader.error
+                      ?? NSError(
+                        domain: "Letterbox",
+                        code: -19,
+                        userInfo: [NSLocalizedDescriptionKey: "Manual export reader could not start"]
+                      )
+                  )
+                  return false
+                }
+                currentVideoReader = nextReader
+                currentVideoOutput = nextVideoOutput
+                currentCameraOutput = nextCameraOutput
+                stateQueue.sync { videoReaders.append(nextReader) }
+                // Re-prime the inline-camera sample pump for the new window so
+                // camera frames keep matching this range's screen frames.
+                invalidateCameraSamples()
+                if let nextCameraOutput {
+                  nextCameraSampleBuffer = nextCameraOutput.copyNextSampleBuffer()
+                }
+              }
+              return true
             }
 
             videoInput.markAsFinished()
@@ -1832,8 +2071,50 @@ final class LetterboxExporter {
 
           let presentationTime = CMSampleBufferGetPresentationTimeStamp(sampleBuffer)
           let sampleTime = presentationTime.seconds
+
+          // Cut at the writer: the composition stays in source time so every
+          // baked effect (zoom/cursor/camera/color) is sampled at the correct
+          // original moment via `sampleTime` below. Here we decide this frame's
+          // fate on the EDITED timeline. Three cases:
+          //  • reorder — the reader is already bounded to one kept range, so the
+          //    frame is kept and re-stamped onto that range's edited slot
+          //    (`currentEditedBaseMs` plus the offset into the range);
+          //  • source-monotonic cuts — drop the frame if its source time fell in
+          //    a cut gap, otherwise re-stamp it onto the compacted timeline;
+          //  • no cuts (`keptRanges` empty) — the source PTS passes through.
+          let outputPresentationTime: CMTime
+          if rangeSequenced {
+            let range = keptRanges[currentRangeIndex]
+            // Truncate (floor for positive time) like the monotonic path below,
+            // then clamp the offset inside the range so a frame landing on the
+            // window edge can never re-stamp past the range's edited length and
+            // collide with the next range's first frame.
+            let sourceMs = Int(sampleTime * 1000.0)
+            let offset = min(max(sourceMs - range.sourceInMs, 0), range.durationMs)
+            outputPresentationTime = CMTime(
+              value: CMTimeValue(currentEditedBaseMs + offset), timescale: 1000)
+          } else if keptRanges.isEmpty {
+            outputPresentationTime = presentationTime
+          } else {
+            // Truncate (floor for positive time): a frame whose real source
+            // time is strictly less than a range's exclusive sourceOutMs must
+            // map to an ms value < sourceOutMs so it survives the keep guard.
+            // Rounding could push e.g. 4016.67ms up to 4017 and drop a frame
+            // that a cut placed at 4017 should have kept.
+            let sourceMs = Int(sampleTime * 1000.0)
+            guard
+              let editedMs = ClipPlaybackPlanner.editedMsForKeptSourceMs(
+                sourceMs, ranges: keptRanges)
+            else {
+              // Removed by a cut — skip render and writing, pull the next frame.
+              return true
+            }
+            outputPresentationTime = CMTime(value: CMTimeValue(editedMs), timescale: 1000)
+          }
+          let progressSeconds = keptRanges.isEmpty ? sampleTime : outputPresentationTime.seconds
           DispatchQueue.main.async {
-            onProgress?(lower + (min(max(sampleTime / durationSeconds, 0.0), 1.0) * span))
+            onProgress?(
+              lower + (min(max(progressSeconds / progressDurationSeconds, 0.0), 1.0) * span))
           }
 
           guard let screenPixelBuffer = CMSampleBufferGetImageBuffer(sampleBuffer) else {
@@ -1871,7 +2152,7 @@ final class LetterboxExporter {
                   CMSampleBufferInvalidate(currentCameraSampleBuffer)
                 }
                 currentCameraSampleBuffer = queuedCameraSample
-                nextCameraSampleBuffer = cameraOutput?.copyNextSampleBuffer()
+                nextCameraSampleBuffer = currentCameraOutput?.copyNextSampleBuffer()
               } else {
                 break
               }
@@ -1914,6 +2195,7 @@ final class LetterboxExporter {
               cameraTrack: inlineCameraTrack!,
               presentationTime: sampleTime,
               plan: inlineCameraRenderPlan,
+              screenColorGrade: colorGrade,
               to: renderedPixelBuffer
             )
           } else {
@@ -1940,16 +2222,23 @@ final class LetterboxExporter {
               )
             }
 
+            // Bake the canvas-wide color grade into the composed frame. Identity
+            // is a passthrough, so this is a no-op unless the user adjusted color.
+            let gradedImage =
+              colorGrade.isIdentity
+              ? imageToRender
+              : ColorGradeRenderer.apply(imageToRender, grade: colorGrade)
+
             self.clearPixelBuffer(renderedPixelBuffer)
             directRenderContext.render(
-              imageToRender,
+              gradedImage,
               to: renderedPixelBuffer,
               bounds: renderBounds,
               colorSpace: VideoColorPipeline.workingColorSpace
             )
           }
 
-          guard videoAdaptor.append(renderedPixelBuffer, withPresentationTime: presentationTime) else {
+          guard videoAdaptor.append(renderedPixelBuffer, withPresentationTime: outputPresentationTime) else {
             fail(
               manualRenderError(
                 code: inlineCameraRenderPlan == nil ? -22 : -34,
@@ -1991,9 +2280,9 @@ final class LetterboxExporter {
           }
 
           guard let sampleBuffer = audioOutput.copyNextSampleBuffer() else {
-            if reader.status == .failed {
+            if audioSourceReader.status == .failed {
               fail(
-                reader.error
+                audioSourceReader.error
                   ?? NSError(
                     domain: "Letterbox",
                     code: -23,
@@ -2051,6 +2340,8 @@ final class LetterboxExporter {
     autoNormalizeOnExport: Bool = false,
     targetLoudnessDbfs: Double = -16.0,
     cameraParams: CameraCompositionParams? = nil,
+    colorGrade: ColorGrade = .identity,
+    clips: [ClipKeptRange] = [],
     onProgress: ((Double) -> Void)? = nil,
     completion: @escaping (Result<URL, Error>) -> Void
   ) {
@@ -2165,6 +2456,7 @@ final class LetterboxExporter {
     )
     params.zoomSegments = effectiveSegments
     params.backgroundPreset = backgroundPreset
+    params.colorGrade = colorGrade.isIdentity ? nil : colorGrade
 
     let resolvedAudioMix = resolveAudioMixControls(
       asset: asset,
@@ -2348,8 +2640,52 @@ final class LetterboxExporter {
       }
 
       let preset = pickPreset(for: comp.asset)
+
+      // PR-3d "cut at the writer": resolve the kept clip ranges. The effect
+      // composition is left in source time (so zoom/cursor/camera/color stay
+      // glued); the manual render loop drops frames in the cut gaps and
+      // re-stamps the survivors onto a compacted edited timeline. Audio is cut
+      // by a dedicated kept-range composition for sample-accurate A/V sync.
+      // PR-3c5: reordered (arrange) clips give non-monotonic source ranges; the
+      // render loop reads each kept range's source window in timeline order, so
+      // reorder bakes correctly too (the audio composition already inserts the
+      // kept ranges in timeline order, so it needs no change).
+      // Truncate (not round) to match how the whole-recording clip's
+      // sourceOutMs is derived on the Flutter side: the preview tick emits
+      // durationMs as Int(durationSeconds * 1000), and the seed clip uses that.
+      // Rounding here would make assetDurationMs one ms larger for ~1/3 of
+      // durations, so isPassthrough would wrongly see an unedited recording as
+      // cut and run the manual path needlessly.
+      let assetDurationMs = Int(comp.asset.duration.seconds * 1000.0)
+      let coalescedClips = ClipPlaybackPlanner.coalesce(ranges: clips)
+      var keptRanges: [ClipKeptRange] = []
+      if !ClipPlaybackPlanner.isPassthrough(
+        ranges: coalescedClips, assetDurationMs: assetDurationMs)
+      {
+        keptRanges = coalescedClips
+      }
+      let hasCuts = !keptRanges.isEmpty
+      // True when the kept ranges are not in source order — the writer reads them
+      // per-window instead of one forward pass. Surfaced for the log only.
+      let hasReorder = hasCuts && !ClipPlaybackPlanner.isSourceMonotonic(keptRanges)
+      let audioCutComposition: AVAsset? =
+        hasCuts ? makeKeptRangeAudioComposition(from: comp.asset, ranges: keptRanges) : nil
+      let editedDurationSeconds: Double? =
+        hasCuts ? Double(ClipPlaybackPlanner.editedDurationMs(ranges: keptRanges)) / 1000.0 : nil
+      if hasCuts {
+        NativeLogger.i(
+          "Export", "Baking clip cuts into export",
+          context: [
+            "keptRanges": keptRanges.count,
+            "sourceDurationMs": assetDurationMs,
+            "editedDurationMs": ClipPlaybackPlanner.editedDurationMs(ranges: keptRanges),
+            "hasCutAudio": audioCutComposition != nil,
+            "reordered": hasReorder,
+          ])
+      }
+
       let exportAudioMix = AudioMixEngine.makeAudioMix(
-        asset: comp.asset,
+        asset: audioCutComposition ?? comp.asset,
         volumePercent: resolvedAudioMix.volumePercent,
         gainDb: resolvedAudioMix.gainDb
       )
@@ -2426,11 +2762,21 @@ final class LetterboxExporter {
         "finalURL": finalURL.path,
       ]
       exportColorContext.forEach { exportStartContext[$0.key] = $0.value }
+      // A non-identity color grade forces the manual reader/writer path: the
+      // fast AVAssetExportSession can only run an instruction/animation-tool
+      // composition, not the per-frame CIFilter pass the grade needs.
+      let hasColorGrade = !colorGrade.isIdentity
+      // Cuts force the manual reader/writer path too: only it can drop the
+      // frames inside cut gaps and re-stamp the kept frames onto the compacted
+      // timeline. The fast AVAssetExportSession can't skip/re-time frames.
       let shouldUseManualRenderExport =
         cameraAssetIsPreStyled
         || comp.inlineCameraRenderPlan != nil
         || comp.videoComposition.animationTool != nil
+        || hasColorGrade
+        || hasCuts
       exportStartContext["finalRenderPath"] = shouldUseManualRenderExport ? "manual_reader_writer" : "asset_export_session"
+      exportStartContext["colorGradeActive"] = hasColorGrade
       NativeLogger.i(
         "Export",
         "Starting final export session",
@@ -2465,6 +2811,10 @@ final class LetterboxExporter {
             backgroundColor: backgroundColor,
             backgroundImagePath: backgroundImagePath,
             backgroundPreset: backgroundPreset,
+            colorGrade: colorGrade,
+            keptRanges: keptRanges,
+            audioAsset: audioCutComposition,
+            editedDurationSeconds: editedDurationSeconds,
             logOutputInfo: true,
             completion: completion
           )

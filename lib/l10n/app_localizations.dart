@@ -1780,6 +1780,42 @@ abstract class AppLocalizations {
   /// **'Snap'**
   String get snap;
 
+  /// No description provided for @clips.
+  ///
+  /// In en, this message translates to:
+  /// **'Clips'**
+  String get clips;
+
+  /// No description provided for @clipSplit.
+  ///
+  /// In en, this message translates to:
+  /// **'Split'**
+  String get clipSplit;
+
+  /// No description provided for @clipSplitTooltip.
+  ///
+  /// In en, this message translates to:
+  /// **'Split clip at playhead'**
+  String get clipSplitTooltip;
+
+  /// No description provided for @clipRemoveSelected.
+  ///
+  /// In en, this message translates to:
+  /// **'Remove selected clip'**
+  String get clipRemoveSelected;
+
+  /// No description provided for @clipUndo.
+  ///
+  /// In en, this message translates to:
+  /// **'Undo clip edit'**
+  String get clipUndo;
+
+  /// No description provided for @clipRedo.
+  ///
+  /// In en, this message translates to:
+  /// **'Redo clip edit'**
+  String get clipRedo;
+
   /// No description provided for @zoomBehavior.
   ///
   /// In en, this message translates to:
@@ -1941,6 +1977,54 @@ abstract class AppLocalizations {
   /// In en, this message translates to:
   /// **'Undo last action'**
   String get zoomUndoLastAction;
+
+  /// No description provided for @zoomRedoLastAction.
+  ///
+  /// In en, this message translates to:
+  /// **'Redo last action'**
+  String get zoomRedoLastAction;
+
+  /// No description provided for @colorCorrection.
+  ///
+  /// In en, this message translates to:
+  /// **'Color Correction'**
+  String get colorCorrection;
+
+  /// No description provided for @autoEnhance.
+  ///
+  /// In en, this message translates to:
+  /// **'Auto-enhance'**
+  String get autoEnhance;
+
+  /// No description provided for @exposure.
+  ///
+  /// In en, this message translates to:
+  /// **'Exposure'**
+  String get exposure;
+
+  /// No description provided for @contrast.
+  ///
+  /// In en, this message translates to:
+  /// **'Contrast'**
+  String get contrast;
+
+  /// No description provided for @saturation.
+  ///
+  /// In en, this message translates to:
+  /// **'Saturation'**
+  String get saturation;
+
+  /// No description provided for @temperature.
+  ///
+  /// In en, this message translates to:
+  /// **'Temperature'**
+  String get temperature;
+
+  /// No description provided for @tint.
+  ///
+  /// In en, this message translates to:
+  /// **'Tint'**
+  String get tint;
 
   /// No description provided for @zoomSelectionCleared.
   ///
@@ -2595,6 +2679,48 @@ abstract class AppLocalizations {
   /// In en, this message translates to:
   /// **'Check for Updates'**
   String get checkForUpdates;
+
+  /// No description provided for @updateChecking.
+  ///
+  /// In en, this message translates to:
+  /// **'Checking for updates…'**
+  String get updateChecking;
+
+  /// No description provided for @updateUpToDate.
+  ///
+  /// In en, this message translates to:
+  /// **'You\'re on the latest version.'**
+  String get updateUpToDate;
+
+  /// No description provided for @updateCheckFailed.
+  ///
+  /// In en, this message translates to:
+  /// **'The update check failed. Try again later.'**
+  String get updateCheckFailed;
+
+  /// No description provided for @updateAvailableTitle.
+  ///
+  /// In en, this message translates to:
+  /// **'Update available'**
+  String get updateAvailableTitle;
+
+  /// No description provided for @updateAvailableBody.
+  ///
+  /// In en, this message translates to:
+  /// **'Clingfy {version} is available for download.'**
+  String updateAvailableBody(Object version);
+
+  /// No description provided for @updateDownload.
+  ///
+  /// In en, this message translates to:
+  /// **'Download update'**
+  String get updateDownload;
+
+  /// No description provided for @updateLater.
+  ///
+  /// In en, this message translates to:
+  /// **'Later'**
+  String get updateLater;
 
   /// No description provided for @escToCancel.
   ///
@@ -3340,6 +3466,18 @@ abstract class AppLocalizations {
   /// **'If something goes wrong, open the logs folder and send today\'s log file to support.'**
   String get diagnosticsHelpText;
 
+  /// No description provided for @diagnosticsVerboseLogging.
+  ///
+  /// In en, this message translates to:
+  /// **'Verbose logging'**
+  String get diagnosticsVerboseLogging;
+
+  /// No description provided for @diagnosticsVerboseLoggingHelp.
+  ///
+  /// In en, this message translates to:
+  /// **'Record detailed debug logs to help reproduce a hard-to-find issue. Turn it on, reproduce the problem, then export diagnostics and send the files. Leave it off for everyday use.'**
+  String get diagnosticsVerboseLoggingHelp;
+
   /// No description provided for @openLogsFolder.
   ///
   /// In en, this message translates to:
@@ -3628,6 +3766,18 @@ abstract class AppLocalizations {
   /// **'Revealed today\'s log file.'**
   String get diagnosticsLogRevealed;
 
+  /// No description provided for @exportDiagnostics.
+  ///
+  /// In en, this message translates to:
+  /// **'Export Diagnostics'**
+  String get exportDiagnostics;
+
+  /// No description provided for @diagnosticsExported.
+  ///
+  /// In en, this message translates to:
+  /// **'Diagnostics package created — revealed in your file manager.'**
+  String get diagnosticsExported;
+
   /// No description provided for @recordingSystemAudio.
   ///
   /// In en, this message translates to:
@@ -3657,12 +3807,6 @@ abstract class AppLocalizations {
   /// In en, this message translates to:
   /// **'Mic + Camera'**
   String get permissionsOnboardingMicCameraRail;
-
-  /// No description provided for @permissionsOnboardingStepLabel.
-  ///
-  /// In en, this message translates to:
-  /// **'Step {current} of 4'**
-  String permissionsOnboardingStepLabel(int current);
 
   /// No description provided for @permissionsOnboardingWelcomeTitle.
   ///
@@ -4323,6 +4467,270 @@ abstract class AppLocalizations {
   /// In en, this message translates to:
   /// **'This license does not unlock Pro features.'**
   String get licenseNotEntitled;
+
+  /// No description provided for @warnMicOpenFailed.
+  ///
+  /// In en, this message translates to:
+  /// **'Your microphone couldn\'t be started — check microphone access in Windows privacy settings. Recording continues without it.'**
+  String get warnMicOpenFailed;
+
+  /// No description provided for @warnMicDisconnected.
+  ///
+  /// In en, this message translates to:
+  /// **'Your microphone was disconnected. Recording continues without it.'**
+  String get warnMicDisconnected;
+
+  /// No description provided for @warnSystemAudioOpenFailed.
+  ///
+  /// In en, this message translates to:
+  /// **'System audio couldn\'t be captured — check your output device in Windows sound settings. Recording continues without it.'**
+  String get warnSystemAudioOpenFailed;
+
+  /// No description provided for @warnSystemAudioStopped.
+  ///
+  /// In en, this message translates to:
+  /// **'System audio capture stopped. Recording continues without it.'**
+  String get warnSystemAudioStopped;
+
+  /// No description provided for @warnCameraUnavailable.
+  ///
+  /// In en, this message translates to:
+  /// **'Your camera isn\'t available right now. Recording continues without the camera overlay.'**
+  String get warnCameraUnavailable;
+
+  /// No description provided for @warnCameraOpenFailed.
+  ///
+  /// In en, this message translates to:
+  /// **'Your camera couldn\'t be started — check camera access in Windows privacy settings. Recording continues without the overlay.'**
+  String get warnCameraOpenFailed;
+
+  /// No description provided for @warnCameraDisconnected.
+  ///
+  /// In en, this message translates to:
+  /// **'Your camera was disconnected. Recording continues without it.'**
+  String get warnCameraDisconnected;
+
+  /// No description provided for @warnEncoderVideoError.
+  ///
+  /// In en, this message translates to:
+  /// **'Recording hit an encoder problem — the video may be incomplete.'**
+  String get warnEncoderVideoError;
+
+  /// No description provided for @warnEncoderAudioError.
+  ///
+  /// In en, this message translates to:
+  /// **'Recording hit an audio encoding problem — the audio may be incomplete.'**
+  String get warnEncoderAudioError;
+
+  /// No description provided for @errMicrophonePermissionRequiredWindows.
+  ///
+  /// In en, this message translates to:
+  /// **'Enable microphone access in Windows Settings > Privacy & security > Microphone, then try again.'**
+  String get errMicrophonePermissionRequiredWindows;
+
+  /// No description provided for @errCameraPermissionDeniedWindows.
+  ///
+  /// In en, this message translates to:
+  /// **'Enable camera access in Windows Settings > Privacy & security > Camera.'**
+  String get errCameraPermissionDeniedWindows;
+
+  /// No description provided for @permissionsHelpTextWindows.
+  ///
+  /// In en, this message translates to:
+  /// **'Review what Clingfy can use and jump straight to the right Windows Settings page.'**
+  String get permissionsHelpTextWindows;
+
+  /// No description provided for @permissionsChangedHintWindows.
+  ///
+  /// In en, this message translates to:
+  /// **'If you change a setting in Windows Settings, return to Clingfy and refresh this page to see the latest status.'**
+  String get permissionsChangedHintWindows;
+
+  /// No description provided for @permissionsScreenRecordingHelpWindows.
+  ///
+  /// In en, this message translates to:
+  /// **'Windows doesn\'t require a screen-recording permission — display, window, and area capture work out of the box.'**
+  String get permissionsScreenRecordingHelpWindows;
+
+  /// No description provided for @permissionsNoGrantNeeded.
+  ///
+  /// In en, this message translates to:
+  /// **'No permission needed'**
+  String get permissionsNoGrantNeeded;
+
+  /// No description provided for @permissionsDetailMicAccessOffWindows.
+  ///
+  /// In en, this message translates to:
+  /// **'Microphone access is turned off in Windows privacy settings. Turn it on in Windows Settings > Privacy & security > Microphone.'**
+  String get permissionsDetailMicAccessOffWindows;
+
+  /// No description provided for @permissionsDetailMicMissingWindows.
+  ///
+  /// In en, this message translates to:
+  /// **'The selected microphone isn\'t connected. Plug it back in or choose another one.'**
+  String get permissionsDetailMicMissingWindows;
+
+  /// No description provided for @permissionsDetailCameraAccessOffWindows.
+  ///
+  /// In en, this message translates to:
+  /// **'Camera access is turned off in Windows privacy settings. Turn it on in Windows Settings > Privacy & security > Camera.'**
+  String get permissionsDetailCameraAccessOffWindows;
+
+  /// No description provided for @permissionsDetailCameraMissingWindows.
+  ///
+  /// In en, this message translates to:
+  /// **'The selected camera isn\'t connected. Plug it back in or choose another one.'**
+  String get permissionsDetailCameraMissingWindows;
+
+  /// No description provided for @permissionsDetailNoCamerasWindows.
+  ///
+  /// In en, this message translates to:
+  /// **'No camera was detected on this PC.'**
+  String get permissionsDetailNoCamerasWindows;
+
+  /// No description provided for @permissionsOpenSoundSettings.
+  ///
+  /// In en, this message translates to:
+  /// **'Open Sound Settings'**
+  String get permissionsOpenSoundSettings;
+
+  /// No description provided for @permissionsOnboardingTrustLocalFirstWindows.
+  ///
+  /// In en, this message translates to:
+  /// **'Local-first: your recordings stay on your PC.'**
+  String get permissionsOnboardingTrustLocalFirstWindows;
+
+  /// No description provided for @permissionsOnboardingTrustPermissionControlWindows.
+  ///
+  /// In en, this message translates to:
+  /// **'You control mic and camera access anytime in Windows Settings.'**
+  String get permissionsOnboardingTrustPermissionControlWindows;
+
+  /// No description provided for @permissionsOnboardingWindowsNoScreenGrant.
+  ///
+  /// In en, this message translates to:
+  /// **'No screen-recording permission needed on Windows — capture works out of the box.'**
+  String get permissionsOnboardingWindowsNoScreenGrant;
+
+  /// No description provided for @permissionsOnboardingStepCount.
+  ///
+  /// In en, this message translates to:
+  /// **'Step {current} of {total}'**
+  String permissionsOnboardingStepCount(int current, int total);
+
+  /// No description provided for @warnWindowClosedPartialSaved.
+  ///
+  /// In en, this message translates to:
+  /// **'Recording stopped: the window you were recording was closed. Your recording up to that point has been saved.'**
+  String get warnWindowClosedPartialSaved;
+
+  /// No description provided for @warnDisplayDisconnectedPartialSaved.
+  ///
+  /// In en, this message translates to:
+  /// **'Recording stopped: the display you were recording was disconnected. Your recording up to that point has been saved.'**
+  String get warnDisplayDisconnectedPartialSaved;
+
+  /// No description provided for @cameraPreviewUseInApp.
+  ///
+  /// In en, this message translates to:
+  /// **'Can\'t see the camera? Use in-app preview'**
+  String get cameraPreviewUseInApp;
+
+  /// No description provided for @cameraPreviewUseFloating.
+  ///
+  /// In en, this message translates to:
+  /// **'Use floating camera bubble'**
+  String get cameraPreviewUseFloating;
+
+  /// No description provided for @appliedOnExportNoticeWindows.
+  ///
+  /// In en, this message translates to:
+  /// **'Applied on export — the inline preview doesn\'t show this effect yet.'**
+  String get appliedOnExportNoticeWindows;
+
+  /// No description provided for @errBadMode.
+  ///
+  /// In en, this message translates to:
+  /// **'This recording mode isn\'t available on Windows yet.'**
+  String get errBadMode;
+
+  /// No description provided for @errNoCamera.
+  ///
+  /// In en, this message translates to:
+  /// **'No camera is available.'**
+  String get errNoCamera;
+
+  /// No description provided for @errCameraInputError.
+  ///
+  /// In en, this message translates to:
+  /// **'The camera stopped working.'**
+  String get errCameraInputError;
+
+  /// No description provided for @errFileNotFound.
+  ///
+  /// In en, this message translates to:
+  /// **'File not found.'**
+  String get errFileNotFound;
+
+  /// No description provided for @errWindowsNotImplemented.
+  ///
+  /// In en, this message translates to:
+  /// **'This feature isn\'t available on Windows yet.'**
+  String get errWindowsNotImplemented;
+
+  /// No description provided for @errRecordingDiskFull.
+  ///
+  /// In en, this message translates to:
+  /// **'Not enough disk space to start recording.'**
+  String get errRecordingDiskFull;
+
+  /// No description provided for @errPreviewOpenFailed.
+  ///
+  /// In en, this message translates to:
+  /// **'Preview failed to open.'**
+  String get errPreviewOpenFailed;
+
+  /// No description provided for @errPreviewRenderFailed.
+  ///
+  /// In en, this message translates to:
+  /// **'Preview stopped rendering. Close and reopen the recording.'**
+  String get errPreviewRenderFailed;
+
+  /// No description provided for @errRecordingStartTimeout.
+  ///
+  /// In en, this message translates to:
+  /// **'Recording did not start in time.'**
+  String get errRecordingStartTimeout;
+
+  /// No description provided for @errRecordingFinalizeTimeout.
+  ///
+  /// In en, this message translates to:
+  /// **'Saving the recording timed out.'**
+  String get errRecordingFinalizeTimeout;
+
+  /// No description provided for @errPreviewTimeout.
+  ///
+  /// In en, this message translates to:
+  /// **'Preview took too long to load.'**
+  String get errPreviewTimeout;
+
+  /// No description provided for @errInternalError.
+  ///
+  /// In en, this message translates to:
+  /// **'An internal error occurred.'**
+  String get errInternalError;
+
+  /// Startup salvage toast shown after the native crash-recovery sweep finds recordings that were interrupted by a crash.
+  ///
+  /// In en, this message translates to:
+  /// **'{count, plural, one{1 recording was interrupted and could not be recovered.} other{{count} recordings were interrupted and could not be recovered.}}'**
+  String recordingInterruptedNotice(int count);
+
+  /// No description provided for @forceNativeCrashLabel.
+  ///
+  /// In en, this message translates to:
+  /// **'Force native crash (test)'**
+  String get forceNativeCrashLabel;
 }
 
 class _AppLocalizationsDelegate

@@ -1,8 +1,10 @@
 import 'package:clingfy/app/home/preview/widgets/video_timeline.dart';
 import 'package:clingfy/core/bridges/native_bridge.dart';
+import 'package:clingfy/core/clips/clip_editor_controller.dart';
 import 'package:clingfy/core/preview/player_controller.dart';
 import 'package:clingfy/core/zoom/zoom_editor_controller.dart';
 import 'package:clingfy/l10n/app_localizations.dart';
+import 'package:clingfy/ui/platform/widgets/app_icon_button.dart';
 import 'package:clingfy/ui/theme/app_theme.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
@@ -10,8 +12,20 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:provider/provider.dart';
 
 import '../../../../test_helpers/native_test_setup.dart';
+import 'package:clingfy/ui/platform/platform_kind.dart';
 
 void main() {
+  // Phase 10.3 forked this surface's widget tree by platform (no-op
+  // controls hidden / zoom editing disabled on Windows). These legacy
+  // assertions pin the macOS branch regardless of the host OS; Windows
+  // branches are covered by dedicated 10.3 tests.
+  setUp(() {
+    debugPlatformKindOverride = PlatformKind.macos;
+  });
+  tearDown(() {
+    debugPlatformKindOverride = null;
+  });
+
   TestWidgetsFlutterBinding.ensureInitialized();
 
   setUp(() async {
@@ -36,6 +50,35 @@ void main() {
     expect(find.byKey(const Key('timeline_editor_viewport')), findsOneWidget);
     expect(find.byKey(const Key('timeline_footer_bar')), findsNothing);
     expect(find.byKey(const Key('timeline_status_line')), findsNothing);
+  });
+
+  testWidgets('redo button re-applies an undone zoom edit', (tester) async {
+    final editor = await _createEditor(tester);
+    final player = _FakePlayerController(editor: editor);
+    addTearDown(player.dispose);
+
+    await tester.pumpWidget(_buildTimeline(player: player));
+
+    final redoButton = find.byKey(const Key('timeline_redo_button'));
+    expect(redoButton, findsOneWidget);
+
+    // Create a manual zoom segment, then undo it.
+    editor.enterOneShotAddMode();
+    editor.updateDraft(1000, 4000);
+    editor.commitDraft();
+    await tester.pump();
+    expect(editor.manualSegments, hasLength(1));
+
+    editor.undo();
+    await tester.pump();
+    expect(editor.manualSegments, isEmpty);
+
+    // The redo button is now enabled; tapping it restores the segment.
+    await tester.ensureVisible(redoButton);
+    await tester.pump();
+    await tester.tap(redoButton);
+    await tester.pump();
+    expect(editor.manualSegments, hasLength(1));
   });
 
   testWidgets('header shows title and no close action', (tester) async {
@@ -240,6 +283,36 @@ void main() {
     expect(find.byKey(const Key('timeline_pan_overlay')), findsNothing);
   });
 
+  testWidgets('releasing Alt before Space exits pan mode (no stuck overlay)', (
+    tester,
+  ) async {
+    final editor = await _createEditor(tester);
+    final player = _FakePlayerController(editor: editor);
+    addTearDown(player.dispose);
+
+    await tester.pumpWidget(_buildTimeline(player: player));
+    await tester.tap(find.byKey(const Key('timeline_shell')));
+    await tester.pump();
+
+    final overlay = find.byKey(const Key('timeline_pan_overlay'));
+
+    // Alt+Space → pan on.
+    await tester.sendKeyDownEvent(LogicalKeyboardKey.altLeft);
+    await tester.sendKeyDownEvent(LogicalKeyboardKey.space);
+    await tester.pump();
+    expect(overlay, findsOneWidget);
+
+    // Release Alt BEFORE Space — the out-of-order release must still exit pan,
+    // not wedge the opaque overlay over the timeline.
+    await tester.sendKeyUpEvent(LogicalKeyboardKey.altLeft);
+    await tester.pump();
+    expect(overlay, findsNothing);
+
+    await tester.sendKeyUpEvent(LogicalKeyboardKey.space);
+    await tester.pump();
+    expect(overlay, findsNothing);
+  });
+
   testWidgets('playhead cap uses the slimmer V1 polish geometry', (
     tester,
   ) async {
@@ -295,6 +368,370 @@ void main() {
       expect(tester.getSize(shellFinder).height, heightDeselected);
     },
   );
+
+  testWidgets('clip lane and split control render with a live clip editor', (
+    tester,
+  ) async {
+    final editor = await _createEditor(tester);
+    final clipEditor = _makeClipEditor();
+    final player = _FakePlayerController(
+      editor: editor,
+      clipEditor: clipEditor,
+    );
+    addTearDown(player.dispose);
+    addTearDown(clipEditor.dispose);
+
+    await tester.pumpWidget(_buildTimeline(player: player));
+
+    expect(find.byKey(const Key('clips_timeline_lane')), findsOneWidget);
+    expect(find.byKey(const Key('timeline_lane_header_clips')), findsOneWidget);
+    expect(find.byKey(const Key('timeline_clip_split_button')), findsOneWidget);
+  });
+
+  testWidgets('split button cuts the clip at the playhead', (tester) async {
+    final editor = await _createEditor(tester);
+    final clipEditor = _makeClipEditor();
+    final player = _FakePlayerController(
+      editor: editor,
+      clipEditor: clipEditor,
+    );
+    addTearDown(player.dispose);
+    addTearDown(clipEditor.dispose);
+
+    await tester.pumpWidget(_buildTimeline(player: player));
+    expect(clipEditor.clips, hasLength(1));
+
+    final splitButton = find.byKey(const Key('timeline_clip_split_button'));
+    await tester.ensureVisible(splitButton);
+    await tester.pump();
+    await tester.tap(splitButton);
+    await tester.pump();
+
+    // Playhead is at 15000ms of a 60000ms recording → two clips.
+    expect(clipEditor.clips, hasLength(2));
+    expect(clipEditor.clips.first.sourceOutMs, 15000);
+    expect(
+      find.byKey(const Key('clips_timeline_lane_clip_clip_0')),
+      findsOneWidget,
+    );
+    expect(
+      find.byKey(const Key('clips_timeline_lane_clip_clip_1')),
+      findsOneWidget,
+    );
+  });
+
+  testWidgets('holding Option arms the scissors cut layer; releasing disarms', (
+    tester,
+  ) async {
+    final editor = await _createEditor(tester);
+    final clipEditor = _makeClipEditor();
+    final player = _FakePlayerController(
+      editor: editor,
+      clipEditor: clipEditor,
+    );
+    addTearDown(player.dispose);
+    addTearDown(clipEditor.dispose);
+
+    await tester.pumpWidget(_buildTimeline(player: player));
+    await tester.tap(find.byKey(const Key('timeline_shell')));
+    await tester.pump();
+
+    final layer = find.byKey(const Key('timeline_scissors_cut_layer'));
+    expect(layer, findsNothing);
+
+    await tester.sendKeyDownEvent(LogicalKeyboardKey.altLeft);
+    await tester.pump();
+    expect(layer, findsOneWidget);
+
+    await tester.sendKeyUpEvent(LogicalKeyboardKey.altLeft);
+    await tester.pump();
+    expect(layer, findsNothing);
+  });
+
+  testWidgets('clicking the armed cut layer splits the clip at the pointer', (
+    tester,
+  ) async {
+    final editor = await _createEditor(tester);
+    final clipEditor = _makeClipEditor();
+    final player = _FakePlayerController(
+      editor: editor,
+      clipEditor: clipEditor,
+    );
+    addTearDown(player.dispose);
+    addTearDown(clipEditor.dispose);
+
+    await tester.pumpWidget(_buildTimeline(player: player));
+    await tester.tap(find.byKey(const Key('timeline_shell')));
+    await tester.pump();
+    expect(clipEditor.clips, hasLength(1));
+
+    await tester.sendKeyDownEvent(LogicalKeyboardKey.altLeft);
+    await tester.pump();
+
+    // Click mid-layer → cut inside the single clip → two clips.
+    await tester.tap(find.byKey(const Key('timeline_scissors_cut_layer')));
+    await tester.pump();
+    expect(clipEditor.clips, hasLength(2));
+
+    await tester.sendKeyUpEvent(LogicalKeyboardKey.altLeft);
+    await tester.pump();
+  });
+
+  testWidgets('clicking the armed cut layer at the start is a no-op', (
+    tester,
+  ) async {
+    final editor = await _createEditor(tester);
+    final clipEditor = _makeClipEditor();
+    final player = _FakePlayerController(
+      editor: editor,
+      clipEditor: clipEditor,
+    );
+    addTearDown(player.dispose);
+    addTearDown(clipEditor.dispose);
+
+    await tester.pumpWidget(_buildTimeline(player: player));
+    await tester.tap(find.byKey(const Key('timeline_shell')));
+    await tester.pump();
+
+    await tester.sendKeyDownEvent(LogicalKeyboardKey.altLeft);
+    await tester.pump();
+
+    final layer = find.byKey(const Key('timeline_scissors_cut_layer'));
+    // Tap the very start → ms 0 → boundary → rejected, still one clip.
+    await tester.tapAt(tester.getTopLeft(layer) + const Offset(0, 20));
+    await tester.pump();
+    expect(clipEditor.clips, hasLength(1));
+
+    await tester.sendKeyUpEvent(LogicalKeyboardKey.altLeft);
+    await tester.pump();
+  });
+
+  testWidgets('selecting a clip then deleting it removes the clip', (
+    tester,
+  ) async {
+    final editor = await _createEditor(tester);
+    final clipEditor = _makeClipEditor();
+    final player = _FakePlayerController(
+      editor: editor,
+      clipEditor: clipEditor,
+    );
+    addTearDown(player.dispose);
+    addTearDown(clipEditor.dispose);
+
+    await tester.pumpWidget(_buildTimeline(player: player));
+
+    final splitButton = find.byKey(const Key('timeline_clip_split_button'));
+    await tester.ensureVisible(splitButton);
+    await tester.pump();
+    await tester.tap(splitButton);
+    await tester.pump();
+    expect(clipEditor.clips, hasLength(2));
+
+    // Tap the first clip box to select it.
+    await tester.tap(find.byKey(const Key('clips_timeline_lane_clip_clip_0')));
+    await tester.pump();
+    expect(clipEditor.selectedClipId, 'clip_0');
+
+    final deleteButton = find.byKey(const Key('timeline_clip_delete_button'));
+    await tester.ensureVisible(deleteButton);
+    await tester.pump();
+    await tester.tap(deleteButton);
+    await tester.pump();
+
+    expect(clipEditor.clips, hasLength(1));
+    expect(clipEditor.clips.single.id, 'clip_1');
+  });
+
+  testWidgets(
+    'Backspace deletes the selected clip (not just the zoom segment)',
+    (tester) async {
+      final editor = await _createEditor(tester);
+      final clipEditor = _makeClipEditor();
+      final player = _FakePlayerController(
+        editor: editor,
+        clipEditor: clipEditor,
+      );
+      addTearDown(player.dispose);
+      addTearDown(clipEditor.dispose);
+
+      await tester.pumpWidget(_buildTimeline(player: player));
+
+      final splitButton = find.byKey(const Key('timeline_clip_split_button'));
+      await tester.ensureVisible(splitButton);
+      await tester.pump();
+      await tester.tap(splitButton);
+      await tester.pump();
+      expect(clipEditor.clips, hasLength(2));
+
+      // Tapping the clip box selects it AND focuses the timeline (pointer-down),
+      // so the Backspace shortcut resolves to the clip-delete action.
+      await tester.tap(
+        find.byKey(const Key('clips_timeline_lane_clip_clip_0')),
+      );
+      await tester.pump();
+      expect(clipEditor.selectedClipId, 'clip_0');
+
+      await tester.sendKeyEvent(LogicalKeyboardKey.backspace);
+      await tester.pump();
+
+      expect(clipEditor.clips, hasLength(1));
+      expect(clipEditor.clips.single.id, 'clip_1');
+    },
+  );
+
+  testWidgets('clip undo and redo buttons walk the clip history', (
+    tester,
+  ) async {
+    final editor = await _createEditor(tester);
+    final clipEditor = _makeClipEditor();
+    final player = _FakePlayerController(
+      editor: editor,
+      clipEditor: clipEditor,
+    );
+    addTearDown(player.dispose);
+    addTearDown(clipEditor.dispose);
+
+    await tester.pumpWidget(_buildTimeline(player: player));
+
+    final undoButton = find.byKey(const Key('timeline_clip_undo_button'));
+    final redoButton = find.byKey(const Key('timeline_clip_redo_button'));
+
+    // Nothing to undo/redo yet — both disabled.
+    expect(tester.widget<AppIconButton>(undoButton).onPressed, isNull);
+    expect(tester.widget<AppIconButton>(redoButton).onPressed, isNull);
+
+    final splitButton = find.byKey(const Key('timeline_clip_split_button'));
+    await tester.ensureVisible(splitButton);
+    await tester.pump();
+    await tester.tap(splitButton);
+    await tester.pump();
+    expect(clipEditor.clips, hasLength(2));
+
+    // Undo collapses the split back to one clip.
+    await tester.ensureVisible(undoButton);
+    await tester.pump();
+    await tester.tap(undoButton);
+    await tester.pump();
+    expect(clipEditor.clips, hasLength(1));
+
+    // Redo re-applies it.
+    await tester.ensureVisible(redoButton);
+    await tester.pump();
+    await tester.tap(redoButton);
+    await tester.pump();
+    expect(clipEditor.clips, hasLength(2));
+  });
+
+  testWidgets('dragging a clip edge handle trims it live and is undoable', (
+    tester,
+  ) async {
+    final editor = await _createEditor(tester);
+    final clipEditor = _makeClipEditor();
+    final player = _FakePlayerController(
+      editor: editor,
+      clipEditor: clipEditor,
+    );
+    addTearDown(player.dispose);
+    addTearDown(clipEditor.dispose);
+
+    await tester.pumpWidget(_buildTimeline(player: player));
+
+    // Split first so there's an interior edge mid-lane (a whole-clip end handle
+    // sits at the clipped right edge of the lane).
+    final splitButton = find.byKey(const Key('timeline_clip_split_button'));
+    await tester.ensureVisible(splitButton);
+    await tester.pump();
+    await tester.tap(splitButton);
+    await tester.pump();
+    expect(clipEditor.clips, hasLength(2));
+    expect(clipEditor.editedDurationMs, 60000);
+
+    // Select the first clip; its end handle is at the cut (~25% across).
+    await tester.tap(find.byKey(const Key('clips_timeline_lane_clip_clip_0')));
+    await tester.pump();
+
+    await tester.drag(
+      find.byKey(const Key('clips_timeline_lane_trim_end_clip_0')),
+      const Offset(-60, 0),
+    );
+    await tester.pump();
+
+    // The clip was trimmed shorter, live.
+    expect(clipEditor.editedDurationMs, lessThan(60000));
+    expect(clipEditor.canUndo, isTrue);
+
+    // The whole drag is a single undo entry distinct from the split: undoing
+    // once restores the duration while leaving the two clips in place.
+    clipEditor.undo();
+    expect(clipEditor.editedDurationMs, 60000);
+    expect(clipEditor.clips, hasLength(2));
+  });
+
+  testWidgets('over-dragging an edge clamps at min duration without inverting', (
+    tester,
+  ) async {
+    final editor = await _createEditor(tester);
+    final clipEditor = _makeClipEditor();
+    final player = _FakePlayerController(
+      editor: editor,
+      clipEditor: clipEditor,
+    );
+    addTearDown(player.dispose);
+    addTearDown(clipEditor.dispose);
+
+    await tester.pumpWidget(_buildTimeline(player: player));
+
+    final splitButton = find.byKey(const Key('timeline_clip_split_button'));
+    await tester.ensureVisible(splitButton);
+    await tester.pump();
+    await tester.tap(splitButton);
+    await tester.pump();
+
+    await tester.tap(find.byKey(const Key('clips_timeline_lane_clip_clip_0')));
+    await tester.pump();
+
+    // Drag the end handle far past the clip's own start.
+    await tester.drag(
+      find.byKey(const Key('clips_timeline_lane_trim_end_clip_0')),
+      const Offset(-2000, 0),
+    );
+    await tester.pump();
+
+    // Both clips survive; the trimmed clip never inverts (out > in) and the
+    // edited timeline stays positive — the min-duration clamp held end to end.
+    expect(clipEditor.clips, hasLength(2));
+    final first = clipEditor.clips.first;
+    expect(first.sourceOutMs, greaterThan(first.sourceInMs));
+    expect(clipEditor.editedDurationMs, greaterThan(0));
+    expect(clipEditor.editedDurationMs, lessThan(60000));
+  });
+
+  testWidgets(
+    'clip lane and controls are hidden when no clip editor attached',
+    (tester) async {
+      final editor = await _createEditor(tester);
+      // clipEditor omitted → null, mimicking a still-loading preview.
+      final player = _FakePlayerController(editor: editor);
+      addTearDown(player.dispose);
+
+      await tester.pumpWidget(_buildTimeline(player: player));
+
+      expect(find.byKey(const Key('clips_timeline_lane')), findsNothing);
+      expect(find.byKey(const Key('timeline_lane_header_clips')), findsNothing);
+      expect(find.byKey(const Key('timeline_clip_split_button')), findsNothing);
+      // The zoom lane is unaffected.
+      expect(find.byKey(const Key('zoom_timeline_lane')), findsOneWidget);
+    },
+  );
+}
+
+ClipEditorController _makeClipEditor() {
+  final controller = ClipEditorController(
+    nativeBridge: NativeBridge.instance,
+    durationMs: 60000,
+    sessionId: 'clip-session',
+  );
+  return controller;
 }
 
 Future<ZoomEditorController> _createEditor(
@@ -388,15 +825,21 @@ class _FakePlayerController extends PlayerController {
   _FakePlayerController({
     required ZoomEditorController? editor,
     bool isPlaying = false,
+    ClipEditorController? clipEditor,
   }) : _editor = editor,
        _isPlaying = isPlaying,
+       _clipEditor = clipEditor,
        super(nativeBridge: NativeBridge.instance);
 
   final ZoomEditorController? _editor;
+  final ClipEditorController? _clipEditor;
   bool _isPlaying;
 
   @override
   ZoomEditorController? get zoomEditor => _editor;
+
+  @override
+  ClipEditorController? get clipEditor => _clipEditor;
 
   @override
   bool get isPlaying => _isPlaying;

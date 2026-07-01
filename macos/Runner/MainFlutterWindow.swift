@@ -815,6 +815,8 @@ class MainFlutterWindow: NSWindow {
             targetLoudnessDbfs: req.targetLoudnessDbfs,
             cameraPath: req.cameraPath,
             cameraParams: cameraParams,
+            colorGrade: req.colorGrade,
+            clips: req.clips,
             onProgress: { [weak self] progress in
               self?.channel?.invokeMethod("updateExportProgress", arguments: progress)
             },
@@ -880,6 +882,13 @@ class MainFlutterWindow: NSWindow {
         let args = call.arguments as? [String: Any]
         let enabled = (args?["enabled"] as? Bool) ?? true
         self.setPreRecordingBarEnabled(enabled)
+        result(nil)
+
+      case "setNativeLogLevel":
+        let args = call.arguments as? [String: Any]
+        if let level = args?["level"] as? String {
+          NativeLogger.setMinLevel(level)
+        }
         result(nil)
 
       case "showPreRecordingBar":
@@ -963,6 +972,68 @@ class MainFlutterWindow: NSWindow {
         } else {
           result(
             FlutterError(code: NativeErrorCode.badArgs, message: "Missing segments", details: nil))
+        }
+
+      case "previewSetColorGrade":
+        if let args = call.arguments as? [String: Any],
+          let gradeDict = args["colorGrade"] as? [String: Any]
+        {
+          let sessionId = args["sessionId"] as? String
+          let grade = ColorGrade.fromFlutter(gradeDict)
+          let hasView = inlinePreviewViewInstance != nil
+          let sessionMatches =
+            sessionId == nil || inlinePreviewViewInstance?.currentSessionId == sessionId
+          NativeLogger.d(
+            "Player", "previewSetColorGrade received",
+            context: [
+              "sessionId": sessionId ?? "nil",
+              "hasPreviewView": hasView,
+              "sessionMatches": sessionMatches,
+              "identity": grade.isIdentity,
+              "exposure": grade.exposure,
+              "contrast": grade.contrast,
+              "saturation": grade.saturation,
+              "temperature": grade.temperature,
+              "tint": grade.tint,
+            ])
+          if let previewView = inlinePreviewViewInstance,
+            sessionId == nil || previewView.currentSessionId == sessionId
+          {
+            previewView.updateColorGradeOnly(grade)
+          }
+          result(nil)
+        } else {
+          result(
+            FlutterError(
+              code: NativeErrorCode.badArgs, message: "Missing colorGrade", details: nil))
+        }
+
+      case "previewSetClips":
+        if let args = call.arguments as? [String: Any] {
+          let clipMaps = args["clips"] as? [[String: Any]]
+          let sessionId = args["sessionId"] as? String
+          let ranges = ClipKeptRange.fromFlutter(clipMaps)
+          let hasView = inlinePreviewViewInstance != nil
+          let sessionMatches =
+            sessionId == nil || inlinePreviewViewInstance?.currentSessionId == sessionId
+          NativeLogger.d(
+            "Player", "previewSetClips received",
+            context: [
+              "sessionId": sessionId ?? "nil",
+              "hasPreviewView": hasView,
+              "sessionMatches": sessionMatches,
+              "clipCount": clipMaps?.count ?? 0,
+              "keptRangeCount": ranges.count,
+            ])
+          if let previewView = inlinePreviewViewInstance,
+            sessionId == nil || previewView.currentSessionId == sessionId
+          {
+            previewView.updateClipsOnly(ranges)
+          }
+          result(nil)
+        } else {
+          result(
+            FlutterError(code: NativeErrorCode.badArgs, message: "Missing clips", details: nil))
         }
 
       case "previewGetZoomCapabilities":

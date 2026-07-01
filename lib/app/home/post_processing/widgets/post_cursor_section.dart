@@ -7,6 +7,7 @@ import 'package:clingfy/ui/platform/widgets/app_slider.dart';
 import 'package:clingfy/ui/platform/widgets/app_slider_row.dart';
 import 'package:clingfy/ui/platform/widgets/app_toggle_row.dart';
 import 'package:flutter/material.dart';
+import 'package:clingfy/ui/platform/platform_kind.dart';
 
 class PostCursorSection extends StatelessWidget {
   const PostCursorSection({
@@ -48,6 +49,15 @@ class PostCursorSection extends StatelessWidget {
               AppInlineNotice(
                 message: l10n.cursorDataMissing,
                 variant: AppInlineNoticeVariant.warning,
+              ),
+            ],
+            // Phase 10.3 (Windows): cursor + click effects render at export
+            // time; the inline preview shows an approximation at best.
+            if (cursorAvailable && isWindows()) ...[
+              const SizedBox(height: AppSidebarTokens.compactGap),
+              AppInlineNotice(
+                key: const ValueKey('post_cursor_export_notice'),
+                message: l10n.appliedOnExportNoticeWindows,
               ),
             ],
             if (showCursor && cursorAvailable) ...[

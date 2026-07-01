@@ -13,6 +13,7 @@ import 'package:clingfy/core/models/app_models.dart';
 
 import 'package:clingfy/core/bridges/native_bridge.dart';
 import 'package:clingfy/app/infrastructure/observability/telemetry_service.dart';
+import 'package:clingfy/ui/platform/platform_kind.dart';
 
 const _prefOverlayShapeId = 'pref.overlayShapeId';
 const _legacyPrefOverlayShape = 'overlayShape';
@@ -53,6 +54,13 @@ class OverlayController extends ChangeNotifier {
 
   bool _isRecording = false; // Transient state from main app
 
+  // Phase 9.3.2 live preview mode. true = floating draggable bubble (macOS-like);
+  // false = in-app Flutter texture preview. Phase 9.3.3: in-app is the Windows
+  // DEFAULT because a capture-excluded floating window is invisible on hybrid
+  // GPUs (WDA reports success but never composites to the display — see #153).
+  // Floating is opt-in via the recording-panel toggle. Persisted.
+  bool _cameraFloatingPreview = false;
+
   bool _chromaKeyEnabled = false;
   double _chromaKeyStrength = 0.4;
   int _chromaKeyColor = 0xFF00FF00; // Green
@@ -66,6 +74,7 @@ class OverlayController extends ChangeNotifier {
 
   // --- Getters ---
   bool get cameraOverlayEnabled => _cameraOverlayEnabled;
+  bool get cameraFloatingPreview => _cameraFloatingPreview;
   bool get linkOverlayToRecording => _linkOverlayToRecording;
   OverlayShape get overlayShape => _overlayShape;
   double get overlaySize => _overlaySize;
@@ -124,6 +133,9 @@ class OverlayController extends ChangeNotifier {
       final sp = await SharedPreferences.getInstance();
 
       _cameraOverlayEnabled = sp.getBool('overlayEnabled') ?? false;
+      // Default to in-app preview (see _cameraFloatingPreview docs); only the
+      // explicit 'floating' opt-in turns on the native bubble.
+      _cameraFloatingPreview = sp.getString('cameraPreviewMode') == 'floating';
       _linkOverlayToRecording = sp.getBool('overlayLinked') ?? true;
       _overlayShape = await _loadOverlayShape(sp);
       _overlaySize = sp.getDouble('overlaySize') ?? 220.0;
@@ -246,13 +258,22 @@ class OverlayController extends ChangeNotifier {
       }
 
       final prefs = await SharedPreferences.getInstance();
-      _areaDisplayId = prefs.getInt('pref.areaDisplayId');
-      final areaX = prefs.getDouble('pref.areaRect.x');
-      final areaY = prefs.getDouble('pref.areaRect.y');
-      final areaW = prefs.getDouble('pref.areaRect.width');
-      final areaH = prefs.getDouble('pref.areaRect.height');
-      if (areaX != null && areaY != null && areaW != null && areaH != null) {
-        _areaRect = Rect.fromLTWH(areaX, areaY, areaW, areaH);
+      if (isWindows()) {
+        // Phase 10.3: the Windows native crop region lives in process
+        // memory only — restoring the Dart half after a restart made the
+        // sidebar claim a selection that RecordingEngine::Start would
+        // reject with TARGET_ERROR. Clear honestly; the user re-picks.
+        // (macOS persists the region natively, so its restore is real.)
+        await _clearStaleAreaSelectionOnStartup(prefs);
+      } else {
+        _areaDisplayId = prefs.getInt('pref.areaDisplayId');
+        final areaX = prefs.getDouble('pref.areaRect.x');
+        final areaY = prefs.getDouble('pref.areaRect.y');
+        final areaW = prefs.getDouble('pref.areaRect.width');
+        final areaH = prefs.getDouble('pref.areaRect.height');
+        if (areaX != null && areaY != null && areaW != null && areaH != null) {
+          _areaRect = Rect.fromLTWH(areaX, areaY, areaW, areaH);
+        }
       }
       notifyListeners();
     } catch (e, st) {
@@ -648,6 +669,52 @@ class OverlayController extends ChangeNotifier {
       _isRecording = isRecording;
       // notifyListeners(); // Not strictly needed if only used for internal logic
       _updateNativeHighlight();
+      // Phase 9.3.2: when recording starts with the camera on, apply the saved
+      // preview mode to native. If floating is requested but unavailable on this
+      // GPU, native reports false and we fall back to the in-app texture.
+      if (isRecording && _cameraOverlayEnabled) {
+        unawaited(_applyCameraPreviewMode());
+      }
+    }
+  }
+
+  Future<void> _applyCameraPreviewMode() async {
+    final requested = _cameraFloatingPreview;
+    final resulting = await _nativeBridge.setCameraPreviewMode(
+      floating: requested,
+    );
+    // Re-guard against the post-await state: the user may have toggled the mode
+    // (setCameraFloatingPreview) while this call was in flight. Only fall back
+    // if we asked for floating, native refused, and floating is still wanted.
+    if (requested && !resulting && _cameraFloatingPreview) {
+      // Floating requested but the bubble is unavailable (no exclusion) → use
+      // the in-app texture instead, and remember it.
+      _cameraFloatingPreview = false;
+      final sp = await SharedPreferences.getInstance();
+      await sp.setString('cameraPreviewMode', 'inApp');
+      notifyListeners();
+    }
+  }
+
+  /// Phase 9.3.2: switch the live preview between the floating bubble and the
+  /// in-app texture (the "Can't see the camera? Use in-app preview" action and
+  /// its inverse). Persists the choice and applies it immediately if recording.
+  Future<void> setCameraFloatingPreview(bool floating) async {
+    if (_cameraFloatingPreview == floating) return;
+    _cameraFloatingPreview = floating;
+    notifyListeners();
+    final sp = await SharedPreferences.getInstance();
+    await sp.setString('cameraPreviewMode', floating ? 'floating' : 'inApp');
+    if (_isRecording && _cameraOverlayEnabled) {
+      final resulting = await _nativeBridge.setCameraPreviewMode(
+        floating: floating,
+      );
+      if (floating && !resulting && _cameraFloatingPreview) {
+        // Asked for floating but it's unavailable on this GPU → revert to in-app.
+        _cameraFloatingPreview = false;
+        await sp.setString('cameraPreviewMode', 'inApp');
+        notifyListeners();
+      }
     }
   }
 
@@ -845,6 +912,22 @@ class OverlayController extends ChangeNotifier {
     await prefs.remove('pref.areaRect.width');
     await prefs.remove('pref.areaRect.height');
     notifyListeners();
+  }
+
+  /// Phase 10.3 (Windows): drop a persisted area selection at startup —
+  /// the native crop region is process-memory only, so the restored Dart
+  /// half would claim a selection that recording can't honor. No native
+  /// clear call needed: a fresh process has no region to clear.
+  Future<void> _clearStaleAreaSelectionOnStartup(
+    SharedPreferences prefs,
+  ) async {
+    _areaDisplayId = null;
+    _areaRect = null;
+    await prefs.remove('pref.areaDisplayId');
+    await prefs.remove('pref.areaRect.x');
+    await prefs.remove('pref.areaRect.y');
+    await prefs.remove('pref.areaRect.width');
+    await prefs.remove('pref.areaRect.height');
   }
 
   void _onAreaSelectionClearedFromNative() {

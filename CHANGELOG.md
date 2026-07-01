@@ -1,3 +1,36 @@
+## [1.0.5] - 2026-07-01
+
+Clingfy 1.0.5 grows the post-recording editor into a light video editor. It adds one-tap and manual **color correction** and a full **clip-editing timeline** — split, cut, trim, and reorder your recording — shown live in the preview and baked faithfully into the exported file. Under the hood, work also continued on the in-progress Windows build.
+
+### Highlights
+- **Color correction:** auto-enhance in one tap, or hand-tune exposure, contrast, saturation, temperature, and tint. The live preview matches the export.
+- **Clip editing:** split a recording into clips, delete the parts you don't want, trim clip edges, and drag clips into a new order — all on the timeline, with undo/redo.
+- Editing plays back **smoothly in the preview** (no pause at cut points) and exports exactly as previewed, keeping zoom, cursor, camera, and color aligned with audio in sync.
+
+### New Features
+- Added **color correction** to post-processing: a one-tap Auto enhance plus manual sliders for exposure, contrast, saturation, temperature, and tint. Adjustments stream into the live preview as you drag and are baked into MOV/MP4/GIF exports so the result matches what you see.
+- Added a **clip-editing timeline**: split at the playhead, Option-click to cut anywhere (scissors tool), remove a selected clip (including via Backspace/Delete), drag a clip's end edge to trim, and drag clips to reorder them. Undo/redo covers every edit.
+- The preview **plays through your cuts and reordering** in real time and the export bakes them in — zoom, cursor highlight, camera overlay, and color grade stay glued to the correct source moments, with audio kept in sync.
+
+### Improvements
+- Cut and reordered playback in the preview is now smooth end-to-end, with no stall at clip boundaries.
+- Added a runtime-configurable log level (an environment variable plus a **Verbose logging** toggle in Settings) to make troubleshooting easier.
+
+### Bug Fixes
+- Fixed GIF export mistakenly saving as a `.mov` file.
+- Fixed reopening a `.clingfyproj` project after it was renamed in Finder.
+- Fixed editing-preview issues found in testing: seeking/scrubbing across cuts now lands on the correct frame, and reordered clips play back in the right order without skipping or jumping the playhead.
+
+### Refactoring / Internal Changes
+- Built a portable editing foundation shared across platforms — a unified timeline model with undo/redo and a serialization codec — that the clip and color features are built on.
+- Continued the in-progress **Windows** build (beta track, not yet part of the shipped macOS app): recording, camera overlay, cursor and smart zoom, window/area capture, and MP4/MOV/GIF export now work on Windows.
+
+### Docs / CI / Tooling
+- Added a Windows-port handoff for the editing features (what's done on macOS, what's left to build on Windows, and the pitfalls to design around).
+- Hardened the release publish step by guarding the CDN cache purge behind an endpoint check.
+- Added the 1.0.5 release-readiness checklist.
+
+
 ## [1.0.4] - 2026-05-24
 
 Clingfy 1.0.4 focuses on better-looking canvases and far more achievable high-resolution exports. It adds preset backgrounds with three procedural styles, makes your canvas settings stick when you reopen a recording, dramatically shrinks the disk space exports need, and improves error messages when storage runs out. Several visual and reliability bugs are also fixed.

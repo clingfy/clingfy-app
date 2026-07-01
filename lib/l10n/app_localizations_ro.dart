@@ -906,6 +906,24 @@ class AppLocalizationsRo extends AppLocalizations {
   String get snap => 'Fixare';
 
   @override
+  String get clips => 'Clipuri';
+
+  @override
+  String get clipSplit => 'Împarte';
+
+  @override
+  String get clipSplitTooltip => 'Împarte clipul la cursor';
+
+  @override
+  String get clipRemoveSelected => 'Elimină clipul selectat';
+
+  @override
+  String get clipUndo => 'Anulează editarea clipului';
+
+  @override
+  String get clipRedo => 'Refă editarea clipului';
+
+  @override
   String get zoomBehavior => 'Comportament zoom';
 
   @override
@@ -994,6 +1012,30 @@ class AppLocalizationsRo extends AppLocalizations {
 
   @override
   String get zoomUndoLastAction => 'Anulează ultima acțiune';
+
+  @override
+  String get zoomRedoLastAction => 'Refă ultima acțiune';
+
+  @override
+  String get colorCorrection => 'Corecție culoare';
+
+  @override
+  String get autoEnhance => 'Auto-îmbunătățire';
+
+  @override
+  String get exposure => 'Expunere';
+
+  @override
+  String get contrast => 'Contrast';
+
+  @override
+  String get saturation => 'Saturație';
+
+  @override
+  String get temperature => 'Temperatură';
+
+  @override
+  String get tint => 'Nuanță';
 
   @override
   String get zoomSelectionCleared => 'Selecția a fost ștearsă';
@@ -1353,6 +1395,30 @@ class AppLocalizationsRo extends AppLocalizations {
 
   @override
   String get checkForUpdates => 'Verifică actualizările';
+
+  @override
+  String get updateChecking => 'Se verifică actualizările…';
+
+  @override
+  String get updateUpToDate => 'Folosești cea mai recentă versiune.';
+
+  @override
+  String get updateCheckFailed =>
+      'Verificarea actualizărilor a eșuat. Încearcă din nou mai târziu.';
+
+  @override
+  String get updateAvailableTitle => 'Actualizare disponibilă';
+
+  @override
+  String updateAvailableBody(Object version) {
+    return 'Clingfy $version este disponibil pentru descărcare.';
+  }
+
+  @override
+  String get updateDownload => 'Descarcă actualizarea';
+
+  @override
+  String get updateLater => 'Mai târziu';
 
   @override
   String get escToCancel => 'Esc pentru anulare';
@@ -1791,6 +1857,13 @@ class AppLocalizationsRo extends AppLocalizations {
       'Dacă ceva nu merge bine, deschideți folderul de loguri și trimiteți logul de astăzi la suport.';
 
   @override
+  String get diagnosticsVerboseLogging => 'Jurnalizare detaliată';
+
+  @override
+  String get diagnosticsVerboseLoggingHelp =>
+      'Înregistrează loguri de depanare detaliate pentru a ajuta la reproducerea unei probleme greu de găsit. Activează-l, reprodu problema, apoi exportă diagnosticarea și trimite fișierele. Lasă-l dezactivat pentru utilizarea zilnică.';
+
+  @override
   String get openLogsFolder => 'Deschide folderul de loguri';
 
   @override
@@ -1953,6 +2026,13 @@ class AppLocalizationsRo extends AppLocalizations {
   String get diagnosticsLogRevealed => 'Fișierul log de astăzi a fost afișat.';
 
   @override
+  String get exportDiagnostics => 'Exportă diagnosticele';
+
+  @override
+  String get diagnosticsExported =>
+      'Pachetul de diagnostic a fost creat și afișat în managerul de fișiere.';
+
+  @override
   String get recordingSystemAudio => 'Audio de sistem';
 
   @override
@@ -1967,11 +2047,6 @@ class AppLocalizationsRo extends AppLocalizations {
 
   @override
   String get permissionsOnboardingMicCameraRail => 'Mic + Cameră';
-
-  @override
-  String permissionsOnboardingStepLabel(int current) {
-    return 'Pasul $current din 4';
-  }
 
   @override
   String get permissionsOnboardingWelcomeTitle => 'Bun venit la Clingfy';
@@ -2364,4 +2439,180 @@ class AppLocalizationsRo extends AppLocalizations {
   @override
   String get licenseNotEntitled =>
       'Această licență nu deblochează funcțiile Pro.';
+
+  @override
+  String get warnMicOpenFailed =>
+      'Microfonul nu a putut porni — verifică accesul la microfon în setările de confidențialitate Windows. Înregistrarea continuă fără el.';
+
+  @override
+  String get warnMicDisconnected =>
+      'Microfonul a fost deconectat. Înregistrarea continuă fără el.';
+
+  @override
+  String get warnSystemAudioOpenFailed =>
+      'Sunetul sistemului nu a putut fi captat — verifică dispozitivul de ieșire în setările de sunet Windows. Înregistrarea continuă fără el.';
+
+  @override
+  String get warnSystemAudioStopped =>
+      'Captarea sunetului de sistem s-a oprit. Înregistrarea continuă fără el.';
+
+  @override
+  String get warnCameraUnavailable =>
+      'Camera nu este disponibilă acum. Înregistrarea continuă fără suprapunerea camerei.';
+
+  @override
+  String get warnCameraOpenFailed =>
+      'Camera nu a putut porni — verifică accesul la cameră în setările de confidențialitate Windows. Înregistrarea continuă fără suprapunere.';
+
+  @override
+  String get warnCameraDisconnected =>
+      'Camera a fost deconectată. Înregistrarea continuă fără ea.';
+
+  @override
+  String get warnEncoderVideoError =>
+      'Înregistrarea a întâmpinat o problemă de codare — videoclipul poate fi incomplet.';
+
+  @override
+  String get warnEncoderAudioError =>
+      'Înregistrarea a întâmpinat o problemă de codare audio — sunetul poate fi incomplet.';
+
+  @override
+  String get errMicrophonePermissionRequiredWindows =>
+      'Activează accesul la microfon în Setări Windows > Confidențialitate și securitate > Microfon, apoi încearcă din nou.';
+
+  @override
+  String get errCameraPermissionDeniedWindows =>
+      'Activează accesul la cameră în Setări Windows > Confidențialitate și securitate > Cameră.';
+
+  @override
+  String get permissionsHelpTextWindows =>
+      'Vezi ce poate folosi Clingfy și sari direct la pagina potrivită din Setări Windows.';
+
+  @override
+  String get permissionsChangedHintWindows =>
+      'Dacă schimbi o setare în Setări Windows, revino la Clingfy și reîmprospătează pagina pentru starea curentă.';
+
+  @override
+  String get permissionsScreenRecordingHelpWindows =>
+      'Windows nu cere o permisiune de înregistrare a ecranului — captarea ecranului, ferestrelor și zonelor funcționează din start.';
+
+  @override
+  String get permissionsNoGrantNeeded => 'Nu necesită permisiune';
+
+  @override
+  String get permissionsDetailMicAccessOffWindows =>
+      'Accesul la microfon este oprit în setările de confidențialitate Windows. Pornește-l din Setări Windows > Confidențialitate și securitate > Microfon.';
+
+  @override
+  String get permissionsDetailMicMissingWindows =>
+      'Microfonul selectat nu este conectat. Reconectează-l sau alege altul.';
+
+  @override
+  String get permissionsDetailCameraAccessOffWindows =>
+      'Accesul la cameră este oprit în setările de confidențialitate Windows. Pornește-l din Setări Windows > Confidențialitate și securitate > Cameră.';
+
+  @override
+  String get permissionsDetailCameraMissingWindows =>
+      'Camera selectată nu este conectată. Reconecteaz-o sau alege alta.';
+
+  @override
+  String get permissionsDetailNoCamerasWindows =>
+      'Nu a fost detectată nicio cameră pe acest PC.';
+
+  @override
+  String get permissionsOpenSoundSettings => 'Deschide setările de sunet';
+
+  @override
+  String get permissionsOnboardingTrustLocalFirstWindows =>
+      'Local mai întâi: înregistrările rămân pe PC-ul tău.';
+
+  @override
+  String get permissionsOnboardingTrustPermissionControlWindows =>
+      'Controlezi oricând accesul la microfon și cameră din Setări Windows.';
+
+  @override
+  String get permissionsOnboardingWindowsNoScreenGrant =>
+      'Nicio permisiune de înregistrare a ecranului nu este necesară pe Windows — captarea funcționează din start.';
+
+  @override
+  String permissionsOnboardingStepCount(int current, int total) {
+    return 'Pasul $current din $total';
+  }
+
+  @override
+  String get warnWindowClosedPartialSaved =>
+      'Înregistrarea s-a oprit: fereastra pe care o înregistrai a fost închisă. Înregistrarea de până atunci a fost salvată.';
+
+  @override
+  String get warnDisplayDisconnectedPartialSaved =>
+      'Înregistrarea s-a oprit: ecranul pe care îl înregistrai a fost deconectat. Înregistrarea de până atunci a fost salvată.';
+
+  @override
+  String get cameraPreviewUseInApp =>
+      'Nu vezi camera? Folosește previzualizarea din aplicație';
+
+  @override
+  String get cameraPreviewUseFloating => 'Folosește bula plutitoare a camerei';
+
+  @override
+  String get appliedOnExportNoticeWindows =>
+      'Se aplică la export — previzualizarea din aplicație nu arată încă acest efect.';
+
+  @override
+  String get errBadMode =>
+      'Acest mod de înregistrare nu este încă disponibil pe Windows.';
+
+  @override
+  String get errNoCamera => 'Nicio cameră disponibilă.';
+
+  @override
+  String get errCameraInputError => 'Camera a încetat să funcționeze.';
+
+  @override
+  String get errFileNotFound => 'Fișierul nu a fost găsit.';
+
+  @override
+  String get errWindowsNotImplemented =>
+      'Această funcție nu este încă disponibilă pe Windows.';
+
+  @override
+  String get errRecordingDiskFull =>
+      'Spațiu insuficient pe disc pentru a începe înregistrarea.';
+
+  @override
+  String get errPreviewOpenFailed => 'Previzualizarea nu a putut fi deschisă.';
+
+  @override
+  String get errPreviewRenderFailed =>
+      'Previzualizarea a încetat să se redea. Închide și redeschide înregistrarea.';
+
+  @override
+  String get errRecordingStartTimeout => 'Înregistrarea nu a pornit la timp.';
+
+  @override
+  String get errRecordingFinalizeTimeout => 'Salvarea înregistrării a expirat.';
+
+  @override
+  String get errPreviewTimeout =>
+      'Previzualizarea a durat prea mult să se încarce.';
+
+  @override
+  String get errInternalError => 'A apărut o eroare internă.';
+
+  @override
+  String recordingInterruptedNotice(int count) {
+    String _temp0 = intl.Intl.pluralLogic(
+      count,
+      locale: localeName,
+      other:
+          '$count de înregistrări au fost întrerupte și nu au putut fi recuperate.',
+      few:
+          '$count înregistrări au fost întrerupte și nu au putut fi recuperate.',
+      one: 'O înregistrare a fost întreruptă și nu a putut fi recuperată.',
+    );
+    return '$_temp0';
+  }
+
+  @override
+  String get forceNativeCrashLabel => 'Forțează blocarea nativă (test)';
 }

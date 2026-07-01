@@ -1,0 +1,321 @@
+# Windows port — editing features (clips + color): status, gaps, and macOS lessons
+
+> **Audience:** the Windows machine (also running Claude Code) that will build the
+> Windows equivalents of the light-editor features. This is a **handoff** written
+> right after the macOS clip-editing work landed, so the Windows port can inherit
+> the architecture decisions and — more importantly — **avoid the bugs we already
+> hit and fixed on macOS.**
+>
+> **Read alongside** (do not duplicate them):
+> - `docs/windows-port.md` — the general phased Windows port (recording, camera,
+>   cursor, zoom, export up to the beta), with per-phase "known deliberate edges".
+> - `docs/editing-platform-plan.md` — the editing-features *plan* (Mac-first,
+>   Phases 0–5: volume/normalize → audio separation → color → split/cut →
+>   audio-format → voice cleanup → subtitles+translate).
+> - `docs/windows-port-inventory.md` — feature inventory + the bridge contract +
+>   the macOS→Windows API replacement table.
+>
+> **Scope of THIS doc:** the two editing features that are DONE on macOS but NOT
+> on Windows — **color grade (Phase 2)** and **clips: split / cut / trim / arrange
+> (Phase 3)** — plus the concrete pitfalls encountered building them.
+
+---
+
+## 0. TL;DR (read this first)
+
+- **macOS: clip editing (split / cut / trim / ARRANGE) + color grade is complete
+  end-to-end** — portable Dart model, live native preview, and export bake. Merged
+  to `develop` as PR-3a…3e (clips) and PR-2a…2c (color).
+- **Windows: the portable Dart model already works** (it is platform-agnostic).
+  **The native halves are NO-OPS:** `previewSetClips` and `previewSetColorGrade`
+  are wired to `HandleNoopSetter` in `windows/runner/Bridge/Routers/preview_router.cpp`,
+  and the `exportVideo` handler ignores the `clips` and `colorGrade` args.
+- **The single most important lesson — do NOT build a "seek-through-cuts"
+  preview.** macOS first shipped a preview that stayed on the raw asset and
+  *seeked across every cut*; it hitched <1s at each boundary and spawned a family
+  of reorder bugs (skip, backward-snap). We ripped it out and replaced it with a
+  **stitched-timeline composition** preview (PR-3e). **Windows should build the
+  composition/stitched-timeline preview from the start** and skip that whole
+  detour. See §5.4.
+
+---
+
+## 1. Where these features plug into the architecture
+
+The Flutter↔native seam is the same one described in `CLAUDE.md` / the inventory.
+For clips + color, the load-bearing facts:
+
+- **The model is portable Dart** and lives in `lib/core/timeline/` +
+  `lib/core/clips/` (clips) and `lib/core/models/` (`ColorGrade`). It has **no
+  platform code** — Windows gets it for free. Key pieces:
+  - `Clip` (`lib/core/timeline/model/edit_track.dart`): `id`, `sourceInMs`,
+    `sourceOutMs`, `timelineStartMs`, `enabled`.
+  - `ClipTimeline` / `ClipOperations` (`lib/core/timeline/`): pure split / remove
+    (ripple) / trim / `moveToIndex` (arrange) + the `timeline↔source` mapping.
+    Every op returns a **normalized** list (contiguous `timelineStartMs`).
+  - `ClipEditorController` (`lib/core/clips/`): the ChangeNotifier the UI drives;
+    undo/redo via `SetClipsCommand` over the shared `EditSession`; pushes each
+    change to native via `previewSetClips`.
+  - `ColorGrade` (`lib/core/models/`): exposure/contrast/saturation/temperature/
+    tint, all normalized `[-1, 1]`, `isIdentity` fast-path.
+- **The UI is shared Flutter** (`lib/app/home/preview/widgets/timeline/…` +
+  `video_timeline.dart`). The clip lane, trim handles, scissors cut, and
+  drag-to-reorder all run on Windows already **as long as the native preview
+  honors `previewSetClips`.** (Today it doesn't, so editing "works" in the model
+  but the Windows preview never reflects a cut.)
+- **The native side is what's missing on Windows:** live preview of cuts/reorder,
+  and baking cuts/reorder/color into the exported file.
+
+### The `timeline ↔ source` invariant (the spine)
+
+Every other effect — **zoom segments, cursor samples, camera sync** — is keyed to
+**original recording (source) time**. The moment clips re-time or reorder the
+video, those effects must be remapped through the timeline↔source map or they
+silently desync. This is the single concept the whole feature is organized around.
+On macOS the map is `ClipPlaybackPlanner` (Swift). **Windows must port the same
+math** (§4) and route zoom/cursor/camera through it.
+
+---
+
+## 2. Status matrix — what's done on macOS vs missing on Windows
+
+| Capability | macOS | Windows | Notes |
+|---|---|---|---|
+| Clip model (split/cut/trim/arrange, undo/redo) | ✅ portable Dart | ✅ portable Dart | Shared; nothing to do. |
+| Clip **UI** (lane, trim, scissors, drag-reorder) | ✅ shared Flutter | ✅ shared Flutter | Runs on Windows; just needs a native preview that honors it. |
+| Clip **live preview** (play through cuts/reorder) | ✅ composition preview (PR-3e) | ❌ `previewSetClips` = no-op | **Build composition-based (§5.4).** |
+| Clip **export bake** (cuts + reorder) | ✅ (PR-3d, PR-3c5) | ❌ `clips` export arg ignored | Media Foundation stitch (§5). |
+| Color model (`ColorGrade`, auto + manual) | ✅ portable Dart | ✅ portable Dart | Shared. |
+| Color **live preview** | ✅ CIFilter videoComposition | ❌ `previewSetColorGrade` = no-op | Needs a per-frame color pass in `preview_compositor.cpp`. |
+| Color **export bake** | ✅ (PR-2c) | ❌ `colorGrade` export arg ignored | Per-frame color pass in the MF encode. |
+| Audio volume / normalize on export | ✅ | ✅ (already shipped) | See `docs/editing-platform-plan.md` Phase 1. |
+
+**Windows entry points to change** (already scaffolded, currently stubs/ignores):
+- `windows/runner/Bridge/Routers/preview_router.cpp` — `previewSetClips` (line
+  ~608) and `previewSetColorGrade` (line ~605) → replace `HandleNoopSetter`.
+- `windows/runner/preview/preview_compositor.cpp` / `preview_engine.cpp` — where
+  the live preview frame is composed (apply cuts → stitched timeline + color).
+- `windows/runner/Capture/Export/export_pipeline.cpp` / `export_session.cpp` /
+  `export_audio.cpp` — where the export honors `clips` + `colorGrade`.
+- `windows/runner/Encoding/mf_sink_writer_encoder.cpp` — the MF encode loop.
+- `windows/runner/Audio/audio_mixer.cpp` — the kept-range audio stitch (§5.2).
+
+---
+
+## 3. Bridge contract for these features
+
+Command/method names are **inline string literals** (not constants) and must
+match on both sides. For clips + color:
+
+- **`previewSetClips`** (Flutter→native, live): args `{ clips: [ {id, sourceInMs,
+  sourceOutMs, timelineStartMs, enabled}, … ], sessionId }`. Clips are in
+  **timeline order**; disabled clips are dropped by the parser; the *kept ranges*
+  are the enabled clips' `[sourceInMs, sourceOutMs)` source windows. Empty / a
+  single whole-recording clip = **passthrough** (no cuts).
+- **`previewSetColorGrade`** (Flutter→native, live): args carry the `ColorGrade`
+  map. Identity grade = passthrough.
+- **`exportVideo`** (Flutter→native): the args map already includes **`clips`**
+  (same shape as above) and **`colorGrade`**. Windows currently parses the map but
+  **ignores both** — it must consume them.
+
+Windows already has a **`bridge_contract_coverage_test`** — keep the clips/color
+methods covered there when you implement them, and keep the day-one contract:
+**every `previewSet*` ships a Windows implementation (even if a documented
+degrade), never silently diverging.**
+
+---
+
+## 4. The portable cut-math to port to C++ (`ClipPlaybackPlanner`)
+
+macOS keeps this as a pure enum `ClipPlaybackPlanner` in
+`macos/Runner/Capture/Export/CompositionBuilder.swift`, exhaustively unit-tested
+in `macos/RunnerTests/RunnerTests.swift` (`ClipPlaybackPlannerTests`). It is pure
+integer-millisecond math — **port it verbatim to C++** (e.g. under
+`windows/runner/Capture/Export/`) with the same tests. The functions and their
+**invariants** (get these exactly right — the macOS bugs in §5 were all subtle
+violations of these):
+
+- `ClipKeptRange { sourceInMs, sourceOutMs }`, `durationMs = sourceOutMs − sourceInMs`.
+- `isPassthrough(ranges, assetDurationMs)` — empty, or a single range covering
+  `[0, assetDurationMs]`. Skips all clip handling.
+- `coalesce(ranges)` — merge *source-adjacent* ranges (`out == next.in`). A split
+  with no deletion collapses back to passthrough. **Reordered ranges are NOT
+  source-adjacent, so coalesce leaves them intact.**
+- `isSourceMonotonic(ranges)` — true when ranges are in non-decreasing **source**
+  order. Split/cut/trim keep this true; **only arrange/reorder breaks it.** This
+  bit decides "simple cut" vs "reorder" in both preview and export.
+- `editedDurationMs(ranges)` — sum of kept `durationMs` (order-independent).
+- `editedMs(forSourceMs, activeIndex, ranges)` — source→edited given the active
+  slot (handles arrange; clamps within the slot).
+- `sourceMs(forEditedMs, ranges)` — the inverse: edited→source. **This is the map
+  the composition preview uses every frame** to sample cursor/zoom/camera.
+- `editedMsForKeptSourceMs(sourceMs, ranges)` — source→edited or `nil` if the
+  moment is in a cut gap (used by the export writer to drop/keep frames).
+- `audioSlots(ranges, audioDurationMs)` → `[{sourceInMs, editedStartMs,
+  copyDurationMs, durationMs}]` — tiles kept ranges onto the edited timeline; each
+  slot spans its **full** `durationMs`, copying only `copyDurationMs` of available
+  audio and leaving the rest silent. **Reused for the video stitch too.** See
+  §5.2 — the "advance by full duration" rule is load-bearing.
+
+---
+
+## 5. Bugs & pitfalls we hit on macOS — AVOID THESE on Windows
+
+These are the expensive lessons. Each was found by on-device testing and/or
+adversarial review and fixed; the Windows port should design them out from day one.
+
+### 5.1 Millisecond conversion must TRUNCATE, not round
+
+The whole-recording clip's `sourceOutMs` is derived on the Flutter side as
+`Int(durationSeconds * 1000)` (**truncation**). Native must match. On macOS we
+initially used `.rounded()` for `assetDurationMs`; for ~1/3 of durations it came
+out 1 ms larger, so `isPassthrough` wrongly reported an *unedited* recording as
+cut and ran the manual path — and a boundary frame could drop. **Rule: every
+seconds→ms conversion in the clip path truncates (`(int)(seconds * 1000.0)`), and
+the frame keep-check truncates too** (a frame at `sourceOutMs − ε` must map below
+the exclusive `sourceOutMs`).
+
+### 5.2 Kept-range audio must advance by the FULL slot duration (A/V sync)
+
+When stitching kept-range audio, advance the write cursor by each range's **full
+edited duration**, not by however much audio was actually copied. The captured
+audio track can be a hair shorter than the video (or the mic stopped early), so a
+range's audio gets **clamped/absent** — if you advance by the *copied* length, a
+clamped range sitting **mid-timeline under reorder** pulls every later range's
+audio earlier → audible desync (up to seconds). Fix: fill the shortfall with
+explicit **silence** (`insertEmptyTimeRange` on macOS; a silent-sample gap in the
+MF/`audio_mixer` path) so each slot is exactly `durationMs`. This was a HIGH review
+finding on macOS. `audioSlots` (§4) encodes it — **use the same slot math for
+both audio and video stitching.** (For source-monotonic cuts it never mattered —
+only the *last* range can be clamped; reorder is what exposed it.)
+
+### 5.3 Reorder export cannot be a single forward read
+
+For **reorder** (non-monotonic ranges), you cannot forward-read the source once
+and re-stamp — the output PTS would go backwards (invalid). macOS reads **each
+kept range's source window in timeline order** (a per-window reader) and stamps
+onto consecutive edited PTS. On Windows/MF the natural equivalent is to **build a
+stitched timeline** (a Media Foundation topology / sequencer source, or read
+per-range) that presents the kept ranges contiguously in **timeline order**. The
+**audio path already reorders correctly** by inserting kept ranges in timeline
+order (§5.2). Guard: `isSourceMonotonic` distinguishes simple cuts from reorder.
+
+### 5.4 The seek-through-cuts preview is a trap — build a stitched-timeline preview
+
+macOS's first preview kept the player on the raw asset and **seeked across each
+cut** at playback. Problems that cost multiple on-device iterations:
+- **Hitch:** every cut is a frame-accurate seek that decodes from the prior
+  keyframe — on a screen recording (sparse keyframes) that stalls playback <1s at
+  **every** boundary.
+- **Reorder "skip":** a reorder advance seeks *backward* in source; the async seek
+  hadn't landed, so the next tick read a stale (later) position as "this range is
+  already finished" and skipped the piece. (We patched it with an
+  `awaitingClipSeek` gate — then deleted the whole approach.)
+- **Playhead "backward-snap":** the reported edited position was derived from the
+  raw source position, which for a source-gap overshoot resolves to a *different*
+  (earlier) timeline slot → the scrubber jumped backwards.
+
+**The fix (PR-3e) — and what Windows should do from the start:** play a **stitched
+composition** of the kept ranges (contiguous edited timeline), so playback is
+naturally smooth with **no per-cut seeks**. Then:
+- The player's time **is edited time**. Report it straight to Flutter.
+- Map **edited→source once per frame** (`sourceMs(forEditedMs)`) to sample the
+  **source-keyed overlays** (cursor, zoom, camera). Identity when there are no cuts.
+- Rebuild the stitched timeline when clips change, **debounced** (macOS uses
+  ~120 ms) so a live trim drag (streams ~60×/s) doesn't thrash the pipeline — the
+  clip lane stays live in Flutter and the preview catches up on release.
+- Reset zoom smoothing/hysteresis when source time jumps **backward** at a reorder
+  boundary (the edited→source map reveals it).
+On Windows: `preview_compositor.cpp` / `preview_engine.cpp` should compose from a
+kept-range **stitched timeline**, not from a seek-per-cut loop. This also
+sidesteps 5.4's three bugs entirely.
+
+### 5.5 Camera stays a separate synced player — remap ALL its time inputs
+
+The camera preview is a **separate synced player + PiP layer**, not a track in the
+composition (it has independent geometry, zoom, placement animation, and a sync
+timeline). Once the main player runs edited time, **every** place that feeds the
+camera the screen time must map edited→source — not just the per-frame tick, but
+also the off-tick paths (window relayout, camera-param change, placement-transition
+timer, manual drag clamp). On macOS we missed 5 such call sites in the first pass
+(caught by review). **Windows: route camera time through one `edited→source`
+helper and audit every caller.**
+
+### 5.6 Narrow-clip trim handle swallowed the reorder drag (shared Flutter UI)
+
+Already fixed in shared code, but note it: the selected clip's opaque end-trim
+handle sat on top and absorbed a body drag on a very narrow clip (≤ ~22 px),
+blocking drag-to-reorder. Fix capped the handle hit-width so a reorder grab-strip
+always survives. Windows inherits the fix (shared widget).
+
+### 5.7 Backspace/Delete keybinding + a benign Flutter keyboard assertion
+
+Shared-Flutter items surfaced during macOS testing (Windows inherits both):
+- **Backspace/Delete now deletes the selected CLIP first** (falls back to
+  zoom-segment delete). If Windows key routing differs, verify the `Shortcuts`/
+  `Actions` still resolve over the timeline focus.
+- A **debug-only** Flutter framework assertion
+  (`HardwareKeyboard._assertEventIsRegular`, tripped by *holding* a key) is dropped
+  in `lib/app/infrastructure/error/global_error_handlers.dart`. It is stripped in
+  release and is not an app bug — do not chase it on Windows either.
+
+### 5.8 Known minor gap (not a blocker)
+
+Under cuts, the **zoom lane's recording-time segments mis-position vs the edited
+ruler** (the lane still draws segments in source time). Acceptable for v1 on both
+platforms; a proper fix remaps the zoom lane through the timeline↔source map.
+
+### 5.9 macOS-only build noise (ignore on Windows)
+
+For completeness: on macOS, SourceKit single-file diagnostics report false
+"cannot find X in scope" for module-level symbols — confirm via `xcodebuild …
+TEST SUCCEEDED`, not the editor squiggles. This is a macOS toolchain quirk with no
+Windows equivalent.
+
+---
+
+## 6. Recommended Windows build order
+
+1. **Port `ClipPlaybackPlanner`** to C++ with its tests (§4). Pure math, no OS deps
+   — do this first; everything else depends on it.
+2. **Color** before clips (smaller, no timeline remap): implement
+   `previewSetColorGrade` (per-frame color pass in `preview_compositor.cpp`) and
+   honor `colorGrade` in the export encode. Identity = passthrough.
+3. **Clip export bake** (deterministic, testable headless): honor `clips` in
+   `export_pipeline` — stitch kept ranges (video via MF topology/per-range;
+   audio via `audio_mixer` with the §5.2 slot rule); route zoom/cursor/camera
+   through the timeline↔source map; reorder = non-monotonic (§5.3).
+4. **Clip live preview** — the **stitched-timeline** approach (§5.4), NOT
+   seek-through-cuts. Wire `previewSetClips` to rebuild the stitched timeline
+   (debounced) and map edited→source for the overlays + camera (§5.5).
+5. Keep the `bridge_contract_coverage_test` honest and add per-feature smoke
+   checks (mirror the macOS `RunnerTests` invariants).
+
+**Guiding principle:** the export is the deterministic, headless-testable part —
+land it first and unit-test the math; the preview is the interactive, "verify
+on-device" part — build it stitched-timeline-first so you never inherit the macOS
+seek bugs.
+
+---
+
+## 7. Future roadmap (reference only — not scheduled here)
+
+For the broader editing initiative (tracked in `docs/editing-platform-plan.md`),
+the open items after clips+color are:
+
+- **Clip / color persistence across app restarts** — durable editor state (macOS
+  `editor_state.json` via `CanvasAppearanceStore`; the plan introduces a net-new
+  `post/state.json`). Today the grade + clips reset per session.
+- **Windows clip render** — the port this whole doc is about.
+- **Remaining friend-features:** audio (boost / **denoise** / source separation) →
+  **subtitles + translate** (on-device ASR: WhisperKit on macOS, whisper.cpp on
+  Windows; translation with the large-v3-turbo caveat — turbo cannot translate).
+- **Known minor gap:** the zoom-lane-vs-edited-ruler mis-position under cuts (§5.8).
+
+---
+
+*Written 2026-07-01, right after macOS PR-3c5 (drag-to-reorder + export bake) and
+PR-3e (smooth composition preview) merged to `develop`. If you (the Windows
+machine) find any of the above is stale, update this file in the same PR that
+touches the code — it is the shared source of truth for the editing-features
+port.*

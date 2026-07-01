@@ -899,6 +899,24 @@ class AppLocalizationsEn extends AppLocalizations {
   String get snap => 'Snap';
 
   @override
+  String get clips => 'Clips';
+
+  @override
+  String get clipSplit => 'Split';
+
+  @override
+  String get clipSplitTooltip => 'Split clip at playhead';
+
+  @override
+  String get clipRemoveSelected => 'Remove selected clip';
+
+  @override
+  String get clipUndo => 'Undo clip edit';
+
+  @override
+  String get clipRedo => 'Redo clip edit';
+
+  @override
   String get zoomBehavior => 'Zoom behavior';
 
   @override
@@ -986,6 +1004,30 @@ class AppLocalizationsEn extends AppLocalizations {
 
   @override
   String get zoomUndoLastAction => 'Undo last action';
+
+  @override
+  String get zoomRedoLastAction => 'Redo last action';
+
+  @override
+  String get colorCorrection => 'Color Correction';
+
+  @override
+  String get autoEnhance => 'Auto-enhance';
+
+  @override
+  String get exposure => 'Exposure';
+
+  @override
+  String get contrast => 'Contrast';
+
+  @override
+  String get saturation => 'Saturation';
+
+  @override
+  String get temperature => 'Temperature';
+
+  @override
+  String get tint => 'Tint';
 
   @override
   String get zoomSelectionCleared => 'Selection cleared';
@@ -1343,6 +1385,29 @@ class AppLocalizationsEn extends AppLocalizations {
 
   @override
   String get checkForUpdates => 'Check for Updates';
+
+  @override
+  String get updateChecking => 'Checking for updates…';
+
+  @override
+  String get updateUpToDate => 'You\'re on the latest version.';
+
+  @override
+  String get updateCheckFailed => 'The update check failed. Try again later.';
+
+  @override
+  String get updateAvailableTitle => 'Update available';
+
+  @override
+  String updateAvailableBody(Object version) {
+    return 'Clingfy $version is available for download.';
+  }
+
+  @override
+  String get updateDownload => 'Download update';
+
+  @override
+  String get updateLater => 'Later';
 
   @override
   String get escToCancel => 'Esc to cancel';
@@ -1776,6 +1841,13 @@ class AppLocalizationsEn extends AppLocalizations {
       'If something goes wrong, open the logs folder and send today\'s log file to support.';
 
   @override
+  String get diagnosticsVerboseLogging => 'Verbose logging';
+
+  @override
+  String get diagnosticsVerboseLoggingHelp =>
+      'Record detailed debug logs to help reproduce a hard-to-find issue. Turn it on, reproduce the problem, then export diagnostics and send the files. Leave it off for everyday use.';
+
+  @override
   String get openLogsFolder => 'Open Logs Folder';
 
   @override
@@ -1935,6 +2007,13 @@ class AppLocalizationsEn extends AppLocalizations {
   String get diagnosticsLogRevealed => 'Revealed today\'s log file.';
 
   @override
+  String get exportDiagnostics => 'Export Diagnostics';
+
+  @override
+  String get diagnosticsExported =>
+      'Diagnostics package created — revealed in your file manager.';
+
+  @override
   String get recordingSystemAudio => 'System audio';
 
   @override
@@ -1949,11 +2028,6 @@ class AppLocalizationsEn extends AppLocalizations {
 
   @override
   String get permissionsOnboardingMicCameraRail => 'Mic + Camera';
-
-  @override
-  String permissionsOnboardingStepLabel(int current) {
-    return 'Step $current of 4';
-  }
 
   @override
   String get permissionsOnboardingWelcomeTitle => 'Welcome to Clingfy';
@@ -2337,4 +2411,176 @@ class AppLocalizationsEn extends AppLocalizations {
 
   @override
   String get licenseNotEntitled => 'This license does not unlock Pro features.';
+
+  @override
+  String get warnMicOpenFailed =>
+      'Your microphone couldn\'t be started — check microphone access in Windows privacy settings. Recording continues without it.';
+
+  @override
+  String get warnMicDisconnected =>
+      'Your microphone was disconnected. Recording continues without it.';
+
+  @override
+  String get warnSystemAudioOpenFailed =>
+      'System audio couldn\'t be captured — check your output device in Windows sound settings. Recording continues without it.';
+
+  @override
+  String get warnSystemAudioStopped =>
+      'System audio capture stopped. Recording continues without it.';
+
+  @override
+  String get warnCameraUnavailable =>
+      'Your camera isn\'t available right now. Recording continues without the camera overlay.';
+
+  @override
+  String get warnCameraOpenFailed =>
+      'Your camera couldn\'t be started — check camera access in Windows privacy settings. Recording continues without the overlay.';
+
+  @override
+  String get warnCameraDisconnected =>
+      'Your camera was disconnected. Recording continues without it.';
+
+  @override
+  String get warnEncoderVideoError =>
+      'Recording hit an encoder problem — the video may be incomplete.';
+
+  @override
+  String get warnEncoderAudioError =>
+      'Recording hit an audio encoding problem — the audio may be incomplete.';
+
+  @override
+  String get errMicrophonePermissionRequiredWindows =>
+      'Enable microphone access in Windows Settings > Privacy & security > Microphone, then try again.';
+
+  @override
+  String get errCameraPermissionDeniedWindows =>
+      'Enable camera access in Windows Settings > Privacy & security > Camera.';
+
+  @override
+  String get permissionsHelpTextWindows =>
+      'Review what Clingfy can use and jump straight to the right Windows Settings page.';
+
+  @override
+  String get permissionsChangedHintWindows =>
+      'If you change a setting in Windows Settings, return to Clingfy and refresh this page to see the latest status.';
+
+  @override
+  String get permissionsScreenRecordingHelpWindows =>
+      'Windows doesn\'t require a screen-recording permission — display, window, and area capture work out of the box.';
+
+  @override
+  String get permissionsNoGrantNeeded => 'No permission needed';
+
+  @override
+  String get permissionsDetailMicAccessOffWindows =>
+      'Microphone access is turned off in Windows privacy settings. Turn it on in Windows Settings > Privacy & security > Microphone.';
+
+  @override
+  String get permissionsDetailMicMissingWindows =>
+      'The selected microphone isn\'t connected. Plug it back in or choose another one.';
+
+  @override
+  String get permissionsDetailCameraAccessOffWindows =>
+      'Camera access is turned off in Windows privacy settings. Turn it on in Windows Settings > Privacy & security > Camera.';
+
+  @override
+  String get permissionsDetailCameraMissingWindows =>
+      'The selected camera isn\'t connected. Plug it back in or choose another one.';
+
+  @override
+  String get permissionsDetailNoCamerasWindows =>
+      'No camera was detected on this PC.';
+
+  @override
+  String get permissionsOpenSoundSettings => 'Open Sound Settings';
+
+  @override
+  String get permissionsOnboardingTrustLocalFirstWindows =>
+      'Local-first: your recordings stay on your PC.';
+
+  @override
+  String get permissionsOnboardingTrustPermissionControlWindows =>
+      'You control mic and camera access anytime in Windows Settings.';
+
+  @override
+  String get permissionsOnboardingWindowsNoScreenGrant =>
+      'No screen-recording permission needed on Windows — capture works out of the box.';
+
+  @override
+  String permissionsOnboardingStepCount(int current, int total) {
+    return 'Step $current of $total';
+  }
+
+  @override
+  String get warnWindowClosedPartialSaved =>
+      'Recording stopped: the window you were recording was closed. Your recording up to that point has been saved.';
+
+  @override
+  String get warnDisplayDisconnectedPartialSaved =>
+      'Recording stopped: the display you were recording was disconnected. Your recording up to that point has been saved.';
+
+  @override
+  String get cameraPreviewUseInApp =>
+      'Can\'t see the camera? Use in-app preview';
+
+  @override
+  String get cameraPreviewUseFloating => 'Use floating camera bubble';
+
+  @override
+  String get appliedOnExportNoticeWindows =>
+      'Applied on export — the inline preview doesn\'t show this effect yet.';
+
+  @override
+  String get errBadMode =>
+      'This recording mode isn\'t available on Windows yet.';
+
+  @override
+  String get errNoCamera => 'No camera is available.';
+
+  @override
+  String get errCameraInputError => 'The camera stopped working.';
+
+  @override
+  String get errFileNotFound => 'File not found.';
+
+  @override
+  String get errWindowsNotImplemented =>
+      'This feature isn\'t available on Windows yet.';
+
+  @override
+  String get errRecordingDiskFull =>
+      'Not enough disk space to start recording.';
+
+  @override
+  String get errPreviewOpenFailed => 'Preview failed to open.';
+
+  @override
+  String get errPreviewRenderFailed =>
+      'Preview stopped rendering. Close and reopen the recording.';
+
+  @override
+  String get errRecordingStartTimeout => 'Recording did not start in time.';
+
+  @override
+  String get errRecordingFinalizeTimeout => 'Saving the recording timed out.';
+
+  @override
+  String get errPreviewTimeout => 'Preview took too long to load.';
+
+  @override
+  String get errInternalError => 'An internal error occurred.';
+
+  @override
+  String recordingInterruptedNotice(int count) {
+    String _temp0 = intl.Intl.pluralLogic(
+      count,
+      locale: localeName,
+      other: '$count recordings were interrupted and could not be recovered.',
+      one: '1 recording was interrupted and could not be recovered.',
+    );
+    return '$_temp0';
+  }
+
+  @override
+  String get forceNativeCrashLabel => 'Force native crash (test)';
 }

@@ -3,6 +3,7 @@ import 'package:clingfy/app/permissions/permissions_controller.dart';
 import 'package:clingfy/app/permissions/screens/permissions_onboarding_screen.dart';
 import 'package:clingfy/core/bridges/native_bridge.dart';
 import 'package:clingfy/ui/platform/widgets/app_button.dart';
+import 'package:clingfy/ui/platform/platform_kind.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_test/flutter_test.dart';
@@ -12,6 +13,12 @@ void main() {
   TestWidgetsFlutterBinding.ensureInitialized();
 
   const channel = MethodChannel(NativeChannel.screenRecorder);
+
+  // Phase 10.2 forked the onboarding journey by platform; the original
+  // tests below pin the 4-step macOS flow regardless of the host OS.
+  setUp(() {
+    debugPlatformKindOverride = PlatformKind.macos;
+  });
 
   Future<void> mockPermissionStatus({
     required bool screenRecording,
@@ -72,8 +79,70 @@ void main() {
   }
 
   tearDown(() async {
+    debugPlatformKindOverride = null;
     TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger
         .setMockMethodCallHandler(channel, null);
+  });
+
+  group('Windows journey (Phase 10.2)', () {
+    setUp(() {
+      debugPlatformKindOverride = PlatformKind.windows;
+    });
+
+    testWidgets('rail shows only Welcome and Mic + Camera', (tester) async {
+      await mockPermissionStatus(screenRecording: true);
+      final controller = buildController(screenRecording: true);
+      await tester.pumpWidget(buildTestApp(controller));
+      await pumpOnboarding(tester);
+
+      expect(find.text('Welcome'), findsOneWidget);
+      expect(find.text('Mic + Camera'), findsOneWidget);
+      expect(find.text('Screen Recording'), findsNothing);
+      expect(find.text('Accessibility'), findsNothing);
+      // Step counter reflects the two-step journey.
+      expect(find.text('Step 1 of 2'), findsOneWidget);
+    });
+
+    testWidgets('welcome tells the Windows truth about screen capture', (
+      tester,
+    ) async {
+      await mockPermissionStatus(screenRecording: true);
+      final controller = buildController(screenRecording: true);
+      await tester.pumpWidget(buildTestApp(controller));
+      await pumpOnboarding(tester);
+
+      expect(
+        find.textContaining('No screen-recording permission needed'),
+        findsOneWidget,
+      );
+      // No dead macOS affordances on Windows.
+      expect(find.text('Restart App'), findsNothing);
+      expect(find.textContaining('macOS requires this'), findsNothing);
+    });
+
+    testWidgets('saved step beyond the Windows journey is clamped', (
+      tester,
+    ) async {
+      await mockPermissionStatus(screenRecording: true);
+      final controller = buildController(screenRecording: true);
+      await tester.pumpWidget(
+        MaterialApp(
+          home: MacosTheme(
+            data: MacosThemeData.light(),
+            child: PermissionsOnboardingScreen(
+              controller: controller,
+              initialStep: 3, // persisted on macOS; out of range on Windows
+              onFinished: () {},
+            ),
+          ),
+        ),
+      );
+      await pumpOnboarding(tester);
+
+      // Clamped to the last Windows step (Mic + Camera), not a crash or a
+      // blank page.
+      expect(find.text('Step 2 of 2'), findsOneWidget);
+    });
   });
 
   testWidgets('welcome screen renders current intro content', (tester) async {

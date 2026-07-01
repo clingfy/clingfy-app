@@ -16,6 +16,7 @@ import 'package:macos_ui/macos_ui.dart';
 import 'package:provider/provider.dart';
 
 import '../../../test_helpers/native_test_setup.dart';
+import 'package:clingfy/ui/platform/platform_kind.dart';
 
 class _Harness {
   _Harness({
@@ -68,6 +69,17 @@ class _FakeDeviceController extends Fake implements DeviceController {
 }
 
 void main() {
+  // Phase 10.3 forked this surface's widget tree by platform (no-op
+  // controls hidden / zoom editing disabled on Windows). These legacy
+  // assertions pin the macOS branch regardless of the host OS; Windows
+  // branches are covered by dedicated 10.3 tests.
+  setUp(() {
+    debugPlatformKindOverride = PlatformKind.macos;
+  });
+  tearDown(() {
+    debugPlatformKindOverride = null;
+  });
+
   TestWidgetsFlutterBinding.ensureInitialized();
 
   setUp(() async {
@@ -100,7 +112,7 @@ void main() {
     );
   }
 
-  Widget buildTestApp(_Harness harness) {
+  Widget buildTestApp(_Harness harness, {int selectedIndex = 0}) {
     return MultiProvider(
       providers: [
         ChangeNotifierProvider<RecordingController>.value(
@@ -123,7 +135,7 @@ void main() {
             body: PostProcessingSidebarContainer(
               settingsController: harness.settings,
               isRecording: false,
-              selectedIndex: 0,
+              selectedIndex: selectedIndex,
               availableWidth: 360,
               isCompact: false,
             ),
@@ -180,4 +192,33 @@ void main() {
       semanticsHandle.dispose();
     },
   );
+
+  testWidgets('container rebuilds the color sliders when the grade changes '
+      '(regression: Selector omitted colorGrade)', (tester) async {
+    final semanticsHandle = tester.ensureSemantics();
+    final harness = await createHarness();
+    addTearDown(harness.dispose);
+
+    // selectedIndex 2 = Effects tab, where PostColorGradeSection lives.
+    await tester.pumpWidget(buildTestApp(harness, selectedIndex: 2));
+    await tester.pump();
+    await tester.pump(const Duration(milliseconds: 50));
+
+    final l10n = await AppLocalizations.delegate.load(const Locale('en'));
+    final exposureFinder = find.bySemanticsLabel(l10n.exposure);
+    expect(exposureFinder, findsOneWidget);
+    expect(tester.getSemantics(exposureFinder).value, '0');
+
+    // Drives the same path the slider's onChanged uses. Before the fix the
+    // Selector record omitted colorGrade, so this notify never rebuilt the
+    // sidebar and the slider stayed at 0 while the preview moved.
+    harness.post.setColorGradeExposure(0.5);
+    await tester.pump();
+    // Flush the 120ms preview debounce timer so no timers leak.
+    await tester.pump(const Duration(milliseconds: 200));
+
+    expect(tester.getSemantics(exposureFinder).value, '0.50');
+
+    semanticsHandle.dispose();
+  });
 }

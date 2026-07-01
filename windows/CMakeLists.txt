@@ -23,6 +23,22 @@ else()
       "Debug" "Profile" "Release")
   endif()
 endif()
+# Phase 10.4 (crash pipeline): emit full linker PDBs for optimized builds so
+# native crashes from beta Release copies can be symbolicated in Sentry
+# (uploaded by ops/release/windows/upload_symbols.ps1). CMake's MSVC Release
+# defaults include neither /Zi nor /DEBUG, so without this no PDB exists for
+# the runner at all. /DEBUG:FULL is explicit because FASTLINK-style PDBs are
+# not portable (sentry-cli cannot use them). /DEBUG flips the linker's
+# defaults to /OPT:NOREF,NOICF, so /OPT:REF /OPT:ICF are restored explicitly
+# -- the linked binary stays byte-comparable to a PDB-less Release link.
+# Appended BEFORE the Profile block below so Profile inherits the same flags
+# via the copy. The matching compiler-side /Z7 lives in
+# APPLY_STANDARD_SETTINGS.
+set(CMAKE_EXE_LINKER_FLAGS_RELEASE
+  "${CMAKE_EXE_LINKER_FLAGS_RELEASE} /DEBUG:FULL /OPT:REF /OPT:ICF")
+set(CMAKE_SHARED_LINKER_FLAGS_RELEASE
+  "${CMAKE_SHARED_LINKER_FLAGS_RELEASE} /DEBUG:FULL /OPT:REF /OPT:ICF")
+
 # Define settings for the Profile build mode.
 set(CMAKE_EXE_LINKER_FLAGS_PROFILE "${CMAKE_EXE_LINKER_FLAGS_RELEASE}")
 set(CMAKE_SHARED_LINKER_FLAGS_PROFILE "${CMAKE_SHARED_LINKER_FLAGS_RELEASE}")
@@ -41,6 +57,16 @@ function(APPLY_STANDARD_SETTINGS TARGET)
   target_compile_features(${TARGET} PUBLIC cxx_std_17)
   target_compile_options(${TARGET} PRIVATE /W4 /WX /wd"4100")
   target_compile_options(${TARGET} PRIVATE /EHsc)
+  # Phase 10.4 (crash pipeline): compile optimized configs with /Z7 so debug
+  # info is embedded in every .obj; the linker's /DEBUG:FULL pass (configured
+  # above) folds it into one complete PDB next to each binary. /Z7 is chosen
+  # over /Zi because runner_bridge is a static library -- with /Zi its debug
+  # info lives in an intermediate vcNNN.pdb that must survive until the final
+  # link, while /Z7 carries it inside the .lib itself, and /Z7 has no
+  # parallel-compile PDB write contention. Debug keeps CMake's default /Zi.
+  target_compile_options(${TARGET} PRIVATE
+    "$<$<CONFIG:Release>:/Z7>"
+    "$<$<CONFIG:Profile>:/Z7>")
   target_compile_definitions(${TARGET} PRIVATE "_HAS_EXCEPTIONS=0")
   target_compile_definitions(${TARGET} PRIVATE "$<$<CONFIG:Debug>:_DEBUG>")
 endfunction()
@@ -56,6 +82,43 @@ add_subdirectory("runner")
 # Generated plugin build rules, which manage building the plugins and adding
 # them to the application.
 include(flutter/generated_plugins.cmake)
+
+
+# === Optional native unit tests ===
+#
+# `flutter build windows` does NOT enable this -- it builds only the runner
+# executable target. Tests are an opt-in build step driven by CMake directly:
+#
+#   cmake -S windows -B build/windows-tests -DBUILD_RUNNER_TESTS=ON
+#   cmake --build build/windows-tests --config Debug
+#   ctest --test-dir build/windows-tests --output-on-failure -C Debug
+#
+# Keeping the option default-OFF avoids paying the GoogleTest FetchContent
+# cost on every normal app build.
+option(BUILD_RUNNER_TESTS "Build native Windows unit tests under windows/runner_tests/" OFF)
+if(BUILD_RUNNER_TESTS)
+  enable_testing()
+  add_subdirectory("runner_tests")
+endif()
+
+
+# === Optional Windows Phase 5 live-compositor POC ===
+#
+# Opt-in target. `flutter build windows` does NOT enable this -- it only
+# builds the runner executable. The POC is a standalone Win32 GUI exe
+# used to de-risk the Phase 5 design before any production wiring goes
+# in. Build with:
+#
+#   cmake -S windows -B build/windows-poc -DBUILD_LIVE_COMPOSITOR_POC=ON
+#   cmake --build build/windows-poc --config Debug --target live_compositor_demo
+#
+# See windows/runner/preview/live_compositor_demo.cpp for what it does
+# and what is intentionally out of scope.
+option(BUILD_LIVE_COMPOSITOR_POC
+  "Build the Windows Phase 5 live-compositor POC executable" OFF)
+if(BUILD_LIVE_COMPOSITOR_POC)
+  add_subdirectory("runner/preview")
+endif()
 
 
 # === Installation ===

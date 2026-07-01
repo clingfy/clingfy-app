@@ -8,6 +8,13 @@ Layers:
 - Bridge contract (`lib/core/bridges/`) — platform-agnostic; Windows must satisfy same surface.
 - Native engine (`macos/Runner/` → `windows/runner/`) — complete rewrite.
 
+> **Editing features (clips + color):** the split/cut/trim/**arrange** and color
+> work is done on macOS but no-op on Windows. See
+> [`windows-port-editing-features.md`](windows-port-editing-features.md) for the
+> port status, the bridge methods to implement, the pure cut-math to port, and —
+> most importantly — the macOS bugs to design around (esp. **don't** build a
+> seek-through-cuts preview).
+
 ---
 
 ## 1. FEATURE INVENTORY

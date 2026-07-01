@@ -220,6 +220,15 @@ class DeviceController extends ChangeNotifier {
       final cams = raw
           .map((e) => CamSource.fromMap(Map<dynamic, dynamic>.from(e as Map)))
           .toList();
+      // Surface the enumeration result in the app log so an empty dropdown is
+      // diagnosable from the Flutter log alone. Log names + count, NOT the raw
+      // maps: the MF symbolic-link ids are long and backslash-heavy (each `\`
+      // is JSON-escaped to `\\` in the .jsonl), which clutters the line. The
+      // full ids live in the native device_probe.log sidecar if needed.
+      Log.i(
+        "Device",
+        "Cameras (${cams.length}): ${cams.map((c) => c.name).join(', ')}",
+      );
 
       final sp = await SharedPreferences.getInstance();
       final savedCamId = sp.getString(_prefVideoDeviceId);

@@ -21,6 +21,9 @@ class HomeRightPanel extends StatelessWidget {
     required this.onPauseRecording,
     required this.onResumeRecording,
     required this.onClosePreview,
+    this.cameraOverlayEnabled = false,
+    this.cameraFloatingPreview = false,
+    this.onToggleCameraPreviewMode,
     this.previewHostBuilder,
     this.startRecordingButtonKey,
   });
@@ -34,6 +37,9 @@ class HomeRightPanel extends StatelessWidget {
   final VoidCallback onPauseRecording;
   final VoidCallback onResumeRecording;
   final VoidCallback onClosePreview;
+  final bool cameraOverlayEnabled;
+  final bool cameraFloatingPreview;
+  final VoidCallback? onToggleCameraPreviewMode;
   final InlinePreviewHostBuilder? previewHostBuilder;
   final Key? startRecordingButtonKey;
 
@@ -128,6 +134,9 @@ class HomeRightPanel extends StatelessWidget {
                         onToggle: onToggleRecording,
                         onPause: onPauseRecording,
                         onResume: onResumeRecording,
+                        cameraOverlayEnabled: cameraOverlayEnabled,
+                        cameraFloatingPreview: cameraFloatingPreview,
+                        onToggleCameraPreviewMode: onToggleCameraPreviewMode,
                         startRecordingButtonKey: startRecordingButtonKey,
                       ),
               ),

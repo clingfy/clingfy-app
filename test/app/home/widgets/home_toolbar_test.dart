@@ -17,6 +17,7 @@ import 'package:macos_ui/macos_ui.dart';
 import 'package:provider/provider.dart';
 
 import '../../../test_helpers/native_test_setup.dart';
+import 'package:clingfy/ui/platform/platform_kind.dart';
 
 class _ToolbarPostProcessingController extends PostProcessingController {
   _ToolbarPostProcessingController._({
@@ -68,6 +69,16 @@ class _FakeDeviceController extends DeviceController {
 }
 
 void main() {
+  // Pin the macOS branch: HomeToolbar renders fluent widgets under the
+  // Windows host platform, which this harness does not scaffold (the
+  // pre-existing FluentLocalizations backlog).
+  setUp(() {
+    debugPlatformKindOverride = PlatformKind.macos;
+  });
+  tearDown(() {
+    debugPlatformKindOverride = null;
+  });
+
   TestWidgetsFlutterBinding.ensureInitialized();
 
   setUp(() async {

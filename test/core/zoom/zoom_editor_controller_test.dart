@@ -157,6 +157,52 @@ void main() {
     expect(harness.controller.addMode, ZoomAddMode.off);
   });
 
+  testWidgets('redo re-applies an undone edit', (tester) async {
+    final harness = await _createHarness(tester);
+
+    harness.controller.enterOneShotAddMode();
+    harness.controller.updateDraft(100, 500);
+    harness.controller.commitDraft();
+    await tester.pump();
+
+    final created = harness.controller.manualSegments.single;
+    expect(harness.controller.canUndo, isTrue);
+    expect(harness.controller.canRedo, isFalse);
+
+    harness.controller.undo();
+    await tester.pump();
+    expect(harness.controller.manualSegments, isEmpty);
+    expect(harness.controller.canRedo, isTrue);
+
+    harness.controller.redo();
+    await tester.pump();
+    expect(harness.controller.manualSegments, hasLength(1));
+    expect(harness.controller.manualSegments.single.id, created.id);
+    expect(harness.controller.canRedo, isFalse);
+    expect(harness.controller.canUndo, isTrue);
+  });
+
+  testWidgets('a new edit after undo clears the redo stack', (tester) async {
+    final harness = await _createHarness(tester);
+
+    harness.controller.enterOneShotAddMode();
+    harness.controller.updateDraft(100, 500);
+    harness.controller.commitDraft();
+    await tester.pump();
+
+    harness.controller.undo();
+    await tester.pump();
+    expect(harness.controller.canRedo, isTrue);
+
+    harness.controller.enterOneShotAddMode();
+    harness.controller.updateDraft(600, 900);
+    harness.controller.commitDraft();
+    await tester.pump();
+
+    expect(harness.controller.canRedo, isFalse);
+    expect(harness.controller.manualSegments, hasLength(1));
+  });
+
   testWidgets('snapping enabled keeps draft times on the frame grid', (
     tester,
   ) async {

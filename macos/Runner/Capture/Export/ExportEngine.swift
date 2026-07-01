@@ -75,6 +75,12 @@ final class ExportEngine {
     let targetLoudnessDbfs: Double
     let cameraPath: String?
     let cameraParams: CameraCompositionParams?
+    /// Canvas-wide color grade baked into the exported screen content.
+    /// `.identity` = no adjustment (the manual render path skips the pass).
+    var colorGrade: ColorGrade = .identity
+    /// Kept source ranges (enabled clips, timeline order) to bake in. Empty =
+    /// no cuts, so the export keeps the whole source (a passthrough).
+    var clips: [ClipKeptRange] = []
   }
 
   /// Facade-owned collaborators + ExportPrep helpers, injected per-call.
@@ -202,6 +208,8 @@ final class ExportEngine {
       autoNormalizeOnExport: input.autoNormalizeOnExport,
       targetLoudnessDbfs: clampedTargetLoudnessDbfs,
       cameraParams: exportCameraParams,
+      colorGrade: input.colorGrade,
+      clips: input.clips,
       onProgress: onProgress
     ) { res in
       switch res {

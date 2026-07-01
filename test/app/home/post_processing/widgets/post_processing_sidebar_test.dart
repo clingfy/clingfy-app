@@ -2,6 +2,7 @@ import 'dart:io';
 
 import 'package:clingfy/app/home/post_processing/widgets/post_processing_sidebar.dart';
 import 'package:clingfy/core/models/app_models.dart';
+import 'package:clingfy/core/timeline/model/color_grade.dart';
 import 'package:clingfy/l10n/app_localizations.dart';
 import 'package:clingfy/ui/platform/widgets/app_icon_button.dart';
 import 'package:clingfy/ui/platform/widgets/app_inline_notice.dart';
@@ -17,8 +18,21 @@ import 'package:flutter/material.dart';
 import 'package:flutter_colorpicker/flutter_colorpicker.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:macos_ui/macos_ui.dart';
+import 'package:clingfy/ui/platform/platform_kind.dart';
 
 void main() {
+  // Phase 10.3 forked this surface's widget tree by platform (no-op
+  // controls hidden / zoom editing disabled on Windows). These legacy
+  // assertions pin the macOS branch regardless of the host OS. Windows
+  // hide-coverage: windows_control_hides_test.dart covers the standalone
+  // sections; sidebar-level hides are pinned by the isWindows() gates.
+  setUp(() {
+    debugPlatformKindOverride = PlatformKind.macos;
+  });
+  tearDown(() {
+    debugPlatformKindOverride = null;
+  });
+
   TestWidgetsFlutterBinding.ensureInitialized();
 
   Widget buildTestApp({
@@ -99,6 +113,14 @@ void main() {
       onZoomFactorChanged: onZoomFactorChanged ?? (_) {},
       onZoomFactorChangeEnd: onZoomFactorChangeEnd ?? (_) {},
       onZoomEffectEnabledChanged: onZoomEffectEnabledChanged ?? (_) {},
+      colorGrade: const ColorGrade(),
+      onColorAutoEnhanceChanged: (_) {},
+      onColorExposureChanged: (_) {},
+      onColorContrastChanged: (_) {},
+      onColorSaturationChanged: (_) {},
+      onColorTemperatureChanged: (_) {},
+      onColorTintChanged: (_) {},
+      onColorChangeEnd: () {},
       onPickImage: () async => null,
       hasCameraAsset: hasCameraAsset,
       cameraExportCapabilities: cameraExportCapabilities,
@@ -784,8 +806,9 @@ void main() {
     );
     await tester.pumpAndSettle();
 
+    // cursor (0), zoom (1), color auto-enhance (2) — zoom stays at index 1.
     final toggleRows = find.byType(AppToggleRow);
-    expect(toggleRows, findsNWidgets(2));
+    expect(toggleRows, findsNWidgets(3));
 
     final offToggle = tester.widget<AppToggleRow>(toggleRows.at(1));
     offToggle.onChanged?.call(true);

@@ -6,15 +6,21 @@ import 'package:clingfy/core/models/app_models.dart';
 import 'package:clingfy/core/bridges/native_bridge.dart';
 import 'package:clingfy/core/zoom/zoom_focus_heuristic.dart';
 import 'package:clingfy/core/zoom/zoom_segment_merge.dart';
+import 'package:clingfy/core/timeline/timeline_timebase.dart';
+import 'package:clingfy/core/timeline/edit_command.dart';
+import 'package:clingfy/core/timeline/edit_session.dart';
 import 'package:clingfy/app/infrastructure/logging/logger_service.dart';
 import 'package:uuid/uuid.dart';
 
-abstract class ZoomEditCommand {
-  void apply();
-  void revert();
+abstract class ZoomEditCommand implements EditCommand {
+  @override
+  EditDomain get domain => EditDomain.zoom;
+
+  @override
+  String get label => 'Zoom edit';
 }
 
-class AddZoomSegmentCommand implements ZoomEditCommand {
+class AddZoomSegmentCommand extends ZoomEditCommand {
   final ZoomEditorController controller;
   final ZoomSegment segment;
 
@@ -31,7 +37,7 @@ class AddZoomSegmentCommand implements ZoomEditCommand {
   }
 }
 
-class MoveZoomSegmentCommand implements ZoomEditCommand {
+class MoveZoomSegmentCommand extends ZoomEditCommand {
   final ZoomEditorController controller;
   final ZoomSegment oldSegment;
   final ZoomSegment newSegment;
@@ -63,7 +69,7 @@ class MoveZoomSegmentCommand implements ZoomEditCommand {
   }
 }
 
-class TrimZoomSegmentCommand implements ZoomEditCommand {
+class TrimZoomSegmentCommand extends ZoomEditCommand {
   final ZoomEditorController controller;
   final ZoomSegment oldSegment;
   final ZoomSegment newSegment;
@@ -100,7 +106,7 @@ class TrimZoomSegmentCommand implements ZoomEditCommand {
 /// number of absorbed/added segments in a single step. Used by edit
 /// paths that may collapse multiple overlapping segments into one
 /// (create / drag-move / resize).
-class MergeZoomEditCommand implements ZoomEditCommand {
+class MergeZoomEditCommand extends ZoomEditCommand {
   final ZoomEditorController controller;
   final List<ZoomSegment> nextManualSegments;
   late final List<ZoomSegment> _previousManualSegments;
@@ -120,7 +126,7 @@ class MergeZoomEditCommand implements ZoomEditCommand {
   }
 }
 
-class DeleteZoomSegmentCommand implements ZoomEditCommand {
+class DeleteZoomSegmentCommand extends ZoomEditCommand {
   final ZoomEditorController controller;
   final ZoomSegment segment;
   late final List<ZoomSegment> _previousManualSegments;
@@ -140,7 +146,7 @@ class DeleteZoomSegmentCommand implements ZoomEditCommand {
   }
 }
 
-class DeleteZoomSegmentsCommand implements ZoomEditCommand {
+class DeleteZoomSegmentsCommand extends ZoomEditCommand {
   final ZoomEditorController controller;
   final List<ZoomSegment> segments;
   late final List<ZoomSegment> _previousManualSegments;
@@ -169,7 +175,7 @@ class DeleteManyZoomSegmentsCommand extends DeleteZoomSegmentsCommand {
 /// For manual segments the change is applied in place. For auto segments
 /// it materializes a manual override segment with the same time range
 /// — matching the behavior of trim/move on auto segments.
-class ChangeZoomFocusModeCommand implements ZoomEditCommand {
+class ChangeZoomFocusModeCommand extends ZoomEditCommand {
   final ZoomEditorController controller;
   final ZoomSegment oldSegment;
   final ZoomSegment newSegment;
@@ -216,13 +222,15 @@ class ZoomEditorController extends ChangeNotifier {
   final String videoPath;
   final int durationMs;
   final String? sessionId;
+  final TimelineTimebase _timebase;
 
   ZoomEditorController({
     required NativeBridge nativeBridge,
     required this.videoPath,
     required this.durationMs,
     this.sessionId,
-  }) : _nativeBridge = nativeBridge;
+  }) : _nativeBridge = nativeBridge,
+       _timebase = TimelineTimebase(durationMs);
 
   List<ZoomSegment> _autoSegments = [];
   List<ZoomSegment> _manualSegments = [];
@@ -293,8 +301,8 @@ class ZoomEditorController extends ChangeNotifier {
 
   String? get primarySelectedSegmentId => _primarySelectedSegmentId;
 
-  static const double frameMs = 1000 / 60;
-  static int get minDurationMs => (frameMs * 2).round();
+  static const double frameMs = TimelineTimebase.frameMs;
+  static int get minDurationMs => TimelineTimebase.minDurationMs;
 
   bool _isTombstone(ZoomSegment s) =>
       s.baseId != null && (s.endMs <= s.startMs);
@@ -447,8 +455,14 @@ class ZoomEditorController extends ChangeNotifier {
   TrimHandle? get activeTrimHandle => _activeTrimHandle;
   bool get isBandSelecting => _bandSelecting;
 
-  final List<ZoomEditCommand> _history = [];
-  bool get canUndo => _history.isNotEmpty;
+  late final EditSession _session = EditSession(
+    onFlush: (_) {
+      _persistManualSegments();
+      _syncToNative();
+    },
+  );
+  bool get canUndo => _session.canUndo;
+  bool get canRedo => _session.canRedo;
 
   ZoomNativeCapabilities _capabilities = ZoomNativeCapabilities.legacy;
 
@@ -1038,20 +1052,11 @@ class ZoomEditorController extends ChangeNotifier {
     return false;
   }
 
-  void execute(ZoomEditCommand cmd) {
-    cmd.apply();
-    _history.add(cmd);
-    _persistManualSegments();
-    _syncToNative();
-  }
+  void execute(ZoomEditCommand cmd) => _session.execute(cmd);
 
-  void undo() {
-    if (_history.isEmpty) return;
-    final cmd = _history.removeLast();
-    cmd.revert();
-    _persistManualSegments();
-    _syncToNative();
-  }
+  void undo() => _session.undo();
+
+  void redo() => _session.redo();
 
   void _commitManualMutation({bool notify = true}) {
     _computeEffective();
@@ -1640,16 +1645,8 @@ class ZoomEditorController extends ChangeNotifier {
     return merged;
   }
 
-  int _snapToGrid(int ms) {
-    final snapped = (ms / frameMs).round() * frameMs;
-    return snapped.round().clamp(0, durationMs);
-  }
-
-  int _normalizeEditableMs(int ms) {
-    final clamped = ms.clamp(0, durationMs);
-    if (!_snappingEnabled) return clamped;
-    return _snapToGrid(clamped);
-  }
+  int _normalizeEditableMs(int ms) =>
+      _timebase.normalizeEditableMs(ms, snapping: _snappingEnabled);
 
   /// Public accessor mirroring [_normalizeEditableMs]. UI surfaces such as
   /// hover ghosts can use this to preview the same ms the controller would

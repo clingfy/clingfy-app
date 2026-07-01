@@ -891,6 +891,24 @@ class AppLocalizationsAr extends AppLocalizations {
   String get snap => 'المحاذاة';
 
   @override
+  String get clips => 'المقاطع';
+
+  @override
+  String get clipSplit => 'تقسيم';
+
+  @override
+  String get clipSplitTooltip => 'تقسيم المقطع عند المؤشر';
+
+  @override
+  String get clipRemoveSelected => 'حذف المقطع المحدد';
+
+  @override
+  String get clipUndo => 'تراجع عن تعديل المقطع';
+
+  @override
+  String get clipRedo => 'إعادة تعديل المقطع';
+
+  @override
   String get zoomBehavior => 'سلوك التكبير';
 
   @override
@@ -977,6 +995,30 @@ class AppLocalizationsAr extends AppLocalizations {
 
   @override
   String get zoomUndoLastAction => 'تراجع عن آخر إجراء';
+
+  @override
+  String get zoomRedoLastAction => 'إعادة آخر إجراء';
+
+  @override
+  String get colorCorrection => 'تصحيح الألوان';
+
+  @override
+  String get autoEnhance => 'تحسين تلقائي';
+
+  @override
+  String get exposure => 'التعريض';
+
+  @override
+  String get contrast => 'التباين';
+
+  @override
+  String get saturation => 'التشبع';
+
+  @override
+  String get temperature => 'الحرارة';
+
+  @override
+  String get tint => 'الصبغة';
 
   @override
   String get zoomSelectionCleared => 'تم مسح التحديد';
@@ -1332,6 +1374,30 @@ class AppLocalizationsAr extends AppLocalizations {
 
   @override
   String get checkForUpdates => 'التحقق من التحديثات';
+
+  @override
+  String get updateChecking => 'جارٍ التحقق من التحديثات…';
+
+  @override
+  String get updateUpToDate => 'أنت على أحدث إصدار.';
+
+  @override
+  String get updateCheckFailed =>
+      'فشل التحقق من التحديثات. حاول مرة أخرى لاحقًا.';
+
+  @override
+  String get updateAvailableTitle => 'تحديث متاح';
+
+  @override
+  String updateAvailableBody(Object version) {
+    return 'الإصدار $version من Clingfy متاح للتنزيل.';
+  }
+
+  @override
+  String get updateDownload => 'تنزيل التحديث';
+
+  @override
+  String get updateLater => 'لاحقًا';
 
   @override
   String get escToCancel => 'Esc للإلغاء';
@@ -1760,6 +1826,13 @@ class AppLocalizationsAr extends AppLocalizations {
       'في حال حدوث خطأ ما، افتح مجلد السجلات وأرسل ملف سجل اليوم للدعم.';
 
   @override
+  String get diagnosticsVerboseLogging => 'تسجيل مفصّل';
+
+  @override
+  String get diagnosticsVerboseLoggingHelp =>
+      'سجّل سجلات تصحيح مفصّلة للمساعدة في إعادة إنتاج مشكلة يصعب تتبّعها. فعّله، ثم أعد إنتاج المشكلة، ثم صدّر التشخيصات وأرسل الملفات. اتركه مُطفأً للاستخدام اليومي.';
+
+  @override
   String get openLogsFolder => 'افتتاح مجلد السجلات';
 
   @override
@@ -1917,6 +1990,13 @@ class AppLocalizationsAr extends AppLocalizations {
   String get diagnosticsLogRevealed => 'تم إظهار ملف سجل اليوم.';
 
   @override
+  String get exportDiagnostics => 'تصدير بيانات التشخيص';
+
+  @override
+  String get diagnosticsExported =>
+      'تم إنشاء حزمة التشخيص وإظهارها في مدير الملفات.';
+
+  @override
   String get recordingSystemAudio => 'صوت النظام';
 
   @override
@@ -1931,11 +2011,6 @@ class AppLocalizationsAr extends AppLocalizations {
 
   @override
   String get permissionsOnboardingMicCameraRail => 'الميكروفون + الكاميرا';
-
-  @override
-  String permissionsOnboardingStepLabel(int current) {
-    return 'الخطوة $current من 4';
-  }
 
   @override
   String get permissionsOnboardingWelcomeTitle => 'مرحبًا بك في Clingfy';
@@ -2325,4 +2400,175 @@ class AppLocalizationsAr extends AppLocalizations {
 
   @override
   String get licenseNotEntitled => 'هذا الترخيص لا يفعّل مزايا Pro.';
+
+  @override
+  String get warnMicOpenFailed =>
+      'تعذر تشغيل الميكروفون — تحقق من وصول الميكروفون في إعدادات خصوصية ويندوز. يستمر التسجيل بدونه.';
+
+  @override
+  String get warnMicDisconnected => 'تم فصل الميكروفون. يستمر التسجيل بدونه.';
+
+  @override
+  String get warnSystemAudioOpenFailed =>
+      'تعذر التقاط صوت النظام — تحقق من جهاز الإخراج في إعدادات الصوت في ويندوز. يستمر التسجيل بدونه.';
+
+  @override
+  String get warnSystemAudioStopped =>
+      'توقف التقاط صوت النظام. يستمر التسجيل بدونه.';
+
+  @override
+  String get warnCameraUnavailable =>
+      'الكاميرا غير متاحة الآن. يستمر التسجيل بدون نافذة الكاميرا.';
+
+  @override
+  String get warnCameraOpenFailed =>
+      'تعذر تشغيل الكاميرا — تحقق من وصول الكاميرا في إعدادات خصوصية ويندوز. يستمر التسجيل بدون النافذة.';
+
+  @override
+  String get warnCameraDisconnected => 'تم فصل الكاميرا. يستمر التسجيل بدونها.';
+
+  @override
+  String get warnEncoderVideoError =>
+      'واجه التسجيل مشكلة في الترميز — قد يكون الفيديو غير مكتمل.';
+
+  @override
+  String get warnEncoderAudioError =>
+      'واجه التسجيل مشكلة في ترميز الصوت — قد يكون الصوت غير مكتمل.';
+
+  @override
+  String get errMicrophonePermissionRequiredWindows =>
+      'فعّل وصول الميكروفون في إعدادات ويندوز > الخصوصية والأمان > الميكروفون، ثم حاول مجددًا.';
+
+  @override
+  String get errCameraPermissionDeniedWindows =>
+      'فعّل وصول الكاميرا في إعدادات ويندوز > الخصوصية والأمان > الكاميرا.';
+
+  @override
+  String get permissionsHelpTextWindows =>
+      'راجع ما يمكن لـ Clingfy استخدامه وانتقل مباشرة إلى صفحة إعدادات ويندوز المناسبة.';
+
+  @override
+  String get permissionsChangedHintWindows =>
+      'إذا غيّرت إعدادًا في إعدادات ويندوز، عُد إلى Clingfy وحدّث هذه الصفحة لرؤية أحدث حالة.';
+
+  @override
+  String get permissionsScreenRecordingHelpWindows =>
+      'لا يتطلب ويندوز إذن تسجيل الشاشة — يعمل التقاط الشاشة والنوافذ والمناطق مباشرة.';
+
+  @override
+  String get permissionsNoGrantNeeded => 'لا حاجة لإذن';
+
+  @override
+  String get permissionsDetailMicAccessOffWindows =>
+      'وصول الميكروفون متوقف في إعدادات خصوصية ويندوز. فعّله في إعدادات ويندوز > الخصوصية والأمان > الميكروفون.';
+
+  @override
+  String get permissionsDetailMicMissingWindows =>
+      'الميكروفون المحدد غير متصل. أعد توصيله أو اختر آخر.';
+
+  @override
+  String get permissionsDetailCameraAccessOffWindows =>
+      'وصول الكاميرا متوقف في إعدادات خصوصية ويندوز. فعّله في إعدادات ويندوز > الخصوصية والأمان > الكاميرا.';
+
+  @override
+  String get permissionsDetailCameraMissingWindows =>
+      'الكاميرا المحددة غير متصلة. أعد توصيلها أو اختر أخرى.';
+
+  @override
+  String get permissionsDetailNoCamerasWindows =>
+      'لم يتم العثور على كاميرا على هذا الكمبيوتر.';
+
+  @override
+  String get permissionsOpenSoundSettings => 'افتح إعدادات الصوت';
+
+  @override
+  String get permissionsOnboardingTrustLocalFirstWindows =>
+      'محلي أولًا: تبقى تسجيلاتك على جهازك.';
+
+  @override
+  String get permissionsOnboardingTrustPermissionControlWindows =>
+      'تتحكم في وصول الميكروفون والكاميرا في أي وقت من إعدادات ويندوز.';
+
+  @override
+  String get permissionsOnboardingWindowsNoScreenGrant =>
+      'لا حاجة لإذن تسجيل الشاشة على ويندوز — يعمل الالتقاط مباشرة.';
+
+  @override
+  String permissionsOnboardingStepCount(int current, int total) {
+    return 'الخطوة $current من $total';
+  }
+
+  @override
+  String get warnWindowClosedPartialSaved =>
+      'توقف التسجيل: النافذة التي كنت تسجلها أُغلقت. تم حفظ تسجيلك حتى تلك اللحظة.';
+
+  @override
+  String get warnDisplayDisconnectedPartialSaved =>
+      'توقف التسجيل: الشاشة التي كنت تسجلها فُصلت. تم حفظ تسجيلك حتى تلك اللحظة.';
+
+  @override
+  String get cameraPreviewUseInApp =>
+      'لا ترى الكاميرا؟ استخدم المعاينة داخل التطبيق';
+
+  @override
+  String get cameraPreviewUseFloating => 'استخدم فقاعة الكاميرا العائمة';
+
+  @override
+  String get appliedOnExportNoticeWindows =>
+      'يُطبَّق عند التصدير — المعاينة الداخلية لا تعرض هذا التأثير بعد.';
+
+  @override
+  String get errBadMode => 'وضع التسجيل هذا غير متاح على ويندوز بعد.';
+
+  @override
+  String get errNoCamera => 'لا توجد كاميرا متاحة.';
+
+  @override
+  String get errCameraInputError => 'توقفت الكاميرا عن العمل.';
+
+  @override
+  String get errFileNotFound => 'الملف غير موجود.';
+
+  @override
+  String get errWindowsNotImplemented => 'هذه الميزة غير متاحة على ويندوز بعد.';
+
+  @override
+  String get errRecordingDiskFull =>
+      'لا توجد مساحة كافية على القرص لبدء التسجيل.';
+
+  @override
+  String get errPreviewOpenFailed => 'تعذّر فتح المعاينة.';
+
+  @override
+  String get errPreviewRenderFailed =>
+      'توقفت المعاينة عن العرض. أغلق التسجيل وأعد فتحه.';
+
+  @override
+  String get errRecordingStartTimeout => 'لم يبدأ التسجيل في الوقت المحدد.';
+
+  @override
+  String get errRecordingFinalizeTimeout => 'انتهت مهلة حفظ التسجيل.';
+
+  @override
+  String get errPreviewTimeout => 'استغرق تحميل المعاينة وقتًا طويلًا.';
+
+  @override
+  String get errInternalError => 'حدث خطأ داخلي.';
+
+  @override
+  String recordingInterruptedNotice(int count) {
+    String _temp0 = intl.Intl.pluralLogic(
+      count,
+      locale: localeName,
+      other: 'انقطع $count تسجيل ولم يكن من الممكن استرداده.',
+      many: 'انقطع $count تسجيلًا ولم يكن من الممكن استرداده.',
+      few: 'انقطعت $count تسجيلات ولم يكن من الممكن استردادها.',
+      two: 'انقطع تسجيلان ولم يكن من الممكن استردادهما.',
+      one: 'انقطع تسجيل واحد ولم يكن من الممكن استرداده.',
+    );
+    return '$_temp0';
+  }
+
+  @override
+  String get forceNativeCrashLabel => 'فرض انهيار أصلي (اختبار)';
 }

@@ -11,6 +11,72 @@ import 'package:clingfy/app/home/widgets/desktop_toolbar.dart';
 import 'package:flutter/widgets.dart';
 import 'package:provider/provider.dart';
 
+/// Decides which toolbar notice presentation wins (Phase 10.2). Pure —
+/// extracted from the build method so the precedence is unit-testable
+/// without the widget tree:
+///
+/// 1. A notice carrying BOTH a message and a code is a coded warning
+///    (Windows recordingWarning). When the mapper RECOGNIZED the code
+///    (its message differs from the raw-code passthrough), render the
+///    localized mapped message + the mapper's settings action, keeping
+///    the notice's (warning) tone.
+/// 2. An unrecognized code — or a plain message notice (macOS warnings,
+///    success toasts) — renders the verbatim message with the notice's
+///    own tone/action.
+/// 3. No message notice: a mapped raw error (recording/device/overlay)
+///    renders as an error-tone presentation dismissed via
+///    [onClearMessage].
+@visibleForTesting
+ToolbarNoticePresentation? resolveToolbarNotice({
+  required HomeUiNotice? notice,
+  required HomeErrorPresentation mapped,
+  required VoidCallback onDismissNotice,
+  required VoidCallback onClearMessage,
+}) {
+  ToolbarMessageTone toneOf(HomeUiNoticeTone tone) => switch (tone) {
+    HomeUiNoticeTone.info => ToolbarMessageTone.info,
+    HomeUiNoticeTone.success => ToolbarMessageTone.success,
+    HomeUiNoticeTone.warning => ToolbarMessageTone.warning,
+    HomeUiNoticeTone.error => ToolbarMessageTone.error,
+  };
+
+  if (notice != null &&
+      notice.message != null &&
+      notice.rawErrorCode != null &&
+      mapped.message != null &&
+      mapped.message != notice.rawErrorCode) {
+    return ToolbarNoticePresentation(
+      message: mapped.message!,
+      tone: toneOf(notice.tone),
+      action: mapped.action,
+      onDismiss: onDismissNotice,
+    );
+  }
+  if (notice?.message != null) {
+    return ToolbarNoticePresentation(
+      message: notice!.message!,
+      tone: toneOf(notice.tone),
+      action: notice.action == null
+          ? null
+          : ToolbarMessageAction(
+              label: notice.action!.label,
+              semanticLabel: notice.action!.semanticLabel,
+              onPressed: notice.action!.onPressed,
+            ),
+      onDismiss: onDismissNotice,
+    );
+  }
+  if (mapped.message != null) {
+    return ToolbarNoticePresentation(
+      message: mapped.message!,
+      tone: ToolbarMessageTone.error,
+      action: mapped.action,
+      onDismiss: onClearMessage,
+    );
+  }
+  return null;
+}
+
 class HomeToolbar extends StatelessWidget {
   const HomeToolbar({
     super.key,
@@ -76,52 +142,44 @@ class HomeToolbar extends StatelessWidget {
 
         return Selector<
           RecordingController,
-          (String? elapsed, String? countdown, String? recError)
+          (
+            String? elapsed,
+            String? countdown,
+            String? recError,
+            String? recErrorFallback,
+          )
         >(
           selector: (_, r) => (
             r.isRecording ? r.formattedElapsed : null,
             r.countdownText,
-            r.errorMessage,
+            r.displayError,
+            r.displayErrorFallback,
           ),
           builder: (context, d, _) {
             final notice = uiState.notice;
             final rawError =
                 notice?.rawErrorCode ?? d.$3 ?? deviceError ?? overlayError;
+            // The prose fallback belongs ONLY to the recording error it
+            // came with — when rawError is a warning-notice code or a
+            // device/overlay code, passing it would break the mapper's
+            // raw-echo default (which resolveToolbarNotice uses as its
+            // "code recognized?" sentinel) and show unrelated prose.
+            final recordingErrorShown =
+                notice?.rawErrorCode == null && d.$3 != null;
             final mapped = HomeErrorMapper.map(
               context,
               rawError,
+              verbatimFallback: recordingErrorShown ? d.$4 : null,
               openSystemSettings: (pane) {
                 unawaited(onOpenSystemSettings(pane));
               },
             );
-            final explicitNotice = notice?.message != null
-                ? ToolbarNoticePresentation(
-                    message: notice!.message!,
-                    tone: switch (notice.tone) {
-                      HomeUiNoticeTone.info => ToolbarMessageTone.info,
-                      HomeUiNoticeTone.success => ToolbarMessageTone.success,
-                      HomeUiNoticeTone.warning => ToolbarMessageTone.warning,
-                      HomeUiNoticeTone.error => ToolbarMessageTone.error,
-                    },
-                    action: notice.action == null
-                        ? null
-                        : ToolbarMessageAction(
-                            label: notice.action!.label,
-                            semanticLabel: notice.action!.semanticLabel,
-                            onPressed: notice.action!.onPressed,
-                          ),
-                    onDismiss: uiState.clearNotice,
-                  )
-                : null;
-            final mappedNotice =
-                explicitNotice == null && mapped.message != null
-                ? ToolbarNoticePresentation(
-                    message: mapped.message!,
-                    tone: ToolbarMessageTone.error,
-                    action: mapped.action,
-                    onDismiss: onClearMessage,
-                  )
-                : null;
+            final resolvedNotice = resolveToolbarNotice(
+              notice: notice,
+              mapped: mapped,
+              onDismissNotice: uiState.clearNotice,
+              onClearMessage: onClearMessage,
+            );
             final exportStatus =
                 exportToolbarState.exporting && exportToolbarState.inBackground
                 ? ToolbarExportStatusPresentation(
@@ -153,7 +211,7 @@ class HomeToolbar extends StatelessWidget {
               isPaused: isPaused,
               elapsedText: d.$1,
               countdownText: d.$2,
-              notice: explicitNotice ?? mappedNotice,
+              notice: resolvedNotice,
               onExport:
                   (previewReady &&
                       !isRecording &&

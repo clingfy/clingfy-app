@@ -1,9 +1,12 @@
 import 'dart:math' as math;
 
+import 'package:clingfy/app/home/preview/widgets/timeline/clips_timeline_lane.dart';
 import 'package:clingfy/app/home/preview/widgets/timeline/markers_timeline_lane.dart';
+import 'package:clingfy/app/home/preview/widgets/timeline/scissors_cut_layer.dart';
 import 'package:clingfy/app/home/preview/widgets/timeline/timeline_ruler_metrics.dart';
 import 'package:clingfy/app/home/preview/widgets/timeline/timeline_viewport_controller.dart';
 import 'package:clingfy/app/home/preview/widgets/timeline/zoom_timeline_lane.dart';
+import 'package:clingfy/core/clips/clip_editor_controller.dart';
 import 'package:clingfy/core/models/app_models.dart';
 import 'package:clingfy/core/zoom/zoom_editor_controller.dart';
 import 'package:clingfy/l10n/app_localizations.dart';
@@ -28,6 +31,13 @@ class TimelineEditorViewport extends StatefulWidget {
     required this.onHoverChanged,
     required this.hoverPositionMs,
     required this.onFocusRequested,
+    this.showClipsLane = false,
+    this.clipEditor,
+    this.onSelectClip,
+    this.clipTrimCallbacks,
+    this.clipReorderCallbacks,
+    this.cutModeArmed = false,
+    this.onCutAt,
   });
 
   final int durationMs;
@@ -38,12 +48,33 @@ class TimelineEditorViewport extends StatefulWidget {
   final bool showZoomLane;
   final bool showMarkersLane;
   final bool panModeEnabled;
+
+  /// Whether the clip (split/cut/arrange) lane is shown.
+  final bool showClipsLane;
+
+  /// The live clip editor; supplies the clip boxes and receives selection.
+  final ClipEditorController? clipEditor;
+
+  /// Called when a clip is tapped (id), or null when the empty lane is tapped.
+  final ValueChanged<String?>? onSelectClip;
+
+  /// Trim drag hooks for the clip lane; null disables trim handles.
+  final ClipTrimCallbacks? clipTrimCallbacks;
+
+  /// Reorder drag hooks for the clip lane; null disables drag-to-reorder.
+  final ClipReorderCallbacks? clipReorderCallbacks;
   final ValueChanged<int> onSeek;
   final ValueChanged<int>? onHoverSeek;
   final VoidCallback? onHoverEnd;
   final ValueChanged<int?> onHoverChanged;
   final int? hoverPositionMs;
   final VoidCallback onFocusRequested;
+
+  /// Whether the scissors cut tool is armed (Option held over the timeline).
+  final bool cutModeArmed;
+
+  /// Called with the timeline ms under the pointer when the user clicks to cut.
+  final ValueChanged<int>? onCutAt;
 
   @override
   State<TimelineEditorViewport> createState() => _TimelineEditorViewportState();
@@ -114,7 +145,9 @@ class _TimelineEditorViewportState extends State<TimelineEditorViewport> {
     final metrics = context.shellMetricsOrNull;
 
     final visibleLaneCount =
-        (widget.showZoomLane ? 1 : 0) + (widget.showMarkersLane ? 1 : 0);
+        (widget.showClipsLane ? 1 : 0) +
+        (widget.showZoomLane ? 1 : 0) +
+        (widget.showMarkersLane ? 1 : 0);
     final laneGap = metrics?.timelineLaneGap ?? (spacing.xs + 2);
     final rulerHeight =
         metrics?.timelineRulerHeight ?? chrome.timelineRulerHeight;
@@ -140,6 +173,7 @@ class _TimelineEditorViewportState extends State<TimelineEditorViewport> {
             Row(
               children: [
                 TimelineTrackHeaderColumn(
+                  showClipsLane: widget.showClipsLane,
                   showZoomLane: widget.showZoomLane,
                   showMarkersLane: widget.showMarkersLane,
                 ),
@@ -173,10 +207,17 @@ class _TimelineEditorViewportState extends State<TimelineEditorViewport> {
                               durationMs: widget.durationMs,
                               positionMs: widget.positionMs,
                               viewportController: widget.viewportController,
+                              showClipsLane: widget.showClipsLane,
                               showZoomLane: widget.showZoomLane,
                               showMarkersLane: widget.showMarkersLane,
                               segments: widget.segments,
                               editorController: widget.editorController,
+                              clipEditor: widget.clipEditor,
+                              onSelectClip: widget.onSelectClip,
+                              clipTrimCallbacks: widget.clipTrimCallbacks,
+                              clipReorderCallbacks: widget.clipReorderCallbacks,
+                              cutModeArmed: widget.cutModeArmed,
+                              onCutAt: widget.onCutAt,
                               hoverPositionMs: widget.hoverPositionMs,
                               onSeek: widget.onSeek,
                               onHoverSeek: widget.onHoverSeek,
@@ -228,8 +269,10 @@ class TimelineTrackHeaderColumn extends StatelessWidget {
     super.key,
     required this.showZoomLane,
     required this.showMarkersLane,
+    this.showClipsLane = false,
   });
 
+  final bool showClipsLane;
   final bool showZoomLane;
   final bool showMarkersLane;
 
@@ -247,6 +290,37 @@ class TimelineTrackHeaderColumn extends StatelessWidget {
     final rulerHeight =
         metrics?.timelineRulerHeight ?? chrome.timelineRulerHeight;
     final laneGap = metrics?.timelineLaneGap ?? (spacing.xs + 2);
+    final hideLabel = headerWidth <= 64;
+
+    // Cells are listed top-to-bottom in the same order the canvas stacks its
+    // lanes (clips, zoom, markers), with a gap before each cell after the
+    // first, so the two columns stay row-aligned regardless of which lanes show.
+    final cells = <Widget>[
+      if (showClipsLane)
+        _TimelineLaneHeaderCell(
+          key: const Key('timeline_lane_header_clips'),
+          icon: Icons.content_cut_rounded,
+          label: l10n.clips,
+          hideLabel: hideLabel,
+        ),
+      if (showZoomLane)
+        _TimelineLaneHeaderCell(
+          key: const Key('timeline_lane_header_zoom'),
+          icon: Icons.zoom_in_rounded,
+          label: l10n.zoom,
+          hideLabel: hideLabel,
+          heightOverride: zoomLaneHeightFor(
+            metrics?.timelineLaneHeight ?? chrome.timelineLaneHeight,
+          ),
+        ),
+      if (showMarkersLane)
+        _TimelineLaneHeaderCell(
+          key: const Key('timeline_lane_header_markers'),
+          icon: Icons.outlined_flag_rounded,
+          label: l10n.markers,
+          hideLabel: hideLabel,
+        ),
+    ];
 
     return Container(
       key: const Key('timeline_track_header_column'),
@@ -262,25 +336,10 @@ class TimelineTrackHeaderColumn extends StatelessWidget {
       child: Column(
         children: [
           SizedBox(height: rulerHeight),
-          if (showZoomLane) ...[
-            _TimelineLaneHeaderCell(
-              key: const Key('timeline_lane_header_zoom'),
-              icon: Icons.zoom_in_rounded,
-              label: l10n.zoom,
-              hideLabel: headerWidth <= 64,
-              heightOverride: zoomLaneHeightFor(
-                metrics?.timelineLaneHeight ?? chrome.timelineLaneHeight,
-              ),
-            ),
-            if (showMarkersLane) SizedBox(height: laneGap),
+          for (var i = 0; i < cells.length; i++) ...[
+            if (i > 0) SizedBox(height: laneGap),
+            cells[i],
           ],
-          if (showMarkersLane)
-            _TimelineLaneHeaderCell(
-              key: const Key('timeline_lane_header_markers'),
-              icon: Icons.outlined_flag_rounded,
-              label: l10n.markers,
-              hideLabel: headerWidth <= 64,
-            ),
         ],
       ),
     );
@@ -304,22 +363,41 @@ class TimelineScrollableCanvas extends StatelessWidget {
     required this.onHoverEnd,
     required this.onHoverChanged,
     required this.onFocusRequested,
+    this.showClipsLane = false,
+    this.clipEditor,
+    this.onSelectClip,
+    this.clipTrimCallbacks,
+    this.clipReorderCallbacks,
+    this.cutModeArmed = false,
+    this.onCutAt,
   });
 
   final double width;
   final int durationMs;
   final int positionMs;
   final TimelineViewportController viewportController;
+  final bool showClipsLane;
   final bool showZoomLane;
   final bool showMarkersLane;
   final List<ZoomSegment> segments;
   final ZoomEditorController? editorController;
+  final ClipEditorController? clipEditor;
+  final ValueChanged<String?>? onSelectClip;
+  final ClipTrimCallbacks? clipTrimCallbacks;
+  final ClipReorderCallbacks? clipReorderCallbacks;
   final int? hoverPositionMs;
   final ValueChanged<int> onSeek;
   final ValueChanged<int>? onHoverSeek;
   final VoidCallback? onHoverEnd;
   final ValueChanged<int?> onHoverChanged;
   final VoidCallback onFocusRequested;
+
+  /// Whether the scissors cut tool is armed (Option held over the timeline).
+  /// When true a transient [ScissorsCutLayer] mounts over the canvas.
+  final bool cutModeArmed;
+
+  /// Called with the timeline ms under the pointer when the user clicks to cut.
+  final ValueChanged<int>? onCutAt;
 
   @override
   Widget build(BuildContext context) {
@@ -331,12 +409,45 @@ class TimelineScrollableCanvas extends StatelessWidget {
     final rulerHeight =
         metrics?.timelineRulerHeight ?? chrome.timelineRulerHeight;
     final laneHeight = metrics?.timelineLaneHeight ?? chrome.timelineLaneHeight;
-    final laneCount = (showZoomLane ? 1 : 0) + (showMarkersLane ? 1 : 0);
+    final laneCount =
+        (showClipsLane ? 1 : 0) +
+        (showZoomLane ? 1 : 0) +
+        (showMarkersLane ? 1 : 0);
     final totalHeight =
         rulerHeight +
         (laneCount * laneHeight) +
         (laneCount > 0 ? (laneCount - 1) * laneGap : 0) +
         (showZoomLane ? kZoomLaneHeightBoost : 0);
+
+    // Lanes stack top-to-bottom in the same order the header column lists its
+    // cells (clips, zoom, markers); a gap precedes every lane after the first.
+    final lanes = <Widget>[
+      if (showClipsLane)
+        ClipsTimelineLane(
+          clips: clipEditor?.clips ?? const [],
+          selectedClipId: clipEditor?.selectedClipId,
+          viewportController: viewportController,
+          onSelectClip: onSelectClip ?? (_) {},
+          trimCallbacks: clipTrimCallbacks,
+          reorderCallbacks: clipReorderCallbacks,
+        ),
+      if (showZoomLane)
+        ZoomTimelineLane(
+          segments: editorController?.displaySegments ?? segments,
+          durationMs: durationMs,
+          positionMs: positionMs,
+          editorController: editorController,
+          onQuickSeek: onSeek,
+          onFocusRequested: onFocusRequested,
+        ),
+      if (showMarkersLane)
+        MarkersTimelineLane(
+          durationMs: durationMs,
+          visibleStartMs: viewportController.visibleStartMs,
+          visibleEndMs: viewportController.visibleEndMs,
+          visibleWidth: viewportController.viewportWidth,
+        ),
+    ];
 
     return SizedBox(
       width: width,
@@ -354,24 +465,10 @@ class TimelineScrollableCanvas extends StatelessWidget {
                 onHoverEnd: onHoverEnd,
                 onHoverChanged: onHoverChanged,
               ),
-              if (showZoomLane) ...[
-                ZoomTimelineLane(
-                  segments: editorController?.displaySegments ?? segments,
-                  durationMs: durationMs,
-                  positionMs: positionMs,
-                  editorController: editorController,
-                  onQuickSeek: onSeek,
-                  onFocusRequested: onFocusRequested,
-                ),
-                if (showMarkersLane) SizedBox(height: laneGap),
+              for (var i = 0; i < lanes.length; i++) ...[
+                if (i > 0) SizedBox(height: laneGap),
+                lanes[i],
               ],
-              if (showMarkersLane)
-                MarkersTimelineLane(
-                  durationMs: durationMs,
-                  visibleStartMs: viewportController.visibleStartMs,
-                  visibleEndMs: viewportController.visibleEndMs,
-                  visibleWidth: viewportController.viewportWidth,
-                ),
             ],
           ),
           IgnorePointer(
@@ -382,6 +479,14 @@ class TimelineScrollableCanvas extends StatelessWidget {
               viewportController: viewportController,
             ),
           ),
+          // Mounted only while the cut tool is armed (Option held). On top of
+          // the lanes + playhead so a click anywhere cuts; absent otherwise so
+          // normal seek/select/scroll/trim gestures are untouched.
+          if (cutModeArmed && onCutAt != null)
+            ScissorsCutLayer(
+              viewportController: viewportController,
+              onCutAt: onCutAt!,
+            ),
         ],
       ),
     );

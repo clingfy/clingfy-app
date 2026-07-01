@@ -804,6 +804,366 @@ extension Array where Element == ZoomTimelineSegment {
   }
 }
 
+/// Canvas-wide color correction applied to the screen content in both the live
+/// preview and the export so the look matches. Fields are normalized to
+/// `[-1, 1]` (0 = neutral), mirroring the Dart `ColorGrade` model. `autoEnabled`
+/// is informational only — the Dart auto-enhance bakes its deltas into the
+/// numeric fields, so the renderer just applies the numbers.
+struct ColorGrade: Equatable {
+  var autoEnabled: Bool
+  var exposure: Double
+  var contrast: Double
+  var saturation: Double
+  var temperature: Double
+  var tint: Double
+
+  static let identity = ColorGrade(
+    autoEnabled: false,
+    exposure: 0,
+    contrast: 0,
+    saturation: 0,
+    temperature: 0,
+    tint: 0
+  )
+
+  /// True when no numeric adjustment is set, so the render pass can be skipped.
+  var isIdentity: Bool {
+    exposure == 0 && contrast == 0 && saturation == 0 && temperature == 0
+      && tint == 0
+  }
+
+  /// Parses the Dart `ColorGrade.toMap()` payload; tolerates missing keys.
+  static func fromFlutter(_ map: [String: Any]?) -> ColorGrade {
+    guard let map else { return .identity }
+    func number(_ key: String) -> Double {
+      if let n = map[key] as? NSNumber { return n.doubleValue }
+      if let d = map[key] as? Double { return d }
+      return 0
+    }
+    return ColorGrade(
+      autoEnabled: (map["autoEnabled"] as? Bool) ?? false,
+      exposure: number("exposure"),
+      contrast: number("contrast"),
+      saturation: number("saturation"),
+      temperature: number("temperature"),
+      tint: number("tint")
+    )
+  }
+}
+
+/// Applies a [ColorGrade] to a `CIImage` as a chained CIFilter pass. Shared by
+/// the live preview composition and the manual export render loop so the graded
+/// look is identical. Returns the input unchanged when the grade is identity.
+enum ColorGradeRenderer {
+  static func apply(_ image: CIImage, grade: ColorGrade) -> CIImage {
+    if grade.isIdentity { return image }
+    var result = image
+
+    if grade.exposure != 0 {
+      let filter = CIFilter(name: "CIExposureAdjust")
+      filter?.setValue(result, forKey: kCIInputImageKey)
+      // Map [-1, 1] -> [-1.5, +1.5] EV.
+      filter?.setValue(grade.exposure * 1.5, forKey: kCIInputEVKey)
+      if let out = filter?.outputImage { result = out }
+    }
+
+    if grade.contrast != 0 || grade.saturation != 0 {
+      let filter = CIFilter(name: "CIColorControls")
+      filter?.setValue(result, forKey: kCIInputImageKey)
+      // contrast: 1.0 neutral, map [-1, 1] -> [0.5, 1.5].
+      filter?.setValue(1.0 + grade.contrast * 0.5, forKey: kCIInputContrastKey)
+      // saturation: 1.0 neutral, map [-1, 1] -> [0.0, 2.0].
+      filter?.setValue(1.0 + grade.saturation, forKey: kCIInputSaturationKey)
+      if let out = filter?.outputImage { result = out }
+    }
+
+    if grade.temperature != 0 || grade.tint != 0 {
+      let filter = CIFilter(name: "CITemperatureAndTint")
+      filter?.setValue(result, forKey: kCIInputImageKey)
+      filter?.setValue(CIVector(x: 6500, y: 0), forKey: "inputNeutral")
+      // Positive temperature = warmer; positive tint = magenta. Raising the
+      // target neutral temperature warms the image.
+      filter?.setValue(
+        CIVector(x: 6500 + grade.temperature * 3000, y: grade.tint * 100),
+        forKey: "inputTargetNeutral"
+      )
+      if let out = filter?.outputImage { result = out }
+    }
+
+    // Filters can nudge the extent; keep the original so downstream render
+    // bounds stay correct (skip when the source extent is infinite).
+    return image.extent.isInfinite ? result : result.cropped(to: image.extent)
+  }
+}
+
+/// A kept source range on the edited timeline, listed in TIMELINE order. Cut
+/// regions are simply the gaps between consecutive ranges' source windows.
+/// Mirrors the Dart `Clip` (enabled clips only); the Dart side normalizes the
+/// list so timeline positions tile contiguously from zero, so the native side
+/// only needs the source windows in order.
+struct ClipKeptRange: Equatable {
+  let sourceInMs: Int
+  let sourceOutMs: Int
+
+  var durationMs: Int { max(0, sourceOutMs - sourceInMs) }
+
+  /// Parses the Dart `Clip.toMap()` payload list, dropping disabled clips and
+  /// any zero/negative-length window. Order is preserved (timeline order).
+  static func fromFlutter(_ list: [[String: Any]]?) -> [ClipKeptRange] {
+    guard let list else { return [] }
+    var ranges: [ClipKeptRange] = []
+    for item in list {
+      let enabled = (item["enabled"] as? Bool) ?? true
+      guard enabled else { continue }
+      let inMs = intValue(item["sourceInMs"])
+      let outMs = intValue(item["sourceOutMs"])
+      if outMs > inMs {
+        ranges.append(ClipKeptRange(sourceInMs: inMs, sourceOutMs: outMs))
+      }
+    }
+    return ranges
+  }
+
+  private static func intValue(_ any: Any?) -> Int {
+    if let n = any as? NSNumber { return n.intValue }
+    if let i = any as? Int { return i }
+    if let d = any as? Double { return Int(d) }
+    return 0
+  }
+}
+
+/// Pure decision logic for "play through the cuts" preview playback.
+///
+/// The preview player stays on the original full asset, so cursor / zoom /
+/// camera keep sampling real recording time and need no remapping. This planner
+/// decides, from the player's real source position, when the playhead must jump
+/// across a cut region (or stop at the trimmed end). It owns no state and no
+/// AVPlayer, so it is exhaustively unit testable; the view holds the active
+/// index and acts on the returned [Decision].
+enum ClipPlaybackPlanner {
+  enum Decision: Equatable {
+    /// Keep playing — still inside the active kept range.
+    case proceed
+    /// Jump to the next kept range (a cut boundary was reached).
+    case advance(toIndex: Int, seekSourceMs: Int)
+    /// Reached the end of the edited timeline — stop.
+    case end
+  }
+
+  /// True when the ranges need no skipping: absent, or a single window that
+  /// already covers the whole asset from 0. Lets the view skip all planner work
+  /// (a zero-cost passthrough, like an identity color grade).
+  static func isPassthrough(ranges: [ClipKeptRange], assetDurationMs: Int) -> Bool {
+    if ranges.isEmpty { return true }
+    guard ranges.count == 1 else { return false }
+    let only = ranges[0]
+    return only.sourceInMs <= 0 && only.sourceOutMs >= assetDurationMs
+  }
+
+  /// From the current player source position and the active range index, decide
+  /// whether to keep playing, jump to the next range, or stop. [epsilonMs]
+  /// absorbs the periodic observer's overshoot so the jump fires a hair before
+  /// the exact cut instead of flashing a frame of cut footage.
+  static func decide(
+    sourceMs: Int,
+    activeIndex: Int,
+    ranges: [ClipKeptRange],
+    epsilonMs: Int = 0
+  ) -> Decision {
+    guard !ranges.isEmpty else { return .proceed }
+    let idx = min(max(activeIndex, 0), ranges.count - 1)
+    let active = ranges[idx]
+    if sourceMs < active.sourceOutMs - epsilonMs {
+      return .proceed
+    }
+    let nextIndex = idx + 1
+    if nextIndex < ranges.count {
+      return .advance(toIndex: nextIndex, seekSourceMs: ranges[nextIndex].sourceInMs)
+    }
+    return .end
+  }
+
+  /// The active range index for a source position: the range containing it,
+  /// else the first range starting after it, else the last. Used when the clip
+  /// list changes or the user seeks.
+  static func activeIndex(forSourceMs sourceMs: Int, ranges: [ClipKeptRange]) -> Int {
+    if ranges.isEmpty { return 0 }
+    for (i, r) in ranges.enumerated() where sourceMs >= r.sourceInMs && sourceMs < r.sourceOutMs {
+      return i
+    }
+    for (i, r) in ranges.enumerated() where sourceMs < r.sourceInMs {
+      return i
+    }
+    return ranges.count - 1
+  }
+
+  /// Total edited-timeline duration (sum of kept range durations).
+  static func editedDurationMs(ranges: [ClipKeptRange]) -> Int {
+    ranges.reduce(0) { $0 + $1.durationMs }
+  }
+
+  /// Maps a real source position to its edited-timeline position given the
+  /// active range index (handles arrange, where source order need not match
+  /// timeline order): the durations of all preceding ranges plus the offset
+  /// into the active range.
+  static func editedMs(
+    forSourceMs sourceMs: Int,
+    activeIndex: Int,
+    ranges: [ClipKeptRange]
+  ) -> Int {
+    guard !ranges.isEmpty else { return sourceMs }
+    let idx = min(max(activeIndex, 0), ranges.count - 1)
+    var base = 0
+    for i in 0..<idx { base += ranges[i].durationMs }
+    let offset = max(0, sourceMs - ranges[idx].sourceInMs)
+    return base + min(offset, ranges[idx].durationMs)
+  }
+
+  /// The kept-range index that an edited-timeline position falls in — the
+  /// inverse counterpart to [activeIndex(forSourceMs:)]. A position at or past
+  /// the edited end resolves to the last range. Used when the user seeks/scrubs
+  /// on the edited timeline so the active range is refreshed to match.
+  static func activeIndex(forEditedMs editedMs: Int, ranges: [ClipKeptRange]) -> Int {
+    guard !ranges.isEmpty else { return 0 }
+    let target = max(0, editedMs)
+    var base = 0
+    for (i, r) in ranges.enumerated() {
+      if target < base + r.durationMs { return i }
+      base += r.durationMs
+    }
+    return ranges.count - 1
+  }
+
+  /// Maps an edited-timeline position back to a real source position — the
+  /// inverse of [editedMs]. A position past the edited end parks on the last
+  /// kept frame. This is what lets a seek/scrub on the edited timeline land on
+  /// the correct source frame across cuts (and, paired with
+  /// [activeIndex(forEditedMs:)], stops a backward seek from parking the
+  /// playhead at the cut).
+  static func sourceMs(forEditedMs editedMs: Int, ranges: [ClipKeptRange]) -> Int {
+    guard !ranges.isEmpty else { return editedMs }
+    let target = max(0, editedMs)
+    var base = 0
+    for r in ranges {
+      if target < base + r.durationMs {
+        return r.sourceInMs + (target - base)
+      }
+      base += r.durationMs
+    }
+    return ranges.last?.sourceOutMs ?? editedMs
+  }
+
+  /// Merges source-adjacent kept ranges (where `range[i].sourceOutMs ==
+  /// range[i+1].sourceInMs`) into one. A split with no deletion produces
+  /// contiguous ranges that cover the asset with no removed footage; coalescing
+  /// turns that back into a single passthrough range so playback and seeking
+  /// skip all clip handling. Reordered (arrange) ranges are not source-adjacent,
+  /// so they are left intact.
+  static func coalesce(ranges: [ClipKeptRange]) -> [ClipKeptRange] {
+    guard ranges.count > 1 else { return ranges }
+    var out: [ClipKeptRange] = []
+    for r in ranges {
+      if let last = out.last, last.sourceOutMs == r.sourceInMs {
+        out[out.count - 1] = ClipKeptRange(
+          sourceInMs: last.sourceInMs, sourceOutMs: r.sourceOutMs)
+      } else {
+        out.append(r)
+      }
+    }
+    return out
+  }
+
+  /// True when a source position sits at/after the last kept range's end (within
+  /// [epsilonMs]) — i.e. the player is parked at the edited end, the spot where
+  /// playback completes. Used so play() restarts from the beginning instead of
+  /// no-op'ing on the last frame.
+  static func isAtEnd(sourceMs: Int, ranges: [ClipKeptRange], epsilonMs: Int = 0) -> Bool {
+    guard let lastOut = ranges.last?.sourceOutMs else { return false }
+    return sourceMs >= lastOut - epsilonMs
+  }
+
+  /// The edited-timeline position for a source moment that lies strictly inside
+  /// a kept range, or `nil` when the moment was removed by a cut. This is what
+  /// the export writer uses to drive "cut at the writer": for each source frame
+  /// it pulls, a `nil` means drop the frame (it is in a cut gap), and a value
+  /// means re-stamp the frame onto the compacted edited timeline at that
+  /// position. Unlike [editedMs] it never clamps a cut-gap moment to a boundary
+  /// — a dropped frame must be reported as dropped, not snapped to the edge.
+  ///
+  /// Empty `ranges` is a passthrough (no cuts): every source moment is kept and
+  /// maps to itself, so the writer behaves exactly as it did before cuts.
+  static func editedMsForKeptSourceMs(_ sourceMs: Int, ranges: [ClipKeptRange]) -> Int? {
+    guard !ranges.isEmpty else { return sourceMs }
+    var base = 0
+    for r in ranges {
+      if sourceMs >= r.sourceInMs && sourceMs < r.sourceOutMs {
+        return base + (sourceMs - r.sourceInMs)
+      }
+      base += r.durationMs
+    }
+    return nil
+  }
+
+  /// True when the kept ranges are listed in non-decreasing source order, i.e.
+  /// reading the source asset forward yields frames in edited-timeline order.
+  /// "Cut at the writer" forward-reads the source once and re-stamps kept frames
+  /// onto the compacted timeline, so it requires this property to emit a
+  /// monotonically increasing output PTS. Split / cut / trim always preserve it
+  /// (timeline order == source order); only clip *reorder* (arrange) can break
+  /// it, and reorder export is handled separately by the caller.
+  static func isSourceMonotonic(_ ranges: [ClipKeptRange]) -> Bool {
+    guard ranges.count > 1 else { return true }
+    for i in 1..<ranges.count where ranges[i].sourceInMs < ranges[i - 1].sourceInMs {
+      return false
+    }
+    return true
+  }
+
+  /// One kept range's placement in the edited-timeline audio composition. The
+  /// slot begins at `editedStartMs` (the cumulative *full* duration of the
+  /// earlier ranges — the same offset the video re-stamp uses as
+  /// `currentEditedBaseMs`) and spans the range's full `durationMs`. Only
+  /// `copyDurationMs` of real source audio is available from `sourceInMs` — the
+  /// captured audio track can run shorter than the video — and the rest of the
+  /// slot is silence.
+  ///
+  /// The load-bearing rule is that each slot advances by the FULL range duration,
+  /// not by however much audio was actually copied. A clamped (short-tail) or
+  /// entirely-absent range therefore leaves trailing silence *inside its own
+  /// slot* instead of pulling every later range earlier. For source-monotonic
+  /// cuts only the last range can ever be clamped, so the distinction was
+  /// invisible; under arrange/reorder a clamped range can sit mid-timeline, where
+  /// advancing by the copied (short) length would desync all downstream audio.
+  struct AudioSlot: Equatable {
+    let sourceInMs: Int
+    let editedStartMs: Int
+    let copyDurationMs: Int
+    let durationMs: Int
+  }
+
+  /// Tiles the kept ranges (in timeline order) into edited-timeline audio slots,
+  /// clamping each range's copied length to what a source audio track of
+  /// `audioDurationMs` actually covers. The slots tile `[0, editedDurationMs)`
+  /// contiguously regardless of source order.
+  static func audioSlots(ranges: [ClipKeptRange], audioDurationMs: Int) -> [AudioSlot] {
+    let audioMs = max(0, audioDurationMs)
+    var base = 0
+    var slots: [AudioSlot] = []
+    for r in ranges {
+      let copyEndMs = min(r.sourceOutMs, audioMs)
+      let copyMs = max(0, copyEndMs - r.sourceInMs)
+      slots.append(
+        AudioSlot(
+          sourceInMs: r.sourceInMs,
+          editedStartMs: base,
+          copyDurationMs: copyMs,
+          durationMs: r.durationMs))
+      base += r.durationMs
+    }
+    return slots
+  }
+}
+
 struct CompositionParams: Equatable {
   let targetSize: CGSize
   let padding: Double
@@ -826,6 +1186,10 @@ struct CompositionParams: Equatable {
   /// `zoomSegments`) so existing `CompositionParams(...)` call sites that
   /// predate the preset feature compile unchanged.
   var backgroundPreset: CanvasBackgroundPreset?
+  /// Canvas-wide color grade baked into the screen content. Defaulted `var`
+  /// (like `zoomSegments` / `backgroundPreset`) so existing call sites compile
+  /// unchanged. `nil` or identity = no color pass.
+  var colorGrade: ColorGrade?
 }
 
 private enum AudioTapSampleType {

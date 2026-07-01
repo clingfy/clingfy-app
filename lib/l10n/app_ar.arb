@@ -325,7 +325,6 @@
   "zoom": "التكبير",
   "intensity": "الشدة",
   "layout": "التخطيط",
-  "effects": "التأثيرات",
   "loudness": "مستوى الصوت",
   "placement": "الموضع",
   "motion": "الحركة",
@@ -369,6 +368,12 @@
   "markers": "العلامات",
   "lanes": "المسارات",
   "snap": "المحاذاة",
+  "clips": "المقاطع",
+  "clipSplit": "تقسيم",
+  "clipSplitTooltip": "تقسيم المقطع عند المؤشر",
+  "clipRemoveSelected": "حذف المقطع المحدد",
+  "clipUndo": "تراجع عن تعديل المقطع",
+  "clipRedo": "إعادة تعديل المقطع",
   "zoomBehavior": "سلوك التكبير",
   "zoomBehaviorTooltip": "اختر كيف يتبع مقطع التكبير هذا التسجيل.",
   "zoomBehaviorDismissTooltip": "إخفاء عناصر التحكم في سلوك التكبير",
@@ -410,6 +415,14 @@
   },
   "zoomSelectAllVisible": "تحديد كل الظاهر",
   "zoomUndoLastAction": "تراجع عن آخر إجراء",
+  "zoomRedoLastAction": "إعادة آخر إجراء",
+  "colorCorrection": "تصحيح الألوان",
+  "autoEnhance": "تحسين تلقائي",
+  "exposure": "التعريض",
+  "contrast": "التباين",
+  "saturation": "التشبع",
+  "temperature": "الحرارة",
+  "tint": "الصبغة",
   "zoomSelectionCleared": "تم مسح التحديد",
   "zoomChangeSelectionRange": "تغيير نطاق التحديد",
   "stopIn": "توقف خلال {value}",
@@ -500,7 +513,6 @@
   "warnBeforeClosingUnexportedRecordingDescription": "اعرض تأكيدًا قبل إغلاق التسجيل الحالي إذا لم يتم تصديره بعد.",
   "closeUnexportedRecordingTitle": "هل تريد إغلاق التسجيل بدون تصدير؟",
   "closeUnexportedRecordingMessage": "لم يتم تصدير هذا التسجيل بعد. إذا أغلقته الآن، فستفقد الوصول إليه في الجلسة الحالية.",
-  "keepEditing": "متابعة التحرير",
   "closeWithoutExporting": "إغلاق بدون تصدير",
   "doNotShowAgain": "عدم الإظهار مرة أخرى",
   "aboutThisApp": "عن التطبيق",
@@ -514,6 +526,13 @@
   "aboutBuildId": "معرّف البناء",
   "aboutBuildDate": "تاريخ البناء",
   "checkForUpdates": "التحقق من التحديثات",
+  "updateChecking": "جارٍ التحقق من التحديثات…",
+  "updateUpToDate": "أنت على أحدث إصدار.",
+  "updateCheckFailed": "فشل التحقق من التحديثات. حاول مرة أخرى لاحقًا.",
+  "updateAvailableTitle": "تحديث متاح",
+  "updateAvailableBody": "الإصدار {version} من Clingfy متاح للتنزيل.",
+  "updateDownload": "تنزيل التحديث",
+  "updateLater": "لاحقًا",
   "escToCancel": "Esc للإلغاء",
   "menuFile": "ملف",
   "menuView": "عرض",
@@ -603,6 +622,8 @@
   "borderWidthLabel": "عرض الحدود",
   "diagnosticsTitle": "التشخيص",
   "diagnosticsHelpText": "في حال حدوث خطأ ما، افتح مجلد السجلات وأرسل ملف سجل اليوم للدعم.",
+  "diagnosticsVerboseLogging": "تسجيل مفصّل",
+  "diagnosticsVerboseLoggingHelp": "سجّل سجلات تصحيح مفصّلة للمساعدة في إعادة إنتاج مشكلة يصعب تتبّعها. فعّله، ثم أعد إنتاج المشكلة، ثم صدّر التشخيصات وأرسل الملفات. اتركه مُطفأً للاستخدام اليومي.",
   "openLogsFolder": "افتتاح مجلد السجلات",
   "revealTodayLog": "إظهار ملف سجل اليوم",
   "copyLogPath": "نسخ المسار",
@@ -651,19 +672,13 @@
   "diagnosticsLogFileUnavailable": "مسار ملف السجل غير متاح الآن.",
   "diagnosticsActionFailed": "تعذر إكمال هذا الإجراء.",
   "diagnosticsLogRevealed": "تم إظهار ملف سجل اليوم.",
+  "exportDiagnostics": "تصدير بيانات التشخيص",
+  "diagnosticsExported": "تم إنشاء حزمة التشخيص وإظهارها في مدير الملفات.",
   "recordingSystemAudio": "صوت النظام",
   "recordingExcludeMicFromSystemAudio": "استبعاد الميكروفون الخاص بي من صوت النظام",
   "restartApp": "أعد تشغيل التطبيق",
   "permissionsOnboardingWelcomeRail": "مرحبًا",
   "permissionsOnboardingMicCameraRail": "الميكروفون + الكاميرا",
-  "permissionsOnboardingStepLabel": "الخطوة {current} من 4",
-  "@permissionsOnboardingStepLabel": {
-    "placeholders": {
-      "current": {
-        "type": "int"
-      }
-    }
-  },
   "permissionsOnboardingWelcomeTitle": "مرحبًا بك في Clingfy",
   "permissionsOnboardingWelcomeSubtitle": "إعداد سريع وستكون جاهزًا للتسجيل خلال دقائق.",
   "permissionsOnboardingTrustLocalFirst": "محلي أولاً: تبقى تسجيلاتك على جهاز Mac الخاص بك.",
@@ -783,5 +798,66 @@
   "licenseNetworkUnavailableWhileConsumingTrial": "الشبكة غير متاحة أثناء مزامنة استخدام النسخة التجريبية.",
   "licenseNetworkUnavailableWhileDeactivatingDevice": "الشبكة غير متاحة أثناء إلغاء تفعيل الجهاز.",
   "licenseValidated": "تم التحقق من الترخيص.",
-  "licenseNotEntitled": "هذا الترخيص لا يفعّل مزايا Pro."
+  "licenseNotEntitled": "هذا الترخيص لا يفعّل مزايا Pro.",
+  "warnMicOpenFailed": "تعذر تشغيل الميكروفون — تحقق من وصول الميكروفون في إعدادات خصوصية ويندوز. يستمر التسجيل بدونه.",
+  "warnMicDisconnected": "تم فصل الميكروفون. يستمر التسجيل بدونه.",
+  "warnSystemAudioOpenFailed": "تعذر التقاط صوت النظام — تحقق من جهاز الإخراج في إعدادات الصوت في ويندوز. يستمر التسجيل بدونه.",
+  "warnSystemAudioStopped": "توقف التقاط صوت النظام. يستمر التسجيل بدونه.",
+  "warnCameraUnavailable": "الكاميرا غير متاحة الآن. يستمر التسجيل بدون نافذة الكاميرا.",
+  "warnCameraOpenFailed": "تعذر تشغيل الكاميرا — تحقق من وصول الكاميرا في إعدادات خصوصية ويندوز. يستمر التسجيل بدون النافذة.",
+  "warnCameraDisconnected": "تم فصل الكاميرا. يستمر التسجيل بدونها.",
+  "warnEncoderVideoError": "واجه التسجيل مشكلة في الترميز — قد يكون الفيديو غير مكتمل.",
+  "warnEncoderAudioError": "واجه التسجيل مشكلة في ترميز الصوت — قد يكون الصوت غير مكتمل.",
+  "errMicrophonePermissionRequiredWindows": "فعّل وصول الميكروفون في إعدادات ويندوز > الخصوصية والأمان > الميكروفون، ثم حاول مجددًا.",
+  "errCameraPermissionDeniedWindows": "فعّل وصول الكاميرا في إعدادات ويندوز > الخصوصية والأمان > الكاميرا.",
+  "permissionsHelpTextWindows": "راجع ما يمكن لـ Clingfy استخدامه وانتقل مباشرة إلى صفحة إعدادات ويندوز المناسبة.",
+  "permissionsChangedHintWindows": "إذا غيّرت إعدادًا في إعدادات ويندوز، عُد إلى Clingfy وحدّث هذه الصفحة لرؤية أحدث حالة.",
+  "permissionsScreenRecordingHelpWindows": "لا يتطلب ويندوز إذن تسجيل الشاشة — يعمل التقاط الشاشة والنوافذ والمناطق مباشرة.",
+  "permissionsNoGrantNeeded": "لا حاجة لإذن",
+  "permissionsDetailMicAccessOffWindows": "وصول الميكروفون متوقف في إعدادات خصوصية ويندوز. فعّله في إعدادات ويندوز > الخصوصية والأمان > الميكروفون.",
+  "permissionsDetailMicMissingWindows": "الميكروفون المحدد غير متصل. أعد توصيله أو اختر آخر.",
+  "permissionsDetailCameraAccessOffWindows": "وصول الكاميرا متوقف في إعدادات خصوصية ويندوز. فعّله في إعدادات ويندوز > الخصوصية والأمان > الكاميرا.",
+  "permissionsDetailCameraMissingWindows": "الكاميرا المحددة غير متصلة. أعد توصيلها أو اختر أخرى.",
+  "permissionsDetailNoCamerasWindows": "لم يتم العثور على كاميرا على هذا الكمبيوتر.",
+  "permissionsOpenSoundSettings": "افتح إعدادات الصوت",
+  "permissionsOnboardingTrustLocalFirstWindows": "محلي أولًا: تبقى تسجيلاتك على جهازك.",
+  "permissionsOnboardingTrustPermissionControlWindows": "تتحكم في وصول الميكروفون والكاميرا في أي وقت من إعدادات ويندوز.",
+  "permissionsOnboardingWindowsNoScreenGrant": "لا حاجة لإذن تسجيل الشاشة على ويندوز — يعمل الالتقاط مباشرة.",
+  "permissionsOnboardingStepCount": "الخطوة {current} من {total}",
+  "@permissionsOnboardingStepCount": {
+    "placeholders": {
+      "current": {
+        "type": "int"
+      },
+      "total": {
+        "type": "int"
+      }
+    }
+  },
+  "warnWindowClosedPartialSaved": "توقف التسجيل: النافذة التي كنت تسجلها أُغلقت. تم حفظ تسجيلك حتى تلك اللحظة.",
+  "warnDisplayDisconnectedPartialSaved": "توقف التسجيل: الشاشة التي كنت تسجلها فُصلت. تم حفظ تسجيلك حتى تلك اللحظة.",
+  "cameraPreviewUseInApp": "لا ترى الكاميرا؟ استخدم المعاينة داخل التطبيق",
+  "cameraPreviewUseFloating": "استخدم فقاعة الكاميرا العائمة",
+  "appliedOnExportNoticeWindows": "يُطبَّق عند التصدير — المعاينة الداخلية لا تعرض هذا التأثير بعد.",
+  "errBadMode": "وضع التسجيل هذا غير متاح على ويندوز بعد.",
+  "errNoCamera": "لا توجد كاميرا متاحة.",
+  "errCameraInputError": "توقفت الكاميرا عن العمل.",
+  "errFileNotFound": "الملف غير موجود.",
+  "errWindowsNotImplemented": "هذه الميزة غير متاحة على ويندوز بعد.",
+  "errRecordingDiskFull": "لا توجد مساحة كافية على القرص لبدء التسجيل.",
+  "errPreviewOpenFailed": "تعذّر فتح المعاينة.",
+  "errPreviewRenderFailed": "توقفت المعاينة عن العرض. أغلق التسجيل وأعد فتحه.",
+  "errRecordingStartTimeout": "لم يبدأ التسجيل في الوقت المحدد.",
+  "errRecordingFinalizeTimeout": "انتهت مهلة حفظ التسجيل.",
+  "errPreviewTimeout": "استغرق تحميل المعاينة وقتًا طويلًا.",
+  "errInternalError": "حدث خطأ داخلي.",
+  "recordingInterruptedNotice": "{count, plural, one{انقطع تسجيل واحد ولم يكن من الممكن استرداده.} two{انقطع تسجيلان ولم يكن من الممكن استردادهما.} few{انقطعت {count} تسجيلات ولم يكن من الممكن استردادها.} many{انقطع {count} تسجيلًا ولم يكن من الممكن استرداده.} other{انقطع {count} تسجيل ولم يكن من الممكن استرداده.}}",
+  "@recordingInterruptedNotice": {
+    "placeholders": {
+      "count": {
+        "type": "int"
+      }
+    }
+  },
+  "forceNativeCrashLabel": "فرض انهيار أصلي (اختبار)"
 }

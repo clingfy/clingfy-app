@@ -40,3 +40,5 @@ flutter run -d macos --flavor $APP_ENV --dart-define-from-file=.env.$APP_ENV
 
 
 
+
+# pwsh ops/release/windows/workflows/local_release.ps1

@@ -9,6 +9,8 @@ import 'package:clingfy/core/export/models/export_settings_types.dart';
 import 'package:clingfy/l10n/app_localizations.dart';
 import 'package:clingfy/app/infrastructure/logging/logger_service.dart';
 import 'package:clingfy/core/models/app_models.dart';
+import 'package:clingfy/core/timeline/model/color_grade.dart';
+import 'package:clingfy/core/color/auto_grade_heuristic.dart';
 import 'package:clingfy/core/models/background_preset_catalog.dart';
 import 'package:clingfy/app/settings/settings_controller.dart';
 import 'package:clingfy/core/bridges/native_bridge.dart';
@@ -46,6 +48,7 @@ class PostProcessingController extends ChangeNotifier {
     _warningSub?.cancel();
     _cameraManualPositionSub?.cancel();
     _audioPreviewDebouncer.dispose();
+    _colorGradePreviewThrottler.dispose();
     _cameraManualPreviewThrottler.dispose();
     super.dispose();
   }
@@ -112,6 +115,16 @@ class PostProcessingController extends ChangeNotifier {
   final AudioDebouncer _audioPreviewDebouncer = AudioDebouncer(
     delay: Duration(milliseconds: 150),
   );
+  ColorGrade _colorGrade = const ColorGrade();
+  // Color edits stream live while the slider is dragged. A *throttle*
+  // (leading + trailing) pushes the first change immediately and then at most
+  // once per interval, so the preview tracks the drag. A trailing debounce kept
+  // deferring the push until the drag settled, which is why color only appeared
+  // once the slider was dropped. The slider's onChangeEnd still flushes the
+  // final value via [commitColorGrade].
+  final ActionThrottler _colorGradePreviewThrottler = ActionThrottler(
+    interval: Duration(milliseconds: 40),
+  );
   final ActionThrottler _cameraManualPreviewThrottler = ActionThrottler();
   CameraPreviewChangeKind _pendingCameraPreviewChangeKind =
       CameraPreviewChangeKind.none;
@@ -141,6 +154,7 @@ class PostProcessingController extends ChangeNotifier {
   bool get cursorAvailable => _cursorAvailable;
   double get audioGainDb => _audioGainDb;
   double get audioVolumePercent => _audioVolumePercent;
+  ColorGrade get colorGrade => _colorGrade;
   String? get cameraPath => _cameraPath;
   bool get hasCameraAsset => _cameraPath != null && _cameraPath!.isNotEmpty;
   CameraCompositionState? get cameraState => _cameraState;
@@ -557,6 +571,85 @@ class PostProcessingController extends ChangeNotifier {
     );
   }
 
+  // --- Color grade ---
+
+  void setColorGradeExposure(double v) {
+    _colorGrade = _colorGrade.copyWith(exposure: v.clamp(-1.0, 1.0));
+    notifyListeners();
+    _schedulePreviewColorGrade();
+  }
+
+  void setColorGradeContrast(double v) {
+    _colorGrade = _colorGrade.copyWith(contrast: v.clamp(-1.0, 1.0));
+    notifyListeners();
+    _schedulePreviewColorGrade();
+  }
+
+  void setColorGradeSaturation(double v) {
+    _colorGrade = _colorGrade.copyWith(saturation: v.clamp(-1.0, 1.0));
+    notifyListeners();
+    _schedulePreviewColorGrade();
+  }
+
+  void setColorGradeTemperature(double v) {
+    _colorGrade = _colorGrade.copyWith(temperature: v.clamp(-1.0, 1.0));
+    notifyListeners();
+    _schedulePreviewColorGrade();
+  }
+
+  void setColorGradeTint(double v) {
+    _colorGrade = _colorGrade.copyWith(tint: v.clamp(-1.0, 1.0));
+    notifyListeners();
+    _schedulePreviewColorGrade();
+  }
+
+  /// Flush the debounce and push the final grade immediately (slider release).
+  void commitColorGrade() {
+    _colorGradePreviewThrottler.cancel();
+    _pushPreviewColorGrade();
+  }
+
+  /// One-tap auto enhance: apply a tasteful preset, or clear back to neutral.
+  void setColorGradeAutoEnhance(bool enabled) {
+    _colorGrade = enabled ? autoEnhanceGrade() : const ColorGrade();
+    notifyListeners();
+    _colorGradePreviewThrottler.cancel();
+    _pushPreviewColorGrade();
+  }
+
+  void _schedulePreviewColorGrade() {
+    _colorGradePreviewThrottler.run(_pushPreviewColorGrade);
+  }
+
+  void _pushPreviewColorGrade() {
+    if (_previewPath == null) {
+      Log.d(
+        "PostProcessing",
+        "Skipping color preview push (no preview path yet)",
+      );
+      return;
+    }
+    Log.d("PostProcessing", "Pushing color grade to preview", null, null, {
+      'sessionId': _activeSessionId,
+      'autoEnabled': _colorGrade.autoEnabled,
+      'exposure': _colorGrade.exposure,
+      'contrast': _colorGrade.contrast,
+      'saturation': _colorGrade.saturation,
+      'temperature': _colorGrade.temperature,
+      'tint': _colorGrade.tint,
+    });
+    unawaited(
+      _nativeBridge
+          .previewSetColorGrade(
+            colorGrade: _colorGrade,
+            sessionId: _activeSessionId,
+          )
+          .catchError((Object e, StackTrace st) {
+            Log.e("PostProcessing", "Failed to update color preview", e, st);
+          }),
+    );
+  }
+
   Map<String, dynamic>? _cameraPreviewMethodArgs(
     CameraPreviewChangeKind changeKind,
   ) {
@@ -644,6 +737,7 @@ class PostProcessingController extends ChangeNotifier {
     _cursorAvailable = true;
     _audioGainDb = _settings.post.postAudioGainDb;
     _audioVolumePercent = _settings.post.postAudioVolumePercent;
+    _colorGrade = const ColorGrade();
     _cameraPath = null;
     _cameraState = null;
     _cameraExportCapabilities = const CameraExportCapabilities.allSupported();
@@ -719,6 +813,13 @@ class PostProcessingController extends ChangeNotifier {
     // Persist the canvas appearance on every committed edit (this method
     // is the debounced canvas-update path). Best-effort, non-blocking.
     _persistCanvasAppearance(projectPath);
+
+    // Phase 6 Slice 1 (PR landing this change) wires `processVideo` on
+    // Windows to a null-returning handler — it no longer throws
+    // WINDOWS_NOT_IMPLEMENTED, so the previous suppression is gone. The
+    // null return signals "no new preview file was generated, keep using
+    // the raw recording", which matches today's Windows preview behavior.
+    // Slices 2+ will start producing a composited preview path here.
 
     _isProcessingPreview = true;
     notifyListeners();
@@ -967,6 +1068,10 @@ class PostProcessingController extends ChangeNotifier {
         'audio.target_loudness_dbfs',
         targetLoudnessDbfs.toStringAsFixed(1),
       );
+      _activeExportTransaction!.setTag(
+        'color.grade_active',
+        _colorGrade.isIdentity ? 'false' : 'true',
+      );
       if (diagnostics.backend != null && diagnostics.backend!.isNotEmpty) {
         _activeExportTransaction!.setTag(
           'recording.backend',
@@ -1001,16 +1106,32 @@ class PostProcessingController extends ChangeNotifier {
         'showCursor': _showCursor,
         'audioGainDb': _audioGainDb,
         'audioVolumePercent': _audioVolumePercent,
+        // Bake the same grade the user sees in the live preview into the
+        // exported file. Identity (no adjustment) is a no-op on the native
+        // side, so it's always safe to send.
+        'colorGrade': _colorGrade.toMap(),
         'autoNormalizeOnExport': autoNormalizeOnExport,
         'targetLoudnessDbfs': targetLoudnessDbfs,
         'filename': dialogResult.fileName.trim(),
-        'directoryOverride': dialogResult.directoryOverride,
+        // Fall back to the workspace save folder when the user didn't pick
+        // a folder in the export dialog itself, so a folder chosen in
+        // Settings → Workspace is honored without re-picking. Native
+        // resolves its own default if this is still null.
+        'directoryOverride':
+            dialogResult.directoryOverride ??
+            _settings.workspace.saveFolderPath,
         'sessionId': _activeSessionId,
         'format': _settings.export.exportFormat,
         'codec': _settings.export.exportCodec,
         'bitrate': _settings.export.exportBitrate,
         if (_cameraPath != null) 'cameraPath': _cameraPath,
         ...?_cameraState?.toMap(),
+        // PR-3d: the kept clip ranges (split / cut / trim) so native bakes the
+        // cuts into the exported file. An unedited recording sends the whole
+        // span, which is a passthrough (no cutting) on the native side.
+        'clips':
+            _player.clipEditor?.clips.map((c) => c.toMap()).toList() ??
+            const <Map<String, dynamic>>[],
       };
 
       _activeExportInvokeSpan = _activeExportTransaction!.startChild(
@@ -1066,8 +1187,10 @@ class PostProcessingController extends ChangeNotifier {
       );
       rethrow;
     } catch (e, st) {
-      if (_isExportCancelRequested ||
-          _isLikelyCancellationMessage(e.toString())) {
+      // Phase 10.4: a requested cancel alone no longer classifies the
+      // failure — only an explicit cancellation signal does. Real errors
+      // that race the user's cancel must still surface and be logged.
+      if (isExportCancellationError(e)) {
         _lastExportWasCancelled = true;
         exportStatus = const SpanStatus.cancelled();
         return null;
@@ -1185,17 +1308,30 @@ class PostProcessingController extends ChangeNotifier {
     await span.finish(status: status);
   }
 
+  /// Phase 10.4: the structured EXPORT_CANCELLED code is the primary
+  /// cancellation signal (Windows emits it); the legacy message sniffing
+  /// stays as the fallback because macOS still cancels with prose-only
+  /// errors. CRITICAL audit fix: this no longer consults
+  /// `_isExportCancelRequested` — pressing Cancel used to turn ANY
+  /// subsequent failure into a silent "clean cancel", eating real errors.
   bool _isExportCancellationException(PlatformException e) {
-    if (_isExportCancelRequested) return true;
-    if (_isLikelyCancellationMessage(e.message) ||
-        _isLikelyCancellationMessage(e.details?.toString())) {
-      return true;
-    }
-    final code = e.code.toLowerCase();
-    return code.contains('cancel');
+    return isExportCancellationError(e);
   }
 
-  bool _isLikelyCancellationMessage(String? message) {
+  @visibleForTesting
+  static bool isExportCancellationError(Object error) {
+    if (error is PlatformException) {
+      if (error.code == NativeErrorCode.exportCancelled) return true;
+      if (_isLikelyCancellationMessage(error.message) ||
+          _isLikelyCancellationMessage(error.details?.toString())) {
+        return true;
+      }
+      return error.code.toLowerCase().contains('cancel');
+    }
+    return _isLikelyCancellationMessage(error.toString());
+  }
+
+  static bool _isLikelyCancellationMessage(String? message) {
     if (message == null || message.isEmpty) return false;
     final normalized = message.toLowerCase();
     return normalized.contains('cancel') ||

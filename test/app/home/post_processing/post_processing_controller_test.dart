@@ -537,4 +537,11 @@ void main() {
     expect(args['cameraOutroDurationMs'], 260);
     expect(args['cameraZoomEmphasisStrength'], 0.12);
   });
+
+  // The "Windows preview composition guard" group was removed in Phase 6
+  // Slice 1: the platform-conditional suppression of processVideo no longer
+  // exists. Native Windows now returns null from processVideo (signaling
+  // "no preview file generated"), which the Dart caller handles cleanly —
+  // no platform check needed. Coverage for that null-return path lives in
+  // windows/runner_tests/router_stub_shapes_test.cpp::ProcessVideoReturnsNullPreviewPath.
 }

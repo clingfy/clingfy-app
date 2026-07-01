@@ -6,12 +6,24 @@ import 'package:flutter/services.dart';
 import 'package:clingfy/app/home/recording/recorded_duration_tracker.dart';
 import 'package:clingfy/core/permissions/models/recording_start_preflight.dart';
 import 'package:clingfy/core/bridges/native_bridge.dart';
+import 'package:clingfy/core/bridges/native_error_codes.dart';
+import 'package:clingfy/core/bridges/native_method_channel.dart';
 import 'package:clingfy/app/infrastructure/observability/telemetry_service.dart';
 import 'package:clingfy/app/infrastructure/logging/logger_service.dart';
 import 'package:clingfy/core/models/app_models.dart';
 import 'package:clingfy/app/settings/settings_controller.dart';
+import 'package:clingfy/ui/platform/platform_kind.dart';
 
 enum _PreviewOpenSource { recordingFinalized, externalProject }
+
+/// A recordingWarning waiting to be shown, with the optional Windows
+/// machine-readable code (see RecordingWarningCode).
+class PendingRecordingWarning {
+  const PendingRecordingWarning({required this.message, this.code});
+
+  final String message;
+  final String? code;
+}
 
 class RecordingController extends ChangeNotifier {
   static const List<String> _recordingStartFailureContextKeys = [
@@ -38,9 +50,43 @@ class RecordingController extends ChangeNotifier {
   }) : _nativeBridge = nativeBridge,
        _settings = settings {
     _settings.addListener(_onSettingsChanged);
-    _workflowSub = _nativeBridge.workflowEvents.listen(_handleWorkflowEvent);
+    // Phase 10.4: an onError-less subscription would silently detach the
+    // controller from every future workflow event on the first stream
+    // error. Log + breadcrumb and stay subscribed (cancelOnError is false).
+    _workflowSub = _nativeBridge.workflowEvents.listen(
+      _handleWorkflowEvent,
+      onError: (Object error, StackTrace stack) {
+        Log.e('Recording', 'Workflow event stream error', error, stack);
+        unawaited(
+          ClingfyTelemetry.addBreadcrumb(
+            category: 'recording.workflow_stream',
+            message: 'workflow event stream error: $error',
+          ),
+        );
+      },
+    );
     unawaited(refreshPauseResumeCapabilities());
   }
+
+  /// Phase 10.4 (Windows): how long each transitional phase may wait for
+  /// the native workflow event that advances it before the watchdog
+  /// recovers the UI. Without these, a dropped native event leaves the app
+  /// stuck in a busy phase forever (verified gap — nothing else recovers
+  /// these phases). macOS keeps trusting native: no watchdogs are armed
+  /// there so its behavior is unchanged.
+  static const Map<WorkflowPhase, Duration> _defaultWatchdogDurations = {
+    WorkflowPhase.startingRecording: Duration(seconds: 30),
+    WorkflowPhase.finalizingRecording: Duration(seconds: 120),
+    WorkflowPhase.openingPreview: Duration(seconds: 30),
+    WorkflowPhase.previewLoading: Duration(seconds: 30),
+    WorkflowPhase.closingPreview: Duration(seconds: 15),
+  };
+
+  /// Test seam: per-phase overrides for the watchdog durations. Phases not
+  /// present fall back to [_defaultWatchdogDurations]. Reset to null in
+  /// test tearDown.
+  @visibleForTesting
+  static Map<WorkflowPhase, Duration>? debugWatchdogDurations;
 
   final NativeBridge _nativeBridge;
   final SettingsController _settings;
@@ -52,16 +98,24 @@ class RecordingController extends ChangeNotifier {
   Duration _elapsed = Duration.zero;
   Timer? _elapsedTicker;
   Timer? _autoStopTimer;
+  Timer? _phaseWatchdog;
+  WorkflowPhase? _watchdogPhase;
+  String? _watchdogSessionId;
   int _sessionCounter = 0;
   bool _startCommandIssued = false;
   String? _mountedPreviewSessionId;
   bool _previewOpenRequested = false;
+  // Step 5.5.2: Flutter texture id returned by Windows previewOpen so
+  // the InlinePreview widget can mount `Texture(textureId: ...)`. null
+  // on macOS (AppKitView path) and until the native call completes.
+  int? _inlinePreviewTextureId;
   bool _pauseResumeInFlight = false;
   _PreviewOpenSource? _previewOpenSource;
   String? _pendingExternalProjectReplacementPath;
   String? _openingExternalProjectPath;
   String? _failedExternalProjectOpenPath;
   String? _pendingWarningMessage;
+  String? _pendingWarningCode;
   RecordingPauseResumeCapabilities _pauseResumeCapabilities =
       const RecordingPauseResumeCapabilities.unsupported();
   final RecordedDurationTracker _durationTracker = RecordedDurationTracker();
@@ -76,6 +130,19 @@ class RecordingController extends ChangeNotifier {
   String? get originalRecordingPath => _state.projectPath;
   String? get errorCode => _state.errorCode;
   String? get errorMessage => _state.errorMessage ?? _state.errorCode;
+
+  /// Phase 10.3: what the toolbar should feed the error mapper. On Windows
+  /// the CODE wins (native messages are hardcoded English; the mapper
+  /// localizes codes), with the prose kept as [displayErrorFallback] for
+  /// unmapped codes. On macOS native messages are already localized, so
+  /// prose keeps winning.
+  String? get displayError => isWindows()
+      ? (_state.errorCode ?? _state.errorMessage)
+      : (_state.errorMessage ?? _state.errorCode);
+
+  /// The native prose to show when [displayError] is a code the mapper
+  /// doesn't recognize (better than rendering the raw token).
+  String? get displayErrorFallback => _state.errorMessage;
   String? get pendingWarningMessage => _pendingWarningMessage;
 
   bool get isRecording =>
@@ -147,6 +214,12 @@ class RecordingController extends ChangeNotifier {
   bool get showPreRecordingBar => phase == WorkflowPhase.idle;
   bool get shouldNotifyRecordingFinalizedOnPreviewOpen =>
       _previewOpenSource == _PreviewOpenSource.recordingFinalized;
+
+  /// Step 5.5.2: Windows-only Flutter texture id from the latest
+  /// `previewOpen` reply. macOS uses an AppKit platform view and never
+  /// produces a texture id. Cleared by `_beginPreviewClose` and on
+  /// `_transitionToIdle`.
+  int? get inlinePreviewTextureId => _inlinePreviewTextureId;
 
   Duration get elapsed => _elapsed;
   bool get autoStopEnabled => _settings.recording.autoStopEnabled;
@@ -282,13 +355,27 @@ class RecordingController extends ChangeNotifier {
       sessionId: nextSessionId,
     );
     _pendingWarningMessage = null;
+    _pendingWarningCode = null;
+    _syncPhaseWatchdog();
     notifyListeners();
   }
 
   String? consumePendingWarningMessage() {
     final warning = _pendingWarningMessage;
     _pendingWarningMessage = null;
+    _pendingWarningCode = null;
     return warning;
+  }
+
+  /// Phase 10.2: read-and-clear the pending warning together with its
+  /// optional machine-readable code (Windows-only; null on macOS).
+  PendingRecordingWarning? consumePendingWarning() {
+    final message = _pendingWarningMessage;
+    final code = _pendingWarningCode;
+    _pendingWarningMessage = null;
+    _pendingWarningCode = null;
+    if (message == null || message.isEmpty) return null;
+    return PendingRecordingWarning(message: message, code: code);
   }
 
   void cancelPendingStartIntent() {
@@ -401,7 +488,7 @@ class RecordingController extends ChangeNotifier {
       await ClingfyTelemetry.stopSession();
       _startCommandIssued = false;
       _transitionToIdle(
-        errorCode: 'RECORDING_ERROR',
+        errorCode: NativeErrorCode.recordingError,
         errorMessage: e.toString(),
       );
     }
@@ -470,7 +557,11 @@ class RecordingController extends ChangeNotifier {
           'previousPhase': previousState.phase.name,
         },
       );
-      _restoreAfterStopFailure(previousState, 'RECORDING_ERROR', e.toString());
+      _restoreAfterStopFailure(
+        previousState,
+        NativeErrorCode.recordingError,
+        e.toString(),
+      );
     }
   }
 
@@ -507,7 +598,7 @@ class RecordingController extends ChangeNotifier {
       );
       _setState(
         _state.copyWith(
-          errorCode: 'RECORDING_ERROR',
+          errorCode: NativeErrorCode.recordingError,
           errorMessage: e.toString(),
         ),
       );
@@ -547,7 +638,7 @@ class RecordingController extends ChangeNotifier {
       );
       _setState(
         _state.copyWith(
-          errorCode: 'RECORDING_ERROR',
+          errorCode: NativeErrorCode.recordingError,
           errorMessage: e.toString(),
         ),
       );
@@ -589,22 +680,54 @@ class RecordingController extends ChangeNotifier {
         'Recording',
         'Invoking native previewOpen for session $activeSessionId',
       );
-      await _nativeBridge.previewOpen(
+      final openResult = await _nativeBridge.previewOpen(
         sessionId: activeSessionId,
         projectPath: path,
       );
+      // Stale-session guard: if the user already pressed close while
+      // native was warming the texture, drop the id on the floor.
+      if (_mountedPreviewSessionId == activeSessionId &&
+          _previewOpenRequested) {
+        _inlinePreviewTextureId = openResult.hasTexture
+            ? openResult.textureId
+            : null;
+        Log.d('Recording', 'previewOpen returned', null, null, {
+          'sessionId': activeSessionId,
+          'textureId': _inlinePreviewTextureId,
+          'width': openResult.width,
+          'height': openResult.height,
+          'videoWidth': openResult.videoWidth,
+          'videoHeight': openResult.videoHeight,
+          'sharedHandleOk': openResult.sharedHandleOk,
+        });
+        notifyListeners();
+      }
     } catch (e, st) {
       Log.e("Recording", "Failed to open preview: $e", e, st);
       _recordExternalProjectOpenFailureIfNeeded();
+      // Keep the structured PlatformException code (PREVIEW_INPUT_MISSING
+      // etc.) so the mapper can localize it; the full toString was an
+      // unlocalizable wall of text.
       _state = _state.copyWith(
-        errorCode: 'PREVIEW_OPEN_ERROR',
-        errorMessage: e.toString(),
+        errorCode: e is PlatformException
+            ? e.code
+            : NativeErrorCode.previewOpenError,
+        errorMessage: e is PlatformException
+            ? _normalizedPlatformErrorMessage(e)
+            : e.toString(),
       );
       notifyListeners();
       await _beginPreviewClose(requestNativeClose: false);
+      // Thread the SAME structured values — passing the generic
+      // PREVIEW_OPEN_ERROR/toString here would clobber the code set above
+      // and make the PREVIEW_INPUT_MISSING mapper case unreachable.
       _transitionToIdle(
-        errorCode: 'PREVIEW_OPEN_ERROR',
-        errorMessage: e.toString(),
+        errorCode: e is PlatformException
+            ? e.code
+            : NativeErrorCode.previewOpenError,
+        errorMessage: e is PlatformException
+            ? _normalizedPlatformErrorMessage(e)
+            : e.toString(),
       );
     }
   }
@@ -655,50 +778,50 @@ class RecordingController extends ChangeNotifier {
     final type = event['type']?.toString();
     if (type == null || type.isEmpty) return;
 
-    if (type == 'previewPreparing' ||
-        type == 'previewReady' ||
-        type == 'previewFailed' ||
-        type == 'previewClosed' ||
-        type == 'recordingFinalized' ||
-        type == 'recordingFinished') {
+    if (type == WorkflowEventType.previewPreparing ||
+        type == WorkflowEventType.previewReady ||
+        type == WorkflowEventType.previewFailed ||
+        type == WorkflowEventType.previewClosed ||
+        type == WorkflowEventType.recordingFinalized ||
+        type == WorkflowEventType.recordingFinished) {
       Log.d('Recording', 'Received $type workflow event', null, null, {
         ..._previewLifecycleLogContext(event),
       });
     }
 
     switch (type) {
-      case 'recordingStarted':
+      case WorkflowEventType.recordingStarted:
         _handleRecordingStartedEvent(event);
         return;
-      case 'recordingPaused':
+      case WorkflowEventType.recordingPaused:
         _handleRecordingPausedEvent(event);
         return;
-      case 'recordingResumed':
+      case WorkflowEventType.recordingResumed:
         _handleRecordingResumedEvent(event);
         return;
-      case 'recordingFinalized':
-      case 'recordingFinished':
+      case WorkflowEventType.recordingFinalized:
+      case WorkflowEventType.recordingFinished:
         _handleRecordingFinalizedEvent(event);
         return;
-      case 'recordingFailed':
+      case WorkflowEventType.recordingFailed:
         _handleRecordingFailedEvent(event);
         return;
-      case 'recordingWarning':
+      case WorkflowEventType.recordingWarning:
         _handleRecordingWarningEvent(event);
         return;
-      case 'previewPreparing':
+      case WorkflowEventType.previewPreparing:
         _handlePreviewPreparingEvent(event);
         return;
-      case 'previewReady':
+      case WorkflowEventType.previewReady:
         _handlePreviewReadyEvent(event);
         return;
-      case 'previewFailed':
+      case WorkflowEventType.previewFailed:
         _handlePreviewFailedEvent(event);
         return;
-      case 'previewClosed':
+      case WorkflowEventType.previewClosed:
         _handlePreviewClosedEvent(event);
         return;
-      case 'openProjectRequest':
+      case WorkflowEventType.openProjectRequest:
         return;
       default:
         Log.d('Recording', 'Ignoring unknown workflow event: $type');
@@ -794,7 +917,11 @@ class RecordingController extends ChangeNotifier {
   void _handleRecordingFinalizedEvent(Map<String, dynamic> event) {
     final eventSessionId = event['sessionId']?.toString();
     if (_isStaleSession(eventSessionId)) return;
+    // Phase 10.4: openingPreview joins the ignore-list so a duplicate
+    // finalized event cannot re-enter _enterPreviewForProject and restart
+    // the preview open that the first event already kicked off.
     if (phase == WorkflowPhase.closingPreview ||
+        phase == WorkflowPhase.openingPreview ||
         phase == WorkflowPhase.previewLoading ||
         phase == WorkflowPhase.previewReady ||
         phase == WorkflowPhase.exporting) {
@@ -804,10 +931,10 @@ class RecordingController extends ChangeNotifier {
     final projectPath = event['projectPath']?.toString();
     if (projectPath == null || projectPath.isEmpty) {
       _handleRecordingFailedEvent({
-        'type': 'recordingFailed',
+        'type': WorkflowEventType.recordingFailed,
         'sessionId': eventSessionId,
         'stage': 'finalize',
-        'code': 'RECORDING_FINALIZE_ERROR',
+        'code': DartSynthesizedErrorCode.recordingFinalizeError,
         'error': 'Missing finalized project path',
       });
       return;
@@ -835,8 +962,74 @@ class RecordingController extends ChangeNotifier {
     final code =
         event['code']?.toString() ??
         event['stage']?.toString() ??
-        'RECORDING_ERROR';
+        NativeErrorCode.recordingError;
     final error = event['error']?.toString();
+
+    // Phase 10.4: once the workflow reached a preview (or export) phase the
+    // recording already finalized successfully — native cannot legitimately
+    // fail it afterwards. Tearing the workflow down over a late/duplicate
+    // failure event would discard a recording the user can already see
+    // (review fix: `exporting` added so a mid-export event can't yank the
+    // shell to idle under a live export, matching the finalized handler's
+    // ignore list).
+    if (phase == WorkflowPhase.openingPreview ||
+        phase == WorkflowPhase.previewLoading ||
+        phase == WorkflowPhase.previewReady ||
+        phase == WorkflowPhase.closingPreview ||
+        phase == WorkflowPhase.exporting) {
+      Log.w(
+        'Recording',
+        'Ignoring recordingFailed during preview phase ${phase.name}',
+        null,
+        null,
+        {
+          'phase': phase.name,
+          'sessionId': eventSessionId,
+          'code': code,
+          'error': error,
+        },
+      );
+      unawaited(
+        ClingfyTelemetry.addBreadcrumb(
+          category: 'recording.workflow',
+          message: 'recordingFailed ignored during ${phase.name}',
+          data: {'code': code, 'sessionId': eventSessionId},
+        ),
+      );
+      return;
+    }
+
+    // Phase 10.4: this event path previously logged nothing — mid-recording
+    // native failures never reached the JSONL log or Sentry unless the
+    // start call itself threw.
+    Log.e('Recording', 'Native recordingFailed event: $code', null, null, {
+      'phase': phase.name,
+      'sessionId': eventSessionId,
+      'code': code,
+      'error': error,
+      'stage': event['stage']?.toString(),
+    });
+    // Review fix: a refused START is reported on BOTH surfaces by native
+    // (the recordingFailed event AND an error reply to the startRecording
+    // call, on macOS and Windows alike). The startRecording catch already
+    // captures that to Sentry — capturing here too double-reported every
+    // failed start. Mid-recording/finalize failures arrive only as events,
+    // so those still capture here.
+    final isStartFailureOwnedByMethodCatch =
+        phase == WorkflowPhase.startingRecording && _startCommandIssued;
+    if (!isStartFailureOwnedByMethodCatch) {
+      unawaited(
+        ClingfyTelemetry.captureError(
+          PlatformException(code: code, message: error),
+          method: 'workflow.recordingFailed',
+          context: {
+            'phase': phase.name,
+            'sessionId': eventSessionId,
+            'stage': event['stage']?.toString(),
+          },
+        ),
+      );
+    }
 
     _pauseResumeInFlight = false;
     _stopElapsedTicker();
@@ -857,7 +1050,12 @@ class RecordingController extends ChangeNotifier {
       return;
     }
 
+    // Phase 10.2: Windows attaches a machine-readable code (see
+    // RecordingWarningCode) so the UI can localize the toast and offer the
+    // right settings action. Absent on macOS — message renders verbatim.
+    final code = event['code']?.toString();
     _pendingWarningMessage = message;
+    _pendingWarningCode = (code == null || code.trim().isEmpty) ? null : code;
     notifyListeners();
   }
 
@@ -927,7 +1125,12 @@ class RecordingController extends ChangeNotifier {
     final eventSessionId = event['sessionId']?.toString();
     if (_isStaleSession(eventSessionId)) return;
 
-    final errorCode = event['reason']?.toString() ?? 'PREVIEW_ERROR';
+    // Windows sends `code` (workflow_event_publisher.cpp); macOS sends
+    // `reason`. Reading only `reason` dropped the Windows code entirely.
+    final errorCode =
+        event['code']?.toString() ??
+        event['reason']?.toString() ??
+        DartSynthesizedErrorCode.previewError;
     final errorMessage =
         event['error']?.toString() ?? event['reason']?.toString();
     Log.w('Recording', 'Preview failed', null, null, {
@@ -996,6 +1199,7 @@ class RecordingController extends ChangeNotifier {
 
     _mountedPreviewSessionId = null;
     _previewOpenRequested = false;
+    _inlinePreviewTextureId = null;
     if (phase != WorkflowPhase.closingPreview) {
       _setState(_state.copyWith(phase: WorkflowPhase.closingPreview));
     }
@@ -1022,24 +1226,155 @@ class RecordingController extends ChangeNotifier {
     _startCommandIssued = false;
     _mountedPreviewSessionId = null;
     _previewOpenRequested = false;
+    _inlinePreviewTextureId = null;
     _previewOpenSource = null;
     _pendingExternalProjectReplacementPath = null;
     _openingExternalProjectPath = null;
     _pendingWarningMessage = null;
+    _pendingWarningCode = null;
     Log.recordingId = null;
     _state = RecordingWorkflowState(
       phase: WorkflowPhase.idle,
       errorCode: clearError ? null : (errorCode ?? _state.errorCode),
       errorMessage: clearError ? null : (errorMessage ?? _state.errorMessage),
     );
+    _syncPhaseWatchdog();
     notifyListeners();
   }
 
   void _setState(RecordingWorkflowState nextState) {
     final changed = nextState != _state;
     _state = nextState;
+    _syncPhaseWatchdog();
     if (changed) {
       notifyListeners();
+    }
+  }
+
+  /// Phase 10.4: (re)arm or cancel the phase watchdog after any phase (or
+  /// in-phase session) change. Must be called by every state-mutation site
+  /// that can change [WorkflowPhase]. No-op on macOS.
+  void _syncPhaseWatchdog() {
+    final currentPhase = _state.phase;
+    if (_watchdogPhase == currentPhase &&
+        _watchdogSessionId == _state.sessionId) {
+      return;
+    }
+    _phaseWatchdog?.cancel();
+    _phaseWatchdog = null;
+    _watchdogPhase = currentPhase;
+    _watchdogSessionId = _state.sessionId;
+    if (!isWindows()) return;
+
+    final duration =
+        debugWatchdogDurations?[currentPhase] ??
+        _defaultWatchdogDurations[currentPhase];
+    if (duration == null) return;
+
+    final armedSessionId = _state.sessionId;
+    _phaseWatchdog = Timer(duration, () {
+      _onPhaseWatchdogFired(currentPhase, armedSessionId, duration);
+    });
+  }
+
+  void _onPhaseWatchdogFired(
+    WorkflowPhase armedPhase,
+    String? armedSessionId,
+    Duration duration,
+  ) {
+    // Stale fire: the phase (or session) already moved on. The timer is
+    // canceled on every transition, so this is belt-and-braces only.
+    if (_state.phase != armedPhase || _state.sessionId != armedSessionId) {
+      return;
+    }
+    _phaseWatchdog = null;
+
+    Log.e(
+      'Recording',
+      'Watchdog: no native workflow event after ${duration.inSeconds}s in '
+          '${armedPhase.name}; recovering UI',
+      null,
+      null,
+      {
+        'phase': armedPhase.name,
+        'sessionId': armedSessionId,
+        'projectPath': _state.projectPath,
+        'watchdogSeconds': duration.inSeconds,
+      },
+    );
+    unawaited(
+      ClingfyTelemetry.captureError(
+        TimeoutException(
+          'Workflow watchdog expired in ${armedPhase.name}',
+          duration,
+        ),
+        method: 'workflow.watchdog',
+        context: {
+          'phase': armedPhase.name,
+          'sessionId': armedSessionId,
+          'projectPath': _state.projectPath,
+          'watchdogMs': duration.inMilliseconds,
+        },
+      ),
+    );
+
+    switch (armedPhase) {
+      case WorkflowPhase.startingRecording:
+        // Review fix: UI-only recovery orphaned a live native capture —
+        // native may have started (the event was lost/late) and would keep
+        // recording with the UI idle, refusing every future start. Issue a
+        // best-effort native stop for the armed session first; the engine's
+        // Stop is idempotent and safely no-ops if the start never landed.
+        unawaited(_invokeNativeStopQuietly(armedSessionId));
+        unawaited(ClingfyTelemetry.stopSession());
+        _transitionToIdle(
+          errorCode: DartSynthesizedErrorCode.recordingStartTimeout,
+        );
+      case WorkflowPhase.finalizingRecording:
+        // Same rationale: a still-finalizing native session would emit a
+        // late recordingFinalized into a stale-dropped void; the stop is a
+        // no-op if the session already settled.
+        unawaited(_invokeNativeStopQuietly(armedSessionId));
+        unawaited(ClingfyTelemetry.stopSession());
+        _transitionToIdle(
+          errorCode: DartSynthesizedErrorCode.recordingFinalizeTimeout,
+        );
+      case WorkflowPhase.openingPreview:
+      case WorkflowPhase.previewLoading:
+        // Same shape as a native previewFailed with PREVIEW_TIMEOUT; the
+        // closingPreview watchdog backstops the close request below.
+        _recordExternalProjectOpenFailureIfNeeded();
+        _state = _state.copyWith(
+          errorCode: DartSynthesizedErrorCode.previewTimeout,
+        );
+        notifyListeners();
+        unawaited(_beginPreviewClose(requestNativeClose: true));
+      case WorkflowPhase.closingPreview:
+        // Mirror the previewClosed handler: back to idle, KEEPING any
+        // existing error (e.g. the PREVIEW_TIMEOUT set above).
+        _transitionToIdle(clearError: false);
+      default:
+        break;
+    }
+  }
+
+  /// Review fix (Phase 10.4): best-effort native stop used by the
+  /// start/finalize watchdogs. Without it the watchdog recovered the UI
+  /// only — a live native capture kept recording invisibly, refused every
+  /// future start, and could only be ended by closing the app. The engine's
+  /// stop is idempotent, so this is safe when the session never actually
+  /// started or already settled. All errors are swallowed: the watchdog has
+  /// already reported the underlying timeout.
+  Future<void> _invokeNativeStopQuietly(String? sessionId) async {
+    if (sessionId == null || sessionId.isEmpty) {
+      return;
+    }
+    try {
+      await _nativeBridge.invokeMethod<void>('stopRecording', {
+        'sessionId': sessionId,
+      });
+    } catch (e) {
+      Log.w('Recording', 'watchdog best-effort native stop failed: $e');
     }
   }
 
@@ -1056,6 +1391,7 @@ class RecordingController extends ChangeNotifier {
     _startCommandIssued = false;
     _mountedPreviewSessionId = null;
     _previewOpenRequested = false;
+    _inlinePreviewTextureId = null;
     _previewOpenSource = source;
     _failedExternalProjectOpenPath = null;
     _pendingExternalProjectReplacementPath = null;
@@ -1142,6 +1478,8 @@ class RecordingController extends ChangeNotifier {
     _settings.removeListener(_onSettingsChanged);
     _elapsedTicker?.cancel();
     _autoStopTimer?.cancel();
+    _phaseWatchdog?.cancel();
+    _phaseWatchdog = null;
     _durationTracker.reset();
     super.dispose();
   }

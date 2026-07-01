@@ -7,6 +7,7 @@ import 'package:clingfy/core/models/app_models.dart';
 import 'package:clingfy/app/home/recording/recording_controller.dart';
 import 'package:clingfy/app/infrastructure/logging/logger_service.dart';
 import 'package:clingfy/core/zoom/zoom_editor_controller.dart';
+import 'package:clingfy/core/clips/clip_editor_controller.dart';
 
 class PlayerController extends ChangeNotifier {
   PlayerController({required NativeBridge nativeBridge})
@@ -38,6 +39,9 @@ class PlayerController extends ChangeNotifier {
   ZoomEditorController? _zoomEditor;
   VoidCallback? _zoomEditorListener;
 
+  ClipEditorController? _clipEditor;
+  VoidCallback? _clipEditorListener;
+
   int get positionMs => _posMs;
   int get durationMs => _durMs;
   bool get isScrubbing => _scrubbing;
@@ -50,6 +54,12 @@ class PlayerController extends ChangeNotifier {
   Stream<Offset> get cameraManualPositionStream =>
       _cameraManualPositionController.stream;
   ZoomEditorController? get zoomEditor => _zoomEditor;
+
+  /// The clip (split/cut/trim/arrange) editor for the active preview, or null
+  /// before the preview is ready. Seeded with the raw recording duration, which
+  /// is known once the first `playerTick` arrives (before any cuts exist, the
+  /// emitted duration is the raw duration).
+  ClipEditorController? get clipEditor => _clipEditor;
   List<ZoomSegment> get zoomSegments => _zoomSegments;
   List<ZoomSegment>? get previewCompositionZoomSegments => _zoomEditor == null
       ? null
@@ -73,19 +83,30 @@ class PlayerController extends ChangeNotifier {
 
       switch (type) {
         case 'playerTick':
-          if (!_scrubbing && !_isPeeking) {
+          // While playing, the playhead must always track — peeking is a
+          // paused-only affordance, so `_playerPlaying` overrides a stale
+          // `_isPeeking` that a hover left set. This is the load-bearing guard
+          // against the "resume leaves the scrubber frozen until the cursor
+          // exits the timeline" bug.
+          if (_playerPlaying || (!_scrubbing && !_isPeeking)) {
             _posMs = (event['positionMs'] as num?)?.toInt() ?? 0;
             _durMs = (event['durationMs'] as num?)?.toInt() ?? 0;
             _playerReady = _durMs > 0;
             if (_playerReady &&
-                _zoomEditor == null &&
                 _activeSessionId != null &&
                 _activePreviewPath != null &&
                 (_workflow?.phase == WorkflowPhase.previewReady ||
                     _workflow?.phase == WorkflowPhase.exporting)) {
-              unawaited(
-                _attachZoomEditor(_activeSessionId!, _activePreviewPath!),
-              );
+              if (_zoomEditor == null) {
+                unawaited(
+                  _attachZoomEditor(_activeSessionId!, _activePreviewPath!),
+                );
+              }
+              // Seed the clip editor with the raw recording duration. This first
+              // tick predates any cut, so `_durMs` is still the raw duration.
+              if (_clipEditor == null) {
+                _attachClipEditor(_activeSessionId!);
+              }
             }
             notifyListeners();
           }
@@ -94,6 +115,9 @@ class PlayerController extends ChangeNotifier {
           final state = event['state'] as String?;
           if (state == 'playing') {
             _playerPlaying = true;
+            // Defense in depth: playback (however it started) ends any peek, so
+            // position ticks must flow to the playhead again.
+            _isPeeking = false;
           } else if (state == 'paused') {
             _playerPlaying = false;
           } else if (state == 'completed') {
@@ -184,6 +208,10 @@ class PlayerController extends ChangeNotifier {
       } else {
         _detachZoomEditor();
       }
+      // Always drop the clip editor on a session switch so the next tick
+      // re-seeds a fresh one with the new recording's raw duration (its own
+      // attach guard would otherwise keep the stale editor).
+      _detachClipEditor();
       notifyListeners();
       return;
     }
@@ -246,6 +274,39 @@ class PlayerController extends ChangeNotifier {
     _zoomSegments = [];
   }
 
+  void _attachClipEditor(String sessionId) {
+    _detachClipEditor();
+
+    final editor = ClipEditorController(
+      nativeBridge: _nativeBridge,
+      durationMs: _durMs,
+      sessionId: sessionId,
+    );
+    _clipEditor = editor;
+
+    void listener() {
+      if (_clipEditor != editor) return;
+      notifyListeners();
+    }
+
+    _clipEditorListener = listener;
+    editor.addListener(listener);
+    notifyListeners();
+  }
+
+  void _detachClipEditor() {
+    final editor = _clipEditor;
+    final listener = _clipEditorListener;
+
+    if (editor != null && listener != null) {
+      editor.removeListener(listener);
+    }
+
+    editor?.dispose();
+    _clipEditor = null;
+    _clipEditorListener = null;
+  }
+
   void _clearPlaybackState({required bool detachZoomEditor}) {
     _blockingError = null;
     _blockingErrorCode = null;
@@ -257,6 +318,7 @@ class PlayerController extends ChangeNotifier {
     _isPeeking = false;
     if (detachZoomEditor) {
       _detachZoomEditor();
+      _detachClipEditor();
     }
     notifyListeners();
   }
@@ -264,9 +326,15 @@ class PlayerController extends ChangeNotifier {
   Future<void> play() async {
     final sessionId = _activeSessionId;
     if (sessionId == null) return;
-    await _nativeBridge.invokeMethod('previewPlay', {'sessionId': sessionId});
+    // Commit any in-progress hover-peek AND mark playing BEFORE the await: a
+    // hover landing during the await calls previewPeekTo, which only bails when
+    // `_playerPlaying` is already true — so setting it after the await would let
+    // that hover re-arm `_isPeeking` and re-freeze the playhead. Set both up
+    // front. (The tick handler also treats `_playerPlaying` as authoritative.)
+    _isPeeking = false;
     _playerPlaying = true;
     notifyListeners();
+    await _nativeBridge.invokeMethod('previewPlay', {'sessionId': sessionId});
   }
 
   Future<void> pause() async {

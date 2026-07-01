@@ -325,7 +325,6 @@
   "zoom": "Zoom",
   "intensity": "Intensitate",
   "layout": "Aspect",
-  "effects": "Efecte",
   "loudness": "Volum",
   "placement": "Poziționare",
   "motion": "Mișcare",
@@ -369,6 +368,12 @@
   "markers": "Marcaje",
   "lanes": "Benzi",
   "snap": "Fixare",
+  "clips": "Clipuri",
+  "clipSplit": "Împarte",
+  "clipSplitTooltip": "Împarte clipul la cursor",
+  "clipRemoveSelected": "Elimină clipul selectat",
+  "clipUndo": "Anulează editarea clipului",
+  "clipRedo": "Refă editarea clipului",
   "zoomBehavior": "Comportament zoom",
   "zoomBehaviorTooltip": "Alege cum urmărește acest segment de zoom înregistrarea.",
   "zoomBehaviorDismissTooltip": "Ascunde controalele pentru comportamentul zoom",
@@ -410,6 +415,14 @@
   },
   "zoomSelectAllVisible": "Selectează tot ce este vizibil",
   "zoomUndoLastAction": "Anulează ultima acțiune",
+  "zoomRedoLastAction": "Refă ultima acțiune",
+  "colorCorrection": "Corecție culoare",
+  "autoEnhance": "Auto-îmbunătățire",
+  "exposure": "Expunere",
+  "contrast": "Contrast",
+  "saturation": "Saturație",
+  "temperature": "Temperatură",
+  "tint": "Nuanță",
   "zoomSelectionCleared": "Selecția a fost ștearsă",
   "zoomChangeSelectionRange": "Schimbă intervalul selecției",
   "stopIn": "Oprește în {value}",
@@ -500,7 +513,6 @@
   "warnBeforeClosingUnexportedRecordingDescription": "Afișează o confirmare înainte de a închide înregistrarea curentă dacă nu a fost exportată încă.",
   "closeUnexportedRecordingTitle": "Închizi înregistrarea fără export?",
   "closeUnexportedRecordingMessage": "Această înregistrare nu a fost încă exportată. Dacă o închizi acum, vei pierde accesul la ea în sesiunea curentă.",
-  "keepEditing": "Continuă editarea",
   "closeWithoutExporting": "Închide fără export",
   "doNotShowAgain": "Nu mai arăta",
   "aboutThisApp": "Despre această aplicație",
@@ -514,6 +526,13 @@
   "aboutBuildId": "Build ID",
   "aboutBuildDate": "Build realizat",
   "checkForUpdates": "Verifică actualizările",
+  "updateChecking": "Se verifică actualizările…",
+  "updateUpToDate": "Folosești cea mai recentă versiune.",
+  "updateCheckFailed": "Verificarea actualizărilor a eșuat. Încearcă din nou mai târziu.",
+  "updateAvailableTitle": "Actualizare disponibilă",
+  "updateAvailableBody": "Clingfy {version} este disponibil pentru descărcare.",
+  "updateDownload": "Descarcă actualizarea",
+  "updateLater": "Mai târziu",
   "escToCancel": "Esc pentru anulare",
   "menuFile": "Fișier",
   "menuView": "Vizualizare",
@@ -603,6 +622,8 @@
   "borderWidthLabel": "Lățime bordură",
   "diagnosticsTitle": "Diagnosticare",
   "diagnosticsHelpText": "Dacă ceva nu merge bine, deschideți folderul de loguri și trimiteți logul de astăzi la suport.",
+  "diagnosticsVerboseLogging": "Jurnalizare detaliată",
+  "diagnosticsVerboseLoggingHelp": "Înregistrează loguri de depanare detaliate pentru a ajuta la reproducerea unei probleme greu de găsit. Activează-l, reprodu problema, apoi exportă diagnosticarea și trimite fișierele. Lasă-l dezactivat pentru utilizarea zilnică.",
   "openLogsFolder": "Deschide folderul de loguri",
   "revealTodayLog": "Arată logul de astăzi",
   "copyLogPath": "Copiază calea",
@@ -651,19 +672,13 @@
   "diagnosticsLogFileUnavailable": "Calea fișierului log nu este disponibilă momentan.",
   "diagnosticsActionFailed": "Acțiunea nu a putut fi finalizată.",
   "diagnosticsLogRevealed": "Fișierul log de astăzi a fost afișat.",
+  "exportDiagnostics": "Exportă diagnosticele",
+  "diagnosticsExported": "Pachetul de diagnostic a fost creat și afișat în managerul de fișiere.",
   "recordingSystemAudio": "Audio de sistem",
   "recordingExcludeMicFromSystemAudio": "Exclude microfonul meu din audio de sistem",
   "restartApp": "Repornește aplicația",
   "permissionsOnboardingWelcomeRail": "Bun venit",
   "permissionsOnboardingMicCameraRail": "Mic + Cameră",
-  "permissionsOnboardingStepLabel": "Pasul {current} din 4",
-  "@permissionsOnboardingStepLabel": {
-    "placeholders": {
-      "current": {
-        "type": "int"
-      }
-    }
-  },
   "permissionsOnboardingWelcomeTitle": "Bun venit la Clingfy",
   "permissionsOnboardingWelcomeSubtitle": "O configurare rapidă și ești gata să înregistrezi în câteva minute.",
   "permissionsOnboardingTrustLocalFirst": "Local-first: înregistrările rămân pe Mac-ul tău.",
@@ -783,5 +798,66 @@
   "licenseNetworkUnavailableWhileConsumingTrial": "Rețeaua nu este disponibilă în timpul sincronizării utilizării trial.",
   "licenseNetworkUnavailableWhileDeactivatingDevice": "Rețeaua nu este disponibilă în timpul dezactivării dispozitivului.",
   "licenseValidated": "Licența a fost validată.",
-  "licenseNotEntitled": "Această licență nu deblochează funcțiile Pro."
+  "licenseNotEntitled": "Această licență nu deblochează funcțiile Pro.",
+  "warnMicOpenFailed": "Microfonul nu a putut porni — verifică accesul la microfon în setările de confidențialitate Windows. Înregistrarea continuă fără el.",
+  "warnMicDisconnected": "Microfonul a fost deconectat. Înregistrarea continuă fără el.",
+  "warnSystemAudioOpenFailed": "Sunetul sistemului nu a putut fi captat — verifică dispozitivul de ieșire în setările de sunet Windows. Înregistrarea continuă fără el.",
+  "warnSystemAudioStopped": "Captarea sunetului de sistem s-a oprit. Înregistrarea continuă fără el.",
+  "warnCameraUnavailable": "Camera nu este disponibilă acum. Înregistrarea continuă fără suprapunerea camerei.",
+  "warnCameraOpenFailed": "Camera nu a putut porni — verifică accesul la cameră în setările de confidențialitate Windows. Înregistrarea continuă fără suprapunere.",
+  "warnCameraDisconnected": "Camera a fost deconectată. Înregistrarea continuă fără ea.",
+  "warnEncoderVideoError": "Înregistrarea a întâmpinat o problemă de codare — videoclipul poate fi incomplet.",
+  "warnEncoderAudioError": "Înregistrarea a întâmpinat o problemă de codare audio — sunetul poate fi incomplet.",
+  "errMicrophonePermissionRequiredWindows": "Activează accesul la microfon în Setări Windows > Confidențialitate și securitate > Microfon, apoi încearcă din nou.",
+  "errCameraPermissionDeniedWindows": "Activează accesul la cameră în Setări Windows > Confidențialitate și securitate > Cameră.",
+  "permissionsHelpTextWindows": "Vezi ce poate folosi Clingfy și sari direct la pagina potrivită din Setări Windows.",
+  "permissionsChangedHintWindows": "Dacă schimbi o setare în Setări Windows, revino la Clingfy și reîmprospătează pagina pentru starea curentă.",
+  "permissionsScreenRecordingHelpWindows": "Windows nu cere o permisiune de înregistrare a ecranului — captarea ecranului, ferestrelor și zonelor funcționează din start.",
+  "permissionsNoGrantNeeded": "Nu necesită permisiune",
+  "permissionsDetailMicAccessOffWindows": "Accesul la microfon este oprit în setările de confidențialitate Windows. Pornește-l din Setări Windows > Confidențialitate și securitate > Microfon.",
+  "permissionsDetailMicMissingWindows": "Microfonul selectat nu este conectat. Reconectează-l sau alege altul.",
+  "permissionsDetailCameraAccessOffWindows": "Accesul la cameră este oprit în setările de confidențialitate Windows. Pornește-l din Setări Windows > Confidențialitate și securitate > Cameră.",
+  "permissionsDetailCameraMissingWindows": "Camera selectată nu este conectată. Reconecteaz-o sau alege alta.",
+  "permissionsDetailNoCamerasWindows": "Nu a fost detectată nicio cameră pe acest PC.",
+  "permissionsOpenSoundSettings": "Deschide setările de sunet",
+  "permissionsOnboardingTrustLocalFirstWindows": "Local mai întâi: înregistrările rămân pe PC-ul tău.",
+  "permissionsOnboardingTrustPermissionControlWindows": "Controlezi oricând accesul la microfon și cameră din Setări Windows.",
+  "permissionsOnboardingWindowsNoScreenGrant": "Nicio permisiune de înregistrare a ecranului nu este necesară pe Windows — captarea funcționează din start.",
+  "permissionsOnboardingStepCount": "Pasul {current} din {total}",
+  "@permissionsOnboardingStepCount": {
+    "placeholders": {
+      "current": {
+        "type": "int"
+      },
+      "total": {
+        "type": "int"
+      }
+    }
+  },
+  "warnWindowClosedPartialSaved": "Înregistrarea s-a oprit: fereastra pe care o înregistrai a fost închisă. Înregistrarea de până atunci a fost salvată.",
+  "warnDisplayDisconnectedPartialSaved": "Înregistrarea s-a oprit: ecranul pe care îl înregistrai a fost deconectat. Înregistrarea de până atunci a fost salvată.",
+  "cameraPreviewUseInApp": "Nu vezi camera? Folosește previzualizarea din aplicație",
+  "cameraPreviewUseFloating": "Folosește bula plutitoare a camerei",
+  "appliedOnExportNoticeWindows": "Se aplică la export — previzualizarea din aplicație nu arată încă acest efect.",
+  "errBadMode": "Acest mod de înregistrare nu este încă disponibil pe Windows.",
+  "errNoCamera": "Nicio cameră disponibilă.",
+  "errCameraInputError": "Camera a încetat să funcționeze.",
+  "errFileNotFound": "Fișierul nu a fost găsit.",
+  "errWindowsNotImplemented": "Această funcție nu este încă disponibilă pe Windows.",
+  "errRecordingDiskFull": "Spațiu insuficient pe disc pentru a începe înregistrarea.",
+  "errPreviewOpenFailed": "Previzualizarea nu a putut fi deschisă.",
+  "errPreviewRenderFailed": "Previzualizarea a încetat să se redea. Închide și redeschide înregistrarea.",
+  "errRecordingStartTimeout": "Înregistrarea nu a pornit la timp.",
+  "errRecordingFinalizeTimeout": "Salvarea înregistrării a expirat.",
+  "errPreviewTimeout": "Previzualizarea a durat prea mult să se încarce.",
+  "errInternalError": "A apărut o eroare internă.",
+  "recordingInterruptedNotice": "{count, plural, one{O înregistrare a fost întreruptă și nu a putut fi recuperată.} few{{count} înregistrări au fost întrerupte și nu au putut fi recuperate.} other{{count} de înregistrări au fost întrerupte și nu au putut fi recuperate.}}",
+  "@recordingInterruptedNotice": {
+    "placeholders": {
+      "count": {
+        "type": "int"
+      }
+    }
+  },
+  "forceNativeCrashLabel": "Forțează blocarea nativă (test)"
 }

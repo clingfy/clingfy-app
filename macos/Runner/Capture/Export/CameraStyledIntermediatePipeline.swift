@@ -909,12 +909,19 @@ final class InlineCameraRenderer {
     cameraTrack: AVAssetTrack,
     presentationTime: Double,
     plan: CompositionBuilder.InlineCameraRenderPlan,
+    screenColorGrade: ColorGrade = .identity,
     to outputPixelBuffer: CVPixelBuffer
   ) {
-    let screenImage = VideoColorPipeline.sourceImage(
+    let rawScreenImage = VideoColorPipeline.sourceImage(
       pixelBuffer: screenPixelBuffer,
       formatDescription: screenFormatDescription
     )
+    // Grade the screen canvas only — the camera overlay stays ungraded, which
+    // matches the live preview (color hits the screen track, not the camera).
+    let screenImage =
+      screenColorGrade.isIdentity
+      ? rawScreenImage
+      : ColorGradeRenderer.apply(rawScreenImage, grade: screenColorGrade)
     let cameraImage = cameraPixelBuffer.map {
       makeCameraSourceImage(
         pixelBuffer: $0,

@@ -3,9 +3,16 @@
 /// These codes are returned by the native side via PlatformException.code
 /// and mapped to localized strings in Flutter.
 ///
-/// IMPORTANT: Keep this in sync with `NativeErrorCode.swift` on the native side.
+/// IMPORTANT: Keep this in sync with `NativeErrorCode.swift` on macOS and
+/// `windows/runner/Bridge/native_error_codes.h` on Windows.
 abstract class NativeErrorCode {
   NativeErrorCode._();
+
+  /// Returned by the native Windows engine when a method is recognized but
+  /// hasn't been ported yet. The Phase 0 catch-all returns this for every
+  /// call so the UI can show a friendly "not available on Windows yet"
+  /// message instead of a raw MissingPluginException.
+  static const String windowsNotImplemented = 'WINDOWS_NOT_IMPLEMENTED';
 
   // Recording lifecycle errors
   static const String alreadyRecording = 'ALREADY_RECORDING';
@@ -38,12 +45,32 @@ abstract class NativeErrorCode {
 
   // Recording/export errors
   static const String recordingError = 'RECORDING_ERROR';
+  static const String recordingDiskFull = 'RECORDING_DISK_FULL';
   static const String outputUrlError = 'OUTPUT_URL_ERROR';
   static const String exportError = 'EXPORT_ERROR';
+  static const String exportCancelled = 'EXPORT_CANCELLED';
   static const String exportInputMissing = 'EXPORT_INPUT_MISSING';
   static const String exportDiskFull = 'EXPORT_DISK_FULL';
   static const String advancedCameraExportFailed =
       'ADVANCED_CAMERA_EXPORT_FAILED';
+
+  // Preview errors. `PREVIEW_INPUT_MISSING`/`SCENE_INPUT_MISSING` mean the
+  // project bundle (or a required file inside it) could not be read;
+  // `PREVIEW_OPEN_ERROR` means the bundle was fine but the preview engine
+  // itself failed to open. PREVIEW_OPEN_ERROR is also synthesized by Dart
+  // when a non-PlatformException escapes the previewOpen call.
+  static const String previewInputMissing = 'PREVIEW_INPUT_MISSING';
+  static const String sceneInputMissing = 'SCENE_INPUT_MISSING';
+  static const String previewOpenError = 'PREVIEW_OPEN_ERROR';
+
+  /// The preview opened fine but rendering died mid-flight (device loss /
+  /// D2DERR_RECREATE_TARGET class) — Windows emits it once per session
+  /// after a run of consecutive frame failures.
+  static const String previewRenderError = 'PREVIEW_RENDER_ERROR';
+
+  // A native handler threw an unexpected exception; the Windows MethodRouter
+  // dispatch barrier converts it into this error instead of crashing.
+  static const String internalError = 'INTERNAL_ERROR';
 
   // File errors
   static const String videoFileMissing = 'VIDEO_FILE_MISSING';
@@ -54,4 +81,34 @@ abstract class NativeErrorCode {
   // Camera errors
   static const String noCamera = 'NO_CAMERA';
   static const String cameraInputError = 'CAMERA_INPUT_ERROR';
+}
+
+/// Error codes that DART synthesizes locally — native never emits these.
+///
+/// They exist so locally-detected failures (timeouts waiting on workflow
+/// events that never arrived, malformed native payloads) flow through the
+/// exact same `errorCode` → `HomeErrorMapper` pipeline as native
+/// PlatformException codes. Do NOT add them to the native headers or to
+/// `NativeErrorCode` above; the three-way contract sync test only checks
+/// native-declared codes.
+abstract class DartSynthesizedErrorCode {
+  DartSynthesizedErrorCode._();
+
+  /// Phase 10.4 watchdog: `startRecording` was issued but neither
+  /// `recordingStarted` nor `recordingFailed` ever arrived.
+  static const String recordingStartTimeout = 'RECORDING_START_TIMEOUT';
+
+  /// Phase 10.4 watchdog: `stopRecording` completed but the
+  /// `recordingFinalized` event never arrived.
+  static const String recordingFinalizeTimeout = 'RECORDING_FINALIZE_TIMEOUT';
+
+  /// Phase 10.4 watchdog: preview open/loading never reached
+  /// `previewReady`/`previewFailed`.
+  static const String previewTimeout = 'PREVIEW_TIMEOUT';
+
+  /// A `recordingFinalized` event arrived without a usable `projectPath`.
+  static const String recordingFinalizeError = 'RECORDING_FINALIZE_ERROR';
+
+  /// A `previewFailed` event arrived without any `code`/`reason` payload.
+  static const String previewError = 'PREVIEW_ERROR';
 }

@@ -123,7 +123,12 @@ class RecordingAudioSection extends StatelessWidget {
                 value: systemAudioEnabled,
                 onChanged: isRecording ? null : onSystemAudioEnabledChanged,
               ),
-              if (systemAudioEnabled && _hasSelectedMicrophone) ...[
+              // Phase 10.3 (Windows): setExcludeMicFromSystemAudio is a
+              // native no-op — the WASAPI loopback mix can't exclude the
+              // mic yet, so the toggle is hidden.
+              if (systemAudioEnabled &&
+                  _hasSelectedMicrophone &&
+                  !isWindows()) ...[
                 const SizedBox(height: AppSidebarTokens.optionsSubgroupGap),
                 AppInsetGroup(
                   children: [

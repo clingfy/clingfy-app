@@ -1,5 +1,6 @@
 import 'dart:async';
 
+import 'package:flutter/foundation.dart' show visibleForTesting;
 import 'package:flutter/services.dart';
 import 'package:sentry_flutter/sentry_flutter.dart';
 
@@ -356,6 +357,7 @@ class ClingfyTelemetry implements RemoteLogSink {
     String? method,
     Map<String, dynamic>? context,
     CaptureDiagnostics? diagnostics,
+    List<String>? fingerprint,
   }) async {
     final effectiveDiagnostics = _effectiveDiagnostics(diagnostics);
     final payload = <String, dynamic>{
@@ -378,6 +380,9 @@ class ClingfyTelemetry implements RemoteLogSink {
         }
         if (error is PlatformException) {
           await scope.setTag('error.native_code', error.code);
+        }
+        if (fingerprint != null && fingerprint.isNotEmpty) {
+          scope.fingerprint = fingerprint;
         }
 
         await _decorateScope(
@@ -500,8 +505,27 @@ class ClingfyTelemetry implements RemoteLogSink {
         stackTrace: stackTrace,
         method: 'native.log',
         context: details,
+        // Phase 10.4: group promoted native errors by their structured
+        // code instead of free-text message — without this every distinct
+        // message becomes its own Sentry issue.
+        fingerprint: nativeLogFingerprint(event),
       ),
     );
+  }
+
+  /// Phase 10.4: Sentry fingerprint for a native ERROR log that carries a
+  /// machine-readable `code` in its context, so issues group by
+  /// (category, code) instead of fragmenting on free-text messages.
+  /// Returns null (default grouping) for non-native, non-error, or
+  /// code-less events.
+  @visibleForTesting
+  static List<String>? nativeLogFingerprint(LogEvent event) {
+    if (event.origin != 'native' || event.level.toUpperCase() != 'ERROR') {
+      return null;
+    }
+    final code = event.context?['code'];
+    if (code is! String || code.isEmpty) return null;
+    return ['native-log', event.category, code];
   }
 
   static SentryLevel _toSentryLevel(String level) {

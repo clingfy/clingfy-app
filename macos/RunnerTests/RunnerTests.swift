@@ -1,5 +1,6 @@
 import AVFoundation
 import Cocoa
+import CoreImage
 import FlutterMacOS
 import ScreenCaptureKit
 import XCTest
@@ -82,6 +83,80 @@ private func makeCaptureSegment(
     endWallClock: RecordingMetadata.iso8601String(from: Date(timeIntervalSince1970: endSeconds)),
     durationSeconds: durationSeconds ?? max(0.0, endSeconds - startSeconds)
   )
+}
+
+final class RenamedRecordingProjectOpenTests: XCTestCase {
+  private func makeTemporaryDirectory() -> URL {
+    let url = URL(fileURLWithPath: NSTemporaryDirectory(), isDirectory: true)
+      .appendingPathComponent("renamed-project-\(UUID().uuidString)", isDirectory: true)
+    try? FileManager.default.createDirectory(at: url, withIntermediateDirectories: true)
+    return url
+  }
+
+  /// Builds a project whose on-disk folder name differs from the `projectId`
+  /// stored in its manifest — exactly what happens when a user renames a
+  /// `.clingfyproj` package in Finder. The required durable capture artifacts
+  /// are written so the open validator's missing-files check passes.
+  private func makeRenamedReadyProject(
+    folderName: String,
+    manifestProjectID: String,
+    in parent: URL
+  ) throws -> URL {
+    let projectRoot = parent.appendingPathComponent(
+      "\(folderName).\(RecordingProjectPaths.projectExtension)",
+      isDirectory: true
+    )
+    let fileManager = FileManager.default
+    try fileManager.createDirectory(
+      at: RecordingProjectPaths.captureDirectoryURL(for: projectRoot),
+      withIntermediateDirectories: true
+    )
+    try Data("screen".utf8).write(to: RecordingProjectPaths.screenVideoURL(for: projectRoot))
+    try Data("{}".utf8).write(to: RecordingProjectPaths.screenMetadataURL(for: projectRoot))
+
+    var manifest = RecordingProjectManifest.create(
+      projectId: manifestProjectID,
+      displayName: "Renamed Clip",
+      includeCamera: false
+    )
+    manifest.updateStatus(.ready)
+    try manifest.write(to: RecordingProjectPaths.manifestURL(for: projectRoot))
+    return projectRoot
+  }
+
+  func testOpenUsesFolderIdentityWhenManifestProjectIdIsStaleAfterRename() throws {
+    let tempDir = makeTemporaryDirectory()
+    defer { try? FileManager.default.removeItem(at: tempDir) }
+
+    let staleManifestID = "rec_2026-06-14_19-10-39_eed21a02"
+    let projectRoot = try makeRenamedReadyProject(
+      folderName: "pause-resume",
+      manifestProjectID: staleManifestID,
+      in: tempDir
+    )
+
+    let ref = try RecordingProjectRef.open(projectRoot: projectRoot)
+
+    // The folder is authoritative for identity.
+    XCTAssertEqual(ref.projectId, "pause-resume")
+    XCTAssertEqual(ref.rootURL.standardizedFileURL, projectRoot.standardizedFileURL)
+    // The manifest keeps its (now stale) recorded id; it is not used for identity.
+    XCTAssertEqual(ref.manifest.projectId, staleManifestID)
+  }
+
+  func testValidatorAcceptsRenamedReadyProject() throws {
+    let tempDir = makeTemporaryDirectory()
+    defer { try? FileManager.default.removeItem(at: tempDir) }
+
+    let projectRoot = try makeRenamedReadyProject(
+      folderName: "remix2",
+      manifestProjectID: "rec_2026-06-14_18-54-32_39db0d21",
+      in: tempDir
+    )
+
+    let ref = try ProjectOpenValidator.validateProjectURL(projectRoot)
+    XCTAssertEqual(ref.projectId, "remix2")
+  }
 }
 
 final class RecordingProjectPathsTests: XCTestCase {
@@ -7519,5 +7594,470 @@ final class ScreenRecorderFacadeSeparateCameraTests: XCTestCase {
       cameraChromaKeyStrength: 0.4,
       cameraChromaKeyColorArgb: nil
     )
+  }
+}
+
+final class ColorGradeTests: XCTestCase {
+  func testFromFlutterParsesAllFields() {
+    let grade = ColorGrade.fromFlutter([
+      "autoEnabled": true,
+      "exposure": 0.2,
+      "contrast": -0.1,
+      "saturation": 0.3,
+      "temperature": 0.05,
+      "tint": -0.02,
+    ])
+    XCTAssertTrue(grade.autoEnabled)
+    XCTAssertEqual(grade.exposure, 0.2, accuracy: 1e-9)
+    XCTAssertEqual(grade.contrast, -0.1, accuracy: 1e-9)
+    XCTAssertEqual(grade.saturation, 0.3, accuracy: 1e-9)
+    XCTAssertEqual(grade.temperature, 0.05, accuracy: 1e-9)
+    XCTAssertEqual(grade.tint, -0.02, accuracy: 1e-9)
+    XCTAssertFalse(grade.isIdentity)
+  }
+
+  func testFromFlutterDefaultsOnNilAndMissingKeys() {
+    XCTAssertTrue(ColorGrade.fromFlutter(nil).isIdentity)
+    let partial = ColorGrade.fromFlutter(["exposure": 0.5])
+    XCTAssertEqual(partial.exposure, 0.5, accuracy: 1e-9)
+    XCTAssertEqual(partial.contrast, 0, accuracy: 1e-9)
+    XCTAssertFalse(partial.autoEnabled)
+  }
+
+  func testIsIdentityIgnoresAutoFlagWhenNumbersAreNeutral() {
+    // The Dart auto-enhance bakes deltas into the numbers, so auto-on with all
+    // zeros has no visual effect and must be treated as identity (skip pass).
+    let grade = ColorGrade(
+      autoEnabled: true, exposure: 0, contrast: 0,
+      saturation: 0, temperature: 0, tint: 0)
+    XCTAssertTrue(grade.isIdentity)
+  }
+
+  func testApplyIdentityPreservesExtent() {
+    let extent = CGRect(x: 0, y: 0, width: 4, height: 4)
+    let source = CIImage(color: CIColor(red: 0.5, green: 0.5, blue: 0.5))
+      .cropped(to: extent)
+    let out = ColorGradeRenderer.apply(source, grade: .identity)
+    XCTAssertEqual(out.extent, extent)
+  }
+
+  func testApplyNonIdentityChangesPixelsAndKeepsExtent() {
+    let extent = CGRect(x: 0, y: 0, width: 4, height: 4)
+    let source = CIImage(color: CIColor(red: 0.4, green: 0.4, blue: 0.4))
+      .cropped(to: extent)
+    let grade = ColorGrade(
+      autoEnabled: false, exposure: 0, contrast: 0.6,
+      saturation: 0, temperature: 0, tint: 0)
+    let out = ColorGradeRenderer.apply(source, grade: grade)
+    XCTAssertEqual(out.extent, extent, "color pass must preserve extent")
+
+    let ctx = CIContext(options: [.workingColorSpace: NSNull()])
+    let space = CGColorSpaceCreateDeviceRGB()
+    let pixelBounds = CGRect(x: 0, y: 0, width: 1, height: 1)
+    var srcPixel = [UInt8](repeating: 0, count: 4)
+    var outPixel = [UInt8](repeating: 0, count: 4)
+    ctx.render(
+      source, toBitmap: &srcPixel, rowBytes: 4, bounds: pixelBounds,
+      format: .RGBA8, colorSpace: space)
+    ctx.render(
+      out, toBitmap: &outPixel, rowBytes: 4, bounds: pixelBounds,
+      format: .RGBA8, colorSpace: space)
+    XCTAssertNotEqual(
+      srcPixel, outPixel, "contrast adjustment should change pixel values")
+  }
+}
+
+final class ClipKeptRangeTests: XCTestCase {
+  func testFromFlutterParsesEnabledRangesInOrder() {
+    let ranges = ClipKeptRange.fromFlutter([
+      ["sourceInMs": 0, "sourceOutMs": 3000, "enabled": true],
+      ["sourceInMs": 7000, "sourceOutMs": 9000, "enabled": true],
+    ])
+    XCTAssertEqual(ranges.count, 2)
+    XCTAssertEqual(ranges[0], ClipKeptRange(sourceInMs: 0, sourceOutMs: 3000))
+    XCTAssertEqual(ranges[1], ClipKeptRange(sourceInMs: 7000, sourceOutMs: 9000))
+  }
+
+  func testFromFlutterSkipsDisabledAndZeroLength() {
+    let ranges = ClipKeptRange.fromFlutter([
+      ["sourceInMs": 0, "sourceOutMs": 3000, "enabled": false],
+      ["sourceInMs": 4000, "sourceOutMs": 4000, "enabled": true],  // zero length
+      ["sourceInMs": 5000, "sourceOutMs": 1000, "enabled": true],  // inverted
+      ["sourceInMs": 6000, "sourceOutMs": 8000, "enabled": true],
+    ])
+    XCTAssertEqual(ranges, [ClipKeptRange(sourceInMs: 6000, sourceOutMs: 8000)])
+  }
+
+  func testFromFlutterNilIsEmpty() {
+    XCTAssertEqual(ClipKeptRange.fromFlutter(nil), [])
+  }
+}
+
+final class ClipPlaybackPlannerTests: XCTestCase {
+  private func ranges(_ pairs: [(Int, Int)]) -> [ClipKeptRange] {
+    pairs.map { ClipKeptRange(sourceInMs: $0.0, sourceOutMs: $0.1) }
+  }
+
+  func testIsPassthroughForEmptyOrWholeAsset() {
+    XCTAssertTrue(ClipPlaybackPlanner.isPassthrough(ranges: [], assetDurationMs: 10000))
+    XCTAssertTrue(
+      ClipPlaybackPlanner.isPassthrough(
+        ranges: ranges([(0, 10000)]), assetDurationMs: 10000))
+    XCTAssertFalse(
+      ClipPlaybackPlanner.isPassthrough(
+        ranges: ranges([(0, 4000), (6000, 10000)]), assetDurationMs: 10000))
+    XCTAssertFalse(
+      ClipPlaybackPlanner.isPassthrough(
+        ranges: ranges([(2000, 10000)]), assetDurationMs: 10000))
+  }
+
+  func testDecideProceedsInsideActiveRange() {
+    let r = ranges([(0, 4000), (6000, 10000)])
+    XCTAssertEqual(
+      ClipPlaybackPlanner.decide(sourceMs: 2000, activeIndex: 0, ranges: r), .proceed)
+  }
+
+  func testDecideAdvancesAtCutBoundary() {
+    let r = ranges([(0, 4000), (6000, 10000)])
+    // Reaching the end of range 0 jumps to the start of range 1 (skips 4000-6000).
+    XCTAssertEqual(
+      ClipPlaybackPlanner.decide(sourceMs: 4000, activeIndex: 0, ranges: r),
+      .advance(toIndex: 1, seekSourceMs: 6000))
+  }
+
+  func testDecideEndsAfterLastRange() {
+    let r = ranges([(0, 4000), (6000, 10000)])
+    XCTAssertEqual(
+      ClipPlaybackPlanner.decide(sourceMs: 10000, activeIndex: 1, ranges: r), .end)
+  }
+
+  func testDecideEpsilonTriggersJumpEarly() {
+    let r = ranges([(0, 4000), (6000, 10000)])
+    // 3990 is within a 17ms epsilon of the 4000 cut, so it advances early.
+    XCTAssertEqual(
+      ClipPlaybackPlanner.decide(sourceMs: 3990, activeIndex: 0, ranges: r, epsilonMs: 17),
+      .advance(toIndex: 1, seekSourceMs: 6000))
+  }
+
+  func testActiveIndexResolution() {
+    let r = ranges([(0, 4000), (6000, 10000)])
+    XCTAssertEqual(ClipPlaybackPlanner.activeIndex(forSourceMs: 2000, ranges: r), 0)
+    XCTAssertEqual(ClipPlaybackPlanner.activeIndex(forSourceMs: 7000, ranges: r), 1)
+    // In the cut gap (4000-6000) -> the next range that starts after.
+    XCTAssertEqual(ClipPlaybackPlanner.activeIndex(forSourceMs: 5000, ranges: r), 1)
+    // Past everything -> last.
+    XCTAssertEqual(ClipPlaybackPlanner.activeIndex(forSourceMs: 99999, ranges: r), 1)
+  }
+
+  func testEditedDurationSumsKeptRanges() {
+    let r = ranges([(0, 4000), (6000, 10000)])
+    XCTAssertEqual(ClipPlaybackPlanner.editedDurationMs(ranges: r), 8000)
+  }
+
+  func testEditedMsMapsSourceToTimeline() {
+    let r = ranges([(0, 4000), (6000, 10000)])
+    // In range 0: identity.
+    XCTAssertEqual(
+      ClipPlaybackPlanner.editedMs(forSourceMs: 2000, activeIndex: 0, ranges: r), 2000)
+    // In range 1 at source 7000: 4000 (range 0) + (7000-6000) = 5000.
+    XCTAssertEqual(
+      ClipPlaybackPlanner.editedMs(forSourceMs: 7000, activeIndex: 1, ranges: r), 5000)
+  }
+
+  func testEditedMsHandlesArrangeReorder() {
+    // Timeline order B then A; source order A before B.
+    let r = ranges([(6000, 8000), (0, 2000)])
+    // Active range 1 (source 0-2000) plays second; source 1000 -> edited 3000.
+    XCTAssertEqual(
+      ClipPlaybackPlanner.editedMs(forSourceMs: 1000, activeIndex: 1, ranges: r), 3000)
+  }
+
+  func testSourceMsInvertsEditedMs() {
+    let r = ranges([(0, 4000), (6000, 10000)])
+    // Before the cut: identity.
+    XCTAssertEqual(ClipPlaybackPlanner.sourceMs(forEditedMs: 2000, ranges: r), 2000)
+    // After the cut: edited 5000 -> 4000 (range 0) + 1000 into range 1 = source 7000.
+    XCTAssertEqual(ClipPlaybackPlanner.sourceMs(forEditedMs: 5000, ranges: r), 7000)
+    // The cut boundary maps to the start of range 1 (skips the removed gap).
+    XCTAssertEqual(ClipPlaybackPlanner.sourceMs(forEditedMs: 4000, ranges: r), 6000)
+    // Past the edited end parks on the last kept frame.
+    XCTAssertEqual(ClipPlaybackPlanner.sourceMs(forEditedMs: 99999, ranges: r), 10000)
+  }
+
+  // editedMsForKeptSourceMs drives "cut at the writer": kept -> edited position,
+  // a source moment in a cut gap -> nil (drop the frame).
+  func testEditedMsForKeptSourceMsKeepsAndCompacts() {
+    let r = ranges([(0, 4000), (6000, 10000)])
+    // Inside range 0: identity.
+    XCTAssertEqual(ClipPlaybackPlanner.editedMsForKeptSourceMs(0, ranges: r), 0)
+    XCTAssertEqual(ClipPlaybackPlanner.editedMsForKeptSourceMs(3999, ranges: r), 3999)
+    // Inside range 1: compacted by the removed 4000-6000 gap.
+    XCTAssertEqual(ClipPlaybackPlanner.editedMsForKeptSourceMs(6000, ranges: r), 4000)
+    XCTAssertEqual(ClipPlaybackPlanner.editedMsForKeptSourceMs(7000, ranges: r), 5000)
+  }
+
+  func testEditedMsForKeptSourceMsDropsCutGapAndBoundary() {
+    let r = ranges([(0, 4000), (6000, 10000)])
+    // Squarely in the removed gap -> dropped.
+    XCTAssertNil(ClipPlaybackPlanner.editedMsForKeptSourceMs(5000, ranges: r))
+    // The exclusive end of a kept range is itself a cut -> dropped (the next
+    // kept frame re-enters at the following range's start).
+    XCTAssertNil(ClipPlaybackPlanner.editedMsForKeptSourceMs(4000, ranges: r))
+    // Past the very end -> dropped.
+    XCTAssertNil(ClipPlaybackPlanner.editedMsForKeptSourceMs(10000, ranges: r))
+  }
+
+  func testEditedMsForKeptSourceMsPassthroughKeepsEverything() {
+    // Empty ranges == no cuts: every source moment maps to itself.
+    XCTAssertEqual(ClipPlaybackPlanner.editedMsForKeptSourceMs(1234, ranges: []), 1234)
+  }
+
+  func testIsSourceMonotonic() {
+    XCTAssertTrue(ClipPlaybackPlanner.isSourceMonotonic([]))
+    XCTAssertTrue(ClipPlaybackPlanner.isSourceMonotonic(ranges([(0, 4000)])))
+    // Split / cut / trim keep timeline order == source order.
+    XCTAssertTrue(ClipPlaybackPlanner.isSourceMonotonic(ranges([(0, 4000), (6000, 10000)])))
+    // Reordered (arrange) clips run source-backwards in places.
+    XCTAssertFalse(ClipPlaybackPlanner.isSourceMonotonic(ranges([(6000, 8000), (0, 2000)])))
+  }
+
+  func testActiveIndexForEditedMs() {
+    let r = ranges([(0, 4000), (6000, 10000)])
+    XCTAssertEqual(ClipPlaybackPlanner.activeIndex(forEditedMs: 2000, ranges: r), 0)
+    XCTAssertEqual(ClipPlaybackPlanner.activeIndex(forEditedMs: 5000, ranges: r), 1)
+    // The cut boundary belongs to the second range.
+    XCTAssertEqual(ClipPlaybackPlanner.activeIndex(forEditedMs: 4000, ranges: r), 1)
+  }
+
+  func testSeekBackBeforeCutResolvesEditedPositionNotCut() {
+    // Regression: after playing past the cut (active index 1), seeking back to
+    // an edited position before the cut must re-resolve the active range so the
+    // emitted edited position equals the target — not clamp to the cut point.
+    let r = ranges([(0, 4000), (6000, 10000)])
+    let editedTarget = 2000
+    let src = ClipPlaybackPlanner.sourceMs(forEditedMs: editedTarget, ranges: r)
+    let idx = ClipPlaybackPlanner.activeIndex(forEditedMs: editedTarget, ranges: r)
+    XCTAssertEqual(src, 2000)
+    XCTAssertEqual(idx, 0)
+    XCTAssertEqual(
+      ClipPlaybackPlanner.editedMs(forSourceMs: src, activeIndex: idx, ranges: r),
+      editedTarget,
+      "edited->source->edited must round-trip, not stick at the cut")
+
+    // The stale-index bug: with the OLD active index (1), the same source maps
+    // to the cut point (4000) instead of 2000 — the symptom we fixed.
+    XCTAssertEqual(
+      ClipPlaybackPlanner.editedMs(forSourceMs: src, activeIndex: 1, ranges: r), 4000)
+  }
+
+  func testEditedSourceRoundTripAcrossCut() {
+    let r = ranges([(0, 4000), (6000, 10000)])
+    for edited in [0, 1500, 3999, 4000, 4001, 6000, 8000] {
+      let src = ClipPlaybackPlanner.sourceMs(forEditedMs: edited, ranges: r)
+      let idx = ClipPlaybackPlanner.activeIndex(forEditedMs: edited, ranges: r)
+      XCTAssertEqual(
+        ClipPlaybackPlanner.editedMs(forSourceMs: src, activeIndex: idx, ranges: r),
+        edited, "round-trip failed at edited \(edited)")
+    }
+  }
+
+  func testCoalesceMergesSourceContiguousRanges() {
+    // A split with no deletion: two source-adjacent ranges collapse into one.
+    XCTAssertEqual(
+      ClipPlaybackPlanner.coalesce(ranges: ranges([(0, 8400), (8400, 12000)])),
+      ranges([(0, 12000)]))
+    // ...which then reads as a passthrough (no removed footage).
+    XCTAssertTrue(
+      ClipPlaybackPlanner.isPassthrough(
+        ranges: ClipPlaybackPlanner.coalesce(ranges: ranges([(0, 8400), (8400, 12000)])),
+        assetDurationMs: 12000))
+  }
+
+  func testCoalesceLeavesRealGapsAndReorderIntact() {
+    // A real delete leaves a gap — not merged.
+    XCTAssertEqual(
+      ClipPlaybackPlanner.coalesce(ranges: ranges([(0, 4000), (6000, 10000)])),
+      ranges([(0, 4000), (6000, 10000)]))
+    // Reordered ranges are not source-adjacent — left intact.
+    XCTAssertEqual(
+      ClipPlaybackPlanner.coalesce(ranges: ranges([(6000, 8000), (0, 2000)])),
+      ranges([(6000, 8000), (0, 2000)]))
+  }
+
+  // The export reorder path (PR-3c5) reads each kept range's source window in
+  // TIMELINE order and re-stamps its frames onto `base + offset`, where `base` is
+  // the sum of the earlier ranges' durations. This must tile [0, editedDuration)
+  // with strictly increasing, gapless edited starts regardless of source order —
+  // otherwise the writer would emit a non-monotonic (rejected) output PTS.
+  func testReorderRestampTilesEditedTimelineMonotonically() {
+    let r = ranges([(6000, 8000), (0, 2000), (10000, 11000)])  // reordered
+    XCTAssertFalse(ClipPlaybackPlanner.isSourceMonotonic(r))
+    var base = 0
+    for (i, range) in r.enumerated() {
+      // Each range's edited start abuts the previous range's edited end (no gap,
+      // no overlap) and equals the planner's source->edited map at this index.
+      XCTAssertEqual(
+        ClipPlaybackPlanner.editedMs(forSourceMs: range.sourceInMs, activeIndex: i, ranges: r),
+        base, "range \(i) edited start")
+      base += range.durationMs
+    }
+    XCTAssertEqual(base, ClipPlaybackPlanner.editedDurationMs(ranges: r))
+  }
+
+  func testEditedSourceRoundTripAcrossReorder() {
+    // Timeline order B(6000-8000) then A(0-2000): the inverse map must follow the
+    // reordered timeline, not source order.
+    let r = ranges([(6000, 8000), (0, 2000)])
+    XCTAssertEqual(ClipPlaybackPlanner.sourceMs(forEditedMs: 0, ranges: r), 6000)
+    XCTAssertEqual(ClipPlaybackPlanner.sourceMs(forEditedMs: 1999, ranges: r), 7999)
+    XCTAssertEqual(ClipPlaybackPlanner.sourceMs(forEditedMs: 2000, ranges: r), 0)
+    XCTAssertEqual(ClipPlaybackPlanner.sourceMs(forEditedMs: 3500, ranges: r), 1500)
+  }
+
+  // The kept-range audio composition must advance by each range's FULL duration
+  // (matching the video re-stamp's editedBase), copying only the audio that
+  // exists and leaving the shortfall silent — otherwise a clamped/absent range
+  // sitting mid-timeline under reorder pulls every later range's audio earlier.
+  func testAudioSlotsAlignReorderedRangesToFullDurations() {
+    // Reordered ranges against a short 4000ms audio track (mic stopped before the
+    // screen recording ended, then the tail clip dragged earlier).
+    let r = ranges([(6000, 10000), (0, 3000), (3000, 6000)])
+    let slots = ClipPlaybackPlanner.audioSlots(ranges: r, audioDurationMs: 4000)
+    XCTAssertEqual(
+      slots,
+      [
+        // Source 6000-10000 is entirely past the 4000ms audio -> fully silent,
+        // but still occupies its full 4000ms slot.
+        ClipPlaybackPlanner.AudioSlot(
+          sourceInMs: 6000, editedStartMs: 0, copyDurationMs: 0, durationMs: 4000),
+        // Source 0-3000 is fully available; slot starts at the cumulative full
+        // duration (4000), not at where the copied audio happened to end.
+        ClipPlaybackPlanner.AudioSlot(
+          sourceInMs: 0, editedStartMs: 4000, copyDurationMs: 3000, durationMs: 3000),
+        // Source 3000-6000: audio only reaches 4000 -> copy 1000ms, 2000ms silent.
+        ClipPlaybackPlanner.AudioSlot(
+          sourceInMs: 3000, editedStartMs: 7000, copyDurationMs: 1000, durationMs: 3000),
+      ])
+    // Slots tile the full edited timeline contiguously with no gap or overlap.
+    XCTAssertEqual(
+      slots.last!.editedStartMs + slots.last!.durationMs,
+      ClipPlaybackPlanner.editedDurationMs(ranges: r))
+  }
+
+  func testAudioSlotsFullLengthAudioCopiesEveryRange() {
+    // Audio at least as long as the video: every reordered slot copies its whole
+    // range with no silence, still tiled by full durations in timeline order.
+    let r = ranges([(6000, 8000), (0, 2000)])
+    let slots = ClipPlaybackPlanner.audioSlots(ranges: r, audioDurationMs: 10000)
+    XCTAssertEqual(
+      slots,
+      [
+        ClipPlaybackPlanner.AudioSlot(
+          sourceInMs: 6000, editedStartMs: 0, copyDurationMs: 2000, durationMs: 2000),
+        ClipPlaybackPlanner.AudioSlot(
+          sourceInMs: 0, editedStartMs: 2000, copyDurationMs: 2000, durationMs: 2000),
+      ])
+    for s in slots { XCTAssertEqual(s.copyDurationMs, s.durationMs) }
+  }
+
+  // Why preview reporting must use the PLAYING slot (not activeIndex(forSourceMs:))
+  // once clips are reordered: a source position overshooting a slot's end into a
+  // removed gap resolves by source to the next SOURCE range, which after a
+  // reorder is an EARLIER timeline slot — snapping the reported playhead backward.
+  func testReorderGapOvershootResolvesToEarlierSlotBySource() {
+    // Timeline [r0, r1, r2]; source order is r0, r2, r1 (middle two swapped).
+    let r = ranges([(0, 2301), (3615, 5233), (2301, 3600)])
+    XCTAssertFalse(ClipPlaybackPlanner.isSourceMonotonic(r))
+    // Inside r2, the source resolves to slot 2 correctly.
+    XCTAssertEqual(ClipPlaybackPlanner.activeIndex(forSourceMs: 3000, ranges: r), 2)
+    // Overshooting r2's end (3600) into the gap [3600, 3615) resolves to slot 1
+    // (earlier in the edited timeline) — the backward-snap the reporter must avoid.
+    XCTAssertEqual(ClipPlaybackPlanner.activeIndex(forSourceMs: 3607, ranges: r), 1)
+    // Reporting from the playing slot (2) instead clamps within that slot, so the
+    // edited position climbs to the slot end and never jumps backward.
+    XCTAssertEqual(ClipPlaybackPlanner.editedMs(forSourceMs: 3590, activeIndex: 2, ranges: r), 5208)
+    XCTAssertEqual(ClipPlaybackPlanner.editedMs(forSourceMs: 3607, activeIndex: 2, ranges: r), 5218)
+  }
+
+  func testReportedEditedPositionResolvesFromSourceNotStaleIndex() {
+    // The fix for "scrub sticks at the cut": the reported edited position uses
+    // the range CONTAINING the source, so a stale playback index can't park it
+    // at the cut. Source 2000 (before the cut) reports 2000 — even though the
+    // stale later index would clamp it to the cut point (4000).
+    let r = ranges([(0, 4000), (6000, 10000)])
+    let reportIndex = ClipPlaybackPlanner.activeIndex(forSourceMs: 2000, ranges: r)
+    XCTAssertEqual(reportIndex, 0)
+    XCTAssertEqual(
+      ClipPlaybackPlanner.editedMs(forSourceMs: 2000, activeIndex: reportIndex, ranges: r), 2000)
+    XCTAssertEqual(
+      ClipPlaybackPlanner.editedMs(forSourceMs: 2000, activeIndex: 1, ranges: r), 4000)
+  }
+
+  func testIsAtEndDetectsTheCompletionParkSpot() {
+    let r = ranges([(0, 4000), (6000, 10000)])
+    // At/after the last kept range's end → parked (so play() should restart).
+    XCTAssertTrue(ClipPlaybackPlanner.isAtEnd(sourceMs: 10000, ranges: r))
+    XCTAssertTrue(
+      ClipPlaybackPlanner.isAtEnd(sourceMs: 9985, ranges: r, epsilonMs: 17))
+    // Comfortably inside → not parked.
+    XCTAssertFalse(ClipPlaybackPlanner.isAtEnd(sourceMs: 8000, ranges: r))
+    XCTAssertFalse(ClipPlaybackPlanner.isAtEnd(sourceMs: 0, ranges: r))
+    // No ranges → this helper never reports "at end" (the no-cut path handles it).
+    XCTAssertFalse(ClipPlaybackPlanner.isAtEnd(sourceMs: 99999, ranges: []))
+  }
+}
+
+final class NativeLoggerTests: XCTestCase {
+  override func tearDown() {
+    // Restore the build default (DEBUG test build → debug) so the shared
+    // static threshold doesn't leak into other test classes.
+    NativeLogger.setMinLevel("debug")
+    super.tearDown()
+  }
+
+  func testInfoThresholdGatesDebug() {
+    NativeLogger.setMinLevel("info")
+    XCTAssertEqual(NativeLogger.minLevelRank, 1)
+    XCTAssertFalse(NativeLogger.shouldSend(level: "DEBUG"))
+    XCTAssertTrue(NativeLogger.shouldSend(level: "INFO"))
+    XCTAssertTrue(NativeLogger.shouldSend(level: "WARNING"))
+    XCTAssertTrue(NativeLogger.shouldSend(level: "ERROR"))
+  }
+
+  func testDebugThresholdSendsEverything() {
+    NativeLogger.setMinLevel("debug")
+    XCTAssertTrue(NativeLogger.shouldSend(level: "DEBUG"))
+    XCTAssertTrue(NativeLogger.shouldSend(level: "INFO"))
+    XCTAssertTrue(NativeLogger.shouldSend(level: "ERROR"))
+  }
+
+  func testErrorThresholdGatesAllButErrors() {
+    NativeLogger.setMinLevel("error")
+    XCTAssertFalse(NativeLogger.shouldSend(level: "DEBUG"))
+    XCTAssertFalse(NativeLogger.shouldSend(level: "INFO"))
+    XCTAssertFalse(NativeLogger.shouldSend(level: "WARNING"))
+    XCTAssertTrue(NativeLogger.shouldSend(level: "ERROR"))
+  }
+
+  func testUnknownLevelNameIsIgnored() {
+    NativeLogger.setMinLevel("warning")
+    NativeLogger.setMinLevel("totally-bogus")
+    XCTAssertEqual(NativeLogger.minLevelRank, 2)
+  }
+
+  func testLevelNameAliasesParse() {
+    NativeLogger.setMinLevel("warn")
+    XCTAssertEqual(NativeLogger.minLevelRank, 2)
+    NativeLogger.setMinLevel("  Verbose  ")
+    XCTAssertEqual(NativeLogger.minLevelRank, 0)
+  }
+
+  func testUnknownEmittedLevelTreatedAsDebug() {
+    // Matches the Dart `nativeEvent` fallback: an unparseable emitted level is
+    // treated as debug (lowest rank), so it is dropped above a debug threshold.
+    NativeLogger.setMinLevel("info")
+    XCTAssertFalse(NativeLogger.shouldSend(level: "BOGUS"))
+    NativeLogger.setMinLevel("debug")
+    XCTAssertTrue(NativeLogger.shouldSend(level: "BOGUS"))
   }
 }
