@@ -78,6 +78,16 @@ final class LetterboxExporter {
   private var progressTimer: Timer?
   private var temporaryArtifacts: [URL] = []
   private var isCancelled = false
+  // In-flight self-retention: the async export pipeline captures `self`
+  // weakly by design, and ARC may release a caller's local exporter as soon
+  // as `export()` returns — locals are not guaranteed to live to the end of
+  // their scope (Xcode 26.5's toolchain started exercising this, killing
+  // exports mid-flight with the -25 "deallocated" error). The exporter holds
+  // itself while an export runs; the wrapped completion releases the hold on
+  // every exit path. Guarded by a lock because completions can fire off-main.
+  private let inFlightRetentionLock = NSLock()
+  private var inFlightSelfRetain: LetterboxExporter?
+  private var inFlightExportGeneration = 0
   private let validationSampleDimension = 64
   private let validationAlphaThreshold: UInt8 = 8
   private let validationNonBlackThreshold: UInt8 = 12
@@ -2345,6 +2355,30 @@ final class LetterboxExporter {
     onProgress: ((Double) -> Void)? = nil,
     completion: @escaping (Result<URL, Error>) -> Void
   ) {
+    // Keep the exporter alive for the duration of this export (see the
+    // inFlightSelfRetain declaration). The generation guard stops a
+    // re-entrant export() — which cancels the prior one — from clearing the
+    // new export's hold when the old export's completion fires late.
+    inFlightRetentionLock.lock()
+    inFlightExportGeneration += 1
+    let exportGeneration = inFlightExportGeneration
+    inFlightSelfRetain = self
+    inFlightRetentionLock.unlock()
+
+    let callerCompletion = completion
+    let completion: (Result<URL, Error>) -> Void = { [weak self] result in
+      // `if let self` holds a strong reference through the unlock, so
+      // dropping the last retain inside the lock cannot free `self` early.
+      if let self {
+        self.inFlightRetentionLock.lock()
+        if self.inFlightExportGeneration == exportGeneration {
+          self.inFlightSelfRetain = nil
+        }
+        self.inFlightRetentionLock.unlock()
+      }
+      callerCompletion(result)
+    }
+
     // Cancel any existing session
     cancel()
     isCancelled = false

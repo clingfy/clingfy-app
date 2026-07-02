@@ -5570,6 +5570,45 @@ final class LetterboxExporterTests: XCTestCase {
     )
   }
 
+  func testExportSurvivesCallerDroppingItsReferenceMidFlight() throws {
+    let tempDir = makeTemporaryDirectory()
+    defer { try? FileManager.default.removeItem(at: tempDir) }
+
+    let projectRoot = try makeRecordingProjectRoot(at: tempDir, includeCamera: false)
+    let project = try RecordingProjectRef.open(projectRoot: projectRoot)
+    let screenURL = RecordingProjectPaths.screenVideoURL(for: projectRoot)
+    try makeColorPatchVideo(
+      url: screenURL,
+      size: CGSize(width: 320, height: 180),
+      durationSeconds: 1.0
+    )
+
+    // Regression (Xcode 26.5 CI): ARC may release a caller's local exporter
+    // as soon as export() returns, and the pipeline captures self weakly —
+    // the in-flight export must keep itself alive. Dropping the only strong
+    // reference immediately makes that deterministic on every toolchain.
+    var exporter: LetterboxExporter? = LetterboxExporter()
+    let exportExpectation = expectation(description: "export survives dropped reference")
+    var exportResult: Result<URL, Error>?
+    exporter?.export(
+      project: project,
+      target: CGSize(width: 640, height: 360),
+      showCursor: false,
+      outputURL: tempDir.appendingPathComponent("final.mp4"),
+      format: "mp4",
+      codec: "h264",
+      bitrate: "auto"
+    ) { result in
+      exportResult = result
+      exportExpectation.fulfill()
+    }
+    exporter = nil
+
+    wait(for: [exportExpectation], timeout: 30.0)
+    let finalURL = try XCTUnwrap(try exportResult?.get())
+    XCTAssertTrue(FileManager.default.fileExists(atPath: finalURL.path))
+  }
+
   private func assertSingleSourceColorParityExport(
     format: String,
     codec: String,
