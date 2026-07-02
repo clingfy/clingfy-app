@@ -130,8 +130,19 @@ degrade), never silently diverging.**
 macOS keeps this as a pure enum `ClipPlaybackPlanner` in
 `macos/Runner/Capture/Export/CompositionBuilder.swift`, exhaustively unit-tested
 in `macos/RunnerTests/RunnerTests.swift` (`ClipPlaybackPlannerTests`). It is pure
-integer-millisecond math — **port it verbatim to C++** (e.g. under
-`windows/runner/Capture/Export/`) with the same tests. The functions and their
+integer-millisecond math — **port it verbatim to C++** with the same tests.
+
+> **✅ PORTED (2026-07-02, build-order step 1).** The C++ port lives at
+> `windows/runner/Capture/Export/clip_playback_planner.{h,cpp}`
+> (namespace `clingfy::capture::export_::clip_planner`), test-for-test suite at
+> `windows/runner_tests/clip_playback_planner_test.cpp` (26/26 passing).
+> Parsing the Dart `Clip.toMap()` payload into `ClipKeptRange` is deliberately
+> NOT in the module (the `export_router` precedent keeps `EncodableValue`
+> parsing in routers) — port `ClipKeptRange.fromFlutter`'s filtering rules
+> (drop disabled, drop `out <= in`, preserve timeline order, truncate-not-round
+> numeric coercion) into the router when steps 3/4 wire the bridge methods.
+
+The functions and their
 **invariants** (get these exactly right — the macOS bugs in §5 were all subtle
 violations of these):
 
@@ -276,8 +287,10 @@ Windows equivalent.
 
 ## 6. Recommended Windows build order
 
-1. **Port `ClipPlaybackPlanner`** to C++ with its tests (§4). Pure math, no OS deps
-   — do this first; everything else depends on it.
+1. ~~**Port `ClipPlaybackPlanner`** to C++ with its tests (§4). Pure math, no OS deps
+   — do this first; everything else depends on it.~~ **✅ Done 2026-07-02** —
+   `windows/runner/Capture/Export/clip_playback_planner.{h,cpp}` +
+   `windows/runner_tests/clip_playback_planner_test.cpp` (26/26).
 2. **Color** before clips (smaller, no timeline remap): implement
    `previewSetColorGrade` (per-frame color pass in `preview_compositor.cpp`) and
    honor `colorGrade` in the export encode. Identity = passthrough.

@@ -62,6 +62,7 @@ add_executable(runner_tests
   "device_record_test.cpp"
   "devices_router_test.cpp"
   "encoder_output_path_test.cpp"
+  "clip_playback_planner_test.cpp"
   "export_audio_test.cpp"
   "export_format_test.cpp"
   "export_geometry_test.cpp"
