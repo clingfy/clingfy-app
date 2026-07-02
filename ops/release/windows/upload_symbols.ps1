@@ -149,15 +149,31 @@ Write-Info "Found $($uploadFiles.Count) file(s) to upload."
 # --- Upload -------------------------------------------------------------------
 Write-Step "Uploading to Sentry ($env:SENTRY_ORG / $env:SENTRY_PROJECT)"
 
-# An array variable in native-command argument position expands to one
-# argument per element — every collected file becomes its own path argument.
-$fileArgs = $uploadFiles.ToArray()
-& $sentryCli.Source debug-files upload `
-  --org $env:SENTRY_ORG `
-  --project $env:SENTRY_PROJECT `
-  $fileArgs
+# Splat one flat argument array. An array in argument position only expands
+# per-element for NATIVE commands; when sentry-cli is npm-installed,
+# Get-Command resolves to a .ps1 shim, and a .ps1 receives the array as a
+# single stringified argument — sentry-cli then sees one garbage path,
+# reports "Found 0 debug information files", and still exits 0 (a silent
+# no-op upload). Splatting (@cliArgs) passes each element as its own
+# argument for both .ps1 shims and native exes.
+$cliArgs = @(
+  'debug-files', 'upload',
+  '--org', $env:SENTRY_ORG,
+  '--project', $env:SENTRY_PROJECT
+) + $uploadFiles.ToArray()
+$cliOutput = & $sentryCli.Source @cliArgs 2>&1
+$cliOutput | ForEach-Object { Write-Host $_ }
 if ($LASTEXITCODE -ne 0) {
   Fail "sentry-cli debug-files upload failed with exit code $LASTEXITCODE."
+}
+
+# Belt-and-braces against the silent-no-op failure mode above: sentry-cli
+# exits 0 even when it matched zero files. We handed it a non-empty list, so
+# "Found 0 debug information files" in its output means the arguments never
+# reached it intact — fail loudly instead of reporting a phantom success.
+if ($cliOutput -match 'Found 0 debug information files') {
+  Fail ("sentry-cli found 0 debug information files despite being given " +
+    "$($uploadFiles.Count) — the file arguments did not reach it intact.")
 }
 
 # --- Summary --------------------------------------------------------------------
