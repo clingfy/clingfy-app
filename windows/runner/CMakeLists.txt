@@ -41,6 +41,7 @@ add_library(runner_bridge STATIC
   "Bridge/Routers/storage_router.cpp"
   "Bridge/Routers/updater_router.cpp"
   "Bridge/updater_event_publisher.cpp"
+  "Capture/Export/clip_playback_planner.cpp"
   "Capture/Export/export_audio.cpp"
   "Capture/Export/export_format.cpp"
   "Capture/Export/export_geometry.cpp"
