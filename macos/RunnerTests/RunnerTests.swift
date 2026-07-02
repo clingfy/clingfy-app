@@ -188,6 +188,8 @@ final class RecordingProjectPathsTests: XCTestCase {
         "screen.meta.json",
         "cursor.json",
         "zoom.manual.json",
+        "mic.m4a",
+        "system.m4a",
         "camera",
         "raw.mov",
         "meta.json",

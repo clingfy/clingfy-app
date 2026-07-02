@@ -15,6 +15,8 @@ enum RecordingProjectPaths {
   static let screenMetadataFileName = "screen.meta.json"
   static let cursorDataFileName = "cursor.json"
   static let zoomManualFileName = "zoom.manual.json"
+  static let micAudioFileName = "mic.m4a"
+  static let systemAudioFileName = "system.m4a"
 
   static let cameraRawFileName = "raw.mov"
   static let cameraMetadataFileName = "meta.json"
@@ -37,6 +39,14 @@ enum RecordingProjectPaths {
 
   static var relativeZoomManualPath: String {
     "\(captureDirectoryName)/\(zoomManualFileName)"
+  }
+
+  static var relativeMicAudioPath: String {
+    "\(captureDirectoryName)/\(micAudioFileName)"
+  }
+
+  static var relativeSystemAudioPath: String {
+    "\(captureDirectoryName)/\(systemAudioFileName)"
   }
 
   static var relativeCameraRawPath: String {
@@ -97,6 +107,14 @@ enum RecordingProjectPaths {
 
   static func zoomManualURL(for projectRoot: URL) -> URL {
     captureDirectoryURL(for: projectRoot).appendingPathComponent(zoomManualFileName, isDirectory: false)
+  }
+
+  static func micAudioURL(for projectRoot: URL) -> URL {
+    captureDirectoryURL(for: projectRoot).appendingPathComponent(micAudioFileName, isDirectory: false)
+  }
+
+  static func systemAudioURL(for projectRoot: URL) -> URL {
+    captureDirectoryURL(for: projectRoot).appendingPathComponent(systemAudioFileName, isDirectory: false)
   }
 
   static func cameraDirectoryURL(for projectRoot: URL) -> URL {
@@ -165,6 +183,8 @@ enum RecordingProjectPaths {
       screenMetadataURL(for: projectRoot),
       cursorDataURL(for: projectRoot),
       zoomManualURL(for: projectRoot),
+      micAudioURL(for: projectRoot),
+      systemAudioURL(for: projectRoot),
       cameraDirectoryURL(for: projectRoot),
       cameraRawURL(for: projectRoot),
       cameraMetadataURL(for: projectRoot),
@@ -185,6 +205,8 @@ enum RecordingProjectPaths {
       screenMetadataURL(for: projectRoot),
       cursorDataURL(for: projectRoot),
       zoomManualURL(for: projectRoot),
+      micAudioURL(for: projectRoot),
+      systemAudioURL(for: projectRoot),
       cameraDirectoryURL(for: projectRoot),
       cameraRawURL(for: projectRoot),
       cameraMetadataURL(for: projectRoot),
@@ -208,6 +230,8 @@ enum RecordingProjectPaths {
       screenMetadataURL(for: projectRoot),
       cursorDataURL(for: projectRoot),
       zoomManualURL(for: projectRoot),
+      micAudioURL(for: projectRoot),
+      systemAudioURL(for: projectRoot),
       cameraRawURL(for: projectRoot),
       cameraMetadataURL(for: projectRoot),
       postStateURL(for: projectRoot),

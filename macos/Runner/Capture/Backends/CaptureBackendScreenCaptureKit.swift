@@ -91,6 +91,8 @@ private struct SegmentedRecordingArtifact {
   let index: Int
   let rawURL: URL
   let cursorURL: URL?
+  let micAudioURL: URL?
+  let systemAudioURL: URL?
   let recordedDuration: TimeInterval
   let startWallClock: Date
   let endWallClock: Date
@@ -127,6 +129,8 @@ private struct SegmentedRecordingSession {
     index: Int,
     rawURL: URL,
     cursorURL: URL?,
+    micAudioURL: URL? = nil,
+    systemAudioURL: URL? = nil,
     recordedDuration: TimeInterval,
     startWallClock: Date,
     endWallClock: Date
@@ -135,6 +139,8 @@ private struct SegmentedRecordingSession {
       index: index,
       rawURL: rawURL,
       cursorURL: cursorURL,
+      micAudioURL: micAudioURL,
+      systemAudioURL: systemAudioURL,
       recordedDuration: recordedDuration,
       startWallClock: startWallClock,
       endWallClock: endWallClock
@@ -523,6 +529,11 @@ final class CaptureBackendScreenCaptureKit: NSObject, CaptureBackend {
   private let audioQ = DispatchQueue(label: "SCK.AudioSampleBufferQueue")
   private let micQ = DispatchQueue(label: "SCK.MicSampleBufferQueue")
 
+  // Writes separated per-source audio files (capture/mic.m4a + capture/system.m4a)
+  // from the sample-buffer streams; SCRecordingOutput's embedded audio is untouched.
+  // Best-effort: source-audio failures never fail the recording.
+  private let sourceAudioRecorder = SourceAudioRecorder()
+
   // State for dynamic updates
   private var currentConfig: CaptureStartConfig?
   private var currentOverlayWindowID: CGWindowID?
@@ -736,6 +747,11 @@ final class CaptureBackendScreenCaptureKit: NSObject, CaptureBackend {
         frameRate: config.frameRate
       )
       self.activeStreamConfig = streamConfig
+      sourceAudioRecorder.configure(
+        directory: outputURL.deletingLastPathComponent(),
+        micEnabled: streamConfig.captureMicrophone,
+        systemAudioEnabled: streamConfig.capturesAudio
+      )
       dbg_configuredSizePx = CGSize(width: streamConfig.width, height: streamConfig.height)
       currentCursorRasterScale = computeCursorRasterScale(
         baseRectPoints: baseRectPoints,
@@ -787,6 +803,7 @@ final class CaptureBackendScreenCaptureKit: NSObject, CaptureBackend {
 
       let stream = SCStream(filter: filter, configuration: streamConfig, delegate: self)
       self.stream = stream
+      sourceAudioRecorder.attachStream(id: ObjectIdentifier(stream))
 
       // Add at least .screen output so stream is “active”
       try stream.addStreamOutput(self, type: SCStreamOutputType.screen, sampleHandlerQueue: videoQ)
@@ -909,6 +926,7 @@ final class CaptureBackendScreenCaptureKit: NSObject, CaptureBackend {
     stopRequested = false
     runPhase = .starting
     isCursorCaptureActive = false
+    sourceAudioRecorder.cancelAndCleanup()
     segmentedSession = SegmentedRecordingSession(
       primaryInProgressRawURL: outputURL,
       expectsCursorSidecars: !config.excludeRecorderApp
@@ -1127,6 +1145,7 @@ final class CaptureBackendScreenCaptureKit: NSObject, CaptureBackend {
       recordingOutput: recordingOutput
     )
     segmentContextsByOutputID[ObjectIdentifier(recordingOutput)] = context
+    sourceAudioRecorder.prepareSegment(index: segment.index)
 
     NativeLogger.i(
       "SCKBackend", "Prepared recording segment",
@@ -1156,6 +1175,17 @@ final class CaptureBackendScreenCaptureKit: NSObject, CaptureBackend {
       self.activeSegmentContext = nil
     }
 
+    let audioArtifacts = await sourceAudioRecorder.finishActiveSegment()
+    // Defense in depth for the pause/activation race: an artifact carrying a
+    // different segment index is stale (possibly paused audio) — discard it.
+    for artifact in audioArtifacts where artifact.index != segment.index {
+      NativeLogger.w(
+        "SCKBackend", "Discarding stale source audio artifact",
+        context: ["artifactIndex": artifact.index, "segmentIndex": segment.index])
+      try? FileManager.default.removeItem(at: artifact.url)
+    }
+    let segmentAudioArtifacts = audioArtifacts.filter { $0.index == segment.index }
+
     try await segment.finalizationWaiter.wait()
     try await stopCursorSegmentIfNeeded(for: segment)
 
@@ -1167,6 +1197,8 @@ final class CaptureBackendScreenCaptureKit: NSObject, CaptureBackend {
         index: segment.index,
         rawURL: segment.rawURL,
         cursorURL: segment.cursorURL,
+        micAudioURL: segmentAudioArtifacts.first(where: { $0.kind == .microphone })?.url,
+        systemAudioURL: segmentAudioArtifacts.first(where: { $0.kind == .systemAudio })?.url,
         recordedDuration: duration,
         startWallClock: startedAt,
         endWallClock: finishedAt
@@ -1231,8 +1263,47 @@ final class CaptureBackendScreenCaptureKit: NSObject, CaptureBackend {
       outputURL: finalCursorDataURL(for: mergedURL)
     )
 
+    await mergeSourceAudioArtifacts(orderedSegments, alongside: mergedURL)
+
     cleanupMergedSegmentArtifacts(orderedSegments, finalURL: mergedURL)
     return mergedURL
+  }
+
+  /// Merges the per-segment source audio files into capture/mic.m4a and
+  /// capture/system.m4a. Best-effort: a failed source is dropped (partial
+  /// final file deleted) and the recording still finishes normally.
+  private func mergeSourceAudioArtifacts(
+    _ segments: [SegmentedRecordingArtifact],
+    alongside mergedScreenURL: URL
+  ) async {
+    let captureDirectory = mergedScreenURL.deletingLastPathComponent()
+
+    for kind in AudioSourceKind.allCases {
+      let inputs = segments.map { segment in
+        AudioSegmentMerger.SegmentInput(
+          url: kind == .microphone ? segment.micAudioURL : segment.systemAudioURL,
+          slotDuration: segment.recordedDuration
+        )
+      }
+      guard inputs.contains(where: { $0.url != nil }) else { continue }
+
+      let finalURL = captureDirectory.appendingPathComponent(kind.finalFileName, isDirectory: false)
+      do {
+        try await AudioSegmentMerger.mergeSegments(inputs, to: finalURL)
+        NativeLogger.i(
+          "SCKBackend", "Merged source audio",
+          context: [
+            "kind": kind.rawValue,
+            "segments": inputs.filter { $0.url != nil }.count,
+            "output": finalURL.path,
+          ])
+      } catch {
+        NativeLogger.w(
+          "SCKBackend", "Source audio merge failed; dropping source",
+          context: ["kind": kind.rawValue, "error": "\(error)"])
+        try? FileManager.default.removeItem(at: finalURL)
+      }
+    }
   }
 
   private func cleanupMergedSegmentArtifacts(_ segments: [SegmentedRecordingArtifact], finalURL: URL) {
@@ -1243,6 +1314,10 @@ final class CaptureBackendScreenCaptureKit: NSObject, CaptureBackend {
       }
       if let cursorURL = segment.cursorURL, fm.fileExists(atPath: cursorURL.path) {
         try? fm.removeItem(at: cursorURL)
+      }
+      for audioURL in [segment.micAudioURL, segment.systemAudioURL].compactMap({ $0 })
+      where fm.fileExists(atPath: audioURL.path) {
+        try? fm.removeItem(at: audioURL)
       }
     }
   }
@@ -1447,6 +1522,7 @@ final class CaptureBackendScreenCaptureKit: NSObject, CaptureBackend {
     stopRequested = false
     runPhase = .idle
     isCursorCaptureActive = false
+    sourceAudioRecorder.cancelAndCleanup()
     smoothedMicLevelLinear = 0.0
     lastMicLevelEmitAt = 0.0
     recordingURL = nil
@@ -1479,6 +1555,7 @@ final class CaptureBackendScreenCaptureKit: NSObject, CaptureBackend {
     if discardCursor {
       cursorRecorder.cancel()
     }
+    sourceAudioRecorder.cancelAndCleanup()
     didStart = false
     paused = false
     stopRequested = false
@@ -2414,13 +2491,22 @@ extension CaptureBackendScreenCaptureKit: SCStreamOutput {
     didOutputSampleBuffer sampleBuffer: CMSampleBuffer,
     of type: SCStreamOutputType
   ) {
-    // SCRecordingOutput writes the file. We only inspect microphone samples for live level telemetry.
-    guard type == .microphone else { return }
-    guard let estimate = AudioLevelEstimator.estimatePeak(sampleBuffer: sampleBuffer) else { return }
-    let sample = MicrophoneLevelSample(linear: estimate.linear, dbfs: estimate.dbfs)
-    Task { @MainActor in
-      guard stream === self.stream else { return }
-      self.handleMicrophoneLevel(sample)
+    // SCRecordingOutput writes screen.mov. We additionally tee the audio
+    // sample streams into per-source files (mic.m4a / system.m4a) and use
+    // microphone samples for live level telemetry.
+    switch type {
+    case .audio:
+      sourceAudioRecorder.append(sampleBuffer, source: .systemAudio, from: ObjectIdentifier(stream))
+    case .microphone:
+      sourceAudioRecorder.append(sampleBuffer, source: .microphone, from: ObjectIdentifier(stream))
+      guard let estimate = AudioLevelEstimator.estimatePeak(sampleBuffer: sampleBuffer) else { return }
+      let sample = MicrophoneLevelSample(linear: estimate.linear, dbfs: estimate.dbfs)
+      Task { @MainActor in
+        guard stream === self.stream else { return }
+        self.handleMicrophoneLevel(sample)
+      }
+    default:
+      return
     }
   }
 }
@@ -2439,6 +2525,17 @@ extension CaptureBackendScreenCaptureKit: SCRecordingOutputDelegate {
         "SCKBackend", "Recording segment started",
         context: ["segmentIndex": context.index, "rawURL": context.rawURL.path]
       )
+      // Only activate the audio writers while this segment is still the
+      // active one. A rapid pause can begin finalizing the segment before
+      // this delegate callback lands; activating then would record paused
+      // audio into a segment whose finalization already ran.
+      if self.activeSegmentContext === context {
+        self.sourceAudioRecorder.activatePreparedSegment(index: context.index)
+      } else {
+        NativeLogger.w(
+          "SCKBackend", "Skipping source audio activation for finalizing segment",
+          context: ["segmentIndex": context.index])
+      }
       guard let url = self.recordingURL else { return }
       await self.markRecordingStarted(url: url)
     }
