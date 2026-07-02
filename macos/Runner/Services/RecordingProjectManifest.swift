@@ -35,6 +35,26 @@ struct RecordingProjectManifest: Codable {
     let screenMetadata: String
     let cursorData: String?
     let zoomManual: String?
+    /// Separated source audio (Phase 1.5). Optional so pre-existing manifests
+    /// and Windows-written manifests (which omit the keys) keep decoding.
+    let micAudio: String?
+    let systemAudio: String?
+
+    init(
+      screenVideo: String,
+      screenMetadata: String,
+      cursorData: String?,
+      zoomManual: String?,
+      micAudio: String? = nil,
+      systemAudio: String? = nil
+    ) {
+      self.screenVideo = screenVideo
+      self.screenMetadata = screenMetadata
+      self.cursorData = cursorData
+      self.zoomManual = zoomManual
+      self.micAudio = micAudio
+      self.systemAudio = systemAudio
+    }
   }
 
   struct CameraFiles: Codable {
@@ -119,7 +139,9 @@ struct RecordingProjectManifest: Codable {
         screenVideo: RecordingProjectPaths.relativeScreenVideoPath,
         screenMetadata: RecordingProjectPaths.relativeScreenMetadataPath,
         cursorData: RecordingProjectPaths.relativeCursorDataPath,
-        zoomManual: RecordingProjectPaths.relativeZoomManualPath
+        zoomManual: RecordingProjectPaths.relativeZoomManualPath,
+        micAudio: RecordingProjectPaths.relativeMicAudioPath,
+        systemAudio: RecordingProjectPaths.relativeSystemAudioPath
       ),
       camera: includeCamera
         ? CameraFiles(
@@ -216,6 +238,30 @@ struct ProjectMediaSources: Equatable {
   let zoomManualURL: URL?
   let cameraVideoURL: URL?
   let cameraMetadataURL: URL?
+  let micAudioURL: URL?
+  let systemAudioURL: URL?
+
+  init(
+    projectRootURL: URL,
+    screenVideoURL: URL,
+    metadataURL: URL?,
+    cursorDataURL: URL?,
+    zoomManualURL: URL?,
+    cameraVideoURL: URL?,
+    cameraMetadataURL: URL?,
+    micAudioURL: URL? = nil,
+    systemAudioURL: URL? = nil
+  ) {
+    self.projectRootURL = projectRootURL
+    self.screenVideoURL = screenVideoURL
+    self.metadataURL = metadataURL
+    self.cursorDataURL = cursorDataURL
+    self.zoomManualURL = zoomManualURL
+    self.cameraVideoURL = cameraVideoURL
+    self.cameraMetadataURL = cameraMetadataURL
+    self.micAudioURL = micAudioURL
+    self.systemAudioURL = systemAudioURL
+  }
 
   var projectPath: String { projectRootURL.path }
   var screenPath: String { screenVideoURL.path }
@@ -223,6 +269,8 @@ struct ProjectMediaSources: Equatable {
   var cursorPath: String? { cursorDataURL?.path }
   var zoomManualPath: String? { zoomManualURL?.path }
   var cameraPath: String? { cameraVideoURL?.path }
+  var micAudioPath: String? { micAudioURL?.path }
+  var systemAudioPath: String? { systemAudioURL?.path }
 }
 
 struct RecordingProjectRef {
@@ -277,6 +325,12 @@ struct RecordingProjectRef {
       for: manifest.camera?.metadata,
       projectRoot: rootURL
     )
+    let micAudioURL =
+      RecordingProjectPaths.resolvedURL(for: manifest.capture.micAudio, projectRoot: rootURL)
+      ?? RecordingProjectPaths.micAudioURL(for: rootURL)
+    let systemAudioURL =
+      RecordingProjectPaths.resolvedURL(for: manifest.capture.systemAudio, projectRoot: rootURL)
+      ?? RecordingProjectPaths.systemAudioURL(for: rootURL)
 
     return ProjectMediaSources(
       projectRootURL: rootURL,
@@ -287,7 +341,9 @@ struct RecordingProjectRef {
       cameraVideoURL: cameraVideoURL.flatMap { fileManager.fileExists(atPath: $0.path) ? $0 : nil },
       cameraMetadataURL: cameraMetadataURL.flatMap {
         fileManager.fileExists(atPath: $0.path) ? $0 : nil
-      }
+      },
+      micAudioURL: fileManager.fileExists(atPath: micAudioURL.path) ? micAudioURL : nil,
+      systemAudioURL: fileManager.fileExists(atPath: systemAudioURL.path) ? systemAudioURL : nil
     )
   }
 
