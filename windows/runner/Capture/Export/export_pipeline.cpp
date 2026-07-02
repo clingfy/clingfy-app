@@ -4,6 +4,7 @@
 #include <d3d11_4.h>
 #include <d2d1_1.h>
 #include <d2d1_1helper.h>
+#include <d2d1effects.h>
 #include <dxgi.h>
 #include <mfapi.h>
 #include <mferror.h>
@@ -24,6 +25,8 @@
 #include "Capture/Camera/camera_export_renderer.h"
 #include "Capture/Cursor/cursor_export_renderer.h"
 #include "Capture/Zoom/zoom_export_controller.h"
+#include "Bridge/native_log_publisher.h"
+#include "Capture/Export/color_grade.h"
 #include "Capture/Export/export_audio.h"
 #include "Capture/Export/export_format.h"
 #include "Capture/Export/export_geometry.h"
@@ -534,6 +537,148 @@ RenderResult RenderComposedExport(const RenderRequest& request) {
     }
   }
 
+  // --- Editing port (color): the graded-content pass -------------------------
+  //
+  // When the grade is non-identity, the content that macOS grades — the
+  // screen video + cursor + click ripples, NOT the background or camera —
+  // is drawn into a canvas-sized FLOAT16 intermediate instead of the output
+  // target, then run through:
+  //
+  //     content(16F, sRGB-encoded, premultiplied)
+  //        └─► ColorManagement  sRGB → scRGB      (piecewise linearization —
+  //        │                                       D2D has no sRGB-transfer
+  //        │                                       primitive; GammaTransfer is
+  //        │                                       a pure power curve)
+  //        └─► ColorMatrix      BuildColorMatrix   (straight alpha, the one
+  //        │                    (grade), 5x4       matrix replicating the
+  //        │                                       whole macOS filter chain)
+  //        └─► ColorManagement  scRGB → sRGB       (re-encode)
+  //        └─► DrawImage onto the output target (canvas-sized: no scaling),
+  //            then the camera draws on top, ungraded.
+  //
+  // Every effect runs at 16bpc float (8bpc intermediates band the shadows).
+  // Failure posture (decision 2A, macOS parity): if any of this cannot be
+  // built, the export continues UNGRADED with a loud diagnostic log — same
+  // best-effort semantics as a CIFilter returning nil on macOS.
+  const bool wants_grade = !request.color_grade.IsIdentity();
+  bool grading = false;
+  ComPtr<ID2D1Bitmap1> content_bitmap;
+  ComPtr<ID2D1Effect> grade_output;  // tail of the effect chain
+  if (wants_grade) {
+    const auto fail_grade = [&](const char* step, HRESULT fail_hr) {
+      clingfy::bridge::NativeLogPublisher::Instance().Warn(
+          "Export",
+          "EXPORT_COLOR_GRADE_DEGRADED: could not build the color-grade "
+          "pass — " +
+              Hr(step, fail_hr) +
+              " — exporting UNGRADED (macOS-parity best-effort).");
+      content_bitmap.Reset();
+      grade_output.Reset();
+    };
+
+    HRESULT grade_hr = S_OK;
+    do {
+      const D2D1_BITMAP_PROPERTIES1 props = D2D1::BitmapProperties1(
+          D2D1_BITMAP_OPTIONS_TARGET,
+          D2D1::PixelFormat(DXGI_FORMAT_R16G16B16A16_FLOAT,
+                            D2D1_ALPHA_MODE_PREMULTIPLIED));
+      if (FAILED(grade_hr = d2d_ctx->CreateBitmap(
+                     D2D1::SizeU(canvas.width, canvas.height), nullptr, 0,
+                     &props, content_bitmap.GetAddressOf()))) {
+        fail_grade("content bitmap", grade_hr);
+        break;
+      }
+
+      ComPtr<ID2D1ColorContext> srgb_ctx;
+      ComPtr<ID2D1ColorContext> scrgb_ctx;
+      if (FAILED(grade_hr = d2d_ctx->CreateColorContext(
+                     D2D1_COLOR_SPACE_SRGB, nullptr, 0, &srgb_ctx)) ||
+          FAILED(grade_hr = d2d_ctx->CreateColorContext(
+                     D2D1_COLOR_SPACE_SCRGB, nullptr, 0, &scrgb_ctx))) {
+        fail_grade("color context", grade_hr);
+        break;
+      }
+
+      ComPtr<ID2D1Effect> to_linear;
+      ComPtr<ID2D1Effect> matrix_fx;
+      ComPtr<ID2D1Effect> to_srgb;
+      if (FAILED(grade_hr = d2d_ctx->CreateEffect(CLSID_D2D1ColorManagement,
+                                                  &to_linear)) ||
+          FAILED(grade_hr = d2d_ctx->CreateEffect(CLSID_D2D1ColorMatrix,
+                                                  &matrix_fx)) ||
+          FAILED(grade_hr = d2d_ctx->CreateEffect(CLSID_D2D1ColorManagement,
+                                                  &to_srgb))) {
+        fail_grade("CreateEffect", grade_hr);
+        break;
+      }
+
+      // 16bpc float intermediates on the whole chain — the linearized values
+      // must not be quantized back to 8 bits between effects.
+      for (ID2D1Effect* fx :
+           {to_linear.Get(), matrix_fx.Get(), to_srgb.Get()}) {
+        if (FAILED(grade_hr = fx->SetValue(
+                       D2D1_PROPERTY_PRECISION,
+                       D2D1_BUFFER_PRECISION_16BPC_FLOAT))) {
+          break;
+        }
+      }
+      if (FAILED(grade_hr)) {
+        fail_grade("buffer precision", grade_hr);
+        break;
+      }
+
+      if (FAILED(grade_hr = to_linear->SetValue(
+                     D2D1_COLORMANAGEMENT_PROP_SOURCE_COLOR_CONTEXT,
+                     srgb_ctx.Get())) ||
+          FAILED(grade_hr = to_linear->SetValue(
+                     D2D1_COLORMANAGEMENT_PROP_DESTINATION_COLOR_CONTEXT,
+                     scrgb_ctx.Get())) ||
+          FAILED(grade_hr = to_srgb->SetValue(
+                     D2D1_COLORMANAGEMENT_PROP_SOURCE_COLOR_CONTEXT,
+                     scrgb_ctx.Get())) ||
+          FAILED(grade_hr = to_srgb->SetValue(
+                     D2D1_COLORMANAGEMENT_PROP_DESTINATION_COLOR_CONTEXT,
+                     srgb_ctx.Get()))) {
+        fail_grade("color management setup", grade_hr);
+        break;
+      }
+
+      // BuildColorMatrix rows are output-major (m[out][in..offset]); the D2D
+      // 5x4 layout is input-major (row per input channel, offsets last) —
+      // transpose on the way in. Alpha passes through untouched; STRAIGHT
+      // alpha mode so the affine offsets act on unpremultiplied color.
+      const color::ColorMatrix cm = color::BuildColorMatrix(request.color_grade);
+      D2D1_MATRIX_5X4_F d2d_matrix{};
+      d2d_matrix._11 = static_cast<FLOAT>(cm.m[0][0]);
+      d2d_matrix._12 = static_cast<FLOAT>(cm.m[1][0]);
+      d2d_matrix._13 = static_cast<FLOAT>(cm.m[2][0]);
+      d2d_matrix._21 = static_cast<FLOAT>(cm.m[0][1]);
+      d2d_matrix._22 = static_cast<FLOAT>(cm.m[1][1]);
+      d2d_matrix._23 = static_cast<FLOAT>(cm.m[2][1]);
+      d2d_matrix._31 = static_cast<FLOAT>(cm.m[0][2]);
+      d2d_matrix._32 = static_cast<FLOAT>(cm.m[1][2]);
+      d2d_matrix._33 = static_cast<FLOAT>(cm.m[2][2]);
+      d2d_matrix._44 = 1.0f;
+      d2d_matrix._51 = static_cast<FLOAT>(cm.m[0][3]);
+      d2d_matrix._52 = static_cast<FLOAT>(cm.m[1][3]);
+      d2d_matrix._53 = static_cast<FLOAT>(cm.m[2][3]);
+      if (FAILED(grade_hr = matrix_fx->SetValue(
+                     D2D1_COLORMATRIX_PROP_COLOR_MATRIX, d2d_matrix)) ||
+          FAILED(grade_hr = matrix_fx->SetValue(
+                     D2D1_COLORMATRIX_PROP_ALPHA_MODE,
+                     D2D1_COLORMATRIX_ALPHA_MODE_STRAIGHT))) {
+        fail_grade("color matrix setup", grade_hr);
+        break;
+      }
+
+      to_linear->SetInput(0, content_bitmap.Get());
+      matrix_fx->SetInputEffect(0, to_linear.Get());
+      to_srgb->SetInputEffect(0, matrix_fx.Get());
+      grade_output = to_srgb;
+      grading = true;
+    } while (false);
+  }
+
   // --- Output encoder at the target resolution. A .gif destination uses the
   // WIC GIF encoder (Slice 5B); otherwise the H.264 Sink Writer, whose
   // container (.mp4 vs .mov) is chosen by the destination_path extension and
@@ -752,14 +897,6 @@ RenderResult RenderComposedExport(const RenderRequest& request) {
         return Failure(request.destination_path, "export: CreateBitmapFromDxgiSurface failed.");
       }
 
-      d2d_ctx->SetTarget(target_bitmap.Get());
-      d2d_ctx->BeginDraw();
-      // Background first (fills the whole canvas, including padding margins
-      // and letterbox bars), then the video on top — clipped to a rounded
-      // rect so the corners reveal the background, matching the macOS
-      // bg-fill-then-rounded-video draw order.
-      d2d_ctx->Clear(clear_color);
-
       // The frame's recording-relative ms (rebased to the first decoded frame),
       // shared by the cursor lookup and the zoom controller.
       const std::int64_t frame_ms =
@@ -780,63 +917,107 @@ RenderResult RenderComposedExport(const RenderRequest& request) {
       prev_frame_hns = timestamp;
       const bool zooming = zf.active && zf.zoom > 1.0;
 
-      // Content clip: rounded layer when a corner radius is set, else an
-      // axis-aligned clip to the content rect when drawing a cursor or a zoom (so
-      // neither bleeds into the padding/background). No clip otherwise — the
-      // plain composition path stays byte-identical to before.
-      bool pushed_layer = false;
-      bool pushed_clip = false;
-      if (rounded_clip != nullptr) {
-        d2d_ctx->PushLayer(
-            D2D1::LayerParameters1(D2D1::InfiniteRect(), rounded_clip.Get(),
-                                   D2D1_ANTIALIAS_MODE_PER_PRIMITIVE),
-            rounded_layer.Get());
-        pushed_layer = true;
-      } else if (zooming || cursor_renderer != nullptr) {
-        d2d_ctx->PushAxisAlignedClip(dest_rect, D2D1_ANTIALIAS_MODE_ALIASED);
-        pushed_clip = true;
+      // The content pass — video + cursor + click ripples under the shared
+      // clip/zoom transform. A lambda because the editing port's color grade
+      // draws it into the FLOAT16 intermediate (graded before the camera),
+      // while the ungraded path draws it straight onto the output target —
+      // one body, two destinations, zero drift.
+      const auto draw_content = [&]() {
+        // Content clip: rounded layer when a corner radius is set, else an
+        // axis-aligned clip to the content rect when drawing a cursor or a zoom
+        // (so neither bleeds into the padding/background). No clip otherwise —
+        // the plain composition path stays byte-identical to before.
+        bool pushed_layer = false;
+        bool pushed_clip = false;
+        if (rounded_clip != nullptr) {
+          d2d_ctx->PushLayer(
+              D2D1::LayerParameters1(D2D1::InfiniteRect(), rounded_clip.Get(),
+                                     D2D1_ANTIALIAS_MODE_PER_PRIMITIVE),
+              rounded_layer.Get());
+          pushed_layer = true;
+        } else if (zooming || cursor_renderer != nullptr) {
+          d2d_ctx->PushAxisAlignedClip(dest_rect, D2D1_ANTIALIAS_MODE_ALIASED);
+          pushed_clip = true;
+        }
+
+        // Apply the zoom transform (identity when not zooming). The clip above
+        // was pushed under the identity transform, so it stays in canvas space
+        // while the content below is magnified about the (clamped) focus
+        // center.
+        if (zooming) {
+          const double cw = content.width;
+          const double ch = content.height;
+          const double half = 0.5 / zf.zoom;
+          const double window_left = (zf.center_x - half) * cw;
+          const double window_top = (zf.center_y - half) * ch;
+          const D2D1_MATRIX_3X2_F zoom_m =
+              D2D1::Matrix3x2F::Translation(
+                  -(static_cast<float>(content.x + window_left)),
+                  -(static_cast<float>(content.y + window_top))) *
+              D2D1::Matrix3x2F::Scale(static_cast<float>(zf.zoom),
+                                      static_cast<float>(zf.zoom)) *
+              D2D1::Matrix3x2F::Translation(static_cast<float>(content.x),
+                                            static_cast<float>(content.y));
+          d2d_ctx->SetTransform(zoom_m);
+        }
+
+        d2d_ctx->DrawBitmap(source_bitmap.Get(), dest_rect, 1.0f,
+                            D2D1_BITMAP_INTERPOLATION_MODE_LINEAR, nullptr);
+        if (cursor_renderer != nullptr) {
+          cursor_renderer->Draw(d2d_ctx.Get(), frame_ms, dest_rect,
+                                static_cast<double>(source_w),
+                                static_cast<double>(source_h),
+                                request.cursor_size);
+          // Phase 8.4: click ripples, drawn under the same transform so they
+          // stay aligned with the cursor + smart zoom.
+          cursor_renderer->DrawClicks(d2d_ctx.Get(), frame_ms, dest_rect,
+                                      static_cast<double>(source_w),
+                                      static_cast<double>(source_h));
+        }
+        if (zooming) {
+          d2d_ctx->SetTransform(D2D1::Matrix3x2F::Identity());
+        }
+        if (pushed_layer) {
+          d2d_ctx->PopLayer();
+        } else if (pushed_clip) {
+          d2d_ctx->PopAxisAlignedClip();
+        }
+      };
+
+      // Editing port (color), pass 1 of 2: the graded path renders the
+      // content into the transparent-backed FLOAT16 intermediate so the
+      // grade hits the screen video + cursor + clicks — and only them —
+      // before the background/camera composite (macOS precomposited-canvas
+      // order).
+      if (grading) {
+        d2d_ctx->SetTarget(content_bitmap.Get());
+        d2d_ctx->BeginDraw();
+        d2d_ctx->Clear(D2D1::ColorF(0.0f, 0.0f, 0.0f, 0.0f));
+        draw_content();
+        const HRESULT content_hr = d2d_ctx->EndDraw();
+        if (FAILED(content_hr)) {
+          d2d_ctx->SetTarget(nullptr);
+          cancel_encoder();
+          return Failure(
+              request.destination_path,
+              Hr("export: Direct2D EndDraw failed (graded content pass)",
+                 content_hr));
+        }
       }
 
-      // Apply the zoom transform (identity when not zooming). The clip above was
-      // pushed under the identity transform, so it stays in canvas space while
-      // the content below is magnified about the (clamped) focus center.
-      if (zooming) {
-        const double cw = content.width;
-        const double ch = content.height;
-        const double half = 0.5 / zf.zoom;
-        const double window_left = (zf.center_x - half) * cw;
-        const double window_top = (zf.center_y - half) * ch;
-        const D2D1_MATRIX_3X2_F zoom_m =
-            D2D1::Matrix3x2F::Translation(
-                -(static_cast<float>(content.x + window_left)),
-                -(static_cast<float>(content.y + window_top))) *
-            D2D1::Matrix3x2F::Scale(static_cast<float>(zf.zoom),
-                                    static_cast<float>(zf.zoom)) *
-            D2D1::Matrix3x2F::Translation(static_cast<float>(content.x),
-                                          static_cast<float>(content.y));
-        d2d_ctx->SetTransform(zoom_m);
-      }
-
-      d2d_ctx->DrawBitmap(source_bitmap.Get(), dest_rect, 1.0f,
-                          D2D1_BITMAP_INTERPOLATION_MODE_LINEAR, nullptr);
-      if (cursor_renderer != nullptr) {
-        cursor_renderer->Draw(d2d_ctx.Get(), frame_ms, dest_rect,
-                              static_cast<double>(source_w),
-                              static_cast<double>(source_h),
-                              request.cursor_size);
-        // Phase 8.4: click ripples, drawn under the same transform so they stay
-        // aligned with the cursor + smart zoom.
-        cursor_renderer->DrawClicks(d2d_ctx.Get(), frame_ms, dest_rect,
-                                    static_cast<double>(source_w),
-                                    static_cast<double>(source_h));
-      }
-      if (zooming) {
-        d2d_ctx->SetTransform(D2D1::Matrix3x2F::Identity());
-      }
-      if (pushed_layer) {
-        d2d_ctx->PopLayer();
-      } else if (pushed_clip) {
-        d2d_ctx->PopAxisAlignedClip();
+      d2d_ctx->SetTarget(target_bitmap.Get());
+      d2d_ctx->BeginDraw();
+      // Background first (fills the whole canvas, including padding margins
+      // and letterbox bars), then the video on top — clipped to a rounded
+      // rect so the corners reveal the background, matching the macOS
+      // bg-fill-then-rounded-video draw order.
+      d2d_ctx->Clear(clear_color);
+      if (grading) {
+        // The intermediate is canvas-sized, so the graded output lands at the
+        // origin 1:1 — no scaling, no interpolation surprises.
+        d2d_ctx->DrawImage(grade_output.Get());
+      } else {
+        draw_content();
       }
       // Phase 9.4: the camera bubble draws LAST, in canvas space with an
       // identity transform (the zoom transform was reset above and the content

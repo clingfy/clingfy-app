@@ -46,7 +46,8 @@ The Flutter↔native seam is the same one described in `CLAUDE.md` / the invento
 For clips + color, the load-bearing facts:
 
 - **The model is portable Dart** and lives in `lib/core/timeline/` +
-  `lib/core/clips/` (clips) and `lib/core/models/` (`ColorGrade`). It has **no
+  `lib/core/clips/` (clips), with `ColorGrade` in
+  `lib/core/timeline/model/color_grade.dart`. It has **no
   platform code** — Windows gets it for free. Key pieces:
   - `Clip` (`lib/core/timeline/model/edit_track.dart`): `id`, `sourceInMs`,
     `sourceOutMs`, `timelineStartMs`, `enabled`.
@@ -56,7 +57,8 @@ For clips + color, the load-bearing facts:
   - `ClipEditorController` (`lib/core/clips/`): the ChangeNotifier the UI drives;
     undo/redo via `SetClipsCommand` over the shared `EditSession`; pushes each
     change to native via `previewSetClips`.
-  - `ColorGrade` (`lib/core/models/`): exposure/contrast/saturation/temperature/
+  - `ColorGrade` (`lib/core/timeline/model/color_grade.dart`):
+    exposure/contrast/saturation/temperature/
     tint, all normalized `[-1, 1]`, `isIdentity` fast-path.
 - **The UI is shared Flutter** (`lib/app/home/preview/widgets/timeline/…` +
   `video_timeline.dart`). The clip lane, trim handles, scissors cut, and
@@ -84,10 +86,10 @@ math** (§4) and route zoom/cursor/camera through it.
 | Clip model (split/cut/trim/arrange, undo/redo) | ✅ portable Dart | ✅ portable Dart | Shared; nothing to do. |
 | Clip **UI** (lane, trim, scissors, drag-reorder) | ✅ shared Flutter | ✅ shared Flutter | Runs on Windows; just needs a native preview that honors it. |
 | Clip **live preview** (play through cuts/reorder) | ✅ composition preview (PR-3e) | ❌ `previewSetClips` = no-op | **Build composition-based (§5.4).** |
-| Clip **export bake** (cuts + reorder) | ✅ (PR-3d, PR-3c5) | ❌ `clips` export arg ignored | Media Foundation stitch (§5). |
+| Clip **export bake** (cuts + reorder) | ✅ (PR-3d, PR-3c5) | ❌ — **interim guard**: exports with real clip edits are REFUSED (`kUnsupportedClipEdits`, PR-2a) instead of silently shipping the uncut source | Media Foundation stitch (§5). |
 | Color model (`ColorGrade`, auto + manual) | ✅ portable Dart | ✅ portable Dart | Shared. |
 | Color **live preview** | ✅ CIFilter videoComposition | ❌ `previewSetColorGrade` = no-op | Needs a per-frame color pass in `preview_compositor.cpp`. |
-| Color **export bake** | ✅ (PR-2c) | ❌ `colorGrade` export arg ignored | Per-frame color pass in the MF encode. |
+| Color **export bake** | ✅ (PR-2c) | ✅ **(PR-2a, 2026-07-03)** — D2D graded intermediate (video+cursor+clicks, camera ungraded) via `Capture/Export/color_grade.{h,cpp}` (one linear-space 5x4 matrix), ColorManagement linearization at 16bpc float; identity = passthrough; parity gated on the golden fixture | Preview half (PR-2b) ships in the SAME release — sliders bake into export before they render in preview. |
 | Audio volume / normalize on export | ✅ | ✅ (already shipped) | See `docs/editing-platform-plan.md` Phase 1. |
 
 **Windows entry points to change** (already scaffolded, currently stubs/ignores):
@@ -294,6 +296,12 @@ Windows equivalent.
 2. **Color** before clips (smaller, no timeline remap): implement
    `previewSetColorGrade` (per-frame color pass in `preview_compositor.cpp`) and
    honor `colorGrade` in the export encode. Identity = passthrough.
+   **Export half ✅ done (PR-2a, 2026-07-03)**: `color_grade.{h,cpp}` (matrix) +
+   `color_grade_args`/`clip_args` (shared wire parsers) + passthrough
+   disqualifier + graded D2D intermediate + interim clips refuse-guard.
+   Golden fixture (`windows/runner_tests/fixtures/color_grade_golden.json`,
+   dumped by macOS `ColorGradeGoldenDumpTests`) gates the parity tests.
+   **Preview half (PR-2b) is next and ships in the same release.**
 3. **Clip export bake** (deterministic, testable headless): honor `clips` in
    `export_pipeline` — stitch kept ranges (video via MF topology/per-range;
    audio via `audio_mixer` with the §5.2 slot rule); route zoom/cursor/camera
