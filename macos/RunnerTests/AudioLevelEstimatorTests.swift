@@ -69,6 +69,41 @@ final class AudioLevelEstimatorTests: XCTestCase {
 
   // MARK: helpers
 
+  // MARK: estimatePeak — interleaved stereo (the AVAssetReader shape)
+
+  /// Regression: interleaved stereo reports mChannelsPerFrame=2 but carries a
+  /// SINGLE buffer. Sizing the AudioBufferList from the channel count made
+  /// CMSampleBufferGetAudioBufferListWithRetainedBlockBuffer fail with
+  /// ArrayTooSmall (-12737), so estimatePeak returned nil — which silently
+  /// zeroed the export auto-normalize peak scan (it reads interleaved float32
+  /// from an AVAssetReader). Must now measure the real peak.
+  func testEstimatePeakInterleavedStereoFloat32MeasuresPeak() throws {
+    // L/R interleaved; loudest sample is -0.8 in the right channel.
+    let interleaved: [Float] = [0.1, -0.8, 0.5, 0.3, -0.2, 0.4]
+    let buffer = try makeFloat32InterleavedStereoSampleBuffer(interleaved)
+
+    let result = try XCTUnwrap(AudioLevelEstimator.estimatePeak(sampleBuffer: buffer))
+    XCTAssertEqual(result.linear, 0.8, accuracy: 0.0001)
+  }
+
+  private func makeFloat32InterleavedStereoSampleBuffer(_ interleaved: [Float]) throws
+    -> CMSampleBuffer
+  {
+    var asbd = AudioStreamBasicDescription(
+      mSampleRate: 48_000,
+      mFormatID: kAudioFormatLinearPCM,
+      mFormatFlags: kAudioFormatFlagIsFloat | kAudioFormatFlagIsPacked,
+      mBytesPerPacket: 8,
+      mFramesPerPacket: 1,
+      mBytesPerFrame: 8,
+      mChannelsPerFrame: 2,
+      mBitsPerChannel: 32,
+      mReserved: 0)
+    return try makeSampleBuffer(
+      asbd: &asbd, bytes: interleaved.withUnsafeBufferPointer { Data(buffer: $0) },
+      frameCount: interleaved.count / 2)
+  }
+
   private func makeFloat32SampleBuffer(_ samples: [Float]) throws -> CMSampleBuffer {
     var asbd = AudioStreamBasicDescription(
       mSampleRate: 48_000,
