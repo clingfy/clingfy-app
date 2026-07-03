@@ -1314,11 +1314,11 @@ final class LetterboxExporter {
       onProgress?(lower + (Double(export.progress) * span))
     }
 
-    export.exportAsynchronously { [weak self] in
+    export.exportAsynchronously { [self] in
       DispatchQueue.main.async {
-        self?.progressTimer?.invalidate()
-        self?.progressTimer = nil
-        self?.currentSession = nil
+        self.progressTimer?.invalidate()
+        self.progressTimer = nil
+        self.currentSession = nil
 
         switch export.status {
         case .completed:
@@ -1329,7 +1329,7 @@ final class LetterboxExporter {
             renderPath: "asset_export_session"
           )
           if logOutputInfo {
-            self?.logExportedFileInfo(url: outputURL)
+            self.logExportedFileInfo(url: outputURL)
           }
           completion(.success(outputURL))
 
@@ -1928,7 +1928,7 @@ final class LetterboxExporter {
     }
 
     func finishIfReady() {
-      stateQueue.async { [weak self] in
+      stateQueue.async { [self] in
         guard videoFinished, audioFinished, !completed else { return }
         completed = true
 
@@ -1946,11 +1946,11 @@ final class LetterboxExporter {
                 renderPath: "manual_reader_writer"
               )
               if logOutputInfo {
-                self?.logExportedFileInfo(url: outputURL)
+                self.logExportedFileInfo(url: outputURL)
               }
               completion(.success(outputURL))
             } else {
-              self?.removeFileIfExists(outputURL)
+              self.removeFileIfExists(outputURL)
               completion(
                 .failure(
                   writer.error
@@ -2365,17 +2365,21 @@ final class LetterboxExporter {
     inFlightSelfRetain = self
     inFlightRetentionLock.unlock()
 
+    NativeLogger.d(
+      "Export", "Export lifetime: retention engaged",
+      context: ["generation": exportGeneration])
+
     let callerCompletion = completion
-    let completion: (Result<URL, Error>) -> Void = { [weak self] result in
-      // `if let self` holds a strong reference through the unlock, so
-      // dropping the last retain inside the lock cannot free `self` early.
-      if let self {
-        self.inFlightRetentionLock.lock()
-        if self.inFlightExportGeneration == exportGeneration {
-          self.inFlightSelfRetain = nil
-        }
-        self.inFlightRetentionLock.unlock()
+    let completion: (Result<URL, Error>) -> Void = { [self] result in
+      inFlightRetentionLock.lock()
+      let matched = inFlightExportGeneration == exportGeneration
+      if matched {
+        inFlightSelfRetain = nil
       }
+      inFlightRetentionLock.unlock()
+      NativeLogger.d(
+        "Export", "Export lifetime: retention released",
+        context: ["generation": exportGeneration, "matched": matched])
       callerCompletion(result)
     }
 
@@ -2817,20 +2821,12 @@ final class LetterboxExporter {
         context: exportStartContext
       )
 
-      let runFinalExport: (@escaping (Result<URL, Error>) -> Void) -> Void = { [weak self] completion in
-        guard let self else {
-          completion(
-            .failure(
-              NSError(
-                domain: "Letterbox",
-                code: -25,
-                userInfo: [NSLocalizedDescriptionKey: "Exporter deallocated before final export could start"]
-              )
-            )
-          )
-          return
-        }
-
+      // The in-flight chain captures self STRONGLY end-to-end: the Xcode 26.5
+      // runtime was observed returning nil from weak loads here even while
+      // inFlightSelfRetain held the object (CI run 28622875201), so the
+      // export flow must not depend on weak references at all. Lifetime is
+      // bounded by the export: these closures die when the chain completes.
+      let runFinalExport: (@escaping (Result<URL, Error>) -> Void) -> Void = { [self] completion in
         if shouldUseManualRenderExport {
           self.runRenderedExportSession(
             asset: comp.asset,
@@ -2884,12 +2880,7 @@ final class LetterboxExporter {
         )
       }
 
-      runFinalExport { [weak self] result in
-        guard let self else {
-          completion(result)
-          return
-        }
-
+      runFinalExport { [self] result in
         switch result {
         case .success(let finalURL):
           if let validationError = self.validateFinalExportReferenceRender(
@@ -2967,15 +2958,15 @@ final class LetterboxExporter {
         inputURL: inputURL,
         params: params,
         cursorRecording: prepassCursorRecording,
-        isCancelled: { [weak self] in self?.isCancelled ?? true },
+        isCancelled: { [self] in self.isCancelled },
         onProgress: { progress in
           onProgress?(scaledProgress(progress, into: prepassRange))
         }
-      ) { [weak self] result in
+      ) { [self] result in
         switch result {
         case .success(let prepared):
-          prepared.temporaryArtifacts.forEach { self?.registerTemporaryArtifact($0) }
-          if let validationError = self?.validateScreenPrepassIntermediate(
+          prepared.temporaryArtifacts.forEach { self.registerTemporaryArtifact($0) }
+          if let validationError = self.validateScreenPrepassIntermediate(
             rawScreenAsset: asset,
             prepassScreenAsset: AVAsset(url: prepared.url)
           ) {
@@ -2984,7 +2975,7 @@ final class LetterboxExporter {
               "Screen pre-pass validation failed",
               context: validationError.userInfo
             )
-            self?.cleanupTemporaryArtifacts()
+            self.cleanupTemporaryArtifacts()
             completion(.failure(validationError))
             return
           }
@@ -2998,7 +2989,7 @@ final class LetterboxExporter {
           )
 
         case .failure(let error):
-          self?.cleanupTemporaryArtifacts()
+          self.cleanupTemporaryArtifacts()
           completion(.failure(error))
         }
       }
@@ -3017,17 +3008,17 @@ final class LetterboxExporter {
         canvasSize: target,
         params: cameraParams,
         fpsHint: fpsHint,
-        isCancelled: { [weak self] in self?.isCancelled ?? true },
+        isCancelled: { [self] in self.isCancelled },
         onProgress: { progress in
           onProgress?(scaledProgress(progress, into: cameraRange))
         }
-      ) { [weak self] result in
+      ) { [self] result in
         switch result {
         case .success(let prepared):
-          prepared.temporaryArtifacts.forEach { self?.registerTemporaryArtifact($0) }
+          prepared.temporaryArtifacts.forEach { self.registerTemporaryArtifact($0) }
 
           if prepared.cameraAssetIsPreStyled,
-            let validationError = self?.validateStyledCameraIntermediate(
+            let validationError = self.validateStyledCameraIntermediate(
               rawCameraAsset: cameraAsset,
               styledCameraAsset: AVAsset(url: prepared.url),
               placementSourceRect: prepared.placementSourceRect
@@ -3038,7 +3029,7 @@ final class LetterboxExporter {
               "Camera pre-pass validation failed",
               context: validationError.userInfo
             )
-            self?.cleanupTemporaryArtifacts()
+            self.cleanupTemporaryArtifacts()
             completion(.failure(validationError))
             return
           }
@@ -3062,7 +3053,7 @@ final class LetterboxExporter {
           )
 
         case .failure(let error):
-          self?.cleanupTemporaryArtifacts()
+          self.cleanupTemporaryArtifacts()
           completion(.failure(error))
         }
       }
