@@ -1517,7 +1517,7 @@ enum AudioMixEngine {
       "Separated audio mix",
       context: [
         "audioTracks": audioTracks.count,
-        "gainTargetTrackID": gainTargetTrackID.map(Int.init) ?? NSNull(),
+        "gainTargetTrackID": gainTargetTrackID.map { Int($0) } ?? NSNull(),
         "masterLinear": masterLinear,
         "gainTargetVolumeComponent": clampedTargetVolume,
         "gainTargetGainDb": clampedTargetGainDb,
