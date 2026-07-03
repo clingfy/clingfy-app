@@ -17,11 +17,30 @@ enum AudioLevelEstimator {
     else { return nil }
 
     let asbd = asbdPtr.pointee
-    let channelCount = max(1, Int(asbd.mChannelsPerFrame))
-    let bufferListSize =
-      MemoryLayout<AudioBufferList>.size + (channelCount - 1) * MemoryLayout<AudioBuffer>.size
+
+    // Size the AudioBufferList from what the sample buffer actually needs, not
+    // from mChannelsPerFrame. For interleaved output the frame reports N
+    // channels but carries a SINGLE buffer, so deriving the list size from the
+    // channel count over-describes the buffer count and
+    // CMSampleBufferGetAudioBufferListWithRetainedBlockBuffer rejects it with
+    // kCMSampleBufferError_ArrayTooSmall (-12737) — silently yielding a nil
+    // peak. That is why auto-normalize's AVAssetReader peak scan measured 0 on
+    // real (interleaved) decoded audio. Query the required size first.
+    var bufferListSizeNeeded = 0
+    let sizeStatus = CMSampleBufferGetAudioBufferListWithRetainedBlockBuffer(
+      sampleBuffer,
+      bufferListSizeNeededOut: &bufferListSizeNeeded,
+      bufferListOut: nil,
+      bufferListSize: 0,
+      blockBufferAllocator: nil,
+      blockBufferMemoryAllocator: nil,
+      flags: UInt32(kCMSampleBufferFlag_AudioBufferList_Assure16ByteAlignment),
+      blockBufferOut: nil
+    )
+    guard sizeStatus == noErr, bufferListSizeNeeded > 0 else { return nil }
+
     let rawPointer = UnsafeMutableRawPointer.allocate(
-      byteCount: bufferListSize,
+      byteCount: bufferListSizeNeeded,
       alignment: MemoryLayout<AudioBufferList>.alignment
     )
     defer { rawPointer.deallocate() }
@@ -32,7 +51,7 @@ enum AudioLevelEstimator {
       sampleBuffer,
       bufferListSizeNeededOut: nil,
       bufferListOut: audioBufferListPointer,
-      bufferListSize: bufferListSize,
+      bufferListSize: bufferListSizeNeeded,
       blockBufferAllocator: nil,
       blockBufferMemoryAllocator: nil,
       flags: UInt32(kCMSampleBufferFlag_AudioBufferList_Assure16ByteAlignment),
