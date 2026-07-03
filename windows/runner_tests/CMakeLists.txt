@@ -64,6 +64,7 @@ add_executable(runner_tests
   "encoder_output_path_test.cpp"
   "clip_playback_planner_test.cpp"
   "clip_args_test.cpp"
+  "preview_compositor_color_test.cpp"
   "color_grade_args_test.cpp"
   "color_grade_test.cpp"
   "export_audio_test.cpp"

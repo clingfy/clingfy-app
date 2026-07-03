@@ -84,6 +84,7 @@ add_library(runner_bridge STATIC
   "Encoding/mf_dxgi_manager.cpp"
   "Encoding/mf_encoder_config.cpp"
   "Encoding/mf_sink_writer_encoder.cpp"
+  "Graphics/color_grade_effect.cpp"
   "Graphics/d3d_device.cpp"
   "Overlay/area_picker_geometry.cpp"
   "Overlay/area_picker_overlay.cpp"
