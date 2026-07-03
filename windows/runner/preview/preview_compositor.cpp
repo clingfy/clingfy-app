@@ -5,10 +5,13 @@
 
 #include <algorithm>
 #include <cmath>
+#include <cstdio>
 #include <cstdlib>
 #include <fstream>
 #include <limits>
+#include <string>
 
+#include "Bridge/native_log_publisher.h"
 #include "preview/zoom_easing_constants.h"
 
 namespace clingfy::preview {
@@ -339,8 +342,43 @@ void PreviewCompositor::ComposeFrame(
                                                   cursor_back_y,
                                                   zoom_for_draw)
                                  : dest_rect;
-  d2d_context->DrawBitmap(video_bitmap_.Get(), &zoomed, 1.0f,
-                          D2D1_BITMAP_INTERPOLATION_MODE_LINEAR);
+
+  // Editing port (color): snapshot the grade (SetColorGrade runs on the
+  // platform thread). Non-identity → draw the video through the shared D2D
+  // color chain; identity or chain failure → the exact pre-color draw.
+  capture::export_::color::ColorGrade grade;
+  std::uint64_t grade_generation = 0;
+  {
+    std::lock_guard<std::mutex> lock(grade_mutex_);
+    grade = grade_;
+    grade_generation = grade_generation_;
+  }
+  bool graded_drawn = false;
+  if (!grade.IsIdentity() &&
+      EnsureColorGradeChain(d2d_context, grade, grade_generation)) {
+    // DrawImage has no dest rect: map the source-sized effect output into
+    // the (possibly zoomed) dest rect with a transform instead.
+    D2D1_MATRIX_3X2_F old_transform;
+    d2d_context->GetTransform(&old_transform);
+    const float sx = (zoomed.right - zoomed.left) /
+                     static_cast<float>(video_width_ != 0 ? video_width_ : 1);
+    const float sy =
+        (zoomed.bottom - zoomed.top) /
+        static_cast<float>(video_height_ != 0 ? video_height_ : 1);
+    d2d_context->SetTransform(D2D1::Matrix3x2F::Scale(sx, sy) *
+                              D2D1::Matrix3x2F::Translation(zoomed.left,
+                                                            zoomed.top) *
+                              old_transform);
+    d2d_context->DrawImage(grade_chain_.Output(), nullptr, nullptr,
+                           D2D1_INTERPOLATION_MODE_LINEAR,
+                           D2D1_COMPOSITE_MODE_SOURCE_OVER);
+    d2d_context->SetTransform(old_transform);
+    graded_drawn = true;
+  }
+  if (!graded_drawn) {
+    d2d_context->DrawBitmap(video_bitmap_.Get(), &zoomed, 1.0f,
+                            D2D1_BITMAP_INTERPOLATION_MODE_LINEAR);
+  }
 
   if (has_cursor && highlight_brush_ && highlight_alpha > 0.0f) {
     highlight_brush_->SetCenter(
@@ -351,6 +389,65 @@ void PreviewCompositor::ComposeFrame(
         kHighlightRadiusPx, kHighlightRadiusPx};
     d2d_context->FillEllipse(halo, highlight_brush_.Get());
   }
+}
+
+void PreviewCompositor::SetColorGrade(
+    const capture::export_::color::ColorGrade& grade) {
+  std::lock_guard<std::mutex> lock(grade_mutex_);
+  if (grade == grade_) {
+    return;
+  }
+  grade_ = grade;
+  ++grade_generation_;
+}
+
+bool PreviewCompositor::EnsureColorGradeChain(
+    ID2D1DeviceContext* d2d_context,
+    const capture::export_::color::ColorGrade& grade,
+    std::uint64_t generation) {
+  const auto degrade = [&](const char* step, HRESULT hr) {
+    grade_chain_.Reset();
+    chain_context_ = nullptr;
+    // Log once per grade change, not per frame — a broken chain would
+    // otherwise spam 60 lines a second.
+    if (failed_generation_ != generation) {
+      failed_generation_ = generation;
+      char hr_buf[32];
+      std::snprintf(hr_buf, sizeof(hr_buf), " (hr=0x%08lX)",
+                    static_cast<unsigned long>(hr));
+      clingfy::bridge::NativeLogPublisher::Instance().Warn(
+          "Preview",
+          std::string("PREVIEW_COLOR_GRADE_DEGRADED: could not build the "
+                      "color-grade pass — ") +
+              step + hr_buf +
+              " — preview renders UNGRADED (macOS-parity best-effort).");
+    }
+    return false;
+  };
+
+  // Rebuild from scratch when the context changed (device loss recreates
+  // it) or the chain never built; otherwise a grade change is a cheap
+  // matrix update in place.
+  if (chain_context_ != d2d_context || !grade_chain_.IsBuilt()) {
+    const HRESULT hr = grade_chain_.Build(d2d_context, grade);
+    if (FAILED(hr)) {
+      return degrade("effect chain", hr);
+    }
+    chain_context_ = d2d_context;
+    chain_generation_ = generation;
+  } else if (chain_generation_ != generation) {
+    const HRESULT hr = grade_chain_.UpdateGrade(grade);
+    if (FAILED(hr)) {
+      return degrade("matrix update", hr);
+    }
+    chain_generation_ = generation;
+  }
+
+  // Re-point the input every time: EnsureResources recreates video_bitmap_
+  // on size changes with the same context, and a stale input would grade a
+  // released bitmap. SetInput is a pointer store — per-frame cost is nil.
+  grade_chain_.SetInput(video_bitmap_.Get());
+  return true;
 }
 
 }  // namespace clingfy::preview

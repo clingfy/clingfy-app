@@ -28,6 +28,7 @@
 #include "Bridge/native_log_publisher.h"
 #include "Capture/Export/color_grade.h"
 #include "Capture/Export/export_audio.h"
+#include "Graphics/color_grade_effect.h"
 #include "Capture/Export/export_format.h"
 #include "Capture/Export/export_geometry.h"
 #include "Capture/Export/gif_export_policy.h"
@@ -563,7 +564,7 @@ RenderResult RenderComposedExport(const RenderRequest& request) {
   const bool wants_grade = !request.color_grade.IsIdentity();
   bool grading = false;
   ComPtr<ID2D1Bitmap1> content_bitmap;
-  ComPtr<ID2D1Effect> grade_output;  // tail of the effect chain
+  clingfy::graphics::ColorGradeEffectChain grade_chain;
   if (wants_grade) {
     const auto fail_grade = [&](const char* step, HRESULT fail_hr) {
       clingfy::bridge::NativeLogPublisher::Instance().Warn(
@@ -573,110 +574,25 @@ RenderResult RenderComposedExport(const RenderRequest& request) {
               Hr(step, fail_hr) +
               " — exporting UNGRADED (macOS-parity best-effort).");
       content_bitmap.Reset();
-      grade_output.Reset();
+      grade_chain.Reset();
     };
 
-    HRESULT grade_hr = S_OK;
-    do {
-      const D2D1_BITMAP_PROPERTIES1 props = D2D1::BitmapProperties1(
-          D2D1_BITMAP_OPTIONS_TARGET,
-          D2D1::PixelFormat(DXGI_FORMAT_R16G16B16A16_FLOAT,
-                            D2D1_ALPHA_MODE_PREMULTIPLIED));
-      if (FAILED(grade_hr = d2d_ctx->CreateBitmap(
-                     D2D1::SizeU(canvas.width, canvas.height), nullptr, 0,
-                     &props, content_bitmap.GetAddressOf()))) {
-        fail_grade("content bitmap", grade_hr);
-        break;
-      }
-
-      ComPtr<ID2D1ColorContext> srgb_ctx;
-      ComPtr<ID2D1ColorContext> scrgb_ctx;
-      if (FAILED(grade_hr = d2d_ctx->CreateColorContext(
-                     D2D1_COLOR_SPACE_SRGB, nullptr, 0, &srgb_ctx)) ||
-          FAILED(grade_hr = d2d_ctx->CreateColorContext(
-                     D2D1_COLOR_SPACE_SCRGB, nullptr, 0, &scrgb_ctx))) {
-        fail_grade("color context", grade_hr);
-        break;
-      }
-
-      ComPtr<ID2D1Effect> to_linear;
-      ComPtr<ID2D1Effect> matrix_fx;
-      ComPtr<ID2D1Effect> to_srgb;
-      if (FAILED(grade_hr = d2d_ctx->CreateEffect(CLSID_D2D1ColorManagement,
-                                                  &to_linear)) ||
-          FAILED(grade_hr = d2d_ctx->CreateEffect(CLSID_D2D1ColorMatrix,
-                                                  &matrix_fx)) ||
-          FAILED(grade_hr = d2d_ctx->CreateEffect(CLSID_D2D1ColorManagement,
-                                                  &to_srgb))) {
-        fail_grade("CreateEffect", grade_hr);
-        break;
-      }
-
-      // 16bpc float intermediates on the whole chain — the linearized values
-      // must not be quantized back to 8 bits between effects.
-      for (ID2D1Effect* fx :
-           {to_linear.Get(), matrix_fx.Get(), to_srgb.Get()}) {
-        if (FAILED(grade_hr = fx->SetValue(
-                       D2D1_PROPERTY_PRECISION,
-                       D2D1_BUFFER_PRECISION_16BPC_FLOAT))) {
-          break;
-        }
-      }
-      if (FAILED(grade_hr)) {
-        fail_grade("buffer precision", grade_hr);
-        break;
-      }
-
-      if (FAILED(grade_hr = to_linear->SetValue(
-                     D2D1_COLORMANAGEMENT_PROP_SOURCE_COLOR_CONTEXT,
-                     srgb_ctx.Get())) ||
-          FAILED(grade_hr = to_linear->SetValue(
-                     D2D1_COLORMANAGEMENT_PROP_DESTINATION_COLOR_CONTEXT,
-                     scrgb_ctx.Get())) ||
-          FAILED(grade_hr = to_srgb->SetValue(
-                     D2D1_COLORMANAGEMENT_PROP_SOURCE_COLOR_CONTEXT,
-                     scrgb_ctx.Get())) ||
-          FAILED(grade_hr = to_srgb->SetValue(
-                     D2D1_COLORMANAGEMENT_PROP_DESTINATION_COLOR_CONTEXT,
-                     srgb_ctx.Get()))) {
-        fail_grade("color management setup", grade_hr);
-        break;
-      }
-
-      // BuildColorMatrix rows are output-major (m[out][in..offset]); the D2D
-      // 5x4 layout is input-major (row per input channel, offsets last) —
-      // transpose on the way in. Alpha passes through untouched; STRAIGHT
-      // alpha mode so the affine offsets act on unpremultiplied color.
-      const color::ColorMatrix cm = color::BuildColorMatrix(request.color_grade);
-      D2D1_MATRIX_5X4_F d2d_matrix{};
-      d2d_matrix._11 = static_cast<FLOAT>(cm.m[0][0]);
-      d2d_matrix._12 = static_cast<FLOAT>(cm.m[1][0]);
-      d2d_matrix._13 = static_cast<FLOAT>(cm.m[2][0]);
-      d2d_matrix._21 = static_cast<FLOAT>(cm.m[0][1]);
-      d2d_matrix._22 = static_cast<FLOAT>(cm.m[1][1]);
-      d2d_matrix._23 = static_cast<FLOAT>(cm.m[2][1]);
-      d2d_matrix._31 = static_cast<FLOAT>(cm.m[0][2]);
-      d2d_matrix._32 = static_cast<FLOAT>(cm.m[1][2]);
-      d2d_matrix._33 = static_cast<FLOAT>(cm.m[2][2]);
-      d2d_matrix._44 = 1.0f;
-      d2d_matrix._51 = static_cast<FLOAT>(cm.m[0][3]);
-      d2d_matrix._52 = static_cast<FLOAT>(cm.m[1][3]);
-      d2d_matrix._53 = static_cast<FLOAT>(cm.m[2][3]);
-      if (FAILED(grade_hr = matrix_fx->SetValue(
-                     D2D1_COLORMATRIX_PROP_COLOR_MATRIX, d2d_matrix)) ||
-          FAILED(grade_hr = matrix_fx->SetValue(
-                     D2D1_COLORMATRIX_PROP_ALPHA_MODE,
-                     D2D1_COLORMATRIX_ALPHA_MODE_STRAIGHT))) {
-        fail_grade("color matrix setup", grade_hr);
-        break;
-      }
-
-      to_linear->SetInput(0, content_bitmap.Get());
-      matrix_fx->SetInputEffect(0, to_linear.Get());
-      to_srgb->SetInputEffect(0, matrix_fx.Get());
-      grade_output = to_srgb;
+    const D2D1_BITMAP_PROPERTIES1 props = D2D1::BitmapProperties1(
+        D2D1_BITMAP_OPTIONS_TARGET,
+        D2D1::PixelFormat(DXGI_FORMAT_R16G16B16A16_FLOAT,
+                          D2D1_ALPHA_MODE_PREMULTIPLIED));
+    HRESULT grade_hr = d2d_ctx->CreateBitmap(
+        D2D1::SizeU(canvas.width, canvas.height), nullptr, 0, &props,
+        content_bitmap.GetAddressOf());
+    if (FAILED(grade_hr)) {
+      fail_grade("content bitmap", grade_hr);
+    } else if (FAILED(grade_hr = grade_chain.Build(d2d_ctx.Get(),
+                                                   request.color_grade))) {
+      fail_grade("effect chain", grade_hr);
+    } else {
+      grade_chain.SetInput(content_bitmap.Get());
       grading = true;
-    } while (false);
+    }
   }
 
   // --- Output encoder at the target resolution. A .gif destination uses the
@@ -1015,7 +931,7 @@ RenderResult RenderComposedExport(const RenderRequest& request) {
       if (grading) {
         // The intermediate is canvas-sized, so the graded output lands at the
         // origin 1:1 — no scaling, no interpolation surprises.
-        d2d_ctx->DrawImage(grade_output.Get());
+        d2d_ctx->DrawImage(grade_chain.Output());
       } else {
         draw_content();
       }

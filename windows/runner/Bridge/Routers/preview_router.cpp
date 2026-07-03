@@ -7,6 +7,7 @@
 #include <sstream>
 #include <string>
 
+#include "Bridge/Routers/color_grade_args.h"
 #include "Bridge/native_error_codes.h"
 #include "Bridge/native_log_publisher.h"
 #include "Bridge/result_helpers.h"
@@ -578,6 +579,23 @@ void HandlePreviewSetCameraPlacement(
   reply::Null(*result);
 }
 
+// Editing port (color): pushes the Dart color grade to the live preview.
+// Parsed by the shared color_grade_args helper (the same parser the export
+// router uses — one wire shape, one parser). Stale-session calls are dropped
+// engine-side; a paused preview is nudged to recomposite immediately.
+// Always replies null (matches the void Dart contract).
+void HandlePreviewSetColorGrade(
+    const flutter::MethodCall<flutter::EncodableValue>& call,
+    std::unique_ptr<flutter::MethodResult<flutter::EncodableValue>> result) {
+  if (const auto* args =
+          std::get_if<flutter::EncodableMap>(call.arguments())) {
+    const std::string session_id = ReadString(*args, "sessionId");
+    PreviewEngine::Instance()->SetColorGrade(
+        session_id, clingfy::bridge::ReadColorGradeArg(*args));
+  }
+  reply::Null(*result);
+}
+
 }  // namespace
 
 void RegisterHandlers(HandlerTable& table) {
@@ -600,14 +618,10 @@ void RegisterHandlers(HandlerTable& table) {
 
   table["previewSetCameraPlacement"] = &HandlePreviewSetCameraPlacement;
   table["previewSetZoomSegments"] = &HandleNoopSetter;
-  // Color grade: macOS renders it live; Windows accepts + ignores it for now
-  // so the contract stays in sync. NOTE: there is NO Dart-side capability
-  // gate — the sliders are live and their values persist + bake into the
-  // EXPORT (PR-2a) — so until the preview pass lands (editing port step 2,
-  // PR-2b: same D2D color chain in preview_compositor) the preview will not
-  // reflect a grade the export applies. PR-2a and PR-2b ship in the same
-  // release for exactly this reason.
-  table["previewSetColorGrade"] = &HandleNoopSetter;
+  // Color grade (editing port step 2): live on Windows — the same D2D color
+  // chain the export bakes with (Graphics/color_grade_effect), applied to
+  // the preview video by preview_compositor. Video-only, like macOS preview.
+  table["previewSetColorGrade"] = &HandlePreviewSetColorGrade;
   // Clip split/cut/trim/arrange: macOS skips cut regions live; Windows accepts
   // + ignores the clip list for now so the bridge contract stays in sync.
   table["previewSetClips"] = &HandleNoopSetter;
