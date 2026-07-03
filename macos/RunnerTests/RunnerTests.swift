@@ -5621,8 +5621,26 @@ final class LetterboxExporterTests: XCTestCase {
     // 48k (or the old 44.1k hardcode) implementation would get wrong.
     let tone441 = tempDir.appendingPathComponent("tone441.m4a")
     try makeToneAudioFile(url: tone441, seconds: 0.3, amplitude: 0.5, sampleRate: 44_100)
+    // Hold the asset: AVAssetTrack does not retain its parent, and the source
+    // track is used past this line (inserted into the composition below).
+    let asset441 = AVAsset(url: tone441)
+    let tracks441 = asset441.tracks(withMediaType: .audio)
+    XCTAssertEqual(LetterboxExporter.aacWriterSampleRate(for: tracks441), 44_100)
+
+    // The rate must survive derivation through an AVMutableComposition track
+    // (the actual shape fed to the writer on the cut + separated paths),
+    // including a trailing silence-fill.
+    let composition = AVMutableComposition()
+    let compTrack = try XCTUnwrap(
+      composition.addMutableTrack(withMediaType: .audio, preferredTrackID: kCMPersistentTrackID_Invalid))
+    let sourceTrack = try XCTUnwrap(tracks441.first)
+    try compTrack.insertTimeRange(
+      CMTimeRange(start: .zero, duration: sourceTrack.timeRange.duration),
+      of: sourceTrack, at: .zero)
+    compTrack.insertEmptyTimeRange(
+      CMTimeRange(start: compTrack.timeRange.end, duration: CMTime(value: 100, timescale: 1000)))
     XCTAssertEqual(
-      LetterboxExporter.aacWriterSampleRate(for: AVAsset(url: tone441).tracks(withMediaType: .audio)),
+      LetterboxExporter.aacWriterSampleRate(for: composition.tracks(withMediaType: .audio)),
       44_100)
 
     // Empty track list falls back to 48k.
@@ -5694,10 +5712,10 @@ final class LetterboxExporterTests: XCTestCase {
     let mix = try XCTUnwrap(
       AudioMixEngine.makeSeparatedAudioMix(
         audioTracks: comp.audioTracks,
-        micTrackID: comp.micTrackID,
+        gainTargetTrackID: comp.micTrackID,
         masterVolumePercent: 50,
-        micVolumeComponent: 0.8,
-        micGainDb: 6))
+        gainTargetVolumeComponent: 0.8,
+        gainTargetGainDb: 6))
 
     func volume(forTrackID id: CMPersistentTrackID?) throws -> Float {
       let params = try XCTUnwrap(mix.inputParameters.first { $0.trackID == id })
@@ -5720,8 +5738,8 @@ final class LetterboxExporterTests: XCTestCase {
     // Zero mic gain ⇒ no tap on any track.
     let noGain = try XCTUnwrap(
       AudioMixEngine.makeSeparatedAudioMix(
-        audioTracks: comp.audioTracks, micTrackID: comp.micTrackID,
-        masterVolumePercent: 100, micVolumeComponent: 1.0, micGainDb: 0))
+        audioTracks: comp.audioTracks, gainTargetTrackID: comp.micTrackID,
+        masterVolumePercent: 100, gainTargetVolumeComponent: 1.0, gainTargetGainDb: 0))
     XCTAssertTrue(noGain.inputParameters.allSatisfy { $0.audioTapProcessor == nil })
   }
 
@@ -5857,6 +5875,83 @@ final class LetterboxExporterTests: XCTestCase {
     // The embedded path was taken: the audio-free screen.mov yields an export
     // with no audio track (proving no accidental silent separated track).
     XCTAssertTrue(AVAsset(url: finalURL).tracks(withMediaType: .audio).isEmpty)
+  }
+
+  func testUndecodableSidecarFallsBackToEmbeddedWithoutFailing() throws {
+    // A sidecar whose container parses but whose audio does not decode must not
+    // abort the export — it degrades to the embedded track. Simulate with a
+    // truncated copy of a real m4a (valid-ish header, missing sample data).
+    let tempDir = makeTemporaryDirectory()
+    defer { try? FileManager.default.removeItem(at: tempDir) }
+    let projectRoot = try makeRecordingProjectRoot(at: tempDir, includeCamera: false)
+    let project = try RecordingProjectRef.open(projectRoot: projectRoot)
+    try makeColorPatchVideo(
+      url: RecordingProjectPaths.screenVideoURL(for: projectRoot),
+      size: CGSize(width: 320, height: 180), durationSeconds: 1.0)
+
+    let realTone = tempDir.appendingPathComponent("real.m4a")
+    try makeToneAudioFile(url: realTone, seconds: 1.0, amplitude: 0.4)
+    let bytes = try Data(contentsOf: realTone)
+    // Keep the moov/header region, drop the trailing sample payload.
+    let truncated = bytes.prefix(min(bytes.count, 800))
+    try truncated.write(to: RecordingProjectPaths.micAudioURL(for: projectRoot))
+
+    // Must complete (not throw). The undecodable sidecar is ignored; the
+    // audio-free screen.mov means the embedded fallback yields no audio track.
+    let finalURL = try runSeparatedAudioExport(project: project, in: tempDir, clips: [])
+    XCTAssertTrue(FileManager.default.fileExists(atPath: finalURL.path))
+  }
+
+  func testSystemOnlyBundleGainTargetsTheSystemTrack() throws {
+    // Mic off (system.m4a only) is a normal capture config. Gain must act on
+    // the system track — a boost should push the output toward full scale,
+    // never become a silent no-op.
+    let tempDir = makeTemporaryDirectory()
+    defer { try? FileManager.default.removeItem(at: tempDir) }
+    let projectRoot = try makeRecordingProjectRoot(at: tempDir, includeCamera: false)
+    let project = try RecordingProjectRef.open(projectRoot: projectRoot)
+    try makeColorPatchVideo(
+      url: RecordingProjectPaths.screenVideoURL(for: projectRoot),
+      size: CGSize(width: 320, height: 180), durationSeconds: 1.0)
+    // System-only, quiet source so a boost is clearly observable.
+    try makeToneAudioFile(
+      url: RecordingProjectPaths.systemAudioURL(for: projectRoot),
+      seconds: 1.0, amplitude: 0.2, frequency: 1000)
+
+    let flatURL = try runSeparatedAudioExport(project: project, in: tempDir, clips: [])
+    let flatPeak = try decodedAudioPeak(url: flatURL)
+    XCTAssertEqual(flatPeak, 0.2, accuracy: 0.08)
+
+    let boostedURL = try runSeparatedAudioExport(
+      project: project, in: tempDir, clips: [], audioGainDb: 18.0)
+    let boostedPeak = try decodedAudioPeak(url: boostedURL)
+    // +18dB on 0.2 ≈ 1.59 → clamps to full scale; the key point is the system
+    // track responded to gain at all (well above the flat 0.2).
+    XCTAssertGreaterThan(boostedPeak, flatPeak + 0.2)
+  }
+
+  func testSystemOnlyMixHasNoGainTargetWhenMicAbsentIsSystem() throws {
+    // Unit-level companion: with only a system source, the primary gain target
+    // is the system track, so a boost attaches the tap to it.
+    let tempDir = makeTemporaryDirectory()
+    defer { try? FileManager.default.removeItem(at: tempDir) }
+    let systemURL = tempDir.appendingPathComponent("system.m4a")
+    try makeToneAudioFile(url: systemURL, seconds: 0.5, amplitude: 0.3, frequency: 1000)
+    let comp = try XCTUnwrap(
+      LetterboxExporter.makeSeparatedAudioComposition(
+        micAsset: nil, systemAsset: AVAsset(url: systemURL), ranges: []))
+    XCTAssertNil(comp.micTrackID)
+    let primary = comp.micTrackID ?? comp.systemTrackID
+
+    let mix = try XCTUnwrap(
+      AudioMixEngine.makeSeparatedAudioMix(
+        audioTracks: comp.audioTracks,
+        gainTargetTrackID: primary,
+        masterVolumePercent: 100,
+        gainTargetVolumeComponent: 1.0,
+        gainTargetGainDb: 12))
+    let params = try XCTUnwrap(mix.inputParameters.first { $0.trackID == comp.systemTrackID })
+    XCTAssertNotNil(params.audioTapProcessor)
   }
 
   private func runSeparatedAudioExport(

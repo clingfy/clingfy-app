@@ -1491,34 +1491,36 @@ enum AudioMixEngine {
   }
 
   /// Builds the per-source mix for separated-audio exports: gain (and its
-  /// normalization fold) targets the MIC track only, volume is a master fader
-  /// applied to every track. Unlike `makeAudioMix`, this never returns nil for
-  /// a non-empty track list — the separated manual path always mixes down
-  /// through the reader, and unity parameters are harmless there.
+  /// normalization fold) targets ONE channel — the primary voice source (mic
+  /// when present, otherwise the sole system track) identified by
+  /// `gainTargetTrackID` — while volume is a master fader applied to every
+  /// track. Unlike `makeAudioMix`, this never returns nil for a non-empty
+  /// track list — the separated manual path always mixes down through the
+  /// reader, and unity parameters are harmless there.
   static func makeSeparatedAudioMix(
     audioTracks: [AVAssetTrack],
-    micTrackID: CMPersistentTrackID?,
+    gainTargetTrackID: CMPersistentTrackID?,
     masterVolumePercent: Double,
-    micVolumeComponent: Double,
-    micGainDb: Double
+    gainTargetVolumeComponent: Double,
+    gainTargetGainDb: Double
   ) -> AVAudioMix? {
     guard !audioTracks.isEmpty else { return nil }
 
     let masterLinear = max(0.0, min(1.0, masterVolumePercent / 100.0))
-    let clampedMicVolume = max(0.0, min(1.0, micVolumeComponent))
-    let clampedMicGainDb = max(0.0, min(24.0, micGainDb))
-    let micGainLinear = Float(pow(10.0, clampedMicGainDb / 20.0))
-    let needsMicGainTap = micGainLinear > 1.0001
+    let clampedTargetVolume = max(0.0, min(1.0, gainTargetVolumeComponent))
+    let clampedTargetGainDb = max(0.0, min(24.0, gainTargetGainDb))
+    let targetGainLinear = Float(pow(10.0, clampedTargetGainDb / 20.0))
+    let needsGainTap = targetGainLinear > 1.0001
 
     NativeLogger.d(
       "AudioMixEngine",
       "Separated audio mix",
       context: [
         "audioTracks": audioTracks.count,
-        "micTrackID": micTrackID.map(Int.init) ?? NSNull(),
+        "gainTargetTrackID": gainTargetTrackID.map(Int.init) ?? NSNull(),
         "masterLinear": masterLinear,
-        "micVolumeComponent": clampedMicVolume,
-        "micGainDb": clampedMicGainDb,
+        "gainTargetVolumeComponent": clampedTargetVolume,
+        "gainTargetGainDb": clampedTargetGainDb,
       ]
     )
 
@@ -1526,20 +1528,20 @@ enum AudioMixEngine {
     var inputParams: [AVMutableAudioMixInputParameters] = []
     for track in audioTracks {
       let params = AVMutableAudioMixInputParameters(track: track)
-      let isMic = micTrackID != nil && track.trackID == micTrackID
-      let volume = isMic ? masterLinear * clampedMicVolume : masterLinear
+      let isGainTarget = gainTargetTrackID != nil && track.trackID == gainTargetTrackID
+      let volume = isGainTarget ? masterLinear * clampedTargetVolume : masterLinear
       params.setVolume(Float(volume), at: .zero)
 
-      if isMic && needsMicGainTap {
+      if isGainTarget && needsGainTap {
         if let tap = makeGainTap(
-          gainLinear: micGainLinear, gainDb: clampedMicGainDb, clampFloatOutput: true)
+          gainLinear: targetGainLinear, gainDb: clampedTargetGainDb, clampFloatOutput: true)
         {
           params.audioTapProcessor = tap
         } else {
           NativeLogger.w(
             "AudioMixEngine",
-            "Failed to create mic gain tap; separated mix continues volume-only",
-            context: ["micGainDb": clampedMicGainDb]
+            "Failed to create gain tap; separated mix continues volume-only",
+            context: ["gainTargetGainDb": clampedTargetGainDb]
           )
         }
       }

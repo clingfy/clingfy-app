@@ -1534,6 +1534,13 @@ final class LetterboxExporter {
 
       if ranges.isEmpty {
         do {
+          // Whole source inserted at zero. A source may run a hair longer than
+          // the video (the single-segment rename tail from PR #206); the manual
+          // pump drains video and audio on independent readers, so a slightly
+          // longer audio track only means a short audio-only tail at the very
+          // end — never a hang. That trailing overshoot is bounded and
+          // accepted (consistent with the PR #206 tail tradeoff); the export
+          // stays A/V-aligned everywhere the video has frames.
           try compositionTrack.insertTimeRange(
             CMTimeRange(start: sourceTrack.timeRange.start, duration: sourceTrack.timeRange.duration),
             of: sourceTrack,
@@ -2608,18 +2615,22 @@ final class LetterboxExporter {
     let resolvedAudioMix: ResolvedAudioMixControls
     let separatedControls: SeparatedAudioControls?
     if hasSeparatedAudio {
-      // Normalize scans the MIC file (the channel it applies to), not the
-      // embedded screen.mov track the export no longer uses.
-      let micPeakLinear: Double? =
-        (autoNormalizeOnExport && separatedMicAsset != nil)
-        ? separatedMicAsset.flatMap { estimateAudioPeakLinear(asset: $0) }
+      // Gain + auto-normalize target the primary voice channel: the mic when
+      // present, otherwise the sole system source (mic off is a normal capture
+      // config — the sliders must still act on the audio that exists rather
+      // than becoming silent no-ops). Normalize scans that same primary file,
+      // never the embedded screen.mov track the export no longer uses.
+      let primaryAsset = separatedMicAsset ?? separatedSystemAsset
+      let primaryPeakLinear: Double? =
+        autoNormalizeOnExport
+        ? primaryAsset.flatMap { estimateAudioPeakLinear(asset: $0) }
         : nil
       let controls = Self.resolveSeparatedAudioControls(
         userGainDb: audioGainDb,
         userVolumePercent: audioVolumePercent,
         autoNormalizeOnExport: autoNormalizeOnExport,
         targetLoudnessDbfs: targetLoudnessDbfs,
-        micPeakLinear: micPeakLinear
+        micPeakLinear: primaryPeakLinear
       )
       separatedControls = controls
       // Keeps the existing log-field contract (resolvedGainDb etc.) intact.
@@ -2877,12 +2888,16 @@ final class LetterboxExporter {
 
       let exportAudioMix: AVAudioMix?
       if let separatedComposition, let separatedControls {
+        // Gain/normalize target the primary channel (mic, else system) so a
+        // system-only bundle still responds to the sliders.
+        let primaryTrackID =
+          separatedComposition.micTrackID ?? separatedComposition.systemTrackID
         exportAudioMix = AudioMixEngine.makeSeparatedAudioMix(
           audioTracks: separatedComposition.audioTracks,
-          micTrackID: separatedComposition.micTrackID,
+          gainTargetTrackID: primaryTrackID,
           masterVolumePercent: separatedControls.masterVolumePercent,
-          micVolumeComponent: separatedControls.micVolumeComponent,
-          micGainDb: separatedControls.micGainDb
+          gainTargetVolumeComponent: separatedControls.micVolumeComponent,
+          gainTargetGainDb: separatedControls.micGainDb
         )
       } else {
         // Corner: sidecar file(s) were readable (so controls were resolved with
@@ -3323,18 +3338,61 @@ final class LetterboxExporter {
     )
   }
 
-  /// A separated source file is used only when it actually decodes to an
-  /// audio track; a present-but-corrupt/empty file falls back to the embedded
-  /// screen.mov audio (exports must never fail because sidecar audio is bad).
+  /// A separated source file is used only when it actually DECODES to audio;
+  /// a present-but-corrupt/empty file falls back to the embedded screen.mov
+  /// audio (exports must never fail because sidecar audio is bad). A header
+  /// check is not enough: a file whose moov/track parses but whose mdat is
+  /// undecodable would pass a track-exists check and then abort the audio pump
+  /// mid-export. Pull one sample buffer up front so "readable" means
+  /// "decodable" — on any failure, log and return nil so the export degrades
+  /// to the embedded track.
   private static func readableAudioAsset(url: URL?) -> AVAsset? {
     guard let url else { return nil }
     let asset = AVAsset(url: url)
-    guard asset.tracks(withMediaType: .audio).first != nil else {
+    guard let track = asset.tracks(withMediaType: .audio).first else {
       NativeLogger.w(
         "Export", "Separated audio file present but has no readable audio track; ignoring",
         context: ["path": url.path])
       return nil
     }
+
+    do {
+      let reader = try AVAssetReader(asset: asset)
+      let output = AVAssetReaderTrackOutput(
+        track: track,
+        outputSettings: [
+          AVFormatIDKey: kAudioFormatLinearPCM,
+          AVLinearPCMIsFloatKey: true,
+          AVLinearPCMBitDepthKey: 32,
+          AVLinearPCMIsBigEndianKey: false,
+          AVLinearPCMIsNonInterleaved: false,
+        ])
+      output.alwaysCopiesSampleData = false
+      guard reader.canAdd(output) else {
+        throw NSError(domain: "Letterbox", code: -40)
+      }
+      reader.add(output)
+      guard reader.startReading() else {
+        throw reader.error ?? NSError(domain: "Letterbox", code: -41)
+      }
+      let firstSample = output.copyNextSampleBuffer()
+      if let firstSample {
+        CMSampleBufferInvalidate(firstSample)
+      }
+      reader.cancelReading()
+      // A parseable-but-undecodable mdat surfaces as a reader failure while
+      // producing no sample. An empty-but-valid track yields no failure and no
+      // sample; treat that as "no usable audio" too.
+      guard reader.status != .failed, firstSample != nil else {
+        throw reader.error ?? NSError(domain: "Letterbox", code: -42)
+      }
+    } catch {
+      NativeLogger.w(
+        "Export", "Separated audio file does not decode; ignoring",
+        context: ["path": url.path, "error": "\(error)"])
+      return nil
+    }
+
     return asset
   }
 
