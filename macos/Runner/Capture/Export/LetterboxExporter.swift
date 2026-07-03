@@ -2615,22 +2615,21 @@ final class LetterboxExporter {
     let resolvedAudioMix: ResolvedAudioMixControls
     let separatedControls: SeparatedAudioControls?
     if hasSeparatedAudio {
-      // Gain + auto-normalize target the primary voice channel: the mic when
-      // present, otherwise the sole system source (mic off is a normal capture
-      // config — the sliders must still act on the audio that exists rather
-      // than becoming silent no-ops). Normalize scans that same primary file,
-      // never the embedded screen.mov track the export no longer uses.
-      let primaryAsset = separatedMicAsset ?? separatedSystemAsset
-      let primaryPeakLinear: Double? =
-        autoNormalizeOnExport
-        ? primaryAsset.flatMap { estimateAudioPeakLinear(asset: $0) }
+      // D7: gain + auto-normalize act on the MIC (voice) only, and are inert
+      // when there is no mic (system-only capture) — the whole point of the
+      // separation is to never boost/normalize system/game/music audio. The
+      // master volume fader below still applies to every track. Normalize
+      // scans the mic file, never the embedded screen.mov track.
+      let micPeakLinear: Double? =
+        (autoNormalizeOnExport && separatedMicAsset != nil)
+        ? separatedMicAsset.flatMap { estimateAudioPeakLinear(asset: $0) }
         : nil
       let controls = Self.resolveSeparatedAudioControls(
         userGainDb: audioGainDb,
         userVolumePercent: audioVolumePercent,
         autoNormalizeOnExport: autoNormalizeOnExport,
         targetLoudnessDbfs: targetLoudnessDbfs,
-        micPeakLinear: primaryPeakLinear
+        micPeakLinear: micPeakLinear
       )
       separatedControls = controls
       // Keeps the existing log-field contract (resolvedGainDb etc.) intact.
@@ -2888,13 +2887,12 @@ final class LetterboxExporter {
 
       let exportAudioMix: AVAudioMix?
       if let separatedComposition, let separatedControls {
-        // Gain/normalize target the primary channel (mic, else system) so a
-        // system-only bundle still responds to the sliders.
-        let primaryTrackID =
-          separatedComposition.micTrackID ?? separatedComposition.systemTrackID
+        // Gain/normalize target the MIC only (D7). With no mic track the gain
+        // target is nil, so no track receives the tap or the reduction — every
+        // track gets master volume only (gain/normalize inert for system-only).
         exportAudioMix = AudioMixEngine.makeSeparatedAudioMix(
           audioTracks: separatedComposition.audioTracks,
-          gainTargetTrackID: primaryTrackID,
+          gainTargetTrackID: separatedComposition.micTrackID,
           masterVolumePercent: separatedControls.masterVolumePercent,
           gainTargetVolumeComponent: separatedControls.micVolumeComponent,
           gainTargetGainDb: separatedControls.micGainDb

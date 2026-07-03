@@ -5902,10 +5902,9 @@ final class LetterboxExporterTests: XCTestCase {
     XCTAssertTrue(FileManager.default.fileExists(atPath: finalURL.path))
   }
 
-  func testSystemOnlyBundleGainTargetsTheSystemTrack() throws {
-    // Mic off (system.m4a only) is a normal capture config. Gain must act on
-    // the system track — a boost should push the output toward full scale,
-    // never become a silent no-op.
+  func testSystemOnlyBundleGainIsInertButVolumeApplies() throws {
+    // D7: mic off (system.m4a only) means gain/normalize do NOTHING (never
+    // boost system/game/music audio), but the master VOLUME fader still works.
     let tempDir = makeTemporaryDirectory()
     defer { try? FileManager.default.removeItem(at: tempDir) }
     let projectRoot = try makeRecordingProjectRoot(at: tempDir, includeCamera: false)
@@ -5913,21 +5912,21 @@ final class LetterboxExporterTests: XCTestCase {
     try makeColorPatchVideo(
       url: RecordingProjectPaths.screenVideoURL(for: projectRoot),
       size: CGSize(width: 320, height: 180), durationSeconds: 1.0)
-    // System-only, quiet source so a boost is clearly observable.
     try makeToneAudioFile(
       url: RecordingProjectPaths.systemAudioURL(for: projectRoot),
-      seconds: 1.0, amplitude: 0.2, frequency: 1000)
+      seconds: 1.0, amplitude: 0.4, frequency: 1000)
 
-    let flatURL = try runSeparatedAudioExport(project: project, in: tempDir, clips: [])
-    let flatPeak = try decodedAudioPeak(url: flatURL)
-    XCTAssertEqual(flatPeak, 0.2, accuracy: 0.08)
-
+    // Gain +18dB must be inert on a system-only bundle: peak stays ~0.4.
     let boostedURL = try runSeparatedAudioExport(
-      project: project, in: tempDir, clips: [], audioGainDb: 18.0)
-    let boostedPeak = try decodedAudioPeak(url: boostedURL)
-    // +18dB on 0.2 ≈ 1.59 → clamps to full scale; the key point is the system
-    // track responded to gain at all (well above the flat 0.2).
-    XCTAssertGreaterThan(boostedPeak, flatPeak + 0.2)
+      project: project, in: tempDir, clips: [], audioGainDb: 18.0, outputName: "boost.mp4")
+    XCTAssertEqual(try decodedAudioPeak(url: boostedURL), 0.4, accuracy: 0.08)
+
+    // Master volume still applies: 25% roughly quarters the system peak.
+    let quietURL = try runSeparatedAudioExport(
+      project: project, in: tempDir, clips: [], audioVolumePercent: 25, outputName: "quiet.mp4")
+    let quietPeak = try decodedAudioPeak(url: quietURL)
+    XCTAssertGreaterThan(quietPeak, 0.03)
+    XCTAssertLessThan(quietPeak, 0.2)
   }
 
   func testSeparatedExportAutoNormalizeBoostsQuietMic() throws {
@@ -5962,9 +5961,9 @@ final class LetterboxExporterTests: XCTestCase {
     XCTAssertLessThan(normPeak, 0.75)
   }
 
-  func testSystemOnlyMixHasNoGainTargetWhenMicAbsentIsSystem() throws {
-    // Unit-level companion: with only a system source, the primary gain target
-    // is the system track, so a boost attaches the tap to it.
+  func testSystemOnlyMixAttachesNoGainTapToAnyTrack() throws {
+    // With no mic track the gain target is nil, so even a large gain attaches
+    // no tap to any track (gain/normalize inert); master volume still routes.
     let tempDir = makeTemporaryDirectory()
     defer { try? FileManager.default.removeItem(at: tempDir) }
     let systemURL = tempDir.appendingPathComponent("system.m4a")
@@ -5973,17 +5972,20 @@ final class LetterboxExporterTests: XCTestCase {
       LetterboxExporter.makeSeparatedAudioComposition(
         micAsset: nil, systemAsset: AVAsset(url: systemURL), ranges: []))
     XCTAssertNil(comp.micTrackID)
-    let primary = comp.micTrackID ?? comp.systemTrackID
 
     let mix = try XCTUnwrap(
       AudioMixEngine.makeSeparatedAudioMix(
         audioTracks: comp.audioTracks,
-        gainTargetTrackID: primary,
-        masterVolumePercent: 100,
+        gainTargetTrackID: comp.micTrackID,  // nil ⇒ no gain target
+        masterVolumePercent: 50,
         gainTargetVolumeComponent: 1.0,
         gainTargetGainDb: 12))
+    XCTAssertTrue(mix.inputParameters.allSatisfy { $0.audioTapProcessor == nil })
+    // Master volume still routes to the system track.
     let params = try XCTUnwrap(mix.inputParameters.first { $0.trackID == comp.systemTrackID })
-    XCTAssertNotNil(params.audioTapProcessor)
+    var vol: Float = -1
+    XCTAssertTrue(params.getVolumeRamp(for: .zero, startVolume: &vol, endVolume: nil, timeRange: nil))
+    XCTAssertEqual(vol, 0.5, accuracy: 0.0001)
   }
 
   private func runSeparatedAudioExport(
