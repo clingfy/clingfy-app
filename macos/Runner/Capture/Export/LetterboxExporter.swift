@@ -1386,13 +1386,34 @@ final class LetterboxExporter {
     ]
   }
 
-  private func manualAudioWriterSettings() -> [String: Any] {
+  /// AAC writer settings for the manual path. The sample rate follows the
+  /// SOURCE track instead of the historic 44.1kHz hardcode: capture writes
+  /// 48kHz (typically), Windows exports 48kHz, and the old constant forced a
+  /// pointless 48→44.1 resample into every manual-path export.
+  private func manualAudioWriterSettings(sourceTracks: [AVAssetTrack]) -> [String: Any] {
     [
       AVFormatIDKey: kAudioFormatMPEG4AAC,
       AVNumberOfChannelsKey: 2,
-      AVSampleRateKey: 44_100,
+      AVSampleRateKey: Self.aacWriterSampleRate(for: sourceTracks),
       AVEncoderBitRateKey: 192_000,
     ]
+  }
+
+  /// Source-derived AAC output rate. AAC-LC supports a fixed rate set; a
+  /// source already on a standard rate keeps it, anything else lands on 48k.
+  static func aacWriterSampleRate(for sourceTracks: [AVAssetTrack]) -> Double {
+    let supportedAACRates: Set<Double> = [
+      8_000, 11_025, 12_000, 16_000, 22_050, 24_000, 32_000, 44_100, 48_000,
+    ]
+    guard
+      let formatDescription = sourceTracks.first?.formatDescriptions.first,
+      let asbd = CMAudioFormatDescriptionGetStreamBasicDescription(
+        formatDescription as! CMFormatDescription)?.pointee,
+      supportedAACRates.contains(asbd.mSampleRate)
+    else {
+      return 48_000
+    }
+    return asbd.mSampleRate
   }
 
   /// Builds an audio-only composition holding just the kept clip ranges,
@@ -1417,26 +1438,34 @@ final class LetterboxExporter {
       return nil
     }
 
-    // Truncate to match the integer-millisecond edited timeline the video
-    // re-stamp works in; clamping the copy to this never inserts past the real
-    // audio end (which throws). Audio can run a hair shorter than the video.
+    let insertedAny = Self.fillCompositionTrackWithKeptRanges(
+      audioTrack, from: sourceAudioTrack, ranges: ranges)
+    // No real audio landed anywhere (every range was past the audio end or failed
+    // to copy): return nil so the export simply has no audio track rather than an
+    // all-silent one.
+    return insertedAny ? composition : nil
+  }
+
+  /// Tiles one composition track with the kept clip ranges of one source
+  /// track. Each slot occupies its full edited duration starting at the
+  /// cumulative full duration of the earlier ranges — exactly the video
+  /// re-stamp's `currentEditedBaseMs`. Within a slot, the available source
+  /// audio is copied (truncated to the source track's own integer-ms extent —
+  /// inserting past the real audio end throws) and any shortfall is filled
+  /// with explicit silence, so later ranges stay A/V-aligned even when a
+  /// clamped range sits mid-timeline under reorder. Returns whether any real
+  /// audio was copied.
+  @discardableResult
+  private static func fillCompositionTrackWithKeptRanges(
+    _ audioTrack: AVMutableCompositionTrack,
+    from sourceAudioTrack: AVAssetTrack,
+    ranges: [ClipKeptRange]
+  ) -> Bool {
     let sourceDuration = sourceAudioTrack.timeRange.duration
     let audioDurationMs = Int(sourceDuration.seconds * 1000.0)
     var insertedAny = false
-    // Each slot occupies its full edited duration starting at the cumulative full
-    // duration of the earlier ranges — exactly the video re-stamp's
-    // `currentEditedBaseMs`. Within a slot, the available source audio is copied
-    // and any shortfall (a clamped tail, an absent range, or a failed copy) is
-    // filled with explicit silence, so later ranges stay A/V-aligned even when a
-    // clamped range sits mid-timeline under reorder. Slots tile contiguously, so
-    // every insert targets the current track end (no reliance on inserting past
-    // the track's duration). Integer-ms timescale keeps the boundaries exact.
     for slot in ClipPlaybackPlanner.audioSlots(ranges: ranges, audioDurationMs: audioDurationMs) {
       let editedStart = CMTime(value: CMTimeValue(slot.editedStartMs), timescale: 1000)
-      // The amount of source audio actually copied into this slot — 0 if there
-      // was none available or the copy threw — so the silence below fills exactly
-      // the rest of the slot and the track stays contiguous (each insert targets
-      // the current track end).
       var insertedMs = 0
       if slot.copyDurationMs > 0 {
         let start = CMTime(value: CMTimeValue(slot.sourceInMs), timescale: 1000)
@@ -1467,10 +1496,83 @@ final class LetterboxExporter {
             duration: CMTime(value: CMTimeValue(silenceMs), timescale: 1000)))
       }
     }
-    // No real audio landed anywhere (every range was past the audio end or failed
-    // to copy): return nil so the export simply has no audio track rather than an
-    // all-silent one.
-    return insertedAny ? composition : nil
+    return insertedAny
+  }
+
+  /// The separated-audio composition: one track per present source
+  /// (mic/system), each tiled with its OWN duration — per-track `audioSlots`
+  /// so a shorter source silence-fills without stealing the other's timing.
+  /// With no cuts, each source is inserted whole at zero. The manual path's
+  /// AVAssetReaderAudioMixOutput mixes ALL tracks of this composition into
+  /// one PCM stream ("mix with system" happens there); trackIDs are recorded
+  /// so the mix can target the mic channel. Returns nil when no source
+  /// contributed real audio (the export then falls back to embedded audio).
+  struct SeparatedAudioComposition {
+    let asset: AVAsset
+    let audioTracks: [AVAssetTrack]
+    let micTrackID: CMPersistentTrackID?
+    let systemTrackID: CMPersistentTrackID?
+  }
+
+  static func makeSeparatedAudioComposition(
+    micAsset: AVAsset?,
+    systemAsset: AVAsset?,
+    ranges: [ClipKeptRange]
+  ) -> SeparatedAudioComposition? {
+    let composition = AVMutableComposition()
+    var micTrackID: CMPersistentTrackID?
+    var systemTrackID: CMPersistentTrackID?
+    var insertedAny = false
+
+    func addSource(_ asset: AVAsset?) -> CMPersistentTrackID? {
+      guard let sourceTrack = asset?.tracks(withMediaType: .audio).first else { return nil }
+      guard
+        let compositionTrack = composition.addMutableTrack(
+          withMediaType: .audio,
+          preferredTrackID: kCMPersistentTrackID_Invalid)
+      else { return nil }
+
+      if ranges.isEmpty {
+        do {
+          // Whole source inserted at zero. A source may run a hair longer than
+          // the video (the single-segment rename tail from PR #206); the manual
+          // pump drains video and audio on independent readers, so a slightly
+          // longer audio track only means a short audio-only tail at the very
+          // end — never a hang. That trailing overshoot is bounded and
+          // accepted (consistent with the PR #206 tail tradeoff); the export
+          // stays A/V-aligned everywhere the video has frames.
+          try compositionTrack.insertTimeRange(
+            CMTimeRange(start: sourceTrack.timeRange.start, duration: sourceTrack.timeRange.duration),
+            of: sourceTrack,
+            at: .zero
+          )
+          insertedAny = true
+          return compositionTrack.trackID
+        } catch {
+          NativeLogger.w(
+            "Export", "Separated audio source failed to insert; dropping source",
+            context: ["error": error.localizedDescription])
+          composition.removeTrack(compositionTrack)
+          return nil
+        }
+      }
+
+      if fillCompositionTrackWithKeptRanges(compositionTrack, from: sourceTrack, ranges: ranges) {
+        insertedAny = true
+      }
+      return compositionTrack.trackID
+    }
+
+    micTrackID = addSource(micAsset)
+    systemTrackID = addSource(systemAsset)
+
+    guard insertedAny else { return nil }
+    return SeparatedAudioComposition(
+      asset: composition,
+      audioTracks: composition.tracks(withMediaType: .audio),
+      micTrackID: micTrackID,
+      systemTrackID: systemTrackID
+    )
   }
 
   private func runRenderedExportSession(
@@ -1489,6 +1591,7 @@ final class LetterboxExporter {
     colorGrade: ColorGrade = .identity,
     keptRanges: [ClipKeptRange] = [],
     audioAsset: AVAsset? = nil,
+    useAllAudioSourceTracks: Bool = false,
     editedDurationSeconds: Double? = nil,
     logOutputInfo: Bool = false,
     completion: @escaping (Result<URL, Error>) -> Void
@@ -1745,9 +1848,16 @@ final class LetterboxExporter {
 
     var audioOutput: AVAssetReaderAudioMixOutput?
     var audioInput: AVAssetWriterInput?
-    if let audioTrack = audioSourceAsset.tracks(withMediaType: .audio).first {
+    // Separated-source compositions carry one track per source (mic/system);
+    // the reader renders them into a single mixed PCM stream honoring the
+    // per-track AVAudioMix parameters. Legacy sources stay first-track-only.
+    let audioSourceTracks =
+      useAllAudioSourceTracks
+      ? audioSourceAsset.tracks(withMediaType: .audio)
+      : Array(audioSourceAsset.tracks(withMediaType: .audio).prefix(1))
+    if !audioSourceTracks.isEmpty {
       let candidateOutput = AVAssetReaderAudioMixOutput(
-        audioTracks: [audioTrack],
+        audioTracks: audioSourceTracks,
         audioSettings: manualAudioOutputSettings()
       )
       candidateOutput.audioMix = audioMix
@@ -1755,7 +1865,7 @@ final class LetterboxExporter {
 
       let candidateInput = AVAssetWriterInput(
         mediaType: .audio,
-        outputSettings: manualAudioWriterSettings()
+        outputSettings: manualAudioWriterSettings(sourceTracks: audioSourceTracks)
       )
       candidateInput.expectsMediaDataInRealTime = false
 
@@ -2496,13 +2606,49 @@ final class LetterboxExporter {
     params.backgroundPreset = backgroundPreset
     params.colorGrade = colorGrade.isIdentity ? nil : colorGrade
 
-    let resolvedAudioMix = resolveAudioMixControls(
-      asset: asset,
-      userGainDb: audioGainDb,
-      userVolumePercent: audioVolumePercent,
-      autoNormalizeOnExport: autoNormalizeOnExport,
-      targetLoudnessDbfs: targetLoudnessDbfs
-    )
+    // Separated sources (Phase 1.5 bundles): validated once here; every
+    // consumer below falls back to the legacy embedded-audio path when nil.
+    let separatedMicAsset = Self.readableAudioAsset(url: mediaSources.micAudioURL)
+    let separatedSystemAsset = Self.readableAudioAsset(url: mediaSources.systemAudioURL)
+    let hasSeparatedAudio = separatedMicAsset != nil || separatedSystemAsset != nil
+
+    let resolvedAudioMix: ResolvedAudioMixControls
+    let separatedControls: SeparatedAudioControls?
+    if hasSeparatedAudio {
+      // D7: gain + auto-normalize act on the MIC (voice) only, and are inert
+      // when there is no mic (system-only capture) — the whole point of the
+      // separation is to never boost/normalize system/game/music audio. The
+      // master volume fader below still applies to every track. Normalize
+      // scans the mic file, never the embedded screen.mov track.
+      let micPeakLinear: Double? =
+        (autoNormalizeOnExport && separatedMicAsset != nil)
+        ? separatedMicAsset.flatMap { estimateAudioPeakLinear(asset: $0) }
+        : nil
+      let controls = Self.resolveSeparatedAudioControls(
+        userGainDb: audioGainDb,
+        userVolumePercent: audioVolumePercent,
+        autoNormalizeOnExport: autoNormalizeOnExport,
+        targetLoudnessDbfs: targetLoudnessDbfs,
+        micPeakLinear: micPeakLinear
+      )
+      separatedControls = controls
+      // Keeps the existing log-field contract (resolvedGainDb etc.) intact.
+      resolvedAudioMix = ResolvedAudioMixControls(
+        gainDb: controls.micGainDb,
+        volumePercent: controls.masterVolumePercent,
+        sourcePeakDbfs: controls.sourcePeakDbfs,
+        normalizationGainDb: controls.normalizationGainDb
+      )
+    } else {
+      separatedControls = nil
+      resolvedAudioMix = resolveAudioMixControls(
+        asset: asset,
+        userGainDb: audioGainDb,
+        userVolumePercent: audioVolumePercent,
+        autoNormalizeOnExport: autoNormalizeOnExport,
+        targetLoudnessDbfs: targetLoudnessDbfs
+      )
+    }
 
     NativeLogger.i(
       "Export", "Export resolved",
@@ -2706,8 +2852,25 @@ final class LetterboxExporter {
       // True when the kept ranges are not in source order — the writer reads them
       // per-window instead of one forward pass. Surfaced for the log only.
       let hasReorder = hasCuts && !ClipPlaybackPlanner.isSourceMonotonic(keptRanges)
-      let audioCutComposition: AVAsset? =
-        hasCuts ? makeKeptRangeAudioComposition(from: comp.asset, ranges: keptRanges) : nil
+      // Separated sources replace the embedded audio entirely: one composition
+      // carrying mic + system tracks (cut-tiled per track when clips exist),
+      // read through the dedicated audio reader and mixed down there. A nil
+      // build (no real audio in any source file) falls back to the legacy
+      // embedded-track handling below.
+      let separatedComposition: SeparatedAudioComposition? =
+        hasSeparatedAudio
+        ? Self.makeSeparatedAudioComposition(
+          micAsset: separatedMicAsset,
+          systemAsset: separatedSystemAsset,
+          ranges: keptRanges)
+        : nil
+      let audioCutComposition: AVAsset?
+      if let separatedComposition {
+        audioCutComposition = separatedComposition.asset
+      } else {
+        audioCutComposition =
+          hasCuts ? makeKeptRangeAudioComposition(from: comp.asset, ranges: keptRanges) : nil
+      }
       let editedDurationSeconds: Double? =
         hasCuts ? Double(ClipPlaybackPlanner.editedDurationMs(ranges: keptRanges)) / 1000.0 : nil
       if hasCuts {
@@ -2722,11 +2885,42 @@ final class LetterboxExporter {
           ])
       }
 
-      let exportAudioMix = AudioMixEngine.makeAudioMix(
-        asset: audioCutComposition ?? comp.asset,
-        volumePercent: resolvedAudioMix.volumePercent,
-        gainDb: resolvedAudioMix.gainDb
-      )
+      let exportAudioMix: AVAudioMix?
+      if let separatedComposition, let separatedControls {
+        // Gain/normalize target the MIC only (D7). With no mic track the gain
+        // target is nil, so no track receives the tap or the reduction — every
+        // track gets master volume only (gain/normalize inert for system-only).
+        exportAudioMix = AudioMixEngine.makeSeparatedAudioMix(
+          audioTracks: separatedComposition.audioTracks,
+          gainTargetTrackID: separatedComposition.micTrackID,
+          masterVolumePercent: separatedControls.masterVolumePercent,
+          gainTargetVolumeComponent: separatedControls.micVolumeComponent,
+          gainTargetGainDb: separatedControls.micGainDb
+        )
+      } else {
+        // Corner: sidecar file(s) were readable (so controls were resolved with
+        // mic semantics) but the separated composition produced no insertable
+        // audio (e.g. every kept range fell beyond the source's extent), so we
+        // fell back to the embedded track. Its mix must use LEGACY,
+        // embedded-scanned controls — the mic-derived resolvedAudioMix could
+        // carry a mic-file normalization (or a system-only normalize skip) that
+        // is wrong for the embedded audio. Recompute so the fallback is
+        // behavior-identical to a non-separated project.
+        let embeddedControls =
+          hasSeparatedAudio
+          ? resolveAudioMixControls(
+            asset: audioCutComposition ?? comp.asset,
+            userGainDb: audioGainDb,
+            userVolumePercent: audioVolumePercent,
+            autoNormalizeOnExport: autoNormalizeOnExport,
+            targetLoudnessDbfs: targetLoudnessDbfs)
+          : resolvedAudioMix
+        exportAudioMix = AudioMixEngine.makeAudioMix(
+          asset: audioCutComposition ?? comp.asset,
+          volumePercent: embeddedControls.volumePercent,
+          gainDb: embeddedControls.gainDb
+        )
+      }
 
       let requestedType = requestedFileType(for: format)
       let compatibleTypes = compatibleOutputTypes(
@@ -2807,14 +3001,22 @@ final class LetterboxExporter {
       // Cuts force the manual reader/writer path too: only it can drop the
       // frames inside cut gaps and re-stamp the kept frames onto the compacted
       // timeline. The fast AVAssetExportSession can't skip/re-time frames.
+      // Separated audio also forces the manual path (owner decision D8): the
+      // session path only mixes down with a non-nil audioMix and its preset
+      // owns the audio settings — the manual reader mixdown is the one
+      // pipeline that handles mic+system correctly everywhere.
       let shouldUseManualRenderExport =
         cameraAssetIsPreStyled
         || comp.inlineCameraRenderPlan != nil
         || comp.videoComposition.animationTool != nil
         || hasColorGrade
         || hasCuts
+        || separatedComposition != nil
       exportStartContext["finalRenderPath"] = shouldUseManualRenderExport ? "manual_reader_writer" : "asset_export_session"
       exportStartContext["colorGradeActive"] = hasColorGrade
+      exportStartContext["audioSourceMode"] = separatedComposition != nil ? "separated" : "embedded"
+      exportStartContext["separatedMicPresent"] = separatedMicAsset != nil
+      exportStartContext["separatedSystemPresent"] = separatedSystemAsset != nil
       NativeLogger.i(
         "Export",
         "Starting final export session",
@@ -2844,6 +3046,7 @@ final class LetterboxExporter {
             colorGrade: colorGrade,
             keptRanges: keptRanges,
             audioAsset: audioCutComposition,
+            useAllAudioSourceTracks: separatedComposition != nil,
             editedDurationSeconds: editedDurationSeconds,
             logOutputInfo: true,
             completion: completion
@@ -3074,6 +3277,121 @@ final class LetterboxExporter {
     let volumePercent: Double
     let sourcePeakDbfs: Double?
     let normalizationGainDb: Double?
+  }
+
+  /// Owner-approved separated-source semantics: gain + auto-normalize target
+  /// the MIC channel only (chain: raw mic → cleanup → normalize/boost → mix
+  /// with system); volume stays a master fader on the final mix. Normalize
+  /// can reduce as well as boost — a reduction lands in `micVolumeComponent`
+  /// (≤1), a boost in `micGainDb` (tap), keeping the historic +24dB cap on
+  /// the combined mic level.
+  struct SeparatedAudioControls: Equatable {
+    let masterVolumePercent: Double
+    let micVolumeComponent: Double
+    let micGainDb: Double
+    let sourcePeakDbfs: Double?
+    let normalizationGainDb: Double?
+  }
+
+  static func resolveSeparatedAudioControls(
+    userGainDb: Double,
+    userVolumePercent: Double,
+    autoNormalizeOnExport: Bool,
+    targetLoudnessDbfs: Double,
+    micPeakLinear: Double?
+  ) -> SeparatedAudioControls {
+    let clampedGainDb = max(0.0, min(24.0, userGainDb))
+    let clampedVolumePercent = max(0.0, min(100.0, userVolumePercent))
+
+    var combinedMicLinear = pow(10.0, clampedGainDb / 20.0)
+    var sourcePeakDbfs: Double?
+    var normalizationGainDb: Double?
+
+    if autoNormalizeOnExport, let micPeakLinear, micPeakLinear > 0.000001 {
+      let clampedTargetDbfs = max(-24.0, min(-6.0, targetLoudnessDbfs))
+      let targetLinear = pow(10.0, clampedTargetDbfs / 20.0)
+      let normalizeLinear = targetLinear / micPeakLinear
+      normalizationGainDb = 20.0 * log10(max(normalizeLinear, 0.000000001))
+      sourcePeakDbfs = AudioLevelEstimator.dbfs(for: micPeakLinear)
+      combinedMicLinear *= normalizeLinear
+    }
+
+    let maxLinear = pow(10.0, 24.0 / 20.0)
+    combinedMicLinear = max(0.0, min(maxLinear, combinedMicLinear))
+
+    let micVolumeComponent = min(1.0, combinedMicLinear)
+    let micGainDb: Double
+    if combinedMicLinear > 1.0 {
+      micGainDb = min(24.0, 20.0 * log10(combinedMicLinear))
+    } else {
+      micGainDb = 0.0
+    }
+
+    return SeparatedAudioControls(
+      masterVolumePercent: clampedVolumePercent,
+      micVolumeComponent: micVolumeComponent,
+      micGainDb: micGainDb,
+      sourcePeakDbfs: sourcePeakDbfs,
+      normalizationGainDb: normalizationGainDb
+    )
+  }
+
+  /// A separated source file is used only when it actually DECODES to audio;
+  /// a present-but-corrupt/empty file falls back to the embedded screen.mov
+  /// audio (exports must never fail because sidecar audio is bad). A header
+  /// check is not enough: a file whose moov/track parses but whose mdat is
+  /// undecodable would pass a track-exists check and then abort the audio pump
+  /// mid-export. Pull one sample buffer up front so "readable" means
+  /// "decodable" — on any failure, log and return nil so the export degrades
+  /// to the embedded track.
+  private static func readableAudioAsset(url: URL?) -> AVAsset? {
+    guard let url else { return nil }
+    let asset = AVAsset(url: url)
+    guard let track = asset.tracks(withMediaType: .audio).first else {
+      NativeLogger.w(
+        "Export", "Separated audio file present but has no readable audio track; ignoring",
+        context: ["path": url.path])
+      return nil
+    }
+
+    do {
+      let reader = try AVAssetReader(asset: asset)
+      let output = AVAssetReaderTrackOutput(
+        track: track,
+        outputSettings: [
+          AVFormatIDKey: kAudioFormatLinearPCM,
+          AVLinearPCMIsFloatKey: true,
+          AVLinearPCMBitDepthKey: 32,
+          AVLinearPCMIsBigEndianKey: false,
+          AVLinearPCMIsNonInterleaved: false,
+        ])
+      output.alwaysCopiesSampleData = false
+      guard reader.canAdd(output) else {
+        throw NSError(domain: "Letterbox", code: -40)
+      }
+      reader.add(output)
+      guard reader.startReading() else {
+        throw reader.error ?? NSError(domain: "Letterbox", code: -41)
+      }
+      let firstSample = output.copyNextSampleBuffer()
+      if let firstSample {
+        CMSampleBufferInvalidate(firstSample)
+      }
+      reader.cancelReading()
+      // A parseable-but-undecodable mdat surfaces as a reader failure while
+      // producing no sample. An empty-but-valid track yields no failure and no
+      // sample; treat that as "no usable audio" too.
+      guard reader.status != .failed, firstSample != nil else {
+        throw reader.error ?? NSError(domain: "Letterbox", code: -42)
+      }
+    } catch {
+      NativeLogger.w(
+        "Export", "Separated audio file does not decode; ignoring",
+        context: ["path": url.path, "error": "\(error)"])
+      return nil
+    }
+
+    return asset
   }
 
   private func resolveAudioMixControls(

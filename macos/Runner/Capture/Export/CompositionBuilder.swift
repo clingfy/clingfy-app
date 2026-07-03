@@ -1203,6 +1203,12 @@ private enum AudioTapSampleType {
 private final class AudioTapContext {
   let gainLinear: Float
   let gainDb: Double
+  /// When true, float samples are clamped to ±1.0 after gain. Used by the
+  /// separated-source mic channel so a boosted mic can never enter the
+  /// mixdown above full scale (the summed mix is then bounded by the int16
+  /// decode stage's saturation). Legacy mixes keep the historic unclamped
+  /// float behavior.
+  let clampFloatOutput: Bool
   var sampleType: AudioTapSampleType = .unknown
   var didLogFirstProcess = false
   var didLogUnsupportedSampleType = false
@@ -1212,9 +1218,10 @@ private final class AudioTapContext {
   var probeMaxPrePeak = 0.0
   var probeMaxPostPeak = 0.0
 
-  init(gainLinear: Float, gainDb: Double) {
+  init(gainLinear: Float, gainDb: Double, clampFloatOutput: Bool = false) {
     self.gainLinear = gainLinear
     self.gainDb = gainDb
+    self.clampFloatOutput = clampFloatOutput
   }
 
   var sampleTypeLabel: String {
@@ -1282,7 +1289,10 @@ private let audioTapProcessCallback: MTAudioProcessingTapProcessCallback = {
           let beforeAbs = Double(abs(before))
           if beforeAbs > peakBefore { peakBefore = beforeAbs }
         }
-        let after = before * gainLinear
+        var after = before * gainLinear
+        if context.clampFloatOutput {
+          after = max(-1.0, min(1.0, after))
+        }
         samples[i] = after
         if shouldProbeSignal {
           let afterAbs = Double(abs(after))
@@ -1304,7 +1314,10 @@ private let audioTapProcessCallback: MTAudioProcessingTapProcessCallback = {
           let beforeAbs = abs(before)
           if beforeAbs > peakBefore { peakBefore = beforeAbs }
         }
-        let after = before * gain
+        var after = before * gain
+        if context.clampFloatOutput {
+          after = max(-1.0, min(1.0, after))
+        }
         samples[i] = after
         if shouldProbeSignal {
           let afterAbs = abs(after)
@@ -1477,9 +1490,75 @@ enum AudioMixEngine {
     return mix
   }
 
-  private static func makeGainTap(gainLinear: Float, gainDb: Double) -> MTAudioProcessingTap? {
+  /// Builds the per-source mix for separated-audio exports: gain (and its
+  /// normalization fold) targets ONE channel — the primary voice source (mic
+  /// when present, otherwise the sole system track) identified by
+  /// `gainTargetTrackID` — while volume is a master fader applied to every
+  /// track. Unlike `makeAudioMix`, this never returns nil for a non-empty
+  /// track list — the separated manual path always mixes down through the
+  /// reader, and unity parameters are harmless there.
+  static func makeSeparatedAudioMix(
+    audioTracks: [AVAssetTrack],
+    gainTargetTrackID: CMPersistentTrackID?,
+    masterVolumePercent: Double,
+    gainTargetVolumeComponent: Double,
+    gainTargetGainDb: Double
+  ) -> AVAudioMix? {
+    guard !audioTracks.isEmpty else { return nil }
+
+    let masterLinear = max(0.0, min(1.0, masterVolumePercent / 100.0))
+    let clampedTargetVolume = max(0.0, min(1.0, gainTargetVolumeComponent))
+    let clampedTargetGainDb = max(0.0, min(24.0, gainTargetGainDb))
+    let targetGainLinear = Float(pow(10.0, clampedTargetGainDb / 20.0))
+    let needsGainTap = targetGainLinear > 1.0001
+
+    NativeLogger.d(
+      "AudioMixEngine",
+      "Separated audio mix",
+      context: [
+        "audioTracks": audioTracks.count,
+        "gainTargetTrackID": gainTargetTrackID.map { Int($0) } ?? NSNull(),
+        "masterLinear": masterLinear,
+        "gainTargetVolumeComponent": clampedTargetVolume,
+        "gainTargetGainDb": clampedTargetGainDb,
+      ]
+    )
+
+    let mix = AVMutableAudioMix()
+    var inputParams: [AVMutableAudioMixInputParameters] = []
+    for track in audioTracks {
+      let params = AVMutableAudioMixInputParameters(track: track)
+      let isGainTarget = gainTargetTrackID != nil && track.trackID == gainTargetTrackID
+      let volume = isGainTarget ? masterLinear * clampedTargetVolume : masterLinear
+      params.setVolume(Float(volume), at: .zero)
+
+      if isGainTarget && needsGainTap {
+        if let tap = makeGainTap(
+          gainLinear: targetGainLinear, gainDb: clampedTargetGainDb, clampFloatOutput: true)
+        {
+          params.audioTapProcessor = tap
+        } else {
+          NativeLogger.w(
+            "AudioMixEngine",
+            "Failed to create gain tap; separated mix continues volume-only",
+            context: ["gainTargetGainDb": clampedTargetGainDb]
+          )
+        }
+      }
+      inputParams.append(params)
+    }
+    mix.inputParameters = inputParams
+    return mix
+  }
+
+  private static func makeGainTap(
+    gainLinear: Float, gainDb: Double, clampFloatOutput: Bool = false
+  ) -> MTAudioProcessingTap? {
     let contextPointer = UnsafeMutableRawPointer(
-      Unmanaged.passRetained(AudioTapContext(gainLinear: gainLinear, gainDb: gainDb)).toOpaque()
+      Unmanaged.passRetained(
+        AudioTapContext(
+          gainLinear: gainLinear, gainDb: gainDb, clampFloatOutput: clampFloatOutput)
+      ).toOpaque()
     )
 
     var callbacks = MTAudioProcessingTapCallbacks(
