@@ -5930,6 +5930,38 @@ final class LetterboxExporterTests: XCTestCase {
     XCTAssertGreaterThan(boostedPeak, flatPeak + 0.2)
   }
 
+  func testSeparatedExportAutoNormalizeBoostsQuietMic() throws {
+    // End-to-end proof that auto-normalize actually runs on the separated
+    // path: a quiet mic (0.1) normalized toward -6 dBFS must come out much
+    // louder than the un-normalized export. This ALSO guards the estimatePeak
+    // AudioBufferList fix (#211) — with the old nil-peak bug, normalize would
+    // silently skip and the two exports would match.
+    let tempDir = makeTemporaryDirectory()
+    defer { try? FileManager.default.removeItem(at: tempDir) }
+    let projectRoot = try makeRecordingProjectRoot(at: tempDir, includeCamera: false)
+    let project = try RecordingProjectRef.open(projectRoot: projectRoot)
+    try makeColorPatchVideo(
+      url: RecordingProjectPaths.screenVideoURL(for: projectRoot),
+      size: CGSize(width: 320, height: 180), durationSeconds: 1.0)
+    try makeToneAudioFile(
+      url: RecordingProjectPaths.micAudioURL(for: projectRoot),
+      seconds: 1.0, amplitude: 0.1, frequency: 440)
+
+    let flatURL = try runSeparatedAudioExport(
+      project: project, in: tempDir, clips: [], outputName: "flat.mp4")
+    let flatPeak = try decodedAudioPeak(url: flatURL)
+    XCTAssertEqual(flatPeak, 0.1, accuracy: 0.05)
+
+    let normURL = try runSeparatedAudioExport(
+      project: project, in: tempDir, clips: [],
+      autoNormalizeOnExport: true, targetLoudnessDbfs: -6.0, outputName: "norm.mp4")
+    let normPeak = try decodedAudioPeak(url: normURL)
+    // -6 dBFS target ≈ 0.5 linear; normalize must lift the 0.1 mic well above
+    // the flat export (the exact value rides AAC ripple, so assert a band).
+    XCTAssertGreaterThan(normPeak, 0.35)
+    XCTAssertLessThan(normPeak, 0.75)
+  }
+
   func testSystemOnlyMixHasNoGainTargetWhenMicAbsentIsSystem() throws {
     // Unit-level companion: with only a system source, the primary gain target
     // is the system track, so a boost attaches the tap to it.
@@ -5959,7 +5991,10 @@ final class LetterboxExporterTests: XCTestCase {
     in tempDir: URL,
     clips: [ClipKeptRange],
     audioGainDb: Double = 0.0,
-    audioVolumePercent: Double = 100.0
+    audioVolumePercent: Double = 100.0,
+    autoNormalizeOnExport: Bool = false,
+    targetLoudnessDbfs: Double = -16.0,
+    outputName: String = "final.mp4"
   ) throws -> URL {
     let exporter = LetterboxExporter()
     let exportExpectation = expectation(description: "separated audio export")
@@ -5968,12 +6003,14 @@ final class LetterboxExporterTests: XCTestCase {
       project: project,
       target: CGSize(width: 640, height: 360),
       showCursor: false,
-      outputURL: tempDir.appendingPathComponent("final.mp4"),
+      outputURL: tempDir.appendingPathComponent(outputName),
       format: "mp4",
       codec: "h264",
       bitrate: "auto",
       audioGainDb: audioGainDb,
       audioVolumePercent: audioVolumePercent,
+      autoNormalizeOnExport: autoNormalizeOnExport,
+      targetLoudnessDbfs: targetLoudnessDbfs,
       clips: clips
     ) { result in
       exportResult = result
