@@ -1456,7 +1456,7 @@ final class LetterboxExporter {
   /// clamped range sits mid-timeline under reorder. Returns whether any real
   /// audio was copied.
   @discardableResult
-  static func fillCompositionTrackWithKeptRanges(
+  private static func fillCompositionTrackWithKeptRanges(
     _ audioTrack: AVMutableCompositionTrack,
     from sourceAudioTrack: AVAssetTrack,
     ranges: [ClipKeptRange]
@@ -2885,10 +2885,27 @@ final class LetterboxExporter {
           micGainDb: separatedControls.micGainDb
         )
       } else {
+        // Corner: sidecar file(s) were readable (so controls were resolved with
+        // mic semantics) but the separated composition produced no insertable
+        // audio (e.g. every kept range fell beyond the source's extent), so we
+        // fell back to the embedded track. Its mix must use LEGACY,
+        // embedded-scanned controls — the mic-derived resolvedAudioMix could
+        // carry a mic-file normalization (or a system-only normalize skip) that
+        // is wrong for the embedded audio. Recompute so the fallback is
+        // behavior-identical to a non-separated project.
+        let embeddedControls =
+          hasSeparatedAudio
+          ? resolveAudioMixControls(
+            asset: audioCutComposition ?? comp.asset,
+            userGainDb: audioGainDb,
+            userVolumePercent: audioVolumePercent,
+            autoNormalizeOnExport: autoNormalizeOnExport,
+            targetLoudnessDbfs: targetLoudnessDbfs)
+          : resolvedAudioMix
         exportAudioMix = AudioMixEngine.makeAudioMix(
           asset: audioCutComposition ?? comp.asset,
-          volumePercent: resolvedAudioMix.volumePercent,
-          gainDb: resolvedAudioMix.gainDb
+          volumePercent: embeddedControls.volumePercent,
+          gainDb: embeddedControls.gainDb
         )
       }
 
