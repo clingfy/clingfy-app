@@ -13,11 +13,13 @@
 #include <propidl.h>
 #include <wrl/client.h>
 
+#include <algorithm>
 #include <atomic>
 #include <cstring>
 #include <filesystem>
 #include <memory>
 #include <mutex>
+#include <optional>
 #include <vector>
 
 #include "Audio/audio_mixer.h"
@@ -781,6 +783,25 @@ RenderResult RenderComposedExport(const RenderRequest& request) {
   bool audio_eos = !has_audio;  // nothing to drain when there is no audio
   double last_progress_emitted = -1.0;  // Slice 5A: throttle progress ticks
 
+  // Editing port (clips, step 3a): keep/drop + re-stamp state. Empty ranges
+  // leave every value at its identity so the loop is byte-identical to the
+  // pre-clip path. Only MONOTONIC + disjoint ranges reach here (reorder/overlap
+  // is refused upstream). `origin_edited_hns` is the first KEPT video frame's
+  // edited PTS — the common zero both streams rebase onto: the encoder rebases
+  // VIDEO by its first written frame but writes AUDIO raw, so audio is shifted
+  // by this same origin here to keep A/V aligned on a head-trim (outside-voice
+  // #1). `pending_audio` buffers the ≤~2 kept audio packets that can arrive
+  // between the first kept range's start and the first kept video frame, so no
+  // audio is lost and none is written before the timeline is anchored (#2).
+  const bool clipping = !request.clip_ranges.empty();
+  const std::int64_t edited_total_ms =
+      clipping ? clip_planner::EditedDurationMs(request.clip_ranges) : 0;
+  const std::uint32_t fps_fallback =
+      request.fps_hint != 0 ? request.fps_hint : 30u;
+  std::int64_t origin_edited_hns = -1;
+  std::int64_t prev_edited_ms = -1;  // previous KEPT frame's edited ms (zoom dt)
+  std::vector<clingfy::audio::MixedPacket> pending_audio;
+
   // Slice 5B GIF decimation: a running emit target on an ideal grid (see
   // gif_export_policy.h). Seeded so the first decoded frame is always kept; a
   // 30/60 fps source becomes a ~kGifTargetFps GIF, jitter-tolerant.
@@ -837,6 +858,23 @@ RenderResult RenderComposedExport(const RenderRequest& request) {
       if (first_video_hns < 0) {
         first_video_hns = timestamp;
       }
+      // The frame's recording-relative ms (rebased to the first decoded frame),
+      // truncated (§5.1) — shared by the clip gate, cursor, zoom, and camera.
+      const std::int64_t frame_ms =
+          first_video_hns >= 0 ? (timestamp - first_video_hns) / 10000 : 0;
+      // Editing port (clips, 3a): keep/drop this source frame against the edited
+      // timeline BEFORE any decode-upload / camera / texture work. nullopt => the
+      // frame is inside a cut gap: drop it (still advance progress so the bar
+      // tracks decode position). Empty ranges => identity (never nullopt).
+      std::optional<std::int64_t> edited;
+      if (clipping) {
+        edited =
+            clip_planner::EditedMsForKeptSourceMs(frame_ms, request.clip_ranges);
+        if (!edited.has_value()) {
+          emit_progress(timestamp);
+          continue;
+        }
+      }
       // Slice 5B: drop frames that fall inside the target GIF interval before
       // any composite/encode work; still advance progress for the dropped
       // frame so the bar tracks decode position. Non-GIF keeps every frame.
@@ -856,11 +894,12 @@ RenderResult RenderComposedExport(const RenderRequest& request) {
 
       // Phase 9.4: advance the camera's held frame BEFORE BeginDraw (the upload
       // is a CopyFromMemory, kept outside the draw like the screen frame above).
-      // frame_ms is recording-relative, rebased to the first decoded frame.
+      // The camera's video frame tracks SOURCE time (frame_ms) so it stays
+      // synced to the screen frame being shown — even under clips, where the
+      // forward-only pull absorbs the source skip across a cut (§5.5). Only the
+      // intro/outro ANIMATION clock (in Draw, below) moves to edited time.
       if (camera_renderer != nullptr) {
-        const std::int64_t cam_frame_ms =
-            first_video_hns >= 0 ? (timestamp - first_video_hns) / 10000 : 0;
-        camera_renderer->Advance(cam_frame_ms);
+        camera_renderer->Advance(frame_ms);
       }
 
       // Fresh output texture per frame: the encoder MFT may hold the
@@ -897,24 +936,31 @@ RenderResult RenderComposedExport(const RenderRequest& request) {
         return Failure(request.destination_path, "export: CreateBitmapFromDxgiSurface failed.");
       }
 
-      // The frame's recording-relative ms (rebased to the first decoded frame),
-      // shared by the cursor lookup and the zoom controller.
-      const std::int64_t frame_ms =
-          first_video_hns >= 0 ? (timestamp - first_video_hns) / 10000 : 0;
-
       // Phase 8.3: advance the smart-zoom transform for this frame. The cursor
       // (8.2) is drawn UNDER the same transform, so the cursor and the magnified
-      // video share one coordinate space.
+      // video share one coordinate space. `frame_ms` (source time) is computed
+      // early, above the clip gate.
       ZoomExportController::Frame zf;
       if (zoom_controller != nullptr) {
+        // Editing port (clips, D4): the exponential smoother must ease in
+        // EDITED time (viewer time). Under a cut the SOURCE dt spikes across the
+        // gap and would snap the zoom, so feed the edited dt; `frame_ms` stays
+        // SOURCE for segment lookup (auto-zoom segments are source-click-keyed).
         const double dt_seconds =
-            prev_frame_hns >= 0
-                ? static_cast<double>(timestamp - prev_frame_hns) / 10'000'000.0
-                : 1.0 / static_cast<double>(
-                            request.fps_hint != 0 ? request.fps_hint : 30u);
+            clipping
+                ? (prev_edited_ms >= 0
+                       ? static_cast<double>(*edited - prev_edited_ms) / 1000.0
+                       : 1.0 / static_cast<double>(fps_fallback))
+                : (prev_frame_hns >= 0
+                       ? static_cast<double>(timestamp - prev_frame_hns) /
+                             10'000'000.0
+                       : 1.0 / static_cast<double>(fps_fallback));
         zf = zoom_controller->Advance(frame_ms, dt_seconds);
       }
       prev_frame_hns = timestamp;
+      if (clipping) {
+        prev_edited_ms = *edited;
+      }
       const bool zooming = zf.active && zf.zoom > 1.0;
 
       // The content pass — video + cursor + click ripples under the shared
@@ -1024,18 +1070,22 @@ RenderResult RenderComposedExport(const RenderRequest& request) {
       // clip/layer popped), so it sits on top of the screen + cursor + clicks
       // and is NOT magnified by smart zoom. Its own mask clips the bubble.
       if (camera_renderer != nullptr) {
-        // The animation timeline must share frame_ms's time base (rebased to
-        // the first video PTS). Raw MF_PD_DURATION keeps the container's PTS
-        // base, so passing it unrebased would put the outro window past the
-        // last reachable frame_ms and the outro would never finish. (An audio
-        // tail outlasting the video still inflates the duration by that tail
-        // — unknowable in a single pass — but recorder tails are well under
-        // one outro, so the outro now completes to within that sliver.)
+        // The animation clock must share the same time base as the clip it
+        // animates over. Under clips (D4, §5.5) the intro/outro run in EDITED
+        // time (the trimmed length = edited_total_ms) at the frame's edited
+        // position — the camera's VIDEO frame was already advanced in SOURCE
+        // time above, so the two time bases are deliberately split. Without
+        // clips: frame_ms + the rebased source duration (raw MF_PD_DURATION
+        // keeps the container's PTS base, so passing it unrebased would put the
+        // outro window past the last reachable frame_ms and it would never
+        // finish; recorder audio tails are well under one outro).
+        const std::int64_t camera_clock_ms = clipping ? *edited : frame_ms;
         const std::int64_t camera_total_ms =
-            duration_hns > first_video_hns
-                ? (duration_hns - first_video_hns) / 10000
-                : 0;
-        camera_renderer->Draw(d2d_ctx.Get(), frame_ms, camera_total_ms);
+            clipping ? edited_total_ms
+                     : (duration_hns > first_video_hns
+                            ? (duration_hns - first_video_hns) / 10000
+                            : 0);
+        camera_renderer->Draw(d2d_ctx.Get(), camera_clock_ms, camera_total_ms);
       }
       const HRESULT end_hr = d2d_ctx->EndDraw();
       d2d_ctx->SetTarget(nullptr);
@@ -1051,7 +1101,14 @@ RenderResult RenderComposedExport(const RenderRequest& request) {
       frame.texture = out_texture;
       frame.width = canvas.width;
       frame.height = canvas.height;
-      frame.timestamp_hns = timestamp;
+      // Editing port (clips, 3a): re-stamp onto the compacted edited timeline.
+      // The encoder rebases video by this first written frame's PTS, so the
+      // whole edited timeline is anchored here; audio is shifted to the same
+      // origin below (T2). Without clips: the raw source PTS, unchanged.
+      frame.timestamp_hns = clipping ? (*edited * 10000) : timestamp;
+      if (clipping && origin_edited_hns < 0) {
+        origin_edited_hns = *edited * 10000;
+      }
       if (auto err = write_video_frame(frame)) {
         cancel_encoder();
         return Failure(request.destination_path,
@@ -1060,6 +1117,26 @@ RenderResult RenderComposedExport(const RenderRequest& request) {
                        IsDiskFullHresult(err->hr));
       }
       ++video_frames;
+      // A/V origin alignment (T2): now that the first kept video frame has
+      // anchored the timeline, flush any audio buffered before it — subtracting
+      // the common origin so it lands on the same zero as the video (the
+      // encoder does NOT rebase audio, so we do it here).
+      if (clipping && origin_edited_hns >= 0 && !pending_audio.empty()) {
+        for (auto& buffered : pending_audio) {
+          buffered.timestamp_hns = std::max<std::int64_t>(
+              0, buffered.timestamp_hns - origin_edited_hns);
+          if (auto err = encoder.WriteAudioPacket(buffered)) {
+            cancel_encoder();
+            return Failure(request.destination_path,
+                           "export: encoder WriteAudioPacket (clip flush) "
+                           "failed — " +
+                               err->message,
+                           IsDiskFullHresult(err->hr));
+          }
+          ++audio_packets;
+        }
+        pending_audio.clear();
+      }
       if (gif) {
         gif_emit_target_hns = AdvanceGifEmitTarget(gif_emit_target_hns, timestamp);
       }
@@ -1088,14 +1165,52 @@ RenderResult RenderComposedExport(const RenderRequest& request) {
           // values only — never frame_count or timestamp, so A/V sync holds.
           ApplyAudioGain(packet.samples.data(), packet.samples.size(),
                          audio_stages);
-          if (auto err = encoder.WriteAudioPacket(packet)) {
-            cancel_encoder();
-            return Failure(request.destination_path,
-                           "export: encoder WriteAudioPacket failed — " +
-                               err->message,
-                           IsDiskFullHresult(err->hr));
+          if (!clipping) {
+            // No clips: carry the packet through at its source PTS (unchanged).
+            if (auto err = encoder.WriteAudioPacket(packet)) {
+              cancel_encoder();
+              return Failure(request.destination_path,
+                             "export: encoder WriteAudioPacket failed — " +
+                                 err->message,
+                             IsDiskFullHresult(err->hr));
+            }
+            ++audio_packets;
+          } else if (first_video_hns < 0) {
+            // Audio ahead of the first decoded video frame: no timeline anchor
+            // yet, and under a head-trim it precedes the kept range. Drop it
+            // (fixes outside-voice #2 — never key audio off an unset anchor).
+          } else {
+            // Editing port (clips, 3a): keep/drop this packet against the edited
+            // timeline by its START (packet-granular; ~≤21 ms of cut-adjacent
+            // audio may leak at a seam — sample-accurate AudioSlots lands in
+            // 3b). Kept packets re-stamp onto the edited timeline; align to the
+            // shared origin (T2), buffering until the first kept video frame
+            // anchors it.
+            const std::int64_t a_src_ms =
+                (timestamp - first_video_hns) / 10000;
+            const auto a_edited = clip_planner::EditedMsForKeptSourceMs(
+                a_src_ms, request.clip_ranges);
+            if (a_edited.has_value()) {
+              packet.timestamp_hns = *a_edited * 10000;  // absolute edited
+              if (origin_edited_hns < 0) {
+                // Timeline not yet anchored (first kept video not written):
+                // buffer; flushed + origin-subtracted on that write.
+                pending_audio.push_back(std::move(packet));
+              } else {
+                packet.timestamp_hns = std::max<std::int64_t>(
+                    0, packet.timestamp_hns - origin_edited_hns);
+                if (auto err = encoder.WriteAudioPacket(packet)) {
+                  cancel_encoder();
+                  return Failure(request.destination_path,
+                                 "export: encoder WriteAudioPacket failed — " +
+                                     err->message,
+                                 IsDiskFullHresult(err->hr));
+                }
+                ++audio_packets;
+              }
+            }
+            // a_edited == nullopt => audio in a cut gap: drop.
           }
-          ++audio_packets;
         } else if (data != nullptr) {
           audio_buffer->Unlock();
         }
