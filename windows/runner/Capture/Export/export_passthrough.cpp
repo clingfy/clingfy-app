@@ -323,14 +323,44 @@ PassthroughResult ExportPassthroughCopy(
   // H.264 Sink Writer. Padding / corner radius / gain / volume / normalize each
   // force it too; a background color alone stays on the fast-path (invisible
   // without margins). The audio + format identity defaults keep the copy alive.
+  // Editing port (clips, interim guard): REFUSE exports carrying real clip
+  // edits until the clip export bake (step 3) lands. Neither path can honor
+  // them today — the byte-copy ships the uncut source (cut-out content the
+  // user removed, possibly deliberately, would ship anyway) and the
+  // composition path would render every frame including the cut ranges. A
+  // split with nothing deleted coalesces back to one contiguous window
+  // starting at source 0 and is NOT an edit. (A pure tail-trim is
+  // indistinguishable from the full range without the asset duration —
+  // known limitation, resolved by step 3.)
+  {
+    const auto coalesced = clip_planner::Coalesce(input.clip_ranges);
+    const bool has_real_edits =
+        coalesced.size() > 1 ||
+        (coalesced.size() == 1 && coalesced[0].source_in_ms > 0);
+    if (has_real_edits) {
+      out.error = PassthroughError::kUnsupportedClipEdits;
+      out.message =
+          "exportVideo: this project contains clip edits (cuts or a "
+          "reordered timeline). Exporting clip edits isn't supported on "
+          "Windows yet — export from macOS, or remove the clip edits and "
+          "try again.";
+      return out;
+    }
+  }
+
   const bool wants_non_mov_container =
       ResolveExportExtension(input.format) != ".mov";
+  // Editing port (color): a non-identity grade must force the composition
+  // path — the byte-copy would silently ship an UNGRADED file while
+  // reporting success (the classic passthrough landmine).
+  const bool wants_color_grade = !input.color_grade.IsIdentity();
   const bool needs_composition =
       !IsIdentityTransform(input.layout, input.resolution) ||
       input.padding > 0.0 || input.corner_radius > 0.0 ||
       RequiresAudioProcessing(input.audio_gain_db, input.audio_volume_percent,
                               input.auto_normalize) ||
-      wants_non_mov_container || wants_sidecar || wants_camera;
+      wants_non_mov_container || wants_sidecar || wants_camera ||
+      wants_color_grade;
 
   // Phase 10.4 disk-full preflight: estimate the bytes the export needs at
   // the destination (source size + headroom for the chosen path) and compare
@@ -426,6 +456,9 @@ PassthroughResult ExportPassthroughCopy(
     render.padding = input.padding;
     render.corner_radius = input.corner_radius;
     render.background_color = input.background_color;
+    // Editing port (color): bake the grade into the composite (identity is a
+    // no-op inside the pipeline).
+    render.color_grade = input.color_grade;
     render.audio_gain_db = input.audio_gain_db;
     render.audio_volume_percent = input.audio_volume_percent;
     render.auto_normalize = input.auto_normalize;

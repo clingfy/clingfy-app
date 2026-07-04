@@ -8689,3 +8689,218 @@ final class NativeLoggerTests: XCTestCase {
     XCTAssertTrue(NativeLogger.shouldSend(level: "BOGUS"))
   }
 }
+
+// MARK: - Color-grade golden fixture dump (editing port, Windows step 2)
+
+/// NOT a behavior test: this renders `ColorGradeRenderer.apply` over a fixed
+/// palette × grade grid and writes the results to
+/// `windows/runner_tests/fixtures/color_grade_golden.json`.
+///
+/// The Windows port reimplements the grade as a linear-space color matrix and
+/// asserts against this fixture (~1e-3 tolerance). Apple does not document the
+/// internals of `CIColorControls` / `CITemperatureAndTint` (contrast pivot,
+/// saturation luma weights, CCT→chromaticity method), so hand-derived
+/// "analytic" vectors would be self-referential — the only honest parity
+/// target is the real renderer's output. See
+/// docs/windows-port-editing-features.md §6 step 2.
+///
+/// Deterministic by construction (fixed palette, fixed grades, sorted JSON
+/// keys, 6-decimal rounding): re-running rewrites byte-identical content, so
+/// it is safe inside full-suite runs. Regenerate whenever ColorGradeRenderer
+/// changes, in the same PR.
+///
+/// Run on the Mac:
+///   cd macos && export APP_ENV=dev
+///   xcodebuild test -workspace Runner.xcworkspace -scheme dev \
+///     -configuration Debug-dev -destination 'platform=macOS' \
+///     -only-testing:RunnerTests/ColorGradeGoldenDumpTests
+/// then commit the regenerated fixture JSON.
+final class ColorGradeGoldenDumpTests: XCTestCase {
+
+  /// sRGB-encoded input palette. 5-step RGB lattice (125) plus a dark ramp —
+  /// the shadows are where linearization/precision bugs (8bpc banding) show
+  /// first, so they get extra samples.
+  private static let palette: [[Double]] = {
+    var colors: [[Double]] = []
+    let steps: [Double] = [0.0, 0.25, 0.5, 0.75, 1.0]
+    for r in steps {
+      for g in steps {
+        for b in steps {
+          colors.append([r, g, b])
+        }
+      }
+    }
+    // Dark grays + dark primaries (banding-sensitive region).
+    for v in [0.01, 0.02, 0.04, 0.08] {
+      colors.append([v, v, v])
+      colors.append([v, 0, 0])
+      colors.append([0, v, 0])
+      colors.append([0, 0, v])
+    }
+    return colors
+  }()
+
+  /// Grade grid: each axis swept alone at ±1 and ±0.5, plus composites that
+  /// exercise filter-chain ordering. Identity is omitted (trivial passthrough
+  /// on both platforms).
+  private static let grades: [[String: Double]] = {
+    var out: [[String: Double]] = []
+    let axes = ["exposure", "contrast", "saturation", "temperature", "tint"]
+    for axis in axes {
+      for value in [-1.0, -0.5, 0.5, 1.0] {
+        out.append([axis: value])
+      }
+    }
+    // Auto-enhance at full intensity (the one-tap path's exact values).
+    out.append(["exposure": 0.04, "contrast": 0.12, "saturation": 0.10])
+    // Mixed composites — chain order matters only when legs combine.
+    out.append([
+      "exposure": 0.5, "contrast": 0.5, "saturation": 0.5,
+      "temperature": 0.5, "tint": 0.5,
+    ])
+    out.append([
+      "exposure": -0.5, "contrast": -0.5, "saturation": -0.5,
+      "temperature": -0.5, "tint": -0.5,
+    ])
+    out.append([
+      "exposure": 0.3, "contrast": -0.2, "saturation": 0.4,
+      "temperature": -0.6, "tint": 0.8,
+    ])
+    out.append([
+      "exposure": 1.0, "contrast": 1.0, "saturation": 1.0,
+      "temperature": 1.0, "tint": 1.0,
+    ])
+    out.append([
+      "exposure": -1.0, "contrast": -1.0, "saturation": -1.0,
+      "temperature": -1.0, "tint": -1.0,
+    ])
+    return out
+  }()
+
+  func testDumpGoldenFixture() throws {
+    let palette = Self.palette
+    let srgb = try XCTUnwrap(CGColorSpace(name: CGColorSpace.sRGB))
+
+    // One Nx1 float strip holding the whole palette: a single render per
+    // grade, and float inputs avoid 8-bit quantization on the way in.
+    var inputPixels = [Float](repeating: 1.0, count: palette.count * 4)
+    for (i, rgb) in palette.enumerated() {
+      inputPixels[i * 4 + 0] = Float(rgb[0])
+      inputPixels[i * 4 + 1] = Float(rgb[1])
+      inputPixels[i * 4 + 2] = Float(rgb[2])
+      inputPixels[i * 4 + 3] = 1.0
+    }
+    let rowBytes = palette.count * 4 * MemoryLayout<Float>.size
+    let inputData = inputPixels.withUnsafeBufferPointer { Data(buffer: $0) }
+    let inputImage = CIImage(
+      bitmapData: inputData,
+      bytesPerRow: rowBytes,
+      size: CGSize(width: palette.count, height: 1),
+      format: .RGBAf,
+      colorSpace: srgb)
+
+    let context = CIContext()
+
+    var cases: [[String: Any]] = []
+    for gradeSpec in Self.grades {
+      let grade = ColorGrade(
+        autoEnabled: false,
+        exposure: gradeSpec["exposure"] ?? 0,
+        contrast: gradeSpec["contrast"] ?? 0,
+        saturation: gradeSpec["saturation"] ?? 0,
+        temperature: gradeSpec["temperature"] ?? 0,
+        tint: gradeSpec["tint"] ?? 0)
+
+      let graded = ColorGradeRenderer.apply(inputImage, grade: grade)
+
+      var outPixels = [Float](repeating: 0, count: palette.count * 4)
+      outPixels.withUnsafeMutableBufferPointer { buffer in
+        context.render(
+          graded,
+          toBitmap: buffer.baseAddress!,
+          rowBytes: rowBytes,
+          bounds: CGRect(x: 0, y: 0, width: palette.count, height: 1),
+          format: .RGBAf,
+          colorSpace: srgb)
+      }
+
+      var outputs: [[Double]] = []
+      for i in 0..<palette.count {
+        outputs.append([
+          Self.round6(Double(outPixels[i * 4 + 0])),
+          Self.round6(Double(outPixels[i * 4 + 1])),
+          Self.round6(Double(outPixels[i * 4 + 2])),
+        ])
+      }
+
+      // Full grade spec (zeros included) so the fixture is self-describing.
+      let gradeJson: [String: Double] = [
+        "exposure": gradeSpec["exposure"] ?? 0,
+        "contrast": gradeSpec["contrast"] ?? 0,
+        "saturation": gradeSpec["saturation"] ?? 0,
+        "temperature": gradeSpec["temperature"] ?? 0,
+        "tint": gradeSpec["tint"] ?? 0,
+      ]
+      cases.append(["grade": gradeJson, "outputs": outputs])
+    }
+
+    let fixture: [String: Any] = [
+      "version": 1,
+      "colorSpace":
+        "sRGB (inputs and outputs sRGB-encoded floats; CI default working space)",
+      "generator": "macos/RunnerTests ColorGradeGoldenDumpTests",
+      "inputs": palette.map {
+        [Self.round6($0[0]), Self.round6($0[1]), Self.round6($0[2])]
+      },
+      "cases": cases,
+    ]
+
+    let json = try JSONSerialization.data(
+      withJSONObject: fixture, options: [.sortedKeys, .prettyPrinted])
+
+    // #filePath = <repo>/macos/RunnerTests/RunnerTests.swift → repo root is
+    // three components up from the file.
+    let repoRoot = URL(fileURLWithPath: #filePath)
+      .deletingLastPathComponent()  // RunnerTests/
+      .deletingLastPathComponent()  // macos/
+      .deletingLastPathComponent()  // repo root
+    let fixtureDir =
+      repoRoot
+      .appendingPathComponent("windows")
+      .appendingPathComponent("runner_tests")
+      .appendingPathComponent("fixtures")
+    try FileManager.default.createDirectory(
+      at: fixtureDir, withIntermediateDirectories: true)
+    let fixtureUrl = fixtureDir.appendingPathComponent("color_grade_golden.json")
+    try json.write(to: fixtureUrl)
+
+    // Sanity: the grade grid must actually change pixels — catches a silently
+    // broken renderer producing an all-passthrough dump.
+    let saturationMinusOne = cases.first { c in
+      (c["grade"] as? [String: Double])?["saturation"] == -1.0
+        && (c["grade"] as? [String: Double])?["exposure"] == 0
+    }
+    let redIndex = palette.firstIndex(of: [1.0, 0.0, 0.0])
+    if let c = saturationMinusOne, let idx = redIndex,
+      let outs = c["outputs"] as? [[Double]]
+    {
+      let out = outs[idx]
+      XCTAssertEqual(
+        out[0], out[1], accuracy: 0.02,
+        "saturation -1 must desaturate pure red toward gray")
+      XCTAssertEqual(
+        out[1], out[2], accuracy: 0.02,
+        "saturation -1 must desaturate pure red toward gray")
+    } else {
+      XCTFail("fixture missing the saturation=-1 case or the red palette entry")
+    }
+
+    print(
+      "ColorGradeGoldenDump: wrote \(cases.count) cases × \(palette.count) colors to \(fixtureUrl.path)"
+    )
+  }
+
+  private static func round6(_ v: Double) -> Double {
+    (v * 1_000_000).rounded() / 1_000_000
+  }
+}

@@ -44,6 +44,10 @@
 #include <functional>
 #include <optional>
 #include <string>
+#include <vector>
+
+#include "Capture/Export/clip_playback_planner.h"
+#include "Capture/Export/color_grade.h"
 
 namespace clingfy::capture::export_ {
 
@@ -159,6 +163,25 @@ struct PassthroughInput {
   std::string camera_outro_preset;
   int camera_intro_duration_ms = 0;
   int camera_outro_duration_ms = 0;
+
+  // Editing port (color): the `colorGrade` map from the `exportVideo` args,
+  // parsed by Bridge/Routers/color_grade_args. A non-identity grade forces
+  // the composition path (a byte-copy cannot bake color) and is threaded
+  // through to the pipeline's per-frame color pass.
+  color::ColorGrade color_grade;
+
+  // Editing port (clips, interim guard): the kept ranges parsed from the
+  // `clips` export arg (enabled clips with a positive source window, in
+  // timeline order — the Dart `Clip.toMap()` list filtered exactly like the
+  // macOS `ClipKeptRange.fromFlutter`). Exports with REAL clip edits are
+  // REFUSED (kUnsupportedClipEdits) until the clip export bake (step 3)
+  // lands: silently byte-copying the uncut source would ship content the
+  // user cut out. A list that coalesces back to one full-range window (a
+  // split with nothing deleted, starting at source 0) is NOT an edit and
+  // stays exportable. Known limitation until step 3: a pure tail-trim (one
+  // range starting at 0) is indistinguishable from the full range without
+  // the asset duration and is allowed through.
+  std::vector<clip_planner::ClipKeptRange> clip_ranges;
 };
 
 // Phase 9.4 — pure decision: should the export composite the camera bubble?
@@ -185,6 +208,12 @@ enum class PassthroughError {
   // unsupported media type, encoder/Direct2D error). Maps to
   // EXPORT_ERROR. Carries the underlying detail in `message`.
   kRenderFailed,
+  // Editing port (clips, interim guard): the project carries real clip edits
+  // (cuts / trims / reorder) and the Windows export cannot bake them yet —
+  // refused so the uncut source can never silently ship. Maps to
+  // EXPORT_ERROR with an explanatory message until the clip export bake
+  // (step 3) replaces this guard.
+  kUnsupportedClipEdits,
   // Phase 10.4: the destination volume cannot hold the export — either the
   // preflight estimate did not fit (required/available byte counts populated
   // on the result) or a mid-write failure carried a disk-full HRESULT /

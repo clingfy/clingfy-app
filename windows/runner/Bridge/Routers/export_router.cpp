@@ -12,6 +12,8 @@
 #include <thread>
 #include <utility>
 
+#include "Bridge/Routers/clip_args.h"
+#include "Bridge/Routers/color_grade_args.h"
 #include "Bridge/export_progress_publisher.h"
 #include "Bridge/native_error_codes.h"
 #include "Bridge/native_log_publisher.h"
@@ -322,6 +324,14 @@ void HandleExportVideo(
         input.camera_center_y = ReadDouble(*center, "y", 0.0);
       }
     }
+    // Editing port: the nested `colorGrade` map and the `clips` list, each
+    // parsed by the shared helper both routers use (one wire shape, one
+    // parser — the camera-parsing duplication hid a bug once). Absent /
+    // malformed → identity / empty, which keeps the byte-copy fast-path
+    // alive; the passthrough layer refuses exports whose clip ranges carry
+    // real edits (step-3 interim guard).
+    input.color_grade = clingfy::bridge::ReadColorGradeArg(*args);
+    input.clip_ranges = clingfy::bridge::ReadClipRangesArg(*args);
   }
 
   // Defensive: refuse a second concurrent export (Dart's _isExporting guards
@@ -561,6 +571,15 @@ void ReplyForExportOutcome(
       return;
     case PassthroughError::kCopyFailed:
     case PassthroughError::kRenderFailed:
+      log_failure(error::kExportError, outcome.message);
+      result.Error(error::kExportError, outcome.message,
+                   flutter::EncodableValue(project_path));
+      return;
+    case PassthroughError::kUnsupportedClipEdits:
+      // Editing port (clips, interim guard): refused BY DESIGN — exporting
+      // would silently ship the uncut source. Surfaces the explanatory
+      // message through the standard export-error channel; step 3 (clip
+      // export bake) removes this case.
       log_failure(error::kExportError, outcome.message);
       result.Error(error::kExportError, outcome.message,
                    flutter::EncodableValue(project_path));

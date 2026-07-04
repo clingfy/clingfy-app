@@ -601,7 +601,12 @@ void RegisterHandlers(HandlerTable& table) {
   table["previewSetCameraPlacement"] = &HandlePreviewSetCameraPlacement;
   table["previewSetZoomSegments"] = &HandleNoopSetter;
   // Color grade: macOS renders it live; Windows accepts + ignores it for now
-  // (capability-gated at the Dart/model layer) so the contract stays in sync.
+  // so the contract stays in sync. NOTE: there is NO Dart-side capability
+  // gate — the sliders are live and their values persist + bake into the
+  // EXPORT (PR-2a) — so until the preview pass lands (editing port step 2,
+  // PR-2b: same D2D color chain in preview_compositor) the preview will not
+  // reflect a grade the export applies. PR-2a and PR-2b ship in the same
+  // release for exactly this reason.
   table["previewSetColorGrade"] = &HandleNoopSetter;
   // Clip split/cut/trim/arrange: macOS skips cut regions live; Windows accepts
   // + ignores the clip list for now so the bridge contract stays in sync.

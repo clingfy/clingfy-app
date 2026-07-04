@@ -1617,5 +1617,177 @@ TEST(ExportPipelineTest, RenderFailureRemovesPartialDestination) {
   fs::remove_all(dir, ec);
 }
 
+// ---- Editing port (color): the export bakes the grade -----------------------
+
+// H.264 tolerance for graded-pixel comparisons: the synthesized source is
+// itself H.264 (lossy once), the export re-encodes (lossy twice), and the
+// color pass adds float→8bpc rounding. 18/255 absorbs all three while still
+// failing loudly on a missing/misapplied grade (which moves channels by 50+).
+constexpr int kGradedPixelTolerance = 18;
+
+TEST(ExportPipelineTest, BakesSaturationGradeIntoExportedPixels) {
+  // saturation -1 fully desaturates: the blue-ish source (0x3366CC) must come
+  // out GRAY at the center — R≈G≈B. Before this slice the grade was silently
+  // ignored, so the blue signature (B beats R by 100+) is the regression
+  // fingerprint this test kills.
+  clingfy::graphics::D3DDevice device;
+  if (device.Create()) {
+    GTEST_SKIP() << "no usable D3D11 device in this environment";
+  }
+  const auto dir = UniqueDir("grade-sat");
+  const auto source = (dir / "source.mov").u8string();
+  const auto dest = (dir / "out.mov").u8string();
+
+  std::string skip_reason;
+  if (!SynthesizeSource(&device, source, /*with_audio=*/false, &skip_reason)) {
+    GTEST_SKIP() << skip_reason;
+  }
+
+  RenderRequest request;
+  request.source_video_path = fs::u8path(source).wstring();
+  request.destination_path = dest;
+  request.layout = "auto";
+  request.resolution = "auto";
+  request.fit = "fit";
+  request.fps_hint = kFps;
+  request.color_grade.saturation = -1.0;
+
+  const RenderResult result = RenderComposedExport(request);
+  ASSERT_TRUE(result.ok) << result.message;
+  EXPECT_GT(result.video_frames_written, 0u);
+
+  UINT w = 0;
+  UINT h = 0;
+  std::vector<std::uint32_t> pixels;
+  if (!ReadFirstFrameBgra(fs::u8path(dest).wstring(), &w, &h, &pixels)) {
+    GTEST_SKIP() << "could not decode the exported frame for pixel readback";
+  }
+  const auto chan = [](std::uint32_t px, int shift) {
+    return static_cast<int>((px >> shift) & 0xFFu);
+  };
+  const std::uint32_t center = pixels[(h / 2) * w + (w / 2)];
+  const int r = chan(center, 16);
+  const int g = chan(center, 8);
+  const int b = chan(center, 0);
+  EXPECT_LT(std::abs(r - b), 30)
+      << "saturation -1 must desaturate the blue source to gray; got r=" << r
+      << " g=" << g << " b=" << b << " (grade ignored by the export?)";
+  EXPECT_LT(std::abs(r - g), 30)
+      << "saturation -1 must desaturate to gray; got r=" << r << " g=" << g
+      << " b=" << b;
+
+  std::error_code ec;
+  fs::remove_all(dir, ec);
+}
+
+TEST(ExportPipelineTest, GradedPixelsMatchCpuPrediction) {
+  // End-to-end validation of the whole D2D color chain (piecewise sRGB
+  // linearization → 5x4 matrix at 16bpc float → re-encode) against the pure
+  // CPU reference in color_grade.h. A missing linearization, an 8bpc
+  // intermediate crushing values, or a transposed matrix each push the
+  // channels well past the H.264 tolerance. Uses a composite grade so every
+  // leg of the chain participates.
+  clingfy::graphics::D3DDevice device;
+  if (device.Create()) {
+    GTEST_SKIP() << "no usable D3D11 device in this environment";
+  }
+  const auto dir = UniqueDir("grade-cpu");
+  const auto source = (dir / "source.mov").u8string();
+  const auto dest = (dir / "out.mov").u8string();
+
+  std::string skip_reason;
+  if (!SynthesizeSource(&device, source, /*with_audio=*/false, &skip_reason)) {
+    GTEST_SKIP() << skip_reason;
+  }
+
+  RenderRequest request;
+  request.source_video_path = fs::u8path(source).wstring();
+  request.destination_path = dest;
+  request.layout = "auto";
+  request.resolution = "auto";
+  request.fit = "fit";
+  request.fps_hint = kFps;
+  request.color_grade.exposure = -0.5;  // darkens — the banding-risk region
+  request.color_grade.saturation = 0.5;
+  request.color_grade.contrast = 0.25;
+
+  const RenderResult result = RenderComposedExport(request);
+  ASSERT_TRUE(result.ok) << result.message;
+
+  UINT w = 0;
+  UINT h = 0;
+  std::vector<std::uint32_t> pixels;
+  if (!ReadFirstFrameBgra(fs::u8path(dest).wstring(), &w, &h, &pixels)) {
+    GTEST_SKIP() << "could not decode the exported frame for pixel readback";
+  }
+
+  // CPU reference on the nominal source color (0x3366CC). The source's own
+  // H.264 pass may already have shifted it a few counts; kGradedPixelTolerance
+  // absorbs that. The prediction clamps to the displayable [0,255] range:
+  // this composite grade drives red to a deep-negative linear value, and the
+  // real 8-bit pipeline (D2D and macOS alike) floors it at 0 — the unclamped
+  // mirrored-curve value only exists in the math helpers.
+  const color::ColorMatrix matrix =
+      color::BuildColorMatrix(request.color_grade);
+  const auto graded = matrix.Apply(color::SrgbToLinear(0x33 / 255.0),
+                                   color::SrgbToLinear(0x66 / 255.0),
+                                   color::SrgbToLinear(0xCC / 255.0));
+  const auto encode8 = [](double linear) {
+    const double srgb = color::LinearToSrgb(linear);
+    return static_cast<int>(
+        std::lround(std::clamp(srgb, 0.0, 1.0) * 255.0));
+  };
+  const int expect_r = encode8(graded[0]);
+  const int expect_g = encode8(graded[1]);
+  const int expect_b = encode8(graded[2]);
+
+  const auto chan = [](std::uint32_t px, int shift) {
+    return static_cast<int>((px >> shift) & 0xFFu);
+  };
+  const std::uint32_t center = pixels[(h / 2) * w + (w / 2)];
+  EXPECT_NEAR(chan(center, 16), expect_r, kGradedPixelTolerance)
+      << "red channel diverges from the CPU reference — linearization, "
+         "precision, or matrix bug in the D2D chain";
+  EXPECT_NEAR(chan(center, 8), expect_g, kGradedPixelTolerance);
+  EXPECT_NEAR(chan(center, 0), expect_b, kGradedPixelTolerance);
+
+  std::error_code ec;
+  fs::remove_all(dir, ec);
+}
+
+TEST(ExportPipelineTest, ColorGradePixelPathCanary) {
+  // The graded-pixel tests above GTEST_SKIP when the environment lacks a D3D
+  // device or H.264 decode — correct for arbitrary machines, but on the
+  // known-good dev/CI box a skip would silently erase ALL enforced coverage
+  // of the D2D color chain while reading green. Set
+  // CLINGFY_REQUIRE_PIXEL_TESTS=1 in the environment that is known to
+  // support decode (the Windows dev box / CI) to turn those skips into this
+  // hard failure.
+  char* required = nullptr;
+  size_t len = 0;
+  _dupenv_s(&required, &len, "CLINGFY_REQUIRE_PIXEL_TESTS");
+  const bool require = required != nullptr && std::string(required) == "1";
+  free(required);
+  if (!require) {
+    GTEST_SKIP() << "canary disarmed (set CLINGFY_REQUIRE_PIXEL_TESTS=1 on "
+                    "the known-good environment)";
+  }
+
+  clingfy::graphics::D3DDevice device;
+  ASSERT_FALSE(device.Create())
+      << "CANARY: no D3D11 device on an environment that promises one — the "
+         "graded-pixel tests are all silently skipping";
+  const auto dir = UniqueDir("grade-canary");
+  const auto source = (dir / "source.mov").u8string();
+  std::string skip_reason;
+  ASSERT_TRUE(
+      SynthesizeSource(&device, source, /*with_audio=*/false, &skip_reason))
+      << "CANARY: H.264 synth/decode unavailable on an environment that "
+         "promises it — the graded-pixel tests are all silently skipping: "
+      << skip_reason;
+  std::error_code ec;
+  fs::remove_all(dir, ec);
+}
+
 }  // namespace
 }  // namespace clingfy::capture::export_

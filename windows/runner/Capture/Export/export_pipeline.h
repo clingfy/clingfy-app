@@ -37,6 +37,8 @@
 #include <optional>
 #include <string>
 
+#include "Capture/Export/color_grade.h"
+
 namespace clingfy::capture::export_ {
 
 // Everything the pipeline needs to render one export. The caller
@@ -46,6 +48,14 @@ namespace clingfy::capture::export_ {
 struct RenderRequest {
   // Absolute path to the recorded source video (`capture/screen.mov`).
   std::wstring source_video_path;
+
+  // Editing port (color): the grade baked into the export. Identity (the
+  // default) keeps the composite byte-identical to before. Applied to the
+  // screen video + cursor + click ripples — NOT the background or the camera
+  // bubble — matching the macOS precomposited-canvas order (cursor/clicks
+  // bake into the intermediate BEFORE the grade; the camera drafts on top
+  // after).
+  color::ColorGrade color_grade;
 
   // Absolute UTF-8 destination path (extension already resolved — .mov / .mp4 /
   // .gif — and collision-avoided by `ResolveExportDestination`). The pipeline

@@ -512,5 +512,158 @@ TEST(ExportPassthroughCopyTest, RenderFailureLeavesNoFileAtDestination) {
   fs::remove_all(project.parent_path(), rm_ec);
 }
 
+// ---- Editing port (color): the passthrough disqualifier ---------------------
+//
+// CRITICAL regression-class guard: before this slice, a graded .mov export
+// byte-copied the UNGRADED source and reported success. A non-identity grade
+// must force the composition path; the identity grade (and the auto flag
+// alone) must keep the fast-path byte-copy alive.
+
+TEST(ExportPassthroughCopyTest, NonIdentityColorGradeForcesReencode) {
+  // mov + auto/auto + no styling: ONLY the grade forces composition. With a
+  // non-decodable source the composition path fails (kRenderFailed), which is
+  // the GPU-independent proof the byte-copy was NOT taken.
+  const auto project = StageProject("export-test-grade", "NOT_A_REAL_VIDEO");
+  const auto dest_dir = project.parent_path() / "out";
+  fs::create_directories(dest_dir);
+
+  PassthroughInput input;
+  input.project_path = project.u8string();
+  input.directory_override = dest_dir.u8string();
+  input.filename = "GradedExport";
+  input.format = "mov";
+  input.color_grade.saturation = -1.0;
+
+  const auto outcome = ExportPassthroughCopy(input);
+  EXPECT_EQ(outcome.error, PassthroughError::kRenderFailed) << outcome.message;
+
+  std::error_code rm_ec;
+  fs::remove_all(project.parent_path(), rm_ec);
+}
+
+TEST(ExportPassthroughCopyTest, IdentityColorGradeKeepsByteCopy) {
+  const auto project = StageProject("export-test-grade-id", "MOCK_VIDEO_BYTES");
+  const auto dest_dir = project.parent_path() / "out";
+  fs::create_directories(dest_dir);
+
+  PassthroughInput input;
+  input.project_path = project.u8string();
+  input.directory_override = dest_dir.u8string();
+  input.filename = "UngradedExport";
+  input.format = "mov";
+  input.color_grade = {};  // explicit identity
+
+  const auto outcome = ExportPassthroughCopy(input);
+  ASSERT_EQ(outcome.error, PassthroughError::kNone) << outcome.message;
+  EXPECT_TRUE(fs::exists(fs::u8path(outcome.output_path)));
+
+  std::error_code rm_ec;
+  fs::remove_all(project.parent_path(), rm_ec);
+}
+
+TEST(ExportPassthroughCopyTest, AutoFlagWithZeroValuesKeepsByteCopy) {
+  // The Swift-parity trap: autoEnabled=true with all-zero numbers is an
+  // IDENTITY grade (numbers-only IsIdentity) and must NOT force a re-encode.
+  const auto project =
+      StageProject("export-test-grade-auto", "MOCK_VIDEO_BYTES");
+  const auto dest_dir = project.parent_path() / "out";
+  fs::create_directories(dest_dir);
+
+  PassthroughInput input;
+  input.project_path = project.u8string();
+  input.directory_override = dest_dir.u8string();
+  input.filename = "AutoZeroExport";
+  input.format = "mov";
+  input.color_grade.auto_enabled = true;  // all numeric fields stay 0
+
+  const auto outcome = ExportPassthroughCopy(input);
+  ASSERT_EQ(outcome.error, PassthroughError::kNone) << outcome.message;
+
+  std::error_code rm_ec;
+  fs::remove_all(project.parent_path(), rm_ec);
+}
+
+// ---- Editing port (clips): the interim refuse guard --------------------------
+//
+// Until the clip export bake (step 3) lands, an export carrying REAL clip
+// edits must be refused: the byte-copy would ship the uncut source (content
+// the user cut out — possibly deliberately — would ship anyway), and the
+// composition path would render every frame including the cut ranges.
+
+TEST(ExportPassthroughCopyTest, ClipCutsAreRefused) {
+  const auto project = StageProject("export-test-clips", "MOCK_VIDEO_BYTES");
+  const auto dest_dir = project.parent_path() / "out";
+  fs::create_directories(dest_dir);
+
+  PassthroughInput input;
+  input.project_path = project.u8string();
+  input.directory_override = dest_dir.u8string();
+  input.filename = "CutExport";
+  input.format = "mov";
+  // A real cut: [0,4000] + [6000,10000] (the 4000-6000 gap was removed).
+  input.clip_ranges = {clip_planner::ClipKeptRange{0, 4000},
+                       clip_planner::ClipKeptRange{6000, 10000}};
+
+  const auto outcome = ExportPassthroughCopy(input);
+  EXPECT_EQ(outcome.error, PassthroughError::kUnsupportedClipEdits);
+  EXPECT_NE(outcome.message.find("clip edits"), std::string::npos)
+      << outcome.message;
+  EXPECT_TRUE(outcome.output_path.empty());
+  EXPECT_FALSE(fs::exists(dest_dir / "CutExport.mov"))
+      << "a refused export must not write anything";
+
+  std::error_code rm_ec;
+  fs::remove_all(project.parent_path(), rm_ec);
+}
+
+TEST(ExportPassthroughCopyTest, ReorderedClipsAreRefused) {
+  const auto project =
+      StageProject("export-test-clips-reorder", "MOCK_VIDEO_BYTES");
+  const auto dest_dir = project.parent_path() / "out";
+  fs::create_directories(dest_dir);
+
+  PassthroughInput input;
+  input.project_path = project.u8string();
+  input.directory_override = dest_dir.u8string();
+  input.filename = "ReorderExport";
+  input.format = "mov";
+  // Arrange: timeline order B then A — not source-adjacent, never coalesces.
+  input.clip_ranges = {clip_planner::ClipKeptRange{6000, 8000},
+                       clip_planner::ClipKeptRange{0, 2000}};
+
+  const auto outcome = ExportPassthroughCopy(input);
+  EXPECT_EQ(outcome.error, PassthroughError::kUnsupportedClipEdits);
+
+  std::error_code rm_ec;
+  fs::remove_all(project.parent_path(), rm_ec);
+}
+
+TEST(ExportPassthroughCopyTest, CoalescableSplitStaysExportable) {
+  // A split with nothing deleted ([0,a]+[a,b]) coalesces back to one
+  // contiguous window from source 0 — NOT an edit; the export proceeds as a
+  // plain byte-copy. (A pure tail-trim is indistinguishable from the full
+  // range without the asset duration and is allowed through — documented
+  // limitation until step 3.)
+  const auto project =
+      StageProject("export-test-clips-split", "MOCK_VIDEO_BYTES");
+  const auto dest_dir = project.parent_path() / "out";
+  fs::create_directories(dest_dir);
+
+  PassthroughInput input;
+  input.project_path = project.u8string();
+  input.directory_override = dest_dir.u8string();
+  input.filename = "SplitExport";
+  input.format = "mov";
+  input.clip_ranges = {clip_planner::ClipKeptRange{0, 8400},
+                       clip_planner::ClipKeptRange{8400, 12000}};
+
+  const auto outcome = ExportPassthroughCopy(input);
+  ASSERT_EQ(outcome.error, PassthroughError::kNone) << outcome.message;
+  EXPECT_TRUE(fs::exists(fs::u8path(outcome.output_path)));
+
+  std::error_code rm_ec;
+  fs::remove_all(project.parent_path(), rm_ec);
+}
+
 }  // namespace
 }  // namespace clingfy::capture::export_
