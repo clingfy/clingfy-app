@@ -5697,6 +5697,132 @@ final class LetterboxExporterTests: XCTestCase {
         micAsset: nil, systemAsset: nil, ranges: []))
   }
 
+  // MARK: - Separated-audio PREVIEW composition (Phase 1.5 WYSIWYG)
+  // The preview plays the SAME mic+system mix the export produces (instead of
+  // screen.mov's skewed embedded track). makeSeparatedPreviewComposition adds a
+  // screen VIDEO track to the separated-audio shape so the preview player item
+  // is a video+audio composition; buildPreview's video composition runs over it.
+
+  func testSeparatedPreviewCompositionHasVideoAndBothAudioTracks() throws {
+    let tempDir = makeTemporaryDirectory()
+    defer { try? FileManager.default.removeItem(at: tempDir) }
+    let screenURL = tempDir.appendingPathComponent("screen.mov")
+    let micURL = tempDir.appendingPathComponent("mic.m4a")
+    let systemURL = tempDir.appendingPathComponent("system.m4a")
+    try makeColorPatchVideo(
+      url: screenURL, size: CGSize(width: 320, height: 240), durationSeconds: 1.0)
+    try makeToneAudioFile(url: micURL, seconds: 1.0, amplitude: 0.5, frequency: 440)
+    try makeToneAudioFile(url: systemURL, seconds: 1.0, amplitude: 0.5, frequency: 1000)
+
+    let screenAsset = AVAsset(url: screenURL)
+    let micAsset = AVAsset(url: micURL)
+    let systemAsset = AVAsset(url: systemURL)
+    let result = try XCTUnwrap(
+      InlinePreviewView.makeSeparatedPreviewComposition(
+        screenAsset: screenAsset, micAsset: micAsset, systemAsset: systemAsset, ranges: []))
+
+    XCTAssertEqual(result.composition.tracks(withMediaType: .video).count, 1)
+    XCTAssertEqual(result.composition.tracks(withMediaType: .audio).count, 2)
+    XCTAssertNotNil(result.micTrackID)
+    XCTAssertNotNil(result.systemTrackID)
+    XCTAssertNotEqual(result.micTrackID, result.systemTrackID)
+    // Mic is inserted FIRST so it is the deterministic gain target — its id must
+    // be the first audio track (matches the export's mic-then-system order).
+    XCTAssertEqual(
+      result.composition.tracks(withMediaType: .audio).first?.trackID, result.micTrackID)
+    // preferredTransform is copied so buildPreview's transform math is unchanged.
+    let srcTransform = try XCTUnwrap(
+      screenAsset.tracks(withMediaType: .video).first).preferredTransform
+    XCTAssertEqual(
+      result.composition.tracks(withMediaType: .video).first?.preferredTransform, srcTransform)
+  }
+
+  func testSeparatedPreviewCompositionMicOnlyOmitsSystemTrack() throws {
+    let tempDir = makeTemporaryDirectory()
+    defer { try? FileManager.default.removeItem(at: tempDir) }
+    let screenURL = tempDir.appendingPathComponent("screen.mov")
+    let micURL = tempDir.appendingPathComponent("mic.m4a")
+    try makeColorPatchVideo(
+      url: screenURL, size: CGSize(width: 320, height: 240), durationSeconds: 1.0)
+    try makeToneAudioFile(url: micURL, seconds: 1.0, amplitude: 0.5, frequency: 440)
+
+    let screenAsset = AVAsset(url: screenURL)
+    let micAsset = AVAsset(url: micURL)
+    let result = try XCTUnwrap(
+      InlinePreviewView.makeSeparatedPreviewComposition(
+        screenAsset: screenAsset, micAsset: micAsset, systemAsset: nil, ranges: []))
+    XCTAssertEqual(result.composition.tracks(withMediaType: .audio).count, 1)
+    XCTAssertNotNil(result.micTrackID)
+    XCTAssertNil(result.systemTrackID)
+  }
+
+  func testSeparatedPreviewCompositionReturnsNilWithoutVideoTrack() throws {
+    let tempDir = makeTemporaryDirectory()
+    defer { try? FileManager.default.removeItem(at: tempDir) }
+    // An audio-only "screen" asset has no video track ⇒ nil, and open()/rebuild
+    // fall back to the legacy embedded-audio path.
+    let audioOnlyURL = tempDir.appendingPathComponent("audio_only.m4a")
+    let micURL = tempDir.appendingPathComponent("mic.m4a")
+    try makeToneAudioFile(url: audioOnlyURL, seconds: 1.0, amplitude: 0.5)
+    try makeToneAudioFile(url: micURL, seconds: 1.0, amplitude: 0.5)
+    let screenAsset = AVAsset(url: audioOnlyURL)
+    let micAsset = AVAsset(url: micURL)
+    XCTAssertNil(
+      InlinePreviewView.makeSeparatedPreviewComposition(
+        screenAsset: screenAsset, micAsset: micAsset, systemAsset: nil, ranges: []))
+  }
+
+  func testSeparatedPreviewCompositionClampsAudioToVideoDuration() throws {
+    let tempDir = makeTemporaryDirectory()
+    defer { try? FileManager.default.removeItem(at: tempDir) }
+    let screenURL = tempDir.appendingPathComponent("screen.mov")
+    let micURL = tempDir.appendingPathComponent("mic.m4a")
+    // Video 0.6s, mic 1.2s: the whole-file audio insert is clamped to the video
+    // so the scrubber timeline is the video's — no audio-only tail.
+    try makeColorPatchVideo(
+      url: screenURL, size: CGSize(width: 320, height: 240), durationSeconds: 0.6)
+    try makeToneAudioFile(url: micURL, seconds: 1.2, amplitude: 0.5, frequency: 440)
+    let screenAsset = AVAsset(url: screenURL)
+    let micAsset = AVAsset(url: micURL)
+    let result = try XCTUnwrap(
+      InlinePreviewView.makeSeparatedPreviewComposition(
+        screenAsset: screenAsset, micAsset: micAsset, systemAsset: nil, ranges: []))
+    let videoDuration = try XCTUnwrap(
+      screenAsset.tracks(withMediaType: .video).first).timeRange.duration.seconds
+    XCTAssertEqual(result.composition.duration.seconds, videoDuration, accuracy: 0.12)
+    let audioDuration = try XCTUnwrap(
+      result.composition.tracks(withMediaType: .audio).first).timeRange.duration.seconds
+    XCTAssertLessThanOrEqual(audioDuration, videoDuration + 0.06)
+  }
+
+  func testSeparatedPreviewCompositionTilesAudioAcrossCuts() throws {
+    let tempDir = makeTemporaryDirectory()
+    defer { try? FileManager.default.removeItem(at: tempDir) }
+    let screenURL = tempDir.appendingPathComponent("screen.mov")
+    let micURL = tempDir.appendingPathComponent("mic.m4a")
+    let systemURL = tempDir.appendingPathComponent("system.m4a")
+    try makeColorPatchVideo(
+      url: screenURL, size: CGSize(width: 320, height: 240), durationSeconds: 1.0)
+    try makeToneAudioFile(url: micURL, seconds: 1.0, amplitude: 0.5, frequency: 440)
+    try makeToneAudioFile(url: systemURL, seconds: 1.0, amplitude: 0.5, frequency: 1000)
+    let screenAsset = AVAsset(url: screenURL)
+    let micAsset = AVAsset(url: micURL)
+    let systemAsset = AVAsset(url: systemURL)
+    let ranges = [
+      ClipKeptRange(sourceInMs: 0, sourceOutMs: 400),
+      ClipKeptRange(sourceInMs: 700, sourceOutMs: 900),
+    ]
+    let result = try XCTUnwrap(
+      InlinePreviewView.makeSeparatedPreviewComposition(
+        screenAsset: screenAsset, micAsset: micAsset, systemAsset: systemAsset, ranges: ranges))
+    // Kept ranges total 600ms; video + both audio tracks compact to the edited
+    // timeline exactly like the export's cut composition.
+    let expected = Double(ClipPlaybackPlanner.editedDurationMs(ranges: ranges)) / 1000.0
+    XCTAssertEqual(result.composition.duration.seconds, expected, accuracy: 0.12)
+    XCTAssertEqual(result.composition.tracks(withMediaType: .video).count, 1)
+    XCTAssertEqual(result.composition.tracks(withMediaType: .audio).count, 2)
+  }
+
   func testMakeSeparatedAudioMixRoutesGainToMicAndVolumeToBoth() throws {
     let tempDir = makeTemporaryDirectory()
     defer { try? FileManager.default.removeItem(at: tempDir) }
