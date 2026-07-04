@@ -3398,7 +3398,12 @@ final class LetterboxExporter {
   /// mid-export. Pull one sample buffer up front so "readable" means
   /// "decodable" — on any failure, log and return nil so the export degrades
   /// to the embedded track.
-  private static func readableAudioAsset(url: URL?) -> AVAsset? {
+  ///
+  /// Module-internal (not `private`) so the preview path (`InlinePreviewView`)
+  /// gates its separated-audio composition on the exact same "decodable"
+  /// definition the export uses — keeping preview == export in every capture
+  /// shape (corrupt/empty sidecar ⇒ both fall back to the embedded track).
+  static func readableAudioAsset(url: URL?) -> AVAsset? {
     guard let url else { return nil }
     let asset = AVAsset(url: url)
     guard let track = asset.tracks(withMediaType: .audio).first else {

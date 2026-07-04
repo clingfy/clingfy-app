@@ -10,6 +10,12 @@ struct PreviewMediaSources: Equatable {
   let cursorPath: String?
   let zoomManualPath: String?
   let cameraSyncTimeline: CameraSyncTimeline?
+  /// Separated-audio sidecars (Phase 1.5). Present only when the bundle carries
+  /// `capture/mic.m4a` / `capture/system.m4a`; nil for legacy recordings. When
+  /// present the preview plays the same mic+system mix the export produces, so
+  /// preview == export (instead of `screen.mov`'s skewed embedded track).
+  let micAudioPath: String?
+  let systemAudioPath: String?
 
   init(
     projectPath: String,
@@ -18,7 +24,9 @@ struct PreviewMediaSources: Equatable {
     metadataPath: String?,
     cursorPath: String?,
     zoomManualPath: String?,
-    cameraSyncTimeline: CameraSyncTimeline? = nil
+    cameraSyncTimeline: CameraSyncTimeline? = nil,
+    micAudioPath: String? = nil,
+    systemAudioPath: String? = nil
   ) {
     self.projectPath = projectPath
     self.screenPath = screenPath
@@ -27,6 +35,8 @@ struct PreviewMediaSources: Equatable {
     self.cursorPath = cursorPath
     self.zoomManualPath = zoomManualPath
     self.cameraSyncTimeline = cameraSyncTimeline
+    self.micAudioPath = micAudioPath
+    self.systemAudioPath = systemAudioPath
   }
 }
 
