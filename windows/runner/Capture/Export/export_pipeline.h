@@ -36,7 +36,9 @@
 #include <functional>
 #include <optional>
 #include <string>
+#include <vector>
 
+#include "Capture/Export/clip_playback_planner.h"
 #include "Capture/Export/color_grade.h"
 
 namespace clingfy::capture::export_ {
@@ -56,6 +58,17 @@ struct RenderRequest {
   // bake into the intermediate BEFORE the grade; the camera drafts on top
   // after).
   color::ColorGrade color_grade;
+
+  // Editing port (clips, step 3a): kept source ranges in TIMELINE order (empty
+  // = no clips = identity, byte-identical to the pre-clip path). Only MONOTONIC
+  // + disjoint ranges reach here — reordered/overlapping timelines are refused
+  // upstream in `export_passthrough` until step 3b. When non-empty, the frame
+  // loop drops source frames/audio packets that fall in a cut gap
+  // (`clip_planner::EditedMsForKeptSourceMs` → nullopt) and re-stamps the
+  // survivors onto the compacted edited timeline; zoom smoothing + the camera
+  // intro/outro clock run in edited time, while the drawn frame's overlays
+  // (cursor/zoom-segment/camera-video) stay keyed to its SOURCE time.
+  std::vector<clip_planner::ClipKeptRange> clip_ranges;
 
   // Absolute UTF-8 destination path (extension already resolved — .mov / .mp4 /
   // .gif — and collision-avoided by `ResolveExportDestination`). The pipeline

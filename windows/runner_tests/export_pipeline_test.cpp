@@ -1617,6 +1617,146 @@ TEST(ExportPipelineTest, RenderFailureRemovesPartialDestination) {
   fs::remove_all(dir, ec);
 }
 
+// ---- Editing port (clips, step 3a): monotonic cut bake ----------------------
+//
+// The pipeline drops source frames/packets in a cut gap and re-stamps the
+// survivors onto a compacted timeline. RenderResult::video_frames_written is
+// what the loop handed the encoder AFTER the drop gate, so the drop count is
+// asserted directly (no decode needed). Sub-frame A/V origin alignment (T2) is
+// verified by construction — AAC encoder priming makes it unobservable at
+// sub-frame resolution through a decode round-trip — so the head-trim case
+// asserts the buffer/flush path runs and preserves both streams.
+
+TEST(ExportPipelineTest, ClipMiddleCutDropsGapFrames) {
+  clingfy::graphics::D3DDevice device;
+  if (device.Create()) {
+    GTEST_SKIP() << "no usable D3D11 device in this environment";
+  }
+  const auto dir = UniqueDir("clip_cut");
+  const auto source = (dir / "source.mov").u8string();
+  std::string skip_reason;
+  if (!SynthesizeSource(&device, source, /*with_audio=*/false, &skip_reason)) {
+    GTEST_SKIP() << skip_reason;
+  }
+
+  auto make_request = [&](const std::string& dest,
+                          std::vector<clip_planner::ClipKeptRange> ranges) {
+    RenderRequest r;
+    r.source_video_path = fs::u8path(source).wstring();
+    r.destination_path = dest;
+    r.layout = "square11";
+    r.resolution = "auto";
+    r.fit = "fit";
+    r.fps_hint = kFps;
+    r.clip_ranges = std::move(ranges);
+    return r;
+  };
+
+  // Source frames land at source ms 0,33,66,99,133,166,199,233 (8 frames @30).
+  // Keep [0,90) (0,33,66) + [150,250) (166,199,233) → drop the two gap frames
+  // at 99 ms and 133 ms.
+  const auto base_dest = (dir / "base.mov").u8string();
+  const auto cut_dest = (dir / "cut.mov").u8string();
+  const RenderResult base = RenderComposedExport(make_request(base_dest, {}));
+  const RenderResult cut = RenderComposedExport(make_request(
+      cut_dest, {clip_planner::ClipKeptRange{0, 90},
+                 clip_planner::ClipKeptRange{150, 250}}));
+  ASSERT_TRUE(base.ok) << base.message;
+  ASSERT_TRUE(cut.ok) << cut.message;
+  EXPECT_GT(cut.video_frames_written, 0u);
+  EXPECT_LT(cut.video_frames_written, base.video_frames_written)
+      << "the cut export must drop the gap frames";
+  EXPECT_EQ(base.video_frames_written - cut.video_frames_written, 2u)
+      << "exactly the two frames at 99 ms and 133 ms should be dropped";
+
+  const ProbeResult probe = ProbeOutput(fs::u8path(cut_dest).wstring());
+  EXPECT_TRUE(probe.ok) << "cut export is not a readable video";
+
+  std::error_code ec;
+  fs::remove_all(dir, ec);
+}
+
+TEST(ExportPipelineTest, SingleWholeRangeKeepsAllFrames) {
+  // A single range covering the whole source exercises the clipping code path
+  // (clip_ranges non-empty) but must keep every frame — the re-stamp is an
+  // identity mapping, so nothing is dropped.
+  clingfy::graphics::D3DDevice device;
+  if (device.Create()) {
+    GTEST_SKIP() << "no usable D3D11 device in this environment";
+  }
+  const auto dir = UniqueDir("clip_whole");
+  const auto source = (dir / "source.mov").u8string();
+  std::string skip_reason;
+  if (!SynthesizeSource(&device, source, /*with_audio=*/false, &skip_reason)) {
+    GTEST_SKIP() << skip_reason;
+  }
+
+  RenderRequest base;
+  base.source_video_path = fs::u8path(source).wstring();
+  base.destination_path = (dir / "base.mov").u8string();
+  base.layout = "square11";
+  base.resolution = "auto";
+  base.fit = "fit";
+  base.fps_hint = kFps;
+
+  RenderRequest whole = base;
+  whole.destination_path = (dir / "whole.mov").u8string();
+  whole.clip_ranges = {clip_planner::ClipKeptRange{0, 1'000'000}};
+
+  const RenderResult base_r = RenderComposedExport(base);
+  const RenderResult whole_r = RenderComposedExport(whole);
+  ASSERT_TRUE(base_r.ok) << base_r.message;
+  ASSERT_TRUE(whole_r.ok) << whole_r.message;
+  EXPECT_EQ(whole_r.video_frames_written, base_r.video_frames_written)
+      << "a whole-covering clip range must not drop any frame";
+
+  std::error_code ec;
+  fs::remove_all(dir, ec);
+}
+
+TEST(ExportPipelineTest, HeadTrimWithAudioExportsDualStream) {
+  // Head-trim [50,250): the first decoded frames (0,33 ms) fall before the kept
+  // range and are dropped, so the FIRST kept video frame is not at edited 0 —
+  // exercising the A/V origin anchor + the buffered-audio flush (T2). Assert the
+  // export succeeds with both streams and the expected kept-frame count.
+  clingfy::graphics::D3DDevice device;
+  if (device.Create()) {
+    GTEST_SKIP() << "no usable D3D11 device in this environment";
+  }
+  const auto dir = UniqueDir("clip_headtrim");
+  const auto source = (dir / "source.mov").u8string();
+  const auto dest = (dir / "out.mov").u8string();
+  std::string skip_reason;
+  if (!SynthesizeSource(&device, source, /*with_audio=*/true, &skip_reason,
+                        /*audio_amplitude=*/8000)) {
+    GTEST_SKIP() << skip_reason;
+  }
+
+  RenderRequest request;
+  request.source_video_path = fs::u8path(source).wstring();
+  request.destination_path = dest;
+  request.layout = "square11";
+  request.resolution = "auto";
+  request.fit = "fit";
+  request.fps_hint = kFps;
+  request.clip_ranges = {clip_planner::ClipKeptRange{50, 250}};
+
+  const RenderResult result = RenderComposedExport(request);
+  ASSERT_TRUE(result.ok) << result.message;
+  EXPECT_TRUE(result.had_audio);
+  EXPECT_EQ(result.video_frames_written, 6u)
+      << "frames at 66,99,133,166,199,233 ms are kept; 0 and 33 ms are trimmed";
+  EXPECT_GT(result.audio_packets_written, 0u)
+      << "kept audio must survive the buffer/flush + origin alignment";
+
+  const ProbeResult probe = ProbeOutput(fs::u8path(dest).wstring());
+  EXPECT_TRUE(probe.ok);
+  EXPECT_TRUE(probe.has_audio) << "head-trim export lost its audio stream";
+
+  std::error_code ec;
+  fs::remove_all(dir, ec);
+}
+
 // ---- Editing port (color): the export bakes the grade -----------------------
 
 // H.264 tolerance for graded-pixel comparisons: the synthesized source is

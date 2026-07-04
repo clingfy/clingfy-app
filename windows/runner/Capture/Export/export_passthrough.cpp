@@ -157,6 +157,35 @@ bool ShouldCompositeCamera(bool camera_visible, bool has_camera_assets,
          !preview_burned_in && frames_written > 0;
 }
 
+ClipEditKind ClassifyClipEdit(
+    const std::vector<clip_planner::ClipKeptRange>& ranges) {
+  const auto coalesced = clip_planner::Coalesce(ranges);
+  // A split with nothing deleted coalesces back to one contiguous window from
+  // source 0 → not a real edit. A single range starting at source 0 (incl. a
+  // pure tail-trim, indistinguishable from the full range without the asset
+  // duration) also stays passthrough.
+  const bool has_real_edits =
+      coalesced.size() > 1 ||
+      (coalesced.size() == 1 && coalesced[0].source_in_ms > 0);
+  if (!has_real_edits) {
+    return ClipEditKind::kPassthrough;
+  }
+  // 3a bakes only DISJOINT + MONOTONIC ranges. Coalesce merges only
+  // source-adjacent ranges, so a genuine overlap (source_in < prev source_out)
+  // survives to here; it is source_in-monotonic but not disjoint.
+  bool disjoint = true;
+  for (std::size_t i = 1; i < coalesced.size(); ++i) {
+    if (coalesced[i].source_in_ms < coalesced[i - 1].source_out_ms) {
+      disjoint = false;
+      break;
+    }
+  }
+  if (!clip_planner::IsSourceMonotonic(coalesced) || !disjoint) {
+    return ClipEditKind::kUnsupported;
+  }
+  return ClipEditKind::kBake;
+}
+
 std::int64_t EstimateRequiredExportBytes(std::int64_t source_size_bytes,
                                          bool composition) {
   if (source_size_bytes < 0) {
@@ -323,29 +352,29 @@ PassthroughResult ExportPassthroughCopy(
   // H.264 Sink Writer. Padding / corner radius / gain / volume / normalize each
   // force it too; a background color alone stays on the fast-path (invisible
   // without margins). The audio + format identity defaults keep the copy alive.
-  // Editing port (clips, interim guard): REFUSE exports carrying real clip
-  // edits until the clip export bake (step 3) lands. Neither path can honor
-  // them today — the byte-copy ships the uncut source (cut-out content the
-  // user removed, possibly deliberately, would ship anyway) and the
-  // composition path would render every frame including the cut ranges. A
-  // split with nothing deleted coalesces back to one contiguous window
-  // starting at source 0 and is NOT an edit. (A pure tail-trim is
-  // indistinguishable from the full range without the asset duration —
-  // known limitation, resolved by step 3.)
-  {
-    const auto coalesced = clip_planner::Coalesce(input.clip_ranges);
-    const bool has_real_edits =
-        coalesced.size() > 1 ||
-        (coalesced.size() == 1 && coalesced[0].source_in_ms > 0);
-    if (has_real_edits) {
+  // Editing port (clips, step 3a): the export now BAKES monotonic clip edits
+  // (cuts / trims / delete-middle) — the pipeline drops cut source frames and
+  // re-stamps the survivors onto a compacted timeline. Only REORDERED or
+  // OVERLAPPING timelines are still refused (kUnsupportedClipEdits) until step
+  // 3b. A split with nothing deleted coalesces back to one contiguous window
+  // from source 0 and is NOT an edit, so it stays on the copy fast-path. (A pure
+  // tail-trim — one range from source 0 — is indistinguishable from the full
+  // range without the asset duration, so it rides the fast-path as before;
+  // harmless, the removed tail is past the last kept frame either way.)
+  bool wants_clips = false;
+  switch (ClassifyClipEdit(input.clip_ranges)) {
+    case ClipEditKind::kPassthrough:
+      break;  // no real edit — stays eligible for the copy fast-path
+    case ClipEditKind::kBake:
+      wants_clips = true;  // real monotonic edit — forces composition below
+      break;
+    case ClipEditKind::kUnsupported:
       out.error = PassthroughError::kUnsupportedClipEdits;
       out.message =
-          "exportVideo: this project contains clip edits (cuts or a "
-          "reordered timeline). Exporting clip edits isn't supported on "
-          "Windows yet — export from macOS, or remove the clip edits and "
-          "try again.";
+          "exportVideo: this project has a reordered or overlapping clip "
+          "timeline, which isn't supported on Windows yet (coming in a "
+          "follow-up) — export from macOS, or undo the reorder and try again.";
       return out;
-    }
   }
 
   const bool wants_non_mov_container =
@@ -354,13 +383,16 @@ PassthroughResult ExportPassthroughCopy(
   // path — the byte-copy would silently ship an UNGRADED file while
   // reporting success (the classic passthrough landmine).
   const bool wants_color_grade = !input.color_grade.IsIdentity();
+  // Editing port (clips, 3a): a real monotonic clip edit must force the
+  // composition path — the byte-copy would ship the UNCUT source while reporting
+  // success (the passthrough landmine). Reorder/overlap already returned above.
   const bool needs_composition =
       !IsIdentityTransform(input.layout, input.resolution) ||
       input.padding > 0.0 || input.corner_radius > 0.0 ||
       RequiresAudioProcessing(input.audio_gain_db, input.audio_volume_percent,
                               input.auto_normalize) ||
       wants_non_mov_container || wants_sidecar || wants_camera ||
-      wants_color_grade;
+      wants_color_grade || wants_clips;
 
   // Phase 10.4 disk-full preflight: estimate the bytes the export needs at
   // the destination (source size + headroom for the chosen path) and compare
@@ -459,6 +491,10 @@ PassthroughResult ExportPassthroughCopy(
     // Editing port (color): bake the grade into the composite (identity is a
     // no-op inside the pipeline).
     render.color_grade = input.color_grade;
+    // Editing port (clips, 3a): bake the monotonic clip edit. Empty = identity;
+    // reorder/overlap was already refused above, so only disjoint + monotonic
+    // ranges reach the pipeline (drop cut frames + re-stamp onto edited PTS).
+    render.clip_ranges = input.clip_ranges;
     render.audio_gain_db = input.audio_gain_db;
     render.audio_volume_percent = input.audio_volume_percent;
     render.auto_normalize = input.auto_normalize;

@@ -184,6 +184,28 @@ struct PassthroughInput {
   std::vector<clip_planner::ClipKeptRange> clip_ranges;
 };
 
+// Editing port (clips, step 3a) — how the export should treat a clip edit.
+enum class ClipEditKind {
+  // Empty, or a single window covering the asset from source 0: no real edit.
+  // Stays eligible for the byte-copy fast-path (a pure tail-trim also lands
+  // here — indistinguishable from the full range without the asset duration).
+  kPassthrough,
+  // A real, DISJOINT + source-MONOTONIC edit (cut / trim / delete-middle):
+  // bake it via the composition path (drop cut frames + re-stamp).
+  kBake,
+  // A reordered or overlapping timeline: not bakeable in 3a — refuse
+  // (kUnsupportedClipEdits) until step 3b adds per-range reorder seeks.
+  kUnsupported,
+};
+
+// Pure classifier for the `clips` export arg: coalesces source-adjacent ranges,
+// then decides passthrough vs. bake vs. refuse. Overlapping/nested ranges are
+// source_in-monotonic but not disjoint, so they classify as kUnsupported (the
+// planner would first-match them while the edited-duration math keeps counting
+// the overlap). Exposed for unit tests.
+ClipEditKind ClassifyClipEdit(
+    const std::vector<clip_planner::ClipKeptRange>& ranges);
+
 // Phase 9.4 — pure decision: should the export composite the camera bubble?
 // True only when the user wants it (`camera_visible`), the project actually has
 // the camera assets (raw.mov + camera.meta.json present-together), the metadata
