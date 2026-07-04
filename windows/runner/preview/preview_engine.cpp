@@ -1824,6 +1824,50 @@ CameraNudgePlan ResolveCameraNudgeTarget(std::int64_t current_ms,
   return plan;
 }
 
+namespace {
+
+// Reflect an editor change immediately in a PAUSED preview. The compositor
+// only re-runs on a frame-server callback, which a paused MediaPlayer does
+// not emit, so without this a camera/color edit would not appear until the
+// user pressed play. Seeking forces the frame server to re-deliver a frame,
+// recompositing with the new settings. The seek target comes from
+// ResolveCameraNudgeTarget (see preview_engine.h): alternating between an
+// anchor and its 1ms neighbor keeps the seek un-coalescable while bounding
+// total drift to 1ms — under one frame at any fps, so the same image is
+// shown — no matter how many edits a drag produces. No-op while playing —
+// the next natural frame already picks the change up and nudging would
+// stutter. Best-effort: a failed nudge just defers the change to the next
+// frame. Shared by SetCameraComposition and SetColorGrade; `mutex` guards
+// `nudge_anchor_ms` (the engine's mutex_ + camera_nudge_anchor_ms_).
+void NudgePausedPreviewPlayer(winrt_playback::MediaPlayer player_snapshot,
+                              std::mutex& mutex,
+                              std::int64_t& nudge_anchor_ms) {
+  if (player_snapshot == nullptr) {
+    return;
+  }
+  try {
+    auto session = player_snapshot.PlaybackSession();
+    if (session.PlaybackState() !=
+        winrt_playback::MediaPlaybackState::Playing) {
+      const auto cur_ms = std::chrono::duration_cast<std::chrono::milliseconds>(
+                              session.Position())
+                              .count();
+      CameraNudgePlan plan;
+      {
+        std::lock_guard<std::mutex> lock(mutex);
+        plan = ResolveCameraNudgeTarget(cur_ms, nudge_anchor_ms);
+        nudge_anchor_ms = plan.anchor_ms;
+      }
+      session.Position(std::chrono::duration_cast<winrt_foundation::TimeSpan>(
+          std::chrono::milliseconds(plan.target_ms)));
+    }
+  } catch (winrt::hresult_error const&) {
+    // Best-effort; the change will appear on the next frame instead.
+  }
+}
+
+}  // namespace
+
 void PreviewEngine::SetCameraComposition(
     const std::string& session_id,
     const PreviewCameraComposition& composition) {
@@ -1848,41 +1892,32 @@ void PreviewEngine::SetCameraComposition(
     impl_->camera_renderer->SetComposition(composition);
     player_snapshot = impl_->player;
   }
+  NudgePausedPreviewPlayer(std::move(player_snapshot), mutex_,
+                           camera_nudge_anchor_ms_);
+}
 
-  // Reflect the change immediately in a PAUSED preview. The compositor only
-  // re-runs on a frame-server callback, which a paused MediaPlayer does not emit,
-  // so without this the new camera settings (placement, shape, opacity, border,
-  // shadow, mirror, chroma) would not appear until the user pressed play. Seeking
-  // forces the frame server to re-deliver a frame, recompositing with the new
-  // settings. The seek target comes from ResolveCameraNudgeTarget (see
-  // preview_engine.h): alternating between an anchor and its 1ms neighbor keeps
-  // the seek un-coalescable while bounding total drift to 1ms — under one frame
-  // at any fps, so the same image is shown — no matter how many camera edits a
-  // drag produces. No-op while playing — the next natural frame already picks
-  // the change up and nudging would stutter. Best-effort: a failed nudge just
-  // defers the change to the next frame.
-  if (player_snapshot == nullptr) {
-    return;
-  }
-  try {
-    auto session = player_snapshot.PlaybackSession();
-    if (session.PlaybackState() !=
-        winrt_playback::MediaPlaybackState::Playing) {
-      const auto cur_ms = std::chrono::duration_cast<std::chrono::milliseconds>(
-                              session.Position())
-                              .count();
-      CameraNudgePlan plan;
-      {
-        std::lock_guard<std::mutex> lock(mutex_);
-        plan = ResolveCameraNudgeTarget(cur_ms, camera_nudge_anchor_ms_);
-        camera_nudge_anchor_ms_ = plan.anchor_ms;
-      }
-      session.Position(std::chrono::duration_cast<winrt_foundation::TimeSpan>(
-          std::chrono::milliseconds(plan.target_ms)));
+void PreviewEngine::SetColorGrade(
+    const std::string& session_id,
+    const capture::export_::color::ColorGrade& grade) {
+  winrt_playback::MediaPlayer player_snapshot{nullptr};
+  {
+    std::lock_guard<std::mutex> lock(mutex_);
+    // Same stale-session + snapshot-then-release discipline as
+    // SetCameraComposition above.
+    if (!session_id.empty() && session_id != active_session_id_) {
+      return;
     }
-  } catch (winrt::hresult_error const&) {
-    // Best-effort; the change will appear on the next frame instead.
+    if (impl_ == nullptr) {
+      return;
+    }
+    // SetColorGrade is internally synchronized (the compositor's grade
+    // mutex) and does no D2D work here — the effect chain (re)builds on the
+    // frame thread at the next composited frame.
+    impl_->compositor.SetColorGrade(grade);
+    player_snapshot = impl_->player;
   }
+  NudgePausedPreviewPlayer(std::move(player_snapshot), mutex_,
+                           camera_nudge_anchor_ms_);
 }
 
 }  // namespace clingfy::preview

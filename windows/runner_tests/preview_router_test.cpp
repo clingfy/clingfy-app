@@ -565,6 +565,37 @@ TEST_F(PreviewRouterTransportTest, PauseStaleSessionReturnsSuccessNull) {
   EXPECT_FALSE(reply.error_called);
 }
 
+// ---- previewSetColorGrade (editing port, PR-2b) --------------------
+
+TEST_F(PreviewRouterTransportTest, SetColorGradeWithoutArgsRepliesNull) {
+  // Matches the void Dart contract (and HandlePreviewSetCameraPlacement):
+  // malformed/missing args are ignored, the reply is always success-null.
+  MethodRouter router;
+  RecordedReply reply;
+  router.Dispatch(test_support::MakeCall("previewSetColorGrade"),
+                  MakeRecorder(reply));
+  EXPECT_TRUE(reply.success_called);
+  EXPECT_FALSE(reply.error_called);
+}
+
+TEST_F(PreviewRouterTransportTest, SetColorGradeStaleSessionRepliesNull) {
+  // No preview session is open in the test process, so the engine drops the
+  // grade silently (stale-session contract) and the router replies null —
+  // the same path a slider tick racing a Close hits in production.
+  MethodRouter router;
+  flutter::EncodableMap grade_map;
+  grade_map[flutter::EncodableValue("saturation")] =
+      flutter::EncodableValue(-1.0);
+  flutter::EncodableMap args;
+  args[flutter::EncodableValue("sessionId")] =
+      flutter::EncodableValue(std::string("sess-stale"));
+  args[flutter::EncodableValue("colorGrade")] =
+      flutter::EncodableValue(grade_map);
+  const auto reply = DispatchWithArgs(router, "previewSetColorGrade", args);
+  EXPECT_TRUE(reply.success_called);
+  EXPECT_FALSE(reply.error_called);
+}
+
 // ---- previewSeekTo ------------------------------------------------
 
 TEST_F(PreviewRouterTransportTest, SeekToMissingSessionIdReturnsBadArgs) {

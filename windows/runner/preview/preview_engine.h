@@ -36,6 +36,7 @@
 #include <flutter_plugin_registrar.h>
 #include <flutter_texture_registrar.h>
 
+#include "Capture/Export/color_grade.h"
 #include "Preview/preview_camera_renderer.h"
 
 #include <atomic>
@@ -201,6 +202,17 @@ class PreviewEngine {
   // and thread-safe; the actual D2D rebuild happens on the next composited frame.
   void SetCameraComposition(const std::string& session_id,
                             const PreviewCameraComposition& composition);
+
+  // Editing port (color): update the live color grade for the inline preview.
+  // Driven by Dart's previewSetColorGrade on every slider tick / auto-enhance
+  // toggle. Applies to the VIDEO ONLY (the cursor halo and camera bubble stay
+  // ungraded — macOS preview parity; the export grades video+cursor+clicks).
+  // A stale session_id is a silent no-op. Cheap and thread-safe; the D2D
+  // effect chain (re)builds on the frame thread at the next composited frame,
+  // and a PAUSED preview is nudged to recomposite immediately, exactly like
+  // camera edits.
+  void SetColorGrade(const std::string& session_id,
+                     const capture::export_::color::ColorGrade& grade);
 
   // For tests / observability.
   std::int64_t current_texture_id() const;
