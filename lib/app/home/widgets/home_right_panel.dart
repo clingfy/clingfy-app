@@ -4,6 +4,7 @@ import 'package:clingfy/core/preview/player_controller.dart';
 import 'package:clingfy/app/home/post_processing/post_processing_controller.dart';
 import 'package:clingfy/app/home/recording/recording_controller.dart';
 import 'package:clingfy/app/home/widgets/hero_panel.dart';
+import 'package:clingfy/app/home/widgets/live_camera_preview.dart';
 import 'package:clingfy/app/home/preview/widgets/inline_preview_panel.dart';
 import 'package:clingfy/app/home/preview/widgets/preview_overlay_controls.dart';
 import 'package:flutter/material.dart';
@@ -23,6 +24,7 @@ class HomeRightPanel extends StatelessWidget {
     required this.onClosePreview,
     this.cameraOverlayEnabled = false,
     this.cameraFloatingPreview = false,
+    this.cameraOverlayStyle = const CameraOverlayPreviewStyle(),
     this.onToggleCameraPreviewMode,
     this.previewHostBuilder,
     this.startRecordingButtonKey,
@@ -39,6 +41,7 @@ class HomeRightPanel extends StatelessWidget {
   final VoidCallback onClosePreview;
   final bool cameraOverlayEnabled;
   final bool cameraFloatingPreview;
+  final CameraOverlayPreviewStyle cameraOverlayStyle;
   final VoidCallback? onToggleCameraPreviewMode;
   final InlinePreviewHostBuilder? previewHostBuilder;
   final Key? startRecordingButtonKey;
@@ -136,6 +139,7 @@ class HomeRightPanel extends StatelessWidget {
                         onResume: onResumeRecording,
                         cameraOverlayEnabled: cameraOverlayEnabled,
                         cameraFloatingPreview: cameraFloatingPreview,
+                        cameraOverlayStyle: cameraOverlayStyle,
                         onToggleCameraPreviewMode: onToggleCameraPreviewMode,
                         startRecordingButtonKey: startRecordingButtonKey,
                       ),

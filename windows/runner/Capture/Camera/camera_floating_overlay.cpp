@@ -1,10 +1,13 @@
 #include "Capture/Camera/camera_floating_overlay.h"
 
 #include <algorithm>
+#include <cmath>
 #include <cstdio>
 #include <utility>
+#include <vector>
 
 #include "Bridge/Devices/device_probe_log.h"
+#include "Capture/Camera/camera_overlay_style_store.h"
 
 namespace clingfy::capture {
 
@@ -15,6 +18,54 @@ constexpr UINT_PTR kPaintTimerId = 1;
 constexpr UINT kPaintIntervalMs = 33;  // ~30 fps repaint.
 constexpr UINT kMsgShow = WM_APP + 1;
 constexpr UINT kMsgHide = WM_APP + 2;
+constexpr double kPi = 3.14159265358979323846;
+
+// A regular polygon (hexagon) / star region inscribed in the shortest window
+// dimension, centered. `sides` vertices for the polygon; the star uses
+// `sides` points (2*sides vertices) alternating outer/inner radius.
+HRGN BuildPolygonRegion(int w, int h, int sides, double rotation,
+                        double inner_ratio, bool star) {
+  const double cx = w / 2.0;
+  const double cy = h / 2.0;
+  const double radius = std::min(w, h) / 2.0;
+  std::vector<POINT> pts;
+  const int vertices = star ? sides * 2 : sides;
+  pts.reserve(vertices);
+  for (int i = 0; i < vertices; ++i) {
+    const double r =
+        star ? ((i % 2 == 0) ? radius : radius * inner_ratio) : radius;
+    const double angle =
+        rotation + (2.0 * kPi * i / vertices) - kPi / 2.0;
+    pts.push_back(POINT{static_cast<LONG>(std::lround(cx + r * std::cos(angle))),
+                        static_cast<LONG>(std::lround(cy + r * std::sin(angle)))});
+  }
+  return ::CreatePolygonRgn(pts.data(), static_cast<int>(pts.size()), WINDING);
+}
+
+// Build the window region for an OverlayShape.wireValue. Mirrors the Dart
+// in-app clipper (camera_overlay_bubble.dart) so the floating bubble and the
+// in-app preview agree on the silhouette. Caller owns the returned HRGN.
+HRGN BuildShapeRegion(int w, int h, int shape_wire, double roundness) {
+  const int shortest = std::min(w, h);
+  const int rr =
+      static_cast<int>(std::clamp(roundness, 0.0, 0.4) * shortest);
+  switch (shape_wire) {
+    case 0:  // circle
+      return ::CreateEllipticRgn(0, 0, w + 1, h + 1);
+    case 1:  // roundedRect
+    case 2:  // square (rounded corners via roundness)
+      return ::CreateRoundRectRgn(0, 0, w + 1, h + 1, 2 * rr, 2 * rr);
+    case 3:  // hexagon
+      return BuildPolygonRegion(w, h, 6, kPi / 6.0, 0.0, /*star=*/false);
+    case 4:  // star
+      return BuildPolygonRegion(w, h, 5, 0.0, 0.5, /*star=*/true);
+    case 5:  // squircle ≈ strongly-rounded rect (matches the painter fallback)
+    default: {
+      const int r = static_cast<int>(0.32 * shortest);
+      return ::CreateRoundRectRgn(0, 0, w + 1, h + 1, 2 * r, 2 * r);
+    }
+  }
+}
 
 void EnsureClassRegistered() {
   static std::once_flag flag;
@@ -56,6 +107,8 @@ LRESULT CALLBACK CameraFloatingOverlay::WndProc(HWND hwnd, UINT msg,
       return 0;
     case WM_TIMER:
       if (wparam == kPaintTimerId && self != nullptr) {
+        // Pick up live style changes (shape / mirror / border) each tick.
+        self->SyncStyleFromStore(hwnd);
         bool dirty = false;
         {
           std::lock_guard<std::mutex> lock(self->frame_mutex_);
@@ -113,8 +166,38 @@ void CameraFloatingOverlay::Paint(HWND hwnd) {
     bmi.bmiHeader.biBitCount = 32;
     bmi.bmiHeader.biCompression = BI_RGB;
     ::SetStretchBltMode(hdc, HALFTONE);
-    ::StretchDIBits(hdc, 0, 0, cw, ch, 0, 0, fw, fh, frame.data(), &bmi,
-                    DIB_RGB_COLORS, SRCCOPY);
+    // Mirror horizontally by flipping the destination width (selfie view — the
+    // Dart overlay mirror default). The window region clips to the shape.
+    if (style_mirror_) {
+      ::StretchDIBits(hdc, cw, 0, -cw, ch, 0, 0, fw, fh, frame.data(), &bmi,
+                      DIB_RGB_COLORS, SRCCOPY);
+    } else {
+      ::StretchDIBits(hdc, 0, 0, cw, ch, 0, 0, fw, fh, frame.data(), &bmi,
+                      DIB_RGB_COLORS, SRCCOPY);
+    }
+
+    // Border: stroke the shape outline with the overlay border color. FrameRgn
+    // follows any region shape (circle / rounded / polygon), so it works for
+    // every OverlayShape. Opacity / shadow / chroma are export-only here.
+    if (style_has_border_ && style_border_px_ > 0.0f) {
+      HRGN border_rgn =
+          BuildShapeRegion(cw, ch, style_shape_wire_, style_roundness_);
+      if (border_rgn != nullptr) {
+        const std::uint32_t a = (style_border_argb_ >> 24) & 0xFF;
+        const COLORREF rgb =
+            RGB((style_border_argb_ >> 16) & 0xFF,
+                (style_border_argb_ >> 8) & 0xFF, style_border_argb_ & 0xFF);
+        if (a > 0) {
+          HBRUSH brush = ::CreateSolidBrush(rgb);
+          if (brush != nullptr) {
+            const int bw = std::max(1, static_cast<int>(style_border_px_));
+            ::FrameRgn(hdc, border_rgn, brush, bw, bw);
+            ::DeleteObject(brush);
+          }
+        }
+        ::DeleteObject(border_rgn);
+      }
+    }
   } else {
     HBRUSH black = ::CreateSolidBrush(RGB(0, 0, 0));
     ::FillRect(hdc, &client, black);
@@ -172,17 +255,10 @@ void CameraFloatingOverlay::ThreadMain(FloatingPlacement placement,
     clingfy::bridge::devices::LogDeviceProbe(b);
   }
 
-  if (placement.rounded) {
-    const int radius =
-        std::max(2, std::min(placement.width, placement.height) / 6);
-    HRGN rgn = ::CreateRoundRectRgn(0, 0, placement.width + 1,
-                                    placement.height + 1, radius, radius);
-    if (rgn != nullptr) {
-      ::SetWindowRgn(hwnd, rgn, TRUE);  // window owns the region.
-    }
-  }
-
   hwnd_.store(hwnd);
+  // Apply the current overlay style (shape region / mirror / border) up front so
+  // the bubble is correctly shaped the instant it is Shown, not one tick later.
+  SyncStyleFromStore(hwnd);
   ::SetTimer(hwnd, kPaintTimerId, kPaintIntervalMs, nullptr);
   running_.store(true);
   ready->set_value(true);  // created HIDDEN — engine Show()s on demand.
@@ -224,6 +300,36 @@ void CameraFloatingOverlay::PublishBgra(const std::uint8_t* bgra, int width,
   frame_w_ = width;
   frame_h_ = height;
   dirty_ = true;
+}
+
+void CameraFloatingOverlay::SyncStyleFromStore(HWND hwnd) {
+  auto& store = CameraOverlayStyleStore::Instance();
+  const std::uint64_t rev = store.revision();
+  if (rev == last_style_revision_) {
+    return;  // nothing changed since the last tick.
+  }
+  last_style_revision_ = rev;
+
+  const CameraOverlayLiveStyle s = store.Snapshot();
+  const ResolvedBubbleStyle resolved = ResolveOverlayBubbleStyle(s);
+  style_shape_wire_ = s.shape_wire;
+  style_roundness_ = s.roundness;
+  style_mirror_ = s.mirror;
+  style_has_border_ =
+      resolved.style.has_border_color && resolved.style.border_width > 0.0;
+  style_border_argb_ = resolved.style.border_argb;
+  style_border_px_ = static_cast<float>(resolved.style.border_width);
+
+  RECT client{};
+  ::GetClientRect(hwnd, &client);
+  const int w = client.right - client.left;
+  const int h = client.bottom - client.top;
+  if (w > 0 && h > 0) {
+    HRGN rgn = BuildShapeRegion(w, h, style_shape_wire_, style_roundness_);
+    // SetWindowRgn takes ownership of rgn; passing TRUE repaints the frame.
+    ::SetWindowRgn(hwnd, rgn, TRUE);
+  }
+  ::InvalidateRect(hwnd, nullptr, FALSE);
 }
 
 void CameraFloatingOverlay::Stop() {

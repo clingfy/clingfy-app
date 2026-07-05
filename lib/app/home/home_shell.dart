@@ -16,6 +16,7 @@ import 'package:clingfy/app/home/widgets/export_progress_dock.dart';
 import 'package:clingfy/app/home/widgets/home_left_sidebar.dart';
 import 'package:clingfy/app/home/widgets/home_options_panel.dart';
 import 'package:clingfy/app/home/widgets/home_right_panel.dart';
+import 'package:clingfy/app/home/widgets/live_camera_preview.dart';
 import 'package:clingfy/app/home/widgets/home_toolbar.dart';
 import 'package:clingfy/app/home/widgets/reset_preferences_action.dart';
 import 'package:clingfy/l10n/app_localizations.dart';
@@ -490,6 +491,13 @@ class _HomeShellState extends State<HomeShell> {
     final cameraFloatingPreview = context.select<OverlayController, bool>(
       (o) => o.cameraFloatingPreview,
     );
+    // Live recording-overlay styling for the in-app camera preview bubble.
+    // Value-equal, so this only rebuilds the preview when a rendered style
+    // changes (shape / roundness / border / shadow / opacity / mirror).
+    final cameraOverlayStyle = context
+        .select<OverlayController, CameraOverlayPreviewStyle>(
+          (o) => CameraOverlayPreviewStyle.fromController(o),
+        );
     final showPreviewShell = context.select<RecordingController, bool>(
       (r) => r.showPreviewShell,
     );
@@ -703,6 +711,8 @@ class _HomeShellState extends State<HomeShell> {
                                                           cameraOverlayEnabled,
                                                       cameraFloatingPreview:
                                                           cameraFloatingPreview,
+                                                      cameraOverlayStyle:
+                                                          cameraOverlayStyle,
                                                       onToggleCameraPreviewMode:
                                                           () => context
                                                               .read<
