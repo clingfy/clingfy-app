@@ -37,6 +37,11 @@ std::string OverlayShapeToPainterShape(int shape_wire) {
   }
 }
 
+InscribedSquare CameraOverlayInscribedSquare(int w, int h) {
+  const int side = std::min(w, h);
+  return InscribedSquare{(w - side) / 2, (h - side) / 2, side};
+}
+
 ResolvedBubbleStyle ResolveOverlayBubbleStyle(const CameraOverlayLiveStyle& s) {
   ResolvedBubbleStyle r;
   r.shape = OverlayShapeToPainterShape(s.shape_wire);

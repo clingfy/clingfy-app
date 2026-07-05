@@ -87,6 +87,31 @@ TEST(ResolveOverlayBubbleStyle, ShadowPresetPassesThroughClamped) {
   EXPECT_EQ(ResolveOverlayBubbleStyle(s).style.shadow_preset, 0);
 }
 
+TEST(CameraOverlayInscribedSquare, LandscapeWindowCentersASquareOfHeight) {
+  // 16:9 floating window: the compact-shape square is height x height, centered
+  // horizontally — NOT the full window (that would render a rectangle).
+  const InscribedSquare sq = CameraOverlayInscribedSquare(400, 225);
+  EXPECT_EQ(sq.side, 225);
+  EXPECT_EQ(sq.x, (400 - 225) / 2);
+  EXPECT_EQ(sq.y, 0);
+  // Provably narrower than the window, so the silhouette differs from a rect.
+  EXPECT_LT(sq.side, 400);
+}
+
+TEST(CameraOverlayInscribedSquare, PortraitWindowCentersASquareOfWidth) {
+  const InscribedSquare sq = CameraOverlayInscribedSquare(120, 300);
+  EXPECT_EQ(sq.side, 120);
+  EXPECT_EQ(sq.x, 0);
+  EXPECT_EQ(sq.y, (300 - 120) / 2);
+}
+
+TEST(CameraOverlayInscribedSquare, SquareWindowIsTheWholeBox) {
+  const InscribedSquare sq = CameraOverlayInscribedSquare(200, 200);
+  EXPECT_EQ(sq.side, 200);
+  EXPECT_EQ(sq.x, 0);
+  EXPECT_EQ(sq.y, 0);
+}
+
 TEST(CameraOverlayStyleStore, SettersMutateSnapshotAndBumpRevision) {
   CameraOverlayStyleStore store;  // isolated instance, not the singleton.
   const std::uint64_t r0 = store.revision();

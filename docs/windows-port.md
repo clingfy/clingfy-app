@@ -468,7 +468,14 @@ preview reflects the *recording sidebar* settings (`OverlayShape`, `OverlayShado
   a border (`FrameRgn` along the shape). The 12 `setCameraOverlay*` / `setChromaKey*`
   / `setOverlayMirror` bridge setters (previously no-ops) now write a shared
   `CameraOverlayStyleStore` (`windows/runner/Capture/Camera/`), which the overlay
-  thread samples each ~33 ms tick to rebuild the region.
+  thread samples each ~33 ms tick to rebuild the region. The window is 16:9, so the
+  **compact** shapes (circle / square / hexagon / star) are inscribed in a *centered
+  square* (`CameraOverlayInscribedSquare`) — a circle reads as a real circle, a
+  square as a real square — while roundedRect / squircle deliberately fill the full
+  window as rounded rectangles. **Only shape / roundness / mirror / border are
+  visible on the floating bubble; opacity / shadow / chroma are no-ops there** (an
+  opaque window can't composite partial transparency) — they show in the in-app
+  preview and bake into the export.
 - **Deliberate live-preview gaps (styling still bakes into the export):**
   - **Chroma key is not applied to the live preview** (in-app or floating) — it
     needs a shader; it still bakes into the inline preview + export.

@@ -68,6 +68,18 @@ ResolvedBubbleStyle ResolveOverlayBubbleStyle(const CameraOverlayLiveStyle& s);
 // tests and reuse by the floating window's region builder.
 std::string OverlayShapeToPainterShape(int shape_wire);
 
+// The largest square centered inside a w x h box. The floating overlay window is
+// a fixed 16:9 landscape, but the compact shapes (circle / square / hexagon /
+// star) must be inscribed in a centered square so they read as an actual circle /
+// square — matching the in-app bubble (camera_overlay_bubble.dart) instead of
+// stretching to the window's aspect. Pure integer geometry, unit-tested.
+struct InscribedSquare {
+  int x = 0;
+  int y = 0;
+  int side = 0;
+};
+InscribedSquare CameraOverlayInscribedSquare(int w, int h);
+
 // Thread-safe holder. Setters run on the platform thread (bridge handlers);
 // Snapshot() runs on the camera capture / compositor thread.
 class CameraOverlayStyleStore {

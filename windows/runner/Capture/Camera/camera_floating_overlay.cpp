@@ -45,21 +45,36 @@ HRGN BuildPolygonRegion(int w, int h, int sides, double rotation,
 // Build the window region for an OverlayShape.wireValue. Mirrors the Dart
 // in-app clipper (camera_overlay_bubble.dart) so the floating bubble and the
 // in-app preview agree on the silhouette. Caller owns the returned HRGN.
+//
+// The compact shapes (circle / square / hexagon / star) are inscribed in a
+// CENTERED SQUARE of the window so a circle reads as a real circle and a square
+// as a real square — not stretched to the window's 16:9 aspect. The window
+// content fills the full frame; the region crops it to the centered shape (the
+// same center-crop the in-app FittedBox cover does). roundedRect / squircle are
+// deliberately full-window "rectangle" silhouettes.
 HRGN BuildShapeRegion(int w, int h, int shape_wire, double roundness) {
   const int shortest = std::min(w, h);
-  const int rr =
-      static_cast<int>(std::clamp(roundness, 0.0, 0.4) * shortest);
+  const clingfy::capture::InscribedSquare sq =
+      clingfy::capture::CameraOverlayInscribedSquare(w, h);
+  const int sq_rr =
+      static_cast<int>(std::clamp(roundness, 0.0, 0.4) * sq.side);
   switch (shape_wire) {
-    case 0:  // circle
-      return ::CreateEllipticRgn(0, 0, w + 1, h + 1);
-    case 1:  // roundedRect
-    case 2:  // square (rounded corners via roundness)
+    case 0:  // circle — true centered circle
+      return ::CreateEllipticRgn(sq.x, sq.y, sq.x + sq.side + 1,
+                                 sq.y + sq.side + 1);
+    case 2:  // square — centered square (rounded corners via roundness)
+      return ::CreateRoundRectRgn(sq.x, sq.y, sq.x + sq.side + 1,
+                                  sq.y + sq.side + 1, 2 * sq_rr, 2 * sq_rr);
+    case 1: {  // roundedRect — full-window rounded rectangle
+      const int rr =
+          static_cast<int>(std::clamp(roundness, 0.0, 0.4) * shortest);
       return ::CreateRoundRectRgn(0, 0, w + 1, h + 1, 2 * rr, 2 * rr);
-    case 3:  // hexagon
+    }
+    case 3:  // hexagon — centered regular polygon
       return BuildPolygonRegion(w, h, 6, kPi / 6.0, 0.0, /*star=*/false);
-    case 4:  // star
+    case 4:  // star — centered
       return BuildPolygonRegion(w, h, 5, 0.0, 0.5, /*star=*/true);
-    case 5:  // squircle ≈ strongly-rounded rect (matches the painter fallback)
+    case 5:  // squircle ≈ strongly-rounded full-window rect (painter fallback)
     default: {
       const int r = static_cast<int>(0.32 * shortest);
       return ::CreateRoundRectRgn(0, 0, w + 1, h + 1, 2 * r, 2 * r);
