@@ -3,6 +3,7 @@
 #include <cstdint>
 
 #include "Bridge/result_helpers.h"
+#include "Capture/Camera/camera_overlay_geometry_store.h"
 #include "Capture/Camera/camera_overlay_style_store.h"
 #include "Capture/Camera/live_camera_texture.h"
 #include "Capture/recording_engine.h"
@@ -61,6 +62,7 @@ void HandleNoopSetter(
 // the recording preview reflects shape / border / shadow / opacity / mirror /
 // chroma immediately (macOS parity). All reply Null — Dart treats them as
 // fire-and-forget.
+using clingfy::capture::CameraOverlayGeometryStore;
 using clingfy::capture::CameraOverlayStyleStore;
 
 void HandleSetShape(
@@ -173,6 +175,40 @@ void HandleSetChromaColor(
   reply::Null(*result);
 }
 
+// Live camera-overlay geometry setters. Each writes the shared
+// CameraOverlayGeometryStore that the floating overlay thread samples per tick
+// so the recording bubble moves / resizes immediately (macOS parity with
+// camera.resize / camera.updatePosition). All reply Null — fire-and-forget.
+void HandleSetSize(
+    const flutter::MethodCall<flutter::EncodableValue>& call,
+    std::unique_ptr<flutter::MethodResult<flutter::EncodableValue>> result) {
+  if (const auto* a = ArgsMap(call)) {
+    CameraOverlayGeometryStore::Instance().SetSize(
+        ReadDouble(*a, "size", 220.0));
+  }
+  reply::Null(*result);
+}
+
+void HandleSetPosition(
+    const flutter::MethodCall<flutter::EncodableValue>& call,
+    std::unique_ptr<flutter::MethodResult<flutter::EncodableValue>> result) {
+  if (const auto* a = ArgsMap(call)) {
+    CameraOverlayGeometryStore::Instance().SetPosition(
+        static_cast<int>(ReadInt(*a, "position", 3)));
+  }
+  reply::Null(*result);
+}
+
+void HandleSetCustomPosition(
+    const flutter::MethodCall<flutter::EncodableValue>& call,
+    std::unique_ptr<flutter::MethodResult<flutter::EncodableValue>> result) {
+  if (const auto* a = ArgsMap(call)) {
+    CameraOverlayGeometryStore::Instance().SetCustomPosition(
+        ReadDouble(*a, "normalizedX", 0.5), ReadDouble(*a, "normalizedY", 0.5));
+  }
+  reply::Null(*result);
+}
+
 // Phase 9.3.1: the Dart recording UI calls this once to get the id of the
 // app-lifetime live-camera preview texture, then mounts a Texture(textureId)
 // widget (shown while recording with the camera on). Returns -1 if the texture
@@ -227,11 +263,14 @@ void RegisterHandlers(HandlerTable& table) {
   table["showCameraOverlay"] = &HandleNoopSetter;
   table["hideCameraOverlay"] = &HandleNoopSetter;
 
-  // Geometry.
-  table["setCameraOverlaySize"] = &HandleNoopSetter;
+  // Geometry — live floating-bubble placement (writes CameraOverlayGeometryStore,
+  // applied by the floating overlay thread via SetWindowPos).
+  table["setCameraOverlaySize"] = &HandleSetSize;
+  table["setCameraOverlayPosition"] = &HandleSetPosition;
+  table["setCameraOverlayCustomPosition"] = &HandleSetCustomPosition;
+  // Absolute pixel frame (macOS setFrame): unused on Windows — the bubble is
+  // placed by size + corner/normalized center, so this stays a no-op.
   table["setCameraOverlayFrame"] = &HandleNoopSetter;
-  table["setCameraOverlayPosition"] = &HandleNoopSetter;
-  table["setCameraOverlayCustomPosition"] = &HandleNoopSetter;
 
   // Shape / styling — live camera bubble style (writes CameraOverlayStyleStore,
   // sampled by the live compositor for WYSIWYG parity with the export).
