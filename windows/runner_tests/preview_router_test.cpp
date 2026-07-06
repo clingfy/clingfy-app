@@ -269,7 +269,10 @@ TEST_F(PreviewRouterSceneInfoTest, HappyPathWithoutCamera) {
   // cameraPath absent — Dart parser reads it as null.
   EXPECT_EQ(find("cameraPath"), nullptr);
 
-  // camera key intentionally NOT emitted; matches macOS gotcha #7.
+  // This minimal bundle's screen.meta.json has no editorSeed block, so the
+  // handler omits the `camera` key and Dart falls back to a hidden camera
+  // (backward-compat with pre-editorSeed recordings). See
+  // EditorSeedSurfacesAsCameraBlock for the populated path.
   EXPECT_EQ(find("camera"), nullptr);
 
   // cameraExportCapabilities map. Phase 9.4 added shapeMask + cornerRadius; 9.5
@@ -308,6 +311,62 @@ TEST_F(PreviewRouterSceneInfoTest, HappyPathWithCameraEmitsCameraPath) {
   ASSERT_NE(it, map.end());
   const auto path = std::get<std::string>(it->second);
   EXPECT_NE(path.find("raw.mov"), std::string::npos);
+}
+
+TEST_F(PreviewRouterSceneInfoTest, EditorSeedSurfacesAsCameraBlock) {
+  MethodRouter router;
+  const fs::path root = MakeMinimalBundle(base_, "with-seed");
+  AddCameraAssets(root);
+  // Overwrite screen.meta.json with an editorSeed (macOS on-disk `camera*`
+  // keys) — the recording engine writes this at stop; here we pin that the
+  // handler surfaces it as the UN-prefixed `camera` block Dart consumes.
+  {
+    std::ofstream out(root / "capture" / "screen.meta.json", std::ios::binary);
+    out << R"({
+  "width": 1920, "height": 1080, "fps": 60, "platform": "windows",
+  "editorSeed": {
+    "cameraVisible": true,
+    "cameraLayoutPreset": "overlayBottomRight",
+    "cameraShape": "roundedRect",
+    "cameraCornerRadius": 0.2,
+    "cameraOpacity": 0.85,
+    "cameraMirror": false,
+    "cameraShadow": 2,
+    "cameraBorderWidth": 4,
+    "cameraBorderColorArgb": 4294967295
+  }
+})";
+  }
+
+  const auto reply = DispatchWithArgs(router, "getRecordingSceneInfo",
+                                      Args(PathToUtf8(root)));
+  ASSERT_TRUE(reply.success_called);
+  const auto& map = std::get<flutter::EncodableMap>(reply.success_value);
+  auto it = map.find(flutter::EncodableValue("camera"));
+  ASSERT_NE(it, map.end());
+  ASSERT_TRUE(std::holds_alternative<flutter::EncodableMap>(it->second));
+  const auto& cam = std::get<flutter::EncodableMap>(it->second);
+  auto field = [&](const char* key) -> const flutter::EncodableValue* {
+    auto f = cam.find(flutter::EncodableValue(key));
+    return f == cam.end() ? nullptr : &f->second;
+  };
+  // Keys are UN-prefixed; the disk `cameraShadow` is renamed to shadowPreset.
+  ASSERT_NE(field("visible"), nullptr);
+  EXPECT_TRUE(std::get<bool>(*field("visible")));
+  ASSERT_NE(field("shape"), nullptr);
+  EXPECT_EQ(std::get<std::string>(*field("shape")), "roundedRect");
+  ASSERT_NE(field("layoutPreset"), nullptr);
+  EXPECT_EQ(std::get<std::string>(*field("layoutPreset")), "overlayBottomRight");
+  ASSERT_NE(field("mirror"), nullptr);
+  EXPECT_FALSE(std::get<bool>(*field("mirror")));
+  ASSERT_NE(field("shadowPreset"), nullptr);
+  EXPECT_EQ(std::get<int>(*field("shadowPreset")), 2);
+  // The on-disk key name must NOT leak through into the reply.
+  EXPECT_EQ(field("cameraShadow"), nullptr);
+  // ARGB survives the bridge as int64 (4294967295 > INT32_MAX).
+  ASSERT_NE(field("borderColorArgb"), nullptr);
+  EXPECT_EQ(std::get<std::int64_t>(*field("borderColorArgb")),
+            std::int64_t{4294967295});
 }
 
 // ---- Path / encoding sanity ----------------------------------------

@@ -24,14 +24,18 @@
 #include <optional>
 #include <string>
 
+#include "Capture/camera_editor_seed.h"
+
 namespace clingfy::capture {
 
 // Parsed contents of `<project>/capture/screen.meta.json`. The Windows
 // writer (`BuildScreenMetaJson`) emits this shape; macOS-produced
-// bundles include the same numeric fields plus an `editorSeed` blob
-// the editor populates over time. Step 5.1 ignores `editorSeed` —
-// Step 5.2 reads it back as opaque JSON when it lands on disk, since
-// `getRecordingSceneInfo` is the consumer.
+// bundles include the same numeric fields plus an `editorSeed` blob.
+// Step 5.2 reads `editorSeed` back into `editor_seed` since
+// `getRecordingSceneInfo` is the consumer (surfaced to Dart as the
+// `camera` block). Empty optional when the bundle predates editorSeed
+// (older Windows recordings) — the scene-info handler then omits the
+// `camera` key, and Dart falls back to a hidden camera.
 struct RecordingMetadata {
   std::uint32_t width = 0;
   std::uint32_t height = 0;
@@ -42,6 +46,7 @@ struct RecordingMetadata {
   bool mic_active = false;
   bool loopback_active = false;
   std::string platform;  // "windows" today; "macos" when read from a Mac bundle.
+  std::optional<CameraEditorSeed> editor_seed;
 };
 
 // Resolved view of a `.clingfyproj` bundle. All path fields are

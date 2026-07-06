@@ -3,11 +3,13 @@
 #include <windows.h>
 #include <shlobj.h>
 
+#include <charconv>
 #include <chrono>
 #include <ctime>
 #include <filesystem>
 #include <fstream>
 #include <sstream>
+#include <string>
 #include <utility>
 
 namespace clingfy::capture {
@@ -59,6 +61,70 @@ std::string JsonEscape(const std::string& value) {
     }
   }
   return out;
+}
+
+// Format a double as compact JSON. `std::to_chars` emits the shortest string
+// that round-trips back to the same double, always with '.' as the separator
+// (locale-independent) and no trailing-zero noise — mirroring how Swift's
+// JSONEncoder renders 1.0 -> "1", 0.35 -> "0.35", while guaranteeing the
+// writer→reader round-trip is lossless.
+std::string JsonNumber(double v) {
+  char buf[32];
+  const auto res = std::to_chars(buf, buf + sizeof(buf), v);
+  return std::string(buf, res.ptr);
+}
+
+// Emit the `editorSeed` object (the recording-time camera composition) using
+// the macOS `RecordingMetadata.EditorSeed` on-disk keys, so a Windows-written
+// screen.meta.json decodes on macOS too. All 12 always-required macOS fields
+// are emitted; the three nullable fields (cameraNormalizedCenter,
+// cameraBorderColorArgb, cameraChromaKeyColorArgb) are omitted when absent,
+// matching JSONEncoder's `encodeIfPresent`. Written as a value only — the
+// caller supplies the `"editorSeed":` key and any trailing comma.
+void AppendEditorSeedJson(std::ostringstream& out, const CameraEditorSeed& s) {
+  out << "{\n";
+  bool first = true;
+  const auto field = [&](const char* key, const std::string& value) {
+    if (!first) out << ",\n";
+    first = false;
+    out << "    \"" << key << "\": " << value;
+  };
+  const auto quoted = [](const std::string& v) {
+    return "\"" + JsonEscape(v) + "\"";
+  };
+  field("cameraVisible", s.visible ? "true" : "false");
+  field("cameraLayoutPreset", quoted(s.layout_preset));
+  if (s.normalized_center_x.has_value() && s.normalized_center_y.has_value()) {
+    field("cameraNormalizedCenter",
+          "{\"x\": " + JsonNumber(*s.normalized_center_x) +
+              ", \"y\": " + JsonNumber(*s.normalized_center_y) + "}");
+  }
+  field("cameraSizeFactor", JsonNumber(s.size_factor));
+  field("cameraShape", quoted(s.shape));
+  field("cameraCornerRadius", JsonNumber(s.corner_radius));
+  field("cameraBorderWidth", JsonNumber(s.border_width));
+  if (s.border_color_argb.has_value()) {
+    field("cameraBorderColorArgb", std::to_string(*s.border_color_argb));
+  }
+  field("cameraShadow", std::to_string(s.shadow_preset));
+  field("cameraOpacity", JsonNumber(s.opacity));
+  field("cameraMirror", s.mirror ? "true" : "false");
+  field("cameraContentMode", quoted(s.content_mode));
+  field("cameraZoomBehavior", quoted(s.zoom_behavior));
+  field("cameraZoomScaleMultiplier", JsonNumber(s.zoom_scale_multiplier));
+  field("cameraIntroPreset", quoted(s.intro_preset));
+  field("cameraOutroPreset", quoted(s.outro_preset));
+  field("cameraZoomEmphasisPreset", quoted(s.zoom_emphasis_preset));
+  field("cameraIntroDurationMs", std::to_string(s.intro_duration_ms));
+  field("cameraOutroDurationMs", std::to_string(s.outro_duration_ms));
+  field("cameraZoomEmphasisStrength", JsonNumber(s.zoom_emphasis_strength));
+  field("cameraChromaKeyEnabled", s.chroma_key_enabled ? "true" : "false");
+  field("cameraChromaKeyStrength", JsonNumber(s.chroma_key_strength));
+  if (s.chroma_key_color_argb.has_value()) {
+    field("cameraChromaKeyColorArgb",
+          std::to_string(*s.chroma_key_color_argb));
+  }
+  out << "\n  }";
 }
 
 bool WriteUtf8File(const fs::path& path, const std::string& contents) {
@@ -236,6 +302,13 @@ std::string BuildScreenMetaJson(const ProjectWriterInput& input) {
         << ", \"width\": " << b.width << ", \"height\": " << b.height
         << "},\n";
   }
+  // Phase 5.2 parity: the recording-time camera composition. macOS always
+  // persists an editorSeed; the reader (ParseScreenMetaJson) and
+  // getRecordingSceneInfo read it back so post-processing opens camera-on with
+  // the recorded settings. Additive — the reader ignores it on old bundles.
+  out << "  \"editorSeed\": ";
+  AppendEditorSeedJson(out, input.editor_seed);
+  out << ",\n";
   out << "  \"platform\": \"windows\"\n";
   out << "}\n";
   return out.str();

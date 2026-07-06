@@ -30,6 +30,7 @@
 #include "Services/recovery_sweep.h"
 #include "Capture/Camera/camera_floating_overlay.h"
 #include "Capture/Camera/camera_meta.h"
+#include "Capture/Camera/camera_overlay_style_store.h"
 #include "Capture/Camera/camera_recorder.h"
 #include "Capture/Camera/live_camera_texture.h"
 #include "Capture/captured_video_frame.h"
@@ -1337,6 +1338,38 @@ void RecordingEngine::FillCameraWriterFields(ProjectWriterInput& input) const {
   input.camera_enabled = current_camera_enabled_;
   input.camera_raw_path = current_camera_raw_path_;
   input.camera_meta_json = current_camera_meta_json_;
+
+  // editorSeed (screen.meta.json) — capture the recording-time camera overlay
+  // styling so post-processing reopens camera-on with the user's settings
+  // (macOS parity via RecordingMetadata.EditorSeed). The overlay style lives in
+  // the process-wide CameraOverlayStyleStore — the SAME source the live preview
+  // and the export bake read — and ResolveOverlayBubbleStyle applies the exact
+  // same border/chroma gating + clamps, so the seed matches what was on screen.
+  const ResolvedBubbleStyle resolved =
+      ResolveOverlayBubbleStyle(CameraOverlayStyleStore::Instance().Snapshot());
+  CameraEditorSeed seed;
+  seed.visible = current_camera_enabled_;  // a camera actually produced frames
+  // Overlay position/size are not tracked natively yet: a visible camera lands
+  // in the bottom-right preset (the common default) which the user can
+  // reposition in the editor; size stays at the .hidden baseline.
+  seed.layout_preset =
+      current_camera_enabled_ ? "overlayBottomRight" : "hidden";
+  seed.shape = resolved.shape;
+  seed.corner_radius = resolved.corner_radius;
+  seed.content_mode = resolved.content_mode;
+  seed.opacity = resolved.style.opacity;
+  seed.mirror = resolved.style.mirror;
+  seed.border_width = resolved.style.border_width;
+  if (resolved.style.has_border_color) {
+    seed.border_color_argb = resolved.style.border_argb;
+  }
+  seed.shadow_preset = resolved.style.shadow_preset;
+  seed.chroma_key_enabled = resolved.style.chroma_enabled;
+  seed.chroma_key_strength = resolved.style.chroma_strength;
+  if (resolved.style.chroma_enabled) {
+    seed.chroma_key_color_argb = resolved.style.chroma_argb;
+  }
+  input.editor_seed = seed;
 }
 
 bool RecordingEngine::SetCameraPreviewFloating(bool floating) {

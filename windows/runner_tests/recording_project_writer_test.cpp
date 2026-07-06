@@ -139,6 +139,57 @@ TEST_F(RecordingProjectWriterTest, ScreenMetaCarriesDiagnostics) {
   EXPECT_NE(meta.find("\"platform\": \"windows\""), std::string::npos);
 }
 
+TEST_F(RecordingProjectWriterTest, ScreenMetaEmitsPopulatedEditorSeed) {
+  ProjectWriterInput input;
+  input.session_id = "sess-seed";
+  CameraEditorSeed seed;
+  seed.visible = true;
+  seed.layout_preset = "overlayBottomRight";
+  seed.shape = "roundedRect";
+  seed.corner_radius = 0.25;
+  seed.opacity = 0.8;
+  seed.mirror = false;
+  seed.border_width = 4.0;
+  seed.border_color_argb = 0xFFFFFFFFu;  // opaque white; > INT32_MAX
+  seed.shadow_preset = 2;
+  seed.chroma_key_enabled = true;
+  seed.chroma_key_strength = 0.6;
+  seed.chroma_key_color_argb = 0xFF00FF00u;  // opaque green (4278255360)
+  input.editor_seed = seed;
+
+  const std::string meta = BuildScreenMetaJson(input);
+  EXPECT_NE(meta.find("\"editorSeed\""), std::string::npos);
+  EXPECT_NE(meta.find("\"cameraVisible\": true"), std::string::npos);
+  EXPECT_NE(meta.find("\"cameraLayoutPreset\": \"overlayBottomRight\""),
+            std::string::npos);
+  EXPECT_NE(meta.find("\"cameraShape\": \"roundedRect\""), std::string::npos);
+  EXPECT_NE(meta.find("\"cameraMirror\": false"), std::string::npos);
+  // On-disk key is `cameraShadow` (renamed to shadowPreset only in the reply).
+  EXPECT_NE(meta.find("\"cameraShadow\": 2"), std::string::npos);
+  // ARGB emitted as the unsigned decimal, matching macOS (must not overflow).
+  EXPECT_NE(meta.find("\"cameraBorderColorArgb\": 4294967295"),
+            std::string::npos);
+  EXPECT_NE(meta.find("\"cameraChromaKeyColorArgb\": 4278255360"),
+            std::string::npos);
+  EXPECT_NE(meta.find("\"cameraChromaKeyEnabled\": true"), std::string::npos);
+}
+
+TEST_F(RecordingProjectWriterTest, ScreenMetaEditorSeedOmitsUnsetNullables) {
+  ProjectWriterInput input;
+  input.session_id = "sess-seed-default";
+  // editor_seed left at defaults — a camera-less recording still writes a seed
+  // (macOS parity), with cameraVisible:false and the nullable fields omitted.
+  const std::string meta = BuildScreenMetaJson(input);
+  EXPECT_NE(meta.find("\"cameraVisible\": false"), std::string::npos);
+  EXPECT_EQ(meta.find("\"cameraBorderColorArgb\""), std::string::npos);
+  EXPECT_EQ(meta.find("\"cameraChromaKeyColorArgb\""), std::string::npos);
+  EXPECT_EQ(meta.find("\"cameraNormalizedCenter\""), std::string::npos);
+  // The always-required macOS fields are present so a Mac decoder accepts it.
+  EXPECT_NE(meta.find("\"cameraSizeFactor\""), std::string::npos);
+  EXPECT_NE(meta.find("\"cameraZoomBehavior\": \"scaleWithScreenZoom\""),
+            std::string::npos);
+}
+
 TEST_F(RecordingProjectWriterTest, ScreenMetaCarriesCaptureTargetType) {
   // Default: display capture records targetType "display" and no windowId.
   ProjectWriterInput display_input;
