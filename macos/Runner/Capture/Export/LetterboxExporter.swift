@@ -73,6 +73,7 @@ final class LetterboxExporter {
     "screen.screen-prepass.",
     "camera.styled.",
     "raw.styled.",
+    "mic-echo-cancelled-",
   ]
   private var currentSession: AVAssetExportSession?
   private var progressTimer: Timer?
@@ -131,6 +132,44 @@ final class LetterboxExporter {
       }
     }
     temporaryArtifacts.removeAll()
+  }
+
+  /// Runs the speaker→mic bleed canceller and returns the URL of the cleaned mic
+  /// to mix, or the original `micAudioURL` when there is nothing to cancel (no
+  /// system reference, no measurable bleed) or the canceller fails. The cleaned
+  /// file is registered for cleanup so it is swept with the other temp artifacts.
+  private func echoCancelledMicURL(micAudioURL: URL?, systemAudioURL: URL?) -> URL? {
+    guard let micAudioURL, let systemAudioURL else { return micAudioURL }
+    let tempRoot = AppPaths.tempRoot()
+    try? FileManager.default.createDirectory(at: tempRoot, withIntermediateDirectories: true)
+    do {
+      let result = try MicEchoCanceller.cancel(
+        micURL: micAudioURL, systemURL: systemAudioURL, outputDirectory: tempRoot)
+      if result.applied {
+        registerTemporaryArtifact(result.cleanedMicURL)
+        NativeLogger.i(
+          "Export", "Cancelled speaker→mic bleed from the microphone",
+          context: [
+            "bleedCorrelation": result.bleedCorrelation,
+            "delayMs": result.delayMs,
+            "reductionDb": result.reductionDb,
+            "cleanedMic": result.cleanedMicURL.lastPathComponent,
+          ])
+      } else {
+        NativeLogger.d(
+          "Export", "No microphone bleed detected; using the microphone as recorded",
+          context: [
+            "bleedCorrelation": result.bleedCorrelation,
+            "delayMs": result.delayMs,
+          ])
+      }
+      return result.cleanedMicURL
+    } catch {
+      NativeLogger.w(
+        "Export", "Mic echo cancellation failed; using the microphone as recorded",
+        context: ["error": "\(error)"])
+      return micAudioURL
+    }
   }
 
   private func fileSizeBytes(for url: URL, fileManager: FileManager = .default) -> Int64 {
@@ -2608,7 +2647,18 @@ final class LetterboxExporter {
 
     // Separated sources (Phase 1.5 bundles): validated once here; every
     // consumer below falls back to the legacy embedded-audio path when nil.
-    let separatedMicAsset = Self.readableAudioAsset(url: mediaSources.micAudioURL)
+    //
+    // Speaker→mic bleed removal: when both a mic and a system sidecar exist, the
+    // mic may carry a delayed copy of the system audio picked up through the
+    // speakers; mixing mic+system would then play the system twice (echo). Cancel
+    // that bleed against the clean system reference first. The helper is a no-op
+    // (returns the original mic) when there's no measurable bleed — headphones,
+    // silent mic, or no system audio — and degrades to the raw mic on any error.
+    let micAudioURLForMix = echoCancelledMicURL(
+      micAudioURL: mediaSources.micAudioURL,
+      systemAudioURL: mediaSources.systemAudioURL
+    )
+    let separatedMicAsset = Self.readableAudioAsset(url: micAudioURLForMix)
     let separatedSystemAsset = Self.readableAudioAsset(url: mediaSources.systemAudioURL)
     let hasSeparatedAudio = separatedMicAsset != nil || separatedSystemAsset != nil
 
