@@ -186,4 +186,143 @@ final class MicEchoCancellerTests: XCTestCase {
     XCTAssertEqual(result.cleanedMicURL, micURL, "bypass returns the original mic unchanged")
     XCTAssertLessThan(abs(result.bleedCorrelation), MicEchoCanceller.gateCorrelation)
   }
+
+  /// Colored (tonal) independent audio: the OLD single-strongest-window gate
+  /// could exceed 0.15 on colored signals with no bleed at all (e.g. headphones +
+  /// music), engaging the canceller and smearing a system ghost into a clean mic.
+  /// Consensus requires many windows to agree on ONE lag, which independent
+  /// sources never do, so it must stay a no-op.
+  func testCancelBypassesColoredIndependentAudio() throws {
+    let n = 96_000  // 2 s → enough windows for a real consensus decision
+    func colored(_ seed: UInt64) -> [Float] {
+      let raw = noise(n, seed: seed)
+      var y = [Float](repeating: 0, count: n)
+      let a: Float = 0.95  // one-pole low-pass → colored / music-like
+      var acc: Float = 0
+      for i in 0..<n {
+        acc = a * acc + (1 - a) * raw[i]
+        y[i] = acc
+      }
+      return y
+    }
+    let micURL = try writeCAF(colored(21), name: "mic.caf")
+    let systemURL = try writeCAF(colored(22), name: "system.caf")
+
+    let result = try MicEchoCanceller.cancel(
+      micURL: micURL, systemURL: systemURL, outputDirectory: FileManager.default.temporaryDirectory)
+
+    XCTAssertFalse(
+      result.applied, "independent colored audio has no consistent bleed lag → must be a no-op")
+    XCTAssertEqual(result.cleanedMicURL, micURL, "bypass returns the original mic unchanged")
+  }
+
+  // MARK: - Windowed detection (the core v2 fix)
+
+  /// The real bug: bleed lives only in the speech PAUSES, so a single global
+  /// correlation is averaged below the gate by the loud speech and the canceller
+  /// never fires. The windowed estimator must still find it.
+  func testEstimateDelayFindsBleedMaskedBySpeech() {
+    let n = 96_000  // 2 s
+    let system = noise(n, seed: 11).map { $0 * 0.5 }
+    let voice = noise(n, seed: 12)
+    let delay = 4_800  // 100 ms
+    let half = n / 2
+
+    var mic = [Float](repeating: 0, count: n)
+    // First half: LOUD speech, no bleed (masks any correlation globally).
+    for i in 0..<half { mic[i] = 2.0 * voice[i] }
+    // Second half: a quiet PAUSE that is pure speaker bleed of the system.
+    for i in half..<n { mic[i] = 0.3 * system[i - delay] }
+
+    // Global correlation is tiny (loud speech dominates the mic energy)…
+    let globalCorr = abs(correlationAtLag(mic, system, lag: delay))
+    XCTAssertLessThan(
+      globalCorr, MicEchoCanceller.gateCorrelation,
+      "a global correlation should be masked below the gate by the speech")
+
+    // …but the windowed estimator finds the bleed in the pause window.
+    let (samples, corr) = MicEchoCanceller.estimateDelay(mic: mic, system: system)
+    XCTAssertEqual(
+      samples, delay, accuracy: MicEchoCanceller.delaySearchDecimation * 2,
+      "windowed detection should recover the pause-time bleed lag")
+    XCTAssertGreaterThan(
+      abs(corr), MicEchoCanceller.gateCorrelation,
+      "the strongest window must clear the gate so the canceller engages")
+  }
+
+  // MARK: - Double-talk freeze
+
+  /// When near-end voice dominates, adaptation must FREEZE so the filter never
+  /// learns (and thus cancels) the voice — while still cancelling when allowed.
+  func testDoubleTalkFreezeSuspendsAdaptation() {
+    let n = 24_000
+    let system = noise(n, seed: 13)
+    let delay = 12
+    var desired = [Float](repeating: 0, count: n)
+    for i in delay..<n { desired[i] = 0.5 * system[i - delay] }  // pure bleed
+
+    // Force a permanent freeze (mic envelope always far above the reference):
+    // weights never leave zero, so the filter passes the input through.
+    let frozenEnv = [Float](repeating: 100, count: n)
+    let refEnv = MicEchoCanceller.movingRMS(system)
+    let frozen = MicEchoCanceller.nlmsDoubleTalk(
+      desired: desired, reference: system, micEnv: frozenEnv, refEnv: refEnv)
+    for i in stride(from: 0, to: n, by: 1_000) {
+      XCTAssertEqual(frozen[i], desired[i], accuracy: 1e-6, "frozen adaptation must pass-through")
+    }
+
+    // With adaptation allowed (nil envelopes) the same signal IS cancelled.
+    let adapted = MicEchoCanceller.nlmsDoubleTalk(
+      desired: desired, reference: system, micEnv: nil, refEnv: nil)
+    let half = n / 2
+    let before = abs(correlationAtLag(Array(desired[half..<n]), Array(system[half..<n]), lag: delay))
+    let after = abs(correlationAtLag(Array(adapted[half..<n]), Array(system[half..<n]), lag: delay))
+    XCTAssertLessThan(after, before * 0.7, "unfrozen adaptation should cancel the bleed")
+  }
+
+  // MARK: - End-to-end: preserve voice, cancel pause bleed
+
+  /// The whole point: a recording with a loud-speech segment (with bleed under
+  /// it) followed by a bleed-only pause must come out with the speech intact and
+  /// the pause bleed gone.
+  func testCancelPreservesLoudVoiceAndCancelsPauseBleed() throws {
+    let n = 96_000
+    let system = noise(n, seed: 14).map { $0 * 0.5 }
+    let voice = noise(n, seed: 15)
+    let delay = 4_800
+    let half = n / 2
+
+    var mic = [Float](repeating: 0, count: n)
+    // Double-talk: loud voice + bleed under it.
+    for i in 0..<half { mic[i] = 2.0 * voice[i] + (i >= delay ? 0.3 * system[i - delay] : 0) }
+    // Pause: bleed only.
+    for i in half..<n { mic[i] = 0.3 * system[i - delay] }
+
+    let micURL = try writeCAF(mic, name: "mic.caf")
+    let systemURL = try writeCAF(system, name: "system.caf")
+    let outDir = FileManager.default.temporaryDirectory.appendingPathComponent(
+      UUID().uuidString, isDirectory: true)
+    try FileManager.default.createDirectory(at: outDir, withIntermediateDirectories: true)
+
+    let result = try MicEchoCanceller.cancel(
+      micURL: micURL, systemURL: systemURL, outputDirectory: outDir)
+    XCTAssertTrue(result.applied, "the pause bleed should trigger cancellation")
+
+    let cleaned = try MicEchoCanceller.decodePCMMono48k(url: result.cleanedMicURL)
+    let m = min(cleaned.count, n)
+    let hi = min(half, m)
+
+    // Speech region: the loud voice survives essentially untouched (blend passes
+    // the raw mic where near-end voice is present).
+    let voiceKeep = correlation(cleaned[0..<hi], mic[0..<hi])
+    XCTAssertGreaterThan(voiceKeep, 0.95, "loud speech must be preserved")
+
+    // Pause region: the bleed is strongly reduced.
+    let before = abs(
+      correlationAtLag(Array(mic[half..<m]), Array(system[half..<m]), lag: delay))
+    let after = abs(
+      correlationAtLag(Array(cleaned[half..<m]), Array(system[half..<m]), lag: delay))
+    XCTAssertGreaterThan(before, 0.3, "the synthetic pause bleed should be strongly present")
+    XCTAssertLessThan(after, before * 0.4, "the pause bleed should be largely cancelled")
+  }
 }

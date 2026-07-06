@@ -205,7 +205,11 @@ final class LetterboxExporter {
   }
 
   private func shouldSweepStaleTemporaryArtifact(named fileName: String) -> Bool {
-    guard fileName.hasSuffix(".mov") else { return false }
+    // Intermediates are .mov (styled/prepass renders) or .caf (the echo-cancelled
+    // mic). A .mov-only guard silently stranded every mic-echo-cancelled-*.caf,
+    // so the one backstop that could reclaim crash-orphaned canceller files never
+    // matched them.
+    guard fileName.hasSuffix(".mov") || fileName.hasSuffix(".caf") else { return false }
     return staleTemporaryArtifactPrefixes.contains { fileName.hasPrefix($0) }
   }
 
