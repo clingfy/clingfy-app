@@ -444,6 +444,50 @@ On a real Windows box, record a clip with the camera enabled, then verify:
 - **Zoom-emphasis "pulse" animation not ported** — it is gated on live zoom
   events and the camera sits outside the zoom transform on Windows.
 
+### Live camera-overlay styling (2026-07) — recording preview reflects the style
+
+The live camera preview used to show a **raw, unstyled** frame while recording
+(both preview modes), so changing overlay shape / border / etc. mid-recording
+did nothing and the bubble always looked rectangular. macOS shows a fully-styled
+live overlay; this closes that gap. The recording-overlay style is a **separate**
+control from the post-record camera composition (`CameraShape` etc.) — the live
+preview reflects the *recording sidebar* settings (`OverlayShape`, `OverlayShadow`,
+`OverlayBorder`, opacity, mirror), exactly like the macOS live overlay.
+
+- **In-app preview (the Windows default): fully styled in Flutter.**
+  `LiveCameraPreview` composites the raw `Texture` into `CameraOverlayBubble`
+  (`lib/app/home/widgets/camera_overlay_bubble.dart`): shape clip (circle /
+  roundedRect / square / squircle / **hexagon / star** via `ClipPath`), roundness,
+  border (stroked to the shape), drop shadow (follows the silhouette), opacity,
+  and horizontal mirror. The style is `context.select`-ed from `OverlayController`
+  at the shell and threaded down, so a slider change repaints the bubble live.
+- **Floating native window: shape + mirror + border only.** The floating bubble
+  is an **opaque** window (the deliberate hybrid-GPU decision — no layered /
+  per-pixel alpha), so it honors shape via a live `SetWindowRgn` (all six shapes,
+  incl. polygon regions for hexagon / star), horizontal mirror (flipped blit), and
+  a border (`FrameRgn` along the shape). The 12 `setCameraOverlay*` / `setChromaKey*`
+  / `setOverlayMirror` bridge setters (previously no-ops) now write a shared
+  `CameraOverlayStyleStore` (`windows/runner/Capture/Camera/`), which the overlay
+  thread samples each ~33 ms tick to rebuild the region. The window is 16:9, so the
+  **compact** shapes (circle / square / hexagon / star) are inscribed in a *centered
+  square* (`CameraOverlayInscribedSquare`) — a circle reads as a real circle, a
+  square as a real square — while roundedRect / squircle deliberately fill the full
+  window as rounded rectangles. **Only shape / roundness / mirror / border are
+  visible on the floating bubble; opacity / shadow / chroma are no-ops there** (an
+  opaque window can't composite partial transparency) — they show in the in-app
+  preview and bake into the export.
+- **Deliberate live-preview gaps (styling still bakes into the export):**
+  - **Chroma key is not applied to the live preview** (in-app or floating) — it
+    needs a shader; it still bakes into the inline preview + export.
+  - **Opacity / soft shadow are not shown on the floating window** — an opaque
+    window cannot composite partial transparency against the desktop. Use the
+    in-app preview for a full-fidelity live view. (A per-pixel-alpha layered
+    floating window would restore them, but risks the documented
+    WDA-exclusion-blank-on-hybrid-GPU failure — deferred to a device-tested slice.)
+  - The in-app bubble is a square box with the camera cover-cropped assuming a
+    16:9 source (mild over-crop on 4:3). Border/shadow presets are calibrated to
+    reasonable defaults pending on-device tuning.
+
 ## Current status — Phase 8 (cursor sidecar + smart zoom) — COMPLETE
 
 Phase 8 switches Windows to Clingfy's editable-cursor model: the OS cursor is no

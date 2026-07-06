@@ -20,6 +20,7 @@ class HeroPanel extends StatelessWidget {
     required this.onResume,
     this.cameraOverlayEnabled = false,
     this.cameraFloatingPreview = false,
+    this.cameraOverlayStyle = const CameraOverlayPreviewStyle(),
     this.onToggleCameraPreviewMode,
     this.startRecordingButtonKey,
   });
@@ -37,6 +38,7 @@ class HeroPanel extends StatelessWidget {
   // false = in-app texture preview (the default — floating is opt-in). The
   // toggle callback flips it (null hides the toggle).
   final bool cameraFloatingPreview;
+  final CameraOverlayPreviewStyle cameraOverlayStyle;
   final VoidCallback? onToggleCameraPreviewMode;
   final Key? startRecordingButtonKey;
 
@@ -123,6 +125,7 @@ class HeroPanel extends StatelessWidget {
                       isRecording: isRecording,
                       cameraEnabled:
                           cameraOverlayEnabled && !cameraFloatingPreview,
+                      overlayStyle: cameraOverlayStyle,
                     ),
                     // Phase 9.3.2: 1-click switch between floating + in-app, for
                     // GPUs where the floating bubble is invisible.

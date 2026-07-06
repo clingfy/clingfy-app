@@ -74,6 +74,12 @@ class CameraFloatingOverlay {
  private:
   void ThreadMain(FloatingPlacement placement, std::promise<bool>* ready);
   void Paint(HWND hwnd);
+  // Re-read the shared CameraOverlayStyleStore and, when it changed, rebuild the
+  // window region for the current shape (SetWindowRgn) + refresh the cached
+  // mirror/border used by Paint. Runs on the overlay thread (WM_TIMER). The
+  // opaque window can only honor shape / mirror / border; opacity / shadow /
+  // chroma are export-only on the floating bubble (see docs/windows-port.md).
+  void SyncStyleFromStore(HWND hwnd);
 
   std::thread thread_;
   std::atomic<bool> running_{false};
@@ -86,6 +92,15 @@ class CameraFloatingOverlay {
   int frame_w_ = 0;
   int frame_h_ = 0;
   bool dirty_ = false;
+
+  // Cached live style — written and read only on the overlay thread.
+  std::uint64_t last_style_revision_ = ~0ull;  // force a sync on first tick.
+  int style_shape_wire_ = 5;                    // OverlayShape.squircle
+  double style_roundness_ = 0.0;
+  bool style_mirror_ = false;
+  bool style_has_border_ = false;
+  std::uint32_t style_border_argb_ = 0;
+  float style_border_px_ = 0.0f;
 };
 
 }  // namespace clingfy::capture
