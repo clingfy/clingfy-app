@@ -801,6 +801,22 @@ final class InlinePreviewView: NSView {
 
     let currentTime = cameraPlayer.currentTime()
     let delta = abs(currentTime.seconds - targetTime.seconds)
+    // Camera-sync diagnostics (WYSIWYG preview investigation). A large drift is the
+    // desync symptom; logging the three clocks tells us whether it's the main-player
+    // time, the screen→camera mapping, or the camera seek that's off.
+    if !delta.isNaN && delta > 0.3 {
+      NativeLogger.i(
+        "Player", "Camera sync drift",
+        context: [
+          "screenTimeSec": screenTime.seconds,
+          "cameraTargetSec": targetTime.seconds,
+          "cameraActualSec": currentTime.seconds,
+          "driftSec": currentTime.seconds - targetTime.seconds,
+          "separatedActive": separatedAudioActive,
+          "mainIsComposition": (player?.currentItem?.asset is AVComposition),
+          "playerRate": Double(player?.rate ?? 0),
+        ])
+    }
     if force || !delta.isNaN && delta > 0.08 {
       cameraPlayer.seek(to: targetTime, toleranceBefore: .zero, toleranceAfter: .zero)
     }
@@ -913,10 +929,32 @@ final class InlinePreviewView: NSView {
     // absent/undecodable this stays the legacy path: the player item is the raw
     // screen asset and plays screen.mov's embedded audio, byte-identical to
     // before this feature.
-    separatedMicAsset = LetterboxExporter.readableAudioAsset(
-      url: mediaSources.micAudioPath.map { URL(fileURLWithPath: $0) })
-    separatedSystemAsset = LetterboxExporter.readableAudioAsset(
-      url: mediaSources.systemAudioPath.map { URL(fileURLWithPath: $0) })
+    // WYSIWYG: preview the SAME cleaned mix the export produces. Run the
+    // speaker→mic bleed canceller on the mic so the preview never plays the
+    // system bleed (and so raising gain — which targets the mic — doesn't
+    // amplify it). Falls back to the raw mic when there's no bleed / no system
+    // reference / on failure.
+    // NOTE: synchronous on the main thread for this first cut — decode + windowed
+    // detection + NLMS scale with recording LENGTH (a few seconds for a short
+    // clip, longer for very long recordings). TODO (fast-follow): run off the main
+    // thread and hot-swap the cleaned mic in, plus cache it per project so
+    // re-opens don't recompute.
+    let rawMicURL = mediaSources.micAudioPath.map { URL(fileURLWithPath: $0) }
+    let systemURL = mediaSources.systemAudioPath.map { URL(fileURLWithPath: $0) }
+    let previewMicURL = Self.cleanedPreviewMicURL(micURL: rawMicURL, systemURL: systemURL)
+    // Reclaim the previous cleaned mic before adopting a new one — we own these
+    // temp CAFs and no shared sweep runs for the preview path.
+    if let previous = previewCleanedMicURL, previous != previewMicURL {
+      try? FileManager.default.removeItem(at: previous)
+      previewCleanedMicURL = nil
+    }
+    if let cleaned = previewMicURL,
+      cleaned.lastPathComponent.hasPrefix("mic-echo-cancelled-")
+    {
+      previewCleanedMicURL = cleaned
+    }
+    separatedMicAsset = LetterboxExporter.readableAudioAsset(url: previewMicURL)
+    separatedSystemAsset = LetterboxExporter.readableAudioAsset(url: systemURL)
     separatedAudioActive = separatedMicAsset != nil || separatedSystemAsset != nil
     separatedMicTrackID = nil
 
@@ -1341,9 +1379,17 @@ final class InlinePreviewView: NSView {
 
     player = nil
     cameraPlayer = nil
+
+    if let cleaned = previewCleanedMicURL {
+      try? FileManager.default.removeItem(at: cleaned)
+      previewCleanedMicURL = nil
+    }
   }
   deinit {
     resetPlayback(reason: "deinit")
+    if let cleaned = previewCleanedMicURL {
+      try? FileManager.default.removeItem(at: cleaned)
+    }
   }
 
   private func observeCurrentItem(for token: UUID) {
@@ -1954,6 +2000,37 @@ final class InlinePreviewView: NSView {
     return composition
   }
 
+  /// Runs the speaker→mic bleed canceller for the PREVIEW so it plays the same
+  /// cleaned mic the export produces (no system bleed, so live mic gain doesn't
+  /// amplify it). Returns the cleaned mic URL, or the original mic when there is
+  /// no bleed / no system reference / on failure — never blocks the preview from
+  /// opening on an error. Synchronous for now; see the call site's TODO.
+  private static func cleanedPreviewMicURL(micURL: URL?, systemURL: URL?) -> URL? {
+    guard let micURL, let systemURL else { return micURL }
+    let tempRoot = AppPaths.tempRoot()
+    try? FileManager.default.createDirectory(at: tempRoot, withIntermediateDirectories: true)
+    do {
+      let result = try MicEchoCanceller.cancel(
+        micURL: micURL, systemURL: systemURL, outputDirectory: tempRoot)
+      NativeLogger.i(
+        "Player",
+        result.applied
+          ? "Preview: cancelled speaker→mic bleed" : "Preview: no mic bleed detected",
+        context: [
+          "applied": result.applied,
+          "bleedCorrelation": result.bleedCorrelation,
+          "reductionDb": result.reductionDb,
+          "delayMs": result.delayMs,
+        ])
+      return result.cleanedMicURL
+    } catch {
+      NativeLogger.w(
+        "Player", "Preview mic echo cancellation failed; using the raw mic",
+        context: ["error": "\(error)"])
+      return micURL
+    }
+  }
+
   /// Result of a separated-audio preview composition: the screen VIDEO track
   /// plus one audio track per decodable sidecar, with the mic trackID so live
   /// gain can target the voice channel exactly as the export does.
@@ -2115,6 +2192,10 @@ final class InlinePreviewView: NSView {
   private var separatedMicAsset: AVAsset?
   private var separatedSystemAsset: AVAsset?
   private var separatedAudioActive = false
+  /// The echo-cancelled mic CAF this view wrote for the current preview (a temp
+  /// file we own). Deleted on the next open and on dispose — nothing else
+  /// reclaims preview-created cancellation files, so without this it leaks.
+  private var previewCleanedMicURL: URL?
   /// Composition trackID of the mic audio track in the CURRENT player item, so
   /// live gain targets the voice channel (matches the export's D7 routing).
   /// nil when system-only (gain inert) or on the legacy path. Refreshed on every
