@@ -858,9 +858,8 @@ std::optional<RecordingError> RecordingEngine::Start(
         place.x = work.left + std::max(0, work_w - place.width - margin);
         place.y = work.top + std::max(0, work_h - place.height - margin);
         place.rounded = true;
-        camera_floating_ = CreateCameraOverlayPresenter();
-        if (!camera_floating_->Start(place)) {
-          camera_floating_.reset();
+        camera_floating_ = StartCameraOverlayPresenter(place);
+        if (camera_floating_ == nullptr) {
           clingfy::bridge::devices::LogDeviceProbe(
               "RecordingEngine: floating camera overlay create failed; in-app "
               "preview only");

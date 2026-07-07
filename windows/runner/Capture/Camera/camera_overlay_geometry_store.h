@@ -55,6 +55,18 @@ FloatingRect ComputeFloatingRect(int work_left, int work_top, int work_right,
                                  int work_bottom, double dpi_scale,
                                  const CameraOverlayGeometry& g);
 
+// Square variant for the DirectComposition presenter (renderer redesign P3):
+// the macOS bubble window is a SQUARE of side `size` — the shape the shared
+// CameraBubblePainter assumes — so the DComp window adopts it. Side carries
+// `size` (clamped 120..400 logical px, scaled by dpi_scale), shrunk to fit the
+// work area; corner presets use the same 3%-of-width margin as the 16:9
+// variant; custom placement centers on the normalized point. Unit-tested; no
+// Win32 calls.
+FloatingRect ComputeSquareFloatingRect(int work_left, int work_top,
+                                       int work_right, int work_bottom,
+                                       double dpi_scale,
+                                       const CameraOverlayGeometry& g);
+
 // Pure inverse for drag write-back: a window rect's center expressed as the
 // normalized (0..1, clamped) fraction of the work area — the coordinate space
 // Dart persists and `use_custom` placement consumes. Unit-tested; no Win32.

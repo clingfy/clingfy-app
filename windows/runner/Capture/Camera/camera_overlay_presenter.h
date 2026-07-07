@@ -70,17 +70,25 @@ class ICameraOverlayPresenter {
 
 // The support kill switch: env CLINGFY_FORCE_GDI_OVERLAY, ANY non-empty value
 // (including "0") pins the safe-mode GDI presenter, so a machine where the
-// (P3) DComp path misbehaves can be unblocked without a new build. Read via
+// DComp path misbehaves can be unblocked without a new build. Read via
 // Win32 GetEnvironmentVariableW so runtime SetEnvironmentVariableW (tests,
-// support tooling) is honored. Exposed for direct tests and the P3 selection
+// support tooling) is honored. Exposed for direct tests and the selection
 // ladder.
 bool ForceGdiOverlay();
 
-// Select and construct the presenter for this recording. P2 scaffolding:
-// always the GDI opaque presenter; P3 adds the DirectComposition attempt with
-// GDI fallback. Honors ForceGdiOverlay() and logs the selection to the
-// device-probe log.
+// Select and construct (NOT start) the presenter. Selection: GDI by default;
+// the DirectComposition presenter when CLINGFY_OVERLAY_DCOMP is set (P3
+// opt-in until the POC gate flips the default in P4). ForceGdiOverlay()
+// always pins GDI. Logs the selection to the device-probe log.
 std::shared_ptr<ICameraOverlayPresenter> CreateCameraOverlayPresenter();
+
+// Select, start, and — when the DComp presenter fails to start or fails
+// capture exclusion (documented Win11 defect) — fall back to the GDI
+// presenter. Returns nullptr only when nothing could start; the engine then
+// runs with the in-app texture preview only. This is the engine's entry
+// point.
+std::shared_ptr<ICameraOverlayPresenter> StartCameraOverlayPresenter(
+    const FloatingPlacement& placement);
 
 }  // namespace clingfy::capture
 
