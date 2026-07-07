@@ -41,6 +41,12 @@ namespace clingfy::bridge::method {
 // NativeBridge handles it via `call.arguments as double?` (Slice 5A).
 inline constexpr const char* kUpdateExportProgress = "updateExportProgress";
 
+// Floating camera-bubble drag write-back: invoked with a map
+// {normalizedX: double, normalizedY: double} (0..1 of the work area). Dart's
+// NativeBridge routes it to OverlayController, which persists the custom
+// position — macOS parity (ScreenRecorderEventBridge.cameraOverlayMoved).
+inline constexpr const char* kCameraOverlayMoved = "cameraOverlayMoved";
+
 }  // namespace clingfy::bridge::method
 
 #endif  // RUNNER_BRIDGE_NATIVE_CHANNEL_NAMES_H_

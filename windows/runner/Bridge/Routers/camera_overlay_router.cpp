@@ -209,6 +209,31 @@ void HandleSetCustomPosition(
   reply::Null(*result);
 }
 
+// Glow-when-recording ring (macOS "recording highlight"). Dart pre-gates
+// enabled = pref AND recording AND camera overlay on, and pushes strength
+// (0.10..1.00) at init + from the slider. Live-only by design (macOS never
+// bakes it into exports), so it lands in the style store for presenters, NOT
+// in ResolveOverlayBubbleStyle / the shared painter.
+void HandleSetHighlight(
+    const flutter::MethodCall<flutter::EncodableValue>& call,
+    std::unique_ptr<flutter::MethodResult<flutter::EncodableValue>> result) {
+  if (const auto* a = ArgsMap(call)) {
+    CameraOverlayStyleStore::Instance().SetGlowEnabled(
+        ReadBool(*a, "enabled", false));
+  }
+  reply::Null(*result);
+}
+
+void HandleSetHighlightStrength(
+    const flutter::MethodCall<flutter::EncodableValue>& call,
+    std::unique_ptr<flutter::MethodResult<flutter::EncodableValue>> result) {
+  if (const auto* a = ArgsMap(call)) {
+    CameraOverlayStyleStore::Instance().SetGlowStrength(
+        ReadDouble(*a, "strength", 0.70));
+  }
+  reply::Null(*result);
+}
+
 // Phase 9.3.1: the Dart recording UI calls this once to get the id of the
 // app-lifetime live-camera preview texture, then mounts a Texture(textureId)
 // widget (shown while recording with the camera on). Returns -1 if the texture
@@ -283,10 +308,14 @@ void RegisterHandlers(HandlerTable& table) {
   table["setCameraOverlayBorderColor"] = &HandleSetBorderColor;
   table["setOverlayMirror"] = &HandleSetMirror;
 
+  // Glow-when-recording ring — camera bubble style (same store). NOTE: despite
+  // the "Highlight" wire name these are the CAMERA glow, not the cursor
+  // highlight (see recording_overlay_section.dart "Glow when recording").
+  table["setCameraOverlayHighlight"] = &HandleSetHighlight;
+  table["setCameraOverlayHighlightStrength"] = &HandleSetHighlightStrength;
+
   // Cursor highlight (overlay-managed, hence routed here next to the other
   // overlay setters rather than under recording).
-  table["setCameraOverlayHighlight"] = &HandleNoopSetter;
-  table["setCameraOverlayHighlightStrength"] = &HandleNoopSetter;
   table["setCursorHighlightEnabled"] = &HandleNoopSetter;
   table["setCursorHighlightLinkedToRecording"] = &HandleNoopSetter;
 

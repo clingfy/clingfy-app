@@ -142,6 +142,20 @@ void CameraOverlayStyleStore::SetChromaColor(std::uint32_t argb) {
   ++revision_;
 }
 
+void CameraOverlayStyleStore::SetGlowEnabled(bool enabled) {
+  std::lock_guard<std::mutex> lock(mutex_);
+  style_.glow_enabled = enabled;
+  ++revision_;
+}
+
+void CameraOverlayStyleStore::SetGlowStrength(double strength) {
+  std::lock_guard<std::mutex> lock(mutex_);
+  // Mirror the macOS facade clamp (0.10..1.00) at the store boundary so every
+  // presenter reads a sane value.
+  style_.glow_strength = std::clamp(strength, 0.10, 1.00);
+  ++revision_;
+}
+
 CameraOverlayLiveStyle CameraOverlayStyleStore::Snapshot() const {
   std::lock_guard<std::mutex> lock(mutex_);
   return style_;

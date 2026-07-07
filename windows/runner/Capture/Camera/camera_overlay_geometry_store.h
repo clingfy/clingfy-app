@@ -55,6 +55,27 @@ FloatingRect ComputeFloatingRect(int work_left, int work_top, int work_right,
                                  int work_bottom, double dpi_scale,
                                  const CameraOverlayGeometry& g);
 
+// Pure inverse for drag write-back: a window rect's center expressed as the
+// normalized (0..1, clamped) fraction of the work area — the coordinate space
+// Dart persists and `use_custom` placement consumes. Unit-tested; no Win32.
+struct NormalizedCenter {
+  double x = 0.5;
+  double y = 0.5;
+};
+NormalizedCenter NormalizedCenterForRect(int work_left, int work_top,
+                                         int work_right, int work_bottom,
+                                         const FloatingRect& rect);
+
+// Drag write-back revision adoption: the overlay may mark its own
+// SetCustomPosition revision as seen ONLY when it directly follows the last
+// revision it synced (returned == last_seen + 1) — i.e. no platform-thread
+// setter slipped in between. Otherwise the seen revision is left untouched so
+// the next sync tick applies the intervening mutation (re-placing at the
+// just-written custom center is idempotent, so nothing is lost). Pure;
+// unit-tested.
+std::uint64_t AdoptDragRevision(std::uint64_t last_seen,
+                                std::uint64_t returned);
+
 // Thread-safe holder. Setters run on the platform thread (bridge handlers);
 // Snapshot()/revision() run on the floating overlay thread.
 class CameraOverlayGeometryStore {
@@ -70,7 +91,11 @@ class CameraOverlayGeometryStore {
   // prior drag).
   void SetPosition(int position);
   // A free normalized center (0..1 of the work area). Sets the custom flag.
-  void SetCustomPosition(double normalized_x, double normalized_y);
+  // Returns the revision this mutation produced so a caller that is ALSO the
+  // sync consumer (the overlay writing back its own drag) can mark it as seen
+  // atomically — without racing a concurrent platform-thread setter, whose
+  // later revision must still be applied.
+  std::uint64_t SetCustomPosition(double normalized_x, double normalized_y);
 
   // A consistent copy of the current geometry.
   CameraOverlayGeometry Snapshot() const;

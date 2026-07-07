@@ -89,6 +89,12 @@ class CameraFloatingOverlay {
   // Rebuild the window region from the cached shape / roundness for the current
   // client size (shared by the style + geometry syncs). Repaints.
   void RebuildRegion(HWND hwnd);
+  // Drag write-back (WM_EXITSIZEMOVE, overlay thread): store the dragged
+  // position as the custom normalized center — marking that revision as seen
+  // (only when no other mutation slipped in between, see AdoptDragRevision) so
+  // the next geometry sync doesn't fight the drop position — and report it to
+  // Dart (cameraOverlayMoved) so it persists across sessions, macOS parity.
+  void OnDragEnded(HWND hwnd);
 
   std::thread thread_;
   std::atomic<bool> running_{false};

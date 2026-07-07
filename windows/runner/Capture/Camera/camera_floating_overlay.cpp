@@ -7,6 +7,7 @@
 #include <vector>
 
 #include "Bridge/Devices/device_probe_log.h"
+#include "Bridge/camera_overlay_move_publisher.h"
 #include "Capture/Camera/camera_overlay_geometry_store.h"
 #include "Capture/Camera/camera_overlay_style_store.h"
 
@@ -120,6 +121,14 @@ LRESULT CALLBACK CameraFloatingOverlay::WndProc(HWND hwnd, UINT msg,
       return 0;
     case kMsgHide:
       ::ShowWindow(hwnd, SW_HIDE);
+      return 0;
+    case WM_EXITSIZEMOVE:
+      // End of a user drag (the HTCAPTION modal move loop). Programmatic
+      // SetWindowPos moves do NOT send this, so it can't self-trigger from the
+      // geometry sync.
+      if (self != nullptr) {
+        self->OnDragEnded(hwnd);
+      }
       return 0;
     case WM_TIMER:
       if (wparam == kPaintTimerId && self != nullptr) {
@@ -388,6 +397,47 @@ void CameraFloatingOverlay::SyncGeometryFromStore(HWND hwnd) {
                  SWP_NOZORDER | SWP_NOACTIVATE);
   // The client size just changed — re-clip the shape to the new bounds.
   RebuildRegion(hwnd);
+}
+
+void CameraFloatingOverlay::OnDragEnded(HWND hwnd) {
+  RECT wnd{};
+  if (::GetWindowRect(hwnd, &wnd) == 0) {
+    return;
+  }
+  RECT work{0, 0, ::GetSystemMetrics(SM_CXSCREEN),
+            ::GetSystemMetrics(SM_CYSCREEN)};
+  if (HMONITOR mon = ::MonitorFromWindow(hwnd, MONITOR_DEFAULTTONEAREST);
+      mon != nullptr) {
+    MONITORINFO mi{};
+    mi.cbSize = sizeof(mi);
+    if (::GetMonitorInfoW(mon, &mi) != 0) {
+      work = mi.rcWork;
+    }
+  }
+  const FloatingRect rect{wnd.left, wnd.top, wnd.right - wnd.left,
+                          wnd.bottom - wnd.top};
+  const NormalizedCenter center = NormalizedCenterForRect(
+      work.left, work.top, work.right, work.bottom, rect);
+
+  // Store the drop position as the custom center and mark that revision as
+  // seen ONLY when it directly follows the last synced one — so the next
+  // SyncGeometryFromStore tick won't re-place the window over a rounding
+  // wobble. If a platform-thread setter (e.g. the size slider) slipped in
+  // between the last sync tick and this write-back, adopting the returned
+  // revision would jump the seen counter PAST that mutation and silently drop
+  // it; AdoptDragRevision keeps the old seen value in that case so the next
+  // tick applies both changes (re-placing at the just-written center is
+  // idempotent).
+  const std::uint64_t returned =
+      CameraOverlayGeometryStore::Instance().SetCustomPosition(center.x,
+                                                               center.y);
+  last_geometry_revision_ =
+      AdoptDragRevision(last_geometry_revision_, returned);
+
+  // Report to Dart so the position persists (SharedPreferences) and the next
+  // recording seeds it — macOS `cameraOverlayMoved` parity.
+  clingfy::bridge::CameraOverlayMovePublisher::Instance().EmitMoved(center.x,
+                                                                    center.y);
 }
 
 void CameraFloatingOverlay::Stop() {

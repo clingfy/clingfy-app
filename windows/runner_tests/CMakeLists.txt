@@ -45,6 +45,7 @@ add_executable(runner_tests
   "camera_nudge_plan_test.cpp"
   "camera_floating_overlay_geometry_smoke_test.cpp"
   "camera_overlay_geometry_store_test.cpp"
+  "camera_overlay_move_publisher_test.cpp"
   "camera_overlay_style_store_test.cpp"
   "camera_preview_support_test.cpp"
   "camera_readiness_test.cpp"

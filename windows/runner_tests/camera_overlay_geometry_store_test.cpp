@@ -177,5 +177,66 @@ TEST(CameraOverlayGeometryStore, CustomPositionSetsFlagAndCenter) {
   EXPECT_DOUBLE_EQ(g.normalized_y, 0.75);
 }
 
+TEST(CameraOverlayGeometryStore, SetCustomPositionReturnsItsRevision) {
+  CameraOverlayGeometryStore store;
+  const std::uint64_t r1 = store.SetCustomPosition(0.1, 0.2);
+  EXPECT_EQ(r1, store.revision());
+  const std::uint64_t r2 = store.SetCustomPosition(0.3, 0.4);
+  EXPECT_EQ(r2, store.revision());
+  EXPECT_GT(r2, r1);
+}
+
+TEST(CameraOverlayGeometryStore, AdoptDragRevisionOnlyWhenUncontended) {
+  // Clean write-back: the drag's revision directly follows the last-synced one,
+  // so it is adopted and the next sync tick self-suppresses.
+  EXPECT_EQ(AdoptDragRevision(7, 8), 8u);
+  // A platform-thread setter (size slider, settings replay) landed between the
+  // overlay's last sync tick and the drag write-back. Adopting revision 9 would
+  // jump the seen counter past the setter's revision 8 and silently drop it —
+  // the seen value must stay put so the next tick applies both mutations.
+  EXPECT_EQ(AdoptDragRevision(7, 9), 7u);
+  // First-check sentinel (~0 forces a sync): never adopt across it.
+  EXPECT_EQ(AdoptDragRevision(~0ull, 1), ~0ull);
+}
+
+// ---- drag write-back inverse ------------------------------------------------
+
+TEST(NormalizedCenterForRect, CenterOfWorkAreaIsHalfHalf) {
+  const NormalizedCenter c =
+      NormalizedCenterForRect(0, 0, 1920, 1080, FloatingRect{860, 440, 200, 200});
+  EXPECT_DOUBLE_EQ(c.x, 0.5);
+  EXPECT_DOUBLE_EQ(c.y, 0.5);
+}
+
+TEST(NormalizedCenterForRect, HonorsWorkAreaOffset) {
+  // Left-docked taskbar: work area starts at x=120. A rect whose center sits at
+  // the work-area origin maps to (0,0), not a negative fraction.
+  const NormalizedCenter c =
+      NormalizedCenterForRect(120, 40, 1920, 1080, FloatingRect{20, -60, 200, 200});
+  EXPECT_DOUBLE_EQ(c.x, 0.0);
+  EXPECT_DOUBLE_EQ(c.y, 0.0);
+}
+
+TEST(NormalizedCenterForRect, ClampsOutOfBoundsCenters) {
+  const NormalizedCenter c = NormalizedCenterForRect(
+      0, 0, 1920, 1080, FloatingRect{2000, 1200, 100, 100});
+  EXPECT_DOUBLE_EQ(c.x, 1.0);
+  EXPECT_DOUBLE_EQ(c.y, 1.0);
+}
+
+TEST(NormalizedCenterForRect, RoundTripsThroughComputeFloatingRect) {
+  // Placing at a custom center then reading the center back must agree within
+  // sub-pixel normalized tolerance — this is what keeps a drag from drifting.
+  CameraOverlayGeometry g;
+  g.size = 220.0;
+  g.use_custom = true;
+  g.normalized_x = 0.31;
+  g.normalized_y = 0.62;
+  const FloatingRect r = ComputeFloatingRect(0, 0, 1920, 1080, 1.0, g);
+  const NormalizedCenter c = NormalizedCenterForRect(0, 0, 1920, 1080, r);
+  EXPECT_NEAR(c.x, 0.31, 0.001);
+  EXPECT_NEAR(c.y, 0.62, 0.001);
+}
+
 }  // namespace
 }  // namespace clingfy::capture
