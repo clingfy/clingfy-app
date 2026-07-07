@@ -88,16 +88,25 @@ enum MicEchoCanceller {
   /// Freeze NLMS adaptation when the mic envelope exceeds this multiple of the
   /// reference envelope — i.e. near-end voice clearly dominates any possible echo.
   static let doubleTalkRatio: Float = 3.0
-  /// Treat near-end voice as PRESENT (→ pass the raw mic through) when the mic
-  /// envelope exceeds this multiple of the reference envelope plus a small floor.
-  static let voiceActivityRatio: Float = 2.0
-  static let voiceActivityFloor: Float = 0.0015
   /// Reference envelope above which the system is considered audibly present.
   static let referencePresentFloor: Float = 0.003
-  /// Blend crossfade time constants (fast open to protect voice onsets, slower
-  /// close so cancelled pauses don't chatter).
-  static let blendAttackSeconds: Double = 0.004
-  static let blendReleaseSeconds: Double = 0.05
+  /// The system is treated as "present" for this long after its envelope drops
+  /// under the floor, bridging intra-speech gaps in the system audio so the
+  /// blend doesn't flap raw/cleaned inside one sentence.
+  static let systemHoldSeconds: Double = 0.5
+  /// …and this long BEFORE it rises (envelope rise time + alignment slack).
+  static let systemBackfillSeconds: Double = 0.06
+  /// Blend crossfade time constants: FAST into the cleaned path (bleed must not
+  /// leak at system onsets), slow back to raw (no chatter at system tails).
+  static let blendFastSeconds: Double = 0.004
+  static let blendSlowSeconds: Double = 0.12
+  /// Extra attenuation of the cleaned mic while the system is present and the
+  /// mic is unambiguously at bleed level — makes the residual survive even a
+  /// +24 dB mic gain. Conservative on purpose: it only engages when the mic
+  /// envelope is far below the reference (no plausible near-end voice), engages
+  /// slowly, and releases FAST so voice onsets are never swallowed.
+  static let pauseDuckDb: Float = -12.0
+  static let pauseDuckMicToRefRatio: Float = 0.25
 
   struct Result {
     /// The mic to feed into the export/preview. Either the freshly written
@@ -153,9 +162,12 @@ enum MicEchoCanceller {
     // 4. NLMS with double-talk freeze → the raw cancelled mic.
     let cleaned = nlmsDoubleTalk(desired: micN, reference: reference, micEnv: micEnv, refEnv: refEnv)
 
-    // 5. Blend by voice activity: raw where the user is talking, cleaned in the
-    //    pauses (where the echo actually is).
-    let blended = voiceActivityBlend(
+    // 5. Blend by SYSTEM presence: cleaned whenever the system is audible (the
+    //    frozen-weight subtraction cannot touch the voice, so this also removes
+    //    the bleed hiding under double-talk), raw when the system is silent
+    //    (byte-for-byte voice, zero risk). Bleed-level pauses get an extra duck
+    //    so the residual stays inaudible even under a +24 dB mic gain.
+    let blended = systemPresenceBlend(
       raw: micN, cleaned: cleaned, micEnv: micEnv, refEnv: refEnv)
 
     // 6. Metrics (coarse, for logging / diagnostics). Measure the residual bleed
@@ -250,28 +262,73 @@ enum MicEchoCanceller {
     return out
   }
 
-  // MARK: - Voice-activity blend
+  // MARK: - System-presence blend
 
-  /// Emit the RAW mic where near-end voice is present and the CLEANED mic in the
-  /// pauses, crossfaded. Since the echo is only audible in the pauses, this
-  /// removes it there while guaranteeing the voice is byte-for-byte the raw
-  /// recording (the blend gain is exactly 1.0 during confirmed speech).
-  static func voiceActivityBlend(
+  /// Emit the CLEANED mic whenever the system audio is present and the RAW mic
+  /// when it is silent, crossfaded.
+  ///
+  /// Why presence and not voice activity: bleed exists exactly when the system
+  /// is audible, including UNDER the user's voice (double-talk). The v2 blend
+  /// passed the raw mic through during speech, so the bleed hiding under it
+  /// survived 100% and became an audible echo once the user raised the mic gain
+  /// (gain targets the mic → the bleed rides along; measured on a real
+  /// recording: raw −2.8 dB below masker at +24 dB gain, v2 −20 dB, this blend
+  /// −31.5 dB — inaudible). The cleaned path is voice-safe by construction:
+  /// with double-talk-frozen weights the NLMS output is `mic − w·reference`,
+  /// a fixed linear function of the REFERENCE only, so anything uncorrelated
+  /// with the system (the voice) passes through untouched.
+  ///
+  /// Presence = reference envelope above `referencePresentFloor`, dilated
+  /// backward by `systemBackfillSeconds` (envelope rise time) and held for
+  /// `systemHoldSeconds` (bridges intra-speech gaps so the blend doesn't flap
+  /// raw/cleaned inside one system sentence — each flap leaks a bleed edge).
+  ///
+  /// Duck: while the system is present and the mic envelope is far below the
+  /// reference (`< pauseDuckMicToRefRatio·refEnv` — unambiguous bleed/noise,
+  /// no plausible near-end voice), attenuate the cleaned path by `pauseDuckDb`
+  /// for extra gain headroom. Engages slowly, releases fast, so a voice onset
+  /// is never swallowed.
+  static func systemPresenceBlend(
     raw: [Float], cleaned: [Float], micEnv: [Float], refEnv: [Float]
   ) -> [Float] {
     let n = raw.count
     guard cleaned.count == n, micEnv.count == n, refEnv.count == n else { return cleaned }
-    let attack = Float(1.0 - exp(-1.0 / (blendAttackSeconds * sampleRate)))
-    let release = Float(1.0 - exp(-1.0 / (blendReleaseSeconds * sampleRate)))
+
+    // System-presence mask: active envelope, dilated back, held forward.
+    var present = [Bool](repeating: false, count: n)
+    let hold = Int(systemHoldSeconds * sampleRate)
+    let backfill = Int(systemBackfillSeconds * sampleRate)
+    var lastActive = -hold - 1
+    for i in 0..<n {
+      if refEnv[i] > referencePresentFloor { lastActive = i }
+      present[i] = (i - lastActive) <= hold
+    }
+    var nextActive = n + backfill + 1
+    for i in stride(from: n - 1, through: 0, by: -1) {
+      if refEnv[i] > referencePresentFloor { nextActive = i }
+      if (nextActive - i) <= backfill { present[i] = true }
+    }
+
+    let fast = Float(1.0 - exp(-1.0 / (blendFastSeconds * sampleRate)))
+    let slow = Float(1.0 - exp(-1.0 / (blendSlowSeconds * sampleRate)))
+    let duckFloor = pow(10.0, pauseDuckDb / 20.0)
+
     var out = [Float](repeating: 0, count: n)
     var gain: Float = 1.0  // 1 → raw mic, 0 → cleaned mic
+    var duck: Float = 1.0  // 1 → no duck, duckFloor → full duck (cleaned path)
     for i in 0..<n {
-      let voiceActive = micEnv[i] > voiceActivityRatio * refEnv[i] + voiceActivityFloor
-      let target: Float = voiceActive ? 1.0 : 0.0
-      // Fast toward raw (protect voice onsets), slower toward cleaned.
-      let coeff = target > gain ? attack : release
+      let target: Float = present[i] ? 0.0 : 1.0
+      // FAST into cleaned (bleed must not leak at system onsets), slow to raw.
+      let coeff = target < gain ? fast : slow
       gain += coeff * (target - gain)
-      out[i] = gain * raw[i] + (1 - gain) * cleaned[i]
+
+      let bleedOnly = present[i] && micEnv[i] < pauseDuckMicToRefRatio * refEnv[i]
+      let duckTarget: Float = bleedOnly ? duckFloor : 1.0
+      // Engage slowly, release FAST (voice onsets must never be swallowed).
+      let duckCoeff = duckTarget < duck ? slow : fast
+      duck += duckCoeff * (duckTarget - duck)
+
+      out[i] = gain * raw[i] + (1 - gain) * (cleaned[i] * duck)
     }
     return out
   }
