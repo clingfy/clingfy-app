@@ -240,6 +240,15 @@ final class InlinePreviewView: NSView {
   private var currentMediaSources: PreviewMediaSources?
   private var lastCameraSyncVisibility: Bool?
   private var lastCameraSyncSegmentStart: Double?
+  /// True while a camera catch-up seek is in flight. Issuing a new AVPlayer seek
+  /// CANCELS the previous one; the per-tick sync used to fire a fresh
+  /// zero-tolerance seek every tick, so once the camera fell behind by more than
+  /// one tick's seek time, no seek ever completed and the camera played along
+  /// seconds behind forever. Guarding on completion lets each seek land. The
+  /// generation counter ignores completions of superseded (force-cancelled)
+  /// seeks so they can't clear the flag while a newer seek is still in flight.
+  private var cameraSeekInFlight = false
+  private var cameraSeekGeneration = 0
   private var cameraDragState: CameraDragState?
   private var pendingPlaybackSnapshotToRestore: PreviewPlaybackSnapshot?
   private var lastGeometryOnlyBoundsRefreshSignature: String?
@@ -733,12 +742,18 @@ final class InlinePreviewView: NSView {
       cameraContainerLayer?.isHidden = true
       lastCameraSyncVisibility = nil
       lastCameraSyncSegmentStart = nil
+      cameraSeekInFlight = false
+      cameraSeekGeneration += 1
       return
     }
 
     let cameraURL = URL(fileURLWithPath: cameraPath)
     let cameraItem = AVPlayerItem(asset: AVURLAsset(url: cameraURL))
     cameraPlayer.replaceCurrentItem(with: cameraItem)
+    // Fresh item ⇒ no seek can be in flight against it; a stale flag from the
+    // previous item must not block the first catch-up seek.
+    cameraSeekInFlight = false
+    cameraSeekGeneration += 1
     cameraPlayer.isMuted = true
     if (player?.rate ?? 0.0) > 0.0 {
       cameraPlayer.play()
@@ -817,11 +832,29 @@ final class InlinePreviewView: NSView {
           "playerRate": Double(player?.rate ?? 0),
         ])
     }
+    let isPlaying = (player?.rate ?? 0.0) > 0.0
     if force || !delta.isNaN && delta > 0.08 {
-      cameraPlayer.seek(to: targetTime, toleranceBefore: .zero, toleranceAfter: .zero)
+      // One catch-up seek at a time: a new seek cancels the in-flight one, and a
+      // per-tick zero-tolerance storm means none ever completes — the camera then
+      // plays along at a constant seconds-scale lag. While playing, a small
+      // tolerance keeps the seek near a keyframe (fast) so it can land within a
+      // tick or two; exact frames only matter when paused/scrubbing.
+      if force || !cameraSeekInFlight {
+        cameraSeekInFlight = true
+        cameraSeekGeneration += 1
+        let generation = cameraSeekGeneration
+        let tolerance: CMTime =
+          isPlaying ? CMTime(seconds: 0.1, preferredTimescale: 600) : .zero
+        cameraPlayer.seek(
+          to: targetTime, toleranceBefore: tolerance, toleranceAfter: tolerance
+        ) { [weak self] _ in
+          guard let self, self.cameraSeekGeneration == generation else { return }
+          self.cameraSeekInFlight = false
+        }
+      }
     }
 
-    if (player?.rate ?? 0.0) > 0.0 {
+    if isPlaying {
       cameraPlayer.play()
     } else {
       cameraPlayer.pause()
