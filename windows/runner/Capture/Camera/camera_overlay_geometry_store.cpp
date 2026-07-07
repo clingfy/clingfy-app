@@ -67,6 +67,19 @@ FloatingRect ComputeFloatingRect(int work_left, int work_top, int work_right,
   return FloatingRect{x, y, iw, ih};
 }
 
+NormalizedCenter NormalizedCenterForRect(int work_left, int work_top,
+                                         int work_right, int work_bottom,
+                                         const FloatingRect& rect) {
+  const double work_w = std::max(1, work_right - work_left);
+  const double work_h = std::max(1, work_bottom - work_top);
+  const double cx = rect.x + rect.width / 2.0;
+  const double cy = rect.y + rect.height / 2.0;
+  return NormalizedCenter{
+      std::clamp((cx - work_left) / work_w, 0.0, 1.0),
+      std::clamp((cy - work_top) / work_h, 0.0, 1.0),
+  };
+}
+
 CameraOverlayGeometryStore& CameraOverlayGeometryStore::Instance() {
   static CameraOverlayGeometryStore instance;
   return instance;
@@ -85,13 +98,13 @@ void CameraOverlayGeometryStore::SetPosition(int position) {
   ++revision_;
 }
 
-void CameraOverlayGeometryStore::SetCustomPosition(double normalized_x,
-                                                   double normalized_y) {
+std::uint64_t CameraOverlayGeometryStore::SetCustomPosition(
+    double normalized_x, double normalized_y) {
   std::lock_guard<std::mutex> lock(mutex_);
   geometry_.normalized_x = normalized_x;
   geometry_.normalized_y = normalized_y;
   geometry_.use_custom = true;
-  ++revision_;
+  return ++revision_;
 }
 
 CameraOverlayGeometry CameraOverlayGeometryStore::Snapshot() const {

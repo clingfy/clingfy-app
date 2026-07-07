@@ -31,6 +31,17 @@
 //   setChromaKeyEnabled         {enabled:bool}
 //   setChromaKeyStrength        {strength:double}  0..1 tolerance
 //   setChromaKeyColor           {color:int}        ARGB
+//   setCameraOverlayHighlight         {enabled:bool}  glow-when-recording ring;
+//                                     Dart pre-gates: pref AND recording AND
+//                                     camera overlay enabled
+//   setCameraOverlayHighlightStrength {strength:double} 0.10..1.00
+//
+// The glow ring is LIVE-ONLY (macOS parity: drawn on the capture-excluded
+// overlay window, never baked into exports), so it is deliberately NOT part of
+// ResolveOverlayBubbleStyle / CameraBubblePainter::Style — presenters read it
+// straight off the snapshot. The opaque GDI bubble cannot render it (needs the
+// alpha halo); the DComp presenter will
+// (docs/decisions/windows-camera-bubble-renderer-architecture.md).
 namespace clingfy::capture {
 
 // Plain snapshot of the live overlay style. Defaults mirror the Dart defaults so
@@ -47,6 +58,10 @@ struct CameraOverlayLiveStyle {
   bool chroma_enabled = false;
   double chroma_strength = 0.4;
   std::uint32_t chroma_argb = 0xFF00FF00;  // default green
+  // Glow-when-recording ring (live-only; see file header). Enabled arrives
+  // pre-gated by Dart, so false until a recording with the pref on starts.
+  bool glow_enabled = false;
+  double glow_strength = 0.70;  // Dart default; wire range 0.10..1.00.
 };
 
 // Resolved painter inputs for one style snapshot. Pure translation of the live
@@ -101,6 +116,8 @@ class CameraOverlayStyleStore {
   void SetChromaEnabled(bool enabled);
   void SetChromaStrength(double strength);
   void SetChromaColor(std::uint32_t argb);
+  void SetGlowEnabled(bool enabled);
+  void SetGlowStrength(double strength);
 
   // A consistent copy of the current style.
   CameraOverlayLiveStyle Snapshot() const;

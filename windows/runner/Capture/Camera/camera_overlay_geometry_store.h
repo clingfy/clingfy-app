@@ -55,6 +55,17 @@ FloatingRect ComputeFloatingRect(int work_left, int work_top, int work_right,
                                  int work_bottom, double dpi_scale,
                                  const CameraOverlayGeometry& g);
 
+// Pure inverse for drag write-back: a window rect's center expressed as the
+// normalized (0..1, clamped) fraction of the work area — the coordinate space
+// Dart persists and `use_custom` placement consumes. Unit-tested; no Win32.
+struct NormalizedCenter {
+  double x = 0.5;
+  double y = 0.5;
+};
+NormalizedCenter NormalizedCenterForRect(int work_left, int work_top,
+                                         int work_right, int work_bottom,
+                                         const FloatingRect& rect);
+
 // Thread-safe holder. Setters run on the platform thread (bridge handlers);
 // Snapshot()/revision() run on the floating overlay thread.
 class CameraOverlayGeometryStore {
@@ -70,7 +81,11 @@ class CameraOverlayGeometryStore {
   // prior drag).
   void SetPosition(int position);
   // A free normalized center (0..1 of the work area). Sets the custom flag.
-  void SetCustomPosition(double normalized_x, double normalized_y);
+  // Returns the revision this mutation produced so a caller that is ALSO the
+  // sync consumer (the overlay writing back its own drag) can mark it as seen
+  // atomically — without racing a concurrent platform-thread setter, whose
+  // later revision must still be applied.
+  std::uint64_t SetCustomPosition(double normalized_x, double normalized_y);
 
   // A consistent copy of the current geometry.
   CameraOverlayGeometry Snapshot() const;

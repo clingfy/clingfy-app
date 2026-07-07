@@ -145,5 +145,49 @@ TEST(CameraOverlayStyleStore, SettersMutateSnapshotAndBumpRevision) {
   EXPECT_EQ(store.revision(), r0 + 11);
 }
 
+
+// ---- glow-when-recording (live-only ring) -----------------------------------
+
+TEST(CameraOverlayStyleStore, GlowDefaultsMatchDartDefaults) {
+  CameraOverlayStyleStore store;
+  const CameraOverlayLiveStyle s = store.Snapshot();
+  EXPECT_FALSE(s.glow_enabled);  // Dart pre-gates on recording state.
+  EXPECT_DOUBLE_EQ(s.glow_strength, 0.70);
+}
+
+TEST(CameraOverlayStyleStore, GlowSettersStoreAndBumpRevision) {
+  CameraOverlayStyleStore store;
+  const std::uint64_t r0 = store.revision();
+  store.SetGlowEnabled(true);
+  store.SetGlowStrength(0.35);
+  const CameraOverlayLiveStyle s = store.Snapshot();
+  EXPECT_TRUE(s.glow_enabled);
+  EXPECT_DOUBLE_EQ(s.glow_strength, 0.35);
+  EXPECT_EQ(store.revision(), r0 + 2);
+}
+
+TEST(CameraOverlayStyleStore, GlowStrengthClampedToWireRange) {
+  CameraOverlayStyleStore store;
+  store.SetGlowStrength(0.0);  // below the 0.10 floor
+  EXPECT_DOUBLE_EQ(store.Snapshot().glow_strength, 0.10);
+  store.SetGlowStrength(5.0);  // above the 1.00 ceiling
+  EXPECT_DOUBLE_EQ(store.Snapshot().glow_strength, 1.00);
+}
+
+TEST(ResolveOverlayBubbleStyle, GlowNeverLeaksIntoThePainterStyle) {
+  // The glow ring is live-only (macOS never exports it); the painter Style has
+  // no glow field, and resolving a glowing snapshot must not disturb any of the
+  // shared fields the exporter consumes.
+  CameraOverlayLiveStyle s;
+  s.glow_enabled = true;
+  s.glow_strength = 1.0;
+  const ResolvedBubbleStyle with_glow = ResolveOverlayBubbleStyle(s);
+  const ResolvedBubbleStyle without = ResolveOverlayBubbleStyle({});
+  EXPECT_EQ(with_glow.shape, without.shape);
+  EXPECT_DOUBLE_EQ(with_glow.style.opacity, without.style.opacity);
+  EXPECT_EQ(with_glow.style.shadow_preset, without.style.shadow_preset);
+  EXPECT_EQ(with_glow.style.chroma_enabled, without.style.chroma_enabled);
+}
+
 }  // namespace
 }  // namespace clingfy::capture

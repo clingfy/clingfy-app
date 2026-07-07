@@ -115,5 +115,80 @@ TEST(CameraFloatingOverlayGeometrySmoke, PresetSizeAndCustomPositionMoveTheWindo
   store.SetPosition(3);
 }
 
+TEST(CameraFloatingOverlayGeometrySmoke, DragEndWritesCustomPositionBack) {
+  auto& store = CameraOverlayGeometryStore::Instance();
+  store.SetSize(220.0);
+  store.SetPosition(3);  // bottomRight, use_custom cleared.
+
+  CameraFloatingOverlay overlay;
+  FloatingPlacement place;
+  place.x = 100;
+  place.y = 100;
+  place.width = 400;
+  place.height = 225;
+  if (!overlay.Start(place)) {
+    GTEST_SKIP() << "overlay window could not be created in this session";
+  }
+  HWND hwnd = ::FindWindowW(kOverlayClassName, nullptr);
+  ASSERT_NE(hwnd, nullptr);
+  ASSERT_TRUE(WindowConverges(hwnd)) << "initial placement";
+
+  // Simulate the OS drag: move the window (as the modal move loop would) and
+  // deliver the drag-end signal the overlay handles.
+  RECT before{};
+  ASSERT_NE(::GetWindowRect(hwnd, &before), 0);
+  const int nx = before.left - 180;
+  const int ny = before.top - 120;
+  ASSERT_NE(::SetWindowPos(hwnd, nullptr, nx, ny, 0, 0,
+                           SWP_NOSIZE | SWP_NOZORDER | SWP_NOACTIVATE),
+            0);
+  ::PostMessageW(hwnd, WM_EXITSIZEMOVE, 0, 0);
+
+  // The store must adopt the dragged position as the custom center.
+  const auto deadline =
+      std::chrono::steady_clock::now() + std::chrono::seconds(3);
+  CameraOverlayGeometry g{};
+  bool wrote_back = false;
+  while (std::chrono::steady_clock::now() < deadline) {
+    g = store.Snapshot();
+    if (g.use_custom) {
+      wrote_back = true;
+      break;
+    }
+    std::this_thread::sleep_for(std::chrono::milliseconds(25));
+  }
+  ASSERT_TRUE(wrote_back) << "drag end never set the custom position";
+
+  // The written-back center matches where the window was dropped.
+  RECT dropped{};
+  ASSERT_NE(::GetWindowRect(hwnd, &dropped), 0);
+  RECT work{0, 0, ::GetSystemMetrics(SM_CXSCREEN),
+            ::GetSystemMetrics(SM_CYSCREEN)};
+  if (HMONITOR mon = ::MonitorFromWindow(hwnd, MONITOR_DEFAULTTONEAREST);
+      mon != nullptr) {
+    MONITORINFO mi{};
+    mi.cbSize = sizeof(mi);
+    if (::GetMonitorInfoW(mon, &mi) != 0) work = mi.rcWork;
+  }
+  const NormalizedCenter want = NormalizedCenterForRect(
+      work.left, work.top, work.right, work.bottom,
+      FloatingRect{dropped.left, dropped.top, dropped.right - dropped.left,
+                   dropped.bottom - dropped.top});
+  EXPECT_NEAR(g.normalized_x, want.x, 0.01);
+  EXPECT_NEAR(g.normalized_y, want.y, 0.01);
+
+  // Self-echo suppression: several sync ticks later the window must still sit
+  // where it was dropped (within rounding), not snap back or wobble.
+  std::this_thread::sleep_for(std::chrono::milliseconds(200));
+  RECT after{};
+  ASSERT_NE(::GetWindowRect(hwnd, &after), 0);
+  EXPECT_NEAR(after.left, dropped.left, 2);
+  EXPECT_NEAR(after.top, dropped.top, 2);
+
+  overlay.Stop();
+  store.SetSize(220.0);
+  store.SetPosition(3);
+}
+
 }  // namespace
 }  // namespace clingfy::capture

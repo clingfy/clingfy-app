@@ -11,6 +11,7 @@ project(runner LANGUAGES CXX)
 add_library(runner_bridge STATIC
   "Bridge/method_dispatcher.cpp"
   "Bridge/method_router.cpp"
+  "Bridge/camera_overlay_move_publisher.cpp"
   "Bridge/event_channel_stubs.cpp"
   "Bridge/export_progress_publisher.cpp"
   "Bridge/native_log_publisher.cpp"
