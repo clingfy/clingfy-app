@@ -203,12 +203,13 @@ clingfy::preview::PreviewCameraComposition ReadCameraComposition(
 // `OutputDebugStringW` for triage without leaking implementation
 // detail across the bridge.
 //
-// `camera` key is intentionally omitted — the Windows recording engine
-// does not currently emit `editorSeed` into screen.meta.json, so there
-// is no manifest-derived camera layout state to surface today. Dart's
-// `RecordingSceneInfo.fromMap` treats a missing key and a `null`
-// identically (`raw['camera'] is Map` → false), which matches the
-// macOS handler exactly.
+// The `camera` block is emitted from the recording's persisted `editorSeed`
+// (BuildScreenMetaJson writes it at record-stop; ParseScreenMetaJson reads it
+// back into RecordingMetadata::editor_seed) so post-processing opens camera-on
+// with the recorded settings, matching macOS. Bundles recorded before editorSeed
+// landed have no seed, so the key is omitted and Dart's
+// `RecordingSceneInfo.fromMap` treats a missing key and a `null` identically
+// (`raw['camera'] is Map` → false) — a hidden camera, the prior behavior.
 // ---------------------------------------------------------------------
 
 flutter::EncodableMap BuildCameraExportCapabilities() {
@@ -234,6 +235,74 @@ flutter::EncodableMap BuildCameraExportCapabilities() {
       {flutter::EncodableValue("shadow"), flutter::EncodableValue(true)},
       {flutter::EncodableValue("chromaKey"), flutter::EncodableValue(true)},
   };
+}
+
+// Phase 5.2: translate a parsed editorSeed into the scene-info `camera` block
+// Dart's CameraCompositionState.fromMap consumes. Keys are UN-prefixed and four
+// are renamed vs the on-disk `camera*` keys (cameraShadow→shadowPreset,
+// cameraNormalizedCenter→normalizedCanvasCenter, cameraBorderColorArgb→
+// borderColorArgb, cameraChromaKeyColorArgb→chromaKeyColorArgb) — this mirrors
+// macOS PreviewSceneResolver.cameraCompositionParamsMap exactly. ARGB values go
+// out as int64 so 0xFFFFFFFF (4294967295) survives the bridge intact.
+flutter::EncodableMap BuildCameraSceneBlock(
+    const clingfy::capture::CameraEditorSeed& s) {
+  flutter::EncodableMap m{
+      {flutter::EncodableValue("visible"), flutter::EncodableValue(s.visible)},
+      {flutter::EncodableValue("layoutPreset"),
+       flutter::EncodableValue(s.layout_preset)},
+      {flutter::EncodableValue("sizeFactor"),
+       flutter::EncodableValue(s.size_factor)},
+      {flutter::EncodableValue("shape"), flutter::EncodableValue(s.shape)},
+      {flutter::EncodableValue("cornerRadius"),
+       flutter::EncodableValue(s.corner_radius)},
+      {flutter::EncodableValue("opacity"),
+       flutter::EncodableValue(s.opacity)},
+      {flutter::EncodableValue("mirror"), flutter::EncodableValue(s.mirror)},
+      {flutter::EncodableValue("contentMode"),
+       flutter::EncodableValue(s.content_mode)},
+      {flutter::EncodableValue("zoomBehavior"),
+       flutter::EncodableValue(s.zoom_behavior)},
+      {flutter::EncodableValue("zoomScaleMultiplier"),
+       flutter::EncodableValue(s.zoom_scale_multiplier)},
+      {flutter::EncodableValue("introPreset"),
+       flutter::EncodableValue(s.intro_preset)},
+      {flutter::EncodableValue("outroPreset"),
+       flutter::EncodableValue(s.outro_preset)},
+      {flutter::EncodableValue("zoomEmphasisPreset"),
+       flutter::EncodableValue(s.zoom_emphasis_preset)},
+      {flutter::EncodableValue("introDurationMs"),
+       flutter::EncodableValue(s.intro_duration_ms)},
+      {flutter::EncodableValue("outroDurationMs"),
+       flutter::EncodableValue(s.outro_duration_ms)},
+      {flutter::EncodableValue("zoomEmphasisStrength"),
+       flutter::EncodableValue(s.zoom_emphasis_strength)},
+      {flutter::EncodableValue("borderWidth"),
+       flutter::EncodableValue(s.border_width)},
+      {flutter::EncodableValue("shadowPreset"),
+       flutter::EncodableValue(s.shadow_preset)},
+      {flutter::EncodableValue("chromaKeyEnabled"),
+       flutter::EncodableValue(s.chroma_key_enabled)},
+      {flutter::EncodableValue("chromaKeyStrength"),
+       flutter::EncodableValue(s.chroma_key_strength)},
+  };
+  if (s.normalized_center_x.has_value() && s.normalized_center_y.has_value()) {
+    m[flutter::EncodableValue("normalizedCanvasCenter")] =
+        flutter::EncodableValue(flutter::EncodableMap{
+            {flutter::EncodableValue("x"),
+             flutter::EncodableValue(*s.normalized_center_x)},
+            {flutter::EncodableValue("y"),
+             flutter::EncodableValue(*s.normalized_center_y)},
+        });
+  }
+  if (s.border_color_argb.has_value()) {
+    m[flutter::EncodableValue("borderColorArgb")] = flutter::EncodableValue(
+        static_cast<std::int64_t>(*s.border_color_argb));
+  }
+  if (s.chroma_key_color_argb.has_value()) {
+    m[flutter::EncodableValue("chromaKeyColorArgb")] = flutter::EncodableValue(
+        static_cast<std::int64_t>(*s.chroma_key_color_argb));
+  }
+  return m;
 }
 
 const char* ReadErrorVariantName(clingfy::capture::ReadError e) {
@@ -328,7 +397,16 @@ void HandleGetRecordingSceneInfo(
     out[flutter::EncodableValue("cameraPath")] =
         flutter::EncodableValue(WideToUtf8(*project.camera_video_path));
   }
-  // Intentionally NO `camera` key — see the function-header comment.
+  // Phase 5.2: surface the persisted editorSeed as the `camera` block so
+  // post-processing opens camera-on with the recorded settings (macOS parity).
+  // Absent on pre-editorSeed Windows bundles (empty optional) → key omitted,
+  // Dart falls back to a hidden camera — the prior behavior, so old recordings
+  // still open unchanged.
+  if (project.metadata.has_value() &&
+      project.metadata->editor_seed.has_value()) {
+    out[flutter::EncodableValue("camera")] = flutter::EncodableValue(
+        BuildCameraSceneBlock(*project.metadata->editor_seed));
+  }
   reply::Map(*result, std::move(out));
 }
 

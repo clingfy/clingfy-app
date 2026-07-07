@@ -345,6 +345,58 @@ const JsonObject* GetObjectField(const JsonObject& obj,
   return &v->as_object();
 }
 
+// Parse the `editorSeed` object (macOS `EditorSeed` on-disk keys) into a
+// CameraEditorSeed. Every field is tolerant: a missing / wrong-typed key keeps
+// the struct default, so a partial or forward-compatible block still yields a
+// usable seed. ARGB values arrive as JSON numbers (e.g. 4294967295) and are
+// narrowed to uint32; they fit exactly in a double.
+CameraEditorSeed ParseEditorSeed(const JsonObject& obj) {
+  CameraEditorSeed s;
+  if (auto v = GetBoolField(obj, "cameraVisible"); v) s.visible = *v;
+  if (auto v = GetStringField(obj, "cameraLayoutPreset"); v)
+    s.layout_preset = *v;
+  if (const JsonObject* c = GetObjectField(obj, "cameraNormalizedCenter"); c) {
+    if (auto x = GetNumberField(*c, "x"); x) s.normalized_center_x = *x;
+    if (auto y = GetNumberField(*c, "y"); y) s.normalized_center_y = *y;
+  }
+  if (auto v = GetNumberField(obj, "cameraSizeFactor"); v) s.size_factor = *v;
+  if (auto v = GetStringField(obj, "cameraShape"); v) s.shape = *v;
+  if (auto v = GetNumberField(obj, "cameraCornerRadius"); v)
+    s.corner_radius = *v;
+  if (auto v = GetNumberField(obj, "cameraBorderWidth"); v) s.border_width = *v;
+  if (auto v = GetNumberField(obj, "cameraBorderColorArgb"); v)
+    s.border_color_argb = static_cast<std::uint32_t>(*v);
+  if (auto v = GetNumberField(obj, "cameraShadow"); v)
+    s.shadow_preset = static_cast<int>(*v);
+  if (auto v = GetNumberField(obj, "cameraOpacity"); v) s.opacity = *v;
+  if (auto v = GetBoolField(obj, "cameraMirror"); v) s.mirror = *v;
+  if (auto v = GetStringField(obj, "cameraContentMode"); v)
+    s.content_mode = *v;
+  if (auto v = GetStringField(obj, "cameraZoomBehavior"); v)
+    s.zoom_behavior = *v;
+  if (auto v = GetNumberField(obj, "cameraZoomScaleMultiplier"); v)
+    s.zoom_scale_multiplier = *v;
+  if (auto v = GetStringField(obj, "cameraIntroPreset"); v)
+    s.intro_preset = *v;
+  if (auto v = GetStringField(obj, "cameraOutroPreset"); v)
+    s.outro_preset = *v;
+  if (auto v = GetStringField(obj, "cameraZoomEmphasisPreset"); v)
+    s.zoom_emphasis_preset = *v;
+  if (auto v = GetNumberField(obj, "cameraIntroDurationMs"); v)
+    s.intro_duration_ms = static_cast<int>(*v);
+  if (auto v = GetNumberField(obj, "cameraOutroDurationMs"); v)
+    s.outro_duration_ms = static_cast<int>(*v);
+  if (auto v = GetNumberField(obj, "cameraZoomEmphasisStrength"); v)
+    s.zoom_emphasis_strength = *v;
+  if (auto v = GetBoolField(obj, "cameraChromaKeyEnabled"); v)
+    s.chroma_key_enabled = *v;
+  if (auto v = GetNumberField(obj, "cameraChromaKeyStrength"); v)
+    s.chroma_key_strength = *v;
+  if (auto v = GetNumberField(obj, "cameraChromaKeyColorArgb"); v)
+    s.chroma_key_color_argb = static_cast<std::uint32_t>(*v);
+  return s;
+}
+
 // ---------------------------------------------------------------------
 // Filesystem helpers.
 // ---------------------------------------------------------------------
@@ -491,6 +543,11 @@ std::optional<RecordingMetadata> ParseScreenMetaJson(
   if (auto v = GetBoolField(obj, "micActive"); v) m.mic_active = *v;
   if (auto v = GetBoolField(obj, "loopbackActive"); v) m.loopback_active = *v;
   if (auto v = GetStringField(obj, "platform"); v) m.platform = *v;
+  // Phase 5.2: the recording-time camera composition. Absent on older Windows
+  // bundles (empty optional → scene-info omits the `camera` key → Dart hidden).
+  if (const JsonObject* seed = GetObjectField(obj, "editorSeed"); seed) {
+    m.editor_seed = ParseEditorSeed(*seed);
+  }
   return m;
 }
 

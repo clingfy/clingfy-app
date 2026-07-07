@@ -2,6 +2,8 @@
 
 #include <gtest/gtest.h>
 
+#include "Capture/recording_project_writer.h"  // editorSeed round-trip
+
 #include <filesystem>
 #include <fstream>
 #include <string>
@@ -363,6 +365,121 @@ TEST(RecordingProjectReaderJson, ParseScreenMetaPopulatesFields) {
 TEST(RecordingProjectReaderJson, ParseScreenMetaReturnsEmptyOnMalformed) {
   const auto meta = ParseScreenMetaJson("not json");
   EXPECT_FALSE(meta.has_value());
+}
+
+TEST(RecordingProjectReaderJson, ParseScreenMetaReadsEditorSeed) {
+  const std::string text = R"({
+    "width": 1920, "height": 1080, "platform": "windows",
+    "editorSeed": {
+      "cameraVisible": true,
+      "cameraLayoutPreset": "overlayBottomRight",
+      "cameraShape": "square",
+      "cameraCornerRadius": 0.3,
+      "cameraOpacity": 0.75,
+      "cameraMirror": false,
+      "cameraShadow": 3,
+      "cameraBorderWidth": 6,
+      "cameraBorderColorArgb": 4294967295,
+      "cameraChromaKeyEnabled": true,
+      "cameraChromaKeyStrength": 0.55,
+      "cameraChromaKeyColorArgb": 4278255360,
+      "cameraNormalizedCenter": {"x": 0.8, "y": 0.9}
+    }
+  })";
+  const auto meta = ParseScreenMetaJson(text);
+  ASSERT_TRUE(meta.has_value());
+  ASSERT_TRUE(meta->editor_seed.has_value());
+  const CameraEditorSeed& s = *meta->editor_seed;
+  EXPECT_TRUE(s.visible);
+  EXPECT_EQ(s.layout_preset, "overlayBottomRight");
+  EXPECT_EQ(s.shape, "square");
+  EXPECT_DOUBLE_EQ(s.corner_radius, 0.3);
+  EXPECT_DOUBLE_EQ(s.opacity, 0.75);
+  EXPECT_FALSE(s.mirror);
+  EXPECT_EQ(s.shadow_preset, 3);
+  EXPECT_DOUBLE_EQ(s.border_width, 6.0);
+  ASSERT_TRUE(s.border_color_argb.has_value());
+  EXPECT_EQ(*s.border_color_argb, 0xFFFFFFFFu);
+  EXPECT_TRUE(s.chroma_key_enabled);
+  EXPECT_DOUBLE_EQ(s.chroma_key_strength, 0.55);
+  ASSERT_TRUE(s.chroma_key_color_argb.has_value());
+  EXPECT_EQ(*s.chroma_key_color_argb, 0xFF00FF00u);
+  ASSERT_TRUE(s.normalized_center_x.has_value());
+  ASSERT_TRUE(s.normalized_center_y.has_value());
+  EXPECT_DOUBLE_EQ(*s.normalized_center_x, 0.8);
+  EXPECT_DOUBLE_EQ(*s.normalized_center_y, 0.9);
+}
+
+TEST(RecordingProjectReaderJson, ParseScreenMetaWithoutEditorSeedLeavesNullopt) {
+  const auto meta =
+      ParseScreenMetaJson(R"({"width":640,"platform":"windows"})");
+  ASSERT_TRUE(meta.has_value());
+  EXPECT_FALSE(meta->editor_seed.has_value());
+}
+
+// The writer emits the on-disk `camera*` keys and the reader parses them back;
+// this pins that they agree (a renamed/typo'd key on either side breaks here)
+// AND that std::to_chars doubles + oversized ARGB ints round-trip losslessly.
+TEST(RecordingProjectReaderJson, EditorSeedWriterReaderRoundTrip) {
+  ProjectWriterInput input;
+  input.session_id = "rt";
+  CameraEditorSeed seed;
+  seed.visible = true;
+  seed.layout_preset = "sideBySideLeft";
+  seed.shape = "squircle";
+  seed.corner_radius = 0.4;
+  seed.size_factor = 0.22;
+  seed.opacity = 0.9;
+  seed.mirror = true;
+  seed.content_mode = "fill";
+  seed.border_width = 3.5;
+  seed.border_color_argb = 0xFF112233u;
+  seed.shadow_preset = 1;
+  seed.chroma_key_enabled = true;
+  seed.chroma_key_strength = 0.35;
+  seed.chroma_key_color_argb = 0xFF00AA00u;
+  seed.zoom_behavior = "fixed";
+  seed.zoom_scale_multiplier = 0.5;
+  seed.intro_preset = "pop";
+  seed.outro_preset = "slide";
+  seed.zoom_emphasis_preset = "pulse";
+  seed.intro_duration_ms = 300;
+  seed.outro_duration_ms = 250;
+  seed.zoom_emphasis_strength = 0.2;
+  seed.normalized_center_x = 0.3;
+  seed.normalized_center_y = 0.7;
+  input.editor_seed = seed;
+
+  const auto meta = ParseScreenMetaJson(BuildScreenMetaJson(input));
+  ASSERT_TRUE(meta.has_value());
+  ASSERT_TRUE(meta->editor_seed.has_value());
+  const CameraEditorSeed& r = *meta->editor_seed;
+  EXPECT_EQ(r.visible, seed.visible);
+  EXPECT_EQ(r.layout_preset, seed.layout_preset);
+  EXPECT_EQ(r.shape, seed.shape);
+  EXPECT_DOUBLE_EQ(r.corner_radius, seed.corner_radius);
+  EXPECT_DOUBLE_EQ(r.size_factor, seed.size_factor);
+  EXPECT_DOUBLE_EQ(r.opacity, seed.opacity);
+  EXPECT_EQ(r.mirror, seed.mirror);
+  EXPECT_EQ(r.content_mode, seed.content_mode);
+  EXPECT_DOUBLE_EQ(r.border_width, seed.border_width);
+  EXPECT_EQ(r.border_color_argb, seed.border_color_argb);
+  EXPECT_EQ(r.shadow_preset, seed.shadow_preset);
+  EXPECT_EQ(r.chroma_key_enabled, seed.chroma_key_enabled);
+  EXPECT_DOUBLE_EQ(r.chroma_key_strength, seed.chroma_key_strength);
+  EXPECT_EQ(r.chroma_key_color_argb, seed.chroma_key_color_argb);
+  EXPECT_EQ(r.zoom_behavior, seed.zoom_behavior);
+  EXPECT_DOUBLE_EQ(r.zoom_scale_multiplier, seed.zoom_scale_multiplier);
+  EXPECT_EQ(r.intro_preset, seed.intro_preset);
+  EXPECT_EQ(r.outro_preset, seed.outro_preset);
+  EXPECT_EQ(r.zoom_emphasis_preset, seed.zoom_emphasis_preset);
+  EXPECT_EQ(r.intro_duration_ms, seed.intro_duration_ms);
+  EXPECT_EQ(r.outro_duration_ms, seed.outro_duration_ms);
+  EXPECT_DOUBLE_EQ(r.zoom_emphasis_strength, seed.zoom_emphasis_strength);
+  ASSERT_TRUE(r.normalized_center_x.has_value());
+  ASSERT_TRUE(r.normalized_center_y.has_value());
+  EXPECT_DOUBLE_EQ(*r.normalized_center_x, *seed.normalized_center_x);
+  EXPECT_DOUBLE_EQ(*r.normalized_center_y, *seed.normalized_center_y);
 }
 
 
