@@ -96,6 +96,11 @@ class CameraDcompOverlay : public ICameraOverlayPresenter {
   // round-trips); re-binds the swapchain target afterwards.
   bool PreparePainter(int side);
   void OnDragEnded(HWND hwnd);
+  // Release every GPU-stack member (painter, bitmaps, D2D, DComp, swapchain,
+  // device) in dependency order. Overlay thread only — shared by the normal
+  // teardown and the BuildGpuStack-failure path, so partially-built COM state
+  // never escapes to be released on another thread.
+  void ReleaseGpuStack();
 
   Options options_{};
 

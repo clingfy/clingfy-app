@@ -95,6 +95,33 @@ TEST(ComputeSquareFloatingRect, ShrinksToTinyWorkArea) {
   EXPECT_LE(r.y + r.height, 150);
 }
 
+TEST(ComputeSquareFloatingRect, TopRightAndBottomLeftCornersDecode) {
+  // Positions 1/2 pin the right/bottom booleans against a transposition —
+  // TL(0) and BR(3) alone are insensitive to swapping them.
+  const int margin = 1920 * 3 / 100;
+  const FloatingRect tr =
+      ComputeSquareFloatingRect(kL, kT, kR, kB, 1.0, Preset(220.0, 1));
+  EXPECT_EQ(tr.x, 1920 - 220 - margin);
+  EXPECT_EQ(tr.y, margin);
+  const FloatingRect bl =
+      ComputeSquareFloatingRect(kL, kT, kR, kB, 1.0, Preset(220.0, 2));
+  EXPECT_EQ(bl.x, margin);
+  EXPECT_EQ(bl.y, 1080 - 220 - margin);
+}
+
+TEST(ComputeSquareFloatingRect, ClampsSizeToWireRange) {
+  // The bridge setters lean on this clamp; a snapshot escaping [120,400] must
+  // not produce an outsized (or sub-minimum) window.
+  const FloatingRect big =
+      ComputeSquareFloatingRect(kL, kT, kR, kB, 1.0, Preset(1000.0, 3));
+  EXPECT_EQ(big.width, 400);
+  EXPECT_EQ(big.height, 400);
+  const FloatingRect tiny =
+      ComputeSquareFloatingRect(kL, kT, kR, kB, 1.0, Preset(50.0, 3));
+  EXPECT_EQ(tiny.width, 120);
+  EXPECT_EQ(tiny.height, 120);
+}
+
 // ---- lifecycle (always runs; never visible) ---------------------------------
 
 TEST(CameraDcompOverlayPoc, HiddenLifecycleBuildsTheGpuStack) {
@@ -125,14 +152,18 @@ TEST(CameraDcompOverlayPoc, HiddenLifecycleBuildsTheGpuStack) {
 
 // ---- on-screen probes (pixel-canary gated) ----------------------------------
 
+// Armed only by the EXACT value "1" — the repo's pixel-canary convention
+// (export_pipeline_test.cpp, preview_compositor_color_test.cpp) — so setting
+// CLINGFY_REQUIRE_PIXEL_TESTS=0 disarms these probes like every other canary.
 bool PixelProbesArmed() {
   char buffer[8]{};
   size_t required = 0;
   if (getenv_s(&required, buffer, sizeof(buffer),
-               "CLINGFY_REQUIRE_PIXEL_TESTS") != 0) {
-    return required > 1;
+               "CLINGFY_REQUIRE_PIXEL_TESTS") != 0 ||
+      required == 0) {
+    return false;  // unset, or a value too long to be "1".
   }
-  return required > 1;
+  return buffer[0] == '1' && buffer[1] == '\0';
 }
 
 // Solid-color BGRA frame (magenta): B=255 G=0 R=255.
@@ -253,6 +284,13 @@ TEST(CameraDcompOverlayPoc, ExcludedFromScreenCapture) {
     GTEST_SKIP() << "set CLINGFY_REQUIRE_PIXEL_TESTS=1 to run the on-screen "
                     "probe (briefly shows a window)";
   }
+  // Positive control INSIDE this test: prove magenta is detectable at all on
+  // this machine before asserting its absence — otherwise a renders-nothing
+  // box (the hybrid-GPU scar) passes the exclusion assertion vacuously when
+  // this test runs in isolation (ctest -R ExcludedFromScreenCapture).
+  ASSERT_TRUE(RunMagentaProbe(/*apply_exclusion=*/false, nullptr))
+      << "positive control rendered nothing — the absence assertion below "
+         "would be vacuous. POC NO-GO.";
   bool wda_ok = false;
   const bool magenta_seen = RunMagentaProbe(/*apply_exclusion=*/true, &wda_ok);
   ASSERT_TRUE(wda_ok)

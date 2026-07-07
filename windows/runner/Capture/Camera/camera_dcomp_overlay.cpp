@@ -150,6 +150,10 @@ void CameraDcompOverlay::ThreadMain(FloatingPlacement placement,
   if (!BuildGpuStack(hwnd, rect.width, rect.height)) {
     clingfy::bridge::devices::LogDeviceProbe(
         "CameraDcompOverlay: GPU stack build failed");
+    // Release the partially-built stack HERE, on the creating thread — leaving
+    // it in members would hand the release to whichever thread destroys the
+    // presenter (and a retried Start would stomp live ComPtrs).
+    ReleaseGpuStack();
     ::DestroyWindow(hwnd);
     ready->set_value(false);
     return;
@@ -198,6 +202,11 @@ void CameraDcompOverlay::ThreadMain(FloatingPlacement placement,
   hwnd_.store(nullptr);
   ::KillTimer(hwnd, kTickTimerId);
   // Release the GPU stack on the thread that created it, then the window.
+  ReleaseGpuStack();
+  ::DestroyWindow(hwnd);
+}
+
+void CameraDcompOverlay::ReleaseGpuStack() {
   painter_ = CameraBubblePainter();
   painter_ready_ = false;
   camera_bitmap_.Reset();
@@ -214,7 +223,6 @@ void CameraDcompOverlay::ThreadMain(FloatingPlacement placement,
   swapchain_.Reset();
   d3d_device_.Reset();
   gpu_ready_.store(false);
-  ::DestroyWindow(hwnd);
 }
 
 bool CameraDcompOverlay::BuildGpuStack(HWND hwnd, int width, int height) {
@@ -397,7 +405,6 @@ void CameraDcompOverlay::SyncAndRender(HWND hwnd) {
   // Geometry: move/resize the SQUARE window, resize the swapchain with it.
   if (const std::uint64_t rev = geometry_store.revision();
       rev != last_geometry_revision_) {
-    last_geometry_revision_ = rev;
     const RECT work = MonitorWorkArea(hwnd);
     const UINT dpi = ::GetDpiForWindow(hwnd);
     const double scale = dpi > 0 ? dpi / 96.0 : 1.0;
@@ -408,11 +415,16 @@ void CameraDcompOverlay::SyncAndRender(HWND hwnd) {
                    SWP_NOZORDER | SWP_NOACTIVATE);
     if (rect.width != prepared_side_) {
       if (!ResizeSwapchain(rect.width, rect.height)) {
+        // Leave the revision UNCONSUMED so the next tick retries: consuming it
+        // here would strand a target-less context (ResizeSwapchain already
+        // dropped the D2D target) burning a dead BeginDraw/EndDraw every tick
+        // until the user happens to change geometry again.
         return;
       }
       prepared_side_ = rect.width;
       needs_prepare = true;
     }
+    last_geometry_revision_ = rev;
     needs_draw = true;
   }
 

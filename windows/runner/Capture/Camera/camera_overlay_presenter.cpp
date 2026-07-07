@@ -37,7 +37,14 @@ std::shared_ptr<ICameraOverlayPresenter> CreateCameraOverlayPresenter() {
   if (!forced && DcompOptIn()) {
     clingfy::bridge::devices::LogDeviceProbe(
         "CameraOverlayPresenter: dcomp (CLINGFY_OVERLAY_DCOMP)");
-    return std::make_shared<CameraDcompOverlay>();
+    CameraDcompOverlay::Options options;
+    // Fault injection promised by the ADR test strategy (§7): simulate the
+    // Win11 WDA defect (skip the exclusion call, so wda_excluded() stays
+    // false) to drive StartCameraOverlayPresenter's fallback rung in tests
+    // without afflicted hardware. Test-only; never set in production.
+    options.apply_capture_exclusion =
+        !EnvSet(L"CLINGFY_TEST_DCOMP_WDA_FAIL");
+    return std::make_shared<CameraDcompOverlay>(options);
   }
   clingfy::bridge::devices::LogDeviceProbe(
       forced ? "CameraOverlayPresenter: gdi (forced by CLINGFY_FORCE_GDI_OVERLAY)"
