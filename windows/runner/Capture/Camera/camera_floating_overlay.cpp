@@ -7,6 +7,7 @@
 #include <vector>
 
 #include "Bridge/Devices/device_probe_log.h"
+#include "Capture/Camera/camera_overlay_geometry_store.h"
 #include "Capture/Camera/camera_overlay_style_store.h"
 
 namespace clingfy::capture {
@@ -122,7 +123,9 @@ LRESULT CALLBACK CameraFloatingOverlay::WndProc(HWND hwnd, UINT msg,
       return 0;
     case WM_TIMER:
       if (wparam == kPaintTimerId && self != nullptr) {
-        // Pick up live style changes (shape / mirror / border) each tick.
+        // Pick up live style (shape / mirror / border) and geometry (size /
+        // position) changes each tick.
+        self->SyncGeometryFromStore(hwnd);
         self->SyncStyleFromStore(hwnd);
         bool dirty = false;
         {
@@ -271,9 +274,12 @@ void CameraFloatingOverlay::ThreadMain(FloatingPlacement placement,
   }
 
   hwnd_.store(hwnd);
-  // Apply the current overlay style (shape region / mirror / border) up front so
-  // the bubble is correctly shaped the instant it is Shown, not one tick later.
+  // Apply the current overlay style (shape region / mirror / border) AND
+  // geometry (size / position) up front, while the window is still hidden, so
+  // the bubble is correctly shaped and placed the instant it is Shown — no
+  // visible snap one tick later.
   SyncStyleFromStore(hwnd);
+  SyncGeometryFromStore(hwnd);
   ::SetTimer(hwnd, kPaintTimerId, kPaintIntervalMs, nullptr);
   running_.store(true);
   ready->set_value(true);  // created HIDDEN — engine Show()s on demand.
@@ -335,6 +341,10 @@ void CameraFloatingOverlay::SyncStyleFromStore(HWND hwnd) {
   style_border_argb_ = resolved.style.border_argb;
   style_border_px_ = static_cast<float>(resolved.style.border_width);
 
+  RebuildRegion(hwnd);
+}
+
+void CameraFloatingOverlay::RebuildRegion(HWND hwnd) {
   RECT client{};
   ::GetClientRect(hwnd, &client);
   const int w = client.right - client.left;
@@ -345,6 +355,39 @@ void CameraFloatingOverlay::SyncStyleFromStore(HWND hwnd) {
     ::SetWindowRgn(hwnd, rgn, TRUE);
   }
   ::InvalidateRect(hwnd, nullptr, FALSE);
+}
+
+void CameraFloatingOverlay::SyncGeometryFromStore(HWND hwnd) {
+  auto& store = CameraOverlayGeometryStore::Instance();
+  const std::uint64_t rev = store.revision();
+  if (rev == last_geometry_revision_) {
+    return;  // nothing changed since the last placement.
+  }
+  last_geometry_revision_ = rev;
+
+  const CameraOverlayGeometry g = store.Snapshot();
+
+  // Place on whatever monitor the window currently sits on (right after Start
+  // that is the captured display; after a drag it follows the bubble).
+  RECT work{0, 0, ::GetSystemMetrics(SM_CXSCREEN),
+            ::GetSystemMetrics(SM_CYSCREEN)};
+  if (HMONITOR mon = ::MonitorFromWindow(hwnd, MONITOR_DEFAULTTONEAREST);
+      mon != nullptr) {
+    MONITORINFO mi{};
+    mi.cbSize = sizeof(mi);
+    if (::GetMonitorInfoW(mon, &mi) != 0) {
+      work = mi.rcWork;
+    }
+  }
+  const UINT dpi = ::GetDpiForWindow(hwnd);
+  const double scale = dpi > 0 ? dpi / 96.0 : 1.0;
+
+  const FloatingRect r = ComputeFloatingRect(work.left, work.top, work.right,
+                                             work.bottom, scale, g);
+  ::SetWindowPos(hwnd, nullptr, r.x, r.y, r.width, r.height,
+                 SWP_NOZORDER | SWP_NOACTIVATE);
+  // The client size just changed — re-clip the shape to the new bounds.
+  RebuildRegion(hwnd);
 }
 
 void CameraFloatingOverlay::Stop() {

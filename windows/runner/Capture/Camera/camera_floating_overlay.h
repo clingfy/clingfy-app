@@ -80,6 +80,15 @@ class CameraFloatingOverlay {
   // opaque window can only honor shape / mirror / border; opacity / shadow /
   // chroma are export-only on the floating bubble (see docs/windows-port.md).
   void SyncStyleFromStore(HWND hwnd);
+  // Re-read the shared CameraOverlayGeometryStore and, when it changed, move /
+  // resize the window (SetWindowPos) to the requested size + corner / normalized
+  // center, then re-clip the shape for the new size. Runs on the overlay thread
+  // (WM_TIMER, and once at creation while still hidden so the bubble appears at
+  // the right size/position without a visible snap).
+  void SyncGeometryFromStore(HWND hwnd);
+  // Rebuild the window region from the cached shape / roundness for the current
+  // client size (shared by the style + geometry syncs). Repaints.
+  void RebuildRegion(HWND hwnd);
 
   std::thread thread_;
   std::atomic<bool> running_{false};
@@ -93,8 +102,10 @@ class CameraFloatingOverlay {
   int frame_h_ = 0;
   bool dirty_ = false;
 
-  // Cached live style — written and read only on the overlay thread.
-  std::uint64_t last_style_revision_ = ~0ull;  // force a sync on first tick.
+  // Cached live style + geometry revisions — written and read only on the
+  // overlay thread. ~0 forces a sync on the first check.
+  std::uint64_t last_style_revision_ = ~0ull;
+  std::uint64_t last_geometry_revision_ = ~0ull;
   int style_shape_wire_ = 5;                    // OverlayShape.squircle
   double style_roundness_ = 0.0;
   bool style_mirror_ = false;
