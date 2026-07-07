@@ -67,6 +67,42 @@ FloatingRect ComputeFloatingRect(int work_left, int work_top, int work_right,
   return FloatingRect{x, y, iw, ih};
 }
 
+FloatingRect ComputeSquareFloatingRect(int work_left, int work_top,
+                                       int work_right, int work_bottom,
+                                       double dpi_scale,
+                                       const CameraOverlayGeometry& g) {
+  const int work_w = std::max(1, work_right - work_left);
+  const int work_h = std::max(1, work_bottom - work_top);
+  const double scale = dpi_scale > 0.0 ? dpi_scale : 1.0;
+
+  double side = std::clamp(g.size, kMinSize, kMaxSize) * scale;
+  side = std::min(side, static_cast<double>(std::min(work_w, work_h)));
+  const int s = std::max(1, static_cast<int>(std::lround(side)));
+
+  const int margin = std::max(8, work_w * 3 / 100);
+
+  int x = 0;
+  int y = 0;
+  if (g.use_custom) {
+    const double cx =
+        work_left + std::clamp(g.normalized_x, 0.0, 1.0) * work_w;
+    const double cy =
+        work_top + std::clamp(g.normalized_y, 0.0, 1.0) * work_h;
+    x = static_cast<int>(std::lround(cx - s / 2.0));
+    y = static_cast<int>(std::lround(cy - s / 2.0));
+  } else {
+    const bool right = g.position == 1 || g.position == 3;
+    const bool bottom = g.position == 2 || g.position == 3;
+    x = right ? (work_right - s - margin) : (work_left + margin);
+    y = bottom ? (work_bottom - s - margin) : (work_top + margin);
+  }
+
+  x = std::clamp(x, work_left, std::max(work_left, work_right - s));
+  y = std::clamp(y, work_top, std::max(work_top, work_bottom - s));
+
+  return FloatingRect{x, y, s, s};
+}
+
 NormalizedCenter NormalizedCenterForRect(int work_left, int work_top,
                                          int work_right, int work_bottom,
                                          const FloatingRect& rect) {

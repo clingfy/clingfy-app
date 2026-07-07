@@ -54,9 +54,11 @@ add_library(runner_bridge STATIC
   "Capture/Export/export_session.cpp"
   "Capture/Export/gif_export_policy.cpp"
   "Capture/Camera/camera_bubble_painter.cpp"
+  "Capture/Camera/camera_dcomp_overlay.cpp"
   "Capture/Camera/camera_export_layout.cpp"
   "Capture/Camera/camera_export_renderer.cpp"
   "Capture/Camera/camera_floating_overlay.cpp"
+  "Capture/Camera/camera_overlay_drag.cpp"
   "Capture/Camera/camera_format.cpp"
   "Capture/Camera/camera_meta.cpp"
   "Capture/Camera/camera_overlay_geometry_store.cpp"
@@ -172,6 +174,13 @@ target_link_libraries(runner_bridge PUBLIC
 # the linker reports them as unresolved externals.
 target_link_libraries(runner_bridge PUBLIC
   "dxguid.lib"
+)
+
+# Renderer redesign P3: DirectComposition (DCompositionCreateDevice /
+# IDCompositionDevice) presents the premultiplied-alpha camera-bubble
+# swapchain (Capture/Camera/camera_dcomp_overlay.cpp).
+target_link_libraries(runner_bridge PUBLIC
+  "dcomp.lib"
 )
 
 # Phase 6 Slice 2 follow-up: the export save-folder resolver + folder
