@@ -41,6 +41,14 @@ class CameraOverlayMovePublisher {
   // Safe from any thread; a no-op when no channel is attached.
   void EmitMoved(double normalized_x, double normalized_y);
 
+  // The exact reverse-bridge payload sent with method::kCameraOverlayMoved —
+  // Dart reads args['normalizedX'] / args['normalizedY'] by key (NativeBridge
+  // -> OverlayController._onCameraOverlayMovedFromNative). Pure and exposed so
+  // tests pin the key contract (NativeLogPublisher::BuildPayload precedent); a
+  // drifted key compiles fine and silently breaks drag persistence.
+  static flutter::EncodableMap BuildMovedPayload(double normalized_x,
+                                                 double normalized_y);
+
  private:
   CameraOverlayMovePublisher() = default;
 

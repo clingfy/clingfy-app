@@ -186,6 +186,19 @@ TEST(CameraOverlayGeometryStore, SetCustomPositionReturnsItsRevision) {
   EXPECT_GT(r2, r1);
 }
 
+TEST(CameraOverlayGeometryStore, AdoptDragRevisionOnlyWhenUncontended) {
+  // Clean write-back: the drag's revision directly follows the last-synced one,
+  // so it is adopted and the next sync tick self-suppresses.
+  EXPECT_EQ(AdoptDragRevision(7, 8), 8u);
+  // A platform-thread setter (size slider, settings replay) landed between the
+  // overlay's last sync tick and the drag write-back. Adopting revision 9 would
+  // jump the seen counter past the setter's revision 8 and silently drop it —
+  // the seen value must stay put so the next tick applies both mutations.
+  EXPECT_EQ(AdoptDragRevision(7, 9), 7u);
+  // First-check sentinel (~0 forces a sync): never adopt across it.
+  EXPECT_EQ(AdoptDragRevision(~0ull, 1), ~0ull);
+}
+
 // ---- drag write-back inverse ------------------------------------------------
 
 TEST(NormalizedCenterForRect, CenterOfWorkAreaIsHalfHalf) {

@@ -176,17 +176,30 @@ TEST(CameraOverlayStyleStore, GlowStrengthClampedToWireRange) {
 
 TEST(ResolveOverlayBubbleStyle, GlowNeverLeaksIntoThePainterStyle) {
   // The glow ring is live-only (macOS never exports it); the painter Style has
-  // no glow field, and resolving a glowing snapshot must not disturb any of the
-  // shared fields the exporter consumes.
+  // no glow field, and resolving a glowing snapshot must not disturb ANY of the
+  // shared fields the exporter consumes. Every ResolvedBubbleStyle field is
+  // compared: a glow ring naively implemented as a border stroke (the most
+  // plausible leak vector) would be baked into exports by the shared painter,
+  // and a partial comparison would let that pass.
   CameraOverlayLiveStyle s;
   s.glow_enabled = true;
   s.glow_strength = 1.0;
   const ResolvedBubbleStyle with_glow = ResolveOverlayBubbleStyle(s);
   const ResolvedBubbleStyle without = ResolveOverlayBubbleStyle({});
   EXPECT_EQ(with_glow.shape, without.shape);
+  EXPECT_DOUBLE_EQ(with_glow.corner_radius, without.corner_radius);
+  EXPECT_EQ(with_glow.content_mode, without.content_mode);
+  EXPECT_EQ(with_glow.style.mirror, without.style.mirror);
   EXPECT_DOUBLE_EQ(with_glow.style.opacity, without.style.opacity);
+  EXPECT_DOUBLE_EQ(with_glow.style.border_width, without.style.border_width);
+  EXPECT_EQ(with_glow.style.has_border_color, without.style.has_border_color);
+  EXPECT_EQ(with_glow.style.border_argb, without.style.border_argb);
   EXPECT_EQ(with_glow.style.shadow_preset, without.style.shadow_preset);
   EXPECT_EQ(with_glow.style.chroma_enabled, without.style.chroma_enabled);
+  EXPECT_DOUBLE_EQ(with_glow.style.chroma_strength,
+                   without.style.chroma_strength);
+  EXPECT_EQ(with_glow.style.has_chroma_color, without.style.has_chroma_color);
+  EXPECT_EQ(with_glow.style.chroma_argb, without.style.chroma_argb);
 }
 
 }  // namespace

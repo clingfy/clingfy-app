@@ -80,6 +80,11 @@ NormalizedCenter NormalizedCenterForRect(int work_left, int work_top,
   };
 }
 
+std::uint64_t AdoptDragRevision(std::uint64_t last_seen,
+                                std::uint64_t returned) {
+  return returned == last_seen + 1 ? returned : last_seen;
+}
+
 CameraOverlayGeometryStore& CameraOverlayGeometryStore::Instance() {
   static CameraOverlayGeometryStore instance;
   return instance;

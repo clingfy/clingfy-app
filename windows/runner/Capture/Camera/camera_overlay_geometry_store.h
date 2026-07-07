@@ -66,6 +66,16 @@ NormalizedCenter NormalizedCenterForRect(int work_left, int work_top,
                                          int work_right, int work_bottom,
                                          const FloatingRect& rect);
 
+// Drag write-back revision adoption: the overlay may mark its own
+// SetCustomPosition revision as seen ONLY when it directly follows the last
+// revision it synced (returned == last_seen + 1) — i.e. no platform-thread
+// setter slipped in between. Otherwise the seen revision is left untouched so
+// the next sync tick applies the intervening mutation (re-placing at the
+// just-written custom center is idempotent, so nothing is lost). Pure;
+// unit-tested.
+std::uint64_t AdoptDragRevision(std::uint64_t last_seen,
+                                std::uint64_t returned);
+
 // Thread-safe holder. Setters run on the platform thread (bridge handlers);
 // Snapshot()/revision() run on the floating overlay thread.
 class CameraOverlayGeometryStore {

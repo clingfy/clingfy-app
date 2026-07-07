@@ -419,14 +419,20 @@ void CameraFloatingOverlay::OnDragEnded(HWND hwnd) {
   const NormalizedCenter center = NormalizedCenterForRect(
       work.left, work.top, work.right, work.bottom, rect);
 
-  // Store the drop position as the custom center and mark exactly THAT
-  // revision as seen: SetCustomPosition returns it atomically, so the next
+  // Store the drop position as the custom center and mark that revision as
+  // seen ONLY when it directly follows the last synced one — so the next
   // SyncGeometryFromStore tick won't re-place the window over a rounding
-  // wobble — while a racing platform-thread setter still gets a later
-  // revision and is applied normally.
-  last_geometry_revision_ =
+  // wobble. If a platform-thread setter (e.g. the size slider) slipped in
+  // between the last sync tick and this write-back, adopting the returned
+  // revision would jump the seen counter PAST that mutation and silently drop
+  // it; AdoptDragRevision keeps the old seen value in that case so the next
+  // tick applies both changes (re-placing at the just-written center is
+  // idempotent).
+  const std::uint64_t returned =
       CameraOverlayGeometryStore::Instance().SetCustomPosition(center.x,
                                                                center.y);
+  last_geometry_revision_ =
+      AdoptDragRevision(last_geometry_revision_, returned);
 
   // Report to Dart so the position persists (SharedPreferences) and the next
   // recording seeds it — macOS `cameraOverlayMoved` parity.

@@ -44,16 +44,21 @@ void CameraOverlayMovePublisher::EmitMoved(double normalized_x,
     if (channel_snapshot == nullptr) {
       return;
     }
-    // Map payload — Dart reads args['normalizedX'] / args['normalizedY'].
     channel_snapshot->InvokeMethod(
         method::kCameraOverlayMoved,
-        std::make_unique<flutter::EncodableValue>(flutter::EncodableMap{
-            {flutter::EncodableValue("normalizedX"),
-             flutter::EncodableValue(normalized_x)},
-            {flutter::EncodableValue("normalizedY"),
-             flutter::EncodableValue(normalized_y)},
-        }));
+        std::make_unique<flutter::EncodableValue>(
+            BuildMovedPayload(normalized_x, normalized_y)));
   });
+}
+
+flutter::EncodableMap CameraOverlayMovePublisher::BuildMovedPayload(
+    double normalized_x, double normalized_y) {
+  return flutter::EncodableMap{
+      {flutter::EncodableValue("normalizedX"),
+       flutter::EncodableValue(normalized_x)},
+      {flutter::EncodableValue("normalizedY"),
+       flutter::EncodableValue(normalized_y)},
+  };
 }
 
 }  // namespace clingfy::bridge

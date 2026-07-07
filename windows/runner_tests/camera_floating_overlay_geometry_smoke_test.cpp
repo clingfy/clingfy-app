@@ -177,13 +177,24 @@ TEST(CameraFloatingOverlayGeometrySmoke, DragEndWritesCustomPositionBack) {
   EXPECT_NEAR(g.normalized_x, want.x, 0.01);
   EXPECT_NEAR(g.normalized_y, want.y, 0.01);
 
-  // Self-echo suppression: several sync ticks later the window must still sit
-  // where it was dropped (within rounding), not snap back or wobble.
+  // Self-echo suppression: with the drag's own revision marked as seen, the
+  // sync tick must not SetWindowPos again — the rect stays BIT-identical.
+  // (A suppression-less re-place through the normalized round-trip lands
+  // within ~2px and would slip through a tolerance check, so exact equality is
+  // what actually pins the mechanism.)
   std::this_thread::sleep_for(std::chrono::milliseconds(200));
   RECT after{};
   ASSERT_NE(::GetWindowRect(hwnd, &after), 0);
-  EXPECT_NEAR(after.left, dropped.left, 2);
-  EXPECT_NEAR(after.top, dropped.top, 2);
+  EXPECT_EQ(after.left, dropped.left);
+  EXPECT_EQ(after.top, dropped.top);
+
+  // The headline regression this PR fixes, end-to-end: a later geometry
+  // mutation (the size slider) must re-place the bubble around the DRAGGED
+  // center — not teleport it back to the stale bottom-right preset.
+  // WindowConverges recomputes its expectation from the store snapshot, which
+  // now carries use_custom + the dragged center.
+  store.SetSize(300.0);
+  EXPECT_TRUE(WindowConverges(hwnd)) << "size change after drag must keep the dragged center";
 
   overlay.Stop();
   store.SetSize(220.0);
