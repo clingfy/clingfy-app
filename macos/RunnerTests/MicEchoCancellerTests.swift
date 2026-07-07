@@ -280,6 +280,51 @@ final class MicEchoCancellerTests: XCTestCase {
     XCTAssertLessThan(after, before * 0.7, "unfrozen adaptation should cancel the bleed")
   }
 
+  // MARK: - Double-talk: bleed under the voice must go too
+
+  /// v3 regression: the system bleed hiding UNDER the user's voice must also be
+  /// cancelled (the v2 voice-activity blend passed the raw mic through during
+  /// speech, so raising the mic gain made the surviving bleed an audible echo).
+  /// The system-presence blend routes double-talk through the frozen-weight
+  /// cleaned path, which removes the bleed but mathematically cannot touch the
+  /// uncorrelated voice.
+  func testCancelRemovesBleedUnderDoubleTalk() throws {
+    let n = 96_000
+    let half = n / 2
+    let delay = 2_640
+    let system = noise(n, seed: 16).map { $0 * 0.5 }
+    let voice = noise(n, seed: 17)
+
+    var mic = [Float](repeating: 0, count: n)
+    // First half: bleed only (the filter converges here).
+    for i in delay..<half { mic[i] = 0.6 * system[i - delay] }
+    // Second half: loud voice with the bleed hiding under it (double-talk).
+    for i in half..<n { mic[i] = 2.0 * voice[i] + 0.6 * system[i - delay] }
+
+    let micURL = try writeCAF(mic, name: "mic.caf")
+    let systemURL = try writeCAF(system, name: "system.caf")
+    let outDir = FileManager.default.temporaryDirectory.appendingPathComponent(
+      UUID().uuidString, isDirectory: true)
+    try FileManager.default.createDirectory(at: outDir, withIntermediateDirectories: true)
+
+    let result = try MicEchoCanceller.cancel(
+      micURL: micURL, systemURL: systemURL, outputDirectory: outDir)
+    XCTAssertTrue(result.applied)
+
+    let cleaned = try MicEchoCanceller.decodePCMMono48k(url: result.cleanedMicURL)
+    let m = min(cleaned.count, n)
+
+    let before = abs(
+      correlationAtLag(Array(mic[half..<m]), Array(system[half..<m]), lag: delay))
+    let after = abs(
+      correlationAtLag(Array(cleaned[half..<m]), Array(system[half..<m]), lag: delay))
+    XCTAssertGreaterThan(before, 0.1, "the bleed under the voice should be measurable")
+    XCTAssertLessThan(after, before * 0.5, "double-talk bleed must be cancelled, not passed raw")
+
+    let voiceKeep = correlation(cleaned[half..<m], voice[half..<m])
+    XCTAssertGreaterThan(voiceKeep, 0.9, "the voice must survive the cleaned path")
+  }
+
   // MARK: - End-to-end: preserve voice, cancel pause bleed
 
   /// The whole point: a recording with a loud-speech segment (with bleed under
