@@ -10,6 +10,8 @@
 #include <thread>
 #include <vector>
 
+#include "Capture/Camera/camera_overlay_presenter.h"
+
 // Phase 9.3.2 — floating camera bubble (macOS-like): a Win32 topmost, opaque,
 // non-activating, draggable window that paints the live camera frame while
 // recording, EXCLUDED from screen capture via
@@ -28,18 +30,13 @@
 // is a user action, not an auto probe.
 namespace clingfy::capture {
 
-struct FloatingPlacement {
-  int x = 0;
-  int y = 0;
-  int width = 0;
-  int height = 0;
-  bool rounded = true;
-};
-
-class CameraFloatingOverlay {
+// The opaque-GDI presenter ("GdiOpaquePresenter" in the renderer design doc) —
+// the safe-mode implementation of ICameraOverlayPresenter. FloatingPlacement
+// lives in camera_overlay_presenter.h with the interface.
+class CameraFloatingOverlay : public ICameraOverlayPresenter {
  public:
   CameraFloatingOverlay() = default;
-  ~CameraFloatingOverlay();
+  ~CameraFloatingOverlay() override;
 
   CameraFloatingOverlay(const CameraFloatingOverlay&) = delete;
   CameraFloatingOverlay& operator=(const CameraFloatingOverlay&) = delete;
@@ -47,26 +44,26 @@ class CameraFloatingOverlay {
   // Create the (hidden) window + apply capture-exclusion. Spawns the overlay
   // thread and blocks until the window is up (or creation failed). Returns false
   // on failure — the caller continues without a floating bubble.
-  bool Start(const FloatingPlacement& placement);
+  bool Start(const FloatingPlacement& placement) override;
 
   // Show / hide the bubble (window ops marshaled to the overlay thread).
-  void Show();
-  void Hide();
+  void Show() override;
+  void Hide() override;
 
   // Feed the latest camera frame (tightly-packed BGRA, stride = width*4).
   // Thread-safe; a no-op before Start / after Stop.
-  void PublishBgra(const std::uint8_t* bgra, int width, int height);
+  void PublishBgra(const std::uint8_t* bgra, int width, int height) override;
 
   // Tear the window + thread down. Idempotent. Call after the frame producer
   // (CameraRecorder) is stopped so no PublishBgra races teardown.
-  void Stop();
+  void Stop() override;
 
-  bool running() const { return running_.load(); }
+  bool running() const override { return running_.load(); }
 
   // True only when SetWindowDisplayAffinity(WDA_EXCLUDEFROMCAPTURE) succeeded —
   // i.e. showing this window will NOT burn it into screen.mov. The engine must
   // never Show() the floating bubble when this is false.
-  bool wda_excluded() const { return wda_excluded_.load(); }
+  bool wda_excluded() const override { return wda_excluded_.load(); }
 
   static LRESULT CALLBACK WndProc(HWND hwnd, UINT msg, WPARAM wparam,
                                   LPARAM lparam);

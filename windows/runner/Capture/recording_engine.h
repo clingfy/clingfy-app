@@ -30,7 +30,7 @@ class WgcDisplayCaptureBackend;
 struct WgcCaptureStats;
 class CursorSampler;
 class CameraRecorder;
-class CameraFloatingOverlay;
+class ICameraOverlayPresenter;
 }
 
 // Singleton orchestrator for the Windows recording lifecycle.
@@ -327,7 +327,9 @@ class RecordingEngine {
   // capture a weak_ptr — an ABANDONED camera recorder's thread may deliver
   // frames long after the engine tore the overlay down, and a raw pointer
   // there would be a use-after-free.
-  std::shared_ptr<CameraFloatingOverlay> camera_floating_;
+  // Renderer P2: held through the presenter interface (GDI today, DComp in
+  // P3) — see docs/decisions/windows-camera-bubble-renderer-architecture.md.
+  std::shared_ptr<ICameraOverlayPresenter> camera_floating_;
 
   // Audio pipeline (Phase 3D). Two WASAPI captures (mic + loopback)
   // fill the matching packet queues; a dedicated mixer thread sums

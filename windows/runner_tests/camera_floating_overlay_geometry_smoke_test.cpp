@@ -14,17 +14,32 @@
 #include <windows.h>
 
 #include <chrono>
+#include <memory>
 #include <thread>
 
 #include <gtest/gtest.h>
 
 #include "Capture/Camera/camera_floating_overlay.h"
 #include "Capture/Camera/camera_overlay_geometry_store.h"
+#include "Capture/Camera/camera_overlay_presenter.h"
 
 namespace clingfy::capture {
 namespace {
 
 constexpr wchar_t kOverlayClassName[] = L"ClingfyCameraFloatingOverlay";
+
+// Obtain the overlay through the production factory — the same
+// factory -> ICameraOverlayPresenter -> Start composition RecordingEngine
+// ships — pinned to the GDI presenter, because these tests' rect expectations
+// are ComputeFloatingRect/16:9 (GDI-shaped) and must not follow a future
+// default flip to the square DComp presenter.
+std::shared_ptr<ICameraOverlayPresenter> MakeGdiOverlayViaFactory() {
+  ::SetEnvironmentVariableW(L"CLINGFY_FORCE_GDI_OVERLAY", L"1");
+  std::shared_ptr<ICameraOverlayPresenter> overlay =
+      CreateCameraOverlayPresenter();
+  ::SetEnvironmentVariableW(L"CLINGFY_FORCE_GDI_OVERLAY", nullptr);
+  return overlay;
+}
 
 // Compute the rect the overlay SHOULD occupy for the store's current geometry,
 // using the same inputs SyncGeometryFromStore uses (nearest monitor work area +
@@ -79,13 +94,14 @@ TEST(CameraFloatingOverlayGeometrySmoke, PresetSizeAndCustomPositionMoveTheWindo
   store.SetSize(220.0);
   store.SetPosition(3);  // bottomRight
 
-  CameraFloatingOverlay overlay;
+  const std::shared_ptr<ICameraOverlayPresenter> overlay =
+      MakeGdiOverlayViaFactory();
   FloatingPlacement place;
   place.x = 100;
   place.y = 100;
   place.width = 400;
   place.height = 225;
-  if (!overlay.Start(place)) {
+  if (!overlay->Start(place)) {
     GTEST_SKIP() << "overlay window could not be created in this session";
   }
 
@@ -108,7 +124,7 @@ TEST(CameraFloatingOverlayGeometrySmoke, PresetSizeAndCustomPositionMoveTheWindo
   store.SetCustomPosition(0.5, 0.5);
   EXPECT_TRUE(WindowConverges(hwnd)) << "custom -> center";
 
-  overlay.Stop();
+  overlay->Stop();
 
   // Leave the process-wide store at Dart defaults for any later test.
   store.SetSize(220.0);
@@ -120,13 +136,14 @@ TEST(CameraFloatingOverlayGeometrySmoke, DragEndWritesCustomPositionBack) {
   store.SetSize(220.0);
   store.SetPosition(3);  // bottomRight, use_custom cleared.
 
-  CameraFloatingOverlay overlay;
+  const std::shared_ptr<ICameraOverlayPresenter> overlay =
+      MakeGdiOverlayViaFactory();
   FloatingPlacement place;
   place.x = 100;
   place.y = 100;
   place.width = 400;
   place.height = 225;
-  if (!overlay.Start(place)) {
+  if (!overlay->Start(place)) {
     GTEST_SKIP() << "overlay window could not be created in this session";
   }
   HWND hwnd = ::FindWindowW(kOverlayClassName, nullptr);
@@ -196,7 +213,7 @@ TEST(CameraFloatingOverlayGeometrySmoke, DragEndWritesCustomPositionBack) {
   store.SetSize(300.0);
   EXPECT_TRUE(WindowConverges(hwnd)) << "size change after drag must keep the dragged center";
 
-  overlay.Stop();
+  overlay->Stop();
   store.SetSize(220.0);
   store.SetPosition(3);
 }

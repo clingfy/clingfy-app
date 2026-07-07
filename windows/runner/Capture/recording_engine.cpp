@@ -28,7 +28,7 @@
 #include "Bridge/recording_warning_codes.h"
 #include "Bridge/workflow_event_publisher.h"
 #include "Services/recovery_sweep.h"
-#include "Capture/Camera/camera_floating_overlay.h"
+#include "Capture/Camera/camera_overlay_presenter.h"
 #include "Capture/Camera/camera_meta.h"
 #include "Capture/Camera/camera_overlay_style_store.h"
 #include "Capture/Camera/camera_recorder.h"
@@ -858,7 +858,7 @@ std::optional<RecordingError> RecordingEngine::Start(
         place.x = work.left + std::max(0, work_w - place.width - margin);
         place.y = work.top + std::max(0, work_h - place.height - margin);
         place.rounded = true;
-        camera_floating_ = std::make_shared<CameraFloatingOverlay>();
+        camera_floating_ = CreateCameraOverlayPresenter();
         if (!camera_floating_->Start(place)) {
           camera_floating_.reset();
           clingfy::bridge::devices::LogDeviceProbe(
@@ -870,7 +870,7 @@ std::optional<RecordingError> RecordingEngine::Start(
       // recorder (open timeout) keeps a detached thread that may deliver
       // frames long after the engine tears the overlay down; the weak_ptr
       // makes that a no-op instead of a use-after-free.
-      std::weak_ptr<CameraFloatingOverlay> floating_weak = camera_floating_;
+      std::weak_ptr<ICameraOverlayPresenter> floating_weak = camera_floating_;
       cam_cfg.on_preview_frame = [floating_weak](const std::uint8_t* bgra,
                                                  int w, int h) {
         LiveCameraTexture::Instance().PublishBgra(bgra, w, h);
