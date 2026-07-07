@@ -6,7 +6,7 @@
 
 #include "Capture/Camera/camera_overlay_presenter.h"
 
-#include <cstdlib>
+#include <windows.h>
 
 #include <gtest/gtest.h>
 
@@ -16,7 +16,7 @@ namespace clingfy::capture {
 namespace {
 
 TEST(CameraOverlayPresenterFactory, DefaultSelectionIsTheGdiPresenter) {
-  ::_putenv_s("CLINGFY_FORCE_GDI_OVERLAY", "");
+  ::SetEnvironmentVariableW(L"CLINGFY_FORCE_GDI_OVERLAY", nullptr);
   const std::shared_ptr<ICameraOverlayPresenter> p =
       CreateCameraOverlayPresenter();
   ASSERT_NE(p, nullptr);
@@ -25,12 +25,35 @@ TEST(CameraOverlayPresenterFactory, DefaultSelectionIsTheGdiPresenter) {
 }
 
 TEST(CameraOverlayPresenterFactory, KillSwitchStillYieldsTheGdiPresenter) {
-  ::_putenv_s("CLINGFY_FORCE_GDI_OVERLAY", "1");
+  ::SetEnvironmentVariableW(L"CLINGFY_FORCE_GDI_OVERLAY", L"1");
   const std::shared_ptr<ICameraOverlayPresenter> p =
       CreateCameraOverlayPresenter();
-  ::_putenv_s("CLINGFY_FORCE_GDI_OVERLAY", "");
+  ::SetEnvironmentVariableW(L"CLINGFY_FORCE_GDI_OVERLAY", nullptr);
   ASSERT_NE(p, nullptr);
   EXPECT_NE(dynamic_cast<CameraFloatingOverlay*>(p.get()), nullptr);
+}
+
+// In P2 both selection paths construct the same GDI presenter, so the factory
+// tests above cannot distinguish a broken kill switch — this direct test is
+// what actually pins the ADR §5 escape hatch before P3 makes it load-bearing.
+TEST(CameraOverlayPresenterFactory, ForceGdiOverlayReadsTheKillSwitch) {
+  ::SetEnvironmentVariableW(L"CLINGFY_FORCE_GDI_OVERLAY", nullptr);
+  EXPECT_FALSE(ForceGdiOverlay());
+
+  ::SetEnvironmentVariableW(L"CLINGFY_FORCE_GDI_OVERLAY", L"1");
+  EXPECT_TRUE(ForceGdiOverlay());
+
+  // Documented contract: ANY non-empty value pins GDI — including "0".
+  ::SetEnvironmentVariableW(L"CLINGFY_FORCE_GDI_OVERLAY", L"0");
+  EXPECT_TRUE(ForceGdiOverlay());
+
+  // Longer than the probe buffer still reads as set.
+  ::SetEnvironmentVariableW(L"CLINGFY_FORCE_GDI_OVERLAY",
+                            L"definitely-longer-than-the-probe-buffer");
+  EXPECT_TRUE(ForceGdiOverlay());
+
+  ::SetEnvironmentVariableW(L"CLINGFY_FORCE_GDI_OVERLAY", nullptr);
+  EXPECT_FALSE(ForceGdiOverlay());
 }
 
 TEST(CameraOverlayPresenterFactory, LifecycleIsSafeWithoutStart) {

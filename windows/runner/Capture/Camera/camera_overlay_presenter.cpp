@@ -1,29 +1,23 @@
 #include "Capture/Camera/camera_overlay_presenter.h"
 
-#include <cstdlib>
+#include <windows.h>
+
+#include <iterator>
 
 #include "Bridge/Devices/device_probe_log.h"
 #include "Capture/Camera/camera_floating_overlay.h"
 
 namespace clingfy::capture {
 
-namespace {
-
-// Support kill switch: any non-empty value pins the safe-mode GDI presenter,
-// so a machine where the (P3) DComp path misbehaves can be unblocked without
-// a new build.
 bool ForceGdiOverlay() {
-  char buffer[8]{};
-  size_t required = 0;
-  if (getenv_s(&required, buffer, sizeof(buffer), "CLINGFY_FORCE_GDI_OVERLAY") !=
-      0) {
-    // Value longer than the probe buffer still means "set".
-    return required > 1;
-  }
-  return required > 1;  // required includes the terminator; >1 means non-empty.
+  // Win32 read (not CRT getenv_s): SetEnvironmentVariableW at runtime — the
+  // convention every other env switch and test in windows/ uses — is invisible
+  // to the CRT's snapshotted copy. Returns 0 when unset or empty; a value
+  // longer than the probe buffer returns the required size, still truthy.
+  wchar_t buffer[8]{};
+  return ::GetEnvironmentVariableW(L"CLINGFY_FORCE_GDI_OVERLAY", buffer,
+                                   static_cast<DWORD>(std::size(buffer))) > 0;
 }
-
-}  // namespace
 
 std::shared_ptr<ICameraOverlayPresenter> CreateCameraOverlayPresenter() {
   const bool forced = ForceGdiOverlay();

@@ -68,11 +68,18 @@ class ICameraOverlayPresenter {
   virtual bool wda_excluded() const = 0;
 };
 
+// The support kill switch: env CLINGFY_FORCE_GDI_OVERLAY, ANY non-empty value
+// (including "0") pins the safe-mode GDI presenter, so a machine where the
+// (P3) DComp path misbehaves can be unblocked without a new build. Read via
+// Win32 GetEnvironmentVariableW so runtime SetEnvironmentVariableW (tests,
+// support tooling) is honored. Exposed for direct tests and the P3 selection
+// ladder.
+bool ForceGdiOverlay();
+
 // Select and construct the presenter for this recording. P2 scaffolding:
 // always the GDI opaque presenter; P3 adds the DirectComposition attempt with
-// GDI fallback. Honors the support kill switch — the environment variable
-// CLINGFY_FORCE_GDI_OVERLAY (any non-empty value) pins the GDI presenter —
-// and logs the selection to the device-probe log.
+// GDI fallback. Honors ForceGdiOverlay() and logs the selection to the
+// device-probe log.
 std::shared_ptr<ICameraOverlayPresenter> CreateCameraOverlayPresenter();
 
 }  // namespace clingfy::capture
