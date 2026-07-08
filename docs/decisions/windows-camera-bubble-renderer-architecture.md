@@ -1,7 +1,36 @@
 # Windows live camera bubble — renderer redesign (D3D/D2D core + DirectComposition presenter)
 
-Status: **approved direction, pre-implementation** (2026-07-07)
+Status: **implemented through P3; P4 (full presenter + default flip) in progress** (updated 2026-07-08)
 Supersedes the presentation layer of [windows-phase-9-camera-overlay-architecture.md](windows-phase-9-camera-overlay-architecture.md); the capture, exclusion-gating, and style-store decisions there remain in force.
+
+## Status update (2026-07-08)
+
+This document was written pre-implementation; P0–P3 have since landed on `develop`
+exactly as designed, and the P3 GO/NO-GO gate **passed**:
+
+- **P0** — #220 (editorSeed persistence), #221 (geometry store + live position/size).
+- **P1** — #224 (`83182be`): drag write-back + `cameraOverlayMoved` emitter + glow
+  fields wired (not rendered). Review hardening: `AdoptDragRevision` guard so a drag
+  write-back cannot swallow a concurrent platform-thread geometry mutation.
+- **P2** — #225 (`8d2db36`): `ICameraOverlayPresenter` seam, byte-identical GDI
+  presenter, factory + kill switch. Review hardening: env reads use Win32
+  `GetEnvironmentVariableW` (the CRT snapshot is invisible to
+  `SetEnvironmentVariableW`, which had made the kill switch untestable).
+- **P3** — #226 (`f60dbd1`): DComp presenter POC. **GO verdict on the hybrid-GPU dev
+  box**: renders on-screen AND absent from screen capture, with all presenter/POC
+  tests passing armed (`CLINGFY_REQUIRE_PIXEL_TESTS=1`). Additions beyond the plan:
+  `CLINGFY_TEST_DCOMP_WDA_FAIL` fault injection exercises the WDA-fail fallback
+  ladder end-to-end without afflicted hardware; a failed swapchain resize leaves the
+  geometry revision unconsumed (retry next tick) instead of stranding a target-less
+  context.
+- **Fallback hardening** — #230 (`3125130`): the mandatory GDI fallback's
+  camera-then-border `Paint` was unbuffered, letting DWM compose borderless
+  mid-paint frames (user-visible border flicker at streaming cadence, 12/180 screen
+  samples); now double-buffered (0/181). Headless pixel tests
+  (`camera_bubble_border_pixel_test.cpp`) pin the painter/DComp border paths per the
+  §7 test strategy.
+- DComp remains **opt-in** (`CLINGFY_OVERLAY_DCOMP=1`) until P4 flips the default;
+  `CLINGFY_FORCE_GDI_OVERLAY` stays the kill switch and beats the opt-in.
 
 ## 1. Problem
 
@@ -180,14 +209,13 @@ reported once per recording for beta telemetry.
 | Phase | Scope | Gate |
 |---|---|---|
 | **P0** ✅ | Geometry store + live position/size (PR #221); editorSeed persistence (PR #220) | merged stack |
-| **P1** | Drag write-back + `cameraOverlayMoved` emitter; glow fields in style store + wire the two no-op handlers (GDI presenter ignores glow) | native tests green; drag→slider no longer teleports |
-| **P2** | Extract `ICameraOverlayPresenter`; `GdiOpaquePresenter` = current behavior byte-identical; selection scaffolding, kill switch, logging | pure refactor — full suite green, manual smoke identical |
-| **P3** | `DCompPresenter` POC behind the kill switch: square window, frame upload, painter mask + opacity + border, WDA probe | **GO/NO-GO on the hybrid-GPU dev box**: renders on-screen AND absent from a WGC recording (robmikh/Win32CaptureSample-style probe) |
-| **P4** | Full presenter: shadow, chroma, glow ring + pulse, effect padding + click-through halo, DPI (`WM_DPICHANGED` → ResizeBuffers + SetDpi), capture-display retarget at recording start, device-lost rebuild + mid-session fallback | headless D2D pixel tests (the `preview_compositor_color_test.cpp` HeadlessD2D pattern) + hardware matrix smoke |
+| **P1** ✅ | Drag write-back + `cameraOverlayMoved` emitter; glow fields in style store + wire the two no-op handlers (GDI presenter ignores glow) | merged as #224 (`83182be`); drag→slider no longer teleports |
+| **P2** ✅ | Extract `ICameraOverlayPresenter`; `GdiOpaquePresenter` = current behavior byte-identical; selection scaffolding, kill switch, logging | merged as #225 (`8d2db36`); full suite green |
+| **P3** ✅ | `DCompPresenter` POC behind the kill switch: square window, frame upload, painter mask + opacity + border, WDA probe | merged as #226 (`f60dbd1`); **GO** on the hybrid-GPU dev box: renders on-screen AND absent from screen capture, armed probes green |
+| **P4** | Full presenter: shadow, chroma, glow ring + pulse, effect padding + click-through halo, DPI (`WM_DPICHANGED` → ResizeBuffers + SetDpi), capture-display retarget at recording start, device-lost rebuild + mid-session fallback, **default flip to DComp** | headless D2D pixel tests (the `preview_compositor_color_test.cpp` HeadlessD2D pattern) + hardware matrix smoke |
 | **P5** (backlog) | Hexagon/star geometry in the painter (fixes export gap too); styled in-app texture (Dart bubble already styles everything but chroma — low urgency) | — |
 
-P1+P2 are safe to run immediately after the current PR stack (#220 → #221) merges.
-P3 is the only genuinely uncertain step, and it is deliberately tiny.
+P0–P3 are merged (see the status update above); P4 is the active phase.
 
 ## 7. Test strategy
 
