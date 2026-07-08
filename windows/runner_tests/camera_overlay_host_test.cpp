@@ -165,6 +165,66 @@ TEST(CameraOverlayHost, SwapIsOneShot) {
   EXPECT_EQ(gdi->frames_, 2);
 }
 
+TEST(CameraOverlayHost, ShowDoesNotForwardToUnexcludedInner) {
+  // The host gates Show on capture-exclusion atomically under its own mutex, so
+  // the engine's separate wda_excluded()+Show() pair can't be raced by a swap
+  // into showing an unexcluded bubble. A direct Show() on an unexcluded inner
+  // must not reach it.
+  auto inner = std::make_shared<FakePresenter>();
+  inner->wda_ = false;
+  auto host = MakeHost(inner, std::make_shared<FakePresenter>());
+  host->Show();
+  EXPECT_FALSE(inner->shown_)
+      << "Show() forwarded to an inner whose capture-exclusion failed";
+  EXPECT_FALSE(host->wda_excluded());
+}
+
+TEST(CameraOverlayHost, ShowRefusesAfterSwapToUnexcludedGdi) {
+  // The TOCTOU the fix closes: inner is excluded and the user's show intent is
+  // set, the inner parks and swaps to an UNEXCLUDED GDI, then a fresh Show()
+  // (as the engine re-issues) must still refuse to show the unexcluded bubble.
+  auto inner = std::make_shared<FakePresenter>();
+  auto gdi = std::make_shared<FakePresenter>();
+  gdi->wda_ = false;
+  auto host = MakeHost(inner, gdi);
+  host->Show();                    // inner excluded -> shown
+  inner->fallback_.store(true);
+  host->PublishBgra(kPixel, 1, 1);  // swap to the unexcluded GDI
+  ASSERT_TRUE(host->did_fall_back_for_test());
+  gdi->shown_ = false;              // clear any prior state
+  host->Show();                     // engine re-issues Show after the swap
+  EXPECT_FALSE(gdi->shown_)
+      << "Show() showed the unexcluded GDI bubble after the swap (leak)";
+}
+
+TEST(CameraOverlayHost, SwapForwardsHostPlacementToGdiFactory) {
+  auto inner = std::make_shared<FakePresenter>();
+  auto gdi = std::make_shared<FakePresenter>();
+  FloatingPlacement received{};
+  bool factory_called = false;
+  auto host = std::make_shared<CameraOverlayHost>(
+      [&](const FloatingPlacement& p)
+          -> std::shared_ptr<ICameraOverlayPresenter> {
+        received = p;
+        factory_called = true;
+        return gdi;
+      });
+  FloatingPlacement place;
+  place.x = 7;
+  place.y = 8;
+  place.width = 333;
+  place.height = 222;
+  host->AdoptInnerForTest(inner, place);
+  inner->fallback_.store(true);
+  host->PublishBgra(kPixel, 1, 1);
+  EXPECT_TRUE(factory_called) << "the GDI fallback factory was not invoked";
+  EXPECT_EQ(received.x, 7);
+  EXPECT_EQ(received.y, 8);
+  EXPECT_EQ(received.width, 333);
+  EXPECT_EQ(received.height, 222)
+      << "the swap did not forward the host's placement to the GDI presenter";
+}
+
 TEST(CameraOverlayHost, StopForwardsAndClears) {
   auto inner = std::make_shared<FakePresenter>();
   auto host = MakeHost(inner, std::make_shared<FakePresenter>());

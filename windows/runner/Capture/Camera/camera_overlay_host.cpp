@@ -74,8 +74,14 @@ void CameraOverlayHost::MaybeFallbackLocked() {
 
 void CameraOverlayHost::Show() {
   std::lock_guard<std::mutex> lock(mutex_);
+  // showing_ records the user's intent (so a later swap to an excluded
+  // presenter re-shows). The ACTUAL show is gated on capture-exclusion HERE,
+  // atomically under the host mutex — the engine's own wda_excluded()+Show()
+  // pair is two separate calls, and a mid-session swap between them could
+  // otherwise substitute an unexcluded GDI presenter and burn the camera into
+  // the recording (never show an unexcluded bubble).
   showing_ = true;
-  if (inner_ != nullptr) {
+  if (inner_ != nullptr && inner_->wda_excluded()) {
     inner_->Show();
   }
 }
