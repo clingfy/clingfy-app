@@ -75,6 +75,18 @@ class ICameraOverlayPresenter {
   virtual bool needs_fallback() const { return false; }
 };
 
+// Compute the creation-time bubble placement for a monitor's work area (all
+// physical px). The presenter corrects the exact rect from the geometry store
+// before showing, but the placement's monitor is load-bearing: the presenter
+// creates its window here, and the geometry store then places the bubble on
+// THAT monitor — so recording a window on a secondary display must pass that
+// display's work area (renderer P4c-c4 capture-display retarget). A 16:9 rect
+// ~22% of the work width (min 160 px), inset 3% (min 8 px) from the bottom-
+// right corner. Pure; unit-tested.
+FloatingPlacement ComputeInitialFloatingPlacement(int work_left, int work_top,
+                                                  int work_right,
+                                                  int work_bottom);
+
 // The support kill switch: env CLINGFY_FORCE_GDI_OVERLAY, ANY non-empty value
 // (including "0") pins the safe-mode GDI presenter, so a machine where the
 // DComp path misbehaves can be unblocked without a new build. Read via

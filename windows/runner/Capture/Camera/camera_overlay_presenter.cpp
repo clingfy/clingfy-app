@@ -2,6 +2,7 @@
 
 #include <windows.h>
 
+#include <algorithm>
 #include <iterator>
 
 #include "Bridge/Devices/device_probe_log.h"
@@ -30,6 +31,21 @@ bool DcompOptIn() { return EnvSet(L"CLINGFY_OVERLAY_DCOMP"); }
 }  // namespace
 
 bool ForceGdiOverlay() { return EnvSet(L"CLINGFY_FORCE_GDI_OVERLAY"); }
+
+FloatingPlacement ComputeInitialFloatingPlacement(int work_left, int work_top,
+                                                  int work_right,
+                                                  int work_bottom) {
+  const int work_w = work_right - work_left;
+  const int work_h = work_bottom - work_top;
+  FloatingPlacement place;
+  place.width = std::max(160, work_w * 22 / 100);
+  place.height = place.width * 9 / 16;
+  const int margin = std::max(8, work_w * 3 / 100);
+  place.x = work_left + std::max(0, work_w - place.width - margin);
+  place.y = work_top + std::max(0, work_h - place.height - margin);
+  place.rounded = true;
+  return place;
+}
 
 
 std::shared_ptr<ICameraOverlayPresenter> CreateCameraOverlayPresenter() {

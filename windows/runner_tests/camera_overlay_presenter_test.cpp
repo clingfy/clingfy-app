@@ -133,5 +133,50 @@ TEST(CameraOverlayPresenterFactory, LifecycleIsSafeWithoutStart) {
   EXPECT_FALSE(p->wda_excluded());
 }
 
+// Initial bubble placement geometry (renderer P4c-c4). The engine feeds this
+// the work area of the RECORDED monitor (display/area resolve it; window mode
+// now derives it from the captured window via MonitorFromWindow), and the
+// placement's coordinates decide which monitor the presenter's window — and
+// therefore the bubble — lands on.
+TEST(ComputeInitialFloatingPlacement, BottomRightInsetSixteenByNine) {
+  // 1080p at the origin, no taskbar inset.
+  const FloatingPlacement p =
+      ComputeInitialFloatingPlacement(0, 0, 1920, 1080);
+  EXPECT_EQ(p.width, 1920 * 22 / 100);        // 422
+  EXPECT_EQ(p.height, p.width * 9 / 16);      // 237
+  const int margin = 1920 * 3 / 100;          // 57
+  EXPECT_EQ(p.x, 1920 - p.width - margin);
+  EXPECT_EQ(p.y, 1080 - p.height - margin);
+  EXPECT_TRUE(p.rounded);
+}
+
+TEST(ComputeInitialFloatingPlacement, LandsOnTheGivenMonitorOrigin) {
+  // A secondary monitor to the right (origin 1920,0): the placement must be
+  // ON that monitor (x >= 1920), which is what retargets the bubble to the
+  // recorded display in window mode.
+  const FloatingPlacement p =
+      ComputeInitialFloatingPlacement(1920, 0, 1920 + 2560, 1440);
+  EXPECT_GE(p.x, 1920);
+  EXPECT_LT(p.x, 1920 + 2560);
+  EXPECT_GE(p.y, 0);
+  EXPECT_LT(p.y + p.height, 1440);
+}
+
+TEST(ComputeInitialFloatingPlacement, ClampsToMinimumWidthOnTinyWorkArea) {
+  const FloatingPlacement p = ComputeInitialFloatingPlacement(0, 0, 300, 200);
+  EXPECT_EQ(p.width, 160);              // max(160, 300*22/100=66)
+  EXPECT_EQ(p.height, 160 * 9 / 16);   // 90
+  EXPECT_GE(p.x, 0);
+  EXPECT_GE(p.y, 0);
+}
+
+TEST(ComputeInitialFloatingPlacement, HonorsNegativeOriginWorkArea) {
+  // Secondary monitor left of the primary: negative coordinates.
+  const FloatingPlacement p =
+      ComputeInitialFloatingPlacement(-1920, 0, 0, 1080);
+  EXPECT_GE(p.x, -1920);
+  EXPECT_LT(p.x + p.width, 0);  // stays on the left-hand monitor
+}
+
 }  // namespace
 }  // namespace clingfy::capture
