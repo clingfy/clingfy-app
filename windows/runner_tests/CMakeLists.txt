@@ -49,6 +49,7 @@ add_executable(runner_tests
   "camera_floating_overlay_geometry_smoke_test.cpp"
   "camera_overlay_geometry_store_test.cpp"
   "camera_overlay_glow_test.cpp"
+  "camera_overlay_host_test.cpp"
   "camera_overlay_move_publisher_test.cpp"
   "camera_overlay_presenter_test.cpp"
   "camera_overlay_style_store_test.cpp"

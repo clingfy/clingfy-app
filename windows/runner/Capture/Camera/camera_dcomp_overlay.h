@@ -97,6 +97,10 @@ class CameraDcompOverlay : public ICameraOverlayPresenter {
   void Stop() override;
   bool running() const override { return running_.load(); }
   bool wda_excluded() const override { return wda_excluded_.load(); }
+  // Request the mid-session GDI fallback once the rebuild budget is spent
+  // (P4c-c3). device_loss_gave_up_ is written on the overlay thread; this
+  // lock-free read is sampled by the owner on the frame-publish thread.
+  bool needs_fallback() const override { return device_loss_gave_up_.load(); }
 
   // POC-gate introspection: true once the full GPU stack is up.
   bool gpu_ready() const { return gpu_ready_.load(); }
@@ -107,7 +111,7 @@ class CameraDcompOverlay : public ICameraOverlayPresenter {
   int device_loss_attempts() const { return total_device_losses_; }
   // Test introspection (P4c): the presenter has spent its rebuild budget and
   // parked (stack dropped, thread alive) awaiting the mid-session GDI fallback.
-  bool device_loss_gave_up() const { return device_loss_gave_up_; }
+  bool device_loss_gave_up() const { return device_loss_gave_up_.load(); }
   // Test introspection (P4c): the current consecutive-loss streak (resets to 0
   // on a clean present). Lets a test observe the streak reset between two
   // well-separated losses. Read after Stop for a race-free value.
@@ -266,7 +270,9 @@ class CameraDcompOverlay : public ICameraOverlayPresenter {
   int consecutive_device_losses_ = 0;
   int total_device_losses_ = 0;  // monotonic; test introspection.
   bool device_loss_retry_pending_ = false;
-  bool device_loss_gave_up_ = false;
+  // Written on the overlay thread; read cross-thread by needs_fallback() on the
+  // frame-publish thread, so it is atomic.
+  std::atomic<bool> device_loss_gave_up_{false};
   bool device_loss_fallback_logged_ = false;
   int simulated_device_losses_remaining_ = 0;
   std::atomic<bool> simulate_one_loss_{false};  // test one-shot injection

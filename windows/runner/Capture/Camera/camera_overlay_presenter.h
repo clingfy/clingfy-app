@@ -66,6 +66,13 @@ class ICameraOverlayPresenter {
   // Best-effort by OS design (a documented Win11 defect can fail the call
   // outright) — which is why this is probed at runtime, never assumed.
   virtual bool wda_excluded() const = 0;
+
+  // True when this presenter has given up rendering and the owner should swap
+  // it for the safe-mode GDI presenter (renderer P4c mid-session fallback).
+  // Only the DComp presenter can request this — after it exhausts its
+  // device-lost rebuild budget; GDI and the host wrapper never do. Sampled on
+  // the frame-publish thread, so it must be cheap and lock-free.
+  virtual bool needs_fallback() const { return false; }
 };
 
 // The support kill switch: env CLINGFY_FORCE_GDI_OVERLAY, ANY non-empty value

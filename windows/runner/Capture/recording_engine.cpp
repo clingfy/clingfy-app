@@ -28,6 +28,7 @@
 #include "Bridge/recording_warning_codes.h"
 #include "Bridge/workflow_event_publisher.h"
 #include "Services/recovery_sweep.h"
+#include "Capture/Camera/camera_overlay_host.h"
 #include "Capture/Camera/camera_overlay_presenter.h"
 #include "Capture/Camera/camera_meta.h"
 #include "Capture/Camera/camera_overlay_style_store.h"
@@ -858,7 +859,11 @@ std::optional<RecordingError> RecordingEngine::Start(
         place.x = work.left + std::max(0, work_w - place.width - margin);
         place.y = work.top + std::max(0, work_h - place.height - margin);
         place.rounded = true;
-        camera_floating_ = StartCameraOverlayPresenter(place);
+        // Wrap the factory ladder in the fallback host so a DComp presenter
+        // that parks on persistent device loss is swapped for the GDI bubble
+        // mid-recording (P4c-c3), transparently to the rest of the engine.
+        auto host = std::make_shared<CameraOverlayHost>();
+        camera_floating_ = host->Start(place) ? host : nullptr;
         if (camera_floating_ == nullptr) {
           clingfy::bridge::devices::LogDeviceProbe(
               "RecordingEngine: floating camera overlay create failed; in-app "
