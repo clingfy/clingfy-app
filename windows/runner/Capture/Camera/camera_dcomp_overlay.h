@@ -42,9 +42,17 @@
 // DComp-presented windows) — the factory falls back to the GDI presenter when
 // it fails here.
 //
-// P3 POC scope: full painter style, square geometry, drag + write-back, WDA
-// probe. Deferred to P4: glow ring, effect padding + click-through halo,
-// WM_DPICHANGED, device-lost rebuild, mid-session fallback.
+// P4a: the window outsizes the content square by an effect-padding halo
+// (ComputeCameraEffectPadding — border/shadow/glow are never clipped at the
+// window edge), placement keeps the CONTENT at the work-area margins
+// (ComputePaddedSquareFloatingRect), and WM_NCHITTEST makes the halo
+// click-through (HTTRANSPARENT) while the content square stays the drag
+// handle (macOS hitTest parity). Window size now depends on the STYLE store
+// too (padding follows border width / shadow preset / glow), so the sync tick
+// re-places the window on style revisions as well.
+// Still deferred: glow ring + pulse (P4b); WM_DPICHANGED, device-lost
+// rebuild, mid-session fallback, capture-display retarget (P4c); default
+// flip (P4d).
 namespace clingfy::capture {
 
 class CameraDcompOverlay : public ICameraOverlayPresenter {
@@ -91,10 +99,17 @@ class CameraDcompOverlay : public ICameraOverlayPresenter {
   // Timer tick: apply store geometry (square rect; SetWindowPos + swapchain
   // resize) and style (painter re-Prepare) changes, then redraw if needed.
   void SyncAndRender(HWND hwnd);
-  // Re-Prepare the shared painter for the current style snapshot + window side
-  // + camera dims. MUST run outside BeginDraw (shadow bake does SetTarget
-  // round-trips); re-binds the swapchain target afterwards.
-  bool PreparePainter(int side);
+  // Cursor-tracked halo click-through (P4a): flips ONLY the WS_EX_TRANSPARENT
+  // bit when the cursor crosses the content/halo boundary (HTTRANSPARENT alone
+  // cannot fall through to other threads' windows), then re-verifies the
+  // capture exclusion — a mutation that silently drops WDA hides the bubble.
+  void UpdateHaloClickThrough(HWND hwnd);
+  // Re-Prepare the shared painter for the current style snapshot + camera
+  // dims, drawing into the content square at (padding_px, padding_px) so
+  // border/shadow/glow spill into the halo instead of the window edge. MUST
+  // run outside BeginDraw (shadow bake does SetTarget round-trips); re-binds
+  // the swapchain target afterwards.
+  bool PreparePainter(int content_side, int padding_px);
   void OnDragEnded(HWND hwnd);
   // Release every GPU-stack member (painter, bitmaps, D2D, DComp, swapchain,
   // device) in dependency order. Overlay thread only — shared by the normal
@@ -136,7 +151,20 @@ class CameraDcompOverlay : public ICameraOverlayPresenter {
   bool painter_ready_ = false;
   std::uint64_t last_style_revision_ = ~0ull;   // force first sync
   std::uint64_t last_geometry_revision_ = ~0ull;
-  int prepared_side_ = 0;
+  // Window/content split (P4a): the swapchain covers the whole padded window;
+  // the painter draws into the content square at (padding, padding). Written
+  // on the overlay thread (creation + sync tick) and read by WM_NCHITTEST,
+  // which also runs on the overlay thread.
+  int prepared_window_side_ = 0;
+  int prepared_content_side_ = 0;
+  int prepared_padding_px_ = 0;
+  // Whether WS_EX_TRANSPARENT is currently set (cursor off-content). Overlay
+  // thread only.
+  bool click_through_ = false;
+  // Inside the OS modal move loop (WM_ENTERSIZEMOVE..WM_EXITSIZEMOVE): the
+  // sync tick defers store-driven SetWindowPos so it never fights the user's
+  // grab. Overlay thread only.
+  bool in_size_move_ = false;
   int prepared_cam_w_ = 0;
   int prepared_cam_h_ = 0;
   bool render_failed_logged_ = false;

@@ -83,6 +83,24 @@ ResolvedBubbleStyle ResolveOverlayBubbleStyle(const CameraOverlayLiveStyle& s);
 // tests and reuse by the floating window's region builder.
 std::string OverlayShapeToPainterShape(int shape_wire);
 
+// Physical px of halo the DComp presenter's window adds on every side of the
+// content square so border stroke, baked shadow, and the (P4b) glow ring are
+// never clipped at the window edge (renderer redesign P4a; macOS counterpart:
+// cameraOverlayEffectPadding).
+//
+// Derived from the SAME constants the painter renders with, not the macOS
+// preset table (Windows shadow presets deliberately diverge):
+// - border: the painter strokes CENTERED on the content outline, so bw/2
+//   overhangs; a full border_width covers it plus antialiasing.
+// - shadow: CameraBubblePainter::PrepareShadow bakes a Gaussian of
+//   stddev = blur_radius/2 with a bake margin of ceil(3*stddev) + bw/2 + 2,
+//   then offsets the baked bitmap by (offset_x, offset_y).
+// - glow (rendered in P4b, reserved here so enabling glow never resizes the
+//   window mid-recording): macOS math, lineWidth + 2*shadowRadius + 6 with
+//   lineWidth = 3+7s, shadowRadius = 6+20s, s clamped to [0.10, 1.00].
+// Floored at 12 px (the macOS minimum halo). Pure; unit-tested.
+double ComputeCameraEffectPadding(const CameraOverlayLiveStyle& s);
+
 // The largest square centered inside a w x h box. The floating overlay window is
 // a fixed 16:9 landscape, but the compact shapes (circle / square / hexagon /
 // star) must be inscribed in a centered square so they read as an actual circle /

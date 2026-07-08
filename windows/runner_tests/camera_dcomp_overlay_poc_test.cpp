@@ -153,6 +153,107 @@ TEST(CameraDcompOverlayPoc, HiddenLifecycleBuildsTheGpuStack) {
   EXPECT_FALSE(overlay.running());
 }
 
+// P4a sync-tick semantics, exercised HIDDEN (no Show — nothing flashes, runs
+// unarmed): a style-only revision whose padding is unchanged must NOT re-place
+// the window (the store's clamped placement would teleport a dragged bubble),
+// while a padding-changing style revision must resize AROUND the dragged
+// center.
+TEST(CameraDcompOverlayPoc, StyleOnlyRevisionKeepsDraggedPosition) {
+  auto& geometry = CameraOverlayGeometryStore::Instance();
+  auto& style = CameraOverlayStyleStore::Instance();
+  geometry.SetSize(220.0);
+  geometry.SetPosition(3);
+  style.SetShape(5);
+  style.SetRoundness(0.0);
+  style.SetOpacity(1.0);
+  style.SetShadow(0);
+  style.SetBorder(0);
+  style.SetBorderWidth(0.0);
+  style.SetChromaEnabled(false);
+  style.SetMirror(false);
+
+  CameraDcompOverlay overlay;
+  FloatingPlacement place;
+  place.x = 100;
+  place.y = 100;
+  place.width = 220;
+  place.height = 220;
+  if (!overlay.Start(place)) {
+    if (::GetDesktopWindow() == nullptr) {
+      GTEST_SKIP() << "no desktop in this session";
+    }
+    FAIL() << "DComp presenter failed to start on this machine";
+  }
+  HWND hwnd = ::FindWindowW(L"ClingfyCameraDcompOverlay", nullptr);
+  ASSERT_NE(hwnd, nullptr);
+
+  // Simulated OS drag (the modal loop's outcome): move, then drag-end.
+  RECT before{};
+  ASSERT_NE(::GetWindowRect(hwnd, &before), 0);
+  ASSERT_NE(::SetWindowPos(hwnd, nullptr, before.left - 180, before.top - 120,
+                           0, 0, SWP_NOSIZE | SWP_NOZORDER | SWP_NOACTIVATE),
+            0);
+  ::PostMessageW(hwnd, WM_EXITSIZEMOVE, 0, 0);
+  const auto adopt_deadline =
+      std::chrono::steady_clock::now() + std::chrono::seconds(3);
+  bool wrote_back = false;
+  while (std::chrono::steady_clock::now() < adopt_deadline) {
+    if (geometry.Snapshot().use_custom) {
+      wrote_back = true;
+      break;
+    }
+    std::this_thread::sleep_for(std::chrono::milliseconds(25));
+  }
+  ASSERT_TRUE(wrote_back) << "drag end never wrote the custom position back";
+  std::this_thread::sleep_for(std::chrono::milliseconds(150));
+  RECT dropped{};
+  ASSERT_NE(::GetWindowRect(hwnd, &dropped), 0);
+
+  // Style-only revision, padding unchanged (border stays OFF, so the color
+  // write cannot alter ComputeCameraEffectPadding): the rect must stay
+  // BIT-identical — any move means the clamped re-place ran.
+  style.SetBorderColor(0xFF112233);
+  std::this_thread::sleep_for(std::chrono::milliseconds(300));
+  RECT after{};
+  ASSERT_NE(::GetWindowRect(hwnd, &after), 0);
+  EXPECT_EQ(after.left, dropped.left)
+      << "style-only revision re-placed a dragged bubble";
+  EXPECT_EQ(after.top, dropped.top);
+  EXPECT_EQ(after.right, dropped.right);
+  EXPECT_EQ(after.bottom, dropped.bottom);
+
+  // Padding-changing style revision: the window must grow (12 -> 30 px halo)
+  // around the DRAGGED center, not teleport back to the preset corner.
+  style.SetShadow(2);
+  const auto grow_deadline =
+      std::chrono::steady_clock::now() + std::chrono::seconds(3);
+  RECT grown{};
+  bool grew = false;
+  while (std::chrono::steady_clock::now() < grow_deadline) {
+    if (::GetWindowRect(hwnd, &grown) != 0 &&
+        grown.right - grown.left == 220 + 2 * 30) {
+      grew = true;
+      break;
+    }
+    std::this_thread::sleep_for(std::chrono::milliseconds(25));
+  }
+  EXPECT_TRUE(grew) << "padding change did not resize the window (width="
+                    << (grown.right - grown.left) << ")";
+  if (grew) {
+    const int dropped_cx = (dropped.left + dropped.right) / 2;
+    const int dropped_cy = (dropped.top + dropped.bottom) / 2;
+    const int grown_cx = (grown.left + grown.right) / 2;
+    const int grown_cy = (grown.top + grown.bottom) / 2;
+    EXPECT_NEAR(grown_cx, dropped_cx, 3) << "resize lost the dragged center";
+    EXPECT_NEAR(grown_cy, dropped_cy, 3) << "resize lost the dragged center";
+  }
+
+  overlay.Stop();
+  style.SetShadow(0);
+  geometry.SetSize(220.0);
+  geometry.SetPosition(3);
+}
+
 // ---- on-screen probes (pixel-canary gated) ----------------------------------
 
 // Armed only by the EXACT value "1" — the repo's pixel-canary convention
@@ -359,6 +460,284 @@ TEST(CameraDcompOverlayPoc, ExcludedFromScreenCapture) {
   EXPECT_FALSE(magenta_seen)
       << "the capture-excluded DComp window LEAKED into a screen capture — "
          "POC NO-GO.";
+}
+
+// P4a: the effect-padding halo must be click-through while the content square
+// stays the drag handle. HTTRANSPARENT alone cannot fall through to other
+// threads' windows, so the presenter tracks the cursor on its tick and flips
+// WS_EX_TRANSPARENT at the content/halo boundary — this probe MOVES the real
+// cursor (restored afterwards) and verifies both directions of the flip via
+// WindowFromPoint. No pixels are read (immune to capture-privacy state), but
+// it briefly shows the overlay window and drives the cursor, so it stays
+// behind the armed gate like every on-screen probe.
+TEST(CameraDcompOverlayPoc, HaloIsClickThroughContentIsDragHandle) {
+  if (!PixelProbesArmed()) {
+    GTEST_SKIP() << "set CLINGFY_REQUIRE_PIXEL_TESTS=1 to run the on-screen "
+                    "probe (briefly shows a window and moves the cursor)";
+  }
+  auto& geometry = CameraOverlayGeometryStore::Instance();
+  auto& style = CameraOverlayStyleStore::Instance();
+  geometry.SetSize(220.0);
+  geometry.SetCustomPosition(0.5, 0.5);
+  style.SetShape(5);
+  style.SetRoundness(0.0);
+  style.SetOpacity(1.0);
+  style.SetShadow(2);  // padding 30 px — a real halo to hit-test.
+  style.SetBorder(0);
+  style.SetChromaEnabled(false);
+  style.SetMirror(false);
+
+  CameraDcompOverlay overlay;
+  FloatingPlacement place;
+  place.x = 200;
+  place.y = 200;
+  place.width = 220;
+  place.height = 220;
+  if (!overlay.Start(place)) {
+    GTEST_SKIP() << "DComp overlay could not start in this session";
+  }
+  overlay.Show();
+  std::this_thread::sleep_for(std::chrono::milliseconds(200));
+
+  HWND hwnd = ::FindWindowW(L"ClingfyCameraDcompOverlay", nullptr);
+  ASSERT_NE(hwnd, nullptr);
+  RECT wr{};
+  ASSERT_NE(::GetWindowRect(hwnd, &wr), 0);
+  // Deterministic (DPI-unaware test process, scale pinned to 1.0): shadow
+  // preset 2 pads exactly 30, so a wrong style snapshot (e.g. the 12 px
+  // default floor) is caught, not just "some padding".
+  EXPECT_EQ(wr.right - wr.left, 220 + 2 * 30)
+      << "window width does not match the store-derived padding";
+
+  // The belt-and-braces WM_NCHITTEST split must answer without any cursor
+  // machinery: halo -> HTTRANSPARENT (covers the flip-lag window), content ->
+  // HTCAPTION (drag handle).
+  const POINT center{(wr.left + wr.right) / 2, (wr.top + wr.bottom) / 2};
+  EXPECT_EQ(::SendMessageW(
+                hwnd, WM_NCHITTEST, 0,
+                MAKELPARAM(static_cast<short>(wr.left + 5),
+                           static_cast<short>(wr.top + 5))),
+            HTTRANSPARENT);
+  EXPECT_EQ(::SendMessageW(
+                hwnd, WM_NCHITTEST, 0,
+                MAKELPARAM(static_cast<short>(center.x),
+                           static_cast<short>(center.y))),
+            HTCAPTION);
+
+  POINT original_cursor{};
+  ::GetCursorPos(&original_cursor);
+  // Several tick intervals so the cursor-tracked flip lands before sampling.
+  const auto settle = std::chrono::milliseconds(150);
+  // Cursor moves must actually land (a human nudging the mouse mid-probe or a
+  // UIPI-elevated foreground window makes assertions below misleading).
+  auto cursor_at = [](int x, int y) {
+    ::SetCursorPos(x, y);
+    POINT p{};
+    return ::GetCursorPos(&p) != 0 && p.x == x && p.y == y;
+  };
+
+  // 1) Cursor on the halo corner: TRANSPARENT set -> hit-test falls through.
+  if (!cursor_at(wr.left + 5, wr.top + 5)) {
+    overlay.Hide();
+    overlay.Stop();
+    style.SetShadow(0);
+    GTEST_SKIP() << "cursor could not be positioned (locked/elevated desktop?)";
+  }
+  std::this_thread::sleep_for(settle);
+  const HWND at_halo = ::WindowFromPoint(POINT{wr.left + 5, wr.top + 5});
+  // 2) Cursor on the content center: TRANSPARENT cleared -> ours + WDA holds
+  // across the style flip (the Electron-scar re-verify must have nothing to
+  // repair, or have repaired it).
+  ASSERT_TRUE(cursor_at(center.x, center.y));
+  std::this_thread::sleep_for(settle);
+  const HWND at_content = ::WindowFromPoint(center);
+  DWORD affinity_after_flip = 0;
+  const BOOL affinity_read =
+      ::GetWindowDisplayAffinity(hwnd, &affinity_after_flip);
+  // 3) Back to the halo: the flip must be repeatable, not one-shot.
+  ASSERT_TRUE(cursor_at(wr.left + 5, wr.top + 5));
+  std::this_thread::sleep_for(settle);
+  const HWND at_halo_again = ::WindowFromPoint(POINT{wr.left + 5, wr.top + 5});
+
+  // 4) Style-driven resize MID-RUN (the P4a sync-tick behavior, distinct from
+  // creation-time sizing): a stronger shadow must grow the window through
+  // SyncAndRender within a few ticks.
+  style.SetShadow(3);  // padding 41 -> width 302
+  RECT grown{};
+  const auto resize_deadline =
+      std::chrono::steady_clock::now() + std::chrono::seconds(3);
+  bool resized = false;
+  while (std::chrono::steady_clock::now() < resize_deadline) {
+    if (::GetWindowRect(hwnd, &grown) != 0 &&
+        grown.right - grown.left == 220 + 2 * 41) {
+      resized = true;
+      break;
+    }
+    std::this_thread::sleep_for(std::chrono::milliseconds(25));
+  }
+
+  ::SetCursorPos(original_cursor.x, original_cursor.y);
+  overlay.Hide();
+  overlay.Stop();
+  style.SetShadow(0);
+  geometry.SetSize(220.0);
+  geometry.SetPosition(3);
+
+  EXPECT_NE(at_halo, hwnd)
+      << "halo point hit-tested to the bubble — halo is not click-through";
+  EXPECT_EQ(at_content, hwnd)
+      << "content center did not hit-test to the bubble";
+  EXPECT_NE(at_halo_again, hwnd)
+      << "click-through did not re-engage after leaving the content";
+  EXPECT_TRUE(affinity_read != 0 &&
+              affinity_after_flip == WDA_EXCLUDEFROMCAPTURE)
+      << "capture exclusion did not survive the WS_EX_TRANSPARENT flip "
+         "(affinity=" << affinity_after_flip << ")";
+  EXPECT_TRUE(resized)
+      << "style-driven padding change did not resize the window mid-run "
+         "(last width=" << (grown.right - grown.left) << ", want 302)";
+}
+
+// P4a content-offset wiring, end to end: PreparePainter must place the bubble
+// at (padding, padding) inside the padded window. A regression to a (0,0)
+// bubble keeps every other probe green (they scan the whole window rect for
+// ANY magenta) while the rendered content sits top-left-shifted, misaligned
+// with the hit-test content square and shadow-clipped on two sides. Pin: the
+// magenta bounding box's center must coincide with the window's center in
+// capture space — a (0,0) regression shifts it by ~padding * display scale
+// (>= 30 px), far beyond the tolerance.
+TEST(CameraDcompOverlayPoc, ContentIsCenteredInPaddedWindow) {
+  if (!PixelProbesArmed()) {
+    GTEST_SKIP() << "set CLINGFY_REQUIRE_PIXEL_TESTS=1 to run the on-screen "
+                    "probe (briefly shows a window)";
+  }
+  auto& geometry = CameraOverlayGeometryStore::Instance();
+  auto& style = CameraOverlayStyleStore::Instance();
+  geometry.SetSize(220.0);
+  geometry.SetCustomPosition(0.5, 0.5);
+  style.SetShape(2);  // square: the content fills its square — crisp bbox.
+  style.SetRoundness(0.0);
+  style.SetOpacity(1.0);
+  style.SetShadow(2);  // padding 30
+  style.SetBorder(0);
+  style.SetChromaEnabled(false);
+  style.SetMirror(false);
+
+  CameraDcompOverlay::Options options;
+  options.apply_capture_exclusion = false;  // BitBlt must see the window.
+  CameraDcompOverlay overlay(options);
+  FloatingPlacement place;
+  place.x = 200;
+  place.y = 200;
+  place.width = 220;
+  place.height = 220;
+  if (!overlay.Start(place)) {
+    GTEST_SKIP() << "DComp overlay could not start in this session";
+  }
+  const std::vector<std::uint8_t> frame = MagentaFrame(64, 64);
+  overlay.PublishBgra(frame.data(), 64, 64);
+  overlay.Show();
+
+  HWND hwnd = ::FindWindowW(L"ClingfyCameraDcompOverlay", nullptr);
+  ASSERT_NE(hwnd, nullptr);
+  RECT rc{};
+  bool warm = false;
+  const auto warm_deadline =
+      std::chrono::steady_clock::now() + std::chrono::seconds(8);
+  while (std::chrono::steady_clock::now() < warm_deadline) {
+    overlay.PublishBgra(frame.data(), 64, 64);
+    if (::GetWindowRect(hwnd, &rc) != 0) {
+      RECT wide = rc;
+      const int w = rc.right - rc.left;
+      wide.left -= w;
+      wide.top -= w;
+      wide.right += w;
+      wide.bottom += w;
+      if (ScreenRegionHasMagenta(wide)) {
+        warm = true;
+        break;
+      }
+    }
+    std::this_thread::sleep_for(std::chrono::milliseconds(60));
+  }
+  auto cleanup = [&]() {
+    overlay.Hide();
+    overlay.Stop();
+    style.SetShadow(0);
+    style.SetShape(5);
+    geometry.SetSize(220.0);
+    geometry.SetPosition(3);
+  };
+  if (!warm) {
+    cleanup();
+    FAIL() << "bubble never rendered — display awake and unlocked?";
+  }
+
+  // Locate the magenta bounding box in CAPTURE (physical) coordinates.
+  ::GetWindowRect(hwnd, &rc);
+  int seed_x = -1, seed_y = -1;
+  {
+    const int w = rc.right - rc.left;
+    const int x0 = rc.left - w, y0 = rc.top - w;
+    const int step = (3 * w) / 96;
+    for (int gy = 0; gy < 96 && seed_x < 0; ++gy) {
+      for (int gx = 0; gx < 96 && seed_x < 0; ++gx) {
+        const int sx = x0 + gx * step, sy = y0 + gy * step;
+        if (ClassifyFlickerSample(ScreenPatchAvg(sx, sy, 2, 2)) == 'M') {
+          seed_x = sx;
+          seed_y = sy;
+        }
+      }
+    }
+  }
+  if (seed_x < 0) {
+    cleanup();
+    FAIL() << "could not locate magenta content in the capture";
+  }
+  auto walk = [&](int x, int y, int dx, int dy) {
+    while (ClassifyFlickerSample(ScreenPatchAvg(x, y, 2, 2)) == 'M') {
+      x += dx;
+      y += dy;
+    }
+    return std::pair<int, int>(x, y);
+  };
+  // Center the seed first so the four walks measure the true extents.
+  const int row_l = walk(seed_x, seed_y, -1, 0).first;
+  const int row_r = walk(seed_x, seed_y, 1, 0).first;
+  const int mid_x = (row_l + row_r) / 2;
+  const int col_t = walk(mid_x, seed_y, 0, -1).second;
+  const int col_b = walk(mid_x, seed_y, 0, 1).second;
+  const int mid_y = (col_t + col_b) / 2;
+  const int box_l = walk(mid_x, mid_y, -1, 0).first;
+  const int box_r = walk(mid_x, mid_y, 1, 0).first;
+  const int box_t = walk(mid_x, mid_y, 0, -1).second;
+  const int box_b = walk(mid_x, mid_y, 0, 1).second;
+
+  // Virtual -> physical scale (the test process is DPI-unaware; the capture
+  // is physical). Primary monitor sits at the origin in both spaces.
+  HDC screen = ::GetDC(nullptr);
+  const double phys_scale =
+      static_cast<double>(::GetDeviceCaps(screen, DESKTOPHORZRES)) /
+      (std::max)(1, ::GetDeviceCaps(screen, HORZRES));
+  ::ReleaseDC(nullptr, screen);
+  const double want_cx = ((rc.left + rc.right) / 2.0) * phys_scale;
+  const double want_cy = ((rc.top + rc.bottom) / 2.0) * phys_scale;
+  const double want_side = 220.0 * phys_scale;
+  const double got_cx = (box_l + box_r) / 2.0;
+  const double got_cy = (box_t + box_b) / 2.0;
+  std::cout << "[content-center] bbox=(" << box_l << "," << box_t << ")-("
+            << box_r << "," << box_b << ") center=(" << got_cx << ","
+            << got_cy << ") want=(" << want_cx << "," << want_cy
+            << ") scale=" << phys_scale << std::endl;
+  cleanup();
+
+  EXPECT_NEAR(got_cx, want_cx, 14.0)
+      << "content is horizontally off the window center — bubble offset "
+         "regression (a (0,0) bubble shifts by ~" << 30 * phys_scale << ")";
+  EXPECT_NEAR(got_cy, want_cy, 14.0)
+      << "content is vertically off the window center";
+  EXPECT_NEAR(box_r - box_l, want_side, 14.0)
+      << "content square is not the DPI-scaled 220 px";
 }
 
 // GDI presenter border integrity: the bubble used to paint camera then border

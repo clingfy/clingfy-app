@@ -428,6 +428,60 @@ TEST(CameraBubbleBorderPixelTest,
                            << "/" << kFrames << " frames\n" << first_miss;
 }
 
+// Renderer redesign P4a: the DComp presenter offsets the content square into a
+// padded window so the baked shadow lands in the halo instead of being clipped
+// at the swapchain edge. This pins the painter half of that contract: given a
+// bubble at (pad, pad, pad+side, pad+side) inside a larger target, shadow
+// pixels MUST appear below the content (the preset's +y offset) and the far
+// halo corner stays transparent.
+TEST(CameraBubbleBorderPixelTest, ShadowRendersIntoEffectPaddingHalo) {
+  HeadlessRig rig;
+  const std::string err = rig.Create(/*use_swapchain_target=*/false);
+  if (!err.empty()) SKIP_OR_FAIL(err);
+
+  constexpr int kPad = 40;
+  constexpr int kContent = kSide - 2 * kPad;  // 140
+  CameraBubblePainter::Style style;
+  style.opacity = 1.0;
+  style.shadow_preset = 2;  // blur 16 -> bake extent ~30 px < kPad
+  CameraBubbleRect bubble;
+  bubble.x = static_cast<double>(kPad);
+  bubble.y = static_cast<double>(kPad);
+  bubble.width = static_cast<double>(kContent);
+  bubble.height = static_cast<double>(kContent);
+  CameraBubblePainter painter;
+  ASSERT_TRUE(painter.Prepare(rig.factory.Get(), rig.ctx.Get(), bubble,
+                              "squircle", /*corner_radius=*/0.0, "fill", style,
+                              kCamSize, kCamSize));
+  rig.ctx->SetTarget(rig.target_bitmap.Get());
+
+  HRESULT hr = S_OK;
+  ASSERT_TRUE(RenderOneFrame(rig, painter, &hr))
+      << "EndDraw hr=0x" << std::hex << hr;
+  std::vector<std::uint32_t> px;
+  ASSERT_TRUE(rig.ReadTarget(&px));
+
+  EXPECT_TRUE(LooksMagenta(At(px, kSide / 2, kSide / 2)))
+      << "camera content missing: " << DumpPx(At(px, kSide / 2, kSide / 2));
+
+  // Shadow in the halo BELOW the content (preset 2 offsets +4 y): any sample
+  // in the band just under the content edge must carry alpha.
+  bool shadow_in_halo = false;
+  std::string band;
+  for (int y = kPad + kContent + 4; y <= kPad + kContent + 24; y += 4) {
+    const std::uint32_t p = At(px, kSide / 2, y);
+    band += " y" + std::to_string(y) + DumpPx(p);
+    if (Chan(p, 24) > 10) shadow_in_halo = true;
+  }
+  EXPECT_TRUE(shadow_in_halo)
+      << "no shadow alpha in the halo below the content —" << band;
+
+  // The far top-left halo corner is ~38 px from the content, past the bake
+  // extent: it must stay (near-)transparent, proving the halo isn't smeared.
+  EXPECT_LT(Chan(At(px, 2, 2), 24), 10)
+      << "unexpected coverage at the halo corner: " << DumpPx(At(px, 2, 2));
+}
+
 // The painter uses ONE ID2D1Geometry both as the PushLayer mask and as the
 // DrawGeometry stroke source in the same frame. Geometries are immutable and
 // this is documented-legal; this micro-case pins it independently of the

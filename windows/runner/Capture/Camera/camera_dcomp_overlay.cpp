@@ -68,17 +68,44 @@ LRESULT CALLBACK CameraDcompOverlay::WndProc(HWND hwnd, UINT msg,
   auto* self = reinterpret_cast<CameraDcompOverlay*>(
       ::GetWindowLongPtrW(hwnd, GWLP_USERDATA));
   switch (msg) {
-    case WM_NCHITTEST:
-      // Whole bubble drags (P4 adds the click-through halo once effect
-      // padding exists).
+    case WM_NCHITTEST: {
+      // Content square = drag handle; the effect-padding halo is
+      // click-through so windows beneath stay interactive (macOS hitTest
+      // parity). Coordinates arrive in screen space, signed.
+      if (self != nullptr) {
+        const int sx = static_cast<short>(LOWORD(lparam));
+        const int sy = static_cast<short>(HIWORD(lparam));
+        RECT wr{};
+        if (::GetWindowRect(hwnd, &wr) != 0 &&
+            !CameraOverlayPointInContent(sx - wr.left, sy - wr.top,
+                                         self->prepared_padding_px_,
+                                         self->prepared_content_side_)) {
+          return HTTRANSPARENT;
+        }
+      }
       return HTCAPTION;
+    }
+    case WM_ENTERSIZEMOVE:
+      // OS modal drag in progress: the sync tick must not SetWindowPos-fight
+      // the user's grab (store revisions stay unconsumed until the drop).
+      if (self != nullptr) {
+        self->in_size_move_ = true;
+      }
+      return 0;
     case WM_EXITSIZEMOVE:
       if (self != nullptr) {
+        self->in_size_move_ = false;
         self->OnDragEnded(hwnd);
       }
       return 0;
     case kMsgShow:
-      ::ShowWindow(hwnd, SW_SHOWNA);
+      // Last line of defense for invariant "never show an unexcluded bubble":
+      // a Show posted by the engine just before a WDA-loss hide (the re-verify
+      // path) must not resurrect the window after it.
+      if (self == nullptr || !self->options_.apply_capture_exclusion ||
+          self->wda_excluded_.load()) {
+        ::ShowWindow(hwnd, SW_SHOWNA);
+      }
       return 0;
     case kMsgHide:
       ::ShowWindow(hwnd, SW_HIDE);
@@ -124,9 +151,18 @@ void CameraDcompOverlay::ThreadMain(FloatingPlacement placement,
 
   // The initial placement is corrected from the geometry store below (square
   // model) before the window can ever be shown; only its monitor matters.
+  //
+  // WS_EX_LAYERED from birth (P4a): cross-thread click-through needs the
+  // LAYERED|TRANSPARENT pair — HTTRANSPARENT alone only falls through to
+  // windows of the SAME thread, so halo clicks over other apps would be
+  // swallowed. DComp content bypasses the redirection surface, so LAYERED
+  // costs nothing (the PowerToys crosshairs-overlay combination). Only the
+  // TRANSPARENT bit ever changes after creation (cursor-tracked on the tick);
+  // WDA is re-verified after every flip. Created TRANSPARENT: the cursor
+  // starts off-content.
   HWND hwnd = ::CreateWindowExW(
       WS_EX_NOREDIRECTIONBITMAP | WS_EX_TOPMOST | WS_EX_TOOLWINDOW |
-          WS_EX_NOACTIVATE,
+          WS_EX_NOACTIVATE | WS_EX_LAYERED | WS_EX_TRANSPARENT,
       kWindowClassName, L"Clingfy Camera", WS_POPUP, placement.x, placement.y,
       std::max(1, placement.width), std::max(1, placement.height), nullptr,
       nullptr, ::GetModuleHandleW(nullptr), this);
@@ -134,20 +170,31 @@ void CameraDcompOverlay::ThreadMain(FloatingPlacement placement,
     ready->set_value(false);
     return;
   }
+  // A LAYERED window renders only after its attributes are set; fully opaque —
+  // per-pixel alpha comes from the DComp visual, not the layered machinery.
+  ::SetLayeredWindowAttributes(hwnd, 0, 255, LWA_ALPHA);
+  click_through_ = true;
 
-  // Square placement per the store, while still hidden.
+  // Padded square placement per the stores, while still hidden. The style
+  // store participates in sizing now (effect padding follows border/shadow/
+  // glow), so its revision is consumed here too — the first camera frame's
+  // dimension change still forces the initial painter Prepare.
   const RECT work = MonitorWorkArea(hwnd);
   const UINT dpi = ::GetDpiForWindow(hwnd);
   const double scale = dpi > 0 ? dpi / 96.0 : 1.0;
   auto& geometry_store = CameraOverlayGeometryStore::Instance();
+  auto& style_store = CameraOverlayStyleStore::Instance();
   last_geometry_revision_ = geometry_store.revision();
-  const FloatingRect rect =
-      ComputeSquareFloatingRect(work.left, work.top, work.right, work.bottom,
-                                scale, geometry_store.Snapshot());
-  ::SetWindowPos(hwnd, nullptr, rect.x, rect.y, rect.width, rect.height,
+  last_style_revision_ = style_store.revision();
+  const PaddedSquareRect placed = ComputePaddedSquareFloatingRect(
+      work.left, work.top, work.right, work.bottom, scale,
+      geometry_store.Snapshot(),
+      ComputeCameraEffectPadding(style_store.Snapshot()));
+  ::SetWindowPos(hwnd, nullptr, placed.window.x, placed.window.y,
+                 placed.window.width, placed.window.height,
                  SWP_NOZORDER | SWP_NOACTIVATE);
 
-  if (!BuildGpuStack(hwnd, rect.width, rect.height)) {
+  if (!BuildGpuStack(hwnd, placed.window.width, placed.window.height)) {
     clingfy::bridge::devices::LogDeviceProbe(
         "CameraDcompOverlay: GPU stack build failed");
     // Release the partially-built stack HERE, on the creating thread — leaving
@@ -158,7 +205,9 @@ void CameraDcompOverlay::ThreadMain(FloatingPlacement placement,
     ready->set_value(false);
     return;
   }
-  prepared_side_ = rect.width;
+  prepared_window_side_ = placed.window.width;
+  prepared_content_side_ = placed.content_side;
+  prepared_padding_px_ = placed.padding_px;
 
   if (options_.apply_capture_exclusion) {
     const BOOL excluded =
@@ -178,11 +227,12 @@ void CameraDcompOverlay::ThreadMain(FloatingPlacement placement,
   }
 
   {
-    char b[160];
+    char b[176];
     std::snprintf(b, sizeof(b),
                   "CameraDcompOverlay: window created at (%d,%d) side=%d "
-                  "dpi=%u wdaExcluded=%d",
-                  rect.x, rect.y, rect.width, dpi,
+                  "(content=%d pad=%d) dpi=%u wdaExcluded=%d",
+                  placed.window.x, placed.window.y, placed.window.width,
+                  placed.content_side, placed.padding_px, dpi,
                   wda_excluded_.load() ? 1 : 0);
     clingfy::bridge::devices::LogDeviceProbe(b);
   }
@@ -356,7 +406,7 @@ bool CameraDcompOverlay::ResizeSwapchain(int width, int height) {
   return true;
 }
 
-bool CameraDcompOverlay::PreparePainter(int side) {
+bool CameraDcompOverlay::PreparePainter(int content_side, int padding_px) {
   if (d2d_ctx_ == nullptr || d2d_factory_ == nullptr ||
       prepared_cam_w_ <= 0 || prepared_cam_h_ <= 0) {
     return false;
@@ -364,11 +414,13 @@ bool CameraDcompOverlay::PreparePainter(int side) {
   const ResolvedBubbleStyle resolved =
       ResolveOverlayBubbleStyle(CameraOverlayStyleStore::Instance().Snapshot());
 
+  // Content square offset into the padded window: border/shadow/glow spill
+  // into the halo instead of getting clipped at the swapchain edge (P4a).
   CameraBubbleRect bubble;
-  bubble.x = 0.0;
-  bubble.y = 0.0;
-  bubble.width = static_cast<double>(side);
-  bubble.height = static_cast<double>(side);
+  bubble.x = static_cast<double>(padding_px);
+  bubble.y = static_cast<double>(padding_px);
+  bubble.width = static_cast<double>(content_side);
+  bubble.height = static_cast<double>(content_side);
 
   // Prepare bakes the shadow via SetTarget round-trips and leaves the target
   // null — call OUTSIDE BeginDraw, then re-bind the swapchain target (the
@@ -381,58 +433,127 @@ bool CameraDcompOverlay::PreparePainter(int side) {
   if (!ok) {
     // Field diagnostic: a failed Prepare silently blanks the bubble, so say
     // so (once per attempt cadence — Prepare only reruns on style changes).
-    char b[96];
+    char b[112];
     std::snprintf(b, sizeof(b),
-                  "CameraDcompOverlay: painter Prepare FAILED (side=%d cam=%dx%d "
-                  "shape=%s)",
-                  side, prepared_cam_w_, prepared_cam_h_,
+                  "CameraDcompOverlay: painter Prepare FAILED (content=%d "
+                  "pad=%d cam=%dx%d shape=%s)",
+                  content_side, padding_px, prepared_cam_w_, prepared_cam_h_,
                   resolved.shape.c_str());
     clingfy::bridge::devices::LogDeviceProbe(b);
   }
   return ok;
 }
 
+void CameraDcompOverlay::UpdateHaloClickThrough(HWND hwnd) {
+  POINT pt{};
+  RECT wr{};
+  if (::GetCursorPos(&pt) == 0 || ::GetWindowRect(hwnd, &wr) == 0) {
+    return;
+  }
+  const bool over_content =
+      ::PtInRect(&wr, pt) != 0 &&
+      CameraOverlayPointInContent(pt.x - wr.left, pt.y - wr.top,
+                                  prepared_padding_px_,
+                                  prepared_content_side_);
+  // Click-through whenever the cursor is NOT over the content square, so the
+  // halo never intercepts input meant for the apps beneath it. Only the
+  // TRANSPARENT bit flips, and only on boundary crossings.
+  const bool want_transparent = !over_content;
+  if (want_transparent == click_through_) {
+    return;
+  }
+  const LONG_PTR ex = ::GetWindowLongPtrW(hwnd, GWL_EXSTYLE);
+  ::SetWindowLongPtrW(hwnd, GWL_EXSTYLE,
+                      want_transparent ? (ex | WS_EX_TRANSPARENT)
+                                       : (ex & ~WS_EX_TRANSPARENT));
+  click_through_ = want_transparent;
+
+  // Electron #47834 lesson: window mutations can silently drop the capture
+  // exclusion on some builds. Re-verify after every flip; if it cannot be
+  // restored, hide — an unexcluded bubble must never stay on screen.
+  if (options_.apply_capture_exclusion && wda_excluded_.load()) {
+    DWORD affinity = 0;
+    if (::GetWindowDisplayAffinity(hwnd, &affinity) != 0 &&
+        affinity == WDA_EXCLUDEFROMCAPTURE) {
+      return;
+    }
+    if (::SetWindowDisplayAffinity(hwnd, WDA_EXCLUDEFROMCAPTURE) != 0) {
+      return;  // restored
+    }
+    wda_excluded_.store(false);
+    ::ShowWindow(hwnd, SW_HIDE);
+    clingfy::bridge::devices::LogDeviceProbe(
+        "CameraDcompOverlay: WDA lost after click-through flip and could not "
+        "be restored — bubble hidden");
+  }
+}
+
 void CameraDcompOverlay::SyncAndRender(HWND hwnd) {
   if (!gpu_ready_.load()) {
     return;
   }
+  UpdateHaloClickThrough(hwnd);
   auto& geometry_store = CameraOverlayGeometryStore::Instance();
   auto& style_store = CameraOverlayStyleStore::Instance();
 
   bool needs_prepare = false;
   bool needs_draw = false;
 
-  // Geometry: move/resize the SQUARE window, resize the swapchain with it.
-  if (const std::uint64_t rev = geometry_store.revision();
-      rev != last_geometry_revision_) {
+  // Geometry AND style drive the padded window rect (P4a: effect padding
+  // follows border/shadow/glow), so either revision re-syncs sizing and any
+  // style change also re-Prepares the painter (loop-invariant resources).
+  // Deferred while the user holds an OS modal drag — SetWindowPos would yank
+  // the window out of their grab; the unconsumed revisions apply on drop.
+  const std::uint64_t grev = geometry_store.revision();
+  const std::uint64_t srev = style_store.revision();
+  const bool geometry_changed = grev != last_geometry_revision_;
+  const bool style_changed = srev != last_style_revision_;
+  if (!in_size_move_ && (geometry_changed || style_changed)) {
     const RECT work = MonitorWorkArea(hwnd);
     const UINT dpi = ::GetDpiForWindow(hwnd);
     const double scale = dpi > 0 ? dpi / 96.0 : 1.0;
-    const FloatingRect rect =
-        ComputeSquareFloatingRect(work.left, work.top, work.right, work.bottom,
-                                  scale, geometry_store.Snapshot());
-    ::SetWindowPos(hwnd, nullptr, rect.x, rect.y, rect.width, rect.height,
-                   SWP_NOZORDER | SWP_NOACTIVATE);
-    if (rect.width != prepared_side_) {
-      if (!ResizeSwapchain(rect.width, rect.height)) {
-        // Leave the revision UNCONSUMED so the next tick retries: consuming it
+    const PaddedSquareRect placed = ComputePaddedSquareFloatingRect(
+        work.left, work.top, work.right, work.bottom, scale,
+        geometry_store.Snapshot(),
+        ComputeCameraEffectPadding(style_store.Snapshot()));
+    // Re-place only when placement inputs actually moved: geometry changes
+    // (pre-P4a semantics) or a padding change (window must grow/shrink). A
+    // style-only revision with unchanged padding — opacity, mirror, colors —
+    // must NOT re-derive the position: the store's clamped placement would
+    // teleport a bubble the user dropped partially past the work-area edge.
+    const bool padding_changed = placed.padding_px != prepared_padding_px_;
+    if (geometry_changed || padding_changed || target_bitmap_ == nullptr) {
+      ::SetWindowPos(hwnd, nullptr, placed.window.x, placed.window.y,
+                     placed.window.width, placed.window.height,
+                     SWP_NOZORDER | SWP_NOACTIVATE);
+      // Keep the hit-test split consistent with the rect just applied even if
+      // the resize below fails and this tick bails out.
+      prepared_content_side_ = placed.content_side;
+      prepared_padding_px_ = placed.padding_px;
+    }
+    // Also retry when a previous failed resize left the context target-less:
+    // a side-REVERTING revision (style toggled back off; the glow flip at
+    // recording stop) reproduces the old side exactly, and skipping here
+    // would consume it with a null target — freezing the bubble for good.
+    if (placed.window.width != prepared_window_side_ ||
+        target_bitmap_ == nullptr) {
+      if (!ResizeSwapchain(placed.window.width, placed.window.height)) {
+        // Leave BOTH revisions UNCONSUMED so the next tick retries: consuming
         // here would strand a target-less context (ResizeSwapchain already
         // dropped the D2D target) burning a dead BeginDraw/EndDraw every tick
-        // until the user happens to change geometry again.
+        // until the user happens to change geometry or style again.
         return;
       }
-      prepared_side_ = rect.width;
+      prepared_window_side_ = placed.window.width;
       needs_prepare = true;
     }
-    last_geometry_revision_ = rev;
-    needs_draw = true;
-  }
-
-  // Style: any change re-Prepares the painter (loop-invariant resources).
-  if (const std::uint64_t rev = style_store.revision();
-      rev != last_style_revision_) {
-    last_style_revision_ = rev;
-    needs_prepare = true;
+    prepared_content_side_ = placed.content_side;
+    prepared_padding_px_ = placed.padding_px;
+    if (style_changed) {
+      needs_prepare = true;
+    }
+    last_geometry_revision_ = grev;
+    last_style_revision_ = srev;
     needs_draw = true;
   }
 
@@ -476,7 +597,8 @@ void CameraDcompOverlay::SyncAndRender(HWND hwnd) {
   }
 
   if (needs_prepare && prepared_cam_w_ > 0) {
-    painter_ready_ = PreparePainter(prepared_side_);
+    painter_ready_ =
+        PreparePainter(prepared_content_side_, prepared_padding_px_);
   }
   if (!needs_draw || !painter_ready_ || camera_bitmap_ == nullptr) {
     return;
@@ -508,7 +630,7 @@ void CameraDcompOverlay::SyncAndRender(HWND hwnd) {
     std::snprintf(b, sizeof(b),
                   "CameraDcompOverlay: first present hr=0x%08lX side=%d "
                   "cam=%dx%d",
-                  static_cast<unsigned long>(present_hr), prepared_side_,
+                  static_cast<unsigned long>(present_hr), prepared_window_side_,
                   prepared_cam_w_, prepared_cam_h_);
     clingfy::bridge::devices::LogDeviceProbe(b);
   }

@@ -103,6 +103,29 @@ FloatingRect ComputeSquareFloatingRect(int work_left, int work_top,
   return FloatingRect{x, y, s, s};
 }
 
+PaddedSquareRect ComputePaddedSquareFloatingRect(
+    int work_left, int work_top, int work_right, int work_bottom,
+    double dpi_scale, const CameraOverlayGeometry& g,
+    double effect_padding_px) {
+  PaddedSquareRect out;
+  const FloatingRect content = ComputeSquareFloatingRect(
+      work_left, work_top, work_right, work_bottom, dpi_scale, g);
+  out.padding_px = static_cast<int>(
+      std::ceil(std::max(0.0, effect_padding_px)));
+  out.content_side = content.width;
+  out.window = FloatingRect{content.x - out.padding_px,
+                            content.y - out.padding_px,
+                            content.width + 2 * out.padding_px,
+                            content.height + 2 * out.padding_px};
+  return out;
+}
+
+bool CameraOverlayPointInContent(int client_x, int client_y, int padding_px,
+                                 int content_side) {
+  return client_x >= padding_px && client_x < padding_px + content_side &&
+         client_y >= padding_px && client_y < padding_px + content_side;
+}
+
 NormalizedCenter NormalizedCenterForRect(int work_left, int work_top,
                                          int work_right, int work_bottom,
                                          const FloatingRect& rect) {

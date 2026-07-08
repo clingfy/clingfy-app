@@ -67,6 +67,33 @@ FloatingRect ComputeSquareFloatingRect(int work_left, int work_top,
                                        double dpi_scale,
                                        const CameraOverlayGeometry& g);
 
+// Renderer redesign P4a: the DComp presenter's window outsizes its content
+// square by an effect-padding halo on every side so border / shadow / glow are
+// not clipped at the window edge (macOS: side = contentSize + 2*effectPadding).
+// The CONTENT keeps ComputeSquareFloatingRect's placement exactly — corner
+// margins, normalized-center placement, and work-area clamping all apply to
+// the content square — and the WINDOW is that rect outset by `padding_px`, so
+// the halo may overhang the work area edge (macOS parity: presets place the
+// panel at `margin - effectPadding`). Window center == content center, which
+// keeps NormalizedCenterForRect drag write-back padding-agnostic.
+struct PaddedSquareRect {
+  FloatingRect window;   // physical px, content outset by padding_px each side
+  int padding_px = 0;    // physical px of halo on each side
+  int content_side = 0;  // physical px, the square the painter draws into
+};
+// `effect_padding_px` is in physical px (ComputeCameraEffectPadding's output —
+// the painter renders shadow/border/glow in physical px, so the halo must not
+// be DPI-scaled). Pure; unit-tested; no Win32 calls.
+PaddedSquareRect ComputePaddedSquareFloatingRect(
+    int work_left, int work_top, int work_right, int work_bottom,
+    double dpi_scale, const CameraOverlayGeometry& g, double effect_padding_px);
+
+// Hit-test split for the padded window (WM_NCHITTEST): true when the CLIENT
+// point lands on the content square (drag handle); false over the halo, which
+// must be click-through (HTTRANSPARENT — macOS hitTest parity). Pure.
+bool CameraOverlayPointInContent(int client_x, int client_y, int padding_px,
+                                 int content_side);
+
 // Pure inverse for drag write-back: a window rect's center expressed as the
 // normalized (0..1, clamped) fraction of the work area — the coordinate space
 // Dart persists and `use_custom` placement consumes. Unit-tested; no Win32.

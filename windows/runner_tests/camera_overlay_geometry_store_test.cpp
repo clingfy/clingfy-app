@@ -238,5 +238,118 @@ TEST(NormalizedCenterForRect, RoundTripsThroughComputeFloatingRect) {
   EXPECT_NEAR(c.y, 0.62, 0.001);
 }
 
+// ---- padded square rect (renderer redesign P4a) ------------------------------
+
+TEST(ComputePaddedSquareFloatingRect, WindowIsContentOutsetByPadding) {
+  const FloatingRect content =
+      ComputeSquareFloatingRect(kL, kT, kR, kB, kNoScale, Preset(220.0, 3));
+  const PaddedSquareRect p = ComputePaddedSquareFloatingRect(
+      kL, kT, kR, kB, kNoScale, Preset(220.0, 3), 30.0);
+  EXPECT_EQ(p.padding_px, 30);
+  EXPECT_EQ(p.content_side, content.width);
+  EXPECT_EQ(p.window.x, content.x - 30);
+  EXPECT_EQ(p.window.y, content.y - 30);
+  EXPECT_EQ(p.window.width, content.width + 60);
+  EXPECT_EQ(p.window.height, content.height + 60);
+}
+
+TEST(ComputePaddedSquareFloatingRect, ContentKeepsTheMarginTheHaloOverhangs) {
+  // macOS parity: presets place the panel at margin - effectPadding, i.e. the
+  // CONTENT sits at the work-area margin and the halo extends exactly
+  // padding px past the margin line (still inside the work area while
+  // margin > padding — the true edge overhang is pinned separately below).
+  const int margin = 1920 * 3 / 100;
+  const PaddedSquareRect p = ComputePaddedSquareFloatingRect(
+      kL, kT, kR, kB, kNoScale, Preset(220.0, 3), 30.0);
+  EXPECT_EQ(p.window.x + p.padding_px, 1920 - 220 - margin);  // content at margin
+  EXPECT_EQ(p.window.x + p.window.width, 1920 - margin + 30);
+}
+
+TEST(ComputePaddedSquareFloatingRect, HaloOverhangsTheWorkAreaAtClampedEdge) {
+  // Content clamped to the work-area corner (custom 1.0,1.0): the WINDOW must
+  // extend past the work-area edge by exactly the padding. A later "fix"
+  // clamping the padded window into the work area would pass the margin test
+  // above yet silently shift edge-parked content inward by the padding.
+  CameraOverlayGeometry g;
+  g.size = 220.0;
+  g.use_custom = true;
+  g.normalized_x = 1.0;
+  g.normalized_y = 1.0;
+  const PaddedSquareRect p =
+      ComputePaddedSquareFloatingRect(kL, kT, kR, kB, kNoScale, g, 30.0);
+  EXPECT_EQ(p.window.x + p.window.width, 1920 + 30);
+  EXPECT_EQ(p.window.y + p.window.height, 1080 + 30);
+}
+
+TEST(ComputePaddedSquareFloatingRect, NegativeOriginWorkAreaIsHandled) {
+  // Secondary monitor left of the primary: every coordinate is negative. The
+  // padded window must track the content there, not clamp to zero.
+  const PaddedSquareRect p = ComputePaddedSquareFloatingRect(
+      -1920, 0, 0, 1080, kNoScale, Preset(220.0, 0), 30.0);
+  const FloatingRect content = ComputeSquareFloatingRect(
+      -1920, 0, 0, 1080, kNoScale, Preset(220.0, 0));
+  EXPECT_EQ(p.window.x, content.x - 30);
+  EXPECT_EQ(p.window.y, content.y - 30);
+  EXPECT_LT(p.window.x, 0);
+}
+
+TEST(ComputePaddedSquareFloatingRect, FractionalPaddingCeilsAndNegativeClamps) {
+  const PaddedSquareRect frac = ComputePaddedSquareFloatingRect(
+      kL, kT, kR, kB, kNoScale, Preset(220.0, 3), 12.3);
+  EXPECT_EQ(frac.padding_px, 13);
+  const FloatingRect content =
+      ComputeSquareFloatingRect(kL, kT, kR, kB, kNoScale, Preset(220.0, 3));
+  const PaddedSquareRect none = ComputePaddedSquareFloatingRect(
+      kL, kT, kR, kB, kNoScale, Preset(220.0, 3), -5.0);
+  EXPECT_EQ(none.padding_px, 0);
+  EXPECT_EQ(none.window.x, content.x);
+  EXPECT_EQ(none.window.width, content.width);
+}
+
+TEST(ComputePaddedSquareFloatingRect, PaddingIsNotDpiScaled) {
+  // The painter renders border/shadow/glow in physical px regardless of the
+  // monitor scale, so the halo must not be scaled either — only the content
+  // side follows DPI.
+  const PaddedSquareRect p = ComputePaddedSquareFloatingRect(
+      kL, kT, kR, kB, 1.5, Preset(220.0, 3), 30.0);
+  EXPECT_EQ(p.content_side, 330);  // 220 * 1.5
+  EXPECT_EQ(p.padding_px, 30);     // NOT 45
+  EXPECT_EQ(p.window.width, 330 + 60);
+}
+
+TEST(ComputePaddedSquareFloatingRect, DragWriteBackStaysPaddingAgnostic) {
+  // Uniform padding preserves the center, so NormalizedCenterForRect over the
+  // WINDOW rect reproduces the custom center — the drag write-back path needs
+  // no padding knowledge.
+  CameraOverlayGeometry g;
+  g.size = 220.0;
+  g.use_custom = true;
+  g.normalized_x = 0.31;
+  g.normalized_y = 0.62;
+  const PaddedSquareRect p =
+      ComputePaddedSquareFloatingRect(kL, kT, kR, kB, kNoScale, g, 41.0);
+  const NormalizedCenter c = NormalizedCenterForRect(kL, kT, kR, kB, p.window);
+  EXPECT_NEAR(c.x, 0.31, 0.001);
+  EXPECT_NEAR(c.y, 0.62, 0.001);
+}
+
+// ---- halo hit-test split (renderer redesign P4a) ------------------------------
+
+TEST(CameraOverlayPointInContent, ContentIsInsideHaloIsOutside) {
+  constexpr int kPad = 30, kSide = 220;
+  // Content corners (inclusive at the low edge, exclusive at the high edge).
+  EXPECT_TRUE(CameraOverlayPointInContent(kPad, kPad, kPad, kSide));
+  EXPECT_TRUE(CameraOverlayPointInContent(kPad + kSide - 1, kPad + kSide - 1,
+                                          kPad, kSide));
+  EXPECT_FALSE(CameraOverlayPointInContent(kPad - 1, kPad, kPad, kSide));
+  EXPECT_FALSE(CameraOverlayPointInContent(kPad, kPad - 1, kPad, kSide));
+  EXPECT_FALSE(CameraOverlayPointInContent(kPad + kSide, kPad, kPad, kSide));
+  EXPECT_FALSE(CameraOverlayPointInContent(kPad, kPad + kSide, kPad, kSide));
+  // Window corner = pure halo.
+  EXPECT_FALSE(CameraOverlayPointInContent(0, 0, kPad, kSide));
+  // Zero padding degenerates to the whole window being the drag handle.
+  EXPECT_TRUE(CameraOverlayPointInContent(0, 0, 0, kSide));
+}
+
 }  // namespace
 }  // namespace clingfy::capture
