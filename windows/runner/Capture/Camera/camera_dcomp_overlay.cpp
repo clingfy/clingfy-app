@@ -769,6 +769,8 @@ void CameraDcompOverlay::SyncAndRender(HWND hwnd) {
   if (SUCCEEDED(hr) && simulated_device_losses_remaining_ > 0) {
     --simulated_device_losses_remaining_;
     hr = DXGI_ERROR_DEVICE_REMOVED;
+  } else if (SUCCEEDED(hr) && simulate_one_loss_.exchange(false)) {
+    hr = DXGI_ERROR_DEVICE_REMOVED;
   }
   if (FAILED(hr)) {
     if (IsDeviceLostHResult(hr)) {

@@ -105,6 +105,16 @@ class CameraDcompOverlay : public ICameraOverlayPresenter {
   // Test introspection (P4c): the presenter has spent its rebuild budget and
   // parked (stack dropped, thread alive) awaiting the mid-session GDI fallback.
   bool device_loss_gave_up() const { return device_loss_gave_up_; }
+  // Test introspection (P4c): the current consecutive-loss streak (resets to 0
+  // on a clean present). Lets a test observe the streak reset between two
+  // well-separated losses. Read after Stop for a race-free value.
+  int device_loss_streak() const { return consecutive_device_losses_; }
+
+  // Test-only (P4c): inject ONE device loss on the next draw, unlike
+  // Options.simulate_device_loss_count which injects on consecutive draws.
+  // Lets a test produce a loss -> clean present -> loss cadence so the
+  // consecutive-streak reset is observable. Thread-safe.
+  void SimulateDeviceLossOnce() { simulate_one_loss_.store(true); }
 
   static LRESULT CALLBACK WndProc(HWND hwnd, UINT msg, WPARAM wparam,
                                   LPARAM lparam);
@@ -150,15 +160,17 @@ class CameraDcompOverlay : public ICameraOverlayPresenter {
   // teardown and the BuildGpuStack-failure path, so partially-built COM state
   // never escapes to be released on another thread.
   void ReleaseGpuStack();
-  // Device-lost recovery (P4c): tear the GPU stack down and rebuild it on the
-  // same window at the current window side, re-applying capture exclusion and
-  // arming a full re-Prepare + frame re-upload on the next tick. Returns false
-  // if the rebuild failed (the caller counts consecutive failures toward the
-  // mid-session GDI fallback). Overlay thread only.
+  // Device-lost recovery (P4c): rebuild the D3D-bound render resources on the
+  // same window and re-point the RETAINED DComp visual at the fresh swapchain,
+  // then arm a full re-Prepare + frame re-upload on the next tick. Capture
+  // exclusion is a window property and survives untouched, so it is NOT
+  // re-applied. Returns false if the rebuild failed (the caller counts
+  // consecutive failures toward the mid-session GDI fallback). Overlay thread.
   bool RebuildGpuStack(HWND hwnd);
   // Apply WDA_EXCLUDEFROMCAPTURE (when options_.apply_capture_exclusion) and
-  // record wda_excluded_; logs on failure (the documented Win11 defect).
-  // Shared by initial creation and the device-lost rebuild. Overlay thread.
+  // record wda_excluded_; logs on failure (the documented Win11 defect). Runs
+  // once at initial creation (the render-only rebuild leaves WDA untouched).
+  // Overlay thread.
   void ApplyCaptureExclusion(HWND hwnd);
   // One device-loss recovery attempt: count it toward the budget, then rebuild
   // the GPU stack. On rebuild failure, arm a retry for the next tick; past the
@@ -241,6 +253,7 @@ class CameraDcompOverlay : public ICameraOverlayPresenter {
   bool device_loss_gave_up_ = false;
   bool device_loss_fallback_logged_ = false;
   int simulated_device_losses_remaining_ = 0;
+  std::atomic<bool> simulate_one_loss_{false};  // test one-shot injection
 };
 
 }  // namespace clingfy::capture

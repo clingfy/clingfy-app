@@ -213,14 +213,82 @@ TEST(CameraDcompOverlayPoc, RecoversFromSimulatedDeviceLoss) {
   }
   const bool running = overlay.running();
   const bool gpu_ready = overlay.gpu_ready();
+  const bool gave_up = overlay.device_loss_gave_up();
   const int attempts = overlay.device_loss_attempts();
   overlay.Stop();
 
   EXPECT_TRUE(running) << "presenter stopped running after device loss";
   EXPECT_TRUE(gpu_ready)
       << "GPU stack did not recover after the simulated device losses";
-  EXPECT_EQ(attempts, 2)
-      << "expected exactly two recovery attempts, got " << attempts;
+  EXPECT_FALSE(gave_up)
+      << "two recoverable losses must not exhaust the rebuild budget";
+  // At least the two injected losses; a transient rebuild failure retries and
+  // legitimately bumps the count (the GivesUp test's own comment notes this),
+  // so a lower bound — not equality — is the flake-free assertion.
+  EXPECT_GE(attempts, 2)
+      << "expected at least two recovery attempts, got " << attempts;
+
+  CameraOverlayStyleStore::Instance().SetShape(5);
+}
+
+// Clean-present reset (P4c): isolated, individually-recoverable losses spread
+// across a recording (a clean present between each) must NOT accumulate toward
+// the give-up budget — the consecutive streak resets on every clean present.
+// Fires FOUR well-separated single losses (> the budget of 3): with the reset
+// working the streak never exceeds 1, so the presenter must never give up;
+// deleting the reset would let the streak climb to 4 and park permanently.
+TEST(CameraDcompOverlayPoc, ConsecutiveStreakResetsBetweenIsolatedLosses) {
+  CameraOverlayGeometryStore::Instance().SetSize(220.0);
+  CameraOverlayGeometryStore::Instance().SetPosition(3);
+  CameraOverlayStyleStore::Instance().SetShape(2);
+  CameraOverlayStyleStore::Instance().SetGlowEnabled(false);
+
+  CameraDcompOverlay overlay;  // no consecutive injection; one-shots below
+  FloatingPlacement place;
+  place.x = 100;
+  place.y = 100;
+  place.width = 220;
+  place.height = 220;
+  if (!overlay.Start(place)) {
+    if (::GetDesktopWindow() == nullptr) {
+      GTEST_SKIP() << "no desktop in this session";
+    }
+    FAIL() << "DComp presenter failed to start on this machine";
+  }
+  const std::vector<std::uint8_t> frame = MagentaFrame(64, 64);
+  bool observed_reset = false;
+  for (int i = 0; i < 4 && !overlay.device_loss_gave_up(); ++i) {
+    const int before = overlay.device_loss_attempts();
+    overlay.SimulateDeviceLossOnce();
+    // Wait for THIS loss to be handled...
+    const auto handled =
+        std::chrono::steady_clock::now() + std::chrono::seconds(3);
+    while (std::chrono::steady_clock::now() < handled &&
+           overlay.device_loss_attempts() == before) {
+      overlay.PublishBgra(frame.data(), 64, 64);
+      std::this_thread::sleep_for(std::chrono::milliseconds(20));
+    }
+    // ...then feed several clean frames so a clean present resets the streak.
+    for (int j = 0; j < 8; ++j) {
+      overlay.PublishBgra(frame.data(), 64, 64);
+      std::this_thread::sleep_for(std::chrono::milliseconds(20));
+    }
+    if (overlay.device_loss_streak() == 0) {
+      observed_reset = true;
+    }
+  }
+  const bool gave_up = overlay.device_loss_gave_up();
+  const bool gpu_ready = overlay.gpu_ready();
+  const int attempts = overlay.device_loss_attempts();
+  overlay.Stop();
+
+  EXPECT_GE(attempts, 4) << "not all four isolated losses were injected";
+  EXPECT_TRUE(observed_reset)
+      << "the consecutive streak never returned to 0 after a clean present";
+  EXPECT_FALSE(gave_up)
+      << "isolated recoverable losses tripped the budget — the clean-present "
+         "streak reset is broken";
+  EXPECT_TRUE(gpu_ready) << "the stack did not stay live across isolated losses";
 
   CameraOverlayStyleStore::Instance().SetShape(5);
 }
