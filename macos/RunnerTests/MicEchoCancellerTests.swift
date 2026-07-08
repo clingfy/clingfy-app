@@ -280,6 +280,37 @@ final class MicEchoCancellerTests: XCTestCase {
     XCTAssertLessThan(after, before * 0.7, "unfrozen adaptation should cancel the bleed")
   }
 
+  // MARK: - Offline gain bake (export path — no reader-side gain tap)
+
+  func testApplyGainScalesAndClamps() {
+    let out = MicEchoCanceller.applyGain([0.1, -0.5, 0.9, 0.0], gainLinear: 4.0)
+    XCTAssertEqual(out[0], 0.4, accuracy: 1e-6)
+    XCTAssertEqual(out[1], -1.0, accuracy: 1e-6, "must clamp at -1")
+    XCTAssertEqual(out[2], 1.0, accuracy: 1e-6, "must clamp at +1")
+    XCTAssertEqual(out[3], 0.0, accuracy: 1e-6)
+  }
+
+  func testBakeGainWritesScaledFileAndBypassesAtUnity() throws {
+    let samples: [Float] = (0..<9_600).map { i in 0.05 * sinf(Float(i) * 0.01) }
+    let micURL = try writeCAF(samples, name: "mic.caf")
+    let outDir = FileManager.default.temporaryDirectory.appendingPathComponent(
+      UUID().uuidString, isDirectory: true)
+    try FileManager.default.createDirectory(at: outDir, withIntermediateDirectories: true)
+
+    // Unity / zero gain → the original file comes back untouched.
+    XCTAssertEqual(try MicEchoCanceller.bakeGain(micURL: micURL, gainDb: 0, outputDirectory: outDir), micURL)
+
+    // +12 dB → samples scaled by ~3.98.
+    let baked = try MicEchoCanceller.bakeGain(micURL: micURL, gainDb: 12, outputDirectory: outDir)
+    XCTAssertNotEqual(baked, micURL)
+    let decoded = try MicEchoCanceller.decodePCMMono48k(url: baked)
+    XCTAssertEqual(decoded.count, samples.count)
+    let gain = powf(10.0, 12.0 / 20.0)
+    for i in stride(from: 0, to: samples.count, by: 997) {
+      XCTAssertEqual(decoded[i], samples[i] * gain, accuracy: 1e-3)
+    }
+  }
+
   // MARK: - Double-talk: bleed under the voice must go too
 
   /// v3 regression: the system bleed hiding UNDER the user's voice must also be
