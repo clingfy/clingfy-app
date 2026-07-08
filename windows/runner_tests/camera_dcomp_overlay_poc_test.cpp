@@ -740,6 +740,207 @@ TEST(CameraDcompOverlayPoc, ContentIsCenteredInPaddedWindow) {
       << "content square is not the DPI-scaled 220 px";
 }
 
+// P4b: the recording glow ring must render on the live bubble and PULSE (the
+// macOS opacity animation). The red stroke sits just inside the content edge
+// over the magenta camera, so its BLUE channel swings with the pulse opacity
+// (magenta b=255, systemRed b=48: p=0.75 -> ~103, p=1.0 -> ~48) while the
+// bubble center stays steady magenta. Disabling the glow must shrink the
+// window back to the 12 px halo (padding is glow-gated).
+TEST(CameraDcompOverlayPoc, GlowRingPulsesOnTheLiveBubble) {
+  if (!PixelProbesArmed()) {
+    GTEST_SKIP() << "set CLINGFY_REQUIRE_PIXEL_TESTS=1 to run the on-screen "
+                    "probe (briefly shows a window)";
+  }
+  auto& geometry = CameraOverlayGeometryStore::Instance();
+  auto& style = CameraOverlayStyleStore::Instance();
+  geometry.SetSize(220.0);
+  geometry.SetCustomPosition(0.5, 0.5);
+  style.SetShape(2);  // square: ring hugs the content edge, crisp geometry.
+  style.SetRoundness(0.0);
+  style.SetOpacity(1.0);
+  style.SetShadow(0);
+  style.SetBorder(0);
+  style.SetChromaEnabled(false);
+  style.SetMirror(false);
+  style.SetGlowStrength(1.0);  // strongest swing: pulse 0.75..1.0, lw 10.
+  style.SetGlowEnabled(true);
+
+  CameraDcompOverlay::Options options;
+  options.apply_capture_exclusion = false;  // BitBlt must see the window.
+  CameraDcompOverlay overlay(options);
+  FloatingPlacement place;
+  place.x = 200;
+  place.y = 200;
+  place.width = 220;
+  place.height = 220;
+  if (!overlay.Start(place)) {
+    style.SetGlowEnabled(false);
+    GTEST_SKIP() << "DComp overlay could not start in this session";
+  }
+  const std::vector<std::uint8_t> frame = MagentaFrame(64, 64);
+  overlay.PublishBgra(frame.data(), 64, 64);
+  overlay.Show();
+
+  HWND hwnd = ::FindWindowW(L"ClingfyCameraDcompOverlay", nullptr);
+  ASSERT_NE(hwnd, nullptr);
+  auto cleanup = [&]() {
+    overlay.Hide();
+    overlay.Stop();
+    style.SetGlowEnabled(false);
+    style.SetShape(5);
+    geometry.SetSize(220.0);
+    geometry.SetPosition(3);
+  };
+  RECT rc{};
+  bool warm = false;
+  const auto warm_deadline =
+      std::chrono::steady_clock::now() + std::chrono::seconds(8);
+  while (std::chrono::steady_clock::now() < warm_deadline) {
+    overlay.PublishBgra(frame.data(), 64, 64);
+    if (::GetWindowRect(hwnd, &rc) != 0) {
+      RECT wide = rc;
+      const int w = rc.right - rc.left;
+      wide.left -= w;
+      wide.top -= w;
+      wide.right += w;
+      wide.bottom += w;
+      if (ScreenRegionHasMagenta(wide)) {
+        warm = true;
+        break;
+      }
+    }
+    std::this_thread::sleep_for(std::chrono::milliseconds(60));
+  }
+  if (!warm) {
+    cleanup();
+    FAIL() << "bubble never rendered — display awake and unlocked?";
+  }
+  // Glow-on padding: 21 + 47*1.0 = 68 px halo (DPI-unaware process, scale 1).
+  ::GetWindowRect(hwnd, &rc);
+  EXPECT_EQ(rc.right - rc.left, 220 + 2 * 68)
+      << "window does not carry the glow-reserved padding";
+
+  // Locate the magenta interior; the ring is the red band just outside it.
+  int seed_x = -1, seed_y = -1;
+  {
+    const int w = rc.right - rc.left;
+    const int x0 = rc.left - w, y0 = rc.top - w;
+    const int step = (3 * w) / 96;
+    for (int gy = 0; gy < 96 && seed_x < 0; ++gy) {
+      for (int gx = 0; gx < 96 && seed_x < 0; ++gx) {
+        const int sx = x0 + gx * step, sy = y0 + gy * step;
+        if (ClassifyFlickerSample(ScreenPatchAvg(sx, sy, 2, 2)) == 'M') {
+          seed_x = sx;
+          seed_y = sy;
+        }
+      }
+    }
+  }
+  if (seed_x < 0) {
+    cleanup();
+    FAIL() << "could not locate magenta content in the capture";
+  }
+  auto walk = [&](int x, int y, int dx, int dy) {
+    while (ClassifyFlickerSample(ScreenPatchAvg(x, y, 2, 2)) == 'M') {
+      x += dx;
+      y += dy;
+    }
+    return std::pair<int, int>(x, y);
+  };
+  auto locate_ring = [&](int* out_mid_x, int* out_mid_y, int* out_ring_x) {
+    const int rl = walk(seed_x, seed_y, -1, 0).first;
+    const int rr = walk(seed_x, seed_y, 1, 0).first;
+    const int mx = (rl + rr) / 2;
+    const int ct = walk(mx, seed_y, 0, -1).second;
+    const int cb = walk(mx, seed_y, 0, 1).second;
+    const int my = (ct + cb) / 2;
+    const int ml = walk(mx, my, -1, 0).first;
+    *out_mid_x = mx;
+    *out_mid_y = my;
+    *out_ring_x = ml - 6;  // 6 px into the red stroke band, outside the camera
+  };
+  int mid_x = 0, mid_y = 0, ring_x = 0;
+  locate_ring(&mid_x, &mid_y, &ring_x);
+
+  // Sample the pulse for ~2 s (s=1.0 -> full period 1.2 s) WITHOUT publishing
+  // any frames: the ring's blue channel may only swing if the tick redraws on
+  // its own (the "pulse animates even when camera frames stall" invariant). A
+  // publish here would drive the redraw and mask a regression that deletes the
+  // tick-driven needs_draw.
+  int ring_b_min = 255, ring_b_max = 0, ring_r_sum = 0, samples = 0;
+  int cam_b_min = 255, cam_b_max = 0;
+  const auto pulse_deadline =
+      std::chrono::steady_clock::now() + std::chrono::milliseconds(2000);
+  while (std::chrono::steady_clock::now() < pulse_deadline) {
+    const AvgColor ring = ScreenPatchAvg(ring_x, mid_y, 2, 2);
+    const AvgColor cam = ScreenPatchAvg(mid_x, mid_y, 2, 2);
+    ring_b_min = (std::min)(ring_b_min, ring.b);
+    ring_b_max = (std::max)(ring_b_max, ring.b);
+    ring_r_sum += ring.r;
+    cam_b_min = (std::min)(cam_b_min, cam.b);
+    cam_b_max = (std::max)(cam_b_max, cam.b);
+    ++samples;
+    std::this_thread::sleep_for(std::chrono::milliseconds(40));
+  }
+  std::cout << "[glow-pulse] ring b=[" << ring_b_min << "," << ring_b_max
+            << "] avg r=" << (samples > 0 ? ring_r_sum / samples : -1)
+            << " cam b=[" << cam_b_min << "," << cam_b_max << "] samples="
+            << samples << std::endl;
+
+  // Re-bake wiring: switch the shape mid-glow (square -> circle). The ring must
+  // follow the new silhouette through PrepareGlow's re-bake on the style
+  // revision; a cache that only re-bakes on glow-field changes would leave the
+  // stale square ring. A circle inscribed in the 220 square touches the edge
+  // midpoints, so at mid-height the ring band sits at the same ring_x.
+  overlay.PublishBgra(frame.data(), 64, 64);  // keep a fresh camera frame
+  style.SetShape(0);
+  std::this_thread::sleep_for(std::chrono::milliseconds(400));
+  const AvgColor ring_after_shape =
+      ScreenPatchAvg(ring_x, mid_y, 2, 2);
+
+  // Disabling the glow must shrink the window (padding 68 -> 12) AND remove the
+  // ring from the composed screen — the window shrink alone is store-driven and
+  // would pass even if the presenter kept drawing a stale ring.
+  style.SetGlowEnabled(false);
+  bool shrank = false;
+  RECT small_rc{};
+  const auto shrink_deadline =
+      std::chrono::steady_clock::now() + std::chrono::seconds(3);
+  while (std::chrono::steady_clock::now() < shrink_deadline) {
+    if (::GetWindowRect(hwnd, &small_rc) != 0 &&
+        small_rc.right - small_rc.left == 220 + 2 * 12) {
+      shrank = true;
+      break;
+    }
+    std::this_thread::sleep_for(std::chrono::milliseconds(25));
+  }
+  // Content stays centered on the same custom point at both paddings, so the
+  // former ring band maps to the same screen pixel — now outside the content
+  // with no ring, it must read NOT red.
+  std::this_thread::sleep_for(std::chrono::milliseconds(150));
+  const AvgColor ring_after_disable = ScreenPatchAvg(ring_x, mid_y, 2, 2);
+  cleanup();
+
+  EXPECT_GT(ring_r_sum / (std::max)(1, samples), 150)
+      << "the ring band is not red — glow ring missing";
+  EXPECT_GT(ring_b_max - ring_b_min, 25)
+      << "the ring's blue channel did not swing without frame publishes — the "
+         "tick-driven pulse redraw is broken";
+  EXPECT_LT(cam_b_max - cam_b_min, 20)
+      << "the bubble interior is unstable — probe aim suspect";
+  EXPECT_GT(ring_after_shape.r, 150)
+      << "no red ring after the shape change — glow was not re-baked for the "
+         "new silhouette (r=" << ring_after_shape.r << ")";
+  EXPECT_TRUE(shrank) << "disabling the glow did not shrink the window "
+                         "(width=" << (small_rc.right - small_rc.left) << ")";
+  EXPECT_FALSE(ring_after_disable.r > 90 &&
+               ring_after_disable.r > 2 * ring_after_disable.g &&
+               ring_after_disable.r > 2 * ring_after_disable.b)
+      << "the ring is still on screen after the glow was disabled (r="
+      << ring_after_disable.r << " g=" << ring_after_disable.g << " b="
+      << ring_after_disable.b << ")";
+}
+
 // GDI presenter border integrity: the bubble used to paint camera then border
 // straight onto the window DC (camera_floating_overlay.cpp Paint). Without a
 // back buffer, every repaint transiently overwrote the border ring with camera

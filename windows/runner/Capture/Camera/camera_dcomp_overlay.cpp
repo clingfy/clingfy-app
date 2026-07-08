@@ -9,6 +9,8 @@
 #include "Bridge/Devices/device_probe_log.h"
 #include "Capture/Camera/camera_overlay_drag.h"
 #include "Capture/Camera/camera_overlay_geometry_store.h"
+#include "Capture/Camera/camera_overlay_glow.h"
+#include "Capture/Camera/camera_overlay_glow_renderer.h"
 #include "Capture/Camera/camera_overlay_style_store.h"
 
 namespace clingfy::capture {
@@ -259,6 +261,9 @@ void CameraDcompOverlay::ThreadMain(FloatingPlacement placement,
 void CameraDcompOverlay::ReleaseGpuStack() {
   painter_ = CameraBubblePainter();
   painter_ready_ = false;
+  glow_bitmap_.Reset();
+  glow_active_ = false;
+  glow_bake_failed_ = false;
   camera_bitmap_.Reset();
   target_bitmap_.Reset();
   if (d2d_ctx_ != nullptr) {
@@ -444,6 +449,55 @@ bool CameraDcompOverlay::PreparePainter(int content_side, int padding_px) {
   return ok;
 }
 
+void CameraDcompOverlay::PrepareGlow(int content_side, int padding_px) {
+  if (d2d_ctx_ == nullptr || d2d_factory_ == nullptr) {
+    return;
+  }
+  const CameraOverlayLiveStyle snap =
+      CameraOverlayStyleStore::Instance().Snapshot();
+  if (!snap.glow_enabled) {
+    glow_bitmap_.Reset();
+    glow_active_ = false;
+    glow_bake_failed_ = false;
+    return;
+  }
+  const bool was_active = glow_active_;
+  const double prev_strength = glow_strength_;
+  const ResolvedBubbleStyle resolved = ResolveOverlayBubbleStyle(snap);
+  glow_bitmap_ = BakeCameraGlowBitmap(
+      d2d_factory_.Get(), d2d_ctx_.Get(), resolved.shape,
+      resolved.corner_radius, content_side, padding_px, snap.glow_strength);
+  d2d_ctx_->SetTarget(target_bitmap_.Get());
+  glow_active_ = glow_bitmap_ != nullptr;
+  glow_strength_ = snap.glow_strength;
+  const float dim = static_cast<float>(content_side + 2 * padding_px);
+  glow_dest_ = D2D1::RectF(0.0f, 0.0f, dim, dim);
+  if (glow_active_ &&
+      (!was_active || snap.glow_strength != prev_strength)) {
+    // Phase origin: the pulse (re)starts at its LOW value when the glow turns
+    // on AND on every strength change — macOS re-adds the CABasicAnimation
+    // from its fromValue in both cases. Recomputing the phase against a stale
+    // epoch with the new strength-dependent period would teleport the opacity
+    // to an arbitrary point of the waveform on every slider tick. Shape or
+    // size re-bakes with the same strength keep the phase (macOS only swaps
+    // the layer path there).
+    glow_epoch_ = std::chrono::steady_clock::now();
+  }
+  // A transiently failed bake must not blank the recording ring for the whole
+  // session: the style revision is already consumed by the caller, so flag a
+  // per-tick retry, and say so in the field log (the painter-Prepare parity).
+  glow_bake_failed_ = !glow_active_;
+  if (glow_bake_failed_ && !glow_bake_failed_logged_) {
+    glow_bake_failed_logged_ = true;
+    char b[96];
+    std::snprintf(b, sizeof(b),
+                  "CameraDcompOverlay: glow bake FAILED (content=%d pad=%d "
+                  "shape=%s) — retrying per tick",
+                  content_side, padding_px, resolved.shape.c_str());
+    clingfy::bridge::devices::LogDeviceProbe(b);
+  }
+}
+
 void CameraDcompOverlay::UpdateHaloClickThrough(HWND hwnd) {
   POINT pt{};
   RECT wr{};
@@ -599,6 +653,17 @@ void CameraDcompOverlay::SyncAndRender(HWND hwnd) {
   if (needs_prepare && prepared_cam_w_ > 0) {
     painter_ready_ =
         PreparePainter(prepared_content_side_, prepared_padding_px_);
+    PrepareGlow(prepared_content_side_, prepared_padding_px_);
+  } else if (glow_bake_failed_ && prepared_cam_w_ > 0) {
+    // The revision that enabled the glow is consumed; keep retrying the bake
+    // until it succeeds (or the glow is disabled) so a transient GPU hiccup
+    // cannot blank the recording ring for the whole session.
+    PrepareGlow(prepared_content_side_, prepared_padding_px_);
+  }
+  // An active glow pulses: redraw every tick while visible so the animation
+  // runs even when camera frames stall (macOS CAAnimation parity).
+  if (glow_active_ && ::IsWindowVisible(hwnd)) {
+    needs_draw = true;
   }
   if (!needs_draw || !painter_ready_ || camera_bitmap_ == nullptr) {
     return;
@@ -610,6 +675,16 @@ void CameraDcompOverlay::SyncAndRender(HWND hwnd) {
   // the painter routes through its keyed path) — full style for free.
   painter_.Draw(d2d_ctx_.Get(), camera_bitmap_.Get(),
                 CameraBubblePainter::Frame{});
+  if (glow_active_ && glow_bitmap_ != nullptr) {
+    const double elapsed =
+        std::chrono::duration<double>(std::chrono::steady_clock::now() -
+                                      glow_epoch_)
+            .count();
+    d2d_ctx_->DrawBitmap(
+        glow_bitmap_.Get(), glow_dest_,
+        static_cast<float>(CameraGlowPulseOpacity(glow_strength_, elapsed)),
+        D2D1_BITMAP_INTERPOLATION_MODE_LINEAR, nullptr);
+  }
   const HRESULT hr = d2d_ctx_->EndDraw();
   if (FAILED(hr)) {
     if (!render_failed_logged_) {

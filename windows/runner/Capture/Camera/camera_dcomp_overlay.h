@@ -9,6 +9,7 @@
 #include <wrl/client.h>
 
 #include <atomic>
+#include <chrono>
 #include <cstdint>
 #include <future>
 #include <mutex>
@@ -50,9 +51,16 @@
 // handle (macOS hitTest parity). Window size now depends on the STYLE store
 // too (padding follows border width / shadow preset / glow), so the sync tick
 // re-places the window on style revisions as well.
-// Still deferred: glow ring + pulse (P4b); WM_DPICHANGED, device-lost
-// rebuild, mid-session fallback, capture-display retarget (P4c); default
-// flip (P4d).
+// P4b: the recording glow ring — presenter-drawn on top of the painter's
+// output (LIVE-ONLY; never in the shared painter, which would bake it into
+// exports). The ring + its blurred halo are baked once per style/geometry
+// change (BakeCameraGlowBitmap) and drawn per tick with the macOS pulse
+// opacity (CameraGlowPulseOpacity); while glow is active and the window is
+// visible, every tick redraws so the pulse animates even when camera frames
+// stall. Glow reads the style store's glow fields directly — deliberately
+// NOT part of ResolveOverlayBubbleStyle.
+// Still deferred: WM_DPICHANGED, device-lost rebuild, mid-session fallback,
+// capture-display retarget (P4c); default flip (P4d).
 namespace clingfy::capture {
 
 class CameraDcompOverlay : public ICameraOverlayPresenter {
@@ -110,6 +118,10 @@ class CameraDcompOverlay : public ICameraOverlayPresenter {
   // run outside BeginDraw (shadow bake does SetTarget round-trips); re-binds
   // the swapchain target afterwards.
   bool PreparePainter(int content_side, int padding_px);
+  // (Re)bake the glow bitmap for the current style snapshot, or release it
+  // when the glow is off. Same call-site contract as PreparePainter (outside
+  // BeginDraw; re-binds the swapchain target). Overlay thread only.
+  void PrepareGlow(int content_side, int padding_px);
   void OnDragEnded(HWND hwnd);
   // Release every GPU-stack member (painter, bitmaps, D2D, DComp, swapchain,
   // device) in dependency order. Overlay thread only — shared by the normal
@@ -149,6 +161,17 @@ class CameraDcompOverlay : public ICameraOverlayPresenter {
   // Painter + the state it was prepared for — overlay thread only.
   CameraBubblePainter painter_;
   bool painter_ready_ = false;
+  // Glow ring (P4b) — overlay thread only. The baked bitmap carries the full
+  // configured alphas; the per-tick draw multiplies in the pulse opacity.
+  Microsoft::WRL::ComPtr<ID2D1Bitmap1> glow_bitmap_;
+  D2D1_RECT_F glow_dest_{};
+  bool glow_active_ = false;
+  // Enabled-but-bake-failed: retried every tick (the enabling revision is
+  // already consumed) so a transient GPU failure cannot blank the ring.
+  bool glow_bake_failed_ = false;
+  bool glow_bake_failed_logged_ = false;
+  double glow_strength_ = 0.70;
+  std::chrono::steady_clock::time_point glow_epoch_{};
   std::uint64_t last_style_revision_ = ~0ull;   // force first sync
   std::uint64_t last_geometry_revision_ = ~0ull;
   // Window/content split (P4a): the swapchain covers the whole padded window;

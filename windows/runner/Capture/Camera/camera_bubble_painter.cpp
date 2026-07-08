@@ -13,18 +13,17 @@
 
 namespace clingfy::capture {
 
-namespace {
-
 using Microsoft::WRL::ComPtr;
 
 // Build a mask/stroke geometry for `shape` inscribed in `rect`. Returns null for
 // "square" (caller uses the rect directly) or on failure. corner_radius is the
 // Dart 0..0.5 fraction off the shorter side; squircle reads as a generously
-// rounded rect (true superellipse deferred).
-ComPtr<ID2D1Geometry> CreateShapeGeometry(ID2D1Factory1* factory,
-                                          const std::string& shape,
-                                          double corner_radius,
-                                          const D2D1_RECT_F& rect) {
+// rounded rect (true superellipse deferred). Public (P4b) so the presenter's
+// glow ring strokes the identical silhouette.
+ComPtr<ID2D1Geometry> CreateCameraShapeGeometry(ID2D1Factory1* factory,
+                                                const std::string& shape,
+                                                double corner_radius,
+                                                const D2D1_RECT_F& rect) {
   const double w = rect.right - rect.left;
   const double h = rect.bottom - rect.top;
   const double side = (w < h ? w : h);
@@ -58,8 +57,6 @@ ComPtr<ID2D1Geometry> CreateShapeGeometry(ID2D1Factory1* factory,
   }
   return geo;  // null for square / zero-radius rounded → caller clips to rect
 }
-
-}  // namespace
 
 bool ExtractCameraFrameBgra(IMFSample* sample, UINT width, UINT height,
                             std::vector<BYTE>* dest) {
@@ -151,7 +148,7 @@ bool CameraBubblePainter::Prepare(ID2D1Factory1* factory,
   // ID2D1Layer otherwise.
   mask_layer_.Reset();
   mask_geometry_ =
-      CreateShapeGeometry(factory, shape, corner_radius, bubble_rect_);
+      CreateCameraShapeGeometry(factory, shape, corner_radius, bubble_rect_);
   if (mask_geometry_ != nullptr) {
     if (FAILED(ctx->CreateLayer(nullptr, mask_layer_.GetAddressOf()))) {
       mask_geometry_.Reset();
@@ -244,7 +241,7 @@ void CameraBubblePainter::PrepareShadow(ID2D1Factory1* factory,
                   static_cast<float>(margin + side),
                   static_cast<float>(margin + side));
   ComPtr<ID2D1Geometry> local_geo =
-      CreateShapeGeometry(factory, shape, corner_radius, local);
+      CreateCameraShapeGeometry(factory, shape, corner_radius, local);
   ComPtr<ID2D1SolidColorBrush> black;
   if (FAILED(ctx->CreateSolidColorBrush(
           D2D1::ColorF(0.0f, 0.0f, 0.0f, static_cast<float>(sh.opacity)),

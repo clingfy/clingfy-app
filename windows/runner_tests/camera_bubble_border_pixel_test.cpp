@@ -20,6 +20,7 @@
 // known-good environment).
 
 #include "Capture/Camera/camera_bubble_painter.h"
+#include "Capture/Camera/camera_overlay_glow_renderer.h"
 
 #include <d2d1_1.h>
 #include <d2d1helper.h>
@@ -480,6 +481,111 @@ TEST(CameraBubbleBorderPixelTest, ShadowRendersIntoEffectPaddingHalo) {
   // extent: it must stay (near-)transparent, proving the halo isn't smeared.
   EXPECT_LT(Chan(At(px, 2, 2), 24), 10)
       << "unexpected coverage at the halo corner: " << DumpPx(At(px, 2, 2));
+}
+
+// Renderer redesign P4b: the glow bake (BakeCameraGlowBitmap) must produce a
+// hollow red ring hugging the inside of the content outline with a blurred
+// halo spilling into the effect padding — and must NOT tint the bubble
+// interior (the camera stays clean; only the pulse opacity modulates the
+// baked bitmap at draw time).
+TEST(CameraBubbleBorderPixelTest, GlowBakeRendersRingAndHaloNotInterior) {
+  HeadlessRig rig;
+  const std::string err = rig.Create(/*use_swapchain_target=*/false);
+  if (!err.empty()) SKIP_OR_FAIL(err);
+
+  constexpr int kPad = 40;
+  constexpr int kContent = kSide - 2 * kPad;  // 140
+  // strength 1.0: lineWidth 10 (ring spans the 10 px inside the content
+  // edge), halo radius 26 (blur stddev 13 -> visible well past the edge).
+  const ComPtr<ID2D1Bitmap1> glow = clingfy::capture::BakeCameraGlowBitmap(
+      rig.factory.Get(), rig.ctx.Get(), "squircle", /*corner_radius=*/0.0,
+      kContent, kPad, /*strength=*/1.0);
+  rig.ctx->SetTarget(rig.target_bitmap.Get());
+  ASSERT_NE(glow, nullptr) << "glow bake soft-failed on a working device";
+
+  rig.ctx->BeginDraw();
+  rig.ctx->Clear(D2D1::ColorF(0.0f, 0.0f, 0.0f, 0.0f));
+  rig.ctx->DrawBitmap(glow.Get(),
+                      D2D1::RectF(0.0f, 0.0f, static_cast<float>(kSide),
+                                  static_cast<float>(kSide)),
+                      1.0f, D2D1_BITMAP_INTERPOLATION_MODE_LINEAR, nullptr);
+  ASSERT_HRESULT_SUCCEEDED(rig.ctx->EndDraw());
+  rig.d3d_ctx->Flush();
+  std::vector<std::uint32_t> px;
+  ASSERT_TRUE(rig.ReadTarget(&px));
+
+  // Ring stroke: mid-height, centered lw/2=5 px inside the content edge —
+  // systemRed (255,59,48) at full alpha.
+  const std::uint32_t ring = At(px, kPad + 5, kSide / 2);
+  EXPECT_TRUE(LooksRed(ring)) << "ring stroke missing: " << DumpPx(ring);
+
+  // Halo: reddish alpha OUTSIDE the content, in the effect padding.
+  const std::uint32_t halo = At(px, kPad - 12, kSide / 2);
+  EXPECT_GT(Chan(halo, 24), 10) << "no halo in the padding: " << DumpPx(halo);
+
+  // Interior: the bubble center must stay clean (the ring is hollow and the
+  // blur has decayed) so the glow never tints the camera image.
+  const std::uint32_t center = At(px, kSide / 2, kSide / 2);
+  EXPECT_LT(Chan(center, 24), 10)
+      << "glow tints the bubble interior: " << DumpPx(center);
+}
+
+// Pins that the parity table's stroke_alpha vs halo_alpha are applied to the
+// RIGHT elements — at strength 1.0 they are 1.0 vs 0.90 and boolean predicates
+// can't tell a swap apart. At strength 0.10 they are 0.64 (stroke) vs 0.342
+// (halo), widely separated: the ring stroke's premultiplied red core reads
+// ~163 correct but ~87 if the halo alpha were applied to it (below the LooksRed
+// floor), and the halo stays well under the stroke.
+TEST(CameraBubbleBorderPixelTest, GlowBakeAppliesStrokeAndHaloAlphasNotSwapped) {
+  HeadlessRig rig;
+  const std::string err = rig.Create(/*use_swapchain_target=*/false);
+  if (!err.empty()) SKIP_OR_FAIL(err);
+
+  constexpr int kPad = 40;
+  constexpr int kContent = kSide - 2 * kPad;  // 140
+  // strength 0.10: lineWidth 3.7, stroke alpha 0.64, halo radius 8 (stddev 4),
+  // halo alpha 0.342.
+  const ComPtr<ID2D1Bitmap1> glow = clingfy::capture::BakeCameraGlowBitmap(
+      rig.factory.Get(), rig.ctx.Get(), "square", /*corner_radius=*/0.0,
+      kContent, kPad, /*strength=*/0.10);
+  rig.ctx->SetTarget(rig.target_bitmap.Get());
+  ASSERT_NE(glow, nullptr) << "glow bake soft-failed on a working device";
+
+  rig.ctx->BeginDraw();
+  rig.ctx->Clear(D2D1::ColorF(0.0f, 0.0f, 0.0f, 0.0f));
+  rig.ctx->DrawBitmap(glow.Get(),
+                      D2D1::RectF(0.0f, 0.0f, static_cast<float>(kSide),
+                                  static_cast<float>(kSide)),
+                      1.0f, D2D1_BITMAP_INTERPOLATION_MODE_LINEAR, nullptr);
+  ASSERT_HRESULT_SUCCEEDED(rig.ctx->EndDraw());
+  rig.d3d_ctx->Flush();
+  std::vector<std::uint32_t> px;
+  ASSERT_TRUE(rig.ReadTarget(&px));
+
+  // Stroke core: scan across the 3.7 px stroke band at the content's left edge
+  // (square shape -> straight vertical stroke at mid-height) for its reddest
+  // pixel. Correct stroke alpha 0.64 -> premultiplied r ~163; a swap to 0.342
+  // -> ~87.
+  int ring_r = 0;
+  for (int x = kPad - 1; x <= kPad + 5; ++x) {
+    ring_r = (std::max)(ring_r, Chan(At(px, x, kSide / 2), 16));
+  }
+  EXPECT_GT(ring_r, 120)
+      << "ring stroke too dim for stroke_alpha 0.64 — halo alpha applied to "
+         "the stroke? (r=" << ring_r << ")";
+  EXPECT_LT(ring_r, 210)
+      << "ring stroke brighter than stroke_alpha 0.64 allows (r=" << ring_r
+      << ")";
+
+  // Halo peak just outside the content: driven by halo_alpha 0.342 on the
+  // blurred stroke, it must stay clearly below the stroke core.
+  int halo_r = 0;
+  for (int x = kPad - 8; x <= kPad - 3; ++x) {
+    halo_r = (std::max)(halo_r, Chan(At(px, x, kSide / 2), 16));
+  }
+  EXPECT_LT(halo_r, ring_r - 20)
+      << "halo is not dimmer than the stroke — alphas may be swapped (halo_r="
+      << halo_r << " ring_r=" << ring_r << ")";
 }
 
 // The painter uses ONE ID2D1Geometry both as the PushLayer mask and as the

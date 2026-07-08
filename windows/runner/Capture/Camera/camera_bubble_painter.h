@@ -30,6 +30,16 @@ namespace clingfy::capture {
 bool ExtractCameraFrameBgra(IMFSample* sample, UINT width, UINT height,
                             std::vector<BYTE>* dest);
 
+// The bubble silhouette geometry for `shape` inscribed in `rect` — the exact
+// mask/stroke geometry the painter renders with, exposed so presenter-side
+// overlays that must hug the same outline (the P4b glow ring) cannot drift
+// from it. Returns null for "square" (callers use the rect directly) or on
+// failure. `corner_radius` is the Dart 0..0.5 fraction of the shorter side;
+// squircle forces a generous rounding (frac >= 0.3).
+Microsoft::WRL::ComPtr<ID2D1Geometry> CreateCameraShapeGeometry(
+    ID2D1Factory1* factory, const std::string& shape, double corner_radius,
+    const D2D1_RECT_F& rect);
+
 class CameraBubblePainter {
  public:
   struct Style {
