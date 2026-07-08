@@ -629,7 +629,7 @@ void CameraDcompOverlay::SyncAndRender(HWND hwnd) {
     // The stack is down after a device loss; keep retrying the rebuild here
     // (the draw path can't, it never runs without gpu_ready_) until it
     // succeeds or the budget is spent and the fallback hook fires.
-    if (device_loss_retry_pending_ && !device_loss_gave_up_) {
+    if (device_loss_retry_pending_ && !device_loss_gave_up_.load()) {
       AttemptDeviceLossRecovery(hwnd, "retry");
     }
     return;
@@ -844,7 +844,7 @@ void CameraDcompOverlay::AttemptDeviceLossRecovery(HWND hwnd,
     // The adapter is wedged, not recovering from an isolated TDR. Stop
     // rebuilding and PARK: drop the render stack so no tick draws against it,
     // keeping the thread alive for the mid-session GDI fallback (P4c-c3).
-    device_loss_gave_up_ = true;
+    device_loss_gave_up_.store(true);
     ReleaseRenderResources();  // sets gpu_ready_ false
     if (!device_loss_fallback_logged_) {
       device_loss_fallback_logged_ = true;

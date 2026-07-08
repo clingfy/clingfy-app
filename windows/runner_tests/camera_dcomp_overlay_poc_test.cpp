@@ -32,6 +32,7 @@
 #include "Capture/Camera/camera_dcomp_overlay.h"
 #include "Capture/Camera/camera_floating_overlay.h"
 #include "Capture/Camera/camera_overlay_geometry_store.h"
+#include "Capture/Camera/camera_overlay_host.h"
 #include "Capture/Camera/camera_overlay_style_store.h"
 
 namespace clingfy::capture {
@@ -227,6 +228,65 @@ TEST(CameraDcompOverlayPoc, RecoversFromSimulatedDeviceLoss) {
   // so a lower bound — not equality — is the flake-free assertion.
   EXPECT_GE(attempts, 2)
       << "expected at least two recovery attempts, got " << attempts;
+
+  CameraOverlayStyleStore::Instance().SetShape(5);
+}
+
+// Mid-session GDI fallback, integration (P4c-c3), HIDDEN: a real DComp
+// presenter fault-injected past its rebuild budget parks; the CameraOverlayHost
+// wrapping it must swap to a real GDI CameraFloatingOverlay when frames keep
+// flowing. Neither window is shown (host is never Show()n), so no display is
+// needed — the swap is observed by the GDI window class appearing and the
+// host's fallback flag.
+TEST(CameraDcompOverlayPoc, HostSwapsToGdiWhenDcompParks) {
+  CameraOverlayGeometryStore::Instance().SetSize(220.0);
+  CameraOverlayGeometryStore::Instance().SetPosition(3);
+  CameraOverlayStyleStore::Instance().SetShape(2);
+  CameraOverlayStyleStore::Instance().SetGlowEnabled(false);
+
+  // A real DComp presenter that will exhaust its budget (5 > 3) and park.
+  CameraDcompOverlay::Options options;
+  options.simulate_device_loss_count = 5;
+  auto dcomp = std::make_shared<CameraDcompOverlay>(options);
+  FloatingPlacement place;
+  place.x = 100;
+  place.y = 100;
+  place.width = 220;
+  place.height = 220;
+  if (!dcomp->Start(place)) {
+    if (::GetDesktopWindow() == nullptr) {
+      GTEST_SKIP() << "no desktop in this session";
+    }
+    FAIL() << "DComp presenter failed to start on this machine";
+  }
+
+  // Wrap it in the host with the production (real GDI) fallback factory.
+  auto host = std::make_shared<CameraOverlayHost>();
+  host->AdoptInnerForTest(dcomp, place);
+
+  const std::vector<std::uint8_t> frame = MagentaFrame(64, 64);
+  const auto deadline =
+      std::chrono::steady_clock::now() + std::chrono::seconds(6);
+  while (std::chrono::steady_clock::now() < deadline &&
+         !host->did_fall_back_for_test()) {
+    host->PublishBgra(frame.data(), 64, 64);
+    std::this_thread::sleep_for(std::chrono::milliseconds(20));
+  }
+  const bool fell_back = host->did_fall_back_for_test();
+  const bool running = host->running();
+  const HWND gdi_window =
+      ::FindWindowW(L"ClingfyCameraFloatingOverlay", nullptr);
+  const HWND dcomp_window =
+      ::FindWindowW(L"ClingfyCameraDcompOverlay", nullptr);
+  host->Stop();
+
+  EXPECT_TRUE(fell_back)
+      << "the host did not swap to GDI after the DComp presenter parked";
+  EXPECT_TRUE(running) << "no live presenter after the fallback swap";
+  EXPECT_NE(gdi_window, nullptr)
+      << "the GDI fallback window was never created";
+  EXPECT_EQ(dcomp_window, nullptr)
+      << "the parked DComp window was not torn down by the swap";
 
   CameraOverlayStyleStore::Instance().SetShape(5);
 }

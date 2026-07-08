@@ -64,6 +64,7 @@ add_library(runner_bridge STATIC
   "Capture/Camera/camera_meta.cpp"
   "Capture/Camera/camera_overlay_geometry_store.cpp"
   "Capture/Camera/camera_overlay_glow.cpp"
+  "Capture/Camera/camera_overlay_host.cpp"
   "Capture/Camera/camera_overlay_glow_renderer.cpp"
   "Capture/Camera/camera_overlay_presenter.cpp"
   "Capture/Camera/camera_overlay_style_store.cpp"
