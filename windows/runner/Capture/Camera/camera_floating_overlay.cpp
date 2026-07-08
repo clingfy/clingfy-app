@@ -184,6 +184,23 @@ void CameraFloatingOverlay::Paint(HWND hwnd) {
     dirty_ = false;
   }
 
+  // Double buffer: compose camera + border into a memory bitmap and blit it in
+  // ONE op. Painting camera-then-border straight onto the window DC let DWM
+  // compose frames captured BETWEEN the two draws — at streaming cadence the
+  // border ring visibly flickered camera-colored (and the camera area didn't,
+  // camera-over-camera being invisible). Falls back to direct painting only if
+  // the buffer can't be created.
+  HDC mem = ::CreateCompatibleDC(hdc);
+  HBITMAP buffer = (cw > 0 && ch > 0)
+                       ? ::CreateCompatibleBitmap(hdc, cw, ch)
+                       : nullptr;
+  HGDIOBJ old_bmp = nullptr;
+  HDC dc = hdc;
+  if (mem != nullptr && buffer != nullptr) {
+    old_bmp = ::SelectObject(mem, buffer);
+    dc = mem;
+  }
+
   if (fw > 0 && fh > 0 && cw > 0 && ch > 0) {
     BITMAPINFO bmi{};
     bmi.bmiHeader.biSize = sizeof(BITMAPINFOHEADER);
@@ -192,14 +209,14 @@ void CameraFloatingOverlay::Paint(HWND hwnd) {
     bmi.bmiHeader.biPlanes = 1;
     bmi.bmiHeader.biBitCount = 32;
     bmi.bmiHeader.biCompression = BI_RGB;
-    ::SetStretchBltMode(hdc, HALFTONE);
+    ::SetStretchBltMode(dc, HALFTONE);
     // Mirror horizontally by flipping the destination width (selfie view — the
     // Dart overlay mirror default). The window region clips to the shape.
     if (style_mirror_) {
-      ::StretchDIBits(hdc, cw, 0, -cw, ch, 0, 0, fw, fh, frame.data(), &bmi,
+      ::StretchDIBits(dc, cw, 0, -cw, ch, 0, 0, fw, fh, frame.data(), &bmi,
                       DIB_RGB_COLORS, SRCCOPY);
     } else {
-      ::StretchDIBits(hdc, 0, 0, cw, ch, 0, 0, fw, fh, frame.data(), &bmi,
+      ::StretchDIBits(dc, 0, 0, cw, ch, 0, 0, fw, fh, frame.data(), &bmi,
                       DIB_RGB_COLORS, SRCCOPY);
     }
 
@@ -218,17 +235,29 @@ void CameraFloatingOverlay::Paint(HWND hwnd) {
           HBRUSH brush = ::CreateSolidBrush(rgb);
           if (brush != nullptr) {
             const int bw = std::max(1, static_cast<int>(style_border_px_));
-            ::FrameRgn(hdc, border_rgn, brush, bw, bw);
+            ::FrameRgn(dc, border_rgn, brush, bw, bw);
             ::DeleteObject(brush);
           }
         }
         ::DeleteObject(border_rgn);
       }
     }
-  } else {
+  } else if (cw > 0 && ch > 0) {
     HBRUSH black = ::CreateSolidBrush(RGB(0, 0, 0));
-    ::FillRect(hdc, &client, black);
+    RECT full{0, 0, cw, ch};
+    ::FillRect(dc, &full, black);
     ::DeleteObject(black);
+  }
+
+  if (dc == mem) {
+    ::BitBlt(hdc, 0, 0, cw, ch, mem, 0, 0, SRCCOPY);
+    ::SelectObject(mem, old_bmp);
+  }
+  if (buffer != nullptr) {
+    ::DeleteObject(buffer);
+  }
+  if (mem != nullptr) {
+    ::DeleteDC(mem);
   }
   ::EndPaint(hwnd, &ps);
 }

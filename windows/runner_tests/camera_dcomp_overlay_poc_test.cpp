@@ -22,12 +22,15 @@
 
 #include <chrono>
 #include <cstdlib>
+#include <string>
 #include <thread>
+#include <utility>
 #include <vector>
 
 #include <gtest/gtest.h>
 
 #include "Capture/Camera/camera_dcomp_overlay.h"
+#include "Capture/Camera/camera_floating_overlay.h"
 #include "Capture/Camera/camera_overlay_geometry_store.h"
 #include "Capture/Camera/camera_overlay_style_store.h"
 
@@ -269,6 +272,62 @@ bool RunMagentaProbe(bool apply_exclusion, bool* wda_ok) {
   return magenta_seen;
 }
 
+// Average color of a small screen patch (BitBlt + CAPTUREBLT like the magenta
+// probe, but scoped to a few pixels so it can poll at high frequency).
+struct AvgColor {
+  int r = 0, g = 0, b = 0;
+};
+AvgColor ScreenPatchAvg(int x, int y, int w, int h) {
+  AvgColor avg;
+  if (w <= 0 || h <= 0) return avg;
+  HDC screen = ::GetDC(nullptr);
+  HDC mem = ::CreateCompatibleDC(screen);
+  HBITMAP bmp = ::CreateCompatibleBitmap(screen, w, h);
+  HGDIOBJ old = ::SelectObject(mem, bmp);
+  ::BitBlt(mem, 0, 0, w, h, screen, x, y, SRCCOPY | CAPTUREBLT);
+  BITMAPINFO bmi{};
+  bmi.bmiHeader.biSize = sizeof(BITMAPINFOHEADER);
+  bmi.bmiHeader.biWidth = w;
+  bmi.bmiHeader.biHeight = -h;
+  bmi.bmiHeader.biPlanes = 1;
+  bmi.bmiHeader.biBitCount = 32;
+  bmi.bmiHeader.biCompression = BI_RGB;
+  std::vector<std::uint8_t> px(static_cast<size_t>(w) * h * 4);
+  ::GetDIBits(mem, bmp, 0, h, px.data(), &bmi, DIB_RGB_COLORS);
+  ::SelectObject(mem, old);
+  ::DeleteObject(bmp);
+  ::DeleteDC(mem);
+  ::ReleaseDC(nullptr, screen);
+  long rs = 0, gs = 0, bs = 0;
+  const int n = w * h;
+  for (int i = 0; i < n; ++i) {
+    bs += px[i * 4 + 0];
+    gs += px[i * 4 + 1];
+    rs += px[i * 4 + 2];
+  }
+  avg.r = static_cast<int>(rs / n);
+  avg.g = static_cast<int>(gs / n);
+  avg.b = static_cast<int>(bs / n);
+  return avg;
+}
+
+char ClassifyFlickerSample(const AvgColor& c) {
+  if (c.r > 150 && c.b > 150 && c.g < 80) return 'M';  // magenta camera
+  // Red border: tolerant of DXGI stretch blur + capture scaling (observed as
+  // washed-out red ~r=110..200 against dark backgrounds).
+  if (c.r > 90 && c.r > 2 * c.g && c.r > 2 * c.b) return 'B';
+  return 'O';
+}
+
+int CountTransitions(const std::string& s) {
+  int t = 0;
+  for (size_t i = 1; i < s.size(); ++i) {
+    if (s[i] != s[i - 1]) ++t;
+  }
+  return t;
+}
+
+
 TEST(CameraDcompOverlayPoc, RendersOnScreen_NoExclusionProbe) {
   if (!PixelProbesArmed()) {
     GTEST_SKIP() << "set CLINGFY_REQUIRE_PIXEL_TESTS=1 to run the on-screen "
@@ -300,6 +359,195 @@ TEST(CameraDcompOverlayPoc, ExcludedFromScreenCapture) {
   EXPECT_FALSE(magenta_seen)
       << "the capture-excluded DComp window LEAKED into a screen capture — "
          "POC NO-GO.";
+}
+
+// GDI presenter border integrity: the bubble used to paint camera then border
+// straight onto the window DC (camera_floating_overlay.cpp Paint). Without a
+// back buffer, every repaint transiently overwrote the border ring with camera
+// pixels, and whenever DWM composed inside that window the DISPLAYED frame had
+// no border — the user-reported "border flickers non-stop, camera solid" (it
+// stopped on pause because pause stops the repaints; measured pre-fix as
+// 12/180 borderless samples on the composed screen over 6s). This test streams
+// frames and asserts the composed screen NEVER shows the border zone without
+// its border: it fails on an unbuffered Paint and passes with the
+// double-buffered one.
+//
+// It MUST sample the DWM-composed screen, not the window's own DC — GetPixel
+// on the window DC serializes with (and flushes) the painter's GDI batch, so
+// the mid-paint state is invisible there; DWM textures the redirection surface
+// without that serialization, which is exactly how users see the flicker.
+// Like every armed pixel probe, it needs an awake, unlocked desktop.
+TEST(CameraFloatingOverlayPaint, BorderNeverDropsWhileStreaming) {
+  if (!PixelProbesArmed()) {
+    GTEST_SKIP() << "set CLINGFY_REQUIRE_PIXEL_TESTS=1 to run the on-screen "
+                    "probe (briefly shows a window)";
+  }
+  auto& geometry = CameraOverlayGeometryStore::Instance();
+  auto& style = CameraOverlayStyleStore::Instance();
+  geometry.SetSize(220.0);
+  geometry.SetCustomPosition(0.5, 0.5);
+  style.SetShape(5);  // squircle — the user's failing shape.
+  style.SetRoundness(0.0);
+  style.SetOpacity(1.0);
+  style.SetShadow(0);  // GDI bubble has no shadow anyway.
+  style.SetBorder(1);
+  style.SetBorderWidth(8.0);
+  style.SetBorderColor(0xFFFF0000);  // opaque red
+  style.SetChromaEnabled(false);
+  style.SetMirror(false);
+
+  CameraFloatingOverlay overlay;
+  FloatingPlacement place;
+  place.x = 200;
+  place.y = 200;
+  place.width = 400;
+  place.height = 225;
+  if (!overlay.Start(place)) {
+    GTEST_SKIP() << "GDI overlay could not start in this session";
+  }
+  HWND hwnd = ::FindWindowW(L"ClingfyCameraFloatingOverlay", nullptr);
+  ASSERT_NE(hwnd, nullptr);
+  // Start applies WDA_EXCLUDEFROMCAPTURE, which hides the window from screen
+  // BitBlt. Lift it (own window, own process) so the probe can sample the
+  // DWM-composed display — display-side behavior is unaffected by WDA.
+  ::SetWindowDisplayAffinity(hwnd, WDA_NONE);
+  const std::vector<std::uint8_t> frame = MagentaFrame(64, 64);
+  overlay.PublishBgra(frame.data(), 64, 64);
+  overlay.Show();
+
+  // Warm-up: keep frames flowing until magenta is on screen. The test process
+  // is DPI-unaware, so the window rect is virtualized while captures are
+  // physical — scan a rect WIDENED by a full window size on every side so a
+  // physical/virtual offset (any monitor scale) can't hide the content.
+  const auto warm_deadline =
+      std::chrono::steady_clock::now() + std::chrono::seconds(8);
+  RECT rc{};
+  bool warm = false;
+  while (std::chrono::steady_clock::now() < warm_deadline) {
+    overlay.PublishBgra(frame.data(), 64, 64);
+    if (::GetWindowRect(hwnd, &rc) != 0) {
+      RECT wide = rc;
+      const int w = rc.right - rc.left;
+      const int h = rc.bottom - rc.top;
+      wide.left -= w;
+      wide.top -= h;
+      wide.right += w;
+      wide.bottom += h;
+      if (ScreenRegionHasMagenta(wide)) {
+        warm = true;
+        break;
+      }
+    }
+    std::this_thread::sleep_for(std::chrono::milliseconds(60));
+  }
+  if (!warm) {
+    overlay.Hide();
+    overlay.Stop();
+    style.SetBorder(0);
+    style.SetBorderWidth(0.0);
+    geometry.SetSize(220.0);
+    geometry.SetPosition(3);
+    FAIL() << "GDI bubble never rendered on screen — is the display awake and "
+              "the session unlocked?";
+  }
+
+  // Self-locate the content in CAPTURE coordinates (the test process is
+  // DPI-unaware, so window rects are virtualized while captures are physical),
+  // then measure BOTH extents so the border sample sits at the content's true
+  // mid-height — on the squircle's straight edge, not its corner arc.
+  ::GetWindowRect(hwnd, &rc);
+  int seed_x = -1, seed_y = -1;
+  {
+    const int w = rc.right - rc.left;
+    const int x0 = rc.left - w / 2, y0 = rc.top - w / 2;
+    const int step = (2 * w) / 66;
+    for (int gy = 0; gy < 66 && seed_x < 0; ++gy) {
+      for (int gx = 0; gx < 66 && seed_x < 0; ++gx) {
+        const int sx = x0 + gx * step, sy = y0 + gy * step;
+        if (ClassifyFlickerSample(ScreenPatchAvg(sx, sy, 2, 2)) == 'M') {
+          seed_x = sx + 24;
+          seed_y = sy + 24;
+        }
+      }
+    }
+  }
+  ASSERT_GT(seed_x, 0) << "could not locate magenta content in the capture";
+  auto walk = [&](int x, int y, int dx, int dy) {
+    while (ClassifyFlickerSample(ScreenPatchAvg(x, y, 2, 2)) == 'M') {
+      x += dx;
+      y += dy;
+    }
+    return std::pair<int, int>(x, y);
+  };
+  const int content_l = walk(seed_x, seed_y, -1, 0).first;
+  const int content_r = walk(seed_x, seed_y, 1, 0).first;
+  const int mid_x = (content_l + content_r) / 2;
+  const int content_t = walk(mid_x, seed_y, 0, -1).second;
+  const int content_b = walk(mid_x, seed_y, 0, 1).second;
+  const int mid_y = (content_t + content_b) / 2;
+  // Left border zone at true mid-height: just past the content edge.
+  const int edge = walk(mid_x, mid_y, -1, 0).first;
+  int b_first = -1, b_last = -1;
+  for (int i = 0; i < 24; ++i) {
+    const char k = ClassifyFlickerSample(ScreenPatchAvg(edge - i, mid_y, 2, 2));
+    if (k == 'B') {
+      if (b_first < 0) b_first = edge - i;
+      b_last = edge - i;
+    } else if (b_first >= 0) {
+      break;
+    }
+  }
+  std::cout << "[gdi-border] content x=[" << content_l << "," << content_r
+            << "] y=[" << content_t << "," << content_b << "] border zone=["
+            << b_last << "," << b_first << "] @y=" << mid_y << std::endl;
+  const int border_x = b_first >= 0 ? (b_first + b_last) / 2 : -1;
+
+  // Stream ~30fps for 6s and sample the composed screen: the border pixel must
+  // be 'B' in EVERY sample; the camera center stays 'M' as the control.
+  std::string border_tl, cam_tl;
+  if (border_x >= 0) {
+    auto next_publish = std::chrono::steady_clock::now();
+    const auto deadline =
+        std::chrono::steady_clock::now() + std::chrono::seconds(6);
+    while (std::chrono::steady_clock::now() < deadline) {
+      if (std::chrono::steady_clock::now() >= next_publish) {
+        overlay.PublishBgra(frame.data(), 64, 64);
+        next_publish += std::chrono::milliseconds(33);
+      }
+      border_tl += ClassifyFlickerSample(ScreenPatchAvg(border_x, mid_y, 2, 2));
+      cam_tl += ClassifyFlickerSample(ScreenPatchAvg(mid_x, mid_y, 2, 2));
+    }
+  }
+
+  overlay.Hide();
+  overlay.Stop();
+  style.SetBorder(0);
+  style.SetBorderWidth(0.0);
+  style.SetShape(5);
+  geometry.SetSize(220.0);
+  geometry.SetPosition(3);
+
+  ASSERT_GE(border_x, 0) << "no border found left of the content at "
+                            "mid-height";
+  int border_drops = 0;
+  for (char c : border_tl) {
+    if (c != 'B') ++border_drops;
+  }
+  int cam_drops = 0;
+  for (char c : cam_tl) {
+    if (c != 'M') ++cam_drops;
+  }
+  std::cout << "[gdi-border] samples=" << border_tl.size() << " borderDrops="
+            << border_drops << " transitions=" << CountTransitions(border_tl)
+            << " camDrops=" << cam_drops << std::endl;
+  std::cout << "[gdi-border] border: " << border_tl.substr(0, 160)
+            << std::endl;
+  EXPECT_EQ(border_drops, 0)
+      << "the GDI bubble's border vanished from the composed screen "
+      << border_drops << "/" << border_tl.size()
+      << " samples while streaming — the camera-then-border Paint must stay "
+         "double-buffered";
+  EXPECT_EQ(cam_drops, 0) << "camera content was unstable — probe aim suspect";
 }
 
 }  // namespace
