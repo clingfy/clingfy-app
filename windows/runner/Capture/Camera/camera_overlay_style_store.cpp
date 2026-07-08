@@ -1,6 +1,9 @@
 #include "Capture/Camera/camera_overlay_style_store.h"
 
 #include <algorithm>
+#include <cmath>
+
+#include "Capture/Camera/camera_export_layout.h"
 
 namespace clingfy::capture {
 
@@ -40,6 +43,32 @@ std::string OverlayShapeToPainterShape(int shape_wire) {
 InscribedSquare CameraOverlayInscribedSquare(int w, int h) {
   const int side = std::min(w, h);
   return InscribedSquare{(w - side) / 2, (h - side) / 2, side};
+}
+
+double ComputeCameraEffectPadding(const CameraOverlayLiveStyle& s) {
+  const bool border_on = s.border_index != 0 && s.border_width > 0.0;
+  const double border_out = border_on ? s.border_width : 0.0;
+
+  double shadow_out = 0.0;
+  const CameraShadowStyle sh =
+      ResolveCameraShadowStyle(ClampShadowPreset(s.shadow_index));
+  if (sh.enabled) {
+    // PrepareShadow's bake extent beyond the content square: 3 stddevs of the
+    // Gaussian (stddev = blur/2) + bw/2 + 2, shifted by the preset offset.
+    const double stddev = sh.blur_radius * 0.5;
+    shadow_out = std::ceil(stddev * 3.0) + border_out / 2.0 + 2.0 +
+                 std::max(std::abs(sh.offset_x), std::abs(sh.offset_y));
+  }
+
+  double glow_out = 0.0;
+  if (s.glow_enabled) {
+    const double gs = std::clamp(s.glow_strength, 0.10, 1.00);
+    const double line_width = 3.0 + 7.0 * gs;
+    const double halo_radius = 6.0 + 20.0 * gs;
+    glow_out = line_width + 2.0 * halo_radius + 6.0;
+  }
+
+  return std::ceil(std::max({border_out, shadow_out, glow_out, 12.0}));
 }
 
 ResolvedBubbleStyle ResolveOverlayBubbleStyle(const CameraOverlayLiveStyle& s) {

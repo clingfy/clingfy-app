@@ -202,5 +202,72 @@ TEST(ResolveOverlayBubbleStyle, GlowNeverLeaksIntoThePainterStyle) {
   EXPECT_EQ(with_glow.style.chroma_argb, without.style.chroma_argb);
 }
 
+TEST(ComputeCameraEffectPadding, PlainBubbleGetsTheMinimumHalo) {
+  // All effects off: the macOS-parity 12 px floor still applies so enabling a
+  // small border later never resizes the window by surprise amounts.
+  EXPECT_DOUBLE_EQ(ComputeCameraEffectPadding({}), 12.0);
+}
+
+TEST(ComputeCameraEffectPadding, BorderAloneMustClearTheFloorToMatter) {
+  CameraOverlayLiveStyle s;
+  s.border_index = 1;
+  s.border_width = 8.0;
+  EXPECT_DOUBLE_EQ(ComputeCameraEffectPadding(s), 12.0);  // under the floor
+  s.border_width = 20.0;
+  EXPECT_DOUBLE_EQ(ComputeCameraEffectPadding(s), 20.0);
+  // OverlayBorder.none zeroes the outset regardless of width.
+  s.border_index = 0;
+  EXPECT_DOUBLE_EQ(ComputeCameraEffectPadding(s), 12.0);
+}
+
+TEST(ComputeCameraEffectPadding, ShadowPresetsCoverTheBakeExtent) {
+  // PrepareShadow extent: ceil(3 * blur/2) + border/2 + 2 + max|offset| with
+  // the WINDOWS preset table (blur 10/16/22, offset_y 2/4/6) — deliberately
+  // NOT the macOS constants.
+  CameraOverlayLiveStyle s;
+  s.shadow_index = 1;
+  EXPECT_DOUBLE_EQ(ComputeCameraEffectPadding(s), 19.0);  // 15 + 2 + 2
+  s.shadow_index = 2;
+  EXPECT_DOUBLE_EQ(ComputeCameraEffectPadding(s), 30.0);  // 24 + 2 + 4
+  s.shadow_index = 3;
+  EXPECT_DOUBLE_EQ(ComputeCameraEffectPadding(s), 41.0);  // 33 + 2 + 6
+  // Forward-compatible wire values clamp to the strongest preset.
+  s.shadow_index = 9;
+  EXPECT_DOUBLE_EQ(ComputeCameraEffectPadding(s), 41.0);
+}
+
+TEST(ComputeCameraEffectPadding, ShadowIncludesTheBorderHalfInItsMargin) {
+  // The bake margin grows by bw/2 when a border is on (PrepareShadow parity).
+  CameraOverlayLiveStyle s;
+  s.shadow_index = 2;
+  s.border_index = 1;
+  s.border_width = 8.0;
+  EXPECT_DOUBLE_EQ(ComputeCameraEffectPadding(s), 34.0);  // 24 + 4 + 2 + 4
+}
+
+TEST(ComputeCameraEffectPadding, GlowUsesTheMacosFootprintFormula) {
+  // lineWidth + 2*shadowRadius + 6 = (3+7s) + 2(6+20s) + 6 = 21 + 47s.
+  CameraOverlayLiveStyle s;
+  s.glow_enabled = true;
+  s.glow_strength = 1.0;
+  EXPECT_DOUBLE_EQ(ComputeCameraEffectPadding(s), 68.0);
+  s.glow_strength = 0.70;  // Dart default
+  EXPECT_DOUBLE_EQ(ComputeCameraEffectPadding(s), 54.0);  // ceil(53.9)
+  s.glow_strength = 0.01;  // clamps to the 0.10 wire floor
+  EXPECT_DOUBLE_EQ(ComputeCameraEffectPadding(s), 26.0);  // ceil(25.7)
+  s.glow_enabled = false;
+  EXPECT_DOUBLE_EQ(ComputeCameraEffectPadding(s), 12.0);
+}
+
+TEST(ComputeCameraEffectPadding, TakesTheLargestOutsetNotTheirSum) {
+  CameraOverlayLiveStyle s;
+  s.border_index = 1;
+  s.border_width = 20.0;
+  s.shadow_index = 3;      // 33 + 10 + 2 + 6 = 51 with the border half
+  s.glow_enabled = true;
+  s.glow_strength = 1.0;   // 68
+  EXPECT_DOUBLE_EQ(ComputeCameraEffectPadding(s), 68.0);
+}
+
 }  // namespace
 }  // namespace clingfy::capture
