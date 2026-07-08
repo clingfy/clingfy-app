@@ -188,7 +188,7 @@ void CameraDcompOverlay::ThreadMain(FloatingPlacement placement,
   // dimension change still forces the initial painter Prepare.
   const RECT work = MonitorWorkArea(hwnd);
   const UINT dpi = ::GetDpiForWindow(hwnd);
-  const double scale = dpi > 0 ? dpi / 96.0 : 1.0;
+  const double scale = CurrentScale(hwnd);
   auto& geometry_store = CameraOverlayGeometryStore::Instance();
   auto& style_store = CameraOverlayStyleStore::Instance();
   last_geometry_revision_ = geometry_store.revision();
@@ -215,6 +215,7 @@ void CameraDcompOverlay::ThreadMain(FloatingPlacement placement,
   prepared_window_side_ = placed.window.width;
   prepared_content_side_ = placed.content_side;
   prepared_padding_px_ = placed.padding_px;
+  last_synced_scale_ = scale;  // seed so the first tick doesn't re-sync
 
   ApplyCaptureExclusion(hwnd);
 
@@ -247,6 +248,15 @@ void CameraDcompOverlay::ThreadMain(FloatingPlacement placement,
   // Release the GPU stack on the thread that created it, then the window.
   ReleaseGpuStack();
   ::DestroyWindow(hwnd);
+}
+
+double CameraDcompOverlay::CurrentScale(HWND hwnd) const {
+  const double override_scale = test_dpi_scale_.load();
+  if (override_scale > 0.0) {
+    return override_scale;
+  }
+  const UINT dpi = ::GetDpiForWindow(hwnd);
+  return dpi > 0 ? dpi / 96.0 : 1.0;
 }
 
 void CameraDcompOverlay::ApplyCaptureExclusion(HWND hwnd) {
@@ -638,12 +648,18 @@ void CameraDcompOverlay::SyncAndRender(HWND hwnd) {
   // the window out of their grab; the unconsumed revisions apply on drop.
   const std::uint64_t grev = geometry_store.revision();
   const std::uint64_t srev = style_store.revision();
+  const double scale = CurrentScale(hwnd);
   const bool geometry_changed = grev != last_geometry_revision_;
   const bool style_changed = srev != last_style_revision_;
-  if (!in_size_move_ && (geometry_changed || style_changed)) {
+  // DPI self-detection (P4c): a monitor scale change — a Settings scale change
+  // mid-recording, or a move to a different-DPI monitor that didn't come
+  // through the store — bumps no revision, so the tick watches the scale
+  // directly (GetDpiForWindow reflects the current monitor). Covers every
+  // DPI-change cause without depending on WM_DPICHANGED delivery, which the OS
+  // gates on per-monitor awareness.
+  const bool dpi_changed = scale != last_synced_scale_;
+  if (!in_size_move_ && (geometry_changed || style_changed || dpi_changed)) {
     const RECT work = MonitorWorkArea(hwnd);
-    const UINT dpi = ::GetDpiForWindow(hwnd);
-    const double scale = dpi > 0 ? dpi / 96.0 : 1.0;
     const PaddedSquareRect placed = ComputePaddedSquareFloatingRect(
         work.left, work.top, work.right, work.bottom, scale,
         geometry_store.Snapshot(),
@@ -654,7 +670,8 @@ void CameraDcompOverlay::SyncAndRender(HWND hwnd) {
     // must NOT re-derive the position: the store's clamped placement would
     // teleport a bubble the user dropped partially past the work-area edge.
     const bool padding_changed = placed.padding_px != prepared_padding_px_;
-    if (geometry_changed || padding_changed || target_bitmap_ == nullptr) {
+    if (geometry_changed || padding_changed || dpi_changed ||
+        target_bitmap_ == nullptr) {
       ::SetWindowPos(hwnd, nullptr, placed.window.x, placed.window.y,
                      placed.window.width, placed.window.height,
                      SWP_NOZORDER | SWP_NOACTIVATE);
@@ -681,11 +698,14 @@ void CameraDcompOverlay::SyncAndRender(HWND hwnd) {
     }
     prepared_content_side_ = placed.content_side;
     prepared_padding_px_ = placed.padding_px;
-    if (style_changed) {
+    if (style_changed || dpi_changed) {
+      // A scale change resizes the content square, so the painter's cover rect
+      // and baked shadow/glow must be re-Prepared at the new dimensions.
       needs_prepare = true;
     }
     last_geometry_revision_ = grev;
     last_style_revision_ = srev;
+    last_synced_scale_ = scale;
     needs_draw = true;
   }
 

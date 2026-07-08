@@ -116,6 +116,12 @@ class CameraDcompOverlay : public ICameraOverlayPresenter {
   // consecutive-streak reset is observable. Thread-safe.
   void SimulateDeviceLossOnce() { simulate_one_loss_.store(true); }
 
+  // Test-only (P4c): override the DPI scale the sync tick would read from
+  // GetDpiForWindow (which is pinned to 96 in the DPI-unaware test process, so
+  // a real scale change is unobservable there). 0 = use the real DPI. Set it
+  // then post WM_DPICHANGED to exercise the DPI-change re-sync. Thread-safe.
+  void SetTestDpiScale(double scale) { test_dpi_scale_.store(scale); }
+
   static LRESULT CALLBACK WndProc(HWND hwnd, UINT msg, WPARAM wparam,
                                   LPARAM lparam);
 
@@ -167,6 +173,9 @@ class CameraDcompOverlay : public ICameraOverlayPresenter {
   // re-applied. Returns false if the rebuild failed (the caller counts
   // consecutive failures toward the mid-session GDI fallback). Overlay thread.
   bool RebuildGpuStack(HWND hwnd);
+  // The DPI scale (dpi/96) to place the window at: the test override when set,
+  // else GetDpiForWindow(hwnd). Overlay thread only.
+  double CurrentScale(HWND hwnd) const;
   // Apply WDA_EXCLUDEFROMCAPTURE (when options_.apply_capture_exclusion) and
   // record wda_excluded_; logs on failure (the documented Win11 defect). Runs
   // once at initial creation (the render-only rebuild leaves WDA untouched).
@@ -231,6 +240,9 @@ class CameraDcompOverlay : public ICameraOverlayPresenter {
   int prepared_window_side_ = 0;
   int prepared_content_side_ = 0;
   int prepared_padding_px_ = 0;
+  // The DPI scale the window was last placed at; the tick re-syncs when the
+  // live scale (CurrentScale) diverges (P4c DPI self-detection).
+  double last_synced_scale_ = 0.0;
   // Whether WS_EX_TRANSPARENT is currently set (cursor off-content). Overlay
   // thread only.
   bool click_through_ = false;
@@ -254,6 +266,7 @@ class CameraDcompOverlay : public ICameraOverlayPresenter {
   bool device_loss_fallback_logged_ = false;
   int simulated_device_losses_remaining_ = 0;
   std::atomic<bool> simulate_one_loss_{false};  // test one-shot injection
+  std::atomic<double> test_dpi_scale_{0.0};     // test DPI override (0 = real)
 };
 
 }  // namespace clingfy::capture
