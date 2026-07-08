@@ -257,6 +257,12 @@ std::optional<RecordingError> RecordingEngine::Start(
     current_target_type_ = "window";
     current_window_id_ = window_id;
     current_source_bounds_.reset();
+    // Place the floating bubble on the monitor the recorded WINDOW is on, not
+    // the primary (renderer P4c-c4). Display/area modes already resolve their
+    // monitor above; window mode derives it from the captured window. Used
+    // ONLY for the bubble placement below — capture uses window_target and the
+    // cursor origin uses the window rect, so this cannot affect them.
+    monitor = ::MonitorFromWindow(*window_target, MONITOR_DEFAULTTONEAREST);
   } else if (is_area_mode) {
     const auto region = WindowsSelectionState::Instance().CurrentAreaRegion();
     if (!region) {
@@ -850,15 +856,8 @@ std::optional<RecordingError> RecordingEngine::Start(
             work = mi.rcWork;
           }
         }
-        const int work_w = work.right - work.left;
-        const int work_h = work.bottom - work.top;
-        FloatingPlacement place;
-        place.width = std::max(160, work_w * 22 / 100);
-        place.height = place.width * 9 / 16;
-        const int margin = std::max(8, work_w * 3 / 100);
-        place.x = work.left + std::max(0, work_w - place.width - margin);
-        place.y = work.top + std::max(0, work_h - place.height - margin);
-        place.rounded = true;
+        const FloatingPlacement place = ComputeInitialFloatingPlacement(
+            work.left, work.top, work.right, work.bottom);
         // Wrap the factory ladder in the fallback host so a DComp presenter
         // that parks on persistent device loss is swapped for the GDI bubble
         // mid-recording (P4c-c3), transparently to the rest of the engine.

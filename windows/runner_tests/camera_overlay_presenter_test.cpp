@@ -133,5 +133,65 @@ TEST(CameraOverlayPresenterFactory, LifecycleIsSafeWithoutStart) {
   EXPECT_FALSE(p->wda_excluded());
 }
 
+// Initial bubble placement geometry (renderer P4c-c4). The engine feeds this
+// the work area of the RECORDED monitor (display/area resolve it; window mode
+// now derives it from the captured window via MonitorFromWindow), and the
+// placement's coordinates decide which monitor the presenter's window — and
+// therefore the bubble — lands on.
+TEST(ComputeInitialFloatingPlacement, BottomRightInsetSixteenByNine) {
+  // 1080p at the origin, no taskbar inset.
+  const FloatingPlacement p =
+      ComputeInitialFloatingPlacement(0, 0, 1920, 1080);
+  EXPECT_EQ(p.width, 1920 * 22 / 100);        // 422
+  EXPECT_EQ(p.height, p.width * 9 / 16);      // 237
+  const int margin = 1920 * 3 / 100;          // 57
+  EXPECT_EQ(p.x, 1920 - p.width - margin);
+  EXPECT_EQ(p.y, 1080 - p.height - margin);
+  EXPECT_TRUE(p.rounded);
+}
+
+TEST(ComputeInitialFloatingPlacement, LandsOnTheGivenMonitorOriginRight) {
+  // A secondary monitor to the right (origin 1920,0), 2560x1440. EXACT x/y so
+  // dropping the work_left offset (x would be 1921, which coincidentally still
+  // clears >= 1920) is caught — that offset is the whole retarget mechanism.
+  const FloatingPlacement p =
+      ComputeInitialFloatingPlacement(1920, 0, 1920 + 2560, 1440);
+  const int width = 2560 * 22 / 100;         // 563
+  const int margin = 2560 * 3 / 100;         // 76
+  EXPECT_EQ(p.width, width);
+  EXPECT_EQ(p.x, 1920 + (2560 - width - margin));   // 3841, pins work_left
+  EXPECT_EQ(p.y, 1440 - p.height - margin);          // 1048
+}
+
+TEST(ComputeInitialFloatingPlacement, HonorsNonZeroWorkTop) {
+  // A monitor stacked BELOW the primary (work area top = 1080): the y-origin
+  // offset must be applied, or the bubble lands on the primary vertically and
+  // silently defeats the retarget. EXACT y pins the work_top term (all other
+  // cases use work_top = 0).
+  const FloatingPlacement p =
+      ComputeInitialFloatingPlacement(0, 1080, 1920, 2160);
+  const int width = 1920 * 22 / 100;         // 422
+  const int margin = 1920 * 3 / 100;         // 57
+  EXPECT_EQ(p.x, 1920 - width - margin);              // 1441
+  EXPECT_EQ(p.y, 1080 + (1080 - p.height - margin));  // 1866, pins work_top
+  EXPECT_GE(p.y, 1080);                                // on the lower monitor
+}
+
+TEST(ComputeInitialFloatingPlacement, ClampsToMinimumWidthOnTinyWorkArea) {
+  const FloatingPlacement p = ComputeInitialFloatingPlacement(0, 0, 300, 200);
+  EXPECT_EQ(p.width, 160);              // max(160, 300*22/100=66)
+  EXPECT_EQ(p.height, 160 * 9 / 16);   // 90
+  EXPECT_GE(p.x, 0);
+  EXPECT_GE(p.y, 0);
+}
+
+TEST(ComputeInitialFloatingPlacement, HonorsNegativeOriginWorkArea) {
+  // Secondary monitor left of the primary: negative coordinates.
+  const FloatingPlacement p =
+      ComputeInitialFloatingPlacement(-1920, 0, 0, 1080);
+  EXPECT_GE(p.x, -1920);
+  EXPECT_LT(p.x + p.width, 0);  // stays on the left-hand monitor
+}
+
 }  // namespace
 }  // namespace clingfy::capture
