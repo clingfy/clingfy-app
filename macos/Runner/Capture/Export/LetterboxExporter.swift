@@ -172,6 +172,40 @@ final class LetterboxExporter {
     }
   }
 
+  /// Bakes the resolved mic gain (user gain + normalization boost fold) into the
+  /// mic file so the export NEVER attaches a gain tap. The manual export path
+  /// reads audio through `AVAssetReaderAudioMixOutput`, which applies a
+  /// per-track `audioTapProcessor` to the MIXED stream — a mic gain tap there
+  /// multiplied the system audio too and its ±1.0 clamp squared the whole mix
+  /// off at 0 dBFS (severe distortion whenever mic + system audio + gain > 0).
+  /// Returns the baked file (registered for cleanup), or the input unchanged
+  /// when there is no gain to apply, or on failure (losing the boost is the
+  /// safe degradation — never the distortion).
+  private func gainBakedMicURL(micAudioURL: URL?, gainDb: Double) -> URL? {
+    guard let micAudioURL, gainDb > 0.0001 else { return micAudioURL }
+    let tempRoot = AppPaths.tempRoot()
+    try? FileManager.default.createDirectory(at: tempRoot, withIntermediateDirectories: true)
+    do {
+      let baked = try MicEchoCanceller.bakeGain(
+        micURL: micAudioURL, gainDb: gainDb, outputDirectory: tempRoot)
+      if baked != micAudioURL {
+        registerTemporaryArtifact(baked)
+        NativeLogger.i(
+          "Export", "Baked mic gain into the mic track (no export gain tap)",
+          context: [
+            "gainDb": gainDb,
+            "bakedMic": baked.lastPathComponent,
+          ])
+      }
+      return baked
+    } catch {
+      NativeLogger.w(
+        "Export", "Mic gain bake failed; exporting the mic without the boost",
+        context: ["gainDb": gainDb, "error": "\(error)"])
+      return micAudioURL
+    }
+  }
+
   private func fileSizeBytes(for url: URL, fileManager: FileManager = .default) -> Int64 {
     let rawValue =
       (try? fileManager.attributesOfItem(atPath: url.path)[.size] as? NSNumber)?
@@ -2662,7 +2696,7 @@ final class LetterboxExporter {
       micAudioURL: mediaSources.micAudioURL,
       systemAudioURL: mediaSources.systemAudioURL
     )
-    let separatedMicAsset = Self.readableAudioAsset(url: micAudioURLForMix)
+    var separatedMicAsset = Self.readableAudioAsset(url: micAudioURLForMix)
     let separatedSystemAsset = Self.readableAudioAsset(url: mediaSources.systemAudioURL)
     let hasSeparatedAudio = separatedMicAsset != nil || separatedSystemAsset != nil
 
@@ -2693,6 +2727,16 @@ final class LetterboxExporter {
         sourcePeakDbfs: controls.sourcePeakDbfs,
         normalizationGainDb: controls.normalizationGainDb
       )
+      // Bake the resolved mic gain into the mic file NOW so the export mix
+      // needs no gain tap (see gainBakedMicURL: a reader-side tap hits the
+      // mixed stream and clamps the whole export at 0 dBFS — the "distorted
+      // system audio when the mic is on" bug). The peak estimate above ran on
+      // the PRE-gain mic, which is what the normalization math expects.
+      if controls.micGainDb > 0.0001 {
+        let bakedURL = gainBakedMicURL(
+          micAudioURL: micAudioURLForMix, gainDb: controls.micGainDb)
+        separatedMicAsset = Self.readableAudioAsset(url: bakedURL) ?? separatedMicAsset
+      }
     } else {
       separatedControls = nil
       resolvedAudioMix = resolveAudioMixControls(
@@ -2942,14 +2986,20 @@ final class LetterboxExporter {
       let exportAudioMix: AVAudioMix?
       if let separatedComposition, let separatedControls {
         // Gain/normalize target the MIC only (D7). With no mic track the gain
-        // target is nil, so no track receives the tap or the reduction — every
-        // track gets master volume only (gain/normalize inert for system-only).
+        // target is nil, so no track receives the reduction — every track gets
+        // master volume only (gain/normalize inert for system-only).
+        //
+        // gainTargetGainDb is ALWAYS 0 here: the mic boost was baked into the
+        // mic file above (gainBakedMicURL). A gain tap must never be attached
+        // in this path — AVAssetReaderAudioMixOutput applies it to the MIXED
+        // stream, multiplying the system audio too and clamping the whole
+        // export at 0 dBFS.
         exportAudioMix = AudioMixEngine.makeSeparatedAudioMix(
           audioTracks: separatedComposition.audioTracks,
           gainTargetTrackID: separatedComposition.micTrackID,
           masterVolumePercent: separatedControls.masterVolumePercent,
           gainTargetVolumeComponent: separatedControls.micVolumeComponent,
-          gainTargetGainDb: separatedControls.micGainDb
+          gainTargetGainDb: 0
         )
       } else {
         // Corner: sidecar file(s) were readable (so controls were resolved with

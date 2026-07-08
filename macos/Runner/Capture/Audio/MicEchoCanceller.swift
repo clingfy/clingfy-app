@@ -333,6 +333,37 @@ enum MicEchoCanceller {
     return out
   }
 
+  // MARK: - Offline gain bake
+
+  /// Bake a static gain into a mic file: decode → multiply → clamp ±1.0 → write
+  /// CAF. Used by the EXPORT instead of an MTAudioProcessingTap because
+  /// `AVAssetReaderAudioMixOutput` applies a per-track tap to the MIXED stream —
+  /// a +24 dB mic tap there multiplies the system audio too and the clamp then
+  /// squares the whole mix off at 0 dBFS (severe audible distortion whenever the
+  /// mic was active with system audio). Baking the gain into the mic file keeps
+  /// it mic-only by construction; the clamp matches the tap's historic
+  /// `clampFloatOutput` bound so a boosted mic still can't enter the mixdown
+  /// above full scale.
+  static func bakeGain(micURL: URL, gainDb: Double, outputDirectory: URL) throws -> URL {
+    let gainLinear = Float(pow(10.0, max(0.0, min(24.0, gainDb)) / 20.0))
+    guard gainLinear > 1.0001 else { return micURL }
+    var samples = try decodePCMMono48k(url: micURL)
+    guard !samples.isEmpty else { return micURL }
+    samples = applyGain(samples, gainLinear: gainLinear)
+    return try writeMonoPCM(samples, directory: outputDirectory)
+  }
+
+  /// `clamp(x · gain, ±1)` — exposed for tests.
+  static func applyGain(_ samples: [Float], gainLinear: Float) -> [Float] {
+    var out = samples
+    var gain = gainLinear
+    vDSP_vsmul(out, 1, &gain, &out, 1, vDSP_Length(out.count))
+    var lo: Float = -1.0
+    var hi: Float = 1.0
+    vDSP_vclip(out, 1, &lo, &hi, &out, 1, vDSP_Length(out.count))
+    return out
+  }
+
   // MARK: - Envelope
 
   /// Moving-RMS envelope over `envelopeWindowSeconds`, computed in O(n) with a
