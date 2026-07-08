@@ -453,6 +453,69 @@ TEST(CameraDcompOverlayPoc, StyleOnlyRevisionKeepsDraggedPosition) {
   geometry.SetPosition(3);
 }
 
+// DPI self-detection (P4c), HIDDEN: a monitor scale change (a Settings scale
+// change mid-recording, or a move to a different-DPI monitor) bumps no store
+// revision, so the sync tick watches the live scale directly and re-places at
+// the new DPI. The test process is DPI-unaware (GetDpiForWindow is pinned to
+// 96), so the scale is injected via SetTestDpiScale to make the re-scale
+// observable; the window rect read back is the (virtualized) rect the
+// presenter computed and applied. No WM_DPICHANGED is sent — the tick detects
+// the change on its own, which is exactly the point (the OS gates that message
+// on per-monitor awareness).
+TEST(CameraDcompOverlayPoc, DpiChangeResizesTheWindow) {
+  auto& geometry = CameraOverlayGeometryStore::Instance();
+  auto& style = CameraOverlayStyleStore::Instance();
+  geometry.SetSize(220.0);
+  geometry.SetPosition(3);
+  style.SetShape(2);
+  style.SetShadow(0);   // padding at the 12 px floor
+  style.SetBorder(0);
+  style.SetGlowEnabled(false);
+
+  CameraDcompOverlay overlay;
+  overlay.SetTestDpiScale(1.0);  // deterministic base before Start
+  FloatingPlacement place;
+  place.x = 100;
+  place.y = 100;
+  place.width = 220;
+  place.height = 220;
+  if (!overlay.Start(place)) {
+    if (::GetDesktopWindow() == nullptr) {
+      GTEST_SKIP() << "no desktop in this session";
+    }
+    FAIL() << "DComp presenter failed to start on this machine";
+  }
+  HWND hwnd = ::FindWindowW(L"ClingfyCameraDcompOverlay", nullptr);
+  ASSERT_NE(hwnd, nullptr);
+
+  auto width_settles_to = [&](int want) {
+    const auto deadline =
+        std::chrono::steady_clock::now() + std::chrono::seconds(3);
+    RECT rc{};
+    while (std::chrono::steady_clock::now() < deadline) {
+      if (::GetWindowRect(hwnd, &rc) != 0 && rc.right - rc.left == want) {
+        return true;
+      }
+      std::this_thread::sleep_for(std::chrono::milliseconds(20));
+    }
+    return false;
+  };
+
+  // Base: content 220 + 2*12 halo = 244.
+  EXPECT_TRUE(width_settles_to(220 + 2 * 12)) << "did not settle at base DPI";
+
+  // Scale to 2.0: content 440 + 2*12 = 464. No revision changes, so only the
+  // tick's scale self-detection can drive the resize.
+  overlay.SetTestDpiScale(2.0);
+  EXPECT_TRUE(width_settles_to(440 + 2 * 12))
+      << "window did not resize after a DPI scale change to 2.0";
+
+  overlay.Stop();
+  style.SetShape(5);
+  geometry.SetSize(220.0);
+  geometry.SetPosition(3);
+}
+
 // ---- on-screen probes (pixel-canary gated) ----------------------------------
 
 // Armed only by the EXACT value "1" — the repo's pixel-canary convention
