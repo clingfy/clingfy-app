@@ -150,16 +150,31 @@ TEST(ComputeInitialFloatingPlacement, BottomRightInsetSixteenByNine) {
   EXPECT_TRUE(p.rounded);
 }
 
-TEST(ComputeInitialFloatingPlacement, LandsOnTheGivenMonitorOrigin) {
-  // A secondary monitor to the right (origin 1920,0): the placement must be
-  // ON that monitor (x >= 1920), which is what retargets the bubble to the
-  // recorded display in window mode.
+TEST(ComputeInitialFloatingPlacement, LandsOnTheGivenMonitorOriginRight) {
+  // A secondary monitor to the right (origin 1920,0), 2560x1440. EXACT x/y so
+  // dropping the work_left offset (x would be 1921, which coincidentally still
+  // clears >= 1920) is caught — that offset is the whole retarget mechanism.
   const FloatingPlacement p =
       ComputeInitialFloatingPlacement(1920, 0, 1920 + 2560, 1440);
-  EXPECT_GE(p.x, 1920);
-  EXPECT_LT(p.x, 1920 + 2560);
-  EXPECT_GE(p.y, 0);
-  EXPECT_LT(p.y + p.height, 1440);
+  const int width = 2560 * 22 / 100;         // 563
+  const int margin = 2560 * 3 / 100;         // 76
+  EXPECT_EQ(p.width, width);
+  EXPECT_EQ(p.x, 1920 + (2560 - width - margin));   // 3841, pins work_left
+  EXPECT_EQ(p.y, 1440 - p.height - margin);          // 1048
+}
+
+TEST(ComputeInitialFloatingPlacement, HonorsNonZeroWorkTop) {
+  // A monitor stacked BELOW the primary (work area top = 1080): the y-origin
+  // offset must be applied, or the bubble lands on the primary vertically and
+  // silently defeats the retarget. EXACT y pins the work_top term (all other
+  // cases use work_top = 0).
+  const FloatingPlacement p =
+      ComputeInitialFloatingPlacement(0, 1080, 1920, 2160);
+  const int width = 1920 * 22 / 100;         // 422
+  const int margin = 1920 * 3 / 100;         // 57
+  EXPECT_EQ(p.x, 1920 - width - margin);              // 1441
+  EXPECT_EQ(p.y, 1080 + (1080 - p.height - margin));  // 1866, pins work_top
+  EXPECT_GE(p.y, 1080);                                // on the lower monitor
 }
 
 TEST(ComputeInitialFloatingPlacement, ClampsToMinimumWidthOnTinyWorkArea) {
