@@ -966,17 +966,100 @@ final class InlinePreviewView: NSView {
     // speaker→mic bleed canceller on the mic so the preview never plays the
     // system bleed (and so raising gain — which targets the mic — doesn't
     // amplify it). Falls back to the raw mic when there's no bleed / no system
-    // reference / on failure.
-    // NOTE: synchronous on the main thread for this first cut — decode + windowed
-    // detection + NLMS scale with recording LENGTH (a few seconds for a short
-    // clip, longer for very long recordings). TODO (fast-follow): run off the main
-    // thread and hot-swap the cleaned mic in, plus cache it per project so
-    // re-opens don't recompute.
+    // reference / on failure. The cleaned mic is cached per project
+    // (`CleanedMicCache`, keyed on the sidecars + algorithm version): a cache
+    // hit finishes the open synchronously exactly like before; a miss runs the
+    // canceller OFF the main thread and finishes the open when it lands, so a
+    // long recording shows the loading state instead of freezing the app.
     let rawMicURL = mediaSources.micAudioPath.map { URL(fileURLWithPath: $0) }
     let systemURL = mediaSources.systemAudioPath.map { URL(fileURLWithPath: $0) }
-    let previewMicURL = Self.cleanedPreviewMicURL(micURL: rawMicURL, systemURL: systemURL)
+    guard let micURL = rawMicURL, let systemReferenceURL = systemURL else {
+      // Nothing to cancel (mic-only / system-only / legacy recording): finish
+      // synchronously, byte-identical to the pre-cache behavior.
+      finishOpen(
+        previewMicURL: rawMicURL, systemURL: systemURL, screenAsset: asset,
+        mediaSources: mediaSources, openToken: openToken,
+        initialPlaybackSnapshot: initialPlaybackSnapshot)
+      return
+    }
+    let projectRoot = URL(fileURLWithPath: mediaSources.projectPath, isDirectory: true)
+    if let hit = CleanedMicCache.shared.cachedOutcome(
+      micURL: micURL, systemURL: systemReferenceURL, projectRoot: projectRoot)
+    {
+      NativeLogger.i(
+        "Player",
+        hit.result.applied
+          ? "Preview: cleaned mic served from cache" : "Preview: no-bleed result served from cache",
+        context: [
+          "applied": hit.result.applied,
+          "bleedCorrelation": hit.result.bleedCorrelation,
+          "reductionDb": hit.result.reductionDb,
+          "delayMs": hit.result.delayMs,
+        ])
+      finishOpen(
+        previewMicURL: hit.result.cleanedMicURL, systemURL: systemURL, screenAsset: asset,
+        mediaSources: mediaSources, openToken: openToken,
+        initialPlaybackSnapshot: initialPlaybackSnapshot)
+      return
+    }
+    // Cache miss: park the players so the PREVIOUS recording doesn't keep
+    // playing under the loading UI, then finish the open when the canceller
+    // lands. `previewPreparing` was already emitted, so Flutter keeps showing
+    // its loading state; `previewReady` still fires only from finishOpen's
+    // item observers — the readiness contract is unchanged, just later.
+    player?.pause()
+    player?.replaceCurrentItem(with: nil)
+    cameraPlayer?.pause()
+    NativeLogger.i(
+      "Player", "Preview: cleaning mic off the main thread (cache miss)",
+      context: ["token": openToken.uuidString])
+    CleanedMicCache.shared.outcomeAsync(
+      micURL: micURL, systemURL: systemReferenceURL, projectRoot: projectRoot
+    ) { [weak self] outcome in
+      guard let self, self.currentOpenToken == openToken else {
+        // Stale: the preview was re-opened or closed while the canceller ran
+        // (close nils the token). A cache-owned artifact must survive for the
+        // next open; a caller-owned temp file has no owner anymore — reclaim
+        // it here.
+        if !outcome.cacheOwned && outcome.result.applied {
+          try? FileManager.default.removeItem(at: outcome.result.cleanedMicURL)
+        }
+        return
+      }
+      NativeLogger.i(
+        "Player",
+        outcome.result.applied
+          ? "Preview: cancelled speaker→mic bleed" : "Preview: no mic bleed detected",
+        context: [
+          "applied": outcome.result.applied,
+          "bleedCorrelation": outcome.result.bleedCorrelation,
+          "reductionDb": outcome.result.reductionDb,
+          "delayMs": outcome.result.delayMs,
+          "cached": outcome.cacheOwned,
+        ])
+      self.finishOpen(
+        previewMicURL: outcome.result.cleanedMicURL, systemURL: systemURL, screenAsset: asset,
+        mediaSources: mediaSources, openToken: openToken,
+        initialPlaybackSnapshot: initialPlaybackSnapshot)
+    }
+  }
+
+  /// Second half of `open()`: builds the player item from the resolved mic and
+  /// wires observers/playback. Runs synchronously inside `open()` when the
+  /// cleaned mic was free (cache hit / nothing to cancel) and as the canceller
+  /// completion (on main, token-guarded) on a cache miss.
+  private func finishOpen(
+    previewMicURL: URL?,
+    systemURL: URL?,
+    screenAsset asset: AVURLAsset,
+    mediaSources: PreviewMediaSources,
+    openToken: UUID,
+    initialPlaybackSnapshot: PreviewPlaybackSnapshot?
+  ) {
     // Reclaim the previous cleaned mic before adopting a new one — we own these
-    // temp CAFs and no shared sweep runs for the preview path.
+    // temp CAFs and no shared sweep runs for the preview path. Cache-owned
+    // files never enter `previewCleanedMicURL` (the prefix below is per-run
+    // temp naming), so the cache survives open/dispose cycles.
     if let previous = previewCleanedMicURL, previous != previewMicURL {
       try? FileManager.default.removeItem(at: previous)
       previewCleanedMicURL = nil
@@ -2031,37 +2114,6 @@ final class InlinePreviewView: NSView {
       stitchKeptRanges(into: audioTrack, from: sourceAudio, ranges: ranges)
     }
     return composition
-  }
-
-  /// Runs the speaker→mic bleed canceller for the PREVIEW so it plays the same
-  /// cleaned mic the export produces (no system bleed, so live mic gain doesn't
-  /// amplify it). Returns the cleaned mic URL, or the original mic when there is
-  /// no bleed / no system reference / on failure — never blocks the preview from
-  /// opening on an error. Synchronous for now; see the call site's TODO.
-  private static func cleanedPreviewMicURL(micURL: URL?, systemURL: URL?) -> URL? {
-    guard let micURL, let systemURL else { return micURL }
-    let tempRoot = AppPaths.tempRoot()
-    try? FileManager.default.createDirectory(at: tempRoot, withIntermediateDirectories: true)
-    do {
-      let result = try MicEchoCanceller.cancel(
-        micURL: micURL, systemURL: systemURL, outputDirectory: tempRoot)
-      NativeLogger.i(
-        "Player",
-        result.applied
-          ? "Preview: cancelled speaker→mic bleed" : "Preview: no mic bleed detected",
-        context: [
-          "applied": result.applied,
-          "bleedCorrelation": result.bleedCorrelation,
-          "reductionDb": result.reductionDb,
-          "delayMs": result.delayMs,
-        ])
-      return result.cleanedMicURL
-    } catch {
-      NativeLogger.w(
-        "Player", "Preview mic echo cancellation failed; using the raw mic",
-        context: ["error": "\(error)"])
-      return micURL
-    }
   }
 
   /// Result of a separated-audio preview composition: the screen VIDEO track

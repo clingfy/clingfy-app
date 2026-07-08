@@ -45,6 +45,13 @@ import Accelerate
 ///   6. Write the result to a lossless CAF the export/preview consumes in place
 ///      of the raw mic.
 enum MicEchoCanceller {
+  /// Version of the cancellation algorithm + tunables. Part of the
+  /// `CleanedMicCache` key: bump this whenever `cancel()`'s output could change
+  /// for the same inputs (algorithm change, any tunable below), or cached
+  /// cleaned mics from older app versions would keep playing stale audio.
+  /// History: 1 = global-gate v1, 2 = windowed consensus (#222),
+  /// 3 = system-presence blend + pause duck (#228).
+  static let algorithmVersion = 3
   static let sampleRate: Double = 48_000
   /// Adaptive filter length in taps. 512 @ 48 kHz ≈ 10.7 ms — long enough for the
   /// residual fine delay + early reflections after bulk alignment, short enough
