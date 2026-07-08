@@ -59,8 +59,11 @@
 // visible, every tick redraws so the pulse animates even when camera frames
 // stall. Glow reads the style store's glow fields directly — deliberately
 // NOT part of ResolveOverlayBubbleStyle.
-// Still deferred: WM_DPICHANGED, device-lost rebuild, mid-session fallback,
-// capture-display retarget (P4c); default flip (P4d).
+// P4c: device-lost rebuild (retained DComp tree; budget + park) and DPI
+// self-detection (the tick re-syncs when the live scale diverges — no
+// WM_DPICHANGED handler, which the OS gates on per-monitor awareness).
+// Still deferred: mid-session GDI fallback, capture-display retarget (P4c);
+// default flip (P4d).
 namespace clingfy::capture {
 
 class CameraDcompOverlay : public ICameraOverlayPresenter {
@@ -119,7 +122,8 @@ class CameraDcompOverlay : public ICameraOverlayPresenter {
   // Test-only (P4c): override the DPI scale the sync tick would read from
   // GetDpiForWindow (which is pinned to 96 in the DPI-unaware test process, so
   // a real scale change is unobservable there). 0 = use the real DPI. Set it
-  // then post WM_DPICHANGED to exercise the DPI-change re-sync. Thread-safe.
+  // to a new value to exercise the tick's DPI-change self-detection (no
+  // WM_DPICHANGED needed — the tick notices on its own). Thread-safe.
   void SetTestDpiScale(double scale) { test_dpi_scale_.store(scale); }
 
   static LRESULT CALLBACK WndProc(HWND hwnd, UINT msg, WPARAM wparam,
