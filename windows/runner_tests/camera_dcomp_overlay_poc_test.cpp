@@ -125,6 +125,20 @@ TEST(ComputeSquareFloatingRect, ClampsSizeToWireRange) {
   EXPECT_EQ(tiny.height, 120);
 }
 
+// Solid-color BGRA frame (magenta): B=255 G=0 R=255. Declared here (above the
+// lifecycle tests) so the device-loss recovery tests, which drive the draw
+// path with published frames, can use it too.
+std::vector<std::uint8_t> MagentaFrame(int w, int h) {
+  std::vector<std::uint8_t> f(static_cast<size_t>(w) * h * 4);
+  for (size_t i = 0; i < f.size(); i += 4) {
+    f[i + 0] = 255;  // B
+    f[i + 1] = 0;    // G
+    f[i + 2] = 255;  // R
+    f[i + 3] = 255;  // A
+  }
+  return f;
+}
+
 // ---- lifecycle (always runs; never visible) ---------------------------------
 
 TEST(CameraDcompOverlayPoc, HiddenLifecycleBuildsTheGpuStack) {
@@ -151,6 +165,191 @@ TEST(CameraDcompOverlayPoc, HiddenLifecycleBuildsTheGpuStack) {
   EXPECT_TRUE(overlay.gpu_ready());
   overlay.Stop();
   EXPECT_FALSE(overlay.running());
+}
+
+// Device-lost rebuild (P4c), exercised HIDDEN (the draw path runs on published
+// frames regardless of visibility, so no window is shown): inject two device
+// losses on the first two draws; the presenter must rebuild the GPU stack each
+// time and stay live — gpu_ready() true, still running, exactly two recovery
+// attempts, and NOT in the gave-up state (the budget is 3).
+TEST(CameraDcompOverlayPoc, RecoversFromSimulatedDeviceLoss) {
+  CameraOverlayGeometryStore::Instance().SetSize(220.0);
+  CameraOverlayGeometryStore::Instance().SetPosition(3);
+  CameraOverlayStyleStore::Instance().SetShape(2);
+  CameraOverlayStyleStore::Instance().SetGlowEnabled(false);
+
+  CameraDcompOverlay::Options options;
+  options.simulate_device_loss_count = 2;
+  CameraDcompOverlay overlay(options);
+  FloatingPlacement place;
+  place.x = 100;
+  place.y = 100;
+  place.width = 220;
+  place.height = 220;
+  if (!overlay.Start(place)) {
+    if (::GetDesktopWindow() == nullptr) {
+      GTEST_SKIP() << "no desktop in this session";
+    }
+    FAIL() << "DComp presenter failed to start on this machine";
+  }
+  // Drive the draw path: each published frame marks the mailbox dirty, so the
+  // ~33 ms tick runs BeginDraw/EndDraw and consumes one injected loss, then
+  // rebuilds. Poll until both injections are spent (or time out).
+  const std::vector<std::uint8_t> frame = MagentaFrame(64, 64);
+  const auto deadline =
+      std::chrono::steady_clock::now() + std::chrono::seconds(5);
+  while (std::chrono::steady_clock::now() < deadline) {
+    overlay.PublishBgra(frame.data(), 64, 64);
+    if (overlay.device_loss_attempts() >= 2 && overlay.gpu_ready()) {
+      break;
+    }
+    std::this_thread::sleep_for(std::chrono::milliseconds(33));
+  }
+  // Let a few more ticks run so a broken rebuild (that left the stack down)
+  // would surface as gpu_ready() == false.
+  for (int i = 0; i < 6; ++i) {
+    overlay.PublishBgra(frame.data(), 64, 64);
+    std::this_thread::sleep_for(std::chrono::milliseconds(33));
+  }
+  const bool running = overlay.running();
+  const bool gpu_ready = overlay.gpu_ready();
+  const bool gave_up = overlay.device_loss_gave_up();
+  const int attempts = overlay.device_loss_attempts();
+  overlay.Stop();
+
+  EXPECT_TRUE(running) << "presenter stopped running after device loss";
+  EXPECT_TRUE(gpu_ready)
+      << "GPU stack did not recover after the simulated device losses";
+  EXPECT_FALSE(gave_up)
+      << "two recoverable losses must not exhaust the rebuild budget";
+  // At least the two injected losses; a transient rebuild failure retries and
+  // legitimately bumps the count (the GivesUp test's own comment notes this),
+  // so a lower bound — not equality — is the flake-free assertion.
+  EXPECT_GE(attempts, 2)
+      << "expected at least two recovery attempts, got " << attempts;
+
+  CameraOverlayStyleStore::Instance().SetShape(5);
+}
+
+// Clean-present reset (P4c): isolated, individually-recoverable losses spread
+// across a recording (a clean present between each) must NOT accumulate toward
+// the give-up budget — the consecutive streak resets on every clean present.
+// Fires FOUR well-separated single losses (> the budget of 3): with the reset
+// working the streak never exceeds 1, so the presenter must never give up;
+// deleting the reset would let the streak climb to 4 and park permanently.
+TEST(CameraDcompOverlayPoc, ConsecutiveStreakResetsBetweenIsolatedLosses) {
+  CameraOverlayGeometryStore::Instance().SetSize(220.0);
+  CameraOverlayGeometryStore::Instance().SetPosition(3);
+  CameraOverlayStyleStore::Instance().SetShape(2);
+  CameraOverlayStyleStore::Instance().SetGlowEnabled(false);
+
+  CameraDcompOverlay overlay;  // no consecutive injection; one-shots below
+  FloatingPlacement place;
+  place.x = 100;
+  place.y = 100;
+  place.width = 220;
+  place.height = 220;
+  if (!overlay.Start(place)) {
+    if (::GetDesktopWindow() == nullptr) {
+      GTEST_SKIP() << "no desktop in this session";
+    }
+    FAIL() << "DComp presenter failed to start on this machine";
+  }
+  const std::vector<std::uint8_t> frame = MagentaFrame(64, 64);
+  bool observed_reset = false;
+  for (int i = 0; i < 4 && !overlay.device_loss_gave_up(); ++i) {
+    const int before = overlay.device_loss_attempts();
+    overlay.SimulateDeviceLossOnce();
+    // Wait for THIS loss to be handled...
+    const auto handled =
+        std::chrono::steady_clock::now() + std::chrono::seconds(3);
+    while (std::chrono::steady_clock::now() < handled &&
+           overlay.device_loss_attempts() == before) {
+      overlay.PublishBgra(frame.data(), 64, 64);
+      std::this_thread::sleep_for(std::chrono::milliseconds(20));
+    }
+    // ...then feed several clean frames so a clean present resets the streak.
+    for (int j = 0; j < 8; ++j) {
+      overlay.PublishBgra(frame.data(), 64, 64);
+      std::this_thread::sleep_for(std::chrono::milliseconds(20));
+    }
+    if (overlay.device_loss_streak() == 0) {
+      observed_reset = true;
+    }
+  }
+  const bool gave_up = overlay.device_loss_gave_up();
+  const bool gpu_ready = overlay.gpu_ready();
+  const int attempts = overlay.device_loss_attempts();
+  overlay.Stop();
+
+  EXPECT_GE(attempts, 4) << "not all four isolated losses were injected";
+  EXPECT_TRUE(observed_reset)
+      << "the consecutive streak never returned to 0 after a clean present";
+  EXPECT_FALSE(gave_up)
+      << "isolated recoverable losses tripped the budget — the clean-present "
+         "streak reset is broken";
+  EXPECT_TRUE(gpu_ready) << "the stack did not stay live across isolated losses";
+
+  CameraOverlayStyleStore::Instance().SetShape(5);
+}
+
+// Device-loss budget (P4c): back-to-back losses with no clean present between
+// them (5 injected on consecutive draws) must trip the rebuild budget (3).
+// Past it the presenter STOPS rebuilding — gpu_ready() goes false while it
+// stays running, parked on the mid-session-fallback hook that P4c-c3 will act
+// on — instead of thrashing the GPU forever.
+TEST(CameraDcompOverlayPoc, GivesUpRebuildingPastTheBudget) {
+  CameraOverlayGeometryStore::Instance().SetSize(220.0);
+  CameraOverlayGeometryStore::Instance().SetPosition(3);
+  CameraOverlayStyleStore::Instance().SetShape(2);
+  CameraOverlayStyleStore::Instance().SetGlowEnabled(false);
+
+  CameraDcompOverlay::Options options;
+  options.simulate_device_loss_count = 5;  // > kMaxConsecutiveDeviceLosses (3)
+  CameraDcompOverlay overlay(options);
+  FloatingPlacement place;
+  place.x = 100;
+  place.y = 100;
+  place.width = 220;
+  place.height = 220;
+  if (!overlay.Start(place)) {
+    if (::GetDesktopWindow() == nullptr) {
+      GTEST_SKIP() << "no desktop in this session";
+    }
+    FAIL() << "DComp presenter failed to start on this machine";
+  }
+  // Poll for the TERMINAL parked state (device_loss_gave_up), not any transient
+  // gpu_ready==false: the artificial back-to-back losses churn D3D device
+  // creation fast enough that a single rebuild can itself transiently fail and
+  // retry (a legitimate mid-recovery state), so only the give-up flag reliably
+  // marks "spent the budget".
+  const std::vector<std::uint8_t> frame = MagentaFrame(64, 64);
+  const auto deadline =
+      std::chrono::steady_clock::now() + std::chrono::seconds(5);
+  while (std::chrono::steady_clock::now() < deadline) {
+    overlay.PublishBgra(frame.data(), 64, 64);
+    if (overlay.device_loss_gave_up()) {
+      break;
+    }
+    std::this_thread::sleep_for(std::chrono::milliseconds(20));
+  }
+  const bool gave_up = overlay.device_loss_gave_up();
+  const bool running = overlay.running();
+  const bool gpu_ready = overlay.gpu_ready();
+  const int attempts = overlay.device_loss_attempts();
+  overlay.Stop();
+
+  EXPECT_TRUE(gave_up) << "presenter never gave up despite persistent loss "
+                          "(attempts=" << attempts << ")";
+  EXPECT_TRUE(running) << "presenter thread died instead of parking";
+  EXPECT_FALSE(gpu_ready)
+      << "presenter kept the stack live after giving up";
+  // Give-up fires on the attempt AFTER the budget (3) — but retries of a
+  // transiently-failed rebuild also count, so it is at least that many.
+  EXPECT_GE(attempts, 4)
+      << "gave up before spending the rebuild budget, got " << attempts;
+
+  CameraOverlayStyleStore::Instance().SetShape(5);
 }
 
 // P4a sync-tick semantics, exercised HIDDEN (no Show — nothing flashes, runs
@@ -270,17 +469,6 @@ bool PixelProbesArmed() {
   return buffer[0] == '1' && buffer[1] == '\0';
 }
 
-// Solid-color BGRA frame (magenta): B=255 G=0 R=255.
-std::vector<std::uint8_t> MagentaFrame(int w, int h) {
-  std::vector<std::uint8_t> f(static_cast<size_t>(w) * h * 4);
-  for (size_t i = 0; i < f.size(); i += 4) {
-    f[i + 0] = 255;  // B
-    f[i + 1] = 0;    // G
-    f[i + 2] = 255;  // R
-    f[i + 3] = 255;  // A
-  }
-  return f;
-}
 
 // BitBlt the screen region and report whether any sampled pixel is ~magenta.
 bool ScreenRegionHasMagenta(const RECT& rc) {
@@ -437,6 +625,70 @@ TEST(CameraDcompOverlayPoc, RendersOnScreen_NoExclusionProbe) {
   EXPECT_TRUE(RunMagentaProbe(/*apply_exclusion=*/false, nullptr))
       << "the premultiplied DComp window rendered NOTHING on screen — the "
          "hybrid-GPU scar. POC NO-GO.";
+}
+
+// Device-lost rebuild, on screen (P4c): after two simulated device losses the
+// bubble must still put magenta on the composed screen — proving the retained
+// DComp visual re-associates with the rebuilt swapchain (SetContent + Commit),
+// not just that the GPU stack rebuilt headlessly.
+TEST(CameraDcompOverlayPoc, RendersOnScreenAfterDeviceLoss) {
+  if (!PixelProbesArmed()) {
+    GTEST_SKIP() << "set CLINGFY_REQUIRE_PIXEL_TESTS=1 to run the on-screen "
+                    "probe (briefly shows a window)";
+  }
+  auto& geometry = CameraOverlayGeometryStore::Instance();
+  auto& style = CameraOverlayStyleStore::Instance();
+  geometry.SetSize(220.0);
+  geometry.SetCustomPosition(0.5, 0.5);
+  style.SetShape(2);
+  style.SetGlowEnabled(false);
+
+  CameraDcompOverlay::Options options;
+  options.apply_capture_exclusion = false;  // BitBlt must see the window.
+  options.simulate_device_loss_count = 2;
+  CameraDcompOverlay overlay(options);
+  FloatingPlacement place;
+  place.x = 200;
+  place.y = 200;
+  place.width = 220;
+  place.height = 220;
+  if (!overlay.Start(place)) {
+    style.SetShape(5);
+    GTEST_SKIP() << "DComp overlay could not start in this session";
+  }
+  const std::vector<std::uint8_t> frame = MagentaFrame(64, 64);
+  overlay.PublishBgra(frame.data(), 64, 64);
+  overlay.Show();
+
+  HWND hwnd = ::FindWindowW(L"ClingfyCameraDcompOverlay", nullptr);
+  bool magenta_after_recovery = false;
+  if (hwnd != nullptr) {
+    const auto deadline =
+        std::chrono::steady_clock::now() + std::chrono::seconds(8);
+    while (std::chrono::steady_clock::now() < deadline) {
+      overlay.PublishBgra(frame.data(), 64, 64);
+      RECT rc{};
+      // Only accept magenta AFTER both losses were handled and the stack came
+      // back, so a stale pre-loss frame can't produce a false pass.
+      if (overlay.device_loss_attempts() >= 2 && overlay.gpu_ready() &&
+          ::GetWindowRect(hwnd, &rc) != 0 && ScreenRegionHasMagenta(rc)) {
+        magenta_after_recovery = true;
+        break;
+      }
+      std::this_thread::sleep_for(std::chrono::milliseconds(60));
+    }
+  }
+  overlay.Hide();
+  overlay.Stop();
+  style.SetShape(5);
+  geometry.SetSize(220.0);
+  geometry.SetPosition(3);
+
+  ASSERT_NE(hwnd, nullptr);
+  EXPECT_TRUE(magenta_after_recovery)
+      << "the bubble did not render on screen after the device-lost rebuild — "
+         "the retained DComp visual failed to re-associate with the new "
+         "swapchain";
 }
 
 TEST(CameraDcompOverlayPoc, ExcludedFromScreenCapture) {
