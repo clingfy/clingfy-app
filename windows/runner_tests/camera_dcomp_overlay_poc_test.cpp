@@ -847,27 +847,31 @@ TEST(CameraDcompOverlayPoc, GlowRingPulsesOnTheLiveBubble) {
     }
     return std::pair<int, int>(x, y);
   };
-  const int row_l = walk(seed_x, seed_y, -1, 0).first;
-  const int row_r = walk(seed_x, seed_y, 1, 0).first;
-  const int mid_x = (row_l + row_r) / 2;
-  const int col_t = walk(mid_x, seed_y, 0, -1).second;
-  const int col_b = walk(mid_x, seed_y, 0, 1).second;
-  const int mid_y = (col_t + col_b) / 2;
-  const int magenta_l = walk(mid_x, mid_y, -1, 0).first;
-  const int ring_x = magenta_l - 6;  // inside the red stroke band
+  auto locate_ring = [&](int* out_mid_x, int* out_mid_y, int* out_ring_x) {
+    const int rl = walk(seed_x, seed_y, -1, 0).first;
+    const int rr = walk(seed_x, seed_y, 1, 0).first;
+    const int mx = (rl + rr) / 2;
+    const int ct = walk(mx, seed_y, 0, -1).second;
+    const int cb = walk(mx, seed_y, 0, 1).second;
+    const int my = (ct + cb) / 2;
+    const int ml = walk(mx, my, -1, 0).first;
+    *out_mid_x = mx;
+    *out_mid_y = my;
+    *out_ring_x = ml - 6;  // 6 px into the red stroke band, outside the camera
+  };
+  int mid_x = 0, mid_y = 0, ring_x = 0;
+  locate_ring(&mid_x, &mid_y, &ring_x);
 
-  // Sample the pulse for ~2 s (s=1.0 -> full period 1.2 s): the ring's blue
-  // channel must swing while the bubble center holds steady.
+  // Sample the pulse for ~2 s (s=1.0 -> full period 1.2 s) WITHOUT publishing
+  // any frames: the ring's blue channel may only swing if the tick redraws on
+  // its own (the "pulse animates even when camera frames stall" invariant). A
+  // publish here would drive the redraw and mask a regression that deletes the
+  // tick-driven needs_draw.
   int ring_b_min = 255, ring_b_max = 0, ring_r_sum = 0, samples = 0;
   int cam_b_min = 255, cam_b_max = 0;
   const auto pulse_deadline =
       std::chrono::steady_clock::now() + std::chrono::milliseconds(2000);
-  auto next_publish = std::chrono::steady_clock::now();
   while (std::chrono::steady_clock::now() < pulse_deadline) {
-    if (std::chrono::steady_clock::now() >= next_publish) {
-      overlay.PublishBgra(frame.data(), 64, 64);
-      next_publish += std::chrono::milliseconds(66);
-    }
     const AvgColor ring = ScreenPatchAvg(ring_x, mid_y, 2, 2);
     const AvgColor cam = ScreenPatchAvg(mid_x, mid_y, 2, 2);
     ring_b_min = (std::min)(ring_b_min, ring.b);
@@ -883,7 +887,20 @@ TEST(CameraDcompOverlayPoc, GlowRingPulsesOnTheLiveBubble) {
             << " cam b=[" << cam_b_min << "," << cam_b_max << "] samples="
             << samples << std::endl;
 
-  // Disabling the glow must shrink the window (padding 68 -> 12).
+  // Re-bake wiring: switch the shape mid-glow (square -> circle). The ring must
+  // follow the new silhouette through PrepareGlow's re-bake on the style
+  // revision; a cache that only re-bakes on glow-field changes would leave the
+  // stale square ring. A circle inscribed in the 220 square touches the edge
+  // midpoints, so at mid-height the ring band sits at the same ring_x.
+  overlay.PublishBgra(frame.data(), 64, 64);  // keep a fresh camera frame
+  style.SetShape(0);
+  std::this_thread::sleep_for(std::chrono::milliseconds(400));
+  const AvgColor ring_after_shape =
+      ScreenPatchAvg(ring_x, mid_y, 2, 2);
+
+  // Disabling the glow must shrink the window (padding 68 -> 12) AND remove the
+  // ring from the composed screen — the window shrink alone is store-driven and
+  // would pass even if the presenter kept drawing a stale ring.
   style.SetGlowEnabled(false);
   bool shrank = false;
   RECT small_rc{};
@@ -897,16 +914,31 @@ TEST(CameraDcompOverlayPoc, GlowRingPulsesOnTheLiveBubble) {
     }
     std::this_thread::sleep_for(std::chrono::milliseconds(25));
   }
+  // Content stays centered on the same custom point at both paddings, so the
+  // former ring band maps to the same screen pixel — now outside the content
+  // with no ring, it must read NOT red.
+  std::this_thread::sleep_for(std::chrono::milliseconds(150));
+  const AvgColor ring_after_disable = ScreenPatchAvg(ring_x, mid_y, 2, 2);
   cleanup();
 
   EXPECT_GT(ring_r_sum / (std::max)(1, samples), 150)
       << "the ring band is not red — glow ring missing";
   EXPECT_GT(ring_b_max - ring_b_min, 25)
-      << "the ring's blue channel did not swing — glow is not pulsing";
+      << "the ring's blue channel did not swing without frame publishes — the "
+         "tick-driven pulse redraw is broken";
   EXPECT_LT(cam_b_max - cam_b_min, 20)
       << "the bubble interior is unstable — probe aim suspect";
+  EXPECT_GT(ring_after_shape.r, 150)
+      << "no red ring after the shape change — glow was not re-baked for the "
+         "new silhouette (r=" << ring_after_shape.r << ")";
   EXPECT_TRUE(shrank) << "disabling the glow did not shrink the window "
                          "(width=" << (small_rc.right - small_rc.left) << ")";
+  EXPECT_FALSE(ring_after_disable.r > 90 &&
+               ring_after_disable.r > 2 * ring_after_disable.g &&
+               ring_after_disable.r > 2 * ring_after_disable.b)
+      << "the ring is still on screen after the glow was disabled (r="
+      << ring_after_disable.r << " g=" << ring_after_disable.g << " b="
+      << ring_after_disable.b << ")";
 }
 
 // GDI presenter border integrity: the bubble used to paint camera then border

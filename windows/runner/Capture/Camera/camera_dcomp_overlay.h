@@ -166,6 +166,10 @@ class CameraDcompOverlay : public ICameraOverlayPresenter {
   Microsoft::WRL::ComPtr<ID2D1Bitmap1> glow_bitmap_;
   D2D1_RECT_F glow_dest_{};
   bool glow_active_ = false;
+  // Enabled-but-bake-failed: retried every tick (the enabling revision is
+  // already consumed) so a transient GPU failure cannot blank the ring.
+  bool glow_bake_failed_ = false;
+  bool glow_bake_failed_logged_ = false;
   double glow_strength_ = 0.70;
   std::chrono::steady_clock::time_point glow_epoch_{};
   std::uint64_t last_style_revision_ = ~0ull;   // force first sync

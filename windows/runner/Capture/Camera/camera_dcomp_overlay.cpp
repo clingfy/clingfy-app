@@ -263,6 +263,7 @@ void CameraDcompOverlay::ReleaseGpuStack() {
   painter_ready_ = false;
   glow_bitmap_.Reset();
   glow_active_ = false;
+  glow_bake_failed_ = false;
   camera_bitmap_.Reset();
   target_bitmap_.Reset();
   if (d2d_ctx_ != nullptr) {
@@ -457,9 +458,11 @@ void CameraDcompOverlay::PrepareGlow(int content_side, int padding_px) {
   if (!snap.glow_enabled) {
     glow_bitmap_.Reset();
     glow_active_ = false;
+    glow_bake_failed_ = false;
     return;
   }
   const bool was_active = glow_active_;
+  const double prev_strength = glow_strength_;
   const ResolvedBubbleStyle resolved = ResolveOverlayBubbleStyle(snap);
   glow_bitmap_ = BakeCameraGlowBitmap(
       d2d_factory_.Get(), d2d_ctx_.Get(), resolved.shape,
@@ -469,10 +472,29 @@ void CameraDcompOverlay::PrepareGlow(int content_side, int padding_px) {
   glow_strength_ = snap.glow_strength;
   const float dim = static_cast<float>(content_side + 2 * padding_px);
   glow_dest_ = D2D1::RectF(0.0f, 0.0f, dim, dim);
-  if (glow_active_ && !was_active) {
-    // Phase origin: the pulse starts at its LOW value when the glow turns on
-    // (macOS fromValue semantics).
+  if (glow_active_ &&
+      (!was_active || snap.glow_strength != prev_strength)) {
+    // Phase origin: the pulse (re)starts at its LOW value when the glow turns
+    // on AND on every strength change — macOS re-adds the CABasicAnimation
+    // from its fromValue in both cases. Recomputing the phase against a stale
+    // epoch with the new strength-dependent period would teleport the opacity
+    // to an arbitrary point of the waveform on every slider tick. Shape or
+    // size re-bakes with the same strength keep the phase (macOS only swaps
+    // the layer path there).
     glow_epoch_ = std::chrono::steady_clock::now();
+  }
+  // A transiently failed bake must not blank the recording ring for the whole
+  // session: the style revision is already consumed by the caller, so flag a
+  // per-tick retry, and say so in the field log (the painter-Prepare parity).
+  glow_bake_failed_ = !glow_active_;
+  if (glow_bake_failed_ && !glow_bake_failed_logged_) {
+    glow_bake_failed_logged_ = true;
+    char b[96];
+    std::snprintf(b, sizeof(b),
+                  "CameraDcompOverlay: glow bake FAILED (content=%d pad=%d "
+                  "shape=%s) — retrying per tick",
+                  content_side, padding_px, resolved.shape.c_str());
+    clingfy::bridge::devices::LogDeviceProbe(b);
   }
 }
 
@@ -631,6 +653,11 @@ void CameraDcompOverlay::SyncAndRender(HWND hwnd) {
   if (needs_prepare && prepared_cam_w_ > 0) {
     painter_ready_ =
         PreparePainter(prepared_content_side_, prepared_padding_px_);
+    PrepareGlow(prepared_content_side_, prepared_padding_px_);
+  } else if (glow_bake_failed_ && prepared_cam_w_ > 0) {
+    // The revision that enabled the glow is consumed; keep retrying the bake
+    // until it succeeds (or the glow is disabled) so a transient GPU hiccup
+    // cannot blank the recording ring for the whole session.
     PrepareGlow(prepared_content_side_, prepared_padding_px_);
   }
   // An active glow pulses: redraw every tick while visible so the animation

@@ -530,6 +530,64 @@ TEST(CameraBubbleBorderPixelTest, GlowBakeRendersRingAndHaloNotInterior) {
       << "glow tints the bubble interior: " << DumpPx(center);
 }
 
+// Pins that the parity table's stroke_alpha vs halo_alpha are applied to the
+// RIGHT elements — at strength 1.0 they are 1.0 vs 0.90 and boolean predicates
+// can't tell a swap apart. At strength 0.10 they are 0.64 (stroke) vs 0.342
+// (halo), widely separated: the ring stroke's premultiplied red core reads
+// ~163 correct but ~87 if the halo alpha were applied to it (below the LooksRed
+// floor), and the halo stays well under the stroke.
+TEST(CameraBubbleBorderPixelTest, GlowBakeAppliesStrokeAndHaloAlphasNotSwapped) {
+  HeadlessRig rig;
+  const std::string err = rig.Create(/*use_swapchain_target=*/false);
+  if (!err.empty()) SKIP_OR_FAIL(err);
+
+  constexpr int kPad = 40;
+  constexpr int kContent = kSide - 2 * kPad;  // 140
+  // strength 0.10: lineWidth 3.7, stroke alpha 0.64, halo radius 8 (stddev 4),
+  // halo alpha 0.342.
+  const ComPtr<ID2D1Bitmap1> glow = clingfy::capture::BakeCameraGlowBitmap(
+      rig.factory.Get(), rig.ctx.Get(), "square", /*corner_radius=*/0.0,
+      kContent, kPad, /*strength=*/0.10);
+  rig.ctx->SetTarget(rig.target_bitmap.Get());
+  ASSERT_NE(glow, nullptr) << "glow bake soft-failed on a working device";
+
+  rig.ctx->BeginDraw();
+  rig.ctx->Clear(D2D1::ColorF(0.0f, 0.0f, 0.0f, 0.0f));
+  rig.ctx->DrawBitmap(glow.Get(),
+                      D2D1::RectF(0.0f, 0.0f, static_cast<float>(kSide),
+                                  static_cast<float>(kSide)),
+                      1.0f, D2D1_BITMAP_INTERPOLATION_MODE_LINEAR, nullptr);
+  ASSERT_HRESULT_SUCCEEDED(rig.ctx->EndDraw());
+  rig.d3d_ctx->Flush();
+  std::vector<std::uint32_t> px;
+  ASSERT_TRUE(rig.ReadTarget(&px));
+
+  // Stroke core: scan across the 3.7 px stroke band at the content's left edge
+  // (square shape -> straight vertical stroke at mid-height) for its reddest
+  // pixel. Correct stroke alpha 0.64 -> premultiplied r ~163; a swap to 0.342
+  // -> ~87.
+  int ring_r = 0;
+  for (int x = kPad - 1; x <= kPad + 5; ++x) {
+    ring_r = (std::max)(ring_r, Chan(At(px, x, kSide / 2), 16));
+  }
+  EXPECT_GT(ring_r, 120)
+      << "ring stroke too dim for stroke_alpha 0.64 — halo alpha applied to "
+         "the stroke? (r=" << ring_r << ")";
+  EXPECT_LT(ring_r, 210)
+      << "ring stroke brighter than stroke_alpha 0.64 allows (r=" << ring_r
+      << ")";
+
+  // Halo peak just outside the content: driven by halo_alpha 0.342 on the
+  // blurred stroke, it must stay clearly below the stroke core.
+  int halo_r = 0;
+  for (int x = kPad - 8; x <= kPad - 3; ++x) {
+    halo_r = (std::max)(halo_r, Chan(At(px, x, kSide / 2), 16));
+  }
+  EXPECT_LT(halo_r, ring_r - 20)
+      << "halo is not dimmer than the stroke — alphas may be swapped (halo_r="
+      << halo_r << " ring_r=" << ring_r << ")";
+}
+
 // The painter uses ONE ID2D1Geometry both as the PushLayer mask and as the
 // DrawGeometry stroke source in the same frame. Geometries are immutable and
 // this is documented-legal; this micro-case pins it independently of the
