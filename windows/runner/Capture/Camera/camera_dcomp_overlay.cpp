@@ -7,6 +7,7 @@
 #include <utility>
 
 #include "Bridge/Devices/device_probe_log.h"
+#include "Capture/Camera/camera_dcomp_device_loss.h"
 #include "Capture/Camera/camera_overlay_drag.h"
 #include "Capture/Camera/camera_overlay_geometry_store.h"
 #include "Capture/Camera/camera_overlay_glow.h"
@@ -22,6 +23,10 @@ using Microsoft::WRL::ComPtr;
 constexpr wchar_t kWindowClassName[] = L"ClingfyCameraDcompOverlay";
 constexpr UINT_PTR kTickTimerId = 1;
 constexpr UINT kTickIntervalMs = 33;  // ~30 fps sync/redraw.
+// After this many back-to-back device losses the in-place rebuild is judged
+// futile (a wedged adapter, not a one-off TDR) and the presenter stops trying,
+// logging the hook the mid-session GDI fallback (P4c-c3) will act on.
+constexpr int kMaxConsecutiveDeviceLosses = 3;
 constexpr UINT kMsgShow = WM_APP + 1;
 constexpr UINT kMsgHide = WM_APP + 2;
 
@@ -211,22 +216,7 @@ void CameraDcompOverlay::ThreadMain(FloatingPlacement placement,
   prepared_content_side_ = placed.content_side;
   prepared_padding_px_ = placed.padding_px;
 
-  if (options_.apply_capture_exclusion) {
-    const BOOL excluded =
-        ::SetWindowDisplayAffinity(hwnd, WDA_EXCLUDEFROMCAPTURE);
-    wda_excluded_.store(excluded != 0);
-    if (excluded == 0) {
-      // Documented Win11 defect (ChangeWindowTreeProtection) hits exactly
-      // this call, disproportionately on DComp windows — the factory reacts
-      // by falling back to the GDI presenter.
-      char b[96];
-      std::snprintf(b, sizeof(b),
-                    "CameraDcompOverlay: WDA_EXCLUDEFROMCAPTURE FAILED "
-                    "(gle=%lu)",
-                    ::GetLastError());
-      clingfy::bridge::devices::LogDeviceProbe(b);
-    }
-  }
+  ApplyCaptureExclusion(hwnd);
 
   {
     char b[176];
@@ -240,6 +230,7 @@ void CameraDcompOverlay::ThreadMain(FloatingPlacement placement,
   }
 
   hwnd_.store(hwnd);
+  simulated_device_losses_remaining_ = options_.simulate_device_loss_count;
   ::SetTimer(hwnd, kTickTimerId, kTickIntervalMs, nullptr);
   running_.store(true);
   ready->set_value(true);  // created HIDDEN — engine Show()s on demand.
@@ -256,6 +247,78 @@ void CameraDcompOverlay::ThreadMain(FloatingPlacement placement,
   // Release the GPU stack on the thread that created it, then the window.
   ReleaseGpuStack();
   ::DestroyWindow(hwnd);
+}
+
+void CameraDcompOverlay::ApplyCaptureExclusion(HWND hwnd) {
+  if (!options_.apply_capture_exclusion) {
+    return;
+  }
+  const BOOL excluded = ::SetWindowDisplayAffinity(hwnd, WDA_EXCLUDEFROMCAPTURE);
+  wda_excluded_.store(excluded != 0);
+  if (excluded == 0) {
+    // Documented Win11 defect (ChangeWindowTreeProtection) hits exactly this
+    // call, disproportionately on DComp windows — the factory reacts by
+    // falling back to the GDI presenter.
+    char b[96];
+    std::snprintf(b, sizeof(b),
+                  "CameraDcompOverlay: WDA_EXCLUDEFROMCAPTURE FAILED (gle=%lu)",
+                  ::GetLastError());
+    clingfy::bridge::devices::LogDeviceProbe(b);
+  }
+}
+
+void CameraDcompOverlay::ReleaseRenderResources() {
+  painter_ = CameraBubblePainter();
+  painter_ready_ = false;
+  glow_bitmap_.Reset();
+  glow_active_ = false;
+  glow_bake_failed_ = false;
+  camera_bitmap_.Reset();
+  target_bitmap_.Reset();
+  if (d2d_ctx_ != nullptr) {
+    d2d_ctx_->SetTarget(nullptr);
+  }
+  d2d_ctx_.Reset();
+  d2d_device_.Reset();
+  d2d_factory_.Reset();
+  swapchain_.Reset();
+  d3d_device_.Reset();
+  gpu_ready_.store(false);
+}
+
+bool CameraDcompOverlay::RebuildGpuStack(HWND hwnd) {
+  // Device-lost recovery: rebuild ONLY the D3D-bound render resources and
+  // re-point the RETAINED DComp visual at the fresh swapchain. Recreating the
+  // DComp target instead (CreateTargetForHwnd) is unreliable — a target is
+  // keyed to the HWND and the old one may still be composed when the new call
+  // runs, so it intermittently fails. WDA affinity is a window property and
+  // survives untouched, so it is not re-applied here.
+  ReleaseRenderResources();
+  if (!BuildRenderResources(prepared_window_side_, prepared_window_side_)) {
+    return false;
+  }
+  if (dcomp_visual_ == nullptr || dcomp_device_ == nullptr ||
+      FAILED(dcomp_visual_->SetContent(swapchain_.Get())) ||
+      FAILED(dcomp_device_->Commit())) {
+    return false;
+  }
+  gpu_ready_.store(true);
+  // A rebuilt stack has no painter, no glow, and a null camera bitmap. Force
+  // the next tick to re-Prepare (both revisions look new) and re-upload the
+  // last frame (mark the mailbox dirty; prepared_cam_* cleared so the bitmap
+  // is recreated at the current dims).
+  painter_ready_ = false;
+  prepared_cam_w_ = 0;
+  prepared_cam_h_ = 0;
+  last_style_revision_ = ~0ull;
+  last_geometry_revision_ = ~0ull;
+  render_failed_logged_ = false;
+  first_present_logged_ = false;
+  {
+    std::lock_guard<std::mutex> lock(frame_mutex_);
+    dirty_ = frame_w_ > 0 && frame_h_ > 0;
+  }
+  return true;
 }
 
 void CameraDcompOverlay::ReleaseGpuStack() {
@@ -280,7 +343,7 @@ void CameraDcompOverlay::ReleaseGpuStack() {
   gpu_ready_.store(false);
 }
 
-bool CameraDcompOverlay::BuildGpuStack(HWND hwnd, int width, int height) {
+bool CameraDcompOverlay::BuildRenderResources(int width, int height) {
   // D3D11 device on the DEFAULT adapter (hybrid-GPU guidance: let DWM own the
   // cross-adapter hand-off), BGRA support for D2D interop. WARP fallback keeps
   // the stack alive on driver-less boxes.
@@ -348,13 +411,22 @@ bool CameraDcompOverlay::BuildGpuStack(HWND hwnd, int width, int height) {
   // pixels via ComputeSquareFloatingRect's dpi scale.
   d2d_ctx_->SetDpi(96.0f, 96.0f);
 
-  if (!ResizeSwapchain(width, height)) {
+  return ResizeSwapchain(width, height);
+}
+
+bool CameraDcompOverlay::BuildGpuStack(HWND hwnd, int width, int height) {
+  if (!BuildRenderResources(width, height)) {
+    return false;
+  }
+  ComPtr<IDXGIDevice> dxgi_device;
+  if (FAILED(d3d_device_.As(&dxgi_device))) {
     return false;
   }
 
   // DComp: device -> target(hwnd, topmost) -> visual(swapchain) -> commit.
-  // Committed ONCE — per-frame updates are swapchain Presents, not visual-tree
-  // changes.
+  // Created ONCE per window and RETAINED across device-lost rebuilds — a
+  // composition target is keyed to the HWND and CreateTargetForHwnd cannot run
+  // twice for one window, so the rebuild re-SetContents this visual instead.
   if (FAILED(::DCompositionCreateDevice(
           dxgi_device.Get(), IID_PPV_ARGS(dcomp_device_.GetAddressOf())))) {
     return false;
@@ -544,6 +616,12 @@ void CameraDcompOverlay::UpdateHaloClickThrough(HWND hwnd) {
 
 void CameraDcompOverlay::SyncAndRender(HWND hwnd) {
   if (!gpu_ready_.load()) {
+    // The stack is down after a device loss; keep retrying the rebuild here
+    // (the draw path can't, it never runs without gpu_ready_) until it
+    // succeeds or the budget is spent and the fallback hook fires.
+    if (device_loss_retry_pending_ && !device_loss_gave_up_) {
+      AttemptDeviceLossRecovery(hwnd, "retry");
+    }
     return;
   }
   UpdateHaloClickThrough(hwnd);
@@ -685,20 +763,36 @@ void CameraDcompOverlay::SyncAndRender(HWND hwnd) {
         static_cast<float>(CameraGlowPulseOpacity(glow_strength_, elapsed)),
         D2D1_BITMAP_INTERPOLATION_MODE_LINEAR, nullptr);
   }
-  const HRESULT hr = d2d_ctx_->EndDraw();
+  HRESULT hr = d2d_ctx_->EndDraw();
+  // Test fault injection (P4c): pretend this frame hit device loss so the
+  // rebuild path is exercised without real GPU removal.
+  if (SUCCEEDED(hr) && simulated_device_losses_remaining_ > 0) {
+    --simulated_device_losses_remaining_;
+    hr = DXGI_ERROR_DEVICE_REMOVED;
+  }
   if (FAILED(hr)) {
-    if (!render_failed_logged_) {
+    if (IsDeviceLostHResult(hr)) {
+      AttemptDeviceLossRecovery(hwnd, "EndDraw");
+    } else if (!render_failed_logged_) {
       render_failed_logged_ = true;
       char b[96];
       std::snprintf(b, sizeof(b),
-                    "CameraDcompOverlay: EndDraw failed hr=0x%08lX "
-                    "(device-lost rebuild lands in P4)",
+                    "CameraDcompOverlay: EndDraw failed hr=0x%08lX (not device "
+                    "loss — no rebuild)",
                     static_cast<unsigned long>(hr));
       clingfy::bridge::devices::LogDeviceProbe(b);
     }
     return;
   }
   const HRESULT present_hr = swapchain_->Present(0, 0);
+  if (FAILED(present_hr)) {
+    if (IsDeviceLostHResult(present_hr)) {
+      AttemptDeviceLossRecovery(hwnd, "Present");
+    }
+    return;
+  }
+  // A clean present clears the device-loss streak — an isolated TDR recovered.
+  consecutive_device_losses_ = 0;
   if (!first_present_logged_) {
     first_present_logged_ = true;
     char b[112];
@@ -709,6 +803,45 @@ void CameraDcompOverlay::SyncAndRender(HWND hwnd) {
                   prepared_cam_w_, prepared_cam_h_);
     clingfy::bridge::devices::LogDeviceProbe(b);
   }
+}
+
+void CameraDcompOverlay::AttemptDeviceLossRecovery(HWND hwnd,
+                                                   const char* where) {
+  device_loss_retry_pending_ = false;
+  ++consecutive_device_losses_;
+  ++total_device_losses_;
+  {
+    char b[144];
+    std::snprintf(b, sizeof(b),
+                  "CameraDcompOverlay: device loss at %s (attempt=%d) — "
+                  "rebuilding GPU stack",
+                  where, consecutive_device_losses_);
+    clingfy::bridge::devices::LogDeviceProbe(b);
+  }
+  if (consecutive_device_losses_ > kMaxConsecutiveDeviceLosses) {
+    // The adapter is wedged, not recovering from an isolated TDR. Stop
+    // rebuilding and PARK: drop the render stack so no tick draws against it,
+    // keeping the thread alive for the mid-session GDI fallback (P4c-c3).
+    device_loss_gave_up_ = true;
+    ReleaseRenderResources();  // sets gpu_ready_ false
+    if (!device_loss_fallback_logged_) {
+      device_loss_fallback_logged_ = true;
+      clingfy::bridge::devices::LogDeviceProbe(
+          "CameraDcompOverlay: device loss persists past the rebuild budget — "
+          "mid-session GDI fallback lands in P4c-c3");
+    }
+    return;
+  }
+  if (RebuildGpuStack(hwnd)) {
+    return;  // gpu_ready_ is true again; the next tick draws a fresh frame.
+  }
+  // The rebuild itself failed (gpu_ready_ false via ReleaseGpuStack). Arm a
+  // retry: the tick top re-enters this path next WM_TIMER until it succeeds or
+  // the budget is spent.
+  device_loss_retry_pending_ = true;
+  clingfy::bridge::devices::LogDeviceProbe(
+      "CameraDcompOverlay: GPU stack rebuild FAILED after device loss — "
+      "retrying next tick");
 }
 
 void CameraDcompOverlay::Show() {
