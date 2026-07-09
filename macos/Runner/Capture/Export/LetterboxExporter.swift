@@ -134,19 +134,26 @@ final class LetterboxExporter {
     temporaryArtifacts.removeAll()
   }
 
-  /// Runs the speaker→mic bleed canceller and returns the URL of the cleaned mic
-  /// to mix, or the original `micAudioURL` when there is nothing to cancel (no
-  /// system reference, no measurable bleed) or the canceller fails. The cleaned
-  /// file is registered for cleanup so it is swept with the other temp artifacts.
-  private func echoCancelledMicURL(micAudioURL: URL?, systemAudioURL: URL?) -> URL? {
+  /// Runs the speaker→mic bleed canceller — through the per-project
+  /// `CleanedMicCache`, so an export after a preview open (or a re-export)
+  /// reuses the cleaned mic instead of recomputing it — and returns the URL of
+  /// the cleaned mic to mix, or the original `micAudioURL` when there is
+  /// nothing to cancel (no system reference, no measurable bleed) or the
+  /// canceller fails. Only a caller-owned temp file (cache unavailable) is
+  /// registered for cleanup: the cache-owned file in the project's `derived/`
+  /// must survive this export for the next preview/export to reuse.
+  private func echoCancelledMicURL(
+    micAudioURL: URL?, systemAudioURL: URL?, projectRoot: URL
+  ) -> URL? {
     guard let micAudioURL, let systemAudioURL else { return micAudioURL }
-    let tempRoot = AppPaths.tempRoot()
-    try? FileManager.default.createDirectory(at: tempRoot, withIntermediateDirectories: true)
     do {
-      let result = try MicEchoCanceller.cancel(
-        micURL: micAudioURL, systemURL: systemAudioURL, outputDirectory: tempRoot)
+      let outcome = try CleanedMicCache.shared.outcome(
+        micURL: micAudioURL, systemURL: systemAudioURL, projectRoot: projectRoot)
+      let result = outcome.result
       if result.applied {
-        registerTemporaryArtifact(result.cleanedMicURL)
+        if !outcome.cacheOwned {
+          registerTemporaryArtifact(result.cleanedMicURL)
+        }
         NativeLogger.i(
           "Export", "Cancelled speaker→mic bleed from the microphone",
           context: [
@@ -154,6 +161,7 @@ final class LetterboxExporter {
             "delayMs": result.delayMs,
             "reductionDb": result.reductionDb,
             "cleanedMic": result.cleanedMicURL.lastPathComponent,
+            "fromCache": outcome.fromCache,
           ])
       } else {
         NativeLogger.d(
@@ -161,6 +169,7 @@ final class LetterboxExporter {
           context: [
             "bleedCorrelation": result.bleedCorrelation,
             "delayMs": result.delayMs,
+            "fromCache": outcome.fromCache,
           ])
       }
       return result.cleanedMicURL
@@ -2694,7 +2703,8 @@ final class LetterboxExporter {
     // silent mic, or no system audio — and degrades to the raw mic on any error.
     let micAudioURLForMix = echoCancelledMicURL(
       micAudioURL: mediaSources.micAudioURL,
-      systemAudioURL: mediaSources.systemAudioURL
+      systemAudioURL: mediaSources.systemAudioURL,
+      projectRoot: project.rootURL
     )
     var separatedMicAsset = Self.readableAudioAsset(url: micAudioURLForMix)
     let separatedSystemAsset = Self.readableAudioAsset(url: mediaSources.systemAudioURL)
