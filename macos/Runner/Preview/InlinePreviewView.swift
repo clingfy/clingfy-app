@@ -2809,12 +2809,29 @@ final class InlinePreviewView: NSView {
     )
   }
 
+  #if DEBUG
+    /// Test seam: forces the reduce-motion decision for placement transitions so
+    /// tests are deterministic regardless of the host's accessibility state.
+    /// Headless CI reports reduce-motion ENABLED, which collapses every preview
+    /// placement transition to 0 s (leaving no `cameraPreviewTransitionState`), so
+    /// a test asserting the retargeted transition mode passes locally but fails in
+    /// CI. `nil` (the default) keeps the real `NSWorkspace` read in every build.
+    var reduceMotionOverrideForTesting: Bool?
+  #endif
+
   private func cameraPreviewTransitionDuration(
     for mode: CameraPreviewTransitionMode
   ) -> CFTimeInterval {
-    CameraPreviewPlacementAnimator.resolvedDuration(
+    #if DEBUG
+      let reduceMotionEnabled =
+        reduceMotionOverrideForTesting
+        ?? NSWorkspace.shared.accessibilityDisplayShouldReduceMotion
+    #else
+      let reduceMotionEnabled = NSWorkspace.shared.accessibilityDisplayShouldReduceMotion
+    #endif
+    return CameraPreviewPlacementAnimator.resolvedDuration(
       for: mode,
-      reduceMotionEnabled: NSWorkspace.shared.accessibilityDisplayShouldReduceMotion
+      reduceMotionEnabled: reduceMotionEnabled
     )
   }
 
