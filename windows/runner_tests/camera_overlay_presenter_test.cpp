@@ -1,8 +1,9 @@
-// Presenter selection (renderer redesign P2). The factory is the seam where
-// P3's DirectComposition attempt (with GDI fallback) plugs in; today it must
-// deterministically hand back the shipping GDI presenter — with and without
-// the support kill switch — so the engine's behavior is unchanged by the
-// refactor.
+// Presenter selection (renderer redesign P2 seam; P4d default flip). The
+// factory now hands back the DirectComposition presenter by DEFAULT; the
+// CLINGFY_FORCE_GDI_OVERLAY kill switch pins the safe-mode GDI presenter, and
+// the start-time ladder falls back to GDI when the DComp presenter cannot
+// start, loses capture exclusion, or fails its render self-check. These tests
+// pin every rung.
 
 #include "Capture/Camera/camera_overlay_presenter.h"
 
@@ -16,22 +17,27 @@
 namespace clingfy::capture {
 namespace {
 
-// Every selection test starts from a clean slate: a developer dogfooding the
-// DComp opt-in (CLINGFY_OVERLAY_DCOMP exported in their shell) must still get
-// green factory tests when running the standard ctest validation.
+// Every selection test starts from a clean slate: a developer with any of these
+// switches exported in their shell (the retired CLINGFY_OVERLAY_DCOMP opt-in, a
+// fault-injection hook) must still get green factory tests when running the
+// standard ctest validation.
 void ClearSelectionEnv() {
   ::SetEnvironmentVariableW(L"CLINGFY_FORCE_GDI_OVERLAY", nullptr);
   ::SetEnvironmentVariableW(L"CLINGFY_OVERLAY_DCOMP", nullptr);
   ::SetEnvironmentVariableW(L"CLINGFY_TEST_DCOMP_WDA_FAIL", nullptr);
+  ::SetEnvironmentVariableW(L"CLINGFY_TEST_DCOMP_RENDER_NOTHING", nullptr);
 }
 
-TEST(CameraOverlayPresenterFactory, DefaultSelectionIsTheGdiPresenter) {
+TEST(CameraOverlayPresenterFactory, DefaultSelectionIsTheDcompPresenter) {
+  // P4d flip: with no switches set, the factory selects DirectComposition —
+  // the full-style live bubble is now what every Windows user gets.
   ClearSelectionEnv();
   const std::shared_ptr<ICameraOverlayPresenter> p =
       CreateCameraOverlayPresenter();
+  ClearSelectionEnv();
   ASSERT_NE(p, nullptr);
-  EXPECT_NE(dynamic_cast<CameraFloatingOverlay*>(p.get()), nullptr);
-  EXPECT_FALSE(p->running());  // constructed, not started.
+  EXPECT_NE(dynamic_cast<CameraDcompOverlay*>(p.get()), nullptr);
+  EXPECT_FALSE(p->running());  // constructed, not started — no GPU touched.
 }
 
 TEST(CameraOverlayPresenterFactory, KillSwitchStillYieldsTheGdiPresenter) {
@@ -44,7 +50,10 @@ TEST(CameraOverlayPresenterFactory, KillSwitchStillYieldsTheGdiPresenter) {
   EXPECT_NE(dynamic_cast<CameraFloatingOverlay*>(p.get()), nullptr);
 }
 
-TEST(CameraOverlayPresenterFactory, DcompOptInSelectsTheDcompPresenter) {
+TEST(CameraOverlayPresenterFactory, RetiredDcompOptInHasNoEffect) {
+  // The CLINGFY_OVERLAY_DCOMP opt-in is retired now that DComp is the default.
+  // A shell that still exports it must behave exactly like the default (DComp),
+  // not regress or select something else — a guard for dogfooders who set it.
   ClearSelectionEnv();
   ::SetEnvironmentVariableW(L"CLINGFY_OVERLAY_DCOMP", L"1");
   const std::shared_ptr<ICameraOverlayPresenter> p =
@@ -52,15 +61,14 @@ TEST(CameraOverlayPresenterFactory, DcompOptInSelectsTheDcompPresenter) {
   ClearSelectionEnv();
   ASSERT_NE(p, nullptr);
   EXPECT_NE(dynamic_cast<CameraDcompOverlay*>(p.get()), nullptr);
-  EXPECT_FALSE(p->running());  // constructed, not started — no GPU touched.
 }
 
-TEST(CameraOverlayPresenterFactory, KillSwitchBeatsDcompOptIn) {
-  // The one guarantee that makes shipping the opt-in safe: the support kill
-  // switch wins over the DComp opt-in, whatever else is set.
+TEST(CameraOverlayPresenterFactory, KillSwitchBeatsTheDefault) {
+  // The one guarantee that makes shipping the DComp default safe: the support
+  // kill switch wins over the default, whatever else is set.
   ClearSelectionEnv();
   ::SetEnvironmentVariableW(L"CLINGFY_FORCE_GDI_OVERLAY", L"1");
-  ::SetEnvironmentVariableW(L"CLINGFY_OVERLAY_DCOMP", L"1");
+  ::SetEnvironmentVariableW(L"CLINGFY_OVERLAY_DCOMP", L"1");  // retired; ignored.
   const std::shared_ptr<ICameraOverlayPresenter> p =
       CreateCameraOverlayPresenter();
   ClearSelectionEnv();
@@ -75,8 +83,8 @@ TEST(CameraOverlayPresenterFactory, KillSwitchBeatsDcompOptIn) {
 // the afflicted-hardware Win11 defect. Real windows + real GPU stack; skips
 // only when this session cannot create any overlay at all.
 TEST(CameraOverlayPresenterFactory, LadderFallsBackToGdiWhenDcompLosesExclusion) {
+  // DComp is the default now, so no opt-in is needed — only the WDA-fail hook.
   ClearSelectionEnv();
-  ::SetEnvironmentVariableW(L"CLINGFY_OVERLAY_DCOMP", L"1");
   ::SetEnvironmentVariableW(L"CLINGFY_TEST_DCOMP_WDA_FAIL", L"1");
   FloatingPlacement place;
   place.x = 100;
@@ -91,6 +99,33 @@ TEST(CameraOverlayPresenterFactory, LadderFallsBackToGdiWhenDcompLosesExclusion)
   }
   EXPECT_NE(dynamic_cast<CameraFloatingOverlay*>(p.get()), nullptr)
       << "the ladder returned the DComp presenter without capture exclusion";
+  EXPECT_TRUE(p->running());
+  p->Stop();
+}
+
+// The P4d safety net (ADR §6 hardware-matrix gate): a DComp presenter that
+// starts and holds capture exclusion but whose render self-check finds the
+// adapter rasterized NOTHING (the hybrid-GPU scar) must be torn down and
+// replaced by the GDI fallback — never returned as a bubble that shows nothing
+// live. Driven by the CLINGFY_TEST_DCOMP_RENDER_NOTHING fault-injection hook
+// instead of afflicted hardware. Real windows + real GPU stack; skips only when
+// this session cannot create any overlay at all.
+TEST(CameraOverlayPresenterFactory, LadderFallsBackToGdiWhenDcompRendersNothing) {
+  ClearSelectionEnv();
+  ::SetEnvironmentVariableW(L"CLINGFY_TEST_DCOMP_RENDER_NOTHING", L"1");
+  FloatingPlacement place;
+  place.x = 100;
+  place.y = 100;
+  place.width = 400;
+  place.height = 225;
+  const std::shared_ptr<ICameraOverlayPresenter> p =
+      StartCameraOverlayPresenter(place);
+  ClearSelectionEnv();
+  if (p == nullptr) {
+    GTEST_SKIP() << "no overlay window could be created in this session";
+  }
+  EXPECT_NE(dynamic_cast<CameraFloatingOverlay*>(p.get()), nullptr)
+      << "the ladder returned the DComp presenter that renders nothing";
   EXPECT_TRUE(p->running());
   p->Stop();
 }
@@ -120,8 +155,11 @@ TEST(CameraOverlayPresenterFactory, ForceGdiOverlayReadsTheKillSwitch) {
 
 TEST(CameraOverlayPresenterFactory, LifecycleIsSafeWithoutStart) {
   ClearSelectionEnv();
+  // Default construction now yields the DComp presenter (P4d) — this pins that
+  // its teardown surface is safe before Start ever touches the GPU.
   const std::shared_ptr<ICameraOverlayPresenter> p =
       CreateCameraOverlayPresenter();
+  ClearSelectionEnv();
   ASSERT_NE(p, nullptr);
   // The engine calls these unconditionally on teardown paths; they must be
   // no-ops on a presenter that never started.

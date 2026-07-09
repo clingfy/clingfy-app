@@ -23,11 +23,6 @@ bool EnvSet(const wchar_t* name) {
                                    static_cast<DWORD>(std::size(buffer))) > 0;
 }
 
-// P3 opt-in: the DirectComposition presenter is exercised only when explicitly
-// requested, until the POC gate (renders on-screen + capture-excluded on the
-// hardware matrix) flips the default in P4.
-bool DcompOptIn() { return EnvSet(L"CLINGFY_OVERLAY_DCOMP"); }
-
 }  // namespace
 
 bool ForceGdiOverlay() { return EnvSet(L"CLINGFY_FORCE_GDI_OVERLAY"); }
@@ -49,52 +44,71 @@ FloatingPlacement ComputeInitialFloatingPlacement(int work_left, int work_top,
 
 
 std::shared_ptr<ICameraOverlayPresenter> CreateCameraOverlayPresenter() {
-  const bool forced = ForceGdiOverlay();
-  if (!forced && DcompOptIn()) {
+  // Renderer P4d: DirectComposition is the DEFAULT presenter — the full-style
+  // live bubble (opacity / shadow / glow / chroma), WYSIWYG with the export.
+  // The GDI bubble is now reached only by the kill switch below or by the
+  // start-time fallback ladder (WDA-exclusion failure or the render
+  // self-check), so a machine where DComp misbehaves still records with the
+  // safe-mode bubble. The former CLINGFY_OVERLAY_DCOMP opt-in is retired.
+  if (ForceGdiOverlay()) {
     clingfy::bridge::devices::LogDeviceProbe(
-        "CameraOverlayPresenter: dcomp (CLINGFY_OVERLAY_DCOMP)");
-    CameraDcompOverlay::Options options;
-    // Fault injection promised by the ADR test strategy (§7): simulate the
-    // Win11 WDA defect (skip the exclusion call, so wda_excluded() stays
-    // false) to drive StartCameraOverlayPresenter's fallback rung in tests
-    // without afflicted hardware. Test-only; never set in production.
-    options.apply_capture_exclusion =
-        !EnvSet(L"CLINGFY_TEST_DCOMP_WDA_FAIL");
-    return std::make_shared<CameraDcompOverlay>(options);
+        "CameraOverlayPresenter: gdi (forced by CLINGFY_FORCE_GDI_OVERLAY)");
+    return std::make_shared<CameraFloatingOverlay>();
   }
-  clingfy::bridge::devices::LogDeviceProbe(
-      forced ? "CameraOverlayPresenter: gdi (forced by CLINGFY_FORCE_GDI_OVERLAY)"
-             : "CameraOverlayPresenter: gdi");
-  return std::make_shared<CameraFloatingOverlay>();
+  clingfy::bridge::devices::LogDeviceProbe("CameraOverlayPresenter: dcomp");
+  CameraDcompOverlay::Options options;
+  // Fault injection promised by the ADR test strategy (§7), each simulating a
+  // documented hardware scar so the fallback ladder is testable without
+  // afflicted hardware. Test-only; never set in production:
+  //  - WDA_FAIL: skip the exclusion call so wda_excluded() stays false (the
+  //    Win11 SetWindowDisplayAffinity defect).
+  //  - RENDER_NOTHING: the render self-check reports no pixels (the hybrid-GPU
+  //    "renders nothing" scar the P4d flip has to be safe against).
+  options.apply_capture_exclusion = !EnvSet(L"CLINGFY_TEST_DCOMP_WDA_FAIL");
+  options.simulate_render_nothing = EnvSet(L"CLINGFY_TEST_DCOMP_RENDER_NOTHING");
+  return std::make_shared<CameraDcompOverlay>(options);
 }
 
 std::shared_ptr<ICameraOverlayPresenter> StartCameraOverlayPresenter(
     const FloatingPlacement& placement) {
   // Ladder: try the selected presenter; a DComp presenter that fails to START
-  // (GPU stack) or fails CAPTURE EXCLUSION (documented Win11 defect that
-  // clusters on DComp-presented windows — plain GDI windows often still
-  // succeed there) falls back to the GDI presenter. A GDI presenter without
-  // exclusion is kept but never shown (existing engine rule).
+  // (GPU stack build OR the render self-check — the adapter rasterizes nothing)
+  // or fails CAPTURE EXCLUSION (documented Win11 defect that clusters on
+  // DComp-presented windows — plain GDI windows often still succeed there)
+  // falls back to the GDI presenter. A GDI presenter without exclusion is kept
+  // but never shown (existing engine rule). The resolved presenter is logged
+  // once here — the per-recording active-presenter telemetry line (ADR §5).
   std::shared_ptr<ICameraOverlayPresenter> presenter =
       CreateCameraOverlayPresenter();
   const bool is_dcomp =
       dynamic_cast<CameraDcompOverlay*>(presenter.get()) != nullptr;
   if (presenter->Start(placement) &&
       (!is_dcomp || presenter->wda_excluded())) {
+    clingfy::bridge::devices::LogDeviceProbe(
+        is_dcomp ? "CameraOverlayPresenter: active = dcomp"
+                 : "CameraOverlayPresenter: active = gdi");
     return presenter;
   }
   presenter->Stop();
   if (!is_dcomp) {
+    clingfy::bridge::devices::LogDeviceProbe(
+        "CameraOverlayPresenter: gdi presenter failed to start — no floating "
+        "bubble");
     return nullptr;  // GDI already failed — nothing further to try.
   }
   clingfy::bridge::devices::LogDeviceProbe(
-      "CameraOverlayPresenter: dcomp failed (start or capture exclusion); "
-      "falling back to gdi");
+      "CameraOverlayPresenter: dcomp failed (start, capture exclusion, or "
+      "render self-check); falling back to gdi");
   presenter = std::make_shared<CameraFloatingOverlay>();
   if (presenter->Start(placement)) {
+    clingfy::bridge::devices::LogDeviceProbe(
+        "CameraOverlayPresenter: active = gdi (fallback)");
     return presenter;
   }
   presenter->Stop();
+  clingfy::bridge::devices::LogDeviceProbe(
+      "CameraOverlayPresenter: gdi fallback failed to start — no floating "
+      "bubble");
   return nullptr;
 }
 

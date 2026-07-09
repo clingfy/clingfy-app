@@ -155,16 +155,51 @@ TEST(CameraDcompOverlayPoc, HiddenLifecycleBuildsTheGpuStack) {
   if (!overlay.Start(place)) {
     // Window creation can fail in exotic sessions; a GPU-stack failure on THIS
     // box is a NO-GO signal we want loudly, so only skip when even a plain
-    // window can't exist (no desktop).
+    // window can't exist (no desktop). Since P4d, Start also runs the render
+    // self-check, so a FAIL here also means the adapter rasterized nothing —
+    // which would (correctly) fall the shipping factory back to GDI.
     if (::GetDesktopWindow() == nullptr) {
       GTEST_SKIP() << "no desktop in this session";
     }
-    FAIL() << "DComp presenter failed to start on this machine (GPU stack or "
-              "window) — POC NO-GO";
+    FAIL() << "DComp presenter failed to start on this machine (GPU stack, "
+              "window, or render self-check) — POC NO-GO";
   }
   EXPECT_TRUE(overlay.running());
   EXPECT_TRUE(overlay.gpu_ready());
   overlay.Stop();
+  EXPECT_FALSE(overlay.running());
+}
+
+// P4d default-flip guard: a DComp presenter whose render self-check reports the
+// adapter rasterized nothing (the hybrid-GPU scar, fault-injected) must FAIL to
+// start and tear its window down — so the factory ladder falls back to GDI
+// rather than shipping an invisible live bubble. HIDDEN; the self-check reads
+// its own swapchain, so no display is needed. The negative (real adapter DOES
+// render) is covered by HiddenLifecycleBuildsTheGpuStack above, which now
+// passes only when the self-check passes.
+TEST(CameraDcompOverlayPoc, RenderSelfCheckFailureStopsTheDcompPresenter) {
+  CameraOverlayGeometryStore::Instance().SetSize(220.0);
+  CameraOverlayGeometryStore::Instance().SetPosition(3);
+
+  CameraDcompOverlay::Options options;
+  options.simulate_render_nothing = true;
+  CameraDcompOverlay overlay(options);
+  FloatingPlacement place;
+  place.x = 100;
+  place.y = 100;
+  place.width = 220;
+  place.height = 220;
+  const bool started = overlay.Start(place);
+
+  EXPECT_FALSE(started)
+      << "the presenter started despite the render self-check reporting the "
+         "adapter renders nothing";
+  EXPECT_FALSE(overlay.running());
+  // The window must be gone — a failed Start tears the whole stack down on the
+  // creating thread (no orphaned DComp window left for the ladder to fight).
+  EXPECT_EQ(::FindWindowW(L"ClingfyCameraDcompOverlay", nullptr), nullptr)
+      << "the DComp window survived a failed render self-check";
+  overlay.Stop();  // idempotent; must be safe after a failed Start.
   EXPECT_FALSE(overlay.running());
 }
 
