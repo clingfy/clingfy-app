@@ -366,6 +366,10 @@ final class InlinePreviewViewLayoutTests: XCTestCase {
       arguments: nil,
       messenger: nil
     )
+    // Force reduce-motion OFF so the placement transition is created regardless
+    // of the host's accessibility state. Headless CI reports reduce-motion ON,
+    // which collapses the transition to 0 s and leaves the mode nil.
+    view.reduceMotionOverrideForTesting = false
     let initialCameraParams = makeCameraParams(
       normalizedCanvasCenter: CGPoint(x: 0.22, y: 0.74)
     )
