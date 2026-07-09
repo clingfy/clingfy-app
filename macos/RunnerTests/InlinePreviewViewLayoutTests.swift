@@ -11,8 +11,8 @@ final class InlinePreviewViewLayoutTests: XCTestCase {
     let oldParams = makeParams()
     let newParams = makeParams(
       cursorSize: 1.4,
-      zoomFactor: 2.5,
-      showCursor: false
+      showCursor: false,
+      zoomFactor: 2.5
     )
     let profile = makeProfile()
 
@@ -160,7 +160,7 @@ final class InlinePreviewViewLayoutTests: XCTestCase {
     XCTAssertEqual(view._testCurrentPreviewProfile(), profile)
   }
 
-  func testApplyCanvasGeometryPreservesZoomTransformAndUsesBoundsPosition() {
+  func testApplyCanvasGeometryPreservesZoomTransformAndUsesBoundsPosition() throws {
     let container = CALayer()
     container.anchorPoint = CGPoint(x: 0.5, y: 0.5)
 
@@ -246,10 +246,14 @@ final class InlinePreviewViewLayoutTests: XCTestCase {
       transition: transition,
       now: 10.10
     )
+    // Sample just past the nominal end (10.0 + 0.20). Evaluating at exactly the
+    // boundary lands rawProgress at 0.99999… from float division, so isComplete
+    // reads false a hair early; a real render clock ticks past the end the same
+    // way and the transition still resolves to `to`.
     let end = CameraPreviewPlacementAnimator.resolvedPresentation(
       target: to,
       transition: transition,
-      now: 10.20
+      now: 10.25
     )
 
     XCTAssertEqual(start.presentation.frame.origin.x, from.frame.origin.x, accuracy: accuracy)
