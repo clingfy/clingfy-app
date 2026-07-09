@@ -52,8 +52,10 @@ enum MicEchoCanceller {
   /// History: 1 = global-gate v1, 2 = windowed consensus (#222),
   /// 3 = system-presence blend + pause duck (#228),
   /// 4 = correlation-based double-talk detector + raw-voice blend (fixes the
-  ///     voice being gutted whenever the user spoke over system audio).
-  static let algorithmVersion = 4
+  ///     voice being gutted whenever the user spoke over system audio),
+  /// 5 = also freeze adaptation on a near-silent reference (v4 could diverge and
+  ///     emit loud out-of-scale bursts after adapting on silence).
+  static let algorithmVersion = 5
   static let sampleRate: Double = 48_000
   /// Adaptive filter length in taps. 512 @ 48 kHz ≈ 10.7 ms — long enough for the
   /// residual fine delay + early reflections after bulk alignment, short enough
@@ -195,10 +197,17 @@ enum MicEchoCanceller {
       system: systemN, delaySamples: delaySamples, count: n)
     let voice = nearEndVoiceMask(mic: micN, reference: voiceReference, micEnv: micEnv)
 
-    // 5. NLMS, FROZEN on near-end voice → the filter only ever learns the system
-    //    bleed, never the voice.
+    // 5. NLMS, FROZEN on near-end voice AND on a near-silent reference. Freezing
+    //    on voice keeps the filter a clean bleed model. Freezing on silence is a
+    //    stability guard: the normalized update `µ·e/(‖x‖²+δ)` has a tiny δ, so
+    //    adapting on a near-zero reference drives the weights into a misadjusted
+    //    state that then OVER-predicts in a later loud pause — producing loud,
+    //    out-of-scale output bursts. There is nothing to learn from silence, so
+    //    don't. (The blend still uses `voice` alone, so pauses stay cancelled.)
+    var adaptationFreeze = voice
+    for i in 0..<n where refEnv[i] < referencePresentFloor { adaptationFreeze[i] = true }
     let cleaned = nlmsDoubleTalk(
-      desired: micN, reference: reference, micEnv: micEnv, refEnv: refEnv, freeze: voice)
+      desired: micN, reference: reference, micEnv: micEnv, refEnv: refEnv, freeze: adaptationFreeze)
 
     // 6. Blend by SYSTEM presence: the cleaned (bleed-subtracted) path whenever
     //    the system is audible AND there is no near-end voice — that removes the

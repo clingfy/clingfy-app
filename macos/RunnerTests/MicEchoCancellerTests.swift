@@ -420,6 +420,43 @@ final class MicEchoCancellerTests: XCTestCase {
     XCTAssertLessThan(after, before * 0.5, "bleed in the pause must still be cancelled")
   }
 
+  /// Stability guard: after the filter has been exposed to a long near-silent
+  /// reference, a later loud system pause must not make it emit an out-of-scale
+  /// burst. Before the near-silent-reference freeze, adapting on silence
+  /// (`µ·e/(‖x‖²+δ)` with a tiny δ) drove the filter into a misadjusted state
+  /// that over-predicted in the loud pause — the cleaned mic spiked to ~12× the
+  /// input on a real recording. The output must stay near the input level.
+  func testCancelDoesNotBurstAfterSilentReference() throws {
+    let n = 120_000
+    let delay = 2_640
+    let loudStart = 48_000
+    let base = colored(n, seed: 31, a: 0.9)
+    var system = [Float](repeating: 0, count: n)
+    for i in 0..<n { system[i] = base[i] * (i < loudStart ? 0.001 : 0.5) }  // silent → loud
+    // Bleed only (no near-end voice), so any large output is a divergence artifact.
+    let hiss = colored(n, seed: 32, a: 0.9)
+    var mic = [Float](repeating: 0, count: n)
+    for i in 0..<n {
+      mic[i] = (i >= delay ? 0.3 * system[i - delay] : 0) + 0.0005 * hiss[i]
+    }
+
+    let micURL = try writeCAF(mic, name: "mic.caf")
+    let systemURL = try writeCAF(system, name: "system.caf")
+    let outDir = FileManager.default.temporaryDirectory.appendingPathComponent(
+      UUID().uuidString, isDirectory: true)
+    try FileManager.default.createDirectory(at: outDir, withIntermediateDirectories: true)
+
+    let result = try MicEchoCanceller.cancel(
+      micURL: micURL, systemURL: systemURL, outputDirectory: outDir)
+    let cleaned = try MicEchoCanceller.decodePCMMono48k(url: result.cleanedMicURL)
+    let micPeak = mic.map { abs($0) }.max() ?? 0
+    let outPeak = cleaned.map { abs($0) }.max() ?? 0
+    XCTAssertGreaterThan(micPeak, 0)
+    XCTAssertLessThan(
+      outPeak, micPeak * 1.5,
+      "the canceller must not emit out-of-scale bursts (pre-fix it spiked to ~12× the input)")
+  }
+
   // MARK: - End-to-end: preserve voice, cancel pause bleed
 
   /// The whole point: a recording with a loud-speech segment (with bleed under
