@@ -50,8 +50,10 @@ enum MicEchoCanceller {
   /// for the same inputs (algorithm change, any tunable below), or cached
   /// cleaned mics from older app versions would keep playing stale audio.
   /// History: 1 = global-gate v1, 2 = windowed consensus (#222),
-  /// 3 = system-presence blend + pause duck (#228).
-  static let algorithmVersion = 3
+  /// 3 = system-presence blend + pause duck (#228),
+  /// 4 = correlation-based double-talk detector + raw-voice blend (fixes the
+  ///     voice being gutted whenever the user spoke over system audio).
+  static let algorithmVersion = 4
   static let sampleRate: Double = 48_000
   /// Adaptive filter length in taps. 512 @ 48 kHz ≈ 10.7 ms — long enough for the
   /// residual fine delay + early reflections after bulk alignment, short enough
@@ -115,6 +117,24 @@ enum MicEchoCanceller {
   static let pauseDuckDb: Float = -12.0
   static let pauseDuckMicToRefRatio: Float = 0.25
 
+  /// Near-end voice (double-talk) detection. A window is "voice" when the mic's
+  /// short-window correlation with the delayed system reference is BELOW
+  /// `voiceCorrelationThreshold` (the mic is dominated by something uncorrelated
+  /// with the system — i.e. the user's voice, not the bleed) AND the mic carries
+  /// real energy (`micEnv > voiceMicFloor`, so quiet system-only pauses are not
+  /// mistaken for voice and still get cancelled).
+  ///
+  /// This replaces the old `micEnv > doubleTalkRatio·refEnv` freeze, which
+  /// compared the mic to the FULL system level. The bleed in the mic is only a
+  /// small fraction of the system (speaker→mic coupling), so during real
+  /// double-talk the voice sits well below the full system level and that test
+  /// almost never fired — the filter kept adapting on the voice and cancelled
+  /// it, gutting speech whenever system audio played. Correlation is
+  /// coupling-independent, so it fires correctly regardless of the room/level.
+  static let voiceCorrelationThreshold: Float = 0.5
+  static let voiceMicFloor: Float = 0.015
+  static let voiceCorrelationWindowSeconds: Double = 0.03
+
   struct Result {
     /// The mic to feed into the export/preview. Either the freshly written
     /// cleaned file (`applied == true`) or the original `micURL` unchanged
@@ -166,16 +186,29 @@ enum MicEchoCanceller {
     let micEnv = movingRMS(micN)
     let refEnv = movingRMS(reference)
 
-    // 4. NLMS with double-talk freeze → the raw cancelled mic.
-    let cleaned = nlmsDoubleTalk(desired: micN, reference: reference, micEnv: micEnv, refEnv: refEnv)
+    // 4. Near-end voice (double-talk) mask: where the mic is voice-dominated
+    //    (uncorrelated with the system reference) and loud enough to matter. The
+    //    correlation is taken against the BLEED-ALIGNED system (exact delay, no
+    //    preroll) so a pure-bleed window is a near-perfect scaled copy of it and
+    //    reads as bleed regardless of the system's spectrum.
+    let voiceReference = bleedAlignedReference(
+      system: systemN, delaySamples: delaySamples, count: n)
+    let voice = nearEndVoiceMask(mic: micN, reference: voiceReference, micEnv: micEnv)
 
-    // 5. Blend by SYSTEM presence: cleaned whenever the system is audible (the
-    //    frozen-weight subtraction cannot touch the voice, so this also removes
-    //    the bleed hiding under double-talk), raw when the system is silent
-    //    (byte-for-byte voice, zero risk). Bleed-level pauses get an extra duck
-    //    so the residual stays inaudible even under a +24 dB mic gain.
+    // 5. NLMS, FROZEN on near-end voice → the filter only ever learns the system
+    //    bleed, never the voice.
+    let cleaned = nlmsDoubleTalk(
+      desired: micN, reference: reference, micEnv: micEnv, refEnv: refEnv, freeze: voice)
+
+    // 6. Blend by SYSTEM presence: the cleaned (bleed-subtracted) path whenever
+    //    the system is audible AND there is no near-end voice — that removes the
+    //    exposed bleed in the pauses, with an extra duck at bleed level so it
+    //    stays inaudible even at +24 dB gain. During genuine double-talk pass the
+    //    RAW mic: the bleed under the voice is masked at every gain (voice and
+    //    bleed scale together), and subtracting a frozen estimate there only
+    //    damages the voice. System silent → raw (byte-for-byte voice).
     let blended = systemPresenceBlend(
-      raw: micN, cleaned: cleaned, micEnv: micEnv, refEnv: refEnv)
+      raw: micN, cleaned: cleaned, micEnv: micEnv, refEnv: refEnv, voice: voice)
 
     // 6. Metrics (coarse, for logging / diagnostics). Measure the residual bleed
     //    the SAME way before and after (mic↔system vs. blended↔system at the same
@@ -217,14 +250,67 @@ enum MicEchoCanceller {
     nlmsDoubleTalk(desired: desired, reference: reference, micEnv: nil, refEnv: nil)
   }
 
-  /// NLMS with optional double-talk detection. When `micEnv`/`refEnv` are
-  /// provided, the weight update is FROZEN for samples where near-end voice
-  /// clearly dominates (`micEnv > doubleTalkRatio · refEnv`), so the filter can
-  /// only ever learn the system bleed, never the voice. The filter output is
-  /// still produced everywhere; only adaptation pauses. Passing `nil` envelopes
-  /// reduces to plain NLMS.
+  /// System aligned to the EXACT bleed delay (no preroll lookahead). A pure-bleed
+  /// window is then a near-perfect scaled copy of this, so it correlates ~1 with
+  /// the mic regardless of the system audio's spectrum — unlike the preroll-offset
+  /// `alignedReference` the NLMS uses, which decorrelates at the 8 ms lag for
+  /// noise-like audio and would let loud bleed read as voice. Detection only.
+  static func bleedAlignedReference(system: [Float], delaySamples: Int, count n: Int) -> [Float] {
+    var out = [Float](repeating: 0, count: n)
+    let m = min(n, system.count)
+    for i in 0..<n {
+      let j = i - delaySamples
+      if j >= 0 && j < m { out[i] = system[j] }
+    }
+    return out
+  }
+
+  /// Per-sample near-end-voice mask for double-talk. A non-overlapping window is
+  /// "voice" when the mic's Pearson correlation with the bleed-aligned system
+  /// `reference` is below `voiceCorrelationThreshold` (mic dominated by something
+  /// uncorrelated with the system → the user's voice, not the bleed); every
+  /// sample in that window is then flagged only if `micEnv > voiceMicFloor`, so
+  /// quiet system-only pauses are never mistaken for voice. Coupling-independent:
+  /// correlation is normalized, so it does not depend on how loud the bleed is.
+  /// Pass `bleedAlignedReference(...)`, not the NLMS reference.
+  static func nearEndVoiceMask(mic: [Float], reference: [Float], micEnv: [Float]) -> [Bool] {
+    let n = mic.count
+    guard n > 0, reference.count >= n, micEnv.count >= n else {
+      return [Bool](repeating: false, count: n)
+    }
+    let w = max(1, Int((voiceCorrelationWindowSeconds * sampleRate).rounded()))
+    var mask = [Bool](repeating: false, count: n)
+    var s = 0
+    while s < n {
+      let e = min(s + w, n)
+      let k = Float(e - s)
+      var sm: Float = 0, sr: Float = 0, smm: Float = 0, srr: Float = 0, smr: Float = 0
+      for i in s..<e {
+        let m = mic[i], r = reference[i]
+        sm += m; sr += r; smm += m * m; srr += r * r; smr += m * r
+      }
+      let cov = smr - sm * sr / k
+      let varMic = smm - sm * sm / k
+      let varRef = srr - sr * sr / k
+      let den = (max(varMic, 0) * max(varRef, 0)).squareRoot()
+      let corr = den > 1e-12 ? abs(cov / den) : 0
+      let isVoiceWindow = corr < voiceCorrelationThreshold
+      if isVoiceWindow {
+        for i in s..<e where micEnv[i] > voiceMicFloor { mask[i] = true }
+      }
+      s = e
+    }
+    return mask
+  }
+
+  /// NLMS with double-talk freeze. When `freeze` is provided, the weight update
+  /// is skipped wherever `freeze[i]` is true; otherwise, when `micEnv`/`refEnv`
+  /// are provided, it freezes on the legacy `micEnv > doubleTalkRatio · refEnv`
+  /// test. Either way the filter can only ever learn the system bleed, never the
+  /// voice. The filter output is produced everywhere; only adaptation pauses.
   static func nlmsDoubleTalk(
-    desired: [Float], reference: [Float], micEnv: [Float]?, refEnv: [Float]?
+    desired: [Float], reference: [Float], micEnv: [Float]?, refEnv: [Float]?,
+    freeze: [Bool]? = nil
   ) -> [Float] {
     let n = desired.count
     let taps = filterTaps
@@ -255,8 +341,10 @@ enum MicEchoCanceller {
           let e = desired[i] - y
           out[i] = e
 
-          // Double-talk freeze: skip the update while near-end voice dominates.
-          if let micEnv, let refEnv, micEnv[i] > doubleTalkRatio * refEnv[i] + 1e-4 {
+          // Double-talk freeze: skip the update while near-end voice is present.
+          if let freeze {
+            if freeze[i] { continue }
+          } else if let micEnv, let refEnv, micEnv[i] > doubleTalkRatio * refEnv[i] + 1e-4 {
             continue
           }
 
@@ -271,19 +359,25 @@ enum MicEchoCanceller {
 
   // MARK: - System-presence blend
 
-  /// Emit the CLEANED mic whenever the system audio is present and the RAW mic
-  /// when it is silent, crossfaded.
+  /// Emit the CLEANED mic when the system audio is present with no near-end
+  /// voice, and the RAW mic otherwise (system silent, or genuine double-talk),
+  /// crossfaded.
   ///
-  /// Why presence and not voice activity: bleed exists exactly when the system
-  /// is audible, including UNDER the user's voice (double-talk). The v2 blend
-  /// passed the raw mic through during speech, so the bleed hiding under it
-  /// survived 100% and became an audible echo once the user raised the mic gain
-  /// (gain targets the mic → the bleed rides along; measured on a real
-  /// recording: raw −2.8 dB below masker at +24 dB gain, v2 −20 dB, this blend
-  /// −31.5 dB — inaudible). The cleaned path is voice-safe by construction:
-  /// with double-talk-frozen weights the NLMS output is `mic − w·reference`,
-  /// a fixed linear function of the REFERENCE only, so anything uncorrelated
-  /// with the system (the voice) passes through untouched.
+  /// Where the bleed actually matters: in the PAUSES, where the system is
+  /// audible but the user is silent, the bleed is exposed and — once the mic
+  /// gain is raised — becomes an audible echo (gain targets the mic, so the
+  /// bleed rides along). There the cleaned + ducked path removes it. UNDER the
+  /// voice (double-talk) the bleed is masked by the speech at EVERY gain (voice
+  /// and bleed are both in the mic and scale together), so it does not need
+  /// cancelling — and must not be, because subtracting the filter estimate
+  /// there damages the voice. So `voice` samples pass the RAW mic through.
+  ///
+  /// (Earlier versions always used the cleaned path whenever the system was
+  /// present, on the theory that a double-talk-frozen filter is voice-safe. In
+  /// practice the freeze detector rarely fired during real double-talk, the
+  /// filter adapted on and cancelled the voice, and even a correctly frozen but
+  /// stale estimate adds energy when subtracted — both audible as voice
+  /// distortion. Passing the raw mic during voice avoids the whole class.)
   ///
   /// Presence = reference envelope above `referencePresentFloor`, dilated
   /// backward by `systemBackfillSeconds` (envelope rise time) and held for
@@ -296,7 +390,7 @@ enum MicEchoCanceller {
   /// for extra gain headroom. Engages slowly, releases fast, so a voice onset
   /// is never swallowed.
   static func systemPresenceBlend(
-    raw: [Float], cleaned: [Float], micEnv: [Float], refEnv: [Float]
+    raw: [Float], cleaned: [Float], micEnv: [Float], refEnv: [Float], voice: [Bool]? = nil
   ) -> [Float] {
     let n = raw.count
     guard cleaned.count == n, micEnv.count == n, refEnv.count == n else { return cleaned }
@@ -324,7 +418,10 @@ enum MicEchoCanceller {
     var gain: Float = 1.0  // 1 → raw mic, 0 → cleaned mic
     var duck: Float = 1.0  // 1 → no duck, duckFloor → full duck (cleaned path)
     for i in 0..<n {
-      let target: Float = present[i] ? 0.0 : 1.0
+      // Cleaned path only when the system is present AND there is no near-end
+      // voice; raw otherwise (system silent, or genuine double-talk).
+      let useCleaned = present[i] && !(voice?[i] ?? false)
+      let target: Float = useCleaned ? 0.0 : 1.0
       // FAST into cleaned (bleed must not leak at system onsets), slow to raw.
       let coeff = target < gain ? fast : slow
       gain += coeff * (target - gain)

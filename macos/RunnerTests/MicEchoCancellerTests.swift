@@ -22,6 +22,25 @@ final class MicEchoCancellerTests: XCTestCase {
     return out
   }
 
+  /// One-pole low-passed (colored) noise, zero-mean unit-std. Real system audio
+  /// and speech are colored, not white; the correlation-based double-talk
+  /// detector — and the NLMS itself — behave differently on colored signals, so
+  /// the double-talk tests use this rather than raw white noise.
+  private func colored(_ count: Int, seed: UInt64, a: Float = 0.9) -> [Float] {
+    let raw = noise(count, seed: seed)
+    var y = [Float](repeating: 0, count: count)
+    var acc: Float = 0
+    for i in 0..<count {
+      acc = a * acc + (1 - a) * raw[i]
+      y[i] = acc
+    }
+    let mean = y.reduce(0, +) / Float(count)
+    for i in 0..<count { y[i] -= mean }
+    let std = (y.reduce(0) { $0 + $1 * $1 } / Float(count)).squareRoot()
+    if std > 0 { for i in 0..<count { y[i] /= std } }
+    return y
+  }
+
   private func zeroMeanUnit(_ x: ArraySlice<Float>) -> [Float] {
     var a = Array(x)
     guard !a.isEmpty else { return a }
@@ -41,6 +60,11 @@ final class MicEchoCancellerTests: XCTestCase {
     var s: Float = 0
     for i in 0..<n { s += ua[i] * ub[i] }
     return s
+  }
+
+  private func rms(_ x: ArraySlice<Float>) -> Float {
+    guard !x.isEmpty else { return 0 }
+    return (x.reduce(0) { $0 + $1 * $1 } / Float(x.count)).squareRoot()
   }
 
   /// Correlation of `a` vs `b` at `lag` (a[n] ~ b[n-lag]).
@@ -311,26 +335,60 @@ final class MicEchoCancellerTests: XCTestCase {
     }
   }
 
-  // MARK: - Double-talk: bleed under the voice must go too
+  // MARK: - Double-talk: the voice must be preserved
 
-  /// v3 regression: the system bleed hiding UNDER the user's voice must also be
-  /// cancelled (the v2 voice-activity blend passed the raw mic through during
-  /// speech, so raising the mic gain made the surviving bleed an audible echo).
-  /// The system-presence blend routes double-talk through the frozen-weight
-  /// cleaned path, which removes the bleed but mathematically cannot touch the
-  /// uncorrelated voice.
-  func testCancelRemovesBleedUnderDoubleTalk() throws {
+  /// Near-end voice detection is coupling-independent: a window that is a
+  /// delayed copy of the reference (pure bleed) is NOT voice; a window of loud
+  /// uncorrelated near-end signal IS. The old `micEnv > 3·refEnv` test compared
+  /// the mic to the full system level and so missed real double-talk.
+  func testNearEndVoiceMaskFlagsVoiceNotBleed() {
+    let n = 24_000
+    let system = noise(n, seed: 21)
+    let delay = 240
+    var bleed = [Float](repeating: 0, count: n)
+    for i in delay..<n { bleed[i] = 0.4 * system[i - delay] }  // pure bleed, mic = f(ref)
+    let voice = noise(n, seed: 22).map { $0 * 0.8 }            // loud, uncorrelated
+
+    let refEnv = MicEchoCanceller.movingRMS(system)  // stand-in aligned reference
+    _ = refEnv
+    let bleedEnv = MicEchoCanceller.movingRMS(bleed)
+    let voiceEnv = MicEchoCanceller.movingRMS(voice)
+    let bleedMask = MicEchoCanceller.nearEndVoiceMask(
+      mic: bleed, reference: bleed, micEnv: bleedEnv)   // mic IS the reference → corr 1
+    let voiceMask = MicEchoCanceller.nearEndVoiceMask(
+      mic: voice, reference: system, micEnv: voiceEnv)  // uncorrelated → corr ~0
+
+    let bleedFlagged = bleedMask.filter { $0 }.count
+    let voiceFlagged = voiceMask.filter { $0 }.count
+    XCTAssertLessThan(bleedFlagged, n / 20, "pure bleed must not be flagged as voice")
+    XCTAssertGreaterThan(voiceFlagged, n / 2, "loud uncorrelated voice must be flagged")
+  }
+
+  /// The reported bug: the v3 canceller GUTTED the voice whenever the user spoke
+  /// over system audio — its `micEnv > 3·refEnv` freeze compared the mic to the
+  /// FULL system level, so during real double-talk (voice comparable to the
+  /// coupling-scaled bleed, far below the full system) the freeze rarely fired,
+  /// the filter adapted on the voice, and cancelled it (measured on a real
+  /// recording: the voice dropped to 8–47 % of its level). The correlation-based
+  /// detector freezes on the voice and the blend passes the raw mic through it,
+  /// so the speech survives intact. The exposed pause bleed is still cancelled
+  /// (asserted here on the bleed-only first half, and end-to-end in
+  /// testCancelPreservesLoudVoiceAndCancelsPauseBleed).
+  func testCancelPreservesVoiceDuringDoubleTalk() throws {
     let n = 96_000
     let half = n / 2
     let delay = 2_640
-    let system = noise(n, seed: 16).map { $0 * 0.5 }
-    let voice = noise(n, seed: 17)
+    // Colored (realistic) system + voice; the coupling is 0.3 and the voice is
+    // only ~0.9× the FULL system level, so the old `micEnv > 3·refEnv` freeze
+    // never fired and the filter cancelled the voice.
+    let system = colored(n, seed: 16, a: 0.9)
+    let voice = colored(n, seed: 17, a: 0.85)
 
     var mic = [Float](repeating: 0, count: n)
-    // First half: bleed only (the filter converges here).
-    for i in delay..<half { mic[i] = 0.6 * system[i - delay] }
-    // Second half: loud voice with the bleed hiding under it (double-talk).
-    for i in half..<n { mic[i] = 2.0 * voice[i] + 0.6 * system[i - delay] }
+    // First half: bleed only (the filter converges + the pause is cancelled).
+    for i in delay..<half { mic[i] = 0.3 * system[i - delay] }
+    // Second half: voice with the bleed hiding under it (double-talk).
+    for i in half..<n { mic[i] = 0.9 * voice[i] + 0.3 * system[i - delay] }
 
     let micURL = try writeCAF(mic, name: "mic.caf")
     let systemURL = try writeCAF(system, name: "system.caf")
@@ -344,16 +402,22 @@ final class MicEchoCancellerTests: XCTestCase {
 
     let cleaned = try MicEchoCanceller.decodePCMMono48k(url: result.cleanedMicURL)
     let m = min(cleaned.count, n)
+    // Skip the crossfade around the boundary; measure steady double-talk.
+    let dtStart = half + 6_000
 
-    let before = abs(
-      correlationAtLag(Array(mic[half..<m]), Array(system[half..<m]), lag: delay))
-    let after = abs(
-      correlationAtLag(Array(cleaned[half..<m]), Array(system[half..<m]), lag: delay))
-    XCTAssertGreaterThan(before, 0.1, "the bleed under the voice should be measurable")
-    XCTAssertLessThan(after, before * 0.5, "double-talk bleed must be cancelled, not passed raw")
+    // The voice survives: high correlation with the original AND its energy is
+    // preserved. Pre-fix the filter gutted it to ~0.65 correlation / ~0.73 energy.
+    let voiceKeep = correlation(cleaned[dtStart..<m], voice[dtStart..<m])
+    XCTAssertGreaterThan(voiceKeep, 0.9, "the voice must survive double-talk")
+    let ratio = rms(cleaned[dtStart..<m]) / max(rms(mic[dtStart..<m]), 1e-9)
+    XCTAssertGreaterThan(ratio, 0.85, "the voice must not be gutted during double-talk")
+    XCTAssertLessThan(ratio, 1.2, "and the frozen filter must not add energy either")
 
-    let voiceKeep = correlation(cleaned[half..<m], voice[half..<m])
-    XCTAssertGreaterThan(voiceKeep, 0.9, "the voice must survive the cleaned path")
+    // The bleed-only first half (the exposed pause) is still cancelled.
+    let bStart = delay + 6_000
+    let before = abs(correlationAtLag(Array(mic[bStart..<half]), Array(system[bStart..<half]), lag: delay))
+    let after = abs(correlationAtLag(Array(cleaned[bStart..<half]), Array(system[bStart..<half]), lag: delay))
+    XCTAssertLessThan(after, before * 0.5, "bleed in the pause must still be cancelled")
   }
 
   // MARK: - End-to-end: preserve voice, cancel pause bleed
