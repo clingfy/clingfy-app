@@ -28,6 +28,7 @@
 #include "Capture/Cursor/cursor_export_renderer.h"
 #include "Capture/Zoom/zoom_export_controller.h"
 #include "Bridge/native_log_publisher.h"
+#include "Capture/Export/clip_audio_stitch.h"
 #include "Capture/Export/color_grade.h"
 #include "Capture/Export/export_audio.h"
 #include "Graphics/color_grade_effect.h"
@@ -49,6 +50,12 @@ using Microsoft::WRL::ComPtr;
 // Sentinel for "stream not found" — distinguishable from any concrete
 // stream index (which start at 0) and from MF's symbolic selectors.
 constexpr DWORD kNoStream = 0xFFFFFFFFu;
+
+// The canonical export audio format the source reader is negotiated to
+// (48 kHz stereo int16 PCM). Shared by the media-type setup and the clip
+// audio stitch so the ms<->frame math and the decoded layout agree.
+constexpr std::int64_t kExportAudioSampleRate = 48'000;
+constexpr std::uint32_t kExportAudioChannels = 2;
 
 // Idempotent MF startup. Mirrors the encoder's pattern: paired with
 // MFShutdown only at process exit, so opening an export does not churn
@@ -390,8 +397,9 @@ RenderResult RenderComposedExport(const RenderRequest& request) {
       pcm_type->SetGUID(MF_MT_MAJOR_TYPE, MFMediaType_Audio);
       pcm_type->SetGUID(MF_MT_SUBTYPE, MFAudioFormat_PCM);
       pcm_type->SetUINT32(MF_MT_AUDIO_BITS_PER_SAMPLE, 16);
-      pcm_type->SetUINT32(MF_MT_AUDIO_SAMPLES_PER_SECOND, 48'000);
-      pcm_type->SetUINT32(MF_MT_AUDIO_NUM_CHANNELS, 2);
+      pcm_type->SetUINT32(MF_MT_AUDIO_SAMPLES_PER_SECOND,
+                          static_cast<UINT32>(kExportAudioSampleRate));
+      pcm_type->SetUINT32(MF_MT_AUDIO_NUM_CHANNELS, kExportAudioChannels);
       if (SUCCEEDED(reader->SetCurrentMediaType(audio_index, nullptr,
                                                 pcm_type.Get()))) {
         has_audio = true;
@@ -1096,26 +1104,45 @@ RenderResult RenderComposedExport(const RenderRequest& request) {
             // yet, and under a head-trim it precedes the kept range. Drop it
             // (fixes outside-voice #2 — never key audio off an unset anchor).
           } else {
-            // Editing port (clips, 3a): keep/drop this packet against the edited
-            // timeline by its START (packet-granular; ~≤21 ms of cut-adjacent
-            // audio may leak at a seam — sample-accurate AudioSlots lands in
-            // 3b). Kept packets re-stamp onto the edited timeline; align to the
-            // shared origin (T2), buffering until the first kept video frame
-            // anchors it.
-            const std::int64_t a_src_ms =
-                (timestamp - first_video_hns) / 10000;
-            const auto a_edited = clip_planner::EditedMsForKeptSourceMs(
-                a_src_ms, request.clip_ranges);
-            if (a_edited.has_value()) {
-              packet.timestamp_hns = *a_edited * 10000;  // absolute edited
+            // Editing port (clips, 3b-1): sample-accurate keep/trim against the
+            // edited timeline. Unlike 3a's packet-granular keep/drop (which
+            // leaked up to ~21 ms of cut-adjacent audio at a seam), a packet
+            // straddling a cut is trimmed to the exact frame at the boundary,
+            // and a packet spanning a cut contributes to BOTH adjacent kept
+            // ranges (the leading audio of the post-cut range is no longer
+            // dropped). Each kept sub-run re-stamps onto the edited timeline and
+            // aligns to the shared origin (T2), buffering until the first kept
+            // video frame anchors it. Only MONOTONIC + disjoint ranges reach
+            // here; reorder's per-slot seek + silence-fill lands in 3b-2.
+            const std::int64_t packet_src_start_frame =
+                ((timestamp - first_video_hns) * kExportAudioSampleRate) /
+                10'000'000;
+            const auto copies = clip_audio::PlanKeptAudioCopies(
+                packet_src_start_frame, packet.frame_count, request.clip_ranges,
+                kExportAudioSampleRate);
+            for (const auto& span : copies) {
+              clingfy::audio::MixedPacket sub;
+              sub.frame_count = span.frame_count;
+              const std::size_t begin =
+                  static_cast<std::size_t>(span.src_offset_frames) *
+                  kExportAudioChannels;
+              const std::size_t end =
+                  begin + static_cast<std::size_t>(span.frame_count) *
+                              kExportAudioChannels;
+              sub.samples.assign(packet.samples.begin() + begin,
+                                 packet.samples.begin() + end);
+              const std::int64_t edited_hns =
+                  (span.edited_start_frame * 10'000'000) /
+                  kExportAudioSampleRate;
+              sub.timestamp_hns = edited_hns;  // absolute edited
               if (origin_edited_hns < 0) {
                 // Timeline not yet anchored (first kept video not written):
                 // buffer; flushed + origin-subtracted on that write.
-                pending_audio.push_back(std::move(packet));
+                pending_audio.push_back(std::move(sub));
               } else {
-                packet.timestamp_hns = std::max<std::int64_t>(
-                    0, packet.timestamp_hns - origin_edited_hns);
-                if (auto err = encoder.WriteAudioPacket(packet)) {
+                sub.timestamp_hns =
+                    std::max<std::int64_t>(0, edited_hns - origin_edited_hns);
+                if (auto err = encoder.WriteAudioPacket(sub)) {
                   cancel_encoder();
                   return Failure(request.destination_path,
                                  "export: encoder WriteAudioPacket failed — " +
@@ -1125,7 +1152,6 @@ RenderResult RenderComposedExport(const RenderRequest& request) {
                 ++audio_packets;
               }
             }
-            // a_edited == nullopt => audio in a cut gap: drop.
           }
         } else if (data != nullptr) {
           audio_buffer->Unlock();

@@ -73,6 +73,7 @@ add_executable(runner_tests
   "device_record_test.cpp"
   "devices_router_test.cpp"
   "encoder_output_path_test.cpp"
+  "clip_audio_stitch_test.cpp"
   "clip_playback_planner_test.cpp"
   "clip_args_test.cpp"
   "preview_compositor_color_test.cpp"
