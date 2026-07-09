@@ -20,9 +20,9 @@ int ClampShadowPreset(int shadow_index) {
 
 std::string OverlayShapeToPainterShape(int shape_wire) {
   // OverlayShape.wireValue: circle(0) roundedRect(1) square(2) hexagon(3)
-  // star(4) squircle(5). The CameraBubblePainter only has circle / roundedRect /
-  // square / squircle geometry, so hexagon and star fall back to the nearest
-  // supported shape (a documented Windows parity gap — see docs/windows-port.md).
+  // star(4) squircle(5). The CameraBubblePainter renders all six live/preview/
+  // export (P5); hexagon and star are sharp polygons matching the GDI overlay
+  // (BuildPolygonRegion) and the in-app Dart preview.
   switch (shape_wire) {
     case 0:
       return "circle";
@@ -30,10 +30,10 @@ std::string OverlayShapeToPainterShape(int shape_wire) {
       return "roundedRect";
     case 2:
       return "square";
-    case 3:            // hexagon → squircle (closest rounded silhouette)
-      return "squircle";
-    case 4:            // star → circle (no polygon geometry; keep it round)
-      return "circle";
+    case 3:
+      return "hexagon";
+    case 4:
+      return "star";
     case 5:
     default:
       return "squircle";
@@ -47,7 +47,18 @@ InscribedSquare CameraOverlayInscribedSquare(int w, int h) {
 
 double ComputeCameraEffectPadding(const CameraOverlayLiveStyle& s) {
   const bool border_on = s.border_index != 0 && s.border_width > 0.0;
-  const double border_out = border_on ? s.border_width : 0.0;
+  double border_out = border_on ? s.border_width : 0.0;
+  // The star's outer tips are acute (~52.6° interior for inner ratio 0.5) and
+  // sit exactly on the content edge (P5). The default MITER border stroke pushes
+  // the tip apex (border_width/2)/sin(26.28°) ≈ 1.13·border_width past the
+  // vertex — beyond the plain border_width the rounded shapes need — so reserve
+  // the overshoot (with a small margin) or the top tip's border clips against
+  // the padded swapchain edge. Star only: the hexagon's 120° joins extend just
+  // 0.58·border_width and its top is a flat, inset edge.
+  constexpr double kStarBorderMiterFactor = 1.2;  // > 0.5 / sin(26.28°) = 1.13
+  if (border_on && s.shape_wire == 4 /* OverlayShape.star */) {
+    border_out *= kStarBorderMiterFactor;
+  }
 
   double shadow_out = 0.0;
   const CameraShadowStyle sh =

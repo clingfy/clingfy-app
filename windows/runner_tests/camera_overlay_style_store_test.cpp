@@ -10,18 +10,18 @@
 namespace clingfy::capture {
 namespace {
 
-TEST(OverlayShapeToPainterShape, MapsSupportedShapesOneToOne) {
+TEST(OverlayShapeToPainterShape, MapsEverySupportedShapeOneToOne) {
   EXPECT_EQ(OverlayShapeToPainterShape(0), "circle");
   EXPECT_EQ(OverlayShapeToPainterShape(1), "roundedRect");
   EXPECT_EQ(OverlayShapeToPainterShape(2), "square");
   EXPECT_EQ(OverlayShapeToPainterShape(5), "squircle");
 }
 
-TEST(OverlayShapeToPainterShape, UnsupportedShapesFallBack) {
-  // hexagon(3) and star(4) have no painter geometry; they degrade to the
-  // nearest supported silhouette rather than rendering nothing.
-  EXPECT_EQ(OverlayShapeToPainterShape(3), "squircle");  // hexagon
-  EXPECT_EQ(OverlayShapeToPainterShape(4), "circle");    // star
+TEST(OverlayShapeToPainterShape, HexagonAndStarNowMapToRealGeometry) {
+  // P5: the painter renders hexagon/star as sharp polygons (matching the GDI
+  // overlay + Dart preview) instead of degrading to squircle/circle.
+  EXPECT_EQ(OverlayShapeToPainterShape(3), "hexagon");
+  EXPECT_EQ(OverlayShapeToPainterShape(4), "star");
 }
 
 TEST(OverlayShapeToPainterShape, UnknownWireDefaultsToSquircle) {
@@ -85,6 +85,33 @@ TEST(ResolveOverlayBubbleStyle, ShadowPresetPassesThroughClamped) {
   EXPECT_EQ(ResolveOverlayBubbleStyle(s).style.shadow_preset, 3);
   s.shadow_index = -5;
   EXPECT_EQ(ResolveOverlayBubbleStyle(s).style.shadow_preset, 0);
+}
+
+// P5: the star's acute tips sit on the content edge and its MITER border stroke
+// overshoots the vertex by ~1.13*border_width, so the padding must reserve the
+// overshoot or the top tip clips at the swapchain edge (border-only, no shadow/
+// glow, wide border is the worst case). Only the star needs it.
+TEST(ComputeCameraEffectPadding, StarBorderReservesTipMiterOvershoot) {
+  CameraOverlayLiveStyle s;
+  s.shape_wire = 4;       // star
+  s.border_index = 1;     // border on
+  s.border_width = 12.0;  // slider max
+  s.shadow_index = 0;     // no shadow
+  s.glow_enabled = false;
+  // 1.128 = (border_width/2) / sin(26.28°), the tip apex overshoot.
+  EXPECT_GE(ComputeCameraEffectPadding(s), 12.0 * 1.128);
+}
+
+TEST(ComputeCameraEffectPadding, NonStarBorderReservesOnlyWidth) {
+  // A circle border has no sharp miter, so the padding is just max(width, floor)
+  // — this pins that the star bump does not leak into the other shapes.
+  CameraOverlayLiveStyle s;
+  s.shape_wire = 0;       // circle
+  s.border_index = 1;
+  s.border_width = 12.0;
+  s.shadow_index = 0;
+  s.glow_enabled = false;
+  EXPECT_DOUBLE_EQ(ComputeCameraEffectPadding(s), 12.0);
 }
 
 TEST(CameraOverlayInscribedSquare, LandscapeWindowCentersASquareOfHeight) {
