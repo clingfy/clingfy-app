@@ -28,6 +28,20 @@ trigger:
   branches:
     include:
       - develop
+  # Only rebuild + republish when something that changes the Windows app
+  # artifact moved — a macOS-only, docs-only, or CI-config-only commit does not
+  # spin a Windows agent (mirrors the GitHub-CI path scoping). macos/**,
+  # test/**, docs/**, .github/** are excluded by omission.
+  paths:
+    include:
+      - windows/**
+      - lib/**
+      - assets/**
+      - pubspec.yaml
+      - pubspec.lock
+      - l10n.yaml
+      - ops/release/windows/**
+      - azure-pipelines/windows-dev-channel.yml
 pr: none
 
 pool:
