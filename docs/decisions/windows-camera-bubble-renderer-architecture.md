@@ -1,6 +1,6 @@
 # Windows live camera bubble — renderer redesign (D3D/D2D core + DirectComposition presenter)
 
-Status: **P0–P4 complete; DirectComposition is the default presenter** (updated 2026-07-09)
+Status: **P0–P5 complete; DirectComposition is the default presenter, all six shapes render** (updated 2026-07-09)
 Supersedes the presentation layer of [windows-phase-9-camera-overlay-architecture.md](windows-phase-9-camera-overlay-architecture.md); the capture, exclusion-gating, and style-store decisions there remain in force.
 
 ## Status update (2026-07-09)
@@ -197,12 +197,17 @@ Key semantic decisions:
   `preview_camera_renderer.h:108-111`; `Prepare` outside `BeginDraw` + target re-bind;
   device-lost recovery = rebuild device/context/swapchain/bitmaps + re-`Prepare`
   (painter `Reset()`s its COM resources cleanly on re-Prepare).
-- **Shape gaps stay documented, painter change optional.** The painter lacks
-  hexagon/star geometry (falls back squircle/circle) — a pre-existing export parity
-  gap. Adding polygon geometries to `CreateShapeGeometry` would fix live + preview +
-  export in one change, fenced behind the enhanced path with the static fast path
-  kept byte-identical (the chroma/animation fencing precedent,
-  `camera_bubble_painter.cpp:313-318`). Scheduled last; not a gate.
+- **Shape gaps closed (P5).** The painter now renders hexagon/star as sharp
+  polygons in `CreateCameraShapeGeometry` (`camera_bubble_painter.cpp`), so live +
+  preview + export all draw them (previously they fell back to squircle/circle — a
+  pre-existing export parity gap). The geometry deliberately matches the Windows
+  convention — the GDI overlay's `BuildPolygonRegion` and the Dart preview's
+  `_polygonPath`/`_starPath` (flat-top hexagon rot π/6, star inner ratio 0.5, sharp
+  corners) — NOT the macOS live overlay (pointy-top hexagon, 0.4 star inner ratio,
+  roundness-rounded), because the painter is the Windows export + DComp-live
+  renderer and must match what the Windows user styled in the app. macOS export
+  itself flattens hexagon/star to roundedRect, so there is no macOS export polygon
+  to be parity with.
 
 ## 5. Presenter selection policy
 
@@ -233,9 +238,11 @@ reported once per recording for beta telemetry.
 | **P2** ✅ | Extract `ICameraOverlayPresenter`; `GdiOpaquePresenter` = current behavior byte-identical; selection scaffolding, kill switch, logging | merged as #225 (`8d2db36`); full suite green |
 | **P3** ✅ | `DCompPresenter` POC behind the kill switch: square window, frame upload, painter mask + opacity + border, WDA probe | merged as #226 (`f60dbd1`); **GO** on the hybrid-GPU dev box: renders on-screen AND absent from screen capture, armed probes green |
 | **P4** ✅ | Full presenter: shadow, chroma (a/b, #232–#237), glow ring + pulse, effect padding + click-through halo, DPI self-detection, capture-display retarget, device-lost rebuild + mid-session fallback, **default flip to DComp** guarded by the render self-check | headless D2D pixel tests + armed on-screen probes green; the hardware-matrix gate is replaced for the flip by the start-time render self-check (§2, P4d) |
-| **P5** (backlog) | Hexagon/star geometry in the painter (fixes export gap too); styled in-app texture (Dart bubble already styles everything but chroma — low urgency) | — |
+| **P5** ✅ | Hexagon/star polygon geometry in the painter (fixes the export gap too) — matches the GDI overlay + Dart preview | headless geometry tests (`camera_bubble_shape_geometry_test.cpp`, FillContainsPoint silhouette pins) + armed on-screen probes green |
 
-P0–P4 are merged (see the status update above); P5 is backlog.
+P0–P5 are merged (see the status update above). The remaining backlog item is the
+styled in-app texture (the Dart bubble already styles everything but chroma — low
+urgency), which is not part of this ADR's presenter work.
 
 ## 7. Test strategy
 
