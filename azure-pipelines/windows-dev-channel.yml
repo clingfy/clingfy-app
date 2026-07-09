@@ -56,13 +56,22 @@ variables:
   - name: RELEASE_CHANNEL
     value: "dev"
 
-  # 16-bit-SAFE monotonic build number. NEVER $(Build.BuildId) here: the Windows
-  # FILEVERSION field is 16-bit and the lane hard-fails a build number > 65535
-  # (ops/release/windows/_config.ps1). counter() starts at 1 and increments once
-  # per run — unique + increasing so the update check sees each build as newer,
-  # and well within 16 bits for the life of the channel.
+  # 16-bit-SAFE monotonic build number. NEVER $(Build.BuildId) here: the macOS
+  # dev lane (dev-channel.yml) uses it, but Build.BuildId is org-wide and already
+  # ~500+; the Windows FILEVERSION field is 16-bit and the lane hard-fails a
+  # build number > 65535 (ops/release/windows/_config.ps1). A dedicated counter()
+  # increments once per run — unique + increasing so the update check sees each
+  # build as newer, and well within 16 bits for the life of the channel.
+  #
+  # Re-seeded to start at 7 (2026-07-09): the earlier manual smoke publish was
+  # 1.0.5+6, so pipeline builds must start above it — otherwise a box with +6
+  # installed would treat the feed as older and never auto-update. Azure honors a
+  # counter's seed ONLY the first time a given prefix is used, so re-seeding
+  # REQUIRES a fresh prefix: bumping the seed on the old 'clingfy-win-dev' prefix
+  # (already at 1) would yield 2, not 7. Hence the '-2' suffix + seed 7 → next
+  # run is +7, then +8, +9…
   - name: WIN_BUILD_NUMBER
-    value: $[counter('clingfy-win-dev', 1)]
+    value: $[counter('clingfy-win-dev-2', 7)]
 
 steps:
   - checkout: self
