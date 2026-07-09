@@ -59,11 +59,16 @@
 // visible, every tick redraws so the pulse animates even when camera frames
 // stall. Glow reads the style store's glow fields directly — deliberately
 // NOT part of ResolveOverlayBubbleStyle.
-// P4c: device-lost rebuild (retained DComp tree; budget + park) and DPI
+// P4c: device-lost rebuild (retained DComp tree; budget + park), DPI
 // self-detection (the tick re-syncs when the live scale diverges — no
-// WM_DPICHANGED handler, which the OS gates on per-monitor awareness).
-// Still deferred: mid-session GDI fallback, capture-display retarget (P4c);
-// default flip (P4d).
+// WM_DPICHANGED handler, which the OS gates on per-monitor awareness),
+// mid-session GDI fallback (via CameraOverlayHost) and capture-display
+// retarget.
+// P4d: this presenter is now the DEFAULT (the factory selects it unless the
+// CLINGFY_FORCE_GDI_OVERLAY kill switch is set). Start runs a one-time render
+// self-check (RenderSelfCheckPasses) that falls the factory back to the GDI
+// bubble if the adapter rasterizes nothing — so the flip is safe on hardware
+// the cross-vendor matrix never covered.
 namespace clingfy::capture {
 
 class CameraDcompOverlay : public ICameraOverlayPresenter {
@@ -78,6 +83,11 @@ class CameraDcompOverlay : public ICameraOverlayPresenter {
     // GPU removal. Each injection makes SyncAndRender treat that tick's draw
     // as DXGI_ERROR_DEVICE_REMOVED and rebuild; the bubble must recover.
     int simulate_device_loss_count = 0;
+    // Tests only (P4d): force the render self-check to report the adapter
+    // rasterized nothing, so Start fails and the factory ladder's
+    // fallback-to-GDI rung is exercised without the hybrid-GPU "renders
+    // nothing" hardware scar. Test-only; never set in production.
+    bool simulate_render_nothing = false;
   };
 
   CameraDcompOverlay() = default;
@@ -189,6 +199,20 @@ class CameraDcompOverlay : public ICameraOverlayPresenter {
   // once at initial creation (the render-only rebuild leaves WDA untouched).
   // Overlay thread.
   void ApplyCaptureExclusion(HWND hwnd);
+  // Renderer P4d default-flip guard: after the GPU stack builds and capture
+  // exclusion is applied, prove THIS adapter actually rasterizes into the
+  // composition swapchain before the flip makes DComp everyone's default. Draws
+  // a known opaque probe, reads the swapchain back buffer straight back (a
+  // direct GPU-resource copy — NOT a screen capture, so WDA_EXCLUDEFROMCAPTURE
+  // does not blind it, unlike the armed on-screen probe), and requires the
+  // read-back pixels to be non-empty. On the hybrid-GPU "renders nothing" scar
+  // the adapter yields an all-zero target despite the fill, so Start fails and
+  // the factory falls back to the safe-mode GDI bubble. Scope: catches the
+  // in-process subset (the D3D / D2D / adapter path produces no pixels); a pure
+  // DWM-composition drop is observable only through the armed on-screen probe.
+  // Leaves a clean transparent front buffer; the window is still hidden, so
+  // nothing flashes. Overlay thread only.
+  bool RenderSelfCheckPasses();
   // One device-loss recovery attempt: count it toward the budget, then rebuild
   // the GPU stack. On rebuild failure, arm a retry for the next tick; past the
   // budget, give up and log the mid-session-fallback hook (c3). Called from

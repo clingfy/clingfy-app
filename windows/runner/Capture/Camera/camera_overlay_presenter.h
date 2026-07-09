@@ -12,14 +12,15 @@
 // CameraRecorder's preview callback — so a presenter is only the WINDOW + DRAW
 // technology. Two implementations are planned:
 //
-//   * CameraFloatingOverlay (camera_floating_overlay.h) — the shipping opaque
-//     GDI window ("GdiOpaquePresenter" in the design doc). Renders shape /
-//     roundness / mirror / border / geometry live; opacity / shadow / glow /
-//     chroma are export-only on it (no per-pixel alpha). The safe-mode
-//     fallback.
-//   * DComp presenter (P3) — WS_EX_NOREDIRECTIONBITMAP + DirectComposition
-//     premultiplied-alpha swapchain + the shared CameraBubblePainter; renders
-//     the full style live.
+//   * CameraFloatingOverlay (camera_floating_overlay.h) — the opaque GDI window
+//     ("GdiOpaquePresenter" in the design doc). Renders shape / roundness /
+//     mirror / border / geometry live; opacity / shadow / glow / chroma are
+//     export-only on it (no per-pixel alpha). The safe-mode fallback, reached
+//     via the kill switch or the start-time ladder (P4d).
+//   * CameraDcompOverlay (camera_dcomp_overlay.h) — WS_EX_NOREDIRECTIONBITMAP +
+//     DirectComposition premultiplied-alpha swapchain + the shared
+//     CameraBubblePainter; renders the full style live. The DEFAULT presenter
+//     as of P4d.
 //
 // RecordingEngine owns presenters only through this interface + the factory
 // below, so swapping/falling back never touches engine logic.
@@ -95,17 +96,19 @@ FloatingPlacement ComputeInitialFloatingPlacement(int work_left, int work_top,
 // ladder.
 bool ForceGdiOverlay();
 
-// Select and construct (NOT start) the presenter. Selection: GDI by default;
-// the DirectComposition presenter when CLINGFY_OVERLAY_DCOMP is set (P3
-// opt-in until the POC gate flips the default in P4). ForceGdiOverlay()
-// always pins GDI. Logs the selection to the device-probe log.
+// Select and construct (NOT start) the presenter. Selection (renderer P4d):
+// the DirectComposition presenter by DEFAULT; ForceGdiOverlay() (the
+// CLINGFY_FORCE_GDI_OVERLAY kill switch) pins the safe-mode GDI presenter. The
+// former CLINGFY_OVERLAY_DCOMP opt-in is retired. Logs the selection to the
+// device-probe log.
 std::shared_ptr<ICameraOverlayPresenter> CreateCameraOverlayPresenter();
 
-// Select, start, and — when the DComp presenter fails to start or fails
-// capture exclusion (documented Win11 defect) — fall back to the GDI
-// presenter. Returns nullptr only when nothing could start; the engine then
-// runs with the in-app texture preview only. This is the engine's entry
-// point.
+// Select, start, and — when the DComp presenter fails to start (GPU stack or
+// the render self-check: the adapter rasterizes nothing) or fails capture
+// exclusion (documented Win11 defect) — fall back to the GDI presenter.
+// Returns nullptr only when nothing could start; the engine then runs with the
+// in-app texture preview only. Logs the resolved active presenter once (the
+// per-recording telemetry line). This is the engine's entry point.
 std::shared_ptr<ICameraOverlayPresenter> StartCameraOverlayPresenter(
     const FloatingPlacement& placement);
 

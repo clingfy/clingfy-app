@@ -230,6 +230,18 @@ void CameraDcompOverlay::ThreadMain(FloatingPlacement placement,
     clingfy::bridge::devices::LogDeviceProbe(b);
   }
 
+  // Renderer P4d default-flip guard: prove this adapter actually rasterizes
+  // into the composition swapchain before the presenter goes live. A "renders
+  // nothing" verdict tears the DComp stack down and reports failure — the
+  // factory ladder then falls back to the safe-mode GDI bubble, so the flip is
+  // safe even on hardware the cross-vendor matrix never covered.
+  if (!RenderSelfCheckPasses()) {
+    ReleaseGpuStack();
+    ::DestroyWindow(hwnd);
+    ready->set_value(false);
+    return;
+  }
+
   hwnd_.store(hwnd);
   simulated_device_losses_remaining_ = options_.simulate_device_loss_count;
   ::SetTimer(hwnd, kTickTimerId, kTickIntervalMs, nullptr);
@@ -275,6 +287,123 @@ void CameraDcompOverlay::ApplyCaptureExclusion(HWND hwnd) {
                   ::GetLastError());
     clingfy::bridge::devices::LogDeviceProbe(b);
   }
+}
+
+bool CameraDcompOverlay::RenderSelfCheckPasses() {
+  // Test hook (P4d): force the "adapter rasterized nothing" verdict so the
+  // factory ladder's GDI fallback is exercised without the hybrid-GPU scar —
+  // the parity of CLINGFY_TEST_DCOMP_WDA_FAIL for the render path.
+  if (options_.simulate_render_nothing) {
+    clingfy::bridge::devices::LogDeviceProbe(
+        "CameraDcompOverlay: render self-check SIMULATED empty (test hook)");
+    return false;
+  }
+  if (d2d_ctx_ == nullptr || swapchain_ == nullptr || d3d_device_ == nullptr ||
+      target_bitmap_ == nullptr) {
+    return false;
+  }
+
+  // Rasterize a KNOWN opaque probe over the whole target. A FillRectangle (not
+  // just Clear) exercises the same rasterizer the painter uses; opaque white so
+  // a black / empty read-back is unambiguous.
+  const D2D1_SIZE_F size = d2d_ctx_->GetSize();
+  d2d_ctx_->BeginDraw();
+  d2d_ctx_->Clear(D2D1::ColorF(0.0f, 0.0f, 0.0f, 0.0f));
+  ComPtr<ID2D1SolidColorBrush> brush;
+  if (SUCCEEDED(d2d_ctx_->CreateSolidColorBrush(
+          D2D1::ColorF(1.0f, 1.0f, 1.0f, 1.0f), brush.GetAddressOf()))) {
+    d2d_ctx_->FillRectangle(D2D1::RectF(0.0f, 0.0f, size.width, size.height),
+                            brush.Get());
+  }
+  HRESULT hr = d2d_ctx_->EndDraw();
+  if (FAILED(hr)) {
+    char b[96];
+    std::snprintf(b, sizeof(b),
+                  "CameraDcompOverlay: render self-check EndDraw failed "
+                  "hr=0x%08lX",
+                  static_cast<unsigned long>(hr));
+    clingfy::bridge::devices::LogDeviceProbe(b);
+    return false;
+  }
+
+  // Read the drawn pixels back off the swapchain back buffer through a
+  // CPU-readable staging copy. This is a direct D3D resource copy, NOT a screen
+  // capture, so the capture exclusion applied just before does not blind it —
+  // which is exactly why this check is shippable in production (the on-screen
+  // magenta probe needs the exclusion OFF, so it can only ever be a dev-box
+  // canary). EndDraw flushed the D2D work, so the immediate-context copy is
+  // ordered after it.
+  ComPtr<ID3D11Texture2D> back;
+  if (FAILED(swapchain_->GetBuffer(0, IID_PPV_ARGS(back.GetAddressOf())))) {
+    return false;
+  }
+  D3D11_TEXTURE2D_DESC desc{};
+  back->GetDesc(&desc);
+  desc.Usage = D3D11_USAGE_STAGING;
+  desc.BindFlags = 0;
+  desc.CPUAccessFlags = D3D11_CPU_ACCESS_READ;
+  desc.MiscFlags = 0;
+  ComPtr<ID3D11Texture2D> staging;
+  if (FAILED(d3d_device_->CreateTexture2D(&desc, nullptr,
+                                          staging.GetAddressOf()))) {
+    return false;
+  }
+  ComPtr<ID3D11DeviceContext> ctx;
+  d3d_device_->GetImmediateContext(ctx.GetAddressOf());
+  ctx->CopyResource(staging.Get(), back.Get());
+  D3D11_MAPPED_SUBRESOURCE mapped{};
+  if (FAILED(ctx->Map(staging.Get(), 0, D3D11_MAP_READ, 0, &mapped))) {
+    return false;
+  }
+  // Count non-zero pixels across a coarse grid: after an opaque-white full fill
+  // a working adapter reads back ~100% non-zero; the "renders nothing" scar
+  // reads back ~0%. A simple majority threshold is robust to a stray sample
+  // either way.
+  int sampled = 0;
+  int non_empty = 0;
+  const auto* base_pixels = static_cast<const std::uint8_t*>(mapped.pData);
+  for (UINT y = 0; y < desc.Height; y += 16) {
+    const std::uint8_t* row =
+        base_pixels + static_cast<size_t>(y) * mapped.RowPitch;
+    for (UINT x = 0; x < desc.Width; x += 16) {
+      const std::uint8_t* px = row + static_cast<size_t>(x) * 4;
+      ++sampled;
+      if (px[0] != 0 || px[1] != 0 || px[2] != 0 || px[3] != 0) {
+        ++non_empty;
+      }
+    }
+  }
+  ctx->Unmap(staging.Get(), 0);
+  const bool passed = sampled > 0 && non_empty * 2 > sampled;
+
+  // Leave a clean, DEFINED transparent front buffer: the moment the engine
+  // Show()s the (still-hidden) window there must be no probe fill or undefined
+  // garbage to composite before the first camera frame arrives. This also
+  // proves the Present path drives the swapchain on this adapter — a present
+  // failure here is itself a "cannot render" signal.
+  d2d_ctx_->BeginDraw();
+  d2d_ctx_->Clear(D2D1::ColorF(0.0f, 0.0f, 0.0f, 0.0f));
+  bool present_ok = SUCCEEDED(d2d_ctx_->EndDraw());
+  if (present_ok) {
+    present_ok = SUCCEEDED(swapchain_->Present(0, 0));
+  }
+
+  if (!passed || !present_ok) {
+    char b[152];
+    std::snprintf(b, sizeof(b),
+                  "CameraDcompOverlay: render self-check FAILED "
+                  "(non_empty=%d/%d present_ok=%d) — adapter renders nothing, "
+                  "falling back to GDI",
+                  non_empty, sampled, present_ok ? 1 : 0);
+    clingfy::bridge::devices::LogDeviceProbe(b);
+    return false;
+  }
+  char b[112];
+  std::snprintf(b, sizeof(b),
+                "CameraDcompOverlay: render self-check PASSED (non_empty=%d/%d)",
+                non_empty, sampled);
+  clingfy::bridge::devices::LogDeviceProbe(b);
+  return true;
 }
 
 void CameraDcompOverlay::ReleaseRenderResources() {

@@ -1,12 +1,12 @@
 # Windows live camera bubble — renderer redesign (D3D/D2D core + DirectComposition presenter)
 
-Status: **implemented through P3; P4 (full presenter + default flip) in progress** (updated 2026-07-08)
+Status: **P0–P4 complete; DirectComposition is the default presenter** (updated 2026-07-09)
 Supersedes the presentation layer of [windows-phase-9-camera-overlay-architecture.md](windows-phase-9-camera-overlay-architecture.md); the capture, exclusion-gating, and style-store decisions there remain in force.
 
-## Status update (2026-07-08)
+## Status update (2026-07-09)
 
-This document was written pre-implementation; P0–P3 have since landed on `develop`
-exactly as designed, and the P3 GO/NO-GO gate **passed**:
+This document was written pre-implementation; P0–P4 have since landed on `develop`
+exactly as designed, the P3 GO/NO-GO gate **passed**, and P4d flipped the default:
 
 - **P0** — #220 (editorSeed persistence), #221 (geometry store + live position/size).
 - **P1** — #224 (`83182be`): drag write-back + `cameraOverlayMoved` emitter + glow
@@ -29,8 +29,28 @@ exactly as designed, and the P3 GO/NO-GO gate **passed**:
   samples); now double-buffered (0/181). Headless pixel tests
   (`camera_bubble_border_pixel_test.cpp`) pin the painter/DComp border paths per the
   §7 test strategy.
-- DComp remains **opt-in** (`CLINGFY_OVERLAY_DCOMP=1`) until P4 flips the default;
-  `CLINGFY_FORCE_GDI_OVERLAY` stays the kill switch and beats the opt-in.
+- **P4a** — #232 (`e084808`): effect-padding halo + click-through (window outsizes
+  the content square by the painter's real bake extents; halo is `HTTRANSPARENT` +
+  cursor-tracked `WS_EX_TRANSPARENT`, WDA re-verified after each flip).
+- **P4b** — #233 (`ed83826`): the recording glow ring, presenter-drawn and live-only
+  (macOS pulse math), baked per style/geometry change, never in the shared painter.
+- **P4c** — device-lost rebuild (#234, retains the DComp tree and rebuilds only render
+  resources), DPI self-detection (#235, the tick re-syncs on scale divergence — no
+  `WM_DPICHANGED` dependency), mid-session GDI fallback (#236, `CameraOverlayHost`
+  swaps DComp→GDI when the rebuild budget is spent; the never-show-unexcluded invariant
+  is enforced atomically at the swap), and capture-display retarget (#237, the bubble
+  lands on the recorded window's monitor).
+- **P4d** — DirectComposition is now the **default** presenter; `CLINGFY_FORCE_GDI_OVERLAY`
+  stays the kill switch and the retired `CLINGFY_OVERLAY_DCOMP` opt-in is gone. Because
+  the ADR's hardware-matrix gate (NVIDIA/AMD) never ran, `Start` runs a one-time **render
+  self-check**: it rasterizes a known opaque probe, reads the swapchain back buffer
+  straight back (a direct GPU-resource copy — WDA does not blind it, so it works in
+  production unlike the on-screen probe), and falls the factory back to the GDI bubble if
+  the adapter produced no pixels. This closes the in-process subset of the hybrid-GPU
+  "renders nothing" scar on any adapter without waiting on the matrix (a pure DWM-
+  composition drop remains observable only through the armed on-screen probe). The
+  resolved presenter is logged once per recording (`active = dcomp` / `gdi`). Fault
+  injection: `CLINGFY_TEST_DCOMP_RENDER_NOTHING` drives the fallback rung in tests.
 
 ## 1. Problem
 
@@ -212,10 +232,10 @@ reported once per recording for beta telemetry.
 | **P1** ✅ | Drag write-back + `cameraOverlayMoved` emitter; glow fields in style store + wire the two no-op handlers (GDI presenter ignores glow) | merged as #224 (`83182be`); drag→slider no longer teleports |
 | **P2** ✅ | Extract `ICameraOverlayPresenter`; `GdiOpaquePresenter` = current behavior byte-identical; selection scaffolding, kill switch, logging | merged as #225 (`8d2db36`); full suite green |
 | **P3** ✅ | `DCompPresenter` POC behind the kill switch: square window, frame upload, painter mask + opacity + border, WDA probe | merged as #226 (`f60dbd1`); **GO** on the hybrid-GPU dev box: renders on-screen AND absent from screen capture, armed probes green |
-| **P4** | Full presenter: shadow, chroma, glow ring + pulse, effect padding + click-through halo, DPI (`WM_DPICHANGED` → ResizeBuffers + SetDpi), capture-display retarget at recording start, device-lost rebuild + mid-session fallback, **default flip to DComp** | headless D2D pixel tests (the `preview_compositor_color_test.cpp` HeadlessD2D pattern) + hardware matrix smoke |
+| **P4** ✅ | Full presenter: shadow, chroma (a/b, #232–#237), glow ring + pulse, effect padding + click-through halo, DPI self-detection, capture-display retarget, device-lost rebuild + mid-session fallback, **default flip to DComp** guarded by the render self-check | headless D2D pixel tests + armed on-screen probes green; the hardware-matrix gate is replaced for the flip by the start-time render self-check (§2, P4d) |
 | **P5** (backlog) | Hexagon/star geometry in the painter (fixes export gap too); styled in-app texture (Dart bubble already styles everything but chroma — low urgency) | — |
 
-P0–P3 are merged (see the status update above); P4 is the active phase.
+P0–P4 are merged (see the status update above); P5 is backlog.
 
 ## 7. Test strategy
 
