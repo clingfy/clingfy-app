@@ -1459,7 +1459,11 @@ flutter test
 ```
 
 For changes to `windows/runner/`, build the Windows target on a Windows host
-(macOS CI cannot build the Windows runner) and run the native tests:
+and run the native tests (macOS CI cannot build the Windows runner — this is
+why CI has a dedicated path-scoped `windows-latest` job in
+`.github/workflows/ci.yml` that runs `flutter build windows` + this `ctest`
+suite whenever `windows/**` or shared code changes; the armed pixel probes
+still run only on the dev box):
 
 ```powershell
 flutter build windows --dart-define-from-file=.env.dev
