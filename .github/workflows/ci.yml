@@ -39,10 +39,14 @@ jobs:
       contents: read
       pull-requests: read
     outputs:
-      # macos/windows are true when that platform OR any shared code changed.
-      macos: ${{ steps.filter.outputs.macos == 'true' || steps.filter.outputs.shared == 'true' }}
-      windows: ${{ steps.filter.outputs.windows == 'true' || steps.filter.outputs.shared == 'true' }}
-      shared: ${{ steps.filter.outputs.shared }}
+      # `dart` gates the Flutter/Dart quality job on its own — a pure macos/** or
+      # windows/** change leaves it false, so format/analyze/flutter-test is
+      # skipped when no Dart changed. `macos`/`windows` stay true when that
+      # platform, the Dart layer (a Dart change affects both builds), or the CI
+      # definition changed (editing CI should exercise every platform's jobs).
+      dart: ${{ steps.filter.outputs.dart }}
+      macos: ${{ steps.filter.outputs.dart == 'true' || steps.filter.outputs.ci == 'true' || steps.filter.outputs.macos_native == 'true' }}
+      windows: ${{ steps.filter.outputs.dart == 'true' || steps.filter.outputs.ci == 'true' || steps.filter.outputs.windows_native == 'true' }}
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -51,29 +55,39 @@ jobs:
         id: filter
         uses: dorny/paths-filter@v3
         with:
-          # `shared` = the Dart/Flutter layer both desktop targets build on, plus
-          # the CI definition itself (editing it should exercise every job).
+          # `dart` = the Flutter/Dart layer both desktop targets build on (what
+          # `flutter-quality` validates). `ci` = the workflow itself (editing it
+          # should exercise every platform's jobs, but not necessarily Dart).
           filters: |
-            shared:
+            dart:
               - 'lib/**'
               - 'test/**'
               - 'pubspec.yaml'
               - 'pubspec.lock'
               - 'analysis_options.yaml'
               - 'l10n.yaml'
+            ci:
               - '.github/workflows/**'
-            macos:
+            macos_native:
               - 'macos/**'
-            windows:
+            windows_native:
               - 'windows/**'
 
   flutter-quality:
     name: Flutter quality
     runs-on: macos-latest
     timeout-minutes: 25
-    # Always runs: the shared Dart/Flutter gate (format + analyze + flutter
-    # test) is cheap and platform-agnostic, and keeping it ungated means the
-    # platform native jobs that `needs:` it never hit skip-propagation.
+    needs:
+      - changes
+    # Runs only when Dart/Flutter code changed (format + analyze + flutter
+    # test) — a pure macos/** or windows/** change skips it. The platform
+    # native jobs deliberately do NOT `needs:` this job, so its skip never
+    # skip-propagates to them; broken Dart still fails the platform builds
+    # (they compile Dart) and this job independently.
+    if: >-
+      needs.changes.outputs.dart == 'true' ||
+      github.event_name == 'schedule' ||
+      github.event_name == 'workflow_dispatch'
 
     steps:
       - name: Checkout
@@ -133,7 +147,6 @@ jobs:
     runs-on: macos-latest
     needs:
       - changes
-      - flutter-quality
     # Only when macOS (or shared) code changed; nightly + manual runs do all.
     if: >-
       needs.changes.outputs.macos == 'true' ||
@@ -288,7 +301,6 @@ jobs:
     timeout-minutes: 90
     needs:
       - changes
-      - flutter-quality
     # Only when macOS (or shared) code changed; nightly + manual runs do all.
     if: >-
       needs.changes.outputs.macos == 'true' ||
@@ -482,7 +494,6 @@ jobs:
     timeout-minutes: 40
     needs:
       - changes
-      - flutter-quality
       - native-macos-fast
     # Only when macOS (or shared) code changed; nightly + manual runs do all.
     if: >-
@@ -591,7 +602,6 @@ jobs:
     timeout-minutes: 60
     needs:
       - changes
-      - flutter-quality
     # Only when windows/** (or shared) code changed; nightly + manual do all.
     if: >-
       needs.changes.outputs.windows == 'true' ||
