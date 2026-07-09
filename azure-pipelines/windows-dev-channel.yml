@@ -1,0 +1,125 @@
+# windows-dev-channel.yml
+#
+# Windows counterpart of dev-channel.yml (macOS): on every push to develop,
+# build the Windows DEV installer and publish it + the update feed
+# (latest-windows.json) to the dev blob, so installed dev builds' update check
+# resolves. Blob-direct (no Front Door), unsigned (Decision D3 allows the
+# unsigned private beta). Drives the same PowerShell release lane
+# (ops/release/windows/) a maintainer runs locally.
+#
+# ── Azure DevOps prerequisites (portal, one-time — cannot live in the repo) ──
+#   1. Create a pipeline pointing at this file (Pipelines → New → this YAML).
+#   2. Service connection `ClingfyAzureConnection` (already used by the macOS
+#      lane) — its service principal needs **Storage Blob Data Contributor on
+#      the `clingfyreleasesdev` storage account** (the macOS dev account may
+#      differ, so verify/grant this role).
+#   3. Secure file `.env.dev` in the Library — the SAME blob-direct config used
+#      locally (AZ_STORAGE_ACCOUNT=clingfyreleasesdev, AZ_CDN_ENDPOINT=the blob
+#      endpoint, AZ_FRONTDOOR_ENDPOINT_NAME empty).
+#   4. Variable group `Clingfy-Secrets` linked (shared with the macOS lane).
+#   5. The `Flutter` Marketplace task (FlutterInstall@0) installed in the org
+#      (the macOS lane already uses it).
+#
+# To also SIGN dev builds: add a DownloadSecureFile for the .pfx, set
+# WIN_SIGN_CERT_PFX/WIN_SIGN_CERT_PASSWORD (or _THUMBPRINT) as env on the build
+# step, and pass -RequireSignature. Left unsigned here on purpose.
+
+trigger:
+  branches:
+    include:
+      - develop
+pr: none
+
+pool:
+  vmImage: "windows-latest"
+
+variables:
+  - group: "Clingfy-Secrets"
+
+  - name: APP_ENV
+    value: "dev"
+
+  - name: RELEASE_CHANNEL
+    value: "dev"
+
+  # 16-bit-SAFE monotonic build number. NEVER $(Build.BuildId) here: the Windows
+  # FILEVERSION field is 16-bit and the lane hard-fails a build number > 65535
+  # (ops/release/windows/_config.ps1). counter() starts at 1 and increments once
+  # per run — unique + increasing so the update check sees each build as newer,
+  # and well within 16 bits for the life of the channel.
+  - name: WIN_BUILD_NUMBER
+    value: $[counter('clingfy-win-dev', 1)]
+
+steps:
+  - checkout: self
+    persistCredentials: true
+    fetchDepth: 0
+
+  - task: DownloadSecureFile@1
+    name: EnvFile
+    displayName: "Download .env.dev"
+    inputs:
+      secureFile: ".env.dev"
+
+  - powershell: |
+      Copy-Item "$(EnvFile.secureFilePath)" `
+        "$(System.DefaultWorkingDirectory)\.env.dev" -Force
+      Write-Host "Staged .env.dev"
+    displayName: "Stage .env.dev"
+
+  - task: FlutterInstall@0
+    displayName: "Install Flutter 3.41.1"
+    inputs:
+      mode: auto
+      channel: stable
+      version: custom
+      customVersion: "3.41.1"
+
+  # Inno Setup is not preinstalled on windows-latest. Note: 6.5+ shows a
+  # "Non-commercial use only" notice on unlicensed installs — acceptable for the
+  # dev channel; use a licensed/pinned copy for the eventual prod lane.
+  - powershell: |
+      choco install innosetup -y --no-progress
+      if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+    displayName: "Install Inno Setup"
+
+  # Build + stage + (unsigned) sign + package the installer. No -Publish here:
+  # the upload runs in the AzureCLI@2 task below so it inherits the service
+  # connection's identity. BUILD_NUMBER_OVERRIDE must match the publish step
+  # (counter() is evaluated once per run, so it does).
+  - powershell: |
+      pwsh -NoProfile -File `
+        ops/release/windows/workflows/local_release.ps1 -Channel dev
+      if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+    displayName: "Build + package (unsigned dev)"
+    env:
+      APP_ENV: $(APP_ENV)
+      RELEASE_CHANNEL: $(RELEASE_CHANNEL)
+      BUILD_NUMBER_OVERRIDE: $(WIN_BUILD_NUMBER)
+
+  # Upload the installer + .sha256 + latest-windows.json to the dev blob, then
+  # smoke-test the published feed/download. AzureCLI@2 authenticates `az` via
+  # the service connection, so 04's `az storage blob upload --auth-mode login`
+  # runs as the service principal (Front Door purge auto-skips: blob-direct).
+  - task: AzureCLI@2
+    displayName: "Publish to dev blob + smoke"
+    inputs:
+      azureSubscription: "ClingfyAzureConnection"
+      scriptType: pscore
+      scriptLocation: inlineScript
+      inlineScript: |
+        pwsh -NoProfile -File ops/release/windows/04_publish_azure.ps1 -Channel dev
+        if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+        pwsh -NoProfile -File ops/release/windows/05_smoke.ps1 -Channel dev
+        if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+    env:
+      APP_ENV: $(APP_ENV)
+      RELEASE_CHANNEL: $(RELEASE_CHANNEL)
+      BUILD_NUMBER_OVERRIDE: $(WIN_BUILD_NUMBER)
+
+  - task: PublishBuildArtifacts@1
+    displayName: "Publish dev artifact"
+    condition: succeededOrFailed()
+    inputs:
+      PathtoPublish: "dist/windows/installer"
+      ArtifactName: "Clingfy-Windows-Dev"
