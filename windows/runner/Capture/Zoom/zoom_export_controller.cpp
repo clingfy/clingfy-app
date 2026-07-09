@@ -178,4 +178,13 @@ ZoomExportController::Frame ZoomExportController::Advance(std::int64_t frame_ms,
   return frame;
 }
 
+void ZoomExportController::ResetSmoothing() {
+  // Same rest state the smoother is constructed with, so the next Advance
+  // eases in from neutral for the new range instead of from the stale
+  // (later-frame) zoom left behind by a backward source jump.
+  cur_zoom_ = 1.0;
+  cur_cx_ = 0.5;
+  cur_cy_ = 0.5;
+}
+
 }  // namespace clingfy::capture

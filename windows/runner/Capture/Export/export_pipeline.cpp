@@ -57,6 +57,23 @@ constexpr DWORD kNoStream = 0xFFFFFFFFu;
 constexpr std::int64_t kExportAudioSampleRate = 48'000;
 constexpr std::uint32_t kExportAudioChannels = 2;
 
+// Seek an IMFSourceReader to a recording-relative millisecond position.
+// Editing port (clips, 3b-2): reorder export reads each kept range's source
+// window in timeline order, which means seeking the reader BACKWARD across a
+// range boundary. MF seeks to the nearest prior keyframe; the caller decodes
+// forward, discarding the lead-in, until the range window is reached.
+void SeekSourceReader(IMFSourceReader* reader, std::int64_t source_ms) {
+  if (reader == nullptr) {
+    return;
+  }
+  PROPVARIANT pos;
+  PropVariantInit(&pos);
+  pos.vt = VT_I8;
+  pos.hVal.QuadPart = std::max<std::int64_t>(0, source_ms) * 10000;
+  reader->SetCurrentPosition(GUID_NULL, pos);
+  PropVariantClear(&pos);
+}
+
 // Idempotent MF startup. Mirrors the encoder's pattern: paired with
 // MFShutdown only at process exit, so opening an export does not churn
 // global MF state. A second independent once_flag (the encoder has its
@@ -747,6 +764,37 @@ RenderResult RenderComposedExport(const RenderRequest& request) {
     }
   };
 
+  // Editing port (clips, 3b-2a): reorder / non-monotonic export. When the kept
+  // ranges are not source-monotonic, a single forward read cannot emit them in
+  // timeline order — the output PTS would go backward (§5.3). Instead we read
+  // each range's source window in TIMELINE order, seeking the reader BACKWARD as
+  // needed; kept frames re-stamp onto a contiguous edited timeline and the
+  // source-keyed effects (zoom smoother, camera reader) reset at each boundary
+  // (§5.4/§5.5). Audio is handled by the decoupled AudioSlots pass in 3b-2b; here
+  // the audio stream is deselected and dropped.
+  const bool reorder =
+      clipping && !clip_planner::IsSourceMonotonic(request.clip_ranges);
+  const int reorder_n = static_cast<int>(request.clip_ranges.size());
+  int reorder_range_idx = 0;
+  std::int64_t reorder_edited_base_ms = 0;
+  if (reorder) {
+    // frame_ms must stay container-relative (0-based) to match clip_ranges, so
+    // anchor to source 0 rather than the first post-seek frame (which sits at
+    // range 0's window, not source 0). The recorder writes from PTS 0.
+    first_video_hns = 0;
+    if (has_audio) {
+      reader->SetStreamSelection(audio_index, FALSE);
+    }
+    audio_eos = true;  // 3b-2b wires reorder audio; drop it here.
+    SeekSourceReader(reader.Get(), request.clip_ranges[0].source_in_ms);
+    if (zoom_controller != nullptr) {
+      zoom_controller->ResetSmoothing();
+    }
+    if (camera_renderer != nullptr) {
+      camera_renderer->SeekTo(request.clip_ranges[0].source_in_ms);
+    }
+  }
+
   while (!(video_eos && audio_eos)) {
     // Slice 5A: cancel between samples — release the writer without
     // finalizing and delete the partial file, then reply cleanly.
@@ -767,6 +815,23 @@ RenderResult RenderComposedExport(const RenderRequest& request) {
     }
     if (flags & MF_SOURCE_READERF_ENDOFSTREAM) {
       if (actual_index == video_index) {
+        if (reorder && reorder_range_idx + 1 < reorder_n) {
+          // A kept range ended exactly at source EOS; advance to the next
+          // timeline range and seek (backward) rather than ending the export.
+          reorder_edited_base_ms +=
+              request.clip_ranges[reorder_range_idx].DurationMs();
+          ++reorder_range_idx;
+          const std::int64_t next_in =
+              request.clip_ranges[reorder_range_idx].source_in_ms;
+          SeekSourceReader(reader.Get(), next_in);
+          if (zoom_controller != nullptr) {
+            zoom_controller->ResetSmoothing();
+          }
+          if (camera_renderer != nullptr) {
+            camera_renderer->SeekTo(next_in);
+          }
+          continue;
+        }
         video_eos = true;
       } else if (actual_index == audio_index) {
         audio_eos = true;
@@ -791,7 +856,39 @@ RenderResult RenderComposedExport(const RenderRequest& request) {
       // frame is inside a cut gap: drop it (still advance progress so the bar
       // tracks decode position). Empty ranges => identity (never nullopt).
       std::optional<std::int64_t> edited;
-      if (clipping) {
+      if (reorder) {
+        // Per-range window gate, in timeline order. Past the current range's end
+        // → advance + seek (re-priming the source-keyed effects) to the next
+        // range, then discard this boundary frame and re-read from the new
+        // position. Before the range's start → keyframe lead-in, discard.
+        if (reorder_range_idx >= reorder_n) {
+          video_eos = true;
+          continue;
+        }
+        const auto& r = request.clip_ranges[reorder_range_idx];
+        if (frame_ms >= r.source_out_ms) {
+          reorder_edited_base_ms += r.DurationMs();
+          ++reorder_range_idx;
+          if (reorder_range_idx < reorder_n) {
+            const std::int64_t next_in =
+                request.clip_ranges[reorder_range_idx].source_in_ms;
+            SeekSourceReader(reader.Get(), next_in);
+            if (zoom_controller != nullptr) {
+              zoom_controller->ResetSmoothing();
+            }
+            if (camera_renderer != nullptr) {
+              camera_renderer->SeekTo(next_in);
+            }
+          } else {
+            video_eos = true;  // all kept ranges emitted
+          }
+          continue;
+        }
+        if (frame_ms < r.source_in_ms) {
+          continue;  // keyframe lead-in before the range window
+        }
+        edited = reorder_edited_base_ms + (frame_ms - r.source_in_ms);
+      } else if (clipping) {
         edited =
             clip_planner::EditedMsForKeptSourceMs(frame_ms, request.clip_ranges);
         if (!edited.has_value()) {

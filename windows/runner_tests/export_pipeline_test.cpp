@@ -317,6 +317,161 @@ bool ReadFirstFrameBgra(const std::wstring& path, UINT* out_w, UINT* out_h,
   return false;
 }
 
+// Editing port (clips, 3b-2a): a two-color source — the first half of the
+// frames RED, the second half BLUE — so a decoded output frame's dominant
+// channel reveals which SOURCE half it came from. That lets a reorder test
+// prove the export read a LATER source window before an EARLIER one.
+bool SynthesizeHalvesSource(clingfy::graphics::D3DDevice* device,
+                            const std::string& path, std::string* skip_reason) {
+  clingfy::encoding::EncoderConfig cfg;
+  cfg.output_path = path;
+  cfg.width = kSourceWidth;
+  cfg.height = kSourceHeight;
+  cfg.fps = kFps;
+  clingfy::encoding::MfSinkWriterEncoder encoder;
+  if (auto err = encoder.Open(cfg, *device, std::nullopt)) {
+    *skip_reason = "halves source encoder open failed: " + err->message;
+    return false;
+  }
+  const std::int64_t frame_dur_hns = 10'000'000 / kFps;
+  for (int i = 0; i < kFrameCount; ++i) {
+    // 0xAARRGGBB: red = 0xFFFF0000, blue = 0xFF0000FF.
+    const std::uint32_t color =
+        (i < kFrameCount / 2) ? 0xFFFF0000u : 0xFF0000FFu;
+    clingfy::capture::CapturedVideoFrame frame;
+    frame.texture = MakeSolidTexture(device->device(), color);
+    if (frame.texture == nullptr) {
+      *skip_reason = "could not allocate a halves source frame";
+      return false;
+    }
+    frame.width = kSourceWidth;
+    frame.height = kSourceHeight;
+    frame.timestamp_hns = static_cast<std::int64_t>(i) * frame_dur_hns;
+    if (auto err = encoder.WriteVideoFrame(frame)) {
+      *skip_reason = "halves source WriteVideoFrame failed: " + err->message;
+      return false;
+    }
+  }
+  if (auto err = encoder.Finalize()) {
+    *skip_reason = "halves source finalize failed: " + err->message;
+    return false;
+  }
+  return true;
+}
+
+// Decode every video frame of `path` and record its CENTER pixel as 0xAARRGGBB
+// (the center is video content, not letterbox). Returns false when the
+// environment can't decode, so the caller GTEST_SKIPs.
+bool ReadFrameCenterColors(const std::wstring& path,
+                           std::vector<std::uint32_t>* out_colors) {
+  out_colors->clear();
+  ComPtr<IMFAttributes> attrs;
+  if (FAILED(::MFCreateAttributes(attrs.GetAddressOf(), 1))) {
+    return false;
+  }
+  attrs->SetUINT32(MF_SOURCE_READER_ENABLE_VIDEO_PROCESSING, TRUE);
+  ComPtr<IMFSourceReader> reader;
+  if (FAILED(::MFCreateSourceReaderFromURL(path.c_str(), attrs.Get(),
+                                           reader.GetAddressOf())) ||
+      reader == nullptr) {
+    return false;
+  }
+  DWORD video_index = 0xFFFFFFFFu;
+  for (DWORD i = 0;; ++i) {
+    ComPtr<IMFMediaType> native;
+    const HRESULT hr = reader->GetNativeMediaType(i, 0, native.GetAddressOf());
+    if (hr == MF_E_INVALIDSTREAMNUMBER) {
+      break;
+    }
+    if (FAILED(hr) || native == nullptr) {
+      continue;
+    }
+    GUID major = GUID_NULL;
+    if (SUCCEEDED(native->GetGUID(MF_MT_MAJOR_TYPE, &major)) &&
+        major == MFMediaType_Video) {
+      video_index = i;
+      break;
+    }
+  }
+  if (video_index == 0xFFFFFFFFu) {
+    return false;
+  }
+  reader->SetStreamSelection(static_cast<DWORD>(MF_SOURCE_READER_ALL_STREAMS),
+                             FALSE);
+  reader->SetStreamSelection(video_index, TRUE);
+  ComPtr<IMFMediaType> rgb;
+  if (FAILED(::MFCreateMediaType(rgb.GetAddressOf()))) {
+    return false;
+  }
+  rgb->SetGUID(MF_MT_MAJOR_TYPE, MFMediaType_Video);
+  rgb->SetGUID(MF_MT_SUBTYPE, MFVideoFormat_RGB32);
+  if (FAILED(reader->SetCurrentMediaType(video_index, nullptr, rgb.Get()))) {
+    return false;
+  }
+  ComPtr<IMFMediaType> current;
+  UINT32 w = 0;
+  UINT32 h = 0;
+  if (FAILED(reader->GetCurrentMediaType(video_index, current.GetAddressOf())) ||
+      FAILED(::MFGetAttributeSize(current.Get(), MF_MT_FRAME_SIZE, &w, &h)) ||
+      w == 0 || h == 0) {
+    return false;
+  }
+  const size_t row_bytes = static_cast<size_t>(w) * 4u;
+  std::vector<std::uint32_t> frame(static_cast<size_t>(w) * h, 0u);
+  for (int guard = 0; guard < 256; ++guard) {
+    DWORD actual = 0;
+    DWORD flags = 0;
+    LONGLONG ts = 0;
+    ComPtr<IMFSample> sample;
+    if (FAILED(reader->ReadSample(video_index, 0, &actual, &flags, &ts,
+                                  sample.GetAddressOf()))) {
+      return false;
+    }
+    if (flags & MF_SOURCE_READERF_ENDOFSTREAM) {
+      break;
+    }
+    if (sample == nullptr) {
+      continue;
+    }
+    auto* dest = reinterpret_cast<BYTE*>(frame.data());
+    ComPtr<IMFMediaBuffer> raw;
+    if (FAILED(sample->GetBufferByIndex(0, raw.GetAddressOf())) ||
+        raw == nullptr) {
+      return false;
+    }
+    ComPtr<IMF2DBuffer> buffer2d;
+    if (SUCCEEDED(raw.As(&buffer2d)) && buffer2d != nullptr) {
+      BYTE* scan0 = nullptr;
+      LONG stride = 0;
+      if (FAILED(buffer2d->Lock2D(&scan0, &stride)) || scan0 == nullptr) {
+        return false;
+      }
+      for (UINT row = 0; row < h; ++row) {
+        std::memcpy(dest + row * row_bytes,
+                    scan0 + static_cast<LONG>(row) * stride, row_bytes);
+      }
+      buffer2d->Unlock2D();
+    } else {
+      ComPtr<IMFMediaBuffer> contig;
+      if (FAILED(sample->ConvertToContiguousBuffer(contig.GetAddressOf())) ||
+          contig == nullptr) {
+        return false;
+      }
+      BYTE* data = nullptr;
+      DWORD max_len = 0;
+      DWORD cur_len = 0;
+      if (FAILED(contig->Lock(&data, &max_len, &cur_len)) || data == nullptr) {
+        return false;
+      }
+      std::memcpy(dest, data, std::min<size_t>(cur_len, row_bytes * h));
+      contig->Unlock();
+    }
+    const size_t center = static_cast<size_t>(h / 2) * w + (w / 2);
+    out_colors->push_back(frame[center]);
+  }
+  return !out_colors->empty();
+}
+
 // Decode the exported audio track to 48 kHz stereo int16 PCM and report its
 // peak (0..1) and RMS (raw int16 units). Mirrors ReadFirstFrameBgra: returns
 // ok=false when the environment can't decode so the caller GTEST_SKIPs. Used
@@ -1709,6 +1864,69 @@ TEST(ExportPipelineTest, SingleWholeRangeKeepsAllFrames) {
   ASSERT_TRUE(whole_r.ok) << whole_r.message;
   EXPECT_EQ(whole_r.video_frames_written, base_r.video_frames_written)
       << "a whole-covering clip range must not drop any frame";
+
+  std::error_code ec;
+  fs::remove_all(dir, ec);
+}
+
+// ---- Editing port (clips, step 3b-2a): reorder / non-monotonic bake ---------
+//
+// The reorder path reads each kept range's source window in TIMELINE order,
+// seeking the reader BACKWARD across a boundary, and re-stamps onto a contiguous
+// edited timeline. With a red-first / blue-second source, a timeline that plays
+// the blue (later) half first must produce blue frames THEN red frames — which
+// only happens if the backward seek + per-range re-stamp work. (Audio is
+// dropped on this path until 3b-2b; the guard still refuses reorder in
+// production, so this exercises the pipeline directly.)
+TEST(ExportPipelineTest, ReorderExportReadsLaterSourceWindowFirst) {
+  clingfy::graphics::D3DDevice device;
+  if (device.Create()) {
+    GTEST_SKIP() << "no usable D3D11 device in this environment";
+  }
+  const auto dir = UniqueDir("clip_reorder");
+  const auto source = (dir / "source.mov").u8string();
+  std::string skip_reason;
+  if (!SynthesizeHalvesSource(&device, source, &skip_reason)) {
+    GTEST_SKIP() << skip_reason;
+  }
+
+  // Source frames 0..3 (ms 0,33,66,100) RED; 4..7 (ms 133,166,200,233) BLUE.
+  // Timeline = [ blue window (133,267), red window (0,133) ] — a later source
+  // window placed BEFORE an earlier one (non-monotonic). The blue range ends at
+  // source EOS, so this also exercises the reorder EOS→next-range advance.
+  RenderRequest r;
+  r.source_video_path = fs::u8path(source).wstring();
+  r.destination_path = (dir / "reorder.mov").u8string();
+  r.layout = "square11";
+  r.resolution = "auto";
+  r.fit = "fit";
+  r.fps_hint = kFps;
+  r.clip_ranges = {clip_planner::ClipKeptRange{133, 267},
+                   clip_planner::ClipKeptRange{0, 133}};
+  ASSERT_FALSE(clip_planner::IsSourceMonotonic(r.clip_ranges))
+      << "test fixture must be a genuine reorder";
+
+  const RenderResult result = RenderComposedExport(r);
+  ASSERT_TRUE(result.ok) << result.message;
+  // Reorder rearranges, it does not drop: all 8 frames survive.
+  EXPECT_EQ(result.video_frames_written, 8u);
+
+  std::vector<std::uint32_t> colors;
+  if (!ReadFrameCenterColors(fs::u8path(r.destination_path).wstring(),
+                             &colors)) {
+    GTEST_SKIP() << "could not decode the reordered output";
+  }
+  ASSERT_GE(colors.size(), 6u) << "expected ~8 output frames";
+
+  auto red_of = [](std::uint32_t c) { return static_cast<int>((c >> 16) & 0xFF); };
+  auto blue_of = [](std::uint32_t c) { return static_cast<int>(c & 0xFF); };
+  // First output frame is the reordered-first (blue, later-in-source) half —
+  // this is the backward seek proving itself.
+  EXPECT_GT(blue_of(colors.front()), red_of(colors.front()) + 40)
+      << "first output frame should be the reordered-first (blue) source half";
+  // Last output frame is the earlier (red) half, now placed second.
+  EXPECT_GT(red_of(colors.back()), blue_of(colors.back()) + 40)
+      << "last output frame should be the earlier (red) source half";
 
   std::error_code ec;
   fs::remove_all(dir, ec);

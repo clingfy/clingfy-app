@@ -56,6 +56,13 @@ class ZoomExportController {
   };
   Frame Advance(std::int64_t frame_ms, double dt_seconds);
 
+  // Snap the exponential smoother back to its neutral rest state (no zoom,
+  // centered). Editing port (clips, 3b-2, §5.4): call at a reorder range
+  // boundary where the source clock jumps BACKWARD — otherwise the next
+  // Advance eases across the discontinuity from the previous (later) frame's
+  // zoom, sweeping the frame instead of resolving the new range fresh.
+  void ResetSmoothing();
+
   std::size_t segment_count() const { return segments_.size(); }
 
  private:
