@@ -1,4 +1,3 @@
-import AVFoundation
 import Foundation
 
 /// Per-project disk cache for `MicEchoCanceller.cancel` output.
@@ -30,8 +29,15 @@ import Foundation
 /// Concurrency: every compute runs on one serial background queue and
 /// re-checks the cache once it reaches the queue, so concurrent requests for
 /// the same project (preview open + export start, rapid re-opens) coalesce
-/// into a single compute instead of racing the write. The serial queue also
-/// bounds peak memory to one decode-everything canceller run at a time.
+/// into a single compute instead of racing the write. The queue is shared
+/// across ALL projects on purpose: it bounds peak memory to ONE
+/// decode-everything canceller run at a time (an hour-long recording holds
+/// several full 48 kHz float arrays — a few GB — so two concurrent computes
+/// could exhaust memory on a small Mac). The cost is that a synchronous
+/// caller (the export preamble) can wait behind an unrelated project's
+/// in-flight compute; that beachball is rare (it needs a long cache-miss
+/// preview of project A overlapping a cache-miss export of project B) and is
+/// the accepted price of the hard memory bound.
 final class CleanedMicCache {
   static let shared = CleanedMicCache()
 
@@ -164,58 +170,84 @@ final class CleanedMicCache {
 
   // MARK: - Internals
 
-  /// Runs the canceller and commits the result into `derived/`. Must run on
-  /// `computeQueue` (single writer). The canceller stages its output CAF
-  /// directly inside `derived/` — NOT `Caches/Temp`, where the export's stale
-  /// sweep deletes `mic-echo-cancelled-*` with no age gate and could reap a
-  /// finished-but-not-yet-renamed compute.
+  /// Cache-or-compute body. Must run on `computeQueue` (single writer). Tries
+  /// to commit into the project's `derived/` slot; on any reason the slot is
+  /// unavailable (project gone, unreadable sidecars, read-only bundle) it
+  /// falls back to a per-run temp compute that the caller owns — the pre-cache
+  /// behavior — so the cleaned mic is still served and the echo never leaks
+  /// back in.
   private func computeAndStore(micURL: URL, systemURL: URL, projectRoot: URL) throws -> Outcome {
     let fileManager = FileManager.default
-    let derivedDir = RecordingProjectPaths.derivedDirectoryURL(for: projectRoot)
-    var cacheUsable = true
-    do {
-      try fileManager.createDirectory(at: derivedDir, withIntermediateDirectories: true)
-    } catch {
-      cacheUsable = false
-    }
     // Key stats are taken BEFORE the decode so a sidecar replaced mid-compute
     // invalidates the entry (its stats at write time won't match the next read).
     let micStat = Self.fileStat(micURL)
     let systemStat = Self.fileStat(systemURL)
-    if micStat == nil || systemStat == nil { cacheUsable = false }
 
-    guard cacheUsable, let micStat, let systemStat else {
-      // No usable cache slot: per-run temp compute, caller owns the file —
-      // byte-identical to the pre-cache behavior.
-      let tempRoot = AppPaths.tempRoot()
-      try? fileManager.createDirectory(at: tempRoot, withIntermediateDirectories: true)
-      let result = try MicEchoCanceller.cancel(
-        micURL: micURL, systemURL: systemURL, outputDirectory: tempRoot)
-      return Outcome(result: result, cacheOwned: false, fromCache: false)
+    // Only claim the in-bundle cache slot when the bundle still exists and its
+    // sidecars are readable. Gating on `projectRoot` existence stops a queued
+    // compute from recreating a `<bundle>.clingfyproj/derived/` HUSK after the
+    // user deleted or Finder-renamed the recording while the compute waited.
+    let derivedDir = RecordingProjectPaths.derivedDirectoryURL(for: projectRoot)
+    var cacheSlotReady = false
+    if let micStat, let systemStat,
+      fileManager.fileExists(atPath: projectRoot.path)
+    {
+      do {
+        try fileManager.createDirectory(at: derivedDir, withIntermediateDirectories: true)
+        // Reclaim any staged CAF a previously crashed/failed compute stranded
+        // here (see `removeStagedFiles`). Nothing else sweeps `derived/`, and
+        // this queue is the single writer, so this is the safe place to do it.
+        Self.removeStagedFiles(in: derivedDir, fileManager: fileManager)
+        cacheSlotReady = true
+      } catch {
+        cacheSlotReady = false
+      }
     }
 
+    if cacheSlotReady, let micStat, let systemStat {
+      do {
+        return try computeIntoCache(
+          micURL: micURL, systemURL: systemURL, projectRoot: projectRoot,
+          derivedDir: derivedDir, micStat: micStat, systemStat: systemStat,
+          fileManager: fileManager)
+      } catch MicEchoCanceller.CancelError.writeFailed(let url) {
+        // The decode succeeded but writing INTO the bundle failed — the project
+        // is on a read-only volume (DMG, network share, permission-stripped
+        // copy); `createDirectory` on an existing `derived/` does NOT surface
+        // that. The pre-cache code always wrote to the always-writable temp
+        // root and served the CLEANED mic here, so match that: retry into temp
+        // rather than degrade to the raw (echo-carrying) mic. Sweep any partial
+        // staged file first.
+        Self.removeStagedFiles(in: derivedDir, fileManager: fileManager)
+        NativeLogger.w(
+          "Audio", "Cleaned-mic cache write failed (read-only bundle?); computing into temp root",
+          context: ["url": url.lastPathComponent, "project": projectRoot.lastPathComponent])
+      }
+    }
+
+    return try computeIntoTemp(micURL: micURL, systemURL: systemURL, fileManager: fileManager)
+  }
+
+  /// Runs the canceller into `derivedDir`, commits the result (moves the CAF
+  /// to the stable cache name, writes metadata last as the commit point), and
+  /// returns a cache-owned outcome. Propagates `CancelError.writeFailed` so the
+  /// caller can fall back to temp.
+  private func computeIntoCache(
+    micURL: URL, systemURL: URL, projectRoot: URL, derivedDir: URL,
+    micStat: FileStat, systemStat: FileStat, fileManager: FileManager
+  ) throws -> Outcome {
     let result = try MicEchoCanceller.cancel(
       micURL: micURL, systemURL: systemURL, outputDirectory: derivedDir)
     let cleanedURL = Self.cleanedFileURL(for: projectRoot)
     var storedResult = result
     if result.applied {
-      do {
-        // Same-volume move = atomic rename; only this queue writes here.
-        try? fileManager.removeItem(at: cleanedURL)
-        try fileManager.moveItem(at: result.cleanedMicURL, to: cleanedURL)
-        storedResult = MicEchoCanceller.Result(
-          cleanedMicURL: cleanedURL, applied: true,
-          bleedCorrelation: result.bleedCorrelation, delayMs: result.delayMs,
-          reductionDb: result.reductionDb)
-      } catch {
-        // Couldn't claim the cache slot — hand the staged file to the caller
-        // unchanged; its `mic-echo-cancelled-` name keeps the caller-owned
-        // temp-file lifecycle working.
-        NativeLogger.w(
-          "Audio", "Cleaned-mic cache write failed; result is uncached this run",
-          context: ["error": "\(error)", "project": projectRoot.lastPathComponent])
-        return Outcome(result: result, cacheOwned: false, fromCache: false)
-      }
+      // Same-volume move = atomic rename; only this queue writes here.
+      try? fileManager.removeItem(at: cleanedURL)
+      try fileManager.moveItem(at: result.cleanedMicURL, to: cleanedURL)
+      storedResult = MicEchoCanceller.Result(
+        cleanedMicURL: cleanedURL, applied: true,
+        bleedCorrelation: result.bleedCorrelation, delayMs: result.delayMs,
+        reductionDb: result.reductionDb)
     } else {
       // A stale positive from an earlier sidecar state must not survive next
       // to a fresh "no bleed" entry.
@@ -230,12 +262,40 @@ final class CleanedMicCache {
       bleedCorrelation: result.bleedCorrelation, delayMs: result.delayMs,
       reductionDb: result.reductionDb)
     // Metadata is the commit point, written last and atomically: readers
-    // validate it before touching the CAF, so a crash between the moves above
+    // validate it before touching the CAF, so a crash between the move above
     // and this write just means a recompute next open.
     if let data = try? JSONEncoder().encode(entry) {
       try? data.write(to: Self.metadataFileURL(for: projectRoot), options: .atomic)
     }
     return Outcome(result: storedResult, cacheOwned: true, fromCache: false)
+  }
+
+  /// Per-run temp compute, caller owns the produced file — byte-identical to
+  /// the pre-cache behavior. Nothing is persisted, so a transient failure that
+  /// reached here is retried on the next open.
+  private func computeIntoTemp(micURL: URL, systemURL: URL, fileManager: FileManager) throws
+    -> Outcome
+  {
+    let tempRoot = AppPaths.tempRoot()
+    try? fileManager.createDirectory(at: tempRoot, withIntermediateDirectories: true)
+    let result = try MicEchoCanceller.cancel(
+      micURL: micURL, systemURL: systemURL, outputDirectory: tempRoot)
+    return Outcome(result: result, cacheOwned: false, fromCache: false)
+  }
+
+  /// The canceller stages its output as `mic-echo-cancelled-<uuid>.caf` before
+  /// we rename it to the stable cache name. A crash or a write failure between
+  /// the stage and the rename would strand that file inside `derived/`, where
+  /// no other sweep looks. Clearing it whenever a compute (re)enters the slot
+  /// is the backstop.
+  static func removeStagedFiles(in directory: URL, fileManager: FileManager = .default) {
+    guard
+      let entries = try? fileManager.contentsOfDirectory(
+        at: directory, includingPropertiesForKeys: nil)
+    else { return }
+    for url in entries where url.lastPathComponent.hasPrefix("mic-echo-cancelled-") {
+      try? fileManager.removeItem(at: url)
+    }
   }
 
   struct FileStat: Equatable {

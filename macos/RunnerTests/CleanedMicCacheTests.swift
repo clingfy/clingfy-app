@@ -128,6 +128,7 @@ final class CleanedMicCacheTests: XCTestCase {
 
     let outDir = FileManager.default.temporaryDirectory.appendingPathComponent(
       UUID().uuidString, isDirectory: true)
+    addTeardownBlock { try? FileManager.default.removeItem(at: outDir) }
     try FileManager.default.createDirectory(at: outDir, withIntermediateDirectories: true)
     let fresh = try MicEchoCanceller.cancel(
       micURL: mic, systemURL: system, outputDirectory: outDir)
@@ -240,6 +241,97 @@ final class CleanedMicCacheTests: XCTestCase {
     XCTAssertNil(
       cache.cachedOutcome(micURL: mic, systemURL: system, projectRoot: projectRoot),
       "an applied entry whose CAF is gone must be a miss, not a broken hit")
+  }
+
+  // MARK: - Fallback paths (cacheOwned == false)
+
+  /// When the cache slot can't be created (here: a plain file sits where
+  /// `derived/` should be, so `createDirectory` throws), the compute must fall
+  /// back to a caller-owned temp file and write no metadata — the two-consumer
+  /// ownership contract (exporter registers for cleanup, preview adopts by the
+  /// `mic-echo-cancelled-` prefix) depends on `cacheOwned == false` here.
+  func testUnwritableDerivedFallsBackToTempCompute() throws {
+    let (mic, system) = try writeBleedPair()
+    // Block `derived/` with a regular file so createDirectory can't make it.
+    try Data("blocker".utf8).write(
+      to: RecordingProjectPaths.derivedDirectoryURL(for: projectRoot))
+    let cache = CleanedMicCache()
+
+    let outcome = try cache.outcome(micURL: mic, systemURL: system, projectRoot: projectRoot)
+    addTeardownBlock {
+      if !outcome.cacheOwned { try? FileManager.default.removeItem(at: outcome.result.cleanedMicURL) }
+    }
+
+    XCTAssertTrue(outcome.result.applied, "the bleed must still be cancelled")
+    XCTAssertFalse(outcome.cacheOwned, "no cache slot ⇒ the caller owns the temp file")
+    XCTAssertTrue(
+      outcome.result.cleanedMicURL.lastPathComponent.hasPrefix("mic-echo-cancelled-"),
+      "a caller-owned file must carry the per-run temp prefix the consumers key on")
+    XCTAssertNotEqual(
+      outcome.result.cleanedMicURL, CleanedMicCache.cleanedFileURL(for: projectRoot))
+    XCTAssertFalse(
+      FileManager.default.fileExists(atPath: CleanedMicCache.metadataFileURL(for: projectRoot).path),
+      "a fallback compute must not write cache metadata")
+  }
+
+  /// A read-only bundle (DMG / network share / permission-stripped copy) makes
+  /// the write INTO `derived/` fail even though `createDirectory` on the
+  /// existing dir succeeds. The canceller output must still be served (from
+  /// temp) — degrading to the raw mic would put the speaker→mic echo back into
+  /// the mix, the exact regression this fallback prevents.
+  func testReadOnlyBundleStillServesCleanedMicFromTemp() throws {
+    let (mic, system) = try writeBleedPair()
+    let derived = RecordingProjectPaths.derivedDirectoryURL(for: projectRoot)
+    try FileManager.default.createDirectory(at: derived, withIntermediateDirectories: true)
+    try FileManager.default.setAttributes(
+      [.posixPermissions: 0o555], ofItemAtPath: derived.path)
+    addTeardownBlock {
+      try? FileManager.default.setAttributes(
+        [.posixPermissions: 0o755], ofItemAtPath: derived.path)
+    }
+    // Skip if this host can't actually enforce the read-only dir (rare, but
+    // keeps the suite non-flaky rather than asserting on an unverifiable state).
+    let probe = derived.appendingPathComponent("write-probe", isDirectory: false)
+    if (try? Data("x".utf8).write(to: probe)) != nil {
+      try? FileManager.default.removeItem(at: probe)
+      throw XCTSkip("filesystem did not enforce a read-only directory")
+    }
+
+    let cache = CleanedMicCache()
+    let outcome = try cache.outcome(micURL: mic, systemURL: system, projectRoot: projectRoot)
+    addTeardownBlock {
+      if !outcome.cacheOwned { try? FileManager.default.removeItem(at: outcome.result.cleanedMicURL) }
+    }
+
+    XCTAssertTrue(outcome.result.applied, "the cleaned mic must still be produced")
+    XCTAssertFalse(outcome.cacheOwned, "a read-only bundle falls back to a caller-owned temp file")
+    XCTAssertTrue(
+      outcome.result.cleanedMicURL.lastPathComponent.hasPrefix("mic-echo-cancelled-"))
+    XCTAssertFalse(
+      FileManager.default.fileExists(atPath: CleanedMicCache.metadataFileURL(for: projectRoot).path),
+      "a failed cache write must not leave metadata behind")
+  }
+
+  /// A crash or write failure between staging (`mic-echo-cancelled-<uuid>.caf`)
+  /// and the rename strands the staged file in `derived/`, which no other sweep
+  /// scans. The next compute into the slot must reclaim it.
+  func testStagedStrayFilesSweptOnNextCompute() throws {
+    let (mic, system) = try writeBleedPair()
+    let derived = RecordingProjectPaths.derivedDirectoryURL(for: projectRoot)
+    try FileManager.default.createDirectory(at: derived, withIntermediateDirectories: true)
+    let stray = derived.appendingPathComponent(
+      "mic-echo-cancelled-STRAY.caf", isDirectory: false)
+    try Data(repeating: 0, count: 1024).write(to: stray)
+
+    let cache = CleanedMicCache()
+    _ = try cache.outcome(micURL: mic, systemURL: system, projectRoot: projectRoot)
+
+    XCTAssertFalse(
+      FileManager.default.fileExists(atPath: stray.path),
+      "a stranded staged CAF must be reclaimed when a compute re-enters the slot")
+    XCTAssertTrue(
+      FileManager.default.fileExists(atPath: CleanedMicCache.cleanedFileURL(for: projectRoot).path),
+      "the real cleaned mic is still committed under the stable name")
   }
 
   // MARK: - Coalescing
