@@ -48,6 +48,15 @@ class CameraExportRenderer {
   // camera's first frame; holds the final frame after EOS.
   void Advance(std::int64_t frame_ms);
 
+  // Seek the camera reader so the next Advance re-primes from `frame_ms` rather
+  // than the forward-only pull's current (later) position. Editing port (clips,
+  // 3b-2, §5.5): call at a reorder range boundary where the source clock jumps
+  // BACKWARD — the forward-only Advance cannot rewind, so without this the bubble
+  // would freeze on a stale later frame. MF seeks to the nearest prior keyframe;
+  // the next Advance decodes forward to the exact frame. Call OUTSIDE
+  // BeginDraw/EndDraw. No-op before Prepare.
+  void SeekTo(std::int64_t frame_ms);
+
   // Draw the held camera frame as a styled bubble, applying the Phase 9.7
   // intro/outro animation for recording-relative `frame_ms` of a
   // `total_duration_ms` clip. Call INSIDE BeginDraw/EndDraw in canvas space (NOT
