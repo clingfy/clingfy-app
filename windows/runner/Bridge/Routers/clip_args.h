@@ -8,8 +8,8 @@
 // side normalizes the list so timeline positions tile contiguously, so the
 // native side only needs the source windows in order.
 //
-// Consumers: export_router today (the step-3 interim refuse guard); the clip
-// export bake (step 3) and `previewSetClips` (step 4) reuse this same parser
+// Consumers: export_router today (feeding the clip export bake — cut / trim /
+// reorder / overlap); `previewSetClips` (step 4) will reuse this same parser
 // — one wire shape, one parser, per the color_grade_args precedent.
 
 #ifndef RUNNER_BRIDGE_ROUTERS_CLIP_ARGS_H_

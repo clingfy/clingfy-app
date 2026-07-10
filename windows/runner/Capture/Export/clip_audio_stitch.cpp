@@ -70,4 +70,37 @@ std::vector<AudioCopySpan> PlanKeptAudioCopies(
   return spans;
 }
 
+std::vector<ReorderAudioSlot> PlanReorderAudioSlots(
+    const std::vector<clip_planner::AudioSlot>& slots,
+    std::int64_t sample_rate_hz) {
+  std::vector<ReorderAudioSlot> out;
+  if (sample_rate_hz <= 0) {
+    return out;
+  }
+  out.reserve(slots.size());
+  for (const clip_planner::AudioSlot& s : slots) {
+    // Derive the slot's frame span from a cumulative-ms→frame conversion of its
+    // edited placement — NOT by summing per-slot frame counts — so slot N's end
+    // frame is exactly slot N+1's start frame at any sample rate (the same
+    // tiling the monotonic path's `edited_base_frame` uses).
+    const std::int64_t start_frame =
+        MsToFrames(s.edited_start_ms, sample_rate_hz);
+    const std::int64_t end_frame =
+        MsToFrames(s.edited_start_ms + s.duration_ms, sample_rate_hz);
+    const std::int64_t slot_frames = std::max<std::int64_t>(0, end_frame - start_frame);
+    // copy_duration_ms is already clamped to the audio extent (<= duration_ms)
+    // by AudioSlots; clamp again defensively so copy never exceeds the slot.
+    const std::int64_t copy_frames = std::min(
+        std::max<std::int64_t>(0, MsToFrames(s.copy_duration_ms, sample_rate_hz)),
+        slot_frames);
+    out.push_back(ReorderAudioSlot{
+        /*source_in_frame=*/MsToFrames(s.source_in_ms, sample_rate_hz),
+        /*edited_start_frame=*/start_frame,
+        /*copy_frame_count=*/copy_frames,
+        /*silence_frame_count=*/slot_frames - copy_frames,
+    });
+  }
+  return out;
+}
+
 }  // namespace clingfy::capture::export_::clip_audio

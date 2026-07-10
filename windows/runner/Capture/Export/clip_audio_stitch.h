@@ -21,11 +21,12 @@
 // behavior is unit-tested headlessly (the export is the deterministic,
 // headless-testable half; §6). Every ms->frame conversion TRUNCATES (§5.1).
 //
-// Scope: this is the MONOTONIC + disjoint (forward-read) case, which is all the
-// export writer routes here today. Reorder's per-slot seek + explicit
-// silence-fill (§5.2/§5.3) lands in Step 3b-2. Because it maps each source
-// moment to the first kept range that contains it, it is well-defined only for
-// disjoint ranges (overlap is refused upstream until 3b-2).
+// Scope: `PlanKeptAudioCopies` is the MONOTONIC + disjoint (forward-read) case.
+// Because it maps each source moment to the first kept range that contains it,
+// it is well-defined only for disjoint, source-ordered ranges. The REORDER /
+// overlap case (Step 3b-2) is `PlanReorderAudioSlots` below: it reads each
+// range's source window out of order (per-slot backward seeks) but stamps them
+// in timeline order, with explicit silence-fill (§5.2/§5.3).
 //
 // "Frame" == one per-channel sample instant (48 kHz stereo => 48 frames/ms).
 
@@ -57,6 +58,49 @@ struct AudioCopySpan {
 std::vector<AudioCopySpan> PlanKeptAudioCopies(
     std::int64_t packet_src_start_frame, std::uint32_t packet_frame_count,
     const std::vector<clip_planner::ClipKeptRange>& ranges,
+    std::int64_t sample_rate_hz);
+
+// One kept range's audio placement on the edited timeline, in integer frames —
+// the reorder counterpart to the monotonic `AudioCopySpan`. Reorder reads the
+// source windows OUT of order (per-slot backward seeks) but stamps them in
+// TIMELINE order, so `edited_start_frame` is strictly increasing across the
+// returned slots (the encoder requires monotonic audio timestamps). Starting
+// at `source_in_frame`, `copy_frame_count` real source frames are copied to
+// `edited_start_frame`; the remaining `silence_frame_count` frames are
+// zero-filled — the captured audio track runs shorter than the slot, or the
+// slot's source lies entirely past the audio end. The two counts sum to the
+// slot's FULL edited duration (§5.2: advance by the range's full duration, not
+// the copied length — a clamped/absent range mid-timeline leaves silence
+// INSIDE its own slot instead of pulling later audio earlier).
+struct ReorderAudioSlot {
+  std::int64_t source_in_frame = 0;
+  std::int64_t edited_start_frame = 0;
+  std::int64_t copy_frame_count = 0;
+  std::int64_t silence_frame_count = 0;
+
+  friend bool operator==(const ReorderAudioSlot& a, const ReorderAudioSlot& b) {
+    return a.source_in_frame == b.source_in_frame &&
+           a.edited_start_frame == b.edited_start_frame &&
+           a.copy_frame_count == b.copy_frame_count &&
+           a.silence_frame_count == b.silence_frame_count;
+  }
+  friend bool operator!=(const ReorderAudioSlot& a, const ReorderAudioSlot& b) {
+    return !(a == b);
+  }
+};
+
+// Convert the planner's ms-based `AudioSlots` (built by
+// `clip_planner::AudioSlots`, in TIMELINE order) into integer-frame reorder
+// slots for the export writer's decoupled audio pass. Every boundary is
+// derived from a cumulative-ms→frame conversion — the SAME `edited_base_frame`
+// derivation `PlanKeptAudioCopies` uses — so slot N's end frame equals slot
+// N+1's start frame at any sample rate and audio seams land on the identical
+// boundaries as the monotonic path. `copy_duration_ms` (already clamped to the
+// audio extent by `AudioSlots`) becomes `copy_frame_count`; the slot's
+// remaining frames become `silence_frame_count`. Every conversion TRUNCATES
+// (§5.1). Empty `slots` (or a non-positive sample rate) returns empty.
+std::vector<ReorderAudioSlot> PlanReorderAudioSlots(
+    const std::vector<clip_planner::AudioSlot>& slots,
     std::int64_t sample_rate_hz);
 
 }  // namespace clingfy::capture::export_::clip_audio

@@ -136,5 +136,83 @@ TEST(ClipAudioStitchTest, RealSampleRateConvertsAndTruncatesMsToFrames) {
   EXPECT_EQ(spans[0].frame_count, 4800u);  // 100 ms * 48 frames/ms
 }
 
+// ---- PlanReorderAudioSlots (Step 3b-2b): the reorder/silence-fill plan -------
+
+// Build the ms-based AudioSlots the reorder planner consumes.
+std::vector<clip_planner::AudioSlot> Slots(
+    std::initializer_list<std::pair<std::int64_t, std::int64_t>> pairs,
+    std::int64_t audio_duration_ms) {
+  return clip_planner::AudioSlots(Ranges(pairs), audio_duration_ms);
+}
+
+TEST(ReorderAudioSlotsTest, EditedStartsAreMonotonicDespiteReversedSource) {
+  // Timeline B(6000,8000) THEN A(0,2000): the source jumps BACKWARD (6000 -> 0)
+  // but the edited placement tiles forward 0 -> 2000, so a reader that reads B's
+  // window first still produces monotonically-increasing edited timestamps.
+  const auto plan = PlanReorderAudioSlots(
+      Slots({{6000, 8000}, {0, 2000}}, /*audio_duration_ms=*/10000), kMsRate);
+  ASSERT_EQ(plan.size(), 2u);
+  EXPECT_EQ(plan[0].source_in_frame, 6000);
+  EXPECT_EQ(plan[0].edited_start_frame, 0);
+  EXPECT_EQ(plan[0].copy_frame_count, 2000);
+  EXPECT_EQ(plan[0].silence_frame_count, 0);
+  EXPECT_EQ(plan[1].source_in_frame, 0);
+  EXPECT_EQ(plan[1].edited_start_frame, 2000);
+  EXPECT_EQ(plan[1].copy_frame_count, 2000);
+  EXPECT_EQ(plan[1].silence_frame_count, 0);
+  EXPECT_LT(plan[0].edited_start_frame, plan[1].edited_start_frame);
+  EXPECT_GT(plan[0].source_in_frame, plan[1].source_in_frame);
+}
+
+TEST(ReorderAudioSlotsTest, ShortAudioClampsCopyAndSilenceFillsTheSlotTail) {
+  // Audio track ends at 4000 ms. B(3000,6000)'s copy clamps to [3000,4000) and
+  // the remaining 2000 ms of the slot is silence (the captured audio ran out).
+  const auto plan = PlanReorderAudioSlots(
+      Slots({{0, 2000}, {3000, 6000}}, /*audio_duration_ms=*/4000), kMsRate);
+  ASSERT_EQ(plan.size(), 2u);
+  EXPECT_EQ(plan[1].source_in_frame, 3000);
+  EXPECT_EQ(plan[1].edited_start_frame, 2000);
+  EXPECT_EQ(plan[1].copy_frame_count, 1000);    // min(6000,4000) - 3000
+  EXPECT_EQ(plan[1].silence_frame_count, 2000);  // 3000 - 1000
+}
+
+TEST(ReorderAudioSlotsTest, MidTimelineSilenceDoesNotPullLaterAudioEarlier) {
+  // §5.2 regression (only reachable under reorder): the FIRST edited slot is
+  // clamped short (its source runs past the audio end), yet the SECOND slot must
+  // stay at edited 2000, NOT slide back to 1000. Advancing by the copied length
+  // instead of the full duration would desync every later slot.
+  const auto plan = PlanReorderAudioSlots(
+      Slots({{5000, 7000}, {0, 2000}}, /*audio_duration_ms=*/6000), kMsRate);
+  ASSERT_EQ(plan.size(), 2u);
+  EXPECT_EQ(plan[0].copy_frame_count, 1000);     // min(7000,6000) - 5000
+  EXPECT_EQ(plan[0].silence_frame_count, 1000);  // full 2000 - copied 1000
+  EXPECT_EQ(plan[1].edited_start_frame, 2000)
+      << "the clamped slot keeps its full duration; the next slot must not move";
+}
+
+TEST(ReorderAudioSlotsTest, SlotsTileContiguouslyAtRealSampleRate) {
+  // At 48 kHz each slot's end frame must be exactly the next slot's start frame
+  // (boundaries derived from cumulative-ms->frame, not summed frame counts).
+  const auto plan = PlanReorderAudioSlots(
+      Slots({{0, 100}, {500, 600}}, /*audio_duration_ms=*/1000),
+      /*sample_rate_hz=*/48000);
+  ASSERT_EQ(plan.size(), 2u);
+  EXPECT_EQ(plan[0].edited_start_frame, 0);
+  EXPECT_EQ(plan[0].copy_frame_count, 4800);  // 100 ms * 48
+  EXPECT_EQ(plan[0].silence_frame_count, 0);
+  const std::int64_t slot0_end = plan[0].edited_start_frame +
+                                 plan[0].copy_frame_count +
+                                 plan[0].silence_frame_count;
+  EXPECT_EQ(slot0_end, plan[1].edited_start_frame);  // 4800, no gap/overlap
+  EXPECT_EQ(plan[1].source_in_frame, 24000);         // 500 ms * 48
+}
+
+TEST(ReorderAudioSlotsTest, EmptyOrNonPositiveRateProducesNoSlots) {
+  EXPECT_TRUE(PlanReorderAudioSlots({}, kMsRate).empty());
+  EXPECT_TRUE(
+      PlanReorderAudioSlots(Slots({{0, 1000}}, 1000), /*sample_rate_hz=*/0)
+          .empty());
+}
+
 }  // namespace
 }  // namespace clingfy::capture::export_::clip_audio

@@ -170,19 +170,10 @@ ClipEditKind ClassifyClipEdit(
   if (!has_real_edits) {
     return ClipEditKind::kPassthrough;
   }
-  // 3a bakes only DISJOINT + MONOTONIC ranges. Coalesce merges only
-  // source-adjacent ranges, so a genuine overlap (source_in < prev source_out)
-  // survives to here; it is source_in-monotonic but not disjoint.
-  bool disjoint = true;
-  for (std::size_t i = 1; i < coalesced.size(); ++i) {
-    if (coalesced[i].source_in_ms < coalesced[i - 1].source_out_ms) {
-      disjoint = false;
-      break;
-    }
-  }
-  if (!clip_planner::IsSourceMonotonic(coalesced) || !disjoint) {
-    return ClipEditKind::kUnsupported;
-  }
+  // Any real edit bakes via the composition path. Monotonic + disjoint ranges
+  // (cut / trim / delete-middle) forward-read the source once; reorder and
+  // overlap read each source window in timeline order (per-range backward
+  // seeks, 3b-2). The pipeline picks the path via IsSourceMonotonic.
   return ClipEditKind::kBake;
 }
 
@@ -352,12 +343,12 @@ PassthroughResult ExportPassthroughCopy(
   // H.264 Sink Writer. Padding / corner radius / gain / volume / normalize each
   // force it too; a background color alone stays on the fast-path (invisible
   // without margins). The audio + format identity defaults keep the copy alive.
-  // Editing port (clips, step 3a): the export now BAKES monotonic clip edits
-  // (cuts / trims / delete-middle) — the pipeline drops cut source frames and
-  // re-stamps the survivors onto a compacted timeline. Only REORDERED or
-  // OVERLAPPING timelines are still refused (kUnsupportedClipEdits) until step
-  // 3b. A split with nothing deleted coalesces back to one contiguous window
-  // from source 0 and is NOT an edit, so it stays on the copy fast-path. (A pure
+  // Editing port (clips): the export BAKES every real clip edit — cuts / trims
+  // / delete-middle (the pipeline drops cut source frames and re-stamps the
+  // survivors onto a compacted timeline) AND reorder / overlap (3b-2 reads each
+  // source window in timeline order with a sample-accurate audio stitch). A
+  // split with nothing deleted coalesces back to one contiguous window from
+  // source 0 and is NOT an edit, so it stays on the copy fast-path. (A pure
   // tail-trim — one range from source 0 — is indistinguishable from the full
   // range without the asset duration, so it rides the fast-path as before;
   // harmless, the removed tail is past the last kept frame either way.)
@@ -366,15 +357,8 @@ PassthroughResult ExportPassthroughCopy(
     case ClipEditKind::kPassthrough:
       break;  // no real edit — stays eligible for the copy fast-path
     case ClipEditKind::kBake:
-      wants_clips = true;  // real monotonic edit — forces composition below
+      wants_clips = true;  // real edit — forces composition below
       break;
-    case ClipEditKind::kUnsupported:
-      out.error = PassthroughError::kUnsupportedClipEdits;
-      out.message =
-          "exportVideo: this project has a reordered or overlapping clip "
-          "timeline, which isn't supported on Windows yet (coming in a "
-          "follow-up) — export from macOS, or undo the reorder and try again.";
-      return out;
   }
 
   const bool wants_non_mov_container =
@@ -383,9 +367,9 @@ PassthroughResult ExportPassthroughCopy(
   // path — the byte-copy would silently ship an UNGRADED file while
   // reporting success (the classic passthrough landmine).
   const bool wants_color_grade = !input.color_grade.IsIdentity();
-  // Editing port (clips, 3a): a real monotonic clip edit must force the
-  // composition path — the byte-copy would ship the UNCUT source while reporting
-  // success (the passthrough landmine). Reorder/overlap already returned above.
+  // Editing port (clips): a real clip edit must force the composition path —
+  // the byte-copy would ship the UNCUT source while reporting success (the
+  // passthrough landmine). Reorder/overlap bake too (3b-2, per-range seeks).
   const bool needs_composition =
       !IsIdentityTransform(input.layout, input.resolution) ||
       input.padding > 0.0 || input.corner_radius > 0.0 ||
@@ -491,9 +475,9 @@ PassthroughResult ExportPassthroughCopy(
     // Editing port (color): bake the grade into the composite (identity is a
     // no-op inside the pipeline).
     render.color_grade = input.color_grade;
-    // Editing port (clips, 3a): bake the monotonic clip edit. Empty = identity;
-    // reorder/overlap was already refused above, so only disjoint + monotonic
-    // ranges reach the pipeline (drop cut frames + re-stamp onto edited PTS).
+    // Editing port (clips): bake the clip edit. Empty = identity; the pipeline
+    // picks the monotonic forward-read or the reorder per-range-seek path via
+    // IsSourceMonotonic (drop cut frames + re-stamp onto edited PTS).
     render.clip_ranges = input.clip_ranges;
     render.audio_gain_db = input.audio_gain_db;
     render.audio_volume_percent = input.audio_volume_percent;

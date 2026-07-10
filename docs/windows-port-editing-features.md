@@ -87,7 +87,7 @@ math** (§4) and route zoom/cursor/camera through it.
 | Clip **UI** (lane, trim, scissors, drag-reorder) | ✅ shared Flutter | ✅ shared Flutter | Runs on Windows; just needs a native preview that honors it. |
 | Clip **live preview** (play through cuts/reorder) | ✅ composition preview (PR-3e) | ❌ `previewSetClips` = no-op | **Build composition-based (§5.4).** |
 | Clip **export bake** (cuts / trim) | ✅ (PR-3d, PR-3c5) | ✅ **(step 3a, 2026-07-04)** — MONOTONIC edits (cut / trim / delete-middle) bake in `export_pipeline`: the frame loop drops source frames/packets in a cut gap (`EditedMsForKeptSourceMs`) and re-stamps survivors onto a compacted edited PTS; audio + video share one origin (the encoder rebases video only, so audio is origin-shifted + buffered until the first kept video frame); zoom smoothing eased on edited dt, camera intro/outro clock on edited time; `ClassifyClipEdit` gate forces composition | Packet-granular audio (~≤21ms cut-seam leak) until 3b. |
-| Clip **export bake** (reorder) | ✅ (PR-3c5) | ❌ — **narrow guard**: reordered / overlapping timelines are REFUSED (`kUnsupportedClipEdits`) until step **3b** (per-range source seeks + sample-accurate `AudioSlots`, §5.2/§5.3) | Only non-monotonic is refused now; monotonic bakes (row above). |
+| Clip **export bake** (reorder) | ✅ (PR-3c5) | ✅ **(step 3b-2, 2026-07-10)** — REORDER / OVERLAP bake: video reads each kept range's source window in TIMELINE order via per-range backward `SetCurrentPosition` seeks (3b-2a), re-stamped onto a contiguous edited PTS; audio rides a decoupled pump on its OWN reader (per-slot seeks, sample-accurate copy + `AudioSlots` silence-fill, §5.2/§5.3), interleaved with the video writes to dodge the sink-writer throttle; zoom smoother reset + camera reader re-primed at each backward boundary (§5.4/§5.5); progress driven from edited position. The `kUnsupportedClipEdits` refuse-guard is RETIRED | Reorder + overlap now fully supported (parity with cuts). |
 | Color model (`ColorGrade`, auto + manual) | ✅ portable Dart | ✅ portable Dart | Shared. |
 | Color **live preview** | ✅ CIFilter videoComposition | ✅ **(PR-2b, 2026-07-03)** — `previewSetColorGrade` → `PreviewEngine::SetColorGrade` (stale-session no-op, paused-nudge like camera) → `PreviewCompositor` applies the SAME shared D2D chain (`Graphics/color_grade_effect`) to the video only (halo/camera ungraded, macOS preview parity); frame-thread effect cache, in-place matrix update per slider tick; headless pixel tests | Ships in the same release as PR-2a. |
 | Color **export bake** | ✅ (PR-2c) | ✅ **(PR-2a, 2026-07-03)** — D2D graded intermediate (video+cursor+clicks, camera ungraded) via `Capture/Export/color_grade.{h,cpp}` (one linear-space 5x4 matrix), ColorManagement linearization at 16bpc float; identity = passthrough; parity gated on the golden fixture | Preview half (PR-2b) ships in the SAME release — sliders bake into export before they render in preview. |
@@ -319,15 +319,21 @@ Windows equivalent.
      skew). Zoom smoothing eased on EDITED dt (source dt spikes across a cut and
      would snap the zoom); camera video stays SOURCE-timed while its intro/outro
      clock moves to EDITED time (§5.5). Gate = pure `ClassifyClipEdit`
-     (passthrough / bake / refuse). Audio is packet-granular (~≤21ms cut-seam
+     (passthrough / bake). Audio is packet-granular (~≤21ms cut-seam
      leak — finer than the frame-granular video cut). The Dart clip editor
      enforces a 2-frame min clip (`TimelineTimebase.minDurationMs`), so a
      sub-frame range that would yield zero frames is unreachable.
-   - **3b (next)** — REORDER (non-monotonic, §5.3): per-range source seeks read
-     in timeline order + sample-accurate `AudioSlots` audio stitch (§5.2 full-slot
-     advance + silence fill). Retires the narrow reorder/overlap refuse-guard.
-     Route zoom/cursor/camera through the timeline↔source map for the reorder
-     backward-jump resets.
+   - **3b (DONE, 2026-07-10)** — REORDER + OVERLAP (non-monotonic, §5.3): the
+     video path reads each kept range's source window in timeline order via
+     per-range backward `SetCurrentPosition` seeks (3b-2a), re-stamped onto a
+     contiguous edited PTS. Audio (3b-2b) rides a decoupled pump on its OWN
+     reader — per-slot backward seeks, sample-accurate copy + `AudioSlots`
+     silence-fill (§5.2 full-slot advance), interleaved with the video writes so
+     it never races the throttling sink writer — origin-shifted onto the same
+     zero as the video. Zoom smoother reset + camera reader re-primed at each
+     backward boundary (§5.5); progress from edited position. Retired the
+     reorder/overlap refuse-guard, so cut / trim / delete-middle / reorder /
+     overlap all bake now.
 4. **Clip live preview** — the **stitched-timeline** approach (§5.4), NOT
    seek-through-cuts. Wire `previewSetClips` to rebuild the stitched timeline
    (debounced) and map edited→source for the overlays + camera (§5.5).

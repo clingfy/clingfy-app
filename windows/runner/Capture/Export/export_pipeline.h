@@ -59,15 +59,18 @@ struct RenderRequest {
   // after).
   color::ColorGrade color_grade;
 
-  // Editing port (clips, step 3a): kept source ranges in TIMELINE order (empty
-  // = no clips = identity, byte-identical to the pre-clip path). Only MONOTONIC
-  // + disjoint ranges reach here — reordered/overlapping timelines are refused
-  // upstream in `export_passthrough` until step 3b. When non-empty, the frame
-  // loop drops source frames/audio packets that fall in a cut gap
+  // Editing port (clips): kept source ranges in TIMELINE order (empty = no clips
+  // = identity, byte-identical to the pre-clip path). Any real edit reaches
+  // here: MONOTONIC + disjoint ranges (cut / trim / delete-middle) forward-read
+  // the source once, while REORDER / OVERLAP (non-monotonic) read each range's
+  // source window in timeline order via per-range backward seeks (3b-2). The
+  // frame loop drops source frames that fall in a cut gap
   // (`clip_planner::EditedMsForKeptSourceMs` → nullopt) and re-stamps the
-  // survivors onto the compacted edited timeline; zoom smoothing + the camera
-  // intro/outro clock run in edited time, while the drawn frame's overlays
-  // (cursor/zoom-segment/camera-video) stay keyed to its SOURCE time.
+  // survivors onto the compacted edited timeline; audio is stitched
+  // sample-accurately (the monotonic in-loop copy, or the decoupled reorder
+  // pump). Zoom smoothing + the camera intro/outro clock run in edited time,
+  // while the drawn frame's overlays (cursor/zoom-segment/camera-video) stay
+  // keyed to its SOURCE time.
   std::vector<clip_planner::ClipKeptRange> clip_ranges;
 
   // Absolute UTF-8 destination path (extension already resolved — .mov / .mp4 /

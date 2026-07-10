@@ -583,15 +583,14 @@ TEST(ExportPassthroughCopyTest, AutoFlagWithZeroValuesKeepsByteCopy) {
   fs::remove_all(project.parent_path(), rm_ec);
 }
 
-// ---- Editing port (clips, step 3a): the gate + refuse behavior ---------------
+// ---- Editing port (clips): the gate + bake behavior --------------------------
 //
-// 3a BAKES monotonic clip edits (cut / trim / delete-middle) via the composition
-// path; only REORDERED or OVERLAPPING timelines are still refused
-// (kUnsupportedClipEdits) until 3b. `ClassifyClipEdit` is the pure gate; the
+// The export BAKES every real clip edit via the composition path — cut / trim /
+// delete-middle (monotonic) AND reorder / overlap (3b-2, per-range source-window
+// reads + a decoupled audio stitch). `ClassifyClipEdit` is the pure gate; the
 // ExportPassthroughCopy cases verify it's wired in (mock video bytes can't
-// decode, so a baked edit surfaces as a render FAILURE — never a refusal and
-// never a silent byte-copy; a real render round-trip is covered in
-// export_pipeline_test).
+// decode, so a baked edit surfaces as a render FAILURE — never a silent
+// byte-copy; a real render round-trip is covered in export_pipeline_test).
 
 TEST(ClassifyClipEditTest, EmptyIsPassthrough) {
   EXPECT_EQ(ClassifyClipEdit({}), ClipEditKind::kPassthrough);
@@ -620,25 +619,26 @@ TEST(ClassifyClipEditTest, HeadTrimIsBake) {
             ClipEditKind::kBake);
 }
 
-TEST(ClassifyClipEditTest, ReorderIsUnsupported) {
+TEST(ClassifyClipEditTest, ReorderIsBake) {
+  // A later source window placed BEFORE an earlier one (non-monotonic) bakes
+  // via the composition path (3b-2 reads each window in timeline order).
   EXPECT_EQ(ClassifyClipEdit({clip_planner::ClipKeptRange{6000, 8000},
                               clip_planner::ClipKeptRange{0, 2000}}),
-            ClipEditKind::kUnsupported);
+            ClipEditKind::kBake);
 }
 
-TEST(ClassifyClipEditTest, OverlappingRangesAreUnsupported) {
+TEST(ClassifyClipEditTest, OverlappingRangesAreBake) {
   // source_in-monotonic but NOT disjoint ([0,2000) overlaps [1000,3000)) —
-  // outside-voice #5: the planner would first-match and under-emit, so refuse.
+  // baked like any real edit now that 3b-2 reads each source window per-range.
   EXPECT_EQ(ClassifyClipEdit({clip_planner::ClipKeptRange{0, 2000},
                               clip_planner::ClipKeptRange{1000, 3000}}),
-            ClipEditKind::kUnsupported);
+            ClipEditKind::kBake);
 }
 
 TEST(ExportPassthroughCopyTest, MonotonicClipCutRoutesToComposition) {
-  // A real monotonic cut is no longer refused: it forces the composition path
-  // (never a byte-copy of the uncut source). With mock video bytes that path
-  // can't decode, so the result is a render failure — the point is it is NOT
-  // kUnsupportedClipEdits and NOT a silent kNone byte-copy.
+  // A real monotonic cut forces the composition path (never a byte-copy of the
+  // uncut source). With mock video bytes that path can't decode, so the result
+  // is a render failure — the point is it is NOT a silent kNone byte-copy.
   const auto project = StageProject("export-test-clip-cut", "MOCK_VIDEO_BYTES");
   const auto dest_dir = project.parent_path() / "out";
   fs::create_directories(dest_dir);
@@ -653,7 +653,6 @@ TEST(ExportPassthroughCopyTest, MonotonicClipCutRoutesToComposition) {
                        clip_planner::ClipKeptRange{6000, 10000}};
 
   const auto outcome = ExportPassthroughCopy(input);
-  EXPECT_NE(outcome.error, PassthroughError::kUnsupportedClipEdits);
   EXPECT_NE(outcome.error, PassthroughError::kNone)
       << "a monotonic cut must be composited, never byte-copied uncut";
   EXPECT_FALSE(fs::exists(dest_dir / "CutExport.mov"))
@@ -663,7 +662,11 @@ TEST(ExportPassthroughCopyTest, MonotonicClipCutRoutesToComposition) {
   fs::remove_all(project.parent_path(), rm_ec);
 }
 
-TEST(ExportPassthroughCopyTest, ReorderedClipsAreRefused) {
+TEST(ExportPassthroughCopyTest, ReorderedClipsRouteToComposition) {
+  // A reordered timeline is no longer refused: it bakes via the composition
+  // path (3b-2 reads each source window in timeline order). Mock video bytes
+  // can't decode, so this surfaces as a render failure — the point is it is NOT
+  // a silent kNone byte-copy of the uncut source.
   const auto project =
       StageProject("export-test-clips-reorder", "MOCK_VIDEO_BYTES");
   const auto dest_dir = project.parent_path() / "out";
@@ -679,15 +682,19 @@ TEST(ExportPassthroughCopyTest, ReorderedClipsAreRefused) {
                        clip_planner::ClipKeptRange{0, 2000}};
 
   const auto outcome = ExportPassthroughCopy(input);
-  EXPECT_EQ(outcome.error, PassthroughError::kUnsupportedClipEdits);
+  EXPECT_NE(outcome.error, PassthroughError::kNone)
+      << "a reordered timeline must be composited, never byte-copied uncut";
+  EXPECT_FALSE(fs::exists(dest_dir / "ReorderExport.mov"))
+      << "the failed composition must leave no output";
 
   std::error_code rm_ec;
   fs::remove_all(project.parent_path(), rm_ec);
 }
 
-TEST(ExportPassthroughCopyTest, OverlappingClipsAreRefused) {
-  // Overlapping source windows are source_in-monotonic but not disjoint, so 3a
-  // refuses them (outside-voice #5) rather than under-emitting.
+TEST(ExportPassthroughCopyTest, OverlappingClipsRouteToComposition) {
+  // Overlapping source windows (source_in-monotonic but not disjoint) bake via
+  // the composition path now that 3b-2 reads each source window per-range,
+  // rather than being refused. As above, mock bytes surface a render failure.
   const auto project =
       StageProject("export-test-clips-overlap", "MOCK_VIDEO_BYTES");
   const auto dest_dir = project.parent_path() / "out";
@@ -702,7 +709,10 @@ TEST(ExportPassthroughCopyTest, OverlappingClipsAreRefused) {
                        clip_planner::ClipKeptRange{1000, 3000}};
 
   const auto outcome = ExportPassthroughCopy(input);
-  EXPECT_EQ(outcome.error, PassthroughError::kUnsupportedClipEdits);
+  EXPECT_NE(outcome.error, PassthroughError::kNone)
+      << "an overlapping timeline must be composited, never byte-copied uncut";
+  EXPECT_FALSE(fs::exists(dest_dir / "OverlapExport.mov"))
+      << "the failed composition must leave no output";
 
   std::error_code rm_ec;
   fs::remove_all(project.parent_path(), rm_ec);
