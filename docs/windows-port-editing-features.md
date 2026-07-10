@@ -255,6 +255,16 @@ timer, manual drag clamp). On macOS we missed 5 such call sites in the first pas
 (caught by review). **Windows: route camera time through one `edited→source`
 helper and audit every caller.**
 
+**Export side (done, 3b-3 audit):** the export camera has no off-tick paths — a
+deterministic frame loop routes every camera time through one helper
+(`CameraTimeMsForFrame`): `Advance`/`SeekTo` take SOURCE time, `Draw` takes
+EDITED time for the intro/outro clock. Under reorder the reader is re-primed at
+each backward boundary (`CameraExportRenderer::SeekTo`, 3b-2a) and this is pinned
+by `ExportPipelineTest.CameraBubbleTracksSourceTimeUnderReorder` (a camera
+colored by source time must invert with the reorder). The off-tick audit is a
+**step-4 (preview)** concern — that's where relayout / param-change / placement
+timer / drag-clamp live.
+
 ### 5.6 Narrow-clip trim handle swallowed the reorder drag (shared Flutter UI)
 
 Already fixed in shared code, but note it: the selected clip's opaque end-trim
