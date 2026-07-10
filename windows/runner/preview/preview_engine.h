@@ -280,6 +280,35 @@ class PreviewEngine {
   // it. (Declared after `struct Impl;` — the parameter needs the name.)
   void NoteRenderFailure(Impl* impl, const char* stage);
 
+  // Editing port (clips, step 4-3): the shared compose + handoff tail, factored
+  // out of HandleVideoFrame so BOTH the MediaPlayer frame path and the edited
+  // (stitched) frame path draw + hand off + emit the playerTick identically. The
+  // caller holds impl->render_mutex, has run EnsureResources, and has already
+  // filled the compositor's video surface/texture. `playback_us` drives the
+  // source-keyed cursor/zoom/camera; `emit_pos_ms` / `emit_dur_ms` are what Dart
+  // sees (edited on the stitched path, raw source on the MediaPlayer path). The
+  // lock order matches HandleVideoFrame: it briefly takes mutex_ while holding
+  // render_mutex for the session snapshot.
+  void ComposeAndHandoffLocked(Impl* impl, std::int64_t playback_us,
+                               std::int64_t emit_pos_ms,
+                               std::int64_t emit_dur_ms);
+
+  // Editing port (clips, step 4-3): render ONE frame of the edited (stitched)
+  // timeline at `edited_ms` — map edited→source, decode that source frame via
+  // the edited reader, upload it into the compositor, then compose + hand off.
+  // Drives the PAUSED / SCRUBBED edited preview (continuous playback is 4-3b).
+  // The caller holds impl->render_mutex. Returns false when there is nothing to
+  // draw (no reader, or the decode failed).
+  bool RenderEditedFrameLocked(Impl* impl, std::int64_t edited_ms);
+
+  // Editing port (clips, step 4-3): are the current clip ranges a real edit
+  // (cut / trim / delete-middle / reorder / overlap) — i.e. should this session
+  // use the stitched reader path rather than the 1:1 MediaPlayer? Pure: coalesce
+  // then check for more than one window, or a single window not starting at
+  // source 0. Mirrors the export ClassifyClipEdit's has-real-edits test.
+  static bool RangesAreEdited(
+      const std::vector<capture::export_::clip_planner::ClipKeptRange>& ranges);
+
   std::unique_ptr<Impl> impl_;
 
   // Plugin registrar + texture registrar are owned by the engine and

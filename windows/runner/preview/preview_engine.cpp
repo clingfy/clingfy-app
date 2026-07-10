@@ -33,6 +33,7 @@
 #include "Services/log_locations.h"
 #include "preview/frame_timing.h"
 #include "preview/preview_compositor.h"
+#include "preview/preview_source_reader.h"
 
 namespace clingfy::preview {
 
@@ -347,12 +348,19 @@ struct PreviewEngine::Impl {
   std::wstring video_path;
   std::wstring cursor_path;
 
-  // ---- Editing port (clips, step 4-1) ----
+  // ---- Editing port (clips, step 4-1/4-3) ----
   // The edited-timeline kept ranges (TIMELINE order) set via SetClips. Empty /
-  // passthrough = no cuts, so the preview plays the source 1:1 as today. Stored
-  // here for the stitched decode front-end the following slices add; guarded by
-  // the engine mutex_ (set off the frame thread, read by the decode path).
+  // passthrough = no cuts, so the preview plays the source 1:1 as today.
+  // Guarded by the engine mutex_ (set off the frame thread).
   std::vector<capture::export_::clip_planner::ClipKeptRange> clip_ranges;
+  // Step 4-3 stitched-preview state (guarded by render_mutex — touched by the
+  // edited render path and read by the frame-server guard). When the ranges are
+  // a real edit the MediaPlayer is paused and frames come from `edited_reader`
+  // instead; `edited_pos_ms` is the current edited-timeline position (the
+  // paused / scrubbed frame). Continuous playback (a pacer) lands in 4-3b.
+  std::unique_ptr<PreviewSourceReader> edited_reader;
+  bool edited_mode = false;
+  std::int64_t edited_pos_ms = 0;
 
   // Serializes the per-frame composition path against the descriptor
   // callback (which Flutter can invoke from its own thread).
@@ -928,6 +936,16 @@ void PreviewEngine::HandleVideoFrame(
     return;
   }
 
+  // Editing port (clips, 4-3): in stitched-preview mode the edited render path
+  // owns the shared texture. The MediaPlayer is paused, but a frame can already
+  // be in flight — drop it so it cannot overwrite the edited frame with uncut
+  // content. (Guard here, before timing_total.BeginFrame, to avoid unbalancing
+  // the frame timer.)
+  if (impl->edited_mode) {
+    impl->dropped_frames.fetch_add(1, std::memory_order_relaxed);
+    return;
+  }
+
   // Step 5.5: resolve the first unresolved seek (if any). Stage 1D
   // semantics — the QPC delta between SeekTo() and "next frame" is the
   // seek latency. Multiple SeekTo() calls between frames stack up;
@@ -979,15 +997,35 @@ void PreviewEngine::HandleVideoFrame(
   }
   impl->timing_copy.EndFrame();
 
+  // ---- render + handoff (shared with the edited stitched path, 4-3) ----
+  // The frame is now in the compositor's video surface; the position/duration
+  // reported to Dart are the RAW source values on this (MediaPlayer) path.
+  const bool need_playback_us = impl->cursor_mode || impl->camera_renderer;
+  const std::int64_t playback_us =
+      need_playback_us ? CurrentPlaybackUs(sender) : -1;
+  const std::int64_t pos_us = CurrentPlaybackUs(sender);
+  std::int64_t dur_us = 0;
+  try {
+    dur_us = std::chrono::duration_cast<std::chrono::microseconds>(
+                 sender.PlaybackSession().NaturalDuration())
+                 .count();
+  } catch (winrt::hresult_error const&) {
+    dur_us = 0;
+  }
+  ComposeAndHandoffLocked(impl, playback_us, pos_us > 0 ? pos_us / 1000 : 0,
+                          dur_us > 0 ? dur_us / 1000 : 0);
+}
+
+void PreviewEngine::ComposeAndHandoffLocked(Impl* impl,
+                                            std::int64_t playback_us,
+                                            std::int64_t emit_pos_ms,
+                                            std::int64_t emit_dur_ms) {
   // ---- render bucket ----
   // The shared texture IS the destination — no slider strip. Letterbox
   // the natural video into the full canvas.
   const D2D1_RECT_F dest = clingfy::preview::LetterboxRect(
       static_cast<UINT>(kTextureWidth), static_cast<UINT>(kTextureHeight),
       impl->compositor.video_width(), impl->compositor.video_height());
-  const bool need_playback_us = impl->cursor_mode || impl->camera_renderer;
-  const std::int64_t playback_us =
-      need_playback_us ? CurrentPlaybackUs(sender) : -1;
 
   // Phase 9.6: advance/seek the camera frame BEFORE BeginDraw (the painter's
   // shadow bake does SetTarget round-trips, illegal inside BeginDraw).
@@ -1070,24 +1108,13 @@ void PreviewEngine::HandleVideoFrame(
         session_snapshot, project_path_snapshot);
   }
   if (!session_snapshot.empty() && !shutting_down_.load()) {
-    const std::int64_t pos_us = CurrentPlaybackUs(sender);
-    std::int64_t dur_us = 0;
-    try {
-      const auto d = sender.PlaybackSession().NaturalDuration();
-      dur_us =
-          std::chrono::duration_cast<std::chrono::microseconds>(d).count();
-    } catch (winrt::hresult_error const&) {
-      dur_us = 0;
-    }
-    const std::int64_t pos_ms = pos_us > 0 ? pos_us / 1000 : 0;
-    const std::int64_t dur_ms = dur_us > 0 ? dur_us / 1000 : 0;
     last_frame_ms_.store(
         std::chrono::duration_cast<std::chrono::milliseconds>(
             std::chrono::steady_clock::now().time_since_epoch())
             .count(),
         std::memory_order_relaxed);
     clingfy::bridge::PlayerEventPublisher::Instance().EmitPlayerTick(
-        session_snapshot, pos_ms, dur_ms);
+        session_snapshot, emit_pos_ms, emit_dur_ms);
   }
 }
 
@@ -1725,14 +1752,26 @@ void PreviewEngine::Close(const CloseArgs& args) {
 
 void PreviewEngine::Play(const std::string& session_id) {
   winrt_playback::MediaPlayer player_snapshot{nullptr};
+  Impl* impl = nullptr;
   {
     std::lock_guard<std::mutex> lock(mutex_);
     if (!running_.load() || session_id != active_session_id_) {
       return;  // Stale or pre-Open call — silent no-op.
     }
-    if (impl_) player_snapshot = impl_->player;
+    if (impl_) {
+      player_snapshot = impl_->player;
+      impl = impl_.get();
+    }
   }
-  if (player_snapshot == nullptr) return;
+  if (player_snapshot == nullptr || impl == nullptr) return;
+  // Editing port (clips, 4-3): resuming the MediaPlayer for an edited session
+  // would decode the UNCUT source (video frames get dropped by the edited-mode
+  // guard, and any audio would be uncut). Continuous stitched playback is 4-3b;
+  // until then Play is a no-op on an edited session (the frame stays put).
+  {
+    std::lock_guard<std::mutex> render_lock(impl->render_mutex);
+    if (impl->edited_mode) return;
+  }
   try {
     player_snapshot.Play();
   } catch (winrt::hresult_error const&) {
@@ -1779,6 +1818,19 @@ void PreviewEngine::SeekTo(const std::string& session_id,
   // briefly). MediaPlayer accepts any TimeSpan but Position < 0 is
   // not meaningful for preview.
   if (position_ms < 0) position_ms = 0;
+
+  // Editing port (clips, 4-3): in stitched-preview mode a scrub is an EDITED-
+  // time position — render that edited frame from the reader instead of seeking
+  // the (paused) MediaPlayer. Separate render_mutex scope so the fall-through
+  // MediaPlayer path below can take it again without a recursive lock.
+  {
+    std::lock_guard<std::mutex> render_lock(impl_snapshot->render_mutex);
+    if (shutting_down_.load()) return;
+    if (impl_snapshot->edited_mode) {
+      RenderEditedFrameLocked(impl_snapshot, position_ms);
+      return;
+    }
+  }
 
   // Capture call_qpc BEFORE issuing the seek so the next-frame
   // resolution measures the round-trip from "user-issued seek" to
@@ -1927,24 +1979,139 @@ void PreviewEngine::SetColorGrade(
                            camera_nudge_anchor_ms_);
 }
 
+bool PreviewEngine::RangesAreEdited(
+    const std::vector<capture::export_::clip_planner::ClipKeptRange>& ranges) {
+  namespace clip = capture::export_::clip_planner;
+  // Mirror the export ClassifyClipEdit has-real-edits test: coalesce source-
+  // adjacent ranges, then a real edit is >1 window, or a single window that does
+  // not start at source 0 (a head-trim). A split with nothing deleted coalesces
+  // back to one full-from-0 window and stays passthrough.
+  const auto coalesced = clip::Coalesce(ranges);
+  return coalesced.size() > 1 ||
+         (coalesced.size() == 1 && coalesced[0].source_in_ms > 0);
+}
+
+bool PreviewEngine::RenderEditedFrameLocked(Impl* impl,
+                                            std::int64_t edited_ms) {
+  namespace clip = capture::export_::clip_planner;
+  if (impl == nullptr || impl->clip_ranges.empty()) {
+    return false;
+  }
+  const std::int64_t edited_dur = clip::EditedDurationMs(impl->clip_ranges);
+  if (edited_ms < 0) edited_ms = 0;
+  if (edited_dur > 0 && edited_ms > edited_dur) edited_ms = edited_dur;
+  const std::int64_t source_ms =
+      clip::SourceMsForEditedMs(edited_ms, impl->clip_ranges);
+
+  if (impl->edited_reader == nullptr) {
+    impl->edited_reader = PreviewSourceReader::Create(impl->video_path);
+    if (impl->edited_reader == nullptr) {
+      return false;  // soft-fail: nothing to draw, MediaPlayer path unaffected
+    }
+  }
+  PreviewSourceReader* reader = impl->edited_reader.get();
+
+  // One seek to the target source window, then decode forward to the frame at
+  // or after it (MF lands on the prior keyframe; discard the lead-in). A single
+  // seek per scrub / clip edit — NOT a per-frame seek during playback (§5.4).
+  reader->SeekTo(source_ms);
+  std::vector<BYTE> bgra;
+  bool have_frame = false;
+  for (int guard = 0; guard < 600; ++guard) {
+    std::vector<BYTE> next;
+    std::int64_t next_ts = 0;
+    if (!reader->ReadNextFrame(&next, &next_ts)) {
+      break;  // EOS — keep the last frame decoded before it
+    }
+    bgra = std::move(next);
+    have_frame = true;
+    if (next_ts >= source_ms) {
+      break;  // reached the target frame
+    }
+  }
+  if (!have_frame) {
+    return false;
+  }
+
+  if (FAILED(impl->compositor.EnsureResources(impl->d3d_device.Get(),
+                                              impl->d2d_context.Get(),
+                                              reader->width(),
+                                              reader->height()))) {
+    NoteRenderFailure(impl, "edited_ensure_resources");
+    return false;
+  }
+  impl->last_video_width.store(reader->width());
+  impl->last_video_height.store(reader->height());
+  // Upload the decoded BGRA straight into the compositor's video texture — the
+  // same seam the headless compositor tests fill (no WinRT frame surface).
+  impl->d3d_context->UpdateSubresource(impl->compositor.video_texture(), 0,
+                                       nullptr, bgra.data(),
+                                       reader->width() * 4u, 0);
+
+  impl->edited_pos_ms = edited_ms;
+  // Overlays (cursor / zoom / camera) are SOURCE-keyed, so pass the frame's
+  // source time; Dart sees the EDITED position + the edited duration.
+  impl->timing_total.BeginFrame();
+  ComposeAndHandoffLocked(impl, source_ms * 1000, edited_ms, edited_dur);
+  return true;
+}
+
 void PreviewEngine::SetClips(
     const std::string& session_id,
     std::vector<capture::export_::clip_planner::ClipKeptRange> ranges) {
-  std::lock_guard<std::mutex> lock(mutex_);
-  // Same stale-session discipline as SetColorGrade / SetCameraComposition: a
-  // slider/drag tick racing a Close (or targeting a non-active session) is a
-  // silent no-op.
-  if (!session_id.empty() && session_id != active_session_id_) {
-    return;
+  winrt_playback::MediaPlayer player_snapshot{nullptr};
+  Impl* impl = nullptr;
+  bool now_edited = false;
+  {
+    std::lock_guard<std::mutex> lock(mutex_);
+    // Same stale-session discipline as SetColorGrade: a clip edit racing a Close
+    // (or targeting a non-active session) is a silent no-op.
+    if (!session_id.empty() && session_id != active_session_id_) {
+      return;
+    }
+    if (impl_ == nullptr) {
+      return;
+    }
+    impl_->clip_ranges = std::move(ranges);
+    now_edited = RangesAreEdited(impl_->clip_ranges);
+    impl = impl_.get();
+    player_snapshot = impl_->player;
   }
-  if (impl_ == nullptr) {
-    return;
+
+  // Coordinate the render mode OUTSIDE mutex_. The compose path needs
+  // render_mutex, and the lock order everywhere is render_mutex → mutex_
+  // (HandleVideoFrame + ComposeAndHandoffLocked), so we must NOT take
+  // render_mutex while holding mutex_. This runs on the Flutter platform thread,
+  // serialized with Close, so `impl` cannot be torn down under us here.
+  if (now_edited) {
+    // Enter stitched-preview mode: pause the MediaPlayer so its frame server
+    // stops overwriting, then render the current edited frame (4-3: paused /
+    // scrub only — a pacer for continuous playback lands in 4-3b).
+    if (player_snapshot != nullptr) {
+      try {
+        player_snapshot.Pause();
+      } catch (winrt::hresult_error const&) {
+        // Best-effort — MediaPlayer errors surface via the MediaFailed event.
+      }
+    }
+    std::lock_guard<std::mutex> render_lock(impl->render_mutex);
+    if (shutting_down_.load()) {
+      return;
+    }
+    impl->edited_mode = true;
+    RenderEditedFrameLocked(impl, impl->edited_pos_ms);
+  } else {
+    // Passthrough (no real cut): leave stitched mode; the MediaPlayer path
+    // resumes producing frames. The last composited frame stays until it does.
+    std::lock_guard<std::mutex> render_lock(impl->render_mutex);
+    if (shutting_down_.load()) {
+      return;
+    }
+    if (impl->edited_mode) {
+      impl->edited_mode = false;
+      impl->edited_reader.reset();
+    }
   }
-  // Slice 4-1: store only. The decode path that stitches these ranges lands in
-  // the following slices; until then an edited list changes nothing visible
-  // (the preview still plays the source 1:1, exactly as the previous no-op did),
-  // so there is no frame to recomposite and no paused-nudge here yet.
-  impl_->clip_ranges = std::move(ranges);
 }
 
 }  // namespace clingfy::preview
