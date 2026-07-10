@@ -33,6 +33,7 @@
 #include <vector>
 
 #include "Audio/audio_mixer.h"
+#include "Capture/Camera/camera_export_layout.h"
 #include "Capture/captured_video_frame.h"
 #include "Encoding/mf_encoder_config.h"
 #include "Encoding/mf_sink_writer_encoder.h"
@@ -66,6 +67,31 @@ ComPtr<ID3D11Texture2D> MakeSolidTexture(ID3D11Device* dev, std::uint32_t bgra) 
   D3D11_SUBRESOURCE_DATA init{};
   init.pSysMem = pixels.data();
   init.SysMemPitch = kSourceWidth * 4u;
+  ComPtr<ID3D11Texture2D> tex;
+  if (FAILED(dev->CreateTexture2D(&desc, &init, tex.GetAddressOf()))) {
+    return nullptr;
+  }
+  return tex;
+}
+
+// Sized variant of MakeSolidTexture for sources whose dimensions differ from the
+// shared 64x48 fixture (e.g. a canvas large enough to hold the camera bubble).
+ComPtr<ID3D11Texture2D> MakeSolidTextureSized(ID3D11Device* dev, UINT width,
+                                              UINT height, std::uint32_t bgra) {
+  std::vector<std::uint32_t> pixels(
+      static_cast<size_t>(width) * height, bgra);
+  D3D11_TEXTURE2D_DESC desc{};
+  desc.Width = width;
+  desc.Height = height;
+  desc.MipLevels = 1;
+  desc.ArraySize = 1;
+  desc.Format = DXGI_FORMAT_B8G8R8A8_UNORM;
+  desc.SampleDesc.Count = 1;
+  desc.Usage = D3D11_USAGE_DEFAULT;
+  desc.BindFlags = D3D11_BIND_RENDER_TARGET | D3D11_BIND_SHADER_RESOURCE;
+  D3D11_SUBRESOURCE_DATA init{};
+  init.pSysMem = pixels.data();
+  init.SysMemPitch = width * 4u;
   ComPtr<ID3D11Texture2D> tex;
   if (FAILED(dev->CreateTexture2D(&desc, &init, tex.GetAddressOf()))) {
     return nullptr;
@@ -757,6 +783,166 @@ bool SynthesizeReorderAudioSource(clingfy::graphics::D3DDevice* device,
     return false;
   }
   return true;
+}
+
+// A sized, two-color halves source: the first half of the frames `color_first`,
+// the second `color_second` (0xAARRGGBB). Generalizes SynthesizeHalvesSource so
+// the camera-under-reorder test can use a canvas large enough for the camera
+// bubble (min 96 px side) AND give the camera a time-varying color.
+bool SynthesizeColorHalvesSource(clingfy::graphics::D3DDevice* device,
+                                 const std::string& path, UINT width,
+                                 UINT height, std::uint32_t color_first,
+                                 std::uint32_t color_second,
+                                 std::string* skip_reason) {
+  clingfy::encoding::EncoderConfig cfg;
+  cfg.output_path = path;
+  cfg.width = width;
+  cfg.height = height;
+  cfg.fps = kFps;
+  clingfy::encoding::MfSinkWriterEncoder encoder;
+  if (auto err = encoder.Open(cfg, *device, std::nullopt)) {
+    *skip_reason = "color-halves source encoder open failed: " + err->message;
+    return false;
+  }
+  const std::int64_t frame_dur_hns = 10'000'000 / kFps;
+  for (int i = 0; i < kFrameCount; ++i) {
+    const std::uint32_t color =
+        (i < kFrameCount / 2) ? color_first : color_second;
+    clingfy::capture::CapturedVideoFrame frame;
+    frame.texture = MakeSolidTextureSized(device->device(), width, height, color);
+    if (frame.texture == nullptr) {
+      *skip_reason = "could not allocate a color-halves source frame";
+      return false;
+    }
+    frame.width = width;
+    frame.height = height;
+    frame.timestamp_hns = static_cast<std::int64_t>(i) * frame_dur_hns;
+    if (auto err = encoder.WriteVideoFrame(frame)) {
+      *skip_reason = "color-halves source WriteVideoFrame failed: " +
+                     err->message;
+      return false;
+    }
+  }
+  if (auto err = encoder.Finalize()) {
+    *skip_reason = "color-halves source finalize failed: " + err->message;
+    return false;
+  }
+  return true;
+}
+
+// Decode every video frame of `path` and record the color (0xAARRGGBB) at the
+// pixel nearest (`px`, `py`), clamped into the frame. Like ReadFrameCenterColors
+// but samples an arbitrary point — used to read the CAMERA bubble (a corner),
+// not the screen (the center). Returns false when decode fails.
+bool ReadFramePixelColors(const std::wstring& path, int px, int py,
+                          std::vector<std::uint32_t>* out_colors) {
+  out_colors->clear();
+  ComPtr<IMFAttributes> attrs;
+  if (FAILED(::MFCreateAttributes(attrs.GetAddressOf(), 1))) {
+    return false;
+  }
+  attrs->SetUINT32(MF_SOURCE_READER_ENABLE_VIDEO_PROCESSING, TRUE);
+  ComPtr<IMFSourceReader> reader;
+  if (FAILED(::MFCreateSourceReaderFromURL(path.c_str(), attrs.Get(),
+                                           reader.GetAddressOf())) ||
+      reader == nullptr) {
+    return false;
+  }
+  DWORD video_index = 0xFFFFFFFFu;
+  for (DWORD i = 0;; ++i) {
+    ComPtr<IMFMediaType> native;
+    const HRESULT hr = reader->GetNativeMediaType(i, 0, native.GetAddressOf());
+    if (hr == MF_E_INVALIDSTREAMNUMBER) {
+      break;
+    }
+    if (FAILED(hr) || native == nullptr) {
+      continue;
+    }
+    GUID major = GUID_NULL;
+    if (SUCCEEDED(native->GetGUID(MF_MT_MAJOR_TYPE, &major)) &&
+        major == MFMediaType_Video) {
+      video_index = i;
+      break;
+    }
+  }
+  if (video_index == 0xFFFFFFFFu) {
+    return false;
+  }
+  reader->SetStreamSelection(static_cast<DWORD>(MF_SOURCE_READER_ALL_STREAMS),
+                             FALSE);
+  reader->SetStreamSelection(video_index, TRUE);
+  ComPtr<IMFMediaType> rgb;
+  if (FAILED(::MFCreateMediaType(rgb.GetAddressOf()))) {
+    return false;
+  }
+  rgb->SetGUID(MF_MT_MAJOR_TYPE, MFMediaType_Video);
+  rgb->SetGUID(MF_MT_SUBTYPE, MFVideoFormat_RGB32);
+  if (FAILED(reader->SetCurrentMediaType(video_index, nullptr, rgb.Get()))) {
+    return false;
+  }
+  ComPtr<IMFMediaType> current;
+  UINT32 w = 0;
+  UINT32 h = 0;
+  if (FAILED(reader->GetCurrentMediaType(video_index, current.GetAddressOf())) ||
+      FAILED(::MFGetAttributeSize(current.Get(), MF_MT_FRAME_SIZE, &w, &h)) ||
+      w == 0 || h == 0) {
+    return false;
+  }
+  const int sx = std::min<int>(std::max<int>(px, 0), static_cast<int>(w) - 1);
+  const int sy = std::min<int>(std::max<int>(py, 0), static_cast<int>(h) - 1);
+  const size_t row_bytes = static_cast<size_t>(w) * 4u;
+  std::vector<std::uint32_t> frame(static_cast<size_t>(w) * h, 0u);
+  for (int guard = 0; guard < 256; ++guard) {
+    DWORD actual = 0;
+    DWORD flags = 0;
+    LONGLONG ts = 0;
+    ComPtr<IMFSample> sample;
+    if (FAILED(reader->ReadSample(video_index, 0, &actual, &flags, &ts,
+                                  sample.GetAddressOf()))) {
+      return false;
+    }
+    if (flags & MF_SOURCE_READERF_ENDOFSTREAM) {
+      break;
+    }
+    if (sample == nullptr) {
+      continue;
+    }
+    auto* dest = reinterpret_cast<BYTE*>(frame.data());
+    ComPtr<IMFMediaBuffer> raw;
+    if (FAILED(sample->GetBufferByIndex(0, raw.GetAddressOf())) ||
+        raw == nullptr) {
+      return false;
+    }
+    ComPtr<IMF2DBuffer> buffer2d;
+    if (SUCCEEDED(raw.As(&buffer2d)) && buffer2d != nullptr) {
+      BYTE* scan0 = nullptr;
+      LONG stride = 0;
+      if (FAILED(buffer2d->Lock2D(&scan0, &stride)) || scan0 == nullptr) {
+        return false;
+      }
+      for (UINT row = 0; row < h; ++row) {
+        std::memcpy(dest + row * row_bytes,
+                    scan0 + static_cast<LONG>(row) * stride, row_bytes);
+      }
+      buffer2d->Unlock2D();
+    } else {
+      ComPtr<IMFMediaBuffer> contig;
+      if (FAILED(sample->ConvertToContiguousBuffer(contig.GetAddressOf())) ||
+          contig == nullptr) {
+        return false;
+      }
+      BYTE* data = nullptr;
+      DWORD max_len = 0;
+      DWORD cur_len = 0;
+      if (FAILED(contig->Lock(&data, &max_len, &cur_len)) || data == nullptr) {
+        return false;
+      }
+      std::memcpy(dest, data, std::min<size_t>(cur_len, row_bytes * h));
+      contig->Unlock();
+    }
+    out_colors->push_back(frame[static_cast<size_t>(sy) * w + sx]);
+  }
+  return !out_colors->empty();
 }
 
 // True when the file begins with a GIF signature ("GIF87a"/"GIF89a"). Media
@@ -2170,6 +2356,106 @@ TEST(ExportPipelineTest, ReorderExportStitchesAudioInEditedOrder) {
   EXPECT_LT(silent_rms, loud_rms * 0.5)
       << "the SILENT source half must land in the FIRST edited slot — proving "
          "the audio was stitched in edited (reordered) order, not source order";
+
+  std::error_code ec;
+  fs::remove_all(dir, ec);
+}
+
+// Editing port (clips, 3b-3): the camera bubble under REORDER (§5.5). The camera
+// is a separate synced player — its VIDEO tracks SOURCE time while the export
+// re-stamps onto the edited timeline, so at a reorder boundary the source clock
+// jumps BACKWARD and the forward-only camera reader must be re-primed
+// (CameraExportRenderer::SeekTo, added in 3b-2a) or the bubble would freeze on a
+// stale later frame. Proof: a camera colored by source time (green first source
+// half, yellow second) over a reordered screen must show, in each output frame's
+// bubble, the color matching that frame's SOURCE window — reversed from source
+// order, exactly like the screen. A broken SeekTo leaves the bubble stuck.
+TEST(ExportPipelineTest, CameraBubbleTracksSourceTimeUnderReorder) {
+  clingfy::graphics::D3DDevice device;
+  if (device.Create()) {
+    GTEST_SKIP() << "no usable D3D11 device in this environment";
+  }
+  const auto dir = UniqueDir("clip_reorder_camera");
+  const auto screen = (dir / "screen.mov").u8string();
+  const auto camera = (dir / "camera.mov").u8string();
+  std::string skip_reason;
+  // Screen 320x240 (big enough for the >=96px bubble): red first, blue second.
+  if (!SynthesizeColorHalvesSource(&device, screen, 320, 240, 0xFFFF0000u,
+                                   0xFF0000FFu, &skip_reason)) {
+    GTEST_SKIP() << skip_reason;
+  }
+  // Camera: green first, yellow second — same duration so the switch lines up in
+  // time with the screen's (only the RED channel differs: yellow=255, green=0).
+  if (!SynthesizeColorHalvesSource(&device, camera, 160, 120, 0xFF00FF00u,
+                                   0xFFFFFF00u, &skip_reason)) {
+    GTEST_SKIP() << skip_reason;
+  }
+
+  RenderRequest r;
+  r.source_video_path = fs::u8path(screen).wstring();
+  r.destination_path = (dir / "reorder_camera.mov").u8string();
+  r.layout = "square11";  // 320x240 -> 320x320 canvas
+  r.resolution = "auto";
+  r.fit = "fit";
+  r.fps_hint = kFps;
+  // Timeline = [ later window (133,267), earlier window (0,133) ] — a reorder.
+  r.clip_ranges = {clip_planner::ClipKeptRange{133, 267},
+                   clip_planner::ClipKeptRange{0, 133}};
+  ASSERT_FALSE(clip_planner::IsSourceMonotonic(r.clip_ranges))
+      << "test fixture must be a genuine reorder";
+  r.draw_camera = true;
+  r.camera_video_path = fs::u8path(camera).wstring();
+  r.camera_start_offset_ms = 0;  // camera time == screen source time
+  r.camera_has_center = true;
+  r.camera_center_x = 0.80;
+  r.camera_center_y = 0.80;
+  r.camera_size_factor = 0.45;   // a big bubble so its center is easy to sample
+  r.camera_shape = "circle";     // center is camera content for any convex shape
+  r.camera_content_mode = "fill";
+  r.camera_opacity = 1.0;
+
+  const RenderResult result = RenderComposedExport(r);
+  ASSERT_TRUE(result.ok) << result.message;
+  EXPECT_EQ(result.video_frames_written, 8u);
+
+  // Locate the bubble center on the 320x320 canvas (same helper the pipeline
+  // uses), then read that pixel across the output frames.
+  const auto bubble = clingfy::capture::ComputeCameraBubbleRect(
+      320.0, 320.0, /*has_center=*/true, 0.80, 0.80, /*layout_preset=*/"",
+      /*size_factor=*/0.45);
+  const int bx = static_cast<int>(bubble.x + bubble.width / 2.0);
+  const int by = static_cast<int>(bubble.y + bubble.height / 2.0);
+
+  std::vector<std::uint32_t> bubble_colors;
+  if (!ReadFramePixelColors(fs::u8path(r.destination_path).wstring(), bx, by,
+                            &bubble_colors)) {
+    GTEST_SKIP() << "could not decode the reordered camera output";
+  }
+  ASSERT_GE(bubble_colors.size(), 6u) << "expected ~8 output frames";
+  auto red_of = [](std::uint32_t c) { return static_cast<int>((c >> 16) & 0xFF); };
+  // Output slot 0 (first half of frames) plays the LATER screen window (source
+  // 133-267), so the camera — synced to source time — reaches its SECOND half
+  // (yellow, high red). Slot 1 (last frames) plays the EARLIER window (source
+  // 0-133) → camera FIRST half (green, low red). We take the MAX red over the
+  // early frames rather than the exact first frame: the boundary frame sits at
+  // the truncated 133 ms while the camera's yellow half starts at 133.33 ms, so
+  // yellow appears from the next frame on. If SeekTo had not re-primed the
+  // reader, the forward-only pull could not rewind and this inversion (yellow
+  // early, green late) would not appear.
+  const std::size_t mid = bubble_colors.size() / 2u;
+  int max_red_early = 0;
+  for (std::size_t i = 0; i < mid; ++i) {
+    max_red_early = std::max(max_red_early, red_of(bubble_colors[i]));
+  }
+  const int last_red = red_of(bubble_colors.back());
+  EXPECT_GT(max_red_early, 120)
+      << "the camera's LATER half (yellow) must appear EARLY (the reordered "
+         "later-source window)";
+  EXPECT_LT(last_red, 120)
+      << "the camera's EARLIER half (green) must appear LATE (the earlier-source "
+         "window) — proving the camera reader re-primed on the backward seek";
+  EXPECT_GT(max_red_early, last_red + 60)
+      << "camera color must track SOURCE time across the reorder backward seek";
 
   std::error_code ec;
   fs::remove_all(dir, ec);
