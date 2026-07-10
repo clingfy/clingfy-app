@@ -96,6 +96,7 @@ add_executable(runner_tests
   "player_event_publisher_test.cpp"
   "preview_camera_renderer_test.cpp"
   "preview_router_test.cpp"
+  "preview_source_reader_test.cpp"
   "project_open_coordinator_test.cpp"
   "misc_router_crash_gate_test.cpp"
   "recording_clock_test.cpp"
