@@ -36,6 +36,7 @@
 #include <flutter_plugin_registrar.h>
 #include <flutter_texture_registrar.h>
 
+#include "Capture/Export/clip_playback_planner.h"
 #include "Capture/Export/color_grade.h"
 #include "Preview/preview_camera_renderer.h"
 
@@ -213,6 +214,17 @@ class PreviewEngine {
   // camera edits.
   void SetColorGrade(const std::string& session_id,
                      const capture::export_::color::ColorGrade& grade);
+
+  // Editing port (clips, step 4-1): store the edited-timeline kept ranges for
+  // the inline preview. Driven by Dart's previewSetClips on open and on every
+  // clip edit (split / cut / trim / drag-reorder), in TIMELINE order — the same
+  // wire shape the export router parses (ReadClipRangesArg). A stale session_id
+  // is a silent no-op. Slice 4-1 only STORES the ranges (the stitched decode
+  // that honors them lands in the following slices); a passthrough list (no real
+  // cut) leaves the preview byte-identical to today. Cheap + thread-safe.
+  void SetClips(
+      const std::string& session_id,
+      std::vector<capture::export_::clip_planner::ClipKeptRange> ranges);
 
   // For tests / observability.
   std::int64_t current_texture_id() const;

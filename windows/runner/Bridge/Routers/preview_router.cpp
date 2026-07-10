@@ -7,6 +7,7 @@
 #include <sstream>
 #include <string>
 
+#include "Bridge/Routers/clip_args.h"
 #include "Bridge/Routers/color_grade_args.h"
 #include "Bridge/native_error_codes.h"
 #include "Bridge/native_log_publisher.h"
@@ -674,6 +675,22 @@ void HandlePreviewSetColorGrade(
   reply::Null(*result);
 }
 
+// Editing port (clips, step 4-1): pushes the Dart clip list to the live
+// preview. Parsed by the shared clip_args helper (the same wire shape the
+// export router uses — one parser, per the color_grade precedent). Stale-session
+// calls are dropped engine-side. Always replies null (the void Dart contract).
+void HandlePreviewSetClips(
+    const flutter::MethodCall<flutter::EncodableValue>& call,
+    std::unique_ptr<flutter::MethodResult<flutter::EncodableValue>> result) {
+  if (const auto* args =
+          std::get_if<flutter::EncodableMap>(call.arguments())) {
+    const std::string session_id = ReadString(*args, "sessionId");
+    PreviewEngine::Instance()->SetClips(session_id,
+                                        clingfy::bridge::ReadClipRangesArg(*args));
+  }
+  reply::Null(*result);
+}
+
 }  // namespace
 
 void RegisterHandlers(HandlerTable& table) {
@@ -700,9 +717,11 @@ void RegisterHandlers(HandlerTable& table) {
   // chain the export bakes with (Graphics/color_grade_effect), applied to
   // the preview video by preview_compositor. Video-only, like macOS preview.
   table["previewSetColorGrade"] = &HandlePreviewSetColorGrade;
-  // Clip split/cut/trim/arrange: macOS skips cut regions live; Windows accepts
-  // + ignores the clip list for now so the bridge contract stays in sync.
-  table["previewSetClips"] = &HandleNoopSetter;
+  // Clip split/cut/trim/arrange (editing port step 4-1): the clip list is now
+  // STORED on the preview session (SetClips). The stitched decode that plays
+  // through cuts/reorder lands in the following slices; a passthrough list keeps
+  // the preview byte-identical to today.
+  table["previewSetClips"] = &HandlePreviewSetClips;
   table["previewSetAudioMix"] = &HandleNoopSetter;
   table["previewSetAudioGainDb"] = &HandleNoopSetter;
 
