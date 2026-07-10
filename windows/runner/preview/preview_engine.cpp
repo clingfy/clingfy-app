@@ -350,8 +350,9 @@ struct PreviewEngine::Impl {
 
   // ---- Editing port (clips, step 4-1/4-3) ----
   // The edited-timeline kept ranges (TIMELINE order) set via SetClips. Empty /
-  // passthrough = no cuts, so the preview plays the source 1:1 as today.
-  // Guarded by the engine mutex_ (set off the frame thread).
+  // passthrough = no cuts, so the preview plays the source 1:1 as today. Guarded
+  // by render_mutex (4-3b: the pacer thread reads it off the platform thread, so
+  // the SetClips write MUST share render_mutex with those reads).
   std::vector<capture::export_::clip_planner::ClipKeptRange> clip_ranges;
   // Step 4-3 stitched-preview state (guarded by render_mutex — touched by the
   // edited render path and read by the frame-server guard). When the ranges are
@@ -361,6 +362,10 @@ struct PreviewEngine::Impl {
   std::unique_ptr<PreviewSourceReader> edited_reader;
   bool edited_mode = false;
   std::int64_t edited_pos_ms = 0;
+  // Step 4-3b: continuous-playback flag for the pacer thread. Set true by Play
+  // on a MONOTONIC edited session, cleared by Pause / passthrough / EOS. Guarded
+  // by render_mutex (set on the platform thread, read by the pacer thread).
+  bool edited_playing = false;
 
   // Serializes the per-frame composition path against the descriptor
   // callback (which Flutter can invoke from its own thread).
@@ -875,6 +880,9 @@ OpenResult PreviewEngine::Open(const OpenArgs& args) {
   // already false at this point — set by the MediaPlayer setup block
   // above.
   heartbeat_thread_ = std::thread([this] { HeartbeatLoop(); });
+  // Step 4-3b: the edited-playback pacer. Idle until an edited session plays;
+  // joined in Close() before the impl_ teardown, exactly like the heartbeat.
+  pacer_thread_ = std::thread([this] { PacerLoop(); });
 
   LogNative("Open() returning success");
 
@@ -1275,36 +1283,55 @@ void PreviewEngine::HeartbeatLoop() {
       continue;
     }
 
-    // Snapshot the session id + the MediaPlayer pointer under the
-    // mutex; release the lock before touching the player (its API
-    // is safe from any thread).
+    // Snapshot the session id + the MediaPlayer pointer + impl under the
+    // mutex; release the lock before touching the player (its API is safe from
+    // any thread). Close joins this thread before destroying impl_, so the raw
+    // impl pointer stays valid for this iteration.
     std::string session_snapshot;
     winrt_playback::MediaPlayer player_snapshot{nullptr};
+    Impl* impl = nullptr;
     {
       std::lock_guard<std::mutex> lock(mutex_);
       session_snapshot = active_session_id_;
       if (impl_) {
         player_snapshot = impl_->player;
+        impl = impl_.get();
       }
     }
-    if (session_snapshot.empty() || player_snapshot == nullptr) continue;
+    if (session_snapshot.empty() || impl == nullptr) continue;
 
     std::int64_t pos_ms = 0;
     std::int64_t dur_ms = 0;
-    try {
-      const auto session = player_snapshot.PlaybackSession();
-      const auto pos =
-          std::chrono::duration_cast<std::chrono::microseconds>(
-              session.Position())
-              .count();
-      const auto dur =
-          std::chrono::duration_cast<std::chrono::microseconds>(
-              session.NaturalDuration())
-              .count();
-      pos_ms = pos > 0 ? pos / 1000 : 0;
-      dur_ms = dur > 0 ? dur / 1000 : 0;
-    } catch (winrt::hresult_error const&) {
-      continue;  // Skip this beat; next loop iteration retries.
+    // Editing port (clips, 4-3b): in stitched mode the MediaPlayer is paused and
+    // its Position/NaturalDuration are the RAW (uncut) source — report the EDITED
+    // playhead + edited duration instead (guarded by render_mutex).
+    bool edited = false;
+    {
+      std::lock_guard<std::mutex> render_lock(impl->render_mutex);
+      if (impl->edited_mode) {
+        edited = true;
+        pos_ms = impl->edited_pos_ms;
+        dur_ms = capture::export_::clip_planner::EditedDurationMs(
+            impl->clip_ranges);
+      }
+    }
+    if (!edited) {
+      if (player_snapshot == nullptr) continue;
+      try {
+        const auto session = player_snapshot.PlaybackSession();
+        const auto pos =
+            std::chrono::duration_cast<std::chrono::microseconds>(
+                session.Position())
+                .count();
+        const auto dur =
+            std::chrono::duration_cast<std::chrono::microseconds>(
+                session.NaturalDuration())
+                .count();
+        pos_ms = pos > 0 ? pos / 1000 : 0;
+        dur_ms = dur > 0 ? dur / 1000 : 0;
+      } catch (winrt::hresult_error const&) {
+        continue;  // Skip this beat; next loop iteration retries.
+      }
     }
 
     clingfy::bridge::PlayerEventPublisher::Instance().EmitPlayerTick(
@@ -1488,6 +1515,16 @@ void PreviewEngine::Close(const CloseArgs& args) {
     heartbeat_thread_.join();
   }
   LogNative("Close() heartbeat thread joined");
+
+  // Step 4-3b: join the pacer thread before touching impl_ (same reason as the
+  // heartbeat) — it holds a raw impl_ pointer + render_mutex per iteration, so
+  // it must be fully stopped before the impl_ move/destroy below. shutting_down_
+  // is already set, so its next loop check exits; the join waits out the current
+  // iteration (during which impl_ is still alive).
+  if (pacer_thread_.joinable()) {
+    pacer_thread_.join();
+  }
+  LogNative("Close() pacer thread joined");
 
   if (!closing_session_id.empty()) {
     clingfy::bridge::WorkflowEventPublisher::Instance().EmitPreviewClosed(
@@ -1764,13 +1801,23 @@ void PreviewEngine::Play(const std::string& session_id) {
     }
   }
   if (player_snapshot == nullptr || impl == nullptr) return;
-  // Editing port (clips, 4-3): resuming the MediaPlayer for an edited session
-  // would decode the UNCUT source (video frames get dropped by the edited-mode
-  // guard, and any audio would be uncut). Continuous stitched playback is 4-3b;
-  // until then Play is a no-op on an edited session (the frame stays put).
+  // Editing port (clips, 4-3b): for an edited session, drive continuous playback
+  // from the pacer thread — NEVER resume the MediaPlayer (it would decode the
+  // uncut source; its frames are dropped by the edited-mode guard and any audio
+  // would be uncut). MONOTONIC (cut) sessions only; reorder playback needs
+  // per-range seeks (4-4), so a reorder session stays on the paused/scrub frame.
   {
     std::lock_guard<std::mutex> render_lock(impl->render_mutex);
-    if (impl->edited_mode) return;
+    if (impl->edited_mode) {
+      namespace clip = capture::export_::clip_planner;
+      if (clip::IsSourceMonotonic(impl->clip_ranges)) {
+        // Render the current frame (re-positions the reader), then let the pacer
+        // read forward from there.
+        RenderEditedFrameLocked(impl, impl->edited_pos_ms);
+        impl->edited_playing = true;
+      }
+      return;
+    }
   }
   try {
     player_snapshot.Play();
@@ -1782,14 +1829,27 @@ void PreviewEngine::Play(const std::string& session_id) {
 
 void PreviewEngine::Pause(const std::string& session_id) {
   winrt_playback::MediaPlayer player_snapshot{nullptr};
+  Impl* impl = nullptr;
   {
     std::lock_guard<std::mutex> lock(mutex_);
     if (!running_.load() || session_id != active_session_id_) {
       return;
     }
-    if (impl_) player_snapshot = impl_->player;
+    if (impl_) {
+      player_snapshot = impl_->player;
+      impl = impl_.get();
+    }
   }
-  if (player_snapshot == nullptr) return;
+  if (player_snapshot == nullptr || impl == nullptr) return;
+  // Editing port (clips, 4-3b): pausing an edited session stops the pacer; the
+  // MediaPlayer is already paused, so leave it be.
+  {
+    std::lock_guard<std::mutex> render_lock(impl->render_mutex);
+    if (impl->edited_mode) {
+      impl->edited_playing = false;
+      return;
+    }
+  }
   try {
     player_snapshot.Pause();
   } catch (winrt::hresult_error const&) {
@@ -2056,12 +2116,117 @@ bool PreviewEngine::RenderEditedFrameLocked(Impl* impl,
   return true;
 }
 
+PreviewEngine::PaceStep PreviewEngine::PaceNextEditedFrameLocked(Impl* impl) {
+  namespace clip = capture::export_::clip_planner;
+  if (impl == nullptr || impl->edited_reader == nullptr ||
+      impl->clip_ranges.empty()) {
+    return PaceStep::kIdle;
+  }
+  const std::int64_t edited_dur = clip::EditedDurationMs(impl->clip_ranges);
+  PreviewSourceReader* reader = impl->edited_reader.get();
+
+  // Decode FORWARD (no seeks) until a kept frame — cut-gap frames are skipped,
+  // which IS the cut (matches the export monotonic path). Decoding is NOT free
+  // (ReadNextFrame fully decodes each frame), so cap the skip at kMaxSkip per
+  // call: a large cut then returns kSkipping so the pacer RELEASES render_mutex
+  // between chunks (keeping Pause/Seek/Close responsive) and steps again. The
+  // reader position persists across calls. Monotonic sessions only (Play gates
+  // on IsSourceMonotonic), so EditedMsForKeptSourceMs is well-defined and
+  // source-forward == edited-forward.
+  constexpr int kMaxSkip = 8;
+  for (int i = 0; i < kMaxSkip; ++i) {
+    if (shutting_down_.load()) {
+      return PaceStep::kIdle;  // let Close's join() return promptly
+    }
+    std::vector<BYTE> bgra;
+    std::int64_t ts_ms = 0;
+    if (!reader->ReadNextFrame(&bgra, &ts_ms)) {
+      impl->edited_playing = false;  // end of source — playback complete
+      return PaceStep::kIdle;
+    }
+    const auto edited = clip::EditedMsForKeptSourceMs(ts_ms, impl->clip_ranges);
+    if (!edited.has_value()) {
+      continue;  // inside a cut gap — skip
+    }
+    if (FAILED(impl->compositor.EnsureResources(impl->d3d_device.Get(),
+                                                impl->d2d_context.Get(),
+                                                reader->width(),
+                                                reader->height()))) {
+      NoteRenderFailure(impl, "pacer_ensure_resources");
+      impl->edited_playing = false;
+      return PaceStep::kIdle;
+    }
+    impl->last_video_width.store(reader->width());
+    impl->last_video_height.store(reader->height());
+    impl->d3d_context->UpdateSubresource(impl->compositor.video_texture(), 0,
+                                         nullptr, bgra.data(),
+                                         reader->width() * 4u, 0);
+    impl->edited_pos_ms = *edited;
+    impl->timing_total.BeginFrame();
+    ComposeAndHandoffLocked(impl, ts_ms * 1000, *edited, edited_dur);
+    return PaceStep::kRendered;
+  }
+  // Hit the cap while still inside a cut gap — yield the lock and continue.
+  return PaceStep::kSkipping;
+}
+
+void PreviewEngine::PacerLoop() {
+  using clock = std::chrono::steady_clock;
+  // Fixed ~30fps budget (the recorder default; the source fps is not trivially
+  // exposed here — a source-fps-accurate pace is a later refinement, and there
+  // is no preview audio yet to sync to). sleep_until an accumulating deadline so
+  // decode jitter doesn't drift the pace fast; reset it if we fall behind so it
+  // can't spiral into catch-up.
+  const auto frame_budget = std::chrono::milliseconds(33);
+  auto next_deadline = clock::now();
+  while (!shutting_down_.load()) {
+    Impl* impl = nullptr;
+    {
+      std::lock_guard<std::mutex> lock(mutex_);
+      impl = impl_.get();
+    }
+    PaceStep step = PaceStep::kIdle;
+    if (impl != nullptr) {
+      // render_mutex is held only for ONE bounded step (a kept frame or up to a
+      // small skip cap) — released before the sleep so SetClips / SeekTo / Pause
+      // / Close and the frame-server guard aren't blocked while paced.
+      std::lock_guard<std::mutex> render_lock(impl->render_mutex);
+      if (!shutting_down_.load() && impl->edited_mode && impl->edited_playing) {
+        step = PaceNextEditedFrameLocked(impl);
+      }
+    }
+    switch (step) {
+      case PaceStep::kRendered:
+        next_deadline += frame_budget;
+        {
+          const auto now = clock::now();
+          if (next_deadline > now) {
+            std::this_thread::sleep_until(next_deadline);
+          } else {
+            next_deadline = now;  // fell behind — don't accumulate lag
+          }
+        }
+        break;
+      case PaceStep::kSkipping:
+        // Mid-gap: render_mutex is released (scope ended) — step again almost
+        // immediately so a large cut skips fast, yielding first so Pause / Seek /
+        // Close interleave. No kept frame yet, so reset the pace anchor.
+        next_deadline = clock::now();
+        std::this_thread::sleep_for(std::chrono::milliseconds(1));
+        break;
+      case PaceStep::kIdle:
+        next_deadline = clock::now();
+        std::this_thread::sleep_for(std::chrono::milliseconds(15));
+        break;
+    }
+  }
+}
+
 void PreviewEngine::SetClips(
     const std::string& session_id,
     std::vector<capture::export_::clip_planner::ClipKeptRange> ranges) {
   winrt_playback::MediaPlayer player_snapshot{nullptr};
   Impl* impl = nullptr;
-  bool now_edited = false;
   {
     std::lock_guard<std::mutex> lock(mutex_);
     // Same stale-session discipline as SetColorGrade: a clip edit racing a Close
@@ -2072,45 +2237,47 @@ void PreviewEngine::SetClips(
     if (impl_ == nullptr) {
       return;
     }
-    impl_->clip_ranges = std::move(ranges);
-    now_edited = RangesAreEdited(impl_->clip_ranges);
     impl = impl_.get();
     player_snapshot = impl_->player;
   }
+  const bool now_edited = RangesAreEdited(ranges);
 
   // Coordinate the render mode OUTSIDE mutex_. The compose path needs
   // render_mutex, and the lock order everywhere is render_mutex → mutex_
   // (HandleVideoFrame + ComposeAndHandoffLocked), so we must NOT take
   // render_mutex while holding mutex_. This runs on the Flutter platform thread,
   // serialized with Close, so `impl` cannot be torn down under us here.
-  if (now_edited) {
+  if (now_edited && player_snapshot != nullptr) {
     // Enter stitched-preview mode: pause the MediaPlayer so its frame server
-    // stops overwriting, then render the current edited frame (4-3: paused /
-    // scrub only — a pacer for continuous playback lands in 4-3b).
-    if (player_snapshot != nullptr) {
-      try {
-        player_snapshot.Pause();
-      } catch (winrt::hresult_error const&) {
-        // Best-effort — MediaPlayer errors surface via the MediaFailed event.
-      }
+    // stops overwriting the edited frame.
+    try {
+      player_snapshot.Pause();
+    } catch (winrt::hresult_error const&) {
+      // Best-effort — MediaPlayer errors surface via the MediaFailed event.
     }
-    std::lock_guard<std::mutex> render_lock(impl->render_mutex);
-    if (shutting_down_.load()) {
-      return;
-    }
+  }
+  std::lock_guard<std::mutex> render_lock(impl->render_mutex);
+  if (shutting_down_.load()) {
+    return;
+  }
+  // clip_ranges is read by the PACER THREAD under render_mutex, so it MUST be
+  // written under render_mutex (never mutex_) or the move-assign races the
+  // pacer's mid-iteration read → heap use-after-free.
+  impl->clip_ranges = std::move(ranges);
+  if (now_edited) {
     impl->edited_mode = true;
+    // A clip edit STOPS continuous playback: the timeline just changed (and may
+    // now be non-monotonic / reorder, which the pacer must never pace). Show the
+    // edited frame paused; the user re-presses Play, which re-arms the pacer only
+    // for a monotonic session. (Slice 6 debounces the trim-drag storm.)
+    impl->edited_playing = false;
     RenderEditedFrameLocked(impl, impl->edited_pos_ms);
-  } else {
+  } else if (impl->edited_mode) {
     // Passthrough (no real cut): leave stitched mode; the MediaPlayer path
     // resumes producing frames. The last composited frame stays until it does.
-    std::lock_guard<std::mutex> render_lock(impl->render_mutex);
-    if (shutting_down_.load()) {
-      return;
-    }
-    if (impl->edited_mode) {
-      impl->edited_mode = false;
-      impl->edited_reader.reset();
-    }
+    impl->edited_mode = false;
+    impl->edited_playing = false;
+    impl->edited_reader.reset();
   }
 }
 
