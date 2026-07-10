@@ -502,4 +502,105 @@ final class MicEchoCancellerTests: XCTestCase {
     XCTAssertGreaterThan(before, 0.3, "the synthetic pause bleed should be strongly present")
     XCTAssertLessThan(after, before * 0.4, "the pause bleed should be largely cancelled")
   }
+
+  // MARK: - Quiet recordings: the self-scaling voice floor (v6)
+
+  /// The v5 bug (found on a real, quiet recording): the near-end-voice gate used
+  /// a FIXED `voiceMicFloor = 0.015`. On a quiet recording the whole voice sits
+  /// under that, so the mask never fired, the blend ran the NLMS-cleaned path
+  /// over the voice, and it came out distorted (the cleaned mic even peaked ABOVE
+  /// the raw mic). The gate is now self-scaling: `min(voiceMicFloor, max(
+  /// voiceMicNoiseFloor, voiceMicFraction · speakingLevel))`. This asserts the
+  /// mechanism directly — quiet voice that the fixed floor MISSES is flagged by
+  /// the scaled floor.
+  func testVoiceMaskScaledFloorFlagsQuietVoiceFixedFloorMisses() {
+    let n = 48_000
+    // Quiet near-end voice: unit-std colored noise scaled to ~0.008 RMS, well
+    // under the old fixed 0.015 floor but clearly above the noise floor (0.004).
+    let voice = colored(n, seed: 41, a: 0.85).map { $0 * 0.008 }
+    let reference = colored(n, seed: 42, a: 0.9)  // uncorrelated → this IS voice
+    let micEnv = MicEchoCanceller.movingRMS(voice)
+
+    // The effective floor cancel() would compute for this recording.
+    let speakingLevel = MicEchoCanceller.percentile(
+      micEnv, MicEchoCanceller.voiceSpeakingPercentile)
+    let effectiveFloor = min(
+      MicEchoCanceller.voiceMicFloor,
+      max(MicEchoCanceller.voiceMicNoiseFloor, MicEchoCanceller.voiceMicFraction * speakingLevel))
+    XCTAssertLessThan(
+      effectiveFloor, MicEchoCanceller.voiceMicFloor,
+      "a quiet recording must scale the voice gate BELOW the fixed 0.015")
+    XCTAssertGreaterThanOrEqual(effectiveFloor, MicEchoCanceller.voiceMicNoiseFloor)
+
+    let scaled = MicEchoCanceller.nearEndVoiceMask(
+      mic: voice, reference: reference, micEnv: micEnv, voiceFloor: effectiveFloor)
+    let fixed = MicEchoCanceller.nearEndVoiceMask(
+      mic: voice, reference: reference, micEnv: micEnv, voiceFloor: MicEchoCanceller.voiceMicFloor)
+
+    XCTAssertGreaterThan(
+      scaled.filter { $0 }.count, n / 2,
+      "the scaled floor must flag the quiet voice (so the blend passes it raw)")
+    XCTAssertLessThan(
+      fixed.filter { $0 }.count, n / 10,
+      "the old fixed floor misses the quiet voice — this is the bug v6 fixes")
+  }
+
+  /// End-to-end on a QUIET double-talk recording (mic peak ~0.06, the level of the
+  /// real recording that reproduced the bug). The voice must survive and — the
+  /// direct signature of the v5 bug — the cleaned mic must NOT peak above the raw
+  /// mic (v5 shipped a cleaned mic peaking ~1.5× the input on this recording).
+  func testCancelPreservesQuietVoiceOverSystem() throws {
+    let n = 96_000
+    let half = n / 2
+    let delay = 2_640
+    // Everything quiet. System ~0.06 RMS; bleed coupling 0.08 → ~0.0048. Voice
+    // ~0.012 RMS, ~2.5× the bleed (dominant) but under the old 0.015 gate.
+    let system = colored(n, seed: 43, a: 0.9).map { $0 * 0.06 }
+    let voice = colored(n, seed: 44, a: 0.85).map { $0 * 0.012 }
+
+    var mic = [Float](repeating: 0, count: n)
+    for i in delay..<half { mic[i] = 0.08 * system[i - delay] }  // pause: bleed only
+    for i in half..<n {  // double-talk: quiet voice over the bleed
+      mic[i] = voice[i] + 0.08 * system[i - delay]
+    }
+
+    let micURL = try writeCAF(mic, name: "mic.caf")
+    let systemURL = try writeCAF(system, name: "system.caf")
+    let outDir = FileManager.default.temporaryDirectory.appendingPathComponent(
+      UUID().uuidString, isDirectory: true)
+    try FileManager.default.createDirectory(at: outDir, withIntermediateDirectories: true)
+
+    let result = try MicEchoCanceller.cancel(
+      micURL: micURL, systemURL: systemURL, outputDirectory: outDir)
+    XCTAssertTrue(result.applied)
+
+    let cleaned = try MicEchoCanceller.decodePCMMono48k(url: result.cleanedMicURL)
+    let m = min(cleaned.count, n)
+
+    // No added-energy artifact: the cleaned mic must not peak above the raw mic
+    // (v5 on this recording produced a cleaned peak ~1.5× the input — the audible
+    // distortion). Allow a small crossfade margin.
+    let micPeak = mic[0..<m].map { abs($0) }.max() ?? 0
+    let outPeak = cleaned[0..<m].map { abs($0) }.max() ?? 0
+    XCTAssertGreaterThan(micPeak, 0)
+    XCTAssertLessThan(
+      outPeak, micPeak * 1.25,
+      "the cleaned quiet mic must not peak above the raw mic (v5's distortion signature)")
+
+    // The quiet voice survives double-talk (blend passes the raw mic there).
+    let dtStart = half + 6_000
+    let voiceKeep = correlation(cleaned[dtStart..<m], mic[dtStart..<m])
+    XCTAssertGreaterThan(voiceKeep, 0.9, "the quiet voice must survive double-talk")
+    let ratio = rms(cleaned[dtStart..<m]) / max(rms(mic[dtStart..<m]), 1e-9)
+    XCTAssertGreaterThan(ratio, 0.8, "the quiet voice must not be gutted")
+    XCTAssertLessThan(ratio, 1.2, "and no energy added either")
+
+    // The bleed-only pause is still cancelled (the echo fix must hold).
+    let bStart = delay + 6_000
+    let before = abs(
+      correlationAtLag(Array(mic[bStart..<half]), Array(system[bStart..<half]), lag: delay))
+    let after = abs(
+      correlationAtLag(Array(cleaned[bStart..<half]), Array(system[bStart..<half]), lag: delay))
+    XCTAssertLessThan(after, before * 0.6, "the pause bleed must still be cancelled")
+  }
 }

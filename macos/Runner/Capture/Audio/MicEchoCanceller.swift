@@ -54,8 +54,12 @@ enum MicEchoCanceller {
   /// 4 = correlation-based double-talk detector + raw-voice blend (fixes the
   ///     voice being gutted whenever the user spoke over system audio),
   /// 5 = also freeze adaptation on a near-silent reference (v4 could diverge and
-  ///     emit loud out-of-scale bursts after adapting on silence).
-  static let algorithmVersion = 5
+  ///     emit loud out-of-scale bursts after adapting on silence),
+  /// 6 = self-scaling near-end-voice floor (the fixed `voiceMicFloor = 0.015` sat
+  ///     ABOVE the entire voice on quiet recordings, so the voice mask never
+  ///     fired and the NLMS-cleaned path ran over — and distorted — the user's
+  ///     voice; the floor now scales down to the recording's own voice level).
+  static let algorithmVersion = 6
   static let sampleRate: Double = 48_000
   /// Adaptive filter length in taps. 512 @ 48 kHz ≈ 10.7 ms — long enough for the
   /// residual fine delay + early reflections after bulk alignment, short enough
@@ -134,7 +138,28 @@ enum MicEchoCanceller {
   /// it, gutting speech whenever system audio played. Correlation is
   /// coupling-independent, so it fires correctly regardless of the room/level.
   static let voiceCorrelationThreshold: Float = 0.5
+  /// Upper bound (ceiling) for the near-end-voice energy gate. The gate only
+  /// exists to keep near-silence out of the voice decision — the CORRELATION
+  /// test does the real voice/bleed discrimination. A fixed `0.015` gate was
+  /// this value's old meaning, but on a QUIET recording the whole voice sits
+  /// below it: the mask never fired, and `systemPresenceBlend` ran the cleaned
+  /// (NLMS-subtracted) path over the voice, distorting it. The effective gate is
+  /// now `min(voiceMicFloor, max(voiceMicNoiseFloor, voiceMicFraction ·
+  /// speakingLevel))` — it can only ever LOWER the gate from `0.015`, so a
+  /// louder recording keeps today's behaviour while a quiet one scales down to
+  /// protect its (quieter) voice. Never raised above `0.015`, so no recording
+  /// regresses.
   static let voiceMicFloor: Float = 0.015
+  /// Absolute floor of the self-scaling gate: just above mic self-noise, so a
+  /// window has to carry real signal to be considered voice.
+  static let voiceMicNoiseFloor: Float = 0.004
+  /// The self-scaling gate is this fraction of the recording's speaking level
+  /// (a high percentile of the mic envelope — see `voiceSpeakingPercentile`).
+  static let voiceMicFraction: Float = 0.15
+  /// Percentile of the mic envelope taken as the recording's "speaking level"
+  /// for the self-scaling voice gate. High enough to sit in voiced speech, not
+  /// the pauses.
+  static let voiceSpeakingPercentile: Double = 0.95
   static let voiceCorrelationWindowSeconds: Double = 0.03
 
   struct Result {
@@ -195,7 +220,16 @@ enum MicEchoCanceller {
     //    reads as bleed regardless of the system's spectrum.
     let voiceReference = bleedAlignedReference(
       system: systemN, delaySamples: delaySamples, count: n)
-    let voice = nearEndVoiceMask(mic: micN, reference: voiceReference, micEnv: micEnv)
+    // Self-scaling energy gate: `min(voiceMicFloor, max(noiseFloor, fraction ·
+    // speakingLevel))`. On a quiet recording the whole voice sits under the old
+    // fixed 0.015 gate; scaling it to the mic's own speaking level lets the mask
+    // fire on that voice. Capped at `voiceMicFloor`, so a loud recording is never
+    // gated more loosely than before → no regression.
+    let speakingLevel = percentile(micEnv, voiceSpeakingPercentile)
+    let effectiveVoiceFloor = min(
+      voiceMicFloor, max(voiceMicNoiseFloor, voiceMicFraction * speakingLevel))
+    let voice = nearEndVoiceMask(
+      mic: micN, reference: voiceReference, micEnv: micEnv, voiceFloor: effectiveVoiceFloor)
 
     // 5. NLMS, FROZEN on near-end voice AND on a near-silent reference. Freezing
     //    on voice keeps the filter a clean bleed model. Freezing on silence is a
@@ -278,11 +312,16 @@ enum MicEchoCanceller {
   /// "voice" when the mic's Pearson correlation with the bleed-aligned system
   /// `reference` is below `voiceCorrelationThreshold` (mic dominated by something
   /// uncorrelated with the system → the user's voice, not the bleed); every
-  /// sample in that window is then flagged only if `micEnv > voiceMicFloor`, so
-  /// quiet system-only pauses are never mistaken for voice. Coupling-independent:
-  /// correlation is normalized, so it does not depend on how loud the bleed is.
-  /// Pass `bleedAlignedReference(...)`, not the NLMS reference.
-  static func nearEndVoiceMask(mic: [Float], reference: [Float], micEnv: [Float]) -> [Bool] {
+  /// sample in that window is then flagged only if `micEnv > voiceFloor`, so
+  /// quiet system-only pauses are never mistaken for voice. `voiceFloor` is the
+  /// self-scaling gate computed by `cancel()` (see `voiceMicFloor`), not a fixed
+  /// constant — a fixed floor sat above the whole voice on quiet recordings and
+  /// let the cleaned path distort it. Coupling-independent: correlation is
+  /// normalized, so it does not depend on how loud the bleed is. Pass
+  /// `bleedAlignedReference(...)`, not the NLMS reference.
+  static func nearEndVoiceMask(
+    mic: [Float], reference: [Float], micEnv: [Float], voiceFloor: Float = voiceMicFloor
+  ) -> [Bool] {
     let n = mic.count
     guard n > 0, reference.count >= n, micEnv.count >= n else {
       return [Bool](repeating: false, count: n)
@@ -305,7 +344,7 @@ enum MicEchoCanceller {
       let corr = den > 1e-12 ? abs(cov / den) : 0
       let isVoiceWindow = corr < voiceCorrelationThreshold
       if isVoiceWindow {
-        for i in s..<e where micEnv[i] > voiceMicFloor { mask[i] = true }
+        for i in s..<e where micEnv[i] > voiceFloor { mask[i] = true }
       }
       s = e
     }
@@ -498,6 +537,22 @@ enum MicEchoCanceller {
       out[i] = (max(running, 0) / count).squareRoot()
     }
     return out
+  }
+
+  /// Linear-interpolated `q`-quantile (0…1) of `values`. Used to read the mic
+  /// envelope's "speaking level" for the self-scaling voice gate. O(n log n) on a
+  /// copy; the envelope arrays here are short enough that this is negligible next
+  /// to the NLMS pass. Returns 0 for an empty input.
+  static func percentile(_ values: [Float], _ q: Double) -> Float {
+    guard !values.isEmpty else { return 0 }
+    let sorted = values.sorted()
+    let clamped = min(1, max(0, q))
+    let pos = clamped * Double(sorted.count - 1)
+    let lo = Int(pos.rounded(.down))
+    let hi = Int(pos.rounded(.up))
+    if lo == hi { return sorted[lo] }
+    let frac = Float(pos - Double(lo))
+    return sorted[lo] + (sorted[hi] - sorted[lo]) * frac
   }
 
   // MARK: - Delay estimation
