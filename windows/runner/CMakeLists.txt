@@ -113,6 +113,7 @@ add_library(runner_bridge STATIC
   "preview/preview_camera_renderer.cpp"
   "preview/preview_compositor.cpp"
   "preview/preview_engine.cpp"
+  "preview/preview_source_reader.cpp"
 )
 apply_standard_settings(runner_bridge)
 target_compile_definitions(runner_bridge PRIVATE "NOMINMAX")
