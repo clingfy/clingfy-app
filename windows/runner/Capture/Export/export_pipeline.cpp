@@ -35,6 +35,7 @@
 #include "Capture/Export/export_format.h"
 #include "Capture/Export/export_geometry.h"
 #include "Capture/Export/gif_export_policy.h"
+#include "Capture/Export/reorder_audio_pump.h"
 #include "Capture/captured_video_frame.h"
 #include "Encoding/gif_encoder.h"
 #include "Encoding/mf_encoder_config.h"
@@ -724,10 +725,11 @@ RenderResult RenderComposedExport(const RenderRequest& request) {
   bool audio_eos = !has_audio;  // nothing to drain when there is no audio
   double last_progress_emitted = -1.0;  // Slice 5A: throttle progress ticks
 
-  // Editing port (clips, step 3a): keep/drop + re-stamp state. Empty ranges
-  // leave every value at its identity so the loop is byte-identical to the
-  // pre-clip path. Only MONOTONIC + disjoint ranges reach here (reorder/overlap
-  // is refused upstream). `origin_edited_hns` is the first KEPT video frame's
+  // Editing port (clips): keep/drop + re-stamp state. Empty ranges leave every
+  // value at its identity so the loop is byte-identical to the pre-clip path.
+  // MONOTONIC ranges forward-read here; REORDER/OVERLAP take the per-range
+  // backward-seek branch below. `origin_edited_hns` is the first KEPT video
+  // frame's
   // edited PTS — the common zero both streams rebase onto: the encoder rebases
   // VIDEO by its first written frame but writes AUDIO raw, so audio is shifted
   // by this same origin here to keep A/V aligned on a head-trim (outside-voice
@@ -752,15 +754,20 @@ RenderResult RenderComposedExport(const RenderRequest& request) {
   // ~1% steps so a long clip doesn't flood the channel. Indeterminate (no emit)
   // when the source reported no duration. Shared by the kept- and (GIF-)dropped-
   // frame paths so the bar advances per decoded frame regardless of decimation.
+  auto report_progress_frac = [&](double frac) {
+    if (!request.on_progress) {
+      return;
+    }
+    frac = frac < 0.0 ? 0.0 : (frac > 1.0 ? 1.0 : frac);
+    if (frac >= last_progress_emitted + 0.01) {
+      last_progress_emitted = frac;
+      request.on_progress(frac);
+    }
+  };
   auto emit_progress = [&](LONGLONG ts) {
-    if (request.on_progress && duration_hns > 0) {
-      double frac =
-          static_cast<double>(ts) / static_cast<double>(duration_hns);
-      frac = frac < 0.0 ? 0.0 : (frac > 1.0 ? 1.0 : frac);
-      if (frac >= last_progress_emitted + 0.01) {
-        last_progress_emitted = frac;
-        request.on_progress(frac);
-      }
+    if (duration_hns > 0) {
+      report_progress_frac(static_cast<double>(ts) /
+                           static_cast<double>(duration_hns));
     }
   };
 
@@ -770,13 +777,16 @@ RenderResult RenderComposedExport(const RenderRequest& request) {
   // each range's source window in TIMELINE order, seeking the reader BACKWARD as
   // needed; kept frames re-stamp onto a contiguous edited timeline and the
   // source-keyed effects (zoom smoother, camera reader) reset at each boundary
-  // (§5.4/§5.5). Audio is handled by the decoupled AudioSlots pass in 3b-2b; here
-  // the audio stream is deselected and dropped.
+  // (§5.4/§5.5). Audio (3b-2b) rides a SEPARATE reader — the reorder-audio pump —
+  // because the backward per-range seeks would corrupt this reader's forward
+  // audio decode; here the main reader's audio stream is deselected and audio is
+  // drained by the pump, interleaved with the video writes below.
   const bool reorder =
       clipping && !clip_planner::IsSourceMonotonic(request.clip_ranges);
   const int reorder_n = static_cast<int>(request.clip_ranges.size());
   int reorder_range_idx = 0;
   std::int64_t reorder_edited_base_ms = 0;
+  std::unique_ptr<ReorderAudioPump> reorder_audio_pump;
   if (reorder) {
     // frame_ms must stay container-relative (0-based) to match clip_ranges, so
     // anchor to source 0 rather than the first post-seek frame (which sits at
@@ -784,8 +794,21 @@ RenderResult RenderComposedExport(const RenderRequest& request) {
     first_video_hns = 0;
     if (has_audio) {
       reader->SetStreamSelection(audio_index, FALSE);
+      // Build the decoupled audio pass from the edited-timeline audio slots.
+      // audio_duration_ms clamps each slot's copied length to the captured
+      // audio extent; the source presentation duration is an upper bound (audio
+      // can run shorter than video), and the pump's own EOS→silence handling
+      // fills any further shortfall, so the exact bound is not load-bearing.
+      const std::int64_t audio_duration_ms =
+          duration_hns > 0 ? duration_hns / 10000 : edited_total_ms;
+      const auto audio_slots =
+          clip_planner::AudioSlots(request.clip_ranges, audio_duration_ms);
+      reorder_audio_pump = ReorderAudioPump::Create(
+          request.source_video_path, audio_slots, kExportAudioSampleRate,
+          kExportAudioChannels, audio_stages);
     }
-    audio_eos = true;  // 3b-2b wires reorder audio; drop it here.
+    // The main reader is video-only under reorder; audio is the pump's job.
+    audio_eos = true;
     SeekSourceReader(reader.Get(), request.clip_ranges[0].source_in_ms);
     if (zoom_controller != nullptr) {
       zoom_controller->ResetSmoothing();
@@ -1158,10 +1181,37 @@ RenderResult RenderComposedExport(const RenderRequest& request) {
         }
         pending_audio.clear();
       }
+      // Editing port (clips, 3b-2b): drain the reorder audio pump up to this
+      // frame's edited position, so audio is written just BEHIND the video and
+      // never races far ahead of it (the sink writer throttles when the two
+      // streams' timestamps diverge). The pump origin-shifts by the same zero
+      // the video anchored on, so A/V stays aligned.
+      if (reorder_audio_pump != nullptr && origin_edited_hns >= 0) {
+        const std::int64_t edited_frame_limit =
+            (*edited * kExportAudioSampleRate) / 1000;
+        if (auto err = reorder_audio_pump->PumpUpTo(edited_frame_limit,
+                                                    origin_edited_hns, encoder,
+                                                    &audio_packets)) {
+          cancel_encoder();
+          return Failure(
+              request.destination_path,
+              "export: reorder audio pump WriteAudioPacket failed — " +
+                  err->message,
+              IsDiskFullHresult(err->hr));
+        }
+      }
       if (gif) {
         gif_emit_target_hns = AdvanceGifEmitTarget(gif_emit_target_hns, timestamp);
       }
-      emit_progress(timestamp);
+      // Progress: the source PTS is non-monotonic under reorder (backward
+      // seeks), so drive the bar from the EDITED position instead (D5). The
+      // monotonic path keeps the source-PTS fraction.
+      if (reorder && edited_total_ms > 0) {
+        report_progress_frac(static_cast<double>(*edited) /
+                             static_cast<double>(edited_total_ms));
+      } else {
+        emit_progress(timestamp);
+      }
     } else if (has_audio && actual_index == audio_index) {
       ComPtr<IMFMediaBuffer> audio_buffer;
       if (SUCCEEDED(sample->ConvertToContiguousBuffer(
@@ -1209,8 +1259,9 @@ RenderResult RenderComposedExport(const RenderRequest& request) {
             // ranges (the leading audio of the post-cut range is no longer
             // dropped). Each kept sub-run re-stamps onto the edited timeline and
             // aligns to the shared origin (T2), buffering until the first kept
-            // video frame anchors it. Only MONOTONIC + disjoint ranges reach
-            // here; reorder's per-slot seek + silence-fill lands in 3b-2.
+            // video frame anchors it. Only MONOTONIC ranges take this in-loop
+            // path; reorder audio is stitched by the decoupled ReorderAudioPump
+            // (the main reader's audio is deselected under reorder, 3b-2b).
             const std::int64_t packet_src_start_frame =
                 ((timestamp - first_video_hns) * kExportAudioSampleRate) /
                 10'000'000;
@@ -1260,6 +1311,20 @@ RenderResult RenderComposedExport(const RenderRequest& request) {
   if (video_frames == 0) {
     cancel_encoder();
     return Failure(request.destination_path, "export: no video frames were decoded from the source.");
+  }
+
+  // Editing port (clips, 3b-2b): drain the reorder audio pump's tail — the
+  // trailing silence and any audio whose edited position sits past the last
+  // written video frame — before finalizing.
+  if (reorder_audio_pump != nullptr && origin_edited_hns >= 0) {
+    if (auto err = reorder_audio_pump->Flush(origin_edited_hns, encoder,
+                                             &audio_packets)) {
+      cancel_encoder();
+      return Failure(
+          request.destination_path,
+          "export: reorder audio pump flush failed — " + err->message,
+          IsDiskFullHresult(err->hr));
+    }
   }
 
   if (auto err = finalize_encoder()) {

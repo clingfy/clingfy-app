@@ -582,6 +582,183 @@ AudioStats ReadAudioPeakRms(const std::wstring& path) {
   return out;
 }
 
+// Decode the whole exported audio track to interleaved 48 kHz stereo int16 PCM.
+// Lets a test measure the level of a specific EDITED-time window (frame index
+// = ms * 48) to prove reorder-audio ordering + silence-fill. Returns false when
+// the environment can't decode, so the caller GTEST_SKIPs.
+bool ReadAllAudioPcm(const std::wstring& path,
+                     std::vector<std::int16_t>* out) {
+  out->clear();
+  ComPtr<IMFSourceReader> reader;
+  if (FAILED(::MFCreateSourceReaderFromURL(path.c_str(), nullptr,
+                                           reader.GetAddressOf())) ||
+      reader == nullptr) {
+    return false;
+  }
+  DWORD audio_index = 0xFFFFFFFFu;
+  for (DWORD i = 0;; ++i) {
+    ComPtr<IMFMediaType> native;
+    const HRESULT hr = reader->GetNativeMediaType(i, 0, native.GetAddressOf());
+    if (hr == MF_E_INVALIDSTREAMNUMBER) {
+      break;
+    }
+    if (FAILED(hr) || native == nullptr) {
+      continue;
+    }
+    GUID major = GUID_NULL;
+    if (SUCCEEDED(native->GetGUID(MF_MT_MAJOR_TYPE, &major)) &&
+        major == MFMediaType_Audio) {
+      audio_index = i;
+      break;
+    }
+  }
+  if (audio_index == 0xFFFFFFFFu) {
+    return false;
+  }
+  reader->SetStreamSelection(static_cast<DWORD>(MF_SOURCE_READER_ALL_STREAMS),
+                             FALSE);
+  reader->SetStreamSelection(audio_index, TRUE);
+  ComPtr<IMFMediaType> pcm;
+  if (FAILED(::MFCreateMediaType(pcm.GetAddressOf()))) {
+    return false;
+  }
+  pcm->SetGUID(MF_MT_MAJOR_TYPE, MFMediaType_Audio);
+  pcm->SetGUID(MF_MT_SUBTYPE, MFAudioFormat_PCM);
+  pcm->SetUINT32(MF_MT_AUDIO_BITS_PER_SAMPLE, 16);
+  pcm->SetUINT32(MF_MT_AUDIO_SAMPLES_PER_SECOND, 48'000);
+  pcm->SetUINT32(MF_MT_AUDIO_NUM_CHANNELS, 2);
+  if (FAILED(reader->SetCurrentMediaType(audio_index, nullptr, pcm.Get()))) {
+    return false;
+  }
+  for (;;) {
+    DWORD flags = 0;
+    LONGLONG ts = 0;
+    ComPtr<IMFSample> sample;
+    if (FAILED(reader->ReadSample(audio_index, 0, nullptr, &flags, &ts,
+                                  sample.GetAddressOf()))) {
+      return false;
+    }
+    if (flags & MF_SOURCE_READERF_ENDOFSTREAM) {
+      break;
+    }
+    if (sample == nullptr) {
+      continue;
+    }
+    ComPtr<IMFMediaBuffer> buffer;
+    if (FAILED(sample->ConvertToContiguousBuffer(buffer.GetAddressOf())) ||
+        buffer == nullptr) {
+      continue;
+    }
+    BYTE* data = nullptr;
+    DWORD max_len = 0;
+    DWORD cur_len = 0;
+    if (SUCCEEDED(buffer->Lock(&data, &max_len, &cur_len)) && data != nullptr &&
+        cur_len > 0) {
+      const auto* s16 = reinterpret_cast<const std::int16_t*>(data);
+      out->insert(out->end(), s16, s16 + cur_len / sizeof(std::int16_t));
+    }
+    if (data != nullptr) {
+      buffer->Unlock();
+    }
+  }
+  return !out->empty();
+}
+
+// RMS (raw int16 units) of an EDITED-time window [start_ms, end_ms) of an
+// interleaved stereo PCM buffer (48 kHz). Frame index = ms * 48.
+double AudioWindowRms(const std::vector<std::int16_t>& pcm, std::int64_t start_ms,
+                      std::int64_t end_ms) {
+  const std::int64_t f0 = start_ms * 48;
+  const std::int64_t f1 = end_ms * 48;
+  double sum_sq = 0.0;
+  std::int64_t n = 0;
+  for (std::int64_t f = f0; f < f1; ++f) {
+    for (std::int64_t c = 0; c < 2; ++c) {
+      const std::size_t idx = static_cast<std::size_t>(f * 2 + c);
+      if (idx < pcm.size()) {
+        const double v = static_cast<double>(pcm[idx]);
+        sum_sq += v * v;
+        ++n;
+      }
+    }
+  }
+  return n > 0 ? std::sqrt(sum_sq / static_cast<double>(n)) : 0.0;
+}
+
+// A reorder-audio fixture: video halves (red/blue, so the reorder is visible)
+// PLUS an audio tone that is LOUD only in the FIRST source half and SILENT in
+// the second. `frames` at kFps → ~frames*33 ms of video; one 1024-frame audio
+// packet per video frame → ~frames*21 ms of audio (audio deliberately runs
+// shorter than video, exercising silence-fill). `half_ms` is the source-time
+// boundary where the tone switches off.
+bool SynthesizeReorderAudioSource(clingfy::graphics::D3DDevice* device,
+                                  const std::string& path, int frames,
+                                  std::int64_t half_ms,
+                                  std::string* skip_reason) {
+  clingfy::encoding::EncoderConfig cfg;
+  cfg.output_path = path;
+  cfg.width = kSourceWidth;
+  cfg.height = kSourceHeight;
+  cfg.fps = kFps;
+  clingfy::encoding::MfSinkWriterEncoder encoder;
+  clingfy::encoding::AudioEncoderConfig audio_cfg;
+  if (auto err = encoder.Open(cfg, *device, audio_cfg)) {
+    *skip_reason = "reorder-audio source encoder open failed: " + err->message;
+    return false;
+  }
+  const std::int64_t frame_dur_hns = 10'000'000 / kFps;
+  constexpr std::uint32_t kAudioFramesPerPacket = 1024;
+  const std::int64_t audio_dur_hns =
+      static_cast<std::int64_t>(kAudioFramesPerPacket) * 10'000'000 / 48'000;
+  std::uint64_t audio_frame_index = 0;
+  constexpr double kPi = 3.14159265358979323846;
+  for (int i = 0; i < frames; ++i) {
+    const std::uint32_t color =
+        (i < frames / 2) ? 0xFFFF0000u : 0xFF0000FFu;  // red then blue
+    clingfy::capture::CapturedVideoFrame frame;
+    frame.texture = MakeSolidTexture(device->device(), color);
+    if (frame.texture == nullptr) {
+      *skip_reason = "could not allocate a reorder-audio source frame";
+      return false;
+    }
+    frame.width = kSourceWidth;
+    frame.height = kSourceHeight;
+    frame.timestamp_hns = static_cast<std::int64_t>(i) * frame_dur_hns;
+    if (auto err = encoder.WriteVideoFrame(frame)) {
+      *skip_reason = "reorder-audio source WriteVideoFrame failed: " +
+                     err->message;
+      return false;
+    }
+    clingfy::audio::MixedPacket packet;
+    packet.frame_count = kAudioFramesPerPacket;
+    packet.samples.resize(static_cast<size_t>(kAudioFramesPerPacket) * 2u);
+    for (std::uint32_t f = 0; f < kAudioFramesPerPacket; ++f) {
+      const std::int64_t sample_ms =
+          static_cast<std::int64_t>((audio_frame_index + f) * 1000 / 48'000);
+      const double t =
+          static_cast<double>(audio_frame_index + f) / 48'000.0;
+      // Loud in the first source half, silent after `half_ms`.
+      const double amp = sample_ms < half_ms ? 8000.0 : 0.0;
+      const auto v =
+          static_cast<std::int16_t>(amp * std::sin(2.0 * kPi * 1000.0 * t));
+      packet.samples[f * 2u] = v;
+      packet.samples[f * 2u + 1u] = v;
+    }
+    audio_frame_index += kAudioFramesPerPacket;
+    packet.timestamp_hns = static_cast<std::int64_t>(i) * audio_dur_hns;
+    if (auto err = encoder.WriteAudioPacket(packet)) {
+      *skip_reason = "reorder-audio source WriteAudioPacket failed: " +
+                     err->message;
+      return false;
+    }
+  }
+  if (auto err = encoder.Finalize()) {
+    *skip_reason = "reorder-audio source finalize failed: " + err->message;
+    return false;
+  }
+  return true;
+}
+
 // True when the file begins with a GIF signature ("GIF87a"/"GIF89a"). Media
 // Foundation cannot open a .gif, so GIF output is validated with this magic-byte
 // check plus the WIC probe below rather than ProbeOutput / ReadFirstFrameBgra.
@@ -1875,9 +2052,9 @@ TEST(ExportPipelineTest, SingleWholeRangeKeepsAllFrames) {
 // seeking the reader BACKWARD across a boundary, and re-stamps onto a contiguous
 // edited timeline. With a red-first / blue-second source, a timeline that plays
 // the blue (later) half first must produce blue frames THEN red frames — which
-// only happens if the backward seek + per-range re-stamp work. (Audio is
-// dropped on this path until 3b-2b; the guard still refuses reorder in
-// production, so this exercises the pipeline directly.)
+// only happens if the backward seek + per-range re-stamp work. (This source has
+// no audio; the reorder AUDIO stitch — the decoupled pump — is exercised by the
+// sibling ReorderExportStitchesAudioInEditedOrder test below.)
 TEST(ExportPipelineTest, ReorderExportReadsLaterSourceWindowFirst) {
   clingfy::graphics::D3DDevice device;
   if (device.Create()) {
@@ -1927,6 +2104,72 @@ TEST(ExportPipelineTest, ReorderExportReadsLaterSourceWindowFirst) {
   // Last output frame is the earlier (red) half, now placed second.
   EXPECT_GT(red_of(colors.back()), blue_of(colors.back()) + 40)
       << "last output frame should be the earlier (red) source half";
+
+  std::error_code ec;
+  fs::remove_all(dir, ec);
+}
+
+// Editing port (clips, 3b-2b): the reorder AUDIO stitch. The source's tone is
+// LOUD only in its first half (source ms < 300) and SILENT after. The timeline
+// plays the LATER (silent) source window first and the EARLIER (loud) one
+// second, so if the decoupled audio pump reads each window in timeline order,
+// the OUTPUT starts silent and ends loud — the reverse of the source. The
+// captured audio also runs shorter than the reordered video, so the tail is
+// silence-filled; the decoded track must span the full edited duration.
+TEST(ExportPipelineTest, ReorderExportStitchesAudioInEditedOrder) {
+  clingfy::graphics::D3DDevice device;
+  if (device.Create()) {
+    GTEST_SKIP() << "no usable D3D11 device in this environment";
+  }
+  const auto dir = UniqueDir("clip_reorder_audio");
+  const auto source = (dir / "source.mov").u8string();
+  std::string skip_reason;
+  if (!SynthesizeReorderAudioSource(&device, source, /*frames=*/30,
+                                    /*half_ms=*/300, &skip_reason)) {
+    GTEST_SKIP() << skip_reason;
+  }
+
+  // Timeline = [ later window (320,620) — SILENT source, then earlier window
+  // (0,300) — LOUD source ]. Edited duration = 600 ms.
+  RenderRequest r;
+  r.source_video_path = fs::u8path(source).wstring();
+  r.destination_path = (dir / "reorder_audio.mov").u8string();
+  r.layout = "square11";
+  r.resolution = "auto";
+  r.fit = "fit";
+  r.fps_hint = kFps;
+  r.clip_ranges = {clip_planner::ClipKeptRange{320, 620},
+                   clip_planner::ClipKeptRange{0, 300}};
+  ASSERT_FALSE(clip_planner::IsSourceMonotonic(r.clip_ranges))
+      << "test fixture must be a genuine reorder";
+
+  const RenderResult result = RenderComposedExport(r);
+  ASSERT_TRUE(result.ok) << result.message;
+  EXPECT_TRUE(result.had_audio) << "reorder audio must survive the pump";
+  EXPECT_GT(result.audio_packets_written, 0u);
+
+  std::vector<std::int16_t> pcm;
+  if (!ReadAllAudioPcm(fs::u8path(r.destination_path).wstring(), &pcm)) {
+    GTEST_SKIP() << "could not decode the reordered output audio";
+  }
+  // The captured tone is only ~300 ms of real audio; the decoded track must be
+  // ~600 ms (the full edited duration), which only happens if the second slot's
+  // shortfall was silence-filled (§5.2). 600 ms * 48 = 28800 frames (± AAC
+  // priming); a track near ~300 ms would mean the silence-fill was skipped.
+  const std::int64_t frames = static_cast<std::int64_t>(pcm.size() / 2u);
+  EXPECT_GT(frames, 24000) << "silence-fill must extend the track to the edited "
+                              "duration, not stop at the real audio";
+  EXPECT_LT(frames, 33000) << "track ran well past the edited duration";
+
+  // Windowed level, with guard bands around the 300 ms slot boundary and the
+  // ends (AAC encoder latency shifts samples by ~20-40 ms).
+  const double silent_rms = AudioWindowRms(pcm, /*start_ms=*/40, /*end_ms=*/260);
+  const double loud_rms = AudioWindowRms(pcm, /*start_ms=*/340, /*end_ms=*/560);
+  EXPECT_GT(loud_rms, 100.0)
+      << "the LOUD source half must land in the SECOND edited slot";
+  EXPECT_LT(silent_rms, loud_rms * 0.5)
+      << "the SILENT source half must land in the FIRST edited slot — proving "
+         "the audio was stitched in edited (reordered) order, not source order";
 
   std::error_code ec;
   fs::remove_all(dir, ec);

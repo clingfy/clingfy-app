@@ -170,39 +170,38 @@ struct PassthroughInput {
   // through to the pipeline's per-frame color pass.
   color::ColorGrade color_grade;
 
-  // Editing port (clips, interim guard): the kept ranges parsed from the
-  // `clips` export arg (enabled clips with a positive source window, in
-  // timeline order — the Dart `Clip.toMap()` list filtered exactly like the
-  // macOS `ClipKeptRange.fromFlutter`). Exports with REAL clip edits are
-  // REFUSED (kUnsupportedClipEdits) until the clip export bake (step 3)
-  // lands: silently byte-copying the uncut source would ship content the
-  // user cut out. A list that coalesces back to one full-range window (a
-  // split with nothing deleted, starting at source 0) is NOT an edit and
-  // stays exportable. Known limitation until step 3: a pure tail-trim (one
-  // range starting at 0) is indistinguishable from the full range without
-  // the asset duration and is allowed through.
+  // Editing port (clips): the kept ranges parsed from the `clips` export arg
+  // (enabled clips with a positive source window, in timeline order — the Dart
+  // `Clip.toMap()` list filtered exactly like the macOS
+  // `ClipKeptRange.fromFlutter`). A real edit — cut / trim / delete-middle /
+  // reorder / overlap — forces the composition path and is baked by the
+  // pipeline; silently byte-copying the uncut source would ship content the
+  // user cut out. A list that coalesces back to one full-range window (a split
+  // with nothing deleted, starting at source 0) is NOT an edit and stays
+  // exportable. Known limitation: a pure tail-trim (one range starting at 0) is
+  // indistinguishable from the full range without the asset duration and is
+  // allowed through.
   std::vector<clip_planner::ClipKeptRange> clip_ranges;
 };
 
-// Editing port (clips, step 3a) — how the export should treat a clip edit.
+// Editing port (clips) — how the export should treat a clip edit.
 enum class ClipEditKind {
   // Empty, or a single window covering the asset from source 0: no real edit.
   // Stays eligible for the byte-copy fast-path (a pure tail-trim also lands
   // here — indistinguishable from the full range without the asset duration).
   kPassthrough,
-  // A real, DISJOINT + source-MONOTONIC edit (cut / trim / delete-middle):
-  // bake it via the composition path (drop cut frames + re-stamp).
+  // A real edit (cut / trim / delete-middle / reorder / overlap): bake it via
+  // the composition path. Cuts drop frames + re-stamp; reorder/overlap read
+  // each source window in timeline order (per-range backward seeks, 3b-2) with
+  // a sample-accurate audio stitch.
   kBake,
-  // A reordered or overlapping timeline: not bakeable in 3a — refuse
-  // (kUnsupportedClipEdits) until step 3b adds per-range reorder seeks.
-  kUnsupported,
 };
 
 // Pure classifier for the `clips` export arg: coalesces source-adjacent ranges,
-// then decides passthrough vs. bake vs. refuse. Overlapping/nested ranges are
-// source_in-monotonic but not disjoint, so they classify as kUnsupported (the
-// planner would first-match them while the edited-duration math keeps counting
-// the overlap). Exposed for unit tests.
+// then decides passthrough vs. bake. Any real edit — cut, trim, delete-middle,
+// reorder, or overlap — bakes via the composition path (3b-2 handles reorder
+// and overlap with per-range source-window reads and a decoupled audio stitch).
+// Exposed for unit tests.
 ClipEditKind ClassifyClipEdit(
     const std::vector<clip_planner::ClipKeptRange>& ranges);
 
@@ -230,12 +229,6 @@ enum class PassthroughError {
   // unsupported media type, encoder/Direct2D error). Maps to
   // EXPORT_ERROR. Carries the underlying detail in `message`.
   kRenderFailed,
-  // Editing port (clips, interim guard): the project carries real clip edits
-  // (cuts / trims / reorder) and the Windows export cannot bake them yet —
-  // refused so the uncut source can never silently ship. Maps to
-  // EXPORT_ERROR with an explanatory message until the clip export bake
-  // (step 3) replaces this guard.
-  kUnsupportedClipEdits,
   // Phase 10.4: the destination volume cannot hold the export — either the
   // preflight estimate did not fit (required/available byte counts populated
   // on the result) or a mid-write failure carried a disk-full HRESULT /

@@ -328,8 +328,8 @@ void HandleExportVideo(
     // parsed by the shared helper both routers use (one wire shape, one
     // parser — the camera-parsing duplication hid a bug once). Absent /
     // malformed → identity / empty, which keeps the byte-copy fast-path
-    // alive; the passthrough layer refuses exports whose clip ranges carry
-    // real edits (step-3 interim guard).
+    // alive; the passthrough layer bakes clip ranges that carry real edits
+    // (cut / trim / reorder / overlap) through the composition path.
     input.color_grade = clingfy::bridge::ReadColorGradeArg(*args);
     input.clip_ranges = clingfy::bridge::ReadClipRangesArg(*args);
   }
@@ -571,15 +571,6 @@ void ReplyForExportOutcome(
       return;
     case PassthroughError::kCopyFailed:
     case PassthroughError::kRenderFailed:
-      log_failure(error::kExportError, outcome.message);
-      result.Error(error::kExportError, outcome.message,
-                   flutter::EncodableValue(project_path));
-      return;
-    case PassthroughError::kUnsupportedClipEdits:
-      // Editing port (clips, interim guard): refused BY DESIGN — exporting
-      // would silently ship the uncut source. Surfaces the explanatory
-      // message through the standard export-error channel; step 3 (clip
-      // export bake) removes this case.
       log_failure(error::kExportError, outcome.message);
       result.Error(error::kExportError, outcome.message,
                    flutter::EncodableValue(project_path));
