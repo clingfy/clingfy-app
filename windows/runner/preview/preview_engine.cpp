@@ -347,6 +347,13 @@ struct PreviewEngine::Impl {
   std::wstring video_path;
   std::wstring cursor_path;
 
+  // ---- Editing port (clips, step 4-1) ----
+  // The edited-timeline kept ranges (TIMELINE order) set via SetClips. Empty /
+  // passthrough = no cuts, so the preview plays the source 1:1 as today. Stored
+  // here for the stitched decode front-end the following slices add; guarded by
+  // the engine mutex_ (set off the frame thread, read by the decode path).
+  std::vector<capture::export_::clip_planner::ClipKeptRange> clip_ranges;
+
   // Serializes the per-frame composition path against the descriptor
   // callback (which Flutter can invoke from its own thread).
   std::mutex render_mutex;
@@ -1918,6 +1925,26 @@ void PreviewEngine::SetColorGrade(
   }
   NudgePausedPreviewPlayer(std::move(player_snapshot), mutex_,
                            camera_nudge_anchor_ms_);
+}
+
+void PreviewEngine::SetClips(
+    const std::string& session_id,
+    std::vector<capture::export_::clip_planner::ClipKeptRange> ranges) {
+  std::lock_guard<std::mutex> lock(mutex_);
+  // Same stale-session discipline as SetColorGrade / SetCameraComposition: a
+  // slider/drag tick racing a Close (or targeting a non-active session) is a
+  // silent no-op.
+  if (!session_id.empty() && session_id != active_session_id_) {
+    return;
+  }
+  if (impl_ == nullptr) {
+    return;
+  }
+  // Slice 4-1: store only. The decode path that stitches these ranges lands in
+  // the following slices; until then an edited list changes nothing visible
+  // (the preview still plays the source 1:1, exactly as the previous no-op did),
+  // so there is no frame to recomposite and no paused-nudge here yet.
+  impl_->clip_ranges = std::move(ranges);
 }
 
 }  // namespace clingfy::preview

@@ -655,6 +655,47 @@ TEST_F(PreviewRouterTransportTest, SetColorGradeStaleSessionRepliesNull) {
   EXPECT_FALSE(reply.error_called);
 }
 
+// ---- previewSetClips (editing port, step 4-1) ---------------------
+
+TEST_F(PreviewRouterTransportTest, SetClipsWithoutArgsRepliesNull) {
+  // Void Dart contract: missing/malformed args are ignored, reply is null.
+  MethodRouter router;
+  RecordedReply reply;
+  router.Dispatch(test_support::MakeCall("previewSetClips"),
+                  MakeRecorder(reply));
+  EXPECT_TRUE(reply.success_called);
+  EXPECT_FALSE(reply.error_called);
+}
+
+TEST_F(PreviewRouterTransportTest, SetClipsStaleSessionRepliesNull) {
+  // No preview session is open in the test process, so the engine drops the
+  // clips silently (stale-session contract) and the router replies null — the
+  // same path a clip edit racing a Close hits in production. Also exercises the
+  // shared clips parser end-to-end (a real reorder list).
+  MethodRouter router;
+  flutter::EncodableMap clip_b;
+  clip_b[flutter::EncodableValue("sourceInMs")] =
+      flutter::EncodableValue(std::int64_t{6000});
+  clip_b[flutter::EncodableValue("sourceOutMs")] =
+      flutter::EncodableValue(std::int64_t{8000});
+  clip_b[flutter::EncodableValue("enabled")] = flutter::EncodableValue(true);
+  flutter::EncodableMap clip_a;
+  clip_a[flutter::EncodableValue("sourceInMs")] =
+      flutter::EncodableValue(std::int64_t{0});
+  clip_a[flutter::EncodableValue("sourceOutMs")] =
+      flutter::EncodableValue(std::int64_t{2000});
+  clip_a[flutter::EncodableValue("enabled")] = flutter::EncodableValue(true);
+  flutter::EncodableMap args;
+  args[flutter::EncodableValue("sessionId")] =
+      flutter::EncodableValue(std::string("sess-stale"));
+  args[flutter::EncodableValue("clips")] = flutter::EncodableValue(
+      flutter::EncodableList{flutter::EncodableValue(clip_b),
+                             flutter::EncodableValue(clip_a)});
+  const auto reply = DispatchWithArgs(router, "previewSetClips", args);
+  EXPECT_TRUE(reply.success_called);
+  EXPECT_FALSE(reply.error_called);
+}
+
 // ---- previewSeekTo ------------------------------------------------
 
 TEST_F(PreviewRouterTransportTest, SeekToMissingSessionIdReturnsBadArgs) {
