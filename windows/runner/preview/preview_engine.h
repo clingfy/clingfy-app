@@ -301,6 +301,25 @@ class PreviewEngine {
   // draw (no reader, or the decode failed).
   bool RenderEditedFrameLocked(Impl* impl, std::int64_t edited_ms);
 
+  // Step 4-3b: one bounded step of continuous edited playback. kRendered = a
+  // kept frame was composed (pace one frame budget); kSkipping = the per-call
+  // decode cap was hit while still inside a cut gap (release render_mutex + step
+  // again immediately, so a large gap doesn't hold the lock for seconds);
+  // kIdle = not playing / stopped / end-of-stream.
+  enum class PaceStep { kIdle, kRendered, kSkipping };
+
+  // Step 4-3b: advance edited playback by ONE step — decode forward from the
+  // edited reader, skipping cut-gap frames (EditedMsForKeptSourceMs nullopt) up
+  // to a small per-call cap, and compose the first kept frame at its edited
+  // position (advancing edited_pos_ms). Monotonic (cut) sessions only; reorder
+  // playback needs per-range seeks (step 4-4). Clears edited_playing at
+  // end-of-stream. Caller holds impl->render_mutex.
+  PaceStep PaceNextEditedFrameLocked(Impl* impl);
+
+  // Step 4-3b pacer thread body. Loops until shutting_down_; while an edited
+  // session is playing, renders one kept frame per ~source-frame budget.
+  void PacerLoop();
+
   // Editing port (clips, step 4-3): are the current clip ranges a real edit
   // (cut / trim / delete-middle / reorder / overlap) — i.e. should this session
   // use the stitched reader path rather than the 1:1 MediaPlayer? Pure: coalesce
@@ -388,6 +407,12 @@ class PreviewEngine {
   // running_ is true and emits a playerTick every ~100ms when the
   // producer thread hasn't ticked recently. shutting_down_ stops it.
   std::thread heartbeat_thread_;
+
+  // Step 4-3b: the edited-playback pacer thread. Per session (created in Open,
+  // joined in Close BEFORE impl_ teardown — like heartbeat_thread_). While an
+  // edited session is playing it decodes forward and renders kept frames at
+  // ~source fps; idle otherwise. shutting_down_ stops it.
+  std::thread pacer_thread_;
 
   mutable std::mutex mutex_;
 };
