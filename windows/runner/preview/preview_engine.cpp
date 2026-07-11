@@ -363,9 +363,17 @@ struct PreviewEngine::Impl {
   bool edited_mode = false;
   std::int64_t edited_pos_ms = 0;
   // Step 4-3b: continuous-playback flag for the pacer thread. Set true by Play
-  // on a MONOTONIC edited session, cleared by Pause / passthrough / EOS. Guarded
-  // by render_mutex (set on the platform thread, read by the pacer thread).
+  // on an edited session, cleared by Pause / passthrough / EOS. Guarded by
+  // render_mutex (set on the platform thread, read by the pacer thread).
   bool edited_playing = false;
+  // Step 4-4: reorder-playback state (render_mutex). When the ranges are NOT
+  // source-monotonic the pacer reads each range's source window in TIMELINE
+  // order via per-range backward seeks (like the export reorder path); these
+  // track the current timeline range + the cumulative edited-ms of the earlier
+  // ranges. Primed by Play / SeekTo from edited_pos_ms; unused for the monotonic
+  // (forward-decode) path.
+  int edited_range_idx = 0;
+  std::int64_t edited_reorder_base_ms = 0;
 
   // Serializes the per-frame composition path against the descriptor
   // callback (which Flutter can invoke from its own thread).
@@ -1801,21 +1809,23 @@ void PreviewEngine::Play(const std::string& session_id) {
     }
   }
   if (player_snapshot == nullptr || impl == nullptr) return;
-  // Editing port (clips, 4-3b): for an edited session, drive continuous playback
-  // from the pacer thread — NEVER resume the MediaPlayer (it would decode the
-  // uncut source; its frames are dropped by the edited-mode guard and any audio
-  // would be uncut). MONOTONIC (cut) sessions only; reorder playback needs
-  // per-range seeks (4-4), so a reorder session stays on the paused/scrub frame.
+  // Editing port (clips, 4-3b/4-4): for an edited session, drive continuous
+  // playback from the pacer thread — NEVER resume the MediaPlayer (it would
+  // decode the uncut source; its frames are dropped by the edited-mode guard and
+  // any audio would be uncut). Both cut (forward-decode) and reorder (per-range
+  // seeks) play.
   {
     std::lock_guard<std::mutex> render_lock(impl->render_mutex);
     if (impl->edited_mode) {
       namespace clip = capture::export_::clip_planner;
-      if (clip::IsSourceMonotonic(impl->clip_ranges)) {
-        // Render the current frame (re-positions the reader), then let the pacer
-        // read forward from there.
-        RenderEditedFrameLocked(impl, impl->edited_pos_ms);
-        impl->edited_playing = true;
+      // Reorder needs the per-range cursor primed from the current position.
+      if (!clip::IsSourceMonotonic(impl->clip_ranges)) {
+        PrimeReorderStateLocked(impl, impl->edited_pos_ms);
       }
+      // Render the current frame (re-positions the reader), then arm the pacer —
+      // only if the render succeeded, so a soft reader/decode failure leaves the
+      // pacer idle rather than busy-polling.
+      impl->edited_playing = RenderEditedFrameLocked(impl, impl->edited_pos_ms);
       return;
     }
   }
@@ -1887,7 +1897,13 @@ void PreviewEngine::SeekTo(const std::string& session_id,
     std::lock_guard<std::mutex> render_lock(impl_snapshot->render_mutex);
     if (shutting_down_.load()) return;
     if (impl_snapshot->edited_mode) {
+      namespace clip = capture::export_::clip_planner;
       RenderEditedFrameLocked(impl_snapshot, position_ms);
+      // 4-4: re-prime the reorder pacer cursor so a scrub while playing a
+      // reordered timeline continues from the scrubbed range.
+      if (!clip::IsSourceMonotonic(impl_snapshot->clip_ranges)) {
+        PrimeReorderStateLocked(impl_snapshot, position_ms);
+      }
       return;
     }
   }
@@ -2125,49 +2141,126 @@ PreviewEngine::PaceStep PreviewEngine::PaceNextEditedFrameLocked(Impl* impl) {
   const std::int64_t edited_dur = clip::EditedDurationMs(impl->clip_ranges);
   PreviewSourceReader* reader = impl->edited_reader.get();
 
-  // Decode FORWARD (no seeks) until a kept frame — cut-gap frames are skipped,
-  // which IS the cut (matches the export monotonic path). Decoding is NOT free
-  // (ReadNextFrame fully decodes each frame), so cap the skip at kMaxSkip per
-  // call: a large cut then returns kSkipping so the pacer RELEASES render_mutex
-  // between chunks (keeping Pause/Seek/Close responsive) and steps again. The
-  // reader position persists across calls. Monotonic sessions only (Play gates
-  // on IsSourceMonotonic), so EditedMsForKeptSourceMs is well-defined and
-  // source-forward == edited-forward.
-  constexpr int kMaxSkip = 8;
-  for (int i = 0; i < kMaxSkip; ++i) {
-    if (shutting_down_.load()) {
-      return PaceStep::kIdle;  // let Close's join() return promptly
-    }
-    std::vector<BYTE> bgra;
-    std::int64_t ts_ms = 0;
-    if (!reader->ReadNextFrame(&bgra, &ts_ms)) {
-      impl->edited_playing = false;  // end of source — playback complete
-      return PaceStep::kIdle;
-    }
-    const auto edited = clip::EditedMsForKeptSourceMs(ts_ms, impl->clip_ranges);
-    if (!edited.has_value()) {
-      continue;  // inside a cut gap — skip
-    }
+  // Shared render tail: upload the decoded frame + compose it at its edited
+  // position (overlays are SOURCE-keyed, so pass the frame's source time; Dart
+  // sees the EDITED position + duration). Returns false (→ kIdle) on failure.
+  const auto emit = [&](std::vector<BYTE>& bgra, std::int64_t source_ms,
+                        std::int64_t edited_ms) -> bool {
     if (FAILED(impl->compositor.EnsureResources(impl->d3d_device.Get(),
                                                 impl->d2d_context.Get(),
                                                 reader->width(),
                                                 reader->height()))) {
       NoteRenderFailure(impl, "pacer_ensure_resources");
       impl->edited_playing = false;
-      return PaceStep::kIdle;
+      return false;
     }
     impl->last_video_width.store(reader->width());
     impl->last_video_height.store(reader->height());
     impl->d3d_context->UpdateSubresource(impl->compositor.video_texture(), 0,
                                          nullptr, bgra.data(),
                                          reader->width() * 4u, 0);
-    impl->edited_pos_ms = *edited;
+    impl->edited_pos_ms = edited_ms;
     impl->timing_total.BeginFrame();
-    ComposeAndHandoffLocked(impl, ts_ms * 1000, *edited, edited_dur);
-    return PaceStep::kRendered;
+    ComposeAndHandoffLocked(impl, source_ms * 1000, edited_ms, edited_dur);
+    return true;
+  };
+
+  // Decoding is NOT free (ReadNextFrame fully decodes each frame), so cap
+  // forward reads at kMaxSkip per call: a long cut gap / keyframe lead-in then
+  // returns kSkipping so the pacer RELEASES render_mutex between chunks (keeping
+  // Pause/Seek/Close responsive) and steps again. The reader position + reorder
+  // cursor persist across calls.
+  constexpr int kMaxSkip = 8;
+
+  if (clip::IsSourceMonotonic(impl->clip_ranges)) {
+    // Cut path: decode FORWARD (no seeks); cut-gap frames are skipped, which IS
+    // the cut (matches the export monotonic path). EditedMsForKeptSourceMs is
+    // well-defined and source-forward == edited-forward.
+    for (int i = 0; i < kMaxSkip; ++i) {
+      if (shutting_down_.load()) return PaceStep::kIdle;
+      std::vector<BYTE> bgra;
+      std::int64_t ts_ms = 0;
+      if (!reader->ReadNextFrame(&bgra, &ts_ms)) {
+        impl->edited_playing = false;  // end of source — playback complete
+        return PaceStep::kIdle;
+      }
+      const auto edited =
+          clip::EditedMsForKeptSourceMs(ts_ms, impl->clip_ranges);
+      if (!edited.has_value()) continue;  // inside a cut gap — skip
+      return emit(bgra, ts_ms, *edited) ? PaceStep::kRendered : PaceStep::kIdle;
+    }
+    return PaceStep::kSkipping;
   }
-  // Hit the cap while still inside a cut gap — yield the lock and continue.
+
+  // Reorder path (step 4-4): read each range's source window in TIMELINE order
+  // via per-range backward seeks (the export reorder read model).
+  // edited_range_idx + edited_reorder_base_ms are primed by Play/SeekTo and
+  // advanced at each range boundary. The camera reader auto-seeks on the
+  // backward playback_us jump; the zoom smoother easing across a boundary is a
+  // known minor refinement (§5.4).
+  const int n = static_cast<int>(impl->clip_ranges.size());
+  for (int i = 0; i < kMaxSkip; ++i) {
+    if (shutting_down_.load()) return PaceStep::kIdle;
+    if (impl->edited_range_idx >= n) {
+      impl->edited_playing = false;  // all ranges emitted
+      return PaceStep::kIdle;
+    }
+    std::vector<BYTE> bgra;
+    std::int64_t ts_ms = 0;
+    if (!reader->ReadNextFrame(&bgra, &ts_ms)) {
+      // A range ended at source EOS — advance to the next timeline range.
+      impl->edited_reorder_base_ms +=
+          impl->clip_ranges[impl->edited_range_idx].DurationMs();
+      if (++impl->edited_range_idx >= n) {
+        impl->edited_playing = false;
+        return PaceStep::kIdle;
+      }
+      reader->SeekTo(impl->clip_ranges[impl->edited_range_idx].source_in_ms);
+      // §5.4: the source clock jumped backward across the range boundary — snap
+      // the zoom smoother to neutral (like the export ResetSmoothing) so it
+      // doesn't ease across the discontinuity. The camera reader auto-seeks on
+      // the backward playback_us.
+      impl->zoom = ZoomState{};
+      continue;
+    }
+    const auto& r = impl->clip_ranges[impl->edited_range_idx];
+    if (ts_ms >= r.source_out_ms) {
+      // Past this range's window → advance + seek (backward) to the next range.
+      impl->edited_reorder_base_ms += r.DurationMs();
+      if (++impl->edited_range_idx >= n) {
+        impl->edited_playing = false;
+        return PaceStep::kIdle;
+      }
+      reader->SeekTo(impl->clip_ranges[impl->edited_range_idx].source_in_ms);
+      // §5.4: the source clock jumped backward across the range boundary — snap
+      // the zoom smoother to neutral (like the export ResetSmoothing) so it
+      // doesn't ease across the discontinuity. The camera reader auto-seeks on
+      // the backward playback_us.
+      impl->zoom = ZoomState{};
+      continue;
+    }
+    if (ts_ms < r.source_in_ms) continue;  // keyframe lead-in — discard
+    const std::int64_t edited =
+        impl->edited_reorder_base_ms + (ts_ms - r.source_in_ms);
+    return emit(bgra, ts_ms, edited) ? PaceStep::kRendered : PaceStep::kIdle;
+  }
   return PaceStep::kSkipping;
+}
+
+void PreviewEngine::PrimeReorderStateLocked(Impl* impl, std::int64_t edited_ms) {
+  namespace clip = capture::export_::clip_planner;
+  if (impl == nullptr) return;
+  impl->edited_range_idx = 0;
+  impl->edited_reorder_base_ms = 0;
+  if (impl->clip_ranges.empty()) return;
+  const int idx = clip::ActiveIndexForEditedMs(edited_ms, impl->clip_ranges);
+  const int n = static_cast<int>(impl->clip_ranges.size());
+  std::int64_t base = 0;
+  for (int i = 0; i < idx && i < n; ++i) {
+    base += impl->clip_ranges[i].DurationMs();
+  }
+  impl->edited_range_idx = idx;
+  impl->edited_reorder_base_ms = base;
 }
 
 void PreviewEngine::PacerLoop() {

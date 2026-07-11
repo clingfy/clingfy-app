@@ -320,6 +320,12 @@ class PreviewEngine {
   // session is playing, renders one kept frame per ~source-frame budget.
   void PacerLoop();
 
+  // Step 4-4: prime the reorder-playback cursor (edited_range_idx +
+  // edited_reorder_base_ms) so a subsequent reorder pace step reads forward
+  // inside the timeline range that contains `edited_ms`. Caller holds
+  // render_mutex; a no-op for a monotonic session (the pacer forward-decodes).
+  void PrimeReorderStateLocked(Impl* impl, std::int64_t edited_ms);
+
   // Editing port (clips, step 4-3): are the current clip ranges a real edit
   // (cut / trim / delete-middle / reorder / overlap) — i.e. should this session
   // use the stitched reader path rather than the 1:1 MediaPlayer? Pure: coalesce
