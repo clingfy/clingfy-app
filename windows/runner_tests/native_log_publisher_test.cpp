@@ -51,9 +51,54 @@ TEST(NativeLogPublisherTest, EmitWithoutChannelIsSafeNoOp) {
   // Startup races and teardown both hit this path; it must never crash or
   // queue anything against a dead channel.
   NativeLogPublisher::Instance().ClearChannel();
+  NativeLogPublisher::Instance().SetMinLevel("debug");
+  NativeLogPublisher::Instance().Debug("Test", "no channel attached");
   NativeLogPublisher::Instance().Info("Test", "no channel attached");
   NativeLogPublisher::Instance().Warn("Test", "no channel attached");
   NativeLogPublisher::Instance().Error("Test", "no channel attached");
+}
+
+// The Settings "verbose logging" toggle (setNativeLogLevel → SetMinLevel) must
+// gate emitted levels the same way macOS NativeLogger does: below-threshold
+// lines are dropped at the source so they never cross the channel.
+TEST(NativeLogPublisherTest, SetMinLevelGatesEmittedLevels) {
+  auto& pub = NativeLogPublisher::Instance();
+
+  pub.SetMinLevel("debug");
+  EXPECT_TRUE(pub.ShouldSend("DEBUG"));
+  EXPECT_TRUE(pub.ShouldSend("INFO"));
+  EXPECT_TRUE(pub.ShouldSend("WARNING"));
+  EXPECT_TRUE(pub.ShouldSend("ERROR"));
+
+  pub.SetMinLevel("info");
+  EXPECT_FALSE(pub.ShouldSend("DEBUG"));
+  EXPECT_TRUE(pub.ShouldSend("INFO"));
+  EXPECT_TRUE(pub.ShouldSend("WARNING"));
+  EXPECT_TRUE(pub.ShouldSend("ERROR"));
+
+  pub.SetMinLevel("warning");
+  EXPECT_FALSE(pub.ShouldSend("DEBUG"));
+  EXPECT_FALSE(pub.ShouldSend("INFO"));
+  EXPECT_TRUE(pub.ShouldSend("WARNING"));
+
+  pub.SetMinLevel("error");
+  EXPECT_FALSE(pub.ShouldSend("WARNING"));
+  EXPECT_TRUE(pub.ShouldSend("ERROR"));
+
+  // Aliases + case/whitespace tolerance (matches macOS + the Dart level names).
+  pub.SetMinLevel("  Verbose ");
+  EXPECT_TRUE(pub.ShouldSend("DEBUG"));
+  pub.SetMinLevel("W");
+  EXPECT_FALSE(pub.ShouldSend("INFO"));
+  EXPECT_TRUE(pub.ShouldSend("WARNING"));
+
+  // Unknown names are ignored (threshold unchanged), like macOS.
+  const int before = pub.min_level_rank();
+  pub.SetMinLevel("bogus");
+  EXPECT_EQ(pub.min_level_rank(), before);
+
+  // Leave a permissive threshold so later tests' emits aren't starved.
+  pub.SetMinLevel("debug");
 }
 
 }  // namespace
