@@ -447,13 +447,15 @@ class _VideoTimelineState extends State<VideoTimeline> {
     final isPlaying = context.select<PlayerController, bool>(
       (player) => player.isPlaying,
     );
-    // The clip editor attaches once the preview is ready (PR-3c2). It is null
-    // until then and on Windows (clips are macOS-only for now, like zoom edits).
-    final clipEditor = isWindows()
-        ? null
-        : context.select<PlayerController, ClipEditorController?>(
-            (player) => player.clipEditor,
-          );
+    // The clip editor attaches once the preview is ready (PR-3c2); null until
+    // then. Windows clip editing is live now — the export bakes cuts/reorder and
+    // the stitched preview (pacer) honors them — so the clip lane is enabled on
+    // both platforms. (Zoom editing, above, stays macOS-only: Windows manual zoom
+    // segments are still a stub.) Known Windows gap: clip persistence across app
+    // restarts isn't ported yet (macOS #203), so edits are in-session only.
+    final clipEditor = context.select<PlayerController, ClipEditorController?>(
+      (player) => player.clipEditor,
+    );
     // Log the attach/detach edge once so "why is the clip lane missing?" leaves
     // a trail. The editor attaches when the preview becomes ready (PR-3c2) and
     // is absent while loading or on Windows.

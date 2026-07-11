@@ -1826,6 +1826,12 @@ void PreviewEngine::Play(const std::string& session_id) {
       // only if the render succeeded, so a soft reader/decode failure leaves the
       // pacer idle rather than busy-polling.
       impl->edited_playing = RenderEditedFrameLocked(impl, impl->edited_pos_ms);
+      clingfy::bridge::NativeLogPublisher::Instance().Debug(
+          "Preview",
+          std::string("Play (stitched, reorder=") +
+              (clip::IsSourceMonotonic(impl->clip_ranges) ? "false" : "true") +
+              ") from edited " + std::to_string(impl->edited_pos_ms) +
+              "ms; pacer armed=" + (impl->edited_playing ? "true" : "false"));
       return;
     }
   }
@@ -1857,6 +1863,9 @@ void PreviewEngine::Pause(const std::string& session_id) {
     std::lock_guard<std::mutex> render_lock(impl->render_mutex);
     if (impl->edited_mode) {
       impl->edited_playing = false;
+      clingfy::bridge::NativeLogPublisher::Instance().Debug(
+          "Preview", "Pause (stitched) at edited " +
+                         std::to_string(impl->edited_pos_ms) + "ms");
       return;
     }
   }
@@ -2082,6 +2091,12 @@ bool PreviewEngine::RenderEditedFrameLocked(Impl* impl,
   if (impl->edited_reader == nullptr) {
     impl->edited_reader = PreviewSourceReader::Create(impl->video_path);
     if (impl->edited_reader == nullptr) {
+      // A real failure the user should see: the stitched preview can't open its
+      // own reader on the recording, so an edited project would show nothing.
+      clingfy::bridge::NativeLogPublisher::Instance().Error(
+          "Preview",
+          "stitched preview reader failed to open the recording — the edited "
+          "preview will be blank (the export is unaffected)");
       return false;  // soft-fail: nothing to draw, MediaPlayer path unaffected
     }
   }
@@ -2357,6 +2372,7 @@ void PreviewEngine::SetClips(
   // written under render_mutex (never mutex_) or the move-assign races the
   // pacer's mid-iteration read → heap use-after-free.
   impl->clip_ranges = std::move(ranges);
+  const bool was_edited = impl->edited_mode;
   if (now_edited) {
     impl->edited_mode = true;
     // A clip edit STOPS continuous playback: the timeline just changed (and may
@@ -2365,12 +2381,24 @@ void PreviewEngine::SetClips(
     // for a monotonic session. (Slice 6 debounces the trim-drag storm.)
     impl->edited_playing = false;
     RenderEditedFrameLocked(impl, impl->edited_pos_ms);
+    if (!was_edited) {
+      namespace clip = capture::export_::clip_planner;
+      clingfy::bridge::NativeLogPublisher::Instance().Debug(
+          "Preview",
+          "stitched preview ON: " + std::to_string(impl->clip_ranges.size()) +
+              " ranges, reorder=" +
+              (clip::IsSourceMonotonic(impl->clip_ranges) ? "false" : "true") +
+              ", editedDur=" +
+              std::to_string(clip::EditedDurationMs(impl->clip_ranges)) + "ms");
+    }
   } else if (impl->edited_mode) {
     // Passthrough (no real cut): leave stitched mode; the MediaPlayer path
     // resumes producing frames. The last composited frame stays until it does.
     impl->edited_mode = false;
     impl->edited_playing = false;
     impl->edited_reader.reset();
+    clingfy::bridge::NativeLogPublisher::Instance().Debug(
+        "Preview", "stitched preview OFF (passthrough — no real cut)");
   }
 }
 

@@ -4,6 +4,7 @@
 #include <flutter/encodable_value.h>
 #include <flutter/method_channel.h>
 
+#include <atomic>
 #include <mutex>
 #include <string>
 
@@ -40,9 +41,25 @@ class NativeLogPublisher {
   void SetChannel(flutter::MethodChannel<flutter::EncodableValue>* channel);
   void ClearChannel();
 
+  // DEBUG is dropped at the source unless the current threshold allows it (the
+  // Settings "verbose logging" toggle, via SetMinLevel), so verbose per-feature
+  // tracing never crosses the channel or reaches release users' logs/Sentry.
+  void Debug(const std::string& category, const std::string& message);
   void Info(const std::string& category, const std::string& message);
   void Warn(const std::string& category, const std::string& message);
   void Error(const std::string& category, const std::string& message);
+
+  // Set the minimum emitted level from a level name (debug/info/warning/error;
+  // also d/i/w/e, verbose/trace). Unknown names are ignored. Driven by Dart's
+  // `setNativeLogLevel` (the Settings "verbose logging" toggle), mirroring macOS
+  // `NativeLogger.setMinLevel`. Thread-safe.
+  void SetMinLevel(const std::string& level_name);
+
+  // Whether an emitted level ("DEBUG"/"INFO"/"WARNING"/"ERROR") passes the
+  // current threshold. Below-threshold logs are dropped at the source. Exposed
+  // for tests.
+  bool ShouldSend(const std::string& emitted_level) const;
+  int min_level_rank() const { return min_level_rank_.load(); }
 
   // Pure payload builder — the shape contract with Dart's Log.nativeEvent
   // parser (keys: ts/level/category/message/context). Exposed for tests.
@@ -52,13 +69,18 @@ class NativeLogPublisher {
                                             const std::string& ts_iso8601);
 
  private:
-  NativeLogPublisher() = default;
+  NativeLogPublisher();
 
   void Emit(const char* level, const std::string& category,
             const std::string& message);
 
   mutable std::mutex mutex_;
   flutter::MethodChannel<flutter::EncodableValue>* channel_ = nullptr;
+  // Min emitted level as a rank (debug=0 < info=1 < warning=2 < error=3),
+  // resolved once from CLINGFY_LOG_LEVEL / the build default, then adjusted at
+  // runtime by SetMinLevel. Atomic: read on the emitting thread, written on the
+  // platform thread.
+  std::atomic<int> min_level_rank_;
 };
 
 }  // namespace clingfy::bridge
