@@ -1,6 +1,7 @@
 import 'package:clingfy/app/home/overlay/overlay_controller.dart';
 import 'package:clingfy/core/bridges/native_bridge.dart';
 import 'package:clingfy/core/models/app_models.dart';
+import 'package:clingfy/ui/platform/platform_kind.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:shared_preferences/shared_preferences.dart';
@@ -136,81 +137,18 @@ void main() {
     expect(args['normalizedY'], closeTo(0.8, 0.0001));
   });
 
-  testWidgets(
-    'Phase 9.3.2: floating preview falls back to in-app when native refuses',
-    (tester) async {
-      // Camera on + floating preference, but native reports the floating bubble
-      // is unavailable (no capture-exclusion). The controller must switch to the
-      // in-app texture and persist the choice so it survives restarts.
-      final harness = await _createControllerHarness(
-        tester,
-        initialPrefs: const {
-          'overlayEnabled': true,
-          'cameraPreviewMode': 'floating',
-        },
-        onCall: (call) async {
-          if (call.method == 'setCameraPreviewMode') {
-            return <String, Object?>{'floating': false};
-          }
-          return null;
-        },
-      );
-
-      expect(harness.controller.cameraFloatingPreview, isTrue);
-
-      harness.controller.updateRecordingState(true);
-      for (var i = 0; i < 50 && harness.controller.cameraFloatingPreview; i++) {
-        await tester.pump(const Duration(milliseconds: 10));
-      }
-
-      expect(harness.controller.cameraFloatingPreview, isFalse);
-      final prefs = await SharedPreferences.getInstance();
-      expect(prefs.getString('cameraPreviewMode'), 'inApp');
-
-      final modeCall = _lastMethodCall(harness.calls, 'setCameraPreviewMode');
-      expect(_callArguments(modeCall)['floating'], isTrue);
-    },
-  );
-
-  testWidgets(
-    'Phase 9.3.3: in-app is the default preview mode (no floating opt-in)',
-    (tester) async {
-      // No cameraPreviewMode pref → in-app preview, not the floating bubble.
-      final harness = await _createControllerHarness(
-        tester,
-        initialPrefs: const {'overlayEnabled': true},
-        onCall: (call) async {
-          if (call.method == 'setCameraPreviewMode') {
-            // Native echoes the requested mode; for in-app it returns false.
-            return <String, Object?>{'floating': false};
-          }
-          return null;
-        },
-      );
-
-      expect(harness.controller.cameraFloatingPreview, isFalse);
-
-      harness.controller.updateRecordingState(true);
-      for (var i = 0; i < 20; i++) {
-        await tester.pump(const Duration(milliseconds: 10));
-      }
-
-      // Recording applies the default mode to native as floating:false.
-      final modeCall = _lastMethodCall(harness.calls, 'setCameraPreviewMode');
-      expect(_callArguments(modeCall)['floating'], isFalse);
-      expect(harness.controller.cameraFloatingPreview, isFalse);
-    },
-  );
-
-  testWidgets('Phase 9.3.2: floating preview is kept when native honors it', (
+  testWidgets('recording start on Windows shows the floating camera bubble', (
     tester,
   ) async {
+    // The floating bubble is the ONLY live preview now (the in-app texture
+    // escape hatch is gone): Windows creates the bubble hidden and shows it
+    // only on this push.
+    debugPlatformKindOverride = PlatformKind.windows;
+    addTearDown(() => debugPlatformKindOverride = null);
+
     final harness = await _createControllerHarness(
       tester,
-      initialPrefs: const {
-        'overlayEnabled': true,
-        'cameraPreviewMode': 'floating',
-      },
+      initialPrefs: const {'overlayEnabled': true},
       onCall: (call) async {
         if (call.method == 'setCameraPreviewMode') {
           return <String, Object?>{'floating': true};
@@ -224,9 +162,64 @@ void main() {
       await tester.pump(const Duration(milliseconds: 10));
     }
 
-    expect(harness.controller.cameraFloatingPreview, isTrue);
-    final prefs = await SharedPreferences.getInstance();
-    expect(prefs.getString('cameraPreviewMode'), 'floating');
+    final modeCall = _lastMethodCall(harness.calls, 'setCameraPreviewMode');
+    expect(_callArguments(modeCall)['floating'], isTrue);
+  });
+
+  testWidgets(
+    'native refusing the floating bubble is tolerated (recording continues)',
+    (tester) async {
+      // Capture-exclusion failed on this GPU: native keeps the bubble hidden
+      // (showing it would burn the camera into the recording). No fallback
+      // mode exists anymore — the controller just logs and moves on.
+      debugPlatformKindOverride = PlatformKind.windows;
+      addTearDown(() => debugPlatformKindOverride = null);
+
+      final harness = await _createControllerHarness(
+        tester,
+        initialPrefs: const {'overlayEnabled': true},
+        onCall: (call) async {
+          if (call.method == 'setCameraPreviewMode') {
+            return <String, Object?>{'floating': false};
+          }
+          return null;
+        },
+      );
+
+      harness.controller.updateRecordingState(true);
+      for (var i = 0; i < 20; i++) {
+        await tester.pump(const Duration(milliseconds: 10));
+      }
+
+      // Exactly one push, floating requested; nothing else happens.
+      final modeCall = _lastMethodCall(harness.calls, 'setCameraPreviewMode');
+      expect(_callArguments(modeCall)['floating'], isTrue);
+    },
+  );
+
+  testWidgets('recording start on macOS never pushes the preview mode', (
+    tester,
+  ) async {
+    // macOS shows its native bubble unconditionally and has no
+    // setCameraPreviewMode handler — pushing it only produced a spurious
+    // error log on every camera recording start.
+    debugPlatformKindOverride = PlatformKind.macos;
+    addTearDown(() => debugPlatformKindOverride = null);
+
+    final harness = await _createControllerHarness(
+      tester,
+      initialPrefs: const {'overlayEnabled': true},
+    );
+
+    harness.controller.updateRecordingState(true);
+    for (var i = 0; i < 20; i++) {
+      await tester.pump(const Duration(milliseconds: 10));
+    }
+
+    expect(
+      harness.calls.where((c) => c.method == 'setCameraPreviewMode'),
+      isEmpty,
+    );
   });
 }
 

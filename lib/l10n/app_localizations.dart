@@ -4630,18 +4630,6 @@ abstract class AppLocalizations {
   /// **'Recording stopped: the display you were recording was disconnected. Your recording up to that point has been saved.'**
   String get warnDisplayDisconnectedPartialSaved;
 
-  /// No description provided for @cameraPreviewUseInApp.
-  ///
-  /// In en, this message translates to:
-  /// **'Can\'t see the camera? Use in-app preview'**
-  String get cameraPreviewUseInApp;
-
-  /// No description provided for @cameraPreviewUseFloating.
-  ///
-  /// In en, this message translates to:
-  /// **'Use floating camera bubble'**
-  String get cameraPreviewUseFloating;
-
   /// No description provided for @appliedOnExportNoticeWindows.
   ///
   /// In en, this message translates to:

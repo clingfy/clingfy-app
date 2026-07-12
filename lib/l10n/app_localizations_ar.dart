@@ -2507,13 +2507,6 @@ class AppLocalizationsAr extends AppLocalizations {
       'توقف التسجيل: الشاشة التي كنت تسجلها فُصلت. تم حفظ تسجيلك حتى تلك اللحظة.';
 
   @override
-  String get cameraPreviewUseInApp =>
-      'لا ترى الكاميرا؟ استخدم المعاينة داخل التطبيق';
-
-  @override
-  String get cameraPreviewUseFloating => 'استخدم فقاعة الكاميرا العائمة';
-
-  @override
   String get appliedOnExportNoticeWindows =>
       'يُطبَّق عند التصدير — المعاينة الداخلية لا تعرض هذا التأثير بعد.';
 

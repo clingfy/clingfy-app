@@ -6,6 +6,7 @@ import 'package:clingfy/app/home/preview/widgets/timeline/timeline_editor_viewpo
 import 'package:clingfy/app/home/preview/widgets/timeline/timeline_header_bar.dart';
 import 'package:clingfy/app/home/preview/widgets/timeline/timeline_transport_bar.dart';
 import 'package:clingfy/app/home/preview/widgets/timeline/timeline_viewport_controller.dart';
+import 'package:clingfy/app/home/recording/recording_controller.dart';
 import 'package:clingfy/app/infrastructure/logging/logger_service.dart';
 import 'package:clingfy/core/bridges/native_bridge.dart';
 import 'package:clingfy/core/clips/clip_editor_controller.dart';
@@ -25,6 +26,13 @@ class TimelineBar extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    // The timeline stays mounted during export so the user can keep scrubbing
+    // the preview; every edit affordance is disabled until the export ends
+    // (the export bakes the clips it was started with — mutating them
+    // mid-flight would desync the preview from the file being written).
+    final isExporting = context.select<RecordingController, bool>(
+      (r) => r.isExporting,
+    );
     return Selector<PlayerController, (int durMs, int posMs, bool ready)>(
       selector: (_, p) => (p.durationMs, p.positionMs, p.isReady),
       builder: (context, t, _) {
@@ -34,6 +42,7 @@ class TimelineBar extends StatelessWidget {
           durationMs: t.$1,
           positionMs: t.$2,
           isReady: t.$3,
+          editingEnabled: !isExporting,
           onSeek: (ms) => unawaited(player.seekTo(ms)),
           onHoverSeek: (ms) => unawaited(player.previewPeekTo(ms)),
           onHoverEnd: () => unawaited(player.previewPeekEnd()),
@@ -50,6 +59,7 @@ class VideoTimeline extends StatefulWidget {
     required this.positionMs,
     required this.isReady,
     required this.onSeek,
+    this.editingEnabled = true,
     this.onHoverSeek,
     this.onHoverEnd,
   });
@@ -57,6 +67,12 @@ class VideoTimeline extends StatefulWidget {
   final int durationMs;
   final int positionMs;
   final bool isReady;
+
+  /// False while an export runs: seek/hover/zoom/play stay live, but every
+  /// edit affordance (split/delete/undo/redo, trim, reorder, scissors, zoom
+  /// editing, the Delete shortcut) is disabled — the export bakes the clips
+  /// it was started with.
+  final bool editingEnabled;
   final ValueChanged<int> onSeek;
   final ValueChanged<int>? onHoverSeek;
   final VoidCallback? onHoverEnd;
@@ -478,14 +494,18 @@ class _VideoTimelineState extends State<VideoTimeline> {
         if (clipEditor != null) clipEditor,
       ]),
       builder: (context, _) {
-        final canEditZoom = ready && editor != null && _showZoomLane;
+        // widget.editingEnabled is false while an export runs: the lanes stay
+        // visible and scrubbing works, but every edit affordance below keys
+        // off these two flags and goes inert.
+        final canEditZoom =
+            ready && editor != null && _showZoomLane && widget.editingEnabled;
         final activeEditor = canEditZoom ? editor : null;
         final modeText = _buildModeText(l10n, editor);
 
         // The clip lane and its controls appear only with a live editor, so a
         // recording that is still loading (or Windows) shows no clip affordances.
         final showClipsLane = _showClipsLane && clipEditor != null;
-        final canEditClips = ready && showClipsLane;
+        final canEditClips = ready && showClipsLane && widget.editingEnabled;
 
         return Stack(
           clipBehavior: Clip.none,
@@ -516,7 +536,10 @@ class _VideoTimelineState extends State<VideoTimeline> {
                   onRedo: activeEditor?.redo,
                   onToggleZoomLaneVisibility: _toggleZoomLaneVisibility,
                   onToggleMarkersLaneVisibility: _toggleMarkersLaneVisibility,
-                  showClipsControls: canEditClips,
+                  // Keep the clip buttons VISIBLE (but disabled via the can*
+                  // flags) while editing is suspended for an export — the bar
+                  // shouldn't reflow when an export starts.
+                  showClipsControls: showClipsLane && ready,
                   canSplitClip: canEditClips,
                   canDeleteClip: canEditClips && clipEditor.canDeleteSelected,
                   canUndoClips: canEditClips && clipEditor.canUndo,
@@ -626,6 +649,9 @@ class _VideoTimelineState extends State<VideoTimeline> {
         actions: <Type, Action<Intent>>{
           DeleteSelectedZoomIntent: CallbackAction<DeleteSelectedZoomIntent>(
             onInvoke: (_) {
+              // Editing suspended (export in flight): the key must be as
+              // inert as the disabled toolbar buttons it mirrors.
+              if (!widget.editingEnabled) return null;
               // Backspace/Delete removes the selected CLIP first — that's what
               // the key usually means over the clip lane — falling back to the
               // selected zoom segment when no (deletable) clip is selected.

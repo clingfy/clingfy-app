@@ -210,7 +210,11 @@ class RecordingController extends ChangeNotifier {
     WorkflowPhase.exporting => false,
   };
   bool get isBusy => isBusyTransitioning;
-  bool get showTimelineBar => phase == WorkflowPhase.previewReady;
+  // The timeline stays visible during export so the user can keep scrubbing
+  // the preview; editing is disabled for the duration (VideoTimeline's
+  // editingEnabled, driven by isExporting).
+  bool get showTimelineBar =>
+      phase == WorkflowPhase.previewReady || phase == WorkflowPhase.exporting;
   bool get showPreRecordingBar => phase == WorkflowPhase.idle;
   bool get shouldNotifyRecordingFinalizedOnPreviewOpen =>
       _previewOpenSource == _PreviewOpenSource.recordingFinalized;
