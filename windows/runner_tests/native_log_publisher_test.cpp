@@ -123,9 +123,18 @@ TEST(NativeLogPublisherTest, EmitWithoutChannelBuffersInsteadOfDropping) {
   EXPECT_EQ(pub.pending_count(), 4u);
 
   // FlushPending with no channel keeps the buffer (a later flush after the
-  // channel attaches must still deliver these lines).
+  // channel attaches must still deliver these lines) — but it does record
+  // the Dart-ready handshake (it arrived over the channel, so the handler
+  // is provably installed).
+  EXPECT_FALSE(pub.dart_ready_for_test());
   pub.FlushPending();
   EXPECT_EQ(pub.pending_count(), 4u);
+  EXPECT_TRUE(pub.dart_ready_for_test());
+
+  // ClearChannel (engine teardown) revokes readiness: the next engine's Dart
+  // side must re-handshake before direct posting resumes.
+  pub.ClearChannel();
+  EXPECT_FALSE(pub.dart_ready_for_test());
 
   pub.ClearPendingForTest();
 }

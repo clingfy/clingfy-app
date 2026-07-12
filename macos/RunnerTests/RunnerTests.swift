@@ -8879,10 +8879,13 @@ final class NativeLoggerTests: XCTestCase {
     XCTAssertEqual(NativeLogger.pendingCountForTest, 2)
 
     // flushPending with no channel keeps the buffer — a later flush after
-    // the channel attaches must still deliver these lines.
+    // the channel attaches must still deliver these lines — but it does mark
+    // the Dart handler as ready (the handshake arrived over the channel).
+    XCTAssertFalse(NativeLogger.dartReadyForTest)
     NativeLogger.flushPending()
     drainMainQueue()
     XCTAssertEqual(NativeLogger.pendingCountForTest, 2)
+    XCTAssertTrue(NativeLogger.dartReadyForTest)
   }
 
   func testPendingBufferIsBoundedDropOldest() {

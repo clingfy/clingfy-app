@@ -93,8 +93,12 @@ NativeLogPublisher::NativeLogPublisher()
     : min_level_rank_(ResolveDefaultRank()) {}
 
 NativeLogPublisher& NativeLogPublisher::Instance() {
-  static NativeLogPublisher instance;
-  return instance;
+  // Deliberately leaked: never destroyed, so unjoinable stragglers (e.g. the
+  // abandoned camera-open worker, camera_recorder.cpp) can still emit during
+  // CRT static destruction without touching a destroyed mutex/deque. Mirrors
+  // PlatformThreadDispatcher's intentional no-teardown design.
+  static NativeLogPublisher* instance = new NativeLogPublisher();
+  return *instance;
 }
 
 void NativeLogPublisher::SetChannel(
@@ -106,6 +110,9 @@ void NativeLogPublisher::SetChannel(
 void NativeLogPublisher::ClearChannel() {
   std::lock_guard<std::mutex> lock(mutex_);
   channel_ = nullptr;
+  // The Dart handler dies with the engine; a new engine's Dart side re-fires
+  // the flushPendingNativeLogs handshake before direct posting resumes.
+  dart_ready_ = false;
 }
 
 void NativeLogPublisher::Debug(const std::string& category,
@@ -188,9 +195,13 @@ void NativeLogPublisher::Emit(const char* level, const std::string& category,
                    std::move(context), error_text, stack);
   {
     std::lock_guard<std::mutex> lock(mutex_);
-    if (channel_ == nullptr) {
-      // No listener yet (startup) or already torn down: hold the line for
-      // the flushPendingNativeLogs drain instead of dropping it.
+    // Buffer until BOTH the channel exists AND Dart has confirmed its 'log'
+    // handler is installed (the flushPendingNativeLogs handshake). The channel
+    // attaches in FlutterWindow::OnCreate — long before Dart main runs — and
+    // Flutter's ChannelBuffers holds only ONE undelivered platform→Dart
+    // message per channel, so posting before the handler exists silently
+    // drops all but the newest line.
+    if (channel_ == nullptr || !dart_ready_) {
       if (pending_.size() >= kMaxPending) {
         pending_.pop_front();
       }
@@ -205,6 +216,9 @@ void NativeLogPublisher::FlushPending() {
   std::vector<flutter::EncodableMap> drained;
   {
     std::lock_guard<std::mutex> lock(mutex_);
+    // The handshake itself arrived over the channel, so Dart's handler is
+    // provably installed: direct posting is safe from here on.
+    dart_ready_ = true;
     if (channel_ == nullptr || pending_.empty()) {
       return;  // keep the buffer — a later flush may still deliver it
     }
@@ -225,6 +239,12 @@ size_t NativeLogPublisher::pending_count() const {
 void NativeLogPublisher::ClearPendingForTest() {
   std::lock_guard<std::mutex> lock(mutex_);
   pending_.clear();
+  dart_ready_ = false;
+}
+
+bool NativeLogPublisher::dart_ready_for_test() const {
+  std::lock_guard<std::mutex> lock(mutex_);
+  return dart_ready_;
 }
 
 flutter::EncodableMap NativeLogPublisher::FrontPendingForTest() const {

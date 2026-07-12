@@ -78,10 +78,13 @@ class NativeLogPublisher {
   bool ShouldSend(const std::string& emitted_level) const;
   int min_level_rank() const { return min_level_rank_.load(); }
 
-  // Drains the pending (pre-channel) buffer through the channel, oldest
-  // first. Called by the `flushPendingNativeLogs` bridge handler once Dart's
-  // 'log' handler is installed. No-op (buffer retained) while no channel is
-  // attached.
+  // The `flushPendingNativeLogs` handshake: marks Dart's 'log' handler as
+  // installed (direct posting is safe from here on) and drains the pending
+  // buffer through the channel, oldest first. Until this runs, EVERY emit is
+  // buffered — the channel attaches in FlutterWindow::OnCreate long before
+  // Dart main executes, and posting into a handler-less isolate silently
+  // drops all but one line (ChannelBuffers capacity 1). Buffer retained if
+  // no channel is attached.
   void FlushPending();
 
   // Number of buffered lines waiting for FlushPending. Exposed for tests.
@@ -94,6 +97,9 @@ class NativeLogPublisher {
   // Test-only: copy of the oldest buffered payload ({} when empty), so tests
   // can pin what a buffered line actually carries.
   flutter::EncodableMap FrontPendingForTest() const;
+
+  // Test-only: whether the Dart-ready handshake has been received.
+  bool dart_ready_for_test() const;
 
   // Oldest lines beyond this are dropped — a startup burst can't grow
   // unbounded if the Flutter engine never attaches.
@@ -123,8 +129,13 @@ class NativeLogPublisher {
 
   mutable std::mutex mutex_;
   flutter::MethodChannel<flutter::EncodableValue>* channel_ = nullptr;
-  // Lines emitted while no channel was attached, oldest first (bounded by
-  // kMaxPending, drop-oldest). Guarded by mutex_.
+  // True once Dart's flushPendingNativeLogs handshake confirmed the 'log'
+  // handler is installed; reset when the channel is cleared. Guarded by
+  // mutex_. Until then every emit buffers (a channel without a Dart handler
+  // drops messages).
+  bool dart_ready_ = false;
+  // Lines emitted before the Dart-ready handshake (or with no channel),
+  // oldest first (bounded by kMaxPending, drop-oldest). Guarded by mutex_.
   std::deque<flutter::EncodableMap> pending_;
   // Min emitted level as a rank (debug=0 < info=1 < warning=2 < error=3),
   // resolved once from CLINGFY_LOG_LEVEL / the build default, then adjusted at

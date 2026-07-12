@@ -60,16 +60,28 @@ Level guidance: `Debug` = per-feature tracing and lifecycle breadcrumbs
 native, pass the failure text as `error` (or `context['error']`) so Sentry
 promotes it to a grouped exception.
 
+**Release-visibility rule:** anything a support ticket would need — a
+degradation the user can see (no camera bubble, empty device dropdown,
+camera-free preview) or a failing HRESULT — must be `Warning`/`Error`, never
+only a `Debug` breadcrumb, because release builds drop `Debug` at the source.
+The camera-overlay fallback ladder, device-enumeration hard failures, and the
+preview camera-renderer create failure all log at `Warning` for exactly this
+reason.
+
 ## Startup: nothing is dropped
 
 Logs emitted before the pipeline is ready are buffered, bounded (512,
 drop-oldest), and replayed in order:
 
 - **Dart before `Log.init`** → in-memory pre-init buffer, drained by `init`.
-- **Native before the channel/handler exists** → pending buffer inside
-  `NativeLogger` / `NativeLogPublisher`. When Dart's `NativeBridge` installs
-  its `log` handler it fires `flushPendingNativeLogs` (fire-and-forget), and
-  native drains the buffer through the channel. This is why startup device
+- **Native before Dart's handler exists** → pending buffer inside
+  `NativeLogger` / `NativeLogPublisher`. The channel itself attaches long
+  before Dart main runs (macOS `awakeFromNib` / Windows `OnCreate`), and
+  Flutter's `ChannelBuffers` keeps only ONE undelivered platform→Dart message
+  per channel — so native buffers **every** line until Dart's `NativeBridge`
+  installs its `log` handler and fires `flushPendingNativeLogs`
+  (fire-and-forget). That handshake proves the handler exists; native drains
+  the buffer and posts directly from then on. This is why startup device
   enumeration and the recovery sweep show up in the file.
 
 ## Adding a remote/third-party logging service

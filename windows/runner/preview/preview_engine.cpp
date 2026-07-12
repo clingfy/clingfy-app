@@ -687,10 +687,17 @@ OpenResult PreviewEngine::Open(const OpenArgs& args) {
   if (!args.camera_path.empty()) {
     impl_->camera_renderer = clingfy::preview::PreviewCameraRenderer::Create(
         args.camera_path, args.camera_start_offset_ms);
-    LogNative(impl_->camera_renderer != nullptr
-                  ? "PreviewCameraRenderer: created for camera/raw.mov"
-                  : "PreviewCameraRenderer: create FAILED (preview stays "
-                    "camera-free)");
+    if (impl_->camera_renderer != nullptr) {
+      LogNative("PreviewCameraRenderer: created for camera/raw.mov");
+    } else {
+      // WARN (not the DEBUG breadcrumb): Open() still succeeds, so this is
+      // the only trace explaining why the editor preview shows no camera
+      // bubble while the export would include it.
+      clingfy::bridge::NativeLogPublisher::Instance().Warn(
+          "Preview",
+          "PreviewCameraRenderer create failed — preview stays camera-free "
+          "though the project has a camera track");
+    }
   }
 
   // ---- 6. Register the external texture. ----

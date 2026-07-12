@@ -864,9 +864,11 @@ std::optional<RecordingError> RecordingEngine::Start(
         auto host = std::make_shared<CameraOverlayHost>();
         camera_floating_ = host->Start(place) ? host : nullptr;
         if (camera_floating_ == nullptr) {
-          clingfy::bridge::devices::LogDeviceProbe(
-              "RecordingEngine: floating camera overlay create failed; in-app "
-              "preview only");
+          // WARN (not a debug probe): the user records without a floating
+          // bubble and support needs this line in release logs/Sentry.
+          clingfy::bridge::NativeLogPublisher::Instance().Warn(
+              "Camera",
+              "floating camera overlay create failed; in-app preview only");
         }
       }
       // Phase 10.4: weak capture (was a raw pointer). An ABANDONED camera

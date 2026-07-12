@@ -13,14 +13,22 @@ class NativeLogger {
   /// via [setMinLevel] so the Settings "verbose logging" toggle reaches native.
   static var minLevelRank: Int = resolveDefaultRank()
 
-  /// Lines emitted while no channel was attached, oldest first. Main-queue
-  /// confined (all mutation happens in main-queue closures). Bounded
-  /// drop-oldest so an engine that never attaches can't grow it unbounded.
-  /// Drained by [flushPending] when Dart signals its 'log' handler is
-  /// installed (the `flushPendingNativeLogs` bridge call) — mirrors the
-  /// Windows NativeLogPublisher pending buffer.
+  /// Lines emitted before Dart confirmed its 'log' handler is installed,
+  /// oldest first. Main-queue confined (all mutation happens in main-queue
+  /// closures). Bounded drop-oldest so an engine that never attaches can't
+  /// grow it unbounded. Drained by [flushPending] (the
+  /// `flushPendingNativeLogs` bridge call) — mirrors the Windows
+  /// NativeLogPublisher pending buffer.
   private static var pending: [[String: Any]] = []
   static let maxPending = 512
+
+  /// True once Dart's flushPendingNativeLogs handshake ran. The channel is
+  /// configured in awakeFromNib — long before Dart main executes — and
+  /// Flutter's ChannelBuffers holds only ONE undelivered platform→Dart
+  /// message per channel, so invoking before the Dart handler exists silently
+  /// drops all but the newest line. Buffer until the handshake proves the
+  /// handler is there. Main-queue confined.
+  private static var dartReady = false
 
   /// UTC ISO8601 with fractional seconds and a trailing 'Z' — the shared
   /// cross-platform timestamp base (Dart Log and Windows NativeLogPublisher
@@ -151,11 +159,14 @@ class NativeLogger {
     return payload
   }
 
-  /// Drains the pending (pre-channel) buffer through the channel, oldest
-  /// first. Dispatched to the main queue so lines queued by in-flight sends
-  /// keep their order. No-op (buffer retained) while no channel is attached.
+  /// The Dart-ready handshake: marks direct invoking as safe (the handshake
+  /// itself arrived over the channel, so Dart's 'log' handler is provably
+  /// installed) and drains the pending buffer, oldest first. Dispatched to
+  /// the main queue so lines queued by in-flight sends keep their order.
+  /// Buffer retained while no channel is attached.
   static func flushPending() {
     DispatchQueue.main.async {
+      dartReady = true
       guard let channel = channel, !pending.isEmpty else { return }
       let drained = pending
       pending = []
@@ -168,10 +179,14 @@ class NativeLogger {
   /// Test-only: number of buffered lines (read on the main queue).
   static var pendingCountForTest: Int { pending.count }
 
-  /// Test-only: clear channel + buffer so static state can't leak.
+  /// Test-only: whether the Dart-ready handshake ran.
+  static var dartReadyForTest: Bool { dartReady }
+
+  /// Test-only: clear channel + buffer + handshake so static state can't leak.
   static func resetForTest() {
     channel = nil
     pending = []
+    dartReady = false
   }
 
   private static func send(
@@ -188,9 +203,10 @@ class NativeLogger {
       error: error, stack: stack, file: file, line: line)
 
     DispatchQueue.main.async {
-      guard let channel = channel else {
-        // No listener yet (startup) or torn down: hold the line for the
-        // flushPendingNativeLogs drain instead of dropping it.
+      guard dartReady, let channel = channel else {
+        // Dart's handler isn't confirmed yet (startup) or the channel is
+        // gone (teardown): hold the line for the flushPendingNativeLogs
+        // drain instead of dropping it.
         if pending.count >= maxPending {
           pending.removeFirst()
         }
