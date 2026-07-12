@@ -9,14 +9,12 @@ import 'package:clingfy/app/home/guide/home_guide_step.dart';
 import 'package:clingfy/app/home/home_ui_state.dart';
 import 'package:clingfy/app/home/preview/widgets/video_timeline.dart';
 import 'package:clingfy/app/home/recording/countdown_controller.dart';
-import 'package:clingfy/app/home/overlay/overlay_controller.dart';
 import 'package:clingfy/app/home/recording/recording_controller.dart';
 import 'package:clingfy/app/home/widgets/countdown_overlay.dart';
 import 'package:clingfy/app/home/widgets/export_progress_dock.dart';
 import 'package:clingfy/app/home/widgets/home_left_sidebar.dart';
 import 'package:clingfy/app/home/widgets/home_options_panel.dart';
 import 'package:clingfy/app/home/widgets/home_right_panel.dart';
-import 'package:clingfy/app/home/widgets/live_camera_preview.dart';
 import 'package:clingfy/app/home/widgets/home_toolbar.dart';
 import 'package:clingfy/app/home/widgets/reset_preferences_action.dart';
 import 'package:clingfy/l10n/app_localizations.dart';
@@ -483,21 +481,6 @@ class _HomeShellState extends State<HomeShell> {
     final showTimelineBar = context.select<RecordingController, bool>(
       (r) => r.showTimelineBar,
     );
-    // Phase 9.3.1/9.3.2: drives the live camera preview (floating bubble vs
-    // in-app Flutter texture).
-    final cameraOverlayEnabled = context.select<OverlayController, bool>(
-      (o) => o.cameraOverlayEnabled,
-    );
-    final cameraFloatingPreview = context.select<OverlayController, bool>(
-      (o) => o.cameraFloatingPreview,
-    );
-    // Live recording-overlay styling for the in-app camera preview bubble.
-    // Value-equal, so this only rebuilds the preview when a rendered style
-    // changes (shape / roundness / border / shadow / opacity / mirror).
-    final cameraOverlayStyle = context
-        .select<OverlayController, CameraOverlayPreviewStyle>(
-          (o) => CameraOverlayPreviewStyle.fromController(o),
-        );
     final showPreviewShell = context.select<RecordingController, bool>(
       (r) => r.showPreviewShell,
     );
@@ -707,20 +690,6 @@ class _HomeShellState extends State<HomeShell> {
                                                       isBusy: isBusy,
                                                       canPause: canPause,
                                                       canResume: canResume,
-                                                      cameraOverlayEnabled:
-                                                          cameraOverlayEnabled,
-                                                      cameraFloatingPreview:
-                                                          cameraFloatingPreview,
-                                                      cameraOverlayStyle:
-                                                          cameraOverlayStyle,
-                                                      onToggleCameraPreviewMode:
-                                                          () => context
-                                                              .read<
-                                                                OverlayController
-                                                              >()
-                                                              .setCameraFloatingPreview(
-                                                                !cameraFloatingPreview,
-                                                              ),
                                                       onToggleRecording: () =>
                                                           _toggleRecordingFromUi(
                                                             context,

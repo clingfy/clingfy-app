@@ -2548,13 +2548,6 @@ class AppLocalizationsRo extends AppLocalizations {
       'Înregistrarea s-a oprit: ecranul pe care îl înregistrai a fost deconectat. Înregistrarea de până atunci a fost salvată.';
 
   @override
-  String get cameraPreviewUseInApp =>
-      'Nu vezi camera? Folosește previzualizarea din aplicație';
-
-  @override
-  String get cameraPreviewUseFloating => 'Folosește bula plutitoare a camerei';
-
-  @override
   String get appliedOnExportNoticeWindows =>
       'Se aplică la export — previzualizarea din aplicație nu arată încă acest efect.';
 

@@ -2520,13 +2520,6 @@ class AppLocalizationsEn extends AppLocalizations {
       'Recording stopped: the display you were recording was disconnected. Your recording up to that point has been saved.';
 
   @override
-  String get cameraPreviewUseInApp =>
-      'Can\'t see the camera? Use in-app preview';
-
-  @override
-  String get cameraPreviewUseFloating => 'Use floating camera bubble';
-
-  @override
   String get appliedOnExportNoticeWindows =>
       'Applied on export — the inline preview doesn\'t show this effect yet.';
 

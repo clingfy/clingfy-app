@@ -152,35 +152,6 @@ void main() {
         expect(result, isFalse);
       },
     );
-
-    test('getCameraPreviewTextureId parses a valid texture id', () async {
-      overrideScreenRecorder((call) async => <String, Object?>{'textureId': 7});
-
-      final id = await NativeBridge.instance.getCameraPreviewTextureId();
-
-      expect(id, 7);
-    });
-
-    test('getCameraPreviewTextureId returns null for a negative id', () async {
-      overrideScreenRecorder(
-        (call) async => <String, Object?>{'textureId': -1},
-      );
-
-      final id = await NativeBridge.instance.getCameraPreviewTextureId();
-
-      expect(id, isNull);
-    });
-
-    test(
-      'getCameraPreviewTextureId returns null on MissingPluginException',
-      () async {
-        clearScreenRecorder();
-
-        final id = await NativeBridge.instance.getCameraPreviewTextureId();
-
-        expect(id, isNull);
-      },
-    );
   });
 
   group('startup recovery report (Phase 10.4)', () {
