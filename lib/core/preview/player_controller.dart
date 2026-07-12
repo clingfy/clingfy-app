@@ -5,7 +5,7 @@ import 'package:flutter/foundation.dart';
 import 'package:clingfy/core/bridges/native_bridge.dart';
 import 'package:clingfy/core/models/app_models.dart';
 import 'package:clingfy/app/home/recording/recording_controller.dart';
-import 'package:clingfy/app/infrastructure/logging/logger_service.dart';
+import 'package:clingfy/core/logging/logger_service.dart';
 import 'package:clingfy/core/zoom/zoom_editor_controller.dart';
 import 'package:clingfy/core/clips/clip_editor_controller.dart';
 

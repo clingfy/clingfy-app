@@ -1,7 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
-import 'package:clingfy/app/infrastructure/logging/logger_service.dart';
+import 'package:clingfy/core/logging/logger_service.dart';
 
 enum AppLocaleSetting { system, en, ar, ro }
 

@@ -1,5 +1,5 @@
 import 'package:clingfy/app/bootstrap/app_providers.dart';
-import 'package:clingfy/app/infrastructure/logging/logger_service.dart';
+import 'package:clingfy/core/logging/logger_service.dart';
 import 'package:clingfy/core/bridges/native_bridge.dart';
 import 'package:clingfy/app/settings/settings_controller.dart';
 import 'package:clingfy/app/shell/platform_app.dart';

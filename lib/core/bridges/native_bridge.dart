@@ -1,6 +1,8 @@
+import 'dart:async';
+
 import 'package:flutter/services.dart';
 import 'package:clingfy/core/bridges/native_method_channel.dart';
-import 'package:clingfy/app/infrastructure/logging/logger_service.dart';
+import 'package:clingfy/core/logging/logger_service.dart';
 import 'package:clingfy/core/models/app_models.dart';
 import 'package:clingfy/core/timeline/model/color_grade.dart';
 import 'package:clingfy/core/timeline/model/edit_track.dart';
@@ -111,6 +113,17 @@ class NativeBridge {
       onError: (error) {
         Log.e("NativeBridge", "Error on workflow event stream: $error");
       },
+    );
+
+    // The Dart 'log' handler is installed now — tell native to drain any log
+    // lines it buffered during startup (before the channel/handler existed),
+    // so early native diagnostics land in the unified log file instead of
+    // being dropped. Fire-and-forget: legacy natives without the method and
+    // test environments without a platform side must never fail construction.
+    unawaited(
+      _nativeBridge
+          .invokeMethod<void>('flushPendingNativeLogs')
+          .catchError((_) {}),
     );
   }
 

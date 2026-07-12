@@ -7,7 +7,7 @@ import 'package:path_provider/path_provider.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
 import 'package:clingfy/app/infrastructure/diagnostics/diagnostics_package_service.dart';
-import 'package:clingfy/app/infrastructure/logging/logger_service.dart';
+import 'package:clingfy/core/logging/logger_service.dart';
 import 'package:clingfy/core/bridges/native_bridge.dart';
 
 class WorkspaceSettingsController extends ChangeNotifier {

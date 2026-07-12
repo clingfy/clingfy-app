@@ -6,7 +6,7 @@ import 'package:clingfy/core/bridges/native_method_channel.dart';
 import 'package:clingfy/core/bridges/native_bridge.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
-import 'package:clingfy/app/infrastructure/logging/logger_service.dart';
+import 'package:clingfy/core/logging/logger_service.dart';
 import 'package:clingfy/core/models/app_models.dart';
 
 class DeviceController extends ChangeNotifier {

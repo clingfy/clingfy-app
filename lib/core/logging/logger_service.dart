@@ -2,7 +2,7 @@ import 'dart:async';
 import 'dart:io';
 
 import 'package:flutter/foundation.dart';
-import 'package:clingfy/app/infrastructure/logging/file_log_sink.dart';
+import 'package:clingfy/core/logging/file_log_sink.dart';
 
 enum LogLevel { debug, info, warning, error }
 
@@ -30,7 +30,7 @@ LogLevel? logLevelFromName(String? raw) {
 }
 
 class LogEvent {
-  final String ts; // ISO8601
+  final String ts; // ISO8601 UTC with a trailing "Z" — same base on all origins
   final String level; // "DEBUG", "INFO", "WARNING", "ERROR"
   final String origin; // "flutter" | "native"
   final String category;
@@ -58,6 +58,9 @@ class LogEvent {
     this.stack,
   });
 
+  /// Null/absent fields are omitted (not serialized as JSON null) so a line
+  /// carries only what its producer actually knew — one compact shape across
+  /// flutter/macOS/Windows origins instead of per-origin null padding.
   Map<String, dynamic> toJson() {
     return {
       'ts': ts,
@@ -65,13 +68,13 @@ class LogEvent {
       'origin': origin,
       'category': category,
       'message': message,
-      'file': file,
-      'line': line,
+      if (file != null) 'file': file,
+      if (line != null) 'line': line,
       'sessionId': sessionId,
-      'recordingId': recordingId,
-      'context': context,
-      'error': error,
-      'stack': stack,
+      if (recordingId != null) 'recordingId': recordingId,
+      if (context != null && context!.isNotEmpty) 'context': context,
+      if (error != null) 'error': error,
+      if (stack != null) 'stack': stack,
     };
   }
 
@@ -101,6 +104,16 @@ class Log {
   static String? recordingId;
   static RemoteLogSink? _remoteSink;
   static bool _initialized = false;
+
+  /// Events emitted before [init] (bootstrap: error handlers, window setup,
+  /// Sentry init). Bounded drop-oldest buffer, replayed into the sinks by
+  /// [init] so the earliest — often most valuable — lines aren't lost.
+  static const int _preInitBufferCapacity = 512;
+  static final List<LogEvent> _preInitBuffer = <LogEvent>[];
+
+  /// UTC ISO8601 with a trailing 'Z' — the single timestamp base shared with
+  /// both native producers (macOS NativeLogger / Windows NativeLogPublisher).
+  static String _nowUtcIso() => DateTime.now().toUtc().toIso8601String();
   static final bool _printToConsole =
       kDebugMode &&
       !Platform.environment.containsKey('FLUTTER_TEST') &&
@@ -145,7 +158,7 @@ class Log {
 
   static Future<void> init({RemoteLogSink? remoteSink}) async {
     if (_initialized) return;
-    _sessionId = DateTime.now().toIso8601String();
+    _sessionId = _nowUtcIso();
     _remoteSink = remoteSink;
     _minLevel = _resolveDefaultLevel();
 
@@ -153,10 +166,27 @@ class Log {
     await FileLogSink().init();
 
     _initialized = true;
+
+    // Replay anything logged before init first — buffered events carry older
+    // timestamps, so draining before the init line keeps the file sorted.
+    // Early bootstrap failures land in the file/remote sinks instead of
+    // vanishing (they were console-only).
+    _drainPreInitBuffer();
+
     i(
       'Log',
       'Logger initialized. SessionId: $_sessionId, minLevel: ${_minLevel.name}',
     );
+  }
+
+  static void _drainPreInitBuffer() {
+    if (_preInitBuffer.isEmpty) return;
+    final buffered = List<LogEvent>.of(_preInitBuffer);
+    _preInitBuffer.clear();
+    for (final event in buffered) {
+      // Already echoed to the console when first emitted.
+      _processEvent(event, echoConsole: false);
+    }
   }
 
   /// Sets the minimum emitted level at runtime (the native side is updated
@@ -232,7 +262,7 @@ class Log {
       // lowest rank — matching the native gate's fallback so both sides agree.
       final level = logLevelFromName(event.level) ?? LogLevel.debug;
       if (level.index < _minLevel.index) return;
-      _processEvent(event);
+      _dispatch(event);
     } catch (e) {
       if (kDebugMode) {
         debugPrint("Error parsing native log event: $e");
@@ -248,7 +278,7 @@ class Log {
   /// event.stack) from ever firing for native ERROR logs.
   @visibleForTesting
   static LogEvent parseNativeEvent(Map<String, dynamic> payload) {
-    final ts = payload['ts'] as String? ?? DateTime.now().toIso8601String();
+    final ts = payload['ts'] as String? ?? _nowUtcIso();
     final levelRaw = payload['level'] as String? ?? 'DEBUG';
     final category = payload['category'] as String? ?? 'Native';
     final message = payload['message'] as String? ?? '';
@@ -263,6 +293,19 @@ class Log {
       (key, value) => MapEntry(key.toString(), value),
     );
 
+    // The long-standing native convention puts the failure text in
+    // context['error'] / context['stack'] (~100 macOS call sites). Promote
+    // those to the top-level fields when the payload didn't set them, so the
+    // Sentry sink's native-ERROR exception path sees the real error text.
+    // The keys stay in context too — promotion adds, it never moves.
+    String? promoted(String key, dynamic topLevel) {
+      if (topLevel is String && topLevel.isNotEmpty) return topLevel;
+      final fromContext = contextMap?[key];
+      return fromContext is String && fromContext.isNotEmpty
+          ? fromContext
+          : null;
+    }
+
     return LogEvent(
       ts: ts,
       level: levelRaw,
@@ -274,8 +317,8 @@ class Log {
       file: file,
       line: line,
       context: contextMap,
-      error: error is String && error.isNotEmpty ? error : null,
-      stack: stack is String && stack.isNotEmpty ? stack : null,
+      error: promoted('error', error),
+      stack: promoted('stack', stack),
     );
   }
 
@@ -292,8 +335,8 @@ class Log {
     if (level.index < _minLevel.index) return;
 
     final event = LogEvent(
-      ts: DateTime.now().toIso8601String(),
-      level: level.toString().split('.').last.toUpperCase(),
+      ts: _nowUtcIso(),
+      level: level.name.toUpperCase(),
       origin: 'flutter',
       category: category,
       message: message,
@@ -304,12 +347,58 @@ class Log {
       stack: stack?.toString(),
     );
 
+    _dispatch(event);
+  }
+
+  /// Routes an event to the sinks, or to the bounded pre-init buffer when
+  /// [init] hasn't run yet (console echo still happens immediately so debug
+  /// runs see bootstrap lines live).
+  static void _dispatch(LogEvent event) {
+    if (!_initialized) {
+      if (_printToConsole) debugPrint(event.toString());
+      if (_preInitBuffer.length >= _preInitBufferCapacity) {
+        _preInitBuffer.removeAt(0);
+      }
+      _preInitBuffer.add(event);
+      return;
+    }
+
     _processEvent(event);
   }
 
-  static void _processEvent(LogEvent event) {
+  /// Test-only: number of events waiting for [init].
+  @visibleForTesting
+  static int get preInitBufferLengthForTest => _preInitBuffer.length;
+
+  /// Test-only: mark the logger initialized without running [init], so tests
+  /// that drive the sinks directly bypass the pre-init buffer.
+  @visibleForTesting
+  static void markInitializedForTest() {
+    _initialized = true;
+  }
+
+  /// Test-only: run [init]'s buffer replay without the real [init] (which
+  /// would re-target the file sink through path_provider).
+  @visibleForTesting
+  static void drainPreInitBufferForTest() {
+    _initialized = true;
+    _drainPreInitBuffer();
+  }
+
+  /// Test-only: tear down all static state between tests.
+  @visibleForTesting
+  static void resetForTest() {
+    _initialized = false;
+    _sessionId = null;
+    _remoteSink = null;
+    recordingId = null;
+    _preInitBuffer.clear();
+    _minLevel = _resolveDefaultLevel();
+  }
+
+  static void _processEvent(LogEvent event, {bool echoConsole = true}) {
     // 1. Console
-    if (_printToConsole) {
+    if (echoConsole && _printToConsole) {
       // Use debugPrint to avoid truncating lengthy logs on Android
       debugPrint(event.toString());
     }

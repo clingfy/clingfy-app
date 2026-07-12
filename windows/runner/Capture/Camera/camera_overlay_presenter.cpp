@@ -6,6 +6,7 @@
 #include <iterator>
 
 #include "Bridge/Devices/device_probe_log.h"
+#include "Bridge/native_log_publisher.h"
 #include "Capture/Camera/camera_dcomp_overlay.h"
 #include "Capture/Camera/camera_floating_overlay.h"
 
@@ -90,15 +91,19 @@ std::shared_ptr<ICameraOverlayPresenter> StartCameraOverlayPresenter(
     return presenter;
   }
   presenter->Stop();
+  // The ladder's degradation steps log at WARN — they must be visible in
+  // release logs/Sentry (a fleet-wide DComp regression or a bubble-less
+  // recording is a support case, not verbose tracing).
   if (!is_dcomp) {
-    clingfy::bridge::devices::LogDeviceProbe(
-        "CameraOverlayPresenter: gdi presenter failed to start — no floating "
-        "bubble");
+    clingfy::bridge::NativeLogPublisher::Instance().Warn(
+        "Camera",
+        "gdi presenter failed to start — no floating bubble");
     return nullptr;  // GDI already failed — nothing further to try.
   }
-  clingfy::bridge::devices::LogDeviceProbe(
-      "CameraOverlayPresenter: dcomp failed (start, capture exclusion, or "
-      "render self-check); falling back to gdi");
+  clingfy::bridge::NativeLogPublisher::Instance().Warn(
+      "Camera",
+      "dcomp presenter failed (start, capture exclusion, or render "
+      "self-check); falling back to gdi");
   presenter = std::make_shared<CameraFloatingOverlay>();
   if (presenter->Start(placement)) {
     clingfy::bridge::devices::LogDeviceProbe(
@@ -106,9 +111,9 @@ std::shared_ptr<ICameraOverlayPresenter> StartCameraOverlayPresenter(
     return presenter;
   }
   presenter->Stop();
-  clingfy::bridge::devices::LogDeviceProbe(
-      "CameraOverlayPresenter: gdi fallback failed to start — no floating "
-      "bubble");
+  clingfy::bridge::NativeLogPublisher::Instance().Warn(
+      "Camera",
+      "gdi fallback failed to start — no floating bubble");
   return nullptr;
 }
 

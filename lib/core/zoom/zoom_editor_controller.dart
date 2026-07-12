@@ -9,7 +9,7 @@ import 'package:clingfy/core/zoom/zoom_segment_merge.dart';
 import 'package:clingfy/core/timeline/timeline_timebase.dart';
 import 'package:clingfy/core/timeline/edit_command.dart';
 import 'package:clingfy/core/timeline/edit_session.dart';
-import 'package:clingfy/app/infrastructure/logging/logger_service.dart';
+import 'package:clingfy/core/logging/logger_service.dart';
 import 'package:uuid/uuid.dart';
 
 abstract class ZoomEditCommand implements EditCommand {

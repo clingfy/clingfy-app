@@ -1,7 +1,7 @@
 import 'dart:convert';
 
 import 'package:clingfy/app/home/models/home_ui_prefs.dart';
-import 'package:clingfy/app/infrastructure/logging/logger_service.dart';
+import 'package:clingfy/core/logging/logger_service.dart';
 import 'package:clingfy/core/models/app_models.dart';
 import 'package:clingfy/ui/platform/widgets/desktop_pane_layout.dart';
 import 'package:shared_preferences/shared_preferences.dart';

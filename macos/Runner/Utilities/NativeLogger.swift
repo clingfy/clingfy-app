@@ -13,6 +13,33 @@ class NativeLogger {
   /// via [setMinLevel] so the Settings "verbose logging" toggle reaches native.
   static var minLevelRank: Int = resolveDefaultRank()
 
+  /// Lines emitted before Dart confirmed its 'log' handler is installed,
+  /// oldest first. Main-queue confined (all mutation happens in main-queue
+  /// closures). Bounded drop-oldest so an engine that never attaches can't
+  /// grow it unbounded. Drained by [flushPending] (the
+  /// `flushPendingNativeLogs` bridge call) — mirrors the Windows
+  /// NativeLogPublisher pending buffer.
+  private static var pending: [[String: Any]] = []
+  static let maxPending = 512
+
+  /// True once Dart's flushPendingNativeLogs handshake ran. The channel is
+  /// configured in awakeFromNib — long before Dart main executes — and
+  /// Flutter's ChannelBuffers holds only ONE undelivered platform→Dart
+  /// message per channel, so invoking before the Dart handler exists silently
+  /// drops all but the newest line. Buffer until the handshake proves the
+  /// handler is there. Main-queue confined.
+  private static var dartReady = false
+
+  /// UTC ISO8601 with fractional seconds and a trailing 'Z' — the shared
+  /// cross-platform timestamp base (Dart Log and Windows NativeLogPublisher
+  /// emit the same shape). Cached: ISO8601DateFormatter is thread-safe and
+  /// allocating one per line was pure waste.
+  static let isoFormatter: ISO8601DateFormatter = {
+    let formatter = ISO8601DateFormatter()
+    formatter.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
+    return formatter
+  }()
+
   static func configure(with channel: FlutterMethodChannel) {
     self.channel = channel
   }
@@ -65,51 +92,57 @@ class NativeLogger {
   }
 
   static func d(
-    _ category: String, _ message: String, context: [String: Any]? = nil, file: String = #file,
-    line: Int = #line
+    _ category: String, _ message: String, context: [String: Any]? = nil,
+    error: String? = nil, stack: String? = nil,
+    file: String = #file, line: Int = #line
   ) {
     send(
-      level: "DEBUG", category: category, message: message, context: context, file: file, line: line
-    )
+      level: "DEBUG", category: category, message: message, context: context,
+      error: error, stack: stack, file: file, line: line)
   }
 
   static func i(
-    _ category: String, _ message: String, context: [String: Any]? = nil, file: String = #file,
-    line: Int = #line
+    _ category: String, _ message: String, context: [String: Any]? = nil,
+    error: String? = nil, stack: String? = nil,
+    file: String = #file, line: Int = #line
   ) {
     send(
-      level: "INFO", category: category, message: message, context: context, file: file, line: line)
+      level: "INFO", category: category, message: message, context: context,
+      error: error, stack: stack, file: file, line: line)
   }
 
   static func w(
-    _ category: String, _ message: String, context: [String: Any]? = nil, file: String = #file,
-    line: Int = #line
+    _ category: String, _ message: String, context: [String: Any]? = nil,
+    error: String? = nil, stack: String? = nil,
+    file: String = #file, line: Int = #line
   ) {
     send(
-      level: "WARNING", category: category, message: message, context: context, file: file,
-      line: line)
+      level: "WARNING", category: category, message: message, context: context,
+      error: error, stack: stack, file: file, line: line)
   }
 
   static func e(
-    _ category: String, _ message: String, context: [String: Any]? = nil, file: String = #file,
-    line: Int = #line
+    _ category: String, _ message: String, context: [String: Any]? = nil,
+    error: String? = nil, stack: String? = nil,
+    file: String = #file, line: Int = #line
   ) {
     send(
-      level: "ERROR", category: category, message: message, context: context, file: file, line: line
-    )
+      level: "ERROR", category: category, message: message, context: context,
+      error: error, stack: stack, file: file, line: line)
   }
 
-  private static func send(
-    level: String, category: String, message: String, context: [String: Any]?, file: String,
-    line: Int
-  ) {
-    // Drop below-threshold logs at the source so they never cross the channel.
-    guard shouldSend(level: level) else { return }
-
+  /// Pure payload builder — the shape contract with Dart's `Log.nativeEvent`
+  /// parser (keys: ts/level/category/message/file/line/context, plus
+  /// error/stack only when set). Exposed for tests; keep in sync with the
+  /// Windows `NativeLogPublisher::BuildPayload`.
+  static func buildPayload(
+    level: String, category: String, message: String, context: [String: Any]?,
+    error: String? = nil, stack: String? = nil,
+    file: String = #file, line: Int = #line
+  ) -> [String: Any] {
     let filename = (file as NSString).lastPathComponent
-
-    let payload: [String: Any] = [
-      "ts": ISO8601DateFormatter().string(from: Date()),
+    var payload: [String: Any] = [
+      "ts": isoFormatter.string(from: Date()),
       "level": level,
       "category": category,
       "message": message,
@@ -117,12 +150,70 @@ class NativeLogger {
       "line": line,
       "context": context ?? [:],
     ]
+    if let error = error, !error.isEmpty {
+      payload["error"] = error
+    }
+    if let stack = stack, !stack.isEmpty {
+      payload["stack"] = stack
+    }
+    return payload
+  }
 
-    // Always NSLog for Xcode visibility
-    // NSLog("[\(category)] [\(level)] \(message)")
+  /// The Dart-ready handshake: marks direct invoking as safe (the handshake
+  /// itself arrived over the channel, so Dart's 'log' handler is provably
+  /// installed) and drains the pending buffer, oldest first. Dispatched to
+  /// the main queue so lines queued by in-flight sends keep their order.
+  /// Buffer retained while no channel is attached.
+  static func flushPending() {
+    DispatchQueue.main.async {
+      dartReady = true
+      guard let channel = channel, !pending.isEmpty else { return }
+      let drained = pending
+      pending = []
+      for payload in drained {
+        channel.invokeMethod("log", arguments: payload)
+      }
+    }
+  }
+
+  /// Test-only: number of buffered lines (read on the main queue).
+  static var pendingCountForTest: Int { pending.count }
+
+  /// Test-only: whether the Dart-ready handshake ran.
+  static var dartReadyForTest: Bool { dartReady }
+
+  /// Test-only: clear channel + buffer + handshake so static state can't leak.
+  static func resetForTest() {
+    channel = nil
+    pending = []
+    dartReady = false
+  }
+
+  private static func send(
+    level: String, category: String, message: String, context: [String: Any]?,
+    error: String?, stack: String?, file: String, line: Int
+  ) {
+    // Drop below-threshold logs at the source so they never cross the channel.
+    guard shouldSend(level: level) else { return }
+
+    // Stamp the timestamp at emit time (not delivery time) so buffering can't
+    // skew the log order story.
+    let payload = buildPayload(
+      level: level, category: category, message: message, context: context,
+      error: error, stack: stack, file: file, line: line)
 
     DispatchQueue.main.async {
-      channel?.invokeMethod("log", arguments: payload)
+      guard dartReady, let channel = channel else {
+        // Dart's handler isn't confirmed yet (startup) or the channel is
+        // gone (teardown): hold the line for the flushPendingNativeLogs
+        // drain instead of dropping it.
+        if pending.count >= maxPending {
+          pending.removeFirst()
+        }
+        pending.append(payload)
+        return
+      }
+      channel.invokeMethod("log", arguments: payload)
     }
   }
 }

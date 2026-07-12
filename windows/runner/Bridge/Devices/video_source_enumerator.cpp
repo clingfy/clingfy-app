@@ -14,10 +14,11 @@
 #include <thread>
 
 // Phase 10.1: the duplicated private LogDeviceProbe copy is gone — both
-// enumerators now share Bridge/Devices/device_probe_log.h, which also owns
-// the %LOCALAPPDATA% relocation. (The old duplication hid a path change
-// exactly like this one.)
+// enumerators share Bridge/Devices/device_probe_log.h (DEBUG breadcrumbs
+// into the unified log pipeline). Hard failures log at WARN via the
+// publisher directly.
 #include "Bridge/Devices/device_probe_log.h"
+#include "Bridge/native_log_publisher.h"
 
 namespace clingfy::bridge::devices {
 
@@ -98,15 +99,21 @@ std::string ReadStringAttribute(IMFActivate& activate, REFGUID key) {
 // The actual Media Foundation enumeration. MUST run on an MTA thread (see
 // EnumerateVideoInputs). Appends discovered cameras to `sources`.
 void EnumerateVideoInputsMf(std::vector<VideoSourceRecord>& sources) {
+  // Hard MF failures below log at WARN: they empty the camera dropdown, so
+  // the failing hr must reach release logs/Sentry without the verbose toggle.
+  // (The zero-devices SUCCESS case further down stays a debug probe — it is
+  // an expected cold-start/privacy outcome, not an error.)
   ScopedCom<IMFAttributes> config;
   if (FAILED(::MFCreateAttributes(config.ReleaseAndGetAddressOf(), 1)) ||
       !config) {
-    LogDeviceProbe("EnumerateVideoInputs: MFCreateAttributes failed");
+    NativeLogPublisher::Instance().Warn(
+        "DeviceProbe", "EnumerateVideoInputs: MFCreateAttributes failed");
     return;
   }
   if (FAILED(config->SetGUID(MF_DEVSOURCE_ATTRIBUTE_SOURCE_TYPE,
                              MF_DEVSOURCE_ATTRIBUTE_SOURCE_TYPE_VIDCAP_GUID))) {
-    LogDeviceProbe("EnumerateVideoInputs: SetGUID(VIDCAP) failed");
+    NativeLogPublisher::Instance().Warn(
+        "DeviceProbe", "EnumerateVideoInputs: SetGUID(VIDCAP) failed");
     return;
   }
 
@@ -119,7 +126,7 @@ void EnumerateVideoInputsMf(std::vector<VideoSourceRecord>& sources) {
     std::snprintf(buf, sizeof(buf),
                   "EnumerateVideoInputs: MFEnumDeviceSources FAILED hr=0x%08X",
                   static_cast<unsigned>(hr));
-    LogDeviceProbe(buf);
+    NativeLogPublisher::Instance().Warn("DeviceProbe", buf);
     return;
   }
   if (raw_devices == nullptr || count == 0) {

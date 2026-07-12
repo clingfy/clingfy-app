@@ -6,12 +6,13 @@ import 'package:archive/archive.dart';
 /// Phase 10.1: one-click diagnostics package.
 ///
 /// Bundles everything a support ticket needs into a single zip: the Dart
-/// JSONL logs, the native logs (`%LOCALAPPDATA%\Clingfy\Logs`, incl.
-/// `device_probe.log`), live capture diagnostics, permission status, the
-/// device inventory, app version/build info, a count of recording files
-/// stranded in the temp folder, and the most recent project manifest
-/// (sanitized). Every section is best-effort: a missing file or a failing
-/// collector is skipped and recorded in the zip's own
+/// JSONL logs (the unified log file — native device-probe/preview lines land
+/// there too, see docs/logging.md), the stress-harness artifacts from
+/// `%LOCALAPPDATA%\Clingfy\Logs`, live capture diagnostics, permission
+/// status, the device inventory, app version/build info, a count of
+/// recording files stranded in the temp folder, and the most recent project
+/// manifest (sanitized). Every section is best-effort: a missing file or a
+/// failing collector is skipped and recorded in the zip's own
 /// `package_manifest.json`, never thrown.
 class DiagnosticsPackageService {
   DiagnosticsPackageService({
@@ -50,11 +51,11 @@ class DiagnosticsPackageService {
   /// Per-file cap — only the newest bytes of an oversized log travel.
   static const int maxLogFileBytes = 2 * 1024 * 1024;
 
-  static const List<String> nativeLogFileNames = [
-    'device_probe.log',
-    'stage2a_2_native.log',
-    'phase5_cycles.log',
-  ];
+  /// Only the stress-harness measurement artifact survives here — the old
+  /// `device_probe.log` / `stage2a_2_native.log` side files are retired
+  /// (their lines flow through the unified JSONL log now), and bundling
+  /// them would ship stale pre-upgrade content that misleads support.
+  static const List<String> nativeLogFileNames = ['phase5_cycles.log'];
 
   /// Redact values whose key suggests a filesystem path or a device
   /// identifier. Device ids embed user-identifying hardware strings and

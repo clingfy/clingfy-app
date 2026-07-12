@@ -891,6 +891,12 @@ class MainFlutterWindow: NSWindow {
         }
         result(nil)
 
+      case "flushPendingNativeLogs":
+        // Dart's 'log' handler is installed — drain the lines buffered
+        // before the channel/handler existed into the unified pipeline.
+        NativeLogger.flushPending()
+        result(nil)
+
       case "showPreRecordingBar":
         self.explicitlyShowPreRecordingBar()
         result(nil)

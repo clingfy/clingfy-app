@@ -95,6 +95,7 @@ const std::vector<std::string>& BridgeContractMethods() {
 
       // Diagnostics.
       "setNativeLogLevel",
+      "flushPendingNativeLogs",
 
       // Preview / player / zoom.
       "previewOpen",

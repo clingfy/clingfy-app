@@ -1,7 +1,7 @@
 import 'dart:io';
 
-import 'package:clingfy/app/infrastructure/logging/file_log_sink.dart';
-import 'package:clingfy/app/infrastructure/logging/logger_service.dart';
+import 'package:clingfy/core/logging/file_log_sink.dart';
+import 'package:clingfy/core/logging/logger_service.dart';
 import 'package:flutter_test/flutter_test.dart';
 
 /// Pins the observable effect of the log-level gate: a sub-threshold log must
@@ -17,12 +17,14 @@ void main() {
     tmp = await Directory.systemTemp.createTemp('log_emit_gate');
     FileLogSink().resetForTest();
     await FileLogSink().initForTest(logsDir: tmp);
+    // These tests drive the sink directly without Log.init — skip the
+    // pre-init buffer so emits land in the file immediately.
+    Log.markInitializedForTest();
   });
 
   tearDown(() async {
     FileLogSink().resetForTest();
-    // Restore the build default so the shared static doesn't leak.
-    Log.setMinLevel(LogLevel.debug);
+    Log.resetForTest();
     if (tmp.existsSync()) await tmp.delete(recursive: true);
   });
 
