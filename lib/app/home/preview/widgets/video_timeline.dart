@@ -7,9 +7,9 @@ import 'package:clingfy/app/home/preview/widgets/timeline/timeline_header_bar.da
 import 'package:clingfy/app/home/preview/widgets/timeline/timeline_transport_bar.dart';
 import 'package:clingfy/app/home/preview/widgets/timeline/timeline_viewport_controller.dart';
 import 'package:clingfy/app/home/recording/recording_controller.dart';
-import 'package:clingfy/app/infrastructure/logging/logger_service.dart';
 import 'package:clingfy/core/bridges/native_bridge.dart';
 import 'package:clingfy/core/clips/clip_editor_controller.dart';
+import 'package:clingfy/core/logging/logger_service.dart';
 import 'package:clingfy/core/models/app_models.dart';
 import 'package:clingfy/core/preview/player_controller.dart';
 import 'package:clingfy/core/zoom/zoom_editor_controller.dart';

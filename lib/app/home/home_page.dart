@@ -17,7 +17,7 @@ import 'package:clingfy/app/home/home_scope.dart';
 import 'package:clingfy/app/home/home_shell.dart';
 import 'package:clingfy/app/home/home_ui_state.dart';
 import 'package:clingfy/app/home/widgets/home_loading_view.dart';
-import 'package:clingfy/app/infrastructure/logging/logger_service.dart';
+import 'package:clingfy/core/logging/logger_service.dart';
 import 'package:clingfy/app/infrastructure/native/native_strings_bridge.dart';
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';

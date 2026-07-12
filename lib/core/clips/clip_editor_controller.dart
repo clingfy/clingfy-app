@@ -4,6 +4,7 @@ import 'package:flutter/foundation.dart';
 
 import 'package:clingfy/core/bridges/native_bridge.dart';
 import 'package:clingfy/core/clips/clip_state_store.dart';
+import 'package:clingfy/core/logging/logger_service.dart';
 import 'package:clingfy/core/timeline/clip_operations.dart';
 import 'package:clingfy/core/timeline/clip_timeline.dart';
 import 'package:clingfy/core/timeline/commands/set_clips_command.dart';
@@ -271,7 +272,7 @@ class ClipEditorController extends ChangeNotifier {
       await _nativeBridge.previewSetClips(clips: _clips, sessionId: _sessionId);
     } catch (e, st) {
       // Preview-only path: a failed push must not break editing.
-      debugPrint('ClipEditorController: previewSetClips failed: $e\n$st');
+      Log.w('Clips', 'previewSetClips push failed', e, st);
     }
   }
 

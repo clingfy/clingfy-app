@@ -2,7 +2,7 @@
 
 #include <utility>
 
-#include "Bridge/Devices/device_probe_log.h"
+#include "Bridge/native_log_publisher.h"
 #include "Capture/Camera/camera_floating_overlay.h"
 
 namespace clingfy::capture {
@@ -52,19 +52,21 @@ void CameraOverlayHost::MaybeFallbackLocked() {
 
   std::shared_ptr<ICameraOverlayPresenter> gdi =
       gdi_factory_ ? gdi_factory_(placement_) : StartGdiPresenter(placement_);
+  // Mid-recording degradations log at WARN — release logs/Sentry must show
+  // why the bubble changed (or vanished) without the verbose toggle.
   if (gdi == nullptr) {
     // Safe mode could not start either — no floating bubble (matches the
     // startup ladder's "WDA failed on both" outcome). Drop the inner presenter.
     inner_.reset();
-    clingfy::bridge::devices::LogDeviceProbe(
-        "CameraOverlayHost: DComp parked on device loss and the GDI fallback "
-        "could not start — no floating bubble");
+    clingfy::bridge::NativeLogPublisher::Instance().Warn(
+        "Camera",
+        "DComp parked on device loss and the GDI fallback could not start — "
+        "no floating bubble");
     return;
   }
   inner_ = std::move(gdi);
-  clingfy::bridge::devices::LogDeviceProbe(
-      "CameraOverlayHost: DComp parked on device loss — swapped to the GDI "
-      "presenter");
+  clingfy::bridge::NativeLogPublisher::Instance().Warn(
+      "Camera", "DComp parked on device loss — swapped to the GDI presenter");
   // Never show a bubble whose capture-exclusion failed (would burn into the
   // recording); honor the last Show/Hide intent otherwise.
   if (was_showing && inner_->wda_excluded()) {

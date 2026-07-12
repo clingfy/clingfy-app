@@ -1,7 +1,7 @@
 import 'dart:io';
 
-import 'package:clingfy/app/infrastructure/logging/file_log_sink.dart';
-import 'package:clingfy/app/infrastructure/logging/logger_service.dart';
+import 'package:clingfy/core/logging/file_log_sink.dart';
+import 'package:clingfy/core/logging/logger_service.dart';
 import 'package:flutter_test/flutter_test.dart';
 
 void main() {

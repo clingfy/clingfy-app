@@ -1,7 +1,7 @@
 import 'package:flutter/widgets.dart';
 import 'package:clingfy/l10n/app_localizations.dart';
 import 'package:clingfy/core/bridges/native_ui_string_keys.dart';
-import 'package:clingfy/app/infrastructure/logging/logger_service.dart';
+import 'package:clingfy/core/logging/logger_service.dart';
 import 'package:clingfy/core/bridges/native_bridge.dart';
 
 /// Bridge for providing localized strings to native code.

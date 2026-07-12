@@ -1,4 +1,4 @@
-import 'package:clingfy/app/infrastructure/logging/logger_service.dart';
+import 'package:clingfy/core/logging/logger_service.dart';
 import 'package:flutter_test/flutter_test.dart';
 
 /// Phase 10.4: native log payloads thread `error`, `stack`, and `context`

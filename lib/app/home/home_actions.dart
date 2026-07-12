@@ -22,7 +22,7 @@ import 'package:clingfy/ui/platform/widgets/desktop_pane_layout.dart';
 import 'package:clingfy/app/permissions/widgets/start_recording_permission_dialog.dart';
 import 'package:clingfy/app/permissions/widgets/start_recording_storage_dialog.dart';
 import 'package:clingfy/l10n/app_localizations.dart';
-import 'package:clingfy/app/infrastructure/logging/logger_service.dart';
+import 'package:clingfy/core/logging/logger_service.dart';
 import 'package:clingfy/core/models/app_models.dart';
 import 'package:clingfy/core/bridges/native_bridge.dart';
 import 'package:clingfy/app/infrastructure/observability/telemetry_service.dart';

@@ -10,6 +10,7 @@
 #include <string>
 
 #include "Bridge/Devices/device_probe_log.h"
+#include "Bridge/native_log_publisher.h"
 
 namespace clingfy::bridge::devices {
 
@@ -148,7 +149,9 @@ std::vector<AudioSourceRecord> EnumerateAudioInputs() {
                   "EnumerateAudioInputs: CoCreateInstance(MMDeviceEnumerator) "
                   "failed hr=0x%08X — no mics enumerable",
                   hr);
-    LogDeviceProbe(buf);
+    // WARN: a hard COM failure empties the mic dropdown — the hr must be
+    // visible in release logs/Sentry, not just under the verbose toggle.
+    NativeLogPublisher::Instance().Warn("DeviceProbe", buf);
     return sources;
   }
 
@@ -195,14 +198,16 @@ std::vector<AudioSourceRecord> EnumerateAudioInputs() {
                     "EnumerateAudioInputs: EnumAudioEndpoints(eCapture, "
                     "ACTIVE|UNPLUGGED) failed hr=0x%08X",
                     hr);
-      LogDeviceProbe(buf);
+      // WARN: both passes failed — the mic dropdown will be empty.
+      NativeLogPublisher::Instance().Warn("DeviceProbe", buf);
       return sources;
     }
   }
 
   count = 0;
   if (FAILED(collection->GetCount(&count))) {
-    LogDeviceProbe(
+    NativeLogPublisher::Instance().Warn(
+        "DeviceProbe",
         "EnumerateAudioInputs: collection->GetCount failed — returning empty");
     return sources;
   }
