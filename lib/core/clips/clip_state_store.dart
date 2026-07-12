@@ -3,6 +3,7 @@ import 'dart:io';
 
 import 'package:flutter/foundation.dart';
 
+import 'package:clingfy/core/logging/logger_service.dart';
 import 'package:clingfy/core/timeline/model/edit_track.dart';
 
 /// Persisted per-recording clip edits (split / cut / trim / reorder).
@@ -55,10 +56,8 @@ class ClipPersistState {
 }
 
 /// Reads/writes [ClipPersistState] as `clips_state.json` inside a recording
-/// project bundle. All I/O is best-effort: a failure is logged via
-/// [debugPrint] and swallowed — persistence must never break editing or
-/// playback. ([debugPrint] rather than the app logger keeps this file inside
-/// the `lib/core` layer.)
+/// project bundle. All I/O is best-effort: a failure is logged and swallowed —
+/// persistence must never break editing or playback.
 abstract final class ClipStateStore {
   static const String _fileName = 'clips_state.json';
 
@@ -70,7 +69,7 @@ abstract final class ClipStateStore {
       const encoder = JsonEncoder.withIndent('  ');
       await _file(projectPath).writeAsString(encoder.convert(state.toJson()));
     } catch (e, st) {
-      debugPrint('ClipStateStore: failed to persist clips: $e\n$st');
+      Log.w('Clips', 'failed to persist clips_state.json', e, st);
     }
   }
 
@@ -84,7 +83,7 @@ abstract final class ClipStateStore {
       if (decoded is! Map) return null;
       return ClipPersistState.fromJson(decoded.cast<String, dynamic>());
     } catch (e, st) {
-      debugPrint('ClipStateStore: failed to read clips: $e\n$st');
+      Log.w('Clips', 'failed to read clips_state.json', e, st);
       return null;
     }
   }

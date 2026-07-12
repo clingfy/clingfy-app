@@ -2,7 +2,7 @@ import 'dart:developer' as developer;
 import 'dart:ui';
 
 import 'package:clingfy/app/infrastructure/error/error_widget_builder.dart';
-import 'package:clingfy/app/infrastructure/logging/logger_service.dart';
+import 'package:clingfy/core/logging/logger_service.dart';
 import 'package:flutter/material.dart';
 
 class GlobalErrorHandlers {

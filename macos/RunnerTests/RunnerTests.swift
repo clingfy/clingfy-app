@@ -8766,7 +8766,16 @@ final class NativeLoggerTests: XCTestCase {
     // Restore the build default (DEBUG test build → debug) so the shared
     // static threshold doesn't leak into other test classes.
     NativeLogger.setMinLevel("debug")
+    NativeLogger.resetForTest()
     super.tearDown()
+  }
+
+  /// Pumps the main queue so main-async work queued by NativeLogger.send /
+  /// flushPending executes before assertions.
+  private func drainMainQueue() {
+    let drained = expectation(description: "main queue drained")
+    DispatchQueue.main.async { drained.fulfill() }
+    wait(for: [drained], timeout: 2.0)
   }
 
   func testInfoThresholdGatesDebug() {
@@ -8813,6 +8822,89 @@ final class NativeLoggerTests: XCTestCase {
     XCTAssertFalse(NativeLogger.shouldSend(level: "BOGUS"))
     NativeLogger.setMinLevel("debug")
     XCTAssertTrue(NativeLogger.shouldSend(level: "BOGUS"))
+  }
+
+  // MARK: unified payload contract (keep in sync with Windows
+  // native_log_publisher_test.cpp and Dart logger_format_contract_test.dart)
+
+  func testBuildPayloadMatchesDartParserContract() {
+    let payload = NativeLogger.buildPayload(
+      level: "ERROR", category: "Capture", message: "stream stopped",
+      context: ["code": "SCK_STOPPED"])
+
+    XCTAssertEqual(payload["level"] as? String, "ERROR")
+    XCTAssertEqual(payload["category"] as? String, "Capture")
+    XCTAssertEqual(payload["message"] as? String, "stream stopped")
+    XCTAssertEqual(payload["file"] as? String, "RunnerTests.swift")
+    XCTAssertNotNil(payload["line"] as? Int)
+    XCTAssertEqual((payload["context"] as? [String: Any])?["code"] as? String, "SCK_STOPPED")
+    // Optional keys stay absent when not provided — no null padding in JSONL.
+    XCTAssertNil(payload["error"])
+    XCTAssertNil(payload["stack"])
+
+    // The unified cross-platform ts: UTC ISO8601 with fractional seconds and
+    // a trailing 'Z' (same clock base as Dart Log / Windows publisher).
+    let ts = payload["ts"] as? String ?? ""
+    let pattern = #"^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d+Z$"#
+    XCTAssertNotNil(
+      ts.range(of: pattern, options: .regularExpression),
+      "unexpected ts shape: \(ts)")
+  }
+
+  func testBuildPayloadCarriesErrorAndStack() {
+    let payload = NativeLogger.buildPayload(
+      level: "ERROR", category: "Capture", message: "stream stopped",
+      context: nil, error: "device disconnected", stack: "frame0\nframe1")
+
+    XCTAssertEqual(payload["error"] as? String, "device disconnected")
+    XCTAssertEqual(payload["stack"] as? String, "frame0\nframe1")
+    // Empty strings are treated as absent, matching the Dart parser.
+    let empty = NativeLogger.buildPayload(
+      level: "ERROR", category: "Capture", message: "m",
+      context: nil, error: "", stack: "")
+    XCTAssertNil(empty["error"])
+    XCTAssertNil(empty["stack"])
+  }
+
+  // MARK: pre-channel pending buffer (mirrors Windows NativeLogPublisher)
+
+  func testEmitWithoutChannelBuffersInsteadOfDropping() {
+    NativeLogger.resetForTest()
+    NativeLogger.setMinLevel("debug")
+
+    NativeLogger.d("Test", "no channel attached")
+    NativeLogger.e("Test", "no channel attached")
+    drainMainQueue()
+
+    XCTAssertEqual(NativeLogger.pendingCountForTest, 2)
+
+    // flushPending with no channel keeps the buffer — a later flush after
+    // the channel attaches must still deliver these lines.
+    NativeLogger.flushPending()
+    drainMainQueue()
+    XCTAssertEqual(NativeLogger.pendingCountForTest, 2)
+  }
+
+  func testPendingBufferIsBoundedDropOldest() {
+    NativeLogger.resetForTest()
+    NativeLogger.setMinLevel("debug")
+
+    for i in 0..<(NativeLogger.maxPending + 40) {
+      NativeLogger.i("Test", "line \(i)")
+    }
+    drainMainQueue()
+
+    XCTAssertEqual(NativeLogger.pendingCountForTest, NativeLogger.maxPending)
+  }
+
+  func testBelowThresholdEmitsAreNotBuffered() {
+    NativeLogger.resetForTest()
+    NativeLogger.setMinLevel("info")
+
+    NativeLogger.d("Test", "verbose line while threshold is info")
+    drainMainQueue()
+
+    XCTAssertEqual(NativeLogger.pendingCountForTest, 0)
   }
 }
 

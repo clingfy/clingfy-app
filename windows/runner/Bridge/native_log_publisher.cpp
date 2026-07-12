@@ -1,10 +1,13 @@
 #include "Bridge/native_log_publisher.h"
 
 #include <cctype>
+#include <chrono>
 #include <cstdio>
 #include <cstdlib>
 #include <ctime>
 #include <memory>
+#include <utility>
+#include <vector>
 
 #include "Bridge/platform_thread_dispatcher.h"
 
@@ -60,18 +63,27 @@ int ResolveDefaultRank() {
 #endif
 }
 
+// UTC ISO8601 with millisecond precision and a trailing 'Z' — the shared
+// cross-platform timestamp base (Dart Log and macOS NativeLogger emit the
+// same shape), so one JSONL file sorts on one clock.
 std::string NowUtcIso8601() {
-  std::time_t now = std::time(nullptr);
+  const auto now = std::chrono::system_clock::now();
+  const std::time_t seconds = std::chrono::system_clock::to_time_t(now);
+  const auto ms = std::chrono::duration_cast<std::chrono::milliseconds>(
+                      now.time_since_epoch())
+                      .count() %
+                  1000;
   std::tm tm_utc{};
 #if defined(_MSC_VER)
-  ::gmtime_s(&tm_utc, &now);
+  ::gmtime_s(&tm_utc, &seconds);
 #else
-  tm_utc = *std::gmtime(&now);
+  tm_utc = *std::gmtime(&seconds);
 #endif
-  char buf[32];
-  std::snprintf(buf, sizeof(buf), "%04d-%02d-%02dT%02d:%02d:%02dZ",
+  char buf[40];
+  std::snprintf(buf, sizeof(buf), "%04d-%02d-%02dT%02d:%02d:%02d.%03dZ",
                 tm_utc.tm_year + 1900, tm_utc.tm_mon + 1, tm_utc.tm_mday,
-                tm_utc.tm_hour, tm_utc.tm_min, tm_utc.tm_sec);
+                tm_utc.tm_hour, tm_utc.tm_min, tm_utc.tm_sec,
+                static_cast<int>(ms));
   return buf;
 }
 
@@ -97,13 +109,15 @@ void NativeLogPublisher::ClearChannel() {
 }
 
 void NativeLogPublisher::Debug(const std::string& category,
-                              const std::string& message) {
-  Emit("DEBUG", category, message);
+                               const std::string& message,
+                               flutter::EncodableMap context) {
+  Emit("DEBUG", category, message, std::move(context));
 }
 
 void NativeLogPublisher::Info(const std::string& category,
-                              const std::string& message) {
-  Emit("INFO", category, message);
+                              const std::string& message,
+                              flutter::EncodableMap context) {
+  Emit("INFO", category, message, std::move(context));
 }
 
 void NativeLogPublisher::SetMinLevel(const std::string& level_name) {
@@ -118,46 +132,107 @@ bool NativeLogPublisher::ShouldSend(const std::string& emitted_level) const {
 }
 
 void NativeLogPublisher::Warn(const std::string& category,
-                              const std::string& message) {
-  Emit("WARNING", category, message);
+                              const std::string& message,
+                              flutter::EncodableMap context) {
+  Emit("WARNING", category, message, std::move(context));
 }
 
 void NativeLogPublisher::Error(const std::string& category,
-                               const std::string& message) {
-  Emit("ERROR", category, message);
+                               const std::string& message,
+                               flutter::EncodableMap context,
+                               const std::string& error_text,
+                               const std::string& stack) {
+  Emit("ERROR", category, message, std::move(context), error_text, stack);
 }
 
 flutter::EncodableMap NativeLogPublisher::BuildPayload(
     const std::string& level, const std::string& category,
-    const std::string& message, const std::string& ts_iso8601) {
-  return flutter::EncodableMap{
+    const std::string& message, const std::string& ts_iso8601,
+    flutter::EncodableMap context, const std::string& error_text,
+    const std::string& stack) {
+  flutter::EncodableMap payload{
       {flutter::EncodableValue("ts"), flutter::EncodableValue(ts_iso8601)},
       {flutter::EncodableValue("level"), flutter::EncodableValue(level)},
       {flutter::EncodableValue("category"),
        flutter::EncodableValue(category)},
       {flutter::EncodableValue("message"), flutter::EncodableValue(message)},
       {flutter::EncodableValue("context"),
-       flutter::EncodableValue(flutter::EncodableMap{})},
+       flutter::EncodableValue(std::move(context))},
   };
+  // Optional keys travel only when set — Dart's parser nulls empty strings
+  // anyway, and the JSONL line stays free of null padding.
+  if (!error_text.empty()) {
+    payload[flutter::EncodableValue("error")] =
+        flutter::EncodableValue(error_text);
+  }
+  if (!stack.empty()) {
+    payload[flutter::EncodableValue("stack")] = flutter::EncodableValue(stack);
+  }
+  return payload;
 }
 
 void NativeLogPublisher::Emit(const char* level, const std::string& category,
-                              const std::string& message) {
+                              const std::string& message,
+                              flutter::EncodableMap context,
+                              const std::string& error_text,
+                              const std::string& stack) {
   // Drop below-threshold logs at the SOURCE so they never cross the channel or
   // reach release users' logs/Sentry (mirrors macOS NativeLogger.send).
   if (!ShouldSend(level)) {
     return;
   }
+  // Stamp the timestamp at emit time (not delivery time) so buffering or
+  // reordering on the platform-thread queue can't skew the log order story.
+  flutter::EncodableMap payload =
+      BuildPayload(level, category, message, NowUtcIso8601(),
+                   std::move(context), error_text, stack);
   {
     std::lock_guard<std::mutex> lock(mutex_);
     if (channel_ == nullptr) {
-      return;  // no listener / torn down
+      // No listener yet (startup) or already torn down: hold the line for
+      // the flushPendingNativeLogs drain instead of dropping it.
+      if (pending_.size() >= kMaxPending) {
+        pending_.pop_front();
+      }
+      pending_.push_back(std::move(payload));
+      return;
     }
   }
-  // Stamp the timestamp at emit time (not delivery time) so reordering on
-  // the platform-thread queue can't skew the log order story.
-  flutter::EncodableMap payload =
-      BuildPayload(level, category, message, NowUtcIso8601());
+  PostToChannel(std::move(payload));
+}
+
+void NativeLogPublisher::FlushPending() {
+  std::vector<flutter::EncodableMap> drained;
+  {
+    std::lock_guard<std::mutex> lock(mutex_);
+    if (channel_ == nullptr || pending_.empty()) {
+      return;  // keep the buffer — a later flush may still deliver it
+    }
+    drained.assign(std::make_move_iterator(pending_.begin()),
+                   std::make_move_iterator(pending_.end()));
+    pending_.clear();
+  }
+  for (auto& payload : drained) {
+    PostToChannel(std::move(payload));
+  }
+}
+
+size_t NativeLogPublisher::pending_count() const {
+  std::lock_guard<std::mutex> lock(mutex_);
+  return pending_.size();
+}
+
+void NativeLogPublisher::ClearPendingForTest() {
+  std::lock_guard<std::mutex> lock(mutex_);
+  pending_.clear();
+}
+
+flutter::EncodableMap NativeLogPublisher::FrontPendingForTest() const {
+  std::lock_guard<std::mutex> lock(mutex_);
+  return pending_.empty() ? flutter::EncodableMap{} : pending_.front();
+}
+
+void NativeLogPublisher::PostToChannel(flutter::EncodableMap payload) {
   // Marshal to the platform thread; re-check the channel inside the posted
   // task so teardown mid-flight can't call into a dead channel.
   PlatformThreadDispatcher::Instance().Post([this, payload] {

@@ -309,8 +309,11 @@ void HandleGetStorageSnapshot(
        flutter::EncodableValue(recordings_root_utf8)},
       {flutter::EncodableValue("tempPath"),
        flutter::EncodableValue(clingfy::storage::WideToUtf8(temp))},
+      // The unified JSONL logs dir — where "Open Logs Folder" points and what
+      // macOS returns for this key. (logsBytes still counts the native dir
+      // too: the stress-harness artifacts and legacy side files live there.)
       {flutter::EncodableValue("logsPath"),
-       flutter::EncodableValue(clingfy::storage::WideToUtf8(native_logs))},
+       flutter::EncodableValue(clingfy::storage::WideToUtf8(dart_logs))},
       {flutter::EncodableValue("warningThresholdBytes"),
        flutter::EncodableValue(kStorageWarningThresholdBytes)},
       {flutter::EncodableValue("criticalThresholdBytes"),

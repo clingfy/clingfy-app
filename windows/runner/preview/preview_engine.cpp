@@ -56,16 +56,15 @@ namespace {
 constexpr int kTextureWidth = 1280;
 constexpr int kTextureHeight = 720;
 
-// Phase 10.1: these diagnostics moved from the CWD-relative
-// build\windows-poc\ to %LOCALAPPDATA%\Clingfy\Logs (see
-// Services/log_locations.h) so installed builds keep their breadcrumbs.
-// File roles are unchanged:
-//   * stage2a_2_native.log — truncated at every Open() for
-//     crash-breadcrumb localisation.
+// The stress-harness measurement artifacts stay in
+// %LOCALAPPDATA%\Clingfy\Logs (see Services/log_locations.h) — they are
+// benchmark outputs consumed by tools/phase5_*.ps1, not logging:
 //   * phase5_cycles.log — append-only across the process lifetime;
 //     truncation would defeat the stress verdict tool, which needs
 //     cross-cycle history to compute aggregate stats.
 //   * stage2a_2_result.md — the Stage 2A-2 verdict artifact.
+// (The old stage2a_2_native.log breadcrumb file is gone: LogNative now
+// forwards into the unified log pipeline instead.)
 std::wstring NativeLogFilePath(const wchar_t* file_name) {
   const std::wstring dir = clingfy::storage::NativeLogsDirectory();
   if (dir.empty()) {
@@ -76,9 +75,6 @@ std::wstring NativeLogFilePath(const wchar_t* file_name) {
 
 std::wstring ArtifactPath() {
   return NativeLogFilePath(L"stage2a_2_result.md");
-}
-std::wstring NativeLogPath() {
-  return NativeLogFilePath(L"stage2a_2_native.log");
 }
 std::wstring Phase5CycleLogPath() {
   return NativeLogFilePath(L"phase5_cycles.log");
@@ -121,40 +117,22 @@ std::int64_t QpcDeltaMs(std::int64_t start, std::int64_t end,
   return ((end - start) * 1000) / freq;
 }
 
-// File-based logger because a Flutter Windows debug build is a GUI
-// subsystem exe with no console; the standard streams are not
-// reliably reachable from outside. The log file is overwritten each
-// Open(); each line carries an HRESULT-style breadcrumb so a crash
-// can be localised by inspecting the last surviving line.
+// Preview-engine lifecycle breadcrumbs (Open/Close aborts, D3D device
+// creation, texture registration). Forwards into the unified log pipeline
+// as DEBUG "Preview" lines — the Settings "verbose logging" toggle (or
+// CLINGFY_LOG_LEVEL=debug for the stress harness) turns them on. Failures
+// that matter in release are dual-logged at ERROR by their call sites.
 void LogNative(const char* msg) {
-  const std::wstring log_path = NativeLogPath();
-  if (log_path.empty()) {
+  if (msg == nullptr) {
     return;
   }
-  EnsureLogParentDir();
-  std::ofstream f(std::filesystem::path(log_path),
-                  std::ios::out | std::ios::app | std::ios::binary);
-  if (f.is_open()) {
-    std::time_t now = std::time(nullptr);
-    std::tm tm_utc{};
-#if defined(_MSC_VER)
-    ::gmtime_s(&tm_utc, &now);
-#else
-    tm_utc = *std::gmtime(&now);
-#endif
-    char ts[32];
-    std::snprintf(ts, sizeof(ts), "%02d:%02d:%02d ",
-                  tm_utc.tm_hour, tm_utc.tm_min, tm_utc.tm_sec);
-    f << ts << msg << "\n";
-  }
+  clingfy::bridge::NativeLogPublisher::Instance().Debug("Preview", msg);
 }
 
-// Step 5.7.1: append-only cycle log. Lives separately from
-// stage2a_2_native.log because that file is truncated on every Open() — a
-// design constraint for crash-breadcrumb localisation but lethal for
-// cross-cycle aggregation. The stress verdict tool reads from this
-// file. Format-wise identical to LogNative; differences are scope
-// (which file) and the no-truncate guarantee.
+// Step 5.7.1: append-only cycle measurements for the stress verdict tool
+// (tools/phase5_extract_verdict.ps1) — a harness data artifact, deliberately
+// NOT part of the unified log pipeline: the tool needs a stable key=value
+// file it can aggregate across cycles, independent of log levels.
 void LogPhase5Cycle(const char* msg) {
   const std::wstring log_path = Phase5CycleLogPath();
   if (log_path.empty()) {
@@ -431,16 +409,6 @@ std::int64_t PreviewEngine::current_texture_id() const {
 }
 
 OpenResult PreviewEngine::Open(const OpenArgs& args) {
-  // Truncate the log file at the top of every Open() so its tail
-  // localises the most recent crash if there is one.
-  {
-    const std::wstring log_path = NativeLogPath();
-    if (!log_path.empty()) {
-      EnsureLogParentDir();
-      std::ofstream f(std::filesystem::path(log_path),
-                      std::ios::out | std::ios::trunc | std::ios::binary);
-    }
-  }
   LogNative("Open() entered");
   std::lock_guard<std::mutex> lock(mutex_);
 
@@ -1250,8 +1218,8 @@ void PreviewEngine::HandleMediaFailed(
     project_path_snapshot = active_project_path_;
   }
   if (!session_snapshot.empty()) {
-    // Phase 10.4: over the log bridge too — the engine's own LogNative
-    // side file never reaches JSONL/Sentry.
+    // ERROR (not the DEBUG LogNative breadcrumb) so release users' logs and
+    // Sentry see the failure regardless of the verbose toggle.
     clingfy::bridge::NativeLogPublisher::Instance().Error(
         "Preview", "MediaFailed (" + code + "): " + message);
     clingfy::bridge::PlayerEventPublisher::Instance().EmitPlayerError(

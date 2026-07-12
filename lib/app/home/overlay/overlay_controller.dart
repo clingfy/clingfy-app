@@ -8,7 +8,7 @@ import 'package:shared_preferences/shared_preferences.dart';
 import 'package:clingfy/core/overlay/overlay_mode.dart';
 
 import 'package:clingfy/l10n/app_localizations.dart';
-import 'package:clingfy/app/infrastructure/logging/logger_service.dart';
+import 'package:clingfy/core/logging/logger_service.dart';
 import 'package:clingfy/core/models/app_models.dart';
 
 import 'package:clingfy/core/bridges/native_bridge.dart';
