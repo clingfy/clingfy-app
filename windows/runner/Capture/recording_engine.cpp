@@ -27,6 +27,7 @@
 #include "Bridge/platform_thread_dispatcher.h"
 #include "Bridge/recording_warning_codes.h"
 #include "Bridge/workflow_event_publisher.h"
+#include "Services/keep_awake.h"
 #include "Services/recovery_sweep.h"
 #include "Capture/Camera/camera_overlay_host.h"
 #include "Capture/Camera/camera_overlay_presenter.h"
@@ -317,6 +318,20 @@ std::optional<RecordingError> RecordingEngine::Start(
   if (!session_.BeginStart(request.session_id)) {
     return fail_start(clingfy::bridge::error::kInvalidRecordingState,
                       "Engine refused to enter Starting state.");
+  }
+
+  // From here to the terminal state the machine must not enter Modern
+  // Standby (sleep invalidates the GPU/media stack mid-recording) and the
+  // recorded display must stay on (a dark display records black frames).
+  // Released in TeardownPipeline — every end path flows through it.
+  keep_awake_ = std::make_unique<clingfy::services::KeepAwake>(
+      clingfy::services::KeepAwake::Mode::kSystemAndDisplay,
+      L"Clingfy is recording the screen");
+  if (!keep_awake_->active()) {
+    clingfy::bridge::NativeLogPublisher::Instance().Warn(
+        "Recording",
+        "keep-awake power request unavailable — the machine may enter "
+        "standby during a long recording");
   }
 
   d3d_device_ = std::make_unique<clingfy::graphics::D3DDevice>();
@@ -1624,6 +1639,8 @@ void RecordingEngine::TeardownPipeline(bool finalize_encoder) {
     d3d_device_->Reset();
     d3d_device_.reset();
   }
+  // The session reached a terminal state — let the machine sleep again.
+  keep_awake_.reset();
 }
 
 void RecordingEngine::CleanupSessionTempFiles(const std::string& session_id,

@@ -23,6 +23,9 @@ class D3DDevice;
 namespace clingfy::encoding {
 class MfSinkWriterEncoder;
 }
+namespace clingfy::services {
+class KeepAwake;
+}
 
 namespace clingfy::capture {
 class VideoFrameQueue;
@@ -330,6 +333,13 @@ class RecordingEngine {
   // Renderer P2: held through the presenter interface (GDI today, DComp in
   // P3) — see docs/decisions/windows-camera-bubble-renderer-architecture.md.
   std::shared_ptr<ICameraOverlayPresenter> camera_floating_;
+
+  // Held for the whole session (Starting → terminal): keeps the machine out
+  // of Modern Standby and the recorded display on — sleep mid-recording
+  // invalidates the GPU/media stack, and a dark display records black
+  // frames. Created after BeginStart, released in TeardownPipeline (every
+  // end path flows through it).
+  std::unique_ptr<clingfy::services::KeepAwake> keep_awake_;
 
   // Audio pipeline (Phase 3D). Two WASAPI captures (mic + loopback)
   // fill the matching packet queues; a dedicated mixer thread sums

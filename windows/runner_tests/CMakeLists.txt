@@ -87,6 +87,7 @@ add_executable(runner_tests
   "export_progress_publisher_test.cpp"
   "export_session_test.cpp"
   "gif_export_policy_test.cpp"
+  "keep_awake_test.cpp"
   "log_locations_test.cpp"
   "mf_encoder_config_test.cpp"
   "native_log_publisher_test.cpp"

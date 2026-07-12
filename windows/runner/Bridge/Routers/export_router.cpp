@@ -24,6 +24,7 @@
 #include "Capture/Export/export_session.h"
 #include "Capture/Zoom/zoom_timeline_builder.h"
 #include "Capture/recording_project_reader.h"
+#include "Services/keep_awake.h"
 #include "Services/shell_reveal.h"
 #include "preview/preview_engine.h"
 
@@ -385,6 +386,19 @@ void HandleExportVideo(
   std::shared_ptr<flutter::MethodResult<flutter::EncodableValue>> shared_result(
       std::move(result));
   std::thread([input, shared_result, on_progress, is_cancelled]() {
+    // A long export must survive the user walking away: Modern Standby
+    // invalidates the GPU/media stack mid-export (device loss →
+    // CreateTexture2D failures). Hold a system-required power request for
+    // the duration; the display may still turn off.
+    clingfy::services::KeepAwake keep_awake(
+        clingfy::services::KeepAwake::Mode::kSystem,
+        L"Clingfy is exporting a recording");
+    if (!keep_awake.active()) {
+      NativeLogPublisher::Instance().Warn(
+          "Export",
+          "keep-awake power request unavailable — the machine may enter "
+          "standby during a long export");
+    }
     // Phase 10.4 worker barrier: an exception escaping a detached thread
     // calls std::terminate and kills the whole process — and this thread is
     // OUTSIDE the MethodRouter dispatch barrier (which only covers the
