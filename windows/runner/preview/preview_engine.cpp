@@ -296,6 +296,11 @@ struct PreviewEngine::Impl {
   // threshold the engine emits PREVIEW_RENDER_ERROR once (see
   // NoteRenderFailure).
   std::atomic<std::uint32_t> consecutive_render_failures{0};
+  // The HRESULT of the most recent per-frame failure, folded into the
+  // PREVIEW_RENDER_ERROR log line. Discriminates device loss (Modern Standby
+  // resume / TDR — DXGI_ERROR_DEVICE_REMOVED) from out-of-memory; a 55-min
+  // session's frame_copy death was undiagnosable without it.
+  std::atomic<std::int32_t> last_render_failure_hr{0};
 
   // ---- Discovered after the first frame ----
   std::atomic<UINT> last_video_width{0};
@@ -966,10 +971,12 @@ void PreviewEngine::HandleVideoFrame(
   impl->last_video_width.store(vw);
   impl->last_video_height.store(vh);
 
-  if (FAILED(impl->compositor.EnsureResources(impl->d3d_device.Get(),
-                                              impl->d2d_context.Get(),
-                                              vw, vh))) {
+  if (const HRESULT ensure_hr = impl->compositor.EnsureResources(
+          impl->d3d_device.Get(), impl->d2d_context.Get(), vw, vh);
+      FAILED(ensure_hr)) {
     impl->dropped_frames.fetch_add(1, std::memory_order_relaxed);
+    impl->last_render_failure_hr.store(static_cast<std::int32_t>(ensure_hr),
+                                       std::memory_order_relaxed);
     NoteRenderFailure(impl, "ensure_resources");
     impl->timing_total.EndFrame();
     return;
@@ -979,8 +986,10 @@ void PreviewEngine::HandleVideoFrame(
   impl->timing_copy.BeginFrame();
   try {
     sender.CopyFrameToVideoSurface(impl->compositor.winrt_video_surface());
-  } catch (winrt::hresult_error const&) {
+  } catch (winrt::hresult_error const& e) {
     impl->dropped_frames.fetch_add(1, std::memory_order_relaxed);
+    impl->last_render_failure_hr.store(static_cast<std::int32_t>(e.code()),
+                                       std::memory_order_relaxed);
     NoteRenderFailure(impl, "frame_copy");
     impl->timing_copy.EndFrame();
     impl->timing_total.EndFrame();
@@ -1050,6 +1059,8 @@ void PreviewEngine::ComposeAndHandoffLocked(Impl* impl,
     // emits PREVIEW_RENDER_ERROR after a run of consecutive failures
     // instead of freezing the image under a moving playhead forever.
     impl->dropped_frames.fetch_add(1, std::memory_order_relaxed);
+    impl->last_render_failure_hr.store(static_cast<std::int32_t>(end_hr),
+                                       std::memory_order_relaxed);
     NoteRenderFailure(impl, "end_draw");
     impl->timing_total.EndFrame();
     return;
@@ -1436,10 +1447,28 @@ void PreviewEngine::NoteRenderFailure(Impl* impl, const char* stage) {
       std::string("The preview stopped rendering (stage: ") + stage +
       "). Close and reopen the preview; the recording file itself is "
       "unaffected.";
-  LogNative(("PREVIEW_RENDER_ERROR emitted: " + message).c_str());
+  // Fold the last per-frame HRESULT (+ the device-removed reason, when the
+  // device is gone) into the log line — it discriminates device loss (Modern
+  // Standby resume / TDR) from out-of-memory, which the stage name alone
+  // cannot.
+  const HRESULT last_hr = static_cast<HRESULT>(
+      impl->last_render_failure_hr.load(std::memory_order_relaxed));
+  const HRESULT removed_reason =
+      impl->d3d_device ? impl->d3d_device->GetDeviceRemovedReason() : S_OK;
+  char detail[96];
+  if (removed_reason != S_OK) {
+    std::snprintf(detail, sizeof(detail),
+                  " (hr=0x%08lX, device removed, reason=0x%08lX)",
+                  static_cast<unsigned long>(last_hr),
+                  static_cast<unsigned long>(removed_reason));
+  } else {
+    std::snprintf(detail, sizeof(detail), " (hr=0x%08lX)",
+                  static_cast<unsigned long>(last_hr));
+  }
+  LogNative(("PREVIEW_RENDER_ERROR emitted: " + message + detail).c_str());
   clingfy::bridge::NativeLogPublisher::Instance().Error(
-      "Preview", "render loop died (" + std::string(stage) +
-                     "); emitting PREVIEW_RENDER_ERROR");
+      "Preview", "render loop died (" + std::string(stage) + ")" + detail +
+                     "; emitting PREVIEW_RENDER_ERROR");
   clingfy::bridge::PlayerEventPublisher::Instance().EmitPlayerError(
       session_snapshot, clingfy::bridge::error::kPreviewRenderError, message);
   clingfy::bridge::WorkflowEventPublisher::Instance().EmitPreviewFailed(
@@ -2099,10 +2128,12 @@ bool PreviewEngine::RenderEditedFrameLocked(Impl* impl,
     return false;
   }
 
-  if (FAILED(impl->compositor.EnsureResources(impl->d3d_device.Get(),
-                                              impl->d2d_context.Get(),
-                                              reader->width(),
-                                              reader->height()))) {
+  if (const HRESULT ensure_hr = impl->compositor.EnsureResources(
+          impl->d3d_device.Get(), impl->d2d_context.Get(), reader->width(),
+          reader->height());
+      FAILED(ensure_hr)) {
+    impl->last_render_failure_hr.store(static_cast<std::int32_t>(ensure_hr),
+                                       std::memory_order_relaxed);
     NoteRenderFailure(impl, "edited_ensure_resources");
     return false;
   }
@@ -2136,10 +2167,12 @@ PreviewEngine::PaceStep PreviewEngine::PaceNextEditedFrameLocked(Impl* impl) {
   // sees the EDITED position + duration). Returns false (→ kIdle) on failure.
   const auto emit = [&](std::vector<BYTE>& bgra, std::int64_t source_ms,
                         std::int64_t edited_ms) -> bool {
-    if (FAILED(impl->compositor.EnsureResources(impl->d3d_device.Get(),
-                                                impl->d2d_context.Get(),
-                                                reader->width(),
-                                                reader->height()))) {
+    if (const HRESULT ensure_hr = impl->compositor.EnsureResources(
+            impl->d3d_device.Get(), impl->d2d_context.Get(), reader->width(),
+            reader->height());
+        FAILED(ensure_hr)) {
+      impl->last_render_failure_hr.store(static_cast<std::int32_t>(ensure_hr),
+                                         std::memory_order_relaxed);
       NoteRenderFailure(impl, "pacer_ensure_resources");
       impl->edited_playing = false;
       return false;

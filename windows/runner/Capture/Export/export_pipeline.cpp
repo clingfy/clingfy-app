@@ -127,6 +127,26 @@ std::string Hr(const char* what, HRESULT hr) {
   return std::string(what) + buf;
 }
 
+// Like Hr, but appends the device-removed reason when the failure is (or is
+// caused by) a lost D3D device — the discriminator between "GPU ran out of
+// memory" and "the device was reset under us" (driver reset, Modern Standby
+// resume, TDR). A 55-min-recording export failure was undiagnosable because
+// this distinction never reached the logs.
+std::string HrWithDeviceState(const char* what, HRESULT hr,
+                              ID3D11Device* device) {
+  std::string message = Hr(what, hr);
+  if (device != nullptr) {
+    const HRESULT removed = device->GetDeviceRemovedReason();
+    if (removed != S_OK) {
+      char buf[48];
+      std::snprintf(buf, sizeof(buf), " (device removed, reason=0x%08lX)",
+                    static_cast<unsigned long>(removed));
+      message += buf;
+    }
+  }
+  return message;
+}
+
 // Walk the source's streams, selecting only the first video stream (and
 // the first audio stream, if any) and recording their concrete indices.
 // Returns kNoStream for a track that is absent.
@@ -959,10 +979,15 @@ RenderResult RenderComposedExport(const RenderRequest& request) {
       desc.Usage = D3D11_USAGE_DEFAULT;
       desc.BindFlags = D3D11_BIND_RENDER_TARGET | D3D11_BIND_SHADER_RESOURCE;
       ComPtr<ID3D11Texture2D> out_texture;
-      if (FAILED(device.device()->CreateTexture2D(&desc, nullptr,
-                                                  out_texture.GetAddressOf()))) {
+      if (const HRESULT tex_hr = device.device()->CreateTexture2D(
+              &desc, nullptr, out_texture.GetAddressOf());
+          FAILED(tex_hr)) {
         cancel_encoder();
-        return Failure(request.destination_path, "export: CreateTexture2D failed for an output frame.");
+        return Failure(request.destination_path,
+                       HrWithDeviceState(
+                           "export: CreateTexture2D failed for an output "
+                           "frame",
+                           tex_hr, device.device()));
       }
       ComPtr<IDXGISurface> out_surface;
       if (FAILED(out_texture.As(&out_surface))) {

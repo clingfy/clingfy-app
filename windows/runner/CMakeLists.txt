@@ -102,6 +102,7 @@ add_library(runner_bridge STATIC
   "Overlay/area_picker_overlay.cpp"
   "Permissions/camera_readiness.cpp"
   "Permissions/permission_probe.cpp"
+  "Services/keep_awake.cpp"
   "Services/log_locations.cpp"
   "Services/recovery_sweep.cpp"
   "Updater/update_checker.cpp"
