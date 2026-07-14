@@ -109,6 +109,12 @@ class RecordingController extends ChangeNotifier {
   // the InlinePreview widget can mount `Texture(textureId: ...)`. null
   // on macOS (AppKitView path) and until the native call completes.
   int? _inlinePreviewTextureId;
+  // The native canvas aspect (previewOpen width/height — the fixed texture
+  // the engine letterboxes video into). The InlinePreview widget must show
+  // the texture at exactly this aspect: a bare `Texture` stretches to its
+  // layout box, distorting the video whenever the panel isn't canvas-shaped
+  // (side panel closed, timeline hidden). null until previewOpen replies.
+  double? _inlinePreviewTextureAspect;
   bool _pauseResumeInFlight = false;
   _PreviewOpenSource? _previewOpenSource;
   String? _pendingExternalProjectReplacementPath;
@@ -224,6 +230,11 @@ class RecordingController extends ChangeNotifier {
   /// produces a texture id. Cleared by `_beginPreviewClose` and on
   /// `_transitionToIdle`.
   int? get inlinePreviewTextureId => _inlinePreviewTextureId;
+
+  /// Aspect ratio (width / height) of the native preview canvas the texture
+  /// id points at, from the same `previewOpen` reply; null until the reply
+  /// arrives (the widget falls back to 16:9, the engine's canvas shape).
+  double? get inlinePreviewTextureAspect => _inlinePreviewTextureAspect;
 
   Duration get elapsed => _elapsed;
   bool get autoStopEnabled => _settings.recording.autoStopEnabled;
@@ -694,6 +705,12 @@ class RecordingController extends ChangeNotifier {
           _previewOpenRequested) {
         _inlinePreviewTextureId = openResult.hasTexture
             ? openResult.textureId
+            : null;
+        _inlinePreviewTextureAspect =
+            (openResult.hasTexture &&
+                openResult.width > 0 &&
+                openResult.height > 0)
+            ? openResult.width / openResult.height
             : null;
         Log.d('Recording', 'previewOpen returned', null, null, {
           'sessionId': activeSessionId,
@@ -1204,6 +1221,7 @@ class RecordingController extends ChangeNotifier {
     _mountedPreviewSessionId = null;
     _previewOpenRequested = false;
     _inlinePreviewTextureId = null;
+    _inlinePreviewTextureAspect = null;
     if (phase != WorkflowPhase.closingPreview) {
       _setState(_state.copyWith(phase: WorkflowPhase.closingPreview));
     }
@@ -1231,6 +1249,7 @@ class RecordingController extends ChangeNotifier {
     _mountedPreviewSessionId = null;
     _previewOpenRequested = false;
     _inlinePreviewTextureId = null;
+    _inlinePreviewTextureAspect = null;
     _previewOpenSource = null;
     _pendingExternalProjectReplacementPath = null;
     _openingExternalProjectPath = null;
@@ -1396,6 +1415,7 @@ class RecordingController extends ChangeNotifier {
     _mountedPreviewSessionId = null;
     _previewOpenRequested = false;
     _inlinePreviewTextureId = null;
+    _inlinePreviewTextureAspect = null;
     _previewOpenSource = source;
     _failedExternalProjectOpenPath = null;
     _pendingExternalProjectReplacementPath = null;
