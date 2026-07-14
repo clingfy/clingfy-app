@@ -89,6 +89,7 @@ add_executable(runner_tests
   "gif_export_policy_test.cpp"
   "keep_awake_test.cpp"
   "log_locations_test.cpp"
+  "preview_open_reconcile_test.cpp"
   "mf_encoder_config_test.cpp"
   "native_log_publisher_test.cpp"
   "permission_probe_test.cpp"
@@ -146,6 +147,11 @@ add_custom_command(TARGET runner_tests POST_BUILD
 
 include(GoogleTest)
 gtest_discover_tests(runner_tests
+  # Discovery runs `runner_tests.exe --gtest_list_tests`, which loads
+  # flutter_windows.dll and runs every static initializer. The 5s default
+  # timed out on a cold CI runner (PR #264's first Windows run) while the
+  # listing was visibly mid-print — give it room.
+  DISCOVERY_TIMEOUT 60
   PROPERTIES
     LABELS "windows-runner"
 )
