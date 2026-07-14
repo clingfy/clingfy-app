@@ -413,8 +413,48 @@ std::int64_t PreviewEngine::current_texture_id() const {
   return texture_id_;
 }
 
+bool PreviewEngine::ShouldReconcileStaleSession(
+    bool running, const std::string& active_session_id,
+    const std::string& incoming_session_id) {
+  return running && !incoming_session_id.empty() &&
+         active_session_id != incoming_session_id;
+}
+
 OpenResult PreviewEngine::Open(const OpenArgs& args) {
   LogNative("Open() entered");
+
+  // Reconcile an orphaned session BEFORE taking mutex_ (Close() locks it
+  // internally — calling it under the lock would self-deadlock). Dart is the
+  // engine's single, serialized driver: an Open for a DIFFERENT session while
+  // one is running means the previous session's owner is gone — a Dart hot
+  // restart (the native process and this singleton survive it) or a
+  // watchdog-abandoned close. Refusing used to wedge every future preview
+  // until a full app restart; close the stale session and proceed instead
+  // (last-open-wins, matching macOS). Same-session re-entry keeps the
+  // idempotent reply below. No interleave risk: Open/Close are both
+  // dispatched on the platform thread.
+  {
+    std::string stale_session_id;
+    {
+      std::lock_guard<std::mutex> lock(mutex_);
+      if (ShouldReconcileStaleSession(running_.load(), active_session_id_,
+                                      args.session_id)) {
+        stale_session_id = active_session_id_;
+      }
+    }
+    if (!stale_session_id.empty()) {
+      clingfy::bridge::NativeLogPublisher::Instance().Warn(
+          "Preview",
+          "closing orphaned preview session " + stale_session_id +
+              " to open " + args.session_id +
+              " — the previous session's owner is gone (Dart hot restart or "
+              "an abandoned close)");
+      CloseArgs close_args;
+      close_args.session_id = stale_session_id;
+      Close(close_args);
+    }
+  }
+
   std::lock_guard<std::mutex> lock(mutex_);
 
   OpenResult result;
@@ -476,10 +516,11 @@ OpenResult PreviewEngine::Open(const OpenArgs& args) {
       }
       return result;
     }
-    // Different session id while already running — caller must Close
-    // the previous session first. Surfacing a real error here is
-    // safer than silently force-closing the previous session out
-    // from under whichever Dart layer still holds its texture id.
+    // Different session id while already running. The orphan reconcile at
+    // the top of Open() closes a stale session before we get here, so this
+    // is a pure backstop — reachable only if that close failed to stop the
+    // engine. Surfacing an error beats silently proceeding into a corrupt
+    // double-session state.
     LogNative("Open() abort: another session is already active");
     result.error =
         "PreviewEngine already has an active session — Close it first.";

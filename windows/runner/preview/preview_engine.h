@@ -155,11 +155,23 @@ class PreviewEngine {
   //   * Open with the SAME session_id while already running →
   //     idempotent, returns the existing state.
   //   * Open with a DIFFERENT session_id while already running →
-  //     returns error (caller must Close first). This is stricter
-  //     than macOS's "queue the request" model, but Flutter has no
-  //     analogous gate for us to wait on — failing loudly is safer
-  //     than silently swapping inputs out from under the Dart layer.
+  //     the running session is ORPHANED (Dart is the single serialized
+  //     driver, so it can only ask for a new session after its owner is
+  //     gone — a Dart hot restart survives the native process, as does a
+  //     watchdog-abandoned close). Open closes the stale session and
+  //     proceeds (last-open-wins, matching macOS). Refusing here used to
+  //     wedge every future preview until a full app restart.
   OpenResult Open(const OpenArgs& args);
+
+  // Pure decision for Open()'s orphan reconcile: should an incoming Open
+  // close the currently-running session first? True only for a NON-empty
+  // incoming id that differs from the active one while the engine runs.
+  // Same-session re-entry stays idempotent; a not-running engine has
+  // nothing to close. Exposed for tests; keep in sync with the reconcile
+  // block at the top of Open().
+  static bool ShouldReconcileStaleSession(
+      bool running, const std::string& active_session_id,
+      const std::string& incoming_session_id);
 
   // Tear down the MediaPlayer + compositor and release the Flutter
   // texture via FlutterDesktopTextureRegistrarUnregisterExternalTexture
