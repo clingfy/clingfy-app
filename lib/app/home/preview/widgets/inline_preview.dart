@@ -90,9 +90,29 @@ class _WindowsInlinePreviewState extends State<_WindowsInlinePreview> {
     final textureId = context.select<RecordingController, int?>(
       (rc) => rc.inlinePreviewTextureId,
     );
+    final aspect = context.select<RecordingController, double?>(
+      (rc) => rc.inlinePreviewTextureAspect,
+    );
     if (textureId == null) {
       return const ColoredBox(color: Colors.black);
     }
-    return Texture(textureId: textureId);
+    // A bare `Texture` stretches the native canvas to fill its layout box,
+    // distorting the video whenever the panel isn't canvas-shaped (side
+    // panel closed → wider, timeline hidden → taller). Pin the texture to
+    // the canvas's own aspect and letterbox it in the panel — the macOS
+    // AppKit view does the equivalent natively (resize-aspect layer
+    // gravity), which is why only Windows showed the stretch.
+    return ColoredBox(
+      color: Colors.black,
+      child: Center(
+        child: AspectRatio(
+          // 16:9 fallback matches the engine's fixed canvas
+          // (PreviewEngine kTextureWidth × kTextureHeight = 1280×720)
+          // for replies that predate the aspect plumbing.
+          aspectRatio: (aspect != null && aspect > 0) ? aspect : 16 / 9,
+          child: Texture(textureId: textureId),
+        ),
+      ),
+    );
   }
 }
