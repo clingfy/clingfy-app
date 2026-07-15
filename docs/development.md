@@ -1,6 +1,6 @@
 # Development
 
-This document covers the public development workflow for the Clingfy macOS app.
+This document covers the public development workflow for the Clingfy desktop app. macOS is the primary target; the Windows port (beta) has its own build/test notes in `windows-port.md` and tester docs in `windows-beta-tester-guide.md`.
 
 ## Tooling
 
