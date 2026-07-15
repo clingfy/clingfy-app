@@ -3790,6 +3790,18 @@ abstract class AppLocalizations {
   /// **'Exclude my mic from system audio'**
   String get recordingExcludeMicFromSystemAudio;
 
+  /// No description provided for @recordingMicEchoCancellation.
+  ///
+  /// In en, this message translates to:
+  /// **'Remove speaker echo from mic'**
+  String get recordingMicEchoCancellation;
+
+  /// No description provided for @recordingMicEchoCancellationHelp.
+  ///
+  /// In en, this message translates to:
+  /// **'Experimental: filters system-audio bleed out of the mic during pauses in your speech. May affect voice quality on some recordings.'**
+  String get recordingMicEchoCancellationHelp;
+
   /// No description provided for @restartApp.
   ///
   /// In en, this message translates to:

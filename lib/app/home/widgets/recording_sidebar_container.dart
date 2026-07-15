@@ -83,6 +83,10 @@ class RecordingSidebarContainer extends StatelessWidget {
               settingsController.recording.excludeMicFromSystemAudio,
           onExcludeMicFromSystemAudioChanged:
               settingsController.recording.updateExcludeMicFromSystemAudio,
+          micEchoCancellationEnabled:
+              settingsController.recording.micEchoCancellationEnabled,
+          onMicEchoCancellationEnabledChanged:
+              settingsController.recording.updateMicEchoCancellationEnabled,
           onCamSourceChanged: device.setCamSource,
           onRefreshCams: device.reloadCameras,
           captureFrameRate: settingsController.recording.captureFrameRate,

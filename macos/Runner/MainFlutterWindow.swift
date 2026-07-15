@@ -300,6 +300,14 @@ class MainFlutterWindow: NSWindow {
         let exclude = (args?["exclude"] as? Bool) ?? true
         self.screenRecorder.setExcludeMicFromSystemAudio(exclude, result: result)
 
+      case "getMicEchoCancellationEnabled":
+        self.screenRecorder.getMicEchoCancellationEnabled(result: result)
+
+      case "setMicEchoCancellationEnabled":
+        let args = call.arguments as? [String: Any]
+        let enabled = (args?["enabled"] as? Bool) ?? false
+        self.screenRecorder.setMicEchoCancellationEnabled(enabled, result: result)
+
       case "setCaptureFrameRate":
         let args = call.arguments as? [String: Any]
         if let fps = args?["fps"] as? Int {

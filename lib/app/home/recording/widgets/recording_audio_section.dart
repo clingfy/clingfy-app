@@ -25,6 +25,7 @@ class RecordingAudioSection extends StatelessWidget {
     required this.loadingAudio,
     required this.systemAudioEnabled,
     required this.excludeMicFromSystemAudio,
+    required this.micEchoCancellationEnabled,
     required this.micInputLevelLinear,
     required this.micInputLevelDbfs,
     required this.micInputTooLow,
@@ -32,6 +33,7 @@ class RecordingAudioSection extends StatelessWidget {
     required this.onRefreshAudio,
     required this.onSystemAudioEnabledChanged,
     required this.onExcludeMicFromSystemAudioChanged,
+    required this.onMicEchoCancellationEnabledChanged,
   });
 
   final bool isRecording;
@@ -40,6 +42,7 @@ class RecordingAudioSection extends StatelessWidget {
   final bool loadingAudio;
   final bool systemAudioEnabled;
   final bool excludeMicFromSystemAudio;
+  final bool micEchoCancellationEnabled;
   final double micInputLevelLinear;
   final double micInputLevelDbfs;
   final bool micInputTooLow;
@@ -47,6 +50,7 @@ class RecordingAudioSection extends StatelessWidget {
   final VoidCallback onRefreshAudio;
   final ValueChanged<bool> onSystemAudioEnabledChanged;
   final ValueChanged<bool> onExcludeMicFromSystemAudioChanged;
+  final ValueChanged<bool> onMicEchoCancellationEnabledChanged;
 
   String get _validAudioId =>
       selectedAudioSourceId == '__none__' ||
@@ -138,6 +142,28 @@ class RecordingAudioSection extends StatelessWidget {
                       onChanged: isRecording
                           ? null
                           : onExcludeMicFromSystemAudioChanged,
+                    ),
+                  ],
+                ),
+              ],
+              // Consumed natively at preview/export time (CleanedMicCache
+              // gate) on any EXISTING project with mic+system tracks — the
+              // raw mic is always what gets recorded. Not gated on the
+              // current capture toggles: hiding it there would strand an
+              // enabled canceller with no reachable off switch. macOS-only
+              // pipeline today.
+              if (!isWindows()) ...[
+                const SizedBox(height: AppSidebarTokens.optionsSubgroupGap),
+                AppInsetGroup(
+                  children: [
+                    AppToggleRow(
+                      key: const Key('recording_mic_echo_cancellation_toggle'),
+                      title: l10n.recordingMicEchoCancellation,
+                      helperText: l10n.recordingMicEchoCancellationHelp,
+                      value: micEchoCancellationEnabled,
+                      onChanged: isRecording
+                          ? null
+                          : onMicEchoCancellationEnabledChanged,
                     ),
                   ],
                 ),

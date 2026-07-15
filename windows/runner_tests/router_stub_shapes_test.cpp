@@ -130,6 +130,7 @@ TEST(StubShapesTest, NoopSettersReturnSuccessWithNullValue) {
       "setFileNameTemplate",
       "setExcludeRecorderApp",
       "setExcludeMicFromSystemAudio",
+      "setMicEchoCancellationEnabled",
       "setCaptureFrameRate",
       "setDisplay",
       "setAppWindowTarget",
@@ -742,6 +743,8 @@ TEST(StubShapesTest, BoolGettersReturnFalse) {
   MethodRouter router;
   const std::vector<std::string> kFalseGetters = {
       "getExcludeRecorderApp",
+      // Mirrors the macOS default: mic echo cancellation is opt-in.
+      "getMicEchoCancellationEnabled",
       "saveManualZoomSegments",
   };
 

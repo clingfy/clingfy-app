@@ -2004,6 +2004,13 @@ class AppLocalizationsAr extends AppLocalizations {
       'استبعاد الميكروفون الخاص بي من صوت النظام';
 
   @override
+  String get recordingMicEchoCancellation => 'إزالة صدى السماعات من الميكروفون';
+
+  @override
+  String get recordingMicEchoCancellationHelp =>
+      'تجريبي: يرشّح تسرب صوت النظام إلى الميكروفون أثناء توقفات الكلام. قد يؤثر على جودة الصوت في بعض التسجيلات.';
+
+  @override
   String get restartApp => 'أعد تشغيل التطبيق';
 
   @override

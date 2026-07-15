@@ -2040,6 +2040,14 @@ class AppLocalizationsRo extends AppLocalizations {
       'Exclude microfonul meu din audio de sistem';
 
   @override
+  String get recordingMicEchoCancellation =>
+      'Elimină ecoul difuzoarelor din microfon';
+
+  @override
+  String get recordingMicEchoCancellationHelp =>
+      'Experimental: filtrează sunetul de sistem scurs în microfon în pauzele de vorbire. Poate afecta calitatea vocii în unele înregistrări.';
+
+  @override
   String get restartApp => 'Repornește aplicația';
 
   @override
