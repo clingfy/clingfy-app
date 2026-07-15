@@ -3,6 +3,7 @@ import 'package:clingfy/core/models/app_models.dart';
 import 'package:clingfy/l10n/app_localizations.dart';
 import 'package:clingfy/ui/platform/widgets/app_inset_group.dart';
 import 'package:clingfy/ui/platform/widgets/app_settings_group.dart';
+import 'package:clingfy/ui/platform/widgets/app_toggle_row.dart';
 import 'package:clingfy/ui/platform/widgets/platform_dropdown.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
@@ -16,6 +17,8 @@ Widget _buildSection({
   bool loadingAudio = false,
   bool systemAudioEnabled = false,
   bool excludeMicFromSystemAudio = false,
+  bool micEchoCancellationEnabled = false,
+  ValueChanged<bool>? onMicEchoCancellationEnabledChanged,
   double micInputLevelLinear = 0.0,
   double micInputLevelDbfs = -160.0,
   bool micInputTooLow = false,
@@ -41,6 +44,7 @@ Widget _buildSection({
               loadingAudio: loadingAudio,
               systemAudioEnabled: systemAudioEnabled,
               excludeMicFromSystemAudio: excludeMicFromSystemAudio,
+              micEchoCancellationEnabled: micEchoCancellationEnabled,
               micInputLevelLinear: micInputLevelLinear,
               micInputLevelDbfs: micInputLevelDbfs,
               micInputTooLow: micInputTooLow,
@@ -48,6 +52,8 @@ Widget _buildSection({
               onRefreshAudio: () {},
               onSystemAudioEnabledChanged: (_) {},
               onExcludeMicFromSystemAudioChanged: (_) {},
+              onMicEchoCancellationEnabledChanged:
+                  onMicEchoCancellationEnabledChanged ?? (_) {},
             ),
           ),
         ),
@@ -64,6 +70,8 @@ Future<void> _pumpSection(
   bool loadingAudio = false,
   bool systemAudioEnabled = false,
   bool excludeMicFromSystemAudio = false,
+  bool micEchoCancellationEnabled = false,
+  ValueChanged<bool>? onMicEchoCancellationEnabledChanged,
   double micInputLevelLinear = 0.0,
   double micInputLevelDbfs = -160.0,
   bool micInputTooLow = false,
@@ -76,6 +84,8 @@ Future<void> _pumpSection(
       loadingAudio: loadingAudio,
       systemAudioEnabled: systemAudioEnabled,
       excludeMicFromSystemAudio: excludeMicFromSystemAudio,
+      micEchoCancellationEnabled: micEchoCancellationEnabled,
+      onMicEchoCancellationEnabledChanged: onMicEchoCancellationEnabledChanged,
       micInputLevelLinear: micInputLevelLinear,
       micInputLevelDbfs: micInputLevelDbfs,
       micInputTooLow: micInputTooLow,
@@ -248,6 +258,86 @@ void main() {
       findsOneWidget,
     );
   });
+
+  testWidgets(
+    'echo cancellation toggle renders off by default with help text',
+    (tester) async {
+      await _pumpSection(
+        tester,
+        selectedAudioSourceId: 'mic-1',
+        systemAudioEnabled: true,
+      );
+
+      final l10n = _l10n(tester);
+
+      expect(find.text(l10n.recordingMicEchoCancellation), findsOneWidget);
+      expect(find.text(l10n.recordingMicEchoCancellationHelp), findsOneWidget);
+      expect(
+        find.ancestor(
+          of: find.text(l10n.recordingMicEchoCancellation),
+          matching: find.byType(AppInsetGroup),
+        ),
+        findsOneWidget,
+      );
+
+      final row = tester.widget<AppToggleRow>(
+        find.byKey(const Key('recording_mic_echo_cancellation_toggle')),
+      );
+      expect(row.value, isFalse);
+    },
+  );
+
+  testWidgets('echo cancellation toggle reports changes and locks while '
+      'recording', (tester) async {
+    bool? received;
+    await _pumpSection(
+      tester,
+      selectedAudioSourceId: 'mic-1',
+      systemAudioEnabled: true,
+      onMicEchoCancellationEnabledChanged: (value) => received = value,
+    );
+
+    final row = tester.widget<AppToggleRow>(
+      find.byKey(const Key('recording_mic_echo_cancellation_toggle')),
+    );
+    row.onChanged!(true);
+    expect(received, isTrue);
+
+    await _pumpSection(
+      tester,
+      selectedAudioSourceId: 'mic-1',
+      systemAudioEnabled: true,
+      isRecording: true,
+    );
+    final lockedRow = tester.widget<AppToggleRow>(
+      find.byKey(const Key('recording_mic_echo_cancellation_toggle')),
+    );
+    expect(lockedRow.onChanged, isNull);
+  });
+
+  testWidgets(
+    'echo cancellation toggle stays visible regardless of capture config',
+    (tester) async {
+      // The pref acts at preview/export time on EXISTING projects, so hiding
+      // it behind the capture toggles would strand an enabled canceller with
+      // no reachable off switch.
+      await _pumpSection(tester, selectedAudioSourceId: 'mic-1');
+      expect(
+        find.byKey(const Key('recording_mic_echo_cancellation_toggle')),
+        findsOneWidget,
+      );
+
+      await _pumpSection(
+        tester,
+        selectedAudioSourceId: '__none__',
+        systemAudioEnabled: true,
+      );
+      expect(
+        find.byKey(const Key('recording_mic_echo_cancellation_toggle')),
+        findsOneWidget,
+      );
+    },
+  );
 
   testWidgets('replaces the old monitor panel with a compact mic indicator', (
     tester,

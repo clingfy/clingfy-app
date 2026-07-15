@@ -38,6 +38,8 @@ const std::vector<std::string>& BridgeContractMethods() {
       "setExcludeRecorderApp",
       "getExcludeMicFromSystemAudio",
       "setExcludeMicFromSystemAudio",
+      "getMicEchoCancellationEnabled",
+      "setMicEchoCancellationEnabled",
       "setCaptureFrameRate",
       "getCaptureDiagnostics",
 

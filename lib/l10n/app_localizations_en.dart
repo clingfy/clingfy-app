@@ -2021,6 +2021,13 @@ class AppLocalizationsEn extends AppLocalizations {
       'Exclude my mic from system audio';
 
   @override
+  String get recordingMicEchoCancellation => 'Remove speaker echo from mic';
+
+  @override
+  String get recordingMicEchoCancellationHelp =>
+      'Experimental: filters system-audio bleed out of the mic during pauses in your speech. May affect voice quality on some recordings.';
+
+  @override
   String get restartApp => 'Restart App';
 
   @override

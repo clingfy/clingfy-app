@@ -86,6 +86,7 @@ Future<void> installCommonNativeMocks({
       case 'togglePreRecordingBar':
       case 'setExcludeRecorderApp':
       case 'setExcludeMicFromSystemAudio':
+      case 'setMicEchoCancellationEnabled':
       case 'setCursorHighlightEnabled':
       case 'setCursorHighlightLinkedToRecording':
       case 'setOverlayEnabled':
@@ -141,6 +142,8 @@ Future<void> installCommonNativeMocks({
         return false;
       case 'getExcludeMicFromSystemAudio':
         return true;
+      case 'getMicEchoCancellationEnabled':
+        return false;
       default:
         return null;
     }

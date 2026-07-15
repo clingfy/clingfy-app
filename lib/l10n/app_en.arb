@@ -690,6 +690,8 @@
   "diagnosticsExported": "Diagnostics package created — revealed in your file manager.",
   "recordingSystemAudio": "System audio",
   "recordingExcludeMicFromSystemAudio": "Exclude my mic from system audio",
+  "recordingMicEchoCancellation": "Remove speaker echo from mic",
+  "recordingMicEchoCancellationHelp": "Experimental: filters system-audio bleed out of the mic during pauses in your speech. May affect voice quality on some recordings.",
   "restartApp": "Restart App",
   "permissionsOnboardingWelcomeRail": "Welcome",
   "permissionsOnboardingMicCameraRail": "Mic + Camera",

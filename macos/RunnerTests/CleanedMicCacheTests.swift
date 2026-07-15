@@ -10,8 +10,13 @@ import XCTest
 final class CleanedMicCacheTests: XCTestCase {
 
   private var projectRoot: URL!
+  private var savedIsEnabledProvider: (() -> Bool)!
 
   override func setUpWithError() throws {
+    // The user preference defaults to OFF; pin the gate ON so the caching
+    // behavior under test is reachable regardless of UserDefaults state.
+    savedIsEnabledProvider = CleanedMicCache.isEnabledProvider
+    CleanedMicCache.isEnabledProvider = { true }
     projectRoot = FileManager.default.temporaryDirectory
       .appendingPathComponent(UUID().uuidString, isDirectory: true)
       .appendingPathComponent("Test.clingfyproj", isDirectory: true)
@@ -21,6 +26,7 @@ final class CleanedMicCacheTests: XCTestCase {
   }
 
   override func tearDownWithError() throws {
+    CleanedMicCache.isEnabledProvider = savedIsEnabledProvider
     try? FileManager.default.removeItem(at: projectRoot.deletingLastPathComponent())
   }
 
@@ -400,5 +406,57 @@ final class CleanedMicCacheTests: XCTestCase {
     XCTAssertNil(
       cache.cachedOutcome(micURL: mic, systemURL: system, projectRoot: projectRoot),
       "failures are not cached — the next open retries")
+  }
+
+  // MARK: - Preference gate (echo cancellation disabled)
+
+  func testDisabledPreferenceServesRawMicWithoutComputing() throws {
+    let (mic, system) = try writeBleedPair()
+    let cache = CleanedMicCache()
+    CleanedMicCache.isEnabledProvider = { false }
+
+    let lookup = cache.cachedOutcome(micURL: mic, systemURL: system, projectRoot: projectRoot)
+    XCTAssertNotNil(
+      lookup, "disabled must read as a synchronous hit so the preview opens without parking")
+    XCTAssertFalse(lookup!.result.applied)
+    XCTAssertEqual(lookup!.result.cleanedMicURL, mic, "the raw mic, untouched")
+    XCTAssertTrue(lookup!.cacheOwned, "no new file exists for the caller to own")
+
+    let outcome = try cache.outcome(micURL: mic, systemURL: system, projectRoot: projectRoot)
+    XCTAssertFalse(outcome.result.applied)
+    XCTAssertEqual(outcome.result.cleanedMicURL, mic)
+    XCTAssertFalse(
+      FileManager.default.fileExists(
+        atPath: CleanedMicCache.metadataFileURL(for: projectRoot).path),
+      "the disabled path must never compute or write cache files")
+    XCTAssertFalse(
+      FileManager.default.fileExists(
+        atPath: CleanedMicCache.cleanedFileURL(for: projectRoot).path))
+  }
+
+  func testDisabledPreferenceLeavesCacheIntactAndReenableHitsInstantly() throws {
+    let (mic, system) = try writeBleedPair()
+    let cache = CleanedMicCache()
+
+    let computed = try cache.outcome(micURL: mic, systemURL: system, projectRoot: projectRoot)
+    XCTAssertTrue(computed.result.applied, "precondition: a real cached cancellation exists")
+
+    CleanedMicCache.isEnabledProvider = { false }
+    let disabled = try cache.outcome(micURL: mic, systemURL: system, projectRoot: projectRoot)
+    XCTAssertFalse(disabled.result.applied)
+    XCTAssertEqual(
+      disabled.result.cleanedMicURL, mic,
+      "disabled must serve the raw mic even when a valid cleaned cache exists")
+    XCTAssertTrue(
+      FileManager.default.fileExists(
+        atPath: CleanedMicCache.cleanedFileURL(for: projectRoot).path),
+      "disabling must not destroy the cache")
+
+    CleanedMicCache.isEnabledProvider = { true }
+    let reenabled = cache.cachedOutcome(micURL: mic, systemURL: system, projectRoot: projectRoot)
+    XCTAssertNotNil(reenabled, "re-enabling must hit the preserved cache, no recompute")
+    XCTAssertTrue(reenabled!.fromCache)
+    XCTAssertTrue(reenabled!.result.applied)
+    XCTAssertEqual(reenabled!.result.cleanedMicURL, computed.result.cleanedMicURL)
   }
 }

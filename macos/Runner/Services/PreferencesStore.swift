@@ -46,6 +46,7 @@ final class PreferencesStore {
       PrefKey.keepOriginals: true,
       PrefKey.excludeRecorderApp: false,  // Default: exclude recorder app from capture
       PrefKey.excludeMicFromSystemAudio: true,  // Default: prevent mic feedback in system audio
+      PrefKey.micEchoCancellationEnabled: false,  // Default: never process the mic (opt-in)
       PrefKey.cameraCaptureMode: CameraCaptureMode.separateCameraAsset.rawValue,
 
       PrefKey.overlayShapeId: CameraOverlayShapeID.defaultValue.rawValue,
@@ -262,6 +263,15 @@ final class PreferencesStore {
   var excludeMicFromSystemAudio: Bool {
     get { ud.bool(forKey: PrefKey.excludeMicFromSystemAudio) }
     set { ud.set(newValue, forKey: PrefKey.excludeMicFromSystemAudio) }
+  }
+
+  /// Whether preview/export run `MicEchoCanceller` over the mic track.
+  /// When false (default), the raw mic is used untouched — the canceller has
+  /// repeatedly damaged the voice on signal regimes it was never validated on,
+  /// so processing is strictly opt-in.
+  var micEchoCancellationEnabled: Bool {
+    get { ud.bool(forKey: PrefKey.micEchoCancellationEnabled) }
+    set { ud.set(newValue, forKey: PrefKey.micEchoCancellationEnabled) }
   }
 
   var cameraCaptureMode: CameraCaptureMode {

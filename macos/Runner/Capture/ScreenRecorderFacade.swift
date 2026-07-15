@@ -1113,6 +1113,16 @@ final class ScreenRecorderFacade: NSObject {
     result(prefs.excludeMicFromSystemAudio)
   }
 
+  func setMicEchoCancellationEnabled(_ enabled: Bool, result: @escaping FlutterResult) {
+    prefs.micEchoCancellationEnabled = enabled
+    NativeLogger.i("Facade", "Set micEchoCancellationEnabled", context: ["enabled": enabled])
+    result(nil)
+  }
+
+  func getMicEchoCancellationEnabled(result: @escaping FlutterResult) {
+    result(prefs.micEchoCancellationEnabled)
+  }
+
   func getDisplays(result: @escaping FlutterResult) { result(displaySvc.allDisplays()) }
   func setDisplay(id: NSNumber?, result: @escaping FlutterResult) {
     prefs.selectedDisplayId = id == nil ? nil : Int(id!.uint32Value)

@@ -676,6 +676,8 @@
   "diagnosticsExported": "Pachetul de diagnostic a fost creat și afișat în managerul de fișiere.",
   "recordingSystemAudio": "Audio de sistem",
   "recordingExcludeMicFromSystemAudio": "Exclude microfonul meu din audio de sistem",
+  "recordingMicEchoCancellation": "Elimină ecoul difuzoarelor din microfon",
+  "recordingMicEchoCancellationHelp": "Experimental: filtrează sunetul de sistem scurs în microfon în pauzele de vorbire. Poate afecta calitatea vocii în unele înregistrări.",
   "restartApp": "Repornește aplicația",
   "permissionsOnboardingWelcomeRail": "Bun venit",
   "permissionsOnboardingMicCameraRail": "Mic + Cameră",

@@ -44,6 +44,13 @@ final class CleanedMicCache {
   static let cleanedFileName = "mic-cleaned.caf"
   static let metadataFileName = "mic-cleaned.json"
 
+  /// Master gate for the whole echo-cancellation path, read per lookup so a
+  /// settings change applies to the very next preview open / export. When it
+  /// returns false every entry point serves the RAW mic immediately — no
+  /// compute, no cache read — but existing cache files are left in place so
+  /// re-enabling is instant. Injectable so tests don't touch UserDefaults.
+  static var isEnabledProvider: () -> Bool = { PreferencesStore().micEchoCancellationEnabled }
+
   /// A lookup/compute result plus who owns the produced file's lifetime.
   struct Outcome {
     let result: MicEchoCanceller.Result
@@ -87,8 +94,16 @@ final class CleanedMicCache {
   // MARK: - Lookup (fast: two stats + a tiny JSON read; safe on the main thread)
 
   /// Returns the cached outcome when the metadata matches the current sidecar
-  /// files and algorithm version, else nil. Never computes.
+  /// files and algorithm version, else nil. Never computes. When echo
+  /// cancellation is disabled this is a synchronous "hit" on the raw mic, so
+  /// the preview opens immediately instead of parking on `outcomeAsync`.
   func cachedOutcome(micURL: URL, systemURL: URL, projectRoot: URL) -> Outcome? {
+    guard Self.isEnabledProvider() else {
+      NativeLogger.i(
+        "Audio", "Mic echo cancellation disabled by preference; using the raw mic",
+        context: ["project": projectRoot.lastPathComponent])
+      return Self.bypassOutcome(micURL: micURL)
+    }
     guard let data = try? Data(contentsOf: Self.metadataFileURL(for: projectRoot)),
       let entry = try? JSONDecoder().decode(Entry.self, from: data),
       entry.algorithmVersion == MicEchoCanceller.algorithmVersion,
@@ -128,7 +143,8 @@ final class CleanedMicCache {
       return hit
     }
     return try computeQueue.sync {
-      // A concurrent request may have filled the cache while we queued.
+      // A concurrent request may have filled the cache while we queued — and
+      // the preference may have flipped, which `cachedOutcome` also re-checks.
       if let hit = cachedOutcome(micURL: micURL, systemURL: systemURL, projectRoot: projectRoot) {
         return hit
       }
@@ -296,6 +312,16 @@ final class CleanedMicCache {
     for url in entries where url.lastPathComponent.hasPrefix("mic-echo-cancelled-") {
       try? fileManager.removeItem(at: url)
     }
+  }
+
+  /// The disabled-path outcome: the untouched raw mic, shaped exactly like a
+  /// negative ("no bleed") result so no caller special-cases it. `cacheOwned`
+  /// because no new file exists for the caller to own or clean up.
+  static func bypassOutcome(micURL: URL) -> Outcome {
+    Outcome(
+      result: MicEchoCanceller.Result(
+        cleanedMicURL: micURL, applied: false, bleedCorrelation: 0, delayMs: 0, reductionDb: 0),
+      cacheOwned: true, fromCache: false)
   }
 
   struct FileStat: Equatable {

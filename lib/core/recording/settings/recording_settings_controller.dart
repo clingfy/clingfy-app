@@ -13,10 +13,13 @@ class RecordingSettingsController extends ChangeNotifier {
       'excludeRecorderAppFromCapture';
   static const String _prefExcludeMicFromSystemAudio =
       'excludeMicFromSystemAudio';
+  static const String _prefMicEchoCancellationEnabled =
+      'micEchoCancellationEnabled';
 
   bool _excludeRecorderAppFromCapture = false;
   bool _systemAudioEnabled = false;
   bool _excludeMicFromSystemAudio = true;
+  bool _micEchoCancellationEnabled = false;
   bool _autoStopEnabled = false;
   Duration _autoStopAfter = const Duration(minutes: 10);
   bool _countdownEnabled = false;
@@ -26,6 +29,7 @@ class RecordingSettingsController extends ChangeNotifier {
   bool get excludeRecorderAppFromCapture => _excludeRecorderAppFromCapture;
   bool get systemAudioEnabled => _systemAudioEnabled;
   bool get excludeMicFromSystemAudio => _excludeMicFromSystemAudio;
+  bool get micEchoCancellationEnabled => _micEchoCancellationEnabled;
   bool get autoStopEnabled => _autoStopEnabled;
   Duration get autoStopAfter => _autoStopAfter;
   bool get countdownEnabled => _countdownEnabled;
@@ -96,6 +100,21 @@ class RecordingSettingsController extends ChangeNotifier {
       Log.e(
         'Settings',
         'Failed to sync excludeMicFromSystemAudio to native',
+        e,
+        st,
+      );
+    }
+
+    _micEchoCancellationEnabled =
+        prefs.getBool(_prefMicEchoCancellationEnabled) ?? false;
+    try {
+      await _nativeBridge.invokeMethod<void>('setMicEchoCancellationEnabled', {
+        'enabled': _micEchoCancellationEnabled,
+      });
+    } catch (e, st) {
+      Log.e(
+        'Settings',
+        'Failed to sync micEchoCancellationEnabled to native',
         e,
         st,
       );
@@ -219,6 +238,35 @@ class RecordingSettingsController extends ChangeNotifier {
       Log.e(
         'Settings',
         'Failed to set excludeMicFromSystemAudio on native',
+        e,
+        st,
+      );
+    }
+  }
+
+  Future<void> updateMicEchoCancellationEnabled(bool value) async {
+    if (value == _micEchoCancellationEnabled) return;
+    _micEchoCancellationEnabled = value;
+    notifyListeners();
+    final prefs = await SharedPreferences.getInstance();
+    try {
+      await prefs.setBool(_prefMicEchoCancellationEnabled, value);
+    } catch (e, st) {
+      Log.e(
+        'Settings',
+        'Failed to persist micEchoCancellationEnabled setting',
+        e,
+        st,
+      );
+    }
+    try {
+      await _nativeBridge.invokeMethod<void>('setMicEchoCancellationEnabled', {
+        'enabled': value,
+      });
+    } catch (e, st) {
+      Log.e(
+        'Settings',
+        'Failed to set micEchoCancellationEnabled on native',
         e,
         st,
       );
