@@ -814,12 +814,6 @@ abstract class AppLocalizations {
   /// **'Pro Monthly'**
   String get paywallCardMonthlyTitle;
 
-  /// No description provided for @paywallCardMonthlyPrice.
-  ///
-  /// In en, this message translates to:
-  /// **'\$9.99'**
-  String get paywallCardMonthlyPrice;
-
   /// No description provided for @paywallCardMonthlyPeriod.
   ///
   /// In en, this message translates to:
@@ -861,12 +855,6 @@ abstract class AppLocalizations {
   /// In en, this message translates to:
   /// **'Lifetime Pro'**
   String get paywallCardLifetimeTitle;
-
-  /// No description provided for @paywallCardLifetimePrice.
-  ///
-  /// In en, this message translates to:
-  /// **'\$59.99'**
-  String get paywallCardLifetimePrice;
 
   /// No description provided for @paywallCardLifetimePeriod.
   ///
@@ -915,12 +903,6 @@ abstract class AppLocalizations {
   /// In en, this message translates to:
   /// **'Updates Extension'**
   String get paywallCardExtensionTitle;
-
-  /// No description provided for @paywallCardExtensionPrice.
-  ///
-  /// In en, this message translates to:
-  /// **'\$19.99'**
-  String get paywallCardExtensionPrice;
 
   /// No description provided for @paywallCardExtensionPeriod.
   ///

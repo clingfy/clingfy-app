@@ -397,9 +397,6 @@ class AppLocalizationsRo extends AppLocalizations {
   String get paywallCardMonthlyTitle => 'Pro Lunar';
 
   @override
-  String get paywallCardMonthlyPrice => '\$9.99';
-
-  @override
   String get paywallCardMonthlyPeriod => '/ lună';
 
   @override
@@ -420,9 +417,6 @@ class AppLocalizationsRo extends AppLocalizations {
 
   @override
   String get paywallCardLifetimeTitle => 'Pro pe Viață';
-
-  @override
-  String get paywallCardLifetimePrice => '\$59.99';
 
   @override
   String get paywallCardLifetimePeriod => 'o singură dată';
@@ -448,9 +442,6 @@ class AppLocalizationsRo extends AppLocalizations {
 
   @override
   String get paywallCardExtensionTitle => 'Extensie Actualizări';
-
-  @override
-  String get paywallCardExtensionPrice => '\$19.99';
 
   @override
   String get paywallCardExtensionPeriod => 'o singură dată';

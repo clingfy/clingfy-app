@@ -6,6 +6,7 @@ import 'package:flutter/cupertino.dart' show CupertinoIcons;
 import 'package:clingfy/app/config/build_config.dart';
 import 'package:clingfy/commercial/licensing/license_controller.dart';
 import 'package:clingfy/commercial/licensing/license_error_mapper.dart';
+import 'package:clingfy/commercial/licensing/pricing_catalog_service.dart';
 import 'package:clingfy/l10n/app_localizations.dart';
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
@@ -37,7 +38,6 @@ class PaywallDialog extends StatefulWidget {
 }
 
 class _PaywallDialogState extends State<PaywallDialog> {
-  static final Uri _pricingUri = Uri.parse('${BuildConfig.siteURL}/pricing');
   static const String _licensePrefix = 'CLINGFY-';
 
   final TextEditingController _licenseKeyController = TextEditingController();
@@ -46,6 +46,9 @@ class _PaywallDialogState extends State<PaywallDialog> {
   String? _errorText;
   String? _noticeText;
   AppInlineNoticeVariant _noticeVariant = AppInlineNoticeVariant.info;
+  // Live prices from GET /v1/pricing (the same Stripe Prices the website checkout charges);
+  // null until loaded / when offline with no cache — the bundled fallbacks render then.
+  PricingCatalog? _pricingCatalog;
 
   @override
   void dispose() {
@@ -58,6 +61,20 @@ class _PaywallDialogState extends State<PaywallDialog> {
     super.initState();
     _licenseKeyController.text = '';
     _licenseKeyController.addListener(_normalizeLicenseInput);
+    _loadPricing();
+  }
+
+  Future<void> _loadPricing() async {
+    final catalog = await PricingCatalogService().load();
+    if (!mounted || catalog == null) return;
+    setState(() => _pricingCatalog = catalog);
+  }
+
+  /// Catalog price -> bundled fallback. Keys are the platform's stable plan keys.
+  String _priceFor(String planKey) {
+    return _pricingCatalog?.plan(planKey)?.formattedAmount ??
+        kBundledFallbackPrices[planKey] ??
+        '';
   }
 
   void _normalizeLicenseInput() {
@@ -112,10 +129,12 @@ class _PaywallDialogState extends State<PaywallDialog> {
     });
   }
 
-  Future<void> _launchPricingPage() async {
+  Future<void> _launchPricingPage(String planKey) async {
     final l10n = AppLocalizations.of(context)!;
+    // ?plan= deep link: the website highlights + scrolls to this plan instead of showing the
+    // generic pricing page.
     final launched = await launchUrl(
-      _pricingUri,
+      Uri.parse('${BuildConfig.siteURL}/pricing?plan=$planKey'),
       mode: LaunchMode.externalApplication,
     );
 
@@ -168,32 +187,32 @@ class _PaywallDialogState extends State<PaywallDialog> {
     final cards = [
       _PricingCard(
         title: l10n.paywallCardMonthlyTitle,
-        price: l10n.paywallCardMonthlyPrice,
+        price: _priceFor('pro_monthly'),
         period: l10n.paywallCardMonthlyPeriod,
         description: l10n.paywallCardMonthlyDescription,
         features: monthlyFeatures,
         buttonText: l10n.paywallCardMonthlyCta,
-        onTap: _launchPricingPage,
+        onTap: () => _launchPricingPage('pro_monthly'),
       ),
       _PricingCard(
         title: l10n.paywallCardLifetimeTitle,
-        price: l10n.paywallCardLifetimePrice,
+        price: _priceFor('lifetime_pro'),
         period: l10n.paywallCardLifetimePeriod,
         description: l10n.paywallCardLifetimeDescription,
         features: lifetimeFeatures,
         buttonText: l10n.paywallCardLifetimeCta,
         recommendedLabel: l10n.paywallRecommendedBadge,
         isHighlighted: true,
-        onTap: _launchPricingPage,
+        onTap: () => _launchPricingPage('lifetime_pro'),
       ),
       _PricingCard(
         title: l10n.paywallCardExtensionTitle,
-        price: l10n.paywallCardExtensionPrice,
+        price: _priceFor('updates_extension'),
         period: l10n.paywallCardExtensionPeriod,
         description: l10n.paywallCardExtensionDescription,
         features: extensionFeatures,
         buttonText: l10n.paywallCardExtensionCta,
-        onTap: _launchPricingPage,
+        onTap: () => _launchPricingPage('updates_extension'),
       ),
     ];
 
