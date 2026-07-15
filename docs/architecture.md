@@ -60,7 +60,10 @@ owns *intent and data* (portable Dart objects); native owns *pixels and time*
    created.
 2. **Capture loop (native).** The backend writes `capture/screen.mov`;
    `CursorRecorder` samples the cursor → `capture/cursor.json`; optional
-   `CameraRecorder` → `camera/raw.mov`; audio (mic + system) is captured. The
+   `CameraRecorder` → `camera/raw.mov`; audio is captured as separate per-source
+   tracks by `SourceAudioRecorder` — mic → `capture/mic.m4a`, system audio →
+   `capture/system.m4a` (`MicEchoCanceller` cleans the mic downstream, cached via
+   `CleanedMicCache`). The
    **workflow** event channel emits `recordingStarted` … `recordingFinalized`;
    `RecordingController` advances `WorkflowPhase`
    (`idle → recording → finalizingRecording → previewReady`).
@@ -72,10 +75,14 @@ owns *intent and data* (portable Dart objects); native owns *pixels and time*
    `PlayerController` (`lib/core/preview/player_controller.dart`).
 4. **Post-processing edits (live).** `PostProcessingController`
    (`lib/app/home/post_processing/post_processing_controller.dart`) holds canvas
-   state (background, camera placement, audio gain, cursor size, zoom). Zoom is
-   the most developed editor — `ZoomEditorController` (`lib/core/zoom/`) keeps
-   auto + manual + effective segments and an **undo stack of `ZoomEditCommand`s**,
-   syncing live to native via `previewSetZoomSegments` (debounced). Each edit
+   state (background, camera placement, audio gain/normalize, cursor size, zoom,
+   color grade, clips). Zoom, clips, and color are full editors:
+   `ZoomEditorController` (`lib/core/zoom/`) keeps auto + manual + effective
+   segments and an **undo stack of `ZoomEditCommand`s**, syncing live to native
+   via `previewSetZoomSegments` (debounced); `ClipEditorController`
+   (`lib/core/clips/` — split/cut/trim/reorder) syncs via `previewSetClips`; and
+   the color-grade commands (`lib/core/color/` + `lib/core/timeline/`) sync via
+   `previewSetColorGrade`. All share the `EditSession` undo/redo model. Each edit
    crosses the bridge immediately.
 5. **Export.** `HomeActions.exportFromUi()` runs the **license gate**
    (`LicenseController.canExport`) → `exportVideo`. macOS: `ExportEngine.export()`
@@ -83,14 +90,18 @@ owns *intent and data* (portable Dart objects); native owns *pixels and time*
    `ScreenZoomCursorIntermediatePipeline` bakes zoom + cursor, (b) camera prepass
    `CameraStyledIntermediatePipeline`, (c) final `CompositionBuilder.build()`
    assembles an `AVMutableVideoComposition` + `AVVideoCompositionCoreAnimationTool`
-   layering background/screen/cursor/zoom/camera, with audio gain/normalize in the
-   same composition path. Progress streams back via `updateExportProgress(double)`.
+   layering background/screen/cursor/zoom/camera, applying the color grade
+   (`ColorGradeRenderer`) and re-tiling video+audio tracks to the kept/reordered
+   clip ranges, with audio gain/normalize in the same composition path. Progress
+   streams back via `updateExportProgress(double)`.
 
 **Key property for new features:** the export composition *already bakes effects*
-(zoom, cursor, camera, background) into the output. Any new editing effect follows
-the same pattern — model in Dart, sync to preview live, add a pass in
-`CompositionBuilder` — which is what [`editing-platform-plan.md`](editing-platform-plan.md)
-builds on.
+(zoom, cursor, camera, background, color grade, clip cuts/reorder) into the
+output. Any new editing effect follows the same pattern — model in Dart, sync to
+preview live, add a pass in the export path. Color correction and clip editing
+(shipped in 1.0.5) followed exactly this pattern; the remaining roadmap in
+[`editing-platform-plan.md`](editing-platform-plan.md) (subtitles, richer audio)
+builds on the same seam.
 
 ## Capture pipeline
 
@@ -138,8 +149,10 @@ Live preview compositing happens in `Preview/InlinePreviewView.swift` (the 60 Hz
   carries audio gain/normalize. Outputs MP4/MOV/GIF.
 
 > There is **no** `AudioMixEngine.swift` — audio gain/normalize lives in the
-> export composition path. `macos/Runner/Capture/Audio/` currently holds only
-> `AudioLevelEstimator.swift` and `MicrophoneLevelMonitor.swift`.
+> export composition path. `macos/Runner/Capture/Audio/` holds
+> `SourceAudioRecorder.swift` (separated mic/system capture),
+> `MicEchoCanceller.swift` + `CleanedMicCache.swift` (echo cancellation), and
+> the level monitors `AudioLevelEstimator.swift` / `MicrophoneLevelMonitor.swift`.
 
 **Render constraint to know:** `AVVideoCompositionCoreAnimationTool` forces a
 slow manual render path and degrades past ~100 `CALayer`s. Effects that add
@@ -202,7 +215,7 @@ add error codes if new failures exist, and test both sides.
 | `lib/app/bootstrap/` | `AppBootstrap → AppRunner → AppProviders → PlatformApp`; error handlers, window config, Sentry |
 | `lib/app/home/` | The workflow: `HomeShell`, `HomeActions`, `HomeBindings`, `WorkflowPhase` + `recording/ preview/ post_processing/ overlay/` |
 | `lib/app/settings/` | `SettingsController` (composite) + section UIs (SharedPreferences) |
-| `lib/core/` | Domain: `recording/ preview/ zoom/ export/ post_processing/ overlay/ devices/ models/ bridges/` — **no `lib/app` imports here** |
+| `lib/core/` | Domain: `recording/ preview/ zoom/ clips/ color/ timeline/ export/ post_processing/ overlay/ devices/ models/ bridges/` — **no `lib/app` imports here** |
 | `lib/commercial/licensing/` | `LicenseController`, `LicenseService`, `PaywallDialog` (backend/signing not in repo) |
 | `lib/ui/` | `app_theme.dart` (token classes + Material/macOS builders), shared widgets |
 | `lib/l10n/` | `app_*.arb` source — **never hand-edit generated `app_localizations*.dart`** |
@@ -218,7 +231,7 @@ to `NativeBridge` event streams, expose derived getters, and debounce live edits
 | **Preview/** | `InlinePreviewView`, `CursorFrameResolver`, `PreviewProfile`, `PreviewEngine` |
 | **Overlays/ + Views/** | `Camera/CameraOverlay`, `RecordingIndicatorView`, `CursorView` |
 | **Capture/Export/** | `ExportEngine`, `LetterboxExporter`, `CompositionBuilder`, prepass pipelines |
-| **Capture/Audio/** | `AudioLevelEstimator`, `MicrophoneLevelMonitor` (levels only today) |
+| **Capture/Audio/** | `SourceAudioRecorder` (separated mic/system tracks), `MicEchoCanceller`, `CleanedMicCache`, `AudioLevelEstimator`, `MicrophoneLevelMonitor` |
 | **Services/** | `RecordingStore`, `RecordingProjectManifest/Paths`, `PreferencesStore` |
 | **Platform/** | `DisplayService`, `MenuBarController` |
 | **Permissions/** | `PermissionsMethodRouter`, `ScreenRecorderFacade+Permissions` (TCC) |
@@ -230,11 +243,14 @@ to `NativeBridge` event streams, expose derived getters, and debounce live edits
 The durable artifact and the natural home for editor state:
 
 - `project.json` — manifest.
-- `capture/` — `screen.mov`, `screen.meta.json`, `cursor.json`.
+- `capture/` — `screen.mov`, `screen.meta.json`, `cursor.json`,
+  `zoom.manual.json`, `mic.m4a`, `system.m4a` (separated mic/system audio).
 - `camera/` — `raw.mov`.
-- `editor_state.json` — current durable canvas/editor state (via
-  `CanvasAppearanceStore`). The editing-platform plan introduces a richer
-  `post/state.json` alongside it.
+- `editor_state.json` — durable canvas/color state (via `CanvasAppearanceStore`).
+- `clips_state.json` — persisted clip edits (`ClipStateStore`,
+  `lib/core/clips/clip_state_store.dart`).
+- `post/state.json` — the timeline document read/written by `TimelineCodec`
+  (`lib/core/timeline/codec/`).
 - `derived/` — generated artifacts.
 
 ## Concurrency

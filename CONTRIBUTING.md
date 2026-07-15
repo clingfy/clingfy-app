@@ -41,7 +41,7 @@ See [docs/branching-strategy.md](docs/branching-strategy.md) for:
 * Keep refactors separate from feature work when possible.
 * Add or update tests when behavior changes.
 * Run `flutter analyze` and `flutter test` before opening a PR.
-* If your change touches native macOS code or release tooling, also run the relevant macOS build or explain why you could not.
+* If your change touches native code (macOS `macos/Runner` or Windows `windows/runner`) or release tooling, also run the relevant native build/tests for that platform (`windows/runner_tests` on Windows) or explain why you could not.
 
 ## Coding and review expectations
 
