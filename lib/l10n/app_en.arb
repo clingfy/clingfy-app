@@ -131,7 +131,6 @@
     }
   },
   "paywallCardMonthlyTitle": "Pro Monthly",
-  "paywallCardMonthlyPrice": "$9.99",
   "paywallCardMonthlyPeriod": "/ month",
   "paywallCardMonthlyDescription": "Always get the latest features.",
   "paywallCardMonthlyFeature1": "Unlimited exports",
@@ -139,7 +138,6 @@
   "paywallCardMonthlyFeature3": "Priority support",
   "paywallCardMonthlyCta": "Subscribe",
   "paywallCardLifetimeTitle": "Lifetime Pro",
-  "paywallCardLifetimePrice": "$59.99",
   "paywallCardLifetimePeriod": "one-time",
   "paywallCardLifetimeDescription": "Own Clingfy forever + 1 year of updates.",
   "paywallCardLifetimeFeature1": "Permanent ownership",
@@ -148,7 +146,6 @@
   "paywallCardLifetimeFeature4": "No watermark",
   "paywallCardLifetimeCta": "Buy Lifetime",
   "paywallCardExtensionTitle": "Updates Extension",
-  "paywallCardExtensionPrice": "$19.99",
   "paywallCardExtensionPeriod": "one-time",
   "paywallCardExtensionDescription": "Extend updates eligibility by +12 months.",
   "paywallCardExtensionFeature1": "Adds +12 months updates",
