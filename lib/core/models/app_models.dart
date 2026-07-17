@@ -10,7 +10,19 @@ export 'package:clingfy/core/zoom/cursor_samples.dart'
         ZoomNativeCapabilities,
         ZoomNativeCapabilityMissing;
 
-enum RecordingQuality { sd, hd720, fhd, qhd2k, uhd4k, k8k, native }
+/// Capture quality presets. `.name` is the wire value for
+/// `setRecordingQuality`; keep names and order in sync with the Swift
+/// `RecordingQuality` enum in `macos/Runner/Core/Models.swift`.
+enum RecordingQuality {
+  sd,
+  hd720,
+  fhd,
+  uhd2k,
+  uhd4k,
+  uhd8k,
+  vertical4k,
+  native,
+}
 
 enum LayoutPreset { auto, classic43, square11, youtube169, reel916 }
 

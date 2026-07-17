@@ -188,7 +188,6 @@
     }
   },
   "paywallCardMonthlyTitle": "Pro Lunar",
-  "paywallCardMonthlyPrice": "$9.99",
   "paywallCardMonthlyPeriod": "/ lună",
   "paywallCardMonthlyDescription": "Primești mereu cele mai noi funcții.",
   "paywallCardMonthlyFeature1": "Exporturi nelimitate",
@@ -196,7 +195,6 @@
   "paywallCardMonthlyFeature3": "Suport prioritar",
   "paywallCardMonthlyCta": "Abonează-te",
   "paywallCardLifetimeTitle": "Pro pe Viață",
-  "paywallCardLifetimePrice": "$59.99",
   "paywallCardLifetimePeriod": "o singură dată",
   "paywallCardLifetimeDescription": "Deții Clingfy pentru totdeauna + 1 an de actualizări.",
   "paywallCardLifetimeFeature1": "Deținere permanentă",
@@ -205,7 +203,6 @@
   "paywallCardLifetimeFeature4": "Fără watermark",
   "paywallCardLifetimeCta": "Cumpără pe Viață",
   "paywallCardExtensionTitle": "Extensie Actualizări",
-  "paywallCardExtensionPrice": "$19.99",
   "paywallCardExtensionPeriod": "o singură dată",
   "paywallCardExtensionDescription": "Extinde eligibilitatea pentru actualizări cu +12 luni.",
   "paywallCardExtensionFeature1": "Adaugă +12 luni de actualizări",

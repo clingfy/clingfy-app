@@ -173,6 +173,21 @@ FlutterWindow::MessageHandler(HWND hwnd, UINT const message,
     case WM_FONTCHANGE:
       flutter_controller_->engine()->ReloadSystemFonts();
       break;
+    case WM_POWERBROADCAST:
+      // Modern Standby / suspend resume invalidates the GPU + media
+      // stack (the 2026-07 55-minute-recording incident: D3D device
+      // removed, WinRT frame server dead). An open preview session
+      // would otherwise sit on a dead device until its render loop
+      // dies mid-play — proactively ask Dart to rebuild it instead.
+      // PBT_APMRESUMEAUTOMATIC fires on every wake, user-initiated or
+      // not; recording/export are protected separately by KeepAwake
+      // power requests (#263) so resume-with-active-capture is not a
+      // case this needs to handle.
+      if (wparam == PBT_APMRESUMEAUTOMATIC) {
+        clingfy::preview::PreviewEngine::Instance()->OnSystemResumed();
+        return TRUE;
+      }
+      break;
   }
 
   return Win32Window::MessageHandler(hwnd, message, wparam, lparam);

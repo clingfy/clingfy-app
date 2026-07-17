@@ -260,6 +260,20 @@ struct PassthroughResult {
   std::int64_t disk_required_bytes = -1;
   std::int64_t disk_available_bytes = -1;
   std::string disk_checked_path;
+  // Standby-resume recovery: true when error == kRenderFailed and the
+  // pipeline classified the failure as a lost D3D device (Modern Standby
+  // resume, driver reset, TDR — see RenderResult::device_removed). The
+  // router retries the whole export once when this is set; a fresh
+  // ExportPassthroughCopy call builds a fresh device.
+  bool device_removed = false;
+  // The destination the FAILED render attempt wrote to (UTF-8; empty on
+  // success and on pre-destination failures). The retry path uses it to
+  // verify the partial output is actually gone before re-resolving the
+  // destination — if a leftover survived both best-effort removals (a
+  // transient AV/indexer lock), a blind retry would collision-avoid to
+  // "name (1).ext" and report success while a corrupt file keeps the name
+  // the user chose.
+  std::string resolved_destination_path;
 };
 
 // ---- Phase 10.4 disk-full preflight (pure, unit-testable) -------------------
@@ -286,6 +300,19 @@ std::int64_t EstimateRequiredExportBytes(std::int64_t source_size_bytes,
 // otherwise a plain `available >= required` comparison.
 bool ExportDiskPreflightFits(std::int64_t required_bytes,
                              std::int64_t available_bytes);
+
+// Standby-resume recovery — pure decision: retry a failed export attempt?
+// True only for the FIRST attempt (`attempts_so_far == 1`) whose outcome is
+// kRenderFailed carrying the device-removed classification, and never after
+// a cancel request (a cancel can land in the gap between attempts). Strictly
+// gating on kRenderFailed means kCancelled / kDiskFull / kInputMissing /
+// kNoDestination / kCopyFailed never retry. Each ExportPassthroughCopy call
+// builds a fresh D3D device / D2D stack / readers / encoder, so the retry
+// IS the pipeline recreation — no extra teardown API exists or is needed.
+// Exposed for unit tests.
+bool ShouldRetryExportAfterDeviceRemoved(const PassthroughResult& outcome,
+                                         int attempts_so_far,
+                                         bool cancel_requested);
 
 // Human-readable decimal byte count ("67.1 MB" / "1.5 GB") — the Windows
 // analogue of the macOS ByteCountFormatter strings embedded in the

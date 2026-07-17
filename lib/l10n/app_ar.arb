@@ -188,7 +188,6 @@
     }
   },
   "paywallCardMonthlyTitle": "Pro شهري",
-  "paywallCardMonthlyPrice": "$9.99",
   "paywallCardMonthlyPeriod": "/ شهر",
   "paywallCardMonthlyDescription": "احصل دائماً على أحدث الميزات.",
   "paywallCardMonthlyFeature1": "صادرات غير محدودة",
@@ -196,7 +195,6 @@
   "paywallCardMonthlyFeature3": "دعم أولوية",
   "paywallCardMonthlyCta": "اشترك",
   "paywallCardLifetimeTitle": "Pro مدى الحياة",
-  "paywallCardLifetimePrice": "$59.99",
   "paywallCardLifetimePeriod": "مرة واحدة",
   "paywallCardLifetimeDescription": "امتلك Clingfy للأبد + سنة تحديثات.",
   "paywallCardLifetimeFeature1": "ملكية دائمة",
@@ -205,7 +203,6 @@
   "paywallCardLifetimeFeature4": "بدون علامة مائية",
   "paywallCardLifetimeCta": "اشترِ مدى الحياة",
   "paywallCardExtensionTitle": "تمديد التحديثات",
-  "paywallCardExtensionPrice": "$19.99",
   "paywallCardExtensionPeriod": "مرة واحدة",
   "paywallCardExtensionDescription": "مدد أهلية التحديثات لمدة +12 شهراً.",
   "paywallCardExtensionFeature1": "إضافة +12 شهراً من التحديثات",

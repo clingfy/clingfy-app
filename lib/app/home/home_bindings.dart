@@ -9,6 +9,7 @@ import 'package:clingfy/app/home/home_scope.dart';
 import 'package:clingfy/app/home/home_ui_state.dart';
 import 'package:clingfy/core/bridges/native_bridge.dart';
 import 'package:clingfy/core/models/app_models.dart';
+import 'package:clingfy/core/preview/player_controller.dart';
 import 'package:clingfy/app/settings/settings_controller.dart';
 import 'package:flutter/services.dart';
 
@@ -45,6 +46,7 @@ class HomeBindings {
   DeviceController get deviceController => scope.devices;
   OverlayController get overlayController => scope.overlay;
   PostProcessingController get postProcessingController => scope.post;
+  PlayerController get playerController => scope.player;
   HomeUiState get uiState => scope.uiState;
 
   bool? _lastRecordingActive;
@@ -138,6 +140,12 @@ class HomeBindings {
     nativeBridge.setOnPreRecordingBarAction(onHandleNativeBarAction);
     nativeBridge.setOnNativeSelectionChanged(onHandleNativeSelectionChanged);
 
+    // Windows `previewInvalidated` (standby resume): after PlayerController
+    // rebuilds the preview in place, re-push the post-processing state the
+    // reopened native session lost (canvas composition + color grade).
+    playerController.onPreviewRebuilt = (sessionId) => postProcessingController
+        .resyncPreviewAfterRebuild(sessionId: sessionId);
+
     recordingController.addListener(_handleWorkflowChanged);
     deviceController.addListener(onUpdateNativeBarState);
     overlayController.addListener(onUpdateNativeBarState);
@@ -160,6 +168,8 @@ class HomeBindings {
     countdownController.removeListener(onUpdateNativeBarState);
     settingsController.removeListener(onUpdateNativeBarState);
     nativeBridge.isUpdateAvailable.removeListener(onUpdateNativeBarState);
+
+    playerController.onPreviewRebuilt = null;
 
     nativeBridge.setOnIndicatorPauseTapped(null);
     nativeBridge.setOnIndicatorStopTapped(null);

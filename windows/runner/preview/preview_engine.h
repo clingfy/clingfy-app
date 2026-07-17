@@ -173,6 +173,25 @@ class PreviewEngine {
       bool running, const std::string& active_session_id,
       const std::string& incoming_session_id);
 
+  // Windows resumed from Modern Standby / suspend. The D3D11 device and
+  // WinRT frame server backing an open session are frequently invalid
+  // after a resume (DXGI_ERROR_DEVICE_REMOVED) — but the failure only
+  // surfaces once playback next touches the device, and the render loop
+  // takes ~90 failed frames to die. Instead of waiting for that, tell
+  // Dart the session is suspect NOW via a `previewInvalidated` player
+  // event; Dart closes and reopens the preview in place (same session
+  // id), rebuilding the device, reader, and texture. No-op when no
+  // session is running. Called from FlutterWindow::MessageHandler on
+  // WM_POWERBROADCAST / PBT_APMRESUMEAUTOMATIC (the platform thread),
+  // but safe from any thread — the publisher marshals internally.
+  void OnSystemResumed();
+
+  // Pure decision for OnSystemResumed(): only a running engine with a
+  // non-empty active session has anything to invalidate. Exposed for
+  // tests; keep in sync with OnSystemResumed().
+  static bool ShouldInvalidateOnSystemResume(
+      bool running, const std::string& active_session_id);
+
   // Tear down the MediaPlayer + compositor and release the Flutter
   // texture via FlutterDesktopTextureRegistrarUnregisterExternalTexture
   // with the documented async-completion callback. The Impl owning

@@ -420,6 +420,43 @@ bool PreviewEngine::ShouldReconcileStaleSession(
          active_session_id != incoming_session_id;
 }
 
+bool PreviewEngine::ShouldInvalidateOnSystemResume(
+    bool running, const std::string& active_session_id) {
+  return running && !active_session_id.empty();
+}
+
+void PreviewEngine::OnSystemResumed() {
+  // Snapshot-then-release, same rule as Open()'s reconcile block: never
+  // publish (or do anything else that can re-enter the engine) while
+  // holding mutex_.
+  std::string session_snapshot;
+  {
+    std::lock_guard<std::mutex> lock(mutex_);
+    if (shutting_down_.load() ||
+        !ShouldInvalidateOnSystemResume(running_.load(),
+                                        active_session_id_)) {
+      return;
+    }
+    session_snapshot = active_session_id_;
+    // Disarm the render loop's own reporter for this session: post-resume
+    // the frame server keeps failing every frame on the removed device, and
+    // ~90 failures (~1.5-3 s) later NoteRenderFailure would emit a loud
+    // PREVIEW_RENDER_ERROR + previewFailed for the very session Dart is
+    // silently rebuilding — the previewFailed handler then tears the phase
+    // down mid-rebuild and the user sees a blocking error instead of a
+    // silent recovery. Open() re-arms the latch for the rebuilt session, so
+    // the loud path stays available after recovery.
+    render_error_emitted_ = true;
+  }
+  clingfy::bridge::NativeLogPublisher::Instance().Warn(
+      "Preview",
+      "system resumed from standby with preview session " + session_snapshot +
+          " open — the D3D device may be invalid; asking Dart for a silent "
+          "rebuild (previewInvalidated)");
+  clingfy::bridge::PlayerEventPublisher::Instance().EmitPreviewInvalidated(
+      session_snapshot, "systemResume");
+}
+
 OpenResult PreviewEngine::Open(const OpenArgs& args) {
   LogNative("Open() entered");
 

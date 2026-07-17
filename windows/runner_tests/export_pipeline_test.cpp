@@ -2072,6 +2072,25 @@ TEST(ExportPipelineTest, IsDiskFullHresultClassifiesOnlyDiskFullCodes) {
   EXPECT_FALSE(IsDiskFullHresult(HRESULT_FROM_WIN32(ERROR_FILE_NOT_FOUND)));
 }
 
+// Pure classifier — GPU-free. Only the device-loss family (DXGI removed /
+// reset / hung / driver-internal-error, plus Direct2D's recreate-target)
+// marks a failure as retryable device loss; disk-full, generic failures,
+// and success codes never do (standby-resume recovery must not retry an
+// export that would fail again for the same non-transient reason).
+TEST(ExportPipelineTest, IsDeviceRemovedHresultClassifiesOnlyDeviceLoss) {
+  EXPECT_TRUE(IsDeviceRemovedHresult(DXGI_ERROR_DEVICE_REMOVED));
+  EXPECT_TRUE(IsDeviceRemovedHresult(DXGI_ERROR_DEVICE_RESET));
+  EXPECT_TRUE(IsDeviceRemovedHresult(DXGI_ERROR_DEVICE_HUNG));
+  EXPECT_TRUE(IsDeviceRemovedHresult(DXGI_ERROR_DRIVER_INTERNAL_ERROR));
+  EXPECT_TRUE(IsDeviceRemovedHresult(D2DERR_RECREATE_TARGET));
+  EXPECT_FALSE(IsDeviceRemovedHresult(S_OK));
+  EXPECT_FALSE(IsDeviceRemovedHresult(E_FAIL));
+  EXPECT_FALSE(IsDeviceRemovedHresult(E_OUTOFMEMORY));
+  EXPECT_FALSE(IsDeviceRemovedHresult(HRESULT_FROM_WIN32(ERROR_DISK_FULL)));
+  EXPECT_FALSE(
+      IsDeviceRemovedHresult(HRESULT_FROM_WIN32(ERROR_ACCESS_DENIED)));
+}
+
 // Phase 10.4 fixture: a source .mov whose video track has ZERO samples. The
 // source reader opens it fine, but the export's frame loop hits EOS
 // immediately and fails ("no video frames were decoded") — a failure that
