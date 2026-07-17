@@ -93,7 +93,7 @@ void EnsureMediaFoundationStarted() {
 // yet and the remove is a harmless no-op. `disk_full` marks a failure whose
 // encoder error carried a disk-full HRESULT. `destination_path` is UTF-8.
 RenderResult Failure(const std::string& destination_path, std::string message,
-                     bool disk_full = false) {
+                     bool disk_full = false, bool device_removed = false) {
   if (!destination_path.empty()) {
     std::error_code ec;
     std::filesystem::remove(std::filesystem::u8path(destination_path), ec);
@@ -101,6 +101,7 @@ RenderResult Failure(const std::string& destination_path, std::string message,
   RenderResult out;
   out.ok = false;
   out.disk_full = disk_full;
+  out.device_removed = device_removed;
   out.message = std::move(message);
   return out;
 }
@@ -320,6 +321,13 @@ bool IsDiskFullHresult(HRESULT hr) {
          hr == HRESULT_FROM_WIN32(ERROR_HANDLE_DISK_FULL);
 }
 
+bool IsDeviceRemovedHresult(HRESULT hr) {
+  return hr == DXGI_ERROR_DEVICE_REMOVED || hr == DXGI_ERROR_DEVICE_RESET ||
+         hr == DXGI_ERROR_DEVICE_HUNG ||
+         hr == DXGI_ERROR_DRIVER_INTERNAL_ERROR ||
+         hr == D2DERR_RECREATE_TARGET;
+}
+
 RenderResult RenderComposedExport(const RenderRequest& request) {
   EnsureMediaFoundationStarted();
 
@@ -340,6 +348,18 @@ RenderResult RenderComposedExport(const RenderRequest& request) {
   if (auto err = device.Create()) {
     return Failure(request.destination_path, "export: D3D11 device creation failed — " + err->message);
   }
+  // Standby-resume recovery: classify a failure as device loss either by
+  // its own HRESULT or by the device's removed-reason — a dead device makes
+  // UNRELATED calls fail with generic codes (E_FAIL, MF errors), so the
+  // probe catches losses the failing HRESULT alone would miss. The router
+  // retries the whole export once on a fresh device when a failure carries
+  // this classification.
+  const auto device_lost = [&device](HRESULT hr) {
+    return IsDeviceRemovedHresult(hr) ||
+           (device.device() != nullptr &&
+            device.device()->GetDeviceRemovedReason() != S_OK);
+  };
+
   // The hardware H.264 MFT runs the encode on its own worker thread, so
   // the device it shares with our Direct2D draws must be multithread
   // protected. Best-effort: older feature levels may not expose the
@@ -854,7 +874,9 @@ RenderResult RenderComposedExport(const RenderRequest& request) {
                             sample.GetAddressOf());
     if (FAILED(hr)) {
       cancel_encoder();
-      return Failure(request.destination_path, Hr("export: IMFSourceReader::ReadSample failed", hr));
+      return Failure(request.destination_path,
+                     Hr("export: IMFSourceReader::ReadSample failed", hr),
+                     /*disk_full=*/false, device_lost(hr));
     }
     if (flags & MF_SOURCE_READERF_ENDOFSTREAM) {
       if (actual_index == video_index) {
@@ -987,7 +1009,8 @@ RenderResult RenderComposedExport(const RenderRequest& request) {
                        HrWithDeviceState(
                            "export: CreateTexture2D failed for an output "
                            "frame",
-                           tex_hr, device.device()));
+                           tex_hr, device.device()),
+                       /*disk_full=*/false, device_lost(tex_hr));
       }
       ComPtr<IDXGISurface> out_surface;
       if (FAILED(out_texture.As(&out_surface))) {
@@ -1116,7 +1139,8 @@ RenderResult RenderComposedExport(const RenderRequest& request) {
           return Failure(
               request.destination_path,
               Hr("export: Direct2D EndDraw failed (graded content pass)",
-                 content_hr));
+                 content_hr),
+              /*disk_full=*/false, device_lost(content_hr));
         }
       }
 
@@ -1160,7 +1184,9 @@ RenderResult RenderComposedExport(const RenderRequest& request) {
       d2d_ctx->SetTarget(nullptr);
       if (FAILED(end_hr)) {
         cancel_encoder();
-        return Failure(request.destination_path, Hr("export: Direct2D EndDraw failed", end_hr));
+        return Failure(request.destination_path,
+                       Hr("export: Direct2D EndDraw failed", end_hr),
+                       /*disk_full=*/false, device_lost(end_hr));
       }
       // Flush so the composite completes before the encoder MFT reads the
       // texture on its own thread.
@@ -1183,7 +1209,7 @@ RenderResult RenderComposedExport(const RenderRequest& request) {
         return Failure(request.destination_path,
                        "export: encoder WriteVideoFrame failed — " +
                            err->message,
-                       IsDiskFullHresult(err->hr));
+                       IsDiskFullHresult(err->hr), device_lost(err->hr));
       }
       ++video_frames;
       // A/V origin alignment (T2): now that the first kept video frame has
@@ -1200,7 +1226,7 @@ RenderResult RenderComposedExport(const RenderRequest& request) {
                            "export: encoder WriteAudioPacket (clip flush) "
                            "failed — " +
                                err->message,
-                           IsDiskFullHresult(err->hr));
+                           IsDiskFullHresult(err->hr), device_lost(err->hr));
           }
           ++audio_packets;
         }
@@ -1222,7 +1248,7 @@ RenderResult RenderComposedExport(const RenderRequest& request) {
               request.destination_path,
               "export: reorder audio pump WriteAudioPacket failed — " +
                   err->message,
-              IsDiskFullHresult(err->hr));
+              IsDiskFullHresult(err->hr), device_lost(err->hr));
         }
       }
       if (gif) {
@@ -1268,7 +1294,8 @@ RenderResult RenderComposedExport(const RenderRequest& request) {
               return Failure(request.destination_path,
                              "export: encoder WriteAudioPacket failed — " +
                                  err->message,
-                             IsDiskFullHresult(err->hr));
+                             IsDiskFullHresult(err->hr),
+                             device_lost(err->hr));
             }
             ++audio_packets;
           } else if (first_video_hns < 0) {
@@ -1320,7 +1347,8 @@ RenderResult RenderComposedExport(const RenderRequest& request) {
                   return Failure(request.destination_path,
                                  "export: encoder WriteAudioPacket failed — " +
                                      err->message,
-                                 IsDiskFullHresult(err->hr));
+                                 IsDiskFullHresult(err->hr),
+                                 device_lost(err->hr));
                 }
                 ++audio_packets;
               }
@@ -1335,7 +1363,12 @@ RenderResult RenderComposedExport(const RenderRequest& request) {
 
   if (video_frames == 0) {
     cancel_encoder();
-    return Failure(request.destination_path, "export: no video frames were decoded from the source.");
+    // S_OK carries no signal of its own here — the classification rides
+    // entirely on the device probe (a lost device can make the reader
+    // return EOS-without-frames instead of a failing HRESULT).
+    return Failure(request.destination_path,
+                   "export: no video frames were decoded from the source.",
+                   /*disk_full=*/false, device_lost(S_OK));
   }
 
   // Editing port (clips, 3b-2b): drain the reorder audio pump's tail — the
@@ -1348,7 +1381,7 @@ RenderResult RenderComposedExport(const RenderRequest& request) {
       return Failure(
           request.destination_path,
           "export: reorder audio pump flush failed — " + err->message,
-          IsDiskFullHresult(err->hr));
+          IsDiskFullHresult(err->hr), device_lost(err->hr));
     }
   }
 
@@ -1358,7 +1391,7 @@ RenderResult RenderComposedExport(const RenderRequest& request) {
     // still-open file handle.
     return Failure(request.destination_path,
                    "export: encoder finalize failed — " + err->message,
-                   IsDiskFullHresult(err->hr));
+                   IsDiskFullHresult(err->hr), device_lost(err->hr));
   }
 
   // Slice 5A: terminal 1.0 so the UI lands exactly at 100% (matches macOS,

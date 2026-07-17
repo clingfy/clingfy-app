@@ -4,6 +4,7 @@
 #include <exception>
 #include <filesystem>
 #include <fstream>
+#include <functional>
 #include <memory>
 #include <optional>
 #include <sstream>
@@ -51,6 +52,68 @@ void HandleSaveManualZoomSegments(
   // back gracefully. Manual zoom editing is hidden on Windows (Phase 10.3)
   // until real persistence lands.
   reply::Bool(*result, false);
+}
+
+// Standby-resume recovery: run the export, and when the FIRST attempt died
+// because the D3D device was removed (Modern Standby resume, driver reset,
+// TDR — the 55-minute-recording incident), run it once more. Every
+// ExportPassthroughCopy call builds a fresh D3D device / D2D stack / readers
+// / encoder, so the second attempt IS the pipeline recreation; a failed
+// attempt leaves no file at the destination (Phase 10.4), so re-running is
+// safe. Shared by the synchronous (tests / no dispatcher) and worker-thread
+// branches so both behave identically. Exceptions are mapped to a failed
+// outcome per attempt — the worker thread runs outside the MethodRouter
+// dispatch barrier, where a throw would std::terminate the process — and a
+// thrown attempt never retries (device_removed stays false).
+//
+// The retry runs under the SAME claimed ExportSession: BeginExport is never
+// re-entered (it would be rejected while running, and it clears the cancel
+// flag, which would eat a cancel landing between the attempts). The decision
+// itself is the pure ShouldRetryExportAfterDeviceRemoved, pinned in
+// export_passthrough_test.cpp.
+clingfy::capture::export_::PassthroughResult RunExportWithDeviceLossRetry(
+    const clingfy::capture::export_::PassthroughInput& input,
+    const std::function<void(double)>& on_progress,
+    const std::function<bool()>& is_cancelled) {
+  namespace exp = clingfy::capture::export_;
+  const auto run_once = [&]() {
+    exp::PassthroughResult outcome;
+    try {
+      outcome = exp::ExportPassthroughCopy(input, on_progress, is_cancelled);
+    } catch (const std::exception& e) {
+      outcome.error = exp::PassthroughError::kRenderFailed;
+      outcome.message =
+          std::string("Unhandled exception during export: ") + e.what();
+    } catch (...) {
+      outcome.error = exp::PassthroughError::kRenderFailed;
+      outcome.message =
+          "Unhandled exception during export: unknown exception.";
+    }
+    return outcome;
+  };
+
+  exp::PassthroughResult outcome = run_once();
+  if (exp::ShouldRetryExportAfterDeviceRemoved(outcome, /*attempts_so_far=*/1,
+                                               is_cancelled())) {
+    NativeLogPublisher::Instance().Warn(
+        "Export", "export attempt failed with the D3D device removed (" +
+                      outcome.message +
+                      ") — recreating the pipeline and retrying once");
+    // Make the restart legible: snap the progress UI back to 0 instead of
+    // leaving it frozen at the failure point while attempt 2 warms up.
+    on_progress(0.0);
+    outcome = run_once();
+    if (outcome.error != exp::PassthroughError::kNone) {
+      NativeLogPublisher::Instance().Error(
+          "Export",
+          "device-removed retry failed too: " + outcome.message);
+    } else {
+      NativeLogPublisher::Instance().Info(
+          "Export", "device-removed retry succeeded — export completed on "
+                    "the recreated pipeline");
+    }
+  }
+  return outcome;
 }
 
 // ---- Phase 6 / Slice 1-5A ---------------------------------------------------
@@ -359,24 +422,12 @@ void HandleExportVideo(
   // worker thread — otherwise the blocked platform thread could never receive
   // cancelExport — and marshal the reply back via the dispatcher.
   if (!PlatformThreadDispatcher::Instance().is_initialized()) {
-    // Same exception mapping as the worker path below. The MethodRouter
-    // dispatch barrier would catch a throw here too, but it cannot know to
-    // call EndExport() — without this catch the session would stay
-    // "running" forever and every later export would be rejected.
-    clingfy::capture::export_::PassthroughResult outcome;
-    try {
-      outcome = clingfy::capture::export_::ExportPassthroughCopy(
-          input, on_progress, is_cancelled);
-    } catch (const std::exception& e) {
-      outcome.error =
-          clingfy::capture::export_::PassthroughError::kRenderFailed;
-      outcome.message =
-          std::string("Unhandled exception during export: ") + e.what();
-    } catch (...) {
-      outcome.error =
-          clingfy::capture::export_::PassthroughError::kRenderFailed;
-      outcome.message = "Unhandled exception during export: unknown exception.";
-    }
+    // RunExportWithDeviceLossRetry maps exceptions to a failed outcome. The
+    // MethodRouter dispatch barrier would catch a throw here too, but it
+    // cannot know to call EndExport() — without that mapping the session
+    // would stay "running" forever and every later export would be rejected.
+    const clingfy::capture::export_::PassthroughResult outcome =
+        RunExportWithDeviceLossRetry(input, on_progress, is_cancelled);
     clingfy::capture::export_::ExportSession::Instance().EndExport();
     ReplyForExportOutcome(*result, outcome, input.project_path,
                           input.directory_override);
@@ -399,25 +450,15 @@ void HandleExportVideo(
           "keep-awake power request unavailable — the machine may enter "
           "standby during a long export");
     }
-    // Phase 10.4 worker barrier: an exception escaping a detached thread
+    // RunExportWithDeviceLossRetry maps exceptions to a failed outcome
+    // (Phase 10.4 worker barrier): an exception escaping a detached thread
     // calls std::terminate and kills the whole process — and this thread is
     // OUTSIDE the MethodRouter dispatch barrier (which only covers the
-    // synchronous handler call). Convert any throw into a normal failed
-    // outcome so the shared reply path below still resolves the Dart future
-    // exactly once (EXPORT_ERROR via ReplyForExportOutcome, which also emits
-    // the native log line).
-    clingfy::capture::export_::PassthroughResult outcome;
-    try {
-      outcome = clingfy::capture::export_::ExportPassthroughCopy(
-          input, on_progress, is_cancelled);
-    } catch (const std::exception& e) {
-      outcome.error = clingfy::capture::export_::PassthroughError::kRenderFailed;
-      outcome.message =
-          std::string("Unhandled exception during export: ") + e.what();
-    } catch (...) {
-      outcome.error = clingfy::capture::export_::PassthroughError::kRenderFailed;
-      outcome.message = "Unhandled exception during export: unknown exception.";
-    }
+    // synchronous handler call). The shared reply path below then resolves
+    // the Dart future exactly once (EXPORT_ERROR via ReplyForExportOutcome,
+    // which also emits the native log line).
+    const clingfy::capture::export_::PassthroughResult outcome =
+        RunExportWithDeviceLossRetry(input, on_progress, is_cancelled);
     clingfy::capture::export_::ExportSession::Instance().EndExport();
     // Reply on the platform thread. shared_result keeps the MethodResult alive
     // until the reply runs (never dropped -> never a hung Dart future).

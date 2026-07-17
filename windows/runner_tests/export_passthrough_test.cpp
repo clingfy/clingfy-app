@@ -13,6 +13,62 @@ namespace {
 
 namespace fs = std::filesystem;
 
+// ---- ShouldRetryExportAfterDeviceRemoved ------------------------------------
+//
+// Pure decision tests; no GPU, no filesystem. Pins the standby-resume retry
+// gate: exactly one retry, only for a device-removed render failure, never
+// after a cancel request.
+
+PassthroughResult MakeOutcome(PassthroughError error, bool device_removed) {
+  PassthroughResult out;
+  out.error = error;
+  out.device_removed = device_removed;
+  return out;
+}
+
+TEST(ShouldRetryExportAfterDeviceRemovedTest,
+     RetriesFirstDeviceRemovedRenderFailure) {
+  EXPECT_TRUE(ShouldRetryExportAfterDeviceRemoved(
+      MakeOutcome(PassthroughError::kRenderFailed, /*device_removed=*/true),
+      /*attempts_so_far=*/1, /*cancel_requested=*/false));
+}
+
+TEST(ShouldRetryExportAfterDeviceRemovedTest, NeverRetriesASecondTime) {
+  EXPECT_FALSE(ShouldRetryExportAfterDeviceRemoved(
+      MakeOutcome(PassthroughError::kRenderFailed, /*device_removed=*/true),
+      /*attempts_so_far=*/2, /*cancel_requested=*/false));
+}
+
+TEST(ShouldRetryExportAfterDeviceRemovedTest, NeverRetriesAfterCancelRequest) {
+  // A cancel can land in the gap between the failed attempt and the retry —
+  // the user's cancel must win over the recovery.
+  EXPECT_FALSE(ShouldRetryExportAfterDeviceRemoved(
+      MakeOutcome(PassthroughError::kRenderFailed, /*device_removed=*/true),
+      /*attempts_so_far=*/1, /*cancel_requested=*/true));
+}
+
+TEST(ShouldRetryExportAfterDeviceRemovedTest,
+     RenderFailureWithoutDeviceLossIsNotRetried) {
+  // A generic render failure (bad source, unsupported media type) would
+  // fail again identically — retrying just doubles the wait to the error.
+  EXPECT_FALSE(ShouldRetryExportAfterDeviceRemoved(
+      MakeOutcome(PassthroughError::kRenderFailed, /*device_removed=*/false),
+      /*attempts_so_far=*/1, /*cancel_requested=*/false));
+}
+
+TEST(ShouldRetryExportAfterDeviceRemovedTest, OtherOutcomesNeverRetry) {
+  for (const auto error :
+       {PassthroughError::kNone, PassthroughError::kInputMissing,
+        PassthroughError::kNoDestination, PassthroughError::kCopyFailed,
+        PassthroughError::kDiskFull, PassthroughError::kCancelled}) {
+    // device_removed=true is inconsistent with these outcomes, but the gate
+    // must be strict on kRenderFailed regardless.
+    EXPECT_FALSE(ShouldRetryExportAfterDeviceRemoved(
+        MakeOutcome(error, /*device_removed=*/true),
+        /*attempts_so_far=*/1, /*cancel_requested=*/false));
+  }
+}
+
 // ---- ResolveExportDestination ----------------------------------------------
 //
 // Pure path-arithmetic tests; no filesystem dependency. Validates the

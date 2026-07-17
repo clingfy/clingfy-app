@@ -555,6 +555,7 @@ PassthroughResult ExportPassthroughCopy(
             render_result.message + ")";
       } else {
         out.error = PassthroughError::kRenderFailed;
+        out.device_removed = render_result.device_removed;
         out.message = "exportVideo: composition render failed — " +
                       render_result.message;
       }
@@ -568,6 +569,14 @@ PassthroughResult ExportPassthroughCopy(
   // kept as the result-contract field.
   out.format_was_downgraded = FormatWasDowngraded(input.format);
   return out;
+}
+
+bool ShouldRetryExportAfterDeviceRemoved(const PassthroughResult& outcome,
+                                         int attempts_so_far,
+                                         bool cancel_requested) {
+  return attempts_so_far == 1 && !cancel_requested &&
+         outcome.error == PassthroughError::kRenderFailed &&
+         outcome.device_removed;
 }
 
 }  // namespace clingfy::capture::export_
