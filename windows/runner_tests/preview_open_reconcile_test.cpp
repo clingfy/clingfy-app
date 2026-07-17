@@ -40,5 +40,27 @@ TEST(PreviewOpenReconcileTest, EmptyIncomingIdNeverReconciles) {
       /*running=*/true, "rec_old", ""));
 }
 
+// Pins OnSystemResumed()'s decision: after a Modern Standby / suspend
+// resume the engine emits `previewInvalidated` (Dart then rebuilds the
+// preview in place) only when a session is actually running.
+TEST(PreviewResumeInvalidateTest, RunningSessionIsInvalidatedOnResume) {
+  EXPECT_TRUE(PreviewEngine::ShouldInvalidateOnSystemResume(
+      /*running=*/true, "rec_1_58af094a"));
+}
+
+TEST(PreviewResumeInvalidateTest, NotRunningNeverInvalidates) {
+  EXPECT_FALSE(PreviewEngine::ShouldInvalidateOnSystemResume(
+      /*running=*/false, ""));
+  EXPECT_FALSE(PreviewEngine::ShouldInvalidateOnSystemResume(
+      /*running=*/false, "rec_leftover"));
+}
+
+// A running flag with no session id is a teardown transient — there is no
+// session Dart could rebuild, so no event may be emitted.
+TEST(PreviewResumeInvalidateTest, EmptySessionIdNeverInvalidates) {
+  EXPECT_FALSE(PreviewEngine::ShouldInvalidateOnSystemResume(
+      /*running=*/true, ""));
+}
+
 }  // namespace
 }  // namespace clingfy::preview

@@ -1,8 +1,10 @@
 import 'dart:async';
 
 import 'package:clingfy/app/home/recording/recording_controller.dart';
+import 'package:clingfy/core/bridges/native_error_codes.dart';
 import 'package:clingfy/core/bridges/native_method_channel.dart';
 import 'package:clingfy/core/bridges/native_bridge.dart';
+import 'package:clingfy/core/models/app_models.dart';
 import 'package:clingfy/core/preview/player_controller.dart';
 import 'package:clingfy/app/settings/settings_controller.dart';
 import 'package:flutter/services.dart';
@@ -308,4 +310,140 @@ void main() {
       expect(harness.player.positionMs, 1800);
     },
   );
+
+  group('previewInvalidated (Windows standby-resume rebuild)', () {
+    test('rebuilds the preview in place and restores the transport', () async {
+      final harness = await createReadyPreviewHarness();
+      addTearDown(harness.recording.dispose);
+      addTearDown(harness.player.dispose);
+      addTearDown(harness.settings.dispose);
+
+      // Ready and PLAYING at 1500 ms — the state the rebuild must restore.
+      await _emitPlayerEvent({
+        'type': 'playerTick',
+        'sessionId': harness.sessionId,
+        'positionMs': 1500,
+        'durationMs': 5000,
+      });
+      await _emitPlayerEvent({
+        'type': 'playerState',
+        'sessionId': harness.sessionId,
+        'state': 'playing',
+      });
+      await pumpEventQueue();
+
+      // Swap the mock so the reopen returns a NEW texture, and record the
+      // rebuild's native traffic separately from the harness setup calls.
+      final rebuildCalls = <MethodCall>[];
+      final messenger =
+          TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger;
+      messenger.setMockMethodCallHandler(screenRecorderChannel, (call) async {
+        rebuildCalls.add(call);
+        if (call.method == 'previewOpen') {
+          return <String, dynamic>{
+            'textureId': 99,
+            'width': 1600,
+            'height': 900,
+            'videoWidth': 1600,
+            'videoHeight': 900,
+            'sharedHandleOk': true,
+          };
+        }
+        if (call.method == 'getZoomSegments' ||
+            call.method == 'getManualZoomSegments') {
+          return <dynamic>[];
+        }
+        return null;
+      });
+
+      final rebuiltSessions = <String>[];
+      harness.player.onPreviewRebuilt = (sessionId) async {
+        rebuiltSessions.add(sessionId);
+      };
+
+      await _emitPlayerEvent({
+        'type': PlayerEventType.previewInvalidated,
+        'sessionId': harness.sessionId,
+        'reason': 'systemResume',
+      });
+      await pumpEventQueue();
+
+      final methods = rebuildCalls.map((c) => c.method).toList();
+      // Raw close → open with the same session id.
+      expect(
+        methods.indexOf('previewClose'),
+        lessThan(methods.indexOf('previewOpen')),
+      );
+      final open = rebuildCalls.singleWhere((c) => c.method == 'previewOpen');
+      expect(
+        (open.arguments as Map<dynamic, dynamic>)['sessionId'],
+        harness.sessionId,
+      );
+      // The post-processing hook and both editors re-pushed their state.
+      expect(rebuiltSessions, [harness.sessionId]);
+      expect(methods, contains('previewSetZoomSegments'));
+      expect(methods, contains('previewSetClips'));
+      // Transport restored: seek back to 1500 ms, then resume playback.
+      final seek = rebuildCalls.where((c) => c.method == 'previewSeekTo');
+      expect(seek, hasLength(1));
+      expect((seek.single.arguments as Map<dynamic, dynamic>)['ms'], 1500);
+      expect(methods, contains('previewPlay'));
+      // The texture swapped in place — no phase change, no error.
+      expect(harness.recording.inlinePreviewTextureId, 99);
+      expect(
+        harness.recording.inlinePreviewTextureAspect,
+        closeTo(1600 / 900, 1e-9),
+      );
+      expect(harness.recording.phase, WorkflowPhase.previewReady);
+      expect(harness.player.blockingError, isNull);
+    });
+
+    test(
+      'a stale previewInvalidated never touches the active preview',
+      () async {
+        final harness = await createReadyPreviewHarness();
+        addTearDown(harness.recording.dispose);
+        addTearDown(harness.player.dispose);
+        addTearDown(harness.settings.dispose);
+
+        final callsBefore = harness.calls.length;
+        await _emitPlayerEvent({
+          'type': PlayerEventType.previewInvalidated,
+          'sessionId': 'rec_stale',
+          'reason': 'systemResume',
+        });
+        await pumpEventQueue();
+
+        expect(harness.calls.length, callsBefore);
+        expect(harness.player.blockingError, isNull);
+      },
+    );
+
+    test(
+      'a failed rebuild surfaces a blocking error instead of a frozen frame',
+      () async {
+        final harness = await createReadyPreviewHarness();
+        addTearDown(harness.recording.dispose);
+        addTearDown(harness.player.dispose);
+        addTearDown(harness.settings.dispose);
+
+        // The harness mock answers previewOpen with null (the macOS shape):
+        // no texture comes back, so the rebuild must report failure rather
+        // than leave a dead texture on screen.
+        await _emitPlayerEvent({
+          'type': PlayerEventType.previewInvalidated,
+          'sessionId': harness.sessionId,
+          'reason': 'systemResume',
+        });
+        await pumpEventQueue();
+
+        expect(harness.player.blockingError, isNotNull);
+        expect(
+          harness.player.blockingErrorCode,
+          NativeErrorCode.previewOpenError,
+        );
+        expect(harness.recording.phase, WorkflowPhase.previewReady);
+      },
+    );
+  });
 }

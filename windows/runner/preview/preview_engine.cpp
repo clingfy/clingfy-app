@@ -420,6 +420,34 @@ bool PreviewEngine::ShouldReconcileStaleSession(
          active_session_id != incoming_session_id;
 }
 
+bool PreviewEngine::ShouldInvalidateOnSystemResume(
+    bool running, const std::string& active_session_id) {
+  return running && !active_session_id.empty();
+}
+
+void PreviewEngine::OnSystemResumed() {
+  // Snapshot-then-release, same rule as Open()'s reconcile block: never
+  // publish (or do anything else that can re-enter the engine) while
+  // holding mutex_.
+  std::string session_snapshot;
+  {
+    std::lock_guard<std::mutex> lock(mutex_);
+    if (shutting_down_.load() ||
+        !ShouldInvalidateOnSystemResume(running_.load(),
+                                        active_session_id_)) {
+      return;
+    }
+    session_snapshot = active_session_id_;
+  }
+  clingfy::bridge::NativeLogPublisher::Instance().Warn(
+      "Preview",
+      "system resumed from standby with preview session " + session_snapshot +
+          " open — the D3D device may be invalid; asking Dart for a silent "
+          "rebuild (previewInvalidated)");
+  clingfy::bridge::PlayerEventPublisher::Instance().EmitPreviewInvalidated(
+      session_snapshot, "systemResume");
+}
+
 OpenResult PreviewEngine::Open(const OpenArgs& args) {
   LogNative("Open() entered");
 

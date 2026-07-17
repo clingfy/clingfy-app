@@ -219,6 +219,28 @@ TEST_F(PlayerEventPublisherTest, PlayerWarningShapeMatchesMacOS) {
   EXPECT_EQ(map->size(), 4u);
 }
 
+// ---- previewInvalidated shape ---------------------------------------
+
+TEST_F(PlayerEventPublisherTest, PreviewInvalidatedShape) {
+  // Windows-only event (no macOS counterpart): emitted after a Modern
+  // Standby / suspend resume so Dart silently rebuilds the preview in
+  // place. Payload is pinned exactly — Dart's PlayerController switches
+  // on `type` and reads `reason` for the log line.
+  auto events = InstallRecordingSink();
+  PlayerEventPublisher::Instance().EmitPreviewInvalidated("sess-42",
+                                                          "systemResume");
+  test_support::PumpMessages();
+
+  ASSERT_EQ(events->size(), 1u);
+  const auto* map = AsMap((*events)[0]);
+  ASSERT_NE(map, nullptr);
+  EXPECT_EQ(ReadString(*map, "type"), "previewInvalidated");
+  EXPECT_EQ(ReadString(*map, "sessionId"), "sess-42");
+  EXPECT_EQ(ReadString(*map, "reason"), "systemResume");
+  EXPECT_EQ(map->size(), 3u) << "previewInvalidated should only carry "
+                                "{type, sessionId, reason}";
+}
+
 // ---- multi-event ordering ------------------------------------------
 
 TEST_F(PlayerEventPublisherTest, EventsArriveInEmissionOrder) {

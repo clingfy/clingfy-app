@@ -758,6 +758,64 @@ class RecordingController extends ChangeNotifier {
     await _beginPreviewClose(requestNativeClose: true);
   }
 
+  /// Silently close and reopen the native preview session in place, keeping
+  /// the same session id and workflow phase. Windows-only recovery driven by
+  /// the `previewInvalidated` player event (the D3D device backing the
+  /// session died — a Modern Standby / suspend resume). Unlike
+  /// [_beginPreviewClose] + [_enterPreviewForProject] this never transitions
+  /// the phase, never shows the loading overlay, and never remounts the
+  /// preview subtree — only the texture id/aspect change, which the inline
+  /// preview widget re-renders in place. Returns true when the reopen
+  /// produced a usable texture.
+  Future<bool> reopenInlinePreviewInPlace() async {
+    final activeSessionId = _state.sessionId;
+    final path = _state.previewPath ?? _state.projectPath;
+    if (activeSessionId == null ||
+        path == null ||
+        (phase != WorkflowPhase.previewReady &&
+            phase != WorkflowPhase.exporting)) {
+      return false;
+    }
+    Log.w(
+      'Recording',
+      'Rebuilding the invalidated preview session in place',
+      null,
+      null,
+      {'sessionId': activeSessionId, 'path': path},
+    );
+    try {
+      await _nativeBridge.previewClose(sessionId: activeSessionId);
+      final openResult = await _nativeBridge.previewOpen(
+        sessionId: activeSessionId,
+        projectPath: path,
+      );
+      // The session may have been closed or replaced while the reopen was in
+      // flight (user pressed close, a new recording started, …) — don't
+      // resurrect texture state for a session that is no longer active.
+      if (_state.sessionId != activeSessionId ||
+          (phase != WorkflowPhase.previewReady &&
+              phase != WorkflowPhase.exporting)) {
+        return false;
+      }
+      _inlinePreviewTextureId = openResult.hasTexture
+          ? openResult.textureId
+          : null;
+      _inlinePreviewTextureAspect =
+          (openResult.hasTexture &&
+              openResult.width > 0 &&
+              openResult.height > 0)
+          ? openResult.width / openResult.height
+          : null;
+      notifyListeners();
+      return openResult.hasTexture;
+    } catch (e, st) {
+      Log.e('Recording', 'Failed to rebuild the invalidated preview', e, st, {
+        'sessionId': activeSessionId,
+      });
+      return false;
+    }
+  }
+
   void enterExporting() {
     if (phase == WorkflowPhase.previewReady) {
       _setState(_state.copyWith(phase: WorkflowPhase.exporting));

@@ -3,6 +3,8 @@ import 'dart:ui' show Offset;
 
 import 'package:flutter/foundation.dart';
 import 'package:clingfy/core/bridges/native_bridge.dart';
+import 'package:clingfy/core/bridges/native_error_codes.dart';
+import 'package:clingfy/core/bridges/native_method_channel.dart';
 import 'package:clingfy/core/models/app_models.dart';
 import 'package:clingfy/app/home/recording/recording_controller.dart';
 import 'package:clingfy/core/logging/logger_service.dart';
@@ -46,6 +48,16 @@ class PlayerController extends ChangeNotifier {
 
   ClipEditorController? _clipEditor;
   VoidCallback? _clipEditorListener;
+
+  /// Called after a `previewInvalidated` rebuild reopened the native session,
+  /// BEFORE the transport is restored. HomeBindings points this at
+  /// `PostProcessingController.resyncPreviewAfterRebuild` so the canvas
+  /// composition and color grade (which live outside this controller) are
+  /// re-pushed too. Null in tests / before bind — the rebuild then restores
+  /// only what this controller owns.
+  Future<void> Function(String sessionId)? onPreviewRebuilt;
+
+  bool _rebuildingInvalidatedPreview = false;
 
   int get positionMs => _posMs;
   int get durationMs => _durMs;
@@ -160,10 +172,68 @@ class PlayerController extends ChangeNotifier {
             _cameraManualPositionController.add(Offset(x, y));
           }
           return;
+        case PlayerEventType.previewInvalidated:
+          unawaited(
+            _rebuildInvalidatedPreview(
+              event['reason']?.toString() ?? 'unknown',
+            ),
+          );
+          return;
         default:
           return;
       }
     });
+  }
+
+  /// Windows-only recovery: the native engine reported the D3D device backing
+  /// the active preview session as gone or suspect (`previewInvalidated`,
+  /// today only after a Modern Standby / suspend resume). Rebuild the preview
+  /// silently in place: raw close+reopen with the SAME session id (no phase
+  /// change, no loading overlay, no preview-subtree remount), re-push the
+  /// editing state the reopened session lost (previewOpen carries none), and
+  /// restore the transport (position + playing state).
+  Future<void> _rebuildInvalidatedPreview(String reason) async {
+    final workflow = _workflow;
+    final sessionId = _activeSessionId;
+    if (workflow == null || sessionId == null) return;
+    if (_rebuildingInvalidatedPreview) return;
+    _rebuildingInvalidatedPreview = true;
+    try {
+      Log.w(
+        'Player',
+        'Native invalidated the preview session — rebuilding it in place',
+        null,
+        null,
+        {'sessionId': sessionId, 'reason': reason},
+      );
+      final restorePositionMs = _posMs;
+      final wasPlaying = _playerPlaying;
+      final reopened = await workflow.reopenInlinePreviewInPlace();
+      // The session may have been closed or replaced while the reopen ran —
+      // never resurrect state for a preview the user already left.
+      if (_activeSessionId != sessionId) return;
+      if (!reopened) {
+        _blockingError =
+            'The preview could not be rebuilt after the system resumed from '
+            'sleep. Close and reopen the preview; the recording file itself '
+            'is unaffected.';
+        _blockingErrorCode = NativeErrorCode.previewOpenError;
+        notifyListeners();
+        return;
+      }
+      // Re-push state BEFORE restoring the transport so the first visible
+      // frame is already composed correctly (grade, canvas, zoom, clips).
+      await onPreviewRebuilt?.call(sessionId);
+      await _zoomEditor?.resyncToNative();
+      await _clipEditor?.resyncToNative();
+      if (_activeSessionId != sessionId) return;
+      await seekTo(restorePositionMs);
+      if (wasPlaying) {
+        await play();
+      }
+    } finally {
+      _rebuildingInvalidatedPreview = false;
+    }
   }
 
   bool _isStaleEvent(Map<String, dynamic> event) {

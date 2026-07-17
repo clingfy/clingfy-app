@@ -1164,6 +1164,104 @@ void main() {
     );
 
     test(
+      'reopenInlinePreviewInPlace swaps the texture without a phase change',
+      () async {
+        final harness = await createHarness();
+        addTearDown(harness.recording.dispose);
+        addTearDown(harness.settings.dispose);
+
+        final messenger =
+            TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger;
+        var nextTextureId = 7;
+        final calls = <MethodCall>[];
+        messenger.setMockMethodCallHandler(screenRecorderChannel, (call) async {
+          calls.add(call);
+          if (call.method == 'previewOpen') {
+            return <String, dynamic>{
+              'textureId': nextTextureId,
+              'width': 1600,
+              'height': 900,
+              'videoWidth': 1600,
+              'videoHeight': 900,
+              'sharedHandleOk': true,
+            };
+          }
+          return null;
+        });
+
+        harness.recording.beginRecordingStartIntent();
+        final sessionId = harness.recording.sessionId!;
+        await _emitWorkflowEvent({
+          'type': 'recordingStarted',
+          'sessionId': sessionId,
+        });
+        await harness.recording.stopRecording();
+        await _emitWorkflowEvent({
+          'type': 'recordingFinalized',
+          'sessionId': sessionId,
+          'projectPath': '/tmp/test.clingfyproj',
+        });
+        await harness.recording.handlePreviewHostMounted();
+        await _emitWorkflowEvent({
+          'type': 'previewReady',
+          'sessionId': sessionId,
+          'path': '/tmp/test.clingfyproj',
+          'token': 'tok',
+        });
+        expect(harness.recording.inlinePreviewTextureId, 7);
+
+        // The rebuild path: close + reopen with the SAME session id, new
+        // texture id from the fresh native session, phase untouched.
+        nextTextureId = 99;
+        calls.clear();
+        final reopened = await harness.recording.reopenInlinePreviewInPlace();
+
+        expect(reopened, isTrue);
+        final methods = calls.map((c) => c.method).toList();
+        expect(
+          methods.indexOf('previewClose'),
+          lessThan(methods.indexOf('previewOpen')),
+        );
+        for (final call in calls.where(
+          (c) => c.method == 'previewClose' || c.method == 'previewOpen',
+        )) {
+          expect(
+            (call.arguments as Map<dynamic, dynamic>)['sessionId'],
+            sessionId,
+          );
+        }
+        expect(harness.recording.inlinePreviewTextureId, 99);
+        expect(
+          harness.recording.inlinePreviewTextureAspect,
+          closeTo(1600 / 900, 1e-9),
+        );
+        expect(harness.recording.phase, WorkflowPhase.previewReady);
+      },
+    );
+
+    test(
+      'reopenInlinePreviewInPlace is a no-op outside previewReady/exporting',
+      () async {
+        final harness = await createHarness();
+        addTearDown(harness.recording.dispose);
+        addTearDown(harness.settings.dispose);
+
+        final messenger =
+            TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger;
+        final calls = <MethodCall>[];
+        messenger.setMockMethodCallHandler(screenRecorderChannel, (call) async {
+          calls.add(call);
+          return null;
+        });
+
+        // Idle — nothing to rebuild, and no native traffic may fire.
+        expect(await harness.recording.reopenInlinePreviewInPlace(), isFalse);
+        expect(calls.where((c) => c.method == 'previewClose'), isEmpty);
+        expect(calls.where((c) => c.method == 'previewOpen'), isEmpty);
+      },
+    );
+
+    test(
       'negative textureId from native reply is treated as no-texture',
       () async {
         final harness = await createHarness();
