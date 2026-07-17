@@ -12,9 +12,9 @@
 //   contrast    c ∈ [-1,1]  →  CIColorControls         v' = (v−P)·k + P,
 //                                                        k = 1 + 0.5·c
 //   saturation  s ∈ [-1,1]  →  CIColorControls         v' = luma + (1+s)·(v−luma)
-//   temperature t ∈ [-1,1]  →  CITemperatureAndTint    Bradford CAT, neutral
-//   tint        n ∈ [-1,1]  →  (same filter)             (6500K,0) → target
-//                                                         (6500+3000·t, 100·n)
+//   temperature t ∈ [-1,1]  →  CITemperatureAndTint    von-Kries diagonal in a
+//   tint        n ∈ [-1,1]  →  (same filter)             fixture-calibrated cone
+//                                                         basis (see .cpp)
 //
 // Order is load-bearing and matches macOS: exposure → contrast+saturation →
 // temperature/tint. The composed matrix operates on linear RGB; callers
@@ -25,13 +25,19 @@
 //
 // PARITY CONTRACT: Apple does not document the exact internals of
 // CIColorControls / CITemperatureAndTint (contrast pivot, saturation luma
-// weights, CCT→chromaticity method). The constants marked "CALIBRATED" below
-// are therefore validated — and if needed tuned — against golden fixtures
-// captured from the real macOS renderer:
+// weights, temperature/tint transform). The constants marked "CALIBRATED"
+// below and the temperature/tint model in the .cpp are therefore derived
+// from — and validated against — golden fixtures captured from the real
+// macOS renderer:
 //   windows/runner_tests/fixtures/color_grade_golden.json
-//   (regenerate with macos RunnerTests/ColorGradeGoldenDumpTests — see the
-//    harness header comment; regeneration belongs in the same PR as any
-//    ColorGradeRenderer change).
+//   (regenerate with macos RunnerTests/ColorGradeGoldenDumpTests, then rerun
+//    tools/fit_color_grade_temperature_tint.py to re-derive the .cpp
+//    constants; both belong in the same PR as any ColorGradeRenderer change).
+//
+// DIRECTION NOTE: the goldens prove the real render direction — positive
+// temperature makes the image COOLER (bluer), positive tint GREENER. The
+// Swift comments say "warmer"/"magenta"; they describe intent, not the
+// render. Windows matches the render (see the .cpp direction note).
 //
 // IsIdentity is NUMBERS-ONLY: `auto_enabled` is deliberately ignored, matching
 // the Swift `ColorGrade.isIdentity` (auto-enhance with all-zero values must
@@ -107,20 +113,22 @@ struct ColorMatrix {
 // --- Mapping constants (from Clingfy's own Swift code — exact, not tuned) ---
 inline constexpr double kExposureEvScale = 1.5;     // e → EV stops
 inline constexpr double kContrastScalePerUnit = 0.5;  // c → slope 1 + 0.5c
-inline constexpr double kTemperatureNeutralK = 6500.0;
-inline constexpr double kTemperatureSpanK = 3000.0;  // t → 6500 + 3000t kelvin
-inline constexpr double kTintSpan = 100.0;           // n → ±100 tint units
 
-// --- CALIBRATED constants (CI internals undocumented; validated against the
-// --- golden fixture, tune there if the goldens disagree) -------------------
+// --- CALIBRATED constants (CI internals undocumented; derived from the
+// --- golden fixture — rerun tools/fit_color_grade_temperature_tint.py after
+// --- regenerating the fixture) ---------------------------------------------
 // Contrast pivot in linear RGB (CIColorControls pivots mid-gray).
 inline constexpr double kContrastPivot = 0.5;
-// Saturation luma weights (Rec.709 primaries; CI works in linear sRGB).
-inline constexpr double kSaturationLumaR = 0.2126;
-inline constexpr double kSaturationLumaG = 0.7152;
-inline constexpr double kSaturationLumaB = 0.0722;
-// CITemperatureAndTint tint units → CIE 1960 Δuv (perpendicular offset).
-inline constexpr double kTintUnitsToDuv = 0.0004;
+// Saturation luma weights, calibrated from the fixture's pure-saturation
+// cases and renormalized to sum EXACTLY 1 so gray stays a fixed point
+// (Rec.709-shaped but not exactly Rec.709 — the calibrated values take the
+// s = ±1 golden error from 1.0e-3 to 1e-6).
+inline constexpr double kSaturationLumaR = 0.21250004500713318;
+inline constexpr double kSaturationLumaG = 0.7153998170249231;
+inline constexpr double kSaturationLumaB = 0.07210013796794383;
+// The temperature/tint model constants (cone basis + log-scale polynomials)
+// live in color_grade.cpp — they are implementation detail of
+// TemperatureTintMatrix, not part of the header contract.
 
 // Builds the single composed matrix for a grade. Identity grade returns
 // ColorMatrix::Identity() exactly (callers use IsIdentity() to skip the whole
