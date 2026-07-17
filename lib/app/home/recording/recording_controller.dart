@@ -783,18 +783,35 @@ class RecordingController extends ChangeNotifier {
       null,
       {'sessionId': activeSessionId, 'path': path},
     );
+    bool sessionStillActive() =>
+        _state.sessionId == activeSessionId &&
+        (phase == WorkflowPhase.previewReady ||
+            phase == WorkflowPhase.exporting);
+
     try {
       await _nativeBridge.previewClose(sessionId: activeSessionId);
+      // Re-check BEFORE reopening: the close await is the widest window in
+      // the rebuild (native joins the render/heartbeat threads), and a user
+      // action landing in it (close button, replace-with-project) must win —
+      // issuing previewOpen for the abandoned session would resurrect it
+      // natively with no Dart owner.
+      if (!sessionStillActive()) {
+        return false;
+      }
       final openResult = await _nativeBridge.previewOpen(
         sessionId: activeSessionId,
         projectPath: path,
       );
-      // The session may have been closed or replaced while the reopen was in
-      // flight (user pressed close, a new recording started, …) — don't
-      // resurrect texture state for a session that is no longer active.
-      if (_state.sessionId != activeSessionId ||
-          (phase != WorkflowPhase.previewReady &&
-              phase != WorkflowPhase.exporting)) {
+      // The session may also have been closed or replaced while the reopen
+      // itself was in flight — don't resurrect texture state for a session
+      // that is no longer active, and tear the freshly opened native session
+      // back down instead of orphaning it until the next open's reconcile.
+      if (!sessionStillActive()) {
+        unawaited(
+          _nativeBridge
+              .previewClose(sessionId: activeSessionId)
+              .catchError((Object _) {}),
+        );
         return false;
       }
       _inlinePreviewTextureId = openResult.hasTexture

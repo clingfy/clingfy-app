@@ -1218,6 +1218,10 @@ void main() {
 
         expect(reopened, isTrue);
         final methods = calls.map((c) => c.method).toList();
+        // Both must be PRESENT before the ordering check — indexOf returns
+        // -1 for a missing method, which would vacuously satisfy lessThan.
+        expect(methods, contains('previewClose'));
+        expect(methods, contains('previewOpen'));
         expect(
           methods.indexOf('previewClose'),
           lessThan(methods.indexOf('previewOpen')),

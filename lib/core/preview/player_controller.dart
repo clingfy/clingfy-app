@@ -59,6 +59,12 @@ class PlayerController extends ChangeNotifier {
 
   bool _rebuildingInvalidatedPreview = false;
 
+  // True when the user drove the transport (play/pause/seek) while a rebuild
+  // was in flight — their action is newer intent than the pre-rebuild
+  // snapshot, so the automatic restore steps aside.
+  bool _userTransportDuringRebuild = false;
+  bool _restoringTransportAfterRebuild = false;
+
   int get positionMs => _posMs;
   int get durationMs => _durMs;
   bool get isScrubbing => _scrubbing;
@@ -196,8 +202,22 @@ class PlayerController extends ChangeNotifier {
     final workflow = _workflow;
     final sessionId = _activeSessionId;
     if (workflow == null || sessionId == null) return;
+    // Only a live preview can be rebuilt in place. During openingPreview /
+    // previewLoading the normal open flow is still running — a resume there
+    // must not race it, and it must NOT surface a blocking error (the open
+    // flow reports its own failures).
+    if (workflow.phase != WorkflowPhase.previewReady &&
+        workflow.phase != WorkflowPhase.exporting) {
+      Log.d(
+        'Player',
+        'Ignoring previewInvalidated in phase ${workflow.phase.name} — '
+            'no live preview to rebuild',
+      );
+      return;
+    }
     if (_rebuildingInvalidatedPreview) return;
     _rebuildingInvalidatedPreview = true;
+    _userTransportDuringRebuild = false;
     try {
       Log.w(
         'Player',
@@ -227,9 +247,29 @@ class PlayerController extends ChangeNotifier {
       await _zoomEditor?.resyncToNative();
       await _clipEditor?.resyncToNative();
       if (_activeSessionId != sessionId) return;
-      await seekTo(restorePositionMs);
-      if (wasPlaying) {
-        await play();
+      if (_userTransportDuringRebuild) {
+        // The user drove the transport while the rebuild ran — their action
+        // is newer intent than the pre-rebuild snapshot, so don't stomp it.
+        Log.d(
+          'Player',
+          'Skipping the transport restore — the user drove the transport '
+              'during the rebuild',
+        );
+        return;
+      }
+      _restoringTransportAfterRebuild = true;
+      try {
+        await seekTo(restorePositionMs);
+        if (wasPlaying) {
+          await play();
+        } else {
+          // Windows PreviewEngine::Open() auto-plays the fresh session —
+          // without this explicit pause, a preview the user left paused
+          // would spontaneously start playing after the rebuild.
+          await pause();
+        }
+      } finally {
+        _restoringTransportAfterRebuild = false;
       }
     } finally {
       _rebuildingInvalidatedPreview = false;
@@ -406,6 +446,9 @@ class PlayerController extends ChangeNotifier {
   Future<void> play() async {
     final sessionId = _activeSessionId;
     if (sessionId == null) return;
+    if (_rebuildingInvalidatedPreview && !_restoringTransportAfterRebuild) {
+      _userTransportDuringRebuild = true;
+    }
     // Commit any in-progress hover-peek AND mark playing BEFORE the await: a
     // hover landing during the await calls previewPeekTo, which only bails when
     // `_playerPlaying` is already true — so setting it after the await would let
@@ -420,6 +463,9 @@ class PlayerController extends ChangeNotifier {
   Future<void> pause() async {
     final sessionId = _activeSessionId;
     if (sessionId == null) return;
+    if (_rebuildingInvalidatedPreview && !_restoringTransportAfterRebuild) {
+      _userTransportDuringRebuild = true;
+    }
     await _nativeBridge.invokeMethod('previewPause', {'sessionId': sessionId});
     _playerPlaying = false;
     notifyListeners();
@@ -428,6 +474,9 @@ class PlayerController extends ChangeNotifier {
   Future<void> seekTo(int ms) async {
     final sessionId = _activeSessionId;
     if (sessionId == null) return;
+    if (_rebuildingInvalidatedPreview && !_restoringTransportAfterRebuild) {
+      _userTransportDuringRebuild = true;
+    }
     _posMs = ms;
     Log.d("Player", "seekTo: $ms ms");
     notifyListeners();

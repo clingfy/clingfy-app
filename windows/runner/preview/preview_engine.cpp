@@ -438,6 +438,15 @@ void PreviewEngine::OnSystemResumed() {
       return;
     }
     session_snapshot = active_session_id_;
+    // Disarm the render loop's own reporter for this session: post-resume
+    // the frame server keeps failing every frame on the removed device, and
+    // ~90 failures (~1.5-3 s) later NoteRenderFailure would emit a loud
+    // PREVIEW_RENDER_ERROR + previewFailed for the very session Dart is
+    // silently rebuilding — the previewFailed handler then tears the phase
+    // down mid-rebuild and the user sees a blocking error instead of a
+    // silent recovery. Open() re-arms the latch for the rebuilt session, so
+    // the loud path stays available after recovery.
+    render_error_emitted_ = true;
   }
   clingfy::bridge::NativeLogPublisher::Instance().Warn(
       "Preview",

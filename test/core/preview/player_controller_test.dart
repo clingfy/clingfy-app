@@ -369,7 +369,11 @@ void main() {
       await pumpEventQueue();
 
       final methods = rebuildCalls.map((c) => c.method).toList();
-      // Raw close → open with the same session id.
+      // Raw close → open with the same session id. Both must be PRESENT
+      // before the ordering check — indexOf returns -1 for a missing
+      // method, which would vacuously satisfy lessThan.
+      expect(methods, contains('previewClose'));
+      expect(methods, contains('previewOpen'));
       expect(
         methods.indexOf('previewClose'),
         lessThan(methods.indexOf('previewOpen')),
@@ -397,6 +401,129 @@ void main() {
       expect(harness.recording.phase, WorkflowPhase.previewReady);
       expect(harness.player.blockingError, isNull);
     });
+
+    test(
+      'a paused preview is restored PAUSED (native Open auto-plays)',
+      () async {
+        final harness = await createReadyPreviewHarness();
+        addTearDown(harness.recording.dispose);
+        addTearDown(harness.player.dispose);
+        addTearDown(harness.settings.dispose);
+
+        // Ready and PAUSED at 1500 ms — no playerState "playing" ever fired.
+        await _emitPlayerEvent({
+          'type': 'playerTick',
+          'sessionId': harness.sessionId,
+          'positionMs': 1500,
+          'durationMs': 5000,
+        });
+        expect(harness.player.isPlaying, isFalse);
+
+        final rebuildCalls = <MethodCall>[];
+        final messenger =
+            TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger;
+        messenger.setMockMethodCallHandler(screenRecorderChannel, (call) async {
+          rebuildCalls.add(call);
+          if (call.method == 'previewOpen') {
+            return <String, dynamic>{
+              'textureId': 55,
+              'width': 1600,
+              'height': 900,
+              'videoWidth': 1600,
+              'videoHeight': 900,
+              'sharedHandleOk': true,
+            };
+          }
+          if (call.method == 'getZoomSegments' ||
+              call.method == 'getManualZoomSegments') {
+            return <dynamic>[];
+          }
+          return null;
+        });
+
+        await _emitPlayerEvent({
+          'type': PlayerEventType.previewInvalidated,
+          'sessionId': harness.sessionId,
+          'reason': 'systemResume',
+        });
+        await pumpEventQueue();
+
+        final methods = rebuildCalls.map((c) => c.method).toList();
+        // Windows PreviewEngine::Open() auto-plays the fresh session — the
+        // rebuild must counter it with an explicit previewPause, and it must
+        // NOT send previewPlay for a preview the user left paused.
+        expect(methods, contains('previewSeekTo'));
+        expect(methods, contains('previewPause'));
+        expect(methods, isNot(contains('previewPlay')));
+        expect(harness.player.isPlaying, isFalse);
+      },
+    );
+
+    test(
+      'previewInvalidated during previewLoading is ignored without an error',
+      () async {
+        // Build the workflow only as far as previewLoading — the normal open
+        // flow is still running, so a resume must neither race it with a
+        // close/reopen nor surface a blocking error.
+        final calls = <MethodCall>[];
+        final messenger =
+            TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger;
+        messenger.setMockMethodCallHandler(screenRecorderChannel, (call) async {
+          calls.add(call);
+          switch (call.method) {
+            case 'getExcludeRecorderApp':
+              return false;
+            case 'getExcludeMicFromSystemAudio':
+              return true;
+            case 'getZoomSegments':
+            case 'getManualZoomSegments':
+              return <dynamic>[];
+            default:
+              return null;
+          }
+        });
+
+        final nativeBridge = NativeBridge.instance;
+        final settings = SettingsController(nativeBridge: nativeBridge);
+        await settings.loadPreferences();
+        final recording = RecordingController(
+          nativeBridge: nativeBridge,
+          settings: settings,
+        );
+        final player = PlayerController(nativeBridge: nativeBridge)
+          ..bindWorkflow(recording);
+        addTearDown(recording.dispose);
+        addTearDown(player.dispose);
+        addTearDown(settings.dispose);
+
+        recording.beginRecordingStartIntent();
+        final sessionId = recording.sessionId!;
+        await _emitWorkflowEvent({
+          'type': 'recordingStarted',
+          'sessionId': sessionId,
+        });
+        await recording.stopRecording();
+        await _emitWorkflowEvent({
+          'type': 'recordingFinalized',
+          'sessionId': sessionId,
+          'projectPath': '/tmp/demo.clingfyproj',
+        });
+        await recording.handlePreviewHostMounted();
+        expect(recording.phase, WorkflowPhase.previewLoading);
+
+        final callsBefore = calls.length;
+        await _emitPlayerEvent({
+          'type': PlayerEventType.previewInvalidated,
+          'sessionId': sessionId,
+          'reason': 'systemResume',
+        });
+        await pumpEventQueue();
+
+        expect(calls.length, callsBefore);
+        expect(player.blockingError, isNull);
+        expect(recording.phase, WorkflowPhase.previewLoading);
+      },
+    );
 
     test(
       'a stale previewInvalidated never touches the active preview',
