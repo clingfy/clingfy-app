@@ -18,7 +18,7 @@ import 'package:http/http.dart' as http;
 /// cached (first offline run). The website's Stripe checkout page stays authoritative.
 const Map<String, String> kBundledFallbackPrices = {
   'pro_monthly': r'$9.99',
-  'lifetime_pro': r'$59.99',
+  'lifetime_pro': r'$39.99',
   'updates_extension': r'$19.99',
 };
 
