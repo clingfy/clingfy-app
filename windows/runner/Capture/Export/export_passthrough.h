@@ -266,6 +266,14 @@ struct PassthroughResult {
   // router retries the whole export once when this is set; a fresh
   // ExportPassthroughCopy call builds a fresh device.
   bool device_removed = false;
+  // The destination the FAILED render attempt wrote to (UTF-8; empty on
+  // success and on pre-destination failures). The retry path uses it to
+  // verify the partial output is actually gone before re-resolving the
+  // destination — if a leftover survived both best-effort removals (a
+  // transient AV/indexer lock), a blind retry would collision-avoid to
+  // "name (1).ext" and report success while a corrupt file keeps the name
+  // the user chose.
+  std::string resolved_destination_path;
 };
 
 // ---- Phase 10.4 disk-full preflight (pure, unit-testable) -------------------

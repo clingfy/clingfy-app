@@ -508,14 +508,20 @@ RenderResult RenderComposedExport(const RenderRequest& request) {
                    "flag missing?).");
   }
   ComPtr<ID2D1Device> d2d_device;
-  if (FAILED(d2d_factory->CreateDevice(dxgi_device.Get(),
-                                       d2d_device.GetAddressOf()))) {
-    return Failure(request.destination_path, "export: ID2D1Factory1::CreateDevice failed.");
+  if (const HRESULT d2d_hr = d2d_factory->CreateDevice(
+          dxgi_device.Get(), d2d_device.GetAddressOf());
+      FAILED(d2d_hr)) {
+    return Failure(request.destination_path,
+                   "export: ID2D1Factory1::CreateDevice failed.",
+                   /*disk_full=*/false, device_lost(d2d_hr));
   }
   ComPtr<ID2D1DeviceContext> d2d_ctx;
-  if (FAILED(d2d_device->CreateDeviceContext(D2D1_DEVICE_CONTEXT_OPTIONS_NONE,
-                                             d2d_ctx.GetAddressOf()))) {
-    return Failure(request.destination_path, "export: ID2D1Device::CreateDeviceContext failed.");
+  if (const HRESULT ctx_hr = d2d_device->CreateDeviceContext(
+          D2D1_DEVICE_CONTEXT_OPTIONS_NONE, d2d_ctx.GetAddressOf());
+      FAILED(ctx_hr)) {
+    return Failure(request.destination_path,
+                   "export: ID2D1Device::CreateDeviceContext failed.",
+                   /*disk_full=*/false, device_lost(ctx_hr));
   }
 
   // Phase 8.2: optional cursor renderer. Draws the sidecar cursor on top of the
@@ -599,10 +605,14 @@ RenderResult RenderComposedExport(const RenderRequest& request) {
     const D2D1_BITMAP_PROPERTIES1 props = D2D1::BitmapProperties1(
         D2D1_BITMAP_OPTIONS_NONE,
         D2D1::PixelFormat(DXGI_FORMAT_B8G8R8A8_UNORM, D2D1_ALPHA_MODE_IGNORE));
-    if (FAILED(d2d_ctx->CreateBitmap(D2D1::SizeU(source_w, source_h), nullptr,
-                                     0, &props, source_bitmap.GetAddressOf()))) {
-      return Failure(request.destination_path, "export: ID2D1DeviceContext::CreateBitmap failed for the "
-                     "source frame.");
+    if (const HRESULT bmp_hr =
+            d2d_ctx->CreateBitmap(D2D1::SizeU(source_w, source_h), nullptr, 0,
+                                  &props, source_bitmap.GetAddressOf());
+        FAILED(bmp_hr)) {
+      return Failure(request.destination_path,
+                     "export: ID2D1DeviceContext::CreateBitmap failed for the "
+                     "source frame.",
+                     /*disk_full=*/false, device_lost(bmp_hr));
     }
   }
 
@@ -678,7 +688,9 @@ RenderResult RenderComposedExport(const RenderRequest& request) {
     gif_config.width = canvas.width;
     gif_config.height = canvas.height;
     if (auto err = gif_encoder.Open(gif_config, device)) {
-      return Failure(request.destination_path, "export: GIF encoder open failed — " + err->message);
+      return Failure(request.destination_path,
+                     "export: GIF encoder open failed — " + err->message,
+                     IsDiskFullHresult(err->hr), device_lost(err->hr));
     }
   } else {
     clingfy::encoding::EncoderConfig enc_config;
@@ -694,7 +706,12 @@ RenderResult RenderComposedExport(const RenderRequest& request) {
       audio_config = clingfy::encoding::AudioEncoderConfig{};
     }
     if (auto err = encoder.Open(enc_config, device, audio_config)) {
-      return Failure(request.destination_path, "export: encoder open failed — " + err->message);
+      // The sink writer binds MF_SINK_WRITER_D3D_MANAGER to this device, so
+      // hardware-MFT activation is a common first-failure site after a
+      // device loss.
+      return Failure(request.destination_path,
+                     "export: encoder open failed — " + err->message,
+                     IsDiskFullHresult(err->hr), device_lost(err->hr));
     }
   }
 
@@ -970,12 +987,19 @@ RenderResult RenderComposedExport(const RenderRequest& request) {
       }
       if (!ExtractTopDownBgra(sample.Get(), source_w, source_h, &top_down)) {
         cancel_encoder();
-        return Failure(request.destination_path, "export: failed to read a decoded video frame buffer.");
+        // No HRESULT in hand — the classification rides on the device probe
+        // alone, same as the no-video-frames site.
+        return Failure(request.destination_path,
+                       "export: failed to read a decoded video frame buffer.",
+                       /*disk_full=*/false, device_lost(S_OK));
       }
-      if (FAILED(source_bitmap->CopyFromMemory(nullptr, top_down.data(),
-                                               source_w * 4u))) {
+      if (const HRESULT copy_hr = source_bitmap->CopyFromMemory(
+              nullptr, top_down.data(), source_w * 4u);
+          FAILED(copy_hr)) {
         cancel_encoder();
-        return Failure(request.destination_path, "export: ID2D1Bitmap::CopyFromMemory failed.");
+        return Failure(request.destination_path,
+                       "export: ID2D1Bitmap::CopyFromMemory failed.",
+                       /*disk_full=*/false, device_lost(copy_hr));
       }
 
       // Phase 9.4: advance the camera's held frame BEFORE BeginDraw (the upload
@@ -1015,17 +1039,22 @@ RenderResult RenderComposedExport(const RenderRequest& request) {
       ComPtr<IDXGISurface> out_surface;
       if (FAILED(out_texture.As(&out_surface))) {
         cancel_encoder();
-        return Failure(request.destination_path, "export: output texture has no IDXGISurface.");
+        return Failure(request.destination_path,
+                       "export: output texture has no IDXGISurface.",
+                       /*disk_full=*/false, device_lost(S_OK));
       }
       const D2D1_BITMAP_PROPERTIES1 target_props = D2D1::BitmapProperties1(
           D2D1_BITMAP_OPTIONS_TARGET,
           D2D1::PixelFormat(DXGI_FORMAT_B8G8R8A8_UNORM,
                             D2D1_ALPHA_MODE_PREMULTIPLIED));
       ComPtr<ID2D1Bitmap1> target_bitmap;
-      if (FAILED(d2d_ctx->CreateBitmapFromDxgiSurface(
-              out_surface.Get(), &target_props, target_bitmap.GetAddressOf()))) {
+      if (const HRESULT tgt_hr = d2d_ctx->CreateBitmapFromDxgiSurface(
+              out_surface.Get(), &target_props, target_bitmap.GetAddressOf());
+          FAILED(tgt_hr)) {
         cancel_encoder();
-        return Failure(request.destination_path, "export: CreateBitmapFromDxgiSurface failed.");
+        return Failure(request.destination_path,
+                       "export: CreateBitmapFromDxgiSurface failed.",
+                       /*disk_full=*/false, device_lost(tgt_hr));
       }
 
       // Phase 8.3: advance the smart-zoom transform for this frame. The cursor

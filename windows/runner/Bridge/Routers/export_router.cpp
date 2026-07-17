@@ -1,5 +1,6 @@
 #include "Bridge/Routers/export_router.h"
 
+#include <chrono>
 #include <cstdint>
 #include <exception>
 #include <filesystem>
@@ -54,6 +55,23 @@ void HandleSaveManualZoomSegments(
   reply::Bool(*result, false);
 }
 
+// True when no partial output remains at `utf8_path` (empty = nothing to
+// clean). Retries the delete briefly — the typical holder is an AV /
+// indexer scan of the just-written file, which releases within tens of ms.
+bool EnsureFailedDestinationRemoved(const std::string& utf8_path) {
+  if (utf8_path.empty()) return true;
+  const std::filesystem::path path = std::filesystem::u8path(utf8_path);
+  for (int attempt = 0; attempt < 3; ++attempt) {
+    std::error_code rm_ec;
+    std::filesystem::remove(path, rm_ec);
+    std::error_code exists_ec;
+    if (!std::filesystem::exists(path, exists_ec)) return true;
+    std::this_thread::sleep_for(std::chrono::milliseconds(50));
+  }
+  std::error_code exists_ec;
+  return !std::filesystem::exists(path, exists_ec);
+}
+
 // Standby-resume recovery: run the export, and when the FIRST attempt died
 // because the D3D device was removed (Modern Standby resume, driver reset,
 // TDR — the 55-minute-recording incident), run it once more. Every
@@ -95,6 +113,22 @@ clingfy::capture::export_::PassthroughResult RunExportWithDeviceLossRetry(
   exp::PassthroughResult outcome = run_once();
   if (exp::ShouldRetryExportAfterDeviceRemoved(outcome, /*attempts_so_far=*/1,
                                                is_cancelled())) {
+    // Destination-stable retry: the failed attempt's partial output is
+    // normally removed twice already (in the pipeline and again in the
+    // passthrough), but a transient external lock (AV / indexer scanning
+    // the just-written file) can survive both. Verify it is actually gone
+    // before re-resolving the destination — a blind retry would
+    // collision-avoid to "name (1).ext" and report SUCCESS while a corrupt
+    // partial keeps the exact name the user chose.
+    if (!EnsureFailedDestinationRemoved(outcome.resolved_destination_path)) {
+      NativeLogPublisher::Instance().Warn(
+          "Export",
+          "skipping the device-removed retry — the failed attempt's partial "
+          "output at " +
+              outcome.resolved_destination_path +
+              " is still locked and could not be removed");
+      return outcome;
+    }
     NativeLogPublisher::Instance().Warn(
         "Export", "export attempt failed with the D3D device removed (" +
                       outcome.message +
