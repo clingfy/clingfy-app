@@ -128,6 +128,6 @@ void main() {
       kBundledFallbackPrices.keys,
       containsAll(['pro_monthly', 'lifetime_pro', 'updates_extension']),
     );
-    expect(kBundledFallbackPrices['lifetime_pro'], r'$59.99');
+    expect(kBundledFallbackPrices['lifetime_pro'], r'$39.99');
   });
 }
