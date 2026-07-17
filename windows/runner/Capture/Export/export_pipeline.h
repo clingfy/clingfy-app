@@ -214,12 +214,25 @@ struct RenderResult {
   // disk-full HRESULT). Lets the caller map it to EXPORT_DISK_FULL instead
   // of a generic render failure.
   bool disk_full = false;
+  // Standby-resume recovery: true when the failure was (or was caused by) a
+  // lost D3D device — the failing HRESULT is a device-loss code, or the
+  // pipeline's device reports GetDeviceRemovedReason() != S_OK. A device
+  // loss is transient (Modern Standby resume, driver reset, TDR): the
+  // router retries the whole export ONCE on a fresh device when this is
+  // set. The 55-minute-recording incident is this exact class.
+  bool device_removed = false;
 };
 
 // Phase 10.4 — pure classifier: does this encoder HRESULT mean the
 // destination volume ran out of space mid-write? (ERROR_DISK_FULL /
 // ERROR_HANDLE_DISK_FULL via HRESULT_FROM_WIN32.) Exposed for unit tests.
 bool IsDiskFullHresult(HRESULT hr);
+
+// Standby-resume recovery — pure classifier: does this HRESULT mean the D3D
+// device backing the export was lost? (DXGI device removed/reset/hung,
+// driver internal error, or Direct2D's recreate-target.) Exposed for unit
+// tests.
+bool IsDeviceRemovedHresult(HRESULT hr);
 
 // Run the full decode → composite → re-encode pass. Synchronous; returns
 // only after the output file is finalized (or a failure removes the partial

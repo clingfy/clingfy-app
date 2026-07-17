@@ -93,7 +93,7 @@ void EnsureMediaFoundationStarted() {
 // yet and the remove is a harmless no-op. `disk_full` marks a failure whose
 // encoder error carried a disk-full HRESULT. `destination_path` is UTF-8.
 RenderResult Failure(const std::string& destination_path, std::string message,
-                     bool disk_full = false) {
+                     bool disk_full = false, bool device_removed = false) {
   if (!destination_path.empty()) {
     std::error_code ec;
     std::filesystem::remove(std::filesystem::u8path(destination_path), ec);
@@ -101,6 +101,7 @@ RenderResult Failure(const std::string& destination_path, std::string message,
   RenderResult out;
   out.ok = false;
   out.disk_full = disk_full;
+  out.device_removed = device_removed;
   out.message = std::move(message);
   return out;
 }
@@ -320,6 +321,13 @@ bool IsDiskFullHresult(HRESULT hr) {
          hr == HRESULT_FROM_WIN32(ERROR_HANDLE_DISK_FULL);
 }
 
+bool IsDeviceRemovedHresult(HRESULT hr) {
+  return hr == DXGI_ERROR_DEVICE_REMOVED || hr == DXGI_ERROR_DEVICE_RESET ||
+         hr == DXGI_ERROR_DEVICE_HUNG ||
+         hr == DXGI_ERROR_DRIVER_INTERNAL_ERROR ||
+         hr == D2DERR_RECREATE_TARGET;
+}
+
 RenderResult RenderComposedExport(const RenderRequest& request) {
   EnsureMediaFoundationStarted();
 
@@ -340,6 +348,18 @@ RenderResult RenderComposedExport(const RenderRequest& request) {
   if (auto err = device.Create()) {
     return Failure(request.destination_path, "export: D3D11 device creation failed — " + err->message);
   }
+  // Standby-resume recovery: classify a failure as device loss either by
+  // its own HRESULT or by the device's removed-reason — a dead device makes
+  // UNRELATED calls fail with generic codes (E_FAIL, MF errors), so the
+  // probe catches losses the failing HRESULT alone would miss. The router
+  // retries the whole export once on a fresh device when a failure carries
+  // this classification.
+  const auto device_lost = [&device](HRESULT hr) {
+    return IsDeviceRemovedHresult(hr) ||
+           (device.device() != nullptr &&
+            device.device()->GetDeviceRemovedReason() != S_OK);
+  };
+
   // The hardware H.264 MFT runs the encode on its own worker thread, so
   // the device it shares with our Direct2D draws must be multithread
   // protected. Best-effort: older feature levels may not expose the
@@ -488,14 +508,20 @@ RenderResult RenderComposedExport(const RenderRequest& request) {
                    "flag missing?).");
   }
   ComPtr<ID2D1Device> d2d_device;
-  if (FAILED(d2d_factory->CreateDevice(dxgi_device.Get(),
-                                       d2d_device.GetAddressOf()))) {
-    return Failure(request.destination_path, "export: ID2D1Factory1::CreateDevice failed.");
+  if (const HRESULT d2d_hr = d2d_factory->CreateDevice(
+          dxgi_device.Get(), d2d_device.GetAddressOf());
+      FAILED(d2d_hr)) {
+    return Failure(request.destination_path,
+                   "export: ID2D1Factory1::CreateDevice failed.",
+                   /*disk_full=*/false, device_lost(d2d_hr));
   }
   ComPtr<ID2D1DeviceContext> d2d_ctx;
-  if (FAILED(d2d_device->CreateDeviceContext(D2D1_DEVICE_CONTEXT_OPTIONS_NONE,
-                                             d2d_ctx.GetAddressOf()))) {
-    return Failure(request.destination_path, "export: ID2D1Device::CreateDeviceContext failed.");
+  if (const HRESULT ctx_hr = d2d_device->CreateDeviceContext(
+          D2D1_DEVICE_CONTEXT_OPTIONS_NONE, d2d_ctx.GetAddressOf());
+      FAILED(ctx_hr)) {
+    return Failure(request.destination_path,
+                   "export: ID2D1Device::CreateDeviceContext failed.",
+                   /*disk_full=*/false, device_lost(ctx_hr));
   }
 
   // Phase 8.2: optional cursor renderer. Draws the sidecar cursor on top of the
@@ -579,10 +605,14 @@ RenderResult RenderComposedExport(const RenderRequest& request) {
     const D2D1_BITMAP_PROPERTIES1 props = D2D1::BitmapProperties1(
         D2D1_BITMAP_OPTIONS_NONE,
         D2D1::PixelFormat(DXGI_FORMAT_B8G8R8A8_UNORM, D2D1_ALPHA_MODE_IGNORE));
-    if (FAILED(d2d_ctx->CreateBitmap(D2D1::SizeU(source_w, source_h), nullptr,
-                                     0, &props, source_bitmap.GetAddressOf()))) {
-      return Failure(request.destination_path, "export: ID2D1DeviceContext::CreateBitmap failed for the "
-                     "source frame.");
+    if (const HRESULT bmp_hr =
+            d2d_ctx->CreateBitmap(D2D1::SizeU(source_w, source_h), nullptr, 0,
+                                  &props, source_bitmap.GetAddressOf());
+        FAILED(bmp_hr)) {
+      return Failure(request.destination_path,
+                     "export: ID2D1DeviceContext::CreateBitmap failed for the "
+                     "source frame.",
+                     /*disk_full=*/false, device_lost(bmp_hr));
     }
   }
 
@@ -658,7 +688,9 @@ RenderResult RenderComposedExport(const RenderRequest& request) {
     gif_config.width = canvas.width;
     gif_config.height = canvas.height;
     if (auto err = gif_encoder.Open(gif_config, device)) {
-      return Failure(request.destination_path, "export: GIF encoder open failed — " + err->message);
+      return Failure(request.destination_path,
+                     "export: GIF encoder open failed — " + err->message,
+                     IsDiskFullHresult(err->hr), device_lost(err->hr));
     }
   } else {
     clingfy::encoding::EncoderConfig enc_config;
@@ -674,7 +706,12 @@ RenderResult RenderComposedExport(const RenderRequest& request) {
       audio_config = clingfy::encoding::AudioEncoderConfig{};
     }
     if (auto err = encoder.Open(enc_config, device, audio_config)) {
-      return Failure(request.destination_path, "export: encoder open failed — " + err->message);
+      // The sink writer binds MF_SINK_WRITER_D3D_MANAGER to this device, so
+      // hardware-MFT activation is a common first-failure site after a
+      // device loss.
+      return Failure(request.destination_path,
+                     "export: encoder open failed — " + err->message,
+                     IsDiskFullHresult(err->hr), device_lost(err->hr));
     }
   }
 
@@ -854,7 +891,9 @@ RenderResult RenderComposedExport(const RenderRequest& request) {
                             sample.GetAddressOf());
     if (FAILED(hr)) {
       cancel_encoder();
-      return Failure(request.destination_path, Hr("export: IMFSourceReader::ReadSample failed", hr));
+      return Failure(request.destination_path,
+                     Hr("export: IMFSourceReader::ReadSample failed", hr),
+                     /*disk_full=*/false, device_lost(hr));
     }
     if (flags & MF_SOURCE_READERF_ENDOFSTREAM) {
       if (actual_index == video_index) {
@@ -948,12 +987,19 @@ RenderResult RenderComposedExport(const RenderRequest& request) {
       }
       if (!ExtractTopDownBgra(sample.Get(), source_w, source_h, &top_down)) {
         cancel_encoder();
-        return Failure(request.destination_path, "export: failed to read a decoded video frame buffer.");
+        // No HRESULT in hand — the classification rides on the device probe
+        // alone, same as the no-video-frames site.
+        return Failure(request.destination_path,
+                       "export: failed to read a decoded video frame buffer.",
+                       /*disk_full=*/false, device_lost(S_OK));
       }
-      if (FAILED(source_bitmap->CopyFromMemory(nullptr, top_down.data(),
-                                               source_w * 4u))) {
+      if (const HRESULT copy_hr = source_bitmap->CopyFromMemory(
+              nullptr, top_down.data(), source_w * 4u);
+          FAILED(copy_hr)) {
         cancel_encoder();
-        return Failure(request.destination_path, "export: ID2D1Bitmap::CopyFromMemory failed.");
+        return Failure(request.destination_path,
+                       "export: ID2D1Bitmap::CopyFromMemory failed.",
+                       /*disk_full=*/false, device_lost(copy_hr));
       }
 
       // Phase 9.4: advance the camera's held frame BEFORE BeginDraw (the upload
@@ -987,22 +1033,28 @@ RenderResult RenderComposedExport(const RenderRequest& request) {
                        HrWithDeviceState(
                            "export: CreateTexture2D failed for an output "
                            "frame",
-                           tex_hr, device.device()));
+                           tex_hr, device.device()),
+                       /*disk_full=*/false, device_lost(tex_hr));
       }
       ComPtr<IDXGISurface> out_surface;
       if (FAILED(out_texture.As(&out_surface))) {
         cancel_encoder();
-        return Failure(request.destination_path, "export: output texture has no IDXGISurface.");
+        return Failure(request.destination_path,
+                       "export: output texture has no IDXGISurface.",
+                       /*disk_full=*/false, device_lost(S_OK));
       }
       const D2D1_BITMAP_PROPERTIES1 target_props = D2D1::BitmapProperties1(
           D2D1_BITMAP_OPTIONS_TARGET,
           D2D1::PixelFormat(DXGI_FORMAT_B8G8R8A8_UNORM,
                             D2D1_ALPHA_MODE_PREMULTIPLIED));
       ComPtr<ID2D1Bitmap1> target_bitmap;
-      if (FAILED(d2d_ctx->CreateBitmapFromDxgiSurface(
-              out_surface.Get(), &target_props, target_bitmap.GetAddressOf()))) {
+      if (const HRESULT tgt_hr = d2d_ctx->CreateBitmapFromDxgiSurface(
+              out_surface.Get(), &target_props, target_bitmap.GetAddressOf());
+          FAILED(tgt_hr)) {
         cancel_encoder();
-        return Failure(request.destination_path, "export: CreateBitmapFromDxgiSurface failed.");
+        return Failure(request.destination_path,
+                       "export: CreateBitmapFromDxgiSurface failed.",
+                       /*disk_full=*/false, device_lost(tgt_hr));
       }
 
       // Phase 8.3: advance the smart-zoom transform for this frame. The cursor
@@ -1116,7 +1168,8 @@ RenderResult RenderComposedExport(const RenderRequest& request) {
           return Failure(
               request.destination_path,
               Hr("export: Direct2D EndDraw failed (graded content pass)",
-                 content_hr));
+                 content_hr),
+              /*disk_full=*/false, device_lost(content_hr));
         }
       }
 
@@ -1160,7 +1213,9 @@ RenderResult RenderComposedExport(const RenderRequest& request) {
       d2d_ctx->SetTarget(nullptr);
       if (FAILED(end_hr)) {
         cancel_encoder();
-        return Failure(request.destination_path, Hr("export: Direct2D EndDraw failed", end_hr));
+        return Failure(request.destination_path,
+                       Hr("export: Direct2D EndDraw failed", end_hr),
+                       /*disk_full=*/false, device_lost(end_hr));
       }
       // Flush so the composite completes before the encoder MFT reads the
       // texture on its own thread.
@@ -1183,7 +1238,7 @@ RenderResult RenderComposedExport(const RenderRequest& request) {
         return Failure(request.destination_path,
                        "export: encoder WriteVideoFrame failed — " +
                            err->message,
-                       IsDiskFullHresult(err->hr));
+                       IsDiskFullHresult(err->hr), device_lost(err->hr));
       }
       ++video_frames;
       // A/V origin alignment (T2): now that the first kept video frame has
@@ -1200,7 +1255,7 @@ RenderResult RenderComposedExport(const RenderRequest& request) {
                            "export: encoder WriteAudioPacket (clip flush) "
                            "failed — " +
                                err->message,
-                           IsDiskFullHresult(err->hr));
+                           IsDiskFullHresult(err->hr), device_lost(err->hr));
           }
           ++audio_packets;
         }
@@ -1222,7 +1277,7 @@ RenderResult RenderComposedExport(const RenderRequest& request) {
               request.destination_path,
               "export: reorder audio pump WriteAudioPacket failed — " +
                   err->message,
-              IsDiskFullHresult(err->hr));
+              IsDiskFullHresult(err->hr), device_lost(err->hr));
         }
       }
       if (gif) {
@@ -1268,7 +1323,8 @@ RenderResult RenderComposedExport(const RenderRequest& request) {
               return Failure(request.destination_path,
                              "export: encoder WriteAudioPacket failed — " +
                                  err->message,
-                             IsDiskFullHresult(err->hr));
+                             IsDiskFullHresult(err->hr),
+                             device_lost(err->hr));
             }
             ++audio_packets;
           } else if (first_video_hns < 0) {
@@ -1320,7 +1376,8 @@ RenderResult RenderComposedExport(const RenderRequest& request) {
                   return Failure(request.destination_path,
                                  "export: encoder WriteAudioPacket failed — " +
                                      err->message,
-                                 IsDiskFullHresult(err->hr));
+                                 IsDiskFullHresult(err->hr),
+                                 device_lost(err->hr));
                 }
                 ++audio_packets;
               }
@@ -1335,7 +1392,12 @@ RenderResult RenderComposedExport(const RenderRequest& request) {
 
   if (video_frames == 0) {
     cancel_encoder();
-    return Failure(request.destination_path, "export: no video frames were decoded from the source.");
+    // S_OK carries no signal of its own here — the classification rides
+    // entirely on the device probe (a lost device can make the reader
+    // return EOS-without-frames instead of a failing HRESULT).
+    return Failure(request.destination_path,
+                   "export: no video frames were decoded from the source.",
+                   /*disk_full=*/false, device_lost(S_OK));
   }
 
   // Editing port (clips, 3b-2b): drain the reorder audio pump's tail — the
@@ -1348,7 +1410,7 @@ RenderResult RenderComposedExport(const RenderRequest& request) {
       return Failure(
           request.destination_path,
           "export: reorder audio pump flush failed — " + err->message,
-          IsDiskFullHresult(err->hr));
+          IsDiskFullHresult(err->hr), device_lost(err->hr));
     }
   }
 
@@ -1358,7 +1420,7 @@ RenderResult RenderComposedExport(const RenderRequest& request) {
     // still-open file handle.
     return Failure(request.destination_path,
                    "export: encoder finalize failed — " + err->message,
-                   IsDiskFullHresult(err->hr));
+                   IsDiskFullHresult(err->hr), device_lost(err->hr));
   }
 
   // Slice 5A: terminal 1.0 so the UI lands exactly at 100% (matches macOS,

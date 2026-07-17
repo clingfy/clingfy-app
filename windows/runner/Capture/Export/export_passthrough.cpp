@@ -12,6 +12,7 @@
 #include <string>
 #include <system_error>
 
+#include "Bridge/native_log_publisher.h"
 #include "Capture/Camera/camera_meta.h"
 #include "Capture/Export/export_audio.h"
 #include "Capture/Export/export_format.h"
@@ -542,6 +543,18 @@ PassthroughResult ExportPassthroughCopy(
       // delete a pre-existing user file.
       std::error_code rm_ec;
       fs::remove(destination, rm_ec);
+      std::error_code exists_ec;
+      if (fs::exists(destination, exists_ec)) {
+        // Both best-effort removals lost — typically a transient external
+        // lock (AV / Search indexer scanning the just-written partial). Say
+        // so: a silent leftover is what turns a failed export into a corrupt
+        // file sitting at the user's chosen name.
+        clingfy::bridge::NativeLogPublisher::Instance().Warn(
+            "Export",
+            "could not remove the partial output at " + destination.u8string() +
+                (rm_ec ? " (" + rm_ec.message() + ")" : ""));
+      }
+      out.resolved_destination_path = destination.u8string();
       if (render_result.disk_full) {
         // The encoder hit a disk-full HRESULT mid-write. No preflight
         // estimate exists at this point (required stays -1); the router
@@ -555,6 +568,7 @@ PassthroughResult ExportPassthroughCopy(
             render_result.message + ")";
       } else {
         out.error = PassthroughError::kRenderFailed;
+        out.device_removed = render_result.device_removed;
         out.message = "exportVideo: composition render failed — " +
                       render_result.message;
       }
@@ -568,6 +582,14 @@ PassthroughResult ExportPassthroughCopy(
   // kept as the result-contract field.
   out.format_was_downgraded = FormatWasDowngraded(input.format);
   return out;
+}
+
+bool ShouldRetryExportAfterDeviceRemoved(const PassthroughResult& outcome,
+                                         int attempts_so_far,
+                                         bool cancel_requested) {
+  return attempts_so_far == 1 && !cancel_requested &&
+         outcome.error == PassthroughError::kRenderFailed &&
+         outcome.device_removed;
 }
 
 }  // namespace clingfy::capture::export_
