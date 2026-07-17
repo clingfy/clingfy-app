@@ -87,6 +87,18 @@ class PlayerEventPublisher {
                          const std::string& code,
                          const std::string& message);
 
+  // `{type: "previewInvalidated", sessionId, reason}`. Windows-only
+  // event (macOS's AVPlayer/AppKit preview survives sleep, so there is
+  // no Swift counterpart): the D3D device backing the active preview
+  // session is gone or suspect — typically after a Modern Standby /
+  // suspend resume (DXGI_ERROR_DEVICE_REMOVED). Unlike playerError this
+  // is NOT a user-facing failure: the Flutter side silently closes and
+  // reopens the preview in place (same session id) to rebuild the
+  // device, reader, and texture. `reason` is machine-readable; the only
+  // current value is "systemResume".
+  void EmitPreviewInvalidated(const std::string& session_id,
+                              const std::string& reason);
+
  private:
   PlayerEventPublisher() = default;
 

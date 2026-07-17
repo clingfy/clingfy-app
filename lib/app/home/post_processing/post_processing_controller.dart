@@ -724,6 +724,18 @@ class PostProcessingController extends ChangeNotifier {
     await applyProcessing();
   }
 
+  /// Re-push every piece of preview state this controller owns to a native
+  /// session that was rebuilt in place (Windows `previewInvalidated` after a
+  /// standby resume — previewOpen carries no editing state): the color grade
+  /// rides its own channel, and [applyProcessing] re-sends the canvas
+  /// composition (padding, background, cursor, zoom, camera placement,
+  /// audio).
+  Future<void> resyncPreviewAfterRebuild({required String sessionId}) async {
+    if (_activeSessionId != sessionId || _projectPath == null) return;
+    _pushPreviewColorGrade();
+    await applyProcessing();
+  }
+
   void _resetForNewRecording() {
     _videoPadding = 0;
     _videoRadius = 0;

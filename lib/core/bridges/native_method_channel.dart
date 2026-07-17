@@ -91,6 +91,26 @@ abstract class WorkflowEventType {
   static const String openProjectRequest = 'openProjectRequest';
 }
 
+/// `type` values carried by events on the [NativeChannel.playerEvents]
+/// channel (preview transport + player state).
+///
+/// The long-standing types (playerTick / playerState / playerError /
+/// playerWarning) are still inline literals in
+/// `PlayerController._listenPlayer`; new types get constants here.
+///
+/// IMPORTANT: Keep this in sync with Swift and with the Windows
+/// `player_event_publisher`.
+abstract class PlayerEventType {
+  PlayerEventType._();
+
+  /// Windows-only: the native D3D device backing the active preview session
+  /// is gone or suspect (Modern Standby / suspend resume). Dart silently
+  /// closes and reopens the preview in place — same session id, no phase
+  /// change — instead of surfacing an error. Payload:
+  /// `{type, sessionId, reason}`.
+  static const String previewInvalidated = 'previewInvalidated';
+}
+
 /// Device event types from native EventChannel.
 ///
 /// IMPORTANT: Keep this in sync with Swift.

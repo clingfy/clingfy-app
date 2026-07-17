@@ -1683,4 +1683,9 @@ class ZoomEditorController extends ChangeNotifier {
     );
     return _syncChain;
   }
+
+  /// Re-push the current effective segments to a preview session that was
+  /// rebuilt in place (Windows `previewInvalidated` — the reopened native
+  /// session starts with no zoom state). Chained behind any in-flight sync.
+  Future<void> resyncToNative() => _syncToNative();
 }

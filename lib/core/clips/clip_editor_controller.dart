@@ -276,6 +276,11 @@ class ClipEditorController extends ChangeNotifier {
     }
   }
 
+  /// Re-push the current clips to a preview session that was rebuilt in
+  /// place (Windows `previewInvalidated` — the reopened native session
+  /// starts with the uncut timeline).
+  Future<void> resyncToNative() => _syncToNative();
+
   /// Restores the persisted clips for this recording, or seeds the whole
   /// recording when there is nothing valid to restore. Also advances the id
   /// counter past any restored ids so new splits never collide with them.
