@@ -260,8 +260,9 @@ void RegisterHandlers(HandlerTable& table) {
   // engine starts consuming it in Phase 9.2 (camera capture).
   table["setVideoSource"] = &HandleSetVideoSource;
 
-  // Audio gain / mix — accepted, no audible effect until Phase 3D.
-  table["updateAudioPreview"] = &HandleNoopSetter;
+  // Audio gain / mix. `updateAudioPreview` moved to preview_router in
+  // editing step 4-7d (it drives PreviewEngine::SetAudioMix now); these two
+  // legacy names stay accepted no-ops.
   table["setAudioMix"] = &HandleNoopSetter;
   table["setAudioGainDb"] = &HandleNoopSetter;
 

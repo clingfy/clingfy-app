@@ -691,6 +691,41 @@ void HandlePreviewSetClips(
   reply::Null(*result);
 }
 
+// Editing port (audio, step 4-7d): the live preview mix. `updateAudioPreview`
+// is the method Dart actually sends (NativeBridge.setAudioMix, keys
+// gain/volume, debounced 150 ms during slider drags); the preview* names are
+// the macOS dispatch aliases (keys audioGainDb/audioVolumePercent) — kept
+// real and thin here, converging on PreviewEngine::SetAudioMix exactly like
+// the three macOS handlers converge on its setAudioMix. Both key spellings
+// are accepted on every method (macOS MainFlutterWindow parity).
+void HandleUpdateAudioPreview(
+    const flutter::MethodCall<flutter::EncodableValue>& call,
+    std::unique_ptr<flutter::MethodResult<flutter::EncodableValue>> result) {
+  if (const auto* args =
+          std::get_if<flutter::EncodableMap>(call.arguments())) {
+    const double gain =
+        ReadDouble(*args, "gain", ReadDouble(*args, "audioGainDb", 0.0));
+    const double volume = ReadDouble(
+        *args, "volume", ReadDouble(*args, "audioVolumePercent", 100.0));
+    PreviewEngine::Instance()->SetAudioMix(ReadString(*args, "sessionId"),
+                                           gain, volume);
+  }
+  reply::Null(*result);
+}
+
+void HandlePreviewSetAudioGainDb(
+    const flutter::MethodCall<flutter::EncodableValue>& call,
+    std::unique_ptr<flutter::MethodResult<flutter::EncodableValue>> result) {
+  if (const auto* args =
+          std::get_if<flutter::EncodableMap>(call.arguments())) {
+    // Gain-only alias: volume stays at unity (macOS parity).
+    PreviewEngine::Instance()->SetAudioMix(
+        ReadString(*args, "sessionId"), ReadDouble(*args, "audioGainDb", 0.0),
+        100.0);
+  }
+  reply::Null(*result);
+}
+
 }  // namespace
 
 void RegisterHandlers(HandlerTable& table) {
@@ -722,8 +757,13 @@ void RegisterHandlers(HandlerTable& table) {
   // through cuts/reorder lands in the following slices; a passthrough list keeps
   // the preview byte-identical to today.
   table["previewSetClips"] = &HandlePreviewSetClips;
-  table["previewSetAudioMix"] = &HandleNoopSetter;
-  table["previewSetAudioGainDb"] = &HandleNoopSetter;
+  // Audio mix (editing port step 4-7d): live on Windows — gain+volume on the
+  // edited-session renderer, volume on the passthrough MediaPlayer.
+  // `updateAudioPreview` registers HERE (it is a preview method; it was a
+  // devices_router no-op until this slice).
+  table["updateAudioPreview"] = &HandleUpdateAudioPreview;
+  table["previewSetAudioMix"] = &HandleUpdateAudioPreview;
+  table["previewSetAudioGainDb"] = &HandlePreviewSetAudioGainDb;
 
   table["previewGetZoomCapabilities"] = &HandleGetZoomCapabilities;
   table["previewGetCursorSamples"] = &HandleGetCursorSamples;

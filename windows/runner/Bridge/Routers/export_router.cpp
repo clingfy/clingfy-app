@@ -564,6 +564,13 @@ void HandleProcessVideo(
     }
     clingfy::preview::PreviewEngine::Instance()->SetCameraComposition(
         ReadString(*args, "sessionId"), c);
+    // Editing port (audio, step 4-7d): seed the preview audio mix — Dart
+    // sends the persisted gain/volume in every processVideo (editor open and
+    // the standby-resume resync included), so the mix applies without
+    // waiting for a slider touch. Stale sessions drop engine-side.
+    clingfy::preview::PreviewEngine::Instance()->SetAudioMix(
+        ReadString(*args, "sessionId"), ReadDouble(*args, "audioGainDb", 0.0),
+        ReadDouble(*args, "audioVolumePercent", 100.0));
   }
   reply::Null(*result);
 }

@@ -257,6 +257,23 @@ class PreviewEngine {
       const std::string& session_id,
       std::vector<capture::export_::clip_planner::ClipKeptRange> ranges);
 
+  // Editing port (audio, step 4-7d — design D6): the live preview audio mix.
+  // `gain_db` [0,24] amplifies (clamped, export/macOS parity), then
+  // `volume_percent` [0,100] attenuates. Applies to the edited-session
+  // renderer's FUTURE samples immediately (no re-decode) and to the
+  // passthrough MediaPlayer's master volume (attenuation only there —
+  // MediaPlayer.Volume is 0..1, so gain on an UNCUT preview stays
+  // export-only: the documented D6 gap). Stored on the session so a
+  // renderer opened later (first clip edit) starts with the current mix,
+  // mirroring macOS's pending-open audioMix override. A stale session_id is
+  // a silent no-op; an empty one applies to the active session (macOS
+  // optional-sessionId semantics). Driven by `updateAudioPreview` (the
+  // method Dart actually sends, debounced 150 ms during slider drags), the
+  // previewSetAudioMix/previewSetAudioGainDb dispatch aliases, and the
+  // audio args riding every processVideo (editor open + standby resync).
+  void SetAudioMix(const std::string& session_id, double gain_db,
+                   double volume_percent);
+
   // For tests / observability.
   std::int64_t current_texture_id() const;
 
