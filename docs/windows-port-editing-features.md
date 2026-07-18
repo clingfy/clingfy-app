@@ -347,6 +347,12 @@ Windows equivalent.
 4. **Clip live preview** — the **stitched-timeline** approach (§5.4), NOT
    seek-through-cuts. Wire `previewSetClips` to rebuild the stitched timeline
    (debounced) and map edited→source for the overlays + camera (§5.5).
+   **✅ Slices 1–4 done (#255–#259, 2026-07-12):** stored ranges → source-reader
+   front-end → paused/scrub edited render → pacer continuous playback →
+   reorder playback. **Remaining: 4-5/4-6 transport polish + trim-drag rebuild
+   hardening, and 4-7 preview AUDIO (edited previews are silent today) — design
+   locked in `docs/decisions/windows-editing-step4-7-preview-audio.md`
+   (2026-07-19).**
 5. Keep the `bridge_contract_coverage_test` honest and add per-feature smoke
    checks (mirror the macOS `RunnerTests` invariants).
 
