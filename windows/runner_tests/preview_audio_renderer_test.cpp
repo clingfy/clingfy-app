@@ -49,6 +49,26 @@ TEST(PreviewAudioRendererClockTest, ZeroPaddingReadsAllSubmitted) {
             48000);
 }
 
+TEST(PreviewAudioRendererClockTest, PlanEndFromLastSlotTiling) {
+  // Slots tile contiguously, so the plan end is the last slot's edited
+  // start + FULL duration (§5.2 — silence included), ms->frames truncating.
+  std::vector<capture::export_::clip_planner::AudioSlot> slots;
+  slots.push_back(capture::export_::clip_planner::AudioSlot{
+      /*source_in_ms=*/6000, /*edited_start_ms=*/0, /*copy_duration_ms=*/2000,
+      /*duration_ms=*/2000});
+  slots.push_back(capture::export_::clip_planner::AudioSlot{
+      /*source_in_ms=*/0, /*edited_start_ms=*/2000, /*copy_duration_ms=*/500,
+      /*duration_ms=*/1500});
+  // End = 2000 + 1500 = 3500 ms = 168000 frames at 48 kHz.
+  EXPECT_EQ(PreviewAudioRenderer::PlanEndEditedFrame(slots), 168000);
+}
+
+TEST(PreviewAudioRendererClockTest, PlanEndOfEmptySlotsIsZero) {
+  // Nothing to play: the stream drains immediately and playing() flips
+  // false — the D7 audio-less-session behavior.
+  EXPECT_EQ(PreviewAudioRenderer::PlanEndEditedFrame({}), 0);
+}
+
 TEST(PreviewAudioRendererOpenTest, MissingSourceFailsSoftly) {
   // The pump opens the source before any WASAPI setup, so a bad path must
   // return nullptr (never throw, never crash) with no audio device needed —

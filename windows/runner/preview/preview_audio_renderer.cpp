@@ -69,6 +69,15 @@ std::int64_t PreviewAudioRenderer::PlaybackEditedFrame(
   return base_edited_frame + static_cast<std::int64_t>(played);
 }
 
+std::int64_t PreviewAudioRenderer::PlanEndEditedFrame(
+    const std::vector<capture::export_::clip_planner::AudioSlot>& slots) {
+  if (slots.empty()) {
+    return 0;
+  }
+  const auto& last = slots.back();
+  return MsToFrames(last.edited_start_ms + last.duration_ms);
+}
+
 class PreviewAudioRenderer::Impl {
  public:
   bool Open(const std::wstring& source_path,
@@ -93,15 +102,18 @@ class PreviewAudioRenderer::Impl {
   enum class Command { kNone, kStartAt, kPause };
 
   void RenderLoop();
-  // Refill the device buffer from the FIFO (topping the FIFO up from the
-  // pump as needed). Returns false on a device failure (reported one-shot).
-  bool FillDeviceBuffer();
+  void HandleStartAt(std::int64_t start_frame);
+  // Refill the device buffer (clamped to the plan's real content so the
+  // padding genuinely drains at EOS). Returns false on a device failure.
+  bool FillDeviceBuffer(std::uint64_t epoch);
   // Ensure the FIFO holds at least `frames` frames, decoding via the pump;
-  // pads with silence once the plan is exhausted.
+  // silence inside the plan comes from the pump's own silence-fill, and any
+  // decode shortfall is padded so the write below never blocks.
   void TopUpFifo(std::int64_t frames);
+  void PublishPosition(std::uint64_t epoch, std::uint32_t padding_frames);
   void ReportRenderError(HRESULT hr);
 
-  // --- Set once in Open, read-only afterwards -------------------------------
+  // --- Set once in Open, immutable afterwards -------------------------------
   std::wstring source_path_;
   ComPtr<IAudioClient> client_;
   ComPtr<IAudioRenderClient> render_client_;
@@ -111,17 +123,22 @@ class PreviewAudioRenderer::Impl {
   HANDLE stop_event_ = nullptr;
   std::thread thread_;
 
-  // --- Guarded by mutex_ (platform thread <-> render thread) ---------------
+  // --- Guarded by mutex_ (brief holds ONLY — never across decode/WASAPI) ---
   std::mutex mutex_;
-  std::unique_ptr<exp::ReorderAudioPump> pump_;
-  std::vector<exp::clip_planner::AudioSlot> slots_;
   exp::AudioGainStages stages_{};
   Command command_ = Command::kNone;
   std::int64_t command_start_frame_ = 0;
+  // Clip edits defer the pump rebuild to the next Play transition, which
+  // runs on the render thread: no mid-fill pump swap can ever occur, and
+  // the MF reader open cost stays off the platform thread.
+  std::vector<exp::clip_planner::AudioSlot> pending_slots_;
+  bool slots_dirty_ = false;
 
-  // --- Render-thread-only streaming state -----------------------------------
+  // --- Render-thread-only streaming state (no locks; Open runs before the
+  // --- thread starts, Close joins before touching them) ---------------------
+  std::unique_ptr<exp::ReorderAudioPump> pump_;
   std::deque<std::int16_t> fifo_;
-  bool fifo_dry_ = false;  // pump exhausted; FIFO tail is synthetic silence
+  std::int64_t plan_end_frame_ = 0;
   std::int64_t base_edited_frame_ = 0;
   std::uint64_t submitted_frames_ = 0;
   bool streaming_ = false;
@@ -130,6 +147,9 @@ class PreviewAudioRenderer::Impl {
   std::atomic<bool> running_{false};
   std::atomic<bool> playing_{false};
   std::atomic<std::int64_t> position_edited_frame_{0};
+  // Bumped by every Play: a fill that started under an older epoch must not
+  // publish its (old-stream) position over the freshly published target.
+  std::atomic<std::uint64_t> play_epoch_{0};
   std::atomic<bool> render_error_reported_{false};
   std::function<void(HRESULT)> on_render_error_;
 };
@@ -138,7 +158,6 @@ bool PreviewAudioRenderer::Impl::Open(
     const std::wstring& source_path,
     const std::vector<exp::clip_planner::AudioSlot>& slots) {
   source_path_ = source_path;
-  slots_ = slots;
   // Identity stages at the pump — the live mix is applied at the FIFO fill
   // site instead (SetGainStages affects only future samples, D6).
   pump_ = exp::ReorderAudioPump::Create(source_path, slots, kSampleRateHz,
@@ -146,6 +165,7 @@ bool PreviewAudioRenderer::Impl::Open(
   if (pump_ == nullptr) {
     return false;  // no audio track / reader failure — soft-fail (D7)
   }
+  plan_end_frame_ = PlanEndEditedFrame(slots);
 
   ComPtr<IMMDeviceEnumerator> enumerator;
   HRESULT hr = ::CoCreateInstance(__uuidof(MMDeviceEnumerator), nullptr,
@@ -230,10 +250,7 @@ void PreviewAudioRenderer::Impl::Close() {
   }
   render_client_.Reset();
   client_.Reset();
-  {
-    std::lock_guard<std::mutex> lock(mutex_);
-    pump_.reset();
-  }
+  pump_.reset();  // render thread joined — safe without a lock
 }
 
 void PreviewAudioRenderer::Impl::Play(std::int64_t edited_ms) {
@@ -243,8 +260,10 @@ void PreviewAudioRenderer::Impl::Play(std::int64_t edited_ms) {
     command_ = Command::kStartAt;
     command_start_frame_ = frame;
   }
-  // Publish the target immediately so a pacer read between this call and the
-  // render thread's transition already sees the new position.
+  // New epoch FIRST: an in-flight fill for the old stream sees the bump and
+  // suppresses its position store, so the target published below survives
+  // until the render thread's kStartAt transition re-publishes it.
+  play_epoch_.fetch_add(1, std::memory_order_relaxed);
   position_edited_frame_.store(frame, std::memory_order_relaxed);
   playing_.store(true, std::memory_order_relaxed);
   if (wake_event_ != nullptr) {
@@ -265,15 +284,16 @@ void PreviewAudioRenderer::Impl::Pause() {
 
 void PreviewAudioRenderer::Impl::SetSlots(
     const std::vector<exp::clip_planner::AudioSlot>& slots) {
-  // The engine force-clears playback on every clip edit; pause defensively
-  // anyway so the render thread cannot be mid-fill on the old plan.
-  Pause();
-  std::lock_guard<std::mutex> lock(mutex_);
-  slots_ = slots;
-  pump_ = exp::ReorderAudioPump::Create(source_path_, slots, kSampleRateHz,
-                                        kChannels, exp::AudioGainStages{});
-  // nullptr (e.g. empty slots) leaves the renderer silent until the next
-  // SetSlots — the engine treats that session as audio-less (D7).
+  {
+    std::lock_guard<std::mutex> lock(mutex_);
+    pending_slots_ = slots;
+    slots_dirty_ = true;
+    command_ = Command::kPause;
+  }
+  playing_.store(false, std::memory_order_relaxed);
+  if (wake_event_ != nullptr) {
+    ::SetEvent(wake_event_);
+  }
 }
 
 void PreviewAudioRenderer::Impl::SetGainStages(
@@ -285,19 +305,20 @@ void PreviewAudioRenderer::Impl::SetGainStages(
 void PreviewAudioRenderer::Impl::TopUpFifo(std::int64_t frames) {
   const std::size_t want_samples =
       static_cast<std::size_t>(frames) * kChannels;
-  std::lock_guard<std::mutex> lock(mutex_);
   if (fifo_.size() >= want_samples) {
     return;
   }
   // The device needs the timeline decoded through this edited frame. The
-  // target is FIXED for this call (FIFO head sits at base + submitted):
-  // recomputing it against the growing FIFO would shrink it below what the
-  // pump already emitted and spin without progress.
-  const std::int64_t limit_frame = base_edited_frame_ +
-                                   static_cast<std::int64_t>(submitted_frames_) +
-                                   frames;
+  // target is FIXED for this call (the FIFO head sits at base + submitted).
+  const std::int64_t limit_frame =
+      base_edited_frame_ + static_cast<std::int64_t>(submitted_frames_) +
+      frames;
   if (pump_ != nullptr && !pump_->done()) {
-    const auto stages = stages_;
+    exp::AudioGainStages stages;
+    {
+      std::lock_guard<std::mutex> lock(mutex_);
+      stages = stages_;
+    }
     pump_->PumpUpTo(
         limit_frame,
         [this, &stages](clingfy::audio::MixedPacket&& packet,
@@ -313,23 +334,42 @@ void PreviewAudioRenderer::Impl::TopUpFifo(std::int64_t frames) {
         });
   }
   if (fifo_.size() < want_samples) {
-    // Plan exhausted (or no pump, or a pump that cannot advance): pad with
-    // silence so the device buffer can always be filled; the drain-out stop
-    // is detected in the render loop once the padding empties.
-    fifo_dry_ = true;
+    // Decode shortfall (pump exhausted or cannot advance): pad so the write
+    // never blocks. The FillDeviceBuffer clamp bounds this to the plan's
+    // real extent, so synthetic padding never delays the EOS drain.
     fifo_.insert(fifo_.end(), want_samples - fifo_.size(), 0);
   }
 }
 
-bool PreviewAudioRenderer::Impl::FillDeviceBuffer() {
+void PreviewAudioRenderer::Impl::PublishPosition(std::uint64_t epoch,
+                                                 std::uint32_t padding_frames) {
+  if (play_epoch_.load(std::memory_order_relaxed) != epoch) {
+    return;  // a newer Play published its target; don't clobber it
+  }
+  const std::int64_t at = std::min(
+      PlaybackEditedFrame(base_edited_frame_, submitted_frames_,
+                          padding_frames),
+      plan_end_frame_);
+  position_edited_frame_.store(at, std::memory_order_relaxed);
+}
+
+bool PreviewAudioRenderer::Impl::FillDeviceBuffer(std::uint64_t epoch) {
   UINT32 padding = 0;
   HRESULT hr = client_->GetCurrentPadding(&padding);
   if (FAILED(hr)) {
     ReportRenderError(hr);
     return false;
   }
-  const UINT32 writable = buffer_frames_ - padding;
+  // Clamp to the plan's real content: past plan_end_frame_ nothing more is
+  // written, the padding drains to zero within one buffer duration, and the
+  // drain-out stop in the render loop can actually fire.
+  const std::int64_t remaining_real = std::max<std::int64_t>(
+      0, plan_end_frame_ - (base_edited_frame_ +
+                            static_cast<std::int64_t>(submitted_frames_)));
+  const UINT32 writable = static_cast<UINT32>(std::min<std::int64_t>(
+      buffer_frames_ - padding, remaining_real));
   if (writable == 0) {
+    PublishPosition(epoch, padding);
     return true;
   }
 
@@ -344,12 +384,9 @@ bool PreviewAudioRenderer::Impl::FillDeviceBuffer() {
   auto* dst = reinterpret_cast<float*>(out);
   const std::size_t sample_count =
       static_cast<std::size_t>(writable) * kChannels;
-  {
-    std::lock_guard<std::mutex> lock(mutex_);
-    for (std::size_t i = 0; i < sample_count; ++i) {
-      dst[i] = static_cast<float>(fifo_.front()) / 32768.0f;
-      fifo_.pop_front();
-    }
+  for (std::size_t i = 0; i < sample_count; ++i) {
+    dst[i] = static_cast<float>(fifo_.front()) / 32768.0f;
+    fifo_.pop_front();
   }
   hr = render_client_->ReleaseBuffer(writable, 0);
   if (FAILED(hr)) {
@@ -357,11 +394,54 @@ bool PreviewAudioRenderer::Impl::FillDeviceBuffer() {
     return false;
   }
   submitted_frames_ += writable;
-  position_edited_frame_.store(
-      PlaybackEditedFrame(base_edited_frame_, submitted_frames_,
-                          padding + writable),
-      std::memory_order_relaxed);
+  PublishPosition(epoch, padding + writable);
   return true;
+}
+
+void PreviewAudioRenderer::Impl::HandleStartAt(std::int64_t start_frame) {
+  client_->Stop();
+  client_->Reset();
+  // A clip edit deferred its pump rebuild to this transition (render
+  // thread — the MF reader open stays off the platform thread, and no
+  // mid-fill pump swap can ever occur).
+  bool rebuild = false;
+  std::vector<exp::clip_planner::AudioSlot> slots;
+  {
+    std::lock_guard<std::mutex> lock(mutex_);
+    if (slots_dirty_) {
+      rebuild = true;
+      slots = std::move(pending_slots_);
+      pending_slots_.clear();
+      slots_dirty_ = false;
+    }
+  }
+  if (rebuild) {
+    pump_ = exp::ReorderAudioPump::Create(source_path_, slots, kSampleRateHz,
+                                          kChannels, exp::AudioGainStages{});
+    // nullptr (e.g. empty slots) leaves this session audio-less: the plan
+    // end collapses to the start, so the stream drains immediately and
+    // playing() flips false (D7 silent-video behavior).
+    plan_end_frame_ = pump_ != nullptr ? PlanEndEditedFrame(slots) : 0;
+  }
+  fifo_.clear();
+  if (pump_ != nullptr) {
+    pump_->PrimeAtEditedFrame(start_frame);
+  }
+  base_edited_frame_ = start_frame;
+  submitted_frames_ = 0;
+  streaming_ = true;
+  const std::uint64_t epoch = play_epoch_.load(std::memory_order_relaxed);
+  if (!FillDeviceBuffer(epoch)) {
+    streaming_ = false;
+    playing_.store(false, std::memory_order_relaxed);
+    return;
+  }
+  const HRESULT hr = client_->Start();
+  if (FAILED(hr)) {
+    ReportRenderError(hr);
+    streaming_ = false;
+    playing_.store(false, std::memory_order_relaxed);
+  }
 }
 
 void PreviewAudioRenderer::Impl::RenderLoop() {
@@ -379,7 +459,8 @@ void PreviewAudioRenderer::Impl::RenderLoop() {
       continue;
     }
 
-    // Transport command (posted by Play/Pause on the platform thread).
+    // Transport command (posted by Play/Pause/SetSlots on the platform
+    // thread).
     Command command = Command::kNone;
     std::int64_t start_frame = 0;
     {
@@ -389,30 +470,7 @@ void PreviewAudioRenderer::Impl::RenderLoop() {
       command_ = Command::kNone;
     }
     if (command == Command::kStartAt) {
-      client_->Stop();
-      client_->Reset();
-      {
-        std::lock_guard<std::mutex> lock(mutex_);
-        fifo_.clear();
-        fifo_dry_ = false;
-        if (pump_ != nullptr) {
-          pump_->PrimeAtEditedFrame(start_frame);
-        }
-      }
-      base_edited_frame_ = start_frame;
-      submitted_frames_ = 0;
-      streaming_ = true;
-      if (!FillDeviceBuffer()) {
-        streaming_ = false;
-        playing_.store(false, std::memory_order_relaxed);
-        continue;
-      }
-      const HRESULT hr = client_->Start();
-      if (FAILED(hr)) {
-        ReportRenderError(hr);
-        streaming_ = false;
-        playing_.store(false, std::memory_order_relaxed);
-      }
+      HandleStartAt(start_frame);
       continue;
     }
     if (command == Command::kPause) {
@@ -422,26 +480,26 @@ void PreviewAudioRenderer::Impl::RenderLoop() {
     }
 
     if (wait == WAIT_OBJECT_0 + 2 && streaming_) {
-      if (!FillDeviceBuffer()) {
+      const std::uint64_t epoch = play_epoch_.load(std::memory_order_relaxed);
+      if (!FillDeviceBuffer(epoch)) {
         client_->Stop();
         streaming_ = false;
         playing_.store(false, std::memory_order_relaxed);
         continue;
       }
-      // Drain-out: the plan is exhausted and everything real has played —
-      // stop pulling; the position pins at the plan end and `playing()`
-      // reads false (the engine's video path owns the EOS transition).
-      bool dry = false;
-      {
-        std::lock_guard<std::mutex> lock(mutex_);
-        dry = fifo_dry_ && (pump_ == nullptr || pump_->done());
-      }
-      if (dry) {
+      // Drain-out: everything real has been submitted AND played. The fill
+      // clamp stopped writing at the plan end, so the padding genuinely
+      // decays to zero within one buffer duration.
+      const bool plan_exhausted =
+          base_edited_frame_ + static_cast<std::int64_t>(submitted_frames_) >=
+          plan_end_frame_;
+      if (plan_exhausted) {
         UINT32 padding = 0;
         if (SUCCEEDED(client_->GetCurrentPadding(&padding)) && padding == 0) {
           client_->Stop();
           streaming_ = false;
           playing_.store(false, std::memory_order_relaxed);
+          PublishPosition(epoch, 0);
         }
       }
     }

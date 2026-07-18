@@ -54,9 +54,19 @@ class PreviewAudioRenderer {
   // currently at the speaker, given the stream base, total frames submitted
   // since the base, and the device's current unplayed padding. Clamped so a
   // just-primed stream (padding == everything submitted) reads the base.
+  // (The renderer additionally clamps the published position to the plan
+  // end so it pins there during the EOS drain.)
   static std::int64_t PlaybackEditedFrame(std::int64_t base_edited_frame,
                                           std::uint64_t submitted_frames,
                                           std::uint32_t padding_frames);
+
+  // Pure, exposed for headless tests: the plan's end as an edited frame —
+  // the tiling invariant makes it the last slot's edited start + duration
+  // (ms -> frames, truncating). Device writes are clamped to it so the
+  // buffer genuinely drains at EOS, and the published position pins there.
+  // Empty slots -> 0 (nothing to play; a stream drains immediately).
+  static std::int64_t PlanEndEditedFrame(
+      const std::vector<capture::export_::clip_planner::AudioSlot>& slots);
 
   // Build the pump + WASAPI client + render thread, stopped at edited 0.
   // `slots` comes from clip_planner::AudioSlots (every edited session — D2).
@@ -78,9 +88,12 @@ class PreviewAudioRenderer {
   // Freeze the stream (device stops pulling; position holds).
   void Pause();
 
-  // Replace the slot plan after a clip edit. Only valid while paused — the
-  // engine force-clears playback on every edit (4-3b rule: the user
-  // re-presses Play), and this defensively pauses first regardless.
+  // Replace the slot plan after a clip edit. Pauses the stream and DEFERS
+  // the pump rebuild to the next Play transition, which runs on the render
+  // thread — so a mid-fill pump swap can never occur and the MF reader
+  // reopen cost never lands on the platform thread. (The engine
+  // force-clears playback on every edit anyway — the 4-3b rule: the user
+  // re-presses Play.)
   void SetSlots(
       const std::vector<capture::export_::clip_planner::AudioSlot>& slots);
 
