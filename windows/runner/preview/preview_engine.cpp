@@ -380,6 +380,12 @@ struct PreviewEngine::Impl {
   // One rebuild per session (D7): a second failure degrades to logged
   // silent video.
   bool audio_rebuild_attempted = false;
+  // 4-7d: the session's live mix (render_mutex). Defaults are the identity
+  // values; SetAudioMix stores clamped values and pushes resolved stages to
+  // the renderer; a renderer opened later starts from these (the macOS
+  // pending-open override semantics).
+  double audio_gain_db = 0.0;
+  double audio_volume_percent = 100.0;
 
   // Serializes the per-frame composition path against the descriptor
   // callback (which Flutter can invoke from its own thread).
@@ -444,6 +450,14 @@ void OpenPreviewAudioRendererLocked(PreviewEngine::Impl* impl) {
                                       std::memory_order_relaxed);
     impl->audio_render_error_pending.store(true, std::memory_order_release);
   });
+  // 4-7d: a renderer opened after the mix was set starts from the stored
+  // values (macOS pending-open override semantics). Identity defaults
+  // resolve to identity stages — a no-op.
+  impl->audio_renderer->SetGainStages(
+      capture::export_::ResolveAudioGainStages(
+          impl->audio_gain_db, impl->audio_volume_percent,
+          /*normalize=*/false, /*target_loudness_dbfs=*/-16.0,
+          /*source_peak_linear=*/0.0));
 }
 
 // D7 mid-stream failure recovery: one WARN naming the HRESULT, ONE rebuild
@@ -2662,6 +2676,54 @@ void PreviewEngine::SetClips(
     impl->audio_renderer.reset();
     clingfy::bridge::NativeLogPublisher::Instance().Debug(
         "Preview", "stitched preview OFF (passthrough — no real cut)");
+  }
+}
+
+void PreviewEngine::SetAudioMix(const std::string& session_id, double gain_db,
+                                double volume_percent) {
+  winrt_playback::MediaPlayer player_snapshot{nullptr};
+  Impl* impl = nullptr;
+  {
+    std::lock_guard<std::mutex> lock(mutex_);
+    // Same stale-session discipline as the other setters; an EMPTY id
+    // applies to the active session (macOS optional-sessionId semantics).
+    if (!session_id.empty() && session_id != active_session_id_) {
+      return;
+    }
+    if (impl_ == nullptr) {
+      return;
+    }
+    impl = impl_.get();
+    player_snapshot = impl_->player;
+  }
+  const double gain = std::clamp(gain_db, 0.0, 24.0);
+  const double volume = std::clamp(volume_percent, 0.0, 100.0);
+  {
+    std::lock_guard<std::mutex> render_lock(impl->render_mutex);
+    if (shutting_down_.load()) {
+      return;
+    }
+    impl->audio_gain_db = gain;
+    impl->audio_volume_percent = volume;
+    if (impl->audio_renderer != nullptr) {
+      // Applies to samples decoded from now on (D6) — the export's exact
+      // two-stage semantics via the shared resolver (normalize stays
+      // export-only, macOS parity).
+      impl->audio_renderer->SetGainStages(
+          capture::export_::ResolveAudioGainStages(
+              gain, volume, /*normalize=*/false,
+              /*target_loudness_dbfs=*/-16.0, /*source_peak_linear=*/0.0));
+    }
+  }
+  // Passthrough master volume — a WinRT call, outside both locks.
+  // Attenuation only (MediaPlayer.Volume is 0..1): gain on an uncut preview
+  // stays export-only, the documented D6 gap. Harmless in edited mode (the
+  // MediaPlayer is paused there), and it keeps the volume correct across a
+  // later passthrough transition.
+  try {
+    player_snapshot.Volume(volume / 100.0);
+  } catch (winrt::hresult_error const&) {
+    // Best-effort — MediaPlayer errors surface via MediaFailed.
   }
 }
 

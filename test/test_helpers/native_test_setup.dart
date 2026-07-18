@@ -122,7 +122,11 @@ Future<void> installCommonNativeMocks({
       case 'revealRecordingsFolder':
       case 'revealTempFolder':
       case 'clearCachedRecordings':
-      case 'setAudioMix':
+      // The wire name Dart's NativeBridge.setAudioMix actually sends
+      // (fixed in editing 4-7d — this mock listed the Dart-side method
+      // name 'setAudioMix' by mistake, so the audio-mix push always fell
+      // through to the default handler).
+      case 'updateAudioPreview':
       case 'previewOpen':
       case 'previewClose':
       case 'previewPlay':

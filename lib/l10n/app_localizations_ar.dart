@@ -2506,7 +2506,7 @@ class AppLocalizationsAr extends AppLocalizations {
 
   @override
   String get appliedOnExportNoticeWindows =>
-      'يُطبَّق عند التصدير — المعاينة الداخلية لا تعرض هذا التأثير بعد.';
+      'يُسمع الكسب بالكامل في المعاينات المُعدَّلة وعند التصدير — المعاينة غير المقصوصة تعكس تغييرات مستوى الصوت فقط.';
 
   @override
   String get errBadMode => 'وضع التسجيل هذا غير متاح على ويندوز بعد.';

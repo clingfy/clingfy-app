@@ -71,8 +71,10 @@ class PostAudioSection extends StatelessWidget {
               const SizedBox(height: AppSidebarTokens.compactGap),
               AppInlineNotice(message: l10n.noMicAudioFound),
             ],
-            // Phase 10.3 (Windows): gain/volume ARE honored by the export,
-            // but the preview player has no audio-mix path yet.
+            // Editing 4-7d (Windows): the mix is LIVE in the preview now —
+            // gain+volume on edited (cut/reordered) sessions, volume-only on
+            // an uncut one (MediaPlayer.Volume can't amplify; gain there
+            // applies on export). The notice narrates that remaining gap.
             if (hasAudio && isWindows()) ...[
               const SizedBox(height: AppSidebarTokens.compactGap),
               AppInlineNotice(
