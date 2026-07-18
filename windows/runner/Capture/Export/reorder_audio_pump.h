@@ -8,11 +8,13 @@
 #include <wrl/client.h>
 
 #include <cstdint>
+#include <functional>
 #include <memory>
 #include <optional>
 #include <string>
 #include <vector>
 
+#include "Audio/audio_mixer.h"
 #include "Capture/Export/clip_audio_stitch.h"
 #include "Capture/Export/clip_playback_planner.h"
 #include "Capture/Export/export_audio.h"
@@ -48,10 +50,27 @@ class MfSinkWriterEncoder;
 //
 // All failures are soft: `Create` returns nullptr (the export then proceeds
 // video-only, exactly as before 3b-2b), matching the rest of the pipeline.
+//
+// Step 4-7a: the pump is ALSO the edited-preview audio decoder (design doc
+// docs/decisions/windows-editing-step4-7-preview-audio.md, D2-D4 — the
+// preview plans EVERY edited session through AudioSlots, monotonic included,
+// so "Reorder" in the name reflects the export origin, not a usage limit).
+// Two additions serve the preview without touching export behavior: a
+// packet-sink seam (the export encoder becomes one wrapper over it; the
+// preview feeds a ring buffer) and `PrimeAtEditedFrame` (scrub re-priming —
+// the export's cursor is forward-only and never needed it).
 namespace clingfy::capture::export_ {
 
 class ReorderAudioPump {
  public:
+  // Packet-sink seam. The sink receives each stitched packet with
+  // `timestamp_hns` UNSET (0) plus the packet's absolute edited-timeline
+  // frame; the sink derives its own timestamps/placement. Return an
+  // EncoderError to abort the pump-up (the export sink propagates encoder
+  // write failures; non-encoder sinks return std::nullopt).
+  using AudioPacketSink =
+      std::function<std::optional<clingfy::encoding::EncoderError>(
+          clingfy::audio::MixedPacket&&, std::int64_t edited_frame)>;
   // Open a second, independent audio-only source reader on `source_path`
   // (negotiated to 48 kHz stereo int16 PCM, matching the encoder) and
   // precompute the per-slot frame plan from `slots` (built by
@@ -77,14 +96,30 @@ class ReorderAudioPump {
       clingfy::encoding::MfSinkWriterEncoder& encoder,
       std::uint64_t* audio_packets);
 
+  // Sink-seam core (Step 4-7a): emit every packet whose edited start frame is
+  // <= `edited_frame_limit` into `sink`. The encoder overload above is a thin
+  // wrapper over this (origin shift + packet count live in its sink).
+  std::optional<clingfy::encoding::EncoderError> PumpUpTo(
+      std::int64_t edited_frame_limit, const AudioPacketSink& sink);
+
   // Drain all remaining audio (final tail, after the video loop). Equivalent to
   // PumpUpTo with an unbounded limit.
   std::optional<clingfy::encoding::EncoderError> Flush(
       std::int64_t origin_hns, clingfy::encoding::MfSinkWriterEncoder& encoder,
       std::uint64_t* audio_packets);
 
+  // Step 4-7a: re-prime the emission cursor so the NEXT emitted frame lands
+  // exactly on `edited_frame` (scrub/replay; clamped to [0, plan end] via
+  // clip_audio::PrimeReorderCursor). The reader re-seeks lazily on the next
+  // copy read. The export never calls this — its cursor is forward-only.
+  void PrimeAtEditedFrame(std::int64_t edited_frame);
+
   // True once every slot has been fully emitted.
   bool done() const;
+
+  // The PCM rate the reader was negotiated to — callers converting edited
+  // ms <-> frames must use this (truncating, §5.1).
+  std::int64_t sample_rate() const { return sample_rate_; }
 
  private:
   ReorderAudioPump() = default;
