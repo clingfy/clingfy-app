@@ -53,6 +53,8 @@ dependencies:
   confetti: ^0.8.0
   syncfusion_flutter_charts: ^33.1.45
   window_manager: ^0.5.1
+  flutter_driver:
+    sdk: flutter
 
 dev_dependencies:
   flutter_launcher_icons: "^0.14.4"
