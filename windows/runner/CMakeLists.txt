@@ -111,6 +111,7 @@ add_library(runner_bridge STATIC
   "Services/shell_reveal.cpp"
   "Services/temp_orphan_scan.cpp"
   "preview/frame_timing.cpp"
+  "preview/preview_audio_renderer.cpp"
   "preview/preview_camera_renderer.cpp"
   "preview/preview_compositor.cpp"
   "preview/preview_engine.cpp"
