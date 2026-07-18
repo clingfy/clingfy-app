@@ -103,4 +103,29 @@ std::vector<ReorderAudioSlot> PlanReorderAudioSlots(
   return out;
 }
 
+PumpCursor PrimeReorderCursor(const std::vector<ReorderAudioSlot>& plan,
+                              std::int64_t edited_frame) {
+  PumpCursor cursor;
+  if (plan.empty() || edited_frame <= 0) {
+    // Empty plan: slot_index 0 == plan.size(), which reads as "done".
+    // Negative/zero target: start of the timeline.
+    return cursor;
+  }
+  // Slots tile the edited timeline contiguously and plans are tiny (one slot
+  // per kept range) — a linear scan is the clearest correct thing.
+  for (std::size_t i = 0; i < plan.size(); ++i) {
+    const ReorderAudioSlot& p = plan[i];
+    const std::int64_t slot_frames = p.copy_frame_count + p.silence_frame_count;
+    if (edited_frame < p.edited_start_frame + slot_frames) {
+      cursor.slot_index = i;
+      cursor.emitted_frames =
+          std::max<std::int64_t>(0, edited_frame - p.edited_start_frame);
+      return cursor;
+    }
+  }
+  cursor.slot_index = plan.size();
+  cursor.emitted_frames = 0;
+  return cursor;
+}
+
 }  // namespace clingfy::capture::export_::clip_audio

@@ -103,6 +103,30 @@ std::vector<ReorderAudioSlot> PlanReorderAudioSlots(
     const std::vector<clip_planner::AudioSlot>& slots,
     std::int64_t sample_rate_hz);
 
+// Cursor into a reorder-slot plan: the next emission point, as a slot index
+// plus frames already emitted (copy + silence) within that slot. Step 4-7a:
+// the preview scrubs, so its pump must re-prime mid-timeline — the export's
+// forward-only cursor never needed this.
+struct PumpCursor {
+  std::size_t slot_index = 0;
+  std::int64_t emitted_frames = 0;
+
+  friend bool operator==(const PumpCursor& a, const PumpCursor& b) {
+    return a.slot_index == b.slot_index &&
+           a.emitted_frames == b.emitted_frames;
+  }
+  friend bool operator!=(const PumpCursor& a, const PumpCursor& b) {
+    return !(a == b);
+  }
+};
+
+// Locate `edited_frame` in `plan` (whose slots tile the edited timeline
+// contiguously): the returned cursor's next emission lands exactly on
+// `edited_frame`. Clamps: negative → {0, 0} (timeline start); at or past the
+// plan's end → {plan.size(), 0} (done). Pure — unit-tested headlessly.
+PumpCursor PrimeReorderCursor(const std::vector<ReorderAudioSlot>& plan,
+                              std::int64_t edited_frame);
+
 }  // namespace clingfy::capture::export_::clip_audio
 
 #endif  // RUNNER_CAPTURE_EXPORT_CLIP_AUDIO_STITCH_H_

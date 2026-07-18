@@ -118,6 +118,18 @@ void ReorderAudioPump::SeekToFrame(std::int64_t source_frame) {
 
 bool ReorderAudioPump::done() const { return slot_i_ >= plan_.size(); }
 
+void ReorderAudioPump::PrimeAtEditedFrame(std::int64_t edited_frame) {
+  const clip_audio::PumpCursor cursor =
+      clip_audio::PrimeReorderCursor(plan_, edited_frame);
+  slot_i_ = cursor.slot_index;
+  emitted_ = cursor.emitted_frames;
+  // A cursor landing in the slot's silence region skips the copy phase
+  // entirely (matches the natural emitted_ >= copy_frame_count transition).
+  copy_done_ = slot_i_ < plan_.size() &&
+               emitted_ >= plan_[slot_i_].copy_frame_count;
+  seeked_ = false;
+}
+
 std::optional<clingfy::encoding::EncoderError> ReorderAudioPump::Flush(
     std::int64_t origin_hns, clingfy::encoding::MfSinkWriterEncoder& encoder,
     std::uint64_t* audio_packets) {
@@ -129,23 +141,29 @@ std::optional<clingfy::encoding::EncoderError> ReorderAudioPump::PumpUpTo(
     std::int64_t edited_frame_limit, std::int64_t origin_hns,
     clingfy::encoding::MfSinkWriterEncoder& encoder,
     std::uint64_t* audio_packets) {
+  // The export sink: absolute edited frame → hns, shifted onto the video's
+  // zero (the encoder rebases video by its first written PTS but writes audio
+  // verbatim), then written to the sink writer.
+  return PumpUpTo(
+      edited_frame_limit,
+      [&](clingfy::audio::MixedPacket&& packet, std::int64_t edited_frame)
+          -> std::optional<clingfy::encoding::EncoderError> {
+        packet.timestamp_hns = std::max<std::int64_t>(
+            0, FrameToHns(edited_frame, sample_rate_) - origin_hns);
+        if (auto err = encoder.WriteAudioPacket(packet)) {
+          return err;
+        }
+        if (audio_packets != nullptr) {
+          ++*audio_packets;
+        }
+        return std::nullopt;
+      });
+}
+
+std::optional<clingfy::encoding::EncoderError> ReorderAudioPump::PumpUpTo(
+    std::int64_t edited_frame_limit, const AudioPacketSink& write) {
   const std::int64_t silence_chunk_frames =
       std::max<std::int64_t>(1, (kSilenceChunkMs * sample_rate_) / 1000);
-
-  auto write = [&](clingfy::audio::MixedPacket&& packet, std::int64_t edited_frame)
-      -> std::optional<clingfy::encoding::EncoderError> {
-    // Absolute edited frame → hns, then shift onto the video's zero (the
-    // encoder rebases video by its first written PTS but writes audio verbatim).
-    packet.timestamp_hns = std::max<std::int64_t>(
-        0, FrameToHns(edited_frame, sample_rate_) - origin_hns);
-    if (auto err = encoder.WriteAudioPacket(packet)) {
-      return err;
-    }
-    if (audio_packets != nullptr) {
-      ++*audio_packets;
-    }
-    return std::nullopt;
-  };
 
   while (slot_i_ < plan_.size()) {
     const clip_audio::ReorderAudioSlot& p = plan_[slot_i_];
@@ -170,7 +188,12 @@ std::optional<clingfy::encoding::EncoderError> ReorderAudioPump::PumpUpTo(
     if (!copy_done_ && emitted_ < p.copy_frame_count) {
       // --- Copy phase: pull real PCM from the source window. ---
       if (!seeked_) {
-        SeekToFrame(p.source_in_frame);
+        // Seek to the still-needed position, not the slot start: identical
+        // when the slot starts fresh (emitted_ == 0 — the only export case),
+        // and skips the already-emitted head after a PrimeAtEditedFrame
+        // landed mid-slot. MF undershoots the target; the intersection below
+        // trims the lead-in either way.
+        SeekToFrame(p.source_in_frame + emitted_);
         seeked_ = true;
       }
       DWORD flags = 0;
