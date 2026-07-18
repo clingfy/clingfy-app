@@ -370,6 +370,16 @@ struct PreviewEngine::Impl {
   // One WARN per session when the renderer could not be built (D7): the
   // fallback is deliberate, but a beta log must say why a preview is silent.
   bool audio_open_failure_logged = false;
+  // D7 mid-stream failure hand-off: the renderer's one-shot error callback
+  // fires on ITS render thread, which must not act inline or touch engine
+  // locks — it only records here. The platform-thread handlers (Play /
+  // SetClips, already under render_mutex) consume the flag and perform the
+  // one WARN + one rebuild attempt (HandleAudioRenderErrorLocked).
+  std::atomic<bool> audio_render_error_pending{false};
+  std::atomic<std::int32_t> audio_render_error_hr{0};
+  // One rebuild per session (D7): a second failure degrades to logged
+  // silent video.
+  bool audio_rebuild_attempted = false;
 
   // Serializes the per-frame composition path against the descriptor
   // callback (which Flutter can invoke from its own thread).
@@ -393,6 +403,83 @@ const FlutterDesktopGpuSurfaceDescriptor* ObtainSurfaceDescriptor(
     return nullptr;
   }
   return &impl->descriptor;
+}
+
+// ---- Step 4-7c: edited-preview audio helpers (all callers hold render_mutex
+// ---- on the platform thread — the engine's serialized transport paths) -----
+
+// The audio extent passed to AudioSlots is the ranges' own upper bound — a
+// shorter real track just early-EOSes in the pump, which silence-fills the
+// shortfall (§5.2), so no MediaPlayer duration query is needed.
+std::vector<capture::export_::clip_planner::AudioSlot> BuildPreviewAudioSlots(
+    const std::vector<capture::export_::clip_planner::ClipKeptRange>& ranges) {
+  std::int64_t audio_extent_ms = 0;
+  for (const auto& r : ranges) {
+    audio_extent_ms = std::max(audio_extent_ms, r.source_out_ms);
+  }
+  return capture::export_::clip_planner::AudioSlots(ranges, audio_extent_ms);
+}
+
+// Open the renderer for the current ranges and wire the mid-stream failure
+// hook (D7). The callback fires on the RENDERER's thread: record-only — the
+// raw Impl* capture is safe because every audio_renderer.reset() (rebuild,
+// passthrough transition, Close) joins the renderer thread first, so the
+// callback can never outlive `impl`.
+void OpenPreviewAudioRendererLocked(PreviewEngine::Impl* impl) {
+  impl->audio_renderer = PreviewAudioRenderer::Open(
+      impl->video_path, BuildPreviewAudioSlots(impl->clip_ranges));
+  if (impl->audio_renderer == nullptr) {
+    if (!impl->audio_open_failure_logged) {
+      impl->audio_open_failure_logged = true;
+      clingfy::bridge::NativeLogPublisher::Instance().Warn(
+          "Preview",
+          "edited-preview audio unavailable (no audio track, no output "
+          "device, or an incompatible endpoint format) — the stitched "
+          "preview stays silent video");
+    }
+    return;
+  }
+  impl->audio_renderer->SetOnRenderError([impl](HRESULT hr) {
+    impl->audio_render_error_hr.store(static_cast<std::int32_t>(hr),
+                                      std::memory_order_relaxed);
+    impl->audio_render_error_pending.store(true, std::memory_order_release);
+  });
+}
+
+// D7 mid-stream failure recovery: one WARN naming the HRESULT, ONE rebuild
+// attempt (a fresh renderer re-Activates the default endpoint — the only way
+// back from AUDCLNT_E_DEVICE_INVALIDATED, e.g. a headset unplug or standby
+// resume), then logged silent-video degradation. Consumed on the platform
+// thread before Play/SetClips act on the renderer.
+void HandleAudioRenderErrorLocked(PreviewEngine::Impl* impl) {
+  if (!impl->audio_render_error_pending.exchange(false,
+                                                 std::memory_order_acquire)) {
+    return;
+  }
+  char detail[48];
+  std::snprintf(detail, sizeof(detail), " (hr=0x%08lX)",
+                static_cast<unsigned long>(static_cast<HRESULT>(
+                    impl->audio_render_error_hr.load(
+                        std::memory_order_relaxed))));
+  if (!impl->audio_rebuild_attempted) {
+    impl->audio_rebuild_attempted = true;
+    clingfy::bridge::NativeLogPublisher::Instance().Warn(
+        "Preview", std::string("edited-preview audio device lost") + detail +
+                       " — rebuilding the renderer once");
+    impl->audio_renderer.reset();
+    OpenPreviewAudioRendererLocked(impl);
+    if (impl->audio_renderer == nullptr) {
+      clingfy::bridge::NativeLogPublisher::Instance().Warn(
+          "Preview",
+          "edited-preview audio rebuild failed — silent video for this "
+          "session");
+    }
+    return;
+  }
+  clingfy::bridge::NativeLogPublisher::Instance().Warn(
+      "Preview", std::string("edited-preview audio failed again") + detail +
+                     " — silent video for this session");
+  impl->audio_renderer.reset();
 }
 
 }  // namespace
@@ -1927,6 +2014,9 @@ void PreviewEngine::Play(const std::string& session_id) {
     std::lock_guard<std::mutex> render_lock(impl->render_mutex);
     if (impl->edited_mode) {
       namespace clip = capture::export_::clip_planner;
+      // 4-7c/D7: consume a mid-stream audio failure BEFORE acting on the
+      // renderer (one WARN + one rebuild; degrades to logged silent video).
+      HandleAudioRenderErrorLocked(impl);
       // Reorder needs the per-range cursor primed from the current position.
       if (!clip::IsSourceMonotonic(impl->clip_ranges)) {
         PrimeReorderStateLocked(impl, impl->edited_pos_ms);
@@ -2319,6 +2409,12 @@ PreviewEngine::PaceStep PreviewEngine::PaceNextEditedFrameLocked(Impl* impl) {
                                          std::memory_order_relaxed);
       NoteRenderFailure(impl, "pacer_ensure_resources");
       impl->edited_playing = false;
+      // 4-7c: a dead video path must not keep playing sound alone. (The EOS
+      // paths deliberately DON'T pause — audio self-drains its final buffer
+      // to the plan end there.)
+      if (impl->audio_renderer != nullptr) {
+        impl->audio_renderer->Pause();
+      }
       return false;
     }
     impl->last_video_width.store(reader->width());
@@ -2535,33 +2631,15 @@ void PreviewEngine::SetClips(
     // for a monotonic session. (Slice 6 debounces the trim-drag storm.)
     impl->edited_playing = false;
     RenderEditedFrameLocked(impl, impl->edited_pos_ms);
-    // Step 4-7c: build/update the audio plan for the stitched session. The
-    // audio extent passed to AudioSlots is the ranges' own upper bound — a
-    // shorter real track just early-EOSes in the pump, which silence-fills
-    // the shortfall (§5.2), so no MediaPlayer duration query is needed here.
-    {
-      namespace clip = capture::export_::clip_planner;
-      std::int64_t audio_extent_ms = 0;
-      for (const auto& r : impl->clip_ranges) {
-        audio_extent_ms = std::max(audio_extent_ms, r.source_out_ms);
-      }
-      const auto slots = clip::AudioSlots(impl->clip_ranges, audio_extent_ms);
-      if (impl->audio_renderer != nullptr) {
-        // Defers the pump rebuild to the next Play (on the render thread).
-        impl->audio_renderer->SetSlots(slots);
-      } else {
-        impl->audio_renderer =
-            PreviewAudioRenderer::Open(impl->video_path, slots);
-        if (impl->audio_renderer == nullptr &&
-            !impl->audio_open_failure_logged) {
-          impl->audio_open_failure_logged = true;
-          clingfy::bridge::NativeLogPublisher::Instance().Warn(
-              "Preview",
-              "edited-preview audio unavailable (no audio track, no output "
-              "device, or an incompatible endpoint format) — the stitched "
-              "preview stays silent video");
-        }
-      }
+    // Step 4-7c: build/update the audio plan for the stitched session — after
+    // consuming any pending mid-stream failure (D7 rebuild-once), so the
+    // SetSlots below always targets a live renderer.
+    HandleAudioRenderErrorLocked(impl);
+    if (impl->audio_renderer != nullptr) {
+      // Defers the pump rebuild to the next Play (on the render thread).
+      impl->audio_renderer->SetSlots(BuildPreviewAudioSlots(impl->clip_ranges));
+    } else {
+      OpenPreviewAudioRendererLocked(impl);
     }
     if (!was_edited) {
       namespace clip = capture::export_::clip_planner;
