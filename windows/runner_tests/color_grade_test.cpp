@@ -122,25 +122,35 @@ TEST(ColorGradeTest, TemperatureTintZeroIsExactIdentity) {
   EXPECT_EQ(TemperatureTintMatrix(0.0, 0.0), ColorMatrix::Identity());
 }
 
-TEST(ColorGradeTest, PositiveTemperatureWarmsNeutralGray) {
+// DIRECTION: pinned to what the macOS renderer ACTUALLY does, proven by the
+// golden fixture (a gray input under t=+1 renders with blue well above red).
+// The Swift-side comment says "positive temperature = warmer", but
+// CITemperatureAndTint moves the image TOWARD the raised target-neutral
+// appearance — i.e. positive temperature renders COOLER. These tests used to
+// assert the comment's direction and pinned a Windows implementation that
+// diverged from every golden temperature case by up to 0.7 sRGB.
+TEST(ColorGradeTest, PositiveTemperatureCoolsNeutralGray) {
   const ColorMatrix m = TemperatureTintMatrix(1.0, 0.0);
   const auto out = m.Apply(0.5, 0.5, 0.5);
-  EXPECT_GT(out[0], out[2]) << "warm shift must raise red above blue";
+  EXPECT_GT(out[2], out[0]) << "positive temperature must raise blue above "
+                               "red (matches the macOS golden render)";
 }
 
-TEST(ColorGradeTest, NegativeTemperatureCoolsNeutralGray) {
+TEST(ColorGradeTest, NegativeTemperatureWarmsNeutralGray) {
   const ColorMatrix m = TemperatureTintMatrix(-1.0, 0.0);
   const auto out = m.Apply(0.5, 0.5, 0.5);
-  EXPECT_LT(out[0], out[2]) << "cool shift must raise blue above red";
+  EXPECT_GT(out[0], out[2]) << "negative temperature must raise red above "
+                               "blue (matches the macOS golden render)";
 }
 
 TEST(ColorGradeTest, TintShiftsGreenMagentaAxis) {
-  // Positive tint = magenta (macOS comment): green falls relative to the
-  // red/blue average. Negative tint goes the other way.
-  const auto magenta = TemperatureTintMatrix(0.0, 1.0).Apply(0.5, 0.5, 0.5);
-  EXPECT_LT(magenta[1], (magenta[0] + magenta[2]) / 2.0);
-  const auto green = TemperatureTintMatrix(0.0, -1.0).Apply(0.5, 0.5, 0.5);
+  // Same direction story as temperature: the goldens prove positive tint
+  // renders GREENER (green rises relative to the red/blue average), not
+  // magenta as the Swift comment suggests; negative tint goes magenta.
+  const auto green = TemperatureTintMatrix(0.0, 1.0).Apply(0.5, 0.5, 0.5);
   EXPECT_GT(green[1], (green[0] + green[2]) / 2.0);
+  const auto magenta = TemperatureTintMatrix(0.0, -1.0).Apply(0.5, 0.5, 0.5);
+  EXPECT_LT(magenta[1], (magenta[0] + magenta[2]) / 2.0);
 }
 
 TEST(ColorGradeTest, BuildComposesLegsInMacosOrder) {
