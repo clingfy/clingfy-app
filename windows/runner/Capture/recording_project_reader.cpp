@@ -650,6 +650,17 @@ ReadResult ReadRecordingProject(const std::wstring& project_path) {
     auto p = JoinAndStringify(root_path, *rel);
     if (FileExists(p)) project.zoom_manual_path = std::move(p);
   }
+  // Audio separation: the mic / system sidecars (macOS Phase 1.5 keys).
+  // Independently existence-gated — never present-together; a missing
+  // sidecar silently degrades to the premixed track in screen.mov.
+  if (const auto rel = GetStringField(*capture, "micAudio"); rel) {
+    auto p = JoinAndStringify(root_path, *rel);
+    if (FileExists(p)) project.mic_audio_path = std::move(p);
+  }
+  if (const auto rel = GetStringField(*capture, "systemAudio"); rel) {
+    auto p = JoinAndStringify(root_path, *rel);
+    if (FileExists(p)) project.system_audio_path = std::move(p);
+  }
 
   // Camera assets — present-together-or-not-at-all.
   if (const JsonObject* camera = GetObjectField(obj, "camera");

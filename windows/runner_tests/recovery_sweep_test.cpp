@@ -201,12 +201,18 @@ TEST_F(RecoverySweepTest, DeadOwnerTempsAreDeletedRegardlessOfAge) {
   TouchTemp("clingfy_crashed2.mp4", "0123456789");
   TouchTemp("clingfy_crashed2.cursor.jsonl", "01234");
   TouchTemp("clingfy_crashed2.camera.mp4", "012");
+  // Audio separation: the mic / system sidecar temps are session
+  // artifacts too — a crash strands them alongside the screen mp4.
+  TouchTemp("clingfy_crashed2.mic.mp4", "ab");
+  TouchTemp("clingfy_crashed2.sys.mp4", "c");
   // now == file mtime → fresh — but the owner is provably dead, so the
   // age guard does not apply.
   const auto result = RunRecoverySweep(Options(/*everything_is_old=*/false));
-  EXPECT_EQ(result.cleaned_temp_files, 3u);
-  EXPECT_EQ(result.cleaned_temp_bytes, 18u);
+  EXPECT_EQ(result.cleaned_temp_files, 5u);
+  EXPECT_EQ(result.cleaned_temp_bytes, 21u);
   EXPECT_FALSE(fs::exists(temp_ / L"clingfy_crashed2.mp4"));
+  EXPECT_FALSE(fs::exists(temp_ / L"clingfy_crashed2.mic.mp4"));
+  EXPECT_FALSE(fs::exists(temp_ / L"clingfy_crashed2.sys.mp4"));
 }
 
 TEST_F(RecoverySweepTest, LiveOwnerTempsSurviveEvenWhenOld) {

@@ -109,4 +109,18 @@ std::string ResolveTempCameraRawPath(const std::string& session_id,
                              ".camera.mp4");
 }
 
+std::string ResolveTempMicAudioPath(const std::string& session_id,
+                                    const std::string& temp_dir_override) {
+  const std::string temp_dir = ResolveTempDir(temp_dir_override);
+  return JoinTempClingfyFile(temp_dir, SanitizeSessionId(session_id),
+                             ".mic.mp4");
+}
+
+std::string ResolveTempSystemAudioPath(const std::string& session_id,
+                                       const std::string& temp_dir_override) {
+  const std::string temp_dir = ResolveTempDir(temp_dir_override);
+  return JoinTempClingfyFile(temp_dir, SanitizeSessionId(session_id),
+                             ".sys.mp4");
+}
+
 }  // namespace clingfy::encoding

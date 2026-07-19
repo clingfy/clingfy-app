@@ -18,6 +18,35 @@ std::int64_t SamplesToHns(std::int64_t samples) {
 
 }  // namespace
 
+MixerBlockSource ChooseMixerBlockSource(bool mic_alive, bool loopback_alive) {
+  if (mic_alive) {
+    return MixerBlockSource::kMic;
+  }
+  if (loopback_alive) {
+    return MixerBlockSource::kLoopback;
+  }
+  return MixerBlockSource::kNone;
+}
+
+void AudioMixer::RenderSourceInt16(const AudioPacket* src,
+                                   std::uint32_t frame_count,
+                                   std::vector<std::int16_t>& out) {
+  out.resize(static_cast<std::size_t>(frame_count) *
+             static_cast<std::size_t>(kPipelineChannelCount));
+  for (std::uint32_t frame = 0; frame < frame_count; ++frame) {
+    for (std::uint32_t channel = 0; channel < kPipelineChannelCount;
+         ++channel) {
+      const std::size_t idx =
+          static_cast<std::size_t>(frame) * kPipelineChannelCount + channel;
+      float sample = 0.0f;
+      if (src != nullptr && frame < src->frame_count && !src->silent) {
+        sample = src->samples[idx];
+      }
+      out[idx] = ClampFloat32ToInt16(sample);
+    }
+  }
+}
+
 void AudioMixer::SumStereoFloat32(const float* mic,
                                    const float* loopback,
                                    std::uint32_t frame_count,

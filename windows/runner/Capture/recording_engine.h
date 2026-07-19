@@ -22,6 +22,7 @@ class D3DDevice;
 }
 namespace clingfy::encoding {
 class MfSinkWriterEncoder;
+class AudioSidecarWriter;
 }
 namespace clingfy::services {
 class KeepAwake;
@@ -257,6 +258,19 @@ class RecordingEngine {
   // after SnapshotProjectWriterInput has already run). Assumes the mutex held.
   void FillCameraWriterFields(ProjectWriterInput& input) const;
 
+  // Audio separation: finalize (or cancel) the mic / system sidecar writers.
+  // Called from TeardownPipeline AFTER the mixer thread joins (the writers'
+  // only feeder). `keep_output` false (failed-start paths) cancels; a
+  // healthy writer (no write errors, >0 samples) finalizes and sets its
+  // `current_*_sidecar_ok_` flag; anything else deletes the temp. Sidecars
+  // are best-effort — nothing here fails the recording. Assumes the mutex
+  // is held.
+  void FinalizeAudioSidecars(bool keep_output);
+
+  // Copies the post-teardown sidecar outcome into a project-writer input.
+  // Same call discipline as FillCameraWriterFields. Assumes the mutex held.
+  void FillAudioSidecarWriterFields(ProjectWriterInput& input) const;
+
   mutable std::mutex mutex_;
   RecordingSessionState session_;
   RecordingClock clock_;
@@ -352,6 +366,24 @@ class RecordingEngine {
   std::unique_ptr<clingfy::audio::AudioPacketQueue> loopback_queue_;
   std::thread audio_mixer_thread_;
   std::atomic<bool> audio_mixer_stopped_{true};
+
+  // Audio separation (docs/decisions/windows-audio-separation.md): one
+  // sidecar writer per captured source, fed by the mixer thread's tee with
+  // the mixed packet's exact span (source data or silence) so both sidecars
+  // stay sample-exact against the premixed track. Best-effort throughout: a
+  // failed open/write drops that sidecar, never the recording. The `failed`
+  // atomics are set from the mixer thread (one-shot, gate further writes);
+  // the `ok` flags + paths are resolved by FinalizeAudioSidecars after the
+  // mixer joins and consumed by FillAudioSidecarWriterFields.
+  std::unique_ptr<clingfy::encoding::AudioSidecarWriter> mic_sidecar_writer_;
+  std::unique_ptr<clingfy::encoding::AudioSidecarWriter>
+      system_sidecar_writer_;
+  std::string current_mic_sidecar_path_;
+  std::string current_system_sidecar_path_;
+  std::atomic<bool> mic_sidecar_failed_{false};
+  std::atomic<bool> system_sidecar_failed_{false};
+  bool current_mic_sidecar_ok_ = false;
+  bool current_system_sidecar_ok_ = false;
 
   // Diagnostic counters for the audio pipeline. Phase 5 user reports of
   // "MP4 has no audio" need to distinguish three failure modes: WASAPI

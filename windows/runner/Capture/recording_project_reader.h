@@ -72,6 +72,15 @@ struct RecordingProject {
   std::optional<std::wstring> cursor_path;
   std::optional<std::wstring> zoom_manual_path;
 
+  // Audio separation: the macOS Phase 1.5 sidecar tracks
+  // (`capture.micAudio` / `capture.systemAudio` → `capture/mic.m4a` /
+  // `capture/system.m4a`). Existence-gated INDEPENDENTLY — a recording may
+  // carry either, both, or neither (never a present-together rule; the
+  // premixed track in screen.mov is always the fallback). Set only when
+  // the manifest key exists AND the file is on disk.
+  std::optional<std::wstring> mic_audio_path;
+  std::optional<std::wstring> system_audio_path;
+
   // Camera assets are present-together-or-not-at-all. If the manifest
   // references them but only one is on disk, the reader fails with
   // `kRequiredFileMissing` (the bundle is broken). When neither exists,

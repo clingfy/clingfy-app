@@ -45,6 +45,18 @@ std::string ResolveTempCursorSidecarPath(const std::string& session_id,
 std::string ResolveTempCameraRawPath(const std::string& session_id,
                                      const std::string& temp_dir_override = "");
 
+// Audio separation: the mic / system sidecar writers stream AAC to
+// `%TEMP%\clingfy_<sanitized>.mic.mp4` / `.sys.mp4` during recording (a
+// `.mp4` extension so MF picks the MPEG-4 container), then the project
+// writer bundles them into `capture/mic.m4a` / `capture/system.m4a` —
+// macOS Phase 1.5 naming; the container is identical, only the name
+// changes. Same sanitization + `temp_dir_override` testability as above.
+std::string ResolveTempMicAudioPath(const std::string& session_id,
+                                    const std::string& temp_dir_override = "");
+std::string ResolveTempSystemAudioPath(
+    const std::string& session_id,
+    const std::string& temp_dir_override = "");
+
 }  // namespace clingfy::encoding
 
 #endif  // RUNNER_ENCODING_ENCODER_OUTPUT_PATH_H_

@@ -27,6 +27,20 @@ struct MixedPacket {
   std::int64_t timestamp_hns = 0;
 };
 
+// Audio-separation D4 (mixer-loop policy): which queue the mixer thread
+// should BLOCK on this iteration, given which sources are still alive.
+// A source dies mid-record when its capture hits a fatal WASAPI error and
+// closes its own queue — the mixer then flips to blocking on the survivor
+// instead of wedging forever on the dead source's empty queue (the
+// pre-separation behavior). `kNone` means both sources are gone and the
+// loop should exit.
+enum class MixerBlockSource { kMic, kLoopback, kNone };
+
+// Pure. Mic wins while alive (loopback is drained non-blocking so a silent
+// system doesn't stall mic audio); loopback becomes the blocking source
+// only once the mic is gone.
+MixerBlockSource ChooseMixerBlockSource(bool mic_alive, bool loopback_alive);
+
 class AudioMixer {
  public:
   // Mix one packet from the mic stream and one from the loopback stream
@@ -46,6 +60,17 @@ class AudioMixer {
                                const float* loopback,
                                std::uint32_t frame_count,
                                std::vector<std::int16_t>& out);
+
+  // Audio-separation D3 (the sidecar tee): render ONE source packet to
+  // int16 over exactly `frame_count` frames — the source's samples where
+  // it contributed (respecting `silent`), silence past its own length or
+  // when `src` is null. `frame_count` is the span `Mix` emitted for the
+  // same iteration, so each sidecar advances in lockstep with the premixed
+  // track: a missing loopback packet or a dead mic writes silence, never a
+  // timeline slip.
+  static void RenderSourceInt16(const AudioPacket* src,
+                                std::uint32_t frame_count,
+                                std::vector<std::int16_t>& out);
 
  private:
   // Monotonically-increasing sample position. The first MixInto call
