@@ -13,6 +13,8 @@
 //      reorder), so the preview is in stitched mode.
 //   3. dart run test_driver/preview_audio_smoke.dart <ws-vm-service-url>
 //      (the ws://127.0.0.1:<port>/<token>/ws URL that flutter run printed)
+// The clock printout IS this harness's interface — the caller reads stdout.
+// ignore_for_file: avoid_print
 import 'package:flutter_driver/flutter_driver.dart';
 
 Future<void> main(List<String> args) async {
