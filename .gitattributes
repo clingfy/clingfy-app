@@ -1,0 +1,4 @@
+# The macOS launcher must stay LF — CRLF breaks bash scripts.
+tools/cli/clingfy text eol=lf
+# The cmd shim is a Windows batch file — keep CRLF.
+tools/cli/clingfy.cmd text eol=crlf
