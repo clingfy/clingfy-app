@@ -539,6 +539,28 @@ bool PreviewEngine::ShouldInvalidateOnSystemResume(
   return running && !active_session_id.empty();
 }
 
+PreviewEngine::TextureSize PreviewEngine::ComputePreviewTextureSize(
+    int video_width_hint, int video_height_hint) {
+  if (video_width_hint <= 0 || video_height_hint <= 0) {
+    return {kTextureWidth, kTextureHeight};
+  }
+  const double aspect =
+      static_cast<double>(video_width_hint) / video_height_hint;
+  int w = kTextureWidth;
+  int h = static_cast<int>(kTextureWidth / aspect);
+  if (h > kTextureHeight) {
+    h = kTextureHeight;
+    w = static_cast<int>(kTextureHeight * aspect);
+  }
+  // Even-align (keeps any half-resolution math downstream sane); floor so a
+  // degenerate hint can never produce a zero-sized texture.
+  w &= ~1;
+  h &= ~1;
+  w = std::max(w, 16);
+  h = std::max(h, 16);
+  return {w, h};
+}
+
 bool PreviewEngine::ShouldRestartEditedPlaybackFromEnd(
     std::int64_t edited_pos_ms, std::int64_t edited_duration_ms) {
   // One-frame tolerance: the pacer stamps the LAST kept frame's edited time,
@@ -617,9 +639,15 @@ OpenResult PreviewEngine::Open(const OpenArgs& args) {
 
   std::lock_guard<std::mutex> lock(mutex_);
 
+  // Polish: aspect-matched texture (see ComputePreviewTextureSize) — the
+  // compositor letterbox becomes an exact fit and Flutter's AspectRatio is
+  // the ONLY letterbox, so non-16:9 recordings no longer get double bars.
+  const TextureSize tex =
+      ComputePreviewTextureSize(args.video_width_hint, args.video_height_hint);
+
   OpenResult result;
-  result.width = kTextureWidth;
-  result.height = kTextureHeight;
+  result.width = tex.width;
+  result.height = tex.height;
 
   if (texture_registrar_ == nullptr) {
     LogNative("Open() abort: texture_registrar_ is null");
@@ -794,7 +822,7 @@ OpenResult PreviewEngine::Open(const OpenArgs& args) {
 
   // ---- 2. Allocate the shared texture. ----
   LogNative("Allocating D3D11_RESOURCE_MISC_SHARED texture...");
-  const auto td = MakeSharedTextureDesc(kTextureWidth, kTextureHeight);
+  const auto td = MakeSharedTextureDesc(tex.width, tex.height);
   hr = impl_->d3d_device->CreateTexture2D(
       &td, nullptr, impl_->shared_texture.ReleaseAndGetAddressOf());
   if (FAILED(hr)) {
@@ -867,10 +895,10 @@ OpenResult PreviewEngine::Open(const OpenArgs& args) {
   //         Flutter every callback (texture size doesn't change).
   impl_->descriptor.struct_size = sizeof(FlutterDesktopGpuSurfaceDescriptor);
   impl_->descriptor.handle = impl_->shared_handle;
-  impl_->descriptor.width = static_cast<size_t>(kTextureWidth);
-  impl_->descriptor.height = static_cast<size_t>(kTextureHeight);
-  impl_->descriptor.visible_width = static_cast<size_t>(kTextureWidth);
-  impl_->descriptor.visible_height = static_cast<size_t>(kTextureHeight);
+  impl_->descriptor.width = static_cast<size_t>(tex.width);
+  impl_->descriptor.height = static_cast<size_t>(tex.height);
+  impl_->descriptor.visible_width = static_cast<size_t>(tex.width);
+  impl_->descriptor.visible_height = static_cast<size_t>(tex.height);
   impl_->descriptor.format = kFlutterDesktopPixelFormatBGRA8888;
   impl_->descriptor.release_callback = nullptr;
   impl_->descriptor.release_context = nullptr;
@@ -935,8 +963,8 @@ OpenResult PreviewEngine::Open(const OpenArgs& args) {
     return result;
   }
   texture_id_ = tex_id;
-  texture_width_ = kTextureWidth;
-  texture_height_ = kTextureHeight;
+  texture_width_ = tex.width;
+  texture_height_ = tex.height;
   egl_extensions_.clear();
   last_error_.clear();
 
@@ -1225,15 +1253,15 @@ void PreviewEngine::ComposeAndHandoffLocked(Impl* impl,
   // The shared texture IS the destination — no slider strip. Letterbox
   // the natural video into the full canvas.
   const D2D1_RECT_F dest = clingfy::preview::LetterboxRect(
-      static_cast<UINT>(kTextureWidth), static_cast<UINT>(kTextureHeight),
+      static_cast<UINT>(texture_width_), static_cast<UINT>(texture_height_),
       impl->compositor.video_width(), impl->compositor.video_height());
 
   // Phase 9.6: advance/seek the camera frame BEFORE BeginDraw (the painter's
   // shadow bake does SetTarget round-trips, illegal inside BeginDraw).
   if (impl->camera_renderer) {
     impl->camera_renderer->PrepareAndAdvance(
-        impl->d2d_context.Get(), static_cast<UINT>(kTextureWidth),
-        static_cast<UINT>(kTextureHeight), playback_us);
+        impl->d2d_context.Get(), static_cast<UINT>(texture_width_),
+        static_cast<UINT>(texture_height_), playback_us);
   }
 
   impl->timing_render.BeginFrame();

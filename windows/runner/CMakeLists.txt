@@ -72,7 +72,6 @@ add_library(runner_bridge STATIC
   "Capture/Camera/camera_overlay_style_store.cpp"
   "Capture/Camera/camera_preview_support.cpp"
   "Capture/Camera/camera_recorder.cpp"
-  "Capture/Camera/live_camera_texture.cpp"
   "Capture/Cursor/cursor_click_hook.cpp"
   "Capture/Cursor/cursor_export_renderer.cpp"
   "Capture/Cursor/cursor_sample_mapper.cpp"

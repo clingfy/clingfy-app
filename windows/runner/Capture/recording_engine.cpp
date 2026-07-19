@@ -34,7 +34,6 @@
 #include "Capture/Camera/camera_meta.h"
 #include "Capture/Camera/camera_overlay_style_store.h"
 #include "Capture/Camera/camera_recorder.h"
-#include "Capture/Camera/live_camera_texture.h"
 #include "Capture/captured_video_frame.h"
 #include "Capture/Cursor/cursor_sampler.h"
 #include "Capture/recording_project_writer.h"
@@ -893,7 +892,9 @@ std::optional<RecordingError> RecordingEngine::Start(
       std::weak_ptr<ICameraOverlayPresenter> floating_weak = camera_floating_;
       cam_cfg.on_preview_frame = [floating_weak](const std::uint8_t* bgra,
                                                  int w, int h) {
-        LiveCameraTexture::Instance().PublishBgra(bgra, w, h);
+        // The in-app LiveCameraTexture feed was retired with the in-app
+        // camera preview widget (#262); the floating bubble is the only
+        // live camera preview now.
         if (auto floating = floating_weak.lock()) {
           floating->PublishBgra(bgra, w, h);
         }

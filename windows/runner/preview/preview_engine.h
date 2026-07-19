@@ -76,6 +76,14 @@ struct OpenArgs {
   // sync key (cameraTime = playbackTime - startOffset).
   std::wstring camera_path;
   std::int64_t camera_start_offset_ms = 0;
+  // Polish: the recording's natural size from screen.meta.json (0 = unknown).
+  // Sizes the shared texture to the video's ASPECT (fitted in the 1280x720
+  // budget) so the compositor letterbox is an exact fit — no bars baked into
+  // the pixels (which doubled up with Flutter's AspectRatio letterbox on
+  // non-16:9 recordings) and the camera bubble's canvas matches the export's
+  // auto-layout canvas aspect.
+  int video_width_hint = 0;
+  int video_height_hint = 0;
 };
 
 struct OpenResult {
@@ -191,6 +199,16 @@ class PreviewEngine {
   // tests; keep in sync with OnSystemResumed().
   static bool ShouldInvalidateOnSystemResume(
       bool running, const std::string& active_session_id);
+
+  struct TextureSize {
+    int width = 0;
+    int height = 0;
+  };
+  // Pure (exposed for tests): the shared-texture size for a session — the
+  // recording's aspect fitted inside the historical 1280x720 budget,
+  // even-aligned, with a small floor. Unknown hints (<= 0) keep 1280x720.
+  static TextureSize ComputePreviewTextureSize(int video_width_hint,
+                                               int video_height_hint);
 
   // Editing port (step 4-5) — pure decision for Play() on an edited session:
   // pressing Play with the playhead at (or within one frame of) the edited

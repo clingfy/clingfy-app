@@ -481,6 +481,15 @@ void HandlePreviewOpen(
   open_args.session_id = session_id;
   open_args.project_path = project_path_utf8;
   open_args.video_path = read.project->screen_path;
+  // Polish: the recording's natural size from screen.meta.json sizes the
+  // shared texture to the video's aspect (no double letterbox on non-16:9
+  // recordings; the camera canvas matches the export's auto layout).
+  if (read.project->metadata.has_value()) {
+    open_args.video_width_hint =
+        static_cast<int>(read.project->metadata->width);
+    open_args.video_height_hint =
+        static_cast<int>(read.project->metadata->height);
+  }
   if (read.project->cursor_path.has_value()) {
     open_args.cursor_path = *read.project->cursor_path;
   }
@@ -527,10 +536,15 @@ void HandlePreviewOpen(
       flutter::EncodableValue(r.width);
   out[flutter::EncodableValue("height")] =
       flutter::EncodableValue(r.height);
-  out[flutter::EncodableValue("videoWidth")] =
-      flutter::EncodableValue(r.video_width);
+  // Engine state carries 0 until the first decoded frame; seed the natural
+  // size from screen.meta.json so Dart sees real dimensions at open time.
+  const int video_w = r.video_width > 0 ? r.video_width
+                                        : open_args.video_width_hint;
+  const int video_h = r.video_height > 0 ? r.video_height
+                                         : open_args.video_height_hint;
+  out[flutter::EncodableValue("videoWidth")] = flutter::EncodableValue(video_w);
   out[flutter::EncodableValue("videoHeight")] =
-      flutter::EncodableValue(r.video_height);
+      flutter::EncodableValue(video_h);
   out[flutter::EncodableValue("sharedHandleOk")] =
       flutter::EncodableValue(r.shared_handle_ok);
   reply::Map(*result, std::move(out));

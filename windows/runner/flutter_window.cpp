@@ -6,7 +6,6 @@
 #include "Bridge/export_progress_publisher.h"
 #include "Bridge/native_log_publisher.h"
 #include "Bridge/platform_thread_dispatcher.h"
-#include "Capture/Camera/live_camera_texture.h"
 #include "Capture/Export/export_session.h"
 #include "Capture/recording_engine.h"
 #include "Services/temp_orphan_scan.h"
@@ -98,13 +97,6 @@ bool FlutterWindow::OnCreate() {
   clingfy::preview::PreviewEngine::Instance()->Initialize(
       flutter_controller_->engine()->GetRegistrarForPlugin(
           "ClingfyPocStage2a"));
-
-  // Phase 9.3.1: register the live camera preview texture once for the app
-  // lifetime. The recorder feeds it BGRA frames during recording; Dart shows a
-  // Texture widget for it. Same raw-C-registrar approach as PreviewEngine.
-  clingfy::capture::LiveCameraTexture::Instance().Initialize(
-      flutter_controller_->engine()->GetRegistrarForPlugin(
-          "ClingfyLiveCamera"));
 
   SetChildContent(flutter_controller_->view()->GetNativeWindow());
 
