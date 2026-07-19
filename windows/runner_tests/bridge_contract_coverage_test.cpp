@@ -86,7 +86,8 @@ const std::vector<std::string>& BridgeContractMethods() {
       "setChromaKeyStrength",
       // getCameraPreviewTextureId was retired with the in-app camera preview
       // widget (the floating bubble is the only live preview); the native
-      // handler + texture feed remain until the native cleanup follow-up.
+      // handler + LiveCameraTexture feed were removed in the follow-up
+      // cleanup.
       "setCameraPreviewMode",
 
       // Recording indicator + pre-recording bar.

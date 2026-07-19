@@ -5,7 +5,6 @@
 #include "Bridge/result_helpers.h"
 #include "Capture/Camera/camera_overlay_geometry_store.h"
 #include "Capture/Camera/camera_overlay_style_store.h"
-#include "Capture/Camera/live_camera_texture.h"
 #include "Capture/recording_engine.h"
 
 namespace clingfy::bridge::routers::camera_overlay {
@@ -235,20 +234,6 @@ void HandleSetHighlightStrength(
 }
 
 // Phase 9.3.1: the Dart recording UI calls this once to get the id of the
-// app-lifetime live-camera preview texture, then mounts a Texture(textureId)
-// widget (shown while recording with the camera on). Returns -1 if the texture
-// is unavailable (registration failed) — Dart then shows no live preview.
-void HandleGetCameraPreviewTextureId(
-    const flutter::MethodCall<flutter::EncodableValue>& /*call*/,
-    std::unique_ptr<flutter::MethodResult<flutter::EncodableValue>> result) {
-  const std::int64_t id =
-      clingfy::capture::LiveCameraTexture::Instance().texture_id();
-  reply::Map(*result, flutter::EncodableMap{
-                          {flutter::EncodableValue("textureId"),
-                           flutter::EncodableValue(id)},
-                      });
-}
-
 // Phase 9.3.2: select the live camera preview mode for the current recording.
 // Dart sends {floating: bool}; the engine shows the floating bubble only if it
 // exists AND capture-exclusion succeeded. Replies {floating: <resulting>} —
@@ -324,8 +309,11 @@ void RegisterHandlers(HandlerTable& table) {
   table["setChromaKeyColor"] = &HandleSetChromaColor;
   table["setChromaKeyStrength"] = &HandleSetChromaStrength;
 
-  // Phase 9.3.1: live camera preview texture id (real handler).
-  table["getCameraPreviewTextureId"] = &HandleGetCameraPreviewTextureId;
+  // getCameraPreviewTextureId + the LiveCameraTexture feed were removed with
+  // the in-app camera preview widget (#262 retired the Dart caller; this
+  // cleanup removed the native half) — the floating bubble is the only live
+  // camera preview. An unknown-method call now falls back to
+  // WINDOWS_NOT_IMPLEMENTED, which nothing triggers.
   // Phase 9.3.2: floating vs in-app preview mode (real handler).
   table["setCameraPreviewMode"] = &HandleSetCameraPreviewMode;
 }

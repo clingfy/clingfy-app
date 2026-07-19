@@ -84,6 +84,51 @@ TEST(PreviewRestartFromEndTest, MidTimelineNeverRestarts) {
       /*edited_pos_ms=*/0, /*edited_duration_ms=*/12000));
 }
 
+// Pins the aspect-matched shared-texture sizing (polish: the fixed 1280x720
+// texture baked letterbox bars into the pixels, which doubled up with
+// Flutter's AspectRatio bars on non-16:9 recordings — and parked the camera
+// bubble's canvas corners inside the bars, off the export's auto canvas).
+TEST(PreviewTextureSizeTest, UnknownHintsKeepTheHistoricalBudget) {
+  const auto s = PreviewEngine::ComputePreviewTextureSize(0, 0);
+  EXPECT_EQ(s.width, 1280);
+  EXPECT_EQ(s.height, 720);
+  const auto neg = PreviewEngine::ComputePreviewTextureSize(-1, 1080);
+  EXPECT_EQ(neg.width, 1280);
+  EXPECT_EQ(neg.height, 720);
+}
+
+TEST(PreviewTextureSizeTest, SixteenNineFillsTheBudgetExactly) {
+  const auto s = PreviewEngine::ComputePreviewTextureSize(1920, 1080);
+  EXPECT_EQ(s.width, 1280);
+  EXPECT_EQ(s.height, 720);
+}
+
+TEST(PreviewTextureSizeTest, PortraitFitsHeightAndNarrowsWidth) {
+  // 1080x1920 → height-bound: w = 720 * (1080/1920) = 405 → 404 even-aligned.
+  const auto s = PreviewEngine::ComputePreviewTextureSize(1080, 1920);
+  EXPECT_EQ(s.width, 404);
+  EXPECT_EQ(s.height, 720);
+}
+
+TEST(PreviewTextureSizeTest, SquareIsHeightBound) {
+  const auto s = PreviewEngine::ComputePreviewTextureSize(1000, 1000);
+  EXPECT_EQ(s.width, 720);
+  EXPECT_EQ(s.height, 720);
+}
+
+TEST(PreviewTextureSizeTest, UltrawideFitsWidthAndShortensHeight) {
+  // 3440x1440 → width-bound: h = 1280 / (3440/1440) = 535.8 → 535 → 534 even.
+  const auto s = PreviewEngine::ComputePreviewTextureSize(3440, 1440);
+  EXPECT_EQ(s.width, 1280);
+  EXPECT_EQ(s.height, 534);
+}
+
+TEST(PreviewTextureSizeTest, DegenerateHintsHitTheFloorNotZero) {
+  const auto s = PreviewEngine::ComputePreviewTextureSize(10000, 1);
+  EXPECT_EQ(s.width, 1280);
+  EXPECT_EQ(s.height, 16);
+}
+
 TEST(PreviewRestartFromEndTest, NonPositiveDurationNeverRestarts) {
   // Nothing to play: a zero/negative duration must not loop Play at 0.
   EXPECT_FALSE(PreviewEngine::ShouldRestartEditedPlaybackFromEnd(
