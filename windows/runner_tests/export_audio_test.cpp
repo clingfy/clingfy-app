@@ -218,5 +218,156 @@ TEST(Int16PeakLinearTest, FullScalePositiveIsOne) {
   EXPECT_NEAR(Int16PeakLinear(s.data(), s.size()), 1.0, kEps);
 }
 
+// ---- Audio separation: ResolveSeparatedAudioStages ---------------------------
+//
+// Port of macOS `resolveSeparatedAudioControls`: gain + normalize target the
+// MIC only (combined boost capped at +24 dB TOTAL), master volume attenuates
+// both tracks, system audio is otherwise unity. The {gain: max(1,c),
+// volume: min(1,c)*master} split mirrors the macOS bake-then-track-volume
+// order exactly.
+
+TEST(ResolveSeparatedAudioStagesTest, IdentityIsUnityOnBothTracks) {
+  const auto s = ResolveSeparatedAudioStages(0.0, 100.0, false, -16.0, 0.0);
+  EXPECT_NEAR(s.mic.gain, 1.0, kEps);
+  EXPECT_NEAR(s.mic.volume, 1.0, kEps);
+  EXPECT_NEAR(s.system.gain, 1.0, kEps);
+  EXPECT_NEAR(s.system.volume, 1.0, kEps);
+}
+
+TEST(ResolveSeparatedAudioStagesTest, GainBoostsTheMicOnly) {
+  const auto s = ResolveSeparatedAudioStages(6.0, 100.0, false, -16.0, 0.0);
+  EXPECT_NEAR(s.mic.gain, std::pow(10.0, 6.0 / 20.0), kEps);  // ~1.9953
+  EXPECT_NEAR(s.mic.volume, 1.0, kEps);
+  EXPECT_NEAR(s.system.gain, 1.0, kEps);  // system NEVER sees the gain
+  EXPECT_NEAR(s.system.volume, 1.0, kEps);
+}
+
+TEST(ResolveSeparatedAudioStagesTest, GainClampsAt24Db) {
+  const auto s = ResolveSeparatedAudioStages(40.0, 100.0, false, -16.0, 0.0);
+  EXPECT_NEAR(s.mic.gain, std::pow(10.0, 24.0 / 20.0), kEps);  // ~15.849
+}
+
+TEST(ResolveSeparatedAudioStagesTest, MasterVolumeAttenuatesBothTracks) {
+  const auto s = ResolveSeparatedAudioStages(6.0, 50.0, false, -16.0, 0.0);
+  EXPECT_NEAR(s.mic.gain, std::pow(10.0, 6.0 / 20.0), kEps);
+  EXPECT_NEAR(s.mic.volume, 0.5, kEps);  // min(1,c)=1 times master
+  EXPECT_NEAR(s.system.volume, 0.5, kEps);
+}
+
+TEST(ResolveSeparatedAudioStagesTest, NormalizeScalingDownRidesTheVolume) {
+  // Peak already at full scale, target -6 dBFS → combined ≈ 0.5012 < 1: the
+  // attenuation lands in the volume stage (macOS micVolumeComponent), the
+  // gain stage stays unity (no bake).
+  const auto s = ResolveSeparatedAudioStages(0.0, 100.0, true, -6.0, 1.0);
+  EXPECT_NEAR(s.mic.gain, 1.0, kEps);
+  EXPECT_NEAR(s.mic.volume, std::pow(10.0, -6.0 / 20.0), kEps);
+  EXPECT_NEAR(s.system.volume, 1.0, kEps);  // normalize never touches system
+}
+
+TEST(ResolveSeparatedAudioStagesTest, NormalizeScalingUpCapsAt24DbTotal) {
+  // A very quiet mic wants x50 — the TOTAL mic boost caps at +24 dB.
+  const auto s = ResolveSeparatedAudioStages(0.0, 100.0, true, -6.0, 0.01);
+  EXPECT_NEAR(s.mic.gain, std::pow(10.0, 24.0 / 20.0), kEps);
+  EXPECT_NEAR(s.mic.volume, 1.0, kEps);
+}
+
+TEST(ResolveSeparatedAudioStagesTest, GainAndNormalizeNeverStackPast24Db) {
+  // Gain already at the cap; normalize wanting more must not stack.
+  const auto s = ResolveSeparatedAudioStages(24.0, 100.0, true, -6.0, 0.25);
+  EXPECT_NEAR(s.mic.gain, std::pow(10.0, 24.0 / 20.0), kEps);
+}
+
+TEST(ResolveSeparatedAudioStagesTest, SilentPeakSkipsNormalize) {
+  // Peak at/below the silence floor: normalizing would divide by ~0 — fall
+  // back to the plain user gain (macOS parity).
+  const auto s = ResolveSeparatedAudioStages(6.0, 100.0, true, -6.0, 0.0);
+  EXPECT_NEAR(s.mic.gain, std::pow(10.0, 6.0 / 20.0), kEps);
+  EXPECT_NEAR(s.mic.volume, 1.0, kEps);
+}
+
+TEST(ResolveSeparatedAudioStagesTest, TargetDbfsClampsToMacRange) {
+  // Target clamps to [-24, -6]: a -30 request behaves as -24.
+  const auto a = ResolveSeparatedAudioStages(0.0, 100.0, true, -30.0, 1.0);
+  const auto b = ResolveSeparatedAudioStages(0.0, 100.0, true, -24.0, 1.0);
+  EXPECT_NEAR(a.mic.volume, b.mic.volume, kEps);
+}
+
+// ---- Audio separation: SumInt16Saturating + SeparatedAudioMerge --------------
+
+TEST(SumInt16SaturatingTest, SumsAndSaturatesBothDirections) {
+  const std::int16_t a[4] = {1000, 20000, -30000, 100};
+  const std::int16_t b[4] = {2000, 20000, -30000, -300};
+  std::int16_t out[4] = {};
+  SumInt16Saturating(a, b, 4, out);
+  EXPECT_EQ(out[0], 3000);
+  EXPECT_EQ(out[1], 32767);   // 40000 saturates high
+  EXPECT_EQ(out[2], -32768);  // -60000 saturates low
+  EXPECT_EQ(out[3], -200);
+}
+
+TEST(SeparatedAudioMergeTest, ReleasesOnlyTheCommonPrefix) {
+  SeparatedAudioMerge merge(true, true, 2);
+  const std::int16_t mic[6] = {100, 100, 200, 200, 300, 300};   // 3 frames
+  const std::int16_t sys[4] = {10, 10, 20, 20};                 // 2 frames
+  merge.AppendMic(mic, 3);
+  merge.AppendSystem(sys, 2);
+  EXPECT_EQ(merge.ReadyFrames(), 2);  // min(3, 2)
+
+  std::vector<std::int16_t> out;
+  EXPECT_EQ(merge.PopMerged(100, out), 2);
+  ASSERT_EQ(out.size(), 4u);
+  EXPECT_EQ(out[0], 110);
+  EXPECT_EQ(out[2], 220);
+  // The mic's unmatched third frame stays queued until system catches up.
+  EXPECT_EQ(merge.ReadyFrames(), 0);
+  const std::int16_t sys2[2] = {30, 30};
+  merge.AppendSystem(sys2, 1);
+  EXPECT_EQ(merge.ReadyFrames(), 1);
+  EXPECT_EQ(merge.PopMerged(100, out), 1);
+  EXPECT_EQ(out[0], 330);
+}
+
+TEST(SeparatedAudioMergeTest, SingleTrackPassesThrough) {
+  SeparatedAudioMerge merge(false, true, 2);
+  const std::int16_t sys[4] = {11, 12, 13, 14};
+  merge.AppendSystem(sys, 2);
+  // An absent mic never gates readiness, and appends to it are ignored.
+  const std::int16_t stray[2] = {99, 99};
+  merge.AppendMic(stray, 1);
+  EXPECT_EQ(merge.ReadyFrames(), 2);
+  std::vector<std::int16_t> out;
+  EXPECT_EQ(merge.PopMerged(100, out), 2);
+  ASSERT_EQ(out.size(), 4u);
+  EXPECT_EQ(out[0], 11);
+  EXPECT_EQ(out[3], 14);
+}
+
+TEST(SeparatedAudioMergeTest, PopRespectsMaxFramesAndKeepsRemainder) {
+  SeparatedAudioMerge merge(true, true, 2);
+  std::vector<std::int16_t> mic(10 * 2, 1000);
+  std::vector<std::int16_t> sys(10 * 2, 2000);
+  merge.AppendMic(mic.data(), 10);
+  merge.AppendSystem(sys.data(), 10);
+  std::vector<std::int16_t> out;
+  EXPECT_EQ(merge.PopMerged(4, out), 4);
+  ASSERT_EQ(out.size(), 8u);
+  EXPECT_EQ(out[0], 3000);
+  EXPECT_EQ(merge.ReadyFrames(), 6);
+  EXPECT_EQ(merge.PopMerged(100, out), 6);
+  EXPECT_EQ(merge.ReadyFrames(), 0);
+}
+
+TEST(SeparatedAudioMergeTest, MergedSumSaturates) {
+  SeparatedAudioMerge merge(true, true, 2);
+  const std::int16_t mic[2] = {30000, -30000};
+  const std::int16_t sys[2] = {30000, -30000};
+  merge.AppendMic(mic, 1);
+  merge.AppendSystem(sys, 1);
+  std::vector<std::int16_t> out;
+  EXPECT_EQ(merge.PopMerged(1, out), 1);
+  EXPECT_EQ(out[0], 32767);
+  EXPECT_EQ(out[1], -32768);
+}
+
 }  // namespace
 }  // namespace clingfy::capture::export_

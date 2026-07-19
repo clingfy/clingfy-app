@@ -4,9 +4,13 @@
 
 #include <gtest/gtest.h>
 
+#include <cstdint>
 #include <filesystem>
 #include <fstream>
 #include <string>
+#include <vector>
+
+#include "Encoding/audio_sidecar_writer.h"
 
 namespace clingfy::capture::export_ {
 namespace {
@@ -343,6 +347,103 @@ TEST(ExportPassthroughCopyTest, SidecarWithCursorAndZoomOffStaysByteCopy) {
   const auto out = ExportPassthroughCopy(input);
   ASSERT_EQ(out.error, PassthroughError::kNone) << out.message;
   EXPECT_TRUE(fs::exists(fs::u8path(out.output_path)));
+  std::ifstream ifs(fs::u8path(out.output_path));
+  const std::string content((std::istreambuf_iterator<char>(ifs)),
+                            std::istreambuf_iterator<char>());
+  EXPECT_EQ(content, "MOCK_BYTES") << "expected a byte-for-byte copy";
+
+  std::error_code rm_ec;
+  fs::remove_all(project.parent_path(), rm_ec);
+}
+
+// Audio separation (design D7/D8): the byte-copy gate. A recording whose
+// manifest names a DECODABLE mic/system sidecar must take the composition
+// path even for identity auto/auto .mov — a byte-copy would ship the
+// embedded premix and silently ignore mic-only gain/normalize (the
+// passthrough landmine). An UNDECODABLE sidecar (crash-truncated / junk)
+// fails the decode-one-sample probe and cleanly keeps the fast-path.
+
+// Rewrite the staged manifest with the macOS `capture.micAudio` key.
+void AddMicSidecarToManifest(const fs::path& project,
+                             const std::string& session_id) {
+  const std::string manifest = R"({
+  "schemaVersion": 2,
+  "projectId": ")" + session_id + R"(",
+  "createdAt": "2026-05-28T22:00:00.000Z",
+  "capture": {
+    "screenVideo": "capture/screen.mov",
+    "screenMetadata": "capture/screen.meta.json",
+    "micAudio": "capture/mic.m4a"
+  }
+})";
+  std::ofstream(project / "project.json") << manifest;
+}
+
+TEST(ExportPassthroughCopyTest, DecodableAudioSidecarForcesReencode) {
+  const auto project = StageProject("export-test-sep-audio", "NOT_A_REAL_VIDEO");
+  AddMicSidecarToManifest(project, "export-test-sep-audio");
+
+  // Produce the sidecar the exact production way: real AAC written to a
+  // .mp4 temp, then renamed to capture/mic.m4a (the D2 bundle move) — so
+  // this also pins that the probe opens MPEG-4 audio under the .m4a name.
+  const fs::path tmp = project / "capture" / "mic.tmp.mp4";
+  {
+    clingfy::encoding::AudioSidecarWriter writer;
+    if (auto err = writer.Open(tmp.string())) {
+      GTEST_SKIP() << "AAC sink writer unavailable: " << err->message;
+    }
+    std::vector<std::int16_t> packet(480 * 2, 1200);
+    std::int64_t ts = 0;
+    for (int i = 0; i < 10; ++i) {
+      ASSERT_FALSE(writer.WriteSamples(packet.data(), 480, ts).has_value());
+      ts += 100'000;
+    }
+    ASSERT_FALSE(writer.Finalize().has_value());
+  }
+  std::error_code mv_ec;
+  fs::rename(tmp, project / "capture" / "mic.m4a", mv_ec);
+  ASSERT_FALSE(mv_ec) << mv_ec.message();
+
+  const auto dest_dir = project.parent_path() / "out";
+  fs::create_directories(dest_dir);
+  PassthroughInput input;
+  input.project_path = project.u8string();
+  input.directory_override = dest_dir.u8string();
+  input.format = "mov";  // identity settings: ONLY the sidecar forces it
+  input.filename = "SeparatedExport";
+  input.show_cursor = false;
+  input.zoom_effect_enabled = false;
+
+  // Composition on the non-decodable screen.mov fails (kRenderFailed) —
+  // GPU-independent proof the gate flipped OFF the byte-copy (kNone).
+  const auto out = ExportPassthroughCopy(input);
+  EXPECT_EQ(out.error, PassthroughError::kRenderFailed)
+      << "a separated recording must re-encode, not byte-copy the premix — "
+      << out.message;
+
+  std::error_code rm_ec;
+  fs::remove_all(project.parent_path(), rm_ec);
+}
+
+TEST(ExportPassthroughCopyTest, UndecodableAudioSidecarStaysByteCopy) {
+  const auto project = StageProject("export-test-sep-junk", "MOCK_BYTES");
+  AddMicSidecarToManifest(project, "export-test-sep-junk");
+  // The manifest names the sidecar and the file EXISTS, but it's junk — the
+  // decode-one-sample probe fails and the legacy fast-path must survive.
+  std::ofstream(project / "capture" / "mic.m4a") << "not an mpeg-4 container";
+
+  const auto dest_dir = project.parent_path() / "out";
+  fs::create_directories(dest_dir);
+  PassthroughInput input;
+  input.project_path = project.u8string();
+  input.directory_override = dest_dir.u8string();
+  input.format = "mov";
+  input.filename = "JunkSidecar";
+  input.show_cursor = false;
+  input.zoom_effect_enabled = false;
+
+  const auto out = ExportPassthroughCopy(input);
+  ASSERT_EQ(out.error, PassthroughError::kNone) << out.message;
   std::ifstream ifs(fs::u8path(out.output_path));
   const std::string content((std::istreambuf_iterator<char>(ifs)),
                             std::istreambuf_iterator<char>());

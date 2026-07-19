@@ -111,6 +111,16 @@ struct RenderRequest {
   bool auto_normalize = false;
   double target_loudness_dbfs = -16.0;
 
+  // Audio separation (D8): the PROBED-decodable sidecar tracks. Set only
+  // when export_passthrough's ProbeDecodableAudio passed for that file —
+  // the pipeline trusts a non-empty path to open. When either is set the
+  // separated tracks REPLACE the embedded premix (deselected entirely) and
+  // audio runs through per-track ReorderAudioPumps mixed down to the single
+  // output AAC track; gain/normalize apply to the mic pump only, volume to
+  // both (macOS separated semantics). Both empty = today's embedded path.
+  std::wstring mic_audio_path;
+  std::wstring system_audio_path;
+
   // Slice 5A. `bitrate` is the requested preset ("auto"/"low"/"medium"/
   // "high"), resolved to an H.264 average bitrate against the output size.
   // The output container is chosen from `destination_path`'s extension

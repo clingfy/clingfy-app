@@ -14,6 +14,7 @@
 
 #include "Bridge/native_log_publisher.h"
 #include "Capture/Camera/camera_meta.h"
+#include "Capture/Export/audio_sidecar_probe.h"
 #include "Capture/Export/export_audio.h"
 #include "Capture/Export/export_format.h"
 #include "Capture/Export/export_geometry.h"
@@ -298,6 +299,24 @@ PassthroughResult ExportPassthroughCopy(
   const bool wants_zoom = input.zoom_effect_enabled && sidecar_exists;
   const bool wants_sidecar = wants_cursor_render || wants_zoom;
 
+  // Audio separation (D7/D8): a SEPARATED recording (decodable mic/system
+  // sidecar) always takes the composition path — macOS never byte-copies a
+  // separated export, because the copy would ship the embedded premix and
+  // silently ignore mic-only gain/normalize. The reader already
+  // existence-gated the paths; the decode-one-sample probe is the same gate
+  // preview uses, so an undecodable (truncated/corrupt) sidecar cleanly
+  // degrades to today's embedded whole-track behavior. GIF exports carry no
+  // audio — skip the probes entirely.
+  const bool gif_export = ResolveExportExtension(input.format) == ".gif";
+  const bool mic_sidecar_decodable =
+      !gif_export && read.project->mic_audio_path.has_value() &&
+      ProbeDecodableAudio(*read.project->mic_audio_path);
+  const bool system_sidecar_decodable =
+      !gif_export && read.project->system_audio_path.has_value() &&
+      ProbeDecodableAudio(*read.project->system_audio_path);
+  const bool wants_separated_audio =
+      mic_sidecar_decodable || system_sidecar_decodable;
+
   // Phase 9.4: resolve the camera bubble. The project reader only sets
   // camera_video_path/camera_metadata_path when BOTH exist on disk (present-
   // together), so a half-broken bundle never reaches here. We parse the metadata
@@ -371,13 +390,15 @@ PassthroughResult ExportPassthroughCopy(
   // Editing port (clips): a real clip edit must force the composition path —
   // the byte-copy would ship the UNCUT source while reporting success (the
   // passthrough landmine). Reorder/overlap bake too (3b-2, per-range seeks).
+  // Audio separation: a separated recording must compose even at identity
+  // settings — the byte-copy would ship the premix (see the probe above).
   const bool needs_composition =
       !IsIdentityTransform(input.layout, input.resolution) ||
       input.padding > 0.0 || input.corner_radius > 0.0 ||
       RequiresAudioProcessing(input.audio_gain_db, input.audio_volume_percent,
                               input.auto_normalize) ||
       wants_non_mov_container || wants_sidecar || wants_camera ||
-      wants_color_grade || wants_clips;
+      wants_color_grade || wants_clips || wants_separated_audio;
 
   // Phase 10.4 disk-full preflight: estimate the bytes the export needs at
   // the destination (source size + headroom for the chosen path) and compare
@@ -484,6 +505,14 @@ PassthroughResult ExportPassthroughCopy(
     render.audio_volume_percent = input.audio_volume_percent;
     render.auto_normalize = input.auto_normalize;
     render.target_loudness_dbfs = input.target_loudness_dbfs;
+    // Audio separation: only PROBED paths reach the pipeline (its contract
+    // is that a non-empty path decodes).
+    if (mic_sidecar_decodable) {
+      render.mic_audio_path = *read.project->mic_audio_path;
+    }
+    if (system_sidecar_decodable) {
+      render.system_audio_path = *read.project->system_audio_path;
+    }
     render.bitrate = input.bitrate;
     // Phase 8.2/8.3: cursor + zoom share the sidecar path; set it when EITHER is
     // active so each feature can read it independently.
