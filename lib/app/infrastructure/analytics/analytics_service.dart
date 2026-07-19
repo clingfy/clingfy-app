@@ -52,7 +52,10 @@ abstract final class ClingfyAnalytics {
   static bool _debugDisabled = kDebugMode;
 
   static bool get isActive =>
-      _enabled && !_debugDisabled && BuildConfig.posthogToken.isNotEmpty && _distinctId.isNotEmpty;
+      _enabled &&
+      !_debugDisabled &&
+      BuildConfig.posthogToken.isNotEmpty &&
+      _distinctId.isNotEmpty;
 
   /// Idempotent startup init. [enabled] is the persisted user setting. Test seams: [client],
   /// [debugOverride] (tests run in debug mode, which would otherwise hard-disable everything),
@@ -89,11 +92,15 @@ abstract final class ClingfyAnalytics {
   }
 
   /// Fire-and-forget capture. Never throws, never blocks the caller.
-  static void capture(String event, {Map<String, Object?> properties = const {}}) {
+  static void capture(
+    String event, {
+    Map<String, Object?> properties = const {},
+  }) {
     if (!isActive) return;
     final sanitized = <String, Object?>{
       for (final entry in properties.entries)
-        if (!_forbiddenKeys.contains(entry.key.toLowerCase())) entry.key: entry.value,
+        if (!_forbiddenKeys.contains(entry.key.toLowerCase()))
+          entry.key: entry.value,
     };
     final payload = <String, Object?>{
       'api_key': BuildConfig.posthogToken,
@@ -108,10 +115,14 @@ abstract final class ClingfyAnalytics {
         'platform': Platform.isWindows
             ? 'windows'
             : Platform.isMacOS
-                ? 'macos'
-                : Platform.operatingSystem,
-        'app_version': BuildConfig.buildName.isEmpty ? 'unknown' : BuildConfig.buildName,
-        'build_number': BuildConfig.buildNumber.isEmpty ? 'unknown' : BuildConfig.buildNumber,
+            ? 'macos'
+            : Platform.operatingSystem,
+        'app_version': BuildConfig.buildName.isEmpty
+            ? 'unknown'
+            : BuildConfig.buildName,
+        'build_number': BuildConfig.buildNumber.isEmpty
+            ? 'unknown'
+            : BuildConfig.buildNumber,
         'analytics_schema_version': 1,
         // Desktop events are anonymous business telemetry — never mint a PostHog person.
         r'$process_person_profile': false,
@@ -125,13 +136,17 @@ abstract final class ClingfyAnalytics {
         )
         .timeout(const Duration(seconds: 10))
         .then((response) {
-      if (response.statusCode < 200 || response.statusCode >= 300) {
-        Log.w('Analytics', 'Capture rejected (${response.statusCode}) for $event');
-      }
-    }).catchError((Object e) {
-      // Offline / DNS / timeout: drop the event silently — never disturb the app.
-      Log.d('Analytics', 'Capture dropped for $event: $e');
-    });
+          if (response.statusCode < 200 || response.statusCode >= 300) {
+            Log.w(
+              'Analytics',
+              'Capture rejected (${response.statusCode}) for $event',
+            );
+          }
+        })
+        .catchError((Object e) {
+          // Offline / DNS / timeout: drop the event silently — never disturb the app.
+          Log.d('Analytics', 'Capture dropped for $event: $e');
+        });
   }
 
   /// Test-only: reset static state between tests.

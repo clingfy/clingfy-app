@@ -1129,7 +1129,9 @@ class RecordingController extends ChangeNotifier {
     ClingfyAnalytics.capture(
       AnalyticsEvents.recordingSessionFail,
       properties: {
-        'stage': phase == WorkflowPhase.startingRecording ? 'start' : 'recording',
+        'stage': phase == WorkflowPhase.startingRecording
+            ? 'start'
+            : 'recording',
         'error_code': code,
       },
     );

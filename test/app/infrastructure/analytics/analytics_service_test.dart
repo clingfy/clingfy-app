@@ -29,19 +29,23 @@ void main() {
 
   tearDown(ClingfyAnalytics.resetForTest);
 
-  test('without a POSTHOG_TOKEN define the service is inert', () async {
-    final prefs = await SharedPreferences.getInstance();
-    await ClingfyAnalytics.init(
-      enabled: true,
-      client: client,
-      debugOverride: false,
-      prefs: prefs,
-    );
-    expect(ClingfyAnalytics.isActive, isFalse);
-    ClingfyAnalytics.capture('recording:session_start');
-    await Future<void>.delayed(Duration.zero);
-    expect(sent, isEmpty);
-  }, skip: _hasToken ? 'no-token guard — run without --dart-define' : false);
+  test(
+    'without a POSTHOG_TOKEN define the service is inert',
+    () async {
+      final prefs = await SharedPreferences.getInstance();
+      await ClingfyAnalytics.init(
+        enabled: true,
+        client: client,
+        debugOverride: false,
+        prefs: prefs,
+      );
+      expect(ClingfyAnalytics.isActive, isFalse);
+      ClingfyAnalytics.capture('recording:session_start');
+      await Future<void>.delayed(Duration.zero);
+      expect(sent, isEmpty);
+    },
+    skip: _hasToken ? 'no-token guard — run without --dart-define' : false,
+  );
 
   test('debug mode hard-disables capture even when enabled', () async {
     final prefs = await SharedPreferences.getInstance();
@@ -70,34 +74,9 @@ void main() {
     expect(ClingfyAnalytics.isActive, isFalse);
   });
 
-  test('install id persists across inits (stable anonymous distinct id)', () async {
-    final prefs = await SharedPreferences.getInstance();
-    await ClingfyAnalytics.init(
-      enabled: true,
-      client: client,
-      debugOverride: false,
-      prefs: prefs,
-    );
-    final first = prefs.getString('analyticsInstallId');
-    ClingfyAnalytics.resetForTest();
-    await ClingfyAnalytics.init(
-      enabled: true,
-      client: client,
-      debugOverride: false,
-      prefs: prefs,
-    );
-    final second = prefs.getString('analyticsInstallId');
-    // Without a token the id is not minted at all (both null); with one it must be stable.
-    expect(second, equals(first));
-    if (_hasToken) {
-      expect(second, isNotNull);
-    }
-  });
-
-  group('with an injected token (run: flutter test --dart-define=POSTHOG_TOKEN=phc_test)', () {
-    const hasToken = _hasToken;
-
-    test('capture posts a sanitized, context-stamped payload', () async {
+  test(
+    'install id persists across inits (stable anonymous distinct id)',
+    () async {
       final prefs = await SharedPreferences.getInstance();
       await ClingfyAnalytics.init(
         enabled: true,
@@ -105,29 +84,64 @@ void main() {
         debugOverride: false,
         prefs: prefs,
       );
-      ClingfyAnalytics.capture(
-        'export:job_complete',
-        properties: {
-          'format': 'mp4',
-          'file_path': 'C:/secret/video.mp4', // must be stripped
-          'license_key': 'CLFY-SECRET', // must be stripped
-        },
+      final first = prefs.getString('analyticsInstallId');
+      ClingfyAnalytics.resetForTest();
+      await ClingfyAnalytics.init(
+        enabled: true,
+        client: client,
+        debugOverride: false,
+        prefs: prefs,
       );
-      await Future<void>.delayed(const Duration(milliseconds: 50));
+      final second = prefs.getString('analyticsInstallId');
+      // Without a token the id is not minted at all (both null); with one it must be stable.
+      expect(second, equals(first));
+      if (_hasToken) {
+        expect(second, isNotNull);
+      }
+    },
+  );
 
-      expect(sent, hasLength(1));
-      final body = jsonDecode(sent.single.body) as Map<String, dynamic>;
-      expect(body['event'], 'export:job_complete');
-      expect(body['distinct_id'], isNotEmpty);
-      final props = body['properties'] as Map<String, dynamic>;
-      expect(props['format'], 'mp4');
-      expect(props.containsKey('file_path'), isFalse);
-      expect(props.containsKey('license_key'), isFalse);
-      expect(props['product'], 'clingfy_desktop');
-      expect(props['source'], 'desktop_client');
-      expect(props['analytics_schema_version'], 1);
-      expect(props[r'$process_person_profile'], isFalse);
-      expect(props['environment'], anyOf('development', 'production'));
-    }, skip: hasToken ? false : 'needs --dart-define=POSTHOG_TOKEN=phc_test');
-  });
+  group(
+    'with an injected token (run: flutter test --dart-define=POSTHOG_TOKEN=phc_test)',
+    () {
+      const hasToken = _hasToken;
+
+      test(
+        'capture posts a sanitized, context-stamped payload',
+        () async {
+          final prefs = await SharedPreferences.getInstance();
+          await ClingfyAnalytics.init(
+            enabled: true,
+            client: client,
+            debugOverride: false,
+            prefs: prefs,
+          );
+          ClingfyAnalytics.capture(
+            'export:job_complete',
+            properties: {
+              'format': 'mp4',
+              'file_path': 'C:/secret/video.mp4', // must be stripped
+              'license_key': 'CLFY-SECRET', // must be stripped
+            },
+          );
+          await Future<void>.delayed(const Duration(milliseconds: 50));
+
+          expect(sent, hasLength(1));
+          final body = jsonDecode(sent.single.body) as Map<String, dynamic>;
+          expect(body['event'], 'export:job_complete');
+          expect(body['distinct_id'], isNotEmpty);
+          final props = body['properties'] as Map<String, dynamic>;
+          expect(props['format'], 'mp4');
+          expect(props.containsKey('file_path'), isFalse);
+          expect(props.containsKey('license_key'), isFalse);
+          expect(props['product'], 'clingfy_desktop');
+          expect(props['source'], 'desktop_client');
+          expect(props['analytics_schema_version'], 1);
+          expect(props[r'$process_person_profile'], isFalse);
+          expect(props['environment'], anyOf('development', 'production'));
+        },
+        skip: hasToken ? false : 'needs --dart-define=POSTHOG_TOKEN=phc_test',
+      );
+    },
+  );
 }
