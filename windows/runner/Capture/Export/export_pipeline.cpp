@@ -17,6 +17,7 @@
 #include <atomic>
 #include <cstring>
 #include <filesystem>
+#include <limits>
 #include <memory>
 #include <mutex>
 #include <optional>
@@ -443,12 +444,21 @@ RenderResult RenderComposedExport(const RenderRequest& request) {
     PropVariantClear(&duration_var);
   }
 
+  // Audio separation (D8): when export_passthrough probed a decodable
+  // sidecar, the separated tracks REPLACE the embedded premix — the main
+  // reader's audio stream is never selected and audio runs through the
+  // per-track pumps built below (macOS parity: separated sources supersede
+  // the embedded track; the premix stays only as the no-sidecar fallback).
+  const bool separated_audio =
+      !gif && (!request.mic_audio_path.empty() ||
+               !request.system_audio_path.empty());
+
   // Audio is optional. Try to pull it through as 48 kHz stereo int16 PCM;
   // if the source has no audio or the type is refused, fall back to a
   // video-only export rather than failing the whole render.
   // GIF has no audio track, so skip audio selection/decode entirely for it.
   bool has_audio = false;
-  if (!gif && audio_index != kNoStream) {
+  if (!gif && !separated_audio && audio_index != kNoStream) {
     reader->SetStreamSelection(audio_index, TRUE);
     ComPtr<IMFMediaType> pcm_type;
     if (SUCCEEDED(::MFCreateMediaType(pcm_type.GetAddressOf()))) {
@@ -479,6 +489,20 @@ RenderResult RenderComposedExport(const RenderRequest& request) {
   const AudioGainStages audio_stages = ResolveAudioGainStages(
       request.audio_gain_db, request.audio_volume_percent,
       request.auto_normalize, request.target_loudness_dbfs, audio_peak);
+
+  // Audio separation (D8): per-track stages. Normalize measures the MIC
+  // sidecar's peak (never the premix, never system audio) and only when a
+  // mic sidecar exists — with no decodable mic, gain/normalize are inert by
+  // construction and only the master volume (system stage) applies.
+  double mic_peak = 0.0;
+  if (separated_audio && request.auto_normalize &&
+      !request.mic_audio_path.empty()) {
+    mic_peak =
+        MeasureSourceAudioPeak(request.mic_audio_path, request.is_cancelled);
+  }
+  const SeparatedAudioStages separated_stages = ResolveSeparatedAudioStages(
+      request.audio_gain_db, request.audio_volume_percent,
+      request.auto_normalize, request.target_loudness_dbfs, mic_peak);
 
   // --- Geometry: output size + source placement, via the tested helpers.
   const SizeF source_size{static_cast<double>(source_w),
@@ -702,7 +726,9 @@ RenderResult RenderComposedExport(const RenderRequest& request) {
         request.bitrate, canvas.width, canvas.height, enc_config.fps);
 
     std::optional<clingfy::encoding::AudioEncoderConfig> audio_config;
-    if (has_audio) {
+    // Separated recordings feed the encoder from the sidecar pumps, not the
+    // (deselected) embedded stream — the output still needs its AAC track.
+    if (has_audio || separated_audio) {
       audio_config = clingfy::encoding::AudioEncoderConfig{};
     }
     if (auto err = encoder.Open(enc_config, device, audio_config)) {
@@ -874,6 +900,105 @@ RenderResult RenderComposedExport(const RenderRequest& request) {
       camera_renderer->SeekTo(request.clip_ranges[0].source_in_ms);
     }
   }
+
+  // Audio separation (D8): one pump per decodable sidecar over ONE shared
+  // slots plan (clip-built when clipping, a single whole-track slot
+  // otherwise), mixed down through SeparatedAudioMerge to the encoder's
+  // single AAC track. Both pumps run the same plan so their totals agree at
+  // every limit; the merge FIFOs absorb per-packet boundary skew. Soft-fail
+  // discipline matches the reorder pump: a pump that can't be built drops
+  // that track (probe passed, so this is rare); both failing → video-only.
+  std::unique_ptr<ReorderAudioPump> sep_mic_pump;
+  std::unique_ptr<ReorderAudioPump> sep_system_pump;
+  std::optional<SeparatedAudioMerge> sep_merge;
+  std::int64_t sep_emitted_frames = 0;
+  if (separated_audio) {
+    const std::int64_t audio_duration_ms =
+        duration_hns > 0 ? duration_hns / 10000 : edited_total_ms;
+    std::vector<clip_planner::AudioSlot> slots;
+    if (clipping) {
+      slots = clip_planner::AudioSlots(request.clip_ranges, audio_duration_ms);
+    } else if (audio_duration_ms > 0) {
+      // Identity plan: the whole recording as one slot — the pump's copy +
+      // EOS→silence handling reproduces the track end-to-end. A source with
+      // no reported duration (audio_duration_ms 0) builds no plan: a slot
+      // with an unbounded duration would silence-fill forever at Flush.
+      clip_planner::AudioSlot whole;
+      whole.source_in_ms = 0;
+      whole.edited_start_ms = 0;
+      whole.copy_duration_ms = audio_duration_ms;
+      whole.duration_ms = audio_duration_ms;
+      slots.push_back(whole);
+    }
+    if (!slots.empty()) {
+      if (!request.mic_audio_path.empty()) {
+        sep_mic_pump = ReorderAudioPump::Create(
+            request.mic_audio_path, slots, kExportAudioSampleRate,
+            kExportAudioChannels, separated_stages.mic);
+      }
+      if (!request.system_audio_path.empty()) {
+        sep_system_pump = ReorderAudioPump::Create(
+            request.system_audio_path, slots, kExportAudioSampleRate,
+            kExportAudioChannels, separated_stages.system);
+      }
+    }
+    if (sep_mic_pump != nullptr || sep_system_pump != nullptr) {
+      sep_merge.emplace(sep_mic_pump != nullptr, sep_system_pump != nullptr,
+                        kExportAudioChannels);
+    }
+  }
+  // Pump both tracks to `limit_frames`, then write every merge-ready frame
+  // as summed packets timestamped by the running emitted-frame counter,
+  // origin-shifted like the reorder pump's export sink.
+  const auto drain_separated =
+      [&](std::int64_t limit_frames, std::int64_t origin_hns)
+      -> std::optional<clingfy::encoding::EncoderError> {
+    if (sep_mic_pump != nullptr) {
+      if (auto err = sep_mic_pump->PumpUpTo(
+              limit_frames,
+              [&](clingfy::audio::MixedPacket&& p, std::int64_t)
+                  -> std::optional<clingfy::encoding::EncoderError> {
+                sep_merge->AppendMic(p.samples.data(), p.frame_count);
+                return std::nullopt;
+              })) {
+        return err;
+      }
+    }
+    if (sep_system_pump != nullptr) {
+      if (auto err = sep_system_pump->PumpUpTo(
+              limit_frames,
+              [&](clingfy::audio::MixedPacket&& p, std::int64_t)
+                  -> std::optional<clingfy::encoding::EncoderError> {
+                sep_merge->AppendSystem(p.samples.data(), p.frame_count);
+                return std::nullopt;
+              })) {
+        return err;
+      }
+    }
+    // ~85 ms packets: comfortably small allocations, few writer calls.
+    constexpr std::int64_t kMergePacketFrames = 4096;
+    std::vector<std::int16_t> merged;
+    while (sep_merge->ReadyFrames() > 0) {
+      const std::int64_t frames = sep_merge->PopMerged(kMergePacketFrames,
+                                                       merged);
+      if (frames == 0) {
+        break;
+      }
+      clingfy::audio::MixedPacket packet;
+      packet.samples = std::move(merged);
+      packet.frame_count = static_cast<std::uint32_t>(frames);
+      packet.timestamp_hns = std::max<std::int64_t>(
+          0, (sep_emitted_frames * 10'000'000) / kExportAudioSampleRate -
+                 origin_hns);
+      sep_emitted_frames += frames;
+      if (auto err = encoder.WriteAudioPacket(packet)) {
+        return err;
+      }
+      ++audio_packets;
+      merged = std::move(packet.samples);  // reuse the allocation
+    }
+    return std::nullopt;
+  };
 
   while (!(video_eos && audio_eos)) {
     // Slice 5A: cancel between samples — release the writer without
@@ -1280,6 +1405,25 @@ RenderResult RenderComposedExport(const RenderRequest& request) {
               IsDiskFullHresult(err->hr), device_lost(err->hr));
         }
       }
+      // Audio separation (D8): drain the per-track pumps to this frame's
+      // timeline position — the same just-behind-the-video cadence as the
+      // reorder pump. Clipping paces by the edited position once the origin
+      // is anchored; a no-clip export paces by the frame's source ms
+      // (edited == source) with a zero origin (the recorder writes from
+      // PTS 0, matching the embedded no-clip path's verbatim timestamps).
+      if (sep_merge.has_value() && (!clipping || origin_edited_hns >= 0)) {
+        const std::int64_t pos_ms = clipping ? *edited : frame_ms;
+        const std::int64_t sep_origin = clipping ? origin_edited_hns : 0;
+        const std::int64_t limit = (pos_ms * kExportAudioSampleRate) / 1000;
+        if (auto err = drain_separated(limit, sep_origin)) {
+          cancel_encoder();
+          return Failure(
+              request.destination_path,
+              "export: separated audio pump WriteAudioPacket failed — " +
+                  err->message,
+              IsDiskFullHresult(err->hr), device_lost(err->hr));
+        }
+      }
       if (gif) {
         gif_emit_target_hns = AdvanceGifEmitTarget(gif_emit_target_hns, timestamp);
       }
@@ -1414,6 +1558,20 @@ RenderResult RenderComposedExport(const RenderRequest& request) {
     }
   }
 
+  // Audio separation (D8): drain both pumps to plan end. Both run the SAME
+  // plan, so their totals converge and the merge FIFOs empty here.
+  if (sep_merge.has_value() && (!clipping || origin_edited_hns >= 0)) {
+    const std::int64_t sep_origin = clipping ? origin_edited_hns : 0;
+    if (auto err = drain_separated(std::numeric_limits<std::int64_t>::max(),
+                                   sep_origin)) {
+      cancel_encoder();
+      return Failure(
+          request.destination_path,
+          "export: separated audio pump flush failed — " + err->message,
+          IsDiskFullHresult(err->hr), device_lost(err->hr));
+    }
+  }
+
   if (auto err = finalize_encoder()) {
     // Both encoders release their writer/stream even on a failed Finalize,
     // so the partial-output removal inside Failure() is not blocked by a
@@ -1435,7 +1593,7 @@ RenderResult RenderComposedExport(const RenderRequest& request) {
   out.output_height = canvas.height;
   out.video_frames_written = video_frames;
   out.audio_packets_written = audio_packets;
-  out.had_audio = has_audio;
+  out.had_audio = has_audio || sep_merge.has_value();
   return out;
 }
 

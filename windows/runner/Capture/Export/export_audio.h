@@ -28,6 +28,8 @@
 
 #include <cstddef>
 #include <cstdint>
+#include <deque>
+#include <vector>
 
 namespace clingfy::capture::export_ {
 
@@ -72,6 +74,81 @@ AudioGainStages ResolveAudioGainStages(double gain_db, double volume_percent,
 // macOS gain tap (`Int16(clamp(s*gain))`) followed by `setVolume`.
 void ApplyAudioGain(std::int16_t* samples, std::size_t count,
                     const AudioGainStages& stages);
+
+// ---- Audio separation (docs/decisions/windows-audio-separation.md D8) -----
+
+// Per-track stages for a SEPARATED recording (mic.m4a + system.m4a
+// sidecars). A faithful port of macOS `resolveSeparatedAudioControls`
+// (LetterboxExporter.swift): gain and normalize target the MIC ONLY; the
+// master volume attenuates both tracks; system audio is otherwise unity.
+//
+// The macOS split maps 1:1 onto the ordered AudioGainStages semantics:
+// macOS bakes the >1 part of combinedMicLinear into the mic file with an
+// int16-truncating gain tap (micGainDb) and applies the <=1 part as the
+// AVAudioMix track volume (micVolumeComponent x masterLinear). Here the
+// same split is {gain: max(1, combined), volume: min(1, combined) x
+// master} — ApplyAudioGain's amplify-clamp-then-attenuate order IS the
+// bake-then-volume order.
+struct SeparatedAudioStages {
+  AudioGainStages mic;     // combined gain*normalize split + master volume
+  AudioGainStages system;  // master volume only
+};
+
+// Resolve the separated per-track stages.
+//   combined = 10^(clamp(gain_db,0,24)/20)
+//   normalize (when `normalize` && mic_peak_linear > ~1e-6):
+//     combined *= 10^(clamp(target,-24,-6)/20) / mic_peak_linear
+//   combined clamped to <= 10^(24/20)  (the TOTAL mic boost cap, macOS
+//     parity — gain and normalize never stack past +24 dB)
+//   mic    = {max(1, combined), min(1, combined) * master}
+//   system = {1, master}          master = clamp(volume_percent,0,100)/100
+// When the recording has no decodable mic sidecar, the caller simply never
+// uses `.mic` — gain/normalize are inert by construction (macOS D7
+// semantics); `.system` carries the volume either way.
+SeparatedAudioStages ResolveSeparatedAudioStages(double gain_db,
+                                                 double volume_percent,
+                                                 bool normalize,
+                                                 double target_loudness_dbfs,
+                                                 double mic_peak_linear);
+
+// Sum two interleaved int16 buffers element-wise with int32 arithmetic and
+// saturation to int16 — the separated tracks' mix-down (macOS's
+// AVAssetReaderAudioMixOutput sums the composition tracks the same way).
+void SumInt16Saturating(const std::int16_t* a, const std::int16_t* b,
+                        std::size_t count, std::int16_t* out);
+
+// FIFO pair merging two independently-pumped separated tracks into summed
+// packets. The two ReorderAudioPumps run the SAME AudioSlots plan so their
+// TOTAL emitted frames agree at every PumpUpTo limit, but their per-packet
+// boundaries need not (decoder priming, silence chunking) — the FIFOs
+// absorb the skew and `PopMerged` releases only frames present on every
+// active track. Pure (no MF) so the merge behavior is unit-testable.
+class SeparatedAudioMerge {
+ public:
+  // `has_mic` / `has_system` name the tracks that will actually feed the
+  // merge; an absent track never gates `ReadyFrames`. At least one must be
+  // true. `channels` is the interleave width (2 for the pipeline).
+  SeparatedAudioMerge(bool has_mic, bool has_system, std::uint32_t channels);
+
+  void AppendMic(const std::int16_t* samples, std::size_t frame_count);
+  void AppendSystem(const std::int16_t* samples, std::size_t frame_count);
+
+  // Frames available on EVERY active track (the mergeable prefix).
+  std::int64_t ReadyFrames() const;
+
+  // Pop up to `max_frames` merged frames into `out` (resized to the popped
+  // frame count x channels; saturating sum when both tracks are active,
+  // pass-through when one). Returns the frames popped.
+  std::int64_t PopMerged(std::int64_t max_frames,
+                         std::vector<std::int16_t>& out);
+
+ private:
+  bool has_mic_ = false;
+  bool has_system_ = false;
+  std::uint32_t channels_ = 2;
+  std::deque<std::int16_t> mic_;
+  std::deque<std::int16_t> system_;
+};
 
 }  // namespace clingfy::capture::export_
 
