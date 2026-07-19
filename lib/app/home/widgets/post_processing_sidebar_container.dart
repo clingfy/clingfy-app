@@ -66,6 +66,7 @@ class PostProcessingSidebarContainer extends StatelessWidget {
         CameraCompositionState? cameraState,
         CameraExportCapabilities cameraExportCapabilities,
         bool? sceneHasAudio,
+        bool? sceneMicGainApplies,
       })
     >(
       selector: (_, p) => (
@@ -91,6 +92,7 @@ class PostProcessingSidebarContainer extends StatelessWidget {
         cameraState: p.cameraState,
         cameraExportCapabilities: p.cameraExportCapabilities,
         sceneHasAudio: p.sceneHasAudio,
+        sceneMicGainApplies: p.sceneMicGainApplies,
       ),
       builder: (context, vm, _) {
         final post = context.read<PostProcessingController>();
@@ -119,6 +121,9 @@ class PostProcessingSidebarContainer extends StatelessWidget {
               isProcessing: vm.isEditingLocked,
               cursorAvailable: vm.cursorAvailable,
               hasAudio: hasAudio,
+              // Gain/normalize availability (mic-dependent on separated
+              // recordings). Null keeps the sections' hasAudio fallback.
+              gainAvailable: vm.sceneMicGainApplies,
               layoutPreset: settingsController.post.layoutPreset,
               resolutionPreset: settingsController.post.resolutionPreset,
               fitMode: settingsController.post.fitMode,

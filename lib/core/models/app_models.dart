@@ -491,6 +491,7 @@ class RecordingSceneInfo {
         const CameraExportCapabilities.allSupported(),
     this.hasMicAudio,
     this.hasSystemAudio,
+    this.micGainApplies,
   });
 
   final String projectPath;
@@ -505,6 +506,13 @@ class RecordingSceneInfo {
   /// report it (macOS today) — callers fall back to their legacy gate.
   final bool? hasMicAudio;
   final bool? hasSystemAudio;
+
+  /// Whether the gain/normalize controls will have an audible effect:
+  /// separated recordings need a decodable mic track (gain is mic-only);
+  /// legacy premix recordings need any premix audio (whole-track gain).
+  /// Null when the platform doesn't report it — callers fall back to their
+  /// combined audio-presence gate.
+  final bool? micGainApplies;
 
   bool get hasCameraAsset => cameraPath != null && cameraPath!.isNotEmpty;
 
@@ -534,6 +542,9 @@ class RecordingSceneInfo {
           : null,
       hasSystemAudio: raw['hasSystemAudio'] is bool
           ? raw['hasSystemAudio'] as bool
+          : null,
+      micGainApplies: raw['micGainApplies'] is bool
+          ? raw['micGainApplies'] as bool
           : null,
     );
   }

@@ -425,18 +425,32 @@ void HandleGetRecordingSceneInfo(
       project.system_audio_path.has_value() &&
       clingfy::capture::export_::ProbeDecodableAudio(
           *project.system_audio_path);
+  // `micGainApplies` names what the GAIN/NORMALIZE controls need: on a
+  // separated recording they are mic-only (inert without a decodable mic
+  // sidecar — D8/D9); on a legacy Windows premix they are whole-track and
+  // work whenever the premix carried ANY audio.
   if (mic_sidecar_ok || system_sidecar_ok) {
     out[flutter::EncodableValue("hasMicAudio")] =
         flutter::EncodableValue(mic_sidecar_ok);
     out[flutter::EncodableValue("hasSystemAudio")] =
         flutter::EncodableValue(system_sidecar_ok);
-  } else if (project.metadata.has_value()) {
+    out[flutter::EncodableValue("micGainApplies")] =
+        flutter::EncodableValue(mic_sidecar_ok);
+  } else if (project.metadata.has_value() &&
+             project.metadata->platform == "windows") {
+    // The metadata fallback reads WINDOWS capture truth. A macOS bundle's
+    // screen.meta.json has a different shape (its micActive/samples fields
+    // parse to defaults here), so gating on it would report false/false
+    // and disable sliders that work on the mac premix — omit the keys
+    // instead (Dart's legacy device gate takes over, today's behavior).
     const bool premix_has_samples =
         project.metadata->audio_samples_written > 0;
     out[flutter::EncodableValue("hasMicAudio")] = flutter::EncodableValue(
         premix_has_samples && project.metadata->mic_active);
     out[flutter::EncodableValue("hasSystemAudio")] = flutter::EncodableValue(
         premix_has_samples && project.metadata->loopback_active);
+    out[flutter::EncodableValue("micGainApplies")] =
+        flutter::EncodableValue(premix_has_samples);
   }
   reply::Map(*result, std::move(out));
 }

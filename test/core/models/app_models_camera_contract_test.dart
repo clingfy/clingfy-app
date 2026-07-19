@@ -45,6 +45,19 @@ void main() {
       'hasMicAudio': 'yes',
     });
     expect(malformed.hasMicAudio, isNull);
+
+    // micGainApplies distinguishes "audio exists" from "the gain slider
+    // does anything": a separated system-only recording has audio but
+    // inert gain; a legacy premix has working whole-track gain.
+    final separatedSystemOnly = RecordingSceneInfo.fromMap({
+      'screenPath': '/tmp/r.mov',
+      'hasMicAudio': false,
+      'hasSystemAudio': true,
+      'micGainApplies': false,
+    });
+    expect(separatedSystemOnly.hasRecordedAudio, isTrue);
+    expect(separatedSystemOnly.micGainApplies, isFalse);
+    expect(legacy.micGainApplies, isNull);
   });
 
   test('camera composition hidden defaults include new motion presets', () {
