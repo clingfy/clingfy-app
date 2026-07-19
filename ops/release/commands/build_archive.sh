@@ -37,6 +37,9 @@ defines=(
   "FLUTTER_BUILD_NUMBER=$BUILD_NUMBER"
   "API_BASE_URL=${API_BASE_URL:-}"
   "CLINGFY_SITE_URL=${CLINGFY_SITE_URL:-}"
+  # PostHog product analytics (public-class ingestion token, from .env.$APP_ENV like SENTRY_DSN).
+  # Empty = analytics compiled out to a no-op. Windows gets it via --dart-define-from-file.
+  "POSTHOG_TOKEN=${POSTHOG_TOKEN:-}"
 )
 
 encoded_items=()

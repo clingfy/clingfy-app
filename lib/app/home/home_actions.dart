@@ -1,5 +1,7 @@
 import 'dart:async';
 
+import 'package:clingfy/app/infrastructure/analytics/analytics_events.dart';
+import 'package:clingfy/app/infrastructure/analytics/analytics_service.dart';
 import 'package:clingfy/core/overlay/overlay_mode.dart';
 import 'package:clingfy/core/bridges/native_bar_action.dart';
 import 'package:clingfy/core/bridges/native_error_codes.dart';
@@ -363,6 +365,14 @@ class HomeActions {
         ),
       );
 
+      ClingfyAnalytics.capture(
+        AnalyticsEvents.billingPaywallView,
+        properties: {
+          'reason': 'export_blocked',
+          'plan': licenseController.currentPlan,
+          'trial_exports_remaining': licenseController.trialExportsRemaining,
+        },
+      );
       await PaywallDialog.show(context);
       if (!context.mounted) return;
 

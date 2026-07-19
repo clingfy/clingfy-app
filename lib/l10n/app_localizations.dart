@@ -3460,6 +3460,18 @@ abstract class AppLocalizations {
   /// **'Record detailed debug logs to help reproduce a hard-to-find issue. Turn it on, reproduce the problem, then export diagnostics and send the files. Leave it off for everyday use.'**
   String get diagnosticsVerboseLoggingHelp;
 
+  /// No description provided for @diagnosticsShareAnalytics.
+  ///
+  /// In en, this message translates to:
+  /// **'Share anonymous usage analytics'**
+  String get diagnosticsShareAnalytics;
+
+  /// No description provided for @diagnosticsShareAnalyticsHelp.
+  ///
+  /// In en, this message translates to:
+  /// **'Help improve Clingfy by sharing feature usage and reliability data. Never includes recordings, filenames, audio, video, or transcripts.'**
+  String get diagnosticsShareAnalyticsHelp;
+
   /// No description provided for @openLogsFolder.
   ///
   /// In en, this message translates to:

@@ -1855,6 +1855,14 @@ class AppLocalizationsRo extends AppLocalizations {
       'Înregistrează loguri de depanare detaliate pentru a ajuta la reproducerea unei probleme greu de găsit. Activează-l, reprodu problema, apoi exportă diagnosticarea și trimite fișierele. Lasă-l dezactivat pentru utilizarea zilnică.';
 
   @override
+  String get diagnosticsShareAnalytics =>
+      'Partajează statistici de utilizare anonime';
+
+  @override
+  String get diagnosticsShareAnalyticsHelp =>
+      'Ajută la îmbunătățirea Clingfy partajând date despre utilizarea funcțiilor și fiabilitate. Nu include niciodată înregistrări, nume de fișiere, audio, video sau transcrieri.';
+
+  @override
   String get openLogsFolder => 'Deschide folderul de loguri';
 
   @override

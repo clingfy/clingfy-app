@@ -1824,6 +1824,13 @@ class AppLocalizationsAr extends AppLocalizations {
       'سجّل سجلات تصحيح مفصّلة للمساعدة في إعادة إنتاج مشكلة يصعب تتبّعها. فعّله، ثم أعد إنتاج المشكلة، ثم صدّر التشخيصات وأرسل الملفات. اتركه مُطفأً للاستخدام اليومي.';
 
   @override
+  String get diagnosticsShareAnalytics => 'مشاركة إحصاءات استخدام مجهولة';
+
+  @override
+  String get diagnosticsShareAnalyticsHelp =>
+      'ساعد في تحسين Clingfy من خلال مشاركة بيانات استخدام الميزات والموثوقية. لا تتضمن أبدًا التسجيلات أو أسماء الملفات أو الصوت أو الفيديو أو النصوص المفرّغة.';
+
+  @override
   String get openLogsFolder => 'افتتاح مجلد السجلات';
 
   @override

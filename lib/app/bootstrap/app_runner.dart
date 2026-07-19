@@ -1,4 +1,6 @@
 import 'package:clingfy/app/bootstrap/app_providers.dart';
+import 'package:clingfy/app/infrastructure/analytics/analytics_events.dart';
+import 'package:clingfy/app/infrastructure/analytics/analytics_service.dart';
 import 'package:clingfy/core/logging/logger_service.dart';
 import 'package:clingfy/core/bridges/native_bridge.dart';
 import 'package:clingfy/app/settings/settings_controller.dart';
@@ -12,6 +14,13 @@ class AppRunner {
     final nativeBridge = NativeBridge.instance;
     final settingsController = SettingsController(nativeBridge: nativeBridge);
     await settingsController.loadPreferences();
+
+    // Anonymous product analytics — a no-op in debug runs / without a POSTHOG_TOKEN define, and
+    // honors the "Share anonymous usage analytics" setting loaded just above.
+    await ClingfyAnalytics.init(
+      enabled: settingsController.workspace.shareUsageAnalytics,
+    );
+    ClingfyAnalytics.capture(AnalyticsEvents.appLaunch);
 
     runApp(
       AppProviders(

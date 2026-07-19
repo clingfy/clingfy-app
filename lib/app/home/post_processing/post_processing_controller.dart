@@ -1,4 +1,6 @@
 import 'dart:async';
+import 'package:clingfy/app/infrastructure/analytics/analytics_events.dart';
+import 'package:clingfy/app/infrastructure/analytics/analytics_service.dart';
 import 'package:clingfy/app/config/build_config.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
@@ -1053,6 +1055,15 @@ class PostProcessingController extends ChangeNotifier {
     _exportProgress = null;
     notifyListeners();
 
+    ClingfyAnalytics.capture(
+      AnalyticsEvents.exportJobStart,
+      properties: {
+        'format': _settings.export.exportFormat,
+        'resolution': _settings.post.resolutionPreset.name,
+        'layout': _settings.post.layoutPreset.name,
+      },
+    );
+
     SpanStatus exportStatus = const SpanStatus.ok();
     CaptureDiagnostics diagnostics = const CaptureDiagnostics();
     final autoNormalizeOnExport = _settings.post.postAutoNormalizeEnabled;
@@ -1187,6 +1198,13 @@ class PostProcessingController extends ChangeNotifier {
       if (newPath != null) {
         Log.i("PostProcessing", "Export completed successfully");
         _hasExportedCurrentRecording = true;
+        ClingfyAnalytics.capture(
+          AnalyticsEvents.exportJobComplete,
+          properties: {
+            'format': _settings.export.exportFormat,
+            'resolution': _settings.post.resolutionPreset.name,
+          },
+        );
       } else if (!_isExportCancelRequested) {
         exportStatus = const SpanStatus.aborted();
       }
@@ -1199,6 +1217,10 @@ class PostProcessingController extends ChangeNotifier {
       }
       exportStatus = _statusForExportPlatformException(e);
       Log.e("PostProcessing", "Export failed: $e");
+      ClingfyAnalytics.capture(
+        AnalyticsEvents.exportJobFail,
+        properties: {'error_code': e.code},
+      );
       await ClingfyTelemetry.captureNativeMethodChannelError(
         method: 'exportVideo',
         error: e,
@@ -1232,6 +1254,10 @@ class PostProcessingController extends ChangeNotifier {
       }
       exportStatus = const SpanStatus.internalError();
       Log.e("PostProcessing", "Export failed: $e");
+      ClingfyAnalytics.capture(
+        AnalyticsEvents.exportJobFail,
+        properties: {'error_code': 'internal'},
+      );
       await ClingfyTelemetry.captureNativeMethodChannelError(
         method: 'exportVideo',
         error: e,
