@@ -539,6 +539,15 @@ bool PreviewEngine::ShouldInvalidateOnSystemResume(
   return running && !active_session_id.empty();
 }
 
+bool PreviewEngine::ShouldRestartEditedPlaybackFromEnd(
+    std::int64_t edited_pos_ms, std::int64_t edited_duration_ms) {
+  // One-frame tolerance: the pacer stamps the LAST kept frame's edited time,
+  // which lands up to a frame short of the exact duration.
+  constexpr std::int64_t kToleranceMs = 40;
+  return edited_duration_ms > 0 &&
+         edited_pos_ms >= edited_duration_ms - kToleranceMs;
+}
+
 void PreviewEngine::OnSystemResumed() {
   // Snapshot-then-release, same rule as Open()'s reconcile block: never
   // publish (or do anything else that can re-enter the engine) while
@@ -2031,6 +2040,12 @@ void PreviewEngine::Play(const std::string& session_id) {
       // 4-7c/D7: consume a mid-stream audio failure BEFORE acting on the
       // renderer (one WARN + one rebuild; degrades to logged silent video).
       HandleAudioRenderErrorLocked(impl);
+      // 4-5: Play at the edited end restarts from 0 (macOS IsAtEnd parity) —
+      // otherwise the pacer EOSes immediately and the button feels dead.
+      if (ShouldRestartEditedPlaybackFromEnd(
+              impl->edited_pos_ms, clip::EditedDurationMs(impl->clip_ranges))) {
+        impl->edited_pos_ms = 0;
+      }
       // Reorder needs the per-range cursor primed from the current position.
       if (!clip::IsSourceMonotonic(impl->clip_ranges)) {
         PrimeReorderStateLocked(impl, impl->edited_pos_ms);
@@ -2458,7 +2473,7 @@ PreviewEngine::PaceStep PreviewEngine::PaceNextEditedFrameLocked(Impl* impl) {
       std::vector<BYTE> bgra;
       std::int64_t ts_ms = 0;
       if (!reader->ReadNextFrame(&bgra, &ts_ms)) {
-        impl->edited_playing = false;  // end of source — playback complete
+        NotifyEditedPlaybackCompleteLocked(impl);  // end of source
         return PaceStep::kIdle;
       }
       const auto edited =
@@ -2480,7 +2495,7 @@ PreviewEngine::PaceStep PreviewEngine::PaceNextEditedFrameLocked(Impl* impl) {
   for (int i = 0; i < kMaxSkip; ++i) {
     if (shutting_down_.load()) return PaceStep::kIdle;
     if (impl->edited_range_idx >= n) {
-      impl->edited_playing = false;  // all ranges emitted
+      NotifyEditedPlaybackCompleteLocked(impl);  // all ranges emitted
       return PaceStep::kIdle;
     }
     std::vector<BYTE> bgra;
@@ -2490,7 +2505,7 @@ PreviewEngine::PaceStep PreviewEngine::PaceNextEditedFrameLocked(Impl* impl) {
       impl->edited_reorder_base_ms +=
           impl->clip_ranges[impl->edited_range_idx].DurationMs();
       if (++impl->edited_range_idx >= n) {
-        impl->edited_playing = false;
+        NotifyEditedPlaybackCompleteLocked(impl);
         return PaceStep::kIdle;
       }
       reader->SeekTo(impl->clip_ranges[impl->edited_range_idx].source_in_ms);
@@ -2506,7 +2521,7 @@ PreviewEngine::PaceStep PreviewEngine::PaceNextEditedFrameLocked(Impl* impl) {
       // Past this range's window → advance + seek (backward) to the next range.
       impl->edited_reorder_base_ms += r.DurationMs();
       if (++impl->edited_range_idx >= n) {
-        impl->edited_playing = false;
+        NotifyEditedPlaybackCompleteLocked(impl);
         return PaceStep::kIdle;
       }
       reader->SeekTo(impl->clip_ranges[impl->edited_range_idx].source_in_ms);
@@ -2524,6 +2539,26 @@ PreviewEngine::PaceStep PreviewEngine::PaceNextEditedFrameLocked(Impl* impl) {
     return emit(bgra, ts_ms, edited) ? PaceStep::kRendered : PaceStep::kIdle;
   }
   return PaceStep::kSkipping;
+}
+
+void PreviewEngine::NotifyEditedPlaybackCompleteLocked(Impl* impl) {
+  impl->edited_playing = false;
+  std::string session_snapshot;
+  {
+    std::lock_guard<std::mutex> lock(mutex_);
+    if (shutting_down_.load()) {
+      return;
+    }
+    session_snapshot = active_session_id_;
+  }
+  if (session_snapshot.empty()) {
+    return;
+  }
+  clingfy::bridge::NativeLogPublisher::Instance().Debug(
+      "Preview", "stitched playback complete at edited " +
+                     std::to_string(impl->edited_pos_ms) + "ms");
+  clingfy::bridge::PlayerEventPublisher::Instance().EmitPlayerState(
+      session_snapshot, "completed");
 }
 
 void PreviewEngine::PrimeReorderStateLocked(Impl* impl, std::int64_t edited_ms) {
@@ -2631,6 +2666,21 @@ void PreviewEngine::SetClips(
   std::lock_guard<std::mutex> render_lock(impl->render_mutex);
   if (shutting_down_.load()) {
     return;
+  }
+  // 4-6: preserve the playhead across a clip edit by anchoring it to the
+  // SOURCE moment it was showing — the edited timeline just changed shape, so
+  // the old edited position points at different content. Map old-edited →
+  // source (old ranges) → new-edited (new ranges); a source moment the edit
+  // cut away keeps the old position, which RenderEditedFrameLocked clamps
+  // into the new duration (nearest-content behavior).
+  if (impl->edited_mode && now_edited && !impl->clip_ranges.empty()) {
+    namespace clip = capture::export_::clip_planner;
+    const std::int64_t source_anchor =
+        clip::SourceMsForEditedMs(impl->edited_pos_ms, impl->clip_ranges);
+    const auto remapped = clip::EditedMsForKeptSourceMs(source_anchor, ranges);
+    if (remapped.has_value()) {
+      impl->edited_pos_ms = *remapped;
+    }
   }
   // clip_ranges is read by the PACER THREAD under render_mutex, so it MUST be
   // written under render_mutex (never mutex_) or the move-assign races the
