@@ -1,5 +1,10 @@
 # `clingfy` terminal launcher
 
+> Installed builds: the Windows installer ships this launcher in
+> `{app}\bin` and offers an *"Add the `clingfy` command to PATH"* checkbox
+> during setup (removed again at uninstall). The instructions below are the
+> from-the-repo setup for development machines.
+
 Open the app — optionally with a `.clingfyproj` — from any terminal:
 
 ```
