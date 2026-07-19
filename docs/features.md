@@ -40,9 +40,9 @@ Status legend: ✅ shipped · 🚧 partial / with caveats · — not available y
 | Microphone capture + gain | Record the mic with adjustable input gain. | ✅ | 🚧 (gain applied at export only) |
 | Live mic level meter | dBFS meter while setting up. | ✅ | 🚧 |
 | Exclude mic from system audio | Stops mic bleed into the system track. | ✅ | — |
-| Export gain + volume | Per-export audio gain (dB) and volume. | ✅ | 🚧 |
+| Export gain + volume | Per-export audio gain (dB) and volume. | ✅ | ✅ |
 | Loudness normalization | One-click normalize to a loudness target at export. | ✅ | — |
-| Live audio mix preview | Hear gain/mix changes while editing. | ✅ | — |
+| Live audio mix preview | Hear gain/mix changes while editing. | ✅ | ✅ |
 
 ## Camera overlay
 
@@ -116,6 +116,7 @@ Status legend: ✅ shipped · 🚧 partial / with caveats · — not available y
 | Save folder + filename template | Choose where recordings go and how they're named. | ✅ | 🚧 (no template) |
 | Crash recovery | Interrupted recordings are salvaged (macOS) or cleaned up with notice (Windows). | ✅ | 🚧 |
 | Keyboard shortcuts | Configurable in-app shortcuts. | ✅ | ✅ |
+| Terminal launcher | `clingfy` CLI opens the app from any terminal, optionally with a `.clingfyproj` (Windows installer can add it to PATH). | ✅ | ✅ |
 | Light / dark theme | Native design systems per platform (macos_ui / fluent_ui). | ✅ | ✅ |
 | Localization | English, Arabic, Romanian — UI and native surfaces. | ✅ | ✅ |
 | Permissions onboarding | Guided flow for screen / mic / camera / accessibility grants. | ✅ | ✅ |
