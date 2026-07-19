@@ -53,12 +53,16 @@ class WasapiAudioCapture {
                                           const std::string& device_id,
                                           AudioPacketQueue& queue);
 
-  // Phase 10.1: one-shot notification when the capture THREAD hits a WASAPI
+  // Phase 10.1: one-shot notification when the capture hits a WASAPI
   // failure mid-record — the classic case is AUDCLNT_E_DEVICE_INVALIDATED
   // after the endpoint unplugs, which previously degraded to a fully silent
-  // recording with zero signal. Fired at most once, from the capture thread
-  // (marshal in the callback if needed). Set BEFORE Start; setting it later
-  // races the capture thread. Surfacing only: loop behavior is unchanged.
+  // recording with zero signal. Fired at most once — from the capture
+  // thread (in-loop read failures) or from Resume()'s caller when the
+  // client fails to restart after a pause (a device invalidated while
+  // paused never signals the buffer event again, so the loop alone would
+  // never notice). Marshal in the callback if needed. Set BEFORE Start;
+  // setting it later races the capture thread. Surfacing only: loop
+  // behavior is unchanged.
   void SetOnCaptureError(
       std::function<void(WasapiCaptureKind, HRESULT)> callback);
 
