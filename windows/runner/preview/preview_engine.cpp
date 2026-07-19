@@ -30,6 +30,7 @@
 #include "Bridge/native_log_publisher.h"
 #include "Bridge/player_event_publisher.h"
 #include "Bridge/workflow_event_publisher.h"
+#include "Capture/Export/audio_sidecar_probe.h"
 #include "Services/log_locations.h"
 #include "preview/frame_timing.h"
 #include "preview/preview_audio_renderer.h"
@@ -386,6 +387,13 @@ struct PreviewEngine::Impl {
   // pending-open override semantics).
   double audio_gain_db = 0.0;
   double audio_volume_percent = 100.0;
+  // Audio separation (D9): the PROBED-decodable sidecar paths (empty when
+  // absent or undecodable) and whether this session's edited audio runs
+  // separated. Probed ONCE at Open; immutable afterwards, so the error-
+  // rebuild path reopens the same mode without re-probing.
+  std::wstring mic_audio_path;
+  std::wstring system_audio_path;
+  bool audio_separated = false;
 
   // Serializes the per-frame composition path against the descriptor
   // callback (which Flutter can invoke from its own thread).
@@ -432,8 +440,16 @@ std::vector<capture::export_::clip_planner::AudioSlot> BuildPreviewAudioSlots(
 // passthrough transition, Close) joins the renderer thread first, so the
 // callback can never outlive `impl`.
 void OpenPreviewAudioRendererLocked(PreviewEngine::Impl* impl) {
-  impl->audio_renderer = PreviewAudioRenderer::Open(
-      impl->video_path, BuildPreviewAudioSlots(impl->clip_ranges));
+  const auto slots = BuildPreviewAudioSlots(impl->clip_ranges);
+  // Audio separation (D9): a session whose sidecars passed the Open-time
+  // decode probe goes dual-pump (mic-only gain); everything else keeps the
+  // premix whole-track path. No cross-fallback — a probed sidecar that
+  // fails here failed on device/endpoint grounds the premix shares.
+  impl->audio_renderer =
+      impl->audio_separated
+          ? PreviewAudioRenderer::OpenSeparated(impl->mic_audio_path,
+                                                impl->system_audio_path, slots)
+          : PreviewAudioRenderer::Open(impl->video_path, slots);
   if (impl->audio_renderer == nullptr) {
     if (!impl->audio_open_failure_logged) {
       impl->audio_open_failure_logged = true;
@@ -452,12 +468,21 @@ void OpenPreviewAudioRendererLocked(PreviewEngine::Impl* impl) {
   });
   // 4-7d: a renderer opened after the mix was set starts from the stored
   // values (macOS pending-open override semantics). Identity defaults
-  // resolve to identity stages — a no-op.
-  impl->audio_renderer->SetGainStages(
-      capture::export_::ResolveAudioGainStages(
-          impl->audio_gain_db, impl->audio_volume_percent,
-          /*normalize=*/false, /*target_loudness_dbfs=*/-16.0,
-          /*source_peak_linear=*/0.0));
+  // resolve to identity stages — a no-op. Normalize stays export-only on
+  // both platforms, so the separated resolver never sees a peak here.
+  if (impl->audio_separated) {
+    impl->audio_renderer->SetSeparatedGainStages(
+        capture::export_::ResolveSeparatedAudioStages(
+            impl->audio_gain_db, impl->audio_volume_percent,
+            /*normalize=*/false, /*target_loudness_dbfs=*/-16.0,
+            /*mic_peak_linear=*/0.0));
+  } else {
+    impl->audio_renderer->SetGainStages(
+        capture::export_::ResolveAudioGainStages(
+            impl->audio_gain_db, impl->audio_volume_percent,
+            /*normalize=*/false, /*target_loudness_dbfs=*/-16.0,
+            /*source_peak_linear=*/0.0));
+  }
 }
 
 // D7 mid-stream failure recovery: one WARN naming the HRESULT, ONE rebuild
@@ -720,6 +745,21 @@ OpenResult PreviewEngine::Open(const OpenArgs& args) {
   impl_ = std::make_unique<Impl>();
   impl_->video_path = args.video_path;
   impl_->cursor_path = args.cursor_path;
+  // Audio separation (D9): run the ONE decode probe per sidecar now, so
+  // every later renderer (re)open — including the error-rebuild path —
+  // reuses the same verdict. An undecodable sidecar degrades to the premix
+  // (D7); a few ms of MF reader open is fine on this path (Open already
+  // builds a device + reader).
+  if (!args.mic_audio_path.empty() &&
+      capture::export_::ProbeDecodableAudio(args.mic_audio_path)) {
+    impl_->mic_audio_path = args.mic_audio_path;
+  }
+  if (!args.system_audio_path.empty() &&
+      capture::export_::ProbeDecodableAudio(args.system_audio_path)) {
+    impl_->system_audio_path = args.system_audio_path;
+  }
+  impl_->audio_separated =
+      !impl_->mic_audio_path.empty() || !impl_->system_audio_path.empty();
   UINT flags = D3D11_CREATE_DEVICE_BGRA_SUPPORT;
   const D3D_FEATURE_LEVEL levels[] = {D3D_FEATURE_LEVEL_11_1,
                                       D3D_FEATURE_LEVEL_11_0,
@@ -2785,12 +2825,20 @@ void PreviewEngine::SetAudioMix(const std::string& session_id, double gain_db,
     impl->audio_volume_percent = volume;
     if (impl->audio_renderer != nullptr) {
       // Applies to samples decoded from now on (D6) — the export's exact
-      // two-stage semantics via the shared resolver (normalize stays
-      // export-only, macOS parity).
-      impl->audio_renderer->SetGainStages(
-          capture::export_::ResolveAudioGainStages(
-              gain, volume, /*normalize=*/false,
-              /*target_loudness_dbfs=*/-16.0, /*source_peak_linear=*/0.0));
+      // two-stage semantics via the shared resolvers (normalize stays
+      // export-only, macOS parity). Separated sessions (D9) get mic-only
+      // gain; legacy premix keeps the whole-track stages.
+      if (impl->audio_separated) {
+        impl->audio_renderer->SetSeparatedGainStages(
+            capture::export_::ResolveSeparatedAudioStages(
+                gain, volume, /*normalize=*/false,
+                /*target_loudness_dbfs=*/-16.0, /*mic_peak_linear=*/0.0));
+      } else {
+        impl->audio_renderer->SetGainStages(
+            capture::export_::ResolveAudioGainStages(
+                gain, volume, /*normalize=*/false,
+                /*target_loudness_dbfs=*/-16.0, /*source_peak_linear=*/0.0));
+      }
     }
   }
   // Passthrough master volume — a WinRT call, outside both locks.

@@ -125,6 +125,11 @@ class PostProcessingSidebar extends StatelessWidget {
   final bool enabled;
   final bool cursorAvailable;
   final bool hasAudio;
+
+  /// Audio separation (Windows D10): whether gain/normalize will have an
+  /// audible effect (mic-dependent on separated recordings). Null falls
+  /// back to [hasAudio] in the sections.
+  final bool? gainAvailable;
   final bool hasCameraAsset;
   final CameraExportCapabilities cameraExportCapabilities;
   final CameraCompositionState? cameraState;
@@ -283,6 +288,7 @@ class PostProcessingSidebar extends StatelessWidget {
     this.enabled = true,
     this.cursorAvailable = true,
     this.hasAudio = true,
+    this.gainAvailable,
     this.disabledMessage,
     this.showHeader = true,
   });
@@ -457,6 +463,7 @@ class PostProcessingSidebar extends StatelessWidget {
     return [
       PostAudioSection(
         hasAudio: hasAudio,
+        gainAvailable: gainAvailable,
         audioVolume: audioVolume,
         audioGainDb: audioGainDb,
         onAudioVolumeChanged: onAudioVolumeChanged,
@@ -467,6 +474,7 @@ class PostProcessingSidebar extends StatelessWidget {
       PostExportSettingsSection(
         isProcessing: isProcessing,
         hasAudio: hasAudio,
+        gainAvailable: gainAvailable,
         autoNormalizeOnExport: autoNormalizeOnExport,
         autoNormalizeTargetDbfs: autoNormalizeTargetDbfs,
         onAutoNormalizeOnExportChanged: onAutoNormalizeOnExportChanged,

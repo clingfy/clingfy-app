@@ -142,6 +142,11 @@ class SeparatedAudioMerge {
   std::int64_t PopMerged(std::int64_t max_frames,
                          std::vector<std::int16_t>& out);
 
+  // Drop ALL buffered samples on both tracks — including the unmatched
+  // skew PopMerged never releases. Used on a seek/re-prime so no stale
+  // pre-seek sample can be summed against post-seek data.
+  void Clear();
+
  private:
   bool has_mic_ = false;
   bool has_system_ = false;

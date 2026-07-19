@@ -12,6 +12,7 @@ class PostExportSettingsSection extends StatelessWidget {
     super.key,
     required this.isProcessing,
     required this.hasAudio,
+    this.gainAvailable,
     required this.autoNormalizeOnExport,
     required this.autoNormalizeTargetDbfs,
     required this.onAutoNormalizeOnExportChanged,
@@ -20,6 +21,14 @@ class PostExportSettingsSection extends StatelessWidget {
 
   final bool isProcessing;
   final bool hasAudio;
+
+  /// Audio separation (Windows D10): normalize is mic-peak based on a
+  /// separated recording, so it shares the gain slider's availability — a
+  /// mic-less-but-system-audio recording has an inert normalize. Null
+  /// (macOS / unknown) falls back to [hasAudio], the legacy behavior
+  /// (normalize measures the embedded track, which works whenever it has
+  /// audio).
+  final bool? gainAvailable;
   final bool autoNormalizeOnExport;
   final double autoNormalizeTargetDbfs;
   final ValueChanged<bool> onAutoNormalizeOnExportChanged;
@@ -28,12 +37,13 @@ class PostExportSettingsSection extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final l10n = AppLocalizations.of(context)!;
-    final disabled = isProcessing || !hasAudio;
+    final available = gainAvailable ?? hasAudio;
+    final disabled = isProcessing || !available;
 
     return Opacity(
-      opacity: hasAudio ? 1.0 : 0.45,
+      opacity: available ? 1.0 : 0.45,
       child: IgnorePointer(
-        ignoring: !hasAudio,
+        ignoring: !available,
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.stretch,
           children: [

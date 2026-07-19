@@ -27,6 +27,10 @@ Future<void> installCommonNativeMocks({
   bool screenRecordingGranted = true,
   bool onboardingSeen = true,
   bool homeGuideSeen = true,
+  // Audio separation (D10): tests that exercise the scene-derived audio
+  // gating inject a getRecordingSceneInfo reply here. Null keeps the
+  // default (no reply -> NativeBridge's empty-scene fallback).
+  Map<String, Object?>? recordingSceneInfoReply,
 }) async {
   SharedPreferences.setMockInitialValues({
     'onboarding_seen_v1': onboardingSeen,
@@ -148,6 +152,8 @@ Future<void> installCommonNativeMocks({
         return true;
       case 'getMicEchoCancellationEnabled':
         return false;
+      case 'getRecordingSceneInfo':
+        return recordingSceneInfoReply;
       default:
         return null;
     }

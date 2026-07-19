@@ -84,6 +84,13 @@ struct OpenArgs {
   // auto-layout canvas aspect.
   int video_width_hint = 0;
   int video_height_hint = 0;
+  // Audio separation (design D9): the mic / system sidecar paths from the
+  // project reader (existence-gated there; empty = absent). The engine runs
+  // the decode probe once at Open and, when either passes, the edited-path
+  // renderer goes dual-pump with mic-only gain — the premix in screen.mov
+  // stays the fallback (and the uncut passthrough MediaPlayer's source).
+  std::wstring mic_audio_path;
+  std::wstring system_audio_path;
 };
 
 struct OpenResult {

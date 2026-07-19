@@ -80,7 +80,15 @@ std::int64_t PreviewAudioRenderer::PlanEndEditedFrame(
 
 class PreviewAudioRenderer::Impl {
  public:
-  bool Open(const std::wstring& source_path,
+  // One decoded input track. Legacy premix sessions have exactly one spec
+  // (flagged is_mic so it rides the merge's always-present slot);
+  // separated sessions (D9) have one per decodable sidecar.
+  struct TrackSpec {
+    std::wstring path;
+    bool is_mic = false;  // selects the separated stage + the merge slot
+  };
+
+  bool Open(std::vector<TrackSpec> specs, bool separated,
             const std::vector<exp::clip_planner::AudioSlot>& slots);
   void Close();
 
@@ -88,6 +96,7 @@ class PreviewAudioRenderer::Impl {
   void Pause();
   void SetSlots(const std::vector<exp::clip_planner::AudioSlot>& slots);
   void SetGainStages(const exp::AudioGainStages& stages);
+  void SetSeparatedGainStages(const exp::SeparatedAudioStages& stages);
   std::int64_t PositionEditedMs() const {
     return FramesToMs(position_edited_frame_.load(std::memory_order_relaxed));
   }
@@ -106,15 +115,22 @@ class PreviewAudioRenderer::Impl {
   // Refill the device buffer (clamped to the plan's real content so the
   // padding genuinely drains at EOS). Returns false on a device failure.
   bool FillDeviceBuffer(std::uint64_t epoch);
-  // Ensure the FIFO holds at least `frames` frames, decoding via the pump;
-  // silence inside the plan comes from the pump's own silence-fill, and any
-  // decode shortfall is padded so the write below never blocks.
+  // Ensure the FIFO holds at least `frames` frames, decoding via the
+  // pump(s); silence inside the plan comes from the pump's own
+  // silence-fill, and any decode shortfall is padded so the write below
+  // never blocks. Separated sessions decode BOTH tracks to the same limit
+  // and move the merge-ready (min-prefix) summed frames into the FIFO.
   void TopUpFifo(std::int64_t frames);
   void PublishPosition(std::uint64_t epoch, std::uint32_t padding_frames);
   void ReportRenderError(HRESULT hr);
+  // (Re)build one pump per track spec from `slots` and reset the merge to
+  // the LIVE tracks (a track whose pump failed must not gate readiness).
+  // Render-thread-only after Open. Returns true when any pump is alive.
+  bool RebuildPumps(const std::vector<exp::clip_planner::AudioSlot>& slots);
 
   // --- Set once in Open, immutable afterwards -------------------------------
-  std::wstring source_path_;
+  std::vector<TrackSpec> track_specs_;
+  bool separated_ = false;
   ComPtr<IAudioClient> client_;
   ComPtr<IAudioRenderClient> render_client_;
   UINT32 buffer_frames_ = 0;
@@ -126,6 +142,8 @@ class PreviewAudioRenderer::Impl {
   // --- Guarded by mutex_ (brief holds ONLY — never across decode/WASAPI) ---
   std::mutex mutex_;
   exp::AudioGainStages stages_{};
+  // Separated live mix (D9): the per-track pair, used when separated_.
+  exp::SeparatedAudioStages separated_stages_{};
   Command command_ = Command::kNone;
   std::int64_t command_start_frame_ = 0;
   // Clip edits defer the pump rebuild to the next Play transition, which
@@ -136,7 +154,13 @@ class PreviewAudioRenderer::Impl {
 
   // --- Render-thread-only streaming state (no locks; Open runs before the
   // --- thread starts, Close joins before touching them) ---------------------
-  std::unique_ptr<exp::ReorderAudioPump> pump_;
+  // Parallel to track_specs_; a failed create leaves a null slot (the track
+  // drops — export soft-fail parity).
+  std::vector<std::unique_ptr<exp::ReorderAudioPump>> pumps_;
+  // The min-prefix merge across the LIVE tracks (single-track sessions pass
+  // through). Reconstructed by RebuildPumps and on every re-prime so no
+  // stale skew survives a seek.
+  std::optional<exp::SeparatedAudioMerge> merge_;
   std::deque<std::int16_t> fifo_;
   std::int64_t plan_end_frame_ = 0;
   std::int64_t base_edited_frame_ = 0;
@@ -154,15 +178,38 @@ class PreviewAudioRenderer::Impl {
   std::function<void(HRESULT)> on_render_error_;
 };
 
-bool PreviewAudioRenderer::Impl::Open(
-    const std::wstring& source_path,
+bool PreviewAudioRenderer::Impl::RebuildPumps(
     const std::vector<exp::clip_planner::AudioSlot>& slots) {
-  source_path_ = source_path;
   // Identity stages at the pump — the live mix is applied at the FIFO fill
   // site instead (SetGainStages affects only future samples, D6).
-  pump_ = exp::ReorderAudioPump::Create(source_path, slots, kSampleRateHz,
-                                        kChannels, exp::AudioGainStages{});
-  if (pump_ == nullptr) {
+  pumps_.clear();
+  bool mic_live = false;
+  bool system_live = false;
+  for (const auto& spec : track_specs_) {
+    auto pump = exp::ReorderAudioPump::Create(spec.path, slots, kSampleRateHz,
+                                              kChannels,
+                                              exp::AudioGainStages{});
+    if (pump != nullptr) {
+      (spec.is_mic ? mic_live : system_live) = true;
+    }
+    pumps_.push_back(std::move(pump));
+  }
+  if (!mic_live && !system_live) {
+    merge_.reset();
+    return false;
+  }
+  // The merge gates on the LIVE tracks only — a dropped track must not
+  // stall readiness at zero forever.
+  merge_.emplace(mic_live, system_live, kChannels);
+  return true;
+}
+
+bool PreviewAudioRenderer::Impl::Open(
+    std::vector<TrackSpec> specs, bool separated,
+    const std::vector<exp::clip_planner::AudioSlot>& slots) {
+  track_specs_ = std::move(specs);
+  separated_ = separated;
+  if (!RebuildPumps(slots)) {
     return false;  // no audio track / reader failure — soft-fail (D7)
   }
   plan_end_frame_ = PlanEndEditedFrame(slots);
@@ -250,7 +297,8 @@ void PreviewAudioRenderer::Impl::Close() {
   }
   render_client_.Reset();
   client_.Reset();
-  pump_.reset();  // render thread joined — safe without a lock
+  pumps_.clear();  // render thread joined — safe without a lock
+  merge_.reset();
 }
 
 void PreviewAudioRenderer::Impl::Play(std::int64_t edited_ms) {
@@ -302,6 +350,12 @@ void PreviewAudioRenderer::Impl::SetGainStages(
   stages_ = stages;
 }
 
+void PreviewAudioRenderer::Impl::SetSeparatedGainStages(
+    const exp::SeparatedAudioStages& stages) {
+  std::lock_guard<std::mutex> lock(mutex_);
+  separated_stages_ = stages;
+}
+
 void PreviewAudioRenderer::Impl::TopUpFifo(std::int64_t frames) {
   const std::size_t want_samples =
       static_cast<std::size_t>(frames) * kChannels;
@@ -313,25 +367,46 @@ void PreviewAudioRenderer::Impl::TopUpFifo(std::int64_t frames) {
   const std::int64_t limit_frame =
       base_edited_frame_ + static_cast<std::int64_t>(submitted_frames_) +
       frames;
-  if (pump_ != nullptr && !pump_->done()) {
-    exp::AudioGainStages stages;
-    {
-      std::lock_guard<std::mutex> lock(mutex_);
-      stages = stages_;
+  exp::AudioGainStages legacy_stages;
+  exp::SeparatedAudioStages pair;
+  {
+    std::lock_guard<std::mutex> lock(mutex_);
+    legacy_stages = stages_;
+    pair = separated_stages_;
+  }
+  // Decode every live track to the SAME limit; per-track stages apply at
+  // the fill site (D6 — future samples only). Both pumps run the same plan
+  // so their totals agree at every limit; the merge FIFOs absorb packet-
+  // boundary skew and release only the min-prefix, summed (D9).
+  for (std::size_t i = 0; i < pumps_.size(); ++i) {
+    auto* pump = pumps_[i].get();
+    if (pump == nullptr || pump->done()) {
+      continue;
     }
-    pump_->PumpUpTo(
+    const bool is_mic = track_specs_[i].is_mic;
+    const exp::AudioGainStages& stages =
+        separated_ ? (is_mic ? pair.mic : pair.system) : legacy_stages;
+    pump->PumpUpTo(
         limit_frame,
-        [this, &stages](clingfy::audio::MixedPacket&& packet,
-                        std::int64_t /*edited_frame*/)
+        [this, &stages, is_mic](clingfy::audio::MixedPacket&& packet,
+                                std::int64_t /*edited_frame*/)
             -> std::optional<clingfy::encoding::EncoderError> {
           // Live mix at the fill site (D6) — the export's exact two-stage
           // clamp semantics, applied only to samples decoded from now on.
           exp::ApplyAudioGain(packet.samples.data(), packet.samples.size(),
                               stages);
-          fifo_.insert(fifo_.end(), packet.samples.begin(),
-                       packet.samples.end());
+          if (is_mic) {
+            merge_->AppendMic(packet.samples.data(), packet.frame_count);
+          } else {
+            merge_->AppendSystem(packet.samples.data(), packet.frame_count);
+          }
           return std::nullopt;
         });
+  }
+  if (merge_.has_value() && merge_->ReadyFrames() > 0) {
+    std::vector<std::int16_t> merged;
+    merge_->PopMerged(merge_->ReadyFrames(), merged);
+    fifo_.insert(fifo_.end(), merged.begin(), merged.end());
   }
   if (fifo_.size() < want_samples) {
     // Decode shortfall (pump exhausted or cannot advance): pad so the write
@@ -416,16 +491,21 @@ void PreviewAudioRenderer::Impl::HandleStartAt(std::int64_t start_frame) {
     }
   }
   if (rebuild) {
-    pump_ = exp::ReorderAudioPump::Create(source_path_, slots, kSampleRateHz,
-                                          kChannels, exp::AudioGainStages{});
-    // nullptr (e.g. empty slots) leaves this session audio-less: the plan
-    // end collapses to the start, so the stream drains immediately and
+    // No live pump (e.g. empty slots) leaves this session audio-less: the
+    // plan end collapses to the start, so the stream drains immediately and
     // playing() flips false (D7 silent-video behavior).
-    plan_end_frame_ = pump_ != nullptr ? PlanEndEditedFrame(slots) : 0;
+    plan_end_frame_ = RebuildPumps(slots) ? PlanEndEditedFrame(slots) : 0;
+  } else if (merge_.has_value()) {
+    // Re-prime without a rebuild: drop EVERYTHING buffered in the merge —
+    // including the unmatched skew PopMerged never releases — so no stale
+    // pre-seek sample can be summed against post-seek data.
+    merge_->Clear();
   }
   fifo_.clear();
-  if (pump_ != nullptr) {
-    pump_->PrimeAtEditedFrame(start_frame);
+  for (auto& pump : pumps_) {
+    if (pump != nullptr) {
+      pump->PrimeAtEditedFrame(start_frame);
+    }
   }
   base_edited_frame_ = start_frame;
   submitted_frames_ = 0;
@@ -528,9 +608,35 @@ PreviewAudioRenderer::~PreviewAudioRenderer() = default;
 std::unique_ptr<PreviewAudioRenderer> PreviewAudioRenderer::Open(
     const std::wstring& source_path,
     const std::vector<capture::export_::clip_planner::AudioSlot>& slots) {
+  if (source_path.empty()) {
+    return nullptr;
+  }
   auto renderer =
       std::unique_ptr<PreviewAudioRenderer>(new PreviewAudioRenderer());
-  if (!renderer->impl_->Open(source_path, slots)) {
+  // The single premix track rides the merge's mic slot (pass-through).
+  if (!renderer->impl_->Open({{source_path, /*is_mic=*/true}},
+                             /*separated=*/false, slots)) {
+    return nullptr;
+  }
+  return renderer;
+}
+
+std::unique_ptr<PreviewAudioRenderer> PreviewAudioRenderer::OpenSeparated(
+    const std::wstring& mic_path, const std::wstring& system_path,
+    const std::vector<capture::export_::clip_planner::AudioSlot>& slots) {
+  std::vector<Impl::TrackSpec> specs;
+  if (!mic_path.empty()) {
+    specs.push_back({mic_path, /*is_mic=*/true});
+  }
+  if (!system_path.empty()) {
+    specs.push_back({system_path, /*is_mic=*/false});
+  }
+  if (specs.empty()) {
+    return nullptr;
+  }
+  auto renderer =
+      std::unique_ptr<PreviewAudioRenderer>(new PreviewAudioRenderer());
+  if (!renderer->impl_->Open(std::move(specs), /*separated=*/true, slots)) {
     return nullptr;
   }
   return renderer;
@@ -550,6 +656,11 @@ void PreviewAudioRenderer::SetSlots(
 void PreviewAudioRenderer::SetGainStages(
     const capture::export_::AudioGainStages& stages) {
   impl_->SetGainStages(stages);
+}
+
+void PreviewAudioRenderer::SetSeparatedGainStages(
+    const capture::export_::SeparatedAudioStages& stages) {
+  impl_->SetSeparatedGainStages(stages);
 }
 
 std::int64_t PreviewAudioRenderer::PositionEditedMs() const {

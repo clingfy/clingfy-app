@@ -2,12 +2,15 @@
 
 #include <gtest/gtest.h>
 
+#include <cstdint>
 #include <filesystem>
 #include <fstream>
 #include <string>
+#include <vector>
 
 #include <flutter/encodable_value.h>
 
+#include "Encoding/audio_sidecar_writer.h"
 #include "test_support.h"
 
 namespace clingfy::bridge {
@@ -294,6 +297,207 @@ TEST_F(PreviewRouterSceneInfoTest, HappyPathWithoutCamera) {
   EXPECT_TRUE(cap("border"));
   EXPECT_TRUE(cap("shadow"));
   EXPECT_TRUE(cap("chromaKey"));
+
+  // Audio separation (D10): no sidecars → the legacy-metadata fallback.
+  // This bundle's meta has no micActive/loopbackActive/audioSamplesWritten
+  // (defaults false/0 — no audio was captured), so both keys are explicit
+  // false.
+  ASSERT_NE(find("hasMicAudio"), nullptr);
+  ASSERT_TRUE(std::holds_alternative<bool>(*find("hasMicAudio")));
+  EXPECT_FALSE(std::get<bool>(*find("hasMicAudio")));
+  ASSERT_NE(find("hasSystemAudio"), nullptr);
+  ASSERT_TRUE(std::holds_alternative<bool>(*find("hasSystemAudio")));
+  EXPECT_FALSE(std::get<bool>(*find("hasSystemAudio")));
+}
+
+TEST_F(PreviewRouterSceneInfoTest, LegacyPremixRecordingReportsMetadataAudio) {
+  // Sidecar-less (pre-separation) recording whose premix carried mic
+  // audio: the D10 keys must come from screen.meta.json — reporting false
+  // here would disable gain/volume sliders that WORK on the premix.
+  MethodRouter router;
+  const fs::path root = MakeMinimalBundle(base_, "legacy-premix");
+  {
+    std::ofstream out(root / "capture" / "screen.meta.json",
+                      std::ios::binary);
+    out << R"({
+  "width": 1920,
+  "height": 1080,
+  "fps": 60,
+  "audioSamplesWritten": 480000,
+  "micActive": true,
+  "loopbackActive": false,
+  "platform": "windows"
+}
+)";
+  }
+
+  const auto reply = DispatchWithArgs(router, "getRecordingSceneInfo",
+                                      Args(PathToUtf8(root)));
+  ASSERT_TRUE(reply.success_called);
+  const auto& map = std::get<flutter::EncodableMap>(reply.success_value);
+  auto get_bool = [&](const char* key) {
+    auto it = map.find(flutter::EncodableValue(key));
+    EXPECT_NE(it, map.end()) << key;
+    return it != map.end() && std::holds_alternative<bool>(it->second) &&
+           std::get<bool>(it->second);
+  };
+  EXPECT_TRUE(get_bool("hasMicAudio"));
+  EXPECT_FALSE(get_bool("hasSystemAudio"));
+  // Whole-track gain works on any legacy premix audio.
+  EXPECT_TRUE(get_bool("micGainApplies"));
+}
+
+TEST_F(PreviewRouterSceneInfoTest,
+       LegacyLoopbackOnlyPremixStillHasWorkingGain) {
+  // Legacy premix with ONLY system audio: whole-track gain (and normalize)
+  // genuinely amplify the premix, so micGainApplies must be true even
+  // though the mic never recorded — unlike the separated case, where gain
+  // is mic-only and inert.
+  MethodRouter router;
+  const fs::path root = MakeMinimalBundle(base_, "legacy-loopback");
+  {
+    std::ofstream out(root / "capture" / "screen.meta.json",
+                      std::ios::binary);
+    out << R"({
+  "width": 1920,
+  "height": 1080,
+  "fps": 60,
+  "audioSamplesWritten": 480000,
+  "micActive": false,
+  "loopbackActive": true,
+  "platform": "windows"
+}
+)";
+  }
+  const auto reply = DispatchWithArgs(router, "getRecordingSceneInfo",
+                                      Args(PathToUtf8(root)));
+  ASSERT_TRUE(reply.success_called);
+  const auto& map = std::get<flutter::EncodableMap>(reply.success_value);
+  auto get_bool = [&](const char* key) {
+    auto it = map.find(flutter::EncodableValue(key));
+    EXPECT_NE(it, map.end()) << key;
+    return it != map.end() && std::holds_alternative<bool>(it->second) &&
+           std::get<bool>(it->second);
+  };
+  EXPECT_FALSE(get_bool("hasMicAudio"));
+  EXPECT_TRUE(get_bool("hasSystemAudio"));
+  EXPECT_TRUE(get_bool("micGainApplies"));
+}
+
+TEST_F(PreviewRouterSceneInfoTest, MacBundleMetadataOmitsAudioKeys) {
+  // A macOS bundle's screen.meta.json has a different shape — its
+  // micActive/audioSamplesWritten parse to defaults here, so gating on
+  // them would report false/false and disable sliders that WORK on the mac
+  // premix. The keys must be OMITTED (Dart falls back to its legacy device
+  // gate) whenever the metadata isn't Windows-authored.
+  MethodRouter router;
+  const fs::path root = MakeMinimalBundle(base_, "mac-bundle");
+  {
+    std::ofstream out(root / "capture" / "screen.meta.json",
+                      std::ios::binary);
+    out << R"({
+  "width": 1920,
+  "height": 1080,
+  "fps": 60,
+  "platform": "macos"
+}
+)";
+  }
+  const auto reply = DispatchWithArgs(router, "getRecordingSceneInfo",
+                                      Args(PathToUtf8(root)));
+  ASSERT_TRUE(reply.success_called);
+  const auto& map = std::get<flutter::EncodableMap>(reply.success_value);
+  EXPECT_EQ(map.find(flutter::EncodableValue("hasMicAudio")), map.end());
+  EXPECT_EQ(map.find(flutter::EncodableValue("hasSystemAudio")), map.end());
+  EXPECT_EQ(map.find(flutter::EncodableValue("micGainApplies")), map.end());
+}
+
+TEST_F(PreviewRouterSceneInfoTest, DecodableSystemSidecarDisablesMicGain) {
+  // SEPARATED recording with only a system sidecar: audio is present
+  // (volume works) but gain/normalize are mic-only and inert — the reply
+  // must say hasSystemAudio=true, micGainApplies=false so the sidebar
+  // disables the gain row instead of promising an effect the pipeline
+  // ignores. Uses a REAL AAC sidecar via the recorder's own writer.
+  MethodRouter router;
+  const fs::path root = MakeMinimalBundle(base_, "sep-system-only");
+  {
+    std::ofstream manifest(root / "project.json", std::ios::binary);
+    manifest << R"({
+  "schemaVersion": 2,
+  "projectId": "sep-system-only",
+  "status": "ready",
+  "capture": {
+    "screenVideo": "capture/screen.mov",
+    "screenMetadata": "capture/screen.meta.json",
+    "systemAudio": "capture/system.m4a"
+  }
+})";
+  }
+  {
+    clingfy::encoding::AudioSidecarWriter writer;
+    const fs::path tmp = root / "capture" / "system.tmp.mp4";
+    if (auto err = writer.Open(tmp.string())) {
+      GTEST_SKIP() << "AAC sink writer unavailable: " << err->message;
+    }
+    std::vector<std::int16_t> packet(480 * 2, 900);
+    std::int64_t ts = 0;
+    for (int i = 0; i < 10; ++i) {
+      ASSERT_FALSE(writer.WriteSamples(packet.data(), 480, ts).has_value());
+      ts += 100'000;
+    }
+    ASSERT_FALSE(writer.Finalize().has_value());
+    std::error_code mv_ec;
+    fs::rename(tmp, root / "capture" / "system.m4a", mv_ec);
+    ASSERT_FALSE(mv_ec) << mv_ec.message();
+  }
+
+  const auto reply = DispatchWithArgs(router, "getRecordingSceneInfo",
+                                      Args(PathToUtf8(root)));
+  ASSERT_TRUE(reply.success_called);
+  const auto& map = std::get<flutter::EncodableMap>(reply.success_value);
+  auto get_bool = [&](const char* key) {
+    auto it = map.find(flutter::EncodableValue(key));
+    EXPECT_NE(it, map.end()) << key;
+    return it != map.end() && std::holds_alternative<bool>(it->second) &&
+           std::get<bool>(it->second);
+  };
+  EXPECT_FALSE(get_bool("hasMicAudio"));
+  EXPECT_TRUE(get_bool("hasSystemAudio"));
+  EXPECT_FALSE(get_bool("micGainApplies"));
+}
+
+TEST_F(PreviewRouterSceneInfoTest, UndecodableSidecarReportsNoMicAudio) {
+  // The manifest names a mic sidecar and the file EXISTS, but it's junk —
+  // the D10 keys ride the decode probe, not bare existence, so the reply
+  // must still say false (the sidebar must not enable a gain slider the
+  // export would ignore).
+  MethodRouter router;
+  const fs::path root = MakeMinimalBundle(base_, "junk-mic");
+  {
+    std::ofstream manifest(root / "project.json", std::ios::binary);
+    manifest << R"({
+  "schemaVersion": 2,
+  "projectId": "junk-mic",
+  "status": "ready",
+  "capture": {
+    "screenVideo": "capture/screen.mov",
+    "screenMetadata": "capture/screen.meta.json",
+    "micAudio": "capture/mic.m4a"
+  }
+})";
+  }
+  {
+    std::ofstream mic(root / "capture" / "mic.m4a", std::ios::binary);
+    mic << "not an mpeg-4 container";
+  }
+
+  const auto reply = DispatchWithArgs(router, "getRecordingSceneInfo",
+                                      Args(PathToUtf8(root)));
+  ASSERT_TRUE(reply.success_called);
+  const auto& map = std::get<flutter::EncodableMap>(reply.success_value);
+  auto it = map.find(flutter::EncodableValue("hasMicAudio"));
+  ASSERT_NE(it, map.end());
+  EXPECT_FALSE(std::get<bool>(it->second));
 }
 
 TEST_F(PreviewRouterSceneInfoTest, HappyPathWithCameraEmitsCameraPath) {

@@ -489,6 +489,9 @@ class RecordingSceneInfo {
     this.camera,
     this.cameraExportCapabilities =
         const CameraExportCapabilities.allSupported(),
+    this.hasMicAudio,
+    this.hasSystemAudio,
+    this.micGainApplies,
   });
 
   final String projectPath;
@@ -498,7 +501,27 @@ class RecordingSceneInfo {
   final CameraCompositionState? camera;
   final CameraExportCapabilities cameraExportCapabilities;
 
+  /// Audio separation (Windows D10): whether the recording carries a
+  /// DECODABLE mic / system sidecar track. Null when the platform doesn't
+  /// report it (macOS today) — callers fall back to their legacy gate.
+  final bool? hasMicAudio;
+  final bool? hasSystemAudio;
+
+  /// Whether the gain/normalize controls will have an audible effect:
+  /// separated recordings need a decodable mic track (gain is mic-only);
+  /// legacy premix recordings need any premix audio (whole-track gain).
+  /// Null when the platform doesn't report it — callers fall back to their
+  /// combined audio-presence gate.
+  final bool? micGainApplies;
+
   bool get hasCameraAsset => cameraPath != null && cameraPath!.isNotEmpty;
+
+  /// Tri-state audio presence: true/false when the platform reported the
+  /// sidecar keys, null (unknown) when it didn't.
+  bool? get hasRecordedAudio {
+    if (hasMicAudio == null && hasSystemAudio == null) return null;
+    return (hasMicAudio ?? false) || (hasSystemAudio ?? false);
+  }
 
   factory RecordingSceneInfo.fromMap(Map<dynamic, dynamic> raw) {
     return RecordingSceneInfo(
@@ -514,6 +537,15 @@ class RecordingSceneInfo {
               raw['cameraExportCapabilities'] as Map,
             )
           : const CameraExportCapabilities.allSupported(),
+      hasMicAudio: raw['hasMicAudio'] is bool
+          ? raw['hasMicAudio'] as bool
+          : null,
+      hasSystemAudio: raw['hasSystemAudio'] is bool
+          ? raw['hasSystemAudio'] as bool
+          : null,
+      micGainApplies: raw['micGainApplies'] is bool
+          ? raw['micGainApplies'] as bool
+          : null,
     );
   }
 }
