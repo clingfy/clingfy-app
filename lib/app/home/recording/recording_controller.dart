@@ -3,6 +3,8 @@ import 'dart:math';
 
 import 'package:flutter/foundation.dart';
 import 'package:flutter/services.dart';
+import 'package:clingfy/app/infrastructure/analytics/analytics_events.dart';
+import 'package:clingfy/app/infrastructure/analytics/analytics_service.dart';
 import 'package:clingfy/app/home/recording/recorded_duration_tracker.dart';
 import 'package:clingfy/core/permissions/models/recording_start_preflight.dart';
 import 'package:clingfy/core/bridges/native_bridge.dart';
@@ -949,6 +951,13 @@ class RecordingController extends ChangeNotifier {
         recordingId: eventSessionId,
       ),
     );
+    ClingfyAnalytics.capture(
+      AnalyticsEvents.recordingSessionStart,
+      properties: {
+        'fps': _settings.recording.captureFrameRate,
+        'system_audio': _settings.recording.systemAudioEnabled,
+      },
+    );
   }
 
   void _handleRecordingPausedEvent(Map<String, dynamic> event) {
@@ -1049,6 +1058,10 @@ class RecordingController extends ChangeNotifier {
       sessionId: eventSessionId,
     );
     unawaited(ClingfyTelemetry.stopSession());
+    ClingfyAnalytics.capture(
+      AnalyticsEvents.recordingSessionComplete,
+      properties: {'duration_seconds': _elapsed.inSeconds},
+    );
   }
 
   void _handleRecordingFailedEvent(Map<String, dynamic> event) {
@@ -1111,6 +1124,17 @@ class RecordingController extends ChangeNotifier {
     // captures that to Sentry — capturing here too double-reported every
     // failed start. Mid-recording/finalize failures arrive only as events,
     // so those still capture here.
+    // One failure = one analytics event, whichever surface reports it first (the method catch
+    // does NOT capture analytics, so no double-count here — unlike the Sentry split below).
+    ClingfyAnalytics.capture(
+      AnalyticsEvents.recordingSessionFail,
+      properties: {
+        'stage': phase == WorkflowPhase.startingRecording
+            ? 'start'
+            : 'recording',
+        'error_code': code,
+      },
+    );
     final isStartFailureOwnedByMethodCatch =
         phase == WorkflowPhase.startingRecording && _startCommandIssued;
     if (!isStartFailureOwnedByMethodCatch) {

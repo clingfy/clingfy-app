@@ -1839,6 +1839,13 @@ class AppLocalizationsEn extends AppLocalizations {
       'Record detailed debug logs to help reproduce a hard-to-find issue. Turn it on, reproduce the problem, then export diagnostics and send the files. Leave it off for everyday use.';
 
   @override
+  String get diagnosticsShareAnalytics => 'Share anonymous usage analytics';
+
+  @override
+  String get diagnosticsShareAnalyticsHelp =>
+      'Help improve Clingfy by sharing feature usage and reliability data. Never includes recordings, filenames, audio, video, or transcripts.';
+
+  @override
   String get openLogsFolder => 'Open Logs Folder';
 
   @override

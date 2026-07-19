@@ -1,6 +1,8 @@
 import 'dart:async';
 import 'dart:math' as math;
 
+import 'package:clingfy/app/infrastructure/analytics/analytics_events.dart';
+import 'package:clingfy/app/infrastructure/analytics/analytics_service.dart';
 import 'package:clingfy/commercial/licensing/license_controller.dart';
 import 'package:clingfy/l10n/app_localizations.dart';
 import 'package:clingfy/commercial/licensing/models/license_plan.dart';
@@ -45,6 +47,10 @@ class _LicenseSettingsSectionState extends State<LicenseSettingsSection> {
   }
 
   Future<bool?> _openPaywall() {
+    ClingfyAnalytics.capture(
+      AnalyticsEvents.billingPaywallView,
+      properties: {'reason': 'settings'},
+    );
     final launcher = widget.paywallLauncher;
     if (launcher != null) {
       return launcher(context);

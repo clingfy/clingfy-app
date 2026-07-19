@@ -82,6 +82,19 @@ class _DiagnosticsSettingsSectionState
                 ),
               ),
               const SizedBox(height: 12),
+              ListenableBuilder(
+                listenable: widget.controller.workspace,
+                builder: (context, _) => AppToggleRow(
+                  key: const Key('diagnostics_share_analytics_toggle'),
+                  title: l10n.diagnosticsShareAnalytics,
+                  helperText: l10n.diagnosticsShareAnalyticsHelp,
+                  value: widget.controller.workspace.shareUsageAnalytics,
+                  onChanged: (value) => unawaited(
+                    widget.controller.workspace.setShareUsageAnalytics(value),
+                  ),
+                ),
+              ),
+              const SizedBox(height: 12),
               Wrap(
                 spacing: 8,
                 runSpacing: 8,

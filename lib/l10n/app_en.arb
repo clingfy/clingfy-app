@@ -628,6 +628,8 @@
   "diagnosticsHelpText": "If something goes wrong, open the logs folder and send today's log file to support.",
   "diagnosticsVerboseLogging": "Verbose logging",
   "diagnosticsVerboseLoggingHelp": "Record detailed debug logs to help reproduce a hard-to-find issue. Turn it on, reproduce the problem, then export diagnostics and send the files. Leave it off for everyday use.",
+  "diagnosticsShareAnalytics": "Share anonymous usage analytics",
+  "diagnosticsShareAnalyticsHelp": "Help improve Clingfy by sharing feature usage and reliability data. Never includes recordings, filenames, audio, video, or transcripts.",
   "openLogsFolder": "Open Logs Folder",
   "revealTodayLog": "Reveal Today's Log File",
   "copyLogPath": "Copy Path",

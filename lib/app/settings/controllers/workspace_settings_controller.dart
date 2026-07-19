@@ -6,6 +6,7 @@ import 'package:package_info_plus/package_info_plus.dart';
 import 'package:path_provider/path_provider.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
+import 'package:clingfy/app/infrastructure/analytics/analytics_service.dart';
 import 'package:clingfy/app/infrastructure/diagnostics/diagnostics_package_service.dart';
 import 'package:clingfy/core/logging/logger_service.dart';
 import 'package:clingfy/core/bridges/native_bridge.dart';
@@ -24,12 +25,14 @@ class WorkspaceSettingsController extends ChangeNotifier {
   static const String _prefShowPreRecordingActionBar =
       'showPreRecordingActionBar';
   static const String _prefVerboseLogging = 'verboseLogging';
+  static const String _prefShareUsageAnalytics = 'shareUsageAnalytics';
 
   bool _openFolderAfterStop = false;
   bool _openFolderAfterExport = true;
   bool _warnBeforeClosingUnexportedRecording = true;
   bool _showPreRecordingActionBar = true;
   bool _verboseLogging = false;
+  bool _shareUsageAnalytics = true;
   String? _saveFolderPath;
   bool _didAutoOpenSaveFolderThisSession = false;
 
@@ -44,6 +47,11 @@ class WorkspaceSettingsController extends ChangeNotifier {
   /// a custom build. Persisted; the env var [Log.logLevelEnvVar] is the other
   /// way to enable it.
   bool get verboseLogging => _verboseLogging;
+
+  /// Anonymous usage analytics (PostHog). Structure-only events — never recordings, filenames,
+  /// audio, video, or transcripts. Enforced in [ClingfyAnalytics]; this is the user-facing off
+  /// switch (and how the founder's own installs stay out of the numbers).
+  bool get shareUsageAnalytics => _shareUsageAnalytics;
   String? get saveFolderPath => _saveFolderPath;
 
   Future<void> loadPreferences(SharedPreferences prefs) async {
@@ -54,6 +62,7 @@ class WorkspaceSettingsController extends ChangeNotifier {
     _showPreRecordingActionBar =
         prefs.getBool(_prefShowPreRecordingActionBar) ?? true;
     _verboseLogging = prefs.getBool(_prefVerboseLogging) ?? false;
+    _shareUsageAnalytics = prefs.getBool(_prefShareUsageAnalytics) ?? true;
     // Only force verbose here: when off we leave the level resolved at startup
     // (which already honors the env var / build default) untouched.
     if (_verboseLogging) {
@@ -90,6 +99,21 @@ class WorkspaceSettingsController extends ChangeNotifier {
     }
 
     await _applyLogVerbosity(value);
+  }
+
+  Future<void> setShareUsageAnalytics(bool value) async {
+    if (value == _shareUsageAnalytics) return;
+    _shareUsageAnalytics = value;
+    notifyListeners();
+
+    final prefs = await SharedPreferences.getInstance();
+    try {
+      await prefs.setBool(_prefShareUsageAnalytics, value);
+    } catch (e, st) {
+      Log.e('Settings', 'Failed to persist analytics preference', e, st);
+    }
+
+    ClingfyAnalytics.setEnabled(value);
   }
 
   Future<void> _cacheSaveFolderPath(String? path) async {
