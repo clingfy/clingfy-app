@@ -294,6 +294,86 @@ TEST_F(PreviewRouterSceneInfoTest, HappyPathWithoutCamera) {
   EXPECT_TRUE(cap("border"));
   EXPECT_TRUE(cap("shadow"));
   EXPECT_TRUE(cap("chromaKey"));
+
+  // Audio separation (D10): no sidecars → the legacy-metadata fallback.
+  // This bundle's meta has no micActive/loopbackActive/audioSamplesWritten
+  // (defaults false/0 — no audio was captured), so both keys are explicit
+  // false.
+  ASSERT_NE(find("hasMicAudio"), nullptr);
+  ASSERT_TRUE(std::holds_alternative<bool>(*find("hasMicAudio")));
+  EXPECT_FALSE(std::get<bool>(*find("hasMicAudio")));
+  ASSERT_NE(find("hasSystemAudio"), nullptr);
+  ASSERT_TRUE(std::holds_alternative<bool>(*find("hasSystemAudio")));
+  EXPECT_FALSE(std::get<bool>(*find("hasSystemAudio")));
+}
+
+TEST_F(PreviewRouterSceneInfoTest, LegacyPremixRecordingReportsMetadataAudio) {
+  // Sidecar-less (pre-separation) recording whose premix carried mic
+  // audio: the D10 keys must come from screen.meta.json — reporting false
+  // here would disable gain/volume sliders that WORK on the premix.
+  MethodRouter router;
+  const fs::path root = MakeMinimalBundle(base_, "legacy-premix");
+  {
+    std::ofstream out(root / "capture" / "screen.meta.json",
+                      std::ios::binary);
+    out << R"({
+  "width": 1920,
+  "height": 1080,
+  "fps": 60,
+  "audioSamplesWritten": 480000,
+  "micActive": true,
+  "loopbackActive": false,
+  "platform": "windows"
+}
+)";
+  }
+
+  const auto reply = DispatchWithArgs(router, "getRecordingSceneInfo",
+                                      Args(PathToUtf8(root)));
+  ASSERT_TRUE(reply.success_called);
+  const auto& map = std::get<flutter::EncodableMap>(reply.success_value);
+  auto get_bool = [&](const char* key) {
+    auto it = map.find(flutter::EncodableValue(key));
+    EXPECT_NE(it, map.end()) << key;
+    return it != map.end() && std::holds_alternative<bool>(it->second) &&
+           std::get<bool>(it->second);
+  };
+  EXPECT_TRUE(get_bool("hasMicAudio"));
+  EXPECT_FALSE(get_bool("hasSystemAudio"));
+}
+
+TEST_F(PreviewRouterSceneInfoTest, UndecodableSidecarReportsNoMicAudio) {
+  // The manifest names a mic sidecar and the file EXISTS, but it's junk —
+  // the D10 keys ride the decode probe, not bare existence, so the reply
+  // must still say false (the sidebar must not enable a gain slider the
+  // export would ignore).
+  MethodRouter router;
+  const fs::path root = MakeMinimalBundle(base_, "junk-mic");
+  {
+    std::ofstream manifest(root / "project.json", std::ios::binary);
+    manifest << R"({
+  "schemaVersion": 2,
+  "projectId": "junk-mic",
+  "status": "ready",
+  "capture": {
+    "screenVideo": "capture/screen.mov",
+    "screenMetadata": "capture/screen.meta.json",
+    "micAudio": "capture/mic.m4a"
+  }
+})";
+  }
+  {
+    std::ofstream mic(root / "capture" / "mic.m4a", std::ios::binary);
+    mic << "not an mpeg-4 container";
+  }
+
+  const auto reply = DispatchWithArgs(router, "getRecordingSceneInfo",
+                                      Args(PathToUtf8(root)));
+  ASSERT_TRUE(reply.success_called);
+  const auto& map = std::get<flutter::EncodableMap>(reply.success_value);
+  auto it = map.find(flutter::EncodableValue("hasMicAudio"));
+  ASSERT_NE(it, map.end());
+  EXPECT_FALSE(std::get<bool>(it->second));
 }
 
 TEST_F(PreviewRouterSceneInfoTest, HappyPathWithCameraEmitsCameraPath) {

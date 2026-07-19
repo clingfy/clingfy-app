@@ -13,6 +13,7 @@
 #include "Bridge/native_log_publisher.h"
 #include "Bridge/result_helpers.h"
 #include "Capture/Camera/camera_meta.h"
+#include "Capture/Export/audio_sidecar_probe.h"
 #include "Capture/recording_project_reader.h"
 #include "preview/preview_engine.h"
 
@@ -408,6 +409,35 @@ void HandleGetRecordingSceneInfo(
     out[flutter::EncodableValue("camera")] = flutter::EncodableValue(
         BuildCameraSceneBlock(*project.metadata->editor_seed));
   }
+  // Audio separation (D10): audio-presence keys so the post-processing
+  // sidebar can gate the gain/volume controls on what the RECORDING
+  // contains instead of the LIVE device selection. Separated recordings
+  // ride the SAME decode probe preview/export use; legacy (premix-only)
+  // recordings fall back to the capture-time truth in screen.meta.json —
+  // their whole-track gain/volume works whenever the premix carried audio,
+  // so sidecar-less must NOT read as "no audio" (that would disable
+  // sliders that work). No metadata either → keys omitted → Dart keeps its
+  // legacy device-selection gate (also the macOS shape today).
+  const bool mic_sidecar_ok =
+      project.mic_audio_path.has_value() &&
+      clingfy::capture::export_::ProbeDecodableAudio(*project.mic_audio_path);
+  const bool system_sidecar_ok =
+      project.system_audio_path.has_value() &&
+      clingfy::capture::export_::ProbeDecodableAudio(
+          *project.system_audio_path);
+  if (mic_sidecar_ok || system_sidecar_ok) {
+    out[flutter::EncodableValue("hasMicAudio")] =
+        flutter::EncodableValue(mic_sidecar_ok);
+    out[flutter::EncodableValue("hasSystemAudio")] =
+        flutter::EncodableValue(system_sidecar_ok);
+  } else if (project.metadata.has_value()) {
+    const bool premix_has_samples =
+        project.metadata->audio_samples_written > 0;
+    out[flutter::EncodableValue("hasMicAudio")] = flutter::EncodableValue(
+        premix_has_samples && project.metadata->mic_active);
+    out[flutter::EncodableValue("hasSystemAudio")] = flutter::EncodableValue(
+        premix_has_samples && project.metadata->loopback_active);
+  }
   reply::Map(*result, std::move(out));
 }
 
@@ -492,6 +522,15 @@ void HandlePreviewOpen(
   }
   if (read.project->cursor_path.has_value()) {
     open_args.cursor_path = *read.project->cursor_path;
+  }
+  // Audio separation (D9): hand the existence-gated sidecar paths to the
+  // engine, which runs the decode probe once at Open. Absent → empty →
+  // the edited preview keeps the premix whole-track path.
+  if (read.project->mic_audio_path.has_value()) {
+    open_args.mic_audio_path = *read.project->mic_audio_path;
+  }
+  if (read.project->system_audio_path.has_value()) {
+    open_args.system_audio_path = *read.project->system_audio_path;
   }
   // Phase 9.6: composite the camera in the preview ONLY when the project has a
   // usable, non-burned-in camera — raw.mov + camera.meta.json present-together

@@ -191,6 +191,11 @@ std::int64_t SeparatedAudioMerge::PopMerged(std::int64_t max_frames,
   return frames;
 }
 
+void SeparatedAudioMerge::Clear() {
+  mic_.clear();
+  system_.clear();
+}
+
 void ApplyAudioGain(std::int16_t* samples, std::size_t count,
                     const AudioGainStages& stages) {
   const bool apply_gain = std::abs(stages.gain - 1.0) >= kUnityEpsilon;

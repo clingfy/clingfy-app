@@ -114,6 +114,11 @@ class PostProcessingController extends ChangeNotifier {
   CameraCompositionState? _cameraState;
   CameraExportCapabilities _cameraExportCapabilities =
       const CameraExportCapabilities.allSupported();
+  // Audio separation (D10): whether the OPEN RECORDING contains audio, as
+  // reported by the platform's scene info (Windows probes the mic/system
+  // sidecars). Null = platform didn't report (macOS today) — the sidebar
+  // falls back to its legacy device-selection gate.
+  bool? _sceneHasAudio;
   final AudioDebouncer _audioPreviewDebouncer = AudioDebouncer(
     delay: Duration(milliseconds: 150),
   );
@@ -162,6 +167,7 @@ class PostProcessingController extends ChangeNotifier {
   CameraCompositionState? get cameraState => _cameraState;
   CameraExportCapabilities get cameraExportCapabilities =>
       _cameraExportCapabilities;
+  bool? get sceneHasAudio => _sceneHasAudio;
 
   // Computed error state
   bool get hasError => _player.blockingError != null;
@@ -759,6 +765,7 @@ class PostProcessingController extends ChangeNotifier {
     _cameraPath = null;
     _cameraState = null;
     _cameraExportCapabilities = const CameraExportCapabilities.allSupported();
+    _sceneHasAudio = null;
     _hasExportedCurrentRecording = false;
   }
 
@@ -771,6 +778,10 @@ class PostProcessingController extends ChangeNotifier {
       _cameraPath = sceneInfo.cameraPath;
       _cameraState = sceneInfo.camera;
       _cameraExportCapabilities = sceneInfo.cameraExportCapabilities;
+      // Audio separation (D10): what the RECORDING contains, when the
+      // platform reports it (Windows probes the sidecars). Null = unknown
+      // (macOS today) — the sidebar keeps its device-selection gate.
+      _sceneHasAudio = sceneInfo.hasRecordedAudio;
       // Restore persisted canvas appearance (padding / corner radius /
       // background / color grade) before the first preview render, so the
       // recording reopens exactly as it was last edited. Synchronous — keeps

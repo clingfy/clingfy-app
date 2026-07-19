@@ -89,5 +89,38 @@ TEST(PreviewAudioRendererOpenTest, EmptySlotsFailSoftly) {
             nullptr);
 }
 
+// Audio separation (D9): the separated variant shares the D7 soft-fail
+// contract — headlessly exercisable because the pumps open before any
+// WASAPI setup.
+
+TEST(PreviewAudioRendererOpenTest, SeparatedWithBothPathsEmptyFailsSoftly) {
+  std::vector<capture::export_::clip_planner::AudioSlot> slots;
+  slots.push_back(capture::export_::clip_planner::AudioSlot{
+      /*source_in_ms=*/0, /*edited_start_ms=*/0, /*copy_duration_ms=*/1000,
+      /*duration_ms=*/1000});
+  EXPECT_EQ(PreviewAudioRenderer::OpenSeparated(L"", L"", slots), nullptr);
+}
+
+TEST(PreviewAudioRendererOpenTest, SeparatedWithMissingSidecarsFailsSoftly) {
+  // Both tracks fail to open (missing files) — no live pump means nullptr,
+  // never a zombie renderer with a zero-length plan.
+  std::vector<capture::export_::clip_planner::AudioSlot> slots;
+  slots.push_back(capture::export_::clip_planner::AudioSlot{
+      /*source_in_ms=*/0, /*edited_start_ms=*/0, /*copy_duration_ms=*/1000,
+      /*duration_ms=*/1000});
+  EXPECT_EQ(PreviewAudioRenderer::OpenSeparated(
+                L"C:\\not\\real\\mic.m4a", L"C:\\not\\real\\system.m4a",
+                slots),
+            nullptr);
+}
+
+TEST(PreviewAudioRendererOpenTest, LegacyEmptyPathFailsSoftly) {
+  std::vector<capture::export_::clip_planner::AudioSlot> slots;
+  slots.push_back(capture::export_::clip_planner::AudioSlot{
+      /*source_in_ms=*/0, /*edited_start_ms=*/0, /*copy_duration_ms=*/1000,
+      /*duration_ms=*/1000});
+  EXPECT_EQ(PreviewAudioRenderer::Open(L"", slots), nullptr);
+}
+
 }  // namespace
 }  // namespace clingfy::preview

@@ -75,6 +75,17 @@ class PreviewAudioRenderer {
       const std::wstring& source_path,
       const std::vector<capture::export_::clip_planner::AudioSlot>& slots);
 
+  // Audio separation (design D9): the SEPARATED variant — one pump per
+  // decodable sidecar (either path may be empty, never both), both running
+  // the SAME slots plan, clamp-summed at the FIFO fill site with the
+  // per-track stage pair (mic gets gain, both get master volume). The
+  // engine only calls this when ProbeDecodableAudio passed for the
+  // non-empty paths. Same soft-fail contract as Open: nullptr when no
+  // track opens (a single failed track just drops — export parity).
+  static std::unique_ptr<PreviewAudioRenderer> OpenSeparated(
+      const std::wstring& mic_path, const std::wstring& system_path,
+      const std::vector<capture::export_::clip_planner::AudioSlot>& slots);
+
   ~PreviewAudioRenderer();
   PreviewAudioRenderer(const PreviewAudioRenderer&) = delete;
   PreviewAudioRenderer& operator=(const PreviewAudioRenderer&) = delete;
@@ -99,7 +110,14 @@ class PreviewAudioRenderer {
 
   // Live mix (D6, wired to the bridge in 4-7d): applied to packets decoded
   // AFTER the call — exactly the "affects only future samples" semantics.
+  // Whole-track stages for the legacy (premix) renderer.
   void SetGainStages(const capture::export_::AudioGainStages& stages);
+
+  // Separated live mix (D9): the per-track stage pair (mic-only gain,
+  // master volume on both). Meaningful only on an OpenSeparated renderer;
+  // same future-samples semantics.
+  void SetSeparatedGainStages(
+      const capture::export_::SeparatedAudioStages& stages);
 
   // The edited position currently at the speaker (ms, truncating). Lock-free;
   // safe from the pacer thread. Frozen while paused; pinned at the plan end

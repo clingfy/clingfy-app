@@ -357,6 +357,27 @@ TEST(SeparatedAudioMergeTest, PopRespectsMaxFramesAndKeepsRemainder) {
   EXPECT_EQ(merge.ReadyFrames(), 0);
 }
 
+TEST(SeparatedAudioMergeTest, ClearDropsBufferedSkewOnBothTracks) {
+  // The preview's seek/re-prime path: Clear must drop EVERYTHING —
+  // including the unmatched skew PopMerged never releases — so no stale
+  // pre-seek sample can be summed against post-seek data.
+  SeparatedAudioMerge merge(true, true, 2);
+  const std::int16_t mic[6] = {100, 100, 200, 200, 300, 300};  // 3 frames
+  const std::int16_t sys[2] = {10, 10};                        // 1 frame
+  merge.AppendMic(mic, 3);
+  merge.AppendSystem(sys, 1);
+  merge.Clear();
+  EXPECT_EQ(merge.ReadyFrames(), 0);
+  // Fresh post-seek data must merge cleanly against nothing stale.
+  const std::int16_t mic2[2] = {7, 7};
+  const std::int16_t sys2[2] = {5, 5};
+  merge.AppendMic(mic2, 1);
+  merge.AppendSystem(sys2, 1);
+  std::vector<std::int16_t> out;
+  EXPECT_EQ(merge.PopMerged(10, out), 1);
+  EXPECT_EQ(out[0], 12);
+}
+
 TEST(SeparatedAudioMergeTest, MergedSumSaturates) {
   SeparatedAudioMerge merge(true, true, 2);
   const std::int16_t mic[2] = {30000, -30000};
