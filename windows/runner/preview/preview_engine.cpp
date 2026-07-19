@@ -2569,9 +2569,17 @@ PreviewEngine::PaceStep PreviewEngine::PaceNextEditedFrameLocked(Impl* impl) {
     // crosses a cut instantly via its slot seek, so crawling a multi-second
     // deleted segment at full-decode speed left the video seconds behind
     // the sound, frozen until it caught up (and on high-res sources it
-    // never fully did). Small gaps still crawl: a seek costs a keyframe
-    // lead-in decode, which only pays for itself past ~a second of gap.
-    constexpr std::int64_t kGapSeekThresholdMs = 1000;
+    // never fully did). Small gaps still crawl: SeekTo lands on the
+    // keyframe AT-OR-BEFORE the target, and this recorder does not pin
+    // keyframe spacing (hardware-MFT default GOP, typically ~2-4s on
+    // sparse-keyframe screen recordings) — when the GOP exceeds the
+    // remaining gap the seek's lead-in decode is a SUPERSET of the crawl
+    // it replaces. The threshold therefore sits above typical GOPs so a
+    // seek near-always lands on a closer keyframe and wins. Follow-up
+    // (issue): pin MF_MT_MAX_KEYFRAME_SPACING at record time, which
+    // bounds every seek lead-in (scrub + reorder too) and lets this
+    // threshold drop.
+    constexpr std::int64_t kGapSeekThresholdMs = 3000;
     for (int i = 0; i < kMaxSkip; ++i) {
       if (shutting_down_.load()) return PaceStep::kIdle;
       std::vector<BYTE> bgra;
