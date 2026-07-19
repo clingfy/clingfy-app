@@ -27,6 +27,13 @@ $ErrorActionPreference = 'Stop'
 $candidates = @()
 if ($env:CLINGFY_EXE) { $candidates += $env:CLINGFY_EXE }
 
+# When this script ships inside an install ({app}\bin\clingfy.ps1, placed by
+# the installer's "add clingfy to PATH" task), its own app's exe is one level
+# up. Prefer it: a dev-channel shim stays on the dev exe and a prod shim on
+# prod, regardless of what else is installed. In the repo this path does not
+# exist and is skipped.
+$candidates += (Join-Path (Split-Path $PSScriptRoot -Parent) 'clingfy.exe')
+
 # Repo dev builds — only when this script actually lives inside the repo
 # (tools/cli/ -> repo root, verified by pubspec.yaml). A copy placed outside
 # the repo silently skips these and falls through to the installed apps.
