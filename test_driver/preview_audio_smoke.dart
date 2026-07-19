@@ -1,16 +1,29 @@
-// Scratch driver smoke for editing 4-7 (preview audio) — NOT committed.
-// Connects to a running debug build (ENABLE_FLUTTER_DRIVER=true) that has the
-// smoke-preview-audio.clingfyproj open, drives Play/Pause on the stitched
-// timeline, and prints the transport clock so the caller can assert that the
-// audio-mastered position advances, freezes on pause, and pins at the end.
+// On-device driver smoke for editing 4-7 (preview audio).
+//
+// Drives Play/Pause on a stitched (edited) timeline in a RUNNING debug build
+// and prints the transport clock, so the caller can assert the audio-mastered
+// position advances in real time, freezes exactly on pause, resumes, and pins
+// at the timeline end instead of running past it (the 4-7b review's critical
+// EOS bug would show here as a clock that never stops).
+//
+// Usage:
+//   1. flutter run -d windows --dart-define-from-file=.env.dev \
+//        --dart-define=ENABLE_FLUTTER_DRIVER=true
+//   2. Open a project whose clips_state.json holds a real edit (a cut or
+//      reorder), so the preview is in stitched mode.
+//   3. dart run test_driver/preview_audio_smoke.dart <ws-vm-service-url>
+//      (the ws://127.0.0.1:<port>/<token>/ws URL that flutter run printed)
 import 'package:flutter_driver/flutter_driver.dart';
 
 Future<void> main(List<String> args) async {
-  final url = args.isNotEmpty
-      ? args[0]
-      : 'ws://127.0.0.1:53595/T_io8nWnOac=/ws';
+  if (args.isEmpty) {
+    throw ArgumentError(
+      'pass the running app\'s VM service websocket URL '
+      '(ws://127.0.0.1:<port>/<token>/ws — printed by flutter run)',
+    );
+  }
   final driver = await FlutterDriver.connect(
-    dartVmServiceUrl: url,
+    dartVmServiceUrl: args[0],
     printCommunication: false,
   );
   final play = find.byValueKey('timeline_play_pause_button');
