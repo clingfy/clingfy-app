@@ -226,6 +226,18 @@ class PreviewEngine {
   static bool ShouldRestartEditedPlaybackFromEnd(std::int64_t edited_pos_ms,
                                                  std::int64_t edited_duration_ms);
 
+  // Pure (exposed for tests): the next kept range's source_in_ms strictly
+  // AFTER `source_ms`, or -1 when none follows. The monotonic pacer uses it
+  // to SEEK across a large cut gap instead of decode-crawling every deleted
+  // frame — the audio renderer (the master clock) crosses a cut instantly
+  // via its slot seek, so a crawl left the video seconds behind the sound,
+  // frozen while it caught up (user-visible lag after deleting a middle
+  // segment). Ranges are the engine's clip_ranges (source-monotonic here).
+  static std::int64_t NextKeptSourceInMsAfter(
+      std::int64_t source_ms,
+      const std::vector<capture::export_::clip_planner::ClipKeptRange>&
+          ranges);
+
   // Tear down the MediaPlayer + compositor and release the Flutter
   // texture via FlutterDesktopTextureRegistrarUnregisterExternalTexture
   // with the documented async-completion callback. The Impl owning

@@ -137,5 +137,54 @@ TEST(PreviewRestartFromEndTest, NonPositiveDurationNeverRestarts) {
       /*edited_pos_ms=*/100, /*edited_duration_ms=*/-1));
 }
 
+// Pins the monotonic gap-seek target (user-reported lag, 2026-07-20: delete
+// a middle segment → the pacer decode-crawled the whole deleted span while
+// the audio master clock seeked across it instantly, leaving the video
+// seconds behind the sound). The pacer seeks to the NEXT kept range's
+// source_in when the remaining gap is large.
+namespace clip = clingfy::capture::export_::clip_planner;
+
+std::vector<clip::ClipKeptRange> DeleteMiddleRanges() {
+  // Kept [0,6000) + [14000,20000): an 8s deleted middle.
+  return {clip::ClipKeptRange{/*source_in_ms=*/0, /*source_out_ms=*/6000},
+          clip::ClipKeptRange{/*source_in_ms=*/14000,
+                              /*source_out_ms=*/20000}};
+}
+
+TEST(NextKeptSourceInAfterTest, GapFrameTargetsTheNextRangeStart) {
+  const auto ranges = DeleteMiddleRanges();
+  EXPECT_EQ(PreviewEngine::NextKeptSourceInMsAfter(6000, ranges), 14000);
+  EXPECT_EQ(PreviewEngine::NextKeptSourceInMsAfter(9000, ranges), 14000);
+  EXPECT_EQ(PreviewEngine::NextKeptSourceInMsAfter(13999, ranges), 14000);
+}
+
+TEST(NextKeptSourceInAfterTest, HeadTrimGapTargetsTheFirstRange) {
+  // A head-trim leaves a leading gap — the seek helps there too.
+  std::vector<clip::ClipKeptRange> ranges{
+      clip::ClipKeptRange{/*source_in_ms=*/5000, /*source_out_ms=*/10000}};
+  EXPECT_EQ(PreviewEngine::NextKeptSourceInMsAfter(0, ranges), 5000);
+  EXPECT_EQ(PreviewEngine::NextKeptSourceInMsAfter(4999, ranges), 5000);
+}
+
+TEST(NextKeptSourceInAfterTest, NothingAfterTheLastRangeReturnsMinusOne) {
+  const auto ranges = DeleteMiddleRanges();
+  // Inside/after the last kept window: no later kept start — the pacer
+  // crawls to EOS (the playback-complete path), never seeks.
+  EXPECT_EQ(PreviewEngine::NextKeptSourceInMsAfter(14000, ranges), -1);
+  EXPECT_EQ(PreviewEngine::NextKeptSourceInMsAfter(19000, ranges), -1);
+  EXPECT_EQ(PreviewEngine::NextKeptSourceInMsAfter(25000, ranges), -1);
+}
+
+TEST(NextKeptSourceInAfterTest, PicksTheNearestStartRegardlessOfOrder) {
+  // Defensive: the helper min-scans, so an unsorted list (reorder input
+  // never reaches it, but nothing enforces that here) still resolves to
+  // the nearest following start.
+  std::vector<clip::ClipKeptRange> ranges{
+      clip::ClipKeptRange{/*source_in_ms=*/14000, /*source_out_ms=*/20000},
+      clip::ClipKeptRange{/*source_in_ms=*/8000, /*source_out_ms=*/9000},
+      clip::ClipKeptRange{/*source_in_ms=*/0, /*source_out_ms=*/6000}};
+  EXPECT_EQ(PreviewEngine::NextKeptSourceInMsAfter(6500, ranges), 8000);
+}
+
 }  // namespace
 }  // namespace clingfy::preview
