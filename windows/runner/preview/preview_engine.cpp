@@ -359,6 +359,13 @@ struct PreviewEngine::Impl {
   // (forward-decode) path.
   int edited_range_idx = 0;
   std::int64_t edited_reorder_base_ms = 0;
+  // Monotonic gap-seek lead-in floor (render_mutex): after the pacer SEEKS
+  // across a large cut gap, MF resumes at the PRIOR keyframe — which can sit
+  // in the pre-gap KEPT region, and re-emitting one of those frames would
+  // snap the playhead backward. Frames with ts below this floor are
+  // discarded. Every transport reposition resets it
+  // (RenderEditedFrameLocked seeks and sets it to its target).
+  std::int64_t edited_min_source_ms = 0;
 
   // Step 4-7c: the edited-session sound output (design D1/D5/D7). Created on
   // the stitched-mode transition in SetClips, reset on the passthrough
@@ -2421,6 +2428,9 @@ bool PreviewEngine::RenderEditedFrameLocked(Impl* impl,
   // or after it (MF lands on the prior keyframe; discard the lead-in). A single
   // seek per scrub / clip edit — NOT a per-frame seek during playback (§5.4).
   reader->SeekTo(source_ms);
+  // Every transport reposition resets the pacer's gap-seek lead-in floor —
+  // a scrub BACKWARD must be allowed to re-emit earlier frames.
+  impl->edited_min_source_ms = source_ms;
   std::vector<BYTE> bgra;
   bool have_frame = false;
   for (int guard = 0; guard < 600; ++guard) {
@@ -2462,6 +2472,23 @@ bool PreviewEngine::RenderEditedFrameLocked(Impl* impl,
   impl->timing_total.BeginFrame();
   ComposeAndHandoffLocked(impl, source_ms * 1000, edited_ms, edited_dur);
   return true;
+}
+
+std::int64_t PreviewEngine::NextKeptSourceInMsAfter(
+    std::int64_t source_ms,
+    const std::vector<capture::export_::clip_planner::ClipKeptRange>& ranges) {
+  // Monotonic ranges are in source order; return the first window that
+  // STARTS after `source_ms` (the frame at source_in itself is kept, so a
+  // seek target of exactly source_in is correct). -1 = no kept audio/video
+  // follows — the caller crawls to EOS (playback-complete path).
+  std::int64_t best = -1;
+  for (const auto& r : ranges) {
+    if (r.source_in_ms > source_ms &&
+        (best < 0 || r.source_in_ms < best)) {
+      best = r.source_in_ms;
+    }
+  }
+  return best;
 }
 
 PreviewEngine::PaceStep PreviewEngine::PaceNextEditedFrameLocked(Impl* impl) {
@@ -2533,9 +2560,18 @@ PreviewEngine::PaceStep PreviewEngine::PaceNextEditedFrameLocked(Impl* impl) {
   constexpr int kMaxSkip = 8;
 
   if (clip::IsSourceMonotonic(impl->clip_ranges)) {
-    // Cut path: decode FORWARD (no seeks); cut-gap frames are skipped, which IS
-    // the cut (matches the export monotonic path). EditedMsForKeptSourceMs is
+    // Cut path: decode FORWARD; cut-gap frames are skipped, which IS the cut
+    // (matches the export monotonic path). EditedMsForKeptSourceMs is
     // well-defined and source-forward == edited-forward.
+    //
+    // LARGE gaps are SEEKED across (like the reorder path's boundaries)
+    // instead of decode-crawled: the audio renderer — the master clock —
+    // crosses a cut instantly via its slot seek, so crawling a multi-second
+    // deleted segment at full-decode speed left the video seconds behind
+    // the sound, frozen until it caught up (and on high-res sources it
+    // never fully did). Small gaps still crawl: a seek costs a keyframe
+    // lead-in decode, which only pays for itself past ~a second of gap.
+    constexpr std::int64_t kGapSeekThresholdMs = 1000;
     for (int i = 0; i < kMaxSkip; ++i) {
       if (shutting_down_.load()) return PaceStep::kIdle;
       std::vector<BYTE> bgra;
@@ -2544,9 +2580,26 @@ PreviewEngine::PaceStep PreviewEngine::PaceNextEditedFrameLocked(Impl* impl) {
         NotifyEditedPlaybackCompleteLocked(impl);  // end of source
         return PaceStep::kIdle;
       }
+      if (ts_ms < impl->edited_min_source_ms) {
+        continue;  // gap-seek keyframe lead-in — never re-emit pre-gap frames
+      }
       const auto edited =
           clip::EditedMsForKeptSourceMs(ts_ms, impl->clip_ranges);
-      if (!edited.has_value()) continue;  // inside a cut gap — skip
+      if (!edited.has_value()) {
+        const std::int64_t next_in =
+            NextKeptSourceInMsAfter(ts_ms, impl->clip_ranges);
+        if (next_in >= 0 && next_in - ts_ms > kGapSeekThresholdMs) {
+          reader->SeekTo(next_in);
+          impl->edited_min_source_ms = next_in;
+          clingfy::bridge::NativeLogPublisher::Instance().Debug(
+              "Preview", "pacer seeked across a " +
+                             std::to_string(next_in - ts_ms) +
+                             "ms cut gap at source " + std::to_string(ts_ms) +
+                             "ms");
+          return PaceStep::kSkipping;
+        }
+        continue;  // small gap — crawl (decode-forward)
+      }
       if (stale_for_audio(*edited)) continue;  // behind the sound — catch up
       return emit(bgra, ts_ms, *edited) ? PaceStep::kRendered : PaceStep::kIdle;
     }
