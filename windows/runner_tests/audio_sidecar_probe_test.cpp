@@ -47,9 +47,9 @@ TEST_F(AudioSidecarProbeTest, NonMediaFileFails) {
   EXPECT_FALSE(ProbeDecodableAudio(junk.wstring()));
 }
 
-TEST_F(AudioSidecarProbeTest, RealSidecarPasses) {
+TEST_F(AudioSidecarProbeTest, RealSidecarPassesUnderBothBundleNames) {
   // Write a real AAC sidecar through the exact writer the recorder uses, so
-  // this pins the full produce→probe contract end-to-end.
+  // this pins the full produce→rename→probe contract end-to-end.
   const fs::path out = dir_ / "mic.mp4";
   clingfy::encoding::AudioSidecarWriter writer;
   if (auto err = writer.Open(out.string())) {
@@ -63,7 +63,18 @@ TEST_F(AudioSidecarProbeTest, RealSidecarPasses) {
   }
   ASSERT_FALSE(writer.Finalize().has_value());
 
+  // The %TEMP% name the writer produced...
   EXPECT_TRUE(ProbeDecodableAudio(out.wstring()));
+
+  // ...and the BUNDLED name production actually probes: the project writer
+  // renames the .mp4 temp to capture/mic.m4a (design D2), and MF's
+  // byte-stream handler selection is extension-driven — the design doc's §5
+  // ".m4a naming" risk is exactly this open, so pin it.
+  const fs::path bundled = dir_ / "mic.m4a";
+  std::error_code ec;
+  fs::rename(out, bundled, ec);
+  ASSERT_FALSE(ec) << ec.message();
+  EXPECT_TRUE(ProbeDecodableAudio(bundled.wstring()));
 }
 
 }  // namespace

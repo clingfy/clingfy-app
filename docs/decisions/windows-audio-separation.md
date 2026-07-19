@@ -197,6 +197,16 @@ a legacy embedded fallback when neither sidecar decodes.
   D4 the recording keeps system audio and the mixed track gains silence in
   the mic's place. Strictly better, but it is a behavior change worth a
   line in the recording-warning docs.
+- **Echo-cancelled mic (deliberate divergence, review-flagged).** macOS
+  separated exports route the mic through its speaker-bleed canceller
+  (`echoCancelledMicURL` / `CleanedMicCache`) BEFORE the decodability
+  gate, the normalize peak estimate, and the mix. Windows feeds the raw
+  `mic.m4a` to all three — the "exclude mic from system audio" feature
+  family is not shipped on Windows at all (see `docs/features.md`), and
+  the export-time canceller belongs to that track, not to separation.
+  Consequence: a speakers-plus-mic recording exported on Windows keeps the
+  bleed in the mic track (and normalize measures it); revisit when the
+  exclude-mic feature is ported.
 
 ## 6. Slices
 
