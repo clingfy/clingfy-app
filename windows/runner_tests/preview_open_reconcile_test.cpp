@@ -62,5 +62,35 @@ TEST(PreviewResumeInvalidateTest, EmptySessionIdNeverInvalidates) {
       /*running=*/true, ""));
 }
 
+// Pins Play()'s restart-from-end decision (editing 4-5, macOS IsAtEnd
+// parity): at (or within one frame of) the edited end, Play restarts from 0
+// instead of rendering one final frame and immediately EOSing.
+TEST(PreviewRestartFromEndTest, AtTheExactEndRestarts) {
+  EXPECT_TRUE(PreviewEngine::ShouldRestartEditedPlaybackFromEnd(
+      /*edited_pos_ms=*/12000, /*edited_duration_ms=*/12000));
+}
+
+TEST(PreviewRestartFromEndTest, WithinOneFrameOfTheEndRestarts) {
+  // The pacer stamps the LAST kept frame's edited time, which can land up to
+  // a frame short of the exact duration.
+  EXPECT_TRUE(PreviewEngine::ShouldRestartEditedPlaybackFromEnd(
+      /*edited_pos_ms=*/11967, /*edited_duration_ms=*/12000));
+}
+
+TEST(PreviewRestartFromEndTest, MidTimelineNeverRestarts) {
+  EXPECT_FALSE(PreviewEngine::ShouldRestartEditedPlaybackFromEnd(
+      /*edited_pos_ms=*/6000, /*edited_duration_ms=*/12000));
+  EXPECT_FALSE(PreviewEngine::ShouldRestartEditedPlaybackFromEnd(
+      /*edited_pos_ms=*/0, /*edited_duration_ms=*/12000));
+}
+
+TEST(PreviewRestartFromEndTest, NonPositiveDurationNeverRestarts) {
+  // Nothing to play: a zero/negative duration must not loop Play at 0.
+  EXPECT_FALSE(PreviewEngine::ShouldRestartEditedPlaybackFromEnd(
+      /*edited_pos_ms=*/0, /*edited_duration_ms=*/0));
+  EXPECT_FALSE(PreviewEngine::ShouldRestartEditedPlaybackFromEnd(
+      /*edited_pos_ms=*/100, /*edited_duration_ms=*/-1));
+}
+
 }  // namespace
 }  // namespace clingfy::preview

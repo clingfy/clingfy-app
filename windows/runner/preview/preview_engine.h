@@ -192,6 +192,15 @@ class PreviewEngine {
   static bool ShouldInvalidateOnSystemResume(
       bool running, const std::string& active_session_id);
 
+  // Editing port (step 4-5) — pure decision for Play() on an edited session:
+  // pressing Play with the playhead at (or within one frame of) the edited
+  // end RESTARTS from 0, macOS IsAtEnd parity — otherwise Play at the end
+  // renders one final frame, the pacer immediately EOSes, and the button
+  // feels dead. Non-positive durations never restart (nothing to play).
+  // Exposed for tests; keep in sync with Play()'s edited branch.
+  static bool ShouldRestartEditedPlaybackFromEnd(std::int64_t edited_pos_ms,
+                                                 std::int64_t edited_duration_ms);
+
   // Tear down the MediaPlayer + compositor and release the Flutter
   // texture via FlutterDesktopTextureRegistrarUnregisterExternalTexture
   // with the documented async-completion callback. The Impl owning
@@ -373,6 +382,14 @@ class PreviewEngine {
   // inside the timeline range that contains `edited_ms`. Caller holds
   // render_mutex; a no-op for a monotonic session (the pacer forward-decodes).
   void PrimeReorderStateLocked(Impl* impl, std::int64_t edited_ms);
+
+  // Step 4-5: genuine end-of-timeline on the pacer path — clears the playing
+  // flag and emits the SAME playerState "completed" the MediaPlayer path
+  // sends from HandleMediaEnded, so Dart no longer infers completion from
+  // pos≈dur. Caller holds render_mutex (the nested mutex_ snapshot inside is
+  // the sanctioned render_mutex → mutex_ order). Decode-FAILURE paths must
+  // NOT call this — they are errors, not completion.
+  void NotifyEditedPlaybackCompleteLocked(Impl* impl);
 
   // Editing port (clips, step 4-3): are the current clip ranges a real edit
   // (cut / trim / delete-middle / reorder / overlap) — i.e. should this session
