@@ -35,7 +35,7 @@ if ($path -notlike "*$bin*") {
 
 Open a new terminal afterwards (PATH changes don't reach existing shells).
 The launcher resolves the exe as: `CLINGFY_EXE` env override → this repo's
-`build\windows\x64\runner\{Debug,Release}` → installed
+`build\windows\x64\runner\{Release,Debug}` → installed
 `%LOCALAPPDATA%\Programs\Clingfy Dev` → installed `Clingfy`. (A copy placed
 outside the repo also works — it just skips the repo-build candidates.)
 
