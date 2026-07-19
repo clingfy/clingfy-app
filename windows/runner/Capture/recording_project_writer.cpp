@@ -244,6 +244,16 @@ std::string BuildManifestJson(const ProjectWriterInput& input) {
   out << "    \"cursorData\": \""
       << (input.cursor_enabled ? "capture/cursor.jsonl" : "capture/cursor.json")
       << "\",\n";
+  // Audio separation: the macOS Phase 1.5 sidecar keys, emitted only for a
+  // sidecar that was actually bundled (macOS's keys are nullable — absent
+  // means "no separated source"). Additive; readers on both platforms
+  // ignore unknown keys, so schemaVersion stays 2.
+  if (input.mic_audio_enabled) {
+    out << "    \"micAudio\": \"capture/mic.m4a\",\n";
+  }
+  if (input.system_audio_enabled) {
+    out << "    \"systemAudio\": \"capture/system.m4a\",\n";
+  }
   out << "    \"zoomManual\": \"capture/zoom.manual.json\"\n";
   out << "  },\n";
   // Phase 9.2: the camera block is emitted ONLY when a camera was actually
@@ -434,6 +444,43 @@ ProjectWriterResult WriteRecordingProject(const ProjectWriterInput& input) {
     }
   }
 
+  // Audio separation: bundle the mic / system sidecars (best-effort, each
+  // independently — same discipline as the cursor sidecar). The recording
+  // is valid without either (the premixed track in screen.mov is intact),
+  // so any failure downgrades that sidecar's flag and its manifest key is
+  // omitted. The `.mp4`→`.m4a` rename is just a name change — the MPEG-4
+  // container is identical; the `.m4a` name matches macOS Phase 1.5.
+  const auto bundle_audio_sidecar = [&project_root](
+                                        const std::string& src_path,
+                                        const char* dst_name) -> bool {
+    const fs::path src = fs::u8path(src_path);
+    std::error_code sc_ec;
+    if (!fs::exists(src, sc_ec)) {
+      return false;
+    }
+    const fs::path dst = project_root / "capture" / dst_name;
+    fs::rename(src, dst, sc_ec);
+    if (sc_ec) {
+      sc_ec.clear();
+      fs::copy_file(src, dst, fs::copy_options::overwrite_existing, sc_ec);
+      if (!sc_ec) {
+        fs::remove(src, sc_ec);
+        sc_ec.clear();
+      }
+    }
+    return fs::exists(dst, sc_ec);
+  };
+  effective.mic_audio_enabled = false;
+  if (input.mic_audio_enabled && !input.mic_audio_path.empty()) {
+    effective.mic_audio_enabled =
+        bundle_audio_sidecar(input.mic_audio_path, "mic.m4a");
+  }
+  effective.system_audio_enabled = false;
+  if (input.system_audio_enabled && !input.system_audio_path.empty()) {
+    effective.system_audio_enabled =
+        bundle_audio_sidecar(input.system_audio_path, "system.m4a");
+  }
+
   // Phase 10.4: by this point the screen video has been moved INTO the
   // bundle (the %TEMP% original is gone), so a failure below would strand a
   // half-built bundle with no usable manifest — invisible to the recovery
@@ -472,6 +519,10 @@ ProjectWriterResult WriteRecordingProject(const ProjectWriterInput& input) {
   // the leftover temp is NOT a deletable straggler.
   ok.cursor_downgraded = input.cursor_enabled && !effective.cursor_enabled;
   ok.camera_downgraded = input.camera_enabled && !effective.camera_enabled;
+  ok.mic_audio_downgraded =
+      input.mic_audio_enabled && !effective.mic_audio_enabled;
+  ok.system_audio_downgraded =
+      input.system_audio_enabled && !effective.system_audio_enabled;
   return ok;
 }
 

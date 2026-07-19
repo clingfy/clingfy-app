@@ -176,6 +176,41 @@ TEST_F(RecordingProjectReaderTest, MissingCursorAndZoomIsNotAnError) {
   EXPECT_FALSE(result.project->zoom_manual_path.has_value());
 }
 
+// ---- Audio separation: mic/system sidecars --------------------------
+
+TEST_F(RecordingProjectReaderTest, AbsentSidecarKeysLeaveOptionalsEmpty) {
+  // The default manifest (a legacy / pre-separation bundle) has no
+  // micAudio/systemAudio keys — both optionals stay empty, no error.
+  const fs::path root = MakeHappyBundle();
+  const auto result = ReadRecordingProject(root.wstring());
+  ASSERT_EQ(result.error, ReadError::kNone) << result.message;
+  EXPECT_FALSE(result.project->mic_audio_path.has_value());
+  EXPECT_FALSE(result.project->system_audio_path.has_value());
+}
+
+TEST_F(RecordingProjectReaderTest, SidecarsResolveIndependentlyByExistence) {
+  // Manifest references BOTH sidecars (macOS keys), but only the mic file
+  // is on disk — mic resolves, system stays empty, and the read succeeds
+  // (never a present-together rule; screen.mov's premix is the fallback).
+  const fs::path root = MakeHappyBundle();
+  std::string manifest = DefaultManifest();
+  const std::string needle = "\"cursorData\": \"capture/cursor.json\",";
+  const auto pos = manifest.find(needle);
+  ASSERT_NE(pos, std::string::npos);
+  manifest.insert(pos + needle.size(),
+                  "\n    \"micAudio\": \"capture/mic.m4a\","
+                  "\n    \"systemAudio\": \"capture/system.m4a\",");
+  WriteFile(root / "project.json", manifest);
+  WriteFile(root / "capture" / "mic.m4a", "fake-mic-aac");
+
+  const auto result = ReadRecordingProject(root.wstring());
+  ASSERT_EQ(result.error, ReadError::kNone) << result.message;
+  ASSERT_TRUE(result.project->mic_audio_path.has_value());
+  EXPECT_EQ(*result.project->mic_audio_path,
+            (root / "capture" / "mic.m4a").wstring());
+  EXPECT_FALSE(result.project->system_audio_path.has_value());
+}
+
 TEST_F(RecordingProjectReaderTest,
        PartialCameraPairTriggersRequiredFileMissing) {
   const fs::path root = MakeHappyBundle();

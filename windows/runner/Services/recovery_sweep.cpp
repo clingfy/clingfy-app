@@ -85,8 +85,8 @@ std::string ResolveTempDir(const std::string& override_dir) {
   return temp.string();
 }
 
-// The three temp artifacts a session leaves while recording — exact names,
-// derived the same way the encoder/sampler derived them.
+// The temp artifacts a session leaves while recording — exact names,
+// derived the same way the encoder/sampler/sidecar writers derived them.
 void InsertSessionTempNames(const std::string& session_id,
                             std::unordered_set<std::string>& names) {
   const std::string sanitized =
@@ -94,6 +94,10 @@ void InsertSessionTempNames(const std::string& session_id,
   names.insert("clingfy_" + sanitized + ".mp4");
   names.insert("clingfy_" + sanitized + ".cursor.jsonl");
   names.insert("clingfy_" + sanitized + ".camera.mp4");
+  // Audio separation: the mic / system sidecar temps (bundled into
+  // capture/mic.m4a / capture/system.m4a on a clean stop).
+  names.insert("clingfy_" + sanitized + ".mic.mp4");
+  names.insert("clingfy_" + sanitized + ".sys.mp4");
 }
 
 }  // namespace

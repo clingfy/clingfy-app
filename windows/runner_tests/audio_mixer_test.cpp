@@ -123,5 +123,83 @@ TEST(AudioMixerTest, SumStereoFloat32SilentInputsProduceZero) {
   }
 }
 
+// Audio-separation D3: the sidecar tee's per-source render must cover
+// EXACTLY the mixed span — source samples where the source contributed,
+// silence everywhere else — so sidecar timelines can never slip against
+// the premixed track.
+
+TEST(RenderSourceInt16Test, NullSourceRendersSilenceOverTheFullSpan) {
+  std::vector<std::int16_t> out;
+  AudioMixer::RenderSourceInt16(nullptr, /*frame_count=*/4, out);
+  ASSERT_EQ(out.size(), 8u);
+  for (auto sample : out) {
+    EXPECT_EQ(sample, 0);
+  }
+}
+
+TEST(RenderSourceInt16Test, SourceSamplesConvertWithTheMixersClamp) {
+  auto src = MakeStereoPacket(2, 0.5f);
+  std::vector<std::int16_t> out;
+  AudioMixer::RenderSourceInt16(&src, /*frame_count=*/2, out);
+  ASSERT_EQ(out.size(), 4u);
+  for (auto sample : out) {
+    EXPECT_EQ(sample, 16384);  // same 0.5 → 16384 as the Mix tests above
+  }
+}
+
+TEST(RenderSourceInt16Test, ShorterSourcePadsTheTailWithSilence) {
+  // Mixed span = 4 frames (the other source was longer); this source only
+  // contributed 2. Its sidecar still advances 4 frames.
+  auto src = MakeStereoPacket(2, 0.5f);
+  std::vector<std::int16_t> out;
+  AudioMixer::RenderSourceInt16(&src, /*frame_count=*/4, out);
+  ASSERT_EQ(out.size(), 8u);
+  for (std::uint32_t i = 0; i < 4; ++i) {
+    for (std::uint32_t ch = 0; ch < 2; ++ch) {
+      EXPECT_EQ(out[i * 2 + ch], i < 2 ? 16384 : 0);
+    }
+  }
+}
+
+TEST(RenderSourceInt16Test, SilentFlagRendersZeroesRegardlessOfBuffer) {
+  auto src = MakeStereoPacket(3, 0.9f);
+  src.silent = true;
+  std::vector<std::int16_t> out;
+  AudioMixer::RenderSourceInt16(&src, /*frame_count=*/3, out);
+  ASSERT_EQ(out.size(), 6u);
+  for (auto sample : out) {
+    EXPECT_EQ(sample, 0);
+  }
+}
+
+TEST(RenderSourceInt16Test, OutOfRangeSamplesClampToInt16) {
+  auto src = MakeStereoPacket(1, 1.7f);
+  std::vector<std::int16_t> out;
+  AudioMixer::RenderSourceInt16(&src, /*frame_count=*/1, out);
+  ASSERT_EQ(out.size(), 2u);
+  for (auto sample : out) {
+    EXPECT_EQ(sample, 32767);
+  }
+}
+
+// Audio-separation D4: blocking-source policy. Mic blocks while alive
+// (loopback drains non-blocking); a dead mic hands the blocking role to
+// loopback; both dead → exit. Pins the mid-record death transitions the
+// engine's mixer loop relies on to never wedge.
+
+TEST(ChooseMixerBlockSourceTest, MicBlocksWhileAlive) {
+  EXPECT_EQ(ChooseMixerBlockSource(true, true), MixerBlockSource::kMic);
+  EXPECT_EQ(ChooseMixerBlockSource(true, false), MixerBlockSource::kMic);
+}
+
+TEST(ChooseMixerBlockSourceTest, LoopbackTakesOverWhenTheMicDies) {
+  EXPECT_EQ(ChooseMixerBlockSource(false, true),
+            MixerBlockSource::kLoopback);
+}
+
+TEST(ChooseMixerBlockSourceTest, BothDeadExitsTheLoop) {
+  EXPECT_EQ(ChooseMixerBlockSource(false, false), MixerBlockSource::kNone);
+}
+
 }  // namespace
 }  // namespace clingfy::audio

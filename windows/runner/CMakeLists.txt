@@ -90,6 +90,7 @@ add_library(runner_bridge STATIC
   "Capture/video_frame_queue.cpp"
   "Capture/wgc_display_capture_backend.cpp"
   "Capture/windows_selection_state.cpp"
+  "Encoding/audio_sidecar_writer.cpp"
   "Encoding/encoder_output_path.cpp"
   "Encoding/gif_encoder.cpp"
   "Encoding/mf_dxgi_manager.cpp"

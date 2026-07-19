@@ -94,6 +94,19 @@ struct ProjectWriterInput {
   std::string camera_meta_json;
   bool camera_enabled = false;
 
+  // Audio separation (docs/decisions/windows-audio-separation.md D1): the
+  // finalized mic / system sidecar temps the engine's AudioSidecarWriters
+  // produced. The writer moves them into `capture/mic.m4a` /
+  // `capture/system.m4a` (best-effort, independently — never
+  // present-together) and, per bundled file, emits the macOS Phase 1.5
+  // manifest key `capture.micAudio` / `capture.systemAudio`. A missing /
+  // unmovable file downgrades its flag (key omitted); the premixed track
+  // in screen.mov is unaffected either way.
+  std::string mic_audio_path;
+  bool mic_audio_enabled = false;
+  std::string system_audio_path;
+  bool system_audio_enabled = false;
+
   // The recording-time camera composition, written into
   // capture/screen.meta.json as the `editorSeed` block (macOS parity) so
   // post-processing reopens camera-on with the user's settings. The engine
@@ -149,6 +162,12 @@ struct ProjectWriterResult {
   // copy of finalized, playable footage.
   bool cursor_downgraded = false;
   bool camera_downgraded = false;
+  // Audio separation: requested sidecar could not be bundled (its temp is
+  // still in %TEMP%). Unlike the camera, a leftover audio sidecar is NOT
+  // precious — the premixed track still carries the audio — so cleanup may
+  // delete it; the flags exist for logging/diagnostics.
+  bool mic_audio_downgraded = false;
+  bool system_audio_downgraded = false;
 };
 
 ProjectWriterResult WriteRecordingProject(const ProjectWriterInput& input);

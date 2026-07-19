@@ -67,5 +67,16 @@ TEST(EncoderOutputPathTest, ResolveCursorSidecarSanitizesAndIsAbsolute) {
               (path[1] == ':' || (path[0] == '\\' && path[1] == '\\')));
 }
 
+TEST(EncoderOutputPathTest, ResolveAudioSidecarTempsJoinAndSanitize) {
+  // Audio separation: `.mp4` temps (MF picks the container from the
+  // extension); the project writer renames them to mic.m4a / system.m4a.
+  EXPECT_EQ(ResolveTempMicAudioPath("session-42", "C:\\Temp"),
+            "C:\\Temp\\clingfy_session-42.mic.mp4");
+  EXPECT_EQ(ResolveTempSystemAudioPath("session-42", "C:\\Temp"),
+            "C:\\Temp\\clingfy_session-42.sys.mp4");
+  EXPECT_EQ(ResolveTempMicAudioPath("dir/../escape", "C:\\Temp"),
+            "C:\\Temp\\clingfy_dir_.._escape.mic.mp4");
+}
+
 }  // namespace
 }  // namespace clingfy::encoding
