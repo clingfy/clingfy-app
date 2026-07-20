@@ -1,3 +1,8 @@
+## [Unreleased]
+
+### New Features
+- Added **Voice Cleanup**, on-device background-noise removal for the microphone. Turn it on in the post-processing Audio panel and pick **Light** or **Balanced**; fans, room tone, and street noise drop away while your voice stays intact. It applies to the microphone only — system, game, and music audio are never touched — and you hear the result in the preview exactly as it will export. Off by default. macOS only for now; the Windows build gets it once the noise-suppression engine is ported.
+
 ## [1.0.5] - 2026-07-01
 
 Clingfy 1.0.5 grows the post-recording editor into a light video editor. It adds one-tap and manual **color correction** and a full **clip-editing timeline** — split, cut, trim, and reorder your recording — shown live in the preview and baked faithfully into the exported file. Under the hood, work also continued on the in-progress Windows build.

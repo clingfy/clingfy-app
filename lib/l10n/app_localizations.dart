@@ -3568,6 +3568,30 @@ abstract class AppLocalizations {
   /// **'Audio Gain'**
   String get audioGain;
 
+  /// No description provided for @voiceCleanup.
+  ///
+  /// In en, this message translates to:
+  /// **'Voice Cleanup'**
+  String get voiceCleanup;
+
+  /// No description provided for @voiceCleanupHelp.
+  ///
+  /// In en, this message translates to:
+  /// **'Removes background noise from the mic, like fans or room tone.'**
+  String get voiceCleanupHelp;
+
+  /// No description provided for @voiceCleanupLight.
+  ///
+  /// In en, this message translates to:
+  /// **'Light'**
+  String get voiceCleanupLight;
+
+  /// No description provided for @voiceCleanupBalanced.
+  ///
+  /// In en, this message translates to:
+  /// **'Balanced'**
+  String get voiceCleanupBalanced;
+
   /// No description provided for @volume.
   ///
   /// In en, this message translates to:

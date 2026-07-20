@@ -769,14 +769,22 @@ enum MicEchoCanceller {
 
   /// Write mono Float32 PCM to a lossless CAF in `directory`. Lossless keeps the
   /// only encode the final export's AAC pass, avoiding a double lossy generation.
-  static func writeMonoPCM(_ samples: [Float], directory: URL) throws -> URL {
+  ///
+  /// `namePrefix` selects the staged file's identity, which carries lifetime
+  /// semantics: `mic-echo-cancelled-` files are swept from the temp root by the
+  /// export and adopted-then-deleted by the preview. A different producer (the
+  /// voice-cleanup stage) passes its own prefix so the two are managed
+  /// independently — see `AudioEnhancementPipeline.stagedFileNamePrefix`.
+  static func writeMonoPCM(
+    _ samples: [Float], directory: URL, namePrefix: String = "mic-echo-cancelled-"
+  ) throws -> URL {
     guard
       let format = AVAudioFormat(
         commonFormat: .pcmFormatFloat32, sampleRate: sampleRate, channels: 1, interleaved: false)
     else {
       throw CancelError.writeFailed(directory)
     }
-    let url = directory.appendingPathComponent("mic-echo-cancelled-\(UUID().uuidString).caf")
+    let url = directory.appendingPathComponent("\(namePrefix)\(UUID().uuidString).caf")
     let file: AVAudioFile
     do {
       file = try AVAudioFile(forWriting: url, settings: format.settings)

@@ -392,6 +392,17 @@ class VoiceCleanup {
     enabled: m['enabled'] as bool? ?? false,
     mode: CleanupMode.fromWire(m['mode']),
   );
+
+  VoiceCleanup copyWith({bool? enabled, CleanupMode? mode}) =>
+      VoiceCleanup(enabled: enabled ?? this.enabled, mode: mode ?? this.mode);
+
+  @override
+  bool operator ==(Object other) =>
+      identical(this, other) ||
+      other is VoiceCleanup && other.enabled == enabled && other.mode == mode;
+
+  @override
+  int get hashCode => Object.hash(enabled, mode);
 }
 
 /// One audio source (mic or system) kept separate until export so cleanup and

@@ -6,6 +6,7 @@ import 'package:clingfy/app/home/post_processing/widgets/post_processing_sidebar
 import 'package:clingfy/app/settings/settings_controller.dart';
 import 'package:clingfy/core/models/app_models.dart';
 import 'package:clingfy/core/timeline/model/color_grade.dart';
+import 'package:clingfy/core/timeline/model/edit_track.dart';
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 
@@ -61,6 +62,7 @@ class PostProcessingSidebarContainer extends StatelessWidget {
         bool zoomEffectEnabled,
         double gain,
         double volume,
+        VoiceCleanup voiceCleanup,
         ColorGrade colorGrade,
         bool hasCameraAsset,
         CameraCompositionState? cameraState,
@@ -84,6 +86,7 @@ class PostProcessingSidebarContainer extends StatelessWidget {
         zoomEffectEnabled: p.zoomEffectEnabled,
         gain: p.audioGainDb,
         volume: p.audioVolumePercent,
+        voiceCleanup: p.voiceCleanup,
         // Part of the record so the sidebar rebuilds when the grade changes —
         // relies on ColorGrade value equality. Without it the color sliders
         // stayed frozen even though the preview updated.
@@ -142,6 +145,7 @@ class PostProcessingSidebarContainer extends StatelessWidget {
               cameraExportCapabilities: vm.cameraExportCapabilities,
               audioGainDb: vm.gain,
               audioVolume: vm.volume,
+              voiceCleanup: vm.voiceCleanup,
               autoNormalizeOnExport:
                   settingsController.post.postAutoNormalizeEnabled,
               autoNormalizeTargetDbfs:
@@ -164,6 +168,7 @@ class PostProcessingSidebarContainer extends StatelessWidget {
               onZoomEffectEnabledChanged: post.setZoomEffectEnabled,
               onAudioGainChanged: post.setAudioGainDb,
               onAudioGainChangeEnd: post.setAudioGainDbEnd,
+              onVoiceCleanupChanged: post.setVoiceCleanup,
               colorGrade: vm.colorGrade,
               onColorAutoEnhanceChanged: post.setColorGradeAutoEnhance,
               onColorExposureChanged: post.setColorGradeExposure,

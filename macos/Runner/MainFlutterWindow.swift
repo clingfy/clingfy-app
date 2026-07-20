@@ -718,6 +718,7 @@ class MainFlutterWindow: NSWindow {
             bitrate: req.bitrate,
             audioGainDb: req.audioGainDb,
             audioVolumePercent: req.audioVolumePercent,
+            voiceCleanup: req.voiceCleanup,
             zoomSegments: zoomSegments,
             cameraPreviewChangeKind: req.cameraPreviewChangeKind,
             sessionId: req.sessionId,
@@ -821,6 +822,7 @@ class MainFlutterWindow: NSWindow {
             audioVolumePercent: req.audioVolumePercent,
             autoNormalizeOnExport: req.autoNormalizeOnExport,
             targetLoudnessDbfs: req.targetLoudnessDbfs,
+            voiceCleanup: req.voiceCleanup,
             cameraPath: req.cameraPath,
             cameraParams: cameraParams,
             colorGrade: req.colorGrade,
@@ -1021,6 +1023,16 @@ class MainFlutterWindow: NSWindow {
             FlutterError(
               code: NativeErrorCode.badArgs, message: "Missing colorGrade", details: nil))
         }
+
+      case "previewSetVoiceCleanup":
+        // Not a live mix parameter: this re-resolves the mic FILE the preview
+        // plays, so the view rebuilds its player item (see
+        // InlinePreviewView.updateVoiceCleanupOnly).
+        let args = call.arguments as? [String: Any]
+        self.screenRecorder.previewSetVoiceCleanup(
+          sessionId: args?["sessionId"] as? String,
+          voiceCleanup: VoiceCleanupRequest.fromFlutter(args?["voiceCleanup"]),
+          result: result)
 
       case "previewSetClips":
         if let args = call.arguments as? [String: Any] {

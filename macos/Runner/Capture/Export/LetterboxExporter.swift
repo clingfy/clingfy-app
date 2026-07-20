@@ -74,6 +74,7 @@ final class LetterboxExporter {
     "camera.styled.",
     "raw.styled.",
     "mic-echo-cancelled-",
+    "mic-enhanced-",
   ]
   private var currentSession: AVAssetExportSession?
   private var progressTimer: Timer?
@@ -176,6 +177,50 @@ final class LetterboxExporter {
     } catch {
       NativeLogger.w(
         "Export", "Mic echo cancellation failed; using the microphone as recorded",
+        context: ["error": "\(error)"])
+      return micAudioURL
+    }
+  }
+
+  /// Runs voice cleanup (noise reduction) on the mic, returning the denoised
+  /// mic to mix — or the input unchanged when cleanup is off, there is no mic
+  /// sidecar (legacy pre-separation bundles, where the only audio is the mixed
+  /// screen track and denoising it would wreck the system audio too), or the
+  /// pipeline fails. Only a caller-owned temp file (cache unavailable) is
+  /// registered for cleanup; the cache-owned file in the project's `derived/`
+  /// must survive this export for the next preview/export to reuse.
+  ///
+  /// Cost note: like `echoCancelledMicURL` above this blocks, and `ExportEngine`
+  /// is `@MainActor`, so a cold cache stalls the main thread for a full decode +
+  /// suppression pass — now potentially twice in a row. In practice both stages
+  /// are already warm because the preview computed them while the user was
+  /// editing, and cleanup is opt-in, so the cold path needs an export with
+  /// cleanup enabled and no prior preview. Moving the whole mic preamble off the
+  /// main actor is the real fix and is deliberately out of scope here.
+  private func voiceCleanedMicURL(
+    micAudioURL: URL?, projectRoot: URL, request: VoiceCleanupRequest
+  ) -> URL? {
+    guard request.enabled, let micAudioURL else { return micAudioURL }
+    do {
+      let outcome = try EnhancedMicCache.shared.outcome(
+        inputMicURL: micAudioURL, request: request, projectRoot: projectRoot)
+      let result = outcome.result
+      guard result.applied else { return micAudioURL }
+      if !outcome.cacheOwned {
+        registerTemporaryArtifact(result.enhancedMicURL)
+      }
+      NativeLogger.i(
+        "Export", "Applied voice cleanup to the microphone",
+        context: [
+          "mode": request.mode.rawValue,
+          "noiseReductionDb": result.noiseReductionDb,
+          "enhancedMic": result.enhancedMicURL.lastPathComponent,
+          "fromCache": outcome.fromCache,
+        ])
+      return result.enhancedMicURL
+    } catch {
+      NativeLogger.w(
+        "Export", "Voice cleanup failed; using the microphone as recorded",
         context: ["error": "\(error)"])
       return micAudioURL
     }
@@ -2545,6 +2590,7 @@ final class LetterboxExporter {
     audioVolumePercent: Double = 100.0,
     autoNormalizeOnExport: Bool = false,
     targetLoudnessDbfs: Double = -16.0,
+    voiceCleanup: VoiceCleanupRequest = .disabled,
     cameraParams: CameraCompositionParams? = nil,
     colorGrade: ColorGrade = .identity,
     clips: [ClipKeptRange] = [],
@@ -2701,10 +2747,22 @@ final class LetterboxExporter {
     // that bleed against the clean system reference first. The helper is a no-op
     // (returns the original mic) when there's no measurable bleed — headphones,
     // silent mic, or no system audio — and degrades to the raw mic on any error.
-    let micAudioURLForMix = echoCancelledMicURL(
+    let echoCancelledMic = echoCancelledMicURL(
       micAudioURL: mediaSources.micAudioURL,
       systemAudioURL: mediaSources.systemAudioURL,
       projectRoot: project.rootURL
+    )
+    // Voice cleanup (background noise reduction) runs on the MIC ONLY, and only
+    // here: after echo cancellation, whose correlation against the system
+    // reference needs the mic's bleed intact, and before the normalize peak scan
+    // and the gain bake below — removing noise lowers the mic's peak, so
+    // normalizing against a pre-cleanup peak would under-boost the voice and
+    // re-amplify whatever noise survived. Legacy bundles with no mic sidecar
+    // skip it by construction (the helper returns its input).
+    let micAudioURLForMix = voiceCleanedMicURL(
+      micAudioURL: echoCancelledMic,
+      projectRoot: project.rootURL,
+      request: voiceCleanup
     )
     var separatedMicAsset = Self.readableAudioAsset(url: micAudioURLForMix)
     let separatedSystemAsset = Self.readableAudioAsset(url: mediaSources.systemAudioURL)

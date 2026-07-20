@@ -1882,6 +1882,19 @@ class AppLocalizationsAr extends AppLocalizations {
   String get audioGain => 'مكسب الصوت';
 
   @override
+  String get voiceCleanup => 'تنقية الصوت';
+
+  @override
+  String get voiceCleanupHelp =>
+      'يزيل ضجيج الخلفية من الميكروفون، مثل المراوح أو صوت الغرفة.';
+
+  @override
+  String get voiceCleanupLight => 'خفيف';
+
+  @override
+  String get voiceCleanupBalanced => 'متوازن';
+
+  @override
   String get volume => 'مستوى الصوت';
 
   @override

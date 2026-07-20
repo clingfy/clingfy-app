@@ -399,6 +399,30 @@ class NativeBridge {
     });
   }
 
+  /// Pushes the mic noise-reduction setting to the open preview.
+  ///
+  /// Unlike gain and volume this is not a live mix parameter — native
+  /// re-resolves which mic FILE the preview plays and rebuilds the player item
+  /// — so it gets its own method rather than riding on `updateAudioPreview`.
+  /// A native build without the method replies `MissingPluginException`, which
+  /// is swallowed: the preview simply keeps playing the un-cleaned mic.
+  Future<void> previewSetVoiceCleanup({
+    required VoiceCleanup voiceCleanup,
+    required String? sessionId,
+  }) async {
+    try {
+      await _nativeBridge.invokeMethod<void>('previewSetVoiceCleanup', {
+        if (sessionId != null) 'sessionId': sessionId,
+        'voiceCleanup': voiceCleanup.toMap(),
+      });
+    } on MissingPluginException {
+      Log.w(
+        'NativeBridge',
+        'previewSetVoiceCleanup is not implemented by this native build',
+      );
+    }
+  }
+
   Future<void> previewSetCameraPlacement({
     required String projectPath,
     required CameraPreviewChangeKind changeKind,

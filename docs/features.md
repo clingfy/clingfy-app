@@ -37,12 +37,14 @@ Status legend: ✅ shipped · 🚧 partial / with caveats · — not available y
 | Feature | What it does | macOS | Windows (beta) |
 |---|---|---|---|
 | System audio capture | Record what plays through the speakers. | ✅ | ✅ (48 kHz devices) |
-| Microphone capture + gain | Record the mic with adjustable input gain. | ✅ | 🚧 (gain applied at export only) |
+| Microphone capture | Record the mic alongside the screen. | ✅ | ✅ |
+| Microphone gain | Boost the mic up to +24 dB. Applied at export and previewed live (there is no capture-time input gain). | ✅ | 🚧 (export only) |
 | Live mic level meter | dBFS meter while setting up. | ✅ | 🚧 |
 | Exclude mic from system audio | Stops mic bleed into the system track. | ✅ | — |
 | Export gain + volume | Per-export audio gain (dB) and volume. | ✅ | ✅ |
 | Loudness normalization | One-click normalize to a loudness target at export. | ✅ | — |
 | Live audio mix preview | Hear gain/mix changes while editing. | ✅ | ✅ |
+| Voice cleanup | On-device background-noise removal for the mic (Light / Balanced), previewed live and baked at export. Mic only — system audio is never denoised. Off by default. | ✅ | — (engine not ported yet) |
 
 ## Camera overlay
 
@@ -133,13 +135,15 @@ Status legend: ✅ shipped · 🚧 partial / with caveats · — not available y
   still being iterated.
 - **WYSIWYG audio preview** — hear the exact export mix in the editor.
 - **Live timeline during export** — keep editing while an export runs.
+- **Voice cleanup** — mic background-noise removal (Light / Balanced),
+  opt-in and off by default. macOS only until the RNNoise engine is built
+  into the Windows target.
 - **Windows beta launch** — installer, updater, and tester docs are ready;
   invites pending release gates.
 
 ## Roadmap (not started)
 
 - Auto-subtitles + translation (on-device Whisper)
-- Voice cleanup levels (noise reduction)
 - AI-assisted recording workflows
 - Collaborative recording tools
 

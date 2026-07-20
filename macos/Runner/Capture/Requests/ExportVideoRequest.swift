@@ -36,6 +36,9 @@ struct ExportVideoRequest: Equatable {
   let audioGainDb: Double
   let audioVolumePercent: Double
   let autoNormalizeOnExport: Bool
+  /// Mic noise reduction. Absent in payloads from older Flutter builds, which
+  /// parse as disabled so their exports are byte-for-byte unchanged.
+  let voiceCleanup: VoiceCleanupRequest
   let targetLoudnessDbfs: Double
   let cameraPath: String?
   /// Canvas-wide color grade baked into the exported screen content. Defaults
@@ -85,6 +88,7 @@ struct ExportVideoRequest: Equatable {
       audioGainDb: (args["audioGainDb"] as? Double) ?? 0.0,
       audioVolumePercent: (args["audioVolumePercent"] as? Double) ?? 100.0,
       autoNormalizeOnExport: (args["autoNormalizeOnExport"] as? Bool) ?? false,
+      voiceCleanup: VoiceCleanupRequest.fromFlutter(args["voiceCleanup"]),
       targetLoudnessDbfs: (args["targetLoudnessDbfs"] as? Double) ?? -16.0,
       cameraPath: args["cameraPath"] as? String,
       colorGrade: ColorGrade.fromFlutter(args["colorGrade"] as? [String: Any]),

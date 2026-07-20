@@ -13,6 +13,7 @@ import 'package:clingfy/app/home/post_processing/widgets/post_layout_section.dar
 import 'package:clingfy/app/home/post_processing/widgets/post_zoom_section.dart';
 import 'package:clingfy/app/home/post_processing/widgets/post_color_grade_section.dart';
 import 'package:clingfy/core/timeline/model/color_grade.dart';
+import 'package:clingfy/core/timeline/model/edit_track.dart';
 import 'package:flutter/material.dart' hide PlatformMenuItem;
 
 class PostProcessingSidebarRail extends StatelessWidget {
@@ -139,6 +140,7 @@ class PostProcessingSidebar extends StatelessWidget {
   final bool isCompact;
   final bool showResolutionControl;
   final double audioGainDb;
+  final VoiceCleanup voiceCleanup;
   final double audioVolume;
   final bool autoNormalizeOnExport;
   final double autoNormalizeTargetDbfs;
@@ -188,6 +190,7 @@ class PostProcessingSidebar extends StatelessWidget {
   final ValueChanged<Offset> onCameraManualCenterSnapped;
   final Function(double) onAudioGainChanged;
   final Function(double) onAudioGainChangeEnd;
+  final ValueChanged<VoiceCleanup> onVoiceCleanupChanged;
   final ColorGrade colorGrade;
   final ValueChanged<bool> onColorAutoEnhanceChanged;
   final ValueChanged<double> onColorExposureChanged;
@@ -275,11 +278,13 @@ class PostProcessingSidebar extends StatelessWidget {
     required this.onCameraManualCenterChangeEnd,
     required this.onCameraManualCenterSnapped,
     required this.audioGainDb,
+    required this.voiceCleanup,
     required this.audioVolume,
     required this.autoNormalizeOnExport,
     required this.autoNormalizeTargetDbfs,
     required this.onAudioGainChanged,
     required this.onAudioGainChangeEnd,
+    required this.onVoiceCleanupChanged,
     required this.onAudioVolumeChanged,
     required this.onAudioVolumeChangeEnd,
     required this.onAutoNormalizeOnExportChanged,
@@ -466,10 +471,12 @@ class PostProcessingSidebar extends StatelessWidget {
         gainAvailable: gainAvailable,
         audioVolume: audioVolume,
         audioGainDb: audioGainDb,
+        voiceCleanup: voiceCleanup,
         onAudioVolumeChanged: onAudioVolumeChanged,
         onAudioVolumeChangeEnd: onAudioVolumeChangeEnd,
         onAudioGainChanged: onAudioGainChanged,
         onAudioGainChangeEnd: onAudioGainChangeEnd,
+        onVoiceCleanupChanged: onVoiceCleanupChanged,
       ),
       PostExportSettingsSection(
         isProcessing: isProcessing,
