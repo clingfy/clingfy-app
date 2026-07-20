@@ -131,6 +131,7 @@ TEST(StubShapesTest, NoopSettersReturnSuccessWithNullValue) {
       "setExcludeRecorderApp",
       "setExcludeMicFromSystemAudio",
       "setMicEchoCancellationEnabled",
+      "previewSetVoiceCleanup",
       "setCaptureFrameRate",
       "setDisplay",
       "setAppWindowTarget",

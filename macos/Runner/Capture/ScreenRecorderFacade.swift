@@ -1274,6 +1274,7 @@ final class ScreenRecorderFacade: NSObject {
     bitrate: String,
     audioGainDb: Double,
     audioVolumePercent: Double,
+    voiceCleanup: VoiceCleanupRequest = .disabled,
     zoomSegments: [ZoomTimelineSegment]?,
     cameraPreviewChangeKind: CameraPreviewChangeKind,
     sessionId: String?,
@@ -1303,6 +1304,7 @@ final class ScreenRecorderFacade: NSObject {
         showCursor: showCursor,
         audioGainDb: audioGainDb,
         audioVolumePercent: audioVolumePercent,
+        voiceCleanup: voiceCleanup,
         zoomSegments: zoomSegments,
         cameraPreviewChangeKind: cameraPreviewChangeKind,
         sessionId: sessionId,
@@ -1352,6 +1354,15 @@ final class ScreenRecorderFacade: NSObject {
       result: result)
   }
 
+  func previewSetVoiceCleanup(
+    sessionId: String?,
+    voiceCleanup: VoiceCleanupRequest,
+    result: @escaping FlutterResult
+  ) {
+    previewEngine.setVoiceCleanup(
+      sessionId: sessionId, voiceCleanup: voiceCleanup, result: result)
+  }
+
   func exportVideo(
     projectPath: String,
     layout: String,
@@ -1374,6 +1385,7 @@ final class ScreenRecorderFacade: NSObject {
     audioVolumePercent: Double,
     autoNormalizeOnExport: Bool,
     targetLoudnessDbfs: Double,
+    voiceCleanup: VoiceCleanupRequest = .disabled,
     cameraPath: String?,
     cameraParams: CameraCompositionParams?,
     colorGrade: ColorGrade = .identity,
@@ -1409,6 +1421,7 @@ final class ScreenRecorderFacade: NSObject {
         audioVolumePercent: audioVolumePercent,
         autoNormalizeOnExport: autoNormalizeOnExport,
         targetLoudnessDbfs: targetLoudnessDbfs,
+        voiceCleanup: voiceCleanup,
         cameraPath: cameraPath,
         cameraParams: cameraParams,
         colorGrade: colorGrade,

@@ -73,6 +73,8 @@ final class ExportEngine {
     let audioVolumePercent: Double
     let autoNormalizeOnExport: Bool
     let targetLoudnessDbfs: Double
+    /// Mic noise reduction. Disabled by default so older payloads are unchanged.
+    var voiceCleanup: VoiceCleanupRequest = .disabled
     let cameraPath: String?
     let cameraParams: CameraCompositionParams?
     /// Canvas-wide color grade baked into the exported screen content.
@@ -207,6 +209,7 @@ final class ExportEngine {
       audioVolumePercent: clampedVolumePercent,
       autoNormalizeOnExport: input.autoNormalizeOnExport,
       targetLoudnessDbfs: clampedTargetLoudnessDbfs,
+      voiceCleanup: input.voiceCleanup,
       cameraParams: exportCameraParams,
       colorGrade: input.colorGrade,
       clips: input.clips,

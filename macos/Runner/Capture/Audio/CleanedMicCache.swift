@@ -30,14 +30,15 @@ import Foundation
 /// re-checks the cache once it reaches the queue, so concurrent requests for
 /// the same project (preview open + export start, rapid re-opens) coalesce
 /// into a single compute instead of racing the write. The queue is shared
-/// across ALL projects on purpose: it bounds peak memory to ONE
-/// decode-everything canceller run at a time (an hour-long recording holds
-/// several full 48 kHz float arrays — a few GB — so two concurrent computes
-/// could exhaust memory on a small Mac). The cost is that a synchronous
-/// caller (the export preamble) can wait behind an unrelated project's
-/// in-flight compute; that beachball is rare (it needs a long cache-miss
-/// preview of project A overlapping a cache-miss export of project B) and is
-/// the accepted price of the hard memory bound.
+/// across ALL projects — and with the voice-cleanup cache — on purpose: it
+/// bounds peak memory to ONE decode-everything run at a time (an hour-long
+/// recording holds several full 48 kHz float arrays — a few GB — so two
+/// concurrent computes could exhaust memory on a small Mac). See
+/// `AudioComputeQueue`. The cost is that a synchronous caller (the export
+/// preamble) can wait behind an unrelated project's in-flight compute; that
+/// beachball is rare (it needs a long cache-miss preview of project A
+/// overlapping a cache-miss export of project B) and is the accepted price of
+/// the hard memory bound.
 final class CleanedMicCache {
   static let shared = CleanedMicCache()
 
@@ -78,8 +79,9 @@ final class CleanedMicCache {
     let reductionDb: Float
   }
 
-  private let computeQueue = DispatchQueue(
-    label: "com.clingfy.audio.cleaned-mic-cache", qos: .userInitiated)
+  /// Shared with the voice-cleanup cache so the two heavy passes can never run
+  /// concurrently — see `AudioComputeQueue` for the memory bound this enforces.
+  private let computeQueue = AudioComputeQueue.shared
 
   static func cleanedFileURL(for projectRoot: URL) -> URL {
     RecordingProjectPaths.derivedDirectoryURL(for: projectRoot)

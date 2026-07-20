@@ -1,9 +1,12 @@
+import 'package:clingfy/core/timeline/model/edit_track.dart';
 import 'package:clingfy/l10n/app_localizations.dart';
 import 'package:clingfy/ui/platform/widgets/app_inline_notice.dart';
+import 'package:clingfy/ui/platform/widgets/app_segmented.dart';
 import 'package:clingfy/ui/platform/widgets/app_settings_group.dart';
 import 'package:clingfy/ui/platform/widgets/app_sidebar_tokens.dart';
 import 'package:clingfy/ui/platform/widgets/app_slider.dart';
 import 'package:clingfy/ui/platform/widgets/app_slider_row.dart';
+import 'package:clingfy/ui/platform/widgets/app_toggle_row.dart';
 import 'package:flutter/material.dart';
 import 'package:clingfy/ui/platform/platform_kind.dart';
 
@@ -14,10 +17,12 @@ class PostAudioSection extends StatelessWidget {
     this.gainAvailable,
     required this.audioVolume,
     required this.audioGainDb,
+    required this.voiceCleanup,
     required this.onAudioVolumeChanged,
     required this.onAudioVolumeChangeEnd,
     required this.onAudioGainChanged,
     required this.onAudioGainChangeEnd,
+    required this.onVoiceCleanupChanged,
   });
 
   final bool hasAudio;
@@ -31,10 +36,12 @@ class PostAudioSection extends StatelessWidget {
   final bool? gainAvailable;
   final double audioVolume;
   final double audioGainDb;
+  final VoiceCleanup voiceCleanup;
   final ValueChanged<double> onAudioVolumeChanged;
   final ValueChanged<double> onAudioVolumeChangeEnd;
   final ValueChanged<double> onAudioGainChanged;
   final ValueChanged<double> onAudioGainChangeEnd;
+  final ValueChanged<VoiceCleanup> onVoiceCleanupChanged;
 
   @override
   Widget build(BuildContext context) {
@@ -77,6 +84,46 @@ class PostAudioSection extends StatelessWidget {
                 onChangeEnd: onAudioGainChangeEnd,
               ),
             ),
+            // Voice cleanup denoises the MIC track alone, so it needs the same
+            // mic-present condition the gain slider does — a system-audio-only
+            // recording has nothing for it to act on. Hidden on Windows: the
+            // native pipeline there has no cleanup stage yet (its bridge method
+            // is a no-op), so showing the control would promise nothing.
+            if (gainEnabled && !isWindows()) ...[
+              const SizedBox(height: AppSidebarTokens.rowGap),
+              AppToggleRow(
+                key: const ValueKey('post_audio_voice_cleanup_toggle'),
+                title: l10n.voiceCleanup,
+                helperText: l10n.voiceCleanupHelp,
+                value: voiceCleanup.enabled,
+                onChanged: (enabled) => onVoiceCleanupChanged(
+                  voiceCleanup.copyWith(enabled: enabled),
+                ),
+              ),
+              if (voiceCleanup.enabled) ...[
+                const SizedBox(height: AppSidebarTokens.optionsSubgroupGap),
+                AppSegmented<CleanupMode>(
+                  key: const ValueKey('post_audio_voice_cleanup_mode'),
+                  value: voiceCleanup.mode,
+                  compact: true,
+                  onChanged: (mode) =>
+                      onVoiceCleanupChanged(voiceCleanup.copyWith(mode: mode)),
+                  items: [
+                    AppSegmentedItem(
+                      value: CleanupMode.light,
+                      label: l10n.voiceCleanupLight,
+                    ),
+                    AppSegmentedItem(
+                      value: CleanupMode.balanced,
+                      label: l10n.voiceCleanupBalanced,
+                    ),
+                    // CleanupMode.highQuality is deliberately absent: it is
+                    // reserved for a future full-band engine and would behave
+                    // identically to Balanced today.
+                  ],
+                ),
+              ],
+            ],
             // "No mic audio track found": shown when the recording has no
             // audio at all (the pre-separation case) AND when it has system
             // audio but no mic track (gain disabled above, volume live).

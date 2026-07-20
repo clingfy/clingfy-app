@@ -973,16 +973,20 @@ final class InlinePreviewView: NSView {
     // long recording shows the loading state instead of freezing the app.
     let rawMicURL = mediaSources.micAudioPath.map { URL(fileURLWithPath: $0) }
     let systemURL = mediaSources.systemAudioPath.map { URL(fileURLWithPath: $0) }
+    let projectRoot = URL(fileURLWithPath: mediaSources.projectPath, isDirectory: true)
     guard let micURL = rawMicURL, let systemReferenceURL = systemURL else {
-      // Nothing to cancel (mic-only / system-only / legacy recording): finish
-      // synchronously, byte-identical to the pre-cache behavior.
-      finishOpen(
-        previewMicURL: rawMicURL, systemURL: systemURL, screenAsset: asset,
-        mediaSources: mediaSources, openToken: openToken,
-        initialPlaybackSnapshot: initialPlaybackSnapshot)
+      // Nothing to cancel (mic-only / system-only / legacy recording). Voice
+      // cleanup only needs the mic, though, so a mic-only take still gets it.
+      resolveVoiceCleanedMic(
+        micURL: rawMicURL, projectRoot: projectRoot, openToken: openToken
+      ) { [weak self] cleanupResolvedMicURL in
+        self?.finishOpen(
+          previewMicURL: cleanupResolvedMicURL, systemURL: systemURL, screenAsset: asset,
+          mediaSources: mediaSources, openToken: openToken,
+          initialPlaybackSnapshot: initialPlaybackSnapshot)
+      }
       return
     }
-    let projectRoot = URL(fileURLWithPath: mediaSources.projectPath, isDirectory: true)
     if let hit = CleanedMicCache.shared.cachedOutcome(
       micURL: micURL, systemURL: systemReferenceURL, projectRoot: projectRoot)
     {
@@ -996,10 +1000,14 @@ final class InlinePreviewView: NSView {
           "reductionDb": hit.result.reductionDb,
           "delayMs": hit.result.delayMs,
         ])
-      finishOpen(
-        previewMicURL: hit.result.cleanedMicURL, systemURL: systemURL, screenAsset: asset,
-        mediaSources: mediaSources, openToken: openToken,
-        initialPlaybackSnapshot: initialPlaybackSnapshot)
+      resolveVoiceCleanedMic(
+        micURL: hit.result.cleanedMicURL, projectRoot: projectRoot, openToken: openToken
+      ) { [weak self] cleanupResolvedMicURL in
+        self?.finishOpen(
+          previewMicURL: cleanupResolvedMicURL, systemURL: systemURL, screenAsset: asset,
+          mediaSources: mediaSources, openToken: openToken,
+          initialPlaybackSnapshot: initialPlaybackSnapshot)
+      }
       return
     }
     // Cache miss: park the players so the PREVIOUS recording doesn't keep
@@ -1037,11 +1045,125 @@ final class InlinePreviewView: NSView {
           "delayMs": outcome.result.delayMs,
           "cached": outcome.cacheOwned,
         ])
-      self.finishOpen(
-        previewMicURL: outcome.result.cleanedMicURL, systemURL: systemURL, screenAsset: asset,
-        mediaSources: mediaSources, openToken: openToken,
-        initialPlaybackSnapshot: initialPlaybackSnapshot)
+      self.resolveVoiceCleanedMic(
+        micURL: outcome.result.cleanedMicURL, projectRoot: projectRoot, openToken: openToken
+      ) { [weak self] cleanupResolvedMicURL in
+        self?.finishOpen(
+          previewMicURL: cleanupResolvedMicURL, systemURL: systemURL, screenAsset: asset,
+          mediaSources: mediaSources, openToken: openToken,
+          initialPlaybackSnapshot: initialPlaybackSnapshot)
+      }
     }
+  }
+
+  /// Second mic stage for the preview: background-noise removal, applied to
+  /// whatever the echo-cancellation stage produced (the cleaned mic, or the raw
+  /// mic when there was nothing to cancel or the setting is off).
+  ///
+  /// Calls `completion` on MAIN with the mic to preview. It is invoked
+  /// synchronously when there is nothing to do — cleanup off, no mic, or a cache
+  /// hit — so the common open path keeps finishing in one turn; only a genuine
+  /// cache miss defers, exactly like the canceller above.
+  ///
+  /// The two stages are chained, never nested: `AudioComputeQueue` is serial, so
+  /// this always runs after the echo stage has returned.
+  private func resolveVoiceCleanedMic(
+    micURL: URL?, projectRoot: URL, openToken: UUID,
+    completion: @escaping (URL?) -> Void
+  ) {
+    let request = voiceCleanupRequest
+    guard request.enabled, let micURL else {
+      completion(micURL)
+      return
+    }
+    if let hit = EnhancedMicCache.shared.cachedOutcome(
+      inputMicURL: micURL, request: request, projectRoot: projectRoot)
+    {
+      NativeLogger.i(
+        "Player", "Preview: voice-cleaned mic served from cache",
+        context: ["mode": request.mode.rawValue, "applied": hit.result.applied])
+      completion(hit.result.applied ? hit.result.enhancedMicURL : micURL)
+      return
+    }
+    // Cache miss: the players were already parked by the caller when it missed
+    // its own cache; park them here too for the mic-only/cache-hit paths that
+    // reached us synchronously, so the previous recording doesn't play on under
+    // the loading UI.
+    player?.pause()
+    player?.replaceCurrentItem(with: nil)
+    cameraPlayer?.pause()
+    NativeLogger.i(
+      "Player", "Preview: cleaning up voice off the main thread (cache miss)",
+      context: ["mode": request.mode.rawValue, "token": openToken.uuidString])
+    EnhancedMicCache.shared.outcomeAsync(
+      inputMicURL: micURL, request: request, projectRoot: projectRoot
+    ) { [weak self] outcome in
+      guard let self, self.currentOpenToken == openToken else {
+        // Stale: re-opened or closed while the pipeline ran. A caller-owned temp
+        // file has no owner anymore — reclaim it.
+        if !outcome.cacheOwned && outcome.result.applied {
+          try? FileManager.default.removeItem(at: outcome.result.enhancedMicURL)
+        }
+        return
+      }
+      NativeLogger.i(
+        "Player", "Preview: applied voice cleanup",
+        context: [
+          "mode": request.mode.rawValue,
+          "applied": outcome.result.applied,
+          "noiseReductionDb": outcome.result.noiseReductionDb,
+          "cached": outcome.cacheOwned,
+        ])
+      completion(outcome.result.applied ? outcome.result.enhancedMicURL : micURL)
+    }
+  }
+
+  /// Applies a voice-cleanup change to the OPEN preview.
+  ///
+  /// Unlike gain and volume — which are live `AVAudioMix` parameters — cleanup
+  /// changes the mic FILE, so the player item has to be rebuilt around a
+  /// re-resolved mic. Reopening the whole preview would lose the playhead and
+  /// re-run the scene setup, so this re-resolves just the mic and hands the new
+  /// asset to the existing clip-composition rebuild.
+  func updateVoiceCleanupOnly(_ request: VoiceCleanupRequest) {
+    guard request != voiceCleanupRequest else { return }
+    voiceCleanupRequest = request
+    guard let mediaSources = currentMediaSources, separatedAudioActive else { return }
+    guard let rawMicPath = mediaSources.micAudioPath else { return }
+
+    let projectRoot = URL(fileURLWithPath: mediaSources.projectPath, isDirectory: true)
+    let rawMicURL = URL(fileURLWithPath: rawMicPath)
+    let systemURL = mediaSources.systemAudioPath.map { URL(fileURLWithPath: $0) }
+    let token = currentOpenToken ?? UUID()
+
+    // Re-run the echo stage first so the chain order matches the export. It is a
+    // cache hit in practice (the open already computed it), and a no-op when
+    // there is no system reference or the preference is off.
+    var micAfterEcho = rawMicURL
+    if let systemURL,
+      let echo = CleanedMicCache.shared.cachedOutcome(
+        micURL: rawMicURL, systemURL: systemURL, projectRoot: projectRoot),
+      echo.result.applied
+    {
+      micAfterEcho = echo.result.cleanedMicURL
+    }
+
+    resolveVoiceCleanedMic(
+      micURL: micAfterEcho, projectRoot: projectRoot, openToken: token
+    ) { [weak self] resolvedMicURL in
+      guard let self, self.currentOpenToken == token else { return }
+      self.swapPreviewMic(to: resolvedMicURL)
+    }
+  }
+
+  /// Swaps the mic asset behind the open preview and rebuilds the separated
+  /// composition around it, preserving the current playhead and clip edits.
+  private func swapPreviewMic(to micURL: URL?) {
+    guard let newMicAsset = LetterboxExporter.readableAudioAsset(url: micURL) else { return }
+    separatedMicAsset = newMicAsset
+    // `rebuildClipComposition` early-returns when the ranges are unchanged, so
+    // force it by rebuilding through the current ranges explicitly.
+    rebuildSeparatedCompositionForCurrentRanges()
   }
 
   /// Second half of `open()`: builds the player item from the resolved mic and
@@ -1934,9 +2056,16 @@ final class InlinePreviewView: NSView {
 
   /// Swaps the player item to a kept-range composition (or back to the raw asset
   /// when `targetRanges` is empty), preserving the source frame currently shown.
-  private func rebuildClipComposition(_ targetRanges: [ClipKeptRange]) {
+  /// Rebuilds around the ranges already applied. Used when the composition's
+  /// INPUTS changed rather than the ranges — swapping in a voice-cleaned mic —
+  /// which the no-change guard below would otherwise skip.
+  private func rebuildSeparatedCompositionForCurrentRanges() {
+    rebuildClipComposition(clipKeptRanges, force: true)
+  }
+
+  private func rebuildClipComposition(_ targetRanges: [ClipKeptRange], force: Bool = false) {
     guard let sourceAsset = sourceScreenAsset else { return }
-    if targetRanges == clipKeptRanges { return }  // no change
+    if !force, targetRanges == clipKeptRanges { return }  // no change
     guard let params = currentCompositionParams, let profile = currentPreviewProfile else {
       // Composition not applied yet (pre-ready). Leave `clipKeptRanges` empty so
       // the overlays stay consistent with the raw-asset player; in practice the
@@ -2277,6 +2406,11 @@ final class InlinePreviewView: NSView {
   private var separatedMicAsset: AVAsset?
   private var separatedSystemAsset: AVAsset?
   private var separatedAudioActive = false
+  /// Current mic noise-reduction setting for this editing session. Unlike gain
+  /// and volume it is not a live mix parameter — changing it re-resolves the mic
+  /// file — so it is held here and consumed by `open()` and
+  /// `updateVoiceCleanupOnly`.
+  private var voiceCleanupRequest: VoiceCleanupRequest = .disabled
   /// The echo-cancelled mic CAF this view wrote for the current preview (a temp
   /// file we own). Deleted on the next open and on dispose — nothing else
   /// reclaims preview-created cancellation files, so without this it leaks.

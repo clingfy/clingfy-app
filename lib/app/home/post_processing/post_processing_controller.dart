@@ -12,6 +12,7 @@ import 'package:clingfy/l10n/app_localizations.dart';
 import 'package:clingfy/core/logging/logger_service.dart';
 import 'package:clingfy/core/models/app_models.dart';
 import 'package:clingfy/core/timeline/model/color_grade.dart';
+import 'package:clingfy/core/timeline/model/edit_track.dart';
 import 'package:clingfy/core/color/auto_grade_heuristic.dart';
 import 'package:clingfy/core/models/background_preset_catalog.dart';
 import 'package:clingfy/app/settings/settings_controller.dart';
@@ -109,6 +110,7 @@ class PostProcessingController extends ChangeNotifier {
   String? _activeSessionId;
   bool _cursorAvailable = true;
   double _audioGainDb = 0.0;
+  VoiceCleanup _voiceCleanup = const VoiceCleanup();
   double _audioVolumePercent = 100.0;
   String? _cameraPath;
   CameraCompositionState? _cameraState;
@@ -161,6 +163,7 @@ class PostProcessingController extends ChangeNotifier {
   String? get previewPath => _previewPath;
   bool get cursorAvailable => _cursorAvailable;
   double get audioGainDb => _audioGainDb;
+  VoiceCleanup get voiceCleanup => _voiceCleanup;
   double get audioVolumePercent => _audioVolumePercent;
   ColorGrade get colorGrade => _colorGrade;
   String? get cameraPath => _cameraPath;
@@ -562,6 +565,33 @@ class PostProcessingController extends ChangeNotifier {
     _pushPreviewAudioMix();
   }
 
+  /// Voice cleanup is a discrete choice, not a dragged slider, so there is no
+  /// separate "end" setter: it persists and pushes to the preview immediately.
+  /// The push re-resolves the mic file natively (an O(recording) pass on the
+  /// first use of each mode), which is why it must never be called from a
+  /// continuous gesture.
+  void setVoiceCleanup(VoiceCleanup value) {
+    if (value == _voiceCleanup) return;
+    _voiceCleanup = value;
+    notifyListeners();
+    unawaited(_settings.post.updatePostVoiceCleanup(value));
+    _pushPreviewVoiceCleanup();
+  }
+
+  void _pushPreviewVoiceCleanup() {
+    if (_previewPath == null) return;
+    unawaited(
+      _nativeBridge
+          .previewSetVoiceCleanup(
+            voiceCleanup: _voiceCleanup,
+            sessionId: _activeSessionId,
+          )
+          .catchError((Object e, StackTrace st) {
+            Log.e("PostProcessing", "Failed to update voice cleanup", e, st);
+          }),
+    );
+  }
+
   void _schedulePreviewAudioMix() {
     _audioPreviewDebouncer.run(_pushPreviewAudioMix);
   }
@@ -762,6 +792,7 @@ class PostProcessingController extends ChangeNotifier {
     _activeSessionId = null;
     _cursorAvailable = true;
     _audioGainDb = _settings.post.postAudioGainDb;
+    _voiceCleanup = _settings.post.postVoiceCleanup;
     _audioVolumePercent = _settings.post.postAudioVolumePercent;
     _colorGrade = const ColorGrade();
     _cameraPath = null;
@@ -905,6 +936,7 @@ class PostProcessingController extends ChangeNotifier {
         'zoomEffectEnabled': _zoomEffectEnabled,
         'showCursor': _showCursor,
         'audioGainDb': _audioGainDb,
+        'voiceCleanup': _voiceCleanup.toMap(),
         'audioVolumePercent': _audioVolumePercent,
         'sessionId': _activeSessionId,
         // For preview, we still use mov/hevc for maximum quality/performance
@@ -983,6 +1015,9 @@ class PostProcessingController extends ChangeNotifier {
           'fitMode': _settings.post.fitMode.name,
           'showCursor': _showCursor,
           'audioGainDb': _audioGainDb,
+          'voiceCleanup': _voiceCleanup.enabled
+              ? _voiceCleanup.mode.wire
+              : 'off',
           'audioVolumePercent': _audioVolumePercent,
         },
       );
@@ -998,6 +1033,9 @@ class PostProcessingController extends ChangeNotifier {
           'fitMode': _settings.post.fitMode.name,
           'showCursor': _showCursor,
           'audioGainDb': _audioGainDb,
+          'voiceCleanup': _voiceCleanup.enabled
+              ? _voiceCleanup.mode.wire
+              : 'off',
           'audioVolumePercent': _audioVolumePercent,
         },
       );
@@ -1166,6 +1204,7 @@ class PostProcessingController extends ChangeNotifier {
         'zoomEffectEnabled': _zoomEffectEnabled,
         'showCursor': _showCursor,
         'audioGainDb': _audioGainDb,
+        'voiceCleanup': _voiceCleanup.toMap(),
         'audioVolumePercent': _audioVolumePercent,
         // Bake the same grade the user sees in the live preview into the
         // exported file. Identity (no adjustment) is a no-op on the native
@@ -1248,6 +1287,9 @@ class PostProcessingController extends ChangeNotifier {
           'codec': _settings.export.exportCodec,
           'bitrate': _settings.export.exportBitrate,
           'audioGainDb': _audioGainDb,
+          'voiceCleanup': _voiceCleanup.enabled
+              ? _voiceCleanup.mode.wire
+              : 'off',
           'audioVolumePercent': _audioVolumePercent,
           'autoNormalizeOnExport': autoNormalizeOnExport,
           'targetLoudnessDbfs': targetLoudnessDbfs,
@@ -1285,6 +1327,9 @@ class PostProcessingController extends ChangeNotifier {
           'codec': _settings.export.exportCodec,
           'bitrate': _settings.export.exportBitrate,
           'audioGainDb': _audioGainDb,
+          'voiceCleanup': _voiceCleanup.enabled
+              ? _voiceCleanup.mode.wire
+              : 'off',
           'audioVolumePercent': _audioVolumePercent,
           'autoNormalizeOnExport': autoNormalizeOnExport,
           'targetLoudnessDbfs': targetLoudnessDbfs,

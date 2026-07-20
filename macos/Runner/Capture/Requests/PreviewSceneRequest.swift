@@ -35,6 +35,9 @@ struct PreviewSceneRequest: Equatable {
   let bitrate: String
   let audioGainDb: Double
   let audioVolumePercent: Double
+  /// Mic noise reduction. Absent in payloads from older Flutter builds, which
+  /// parse as disabled.
+  let voiceCleanup: VoiceCleanupRequest
   let sessionId: String?
   let cameraPath: String?
 
@@ -79,6 +82,7 @@ struct PreviewSceneRequest: Equatable {
       bitrate: (args["bitrate"] as? String) ?? "auto",
       audioGainDb: (args["audioGainDb"] as? Double) ?? 0.0,
       audioVolumePercent: (args["audioVolumePercent"] as? Double) ?? 100.0,
+      voiceCleanup: VoiceCleanupRequest.fromFlutter(args["voiceCleanup"]),
       sessionId: args["sessionId"] as? String,
       cameraPath: args["cameraPath"] as? String
     )

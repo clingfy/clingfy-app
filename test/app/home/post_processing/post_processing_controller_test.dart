@@ -1,6 +1,7 @@
 import 'package:clingfy/core/preview/player_controller.dart';
 import 'package:clingfy/app/home/post_processing/post_processing_controller.dart';
 import 'package:clingfy/core/models/app_models.dart';
+import 'package:clingfy/core/timeline/model/edit_track.dart';
 import 'package:clingfy/core/bridges/native_bridge.dart';
 import 'package:clingfy/app/settings/settings_controller.dart';
 import 'package:flutter/services.dart';
@@ -108,6 +109,33 @@ void main() {
     return harness;
   }
 
+  test('applyProcessing carries the current voice-cleanup setting', () async {
+    final harness = await createHarness();
+
+    harness.post.setVoiceCleanup(
+      const VoiceCleanup(enabled: true, mode: CleanupMode.light),
+    );
+    await harness.post.applyProcessing();
+
+    expect(harness.processCalls, isNotEmpty);
+    final args = Map<String, dynamic>.from(
+      harness.processCalls.last.arguments! as Map<dynamic, dynamic>,
+    );
+    expect(args['voiceCleanup'], {'enabled': true, 'mode': 'light'});
+  });
+
+  test('setVoiceCleanup persists the choice as the new default', () async {
+    final harness = await createHarness();
+
+    harness.post.setVoiceCleanup(
+      const VoiceCleanup(enabled: true, mode: CleanupMode.light),
+    );
+    await Future<void>.delayed(Duration.zero);
+
+    expect(harness.settings.post.postVoiceCleanup.enabled, isTrue);
+    expect(harness.settings.post.postVoiceCleanup.mode, CleanupMode.light);
+  });
+
   test(
     'applyProcessing includes zoomSegments when preview composition segments are available',
     () async {
@@ -136,6 +164,9 @@ void main() {
       );
       expect(args['audioGainDb'], harness.post.audioGainDb);
       expect(args['audioVolumePercent'], harness.post.audioVolumePercent);
+      // Additive voice-cleanup key: absent-or-disabled must look identical to
+      // the pre-feature payload on the native side.
+      expect(args['voiceCleanup'], {'enabled': false, 'mode': 'balanced'});
       expect(args['cameraPreviewChangeKind'], 'none');
       expect(args['zoomSegments'], [
         {'startMs': 120, 'endMs': 340},

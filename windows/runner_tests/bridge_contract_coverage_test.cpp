@@ -115,6 +115,7 @@ const std::vector<std::string>& BridgeContractMethods() {
       "inlinePreviewStop",
       "previewSetCameraPlacement",
       "previewSetZoomSegments",
+      "previewSetVoiceCleanup",
       "previewSetColorGrade",
       "previewSetClips",
       "previewSetAudioMix",

@@ -16,6 +16,7 @@ import 'package:clingfy/ui/platform/widgets/resolution_preset_menu_items.dart';
 import 'package:clingfy/ui/theme/app_theme.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_colorpicker/flutter_colorpicker.dart';
+import 'package:clingfy/core/timeline/model/edit_track.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:macos_ui/macos_ui.dart';
 import 'package:clingfy/ui/platform/platform_kind.dart';
@@ -91,6 +92,7 @@ void main() {
       hasAudio: hasAudio,
       disabledMessage: null,
       audioGainDb: 0,
+      voiceCleanup: const VoiceCleanup(),
       audioVolume: 50,
       autoNormalizeOnExport: autoNormalizeOnExport,
       autoNormalizeTargetDbfs: -14,
@@ -153,6 +155,7 @@ void main() {
       onCameraManualCenterSnapped: onCameraManualCenterSnapped ?? (_) {},
       onAudioGainChanged: (_) {},
       onAudioGainChangeEnd: (_) {},
+      onVoiceCleanupChanged: (_) {},
       onAudioVolumeChanged: (_) {},
       onAudioVolumeChangeEnd: (_) {},
       onAutoNormalizeOnExportChanged: (_) {},

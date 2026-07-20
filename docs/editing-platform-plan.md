@@ -404,7 +404,7 @@ any input format
 - Tests: resample correctness (rate + channel count), mono/stereo split, a
   non-48 kHz input no longer dropped.
 
-### Phase 4 — voice cleanup (noise reduction)
+### Phase 4 — voice cleanup (noise reduction) — SHIPPED on macOS
 
 A **pluggable `AudioEnhancementPipeline`** applied to the **mic source only**
 (after 1.5/3.5 there is a clean 48 kHz mono mic copy to feed it).
@@ -422,6 +422,25 @@ A **pluggable `AudioEnhancementPipeline`** applied to the **mic source only**
   `voiceCleanup{enabled,mode}` (additive).
 - Tests: pipeline mode→engine routing (Dart), `RNNoiseEngineTests.swift`
   (frame size/passthrough), `audio_mixer_test.cpp` (cleanup branch).
+
+**Landed (macOS):** RNNoise v0.2 is vendored at
+`macos/Runner/Capture/Audio/RNNoise/`, wrapped by `RNNoiseEngine.swift`
+and the engine-agnostic `AudioEnhancementPipeline.swift`, cached per
+project by `EnhancedMicCache` and spliced into the export mic chain
+between echo cancellation and the normalize/gain stage. Two deviations
+from this plan, both deliberate:
+
+- The UI exposes **Off / Light / Balanced** only. `High Quality` was to
+  mean DeepFilterNet, which is not vendored, so offering the level would
+  have been a relabelled Balanced. The `highQuality` wire value still
+  parses (and runs RNNoise at full strength) so a project written by a
+  future build opens correctly.
+- Windows is **not** stubbed at `audio_mixer.cpp` as sketched here. That
+  is a capture-time hook, but Windows sums mic + loopback into one track
+  while recording, so there is no mic-only source to clean at export and
+  no post-hoc mode change could be honoured. Windows needs Phase 1.5
+  (separated capture) first; until then the bridge method is a no-op and
+  the control is hidden there.
 
 ### Phase 5 — subtitles + translate *(the big one)*
 

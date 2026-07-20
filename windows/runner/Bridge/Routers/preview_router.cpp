@@ -815,6 +815,13 @@ void RegisterHandlers(HandlerTable& table) {
 
   table["previewSetCameraPlacement"] = &HandlePreviewSetCameraPlacement;
   table["previewSetZoomSegments"] = &HandleNoopSetter;
+  // Voice cleanup (noise reduction) is macOS-only by construction: it denoises
+  // the MIC alone, and Windows sums mic + loopback into one AAC track while
+  // recording (Audio/audio_mixer), so no mic-only source survives to export.
+  // Registered as a no-op so the additive Flutter call succeeds; the Flutter UI
+  // hides the control on Windows rather than promising something the export
+  // cannot deliver. A real port needs separated capture first.
+  table["previewSetVoiceCleanup"] = &HandleNoopSetter;
   // Color grade (editing port step 2): live on Windows — the same D2D color
   // chain the export bakes with (Graphics/color_grade_effect), applied to
   // the preview video by preview_compositor. Video-only, like macOS preview.

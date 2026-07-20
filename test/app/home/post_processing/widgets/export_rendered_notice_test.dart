@@ -5,6 +5,7 @@ import 'package:clingfy/l10n/app_localizations.dart';
 import 'package:clingfy/ui/platform/platform_kind.dart';
 import 'package:fluent_ui/fluent_ui.dart' as fluent;
 import 'package:flutter/material.dart';
+import 'package:clingfy/core/timeline/model/edit_track.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:macos_ui/macos_ui.dart';
 
@@ -79,9 +80,11 @@ void main() {
             PostAudioSection(
               hasAudio: true,
               audioGainDb: 0,
+              voiceCleanup: const VoiceCleanup(),
               audioVolume: 100,
               onAudioGainChanged: (_) {},
               onAudioGainChangeEnd: (_) {},
+              onVoiceCleanupChanged: (_) {},
               onAudioVolumeChanged: (_) {},
               onAudioVolumeChangeEnd: (_) {},
             ),

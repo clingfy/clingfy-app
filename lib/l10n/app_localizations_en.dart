@@ -1898,6 +1898,19 @@ class AppLocalizationsEn extends AppLocalizations {
   String get audioGain => 'Audio Gain';
 
   @override
+  String get voiceCleanup => 'Voice Cleanup';
+
+  @override
+  String get voiceCleanupHelp =>
+      'Removes background noise from the mic, like fans or room tone.';
+
+  @override
+  String get voiceCleanupLight => 'Light';
+
+  @override
+  String get voiceCleanupBalanced => 'Balanced';
+
+  @override
   String get volume => 'Volume';
 
   @override

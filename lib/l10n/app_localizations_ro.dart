@@ -1916,6 +1916,19 @@ class AppLocalizationsRo extends AppLocalizations {
   String get audioGain => 'Câștig Audio';
 
   @override
+  String get voiceCleanup => 'Curățare Voce';
+
+  @override
+  String get voiceCleanupHelp =>
+      'Elimină zgomotul de fundal din microfon, precum ventilatoare sau zgomotul camerei.';
+
+  @override
+  String get voiceCleanupLight => 'Ușoară';
+
+  @override
+  String get voiceCleanupBalanced => 'Echilibrată';
+
+  @override
   String get volume => 'Volum';
 
   @override
