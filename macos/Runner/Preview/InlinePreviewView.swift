@@ -887,6 +887,7 @@ final class InlinePreviewView: NSView {
     {
       voiceCleanupRequest = sessionCleanup
     }
+    endMicSwapTickSuppression()
     // Generate a new token for this open operation
     let openToken = UUID()
     currentOpenToken = openToken
@@ -1219,10 +1220,121 @@ final class InlinePreviewView: NSView {
     }
     separatedMicAsset = newMicAsset
     releaseOwnedPreviewMics(keeping: micURL)
-    // `rebuildClipComposition` early-returns when the ranges are unchanged, so
-    // force it by rebuilding through the current ranges explicitly.
-    rebuildSeparatedCompositionForCurrentRanges()
+    swapPreviewMicItemSeamlessly()
   }
+
+  /// Swaps ONLY the mic behind the open preview.
+  ///
+  /// Deliberately not `rebuildClipComposition`: that path exists for clip edits,
+  /// where the ranges and duration genuinely change, and it pays for that by
+  /// rebuilding the whole preview scene through `applyCompositionNow` (video
+  /// composition, camera layout, colour policy) and resetting the zoom smoother.
+  /// Driving it from a cleanup toggle made the video and the camera overlay
+  /// visibly flicker and bounced the scrubber to 00:00 and back, for a change
+  /// that touches one audio track and nothing else.
+  ///
+  /// Here the ranges are passed through untouched, the cached `currentLayout` is
+  /// reused, and the only work is: build the composition around the new mic,
+  /// dress the new item exactly like the live one, install it, and seek back —
+  /// all with ticks suppressed so Flutter never observes the intermediate zero.
+  ///
+  /// Falls back to the full rebuild if the new composition's video track does
+  /// not line up with the live one, since the cached layout binds to it by ID.
+  private func swapPreviewMicItemSeamlessly() {
+    guard separatedAudioActive,
+      let player,
+      let sourceAsset = sourceScreenAsset,
+      let layout = currentLayout,
+      let liveItem = player.currentItem,
+      let params = currentCompositionParams,
+      let token = currentOpenToken
+    else {
+      // Pre-ready (no layout yet): the initial open is still resolving its own
+      // mic and will pick this one up when it finishes.
+      return
+    }
+
+    guard
+      let separated = Self.makeSeparatedPreviewComposition(
+        screenAsset: sourceAsset,
+        micAsset: separatedMicAsset,
+        systemAsset: separatedSystemAsset,
+        ranges: clipKeptRanges)
+    else {
+      NativeLogger.w("Player", "Mic swap: failed to build the separated composition")
+      return
+    }
+
+    // `layout.composition` binds its layer instruction to the video track by ID.
+    // Track IDs are auto-assigned, so verify rather than assume: reusing a
+    // mismatched composition renders black, which is worse than the flicker.
+    let liveVideoID = liveItem.asset.tracks(withMediaType: .video).first?.trackID
+    let newVideoID = separated.composition.tracks(withMediaType: .video).first?.trackID
+    guard let liveVideoID, let newVideoID, liveVideoID == newVideoID else {
+      NativeLogger.w(
+        "Player", "Mic swap: video track id moved; falling back to the full rebuild",
+        context: ["live": liveVideoID ?? -1, "new": newVideoID ?? -1])
+      rebuildSeparatedCompositionForCurrentRanges()
+      return
+    }
+
+    let restoreTime = player.currentTime()
+    let wasPlaying = player.rate != 0
+
+    let item = AVPlayerItem(asset: separated.composition)
+    if #available(macOS 10.13, *) { item.seekingWaitsForVideoCompositionRendering = true }
+    item.videoComposition = makeGradedComposition(
+      layout: layout, grade: currentColorGrade, asset: separated.composition)
+    if #available(macOS 10.15, *) { item.preferredMaximumResolution = layout.renderSize }
+    // Gain routing targets the mic track by id, and the new composition has its
+    // own. Set it before building the mix, and only now that the item is
+    // certain to be installed.
+    separatedMicTrackID = separated.micTrackID
+    applyAudioMix(
+      to: item, gainDb: params.audioGainDb, volumePercent: params.audioVolumePercent)
+
+    // Suppress BEFORE the swap and release only once the restore seek reports
+    // done — the item's time is 0 until then, and the observer fires at 60 Hz.
+    beginMicSwapTickSuppression()
+    player.replaceCurrentItem(with: item)
+    observeCurrentItem(for: token)
+    player.seek(to: restoreTime, toleranceBefore: .zero, toleranceAfter: .zero) {
+      [weak self] _ in
+      guard let self else { return }
+      if wasPlaying, self.player?.rate == 0 { self.player?.play() }
+      self.endMicSwapTickSuppression()
+    }
+
+    NativeLogger.i(
+      "Player", "Swapped the preview mic without rebuilding the scene",
+      context: [
+        "restoreMs": Int(restoreTime.seconds * 1000),
+        "wasPlaying": wasPlaying,
+        "rangeCount": clipKeptRanges.count,
+      ])
+  }
+
+  private func beginMicSwapTickSuppression() {
+    suppressTicksForItemSwap = true
+    micSwapWatchdog?.cancel()
+    // Bounded: `sendTick` also drives the cursor, zoom and camera overlays, so
+    // a seek that never calls back must not freeze them.
+    let watchdog = DispatchWorkItem { [weak self] in self?.endMicSwapTickSuppression() }
+    micSwapWatchdog = watchdog
+    DispatchQueue.main.asyncAfter(deadline: .now() + 0.5, execute: watchdog)
+  }
+
+  private func endMicSwapTickSuppression() {
+    micSwapWatchdog?.cancel()
+    micSwapWatchdog = nil
+    suppressTicksForItemSwap = false
+  }
+
+  // MARK: - Test seams for the mic-swap tick guard
+
+  var isSuppressingTicksForTesting: Bool { suppressTicksForItemSwap }
+  func beginMicSwapTickSuppressionForTesting() { beginMicSwapTickSuppression() }
+  func endMicSwapTickSuppressionForTesting() { endMicSwapTickSuppression() }
 
   /// Per-run temp mics are named with the producing stage's prefix; cache-owned
   /// files in `derived/` use stable names and must never be deleted here.
@@ -1632,6 +1744,8 @@ final class InlinePreviewView: NSView {
   ////
 
   public func resetPlayback(reason: String = "reset") {
+    // A close landing mid-swap must not strand the tick guard.
+    endMicSwapTickSuppression()
     let closingSessionId = currentSessionId
     let closingPath = currentVideoPath
     let closingToken = currentOpenToken
@@ -2069,7 +2183,15 @@ final class InlinePreviewView: NSView {
   }
 
   private func sendTick(position: CMTime) {
-    guard let duration = player?.currentItem?.duration else { return }
+    // A mic swap installs a fresh item whose time is 0 until the restore seek
+    // lands. The periodic observer lives on the PLAYER, so it keeps firing
+    // straight through the swap, and Dart's `playerTick` handler assigns
+    // `positionMs` unconditionally — one such tick is what snapped the
+    // scrubber to 00:00 and back. Stay silent for the swap window.
+    guard !suppressTicksForItemSwap else { return }
+    // `.indefinite` is non-nil, so without this a not-yet-loaded item reports
+    // durationMs 0, which Dart reads as "not ready".
+    guard let duration = player?.currentItem?.duration, duration.isNumeric else { return }
     syncCameraPlayback(to: position)
 
     let posSeconds = CMTimeGetSeconds(position)
@@ -2529,6 +2651,12 @@ final class InlinePreviewView: NSView {
   private let clipJumpEpsilonMs = 17
   private var currentCameraCompositionParams: CameraCompositionParams?
   private var currentLayout: CompositionBuilder.PreviewCompositionResult?
+  /// Set across a mic swap so no zero-position tick escapes to Flutter. Always
+  /// cleared through `endMicSwapTickSuppression`, which the watchdog also calls
+  /// — `sendTick` drives the cursor, zoom and camera overlays too, so a leaked
+  /// flag would freeze them.
+  private var suppressTicksForItemSwap = false
+  private var micSwapWatchdog: DispatchWorkItem?
   private var pendingCompositionParams: CompositionParams?
   private var pendingCameraCompositionParams: CameraCompositionParams?
   private var pendingCameraPreviewChangeKind: CameraPreviewChangeKind = .none
@@ -3438,11 +3566,17 @@ final class InlinePreviewView: NSView {
   /// CIFilter pass when [grade] is non-identity. Returns the layout's own
   /// composition unchanged when there is nothing to grade, so color-off is a
   /// zero-cost passthrough.
+  /// `asset` overrides the live item's asset, for callers that must grade a
+  /// composition BEFORE it is installed. `AVMutableVideoComposition(asset:)`
+  /// derives its instructions from the asset it is handed, so grading the old
+  /// asset and attaching the result to a new item renders wrong at any
+  /// non-identity grade.
   private func makeGradedComposition(
     layout: CompositionBuilder.PreviewCompositionResult,
-    grade: ColorGrade
+    grade: ColorGrade,
+    asset gradeAsset: AVAsset? = nil
   ) -> AVVideoComposition {
-    guard !grade.isIdentity, let asset = player?.currentItem?.asset else {
+    guard !grade.isIdentity, let asset = gradeAsset ?? player?.currentItem?.asset else {
       return layout.composition
     }
     let base = layout.composition

@@ -347,6 +347,54 @@ final class AudioEnhancementPipelineTests: XCTestCase {
     XCTAssertEqual(view.currentVoiceCleanupForTesting, request)
   }
 
+  /// The guard that fixes the reported scrubber jump: while a mic swap is in
+  /// flight the periodic observer keeps firing against a fresh item whose time
+  /// is 0, and Dart assigns `positionMs` from every tick unconditionally.
+  ///
+  /// Only the state machine is asserted here. Whether a tick actually reaches
+  /// Flutter cannot be exercised in a unit test — `sendTick` needs a loaded
+  /// item and `emitPlayerEvent` needs an open session, so a stubbed sink
+  /// records nothing either way and such a test would pass with the guard
+  /// deleted. The emission path is covered by the manual repro instead.
+  @MainActor
+  func testMicSwapSuppressionBracketsTheSwap() {
+    let view = InlinePreviewView(viewIdentifier: 3, arguments: nil, messenger: nil)
+    XCTAssertFalse(view.isSuppressingTicksForTesting)
+
+    view.beginMicSwapTickSuppressionForTesting()
+    XCTAssertTrue(view.isSuppressingTicksForTesting)
+
+    view.endMicSwapTickSuppressionForTesting()
+    XCTAssertFalse(
+      view.isSuppressingTicksForTesting,
+      "Suppression must be released or the cursor, zoom and camera overlays freeze")
+  }
+
+  /// The suppression window is bounded: `sendTick` also drives the cursor, zoom
+  /// and camera overlays, so a seek that never calls back must not freeze them.
+  @MainActor
+  func testMicSwapTickSuppressionIsReleasedByTheWatchdog() {
+    let view = InlinePreviewView(viewIdentifier: 4, arguments: nil, messenger: nil)
+    view.beginMicSwapTickSuppressionForTesting()
+    XCTAssertTrue(view.isSuppressingTicksForTesting)
+
+    let released = expectation(description: "watchdog released the tick guard")
+    DispatchQueue.main.asyncAfter(deadline: .now() + 1.0) {
+      XCTAssertFalse(view.isSuppressingTicksForTesting)
+      released.fulfill()
+    }
+    wait(for: [released], timeout: 5)
+  }
+
+  /// Closing mid-swap must not strand the guard on a reused view.
+  @MainActor
+  func testResetPlaybackClearsTickSuppression() {
+    let view = InlinePreviewView(viewIdentifier: 5, arguments: nil, messenger: nil)
+    view.beginMicSwapTickSuppressionForTesting()
+    view.resetPlayback(reason: "test")
+    XCTAssertFalse(view.isSuppressingTicksForTesting)
+  }
+
   /// A stale session's setting must not leak into a different recording.
   @MainActor
   func testPreviewIgnoresAnotherSessionsVoiceCleanup() throws {
