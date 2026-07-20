@@ -27,8 +27,29 @@ import Foundation
 final class EnhancedMicCache {
   static let shared = EnhancedMicCache()
 
-  static let enhancedFileName = "mic-enhanced.caf"
-  static let metadataFileName = "mic-enhanced.json"
+  /// Each mode caches to its OWN file, so switching Light↔Balanced is an instant
+  /// cache hit instead of a recompute, and — because the file a mode change
+  /// produces is never the one the live preview is reading — a switch cannot
+  /// delete a file out from under the playing item. Bounded by `keepNewestModes`.
+  ///
+  /// The stem is deliberately NOT `mic-enhanced-`: that prefix names the
+  /// pipeline's per-run STAGED temp files (`AudioEnhancementPipeline`
+  /// `.stagedFileNamePrefix`), which `removeStagedFiles` and the export's temp
+  /// sweep both delete. A committed cache file must not collide with that.
+  static let cacheFileStem = "voice-cleanup-"
+  /// How many mode files to keep per project. 2 covers instant Light↔Balanced,
+  /// the only two modes the UI exposes, at ~2x the single-slot disk cost.
+  static let keepNewestModes = 2
+
+  static func cacheFileURL(for projectRoot: URL, mode: VoiceCleanupMode) -> URL {
+    RecordingProjectPaths.derivedDirectoryURL(for: projectRoot)
+      .appendingPathComponent("\(cacheFileStem)\(mode.rawValue).caf", isDirectory: false)
+  }
+
+  static func cacheMetadataURL(for projectRoot: URL, mode: VoiceCleanupMode) -> URL {
+    RecordingProjectPaths.derivedDirectoryURL(for: projectRoot)
+      .appendingPathComponent("\(cacheFileStem)\(mode.rawValue).json", isDirectory: false)
+  }
 
   /// A lookup/compute result plus who owns the produced file's lifetime,
   /// mirroring `CleanedMicCache.Outcome`.
@@ -57,25 +78,17 @@ final class EnhancedMicCache {
   /// Shared with `CleanedMicCache` — see `AudioComputeQueue`.
   private let computeQueue = AudioComputeQueue.shared
 
-  static func enhancedFileURL(for projectRoot: URL) -> URL {
-    RecordingProjectPaths.derivedDirectoryURL(for: projectRoot)
-      .appendingPathComponent(enhancedFileName, isDirectory: false)
-  }
-
-  static func metadataFileURL(for projectRoot: URL) -> URL {
-    RecordingProjectPaths.derivedDirectoryURL(for: projectRoot)
-      .appendingPathComponent(metadataFileName, isDirectory: false)
-  }
-
   // MARK: - Lookup (fast: one stat + a tiny JSON read; safe on the main thread)
 
-  /// Returns the cached outcome when the metadata matches the current input
-  /// file, mode and versions, else nil. Never computes. A disabled request is a
+  /// Returns the cached outcome when the mode's metadata matches the current
+  /// input file and versions, else nil. Never computes. A disabled request is a
   /// synchronous "hit" on the input mic, so the preview opens immediately
   /// instead of parking on `outcomeAsync`.
   func cachedOutcome(inputMicURL: URL, request: VoiceCleanupRequest, projectRoot: URL) -> Outcome? {
     guard request.enabled else { return Self.bypassOutcome(micURL: inputMicURL) }
-    guard let data = try? Data(contentsOf: Self.metadataFileURL(for: projectRoot)),
+    guard
+      let data = try? Data(
+        contentsOf: Self.cacheMetadataURL(for: projectRoot, mode: request.mode)),
       let entry = try? JSONDecoder().decode(Entry.self, from: data),
       entry.pipelineVersion == AudioEnhancementPipeline.pipelineVersion,
       entry.engineVersion == RNNoiseEngine.engineVersion,
@@ -84,7 +97,7 @@ final class EnhancedMicCache {
       entry.inputFileSize == inputStat.size,
       entry.inputModifiedMs == inputStat.modifiedMs
     else { return nil }
-    let enhancedURL = Self.enhancedFileURL(for: projectRoot)
+    let enhancedURL = Self.cacheFileURL(for: projectRoot, mode: request.mode)
     guard entry.applied, FileManager.default.fileExists(atPath: enhancedURL.path) else {
       return nil
     }
@@ -205,14 +218,14 @@ final class EnhancedMicCache {
   ) throws -> Outcome {
     let result = try AudioEnhancementPipeline.enhance(
       micURL: inputMicURL, mode: request.mode, outputDirectory: derivedDir)
-    let enhancedURL = Self.enhancedFileURL(for: projectRoot)
-    // Invalidate the entry BEFORE swapping the audio. Readers run on other
-    // threads (export preamble, preview open) and validate metadata before
-    // touching the CAF, so leaving the previous entry in place across the swap
-    // would let one match the OLD mode's metadata against the NEW mode's audio
-    // and serve the wrong strength. Dropping it first makes that window a plain
-    // cache miss instead — a recompute, never wrong audio.
-    try? fileManager.removeItem(at: Self.metadataFileURL(for: projectRoot))
+    let enhancedURL = Self.cacheFileURL(for: projectRoot, mode: request.mode)
+    let metadataURL = Self.cacheMetadataURL(for: projectRoot, mode: request.mode)
+    // Invalidate THIS mode's entry before swapping its audio. A reader that
+    // matched the old metadata against the new CAF would serve stale content
+    // for one window; dropping the metadata first makes that window a plain
+    // cache miss instead. Only this mode's files are touched — other cached
+    // modes (and whatever the live preview is playing) are left intact.
+    try? fileManager.removeItem(at: metadataURL)
     // Same-volume move = atomic rename; only this queue writes here.
     try? fileManager.removeItem(at: enhancedURL)
     try fileManager.moveItem(at: result.enhancedMicURL, to: enhancedURL)
@@ -227,12 +240,54 @@ final class EnhancedMicCache {
     // validate it before touching the CAF, so a crash between the move above
     // and this write just means a recompute next open.
     if let data = try? JSONEncoder().encode(entry) {
-      try? data.write(to: Self.metadataFileURL(for: projectRoot), options: .atomic)
+      try? data.write(to: metadataURL, options: .atomic)
     }
+    // Bound disk: keep the newest few mode files, drop the rest. Never evicts
+    // the mode just written (it is the newest), so it cannot delete the file
+    // the caller is about to install.
+    Self.evictOldModes(in: derivedDir, keeping: request.mode, fileManager: fileManager)
     return Outcome(
       result: AudioEnhancementPipeline.Result(
         enhancedMicURL: enhancedURL, applied: true, noiseReductionDb: result.noiseReductionDb),
       cacheOwned: true, fromCache: false)
+  }
+
+  /// Keeps the `keepNewestModes` most-recently-written mode files (by the
+  /// metadata's mtime) plus `keeping`, deleting the rest and their metadata.
+  /// Also removes the legacy single-slot `mic-enhanced.caf`/`.json` from before
+  /// per-mode caching. Runs on `computeQueue`, the single writer.
+  static func evictOldModes(
+    in directory: URL, keeping: VoiceCleanupMode, fileManager: FileManager = .default
+  ) {
+    // Legacy single-slot files (pre per-mode). Named without the mode suffix, so
+    // they are never valid entries now — reclaim the disk.
+    try? fileManager.removeItem(at: directory.appendingPathComponent("mic-enhanced.caf"))
+    try? fileManager.removeItem(at: directory.appendingPathComponent("mic-enhanced.json"))
+
+    guard
+      let entries = try? fileManager.contentsOfDirectory(
+        at: directory, includingPropertiesForKeys: [.contentModificationDateKey])
+    else { return }
+    let metas = entries.filter {
+      $0.lastPathComponent.hasPrefix(cacheFileStem) && $0.pathExtension == "json"
+    }
+    guard metas.count > keepNewestModes else { return }
+    func mtime(_ url: URL) -> Date {
+      (try? url.resourceValues(forKeys: [.contentModificationDateKey]))?.contentModificationDate
+        ?? .distantPast
+    }
+    // Newest-first, then always float `keeping` to the front so it survives even
+    // if a filesystem's mtime resolution ties it with an older file.
+    let keepName = "\(cacheFileStem)\(keeping.rawValue).json"
+    let ordered = metas.sorted { a, b in
+      if a.lastPathComponent == keepName { return true }
+      if b.lastPathComponent == keepName { return false }
+      return mtime(a) > mtime(b)
+    }
+    for meta in ordered.dropFirst(keepNewestModes) {
+      try? fileManager.removeItem(at: meta)
+      try? fileManager.removeItem(at: meta.deletingPathExtension().appendingPathExtension("caf"))
+    }
   }
 
   /// Per-run temp compute, caller owns the produced file. Nothing is persisted,

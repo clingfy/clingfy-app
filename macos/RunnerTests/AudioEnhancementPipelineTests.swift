@@ -145,7 +145,7 @@ final class AudioEnhancementPipelineTests: XCTestCase {
     XCTAssertEqual(outcome.result.enhancedMicURL, mic)
     XCTAssertFalse(
       FileManager.default.fileExists(
-        atPath: EnhancedMicCache.metadataFileURL(for: project).path))
+        atPath: EnhancedMicCache.cacheMetadataURL(for: project, mode: .balanced).path))
   }
 
   func testComputeThenHitServesTheCachedFile() throws {
@@ -158,7 +158,9 @@ final class AudioEnhancementPipelineTests: XCTestCase {
     XCTAssertTrue(first.result.applied)
     XCTAssertFalse(first.fromCache)
     XCTAssertTrue(first.cacheOwned)
-    XCTAssertEqual(first.result.enhancedMicURL, EnhancedMicCache.enhancedFileURL(for: project))
+    XCTAssertEqual(
+      first.result.enhancedMicURL,
+      EnhancedMicCache.cacheFileURL(for: project, mode: .balanced))
 
     let second = try EnhancedMicCache.shared.outcome(
       inputMicURL: mic, request: request, projectRoot: project)
@@ -166,21 +168,60 @@ final class AudioEnhancementPipelineTests: XCTestCase {
     XCTAssertEqual(second.result.enhancedMicURL, first.result.enhancedMicURL)
   }
 
-  /// The whole reason this is a separate cache from `CleanedMicCache`: the
-  /// output depends on a user setting, so a mode change must not be served a
-  /// stale file.
-  func testChangingModeInvalidatesTheEntry() throws {
+  /// A mode never computed yet is a miss; a mode already computed is a HIT even
+  /// after switching away and back. Per-mode files are what make switching
+  /// Light↔Balanced instant instead of a recompute each time.
+  func testEachModeCachesIndependently() throws {
     let mic = try writeNoisyVoice()
     let project = try makeProject()
+    let balanced = VoiceCleanupRequest(enabled: true, mode: .balanced)
+    let light = VoiceCleanupRequest(enabled: true, mode: .light)
 
+    _ = try EnhancedMicCache.shared.outcome(
+      inputMicURL: mic, request: balanced, projectRoot: project)
+
+    // Light was never computed → miss.
+    XCTAssertNil(
+      EnhancedMicCache.shared.cachedOutcome(
+        inputMicURL: mic, request: light, projectRoot: project),
+      "A mode that was never computed must not be served another mode's file")
+
+    // Compute light, then switching BACK to balanced is an instant hit — its
+    // file was never deleted by the light compute.
+    _ = try EnhancedMicCache.shared.outcome(
+      inputMicURL: mic, request: light, projectRoot: project)
+    let balancedAgain = EnhancedMicCache.shared.cachedOutcome(
+      inputMicURL: mic, request: balanced, projectRoot: project)
+    XCTAssertNotNil(balancedAgain, "Switching back to a computed mode must hit cache")
+    XCTAssertTrue(balancedAgain!.fromCache)
+
+    // Distinct files, distinct content on disk.
+    let lightURL = EnhancedMicCache.cacheFileURL(for: project, mode: .light)
+    let balancedURL = EnhancedMicCache.cacheFileURL(for: project, mode: .balanced)
+    XCTAssertNotEqual(lightURL, balancedURL)
+    XCTAssertTrue(FileManager.default.fileExists(atPath: lightURL.path))
+    XCTAssertTrue(FileManager.default.fileExists(atPath: balancedURL.path))
+  }
+
+  /// The one-slot cache used to delete the file the live preview was reading
+  /// whenever the mode changed. Per-mode files must never remove another mode's
+  /// file when computing a new one.
+  func testComputingOneModeLeavesAnotherModesFileIntact() throws {
+    let mic = try writeNoisyVoice()
+    let project = try makeProject()
     _ = try EnhancedMicCache.shared.outcome(
       inputMicURL: mic, request: VoiceCleanupRequest(enabled: true, mode: .balanced),
       projectRoot: project)
-    let afterModeChange = EnhancedMicCache.shared.cachedOutcome(
+    let balancedURL = EnhancedMicCache.cacheFileURL(for: project, mode: .balanced)
+    XCTAssertTrue(FileManager.default.fileExists(atPath: balancedURL.path))
+
+    _ = try EnhancedMicCache.shared.outcome(
       inputMicURL: mic, request: VoiceCleanupRequest(enabled: true, mode: .light),
       projectRoot: project)
 
-    XCTAssertNil(afterModeChange, "A different strength must recompute, not reuse")
+    XCTAssertTrue(
+      FileManager.default.fileExists(atPath: balancedURL.path),
+      "Computing light must not delete the balanced file a live player may hold open")
   }
 
   /// Keying on the INPUT file is what composes with echo cancellation: when
@@ -204,6 +245,29 @@ final class AudioEnhancementPipelineTests: XCTestCase {
       "A different input mic must not be served the previous input's cleanup")
   }
 
+  /// Disk is bounded: a third mode evicts the oldest, and never the mode just
+  /// written.
+  func testOldestModeIsEvictedBeyondTheCap() throws {
+    XCTAssertEqual(EnhancedMicCache.keepNewestModes, 2, "test assumes a cap of 2")
+    let mic = try writeNoisyVoice(seconds: 1.0)
+    let project = try makeProject()
+    for mode in [VoiceCleanupMode.light, .balanced, .highQuality] {
+      _ = try EnhancedMicCache.shared.outcome(
+        inputMicURL: mic, request: VoiceCleanupRequest(enabled: true, mode: mode),
+        projectRoot: project)
+    }
+
+    let fm = FileManager.default
+    XCTAssertFalse(
+      fm.fileExists(atPath: EnhancedMicCache.cacheFileURL(for: project, mode: .light).path),
+      "The oldest mode should have been evicted")
+    XCTAssertTrue(
+      fm.fileExists(atPath: EnhancedMicCache.cacheFileURL(for: project, mode: .highQuality).path),
+      "The mode just written must survive")
+    XCTAssertTrue(
+      fm.fileExists(atPath: EnhancedMicCache.cacheFileURL(for: project, mode: .balanced).path))
+  }
+
   func testMissingCachedFileForcesRecompute() throws {
     let mic = try writeNoisyVoice()
     let project = try makeProject()
@@ -211,7 +275,8 @@ final class AudioEnhancementPipelineTests: XCTestCase {
 
     _ = try EnhancedMicCache.shared.outcome(
       inputMicURL: mic, request: request, projectRoot: project)
-    try FileManager.default.removeItem(at: EnhancedMicCache.enhancedFileURL(for: project))
+    try FileManager.default.removeItem(
+      at: EnhancedMicCache.cacheFileURL(for: project, mode: .balanced))
 
     XCTAssertNil(
       EnhancedMicCache.shared.cachedOutcome(
@@ -226,7 +291,8 @@ final class AudioEnhancementPipelineTests: XCTestCase {
 
     _ = try EnhancedMicCache.shared.outcome(
       inputMicURL: mic, request: request, projectRoot: project)
-    try Data("{".utf8).write(to: EnhancedMicCache.metadataFileURL(for: project))
+    try Data("{".utf8).write(
+      to: EnhancedMicCache.cacheMetadataURL(for: project, mode: .balanced))
 
     XCTAssertNil(
       EnhancedMicCache.shared.cachedOutcome(
@@ -438,7 +504,7 @@ final class AudioEnhancementPipelineTests: XCTestCase {
     wait(for: [expectation], timeout: 60)
     XCTAssertFalse(
       FileManager.default.fileExists(
-        atPath: EnhancedMicCache.metadataFileURL(for: project).path),
+        atPath: EnhancedMicCache.cacheMetadataURL(for: project, mode: .balanced).path),
       "A transient failure must not be cached")
   }
 }

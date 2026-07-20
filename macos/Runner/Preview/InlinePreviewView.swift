@@ -1150,6 +1150,7 @@ final class InlinePreviewView: NSView {
   func updateVoiceCleanupOnly(_ request: VoiceCleanupRequest) {
     guard request != voiceCleanupRequest else { return }
     voiceCleanupRequest = request
+    voiceCleanupGeneration += 1
     guard separatedAudioActive else { return }
     reresolveVoiceCleanupForOpenPreview()
   }
@@ -1163,6 +1164,7 @@ final class InlinePreviewView: NSView {
     let rawMicURL = URL(fileURLWithPath: rawMicPath)
     let systemURL = mediaSources.systemAudioPath.map { URL(fileURLWithPath: $0) }
     let token = currentOpenToken ?? UUID()
+    let generation = voiceCleanupGeneration
 
     // Re-run the echo stage first so the chain order matches the export's. It is
     // a cache hit in practice — the open already computed it — but a lookup-only
@@ -1173,13 +1175,16 @@ final class InlinePreviewView: NSView {
     // either way. It is also a no-op when there is no system reference or the
     // preference is off.
     guard let systemURL else {
-      chainVoiceCleanup(from: rawMicURL, projectRoot: projectRoot, token: token)
+      chainVoiceCleanup(
+        from: rawMicURL, projectRoot: projectRoot, token: token, generation: generation)
       return
     }
     CleanedMicCache.shared.outcomeAsync(
       micURL: rawMicURL, systemURL: systemURL, projectRoot: projectRoot
     ) { [weak self] echo in
-      guard let self, self.currentOpenToken == token else {
+      guard let self, self.currentOpenToken == token,
+        self.voiceCleanupGeneration == generation
+      else {
         if !echo.cacheOwned && echo.result.applied {
           try? FileManager.default.removeItem(at: echo.result.cleanedMicURL)
         }
@@ -1189,19 +1194,28 @@ final class InlinePreviewView: NSView {
         self.adoptOwnedPreviewMicIfTemporary(echo.result.cleanedMicURL)
       }
       self.chainVoiceCleanup(
-        from: echo.result.cleanedMicURL, projectRoot: projectRoot, token: token)
+        from: echo.result.cleanedMicURL, projectRoot: projectRoot, token: token,
+        generation: generation)
     }
   }
 
   /// Second half of a live cleanup change: denoise whatever the echo stage
   /// produced and swap the result in. The players are deliberately NOT parked —
   /// the footage on screen is already correct and only the mic is changing.
-  private func chainVoiceCleanup(from micURL: URL, projectRoot: URL, token: UUID) {
+  ///
+  /// `generation` is re-checked after the (possibly long) denoise so a toggle the
+  /// user made WHILE it ran wins — otherwise a slow compute for the abandoned
+  /// mode would install over the newer choice.
+  private func chainVoiceCleanup(
+    from micURL: URL, projectRoot: URL, token: UUID, generation: Int
+  ) {
     resolveVoiceCleanedMic(
       micURL: micURL, projectRoot: projectRoot, openToken: token,
       parkPlayersOnMiss: false
     ) { [weak self] resolvedMicURL in
-      guard let self, self.currentOpenToken == token else { return }
+      guard let self, self.currentOpenToken == token,
+        self.voiceCleanupGeneration == generation
+      else { return }
       self.swapPreviewMic(to: resolvedMicURL)
     }
   }
@@ -2620,11 +2634,16 @@ final class InlinePreviewView: NSView {
   /// file — so it is held here and consumed by `open()` and
   /// `updateVoiceCleanupOnly`.
   private var voiceCleanupRequest: VoiceCleanupRequest = .disabled
+  /// Bumped on every cleanup change. The async mic chain captures the value at
+  /// its start and installs its result only if it is still current, so rapid
+  /// Light↔Balanced toggling always lands on the LAST choice instead of whichever
+  /// off-main compute happens to finish last.
   /// Which request the mic currently in the player was resolved with. A toggle
   /// that lands mid-open sets `voiceCleanupRequest` after the resolve already
   /// read it, so `finishOpen` compares the two and re-resolves on a mismatch —
   /// otherwise that toggle is silently dropped until the next one.
   private var resolvedVoiceCleanup: VoiceCleanupRequest = .disabled
+  private var voiceCleanupGeneration = 0
 
   /// Exposed so `AudioEnhancementPipelineTests` can assert that `open()` adopts
   /// the session's setting — the seam where preview/export parity is decided.
