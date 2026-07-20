@@ -1085,6 +1085,7 @@ final class InlinePreviewView: NSView {
     completion: @escaping (URL?) -> Void
   ) {
     let request = voiceCleanupRequest
+    resolvedVoiceCleanup = request
     guard request.enabled, let micURL else {
       completion(micURL)
       return
@@ -1148,6 +1149,12 @@ final class InlinePreviewView: NSView {
   func updateVoiceCleanupOnly(_ request: VoiceCleanupRequest) {
     guard request != voiceCleanupRequest else { return }
     voiceCleanupRequest = request
+    guard separatedAudioActive else { return }
+    reresolveVoiceCleanupForOpenPreview()
+  }
+
+  /// Re-runs the mic chain for the OPEN preview and swaps the result in.
+  private func reresolveVoiceCleanupForOpenPreview() {
     guard let mediaSources = currentMediaSources, separatedAudioActive else { return }
     guard let rawMicPath = mediaSources.micAudioPath else { return }
 
@@ -1269,6 +1276,7 @@ final class InlinePreviewView: NSView {
     separatedSystemAsset = LetterboxExporter.readableAudioAsset(url: systemURL)
     separatedAudioActive = separatedMicAsset != nil || separatedSystemAsset != nil
     separatedMicTrackID = nil
+    let cleanupChangedDuringOpen = voiceCleanupRequest != resolvedVoiceCleanup
 
     let item: AVPlayerItem
     if separatedAudioActive,
@@ -1321,6 +1329,16 @@ final class InlinePreviewView: NSView {
 
     NativeLogger.d(
       "Player", "InlinePreviewView.open completed", context: ["token": openToken.uuidString])
+
+    // A cleanup change that landed while the mic was being resolved was read too
+    // late to affect it. Reconcile now that the player is up, so the toggle is
+    // not silently dropped until the user makes another one.
+    if cleanupChangedDuringOpen, separatedAudioActive {
+      NativeLogger.i(
+        "Player", "Preview: voice cleanup changed during open; re-resolving the mic",
+        context: ["mode": voiceCleanupRequest.mode.rawValue])
+      reresolveVoiceCleanupForOpenPreview()
+    }
   }
 
   static func previewLifecycleEventPayload(
@@ -2480,6 +2498,11 @@ final class InlinePreviewView: NSView {
   /// file — so it is held here and consumed by `open()` and
   /// `updateVoiceCleanupOnly`.
   private var voiceCleanupRequest: VoiceCleanupRequest = .disabled
+  /// Which request the mic currently in the player was resolved with. A toggle
+  /// that lands mid-open sets `voiceCleanupRequest` after the resolve already
+  /// read it, so `finishOpen` compares the two and re-resolves on a mismatch —
+  /// otherwise that toggle is silently dropped until the next one.
+  private var resolvedVoiceCleanup: VoiceCleanupRequest = .disabled
 
   /// Exposed so `AudioEnhancementPipelineTests` can assert that `open()` adopts
   /// the session's setting — the seam where preview/export parity is decided.

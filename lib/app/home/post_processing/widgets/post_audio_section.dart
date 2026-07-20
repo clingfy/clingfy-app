@@ -89,7 +89,14 @@ class PostAudioSection extends StatelessWidget {
             // recording has nothing for it to act on. Hidden on Windows until
             // the RNNoise engine is built there (its bridge method is a no-op
             // today), so the control never promises a cleanup that won't happen.
-            if (gainEnabled && !isWindows()) ...[
+            //
+            // It stays visible while ENABLED even when that condition lapses:
+            // `hasAudio` follows the live device selection, not the project, so
+            // deselecting the mic would otherwise hide an enabled setting that
+            // still applies at export — leaving no reachable off switch. Same
+            // stranding the echo-cancellation toggle documents in
+            // recording_audio_section.dart.
+            if ((gainEnabled || voiceCleanup.enabled) && !isWindows()) ...[
               const SizedBox(height: AppSidebarTokens.rowGap),
               AppToggleRow(
                 key: const ValueKey('post_audio_voice_cleanup_toggle'),
