@@ -86,6 +86,9 @@ enum AudioEnhancementPipeline {
   }
 
   enum EnhanceError: Error {
+    /// The suppressor could not be created at all. Distinct from "nothing to
+    /// clean" so the caller degrades to the raw mic WITHOUT caching a result.
+    case engineUnavailable
     case decodeFailed(URL)
     case writeFailed(URL)
     case emptyInput(URL)
@@ -112,7 +115,9 @@ enum AudioEnhancementPipeline {
     guard !samples.isEmpty else { throw EnhanceError.emptyInput(micURL) }
 
     let inputRms = rms(samples)
-    let cleaned = RNNoiseEngine.denoise(samples, wetMix: mode.wetMix)
+    guard let cleaned = RNNoiseEngine.denoise(samples, wetMix: mode.wetMix) else {
+      throw EnhanceError.engineUnavailable
+    }
     let outputRms = rms(cleaned)
 
     let url: URL

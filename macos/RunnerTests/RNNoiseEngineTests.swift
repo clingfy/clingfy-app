@@ -56,6 +56,16 @@ final class RNNoiseEngineTests: XCTestCase {
     return (sum / Float(samples.count)).squareRoot()
   }
 
+  /// `RNNoiseEngine.denoise` returns nil only when the suppressor could not be
+  /// created — a real failure these tests should never hit silently.
+  private func denoised(_ samples: [Float], wetMix: Float) -> [Float] {
+    guard let out = RNNoiseEngine.denoise(samples, wetMix: wetMix) else {
+      XCTFail("RNNoise engine was unavailable")
+      return samples
+    }
+    return out
+  }
+
   private func peak(_ samples: [Float]) -> Float {
     samples.reduce(Float(0)) { max($0, abs($1)) }
   }
@@ -76,32 +86,32 @@ final class RNNoiseEngineTests: XCTestCase {
 
   func testOutputLengthMatchesInputForAnExactFrameMultiple() {
     let input = voice(count: RNNoiseEngine.frameSize * 40)
-    let output = RNNoiseEngine.denoise(input, wetMix: 1.0)
+    let output = denoised(input, wetMix: 1.0)
     XCTAssertEqual(output.count, input.count)
   }
 
   func testOutputLengthMatchesInputForARaggedTail() {
     // 40 frames + 137 samples: the tail is shorter than one frame.
     let input = voice(count: RNNoiseEngine.frameSize * 40 + 137)
-    let output = RNNoiseEngine.denoise(input, wetMix: 1.0)
+    let output = denoised(input, wetMix: 1.0)
     XCTAssertEqual(output.count, input.count)
   }
 
   func testShorterThanOneFrameStillReturnsTheSameLength() {
     let input = voice(count: 100)
-    let output = RNNoiseEngine.denoise(input, wetMix: 1.0)
+    let output = denoised(input, wetMix: 1.0)
     XCTAssertEqual(output.count, 100)
   }
 
   func testEmptyInputIsReturnedUnchanged() {
-    XCTAssertTrue(RNNoiseEngine.denoise([], wetMix: 1.0).isEmpty)
+    XCTAssertTrue(denoised([], wetMix: 1.0).isEmpty)
   }
 
   // MARK: - Suppression
 
   func testNoiseOnlyInputIsStronglyAttenuated() {
     let input = noise(count: Int(sampleRate) * 3, amplitude: 0.1)
-    let output = RNNoiseEngine.denoise(input, wetMix: 1.0)
+    let output = denoised(input, wetMix: 1.0)
     // Skip the first second: the model needs to converge.
     let skip = Int(sampleRate)
     let before = rms(input[skip...])
@@ -118,8 +128,8 @@ final class RNNoiseEngineTests: XCTestCase {
     var mixed = voice(count: count)
     for i in 0..<count { mixed[i] += backdrop[i] }
 
-    let denoisedNoise = RNNoiseEngine.denoise(backdrop, wetMix: 1.0)
-    let denoisedMixed = RNNoiseEngine.denoise(mixed, wetMix: 1.0)
+    let denoisedNoise = denoised(backdrop, wetMix: 1.0)
+    let denoisedMixed = denoised(mixed, wetMix: 1.0)
 
     let residualNoise = rms(denoisedNoise[skip...])
     let survivingVoice = rms(denoisedMixed[skip...])
@@ -138,7 +148,7 @@ final class RNNoiseEngineTests: XCTestCase {
   /// collapses — which is easy to mistake for very aggressive denoising.
   func testLoudVoiceKeepsItsAmplitudeOrderOfMagnitude() {
     let input = voice(count: Int(sampleRate) * 2, amplitude: 0.25)
-    let output = RNNoiseEngine.denoise(input, wetMix: 1.0)
+    let output = denoised(input, wetMix: 1.0)
     let skip = Int(sampleRate)
     let inputPeak = peak(Array(input[skip...]))
     let outputPeak = peak(Array(output[skip...]))
@@ -156,14 +166,14 @@ final class RNNoiseEngineTests: XCTestCase {
   /// `bakeGain` skips its clamp at unity gain — so the engine has to clamp.
   func testHotInputIsClampedToFullScale() {
     let input = voice(count: Int(sampleRate) * 2, amplitude: 0.99)
-    let output = RNNoiseEngine.denoise(input, wetMix: 1.0)
+    let output = denoised(input, wetMix: 1.0)
     XCTAssertLessThanOrEqual(peak(output), 1.0)
     XCTAssertGreaterThan(peak(output), 0.5, "The voice must still be there after clamping")
   }
 
   func testLightMixOfAHotInputIsAlsoClamped() {
     let input = voice(count: Int(sampleRate), amplitude: 0.99)
-    XCTAssertLessThanOrEqual(peak(RNNoiseEngine.denoise(input, wetMix: 0.5)), 1.0)
+    XCTAssertLessThanOrEqual(peak(denoised(input, wetMix: 0.5)), 1.0)
   }
 
   // MARK: - Alignment
@@ -179,7 +189,7 @@ final class RNNoiseEngineTests: XCTestCase {
     let burst = voice(count: burstLength, amplitude: 0.5)
     for i in 0..<burstLength { input[burstStart + i] = burst[i] }
 
-    let output = RNNoiseEngine.denoise(input, wetMix: 1.0)
+    let output = denoised(input, wetMix: 1.0)
 
     // Energy must land in the burst window, not one/two frames later.
     let inWindow = rms(output[burstStart..<(burstStart + burstLength)])
@@ -198,15 +208,15 @@ final class RNNoiseEngineTests: XCTestCase {
 
   func testZeroWetMixIsAPassThrough() {
     let input = voice(count: RNNoiseEngine.frameSize * 10)
-    let output = RNNoiseEngine.denoise(input, wetMix: 0)
+    let output = denoised(input, wetMix: 0)
     XCTAssertEqual(output, input)
   }
 
   func testLightLeavesMoreNoiseThanBalanced() {
     let input = noise(count: Int(sampleRate) * 3, amplitude: 0.1)
     let skip = Int(sampleRate)
-    let light = rms(RNNoiseEngine.denoise(input, wetMix: 0.5)[skip...])
-    let balanced = rms(RNNoiseEngine.denoise(input, wetMix: 1.0)[skip...])
+    let light = rms(denoised(input, wetMix: 0.5)[skip...])
+    let balanced = rms(denoised(input, wetMix: 1.0)[skip...])
     XCTAssertGreaterThan(
       light, balanced,
       "A lighter wet mix must leave more of the original noise in place")
@@ -215,9 +225,9 @@ final class RNNoiseEngineTests: XCTestCase {
 
   func testWetMixIsClamped() {
     let input = voice(count: RNNoiseEngine.frameSize * 8)
-    let above = RNNoiseEngine.denoise(input, wetMix: 4.0)
-    let full = RNNoiseEngine.denoise(input, wetMix: 1.0)
+    let above = denoised(input, wetMix: 4.0)
+    let full = denoised(input, wetMix: 1.0)
     XCTAssertEqual(above, full)
-    XCTAssertEqual(RNNoiseEngine.denoise(input, wetMix: -1.0), input)
+    XCTAssertEqual(denoised(input, wetMix: -1.0), input)
   }
 }

@@ -41,17 +41,24 @@ enum RNNoiseEngine {
 
   /// Denoise mono 48 kHz samples in the ±1.0 float range.
   ///
-  /// Returns an array of the same length, sample-aligned with `samples`.
+  /// Returns an array of the same length, sample-aligned with `samples`, or nil
+  /// when the engine could not run at all — which the caller must treat as a
+  /// failure rather than caching it as a clean pass.
   /// `wetMix` blends the suppressed signal against the original: 1.0 is full
   /// RNNoise, 0.5 leaves the noise ~6 dB down with fewer artifacts, 0.0 is a
   /// pass-through. Values outside 0...1 are clamped.
-  static func denoise(_ samples: [Float], wetMix: Float) -> [Float] {
+  static func denoise(_ samples: [Float], wetMix: Float) -> [Float]? {
     let n = samples.count
     guard n > 0 else { return samples }
     let wet = max(0.0, min(1.0, wetMix))
     guard wet > 0.0001 else { return samples }
 
-    guard let state = rnnoise_create(nil) else { return samples }
+    guard let state = rnnoise_create(nil) else {
+      // Allocation failure. Returning the input would look like a successful
+      // no-op cleanup and get cached as one, so the caller is told instead.
+      NativeLogger.w("Audio", "RNNoise state allocation failed; no cleanup applied")
+      return nil
+    }
     defer { rnnoise_destroy(state) }
 
     var output = [Float](repeating: 0, count: n)

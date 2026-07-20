@@ -74,6 +74,7 @@ final class LetterboxExporter {
     "camera.styled.",
     "raw.styled.",
     "mic-echo-cancelled-",
+    "mic-enhanced-",
   ]
   private var currentSession: AVAssetExportSession?
   private var progressTimer: Timer?
