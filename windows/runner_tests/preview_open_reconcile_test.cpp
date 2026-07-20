@@ -175,6 +175,180 @@ TEST(NextKeptSourceInAfterTest, NothingAfterTheLastRangeReturnsMinusOne) {
   EXPECT_EQ(PreviewEngine::NextKeptSourceInMsAfter(25000, ranges), -1);
 }
 
+// ---- Edited-pacer chase policy -------------------------------------------
+//
+// The audio renderer is the master clock, but the preview's SOFTWARE video
+// decode has almost no headroom (~1.0-1.7x realtime), so "discard every
+// frame behind the sound" froze the picture outright (user-reported
+// 2026-07-20). These pin the replacement policy, including the two corners
+// the review caught in the first cut: seeking into the tail (the edited end
+// maps one-past-the-last-kept-frame -> every remaining frame floored out)
+// and back-to-back chase seeks starving the picture during keyframe lead-in
+// decode.
+
+using Chase = PreviewEngine::PacerChaseInput;
+using ChaseAction = PreviewEngine::PacerChaseAction;
+
+Chase InSync() {
+  Chase c;
+  c.frame_edited_ms = 5000;
+  c.audio_edited_ms = 5000;
+  c.edited_duration_ms = 60000;
+  return c;
+}
+
+TEST(PacerChasePolicyTest, InSyncFrameEmits) {
+  const auto d = PreviewEngine::DecidePacerChase(InSync());
+  EXPECT_EQ(d.action, ChaseAction::kEmit);
+  EXPECT_EQ(d.next_stale_streak, 0);
+}
+
+TEST(PacerChasePolicyTest, NoAudioSessionAlwaysEmits) {
+  // Free-run (pre-audio behavior): a silent session must be unaffected by
+  // every rule below, however far "behind" its position looks.
+  Chase c = InSync();
+  c.audio_edited_ms = -1;
+  c.frame_edited_ms = 0;
+  c.stale_streak = 5;
+  const auto d = PreviewEngine::DecidePacerChase(c);
+  EXPECT_EQ(d.action, ChaseAction::kEmit);
+  EXPECT_EQ(d.next_stale_streak, 0);
+}
+
+TEST(PacerChasePolicyTest, SlightlyBehindStillCountsAsInSync) {
+  Chase c = InSync();
+  c.frame_edited_ms = 5000 - PreviewEngine::kAudioChaseSlackMs;
+  EXPECT_EQ(PreviewEngine::DecidePacerChase(c).action, ChaseAction::kEmit);
+}
+
+TEST(PacerChasePolicyTest, StaleFrameDiscardsUntilTheDecimationTick) {
+  // A modest trail (under the chase-seek deficit): discard, discard, ...
+  // then emit the Nth so the picture never stops advancing.
+  Chase c = InSync();
+  c.frame_edited_ms = 4000;  // 1s behind — stale, but no seek
+  int streak = 0;
+  for (int i = 1; i < PreviewEngine::kStaleEmitEvery; ++i) {
+    c.stale_streak = streak;
+    const auto d = PreviewEngine::DecidePacerChase(c);
+    EXPECT_EQ(d.action, ChaseAction::kDiscard) << "iteration " << i;
+    EXPECT_EQ(d.next_stale_streak, i);
+    streak = d.next_stale_streak;
+  }
+  c.stale_streak = streak;
+  const auto d = PreviewEngine::DecidePacerChase(c);
+  EXPECT_EQ(d.action, ChaseAction::kEmit);
+  EXPECT_EQ(d.next_stale_streak, 0) << "the streak restarts after an emit";
+}
+
+TEST(PacerChasePolicyTest, LargeDeficitSeeksToTheAudioClock) {
+  Chase c = InSync();
+  c.audio_edited_ms = 20000;
+  c.frame_edited_ms = 10000;  // 10s behind
+  const auto d = PreviewEngine::DecidePacerChase(c);
+  EXPECT_EQ(d.action, ChaseAction::kSeekToAudio);
+  EXPECT_EQ(d.seek_target_edited_ms, 20000);
+}
+
+TEST(PacerChasePolicyTest, ChaseSeekRespectsTheCooldown) {
+  Chase c = InSync();
+  c.audio_edited_ms = 20000;
+  c.frame_edited_ms = 10000;
+  c.ms_since_chase_seek = PreviewEngine::kChaseSeekCooldownMs - 1;
+  const auto d = PreviewEngine::DecidePacerChase(c);
+  EXPECT_NE(d.action, ChaseAction::kSeekToAudio)
+      << "back-to-back seeks would storm keyframe lead-in decodes";
+  EXPECT_EQ(d.action, ChaseAction::kDiscard);  // decimation carries it
+
+  c.ms_since_chase_seek = PreviewEngine::kChaseSeekCooldownMs;
+  EXPECT_EQ(PreviewEngine::DecidePacerChase(c).action,
+            ChaseAction::kSeekToAudio);
+}
+
+TEST(PacerChasePolicyTest, NeverSeeksIntoTheTail) {
+  // THE REGRESSION: SourceMsForEditedMs(edited_duration) returns
+  // ranges.back().source_out_ms — one past the last kept frame. Seeking
+  // there sets the lead-in floor above every remaining frame, so the
+  // picture freezes for the rest of playback and the playhead never
+  // reaches the end. Near the end we decimate instead.
+  Chase c;
+  c.edited_duration_ms = 12000;
+  c.audio_edited_ms = 12000;  // sound has reached the end
+  c.frame_edited_ms = 4000;   // video 8s behind
+  EXPECT_NE(PreviewEngine::DecidePacerChase(c).action,
+            ChaseAction::kSeekToAudio);
+
+  // Just inside the guard — still no seek.
+  c.audio_edited_ms = 12000 - PreviewEngine::kChaseSeekEndGuardMs;
+  EXPECT_NE(PreviewEngine::DecidePacerChase(c).action,
+            ChaseAction::kSeekToAudio);
+
+  // Comfortably clear of the tail — seek allowed again.
+  c.audio_edited_ms = 12000 - PreviewEngine::kChaseSeekEndGuardMs - 1;
+  EXPECT_EQ(PreviewEngine::DecidePacerChase(c).action,
+            ChaseAction::kSeekToAudio);
+}
+
+TEST(PacerChasePolicyTest, UnknownDurationNeverSeeks) {
+  // No duration = no way to know where the tail is; decimate only.
+  Chase c = InSync();
+  c.edited_duration_ms = 0;
+  c.audio_edited_ms = 20000;
+  c.frame_edited_ms = 10000;
+  EXPECT_NE(PreviewEngine::DecidePacerChase(c).action,
+            ChaseAction::kSeekToAudio);
+}
+
+TEST(PacerChasePolicyTest, PostSeekFrameEmitsUnconditionally) {
+  // THE OTHER REGRESSION: after a chase seek the reader decodes a keyframe
+  // lead-in (~GOP, seconds at these decode rates) during which audio keeps
+  // advancing — so the frame we sought to arrives "stale" and, without
+  // this rule, immediately triggered ANOTHER seek. Seek, decode, discard,
+  // seek: the picture never advanced at all.
+  Chase c = InSync();
+  c.awaiting_chase_frame = true;
+  c.audio_edited_ms = 30000;
+  c.frame_edited_ms = 20000;   // 10s "behind" purely from lead-in decode
+  c.ms_since_chase_seek = PreviewEngine::kChaseSeekCooldownMs + 1;
+  const auto d = PreviewEngine::DecidePacerChase(c);
+  EXPECT_EQ(d.action, ChaseAction::kEmit);
+  EXPECT_EQ(d.next_stale_streak, 0);
+}
+
+TEST(PacerChasePolicyTest, ReorderBranchDecimatesInsteadOfSeeking) {
+  // Reorder playback can't reposition (the range cursor would need
+  // re-priming), so the same deficit decimates.
+  Chase c = InSync();
+  c.allow_chase_seek = false;
+  c.audio_edited_ms = 20000;
+  c.frame_edited_ms = 10000;
+  const auto d = PreviewEngine::DecidePacerChase(c);
+  EXPECT_EQ(d.action, ChaseAction::kDiscard);
+  EXPECT_EQ(d.next_stale_streak, 1);
+
+  c.stale_streak = PreviewEngine::kStaleEmitEvery - 1;
+  EXPECT_EQ(PreviewEngine::DecidePacerChase(c).action, ChaseAction::kEmit);
+}
+
+TEST(PacerChasePolicyTest, PictureAlwaysAdvancesUnderAnyDeficit) {
+  // The load-bearing property: whatever the trail, a bounded number of
+  // consecutive decisions must produce an emit — never an unbounded
+  // discard run (that IS the reported freeze).
+  for (const std::int64_t deficit : {100, 1500, 5000, 60000, 600000}) {
+    Chase c;
+    c.edited_duration_ms = 1'000'000;  // far from the tail
+    c.audio_edited_ms = 700000;
+    c.frame_edited_ms = 700000 - deficit;
+    c.allow_chase_seek = false;  // worst case: no reposition available
+    int emits = 0;
+    for (int i = 0; i < PreviewEngine::kStaleEmitEvery; ++i) {
+      const auto d = PreviewEngine::DecidePacerChase(c);
+      if (d.action == ChaseAction::kEmit) ++emits;
+      c.stale_streak = d.next_stale_streak;
+    }
+    EXPECT_GE(emits, 1) << "deficit " << deficit << "ms produced no frame";
+  }
+}
+
 TEST(NextKeptSourceInAfterTest, PicksTheNearestStartRegardlessOfOrder) {
   // Defensive: the helper min-scans, so an unsorted list (reorder input
   // never reaches it, but nothing enforces that here) still resolves to

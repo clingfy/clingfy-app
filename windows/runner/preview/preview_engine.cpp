@@ -366,6 +366,24 @@ struct PreviewEngine::Impl {
   // discarded. Every transport reposition resets it
   // (RenderEditedFrameLocked seeks and sets it to its target).
   std::int64_t edited_min_source_ms = 0;
+  // Zero-decode-margin chase state (render_mutex) — see DecidePacerChase
+  // for the policy these feed. `stale_streak` counts consecutive stale
+  // discards (decimation); `last_chase_seek` spaces repositions;
+  // `awaiting_chase_frame` makes the first frame after a reposition emit
+  // unconditionally, so a long keyframe lead-in can't trigger another
+  // chase and starve the picture forever. All three reset on any transport
+  // reposition (RenderEditedFrameLocked).
+  int stale_streak = 0;
+  std::chrono::steady_clock::time_point last_chase_seek{};
+  bool awaiting_chase_frame = false;
+  // Adaptive frame budget (atomic — the pacer reads it outside
+  // render_mutex, before sleeping). Measured from the edited-time delta
+  // between presented frames, so a 60 fps recording paces at ~16 ms
+  // instead of the historical fixed 33 ms (which played such sources at
+  // half speed). Seeded at 33 ms and clamped to a sane range so a cut
+  // boundary or a decode hiccup can't produce a runaway budget.
+  std::atomic<int> paced_budget_ms{33};
+  std::int64_t last_presented_edited_ms = -1;
 
   // Step 4-7c: the edited-session sound output (design D1/D5/D7). Created on
   // the stitched-mode transition in SetClips, reset on the passthrough
@@ -2429,8 +2447,12 @@ bool PreviewEngine::RenderEditedFrameLocked(Impl* impl,
   // seek per scrub / clip edit — NOT a per-frame seek during playback (§5.4).
   reader->SeekTo(source_ms);
   // Every transport reposition resets the pacer's gap-seek lead-in floor —
-  // a scrub BACKWARD must be allowed to re-emit earlier frames.
+  // a scrub BACKWARD must be allowed to re-emit earlier frames — and the
+  // chase state (a fresh position starts at parity with the sound).
   impl->edited_min_source_ms = source_ms;
+  impl->stale_streak = 0;
+  impl->awaiting_chase_frame = false;
+  impl->last_chase_seek = {};  // a fresh position starts at parity
   std::vector<BYTE> bgra;
   bool have_frame = false;
   for (int guard = 0; guard < 600; ++guard) {
@@ -2474,6 +2496,60 @@ bool PreviewEngine::RenderEditedFrameLocked(Impl* impl,
   return true;
 }
 
+PreviewEngine::PacerChaseDecision PreviewEngine::DecidePacerChase(
+    const PacerChaseInput& in) {
+  PacerChaseDecision out;
+
+  // The frame we repositioned to — show it, whatever the clock says.
+  if (in.awaiting_chase_frame) {
+    out.action = PacerChaseAction::kEmit;
+    out.next_stale_streak = 0;
+    return out;
+  }
+  // No sound: the pacer free-runs (pre-4-7c behavior, byte-identical).
+  if (in.audio_edited_ms < 0) {
+    out.action = PacerChaseAction::kEmit;
+    out.next_stale_streak = 0;
+    return out;
+  }
+  // Within a frame budget of the sound — in sync.
+  if (in.frame_edited_ms >= in.audio_edited_ms - kAudioChaseSlackMs) {
+    out.action = PacerChaseAction::kEmit;
+    out.next_stale_streak = 0;
+    return out;
+  }
+
+  // Behind the sound. A big enough trail warrants a reposition — but never
+  // into the tail (the edited end maps one-past-the-last-kept-frame, which
+  // would floor out every remaining frame), and never twice in a row
+  // without a frame in between (the lead-in decode would starve forever).
+  const std::int64_t deficit = in.audio_edited_ms - in.frame_edited_ms;
+  const bool cooldown_elapsed = in.ms_since_chase_seek < 0 ||
+                                in.ms_since_chase_seek >= kChaseSeekCooldownMs;
+  const bool clear_of_the_tail =
+      in.edited_duration_ms > 0 &&
+      in.audio_edited_ms + kChaseSeekEndGuardMs < in.edited_duration_ms;
+  if (in.allow_chase_seek && deficit > kChaseSeekDeficitMs &&
+      cooldown_elapsed && clear_of_the_tail) {
+    out.action = PacerChaseAction::kSeekToAudio;
+    out.seek_target_edited_ms = in.audio_edited_ms;
+    out.next_stale_streak = 0;
+    return out;
+  }
+
+  // Otherwise decimate: show every Nth stale frame so the picture keeps
+  // moving (trailing the sound) instead of freezing.
+  const int streak = in.stale_streak + 1;
+  if (streak >= kStaleEmitEvery) {
+    out.action = PacerChaseAction::kEmit;
+    out.next_stale_streak = 0;
+    return out;
+  }
+  out.action = PacerChaseAction::kDiscard;
+  out.next_stale_streak = streak;
+  return out;
+}
+
 std::int64_t PreviewEngine::NextKeptSourceInMsAfter(
     std::int64_t source_ms,
     const std::vector<capture::export_::clip_planner::ClipKeptRange>& ranges) {
@@ -2512,12 +2588,25 @@ PreviewEngine::PaceStep PreviewEngine::PaceNextEditedFrameLocked(Impl* impl) {
       return PaceStep::kIdle;  // video is ahead — hold this tick
     }
   }
-  // A frame more than one budget behind the sound is stale: decode past it
-  // instead of showing it, so the video catches up within a step or two.
-  constexpr std::int64_t kAudioChaseSlackMs = 33;
-  const auto stale_for_audio = [&](std::int64_t edited_ms) {
-    return audio_target_ms >= 0 &&
-           edited_ms < audio_target_ms - kAudioChaseSlackMs;
+  // Per-frame chase decision (pure policy — see DecidePacerChase). Builds
+  // the shared half of the input; each branch fills in the frame position
+  // and whether repositioning is available.
+  const auto chase_input_for = [&](std::int64_t frame_edited_ms,
+                                   bool allow_chase_seek) {
+    PacerChaseInput in;
+    in.frame_edited_ms = frame_edited_ms;
+    in.audio_edited_ms = audio_target_ms;
+    in.edited_duration_ms = edited_dur;
+    in.stale_streak = impl->stale_streak;
+    in.awaiting_chase_frame = impl->awaiting_chase_frame;
+    in.allow_chase_seek = allow_chase_seek;
+    in.ms_since_chase_seek =
+        impl->last_chase_seek.time_since_epoch().count() == 0
+            ? -1
+            : std::chrono::duration_cast<std::chrono::milliseconds>(
+                  std::chrono::steady_clock::now() - impl->last_chase_seek)
+                  .count();
+    return in;
   };
 
   // Shared render tail: upload the decoded frame + compose it at its edited
@@ -2546,10 +2635,33 @@ PreviewEngine::PaceStep PreviewEngine::PaceNextEditedFrameLocked(Impl* impl) {
     impl->d3d_context->UpdateSubresource(impl->compositor.video_texture(), 0,
                                          nullptr, bgra.data(),
                                          reader->width() * 4u, 0);
+    // Adaptive budget: the edited-time distance between presented frames IS
+    // the source's frame interval (the edited timeline is contiguous, and a
+    // cut boundary still advances by one frame). Clamped so a seek jump or
+    // a decimated skip can't stretch the budget.
+    if (impl->last_presented_edited_ms >= 0) {
+      const std::int64_t delta = edited_ms - impl->last_presented_edited_ms;
+      if (delta > 0 && delta <= 100) {
+        impl->paced_budget_ms.store(static_cast<int>(std::max<std::int64_t>(5, delta)),
+                                    std::memory_order_relaxed);
+      }
+    }
+    impl->last_presented_edited_ms = edited_ms;
     impl->edited_pos_ms = edited_ms;
     impl->timing_total.BeginFrame();
     ComposeAndHandoffLocked(impl, source_ms * 1000, edited_ms, edited_dur);
     return true;
+  };
+
+  // A presented frame that is STILL behind the sound must not burn a frame
+  // budget — step again at once so decode runs at full speed until it
+  // catches up (or the chase policy repositions).
+  const auto step_for_emit = [&](bool ok, std::int64_t edited_ms) {
+    if (!ok) return PaceStep::kIdle;
+    return (audio_target_ms >= 0 &&
+            edited_ms < audio_target_ms - kAudioChaseSlackMs)
+               ? PaceStep::kRenderedBehind
+               : PaceStep::kRendered;
   };
 
   // Decoding is NOT free (ReadNextFrame fully decodes each frame), so cap
@@ -2608,8 +2720,29 @@ PreviewEngine::PaceStep PreviewEngine::PaceNextEditedFrameLocked(Impl* impl) {
         }
         continue;  // small gap — crawl (decode-forward)
       }
-      if (stale_for_audio(*edited)) continue;  // behind the sound — catch up
-      return emit(bgra, ts_ms, *edited) ? PaceStep::kRendered : PaceStep::kIdle;
+      const auto chase = DecidePacerChase(
+          chase_input_for(*edited, /*allow_chase_seek=*/true));
+      impl->stale_streak = chase.next_stale_streak;
+      if (chase.action == PacerChaseAction::kSeekToAudio) {
+        // Way behind the sound and decode can't close it — reposition to
+        // the audio clock like a scrub. The policy guarantees the target
+        // sits clear of the tail, so it always maps into a kept window.
+        const std::int64_t target_source = clip::SourceMsForEditedMs(
+            chase.seek_target_edited_ms, impl->clip_ranges);
+        reader->SeekTo(target_source);
+        impl->edited_min_source_ms = target_source;
+        impl->last_chase_seek = std::chrono::steady_clock::now();
+        impl->awaiting_chase_frame = true;
+        clingfy::bridge::NativeLogPublisher::Instance().Debug(
+            "Preview",
+            "pacer chase-seek to the audio clock: video was at edited " +
+                std::to_string(*edited) + "ms, audio at " +
+                std::to_string(audio_target_ms) + "ms");
+        return PaceStep::kSkipping;
+      }
+      if (chase.action == PacerChaseAction::kDiscard) continue;
+      impl->awaiting_chase_frame = false;
+      return step_for_emit(emit(bgra, ts_ms, *edited), *edited);
     }
     return PaceStep::kSkipping;
   }
@@ -2664,8 +2797,15 @@ PreviewEngine::PaceStep PreviewEngine::PaceNextEditedFrameLocked(Impl* impl) {
     if (ts_ms < r.source_in_ms) continue;  // keyframe lead-in — discard
     const std::int64_t edited =
         impl->edited_reorder_base_ms + (ts_ms - r.source_in_ms);
-    if (stale_for_audio(edited)) continue;  // behind the sound — catch up
-    return emit(bgra, ts_ms, edited) ? PaceStep::kRendered : PaceStep::kIdle;
+    // Decimation only here: a reorder reposition would need the range
+    // cursor re-primed too, so the policy is told repositioning is
+    // unavailable and keeps the picture moving by decimating instead.
+    const auto chase =
+        DecidePacerChase(chase_input_for(edited, /*allow_chase_seek=*/false));
+    impl->stale_streak = chase.next_stale_streak;
+    if (chase.action == PacerChaseAction::kDiscard) continue;
+    impl->awaiting_chase_frame = false;
+    return step_for_emit(emit(bgra, ts_ms, edited), edited);
   }
   return PaceStep::kSkipping;
 }
@@ -2713,8 +2853,16 @@ void PreviewEngine::PacerLoop() {
   // is no preview audio yet to sync to). sleep_until an accumulating deadline so
   // decode jitter doesn't drift the pace fast; reset it if we fall behind so it
   // can't spiral into catch-up.
-  const auto frame_budget = std::chrono::milliseconds(33);
   auto next_deadline = clock::now();
+  // Pacer telemetry (Debug level, ~2s cadence while playing): the A/V chase
+  // in one line — video edited position vs the audio master clock plus the
+  // step mix. The user-facing "laggy preview" class of bug is invisible in
+  // ordinary logs (video position freezes silently); this line names which
+  // side stalled without a debugger.
+  auto telemetry_last = clock::now();
+  int telemetry_rendered = 0;
+  int telemetry_skipping = 0;
+  int telemetry_idle = 0;
   while (!shutting_down_.load()) {
     Impl* impl = nullptr;
     {
@@ -2727,13 +2875,64 @@ void PreviewEngine::PacerLoop() {
       // small skip cap) — released before the sleep so SetClips / SeekTo / Pause
       // / Close and the frame-server guard aren't blocked while paced.
       std::lock_guard<std::mutex> render_lock(impl->render_mutex);
-      if (!shutting_down_.load() && impl->edited_mode && impl->edited_playing) {
+      const bool paced = !shutting_down_.load() && impl->edited_mode &&
+                         impl->edited_playing;
+      if (!paced) {
+        // Not playing: start the next window fresh so the first line after
+        // a resume reports a real 2s sample, not counts stranded from
+        // before the pause over an unbounded interval.
+        telemetry_last = clock::now();
+        telemetry_rendered = 0;
+        telemetry_skipping = 0;
+        telemetry_idle = 0;
+      }
+      if (paced) {
         step = PaceNextEditedFrameLocked(impl);
+        switch (step) {
+          case PaceStep::kRendered:
+          case PaceStep::kRenderedBehind: ++telemetry_rendered; break;
+          case PaceStep::kSkipping: ++telemetry_skipping; break;
+          case PaceStep::kIdle: ++telemetry_idle; break;
+        }
+        const auto now = clock::now();
+        if (now - telemetry_last >= std::chrono::milliseconds(2000)) {
+          const std::int64_t audio_ms =
+              impl->audio_renderer != nullptr
+                  ? impl->audio_renderer->PositionEditedMs()
+                  : -1;
+          const bool audio_playing = impl->audio_renderer != nullptr &&
+                                     impl->audio_renderer->playing();
+          clingfy::bridge::NativeLogPublisher::Instance().Debug(
+              "Preview",
+              "pacer telemetry: video_edited=" +
+                  std::to_string(impl->edited_pos_ms) +
+                  "ms audio=" + std::to_string(audio_ms) +
+                  "ms audio_playing=" + (audio_playing ? "1" : "0") +
+                  " rendered=" + std::to_string(telemetry_rendered) +
+                  " skipping=" + std::to_string(telemetry_skipping) +
+                  " idle=" + std::to_string(telemetry_idle) + " per 2s");
+          telemetry_last = now;
+          telemetry_rendered = 0;
+          telemetry_skipping = 0;
+          telemetry_idle = 0;
+        }
       }
     }
     switch (step) {
+      case PaceStep::kRenderedBehind:
+        // Presented, but the sound is still ahead: no sleep — decode the
+        // next frame immediately. The audio-ahead hold at the top of the
+        // step is what stops the video from running past the sound, so
+        // this cannot overrun.
+        next_deadline = clock::now();
+        break;
       case PaceStep::kRendered:
-        next_deadline += frame_budget;
+        // Pace by the MEASURED source frame interval (impl-adaptive), not
+        // a fixed 30 fps: a 60 fps recording needs a ~16 ms budget or its
+        // content advances at half wall-clock speed.
+        next_deadline += std::chrono::milliseconds(
+            impl != nullptr ? impl->paced_budget_ms.load(std::memory_order_relaxed)
+                            : 33);
         {
           const auto now = clock::now();
           if (next_deadline > now) {

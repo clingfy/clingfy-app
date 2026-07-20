@@ -7,8 +7,11 @@
 #
 # Executable resolution order (first hit wins):
 #   1. $env:CLINGFY_EXE                  — explicit override
-#   2. repo dev builds                   — Debug, then Release (what you are
-#                                          actively iterating on)
+#   2. repo dev builds                   — Release, then Debug (Release first:
+#                                          the preview's software video decode
+#                                          needs the optimized build's headroom;
+#                                          Debug decodes ~at source realtime and
+#                                          the edited preview turns laggy)
 #   3. installed "Clingfy Dev" / "Clingfy" under %LOCALAPPDATA%\Programs
 #
 # The project path is absolutized BEFORE launch: the single-instance forward
@@ -41,8 +44,8 @@ $repoRoot = Join-Path $PSScriptRoot '..\..'
 if (Test-Path (Join-Path $repoRoot 'pubspec.yaml')) {
     $repoRoot = (Resolve-Path $repoRoot).Path
     $candidates += @(
-        (Join-Path $repoRoot 'build\windows\x64\runner\Debug\clingfy.exe'),
-        (Join-Path $repoRoot 'build\windows\x64\runner\Release\clingfy.exe')
+        (Join-Path $repoRoot 'build\windows\x64\runner\Release\clingfy.exe'),
+        (Join-Path $repoRoot 'build\windows\x64\runner\Debug\clingfy.exe')
     )
 }
 $candidates += @(

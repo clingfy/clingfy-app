@@ -226,6 +226,81 @@ class PreviewEngine {
   static bool ShouldRestartEditedPlaybackFromEnd(std::int64_t edited_pos_ms,
                                                  std::int64_t edited_duration_ms);
 
+  // ---- Edited-pacer chase policy (pure, exposed for tests) ----------------
+  //
+  // The edited preview's audio renderer is the MASTER clock (design 4-7c
+  // D5), so the video pacer must chase it. The naive chase — discard every
+  // frame that is behind the sound — assumes video decode runs well past
+  // realtime. The preview reader's SOFTWARE decode does not (measured
+  // ~1.3-1.7x at 1080p Release, ~1.0x Debug, worse at higher resolutions),
+  // so at zero margin an unbounded discard freezes the picture completely
+  // while audio plays on (user-reported, 2026-07-20). This policy keeps the
+  // picture moving in that regime and bounds the lip-sync trail.
+  //
+  // Tunables are public so tests assert against named values, not magic
+  // numbers.
+  //   kAudioChaseSlackMs   — a frame within this of the sound is "in sync".
+  //   kStaleEmitEvery      — emit every Nth stale frame anyway (late-frame
+  //                          decimation: the picture always advances).
+  //                          Discarding does NOT speed up catch-up (the
+  //                          decode already happened) — it only saves the
+  //                          compose+upload — so this stays small: measured
+  //                          17-25 presented fps at N=2 vs 8 at N=6, for
+  //                          the same content rate.
+  //   kChaseSeekDeficitMs  — trail past this and a reposition is warranted.
+  //                          Measured on a 1080p60 recording: a chase seek
+  //                          costs a keyframe lead-in decode (~2 s of
+  //                          blacked-out catch-up, since the recorder does
+  //                          not pin GOP — issue #294), so the trigger must
+  //                          sit well above that or the seek costs more
+  //                          than it recovers.
+  //   kChaseSeekCooldownMs — minimum spacing between chase seeks.
+  //   kChaseSeekEndGuardMs — never chase INTO the tail: the edited end maps
+  //                          one-past-the-last-kept-frame, so a seek there
+  //                          floors out every remaining frame and freezes
+  //                          the picture for good. Decimation carries the
+  //                          tail instead.
+  static constexpr std::int64_t kAudioChaseSlackMs = 33;
+  static constexpr int kStaleEmitEvery = 2;
+  static constexpr std::int64_t kChaseSeekDeficitMs = 5000;
+  static constexpr std::int64_t kChaseSeekCooldownMs = 3000;
+  static constexpr std::int64_t kChaseSeekEndGuardMs = 1000;
+
+  enum class PacerChaseAction { kEmit, kDiscard, kSeekToAudio };
+
+  struct PacerChaseInput {
+    // The decoded frame's position on the edited timeline.
+    std::int64_t frame_edited_ms = 0;
+    // The audio master clock, or < 0 when this session has no sound (the
+    // pacer then free-runs on its own budget — every frame emits).
+    std::int64_t audio_edited_ms = -1;
+    std::int64_t edited_duration_ms = 0;
+    // Consecutive stale frames discarded so far.
+    int stale_streak = 0;
+    // Elapsed since the last chase seek; < 0 = never chased.
+    std::int64_t ms_since_chase_seek = -1;
+    // A chase seek is in flight: the next frame that clears the lead-in
+    // floor IS the frame we repositioned to, so it emits unconditionally.
+    // Without this the post-seek frame is still "stale" (the keyframe
+    // lead-in decode let audio advance), so a long lead-in would trigger
+    // another chase — seek, decode, discard, seek — and the picture would
+    // never advance at all.
+    bool awaiting_chase_frame = false;
+    // The reorder branch cannot reposition (its range cursor would need
+    // re-priming), so it decimates only.
+    bool allow_chase_seek = true;
+  };
+
+  struct PacerChaseDecision {
+    PacerChaseAction action = PacerChaseAction::kEmit;
+    // Valid for kSeekToAudio: where to reposition, in edited ms.
+    std::int64_t seek_target_edited_ms = 0;
+    int next_stale_streak = 0;
+  };
+
+  // Pure decision for one decoded frame. See the tunables above.
+  static PacerChaseDecision DecidePacerChase(const PacerChaseInput& input);
+
   // Pure (exposed for tests): the next kept range's source_in_ms strictly
   // AFTER `source_ms`, or -1 when none follows. The monotonic pacer uses it
   // to SEEK across a large cut gap instead of decode-crawling every deleted
@@ -400,7 +475,13 @@ class PreviewEngine {
   // decode cap was hit while still inside a cut gap (release render_mutex + step
   // again immediately, so a large gap doesn't hold the lock for seconds);
   // kIdle = not playing / stopped / end-of-stream.
-  enum class PaceStep { kIdle, kRendered, kSkipping };
+  // kRenderedBehind: a frame was presented but the video is STILL behind
+  // the audio master — decode the next one immediately instead of burning
+  // a frame budget. Without it the pacer sleeps a whole budget after every
+  // frame, so a source whose frame rate exceeds the budget (a 60 fps
+  // recording against the historical fixed 33 ms) advances content at half
+  // wall-clock speed and can never track the sound, however fast decode is.
+  enum class PaceStep { kIdle, kRendered, kRenderedBehind, kSkipping };
 
   // Step 4-3b: advance edited playback by ONE step — decode forward from the
   // edited reader, skipping cut-gap frames (EditedMsForKeptSourceMs nullopt) up
