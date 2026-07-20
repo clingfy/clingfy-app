@@ -37,8 +37,6 @@
 		F1A0011AA11D105E00002018 /* rnn.c in Sources */ = {isa = PBXBuildFile; fileRef = F1A0011AA11D105E00002017 /* rnn.c */; };
 		F1A0011AA11D105E0000201A /* rnnoise_data.c in Sources */ = {isa = PBXBuildFile; fileRef = F1A0011AA11D105E00002019 /* rnnoise_data.c */; };
 		F1A0011AA11D105E0000201C /* rnnoise_tables.c in Sources */ = {isa = PBXBuildFile; fileRef = F1A0011AA11D105E0000201B /* rnnoise_tables.c */; };
-		F1A0011AA11D105E00002030 /* RNNoiseEngineTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = F1A0011AA11D105E0000202F /* RNNoiseEngineTests.swift */; };
-		F1A0011AA11D105E00002032 /* AudioEnhancementPipelineTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = F1A0011AA11D105E00002031 /* AudioEnhancementPipelineTests.swift */; };
 		01921F2F7A5F86C0AC6E6AC4 /* CaptureBackendBinder.swift in Sources */ = {isa = PBXBuildFile; fileRef = 67EE618FCE29B99878804E71 /* CaptureBackendBinder.swift */; };
 		01AAE1E4B799E6B85610A896 /* ExportPrep.swift in Sources */ = {isa = PBXBuildFile; fileRef = DBAFE534F311451D8C165B52 /* ExportPrep.swift */; };
 		0397B2A14242AA904B51F603 /* RecordingIndicatorCoordinator.swift in Sources */ = {isa = PBXBuildFile; fileRef = C07C546166B52E67C8D2F881 /* RecordingIndicatorCoordinator.swift */; };
