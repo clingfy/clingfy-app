@@ -815,12 +815,14 @@ void RegisterHandlers(HandlerTable& table) {
 
   table["previewSetCameraPlacement"] = &HandlePreviewSetCameraPlacement;
   table["previewSetZoomSegments"] = &HandleNoopSetter;
-  // Voice cleanup (noise reduction) is macOS-only by construction: it denoises
-  // the MIC alone, and Windows sums mic + loopback into one AAC track while
-  // recording (Audio/audio_mixer), so no mic-only source survives to export.
-  // Registered as a no-op so the additive Flutter call succeeds; the Flutter UI
-  // hides the control on Windows rather than promising something the export
-  // cannot deliver. A real port needs separated capture first.
+  // Voice cleanup (noise reduction) is macOS-only for now. The blocker is no
+  // longer the audio layout — audio separation (slices A-C) gives Windows the
+  // same `capture/mic.m4a` sidecar the macOS stage denoises — it is that the
+  // RNNoise engine is not built here: both CMake projects declare LANGUAGES CXX
+  // only, so vendoring its C sources needs `enable_language(C)` or a separate C
+  // target first. Registered as a no-op so the additive Flutter call succeeds;
+  // the UI hides the control until the engine lands. The port's insertion point
+  // is the mic pump, before ResolveAudioGainStages in export_pipeline.
   table["previewSetVoiceCleanup"] = &HandleNoopSetter;
   // Color grade (editing port step 2): live on Windows — the same D2D color
   // chain the export bakes with (Graphics/color_grade_effect), applied to

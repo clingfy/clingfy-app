@@ -44,7 +44,7 @@ Status legend: ✅ shipped · 🚧 partial / with caveats · — not available y
 | Export gain + volume | Per-export audio gain (dB) and volume. | ✅ | ✅ |
 | Loudness normalization | One-click normalize to a loudness target at export. | ✅ | — |
 | Live audio mix preview | Hear gain/mix changes while editing. | ✅ | ✅ |
-| Voice cleanup | On-device background-noise removal for the mic (Light / Balanced), previewed live and baked at export. Mic only — system audio is never denoised. Off by default. | ✅ | — (needs separated capture) |
+| Voice cleanup | On-device background-noise removal for the mic (Light / Balanced), previewed live and baked at export. Mic only — system audio is never denoised. Off by default. | ✅ | — (engine not ported yet) |
 
 ## Camera overlay
 
@@ -136,8 +136,8 @@ Status legend: ✅ shipped · 🚧 partial / with caveats · — not available y
 - **WYSIWYG audio preview** — hear the exact export mix in the editor.
 - **Live timeline during export** — keep editing while an export runs.
 - **Voice cleanup** — mic background-noise removal (Light / Balanced),
-  opt-in and off by default. macOS only until Windows records mic and
-  system audio as separate tracks.
+  opt-in and off by default. macOS only until the RNNoise engine is built
+  into the Windows target.
 - **Windows beta launch** — installer, updater, and tester docs are ready;
   invites pending release gates.
 

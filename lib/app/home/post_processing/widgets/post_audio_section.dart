@@ -86,9 +86,9 @@ class PostAudioSection extends StatelessWidget {
             ),
             // Voice cleanup denoises the MIC track alone, so it needs the same
             // mic-present condition the gain slider does — a system-audio-only
-            // recording has nothing for it to act on. Hidden on Windows: the
-            // native pipeline there has no cleanup stage yet (its bridge method
-            // is a no-op), so showing the control would promise nothing.
+            // recording has nothing for it to act on. Hidden on Windows until
+            // the RNNoise engine is built there (its bridge method is a no-op
+            // today), so the control never promises a cleanup that won't happen.
             if (gainEnabled && !isWindows()) ...[
               const SizedBox(height: AppSidebarTokens.rowGap),
               AppToggleRow(

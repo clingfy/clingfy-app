@@ -436,11 +436,14 @@ from this plan, both deliberate:
   parses (and runs RNNoise at full strength) so a project written by a
   future build opens correctly.
 - Windows is **not** stubbed at `audio_mixer.cpp` as sketched here. That
-  is a capture-time hook, but Windows sums mic + loopback into one track
-  while recording, so there is no mic-only source to clean at export and
-  no post-hoc mode change could be honoured. Windows needs Phase 1.5
-  (separated capture) first; until then the bridge method is a no-op and
-  the control is hidden there.
+  is a capture-time hook, so it could not honour a post-hoc Off/Light/
+  Balanced change. With audio separation landed, the right Windows
+  insertion point is the export/preview mic pump — before
+  `ResolveAudioGainStages` in `export_pipeline` — mirroring the macOS
+  ordering. What actually blocks the port is the build: both Windows CMake
+  projects declare `LANGUAGES CXX` only, so the vendored C needs
+  `enable_language(C)` or its own C target. Until then the bridge method is
+  a no-op and the control is hidden there.
 
 ### Phase 5 — subtitles + translate *(the big one)*
 
