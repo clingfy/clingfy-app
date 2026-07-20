@@ -332,6 +332,29 @@ bool IsDeviceRemovedHresult(HRESULT hr) {
 RenderResult RenderComposedExport(const RenderRequest& request) {
   EnsureMediaFoundationStarted();
 
+  // PARITY GAP (macOS has this, Windows does not yet): there is no pre-flight
+  // of `request.destination_path` before the expensive work below. macOS added
+  // one in `ExportEngine.destinationProblem` after a real report — exporting to
+  // a remembered folder on a disk that had been ejected rendered the full
+  // 31-second screen pre-pass and only failed when the writer finally tried to
+  // create the output, surfacing as a bare "Cannot create file".
+  //
+  // Windows is exposed to the same thing, and arguably more: the save folder is
+  // remembered as a plain path string, so a mapped network drive that is no
+  // longer connected, an ejected USB volume, or a drive letter that has since
+  // changed all look valid in the export dialog and only fail at the Sink
+  // Writer, after the whole render.
+  //
+  // The fix mirrors macOS: right here, before `D3DDevice::Create`, check that
+  // the destination's parent directory exists, is a directory, and is actually
+  // writable (probe-write a temp file rather than trusting an attribute — a
+  // network share can report writable and still refuse), and return
+  // `Failure(...)` with a message that names the cause. Distinguish "the disk
+  // or share is not connected" from "the folder is gone": telling someone their
+  // folder no longer exists sends them looking for something that is really
+  // just unplugged. See macos/Runner/Capture/Export/ExportEngine.swift and
+  // macos/RunnerTests/ExportDestinationPreflightTests.swift.
+
   // Slice 5A: bail before any heavy GPU/MF setup if already cancelled. No
   // output file exists yet, so Cancelled() just returns the clean result.
   if (request.is_cancelled && request.is_cancelled()) {
