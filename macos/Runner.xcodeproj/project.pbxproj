@@ -21,6 +21,7 @@
 /* End PBXAggregateTarget section */
 
 /* Begin PBXBuildFile section */
+		F1A0011AA11D105E00002102 /* ExportDestinationPreflightTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = F1A0011AA11D105E00002101 /* ExportDestinationPreflightTests.swift */; };
 		F1A0011AA11D105E00002036 /* AudioEnhancementPipelineTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = F1A0011AA11D105E00002031 /* AudioEnhancementPipelineTests.swift */; };
 		F1A0011AA11D105E00002035 /* RNNoiseEngineTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = F1A0011AA11D105E0000202F /* RNNoiseEngineTests.swift */; };
 		F1A0011AA11D105E00002002 /* RNNoiseEngine.swift in Sources */ = {isa = PBXBuildFile; fileRef = F1A0011AA11D105E00002001 /* RNNoiseEngine.swift */; };
@@ -241,6 +242,7 @@
 /* End PBXCopyFilesBuildPhase section */
 
 /* Begin PBXFileReference section */
+		F1A0011AA11D105E00002101 /* ExportDestinationPreflightTests.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = ExportDestinationPreflightTests.swift; sourceTree = "<group>"; };
 		F1A0011AA11D105E00002001 /* RNNoiseEngine.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = RNNoiseEngine.swift; sourceTree = "<group>"; };
 		F1A0011AA11D105E00002003 /* AudioEnhancementPipeline.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = AudioEnhancementPipeline.swift; sourceTree = "<group>"; };
 		F1A0011AA11D105E00002005 /* AudioComputeQueue.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = AudioComputeQueue.swift; sourceTree = "<group>"; };
@@ -620,6 +622,7 @@
 				F1A0011AA11D105E00000003 /* AudioSourceRecordingTests.swift */,
 				F1A0011AA11D105E00000103 /* MicEchoCancellerTests.swift */,
 				F1A0011AA11D105E0000202F /* RNNoiseEngineTests.swift */,
+				F1A0011AA11D105E00002101 /* ExportDestinationPreflightTests.swift */,
 				F1A0011AA11D105E00002031 /* AudioEnhancementPipelineTests.swift */,
 				F1A0011AA11D105E00000107 /* CleanedMicCacheTests.swift */,
 				F1A0011AA11D105E00000109 /* InlinePreviewViewLayoutTests.swift */,
@@ -1412,6 +1415,7 @@
 				F1A0011AA11D105E00000004 /* AudioSourceRecordingTests.swift in Sources */,
 				F1A0011AA11D105E00000104 /* MicEchoCancellerTests.swift in Sources */,
 				F1A0011AA11D105E00002035 /* RNNoiseEngineTests.swift in Sources */,
+				F1A0011AA11D105E00002102 /* ExportDestinationPreflightTests.swift in Sources */,
 				F1A0011AA11D105E00002036 /* AudioEnhancementPipelineTests.swift in Sources */,
 				F1A0011AA11D105E00000108 /* CleanedMicCacheTests.swift in Sources */,
 				F1A0011AA11D105E0000010A /* InlinePreviewViewLayoutTests.swift in Sources */,
