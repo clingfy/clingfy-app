@@ -189,6 +189,14 @@ final class LetterboxExporter {
   /// pipeline fails. Only a caller-owned temp file (cache unavailable) is
   /// registered for cleanup; the cache-owned file in the project's `derived/`
   /// must survive this export for the next preview/export to reuse.
+  ///
+  /// Cost note: like `echoCancelledMicURL` above this blocks, and `ExportEngine`
+  /// is `@MainActor`, so a cold cache stalls the main thread for a full decode +
+  /// suppression pass — now potentially twice in a row. In practice both stages
+  /// are already warm because the preview computed them while the user was
+  /// editing, and cleanup is opt-in, so the cold path needs an export with
+  /// cleanup enabled and no prior preview. Moving the whole mic preamble off the
+  /// main actor is the real fix and is deliberately out of scope here.
   private func voiceCleanedMicURL(
     micAudioURL: URL?, projectRoot: URL, request: VoiceCleanupRequest
   ) -> URL? {

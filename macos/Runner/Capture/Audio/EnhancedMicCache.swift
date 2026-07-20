@@ -206,6 +206,13 @@ final class EnhancedMicCache {
     let result = try AudioEnhancementPipeline.enhance(
       micURL: inputMicURL, mode: request.mode, outputDirectory: derivedDir)
     let enhancedURL = Self.enhancedFileURL(for: projectRoot)
+    // Invalidate the entry BEFORE swapping the audio. Readers run on other
+    // threads (export preamble, preview open) and validate metadata before
+    // touching the CAF, so leaving the previous entry in place across the swap
+    // would let one match the OLD mode's metadata against the NEW mode's audio
+    // and serve the wrong strength. Dropping it first makes that window a plain
+    // cache miss instead — a recompute, never wrong audio.
+    try? fileManager.removeItem(at: Self.metadataFileURL(for: projectRoot))
     // Same-volume move = atomic rename; only this queue writes here.
     try? fileManager.removeItem(at: enhancedURL)
     try fileManager.moveItem(at: result.enhancedMicURL, to: enhancedURL)
