@@ -24,6 +24,18 @@ Compiled with no extra defines: `HAVE_CONFIG_H` unset (no `config.h`),
 no x86 RTCD. SIMD still engages per-arch at compile time via `vec.h`
 (`vec_neon.h` on arm64, `vec_avx.h` on x86_64).
 
+## Build flags
+
+Every `.c` here carries a per-file `COMPILER_FLAGS = "-O2"` in the Xcode project,
+so the DSP is optimized even in Debug. This is not a micro-optimization: Debug
+builds use `GCC_OPTIMIZATION_LEVEL = 0`, and measured on 48 s of audio the
+suppressor takes **3150 ms** unoptimized versus **338 ms** at `-O2` — a 9.3x
+penalty that turns a mode switch in the dev build into a multi-second wait and
+makes voice cleanup feel broken when it is not.
+
+Nobody steps through vendored third-party DSP in a debugger, so there is nothing
+to lose. Keep the flag if you re-register these files.
+
 ## Local modifications
 
 One packaging bug in the 0.2 tarball is patched, mirroring upstream `main`:
