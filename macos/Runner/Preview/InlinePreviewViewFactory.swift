@@ -421,11 +421,8 @@ func rehydrateActivePreviewIfNeeded(on view: InlinePreviewView) -> Bool {
         "path": state.mediaSources.screenPath,
         "cameraPath": state.mediaSources.cameraPath ?? "nil",
       ])
-    if let voiceCleanup = state.voiceCleanup {
-      // Seed BEFORE opening: `open()` resolves the mic file, so applying this
-      // afterwards would open on the raw mic and then rebuild.
-      view.updateVoiceCleanupOnly(voiceCleanup)
-    }
+    // `state.voiceCleanup` needs no seeding here: `open()` adopts it from the
+    // session itself, which covers this path and the two in `create` alike.
     view.open(
       mediaSources: state.mediaSources,
       sessionId: state.sessionId,

@@ -279,6 +279,68 @@ final class AudioEnhancementPipelineTests: XCTestCase {
 
   /// A decode failure must degrade to the un-enhanced mic rather than fail the
   /// preview open, and must not be cached so the next open retries.
+  /// Regression: the preview must adopt the session's cleanup setting on a
+  /// NORMAL open, not only when a host view is rehydrated. Seeding it at just
+  /// one of the three `open()` call sites left the common path opening on the
+  /// raw mic while the export cleaned it — a silent preview/export mismatch,
+  /// self-correcting only if the user happened to toggle the control.
+  @MainActor
+  func testPreviewAdoptsTheSessionVoiceCleanupOnOpen() throws {
+    let sessionId = "rec_voice_cleanup_session"
+    let mediaSources = PreviewMediaSources(
+      projectPath: workDirectory.path,
+      screenPath: workDirectory.appendingPathComponent("screen.mov").path,
+      cameraPath: nil,
+      metadataPath: nil,
+      cursorPath: nil,
+      zoomManualPath: nil,
+      cameraSyncTimeline: nil,
+      micAudioPath: nil,
+      systemAudioPath: nil)
+
+    beginActiveInlinePreviewSession(sessionId: sessionId, mediaSources: mediaSources)
+    defer { clearAllInlinePreviewState() }
+
+    let request = VoiceCleanupRequest(enabled: true, mode: .light)
+    updateActiveInlinePreviewVoiceCleanup(sessionId: sessionId, voiceCleanup: request)
+
+    XCTAssertEqual(
+      activeInlinePreviewState?.voiceCleanup, request,
+      "The setter must record the session's cleanup even with no view attached")
+
+    let view = InlinePreviewView(viewIdentifier: 1, arguments: nil, messenger: nil)
+    view.open(mediaSources: mediaSources, sessionId: sessionId)
+
+    XCTAssertEqual(
+      view.currentVoiceCleanupForTesting, request,
+      "open() must adopt the session's cleanup before it resolves the mic")
+  }
+
+  /// A stale session's setting must not leak into a different recording.
+  @MainActor
+  func testPreviewIgnoresAnotherSessionsVoiceCleanup() throws {
+    let mediaSources = PreviewMediaSources(
+      projectPath: workDirectory.path,
+      screenPath: workDirectory.appendingPathComponent("screen.mov").path,
+      cameraPath: nil,
+      metadataPath: nil,
+      cursorPath: nil,
+      zoomManualPath: nil,
+      cameraSyncTimeline: nil,
+      micAudioPath: nil,
+      systemAudioPath: nil)
+
+    beginActiveInlinePreviewSession(sessionId: "rec_a", mediaSources: mediaSources)
+    defer { clearAllInlinePreviewState() }
+    updateActiveInlinePreviewVoiceCleanup(
+      sessionId: "rec_a", voiceCleanup: VoiceCleanupRequest(enabled: true, mode: .balanced))
+
+    let view = InlinePreviewView(viewIdentifier: 1, arguments: nil, messenger: nil)
+    view.open(mediaSources: mediaSources, sessionId: "rec_b")
+
+    XCTAssertEqual(view.currentVoiceCleanupForTesting, VoiceCleanupRequest.disabled)
+  }
+
   func testAsyncFailureDegradesToTheInputMic() throws {
     let project = try makeProject()
     let bogus = workDirectory.appendingPathComponent("broken.caf")

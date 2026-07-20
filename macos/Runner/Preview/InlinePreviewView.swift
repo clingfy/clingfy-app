@@ -875,6 +875,18 @@ final class InlinePreviewView: NSView {
       || pendingCompositionWorkItem != nil
     let hadCurrentScene = currentScene != nil
     let hadCurrentLayout = currentLayout != nil
+    // Adopt the session's voice-cleanup setting BEFORE resolving the mic below.
+    // It is seeded on the session by `processVideo` and by the dedicated setter,
+    // both of which can land while no view exists (or against a view that is
+    // later replaced). Reading it here rather than at each call site is what
+    // keeps the preview's mix equal to the export's: miss it and a project with
+    // cleanup enabled would open on the raw mic and only correct itself if the
+    // user happened to toggle the control.
+    if let sessionCleanup = activeInlinePreviewState?.voiceCleanup,
+      activeInlinePreviewState?.sessionId == sessionId
+    {
+      voiceCleanupRequest = sessionCleanup
+    }
     // Generate a new token for this open operation
     let openToken = UUID()
     currentOpenToken = openToken
@@ -2411,6 +2423,10 @@ final class InlinePreviewView: NSView {
   /// file — so it is held here and consumed by `open()` and
   /// `updateVoiceCleanupOnly`.
   private var voiceCleanupRequest: VoiceCleanupRequest = .disabled
+
+  /// Exposed so `AudioEnhancementPipelineTests` can assert that `open()` adopts
+  /// the session's setting — the seam where preview/export parity is decided.
+  var currentVoiceCleanupForTesting: VoiceCleanupRequest { voiceCleanupRequest }
   /// The echo-cancelled mic CAF this view wrote for the current preview (a temp
   /// file we own). Deleted on the next open and on dispose — nothing else
   /// reclaims preview-created cancellation files, so without this it leaks.
