@@ -316,6 +316,37 @@ final class AudioEnhancementPipelineTests: XCTestCase {
       "open() must adopt the session's cleanup before it resolves the mic")
   }
 
+  /// The other delivery order: the setting arrives (via the scene payload or the
+  /// dedicated setter) AFTER the preview is already open. An open view reads its
+  /// cleanup only at open time, so it has to be pushed — otherwise a persisted
+  /// setting reaches the export but never the preview.
+  @MainActor
+  func testOpenPreviewAcceptsAVoiceCleanupPushedAfterwards() throws {
+    let sessionId = "rec_late_push"
+    let mediaSources = PreviewMediaSources(
+      projectPath: workDirectory.path,
+      screenPath: workDirectory.appendingPathComponent("screen.mov").path,
+      cameraPath: nil,
+      metadataPath: nil,
+      cursorPath: nil,
+      zoomManualPath: nil,
+      cameraSyncTimeline: nil,
+      micAudioPath: nil,
+      systemAudioPath: nil)
+
+    beginActiveInlinePreviewSession(sessionId: sessionId, mediaSources: mediaSources)
+    defer { clearAllInlinePreviewState() }
+
+    let view = InlinePreviewView(viewIdentifier: 2, arguments: nil, messenger: nil)
+    view.open(mediaSources: mediaSources, sessionId: sessionId)
+    XCTAssertEqual(view.currentVoiceCleanupForTesting, VoiceCleanupRequest.disabled)
+
+    let request = VoiceCleanupRequest(enabled: true, mode: .balanced)
+    view.updateVoiceCleanupOnly(request)
+
+    XCTAssertEqual(view.currentVoiceCleanupForTesting, request)
+  }
+
   /// A stale session's setting must not leak into a different recording.
   @MainActor
   func testPreviewIgnoresAnotherSessionsVoiceCleanup() throws {

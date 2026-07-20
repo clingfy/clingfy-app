@@ -773,6 +773,7 @@ class PostProcessingController extends ChangeNotifier {
   Future<void> resyncPreviewAfterRebuild({required String sessionId}) async {
     if (_activeSessionId != sessionId || _projectPath == null) return;
     _pushPreviewColorGrade();
+    _pushPreviewVoiceCleanup();
     await applyProcessing();
   }
 

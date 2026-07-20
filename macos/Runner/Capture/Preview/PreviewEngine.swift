@@ -109,9 +109,20 @@ final class PreviewEngine {
     let clampedGainDb = max(0, min(24, input.audioGainDb))
     let clampedVolumePercent = max(0, min(100, input.audioVolumePercent))
     // Carried on the scene request so the setting survives a session restart
-    // even if the dedicated setter never fires.
+    // even if the dedicated setter never fires. Both halves are needed: the
+    // session store covers a scene that arrives BEFORE the preview opens (open()
+    // adopts it), and the push below covers one that arrives AFTER, since an
+    // open view reads its cleanup only at open time. `CompositionParams` cannot
+    // carry it — the scene rebuild changes composition, not the mic file.
     updateActiveInlinePreviewVoiceCleanup(
       sessionId: input.sessionId, voiceCleanup: input.voiceCleanup)
+    let sceneVoiceCleanup = input.voiceCleanup
+    let sceneSessionId = input.sessionId
+    DispatchQueue.main.async {
+      guard let view = inlinePreviewViewInstance else { return }
+      if let sceneSessionId, view.currentSessionId != sceneSessionId { return }
+      view.updateVoiceCleanupOnly(sceneVoiceCleanup)
+    }
 
     var params = CompositionParams(
       targetSize: targetSize,
