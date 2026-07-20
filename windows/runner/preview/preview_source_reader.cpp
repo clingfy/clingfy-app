@@ -88,8 +88,21 @@ std::unique_ptr<PreviewSourceReader> PreviewSourceReader::Create(
     return nullptr;
   }
   // Let the reader insert a video processor to convert NV12/etc → RGB32 in
-  // system memory (no D3D binding needed — the pacer uploads to the compositor).
-  attrs->SetUINT32(MF_SOURCE_READER_ENABLE_VIDEO_PROCESSING, TRUE);
+  // system memory (no D3D binding needed — the pacer uploads to the
+  // compositor).
+  //
+  // ADVANCED, not basic: measured on a 1080p60 recording, the advanced
+  // processor decodes+converts at ~69 fps against the basic processor's
+  // ~32-44 fps. That is the difference between tracking the audio master
+  // clock and never catching it (the reported "laggy preview" — the source
+  // runs at 57 fps, so the basic path could not keep up at all). Output
+  // format and buffer layout are unchanged, so this is throughput-only.
+  //
+  // Deliberately NOT paired with MF_SOURCE_READER_D3D_MANAGER: measured at
+  // ~1 fps, because every frame would then be read back GPU->CPU for the
+  // compositor upload. Keeping frames on the GPU end to end is the real
+  // win but needs the compositor's upload seam redesigned (issue #296).
+  attrs->SetUINT32(MF_SOURCE_READER_ENABLE_ADVANCED_VIDEO_PROCESSING, TRUE);
 
   ComPtr<IMFSourceReader> reader;
   if (FAILED(::MFCreateSourceReaderFromURL(source_path.c_str(), attrs.Get(),
