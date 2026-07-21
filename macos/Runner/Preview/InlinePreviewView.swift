@@ -2150,33 +2150,34 @@ final class InlinePreviewView: NSView {
     // `positionMs` unconditionally — one such tick is what snapped the
     // scrubber to 00:00 and back. Stay silent for the swap window.
     guard !suppressTicksForItemSwap else { return }
-    // `.indefinite` is non-nil, so without this a not-yet-loaded item reports
-    // durationMs 0, which Dart reads as "not ready".
-    guard let duration = player?.currentItem?.duration, duration.isNumeric else { return }
-    syncCameraPlayback(to: position)
+    guard let item = player?.currentItem else { return }
 
+    // Overlays (camera / cursor / zoom) are keyed to SOURCE time and never need
+    // the item's duration, so they update on EVERY tick — including while a
+    // just-installed item is still loading (duration `.indefinite`). This block
+    // must not be gated on a numeric duration: a clip-edit rebuild done while
+    // paused installs a loading item, and the seek's tick can arrive before the
+    // duration resolves — skipping the overlays here strands the camera hidden
+    // with no later tick to recover it.
     let posSeconds = CMTimeGetSeconds(position)
-    let durSeconds = CMTimeGetSeconds(duration)
-
-    let posMs = (posSeconds.isNaN || posSeconds.isInfinite) ? 0 : Int(posSeconds * 1000)
-    let durMs = (durSeconds.isNaN || durSeconds.isInfinite) ? 0 : Int(durSeconds * 1000)
-
-    // The player plays the edited timeline directly — the raw asset when there
-    // are no cuts, a kept-range composition when there are — so its position and
-    // duration ARE the edited values; report them straight to Flutter. The
-    // cursor/zoom/camera overlays are keyed to SOURCE time, so map the player
-    // time back to source for them (identity when there are no cuts).
     let sourceSecs = sourceSeconds(forPlayerSeconds: posSeconds)
     let t = (sourceSecs.isNaN || sourceSecs.isInfinite) ? 0 : sourceSecs
     let tickState = PreviewTickState(time: t, frame: cursorFrameResolver.frame(at: t))
-
+    syncCameraPlayback(to: position)
     CATransaction.begin()
     CATransaction.setDisableActions(true)
-    defer { CATransaction.commit() }
     updateCursorLayer(tick: tickState)
     let screenZoom = updateZoom(tick: tickState)
     updateCameraPreviewGeometry(time: t, screenZoom: screenZoom)
+    CATransaction.commit()
 
+    // Only EMIT the transport tick once the duration is real: a not-yet-loaded
+    // item reports `.indefinite`, which would send durationMs 0 that Dart reads
+    // as "not ready" and collapse the scrubber. The overlays above already ran.
+    guard item.duration.isNumeric else { return }
+    let durSeconds = CMTimeGetSeconds(item.duration)
+    let posMs = (posSeconds.isNaN || posSeconds.isInfinite) ? 0 : Int(posSeconds * 1000)
+    let durMs = (durSeconds.isNaN || durSeconds.isInfinite) ? 0 : Int(durSeconds * 1000)
     emitPlayerEvent([
       "type": "playerTick",
       "positionMs": posMs,
@@ -2326,6 +2327,10 @@ final class InlinePreviewView: NSView {
     // smoother so it doesn't lerp across the discontinuity.
     resetZoomState()
     lastZoomTime = sourceSeconds(forPlayerSeconds: Double(restoreEditedMs) / 1000.0)
+    // Re-resolve the camera at the restored playhead now, not on the next tick:
+    // clip edits happen while paused, so the periodic observer may not fire soon
+    // enough to un-hide the camera after the rebuild's seek.
+    syncCameraPlayback(to: restoreTime, force: true)
 
     NativeLogger.i(
       "Player", "Rebuilt clip composition preview",
