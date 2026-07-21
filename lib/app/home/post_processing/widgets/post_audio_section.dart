@@ -95,12 +95,12 @@ class PostAudioSection extends StatelessWidget {
             // stranding the echo-cancellation toggle documents in
             // recording_audio_section.dart.
             //
-            // On Windows the RNNoise engine runs at EXPORT (not yet in the live
-            // preview): the toggle shows and applies on export (with the notice
-            // below), but the mode selector stays macOS-only until the Windows
-            // path treats light/balanced as a real wet/dry blend — today it
-            // would run full strength for either, so exposing the choice would
-            // promise a difference that isn't there.
+            // On Windows the RNNoise engine denoises BOTH the export and the
+            // live preview now (WYSIWYG), so no export-only notice. The mode
+            // selector stays macOS-only until the Windows path treats
+            // light/balanced as a real wet/dry blend — today it runs full
+            // strength for either, so exposing the choice would promise a
+            // difference that isn't there.
             if (gainEnabled || voiceCleanup.enabled) ...[
               const SizedBox(height: AppSidebarTokens.rowGap),
               AppToggleRow(
@@ -133,14 +133,6 @@ class PostAudioSection extends StatelessWidget {
                     // reserved for a future full-band engine and would behave
                     // identically to Balanced today.
                   ],
-                ),
-              ],
-              // Windows applies cleanup on export only (no preview denoise yet).
-              if (voiceCleanup.enabled && isWindows()) ...[
-                const SizedBox(height: AppSidebarTokens.compactGap),
-                AppInlineNotice(
-                  key: const ValueKey('post_audio_voice_cleanup_export_notice'),
-                  message: l10n.voiceCleanupExportNoticeWindows,
                 ),
               ],
             ],
