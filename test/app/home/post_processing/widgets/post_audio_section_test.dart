@@ -7,10 +7,10 @@ import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:macos_ui/macos_ui.dart';
 
-/// Voice-cleanup UI on Windows (Phase 4 slice): the RNNoise engine denoises on
-/// EXPORT, so the toggle is now shown, but the mode selector stays macOS-only
-/// (Windows runs full strength for either mode) and an export notice replaces
-/// the WYSIWYG the live preview can't give yet.
+/// Voice-cleanup UI on Windows (Phase 4): the RNNoise engine denoises both the
+/// export and the live preview (WYSIWYG), so the toggle is shown and there is
+/// no export-only notice. The mode selector stays macOS-only — the Windows path
+/// runs full strength for either light/balanced.
 void main() {
   tearDown(() {
     debugPlatformKindOverride = null;
@@ -45,7 +45,6 @@ void main() {
 
   const toggle = ValueKey('post_audio_voice_cleanup_toggle');
   const mode = ValueKey('post_audio_voice_cleanup_mode');
-  const voiceNotice = ValueKey('post_audio_voice_cleanup_export_notice');
 
   testWidgets('Windows: the voice-cleanup toggle is shown', (tester) async {
     debugPlatformKindOverride = PlatformKind.windows;
@@ -53,7 +52,7 @@ void main() {
     expect(find.byKey(toggle), findsOneWidget);
   });
 
-  testWidgets('Windows enabled: mode selector hidden, export notice shown', (
+  testWidgets('Windows enabled: toggle shown, mode selector hidden', (
     tester,
   ) async {
     debugPlatformKindOverride = PlatformKind.windows;
@@ -62,18 +61,14 @@ void main() {
     );
     expect(find.byKey(toggle), findsOneWidget);
     expect(find.byKey(mode), findsNothing);
-    expect(find.byKey(voiceNotice), findsOneWidget);
   });
 
-  testWidgets('macOS enabled: mode selector shown, no export notice', (
-    tester,
-  ) async {
+  testWidgets('macOS enabled: mode selector shown', (tester) async {
     debugPlatformKindOverride = PlatformKind.macos;
     await tester.pumpWidget(
       host(audioSection(const VoiceCleanup(enabled: true))),
     );
     expect(find.byKey(toggle), findsOneWidget);
     expect(find.byKey(mode), findsOneWidget);
-    expect(find.byKey(voiceNotice), findsNothing);
   });
 }

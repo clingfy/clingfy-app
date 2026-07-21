@@ -643,7 +643,6 @@
   "voiceCleanupHelp": "يزيل ضجيج الخلفية من الميكروفون، مثل المراوح أو صوت الغرفة.",
   "voiceCleanupLight": "خفيف",
   "voiceCleanupBalanced": "متوازن",
-  "voiceCleanupExportNoticeWindows": "تُطبَّق تنقية الصوت عند التصدير — المعاينة المباشرة لا تُنقَّى بعد.",
   "volume": "مستوى الصوت",
   "micInputLevel": "مستوى دخل الميكروفون",
   "micInputIndicatorDisabledTooltip": "اختر ميكروفونًا لمعاينة مستوى الإدخال.",

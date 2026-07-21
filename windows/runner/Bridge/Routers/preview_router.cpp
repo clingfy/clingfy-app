@@ -742,6 +742,29 @@ void HandlePreviewSetColorGrade(
   reply::Null(*result);
 }
 
+// Voice cleanup (Phase 4 preview WYSIWYG): denoise the preview's mic so the
+// live preview matches the export bake. `voiceCleanup` is a nested
+// {enabled, mode} map (Dart VoiceCleanup.toMap()); only `enabled` drives the
+// preview today — the export runs full strength for either mode, so mode is
+// not yet a wet/dry blend. Stale-session calls are dropped engine-side.
+void HandlePreviewSetVoiceCleanup(
+    const flutter::MethodCall<flutter::EncodableValue>& call,
+    std::unique_ptr<flutter::MethodResult<flutter::EncodableValue>> result) {
+  if (const auto* args =
+          std::get_if<flutter::EncodableMap>(call.arguments())) {
+    const std::string session_id = ReadString(*args, "sessionId");
+    bool enabled = false;
+    if (const auto it = args->find(flutter::EncodableValue("voiceCleanup"));
+        it != args->end()) {
+      if (const auto* vc = std::get_if<flutter::EncodableMap>(&it->second)) {
+        enabled = ReadBool(*vc, "enabled", false);
+      }
+    }
+    PreviewEngine::Instance()->SetVoiceCleanup(session_id, enabled);
+  }
+  reply::Null(*result);
+}
+
 // Editing port (clips, step 4-1): pushes the Dart clip list to the live
 // preview. Parsed by the shared clip_args helper (the same wire shape the
 // export router uses — one parser, per the color_grade precedent). Stale-session
@@ -815,15 +838,13 @@ void RegisterHandlers(HandlerTable& table) {
 
   table["previewSetCameraPlacement"] = &HandlePreviewSetCameraPlacement;
   table["previewSetZoomSegments"] = &HandleNoopSetter;
-  // Voice cleanup (noise reduction) is macOS-only for now. The blocker is no
-  // longer the audio layout — audio separation (slices A-C) gives Windows the
-  // same `capture/mic.m4a` sidecar the macOS stage denoises — it is that the
-  // RNNoise engine is not built here: both CMake projects declare LANGUAGES CXX
-  // only, so vendoring its C sources needs `enable_language(C)` or a separate C
-  // target first. Registered as a no-op so the additive Flutter call succeeds;
-  // the UI hides the control until the engine lands. The port's insertion point
-  // is the mic pump, before ResolveAudioGainStages in export_pipeline.
-  table["previewSetVoiceCleanup"] = &HandleNoopSetter;
+  // Voice cleanup (Phase 4 preview WYSIWYG): the RNNoise engine now runs on
+  // Windows and the export denoises the mic; this drives the LIVE preview mic
+  // too. Enabling produces the cleaned mic on a background thread and rebuilds
+  // the mic pump onto it (marshaled to the platform thread); disabling swaps
+  // the raw mic straight back. Mode (light/balanced) is not yet a wet/dry
+  // blend — the export runs full strength for either.
+  table["previewSetVoiceCleanup"] = &HandlePreviewSetVoiceCleanup;
   // Color grade (editing port step 2): live on Windows — the same D2D color
   // chain the export bakes with (Graphics/color_grade_effect), applied to
   // the preview video by preview_compositor. Video-only, like macOS preview.
