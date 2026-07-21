@@ -283,11 +283,27 @@ Shared-Flutter items surfaced during macOS testing (Windows inherits both):
   in `lib/app/infrastructure/error/global_error_handlers.dart`. It is stripped in
   release and is not an app bug — do not chase it on Windows either.
 
-### 5.8 Known minor gap (not a blocker)
+### 5.8 Zoom lane vs. edited ruler under cuts
 
-Under cuts, the **zoom lane's recording-time segments mis-position vs the edited
-ruler** (the lane still draws segments in source time). Acceptable for v1 on both
-platforms; a proper fix remaps the zoom lane through the timeline↔source map.
+Originally the **zoom lane's recording-time segments mis-positioned vs the edited
+ruler** — the lane drew segments in source time, so under cuts the pills sat at the
+wrong x and ran past the timeline end.
+
+**Fixed for the display-only lane (#286)** by the pure
+`mapZoomSegmentsToEditedTimeline` (`lib/core/timeline/zoom_segment_timeline_mapper.dart`):
+it intersects each source-time segment with every enabled clip's window and re-bases
+it to the clip's timeline position — cut-gap segments vanish, straddlers clamp,
+multi-range segments split into one pill per range, reordered clips reposition; the
+identity timeline maps 1:1 so it applies unconditionally. Wired in
+`timeline_editor_viewport.dart`; the underlying zoom model stays in source time (the
+native compositor and export do their own edited-time mapping). This is all of
+Windows.
+
+**Remaining (accepted v1 gap, macOS-only):** the macOS **editable** zoom lane keeps
+raw source coords, because its drag interactions work in source coordinates and
+remapping display-only would desync them (`timeline_editor_viewport.dart` falls back
+to `editorController.displaySegments` when an editor is attached). Windows has no
+editable lane, so it is unaffected.
 
 ### 5.9 macOS-only build noise (ignore on Windows)
 
@@ -375,7 +391,8 @@ the open items after clips+color are:
 - **Remaining friend-features:** audio (boost / **denoise** / source separation) →
   **subtitles + translate** (on-device ASR: WhisperKit on macOS, whisper.cpp on
   Windows; translation with the large-v3-turbo caveat — turbo cannot translate).
-- **Known minor gap:** the zoom-lane-vs-edited-ruler mis-position under cuts (§5.8).
+- **Zoom lane under cuts (§5.8):** fixed for the display-only lane (#286); only the
+  macOS editable lane keeps source coords by design — Windows is unaffected.
 
 ---
 
