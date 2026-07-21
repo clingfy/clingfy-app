@@ -14,6 +14,7 @@
 #include "Bridge/result_helpers.h"
 #include "Capture/Camera/camera_meta.h"
 #include "Capture/Export/audio_sidecar_probe.h"
+#include "Capture/Export/mic_cleanup.h"
 #include "Capture/recording_project_reader.h"
 #include "preview/preview_engine.h"
 
@@ -754,13 +755,17 @@ void HandlePreviewSetVoiceCleanup(
           std::get_if<flutter::EncodableMap>(call.arguments())) {
     const std::string session_id = ReadString(*args, "sessionId");
     bool enabled = false;
+    std::string mode;
     if (const auto it = args->find(flutter::EncodableValue("voiceCleanup"));
         it != args->end()) {
       if (const auto* vc = std::get_if<flutter::EncodableMap>(&it->second)) {
         enabled = ReadBool(*vc, "enabled", false);
+        mode = ReadString(*vc, "mode");
       }
     }
-    PreviewEngine::Instance()->SetVoiceCleanup(session_id, enabled);
+    PreviewEngine::Instance()->SetVoiceCleanup(
+        session_id, enabled,
+        clingfy::capture::export_::VoiceCleanupWetMix(mode));
   }
   reply::Null(*result);
 }

@@ -8,9 +8,9 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:macos_ui/macos_ui.dart';
 
 /// Voice-cleanup UI on Windows (Phase 4): the RNNoise engine denoises both the
-/// export and the live preview (WYSIWYG), so the toggle is shown and there is
-/// no export-only notice. The mode selector stays macOS-only — the Windows path
-/// runs full strength for either light/balanced.
+/// export and the live preview (WYSIWYG), and light/balanced is a real wet/dry
+/// blend, so the toggle AND the mode selector show on both platforms with no
+/// export-only notice.
 void main() {
   tearDown(() {
     debugPlatformKindOverride = null;
@@ -52,7 +52,7 @@ void main() {
     expect(find.byKey(toggle), findsOneWidget);
   });
 
-  testWidgets('Windows enabled: toggle shown, mode selector hidden', (
+  testWidgets('Windows enabled: toggle + mode selector shown', (
     tester,
   ) async {
     debugPlatformKindOverride = PlatformKind.windows;
@@ -60,7 +60,7 @@ void main() {
       host(audioSection(const VoiceCleanup(enabled: true))),
     );
     expect(find.byKey(toggle), findsOneWidget);
-    expect(find.byKey(mode), findsNothing);
+    expect(find.byKey(mode), findsOneWidget);
   });
 
   testWidgets('macOS enabled: mode selector shown', (tester) async {
