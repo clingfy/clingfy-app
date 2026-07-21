@@ -126,15 +126,23 @@ class MicCleanupTest : public ::testing::Test {
   fs::path dir_;
 };
 
+TEST(VoiceCleanupWetMixTest, LightIsGentlerThanBalanced) {
+  EXPECT_FLOAT_EQ(VoiceCleanupWetMix("light"), 0.5f);
+  EXPECT_FLOAT_EQ(VoiceCleanupWetMix("balanced"), 1.0f);
+  // Unknown / reserved / empty fall back to full strength.
+  EXPECT_FLOAT_EQ(VoiceCleanupWetMix("highQuality"), 1.0f);
+  EXPECT_FLOAT_EQ(VoiceCleanupWetMix(""), 1.0f);
+}
+
 TEST_F(MicCleanupTest, EmptyPathsFailSoftly) {
-  EXPECT_FALSE(ProduceCleanedMic(L"", "out.mp4", nullptr));
-  EXPECT_FALSE(ProduceCleanedMic(L"in.mp4", "", nullptr));
+  EXPECT_FALSE(ProduceCleanedMic(L"", "out.mp4", nullptr, 1.0f));
+  EXPECT_FALSE(ProduceCleanedMic(L"in.mp4", "", nullptr, 1.0f));
 }
 
 TEST_F(MicCleanupTest, UnreadableSourceFailsSoftly) {
   const auto out = (dir_ / "cleaned.mp4").string();
   EXPECT_FALSE(ProduceCleanedMic((dir_ / "does-not-exist.mp4").wstring(), out,
-                                 nullptr));
+                                 nullptr, 1.0f));
 }
 
 TEST_F(MicCleanupTest, DenoisesAndProducesADecodableFile) {
@@ -142,7 +150,8 @@ TEST_F(MicCleanupTest, DenoisesAndProducesADecodableFile) {
   ASSERT_TRUE(WriteNoisyMic(noisy, /*seconds=*/2));
 
   const auto cleaned = (dir_ / "mic-cleaned.mp4").string();
-  ASSERT_TRUE(ProduceCleanedMic(fs::path(noisy).wstring(), cleaned, nullptr));
+  ASSERT_TRUE(ProduceCleanedMic(fs::path(noisy).wstring(), cleaned, nullptr,
+                                /*wet_mix=*/1.0f));
 
   // The output must be a valid, pump-openable sidecar.
   EXPECT_TRUE(ProbeDecodableAudio(fs::path(cleaned).wstring()));
@@ -155,12 +164,33 @@ TEST_F(MicCleanupTest, DenoisesAndProducesADecodableFile) {
   EXPECT_LT(clean_energy, noisy_energy * 0.5);
 }
 
+TEST_F(MicCleanupTest, LightRetainsMoreNoiseThanBalanced) {
+  const auto noisy = (dir_ / "mic.mp4").string();
+  ASSERT_TRUE(WriteNoisyMic(noisy, /*seconds=*/2));
+
+  const auto light = (dir_ / "mic-light.mp4").string();
+  const auto balanced = (dir_ / "mic-balanced.mp4").string();
+  ASSERT_TRUE(ProduceCleanedMic(fs::path(noisy).wstring(), light, nullptr,
+                                VoiceCleanupWetMix("light")));
+  ASSERT_TRUE(ProduceCleanedMic(fs::path(noisy).wstring(), balanced, nullptr,
+                                VoiceCleanupWetMix("balanced")));
+
+  const double noisy_energy = DecodeMonoEnergy(fs::path(noisy).wstring());
+  const double light_energy = DecodeMonoEnergy(fs::path(light).wstring());
+  const double balanced_energy = DecodeMonoEnergy(fs::path(balanced).wstring());
+  ASSERT_GT(noisy_energy, 0.0);
+  // Both suppress the noise, but light (a 50% wet/dry blend) leaves audibly
+  // more of the original than balanced (full RNNoise): balanced < light < noisy.
+  EXPECT_LT(balanced_energy, light_energy);
+  EXPECT_LT(light_energy, noisy_energy);
+}
+
 TEST_F(MicCleanupTest, CancelStopsAndReportsFailure) {
   const auto noisy = (dir_ / "mic.mp4").string();
   ASSERT_TRUE(WriteNoisyMic(noisy, /*seconds=*/2));
   const auto cleaned = (dir_ / "mic-cancel.mp4").string();
   EXPECT_FALSE(ProduceCleanedMic(fs::path(noisy).wstring(), cleaned,
-                                 [] { return true; }));
+                                 [] { return true; }, 1.0f));
 }
 
 }  // namespace

@@ -404,7 +404,8 @@ class PreviewEngine {
   // mic-less session is a no-op. Stale/empty session-id semantics match the
   // other setters. On Windows this is the analog of macOS's
   // previewSetVoiceCleanup re-resolving which mic FILE the preview plays.
-  void SetVoiceCleanup(const std::string& session_id, bool enabled);
+  void SetVoiceCleanup(const std::string& session_id, bool enabled,
+                       float wet_mix);
 
   // For tests / observability.
   std::int64_t current_texture_id() const;
@@ -416,10 +417,16 @@ class PreviewEngine {
   PreviewEngine& operator=(const PreviewEngine&) = delete;
 
   // Voice-cleanup background-pass completion, marshaled back to the platform
-  // thread. Rebuilds the mic pump onto `cleaned_path` when the session is
-  // still current and the toggle is still on; otherwise drops the temp file.
+  // thread. Rebuilds the mic pump onto `cleaned_path` when the session is still
+  // current, the toggle is still on, and `wet_mix` still matches the requested
+  // strength (a mode change mid-compute discards a stale result); otherwise
+  // drops the temp file.
+  // `generation` identifies the worker; only the CURRENT generation clears
+  // `computing`, applies the result, or hands off to the next pass — a
+  // superseded worker (mode changed) just drops its temp.
   void OnPreviewCleanedMicReady(const std::string& session_id, bool ok,
-                                const std::wstring& cleaned_path);
+                                const std::wstring& cleaned_path, float wet_mix,
+                                std::uint64_t generation);
 
   // Implementation lives in the .cpp where the winrt projection
   // headers are visible. The trampoline lambdas in Open() pass an
@@ -465,6 +472,14 @@ class PreviewEngine {
   // signal at all. The counter lives on the Impl; the success path resets
   // it. (Declared after `struct Impl;` — the parameter needs the name.)
   void NoteRenderFailure(Impl* impl, const char* stage);
+
+  // Start a background cleanup pass for `wet_mix` under `generation`. Caller
+  // holds render_mutex and guarantees no worker is in flight (computing ==
+  // false), so the only thread joined here is a FINISHED handle — never an
+  // in-flight one (joining that under the lock could deadlock the inline
+  // dispatch path).
+  void StartVoiceCleanupWorkerLocked(Impl* impl, const std::string& session_id,
+                                     float wet_mix, std::uint64_t generation);
 
   // Editing port (clips, step 4-3): the shared compose + handoff tail, factored
   // out of HandleVideoFrame so BOTH the MediaPlayer frame path and the edited
