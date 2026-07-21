@@ -369,6 +369,7 @@ void HandleExportVideo(
       if (const auto* vc =
               std::get_if<flutter::EncodableMap>(&it->second)) {
         input.voice_cleanup_enabled = ReadBool(*vc, "enabled", false);
+        input.voice_cleanup_mode = ReadString(*vc, "mode");
       }
     }
     // Slice 5A. Bitrate is a preset string resolved against the output size;

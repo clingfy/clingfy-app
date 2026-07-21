@@ -432,6 +432,15 @@ struct PreviewEngine::Impl {
   // single in-flight worker; `cleanup_thread` is joined (after signalling
   // `cleanup_cancel`) at Close so a long denoise never outlives the session.
   bool voice_cleanup_enabled = false;
+  // The requested strength (VoiceCleanupWetMix) and the strength the cached
+  // cleaned file was actually produced with — a mode change (light<->balanced)
+  // makes them differ, which invalidates the cache and re-runs the worker.
+  float voice_cleanup_wet_mix = 1.0f;
+  float cleaned_wet_mix = -1.0f;
+  // Bumped per spawned worker; the completion applies only its own generation,
+  // so a superseded worker (mode toggled again mid-compute) can't touch the
+  // live one's state or temp file even when the two share a strength value.
+  std::uint64_t voice_cleanup_generation = 0;
   bool voice_cleanup_computing = false;
   bool cleaned_mic_ready = false;
   bool use_cleaned_mic = false;
@@ -549,14 +558,18 @@ void RebuildPreviewAudioRendererLocked(PreviewEngine::Impl* impl) {
   }
 }
 
-// Per-session temp path for the RNNoise-cleaned preview mic. Session-scoped so
-// concurrent sessions never collide; `.mp4` so MF picks the MPEG-4 container.
-std::filesystem::path PreviewCleanedMicPath(const std::string& session_id) {
+// Per-session, per-GENERATION temp path for the RNNoise-cleaned preview mic.
+// Session-scoped so concurrent sessions never collide; the generation makes it
+// unique per worker, so a superseded worker never shares a path with the live
+// one (two same-strength workers would otherwise collide). `.mp4` so MF picks
+// the MPEG-4 container.
+std::filesystem::path PreviewCleanedMicPath(const std::string& session_id,
+                                            std::uint64_t generation) {
   std::string name = "clingfy-preview-miccleanup-";
   for (const char c : session_id) {
     name += std::isalnum(static_cast<unsigned char>(c)) ? c : '_';
   }
-  name += ".mp4";
+  name += "-g" + std::to_string(generation) + ".mp4";
   return std::filesystem::temp_directory_path() / name;
 }
 
@@ -3191,8 +3204,54 @@ void PreviewEngine::SetAudioMix(const std::string& session_id, double gain_db,
   }
 }
 
-void PreviewEngine::SetVoiceCleanup(const std::string& session_id,
-                                    bool enabled) {
+void PreviewEngine::StartVoiceCleanupWorkerLocked(Impl* impl,
+                                                  const std::string& session_id,
+                                                  float wet_mix,
+                                                  std::uint64_t generation) {
+  // Caller guarantees no worker is in flight, so any joinable handle is a
+  // FINISHED worker — join it before reassigning. Never join an in-flight one
+  // under render_mutex (the inline-dispatch path would run its completion,
+  // which wants render_mutex, on the joined thread -> deadlock); the mode-
+  // change path instead cancels the live worker and lets ITS completion start
+  // the next pass. The self-id guard covers the degenerate inline-dispatch case
+  // where this runs on the worker thread itself.
+  if (impl->cleanup_thread.joinable()) {
+    if (impl->cleanup_thread.get_id() == std::this_thread::get_id()) {
+      impl->cleanup_thread.detach();
+    } else {
+      impl->cleanup_thread.join();
+    }
+  }
+  impl->voice_cleanup_computing = true;
+  impl->cleanup_cancel.store(false);
+
+  const std::wstring mic = impl->mic_audio_path;
+  const std::filesystem::path out =
+      PreviewCleanedMicPath(session_id, generation);
+  try {
+    impl->cleanup_thread =
+        std::thread([this, impl, session_id, mic, out, wet_mix, generation]() {
+          const bool ok = capture::export_::ProduceCleanedMic(
+              mic, out.u8string(),
+              [impl] { return impl->cleanup_cancel.load(); }, wet_mix);
+          const std::wstring out_w = out.wstring();
+          clingfy::bridge::PlatformThreadDispatcher::Instance().Post(
+              [this, session_id, ok, out_w, wet_mix, generation] {
+                OnPreviewCleanedMicReady(session_id, ok, out_w, wet_mix,
+                                         generation);
+              });
+        });
+  } catch (const std::system_error&) {
+    // Thread/handle exhaustion: clear the guard so a later toggle can retry
+    // instead of silently no-opping for the rest of the session.
+    impl->voice_cleanup_computing = false;
+    clingfy::bridge::NativeLogPublisher::Instance().Warn(
+        "Preview", "voice cleanup worker thread could not be started");
+  }
+}
+
+void PreviewEngine::SetVoiceCleanup(const std::string& session_id, bool enabled,
+                                    float wet_mix) {
   Impl* impl = nullptr;
   std::string active;
   {
@@ -3212,14 +3271,17 @@ void PreviewEngine::SetVoiceCleanup(const std::string& session_id,
   if (shutting_down_.load()) {
     return;
   }
-  if (impl->voice_cleanup_enabled == enabled) {
-    return;  // no change
+  // No change: same enabled state AND (if on) same strength.
+  if (impl->voice_cleanup_enabled == enabled &&
+      (!enabled || impl->voice_cleanup_wet_mix == wet_mix)) {
+    return;
   }
   impl->voice_cleanup_enabled = enabled;
+  impl->voice_cleanup_wet_mix = wet_mix;
 
   // Only a separated session with a mic sidecar has anything to denoise. A
-  // premix or system-only session just records the flag (a mic reselected in a
-  // later session would honor it).
+  // premix or system-only session just records the flags (a mic reselected in
+  // a later session would honor them).
   if (!impl->audio_separated || impl->mic_audio_path.empty()) {
     return;
   }
@@ -3238,8 +3300,8 @@ void PreviewEngine::SetVoiceCleanup(const std::string& session_id,
     return;
   }
 
-  if (impl->cleaned_mic_ready) {
-    // Already produced this session: swap the cleaned mic straight in.
+  if (impl->cleaned_mic_ready && impl->cleaned_wet_mix == wet_mix) {
+    // Already produced at this strength: swap the cleaned mic straight in.
     impl->use_cleaned_mic = true;
     if (impl->audio_renderer != nullptr) {
       RebuildPreviewAudioRendererLocked(impl);
@@ -3247,41 +3309,37 @@ void PreviewEngine::SetVoiceCleanup(const std::string& session_id,
     return;
   }
 
+  // (Re)compute for this strength. Any cleaned file in use is for a different
+  // strength now — drop back to the raw mic (releasing its handle) and delete
+  // the stale file before the new worker runs.
+  if (impl->use_cleaned_mic) {
+    impl->use_cleaned_mic = false;
+    if (impl->audio_renderer != nullptr) {
+      RebuildPreviewAudioRendererLocked(impl);
+    }
+  }
+  if (impl->cleaned_mic_ready) {
+    std::error_code ec;
+    std::filesystem::remove(impl->cleaned_mic_path, ec);
+    impl->cleaned_mic_ready = false;
+    impl->cleaned_mic_path.clear();
+  }
+  // If a worker is already running (for a now-stale strength), don't join it
+  // here — cancel it and let its completion start the next pass for the
+  // current strength. Otherwise start one now.
   if (impl->voice_cleanup_computing) {
-    return;  // a worker is already producing it; it applies on completion
+    impl->cleanup_cancel.store(true);
+    return;
   }
-  impl->voice_cleanup_computing = true;
-  impl->cleanup_cancel.store(false);
-
-  const std::wstring mic = impl->mic_audio_path;
-  const std::filesystem::path out = PreviewCleanedMicPath(active);
-  // A previous toggle's worker has finished (computing was cleared on the
-  // platform thread) but may leave a joinable handle; join it before reusing.
-  if (impl->cleanup_thread.joinable()) {
-    impl->cleanup_thread.join();
-  }
-  try {
-    impl->cleanup_thread = std::thread([this, impl, active, mic, out]() {
-      const bool ok = capture::export_::ProduceCleanedMic(
-          mic, out.u8string(), [impl] { return impl->cleanup_cancel.load(); });
-      const std::wstring out_w = out.wstring();
-      clingfy::bridge::PlatformThreadDispatcher::Instance().Post(
-          [this, active, ok, out_w] {
-            OnPreviewCleanedMicReady(active, ok, out_w);
-          });
-    });
-  } catch (const std::system_error&) {
-    // Thread/handle exhaustion: clear the guard so a later toggle can retry
-    // instead of silently no-opping for the rest of the session.
-    impl->voice_cleanup_computing = false;
-    clingfy::bridge::NativeLogPublisher::Instance().Warn(
-        "Preview", "voice cleanup worker thread could not be started");
-  }
+  StartVoiceCleanupWorkerLocked(impl, active, wet_mix,
+                                ++impl->voice_cleanup_generation);
 }
 
 void PreviewEngine::OnPreviewCleanedMicReady(const std::string& session_id,
                                              bool ok,
-                                             const std::wstring& cleaned_path) {
+                                             const std::wstring& cleaned_path,
+                                             float wet_mix,
+                                             std::uint64_t generation) {
   const std::filesystem::path out(cleaned_path);
   Impl* impl = nullptr;
   {
@@ -3296,25 +3354,47 @@ void PreviewEngine::OnPreviewCleanedMicReady(const std::string& session_id,
   }
 
   std::lock_guard<std::mutex> render_lock(impl->render_mutex);
-  impl->voice_cleanup_computing = false;
-  if (shutting_down_.load() || !ok || !impl->voice_cleanup_enabled) {
-    // Failed, cancelled, or the user turned cleanup back off mid-compute:
-    // keep the raw mic and discard the temp.
+  const bool current = generation == impl->voice_cleanup_generation;
+  if (!current) {
+    // A superseded worker (the mode was toggled again before it finished): it
+    // owns its own generation-tagged temp and never the live worker's state.
     std::error_code ec;
     std::filesystem::remove(out, ec);
-    if (!ok) {
-      clingfy::bridge::NativeLogPublisher::Instance().Warn(
-          "Preview", "preview voice cleanup failed; keeping the raw mic");
+    return;
+  }
+  impl->voice_cleanup_computing = false;
+
+  const bool want_cleaned = !shutting_down_.load() && impl->voice_cleanup_enabled;
+  if (ok && want_cleaned && impl->voice_cleanup_wet_mix == wet_mix) {
+    impl->cleaned_mic_path = cleaned_path;
+    impl->cleaned_wet_mix = wet_mix;
+    impl->cleaned_mic_ready = true;
+    impl->use_cleaned_mic = true;
+    // Only rebuild a live renderer (edited mode). In passthrough the flags are
+    // enough — the renderer built on the next cut opens the cleaned mic.
+    if (impl->audio_renderer != nullptr) {
+      RebuildPreviewAudioRendererLocked(impl);
     }
     return;
   }
-  impl->cleaned_mic_path = cleaned_path;
-  impl->cleaned_mic_ready = true;
-  impl->use_cleaned_mic = true;
-  // Only rebuild a live renderer (edited mode). In passthrough the flags are
-  // enough — the renderer built on the next cut opens the cleaned mic.
-  if (impl->audio_renderer != nullptr) {
-    RebuildPreviewAudioRendererLocked(impl);
+
+  // Not applied: failed, cancelled, disabled, or the requested strength moved
+  // on while this pass ran. Drop this worker's temp.
+  std::error_code ec;
+  std::filesystem::remove(out, ec);
+  if (!ok && want_cleaned && impl->voice_cleanup_wet_mix == wet_mix) {
+    clingfy::bridge::NativeLogPublisher::Instance().Warn(
+        "Preview", "preview voice cleanup failed; keeping the raw mic");
+  }
+  // Hand off: if cleanup is still wanted at a strength we don't have cached and
+  // nothing is now computing, start the next pass (covers the cancel-and-
+  // restart on a mode change).
+  if (want_cleaned && !impl->voice_cleanup_computing &&
+      impl->audio_separated && !impl->mic_audio_path.empty() &&
+      !(impl->cleaned_mic_ready &&
+        impl->cleaned_wet_mix == impl->voice_cleanup_wet_mix)) {
+    StartVoiceCleanupWorkerLocked(impl, session_id, impl->voice_cleanup_wet_mix,
+                                  ++impl->voice_cleanup_generation);
   }
 }
 

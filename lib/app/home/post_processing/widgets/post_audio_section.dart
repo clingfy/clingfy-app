@@ -96,11 +96,9 @@ class PostAudioSection extends StatelessWidget {
             // recording_audio_section.dart.
             //
             // On Windows the RNNoise engine denoises BOTH the export and the
-            // live preview now (WYSIWYG), so no export-only notice. The mode
-            // selector stays macOS-only until the Windows path treats
-            // light/balanced as a real wet/dry blend — today it runs full
-            // strength for either, so exposing the choice would promise a
-            // difference that isn't there.
+            // live preview (WYSIWYG), and light/balanced is a real wet/dry
+            // blend there now, so the toggle AND the mode selector show on both
+            // platforms — no export-only notice.
             if (gainEnabled || voiceCleanup.enabled) ...[
               const SizedBox(height: AppSidebarTokens.rowGap),
               AppToggleRow(
@@ -112,7 +110,7 @@ class PostAudioSection extends StatelessWidget {
                   voiceCleanup.copyWith(enabled: enabled),
                 ),
               ),
-              if (voiceCleanup.enabled && !isWindows()) ...[
+              if (voiceCleanup.enabled) ...[
                 const SizedBox(height: AppSidebarTokens.optionsSubgroupGap),
                 AppSegmented<CleanupMode>(
                   key: const ValueKey('post_audio_voice_cleanup_mode'),
