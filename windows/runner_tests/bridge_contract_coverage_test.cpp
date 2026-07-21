@@ -2,7 +2,9 @@
 
 #include <gtest/gtest.h>
 
+#include <algorithm>
 #include <string>
+#include <unordered_set>
 #include <vector>
 
 namespace clingfy::bridge {
@@ -197,6 +199,37 @@ TEST(BridgeContractCoverageTest, EveryDartContractMethodHasARegisteredHandler) {
            for (size_t i = 0; i < missing.size(); ++i) {
              if (i != 0) joined += "\n  - ";
              joined += missing[i];
+           }
+           return joined;
+         }();
+}
+
+TEST(BridgeContractCoverageTest, EveryRegisteredHandlerIsOnTheDartContract) {
+  MethodRouter router;
+  const auto& contract = BridgeContractMethods();
+  const std::unordered_set<std::string> listed(contract.begin(),
+                                               contract.end());
+
+  std::vector<std::string> unlisted;
+  for (const auto& method : router.RegisteredMethodNames()) {
+    if (listed.find(method) == listed.end()) {
+      unlisted.push_back(method);
+    }
+  }
+  std::sort(unlisted.begin(), unlisted.end());
+
+  EXPECT_TRUE(unlisted.empty())
+      << "The following methods have a registered handler in a "
+         "windows/runner/Bridge/Routers/*.cpp file but are MISSING from "
+         "BridgeContractMethods() above. A registered-but-unlisted method "
+         "drifts silently (the other test only proves the listed direction). "
+         "Add each to the contract list here so the Dart<->Windows bridge "
+         "stays fully accounted for:\n  - "
+      << [&unlisted] {
+           std::string joined;
+           for (size_t i = 0; i < unlisted.size(); ++i) {
+             if (i != 0) joined += "\n  - ";
+             joined += unlisted[i];
            }
            return joined;
          }();
