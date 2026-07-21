@@ -958,5 +958,38 @@ TEST_F(PreviewRouterTransportTest, SeekToAcceptsInt32Ms) {
   EXPECT_FALSE(reply.error_called);
 }
 
+// Phase 4 preview WYSIWYG: previewSetVoiceCleanup is wired (no longer a no-op)
+// and parses the nested {enabled, mode} map. With no live session the engine
+// drops it (stale-session guard), so the router still replies a clean null —
+// this pins the handler registration + nested-map parse without an engine.
+TEST(PreviewRouterVoiceCleanupTest, ParsesNestedMapAndRepliesNullWithNoSession) {
+  MethodRouter router;
+  flutter::EncodableMap voice;
+  voice[flutter::EncodableValue("enabled")] = flutter::EncodableValue(true);
+  voice[flutter::EncodableValue("mode")] =
+      flutter::EncodableValue(std::string("balanced"));
+  flutter::EncodableMap args;
+  args[flutter::EncodableValue("sessionId")] =
+      flutter::EncodableValue(std::string("no-such-session"));
+  args[flutter::EncodableValue("voiceCleanup")] =
+      flutter::EncodableValue(std::move(voice));
+
+  const auto reply =
+      DispatchWithArgs(router, "previewSetVoiceCleanup", std::move(args));
+  EXPECT_TRUE(reply.success_called);
+  EXPECT_FALSE(reply.error_called);
+}
+
+TEST(PreviewRouterVoiceCleanupTest, MissingVoiceCleanupMapStillRepliesNull) {
+  MethodRouter router;
+  flutter::EncodableMap args;
+  args[flutter::EncodableValue("sessionId")] =
+      flutter::EncodableValue(std::string("no-such-session"));
+  const auto reply =
+      DispatchWithArgs(router, "previewSetVoiceCleanup", std::move(args));
+  EXPECT_TRUE(reply.success_called);
+  EXPECT_FALSE(reply.error_called);
+}
+
 }  // namespace
 }  // namespace clingfy::bridge

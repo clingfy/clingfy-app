@@ -1929,10 +1929,6 @@ class AppLocalizationsRo extends AppLocalizations {
   String get voiceCleanupBalanced => 'Echilibrată';
 
   @override
-  String get voiceCleanupExportNoticeWindows =>
-      'Curățarea vocii se aplică la export — previzualizarea live nu este încă curățată.';
-
-  @override
   String get volume => 'Volum';
 
   @override

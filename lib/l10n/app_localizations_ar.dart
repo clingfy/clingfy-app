@@ -1895,10 +1895,6 @@ class AppLocalizationsAr extends AppLocalizations {
   String get voiceCleanupBalanced => 'متوازن';
 
   @override
-  String get voiceCleanupExportNoticeWindows =>
-      'تُطبَّق تنقية الصوت عند التصدير — المعاينة المباشرة لا تُنقَّى بعد.';
-
-  @override
   String get volume => 'مستوى الصوت';
 
   @override
