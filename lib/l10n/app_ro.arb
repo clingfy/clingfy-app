@@ -643,6 +643,7 @@
   "voiceCleanupHelp": "Elimină zgomotul de fundal din microfon, precum ventilatoare sau zgomotul camerei.",
   "voiceCleanupLight": "Ușoară",
   "voiceCleanupBalanced": "Echilibrată",
+  "voiceCleanupExportNoticeWindows": "Curățarea vocii se aplică la export — previzualizarea live nu este încă curățată.",
   "volume": "Volum",
   "micInputLevel": "Nivel intrare microfon",
   "micInputIndicatorDisabledTooltip": "Selectează un microfon pentru a previzualiza nivelul de intrare.",

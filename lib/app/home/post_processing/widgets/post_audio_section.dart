@@ -86,9 +86,7 @@ class PostAudioSection extends StatelessWidget {
             ),
             // Voice cleanup denoises the MIC track alone, so it needs the same
             // mic-present condition the gain slider does — a system-audio-only
-            // recording has nothing for it to act on. Hidden on Windows until
-            // the RNNoise engine is built there (its bridge method is a no-op
-            // today), so the control never promises a cleanup that won't happen.
+            // recording has nothing for it to act on.
             //
             // It stays visible while ENABLED even when that condition lapses:
             // `hasAudio` follows the live device selection, not the project, so
@@ -96,7 +94,14 @@ class PostAudioSection extends StatelessWidget {
             // still applies at export — leaving no reachable off switch. Same
             // stranding the echo-cancellation toggle documents in
             // recording_audio_section.dart.
-            if ((gainEnabled || voiceCleanup.enabled) && !isWindows()) ...[
+            //
+            // On Windows the RNNoise engine runs at EXPORT (not yet in the live
+            // preview): the toggle shows and applies on export (with the notice
+            // below), but the mode selector stays macOS-only until the Windows
+            // path treats light/balanced as a real wet/dry blend — today it
+            // would run full strength for either, so exposing the choice would
+            // promise a difference that isn't there.
+            if (gainEnabled || voiceCleanup.enabled) ...[
               const SizedBox(height: AppSidebarTokens.rowGap),
               AppToggleRow(
                 key: const ValueKey('post_audio_voice_cleanup_toggle'),
@@ -107,7 +112,7 @@ class PostAudioSection extends StatelessWidget {
                   voiceCleanup.copyWith(enabled: enabled),
                 ),
               ),
-              if (voiceCleanup.enabled) ...[
+              if (voiceCleanup.enabled && !isWindows()) ...[
                 const SizedBox(height: AppSidebarTokens.optionsSubgroupGap),
                 AppSegmented<CleanupMode>(
                   key: const ValueKey('post_audio_voice_cleanup_mode'),
@@ -128,6 +133,14 @@ class PostAudioSection extends StatelessWidget {
                     // reserved for a future full-band engine and would behave
                     // identically to Balanced today.
                   ],
+                ),
+              ],
+              // Windows applies cleanup on export only (no preview denoise yet).
+              if (voiceCleanup.enabled && isWindows()) ...[
+                const SizedBox(height: AppSidebarTokens.compactGap),
+                AppInlineNotice(
+                  key: const ValueKey('post_audio_voice_cleanup_export_notice'),
+                  message: l10n.voiceCleanupExportNoticeWindows,
                 ),
               ],
             ],

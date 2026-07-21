@@ -3592,6 +3592,12 @@ abstract class AppLocalizations {
   /// **'Balanced'**
   String get voiceCleanupBalanced;
 
+  /// No description provided for @voiceCleanupExportNoticeWindows.
+  ///
+  /// In en, this message translates to:
+  /// **'Voice cleanup is applied on export — the live preview isn\'t cleaned up yet.'**
+  String get voiceCleanupExportNoticeWindows;
+
   /// No description provided for @volume.
   ///
   /// In en, this message translates to:
