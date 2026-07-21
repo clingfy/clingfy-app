@@ -679,10 +679,7 @@ final class InlinePreviewView: NSView {
     return max(0, min(100, value))
   }
 
-  private func applyAudioMix(
-    to item: AVPlayerItem, gainDb: Double, volumePercent: Double,
-    crossfadeAnchor: CMTime? = nil, outgoingMicVariant: PreviewMicVariant? = nil
-  ) {
+  private func applyAudioMix(to item: AVPlayerItem, gainDb: Double, volumePercent: Double) {
     if separatedAudioActive {
       // Separated preview: mirror the export's non-normalized control resolution
       // (LetterboxExporter D7) so live gain behaves EXACTLY like the export —
@@ -695,10 +692,9 @@ final class InlinePreviewView: NSView {
         targetLoudnessDbfs: 0,
         micPeakLinear: nil
       )
-      // Select the current mic variant; mute the rest. gain routes to the
-      // selected track. When a cleanup switch supplies a crossfade anchor +
-      // the outgoing variant, the two changing tracks ramp; the gain tap sits
-      // on every mic variant so it never moves.
+      // Select the current mic variant; mute the rest (whole timeline). Gain
+      // routes to the selected track; the tap sits on every mic variant so a
+      // reselect never moves it.
       let selectedID = separatedMicTrackID
       let muted = Set(separatedMicTrackIDs.values).subtracting(selectedID.map { [$0] } ?? [])
       item.audioMix = AudioMixEngine.makeSeparatedAudioMix(
@@ -707,9 +703,7 @@ final class InlinePreviewView: NSView {
         masterVolumePercent: controls.masterVolumePercent,
         gainTargetVolumeComponent: controls.micVolumeComponent,
         gainTargetGainDb: controls.micGainDb,
-        mutedTrackIDs: muted,
-        rampAnchor: crossfadeAnchor,
-        outgoingMicTrackID: outgoingMicVariant.flatMap { separatedMicTrackIDs[$0] }
+        mutedTrackIDs: muted
       )
       return
     }
