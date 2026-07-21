@@ -96,6 +96,7 @@ add_library(runner_bridge STATIC
   "Capture/Export/export_passthrough.cpp"
   "Capture/Export/export_session.cpp"
   "Capture/Export/gif_export_policy.cpp"
+  "Capture/Export/mic_cleanup.cpp"
   "Capture/Export/reorder_audio_pump.cpp"
   "Capture/Camera/camera_bubble_painter.cpp"
   "Capture/Camera/camera_dcomp_device_loss.cpp"
