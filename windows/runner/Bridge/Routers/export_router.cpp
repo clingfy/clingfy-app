@@ -361,6 +361,16 @@ void HandleExportVideo(
     input.audio_volume_percent = ReadDouble(*args, "audioVolumePercent", 100.0);
     input.auto_normalize = ReadBool(*args, "autoNormalizeOnExport", false);
     input.target_loudness_dbfs = ReadDouble(*args, "targetLoudnessDbfs", -16.0);
+    // Phase 4 voice cleanup. `voiceCleanup` is a nested {enabled, mode} map
+    // (Dart VoiceCleanup.toMap()); only `enabled` gates the export mic pass
+    // today. Absent map / absent key => off (byte-copy fast-path preserved).
+    if (const auto it = args->find(flutter::EncodableValue("voiceCleanup"));
+        it != args->end()) {
+      if (const auto* vc =
+              std::get_if<flutter::EncodableMap>(&it->second)) {
+        input.voice_cleanup_enabled = ReadBool(*vc, "enabled", false);
+      }
+    }
     // Slice 5A. Bitrate is a preset string resolved against the output size;
     // format selects the container (.mp4 vs .mov).
     input.bitrate = ReadString(*args, "bitrate");
