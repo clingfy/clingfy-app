@@ -679,7 +679,10 @@ final class InlinePreviewView: NSView {
     return max(0, min(100, value))
   }
 
-  private func applyAudioMix(to item: AVPlayerItem, gainDb: Double, volumePercent: Double) {
+  private func applyAudioMix(
+    to item: AVPlayerItem, gainDb: Double, volumePercent: Double,
+    crossfadeAnchor: CMTime? = nil, outgoingMicVariant: PreviewMicVariant? = nil
+  ) {
     if separatedAudioActive {
       // Separated preview: mirror the export's non-normalized control resolution
       // (LetterboxExporter D7) so live gain behaves EXACTLY like the export —
@@ -692,12 +695,21 @@ final class InlinePreviewView: NSView {
         targetLoudnessDbfs: 0,
         micPeakLinear: nil
       )
+      // Select the current mic variant; mute the rest. gain routes to the
+      // selected track. When a cleanup switch supplies a crossfade anchor +
+      // the outgoing variant, the two changing tracks ramp; the gain tap sits
+      // on every mic variant so it never moves.
+      let selectedID = separatedMicTrackID
+      let muted = Set(separatedMicTrackIDs.values).subtracting(selectedID.map { [$0] } ?? [])
       item.audioMix = AudioMixEngine.makeSeparatedAudioMix(
         audioTracks: item.asset.tracks(withMediaType: .audio),
-        gainTargetTrackID: separatedMicTrackID,
+        gainTargetTrackID: selectedID,
         masterVolumePercent: controls.masterVolumePercent,
         gainTargetVolumeComponent: controls.micVolumeComponent,
-        gainTargetGainDb: controls.micGainDb
+        gainTargetGainDb: controls.micGainDb,
+        mutedTrackIDs: muted,
+        rampAnchor: crossfadeAnchor,
+        outgoingMicTrackID: outgoingMicVariant.flatMap { separatedMicTrackIDs[$0] }
       )
       return
     }
@@ -887,6 +899,7 @@ final class InlinePreviewView: NSView {
     {
       voiceCleanupRequest = sessionCleanup
     }
+    endMicSwapTickSuppression()
     // Generate a new token for this open operation
     let openToken = UUID()
     currentOpenToken = openToken
@@ -989,11 +1002,11 @@ final class InlinePreviewView: NSView {
     guard let micURL = rawMicURL, let systemReferenceURL = systemURL else {
       // Nothing to cancel (mic-only / system-only / legacy recording). Voice
       // cleanup only needs the mic, though, so a mic-only take still gets it.
-      resolveVoiceCleanedMic(
-        micURL: rawMicURL, projectRoot: projectRoot, openToken: openToken
-      ) { [weak self] cleanupResolvedMicURL in
+      resolveAllVoiceCleanupVariants(
+        baseMicURL: rawMicURL, projectRoot: projectRoot, openToken: openToken
+      ) { [weak self] micVariants in
         self?.finishOpen(
-          previewMicURL: cleanupResolvedMicURL, systemURL: systemURL, screenAsset: asset,
+          previewMicVariants: micVariants, systemURL: systemURL, screenAsset: asset,
           mediaSources: mediaSources, openToken: openToken,
           initialPlaybackSnapshot: initialPlaybackSnapshot)
       }
@@ -1012,11 +1025,11 @@ final class InlinePreviewView: NSView {
           "reductionDb": hit.result.reductionDb,
           "delayMs": hit.result.delayMs,
         ])
-      resolveVoiceCleanedMic(
-        micURL: hit.result.cleanedMicURL, projectRoot: projectRoot, openToken: openToken
-      ) { [weak self] cleanupResolvedMicURL in
+      resolveAllVoiceCleanupVariants(
+        baseMicURL: hit.result.cleanedMicURL, projectRoot: projectRoot, openToken: openToken
+      ) { [weak self] micVariants in
         self?.finishOpen(
-          previewMicURL: cleanupResolvedMicURL, systemURL: systemURL, screenAsset: asset,
+          previewMicVariants: micVariants, systemURL: systemURL, screenAsset: asset,
           mediaSources: mediaSources, openToken: openToken,
           initialPlaybackSnapshot: initialPlaybackSnapshot)
       }
@@ -1057,172 +1070,218 @@ final class InlinePreviewView: NSView {
           "delayMs": outcome.result.delayMs,
           "cached": outcome.cacheOwned,
         ])
-      self.resolveVoiceCleanedMic(
-        micURL: outcome.result.cleanedMicURL, projectRoot: projectRoot, openToken: openToken
-      ) { [weak self] cleanupResolvedMicURL in
+      self.resolveAllVoiceCleanupVariants(
+        baseMicURL: outcome.result.cleanedMicURL, projectRoot: projectRoot, openToken: openToken
+      ) { [weak self] micVariants in
         self?.finishOpen(
-          previewMicURL: cleanupResolvedMicURL, systemURL: systemURL, screenAsset: asset,
+          previewMicVariants: micVariants, systemURL: systemURL, screenAsset: asset,
           mediaSources: mediaSources, openToken: openToken,
           initialPlaybackSnapshot: initialPlaybackSnapshot)
       }
     }
   }
 
-  /// Second mic stage for the preview: background-noise removal, applied to
-  /// whatever the echo-cancellation stage produced (the cleaned mic, or the raw
-  /// mic when there was nothing to cancel or the setting is off).
+  /// Resolves EVERY mic variant to preview: the base mic (post echo-cancel)
+  /// plus, when cleanup is enabled for this recording, the light and balanced
+  /// cleaned files. All variants go into ONE composition at open, so every later
+  /// cleanup-mode switch is a live audio-mix reselect (no player-item swap, no
+  /// video flicker, no audio-graph restart).
   ///
-  /// Calls `completion` on MAIN with the mic to preview. It is invoked
-  /// synchronously when there is nothing to do — cleanup off, no mic, or a cache
-  /// hit — so the common open path keeps finishing in one turn; only a genuine
-  /// cache miss defers, exactly like the canceller above.
-  ///
-  /// The two stages are chained, never nested: `AudioComputeQueue` is serial, so
-  /// this always runs after the echo stage has returned.
-  private func resolveVoiceCleanedMic(
-    micURL: URL?, projectRoot: URL, openToken: UUID,
-    parkPlayersOnMiss: Bool = true,
-    completion: @escaping (URL?) -> Void
+  /// Cleanup-OFF opens pay nothing: only `.base` is resolved. `completion` runs
+  /// on MAIN. Synchronous when everything is a cache hit; a genuine miss parks
+  /// the players and defers, exactly like the echo stage above.
+  private func resolveAllVoiceCleanupVariants(
+    baseMicURL: URL?, projectRoot: URL, openToken: UUID,
+    completion: @escaping ([PreviewMicVariant: URL]) -> Void
   ) {
-    let request = voiceCleanupRequest
-    resolvedVoiceCleanup = request
-    guard request.enabled, let micURL else {
-      completion(micURL)
+    resolvedVoiceCleanup = voiceCleanupRequest
+    var variants: [PreviewMicVariant: URL] = [:]
+    if let baseMicURL { variants[.base] = baseMicURL }
+    guard voiceCleanupRequest.enabled, let baseMicURL else {
+      completion(variants)
       return
     }
-    if let hit = EnhancedMicCache.shared.cachedOutcome(
-      inputMicURL: micURL, request: request, projectRoot: projectRoot)
-    {
-      NativeLogger.i(
-        "Player", "Preview: voice-cleaned mic served from cache",
-        context: ["mode": request.mode.rawValue, "applied": hit.result.applied])
-      completion(hit.result.applied ? hit.result.enhancedMicURL : micURL)
-      return
+    resolveCleanedVariants(
+      baseMicURL: baseMicURL, projectRoot: projectRoot, openToken: openToken,
+      parkPlayersOnMiss: true
+    ) { cleaned in
+      completion(variants.merging(cleaned) { _, new in new })
     }
-    // Cache miss during an OPEN: park the players so the previous recording
-    // doesn't play on under the loading UI (the caller already did this when it
-    // missed its own cache; this covers the paths that reached us
-    // synchronously). A live toggle passes false — there the preview is already
-    // showing the right footage and only the mic changes, so blanking it would
-    // rewind the playhead and stop playback for a background compute.
-    if parkPlayersOnMiss {
-      player?.pause()
-      player?.replaceCurrentItem(with: nil)
-      cameraPlayer?.pause()
-    }
-    NativeLogger.i(
-      "Player", "Preview: cleaning up voice off the main thread (cache miss)",
-      context: ["mode": request.mode.rawValue, "token": openToken.uuidString])
-    EnhancedMicCache.shared.outcomeAsync(
-      inputMicURL: micURL, request: request, projectRoot: projectRoot
-    ) { [weak self] outcome in
-      guard let self, self.currentOpenToken == openToken else {
-        // Stale: re-opened or closed while the pipeline ran. A caller-owned temp
-        // file has no owner anymore — reclaim it.
-        if !outcome.cacheOwned && outcome.result.applied {
-          try? FileManager.default.removeItem(at: outcome.result.enhancedMicURL)
+  }
+
+  /// Computes the cleaned files for every offered mode (light, balanced) from a
+  /// base mic. Cache hits are collected synchronously; misses run off the shared
+  /// audio queue under a group, adopting/reclaiming any temp files with the same
+  /// token/stale logic as the echo stage. A mode that fails to clean is simply
+  /// absent (the switcher falls back to base). `completion` runs on MAIN.
+  private func resolveCleanedVariants(
+    baseMicURL: URL, projectRoot: URL, openToken: UUID, parkPlayersOnMiss: Bool,
+    completion: @escaping ([PreviewMicVariant: URL]) -> Void
+  ) {
+    var cleaned: [PreviewMicVariant: URL] = [:]
+    let group = DispatchGroup()
+    var parked = false
+    for mode in [VoiceCleanupMode.light, .balanced] {
+      let request = VoiceCleanupRequest(enabled: true, mode: mode)
+      if let hit = EnhancedMicCache.shared.cachedOutcome(
+        inputMicURL: baseMicURL, request: request, projectRoot: projectRoot)
+      {
+        if hit.result.applied { cleaned[.cleaned(mode)] = hit.result.enhancedMicURL }
+        continue
+      }
+      if parkPlayersOnMiss && !parked {
+        player?.pause()
+        player?.replaceCurrentItem(with: nil)
+        cameraPlayer?.pause()
+        parked = true
+      }
+      group.enter()
+      EnhancedMicCache.shared.outcomeAsync(
+        inputMicURL: baseMicURL, request: request, projectRoot: projectRoot
+      ) { [weak self] outcome in
+        defer { group.leave() }
+        guard let self, self.currentOpenToken == openToken else {
+          if !outcome.cacheOwned && outcome.result.applied {
+            try? FileManager.default.removeItem(at: outcome.result.enhancedMicURL)
+          }
+          return
         }
-        return
+        if outcome.result.applied {
+          if !outcome.cacheOwned {
+            self.adoptOwnedPreviewMicIfTemporary(outcome.result.enhancedMicURL)
+          }
+          cleaned[.cleaned(mode)] = outcome.result.enhancedMicURL  // mutated on MAIN only
+        }
       }
-      NativeLogger.i(
-        "Player", "Preview: applied voice cleanup",
-        context: [
-          "mode": request.mode.rawValue,
-          "applied": outcome.result.applied,
-          "noiseReductionDb": outcome.result.noiseReductionDb,
-          "cached": outcome.cacheOwned,
-        ])
-      if !outcome.cacheOwned && outcome.result.applied {
-        self.adoptOwnedPreviewMicIfTemporary(outcome.result.enhancedMicURL)
-      }
-      completion(outcome.result.applied ? outcome.result.enhancedMicURL : micURL)
+    }
+    group.notify(queue: .main) { [weak self] in
+      guard let self, self.currentOpenToken == openToken else { return }
+      completion(cleaned)
     }
   }
 
   /// Applies a voice-cleanup change to the OPEN preview.
   ///
-  /// Unlike gain and volume — which are live `AVAudioMix` parameters — cleanup
-  /// changes the mic FILE, so the player item has to be rebuilt around a
-  /// re-resolved mic. Reopening the whole preview would lose the playhead and
-  /// re-run the scene setup, so this re-resolves just the mic and hands the new
-  /// asset to the existing clip-composition rebuild.
+  /// Cleanup changes which mic FILE is heard, but every variant is already a
+  /// track in the composition, so this is a live audio-mix reselect — NOT a
+  /// player-item swap. The video layer is never re-handed an item (no flicker)
+  /// and the audio render graph is never torn down (no ~10ms tap glitch);
+  /// mechanically identical to a gain/volume slider change. Only the rare
+  /// not-yet-precomputed case (cleanup enabled mid-session) pays one rebuild.
   func updateVoiceCleanupOnly(_ request: VoiceCleanupRequest) {
     guard request != voiceCleanupRequest else { return }
+    let previous = selectedMicVariant
     voiceCleanupRequest = request
+    voiceCleanupGeneration += 1
     guard separatedAudioActive else { return }
-    reresolveVoiceCleanupForOpenPreview()
+    applySelectedMicVariant(crossfadeFrom: previous)
   }
 
-  /// Re-runs the mic chain for the OPEN preview and swaps the result in.
-  private func reresolveVoiceCleanupForOpenPreview() {
-    guard let mediaSources = currentMediaSources, separatedAudioActive else { return }
-    guard let rawMicPath = mediaSources.micAudioPath else { return }
-
-    let projectRoot = URL(fileURLWithPath: mediaSources.projectPath, isDirectory: true)
-    let rawMicURL = URL(fileURLWithPath: rawMicPath)
-    let systemURL = mediaSources.systemAudioPath.map { URL(fileURLWithPath: $0) }
-    let token = currentOpenToken ?? UUID()
-
-    // Re-run the echo stage first so the chain order matches the export's. It is
-    // a cache hit in practice — the open already computed it — but a lookup-only
-    // check would silently DROP echo cancellation whenever the result was not
-    // cache-committed (read-only bundle, a compute still in flight), leaving the
-    // preview playing bleed the export removes. `outcomeAsync` serves the hit
-    // immediately and otherwise recomputes off-main, so the chain is preserved
-    // either way. It is also a no-op when there is no system reference or the
-    // preference is off.
-    guard let systemURL else {
-      chainVoiceCleanup(from: rawMicURL, projectRoot: projectRoot, token: token)
+  /// Reselects the current mic variant on the live item via `item.audioMix`.
+  /// Crossfades from `previous` at the playhead for a click-free transition. No
+  /// `replaceCurrentItem`. Routes to a one-time warm+rebuild only when the
+  /// selected variant was never precomputed.
+  private func applySelectedMicVariant(crossfadeFrom previous: PreviewMicVariant? = nil) {
+    guard separatedAudioActive, let item = player?.currentItem else { return }
+    let target = selectedMicVariant
+    guard let id = separatedMicTrackIDs[target] else {
+      warmMissingCleanedVariantsThenRebuild()
       return
     }
-    CleanedMicCache.shared.outcomeAsync(
-      micURL: rawMicURL, systemURL: systemURL, projectRoot: projectRoot
-    ) { [weak self] echo in
-      guard let self, self.currentOpenToken == token else {
-        if !echo.cacheOwned && echo.result.applied {
-          try? FileManager.default.removeItem(at: echo.result.cleanedMicURL)
+    separatedMicTrackID = id
+    // Anchor the crossfade slightly ahead of the playhead so it lands in
+    // not-yet-rendered audio; if it falls inside the buffer the ramp is a no-op
+    // and the whole-timeline baselines still give the correct hard selection.
+    let anchor: CMTime? =
+      (previous != nil && previous != target)
+      ? (player?.currentTime()).map { $0 + CMTime(value: 80, timescale: 1000) }
+      : nil
+    applyAudioMix(
+      to: item,
+      gainDb: currentCompositionParams?.audioGainDb ?? 0,
+      volumePercent: currentCompositionParams?.audioVolumePercent ?? 100,
+      crossfadeAnchor: anchor,
+      outgoingMicVariant: previous)
+    NativeLogger.i(
+      "Player", "Voice cleanup: live mic-variant reselect (no item swap)",
+      context: ["mode": voiceCleanupRequest.enabled ? voiceCleanupRequest.mode.rawValue : "off"])
+  }
+
+  /// The only mode-change path that may swap the item, and only when a cleaned
+  /// variant was not precomputed (cleanup enabled mid-session, or a compute
+  /// failed at open). Warms ALL offered cleaned modes from the base mic, then
+  /// rebuilds the composition once with every variant present — so every
+  /// subsequent switch is a live reselect. Falls back to the base variant if
+  /// nothing could be cleaned.
+  private func warmMissingCleanedVariantsThenRebuild() {
+    guard separatedAudioActive,
+      let baseURL = (separatedMicAssets[.base] as? AVURLAsset)?.url,
+      let mediaSources = currentMediaSources
+    else {
+      selectBaseVariantFallback()
+      return
+    }
+    let projectRoot = URL(fileURLWithPath: mediaSources.projectPath, isDirectory: true)
+    let token = currentOpenToken
+    let generation = voiceCleanupGeneration
+    NativeLogger.i("Player", "Voice cleanup: warming cleaned variants then rebuilding once")
+    resolveCleanedVariants(
+      baseMicURL: baseURL, projectRoot: projectRoot, openToken: token ?? UUID(),
+      parkPlayersOnMiss: false
+    ) { [weak self] cleaned in
+      guard let self, self.currentOpenToken == token,
+        self.voiceCleanupGeneration == generation
+      else { return }
+      var inserted = false
+      for (variant, url) in cleaned {
+        if let asset = LetterboxExporter.readableAudioAsset(url: url) {
+          self.separatedMicAssets[variant] = asset
+          inserted = true
         }
+      }
+      guard inserted else {
+        self.selectBaseVariantFallback()
         return
       }
-      if !echo.cacheOwned && echo.result.applied {
-        self.adoptOwnedPreviewMicIfTemporary(echo.result.cleanedMicURL)
-      }
-      self.chainVoiceCleanup(
-        from: echo.result.cleanedMicURL, projectRoot: projectRoot, token: token)
+      // One accepted item rebuild to add the new tracks; every switch after is
+      // a live reselect.
+      self.rebuildSeparatedCompositionForCurrentRanges()
+      self.applySelectedMicVariant()
     }
   }
 
-  /// Second half of a live cleanup change: denoise whatever the echo stage
-  /// produced and swap the result in. The players are deliberately NOT parked —
-  /// the footage on screen is already correct and only the mic is changing.
-  private func chainVoiceCleanup(from micURL: URL, projectRoot: URL, token: UUID) {
-    resolveVoiceCleanedMic(
-      micURL: micURL, projectRoot: projectRoot, openToken: token,
-      parkPlayersOnMiss: false
-    ) { [weak self] resolvedMicURL in
-      guard let self, self.currentOpenToken == token else { return }
-      self.swapPreviewMic(to: resolvedMicURL)
-    }
+  /// Route the mix to the always-present base track — used when a cleaned
+  /// variant is unavailable so the preview never plays nothing.
+  private func selectBaseVariantFallback() {
+    guard let item = player?.currentItem, let baseID = separatedMicTrackIDs[.base] else { return }
+    separatedMicTrackID = baseID
+    applyAudioMix(
+      to: item,
+      gainDb: currentCompositionParams?.audioGainDb ?? 0,
+      volumePercent: currentCompositionParams?.audioVolumePercent ?? 100)
   }
 
-  /// Swaps the mic asset behind the open preview and rebuilds the separated
-  /// composition around it, preserving the current playhead and clip edits.
-  private func swapPreviewMic(to micURL: URL?) {
-    guard let newMicAsset = LetterboxExporter.readableAudioAsset(url: micURL) else {
-      // Unreadable produced file: keep the mic that is already playing rather
-      // than rebuilding around nothing. Losing the cleanup is the safe
-      // degradation; a silent preview is not.
-      NativeLogger.w(
-        "Player", "Preview: voice-cleaned mic was not readable; keeping the current mic",
-        context: ["url": micURL?.lastPathComponent ?? "nil"])
-      return
-    }
-    separatedMicAsset = newMicAsset
-    releaseOwnedPreviewMics(keeping: micURL)
-    // `rebuildClipComposition` early-returns when the ranges are unchanged, so
-    // force it by rebuilding through the current ranges explicitly.
-    rebuildSeparatedCompositionForCurrentRanges()
+  private func beginMicSwapTickSuppression() {
+    suppressTicksForItemSwap = true
+    micSwapWatchdog?.cancel()
+    // Bounded: `sendTick` also drives the cursor, zoom and camera overlays, so
+    // a seek that never calls back must not freeze them.
+    let watchdog = DispatchWorkItem { [weak self] in self?.endMicSwapTickSuppression() }
+    micSwapWatchdog = watchdog
+    DispatchQueue.main.asyncAfter(deadline: .now() + 0.5, execute: watchdog)
   }
+
+  private func endMicSwapTickSuppression() {
+    micSwapWatchdog?.cancel()
+    micSwapWatchdog = nil
+    suppressTicksForItemSwap = false
+  }
+
+  // MARK: - Test seams for the mic-swap tick guard
+
+  var isSuppressingTicksForTesting: Bool { suppressTicksForItemSwap }
+  func beginMicSwapTickSuppressionForTesting() { beginMicSwapTickSuppression() }
+  func endMicSwapTickSuppressionForTesting() { endMicSwapTickSuppression() }
 
   /// Per-run temp mics are named with the producing stage's prefix; cache-owned
   /// files in `derived/` use stable names and must never be deleted here.
@@ -1242,9 +1301,9 @@ final class InlinePreviewView: NSView {
 
   /// Deletes every owned temp mic except `keeping` (the one the player is about
   /// to use, or is using).
-  private func releaseOwnedPreviewMics(keeping: URL?) {
-    let survivors = ownedPreviewMicURLs.filter { $0 == keeping }
-    for url in ownedPreviewMicURLs where url != keeping {
+  private func releaseOwnedPreviewMics(keeping: Set<URL>) {
+    let survivors = ownedPreviewMicURLs.filter { keeping.contains($0) }
+    for url in ownedPreviewMicURLs where !keeping.contains(url) {
       try? FileManager.default.removeItem(at: url)
     }
     ownedPreviewMicURLs = survivors
@@ -1255,7 +1314,7 @@ final class InlinePreviewView: NSView {
   /// cleaned mic was free (cache hit / nothing to cancel) and as the canceller
   /// completion (on main, token-guarded) on a cache miss.
   private func finishOpen(
-    previewMicURL: URL?,
+    previewMicVariants: [PreviewMicVariant: URL],
     systemURL: URL?,
     screenAsset asset: AVURLAsset,
     mediaSources: PreviewMediaSources,
@@ -1264,30 +1323,34 @@ final class InlinePreviewView: NSView {
   ) {
     // Reclaim the previous open's owned temp mics before adopting this one's —
     // we own these temp CAFs and no shared sweep runs for the preview path.
-    // Cache-owned files never enter the owned set (the prefixes below are
-    // per-run temp naming), so the caches survive open/dispose cycles.
-    //
-    // It is a SET, not one slot, because the mic goes through two stages: when
-    // both fall back to temp, the echo stage's file is still ours to delete
-    // even though only the cleanup stage's file reaches the player.
-    releaseOwnedPreviewMics(keeping: previewMicURL)
-    adoptOwnedPreviewMicIfTemporary(previewMicURL)
-    separatedMicAsset = LetterboxExporter.readableAudioAsset(url: previewMicURL)
+    // Cache-owned files never enter the owned set (the prefixes are per-run temp
+    // naming), so the caches survive open/dispose cycles. It is a SET because
+    // EVERY variant's file backs a live composition track — dropping one would
+    // yank the file out from under a decoding track.
+    releaseOwnedPreviewMics(keeping: Set(previewMicVariants.values))
+    for url in previewMicVariants.values { adoptOwnedPreviewMicIfTemporary(url) }
+    separatedMicAssets = previewMicVariants.compactMapValues {
+      LetterboxExporter.readableAudioAsset(url: $0)
+    }
     separatedSystemAsset = LetterboxExporter.readableAudioAsset(url: systemURL)
-    separatedAudioActive = separatedMicAsset != nil || separatedSystemAsset != nil
+    separatedAudioActive = !separatedMicAssets.isEmpty || separatedSystemAsset != nil
     separatedMicTrackID = nil
+    separatedMicTrackIDs = [:]
     let cleanupChangedDuringOpen = voiceCleanupRequest != resolvedVoiceCleanup
 
     let item: AVPlayerItem
     if separatedAudioActive,
       let separated = Self.makeSeparatedPreviewComposition(
         screenAsset: asset,
-        micAsset: separatedMicAsset,
+        micAssetsByVariant: separatedMicAssets,
         systemAsset: separatedSystemAsset,
         ranges: [])
     {
-      // WYSIWYG: preview the same mic+system mix the export produces.
-      separatedMicTrackID = separated.micTrackID
+      // WYSIWYG: preview the same mic+system mix the export produces. All mic
+      // variants are tracks; the selection is applied below.
+      separatedMicTrackIDs = separated.micTrackIDs
+      separatedMicTrackID =
+        separated.micTrackIDs[selectedMicVariant] ?? separated.micTrackIDs[.base]
       item = AVPlayerItem(asset: separated.composition)
     } else {
       // Legacy recording (no decodable sidecars) or composition build failure:
@@ -1299,6 +1362,16 @@ final class InlinePreviewView: NSView {
     // Make seeking wait for video composition rendering (improves seek accuracy)
     if #available(macOS 10.13, *) {
       item.seekingWaitsForVideoCompositionRendering = true
+    }
+
+    // Apply the mute-mix BEFORE the item is installed and played, or the brief
+    // window before applyCompositionNow's mix would sum ALL mic variant tracks
+    // at once (multiple mics playing over each other).
+    if separatedAudioActive {
+      applyAudioMix(
+        to: item,
+        gainDb: currentCompositionParams?.audioGainDb ?? 0,
+        volumePercent: currentCompositionParams?.audioVolumePercent ?? 100)
     }
 
     // Replace player item
@@ -1330,14 +1403,14 @@ final class InlinePreviewView: NSView {
     NativeLogger.d(
       "Player", "InlinePreviewView.open completed", context: ["token": openToken.uuidString])
 
-    // A cleanup change that landed while the mic was being resolved was read too
-    // late to affect it. Reconcile now that the player is up, so the toggle is
-    // not silently dropped until the user makes another one.
+    // A cleanup change that landed while the variants were being resolved was
+    // read too late to affect the initial selection. Every offered variant is
+    // already a track, so reconcile is a live reselect — not a re-resolve.
     if cleanupChangedDuringOpen, separatedAudioActive {
       NativeLogger.i(
-        "Player", "Preview: voice cleanup changed during open; re-resolving the mic",
-        context: ["mode": voiceCleanupRequest.mode.rawValue])
-      reresolveVoiceCleanupForOpenPreview()
+        "Player", "Preview: voice cleanup changed during open; reselecting the mic variant",
+        context: ["mode": voiceCleanupRequest.enabled ? voiceCleanupRequest.mode.rawValue : "off"])
+      applySelectedMicVariant()
     }
   }
 
@@ -1632,6 +1705,8 @@ final class InlinePreviewView: NSView {
   ////
 
   public func resetPlayback(reason: String = "reset") {
+    // A close landing mid-swap must not strand the tick guard.
+    endMicSwapTickSuppression()
     let closingSessionId = currentSessionId
     let closingPath = currentVideoPath
     let closingToken = currentOpenToken
@@ -1710,11 +1785,11 @@ final class InlinePreviewView: NSView {
     player = nil
     cameraPlayer = nil
 
-    releaseOwnedPreviewMics(keeping: nil)
+    releaseOwnedPreviewMics(keeping: [])
   }
   deinit {
     resetPlayback(reason: "deinit")
-    releaseOwnedPreviewMics(keeping: nil)
+    releaseOwnedPreviewMics(keeping: [])
   }
 
   private func observeCurrentItem(for token: UUID) {
@@ -2069,31 +2144,40 @@ final class InlinePreviewView: NSView {
   }
 
   private func sendTick(position: CMTime) {
-    guard let duration = player?.currentItem?.duration else { return }
-    syncCameraPlayback(to: position)
+    // A mic swap installs a fresh item whose time is 0 until the restore seek
+    // lands. The periodic observer lives on the PLAYER, so it keeps firing
+    // straight through the swap, and Dart's `playerTick` handler assigns
+    // `positionMs` unconditionally — one such tick is what snapped the
+    // scrubber to 00:00 and back. Stay silent for the swap window.
+    guard !suppressTicksForItemSwap else { return }
+    guard let item = player?.currentItem else { return }
 
+    // Overlays (camera / cursor / zoom) are keyed to SOURCE time and never need
+    // the item's duration, so they update on EVERY tick — including while a
+    // just-installed item is still loading (duration `.indefinite`). This block
+    // must not be gated on a numeric duration: a clip-edit rebuild done while
+    // paused installs a loading item, and the seek's tick can arrive before the
+    // duration resolves — skipping the overlays here strands the camera hidden
+    // with no later tick to recover it.
     let posSeconds = CMTimeGetSeconds(position)
-    let durSeconds = CMTimeGetSeconds(duration)
-
-    let posMs = (posSeconds.isNaN || posSeconds.isInfinite) ? 0 : Int(posSeconds * 1000)
-    let durMs = (durSeconds.isNaN || durSeconds.isInfinite) ? 0 : Int(durSeconds * 1000)
-
-    // The player plays the edited timeline directly — the raw asset when there
-    // are no cuts, a kept-range composition when there are — so its position and
-    // duration ARE the edited values; report them straight to Flutter. The
-    // cursor/zoom/camera overlays are keyed to SOURCE time, so map the player
-    // time back to source for them (identity when there are no cuts).
     let sourceSecs = sourceSeconds(forPlayerSeconds: posSeconds)
     let t = (sourceSecs.isNaN || sourceSecs.isInfinite) ? 0 : sourceSecs
     let tickState = PreviewTickState(time: t, frame: cursorFrameResolver.frame(at: t))
-
+    syncCameraPlayback(to: position)
     CATransaction.begin()
     CATransaction.setDisableActions(true)
-    defer { CATransaction.commit() }
     updateCursorLayer(tick: tickState)
     let screenZoom = updateZoom(tick: tickState)
     updateCameraPreviewGeometry(time: t, screenZoom: screenZoom)
+    CATransaction.commit()
 
+    // Only EMIT the transport tick once the duration is real: a not-yet-loaded
+    // item reports `.indefinite`, which would send durationMs 0 that Dart reads
+    // as "not ready" and collapse the scrubber. The overlays above already ran.
+    guard item.duration.isNumeric else { return }
+    let durSeconds = CMTimeGetSeconds(item.duration)
+    let posMs = (posSeconds.isNaN || posSeconds.isInfinite) ? 0 : Int(posSeconds * 1000)
+    let durMs = (durSeconds.isNaN || durSeconds.isInfinite) ? 0 : Int(durSeconds * 1000)
     emitPlayerEvent([
       "type": "playerTick",
       "positionMs": posMs,
@@ -2175,14 +2259,18 @@ final class InlinePreviewView: NSView {
       guard
         let separated = Self.makeSeparatedPreviewComposition(
           screenAsset: sourceAsset,
-          micAsset: separatedMicAsset,
+          micAssetsByVariant: separatedMicAssets,
           systemAsset: separatedSystemAsset,
           ranges: targetRanges)
       else {
         NativeLogger.w("Player", "rebuildClipComposition: failed to build separated composition")
         return
       }
-      separatedMicTrackID = separated.micTrackID
+      // Keep every mic variant across the edit and preserve the current
+      // selection, so mode switching stays swap-free after a cut/reorder.
+      separatedMicTrackIDs = separated.micTrackIDs
+      separatedMicTrackID =
+        separated.micTrackIDs[selectedMicVariant] ?? separated.micTrackIDs[.base]
       newAsset = separated.composition
     } else if targetRanges.isEmpty {
       // → passthrough: edited == source, play the raw asset directly.
@@ -2239,6 +2327,10 @@ final class InlinePreviewView: NSView {
     // smoother so it doesn't lerp across the discontinuity.
     resetZoomState()
     lastZoomTime = sourceSeconds(forPlayerSeconds: Double(restoreEditedMs) / 1000.0)
+    // Re-resolve the camera at the restored playhead now, not on the next tick:
+    // clip edits happen while paused, so the periodic observer may not fire soon
+    // enough to un-hide the camera after the rebuild's seek.
+    syncCameraPlayback(to: restoreTime, force: true)
 
     NativeLogger.i(
       "Player", "Rebuilt clip composition preview",
@@ -2338,7 +2430,10 @@ final class InlinePreviewView: NSView {
   /// Internal (not `private`) so `@testable` unit tests can assert its shape.
   struct SeparatedPreviewComposition {
     let composition: AVMutableComposition
-    let micTrackID: CMPersistentTrackID?
+    /// One entry per decodable mic variant present in the composition. The
+    /// selected variant's id is the gain target; the rest are muted. A variant
+    /// whose file has no readable audio is simply absent.
+    let micTrackIDs: [PreviewMicVariant: CMPersistentTrackID]
     let systemTrackID: CMPersistentTrackID?
   }
 
@@ -2355,7 +2450,7 @@ final class InlinePreviewView: NSView {
   /// video track — callers then fall back to the legacy embedded-audio path.
   static func makeSeparatedPreviewComposition(
     screenAsset: AVAsset,
-    micAsset: AVAsset?,
+    micAssetsByVariant: [PreviewMicVariant: AVAsset],
     systemAsset: AVAsset?,
     ranges: [ClipKeptRange]
   ) -> SeparatedPreviewComposition? {
@@ -2410,10 +2505,17 @@ final class InlinePreviewView: NSView {
       return audioTrack.trackID
     }
 
-    let micTrackID = addAudio(micAsset)
+    // Mic variants first (deterministic order), then system — matching the
+    // export track order. Each variant is stitched to the same kept ranges as
+    // the video, so they all share cut boundaries.
+    var micTrackIDs: [PreviewMicVariant: CMPersistentTrackID] = [:]
+    for variant in PreviewMicVariant.all {
+      guard let audioAsset = micAssetsByVariant[variant] else { continue }
+      if let id = addAudio(audioAsset) { micTrackIDs[variant] = id }
+    }
     let systemTrackID = addAudio(systemAsset)
     return SeparatedPreviewComposition(
-      composition: composition, micTrackID: micTrackID, systemTrackID: systemTrackID)
+      composition: composition, micTrackIDs: micTrackIDs, systemTrackID: systemTrackID)
   }
 
   private func sendState(state: String) {
@@ -2490,19 +2592,36 @@ final class InlinePreviewView: NSView {
   /// skewed embedded track. Resolved ONCE per `open()` and reused across every
   /// clip rebuild. All nil / false ⇒ legacy path (raw asset + embedded audio),
   /// byte-identical to before this feature.
-  private var separatedMicAsset: AVAsset?
+  /// All decodable mic variants (base + cleaned modes) in the current
+  /// composition, keyed by variant. Every one is inserted at build time so a
+  /// cleanup-mode switch is a live audio-mix reselect, never a player-item swap.
+  private var separatedMicAssets: [PreviewMicVariant: AVAsset] = [:]
+  /// Composition trackID of each mic variant in the current player item — the
+  /// mute set for the audio mix. Refreshed on every composition (re)build.
+  private var separatedMicTrackIDs: [PreviewMicVariant: CMPersistentTrackID] = [:]
   private var separatedSystemAsset: AVAsset?
   private var separatedAudioActive = false
+
+  /// The variant the mix should currently select: the cleaned mode when cleanup
+  /// is on, else the base mic.
+  private var selectedMicVariant: PreviewMicVariant {
+    voiceCleanupRequest.enabled ? .cleaned(voiceCleanupRequest.mode) : .base
+  }
   /// Current mic noise-reduction setting for this editing session. Unlike gain
   /// and volume it is not a live mix parameter — changing it re-resolves the mic
   /// file — so it is held here and consumed by `open()` and
   /// `updateVoiceCleanupOnly`.
   private var voiceCleanupRequest: VoiceCleanupRequest = .disabled
+  /// Bumped on every cleanup change. The async mic chain captures the value at
+  /// its start and installs its result only if it is still current, so rapid
+  /// Light↔Balanced toggling always lands on the LAST choice instead of whichever
+  /// off-main compute happens to finish last.
   /// Which request the mic currently in the player was resolved with. A toggle
   /// that lands mid-open sets `voiceCleanupRequest` after the resolve already
   /// read it, so `finishOpen` compares the two and re-resolves on a mismatch —
   /// otherwise that toggle is silently dropped until the next one.
   private var resolvedVoiceCleanup: VoiceCleanupRequest = .disabled
+  private var voiceCleanupGeneration = 0
 
   /// Exposed so `AudioEnhancementPipelineTests` can assert that `open()` adopts
   /// the session's setting — the seam where preview/export parity is decided.
@@ -2529,6 +2648,12 @@ final class InlinePreviewView: NSView {
   private let clipJumpEpsilonMs = 17
   private var currentCameraCompositionParams: CameraCompositionParams?
   private var currentLayout: CompositionBuilder.PreviewCompositionResult?
+  /// Set across a mic swap so no zero-position tick escapes to Flutter. Always
+  /// cleared through `endMicSwapTickSuppression`, which the watchdog also calls
+  /// — `sendTick` drives the cursor, zoom and camera overlays too, so a leaked
+  /// flag would freeze them.
+  private var suppressTicksForItemSwap = false
+  private var micSwapWatchdog: DispatchWorkItem?
   private var pendingCompositionParams: CompositionParams?
   private var pendingCameraCompositionParams: CameraCompositionParams?
   private var pendingCameraPreviewChangeKind: CameraPreviewChangeKind = .none
@@ -3438,11 +3563,17 @@ final class InlinePreviewView: NSView {
   /// CIFilter pass when [grade] is non-identity. Returns the layout's own
   /// composition unchanged when there is nothing to grade, so color-off is a
   /// zero-cost passthrough.
+  /// `asset` overrides the live item's asset, for callers that must grade a
+  /// composition BEFORE it is installed. `AVMutableVideoComposition(asset:)`
+  /// derives its instructions from the asset it is handed, so grading the old
+  /// asset and attaching the result to a new item renders wrong at any
+  /// non-identity grade.
   private func makeGradedComposition(
     layout: CompositionBuilder.PreviewCompositionResult,
-    grade: ColorGrade
+    grade: ColorGrade,
+    asset gradeAsset: AVAsset? = nil
   ) -> AVVideoComposition {
-    guard !grade.isIdentity, let asset = player?.currentItem?.asset else {
+    guard !grade.isIdentity, let asset = gradeAsset ?? player?.currentItem?.asset else {
       return layout.composition
     }
     let base = layout.composition

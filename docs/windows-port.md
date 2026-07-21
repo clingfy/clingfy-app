@@ -172,6 +172,38 @@ opens; `CLINGFY_CRASH_TEST=1` + diagnostics button → process dies →
 relaunch → crash event appears in Sentry symbolicated (after running
 `upload_symbols.ps1` on the same build).
 
+### Open parity gap — export destination is not pre-flighted
+
+macOS validates the export destination before it renders anything; Windows
+still does not. Reported on macOS 2026-07-20: exporting to a remembered folder
+on a disk that had since been ejected rendered the entire 31-second screen
+pre-pass and only failed when `AVAssetWriter` tried to create the output,
+surfacing as a bare `Cannot create file` naming neither the folder nor the
+reason.
+
+macOS fix: `ExportEngine.destinationProblem(folder:)` runs immediately after the
+output URL is resolved and before any work — reachability, that it is a
+directory, and an actual probe-write rather than a permission bit (under the
+sandbox a folder can be POSIX-writable and still refused). A missing path under
+`/Volumes/` reports a disconnected disk specifically. Covered by
+`macos/RunnerTests/ExportDestinationPreflightTests.swift`.
+
+Windows is exposed to the same failure and has more ways to hit it, since the
+save folder is remembered as a plain path string: a mapped network drive that is
+no longer connected, an ejected USB volume, or a drive letter that has since been
+reassigned all look valid in the export dialog and only fail at the Sink Writer,
+after the full render.
+
+To close it: add the equivalent check at the top of `RenderComposedExport`
+(`windows/runner/Capture/Export/export_pipeline.cpp`), before
+`D3DDevice::Create`, returning `Failure(...)` with a message that names the
+cause. Probe-write rather than trusting an attribute — a network share can
+report writable and still refuse — and distinguish "the disk or share is not
+connected" from "the folder is gone", because telling someone their folder no
+longer exists sends them looking for something that is really just unplugged.
+A `TEST(ExportPipelineTest, ...)` in `windows/runner_tests/export_pipeline_test.cpp`
+should pin the missing-directory and non-writable cases.
+
 ### Phase 10.5 — installer + release pipeline
 
 The Windows release lane lives at `ops/release/windows/` (PowerShell 7),

@@ -1497,12 +1497,39 @@ enum AudioMixEngine {
   /// track. Unlike `makeAudioMix`, this never returns nil for a non-empty
   /// track list — the separated manual path always mixes down through the
   /// reader, and unity parameters are harmless there.
+  /// Builds the separated-audio mix.
+  ///
+  /// `mutedTrackIDs` are the OTHER selectable mic variants (light/balanced/base
+  /// not currently chosen) that the preview keeps in the composition so a
+  /// cleanup-mode switch is a live `item.audioMix =` reassignment instead of a
+  /// player-item swap. They are driven to volume 0. Two properties make that
+  /// switch glitch-free, and both are why the tap and ramp handling below is
+  /// what it is:
+  ///
+  ///  - The gain tap (only when gain > 0 dB) is attached to EVERY mic-variant
+  ///    track — the gain target AND every `mutedTrackIDs` member — not just the
+  ///    audible one. Reassigning the mix on a switch then only changes volumes;
+  ///    no MTAudioProcessingTap is finalized/prepared, which is exactly the
+  ///    "Audio gain tap finalized without processing frames" glitch. System
+  ///    tracks never get the tap.
+  ///  - `rampAnchor`/`outgoingMicTrackID` crossfade the incoming variant up and
+  ///    the outgoing one down over `rampDuration` at the playhead, with explicit
+  ///    whole-timeline baselines so a paused/seeked position still reflects the
+  ///    new selection. If the anchor lands in already-buffered audio the ramp is
+  ///    a no-op and the baselines still give the correct hard selection.
+  ///
+  /// Defaults (`mutedTrackIDs: []`, `rampAnchor: nil`) reproduce the prior
+  /// single-mic behavior exactly, so the export caller is byte-identical.
   static func makeSeparatedAudioMix(
     audioTracks: [AVAssetTrack],
     gainTargetTrackID: CMPersistentTrackID?,
     masterVolumePercent: Double,
     gainTargetVolumeComponent: Double,
-    gainTargetGainDb: Double
+    gainTargetGainDb: Double,
+    mutedTrackIDs: Set<CMPersistentTrackID> = [],
+    rampAnchor: CMTime? = nil,
+    rampDuration: CMTime = CMTime(value: 30, timescale: 1000),
+    outgoingMicTrackID: CMPersistentTrackID? = nil
   ) -> AVAudioMix? {
     guard !audioTracks.isEmpty else { return nil }
 
@@ -1511,6 +1538,9 @@ enum AudioMixEngine {
     let clampedTargetGainDb = max(0.0, min(24.0, gainTargetGainDb))
     let targetGainLinear = Float(pow(10.0, clampedTargetGainDb / 20.0))
     let needsGainTap = targetGainLinear > 1.0001
+    // The audible mic's volume when selected (gain applied via the tap, so this
+    // is master × the mic volume component). Muted mic variants sit at 0.
+    let selectedMicLinear = Float(masterLinear * clampedTargetVolume)
 
     NativeLogger.d(
       "AudioMixEngine",
@@ -1518,6 +1548,8 @@ enum AudioMixEngine {
       context: [
         "audioTracks": audioTracks.count,
         "gainTargetTrackID": gainTargetTrackID.map { Int($0) } ?? NSNull(),
+        "mutedTracks": mutedTrackIDs.count,
+        "ramp": rampAnchor != nil,
         "masterLinear": masterLinear,
         "gainTargetVolumeComponent": clampedTargetVolume,
         "gainTargetGainDb": clampedTargetGainDb,
@@ -1529,10 +1561,32 @@ enum AudioMixEngine {
     for track in audioTracks {
       let params = AVMutableAudioMixInputParameters(track: track)
       let isGainTarget = gainTargetTrackID != nil && track.trackID == gainTargetTrackID
-      let volume = isGainTarget ? masterLinear * clampedTargetVolume : masterLinear
-      params.setVolume(Float(volume), at: .zero)
+      let isMuted = mutedTrackIDs.contains(track.trackID)
+      // A mic variant is the gain target (selected) or a muted alternative. Only
+      // these switch; the system track is neither and stays at master volume.
+      let isMicVariant = isGainTarget || isMuted
+      let finalVolume: Float = isMuted ? 0 : (isGainTarget ? selectedMicLinear : Float(masterLinear))
 
-      if isGainTarget && needsGainTap {
+      // Crossfade only the two tracks that change on a switch: the incoming
+      // (gain target, 0 → selected) and the outgoing (previous selection,
+      // selected → 0). Everything else gets a plain whole-timeline volume.
+      if let anchor = rampAnchor, isGainTarget {
+        params.setVolume(0, at: .zero)
+        params.setVolumeRamp(
+          fromStartVolume: 0, toEndVolume: finalVolume,
+          timeRange: CMTimeRange(start: anchor, duration: rampDuration))
+      } else if let anchor = rampAnchor, isMuted, track.trackID == outgoingMicTrackID {
+        params.setVolume(selectedMicLinear, at: .zero)
+        params.setVolumeRamp(
+          fromStartVolume: selectedMicLinear, toEndVolume: 0,
+          timeRange: CMTimeRange(start: anchor, duration: rampDuration))
+      } else {
+        params.setVolume(finalVolume, at: .zero)
+      }
+
+      // Tap every mic-variant track (not system) so the tap set is identical
+      // before and after a switch — the switch never finalizes/prepares a tap.
+      if isMicVariant && needsGainTap {
         if let tap = makeGainTap(
           gainLinear: targetGainLinear, gainDb: clampedTargetGainDb, clampFloatOutput: true)
         {

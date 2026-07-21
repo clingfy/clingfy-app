@@ -21,22 +21,23 @@
 /* End PBXAggregateTarget section */
 
 /* Begin PBXBuildFile section */
+		F1A0011AA11D105E00002102 /* ExportDestinationPreflightTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = F1A0011AA11D105E00002101 /* ExportDestinationPreflightTests.swift */; };
 		F1A0011AA11D105E00002036 /* AudioEnhancementPipelineTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = F1A0011AA11D105E00002031 /* AudioEnhancementPipelineTests.swift */; };
 		F1A0011AA11D105E00002035 /* RNNoiseEngineTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = F1A0011AA11D105E0000202F /* RNNoiseEngineTests.swift */; };
 		F1A0011AA11D105E00002002 /* RNNoiseEngine.swift in Sources */ = {isa = PBXBuildFile; fileRef = F1A0011AA11D105E00002001 /* RNNoiseEngine.swift */; };
 		F1A0011AA11D105E00002004 /* AudioEnhancementPipeline.swift in Sources */ = {isa = PBXBuildFile; fileRef = F1A0011AA11D105E00002003 /* AudioEnhancementPipeline.swift */; };
 		F1A0011AA11D105E00002006 /* AudioComputeQueue.swift in Sources */ = {isa = PBXBuildFile; fileRef = F1A0011AA11D105E00002005 /* AudioComputeQueue.swift */; };
 		F1A0011AA11D105E00002008 /* EnhancedMicCache.swift in Sources */ = {isa = PBXBuildFile; fileRef = F1A0011AA11D105E00002007 /* EnhancedMicCache.swift */; };
-		F1A0011AA11D105E0000200A /* celt_lpc.c in Sources */ = {isa = PBXBuildFile; fileRef = F1A0011AA11D105E00002009 /* celt_lpc.c */; };
-		F1A0011AA11D105E0000200C /* denoise.c in Sources */ = {isa = PBXBuildFile; fileRef = F1A0011AA11D105E0000200B /* denoise.c */; };
-		F1A0011AA11D105E0000200E /* kiss_fft.c in Sources */ = {isa = PBXBuildFile; fileRef = F1A0011AA11D105E0000200D /* kiss_fft.c */; };
-		F1A0011AA11D105E00002010 /* nnet.c in Sources */ = {isa = PBXBuildFile; fileRef = F1A0011AA11D105E0000200F /* nnet.c */; };
-		F1A0011AA11D105E00002012 /* nnet_default.c in Sources */ = {isa = PBXBuildFile; fileRef = F1A0011AA11D105E00002011 /* nnet_default.c */; };
-		F1A0011AA11D105E00002014 /* parse_lpcnet_weights.c in Sources */ = {isa = PBXBuildFile; fileRef = F1A0011AA11D105E00002013 /* parse_lpcnet_weights.c */; };
-		F1A0011AA11D105E00002016 /* pitch.c in Sources */ = {isa = PBXBuildFile; fileRef = F1A0011AA11D105E00002015 /* pitch.c */; };
-		F1A0011AA11D105E00002018 /* rnn.c in Sources */ = {isa = PBXBuildFile; fileRef = F1A0011AA11D105E00002017 /* rnn.c */; };
-		F1A0011AA11D105E0000201A /* rnnoise_data.c in Sources */ = {isa = PBXBuildFile; fileRef = F1A0011AA11D105E00002019 /* rnnoise_data.c */; };
-		F1A0011AA11D105E0000201C /* rnnoise_tables.c in Sources */ = {isa = PBXBuildFile; fileRef = F1A0011AA11D105E0000201B /* rnnoise_tables.c */; };
+		F1A0011AA11D105E0000200A /* celt_lpc.c in Sources */ = {isa = PBXBuildFile; fileRef = F1A0011AA11D105E00002009 /* celt_lpc.c */; settings = {COMPILER_FLAGS = "-O2"; }; };
+		F1A0011AA11D105E0000200C /* denoise.c in Sources */ = {isa = PBXBuildFile; fileRef = F1A0011AA11D105E0000200B /* denoise.c */; settings = {COMPILER_FLAGS = "-O2"; }; };
+		F1A0011AA11D105E0000200E /* kiss_fft.c in Sources */ = {isa = PBXBuildFile; fileRef = F1A0011AA11D105E0000200D /* kiss_fft.c */; settings = {COMPILER_FLAGS = "-O2"; }; };
+		F1A0011AA11D105E00002010 /* nnet.c in Sources */ = {isa = PBXBuildFile; fileRef = F1A0011AA11D105E0000200F /* nnet.c */; settings = {COMPILER_FLAGS = "-O2"; }; };
+		F1A0011AA11D105E00002012 /* nnet_default.c in Sources */ = {isa = PBXBuildFile; fileRef = F1A0011AA11D105E00002011 /* nnet_default.c */; settings = {COMPILER_FLAGS = "-O2"; }; };
+		F1A0011AA11D105E00002014 /* parse_lpcnet_weights.c in Sources */ = {isa = PBXBuildFile; fileRef = F1A0011AA11D105E00002013 /* parse_lpcnet_weights.c */; settings = {COMPILER_FLAGS = "-O2"; }; };
+		F1A0011AA11D105E00002016 /* pitch.c in Sources */ = {isa = PBXBuildFile; fileRef = F1A0011AA11D105E00002015 /* pitch.c */; settings = {COMPILER_FLAGS = "-O2"; }; };
+		F1A0011AA11D105E00002018 /* rnn.c in Sources */ = {isa = PBXBuildFile; fileRef = F1A0011AA11D105E00002017 /* rnn.c */; settings = {COMPILER_FLAGS = "-O2"; }; };
+		F1A0011AA11D105E0000201A /* rnnoise_data.c in Sources */ = {isa = PBXBuildFile; fileRef = F1A0011AA11D105E00002019 /* rnnoise_data.c */; settings = {COMPILER_FLAGS = "-O2"; }; };
+		F1A0011AA11D105E0000201C /* rnnoise_tables.c in Sources */ = {isa = PBXBuildFile; fileRef = F1A0011AA11D105E0000201B /* rnnoise_tables.c */; settings = {COMPILER_FLAGS = "-O2"; }; };
 		01921F2F7A5F86C0AC6E6AC4 /* CaptureBackendBinder.swift in Sources */ = {isa = PBXBuildFile; fileRef = 67EE618FCE29B99878804E71 /* CaptureBackendBinder.swift */; };
 		01AAE1E4B799E6B85610A896 /* ExportPrep.swift in Sources */ = {isa = PBXBuildFile; fileRef = DBAFE534F311451D8C165B52 /* ExportPrep.swift */; };
 		0397B2A14242AA904B51F603 /* RecordingIndicatorCoordinator.swift in Sources */ = {isa = PBXBuildFile; fileRef = C07C546166B52E67C8D2F881 /* RecordingIndicatorCoordinator.swift */; };
@@ -241,6 +242,7 @@
 /* End PBXCopyFilesBuildPhase section */
 
 /* Begin PBXFileReference section */
+		F1A0011AA11D105E00002101 /* ExportDestinationPreflightTests.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = ExportDestinationPreflightTests.swift; sourceTree = "<group>"; };
 		F1A0011AA11D105E00002001 /* RNNoiseEngine.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = RNNoiseEngine.swift; sourceTree = "<group>"; };
 		F1A0011AA11D105E00002003 /* AudioEnhancementPipeline.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = AudioEnhancementPipeline.swift; sourceTree = "<group>"; };
 		F1A0011AA11D105E00002005 /* AudioComputeQueue.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = AudioComputeQueue.swift; sourceTree = "<group>"; };
@@ -620,6 +622,7 @@
 				F1A0011AA11D105E00000003 /* AudioSourceRecordingTests.swift */,
 				F1A0011AA11D105E00000103 /* MicEchoCancellerTests.swift */,
 				F1A0011AA11D105E0000202F /* RNNoiseEngineTests.swift */,
+				F1A0011AA11D105E00002101 /* ExportDestinationPreflightTests.swift */,
 				F1A0011AA11D105E00002031 /* AudioEnhancementPipelineTests.swift */,
 				F1A0011AA11D105E00000107 /* CleanedMicCacheTests.swift */,
 				F1A0011AA11D105E00000109 /* InlinePreviewViewLayoutTests.swift */,
@@ -1412,6 +1415,7 @@
 				F1A0011AA11D105E00000004 /* AudioSourceRecordingTests.swift in Sources */,
 				F1A0011AA11D105E00000104 /* MicEchoCancellerTests.swift in Sources */,
 				F1A0011AA11D105E00002035 /* RNNoiseEngineTests.swift in Sources */,
+				F1A0011AA11D105E00002102 /* ExportDestinationPreflightTests.swift in Sources */,
 				F1A0011AA11D105E00002036 /* AudioEnhancementPipelineTests.swift in Sources */,
 				F1A0011AA11D105E00000108 /* CleanedMicCacheTests.swift in Sources */,
 				F1A0011AA11D105E0000010A /* InlinePreviewViewLayoutTests.swift in Sources */,

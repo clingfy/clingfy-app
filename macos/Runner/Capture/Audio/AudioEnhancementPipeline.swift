@@ -32,6 +32,18 @@ enum VoiceCleanupMode: String {
   }
 }
 
+/// Which microphone the preview is playing: the base mic (cleanup off) or a
+/// cleaned variant. The preview composition carries a track per variant so a
+/// mode switch is a live audio-mix reselect, never a player-item swap.
+enum PreviewMicVariant: Hashable {
+  case base
+  case cleaned(VoiceCleanupMode)
+
+  /// Build/selection order. `highQuality` is intentionally excluded — it is a
+  /// reserved future mode not offered in the UI.
+  static let all: [PreviewMicVariant] = [.base, .cleaned(.light), .cleaned(.balanced)]
+}
+
 /// A voice-cleanup request as it arrives from Flutter.
 struct VoiceCleanupRequest: Equatable {
   let enabled: Bool
