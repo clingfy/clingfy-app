@@ -421,8 +421,12 @@ class PreviewEngine {
   // current, the toggle is still on, and `wet_mix` still matches the requested
   // strength (a mode change mid-compute discards a stale result); otherwise
   // drops the temp file.
+  // `generation` identifies the worker; only the CURRENT generation clears
+  // `computing`, applies the result, or hands off to the next pass — a
+  // superseded worker (mode changed) just drops its temp.
   void OnPreviewCleanedMicReady(const std::string& session_id, bool ok,
-                                const std::wstring& cleaned_path, float wet_mix);
+                                const std::wstring& cleaned_path, float wet_mix,
+                                std::uint64_t generation);
 
   // Implementation lives in the .cpp where the winrt projection
   // headers are visible. The trampoline lambdas in Open() pass an
@@ -469,11 +473,13 @@ class PreviewEngine {
   // it. (Declared after `struct Impl;` — the parameter needs the name.)
   void NoteRenderFailure(Impl* impl, const char* stage);
 
-  // Cancel + join any in-flight voice-cleanup worker (it was producing a stale
-  // strength) and start a fresh background pass for `wet_mix`. Caller holds the
-  // session's render_mutex.
+  // Start a background cleanup pass for `wet_mix` under `generation`. Caller
+  // holds render_mutex and guarantees no worker is in flight (computing ==
+  // false), so the only thread joined here is a FINISHED handle — never an
+  // in-flight one (joining that under the lock could deadlock the inline
+  // dispatch path).
   void StartVoiceCleanupWorkerLocked(Impl* impl, const std::string& session_id,
-                                     float wet_mix);
+                                     float wet_mix, std::uint64_t generation);
 
   // Editing port (clips, step 4-3): the shared compose + handoff tail, factored
   // out of HandleVideoFrame so BOTH the MediaPlayer frame path and the edited
