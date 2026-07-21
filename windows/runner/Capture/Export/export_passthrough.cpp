@@ -19,6 +19,7 @@
 #include "Capture/Export/export_format.h"
 #include "Capture/Export/export_geometry.h"
 #include "Capture/Export/export_pipeline.h"
+#include "Capture/Export/mic_cleanup.h"
 #include "Capture/recording_project_reader.h"
 #include "Services/save_folder.h"
 
@@ -486,6 +487,10 @@ PassthroughResult ExportPassthroughCopy(
     // requested resolution / layout / fit with the Slice 3 styling, scale the
     // audio by the Slice 4 gain / volume / normalize multiplier, and re-encode.
     RenderRequest render;
+    // Per-export temp holding the RNNoise-cleaned mic (Phase 4). Kept in this
+    // scope so it outlives RenderComposedExport below, then deleted right after
+    // the render returns.
+    std::optional<fs::path> cleaned_mic_temp;
     render.source_video_path = read.project->screen_path;
     render.destination_path = destination.u8string();
     render.layout = input.layout;
@@ -509,6 +514,23 @@ PassthroughResult ExportPassthroughCopy(
     // is that a non-empty path decodes).
     if (mic_sidecar_decodable) {
       render.mic_audio_path = *read.project->mic_audio_path;
+      // Phase 4 voice cleanup: run the mic through RNNoise before the audio
+      // pump. Best-effort -- a failed clean leaves render.mic_audio_path on the
+      // raw sidecar, so the export just skips denoising rather than failing.
+      if (input.voice_cleanup_enabled) {
+        fs::path cleaned = destination;
+        cleaned += ".miccleanup.mp4";
+        if (ProduceCleanedMic(*read.project->mic_audio_path, cleaned.u8string(),
+                              is_cancelled)) {
+          render.mic_audio_path = cleaned.wstring();
+          cleaned_mic_temp = cleaned;
+        } else {
+          std::error_code clean_ec;
+          fs::remove(cleaned, clean_ec);
+          clingfy::bridge::NativeLogPublisher::Instance().Warn(
+              "Export", "voice cleanup failed; exporting the raw mic");
+        }
+      }
     }
     if (system_sidecar_decodable) {
       render.system_audio_path = *read.project->system_audio_path;
@@ -555,6 +577,12 @@ PassthroughResult ExportPassthroughCopy(
                           ? read.project->metadata->fps
                           : 0u;
     const RenderResult render_result = RenderComposedExport(render);
+    // The cleaned-mic temp (if any) has served the render; drop it regardless
+    // of outcome. render.mic_audio_path is not read past this point.
+    if (cleaned_mic_temp) {
+      std::error_code clean_ec;
+      fs::remove(*cleaned_mic_temp, clean_ec);
+    }
     if (!render_result.ok) {
       if (render_result.cancelled) {
         // Cancel cleanup is owned by the pipeline (Cancelled() removed the

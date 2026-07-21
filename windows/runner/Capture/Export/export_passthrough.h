@@ -103,6 +103,13 @@ struct PassthroughInput {
   bool auto_normalize = false;
   double target_loudness_dbfs = -16.0;
 
+  // Phase 4 voice cleanup. The `voiceCleanup.enabled` bool from the
+  // `exportVideo` map. When set (and the recording has a decodable separated
+  // mic sidecar), the export runs the mic through the RNNoise engine
+  // (Capture/Export/mic_cleanup.h) before the audio pump. Off leaves the mic
+  // untouched -- identical to the pre-feature export.
+  bool voice_cleanup_enabled = false;
+
   // Slice 5A: requested output bitrate preset ("auto"/"low"/"medium"/"high").
   // The `format` field above selects the container (.mp4 vs .mov).
   std::string bitrate;

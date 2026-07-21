@@ -76,6 +76,7 @@ add_executable(runner_tests
   "encoder_output_path_test.cpp"
   "clip_audio_stitch_test.cpp"
   "clip_playback_planner_test.cpp"
+  "mic_cleanup_test.cpp"
   "clip_args_test.cpp"
   "preview_audio_renderer_test.cpp"
   "preview_compositor_color_test.cpp"
