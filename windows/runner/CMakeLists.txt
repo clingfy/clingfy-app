@@ -1,6 +1,46 @@
 cmake_minimum_required(VERSION 3.14)
 project(runner LANGUAGES CXX)
 
+# The RNNoise voice-cleanup engine below is plain C; enable the C toolchain so
+# its static library can compile. The rest of the runner stays C++-only.
+enable_language(C)
+
+# === RNNoise voice-cleanup engine (C static library) ===
+#
+# The RNNoise sources are vendored ONCE, under macos/Runner/Capture/Audio/
+# RNNoise/ (added with the macOS voice-cleanup feature, #297). They are plain
+# portable C -- nothing macOS-specific -- so Windows compiles the SAME copy
+# rather than duplicating the ~141k-line model-weights file. One source of
+# truth: a second copy would silently drift from the macOS denoiser.
+#
+# Every listed unit builds clean under MSVC: the built-in model
+# (rnnoise_create(nullptr)) needs no config.h (HAVE_CONFIG_H stays undefined),
+# and the only POSIX code -- the mmap file loader in parse_lpcnet_weights.c --
+# sits in a disabled `#if 0` block, so that file is portable too (it defines
+# rnn_parse_weights / rnn_linear_init, which the built-in model path needs).
+set(RNNOISE_DIR
+  "${CMAKE_CURRENT_SOURCE_DIR}/../../macos/Runner/Capture/Audio/RNNoise")
+add_library(rnnoise STATIC
+  "${RNNOISE_DIR}/celt_lpc.c"
+  "${RNNOISE_DIR}/denoise.c"
+  "${RNNOISE_DIR}/kiss_fft.c"
+  "${RNNOISE_DIR}/nnet.c"
+  "${RNNOISE_DIR}/nnet_default.c"
+  "${RNNOISE_DIR}/parse_lpcnet_weights.c"
+  "${RNNOISE_DIR}/pitch.c"
+  "${RNNOISE_DIR}/rnn.c"
+  "${RNNOISE_DIR}/rnnoise_data.c"
+  "${RNNOISE_DIR}/rnnoise_tables.c"
+)
+target_include_directories(rnnoise PUBLIC "${RNNOISE_DIR}")
+set_target_properties(rnnoise PROPERTIES C_STANDARD 11 C_STANDARD_REQUIRED ON)
+# Third-party C: silence its own warnings (not ours to fix, and it must not
+# inherit the runner's /W4 /WX) and MSVC's secure-CRT deprecation nags.
+if (MSVC)
+  target_compile_options(rnnoise PRIVATE /W0)
+  target_compile_definitions(rnnoise PRIVATE _CRT_SECURE_NO_WARNINGS)
+endif()
+
 # === Bridge static library ===
 #
 # Bridge sources live in a static library so they can be linked by both the
@@ -25,6 +65,7 @@ add_library(runner_bridge STATIC
   "Audio/audio_mixer.cpp"
   "Audio/audio_packet_queue.cpp"
   "Audio/wasapi_audio_capture.cpp"
+  "Audio/VoiceCleanup/rnnoise_denoiser.cpp"
   "Bridge/Devices/audio_source_enumerator.cpp"
   "Bridge/Devices/device_probe_log.cpp"
   "Bridge/Devices/device_record.cpp"
@@ -122,6 +163,10 @@ apply_standard_settings(runner_bridge)
 target_compile_definitions(runner_bridge PRIVATE "NOMINMAX")
 target_include_directories(runner_bridge PUBLIC "${CMAKE_CURRENT_SOURCE_DIR}")
 target_link_libraries(runner_bridge PUBLIC flutter flutter_wrapper_app)
+
+# Voice-cleanup (RNNoise) engine. PUBLIC so the runner exe and runner_tests
+# both resolve the RnnoiseDenoiser wrapper's C symbols transitively.
+target_link_libraries(runner_bridge PUBLIC rnnoise)
 
 # Win32 / WASAPI / Media Foundation libraries required by the Phase 2 device
 # enumerators. These ship with the Windows SDK and do not pull in any

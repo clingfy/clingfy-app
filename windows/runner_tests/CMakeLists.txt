@@ -68,6 +68,7 @@ add_executable(runner_tests
   "zoom_timeline_builder_test.cpp"
   "audio_format_test.cpp"
   "audio_sidecar_writer_test.cpp"
+  "rnnoise_denoiser_test.cpp"
   "audio_mixer_test.cpp"
   "audio_packet_queue_test.cpp"
   "device_record_test.cpp"
