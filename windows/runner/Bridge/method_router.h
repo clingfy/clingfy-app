@@ -8,6 +8,7 @@
 #include <memory>
 #include <string>
 #include <unordered_map>
+#include <vector>
 
 namespace clingfy::bridge {
 
@@ -63,6 +64,14 @@ class MethodRouter {
   // not fall through to the WINDOWS_NOT_IMPLEMENTED fallback. Used by tests
   // to verify bridge-contract coverage.
   bool HasHandler(const std::string& method) const;
+
+  // Test-only: every method name with a registered handler, in unspecified
+  // order. Lets the contract-coverage test assert the REVERSE direction --
+  // that no handler is registered without a matching entry on the Dart
+  // bridge contract. `HasHandler` only proves listed -> registered; a
+  // registered-but-unlisted method (a forgotten contract entry) would
+  // otherwise drift silently.
+  std::vector<std::string> RegisteredMethodNames() const;
 
  private:
   HandlerTable handlers_;

@@ -147,4 +147,13 @@ bool MethodRouter::HasHandler(const std::string& method) const {
   return handlers_.find(method) != handlers_.end();
 }
 
+std::vector<std::string> MethodRouter::RegisteredMethodNames() const {
+  std::vector<std::string> names;
+  names.reserve(handlers_.size());
+  for (const auto& entry : handlers_) {
+    names.push_back(entry.first);
+  }
+  return names;
+}
+
 }  // namespace clingfy::bridge
