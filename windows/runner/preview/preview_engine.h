@@ -395,6 +395,17 @@ class PreviewEngine {
   void SetAudioMix(const std::string& session_id, double gain_db,
                    double volume_percent);
 
+  // Voice cleanup (Phase 4, preview WYSIWYG): denoise the preview's mic track
+  // so the live preview matches what the export bakes. `enabled` runs the mic
+  // sidecar through RNNoise (Capture/Export/mic_cleanup) on a background
+  // thread; when the cleaned file is ready the mic pump is rebuilt to play it
+  // (marshaled back to the platform thread). Disabling rebuilds immediately on
+  // the raw mic. Only meaningful on a separated (sidecar) session; a premix or
+  // mic-less session is a no-op. Stale/empty session-id semantics match the
+  // other setters. On Windows this is the analog of macOS's
+  // previewSetVoiceCleanup re-resolving which mic FILE the preview plays.
+  void SetVoiceCleanup(const std::string& session_id, bool enabled);
+
   // For tests / observability.
   std::int64_t current_texture_id() const;
 
@@ -403,6 +414,12 @@ class PreviewEngine {
   ~PreviewEngine();
   PreviewEngine(const PreviewEngine&) = delete;
   PreviewEngine& operator=(const PreviewEngine&) = delete;
+
+  // Voice-cleanup background-pass completion, marshaled back to the platform
+  // thread. Rebuilds the mic pump onto `cleaned_path` when the session is
+  // still current and the toggle is still on; otherwise drops the temp file.
+  void OnPreviewCleanedMicReady(const std::string& session_id, bool ok,
+                                const std::wstring& cleaned_path);
 
   // Implementation lives in the .cpp where the winrt projection
   // headers are visible. The trampoline lambdas in Open() pass an

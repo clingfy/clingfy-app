@@ -650,7 +650,6 @@
   "voiceCleanupHelp": "Removes background noise from the mic, like fans or room tone.",
   "voiceCleanupLight": "Light",
   "voiceCleanupBalanced": "Balanced",
-  "voiceCleanupExportNoticeWindows": "Voice cleanup is applied on export — the live preview isn't cleaned up yet.",
   "volume": "Volume",
   "micInputLevel": "Mic input level",
   "micInputIndicatorDisabledTooltip": "Select a microphone to preview input level.",
