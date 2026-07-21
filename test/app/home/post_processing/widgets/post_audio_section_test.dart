@@ -52,9 +52,7 @@ void main() {
     expect(find.byKey(toggle), findsOneWidget);
   });
 
-  testWidgets('Windows enabled: toggle + mode selector shown', (
-    tester,
-  ) async {
+  testWidgets('Windows enabled: toggle + mode selector shown', (tester) async {
     debugPlatformKindOverride = PlatformKind.windows;
     await tester.pumpWidget(
       host(audioSection(const VoiceCleanup(enabled: true))),
