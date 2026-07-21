@@ -900,6 +900,7 @@ final class InlinePreviewView: NSView {
       voiceCleanupRequest = sessionCleanup
     }
     endMicSwapTickSuppression()
+    voiceCleanupWarmInFlight = false
     // Generate a new token for this open operation
     let openToken = UUID()
     currentOpenToken = openToken
@@ -1170,18 +1171,16 @@ final class InlinePreviewView: NSView {
   /// not-yet-precomputed case (cleanup enabled mid-session) pays one rebuild.
   func updateVoiceCleanupOnly(_ request: VoiceCleanupRequest) {
     guard request != voiceCleanupRequest else { return }
-    let previous = selectedMicVariant
     voiceCleanupRequest = request
     voiceCleanupGeneration += 1
     guard separatedAudioActive else { return }
-    applySelectedMicVariant(crossfadeFrom: previous)
+    applySelectedMicVariant()
   }
 
-  /// Reselects the current mic variant on the live item via `item.audioMix`.
-  /// Crossfades from `previous` at the playhead for a click-free transition. No
+  /// Reselects the current mic variant on the live item via `item.audioMix`. No
   /// `replaceCurrentItem`. Routes to a one-time warm+rebuild only when the
   /// selected variant was never precomputed.
-  private func applySelectedMicVariant(crossfadeFrom previous: PreviewMicVariant? = nil) {
+  private func applySelectedMicVariant() {
     guard separatedAudioActive, let item = player?.currentItem else { return }
     let target = selectedMicVariant
     guard let id = separatedMicTrackIDs[target] else {
@@ -1189,19 +1188,16 @@ final class InlinePreviewView: NSView {
       return
     }
     separatedMicTrackID = id
-    // Anchor the crossfade slightly ahead of the playhead so it lands in
-    // not-yet-rendered audio; if it falls inside the buffer the ramp is a no-op
-    // and the whole-timeline baselines still give the correct hard selection.
-    let anchor: CMTime? =
-      (previous != nil && previous != target)
-      ? (player?.currentTime()).map { $0 + CMTime(value: 80, timescale: 1000) }
-      : nil
+    // Hard, whole-timeline select: the chosen variant plays at EVERY position,
+    // the others are muted. A crossfade ramp anchored ahead of the playhead was
+    // wrong here — it left the OUTGOING variant audible at the current/paused
+    // position and mislabeled the pre-anchor timeline, so a switch appeared not
+    // to take (and Balanced sounded like Light). Correctness beats click-free;
+    // between two coherent voice takes a hard swap is effectively inaudible.
     applyAudioMix(
       to: item,
       gainDb: currentCompositionParams?.audioGainDb ?? 0,
-      volumePercent: currentCompositionParams?.audioVolumePercent ?? 100,
-      crossfadeAnchor: anchor,
-      outgoingMicVariant: previous)
+      volumePercent: currentCompositionParams?.audioVolumePercent ?? 100)
     NativeLogger.i(
       "Player", "Voice cleanup: live mic-variant reselect (no item swap)",
       context: ["mode": voiceCleanupRequest.enabled ? voiceCleanupRequest.mode.rawValue : "off"])
@@ -1221,17 +1217,25 @@ final class InlinePreviewView: NSView {
       selectBaseVariantFallback()
       return
     }
+    // Rapid toggling triggers a warm on every switch. The cleaned files are
+    // mode-independent, so one warm covers them all — coalesce so we don't stack
+    // computes and, worse, discard each other on a generation bump (which left
+    // cleanup "not working until you toggle again").
+    guard !voiceCleanupWarmInFlight else { return }
+    voiceCleanupWarmInFlight = true
     let projectRoot = URL(fileURLWithPath: mediaSources.projectPath, isDirectory: true)
     let token = currentOpenToken
-    let generation = voiceCleanupGeneration
     NativeLogger.i("Player", "Voice cleanup: warming cleaned variants then rebuilding once")
     resolveCleanedVariants(
       baseMicURL: baseURL, projectRoot: projectRoot, openToken: token ?? UUID(),
       parkPlayersOnMiss: false
     ) { [weak self] cleaned in
-      guard let self, self.currentOpenToken == token,
-        self.voiceCleanupGeneration == generation
-      else { return }
+      guard let self else { return }
+      self.voiceCleanupWarmInFlight = false
+      // Only guard on the SAME open (token). Do NOT discard on a generation
+      // change: the computed files are the same regardless of which mode is now
+      // selected, so install them and apply whatever the CURRENT selection is.
+      guard self.currentOpenToken == token else { return }
       var inserted = false
       for (variant, url) in cleaned {
         if let asset = LetterboxExporter.readableAudioAsset(url: url) {
@@ -1244,7 +1248,8 @@ final class InlinePreviewView: NSView {
         return
       }
       // One accepted item rebuild to add the new tracks; every switch after is
-      // a live reselect.
+      // a live reselect. applySelectedMicVariant reads the CURRENT request, so
+      // toggles made during the warm land on the latest choice.
       self.rebuildSeparatedCompositionForCurrentRanges()
       self.applySelectedMicVariant()
     }
@@ -2622,6 +2627,10 @@ final class InlinePreviewView: NSView {
   /// otherwise that toggle is silently dropped until the next one.
   private var resolvedVoiceCleanup: VoiceCleanupRequest = .disabled
   private var voiceCleanupGeneration = 0
+  /// True while a warm+rebuild of the cleaned variants is running, so rapid
+  /// toggling coalesces into one compute instead of stacking (and cancelling)
+  /// many. Reset on open and when the warm completes.
+  private var voiceCleanupWarmInFlight = false
 
   /// Exposed so `AudioEnhancementPipelineTests` can assert that `open()` adopts
   /// the session's setting — the seam where preview/export parity is decided.
