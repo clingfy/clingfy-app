@@ -5719,22 +5719,57 @@ final class LetterboxExporterTests: XCTestCase {
     let systemAsset = AVAsset(url: systemURL)
     let result = try XCTUnwrap(
       InlinePreviewView.makeSeparatedPreviewComposition(
-        screenAsset: screenAsset, micAsset: micAsset, systemAsset: systemAsset, ranges: []))
+        screenAsset: screenAsset, micAssetsByVariant: [.base: micAsset], systemAsset: systemAsset, ranges: []))
 
     XCTAssertEqual(result.composition.tracks(withMediaType: .video).count, 1)
     XCTAssertEqual(result.composition.tracks(withMediaType: .audio).count, 2)
-    XCTAssertNotNil(result.micTrackID)
+    XCTAssertNotNil(result.micTrackIDs[.base])
     XCTAssertNotNil(result.systemTrackID)
-    XCTAssertNotEqual(result.micTrackID, result.systemTrackID)
+    XCTAssertNotEqual(result.micTrackIDs[.base], result.systemTrackID)
     // Mic is inserted FIRST so it is the deterministic gain target — its id must
     // be the first audio track (matches the export's mic-then-system order).
     XCTAssertEqual(
-      result.composition.tracks(withMediaType: .audio).first?.trackID, result.micTrackID)
+      result.composition.tracks(withMediaType: .audio).first?.trackID, result.micTrackIDs[.base])
     // preferredTransform is copied so buildPreview's transform math is unchanged.
     let srcTransform = try XCTUnwrap(
       screenAsset.tracks(withMediaType: .video).first).preferredTransform
     XCTAssertEqual(
       result.composition.tracks(withMediaType: .video).first?.preferredTransform, srcTransform)
+  }
+
+  /// With cleanup precomputed, every mic variant becomes its own audio track so
+  /// a mode switch is a live audio-mix reselect, not a player-item swap.
+  func testSeparatedPreviewCompositionInsertsATrackPerMicVariant() throws {
+    let tempDir = makeTemporaryDirectory()
+    defer { try? FileManager.default.removeItem(at: tempDir) }
+    let screenURL = tempDir.appendingPathComponent("screen.mov")
+    let baseURL = tempDir.appendingPathComponent("base.m4a")
+    let lightURL = tempDir.appendingPathComponent("light.m4a")
+    let balancedURL = tempDir.appendingPathComponent("balanced.m4a")
+    let systemURL = tempDir.appendingPathComponent("system.m4a")
+    try makeColorPatchVideo(
+      url: screenURL, size: CGSize(width: 320, height: 240), durationSeconds: 1.0)
+    for url in [baseURL, lightURL, balancedURL, systemURL] {
+      try makeToneAudioFile(url: url, seconds: 1.0, amplitude: 0.5, frequency: 440)
+    }
+    let result = try XCTUnwrap(
+      InlinePreviewView.makeSeparatedPreviewComposition(
+        screenAsset: AVAsset(url: screenURL),
+        micAssetsByVariant: [
+          .base: AVAsset(url: baseURL),
+          .cleaned(.light): AVAsset(url: lightURL),
+          .cleaned(.balanced): AVAsset(url: balancedURL),
+        ],
+        systemAsset: AVAsset(url: systemURL), ranges: []))
+    // 3 mic tracks + 1 system.
+    XCTAssertEqual(result.composition.tracks(withMediaType: .audio).count, 4)
+    XCTAssertEqual(result.micTrackIDs.count, 3)
+    let ids = Set(result.micTrackIDs.values)
+    XCTAssertEqual(ids.count, 3, "each variant gets a distinct track id")
+    XCTAssertFalse(ids.contains(result.systemTrackID!), "system is not a mic variant")
+    // Base is inserted first (the deterministic gain fallback).
+    XCTAssertEqual(
+      result.composition.tracks(withMediaType: .audio).first?.trackID, result.micTrackIDs[.base])
   }
 
   func testSeparatedPreviewCompositionMicOnlyOmitsSystemTrack() throws {
@@ -5750,9 +5785,9 @@ final class LetterboxExporterTests: XCTestCase {
     let micAsset = AVAsset(url: micURL)
     let result = try XCTUnwrap(
       InlinePreviewView.makeSeparatedPreviewComposition(
-        screenAsset: screenAsset, micAsset: micAsset, systemAsset: nil, ranges: []))
+        screenAsset: screenAsset, micAssetsByVariant: [.base: micAsset], systemAsset: nil, ranges: []))
     XCTAssertEqual(result.composition.tracks(withMediaType: .audio).count, 1)
-    XCTAssertNotNil(result.micTrackID)
+    XCTAssertNotNil(result.micTrackIDs[.base])
     XCTAssertNil(result.systemTrackID)
   }
 
@@ -5769,7 +5804,7 @@ final class LetterboxExporterTests: XCTestCase {
     let micAsset = AVAsset(url: micURL)
     XCTAssertNil(
       InlinePreviewView.makeSeparatedPreviewComposition(
-        screenAsset: screenAsset, micAsset: micAsset, systemAsset: nil, ranges: []))
+        screenAsset: screenAsset, micAssetsByVariant: [.base: micAsset], systemAsset: nil, ranges: []))
   }
 
   func testSeparatedPreviewCompositionClampsAudioToVideoDuration() throws {
@@ -5786,7 +5821,7 @@ final class LetterboxExporterTests: XCTestCase {
     let micAsset = AVAsset(url: micURL)
     let result = try XCTUnwrap(
       InlinePreviewView.makeSeparatedPreviewComposition(
-        screenAsset: screenAsset, micAsset: micAsset, systemAsset: nil, ranges: []))
+        screenAsset: screenAsset, micAssetsByVariant: [.base: micAsset], systemAsset: nil, ranges: []))
     let videoDuration = try XCTUnwrap(
       screenAsset.tracks(withMediaType: .video).first).timeRange.duration.seconds
     XCTAssertEqual(result.composition.duration.seconds, videoDuration, accuracy: 0.12)
@@ -5814,7 +5849,7 @@ final class LetterboxExporterTests: XCTestCase {
     ]
     let result = try XCTUnwrap(
       InlinePreviewView.makeSeparatedPreviewComposition(
-        screenAsset: screenAsset, micAsset: micAsset, systemAsset: systemAsset, ranges: ranges))
+        screenAsset: screenAsset, micAssetsByVariant: [.base: micAsset], systemAsset: systemAsset, ranges: ranges))
     // Kept ranges total 600ms; video + both audio tracks compact to the edited
     // timeline exactly like the export's cut composition.
     let expected = Double(ClipPlaybackPlanner.editedDurationMs(ranges: ranges)) / 1000.0
@@ -5867,6 +5902,114 @@ final class LetterboxExporterTests: XCTestCase {
         audioTracks: comp.audioTracks, gainTargetTrackID: comp.micTrackID,
         masterVolumePercent: 100, gainTargetVolumeComponent: 1.0, gainTargetGainDb: 0))
     XCTAssertTrue(noGain.inputParameters.allSatisfy { $0.audioTapProcessor == nil })
+  }
+
+  /// The multi-variant preview mix: the selected mic plays, the other mic
+  /// variants are muted to volume 0, and — critically for a glitch-free switch
+  /// — the gain tap sits on EVERY mic variant so switching selection never
+  /// finalizes/prepares a tap. System is neither muted nor tapped.
+  func testSeparatedAudioMixMutesOtherVariantsAndTapsEveryMicVariant() throws {
+    let tempDir = makeTemporaryDirectory()
+    defer { try? FileManager.default.removeItem(at: tempDir) }
+    // Build a composition with 3 mic variant tracks + 1 system track.
+    let screenURL = tempDir.appendingPathComponent("screen.mov")
+    try makeColorPatchVideo(
+      url: screenURL, size: CGSize(width: 160, height: 120), durationSeconds: 0.5)
+    var micAssets: [PreviewMicVariant: AVAsset] = [:]
+    for (variant, name) in [
+      (PreviewMicVariant.base, "base"), (.cleaned(.light), "light"),
+      (.cleaned(.balanced), "balanced"),
+    ] {
+      let url = tempDir.appendingPathComponent("\(name).m4a")
+      try makeToneAudioFile(url: url, seconds: 0.5, amplitude: 0.5, frequency: 440)
+      micAssets[variant] = AVAsset(url: url)
+    }
+    let systemURL = tempDir.appendingPathComponent("system.m4a")
+    try makeToneAudioFile(url: systemURL, seconds: 0.5, amplitude: 0.5, frequency: 1000)
+    let comp = try XCTUnwrap(
+      InlinePreviewView.makeSeparatedPreviewComposition(
+        screenAsset: AVAsset(url: screenURL), micAssetsByVariant: micAssets,
+        systemAsset: AVAsset(url: systemURL), ranges: []))
+
+    let selected = try XCTUnwrap(comp.micTrackIDs[.cleaned(.balanced)])
+    let mutedSet = Set(comp.micTrackIDs.values).subtracting([selected])
+    XCTAssertEqual(mutedSet.count, 2)
+
+    let mix = try XCTUnwrap(
+      AudioMixEngine.makeSeparatedAudioMix(
+        audioTracks: comp.composition.tracks(withMediaType: .audio),
+        gainTargetTrackID: selected,
+        masterVolumePercent: 100, gainTargetVolumeComponent: 1.0, gainTargetGainDb: 6,
+        mutedTrackIDs: mutedSet))
+
+    func params(_ id: CMPersistentTrackID?) throws -> AVAudioMixInputParameters {
+      try XCTUnwrap(mix.inputParameters.first { $0.trackID == id })
+    }
+    func startVolume(_ id: CMPersistentTrackID?) throws -> Float {
+      var v: Float = -1
+      XCTAssertTrue(try params(id).getVolumeRamp(for: .zero, startVolume: &v, endVolume: nil, timeRange: nil))
+      return v
+    }
+    // Selected audible; the other mic variants muted to 0.
+    XCTAssertEqual(try startVolume(selected), 1.0, accuracy: 0.0001)
+    for muted in mutedSet { XCTAssertEqual(try startVolume(muted), 0, accuracy: 0.0001) }
+    XCTAssertEqual(try startVolume(comp.systemTrackID), 1.0, accuracy: 0.0001)
+    // Gain tap on ALL THREE mic variants (so a switch never moves it), NOT on
+    // the system track.
+    for micID in comp.micTrackIDs.values {
+      XCTAssertNotNil(try params(micID).audioTapProcessor, "every mic variant is tapped")
+    }
+    XCTAssertNil(try params(comp.systemTrackID).audioTapProcessor)
+  }
+
+  /// A crossfade anchor ramps the incoming variant up and the outgoing one down
+  /// over the ramp window, with correct whole-timeline baselines (0 before for
+  /// the incoming, target before for the outgoing).
+  func testSeparatedAudioMixCrossfadeRampsIncomingUpAndOutgoingDown() throws {
+    let tempDir = makeTemporaryDirectory()
+    defer { try? FileManager.default.removeItem(at: tempDir) }
+    let screenURL = tempDir.appendingPathComponent("screen.mov")
+    try makeColorPatchVideo(
+      url: screenURL, size: CGSize(width: 160, height: 120), durationSeconds: 1.0)
+    var micAssets: [PreviewMicVariant: AVAsset] = [:]
+    for (variant, name) in [
+      (PreviewMicVariant.base, "base"), (.cleaned(.light), "light"),
+    ] {
+      let url = tempDir.appendingPathComponent("\(name).m4a")
+      try makeToneAudioFile(url: url, seconds: 1.0, amplitude: 0.5, frequency: 440)
+      micAssets[variant] = AVAsset(url: url)
+    }
+    let comp = try XCTUnwrap(
+      InlinePreviewView.makeSeparatedPreviewComposition(
+        screenAsset: AVAsset(url: screenURL), micAssetsByVariant: micAssets,
+        systemAsset: nil, ranges: []))
+    let incoming = try XCTUnwrap(comp.micTrackIDs[.cleaned(.light)])  // newly selected
+    let outgoing = try XCTUnwrap(comp.micTrackIDs[.base])  // previous selection
+    let anchor = CMTime(value: 500, timescale: 1000)
+    let dur = CMTime(value: 30, timescale: 1000)
+
+    let mix = try XCTUnwrap(
+      AudioMixEngine.makeSeparatedAudioMix(
+        audioTracks: comp.composition.tracks(withMediaType: .audio),
+        gainTargetTrackID: incoming,
+        masterVolumePercent: 100, gainTargetVolumeComponent: 1.0, gainTargetGainDb: 0,
+        mutedTrackIDs: [outgoing], rampAnchor: anchor, rampDuration: dur,
+        outgoingMicTrackID: outgoing))
+
+    func rampAt(_ id: CMPersistentTrackID, at t: CMTime) throws -> (Float, Float) {
+      let p = try XCTUnwrap(mix.inputParameters.first { $0.trackID == id })
+      var s: Float = -1
+      var e: Float = -1
+      XCTAssertTrue(p.getVolumeRamp(for: t, startVolume: &s, endVolume: &e, timeRange: nil))
+      return (s, e)
+    }
+    // Before the anchor: incoming silent (0), outgoing at full.
+    XCTAssertEqual(try rampAt(incoming, at: .zero).0, 0, accuracy: 0.01)
+    XCTAssertEqual(try rampAt(outgoing, at: .zero).0, 1.0, accuracy: 0.01)
+    // After the ramp: incoming at full, outgoing silent.
+    let after = CMTime(value: 600, timescale: 1000)
+    XCTAssertEqual(try rampAt(incoming, at: after).0, 1.0, accuracy: 0.01)
+    XCTAssertEqual(try rampAt(outgoing, at: after).0, 0, accuracy: 0.01)
   }
 
   func testSeparatedExportMasterVolumeAttenuatesTheMix() throws {
