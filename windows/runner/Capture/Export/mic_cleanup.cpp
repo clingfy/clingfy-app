@@ -7,6 +7,7 @@
 #include <mfreadwrite.h>
 #include <wrl/client.h>
 
+#include <algorithm>
 #include <cstdint>
 #include <mutex>
 #include <vector>
@@ -78,11 +79,52 @@ std::int16_t ClampToInt16(float v) {
   return static_cast<std::int16_t>(v);
 }
 
+// Decode the whole mono track into `out`. Returns false on a read error or
+// cancel.
+bool DecodeMonoInt16(IMFSourceReader* reader, DWORD audio_index,
+                     const std::function<bool()>& is_cancelled,
+                     std::vector<std::int16_t>* out) {
+  for (;;) {
+    if (is_cancelled && is_cancelled()) {
+      return false;
+    }
+    DWORD flags = 0;
+    LONGLONG timestamp = 0;
+    ComPtr<IMFSample> sample;
+    if (FAILED(reader->ReadSample(audio_index, 0, nullptr, &flags, &timestamp,
+                                  sample.GetAddressOf()))) {
+      return false;
+    }
+    if (sample != nullptr) {
+      ComPtr<IMFMediaBuffer> buffer;
+      if (SUCCEEDED(sample->ConvertToContiguousBuffer(buffer.GetAddressOf())) &&
+          buffer != nullptr) {
+        BYTE* data = nullptr;
+        DWORD cur_len = 0;
+        if (SUCCEEDED(buffer->Lock(&data, nullptr, &cur_len)) &&
+            data != nullptr) {
+          const auto* s16 = reinterpret_cast<const std::int16_t*>(data);
+          out->insert(out->end(), s16, s16 + cur_len / sizeof(std::int16_t));
+          buffer->Unlock();
+        }
+      }
+    }
+    if (flags & MF_SOURCE_READERF_ENDOFSTREAM) {
+      return true;
+    }
+  }
+}
+
 }  // namespace
+
+float VoiceCleanupWetMix(const std::string& mode) {
+  return mode == "light" ? 0.5f : 1.0f;
+}
 
 bool ProduceCleanedMic(const std::wstring& mic_path,
                        const std::string& output_path,
-                       const std::function<bool()>& is_cancelled) {
+                       const std::function<bool()>& is_cancelled,
+                       float wet_mix) {
   if (mic_path.empty() || output_path.empty()) {
     return false;
   }
@@ -94,6 +136,10 @@ bool ProduceCleanedMic(const std::wstring& mic_path,
   }
   const int frame_size =
       clingfy::audio::voice_cleanup::RnnoiseDenoiser::FrameSize();  // 480
+  // RNNoise's algorithmic latency is a whole 2 frames (20 ms); the denoised
+  // stream must be shifted back by this to stay sample-aligned with the source.
+  const int latency = 2 * frame_size;
+  const float wet = std::clamp(wet_mix, 0.0f, 1.0f);
 
   ComPtr<IMFSourceReader> reader;
   if (FAILED(::MFCreateSourceReaderFromURL(mic_path.c_str(), nullptr,
@@ -106,106 +152,80 @@ bool ProduceCleanedMic(const std::wstring& mic_path,
     return false;
   }
 
+  // Decode the whole mono track: the delay realignment writes frame f's output
+  // at f*frame_size - latency, and a partial mix reads the aligned original at
+  // the same index, so the full buffer must be materialized (macOS parity).
+  std::vector<std::int16_t> src;
+  if (!DecodeMonoInt16(reader.Get(), audio_index, is_cancelled, &src)) {
+    return false;
+  }
+  const std::size_t n = src.size();
+
   clingfy::encoding::AudioSidecarWriter writer;
   if (writer.Open(output_path).has_value()) {
     return false;
   }
 
-  // Decoded mono samples not yet grouped into a 480-frame window. `head` walks
-  // forward as frames are consumed; `pending` is compacted when head grows so
-  // this stays O(n) instead of erasing from the front each frame.
-  std::vector<std::int16_t> pending;
-  std::size_t head = 0;
-  std::vector<float> denoise_in(frame_size);
-  std::vector<float> denoise_out(frame_size);
-  std::vector<std::int16_t> stereo(static_cast<std::size_t>(frame_size) * 2);
-  std::int64_t frames_written = 0;
-
-  // Denoise `valid` real mono samples starting at `src` (a zero-padded window
-  // of exactly frame_size floats) and write them as stereo (mono duplicated to
-  // L/R). Returns false on a writer error.
-  auto emit = [&](const float* src, int valid) -> bool {
-    denoiser.ProcessFrame(src, denoise_out.data());
-    for (int i = 0; i < valid; ++i) {
-      const std::int16_t s = ClampToInt16(denoise_out[i]);
-      stereo[static_cast<std::size_t>(i) * 2] = s;
-      stereo[static_cast<std::size_t>(i) * 2 + 1] = s;
-    }
-    const std::int64_t ts = frames_written * 10'000'000 / kSampleRate;
-    if (writer
-            .WriteSamples(stereo.data(), static_cast<std::uint32_t>(valid), ts)
-            .has_value()) {
-      return false;
-    }
-    frames_written += valid;
-    return true;
-  };
-
-  bool eos = false;
-  while (!eos) {
-    if (is_cancelled && is_cancelled()) {
-      writer.Cancel();
-      return false;
-    }
-    DWORD flags = 0;
-    LONGLONG timestamp = 0;
-    ComPtr<IMFSample> sample;
-    if (FAILED(reader->ReadSample(audio_index, 0, nullptr, &flags, &timestamp,
-                                  sample.GetAddressOf()))) {
-      writer.Cancel();
-      return false;
-    }
-    if (flags & MF_SOURCE_READERF_ENDOFSTREAM) {
-      eos = true;
-    }
-    if (sample != nullptr) {
-      ComPtr<IMFMediaBuffer> buffer;
-      if (SUCCEEDED(sample->ConvertToContiguousBuffer(buffer.GetAddressOf())) &&
-          buffer != nullptr) {
-        BYTE* data = nullptr;
-        DWORD cur_len = 0;
-        if (SUCCEEDED(buffer->Lock(&data, nullptr, &cur_len)) &&
-            data != nullptr) {
-          const auto* s16 = reinterpret_cast<const std::int16_t*>(data);
-          const std::size_t n = cur_len / sizeof(std::int16_t);
-          pending.insert(pending.end(), s16, s16 + n);
-          buffer->Unlock();
-        }
-      }
-    }
-
-    // Emit every complete frame currently buffered.
-    while (pending.size() - head >= static_cast<std::size_t>(frame_size)) {
-      for (int i = 0; i < frame_size; ++i) {
-        denoise_in[i] = static_cast<float>(pending[head + i]);
-      }
-      if (!emit(denoise_in.data(), frame_size)) {
+  // Denoise into a source-aligned float buffer.
+  std::vector<float> output(n, 0.0f);
+  if (n > 0) {
+    std::vector<float> in_f(frame_size);
+    std::vector<float> den_f(frame_size);
+    const std::size_t frame_count =
+        (n + latency + frame_size - 1) / frame_size;
+    const std::size_t prime_frames = latency / frame_size;
+    for (std::size_t f = 0; f < frame_count; ++f) {
+      if (is_cancelled && is_cancelled()) {
         writer.Cancel();
         return false;
       }
-      head += frame_size;
+      const std::size_t read = f * frame_size;
+      for (int i = 0; i < frame_size; ++i) {
+        const std::size_t idx = read + static_cast<std::size_t>(i);
+        in_f[i] = idx < n ? static_cast<float>(src[idx]) : 0.0f;
+      }
+      denoiser.ProcessFrame(in_f.data(), den_f.data());
+      if (f < prime_frames) {
+        continue;  // priming frames (the lookahead) are dropped
+      }
+      const std::size_t write = read - static_cast<std::size_t>(latency);
+      const std::size_t count = write < n ? std::min<std::size_t>(
+                                                frame_size, n - write)
+                                          : 0;
+      for (std::size_t i = 0; i < count; ++i) {
+        output[write + i] = den_f[i];
+      }
     }
-    // Bound the buffer: drop consumed samples once head runs ahead.
-    if (head >= 65'536) {
-      pending.erase(pending.begin(), pending.begin() + head);
-      head = 0;
+    // out = wet * denoised + (1 - wet) * original.
+    if (wet < 0.9999f) {
+      const float dry = 1.0f - wet;
+      for (std::size_t i = 0; i < n; ++i) {
+        output[i] = wet * output[i] + dry * static_cast<float>(src[i]);
+      }
     }
   }
 
-  // Final short frame: zero-pad to frame_size, denoise, keep only the real
-  // samples so the cleaned track length matches the source.
-  const std::size_t remaining = pending.size() - head;
-  if (remaining > 0) {
-    for (int i = 0; i < frame_size; ++i) {
-      denoise_in[i] =
-          (static_cast<std::size_t>(i) < remaining)
-              ? static_cast<float>(pending[head + static_cast<std::size_t>(i)])
-              : 0.0f;
+  // Write the aligned mono result as stereo (mono duplicated to L/R), in
+  // ~100 ms blocks with monotonic timestamps.
+  constexpr std::size_t kBlock = 4'800;
+  std::vector<std::int16_t> stereo(kBlock * 2);
+  std::size_t written = 0;
+  while (written < n) {
+    const std::size_t count = std::min(kBlock, n - written);
+    for (std::size_t i = 0; i < count; ++i) {
+      const std::int16_t s = ClampToInt16(output[written + i]);
+      stereo[i * 2] = s;
+      stereo[i * 2 + 1] = s;
     }
-    if (!emit(denoise_in.data(), static_cast<int>(remaining))) {
+    const std::int64_t ts =
+        static_cast<std::int64_t>(written) * 10'000'000 / kSampleRate;
+    if (writer
+            .WriteSamples(stereo.data(), static_cast<std::uint32_t>(count), ts)
+            .has_value()) {
       writer.Cancel();
       return false;
     }
+    written += count;
   }
 
   return !writer.Finalize().has_value();

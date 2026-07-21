@@ -521,7 +521,8 @@ PassthroughResult ExportPassthroughCopy(
         fs::path cleaned = destination;
         cleaned += ".miccleanup.mp4";
         if (ProduceCleanedMic(*read.project->mic_audio_path, cleaned.u8string(),
-                              is_cancelled)) {
+                              is_cancelled,
+                              VoiceCleanupWetMix(input.voice_cleanup_mode))) {
           render.mic_audio_path = cleaned.wstring();
           cleaned_mic_temp = cleaned;
         } else {
