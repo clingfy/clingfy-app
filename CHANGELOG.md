@@ -26,7 +26,7 @@ Clingfy 1.0.6 is an audio release. It adds **Voice Cleanup** — on-device backg
 
 ### Internal
 - Unified the macOS / Windows logging into one JSONL contract.
-- Continued the **Windows beta**: audio separation, the on-device Voice Cleanup engine, the camera-bubble renderer, and clip-editing playback all advanced (still in beta, not yet publicly released).
+- Continued the **Windows beta**: **Voice Cleanup is now complete on Windows** — the on-device engine plus export, live-preview (WYSIWYG), and Light/Balanced strength, matching macOS — alongside separated mic/system audio, the camera-bubble renderer, and clip-editing playback. The Windows build ships **unsigned** for now (a signed build comes later), so it remains in beta and is not yet publicly released.
 
 ## [1.0.5] - 2026-07-01
 
