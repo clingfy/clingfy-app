@@ -295,6 +295,8 @@ extension ScreenRecorderFacade {
         "metadataPath": mediaSources.metadataPath ?? "nil",
         "cursorPath": mediaSources.cursorPath ?? "nil",
         "zoomManualPath": mediaSources.zoomManualPath ?? "nil",
+        "micAudioPath": mediaSources.micAudioPath ?? "nil",
+        "systemAudioPath": mediaSources.systemAudioPath ?? "nil",
         "cameraSyncSegments": cameraSyncTimeline?.segments.count ?? 0,
       ]
     )
@@ -306,7 +308,9 @@ extension ScreenRecorderFacade {
       metadataPath: mediaSources.metadataPath,
       cursorPath: mediaSources.cursorPath,
       zoomManualPath: mediaSources.zoomManualPath,
-      cameraSyncTimeline: cameraSyncTimeline
+      cameraSyncTimeline: cameraSyncTimeline,
+      micAudioPath: mediaSources.micAudioPath,
+      systemAudioPath: mediaSources.systemAudioPath
     )
   }
 

@@ -33,8 +33,12 @@
 #include <winrt/Windows.Graphics.DirectX.Direct3D11.h>
 
 #include <cstdint>
+#include <mutex>
 #include <string>
 #include <vector>
+
+#include "Capture/Export/color_grade.h"
+#include "Graphics/color_grade_effect.h"
 
 namespace clingfy::preview {
 
@@ -161,8 +165,35 @@ class PreviewCompositor {
   UINT video_height() const { return video_height_; }
   bool has_video_target() const { return video_texture_ != nullptr; }
 
+  // The offscreen video texture the frames land in. Exposed so the headless
+  // compositor tests can fill it directly (UpdateSubresource) without a
+  // MediaPlayer.
+  ID3D11Texture2D* video_texture() const { return video_texture_.Get(); }
+
+  // Editing port (color): sets the grade applied to the VIDEO ONLY — the
+  // cursor highlight halo (drawn after) stays ungraded, matching the macOS
+  // preview, where color hits the screen track and not the overlays. The
+  // export grades video+cursor+clicks (its cursor is baked before the grade
+  // on both platforms) — that asymmetry is macOS behavior, reproduced
+  // deliberately.
+  //
+  // Thread-safe: callable from the platform thread while ComposeFrame runs
+  // on the frame-server thread. The D2D effect chain itself is built lazily
+  // ON the frame thread against the frame thread's device context (and
+  // rebuilt after device loss); a build failure degrades to an ungraded
+  // preview with one loud log per grade change.
+  void SetColorGrade(const capture::export_::color::ColorGrade& grade);
+
  private:
   HRESULT EnsureHighlightBrush(ID2D1DeviceContext* d2d_context);
+
+  // Frame-thread only. Ensures the effect chain exists for `d2d_context`
+  // and carries `generation`'s matrix. Returns false (ungraded fallback)
+  // on any failure.
+  bool EnsureColorGradeChain(
+      ID2D1DeviceContext* d2d_context,
+      const capture::export_::color::ColorGrade& grade,
+      std::uint64_t generation);
 
   Microsoft::WRL::ComPtr<ID3D11Texture2D> video_texture_;
   Microsoft::WRL::ComPtr<ID2D1Bitmap1> video_bitmap_;
@@ -171,6 +202,18 @@ class PreviewCompositor {
       winrt_video_surface_{nullptr};
   UINT video_width_ = 0;
   UINT video_height_ = 0;
+
+  // Editing port (color). grade_mutex_ guards grade_ + grade_generation_
+  // (written by SetColorGrade on the platform thread, snapshotted by
+  // ComposeFrame on the frame thread). The chain members are frame-thread
+  // only.
+  std::mutex grade_mutex_;
+  capture::export_::color::ColorGrade grade_;
+  std::uint64_t grade_generation_ = 0;
+  std::uint64_t chain_generation_ = 0;
+  std::uint64_t failed_generation_ = 0;  // log-once per grade change
+  ID2D1DeviceContext* chain_context_ = nullptr;  // observed, not owned
+  clingfy::graphics::ColorGradeEffectChain grade_chain_;
 };
 
 }  // namespace clingfy::preview

@@ -133,6 +133,8 @@ class RecordingOptionsSidebar extends StatelessWidget {
   final Function(bool) onSystemAudioEnabledChanged;
   final bool excludeMicFromSystemAudio;
   final Function(bool) onExcludeMicFromSystemAudioChanged;
+  final bool micEchoCancellationEnabled;
+  final Function(bool) onMicEchoCancellationEnabledChanged;
   final Function(String?) onCamSourceChanged;
   final VoidCallback onRefreshCams;
   final VoidCallback onPickArea;
@@ -240,6 +242,8 @@ class RecordingOptionsSidebar extends StatelessWidget {
     required this.onSystemAudioEnabledChanged,
     required this.excludeMicFromSystemAudio,
     required this.onExcludeMicFromSystemAudioChanged,
+    required this.micEchoCancellationEnabled,
+    required this.onMicEchoCancellationEnabledChanged,
     required this.onCamSourceChanged,
     required this.onRefreshCams,
     // Output Tab
@@ -400,6 +404,7 @@ class RecordingOptionsSidebar extends StatelessWidget {
         loadingAudio: loadingAudio,
         systemAudioEnabled: systemAudioEnabled,
         excludeMicFromSystemAudio: excludeMicFromSystemAudio,
+        micEchoCancellationEnabled: micEchoCancellationEnabled,
         micInputLevelLinear: micInputLevelLinear,
         micInputLevelDbfs: micInputLevelDbfs,
         micInputTooLow: micInputTooLow,
@@ -407,6 +412,8 @@ class RecordingOptionsSidebar extends StatelessWidget {
         onRefreshAudio: onRefreshAudio,
         onSystemAudioEnabledChanged: onSystemAudioEnabledChanged,
         onExcludeMicFromSystemAudioChanged: onExcludeMicFromSystemAudioChanged,
+        onMicEchoCancellationEnabledChanged:
+            onMicEchoCancellationEnabledChanged,
       ),
       // Phase 10.3 (Windows): the live cursor-highlight overlay does not
       // exist (setCursorHighlightEnabled is a no-op) — hide its control.

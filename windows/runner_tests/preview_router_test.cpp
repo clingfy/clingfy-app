@@ -2,12 +2,15 @@
 
 #include <gtest/gtest.h>
 
+#include <cstdint>
 #include <filesystem>
 #include <fstream>
 #include <string>
+#include <vector>
 
 #include <flutter/encodable_value.h>
 
+#include "Encoding/audio_sidecar_writer.h"
 #include "test_support.h"
 
 namespace clingfy::bridge {
@@ -269,7 +272,10 @@ TEST_F(PreviewRouterSceneInfoTest, HappyPathWithoutCamera) {
   // cameraPath absent — Dart parser reads it as null.
   EXPECT_EQ(find("cameraPath"), nullptr);
 
-  // camera key intentionally NOT emitted; matches macOS gotcha #7.
+  // This minimal bundle's screen.meta.json has no editorSeed block, so the
+  // handler omits the `camera` key and Dart falls back to a hidden camera
+  // (backward-compat with pre-editorSeed recordings). See
+  // EditorSeedSurfacesAsCameraBlock for the populated path.
   EXPECT_EQ(find("camera"), nullptr);
 
   // cameraExportCapabilities map. Phase 9.4 added shapeMask + cornerRadius; 9.5
@@ -291,6 +297,207 @@ TEST_F(PreviewRouterSceneInfoTest, HappyPathWithoutCamera) {
   EXPECT_TRUE(cap("border"));
   EXPECT_TRUE(cap("shadow"));
   EXPECT_TRUE(cap("chromaKey"));
+
+  // Audio separation (D10): no sidecars → the legacy-metadata fallback.
+  // This bundle's meta has no micActive/loopbackActive/audioSamplesWritten
+  // (defaults false/0 — no audio was captured), so both keys are explicit
+  // false.
+  ASSERT_NE(find("hasMicAudio"), nullptr);
+  ASSERT_TRUE(std::holds_alternative<bool>(*find("hasMicAudio")));
+  EXPECT_FALSE(std::get<bool>(*find("hasMicAudio")));
+  ASSERT_NE(find("hasSystemAudio"), nullptr);
+  ASSERT_TRUE(std::holds_alternative<bool>(*find("hasSystemAudio")));
+  EXPECT_FALSE(std::get<bool>(*find("hasSystemAudio")));
+}
+
+TEST_F(PreviewRouterSceneInfoTest, LegacyPremixRecordingReportsMetadataAudio) {
+  // Sidecar-less (pre-separation) recording whose premix carried mic
+  // audio: the D10 keys must come from screen.meta.json — reporting false
+  // here would disable gain/volume sliders that WORK on the premix.
+  MethodRouter router;
+  const fs::path root = MakeMinimalBundle(base_, "legacy-premix");
+  {
+    std::ofstream out(root / "capture" / "screen.meta.json",
+                      std::ios::binary);
+    out << R"({
+  "width": 1920,
+  "height": 1080,
+  "fps": 60,
+  "audioSamplesWritten": 480000,
+  "micActive": true,
+  "loopbackActive": false,
+  "platform": "windows"
+}
+)";
+  }
+
+  const auto reply = DispatchWithArgs(router, "getRecordingSceneInfo",
+                                      Args(PathToUtf8(root)));
+  ASSERT_TRUE(reply.success_called);
+  const auto& map = std::get<flutter::EncodableMap>(reply.success_value);
+  auto get_bool = [&](const char* key) {
+    auto it = map.find(flutter::EncodableValue(key));
+    EXPECT_NE(it, map.end()) << key;
+    return it != map.end() && std::holds_alternative<bool>(it->second) &&
+           std::get<bool>(it->second);
+  };
+  EXPECT_TRUE(get_bool("hasMicAudio"));
+  EXPECT_FALSE(get_bool("hasSystemAudio"));
+  // Whole-track gain works on any legacy premix audio.
+  EXPECT_TRUE(get_bool("micGainApplies"));
+}
+
+TEST_F(PreviewRouterSceneInfoTest,
+       LegacyLoopbackOnlyPremixStillHasWorkingGain) {
+  // Legacy premix with ONLY system audio: whole-track gain (and normalize)
+  // genuinely amplify the premix, so micGainApplies must be true even
+  // though the mic never recorded — unlike the separated case, where gain
+  // is mic-only and inert.
+  MethodRouter router;
+  const fs::path root = MakeMinimalBundle(base_, "legacy-loopback");
+  {
+    std::ofstream out(root / "capture" / "screen.meta.json",
+                      std::ios::binary);
+    out << R"({
+  "width": 1920,
+  "height": 1080,
+  "fps": 60,
+  "audioSamplesWritten": 480000,
+  "micActive": false,
+  "loopbackActive": true,
+  "platform": "windows"
+}
+)";
+  }
+  const auto reply = DispatchWithArgs(router, "getRecordingSceneInfo",
+                                      Args(PathToUtf8(root)));
+  ASSERT_TRUE(reply.success_called);
+  const auto& map = std::get<flutter::EncodableMap>(reply.success_value);
+  auto get_bool = [&](const char* key) {
+    auto it = map.find(flutter::EncodableValue(key));
+    EXPECT_NE(it, map.end()) << key;
+    return it != map.end() && std::holds_alternative<bool>(it->second) &&
+           std::get<bool>(it->second);
+  };
+  EXPECT_FALSE(get_bool("hasMicAudio"));
+  EXPECT_TRUE(get_bool("hasSystemAudio"));
+  EXPECT_TRUE(get_bool("micGainApplies"));
+}
+
+TEST_F(PreviewRouterSceneInfoTest, MacBundleMetadataOmitsAudioKeys) {
+  // A macOS bundle's screen.meta.json has a different shape — its
+  // micActive/audioSamplesWritten parse to defaults here, so gating on
+  // them would report false/false and disable sliders that WORK on the mac
+  // premix. The keys must be OMITTED (Dart falls back to its legacy device
+  // gate) whenever the metadata isn't Windows-authored.
+  MethodRouter router;
+  const fs::path root = MakeMinimalBundle(base_, "mac-bundle");
+  {
+    std::ofstream out(root / "capture" / "screen.meta.json",
+                      std::ios::binary);
+    out << R"({
+  "width": 1920,
+  "height": 1080,
+  "fps": 60,
+  "platform": "macos"
+}
+)";
+  }
+  const auto reply = DispatchWithArgs(router, "getRecordingSceneInfo",
+                                      Args(PathToUtf8(root)));
+  ASSERT_TRUE(reply.success_called);
+  const auto& map = std::get<flutter::EncodableMap>(reply.success_value);
+  EXPECT_EQ(map.find(flutter::EncodableValue("hasMicAudio")), map.end());
+  EXPECT_EQ(map.find(flutter::EncodableValue("hasSystemAudio")), map.end());
+  EXPECT_EQ(map.find(flutter::EncodableValue("micGainApplies")), map.end());
+}
+
+TEST_F(PreviewRouterSceneInfoTest, DecodableSystemSidecarDisablesMicGain) {
+  // SEPARATED recording with only a system sidecar: audio is present
+  // (volume works) but gain/normalize are mic-only and inert — the reply
+  // must say hasSystemAudio=true, micGainApplies=false so the sidebar
+  // disables the gain row instead of promising an effect the pipeline
+  // ignores. Uses a REAL AAC sidecar via the recorder's own writer.
+  MethodRouter router;
+  const fs::path root = MakeMinimalBundle(base_, "sep-system-only");
+  {
+    std::ofstream manifest(root / "project.json", std::ios::binary);
+    manifest << R"({
+  "schemaVersion": 2,
+  "projectId": "sep-system-only",
+  "status": "ready",
+  "capture": {
+    "screenVideo": "capture/screen.mov",
+    "screenMetadata": "capture/screen.meta.json",
+    "systemAudio": "capture/system.m4a"
+  }
+})";
+  }
+  {
+    clingfy::encoding::AudioSidecarWriter writer;
+    const fs::path tmp = root / "capture" / "system.tmp.mp4";
+    if (auto err = writer.Open(tmp.string())) {
+      GTEST_SKIP() << "AAC sink writer unavailable: " << err->message;
+    }
+    std::vector<std::int16_t> packet(480 * 2, 900);
+    std::int64_t ts = 0;
+    for (int i = 0; i < 10; ++i) {
+      ASSERT_FALSE(writer.WriteSamples(packet.data(), 480, ts).has_value());
+      ts += 100'000;
+    }
+    ASSERT_FALSE(writer.Finalize().has_value());
+    std::error_code mv_ec;
+    fs::rename(tmp, root / "capture" / "system.m4a", mv_ec);
+    ASSERT_FALSE(mv_ec) << mv_ec.message();
+  }
+
+  const auto reply = DispatchWithArgs(router, "getRecordingSceneInfo",
+                                      Args(PathToUtf8(root)));
+  ASSERT_TRUE(reply.success_called);
+  const auto& map = std::get<flutter::EncodableMap>(reply.success_value);
+  auto get_bool = [&](const char* key) {
+    auto it = map.find(flutter::EncodableValue(key));
+    EXPECT_NE(it, map.end()) << key;
+    return it != map.end() && std::holds_alternative<bool>(it->second) &&
+           std::get<bool>(it->second);
+  };
+  EXPECT_FALSE(get_bool("hasMicAudio"));
+  EXPECT_TRUE(get_bool("hasSystemAudio"));
+  EXPECT_FALSE(get_bool("micGainApplies"));
+}
+
+TEST_F(PreviewRouterSceneInfoTest, UndecodableSidecarReportsNoMicAudio) {
+  // The manifest names a mic sidecar and the file EXISTS, but it's junk —
+  // the D10 keys ride the decode probe, not bare existence, so the reply
+  // must still say false (the sidebar must not enable a gain slider the
+  // export would ignore).
+  MethodRouter router;
+  const fs::path root = MakeMinimalBundle(base_, "junk-mic");
+  {
+    std::ofstream manifest(root / "project.json", std::ios::binary);
+    manifest << R"({
+  "schemaVersion": 2,
+  "projectId": "junk-mic",
+  "status": "ready",
+  "capture": {
+    "screenVideo": "capture/screen.mov",
+    "screenMetadata": "capture/screen.meta.json",
+    "micAudio": "capture/mic.m4a"
+  }
+})";
+  }
+  {
+    std::ofstream mic(root / "capture" / "mic.m4a", std::ios::binary);
+    mic << "not an mpeg-4 container";
+  }
+
+  const auto reply = DispatchWithArgs(router, "getRecordingSceneInfo",
+                                      Args(PathToUtf8(root)));
+  ASSERT_TRUE(reply.success_called);
+  const auto& map = std::get<flutter::EncodableMap>(reply.success_value);
+  auto it = map.find(flutter::EncodableValue("hasMicAudio"));
+  ASSERT_NE(it, map.end());
+  EXPECT_FALSE(std::get<bool>(it->second));
 }
 
 TEST_F(PreviewRouterSceneInfoTest, HappyPathWithCameraEmitsCameraPath) {
@@ -308,6 +515,62 @@ TEST_F(PreviewRouterSceneInfoTest, HappyPathWithCameraEmitsCameraPath) {
   ASSERT_NE(it, map.end());
   const auto path = std::get<std::string>(it->second);
   EXPECT_NE(path.find("raw.mov"), std::string::npos);
+}
+
+TEST_F(PreviewRouterSceneInfoTest, EditorSeedSurfacesAsCameraBlock) {
+  MethodRouter router;
+  const fs::path root = MakeMinimalBundle(base_, "with-seed");
+  AddCameraAssets(root);
+  // Overwrite screen.meta.json with an editorSeed (macOS on-disk `camera*`
+  // keys) — the recording engine writes this at stop; here we pin that the
+  // handler surfaces it as the UN-prefixed `camera` block Dart consumes.
+  {
+    std::ofstream out(root / "capture" / "screen.meta.json", std::ios::binary);
+    out << R"({
+  "width": 1920, "height": 1080, "fps": 60, "platform": "windows",
+  "editorSeed": {
+    "cameraVisible": true,
+    "cameraLayoutPreset": "overlayBottomRight",
+    "cameraShape": "roundedRect",
+    "cameraCornerRadius": 0.2,
+    "cameraOpacity": 0.85,
+    "cameraMirror": false,
+    "cameraShadow": 2,
+    "cameraBorderWidth": 4,
+    "cameraBorderColorArgb": 4294967295
+  }
+})";
+  }
+
+  const auto reply = DispatchWithArgs(router, "getRecordingSceneInfo",
+                                      Args(PathToUtf8(root)));
+  ASSERT_TRUE(reply.success_called);
+  const auto& map = std::get<flutter::EncodableMap>(reply.success_value);
+  auto it = map.find(flutter::EncodableValue("camera"));
+  ASSERT_NE(it, map.end());
+  ASSERT_TRUE(std::holds_alternative<flutter::EncodableMap>(it->second));
+  const auto& cam = std::get<flutter::EncodableMap>(it->second);
+  auto field = [&](const char* key) -> const flutter::EncodableValue* {
+    auto f = cam.find(flutter::EncodableValue(key));
+    return f == cam.end() ? nullptr : &f->second;
+  };
+  // Keys are UN-prefixed; the disk `cameraShadow` is renamed to shadowPreset.
+  ASSERT_NE(field("visible"), nullptr);
+  EXPECT_TRUE(std::get<bool>(*field("visible")));
+  ASSERT_NE(field("shape"), nullptr);
+  EXPECT_EQ(std::get<std::string>(*field("shape")), "roundedRect");
+  ASSERT_NE(field("layoutPreset"), nullptr);
+  EXPECT_EQ(std::get<std::string>(*field("layoutPreset")), "overlayBottomRight");
+  ASSERT_NE(field("mirror"), nullptr);
+  EXPECT_FALSE(std::get<bool>(*field("mirror")));
+  ASSERT_NE(field("shadowPreset"), nullptr);
+  EXPECT_EQ(std::get<int>(*field("shadowPreset")), 2);
+  // The on-disk key name must NOT leak through into the reply.
+  EXPECT_EQ(field("cameraShadow"), nullptr);
+  // ARGB survives the bridge as int64 (4294967295 > INT32_MAX).
+  ASSERT_NE(field("borderColorArgb"), nullptr);
+  EXPECT_EQ(std::get<std::int64_t>(*field("borderColorArgb")),
+            std::int64_t{4294967295});
 }
 
 // ---- Path / encoding sanity ----------------------------------------
@@ -565,6 +828,78 @@ TEST_F(PreviewRouterTransportTest, PauseStaleSessionReturnsSuccessNull) {
   EXPECT_FALSE(reply.error_called);
 }
 
+// ---- previewSetColorGrade (editing port, PR-2b) --------------------
+
+TEST_F(PreviewRouterTransportTest, SetColorGradeWithoutArgsRepliesNull) {
+  // Matches the void Dart contract (and HandlePreviewSetCameraPlacement):
+  // malformed/missing args are ignored, the reply is always success-null.
+  MethodRouter router;
+  RecordedReply reply;
+  router.Dispatch(test_support::MakeCall("previewSetColorGrade"),
+                  MakeRecorder(reply));
+  EXPECT_TRUE(reply.success_called);
+  EXPECT_FALSE(reply.error_called);
+}
+
+TEST_F(PreviewRouterTransportTest, SetColorGradeStaleSessionRepliesNull) {
+  // No preview session is open in the test process, so the engine drops the
+  // grade silently (stale-session contract) and the router replies null —
+  // the same path a slider tick racing a Close hits in production.
+  MethodRouter router;
+  flutter::EncodableMap grade_map;
+  grade_map[flutter::EncodableValue("saturation")] =
+      flutter::EncodableValue(-1.0);
+  flutter::EncodableMap args;
+  args[flutter::EncodableValue("sessionId")] =
+      flutter::EncodableValue(std::string("sess-stale"));
+  args[flutter::EncodableValue("colorGrade")] =
+      flutter::EncodableValue(grade_map);
+  const auto reply = DispatchWithArgs(router, "previewSetColorGrade", args);
+  EXPECT_TRUE(reply.success_called);
+  EXPECT_FALSE(reply.error_called);
+}
+
+// ---- previewSetClips (editing port, step 4-1) ---------------------
+
+TEST_F(PreviewRouterTransportTest, SetClipsWithoutArgsRepliesNull) {
+  // Void Dart contract: missing/malformed args are ignored, reply is null.
+  MethodRouter router;
+  RecordedReply reply;
+  router.Dispatch(test_support::MakeCall("previewSetClips"),
+                  MakeRecorder(reply));
+  EXPECT_TRUE(reply.success_called);
+  EXPECT_FALSE(reply.error_called);
+}
+
+TEST_F(PreviewRouterTransportTest, SetClipsStaleSessionRepliesNull) {
+  // No preview session is open in the test process, so the engine drops the
+  // clips silently (stale-session contract) and the router replies null — the
+  // same path a clip edit racing a Close hits in production. Also exercises the
+  // shared clips parser end-to-end (a real reorder list).
+  MethodRouter router;
+  flutter::EncodableMap clip_b;
+  clip_b[flutter::EncodableValue("sourceInMs")] =
+      flutter::EncodableValue(std::int64_t{6000});
+  clip_b[flutter::EncodableValue("sourceOutMs")] =
+      flutter::EncodableValue(std::int64_t{8000});
+  clip_b[flutter::EncodableValue("enabled")] = flutter::EncodableValue(true);
+  flutter::EncodableMap clip_a;
+  clip_a[flutter::EncodableValue("sourceInMs")] =
+      flutter::EncodableValue(std::int64_t{0});
+  clip_a[flutter::EncodableValue("sourceOutMs")] =
+      flutter::EncodableValue(std::int64_t{2000});
+  clip_a[flutter::EncodableValue("enabled")] = flutter::EncodableValue(true);
+  flutter::EncodableMap args;
+  args[flutter::EncodableValue("sessionId")] =
+      flutter::EncodableValue(std::string("sess-stale"));
+  args[flutter::EncodableValue("clips")] = flutter::EncodableValue(
+      flutter::EncodableList{flutter::EncodableValue(clip_b),
+                             flutter::EncodableValue(clip_a)});
+  const auto reply = DispatchWithArgs(router, "previewSetClips", args);
+  EXPECT_TRUE(reply.success_called);
+  EXPECT_FALSE(reply.error_called);
+}
+
 // ---- previewSeekTo ------------------------------------------------
 
 TEST_F(PreviewRouterTransportTest, SeekToMissingSessionIdReturnsBadArgs) {
@@ -619,6 +954,39 @@ TEST_F(PreviewRouterTransportTest, SeekToAcceptsInt32Ms) {
       flutter::EncodableValue(std::int32_t{42});
   const auto reply =
       DispatchWithArgs(router, "previewSeekTo", std::move(args));
+  EXPECT_TRUE(reply.success_called);
+  EXPECT_FALSE(reply.error_called);
+}
+
+// Phase 4 preview WYSIWYG: previewSetVoiceCleanup is wired (no longer a no-op)
+// and parses the nested {enabled, mode} map. With no live session the engine
+// drops it (stale-session guard), so the router still replies a clean null —
+// this pins the handler registration + nested-map parse without an engine.
+TEST(PreviewRouterVoiceCleanupTest, ParsesNestedMapAndRepliesNullWithNoSession) {
+  MethodRouter router;
+  flutter::EncodableMap voice;
+  voice[flutter::EncodableValue("enabled")] = flutter::EncodableValue(true);
+  voice[flutter::EncodableValue("mode")] =
+      flutter::EncodableValue(std::string("balanced"));
+  flutter::EncodableMap args;
+  args[flutter::EncodableValue("sessionId")] =
+      flutter::EncodableValue(std::string("no-such-session"));
+  args[flutter::EncodableValue("voiceCleanup")] =
+      flutter::EncodableValue(std::move(voice));
+
+  const auto reply =
+      DispatchWithArgs(router, "previewSetVoiceCleanup", std::move(args));
+  EXPECT_TRUE(reply.success_called);
+  EXPECT_FALSE(reply.error_called);
+}
+
+TEST(PreviewRouterVoiceCleanupTest, MissingVoiceCleanupMapStillRepliesNull) {
+  MethodRouter router;
+  flutter::EncodableMap args;
+  args[flutter::EncodableValue("sessionId")] =
+      flutter::EncodableValue(std::string("no-such-session"));
+  const auto reply =
+      DispatchWithArgs(router, "previewSetVoiceCleanup", std::move(args));
   EXPECT_TRUE(reply.success_called);
   EXPECT_FALSE(reply.error_called);
 }

@@ -13,18 +13,77 @@
 
 namespace clingfy::capture {
 
+using Microsoft::WRL::ComPtr;
+
 namespace {
 
-using Microsoft::WRL::ComPtr;
+constexpr double kPi = 3.14159265358979323846;
+
+// A sharp regular polygon / star path geometry inscribed in `rect` (centered,
+// circum-radius = half the shorter side). `sides` vertices for a polygon; a
+// star uses 2*`sides` vertices alternating outer / inner (= outer * inner_ratio)
+// radius. Mirrors the GDI overlay's BuildPolygonRegion
+// (camera_floating_overlay.cpp) and the Dart preview's _polygonPath / _starPath
+// (lib/app/home/widgets/camera_overlay_bubble.dart) EXACTLY — same vertex
+// count, rotation, inner ratio, and sharp corners — so the DComp bubble, the
+// GDI bubble, the in-app preview, and the export all draw the identical
+// silhouette. (This is DELIBERATELY the Windows/Dart convention, which differs
+// from the macOS live overlay: macOS uses a pointy-top hexagon, a 0.4 star
+// inner ratio, and roundness-driven corner rounding. Keep them in sync with
+// BuildPolygonRegion if either changes.)
+ComPtr<ID2D1Geometry> BuildCameraPolygonGeometry(ID2D1Factory1* factory,
+                                                 const D2D1_RECT_F& rect,
+                                                 int sides, double rotation,
+                                                 double inner_ratio,
+                                                 bool is_star) {
+  const double cx = (rect.left + rect.right) / 2.0;
+  const double cy = (rect.top + rect.bottom) / 2.0;
+  const double radius =
+      (std::min)(rect.right - rect.left, rect.bottom - rect.top) / 2.0;
+  ComPtr<ID2D1Geometry> geo;
+  if (radius <= 0.0 || sides < 3) {
+    return geo;
+  }
+  const int vertices = is_star ? sides * 2 : sides;
+  ComPtr<ID2D1PathGeometry> path;
+  if (FAILED(factory->CreatePathGeometry(path.GetAddressOf()))) {
+    return geo;
+  }
+  ComPtr<ID2D1GeometrySink> sink;
+  if (FAILED(path->Open(sink.GetAddressOf()))) {
+    return geo;
+  }
+  auto vertex = [&](int i) {
+    const double r =
+        is_star ? ((i % 2 == 0) ? radius : radius * inner_ratio) : radius;
+    const double angle = rotation + (2.0 * kPi * i / vertices) - kPi / 2.0;
+    return D2D1::Point2F(static_cast<float>(cx + r * std::cos(angle)),
+                         static_cast<float>(cy + r * std::sin(angle)));
+  };
+  sink->BeginFigure(vertex(0), D2D1_FIGURE_BEGIN_FILLED);
+  for (int i = 1; i < vertices; ++i) {
+    sink->AddLine(vertex(i));
+  }
+  sink->EndFigure(D2D1_FIGURE_END_CLOSED);
+  if (SUCCEEDED(sink->Close())) {
+    path.As(&geo);
+  }
+  return geo;
+}
+
+}  // namespace
 
 // Build a mask/stroke geometry for `shape` inscribed in `rect`. Returns null for
 // "square" (caller uses the rect directly) or on failure. corner_radius is the
 // Dart 0..0.5 fraction off the shorter side; squircle reads as a generously
-// rounded rect (true superellipse deferred).
-ComPtr<ID2D1Geometry> CreateShapeGeometry(ID2D1Factory1* factory,
-                                          const std::string& shape,
-                                          double corner_radius,
-                                          const D2D1_RECT_F& rect) {
+// rounded rect (true superellipse deferred). hexagon / star are sharp polygons
+// matching the GDI overlay + Dart preview (corner_radius is ignored for them,
+// the Windows/Dart convention). Public (P4b) so the presenter's glow ring
+// strokes the identical silhouette.
+ComPtr<ID2D1Geometry> CreateCameraShapeGeometry(ID2D1Factory1* factory,
+                                                const std::string& shape,
+                                                double corner_radius,
+                                                const D2D1_RECT_F& rect) {
   const double w = rect.right - rect.left;
   const double h = rect.bottom - rect.top;
   const double side = (w < h ? w : h);
@@ -55,11 +114,21 @@ ComPtr<ID2D1Geometry> CreateShapeGeometry(ID2D1Factory1* factory,
         rrect.As(&geo);
       }
     }
+  } else if (shape == "hexagon") {
+    // Regular hexagon, rotation +30° (flat top/bottom, points left/right) —
+    // BuildPolygonRegion(w, h, 6, kPi/6, 0, false) / Dart _polygonPath(6, π/6).
+    geo = BuildCameraPolygonGeometry(factory, rect, /*sides=*/6,
+                                     /*rotation=*/kPi / 6.0,
+                                     /*inner_ratio=*/0.0, /*is_star=*/false);
+  } else if (shape == "star") {
+    // 5-point star, inner ratio 0.5, first point straight up —
+    // BuildPolygonRegion(w, h, 5, 0, 0.5, true) / Dart _starPath(5, 0.5).
+    geo = BuildCameraPolygonGeometry(factory, rect, /*sides=*/5,
+                                     /*rotation=*/0.0,
+                                     /*inner_ratio=*/0.5, /*is_star=*/true);
   }
   return geo;  // null for square / zero-radius rounded → caller clips to rect
 }
-
-}  // namespace
 
 bool ExtractCameraFrameBgra(IMFSample* sample, UINT width, UINT height,
                             std::vector<BYTE>* dest) {
@@ -151,7 +220,7 @@ bool CameraBubblePainter::Prepare(ID2D1Factory1* factory,
   // ID2D1Layer otherwise.
   mask_layer_.Reset();
   mask_geometry_ =
-      CreateShapeGeometry(factory, shape, corner_radius, bubble_rect_);
+      CreateCameraShapeGeometry(factory, shape, corner_radius, bubble_rect_);
   if (mask_geometry_ != nullptr) {
     if (FAILED(ctx->CreateLayer(nullptr, mask_layer_.GetAddressOf()))) {
       mask_geometry_.Reset();
@@ -244,7 +313,7 @@ void CameraBubblePainter::PrepareShadow(ID2D1Factory1* factory,
                   static_cast<float>(margin + side),
                   static_cast<float>(margin + side));
   ComPtr<ID2D1Geometry> local_geo =
-      CreateShapeGeometry(factory, shape, corner_radius, local);
+      CreateCameraShapeGeometry(factory, shape, corner_radius, local);
   ComPtr<ID2D1SolidColorBrush> black;
   if (FAILED(ctx->CreateSolidColorBrush(
           D2D1::ColorF(0.0f, 0.0f, 0.0f, static_cast<float>(sh.opacity)),

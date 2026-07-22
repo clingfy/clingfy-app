@@ -391,9 +391,6 @@ class AppLocalizationsAr extends AppLocalizations {
   String get paywallCardMonthlyTitle => 'Pro شهري';
 
   @override
-  String get paywallCardMonthlyPrice => '\$9.99';
-
-  @override
   String get paywallCardMonthlyPeriod => '/ شهر';
 
   @override
@@ -413,9 +410,6 @@ class AppLocalizationsAr extends AppLocalizations {
 
   @override
   String get paywallCardLifetimeTitle => 'Pro مدى الحياة';
-
-  @override
-  String get paywallCardLifetimePrice => '\$59.99';
 
   @override
   String get paywallCardLifetimePeriod => 'مرة واحدة';
@@ -441,9 +435,6 @@ class AppLocalizationsAr extends AppLocalizations {
 
   @override
   String get paywallCardExtensionTitle => 'تمديد التحديثات';
-
-  @override
-  String get paywallCardExtensionPrice => '\$19.99';
 
   @override
   String get paywallCardExtensionPeriod => 'مرة واحدة';
@@ -1833,6 +1824,13 @@ class AppLocalizationsAr extends AppLocalizations {
       'سجّل سجلات تصحيح مفصّلة للمساعدة في إعادة إنتاج مشكلة يصعب تتبّعها. فعّله، ثم أعد إنتاج المشكلة، ثم صدّر التشخيصات وأرسل الملفات. اتركه مُطفأً للاستخدام اليومي.';
 
   @override
+  String get diagnosticsShareAnalytics => 'مشاركة إحصاءات استخدام مجهولة';
+
+  @override
+  String get diagnosticsShareAnalyticsHelp =>
+      'ساعد في تحسين Clingfy من خلال مشاركة بيانات استخدام الميزات والموثوقية. لا تتضمن أبدًا التسجيلات أو أسماء الملفات أو الصوت أو الفيديو أو النصوص المفرّغة.';
+
+  @override
   String get openLogsFolder => 'افتتاح مجلد السجلات';
 
   @override
@@ -1882,6 +1880,19 @@ class AppLocalizationsAr extends AppLocalizations {
 
   @override
   String get audioGain => 'مكسب الصوت';
+
+  @override
+  String get voiceCleanup => 'تنقية الصوت';
+
+  @override
+  String get voiceCleanupHelp =>
+      'يزيل ضجيج الخلفية من الميكروفون، مثل المراوح أو صوت الغرفة.';
+
+  @override
+  String get voiceCleanupLight => 'خفيف';
+
+  @override
+  String get voiceCleanupBalanced => 'متوازن';
 
   @override
   String get volume => 'مستوى الصوت';
@@ -2002,6 +2013,13 @@ class AppLocalizationsAr extends AppLocalizations {
   @override
   String get recordingExcludeMicFromSystemAudio =>
       'استبعاد الميكروفون الخاص بي من صوت النظام';
+
+  @override
+  String get recordingMicEchoCancellation => 'إزالة صدى السماعات من الميكروفون';
+
+  @override
+  String get recordingMicEchoCancellationHelp =>
+      'تجريبي: يرشّح تسرب صوت النظام إلى الميكروفون أثناء توقفات الكلام. قد يؤثر على جودة الصوت في بعض التسجيلات.';
 
   @override
   String get restartApp => 'أعد تشغيل التطبيق';
@@ -2507,15 +2525,8 @@ class AppLocalizationsAr extends AppLocalizations {
       'توقف التسجيل: الشاشة التي كنت تسجلها فُصلت. تم حفظ تسجيلك حتى تلك اللحظة.';
 
   @override
-  String get cameraPreviewUseInApp =>
-      'لا ترى الكاميرا؟ استخدم المعاينة داخل التطبيق';
-
-  @override
-  String get cameraPreviewUseFloating => 'استخدم فقاعة الكاميرا العائمة';
-
-  @override
   String get appliedOnExportNoticeWindows =>
-      'يُطبَّق عند التصدير — المعاينة الداخلية لا تعرض هذا التأثير بعد.';
+      'يُسمع الكسب بالكامل في المعاينات المُعدَّلة وعند التصدير — المعاينة غير المقصوصة تعكس تغييرات مستوى الصوت فقط.';
 
   @override
   String get errBadMode => 'وضع التسجيل هذا غير متاح على ويندوز بعد.';

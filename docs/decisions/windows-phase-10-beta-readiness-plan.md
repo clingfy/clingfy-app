@@ -62,8 +62,9 @@ Everything in the slice plan traces back to one of those six.
    lowercase "clingfy" branding (`Runner.rc:92-99`, `main.cpp:77`), no VC++
    runtime bundling, updater is a hardcoded `false`
    (`misc_router.cpp:26`) behind a visible Check-for-Updates button,
-   `ops/release` is 100% macOS, no Windows CI (and GH Actions credits are
-   exhausted — plan for local PowerShell scripts).
+   `ops/release` is 100% macOS (no Windows *release* pipeline — plan for local
+   PowerShell scripts; build/test CI for Windows now exists, see
+   `.github/workflows/ci.yml`).
 2. **Diagnostics die exactly where we need them.** Native logs write to
    CWD-relative `build\windows-poc\` (silently dropped for an installed app,
    `device_probe_log.cpp:16-19`); native logs never reach Dart/Sentry (no
@@ -376,9 +377,14 @@ is the beta-sized cut; full WYSIWYG parity for cursor/zoom is post-beta).
   preview draws no cursor/zoom, but a POC-era renderer DOES draw a divergent
   approximation (`preview_compositor.cpp:289-352`). 10.3 must scope from the
   code, not the doc; fix the doc in 10.3.
-- **No Windows CI** (GH credits exhausted; macOS runners can't build the
-  Windows runner anyway): every slice rests on local ctest + the dev box.
-  The release script should run the test suite as a gate.
+- **Windows CI** now exists (a path-scoped `windows-latest` job in
+  `.github/workflows/ci.yml`: `flutter build windows` + the headless `ctest`
+  suite; the armed pixel probes still only run on the dev box). It runs only
+  when `windows/**` or shared code changes. Earlier this was blocked because
+  macOS runners can't build the Windows runner and GH credits were tight;
+  macOS CI now runs on every PR, so the added `windows-latest` cost (2×, vs
+  macOS's 10×) is affordable. The release script should still run the suite
+  as a gate for release builds.
 - **`.env` files are public-repo-tracked**: feed URLs are fine there;
   signing keys and the Sparkle/EdDSA key never are (out-of-band, same as
   macOS).

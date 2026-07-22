@@ -388,6 +388,85 @@ void main() {
     expect(find.byKey(const Key('timeline_clip_split_button')), findsOneWidget);
   });
 
+  // While an export runs the timeline stays mounted (scrub/transport live)
+  // but every edit affordance is inert — the export bakes the clips it was
+  // started with.
+  group('editing disabled during export (editingEnabled: false)', () {
+    testWidgets('lanes and controls stay visible; split is inert', (
+      tester,
+    ) async {
+      final editor = await _createEditor(tester);
+      final clipEditor = _makeClipEditor();
+      final player = _FakePlayerController(
+        editor: editor,
+        clipEditor: clipEditor,
+      );
+      addTearDown(player.dispose);
+      addTearDown(clipEditor.dispose);
+
+      await tester.pumpWidget(
+        _buildTimeline(player: player, editingEnabled: false),
+      );
+
+      // The bar does not reflow: lane + controls remain visible.
+      expect(find.byKey(const Key('clips_timeline_lane')), findsOneWidget);
+      final splitButton = find.byKey(const Key('timeline_clip_split_button'));
+      expect(splitButton, findsOneWidget);
+
+      // ...but the split does nothing.
+      await tester.ensureVisible(splitButton);
+      await tester.pump();
+      await tester.tap(splitButton, warnIfMissed: false);
+      await tester.pump();
+      expect(clipEditor.clips, hasLength(1));
+    });
+
+    testWidgets('the Delete shortcut is inert', (tester) async {
+      final editor = await _createEditor(tester);
+      final clipEditor = _makeClipEditor();
+      final player = _FakePlayerController(
+        editor: editor,
+        clipEditor: clipEditor,
+      );
+      addTearDown(player.dispose);
+      addTearDown(clipEditor.dispose);
+
+      await tester.pumpWidget(
+        _buildTimeline(player: player, editingEnabled: false),
+      );
+
+      // Give the timeline focus (pointer down does this), select nothing in
+      // particular, and hit Delete — no clip may disappear.
+      await tester.tap(
+        find.byKey(const Key('timeline_shell')),
+        warnIfMissed: false,
+      );
+      await tester.pump();
+      await tester.sendKeyEvent(LogicalKeyboardKey.delete);
+      await tester.pump();
+
+      expect(clipEditor.clips, hasLength(1));
+    });
+
+    testWidgets('the transport play/pause stays live', (tester) async {
+      final editor = await _createEditor(tester);
+      final player = _FakePlayerController(editor: editor);
+      addTearDown(player.dispose);
+
+      await tester.pumpWidget(
+        _buildTimeline(player: player, editingEnabled: false),
+      );
+
+      expect(player.isPlaying, isFalse);
+      await tester.tap(
+        find.byKey(const Key('timeline_play_pause_button')),
+        warnIfMissed: false,
+      );
+      await tester.pump();
+      expect(player.isPlaying, isTrue);
+    });
+  });
+
   testWidgets('split button cuts the clip at the playhead', (tester) async {
     final editor = await _createEditor(tester);
     final clipEditor = _makeClipEditor();
@@ -781,6 +860,7 @@ Future<ZoomEditorController> _createEditor(
 
 Widget _buildTimeline({
   required PlayerController player,
+  bool editingEnabled = true,
   ValueChanged<int>? onSeek,
   ValueChanged<int>? onHoverSeek,
   VoidCallback? onHoverEnd,
@@ -801,6 +881,7 @@ Widget _buildTimeline({
               durationMs: 60000,
               positionMs: 15000,
               isReady: true,
+              editingEnabled: editingEnabled,
               onSeek: onSeek ?? (_) {},
               onHoverSeek: onHoverSeek ?? (_) {},
               onHoverEnd: onHoverEnd ?? () {},

@@ -21,18 +21,26 @@
 #include <cmath>
 #include <cstdio>
 #include <ctime>
+#include <atomic>
+#include <cctype>
 #include <filesystem>
 #include <fstream>
 #include <limits>
 #include <system_error>
+#include <thread>
 
 #include "Bridge/native_error_codes.h"
 #include "Bridge/native_log_publisher.h"
+#include "Bridge/platform_thread_dispatcher.h"
 #include "Bridge/player_event_publisher.h"
 #include "Bridge/workflow_event_publisher.h"
+#include "Capture/Export/audio_sidecar_probe.h"
+#include "Capture/Export/mic_cleanup.h"
 #include "Services/log_locations.h"
 #include "preview/frame_timing.h"
+#include "preview/preview_audio_renderer.h"
 #include "preview/preview_compositor.h"
+#include "preview/preview_source_reader.h"
 
 namespace clingfy::preview {
 
@@ -55,16 +63,15 @@ namespace {
 constexpr int kTextureWidth = 1280;
 constexpr int kTextureHeight = 720;
 
-// Phase 10.1: these diagnostics moved from the CWD-relative
-// build\windows-poc\ to %LOCALAPPDATA%\Clingfy\Logs (see
-// Services/log_locations.h) so installed builds keep their breadcrumbs.
-// File roles are unchanged:
-//   * stage2a_2_native.log — truncated at every Open() for
-//     crash-breadcrumb localisation.
+// The stress-harness measurement artifacts stay in
+// %LOCALAPPDATA%\Clingfy\Logs (see Services/log_locations.h) — they are
+// benchmark outputs consumed by tools/phase5_*.ps1, not logging:
 //   * phase5_cycles.log — append-only across the process lifetime;
 //     truncation would defeat the stress verdict tool, which needs
 //     cross-cycle history to compute aggregate stats.
 //   * stage2a_2_result.md — the Stage 2A-2 verdict artifact.
+// (The old stage2a_2_native.log breadcrumb file is gone: LogNative now
+// forwards into the unified log pipeline instead.)
 std::wstring NativeLogFilePath(const wchar_t* file_name) {
   const std::wstring dir = clingfy::storage::NativeLogsDirectory();
   if (dir.empty()) {
@@ -75,9 +82,6 @@ std::wstring NativeLogFilePath(const wchar_t* file_name) {
 
 std::wstring ArtifactPath() {
   return NativeLogFilePath(L"stage2a_2_result.md");
-}
-std::wstring NativeLogPath() {
-  return NativeLogFilePath(L"stage2a_2_native.log");
 }
 std::wstring Phase5CycleLogPath() {
   return NativeLogFilePath(L"phase5_cycles.log");
@@ -120,40 +124,22 @@ std::int64_t QpcDeltaMs(std::int64_t start, std::int64_t end,
   return ((end - start) * 1000) / freq;
 }
 
-// File-based logger because a Flutter Windows debug build is a GUI
-// subsystem exe with no console; the standard streams are not
-// reliably reachable from outside. The log file is overwritten each
-// Open(); each line carries an HRESULT-style breadcrumb so a crash
-// can be localised by inspecting the last surviving line.
+// Preview-engine lifecycle breadcrumbs (Open/Close aborts, D3D device
+// creation, texture registration). Forwards into the unified log pipeline
+// as DEBUG "Preview" lines — the Settings "verbose logging" toggle (or
+// CLINGFY_LOG_LEVEL=debug for the stress harness) turns them on. Failures
+// that matter in release are dual-logged at ERROR by their call sites.
 void LogNative(const char* msg) {
-  const std::wstring log_path = NativeLogPath();
-  if (log_path.empty()) {
+  if (msg == nullptr) {
     return;
   }
-  EnsureLogParentDir();
-  std::ofstream f(std::filesystem::path(log_path),
-                  std::ios::out | std::ios::app | std::ios::binary);
-  if (f.is_open()) {
-    std::time_t now = std::time(nullptr);
-    std::tm tm_utc{};
-#if defined(_MSC_VER)
-    ::gmtime_s(&tm_utc, &now);
-#else
-    tm_utc = *std::gmtime(&now);
-#endif
-    char ts[32];
-    std::snprintf(ts, sizeof(ts), "%02d:%02d:%02d ",
-                  tm_utc.tm_hour, tm_utc.tm_min, tm_utc.tm_sec);
-    f << ts << msg << "\n";
-  }
+  clingfy::bridge::NativeLogPublisher::Instance().Debug("Preview", msg);
 }
 
-// Step 5.7.1: append-only cycle log. Lives separately from
-// stage2a_2_native.log because that file is truncated on every Open() — a
-// design constraint for crash-breadcrumb localisation but lethal for
-// cross-cycle aggregation. The stress verdict tool reads from this
-// file. Format-wise identical to LogNative; differences are scope
-// (which file) and the no-truncate guarantee.
+// Step 5.7.1: append-only cycle measurements for the stress verdict tool
+// (tools/phase5_extract_verdict.ps1) — a harness data artifact, deliberately
+// NOT part of the unified log pipeline: the tool needs a stable key=value
+// file it can aggregate across cycles, independent of log levels.
 void LogPhase5Cycle(const char* msg) {
   const std::wstring log_path = Phase5CycleLogPath();
   if (log_path.empty()) {
@@ -317,6 +303,11 @@ struct PreviewEngine::Impl {
   // threshold the engine emits PREVIEW_RENDER_ERROR once (see
   // NoteRenderFailure).
   std::atomic<std::uint32_t> consecutive_render_failures{0};
+  // The HRESULT of the most recent per-frame failure, folded into the
+  // PREVIEW_RENDER_ERROR log line. Discriminates device loss (Modern Standby
+  // resume / TDR — DXGI_ERROR_DEVICE_REMOVED) from out-of-memory; a 55-min
+  // session's frame_copy death was undiagnosable without it.
+  std::atomic<std::int32_t> last_render_failure_hr{0};
 
   // ---- Discovered after the first frame ----
   std::atomic<UINT> last_video_width{0};
@@ -347,6 +338,116 @@ struct PreviewEngine::Impl {
   std::wstring video_path;
   std::wstring cursor_path;
 
+  // ---- Editing port (clips, step 4-1/4-3) ----
+  // The edited-timeline kept ranges (TIMELINE order) set via SetClips. Empty /
+  // passthrough = no cuts, so the preview plays the source 1:1 as today. Guarded
+  // by render_mutex (4-3b: the pacer thread reads it off the platform thread, so
+  // the SetClips write MUST share render_mutex with those reads).
+  std::vector<capture::export_::clip_planner::ClipKeptRange> clip_ranges;
+  // Step 4-3 stitched-preview state (guarded by render_mutex — touched by the
+  // edited render path and read by the frame-server guard). When the ranges are
+  // a real edit the MediaPlayer is paused and frames come from `edited_reader`
+  // instead; `edited_pos_ms` is the current edited-timeline position (the
+  // paused / scrubbed frame). Continuous playback (a pacer) lands in 4-3b.
+  std::unique_ptr<PreviewSourceReader> edited_reader;
+  bool edited_mode = false;
+  std::int64_t edited_pos_ms = 0;
+  // Step 4-3b: continuous-playback flag for the pacer thread. Set true by Play
+  // on an edited session, cleared by Pause / passthrough / EOS. Guarded by
+  // render_mutex (set on the platform thread, read by the pacer thread).
+  bool edited_playing = false;
+  // Step 4-4: reorder-playback state (render_mutex). When the ranges are NOT
+  // source-monotonic the pacer reads each range's source window in TIMELINE
+  // order via per-range backward seeks (like the export reorder path); these
+  // track the current timeline range + the cumulative edited-ms of the earlier
+  // ranges. Primed by Play / SeekTo from edited_pos_ms; unused for the monotonic
+  // (forward-decode) path.
+  int edited_range_idx = 0;
+  std::int64_t edited_reorder_base_ms = 0;
+  // Monotonic gap-seek lead-in floor (render_mutex): after the pacer SEEKS
+  // across a large cut gap, MF resumes at the PRIOR keyframe — which can sit
+  // in the pre-gap KEPT region, and re-emitting one of those frames would
+  // snap the playhead backward. Frames with ts below this floor are
+  // discarded. Every transport reposition resets it
+  // (RenderEditedFrameLocked seeks and sets it to its target).
+  std::int64_t edited_min_source_ms = 0;
+  // Zero-decode-margin chase state (render_mutex) — see DecidePacerChase
+  // for the policy these feed. `stale_streak` counts consecutive stale
+  // discards (decimation); `last_chase_seek` spaces repositions;
+  // `awaiting_chase_frame` makes the first frame after a reposition emit
+  // unconditionally, so a long keyframe lead-in can't trigger another
+  // chase and starve the picture forever. All three reset on any transport
+  // reposition (RenderEditedFrameLocked).
+  int stale_streak = 0;
+  std::chrono::steady_clock::time_point last_chase_seek{};
+  bool awaiting_chase_frame = false;
+  // Adaptive frame budget (atomic — the pacer reads it outside
+  // render_mutex, before sleeping). Measured from the edited-time delta
+  // between presented frames, so a 60 fps recording paces at ~16 ms
+  // instead of the historical fixed 33 ms (which played such sources at
+  // half speed). Seeded at 33 ms and clamped to a sane range so a cut
+  // boundary or a decode hiccup can't produce a runaway budget.
+  std::atomic<int> paced_budget_ms{33};
+  std::int64_t last_presented_edited_ms = -1;
+
+  // Step 4-7c: the edited-session sound output (design D1/D5/D7). Created on
+  // the stitched-mode transition in SetClips, reset on the passthrough
+  // transition and in Close (explicitly, before impl teardown). Guarded by
+  // render_mutex like the rest of the edited state; the renderer's own API
+  // is thread-safe and its PositionEditedMs() read is lock-free, so the
+  // pacer may consult it every step. nullptr = this session has no audio
+  // (no track / no endpoint / renderer failed) — silent-video preview (D7).
+  std::unique_ptr<PreviewAudioRenderer> audio_renderer;
+  // One WARN per session when the renderer could not be built (D7): the
+  // fallback is deliberate, but a beta log must say why a preview is silent.
+  bool audio_open_failure_logged = false;
+  // D7 mid-stream failure hand-off: the renderer's one-shot error callback
+  // fires on ITS render thread, which must not act inline or touch engine
+  // locks — it only records here. The platform-thread handlers (Play /
+  // SetClips, already under render_mutex) consume the flag and perform the
+  // one WARN + one rebuild attempt (HandleAudioRenderErrorLocked).
+  std::atomic<bool> audio_render_error_pending{false};
+  std::atomic<std::int32_t> audio_render_error_hr{0};
+  // One rebuild per session (D7): a second failure degrades to logged
+  // silent video.
+  bool audio_rebuild_attempted = false;
+  // 4-7d: the session's live mix (render_mutex). Defaults are the identity
+  // values; SetAudioMix stores clamped values and pushes resolved stages to
+  // the renderer; a renderer opened later starts from these (the macOS
+  // pending-open override semantics).
+  double audio_gain_db = 0.0;
+  double audio_volume_percent = 100.0;
+  // Audio separation (D9): the PROBED-decodable sidecar paths (empty when
+  // absent or undecodable) and whether this session's edited audio runs
+  // separated. Probed ONCE at Open; immutable afterwards, so the error-
+  // rebuild path reopens the same mode without re-probing.
+  std::wstring mic_audio_path;
+  std::wstring system_audio_path;
+  bool audio_separated = false;
+
+  // Voice cleanup (Phase 4 preview WYSIWYG, render_mutex-guarded except the
+  // cancel atomic). `enabled` is the user's toggle; `use_cleaned_mic` gates
+  // OpenPreviewAudioRendererLocked onto `cleaned_mic_path` once the background
+  // RNNoise pass has produced it (`cleaned_mic_ready`). `computing` guards a
+  // single in-flight worker; `cleanup_thread` is joined (after signalling
+  // `cleanup_cancel`) at Close so a long denoise never outlives the session.
+  bool voice_cleanup_enabled = false;
+  // The requested strength (VoiceCleanupWetMix) and the strength the cached
+  // cleaned file was actually produced with — a mode change (light<->balanced)
+  // makes them differ, which invalidates the cache and re-runs the worker.
+  float voice_cleanup_wet_mix = 1.0f;
+  float cleaned_wet_mix = -1.0f;
+  // Bumped per spawned worker; the completion applies only its own generation,
+  // so a superseded worker (mode toggled again mid-compute) can't touch the
+  // live one's state or temp file even when the two share a strength value.
+  std::uint64_t voice_cleanup_generation = 0;
+  bool voice_cleanup_computing = false;
+  bool cleaned_mic_ready = false;
+  bool use_cleaned_mic = false;
+  std::wstring cleaned_mic_path;
+  std::thread cleanup_thread;
+  std::atomic<bool> cleanup_cancel{false};
+
   // Serializes the per-frame composition path against the descriptor
   // callback (which Flutter can invoke from its own thread).
   std::mutex render_mutex;
@@ -369,6 +470,143 @@ const FlutterDesktopGpuSurfaceDescriptor* ObtainSurfaceDescriptor(
     return nullptr;
   }
   return &impl->descriptor;
+}
+
+// ---- Step 4-7c: edited-preview audio helpers (all callers hold render_mutex
+// ---- on the platform thread — the engine's serialized transport paths) -----
+
+// The audio extent passed to AudioSlots is the ranges' own upper bound — a
+// shorter real track just early-EOSes in the pump, which silence-fills the
+// shortfall (§5.2), so no MediaPlayer duration query is needed.
+std::vector<capture::export_::clip_planner::AudioSlot> BuildPreviewAudioSlots(
+    const std::vector<capture::export_::clip_planner::ClipKeptRange>& ranges) {
+  std::int64_t audio_extent_ms = 0;
+  for (const auto& r : ranges) {
+    audio_extent_ms = std::max(audio_extent_ms, r.source_out_ms);
+  }
+  return capture::export_::clip_planner::AudioSlots(ranges, audio_extent_ms);
+}
+
+// Open the renderer for the current ranges and wire the mid-stream failure
+// hook (D7). The callback fires on the RENDERER's thread: record-only — the
+// raw Impl* capture is safe because every audio_renderer.reset() (rebuild,
+// passthrough transition, Close) joins the renderer thread first, so the
+// callback can never outlive `impl`.
+void OpenPreviewAudioRendererLocked(PreviewEngine::Impl* impl) {
+  const auto slots = BuildPreviewAudioSlots(impl->clip_ranges);
+  // Audio separation (D9): a session whose sidecars passed the Open-time
+  // decode probe goes dual-pump (mic-only gain); everything else keeps the
+  // premix whole-track path. No cross-fallback — a probed sidecar that
+  // fails here failed on device/endpoint grounds the premix shares.
+  // Voice cleanup: play the RNNoise-cleaned mic when the background pass has
+  // produced it and the toggle is on; otherwise the raw sidecar. The system
+  // track is never cleaned (voice cleanup targets the mic alone).
+  const std::wstring& mic_for_renderer =
+      (impl->use_cleaned_mic && !impl->cleaned_mic_path.empty())
+          ? impl->cleaned_mic_path
+          : impl->mic_audio_path;
+  impl->audio_renderer =
+      impl->audio_separated
+          ? PreviewAudioRenderer::OpenSeparated(mic_for_renderer,
+                                                impl->system_audio_path, slots)
+          : PreviewAudioRenderer::Open(impl->video_path, slots);
+  if (impl->audio_renderer == nullptr) {
+    if (!impl->audio_open_failure_logged) {
+      impl->audio_open_failure_logged = true;
+      clingfy::bridge::NativeLogPublisher::Instance().Warn(
+          "Preview",
+          "edited-preview audio unavailable (no audio track, no output "
+          "device, or an incompatible endpoint format) — the stitched "
+          "preview stays silent video");
+    }
+    return;
+  }
+  impl->audio_renderer->SetOnRenderError([impl](HRESULT hr) {
+    impl->audio_render_error_hr.store(static_cast<std::int32_t>(hr),
+                                      std::memory_order_relaxed);
+    impl->audio_render_error_pending.store(true, std::memory_order_release);
+  });
+  // 4-7d: a renderer opened after the mix was set starts from the stored
+  // values (macOS pending-open override semantics). Identity defaults
+  // resolve to identity stages — a no-op. Normalize stays export-only on
+  // both platforms, so the separated resolver never sees a peak here.
+  if (impl->audio_separated) {
+    impl->audio_renderer->SetSeparatedGainStages(
+        capture::export_::ResolveSeparatedAudioStages(
+            impl->audio_gain_db, impl->audio_volume_percent,
+            /*normalize=*/false, /*target_loudness_dbfs=*/-16.0,
+            /*mic_peak_linear=*/0.0));
+  } else {
+    impl->audio_renderer->SetGainStages(
+        capture::export_::ResolveAudioGainStages(
+            impl->audio_gain_db, impl->audio_volume_percent,
+            /*normalize=*/false, /*target_loudness_dbfs=*/-16.0,
+            /*source_peak_linear=*/0.0));
+  }
+}
+
+// Rebuild the audio renderer in place for the current mic selection (voice
+// cleanup swaps between the raw and RNNoise-cleaned mic). If the session was
+// playing, resume audio at the current edited position so the master clock —
+// and the video pacer that chases it — keeps running across the swap instead
+// of stalling on a reset renderer.
+void RebuildPreviewAudioRendererLocked(PreviewEngine::Impl* impl) {
+  impl->audio_renderer.reset();
+  OpenPreviewAudioRendererLocked(impl);
+  if (impl->edited_playing && impl->audio_renderer != nullptr) {
+    impl->audio_renderer->Play(impl->edited_pos_ms);
+  }
+}
+
+// Per-session, per-GENERATION temp path for the RNNoise-cleaned preview mic.
+// Session-scoped so concurrent sessions never collide; the generation makes it
+// unique per worker, so a superseded worker never shares a path with the live
+// one (two same-strength workers would otherwise collide). `.mp4` so MF picks
+// the MPEG-4 container.
+std::filesystem::path PreviewCleanedMicPath(const std::string& session_id,
+                                            std::uint64_t generation) {
+  std::string name = "clingfy-preview-miccleanup-";
+  for (const char c : session_id) {
+    name += std::isalnum(static_cast<unsigned char>(c)) ? c : '_';
+  }
+  name += "-g" + std::to_string(generation) + ".mp4";
+  return std::filesystem::temp_directory_path() / name;
+}
+
+// D7 mid-stream failure recovery: one WARN naming the HRESULT, ONE rebuild
+// attempt (a fresh renderer re-Activates the default endpoint — the only way
+// back from AUDCLNT_E_DEVICE_INVALIDATED, e.g. a headset unplug or standby
+// resume), then logged silent-video degradation. Consumed on the platform
+// thread before Play/SetClips act on the renderer.
+void HandleAudioRenderErrorLocked(PreviewEngine::Impl* impl) {
+  if (!impl->audio_render_error_pending.exchange(false,
+                                                 std::memory_order_acquire)) {
+    return;
+  }
+  char detail[48];
+  std::snprintf(detail, sizeof(detail), " (hr=0x%08lX)",
+                static_cast<unsigned long>(static_cast<HRESULT>(
+                    impl->audio_render_error_hr.load(
+                        std::memory_order_relaxed))));
+  if (!impl->audio_rebuild_attempted) {
+    impl->audio_rebuild_attempted = true;
+    clingfy::bridge::NativeLogPublisher::Instance().Warn(
+        "Preview", std::string("edited-preview audio device lost") + detail +
+                       " — rebuilding the renderer once");
+    impl->audio_renderer.reset();
+    OpenPreviewAudioRendererLocked(impl);
+    if (impl->audio_renderer == nullptr) {
+      clingfy::bridge::NativeLogPublisher::Instance().Warn(
+          "Preview",
+          "edited-preview audio rebuild failed — silent video for this "
+          "session");
+    }
+    return;
+  }
+  clingfy::bridge::NativeLogPublisher::Instance().Warn(
+      "Preview", std::string("edited-preview audio failed again") + detail +
+                     " — silent video for this session");
+  impl->audio_renderer.reset();
 }
 
 }  // namespace
@@ -402,23 +640,127 @@ std::int64_t PreviewEngine::current_texture_id() const {
   return texture_id_;
 }
 
-OpenResult PreviewEngine::Open(const OpenArgs& args) {
-  // Truncate the log file at the top of every Open() so its tail
-  // localises the most recent crash if there is one.
+bool PreviewEngine::ShouldReconcileStaleSession(
+    bool running, const std::string& active_session_id,
+    const std::string& incoming_session_id) {
+  return running && !incoming_session_id.empty() &&
+         active_session_id != incoming_session_id;
+}
+
+bool PreviewEngine::ShouldInvalidateOnSystemResume(
+    bool running, const std::string& active_session_id) {
+  return running && !active_session_id.empty();
+}
+
+PreviewEngine::TextureSize PreviewEngine::ComputePreviewTextureSize(
+    int video_width_hint, int video_height_hint) {
+  if (video_width_hint <= 0 || video_height_hint <= 0) {
+    return {kTextureWidth, kTextureHeight};
+  }
+  const double aspect =
+      static_cast<double>(video_width_hint) / video_height_hint;
+  int w = kTextureWidth;
+  int h = static_cast<int>(kTextureWidth / aspect);
+  if (h > kTextureHeight) {
+    h = kTextureHeight;
+    w = static_cast<int>(kTextureHeight * aspect);
+  }
+  // Even-align (keeps any half-resolution math downstream sane); floor so a
+  // degenerate hint can never produce a zero-sized texture.
+  w &= ~1;
+  h &= ~1;
+  w = std::max(w, 16);
+  h = std::max(h, 16);
+  return {w, h};
+}
+
+bool PreviewEngine::ShouldRestartEditedPlaybackFromEnd(
+    std::int64_t edited_pos_ms, std::int64_t edited_duration_ms) {
+  // One-frame tolerance: the pacer stamps the LAST kept frame's edited time,
+  // which lands up to a frame short of the exact duration.
+  constexpr std::int64_t kToleranceMs = 40;
+  return edited_duration_ms > 0 &&
+         edited_pos_ms >= edited_duration_ms - kToleranceMs;
+}
+
+void PreviewEngine::OnSystemResumed() {
+  // Snapshot-then-release, same rule as Open()'s reconcile block: never
+  // publish (or do anything else that can re-enter the engine) while
+  // holding mutex_.
+  std::string session_snapshot;
   {
-    const std::wstring log_path = NativeLogPath();
-    if (!log_path.empty()) {
-      EnsureLogParentDir();
-      std::ofstream f(std::filesystem::path(log_path),
-                      std::ios::out | std::ios::trunc | std::ios::binary);
+    std::lock_guard<std::mutex> lock(mutex_);
+    if (shutting_down_.load() ||
+        !ShouldInvalidateOnSystemResume(running_.load(),
+                                        active_session_id_)) {
+      return;
+    }
+    session_snapshot = active_session_id_;
+    // Disarm the render loop's own reporter for this session: post-resume
+    // the frame server keeps failing every frame on the removed device, and
+    // ~90 failures (~1.5-3 s) later NoteRenderFailure would emit a loud
+    // PREVIEW_RENDER_ERROR + previewFailed for the very session Dart is
+    // silently rebuilding — the previewFailed handler then tears the phase
+    // down mid-rebuild and the user sees a blocking error instead of a
+    // silent recovery. Open() re-arms the latch for the rebuilt session, so
+    // the loud path stays available after recovery.
+    render_error_emitted_ = true;
+  }
+  clingfy::bridge::NativeLogPublisher::Instance().Warn(
+      "Preview",
+      "system resumed from standby with preview session " + session_snapshot +
+          " open — the D3D device may be invalid; asking Dart for a silent "
+          "rebuild (previewInvalidated)");
+  clingfy::bridge::PlayerEventPublisher::Instance().EmitPreviewInvalidated(
+      session_snapshot, "systemResume");
+}
+
+OpenResult PreviewEngine::Open(const OpenArgs& args) {
+  LogNative("Open() entered");
+
+  // Reconcile an orphaned session BEFORE taking mutex_ (Close() locks it
+  // internally — calling it under the lock would self-deadlock). Dart is the
+  // engine's single, serialized driver: an Open for a DIFFERENT session while
+  // one is running means the previous session's owner is gone — a Dart hot
+  // restart (the native process and this singleton survive it) or a
+  // watchdog-abandoned close. Refusing used to wedge every future preview
+  // until a full app restart; close the stale session and proceed instead
+  // (last-open-wins, matching macOS). Same-session re-entry keeps the
+  // idempotent reply below. No interleave risk: Open/Close are both
+  // dispatched on the platform thread.
+  {
+    std::string stale_session_id;
+    {
+      std::lock_guard<std::mutex> lock(mutex_);
+      if (ShouldReconcileStaleSession(running_.load(), active_session_id_,
+                                      args.session_id)) {
+        stale_session_id = active_session_id_;
+      }
+    }
+    if (!stale_session_id.empty()) {
+      clingfy::bridge::NativeLogPublisher::Instance().Warn(
+          "Preview",
+          "closing orphaned preview session " + stale_session_id +
+              " to open " + args.session_id +
+              " — the previous session's owner is gone (Dart hot restart or "
+              "an abandoned close)");
+      CloseArgs close_args;
+      close_args.session_id = stale_session_id;
+      Close(close_args);
     }
   }
-  LogNative("Open() entered");
+
   std::lock_guard<std::mutex> lock(mutex_);
 
+  // Polish: aspect-matched texture (see ComputePreviewTextureSize) — the
+  // compositor letterbox becomes an exact fit and Flutter's AspectRatio is
+  // the ONLY letterbox, so non-16:9 recordings no longer get double bars.
+  const TextureSize tex =
+      ComputePreviewTextureSize(args.video_width_hint, args.video_height_hint);
+
   OpenResult result;
-  result.width = kTextureWidth;
-  result.height = kTextureHeight;
+  result.width = tex.width;
+  result.height = tex.height;
 
   if (texture_registrar_ == nullptr) {
     LogNative("Open() abort: texture_registrar_ is null");
@@ -475,10 +817,11 @@ OpenResult PreviewEngine::Open(const OpenArgs& args) {
       }
       return result;
     }
-    // Different session id while already running — caller must Close
-    // the previous session first. Surfacing a real error here is
-    // safer than silently force-closing the previous session out
-    // from under whichever Dart layer still holds its texture id.
+    // Different session id while already running. The orphan reconcile at
+    // the top of Open() closes a stale session before we get here, so this
+    // is a pure backstop — reachable only if that close failed to stop the
+    // engine. Surfacing an error beats silently proceeding into a corrupt
+    // double-session state.
     LogNative("Open() abort: another session is already active");
     result.error =
         "PreviewEngine already has an active session — Close it first.";
@@ -490,6 +833,21 @@ OpenResult PreviewEngine::Open(const OpenArgs& args) {
   impl_ = std::make_unique<Impl>();
   impl_->video_path = args.video_path;
   impl_->cursor_path = args.cursor_path;
+  // Audio separation (D9): run the ONE decode probe per sidecar now, so
+  // every later renderer (re)open — including the error-rebuild path —
+  // reuses the same verdict. An undecodable sidecar degrades to the premix
+  // (D7); a few ms of MF reader open is fine on this path (Open already
+  // builds a device + reader).
+  if (!args.mic_audio_path.empty() &&
+      capture::export_::ProbeDecodableAudio(args.mic_audio_path)) {
+    impl_->mic_audio_path = args.mic_audio_path;
+  }
+  if (!args.system_audio_path.empty() &&
+      capture::export_::ProbeDecodableAudio(args.system_audio_path)) {
+    impl_->system_audio_path = args.system_audio_path;
+  }
+  impl_->audio_separated =
+      !impl_->mic_audio_path.empty() || !impl_->system_audio_path.empty();
   UINT flags = D3D11_CREATE_DEVICE_BGRA_SUPPORT;
   const D3D_FEATURE_LEVEL levels[] = {D3D_FEATURE_LEVEL_11_1,
                                       D3D_FEATURE_LEVEL_11_0,
@@ -592,7 +950,7 @@ OpenResult PreviewEngine::Open(const OpenArgs& args) {
 
   // ---- 2. Allocate the shared texture. ----
   LogNative("Allocating D3D11_RESOURCE_MISC_SHARED texture...");
-  const auto td = MakeSharedTextureDesc(kTextureWidth, kTextureHeight);
+  const auto td = MakeSharedTextureDesc(tex.width, tex.height);
   hr = impl_->d3d_device->CreateTexture2D(
       &td, nullptr, impl_->shared_texture.ReleaseAndGetAddressOf());
   if (FAILED(hr)) {
@@ -665,10 +1023,10 @@ OpenResult PreviewEngine::Open(const OpenArgs& args) {
   //         Flutter every callback (texture size doesn't change).
   impl_->descriptor.struct_size = sizeof(FlutterDesktopGpuSurfaceDescriptor);
   impl_->descriptor.handle = impl_->shared_handle;
-  impl_->descriptor.width = static_cast<size_t>(kTextureWidth);
-  impl_->descriptor.height = static_cast<size_t>(kTextureHeight);
-  impl_->descriptor.visible_width = static_cast<size_t>(kTextureWidth);
-  impl_->descriptor.visible_height = static_cast<size_t>(kTextureHeight);
+  impl_->descriptor.width = static_cast<size_t>(tex.width);
+  impl_->descriptor.height = static_cast<size_t>(tex.height);
+  impl_->descriptor.visible_width = static_cast<size_t>(tex.width);
+  impl_->descriptor.visible_height = static_cast<size_t>(tex.height);
   impl_->descriptor.format = kFlutterDesktopPixelFormatBGRA8888;
   impl_->descriptor.release_callback = nullptr;
   impl_->descriptor.release_context = nullptr;
@@ -691,10 +1049,17 @@ OpenResult PreviewEngine::Open(const OpenArgs& args) {
   if (!args.camera_path.empty()) {
     impl_->camera_renderer = clingfy::preview::PreviewCameraRenderer::Create(
         args.camera_path, args.camera_start_offset_ms);
-    LogNative(impl_->camera_renderer != nullptr
-                  ? "PreviewCameraRenderer: created for camera/raw.mov"
-                  : "PreviewCameraRenderer: create FAILED (preview stays "
-                    "camera-free)");
+    if (impl_->camera_renderer != nullptr) {
+      LogNative("PreviewCameraRenderer: created for camera/raw.mov");
+    } else {
+      // WARN (not the DEBUG breadcrumb): Open() still succeeds, so this is
+      // the only trace explaining why the editor preview shows no camera
+      // bubble while the export would include it.
+      clingfy::bridge::NativeLogPublisher::Instance().Warn(
+          "Preview",
+          "PreviewCameraRenderer create failed — preview stays camera-free "
+          "though the project has a camera track");
+    }
   }
 
   // ---- 6. Register the external texture. ----
@@ -726,8 +1091,8 @@ OpenResult PreviewEngine::Open(const OpenArgs& args) {
     return result;
   }
   texture_id_ = tex_id;
-  texture_width_ = kTextureWidth;
-  texture_height_ = kTextureHeight;
+  texture_width_ = tex.width;
+  texture_height_ = tex.height;
   egl_extensions_.clear();
   last_error_.clear();
 
@@ -860,6 +1225,9 @@ OpenResult PreviewEngine::Open(const OpenArgs& args) {
   // already false at this point — set by the MediaPlayer setup block
   // above.
   heartbeat_thread_ = std::thread([this] { HeartbeatLoop(); });
+  // Step 4-3b: the edited-playback pacer. Idle until an edited session plays;
+  // joined in Close() before the impl_ teardown, exactly like the heartbeat.
+  pacer_thread_ = std::thread([this] { PacerLoop(); });
 
   LogNative("Open() returning success");
 
@@ -921,6 +1289,16 @@ void PreviewEngine::HandleVideoFrame(
     return;
   }
 
+  // Editing port (clips, 4-3): in stitched-preview mode the edited render path
+  // owns the shared texture. The MediaPlayer is paused, but a frame can already
+  // be in flight — drop it so it cannot overwrite the edited frame with uncut
+  // content. (Guard here, before timing_total.BeginFrame, to avoid unbalancing
+  // the frame timer.)
+  if (impl->edited_mode) {
+    impl->dropped_frames.fetch_add(1, std::memory_order_relaxed);
+    return;
+  }
+
   // Step 5.5: resolve the first unresolved seek (if any). Stage 1D
   // semantics — the QPC delta between SeekTo() and "next frame" is the
   // seek latency. Multiple SeekTo() calls between frames stack up;
@@ -950,10 +1328,12 @@ void PreviewEngine::HandleVideoFrame(
   impl->last_video_width.store(vw);
   impl->last_video_height.store(vh);
 
-  if (FAILED(impl->compositor.EnsureResources(impl->d3d_device.Get(),
-                                              impl->d2d_context.Get(),
-                                              vw, vh))) {
+  if (const HRESULT ensure_hr = impl->compositor.EnsureResources(
+          impl->d3d_device.Get(), impl->d2d_context.Get(), vw, vh);
+      FAILED(ensure_hr)) {
     impl->dropped_frames.fetch_add(1, std::memory_order_relaxed);
+    impl->last_render_failure_hr.store(static_cast<std::int32_t>(ensure_hr),
+                                       std::memory_order_relaxed);
     NoteRenderFailure(impl, "ensure_resources");
     impl->timing_total.EndFrame();
     return;
@@ -963,8 +1343,10 @@ void PreviewEngine::HandleVideoFrame(
   impl->timing_copy.BeginFrame();
   try {
     sender.CopyFrameToVideoSurface(impl->compositor.winrt_video_surface());
-  } catch (winrt::hresult_error const&) {
+  } catch (winrt::hresult_error const& e) {
     impl->dropped_frames.fetch_add(1, std::memory_order_relaxed);
+    impl->last_render_failure_hr.store(static_cast<std::int32_t>(e.code()),
+                                       std::memory_order_relaxed);
     NoteRenderFailure(impl, "frame_copy");
     impl->timing_copy.EndFrame();
     impl->timing_total.EndFrame();
@@ -972,22 +1354,42 @@ void PreviewEngine::HandleVideoFrame(
   }
   impl->timing_copy.EndFrame();
 
+  // ---- render + handoff (shared with the edited stitched path, 4-3) ----
+  // The frame is now in the compositor's video surface; the position/duration
+  // reported to Dart are the RAW source values on this (MediaPlayer) path.
+  const bool need_playback_us = impl->cursor_mode || impl->camera_renderer;
+  const std::int64_t playback_us =
+      need_playback_us ? CurrentPlaybackUs(sender) : -1;
+  const std::int64_t pos_us = CurrentPlaybackUs(sender);
+  std::int64_t dur_us = 0;
+  try {
+    dur_us = std::chrono::duration_cast<std::chrono::microseconds>(
+                 sender.PlaybackSession().NaturalDuration())
+                 .count();
+  } catch (winrt::hresult_error const&) {
+    dur_us = 0;
+  }
+  ComposeAndHandoffLocked(impl, playback_us, pos_us > 0 ? pos_us / 1000 : 0,
+                          dur_us > 0 ? dur_us / 1000 : 0);
+}
+
+void PreviewEngine::ComposeAndHandoffLocked(Impl* impl,
+                                            std::int64_t playback_us,
+                                            std::int64_t emit_pos_ms,
+                                            std::int64_t emit_dur_ms) {
   // ---- render bucket ----
   // The shared texture IS the destination — no slider strip. Letterbox
   // the natural video into the full canvas.
   const D2D1_RECT_F dest = clingfy::preview::LetterboxRect(
-      static_cast<UINT>(kTextureWidth), static_cast<UINT>(kTextureHeight),
+      static_cast<UINT>(texture_width_), static_cast<UINT>(texture_height_),
       impl->compositor.video_width(), impl->compositor.video_height());
-  const bool need_playback_us = impl->cursor_mode || impl->camera_renderer;
-  const std::int64_t playback_us =
-      need_playback_us ? CurrentPlaybackUs(sender) : -1;
 
   // Phase 9.6: advance/seek the camera frame BEFORE BeginDraw (the painter's
   // shadow bake does SetTarget round-trips, illegal inside BeginDraw).
   if (impl->camera_renderer) {
     impl->camera_renderer->PrepareAndAdvance(
-        impl->d2d_context.Get(), static_cast<UINT>(kTextureWidth),
-        static_cast<UINT>(kTextureHeight), playback_us);
+        impl->d2d_context.Get(), static_cast<UINT>(texture_width_),
+        static_cast<UINT>(texture_height_), playback_us);
   }
 
   impl->timing_render.BeginFrame();
@@ -1014,6 +1416,8 @@ void PreviewEngine::HandleVideoFrame(
     // emits PREVIEW_RENDER_ERROR after a run of consecutive failures
     // instead of freezing the image under a moving playhead forever.
     impl->dropped_frames.fetch_add(1, std::memory_order_relaxed);
+    impl->last_render_failure_hr.store(static_cast<std::int32_t>(end_hr),
+                                       std::memory_order_relaxed);
     NoteRenderFailure(impl, "end_draw");
     impl->timing_total.EndFrame();
     return;
@@ -1063,24 +1467,13 @@ void PreviewEngine::HandleVideoFrame(
         session_snapshot, project_path_snapshot);
   }
   if (!session_snapshot.empty() && !shutting_down_.load()) {
-    const std::int64_t pos_us = CurrentPlaybackUs(sender);
-    std::int64_t dur_us = 0;
-    try {
-      const auto d = sender.PlaybackSession().NaturalDuration();
-      dur_us =
-          std::chrono::duration_cast<std::chrono::microseconds>(d).count();
-    } catch (winrt::hresult_error const&) {
-      dur_us = 0;
-    }
-    const std::int64_t pos_ms = pos_us > 0 ? pos_us / 1000 : 0;
-    const std::int64_t dur_ms = dur_us > 0 ? dur_us / 1000 : 0;
     last_frame_ms_.store(
         std::chrono::duration_cast<std::chrono::milliseconds>(
             std::chrono::steady_clock::now().time_since_epoch())
             .count(),
         std::memory_order_relaxed);
     clingfy::bridge::PlayerEventPublisher::Instance().EmitPlayerTick(
-        session_snapshot, pos_ms, dur_ms);
+        session_snapshot, emit_pos_ms, emit_dur_ms);
   }
 }
 
@@ -1200,8 +1593,8 @@ void PreviewEngine::HandleMediaFailed(
     project_path_snapshot = active_project_path_;
   }
   if (!session_snapshot.empty()) {
-    // Phase 10.4: over the log bridge too — the engine's own LogNative
-    // side file never reaches JSONL/Sentry.
+    // ERROR (not the DEBUG LogNative breadcrumb) so release users' logs and
+    // Sentry see the failure regardless of the verbose toggle.
     clingfy::bridge::NativeLogPublisher::Instance().Error(
         "Preview", "MediaFailed (" + code + "): " + message);
     clingfy::bridge::PlayerEventPublisher::Instance().EmitPlayerError(
@@ -1241,36 +1634,55 @@ void PreviewEngine::HeartbeatLoop() {
       continue;
     }
 
-    // Snapshot the session id + the MediaPlayer pointer under the
-    // mutex; release the lock before touching the player (its API
-    // is safe from any thread).
+    // Snapshot the session id + the MediaPlayer pointer + impl under the
+    // mutex; release the lock before touching the player (its API is safe from
+    // any thread). Close joins this thread before destroying impl_, so the raw
+    // impl pointer stays valid for this iteration.
     std::string session_snapshot;
     winrt_playback::MediaPlayer player_snapshot{nullptr};
+    Impl* impl = nullptr;
     {
       std::lock_guard<std::mutex> lock(mutex_);
       session_snapshot = active_session_id_;
       if (impl_) {
         player_snapshot = impl_->player;
+        impl = impl_.get();
       }
     }
-    if (session_snapshot.empty() || player_snapshot == nullptr) continue;
+    if (session_snapshot.empty() || impl == nullptr) continue;
 
     std::int64_t pos_ms = 0;
     std::int64_t dur_ms = 0;
-    try {
-      const auto session = player_snapshot.PlaybackSession();
-      const auto pos =
-          std::chrono::duration_cast<std::chrono::microseconds>(
-              session.Position())
-              .count();
-      const auto dur =
-          std::chrono::duration_cast<std::chrono::microseconds>(
-              session.NaturalDuration())
-              .count();
-      pos_ms = pos > 0 ? pos / 1000 : 0;
-      dur_ms = dur > 0 ? dur / 1000 : 0;
-    } catch (winrt::hresult_error const&) {
-      continue;  // Skip this beat; next loop iteration retries.
+    // Editing port (clips, 4-3b): in stitched mode the MediaPlayer is paused and
+    // its Position/NaturalDuration are the RAW (uncut) source — report the EDITED
+    // playhead + edited duration instead (guarded by render_mutex).
+    bool edited = false;
+    {
+      std::lock_guard<std::mutex> render_lock(impl->render_mutex);
+      if (impl->edited_mode) {
+        edited = true;
+        pos_ms = impl->edited_pos_ms;
+        dur_ms = capture::export_::clip_planner::EditedDurationMs(
+            impl->clip_ranges);
+      }
+    }
+    if (!edited) {
+      if (player_snapshot == nullptr) continue;
+      try {
+        const auto session = player_snapshot.PlaybackSession();
+        const auto pos =
+            std::chrono::duration_cast<std::chrono::microseconds>(
+                session.Position())
+                .count();
+        const auto dur =
+            std::chrono::duration_cast<std::chrono::microseconds>(
+                session.NaturalDuration())
+                .count();
+        pos_ms = pos > 0 ? pos / 1000 : 0;
+        dur_ms = dur > 0 ? dur / 1000 : 0;
+      } catch (winrt::hresult_error const&) {
+        continue;  // Skip this beat; next loop iteration retries.
+      }
     }
 
     clingfy::bridge::PlayerEventPublisher::Instance().EmitPlayerTick(
@@ -1392,10 +1804,28 @@ void PreviewEngine::NoteRenderFailure(Impl* impl, const char* stage) {
       std::string("The preview stopped rendering (stage: ") + stage +
       "). Close and reopen the preview; the recording file itself is "
       "unaffected.";
-  LogNative(("PREVIEW_RENDER_ERROR emitted: " + message).c_str());
+  // Fold the last per-frame HRESULT (+ the device-removed reason, when the
+  // device is gone) into the log line — it discriminates device loss (Modern
+  // Standby resume / TDR) from out-of-memory, which the stage name alone
+  // cannot.
+  const HRESULT last_hr = static_cast<HRESULT>(
+      impl->last_render_failure_hr.load(std::memory_order_relaxed));
+  const HRESULT removed_reason =
+      impl->d3d_device ? impl->d3d_device->GetDeviceRemovedReason() : S_OK;
+  char detail[96];
+  if (removed_reason != S_OK) {
+    std::snprintf(detail, sizeof(detail),
+                  " (hr=0x%08lX, device removed, reason=0x%08lX)",
+                  static_cast<unsigned long>(last_hr),
+                  static_cast<unsigned long>(removed_reason));
+  } else {
+    std::snprintf(detail, sizeof(detail), " (hr=0x%08lX)",
+                  static_cast<unsigned long>(last_hr));
+  }
+  LogNative(("PREVIEW_RENDER_ERROR emitted: " + message + detail).c_str());
   clingfy::bridge::NativeLogPublisher::Instance().Error(
-      "Preview", "render loop died (" + std::string(stage) +
-                     "); emitting PREVIEW_RENDER_ERROR");
+      "Preview", "render loop died (" + std::string(stage) + ")" + detail +
+                     "; emitting PREVIEW_RENDER_ERROR");
   clingfy::bridge::PlayerEventPublisher::Instance().EmitPlayerError(
       session_snapshot, clingfy::bridge::error::kPreviewRenderError, message);
   clingfy::bridge::WorkflowEventPublisher::Instance().EmitPreviewFailed(
@@ -1454,6 +1884,58 @@ void PreviewEngine::Close(const CloseArgs& args) {
     heartbeat_thread_.join();
   }
   LogNative("Close() heartbeat thread joined");
+
+  // Step 4-3b: join the pacer thread before touching impl_ (same reason as the
+  // heartbeat) — it holds a raw impl_ pointer + render_mutex per iteration, so
+  // it must be fully stopped before the impl_ move/destroy below. shutting_down_
+  // is already set, so its next loop check exits; the join waits out the current
+  // iteration (during which impl_ is still alive).
+  if (pacer_thread_.joinable()) {
+    pacer_thread_.join();
+  }
+  LogNative("Close() pacer thread joined");
+
+  // Voice cleanup (Phase 4): signal + join any in-flight RNNoise worker before
+  // impl_ is torn down — the worker holds a raw impl_ pointer via its cancel
+  // flag. The cancel makes ProduceCleanedMic return between samples, so the
+  // join is fast even mid-denoise. Grabbed under mutex_ but joined outside it
+  // (the worker never takes mutex_, and the pacer/heartbeat are already
+  // stopped, so nothing else touches these here). The temp is deleted AFTER
+  // the renderer reset below — the mic pump holds the cleaned file open (MF
+  // opens it without FILE_SHARE_DELETE), so removing it first would fail.
+  {
+    Impl* impl = nullptr;
+    {
+      std::lock_guard<std::mutex> lock(mutex_);
+      impl = impl_.get();
+    }
+    if (impl != nullptr) {
+      impl->cleanup_cancel.store(true);
+      if (impl->cleanup_thread.joinable()) {
+        impl->cleanup_thread.join();
+      }
+    }
+  }
+  LogNative("Close() voice-cleanup worker joined");
+
+  // 4-7c: stop + join the audio renderer's thread HERE, next to the pacer
+  // join (design D9) — explicitly, before impl_ is moved into the async
+  // texture-unregister teardown, so the WASAPI stream never outlives the
+  // session and the join runs on this (platform) thread, not whichever
+  // thread Flutter's unregister callback lands on. The pacer and platform
+  // handlers are stopped/serialized at this point, so the reset needs no
+  // render_mutex.
+  {
+    std::lock_guard<std::mutex> lock(mutex_);
+    if (impl_ != nullptr) {
+      impl_->audio_renderer.reset();
+      // Now the mic pump has released the cleaned temp — safe to delete.
+      if (!impl_->cleaned_mic_path.empty()) {
+        std::error_code ec;
+        std::filesystem::remove(impl_->cleaned_mic_path, ec);
+      }
+    }
+  }
 
   if (!closing_session_id.empty()) {
     clingfy::bridge::WorkflowEventPublisher::Instance().EmitPreviewClosed(
@@ -1718,14 +2200,61 @@ void PreviewEngine::Close(const CloseArgs& args) {
 
 void PreviewEngine::Play(const std::string& session_id) {
   winrt_playback::MediaPlayer player_snapshot{nullptr};
+  Impl* impl = nullptr;
   {
     std::lock_guard<std::mutex> lock(mutex_);
     if (!running_.load() || session_id != active_session_id_) {
       return;  // Stale or pre-Open call — silent no-op.
     }
-    if (impl_) player_snapshot = impl_->player;
+    if (impl_) {
+      player_snapshot = impl_->player;
+      impl = impl_.get();
+    }
   }
-  if (player_snapshot == nullptr) return;
+  if (player_snapshot == nullptr || impl == nullptr) return;
+  // Editing port (clips, 4-3b/4-4): for an edited session, drive continuous
+  // playback from the pacer thread — NEVER resume the MediaPlayer (it would
+  // decode the uncut source; its frames are dropped by the edited-mode guard and
+  // any audio would be uncut). Both cut (forward-decode) and reorder (per-range
+  // seeks) play.
+  {
+    std::lock_guard<std::mutex> render_lock(impl->render_mutex);
+    if (impl->edited_mode) {
+      namespace clip = capture::export_::clip_planner;
+      // 4-7c/D7: consume a mid-stream audio failure BEFORE acting on the
+      // renderer (one WARN + one rebuild; degrades to logged silent video).
+      HandleAudioRenderErrorLocked(impl);
+      // 4-5: Play at the edited end restarts from 0 (macOS IsAtEnd parity) —
+      // otherwise the pacer EOSes immediately and the button feels dead.
+      if (ShouldRestartEditedPlaybackFromEnd(
+              impl->edited_pos_ms, clip::EditedDurationMs(impl->clip_ranges))) {
+        impl->edited_pos_ms = 0;
+      }
+      // Reorder needs the per-range cursor primed from the current position.
+      if (!clip::IsSourceMonotonic(impl->clip_ranges)) {
+        PrimeReorderStateLocked(impl, impl->edited_pos_ms);
+      }
+      // Render the current frame (re-positions the reader), then arm the pacer —
+      // only if the render succeeded, so a soft reader/decode failure leaves the
+      // pacer idle rather than busy-polling.
+      impl->edited_playing = RenderEditedFrameLocked(impl, impl->edited_pos_ms);
+      // 4-7c: start the sound at the same edited position (Play always
+      // re-primes the renderer, dropping any stale buffered audio). Only when
+      // the video armed — a dead video path must not play sound alone.
+      if (impl->edited_playing && impl->audio_renderer != nullptr) {
+        impl->audio_renderer->Play(impl->edited_pos_ms);
+      }
+      clingfy::bridge::NativeLogPublisher::Instance().Debug(
+          "Preview",
+          std::string("Play (stitched, reorder=") +
+              (clip::IsSourceMonotonic(impl->clip_ranges) ? "false" : "true") +
+              ") from edited " + std::to_string(impl->edited_pos_ms) +
+              "ms; pacer armed=" + (impl->edited_playing ? "true" : "false") +
+              ", audio=" +
+              (impl->audio_renderer != nullptr ? "on" : "off"));
+      return;
+    }
+  }
   try {
     player_snapshot.Play();
   } catch (winrt::hresult_error const&) {
@@ -1736,14 +2265,34 @@ void PreviewEngine::Play(const std::string& session_id) {
 
 void PreviewEngine::Pause(const std::string& session_id) {
   winrt_playback::MediaPlayer player_snapshot{nullptr};
+  Impl* impl = nullptr;
   {
     std::lock_guard<std::mutex> lock(mutex_);
     if (!running_.load() || session_id != active_session_id_) {
       return;
     }
-    if (impl_) player_snapshot = impl_->player;
+    if (impl_) {
+      player_snapshot = impl_->player;
+      impl = impl_.get();
+    }
   }
-  if (player_snapshot == nullptr) return;
+  if (player_snapshot == nullptr || impl == nullptr) return;
+  // Editing port (clips, 4-3b): pausing an edited session stops the pacer; the
+  // MediaPlayer is already paused, so leave it be.
+  {
+    std::lock_guard<std::mutex> render_lock(impl->render_mutex);
+    if (impl->edited_mode) {
+      impl->edited_playing = false;
+      // 4-7c: freeze the sound with the frame.
+      if (impl->audio_renderer != nullptr) {
+        impl->audio_renderer->Pause();
+      }
+      clingfy::bridge::NativeLogPublisher::Instance().Debug(
+          "Preview", "Pause (stitched) at edited " +
+                         std::to_string(impl->edited_pos_ms) + "ms");
+      return;
+    }
+  }
   try {
     player_snapshot.Pause();
   } catch (winrt::hresult_error const&) {
@@ -1772,6 +2321,32 @@ void PreviewEngine::SeekTo(const std::string& session_id,
   // briefly). MediaPlayer accepts any TimeSpan but Position < 0 is
   // not meaningful for preview.
   if (position_ms < 0) position_ms = 0;
+
+  // Editing port (clips, 4-3): in stitched-preview mode a scrub is an EDITED-
+  // time position — render that edited frame from the reader instead of seeking
+  // the (paused) MediaPlayer. Separate render_mutex scope so the fall-through
+  // MediaPlayer path below can take it again without a recursive lock.
+  {
+    std::lock_guard<std::mutex> render_lock(impl_snapshot->render_mutex);
+    if (shutting_down_.load()) return;
+    if (impl_snapshot->edited_mode) {
+      namespace clip = capture::export_::clip_planner;
+      RenderEditedFrameLocked(impl_snapshot, position_ms);
+      // 4-4: re-prime the reorder pacer cursor so a scrub while playing a
+      // reordered timeline continues from the scrubbed range.
+      if (!clip::IsSourceMonotonic(impl_snapshot->clip_ranges)) {
+        PrimeReorderStateLocked(impl_snapshot, position_ms);
+      }
+      // 4-7c: a scrub WHILE playing restarts the sound at the new position
+      // (Play re-primes and drops the stale buffer); while paused the
+      // renderer stays idle — the next Play carries the fresh position.
+      if (impl_snapshot->edited_playing &&
+          impl_snapshot->audio_renderer != nullptr) {
+        impl_snapshot->audio_renderer->Play(position_ms);
+      }
+      return;
+    }
+  }
 
   // Capture call_qpc BEFORE issuing the seek so the next-frame
   // resolution measures the round-trip from "user-issued seek" to
@@ -1824,6 +2399,50 @@ CameraNudgePlan ResolveCameraNudgeTarget(std::int64_t current_ms,
   return plan;
 }
 
+namespace {
+
+// Reflect an editor change immediately in a PAUSED preview. The compositor
+// only re-runs on a frame-server callback, which a paused MediaPlayer does
+// not emit, so without this a camera/color edit would not appear until the
+// user pressed play. Seeking forces the frame server to re-deliver a frame,
+// recompositing with the new settings. The seek target comes from
+// ResolveCameraNudgeTarget (see preview_engine.h): alternating between an
+// anchor and its 1ms neighbor keeps the seek un-coalescable while bounding
+// total drift to 1ms — under one frame at any fps, so the same image is
+// shown — no matter how many edits a drag produces. No-op while playing —
+// the next natural frame already picks the change up and nudging would
+// stutter. Best-effort: a failed nudge just defers the change to the next
+// frame. Shared by SetCameraComposition and SetColorGrade; `mutex` guards
+// `nudge_anchor_ms` (the engine's mutex_ + camera_nudge_anchor_ms_).
+void NudgePausedPreviewPlayer(winrt_playback::MediaPlayer player_snapshot,
+                              std::mutex& mutex,
+                              std::int64_t& nudge_anchor_ms) {
+  if (player_snapshot == nullptr) {
+    return;
+  }
+  try {
+    auto session = player_snapshot.PlaybackSession();
+    if (session.PlaybackState() !=
+        winrt_playback::MediaPlaybackState::Playing) {
+      const auto cur_ms = std::chrono::duration_cast<std::chrono::milliseconds>(
+                              session.Position())
+                              .count();
+      CameraNudgePlan plan;
+      {
+        std::lock_guard<std::mutex> lock(mutex);
+        plan = ResolveCameraNudgeTarget(cur_ms, nudge_anchor_ms);
+        nudge_anchor_ms = plan.anchor_ms;
+      }
+      session.Position(std::chrono::duration_cast<winrt_foundation::TimeSpan>(
+          std::chrono::milliseconds(plan.target_ms)));
+    }
+  } catch (winrt::hresult_error const&) {
+    // Best-effort; the change will appear on the next frame instead.
+  }
+}
+
+}  // namespace
+
 void PreviewEngine::SetCameraComposition(
     const std::string& session_id,
     const PreviewCameraComposition& composition) {
@@ -1848,40 +2467,934 @@ void PreviewEngine::SetCameraComposition(
     impl_->camera_renderer->SetComposition(composition);
     player_snapshot = impl_->player;
   }
+  NudgePausedPreviewPlayer(std::move(player_snapshot), mutex_,
+                           camera_nudge_anchor_ms_);
+}
 
-  // Reflect the change immediately in a PAUSED preview. The compositor only
-  // re-runs on a frame-server callback, which a paused MediaPlayer does not emit,
-  // so without this the new camera settings (placement, shape, opacity, border,
-  // shadow, mirror, chroma) would not appear until the user pressed play. Seeking
-  // forces the frame server to re-deliver a frame, recompositing with the new
-  // settings. The seek target comes from ResolveCameraNudgeTarget (see
-  // preview_engine.h): alternating between an anchor and its 1ms neighbor keeps
-  // the seek un-coalescable while bounding total drift to 1ms — under one frame
-  // at any fps, so the same image is shown — no matter how many camera edits a
-  // drag produces. No-op while playing — the next natural frame already picks
-  // the change up and nudging would stutter. Best-effort: a failed nudge just
-  // defers the change to the next frame.
-  if (player_snapshot == nullptr) {
+void PreviewEngine::SetColorGrade(
+    const std::string& session_id,
+    const capture::export_::color::ColorGrade& grade) {
+  winrt_playback::MediaPlayer player_snapshot{nullptr};
+  {
+    std::lock_guard<std::mutex> lock(mutex_);
+    // Same stale-session + snapshot-then-release discipline as
+    // SetCameraComposition above.
+    if (!session_id.empty() && session_id != active_session_id_) {
+      return;
+    }
+    if (impl_ == nullptr) {
+      return;
+    }
+    // SetColorGrade is internally synchronized (the compositor's grade
+    // mutex) and does no D2D work here — the effect chain (re)builds on the
+    // frame thread at the next composited frame.
+    impl_->compositor.SetColorGrade(grade);
+    player_snapshot = impl_->player;
+  }
+  NudgePausedPreviewPlayer(std::move(player_snapshot), mutex_,
+                           camera_nudge_anchor_ms_);
+}
+
+bool PreviewEngine::RangesAreEdited(
+    const std::vector<capture::export_::clip_planner::ClipKeptRange>& ranges) {
+  namespace clip = capture::export_::clip_planner;
+  // Mirror the export ClassifyClipEdit has-real-edits test: coalesce source-
+  // adjacent ranges, then a real edit is >1 window, or a single window that does
+  // not start at source 0 (a head-trim). A split with nothing deleted coalesces
+  // back to one full-from-0 window and stays passthrough.
+  const auto coalesced = clip::Coalesce(ranges);
+  return coalesced.size() > 1 ||
+         (coalesced.size() == 1 && coalesced[0].source_in_ms > 0);
+}
+
+bool PreviewEngine::RenderEditedFrameLocked(Impl* impl,
+                                            std::int64_t edited_ms) {
+  namespace clip = capture::export_::clip_planner;
+  if (impl == nullptr || impl->clip_ranges.empty()) {
+    return false;
+  }
+  const std::int64_t edited_dur = clip::EditedDurationMs(impl->clip_ranges);
+  if (edited_ms < 0) edited_ms = 0;
+  if (edited_dur > 0 && edited_ms > edited_dur) edited_ms = edited_dur;
+  const std::int64_t source_ms =
+      clip::SourceMsForEditedMs(edited_ms, impl->clip_ranges);
+
+  if (impl->edited_reader == nullptr) {
+    impl->edited_reader = PreviewSourceReader::Create(impl->video_path);
+    if (impl->edited_reader == nullptr) {
+      // A real failure the user should see: the stitched preview can't open its
+      // own reader on the recording, so an edited project would show nothing.
+      clingfy::bridge::NativeLogPublisher::Instance().Error(
+          "Preview",
+          "stitched preview reader failed to open the recording — the edited "
+          "preview will be blank (the export is unaffected)");
+      return false;  // soft-fail: nothing to draw, MediaPlayer path unaffected
+    }
+  }
+  PreviewSourceReader* reader = impl->edited_reader.get();
+
+  // One seek to the target source window, then decode forward to the frame at
+  // or after it (MF lands on the prior keyframe; discard the lead-in). A single
+  // seek per scrub / clip edit — NOT a per-frame seek during playback (§5.4).
+  reader->SeekTo(source_ms);
+  // Every transport reposition resets the pacer's gap-seek lead-in floor —
+  // a scrub BACKWARD must be allowed to re-emit earlier frames — and the
+  // chase state (a fresh position starts at parity with the sound).
+  impl->edited_min_source_ms = source_ms;
+  impl->stale_streak = 0;
+  impl->awaiting_chase_frame = false;
+  impl->last_chase_seek = {};  // a fresh position starts at parity
+  std::vector<BYTE> bgra;
+  bool have_frame = false;
+  for (int guard = 0; guard < 600; ++guard) {
+    std::vector<BYTE> next;
+    std::int64_t next_ts = 0;
+    if (!reader->ReadNextFrame(&next, &next_ts)) {
+      break;  // EOS — keep the last frame decoded before it
+    }
+    bgra = std::move(next);
+    have_frame = true;
+    if (next_ts >= source_ms) {
+      break;  // reached the target frame
+    }
+  }
+  if (!have_frame) {
+    return false;
+  }
+
+  if (const HRESULT ensure_hr = impl->compositor.EnsureResources(
+          impl->d3d_device.Get(), impl->d2d_context.Get(), reader->width(),
+          reader->height());
+      FAILED(ensure_hr)) {
+    impl->last_render_failure_hr.store(static_cast<std::int32_t>(ensure_hr),
+                                       std::memory_order_relaxed);
+    NoteRenderFailure(impl, "edited_ensure_resources");
+    return false;
+  }
+  impl->last_video_width.store(reader->width());
+  impl->last_video_height.store(reader->height());
+  // Upload the decoded BGRA straight into the compositor's video texture — the
+  // same seam the headless compositor tests fill (no WinRT frame surface).
+  impl->d3d_context->UpdateSubresource(impl->compositor.video_texture(), 0,
+                                       nullptr, bgra.data(),
+                                       reader->width() * 4u, 0);
+
+  impl->edited_pos_ms = edited_ms;
+  // Overlays (cursor / zoom / camera) are SOURCE-keyed, so pass the frame's
+  // source time; Dart sees the EDITED position + the edited duration.
+  impl->timing_total.BeginFrame();
+  ComposeAndHandoffLocked(impl, source_ms * 1000, edited_ms, edited_dur);
+  return true;
+}
+
+PreviewEngine::PacerChaseDecision PreviewEngine::DecidePacerChase(
+    const PacerChaseInput& in) {
+  PacerChaseDecision out;
+
+  // The frame we repositioned to — show it, whatever the clock says.
+  if (in.awaiting_chase_frame) {
+    out.action = PacerChaseAction::kEmit;
+    out.next_stale_streak = 0;
+    return out;
+  }
+  // No sound: the pacer free-runs (pre-4-7c behavior, byte-identical).
+  if (in.audio_edited_ms < 0) {
+    out.action = PacerChaseAction::kEmit;
+    out.next_stale_streak = 0;
+    return out;
+  }
+  // Within a frame budget of the sound — in sync.
+  if (in.frame_edited_ms >= in.audio_edited_ms - kAudioChaseSlackMs) {
+    out.action = PacerChaseAction::kEmit;
+    out.next_stale_streak = 0;
+    return out;
+  }
+
+  // Behind the sound. A big enough trail warrants a reposition — but never
+  // into the tail (the edited end maps one-past-the-last-kept-frame, which
+  // would floor out every remaining frame), and never twice in a row
+  // without a frame in between (the lead-in decode would starve forever).
+  const std::int64_t deficit = in.audio_edited_ms - in.frame_edited_ms;
+  const bool cooldown_elapsed = in.ms_since_chase_seek < 0 ||
+                                in.ms_since_chase_seek >= kChaseSeekCooldownMs;
+  const bool clear_of_the_tail =
+      in.edited_duration_ms > 0 &&
+      in.audio_edited_ms + kChaseSeekEndGuardMs < in.edited_duration_ms;
+  if (in.allow_chase_seek && deficit > kChaseSeekDeficitMs &&
+      cooldown_elapsed && clear_of_the_tail) {
+    out.action = PacerChaseAction::kSeekToAudio;
+    out.seek_target_edited_ms = in.audio_edited_ms;
+    out.next_stale_streak = 0;
+    return out;
+  }
+
+  // Otherwise decimate: show every Nth stale frame so the picture keeps
+  // moving (trailing the sound) instead of freezing.
+  const int streak = in.stale_streak + 1;
+  if (streak >= kStaleEmitEvery) {
+    out.action = PacerChaseAction::kEmit;
+    out.next_stale_streak = 0;
+    return out;
+  }
+  out.action = PacerChaseAction::kDiscard;
+  out.next_stale_streak = streak;
+  return out;
+}
+
+std::int64_t PreviewEngine::NextKeptSourceInMsAfter(
+    std::int64_t source_ms,
+    const std::vector<capture::export_::clip_planner::ClipKeptRange>& ranges) {
+  // Monotonic ranges are in source order; return the first window that
+  // STARTS after `source_ms` (the frame at source_in itself is kept, so a
+  // seek target of exactly source_in is correct). -1 = no kept audio/video
+  // follows — the caller crawls to EOS (playback-complete path).
+  std::int64_t best = -1;
+  for (const auto& r : ranges) {
+    if (r.source_in_ms > source_ms &&
+        (best < 0 || r.source_in_ms < best)) {
+      best = r.source_in_ms;
+    }
+  }
+  return best;
+}
+
+PreviewEngine::PaceStep PreviewEngine::PaceNextEditedFrameLocked(Impl* impl) {
+  namespace clip = capture::export_::clip_planner;
+  if (impl == nullptr || impl->edited_reader == nullptr ||
+      impl->clip_ranges.empty()) {
+    return PaceStep::kIdle;
+  }
+  const std::int64_t edited_dur = clip::EditedDurationMs(impl->clip_ranges);
+  PreviewSourceReader* reader = impl->edited_reader.get();
+
+  // 4-7c (design D5): while sound is streaming, AUDIO is the master clock —
+  // the video chases the renderer's lock-free position and never leads it
+  // (an audio glitch is far more audible than a ±1-frame video adjustment).
+  // audio_target < 0 = no audio (or drained/paused): the pacer free-runs on
+  // its fixed budget exactly as before this slice.
+  std::int64_t audio_target_ms = -1;
+  if (impl->audio_renderer != nullptr && impl->audio_renderer->playing()) {
+    audio_target_ms = impl->audio_renderer->PositionEditedMs();
+    if (impl->edited_pos_ms > audio_target_ms) {
+      return PaceStep::kIdle;  // video is ahead — hold this tick
+    }
+  }
+  // Per-frame chase decision (pure policy — see DecidePacerChase). Builds
+  // the shared half of the input; each branch fills in the frame position
+  // and whether repositioning is available.
+  const auto chase_input_for = [&](std::int64_t frame_edited_ms,
+                                   bool allow_chase_seek) {
+    PacerChaseInput in;
+    in.frame_edited_ms = frame_edited_ms;
+    in.audio_edited_ms = audio_target_ms;
+    in.edited_duration_ms = edited_dur;
+    in.stale_streak = impl->stale_streak;
+    in.awaiting_chase_frame = impl->awaiting_chase_frame;
+    in.allow_chase_seek = allow_chase_seek;
+    in.ms_since_chase_seek =
+        impl->last_chase_seek.time_since_epoch().count() == 0
+            ? -1
+            : std::chrono::duration_cast<std::chrono::milliseconds>(
+                  std::chrono::steady_clock::now() - impl->last_chase_seek)
+                  .count();
+    return in;
+  };
+
+  // Shared render tail: upload the decoded frame + compose it at its edited
+  // position (overlays are SOURCE-keyed, so pass the frame's source time; Dart
+  // sees the EDITED position + duration). Returns false (→ kIdle) on failure.
+  const auto emit = [&](std::vector<BYTE>& bgra, std::int64_t source_ms,
+                        std::int64_t edited_ms) -> bool {
+    if (const HRESULT ensure_hr = impl->compositor.EnsureResources(
+            impl->d3d_device.Get(), impl->d2d_context.Get(), reader->width(),
+            reader->height());
+        FAILED(ensure_hr)) {
+      impl->last_render_failure_hr.store(static_cast<std::int32_t>(ensure_hr),
+                                         std::memory_order_relaxed);
+      NoteRenderFailure(impl, "pacer_ensure_resources");
+      impl->edited_playing = false;
+      // 4-7c: a dead video path must not keep playing sound alone. (The EOS
+      // paths deliberately DON'T pause — audio self-drains its final buffer
+      // to the plan end there.)
+      if (impl->audio_renderer != nullptr) {
+        impl->audio_renderer->Pause();
+      }
+      return false;
+    }
+    impl->last_video_width.store(reader->width());
+    impl->last_video_height.store(reader->height());
+    impl->d3d_context->UpdateSubresource(impl->compositor.video_texture(), 0,
+                                         nullptr, bgra.data(),
+                                         reader->width() * 4u, 0);
+    // Adaptive budget: the edited-time distance between presented frames IS
+    // the source's frame interval (the edited timeline is contiguous, and a
+    // cut boundary still advances by one frame). Clamped so a seek jump or
+    // a decimated skip can't stretch the budget.
+    if (impl->last_presented_edited_ms >= 0) {
+      const std::int64_t delta = edited_ms - impl->last_presented_edited_ms;
+      if (delta > 0 && delta <= 100) {
+        impl->paced_budget_ms.store(static_cast<int>(std::max<std::int64_t>(5, delta)),
+                                    std::memory_order_relaxed);
+      }
+    }
+    impl->last_presented_edited_ms = edited_ms;
+    impl->edited_pos_ms = edited_ms;
+    impl->timing_total.BeginFrame();
+    ComposeAndHandoffLocked(impl, source_ms * 1000, edited_ms, edited_dur);
+    return true;
+  };
+
+  // A presented frame that is STILL behind the sound must not burn a frame
+  // budget — step again at once so decode runs at full speed until it
+  // catches up (or the chase policy repositions).
+  const auto step_for_emit = [&](bool ok, std::int64_t edited_ms) {
+    if (!ok) return PaceStep::kIdle;
+    return (audio_target_ms >= 0 &&
+            edited_ms < audio_target_ms - kAudioChaseSlackMs)
+               ? PaceStep::kRenderedBehind
+               : PaceStep::kRendered;
+  };
+
+  // Decoding is NOT free (ReadNextFrame fully decodes each frame), so cap
+  // forward reads at kMaxSkip per call: a long cut gap / keyframe lead-in then
+  // returns kSkipping so the pacer RELEASES render_mutex between chunks (keeping
+  // Pause/Seek/Close responsive) and steps again. The reader position + reorder
+  // cursor persist across calls.
+  constexpr int kMaxSkip = 8;
+
+  if (clip::IsSourceMonotonic(impl->clip_ranges)) {
+    // Cut path: decode FORWARD; cut-gap frames are skipped, which IS the cut
+    // (matches the export monotonic path). EditedMsForKeptSourceMs is
+    // well-defined and source-forward == edited-forward.
+    //
+    // LARGE gaps are SEEKED across (like the reorder path's boundaries)
+    // instead of decode-crawled: the audio renderer — the master clock —
+    // crosses a cut instantly via its slot seek, so crawling a multi-second
+    // deleted segment at full-decode speed left the video seconds behind
+    // the sound, frozen until it caught up (and on high-res sources it
+    // never fully did). Small gaps still crawl: SeekTo lands on the
+    // keyframe AT-OR-BEFORE the target, and this recorder does not pin
+    // keyframe spacing (hardware-MFT default GOP, typically ~2-4s on
+    // sparse-keyframe screen recordings) — when the GOP exceeds the
+    // remaining gap the seek's lead-in decode is a SUPERSET of the crawl
+    // it replaces. The threshold therefore sits above typical GOPs so a
+    // seek near-always lands on a closer keyframe and wins. Follow-up
+    // (issue): pin MF_MT_MAX_KEYFRAME_SPACING at record time, which
+    // bounds every seek lead-in (scrub + reorder too) and lets this
+    // threshold drop.
+    constexpr std::int64_t kGapSeekThresholdMs = 3000;
+    for (int i = 0; i < kMaxSkip; ++i) {
+      if (shutting_down_.load()) return PaceStep::kIdle;
+      std::vector<BYTE> bgra;
+      std::int64_t ts_ms = 0;
+      if (!reader->ReadNextFrame(&bgra, &ts_ms)) {
+        NotifyEditedPlaybackCompleteLocked(impl);  // end of source
+        return PaceStep::kIdle;
+      }
+      if (ts_ms < impl->edited_min_source_ms) {
+        continue;  // gap-seek keyframe lead-in — never re-emit pre-gap frames
+      }
+      const auto edited =
+          clip::EditedMsForKeptSourceMs(ts_ms, impl->clip_ranges);
+      if (!edited.has_value()) {
+        const std::int64_t next_in =
+            NextKeptSourceInMsAfter(ts_ms, impl->clip_ranges);
+        if (next_in >= 0 && next_in - ts_ms > kGapSeekThresholdMs) {
+          reader->SeekTo(next_in);
+          impl->edited_min_source_ms = next_in;
+          clingfy::bridge::NativeLogPublisher::Instance().Debug(
+              "Preview", "pacer seeked across a " +
+                             std::to_string(next_in - ts_ms) +
+                             "ms cut gap at source " + std::to_string(ts_ms) +
+                             "ms");
+          return PaceStep::kSkipping;
+        }
+        continue;  // small gap — crawl (decode-forward)
+      }
+      const auto chase = DecidePacerChase(
+          chase_input_for(*edited, /*allow_chase_seek=*/true));
+      impl->stale_streak = chase.next_stale_streak;
+      if (chase.action == PacerChaseAction::kSeekToAudio) {
+        // Way behind the sound and decode can't close it — reposition to
+        // the audio clock like a scrub. The policy guarantees the target
+        // sits clear of the tail, so it always maps into a kept window.
+        const std::int64_t target_source = clip::SourceMsForEditedMs(
+            chase.seek_target_edited_ms, impl->clip_ranges);
+        reader->SeekTo(target_source);
+        impl->edited_min_source_ms = target_source;
+        impl->last_chase_seek = std::chrono::steady_clock::now();
+        impl->awaiting_chase_frame = true;
+        clingfy::bridge::NativeLogPublisher::Instance().Debug(
+            "Preview",
+            "pacer chase-seek to the audio clock: video was at edited " +
+                std::to_string(*edited) + "ms, audio at " +
+                std::to_string(audio_target_ms) + "ms");
+        return PaceStep::kSkipping;
+      }
+      if (chase.action == PacerChaseAction::kDiscard) continue;
+      impl->awaiting_chase_frame = false;
+      return step_for_emit(emit(bgra, ts_ms, *edited), *edited);
+    }
+    return PaceStep::kSkipping;
+  }
+
+  // Reorder path (step 4-4): read each range's source window in TIMELINE order
+  // via per-range backward seeks (the export reorder read model).
+  // edited_range_idx + edited_reorder_base_ms are primed by Play/SeekTo and
+  // advanced at each range boundary. The camera reader auto-seeks on the
+  // backward playback_us jump; the zoom smoother easing across a boundary is a
+  // known minor refinement (§5.4).
+  const int n = static_cast<int>(impl->clip_ranges.size());
+  for (int i = 0; i < kMaxSkip; ++i) {
+    if (shutting_down_.load()) return PaceStep::kIdle;
+    if (impl->edited_range_idx >= n) {
+      NotifyEditedPlaybackCompleteLocked(impl);  // all ranges emitted
+      return PaceStep::kIdle;
+    }
+    std::vector<BYTE> bgra;
+    std::int64_t ts_ms = 0;
+    if (!reader->ReadNextFrame(&bgra, &ts_ms)) {
+      // A range ended at source EOS — advance to the next timeline range.
+      impl->edited_reorder_base_ms +=
+          impl->clip_ranges[impl->edited_range_idx].DurationMs();
+      if (++impl->edited_range_idx >= n) {
+        NotifyEditedPlaybackCompleteLocked(impl);
+        return PaceStep::kIdle;
+      }
+      reader->SeekTo(impl->clip_ranges[impl->edited_range_idx].source_in_ms);
+      // §5.4: the source clock jumped backward across the range boundary — snap
+      // the zoom smoother to neutral (like the export ResetSmoothing) so it
+      // doesn't ease across the discontinuity. The camera reader auto-seeks on
+      // the backward playback_us.
+      impl->zoom = ZoomState{};
+      continue;
+    }
+    const auto& r = impl->clip_ranges[impl->edited_range_idx];
+    if (ts_ms >= r.source_out_ms) {
+      // Past this range's window → advance + seek (backward) to the next range.
+      impl->edited_reorder_base_ms += r.DurationMs();
+      if (++impl->edited_range_idx >= n) {
+        NotifyEditedPlaybackCompleteLocked(impl);
+        return PaceStep::kIdle;
+      }
+      reader->SeekTo(impl->clip_ranges[impl->edited_range_idx].source_in_ms);
+      // §5.4: the source clock jumped backward across the range boundary — snap
+      // the zoom smoother to neutral (like the export ResetSmoothing) so it
+      // doesn't ease across the discontinuity. The camera reader auto-seeks on
+      // the backward playback_us.
+      impl->zoom = ZoomState{};
+      continue;
+    }
+    if (ts_ms < r.source_in_ms) continue;  // keyframe lead-in — discard
+    const std::int64_t edited =
+        impl->edited_reorder_base_ms + (ts_ms - r.source_in_ms);
+    // Decimation only here: a reorder reposition would need the range
+    // cursor re-primed too, so the policy is told repositioning is
+    // unavailable and keeps the picture moving by decimating instead.
+    const auto chase =
+        DecidePacerChase(chase_input_for(edited, /*allow_chase_seek=*/false));
+    impl->stale_streak = chase.next_stale_streak;
+    if (chase.action == PacerChaseAction::kDiscard) continue;
+    impl->awaiting_chase_frame = false;
+    return step_for_emit(emit(bgra, ts_ms, edited), edited);
+  }
+  return PaceStep::kSkipping;
+}
+
+void PreviewEngine::NotifyEditedPlaybackCompleteLocked(Impl* impl) {
+  impl->edited_playing = false;
+  std::string session_snapshot;
+  {
+    std::lock_guard<std::mutex> lock(mutex_);
+    if (shutting_down_.load()) {
+      return;
+    }
+    session_snapshot = active_session_id_;
+  }
+  if (session_snapshot.empty()) {
     return;
   }
-  try {
-    auto session = player_snapshot.PlaybackSession();
-    if (session.PlaybackState() !=
-        winrt_playback::MediaPlaybackState::Playing) {
-      const auto cur_ms = std::chrono::duration_cast<std::chrono::milliseconds>(
-                              session.Position())
-                              .count();
-      CameraNudgePlan plan;
-      {
-        std::lock_guard<std::mutex> lock(mutex_);
-        plan = ResolveCameraNudgeTarget(cur_ms, camera_nudge_anchor_ms_);
-        camera_nudge_anchor_ms_ = plan.anchor_ms;
-      }
-      session.Position(std::chrono::duration_cast<winrt_foundation::TimeSpan>(
-          std::chrono::milliseconds(plan.target_ms)));
+  clingfy::bridge::NativeLogPublisher::Instance().Debug(
+      "Preview", "stitched playback complete at edited " +
+                     std::to_string(impl->edited_pos_ms) + "ms");
+  clingfy::bridge::PlayerEventPublisher::Instance().EmitPlayerState(
+      session_snapshot, "completed");
+}
+
+void PreviewEngine::PrimeReorderStateLocked(Impl* impl, std::int64_t edited_ms) {
+  namespace clip = capture::export_::clip_planner;
+  if (impl == nullptr) return;
+  impl->edited_range_idx = 0;
+  impl->edited_reorder_base_ms = 0;
+  if (impl->clip_ranges.empty()) return;
+  const int idx = clip::ActiveIndexForEditedMs(edited_ms, impl->clip_ranges);
+  const int n = static_cast<int>(impl->clip_ranges.size());
+  std::int64_t base = 0;
+  for (int i = 0; i < idx && i < n; ++i) {
+    base += impl->clip_ranges[i].DurationMs();
+  }
+  impl->edited_range_idx = idx;
+  impl->edited_reorder_base_ms = base;
+}
+
+void PreviewEngine::PacerLoop() {
+  using clock = std::chrono::steady_clock;
+  // Fixed ~30fps budget (the recorder default; the source fps is not trivially
+  // exposed here — a source-fps-accurate pace is a later refinement, and there
+  // is no preview audio yet to sync to). sleep_until an accumulating deadline so
+  // decode jitter doesn't drift the pace fast; reset it if we fall behind so it
+  // can't spiral into catch-up.
+  auto next_deadline = clock::now();
+  // Pacer telemetry (Debug level, ~2s cadence while playing): the A/V chase
+  // in one line — video edited position vs the audio master clock plus the
+  // step mix. The user-facing "laggy preview" class of bug is invisible in
+  // ordinary logs (video position freezes silently); this line names which
+  // side stalled without a debugger.
+  auto telemetry_last = clock::now();
+  int telemetry_rendered = 0;
+  int telemetry_skipping = 0;
+  int telemetry_idle = 0;
+  while (!shutting_down_.load()) {
+    Impl* impl = nullptr;
+    {
+      std::lock_guard<std::mutex> lock(mutex_);
+      impl = impl_.get();
     }
+    PaceStep step = PaceStep::kIdle;
+    if (impl != nullptr) {
+      // render_mutex is held only for ONE bounded step (a kept frame or up to a
+      // small skip cap) — released before the sleep so SetClips / SeekTo / Pause
+      // / Close and the frame-server guard aren't blocked while paced.
+      std::lock_guard<std::mutex> render_lock(impl->render_mutex);
+      const bool paced = !shutting_down_.load() && impl->edited_mode &&
+                         impl->edited_playing;
+      if (!paced) {
+        // Not playing: start the next window fresh so the first line after
+        // a resume reports a real 2s sample, not counts stranded from
+        // before the pause over an unbounded interval.
+        telemetry_last = clock::now();
+        telemetry_rendered = 0;
+        telemetry_skipping = 0;
+        telemetry_idle = 0;
+      }
+      if (paced) {
+        step = PaceNextEditedFrameLocked(impl);
+        switch (step) {
+          case PaceStep::kRendered:
+          case PaceStep::kRenderedBehind: ++telemetry_rendered; break;
+          case PaceStep::kSkipping: ++telemetry_skipping; break;
+          case PaceStep::kIdle: ++telemetry_idle; break;
+        }
+        const auto now = clock::now();
+        if (now - telemetry_last >= std::chrono::milliseconds(2000)) {
+          const std::int64_t audio_ms =
+              impl->audio_renderer != nullptr
+                  ? impl->audio_renderer->PositionEditedMs()
+                  : -1;
+          const bool audio_playing = impl->audio_renderer != nullptr &&
+                                     impl->audio_renderer->playing();
+          clingfy::bridge::NativeLogPublisher::Instance().Debug(
+              "Preview",
+              "pacer telemetry: video_edited=" +
+                  std::to_string(impl->edited_pos_ms) +
+                  "ms audio=" + std::to_string(audio_ms) +
+                  "ms audio_playing=" + (audio_playing ? "1" : "0") +
+                  " rendered=" + std::to_string(telemetry_rendered) +
+                  " skipping=" + std::to_string(telemetry_skipping) +
+                  " idle=" + std::to_string(telemetry_idle) + " per 2s");
+          telemetry_last = now;
+          telemetry_rendered = 0;
+          telemetry_skipping = 0;
+          telemetry_idle = 0;
+        }
+      }
+    }
+    switch (step) {
+      case PaceStep::kRenderedBehind:
+        // Presented, but the sound is still ahead: no sleep — decode the
+        // next frame immediately. The audio-ahead hold at the top of the
+        // step is what stops the video from running past the sound, so
+        // this cannot overrun.
+        next_deadline = clock::now();
+        break;
+      case PaceStep::kRendered:
+        // Pace by the MEASURED source frame interval (impl-adaptive), not
+        // a fixed 30 fps: a 60 fps recording needs a ~16 ms budget or its
+        // content advances at half wall-clock speed.
+        next_deadline += std::chrono::milliseconds(
+            impl != nullptr ? impl->paced_budget_ms.load(std::memory_order_relaxed)
+                            : 33);
+        {
+          const auto now = clock::now();
+          if (next_deadline > now) {
+            std::this_thread::sleep_until(next_deadline);
+          } else {
+            next_deadline = now;  // fell behind — don't accumulate lag
+          }
+        }
+        break;
+      case PaceStep::kSkipping:
+        // Mid-gap: render_mutex is released (scope ended) — step again almost
+        // immediately so a large cut skips fast, yielding first so Pause / Seek /
+        // Close interleave. No kept frame yet, so reset the pace anchor.
+        next_deadline = clock::now();
+        std::this_thread::sleep_for(std::chrono::milliseconds(1));
+        break;
+      case PaceStep::kIdle:
+        next_deadline = clock::now();
+        std::this_thread::sleep_for(std::chrono::milliseconds(15));
+        break;
+    }
+  }
+}
+
+void PreviewEngine::SetClips(
+    const std::string& session_id,
+    std::vector<capture::export_::clip_planner::ClipKeptRange> ranges) {
+  winrt_playback::MediaPlayer player_snapshot{nullptr};
+  Impl* impl = nullptr;
+  {
+    std::lock_guard<std::mutex> lock(mutex_);
+    // Same stale-session discipline as SetColorGrade: a clip edit racing a Close
+    // (or targeting a non-active session) is a silent no-op.
+    if (!session_id.empty() && session_id != active_session_id_) {
+      return;
+    }
+    if (impl_ == nullptr) {
+      return;
+    }
+    impl = impl_.get();
+    player_snapshot = impl_->player;
+  }
+  const bool now_edited = RangesAreEdited(ranges);
+
+  // Coordinate the render mode OUTSIDE mutex_. The compose path needs
+  // render_mutex, and the lock order everywhere is render_mutex → mutex_
+  // (HandleVideoFrame + ComposeAndHandoffLocked), so we must NOT take
+  // render_mutex while holding mutex_. This runs on the Flutter platform thread,
+  // serialized with Close, so `impl` cannot be torn down under us here.
+  if (now_edited && player_snapshot != nullptr) {
+    // Enter stitched-preview mode: pause the MediaPlayer so its frame server
+    // stops overwriting the edited frame.
+    try {
+      player_snapshot.Pause();
+    } catch (winrt::hresult_error const&) {
+      // Best-effort — MediaPlayer errors surface via the MediaFailed event.
+    }
+  }
+  std::lock_guard<std::mutex> render_lock(impl->render_mutex);
+  if (shutting_down_.load()) {
+    return;
+  }
+  // 4-6: preserve the playhead across a clip edit by anchoring it to the
+  // SOURCE moment it was showing — the edited timeline just changed shape, so
+  // the old edited position points at different content. Map old-edited →
+  // source (old ranges) → new-edited (new ranges); a source moment the edit
+  // cut away keeps the old position, which RenderEditedFrameLocked clamps
+  // into the new duration (nearest-content behavior).
+  if (impl->edited_mode && now_edited && !impl->clip_ranges.empty()) {
+    namespace clip = capture::export_::clip_planner;
+    const std::int64_t source_anchor =
+        clip::SourceMsForEditedMs(impl->edited_pos_ms, impl->clip_ranges);
+    const auto remapped = clip::EditedMsForKeptSourceMs(source_anchor, ranges);
+    if (remapped.has_value()) {
+      impl->edited_pos_ms = *remapped;
+    }
+  }
+  // clip_ranges is read by the PACER THREAD under render_mutex, so it MUST be
+  // written under render_mutex (never mutex_) or the move-assign races the
+  // pacer's mid-iteration read → heap use-after-free.
+  impl->clip_ranges = std::move(ranges);
+  const bool was_edited = impl->edited_mode;
+  if (now_edited) {
+    impl->edited_mode = true;
+    // A clip edit STOPS continuous playback: the timeline just changed (and may
+    // now be non-monotonic / reorder, which the pacer must never pace). Show the
+    // edited frame paused; the user re-presses Play, which re-arms the pacer only
+    // for a monotonic session. (Slice 6 debounces the trim-drag storm.)
+    impl->edited_playing = false;
+    RenderEditedFrameLocked(impl, impl->edited_pos_ms);
+    // Step 4-7c: build/update the audio plan for the stitched session — after
+    // consuming any pending mid-stream failure (D7 rebuild-once), so the
+    // SetSlots below always targets a live renderer.
+    HandleAudioRenderErrorLocked(impl);
+    if (impl->audio_renderer != nullptr) {
+      // Defers the pump rebuild to the next Play (on the render thread).
+      impl->audio_renderer->SetSlots(BuildPreviewAudioSlots(impl->clip_ranges));
+    } else {
+      OpenPreviewAudioRendererLocked(impl);
+    }
+    if (!was_edited) {
+      namespace clip = capture::export_::clip_planner;
+      clingfy::bridge::NativeLogPublisher::Instance().Debug(
+          "Preview",
+          "stitched preview ON: " + std::to_string(impl->clip_ranges.size()) +
+              " ranges, reorder=" +
+              (clip::IsSourceMonotonic(impl->clip_ranges) ? "false" : "true") +
+              ", editedDur=" +
+              std::to_string(clip::EditedDurationMs(impl->clip_ranges)) +
+              "ms, audio=" +
+              (impl->audio_renderer != nullptr ? "on" : "off"));
+    }
+  } else if (impl->edited_mode) {
+    // Passthrough (no real cut): leave stitched mode; the MediaPlayer path
+    // resumes producing frames (audio included — its track was never touched).
+    impl->edited_mode = false;
+    impl->edited_playing = false;
+    impl->edited_reader.reset();
+    impl->audio_renderer.reset();
+    clingfy::bridge::NativeLogPublisher::Instance().Debug(
+        "Preview", "stitched preview OFF (passthrough — no real cut)");
+  }
+}
+
+void PreviewEngine::SetAudioMix(const std::string& session_id, double gain_db,
+                                double volume_percent) {
+  winrt_playback::MediaPlayer player_snapshot{nullptr};
+  Impl* impl = nullptr;
+  {
+    std::lock_guard<std::mutex> lock(mutex_);
+    // Same stale-session discipline as the other setters; an EMPTY id
+    // applies to the active session (macOS optional-sessionId semantics).
+    if (!session_id.empty() && session_id != active_session_id_) {
+      return;
+    }
+    if (impl_ == nullptr) {
+      return;
+    }
+    impl = impl_.get();
+    player_snapshot = impl_->player;
+  }
+  const double gain = std::clamp(gain_db, 0.0, 24.0);
+  const double volume = std::clamp(volume_percent, 0.0, 100.0);
+  {
+    std::lock_guard<std::mutex> render_lock(impl->render_mutex);
+    if (shutting_down_.load()) {
+      return;
+    }
+    impl->audio_gain_db = gain;
+    impl->audio_volume_percent = volume;
+    if (impl->audio_renderer != nullptr) {
+      // Applies to samples decoded from now on (D6) — the export's exact
+      // two-stage semantics via the shared resolvers (normalize stays
+      // export-only, macOS parity). Separated sessions (D9) get mic-only
+      // gain; legacy premix keeps the whole-track stages.
+      if (impl->audio_separated) {
+        impl->audio_renderer->SetSeparatedGainStages(
+            capture::export_::ResolveSeparatedAudioStages(
+                gain, volume, /*normalize=*/false,
+                /*target_loudness_dbfs=*/-16.0, /*mic_peak_linear=*/0.0));
+      } else {
+        impl->audio_renderer->SetGainStages(
+            capture::export_::ResolveAudioGainStages(
+                gain, volume, /*normalize=*/false,
+                /*target_loudness_dbfs=*/-16.0, /*source_peak_linear=*/0.0));
+      }
+    }
+  }
+  // Passthrough master volume — a WinRT call, outside both locks.
+  // Attenuation only (MediaPlayer.Volume is 0..1): gain on an uncut preview
+  // stays export-only, the documented D6 gap. Harmless in edited mode (the
+  // MediaPlayer is paused there), and it keeps the volume correct across a
+  // later passthrough transition.
+  try {
+    player_snapshot.Volume(volume / 100.0);
   } catch (winrt::hresult_error const&) {
-    // Best-effort; the change will appear on the next frame instead.
+    // Best-effort — MediaPlayer errors surface via MediaFailed.
+  }
+}
+
+void PreviewEngine::StartVoiceCleanupWorkerLocked(Impl* impl,
+                                                  const std::string& session_id,
+                                                  float wet_mix,
+                                                  std::uint64_t generation) {
+  // Caller guarantees no worker is in flight, so any joinable handle is a
+  // FINISHED worker — join it before reassigning. Never join an in-flight one
+  // under render_mutex (the inline-dispatch path would run its completion,
+  // which wants render_mutex, on the joined thread -> deadlock); the mode-
+  // change path instead cancels the live worker and lets ITS completion start
+  // the next pass. The self-id guard covers the degenerate inline-dispatch case
+  // where this runs on the worker thread itself.
+  if (impl->cleanup_thread.joinable()) {
+    if (impl->cleanup_thread.get_id() == std::this_thread::get_id()) {
+      impl->cleanup_thread.detach();
+    } else {
+      impl->cleanup_thread.join();
+    }
+  }
+  impl->voice_cleanup_computing = true;
+  impl->cleanup_cancel.store(false);
+
+  const std::wstring mic = impl->mic_audio_path;
+  const std::filesystem::path out =
+      PreviewCleanedMicPath(session_id, generation);
+  try {
+    impl->cleanup_thread =
+        std::thread([this, impl, session_id, mic, out, wet_mix, generation]() {
+          const bool ok = capture::export_::ProduceCleanedMic(
+              mic, out.u8string(),
+              [impl] { return impl->cleanup_cancel.load(); }, wet_mix);
+          const std::wstring out_w = out.wstring();
+          clingfy::bridge::PlatformThreadDispatcher::Instance().Post(
+              [this, session_id, ok, out_w, wet_mix, generation] {
+                OnPreviewCleanedMicReady(session_id, ok, out_w, wet_mix,
+                                         generation);
+              });
+        });
+  } catch (const std::system_error&) {
+    // Thread/handle exhaustion: clear the guard so a later toggle can retry
+    // instead of silently no-opping for the rest of the session.
+    impl->voice_cleanup_computing = false;
+    clingfy::bridge::NativeLogPublisher::Instance().Warn(
+        "Preview", "voice cleanup worker thread could not be started");
+  }
+}
+
+void PreviewEngine::SetVoiceCleanup(const std::string& session_id, bool enabled,
+                                    float wet_mix) {
+  Impl* impl = nullptr;
+  std::string active;
+  {
+    std::lock_guard<std::mutex> lock(mutex_);
+    // Stale/empty session-id semantics match the other setters.
+    if (!session_id.empty() && session_id != active_session_id_) {
+      return;
+    }
+    if (impl_ == nullptr) {
+      return;
+    }
+    impl = impl_.get();
+    active = active_session_id_;
+  }
+
+  std::lock_guard<std::mutex> render_lock(impl->render_mutex);
+  if (shutting_down_.load()) {
+    return;
+  }
+  // No change: same enabled state AND (if on) same strength.
+  if (impl->voice_cleanup_enabled == enabled &&
+      (!enabled || impl->voice_cleanup_wet_mix == wet_mix)) {
+    return;
+  }
+  impl->voice_cleanup_enabled = enabled;
+  impl->voice_cleanup_wet_mix = wet_mix;
+
+  // Only a separated session with a mic sidecar has anything to denoise. A
+  // premix or system-only session just records the flags (a mic reselected in
+  // a later session would honor them).
+  if (!impl->audio_separated || impl->mic_audio_path.empty()) {
+    return;
+  }
+
+  // Only a LIVE renderer (edited mode) needs a rebuild to swap the mic. In
+  // passthrough the audio_renderer is null (the MediaPlayer drives the premix,
+  // so a mic swap has no audible effect and would just build an idle WASAPI
+  // stream holding the temp open): record the flags and let the renderer built
+  // on the first cut pick the right mic via OpenPreviewAudioRendererLocked.
+  if (!enabled) {
+    // Back to the raw mic immediately — no decode needed.
+    impl->use_cleaned_mic = false;
+    if (impl->audio_renderer != nullptr) {
+      RebuildPreviewAudioRendererLocked(impl);
+    }
+    return;
+  }
+
+  if (impl->cleaned_mic_ready && impl->cleaned_wet_mix == wet_mix) {
+    // Already produced at this strength: swap the cleaned mic straight in.
+    impl->use_cleaned_mic = true;
+    if (impl->audio_renderer != nullptr) {
+      RebuildPreviewAudioRendererLocked(impl);
+    }
+    return;
+  }
+
+  // (Re)compute for this strength. Any cleaned file in use is for a different
+  // strength now — drop back to the raw mic (releasing its handle) and delete
+  // the stale file before the new worker runs.
+  if (impl->use_cleaned_mic) {
+    impl->use_cleaned_mic = false;
+    if (impl->audio_renderer != nullptr) {
+      RebuildPreviewAudioRendererLocked(impl);
+    }
+  }
+  if (impl->cleaned_mic_ready) {
+    std::error_code ec;
+    std::filesystem::remove(impl->cleaned_mic_path, ec);
+    impl->cleaned_mic_ready = false;
+    impl->cleaned_mic_path.clear();
+  }
+  // If a worker is already running (for a now-stale strength), don't join it
+  // here — cancel it and let its completion start the next pass for the
+  // current strength. Otherwise start one now.
+  if (impl->voice_cleanup_computing) {
+    impl->cleanup_cancel.store(true);
+    return;
+  }
+  StartVoiceCleanupWorkerLocked(impl, active, wet_mix,
+                                ++impl->voice_cleanup_generation);
+}
+
+void PreviewEngine::OnPreviewCleanedMicReady(const std::string& session_id,
+                                             bool ok,
+                                             const std::wstring& cleaned_path,
+                                             float wet_mix,
+                                             std::uint64_t generation) {
+  const std::filesystem::path out(cleaned_path);
+  Impl* impl = nullptr;
+  {
+    std::lock_guard<std::mutex> lock(mutex_);
+    if (impl_ == nullptr || session_id != active_session_id_) {
+      // Session closed or switched while computing: drop the orphan temp.
+      std::error_code ec;
+      std::filesystem::remove(out, ec);
+      return;
+    }
+    impl = impl_.get();
+  }
+
+  std::lock_guard<std::mutex> render_lock(impl->render_mutex);
+  const bool current = generation == impl->voice_cleanup_generation;
+  if (!current) {
+    // A superseded worker (the mode was toggled again before it finished): it
+    // owns its own generation-tagged temp and never the live worker's state.
+    std::error_code ec;
+    std::filesystem::remove(out, ec);
+    return;
+  }
+  impl->voice_cleanup_computing = false;
+
+  const bool want_cleaned = !shutting_down_.load() && impl->voice_cleanup_enabled;
+  if (ok && want_cleaned && impl->voice_cleanup_wet_mix == wet_mix) {
+    impl->cleaned_mic_path = cleaned_path;
+    impl->cleaned_wet_mix = wet_mix;
+    impl->cleaned_mic_ready = true;
+    impl->use_cleaned_mic = true;
+    // Only rebuild a live renderer (edited mode). In passthrough the flags are
+    // enough — the renderer built on the next cut opens the cleaned mic.
+    if (impl->audio_renderer != nullptr) {
+      RebuildPreviewAudioRendererLocked(impl);
+    }
+    return;
+  }
+
+  // Not applied: failed, cancelled, disabled, or the requested strength moved
+  // on while this pass ran. Drop this worker's temp.
+  std::error_code ec;
+  std::filesystem::remove(out, ec);
+  if (!ok && want_cleaned && impl->voice_cleanup_wet_mix == wet_mix) {
+    clingfy::bridge::NativeLogPublisher::Instance().Warn(
+        "Preview", "preview voice cleanup failed; keeping the raw mic");
+  }
+  // Hand off: if cleanup is still wanted at a strength we don't have cached and
+  // nothing is now computing, start the next pass (covers the cancel-and-
+  // restart on a mode change).
+  if (want_cleaned && !impl->voice_cleanup_computing &&
+      impl->audio_separated && !impl->mic_audio_path.empty() &&
+      !(impl->cleaned_mic_ready &&
+        impl->cleaned_wet_mix == impl->voice_cleanup_wet_mix)) {
+    StartVoiceCleanupWorkerLocked(impl, session_id, impl->voice_cleanup_wet_mix,
+                                  ++impl->voice_cleanup_generation);
   }
 }
 

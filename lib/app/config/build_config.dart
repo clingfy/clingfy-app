@@ -44,6 +44,13 @@ class BuildConfig {
     defaultValue: '',
   );
 
+  /// PostHog project token (public-class ingestion key, injected like SENTRY_DSN — never
+  /// committed). Empty = product analytics fully disabled.
+  static const String posthogToken = String.fromEnvironment(
+    'POSTHOG_TOKEN',
+    defaultValue: '',
+  );
+
   static const String buildName = String.fromEnvironment(
     'FLUTTER_BUILD_NAME',
     defaultValue: '',

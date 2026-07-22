@@ -231,6 +231,15 @@ void HandleGetExcludeMicFromSystemAudio(
   reply::Bool(*result, true);
 }
 
+// macOS default is `false` (mic echo cancellation is opt-in; the canceller
+// itself is a macOS-only preview/export step). Mirror the default; the
+// setter is a no-op until Windows grows an equivalent pipeline.
+void HandleGetMicEchoCancellationEnabled(
+    const flutter::MethodCall<flutter::EncodableValue>& /*call*/,
+    std::unique_ptr<flutter::MethodResult<flutter::EncodableValue>> result) {
+  reply::Bool(*result, false);
+}
+
 // Phase 3E: surface the engine's live capture diagnostics. The keys
 // here match the macOS `StorageDiagnosticsService` shape
 // (`backend`, `captureFps`, free-space counters) where the meaning
@@ -403,10 +412,12 @@ void RegisterHandlers(HandlerTable& table) {
   table["setFileNameTemplate"] = &HandleNoopSetter;
   table["setExcludeRecorderApp"] = &HandleNoopSetter;
   table["setExcludeMicFromSystemAudio"] = &HandleNoopSetter;
+  table["setMicEchoCancellationEnabled"] = &HandleNoopSetter;
   table["setCaptureFrameRate"] = &HandleNoopSetter;
 
   table["getExcludeRecorderApp"] = &HandleGetExcludeRecorderApp;
   table["getExcludeMicFromSystemAudio"] = &HandleGetExcludeMicFromSystemAudio;
+  table["getMicEchoCancellationEnabled"] = &HandleGetMicEchoCancellationEnabled;
   table["getCaptureDiagnostics"] = &HandleGetCaptureDiagnostics;
 }
 

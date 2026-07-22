@@ -300,6 +300,14 @@ class MainFlutterWindow: NSWindow {
         let exclude = (args?["exclude"] as? Bool) ?? true
         self.screenRecorder.setExcludeMicFromSystemAudio(exclude, result: result)
 
+      case "getMicEchoCancellationEnabled":
+        self.screenRecorder.getMicEchoCancellationEnabled(result: result)
+
+      case "setMicEchoCancellationEnabled":
+        let args = call.arguments as? [String: Any]
+        let enabled = (args?["enabled"] as? Bool) ?? false
+        self.screenRecorder.setMicEchoCancellationEnabled(enabled, result: result)
+
       case "setCaptureFrameRate":
         let args = call.arguments as? [String: Any]
         if let fps = args?["fps"] as? Int {
@@ -710,6 +718,7 @@ class MainFlutterWindow: NSWindow {
             bitrate: req.bitrate,
             audioGainDb: req.audioGainDb,
             audioVolumePercent: req.audioVolumePercent,
+            voiceCleanup: req.voiceCleanup,
             zoomSegments: zoomSegments,
             cameraPreviewChangeKind: req.cameraPreviewChangeKind,
             sessionId: req.sessionId,
@@ -813,6 +822,7 @@ class MainFlutterWindow: NSWindow {
             audioVolumePercent: req.audioVolumePercent,
             autoNormalizeOnExport: req.autoNormalizeOnExport,
             targetLoudnessDbfs: req.targetLoudnessDbfs,
+            voiceCleanup: req.voiceCleanup,
             cameraPath: req.cameraPath,
             cameraParams: cameraParams,
             colorGrade: req.colorGrade,
@@ -889,6 +899,12 @@ class MainFlutterWindow: NSWindow {
         if let level = args?["level"] as? String {
           NativeLogger.setMinLevel(level)
         }
+        result(nil)
+
+      case "flushPendingNativeLogs":
+        // Dart's 'log' handler is installed — drain the lines buffered
+        // before the channel/handler existed into the unified pipeline.
+        NativeLogger.flushPending()
         result(nil)
 
       case "showPreRecordingBar":
@@ -1007,6 +1023,16 @@ class MainFlutterWindow: NSWindow {
             FlutterError(
               code: NativeErrorCode.badArgs, message: "Missing colorGrade", details: nil))
         }
+
+      case "previewSetVoiceCleanup":
+        // Not a live mix parameter: this re-resolves the mic FILE the preview
+        // plays, so the view rebuilds its player item (see
+        // InlinePreviewView.updateVoiceCleanupOnly).
+        let args = call.arguments as? [String: Any]
+        self.screenRecorder.previewSetVoiceCleanup(
+          sessionId: args?["sessionId"] as? String,
+          voiceCleanup: VoiceCleanupRequest.fromFlutter(args?["voiceCleanup"]),
+          result: result)
 
       case "previewSetClips":
         if let args = call.arguments as? [String: Any] {

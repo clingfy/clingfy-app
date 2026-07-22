@@ -73,6 +73,8 @@ void main() {
               onSystemAudioEnabledChanged: (_) {},
               excludeMicFromSystemAudio: false,
               onExcludeMicFromSystemAudioChanged: (_) {},
+              micEchoCancellationEnabled: false,
+              onMicEchoCancellationEnabledChanged: (_) {},
               onCamSourceChanged: (_) {},
               onRefreshCams: () {},
               onPickArea: () {},

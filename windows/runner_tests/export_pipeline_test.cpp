@@ -33,6 +33,7 @@
 #include <vector>
 
 #include "Audio/audio_mixer.h"
+#include "Capture/Camera/camera_export_layout.h"
 #include "Capture/captured_video_frame.h"
 #include "Encoding/mf_encoder_config.h"
 #include "Encoding/mf_sink_writer_encoder.h"
@@ -66,6 +67,31 @@ ComPtr<ID3D11Texture2D> MakeSolidTexture(ID3D11Device* dev, std::uint32_t bgra) 
   D3D11_SUBRESOURCE_DATA init{};
   init.pSysMem = pixels.data();
   init.SysMemPitch = kSourceWidth * 4u;
+  ComPtr<ID3D11Texture2D> tex;
+  if (FAILED(dev->CreateTexture2D(&desc, &init, tex.GetAddressOf()))) {
+    return nullptr;
+  }
+  return tex;
+}
+
+// Sized variant of MakeSolidTexture for sources whose dimensions differ from the
+// shared 64x48 fixture (e.g. a canvas large enough to hold the camera bubble).
+ComPtr<ID3D11Texture2D> MakeSolidTextureSized(ID3D11Device* dev, UINT width,
+                                              UINT height, std::uint32_t bgra) {
+  std::vector<std::uint32_t> pixels(
+      static_cast<size_t>(width) * height, bgra);
+  D3D11_TEXTURE2D_DESC desc{};
+  desc.Width = width;
+  desc.Height = height;
+  desc.MipLevels = 1;
+  desc.ArraySize = 1;
+  desc.Format = DXGI_FORMAT_B8G8R8A8_UNORM;
+  desc.SampleDesc.Count = 1;
+  desc.Usage = D3D11_USAGE_DEFAULT;
+  desc.BindFlags = D3D11_BIND_RENDER_TARGET | D3D11_BIND_SHADER_RESOURCE;
+  D3D11_SUBRESOURCE_DATA init{};
+  init.pSysMem = pixels.data();
+  init.SysMemPitch = width * 4u;
   ComPtr<ID3D11Texture2D> tex;
   if (FAILED(dev->CreateTexture2D(&desc, &init, tex.GetAddressOf()))) {
     return nullptr;
@@ -317,6 +343,161 @@ bool ReadFirstFrameBgra(const std::wstring& path, UINT* out_w, UINT* out_h,
   return false;
 }
 
+// Editing port (clips, 3b-2a): a two-color source — the first half of the
+// frames RED, the second half BLUE — so a decoded output frame's dominant
+// channel reveals which SOURCE half it came from. That lets a reorder test
+// prove the export read a LATER source window before an EARLIER one.
+bool SynthesizeHalvesSource(clingfy::graphics::D3DDevice* device,
+                            const std::string& path, std::string* skip_reason) {
+  clingfy::encoding::EncoderConfig cfg;
+  cfg.output_path = path;
+  cfg.width = kSourceWidth;
+  cfg.height = kSourceHeight;
+  cfg.fps = kFps;
+  clingfy::encoding::MfSinkWriterEncoder encoder;
+  if (auto err = encoder.Open(cfg, *device, std::nullopt)) {
+    *skip_reason = "halves source encoder open failed: " + err->message;
+    return false;
+  }
+  const std::int64_t frame_dur_hns = 10'000'000 / kFps;
+  for (int i = 0; i < kFrameCount; ++i) {
+    // 0xAARRGGBB: red = 0xFFFF0000, blue = 0xFF0000FF.
+    const std::uint32_t color =
+        (i < kFrameCount / 2) ? 0xFFFF0000u : 0xFF0000FFu;
+    clingfy::capture::CapturedVideoFrame frame;
+    frame.texture = MakeSolidTexture(device->device(), color);
+    if (frame.texture == nullptr) {
+      *skip_reason = "could not allocate a halves source frame";
+      return false;
+    }
+    frame.width = kSourceWidth;
+    frame.height = kSourceHeight;
+    frame.timestamp_hns = static_cast<std::int64_t>(i) * frame_dur_hns;
+    if (auto err = encoder.WriteVideoFrame(frame)) {
+      *skip_reason = "halves source WriteVideoFrame failed: " + err->message;
+      return false;
+    }
+  }
+  if (auto err = encoder.Finalize()) {
+    *skip_reason = "halves source finalize failed: " + err->message;
+    return false;
+  }
+  return true;
+}
+
+// Decode every video frame of `path` and record its CENTER pixel as 0xAARRGGBB
+// (the center is video content, not letterbox). Returns false when the
+// environment can't decode, so the caller GTEST_SKIPs.
+bool ReadFrameCenterColors(const std::wstring& path,
+                           std::vector<std::uint32_t>* out_colors) {
+  out_colors->clear();
+  ComPtr<IMFAttributes> attrs;
+  if (FAILED(::MFCreateAttributes(attrs.GetAddressOf(), 1))) {
+    return false;
+  }
+  attrs->SetUINT32(MF_SOURCE_READER_ENABLE_VIDEO_PROCESSING, TRUE);
+  ComPtr<IMFSourceReader> reader;
+  if (FAILED(::MFCreateSourceReaderFromURL(path.c_str(), attrs.Get(),
+                                           reader.GetAddressOf())) ||
+      reader == nullptr) {
+    return false;
+  }
+  DWORD video_index = 0xFFFFFFFFu;
+  for (DWORD i = 0;; ++i) {
+    ComPtr<IMFMediaType> native;
+    const HRESULT hr = reader->GetNativeMediaType(i, 0, native.GetAddressOf());
+    if (hr == MF_E_INVALIDSTREAMNUMBER) {
+      break;
+    }
+    if (FAILED(hr) || native == nullptr) {
+      continue;
+    }
+    GUID major = GUID_NULL;
+    if (SUCCEEDED(native->GetGUID(MF_MT_MAJOR_TYPE, &major)) &&
+        major == MFMediaType_Video) {
+      video_index = i;
+      break;
+    }
+  }
+  if (video_index == 0xFFFFFFFFu) {
+    return false;
+  }
+  reader->SetStreamSelection(static_cast<DWORD>(MF_SOURCE_READER_ALL_STREAMS),
+                             FALSE);
+  reader->SetStreamSelection(video_index, TRUE);
+  ComPtr<IMFMediaType> rgb;
+  if (FAILED(::MFCreateMediaType(rgb.GetAddressOf()))) {
+    return false;
+  }
+  rgb->SetGUID(MF_MT_MAJOR_TYPE, MFMediaType_Video);
+  rgb->SetGUID(MF_MT_SUBTYPE, MFVideoFormat_RGB32);
+  if (FAILED(reader->SetCurrentMediaType(video_index, nullptr, rgb.Get()))) {
+    return false;
+  }
+  ComPtr<IMFMediaType> current;
+  UINT32 w = 0;
+  UINT32 h = 0;
+  if (FAILED(reader->GetCurrentMediaType(video_index, current.GetAddressOf())) ||
+      FAILED(::MFGetAttributeSize(current.Get(), MF_MT_FRAME_SIZE, &w, &h)) ||
+      w == 0 || h == 0) {
+    return false;
+  }
+  const size_t row_bytes = static_cast<size_t>(w) * 4u;
+  std::vector<std::uint32_t> frame(static_cast<size_t>(w) * h, 0u);
+  for (int guard = 0; guard < 256; ++guard) {
+    DWORD actual = 0;
+    DWORD flags = 0;
+    LONGLONG ts = 0;
+    ComPtr<IMFSample> sample;
+    if (FAILED(reader->ReadSample(video_index, 0, &actual, &flags, &ts,
+                                  sample.GetAddressOf()))) {
+      return false;
+    }
+    if (flags & MF_SOURCE_READERF_ENDOFSTREAM) {
+      break;
+    }
+    if (sample == nullptr) {
+      continue;
+    }
+    auto* dest = reinterpret_cast<BYTE*>(frame.data());
+    ComPtr<IMFMediaBuffer> raw;
+    if (FAILED(sample->GetBufferByIndex(0, raw.GetAddressOf())) ||
+        raw == nullptr) {
+      return false;
+    }
+    ComPtr<IMF2DBuffer> buffer2d;
+    if (SUCCEEDED(raw.As(&buffer2d)) && buffer2d != nullptr) {
+      BYTE* scan0 = nullptr;
+      LONG stride = 0;
+      if (FAILED(buffer2d->Lock2D(&scan0, &stride)) || scan0 == nullptr) {
+        return false;
+      }
+      for (UINT row = 0; row < h; ++row) {
+        std::memcpy(dest + row * row_bytes,
+                    scan0 + static_cast<LONG>(row) * stride, row_bytes);
+      }
+      buffer2d->Unlock2D();
+    } else {
+      ComPtr<IMFMediaBuffer> contig;
+      if (FAILED(sample->ConvertToContiguousBuffer(contig.GetAddressOf())) ||
+          contig == nullptr) {
+        return false;
+      }
+      BYTE* data = nullptr;
+      DWORD max_len = 0;
+      DWORD cur_len = 0;
+      if (FAILED(contig->Lock(&data, &max_len, &cur_len)) || data == nullptr) {
+        return false;
+      }
+      std::memcpy(dest, data, std::min<size_t>(cur_len, row_bytes * h));
+      contig->Unlock();
+    }
+    const size_t center = static_cast<size_t>(h / 2) * w + (w / 2);
+    out_colors->push_back(frame[center]);
+  }
+  return !out_colors->empty();
+}
+
 // Decode the exported audio track to 48 kHz stereo int16 PCM and report its
 // peak (0..1) and RMS (raw int16 units). Mirrors ReadFirstFrameBgra: returns
 // ok=false when the environment can't decode so the caller GTEST_SKIPs. Used
@@ -425,6 +606,343 @@ AudioStats ReadAudioPeakRms(const std::wstring& path) {
   out.peak = peak / 32767.0;
   out.rms = std::sqrt(sum_sq / static_cast<double>(total));
   return out;
+}
+
+// Decode the whole exported audio track to interleaved 48 kHz stereo int16 PCM.
+// Lets a test measure the level of a specific EDITED-time window (frame index
+// = ms * 48) to prove reorder-audio ordering + silence-fill. Returns false when
+// the environment can't decode, so the caller GTEST_SKIPs.
+bool ReadAllAudioPcm(const std::wstring& path,
+                     std::vector<std::int16_t>* out) {
+  out->clear();
+  ComPtr<IMFSourceReader> reader;
+  if (FAILED(::MFCreateSourceReaderFromURL(path.c_str(), nullptr,
+                                           reader.GetAddressOf())) ||
+      reader == nullptr) {
+    return false;
+  }
+  DWORD audio_index = 0xFFFFFFFFu;
+  for (DWORD i = 0;; ++i) {
+    ComPtr<IMFMediaType> native;
+    const HRESULT hr = reader->GetNativeMediaType(i, 0, native.GetAddressOf());
+    if (hr == MF_E_INVALIDSTREAMNUMBER) {
+      break;
+    }
+    if (FAILED(hr) || native == nullptr) {
+      continue;
+    }
+    GUID major = GUID_NULL;
+    if (SUCCEEDED(native->GetGUID(MF_MT_MAJOR_TYPE, &major)) &&
+        major == MFMediaType_Audio) {
+      audio_index = i;
+      break;
+    }
+  }
+  if (audio_index == 0xFFFFFFFFu) {
+    return false;
+  }
+  reader->SetStreamSelection(static_cast<DWORD>(MF_SOURCE_READER_ALL_STREAMS),
+                             FALSE);
+  reader->SetStreamSelection(audio_index, TRUE);
+  ComPtr<IMFMediaType> pcm;
+  if (FAILED(::MFCreateMediaType(pcm.GetAddressOf()))) {
+    return false;
+  }
+  pcm->SetGUID(MF_MT_MAJOR_TYPE, MFMediaType_Audio);
+  pcm->SetGUID(MF_MT_SUBTYPE, MFAudioFormat_PCM);
+  pcm->SetUINT32(MF_MT_AUDIO_BITS_PER_SAMPLE, 16);
+  pcm->SetUINT32(MF_MT_AUDIO_SAMPLES_PER_SECOND, 48'000);
+  pcm->SetUINT32(MF_MT_AUDIO_NUM_CHANNELS, 2);
+  if (FAILED(reader->SetCurrentMediaType(audio_index, nullptr, pcm.Get()))) {
+    return false;
+  }
+  for (;;) {
+    DWORD flags = 0;
+    LONGLONG ts = 0;
+    ComPtr<IMFSample> sample;
+    if (FAILED(reader->ReadSample(audio_index, 0, nullptr, &flags, &ts,
+                                  sample.GetAddressOf()))) {
+      return false;
+    }
+    if (flags & MF_SOURCE_READERF_ENDOFSTREAM) {
+      break;
+    }
+    if (sample == nullptr) {
+      continue;
+    }
+    ComPtr<IMFMediaBuffer> buffer;
+    if (FAILED(sample->ConvertToContiguousBuffer(buffer.GetAddressOf())) ||
+        buffer == nullptr) {
+      continue;
+    }
+    BYTE* data = nullptr;
+    DWORD max_len = 0;
+    DWORD cur_len = 0;
+    if (SUCCEEDED(buffer->Lock(&data, &max_len, &cur_len)) && data != nullptr &&
+        cur_len > 0) {
+      const auto* s16 = reinterpret_cast<const std::int16_t*>(data);
+      out->insert(out->end(), s16, s16 + cur_len / sizeof(std::int16_t));
+    }
+    if (data != nullptr) {
+      buffer->Unlock();
+    }
+  }
+  return !out->empty();
+}
+
+// RMS (raw int16 units) of an EDITED-time window [start_ms, end_ms) of an
+// interleaved stereo PCM buffer (48 kHz). Frame index = ms * 48.
+double AudioWindowRms(const std::vector<std::int16_t>& pcm, std::int64_t start_ms,
+                      std::int64_t end_ms) {
+  const std::int64_t f0 = start_ms * 48;
+  const std::int64_t f1 = end_ms * 48;
+  double sum_sq = 0.0;
+  std::int64_t n = 0;
+  for (std::int64_t f = f0; f < f1; ++f) {
+    for (std::int64_t c = 0; c < 2; ++c) {
+      const std::size_t idx = static_cast<std::size_t>(f * 2 + c);
+      if (idx < pcm.size()) {
+        const double v = static_cast<double>(pcm[idx]);
+        sum_sq += v * v;
+        ++n;
+      }
+    }
+  }
+  return n > 0 ? std::sqrt(sum_sq / static_cast<double>(n)) : 0.0;
+}
+
+// A reorder-audio fixture: video halves (red/blue, so the reorder is visible)
+// PLUS an audio tone that is LOUD only in the FIRST source half and SILENT in
+// the second. `frames` at kFps → ~frames*33 ms of video; one 1024-frame audio
+// packet per video frame → ~frames*21 ms of audio (audio deliberately runs
+// shorter than video, exercising silence-fill). `half_ms` is the source-time
+// boundary where the tone switches off.
+bool SynthesizeReorderAudioSource(clingfy::graphics::D3DDevice* device,
+                                  const std::string& path, int frames,
+                                  std::int64_t half_ms,
+                                  std::string* skip_reason) {
+  clingfy::encoding::EncoderConfig cfg;
+  cfg.output_path = path;
+  cfg.width = kSourceWidth;
+  cfg.height = kSourceHeight;
+  cfg.fps = kFps;
+  clingfy::encoding::MfSinkWriterEncoder encoder;
+  clingfy::encoding::AudioEncoderConfig audio_cfg;
+  if (auto err = encoder.Open(cfg, *device, audio_cfg)) {
+    *skip_reason = "reorder-audio source encoder open failed: " + err->message;
+    return false;
+  }
+  const std::int64_t frame_dur_hns = 10'000'000 / kFps;
+  constexpr std::uint32_t kAudioFramesPerPacket = 1024;
+  const std::int64_t audio_dur_hns =
+      static_cast<std::int64_t>(kAudioFramesPerPacket) * 10'000'000 / 48'000;
+  std::uint64_t audio_frame_index = 0;
+  constexpr double kPi = 3.14159265358979323846;
+  for (int i = 0; i < frames; ++i) {
+    const std::uint32_t color =
+        (i < frames / 2) ? 0xFFFF0000u : 0xFF0000FFu;  // red then blue
+    clingfy::capture::CapturedVideoFrame frame;
+    frame.texture = MakeSolidTexture(device->device(), color);
+    if (frame.texture == nullptr) {
+      *skip_reason = "could not allocate a reorder-audio source frame";
+      return false;
+    }
+    frame.width = kSourceWidth;
+    frame.height = kSourceHeight;
+    frame.timestamp_hns = static_cast<std::int64_t>(i) * frame_dur_hns;
+    if (auto err = encoder.WriteVideoFrame(frame)) {
+      *skip_reason = "reorder-audio source WriteVideoFrame failed: " +
+                     err->message;
+      return false;
+    }
+    clingfy::audio::MixedPacket packet;
+    packet.frame_count = kAudioFramesPerPacket;
+    packet.samples.resize(static_cast<size_t>(kAudioFramesPerPacket) * 2u);
+    for (std::uint32_t f = 0; f < kAudioFramesPerPacket; ++f) {
+      const std::int64_t sample_ms =
+          static_cast<std::int64_t>((audio_frame_index + f) * 1000 / 48'000);
+      const double t =
+          static_cast<double>(audio_frame_index + f) / 48'000.0;
+      // Loud in the first source half, silent after `half_ms`.
+      const double amp = sample_ms < half_ms ? 8000.0 : 0.0;
+      const auto v =
+          static_cast<std::int16_t>(amp * std::sin(2.0 * kPi * 1000.0 * t));
+      packet.samples[f * 2u] = v;
+      packet.samples[f * 2u + 1u] = v;
+    }
+    audio_frame_index += kAudioFramesPerPacket;
+    packet.timestamp_hns = static_cast<std::int64_t>(i) * audio_dur_hns;
+    if (auto err = encoder.WriteAudioPacket(packet)) {
+      *skip_reason = "reorder-audio source WriteAudioPacket failed: " +
+                     err->message;
+      return false;
+    }
+  }
+  if (auto err = encoder.Finalize()) {
+    *skip_reason = "reorder-audio source finalize failed: " + err->message;
+    return false;
+  }
+  return true;
+}
+
+// A sized, two-color halves source: the first half of the frames `color_first`,
+// the second `color_second` (0xAARRGGBB). Generalizes SynthesizeHalvesSource so
+// the camera-under-reorder test can use a canvas large enough for the camera
+// bubble (min 96 px side) AND give the camera a time-varying color.
+bool SynthesizeColorHalvesSource(clingfy::graphics::D3DDevice* device,
+                                 const std::string& path, UINT width,
+                                 UINT height, std::uint32_t color_first,
+                                 std::uint32_t color_second,
+                                 std::string* skip_reason) {
+  clingfy::encoding::EncoderConfig cfg;
+  cfg.output_path = path;
+  cfg.width = width;
+  cfg.height = height;
+  cfg.fps = kFps;
+  clingfy::encoding::MfSinkWriterEncoder encoder;
+  if (auto err = encoder.Open(cfg, *device, std::nullopt)) {
+    *skip_reason = "color-halves source encoder open failed: " + err->message;
+    return false;
+  }
+  const std::int64_t frame_dur_hns = 10'000'000 / kFps;
+  for (int i = 0; i < kFrameCount; ++i) {
+    const std::uint32_t color =
+        (i < kFrameCount / 2) ? color_first : color_second;
+    clingfy::capture::CapturedVideoFrame frame;
+    frame.texture = MakeSolidTextureSized(device->device(), width, height, color);
+    if (frame.texture == nullptr) {
+      *skip_reason = "could not allocate a color-halves source frame";
+      return false;
+    }
+    frame.width = width;
+    frame.height = height;
+    frame.timestamp_hns = static_cast<std::int64_t>(i) * frame_dur_hns;
+    if (auto err = encoder.WriteVideoFrame(frame)) {
+      *skip_reason = "color-halves source WriteVideoFrame failed: " +
+                     err->message;
+      return false;
+    }
+  }
+  if (auto err = encoder.Finalize()) {
+    *skip_reason = "color-halves source finalize failed: " + err->message;
+    return false;
+  }
+  return true;
+}
+
+// Decode every video frame of `path` and record the color (0xAARRGGBB) at the
+// pixel nearest (`px`, `py`), clamped into the frame. Like ReadFrameCenterColors
+// but samples an arbitrary point — used to read the CAMERA bubble (a corner),
+// not the screen (the center). Returns false when decode fails.
+bool ReadFramePixelColors(const std::wstring& path, int px, int py,
+                          std::vector<std::uint32_t>* out_colors) {
+  out_colors->clear();
+  ComPtr<IMFAttributes> attrs;
+  if (FAILED(::MFCreateAttributes(attrs.GetAddressOf(), 1))) {
+    return false;
+  }
+  attrs->SetUINT32(MF_SOURCE_READER_ENABLE_VIDEO_PROCESSING, TRUE);
+  ComPtr<IMFSourceReader> reader;
+  if (FAILED(::MFCreateSourceReaderFromURL(path.c_str(), attrs.Get(),
+                                           reader.GetAddressOf())) ||
+      reader == nullptr) {
+    return false;
+  }
+  DWORD video_index = 0xFFFFFFFFu;
+  for (DWORD i = 0;; ++i) {
+    ComPtr<IMFMediaType> native;
+    const HRESULT hr = reader->GetNativeMediaType(i, 0, native.GetAddressOf());
+    if (hr == MF_E_INVALIDSTREAMNUMBER) {
+      break;
+    }
+    if (FAILED(hr) || native == nullptr) {
+      continue;
+    }
+    GUID major = GUID_NULL;
+    if (SUCCEEDED(native->GetGUID(MF_MT_MAJOR_TYPE, &major)) &&
+        major == MFMediaType_Video) {
+      video_index = i;
+      break;
+    }
+  }
+  if (video_index == 0xFFFFFFFFu) {
+    return false;
+  }
+  reader->SetStreamSelection(static_cast<DWORD>(MF_SOURCE_READER_ALL_STREAMS),
+                             FALSE);
+  reader->SetStreamSelection(video_index, TRUE);
+  ComPtr<IMFMediaType> rgb;
+  if (FAILED(::MFCreateMediaType(rgb.GetAddressOf()))) {
+    return false;
+  }
+  rgb->SetGUID(MF_MT_MAJOR_TYPE, MFMediaType_Video);
+  rgb->SetGUID(MF_MT_SUBTYPE, MFVideoFormat_RGB32);
+  if (FAILED(reader->SetCurrentMediaType(video_index, nullptr, rgb.Get()))) {
+    return false;
+  }
+  ComPtr<IMFMediaType> current;
+  UINT32 w = 0;
+  UINT32 h = 0;
+  if (FAILED(reader->GetCurrentMediaType(video_index, current.GetAddressOf())) ||
+      FAILED(::MFGetAttributeSize(current.Get(), MF_MT_FRAME_SIZE, &w, &h)) ||
+      w == 0 || h == 0) {
+    return false;
+  }
+  const int sx = std::min<int>(std::max<int>(px, 0), static_cast<int>(w) - 1);
+  const int sy = std::min<int>(std::max<int>(py, 0), static_cast<int>(h) - 1);
+  const size_t row_bytes = static_cast<size_t>(w) * 4u;
+  std::vector<std::uint32_t> frame(static_cast<size_t>(w) * h, 0u);
+  for (int guard = 0; guard < 256; ++guard) {
+    DWORD actual = 0;
+    DWORD flags = 0;
+    LONGLONG ts = 0;
+    ComPtr<IMFSample> sample;
+    if (FAILED(reader->ReadSample(video_index, 0, &actual, &flags, &ts,
+                                  sample.GetAddressOf()))) {
+      return false;
+    }
+    if (flags & MF_SOURCE_READERF_ENDOFSTREAM) {
+      break;
+    }
+    if (sample == nullptr) {
+      continue;
+    }
+    auto* dest = reinterpret_cast<BYTE*>(frame.data());
+    ComPtr<IMFMediaBuffer> raw;
+    if (FAILED(sample->GetBufferByIndex(0, raw.GetAddressOf())) ||
+        raw == nullptr) {
+      return false;
+    }
+    ComPtr<IMF2DBuffer> buffer2d;
+    if (SUCCEEDED(raw.As(&buffer2d)) && buffer2d != nullptr) {
+      BYTE* scan0 = nullptr;
+      LONG stride = 0;
+      if (FAILED(buffer2d->Lock2D(&scan0, &stride)) || scan0 == nullptr) {
+        return false;
+      }
+      for (UINT row = 0; row < h; ++row) {
+        std::memcpy(dest + row * row_bytes,
+                    scan0 + static_cast<LONG>(row) * stride, row_bytes);
+      }
+      buffer2d->Unlock2D();
+    } else {
+      ComPtr<IMFMediaBuffer> contig;
+      if (FAILED(sample->ConvertToContiguousBuffer(contig.GetAddressOf())) ||
+          contig == nullptr) {
+        return false;
+      }
+      BYTE* data = nullptr;
+      DWORD max_len = 0;
+      DWORD cur_len = 0;
+      if (FAILED(contig->Lock(&data, &max_len, &cur_len)) || data == nullptr) {
+        return false;
+      }
+      std::memcpy(dest, data, std::min<size_t>(cur_len, row_bytes * h));
+      contig->Unlock();
+    }
+    out_colors->push_back(frame[static_cast<size_t>(sy) * w + sx]);
+  }
+  return !out_colors->empty();
 }
 
 // True when the file begins with a GIF signature ("GIF87a"/"GIF89a"). Media
@@ -1554,6 +2072,25 @@ TEST(ExportPipelineTest, IsDiskFullHresultClassifiesOnlyDiskFullCodes) {
   EXPECT_FALSE(IsDiskFullHresult(HRESULT_FROM_WIN32(ERROR_FILE_NOT_FOUND)));
 }
 
+// Pure classifier — GPU-free. Only the device-loss family (DXGI removed /
+// reset / hung / driver-internal-error, plus Direct2D's recreate-target)
+// marks a failure as retryable device loss; disk-full, generic failures,
+// and success codes never do (standby-resume recovery must not retry an
+// export that would fail again for the same non-transient reason).
+TEST(ExportPipelineTest, IsDeviceRemovedHresultClassifiesOnlyDeviceLoss) {
+  EXPECT_TRUE(IsDeviceRemovedHresult(DXGI_ERROR_DEVICE_REMOVED));
+  EXPECT_TRUE(IsDeviceRemovedHresult(DXGI_ERROR_DEVICE_RESET));
+  EXPECT_TRUE(IsDeviceRemovedHresult(DXGI_ERROR_DEVICE_HUNG));
+  EXPECT_TRUE(IsDeviceRemovedHresult(DXGI_ERROR_DRIVER_INTERNAL_ERROR));
+  EXPECT_TRUE(IsDeviceRemovedHresult(D2DERR_RECREATE_TARGET));
+  EXPECT_FALSE(IsDeviceRemovedHresult(S_OK));
+  EXPECT_FALSE(IsDeviceRemovedHresult(E_FAIL));
+  EXPECT_FALSE(IsDeviceRemovedHresult(E_OUTOFMEMORY));
+  EXPECT_FALSE(IsDeviceRemovedHresult(HRESULT_FROM_WIN32(ERROR_DISK_FULL)));
+  EXPECT_FALSE(
+      IsDeviceRemovedHresult(HRESULT_FROM_WIN32(ERROR_ACCESS_DENIED)));
+}
+
 // Phase 10.4 fixture: a source .mov whose video track has ZERO samples. The
 // source reader opens it fine, but the export's frame loop hits EOS
 // immediately and fails ("no video frames were decoded") — a failure that
@@ -1613,6 +2150,547 @@ TEST(ExportPipelineTest, RenderFailureRemovesPartialDestination) {
       << "a failed render left a partial file at the destination — "
       << result.message;
 
+  std::error_code ec;
+  fs::remove_all(dir, ec);
+}
+
+// ---- Editing port (clips, step 3a): monotonic cut bake ----------------------
+//
+// The pipeline drops source frames/packets in a cut gap and re-stamps the
+// survivors onto a compacted timeline. RenderResult::video_frames_written is
+// what the loop handed the encoder AFTER the drop gate, so the drop count is
+// asserted directly (no decode needed). Sub-frame A/V origin alignment (T2) is
+// verified by construction — AAC encoder priming makes it unobservable at
+// sub-frame resolution through a decode round-trip — so the head-trim case
+// asserts the buffer/flush path runs and preserves both streams.
+
+TEST(ExportPipelineTest, ClipMiddleCutDropsGapFrames) {
+  clingfy::graphics::D3DDevice device;
+  if (device.Create()) {
+    GTEST_SKIP() << "no usable D3D11 device in this environment";
+  }
+  const auto dir = UniqueDir("clip_cut");
+  const auto source = (dir / "source.mov").u8string();
+  std::string skip_reason;
+  if (!SynthesizeSource(&device, source, /*with_audio=*/false, &skip_reason)) {
+    GTEST_SKIP() << skip_reason;
+  }
+
+  auto make_request = [&](const std::string& dest,
+                          std::vector<clip_planner::ClipKeptRange> ranges) {
+    RenderRequest r;
+    r.source_video_path = fs::u8path(source).wstring();
+    r.destination_path = dest;
+    r.layout = "square11";
+    r.resolution = "auto";
+    r.fit = "fit";
+    r.fps_hint = kFps;
+    r.clip_ranges = std::move(ranges);
+    return r;
+  };
+
+  // Source frames land at source ms 0,33,66,99,133,166,199,233 (8 frames @30).
+  // Keep [0,90) (0,33,66) + [150,250) (166,199,233) → drop the two gap frames
+  // at 99 ms and 133 ms.
+  const auto base_dest = (dir / "base.mov").u8string();
+  const auto cut_dest = (dir / "cut.mov").u8string();
+  const RenderResult base = RenderComposedExport(make_request(base_dest, {}));
+  const RenderResult cut = RenderComposedExport(make_request(
+      cut_dest, {clip_planner::ClipKeptRange{0, 90},
+                 clip_planner::ClipKeptRange{150, 250}}));
+  ASSERT_TRUE(base.ok) << base.message;
+  ASSERT_TRUE(cut.ok) << cut.message;
+  EXPECT_GT(cut.video_frames_written, 0u);
+  EXPECT_LT(cut.video_frames_written, base.video_frames_written)
+      << "the cut export must drop the gap frames";
+  EXPECT_EQ(base.video_frames_written - cut.video_frames_written, 2u)
+      << "exactly the two frames at 99 ms and 133 ms should be dropped";
+
+  const ProbeResult probe = ProbeOutput(fs::u8path(cut_dest).wstring());
+  EXPECT_TRUE(probe.ok) << "cut export is not a readable video";
+
+  std::error_code ec;
+  fs::remove_all(dir, ec);
+}
+
+TEST(ExportPipelineTest, SingleWholeRangeKeepsAllFrames) {
+  // A single range covering the whole source exercises the clipping code path
+  // (clip_ranges non-empty) but must keep every frame — the re-stamp is an
+  // identity mapping, so nothing is dropped.
+  clingfy::graphics::D3DDevice device;
+  if (device.Create()) {
+    GTEST_SKIP() << "no usable D3D11 device in this environment";
+  }
+  const auto dir = UniqueDir("clip_whole");
+  const auto source = (dir / "source.mov").u8string();
+  std::string skip_reason;
+  if (!SynthesizeSource(&device, source, /*with_audio=*/false, &skip_reason)) {
+    GTEST_SKIP() << skip_reason;
+  }
+
+  RenderRequest base;
+  base.source_video_path = fs::u8path(source).wstring();
+  base.destination_path = (dir / "base.mov").u8string();
+  base.layout = "square11";
+  base.resolution = "auto";
+  base.fit = "fit";
+  base.fps_hint = kFps;
+
+  RenderRequest whole = base;
+  whole.destination_path = (dir / "whole.mov").u8string();
+  whole.clip_ranges = {clip_planner::ClipKeptRange{0, 1'000'000}};
+
+  const RenderResult base_r = RenderComposedExport(base);
+  const RenderResult whole_r = RenderComposedExport(whole);
+  ASSERT_TRUE(base_r.ok) << base_r.message;
+  ASSERT_TRUE(whole_r.ok) << whole_r.message;
+  EXPECT_EQ(whole_r.video_frames_written, base_r.video_frames_written)
+      << "a whole-covering clip range must not drop any frame";
+
+  std::error_code ec;
+  fs::remove_all(dir, ec);
+}
+
+// ---- Editing port (clips, step 3b-2a): reorder / non-monotonic bake ---------
+//
+// The reorder path reads each kept range's source window in TIMELINE order,
+// seeking the reader BACKWARD across a boundary, and re-stamps onto a contiguous
+// edited timeline. With a red-first / blue-second source, a timeline that plays
+// the blue (later) half first must produce blue frames THEN red frames — which
+// only happens if the backward seek + per-range re-stamp work. (This source has
+// no audio; the reorder AUDIO stitch — the decoupled pump — is exercised by the
+// sibling ReorderExportStitchesAudioInEditedOrder test below.)
+TEST(ExportPipelineTest, ReorderExportReadsLaterSourceWindowFirst) {
+  clingfy::graphics::D3DDevice device;
+  if (device.Create()) {
+    GTEST_SKIP() << "no usable D3D11 device in this environment";
+  }
+  const auto dir = UniqueDir("clip_reorder");
+  const auto source = (dir / "source.mov").u8string();
+  std::string skip_reason;
+  if (!SynthesizeHalvesSource(&device, source, &skip_reason)) {
+    GTEST_SKIP() << skip_reason;
+  }
+
+  // Source frames 0..3 (ms 0,33,66,100) RED; 4..7 (ms 133,166,200,233) BLUE.
+  // Timeline = [ blue window (133,267), red window (0,133) ] — a later source
+  // window placed BEFORE an earlier one (non-monotonic). The blue range ends at
+  // source EOS, so this also exercises the reorder EOS→next-range advance.
+  RenderRequest r;
+  r.source_video_path = fs::u8path(source).wstring();
+  r.destination_path = (dir / "reorder.mov").u8string();
+  r.layout = "square11";
+  r.resolution = "auto";
+  r.fit = "fit";
+  r.fps_hint = kFps;
+  r.clip_ranges = {clip_planner::ClipKeptRange{133, 267},
+                   clip_planner::ClipKeptRange{0, 133}};
+  ASSERT_FALSE(clip_planner::IsSourceMonotonic(r.clip_ranges))
+      << "test fixture must be a genuine reorder";
+
+  const RenderResult result = RenderComposedExport(r);
+  ASSERT_TRUE(result.ok) << result.message;
+  // Reorder rearranges, it does not drop: all 8 frames survive.
+  EXPECT_EQ(result.video_frames_written, 8u);
+
+  std::vector<std::uint32_t> colors;
+  if (!ReadFrameCenterColors(fs::u8path(r.destination_path).wstring(),
+                             &colors)) {
+    GTEST_SKIP() << "could not decode the reordered output";
+  }
+  ASSERT_GE(colors.size(), 6u) << "expected ~8 output frames";
+
+  auto red_of = [](std::uint32_t c) { return static_cast<int>((c >> 16) & 0xFF); };
+  auto blue_of = [](std::uint32_t c) { return static_cast<int>(c & 0xFF); };
+  // First output frame is the reordered-first (blue, later-in-source) half —
+  // this is the backward seek proving itself.
+  EXPECT_GT(blue_of(colors.front()), red_of(colors.front()) + 40)
+      << "first output frame should be the reordered-first (blue) source half";
+  // Last output frame is the earlier (red) half, now placed second.
+  EXPECT_GT(red_of(colors.back()), blue_of(colors.back()) + 40)
+      << "last output frame should be the earlier (red) source half";
+
+  std::error_code ec;
+  fs::remove_all(dir, ec);
+}
+
+// Editing port (clips, 3b-2b): the reorder AUDIO stitch. The source's tone is
+// LOUD only in its first half (source ms < 300) and SILENT after. The timeline
+// plays the LATER (silent) source window first and the EARLIER (loud) one
+// second, so if the decoupled audio pump reads each window in timeline order,
+// the OUTPUT starts silent and ends loud — the reverse of the source. The
+// captured audio also runs shorter than the reordered video, so the tail is
+// silence-filled; the decoded track must span the full edited duration.
+TEST(ExportPipelineTest, ReorderExportStitchesAudioInEditedOrder) {
+  clingfy::graphics::D3DDevice device;
+  if (device.Create()) {
+    GTEST_SKIP() << "no usable D3D11 device in this environment";
+  }
+  const auto dir = UniqueDir("clip_reorder_audio");
+  const auto source = (dir / "source.mov").u8string();
+  std::string skip_reason;
+  if (!SynthesizeReorderAudioSource(&device, source, /*frames=*/30,
+                                    /*half_ms=*/300, &skip_reason)) {
+    GTEST_SKIP() << skip_reason;
+  }
+
+  // Timeline = [ later window (320,620) — SILENT source, then earlier window
+  // (0,300) — LOUD source ]. Edited duration = 600 ms.
+  RenderRequest r;
+  r.source_video_path = fs::u8path(source).wstring();
+  r.destination_path = (dir / "reorder_audio.mov").u8string();
+  r.layout = "square11";
+  r.resolution = "auto";
+  r.fit = "fit";
+  r.fps_hint = kFps;
+  r.clip_ranges = {clip_planner::ClipKeptRange{320, 620},
+                   clip_planner::ClipKeptRange{0, 300}};
+  ASSERT_FALSE(clip_planner::IsSourceMonotonic(r.clip_ranges))
+      << "test fixture must be a genuine reorder";
+
+  const RenderResult result = RenderComposedExport(r);
+  ASSERT_TRUE(result.ok) << result.message;
+  EXPECT_TRUE(result.had_audio) << "reorder audio must survive the pump";
+  EXPECT_GT(result.audio_packets_written, 0u);
+
+  std::vector<std::int16_t> pcm;
+  if (!ReadAllAudioPcm(fs::u8path(r.destination_path).wstring(), &pcm)) {
+    GTEST_SKIP() << "could not decode the reordered output audio";
+  }
+  // The captured tone is only ~300 ms of real audio; the decoded track must be
+  // ~600 ms (the full edited duration), which only happens if the second slot's
+  // shortfall was silence-filled (§5.2). 600 ms * 48 = 28800 frames (± AAC
+  // priming); a track near ~300 ms would mean the silence-fill was skipped.
+  const std::int64_t frames = static_cast<std::int64_t>(pcm.size() / 2u);
+  EXPECT_GT(frames, 24000) << "silence-fill must extend the track to the edited "
+                              "duration, not stop at the real audio";
+  EXPECT_LT(frames, 33000) << "track ran well past the edited duration";
+
+  // Windowed level, with guard bands around the 300 ms slot boundary and the
+  // ends (AAC encoder latency shifts samples by ~20-40 ms).
+  const double silent_rms = AudioWindowRms(pcm, /*start_ms=*/40, /*end_ms=*/260);
+  const double loud_rms = AudioWindowRms(pcm, /*start_ms=*/340, /*end_ms=*/560);
+  EXPECT_GT(loud_rms, 100.0)
+      << "the LOUD source half must land in the SECOND edited slot";
+  EXPECT_LT(silent_rms, loud_rms * 0.5)
+      << "the SILENT source half must land in the FIRST edited slot — proving "
+         "the audio was stitched in edited (reordered) order, not source order";
+
+  std::error_code ec;
+  fs::remove_all(dir, ec);
+}
+
+// Editing port (clips, 3b-3): the camera bubble under REORDER (§5.5). The camera
+// is a separate synced player — its VIDEO tracks SOURCE time while the export
+// re-stamps onto the edited timeline, so at a reorder boundary the source clock
+// jumps BACKWARD and the forward-only camera reader must be re-primed
+// (CameraExportRenderer::SeekTo, added in 3b-2a) or the bubble would freeze on a
+// stale later frame. Proof: a camera colored by source time (green first source
+// half, yellow second) over a reordered screen must show, in each output frame's
+// bubble, the color matching that frame's SOURCE window — reversed from source
+// order, exactly like the screen. A broken SeekTo leaves the bubble stuck.
+TEST(ExportPipelineTest, CameraBubbleTracksSourceTimeUnderReorder) {
+  clingfy::graphics::D3DDevice device;
+  if (device.Create()) {
+    GTEST_SKIP() << "no usable D3D11 device in this environment";
+  }
+  const auto dir = UniqueDir("clip_reorder_camera");
+  const auto screen = (dir / "screen.mov").u8string();
+  const auto camera = (dir / "camera.mov").u8string();
+  std::string skip_reason;
+  // Screen 320x240 (big enough for the >=96px bubble): red first, blue second.
+  if (!SynthesizeColorHalvesSource(&device, screen, 320, 240, 0xFFFF0000u,
+                                   0xFF0000FFu, &skip_reason)) {
+    GTEST_SKIP() << skip_reason;
+  }
+  // Camera: green first, yellow second — same duration so the switch lines up in
+  // time with the screen's (only the RED channel differs: yellow=255, green=0).
+  if (!SynthesizeColorHalvesSource(&device, camera, 160, 120, 0xFF00FF00u,
+                                   0xFFFFFF00u, &skip_reason)) {
+    GTEST_SKIP() << skip_reason;
+  }
+
+  RenderRequest r;
+  r.source_video_path = fs::u8path(screen).wstring();
+  r.destination_path = (dir / "reorder_camera.mov").u8string();
+  r.layout = "square11";  // 320x240 -> 320x320 canvas
+  r.resolution = "auto";
+  r.fit = "fit";
+  r.fps_hint = kFps;
+  // Timeline = [ later window (133,267), earlier window (0,133) ] — a reorder.
+  r.clip_ranges = {clip_planner::ClipKeptRange{133, 267},
+                   clip_planner::ClipKeptRange{0, 133}};
+  ASSERT_FALSE(clip_planner::IsSourceMonotonic(r.clip_ranges))
+      << "test fixture must be a genuine reorder";
+  r.draw_camera = true;
+  r.camera_video_path = fs::u8path(camera).wstring();
+  r.camera_start_offset_ms = 0;  // camera time == screen source time
+  r.camera_has_center = true;
+  r.camera_center_x = 0.80;
+  r.camera_center_y = 0.80;
+  r.camera_size_factor = 0.45;   // a big bubble so its center is easy to sample
+  r.camera_shape = "circle";     // center is camera content for any convex shape
+  r.camera_content_mode = "fill";
+  r.camera_opacity = 1.0;
+
+  const RenderResult result = RenderComposedExport(r);
+  ASSERT_TRUE(result.ok) << result.message;
+  EXPECT_EQ(result.video_frames_written, 8u);
+
+  // Locate the bubble center on the 320x320 canvas (same helper the pipeline
+  // uses), then read that pixel across the output frames.
+  const auto bubble = clingfy::capture::ComputeCameraBubbleRect(
+      320.0, 320.0, /*has_center=*/true, 0.80, 0.80, /*layout_preset=*/"",
+      /*size_factor=*/0.45);
+  const int bx = static_cast<int>(bubble.x + bubble.width / 2.0);
+  const int by = static_cast<int>(bubble.y + bubble.height / 2.0);
+
+  std::vector<std::uint32_t> bubble_colors;
+  if (!ReadFramePixelColors(fs::u8path(r.destination_path).wstring(), bx, by,
+                            &bubble_colors)) {
+    GTEST_SKIP() << "could not decode the reordered camera output";
+  }
+  ASSERT_GE(bubble_colors.size(), 6u) << "expected ~8 output frames";
+  auto red_of = [](std::uint32_t c) { return static_cast<int>((c >> 16) & 0xFF); };
+  // Output slot 0 (first half of frames) plays the LATER screen window (source
+  // 133-267), so the camera — synced to source time — reaches its SECOND half
+  // (yellow, high red). Slot 1 (last frames) plays the EARLIER window (source
+  // 0-133) → camera FIRST half (green, low red). We take the MAX red over the
+  // early frames rather than the exact first frame: the boundary frame sits at
+  // the truncated 133 ms while the camera's yellow half starts at 133.33 ms, so
+  // yellow appears from the next frame on. If SeekTo had not re-primed the
+  // reader, the forward-only pull could not rewind and this inversion (yellow
+  // early, green late) would not appear.
+  const std::size_t mid = bubble_colors.size() / 2u;
+  int max_red_early = 0;
+  for (std::size_t i = 0; i < mid; ++i) {
+    max_red_early = std::max(max_red_early, red_of(bubble_colors[i]));
+  }
+  const int last_red = red_of(bubble_colors.back());
+  EXPECT_GT(max_red_early, 120)
+      << "the camera's LATER half (yellow) must appear EARLY (the reordered "
+         "later-source window)";
+  EXPECT_LT(last_red, 120)
+      << "the camera's EARLIER half (green) must appear LATE (the earlier-source "
+         "window) — proving the camera reader re-primed on the backward seek";
+  EXPECT_GT(max_red_early, last_red + 60)
+      << "camera color must track SOURCE time across the reorder backward seek";
+
+  std::error_code ec;
+  fs::remove_all(dir, ec);
+}
+
+TEST(ExportPipelineTest, HeadTrimWithAudioExportsDualStream) {
+  // Head-trim [50,250): the first decoded frames (0,33 ms) fall before the kept
+  // range and are dropped, so the FIRST kept video frame is not at edited 0 —
+  // exercising the A/V origin anchor + the buffered-audio flush (T2). Assert the
+  // export succeeds with both streams and the expected kept-frame count.
+  clingfy::graphics::D3DDevice device;
+  if (device.Create()) {
+    GTEST_SKIP() << "no usable D3D11 device in this environment";
+  }
+  const auto dir = UniqueDir("clip_headtrim");
+  const auto source = (dir / "source.mov").u8string();
+  const auto dest = (dir / "out.mov").u8string();
+  std::string skip_reason;
+  if (!SynthesizeSource(&device, source, /*with_audio=*/true, &skip_reason,
+                        /*audio_amplitude=*/8000)) {
+    GTEST_SKIP() << skip_reason;
+  }
+
+  RenderRequest request;
+  request.source_video_path = fs::u8path(source).wstring();
+  request.destination_path = dest;
+  request.layout = "square11";
+  request.resolution = "auto";
+  request.fit = "fit";
+  request.fps_hint = kFps;
+  request.clip_ranges = {clip_planner::ClipKeptRange{50, 250}};
+
+  const RenderResult result = RenderComposedExport(request);
+  ASSERT_TRUE(result.ok) << result.message;
+  EXPECT_TRUE(result.had_audio);
+  EXPECT_EQ(result.video_frames_written, 6u)
+      << "frames at 66,99,133,166,199,233 ms are kept; 0 and 33 ms are trimmed";
+  EXPECT_GT(result.audio_packets_written, 0u)
+      << "kept audio must survive the buffer/flush + origin alignment";
+
+  const ProbeResult probe = ProbeOutput(fs::u8path(dest).wstring());
+  EXPECT_TRUE(probe.ok);
+  EXPECT_TRUE(probe.has_audio) << "head-trim export lost its audio stream";
+
+  std::error_code ec;
+  fs::remove_all(dir, ec);
+}
+
+// ---- Editing port (color): the export bakes the grade -----------------------
+
+// H.264 tolerance for graded-pixel comparisons: the synthesized source is
+// itself H.264 (lossy once), the export re-encodes (lossy twice), and the
+// color pass adds float→8bpc rounding. 18/255 absorbs all three while still
+// failing loudly on a missing/misapplied grade (which moves channels by 50+).
+constexpr int kGradedPixelTolerance = 18;
+
+TEST(ExportPipelineTest, BakesSaturationGradeIntoExportedPixels) {
+  // saturation -1 fully desaturates: the blue-ish source (0x3366CC) must come
+  // out GRAY at the center — R≈G≈B. Before this slice the grade was silently
+  // ignored, so the blue signature (B beats R by 100+) is the regression
+  // fingerprint this test kills.
+  clingfy::graphics::D3DDevice device;
+  if (device.Create()) {
+    GTEST_SKIP() << "no usable D3D11 device in this environment";
+  }
+  const auto dir = UniqueDir("grade-sat");
+  const auto source = (dir / "source.mov").u8string();
+  const auto dest = (dir / "out.mov").u8string();
+
+  std::string skip_reason;
+  if (!SynthesizeSource(&device, source, /*with_audio=*/false, &skip_reason)) {
+    GTEST_SKIP() << skip_reason;
+  }
+
+  RenderRequest request;
+  request.source_video_path = fs::u8path(source).wstring();
+  request.destination_path = dest;
+  request.layout = "auto";
+  request.resolution = "auto";
+  request.fit = "fit";
+  request.fps_hint = kFps;
+  request.color_grade.saturation = -1.0;
+
+  const RenderResult result = RenderComposedExport(request);
+  ASSERT_TRUE(result.ok) << result.message;
+  EXPECT_GT(result.video_frames_written, 0u);
+
+  UINT w = 0;
+  UINT h = 0;
+  std::vector<std::uint32_t> pixels;
+  if (!ReadFirstFrameBgra(fs::u8path(dest).wstring(), &w, &h, &pixels)) {
+    GTEST_SKIP() << "could not decode the exported frame for pixel readback";
+  }
+  const auto chan = [](std::uint32_t px, int shift) {
+    return static_cast<int>((px >> shift) & 0xFFu);
+  };
+  const std::uint32_t center = pixels[(h / 2) * w + (w / 2)];
+  const int r = chan(center, 16);
+  const int g = chan(center, 8);
+  const int b = chan(center, 0);
+  EXPECT_LT(std::abs(r - b), 30)
+      << "saturation -1 must desaturate the blue source to gray; got r=" << r
+      << " g=" << g << " b=" << b << " (grade ignored by the export?)";
+  EXPECT_LT(std::abs(r - g), 30)
+      << "saturation -1 must desaturate to gray; got r=" << r << " g=" << g
+      << " b=" << b;
+
+  std::error_code ec;
+  fs::remove_all(dir, ec);
+}
+
+TEST(ExportPipelineTest, GradedPixelsMatchCpuPrediction) {
+  // End-to-end validation of the whole D2D color chain (piecewise sRGB
+  // linearization → 5x4 matrix at 16bpc float → re-encode) against the pure
+  // CPU reference in color_grade.h. A missing linearization, an 8bpc
+  // intermediate crushing values, or a transposed matrix each push the
+  // channels well past the H.264 tolerance. Uses a composite grade so every
+  // leg of the chain participates.
+  clingfy::graphics::D3DDevice device;
+  if (device.Create()) {
+    GTEST_SKIP() << "no usable D3D11 device in this environment";
+  }
+  const auto dir = UniqueDir("grade-cpu");
+  const auto source = (dir / "source.mov").u8string();
+  const auto dest = (dir / "out.mov").u8string();
+
+  std::string skip_reason;
+  if (!SynthesizeSource(&device, source, /*with_audio=*/false, &skip_reason)) {
+    GTEST_SKIP() << skip_reason;
+  }
+
+  RenderRequest request;
+  request.source_video_path = fs::u8path(source).wstring();
+  request.destination_path = dest;
+  request.layout = "auto";
+  request.resolution = "auto";
+  request.fit = "fit";
+  request.fps_hint = kFps;
+  request.color_grade.exposure = -0.5;  // darkens — the banding-risk region
+  request.color_grade.saturation = 0.5;
+  request.color_grade.contrast = 0.25;
+
+  const RenderResult result = RenderComposedExport(request);
+  ASSERT_TRUE(result.ok) << result.message;
+
+  UINT w = 0;
+  UINT h = 0;
+  std::vector<std::uint32_t> pixels;
+  if (!ReadFirstFrameBgra(fs::u8path(dest).wstring(), &w, &h, &pixels)) {
+    GTEST_SKIP() << "could not decode the exported frame for pixel readback";
+  }
+
+  // CPU reference on the nominal source color (0x3366CC). The source's own
+  // H.264 pass may already have shifted it a few counts; kGradedPixelTolerance
+  // absorbs that. The prediction clamps to the displayable [0,255] range:
+  // this composite grade drives red to a deep-negative linear value, and the
+  // real 8-bit pipeline (D2D and macOS alike) floors it at 0 — the unclamped
+  // mirrored-curve value only exists in the math helpers.
+  const color::ColorMatrix matrix =
+      color::BuildColorMatrix(request.color_grade);
+  const auto graded = matrix.Apply(color::SrgbToLinear(0x33 / 255.0),
+                                   color::SrgbToLinear(0x66 / 255.0),
+                                   color::SrgbToLinear(0xCC / 255.0));
+  const auto encode8 = [](double linear) {
+    const double srgb = color::LinearToSrgb(linear);
+    return static_cast<int>(
+        std::lround(std::clamp(srgb, 0.0, 1.0) * 255.0));
+  };
+  const int expect_r = encode8(graded[0]);
+  const int expect_g = encode8(graded[1]);
+  const int expect_b = encode8(graded[2]);
+
+  const auto chan = [](std::uint32_t px, int shift) {
+    return static_cast<int>((px >> shift) & 0xFFu);
+  };
+  const std::uint32_t center = pixels[(h / 2) * w + (w / 2)];
+  EXPECT_NEAR(chan(center, 16), expect_r, kGradedPixelTolerance)
+      << "red channel diverges from the CPU reference — linearization, "
+         "precision, or matrix bug in the D2D chain";
+  EXPECT_NEAR(chan(center, 8), expect_g, kGradedPixelTolerance);
+  EXPECT_NEAR(chan(center, 0), expect_b, kGradedPixelTolerance);
+
+  std::error_code ec;
+  fs::remove_all(dir, ec);
+}
+
+TEST(ExportPipelineTest, ColorGradePixelPathCanary) {
+  // The graded-pixel tests above GTEST_SKIP when the environment lacks a D3D
+  // device or H.264 decode — correct for arbitrary machines, but on the
+  // known-good dev/CI box a skip would silently erase ALL enforced coverage
+  // of the D2D color chain while reading green. Set
+  // CLINGFY_REQUIRE_PIXEL_TESTS=1 in the environment that is known to
+  // support decode (the Windows dev box / CI) to turn those skips into this
+  // hard failure.
+  char* required = nullptr;
+  size_t len = 0;
+  _dupenv_s(&required, &len, "CLINGFY_REQUIRE_PIXEL_TESTS");
+  const bool require = required != nullptr && std::string(required) == "1";
+  free(required);
+  if (!require) {
+    GTEST_SKIP() << "canary disarmed (set CLINGFY_REQUIRE_PIXEL_TESTS=1 on "
+                    "the known-good environment)";
+  }
+
+  clingfy::graphics::D3DDevice device;
+  ASSERT_FALSE(device.Create())
+      << "CANARY: no D3D11 device on an environment that promises one — the "
+         "graded-pixel tests are all silently skipping";
+  const auto dir = UniqueDir("grade-canary");
+  const auto source = (dir / "source.mov").u8string();
+  std::string skip_reason;
+  ASSERT_TRUE(
+      SynthesizeSource(&device, source, /*with_audio=*/false, &skip_reason))
+      << "CANARY: H.264 synth/decode unavailable on an environment that "
+         "promises it — the graded-pixel tests are all silently skipping: "
+      << skip_reason;
   std::error_code ec;
   fs::remove_all(dir, ec);
 }

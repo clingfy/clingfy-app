@@ -8,6 +8,7 @@ import 'package:clingfy/app/home/preview/widgets/timeline/timeline_viewport_cont
 import 'package:clingfy/app/home/preview/widgets/timeline/zoom_timeline_lane.dart';
 import 'package:clingfy/core/clips/clip_editor_controller.dart';
 import 'package:clingfy/core/models/app_models.dart';
+import 'package:clingfy/core/timeline/zoom_segment_timeline_mapper.dart';
 import 'package:clingfy/core/zoom/zoom_editor_controller.dart';
 import 'package:clingfy/l10n/app_localizations.dart';
 import 'package:clingfy/ui/platform/widgets/responsive_shell_scope.dart';
@@ -433,7 +434,18 @@ class TimelineScrollableCanvas extends StatelessWidget {
         ),
       if (showZoomLane)
         ZoomTimelineLane(
-          segments: editorController?.displaySegments ?? segments,
+          // §5.8: the display-only lane (no zoom editor attached — all of
+          // Windows, where manual zoom is gated off) remaps its SOURCE-time
+          // segments onto the EDITED timeline so pills line up with the
+          // ruler under cuts/reorders. The editable macOS lane keeps raw
+          // editor segments — its drag interactions work in source
+          // coordinates and remapping display-only would desync them.
+          segments:
+              editorController?.displaySegments ??
+              mapZoomSegmentsToEditedTimeline(
+                segments,
+                clipEditor?.clips ?? const [],
+              ),
           durationMs: durationMs,
           positionMs: positionMs,
           editorController: editorController,

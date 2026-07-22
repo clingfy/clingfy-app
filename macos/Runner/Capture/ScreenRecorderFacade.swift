@@ -1113,6 +1113,16 @@ final class ScreenRecorderFacade: NSObject {
     result(prefs.excludeMicFromSystemAudio)
   }
 
+  func setMicEchoCancellationEnabled(_ enabled: Bool, result: @escaping FlutterResult) {
+    prefs.micEchoCancellationEnabled = enabled
+    NativeLogger.i("Facade", "Set micEchoCancellationEnabled", context: ["enabled": enabled])
+    result(nil)
+  }
+
+  func getMicEchoCancellationEnabled(result: @escaping FlutterResult) {
+    result(prefs.micEchoCancellationEnabled)
+  }
+
   func getDisplays(result: @escaping FlutterResult) { result(displaySvc.allDisplays()) }
   func setDisplay(id: NSNumber?, result: @escaping FlutterResult) {
     prefs.selectedDisplayId = id == nil ? nil : Int(id!.uint32Value)
@@ -1264,6 +1274,7 @@ final class ScreenRecorderFacade: NSObject {
     bitrate: String,
     audioGainDb: Double,
     audioVolumePercent: Double,
+    voiceCleanup: VoiceCleanupRequest = .disabled,
     zoomSegments: [ZoomTimelineSegment]?,
     cameraPreviewChangeKind: CameraPreviewChangeKind,
     sessionId: String?,
@@ -1293,6 +1304,7 @@ final class ScreenRecorderFacade: NSObject {
         showCursor: showCursor,
         audioGainDb: audioGainDb,
         audioVolumePercent: audioVolumePercent,
+        voiceCleanup: voiceCleanup,
         zoomSegments: zoomSegments,
         cameraPreviewChangeKind: cameraPreviewChangeKind,
         sessionId: sessionId,
@@ -1342,6 +1354,15 @@ final class ScreenRecorderFacade: NSObject {
       result: result)
   }
 
+  func previewSetVoiceCleanup(
+    sessionId: String?,
+    voiceCleanup: VoiceCleanupRequest,
+    result: @escaping FlutterResult
+  ) {
+    previewEngine.setVoiceCleanup(
+      sessionId: sessionId, voiceCleanup: voiceCleanup, result: result)
+  }
+
   func exportVideo(
     projectPath: String,
     layout: String,
@@ -1364,6 +1385,7 @@ final class ScreenRecorderFacade: NSObject {
     audioVolumePercent: Double,
     autoNormalizeOnExport: Bool,
     targetLoudnessDbfs: Double,
+    voiceCleanup: VoiceCleanupRequest = .disabled,
     cameraPath: String?,
     cameraParams: CameraCompositionParams?,
     colorGrade: ColorGrade = .identity,
@@ -1399,6 +1421,7 @@ final class ScreenRecorderFacade: NSObject {
         audioVolumePercent: audioVolumePercent,
         autoNormalizeOnExport: autoNormalizeOnExport,
         targetLoudnessDbfs: targetLoudnessDbfs,
+        voiceCleanup: voiceCleanup,
         cameraPath: cameraPath,
         cameraParams: cameraParams,
         colorGrade: colorGrade,

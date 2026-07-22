@@ -12,11 +12,14 @@
 #include <string>
 #include <system_error>
 
+#include "Bridge/native_log_publisher.h"
 #include "Capture/Camera/camera_meta.h"
+#include "Capture/Export/audio_sidecar_probe.h"
 #include "Capture/Export/export_audio.h"
 #include "Capture/Export/export_format.h"
 #include "Capture/Export/export_geometry.h"
 #include "Capture/Export/export_pipeline.h"
+#include "Capture/Export/mic_cleanup.h"
 #include "Capture/recording_project_reader.h"
 #include "Services/save_folder.h"
 
@@ -157,6 +160,26 @@ bool ShouldCompositeCamera(bool camera_visible, bool has_camera_assets,
          !preview_burned_in && frames_written > 0;
 }
 
+ClipEditKind ClassifyClipEdit(
+    const std::vector<clip_planner::ClipKeptRange>& ranges) {
+  const auto coalesced = clip_planner::Coalesce(ranges);
+  // A split with nothing deleted coalesces back to one contiguous window from
+  // source 0 → not a real edit. A single range starting at source 0 (incl. a
+  // pure tail-trim, indistinguishable from the full range without the asset
+  // duration) also stays passthrough.
+  const bool has_real_edits =
+      coalesced.size() > 1 ||
+      (coalesced.size() == 1 && coalesced[0].source_in_ms > 0);
+  if (!has_real_edits) {
+    return ClipEditKind::kPassthrough;
+  }
+  // Any real edit bakes via the composition path. Monotonic + disjoint ranges
+  // (cut / trim / delete-middle) forward-read the source once; reorder and
+  // overlap read each source window in timeline order (per-range backward
+  // seeks, 3b-2). The pipeline picks the path via IsSourceMonotonic.
+  return ClipEditKind::kBake;
+}
+
 std::int64_t EstimateRequiredExportBytes(std::int64_t source_size_bytes,
                                          bool composition) {
   if (source_size_bytes < 0) {
@@ -277,6 +300,24 @@ PassthroughResult ExportPassthroughCopy(
   const bool wants_zoom = input.zoom_effect_enabled && sidecar_exists;
   const bool wants_sidecar = wants_cursor_render || wants_zoom;
 
+  // Audio separation (D7/D8): a SEPARATED recording (decodable mic/system
+  // sidecar) always takes the composition path — macOS never byte-copies a
+  // separated export, because the copy would ship the embedded premix and
+  // silently ignore mic-only gain/normalize. The reader already
+  // existence-gated the paths; the decode-one-sample probe is the same gate
+  // preview uses, so an undecodable (truncated/corrupt) sidecar cleanly
+  // degrades to today's embedded whole-track behavior. GIF exports carry no
+  // audio — skip the probes entirely.
+  const bool gif_export = ResolveExportExtension(input.format) == ".gif";
+  const bool mic_sidecar_decodable =
+      !gif_export && read.project->mic_audio_path.has_value() &&
+      ProbeDecodableAudio(*read.project->mic_audio_path);
+  const bool system_sidecar_decodable =
+      !gif_export && read.project->system_audio_path.has_value() &&
+      ProbeDecodableAudio(*read.project->system_audio_path);
+  const bool wants_separated_audio =
+      mic_sidecar_decodable || system_sidecar_decodable;
+
   // Phase 9.4: resolve the camera bubble. The project reader only sets
   // camera_video_path/camera_metadata_path when BOTH exist on disk (present-
   // together), so a half-broken bundle never reaches here. We parse the metadata
@@ -323,14 +364,42 @@ PassthroughResult ExportPassthroughCopy(
   // H.264 Sink Writer. Padding / corner radius / gain / volume / normalize each
   // force it too; a background color alone stays on the fast-path (invisible
   // without margins). The audio + format identity defaults keep the copy alive.
+  // Editing port (clips): the export BAKES every real clip edit — cuts / trims
+  // / delete-middle (the pipeline drops cut source frames and re-stamps the
+  // survivors onto a compacted timeline) AND reorder / overlap (3b-2 reads each
+  // source window in timeline order with a sample-accurate audio stitch). A
+  // split with nothing deleted coalesces back to one contiguous window from
+  // source 0 and is NOT an edit, so it stays on the copy fast-path. (A pure
+  // tail-trim — one range from source 0 — is indistinguishable from the full
+  // range without the asset duration, so it rides the fast-path as before;
+  // harmless, the removed tail is past the last kept frame either way.)
+  bool wants_clips = false;
+  switch (ClassifyClipEdit(input.clip_ranges)) {
+    case ClipEditKind::kPassthrough:
+      break;  // no real edit — stays eligible for the copy fast-path
+    case ClipEditKind::kBake:
+      wants_clips = true;  // real edit — forces composition below
+      break;
+  }
+
   const bool wants_non_mov_container =
       ResolveExportExtension(input.format) != ".mov";
+  // Editing port (color): a non-identity grade must force the composition
+  // path — the byte-copy would silently ship an UNGRADED file while
+  // reporting success (the classic passthrough landmine).
+  const bool wants_color_grade = !input.color_grade.IsIdentity();
+  // Editing port (clips): a real clip edit must force the composition path —
+  // the byte-copy would ship the UNCUT source while reporting success (the
+  // passthrough landmine). Reorder/overlap bake too (3b-2, per-range seeks).
+  // Audio separation: a separated recording must compose even at identity
+  // settings — the byte-copy would ship the premix (see the probe above).
   const bool needs_composition =
       !IsIdentityTransform(input.layout, input.resolution) ||
       input.padding > 0.0 || input.corner_radius > 0.0 ||
       RequiresAudioProcessing(input.audio_gain_db, input.audio_volume_percent,
                               input.auto_normalize) ||
-      wants_non_mov_container || wants_sidecar || wants_camera;
+      wants_non_mov_container || wants_sidecar || wants_camera ||
+      wants_color_grade || wants_clips || wants_separated_audio;
 
   // Phase 10.4 disk-full preflight: estimate the bytes the export needs at
   // the destination (source size + headroom for the chosen path) and compare
@@ -418,6 +487,10 @@ PassthroughResult ExportPassthroughCopy(
     // requested resolution / layout / fit with the Slice 3 styling, scale the
     // audio by the Slice 4 gain / volume / normalize multiplier, and re-encode.
     RenderRequest render;
+    // Per-export temp holding the RNNoise-cleaned mic (Phase 4). Kept in this
+    // scope so it outlives RenderComposedExport below, then deleted right after
+    // the render returns.
+    std::optional<fs::path> cleaned_mic_temp;
     render.source_video_path = read.project->screen_path;
     render.destination_path = destination.u8string();
     render.layout = input.layout;
@@ -426,10 +499,43 @@ PassthroughResult ExportPassthroughCopy(
     render.padding = input.padding;
     render.corner_radius = input.corner_radius;
     render.background_color = input.background_color;
+    // Editing port (color): bake the grade into the composite (identity is a
+    // no-op inside the pipeline).
+    render.color_grade = input.color_grade;
+    // Editing port (clips): bake the clip edit. Empty = identity; the pipeline
+    // picks the monotonic forward-read or the reorder per-range-seek path via
+    // IsSourceMonotonic (drop cut frames + re-stamp onto edited PTS).
+    render.clip_ranges = input.clip_ranges;
     render.audio_gain_db = input.audio_gain_db;
     render.audio_volume_percent = input.audio_volume_percent;
     render.auto_normalize = input.auto_normalize;
     render.target_loudness_dbfs = input.target_loudness_dbfs;
+    // Audio separation: only PROBED paths reach the pipeline (its contract
+    // is that a non-empty path decodes).
+    if (mic_sidecar_decodable) {
+      render.mic_audio_path = *read.project->mic_audio_path;
+      // Phase 4 voice cleanup: run the mic through RNNoise before the audio
+      // pump. Best-effort -- a failed clean leaves render.mic_audio_path on the
+      // raw sidecar, so the export just skips denoising rather than failing.
+      if (input.voice_cleanup_enabled) {
+        fs::path cleaned = destination;
+        cleaned += ".miccleanup.mp4";
+        if (ProduceCleanedMic(*read.project->mic_audio_path, cleaned.u8string(),
+                              is_cancelled,
+                              VoiceCleanupWetMix(input.voice_cleanup_mode))) {
+          render.mic_audio_path = cleaned.wstring();
+          cleaned_mic_temp = cleaned;
+        } else {
+          std::error_code clean_ec;
+          fs::remove(cleaned, clean_ec);
+          clingfy::bridge::NativeLogPublisher::Instance().Warn(
+              "Export", "voice cleanup failed; exporting the raw mic");
+        }
+      }
+    }
+    if (system_sidecar_decodable) {
+      render.system_audio_path = *read.project->system_audio_path;
+    }
     render.bitrate = input.bitrate;
     // Phase 8.2/8.3: cursor + zoom share the sidecar path; set it when EITHER is
     // active so each feature can read it independently.
@@ -472,6 +578,12 @@ PassthroughResult ExportPassthroughCopy(
                           ? read.project->metadata->fps
                           : 0u;
     const RenderResult render_result = RenderComposedExport(render);
+    // The cleaned-mic temp (if any) has served the render; drop it regardless
+    // of outcome. render.mic_audio_path is not read past this point.
+    if (cleaned_mic_temp) {
+      std::error_code clean_ec;
+      fs::remove(*cleaned_mic_temp, clean_ec);
+    }
     if (!render_result.ok) {
       if (render_result.cancelled) {
         // Cancel cleanup is owned by the pipeline (Cancelled() removed the
@@ -489,6 +601,18 @@ PassthroughResult ExportPassthroughCopy(
       // delete a pre-existing user file.
       std::error_code rm_ec;
       fs::remove(destination, rm_ec);
+      std::error_code exists_ec;
+      if (fs::exists(destination, exists_ec)) {
+        // Both best-effort removals lost — typically a transient external
+        // lock (AV / Search indexer scanning the just-written partial). Say
+        // so: a silent leftover is what turns a failed export into a corrupt
+        // file sitting at the user's chosen name.
+        clingfy::bridge::NativeLogPublisher::Instance().Warn(
+            "Export",
+            "could not remove the partial output at " + destination.u8string() +
+                (rm_ec ? " (" + rm_ec.message() + ")" : ""));
+      }
+      out.resolved_destination_path = destination.u8string();
       if (render_result.disk_full) {
         // The encoder hit a disk-full HRESULT mid-write. No preflight
         // estimate exists at this point (required stays -1); the router
@@ -502,6 +626,7 @@ PassthroughResult ExportPassthroughCopy(
             render_result.message + ")";
       } else {
         out.error = PassthroughError::kRenderFailed;
+        out.device_removed = render_result.device_removed;
         out.message = "exportVideo: composition render failed — " +
                       render_result.message;
       }
@@ -515,6 +640,14 @@ PassthroughResult ExportPassthroughCopy(
   // kept as the result-contract field.
   out.format_was_downgraded = FormatWasDowngraded(input.format);
   return out;
+}
+
+bool ShouldRetryExportAfterDeviceRemoved(const PassthroughResult& outcome,
+                                         int attempts_so_far,
+                                         bool cancel_requested) {
+  return attempts_so_far == 1 && !cancel_requested &&
+         outcome.error == PassthroughError::kRenderFailed &&
+         outcome.device_removed;
 }
 
 }  // namespace clingfy::capture::export_

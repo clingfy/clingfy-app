@@ -1,4 +1,6 @@
 import 'dart:async';
+import 'package:clingfy/app/infrastructure/analytics/analytics_events.dart';
+import 'package:clingfy/app/infrastructure/analytics/analytics_service.dart';
 import 'package:clingfy/app/config/build_config.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
@@ -7,9 +9,10 @@ import 'package:sentry_flutter/sentry_flutter.dart';
 import 'package:clingfy/core/bridges/native_error_codes.dart';
 import 'package:clingfy/core/export/models/export_settings_types.dart';
 import 'package:clingfy/l10n/app_localizations.dart';
-import 'package:clingfy/app/infrastructure/logging/logger_service.dart';
+import 'package:clingfy/core/logging/logger_service.dart';
 import 'package:clingfy/core/models/app_models.dart';
 import 'package:clingfy/core/timeline/model/color_grade.dart';
+import 'package:clingfy/core/timeline/model/edit_track.dart';
 import 'package:clingfy/core/color/auto_grade_heuristic.dart';
 import 'package:clingfy/core/models/background_preset_catalog.dart';
 import 'package:clingfy/app/settings/settings_controller.dart';
@@ -107,11 +110,18 @@ class PostProcessingController extends ChangeNotifier {
   String? _activeSessionId;
   bool _cursorAvailable = true;
   double _audioGainDb = 0.0;
+  VoiceCleanup _voiceCleanup = const VoiceCleanup();
   double _audioVolumePercent = 100.0;
   String? _cameraPath;
   CameraCompositionState? _cameraState;
   CameraExportCapabilities _cameraExportCapabilities =
       const CameraExportCapabilities.allSupported();
+  // Audio separation (D10): whether the OPEN RECORDING contains audio, as
+  // reported by the platform's scene info (Windows probes the mic/system
+  // sidecars). Null = platform didn't report (macOS today) — the sidebar
+  // falls back to its legacy device-selection gate.
+  bool? _sceneHasAudio;
+  bool? _sceneMicGainApplies;
   final AudioDebouncer _audioPreviewDebouncer = AudioDebouncer(
     delay: Duration(milliseconds: 150),
   );
@@ -153,6 +163,7 @@ class PostProcessingController extends ChangeNotifier {
   String? get previewPath => _previewPath;
   bool get cursorAvailable => _cursorAvailable;
   double get audioGainDb => _audioGainDb;
+  VoiceCleanup get voiceCleanup => _voiceCleanup;
   double get audioVolumePercent => _audioVolumePercent;
   ColorGrade get colorGrade => _colorGrade;
   String? get cameraPath => _cameraPath;
@@ -160,6 +171,8 @@ class PostProcessingController extends ChangeNotifier {
   CameraCompositionState? get cameraState => _cameraState;
   CameraExportCapabilities get cameraExportCapabilities =>
       _cameraExportCapabilities;
+  bool? get sceneHasAudio => _sceneHasAudio;
+  bool? get sceneMicGainApplies => _sceneMicGainApplies;
 
   // Computed error state
   bool get hasError => _player.blockingError != null;
@@ -552,6 +565,33 @@ class PostProcessingController extends ChangeNotifier {
     _pushPreviewAudioMix();
   }
 
+  /// Voice cleanup is a discrete choice, not a dragged slider, so there is no
+  /// separate "end" setter: it persists and pushes to the preview immediately.
+  /// The push re-resolves the mic file natively (an O(recording) pass on the
+  /// first use of each mode), which is why it must never be called from a
+  /// continuous gesture.
+  void setVoiceCleanup(VoiceCleanup value) {
+    if (value == _voiceCleanup) return;
+    _voiceCleanup = value;
+    notifyListeners();
+    unawaited(_settings.post.updatePostVoiceCleanup(value));
+    _pushPreviewVoiceCleanup();
+  }
+
+  void _pushPreviewVoiceCleanup() {
+    if (_previewPath == null) return;
+    unawaited(
+      _nativeBridge
+          .previewSetVoiceCleanup(
+            voiceCleanup: _voiceCleanup,
+            sessionId: _activeSessionId,
+          )
+          .catchError((Object e, StackTrace st) {
+            Log.e("PostProcessing", "Failed to update voice cleanup", e, st);
+          }),
+    );
+  }
+
   void _schedulePreviewAudioMix() {
     _audioPreviewDebouncer.run(_pushPreviewAudioMix);
   }
@@ -604,9 +644,12 @@ class PostProcessingController extends ChangeNotifier {
   }
 
   /// Flush the debounce and push the final grade immediately (slider release).
+  /// This is the color-edit commit point, so it is also where the grade is
+  /// persisted to the project bundle (drag ticks only update the preview).
   void commitColorGrade() {
     _colorGradePreviewThrottler.cancel();
     _pushPreviewColorGrade();
+    _persistEditorStateIfActive();
   }
 
   /// One-tap auto enhance: apply a tasteful preset, or clear back to neutral.
@@ -615,6 +658,7 @@ class PostProcessingController extends ChangeNotifier {
     notifyListeners();
     _colorGradePreviewThrottler.cancel();
     _pushPreviewColorGrade();
+    _persistEditorStateIfActive();
   }
 
   void _schedulePreviewColorGrade() {
@@ -720,6 +764,19 @@ class PostProcessingController extends ChangeNotifier {
     await applyProcessing();
   }
 
+  /// Re-push every piece of preview state this controller owns to a native
+  /// session that was rebuilt in place (Windows `previewInvalidated` after a
+  /// standby resume — previewOpen carries no editing state): the color grade
+  /// rides its own channel, and [applyProcessing] re-sends the canvas
+  /// composition (padding, background, cursor, zoom, camera placement,
+  /// audio).
+  Future<void> resyncPreviewAfterRebuild({required String sessionId}) async {
+    if (_activeSessionId != sessionId || _projectPath == null) return;
+    _pushPreviewColorGrade();
+    _pushPreviewVoiceCleanup();
+    await applyProcessing();
+  }
+
   void _resetForNewRecording() {
     _videoPadding = 0;
     _videoRadius = 0;
@@ -736,11 +793,14 @@ class PostProcessingController extends ChangeNotifier {
     _activeSessionId = null;
     _cursorAvailable = true;
     _audioGainDb = _settings.post.postAudioGainDb;
+    _voiceCleanup = _settings.post.postVoiceCleanup;
     _audioVolumePercent = _settings.post.postAudioVolumePercent;
     _colorGrade = const ColorGrade();
     _cameraPath = null;
     _cameraState = null;
     _cameraExportCapabilities = const CameraExportCapabilities.allSupported();
+    _sceneHasAudio = null;
+    _sceneMicGainApplies = null;
     _hasExportedCurrentRecording = false;
   }
 
@@ -753,11 +813,24 @@ class PostProcessingController extends ChangeNotifier {
       _cameraPath = sceneInfo.cameraPath;
       _cameraState = sceneInfo.camera;
       _cameraExportCapabilities = sceneInfo.cameraExportCapabilities;
+      // Audio separation (D10): what the RECORDING contains, when the
+      // platform reports it (Windows probes the sidecars). Null = unknown
+      // (macOS today) — the sidebar keeps its device-selection gate.
+      _sceneHasAudio = sceneInfo.hasRecordedAudio;
+      _sceneMicGainApplies = sceneInfo.micGainApplies;
       // Restore persisted canvas appearance (padding / corner radius /
-      // background) before the first preview render, so the recording
-      // reopens exactly as it was last edited. Synchronous — keeps the
-      // scene-load → applyProcessing ordering unchanged.
+      // background / color grade) before the first preview render, so the
+      // recording reopens exactly as it was last edited. Synchronous — keeps
+      // the scene-load → applyProcessing ordering unchanged.
       _loadCanvasAppearance(projectPath);
+      // Push the restored grade to the preview. The native side stores it and
+      // applies it to whatever preview item loads (deferred if the item isn't
+      // live yet), so the reopened recording shows the last color adjustment.
+      // Guarded like [_loadCanvasAppearance] so a session swap mid-load never
+      // pushes this recording's grade onto a different one.
+      if (_projectPath == projectPath) {
+        _pushPreviewColorGrade();
+      }
       notifyListeners();
       await applyProcessing();
     } catch (e, st) {
@@ -777,11 +850,12 @@ class PostProcessingController extends ChangeNotifier {
     _backgroundColor = state.backgroundColorArgb;
     _backgroundImagePath = state.backgroundImagePath;
     _backgroundPreset = state.backgroundPreset;
+    _colorGrade = state.colorGrade;
   }
 
-  /// Persists the current canvas appearance to the project bundle.
-  /// Fire-and-forget — invoked from [applyProcessing] on every committed
-  /// canvas edit.
+  /// Persists the current editor state (canvas appearance + color grade) to the
+  /// project bundle. Fire-and-forget — invoked from [applyProcessing] on every
+  /// committed canvas edit and from the color-grade commit points.
   void _persistCanvasAppearance(String projectPath) {
     unawaited(
       CanvasAppearanceStore.save(
@@ -793,9 +867,19 @@ class PostProcessingController extends ChangeNotifier {
           backgroundColorArgb: _backgroundColor,
           backgroundImagePath: _backgroundImagePath,
           backgroundPreset: _backgroundPreset,
+          colorGrade: _colorGrade,
         ),
       ),
     );
+  }
+
+  /// Persists the editor state only when a recording is attached. Used by the
+  /// color-grade commit points, which (unlike canvas edits) do not route
+  /// through [applyProcessing].
+  void _persistEditorStateIfActive() {
+    final projectPath = _projectPath;
+    if (projectPath == null) return;
+    _persistCanvasAppearance(projectPath);
   }
 
   void togglePlayback() {
@@ -853,6 +937,7 @@ class PostProcessingController extends ChangeNotifier {
         'zoomEffectEnabled': _zoomEffectEnabled,
         'showCursor': _showCursor,
         'audioGainDb': _audioGainDb,
+        'voiceCleanup': _voiceCleanup.toMap(),
         'audioVolumePercent': _audioVolumePercent,
         'sessionId': _activeSessionId,
         // For preview, we still use mov/hevc for maximum quality/performance
@@ -931,6 +1016,9 @@ class PostProcessingController extends ChangeNotifier {
           'fitMode': _settings.post.fitMode.name,
           'showCursor': _showCursor,
           'audioGainDb': _audioGainDb,
+          'voiceCleanup': _voiceCleanup.enabled
+              ? _voiceCleanup.mode.wire
+              : 'off',
           'audioVolumePercent': _audioVolumePercent,
         },
       );
@@ -946,6 +1034,9 @@ class PostProcessingController extends ChangeNotifier {
           'fitMode': _settings.post.fitMode.name,
           'showCursor': _showCursor,
           'audioGainDb': _audioGainDb,
+          'voiceCleanup': _voiceCleanup.enabled
+              ? _voiceCleanup.mode.wire
+              : 'off',
           'audioVolumePercent': _audioVolumePercent,
         },
       );
@@ -1017,6 +1108,15 @@ class PostProcessingController extends ChangeNotifier {
     _isExportInBackground = false;
     _exportProgress = null;
     notifyListeners();
+
+    ClingfyAnalytics.capture(
+      AnalyticsEvents.exportJobStart,
+      properties: {
+        'format': _settings.export.exportFormat,
+        'resolution': _settings.post.resolutionPreset.name,
+        'layout': _settings.post.layoutPreset.name,
+      },
+    );
 
     SpanStatus exportStatus = const SpanStatus.ok();
     CaptureDiagnostics diagnostics = const CaptureDiagnostics();
@@ -1105,6 +1205,7 @@ class PostProcessingController extends ChangeNotifier {
         'zoomEffectEnabled': _zoomEffectEnabled,
         'showCursor': _showCursor,
         'audioGainDb': _audioGainDb,
+        'voiceCleanup': _voiceCleanup.toMap(),
         'audioVolumePercent': _audioVolumePercent,
         // Bake the same grade the user sees in the live preview into the
         // exported file. Identity (no adjustment) is a no-op on the native
@@ -1152,6 +1253,13 @@ class PostProcessingController extends ChangeNotifier {
       if (newPath != null) {
         Log.i("PostProcessing", "Export completed successfully");
         _hasExportedCurrentRecording = true;
+        ClingfyAnalytics.capture(
+          AnalyticsEvents.exportJobComplete,
+          properties: {
+            'format': _settings.export.exportFormat,
+            'resolution': _settings.post.resolutionPreset.name,
+          },
+        );
       } else if (!_isExportCancelRequested) {
         exportStatus = const SpanStatus.aborted();
       }
@@ -1164,6 +1272,10 @@ class PostProcessingController extends ChangeNotifier {
       }
       exportStatus = _statusForExportPlatformException(e);
       Log.e("PostProcessing", "Export failed: $e");
+      ClingfyAnalytics.capture(
+        AnalyticsEvents.exportJobFail,
+        properties: {'error_code': e.code},
+      );
       await ClingfyTelemetry.captureNativeMethodChannelError(
         method: 'exportVideo',
         error: e,
@@ -1176,6 +1288,9 @@ class PostProcessingController extends ChangeNotifier {
           'codec': _settings.export.exportCodec,
           'bitrate': _settings.export.exportBitrate,
           'audioGainDb': _audioGainDb,
+          'voiceCleanup': _voiceCleanup.enabled
+              ? _voiceCleanup.mode.wire
+              : 'off',
           'audioVolumePercent': _audioVolumePercent,
           'autoNormalizeOnExport': autoNormalizeOnExport,
           'targetLoudnessDbfs': targetLoudnessDbfs,
@@ -1197,6 +1312,10 @@ class PostProcessingController extends ChangeNotifier {
       }
       exportStatus = const SpanStatus.internalError();
       Log.e("PostProcessing", "Export failed: $e");
+      ClingfyAnalytics.capture(
+        AnalyticsEvents.exportJobFail,
+        properties: {'error_code': 'internal'},
+      );
       await ClingfyTelemetry.captureNativeMethodChannelError(
         method: 'exportVideo',
         error: e,
@@ -1209,6 +1328,9 @@ class PostProcessingController extends ChangeNotifier {
           'codec': _settings.export.exportCodec,
           'bitrate': _settings.export.exportBitrate,
           'audioGainDb': _audioGainDb,
+          'voiceCleanup': _voiceCleanup.enabled
+              ? _voiceCleanup.mode.wire
+              : 'off',
           'audioVolumePercent': _audioVolumePercent,
           'autoNormalizeOnExport': autoNormalizeOnExport,
           'targetLoudnessDbfs': targetLoudnessDbfs,

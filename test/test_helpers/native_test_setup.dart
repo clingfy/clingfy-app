@@ -27,6 +27,10 @@ Future<void> installCommonNativeMocks({
   bool screenRecordingGranted = true,
   bool onboardingSeen = true,
   bool homeGuideSeen = true,
+  // Audio separation (D10): tests that exercise the scene-derived audio
+  // gating inject a getRecordingSceneInfo reply here. Null keeps the
+  // default (no reply -> NativeBridge's empty-scene fallback).
+  Map<String, Object?>? recordingSceneInfoReply,
 }) async {
   SharedPreferences.setMockInitialValues({
     'onboarding_seen_v1': onboardingSeen,
@@ -86,6 +90,7 @@ Future<void> installCommonNativeMocks({
       case 'togglePreRecordingBar':
       case 'setExcludeRecorderApp':
       case 'setExcludeMicFromSystemAudio':
+      case 'setMicEchoCancellationEnabled':
       case 'setCursorHighlightEnabled':
       case 'setCursorHighlightLinkedToRecording':
       case 'setOverlayEnabled':
@@ -121,7 +126,11 @@ Future<void> installCommonNativeMocks({
       case 'revealRecordingsFolder':
       case 'revealTempFolder':
       case 'clearCachedRecordings':
-      case 'setAudioMix':
+      // The wire name Dart's NativeBridge.setAudioMix actually sends
+      // (fixed in editing 4-7d — this mock listed the Dart-side method
+      // name 'setAudioMix' by mistake, so the audio-mix push always fell
+      // through to the default handler).
+      case 'updateAudioPreview':
       case 'previewOpen':
       case 'previewClose':
       case 'previewPlay':
@@ -141,6 +150,10 @@ Future<void> installCommonNativeMocks({
         return false;
       case 'getExcludeMicFromSystemAudio':
         return true;
+      case 'getMicEchoCancellationEnabled':
+        return false;
+      case 'getRecordingSceneInfo':
+        return recordingSceneInfoReply;
       default:
         return null;
     }

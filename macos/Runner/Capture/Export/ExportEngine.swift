@@ -73,6 +73,8 @@ final class ExportEngine {
     let audioVolumePercent: Double
     let autoNormalizeOnExport: Bool
     let targetLoudnessDbfs: Double
+    /// Mic noise reduction. Disabled by default so older payloads are unchanged.
+    var voiceCleanup: VoiceCleanupRequest = .disabled
     let cameraPath: String?
     let cameraParams: CameraCompositionParams?
     /// Canvas-wide color grade baked into the exported screen content.
@@ -101,6 +103,39 @@ final class ExportEngine {
     /// the cleanup that runs in the completion block.
     let keepOriginals: Bool
     let defaultZoomFollowStrength: CGFloat
+  }
+
+  /// Why the destination cannot receive an export, or nil when it can.
+  ///
+  /// Deliberately checks reachability and writability separately: an ejected
+  /// drive and a permission problem need different actions from the user, and
+  /// "Cannot create file" tells them neither.
+  static func destinationProblem(folder: URL) -> String? {
+    let fileManager = FileManager.default
+    var isDirectory: ObjCBool = false
+    guard fileManager.fileExists(atPath: folder.path, isDirectory: &isDirectory) else {
+      // A path under /Volumes that no longer exists is almost always an
+      // unmounted disk rather than a deleted folder.
+      if folder.path.hasPrefix("/Volumes/") {
+        return
+          "The export folder is on a disk that is not connected. Reconnect it, or choose another folder."
+      }
+      return "The export folder no longer exists. Choose another folder."
+    }
+    guard isDirectory.boolValue else {
+      return "The export destination is not a folder. Choose another folder."
+    }
+    // An actual write probe rather than a permission bit: under the sandbox a
+    // folder can be POSIX-writable and still refused, and a network or
+    // read-only volume only reveals itself on the write.
+    let probe = folder.appendingPathComponent(".clingfy-write-probe-\(UUID().uuidString)")
+    do {
+      try Data().write(to: probe, options: .atomic)
+      try? fileManager.removeItem(at: probe)
+    } catch {
+      return "The export folder cannot be written to. Choose another folder."
+    }
+    return nil
   }
 
   func export(
@@ -170,6 +205,26 @@ final class ExportEngine {
       idx += 1
     }
 
+    // 6b. Pre-flight the destination BEFORE any rendering.
+    //
+    // The save folder is remembered as a plain path string, so a folder on a
+    // volume that has since been ejected still looks valid in the export
+    // dialog. Without this check the export renders every intermediate first —
+    // minutes of work on a long recording — and only fails when AVAssetWriter
+    // finally tries to create the output, with a bare "Cannot create file".
+    // Fail immediately instead, and say which folder is unreachable.
+    if let destinationError = Self.destinationProblem(folder: folder) {
+      NativeLogger.w(
+        "Export", "Export destination is not writable; refusing before rendering",
+        context: ["folder": folder.path, "reason": destinationError])
+      result(
+        FlutterError(
+          code: NativeErrorCode.exportError,
+          message: destinationError,
+          details: folder.path))
+      return
+    }
+
     // 7. Capture cleanup state.
     let keepOriginals = dependencies.keepOriginals
     let recordingStoreRef = dependencies.recordingStore
@@ -207,6 +262,7 @@ final class ExportEngine {
       audioVolumePercent: clampedVolumePercent,
       autoNormalizeOnExport: input.autoNormalizeOnExport,
       targetLoudnessDbfs: clampedTargetLoudnessDbfs,
+      voiceCleanup: input.voiceCleanup,
       cameraParams: exportCameraParams,
       colorGrade: input.colorGrade,
       clips: input.clips,

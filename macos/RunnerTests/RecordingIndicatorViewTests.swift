@@ -13,6 +13,14 @@ final class RecordingIndicatorViewTests: XCTestCase {
       frame: NSRect(origin: .zero, size: RecordingIndicatorView.preferredSize)
     )
     view.elapsedProvider = { elapsed }
+    // The primary/secondary buttons only lay out a hit target when their handler
+    // is wired (isPrimaryActionAvailable / isSecondaryStopAvailable) — the way
+    // ScreenRecorderFacade always installs all three. Wire no-op handlers before
+    // layout so recording/paused render their targets; the click tests overwrite
+    // the specific handler they assert on afterward.
+    view.onPauseTapped = {}
+    view.onResumeTapped = {}
+    view.onStopTapped = {}
     view.state = state
     view.layoutSubtreeIfNeeded()
     return view

@@ -44,6 +44,10 @@
 #include <functional>
 #include <optional>
 #include <string>
+#include <vector>
+
+#include "Capture/Export/clip_playback_planner.h"
+#include "Capture/Export/color_grade.h"
 
 namespace clingfy::capture::export_ {
 
@@ -98,6 +102,15 @@ struct PassthroughInput {
   double audio_volume_percent = 100.0;
   bool auto_normalize = false;
   double target_loudness_dbfs = -16.0;
+
+  // Phase 4 voice cleanup. The `voiceCleanup.{enabled,mode}` from the
+  // `exportVideo` map. When enabled (and the recording has a decodable
+  // separated mic sidecar), the export runs the mic through the RNNoise engine
+  // (Capture/Export/mic_cleanup.h) before the audio pump; `mode` picks the
+  // wet/dry strength ("light" = gentler, else full). Off leaves the mic
+  // untouched -- identical to the pre-feature export.
+  bool voice_cleanup_enabled = false;
+  std::string voice_cleanup_mode;
 
   // Slice 5A: requested output bitrate preset ("auto"/"low"/"medium"/"high").
   // The `format` field above selects the container (.mp4 vs .mov).
@@ -159,7 +172,47 @@ struct PassthroughInput {
   std::string camera_outro_preset;
   int camera_intro_duration_ms = 0;
   int camera_outro_duration_ms = 0;
+
+  // Editing port (color): the `colorGrade` map from the `exportVideo` args,
+  // parsed by Bridge/Routers/color_grade_args. A non-identity grade forces
+  // the composition path (a byte-copy cannot bake color) and is threaded
+  // through to the pipeline's per-frame color pass.
+  color::ColorGrade color_grade;
+
+  // Editing port (clips): the kept ranges parsed from the `clips` export arg
+  // (enabled clips with a positive source window, in timeline order — the Dart
+  // `Clip.toMap()` list filtered exactly like the macOS
+  // `ClipKeptRange.fromFlutter`). A real edit — cut / trim / delete-middle /
+  // reorder / overlap — forces the composition path and is baked by the
+  // pipeline; silently byte-copying the uncut source would ship content the
+  // user cut out. A list that coalesces back to one full-range window (a split
+  // with nothing deleted, starting at source 0) is NOT an edit and stays
+  // exportable. Known limitation: a pure tail-trim (one range starting at 0) is
+  // indistinguishable from the full range without the asset duration and is
+  // allowed through.
+  std::vector<clip_planner::ClipKeptRange> clip_ranges;
 };
+
+// Editing port (clips) — how the export should treat a clip edit.
+enum class ClipEditKind {
+  // Empty, or a single window covering the asset from source 0: no real edit.
+  // Stays eligible for the byte-copy fast-path (a pure tail-trim also lands
+  // here — indistinguishable from the full range without the asset duration).
+  kPassthrough,
+  // A real edit (cut / trim / delete-middle / reorder / overlap): bake it via
+  // the composition path. Cuts drop frames + re-stamp; reorder/overlap read
+  // each source window in timeline order (per-range backward seeks, 3b-2) with
+  // a sample-accurate audio stitch.
+  kBake,
+};
+
+// Pure classifier for the `clips` export arg: coalesces source-adjacent ranges,
+// then decides passthrough vs. bake. Any real edit — cut, trim, delete-middle,
+// reorder, or overlap — bakes via the composition path (3b-2 handles reorder
+// and overlap with per-range source-window reads and a decoupled audio stitch).
+// Exposed for unit tests.
+ClipEditKind ClassifyClipEdit(
+    const std::vector<clip_planner::ClipKeptRange>& ranges);
 
 // Phase 9.4 — pure decision: should the export composite the camera bubble?
 // True only when the user wants it (`camera_visible`), the project actually has
@@ -216,6 +269,20 @@ struct PassthroughResult {
   std::int64_t disk_required_bytes = -1;
   std::int64_t disk_available_bytes = -1;
   std::string disk_checked_path;
+  // Standby-resume recovery: true when error == kRenderFailed and the
+  // pipeline classified the failure as a lost D3D device (Modern Standby
+  // resume, driver reset, TDR — see RenderResult::device_removed). The
+  // router retries the whole export once when this is set; a fresh
+  // ExportPassthroughCopy call builds a fresh device.
+  bool device_removed = false;
+  // The destination the FAILED render attempt wrote to (UTF-8; empty on
+  // success and on pre-destination failures). The retry path uses it to
+  // verify the partial output is actually gone before re-resolving the
+  // destination — if a leftover survived both best-effort removals (a
+  // transient AV/indexer lock), a blind retry would collision-avoid to
+  // "name (1).ext" and report success while a corrupt file keeps the name
+  // the user chose.
+  std::string resolved_destination_path;
 };
 
 // ---- Phase 10.4 disk-full preflight (pure, unit-testable) -------------------
@@ -242,6 +309,19 @@ std::int64_t EstimateRequiredExportBytes(std::int64_t source_size_bytes,
 // otherwise a plain `available >= required` comparison.
 bool ExportDiskPreflightFits(std::int64_t required_bytes,
                              std::int64_t available_bytes);
+
+// Standby-resume recovery — pure decision: retry a failed export attempt?
+// True only for the FIRST attempt (`attempts_so_far == 1`) whose outcome is
+// kRenderFailed carrying the device-removed classification, and never after
+// a cancel request (a cancel can land in the gap between attempts). Strictly
+// gating on kRenderFailed means kCancelled / kDiskFull / kInputMissing /
+// kNoDestination / kCopyFailed never retry. Each ExportPassthroughCopy call
+// builds a fresh D3D device / D2D stack / readers / encoder, so the retry
+// IS the pipeline recreation — no extra teardown API exists or is needed.
+// Exposed for unit tests.
+bool ShouldRetryExportAfterDeviceRemoved(const PassthroughResult& outcome,
+                                         int attempts_so_far,
+                                         bool cancel_requested);
 
 // Human-readable decimal byte count ("67.1 MB" / "1.5 GB") — the Windows
 // analogue of the macOS ByteCountFormatter strings embedded in the

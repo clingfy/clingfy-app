@@ -1,8 +1,9 @@
 import 'package:flutter/foundation.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
-import 'package:clingfy/app/infrastructure/logging/logger_service.dart';
+import 'package:clingfy/core/logging/logger_service.dart';
 import 'package:clingfy/core/models/app_models.dart';
+import 'package:clingfy/core/timeline/model/edit_track.dart';
 
 class PostProcessingSettingsController extends ChangeNotifier {
   static const String _prefPostAudioGainDb = 'postAudioGainDb';
@@ -10,6 +11,8 @@ class PostProcessingSettingsController extends ChangeNotifier {
   static const String _prefPostAutoNormalizeEnabled =
       'postAutoNormalizeEnabled';
   static const String _prefPostTargetLoudnessDbfs = 'postTargetLoudnessDbfs';
+  static const String _prefPostVoiceCleanupEnabled = 'postVoiceCleanupEnabled';
+  static const String _prefPostVoiceCleanupMode = 'postVoiceCleanupMode';
   static const String _prefPostZoomEffectEnabled = 'postZoomEffectEnabled';
   static const String _prefPostZoomFactor = 'postZoomFactor';
 
@@ -20,6 +23,9 @@ class PostProcessingSettingsController extends ChangeNotifier {
   double _postAudioVolumePercent = 100.0;
   bool _postAutoNormalizeEnabled = false;
   double _postTargetLoudnessDbfs = -16.0;
+  // Voice cleanup ships opt-in and OFF by default: it is a lossy DSP pass on
+  // the user's voice, so it only ever runs when explicitly asked for.
+  VoiceCleanup _postVoiceCleanup = const VoiceCleanup();
   bool _postZoomEffectEnabled = true;
   double _postZoomFactor = 1.5;
 
@@ -30,6 +36,7 @@ class PostProcessingSettingsController extends ChangeNotifier {
   double get postAudioVolumePercent => _postAudioVolumePercent;
   bool get postAutoNormalizeEnabled => _postAutoNormalizeEnabled;
   double get postTargetLoudnessDbfs => _postTargetLoudnessDbfs;
+  VoiceCleanup get postVoiceCleanup => _postVoiceCleanup;
   bool get postZoomEffectEnabled => _postZoomEffectEnabled;
   double get postZoomFactor => _postZoomFactor;
 
@@ -74,6 +81,12 @@ class PostProcessingSettingsController extends ChangeNotifier {
         prefs.getBool(_prefPostAutoNormalizeEnabled) ?? false;
     _postTargetLoudnessDbfs = _clampPostTargetLoudnessDbfs(
       prefs.getDouble(_prefPostTargetLoudnessDbfs) ?? -16.0,
+    );
+    _postVoiceCleanup = VoiceCleanup(
+      enabled: prefs.getBool(_prefPostVoiceCleanupEnabled) ?? false,
+      mode: CleanupMode.fromWire(
+        prefs.getString(_prefPostVoiceCleanupMode) ?? CleanupMode.balanced.wire,
+      ),
     );
     _postZoomEffectEnabled = prefs.getBool(_prefPostZoomEffectEnabled) ?? true;
     _postZoomFactor = _clampPostZoomFactor(
@@ -153,6 +166,19 @@ class PostProcessingSettingsController extends ChangeNotifier {
       await prefs.setBool(_prefPostAutoNormalizeEnabled, value);
     } catch (e, st) {
       Log.e('Settings', 'Failed to persist post auto-normalize setting', e, st);
+    }
+  }
+
+  Future<void> updatePostVoiceCleanup(VoiceCleanup value) async {
+    if (value == _postVoiceCleanup) return;
+    _postVoiceCleanup = value;
+    notifyListeners();
+    final prefs = await SharedPreferences.getInstance();
+    try {
+      await prefs.setBool(_prefPostVoiceCleanupEnabled, value.enabled);
+      await prefs.setString(_prefPostVoiceCleanupMode, value.mode.wire);
+    } catch (e, st) {
+      Log.e('Settings', 'Failed to persist post voice cleanup setting', e, st);
     }
   }
 

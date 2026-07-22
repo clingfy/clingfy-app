@@ -1,6 +1,8 @@
+import 'dart:async';
+
 import 'package:flutter/services.dart';
 import 'package:clingfy/core/bridges/native_method_channel.dart';
-import 'package:clingfy/app/infrastructure/logging/logger_service.dart';
+import 'package:clingfy/core/logging/logger_service.dart';
 import 'package:clingfy/core/models/app_models.dart';
 import 'package:clingfy/core/timeline/model/color_grade.dart';
 import 'package:clingfy/core/timeline/model/edit_track.dart';
@@ -111,6 +113,17 @@ class NativeBridge {
       onError: (error) {
         Log.e("NativeBridge", "Error on workflow event stream: $error");
       },
+    );
+
+    // The Dart 'log' handler is installed now — tell native to drain any log
+    // lines it buffered during startup (before the channel/handler existed),
+    // so early native diagnostics land in the unified log file instead of
+    // being dropped. Fire-and-forget: legacy natives without the method and
+    // test environments without a platform side must never fail construction.
+    unawaited(
+      _nativeBridge
+          .invokeMethod<void>('flushPendingNativeLogs')
+          .catchError((_) {}),
     );
   }
 
@@ -384,6 +397,30 @@ class NativeBridge {
       'gain': gainDb,
       'volume': volumePercent,
     });
+  }
+
+  /// Pushes the mic noise-reduction setting to the open preview.
+  ///
+  /// Unlike gain and volume this is not a live mix parameter — native
+  /// re-resolves which mic FILE the preview plays and rebuilds the player item
+  /// — so it gets its own method rather than riding on `updateAudioPreview`.
+  /// A native build without the method replies `MissingPluginException`, which
+  /// is swallowed: the preview simply keeps playing the un-cleaned mic.
+  Future<void> previewSetVoiceCleanup({
+    required VoiceCleanup voiceCleanup,
+    required String? sessionId,
+  }) async {
+    try {
+      await _nativeBridge.invokeMethod<void>('previewSetVoiceCleanup', {
+        if (sessionId != null) 'sessionId': sessionId,
+        'voiceCleanup': voiceCleanup.toMap(),
+      });
+    } on MissingPluginException {
+      Log.w(
+        'NativeBridge',
+        'previewSetVoiceCleanup is not implemented by this native build',
+      );
+    }
   }
 
   Future<void> previewSetCameraPlacement({
@@ -724,35 +761,11 @@ class NativeBridge {
     });
   }
 
-  /// Phase 9.3.1: the id of the app-lifetime live-camera preview texture, or
-  /// null when unavailable (registration failed, or not a Windows build with the
-  /// texture). The recording UI mounts a `Texture(textureId:)` for it while
-  /// recording with the camera enabled. The texture is fed by the recorder; it
-  /// shows nothing until camera frames arrive.
-  Future<int?> getCameraPreviewTextureId() async {
-    // Windows-only. On macOS (and any build without the handler) the channel
-    // throws MissingPluginException — degrade to null so the cross-platform
-    // recording UI simply shows no live preview rather than crashing.
-    try {
-      final result = await _nativeBridge.invokeMethod<Map>(
-        'getCameraPreviewTextureId',
-      );
-      final id = (result?['textureId'] as num?)?.toInt();
-      if (id == null || id < 0) return null;
-      return id;
-    } on MissingPluginException {
-      return null;
-    } catch (e) {
-      Log.e('NativeBridge', 'getCameraPreviewTextureId failed: $e');
-      return null;
-    }
-  }
-
-  /// Phase 9.3.2: select the live camera preview mode for the current recording.
-  /// [floating] true requests the topmost floating bubble; the native side only
-  /// honors it when the bubble exists AND capture-exclusion succeeded. Returns
-  /// the RESULTING floating state — false means use the in-app texture (floating
-  /// unavailable, in-app requested, or no Windows handler). Never throws.
+  /// Shows the floating camera bubble for the current recording (Windows: the
+  /// engine creates it hidden and shows it only on this call). Returns the
+  /// RESULTING floating state — false means no live bubble (capture-exclusion
+  /// failed on this GPU; native never shows an unexcluded bubble because it
+  /// would burn into the recording, or no Windows handler). Never throws.
   Future<bool> setCameraPreviewMode({required bool floating}) async {
     try {
       final result = await _nativeBridge.invokeMethod<Map>(

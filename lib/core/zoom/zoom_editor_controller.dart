@@ -9,7 +9,7 @@ import 'package:clingfy/core/zoom/zoom_segment_merge.dart';
 import 'package:clingfy/core/timeline/timeline_timebase.dart';
 import 'package:clingfy/core/timeline/edit_command.dart';
 import 'package:clingfy/core/timeline/edit_session.dart';
-import 'package:clingfy/app/infrastructure/logging/logger_service.dart';
+import 'package:clingfy/core/logging/logger_service.dart';
 import 'package:uuid/uuid.dart';
 
 abstract class ZoomEditCommand implements EditCommand {
@@ -1683,4 +1683,9 @@ class ZoomEditorController extends ChangeNotifier {
     );
     return _syncChain;
   }
+
+  /// Re-push the current effective segments to a preview session that was
+  /// rebuilt in place (Windows `previewInvalidated` — the reopened native
+  /// session starts with no zoom state). Chained behind any in-flight sync.
+  Future<void> resyncToNative() => _syncToNative();
 }

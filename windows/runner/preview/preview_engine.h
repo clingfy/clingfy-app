@@ -36,6 +36,8 @@
 #include <flutter_plugin_registrar.h>
 #include <flutter_texture_registrar.h>
 
+#include "Capture/Export/clip_playback_planner.h"
+#include "Capture/Export/color_grade.h"
 #include "Preview/preview_camera_renderer.h"
 
 #include <atomic>
@@ -74,6 +76,21 @@ struct OpenArgs {
   // sync key (cameraTime = playbackTime - startOffset).
   std::wstring camera_path;
   std::int64_t camera_start_offset_ms = 0;
+  // Polish: the recording's natural size from screen.meta.json (0 = unknown).
+  // Sizes the shared texture to the video's ASPECT (fitted in the 1280x720
+  // budget) so the compositor letterbox is an exact fit — no bars baked into
+  // the pixels (which doubled up with Flutter's AspectRatio letterbox on
+  // non-16:9 recordings) and the camera bubble's canvas matches the export's
+  // auto-layout canvas aspect.
+  int video_width_hint = 0;
+  int video_height_hint = 0;
+  // Audio separation (design D9): the mic / system sidecar paths from the
+  // project reader (existence-gated there; empty = absent). The engine runs
+  // the decode probe once at Open and, when either passes, the edited-path
+  // renderer goes dual-pump with mic-only gain — the premix in screen.mov
+  // stays the fallback (and the uncut passthrough MediaPlayer's source).
+  std::wstring mic_audio_path;
+  std::wstring system_audio_path;
 };
 
 struct OpenResult {
@@ -153,11 +170,148 @@ class PreviewEngine {
   //   * Open with the SAME session_id while already running →
   //     idempotent, returns the existing state.
   //   * Open with a DIFFERENT session_id while already running →
-  //     returns error (caller must Close first). This is stricter
-  //     than macOS's "queue the request" model, but Flutter has no
-  //     analogous gate for us to wait on — failing loudly is safer
-  //     than silently swapping inputs out from under the Dart layer.
+  //     the running session is ORPHANED (Dart is the single serialized
+  //     driver, so it can only ask for a new session after its owner is
+  //     gone — a Dart hot restart survives the native process, as does a
+  //     watchdog-abandoned close). Open closes the stale session and
+  //     proceeds (last-open-wins, matching macOS). Refusing here used to
+  //     wedge every future preview until a full app restart.
   OpenResult Open(const OpenArgs& args);
+
+  // Pure decision for Open()'s orphan reconcile: should an incoming Open
+  // close the currently-running session first? True only for a NON-empty
+  // incoming id that differs from the active one while the engine runs.
+  // Same-session re-entry stays idempotent; a not-running engine has
+  // nothing to close. Exposed for tests; keep in sync with the reconcile
+  // block at the top of Open().
+  static bool ShouldReconcileStaleSession(
+      bool running, const std::string& active_session_id,
+      const std::string& incoming_session_id);
+
+  // Windows resumed from Modern Standby / suspend. The D3D11 device and
+  // WinRT frame server backing an open session are frequently invalid
+  // after a resume (DXGI_ERROR_DEVICE_REMOVED) — but the failure only
+  // surfaces once playback next touches the device, and the render loop
+  // takes ~90 failed frames to die. Instead of waiting for that, tell
+  // Dart the session is suspect NOW via a `previewInvalidated` player
+  // event; Dart closes and reopens the preview in place (same session
+  // id), rebuilding the device, reader, and texture. No-op when no
+  // session is running. Called from FlutterWindow::MessageHandler on
+  // WM_POWERBROADCAST / PBT_APMRESUMEAUTOMATIC (the platform thread),
+  // but safe from any thread — the publisher marshals internally.
+  void OnSystemResumed();
+
+  // Pure decision for OnSystemResumed(): only a running engine with a
+  // non-empty active session has anything to invalidate. Exposed for
+  // tests; keep in sync with OnSystemResumed().
+  static bool ShouldInvalidateOnSystemResume(
+      bool running, const std::string& active_session_id);
+
+  struct TextureSize {
+    int width = 0;
+    int height = 0;
+  };
+  // Pure (exposed for tests): the shared-texture size for a session — the
+  // recording's aspect fitted inside the historical 1280x720 budget,
+  // even-aligned, with a small floor. Unknown hints (<= 0) keep 1280x720.
+  static TextureSize ComputePreviewTextureSize(int video_width_hint,
+                                               int video_height_hint);
+
+  // Editing port (step 4-5) — pure decision for Play() on an edited session:
+  // pressing Play with the playhead at (or within one frame of) the edited
+  // end RESTARTS from 0, macOS IsAtEnd parity — otherwise Play at the end
+  // renders one final frame, the pacer immediately EOSes, and the button
+  // feels dead. Non-positive durations never restart (nothing to play).
+  // Exposed for tests; keep in sync with Play()'s edited branch.
+  static bool ShouldRestartEditedPlaybackFromEnd(std::int64_t edited_pos_ms,
+                                                 std::int64_t edited_duration_ms);
+
+  // ---- Edited-pacer chase policy (pure, exposed for tests) ----------------
+  //
+  // The edited preview's audio renderer is the MASTER clock (design 4-7c
+  // D5), so the video pacer must chase it. The naive chase — discard every
+  // frame that is behind the sound — assumes video decode runs well past
+  // realtime. The preview reader's SOFTWARE decode does not (measured
+  // ~1.3-1.7x at 1080p Release, ~1.0x Debug, worse at higher resolutions),
+  // so at zero margin an unbounded discard freezes the picture completely
+  // while audio plays on (user-reported, 2026-07-20). This policy keeps the
+  // picture moving in that regime and bounds the lip-sync trail.
+  //
+  // Tunables are public so tests assert against named values, not magic
+  // numbers.
+  //   kAudioChaseSlackMs   — a frame within this of the sound is "in sync".
+  //   kStaleEmitEvery      — emit every Nth stale frame anyway (late-frame
+  //                          decimation: the picture always advances).
+  //                          Discarding does NOT speed up catch-up (the
+  //                          decode already happened) — it only saves the
+  //                          compose+upload — so this stays small: measured
+  //                          17-25 presented fps at N=2 vs 8 at N=6, for
+  //                          the same content rate.
+  //   kChaseSeekDeficitMs  — trail past this and a reposition is warranted.
+  //                          Measured on a 1080p60 recording: a chase seek
+  //                          costs a keyframe lead-in decode (~2 s of
+  //                          blacked-out catch-up, since the recorder does
+  //                          not pin GOP — issue #294), so the trigger must
+  //                          sit well above that or the seek costs more
+  //                          than it recovers.
+  //   kChaseSeekCooldownMs — minimum spacing between chase seeks.
+  //   kChaseSeekEndGuardMs — never chase INTO the tail: the edited end maps
+  //                          one-past-the-last-kept-frame, so a seek there
+  //                          floors out every remaining frame and freezes
+  //                          the picture for good. Decimation carries the
+  //                          tail instead.
+  static constexpr std::int64_t kAudioChaseSlackMs = 33;
+  static constexpr int kStaleEmitEvery = 2;
+  static constexpr std::int64_t kChaseSeekDeficitMs = 5000;
+  static constexpr std::int64_t kChaseSeekCooldownMs = 3000;
+  static constexpr std::int64_t kChaseSeekEndGuardMs = 1000;
+
+  enum class PacerChaseAction { kEmit, kDiscard, kSeekToAudio };
+
+  struct PacerChaseInput {
+    // The decoded frame's position on the edited timeline.
+    std::int64_t frame_edited_ms = 0;
+    // The audio master clock, or < 0 when this session has no sound (the
+    // pacer then free-runs on its own budget — every frame emits).
+    std::int64_t audio_edited_ms = -1;
+    std::int64_t edited_duration_ms = 0;
+    // Consecutive stale frames discarded so far.
+    int stale_streak = 0;
+    // Elapsed since the last chase seek; < 0 = never chased.
+    std::int64_t ms_since_chase_seek = -1;
+    // A chase seek is in flight: the next frame that clears the lead-in
+    // floor IS the frame we repositioned to, so it emits unconditionally.
+    // Without this the post-seek frame is still "stale" (the keyframe
+    // lead-in decode let audio advance), so a long lead-in would trigger
+    // another chase — seek, decode, discard, seek — and the picture would
+    // never advance at all.
+    bool awaiting_chase_frame = false;
+    // The reorder branch cannot reposition (its range cursor would need
+    // re-priming), so it decimates only.
+    bool allow_chase_seek = true;
+  };
+
+  struct PacerChaseDecision {
+    PacerChaseAction action = PacerChaseAction::kEmit;
+    // Valid for kSeekToAudio: where to reposition, in edited ms.
+    std::int64_t seek_target_edited_ms = 0;
+    int next_stale_streak = 0;
+  };
+
+  // Pure decision for one decoded frame. See the tunables above.
+  static PacerChaseDecision DecidePacerChase(const PacerChaseInput& input);
+
+  // Pure (exposed for tests): the next kept range's source_in_ms strictly
+  // AFTER `source_ms`, or -1 when none follows. The monotonic pacer uses it
+  // to SEEK across a large cut gap instead of decode-crawling every deleted
+  // frame — the audio renderer (the master clock) crosses a cut instantly
+  // via its slot seek, so a crawl left the video seconds behind the sound,
+  // frozen while it caught up (user-visible lag after deleting a middle
+  // segment). Ranges are the engine's clip_ranges (source-monotonic here).
+  static std::int64_t NextKeptSourceInMsAfter(
+      std::int64_t source_ms,
+      const std::vector<capture::export_::clip_planner::ClipKeptRange>&
+          ranges);
 
   // Tear down the MediaPlayer + compositor and release the Flutter
   // texture via FlutterDesktopTextureRegistrarUnregisterExternalTexture
@@ -202,6 +356,57 @@ class PreviewEngine {
   void SetCameraComposition(const std::string& session_id,
                             const PreviewCameraComposition& composition);
 
+  // Editing port (color): update the live color grade for the inline preview.
+  // Driven by Dart's previewSetColorGrade on every slider tick / auto-enhance
+  // toggle. Applies to the VIDEO ONLY (the cursor halo and camera bubble stay
+  // ungraded — macOS preview parity; the export grades video+cursor+clicks).
+  // A stale session_id is a silent no-op. Cheap and thread-safe; the D2D
+  // effect chain (re)builds on the frame thread at the next composited frame,
+  // and a PAUSED preview is nudged to recomposite immediately, exactly like
+  // camera edits.
+  void SetColorGrade(const std::string& session_id,
+                     const capture::export_::color::ColorGrade& grade);
+
+  // Editing port (clips, step 4-1): store the edited-timeline kept ranges for
+  // the inline preview. Driven by Dart's previewSetClips on open and on every
+  // clip edit (split / cut / trim / drag-reorder), in TIMELINE order — the same
+  // wire shape the export router parses (ReadClipRangesArg). A stale session_id
+  // is a silent no-op. Slice 4-1 only STORES the ranges (the stitched decode
+  // that honors them lands in the following slices); a passthrough list (no real
+  // cut) leaves the preview byte-identical to today. Cheap + thread-safe.
+  void SetClips(
+      const std::string& session_id,
+      std::vector<capture::export_::clip_planner::ClipKeptRange> ranges);
+
+  // Editing port (audio, step 4-7d — design D6): the live preview audio mix.
+  // `gain_db` [0,24] amplifies (clamped, export/macOS parity), then
+  // `volume_percent` [0,100] attenuates. Applies to the edited-session
+  // renderer's FUTURE samples immediately (no re-decode) and to the
+  // passthrough MediaPlayer's master volume (attenuation only there —
+  // MediaPlayer.Volume is 0..1, so gain on an UNCUT preview stays
+  // export-only: the documented D6 gap). Stored on the session so a
+  // renderer opened later (first clip edit) starts with the current mix,
+  // mirroring macOS's pending-open audioMix override. A stale session_id is
+  // a silent no-op; an empty one applies to the active session (macOS
+  // optional-sessionId semantics). Driven by `updateAudioPreview` (the
+  // method Dart actually sends, debounced 150 ms during slider drags), the
+  // previewSetAudioMix/previewSetAudioGainDb dispatch aliases, and the
+  // audio args riding every processVideo (editor open + standby resync).
+  void SetAudioMix(const std::string& session_id, double gain_db,
+                   double volume_percent);
+
+  // Voice cleanup (Phase 4, preview WYSIWYG): denoise the preview's mic track
+  // so the live preview matches what the export bakes. `enabled` runs the mic
+  // sidecar through RNNoise (Capture/Export/mic_cleanup) on a background
+  // thread; when the cleaned file is ready the mic pump is rebuilt to play it
+  // (marshaled back to the platform thread). Disabling rebuilds immediately on
+  // the raw mic. Only meaningful on a separated (sidecar) session; a premix or
+  // mic-less session is a no-op. Stale/empty session-id semantics match the
+  // other setters. On Windows this is the analog of macOS's
+  // previewSetVoiceCleanup re-resolving which mic FILE the preview plays.
+  void SetVoiceCleanup(const std::string& session_id, bool enabled,
+                       float wet_mix);
+
   // For tests / observability.
   std::int64_t current_texture_id() const;
 
@@ -210,6 +415,18 @@ class PreviewEngine {
   ~PreviewEngine();
   PreviewEngine(const PreviewEngine&) = delete;
   PreviewEngine& operator=(const PreviewEngine&) = delete;
+
+  // Voice-cleanup background-pass completion, marshaled back to the platform
+  // thread. Rebuilds the mic pump onto `cleaned_path` when the session is still
+  // current, the toggle is still on, and `wet_mix` still matches the requested
+  // strength (a mode change mid-compute discards a stale result); otherwise
+  // drops the temp file.
+  // `generation` identifies the worker; only the CURRENT generation clears
+  // `computing`, applies the result, or hands off to the next pass — a
+  // superseded worker (mode changed) just drops its temp.
+  void OnPreviewCleanedMicReady(const std::string& session_id, bool ok,
+                                const std::wstring& cleaned_path, float wet_mix,
+                                std::uint64_t generation);
 
   // Implementation lives in the .cpp where the winrt projection
   // headers are visible. The trampoline lambdas in Open() pass an
@@ -255,6 +472,82 @@ class PreviewEngine {
   // signal at all. The counter lives on the Impl; the success path resets
   // it. (Declared after `struct Impl;` — the parameter needs the name.)
   void NoteRenderFailure(Impl* impl, const char* stage);
+
+  // Start a background cleanup pass for `wet_mix` under `generation`. Caller
+  // holds render_mutex and guarantees no worker is in flight (computing ==
+  // false), so the only thread joined here is a FINISHED handle — never an
+  // in-flight one (joining that under the lock could deadlock the inline
+  // dispatch path).
+  void StartVoiceCleanupWorkerLocked(Impl* impl, const std::string& session_id,
+                                     float wet_mix, std::uint64_t generation);
+
+  // Editing port (clips, step 4-3): the shared compose + handoff tail, factored
+  // out of HandleVideoFrame so BOTH the MediaPlayer frame path and the edited
+  // (stitched) frame path draw + hand off + emit the playerTick identically. The
+  // caller holds impl->render_mutex, has run EnsureResources, and has already
+  // filled the compositor's video surface/texture. `playback_us` drives the
+  // source-keyed cursor/zoom/camera; `emit_pos_ms` / `emit_dur_ms` are what Dart
+  // sees (edited on the stitched path, raw source on the MediaPlayer path). The
+  // lock order matches HandleVideoFrame: it briefly takes mutex_ while holding
+  // render_mutex for the session snapshot.
+  void ComposeAndHandoffLocked(Impl* impl, std::int64_t playback_us,
+                               std::int64_t emit_pos_ms,
+                               std::int64_t emit_dur_ms);
+
+  // Editing port (clips, step 4-3): render ONE frame of the edited (stitched)
+  // timeline at `edited_ms` — map edited→source, decode that source frame via
+  // the edited reader, upload it into the compositor, then compose + hand off.
+  // Drives the PAUSED / SCRUBBED edited preview (continuous playback is 4-3b).
+  // The caller holds impl->render_mutex. Returns false when there is nothing to
+  // draw (no reader, or the decode failed).
+  bool RenderEditedFrameLocked(Impl* impl, std::int64_t edited_ms);
+
+  // Step 4-3b: one bounded step of continuous edited playback. kRendered = a
+  // kept frame was composed (pace one frame budget); kSkipping = the per-call
+  // decode cap was hit while still inside a cut gap (release render_mutex + step
+  // again immediately, so a large gap doesn't hold the lock for seconds);
+  // kIdle = not playing / stopped / end-of-stream.
+  // kRenderedBehind: a frame was presented but the video is STILL behind
+  // the audio master — decode the next one immediately instead of burning
+  // a frame budget. Without it the pacer sleeps a whole budget after every
+  // frame, so a source whose frame rate exceeds the budget (a 60 fps
+  // recording against the historical fixed 33 ms) advances content at half
+  // wall-clock speed and can never track the sound, however fast decode is.
+  enum class PaceStep { kIdle, kRendered, kRenderedBehind, kSkipping };
+
+  // Step 4-3b: advance edited playback by ONE step — decode forward from the
+  // edited reader, skipping cut-gap frames (EditedMsForKeptSourceMs nullopt) up
+  // to a small per-call cap, and compose the first kept frame at its edited
+  // position (advancing edited_pos_ms). Monotonic (cut) sessions only; reorder
+  // playback needs per-range seeks (step 4-4). Clears edited_playing at
+  // end-of-stream. Caller holds impl->render_mutex.
+  PaceStep PaceNextEditedFrameLocked(Impl* impl);
+
+  // Step 4-3b pacer thread body. Loops until shutting_down_; while an edited
+  // session is playing, renders one kept frame per ~source-frame budget.
+  void PacerLoop();
+
+  // Step 4-4: prime the reorder-playback cursor (edited_range_idx +
+  // edited_reorder_base_ms) so a subsequent reorder pace step reads forward
+  // inside the timeline range that contains `edited_ms`. Caller holds
+  // render_mutex; a no-op for a monotonic session (the pacer forward-decodes).
+  void PrimeReorderStateLocked(Impl* impl, std::int64_t edited_ms);
+
+  // Step 4-5: genuine end-of-timeline on the pacer path — clears the playing
+  // flag and emits the SAME playerState "completed" the MediaPlayer path
+  // sends from HandleMediaEnded, so Dart no longer infers completion from
+  // pos≈dur. Caller holds render_mutex (the nested mutex_ snapshot inside is
+  // the sanctioned render_mutex → mutex_ order). Decode-FAILURE paths must
+  // NOT call this — they are errors, not completion.
+  void NotifyEditedPlaybackCompleteLocked(Impl* impl);
+
+  // Editing port (clips, step 4-3): are the current clip ranges a real edit
+  // (cut / trim / delete-middle / reorder / overlap) — i.e. should this session
+  // use the stitched reader path rather than the 1:1 MediaPlayer? Pure: coalesce
+  // then check for more than one window, or a single window not starting at
+  // source 0. Mirrors the export ClassifyClipEdit's has-real-edits test.
+  static bool RangesAreEdited(
+      const std::vector<capture::export_::clip_planner::ClipKeptRange>& ranges);
 
   std::unique_ptr<Impl> impl_;
 
@@ -335,6 +628,12 @@ class PreviewEngine {
   // running_ is true and emits a playerTick every ~100ms when the
   // producer thread hasn't ticked recently. shutting_down_ stops it.
   std::thread heartbeat_thread_;
+
+  // Step 4-3b: the edited-playback pacer thread. Per session (created in Open,
+  // joined in Close BEFORE impl_ teardown — like heartbeat_thread_). While an
+  // edited session is playing it decodes forward and renders kept frames at
+  // ~source fps; idle otherwise. shutting_down_ stops it.
+  std::thread pacer_thread_;
 
   mutable std::mutex mutex_;
 };

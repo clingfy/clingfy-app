@@ -27,17 +27,20 @@
 #include "Bridge/platform_thread_dispatcher.h"
 #include "Bridge/recording_warning_codes.h"
 #include "Bridge/workflow_event_publisher.h"
+#include "Services/keep_awake.h"
 #include "Services/recovery_sweep.h"
-#include "Capture/Camera/camera_floating_overlay.h"
+#include "Capture/Camera/camera_overlay_host.h"
+#include "Capture/Camera/camera_overlay_presenter.h"
 #include "Capture/Camera/camera_meta.h"
+#include "Capture/Camera/camera_overlay_style_store.h"
 #include "Capture/Camera/camera_recorder.h"
-#include "Capture/Camera/live_camera_texture.h"
 #include "Capture/captured_video_frame.h"
 #include "Capture/Cursor/cursor_sampler.h"
 #include "Capture/recording_project_writer.h"
 #include "Capture/video_frame_queue.h"
 #include "Capture/wgc_display_capture_backend.h"
 #include "Capture/windows_selection_state.h"
+#include "Encoding/audio_sidecar_writer.h"
 #include "Encoding/encoder_output_path.h"
 #include "Encoding/mf_encoder_config.h"
 #include "Encoding/mf_sink_writer_encoder.h"
@@ -255,6 +258,12 @@ std::optional<RecordingError> RecordingEngine::Start(
     current_target_type_ = "window";
     current_window_id_ = window_id;
     current_source_bounds_.reset();
+    // Place the floating bubble on the monitor the recorded WINDOW is on, not
+    // the primary (renderer P4c-c4). Display/area modes already resolve their
+    // monitor above; window mode derives it from the captured window. Used
+    // ONLY for the bubble placement below — capture uses window_target and the
+    // cursor origin uses the window rect, so this cannot affect them.
+    monitor = ::MonitorFromWindow(*window_target, MONITOR_DEFAULTTONEAREST);
   } else if (is_area_mode) {
     const auto region = WindowsSelectionState::Instance().CurrentAreaRegion();
     if (!region) {
@@ -309,6 +318,20 @@ std::optional<RecordingError> RecordingEngine::Start(
   if (!session_.BeginStart(request.session_id)) {
     return fail_start(clingfy::bridge::error::kInvalidRecordingState,
                       "Engine refused to enter Starting state.");
+  }
+
+  // From here to the terminal state the machine must not enter Modern
+  // Standby (sleep invalidates the GPU/media stack mid-recording) and the
+  // recorded display must stay on (a dark display records black frames).
+  // Released in TeardownPipeline — every end path flows through it.
+  keep_awake_ = std::make_unique<clingfy::services::KeepAwake>(
+      clingfy::services::KeepAwake::Mode::kSystemAndDisplay,
+      L"Clingfy is recording the screen");
+  if (!keep_awake_->active()) {
+    clingfy::bridge::NativeLogPublisher::Instance().Warn(
+        "Recording",
+        "keep-awake power request unavailable — the machine may enter "
+        "standby during a long recording");
   }
 
   d3d_device_ = std::make_unique<clingfy::graphics::D3DDevice>();
@@ -485,7 +508,18 @@ std::optional<RecordingError> RecordingEngine::Start(
     mic_queue_ = std::make_unique<clingfy::audio::AudioPacketQueue>();
     mic_capture_ =
         std::make_unique<clingfy::audio::WasapiAudioCapture>();
-    mic_capture_->SetOnCaptureError(on_audio_capture_error);
+    // Audio-separation D4: on a fatal mid-record WASAPI error the capture
+    // also closes its own queue, so the mixer flips to the surviving source
+    // instead of blocking forever on a queue nothing will ever fill again
+    // (the pre-separation behavior wedged ALL audio when the mic died).
+    // Lifetime: the one-shot callback fires from the capture thread, which
+    // Stop() joins before the queue is reset in teardown.
+    mic_capture_->SetOnCaptureError(
+        [on_audio_capture_error, queue = mic_queue_.get()](
+            clingfy::audio::WasapiCaptureKind k, HRESULT hr) {
+          on_audio_capture_error(k, hr);
+          queue->Close();
+        });
     const auto mic_id =
         WindowsSelectionState::Instance().MicrophoneId().value_or("");
     {
@@ -521,7 +555,13 @@ std::optional<RecordingError> RecordingEngine::Start(
         std::make_unique<clingfy::audio::AudioPacketQueue>();
     loopback_capture_ =
         std::make_unique<clingfy::audio::WasapiAudioCapture>();
-    loopback_capture_->SetOnCaptureError(on_audio_capture_error);
+    // D4: same close-own-queue discipline as the mic capture above.
+    loopback_capture_->SetOnCaptureError(
+        [on_audio_capture_error, queue = loopback_queue_.get()](
+            clingfy::audio::WasapiCaptureKind k, HRESULT hr) {
+          on_audio_capture_error(k, hr);
+          queue->Close();
+        });
     auto loopback_err = loopback_capture_->Start(
         clingfy::audio::WasapiCaptureKind::kSystemLoopback, "",
         *loopback_queue_);
@@ -543,6 +583,48 @@ std::optional<RecordingError> RecordingEngine::Start(
       clingfy::bridge::devices::LogDeviceProbe(
           "RecordingEngine: loopback open OK");
     }
+  }
+
+  // Audio-separation sidecar writers (D2/D5): one per LIVE capture, fed by
+  // the mixer thread's tee below. Best-effort — an open failure logs one
+  // WARN and drops that sidecar; the premixed track is unaffected.
+  mic_sidecar_failed_.store(false);
+  system_sidecar_failed_.store(false);
+  current_mic_sidecar_path_.clear();
+  current_system_sidecar_path_.clear();
+  current_mic_sidecar_ok_ = false;
+  current_system_sidecar_ok_ = false;
+  const auto open_sidecar =
+      [](const char* label, const std::string& path,
+         std::unique_ptr<clingfy::encoding::AudioSidecarWriter>& writer_out,
+         std::string& path_out) {
+        auto writer =
+            std::make_unique<clingfy::encoding::AudioSidecarWriter>();
+        if (auto err = writer->Open(path)) {
+          char buf[640];
+          std::snprintf(buf, sizeof(buf),
+                        "RecordingEngine: %s audio sidecar open FAILED "
+                        "hr=0x%08lX msg=%s — recording continues without it",
+                        label, static_cast<unsigned long>(err->hr),
+                        err->message.c_str());
+          clingfy::bridge::devices::LogDeviceProbe(buf);
+          clingfy::bridge::NativeLogPublisher::Instance().Warn("Recording",
+                                                               buf);
+          return;
+        }
+        writer_out = std::move(writer);
+        path_out = path;
+      };
+  if (mic_capture_ != nullptr) {
+    open_sidecar("mic",
+                 clingfy::encoding::ResolveTempMicAudioPath(request.session_id),
+                 mic_sidecar_writer_, current_mic_sidecar_path_);
+  }
+  if (loopback_capture_ != nullptr) {
+    open_sidecar(
+        "system",
+        clingfy::encoding::ResolveTempSystemAudioPath(request.session_id),
+        system_sidecar_writer_, current_system_sidecar_path_);
   }
 
   // Drain thread: pulls captured frames off the queue and writes them
@@ -600,31 +682,102 @@ std::optional<RecordingError> RecordingEngine::Start(
       clingfy::bridge::devices::LogDeviceProbe(
           "RecordingEngine: audio mixer thread start");
       clingfy::audio::AudioMixer mixer;
+      // Audio-separation D4: a source is "alive" until its queue closes —
+      // either at teardown or when a fatal capture error closes it
+      // mid-record. The blocking source follows the alive flags (pure
+      // policy in ChooseMixerBlockSource) so a dead mic hands the blocking
+      // role to loopback instead of wedging all audio, with the dead
+      // source contributing silence to the premix AND its sidecar.
+      bool mic_alive = mic_queue_ != nullptr;
+      bool loopback_alive = loopback_queue_ != nullptr;
+      // D3 tee scratch, reused across iterations.
+      std::vector<std::int16_t> sidecar_render;
       while (!audio_mixer_stopped_.load()) {
+        auto block = clingfy::audio::ChooseMixerBlockSource(mic_alive,
+                                                            loopback_alive);
+        if (block == clingfy::audio::MixerBlockSource::kNone) break;
         std::optional<clingfy::audio::AudioPacket> mic;
         std::optional<clingfy::audio::AudioPacket> loopback;
-        if (mic_queue_ != nullptr) {
+        if (block == clingfy::audio::MixerBlockSource::kMic) {
           mic = mic_queue_->Pop();
           if (audio_mixer_stopped_.load()) break;
+          if (!mic.has_value()) {
+            // Closed + drained (mid-record mic death or teardown). Flip
+            // the blocking role to loopback within the SAME iteration so
+            // no packet slot is skipped.
+            mic_alive = false;
+            clingfy::bridge::devices::LogDeviceProbe(
+                "RecordingEngine: mic queue closed; mixer continues with "
+                "loopback only");
+            block = clingfy::audio::ChooseMixerBlockSource(mic_alive,
+                                                           loopback_alive);
+            if (block == clingfy::audio::MixerBlockSource::kNone) break;
+          }
         }
-        if (loopback_queue_ != nullptr) {
-          // Use TryPop when the mic queue is alive so we don't block
-          // waiting for system audio if nothing is currently playing.
-          // When only loopback is alive (no mic), fall back to a
-          // blocking Pop so the mixer doesn't busy-spin.
-          if (mic_queue_ != nullptr) {
-            loopback = loopback_queue_->TryPop();
-          } else {
+        if (loopback_alive) {
+          // Use TryPop while the mic is the blocking source so we don't
+          // block waiting for system audio if nothing is currently
+          // playing. When loopback IS the blocking source (no mic, or the
+          // mic just died), a blocking Pop avoids a busy-spin.
+          if (block == clingfy::audio::MixerBlockSource::kLoopback) {
             loopback = loopback_queue_->Pop();
             if (audio_mixer_stopped_.load()) break;
+            if (!loopback.has_value()) {
+              loopback_alive = false;
+              clingfy::bridge::devices::LogDeviceProbe(
+                  "RecordingEngine: loopback queue closed; mixer continues "
+                  "with mic only");
+            }
+          } else {
+            loopback = loopback_queue_->TryPop();
           }
         }
         if (!mic.has_value() && !loopback.has_value()) {
-          // Both queues drained / closed → exit the mixer loop.
-          break;
+          // Nothing this iteration (a source died with no survivor data
+          // yet) — re-evaluate the alive flags at the top of the loop.
+          continue;
         }
         auto mixed = mixer.Mix(mic.has_value() ? &*mic : nullptr,
                                 loopback.has_value() ? &*loopback : nullptr);
+        // Audio-separation D3 tee: each sidecar receives EXACTLY the mixed
+        // packet's span — its own source's samples where present, silence
+        // otherwise — timestamped on the same synthetic timeline, so the
+        // sidecars stay sample-exact against the premixed track (and thus
+        // the video) by construction.
+        if (mixed.frame_count > 0) {
+          const auto tee_one =
+              [&](clingfy::encoding::AudioSidecarWriter* writer,
+                  std::atomic<bool>& failed,
+                  const clingfy::audio::AudioPacket* source,
+                  const char* label) {
+                if (writer == nullptr || failed.load(std::memory_order_relaxed))
+                  return;
+                clingfy::audio::AudioMixer::RenderSourceInt16(
+                    source, mixed.frame_count, sidecar_render);
+                if (auto err = writer->WriteSamples(sidecar_render.data(),
+                                                    mixed.frame_count,
+                                                    mixed.timestamp_hns)) {
+                  // One-shot: drop this sidecar for the rest of the session
+                  // (Finalize will discard the partial file). The premix is
+                  // unaffected.
+                  failed.store(true, std::memory_order_relaxed);
+                  char buf[640];
+                  std::snprintf(
+                      buf, sizeof(buf),
+                      "RecordingEngine: %s audio sidecar write FAILED "
+                      "hr=0x%08lX msg=%s — dropping the sidecar",
+                      label, static_cast<unsigned long>(err->hr),
+                      err->message.c_str());
+                  clingfy::bridge::devices::LogDeviceProbe(buf);
+                  clingfy::bridge::NativeLogPublisher::Instance().Warn(
+                      "Recording", buf);
+                }
+              };
+          tee_one(mic_sidecar_writer_.get(), mic_sidecar_failed_,
+                  mic.has_value() ? &*mic : nullptr, "mic");
+          tee_one(system_sidecar_writer_.get(), system_sidecar_failed_,
+                  loopback.has_value() ? &*loopback : nullptr, "system");
+        }
         if (mixed.frame_count > 0 && encoder_ != nullptr) {
           if (auto write_err = encoder_->WriteAudioPacket(mixed)) {
             audio_write_errors_.fetch_add(1, std::memory_order_relaxed);
@@ -848,31 +1001,31 @@ std::optional<RecordingError> RecordingEngine::Start(
             work = mi.rcWork;
           }
         }
-        const int work_w = work.right - work.left;
-        const int work_h = work.bottom - work.top;
-        FloatingPlacement place;
-        place.width = std::max(160, work_w * 22 / 100);
-        place.height = place.width * 9 / 16;
-        const int margin = std::max(8, work_w * 3 / 100);
-        place.x = work.left + std::max(0, work_w - place.width - margin);
-        place.y = work.top + std::max(0, work_h - place.height - margin);
-        place.rounded = true;
-        camera_floating_ = std::make_shared<CameraFloatingOverlay>();
-        if (!camera_floating_->Start(place)) {
-          camera_floating_.reset();
-          clingfy::bridge::devices::LogDeviceProbe(
-              "RecordingEngine: floating camera overlay create failed; in-app "
-              "preview only");
+        const FloatingPlacement place = ComputeInitialFloatingPlacement(
+            work.left, work.top, work.right, work.bottom);
+        // Wrap the factory ladder in the fallback host so a DComp presenter
+        // that parks on persistent device loss is swapped for the GDI bubble
+        // mid-recording (P4c-c3), transparently to the rest of the engine.
+        auto host = std::make_shared<CameraOverlayHost>();
+        camera_floating_ = host->Start(place) ? host : nullptr;
+        if (camera_floating_ == nullptr) {
+          // WARN (not a debug probe): the user records without a floating
+          // bubble and support needs this line in release logs/Sentry.
+          clingfy::bridge::NativeLogPublisher::Instance().Warn(
+              "Camera",
+              "floating camera overlay create failed; in-app preview only");
         }
       }
       // Phase 10.4: weak capture (was a raw pointer). An ABANDONED camera
       // recorder (open timeout) keeps a detached thread that may deliver
       // frames long after the engine tears the overlay down; the weak_ptr
       // makes that a no-op instead of a use-after-free.
-      std::weak_ptr<CameraFloatingOverlay> floating_weak = camera_floating_;
+      std::weak_ptr<ICameraOverlayPresenter> floating_weak = camera_floating_;
       cam_cfg.on_preview_frame = [floating_weak](const std::uint8_t* bgra,
                                                  int w, int h) {
-        LiveCameraTexture::Instance().PublishBgra(bgra, w, h);
+        // The in-app LiveCameraTexture feed was retired with the in-app
+        // camera preview widget (#262); the floating bubble is the only
+        // live camera preview now.
         if (auto floating = floating_weak.lock()) {
           floating->PublishBgra(bgra, w, h);
         }
@@ -1185,6 +1338,7 @@ std::optional<RecordingError> RecordingEngine::Stop(
   // fill the camera fields here (the rest of project_input was snapshotted
   // pre-teardown when the screen pipeline was still live).
   FillCameraWriterFields(project_input);
+  FillAudioSidecarWriterFields(project_input);
 
   if (!session_.MarkStopped()) {
     session_.MarkFailed();
@@ -1337,6 +1491,92 @@ void RecordingEngine::FillCameraWriterFields(ProjectWriterInput& input) const {
   input.camera_enabled = current_camera_enabled_;
   input.camera_raw_path = current_camera_raw_path_;
   input.camera_meta_json = current_camera_meta_json_;
+
+  // editorSeed (screen.meta.json) — capture the recording-time camera overlay
+  // styling so post-processing reopens camera-on with the user's settings
+  // (macOS parity via RecordingMetadata.EditorSeed). The overlay style lives in
+  // the process-wide CameraOverlayStyleStore — the SAME source the live preview
+  // and the export bake read — and ResolveOverlayBubbleStyle applies the exact
+  // same border/chroma gating + clamps, so the seed matches what was on screen.
+  const ResolvedBubbleStyle resolved =
+      ResolveOverlayBubbleStyle(CameraOverlayStyleStore::Instance().Snapshot());
+  CameraEditorSeed seed;
+  seed.visible = current_camera_enabled_;  // a camera actually produced frames
+  // Overlay position/size are not tracked natively yet: a visible camera lands
+  // in the bottom-right preset (the common default) which the user can
+  // reposition in the editor; size stays at the .hidden baseline.
+  seed.layout_preset =
+      current_camera_enabled_ ? "overlayBottomRight" : "hidden";
+  seed.shape = resolved.shape;
+  seed.corner_radius = resolved.corner_radius;
+  seed.content_mode = resolved.content_mode;
+  seed.opacity = resolved.style.opacity;
+  seed.mirror = resolved.style.mirror;
+  seed.border_width = resolved.style.border_width;
+  if (resolved.style.has_border_color) {
+    seed.border_color_argb = resolved.style.border_argb;
+  }
+  seed.shadow_preset = resolved.style.shadow_preset;
+  seed.chroma_key_enabled = resolved.style.chroma_enabled;
+  seed.chroma_key_strength = resolved.style.chroma_strength;
+  if (resolved.style.chroma_enabled) {
+    seed.chroma_key_color_argb = resolved.style.chroma_argb;
+  }
+  input.editor_seed = seed;
+}
+
+void RecordingEngine::FinalizeAudioSidecars(bool keep_output) {
+  const auto finalize_one =
+      [keep_output](
+          std::unique_ptr<clingfy::encoding::AudioSidecarWriter>& writer,
+          std::atomic<bool>& failed, std::string& path, bool& ok_flag,
+          const char* label) {
+        ok_flag = false;
+        if (writer == nullptr) {
+          path.clear();
+          return;
+        }
+        const bool healthy =
+            keep_output && !failed.load() && writer->samples_written() > 0;
+        if (healthy) {
+          if (auto err = writer->Finalize()) {
+            char buf[640];
+            std::snprintf(buf, sizeof(buf),
+                          "RecordingEngine: %s audio sidecar Finalize FAILED "
+                          "hr=0x%08lX msg=%s — dropping the sidecar",
+                          label, static_cast<unsigned long>(err->hr),
+                          err->message.c_str());
+            clingfy::bridge::devices::LogDeviceProbe(buf);
+            clingfy::bridge::NativeLogPublisher::Instance().Warn("Recording",
+                                                                 buf);
+          } else {
+            ok_flag = true;
+          }
+        } else {
+          writer->Cancel();
+        }
+        writer.reset();
+        if (!ok_flag && !path.empty()) {
+          // A cancelled / failed sidecar temp is never usable (headerless
+          // MP4) — delete it now rather than leaving a strand.
+          std::error_code ec;
+          std::filesystem::remove(std::filesystem::u8path(path), ec);
+          path.clear();
+        }
+      };
+  finalize_one(mic_sidecar_writer_, mic_sidecar_failed_,
+               current_mic_sidecar_path_, current_mic_sidecar_ok_, "mic");
+  finalize_one(system_sidecar_writer_, system_sidecar_failed_,
+               current_system_sidecar_path_, current_system_sidecar_ok_,
+               "system");
+}
+
+void RecordingEngine::FillAudioSidecarWriterFields(
+    ProjectWriterInput& input) const {
+  input.mic_audio_path = current_mic_sidecar_path_;
+  input.mic_audio_enabled = current_mic_sidecar_ok_;
+  input.system_audio_path = current_system_sidecar_path_;
+  input.system_audio_enabled = current_system_sidecar_ok_;
 }
 
 bool RecordingEngine::SetCameraPreviewFloating(bool floating) {
@@ -1408,6 +1648,7 @@ void RecordingEngine::HandleTargetLost(const std::string& session_id) {
 
   TeardownPipeline();
   FillCameraWriterFields(project_input);
+  FillAudioSidecarWriterFields(project_input);
 
   if (!session_.MarkStopped()) {
     session_.MarkFailed();
@@ -1553,6 +1794,11 @@ void RecordingEngine::TeardownPipeline(bool finalize_encoder) {
   if (encoder_thread_.joinable()) encoder_thread_.join();
   if (audio_mixer_thread_.joinable()) audio_mixer_thread_.join();
 
+  // Audio separation: the mixer thread (the sidecars' only feeder) is
+  // joined — finalize or discard the sidecar files. Mirrors the encoder
+  // gating below: failed-start paths (finalize_encoder=false) cancel.
+  FinalizeAudioSidecars(/*keep_output=*/finalize_encoder);
+
   // Phase 10.4: capture the encoder outcome for the finalize paths' gating
   // BEFORE the encoder is destroyed. The Finalize() result used to be
   // discarded — a moov-less MP4 shipped as `recordingFinalized`.
@@ -1586,6 +1832,8 @@ void RecordingEngine::TeardownPipeline(bool finalize_encoder) {
     d3d_device_->Reset();
     d3d_device_.reset();
   }
+  // The session reached a terminal state — let the machine sleep again.
+  keep_awake_.reset();
 }
 
 void RecordingEngine::CleanupSessionTempFiles(const std::string& session_id,
@@ -1593,6 +1841,8 @@ void RecordingEngine::CleanupSessionTempFiles(const std::string& session_id,
   std::vector<std::string> paths = {
       clingfy::encoding::ResolveTempMp4Path(session_id),
       clingfy::encoding::ResolveTempCursorSidecarPath(session_id),
+      clingfy::encoding::ResolveTempMicAudioPath(session_id),
+      clingfy::encoding::ResolveTempSystemAudioPath(session_id),
   };
   if (include_camera) {
     paths.push_back(clingfy::encoding::ResolveTempCameraRawPath(session_id));

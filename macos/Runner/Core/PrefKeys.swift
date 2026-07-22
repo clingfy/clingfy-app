@@ -21,5 +21,6 @@ enum PrefKey {
   static let keepOriginals = "pref.keepOriginals"
   static let excludeRecorderApp = "pref.excludeRecorderApp"
   static let excludeMicFromSystemAudio = "pref.excludeMicFromSystemAudio"
+  static let micEchoCancellationEnabled = "pref.micEchoCancellationEnabled"
   static let cameraCaptureMode = "pref.cameraCaptureMode"
 }

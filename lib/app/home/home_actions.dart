@@ -1,5 +1,7 @@
 import 'dart:async';
 
+import 'package:clingfy/app/infrastructure/analytics/analytics_events.dart';
+import 'package:clingfy/app/infrastructure/analytics/analytics_service.dart';
 import 'package:clingfy/core/overlay/overlay_mode.dart';
 import 'package:clingfy/core/bridges/native_bar_action.dart';
 import 'package:clingfy/core/bridges/native_error_codes.dart';
@@ -22,7 +24,7 @@ import 'package:clingfy/ui/platform/widgets/desktop_pane_layout.dart';
 import 'package:clingfy/app/permissions/widgets/start_recording_permission_dialog.dart';
 import 'package:clingfy/app/permissions/widgets/start_recording_storage_dialog.dart';
 import 'package:clingfy/l10n/app_localizations.dart';
-import 'package:clingfy/app/infrastructure/logging/logger_service.dart';
+import 'package:clingfy/core/logging/logger_service.dart';
 import 'package:clingfy/core/models/app_models.dart';
 import 'package:clingfy/core/bridges/native_bridge.dart';
 import 'package:clingfy/app/infrastructure/observability/telemetry_service.dart';
@@ -363,6 +365,14 @@ class HomeActions {
         ),
       );
 
+      ClingfyAnalytics.capture(
+        AnalyticsEvents.billingPaywallView,
+        properties: {
+          'reason': 'export_blocked',
+          'plan': licenseController.currentPlan,
+          'trial_exports_remaining': licenseController.trialExportsRemaining,
+        },
+      );
       await PaywallDialog.show(context);
       if (!context.mounted) return;
 

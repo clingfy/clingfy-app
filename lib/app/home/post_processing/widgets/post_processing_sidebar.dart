@@ -13,6 +13,7 @@ import 'package:clingfy/app/home/post_processing/widgets/post_layout_section.dar
 import 'package:clingfy/app/home/post_processing/widgets/post_zoom_section.dart';
 import 'package:clingfy/app/home/post_processing/widgets/post_color_grade_section.dart';
 import 'package:clingfy/core/timeline/model/color_grade.dart';
+import 'package:clingfy/core/timeline/model/edit_track.dart';
 import 'package:flutter/material.dart' hide PlatformMenuItem;
 
 class PostProcessingSidebarRail extends StatelessWidget {
@@ -125,6 +126,11 @@ class PostProcessingSidebar extends StatelessWidget {
   final bool enabled;
   final bool cursorAvailable;
   final bool hasAudio;
+
+  /// Audio separation (Windows D10): whether gain/normalize will have an
+  /// audible effect (mic-dependent on separated recordings). Null falls
+  /// back to [hasAudio] in the sections.
+  final bool? gainAvailable;
   final bool hasCameraAsset;
   final CameraExportCapabilities cameraExportCapabilities;
   final CameraCompositionState? cameraState;
@@ -134,6 +140,7 @@ class PostProcessingSidebar extends StatelessWidget {
   final bool isCompact;
   final bool showResolutionControl;
   final double audioGainDb;
+  final VoiceCleanup voiceCleanup;
   final double audioVolume;
   final bool autoNormalizeOnExport;
   final double autoNormalizeTargetDbfs;
@@ -183,6 +190,7 @@ class PostProcessingSidebar extends StatelessWidget {
   final ValueChanged<Offset> onCameraManualCenterSnapped;
   final Function(double) onAudioGainChanged;
   final Function(double) onAudioGainChangeEnd;
+  final ValueChanged<VoiceCleanup> onVoiceCleanupChanged;
   final ColorGrade colorGrade;
   final ValueChanged<bool> onColorAutoEnhanceChanged;
   final ValueChanged<double> onColorExposureChanged;
@@ -270,11 +278,13 @@ class PostProcessingSidebar extends StatelessWidget {
     required this.onCameraManualCenterChangeEnd,
     required this.onCameraManualCenterSnapped,
     required this.audioGainDb,
+    required this.voiceCleanup,
     required this.audioVolume,
     required this.autoNormalizeOnExport,
     required this.autoNormalizeTargetDbfs,
     required this.onAudioGainChanged,
     required this.onAudioGainChangeEnd,
+    required this.onVoiceCleanupChanged,
     required this.onAudioVolumeChanged,
     required this.onAudioVolumeChangeEnd,
     required this.onAutoNormalizeOnExportChanged,
@@ -283,6 +293,7 @@ class PostProcessingSidebar extends StatelessWidget {
     this.enabled = true,
     this.cursorAvailable = true,
     this.hasAudio = true,
+    this.gainAvailable,
     this.disabledMessage,
     this.showHeader = true,
   });
@@ -457,16 +468,20 @@ class PostProcessingSidebar extends StatelessWidget {
     return [
       PostAudioSection(
         hasAudio: hasAudio,
+        gainAvailable: gainAvailable,
         audioVolume: audioVolume,
         audioGainDb: audioGainDb,
+        voiceCleanup: voiceCleanup,
         onAudioVolumeChanged: onAudioVolumeChanged,
         onAudioVolumeChangeEnd: onAudioVolumeChangeEnd,
         onAudioGainChanged: onAudioGainChanged,
         onAudioGainChangeEnd: onAudioGainChangeEnd,
+        onVoiceCleanupChanged: onVoiceCleanupChanged,
       ),
       PostExportSettingsSection(
         isProcessing: isProcessing,
         hasAudio: hasAudio,
+        gainAvailable: gainAvailable,
         autoNormalizeOnExport: autoNormalizeOnExport,
         autoNormalizeTargetDbfs: autoNormalizeTargetDbfs,
         onAutoNormalizeOnExportChanged: onAutoNormalizeOnExportChanged,

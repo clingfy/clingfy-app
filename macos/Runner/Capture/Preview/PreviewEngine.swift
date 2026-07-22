@@ -54,6 +54,7 @@ final class PreviewEngine {
     let showCursor: Bool
     let audioGainDb: Double
     let audioVolumePercent: Double
+    var voiceCleanup: VoiceCleanupRequest = .disabled
     let zoomSegments: [ZoomTimelineSegment]?
     let cameraPreviewChangeKind: CameraPreviewChangeKind
     let sessionId: String?
@@ -107,6 +108,21 @@ final class PreviewEngine {
 
     let clampedGainDb = max(0, min(24, input.audioGainDb))
     let clampedVolumePercent = max(0, min(100, input.audioVolumePercent))
+    // Carried on the scene request so the setting survives a session restart
+    // even if the dedicated setter never fires. Both halves are needed: the
+    // session store covers a scene that arrives BEFORE the preview opens (open()
+    // adopts it), and the push below covers one that arrives AFTER, since an
+    // open view reads its cleanup only at open time. `CompositionParams` cannot
+    // carry it — the scene rebuild changes composition, not the mic file.
+    updateActiveInlinePreviewVoiceCleanup(
+      sessionId: input.sessionId, voiceCleanup: input.voiceCleanup)
+    let sceneVoiceCleanup = input.voiceCleanup
+    let sceneSessionId = input.sessionId
+    DispatchQueue.main.async {
+      guard let view = inlinePreviewViewInstance else { return }
+      if let sceneSessionId, view.currentSessionId != sceneSessionId { return }
+      view.updateVoiceCleanupOnly(sceneVoiceCleanup)
+    }
 
     var params = CompositionParams(
       targetSize: targetSize,
@@ -240,6 +256,27 @@ final class PreviewEngine {
     {
       result(nil)
       return
+    }
+    result(nil)
+  }
+
+  /// Voice cleanup is NOT a live mix parameter: it changes which mic file the
+  /// preview plays, so the view re-resolves the mic and rebuilds its player
+  /// item rather than adjusting an `AVAudioMix`.
+  func setVoiceCleanup(
+    sessionId: String?,
+    voiceCleanup: VoiceCleanupRequest,
+    result: @escaping FlutterResult
+  ) {
+    // Stored on the session too, so a preview that is not open yet (or gets
+    // rehydrated into a new host view) resolves the right mic on its first open.
+    updateActiveInlinePreviewVoiceCleanup(sessionId: sessionId, voiceCleanup: voiceCleanup)
+    if let view = inlinePreviewViewInstance {
+      if let sessionId, view.currentSessionId != sessionId {
+        result(nil)
+        return
+      }
+      view.updateVoiceCleanupOnly(voiceCleanup)
     }
     result(nil)
   }

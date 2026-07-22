@@ -139,6 +139,57 @@ TEST_F(RecordingProjectWriterTest, ScreenMetaCarriesDiagnostics) {
   EXPECT_NE(meta.find("\"platform\": \"windows\""), std::string::npos);
 }
 
+TEST_F(RecordingProjectWriterTest, ScreenMetaEmitsPopulatedEditorSeed) {
+  ProjectWriterInput input;
+  input.session_id = "sess-seed";
+  CameraEditorSeed seed;
+  seed.visible = true;
+  seed.layout_preset = "overlayBottomRight";
+  seed.shape = "roundedRect";
+  seed.corner_radius = 0.25;
+  seed.opacity = 0.8;
+  seed.mirror = false;
+  seed.border_width = 4.0;
+  seed.border_color_argb = 0xFFFFFFFFu;  // opaque white; > INT32_MAX
+  seed.shadow_preset = 2;
+  seed.chroma_key_enabled = true;
+  seed.chroma_key_strength = 0.6;
+  seed.chroma_key_color_argb = 0xFF00FF00u;  // opaque green (4278255360)
+  input.editor_seed = seed;
+
+  const std::string meta = BuildScreenMetaJson(input);
+  EXPECT_NE(meta.find("\"editorSeed\""), std::string::npos);
+  EXPECT_NE(meta.find("\"cameraVisible\": true"), std::string::npos);
+  EXPECT_NE(meta.find("\"cameraLayoutPreset\": \"overlayBottomRight\""),
+            std::string::npos);
+  EXPECT_NE(meta.find("\"cameraShape\": \"roundedRect\""), std::string::npos);
+  EXPECT_NE(meta.find("\"cameraMirror\": false"), std::string::npos);
+  // On-disk key is `cameraShadow` (renamed to shadowPreset only in the reply).
+  EXPECT_NE(meta.find("\"cameraShadow\": 2"), std::string::npos);
+  // ARGB emitted as the unsigned decimal, matching macOS (must not overflow).
+  EXPECT_NE(meta.find("\"cameraBorderColorArgb\": 4294967295"),
+            std::string::npos);
+  EXPECT_NE(meta.find("\"cameraChromaKeyColorArgb\": 4278255360"),
+            std::string::npos);
+  EXPECT_NE(meta.find("\"cameraChromaKeyEnabled\": true"), std::string::npos);
+}
+
+TEST_F(RecordingProjectWriterTest, ScreenMetaEditorSeedOmitsUnsetNullables) {
+  ProjectWriterInput input;
+  input.session_id = "sess-seed-default";
+  // editor_seed left at defaults — a camera-less recording still writes a seed
+  // (macOS parity), with cameraVisible:false and the nullable fields omitted.
+  const std::string meta = BuildScreenMetaJson(input);
+  EXPECT_NE(meta.find("\"cameraVisible\": false"), std::string::npos);
+  EXPECT_EQ(meta.find("\"cameraBorderColorArgb\""), std::string::npos);
+  EXPECT_EQ(meta.find("\"cameraChromaKeyColorArgb\""), std::string::npos);
+  EXPECT_EQ(meta.find("\"cameraNormalizedCenter\""), std::string::npos);
+  // The always-required macOS fields are present so a Mac decoder accepts it.
+  EXPECT_NE(meta.find("\"cameraSizeFactor\""), std::string::npos);
+  EXPECT_NE(meta.find("\"cameraZoomBehavior\": \"scaleWithScreenZoom\""),
+            std::string::npos);
+}
+
 TEST_F(RecordingProjectWriterTest, ScreenMetaCarriesCaptureTargetType) {
   // Default: display capture records targetType "display" and no windowId.
   ProjectWriterInput display_input;
@@ -314,6 +365,101 @@ TEST_F(RecordingProjectWriterTest, DowngradesCameraWhenRawMissing) {
   std::ifstream proj_in(project_root / "project.json");
   std::ostringstream proj_ss; proj_ss << proj_in.rdbuf();
   EXPECT_EQ(proj_ss.str().find("\"camera\":"), std::string::npos);
+}
+
+// === Audio separation: mic/system sidecar bundling ==========================
+
+TEST_F(RecordingProjectWriterTest, BundlesAudioSidecarsWithMacOsNames) {
+  const auto fake_mp4 = WriteFakeMp4("src.mp4");
+  const fs::path mic_tmp = base_ / "clingfy_x.mic.mp4";
+  const fs::path sys_tmp = base_ / "clingfy_x.sys.mp4";
+  { std::ofstream o(mic_tmp, std::ios::binary); o << "fake mic aac"; }
+  { std::ofstream o(sys_tmp, std::ios::binary); o << "fake sys aac"; }
+
+  ProjectWriterInput input;
+  input.session_id = "sess-audio-sep";
+  input.source_mp4_path = fake_mp4.string();
+  input.recordings_root_override = base_.string();
+  input.mic_audio_enabled = true;
+  input.mic_audio_path = mic_tmp.string();
+  input.system_audio_enabled = true;
+  input.system_audio_path = sys_tmp.string();
+
+  auto result = WriteRecordingProject(input);
+  ASSERT_EQ(result.kind, ProjectWriterErrorKind::kNone) << result.message;
+  const fs::path project_root = result.project_path;
+  // macOS Phase 1.5 names — a bundle copied to a Mac resolves identically.
+  EXPECT_TRUE(fs::exists(project_root / "capture" / "mic.m4a"));
+  EXPECT_TRUE(fs::exists(project_root / "capture" / "system.m4a"));
+  EXPECT_FALSE(fs::exists(mic_tmp)) << "temp sidecar should be moved";
+  EXPECT_FALSE(fs::exists(sys_tmp)) << "temp sidecar should be moved";
+  EXPECT_FALSE(result.mic_audio_downgraded);
+  EXPECT_FALSE(result.system_audio_downgraded);
+
+  std::ifstream proj_in(project_root / "project.json");
+  std::ostringstream proj_ss; proj_ss << proj_in.rdbuf();
+  EXPECT_NE(proj_ss.str().find("\"micAudio\": \"capture/mic.m4a\""),
+            std::string::npos);
+  EXPECT_NE(proj_ss.str().find("\"systemAudio\": \"capture/system.m4a\""),
+            std::string::npos);
+}
+
+TEST_F(RecordingProjectWriterTest, SidecarsBundleIndependentlyNeverAsAPair) {
+  // Mic-only recording (system audio off): only the mic key may appear —
+  // there is NO present-together rule for audio sidecars (unlike camera).
+  const auto fake_mp4 = WriteFakeMp4("src.mp4");
+  const fs::path mic_tmp = base_ / "clingfy_y.mic.mp4";
+  { std::ofstream o(mic_tmp, std::ios::binary); o << "fake mic aac"; }
+
+  ProjectWriterInput input;
+  input.session_id = "sess-mic-only";
+  input.source_mp4_path = fake_mp4.string();
+  input.recordings_root_override = base_.string();
+  input.mic_audio_enabled = true;
+  input.mic_audio_path = mic_tmp.string();
+
+  auto result = WriteRecordingProject(input);
+  ASSERT_EQ(result.kind, ProjectWriterErrorKind::kNone) << result.message;
+  const fs::path project_root = result.project_path;
+  EXPECT_TRUE(fs::exists(project_root / "capture" / "mic.m4a"));
+  EXPECT_FALSE(fs::exists(project_root / "capture" / "system.m4a"));
+
+  std::ifstream proj_in(project_root / "project.json");
+  std::ostringstream proj_ss; proj_ss << proj_in.rdbuf();
+  EXPECT_NE(proj_ss.str().find("\"micAudio\""), std::string::npos);
+  EXPECT_EQ(proj_ss.str().find("\"systemAudio\""), std::string::npos);
+}
+
+TEST_F(RecordingProjectWriterTest, DowngradesAudioSidecarWhenTempMissing) {
+  // Engine said the sidecar finalized, but the temp vanished before
+  // bundling — the manifest must not point at a file that is not there.
+  const auto fake_mp4 = WriteFakeMp4("src.mp4");
+  ProjectWriterInput input;
+  input.session_id = "sess-audio-gone";
+  input.source_mp4_path = fake_mp4.string();
+  input.recordings_root_override = base_.string();
+  input.mic_audio_enabled = true;
+  input.mic_audio_path = (base_ / "not-there.mic.mp4").string();
+
+  auto result = WriteRecordingProject(input);
+  ASSERT_EQ(result.kind, ProjectWriterErrorKind::kNone) << result.message;
+  EXPECT_TRUE(result.mic_audio_downgraded);
+  const fs::path project_root = result.project_path;
+  EXPECT_FALSE(fs::exists(project_root / "capture" / "mic.m4a"));
+  std::ifstream proj_in(project_root / "project.json");
+  std::ostringstream proj_ss; proj_ss << proj_in.rdbuf();
+  EXPECT_EQ(proj_ss.str().find("\"micAudio\""), std::string::npos);
+}
+
+TEST(RecordingProjectWriterManifestAudio, ManifestOmitsSidecarKeysByDefault) {
+  ProjectWriterInput input;
+  input.session_id = "sess-no-sidecars";
+  const std::string manifest = BuildManifestJson(input);
+  // Legacy / video-only recordings keep the exact pre-separation manifest
+  // shape: no micAudio/systemAudio keys at all (macOS's nullable parity).
+  EXPECT_EQ(manifest.find("micAudio"), std::string::npos);
+  EXPECT_EQ(manifest.find("systemAudio"), std::string::npos);
+  EXPECT_NE(manifest.find("\"schemaVersion\": 2"), std::string::npos);
 }
 
 TEST(RecordingProjectWriterFreeFunctions, Iso8601TimestampShape) {

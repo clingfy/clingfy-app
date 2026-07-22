@@ -10,6 +10,8 @@
 #include <thread>
 #include <vector>
 
+#include "Capture/Camera/camera_overlay_presenter.h"
+
 // Phase 9.3.2 — floating camera bubble (macOS-like): a Win32 topmost, opaque,
 // non-activating, draggable window that paints the live camera frame while
 // recording, EXCLUDED from screen capture via
@@ -28,18 +30,13 @@
 // is a user action, not an auto probe.
 namespace clingfy::capture {
 
-struct FloatingPlacement {
-  int x = 0;
-  int y = 0;
-  int width = 0;
-  int height = 0;
-  bool rounded = true;
-};
-
-class CameraFloatingOverlay {
+// The opaque-GDI presenter ("GdiOpaquePresenter" in the renderer design doc) —
+// the safe-mode implementation of ICameraOverlayPresenter. FloatingPlacement
+// lives in camera_overlay_presenter.h with the interface.
+class CameraFloatingOverlay : public ICameraOverlayPresenter {
  public:
   CameraFloatingOverlay() = default;
-  ~CameraFloatingOverlay();
+  ~CameraFloatingOverlay() override;
 
   CameraFloatingOverlay(const CameraFloatingOverlay&) = delete;
   CameraFloatingOverlay& operator=(const CameraFloatingOverlay&) = delete;
@@ -47,26 +44,26 @@ class CameraFloatingOverlay {
   // Create the (hidden) window + apply capture-exclusion. Spawns the overlay
   // thread and blocks until the window is up (or creation failed). Returns false
   // on failure — the caller continues without a floating bubble.
-  bool Start(const FloatingPlacement& placement);
+  bool Start(const FloatingPlacement& placement) override;
 
   // Show / hide the bubble (window ops marshaled to the overlay thread).
-  void Show();
-  void Hide();
+  void Show() override;
+  void Hide() override;
 
   // Feed the latest camera frame (tightly-packed BGRA, stride = width*4).
   // Thread-safe; a no-op before Start / after Stop.
-  void PublishBgra(const std::uint8_t* bgra, int width, int height);
+  void PublishBgra(const std::uint8_t* bgra, int width, int height) override;
 
   // Tear the window + thread down. Idempotent. Call after the frame producer
   // (CameraRecorder) is stopped so no PublishBgra races teardown.
-  void Stop();
+  void Stop() override;
 
-  bool running() const { return running_.load(); }
+  bool running() const override { return running_.load(); }
 
   // True only when SetWindowDisplayAffinity(WDA_EXCLUDEFROMCAPTURE) succeeded —
   // i.e. showing this window will NOT burn it into screen.mov. The engine must
   // never Show() the floating bubble when this is false.
-  bool wda_excluded() const { return wda_excluded_.load(); }
+  bool wda_excluded() const override { return wda_excluded_.load(); }
 
   static LRESULT CALLBACK WndProc(HWND hwnd, UINT msg, WPARAM wparam,
                                   LPARAM lparam);
@@ -74,6 +71,27 @@ class CameraFloatingOverlay {
  private:
   void ThreadMain(FloatingPlacement placement, std::promise<bool>* ready);
   void Paint(HWND hwnd);
+  // Re-read the shared CameraOverlayStyleStore and, when it changed, rebuild the
+  // window region for the current shape (SetWindowRgn) + refresh the cached
+  // mirror/border used by Paint. Runs on the overlay thread (WM_TIMER). The
+  // opaque window can only honor shape / mirror / border; opacity / shadow /
+  // chroma are export-only on the floating bubble (see docs/windows-port.md).
+  void SyncStyleFromStore(HWND hwnd);
+  // Re-read the shared CameraOverlayGeometryStore and, when it changed, move /
+  // resize the window (SetWindowPos) to the requested size + corner / normalized
+  // center, then re-clip the shape for the new size. Runs on the overlay thread
+  // (WM_TIMER, and once at creation while still hidden so the bubble appears at
+  // the right size/position without a visible snap).
+  void SyncGeometryFromStore(HWND hwnd);
+  // Rebuild the window region from the cached shape / roundness for the current
+  // client size (shared by the style + geometry syncs). Repaints.
+  void RebuildRegion(HWND hwnd);
+  // Drag write-back (WM_EXITSIZEMOVE, overlay thread): store the dragged
+  // position as the custom normalized center — marking that revision as seen
+  // (only when no other mutation slipped in between, see AdoptDragRevision) so
+  // the next geometry sync doesn't fight the drop position — and report it to
+  // Dart (cameraOverlayMoved) so it persists across sessions, macOS parity.
+  void OnDragEnded(HWND hwnd);
 
   std::thread thread_;
   std::atomic<bool> running_{false};
@@ -86,6 +104,17 @@ class CameraFloatingOverlay {
   int frame_w_ = 0;
   int frame_h_ = 0;
   bool dirty_ = false;
+
+  // Cached live style + geometry revisions — written and read only on the
+  // overlay thread. ~0 forces a sync on the first check.
+  std::uint64_t last_style_revision_ = ~0ull;
+  std::uint64_t last_geometry_revision_ = ~0ull;
+  int style_shape_wire_ = 5;                    // OverlayShape.squircle
+  double style_roundness_ = 0.0;
+  bool style_mirror_ = false;
+  bool style_has_border_ = false;
+  std::uint32_t style_border_argb_ = 0;
+  float style_border_px_ = 0.0f;
 };
 
 }  // namespace clingfy::capture

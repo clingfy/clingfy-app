@@ -1,0 +1,52 @@
+#!/usr/bin/env bash
+# clingfy — open Clingfy (optionally with a .clingfyproj) from any terminal.
+# macOS counterpart of clingfy.ps1.
+#
+# Usage:
+#   clingfy                # launch the app
+#   clingfy .              # open the .clingfyproj in the current directory
+#   clingfy <path>         # open a specific .clingfyproj
+#
+# App resolution order (first hit wins):
+#   1. $CLINGFY_APP        — explicit app name override (e.g. "Clingfy Dev")
+#   2. "Clingfy Dev"       — the dev flavor, if installed
+#   3. "Clingfy"           — the prod app
+#
+# Install (one-time): see tools/cli/README.md.
+set -euo pipefail
+
+resolve_project() {
+  local p="$1"
+  p="$(cd "$(dirname "$p")" && pwd)/$(basename "$p")"
+  if [[ "$p" != *.clingfyproj ]]; then
+    # Tolerate being INSIDE the bundle or pointing at its parent dir.
+    local inner
+    inner="$(find "$p" -maxdepth 1 -type d -name '*.clingfyproj' | head -1 || true)"
+    [[ -n "$inner" ]] && p="$inner"
+  fi
+  printf '%s' "$p"
+}
+
+open_with() {
+  local app="$1"; shift
+  if [[ $# -gt 0 ]]; then
+    open -a "$app" "$@" 2>/dev/null
+  else
+    open -a "$app" 2>/dev/null
+  fi
+}
+
+args=()
+if [[ $# -gt 0 ]]; then
+  args+=("$(resolve_project "$1")")
+fi
+
+for app in "${CLINGFY_APP:-}" "Clingfy Dev" "Clingfy"; do
+  [[ -z "$app" ]] && continue
+  if open_with "$app" ${args[@]+"${args[@]}"}; then
+    exit 0
+  fi
+done
+
+echo "clingfy: no Clingfy app found (tried: \$CLINGFY_APP, 'Clingfy Dev', 'Clingfy')." >&2
+exit 1

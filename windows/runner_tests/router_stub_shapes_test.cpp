@@ -130,13 +130,18 @@ TEST(StubShapesTest, NoopSettersReturnSuccessWithNullValue) {
       "setFileNameTemplate",
       "setExcludeRecorderApp",
       "setExcludeMicFromSystemAudio",
+      "setMicEchoCancellationEnabled",
+      "previewSetVoiceCleanup",
       "setCaptureFrameRate",
       "setDisplay",
       "setAppWindowTarget",
       "setDisplayTargetMode",
       "setAudioSource",
       "setVideoSource",
-      "updateAudioPreview",
+      // updateAudioPreview became REAL in editing step 4-7d (routes to
+      // PreviewEngine::SetAudioMix) — its contract test lives below with the
+      // other audio-mix methods. setAudioMix/setAudioGainDb stay legacy
+      // accepted no-ops.
       "setAudioMix",
       "setAudioGainDb",
       // pickAreaRecordingRegion now returns a region map (Phase 7.2) — covered
@@ -186,8 +191,9 @@ TEST(StubShapesTest, NoopSettersReturnSuccessWithNullValue) {
       "inlinePreviewStop",
       "previewSetCameraPlacement",
       "previewSetZoomSegments",
-      "previewSetAudioMix",
-      "previewSetAudioGainDb",
+      // previewSetAudioMix / previewSetAudioGainDb became REAL in editing
+      // step 4-7d (PreviewEngine::SetAudioMix aliases) — dedicated contract
+      // tests below.
       "openAccessibilitySettings",
       "openScreenRecordingSettings",
       "openSystemSettings",
@@ -208,6 +214,55 @@ TEST(StubShapesTest, NoopSettersReturnSuccessWithNullValue) {
         << "Method '" << method
         << "' should return null but returned a value.";
   }
+}
+
+// === Editing step 4-7d: the audio-mix methods are REAL now =================
+//
+// updateAudioPreview (the method Dart actually sends) and the
+// previewSetAudioMix / previewSetAudioGainDb dispatch aliases route through
+// PreviewEngine::SetAudioMix. The engine is idle in runner_tests (never
+// Opened), so the stale/no-session path must be a SILENT null success —
+// matching macOS ("stale sessionId is a silent success") and the
+// previewPlay/Pause precedent above. Args must parse without error for both
+// key spellings; a missing-args call must not crash.
+TEST(StubShapesTest, AudioMixMethodsReplyNullSuccessWhenNoSessionIsOpen) {
+  MethodRouter router;
+  const auto dart_keys = DispatchWithArgs(
+      router, "updateAudioPreview",
+      flutter::EncodableMap{
+          {flutter::EncodableValue("sessionId"),
+           flutter::EncodableValue("rec_stale")},
+          {flutter::EncodableValue("gain"), flutter::EncodableValue(6.0)},
+          {flutter::EncodableValue("volume"), flutter::EncodableValue(50.0)},
+      });
+  EXPECT_TRUE(dart_keys.success_called);
+  EXPECT_FALSE(dart_keys.error_called);
+  EXPECT_TRUE(dart_keys.success_value.IsNull());
+
+  const auto alias_keys = DispatchWithArgs(
+      router, "previewSetAudioMix",
+      flutter::EncodableMap{
+          {flutter::EncodableValue("audioGainDb"),
+           flutter::EncodableValue(12.0)},
+          {flutter::EncodableValue("audioVolumePercent"),
+           flutter::EncodableValue(80.0)},
+      });
+  EXPECT_TRUE(alias_keys.success_called);
+  EXPECT_FALSE(alias_keys.error_called);
+  EXPECT_TRUE(alias_keys.success_value.IsNull());
+
+  const auto gain_only = DispatchWithArgs(
+      router, "previewSetAudioGainDb",
+      flutter::EncodableMap{{flutter::EncodableValue("audioGainDb"),
+                             flutter::EncodableValue(24.0)}});
+  EXPECT_TRUE(gain_only.success_called);
+  EXPECT_FALSE(gain_only.error_called);
+  EXPECT_TRUE(gain_only.success_value.IsNull());
+
+  // No args at all: still a tolerated null success (no parse crash).
+  const auto no_args = Dispatch(router, "updateAudioPreview");
+  EXPECT_TRUE(no_args.success_called);
+  EXPECT_FALSE(no_args.error_called);
 }
 
 // === Export action methods (Phase 6 Slice 1). ==============================
@@ -742,6 +797,8 @@ TEST(StubShapesTest, BoolGettersReturnFalse) {
   MethodRouter router;
   const std::vector<std::string> kFalseGetters = {
       "getExcludeRecorderApp",
+      // Mirrors the macOS default: mic echo cancellation is opt-in.
+      "getMicEchoCancellationEnabled",
       "saveManualZoomSegments",
   };
 

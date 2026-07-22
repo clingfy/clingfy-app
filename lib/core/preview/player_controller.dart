@@ -3,9 +3,11 @@ import 'dart:ui' show Offset;
 
 import 'package:flutter/foundation.dart';
 import 'package:clingfy/core/bridges/native_bridge.dart';
+import 'package:clingfy/core/bridges/native_error_codes.dart';
+import 'package:clingfy/core/bridges/native_method_channel.dart';
 import 'package:clingfy/core/models/app_models.dart';
 import 'package:clingfy/app/home/recording/recording_controller.dart';
-import 'package:clingfy/app/infrastructure/logging/logger_service.dart';
+import 'package:clingfy/core/logging/logger_service.dart';
 import 'package:clingfy/core/zoom/zoom_editor_controller.dart';
 import 'package:clingfy/core/clips/clip_editor_controller.dart';
 
@@ -31,6 +33,11 @@ class PlayerController extends ChangeNotifier {
   String? _blockingErrorCode;
   String? _activeSessionId;
   String? _activePreviewPath;
+  // The `.clingfyproj` bundle path for the active preview — the persistence key
+  // for clip edits. Tracked alongside `_activePreviewPath` (which is the
+  // generated preview file, not the project) so the clip editor can load/save
+  // `clips_state.json` in the bundle.
+  String? _activeProjectPath;
 
   final _warningController = StreamController<String>.broadcast();
   final _warningCodeController = StreamController<String>.broadcast();
@@ -41,6 +48,22 @@ class PlayerController extends ChangeNotifier {
 
   ClipEditorController? _clipEditor;
   VoidCallback? _clipEditorListener;
+
+  /// Called after a `previewInvalidated` rebuild reopened the native session,
+  /// BEFORE the transport is restored. HomeBindings points this at
+  /// `PostProcessingController.resyncPreviewAfterRebuild` so the canvas
+  /// composition and color grade (which live outside this controller) are
+  /// re-pushed too. Null in tests / before bind — the rebuild then restores
+  /// only what this controller owns.
+  Future<void> Function(String sessionId)? onPreviewRebuilt;
+
+  bool _rebuildingInvalidatedPreview = false;
+
+  // True when the user drove the transport (play/pause/seek) while a rebuild
+  // was in flight — their action is newer intent than the pre-rebuild
+  // snapshot, so the automatic restore steps aside.
+  bool _userTransportDuringRebuild = false;
+  bool _restoringTransportAfterRebuild = false;
 
   int get positionMs => _posMs;
   int get durationMs => _durMs;
@@ -104,8 +127,9 @@ class PlayerController extends ChangeNotifier {
               }
               // Seed the clip editor with the raw recording duration. This first
               // tick predates any cut, so `_durMs` is still the raw duration.
+              // The project path lets it restore/persist per-recording cuts.
               if (_clipEditor == null) {
-                _attachClipEditor(_activeSessionId!);
+                _attachClipEditor(_activeSessionId!, _activeProjectPath);
               }
             }
             notifyListeners();
@@ -154,10 +178,102 @@ class PlayerController extends ChangeNotifier {
             _cameraManualPositionController.add(Offset(x, y));
           }
           return;
+        case PlayerEventType.previewInvalidated:
+          unawaited(
+            _rebuildInvalidatedPreview(
+              event['reason']?.toString() ?? 'unknown',
+            ),
+          );
+          return;
         default:
           return;
       }
     });
+  }
+
+  /// Windows-only recovery: the native engine reported the D3D device backing
+  /// the active preview session as gone or suspect (`previewInvalidated`,
+  /// today only after a Modern Standby / suspend resume). Rebuild the preview
+  /// silently in place: raw close+reopen with the SAME session id (no phase
+  /// change, no loading overlay, no preview-subtree remount), re-push the
+  /// editing state the reopened session lost (previewOpen carries none), and
+  /// restore the transport (position + playing state).
+  Future<void> _rebuildInvalidatedPreview(String reason) async {
+    final workflow = _workflow;
+    final sessionId = _activeSessionId;
+    if (workflow == null || sessionId == null) return;
+    // Only a live preview can be rebuilt in place. During openingPreview /
+    // previewLoading the normal open flow is still running — a resume there
+    // must not race it, and it must NOT surface a blocking error (the open
+    // flow reports its own failures).
+    if (workflow.phase != WorkflowPhase.previewReady &&
+        workflow.phase != WorkflowPhase.exporting) {
+      Log.d(
+        'Player',
+        'Ignoring previewInvalidated in phase ${workflow.phase.name} — '
+            'no live preview to rebuild',
+      );
+      return;
+    }
+    if (_rebuildingInvalidatedPreview) return;
+    _rebuildingInvalidatedPreview = true;
+    _userTransportDuringRebuild = false;
+    try {
+      Log.w(
+        'Player',
+        'Native invalidated the preview session — rebuilding it in place',
+        null,
+        null,
+        {'sessionId': sessionId, 'reason': reason},
+      );
+      final restorePositionMs = _posMs;
+      final wasPlaying = _playerPlaying;
+      final reopened = await workflow.reopenInlinePreviewInPlace();
+      // The session may have been closed or replaced while the reopen ran —
+      // never resurrect state for a preview the user already left.
+      if (_activeSessionId != sessionId) return;
+      if (!reopened) {
+        _blockingError =
+            'The preview could not be rebuilt after the system resumed from '
+            'sleep. Close and reopen the preview; the recording file itself '
+            'is unaffected.';
+        _blockingErrorCode = NativeErrorCode.previewOpenError;
+        notifyListeners();
+        return;
+      }
+      // Re-push state BEFORE restoring the transport so the first visible
+      // frame is already composed correctly (grade, canvas, zoom, clips).
+      await onPreviewRebuilt?.call(sessionId);
+      await _zoomEditor?.resyncToNative();
+      await _clipEditor?.resyncToNative();
+      if (_activeSessionId != sessionId) return;
+      if (_userTransportDuringRebuild) {
+        // The user drove the transport while the rebuild ran — their action
+        // is newer intent than the pre-rebuild snapshot, so don't stomp it.
+        Log.d(
+          'Player',
+          'Skipping the transport restore — the user drove the transport '
+              'during the rebuild',
+        );
+        return;
+      }
+      _restoringTransportAfterRebuild = true;
+      try {
+        await seekTo(restorePositionMs);
+        if (wasPlaying) {
+          await play();
+        } else {
+          // Windows PreviewEngine::Open() auto-plays the fresh session —
+          // without this explicit pause, a preview the user left paused
+          // would spontaneously start playing after the rebuild.
+          await pause();
+        }
+      } finally {
+        _restoringTransportAfterRebuild = false;
+      }
+    } finally {
+      _rebuildingInvalidatedPreview = false;
+    }
   }
 
   bool _isStaleEvent(Map<String, dynamic> event) {
@@ -200,6 +316,7 @@ class PlayerController extends ChangeNotifier {
             _activePreviewPath != nextPreviewPath)) {
       _activeSessionId = nextSessionId;
       _activePreviewPath = nextPreviewPath;
+      _activeProjectPath = nextProjectPath;
       _blockingError = null;
       _blockingErrorCode = null;
       _playerReady = false;
@@ -222,6 +339,7 @@ class PlayerController extends ChangeNotifier {
         _clearPlaybackState(detachZoomEditor: true);
         _activeSessionId = nextSessionId;
         _activePreviewPath = nextPreviewPath;
+        _activeProjectPath = nextProjectPath;
       }
       return;
     }
@@ -231,6 +349,7 @@ class PlayerController extends ChangeNotifier {
       if (_activeSessionId != null || _zoomEditor != null || _playerReady) {
         _activeSessionId = null;
         _activePreviewPath = null;
+        _activeProjectPath = null;
         _clearPlaybackState(detachZoomEditor: true);
       }
     }
@@ -274,13 +393,14 @@ class PlayerController extends ChangeNotifier {
     _zoomSegments = [];
   }
 
-  void _attachClipEditor(String sessionId) {
+  void _attachClipEditor(String sessionId, String? projectPath) {
     _detachClipEditor();
 
     final editor = ClipEditorController(
       nativeBridge: _nativeBridge,
       durationMs: _durMs,
       sessionId: sessionId,
+      projectPath: projectPath,
     );
     _clipEditor = editor;
 
@@ -326,6 +446,9 @@ class PlayerController extends ChangeNotifier {
   Future<void> play() async {
     final sessionId = _activeSessionId;
     if (sessionId == null) return;
+    if (_rebuildingInvalidatedPreview && !_restoringTransportAfterRebuild) {
+      _userTransportDuringRebuild = true;
+    }
     // Commit any in-progress hover-peek AND mark playing BEFORE the await: a
     // hover landing during the await calls previewPeekTo, which only bails when
     // `_playerPlaying` is already true — so setting it after the await would let
@@ -340,6 +463,9 @@ class PlayerController extends ChangeNotifier {
   Future<void> pause() async {
     final sessionId = _activeSessionId;
     if (sessionId == null) return;
+    if (_rebuildingInvalidatedPreview && !_restoringTransportAfterRebuild) {
+      _userTransportDuringRebuild = true;
+    }
     await _nativeBridge.invokeMethod('previewPause', {'sessionId': sessionId});
     _playerPlaying = false;
     notifyListeners();
@@ -348,6 +474,9 @@ class PlayerController extends ChangeNotifier {
   Future<void> seekTo(int ms) async {
     final sessionId = _activeSessionId;
     if (sessionId == null) return;
+    if (_rebuildingInvalidatedPreview && !_restoringTransportAfterRebuild) {
+      _userTransportDuringRebuild = true;
+    }
     _posMs = ms;
     Log.d("Player", "seekTo: $ms ms");
     notifyListeners();

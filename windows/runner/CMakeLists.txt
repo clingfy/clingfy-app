@@ -1,6 +1,46 @@
 cmake_minimum_required(VERSION 3.14)
 project(runner LANGUAGES CXX)
 
+# The RNNoise voice-cleanup engine below is plain C; enable the C toolchain so
+# its static library can compile. The rest of the runner stays C++-only.
+enable_language(C)
+
+# === RNNoise voice-cleanup engine (C static library) ===
+#
+# The RNNoise sources are vendored ONCE, under macos/Runner/Capture/Audio/
+# RNNoise/ (added with the macOS voice-cleanup feature, #297). They are plain
+# portable C -- nothing macOS-specific -- so Windows compiles the SAME copy
+# rather than duplicating the ~141k-line model-weights file. One source of
+# truth: a second copy would silently drift from the macOS denoiser.
+#
+# Every listed unit builds clean under MSVC: the built-in model
+# (rnnoise_create(nullptr)) needs no config.h (HAVE_CONFIG_H stays undefined),
+# and the only POSIX code -- the mmap file loader in parse_lpcnet_weights.c --
+# sits in a disabled `#if 0` block, so that file is portable too (it defines
+# rnn_parse_weights / rnn_linear_init, which the built-in model path needs).
+set(RNNOISE_DIR
+  "${CMAKE_CURRENT_SOURCE_DIR}/../../macos/Runner/Capture/Audio/RNNoise")
+add_library(rnnoise STATIC
+  "${RNNOISE_DIR}/celt_lpc.c"
+  "${RNNOISE_DIR}/denoise.c"
+  "${RNNOISE_DIR}/kiss_fft.c"
+  "${RNNOISE_DIR}/nnet.c"
+  "${RNNOISE_DIR}/nnet_default.c"
+  "${RNNOISE_DIR}/parse_lpcnet_weights.c"
+  "${RNNOISE_DIR}/pitch.c"
+  "${RNNOISE_DIR}/rnn.c"
+  "${RNNOISE_DIR}/rnnoise_data.c"
+  "${RNNOISE_DIR}/rnnoise_tables.c"
+)
+target_include_directories(rnnoise PUBLIC "${RNNOISE_DIR}")
+set_target_properties(rnnoise PROPERTIES C_STANDARD 11 C_STANDARD_REQUIRED ON)
+# Third-party C: silence its own warnings (not ours to fix, and it must not
+# inherit the runner's /W4 /WX) and MSVC's secure-CRT deprecation nags.
+if (MSVC)
+  target_compile_options(rnnoise PRIVATE /W0)
+  target_compile_definitions(rnnoise PRIVATE _CRT_SECURE_NO_WARNINGS)
+endif()
+
 # === Bridge static library ===
 #
 # Bridge sources live in a static library so they can be linked by both the
@@ -11,6 +51,7 @@ project(runner LANGUAGES CXX)
 add_library(runner_bridge STATIC
   "Bridge/method_dispatcher.cpp"
   "Bridge/method_router.cpp"
+  "Bridge/camera_overlay_move_publisher.cpp"
   "Bridge/event_channel_stubs.cpp"
   "Bridge/export_progress_publisher.cpp"
   "Bridge/native_log_publisher.cpp"
@@ -24,6 +65,7 @@ add_library(runner_bridge STATIC
   "Audio/audio_mixer.cpp"
   "Audio/audio_packet_queue.cpp"
   "Audio/wasapi_audio_capture.cpp"
+  "Audio/VoiceCleanup/rnnoise_denoiser.cpp"
   "Bridge/Devices/audio_source_enumerator.cpp"
   "Bridge/Devices/device_probe_log.cpp"
   "Bridge/Devices/device_record.cpp"
@@ -36,11 +78,17 @@ add_library(runner_bridge STATIC
   "Bridge/Routers/indicator_router.cpp"
   "Bridge/Routers/misc_router.cpp"
   "Bridge/Routers/permissions_router.cpp"
+  "Bridge/Routers/clip_args.cpp"
+  "Bridge/Routers/color_grade_args.cpp"
   "Bridge/Routers/preview_router.cpp"
   "Bridge/Routers/recording_router.cpp"
   "Bridge/Routers/storage_router.cpp"
   "Bridge/Routers/updater_router.cpp"
   "Bridge/updater_event_publisher.cpp"
+  "Capture/Export/audio_sidecar_probe.cpp"
+  "Capture/Export/clip_audio_stitch.cpp"
+  "Capture/Export/clip_playback_planner.cpp"
+  "Capture/Export/color_grade.cpp"
   "Capture/Export/export_audio.cpp"
   "Capture/Export/export_format.cpp"
   "Capture/Export/export_geometry.cpp"
@@ -48,15 +96,25 @@ add_library(runner_bridge STATIC
   "Capture/Export/export_passthrough.cpp"
   "Capture/Export/export_session.cpp"
   "Capture/Export/gif_export_policy.cpp"
+  "Capture/Export/mic_cleanup.cpp"
+  "Capture/Export/reorder_audio_pump.cpp"
   "Capture/Camera/camera_bubble_painter.cpp"
+  "Capture/Camera/camera_dcomp_device_loss.cpp"
+  "Capture/Camera/camera_dcomp_overlay.cpp"
   "Capture/Camera/camera_export_layout.cpp"
   "Capture/Camera/camera_export_renderer.cpp"
   "Capture/Camera/camera_floating_overlay.cpp"
+  "Capture/Camera/camera_overlay_drag.cpp"
   "Capture/Camera/camera_format.cpp"
   "Capture/Camera/camera_meta.cpp"
+  "Capture/Camera/camera_overlay_geometry_store.cpp"
+  "Capture/Camera/camera_overlay_glow.cpp"
+  "Capture/Camera/camera_overlay_host.cpp"
+  "Capture/Camera/camera_overlay_glow_renderer.cpp"
+  "Capture/Camera/camera_overlay_presenter.cpp"
+  "Capture/Camera/camera_overlay_style_store.cpp"
   "Capture/Camera/camera_preview_support.cpp"
   "Capture/Camera/camera_recorder.cpp"
-  "Capture/Camera/live_camera_texture.cpp"
   "Capture/Cursor/cursor_click_hook.cpp"
   "Capture/Cursor/cursor_export_renderer.cpp"
   "Capture/Cursor/cursor_sample_mapper.cpp"
@@ -75,16 +133,19 @@ add_library(runner_bridge STATIC
   "Capture/video_frame_queue.cpp"
   "Capture/wgc_display_capture_backend.cpp"
   "Capture/windows_selection_state.cpp"
+  "Encoding/audio_sidecar_writer.cpp"
   "Encoding/encoder_output_path.cpp"
   "Encoding/gif_encoder.cpp"
   "Encoding/mf_dxgi_manager.cpp"
   "Encoding/mf_encoder_config.cpp"
   "Encoding/mf_sink_writer_encoder.cpp"
+  "Graphics/color_grade_effect.cpp"
   "Graphics/d3d_device.cpp"
   "Overlay/area_picker_geometry.cpp"
   "Overlay/area_picker_overlay.cpp"
   "Permissions/camera_readiness.cpp"
   "Permissions/permission_probe.cpp"
+  "Services/keep_awake.cpp"
   "Services/log_locations.cpp"
   "Services/recovery_sweep.cpp"
   "Updater/update_checker.cpp"
@@ -93,14 +154,20 @@ add_library(runner_bridge STATIC
   "Services/shell_reveal.cpp"
   "Services/temp_orphan_scan.cpp"
   "preview/frame_timing.cpp"
+  "preview/preview_audio_renderer.cpp"
   "preview/preview_camera_renderer.cpp"
   "preview/preview_compositor.cpp"
   "preview/preview_engine.cpp"
+  "preview/preview_source_reader.cpp"
 )
 apply_standard_settings(runner_bridge)
 target_compile_definitions(runner_bridge PRIVATE "NOMINMAX")
 target_include_directories(runner_bridge PUBLIC "${CMAKE_CURRENT_SOURCE_DIR}")
 target_link_libraries(runner_bridge PUBLIC flutter flutter_wrapper_app)
+
+# Voice-cleanup (RNNoise) engine. PUBLIC so the runner exe and runner_tests
+# both resolve the RnnoiseDenoiser wrapper's C symbols transitively.
+target_link_libraries(runner_bridge PUBLIC rnnoise)
 
 # Win32 / WASAPI / Media Foundation libraries required by the Phase 2 device
 # enumerators. These ship with the Windows SDK and do not pull in any
@@ -163,6 +230,13 @@ target_link_libraries(runner_bridge PUBLIC
 # the linker reports them as unresolved externals.
 target_link_libraries(runner_bridge PUBLIC
   "dxguid.lib"
+)
+
+# Renderer redesign P3: DirectComposition (DCompositionCreateDevice /
+# IDCompositionDevice) presents the premultiplied-alpha camera-bubble
+# swapchain (Capture/Camera/camera_dcomp_overlay.cpp).
+target_link_libraries(runner_bridge PUBLIC
+  "dcomp.lib"
 )
 
 # Phase 6 Slice 2 follow-up: the export save-folder resolver + folder

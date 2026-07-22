@@ -3,13 +3,15 @@ import 'dart:math';
 
 import 'package:flutter/foundation.dart';
 import 'package:flutter/services.dart';
+import 'package:clingfy/app/infrastructure/analytics/analytics_events.dart';
+import 'package:clingfy/app/infrastructure/analytics/analytics_service.dart';
 import 'package:clingfy/app/home/recording/recorded_duration_tracker.dart';
 import 'package:clingfy/core/permissions/models/recording_start_preflight.dart';
 import 'package:clingfy/core/bridges/native_bridge.dart';
 import 'package:clingfy/core/bridges/native_error_codes.dart';
 import 'package:clingfy/core/bridges/native_method_channel.dart';
 import 'package:clingfy/app/infrastructure/observability/telemetry_service.dart';
-import 'package:clingfy/app/infrastructure/logging/logger_service.dart';
+import 'package:clingfy/core/logging/logger_service.dart';
 import 'package:clingfy/core/models/app_models.dart';
 import 'package:clingfy/app/settings/settings_controller.dart';
 import 'package:clingfy/ui/platform/platform_kind.dart';
@@ -109,6 +111,12 @@ class RecordingController extends ChangeNotifier {
   // the InlinePreview widget can mount `Texture(textureId: ...)`. null
   // on macOS (AppKitView path) and until the native call completes.
   int? _inlinePreviewTextureId;
+  // The native canvas aspect (previewOpen width/height — the fixed texture
+  // the engine letterboxes video into). The InlinePreview widget must show
+  // the texture at exactly this aspect: a bare `Texture` stretches to its
+  // layout box, distorting the video whenever the panel isn't canvas-shaped
+  // (side panel closed, timeline hidden). null until previewOpen replies.
+  double? _inlinePreviewTextureAspect;
   bool _pauseResumeInFlight = false;
   _PreviewOpenSource? _previewOpenSource;
   String? _pendingExternalProjectReplacementPath;
@@ -210,7 +218,11 @@ class RecordingController extends ChangeNotifier {
     WorkflowPhase.exporting => false,
   };
   bool get isBusy => isBusyTransitioning;
-  bool get showTimelineBar => phase == WorkflowPhase.previewReady;
+  // The timeline stays visible during export so the user can keep scrubbing
+  // the preview; editing is disabled for the duration (VideoTimeline's
+  // editingEnabled, driven by isExporting).
+  bool get showTimelineBar =>
+      phase == WorkflowPhase.previewReady || phase == WorkflowPhase.exporting;
   bool get showPreRecordingBar => phase == WorkflowPhase.idle;
   bool get shouldNotifyRecordingFinalizedOnPreviewOpen =>
       _previewOpenSource == _PreviewOpenSource.recordingFinalized;
@@ -220,6 +232,11 @@ class RecordingController extends ChangeNotifier {
   /// produces a texture id. Cleared by `_beginPreviewClose` and on
   /// `_transitionToIdle`.
   int? get inlinePreviewTextureId => _inlinePreviewTextureId;
+
+  /// Aspect ratio (width / height) of the native preview canvas the texture
+  /// id points at, from the same `previewOpen` reply; null until the reply
+  /// arrives (the widget falls back to 16:9, the engine's canvas shape).
+  double? get inlinePreviewTextureAspect => _inlinePreviewTextureAspect;
 
   Duration get elapsed => _elapsed;
   bool get autoStopEnabled => _settings.recording.autoStopEnabled;
@@ -691,6 +708,12 @@ class RecordingController extends ChangeNotifier {
         _inlinePreviewTextureId = openResult.hasTexture
             ? openResult.textureId
             : null;
+        _inlinePreviewTextureAspect =
+            (openResult.hasTexture &&
+                openResult.width > 0 &&
+                openResult.height > 0)
+            ? openResult.width / openResult.height
+            : null;
         Log.d('Recording', 'previewOpen returned', null, null, {
           'sessionId': activeSessionId,
           'textureId': _inlinePreviewTextureId,
@@ -735,6 +758,81 @@ class RecordingController extends ChangeNotifier {
   Future<void> closePreview() async {
     if (!showPreviewShell || phase == WorkflowPhase.exporting) return;
     await _beginPreviewClose(requestNativeClose: true);
+  }
+
+  /// Silently close and reopen the native preview session in place, keeping
+  /// the same session id and workflow phase. Windows-only recovery driven by
+  /// the `previewInvalidated` player event (the D3D device backing the
+  /// session died — a Modern Standby / suspend resume). Unlike
+  /// [_beginPreviewClose] + [_enterPreviewForProject] this never transitions
+  /// the phase, never shows the loading overlay, and never remounts the
+  /// preview subtree — only the texture id/aspect change, which the inline
+  /// preview widget re-renders in place. Returns true when the reopen
+  /// produced a usable texture.
+  Future<bool> reopenInlinePreviewInPlace() async {
+    final activeSessionId = _state.sessionId;
+    final path = _state.previewPath ?? _state.projectPath;
+    if (activeSessionId == null ||
+        path == null ||
+        (phase != WorkflowPhase.previewReady &&
+            phase != WorkflowPhase.exporting)) {
+      return false;
+    }
+    Log.w(
+      'Recording',
+      'Rebuilding the invalidated preview session in place',
+      null,
+      null,
+      {'sessionId': activeSessionId, 'path': path},
+    );
+    bool sessionStillActive() =>
+        _state.sessionId == activeSessionId &&
+        (phase == WorkflowPhase.previewReady ||
+            phase == WorkflowPhase.exporting);
+
+    try {
+      await _nativeBridge.previewClose(sessionId: activeSessionId);
+      // Re-check BEFORE reopening: the close await is the widest window in
+      // the rebuild (native joins the render/heartbeat threads), and a user
+      // action landing in it (close button, replace-with-project) must win —
+      // issuing previewOpen for the abandoned session would resurrect it
+      // natively with no Dart owner.
+      if (!sessionStillActive()) {
+        return false;
+      }
+      final openResult = await _nativeBridge.previewOpen(
+        sessionId: activeSessionId,
+        projectPath: path,
+      );
+      // The session may also have been closed or replaced while the reopen
+      // itself was in flight — don't resurrect texture state for a session
+      // that is no longer active, and tear the freshly opened native session
+      // back down instead of orphaning it until the next open's reconcile.
+      if (!sessionStillActive()) {
+        unawaited(
+          _nativeBridge
+              .previewClose(sessionId: activeSessionId)
+              .catchError((Object _) {}),
+        );
+        return false;
+      }
+      _inlinePreviewTextureId = openResult.hasTexture
+          ? openResult.textureId
+          : null;
+      _inlinePreviewTextureAspect =
+          (openResult.hasTexture &&
+              openResult.width > 0 &&
+              openResult.height > 0)
+          ? openResult.width / openResult.height
+          : null;
+      notifyListeners();
+      return openResult.hasTexture;
+    } catch (e, st) {
+      Log.e('Recording', 'Failed to rebuild the invalidated preview', e, st, {
+        'sessionId': activeSessionId,
+      });
+      return false;
+    }
   }
 
   void enterExporting() {
@@ -853,6 +951,13 @@ class RecordingController extends ChangeNotifier {
         recordingId: eventSessionId,
       ),
     );
+    ClingfyAnalytics.capture(
+      AnalyticsEvents.recordingSessionStart,
+      properties: {
+        'fps': _settings.recording.captureFrameRate,
+        'system_audio': _settings.recording.systemAudioEnabled,
+      },
+    );
   }
 
   void _handleRecordingPausedEvent(Map<String, dynamic> event) {
@@ -953,6 +1058,10 @@ class RecordingController extends ChangeNotifier {
       sessionId: eventSessionId,
     );
     unawaited(ClingfyTelemetry.stopSession());
+    ClingfyAnalytics.capture(
+      AnalyticsEvents.recordingSessionComplete,
+      properties: {'duration_seconds': _elapsed.inSeconds},
+    );
   }
 
   void _handleRecordingFailedEvent(Map<String, dynamic> event) {
@@ -1015,6 +1124,17 @@ class RecordingController extends ChangeNotifier {
     // captures that to Sentry — capturing here too double-reported every
     // failed start. Mid-recording/finalize failures arrive only as events,
     // so those still capture here.
+    // One failure = one analytics event, whichever surface reports it first (the method catch
+    // does NOT capture analytics, so no double-count here — unlike the Sentry split below).
+    ClingfyAnalytics.capture(
+      AnalyticsEvents.recordingSessionFail,
+      properties: {
+        'stage': phase == WorkflowPhase.startingRecording
+            ? 'start'
+            : 'recording',
+        'error_code': code,
+      },
+    );
     final isStartFailureOwnedByMethodCatch =
         phase == WorkflowPhase.startingRecording && _startCommandIssued;
     if (!isStartFailureOwnedByMethodCatch) {
@@ -1200,6 +1320,7 @@ class RecordingController extends ChangeNotifier {
     _mountedPreviewSessionId = null;
     _previewOpenRequested = false;
     _inlinePreviewTextureId = null;
+    _inlinePreviewTextureAspect = null;
     if (phase != WorkflowPhase.closingPreview) {
       _setState(_state.copyWith(phase: WorkflowPhase.closingPreview));
     }
@@ -1227,6 +1348,7 @@ class RecordingController extends ChangeNotifier {
     _mountedPreviewSessionId = null;
     _previewOpenRequested = false;
     _inlinePreviewTextureId = null;
+    _inlinePreviewTextureAspect = null;
     _previewOpenSource = null;
     _pendingExternalProjectReplacementPath = null;
     _openingExternalProjectPath = null;
@@ -1392,6 +1514,7 @@ class RecordingController extends ChangeNotifier {
     _mountedPreviewSessionId = null;
     _previewOpenRequested = false;
     _inlinePreviewTextureId = null;
+    _inlinePreviewTextureAspect = null;
     _previewOpenSource = source;
     _failedExternalProjectOpenPath = null;
     _pendingExternalProjectReplacementPath = null;

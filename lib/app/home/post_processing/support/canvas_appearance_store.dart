@@ -1,8 +1,9 @@
 import 'dart:convert';
 import 'dart:io';
 
-import 'package:clingfy/app/infrastructure/logging/logger_service.dart';
+import 'package:clingfy/core/logging/logger_service.dart';
 import 'package:clingfy/core/models/app_models.dart';
+import 'package:clingfy/core/timeline/model/color_grade.dart';
 
 /// Persisted per-recording canvas appearance — the post-processing canvas
 /// edits that previously reset every time a recording was reopened
@@ -17,6 +18,12 @@ import 'package:clingfy/core/models/app_models.dart';
 /// are already global app settings (`SettingsController.post`) and do not
 /// reset on reopen; making them per-project would be a separate behavior
 /// change.
+///
+/// The color grade (auto-enhance + exposure/contrast/saturation/temperature/
+/// tint) rides along in the same file — it is per-project editor state just
+/// like the canvas, so it persists and restores together. Clips (split / cut /
+/// trim / reorder) persist separately in `clips_state.json` because that model
+/// lives in `lib/core` and cannot depend on this `lib/app` store.
 class CanvasAppearanceState {
   const CanvasAppearanceState({
     required this.padding,
@@ -25,10 +32,13 @@ class CanvasAppearanceState {
     required this.backgroundColorArgb,
     required this.backgroundImagePath,
     required this.backgroundPreset,
+    this.colorGrade = const ColorGrade(),
   });
 
-  /// Bump when the on-disk shape changes incompatibly.
-  static const int version = 1;
+  /// Bump when the on-disk shape changes incompatibly. v2 added [colorGrade];
+  /// a v1 file (no `colorGrade` key) still reads cleanly and falls back to the
+  /// neutral grade, so older recordings keep working.
+  static const int version = 2;
 
   final double padding;
   final double cornerRadius;
@@ -36,6 +46,7 @@ class CanvasAppearanceState {
   final int? backgroundColorArgb;
   final String? backgroundImagePath;
   final CanvasBackgroundPreset? backgroundPreset;
+  final ColorGrade colorGrade;
 
   Map<String, dynamic> toJson() => {
     'version': version,
@@ -47,6 +58,7 @@ class CanvasAppearanceState {
       'imagePath': backgroundImagePath,
       'preset': backgroundPreset?.toJson(),
     },
+    'colorGrade': colorGrade.toMap(),
   };
 
   /// Parses persisted state. Returns `null` for any malformed/old payload
@@ -59,6 +71,7 @@ class CanvasAppearanceState {
       (k) => k.name == bgMap['kind'],
       orElse: () => BackgroundKind.color,
     );
+    final grade = json['colorGrade'];
     return CanvasAppearanceState(
       padding: (json['padding'] as num?)?.toDouble() ?? 0.0,
       cornerRadius: (json['cornerRadius'] as num?)?.toDouble() ?? 0.0,
@@ -70,6 +83,7 @@ class CanvasAppearanceState {
       backgroundPreset: CanvasBackgroundPreset.fromJson(
         (bgMap['preset'] as Map?)?.cast<String, dynamic>(),
       ),
+      colorGrade: grade is Map ? ColorGrade.fromMap(grade) : const ColorGrade(),
     );
   }
 }

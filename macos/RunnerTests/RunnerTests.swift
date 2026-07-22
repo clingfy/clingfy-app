@@ -188,6 +188,8 @@ final class RecordingProjectPathsTests: XCTestCase {
         "screen.meta.json",
         "cursor.json",
         "zoom.manual.json",
+        "mic.m4a",
+        "system.m4a",
         "camera",
         "raw.mov",
         "meta.json",
@@ -5568,6 +5570,851 @@ final class LetterboxExporterTests: XCTestCase {
     )
   }
 
+  // MARK: - Separated-source audio (export rewire)
+
+  func testResolveSeparatedAudioControlsMathAndCaps() {
+    // No normalize: user gain rides the tap, master volume passes through.
+    let plain = LetterboxExporter.resolveSeparatedAudioControls(
+      userGainDb: 6.0, userVolumePercent: 80.0,
+      autoNormalizeOnExport: false, targetLoudnessDbfs: -16.0, micPeakLinear: nil)
+    XCTAssertEqual(plain.masterVolumePercent, 80.0)
+    XCTAssertEqual(plain.micVolumeComponent, 1.0, accuracy: 0.0001)
+    XCTAssertEqual(plain.micGainDb, 6.0, accuracy: 0.0001)
+    XCTAssertNil(plain.normalizationGainDb)
+
+    // Normalize BOOST: quiet mic (peak -40dBFS) toward -16dBFS, capped at +24.
+    let boost = LetterboxExporter.resolveSeparatedAudioControls(
+      userGainDb: 6.0, userVolumePercent: 100.0,
+      autoNormalizeOnExport: true, targetLoudnessDbfs: -16.0, micPeakLinear: 0.01)
+    XCTAssertEqual(boost.micVolumeComponent, 1.0, accuracy: 0.0001)
+    XCTAssertEqual(boost.micGainDb, 24.0, accuracy: 0.0001)
+    XCTAssertNotNil(boost.normalizationGainDb)
+
+    // Normalize REDUCE: hot mic (near 0dBFS) down to -16dBFS lands in the
+    // volume component (taps only boost); user gain folds in first.
+    let reduce = LetterboxExporter.resolveSeparatedAudioControls(
+      userGainDb: 0.0, userVolumePercent: 100.0,
+      autoNormalizeOnExport: true, targetLoudnessDbfs: -16.0, micPeakLinear: 1.0)
+    XCTAssertEqual(reduce.micGainDb, 0.0, accuracy: 0.0001)
+    XCTAssertEqual(reduce.micVolumeComponent, pow(10.0, -16.0 / 20.0), accuracy: 0.001)
+
+    // Unmeasurable peak: normalize is skipped, user settings survive.
+    let skipped = LetterboxExporter.resolveSeparatedAudioControls(
+      userGainDb: 3.0, userVolumePercent: 100.0,
+      autoNormalizeOnExport: true, targetLoudnessDbfs: -16.0, micPeakLinear: 0.0)
+    XCTAssertNil(skipped.normalizationGainDb)
+    XCTAssertEqual(skipped.micGainDb, 3.0, accuracy: 0.0001)
+  }
+
+  func testAacWriterSampleRateFollowsSourceWith48kFallback() throws {
+    let tempDir = makeTemporaryDirectory()
+    defer { try? FileManager.default.removeItem(at: tempDir) }
+
+    // 48k source keeps 48k.
+    let tone48 = tempDir.appendingPathComponent("tone48.m4a")
+    try makeToneAudioFile(url: tone48, seconds: 0.3, amplitude: 0.5, sampleRate: 48_000)
+    XCTAssertEqual(
+      LetterboxExporter.aacWriterSampleRate(for: AVAsset(url: tone48).tracks(withMediaType: .audio)),
+      48_000)
+
+    // 44.1k source PRESERVES 44.1k — the discriminating case that a constant
+    // 48k (or the old 44.1k hardcode) implementation would get wrong.
+    let tone441 = tempDir.appendingPathComponent("tone441.m4a")
+    try makeToneAudioFile(url: tone441, seconds: 0.3, amplitude: 0.5, sampleRate: 44_100)
+    // Hold the asset: AVAssetTrack does not retain its parent, and the source
+    // track is used past this line (inserted into the composition below).
+    let asset441 = AVAsset(url: tone441)
+    let tracks441 = asset441.tracks(withMediaType: .audio)
+    XCTAssertEqual(LetterboxExporter.aacWriterSampleRate(for: tracks441), 44_100)
+
+    // The rate must survive derivation through an AVMutableComposition track
+    // (the actual shape fed to the writer on the cut + separated paths),
+    // including a trailing silence-fill.
+    let composition = AVMutableComposition()
+    let compTrack = try XCTUnwrap(
+      composition.addMutableTrack(withMediaType: .audio, preferredTrackID: kCMPersistentTrackID_Invalid))
+    let sourceTrack = try XCTUnwrap(tracks441.first)
+    try compTrack.insertTimeRange(
+      CMTimeRange(start: .zero, duration: sourceTrack.timeRange.duration),
+      of: sourceTrack, at: .zero)
+    compTrack.insertEmptyTimeRange(
+      CMTimeRange(start: compTrack.timeRange.end, duration: CMTime(value: 100, timescale: 1000)))
+    XCTAssertEqual(
+      LetterboxExporter.aacWriterSampleRate(for: composition.tracks(withMediaType: .audio)),
+      44_100)
+
+    // Empty track list falls back to 48k.
+    XCTAssertEqual(LetterboxExporter.aacWriterSampleRate(for: []), 48_000)
+  }
+
+  func testMakeSeparatedAudioCompositionShapesTracksAndCuts() throws {
+    let tempDir = makeTemporaryDirectory()
+    defer { try? FileManager.default.removeItem(at: tempDir) }
+
+    let micURL = tempDir.appendingPathComponent("mic.m4a")
+    let systemURL = tempDir.appendingPathComponent("system.m4a")
+    try makeToneAudioFile(url: micURL, seconds: 1.0, amplitude: 0.5, frequency: 440)
+    try makeToneAudioFile(url: systemURL, seconds: 1.0, amplitude: 0.5, frequency: 1000)
+
+    // No cuts: both sources whole, distinct tracks, ids recorded.
+    let whole = try XCTUnwrap(
+      LetterboxExporter.makeSeparatedAudioComposition(
+        micAsset: AVAsset(url: micURL),
+        systemAsset: AVAsset(url: systemURL),
+        ranges: []
+      ))
+    XCTAssertEqual(whole.audioTracks.count, 2)
+    XCTAssertNotNil(whole.micTrackID)
+    XCTAssertNotNil(whole.systemTrackID)
+    XCTAssertNotEqual(whole.micTrackID, whole.systemTrackID)
+    XCTAssertEqual(whole.asset.duration.seconds, 1.0, accuracy: 0.15)
+
+    // Cuts: both tracks compact onto the edited timeline.
+    let cut = try XCTUnwrap(
+      LetterboxExporter.makeSeparatedAudioComposition(
+        micAsset: AVAsset(url: micURL),
+        systemAsset: AVAsset(url: systemURL),
+        ranges: [
+          ClipKeptRange(sourceInMs: 0, sourceOutMs: 400),
+          ClipKeptRange(sourceInMs: 700, sourceOutMs: 900),
+        ]
+      ))
+    XCTAssertEqual(cut.audioTracks.count, 2)
+    XCTAssertEqual(cut.asset.duration.seconds, 0.6, accuracy: 0.1)
+
+    // Mic-only bundle: single track, mic id only.
+    let micOnly = try XCTUnwrap(
+      LetterboxExporter.makeSeparatedAudioComposition(
+        micAsset: AVAsset(url: micURL), systemAsset: nil, ranges: []
+      ))
+    XCTAssertEqual(micOnly.audioTracks.count, 1)
+    XCTAssertNotNil(micOnly.micTrackID)
+    XCTAssertNil(micOnly.systemTrackID)
+
+    // Nothing readable: nil, so the export falls back to embedded audio.
+    XCTAssertNil(
+      LetterboxExporter.makeSeparatedAudioComposition(
+        micAsset: nil, systemAsset: nil, ranges: []))
+  }
+
+  // MARK: - Separated-audio PREVIEW composition (Phase 1.5 WYSIWYG)
+  // The preview plays the SAME mic+system mix the export produces (instead of
+  // screen.mov's skewed embedded track). makeSeparatedPreviewComposition adds a
+  // screen VIDEO track to the separated-audio shape so the preview player item
+  // is a video+audio composition; buildPreview's video composition runs over it.
+
+  func testSeparatedPreviewCompositionHasVideoAndBothAudioTracks() throws {
+    let tempDir = makeTemporaryDirectory()
+    defer { try? FileManager.default.removeItem(at: tempDir) }
+    let screenURL = tempDir.appendingPathComponent("screen.mov")
+    let micURL = tempDir.appendingPathComponent("mic.m4a")
+    let systemURL = tempDir.appendingPathComponent("system.m4a")
+    try makeColorPatchVideo(
+      url: screenURL, size: CGSize(width: 320, height: 240), durationSeconds: 1.0)
+    try makeToneAudioFile(url: micURL, seconds: 1.0, amplitude: 0.5, frequency: 440)
+    try makeToneAudioFile(url: systemURL, seconds: 1.0, amplitude: 0.5, frequency: 1000)
+
+    let screenAsset = AVAsset(url: screenURL)
+    let micAsset = AVAsset(url: micURL)
+    let systemAsset = AVAsset(url: systemURL)
+    let result = try XCTUnwrap(
+      InlinePreviewView.makeSeparatedPreviewComposition(
+        screenAsset: screenAsset, micAssetsByVariant: [.base: micAsset], systemAsset: systemAsset, ranges: []))
+
+    XCTAssertEqual(result.composition.tracks(withMediaType: .video).count, 1)
+    XCTAssertEqual(result.composition.tracks(withMediaType: .audio).count, 2)
+    XCTAssertNotNil(result.micTrackIDs[.base])
+    XCTAssertNotNil(result.systemTrackID)
+    XCTAssertNotEqual(result.micTrackIDs[.base], result.systemTrackID)
+    // Mic is inserted FIRST so it is the deterministic gain target — its id must
+    // be the first audio track (matches the export's mic-then-system order).
+    XCTAssertEqual(
+      result.composition.tracks(withMediaType: .audio).first?.trackID, result.micTrackIDs[.base])
+    // preferredTransform is copied so buildPreview's transform math is unchanged.
+    let srcTransform = try XCTUnwrap(
+      screenAsset.tracks(withMediaType: .video).first).preferredTransform
+    XCTAssertEqual(
+      result.composition.tracks(withMediaType: .video).first?.preferredTransform, srcTransform)
+  }
+
+  /// With cleanup precomputed, every mic variant becomes its own audio track so
+  /// a mode switch is a live audio-mix reselect, not a player-item swap.
+  func testSeparatedPreviewCompositionInsertsATrackPerMicVariant() throws {
+    let tempDir = makeTemporaryDirectory()
+    defer { try? FileManager.default.removeItem(at: tempDir) }
+    let screenURL = tempDir.appendingPathComponent("screen.mov")
+    let baseURL = tempDir.appendingPathComponent("base.m4a")
+    let lightURL = tempDir.appendingPathComponent("light.m4a")
+    let balancedURL = tempDir.appendingPathComponent("balanced.m4a")
+    let systemURL = tempDir.appendingPathComponent("system.m4a")
+    try makeColorPatchVideo(
+      url: screenURL, size: CGSize(width: 320, height: 240), durationSeconds: 1.0)
+    for url in [baseURL, lightURL, balancedURL, systemURL] {
+      try makeToneAudioFile(url: url, seconds: 1.0, amplitude: 0.5, frequency: 440)
+    }
+    let result = try XCTUnwrap(
+      InlinePreviewView.makeSeparatedPreviewComposition(
+        screenAsset: AVAsset(url: screenURL),
+        micAssetsByVariant: [
+          .base: AVAsset(url: baseURL),
+          .cleaned(.light): AVAsset(url: lightURL),
+          .cleaned(.balanced): AVAsset(url: balancedURL),
+        ],
+        systemAsset: AVAsset(url: systemURL), ranges: []))
+    // 3 mic tracks + 1 system.
+    XCTAssertEqual(result.composition.tracks(withMediaType: .audio).count, 4)
+    XCTAssertEqual(result.micTrackIDs.count, 3)
+    let ids = Set(result.micTrackIDs.values)
+    XCTAssertEqual(ids.count, 3, "each variant gets a distinct track id")
+    XCTAssertFalse(ids.contains(result.systemTrackID!), "system is not a mic variant")
+    // Base is inserted first (the deterministic gain fallback).
+    XCTAssertEqual(
+      result.composition.tracks(withMediaType: .audio).first?.trackID, result.micTrackIDs[.base])
+  }
+
+  func testSeparatedPreviewCompositionMicOnlyOmitsSystemTrack() throws {
+    let tempDir = makeTemporaryDirectory()
+    defer { try? FileManager.default.removeItem(at: tempDir) }
+    let screenURL = tempDir.appendingPathComponent("screen.mov")
+    let micURL = tempDir.appendingPathComponent("mic.m4a")
+    try makeColorPatchVideo(
+      url: screenURL, size: CGSize(width: 320, height: 240), durationSeconds: 1.0)
+    try makeToneAudioFile(url: micURL, seconds: 1.0, amplitude: 0.5, frequency: 440)
+
+    let screenAsset = AVAsset(url: screenURL)
+    let micAsset = AVAsset(url: micURL)
+    let result = try XCTUnwrap(
+      InlinePreviewView.makeSeparatedPreviewComposition(
+        screenAsset: screenAsset, micAssetsByVariant: [.base: micAsset], systemAsset: nil, ranges: []))
+    XCTAssertEqual(result.composition.tracks(withMediaType: .audio).count, 1)
+    XCTAssertNotNil(result.micTrackIDs[.base])
+    XCTAssertNil(result.systemTrackID)
+  }
+
+  func testSeparatedPreviewCompositionReturnsNilWithoutVideoTrack() throws {
+    let tempDir = makeTemporaryDirectory()
+    defer { try? FileManager.default.removeItem(at: tempDir) }
+    // An audio-only "screen" asset has no video track ⇒ nil, and open()/rebuild
+    // fall back to the legacy embedded-audio path.
+    let audioOnlyURL = tempDir.appendingPathComponent("audio_only.m4a")
+    let micURL = tempDir.appendingPathComponent("mic.m4a")
+    try makeToneAudioFile(url: audioOnlyURL, seconds: 1.0, amplitude: 0.5)
+    try makeToneAudioFile(url: micURL, seconds: 1.0, amplitude: 0.5)
+    let screenAsset = AVAsset(url: audioOnlyURL)
+    let micAsset = AVAsset(url: micURL)
+    XCTAssertNil(
+      InlinePreviewView.makeSeparatedPreviewComposition(
+        screenAsset: screenAsset, micAssetsByVariant: [.base: micAsset], systemAsset: nil, ranges: []))
+  }
+
+  func testSeparatedPreviewCompositionClampsAudioToVideoDuration() throws {
+    let tempDir = makeTemporaryDirectory()
+    defer { try? FileManager.default.removeItem(at: tempDir) }
+    let screenURL = tempDir.appendingPathComponent("screen.mov")
+    let micURL = tempDir.appendingPathComponent("mic.m4a")
+    // Video 0.6s, mic 1.2s: the whole-file audio insert is clamped to the video
+    // so the scrubber timeline is the video's — no audio-only tail.
+    try makeColorPatchVideo(
+      url: screenURL, size: CGSize(width: 320, height: 240), durationSeconds: 0.6)
+    try makeToneAudioFile(url: micURL, seconds: 1.2, amplitude: 0.5, frequency: 440)
+    let screenAsset = AVAsset(url: screenURL)
+    let micAsset = AVAsset(url: micURL)
+    let result = try XCTUnwrap(
+      InlinePreviewView.makeSeparatedPreviewComposition(
+        screenAsset: screenAsset, micAssetsByVariant: [.base: micAsset], systemAsset: nil, ranges: []))
+    let videoDuration = try XCTUnwrap(
+      screenAsset.tracks(withMediaType: .video).first).timeRange.duration.seconds
+    XCTAssertEqual(result.composition.duration.seconds, videoDuration, accuracy: 0.12)
+    let audioDuration = try XCTUnwrap(
+      result.composition.tracks(withMediaType: .audio).first).timeRange.duration.seconds
+    XCTAssertLessThanOrEqual(audioDuration, videoDuration + 0.06)
+  }
+
+  func testSeparatedPreviewCompositionTilesAudioAcrossCuts() throws {
+    let tempDir = makeTemporaryDirectory()
+    defer { try? FileManager.default.removeItem(at: tempDir) }
+    let screenURL = tempDir.appendingPathComponent("screen.mov")
+    let micURL = tempDir.appendingPathComponent("mic.m4a")
+    let systemURL = tempDir.appendingPathComponent("system.m4a")
+    try makeColorPatchVideo(
+      url: screenURL, size: CGSize(width: 320, height: 240), durationSeconds: 1.0)
+    try makeToneAudioFile(url: micURL, seconds: 1.0, amplitude: 0.5, frequency: 440)
+    try makeToneAudioFile(url: systemURL, seconds: 1.0, amplitude: 0.5, frequency: 1000)
+    let screenAsset = AVAsset(url: screenURL)
+    let micAsset = AVAsset(url: micURL)
+    let systemAsset = AVAsset(url: systemURL)
+    let ranges = [
+      ClipKeptRange(sourceInMs: 0, sourceOutMs: 400),
+      ClipKeptRange(sourceInMs: 700, sourceOutMs: 900),
+    ]
+    let result = try XCTUnwrap(
+      InlinePreviewView.makeSeparatedPreviewComposition(
+        screenAsset: screenAsset, micAssetsByVariant: [.base: micAsset], systemAsset: systemAsset, ranges: ranges))
+    // Kept ranges total 600ms; video + both audio tracks compact to the edited
+    // timeline exactly like the export's cut composition.
+    let expected = Double(ClipPlaybackPlanner.editedDurationMs(ranges: ranges)) / 1000.0
+    XCTAssertEqual(result.composition.duration.seconds, expected, accuracy: 0.12)
+    XCTAssertEqual(result.composition.tracks(withMediaType: .video).count, 1)
+    XCTAssertEqual(result.composition.tracks(withMediaType: .audio).count, 2)
+  }
+
+  func testMakeSeparatedAudioMixRoutesGainToMicAndVolumeToBoth() throws {
+    let tempDir = makeTemporaryDirectory()
+    defer { try? FileManager.default.removeItem(at: tempDir) }
+    let micURL = tempDir.appendingPathComponent("mic.m4a")
+    let systemURL = tempDir.appendingPathComponent("system.m4a")
+    try makeToneAudioFile(url: micURL, seconds: 0.5, amplitude: 0.5, frequency: 440)
+    try makeToneAudioFile(url: systemURL, seconds: 0.5, amplitude: 0.5, frequency: 1000)
+    let comp = try XCTUnwrap(
+      LetterboxExporter.makeSeparatedAudioComposition(
+        micAsset: AVAsset(url: micURL), systemAsset: AVAsset(url: systemURL), ranges: []))
+
+    // master 50%, mic component 0.8, mic gain +6dB (tap on mic only).
+    let mix = try XCTUnwrap(
+      AudioMixEngine.makeSeparatedAudioMix(
+        audioTracks: comp.audioTracks,
+        gainTargetTrackID: comp.micTrackID,
+        masterVolumePercent: 50,
+        gainTargetVolumeComponent: 0.8,
+        gainTargetGainDb: 6))
+
+    func volume(forTrackID id: CMPersistentTrackID?) throws -> Float {
+      let params = try XCTUnwrap(mix.inputParameters.first { $0.trackID == id })
+      var start: Float = -1
+      XCTAssertTrue(params.getVolumeRamp(for: .zero, startVolume: &start, endVolume: nil, timeRange: nil))
+      return start
+    }
+    func hasTap(forTrackID id: CMPersistentTrackID?) throws -> Bool {
+      let params = try XCTUnwrap(mix.inputParameters.first { $0.trackID == id })
+      return params.audioTapProcessor != nil
+    }
+
+    // Mic volume = master · micComponent = 0.5 · 0.8 = 0.4; system = master = 0.5.
+    XCTAssertEqual(try volume(forTrackID: comp.micTrackID), 0.4, accuracy: 0.0001)
+    XCTAssertEqual(try volume(forTrackID: comp.systemTrackID), 0.5, accuracy: 0.0001)
+    // Gain tap on the mic ONLY.
+    XCTAssertTrue(try hasTap(forTrackID: comp.micTrackID))
+    XCTAssertFalse(try hasTap(forTrackID: comp.systemTrackID))
+
+    // Zero mic gain ⇒ no tap on any track.
+    let noGain = try XCTUnwrap(
+      AudioMixEngine.makeSeparatedAudioMix(
+        audioTracks: comp.audioTracks, gainTargetTrackID: comp.micTrackID,
+        masterVolumePercent: 100, gainTargetVolumeComponent: 1.0, gainTargetGainDb: 0))
+    XCTAssertTrue(noGain.inputParameters.allSatisfy { $0.audioTapProcessor == nil })
+  }
+
+  /// The multi-variant preview mix: the selected mic plays, the other mic
+  /// variants are muted to volume 0, and — critically for a glitch-free switch
+  /// — the gain tap sits on EVERY mic variant so switching selection never
+  /// finalizes/prepares a tap. System is neither muted nor tapped.
+  func testSeparatedAudioMixMutesOtherVariantsAndTapsEveryMicVariant() throws {
+    let tempDir = makeTemporaryDirectory()
+    defer { try? FileManager.default.removeItem(at: tempDir) }
+    // Build a composition with 3 mic variant tracks + 1 system track.
+    let screenURL = tempDir.appendingPathComponent("screen.mov")
+    try makeColorPatchVideo(
+      url: screenURL, size: CGSize(width: 160, height: 120), durationSeconds: 0.5)
+    var micAssets: [PreviewMicVariant: AVAsset] = [:]
+    for (variant, name) in [
+      (PreviewMicVariant.base, "base"), (.cleaned(.light), "light"),
+      (.cleaned(.balanced), "balanced"),
+    ] {
+      let url = tempDir.appendingPathComponent("\(name).m4a")
+      try makeToneAudioFile(url: url, seconds: 0.5, amplitude: 0.5, frequency: 440)
+      micAssets[variant] = AVAsset(url: url)
+    }
+    let systemURL = tempDir.appendingPathComponent("system.m4a")
+    try makeToneAudioFile(url: systemURL, seconds: 0.5, amplitude: 0.5, frequency: 1000)
+    let comp = try XCTUnwrap(
+      InlinePreviewView.makeSeparatedPreviewComposition(
+        screenAsset: AVAsset(url: screenURL), micAssetsByVariant: micAssets,
+        systemAsset: AVAsset(url: systemURL), ranges: []))
+
+    let selected = try XCTUnwrap(comp.micTrackIDs[.cleaned(.balanced)])
+    let mutedSet = Set(comp.micTrackIDs.values).subtracting([selected])
+    XCTAssertEqual(mutedSet.count, 2)
+
+    let mix = try XCTUnwrap(
+      AudioMixEngine.makeSeparatedAudioMix(
+        audioTracks: comp.composition.tracks(withMediaType: .audio),
+        gainTargetTrackID: selected,
+        masterVolumePercent: 100, gainTargetVolumeComponent: 1.0, gainTargetGainDb: 6,
+        mutedTrackIDs: mutedSet))
+
+    func params(_ id: CMPersistentTrackID?) throws -> AVAudioMixInputParameters {
+      try XCTUnwrap(mix.inputParameters.first { $0.trackID == id })
+    }
+    func startVolume(_ id: CMPersistentTrackID?) throws -> Float {
+      var v: Float = -1
+      XCTAssertTrue(try params(id).getVolumeRamp(for: .zero, startVolume: &v, endVolume: nil, timeRange: nil))
+      return v
+    }
+    // Selected audible; the other mic variants muted to 0.
+    XCTAssertEqual(try startVolume(selected), 1.0, accuracy: 0.0001)
+    for muted in mutedSet { XCTAssertEqual(try startVolume(muted), 0, accuracy: 0.0001) }
+    XCTAssertEqual(try startVolume(comp.systemTrackID), 1.0, accuracy: 0.0001)
+    // Gain tap on ALL THREE mic variants (so a switch never moves it), NOT on
+    // the system track.
+    for micID in comp.micTrackIDs.values {
+      XCTAssertNotNil(try params(micID).audioTapProcessor, "every mic variant is tapped")
+    }
+    XCTAssertNil(try params(comp.systemTrackID).audioTapProcessor)
+  }
+
+  func testSeparatedExportMasterVolumeAttenuatesTheMix() throws {
+    let tempDir = makeTemporaryDirectory()
+    defer { try? FileManager.default.removeItem(at: tempDir) }
+    let projectRoot = try makeRecordingProjectRoot(at: tempDir, includeCamera: false)
+    let project = try RecordingProjectRef.open(projectRoot: projectRoot)
+    try makeColorPatchVideo(
+      url: RecordingProjectPaths.screenVideoURL(for: projectRoot),
+      size: CGSize(width: 320, height: 180), durationSeconds: 1.0)
+    try makeToneAudioFile(
+      url: RecordingProjectPaths.micAudioURL(for: projectRoot),
+      seconds: 1.0, amplitude: 0.4, frequency: 440)
+    try makeToneAudioFile(
+      url: RecordingProjectPaths.systemAudioURL(for: projectRoot),
+      seconds: 1.0, amplitude: 0.4, frequency: 1000)
+
+    // Master volume as a fader: 25% must drop the mixed peak well below the
+    // full-volume ~0.8 (both tracks scaled, not just one).
+    let quietURL = try runSeparatedAudioExport(
+      project: project, in: tempDir, clips: [], audioVolumePercent: 25)
+    let quietPeak = try decodedAudioPeak(url: quietURL)
+    XCTAssertGreaterThan(quietPeak, 0.1)
+    XCTAssertLessThan(quietPeak, 0.35)
+  }
+
+  func testSeparatedExportMicGainStaysBelowFullScale() throws {
+    let tempDir = makeTemporaryDirectory()
+    defer { try? FileManager.default.removeItem(at: tempDir) }
+    let projectRoot = try makeRecordingProjectRoot(at: tempDir, includeCamera: false)
+    let project = try RecordingProjectRef.open(projectRoot: projectRoot)
+    try makeColorPatchVideo(
+      url: RecordingProjectPaths.screenVideoURL(for: projectRoot),
+      size: CGSize(width: 320, height: 180), durationSeconds: 1.0)
+    // Loud mic + max user gain would overshoot 1.0 without the float clamp on
+    // the mic tap; system present so the summed mix is also exercised.
+    try makeToneAudioFile(
+      url: RecordingProjectPaths.micAudioURL(for: projectRoot),
+      seconds: 1.0, amplitude: 0.9, frequency: 440)
+    try makeToneAudioFile(
+      url: RecordingProjectPaths.systemAudioURL(for: projectRoot),
+      seconds: 1.0, amplitude: 0.2, frequency: 1000)
+
+    let boostedURL = try runSeparatedAudioExport(
+      project: project, in: tempDir, clips: [], audioGainDb: 24.0)
+    let peak = try decodedAudioPeak(url: boostedURL)
+    // +24dB on a 0.9 mic is ~14x linear. The float clamp caps the mic at 1.0
+    // before the mix and the int16 reader stage saturates the sum, so the
+    // signal reaches full scale instead of running away to 14x. The decoded
+    // AAC peak sits just above 1.0 (~1.05-1.1) purely from lossy-codec
+    // reconstruction of a hard-clipped waveform — not an unbounded overshoot.
+    XCTAssertGreaterThan(peak, 0.95)
+    XCTAssertLessThan(peak, 1.15)
+  }
+
+  func testSeparatedSourcesExportMixesToSingleTrackAt48k() throws {
+    let tempDir = makeTemporaryDirectory()
+    defer { try? FileManager.default.removeItem(at: tempDir) }
+
+    let projectRoot = try makeRecordingProjectRoot(at: tempDir, includeCamera: false)
+    let project = try RecordingProjectRef.open(projectRoot: projectRoot)
+    try makeColorPatchVideo(
+      url: RecordingProjectPaths.screenVideoURL(for: projectRoot),
+      size: CGSize(width: 320, height: 180),
+      durationSeconds: 1.0
+    )
+    try makeToneAudioFile(
+      url: RecordingProjectPaths.micAudioURL(for: projectRoot),
+      seconds: 1.0, amplitude: 0.4, frequency: 440)
+    try makeToneAudioFile(
+      url: RecordingProjectPaths.systemAudioURL(for: projectRoot),
+      seconds: 1.0, amplitude: 0.4, frequency: 1000)
+
+    let finalURL = try runSeparatedAudioExport(
+      project: project, in: tempDir, clips: [])
+
+    let audioTracks = AVAsset(url: finalURL).tracks(withMediaType: .audio)
+    XCTAssertEqual(audioTracks.count, 1)
+    let formatDescriptions = audioTracks[0].formatDescriptions as! [CMFormatDescription]
+    let asbd = CMAudioFormatDescriptionGetStreamBasicDescription(formatDescriptions[0])?.pointee
+    XCTAssertEqual(asbd?.mSampleRate, 48_000)
+    // Both 0.4 tones summed peak ~0.8; a single dropped track would cap ~0.41.
+    // The tight lower bound pins that the SYSTEM track actually reached the
+    // mixdown, and the upper bound co-pins the no-overs contract.
+    let mixedPeak = try decodedAudioPeak(url: finalURL)
+    XCTAssertGreaterThan(mixedPeak, 0.6)
+    XCTAssertLessThanOrEqual(mixedPeak, 1.0)
+  }
+
+  func testSeparatedSourcesExportWithCutsKeepsEditedDuration() throws {
+    let tempDir = makeTemporaryDirectory()
+    defer { try? FileManager.default.removeItem(at: tempDir) }
+
+    let projectRoot = try makeRecordingProjectRoot(at: tempDir, includeCamera: false)
+    let project = try RecordingProjectRef.open(projectRoot: projectRoot)
+    try makeColorPatchVideo(
+      url: RecordingProjectPaths.screenVideoURL(for: projectRoot),
+      size: CGSize(width: 320, height: 180),
+      durationSeconds: 1.0
+    )
+    try makeToneAudioFile(
+      url: RecordingProjectPaths.micAudioURL(for: projectRoot),
+      seconds: 1.0, amplitude: 0.4, frequency: 440)
+
+    let finalURL = try runSeparatedAudioExport(
+      project: project, in: tempDir,
+      clips: [ClipKeptRange(sourceInMs: 0, sourceOutMs: 500)])
+
+    let asset = AVAsset(url: finalURL)
+    XCTAssertEqual(asset.duration.seconds, 0.5, accuracy: 0.15)
+    let audioTracks = asset.tracks(withMediaType: .audio)
+    XCTAssertEqual(audioTracks.count, 1)
+    XCTAssertLessThanOrEqual(audioTracks[0].timeRange.duration.seconds, 0.65)
+  }
+
+  func testCorruptSeparatedAudioFallsBackToEmbeddedPath() throws {
+    let tempDir = makeTemporaryDirectory()
+    defer { try? FileManager.default.removeItem(at: tempDir) }
+
+    let projectRoot = try makeRecordingProjectRoot(at: tempDir, includeCamera: false)
+    let project = try RecordingProjectRef.open(projectRoot: projectRoot)
+    try makeColorPatchVideo(
+      url: RecordingProjectPaths.screenVideoURL(for: projectRoot),
+      size: CGSize(width: 320, height: 180),
+      durationSeconds: 1.0
+    )
+    // Present but garbage: must be ignored, not fail the export.
+    try Data("not audio".utf8).write(to: RecordingProjectPaths.micAudioURL(for: projectRoot))
+
+    let finalURL = try runSeparatedAudioExport(project: project, in: tempDir, clips: [])
+    XCTAssertTrue(FileManager.default.fileExists(atPath: finalURL.path))
+    // The embedded path was taken: the audio-free screen.mov yields an export
+    // with no audio track (proving no accidental silent separated track).
+    XCTAssertTrue(AVAsset(url: finalURL).tracks(withMediaType: .audio).isEmpty)
+  }
+
+  func testUndecodableSidecarFallsBackToEmbeddedWithoutFailing() throws {
+    // A sidecar whose container parses but whose audio does not decode must not
+    // abort the export — it degrades to the embedded track. Simulate with a
+    // truncated copy of a real m4a (valid-ish header, missing sample data).
+    let tempDir = makeTemporaryDirectory()
+    defer { try? FileManager.default.removeItem(at: tempDir) }
+    let projectRoot = try makeRecordingProjectRoot(at: tempDir, includeCamera: false)
+    let project = try RecordingProjectRef.open(projectRoot: projectRoot)
+    try makeColorPatchVideo(
+      url: RecordingProjectPaths.screenVideoURL(for: projectRoot),
+      size: CGSize(width: 320, height: 180), durationSeconds: 1.0)
+
+    let realTone = tempDir.appendingPathComponent("real.m4a")
+    try makeToneAudioFile(url: realTone, seconds: 1.0, amplitude: 0.4)
+    let bytes = try Data(contentsOf: realTone)
+    // Keep the moov/header region, drop the trailing sample payload.
+    let truncated = bytes.prefix(min(bytes.count, 800))
+    try truncated.write(to: RecordingProjectPaths.micAudioURL(for: projectRoot))
+
+    // Must complete (not throw). The undecodable sidecar is ignored; the
+    // audio-free screen.mov means the embedded fallback yields no audio track.
+    let finalURL = try runSeparatedAudioExport(project: project, in: tempDir, clips: [])
+    XCTAssertTrue(FileManager.default.fileExists(atPath: finalURL.path))
+  }
+
+  func testSystemOnlyBundleGainIsInertButVolumeApplies() throws {
+    // D7: mic off (system.m4a only) means gain/normalize do NOTHING (never
+    // boost system/game/music audio), but the master VOLUME fader still works.
+    let tempDir = makeTemporaryDirectory()
+    defer { try? FileManager.default.removeItem(at: tempDir) }
+    let projectRoot = try makeRecordingProjectRoot(at: tempDir, includeCamera: false)
+    let project = try RecordingProjectRef.open(projectRoot: projectRoot)
+    try makeColorPatchVideo(
+      url: RecordingProjectPaths.screenVideoURL(for: projectRoot),
+      size: CGSize(width: 320, height: 180), durationSeconds: 1.0)
+    try makeToneAudioFile(
+      url: RecordingProjectPaths.systemAudioURL(for: projectRoot),
+      seconds: 1.0, amplitude: 0.4, frequency: 1000)
+
+    // Gain +18dB must be inert on a system-only bundle: peak stays ~0.4.
+    let boostedURL = try runSeparatedAudioExport(
+      project: project, in: tempDir, clips: [], audioGainDb: 18.0, outputName: "boost.mp4")
+    XCTAssertEqual(try decodedAudioPeak(url: boostedURL), 0.4, accuracy: 0.08)
+
+    // Master volume still applies: 25% roughly quarters the system peak.
+    let quietURL = try runSeparatedAudioExport(
+      project: project, in: tempDir, clips: [], audioVolumePercent: 25, outputName: "quiet.mp4")
+    let quietPeak = try decodedAudioPeak(url: quietURL)
+    XCTAssertGreaterThan(quietPeak, 0.03)
+    XCTAssertLessThan(quietPeak, 0.2)
+  }
+
+  func testSeparatedExportAutoNormalizeBoostsQuietMic() throws {
+    // End-to-end proof that auto-normalize actually runs on the separated
+    // path: a quiet mic (0.1) normalized toward -6 dBFS must come out much
+    // louder than the un-normalized export. This ALSO guards the estimatePeak
+    // AudioBufferList fix (#211) — with the old nil-peak bug, normalize would
+    // silently skip and the two exports would match.
+    let tempDir = makeTemporaryDirectory()
+    defer { try? FileManager.default.removeItem(at: tempDir) }
+    let projectRoot = try makeRecordingProjectRoot(at: tempDir, includeCamera: false)
+    let project = try RecordingProjectRef.open(projectRoot: projectRoot)
+    try makeColorPatchVideo(
+      url: RecordingProjectPaths.screenVideoURL(for: projectRoot),
+      size: CGSize(width: 320, height: 180), durationSeconds: 1.0)
+    try makeToneAudioFile(
+      url: RecordingProjectPaths.micAudioURL(for: projectRoot),
+      seconds: 1.0, amplitude: 0.1, frequency: 440)
+
+    let flatURL = try runSeparatedAudioExport(
+      project: project, in: tempDir, clips: [], outputName: "flat.mp4")
+    let flatPeak = try decodedAudioPeak(url: flatURL)
+    XCTAssertEqual(flatPeak, 0.1, accuracy: 0.05)
+
+    let normURL = try runSeparatedAudioExport(
+      project: project, in: tempDir, clips: [],
+      autoNormalizeOnExport: true, targetLoudnessDbfs: -6.0, outputName: "norm.mp4")
+    let normPeak = try decodedAudioPeak(url: normURL)
+    // -6 dBFS target ≈ 0.5 linear; normalize must lift the 0.1 mic well above
+    // the flat export (the exact value rides AAC ripple, so assert a band).
+    XCTAssertGreaterThan(normPeak, 0.35)
+    XCTAssertLessThan(normPeak, 0.75)
+  }
+
+  func testSystemOnlyMixAttachesNoGainTapToAnyTrack() throws {
+    // With no mic track the gain target is nil, so even a large gain attaches
+    // no tap to any track (gain/normalize inert); master volume still routes.
+    let tempDir = makeTemporaryDirectory()
+    defer { try? FileManager.default.removeItem(at: tempDir) }
+    let systemURL = tempDir.appendingPathComponent("system.m4a")
+    try makeToneAudioFile(url: systemURL, seconds: 0.5, amplitude: 0.3, frequency: 1000)
+    let comp = try XCTUnwrap(
+      LetterboxExporter.makeSeparatedAudioComposition(
+        micAsset: nil, systemAsset: AVAsset(url: systemURL), ranges: []))
+    XCTAssertNil(comp.micTrackID)
+
+    let mix = try XCTUnwrap(
+      AudioMixEngine.makeSeparatedAudioMix(
+        audioTracks: comp.audioTracks,
+        gainTargetTrackID: comp.micTrackID,  // nil ⇒ no gain target
+        masterVolumePercent: 50,
+        gainTargetVolumeComponent: 1.0,
+        gainTargetGainDb: 12))
+    XCTAssertTrue(mix.inputParameters.allSatisfy { $0.audioTapProcessor == nil })
+    // Master volume still routes to the system track.
+    let params = try XCTUnwrap(mix.inputParameters.first { $0.trackID == comp.systemTrackID })
+    var vol: Float = -1
+    XCTAssertTrue(params.getVolumeRamp(for: .zero, startVolume: &vol, endVolume: nil, timeRange: nil))
+    XCTAssertEqual(vol, 0.5, accuracy: 0.0001)
+  }
+
+  private func runSeparatedAudioExport(
+    project: RecordingProjectRef,
+    in tempDir: URL,
+    clips: [ClipKeptRange],
+    audioGainDb: Double = 0.0,
+    audioVolumePercent: Double = 100.0,
+    autoNormalizeOnExport: Bool = false,
+    targetLoudnessDbfs: Double = -16.0,
+    outputName: String = "final.mp4"
+  ) throws -> URL {
+    let exporter = LetterboxExporter()
+    let exportExpectation = expectation(description: "separated audio export")
+    var exportResult: Result<URL, Error>?
+    exporter.export(
+      project: project,
+      target: CGSize(width: 640, height: 360),
+      showCursor: false,
+      outputURL: tempDir.appendingPathComponent(outputName),
+      format: "mp4",
+      codec: "h264",
+      bitrate: "auto",
+      audioGainDb: audioGainDb,
+      audioVolumePercent: audioVolumePercent,
+      autoNormalizeOnExport: autoNormalizeOnExport,
+      targetLoudnessDbfs: targetLoudnessDbfs,
+      clips: clips
+    ) { result in
+      exportResult = result
+      exportExpectation.fulfill()
+    }
+    wait(for: [exportExpectation], timeout: 30.0)
+    return try XCTUnwrap(try exportResult?.get())
+  }
+
+  /// Writes a sine tone as stereo AAC (.m4a) — the shape the capture tee
+  /// produces — for separated-source fixtures. Defaults to 48kHz.
+  private func makeToneAudioFile(
+    url: URL,
+    seconds: Double,
+    amplitude: Float,
+    frequency: Double = 440,
+    sampleRate: Double = 48_000.0
+  ) throws {
+    try? FileManager.default.removeItem(at: url)
+    let channels = 2
+    let writer = try AVAssetWriter(outputURL: url, fileType: .m4a)
+    let input = AVAssetWriterInput(
+      mediaType: .audio,
+      outputSettings: [
+        AVFormatIDKey: kAudioFormatMPEG4AAC,
+        AVSampleRateKey: sampleRate,
+        AVNumberOfChannelsKey: channels,
+        AVEncoderBitRateKey: 192_000,
+      ])
+    input.expectsMediaDataInRealTime = false
+    writer.add(input)
+    XCTAssertTrue(writer.startWriting())
+    writer.startSession(atSourceTime: .zero)
+
+    var asbd = AudioStreamBasicDescription(
+      mSampleRate: sampleRate,
+      mFormatID: kAudioFormatLinearPCM,
+      mFormatFlags: kAudioFormatFlagIsFloat | kAudioFormatFlagIsPacked,
+      mBytesPerPacket: UInt32(4 * channels),
+      mFramesPerPacket: 1,
+      mBytesPerFrame: UInt32(4 * channels),
+      mChannelsPerFrame: UInt32(channels),
+      mBitsPerChannel: 32,
+      mReserved: 0
+    )
+    var formatDescription: CMAudioFormatDescription?
+    XCTAssertEqual(
+      CMAudioFormatDescriptionCreate(
+        allocator: kCFAllocatorDefault, asbd: &asbd, layoutSize: 0, layout: nil,
+        magicCookieSize: 0, magicCookie: nil, extensions: nil,
+        formatDescriptionOut: &formatDescription),
+      noErr)
+
+    let totalFrames = Int(sampleRate * seconds)
+    let chunkFrames = Int(sampleRate * 0.1)
+    var frameCursor = 0
+    while frameCursor < totalFrames {
+      let frames = min(chunkFrames, totalFrames - frameCursor)
+      var samples = [Float](repeating: 0, count: frames * channels)
+      for frame in 0..<frames {
+        let t = Double(frameCursor + frame) / sampleRate
+        let value = amplitude * Float(sin(2.0 * Double.pi * frequency * t))
+        for channel in 0..<channels {
+          samples[frame * channels + channel] = value
+        }
+      }
+      let byteCount = samples.count * MemoryLayout<Float>.size
+
+      var blockBuffer: CMBlockBuffer?
+      XCTAssertEqual(
+        CMBlockBufferCreateWithMemoryBlock(
+          allocator: kCFAllocatorDefault, memoryBlock: nil, blockLength: byteCount,
+          blockAllocator: kCFAllocatorDefault, customBlockSource: nil, offsetToData: 0,
+          dataLength: byteCount, flags: 0, blockBufferOut: &blockBuffer),
+        kCMBlockBufferNoErr)
+      try samples.withUnsafeBytes { raw in
+        guard
+          CMBlockBufferReplaceDataBytes(
+            with: raw.baseAddress!, blockBuffer: blockBuffer!,
+            offsetIntoDestination: 0, dataLength: byteCount) == kCMBlockBufferNoErr
+        else {
+          throw NSError(domain: "ToneFixture", code: -1)
+        }
+      }
+
+      var sampleBuffer: CMSampleBuffer?
+      XCTAssertEqual(
+        CMAudioSampleBufferCreateReadyWithPacketDescriptions(
+          allocator: kCFAllocatorDefault, dataBuffer: blockBuffer!,
+          formatDescription: formatDescription!, sampleCount: frames,
+          presentationTimeStamp: CMTime(value: CMTimeValue(frameCursor), timescale: CMTimeScale(sampleRate)),
+          packetDescriptions: nil, sampleBufferOut: &sampleBuffer),
+        noErr)
+
+      while !input.isReadyForMoreMediaData {
+        Thread.sleep(forTimeInterval: 0.005)
+      }
+      XCTAssertTrue(input.append(sampleBuffer!))
+      frameCursor += frames
+    }
+
+    input.markAsFinished()
+    let finishExpectation = expectation(description: "tone writer finished")
+    writer.finishWriting { finishExpectation.fulfill() }
+    wait(for: [finishExpectation], timeout: 10.0)
+    XCTAssertEqual(writer.status, .completed)
+  }
+
+  private func decodedAudioPeak(url: URL) throws -> Double {
+    let asset = AVAsset(url: url)
+    guard let track = asset.tracks(withMediaType: .audio).first else { return 0 }
+    let reader = try AVAssetReader(asset: asset)
+    let output = AVAssetReaderTrackOutput(
+      track: track,
+      outputSettings: [
+        AVFormatIDKey: kAudioFormatLinearPCM,
+        AVLinearPCMIsFloatKey: true,
+        AVLinearPCMBitDepthKey: 32,
+        AVLinearPCMIsBigEndianKey: false,
+        AVLinearPCMIsNonInterleaved: false,
+      ])
+    guard reader.canAdd(output) else { return 0 }
+    reader.add(output)
+    guard reader.startReading() else { return 0 }
+    var peak: Float = 0
+    while reader.status == .reading {
+      guard let sample = output.copyNextSampleBuffer(),
+        let dataBuffer = CMSampleBufferGetDataBuffer(sample)
+      else { break }
+      var length = 0
+      var pointer: UnsafeMutablePointer<Int8>?
+      CMBlockBufferGetDataPointer(
+        dataBuffer, atOffset: 0, lengthAtOffsetOut: nil,
+        totalLengthOut: &length, dataPointerOut: &pointer)
+      pointer?.withMemoryRebound(to: Float.self, capacity: length / 4) { samples in
+        for index in 0..<(length / 4) {
+          peak = max(peak, abs(samples[index]))
+        }
+      }
+      CMSampleBufferInvalidate(sample)
+    }
+    return Double(peak)
+  }
+
+  func testExportSurvivesCallerDroppingItsReferenceMidFlight() throws {
+    let tempDir = makeTemporaryDirectory()
+    defer { try? FileManager.default.removeItem(at: tempDir) }
+
+    let projectRoot = try makeRecordingProjectRoot(at: tempDir, includeCamera: false)
+    let project = try RecordingProjectRef.open(projectRoot: projectRoot)
+    let screenURL = RecordingProjectPaths.screenVideoURL(for: projectRoot)
+    try makeColorPatchVideo(
+      url: screenURL,
+      size: CGSize(width: 320, height: 180),
+      durationSeconds: 1.0
+    )
+
+    // Regression (Xcode 26.5 CI): ARC may release a caller's local exporter
+    // as soon as export() returns, and the pipeline captures self weakly —
+    // the in-flight export must keep itself alive. Dropping the only strong
+    // reference immediately makes that deterministic on every toolchain.
+    var exporter: LetterboxExporter? = LetterboxExporter()
+    let exportExpectation = expectation(description: "export survives dropped reference")
+    var exportResult: Result<URL, Error>?
+    exporter?.export(
+      project: project,
+      target: CGSize(width: 640, height: 360),
+      showCursor: false,
+      outputURL: tempDir.appendingPathComponent("final.mp4"),
+      format: "mp4",
+      codec: "h264",
+      bitrate: "auto"
+    ) { result in
+      exportResult = result
+      exportExpectation.fulfill()
+    }
+    exporter = nil
+
+    wait(for: [exportExpectation], timeout: 30.0)
+    let finalURL = try XCTUnwrap(try exportResult?.get())
+    XCTAssertTrue(FileManager.default.fileExists(atPath: finalURL.path))
+  }
+
   private func assertSingleSourceColorParityExport(
     format: String,
     codec: String,
@@ -8012,7 +8859,16 @@ final class NativeLoggerTests: XCTestCase {
     // Restore the build default (DEBUG test build → debug) so the shared
     // static threshold doesn't leak into other test classes.
     NativeLogger.setMinLevel("debug")
+    NativeLogger.resetForTest()
     super.tearDown()
+  }
+
+  /// Pumps the main queue so main-async work queued by NativeLogger.send /
+  /// flushPending executes before assertions.
+  private func drainMainQueue() {
+    let drained = expectation(description: "main queue drained")
+    DispatchQueue.main.async { drained.fulfill() }
+    wait(for: [drained], timeout: 2.0)
   }
 
   func testInfoThresholdGatesDebug() {
@@ -8059,5 +8915,306 @@ final class NativeLoggerTests: XCTestCase {
     XCTAssertFalse(NativeLogger.shouldSend(level: "BOGUS"))
     NativeLogger.setMinLevel("debug")
     XCTAssertTrue(NativeLogger.shouldSend(level: "BOGUS"))
+  }
+
+  // MARK: unified payload contract (keep in sync with Windows
+  // native_log_publisher_test.cpp and Dart logger_format_contract_test.dart)
+
+  func testBuildPayloadMatchesDartParserContract() {
+    let payload = NativeLogger.buildPayload(
+      level: "ERROR", category: "Capture", message: "stream stopped",
+      context: ["code": "SCK_STOPPED"])
+
+    XCTAssertEqual(payload["level"] as? String, "ERROR")
+    XCTAssertEqual(payload["category"] as? String, "Capture")
+    XCTAssertEqual(payload["message"] as? String, "stream stopped")
+    XCTAssertEqual(payload["file"] as? String, "RunnerTests.swift")
+    XCTAssertNotNil(payload["line"] as? Int)
+    XCTAssertEqual((payload["context"] as? [String: Any])?["code"] as? String, "SCK_STOPPED")
+    // Optional keys stay absent when not provided — no null padding in JSONL.
+    XCTAssertNil(payload["error"])
+    XCTAssertNil(payload["stack"])
+
+    // The unified cross-platform ts: UTC ISO8601 with fractional seconds and
+    // a trailing 'Z' (same clock base as Dart Log / Windows publisher).
+    let ts = payload["ts"] as? String ?? ""
+    let pattern = #"^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d+Z$"#
+    XCTAssertNotNil(
+      ts.range(of: pattern, options: .regularExpression),
+      "unexpected ts shape: \(ts)")
+  }
+
+  func testBuildPayloadCarriesErrorAndStack() {
+    let payload = NativeLogger.buildPayload(
+      level: "ERROR", category: "Capture", message: "stream stopped",
+      context: nil, error: "device disconnected", stack: "frame0\nframe1")
+
+    XCTAssertEqual(payload["error"] as? String, "device disconnected")
+    XCTAssertEqual(payload["stack"] as? String, "frame0\nframe1")
+    // Empty strings are treated as absent, matching the Dart parser.
+    let empty = NativeLogger.buildPayload(
+      level: "ERROR", category: "Capture", message: "m",
+      context: nil, error: "", stack: "")
+    XCTAssertNil(empty["error"])
+    XCTAssertNil(empty["stack"])
+  }
+
+  // MARK: pre-channel pending buffer (mirrors Windows NativeLogPublisher)
+
+  func testEmitWithoutChannelBuffersInsteadOfDropping() {
+    NativeLogger.resetForTest()
+    NativeLogger.setMinLevel("debug")
+
+    NativeLogger.d("Test", "no channel attached")
+    NativeLogger.e("Test", "no channel attached")
+    drainMainQueue()
+
+    XCTAssertEqual(NativeLogger.pendingCountForTest, 2)
+
+    // flushPending with no channel keeps the buffer — a later flush after
+    // the channel attaches must still deliver these lines — but it does mark
+    // the Dart handler as ready (the handshake arrived over the channel).
+    XCTAssertFalse(NativeLogger.dartReadyForTest)
+    NativeLogger.flushPending()
+    drainMainQueue()
+    XCTAssertEqual(NativeLogger.pendingCountForTest, 2)
+    XCTAssertTrue(NativeLogger.dartReadyForTest)
+  }
+
+  func testPendingBufferIsBoundedDropOldest() {
+    NativeLogger.resetForTest()
+    NativeLogger.setMinLevel("debug")
+
+    for i in 0..<(NativeLogger.maxPending + 40) {
+      NativeLogger.i("Test", "line \(i)")
+    }
+    drainMainQueue()
+
+    XCTAssertEqual(NativeLogger.pendingCountForTest, NativeLogger.maxPending)
+  }
+
+  func testBelowThresholdEmitsAreNotBuffered() {
+    NativeLogger.resetForTest()
+    NativeLogger.setMinLevel("info")
+
+    NativeLogger.d("Test", "verbose line while threshold is info")
+    drainMainQueue()
+
+    XCTAssertEqual(NativeLogger.pendingCountForTest, 0)
+  }
+}
+
+// MARK: - Color-grade golden fixture dump (editing port, Windows step 2)
+
+/// NOT a behavior test: this renders `ColorGradeRenderer.apply` over a fixed
+/// palette × grade grid and writes the results to
+/// `windows/runner_tests/fixtures/color_grade_golden.json`.
+///
+/// The Windows port reimplements the grade as a linear-space color matrix and
+/// asserts against this fixture (~1e-3 tolerance). Apple does not document the
+/// internals of `CIColorControls` / `CITemperatureAndTint` (contrast pivot,
+/// saturation luma weights, CCT→chromaticity method), so hand-derived
+/// "analytic" vectors would be self-referential — the only honest parity
+/// target is the real renderer's output. See
+/// docs/windows-port-editing-features.md §6 step 2.
+///
+/// Deterministic by construction (fixed palette, fixed grades, sorted JSON
+/// keys, 6-decimal rounding): re-running rewrites byte-identical content, so
+/// it is safe inside full-suite runs. Regenerate whenever ColorGradeRenderer
+/// changes, in the same PR.
+///
+/// Run on the Mac:
+///   cd macos && export APP_ENV=dev
+///   xcodebuild test -workspace Runner.xcworkspace -scheme dev \
+///     -configuration Debug-dev -destination 'platform=macOS' \
+///     -only-testing:RunnerTests/ColorGradeGoldenDumpTests
+/// then commit the regenerated fixture JSON.
+final class ColorGradeGoldenDumpTests: XCTestCase {
+
+  /// sRGB-encoded input palette. 5-step RGB lattice (125) plus a dark ramp —
+  /// the shadows are where linearization/precision bugs (8bpc banding) show
+  /// first, so they get extra samples.
+  private static let palette: [[Double]] = {
+    var colors: [[Double]] = []
+    let steps: [Double] = [0.0, 0.25, 0.5, 0.75, 1.0]
+    for r in steps {
+      for g in steps {
+        for b in steps {
+          colors.append([r, g, b])
+        }
+      }
+    }
+    // Dark grays + dark primaries (banding-sensitive region).
+    for v in [0.01, 0.02, 0.04, 0.08] {
+      colors.append([v, v, v])
+      colors.append([v, 0, 0])
+      colors.append([0, v, 0])
+      colors.append([0, 0, v])
+    }
+    return colors
+  }()
+
+  /// Grade grid: each axis swept alone at ±1 and ±0.5, plus composites that
+  /// exercise filter-chain ordering. Identity is omitted (trivial passthrough
+  /// on both platforms).
+  private static let grades: [[String: Double]] = {
+    var out: [[String: Double]] = []
+    let axes = ["exposure", "contrast", "saturation", "temperature", "tint"]
+    for axis in axes {
+      for value in [-1.0, -0.5, 0.5, 1.0] {
+        out.append([axis: value])
+      }
+    }
+    // Auto-enhance at full intensity (the one-tap path's exact values).
+    out.append(["exposure": 0.04, "contrast": 0.12, "saturation": 0.10])
+    // Mixed composites — chain order matters only when legs combine.
+    out.append([
+      "exposure": 0.5, "contrast": 0.5, "saturation": 0.5,
+      "temperature": 0.5, "tint": 0.5,
+    ])
+    out.append([
+      "exposure": -0.5, "contrast": -0.5, "saturation": -0.5,
+      "temperature": -0.5, "tint": -0.5,
+    ])
+    out.append([
+      "exposure": 0.3, "contrast": -0.2, "saturation": 0.4,
+      "temperature": -0.6, "tint": 0.8,
+    ])
+    out.append([
+      "exposure": 1.0, "contrast": 1.0, "saturation": 1.0,
+      "temperature": 1.0, "tint": 1.0,
+    ])
+    out.append([
+      "exposure": -1.0, "contrast": -1.0, "saturation": -1.0,
+      "temperature": -1.0, "tint": -1.0,
+    ])
+    return out
+  }()
+
+  func testDumpGoldenFixture() throws {
+    let palette = Self.palette
+    let srgb = try XCTUnwrap(CGColorSpace(name: CGColorSpace.sRGB))
+
+    // One Nx1 float strip holding the whole palette: a single render per
+    // grade, and float inputs avoid 8-bit quantization on the way in.
+    var inputPixels = [Float](repeating: 1.0, count: palette.count * 4)
+    for (i, rgb) in palette.enumerated() {
+      inputPixels[i * 4 + 0] = Float(rgb[0])
+      inputPixels[i * 4 + 1] = Float(rgb[1])
+      inputPixels[i * 4 + 2] = Float(rgb[2])
+      inputPixels[i * 4 + 3] = 1.0
+    }
+    let rowBytes = palette.count * 4 * MemoryLayout<Float>.size
+    let inputData = inputPixels.withUnsafeBufferPointer { Data(buffer: $0) }
+    let inputImage = CIImage(
+      bitmapData: inputData,
+      bytesPerRow: rowBytes,
+      size: CGSize(width: palette.count, height: 1),
+      format: .RGBAf,
+      colorSpace: srgb)
+
+    let context = CIContext()
+
+    var cases: [[String: Any]] = []
+    for gradeSpec in Self.grades {
+      let grade = ColorGrade(
+        autoEnabled: false,
+        exposure: gradeSpec["exposure"] ?? 0,
+        contrast: gradeSpec["contrast"] ?? 0,
+        saturation: gradeSpec["saturation"] ?? 0,
+        temperature: gradeSpec["temperature"] ?? 0,
+        tint: gradeSpec["tint"] ?? 0)
+
+      let graded = ColorGradeRenderer.apply(inputImage, grade: grade)
+
+      var outPixels = [Float](repeating: 0, count: palette.count * 4)
+      outPixels.withUnsafeMutableBufferPointer { buffer in
+        context.render(
+          graded,
+          toBitmap: buffer.baseAddress!,
+          rowBytes: rowBytes,
+          bounds: CGRect(x: 0, y: 0, width: palette.count, height: 1),
+          format: .RGBAf,
+          colorSpace: srgb)
+      }
+
+      var outputs: [[Double]] = []
+      for i in 0..<palette.count {
+        outputs.append([
+          Self.round6(Double(outPixels[i * 4 + 0])),
+          Self.round6(Double(outPixels[i * 4 + 1])),
+          Self.round6(Double(outPixels[i * 4 + 2])),
+        ])
+      }
+
+      // Full grade spec (zeros included) so the fixture is self-describing.
+      let gradeJson: [String: Double] = [
+        "exposure": gradeSpec["exposure"] ?? 0,
+        "contrast": gradeSpec["contrast"] ?? 0,
+        "saturation": gradeSpec["saturation"] ?? 0,
+        "temperature": gradeSpec["temperature"] ?? 0,
+        "tint": gradeSpec["tint"] ?? 0,
+      ]
+      cases.append(["grade": gradeJson, "outputs": outputs])
+    }
+
+    let fixture: [String: Any] = [
+      "version": 1,
+      "colorSpace":
+        "sRGB (inputs and outputs sRGB-encoded floats; CI default working space)",
+      "generator": "macos/RunnerTests ColorGradeGoldenDumpTests",
+      "inputs": palette.map {
+        [Self.round6($0[0]), Self.round6($0[1]), Self.round6($0[2])]
+      },
+      "cases": cases,
+    ]
+
+    let json = try JSONSerialization.data(
+      withJSONObject: fixture, options: [.sortedKeys, .prettyPrinted])
+
+    // #filePath = <repo>/macos/RunnerTests/RunnerTests.swift → repo root is
+    // three components up from the file.
+    let repoRoot = URL(fileURLWithPath: #filePath)
+      .deletingLastPathComponent()  // RunnerTests/
+      .deletingLastPathComponent()  // macos/
+      .deletingLastPathComponent()  // repo root
+    let fixtureDir =
+      repoRoot
+      .appendingPathComponent("windows")
+      .appendingPathComponent("runner_tests")
+      .appendingPathComponent("fixtures")
+    try FileManager.default.createDirectory(
+      at: fixtureDir, withIntermediateDirectories: true)
+    let fixtureUrl = fixtureDir.appendingPathComponent("color_grade_golden.json")
+    try json.write(to: fixtureUrl)
+
+    // Sanity: the grade grid must actually change pixels — catches a silently
+    // broken renderer producing an all-passthrough dump.
+    let saturationMinusOne = cases.first { c in
+      (c["grade"] as? [String: Double])?["saturation"] == -1.0
+        && (c["grade"] as? [String: Double])?["exposure"] == 0
+    }
+    let redIndex = palette.firstIndex(of: [1.0, 0.0, 0.0])
+    if let c = saturationMinusOne, let idx = redIndex,
+      let outs = c["outputs"] as? [[Double]]
+    {
+      let out = outs[idx]
+      XCTAssertEqual(
+        out[0], out[1], accuracy: 0.02,
+        "saturation -1 must desaturate pure red toward gray")
+      XCTAssertEqual(
+        out[1], out[2], accuracy: 0.02,
+        "saturation -1 must desaturate pure red toward gray")
+    } else {
+      XCTFail("fixture missing the saturation=-1 case or the red palette entry")
+    }
+
+    print(
+      "ColorGradeGoldenDump: wrote \(cases.count) cases × \(palette.count) colors to \(fixtureUrl.path)"
+    )
+  }
+
+  private static func round6(_ v: Double) -> Double {
+    (v * 1_000_000).rounded() / 1_000_000
   }
 }

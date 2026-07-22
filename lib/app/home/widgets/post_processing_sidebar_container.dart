@@ -6,6 +6,7 @@ import 'package:clingfy/app/home/post_processing/widgets/post_processing_sidebar
 import 'package:clingfy/app/settings/settings_controller.dart';
 import 'package:clingfy/core/models/app_models.dart';
 import 'package:clingfy/core/timeline/model/color_grade.dart';
+import 'package:clingfy/core/timeline/model/edit_track.dart';
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 
@@ -61,10 +62,13 @@ class PostProcessingSidebarContainer extends StatelessWidget {
         bool zoomEffectEnabled,
         double gain,
         double volume,
+        VoiceCleanup voiceCleanup,
         ColorGrade colorGrade,
         bool hasCameraAsset,
         CameraCompositionState? cameraState,
         CameraExportCapabilities cameraExportCapabilities,
+        bool? sceneHasAudio,
+        bool? sceneMicGainApplies,
       })
     >(
       selector: (_, p) => (
@@ -82,6 +86,7 @@ class PostProcessingSidebarContainer extends StatelessWidget {
         zoomEffectEnabled: p.zoomEffectEnabled,
         gain: p.audioGainDb,
         volume: p.audioVolumePercent,
+        voiceCleanup: p.voiceCleanup,
         // Part of the record so the sidebar rebuilds when the grade changes —
         // relies on ColorGrade value equality. Without it the color sliders
         // stayed frozen even though the preview updated.
@@ -89,12 +94,21 @@ class PostProcessingSidebarContainer extends StatelessWidget {
         hasCameraAsset: p.hasCameraAsset,
         cameraState: p.cameraState,
         cameraExportCapabilities: p.cameraExportCapabilities,
+        sceneHasAudio: p.sceneHasAudio,
+        sceneMicGainApplies: p.sceneMicGainApplies,
       ),
       builder: (context, vm, _) {
         final post = context.read<PostProcessingController>();
-        final hasAudio = context.select<DeviceController, bool>(
+        // Audio separation (D10): prefer what the RECORDING actually
+        // contains (the platform's probed scene-info verdict) over the
+        // live device selection — a mic unplugged after recording must not
+        // disable the gain slider, and a mic-less recording must not
+        // enable it. Null = the platform didn't report (macOS today):
+        // keep the legacy device-selection gate.
+        final deviceHasAudio = context.select<DeviceController, bool>(
           (d) => d.selectedAudioSourceId != DeviceController.noAudioId,
         );
+        final hasAudio = vm.sceneHasAudio ?? deviceHasAudio;
 
         return ListenableBuilder(
           listenable: settingsController.post,
@@ -110,6 +124,9 @@ class PostProcessingSidebarContainer extends StatelessWidget {
               isProcessing: vm.isEditingLocked,
               cursorAvailable: vm.cursorAvailable,
               hasAudio: hasAudio,
+              // Gain/normalize availability (mic-dependent on separated
+              // recordings). Null keeps the sections' hasAudio fallback.
+              gainAvailable: vm.sceneMicGainApplies,
               layoutPreset: settingsController.post.layoutPreset,
               resolutionPreset: settingsController.post.resolutionPreset,
               fitMode: settingsController.post.fitMode,
@@ -128,6 +145,7 @@ class PostProcessingSidebarContainer extends StatelessWidget {
               cameraExportCapabilities: vm.cameraExportCapabilities,
               audioGainDb: vm.gain,
               audioVolume: vm.volume,
+              voiceCleanup: vm.voiceCleanup,
               autoNormalizeOnExport:
                   settingsController.post.postAutoNormalizeEnabled,
               autoNormalizeTargetDbfs:
@@ -150,6 +168,7 @@ class PostProcessingSidebarContainer extends StatelessWidget {
               onZoomEffectEnabledChanged: post.setZoomEffectEnabled,
               onAudioGainChanged: post.setAudioGainDb,
               onAudioGainChangeEnd: post.setAudioGainDbEnd,
+              onVoiceCleanupChanged: post.setVoiceCleanup,
               colorGrade: vm.colorGrade,
               onColorAutoEnhanceChanged: post.setColorGradeAutoEnhance,
               onColorExposureChanged: post.setColorGradeExposure,

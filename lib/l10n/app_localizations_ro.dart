@@ -397,9 +397,6 @@ class AppLocalizationsRo extends AppLocalizations {
   String get paywallCardMonthlyTitle => 'Pro Lunar';
 
   @override
-  String get paywallCardMonthlyPrice => '\$9.99';
-
-  @override
   String get paywallCardMonthlyPeriod => '/ lună';
 
   @override
@@ -420,9 +417,6 @@ class AppLocalizationsRo extends AppLocalizations {
 
   @override
   String get paywallCardLifetimeTitle => 'Pro pe Viață';
-
-  @override
-  String get paywallCardLifetimePrice => '\$59.99';
 
   @override
   String get paywallCardLifetimePeriod => 'o singură dată';
@@ -448,9 +442,6 @@ class AppLocalizationsRo extends AppLocalizations {
 
   @override
   String get paywallCardExtensionTitle => 'Extensie Actualizări';
-
-  @override
-  String get paywallCardExtensionPrice => '\$19.99';
 
   @override
   String get paywallCardExtensionPeriod => 'o singură dată';
@@ -1864,6 +1855,14 @@ class AppLocalizationsRo extends AppLocalizations {
       'Înregistrează loguri de depanare detaliate pentru a ajuta la reproducerea unei probleme greu de găsit. Activează-l, reprodu problema, apoi exportă diagnosticarea și trimite fișierele. Lasă-l dezactivat pentru utilizarea zilnică.';
 
   @override
+  String get diagnosticsShareAnalytics =>
+      'Partajează statistici de utilizare anonime';
+
+  @override
+  String get diagnosticsShareAnalyticsHelp =>
+      'Ajută la îmbunătățirea Clingfy partajând date despre utilizarea funcțiilor și fiabilitate. Nu include niciodată înregistrări, nume de fișiere, audio, video sau transcrieri.';
+
+  @override
   String get openLogsFolder => 'Deschide folderul de loguri';
 
   @override
@@ -1915,6 +1914,19 @@ class AppLocalizationsRo extends AppLocalizations {
 
   @override
   String get audioGain => 'Câștig Audio';
+
+  @override
+  String get voiceCleanup => 'Curățare Voce';
+
+  @override
+  String get voiceCleanupHelp =>
+      'Elimină zgomotul de fundal din microfon, precum ventilatoare sau zgomotul camerei.';
+
+  @override
+  String get voiceCleanupLight => 'Ușoară';
+
+  @override
+  String get voiceCleanupBalanced => 'Echilibrată';
 
   @override
   String get volume => 'Volum';
@@ -2038,6 +2050,14 @@ class AppLocalizationsRo extends AppLocalizations {
   @override
   String get recordingExcludeMicFromSystemAudio =>
       'Exclude microfonul meu din audio de sistem';
+
+  @override
+  String get recordingMicEchoCancellation =>
+      'Elimină ecoul difuzoarelor din microfon';
+
+  @override
+  String get recordingMicEchoCancellationHelp =>
+      'Experimental: filtrează sunetul de sistem scurs în microfon în pauzele de vorbire. Poate afecta calitatea vocii în unele înregistrări.';
 
   @override
   String get restartApp => 'Repornește aplicația';
@@ -2548,15 +2568,8 @@ class AppLocalizationsRo extends AppLocalizations {
       'Înregistrarea s-a oprit: ecranul pe care îl înregistrai a fost deconectat. Înregistrarea de până atunci a fost salvată.';
 
   @override
-  String get cameraPreviewUseInApp =>
-      'Nu vezi camera? Folosește previzualizarea din aplicație';
-
-  @override
-  String get cameraPreviewUseFloating => 'Folosește bula plutitoare a camerei';
-
-  @override
   String get appliedOnExportNoticeWindows =>
-      'Se aplică la export — previzualizarea din aplicație nu arată încă acest efect.';
+      'Amplificarea se aude complet în previzualizările editate și la export — o previzualizare netăiată redă doar modificările volumului.';
 
   @override
   String get errBadMode =>

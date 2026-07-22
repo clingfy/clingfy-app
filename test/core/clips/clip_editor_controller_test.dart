@@ -1,6 +1,10 @@
+import 'dart:io';
+
 import 'package:clingfy/core/bridges/native_bridge.dart';
 import 'package:clingfy/core/bridges/native_method_channel.dart';
 import 'package:clingfy/core/clips/clip_editor_controller.dart';
+import 'package:clingfy/core/clips/clip_state_store.dart';
+import 'package:clingfy/core/timeline/model/edit_track.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_test/flutter_test.dart';
 
@@ -231,5 +235,198 @@ void main() {
     c.selectClip('clip_0');
 
     expect(notifications, greaterThanOrEqualTo(2));
+  });
+
+  group('persistence', () {
+    late Directory projectDir;
+
+    setUp(() async {
+      projectDir = await Directory.systemTemp.createTemp('clingfy_clipedit_');
+    });
+
+    tearDown(() async {
+      if (await projectDir.exists()) {
+        await projectDir.delete(recursive: true);
+      }
+    });
+
+    ClipEditorController makeForProject({int durationMs = 10000}) =>
+        ClipEditorController(
+          nativeBridge: NativeBridge.instance,
+          durationMs: durationMs,
+          sessionId: 'sess-1',
+          projectPath: projectDir.path,
+        );
+
+    Future<void> seedPersistedClips(List<Clip> clips) => ClipStateStore.save(
+      projectDir.path,
+      ClipPersistState(recordingDurationMs: 10000, clips: clips),
+    );
+
+    test(
+      'with no persisted file, seeds the whole recording (no push)',
+      () async {
+        final c = makeForProject();
+        addTearDown(c.dispose);
+        await pumpEventQueue();
+
+        expect(c.clips, hasLength(1));
+        expect(c.hasCuts, isFalse);
+        // A trivial (whole-recording) restore is native's starting state, so it
+        // must not push on construction.
+        expect(setClipsCalls, isEmpty);
+      },
+    );
+
+    test('restores persisted cuts and pushes them to native on open', () async {
+      await seedPersistedClips(const [
+        Clip(
+          id: 'clip_0',
+          sourceInMs: 0,
+          sourceOutMs: 4000,
+          timelineStartMs: 0,
+        ),
+        Clip(
+          id: 'clip_1',
+          sourceInMs: 6000,
+          sourceOutMs: 10000,
+          timelineStartMs: 4000,
+        ),
+      ]);
+
+      final c = makeForProject();
+      addTearDown(c.dispose);
+      await pumpEventQueue();
+
+      expect(c.clips, hasLength(2));
+      expect(c.hasCuts, isTrue);
+      expect(c.editedDurationMs, 8000);
+      // Restored edit is pushed so the reopened preview plays its cuts.
+      expect(setClipsCalls, isNotEmpty);
+      expect(lastPushedClips(), hasLength(2));
+      // Restore itself is not an undoable edit.
+      expect(c.canUndo, isFalse);
+    });
+
+    test('advances the id counter past restored ids (no collision)', () async {
+      await seedPersistedClips(const [
+        Clip(
+          id: 'clip_0',
+          sourceInMs: 0,
+          sourceOutMs: 4000,
+          timelineStartMs: 0,
+        ),
+        Clip(
+          id: 'clip_1',
+          sourceInMs: 4000,
+          sourceOutMs: 10000,
+          timelineStartMs: 4000,
+        ),
+      ]);
+
+      final c = makeForProject();
+      addTearDown(c.dispose);
+
+      // Splitting the first restored clip must mint a fresh id, not reuse
+      // clip_0 / clip_1.
+      c.splitAtPlayhead(2000);
+      final ids = c.clips.map((e) => e.id).toList();
+      expect(ids.toSet(), hasLength(ids.length), reason: 'ids must be unique');
+      expect(ids, contains('clip_2'));
+    });
+
+    test('re-normalizes a stale timelineStartMs layout on restore', () async {
+      // A corrupted/hand-edited file with a non-contiguous timeline: clip_1's
+      // timelineStartMs (9999) does not follow clip_0's duration. Restore must
+      // reflow it to the gap-free layout (4000) while preserving ids/source.
+      await seedPersistedClips(const [
+        Clip(
+          id: 'clip_0',
+          sourceInMs: 0,
+          sourceOutMs: 4000,
+          timelineStartMs: 0,
+        ),
+        Clip(
+          id: 'clip_1',
+          sourceInMs: 6000,
+          sourceOutMs: 10000,
+          timelineStartMs: 9999,
+        ),
+      ]);
+
+      final c = makeForProject();
+      addTearDown(c.dispose);
+
+      expect(c.clips.map((e) => e.id), ['clip_0', 'clip_1']);
+      expect(c.clips[0].timelineStartMs, 0);
+      expect(c.clips[1].timelineStartMs, 4000);
+      expect(c.clips[1].sourceInMs, 6000);
+      expect(c.editedDurationMs, 8000);
+    });
+
+    test(
+      'rejects out-of-range persisted clips and seeds the whole recording',
+      () async {
+        // sourceOutMs well beyond the recording length → not from this recording.
+        await seedPersistedClips(const [
+          Clip(
+            id: 'clip_0',
+            sourceInMs: 0,
+            sourceOutMs: 999999,
+            timelineStartMs: 0,
+          ),
+        ]);
+
+        final c = makeForProject();
+        addTearDown(c.dispose);
+        await pumpEventQueue();
+
+        expect(c.clips, hasLength(1));
+        expect(c.hasCuts, isFalse);
+        expect(c.editedDurationMs, 10000);
+        expect(setClipsCalls, isEmpty);
+      },
+    );
+
+    test('persists the clip list on a committed edit', () async {
+      final c = makeForProject();
+      addTearDown(c.dispose);
+
+      c.splitAtPlayhead(4000);
+      await pumpEventQueue();
+
+      final persisted = ClipStateStore.load(projectDir.path);
+      expect(persisted, isNotNull);
+      expect(persisted!.clips, hasLength(2));
+      expect(persisted.recordingDurationMs, 10000);
+    });
+
+    test('persists undo back to the whole recording', () async {
+      final c = makeForProject();
+      addTearDown(c.dispose);
+
+      c.splitAtPlayhead(4000);
+      await pumpEventQueue();
+      c.undo();
+      await pumpEventQueue();
+
+      final persisted = ClipStateStore.load(projectDir.path);
+      expect(persisted, isNotNull);
+      expect(persisted!.clips, hasLength(1));
+    });
+
+    test('does not persist when no project path is set', () async {
+      // The default `make()` has no project path — editing must not write.
+      final c = make();
+      addTearDown(c.dispose);
+
+      c.splitAtPlayhead(4000);
+      await pumpEventQueue();
+
+      expect(
+        await File('${projectDir.path}/clips_state.json').exists(),
+        isFalse,
+      );
+    });
   });
 }

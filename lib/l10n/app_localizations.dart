@@ -814,12 +814,6 @@ abstract class AppLocalizations {
   /// **'Pro Monthly'**
   String get paywallCardMonthlyTitle;
 
-  /// No description provided for @paywallCardMonthlyPrice.
-  ///
-  /// In en, this message translates to:
-  /// **'\$9.99'**
-  String get paywallCardMonthlyPrice;
-
   /// No description provided for @paywallCardMonthlyPeriod.
   ///
   /// In en, this message translates to:
@@ -861,12 +855,6 @@ abstract class AppLocalizations {
   /// In en, this message translates to:
   /// **'Lifetime Pro'**
   String get paywallCardLifetimeTitle;
-
-  /// No description provided for @paywallCardLifetimePrice.
-  ///
-  /// In en, this message translates to:
-  /// **'\$59.99'**
-  String get paywallCardLifetimePrice;
 
   /// No description provided for @paywallCardLifetimePeriod.
   ///
@@ -915,12 +903,6 @@ abstract class AppLocalizations {
   /// In en, this message translates to:
   /// **'Updates Extension'**
   String get paywallCardExtensionTitle;
-
-  /// No description provided for @paywallCardExtensionPrice.
-  ///
-  /// In en, this message translates to:
-  /// **'\$19.99'**
-  String get paywallCardExtensionPrice;
 
   /// No description provided for @paywallCardExtensionPeriod.
   ///
@@ -3478,6 +3460,18 @@ abstract class AppLocalizations {
   /// **'Record detailed debug logs to help reproduce a hard-to-find issue. Turn it on, reproduce the problem, then export diagnostics and send the files. Leave it off for everyday use.'**
   String get diagnosticsVerboseLoggingHelp;
 
+  /// No description provided for @diagnosticsShareAnalytics.
+  ///
+  /// In en, this message translates to:
+  /// **'Share anonymous usage analytics'**
+  String get diagnosticsShareAnalytics;
+
+  /// No description provided for @diagnosticsShareAnalyticsHelp.
+  ///
+  /// In en, this message translates to:
+  /// **'Help improve Clingfy by sharing feature usage and reliability data. Never includes recordings, filenames, audio, video, or transcripts.'**
+  String get diagnosticsShareAnalyticsHelp;
+
   /// No description provided for @openLogsFolder.
   ///
   /// In en, this message translates to:
@@ -3573,6 +3567,30 @@ abstract class AppLocalizations {
   /// In en, this message translates to:
   /// **'Audio Gain'**
   String get audioGain;
+
+  /// No description provided for @voiceCleanup.
+  ///
+  /// In en, this message translates to:
+  /// **'Voice Cleanup'**
+  String get voiceCleanup;
+
+  /// No description provided for @voiceCleanupHelp.
+  ///
+  /// In en, this message translates to:
+  /// **'Removes background noise from the mic, like fans or room tone.'**
+  String get voiceCleanupHelp;
+
+  /// No description provided for @voiceCleanupLight.
+  ///
+  /// In en, this message translates to:
+  /// **'Light'**
+  String get voiceCleanupLight;
+
+  /// No description provided for @voiceCleanupBalanced.
+  ///
+  /// In en, this message translates to:
+  /// **'Balanced'**
+  String get voiceCleanupBalanced;
 
   /// No description provided for @volume.
   ///
@@ -3789,6 +3807,18 @@ abstract class AppLocalizations {
   /// In en, this message translates to:
   /// **'Exclude my mic from system audio'**
   String get recordingExcludeMicFromSystemAudio;
+
+  /// No description provided for @recordingMicEchoCancellation.
+  ///
+  /// In en, this message translates to:
+  /// **'Remove speaker echo from mic'**
+  String get recordingMicEchoCancellation;
+
+  /// No description provided for @recordingMicEchoCancellationHelp.
+  ///
+  /// In en, this message translates to:
+  /// **'Experimental: filters system-audio bleed out of the mic during pauses in your speech. May affect voice quality on some recordings.'**
+  String get recordingMicEchoCancellationHelp;
 
   /// No description provided for @restartApp.
   ///
@@ -4630,22 +4660,10 @@ abstract class AppLocalizations {
   /// **'Recording stopped: the display you were recording was disconnected. Your recording up to that point has been saved.'**
   String get warnDisplayDisconnectedPartialSaved;
 
-  /// No description provided for @cameraPreviewUseInApp.
-  ///
-  /// In en, this message translates to:
-  /// **'Can\'t see the camera? Use in-app preview'**
-  String get cameraPreviewUseInApp;
-
-  /// No description provided for @cameraPreviewUseFloating.
-  ///
-  /// In en, this message translates to:
-  /// **'Use floating camera bubble'**
-  String get cameraPreviewUseFloating;
-
   /// No description provided for @appliedOnExportNoticeWindows.
   ///
   /// In en, this message translates to:
-  /// **'Applied on export — the inline preview doesn\'t show this effect yet.'**
+  /// **'Gain is fully audible in edited previews and exports — an uncut preview plays volume changes only.'**
   String get appliedOnExportNoticeWindows;
 
   /// No description provided for @errBadMode.

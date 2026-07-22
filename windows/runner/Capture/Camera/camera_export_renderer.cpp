@@ -2,7 +2,9 @@
 
 #include <mfapi.h>
 #include <mferror.h>
+#include <propidl.h>
 
+#include <algorithm>
 #include <utility>
 
 namespace clingfy::capture {
@@ -170,6 +172,29 @@ void CameraExportRenderer::Advance(std::int64_t frame_ms) {
     }
     continue;  // stream tick (gap / format change)
   }
+}
+
+void CameraExportRenderer::SeekTo(std::int64_t frame_ms) {
+  if (!ready_ || reader_ == nullptr) {
+    return;
+  }
+  const std::int64_t camera_ms =
+      CameraTimeMsForFrame(frame_ms, start_offset_ms_);
+  PROPVARIANT pos;
+  PropVariantInit(&pos);
+  pos.vt = VT_I8;
+  // A pre-start target (camera hadn't begun yet) clamps to 0; the next Advance
+  // will no-op until the camera's own timeline is reached, as before.
+  pos.hVal.QuadPart = std::max<std::int64_t>(0, camera_ms) * 10000;
+  if (SUCCEEDED(reader_->SetCurrentPosition(GUID_NULL, pos))) {
+    // Drop the forward-pull state so the next Advance re-reads from the seek
+    // point. The held frame + its bitmap survive as a fallback until Advance
+    // uploads a new one, so a Draw between SeekTo and Advance never blanks.
+    has_pending_ = false;
+    pending_sample_.Reset();
+    eos_ = false;
+  }
+  PropVariantClear(&pos);
 }
 
 void CameraExportRenderer::Draw(ID2D1DeviceContext* ctx,

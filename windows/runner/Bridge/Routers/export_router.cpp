@@ -1,9 +1,11 @@
 #include "Bridge/Routers/export_router.h"
 
+#include <chrono>
 #include <cstdint>
 #include <exception>
 #include <filesystem>
 #include <fstream>
+#include <functional>
 #include <memory>
 #include <optional>
 #include <sstream>
@@ -12,6 +14,8 @@
 #include <thread>
 #include <utility>
 
+#include "Bridge/Routers/clip_args.h"
+#include "Bridge/Routers/color_grade_args.h"
 #include "Bridge/export_progress_publisher.h"
 #include "Bridge/native_error_codes.h"
 #include "Bridge/native_log_publisher.h"
@@ -22,6 +26,7 @@
 #include "Capture/Export/export_session.h"
 #include "Capture/Zoom/zoom_timeline_builder.h"
 #include "Capture/recording_project_reader.h"
+#include "Services/keep_awake.h"
 #include "Services/shell_reveal.h"
 #include "preview/preview_engine.h"
 
@@ -48,6 +53,101 @@ void HandleSaveManualZoomSegments(
   // back gracefully. Manual zoom editing is hidden on Windows (Phase 10.3)
   // until real persistence lands.
   reply::Bool(*result, false);
+}
+
+// True when no partial output remains at `utf8_path` (empty = nothing to
+// clean). Retries the delete briefly — the typical holder is an AV /
+// indexer scan of the just-written file, which releases within tens of ms.
+bool EnsureFailedDestinationRemoved(const std::string& utf8_path) {
+  if (utf8_path.empty()) return true;
+  const std::filesystem::path path = std::filesystem::u8path(utf8_path);
+  for (int attempt = 0; attempt < 3; ++attempt) {
+    std::error_code rm_ec;
+    std::filesystem::remove(path, rm_ec);
+    std::error_code exists_ec;
+    if (!std::filesystem::exists(path, exists_ec)) return true;
+    std::this_thread::sleep_for(std::chrono::milliseconds(50));
+  }
+  std::error_code exists_ec;
+  return !std::filesystem::exists(path, exists_ec);
+}
+
+// Standby-resume recovery: run the export, and when the FIRST attempt died
+// because the D3D device was removed (Modern Standby resume, driver reset,
+// TDR — the 55-minute-recording incident), run it once more. Every
+// ExportPassthroughCopy call builds a fresh D3D device / D2D stack / readers
+// / encoder, so the second attempt IS the pipeline recreation; a failed
+// attempt leaves no file at the destination (Phase 10.4), so re-running is
+// safe. Shared by the synchronous (tests / no dispatcher) and worker-thread
+// branches so both behave identically. Exceptions are mapped to a failed
+// outcome per attempt — the worker thread runs outside the MethodRouter
+// dispatch barrier, where a throw would std::terminate the process — and a
+// thrown attempt never retries (device_removed stays false).
+//
+// The retry runs under the SAME claimed ExportSession: BeginExport is never
+// re-entered (it would be rejected while running, and it clears the cancel
+// flag, which would eat a cancel landing between the attempts). The decision
+// itself is the pure ShouldRetryExportAfterDeviceRemoved, pinned in
+// export_passthrough_test.cpp.
+clingfy::capture::export_::PassthroughResult RunExportWithDeviceLossRetry(
+    const clingfy::capture::export_::PassthroughInput& input,
+    const std::function<void(double)>& on_progress,
+    const std::function<bool()>& is_cancelled) {
+  namespace exp = clingfy::capture::export_;
+  const auto run_once = [&]() {
+    exp::PassthroughResult outcome;
+    try {
+      outcome = exp::ExportPassthroughCopy(input, on_progress, is_cancelled);
+    } catch (const std::exception& e) {
+      outcome.error = exp::PassthroughError::kRenderFailed;
+      outcome.message =
+          std::string("Unhandled exception during export: ") + e.what();
+    } catch (...) {
+      outcome.error = exp::PassthroughError::kRenderFailed;
+      outcome.message =
+          "Unhandled exception during export: unknown exception.";
+    }
+    return outcome;
+  };
+
+  exp::PassthroughResult outcome = run_once();
+  if (exp::ShouldRetryExportAfterDeviceRemoved(outcome, /*attempts_so_far=*/1,
+                                               is_cancelled())) {
+    // Destination-stable retry: the failed attempt's partial output is
+    // normally removed twice already (in the pipeline and again in the
+    // passthrough), but a transient external lock (AV / indexer scanning
+    // the just-written file) can survive both. Verify it is actually gone
+    // before re-resolving the destination — a blind retry would
+    // collision-avoid to "name (1).ext" and report SUCCESS while a corrupt
+    // partial keeps the exact name the user chose.
+    if (!EnsureFailedDestinationRemoved(outcome.resolved_destination_path)) {
+      NativeLogPublisher::Instance().Warn(
+          "Export",
+          "skipping the device-removed retry — the failed attempt's partial "
+          "output at " +
+              outcome.resolved_destination_path +
+              " is still locked and could not be removed");
+      return outcome;
+    }
+    NativeLogPublisher::Instance().Warn(
+        "Export", "export attempt failed with the D3D device removed (" +
+                      outcome.message +
+                      ") — recreating the pipeline and retrying once");
+    // Make the restart legible: snap the progress UI back to 0 instead of
+    // leaving it frozen at the failure point while attempt 2 warms up.
+    on_progress(0.0);
+    outcome = run_once();
+    if (outcome.error != exp::PassthroughError::kNone) {
+      NativeLogPublisher::Instance().Error(
+          "Export",
+          "device-removed retry failed too: " + outcome.message);
+    } else {
+      NativeLogPublisher::Instance().Info(
+          "Export", "device-removed retry succeeded — export completed on "
+                    "the recreated pipeline");
+    }
+  }
+  return outcome;
 }
 
 // ---- Phase 6 / Slice 1-5A ---------------------------------------------------
@@ -261,6 +361,17 @@ void HandleExportVideo(
     input.audio_volume_percent = ReadDouble(*args, "audioVolumePercent", 100.0);
     input.auto_normalize = ReadBool(*args, "autoNormalizeOnExport", false);
     input.target_loudness_dbfs = ReadDouble(*args, "targetLoudnessDbfs", -16.0);
+    // Phase 4 voice cleanup. `voiceCleanup` is a nested {enabled, mode} map
+    // (Dart VoiceCleanup.toMap()); only `enabled` gates the export mic pass
+    // today. Absent map / absent key => off (byte-copy fast-path preserved).
+    if (const auto it = args->find(flutter::EncodableValue("voiceCleanup"));
+        it != args->end()) {
+      if (const auto* vc =
+              std::get_if<flutter::EncodableMap>(&it->second)) {
+        input.voice_cleanup_enabled = ReadBool(*vc, "enabled", false);
+        input.voice_cleanup_mode = ReadString(*vc, "mode");
+      }
+    }
     // Slice 5A. Bitrate is a preset string resolved against the output size;
     // format selects the container (.mp4 vs .mov).
     input.bitrate = ReadString(*args, "bitrate");
@@ -322,6 +433,14 @@ void HandleExportVideo(
         input.camera_center_y = ReadDouble(*center, "y", 0.0);
       }
     }
+    // Editing port: the nested `colorGrade` map and the `clips` list, each
+    // parsed by the shared helper both routers use (one wire shape, one
+    // parser — the camera-parsing duplication hid a bug once). Absent /
+    // malformed → identity / empty, which keeps the byte-copy fast-path
+    // alive; the passthrough layer bakes clip ranges that carry real edits
+    // (cut / trim / reorder / overlap) through the composition path.
+    input.color_grade = clingfy::bridge::ReadColorGradeArg(*args);
+    input.clip_ranges = clingfy::bridge::ReadClipRangesArg(*args);
   }
 
   // Defensive: refuse a second concurrent export (Dart's _isExporting guards
@@ -348,24 +467,12 @@ void HandleExportVideo(
   // worker thread — otherwise the blocked platform thread could never receive
   // cancelExport — and marshal the reply back via the dispatcher.
   if (!PlatformThreadDispatcher::Instance().is_initialized()) {
-    // Same exception mapping as the worker path below. The MethodRouter
-    // dispatch barrier would catch a throw here too, but it cannot know to
-    // call EndExport() — without this catch the session would stay
-    // "running" forever and every later export would be rejected.
-    clingfy::capture::export_::PassthroughResult outcome;
-    try {
-      outcome = clingfy::capture::export_::ExportPassthroughCopy(
-          input, on_progress, is_cancelled);
-    } catch (const std::exception& e) {
-      outcome.error =
-          clingfy::capture::export_::PassthroughError::kRenderFailed;
-      outcome.message =
-          std::string("Unhandled exception during export: ") + e.what();
-    } catch (...) {
-      outcome.error =
-          clingfy::capture::export_::PassthroughError::kRenderFailed;
-      outcome.message = "Unhandled exception during export: unknown exception.";
-    }
+    // RunExportWithDeviceLossRetry maps exceptions to a failed outcome. The
+    // MethodRouter dispatch barrier would catch a throw here too, but it
+    // cannot know to call EndExport() — without that mapping the session
+    // would stay "running" forever and every later export would be rejected.
+    const clingfy::capture::export_::PassthroughResult outcome =
+        RunExportWithDeviceLossRetry(input, on_progress, is_cancelled);
     clingfy::capture::export_::ExportSession::Instance().EndExport();
     ReplyForExportOutcome(*result, outcome, input.project_path,
                           input.directory_override);
@@ -375,25 +482,28 @@ void HandleExportVideo(
   std::shared_ptr<flutter::MethodResult<flutter::EncodableValue>> shared_result(
       std::move(result));
   std::thread([input, shared_result, on_progress, is_cancelled]() {
-    // Phase 10.4 worker barrier: an exception escaping a detached thread
+    // A long export must survive the user walking away: Modern Standby
+    // invalidates the GPU/media stack mid-export (device loss →
+    // CreateTexture2D failures). Hold a system-required power request for
+    // the duration; the display may still turn off.
+    clingfy::services::KeepAwake keep_awake(
+        clingfy::services::KeepAwake::Mode::kSystem,
+        L"Clingfy is exporting a recording");
+    if (!keep_awake.active()) {
+      NativeLogPublisher::Instance().Warn(
+          "Export",
+          "keep-awake power request unavailable — the machine may enter "
+          "standby during a long export");
+    }
+    // RunExportWithDeviceLossRetry maps exceptions to a failed outcome
+    // (Phase 10.4 worker barrier): an exception escaping a detached thread
     // calls std::terminate and kills the whole process — and this thread is
     // OUTSIDE the MethodRouter dispatch barrier (which only covers the
-    // synchronous handler call). Convert any throw into a normal failed
-    // outcome so the shared reply path below still resolves the Dart future
-    // exactly once (EXPORT_ERROR via ReplyForExportOutcome, which also emits
-    // the native log line).
-    clingfy::capture::export_::PassthroughResult outcome;
-    try {
-      outcome = clingfy::capture::export_::ExportPassthroughCopy(
-          input, on_progress, is_cancelled);
-    } catch (const std::exception& e) {
-      outcome.error = clingfy::capture::export_::PassthroughError::kRenderFailed;
-      outcome.message =
-          std::string("Unhandled exception during export: ") + e.what();
-    } catch (...) {
-      outcome.error = clingfy::capture::export_::PassthroughError::kRenderFailed;
-      outcome.message = "Unhandled exception during export: unknown exception.";
-    }
+    // synchronous handler call). The shared reply path below then resolves
+    // the Dart future exactly once (EXPORT_ERROR via ReplyForExportOutcome,
+    // which also emits the native log line).
+    const clingfy::capture::export_::PassthroughResult outcome =
+        RunExportWithDeviceLossRetry(input, on_progress, is_cancelled);
     clingfy::capture::export_::ExportSession::Instance().EndExport();
     // Reply on the platform thread. shared_result keeps the MethodResult alive
     // until the reply runs (never dropped -> never a hung Dart future).
@@ -465,6 +575,13 @@ void HandleProcessVideo(
     }
     clingfy::preview::PreviewEngine::Instance()->SetCameraComposition(
         ReadString(*args, "sessionId"), c);
+    // Editing port (audio, step 4-7d): seed the preview audio mix — Dart
+    // sends the persisted gain/volume in every processVideo (editor open and
+    // the standby-resume resync included), so the mix applies without
+    // waiting for a slider touch. Stale sessions drop engine-side.
+    clingfy::preview::PreviewEngine::Instance()->SetAudioMix(
+        ReadString(*args, "sessionId"), ReadDouble(*args, "audioGainDb", 0.0),
+        ReadDouble(*args, "audioVolumePercent", 100.0));
   }
   reply::Null(*result);
 }

@@ -1,10 +1,15 @@
 #include "Capture/Camera/camera_floating_overlay.h"
 
 #include <algorithm>
+#include <cmath>
 #include <cstdio>
 #include <utility>
+#include <vector>
 
 #include "Bridge/Devices/device_probe_log.h"
+#include "Capture/Camera/camera_overlay_drag.h"
+#include "Capture/Camera/camera_overlay_geometry_store.h"
+#include "Capture/Camera/camera_overlay_style_store.h"
 
 namespace clingfy::capture {
 
@@ -15,6 +20,69 @@ constexpr UINT_PTR kPaintTimerId = 1;
 constexpr UINT kPaintIntervalMs = 33;  // ~30 fps repaint.
 constexpr UINT kMsgShow = WM_APP + 1;
 constexpr UINT kMsgHide = WM_APP + 2;
+constexpr double kPi = 3.14159265358979323846;
+
+// A regular polygon (hexagon) / star region inscribed in the shortest window
+// dimension, centered. `sides` vertices for the polygon; the star uses
+// `sides` points (2*sides vertices) alternating outer/inner radius.
+HRGN BuildPolygonRegion(int w, int h, int sides, double rotation,
+                        double inner_ratio, bool star) {
+  const double cx = w / 2.0;
+  const double cy = h / 2.0;
+  const double radius = std::min(w, h) / 2.0;
+  std::vector<POINT> pts;
+  const int vertices = star ? sides * 2 : sides;
+  pts.reserve(vertices);
+  for (int i = 0; i < vertices; ++i) {
+    const double r =
+        star ? ((i % 2 == 0) ? radius : radius * inner_ratio) : radius;
+    const double angle =
+        rotation + (2.0 * kPi * i / vertices) - kPi / 2.0;
+    pts.push_back(POINT{static_cast<LONG>(std::lround(cx + r * std::cos(angle))),
+                        static_cast<LONG>(std::lround(cy + r * std::sin(angle)))});
+  }
+  return ::CreatePolygonRgn(pts.data(), static_cast<int>(pts.size()), WINDING);
+}
+
+// Build the window region for an OverlayShape.wireValue. Mirrors the Dart
+// in-app clipper (camera_overlay_bubble.dart) so the floating bubble and the
+// in-app preview agree on the silhouette. Caller owns the returned HRGN.
+//
+// The compact shapes (circle / square / hexagon / star) are inscribed in a
+// CENTERED SQUARE of the window so a circle reads as a real circle and a square
+// as a real square — not stretched to the window's 16:9 aspect. The window
+// content fills the full frame; the region crops it to the centered shape (the
+// same center-crop the in-app FittedBox cover does). roundedRect / squircle are
+// deliberately full-window "rectangle" silhouettes.
+HRGN BuildShapeRegion(int w, int h, int shape_wire, double roundness) {
+  const int shortest = std::min(w, h);
+  const clingfy::capture::InscribedSquare sq =
+      clingfy::capture::CameraOverlayInscribedSquare(w, h);
+  const int sq_rr =
+      static_cast<int>(std::clamp(roundness, 0.0, 0.4) * sq.side);
+  switch (shape_wire) {
+    case 0:  // circle — true centered circle
+      return ::CreateEllipticRgn(sq.x, sq.y, sq.x + sq.side + 1,
+                                 sq.y + sq.side + 1);
+    case 2:  // square — centered square (rounded corners via roundness)
+      return ::CreateRoundRectRgn(sq.x, sq.y, sq.x + sq.side + 1,
+                                  sq.y + sq.side + 1, 2 * sq_rr, 2 * sq_rr);
+    case 1: {  // roundedRect — full-window rounded rectangle
+      const int rr =
+          static_cast<int>(std::clamp(roundness, 0.0, 0.4) * shortest);
+      return ::CreateRoundRectRgn(0, 0, w + 1, h + 1, 2 * rr, 2 * rr);
+    }
+    case 3:  // hexagon — centered regular polygon
+      return BuildPolygonRegion(w, h, 6, kPi / 6.0, 0.0, /*star=*/false);
+    case 4:  // star — centered
+      return BuildPolygonRegion(w, h, 5, 0.0, 0.5, /*star=*/true);
+    case 5:  // squircle ≈ strongly-rounded full-window rect (painter fallback)
+    default: {
+      const int r = static_cast<int>(0.32 * shortest);
+      return ::CreateRoundRectRgn(0, 0, w + 1, h + 1, 2 * r, 2 * r);
+    }
+  }
+}
 
 void EnsureClassRegistered() {
   static std::once_flag flag;
@@ -54,8 +122,20 @@ LRESULT CALLBACK CameraFloatingOverlay::WndProc(HWND hwnd, UINT msg,
     case kMsgHide:
       ::ShowWindow(hwnd, SW_HIDE);
       return 0;
+    case WM_EXITSIZEMOVE:
+      // End of a user drag (the HTCAPTION modal move loop). Programmatic
+      // SetWindowPos moves do NOT send this, so it can't self-trigger from the
+      // geometry sync.
+      if (self != nullptr) {
+        self->OnDragEnded(hwnd);
+      }
+      return 0;
     case WM_TIMER:
       if (wparam == kPaintTimerId && self != nullptr) {
+        // Pick up live style (shape / mirror / border) and geometry (size /
+        // position) changes each tick.
+        self->SyncGeometryFromStore(hwnd);
+        self->SyncStyleFromStore(hwnd);
         bool dirty = false;
         {
           std::lock_guard<std::mutex> lock(self->frame_mutex_);
@@ -104,6 +184,23 @@ void CameraFloatingOverlay::Paint(HWND hwnd) {
     dirty_ = false;
   }
 
+  // Double buffer: compose camera + border into a memory bitmap and blit it in
+  // ONE op. Painting camera-then-border straight onto the window DC let DWM
+  // compose frames captured BETWEEN the two draws — at streaming cadence the
+  // border ring visibly flickered camera-colored (and the camera area didn't,
+  // camera-over-camera being invisible). Falls back to direct painting only if
+  // the buffer can't be created.
+  HDC mem = ::CreateCompatibleDC(hdc);
+  HBITMAP buffer = (cw > 0 && ch > 0)
+                       ? ::CreateCompatibleBitmap(hdc, cw, ch)
+                       : nullptr;
+  HGDIOBJ old_bmp = nullptr;
+  HDC dc = hdc;
+  if (mem != nullptr && buffer != nullptr) {
+    old_bmp = ::SelectObject(mem, buffer);
+    dc = mem;
+  }
+
   if (fw > 0 && fh > 0 && cw > 0 && ch > 0) {
     BITMAPINFO bmi{};
     bmi.bmiHeader.biSize = sizeof(BITMAPINFOHEADER);
@@ -112,13 +209,55 @@ void CameraFloatingOverlay::Paint(HWND hwnd) {
     bmi.bmiHeader.biPlanes = 1;
     bmi.bmiHeader.biBitCount = 32;
     bmi.bmiHeader.biCompression = BI_RGB;
-    ::SetStretchBltMode(hdc, HALFTONE);
-    ::StretchDIBits(hdc, 0, 0, cw, ch, 0, 0, fw, fh, frame.data(), &bmi,
-                    DIB_RGB_COLORS, SRCCOPY);
-  } else {
+    ::SetStretchBltMode(dc, HALFTONE);
+    // Mirror horizontally by flipping the destination width (selfie view — the
+    // Dart overlay mirror default). The window region clips to the shape.
+    if (style_mirror_) {
+      ::StretchDIBits(dc, cw, 0, -cw, ch, 0, 0, fw, fh, frame.data(), &bmi,
+                      DIB_RGB_COLORS, SRCCOPY);
+    } else {
+      ::StretchDIBits(dc, 0, 0, cw, ch, 0, 0, fw, fh, frame.data(), &bmi,
+                      DIB_RGB_COLORS, SRCCOPY);
+    }
+
+    // Border: stroke the shape outline with the overlay border color. FrameRgn
+    // follows any region shape (circle / rounded / polygon), so it works for
+    // every OverlayShape. Opacity / shadow / chroma are export-only here.
+    if (style_has_border_ && style_border_px_ > 0.0f) {
+      HRGN border_rgn =
+          BuildShapeRegion(cw, ch, style_shape_wire_, style_roundness_);
+      if (border_rgn != nullptr) {
+        const std::uint32_t a = (style_border_argb_ >> 24) & 0xFF;
+        const COLORREF rgb =
+            RGB((style_border_argb_ >> 16) & 0xFF,
+                (style_border_argb_ >> 8) & 0xFF, style_border_argb_ & 0xFF);
+        if (a > 0) {
+          HBRUSH brush = ::CreateSolidBrush(rgb);
+          if (brush != nullptr) {
+            const int bw = std::max(1, static_cast<int>(style_border_px_));
+            ::FrameRgn(dc, border_rgn, brush, bw, bw);
+            ::DeleteObject(brush);
+          }
+        }
+        ::DeleteObject(border_rgn);
+      }
+    }
+  } else if (cw > 0 && ch > 0) {
     HBRUSH black = ::CreateSolidBrush(RGB(0, 0, 0));
-    ::FillRect(hdc, &client, black);
+    RECT full{0, 0, cw, ch};
+    ::FillRect(dc, &full, black);
     ::DeleteObject(black);
+  }
+
+  if (dc == mem) {
+    ::BitBlt(hdc, 0, 0, cw, ch, mem, 0, 0, SRCCOPY);
+    ::SelectObject(mem, old_bmp);
+  }
+  if (buffer != nullptr) {
+    ::DeleteObject(buffer);
+  }
+  if (mem != nullptr) {
+    ::DeleteDC(mem);
   }
   ::EndPaint(hwnd, &ps);
 }
@@ -172,17 +311,13 @@ void CameraFloatingOverlay::ThreadMain(FloatingPlacement placement,
     clingfy::bridge::devices::LogDeviceProbe(b);
   }
 
-  if (placement.rounded) {
-    const int radius =
-        std::max(2, std::min(placement.width, placement.height) / 6);
-    HRGN rgn = ::CreateRoundRectRgn(0, 0, placement.width + 1,
-                                    placement.height + 1, radius, radius);
-    if (rgn != nullptr) {
-      ::SetWindowRgn(hwnd, rgn, TRUE);  // window owns the region.
-    }
-  }
-
   hwnd_.store(hwnd);
+  // Apply the current overlay style (shape region / mirror / border) AND
+  // geometry (size / position) up front, while the window is still hidden, so
+  // the bubble is correctly shaped and placed the instant it is Shown — no
+  // visible snap one tick later.
+  SyncStyleFromStore(hwnd);
+  SyncGeometryFromStore(hwnd);
   ::SetTimer(hwnd, kPaintTimerId, kPaintIntervalMs, nullptr);
   running_.store(true);
   ready->set_value(true);  // created HIDDEN — engine Show()s on demand.
@@ -224,6 +359,87 @@ void CameraFloatingOverlay::PublishBgra(const std::uint8_t* bgra, int width,
   frame_w_ = width;
   frame_h_ = height;
   dirty_ = true;
+}
+
+void CameraFloatingOverlay::SyncStyleFromStore(HWND hwnd) {
+  auto& store = CameraOverlayStyleStore::Instance();
+  const std::uint64_t rev = store.revision();
+  if (rev == last_style_revision_) {
+    return;  // nothing changed since the last tick.
+  }
+  last_style_revision_ = rev;
+
+  const CameraOverlayLiveStyle s = store.Snapshot();
+  const ResolvedBubbleStyle resolved = ResolveOverlayBubbleStyle(s);
+  style_shape_wire_ = s.shape_wire;
+  style_roundness_ = s.roundness;
+  style_mirror_ = s.mirror;
+  style_has_border_ =
+      resolved.style.has_border_color && resolved.style.border_width > 0.0;
+  style_border_argb_ = resolved.style.border_argb;
+  style_border_px_ = static_cast<float>(resolved.style.border_width);
+
+  RebuildRegion(hwnd);
+}
+
+void CameraFloatingOverlay::RebuildRegion(HWND hwnd) {
+  RECT client{};
+  ::GetClientRect(hwnd, &client);
+  const int w = client.right - client.left;
+  const int h = client.bottom - client.top;
+  if (w > 0 && h > 0) {
+    HRGN rgn = BuildShapeRegion(w, h, style_shape_wire_, style_roundness_);
+    // SetWindowRgn takes ownership of rgn; passing TRUE repaints the frame.
+    ::SetWindowRgn(hwnd, rgn, TRUE);
+  }
+  ::InvalidateRect(hwnd, nullptr, FALSE);
+}
+
+void CameraFloatingOverlay::SyncGeometryFromStore(HWND hwnd) {
+  auto& store = CameraOverlayGeometryStore::Instance();
+  const std::uint64_t rev = store.revision();
+  if (rev == last_geometry_revision_) {
+    return;  // nothing changed since the last placement.
+  }
+  last_geometry_revision_ = rev;
+
+  const CameraOverlayGeometry g = store.Snapshot();
+
+  // Place on whatever monitor the window currently sits on (right after Start
+  // that is the captured display; after a drag it follows the bubble).
+  RECT work{0, 0, ::GetSystemMetrics(SM_CXSCREEN),
+            ::GetSystemMetrics(SM_CYSCREEN)};
+  if (HMONITOR mon = ::MonitorFromWindow(hwnd, MONITOR_DEFAULTTONEAREST);
+      mon != nullptr) {
+    MONITORINFO mi{};
+    mi.cbSize = sizeof(mi);
+    if (::GetMonitorInfoW(mon, &mi) != 0) {
+      work = mi.rcWork;
+    }
+  }
+  const UINT dpi = ::GetDpiForWindow(hwnd);
+  const double scale = dpi > 0 ? dpi / 96.0 : 1.0;
+
+  const FloatingRect r = ComputeFloatingRect(work.left, work.top, work.right,
+                                             work.bottom, scale, g);
+  ::SetWindowPos(hwnd, nullptr, r.x, r.y, r.width, r.height,
+                 SWP_NOZORDER | SWP_NOACTIVATE);
+  // The client size just changed — re-clip the shape to the new bounds.
+  RebuildRegion(hwnd);
+}
+
+void CameraFloatingOverlay::OnDragEnded(HWND hwnd) {
+  // Shared write-back (store custom center + notify Dart). Adopt the produced
+  // revision as seen only when it directly follows the last-synced one (see
+  // AdoptDragRevision): unconditional adoption could jump the seen counter
+  // past a platform-thread setter that landed between the last sync tick and
+  // this write-back, silently dropping e.g. a size change. Revision 0 = rect
+  // read failed, nothing written, nothing to suppress.
+  const std::uint64_t revision = WriteBackOverlayDragEnd(hwnd);
+  if (revision != 0) {
+    last_geometry_revision_ =
+        AdoptDragRevision(last_geometry_revision_, revision);
+  }
 }
 
 void CameraFloatingOverlay::Stop() {

@@ -1,6 +1,5 @@
 import 'package:flutter/material.dart';
 import 'package:clingfy/app/home/widgets/grid_painter.dart';
-import 'package:clingfy/app/home/widgets/live_camera_preview.dart';
 import 'package:clingfy/l10n/app_localizations.dart';
 import 'package:clingfy/ui/platform/widgets/responsive_shell_scope.dart';
 import 'package:clingfy/ui/theme/app_theme.dart';
@@ -18,9 +17,6 @@ class HeroPanel extends StatelessWidget {
     required this.onToggle,
     required this.onPause,
     required this.onResume,
-    this.cameraOverlayEnabled = false,
-    this.cameraFloatingPreview = false,
-    this.onToggleCameraPreviewMode,
     this.startRecordingButtonKey,
   });
 
@@ -32,12 +28,6 @@ class HeroPanel extends StatelessWidget {
   final VoidCallback onToggle;
   final VoidCallback onPause;
   final VoidCallback onResume;
-  final bool cameraOverlayEnabled;
-  // Phase 9.3.2/9.3.3: true = floating native bubble (in-app texture hidden);
-  // false = in-app texture preview (the default — floating is opt-in). The
-  // toggle callback flips it (null hides the toggle).
-  final bool cameraFloatingPreview;
-  final VoidCallback? onToggleCameraPreviewMode;
   final Key? startRecordingButtonKey;
 
   @override
@@ -116,39 +106,6 @@ class HeroPanel extends StatelessWidget {
                       ),
                     ),
                     SizedBox(height: xxlGap),
-                    // Phase 9.3.1/9.3.2: in-app camera texture — shown only in
-                    // in-app preview mode (in floating mode the native bubble
-                    // shows it instead).
-                    LiveCameraPreview(
-                      isRecording: isRecording,
-                      cameraEnabled:
-                          cameraOverlayEnabled && !cameraFloatingPreview,
-                    ),
-                    // Phase 9.3.2: 1-click switch between floating + in-app, for
-                    // GPUs where the floating bubble is invisible.
-                    if (isRecording &&
-                        cameraOverlayEnabled &&
-                        onToggleCameraPreviewMode != null) ...[
-                      TextButton.icon(
-                        onPressed: onToggleCameraPreviewMode,
-                        icon: Icon(
-                          cameraFloatingPreview
-                              ? Icons.picture_in_picture_alt
-                              : Icons.open_in_new,
-                          size: 16,
-                        ),
-                        label: Text(
-                          cameraFloatingPreview
-                              ? AppLocalizations.of(
-                                  context,
-                                )!.cameraPreviewUseInApp
-                              : AppLocalizations.of(
-                                  context,
-                                )!.cameraPreviewUseFloating,
-                        ),
-                      ),
-                      SizedBox(height: lgGap),
-                    ],
                     if (!isRecording)
                       FilledButton.icon(
                         key: startRecordingButtonKey,

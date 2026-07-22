@@ -73,11 +73,23 @@ final class LetterboxExporter {
     "screen.screen-prepass.",
     "camera.styled.",
     "raw.styled.",
+    "mic-echo-cancelled-",
+    "mic-enhanced-",
   ]
   private var currentSession: AVAssetExportSession?
   private var progressTimer: Timer?
   private var temporaryArtifacts: [URL] = []
   private var isCancelled = false
+  // In-flight self-retention: the async export pipeline captures `self`
+  // weakly by design, and ARC may release a caller's local exporter as soon
+  // as `export()` returns — locals are not guaranteed to live to the end of
+  // their scope (Xcode 26.5's toolchain started exercising this, killing
+  // exports mid-flight with the -25 "deallocated" error). The exporter holds
+  // itself while an export runs; the wrapped completion releases the hold on
+  // every exit path. Guarded by a lock because completions can fire off-main.
+  private let inFlightRetentionLock = NSLock()
+  private var inFlightSelfRetain: LetterboxExporter?
+  private var inFlightExportGeneration = 0
   private let validationSampleDimension = 64
   private let validationAlphaThreshold: UInt8 = 8
   private let validationNonBlackThreshold: UInt8 = 12
@@ -123,6 +135,131 @@ final class LetterboxExporter {
     temporaryArtifacts.removeAll()
   }
 
+  /// Runs the speaker→mic bleed canceller — through the per-project
+  /// `CleanedMicCache`, so an export after a preview open (or a re-export)
+  /// reuses the cleaned mic instead of recomputing it — and returns the URL of
+  /// the cleaned mic to mix, or the original `micAudioURL` when there is
+  /// nothing to cancel (no system reference, no measurable bleed) or the
+  /// canceller fails. Only a caller-owned temp file (cache unavailable) is
+  /// registered for cleanup: the cache-owned file in the project's `derived/`
+  /// must survive this export for the next preview/export to reuse.
+  private func echoCancelledMicURL(
+    micAudioURL: URL?, systemAudioURL: URL?, projectRoot: URL
+  ) -> URL? {
+    guard let micAudioURL, let systemAudioURL else { return micAudioURL }
+    do {
+      let outcome = try CleanedMicCache.shared.outcome(
+        micURL: micAudioURL, systemURL: systemAudioURL, projectRoot: projectRoot)
+      let result = outcome.result
+      if result.applied {
+        if !outcome.cacheOwned {
+          registerTemporaryArtifact(result.cleanedMicURL)
+        }
+        NativeLogger.i(
+          "Export", "Cancelled speaker→mic bleed from the microphone",
+          context: [
+            "bleedCorrelation": result.bleedCorrelation,
+            "delayMs": result.delayMs,
+            "reductionDb": result.reductionDb,
+            "cleanedMic": result.cleanedMicURL.lastPathComponent,
+            "fromCache": outcome.fromCache,
+          ])
+      } else {
+        NativeLogger.d(
+          "Export", "No microphone bleed detected; using the microphone as recorded",
+          context: [
+            "bleedCorrelation": result.bleedCorrelation,
+            "delayMs": result.delayMs,
+            "fromCache": outcome.fromCache,
+          ])
+      }
+      return result.cleanedMicURL
+    } catch {
+      NativeLogger.w(
+        "Export", "Mic echo cancellation failed; using the microphone as recorded",
+        context: ["error": "\(error)"])
+      return micAudioURL
+    }
+  }
+
+  /// Runs voice cleanup (noise reduction) on the mic, returning the denoised
+  /// mic to mix — or the input unchanged when cleanup is off, there is no mic
+  /// sidecar (legacy pre-separation bundles, where the only audio is the mixed
+  /// screen track and denoising it would wreck the system audio too), or the
+  /// pipeline fails. Only a caller-owned temp file (cache unavailable) is
+  /// registered for cleanup; the cache-owned file in the project's `derived/`
+  /// must survive this export for the next preview/export to reuse.
+  ///
+  /// Cost note: like `echoCancelledMicURL` above this blocks, and `ExportEngine`
+  /// is `@MainActor`, so a cold cache stalls the main thread for a full decode +
+  /// suppression pass — now potentially twice in a row. In practice both stages
+  /// are already warm because the preview computed them while the user was
+  /// editing, and cleanup is opt-in, so the cold path needs an export with
+  /// cleanup enabled and no prior preview. Moving the whole mic preamble off the
+  /// main actor is the real fix and is deliberately out of scope here.
+  private func voiceCleanedMicURL(
+    micAudioURL: URL?, projectRoot: URL, request: VoiceCleanupRequest
+  ) -> URL? {
+    guard request.enabled, let micAudioURL else { return micAudioURL }
+    do {
+      let outcome = try EnhancedMicCache.shared.outcome(
+        inputMicURL: micAudioURL, request: request, projectRoot: projectRoot)
+      let result = outcome.result
+      guard result.applied else { return micAudioURL }
+      if !outcome.cacheOwned {
+        registerTemporaryArtifact(result.enhancedMicURL)
+      }
+      NativeLogger.i(
+        "Export", "Applied voice cleanup to the microphone",
+        context: [
+          "mode": request.mode.rawValue,
+          "noiseReductionDb": result.noiseReductionDb,
+          "enhancedMic": result.enhancedMicURL.lastPathComponent,
+          "fromCache": outcome.fromCache,
+        ])
+      return result.enhancedMicURL
+    } catch {
+      NativeLogger.w(
+        "Export", "Voice cleanup failed; using the microphone as recorded",
+        context: ["error": "\(error)"])
+      return micAudioURL
+    }
+  }
+
+  /// Bakes the resolved mic gain (user gain + normalization boost fold) into the
+  /// mic file so the export NEVER attaches a gain tap. The manual export path
+  /// reads audio through `AVAssetReaderAudioMixOutput`, which applies a
+  /// per-track `audioTapProcessor` to the MIXED stream — a mic gain tap there
+  /// multiplied the system audio too and its ±1.0 clamp squared the whole mix
+  /// off at 0 dBFS (severe distortion whenever mic + system audio + gain > 0).
+  /// Returns the baked file (registered for cleanup), or the input unchanged
+  /// when there is no gain to apply, or on failure (losing the boost is the
+  /// safe degradation — never the distortion).
+  private func gainBakedMicURL(micAudioURL: URL?, gainDb: Double) -> URL? {
+    guard let micAudioURL, gainDb > 0.0001 else { return micAudioURL }
+    let tempRoot = AppPaths.tempRoot()
+    try? FileManager.default.createDirectory(at: tempRoot, withIntermediateDirectories: true)
+    do {
+      let baked = try MicEchoCanceller.bakeGain(
+        micURL: micAudioURL, gainDb: gainDb, outputDirectory: tempRoot)
+      if baked != micAudioURL {
+        registerTemporaryArtifact(baked)
+        NativeLogger.i(
+          "Export", "Baked mic gain into the mic track (no export gain tap)",
+          context: [
+            "gainDb": gainDb,
+            "bakedMic": baked.lastPathComponent,
+          ])
+      }
+      return baked
+    } catch {
+      NativeLogger.w(
+        "Export", "Mic gain bake failed; exporting the mic without the boost",
+        context: ["gainDb": gainDb, "error": "\(error)"])
+      return micAudioURL
+    }
+  }
+
   private func fileSizeBytes(for url: URL, fileManager: FileManager = .default) -> Int64 {
     let rawValue =
       (try? fileManager.attributesOfItem(atPath: url.path)[.size] as? NSNumber)?
@@ -156,7 +293,11 @@ final class LetterboxExporter {
   }
 
   private func shouldSweepStaleTemporaryArtifact(named fileName: String) -> Bool {
-    guard fileName.hasSuffix(".mov") else { return false }
+    // Intermediates are .mov (styled/prepass renders) or .caf (the echo-cancelled
+    // mic). A .mov-only guard silently stranded every mic-echo-cancelled-*.caf,
+    // so the one backstop that could reclaim crash-orphaned canceller files never
+    // matched them.
+    guard fileName.hasSuffix(".mov") || fileName.hasSuffix(".caf") else { return false }
     return staleTemporaryArtifactPrefixes.contains { fileName.hasPrefix($0) }
   }
 
@@ -1304,11 +1445,11 @@ final class LetterboxExporter {
       onProgress?(lower + (Double(export.progress) * span))
     }
 
-    export.exportAsynchronously { [weak self] in
+    export.exportAsynchronously { [self] in
       DispatchQueue.main.async {
-        self?.progressTimer?.invalidate()
-        self?.progressTimer = nil
-        self?.currentSession = nil
+        self.progressTimer?.invalidate()
+        self.progressTimer = nil
+        self.currentSession = nil
 
         switch export.status {
         case .completed:
@@ -1319,7 +1460,7 @@ final class LetterboxExporter {
             renderPath: "asset_export_session"
           )
           if logOutputInfo {
-            self?.logExportedFileInfo(url: outputURL)
+            self.logExportedFileInfo(url: outputURL)
           }
           completion(.success(outputURL))
 
@@ -1376,13 +1517,34 @@ final class LetterboxExporter {
     ]
   }
 
-  private func manualAudioWriterSettings() -> [String: Any] {
+  /// AAC writer settings for the manual path. The sample rate follows the
+  /// SOURCE track instead of the historic 44.1kHz hardcode: capture writes
+  /// 48kHz (typically), Windows exports 48kHz, and the old constant forced a
+  /// pointless 48→44.1 resample into every manual-path export.
+  private func manualAudioWriterSettings(sourceTracks: [AVAssetTrack]) -> [String: Any] {
     [
       AVFormatIDKey: kAudioFormatMPEG4AAC,
       AVNumberOfChannelsKey: 2,
-      AVSampleRateKey: 44_100,
+      AVSampleRateKey: Self.aacWriterSampleRate(for: sourceTracks),
       AVEncoderBitRateKey: 192_000,
     ]
+  }
+
+  /// Source-derived AAC output rate. AAC-LC supports a fixed rate set; a
+  /// source already on a standard rate keeps it, anything else lands on 48k.
+  static func aacWriterSampleRate(for sourceTracks: [AVAssetTrack]) -> Double {
+    let supportedAACRates: Set<Double> = [
+      8_000, 11_025, 12_000, 16_000, 22_050, 24_000, 32_000, 44_100, 48_000,
+    ]
+    guard
+      let formatDescription = sourceTracks.first?.formatDescriptions.first,
+      let asbd = CMAudioFormatDescriptionGetStreamBasicDescription(
+        formatDescription as! CMFormatDescription)?.pointee,
+      supportedAACRates.contains(asbd.mSampleRate)
+    else {
+      return 48_000
+    }
+    return asbd.mSampleRate
   }
 
   /// Builds an audio-only composition holding just the kept clip ranges,
@@ -1407,26 +1569,34 @@ final class LetterboxExporter {
       return nil
     }
 
-    // Truncate to match the integer-millisecond edited timeline the video
-    // re-stamp works in; clamping the copy to this never inserts past the real
-    // audio end (which throws). Audio can run a hair shorter than the video.
+    let insertedAny = Self.fillCompositionTrackWithKeptRanges(
+      audioTrack, from: sourceAudioTrack, ranges: ranges)
+    // No real audio landed anywhere (every range was past the audio end or failed
+    // to copy): return nil so the export simply has no audio track rather than an
+    // all-silent one.
+    return insertedAny ? composition : nil
+  }
+
+  /// Tiles one composition track with the kept clip ranges of one source
+  /// track. Each slot occupies its full edited duration starting at the
+  /// cumulative full duration of the earlier ranges — exactly the video
+  /// re-stamp's `currentEditedBaseMs`. Within a slot, the available source
+  /// audio is copied (truncated to the source track's own integer-ms extent —
+  /// inserting past the real audio end throws) and any shortfall is filled
+  /// with explicit silence, so later ranges stay A/V-aligned even when a
+  /// clamped range sits mid-timeline under reorder. Returns whether any real
+  /// audio was copied.
+  @discardableResult
+  private static func fillCompositionTrackWithKeptRanges(
+    _ audioTrack: AVMutableCompositionTrack,
+    from sourceAudioTrack: AVAssetTrack,
+    ranges: [ClipKeptRange]
+  ) -> Bool {
     let sourceDuration = sourceAudioTrack.timeRange.duration
     let audioDurationMs = Int(sourceDuration.seconds * 1000.0)
     var insertedAny = false
-    // Each slot occupies its full edited duration starting at the cumulative full
-    // duration of the earlier ranges — exactly the video re-stamp's
-    // `currentEditedBaseMs`. Within a slot, the available source audio is copied
-    // and any shortfall (a clamped tail, an absent range, or a failed copy) is
-    // filled with explicit silence, so later ranges stay A/V-aligned even when a
-    // clamped range sits mid-timeline under reorder. Slots tile contiguously, so
-    // every insert targets the current track end (no reliance on inserting past
-    // the track's duration). Integer-ms timescale keeps the boundaries exact.
     for slot in ClipPlaybackPlanner.audioSlots(ranges: ranges, audioDurationMs: audioDurationMs) {
       let editedStart = CMTime(value: CMTimeValue(slot.editedStartMs), timescale: 1000)
-      // The amount of source audio actually copied into this slot — 0 if there
-      // was none available or the copy threw — so the silence below fills exactly
-      // the rest of the slot and the track stays contiguous (each insert targets
-      // the current track end).
       var insertedMs = 0
       if slot.copyDurationMs > 0 {
         let start = CMTime(value: CMTimeValue(slot.sourceInMs), timescale: 1000)
@@ -1457,10 +1627,83 @@ final class LetterboxExporter {
             duration: CMTime(value: CMTimeValue(silenceMs), timescale: 1000)))
       }
     }
-    // No real audio landed anywhere (every range was past the audio end or failed
-    // to copy): return nil so the export simply has no audio track rather than an
-    // all-silent one.
-    return insertedAny ? composition : nil
+    return insertedAny
+  }
+
+  /// The separated-audio composition: one track per present source
+  /// (mic/system), each tiled with its OWN duration — per-track `audioSlots`
+  /// so a shorter source silence-fills without stealing the other's timing.
+  /// With no cuts, each source is inserted whole at zero. The manual path's
+  /// AVAssetReaderAudioMixOutput mixes ALL tracks of this composition into
+  /// one PCM stream ("mix with system" happens there); trackIDs are recorded
+  /// so the mix can target the mic channel. Returns nil when no source
+  /// contributed real audio (the export then falls back to embedded audio).
+  struct SeparatedAudioComposition {
+    let asset: AVAsset
+    let audioTracks: [AVAssetTrack]
+    let micTrackID: CMPersistentTrackID?
+    let systemTrackID: CMPersistentTrackID?
+  }
+
+  static func makeSeparatedAudioComposition(
+    micAsset: AVAsset?,
+    systemAsset: AVAsset?,
+    ranges: [ClipKeptRange]
+  ) -> SeparatedAudioComposition? {
+    let composition = AVMutableComposition()
+    var micTrackID: CMPersistentTrackID?
+    var systemTrackID: CMPersistentTrackID?
+    var insertedAny = false
+
+    func addSource(_ asset: AVAsset?) -> CMPersistentTrackID? {
+      guard let sourceTrack = asset?.tracks(withMediaType: .audio).first else { return nil }
+      guard
+        let compositionTrack = composition.addMutableTrack(
+          withMediaType: .audio,
+          preferredTrackID: kCMPersistentTrackID_Invalid)
+      else { return nil }
+
+      if ranges.isEmpty {
+        do {
+          // Whole source inserted at zero. A source may run a hair longer than
+          // the video (the single-segment rename tail from PR #206); the manual
+          // pump drains video and audio on independent readers, so a slightly
+          // longer audio track only means a short audio-only tail at the very
+          // end — never a hang. That trailing overshoot is bounded and
+          // accepted (consistent with the PR #206 tail tradeoff); the export
+          // stays A/V-aligned everywhere the video has frames.
+          try compositionTrack.insertTimeRange(
+            CMTimeRange(start: sourceTrack.timeRange.start, duration: sourceTrack.timeRange.duration),
+            of: sourceTrack,
+            at: .zero
+          )
+          insertedAny = true
+          return compositionTrack.trackID
+        } catch {
+          NativeLogger.w(
+            "Export", "Separated audio source failed to insert; dropping source",
+            context: ["error": error.localizedDescription])
+          composition.removeTrack(compositionTrack)
+          return nil
+        }
+      }
+
+      if fillCompositionTrackWithKeptRanges(compositionTrack, from: sourceTrack, ranges: ranges) {
+        insertedAny = true
+      }
+      return compositionTrack.trackID
+    }
+
+    micTrackID = addSource(micAsset)
+    systemTrackID = addSource(systemAsset)
+
+    guard insertedAny else { return nil }
+    return SeparatedAudioComposition(
+      asset: composition,
+      audioTracks: composition.tracks(withMediaType: .audio),
+      micTrackID: micTrackID,
+      systemTrackID: systemTrackID
+    )
   }
 
   private func runRenderedExportSession(
@@ -1479,6 +1722,7 @@ final class LetterboxExporter {
     colorGrade: ColorGrade = .identity,
     keptRanges: [ClipKeptRange] = [],
     audioAsset: AVAsset? = nil,
+    useAllAudioSourceTracks: Bool = false,
     editedDurationSeconds: Double? = nil,
     logOutputInfo: Bool = false,
     completion: @escaping (Result<URL, Error>) -> Void
@@ -1735,9 +1979,16 @@ final class LetterboxExporter {
 
     var audioOutput: AVAssetReaderAudioMixOutput?
     var audioInput: AVAssetWriterInput?
-    if let audioTrack = audioSourceAsset.tracks(withMediaType: .audio).first {
+    // Separated-source compositions carry one track per source (mic/system);
+    // the reader renders them into a single mixed PCM stream honoring the
+    // per-track AVAudioMix parameters. Legacy sources stay first-track-only.
+    let audioSourceTracks =
+      useAllAudioSourceTracks
+      ? audioSourceAsset.tracks(withMediaType: .audio)
+      : Array(audioSourceAsset.tracks(withMediaType: .audio).prefix(1))
+    if !audioSourceTracks.isEmpty {
       let candidateOutput = AVAssetReaderAudioMixOutput(
-        audioTracks: [audioTrack],
+        audioTracks: audioSourceTracks,
         audioSettings: manualAudioOutputSettings()
       )
       candidateOutput.audioMix = audioMix
@@ -1745,7 +1996,7 @@ final class LetterboxExporter {
 
       let candidateInput = AVAssetWriterInput(
         mediaType: .audio,
-        outputSettings: manualAudioWriterSettings()
+        outputSettings: manualAudioWriterSettings(sourceTracks: audioSourceTracks)
       )
       candidateInput.expectsMediaDataInRealTime = false
 
@@ -1918,7 +2169,7 @@ final class LetterboxExporter {
     }
 
     func finishIfReady() {
-      stateQueue.async { [weak self] in
+      stateQueue.async { [self] in
         guard videoFinished, audioFinished, !completed else { return }
         completed = true
 
@@ -1936,11 +2187,11 @@ final class LetterboxExporter {
                 renderPath: "manual_reader_writer"
               )
               if logOutputInfo {
-                self?.logExportedFileInfo(url: outputURL)
+                self.logExportedFileInfo(url: outputURL)
               }
               completion(.success(outputURL))
             } else {
-              self?.removeFileIfExists(outputURL)
+              self.removeFileIfExists(outputURL)
               completion(
                 .failure(
                   writer.error
@@ -2339,12 +2590,41 @@ final class LetterboxExporter {
     audioVolumePercent: Double = 100.0,
     autoNormalizeOnExport: Bool = false,
     targetLoudnessDbfs: Double = -16.0,
+    voiceCleanup: VoiceCleanupRequest = .disabled,
     cameraParams: CameraCompositionParams? = nil,
     colorGrade: ColorGrade = .identity,
     clips: [ClipKeptRange] = [],
     onProgress: ((Double) -> Void)? = nil,
     completion: @escaping (Result<URL, Error>) -> Void
   ) {
+    // Keep the exporter alive for the duration of this export (see the
+    // inFlightSelfRetain declaration). The generation guard stops a
+    // re-entrant export() — which cancels the prior one — from clearing the
+    // new export's hold when the old export's completion fires late.
+    inFlightRetentionLock.lock()
+    inFlightExportGeneration += 1
+    let exportGeneration = inFlightExportGeneration
+    inFlightSelfRetain = self
+    inFlightRetentionLock.unlock()
+
+    NativeLogger.d(
+      "Export", "Export lifetime: retention engaged",
+      context: ["generation": exportGeneration])
+
+    let callerCompletion = completion
+    let completion: (Result<URL, Error>) -> Void = { [self] result in
+      inFlightRetentionLock.lock()
+      let matched = inFlightExportGeneration == exportGeneration
+      if matched {
+        inFlightSelfRetain = nil
+      }
+      inFlightRetentionLock.unlock()
+      NativeLogger.d(
+        "Export", "Export lifetime: retention released",
+        context: ["generation": exportGeneration, "matched": matched])
+      callerCompletion(result)
+    }
+
     // Cancel any existing session
     cancel()
     isCancelled = false
@@ -2458,13 +2738,83 @@ final class LetterboxExporter {
     params.backgroundPreset = backgroundPreset
     params.colorGrade = colorGrade.isIdentity ? nil : colorGrade
 
-    let resolvedAudioMix = resolveAudioMixControls(
-      asset: asset,
-      userGainDb: audioGainDb,
-      userVolumePercent: audioVolumePercent,
-      autoNormalizeOnExport: autoNormalizeOnExport,
-      targetLoudnessDbfs: targetLoudnessDbfs
+    // Separated sources (Phase 1.5 bundles): validated once here; every
+    // consumer below falls back to the legacy embedded-audio path when nil.
+    //
+    // Speaker→mic bleed removal: when both a mic and a system sidecar exist, the
+    // mic may carry a delayed copy of the system audio picked up through the
+    // speakers; mixing mic+system would then play the system twice (echo). Cancel
+    // that bleed against the clean system reference first. The helper is a no-op
+    // (returns the original mic) when there's no measurable bleed — headphones,
+    // silent mic, or no system audio — and degrades to the raw mic on any error.
+    let echoCancelledMic = echoCancelledMicURL(
+      micAudioURL: mediaSources.micAudioURL,
+      systemAudioURL: mediaSources.systemAudioURL,
+      projectRoot: project.rootURL
     )
+    // Voice cleanup (background noise reduction) runs on the MIC ONLY, and only
+    // here: after echo cancellation, whose correlation against the system
+    // reference needs the mic's bleed intact, and before the normalize peak scan
+    // and the gain bake below — removing noise lowers the mic's peak, so
+    // normalizing against a pre-cleanup peak would under-boost the voice and
+    // re-amplify whatever noise survived. Legacy bundles with no mic sidecar
+    // skip it by construction (the helper returns its input).
+    let micAudioURLForMix = voiceCleanedMicURL(
+      micAudioURL: echoCancelledMic,
+      projectRoot: project.rootURL,
+      request: voiceCleanup
+    )
+    var separatedMicAsset = Self.readableAudioAsset(url: micAudioURLForMix)
+    let separatedSystemAsset = Self.readableAudioAsset(url: mediaSources.systemAudioURL)
+    let hasSeparatedAudio = separatedMicAsset != nil || separatedSystemAsset != nil
+
+    let resolvedAudioMix: ResolvedAudioMixControls
+    let separatedControls: SeparatedAudioControls?
+    if hasSeparatedAudio {
+      // D7: gain + auto-normalize act on the MIC (voice) only, and are inert
+      // when there is no mic (system-only capture) — the whole point of the
+      // separation is to never boost/normalize system/game/music audio. The
+      // master volume fader below still applies to every track. Normalize
+      // scans the mic file, never the embedded screen.mov track.
+      let micPeakLinear: Double? =
+        (autoNormalizeOnExport && separatedMicAsset != nil)
+        ? separatedMicAsset.flatMap { estimateAudioPeakLinear(asset: $0) }
+        : nil
+      let controls = Self.resolveSeparatedAudioControls(
+        userGainDb: audioGainDb,
+        userVolumePercent: audioVolumePercent,
+        autoNormalizeOnExport: autoNormalizeOnExport,
+        targetLoudnessDbfs: targetLoudnessDbfs,
+        micPeakLinear: micPeakLinear
+      )
+      separatedControls = controls
+      // Keeps the existing log-field contract (resolvedGainDb etc.) intact.
+      resolvedAudioMix = ResolvedAudioMixControls(
+        gainDb: controls.micGainDb,
+        volumePercent: controls.masterVolumePercent,
+        sourcePeakDbfs: controls.sourcePeakDbfs,
+        normalizationGainDb: controls.normalizationGainDb
+      )
+      // Bake the resolved mic gain into the mic file NOW so the export mix
+      // needs no gain tap (see gainBakedMicURL: a reader-side tap hits the
+      // mixed stream and clamps the whole export at 0 dBFS — the "distorted
+      // system audio when the mic is on" bug). The peak estimate above ran on
+      // the PRE-gain mic, which is what the normalization math expects.
+      if controls.micGainDb > 0.0001 {
+        let bakedURL = gainBakedMicURL(
+          micAudioURL: micAudioURLForMix, gainDb: controls.micGainDb)
+        separatedMicAsset = Self.readableAudioAsset(url: bakedURL) ?? separatedMicAsset
+      }
+    } else {
+      separatedControls = nil
+      resolvedAudioMix = resolveAudioMixControls(
+        asset: asset,
+        userGainDb: audioGainDb,
+        userVolumePercent: audioVolumePercent,
+        autoNormalizeOnExport: autoNormalizeOnExport,
+        targetLoudnessDbfs: targetLoudnessDbfs
+      )
+    }
 
     NativeLogger.i(
       "Export", "Export resolved",
@@ -2668,8 +3018,25 @@ final class LetterboxExporter {
       // True when the kept ranges are not in source order — the writer reads them
       // per-window instead of one forward pass. Surfaced for the log only.
       let hasReorder = hasCuts && !ClipPlaybackPlanner.isSourceMonotonic(keptRanges)
-      let audioCutComposition: AVAsset? =
-        hasCuts ? makeKeptRangeAudioComposition(from: comp.asset, ranges: keptRanges) : nil
+      // Separated sources replace the embedded audio entirely: one composition
+      // carrying mic + system tracks (cut-tiled per track when clips exist),
+      // read through the dedicated audio reader and mixed down there. A nil
+      // build (no real audio in any source file) falls back to the legacy
+      // embedded-track handling below.
+      let separatedComposition: SeparatedAudioComposition? =
+        hasSeparatedAudio
+        ? Self.makeSeparatedAudioComposition(
+          micAsset: separatedMicAsset,
+          systemAsset: separatedSystemAsset,
+          ranges: keptRanges)
+        : nil
+      let audioCutComposition: AVAsset?
+      if let separatedComposition {
+        audioCutComposition = separatedComposition.asset
+      } else {
+        audioCutComposition =
+          hasCuts ? makeKeptRangeAudioComposition(from: comp.asset, ranges: keptRanges) : nil
+      }
       let editedDurationSeconds: Double? =
         hasCuts ? Double(ClipPlaybackPlanner.editedDurationMs(ranges: keptRanges)) / 1000.0 : nil
       if hasCuts {
@@ -2684,11 +3051,48 @@ final class LetterboxExporter {
           ])
       }
 
-      let exportAudioMix = AudioMixEngine.makeAudioMix(
-        asset: audioCutComposition ?? comp.asset,
-        volumePercent: resolvedAudioMix.volumePercent,
-        gainDb: resolvedAudioMix.gainDb
-      )
+      let exportAudioMix: AVAudioMix?
+      if let separatedComposition, let separatedControls {
+        // Gain/normalize target the MIC only (D7). With no mic track the gain
+        // target is nil, so no track receives the reduction — every track gets
+        // master volume only (gain/normalize inert for system-only).
+        //
+        // gainTargetGainDb is ALWAYS 0 here: the mic boost was baked into the
+        // mic file above (gainBakedMicURL). A gain tap must never be attached
+        // in this path — AVAssetReaderAudioMixOutput applies it to the MIXED
+        // stream, multiplying the system audio too and clamping the whole
+        // export at 0 dBFS.
+        exportAudioMix = AudioMixEngine.makeSeparatedAudioMix(
+          audioTracks: separatedComposition.audioTracks,
+          gainTargetTrackID: separatedComposition.micTrackID,
+          masterVolumePercent: separatedControls.masterVolumePercent,
+          gainTargetVolumeComponent: separatedControls.micVolumeComponent,
+          gainTargetGainDb: 0
+        )
+      } else {
+        // Corner: sidecar file(s) were readable (so controls were resolved with
+        // mic semantics) but the separated composition produced no insertable
+        // audio (e.g. every kept range fell beyond the source's extent), so we
+        // fell back to the embedded track. Its mix must use LEGACY,
+        // embedded-scanned controls — the mic-derived resolvedAudioMix could
+        // carry a mic-file normalization (or a system-only normalize skip) that
+        // is wrong for the embedded audio. Recompute so the fallback is
+        // behavior-identical to a non-separated project.
+        let embeddedControls =
+          hasSeparatedAudio
+          ? resolveAudioMixControls(
+            asset: audioCutComposition ?? comp.asset,
+            userGainDb: audioGainDb,
+            userVolumePercent: audioVolumePercent,
+            autoNormalizeOnExport: autoNormalizeOnExport,
+            targetLoudnessDbfs: targetLoudnessDbfs)
+          : resolvedAudioMix
+        exportAudioMix = AudioMixEngine.makeAudioMix(
+          asset: audioCutComposition ?? comp.asset,
+          volumePercent: embeddedControls.volumePercent,
+          gainDb: embeddedControls.gainDb
+        )
+      }
 
       let requestedType = requestedFileType(for: format)
       let compatibleTypes = compatibleOutputTypes(
@@ -2769,34 +3173,34 @@ final class LetterboxExporter {
       // Cuts force the manual reader/writer path too: only it can drop the
       // frames inside cut gaps and re-stamp the kept frames onto the compacted
       // timeline. The fast AVAssetExportSession can't skip/re-time frames.
+      // Separated audio also forces the manual path (owner decision D8): the
+      // session path only mixes down with a non-nil audioMix and its preset
+      // owns the audio settings — the manual reader mixdown is the one
+      // pipeline that handles mic+system correctly everywhere.
       let shouldUseManualRenderExport =
         cameraAssetIsPreStyled
         || comp.inlineCameraRenderPlan != nil
         || comp.videoComposition.animationTool != nil
         || hasColorGrade
         || hasCuts
+        || separatedComposition != nil
       exportStartContext["finalRenderPath"] = shouldUseManualRenderExport ? "manual_reader_writer" : "asset_export_session"
       exportStartContext["colorGradeActive"] = hasColorGrade
+      exportStartContext["audioSourceMode"] = separatedComposition != nil ? "separated" : "embedded"
+      exportStartContext["separatedMicPresent"] = separatedMicAsset != nil
+      exportStartContext["separatedSystemPresent"] = separatedSystemAsset != nil
       NativeLogger.i(
         "Export",
         "Starting final export session",
         context: exportStartContext
       )
 
-      let runFinalExport: (@escaping (Result<URL, Error>) -> Void) -> Void = { [weak self] completion in
-        guard let self else {
-          completion(
-            .failure(
-              NSError(
-                domain: "Letterbox",
-                code: -25,
-                userInfo: [NSLocalizedDescriptionKey: "Exporter deallocated before final export could start"]
-              )
-            )
-          )
-          return
-        }
-
+      // The in-flight chain captures self STRONGLY end-to-end: the Xcode 26.5
+      // runtime was observed returning nil from weak loads here even while
+      // inFlightSelfRetain held the object (CI run 28622875201), so the
+      // export flow must not depend on weak references at all. Lifetime is
+      // bounded by the export: these closures die when the chain completes.
+      let runFinalExport: (@escaping (Result<URL, Error>) -> Void) -> Void = { [self] completion in
         if shouldUseManualRenderExport {
           self.runRenderedExportSession(
             asset: comp.asset,
@@ -2814,6 +3218,7 @@ final class LetterboxExporter {
             colorGrade: colorGrade,
             keptRanges: keptRanges,
             audioAsset: audioCutComposition,
+            useAllAudioSourceTracks: separatedComposition != nil,
             editedDurationSeconds: editedDurationSeconds,
             logOutputInfo: true,
             completion: completion
@@ -2850,12 +3255,7 @@ final class LetterboxExporter {
         )
       }
 
-      runFinalExport { [weak self] result in
-        guard let self else {
-          completion(result)
-          return
-        }
-
+      runFinalExport { [self] result in
         switch result {
         case .success(let finalURL):
           if let validationError = self.validateFinalExportReferenceRender(
@@ -2933,15 +3333,15 @@ final class LetterboxExporter {
         inputURL: inputURL,
         params: params,
         cursorRecording: prepassCursorRecording,
-        isCancelled: { [weak self] in self?.isCancelled ?? true },
+        isCancelled: { [self] in self.isCancelled },
         onProgress: { progress in
           onProgress?(scaledProgress(progress, into: prepassRange))
         }
-      ) { [weak self] result in
+      ) { [self] result in
         switch result {
         case .success(let prepared):
-          prepared.temporaryArtifacts.forEach { self?.registerTemporaryArtifact($0) }
-          if let validationError = self?.validateScreenPrepassIntermediate(
+          prepared.temporaryArtifacts.forEach { self.registerTemporaryArtifact($0) }
+          if let validationError = self.validateScreenPrepassIntermediate(
             rawScreenAsset: asset,
             prepassScreenAsset: AVAsset(url: prepared.url)
           ) {
@@ -2950,7 +3350,7 @@ final class LetterboxExporter {
               "Screen pre-pass validation failed",
               context: validationError.userInfo
             )
-            self?.cleanupTemporaryArtifacts()
+            self.cleanupTemporaryArtifacts()
             completion(.failure(validationError))
             return
           }
@@ -2964,7 +3364,7 @@ final class LetterboxExporter {
           )
 
         case .failure(let error):
-          self?.cleanupTemporaryArtifacts()
+          self.cleanupTemporaryArtifacts()
           completion(.failure(error))
         }
       }
@@ -2983,17 +3383,17 @@ final class LetterboxExporter {
         canvasSize: target,
         params: cameraParams,
         fpsHint: fpsHint,
-        isCancelled: { [weak self] in self?.isCancelled ?? true },
+        isCancelled: { [self] in self.isCancelled },
         onProgress: { progress in
           onProgress?(scaledProgress(progress, into: cameraRange))
         }
-      ) { [weak self] result in
+      ) { [self] result in
         switch result {
         case .success(let prepared):
-          prepared.temporaryArtifacts.forEach { self?.registerTemporaryArtifact($0) }
+          prepared.temporaryArtifacts.forEach { self.registerTemporaryArtifact($0) }
 
           if prepared.cameraAssetIsPreStyled,
-            let validationError = self?.validateStyledCameraIntermediate(
+            let validationError = self.validateStyledCameraIntermediate(
               rawCameraAsset: cameraAsset,
               styledCameraAsset: AVAsset(url: prepared.url),
               placementSourceRect: prepared.placementSourceRect
@@ -3004,7 +3404,7 @@ final class LetterboxExporter {
               "Camera pre-pass validation failed",
               context: validationError.userInfo
             )
-            self?.cleanupTemporaryArtifacts()
+            self.cleanupTemporaryArtifacts()
             completion(.failure(validationError))
             return
           }
@@ -3028,7 +3428,7 @@ final class LetterboxExporter {
           )
 
         case .failure(let error):
-          self?.cleanupTemporaryArtifacts()
+          self.cleanupTemporaryArtifacts()
           completion(.failure(error))
         }
       }
@@ -3049,6 +3449,126 @@ final class LetterboxExporter {
     let volumePercent: Double
     let sourcePeakDbfs: Double?
     let normalizationGainDb: Double?
+  }
+
+  /// Owner-approved separated-source semantics: gain + auto-normalize target
+  /// the MIC channel only (chain: raw mic → cleanup → normalize/boost → mix
+  /// with system); volume stays a master fader on the final mix. Normalize
+  /// can reduce as well as boost — a reduction lands in `micVolumeComponent`
+  /// (≤1), a boost in `micGainDb` (tap), keeping the historic +24dB cap on
+  /// the combined mic level.
+  struct SeparatedAudioControls: Equatable {
+    let masterVolumePercent: Double
+    let micVolumeComponent: Double
+    let micGainDb: Double
+    let sourcePeakDbfs: Double?
+    let normalizationGainDb: Double?
+  }
+
+  static func resolveSeparatedAudioControls(
+    userGainDb: Double,
+    userVolumePercent: Double,
+    autoNormalizeOnExport: Bool,
+    targetLoudnessDbfs: Double,
+    micPeakLinear: Double?
+  ) -> SeparatedAudioControls {
+    let clampedGainDb = max(0.0, min(24.0, userGainDb))
+    let clampedVolumePercent = max(0.0, min(100.0, userVolumePercent))
+
+    var combinedMicLinear = pow(10.0, clampedGainDb / 20.0)
+    var sourcePeakDbfs: Double?
+    var normalizationGainDb: Double?
+
+    if autoNormalizeOnExport, let micPeakLinear, micPeakLinear > 0.000001 {
+      let clampedTargetDbfs = max(-24.0, min(-6.0, targetLoudnessDbfs))
+      let targetLinear = pow(10.0, clampedTargetDbfs / 20.0)
+      let normalizeLinear = targetLinear / micPeakLinear
+      normalizationGainDb = 20.0 * log10(max(normalizeLinear, 0.000000001))
+      sourcePeakDbfs = AudioLevelEstimator.dbfs(for: micPeakLinear)
+      combinedMicLinear *= normalizeLinear
+    }
+
+    let maxLinear = pow(10.0, 24.0 / 20.0)
+    combinedMicLinear = max(0.0, min(maxLinear, combinedMicLinear))
+
+    let micVolumeComponent = min(1.0, combinedMicLinear)
+    let micGainDb: Double
+    if combinedMicLinear > 1.0 {
+      micGainDb = min(24.0, 20.0 * log10(combinedMicLinear))
+    } else {
+      micGainDb = 0.0
+    }
+
+    return SeparatedAudioControls(
+      masterVolumePercent: clampedVolumePercent,
+      micVolumeComponent: micVolumeComponent,
+      micGainDb: micGainDb,
+      sourcePeakDbfs: sourcePeakDbfs,
+      normalizationGainDb: normalizationGainDb
+    )
+  }
+
+  /// A separated source file is used only when it actually DECODES to audio;
+  /// a present-but-corrupt/empty file falls back to the embedded screen.mov
+  /// audio (exports must never fail because sidecar audio is bad). A header
+  /// check is not enough: a file whose moov/track parses but whose mdat is
+  /// undecodable would pass a track-exists check and then abort the audio pump
+  /// mid-export. Pull one sample buffer up front so "readable" means
+  /// "decodable" — on any failure, log and return nil so the export degrades
+  /// to the embedded track.
+  ///
+  /// Module-internal (not `private`) so the preview path (`InlinePreviewView`)
+  /// gates its separated-audio composition on the exact same "decodable"
+  /// definition the export uses — keeping preview == export in every capture
+  /// shape (corrupt/empty sidecar ⇒ both fall back to the embedded track).
+  static func readableAudioAsset(url: URL?) -> AVAsset? {
+    guard let url else { return nil }
+    let asset = AVAsset(url: url)
+    guard let track = asset.tracks(withMediaType: .audio).first else {
+      NativeLogger.w(
+        "Export", "Separated audio file present but has no readable audio track; ignoring",
+        context: ["path": url.path])
+      return nil
+    }
+
+    do {
+      let reader = try AVAssetReader(asset: asset)
+      let output = AVAssetReaderTrackOutput(
+        track: track,
+        outputSettings: [
+          AVFormatIDKey: kAudioFormatLinearPCM,
+          AVLinearPCMIsFloatKey: true,
+          AVLinearPCMBitDepthKey: 32,
+          AVLinearPCMIsBigEndianKey: false,
+          AVLinearPCMIsNonInterleaved: false,
+        ])
+      output.alwaysCopiesSampleData = false
+      guard reader.canAdd(output) else {
+        throw NSError(domain: "Letterbox", code: -40)
+      }
+      reader.add(output)
+      guard reader.startReading() else {
+        throw reader.error ?? NSError(domain: "Letterbox", code: -41)
+      }
+      let firstSample = output.copyNextSampleBuffer()
+      if let firstSample {
+        CMSampleBufferInvalidate(firstSample)
+      }
+      reader.cancelReading()
+      // A parseable-but-undecodable mdat surfaces as a reader failure while
+      // producing no sample. An empty-but-valid track yields no failure and no
+      // sample; treat that as "no usable audio" too.
+      guard reader.status != .failed, firstSample != nil else {
+        throw reader.error ?? NSError(domain: "Letterbox", code: -42)
+      }
+    } catch {
+      NativeLogger.w(
+        "Export", "Separated audio file does not decode; ignoring",
+        context: ["path": url.path, "error": "\(error)"])
+      return nil
+    }
+
+    return asset
   }
 
   private func resolveAudioMixControls(

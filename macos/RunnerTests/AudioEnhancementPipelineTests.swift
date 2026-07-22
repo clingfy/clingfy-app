@@ -1,0 +1,510 @@
+import AVFoundation
+import XCTest
+
+@testable import Clingfy
+
+/// Covers the file-to-file voice-cleanup stage, its wire parsing, and the cache
+/// semantics that decide when a cleaned mic is reused versus recomputed.
+final class AudioEnhancementPipelineTests: XCTestCase {
+  private var workDirectory: URL!
+
+  override func setUpWithError() throws {
+    workDirectory = FileManager.default.temporaryDirectory
+      .appendingPathComponent("voice-cleanup-tests-\(UUID().uuidString)", isDirectory: true)
+    try FileManager.default.createDirectory(at: workDirectory, withIntermediateDirectories: true)
+  }
+
+  override func tearDownWithError() throws {
+    if let workDirectory { try? FileManager.default.removeItem(at: workDirectory) }
+  }
+
+  // MARK: - Fixtures
+
+  /// Writes noisy speech to a mono 48 kHz CAF the pipeline can decode.
+  @discardableResult
+  private func writeNoisyVoice(seconds: Double = 2.0, named name: String = "mic.caf") throws -> URL
+  {
+    let rate: Float = 48_000
+    let count = Int(Double(rate) * seconds)
+    var samples = [Float](repeating: 0, count: count)
+    var state: UInt32 = 4242
+    for i in 0..<count {
+      let t = Float(i) / rate
+      var voice: Float = 0
+      for harmonic in 1...12 {
+        voice += sinf(2 * .pi * 140 * Float(harmonic) * t) / Float(harmonic)
+      }
+      state = state &* 1_103_515_245 &+ 12345
+      let noise = (Float((state >> 16) & 0x7fff) / 16384.0 - 1.0) * 0.1
+      samples[i] = voice * 0.2 + noise
+    }
+    return try MicEchoCanceller.writeMonoPCM(
+      samples, directory: workDirectory, namePrefix: "fixture-\(name)-")
+  }
+
+  private func decodeRms(_ url: URL) throws -> Float {
+    let samples = try MicEchoCanceller.decodePCMMono48k(url: url)
+    guard !samples.isEmpty else { return 0 }
+    let sum = samples.reduce(Float(0)) { $0 + $1 * $1 }
+    return (sum / Float(samples.count)).squareRoot()
+  }
+
+  private func makeProject() throws -> URL {
+    let root = workDirectory.appendingPathComponent("Take.clingfyproj", isDirectory: true)
+    try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+    return root
+  }
+
+  // MARK: - Wire parsing
+
+  func testRequestParsesEnabledAndMode() {
+    let request = VoiceCleanupRequest.fromFlutter(["enabled": true, "mode": "light"])
+    XCTAssertTrue(request.enabled)
+    XCTAssertEqual(request.mode, .light)
+  }
+
+  func testRequestIsDisabledWhenTheKeyIsAbsentOrMalformed() {
+    XCTAssertFalse(VoiceCleanupRequest.fromFlutter(nil).enabled)
+    XCTAssertFalse(VoiceCleanupRequest.fromFlutter("nonsense").enabled)
+    XCTAssertFalse(VoiceCleanupRequest.fromFlutter([:] as [String: Any]).enabled)
+    XCTAssertFalse(VoiceCleanupRequest.fromFlutter(["enabled": false, "mode": "light"]).enabled)
+  }
+
+  /// Matches Dart's `CleanupMode.fromWire`, which also falls back to balanced.
+  func testUnknownModeFallsBackToBalanced() {
+    let request = VoiceCleanupRequest.fromFlutter(["enabled": true, "mode": "ultra"])
+    XCTAssertEqual(request.mode, .balanced)
+  }
+
+  /// `highQuality` is reserved for a future full-band engine. Until it is
+  /// vendored the level must still run — at full RNNoise strength — so a
+  /// project saved by a newer build does not silently lose its cleanup.
+  func testHighQualityCurrentlyRunsAtFullStrength() {
+    XCTAssertEqual(VoiceCleanupMode.highQuality.wetMix, VoiceCleanupMode.balanced.wetMix)
+    XCTAssertLessThan(VoiceCleanupMode.light.wetMix, VoiceCleanupMode.balanced.wetMix)
+  }
+
+  func testModeWireValuesMatchDart() {
+    XCTAssertEqual(VoiceCleanupMode.light.rawValue, "light")
+    XCTAssertEqual(VoiceCleanupMode.balanced.rawValue, "balanced")
+    XCTAssertEqual(VoiceCleanupMode.highQuality.rawValue, "highQuality")
+  }
+
+  // MARK: - Pipeline
+
+  func testEnhanceProducesAQuieterFileAndReportsPositiveReduction() throws {
+    let mic = try writeNoisyVoice()
+    let result = try AudioEnhancementPipeline.enhance(
+      micURL: mic, mode: .balanced, outputDirectory: workDirectory)
+
+    XCTAssertTrue(result.applied)
+    XCTAssertNotEqual(result.enhancedMicURL, mic)
+    XCTAssertTrue(FileManager.default.fileExists(atPath: result.enhancedMicURL.path))
+    XCTAssertGreaterThan(
+      result.noiseReductionDb, 0,
+      "Positive means quieter. A negative value here would mean the stage added energy.")
+    XCTAssertLessThan(try decodeRms(result.enhancedMicURL), try decodeRms(mic))
+  }
+
+  func testEnhancePreservesDurationWithinAFrame() throws {
+    let mic = try writeNoisyVoice(seconds: 1.5)
+    let result = try AudioEnhancementPipeline.enhance(
+      micURL: mic, mode: .balanced, outputDirectory: workDirectory)
+    let before = try MicEchoCanceller.decodePCMMono48k(url: mic).count
+    let after = try MicEchoCanceller.decodePCMMono48k(url: result.enhancedMicURL).count
+    XCTAssertEqual(before, after, "Cleanup must not change the mic's length")
+  }
+
+  func testStagedOutputUsesItsOwnPrefix() throws {
+    let mic = try writeNoisyVoice()
+    let result = try AudioEnhancementPipeline.enhance(
+      micURL: mic, mode: .balanced, outputDirectory: workDirectory)
+    XCTAssertTrue(
+      result.enhancedMicURL.lastPathComponent.hasPrefix(
+        AudioEnhancementPipeline.stagedFileNamePrefix),
+      "Reusing the echo canceller's prefix would let its temp sweep delete this file")
+  }
+
+  func testEnhanceThrowsOnAnUndecodableInput() throws {
+    let bogus = workDirectory.appendingPathComponent("not-audio.caf")
+    try Data("nope".utf8).write(to: bogus)
+    XCTAssertThrowsError(
+      try AudioEnhancementPipeline.enhance(
+        micURL: bogus, mode: .balanced, outputDirectory: workDirectory))
+  }
+
+  // MARK: - Cache
+
+  func testDisabledRequestBypassesWithoutTouchingTheCache() throws {
+    let mic = try writeNoisyVoice()
+    let project = try makeProject()
+    let outcome = try EnhancedMicCache.shared.outcome(
+      inputMicURL: mic, request: .disabled, projectRoot: project)
+
+    XCTAssertFalse(outcome.result.applied)
+    XCTAssertEqual(outcome.result.enhancedMicURL, mic)
+    XCTAssertFalse(
+      FileManager.default.fileExists(
+        atPath: EnhancedMicCache.cacheMetadataURL(for: project, mode: .balanced).path))
+  }
+
+  func testComputeThenHitServesTheCachedFile() throws {
+    let mic = try writeNoisyVoice()
+    let project = try makeProject()
+    let request = VoiceCleanupRequest(enabled: true, mode: .balanced)
+
+    let first = try EnhancedMicCache.shared.outcome(
+      inputMicURL: mic, request: request, projectRoot: project)
+    XCTAssertTrue(first.result.applied)
+    XCTAssertFalse(first.fromCache)
+    XCTAssertTrue(first.cacheOwned)
+    XCTAssertEqual(
+      first.result.enhancedMicURL,
+      EnhancedMicCache.cacheFileURL(for: project, mode: .balanced))
+
+    let second = try EnhancedMicCache.shared.outcome(
+      inputMicURL: mic, request: request, projectRoot: project)
+    XCTAssertTrue(second.fromCache)
+    XCTAssertEqual(second.result.enhancedMicURL, first.result.enhancedMicURL)
+  }
+
+  /// A mode never computed yet is a miss; a mode already computed is a HIT even
+  /// after switching away and back. Per-mode files are what make switching
+  /// Light↔Balanced instant instead of a recompute each time.
+  func testEachModeCachesIndependently() throws {
+    let mic = try writeNoisyVoice()
+    let project = try makeProject()
+    let balanced = VoiceCleanupRequest(enabled: true, mode: .balanced)
+    let light = VoiceCleanupRequest(enabled: true, mode: .light)
+
+    _ = try EnhancedMicCache.shared.outcome(
+      inputMicURL: mic, request: balanced, projectRoot: project)
+
+    // Light was never computed → miss.
+    XCTAssertNil(
+      EnhancedMicCache.shared.cachedOutcome(
+        inputMicURL: mic, request: light, projectRoot: project),
+      "A mode that was never computed must not be served another mode's file")
+
+    // Compute light, then switching BACK to balanced is an instant hit — its
+    // file was never deleted by the light compute.
+    _ = try EnhancedMicCache.shared.outcome(
+      inputMicURL: mic, request: light, projectRoot: project)
+    let balancedAgain = EnhancedMicCache.shared.cachedOutcome(
+      inputMicURL: mic, request: balanced, projectRoot: project)
+    XCTAssertNotNil(balancedAgain, "Switching back to a computed mode must hit cache")
+    XCTAssertTrue(balancedAgain!.fromCache)
+
+    // Distinct files, distinct content on disk.
+    let lightURL = EnhancedMicCache.cacheFileURL(for: project, mode: .light)
+    let balancedURL = EnhancedMicCache.cacheFileURL(for: project, mode: .balanced)
+    XCTAssertNotEqual(lightURL, balancedURL)
+    XCTAssertTrue(FileManager.default.fileExists(atPath: lightURL.path))
+    XCTAssertTrue(FileManager.default.fileExists(atPath: balancedURL.path))
+  }
+
+  /// The one-slot cache used to delete the file the live preview was reading
+  /// whenever the mode changed. Per-mode files must never remove another mode's
+  /// file when computing a new one.
+  func testComputingOneModeLeavesAnotherModesFileIntact() throws {
+    let mic = try writeNoisyVoice()
+    let project = try makeProject()
+    _ = try EnhancedMicCache.shared.outcome(
+      inputMicURL: mic, request: VoiceCleanupRequest(enabled: true, mode: .balanced),
+      projectRoot: project)
+    let balancedURL = EnhancedMicCache.cacheFileURL(for: project, mode: .balanced)
+    XCTAssertTrue(FileManager.default.fileExists(atPath: balancedURL.path))
+
+    _ = try EnhancedMicCache.shared.outcome(
+      inputMicURL: mic, request: VoiceCleanupRequest(enabled: true, mode: .light),
+      projectRoot: project)
+
+    XCTAssertTrue(
+      FileManager.default.fileExists(atPath: balancedURL.path),
+      "Computing light must not delete the balanced file a live player may hold open")
+  }
+
+  /// Keying on the INPUT file is what composes with echo cancellation: when
+  /// that stage turns on or recomputes, the input identity changes and this
+  /// entry must fall out.
+  func testChangingTheInputFileInvalidatesTheEntry() throws {
+    let mic = try writeNoisyVoice()
+    let project = try makeProject()
+    let request = VoiceCleanupRequest(enabled: true, mode: .balanced)
+
+    _ = try EnhancedMicCache.shared.outcome(
+      inputMicURL: mic, request: request, projectRoot: project)
+    XCTAssertNotNil(
+      EnhancedMicCache.shared.cachedOutcome(
+        inputMicURL: mic, request: request, projectRoot: project))
+
+    let otherMic = try writeNoisyVoice(seconds: 1.0, named: "other")
+    XCTAssertNil(
+      EnhancedMicCache.shared.cachedOutcome(
+        inputMicURL: otherMic, request: request, projectRoot: project),
+      "A different input mic must not be served the previous input's cleanup")
+  }
+
+  /// Disk is bounded: a third mode evicts the oldest, and never the mode just
+  /// written.
+  func testOldestModeIsEvictedBeyondTheCap() throws {
+    XCTAssertEqual(EnhancedMicCache.keepNewestModes, 2, "test assumes a cap of 2")
+    let mic = try writeNoisyVoice(seconds: 1.0)
+    let project = try makeProject()
+    for mode in [VoiceCleanupMode.light, .balanced, .highQuality] {
+      _ = try EnhancedMicCache.shared.outcome(
+        inputMicURL: mic, request: VoiceCleanupRequest(enabled: true, mode: mode),
+        projectRoot: project)
+    }
+
+    let fm = FileManager.default
+    XCTAssertFalse(
+      fm.fileExists(atPath: EnhancedMicCache.cacheFileURL(for: project, mode: .light).path),
+      "The oldest mode should have been evicted")
+    XCTAssertTrue(
+      fm.fileExists(atPath: EnhancedMicCache.cacheFileURL(for: project, mode: .highQuality).path),
+      "The mode just written must survive")
+    XCTAssertTrue(
+      fm.fileExists(atPath: EnhancedMicCache.cacheFileURL(for: project, mode: .balanced).path))
+  }
+
+  func testMissingCachedFileForcesRecompute() throws {
+    let mic = try writeNoisyVoice()
+    let project = try makeProject()
+    let request = VoiceCleanupRequest(enabled: true, mode: .balanced)
+
+    _ = try EnhancedMicCache.shared.outcome(
+      inputMicURL: mic, request: request, projectRoot: project)
+    try FileManager.default.removeItem(
+      at: EnhancedMicCache.cacheFileURL(for: project, mode: .balanced))
+
+    XCTAssertNil(
+      EnhancedMicCache.shared.cachedOutcome(
+        inputMicURL: mic, request: request, projectRoot: project),
+      "Metadata without its audio file must not report a hit")
+  }
+
+  func testCorruptMetadataForcesRecompute() throws {
+    let mic = try writeNoisyVoice()
+    let project = try makeProject()
+    let request = VoiceCleanupRequest(enabled: true, mode: .balanced)
+
+    _ = try EnhancedMicCache.shared.outcome(
+      inputMicURL: mic, request: request, projectRoot: project)
+    try Data("{".utf8).write(
+      to: EnhancedMicCache.cacheMetadataURL(for: project, mode: .balanced))
+
+    XCTAssertNil(
+      EnhancedMicCache.shared.cachedOutcome(
+        inputMicURL: mic, request: request, projectRoot: project))
+  }
+
+  func testStagedFilesAreSweptFromTheDerivedSlot() throws {
+    let project = try makeProject()
+    let derived = RecordingProjectPaths.derivedDirectoryURL(for: project)
+    try FileManager.default.createDirectory(at: derived, withIntermediateDirectories: true)
+    let stranded = derived.appendingPathComponent(
+      "\(AudioEnhancementPipeline.stagedFileNamePrefix)stale.caf")
+    try Data("x".utf8).write(to: stranded)
+
+    EnhancedMicCache.removeStagedFiles(in: derived)
+
+    XCTAssertFalse(FileManager.default.fileExists(atPath: stranded.path))
+  }
+
+  /// The echo canceller's own staged files live in the same directory and are
+  /// swept by its cache, not this one.
+  func testSweepLeavesTheEchoCancellerStagedFilesAlone() throws {
+    let project = try makeProject()
+    let derived = RecordingProjectPaths.derivedDirectoryURL(for: project)
+    try FileManager.default.createDirectory(at: derived, withIntermediateDirectories: true)
+    let otherStage = derived.appendingPathComponent("mic-echo-cancelled-stale.caf")
+    try Data("x".utf8).write(to: otherStage)
+
+    EnhancedMicCache.removeStagedFiles(in: derived)
+
+    XCTAssertTrue(FileManager.default.fileExists(atPath: otherStage.path))
+  }
+
+  func testAsyncOutcomeDeliversOnMain() throws {
+    let mic = try writeNoisyVoice(seconds: 1.0)
+    let project = try makeProject()
+    let expectation = expectation(description: "voice cleanup completes")
+
+    EnhancedMicCache.shared.outcomeAsync(
+      inputMicURL: mic, request: VoiceCleanupRequest(enabled: true, mode: .balanced),
+      projectRoot: project
+    ) { outcome in
+      XCTAssertTrue(Thread.isMainThread)
+      XCTAssertTrue(outcome.result.applied)
+      expectation.fulfill()
+    }
+
+    wait(for: [expectation], timeout: 60)
+  }
+
+  /// A decode failure must degrade to the un-enhanced mic rather than fail the
+  /// preview open, and must not be cached so the next open retries.
+  /// Regression: the preview must adopt the session's cleanup setting on a
+  /// NORMAL open, not only when a host view is rehydrated. Seeding it at just
+  /// one of the three `open()` call sites left the common path opening on the
+  /// raw mic while the export cleaned it — a silent preview/export mismatch,
+  /// self-correcting only if the user happened to toggle the control.
+  @MainActor
+  func testPreviewAdoptsTheSessionVoiceCleanupOnOpen() throws {
+    let sessionId = "rec_voice_cleanup_session"
+    let mediaSources = PreviewMediaSources(
+      projectPath: workDirectory.path,
+      screenPath: workDirectory.appendingPathComponent("screen.mov").path,
+      cameraPath: nil,
+      metadataPath: nil,
+      cursorPath: nil,
+      zoomManualPath: nil,
+      cameraSyncTimeline: nil,
+      micAudioPath: nil,
+      systemAudioPath: nil)
+
+    beginActiveInlinePreviewSession(sessionId: sessionId, mediaSources: mediaSources)
+    defer { clearAllInlinePreviewState() }
+
+    let request = VoiceCleanupRequest(enabled: true, mode: .light)
+    updateActiveInlinePreviewVoiceCleanup(sessionId: sessionId, voiceCleanup: request)
+
+    XCTAssertEqual(
+      activeInlinePreviewState?.voiceCleanup, request,
+      "The setter must record the session's cleanup even with no view attached")
+
+    let view = InlinePreviewView(viewIdentifier: 1, arguments: nil, messenger: nil)
+    view.open(mediaSources: mediaSources, sessionId: sessionId)
+
+    XCTAssertEqual(
+      view.currentVoiceCleanupForTesting, request,
+      "open() must adopt the session's cleanup before it resolves the mic")
+  }
+
+  /// The other delivery order: the setting arrives (via the scene payload or the
+  /// dedicated setter) AFTER the preview is already open. An open view reads its
+  /// cleanup only at open time, so it has to be pushed — otherwise a persisted
+  /// setting reaches the export but never the preview.
+  @MainActor
+  func testOpenPreviewAcceptsAVoiceCleanupPushedAfterwards() throws {
+    let sessionId = "rec_late_push"
+    let mediaSources = PreviewMediaSources(
+      projectPath: workDirectory.path,
+      screenPath: workDirectory.appendingPathComponent("screen.mov").path,
+      cameraPath: nil,
+      metadataPath: nil,
+      cursorPath: nil,
+      zoomManualPath: nil,
+      cameraSyncTimeline: nil,
+      micAudioPath: nil,
+      systemAudioPath: nil)
+
+    beginActiveInlinePreviewSession(sessionId: sessionId, mediaSources: mediaSources)
+    defer { clearAllInlinePreviewState() }
+
+    let view = InlinePreviewView(viewIdentifier: 2, arguments: nil, messenger: nil)
+    view.open(mediaSources: mediaSources, sessionId: sessionId)
+    XCTAssertEqual(view.currentVoiceCleanupForTesting, VoiceCleanupRequest.disabled)
+
+    let request = VoiceCleanupRequest(enabled: true, mode: .balanced)
+    view.updateVoiceCleanupOnly(request)
+
+    XCTAssertEqual(view.currentVoiceCleanupForTesting, request)
+  }
+
+  /// The guard that fixes the reported scrubber jump: while a mic swap is in
+  /// flight the periodic observer keeps firing against a fresh item whose time
+  /// is 0, and Dart assigns `positionMs` from every tick unconditionally.
+  ///
+  /// Only the state machine is asserted here. Whether a tick actually reaches
+  /// Flutter cannot be exercised in a unit test — `sendTick` needs a loaded
+  /// item and `emitPlayerEvent` needs an open session, so a stubbed sink
+  /// records nothing either way and such a test would pass with the guard
+  /// deleted. The emission path is covered by the manual repro instead.
+  @MainActor
+  func testMicSwapSuppressionBracketsTheSwap() {
+    let view = InlinePreviewView(viewIdentifier: 3, arguments: nil, messenger: nil)
+    XCTAssertFalse(view.isSuppressingTicksForTesting)
+
+    view.beginMicSwapTickSuppressionForTesting()
+    XCTAssertTrue(view.isSuppressingTicksForTesting)
+
+    view.endMicSwapTickSuppressionForTesting()
+    XCTAssertFalse(
+      view.isSuppressingTicksForTesting,
+      "Suppression must be released or the cursor, zoom and camera overlays freeze")
+  }
+
+  /// The suppression window is bounded: `sendTick` also drives the cursor, zoom
+  /// and camera overlays, so a seek that never calls back must not freeze them.
+  @MainActor
+  func testMicSwapTickSuppressionIsReleasedByTheWatchdog() {
+    let view = InlinePreviewView(viewIdentifier: 4, arguments: nil, messenger: nil)
+    view.beginMicSwapTickSuppressionForTesting()
+    XCTAssertTrue(view.isSuppressingTicksForTesting)
+
+    let released = expectation(description: "watchdog released the tick guard")
+    DispatchQueue.main.asyncAfter(deadline: .now() + 1.0) {
+      XCTAssertFalse(view.isSuppressingTicksForTesting)
+      released.fulfill()
+    }
+    wait(for: [released], timeout: 5)
+  }
+
+  /// Closing mid-swap must not strand the guard on a reused view.
+  @MainActor
+  func testResetPlaybackClearsTickSuppression() {
+    let view = InlinePreviewView(viewIdentifier: 5, arguments: nil, messenger: nil)
+    view.beginMicSwapTickSuppressionForTesting()
+    view.resetPlayback(reason: "test")
+    XCTAssertFalse(view.isSuppressingTicksForTesting)
+  }
+
+  /// A stale session's setting must not leak into a different recording.
+  @MainActor
+  func testPreviewIgnoresAnotherSessionsVoiceCleanup() throws {
+    let mediaSources = PreviewMediaSources(
+      projectPath: workDirectory.path,
+      screenPath: workDirectory.appendingPathComponent("screen.mov").path,
+      cameraPath: nil,
+      metadataPath: nil,
+      cursorPath: nil,
+      zoomManualPath: nil,
+      cameraSyncTimeline: nil,
+      micAudioPath: nil,
+      systemAudioPath: nil)
+
+    beginActiveInlinePreviewSession(sessionId: "rec_a", mediaSources: mediaSources)
+    defer { clearAllInlinePreviewState() }
+    updateActiveInlinePreviewVoiceCleanup(
+      sessionId: "rec_a", voiceCleanup: VoiceCleanupRequest(enabled: true, mode: .balanced))
+
+    let view = InlinePreviewView(viewIdentifier: 1, arguments: nil, messenger: nil)
+    view.open(mediaSources: mediaSources, sessionId: "rec_b")
+
+    XCTAssertEqual(view.currentVoiceCleanupForTesting, VoiceCleanupRequest.disabled)
+  }
+
+  func testAsyncFailureDegradesToTheInputMic() throws {
+    let project = try makeProject()
+    let bogus = workDirectory.appendingPathComponent("broken.caf")
+    try Data("nope".utf8).write(to: bogus)
+    let expectation = expectation(description: "degrades")
+
+    EnhancedMicCache.shared.outcomeAsync(
+      inputMicURL: bogus, request: VoiceCleanupRequest(enabled: true, mode: .balanced),
+      projectRoot: project
+    ) { outcome in
+      XCTAssertFalse(outcome.result.applied)
+      XCTAssertEqual(outcome.result.enhancedMicURL, bogus)
+      expectation.fulfill()
+    }
+
+    wait(for: [expectation], timeout: 60)
+    XCTAssertFalse(
+      FileManager.default.fileExists(
+        atPath: EnhancedMicCache.cacheMetadataURL(for: project, mode: .balanced).path),
+      "A transient failure must not be cached")
+  }
+}

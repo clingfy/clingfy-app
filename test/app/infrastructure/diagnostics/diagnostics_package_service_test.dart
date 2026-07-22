@@ -59,7 +59,10 @@ void main() {
   test('packages logs, diagnostics sections, and the orphan count', () async {
     File('${dartLogs.path}/logs_2026-06-09.jsonl').writeAsStringSync('{"a":1}');
     File('${dartLogs.path}/logs_2026-06-10.jsonl').writeAsStringSync('{"b":2}');
-    File('${nativeLogs.path}/device_probe.log').writeAsStringSync('probe');
+    File('${nativeLogs.path}/phase5_cycles.log').writeAsStringSync('cycle=1');
+    // Retired side files (their lines flow through the JSONL log now) must
+    // NOT be bundled even when a stale pre-upgrade copy exists on disk.
+    File('${nativeLogs.path}/device_probe.log').writeAsStringSync('stale');
     File('${temp.path}/clingfy_abc.mp4').writeAsStringSync('0123456789');
     File('${temp.path}/unrelated.txt').writeAsStringSync('x');
 
@@ -74,7 +77,9 @@ void main() {
     final archive = readZip(zip);
     expect(entryText(archive, 'logs/dart/logs_2026-06-10.jsonl'), '{"b":2}');
     expect(entryText(archive, 'logs/dart/logs_2026-06-09.jsonl'), '{"a":1}');
-    expect(entryText(archive, 'logs/native/device_probe.log'), 'probe');
+    expect(entryText(archive, 'logs/native/phase5_cycles.log'), 'cycle=1');
+    expect(archive.findFile('logs/native/device_probe.log'), isNull);
+    expect(archive.findFile('logs/native/stage2a_2_native.log'), isNull);
     expect(
       jsonDecode(entryText(archive, 'diagnostics/capture_diagnostics.json')),
       {'backend': 'windows_mf'},
@@ -95,12 +100,12 @@ void main() {
     final manifest =
         jsonDecode(entryText(archive, 'package_manifest.json'))
             as Map<String, dynamic>;
-    expect(manifest['included'], contains('logs/native/device_probe.log'));
-    // The other two native logs don't exist — skipped, and the manifest
-    // says so instead of pretending.
+    expect(manifest['included'], contains('logs/native/phase5_cycles.log'));
+    // The retired side files are not even attempted — neither included nor
+    // listed as skipped.
     final skipped = manifest['skipped'] as Map<String, dynamic>;
-    expect(skipped, contains('logs/native/stage2a_2_native.log'));
-    expect(skipped, contains('logs/native/phase5_cycles.log'));
+    expect(skipped, isNot(contains('logs/native/device_probe.log')));
+    expect(skipped, isNot(contains('logs/native/stage2a_2_native.log')));
   });
 
   test(

@@ -7,7 +7,9 @@ import 'package:clingfy/app/settings/settings_controller.dart';
 import 'package:clingfy/core/bridges/native_bridge.dart';
 import 'package:clingfy/core/devices/device_controller.dart';
 import 'package:clingfy/core/models/app_models.dart';
+import 'package:clingfy/app/home/post_processing/widgets/post_audio_section.dart';
 import 'package:clingfy/core/preview/player_controller.dart';
+import 'package:clingfy/ui/platform/widgets/app_slider.dart';
 import 'package:clingfy/l10n/app_localizations.dart';
 import 'package:clingfy/ui/theme/app_theme.dart';
 import 'package:flutter/material.dart';
@@ -192,6 +194,137 @@ void main() {
       semanticsHandle.dispose();
     },
   );
+
+  testWidgets('scene-derived audio verdict overrides the device gate '
+      '(audio separation D10)', (tester) async {
+    // The recording HAS system audio but NO mic track (separated,
+    // mic-less). The fake device reports noAudioId — under the legacy
+    // device gate everything would be disabled, so enabled volume here
+    // proves the scene verdict wins; disabled gain + the notice prove
+    // the mic-only gating.
+    await clearCommonNativeMocks();
+    await installCommonNativeMocks(
+      recordingSceneInfoReply: <String, Object?>{
+        'projectPath': '/tmp/p.clingfyproj',
+        'screenPath': '/tmp/p.clingfyproj/capture/screen.mov',
+        'hasMicAudio': false,
+        'hasSystemAudio': true,
+        'micGainApplies': false,
+      },
+    );
+    final harness = await createHarness();
+    addTearDown(harness.dispose);
+
+    harness.post.attachToRecording(
+      sessionId: 'sess-audio-gate',
+      projectPath: '/tmp/p.clingfyproj',
+    );
+    // selectedIndex 3 = Export tab, where PostAudioSection lives.
+    await tester.pumpWidget(buildTestApp(harness, selectedIndex: 3));
+    await tester.pump();
+    await tester.pump(const Duration(milliseconds: 50));
+
+    expect(harness.post.sceneHasAudio, isTrue);
+    expect(harness.post.sceneMicGainApplies, isFalse);
+
+    final l10n = await AppLocalizations.delegate.load(const Locale('en'));
+    final audioSection = find.byType(PostAudioSection);
+    expect(audioSection, findsOneWidget);
+    final sliders = tester
+        .widgetList<AppSlider>(
+          find.descendant(of: audioSection, matching: find.byType(AppSlider)),
+        )
+        .toList();
+    // PostAudioSection order: volume first, gain second.
+    expect(sliders, hasLength(2));
+    expect(
+      sliders[0].onChanged,
+      isNotNull,
+      reason:
+          'system audio exists — volume must be live even though '
+          'the DEVICE selection says no audio',
+    );
+    expect(
+      sliders[1].onChanged,
+      isNull,
+      reason:
+          'gain is mic-only on a separated recording — a mic-less '
+          'one must not offer a slider the pipeline ignores',
+    );
+    expect(find.text(l10n.noMicAudioFound), findsOneWidget);
+  });
+
+  testWidgets('absent scene audio keys keep the legacy device gate', (
+    tester,
+  ) async {
+    // macOS-shaped reply (no audio keys): the device fake says noAudioId,
+    // so both sliders stay disabled — exactly the pre-separation gate.
+    await clearCommonNativeMocks();
+    await installCommonNativeMocks(
+      recordingSceneInfoReply: <String, Object?>{
+        'projectPath': '/tmp/p.clingfyproj',
+        'screenPath': '/tmp/p.clingfyproj/capture/screen.mov',
+      },
+    );
+    final harness = await createHarness();
+    addTearDown(harness.dispose);
+
+    harness.post.attachToRecording(
+      sessionId: 'sess-legacy-gate',
+      projectPath: '/tmp/p.clingfyproj',
+    );
+    await tester.pumpWidget(buildTestApp(harness, selectedIndex: 3));
+    await tester.pump();
+    await tester.pump(const Duration(milliseconds: 50));
+
+    expect(harness.post.sceneHasAudio, isNull);
+
+    final sliders = tester
+        .widgetList<AppSlider>(
+          find.descendant(
+            of: find.byType(PostAudioSection),
+            matching: find.byType(AppSlider),
+          ),
+        )
+        .toList();
+    expect(sliders, hasLength(2));
+    expect(sliders[0].onChanged, isNull);
+    expect(sliders[1].onChanged, isNull);
+  });
+
+  testWidgets('detaching the recording clears the scene audio verdict', (
+    tester,
+  ) async {
+    await clearCommonNativeMocks();
+    await installCommonNativeMocks(
+      recordingSceneInfoReply: <String, Object?>{
+        'projectPath': '/tmp/p.clingfyproj',
+        'screenPath': '/tmp/p.clingfyproj/capture/screen.mov',
+        'hasMicAudio': true,
+        'hasSystemAudio': true,
+        'micGainApplies': true,
+      },
+    );
+    final harness = await createHarness();
+    addTearDown(harness.dispose);
+
+    harness.post.attachToRecording(
+      sessionId: 'sess-reset',
+      projectPath: '/tmp/p.clingfyproj',
+    );
+    // Let the async scene-info load land.
+    await tester.pumpWidget(buildTestApp(harness, selectedIndex: 3));
+    await tester.pump();
+    await tester.pump(const Duration(milliseconds: 50));
+    expect(harness.post.sceneHasAudio, isTrue);
+    expect(harness.post.sceneMicGainApplies, isTrue);
+
+    // A stale verdict must never leak into the next recording.
+    harness.post.detachRecording();
+    expect(harness.post.sceneHasAudio, isNull);
+    expect(harness.post.sceneMicGainApplies, isNull);
+    await tester.pump(const Duration(milliseconds: 50));
+  });
 
   testWidgets('container rebuilds the color sliders when the grade changes '
       '(regression: Selector omitted colorGrade)', (tester) async {

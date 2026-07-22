@@ -157,6 +157,10 @@ struct ActiveInlinePreviewState: Equatable {
   var zoomSegments: [ZoomTimelineSegment]?
   var cameraPlacementOverride: PreviewCameraPlacementOverride?
   var audioMixOverride: PreviewAudioMixOverride?
+  /// Mic noise reduction for this session. Unlike the mix override this is not
+  /// a live parameter — it decides which mic FILE the preview plays — so it is
+  /// applied before the view opens rather than after.
+  var voiceCleanup: VoiceCleanupRequest?
   var playbackSnapshot: PreviewPlaybackSnapshot
 }
 
@@ -241,6 +245,7 @@ func beginActiveInlinePreviewSession(sessionId: String, mediaSources: PreviewMed
     zoomSegments: nil,
     cameraPlacementOverride: nil,
     audioMixOverride: nil,
+    voiceCleanup: nil,
     playbackSnapshot: .initial
   )
 }
@@ -354,6 +359,18 @@ func updateActiveInlinePreviewCameraPlacementOverride(
   activeInlinePreviewState = state
 }
 
+func updateActiveInlinePreviewVoiceCleanup(
+  sessionId: String?,
+  voiceCleanup: VoiceCleanupRequest
+) {
+  guard var state = activeInlinePreviewState else { return }
+  if let sessionId, state.sessionId != sessionId {
+    return
+  }
+  state.voiceCleanup = voiceCleanup
+  activeInlinePreviewState = state
+}
+
 func updateActiveInlinePreviewAudioMixOverride(
   sessionId: String?,
   gainDb: Double,
@@ -404,6 +421,8 @@ func rehydrateActivePreviewIfNeeded(on view: InlinePreviewView) -> Bool {
         "path": state.mediaSources.screenPath,
         "cameraPath": state.mediaSources.cameraPath ?? "nil",
       ])
+    // `state.voiceCleanup` needs no seeding here: `open()` adopts it from the
+    // session itself, which covers this path and the two in `create` alike.
     view.open(
       mediaSources: state.mediaSources,
       sessionId: state.sessionId,

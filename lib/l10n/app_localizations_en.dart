@@ -393,9 +393,6 @@ class AppLocalizationsEn extends AppLocalizations {
   String get paywallCardMonthlyTitle => 'Pro Monthly';
 
   @override
-  String get paywallCardMonthlyPrice => '\$9.99';
-
-  @override
   String get paywallCardMonthlyPeriod => '/ month';
 
   @override
@@ -415,9 +412,6 @@ class AppLocalizationsEn extends AppLocalizations {
 
   @override
   String get paywallCardLifetimeTitle => 'Lifetime Pro';
-
-  @override
-  String get paywallCardLifetimePrice => '\$59.99';
 
   @override
   String get paywallCardLifetimePeriod => 'one-time';
@@ -443,9 +437,6 @@ class AppLocalizationsEn extends AppLocalizations {
 
   @override
   String get paywallCardExtensionTitle => 'Updates Extension';
-
-  @override
-  String get paywallCardExtensionPrice => '\$19.99';
 
   @override
   String get paywallCardExtensionPeriod => 'one-time';
@@ -1848,6 +1839,13 @@ class AppLocalizationsEn extends AppLocalizations {
       'Record detailed debug logs to help reproduce a hard-to-find issue. Turn it on, reproduce the problem, then export diagnostics and send the files. Leave it off for everyday use.';
 
   @override
+  String get diagnosticsShareAnalytics => 'Share anonymous usage analytics';
+
+  @override
+  String get diagnosticsShareAnalyticsHelp =>
+      'Help improve Clingfy by sharing feature usage and reliability data. Never includes recordings, filenames, audio, video, or transcripts.';
+
+  @override
   String get openLogsFolder => 'Open Logs Folder';
 
   @override
@@ -1898,6 +1896,19 @@ class AppLocalizationsEn extends AppLocalizations {
 
   @override
   String get audioGain => 'Audio Gain';
+
+  @override
+  String get voiceCleanup => 'Voice Cleanup';
+
+  @override
+  String get voiceCleanupHelp =>
+      'Removes background noise from the mic, like fans or room tone.';
+
+  @override
+  String get voiceCleanupLight => 'Light';
+
+  @override
+  String get voiceCleanupBalanced => 'Balanced';
 
   @override
   String get volume => 'Volume';
@@ -2019,6 +2030,13 @@ class AppLocalizationsEn extends AppLocalizations {
   @override
   String get recordingExcludeMicFromSystemAudio =>
       'Exclude my mic from system audio';
+
+  @override
+  String get recordingMicEchoCancellation => 'Remove speaker echo from mic';
+
+  @override
+  String get recordingMicEchoCancellationHelp =>
+      'Experimental: filters system-audio bleed out of the mic during pauses in your speech. May affect voice quality on some recordings.';
 
   @override
   String get restartApp => 'Restart App';
@@ -2520,15 +2538,8 @@ class AppLocalizationsEn extends AppLocalizations {
       'Recording stopped: the display you were recording was disconnected. Your recording up to that point has been saved.';
 
   @override
-  String get cameraPreviewUseInApp =>
-      'Can\'t see the camera? Use in-app preview';
-
-  @override
-  String get cameraPreviewUseFloating => 'Use floating camera bubble';
-
-  @override
   String get appliedOnExportNoticeWindows =>
-      'Applied on export — the inline preview doesn\'t show this effect yet.';
+      'Gain is fully audible in edited previews and exports — an uncut preview plays volume changes only.';
 
   @override
   String get errBadMode =>

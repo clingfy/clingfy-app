@@ -2,10 +2,10 @@
 
 #include <optional>
 
+#include "Bridge/camera_overlay_move_publisher.h"
 #include "Bridge/export_progress_publisher.h"
 #include "Bridge/native_log_publisher.h"
 #include "Bridge/platform_thread_dispatcher.h"
-#include "Capture/Camera/live_camera_texture.h"
 #include "Capture/Export/export_session.h"
 #include "Capture/recording_engine.h"
 #include "Services/temp_orphan_scan.h"
@@ -74,6 +74,12 @@ bool FlutterWindow::OnCreate() {
   clingfy::bridge::NativeLogPublisher::Instance().SetChannel(
       method_dispatcher_->channel());
 
+  // Editing port P1: same channel for the floating camera-bubble drag
+  // write-back (`cameraOverlayMoved`), emitted from the overlay thread when a
+  // drag ends. Cleared alongside the other publishers in OnDestroy.
+  clingfy::bridge::CameraOverlayMovePublisher::Instance().SetChannel(
+      method_dispatcher_->channel());
+
   // Phase 10.1: detect recordings stranded in %TEMP% by a crash/kill in a
   // previous session (detection + reporting only; salvage is Phase 10.4).
   // Runs on its own short-lived thread, off the startup path.
@@ -91,13 +97,6 @@ bool FlutterWindow::OnCreate() {
   clingfy::preview::PreviewEngine::Instance()->Initialize(
       flutter_controller_->engine()->GetRegistrarForPlugin(
           "ClingfyPocStage2a"));
-
-  // Phase 9.3.1: register the live camera preview texture once for the app
-  // lifetime. The recorder feeds it BGRA frames during recording; Dart shows a
-  // Texture widget for it. Same raw-C-registrar approach as PreviewEngine.
-  clingfy::capture::LiveCameraTexture::Instance().Initialize(
-      flutter_controller_->engine()->GetRegistrarForPlugin(
-          "ClingfyLiveCamera"));
 
   SetChildContent(flutter_controller_->view()->GetNativeWindow());
 
@@ -137,6 +136,7 @@ void FlutterWindow::OnDestroy() {
   // one.
   clingfy::bridge::ExportProgressPublisher::Instance().ClearChannel();
   clingfy::bridge::NativeLogPublisher::Instance().ClearChannel();
+  clingfy::bridge::CameraOverlayMovePublisher::Instance().ClearChannel();
   event_channel_stubs_.reset();
   method_dispatcher_.reset();
 
@@ -164,6 +164,21 @@ FlutterWindow::MessageHandler(HWND hwnd, UINT const message,
   switch (message) {
     case WM_FONTCHANGE:
       flutter_controller_->engine()->ReloadSystemFonts();
+      break;
+    case WM_POWERBROADCAST:
+      // Modern Standby / suspend resume invalidates the GPU + media
+      // stack (the 2026-07 55-minute-recording incident: D3D device
+      // removed, WinRT frame server dead). An open preview session
+      // would otherwise sit on a dead device until its render loop
+      // dies mid-play — proactively ask Dart to rebuild it instead.
+      // PBT_APMRESUMEAUTOMATIC fires on every wake, user-initiated or
+      // not; recording/export are protected separately by KeepAwake
+      // power requests (#263) so resume-with-active-capture is not a
+      // case this needs to handle.
+      if (wparam == PBT_APMRESUMEAUTOMATIC) {
+        clingfy::preview::PreviewEngine::Instance()->OnSystemResumed();
+        return TRUE;
+      }
       break;
   }
 

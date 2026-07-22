@@ -3,12 +3,17 @@
 
 namespace clingfy::bridge::devices {
 
-// Append-only diagnostic log shared by the device enumerators and the
-// recording engine's audio-start path. Writes one timestamped line to
-// `%LOCALAPPDATA%\Clingfy\Logs\device_probe.log` (directory overridable
-// via CLINGFY_NATIVE_LOG_DIR). Best-effort: silent if the file cannot be
-// opened (no exception propagates), since these are diagnostic
-// breadcrumbs, not load-bearing.
+// Diagnostic breadcrumbs shared by the device enumerators, the camera
+// overlay stack, and the recording engine. Forwards into the unified log
+// pipeline as DEBUG lines under the "DeviceProbe" category
+// (NativeLogPublisher → Dart JSONL file), so the Settings "verbose logging"
+// toggle governs them like every other debug trace. Lines emitted before the
+// Flutter channel attaches are held in the publisher's pending buffer and
+// drained once Dart is ready.
+//
+// (Until the logging unification this wrote its own
+// %LOCALAPPDATA%\Clingfy\Logs\device_probe.log side file — one mechanism,
+// one file now.)
 void LogDeviceProbe(const char* msg);
 
 }  // namespace clingfy::bridge::devices

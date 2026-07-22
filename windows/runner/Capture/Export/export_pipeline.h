@@ -36,6 +36,10 @@
 #include <functional>
 #include <optional>
 #include <string>
+#include <vector>
+
+#include "Capture/Export/clip_playback_planner.h"
+#include "Capture/Export/color_grade.h"
 
 namespace clingfy::capture::export_ {
 
@@ -46,6 +50,28 @@ namespace clingfy::capture::export_ {
 struct RenderRequest {
   // Absolute path to the recorded source video (`capture/screen.mov`).
   std::wstring source_video_path;
+
+  // Editing port (color): the grade baked into the export. Identity (the
+  // default) keeps the composite byte-identical to before. Applied to the
+  // screen video + cursor + click ripples — NOT the background or the camera
+  // bubble — matching the macOS precomposited-canvas order (cursor/clicks
+  // bake into the intermediate BEFORE the grade; the camera drafts on top
+  // after).
+  color::ColorGrade color_grade;
+
+  // Editing port (clips): kept source ranges in TIMELINE order (empty = no clips
+  // = identity, byte-identical to the pre-clip path). Any real edit reaches
+  // here: MONOTONIC + disjoint ranges (cut / trim / delete-middle) forward-read
+  // the source once, while REORDER / OVERLAP (non-monotonic) read each range's
+  // source window in timeline order via per-range backward seeks (3b-2). The
+  // frame loop drops source frames that fall in a cut gap
+  // (`clip_planner::EditedMsForKeptSourceMs` → nullopt) and re-stamps the
+  // survivors onto the compacted edited timeline; audio is stitched
+  // sample-accurately (the monotonic in-loop copy, or the decoupled reorder
+  // pump). Zoom smoothing + the camera intro/outro clock run in edited time,
+  // while the drawn frame's overlays (cursor/zoom-segment/camera-video) stay
+  // keyed to its SOURCE time.
+  std::vector<clip_planner::ClipKeptRange> clip_ranges;
 
   // Absolute UTF-8 destination path (extension already resolved — .mov / .mp4 /
   // .gif — and collision-avoided by `ResolveExportDestination`). The pipeline
@@ -84,6 +110,16 @@ struct RenderRequest {
   double audio_volume_percent = 100.0;
   bool auto_normalize = false;
   double target_loudness_dbfs = -16.0;
+
+  // Audio separation (D8): the PROBED-decodable sidecar tracks. Set only
+  // when export_passthrough's ProbeDecodableAudio passed for that file —
+  // the pipeline trusts a non-empty path to open. When either is set the
+  // separated tracks REPLACE the embedded premix (deselected entirely) and
+  // audio runs through per-track ReorderAudioPumps mixed down to the single
+  // output AAC track; gain/normalize apply to the mic pump only, volume to
+  // both (macOS separated semantics). Both empty = today's embedded path.
+  std::wstring mic_audio_path;
+  std::wstring system_audio_path;
 
   // Slice 5A. `bitrate` is the requested preset ("auto"/"low"/"medium"/
   // "high"), resolved to an H.264 average bitrate against the output size.
@@ -188,12 +224,25 @@ struct RenderResult {
   // disk-full HRESULT). Lets the caller map it to EXPORT_DISK_FULL instead
   // of a generic render failure.
   bool disk_full = false;
+  // Standby-resume recovery: true when the failure was (or was caused by) a
+  // lost D3D device — the failing HRESULT is a device-loss code, or the
+  // pipeline's device reports GetDeviceRemovedReason() != S_OK. A device
+  // loss is transient (Modern Standby resume, driver reset, TDR): the
+  // router retries the whole export ONCE on a fresh device when this is
+  // set. The 55-minute-recording incident is this exact class.
+  bool device_removed = false;
 };
 
 // Phase 10.4 — pure classifier: does this encoder HRESULT mean the
 // destination volume ran out of space mid-write? (ERROR_DISK_FULL /
 // ERROR_HANDLE_DISK_FULL via HRESULT_FROM_WIN32.) Exposed for unit tests.
 bool IsDiskFullHresult(HRESULT hr);
+
+// Standby-resume recovery — pure classifier: does this HRESULT mean the D3D
+// device backing the export was lost? (DXGI device removed/reset/hung,
+// driver internal error, or Direct2D's recreate-target.) Exposed for unit
+// tests.
+bool IsDeviceRemovedHresult(HRESULT hr);
 
 // Run the full decode → composite → re-encode pass. Synchronous; returns
 // only after the output file is finalized (or a failure removes the partial

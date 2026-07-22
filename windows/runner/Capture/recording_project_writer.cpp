@@ -3,11 +3,13 @@
 #include <windows.h>
 #include <shlobj.h>
 
+#include <charconv>
 #include <chrono>
 #include <ctime>
 #include <filesystem>
 #include <fstream>
 #include <sstream>
+#include <string>
 #include <utility>
 
 namespace clingfy::capture {
@@ -59,6 +61,70 @@ std::string JsonEscape(const std::string& value) {
     }
   }
   return out;
+}
+
+// Format a double as compact JSON. `std::to_chars` emits the shortest string
+// that round-trips back to the same double, always with '.' as the separator
+// (locale-independent) and no trailing-zero noise — mirroring how Swift's
+// JSONEncoder renders 1.0 -> "1", 0.35 -> "0.35", while guaranteeing the
+// writer→reader round-trip is lossless.
+std::string JsonNumber(double v) {
+  char buf[32];
+  const auto res = std::to_chars(buf, buf + sizeof(buf), v);
+  return std::string(buf, res.ptr);
+}
+
+// Emit the `editorSeed` object (the recording-time camera composition) using
+// the macOS `RecordingMetadata.EditorSeed` on-disk keys, so a Windows-written
+// screen.meta.json decodes on macOS too. All 12 always-required macOS fields
+// are emitted; the three nullable fields (cameraNormalizedCenter,
+// cameraBorderColorArgb, cameraChromaKeyColorArgb) are omitted when absent,
+// matching JSONEncoder's `encodeIfPresent`. Written as a value only — the
+// caller supplies the `"editorSeed":` key and any trailing comma.
+void AppendEditorSeedJson(std::ostringstream& out, const CameraEditorSeed& s) {
+  out << "{\n";
+  bool first = true;
+  const auto field = [&](const char* key, const std::string& value) {
+    if (!first) out << ",\n";
+    first = false;
+    out << "    \"" << key << "\": " << value;
+  };
+  const auto quoted = [](const std::string& v) {
+    return "\"" + JsonEscape(v) + "\"";
+  };
+  field("cameraVisible", s.visible ? "true" : "false");
+  field("cameraLayoutPreset", quoted(s.layout_preset));
+  if (s.normalized_center_x.has_value() && s.normalized_center_y.has_value()) {
+    field("cameraNormalizedCenter",
+          "{\"x\": " + JsonNumber(*s.normalized_center_x) +
+              ", \"y\": " + JsonNumber(*s.normalized_center_y) + "}");
+  }
+  field("cameraSizeFactor", JsonNumber(s.size_factor));
+  field("cameraShape", quoted(s.shape));
+  field("cameraCornerRadius", JsonNumber(s.corner_radius));
+  field("cameraBorderWidth", JsonNumber(s.border_width));
+  if (s.border_color_argb.has_value()) {
+    field("cameraBorderColorArgb", std::to_string(*s.border_color_argb));
+  }
+  field("cameraShadow", std::to_string(s.shadow_preset));
+  field("cameraOpacity", JsonNumber(s.opacity));
+  field("cameraMirror", s.mirror ? "true" : "false");
+  field("cameraContentMode", quoted(s.content_mode));
+  field("cameraZoomBehavior", quoted(s.zoom_behavior));
+  field("cameraZoomScaleMultiplier", JsonNumber(s.zoom_scale_multiplier));
+  field("cameraIntroPreset", quoted(s.intro_preset));
+  field("cameraOutroPreset", quoted(s.outro_preset));
+  field("cameraZoomEmphasisPreset", quoted(s.zoom_emphasis_preset));
+  field("cameraIntroDurationMs", std::to_string(s.intro_duration_ms));
+  field("cameraOutroDurationMs", std::to_string(s.outro_duration_ms));
+  field("cameraZoomEmphasisStrength", JsonNumber(s.zoom_emphasis_strength));
+  field("cameraChromaKeyEnabled", s.chroma_key_enabled ? "true" : "false");
+  field("cameraChromaKeyStrength", JsonNumber(s.chroma_key_strength));
+  if (s.chroma_key_color_argb.has_value()) {
+    field("cameraChromaKeyColorArgb",
+          std::to_string(*s.chroma_key_color_argb));
+  }
+  out << "\n  }";
 }
 
 bool WriteUtf8File(const fs::path& path, const std::string& contents) {
@@ -178,6 +244,16 @@ std::string BuildManifestJson(const ProjectWriterInput& input) {
   out << "    \"cursorData\": \""
       << (input.cursor_enabled ? "capture/cursor.jsonl" : "capture/cursor.json")
       << "\",\n";
+  // Audio separation: the macOS Phase 1.5 sidecar keys, emitted only for a
+  // sidecar that was actually bundled (macOS's keys are nullable — absent
+  // means "no separated source"). Additive; readers on both platforms
+  // ignore unknown keys, so schemaVersion stays 2.
+  if (input.mic_audio_enabled) {
+    out << "    \"micAudio\": \"capture/mic.m4a\",\n";
+  }
+  if (input.system_audio_enabled) {
+    out << "    \"systemAudio\": \"capture/system.m4a\",\n";
+  }
   out << "    \"zoomManual\": \"capture/zoom.manual.json\"\n";
   out << "  },\n";
   // Phase 9.2: the camera block is emitted ONLY when a camera was actually
@@ -236,6 +312,13 @@ std::string BuildScreenMetaJson(const ProjectWriterInput& input) {
         << ", \"width\": " << b.width << ", \"height\": " << b.height
         << "},\n";
   }
+  // Phase 5.2 parity: the recording-time camera composition. macOS always
+  // persists an editorSeed; the reader (ParseScreenMetaJson) and
+  // getRecordingSceneInfo read it back so post-processing opens camera-on with
+  // the recorded settings. Additive — the reader ignores it on old bundles.
+  out << "  \"editorSeed\": ";
+  AppendEditorSeedJson(out, input.editor_seed);
+  out << ",\n";
   out << "  \"platform\": \"windows\"\n";
   out << "}\n";
   return out.str();
@@ -361,6 +444,43 @@ ProjectWriterResult WriteRecordingProject(const ProjectWriterInput& input) {
     }
   }
 
+  // Audio separation: bundle the mic / system sidecars (best-effort, each
+  // independently — same discipline as the cursor sidecar). The recording
+  // is valid without either (the premixed track in screen.mov is intact),
+  // so any failure downgrades that sidecar's flag and its manifest key is
+  // omitted. The `.mp4`→`.m4a` rename is just a name change — the MPEG-4
+  // container is identical; the `.m4a` name matches macOS Phase 1.5.
+  const auto bundle_audio_sidecar = [&project_root](
+                                        const std::string& src_path,
+                                        const char* dst_name) -> bool {
+    const fs::path src = fs::u8path(src_path);
+    std::error_code sc_ec;
+    if (!fs::exists(src, sc_ec)) {
+      return false;
+    }
+    const fs::path dst = project_root / "capture" / dst_name;
+    fs::rename(src, dst, sc_ec);
+    if (sc_ec) {
+      sc_ec.clear();
+      fs::copy_file(src, dst, fs::copy_options::overwrite_existing, sc_ec);
+      if (!sc_ec) {
+        fs::remove(src, sc_ec);
+        sc_ec.clear();
+      }
+    }
+    return fs::exists(dst, sc_ec);
+  };
+  effective.mic_audio_enabled = false;
+  if (input.mic_audio_enabled && !input.mic_audio_path.empty()) {
+    effective.mic_audio_enabled =
+        bundle_audio_sidecar(input.mic_audio_path, "mic.m4a");
+  }
+  effective.system_audio_enabled = false;
+  if (input.system_audio_enabled && !input.system_audio_path.empty()) {
+    effective.system_audio_enabled =
+        bundle_audio_sidecar(input.system_audio_path, "system.m4a");
+  }
+
   // Phase 10.4: by this point the screen video has been moved INTO the
   // bundle (the %TEMP% original is gone), so a failure below would strand a
   // half-built bundle with no usable manifest — invisible to the recovery
@@ -399,6 +519,10 @@ ProjectWriterResult WriteRecordingProject(const ProjectWriterInput& input) {
   // the leftover temp is NOT a deletable straggler.
   ok.cursor_downgraded = input.cursor_enabled && !effective.cursor_enabled;
   ok.camera_downgraded = input.camera_enabled && !effective.camera_enabled;
+  ok.mic_audio_downgraded =
+      input.mic_audio_enabled && !effective.mic_audio_enabled;
+  ok.system_audio_downgraded =
+      input.system_audio_enabled && !effective.system_audio_enabled;
   return ok;
 }
 

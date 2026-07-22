@@ -7,10 +7,14 @@
 #include <sstream>
 #include <string>
 
+#include "Bridge/Routers/clip_args.h"
+#include "Bridge/Routers/color_grade_args.h"
 #include "Bridge/native_error_codes.h"
 #include "Bridge/native_log_publisher.h"
 #include "Bridge/result_helpers.h"
 #include "Capture/Camera/camera_meta.h"
+#include "Capture/Export/audio_sidecar_probe.h"
+#include "Capture/Export/mic_cleanup.h"
 #include "Capture/recording_project_reader.h"
 #include "preview/preview_engine.h"
 
@@ -202,12 +206,13 @@ clingfy::preview::PreviewCameraComposition ReadCameraComposition(
 // `OutputDebugStringW` for triage without leaking implementation
 // detail across the bridge.
 //
-// `camera` key is intentionally omitted — the Windows recording engine
-// does not currently emit `editorSeed` into screen.meta.json, so there
-// is no manifest-derived camera layout state to surface today. Dart's
-// `RecordingSceneInfo.fromMap` treats a missing key and a `null`
-// identically (`raw['camera'] is Map` → false), which matches the
-// macOS handler exactly.
+// The `camera` block is emitted from the recording's persisted `editorSeed`
+// (BuildScreenMetaJson writes it at record-stop; ParseScreenMetaJson reads it
+// back into RecordingMetadata::editor_seed) so post-processing opens camera-on
+// with the recorded settings, matching macOS. Bundles recorded before editorSeed
+// landed have no seed, so the key is omitted and Dart's
+// `RecordingSceneInfo.fromMap` treats a missing key and a `null` identically
+// (`raw['camera'] is Map` → false) — a hidden camera, the prior behavior.
 // ---------------------------------------------------------------------
 
 flutter::EncodableMap BuildCameraExportCapabilities() {
@@ -233,6 +238,74 @@ flutter::EncodableMap BuildCameraExportCapabilities() {
       {flutter::EncodableValue("shadow"), flutter::EncodableValue(true)},
       {flutter::EncodableValue("chromaKey"), flutter::EncodableValue(true)},
   };
+}
+
+// Phase 5.2: translate a parsed editorSeed into the scene-info `camera` block
+// Dart's CameraCompositionState.fromMap consumes. Keys are UN-prefixed and four
+// are renamed vs the on-disk `camera*` keys (cameraShadow→shadowPreset,
+// cameraNormalizedCenter→normalizedCanvasCenter, cameraBorderColorArgb→
+// borderColorArgb, cameraChromaKeyColorArgb→chromaKeyColorArgb) — this mirrors
+// macOS PreviewSceneResolver.cameraCompositionParamsMap exactly. ARGB values go
+// out as int64 so 0xFFFFFFFF (4294967295) survives the bridge intact.
+flutter::EncodableMap BuildCameraSceneBlock(
+    const clingfy::capture::CameraEditorSeed& s) {
+  flutter::EncodableMap m{
+      {flutter::EncodableValue("visible"), flutter::EncodableValue(s.visible)},
+      {flutter::EncodableValue("layoutPreset"),
+       flutter::EncodableValue(s.layout_preset)},
+      {flutter::EncodableValue("sizeFactor"),
+       flutter::EncodableValue(s.size_factor)},
+      {flutter::EncodableValue("shape"), flutter::EncodableValue(s.shape)},
+      {flutter::EncodableValue("cornerRadius"),
+       flutter::EncodableValue(s.corner_radius)},
+      {flutter::EncodableValue("opacity"),
+       flutter::EncodableValue(s.opacity)},
+      {flutter::EncodableValue("mirror"), flutter::EncodableValue(s.mirror)},
+      {flutter::EncodableValue("contentMode"),
+       flutter::EncodableValue(s.content_mode)},
+      {flutter::EncodableValue("zoomBehavior"),
+       flutter::EncodableValue(s.zoom_behavior)},
+      {flutter::EncodableValue("zoomScaleMultiplier"),
+       flutter::EncodableValue(s.zoom_scale_multiplier)},
+      {flutter::EncodableValue("introPreset"),
+       flutter::EncodableValue(s.intro_preset)},
+      {flutter::EncodableValue("outroPreset"),
+       flutter::EncodableValue(s.outro_preset)},
+      {flutter::EncodableValue("zoomEmphasisPreset"),
+       flutter::EncodableValue(s.zoom_emphasis_preset)},
+      {flutter::EncodableValue("introDurationMs"),
+       flutter::EncodableValue(s.intro_duration_ms)},
+      {flutter::EncodableValue("outroDurationMs"),
+       flutter::EncodableValue(s.outro_duration_ms)},
+      {flutter::EncodableValue("zoomEmphasisStrength"),
+       flutter::EncodableValue(s.zoom_emphasis_strength)},
+      {flutter::EncodableValue("borderWidth"),
+       flutter::EncodableValue(s.border_width)},
+      {flutter::EncodableValue("shadowPreset"),
+       flutter::EncodableValue(s.shadow_preset)},
+      {flutter::EncodableValue("chromaKeyEnabled"),
+       flutter::EncodableValue(s.chroma_key_enabled)},
+      {flutter::EncodableValue("chromaKeyStrength"),
+       flutter::EncodableValue(s.chroma_key_strength)},
+  };
+  if (s.normalized_center_x.has_value() && s.normalized_center_y.has_value()) {
+    m[flutter::EncodableValue("normalizedCanvasCenter")] =
+        flutter::EncodableValue(flutter::EncodableMap{
+            {flutter::EncodableValue("x"),
+             flutter::EncodableValue(*s.normalized_center_x)},
+            {flutter::EncodableValue("y"),
+             flutter::EncodableValue(*s.normalized_center_y)},
+        });
+  }
+  if (s.border_color_argb.has_value()) {
+    m[flutter::EncodableValue("borderColorArgb")] = flutter::EncodableValue(
+        static_cast<std::int64_t>(*s.border_color_argb));
+  }
+  if (s.chroma_key_color_argb.has_value()) {
+    m[flutter::EncodableValue("chromaKeyColorArgb")] = flutter::EncodableValue(
+        static_cast<std::int64_t>(*s.chroma_key_color_argb));
+  }
+  return m;
 }
 
 const char* ReadErrorVariantName(clingfy::capture::ReadError e) {
@@ -327,7 +400,59 @@ void HandleGetRecordingSceneInfo(
     out[flutter::EncodableValue("cameraPath")] =
         flutter::EncodableValue(WideToUtf8(*project.camera_video_path));
   }
-  // Intentionally NO `camera` key — see the function-header comment.
+  // Phase 5.2: surface the persisted editorSeed as the `camera` block so
+  // post-processing opens camera-on with the recorded settings (macOS parity).
+  // Absent on pre-editorSeed Windows bundles (empty optional) → key omitted,
+  // Dart falls back to a hidden camera — the prior behavior, so old recordings
+  // still open unchanged.
+  if (project.metadata.has_value() &&
+      project.metadata->editor_seed.has_value()) {
+    out[flutter::EncodableValue("camera")] = flutter::EncodableValue(
+        BuildCameraSceneBlock(*project.metadata->editor_seed));
+  }
+  // Audio separation (D10): audio-presence keys so the post-processing
+  // sidebar can gate the gain/volume controls on what the RECORDING
+  // contains instead of the LIVE device selection. Separated recordings
+  // ride the SAME decode probe preview/export use; legacy (premix-only)
+  // recordings fall back to the capture-time truth in screen.meta.json —
+  // their whole-track gain/volume works whenever the premix carried audio,
+  // so sidecar-less must NOT read as "no audio" (that would disable
+  // sliders that work). No metadata either → keys omitted → Dart keeps its
+  // legacy device-selection gate (also the macOS shape today).
+  const bool mic_sidecar_ok =
+      project.mic_audio_path.has_value() &&
+      clingfy::capture::export_::ProbeDecodableAudio(*project.mic_audio_path);
+  const bool system_sidecar_ok =
+      project.system_audio_path.has_value() &&
+      clingfy::capture::export_::ProbeDecodableAudio(
+          *project.system_audio_path);
+  // `micGainApplies` names what the GAIN/NORMALIZE controls need: on a
+  // separated recording they are mic-only (inert without a decodable mic
+  // sidecar — D8/D9); on a legacy Windows premix they are whole-track and
+  // work whenever the premix carried ANY audio.
+  if (mic_sidecar_ok || system_sidecar_ok) {
+    out[flutter::EncodableValue("hasMicAudio")] =
+        flutter::EncodableValue(mic_sidecar_ok);
+    out[flutter::EncodableValue("hasSystemAudio")] =
+        flutter::EncodableValue(system_sidecar_ok);
+    out[flutter::EncodableValue("micGainApplies")] =
+        flutter::EncodableValue(mic_sidecar_ok);
+  } else if (project.metadata.has_value() &&
+             project.metadata->platform == "windows") {
+    // The metadata fallback reads WINDOWS capture truth. A macOS bundle's
+    // screen.meta.json has a different shape (its micActive/samples fields
+    // parse to defaults here), so gating on it would report false/false
+    // and disable sliders that work on the mac premix — omit the keys
+    // instead (Dart's legacy device gate takes over, today's behavior).
+    const bool premix_has_samples =
+        project.metadata->audio_samples_written > 0;
+    out[flutter::EncodableValue("hasMicAudio")] = flutter::EncodableValue(
+        premix_has_samples && project.metadata->mic_active);
+    out[flutter::EncodableValue("hasSystemAudio")] = flutter::EncodableValue(
+        premix_has_samples && project.metadata->loopback_active);
+    out[flutter::EncodableValue("micGainApplies")] =
+        flutter::EncodableValue(premix_has_samples);
+  }
   reply::Map(*result, std::move(out));
 }
 
@@ -401,8 +526,26 @@ void HandlePreviewOpen(
   open_args.session_id = session_id;
   open_args.project_path = project_path_utf8;
   open_args.video_path = read.project->screen_path;
+  // Polish: the recording's natural size from screen.meta.json sizes the
+  // shared texture to the video's aspect (no double letterbox on non-16:9
+  // recordings; the camera canvas matches the export's auto layout).
+  if (read.project->metadata.has_value()) {
+    open_args.video_width_hint =
+        static_cast<int>(read.project->metadata->width);
+    open_args.video_height_hint =
+        static_cast<int>(read.project->metadata->height);
+  }
   if (read.project->cursor_path.has_value()) {
     open_args.cursor_path = *read.project->cursor_path;
+  }
+  // Audio separation (D9): hand the existence-gated sidecar paths to the
+  // engine, which runs the decode probe once at Open. Absent → empty →
+  // the edited preview keeps the premix whole-track path.
+  if (read.project->mic_audio_path.has_value()) {
+    open_args.mic_audio_path = *read.project->mic_audio_path;
+  }
+  if (read.project->system_audio_path.has_value()) {
+    open_args.system_audio_path = *read.project->system_audio_path;
   }
   // Phase 9.6: composite the camera in the preview ONLY when the project has a
   // usable, non-burned-in camera — raw.mov + camera.meta.json present-together
@@ -447,10 +590,15 @@ void HandlePreviewOpen(
       flutter::EncodableValue(r.width);
   out[flutter::EncodableValue("height")] =
       flutter::EncodableValue(r.height);
-  out[flutter::EncodableValue("videoWidth")] =
-      flutter::EncodableValue(r.video_width);
+  // Engine state carries 0 until the first decoded frame; seed the natural
+  // size from screen.meta.json so Dart sees real dimensions at open time.
+  const int video_w = r.video_width > 0 ? r.video_width
+                                        : open_args.video_width_hint;
+  const int video_h = r.video_height > 0 ? r.video_height
+                                         : open_args.video_height_hint;
+  out[flutter::EncodableValue("videoWidth")] = flutter::EncodableValue(video_w);
   out[flutter::EncodableValue("videoHeight")] =
-      flutter::EncodableValue(r.video_height);
+      flutter::EncodableValue(video_h);
   out[flutter::EncodableValue("sharedHandleOk")] =
       flutter::EncodableValue(r.shared_handle_ok);
   reply::Map(*result, std::move(out));
@@ -578,6 +726,101 @@ void HandlePreviewSetCameraPlacement(
   reply::Null(*result);
 }
 
+// Editing port (color): pushes the Dart color grade to the live preview.
+// Parsed by the shared color_grade_args helper (the same parser the export
+// router uses — one wire shape, one parser). Stale-session calls are dropped
+// engine-side; a paused preview is nudged to recomposite immediately.
+// Always replies null (matches the void Dart contract).
+void HandlePreviewSetColorGrade(
+    const flutter::MethodCall<flutter::EncodableValue>& call,
+    std::unique_ptr<flutter::MethodResult<flutter::EncodableValue>> result) {
+  if (const auto* args =
+          std::get_if<flutter::EncodableMap>(call.arguments())) {
+    const std::string session_id = ReadString(*args, "sessionId");
+    PreviewEngine::Instance()->SetColorGrade(
+        session_id, clingfy::bridge::ReadColorGradeArg(*args));
+  }
+  reply::Null(*result);
+}
+
+// Voice cleanup (Phase 4 preview WYSIWYG): denoise the preview's mic so the
+// live preview matches the export bake. `voiceCleanup` is a nested
+// {enabled, mode} map (Dart VoiceCleanup.toMap()); only `enabled` drives the
+// preview today — the export runs full strength for either mode, so mode is
+// not yet a wet/dry blend. Stale-session calls are dropped engine-side.
+void HandlePreviewSetVoiceCleanup(
+    const flutter::MethodCall<flutter::EncodableValue>& call,
+    std::unique_ptr<flutter::MethodResult<flutter::EncodableValue>> result) {
+  if (const auto* args =
+          std::get_if<flutter::EncodableMap>(call.arguments())) {
+    const std::string session_id = ReadString(*args, "sessionId");
+    bool enabled = false;
+    std::string mode;
+    if (const auto it = args->find(flutter::EncodableValue("voiceCleanup"));
+        it != args->end()) {
+      if (const auto* vc = std::get_if<flutter::EncodableMap>(&it->second)) {
+        enabled = ReadBool(*vc, "enabled", false);
+        mode = ReadString(*vc, "mode");
+      }
+    }
+    PreviewEngine::Instance()->SetVoiceCleanup(
+        session_id, enabled,
+        clingfy::capture::export_::VoiceCleanupWetMix(mode));
+  }
+  reply::Null(*result);
+}
+
+// Editing port (clips, step 4-1): pushes the Dart clip list to the live
+// preview. Parsed by the shared clip_args helper (the same wire shape the
+// export router uses — one parser, per the color_grade precedent). Stale-session
+// calls are dropped engine-side. Always replies null (the void Dart contract).
+void HandlePreviewSetClips(
+    const flutter::MethodCall<flutter::EncodableValue>& call,
+    std::unique_ptr<flutter::MethodResult<flutter::EncodableValue>> result) {
+  if (const auto* args =
+          std::get_if<flutter::EncodableMap>(call.arguments())) {
+    const std::string session_id = ReadString(*args, "sessionId");
+    PreviewEngine::Instance()->SetClips(session_id,
+                                        clingfy::bridge::ReadClipRangesArg(*args));
+  }
+  reply::Null(*result);
+}
+
+// Editing port (audio, step 4-7d): the live preview mix. `updateAudioPreview`
+// is the method Dart actually sends (NativeBridge.setAudioMix, keys
+// gain/volume, debounced 150 ms during slider drags); the preview* names are
+// the macOS dispatch aliases (keys audioGainDb/audioVolumePercent) — kept
+// real and thin here, converging on PreviewEngine::SetAudioMix exactly like
+// the three macOS handlers converge on its setAudioMix. Both key spellings
+// are accepted on every method (macOS MainFlutterWindow parity).
+void HandleUpdateAudioPreview(
+    const flutter::MethodCall<flutter::EncodableValue>& call,
+    std::unique_ptr<flutter::MethodResult<flutter::EncodableValue>> result) {
+  if (const auto* args =
+          std::get_if<flutter::EncodableMap>(call.arguments())) {
+    const double gain =
+        ReadDouble(*args, "gain", ReadDouble(*args, "audioGainDb", 0.0));
+    const double volume = ReadDouble(
+        *args, "volume", ReadDouble(*args, "audioVolumePercent", 100.0));
+    PreviewEngine::Instance()->SetAudioMix(ReadString(*args, "sessionId"),
+                                           gain, volume);
+  }
+  reply::Null(*result);
+}
+
+void HandlePreviewSetAudioGainDb(
+    const flutter::MethodCall<flutter::EncodableValue>& call,
+    std::unique_ptr<flutter::MethodResult<flutter::EncodableValue>> result) {
+  if (const auto* args =
+          std::get_if<flutter::EncodableMap>(call.arguments())) {
+    // Gain-only alias: volume stays at unity (macOS parity).
+    PreviewEngine::Instance()->SetAudioMix(
+        ReadString(*args, "sessionId"), ReadDouble(*args, "audioGainDb", 0.0),
+        100.0);
+  }
+  reply::Null(*result);
+}
+
 }  // namespace
 
 void RegisterHandlers(HandlerTable& table) {
@@ -600,14 +843,29 @@ void RegisterHandlers(HandlerTable& table) {
 
   table["previewSetCameraPlacement"] = &HandlePreviewSetCameraPlacement;
   table["previewSetZoomSegments"] = &HandleNoopSetter;
-  // Color grade: macOS renders it live; Windows accepts + ignores it for now
-  // (capability-gated at the Dart/model layer) so the contract stays in sync.
-  table["previewSetColorGrade"] = &HandleNoopSetter;
-  // Clip split/cut/trim/arrange: macOS skips cut regions live; Windows accepts
-  // + ignores the clip list for now so the bridge contract stays in sync.
-  table["previewSetClips"] = &HandleNoopSetter;
-  table["previewSetAudioMix"] = &HandleNoopSetter;
-  table["previewSetAudioGainDb"] = &HandleNoopSetter;
+  // Voice cleanup (Phase 4 preview WYSIWYG): the RNNoise engine now runs on
+  // Windows and the export denoises the mic; this drives the LIVE preview mic
+  // too. Enabling produces the cleaned mic on a background thread and rebuilds
+  // the mic pump onto it (marshaled to the platform thread); disabling swaps
+  // the raw mic straight back. Mode (light/balanced) is not yet a wet/dry
+  // blend — the export runs full strength for either.
+  table["previewSetVoiceCleanup"] = &HandlePreviewSetVoiceCleanup;
+  // Color grade (editing port step 2): live on Windows — the same D2D color
+  // chain the export bakes with (Graphics/color_grade_effect), applied to
+  // the preview video by preview_compositor. Video-only, like macOS preview.
+  table["previewSetColorGrade"] = &HandlePreviewSetColorGrade;
+  // Clip split/cut/trim/arrange (editing port step 4-1): the clip list is now
+  // STORED on the preview session (SetClips). The stitched decode that plays
+  // through cuts/reorder lands in the following slices; a passthrough list keeps
+  // the preview byte-identical to today.
+  table["previewSetClips"] = &HandlePreviewSetClips;
+  // Audio mix (editing port step 4-7d): live on Windows — gain+volume on the
+  // edited-session renderer, volume on the passthrough MediaPlayer.
+  // `updateAudioPreview` registers HERE (it is a preview method; it was a
+  // devices_router no-op until this slice).
+  table["updateAudioPreview"] = &HandleUpdateAudioPreview;
+  table["previewSetAudioMix"] = &HandleUpdateAudioPreview;
+  table["previewSetAudioGainDb"] = &HandlePreviewSetAudioGainDb;
 
   table["previewGetZoomCapabilities"] = &HandleGetZoomCapabilities;
   table["previewGetCursorSamples"] = &HandleGetCursorSamples;

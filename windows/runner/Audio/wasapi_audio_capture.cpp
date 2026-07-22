@@ -397,7 +397,18 @@ void WasapiAudioCapture::Impl::Resume() {
     return;
   }
   if (client_ != nullptr) {
-    client_->Start();
+    // A device invalidated WHILE PAUSED fails here (classically
+    // AUDCLNT_E_DEVICE_INVALIDATED) — and silently: the client never
+    // signals its buffer event again, so the capture loop idles on the
+    // WAIT_TIMEOUT branch forever and the in-loop GetBuffer error
+    // reporting never runs. Route the failure through the same one-shot
+    // ReportCaptureError so the engine's queue-close (audio-separation
+    // D4) fires and the mixer flips to the surviving source instead of
+    // blocking forever on a stream that will never produce a packet.
+    const HRESULT hr = client_->Start();
+    if (FAILED(hr)) {
+      ReportCaptureError(hr);
+    }
   }
 }
 

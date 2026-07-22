@@ -3,6 +3,8 @@ import 'dart:async';
 import 'package:flutter/foundation.dart';
 
 import 'package:clingfy/core/bridges/native_bridge.dart';
+import 'package:clingfy/core/clips/clip_state_store.dart';
+import 'package:clingfy/core/logging/logger_service.dart';
 import 'package:clingfy/core/timeline/clip_operations.dart';
 import 'package:clingfy/core/timeline/clip_timeline.dart';
 import 'package:clingfy/core/timeline/commands/set_clips_command.dart';
@@ -26,18 +28,33 @@ class ClipEditorController extends ChangeNotifier {
     required NativeBridge nativeBridge,
     required int durationMs,
     required String? sessionId,
+    String? projectPath,
     Duration liveSyncInterval = const Duration(milliseconds: 16),
   }) : _nativeBridge = nativeBridge,
        _durationMs = durationMs < 0 ? 0 : durationMs,
        _sessionId = sessionId,
+       _projectPath = projectPath,
        _liveSyncInterval = liveSyncInterval {
-    _clips = [ClipTimeline.wholeRecording(_durationMs)];
-    _session = EditSession(onFlush: (_) => unawaited(_syncToNative()));
+    final restored = _loadPersistedClipsOrSeed();
+    _clips = restored;
+    _session = EditSession(
+      onFlush: (_) {
+        unawaited(_syncToNative());
+        _persistClips();
+      },
+    );
+    // A restored edit must reach the native preview so the reopened recording
+    // plays back its cuts. The default (whole recording) is native's starting
+    // state, so only a non-trivial restore needs pushing.
+    if (!ClipTimeline.isWholeRecording(_clips, _durationMs)) {
+      unawaited(_syncToNative());
+    }
   }
 
   final NativeBridge _nativeBridge;
   final int _durationMs;
   final String? _sessionId;
+  final String? _projectPath;
   final Duration _liveSyncInterval;
 
   late List<Clip> _clips;
@@ -255,8 +272,80 @@ class ClipEditorController extends ChangeNotifier {
       await _nativeBridge.previewSetClips(clips: _clips, sessionId: _sessionId);
     } catch (e, st) {
       // Preview-only path: a failed push must not break editing.
-      debugPrint('ClipEditorController: previewSetClips failed: $e\n$st');
+      Log.w('Clips', 'previewSetClips push failed', e, st);
     }
+  }
+
+  /// Re-push the current clips to a preview session that was rebuilt in
+  /// place (Windows `previewInvalidated` — the reopened native session
+  /// starts with the uncut timeline).
+  Future<void> resyncToNative() => _syncToNative();
+
+  /// Restores the persisted clips for this recording, or seeds the whole
+  /// recording when there is nothing valid to restore. Also advances the id
+  /// counter past any restored ids so new splits never collide with them.
+  List<Clip> _loadPersistedClipsOrSeed() {
+    final seed = [ClipTimeline.wholeRecording(_durationMs)];
+    final path = _projectPath;
+    if (path == null || _durationMs <= 0) return seed;
+
+    final persisted = ClipStateStore.load(path);
+    if (persisted == null) return seed;
+
+    final restored = _sanitizePersistedClips(persisted.clips);
+    if (restored == null) return seed;
+
+    _advanceIdCounterPast(restored);
+    return restored;
+  }
+
+  /// Validates restored clips against the current recording. Rejects (returns
+  /// null → fall back to the whole-recording seed) anything that could not have
+  /// come from this recording: an empty list, no surviving enabled clip, an
+  /// inverted/negative range, or a source bound past the recording length
+  /// (beyond a small tolerance for ms rounding).
+  ///
+  /// The accepted list is re-normalized (gap-free, contiguous `timelineStartMs`
+  /// in clip order — the invariant every [ClipOperations] result already
+  /// satisfies) so a hand-edited or corrupted file with a stale layout still
+  /// restores to a clean, playable timeline. Ids are preserved.
+  List<Clip>? _sanitizePersistedClips(List<Clip> clips) {
+    if (clips.isEmpty) return null;
+    if (!clips.any((c) => c.enabled)) return null;
+    const toleranceMs = 250;
+    for (final c in clips) {
+      if (c.sourceInMs < 0) return null;
+      if (c.sourceOutMs <= c.sourceInMs) return null;
+      if (c.sourceOutMs > _durationMs + toleranceMs) return null;
+    }
+    return ClipTimeline.normalized(clips);
+  }
+
+  void _advanceIdCounterPast(List<Clip> clips) {
+    final pattern = RegExp(r'clip_(\d+)$');
+    var maxSuffix = 0;
+    for (final c in clips) {
+      final match = pattern.firstMatch(c.id);
+      if (match == null) continue;
+      final suffix = int.tryParse(match.group(1)!) ?? 0;
+      if (suffix > maxSuffix) maxSuffix = suffix;
+    }
+    if (maxSuffix >= _idCounter) _idCounter = maxSuffix + 1;
+  }
+
+  /// Persists the current committed clip list. Fire-and-forget, best-effort —
+  /// invoked from [EditSession.onFlush], i.e. only on committed history changes
+  /// (split / cut / trim-commit / reorder / undo / redo), never on the
+  /// high-frequency live-trim ticks.
+  void _persistClips() {
+    final path = _projectPath;
+    if (path == null) return;
+    unawaited(
+      ClipStateStore.save(
+        path,
+        ClipPersistState(recordingDurationMs: _durationMs, clips: _clips),
+      ),
+    );
   }
 
   @override

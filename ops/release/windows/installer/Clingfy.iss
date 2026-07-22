@@ -88,12 +88,20 @@ SetupIconFile={#SourcePath}\..\..\..\..\windows\runner\resources\app_icon.ico
 CloseApplications=yes
 RestartApplications=no
 ChangesAssociations=yes
+; The optional clipath task edits HKCU\Environment Path; this makes Inno
+; broadcast WM_SETTINGCHANGE at the end of install so NEW terminals see it.
+ChangesEnvironment=yes
 
 [Languages]
 Name: "english"; MessagesFile: "compiler:Default.isl"
 
 [Tasks]
 Name: "desktopicon"; Description: "{cm:CreateDesktopIcon}"; GroupDescription: "{cm:AdditionalIcons}"; Flags: unchecked
+; Optional terminal launcher: ships {app}\bin\clingfy.{cmd,ps1} (always) and,
+; when selected, appends {app}\bin to the USER Path so `clingfy .` opens the
+; project in the current directory. Per-user (HKCU), matching
+; PrivilegesRequired=lowest; removed again at uninstall by the [Code] below.
+Name: "clipath"; Description: "Add the ""clingfy"" command to PATH (open projects from the terminal)"; GroupDescription: "Terminal:"; Flags: unchecked
 
 [InstallDelete]
 ; Upgrades install over the existing {app}, and Inno never deletes files the
@@ -103,6 +111,7 @@ Name: "desktopicon"; Description: "{cm:CreateDesktopIcon}"; GroupDescription: "{
 ; and prefs live under %LOCALAPPDATA%/%APPDATA%), so this cleanup is safe.
 ; Every surviving file is re-shipped by [Files] in the same transaction.
 Type: filesandordirs; Name: "{app}\data"
+Type: filesandordirs; Name: "{app}\bin"
 Type: files; Name: "{app}\*.dll"
 
 [Files]
@@ -110,6 +119,11 @@ Type: files; Name: "{app}\*.dll"
 ; runner_bridge.lib, and native_assets.json, and includes the app-local
 ; VC++ CRT. The installer ships it verbatim.
 Source: "{#StagingDir}\*"; DestDir: "{app}"; Flags: recursesubdirs ignoreversion
+; The terminal launcher (tools/cli). Shipped unconditionally (tiny); only the
+; PATH edit is gated on the clipath task. The .ps1 prefers {app}\clingfy.exe
+; when run from {app}\bin, so each channel's shim opens its own channel.
+Source: "{#SourcePath}\..\..\..\..\tools\cli\clingfy.cmd"; DestDir: "{app}\bin"; Flags: ignoreversion
+Source: "{#SourcePath}\..\..\..\..\tools\cli\clingfy.ps1"; DestDir: "{app}\bin"; Flags: ignoreversion
 
 [Icons]
 Name: "{userprograms}\{#MyAppName}"; Filename: "{app}\clingfy.exe"
@@ -149,9 +163,70 @@ Root: HKA; Subkey: "Software\Classes\Directory\shell\{#MyDirVerbKey}\command"; V
 Filename: "{app}\clingfy.exe"; Description: "{cm:LaunchProgram,{#MyAppName}}"; Flags: nowait postinstall skipifsilent
 
 [Code]
+// ---- clipath task: {app}\bin on the USER Path -----------------------------
+// HKCU\Environment (per-user, no elevation). Append is idempotent
+// (case-insensitive segment check); removal rebuilds the value segment by
+// segment so it never corrupts neighbors regardless of position or stray
+// separators, and runs unconditionally at uninstall (a no-op when the task
+// was never selected).
+
+const
+  EnvRegKey = 'Environment';
+
+procedure AddCliBinToPath();
+var
+  Path, BinDir: string;
+begin
+  BinDir := ExpandConstant('{app}\bin');
+  if not RegQueryStringValue(HKCU, EnvRegKey, 'Path', Path) then
+    Path := '';
+  if Pos(';' + Lowercase(BinDir) + ';', ';' + Lowercase(Path) + ';') > 0 then
+    exit;
+  if (Path <> '') and (Path[Length(Path)] <> ';') then
+    Path := Path + ';';
+  RegWriteExpandStringValue(HKCU, EnvRegKey, 'Path', Path + BinDir);
+end;
+
+procedure RemoveCliBinFromPath();
+var
+  Path, Bin, Rebuilt, Seg: string;
+  I: Integer;
+begin
+  if not RegQueryStringValue(HKCU, EnvRegKey, 'Path', Path) then
+    exit;
+  Bin := Lowercase(ExpandConstant('{app}\bin'));
+  Rebuilt := '';
+  Seg := '';
+  for I := 1 to Length(Path) + 1 do
+  begin
+    if (I > Length(Path)) or (Path[I] = ';') then
+    begin
+      if (Seg <> '') and (Lowercase(Seg) <> Bin) then
+      begin
+        if Rebuilt <> '' then
+          Rebuilt := Rebuilt + ';';
+        Rebuilt := Rebuilt + Seg;
+      end;
+      Seg := '';
+    end
+    else
+      Seg := Seg + Path[I];
+  end;
+  if Rebuilt <> Path then
+    RegWriteExpandStringValue(HKCU, EnvRegKey, 'Path', Rebuilt);
+end;
+
+procedure CurStepChanged(CurStep: TSetupStep);
+begin
+  if (CurStep = ssPostInstall) and WizardIsTaskSelected('clipath') then
+    AddCliBinToPath();
+end;
+
 // Uninstall-time association cleanup: delete the .clingfyproj default value
 // only if it still equals this channel's ProgId. If another channel (or any
-// other app) owns the extension by now, leave it alone.
+// other app) owns the extension by now, leave it alone. Also drops
+// {app}\bin from the user Path (no-op when the clipath task was never
+// selected).
 procedure CurUninstallStepChanged(CurUninstallStep: TUninstallStep);
 var
   CurrentProgId: string;
@@ -161,5 +236,6 @@ begin
     if RegQueryStringValue(HKA, 'Software\Classes\.clingfyproj', '', CurrentProgId) and
        (CurrentProgId = '{#MyProgId}') then
       RegDeleteValue(HKA, 'Software\Classes\.clingfyproj', '');
+    RemoveCliBinFromPath();
   end;
 end;

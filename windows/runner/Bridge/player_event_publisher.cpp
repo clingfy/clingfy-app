@@ -127,4 +127,11 @@ void PlayerEventPublisher::EmitPlayerWarning(const std::string& session_id,
   EmitMap(std::move(event));
 }
 
+void PlayerEventPublisher::EmitPreviewInvalidated(
+    const std::string& session_id, const std::string& reason) {
+  auto event = MakeEvent("previewInvalidated", session_id);
+  event[flutter::EncodableValue("reason")] = flutter::EncodableValue(reason);
+  EmitMap(std::move(event));
+}
+
 }  // namespace clingfy::bridge
