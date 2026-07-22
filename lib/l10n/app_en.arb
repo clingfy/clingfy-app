@@ -548,6 +548,7 @@
   "unknown": "Unknown",
   "none": "None",
   "appDescription": "A simple, powerful screen recorder for macOS.",
+  "appDescriptionWindows": "A simple, powerful screen recorder for Windows.",
   "visitWebsite": "Visit Website",
   "contactSupport": "Contact Support",
   "privacyPolicy": "Privacy Policy",

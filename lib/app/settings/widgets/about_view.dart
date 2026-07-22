@@ -1,5 +1,6 @@
 import 'package:clingfy/app/settings/widgets/about_section.dart';
 import 'package:flutter/cupertino.dart' show CupertinoIcons;
+import 'package:clingfy/ui/platform/platform_kind.dart';
 import 'package:clingfy/ui/platform/widgets/app_button.dart';
 import 'package:flutter/material.dart';
 import 'package:package_info_plus/package_info_plus.dart';
@@ -102,7 +103,9 @@ class _AboutViewState extends State<AboutView> {
                         const SizedBox(height: 24),
 
                         Text(
-                          l10n.appDescription,
+                          isWindows()
+                              ? l10n.appDescriptionWindows
+                              : l10n.appDescription,
                           style: theme.textTheme.bodyLarge,
                           textAlign: TextAlign.center,
                         ),
