@@ -131,6 +131,14 @@ stages:
               APP_ENV: $(APP_ENV)
               RELEASE_CHANNEL: $(RELEASE_CHANNEL)
 
+          # sentry-cli is not preinstalled on windows-latest; upload_symbols.ps1
+          # requires it on PATH. npm ships on the agent, and the script already
+          # handles the npm-install arg-passing quirk (its own comment).
+          - powershell: |
+              npm install -g @sentry/cli
+              if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+            displayName: "Install sentry-cli"
+
           # Sentry symbols — non-blocking, canonical invocation from
           # ci_release.ps1 (upload_symbols takes -EnvFile, not -Channel).
           - powershell: |
