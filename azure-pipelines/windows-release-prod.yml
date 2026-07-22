@@ -1,0 +1,149 @@
+# windows-release-prod.yml
+#
+# Windows counterpart of release-prod.yml (macOS): the PRODUCTION Windows
+# release lane. Manually triggered from a `release/*` branch, it builds the
+# prod installer and publishes it + the update feed (latest-windows.json) to
+# the PROD blob. Unsigned for now (decision D3 / no signing certificate yet):
+# `03_sign.ps1` skips with a loud warning when no WIN_SIGN_* material is set,
+# so prod ships unsigned and users see a Windows SmartScreen "unknown
+# publisher" prompt until a cert is wired (see "To SIGN" below).
+#
+# Mirrors the split the dev lane (windows-dev-channel.yml) uses: build/package
+# in a plain step, then upload inside an AzureCLI@2 task so `az` runs as the
+# service connection's identity. Prod is version-only (`Clingfy_Setup_1.0.6.exe`),
+# no `+build` in the name; the pubspec build number still feeds FILEVERSION and
+# must stay <= 65535 (never $(Build.BuildId) here).
+#
+# ── Azure DevOps prerequisites (portal, one-time — cannot live in the repo) ──
+#   1. Create a pipeline pointing at this file (Pipelines -> New -> this YAML),
+#      run it MANUALLY from the `release/x.y.z` branch you are shipping.
+#   2. Service connection `ClingfyAzureConnection` (shared with macOS) — its
+#      service principal needs **Storage Blob Data Contributor on the PROD
+#      storage account** (the account `.env.prod` points at, e.g.
+#      `clingfyreleases` — NOT the dev account). Verify/grant this role.
+#   3. Secure file `.env.prod` in the Library — the prod blob-direct config
+#      (AZ_STORAGE_ACCOUNT = the prod account; AZ_FRONTDOOR_ENDPOINT_NAME empty
+#      unless prod is fronted, in which case 04 purges those paths).
+#   4. Variable group `Clingfy-Secrets` linked (shared with the macOS lane).
+#   5. The `Flutter` Marketplace task (FlutterInstall@0) installed in the org.
+#
+# To SIGN prod builds: add a DownloadSecureFile for the .pfx, set
+# WIN_SIGN_CERT_PFX/WIN_SIGN_CERT_PASSWORD (or _THUMBPRINT) as env on the build
+# step, and the lane signs automatically (03_sign runs when material exists).
+# Left unsigned here on purpose per the current release decision.
+
+trigger: none
+pr: none
+
+pool:
+  vmImage: "windows-latest"
+
+variables:
+  - group: "Clingfy-Secrets"
+
+  - name: APP_ENV
+    value: "prod"
+
+  - name: RELEASE_CHANNEL
+    value: "prod"
+
+stages:
+  - stage: Release
+    displayName: "Windows Production Release (unsigned)"
+    # Belt-and-suspenders alongside 00_version_guard.ps1: only ever run from a
+    # release branch, so a stray manual run on develop can't publish prod.
+    condition: startsWith(variables['Build.SourceBranch'], 'refs/heads/release/')
+    jobs:
+      - job: BuildPublish
+        displayName: "Build, package (unsigned), publish, smoke"
+        steps:
+          - checkout: self
+            persistCredentials: true
+            fetchDepth: 0
+
+          - task: DownloadSecureFile@1
+            name: EnvFile
+            displayName: "Download .env.prod"
+            inputs:
+              secureFile: ".env.prod"
+
+          - powershell: |
+              Copy-Item "$(EnvFile.secureFilePath)" `
+                "$(System.DefaultWorkingDirectory)\.env.prod" -Force
+              Write-Host "Staged .env.prod"
+            displayName: "Stage .env.prod"
+
+          - task: FlutterInstall@0
+            displayName: "Install Flutter 3.41.1"
+            inputs:
+              mode: auto
+              channel: stable
+              version: custom
+              customVersion: "3.41.1"
+
+          # Inno Setup is not preinstalled on windows-latest. 6.5+ prints a
+          # "Non-commercial use only" notice on unlicensed installs — verify the
+          # Inno license before a commercial ship (ops/release/windows/RUNBOOK.md).
+          - powershell: |
+              choco install innosetup -y --no-progress
+              if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+            displayName: "Install Inno Setup"
+
+          # Hard gate: the release/* branch name must match pubspec's semantic
+          # version (00_version_guard skips on non-release branches, but the
+          # stage condition already pinned us to release/*).
+          - powershell: |
+              pwsh -NoProfile -File ops/release/windows/00_version_guard.ps1 -Channel prod
+              if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+            displayName: "Version guard (branch <-> pubspec)"
+            env:
+              APP_ENV: $(APP_ENV)
+              RELEASE_CHANNEL: $(RELEASE_CHANNEL)
+
+          # Build + stage + package the prod installer. No -Publish here (upload
+          # runs under the service connection below). No WIN_SIGN_* env => 03_sign
+          # skips and the build is unsigned. Build number comes from pubspec
+          # (`X.Y.Z+N`), NOT $(Build.BuildId), so it stays within 16 bits.
+          - powershell: |
+              pwsh -NoProfile -File `
+                ops/release/windows/workflows/local_release.ps1 -Channel prod -Clean
+              if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+            displayName: "Build + package (unsigned prod)"
+            env:
+              APP_ENV: $(APP_ENV)
+              RELEASE_CHANNEL: $(RELEASE_CHANNEL)
+
+          # Upload installer + .sha256 + latest-windows.json to the PROD blob,
+          # then smoke-test the published feed/download. AzureCLI@2 gives `az`
+          # the service connection identity for `--auth-mode login`.
+          - task: AzureCLI@2
+            displayName: "Publish to prod blob + smoke"
+            inputs:
+              azureSubscription: "ClingfyAzureConnection"
+              scriptType: pscore
+              scriptLocation: inlineScript
+              inlineScript: |
+                pwsh -NoProfile -File ops/release/windows/04_publish_azure.ps1 -Channel prod
+                if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+                pwsh -NoProfile -File ops/release/windows/05_smoke.ps1 -Channel prod
+                if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+            env:
+              APP_ENV: $(APP_ENV)
+              RELEASE_CHANNEL: $(RELEASE_CHANNEL)
+
+          # Sentry symbols — non-blocking, canonical invocation from
+          # ci_release.ps1 (upload_symbols takes -EnvFile, not -Channel).
+          - powershell: |
+              pwsh -NoProfile -File ops/release/windows/upload_symbols.ps1 -EnvFile ".env.prod"
+            displayName: "Upload Sentry symbols (non-blocking)"
+            continueOnError: true
+            env:
+              APP_ENV: $(APP_ENV)
+              RELEASE_CHANNEL: $(RELEASE_CHANNEL)
+
+          - task: PublishBuildArtifacts@1
+            displayName: "Publish prod artifact"
+            condition: succeededOrFailed()
+            inputs:
+              PathtoPublish: "dist/windows/installer"
+              ArtifactName: "Clingfy-Windows-Prod"
