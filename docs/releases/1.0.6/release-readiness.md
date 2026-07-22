@@ -17,11 +17,11 @@ Fill this section before starting verification.
 - Version: `v1.0.6`
 - Channel: `prod`
 - Date: `2026-07-22`
-- Verified by: `TBD (maintainer)`
-- Commit: `TBD`
+- Verified by: `Nabil`
+- Commit: `ff5d172`
 - Tag: `v1.0.6`
 - Build: `Azure #255` or `GitHub Actions #4`
-- Status: `In progress`
+- Status: `Approved`
 
 Possible status values:
 
@@ -46,11 +46,11 @@ flutter build macos --flavor prod
 
 Checklist:
 
-* [ ] `dart format --output=none --set-exit-if-changed .`
-* [ ] `flutter analyze test`
-* [ ] `flutter analyze lib`
-* [ ] `flutter build macos --flavor dev`
-* [ ] `flutter build macos --flavor prod`
+* [X] `dart format --output=none --set-exit-if-changed .`
+* [X] `flutter analyze test`
+* [X] `flutter analyze lib`
+* [X] `flutter build macos --flavor dev`
+* [X] `flutter build macos --flavor prod`
 
 Notes:
 
@@ -62,14 +62,14 @@ Notes:
 
 Verify the full recording workflow.
 
-* [ ] full display recording
-* [ ] single window recording
-* [ ] custom area recording
-* [ ] countdown start
-* [ ] countdown cancel
-* [ ] stop flow
-* [ ] menu bar control
-* [ ] recording indicator overlay
+* [X] full display recording
+* [X] single window recording
+* [X] custom area recording
+* [X] countdown start
+* [X] countdown cancel
+* [X] stop flow
+* [X] menu bar control
+* [X] recording indicator overlay
 
 Notes:
 
@@ -81,10 +81,10 @@ Notes:
 
 Verify permission prompts and recovery flows.
 
-* [ ] screen recording permission request
-* [ ] screen recording recovery flow
-* [ ] camera permission flow
-* [ ] accessibility prompt
+* [X] screen recording permission request
+* [X] screen recording recovery flow
+* [X] camera permission flow
+* [X] accessibility prompt
 
 Notes:
 
@@ -96,16 +96,16 @@ Notes:
 
 Verify overlay behavior and cursor/zoom features.
 
-* [ ] overlay show/hide
-* [ ] overlay manual move
-* [ ] overlay position persistence
-* [ ] overlay styling options
-* [ ] overlay linked-to-recording mode
-* [ ] cursor sidecar capture
-* [ ] cursor visibility toggle in export
-* [ ] cursor scaling and highlight
-* [ ] zoom factor
-* [ ] zoom follow strength
+* [X] overlay show/hide
+* [X] overlay manual move
+* [X] overlay position persistence
+* [X] overlay styling options
+* [X] overlay linked-to-recording mode
+* [X] cursor sidecar capture
+* [X] cursor visibility toggle in export
+* [X] cursor scaling and highlight
+* [X] zoom factor
+* [X] zoom follow strength
 
 Notes:
 
@@ -117,17 +117,17 @@ Notes:
 
 Verify preview playback and export pipeline.
 
-* [ ] inline preview playback
-* [ ] 16:9 preview/export
-* [ ] 1080p export
-* [ ] 1440p export
-* [ ] 2160p export
-* [ ] MP4 export
-* [ ] MOV export
+* [X] inline preview playback
+* [X] 16:9 preview/export
+* [X] 1080p export
+* [X] 1440p export
+* [X] 2160p export
+* [X] MP4 export
+* [X] MOV export
 * [ ] GIF export
-* [ ] background image export
-* [ ] background color export
-* [ ] save folder selection
+* [X] background image export
+* [X] background color export
+* [X] save folder selection
 
 Notes:
 
@@ -139,10 +139,10 @@ Notes:
 
 Verify licensing and paywall behavior.
 
-* [ ] free trial depletion
-* [ ] paywall display
-* [ ] license activation
-* [ ] expired updates messaging
+* [X] free trial depletion
+* [X] paywall display
+* [X] license activation
+* [X] expired updates messaging
 
 Notes:
 
@@ -154,11 +154,11 @@ Notes:
 
 Ensure repository documentation and release tooling are in place.
 
-* [ ] release tooling documented in `ops/release/README.md`
-* [ ] `README.md` updated
+* [X] release tooling documented in `ops/release/README.md`
+* [X] `README.md` updated
 * [ ] `LICENSE` added
 * [ ] `LICENSING.md` added
-* [ ] `CONTRIBUTING.md` added
+* [x] `CONTRIBUTING.md` added
 * [ ] `SECURITY.md` added
 
 Notes:
@@ -171,11 +171,11 @@ Notes:
 
 Verify the generated release artifacts before publishing.
 
-* [ ] DMG launches correctly
-* [ ] app icon and metadata appear correctly
-* [ ] auto-updater configuration verified
-* [ ] update channel configuration verified
-* [ ] application launches without console errors
+* [X] DMG launches correctly
+* [X] app icon and metadata appear correctly
+* [X] auto-updater configuration verified
+* [X] update channel configuration verified
+* [X] application launches without console errors
 
 Notes:
 
@@ -187,7 +187,7 @@ Notes:
 
 Complete this section after all checks.
 
-* [ ] Approved for release
+* [X] Approved for release
 * [ ] Blocked from release
 
 Blocking issues:
