@@ -5,6 +5,7 @@ import 'package:intl/intl.dart';
 import 'package:package_info_plus/package_info_plus.dart';
 import 'package:clingfy/app/config/build_config.dart';
 import 'package:clingfy/l10n/app_localizations.dart';
+import 'package:clingfy/ui/platform/platform_kind.dart';
 import 'package:clingfy/ui/platform/widgets/app_inline_notice.dart';
 import 'package:clingfy/ui/platform/widgets/app_icon_button.dart';
 
@@ -105,7 +106,9 @@ class _AboutSectionState extends State<AboutSection>
               ),
               const SizedBox(height: 20),
               Text(
-                AppLocalizations.of(context)!.appDescription,
+                isWindows()
+                    ? AppLocalizations.of(context)!.appDescriptionWindows
+                    : AppLocalizations.of(context)!.appDescription,
                 style: theme.textTheme.bodyLarge,
                 textAlign: TextAlign.center,
               ),

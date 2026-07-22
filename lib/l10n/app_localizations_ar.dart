@@ -1591,6 +1591,9 @@ class AppLocalizationsAr extends AppLocalizations {
   String get appDescription => 'مسجل شاشة بسيط وقوي لنظام macOS.';
 
   @override
+  String get appDescriptionWindows => 'مسجل شاشة بسيط وقوي لنظام Windows.';
+
+  @override
   String get visitWebsite => 'زيارة الموقع';
 
   @override
