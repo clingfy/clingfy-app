@@ -1618,6 +1618,10 @@ class AppLocalizationsRo extends AppLocalizations {
       'Un înregistrator de ecran simplu și puternic pentru macOS.';
 
   @override
+  String get appDescriptionWindows =>
+      'Un înregistrator de ecran simplu și puternic pentru Windows.';
+
+  @override
   String get visitWebsite => 'Vizitați Website-ul';
 
   @override

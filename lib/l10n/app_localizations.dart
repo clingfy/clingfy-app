@@ -3064,6 +3064,12 @@ abstract class AppLocalizations {
   /// **'A simple, powerful screen recorder for macOS.'**
   String get appDescription;
 
+  /// No description provided for @appDescriptionWindows.
+  ///
+  /// In en, this message translates to:
+  /// **'A simple, powerful screen recorder for Windows.'**
+  String get appDescriptionWindows;
+
   /// No description provided for @visitWebsite.
   ///
   /// In en, this message translates to:

@@ -1604,6 +1604,10 @@ class AppLocalizationsEn extends AppLocalizations {
   String get appDescription => 'A simple, powerful screen recorder for macOS.';
 
   @override
+  String get appDescriptionWindows =>
+      'A simple, powerful screen recorder for Windows.';
+
+  @override
   String get visitWebsite => 'Visit Website';
 
   @override

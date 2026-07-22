@@ -555,6 +555,7 @@
   "unknown": "غير معروف",
   "none": "لا يوجد",
   "appDescription": "مسجل شاشة بسيط وقوي لنظام macOS.",
+  "appDescriptionWindows": "مسجل شاشة بسيط وقوي لنظام Windows.",
   "visitWebsite": "زيارة الموقع",
   "contactSupport": "الاتصال بالدعم",
   "privacyPolicy": "سياسة الخصوصية",

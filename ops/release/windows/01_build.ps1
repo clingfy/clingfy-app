@@ -77,8 +77,47 @@ if ($SkipBuild) {
     & $flutter.Source pub get
     if ($LASTEXITCODE -ne 0) { Fail "flutter pub get failed with exit code $LASTEXITCODE." }
 
-    Write-Step "flutter build windows --release --dart-define-from-file=$($Ctx.EnvFile)"
-    & $flutter.Source build windows --release "--dart-define-from-file=$($Ctx.EnvFile)"
+    # Build-provenance dart-defines (mirrors the macOS build_archive.sh set):
+    # without these BuildConfig falls back to unknown/local and the About
+    # screen shows no real commit/branch/build. .env files can't carry them —
+    # they are per-build. Branch resolves from the CI env FIRST because Azure
+    # checks out a detached HEAD, where `git branch --show-current` is empty.
+    $commitHash = (& git rev-parse --short HEAD 2>$null)
+    if ($LASTEXITCODE -ne 0 -or [string]::IsNullOrWhiteSpace($commitHash)) {
+      $commitHash = 'unknown'
+    }
+    $commitHash = "$commitHash".Trim()
+
+    $branchName = ''
+    if ($env:BUILD_SOURCEBRANCH) {
+      $branchName = $env:BUILD_SOURCEBRANCH -replace '^refs/heads/', ''
+    }
+    elseif ($env:BUILD_SOURCEBRANCHNAME) {
+      $branchName = $env:BUILD_SOURCEBRANCHNAME
+    }
+    else {
+      $gitBranch = (& git branch --show-current 2>$null)
+      if ($LASTEXITCODE -eq 0 -and -not [string]::IsNullOrWhiteSpace($gitBranch)) {
+        $branchName = "$gitBranch".Trim()
+      }
+    }
+    if ([string]::IsNullOrWhiteSpace($branchName)) { $branchName = 'local' }
+
+    $buildId = if ($env:BUILD_BUILDID) {
+      $env:BUILD_BUILDID
+    }
+    else {
+      [DateTimeOffset]::UtcNow.ToUnixTimeSeconds().ToString()
+    }
+    $timestampUtc = [DateTime]::UtcNow.ToString('yyyy-MM-ddTHH:mm:ssZ')
+
+    Write-Step "flutter build windows --release (+ build-provenance defines: $commitHash / $branchName)"
+    & $flutter.Source build windows --release `
+      "--dart-define-from-file=$($Ctx.EnvFile)" `
+      "--dart-define=COMMIT_HASH=$commitHash" `
+      "--dart-define=BUILD_BRANCH=$branchName" `
+      "--dart-define=BUILD_ID=$buildId" `
+      "--dart-define=BUILD_TIMESTAMP=$timestampUtc"
     if ($LASTEXITCODE -ne 0) { Fail "flutter build windows failed with exit code $LASTEXITCODE." }
   } finally {
     Pop-Location
