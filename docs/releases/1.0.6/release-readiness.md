@@ -21,7 +21,7 @@ Fill this section before starting verification.
 - Commit: `ff5d172`
 - Tag: `v1.0.6`
 - Build: `Azure #255` or `GitHub Actions #4`
-- Status: `Approved`
+- Status: `Released`
 
 Possible status values:
 
