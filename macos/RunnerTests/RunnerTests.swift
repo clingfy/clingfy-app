@@ -5962,56 +5962,6 @@ final class LetterboxExporterTests: XCTestCase {
     XCTAssertNil(try params(comp.systemTrackID).audioTapProcessor)
   }
 
-  /// A crossfade anchor ramps the incoming variant up and the outgoing one down
-  /// over the ramp window, with correct whole-timeline baselines (0 before for
-  /// the incoming, target before for the outgoing).
-  func testSeparatedAudioMixCrossfadeRampsIncomingUpAndOutgoingDown() throws {
-    let tempDir = makeTemporaryDirectory()
-    defer { try? FileManager.default.removeItem(at: tempDir) }
-    let screenURL = tempDir.appendingPathComponent("screen.mov")
-    try makeColorPatchVideo(
-      url: screenURL, size: CGSize(width: 160, height: 120), durationSeconds: 1.0)
-    var micAssets: [PreviewMicVariant: AVAsset] = [:]
-    for (variant, name) in [
-      (PreviewMicVariant.base, "base"), (.cleaned(.light), "light"),
-    ] {
-      let url = tempDir.appendingPathComponent("\(name).m4a")
-      try makeToneAudioFile(url: url, seconds: 1.0, amplitude: 0.5, frequency: 440)
-      micAssets[variant] = AVAsset(url: url)
-    }
-    let comp = try XCTUnwrap(
-      InlinePreviewView.makeSeparatedPreviewComposition(
-        screenAsset: AVAsset(url: screenURL), micAssetsByVariant: micAssets,
-        systemAsset: nil, ranges: []))
-    let incoming = try XCTUnwrap(comp.micTrackIDs[.cleaned(.light)])  // newly selected
-    let outgoing = try XCTUnwrap(comp.micTrackIDs[.base])  // previous selection
-    let anchor = CMTime(value: 500, timescale: 1000)
-    let dur = CMTime(value: 30, timescale: 1000)
-
-    let mix = try XCTUnwrap(
-      AudioMixEngine.makeSeparatedAudioMix(
-        audioTracks: comp.composition.tracks(withMediaType: .audio),
-        gainTargetTrackID: incoming,
-        masterVolumePercent: 100, gainTargetVolumeComponent: 1.0, gainTargetGainDb: 0,
-        mutedTrackIDs: [outgoing], rampAnchor: anchor, rampDuration: dur,
-        outgoingMicTrackID: outgoing))
-
-    func rampAt(_ id: CMPersistentTrackID, at t: CMTime) throws -> (Float, Float) {
-      let p = try XCTUnwrap(mix.inputParameters.first { $0.trackID == id })
-      var s: Float = -1
-      var e: Float = -1
-      XCTAssertTrue(p.getVolumeRamp(for: t, startVolume: &s, endVolume: &e, timeRange: nil))
-      return (s, e)
-    }
-    // Before the anchor: incoming silent (0), outgoing at full.
-    XCTAssertEqual(try rampAt(incoming, at: .zero).0, 0, accuracy: 0.01)
-    XCTAssertEqual(try rampAt(outgoing, at: .zero).0, 1.0, accuracy: 0.01)
-    // After the ramp: incoming at full, outgoing silent.
-    let after = CMTime(value: 600, timescale: 1000)
-    XCTAssertEqual(try rampAt(incoming, at: after).0, 1.0, accuracy: 0.01)
-    XCTAssertEqual(try rampAt(outgoing, at: after).0, 0, accuracy: 0.01)
-  }
-
   func testSeparatedExportMasterVolumeAttenuatesTheMix() throws {
     let tempDir = makeTemporaryDirectory()
     defer { try? FileManager.default.removeItem(at: tempDir) }

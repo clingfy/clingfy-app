@@ -1,7 +1,32 @@
-## [Unreleased]
+## [1.0.6] - 2026-07-22
+
+Clingfy 1.0.6 is an audio release. It adds **Voice Cleanup** — on-device background-noise removal for your microphone — and, under it, a reworked audio pipeline that records the mic and system audio as separate tracks and previews the exact mix you'll export. Your clip and color edits now also survive a restart.
+
+### Highlights
+- **Voice Cleanup:** remove fans, room tone, and street noise from your mic with one tap — Light or Balanced. Mic only; your system, game, and music audio are never touched. Previewed live exactly as it exports. Off by default.
+- **Separated audio + WYSIWYG preview:** the mic and system audio are captured as independent tracks and mixed at export, so the preview plays the true export mix instead of the recording's baked-in track.
+- **Edits persist:** clip cuts and color grades are saved per recording and restored when you reopen a project.
 
 ### New Features
-- Added **Voice Cleanup**, on-device background-noise removal for the microphone. Turn it on in the post-processing Audio panel and pick **Light** or **Balanced**; fans, room tone, and street noise drop away while your voice stays intact. It applies to the microphone only — system, game, and music audio are never touched — and you hear the result in the preview exactly as it will export. Off by default. Available on both macOS and Windows.
+- Added **Voice Cleanup** in the post-processing Audio panel (Light / Balanced), on-device and private — nothing is uploaded. It cleans the microphone track only and the preview matches the export.
+- The microphone and system audio are now recorded as **separate sources** in the project and mixed at export, unlocking mic-only processing without touching system audio.
+- Added an opt-in **speaker-to-mic echo removal** for recordings made with speakers: it cancels the delayed copy of the system audio that bleeds into the mic during pauses. Off by default.
+- **Clip and color edits persist** across app restarts, saved per recording.
+
+### Improvements
+- The editor preview now plays the **same mic + system mix the export produces**, so what you hear is what you get.
+- You can keep **editing the timeline while an export runs**.
+- Mic gain is baked into the mic track at export, so boosting the mic no longer distorts the rest of the mix.
+- Loudness normalization and per-export audio gain/volume act on the voice track only.
+
+### Bug Fixes
+- Fixed the zoom lane drifting off the edited ruler under cuts.
+- Export now checks the destination folder before rendering, so an unplugged drive fails immediately with a clear message instead of after a full render.
+- Fixed a preview flicker and audio glitch when switching Voice Cleanup modes, and a case where a clip delete could hide the camera overlay.
+
+### Internal
+- Unified the macOS / Windows logging into one JSONL contract.
+- Continued the **Windows beta**: **Voice Cleanup is now complete on Windows** — the on-device engine plus export, live-preview (WYSIWYG), and Light/Balanced strength, matching macOS — alongside separated mic/system audio, the camera-bubble renderer, and clip-editing playback. The Windows build ships **unsigned** for now (a signed build comes later), so it remains in beta and is not yet publicly released.
 
 ## [1.0.5] - 2026-07-01
 

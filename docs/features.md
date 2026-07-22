@@ -4,7 +4,7 @@ The canonical answer to "what can Clingfy do today?" — one row per user-facing
 feature, with platform status. Update this file whenever a release ships
 (alongside `CHANGELOG.md`).
 
-- **Baseline:** macOS **v1.0.5** (2026-07-01). Anything newer is listed under
+- **Baseline:** macOS **v1.0.6** (2026-07-22). Anything newer is listed under
   [In development](#in-development-on-develop-unreleased).
 - **Windows** is a beta port living in `windows/` — feature-complete for
   record → preview → edit → export, not yet publicly released. See
@@ -128,16 +128,9 @@ Status legend: ✅ shipped · 🚧 partial / with caveats · — not available y
 
 ## In development on `develop` (unreleased)
 
-- **Clip + color persistence** — edits survive app restarts, saved per project.
-- **Separated audio capture** — mic and system audio recorded as independent
-  tracks (`capture/mic.m4a` + `capture/system.m4a`) and mixed at export.
-- **Mic echo cancellation** — removing speaker-to-mic bleed; experimental,
-  still being iterated.
-- **WYSIWYG audio preview** — hear the exact export mix in the editor.
-- **Live timeline during export** — keep editing while an export runs.
-- **Voice cleanup** — mic background-noise removal (Light / Balanced),
-  opt-in and off by default. macOS only until the RNNoise engine is built
-  into the Windows target.
+- **Windows Voice Cleanup** — the on-device RNNoise engine is built into the
+  Windows target; wiring it into the Windows export/preview is the remaining
+  work.
 - **Windows beta launch** — installer, updater, and tester docs are ready;
   invites pending release gates.
 
@@ -151,6 +144,7 @@ Status legend: ✅ shipped · 🚧 partial / with caveats · — not available y
 
 | Version | Headline features |
 |---|---|
+| 1.0.6 (2026-07-22) | Voice Cleanup (mic noise reduction), separated mic/system audio + WYSIWYG preview, opt-in echo removal, clip/color edit persistence |
 | 1.0.5 (2026-07-01) | Clip editing (split / cut / trim / reorder), color correction, verbose logging |
 | 1.0.4 | Procedural backgrounds, per-recording canvas persistence, massive export temp-disk reduction |
 | 1.0.3 | Follow-cursor + fixed-target zoom editing, floating zoom toolbar |
