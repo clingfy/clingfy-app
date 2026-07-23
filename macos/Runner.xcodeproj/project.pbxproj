@@ -113,6 +113,7 @@
 		632E2DD388917796BE34FCCD /* ExportPrepTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = E0F9BE980D7AC62253E76CAC /* ExportPrepTests.swift */; };
 		694F07480FE17B655AC013A3 /* RecordingStateMachineTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 04091965DCAEC5DFBFFCCDEB /* RecordingStateMachineTests.swift */; };
 		69B5122F481E9152FAF2A9B3 /* RequestParsingTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 964282A8773D929D64A40630 /* RequestParsingTests.swift */; };
+		6C7415F5D3D15C0CF94618EB /* GifEncoderTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = A7CE3815FDED694968446657 /* GifEncoderTests.swift */; };
 		70E344F67EBA92C8E19FC2A9 /* PreviewEngine.swift in Sources */ = {isa = PBXBuildFile; fileRef = 20A218232ED0A6EA98B32ABD /* PreviewEngine.swift */; };
 		78803A98243937CED6567313 /* RadialGlowBackgroundRenderer.swift in Sources */ = {isa = PBXBuildFile; fileRef = DD7E17F6CABE8AC154B4FDD0 /* RadialGlowBackgroundRenderer.swift */; };
 		79A2C220CAB9E6C95BED894A /* CachedRecordingsCleanupPolicy.swift in Sources */ = {isa = PBXBuildFile; fileRef = 1C10603525072F935CFA8A14 /* CachedRecordingsCleanupPolicy.swift */; };
@@ -182,6 +183,7 @@
 		E1A0C0012F60000100BEE001 /* AVAssetWriterInputExceptionBridge.m in Sources */ = {isa = PBXBuildFile; fileRef = E1A0C0032F60000100BEE003 /* AVAssetWriterInputExceptionBridge.m */; };
 		E2E9A1BCA255E1E4D0E7D893 /* RecordingSessionCoordinatorTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 1D5A886A3A3078FDE329DDD8 /* RecordingSessionCoordinatorTests.swift */; };
 		E3ECE685EE9CE4A7311FD73C /* RecordingEngine.swift in Sources */ = {isa = PBXBuildFile; fileRef = A5A6225F6CBBE813D421D521 /* RecordingEngine.swift */; };
+		E7F90A099654ACCB10A3028D /* GifEncoder.swift in Sources */ = {isa = PBXBuildFile; fileRef = 4758E388D386E24B68B33F48 /* GifEncoder.swift */; };
 		ED14C053CA72B2C3595D73FE /* ScreenRecorderMethodDispatcher.swift in Sources */ = {isa = PBXBuildFile; fileRef = 4397E0D64816B4207BDD9EE0 /* ScreenRecorderMethodDispatcher.swift */; };
 		F105AFBAF4A49E9E45E9F551 /* CanvasBackgroundRenderer.swift in Sources */ = {isa = PBXBuildFile; fileRef = CDB7D0CE2C3759DD0ABDFF44 /* CanvasBackgroundRenderer.swift */; };
 		F1A0011AA11D105E00000002 /* SourceAudioRecorder.swift in Sources */ = {isa = PBXBuildFile; fileRef = F1A0011AA11D105E00000001 /* SourceAudioRecorder.swift */; };
@@ -283,6 +285,7 @@
 		3DA17418CA7B00D8F0F4B113 /* ExportEngineTests.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = ExportEngineTests.swift; sourceTree = "<group>"; };
 		427E590FBC9C4916C464DEA7 /* OverlayRefreshPlan.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = OverlayRefreshPlan.swift; sourceTree = "<group>"; };
 		4397E0D64816B4207BDD9EE0 /* ScreenRecorderMethodDispatcher.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = ScreenRecorderMethodDispatcher.swift; sourceTree = "<group>"; };
+		4758E388D386E24B68B33F48 /* GifEncoder.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = GifEncoder.swift; sourceTree = "<group>"; };
 		4899C8EB90C6FE3503A404A8 /* Pods-RunnerTests.release-prod.xcconfig */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = text.xcconfig; name = "Pods-RunnerTests.release-prod.xcconfig"; path = "Target Support Files/Pods-RunnerTests/Pods-RunnerTests.release-prod.xcconfig"; sourceTree = "<group>"; };
 		49998781A7ED783ED2315B93 /* NSColor+ARGB.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = "NSColor+ARGB.swift"; sourceTree = "<group>"; };
 		523922A25F5F34150B8F9459 /* GifExportPolicyTests.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = GifExportPolicyTests.swift; sourceTree = "<group>"; };
@@ -382,6 +385,7 @@
 		A5A6225F6CBBE813D421D521 /* RecordingEngine.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = RecordingEngine.swift; sourceTree = "<group>"; };
 		A74D174212C4749A322E8474 /* ZoomQueryServiceTests.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = ZoomQueryServiceTests.swift; sourceTree = "<group>"; };
 		A77BB536EE34C7BCF42EEA92 /* RecordingStateMachine.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = RecordingStateMachine.swift; sourceTree = "<group>"; };
+		A7CE3815FDED694968446657 /* GifEncoderTests.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = GifEncoderTests.swift; sourceTree = "<group>"; };
 		A804343376134DBC7318D507 /* PermissionsMethodRouterTests.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = PermissionsMethodRouterTests.swift; sourceTree = "<group>"; };
 		A868AEABCCB24F61D1BAC9CF /* CursorHighlightCoordinator.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = CursorHighlightCoordinator.swift; sourceTree = "<group>"; };
 		B01053F62F931EDFDC4E9F77 /* Pods_RunnerTests.framework */ = {isa = PBXFileReference; explicitFileType = wrapper.framework; includeInIndex = 0; path = Pods_RunnerTests.framework; sourceTree = BUILT_PRODUCTS_DIR; };
@@ -588,6 +592,7 @@
 				F1A0011AA11D105E0000010B /* PauseResumeSupportTests.swift */,
 				F1A0011AA11D105E0000010D /* RecordingIndicatorViewTests.swift */,
 				523922A25F5F34150B8F9459 /* GifExportPolicyTests.swift */,
+				A7CE3815FDED694968446657 /* GifEncoderTests.swift */,
 			);
 			path = RunnerTests;
 			sourceTree = "<group>";
@@ -787,6 +792,7 @@
 				DBAFE534F311451D8C165B52 /* ExportPrep.swift */,
 				A2DFE0B0B122000B271D8965 /* ExportEngine.swift */,
 				F44E22AB2A7EA86DE6C7B238 /* GifExportPolicy.swift */,
+				4758E388D386E24B68B33F48 /* GifEncoder.swift */,
 			);
 			path = Export;
 			sourceTree = "<group>";
@@ -1428,6 +1434,7 @@
 				F1A0011AA11D105E0000010C /* PauseResumeSupportTests.swift in Sources */,
 				F1A0011AA11D105E0000010E /* RecordingIndicatorViewTests.swift in Sources */,
 				82988B71EFD8E0C92461A1E0 /* GifExportPolicyTests.swift in Sources */,
+				6C7415F5D3D15C0CF94618EB /* GifEncoderTests.swift in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -1566,6 +1573,7 @@
 				91CE937036D54A858468EA85 /* GraphicMeshBackgroundRenderer.swift in Sources */,
 				78803A98243937CED6567313 /* RadialGlowBackgroundRenderer.swift in Sources */,
 				89810FF4C029B0A37903EF47 /* GifExportPolicy.swift in Sources */,
+				E7F90A099654ACCB10A3028D /* GifEncoder.swift in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
