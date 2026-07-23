@@ -287,6 +287,9 @@ jobs:
             -only-testing:RunnerTests/RNNoiseEngineTests \
             -only-testing:RunnerTests/AudioEnhancementPipelineTests \
             -only-testing:RunnerTests/ExportDestinationPreflightTests \
+            -only-testing:RunnerTests/GifExportPolicyTests \
+            -only-testing:RunnerTests/GifEncoderTests \
+            -only-testing:RunnerTests/GifExportSessionTests \
             test-without-building 2>&1 | tee build/ci/xcode-fast-test.log
 
       - name: Upload fast native test artifacts

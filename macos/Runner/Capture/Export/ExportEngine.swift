@@ -44,6 +44,10 @@ final class ExportEngine {
 
   private let exporter: LetterboxExporter
 
+  /// Live GIF transcode (runs after the render). Retained so `cancel()` can
+  /// stop it mid-transcode.
+  private var gifSession: GifExportSession?
+
   init(exporter: LetterboxExporter = LetterboxExporter()) {
     self.exporter = exporter
   }
@@ -238,11 +242,33 @@ final class ExportEngine {
     let exportCameraParams = dependencies.sanitizeCameraParams(
       input.cameraParams, input.cameraPath)
 
-    // 10. Run the exporter.
+    // 10. Run the exporter. GIF has no AVFileType container, so render the
+    // fully-composited video to a temp MOV first and transcode it to GIF
+    // afterwards (grade/camera/cuts are baked into the render — see
+    // GifExportSession). The temp MOV uses the user's codec/bitrate; only the
+    // container differs.
     let flutterExportFailureMap = dependencies.flutterExportFailure
+    let isGif = input.format == "gif"
+    let tempMovURL: URL? =
+      isGif
+      ? FileManager.default.temporaryDirectory
+        .appendingPathComponent("clingfy-gif-source-\(UUID().uuidString).mov")
+      : nil
+    let renderURL = tempMovURL ?? outputURL
+    let renderFormat = isGif ? "mov" : input.format
+    // GIF is downscaled to the long-edge cap, so render the intermediate at that
+    // capped (even) size — otherwise a 4K/8K selection renders a huge frame just
+    // to throw it away for a result identical to 1080. Non-GIF is unchanged.
+    let renderTarget = isGif ? Self.gifIntermediateSize(from: targetSize) : targetSize
+    // Reserve the tail of the progress bar for the GIF transcode.
+    let renderProgressSpan = isGif ? 0.85 : 1.0
+    let renderProgress: ((Double) -> Void)? = onProgress.map { callback in
+      { value in callback(min(max(value, 0), 1) * renderProgressSpan) }
+    }
+
     exporter.export(
       project: projectRef,
-      target: targetSize,
+      target: renderTarget,
       padding: input.padding,
       cornerRadius: input.cornerRadius,
       backgroundColor: input.backgroundColor,
@@ -253,8 +279,8 @@ final class ExportEngine {
       zoomEnabled: true,
       zoomFactor: CGFloat(input.zoomFactor),
       followStrength: dependencies.defaultZoomFollowStrength,
-      outputURL: outputURL,
-      format: input.format,
+      outputURL: renderURL,
+      format: renderFormat,
       codec: input.codec,
       bitrate: input.bitrate,
       fitMode: input.fit,
@@ -266,37 +292,88 @@ final class ExportEngine {
       cameraParams: exportCameraParams,
       colorGrade: input.colorGrade,
       clips: input.clips,
-      onProgress: onProgress
+      onProgress: renderProgress
     ) { res in
       switch res {
       case .success(let final):
-        // 11a. Append export record to manifest; schedule cleanup.
-        if var manifest = try? RecordingProjectManifest.read(
-          from: RecordingProjectPaths.manifestURL(for: projectRef.rootURL))
-        {
-          manifest.appendExportRecord(
-            format: input.format,
-            resolution: input.resolution,
-            destinationPath: final.path)
-          try? manifest.write(
-            to: RecordingProjectPaths.manifestURL(for: projectRef.rootURL))
+        // Non-GIF: finish directly.
+        guard isGif, let tempMovURL else {
+          Self.finishExportSuccess(
+            finalPath: final.path, input: input, projectRef: projectRef,
+            keepOriginals: keepOriginals, recordingStore: recordingStoreRef, result: result)
+          return
         }
-        DispatchQueue.global(qos: .utility).async {
-          recordingStoreRef.cleanupAfterExport(
-            projectRootURL: projectRef.rootURL,
-            keepOriginals: keepOriginals)
+        // GIF: transcode the rendered MOV -> GIF, delete the temp, then finish.
+        DispatchQueue.main.async {
+          let session = GifExportSession()
+          self.gifSession = session
+          session.run(
+            sourceVideoURL: final,
+            outputURL: outputURL,
+            onProgress: onProgress.map { callback in
+              { value in callback(renderProgressSpan + value * (1 - renderProgressSpan)) }
+            }
+          ) { gifResult in
+            self.gifSession = nil
+            try? FileManager.default.removeItem(at: tempMovURL)
+            switch gifResult {
+            case .success(let gifURL):
+              Self.finishExportSuccess(
+                finalPath: gifURL.path, input: input, projectRef: projectRef,
+                keepOriginals: keepOriginals, recordingStore: recordingStoreRef, result: result)
+            case .failure(let error):
+              result(flutterExportFailureMap(error))
+            }
+          }
         }
-        result(final.path)
       case .failure(let err):
-        // 11b. Map error to FlutterError via the facade's ExportPrep
-        // extension (kept on the facade because it's an extension
-        // of ScreenRecorderFacade).
+        if let tempMovURL { try? FileManager.default.removeItem(at: tempMovURL) }
+        // Map error to FlutterError via the facade's ExportPrep extension.
         result(flutterExportFailureMap(err))
       }
     }
   }
 
+  /// Append the export record to the manifest, schedule cleanup, and return the
+  /// final path to Flutter. `nonisolated` + static so it can run from either the
+  /// direct render completion or the GIF transcode completion, on any thread.
+  /// The intermediate render size for a GIF: the chosen target capped to the
+  /// GIF long-edge and rounded to even dimensions (the H.264 intermediate wants
+  /// even width/height). Keeps a 4K/8K selection from rendering a giant frame.
+  nonisolated private static func gifIntermediateSize(from target: CGSize) -> CGSize {
+    let capped = GifExportPolicy.renderSize(canvasSize: target)
+    func even(_ value: CGFloat) -> CGFloat { max(2, (value / 2).rounded() * 2) }
+    return CGSize(width: even(capped.width), height: even(capped.height))
+  }
+
+  nonisolated private static func finishExportSuccess(
+    finalPath: String,
+    input: Input,
+    projectRef: RecordingProjectRef,
+    keepOriginals: Bool,
+    recordingStore: RecordingStore,
+    result: @escaping FlutterResult
+  ) {
+    if var manifest = try? RecordingProjectManifest.read(
+      from: RecordingProjectPaths.manifestURL(for: projectRef.rootURL))
+    {
+      manifest.appendExportRecord(
+        format: input.format,
+        resolution: input.resolution,
+        destinationPath: finalPath)
+      try? manifest.write(
+        to: RecordingProjectPaths.manifestURL(for: projectRef.rootURL))
+    }
+    DispatchQueue.global(qos: .utility).async {
+      recordingStore.cleanupAfterExport(
+        projectRootURL: projectRef.rootURL,
+        keepOriginals: keepOriginals)
+    }
+    result(finalPath)
+  }
+
   func cancel() {
     exporter.cancel()
+    gifSession?.cancel()
   }
 }

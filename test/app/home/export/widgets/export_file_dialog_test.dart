@@ -53,20 +53,25 @@ void main() {
     ]);
   });
 
-  testWidgets('gif format hides codec and bitrate controls', (tester) async {
+  testWidgets('gif format hides resolution, codec and bitrate controls', (
+    tester,
+  ) async {
     await tester.pumpWidget(buildDialog(initialExportFormat: ExportFormat.gif));
     await tester.pumpAndSettle();
 
+    // GIF always exports at up to 1080p, so none of these apply.
+    expect(find.text('Resolution'), findsNothing);
     expect(find.text('Codec'), findsNothing);
     expect(find.text('Bitrate'), findsNothing);
   });
 
-  testWidgets('switching format to gif hides codec and bitrate controls', (
+  testWidgets('switching format to gif hides resolution, codec and bitrate', (
     tester,
   ) async {
     await tester.pumpWidget(buildDialog(initialExportFormat: ExportFormat.mov));
     await tester.pumpAndSettle();
 
+    expect(find.text('Resolution'), findsOneWidget);
     expect(find.text('Codec'), findsOneWidget);
     expect(find.text('Bitrate'), findsOneWidget);
 
@@ -78,6 +83,7 @@ void main() {
     formatDropdown.onChanged?.call(ExportFormat.gif);
     await tester.pumpAndSettle();
 
+    expect(find.text('Resolution'), findsNothing);
     expect(find.text('Codec'), findsNothing);
     expect(find.text('Bitrate'), findsNothing);
   });
