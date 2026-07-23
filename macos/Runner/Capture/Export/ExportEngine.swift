@@ -256,6 +256,10 @@ final class ExportEngine {
       : nil
     let renderURL = tempMovURL ?? outputURL
     let renderFormat = isGif ? "mov" : input.format
+    // GIF is downscaled to the long-edge cap, so render the intermediate at that
+    // capped (even) size — otherwise a 4K/8K selection renders a huge frame just
+    // to throw it away for a result identical to 1080. Non-GIF is unchanged.
+    let renderTarget = isGif ? Self.gifIntermediateSize(from: targetSize) : targetSize
     // Reserve the tail of the progress bar for the GIF transcode.
     let renderProgressSpan = isGif ? 0.85 : 1.0
     let renderProgress: ((Double) -> Void)? = onProgress.map { callback in
@@ -264,7 +268,7 @@ final class ExportEngine {
 
     exporter.export(
       project: projectRef,
-      target: targetSize,
+      target: renderTarget,
       padding: input.padding,
       cornerRadius: input.cornerRadius,
       backgroundColor: input.backgroundColor,
@@ -333,6 +337,15 @@ final class ExportEngine {
   /// Append the export record to the manifest, schedule cleanup, and return the
   /// final path to Flutter. `nonisolated` + static so it can run from either the
   /// direct render completion or the GIF transcode completion, on any thread.
+  /// The intermediate render size for a GIF: the chosen target capped to the
+  /// GIF long-edge and rounded to even dimensions (the H.264 intermediate wants
+  /// even width/height). Keeps a 4K/8K selection from rendering a giant frame.
+  nonisolated private static func gifIntermediateSize(from target: CGSize) -> CGSize {
+    let capped = GifExportPolicy.renderSize(canvasSize: target)
+    func even(_ value: CGFloat) -> CGFloat { max(2, (value / 2).rounded() * 2) }
+    return CGSize(width: even(capped.width), height: even(capped.height))
+  }
+
   nonisolated private static func finishExportSuccess(
     finalPath: String,
     input: Input,

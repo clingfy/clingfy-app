@@ -209,18 +209,20 @@ class _ExportFileDialogState extends State<ExportFileDialog> {
               SizedBox(height: spacing.panel - 2),
 
               // ── Resolution / Codec / Bitrate ──
-              _SectionLabel(label: l10n.resolution),
-              SizedBox(height: spacing.sm),
-              PlatformDropdown<ResolutionPreset>(
-                value: _resolutionPreset,
-                expand: true,
-                items: buildResolutionPresetMenuItems(l10n),
-                onChanged: (v) {
-                  if (v != null) setState(() => _resolutionPreset = v);
-                },
-              ),
-
+              // GIF has none of these: it always exports at up to 1080p, 15 fps
+              // (a 4K/8K GIF would be multiple GB and open in nothing).
               if (supportsVideoEncoding) ...[
+                _SectionLabel(label: l10n.resolution),
+                SizedBox(height: spacing.sm),
+                PlatformDropdown<ResolutionPreset>(
+                  value: _resolutionPreset,
+                  expand: true,
+                  items: buildResolutionPresetMenuItems(l10n),
+                  onChanged: (v) {
+                    if (v != null) setState(() => _resolutionPreset = v);
+                  },
+                ),
+
                 SizedBox(height: spacing.md),
                 _SectionLabel(label: l10n.codec),
                 SizedBox(height: spacing.sm),

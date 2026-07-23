@@ -187,6 +187,20 @@ correctness** (color, dither texture, chroma/AA edges) and **4K/long perf
 numbers**. Everything timing, lifecycle, dimension, loop, and memory-contract is
 pinned by automated tests on both platforms.
 
+## Resolution UI & intermediate render (post-ship fix)
+
+Because the GIF long-edge is capped at 1080, every export resolution ≥1080
+(1080p/2K/4K/8K, all 16:9) collapses to the same ~1080×608 GIF — so the export
+dialog's **resolution / codec / bitrate controls are all hidden for GIF**
+(`export_file_dialog.dart`, under the existing `supportsVideoEncoding` gate). A
+visible-but-inert resolution dropdown was confusing, and a 4K/8K selection also
+implied a giant render.
+
+`ExportEngine` now renders the GIF's **intermediate MOV at the capped (even)
+size** (`gifIntermediateSize`), not the chosen resolution — so a 4K/8K pick can
+never render a giant intermediate frame just to downscale it (no memory blow-up).
+`GifExportSession`'s own downscale stays as a safety no-op.
+
 ## Follow-ups
 
 - **Windows parity follow-up:** add the ≤1080 long-edge cap and the drift-free
