@@ -1867,6 +1867,21 @@ class AppLocalizationsRo extends AppLocalizations {
       'Ajută la îmbunătățirea Clingfy partajând date despre utilizarea funcțiilor și fiabilitate. Nu include niciodată înregistrări, nume de fișiere, audio, video sau transcrieri.';
 
   @override
+  String get diagnosticsAnalyticsInternal =>
+      'Marchează acest dispozitiv ca intern';
+
+  @override
+  String get diagnosticsAnalyticsInternalHelp =>
+      'Doar pentru proprietar/testare. Exclude statisticile acestei instalări din numerele reale, astfel încât propria utilizare să nu umfle statisticile. Utilizatorii obișnuiți nu văd această opțiune.';
+
+  @override
+  String get diagnosticsAnalyticsTest => 'Testează evenimentele de statistici';
+
+  @override
+  String get diagnosticsAnalyticsTestHelp =>
+      'Doar pentru proprietar/testare. Trimite statistici marcate ca test — vizibile doar în vizualizarea Test din tabloul de bord intern, niciodată în numerele reale — pentru a verifica fluxul. Activează evenimentele și în versiunile de depanare.';
+
+  @override
   String get openLogsFolder => 'Deschide folderul de loguri';
 
   @override

@@ -97,6 +97,9 @@ This hybrid architecture allows **high-performance screen capture** while mainta
 More details:  
 `docs/architecture.md`
 
+Privacy & analytics — what the app measures, and how to turn it off:  
+`docs/analytics.md`
+
 ---
 
 # Installation

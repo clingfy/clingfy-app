@@ -34,6 +34,23 @@ class _DiagnosticsSettingsSectionState
   bool get _showForceCrashButton =>
       isWindows() && Platform.environment['CLINGFY_CRASH_TEST'] == '1';
 
+  /// Hidden owner affordance: tapping the Diagnostics card [_revealTapTarget] times reveals the
+  /// internal/test analytics controls on a shipped RELEASE build where no env var is set (e.g. a
+  /// macOS app launched from Finder). Undiscoverable to normal users; the controls simply
+  /// appearing is the confirmation. Taps on the toggles/buttons are consumed by them, so only
+  /// taps on the card's title/empty area count.
+  static const int _revealTapTarget = 7;
+  int _revealTapCount = 0;
+
+  void _onDiagnosticsTap() {
+    if (widget.controller.workspace.showAnalyticsOwnerControls) return;
+    _revealTapCount++;
+    if (_revealTapCount >= _revealTapTarget) {
+      _revealTapCount = 0;
+      widget.controller.workspace.revealAnalyticsOwnerControls();
+    }
+  }
+
   void _setNotice(String message, AppInlineNoticeVariant variant) {
     setState(() {
       _noticeText = message;
@@ -59,120 +76,174 @@ class _DiagnosticsSettingsSectionState
     return buildSectionPage(
       context,
       children: [
-        SettingsCard(
-          title: l10n.diagnosticsTitle,
-          infoTooltip: l10n.diagnosticsHelpText,
-          child: Column(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              if (_noticeText != null) ...[
-                AppInlineNotice(message: _noticeText!, variant: _noticeVariant),
+        GestureDetector(
+          behavior: HitTestBehavior.translucent,
+          onTap: _onDiagnosticsTap,
+          child: SettingsCard(
+            title: l10n.diagnosticsTitle,
+            infoTooltip: l10n.diagnosticsHelpText,
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                if (_noticeText != null) ...[
+                  AppInlineNotice(
+                    message: _noticeText!,
+                    variant: _noticeVariant,
+                  ),
+                  const SizedBox(height: 12),
+                ],
+                ListenableBuilder(
+                  listenable: widget.controller.workspace,
+                  builder: (context, _) => AppToggleRow(
+                    key: const Key('diagnostics_verbose_logging_toggle'),
+                    title: l10n.diagnosticsVerboseLogging,
+                    helperText: l10n.diagnosticsVerboseLoggingHelp,
+                    value: widget.controller.workspace.verboseLogging,
+                    onChanged: (value) => unawaited(
+                      widget.controller.workspace.setVerboseLogging(value),
+                    ),
+                  ),
+                ),
                 const SizedBox(height: 12),
-              ],
-              ListenableBuilder(
-                listenable: widget.controller.workspace,
-                builder: (context, _) => AppToggleRow(
-                  key: const Key('diagnostics_verbose_logging_toggle'),
-                  title: l10n.diagnosticsVerboseLogging,
-                  helperText: l10n.diagnosticsVerboseLoggingHelp,
-                  value: widget.controller.workspace.verboseLogging,
-                  onChanged: (value) => unawaited(
-                    widget.controller.workspace.setVerboseLogging(value),
+                ListenableBuilder(
+                  listenable: widget.controller.workspace,
+                  builder: (context, _) => AppToggleRow(
+                    key: const Key('diagnostics_share_analytics_toggle'),
+                    title: l10n.diagnosticsShareAnalytics,
+                    helperText: l10n.diagnosticsShareAnalyticsHelp,
+                    value: widget.controller.workspace.shareUsageAnalytics,
+                    onChanged: (value) => unawaited(
+                      widget.controller.workspace.setShareUsageAnalytics(value),
+                    ),
                   ),
                 ),
-              ),
-              const SizedBox(height: 12),
-              ListenableBuilder(
-                listenable: widget.controller.workspace,
-                builder: (context, _) => AppToggleRow(
-                  key: const Key('diagnostics_share_analytics_toggle'),
-                  title: l10n.diagnosticsShareAnalytics,
-                  helperText: l10n.diagnosticsShareAnalyticsHelp,
-                  value: widget.controller.workspace.shareUsageAnalytics,
-                  onChanged: (value) => unawaited(
-                    widget.controller.workspace.setShareUsageAnalytics(value),
-                  ),
+                const SizedBox(height: 12),
+                // Owner/dev-only: mark this install internal (excluded from real numbers) or enter
+                // the manual test channel. Hidden from normal users — revealed only in debug builds
+                // or when CLINGFY_INTERNAL / CLINGFY_ANALYTICS_TEST is set (mirrors the web
+                // ?clingfy_internal / ?clingfy_test device flags).
+                ListenableBuilder(
+                  listenable: widget.controller.workspace,
+                  builder: (context, _) {
+                    if (!widget
+                        .controller
+                        .workspace
+                        .showAnalyticsOwnerControls) {
+                      return const SizedBox.shrink();
+                    }
+                    return Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        AppToggleRow(
+                          key: const Key(
+                            'diagnostics_analytics_internal_toggle',
+                          ),
+                          title: l10n.diagnosticsAnalyticsInternal,
+                          helperText: l10n.diagnosticsAnalyticsInternalHelp,
+                          value:
+                              widget.controller.workspace.analyticsMarkInternal,
+                          onChanged: (value) => unawaited(
+                            widget.controller.workspace
+                                .setAnalyticsMarkInternal(value),
+                          ),
+                        ),
+                        const SizedBox(height: 12),
+                        AppToggleRow(
+                          key: const Key('diagnostics_analytics_test_toggle'),
+                          title: l10n.diagnosticsAnalyticsTest,
+                          helperText: l10n.diagnosticsAnalyticsTestHelp,
+                          value: widget.controller.workspace.analyticsTestMode,
+                          onChanged: (value) => unawaited(
+                            widget.controller.workspace.setAnalyticsTestMode(
+                              value,
+                            ),
+                          ),
+                        ),
+                        const SizedBox(height: 12),
+                      ],
+                    );
+                  },
                 ),
-              ),
-              const SizedBox(height: 12),
-              Wrap(
-                spacing: 8,
-                runSpacing: 8,
-                children: [
-                  AppButton(
-                    label: l10n.openLogsFolder,
-                    icon: CupertinoIcons.folder,
-                    onPressed: widget.controller.workspace.revealLogsFolder,
-                  ),
-                  AppButton(
-                    label: l10n.revealTodayLog,
-                    icon: CupertinoIcons.doc_text,
-                    variant: AppButtonVariant.secondary,
-                    onPressed: () async {
-                      try {
-                        await widget.controller.workspace.revealTodayLogFile();
-                        _setNotice(
-                          l10n.diagnosticsLogRevealed,
-                          AppInlineNoticeVariant.success,
-                        );
-                      } catch (e) {
-                        _setNotice(
-                          _messageForError(l10n, e),
-                          AppInlineNoticeVariant.error,
-                        );
-                      }
-                    },
-                  ),
-                  AppButton(
-                    label: l10n.copyLogPath,
-                    icon: CupertinoIcons.doc_on_clipboard,
-                    variant: AppButtonVariant.secondary,
-                    onPressed: () async {
-                      try {
-                        await widget.controller.workspace
-                            .copyTodayLogFilePathToClipboard();
-                        _setNotice(
-                          l10n.recordingPathCopied,
-                          AppInlineNoticeVariant.success,
-                        );
-                      } catch (e) {
-                        _setNotice(
-                          _messageForError(l10n, e),
-                          AppInlineNoticeVariant.error,
-                        );
-                      }
-                    },
-                  ),
-                  AppButton(
-                    label: l10n.exportDiagnostics,
-                    icon: CupertinoIcons.archivebox,
-                    variant: AppButtonVariant.secondary,
-                    onPressed: () async {
-                      final path = await widget.controller.workspace
-                          .exportDiagnosticsPackage();
-                      if (!mounted) return;
-                      _setNotice(
-                        path != null
-                            ? l10n.diagnosticsExported
-                            : l10n.diagnosticsActionFailed,
-                        path != null
-                            ? AppInlineNoticeVariant.success
-                            : AppInlineNoticeVariant.error,
-                      );
-                    },
-                  ),
-                  if (_showForceCrashButton)
+                Wrap(
+                  spacing: 8,
+                  runSpacing: 8,
+                  children: [
                     AppButton(
-                      label: l10n.forceNativeCrashLabel,
-                      icon: CupertinoIcons.exclamationmark_triangle,
+                      label: l10n.openLogsFolder,
+                      icon: CupertinoIcons.folder,
+                      onPressed: widget.controller.workspace.revealLogsFolder,
+                    ),
+                    AppButton(
+                      label: l10n.revealTodayLog,
+                      icon: CupertinoIcons.doc_text,
                       variant: AppButtonVariant.secondary,
-                      onPressed: () {
-                        NativeBridge.instance.debugForceNativeCrash();
+                      onPressed: () async {
+                        try {
+                          await widget.controller.workspace
+                              .revealTodayLogFile();
+                          _setNotice(
+                            l10n.diagnosticsLogRevealed,
+                            AppInlineNoticeVariant.success,
+                          );
+                        } catch (e) {
+                          _setNotice(
+                            _messageForError(l10n, e),
+                            AppInlineNoticeVariant.error,
+                          );
+                        }
                       },
                     ),
-                ],
-              ),
-            ],
+                    AppButton(
+                      label: l10n.copyLogPath,
+                      icon: CupertinoIcons.doc_on_clipboard,
+                      variant: AppButtonVariant.secondary,
+                      onPressed: () async {
+                        try {
+                          await widget.controller.workspace
+                              .copyTodayLogFilePathToClipboard();
+                          _setNotice(
+                            l10n.recordingPathCopied,
+                            AppInlineNoticeVariant.success,
+                          );
+                        } catch (e) {
+                          _setNotice(
+                            _messageForError(l10n, e),
+                            AppInlineNoticeVariant.error,
+                          );
+                        }
+                      },
+                    ),
+                    AppButton(
+                      label: l10n.exportDiagnostics,
+                      icon: CupertinoIcons.archivebox,
+                      variant: AppButtonVariant.secondary,
+                      onPressed: () async {
+                        final path = await widget.controller.workspace
+                            .exportDiagnosticsPackage();
+                        if (!mounted) return;
+                        _setNotice(
+                          path != null
+                              ? l10n.diagnosticsExported
+                              : l10n.diagnosticsActionFailed,
+                          path != null
+                              ? AppInlineNoticeVariant.success
+                              : AppInlineNoticeVariant.error,
+                        );
+                      },
+                    ),
+                    if (_showForceCrashButton)
+                      AppButton(
+                        label: l10n.forceNativeCrashLabel,
+                        icon: CupertinoIcons.exclamationmark_triangle,
+                        variant: AppButtonVariant.secondary,
+                        onPressed: () {
+                          NativeBridge.instance.debugForceNativeCrash();
+                        },
+                      ),
+                  ],
+                ),
+              ],
+            ),
           ),
         ),
       ],
