@@ -2529,6 +2529,10 @@ class AppLocalizationsAr extends AppLocalizations {
 
   @override
   String get appliedOnExportNoticeWindows =>
+      'يُطبَّق عند التصدير — المعاينة الداخلية لا تعرض هذا التأثير بعد.';
+
+  @override
+  String get audioGainNoticeWindows =>
       'يُسمع الكسب بالكامل في المعاينات المُعدَّلة وعند التصدير — المعاينة غير المقصوصة تعكس تغييرات مستوى الصوت فقط.';
 
   @override

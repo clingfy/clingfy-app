@@ -4669,8 +4669,14 @@ abstract class AppLocalizations {
   /// No description provided for @appliedOnExportNoticeWindows.
   ///
   /// In en, this message translates to:
-  /// **'Gain is fully audible in edited previews and exports — an uncut preview plays volume changes only.'**
+  /// **'Applied on export — the inline preview doesn\'t show this effect yet.'**
   String get appliedOnExportNoticeWindows;
+
+  /// No description provided for @audioGainNoticeWindows.
+  ///
+  /// In en, this message translates to:
+  /// **'Gain is fully audible in edited previews and exports — an uncut preview plays volume changes only.'**
+  String get audioGainNoticeWindows;
 
   /// No description provided for @errBadMode.
   ///

@@ -3,6 +3,7 @@ import 'package:clingfy/app/home/post_processing/widgets/post_cursor_section.dar
 import 'package:clingfy/app/home/post_processing/widgets/post_zoom_section.dart';
 import 'package:clingfy/l10n/app_localizations.dart';
 import 'package:clingfy/ui/platform/platform_kind.dart';
+import 'package:clingfy/ui/platform/widgets/app_inline_notice.dart';
 import 'package:fluent_ui/fluent_ui.dart' as fluent;
 import 'package:flutter/material.dart';
 import 'package:clingfy/core/timeline/model/edit_track.dart';
@@ -100,5 +101,18 @@ void main() {
       find.byKey(const ValueKey('post_audio_export_notice')),
       findsOneWidget,
     );
+
+    // Regression guard (#281 hijacked appliedOnExportNoticeWindows to an
+    // audio-gain sentence, so the cursor + zoom panels rendered a gain
+    // message). The cursor notice must say the effect renders on export, NOT
+    // talk about gain; only the audio panel talks about gain.
+    String messageFor(String key) =>
+        tester.widget<AppInlineNotice>(find.byKey(ValueKey(key))).message;
+
+    final cursorMessage = messageFor('post_cursor_export_notice');
+    final audioMessage = messageFor('post_audio_export_notice');
+    expect(cursorMessage, isNot(contains('Gain')));
+    expect(audioMessage, contains('Gain'));
+    expect(cursorMessage, isNot(equals(audioMessage)));
   });
 }

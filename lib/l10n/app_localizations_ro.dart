@@ -2573,6 +2573,10 @@ class AppLocalizationsRo extends AppLocalizations {
 
   @override
   String get appliedOnExportNoticeWindows =>
+      'Se aplică la export — previzualizarea din aplicație nu arată încă acest efect.';
+
+  @override
+  String get audioGainNoticeWindows =>
       'Amplificarea se aude complet în previzualizările editate și la export — o previzualizare netăiată redă doar modificările volumului.';
 
   @override
