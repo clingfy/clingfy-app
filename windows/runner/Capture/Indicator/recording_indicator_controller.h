@@ -10,6 +10,8 @@
 #include <mutex>
 #include <thread>
 
+#include "Capture/Indicator/recording_indicator_model.h"
+
 // Slice 1 (Windows recording indicator): the always-on-top pill shown WHILE
 // recording, with a native-ticking `HH:MM:SS` timer. This is the window /
 // thread / GDI half; the pure state + formatting + placement logic lives in
@@ -51,6 +53,12 @@ class RecordingIndicatorController {
   // just refreshes the provider.
   void Show(std::function<std::uint64_t()> duration_provider);
 
+  // Update the pill's visual state (recording <-> paused <-> stopping). Drives
+  // which controls are drawn (pause vs resume) and the paused/stopping styling.
+  // Non-blocking (posts a repaint to the overlay thread); safe under the
+  // engine's recording lock. A no-op before Show / after Hide.
+  void SetState(IndicatorVisualState state);
+
   // Hide the pill. Non-blocking: posts a hide to the overlay thread and returns
   // immediately, leaving the (idle) thread alive for the next recording. Safe
   // to call under the engine's recording lock. Idempotent.
@@ -62,6 +70,7 @@ class RecordingIndicatorController {
 
   // Test / diagnostics: whether the pill is currently shown.
   bool visible_for_testing() const { return visible_.load(); }
+  IndicatorVisualState state_for_testing() const { return state_.load(); }
 
   static LRESULT CALLBACK WndProc(HWND hwnd, UINT msg, WPARAM wparam,
                                   LPARAM lparam);
@@ -78,11 +87,16 @@ class RecordingIndicatorController {
   // Position the pill in the top-right of the work area of whatever monitor it
   // currently sits on, DPI-scaled. Runs on the overlay thread.
   void PlaceWindow(HWND hwnd);
+  // Fire the reverse call for the control at the given client point (if any),
+  // deriving pause vs resume from the current visual state. Overlay thread.
+  void HandleClick(HWND hwnd, int x, int y);
 
   std::thread thread_;
   std::atomic<bool> running_{false};
   std::atomic<bool> visible_{false};
   std::atomic<HWND> hwnd_{nullptr};
+  std::atomic<IndicatorVisualState> state_{IndicatorVisualState::kHidden};
+  std::atomic<bool> can_pause_resume_{true};
   DWORD thread_id_ = 0;
 
   // The elapsed-seconds source, swapped under `provider_mutex_` and read on the

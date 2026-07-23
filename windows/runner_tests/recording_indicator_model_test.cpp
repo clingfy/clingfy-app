@@ -132,5 +132,68 @@ TEST(RecordingIndicatorModelTest, NonPositiveScaleTreatedAsOneToOne) {
   EXPECT_EQ(r.height, 40);
 }
 
+// --- ComputeIndicatorButtons / HitTestIndicatorButton (Slice 2) -------------
+
+TEST(RecordingIndicatorModelTest, RecordingShowsPauseAndStop) {
+  const IndicatorButtonLayout l = ComputeIndicatorButtons(
+      220, 44, IndicatorVisualState::kRecording, /*can_pause_resume=*/true);
+  EXPECT_TRUE(l.primary.present);
+  EXPECT_TRUE(l.stop.present);
+  // Stop is pinned to the right of primary.
+  EXPECT_GT(l.stop.left, l.primary.left);
+  // Both sit inside the client width and are square-ish.
+  EXPECT_LE(l.stop.right, 220);
+  EXPECT_EQ(l.primary.bottom - l.primary.top, l.primary.right - l.primary.left);
+}
+
+TEST(RecordingIndicatorModelTest, PausedStillShowsPrimaryAndStop) {
+  const IndicatorButtonLayout l = ComputeIndicatorButtons(
+      220, 44, IndicatorVisualState::kPaused, /*can_pause_resume=*/true);
+  EXPECT_TRUE(l.primary.present);  // now means "resume"
+  EXPECT_TRUE(l.stop.present);
+}
+
+TEST(RecordingIndicatorModelTest, PrimarySuppressedWhenPauseUnavailable) {
+  const IndicatorButtonLayout l = ComputeIndicatorButtons(
+      220, 44, IndicatorVisualState::kRecording, /*can_pause_resume=*/false);
+  EXPECT_FALSE(l.primary.present);
+  EXPECT_TRUE(l.stop.present);  // stop still available
+}
+
+TEST(RecordingIndicatorModelTest, HiddenAndStoppingHaveNoButtons) {
+  const IndicatorButtonLayout hidden = ComputeIndicatorButtons(
+      220, 44, IndicatorVisualState::kHidden, true);
+  EXPECT_FALSE(hidden.primary.present);
+  EXPECT_FALSE(hidden.stop.present);
+
+  const IndicatorButtonLayout stopping = ComputeIndicatorButtons(
+      220, 44, IndicatorVisualState::kStopping, true);
+  EXPECT_FALSE(stopping.primary.present);
+  EXPECT_FALSE(stopping.stop.present);
+}
+
+TEST(RecordingIndicatorModelTest, HitTestPrimaryAndStop) {
+  const IndicatorButtonLayout l = ComputeIndicatorButtons(
+      220, 44, IndicatorVisualState::kRecording, true);
+
+  // A point in the center of each button hits it.
+  const int py = (l.primary.top + l.primary.bottom) / 2;
+  const int px = (l.primary.left + l.primary.right) / 2;
+  EXPECT_EQ(HitTestIndicatorButton(l, px, py), IndicatorButton::kPrimary);
+
+  const int sy = (l.stop.top + l.stop.bottom) / 2;
+  const int sx = (l.stop.left + l.stop.right) / 2;
+  EXPECT_EQ(HitTestIndicatorButton(l, sx, sy), IndicatorButton::kStop);
+
+  // The timer area on the far left hits nothing.
+  EXPECT_EQ(HitTestIndicatorButton(l, 4, 22), IndicatorButton::kNone);
+}
+
+TEST(RecordingIndicatorModelTest, HitTestMissesWhenButtonsAbsent) {
+  const IndicatorButtonLayout l = ComputeIndicatorButtons(
+      220, 44, IndicatorVisualState::kStopping, true);
+  EXPECT_EQ(HitTestIndicatorButton(l, 200, 22), IndicatorButton::kNone);
+}
+
 }  // namespace
 }  // namespace clingfy::capture

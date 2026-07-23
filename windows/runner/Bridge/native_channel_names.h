@@ -47,6 +47,16 @@ inline constexpr const char* kUpdateExportProgress = "updateExportProgress";
 // position — macOS parity (ScreenRecorderEventBridge.cameraOverlayMoved).
 inline constexpr const char* kCameraOverlayMoved = "cameraOverlayMoved";
 
+// Recording-indicator control taps: invoked with NO arguments when the user
+// clicks the pause / stop / resume control on the on-screen recording pill.
+// Dart's NativeBridge dispatches them to home_bindings (pauseRecording /
+// onToggleRecording / resumeRecording) — macOS parity (the indicator taps
+// report UP to Dart, which owns the pause/resume/stop logic). Keep in sync with
+// Dart NativeToFlutterMethod.indicator{Pause,Stop,Resume}Tapped.
+inline constexpr const char* kIndicatorPauseTapped = "indicatorPauseTapped";
+inline constexpr const char* kIndicatorStopTapped = "indicatorStopTapped";
+inline constexpr const char* kIndicatorResumeTapped = "indicatorResumeTapped";
+
 }  // namespace clingfy::bridge::method
 
 #endif  // RUNNER_BRIDGE_NATIVE_CHANNEL_NAMES_H_

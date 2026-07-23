@@ -54,6 +54,7 @@ add_library(runner_bridge STATIC
   "Bridge/camera_overlay_move_publisher.cpp"
   "Bridge/event_channel_stubs.cpp"
   "Bridge/export_progress_publisher.cpp"
+  "Bridge/indicator_event_publisher.cpp"
   "Bridge/native_log_publisher.cpp"
   "Bridge/platform_thread_dispatcher.cpp"
   "Bridge/player_event_publisher.cpp"

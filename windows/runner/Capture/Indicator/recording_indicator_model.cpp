@@ -63,4 +63,47 @@ IndicatorRect ComputeIndicatorRect(int work_left, int work_top, int work_right,
   return IndicatorRect{x, y, width, height};
 }
 
+IndicatorButtonLayout ComputeIndicatorButtons(int client_width,
+                                              int client_height,
+                                              IndicatorVisualState state,
+                                              bool can_pause_resume) {
+  IndicatorButtonLayout out{};
+  // Only the live states carry controls. Hidden isn't shown; stopping shows a
+  // spinner (no controls).
+  const bool active = state == IndicatorVisualState::kRecording ||
+                      state == IndicatorVisualState::kPaused;
+  if (!active || client_width <= 0 || client_height <= 0) {
+    return out;
+  }
+
+  const int pad = std::max(4, client_height / 8);
+  const int side = std::max(1, client_height - 2 * pad);
+  const int gap = pad;
+  const int top = pad;
+  const int bottom = top + side;
+
+  // Stop always shows for active states, pinned to the right edge.
+  int right = client_width - pad;
+  out.stop = IndicatorButtonRect{right - side, top, right, bottom, true};
+
+  // Primary (pause/resume) sits to the LEFT of stop, only when offered.
+  if (can_pause_resume) {
+    right = out.stop.left - gap;
+    out.primary = IndicatorButtonRect{right - side, top, right, bottom, true};
+  }
+
+  return out;
+}
+
+IndicatorButton HitTestIndicatorButton(const IndicatorButtonLayout& layout,
+                                       int x, int y) {
+  if (layout.primary.Contains(x, y)) {
+    return IndicatorButton::kPrimary;
+  }
+  if (layout.stop.Contains(x, y)) {
+    return IndicatorButton::kStop;
+  }
+  return IndicatorButton::kNone;
+}
+
 }  // namespace clingfy::capture
