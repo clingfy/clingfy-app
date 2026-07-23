@@ -7,6 +7,7 @@
 #include "Bridge/native_log_publisher.h"
 #include "Bridge/platform_thread_dispatcher.h"
 #include "Capture/Export/export_session.h"
+#include "Capture/Indicator/recording_indicator_controller.h"
 #include "Capture/recording_engine.h"
 #include "Services/temp_orphan_scan.h"
 #include "flutter/generated_plugin_registrant.h"
@@ -121,6 +122,12 @@ void FlutterWindow::OnDestroy() {
   // Workflow events emitted during this teardown may not reach Dart (the
   // channel is going away) — the on-disk project is the point.
   clingfy::capture::RecordingEngine::Instance().StopActiveSessionForShutdown();
+
+  // Slice 1 (Windows recording indicator): the overlay thread persists idle
+  // between recordings, so join it explicitly at app teardown (off any lock).
+  // StopActiveSessionForShutdown above already hid the pill; this reclaims the
+  // thread + window.
+  clingfy::capture::RecordingIndicatorController::Instance().Shutdown();
 
   // Abort any in-flight export so its worker stops decoding/encoding and
   // deletes its partial output instead of racing teardown. (The worker's

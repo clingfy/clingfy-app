@@ -36,6 +36,7 @@
 #include "Capture/Camera/camera_recorder.h"
 #include "Capture/captured_video_frame.h"
 #include "Capture/Cursor/cursor_sampler.h"
+#include "Capture/Indicator/recording_indicator_controller.h"
 #include "Capture/recording_project_writer.h"
 #include "Capture/video_frame_queue.h"
 #include "Capture/wgc_display_capture_backend.h"
@@ -1124,6 +1125,15 @@ std::optional<RecordingError> RecordingEngine::Start(
                       "Engine refused to enter Recording state.");
   }
 
+  // Slice 1 (Windows recording indicator): the pill goes up the moment the
+  // recording is live and comes down in TeardownPipeline (every end path).
+  // The timer pulls pause-aware elapsed seconds straight from the engine clock
+  // — never pushed from Flutter. The provider takes `mutex_`, but Show only
+  // stores it (the overlay thread calls it later), so there is no re-entrant
+  // lock here, and Hide() never joins that thread, so teardown can't deadlock.
+  RecordingIndicatorController::Instance().Show(
+      []() -> std::uint64_t { return RecordingEngine::Instance().ElapsedSeconds(); });
+
   // Lifecycle event: the recording is officially live. Phase 3E onward
   // the Flutter UI transitions to its `recording` phase on this event
   // and only then enables the stop button.
@@ -1750,6 +1760,13 @@ void RecordingEngine::HandleTargetLost(const std::string& session_id) {
 }
 
 void RecordingEngine::TeardownPipeline(bool finalize_encoder) {
+  // Slice 1 (Windows recording indicator): every recording-end path flows
+  // through here (Stop, failure, target-loss), so this is the single hide
+  // hook. Non-blocking — Hide() only posts to the overlay thread and never
+  // joins it, so calling it under `mutex_` cannot deadlock against the
+  // indicator's elapsed-seconds provider (which takes `mutex_`).
+  RecordingIndicatorController::Instance().Hide();
+
   // Strict ordering: stop the capture producers first, then signal the
   // drain / mixer consumer threads via queue Close, join them, then
   // finalize the encoder so the MP4 footer is written before the
@@ -1911,6 +1928,12 @@ RecordingState RecordingEngine::state() const {
 std::string RecordingEngine::session_id() const {
   std::lock_guard<std::mutex> lock(mutex_);
   return std::string(session_.session_id());
+}
+
+std::uint64_t RecordingEngine::ElapsedSeconds() const {
+  std::lock_guard<std::mutex> lock(mutex_);
+  const std::int64_t hns = clock_.ElapsedHns();  // 100-ns units, pause-aware.
+  return hns > 0 ? static_cast<std::uint64_t>(hns / 10'000'000) : 0;
 }
 
 RecordingEngine::CaptureDiagnostics RecordingEngine::Diagnostics() const {
