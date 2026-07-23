@@ -125,6 +125,8 @@ add_library(runner_bridge STATIC
   "Capture/Zoom/zoom_follow_smoother.cpp"
   "Capture/Zoom/zoom_hysteresis.cpp"
   "Capture/Zoom/zoom_timeline_builder.cpp"
+  "Capture/Indicator/recording_indicator_controller.cpp"
+  "Capture/Indicator/recording_indicator_model.cpp"
   "Capture/recording_clock.cpp"
   "Capture/recording_engine.cpp"
   "Capture/recording_project_reader.cpp"
