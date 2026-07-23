@@ -4,6 +4,7 @@
 
 #include "Bridge/camera_overlay_move_publisher.h"
 #include "Bridge/export_progress_publisher.h"
+#include "Bridge/indicator_event_publisher.h"
 #include "Bridge/native_log_publisher.h"
 #include "Bridge/platform_thread_dispatcher.h"
 #include "Capture/Export/export_session.h"
@@ -81,6 +82,12 @@ bool FlutterWindow::OnCreate() {
   clingfy::bridge::CameraOverlayMovePublisher::Instance().SetChannel(
       method_dispatcher_->channel());
 
+  // Recording-indicator slice 2: same channel for the pill's pause/stop/resume
+  // control taps (`indicator{Pause,Stop,Resume}Tapped`), emitted from the
+  // overlay thread. Cleared alongside the other publishers in OnDestroy.
+  clingfy::bridge::IndicatorEventPublisher::Instance().SetChannel(
+      method_dispatcher_->channel());
+
   // Phase 10.1: detect recordings stranded in %TEMP% by a crash/kill in a
   // previous session (detection + reporting only; salvage is Phase 10.4).
   // Runs on its own short-lived thread, off the startup path.
@@ -144,6 +151,7 @@ void FlutterWindow::OnDestroy() {
   clingfy::bridge::ExportProgressPublisher::Instance().ClearChannel();
   clingfy::bridge::NativeLogPublisher::Instance().ClearChannel();
   clingfy::bridge::CameraOverlayMovePublisher::Instance().ClearChannel();
+  clingfy::bridge::IndicatorEventPublisher::Instance().ClearChannel();
   event_channel_stubs_.reset();
   method_dispatcher_.reset();
 

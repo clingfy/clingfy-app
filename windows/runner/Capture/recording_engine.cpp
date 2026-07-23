@@ -1204,6 +1204,11 @@ std::optional<RecordingError> RecordingEngine::Pause(
                           "Engine refused to enter Paused state."};
   }
 
+  // Slice 2 (Windows recording indicator): reflect the pause on the pill (dot
+  // turns amber, the primary control becomes resume). Non-blocking.
+  RecordingIndicatorController::Instance().SetState(
+      IndicatorVisualState::kPaused);
+
   clingfy::bridge::WorkflowEventPublisher::Instance().EmitRecordingPaused(
       std::string(session_.session_id()));
   return std::nullopt;
@@ -1262,6 +1267,11 @@ std::optional<RecordingError> RecordingEngine::Resume(
     return RecordingError{clingfy::bridge::error::kInvalidRecordingState,
                           "Engine refused to enter Recording state."};
   }
+
+  // Slice 2 (Windows recording indicator): back to the recording look (red dot,
+  // pause control). Non-blocking.
+  RecordingIndicatorController::Instance().SetState(
+      IndicatorVisualState::kRecording);
 
   clingfy::bridge::WorkflowEventPublisher::Instance().EmitRecordingResumed(
       std::string(session_.session_id()));

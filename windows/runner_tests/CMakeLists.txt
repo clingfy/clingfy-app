@@ -107,6 +107,7 @@ add_executable(runner_tests
   "misc_router_crash_gate_test.cpp"
   "recording_clock_test.cpp"
   "recording_indicator_model_test.cpp"
+  "indicator_event_publisher_test.cpp"
   "reorder_audio_pump_test.cpp"
   "recording_engine_test.cpp"
   "recording_project_reader_test.cpp"

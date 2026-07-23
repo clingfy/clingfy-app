@@ -53,6 +53,49 @@ IndicatorRect ComputeIndicatorRect(int work_left, int work_top, int work_right,
                                    int work_bottom, double scale,
                                    int base_width, int base_height);
 
+// Slice 2: the pill's interactive controls. The "primary" control is
+// pause (when recording) or resume (when paused) — same rect, different glyph
+// and different reverse call; the caller derives which from the visual state.
+enum class IndicatorButton {
+  kNone,
+  kPrimary,  // pause (recording) OR resume (paused)
+  kStop,
+};
+
+// A control rectangle in window client coordinates. `present` is false when the
+// button is not shown for the current state (then the rect is degenerate).
+struct IndicatorButtonRect {
+  int left = 0;
+  int top = 0;
+  int right = 0;
+  int bottom = 0;
+  bool present = false;
+
+  bool Contains(int x, int y) const {
+    return present && x >= left && x < right && y >= top && y < bottom;
+  }
+};
+
+struct IndicatorButtonLayout {
+  IndicatorButtonRect primary;  // pause / resume
+  IndicatorButtonRect stop;
+};
+
+// Lay out the right-aligned control buttons for the given client size + visual
+// state. Buttons are square, vertically centered, and packed right-to-left:
+// [ ...timer... ] [primary] [stop]. Only the recording / paused states get
+// controls (hidden / stopping get none); the primary (pause/resume) button is
+// omitted when `can_pause_resume` is false, mirroring macOS
+// `isPrimaryActionAvailable`.
+IndicatorButtonLayout ComputeIndicatorButtons(int client_width,
+                                              int client_height,
+                                              IndicatorVisualState state,
+                                              bool can_pause_resume);
+
+// Which control (if any) contains the client-coordinate point.
+IndicatorButton HitTestIndicatorButton(const IndicatorButtonLayout& layout,
+                                       int x, int y);
+
 }  // namespace clingfy::capture
 
 #endif  // RUNNER_CAPTURE_INDICATOR_RECORDING_INDICATOR_MODEL_H_
