@@ -57,20 +57,34 @@ differentiator, and **both** platforms upgrade together (most plausibly
 libimagequant, not gifski). A macOS-local swap is the wrong move — it's a
 cross-platform product decision, not an implementation choice.
 
-### Frame source — reuse the composited frames, single-pass, no MP4 round-trip
+### Frame source — transcode the rendered video (as implemented)
 
-Feed the encoder the exporter's already-composited frames (`renderedPixelBuffer`
-at render size), decimated to the GIF target rate. **Do not** decode the
-finished MP4 back to frames, and **do not** tap the `AVVideoComposition` output.
+**Load-bearing constraint (verified against the code):** color grade and the
+inline camera are applied in the export's per-frame **compose tail**
+(`LetterboxExporter.swift` ~2398–2490), **not** in `comp.videoComposition`. So
+*no* readily-tappable source of fully-composited frames exists — neither
+`AVAssetExportSession` nor a standalone `AVAssetReaderVideoCompositionOutput`
+over `comp.videoComposition` would include grade + camera. The only source of
+truth for correct frames is the **finished video** the (tested) pipeline bakes.
 
-Load-bearing subtlety (verified against the code): **color grade and the inline
-camera are applied in the per-frame compose tail of the export session
-(`LetterboxExporter.swift` ~2398–2490), not in `comp.videoComposition`.** A
-naive composition-output tap or MP4 round-trip would silently drop grade +
-camera. The GIF path therefore runs the *same* compose tail — which requires
-extracting a shared `composeRenderedFrame(...)` (PR-3, the one nontrivial build
-risk; behavior of the video path must stay byte-identical, backstopped by
-`validateFinalExportReferenceRender`).
+**Implemented approach — transcode the rendered video at the `ExportEngine`
+layer, not surgery inside `LetterboxExporter`:** when `format == "gif"`,
+`ExportEngine.export` renders the composited video to a **temp `.mov`** (the
+whole existing render path, with grade/camera/cuts baked in, at the user's
+codec/bitrate), then `GifExportSession` transcodes that MOV → GIF (decimate to
+15 fps, downscale to the long-edge cap, opaque flatten, encode), deletes the
+temp, and reports the `.gif` path. `LetterboxExporter` is **untouched**.
+
+Why this over the originally-designed single-pass (extract `composeRenderedFrame`
++ a parallel reader loop): the compose tail is deeply entangled (a stateful
+inline-camera sample pump plus many render-loop locals), so extracting a shared
+tail is a genuine, hard-to-verify refactor. Transcoding the finished video is
+**guaranteed-correct** (it reuses the entire tested render) and isolates all GIF
+code to two new files + one `ExportEngine` branch. The cost is one extra
+intermediate encode generation — negligible for a 256-color, ≤1080, 15 fps GIF,
+where ImageIO quantization dominates quality, not an H.264 intermediate.
+Single-pass remains a valid **future optimization** (it halves the render work
+on GIF exports) but is not worth its risk for v1.
 
 ## The parity contract
 
@@ -142,19 +156,21 @@ frames returns false and writes nothing.
   and both delay keys. Adds two read-back tests: palette-locality (measure &
   document what ImageIO emits) and **no-transparent-index** on an AA/rounded
   frame.
-- **PR-3 — refactor: extract `composeRenderedFrame(...)`** from the export
-  session (~2398–2490). Pure relocation, video path byte-identical, gated by the
-  export `RunnerTests` + `validateFinalExportReferenceRender`. **Merge alone.**
-- **PR-4 — `GifExportSession.swift` + the ~15-line branch at
-  `LetterboxExporter.swift:3041`** (+ tests). Own `AVAssetReader` +
-  `AVAssetReaderVideoCompositionOutput`; cut-drop + edited PTS; decimate; compose
-  tail with CIImage downscale to the capped size before `createCGImage`; encode.
-  Reuses `onProgress` unchanged. Integration tests: decimated-count,
-  respects-cuts, **capped dimensions**, cancel-deletes.
-- **PR-5 (optional, data-driven)** — composite natively at the capped size in
-  `CompositionBuilder.buildExport` (eliminates the wasted 4K composite on
-  decimated frames) + any hard duration cap. Only if PR-4's perf log shows the
-  4K composite dominating.
+- **PR-3/PR-4 (implemented together) — `GifExportSession.swift` + the
+  `ExportEngine.export` GIF branch** (+ `GifExportSessionTests.swift`).
+  `GifExportSession` transcodes a rendered video → GIF: `AVAssetReader` /
+  `AVAssetReaderTrackOutput` over the finished MOV, decimate on the ideal grid,
+  CIImage downscale to the capped size, `GifEncoder`. `ExportEngine` renders the
+  temp MOV first (progress `0…0.85`), then transcodes (`0.85…1.0`), deletes the
+  temp, and threads the `.gif` path back through the existing manifest/cleanup.
+  `cancel()` stops both phases. `LetterboxExporter` is untouched — this replaces
+  the original design's compose-tail extraction (dropped as too risky; see the
+  frame-source section). Integration tests write a synthetic video and assert
+  decimation (30→~15 fps), infinite loop, and the long-edge downscale.
+- **PR-5 (optional, data-driven)** — single-pass: composite natively at the
+  capped size and encode the GIF in the same render (eliminates the intermediate
+  MOV). Only worth it if the extra encode generation shows up in real perf
+  numbers, plus any hard duration cap.
 
 ## Effort & verification
 
