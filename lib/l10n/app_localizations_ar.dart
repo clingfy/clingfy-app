@@ -1834,6 +1834,20 @@ class AppLocalizationsAr extends AppLocalizations {
       'ساعد في تحسين Clingfy من خلال مشاركة بيانات استخدام الميزات والموثوقية. لا تتضمن أبدًا التسجيلات أو أسماء الملفات أو الصوت أو الفيديو أو النصوص المفرّغة.';
 
   @override
+  String get diagnosticsAnalyticsInternal => 'وضع علامة داخلي على هذا الجهاز';
+
+  @override
+  String get diagnosticsAnalyticsInternalHelp =>
+      'للمالك/الاختبار فقط. يستبعد إحصاءات هذا التثبيت من الأرقام الحقيقية، بحيث لا يضخّم استخدامك الخاص الإحصاءات. لا يرى المستخدمون العاديون هذا الخيار.';
+
+  @override
+  String get diagnosticsAnalyticsTest => 'اختبار أحداث الإحصاءات';
+
+  @override
+  String get diagnosticsAnalyticsTestHelp =>
+      'للمالك/الاختبار فقط. يرسل إحصاءات موسومة كاختبار — تظهر فقط في عرض الاختبار بلوحة المعلومات الداخلية، وليس في الأرقام الحقيقية — للتحقق من المسار. كما يفعّل الأحداث في إصدارات التصحيح.';
+
+  @override
   String get openLogsFolder => 'افتتاح مجلد السجلات';
 
   @override

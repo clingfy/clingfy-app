@@ -1850,6 +1850,20 @@ class AppLocalizationsEn extends AppLocalizations {
       'Help improve Clingfy by sharing feature usage and reliability data. Never includes recordings, filenames, audio, video, or transcripts.';
 
   @override
+  String get diagnosticsAnalyticsInternal => 'Mark this device internal';
+
+  @override
+  String get diagnosticsAnalyticsInternalHelp =>
+      'Owner/testing only. Excludes this install\'s analytics from the real numbers, so your own usage never inflates the stats. Normal users never see this option.';
+
+  @override
+  String get diagnosticsAnalyticsTest => 'Test analytics events';
+
+  @override
+  String get diagnosticsAnalyticsTestHelp =>
+      'Owner/testing only. Sends analytics tagged as test — visible only in the Test view of the internal dashboard, never in real numbers — so the pipeline can be verified. Also enables events in debug builds.';
+
+  @override
   String get openLogsFolder => 'Open Logs Folder';
 
   @override

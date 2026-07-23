@@ -3478,6 +3478,30 @@ abstract class AppLocalizations {
   /// **'Help improve Clingfy by sharing feature usage and reliability data. Never includes recordings, filenames, audio, video, or transcripts.'**
   String get diagnosticsShareAnalyticsHelp;
 
+  /// No description provided for @diagnosticsAnalyticsInternal.
+  ///
+  /// In en, this message translates to:
+  /// **'Mark this device internal'**
+  String get diagnosticsAnalyticsInternal;
+
+  /// No description provided for @diagnosticsAnalyticsInternalHelp.
+  ///
+  /// In en, this message translates to:
+  /// **'Owner/testing only. Excludes this install\'s analytics from the real numbers, so your own usage never inflates the stats. Normal users never see this option.'**
+  String get diagnosticsAnalyticsInternalHelp;
+
+  /// No description provided for @diagnosticsAnalyticsTest.
+  ///
+  /// In en, this message translates to:
+  /// **'Test analytics events'**
+  String get diagnosticsAnalyticsTest;
+
+  /// No description provided for @diagnosticsAnalyticsTestHelp.
+  ///
+  /// In en, this message translates to:
+  /// **'Owner/testing only. Sends analytics tagged as test — visible only in the Test view of the internal dashboard, never in real numbers — so the pipeline can be verified. Also enables events in debug builds.'**
+  String get diagnosticsAnalyticsTestHelp;
+
   /// No description provided for @openLogsFolder.
   ///
   /// In en, this message translates to:

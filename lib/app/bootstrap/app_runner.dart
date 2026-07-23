@@ -16,9 +16,13 @@ class AppRunner {
     await settingsController.loadPreferences();
 
     // Anonymous product analytics — a no-op in debug runs / without a POSTHOG_TOKEN define, and
-    // honors the "Share anonymous usage analytics" setting loaded just above.
+    // honors the "Share anonymous usage analytics" setting loaded just above. `internal`/`testMode`
+    // are the owner-only exclusion + manual test channel (persisted setting OR the CLINGFY_INTERNAL
+    // / CLINGFY_ANALYTICS_TEST env override; test mode also enables capture in debug).
     await ClingfyAnalytics.init(
       enabled: settingsController.workspace.shareUsageAnalytics,
+      internal: settingsController.workspace.analyticsMarkInternal,
+      testMode: settingsController.workspace.analyticsTestMode,
     );
     ClingfyAnalytics.capture(AnalyticsEvents.appLaunch);
 
