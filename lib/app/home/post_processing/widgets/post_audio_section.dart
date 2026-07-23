@@ -151,7 +151,7 @@ class PostAudioSection extends StatelessWidget {
               const SizedBox(height: AppSidebarTokens.compactGap),
               AppInlineNotice(
                 key: const ValueKey('post_audio_export_notice'),
-                message: l10n.appliedOnExportNoticeWindows,
+                message: l10n.audioGainNoticeWindows,
               ),
             ],
           ],
