@@ -187,6 +187,22 @@ class AppLocalizationsEn extends AppLocalizations {
   String get high => 'High';
 
   @override
+  String get gifSizeLabel => 'Size';
+
+  @override
+  String get gifSizeSmall => 'Small (480px)';
+
+  @override
+  String get gifSizeMedium => 'Medium (720px)';
+
+  @override
+  String get gifSizeLarge => 'Large (1080px)';
+
+  @override
+  String get gifSizeCaption =>
+      'GIFs export at 15 fps. Larger sizes look sharper but make bigger files.';
+
+  @override
   String get original => 'Original';
 
   @override

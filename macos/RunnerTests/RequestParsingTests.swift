@@ -73,6 +73,7 @@ final class ExportVideoRequestParsingTests: XCTestCase {
     XCTAssertEqual(r.format, "mov")
     XCTAssertEqual(r.codec, "hevc")
     XCTAssertEqual(r.bitrate, "auto")
+    XCTAssertEqual(r.gifSize, "large")  // older payloads: render at today's cap
     XCTAssertEqual(r.audioGainDb, 0.0)
     XCTAssertEqual(r.audioVolumePercent, 100.0)
     XCTAssertFalse(r.autoNormalizeOnExport)
@@ -88,7 +89,7 @@ final class ExportVideoRequestParsingTests: XCTestCase {
       "fitMode": "crop", "padding": 12.0, "cornerRadius": 8.0, "backgroundColor": 0x11_22_33,
       "backgroundImagePath": "/bg.png", "cursorSize": 2.0, "zoomFactor": 3.0,
       "zoomEffectEnabled": true, "showCursor": false, "filename": "out", "directoryOverride": "/d",
-      "format": "mp4", "codec": "h264", "bitrate": "high", "audioGainDb": -3.0,
+      "format": "mp4", "codec": "h264", "bitrate": "high", "gifSize": "small", "audioGainDb": -3.0,
       "audioVolumePercent": 80.0, "autoNormalizeOnExport": true, "targetLoudnessDbfs": -14.0,
       "cameraPath": "/cam.mov",
       "colorGrade": [
@@ -111,6 +112,7 @@ final class ExportVideoRequestParsingTests: XCTestCase {
     XCTAssertEqual(r.format, "mp4")
     XCTAssertEqual(r.codec, "h264")
     XCTAssertEqual(r.bitrate, "high")
+    XCTAssertEqual(r.gifSize, "small")
     XCTAssertEqual(r.audioGainDb, -3.0)
     XCTAssertEqual(r.audioVolumePercent, 80.0)
     XCTAssertTrue(r.autoNormalizeOnExport)

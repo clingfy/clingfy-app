@@ -33,6 +33,11 @@ struct ExportVideoRequest: Equatable {
   let format: String
   let codec: String
   let bitrate: String
+  /// GIF-only long-edge size preset ("small"/"medium"/"large"). Absent in
+  /// payloads from older Flutter builds, which default to "large" so their GIF
+  /// exports render exactly as before the control existed. Ignored for non-GIF
+  /// formats.
+  let gifSize: String
   let audioGainDb: Double
   let audioVolumePercent: Double
   let autoNormalizeOnExport: Bool
@@ -85,6 +90,7 @@ struct ExportVideoRequest: Equatable {
       format: (args["format"] as? String) ?? "mov",
       codec: (args["codec"] as? String) ?? "hevc",
       bitrate: (args["bitrate"] as? String) ?? "auto",
+      gifSize: (args["gifSize"] as? String) ?? "large",
       audioGainDb: (args["audioGainDb"] as? Double) ?? 0.0,
       audioVolumePercent: (args["audioVolumePercent"] as? Double) ?? 100.0,
       autoNormalizeOnExport: (args["autoNormalizeOnExport"] as? Bool) ?? false,

@@ -12,7 +12,10 @@ import 'package:macos_ui/macos_ui.dart';
 void main() {
   TestWidgetsFlutterBinding.ensureInitialized();
 
-  Widget buildDialog({ExportFormat initialExportFormat = ExportFormat.mov}) {
+  Widget buildDialog({
+    ExportFormat initialExportFormat = ExportFormat.mov,
+    GifSizePreset initialGifSize = GifSizePreset.large,
+  }) {
     return MaterialApp(
       localizationsDelegates: AppLocalizations.localizationsDelegates,
       supportedLocales: AppLocalizations.supportedLocales,
@@ -29,6 +32,7 @@ void main() {
             initialExportFormat: initialExportFormat,
             initialExportCodec: ExportCodec.hevc,
             initialExportBitrate: ExportBitratePreset.auto,
+            initialGifSize: initialGifSize,
             onPickFolder: () async => null,
           ),
         ),
@@ -53,39 +57,115 @@ void main() {
     ]);
   });
 
-  testWidgets('gif format hides resolution, codec and bitrate controls', (
+  testWidgets(
+    'gif format hides resolution/codec/bitrate and shows the Size control',
+    (tester) async {
+      await tester.pumpWidget(
+        buildDialog(initialExportFormat: ExportFormat.gif),
+      );
+      await tester.pumpAndSettle();
+
+      // Video-encoding controls do not apply to GIF.
+      expect(find.text('Resolution'), findsNothing);
+      expect(find.text('Codec'), findsNothing);
+      expect(find.text('Bitrate'), findsNothing);
+
+      // GIF gets a single Small/Medium/Large size control instead.
+      expect(find.text('Size'), findsOneWidget);
+      final sizeDropdown = tester.widget<PlatformDropdown<GifSizePreset>>(
+        find.byWidgetPredicate(
+          (widget) => widget is PlatformDropdown<GifSizePreset>,
+        ),
+      );
+      expect(sizeDropdown.items.map((item) => item.value).toList(), const [
+        GifSizePreset.small,
+        GifSizePreset.medium,
+        GifSizePreset.large,
+      ]);
+    },
+  );
+
+  testWidgets(
+    'switching format to gif swaps video controls for the Size control',
+    (tester) async {
+      await tester.pumpWidget(
+        buildDialog(initialExportFormat: ExportFormat.mov),
+      );
+      await tester.pumpAndSettle();
+
+      expect(find.text('Resolution'), findsOneWidget);
+      expect(find.text('Codec'), findsOneWidget);
+      expect(find.text('Bitrate'), findsOneWidget);
+      expect(find.text('Size'), findsNothing);
+
+      final formatDropdown = tester.widget<PlatformDropdown<ExportFormat>>(
+        find.byWidgetPredicate(
+          (widget) => widget is PlatformDropdown<ExportFormat>,
+        ),
+      );
+      formatDropdown.onChanged?.call(ExportFormat.gif);
+      await tester.pumpAndSettle();
+
+      expect(find.text('Resolution'), findsNothing);
+      expect(find.text('Codec'), findsNothing);
+      expect(find.text('Bitrate'), findsNothing);
+      expect(find.text('Size'), findsOneWidget);
+    },
+  );
+
+  testWidgets('export returns the chosen GIF size in the result', (
     tester,
   ) async {
-    await tester.pumpWidget(buildDialog(initialExportFormat: ExportFormat.gif));
-    await tester.pumpAndSettle();
-
-    // GIF always exports at up to 1080p, so none of these apply.
-    expect(find.text('Resolution'), findsNothing);
-    expect(find.text('Codec'), findsNothing);
-    expect(find.text('Bitrate'), findsNothing);
-  });
-
-  testWidgets('switching format to gif hides resolution, codec and bitrate', (
-    tester,
-  ) async {
-    await tester.pumpWidget(buildDialog(initialExportFormat: ExportFormat.mov));
-    await tester.pumpAndSettle();
-
-    expect(find.text('Resolution'), findsOneWidget);
-    expect(find.text('Codec'), findsOneWidget);
-    expect(find.text('Bitrate'), findsOneWidget);
-
-    final formatDropdown = tester.widget<PlatformDropdown<ExportFormat>>(
-      find.byWidgetPredicate(
-        (widget) => widget is PlatformDropdown<ExportFormat>,
+    ExportFileDialogResult? captured;
+    await tester.pumpWidget(
+      MaterialApp(
+        localizationsDelegates: AppLocalizations.localizationsDelegates,
+        supportedLocales: AppLocalizations.supportedLocales,
+        theme: buildDarkTheme(),
+        home: MacosTheme(
+          data: buildMacosTheme(Brightness.dark),
+          child: Builder(
+            builder: (context) => Scaffold(
+              body: ElevatedButton(
+                onPressed: () async {
+                  captured = await ExportFileDialog.show(
+                    context,
+                    initialFileName: 'Clingfy Export',
+                    initialDirectory: '/tmp',
+                    initialResolutionPreset: ResolutionPreset.auto,
+                    initialExportFormat: ExportFormat.gif,
+                    initialExportCodec: ExportCodec.hevc,
+                    initialExportBitrate: ExportBitratePreset.auto,
+                    initialGifSize: GifSizePreset.large,
+                    onPickFolder: () async => null,
+                  );
+                },
+                child: const Text('open'),
+              ),
+            ),
+          ),
+        ),
       ),
     );
-    formatDropdown.onChanged?.call(ExportFormat.gif);
+
+    await tester.tap(find.text('open'));
     await tester.pumpAndSettle();
 
-    expect(find.text('Resolution'), findsNothing);
-    expect(find.text('Codec'), findsNothing);
-    expect(find.text('Bitrate'), findsNothing);
+    // Pick Small, then Export.
+    final sizeDropdown = tester.widget<PlatformDropdown<GifSizePreset>>(
+      find.byWidgetPredicate(
+        (widget) => widget is PlatformDropdown<GifSizePreset>,
+      ),
+    );
+    sizeDropdown.onChanged?.call(GifSizePreset.small);
+    await tester.pumpAndSettle();
+
+    await tester.tap(find.text('Export'));
+    await tester.pumpAndSettle();
+
+    expect(captured, isNotNull);
+    expect(captured!.exportFormat, ExportFormat.gif);
+    expect(captured!.gifSize, GifSizePreset.small);
   });
 
   testWidgets('uses close icon in header instead of footer cancel button', (

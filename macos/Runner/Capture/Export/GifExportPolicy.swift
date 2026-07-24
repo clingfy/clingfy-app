@@ -50,7 +50,32 @@ enum GifExportPolicy {
   static let emitTargetStart: Int64 = .min
 
   /// Default long-edge cap (px) for the encoded GIF. Additive vs. Windows.
+  /// Equals `large`'s cap — an omitted/unknown size preset renders exactly as
+  /// before this control existed.
   static let defaultMaxLongEdge: CGFloat = 1080
+
+  /// GIF size presets → long-edge cap (px). The wire values
+  /// (`"small"`/`"medium"`/`"large"`) mirror the Flutter `GifSizePreset` enum
+  /// and its `longEdgePx`; keep the two in sync. fps stays `targetFps` (15)
+  /// across every preset — dimension is the file-size lever, and a per-preset
+  /// fps would diverge from the Windows parity contract. Additive vs. Windows.
+  static let smallMaxLongEdge: CGFloat = 480
+  static let mediumMaxLongEdge: CGFloat = 720
+  static let largeMaxLongEdge: CGFloat = 1080
+
+  /// Resolve a GIF size-preset wire value to its long-edge cap. Unknown, empty,
+  /// or `nil` (older Flutter payloads that predate the control) falls back to
+  /// `defaultMaxLongEdge` (== `large`), so those exports are byte-for-byte
+  /// unchanged. Matching is case-insensitive and whitespace-trimmed to mirror
+  /// the Dart `gifSizePresetFromWire` parser.
+  static func maxLongEdge(forSizePreset raw: String?) -> CGFloat {
+    switch raw?.lowercased().trimmingCharacters(in: .whitespacesAndNewlines) {
+    case "small": return smallMaxLongEdge
+    case "medium": return mediumMaxLongEdge
+    case "large": return largeMaxLongEdge
+    default: return defaultMaxLongEdge
+    }
+  }
 
   private static let hnsPerSecond: Int64 = 10_000_000
   private static let hnsPerCentisecond: Int64 = 100_000  // 1/100 s in 100 ns units

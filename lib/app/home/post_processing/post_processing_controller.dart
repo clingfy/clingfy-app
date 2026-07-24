@@ -1073,6 +1073,7 @@ class PostProcessingController extends ChangeNotifier {
       initialExportFormat: _settings.export.exportFormatType,
       initialExportCodec: _settings.export.exportCodecType,
       initialExportBitrate: _settings.export.exportBitrateType,
+      initialGifSize: _settings.export.gifSizeType,
       onPickFolder: _settings.workspace.chooseSaveFolderPath,
     );
 
@@ -1099,6 +1100,13 @@ class PostProcessingController extends ChangeNotifier {
     final chosenBitrate = dialogResult.exportBitrate.wireValue;
     if (chosenBitrate != _settings.export.exportBitrate) {
       await _settings.export.updateExportBitrate(chosenBitrate);
+    }
+
+    // Apply and persist the GIF size (only meaningful for GIF exports, but the
+    // dialog always returns the current selection).
+    final chosenGifSize = dialogResult.gifSize.wireValue;
+    if (chosenGifSize != _settings.export.gifSize) {
+      await _settings.export.updateGifSize(chosenGifSize);
     }
 
     // Determine target size
@@ -1151,6 +1159,10 @@ class PostProcessingController extends ChangeNotifier {
       _activeExportTransaction!.setTag(
         'export.bitrate',
         _settings.export.exportBitrate,
+      );
+      _activeExportTransaction!.setTag(
+        'export.gif_size',
+        _settings.export.gifSize,
       );
       _activeExportTransaction!.setTag(
         'audio.gain_db',
@@ -1225,6 +1237,9 @@ class PostProcessingController extends ChangeNotifier {
         'format': _settings.export.exportFormat,
         'codec': _settings.export.exportCodec,
         'bitrate': _settings.export.exportBitrate,
+        // GIF-only: long-edge size preset (small/medium/large). Native ignores
+        // it for non-GIF formats. Older payloads that omit it default to large.
+        'gifSize': _settings.export.gifSize,
         if (_cameraPath != null) 'cameraPath': _cameraPath,
         ...?_cameraState?.toMap(),
         // PR-3d: the kept clip ranges (split / cut / trim) so native bakes the

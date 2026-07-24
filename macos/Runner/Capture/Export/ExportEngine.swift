@@ -73,6 +73,10 @@ final class ExportEngine {
     let format: String
     let codec: String
     let bitrate: String
+    /// GIF-only long-edge size preset ("small"/"medium"/"large"). Resolved to a
+    /// pixel cap via `GifExportPolicy.maxLongEdge(forSizePreset:)`; unknown/older
+    /// values fall back to "large" (today's output). Ignored for non-GIF formats.
+    var gifSize: String = "large"
     let audioGainDb: Double
     let audioVolumePercent: Double
     let autoNormalizeOnExport: Bool
@@ -256,10 +260,15 @@ final class ExportEngine {
       : nil
     let renderURL = tempMovURL ?? outputURL
     let renderFormat = isGif ? "mov" : input.format
+    // GIF long-edge cap for the chosen size preset (small/medium/large). Older
+    // payloads without `gifSize` resolve to "large" (== today's 1080 cap).
+    let gifMaxLongEdge = GifExportPolicy.maxLongEdge(forSizePreset: input.gifSize)
     // GIF is downscaled to the long-edge cap, so render the intermediate at that
-    // capped (even) size — otherwise a 4K/8K selection renders a huge frame just
-    // to throw it away for a result identical to 1080. Non-GIF is unchanged.
-    let renderTarget = isGif ? Self.gifIntermediateSize(from: targetSize) : targetSize
+    // capped (even) size — otherwise a 4K/8K selection (or a large source at the
+    // Small/Medium preset) renders a huge frame just to throw it away. Non-GIF
+    // is unchanged.
+    let renderTarget =
+      isGif ? Self.gifIntermediateSize(from: targetSize, maxLongEdge: gifMaxLongEdge) : targetSize
     // Reserve the tail of the progress bar for the GIF transcode.
     let renderProgressSpan = isGif ? 0.85 : 1.0
     let renderProgress: ((Double) -> Void)? = onProgress.map { callback in
@@ -310,6 +319,7 @@ final class ExportEngine {
           session.run(
             sourceVideoURL: final,
             outputURL: outputURL,
+            maxLongEdge: gifMaxLongEdge,
             onProgress: onProgress.map { callback in
               { value in callback(renderProgressSpan + value * (1 - renderProgressSpan)) }
             }
@@ -338,10 +348,15 @@ final class ExportEngine {
   /// final path to Flutter. `nonisolated` + static so it can run from either the
   /// direct render completion or the GIF transcode completion, on any thread.
   /// The intermediate render size for a GIF: the chosen target capped to the
-  /// GIF long-edge and rounded to even dimensions (the H.264 intermediate wants
-  /// even width/height). Keeps a 4K/8K selection from rendering a giant frame.
-  nonisolated private static func gifIntermediateSize(from target: CGSize) -> CGSize {
-    let capped = GifExportPolicy.renderSize(canvasSize: target)
+  /// GIF long-edge (`maxLongEdge`, from the size preset) and rounded to even
+  /// dimensions (the H.264 intermediate wants even width/height). Keeps a
+  /// 4K/8K selection — or any source larger than the preset cap — from
+  /// rendering a giant frame just to downscale it.
+  nonisolated private static func gifIntermediateSize(
+    from target: CGSize,
+    maxLongEdge: CGFloat = GifExportPolicy.defaultMaxLongEdge
+  ) -> CGSize {
+    let capped = GifExportPolicy.renderSize(canvasSize: target, maxLongEdge: maxLongEdge)
     func even(_ value: CGFloat) -> CGFloat { max(2, (value / 2).rounded() * 2) }
     return CGSize(width: even(capped.width), height: even(capped.height))
   }

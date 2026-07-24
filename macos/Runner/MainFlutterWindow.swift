@@ -818,6 +818,7 @@ class MainFlutterWindow: NSWindow {
             format: req.format,
             codec: req.codec,
             bitrate: req.bitrate,
+            gifSize: req.gifSize,
             audioGainDb: req.audioGainDb,
             audioVolumePercent: req.audioVolumePercent,
             autoNormalizeOnExport: req.autoNormalizeOnExport,

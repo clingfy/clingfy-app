@@ -186,6 +186,22 @@ class AppLocalizationsAr extends AppLocalizations {
   String get high => 'عالية';
 
   @override
+  String get gifSizeLabel => 'الحجم';
+
+  @override
+  String get gifSizeSmall => 'صغير (480 بكسل)';
+
+  @override
+  String get gifSizeMedium => 'متوسط (720 بكسل)';
+
+  @override
+  String get gifSizeLarge => 'كبير (1080 بكسل)';
+
+  @override
+  String get gifSizeCaption =>
+      'يتم تصدير ملفات GIF بمعدل 15 إطارًا في الثانية. الأحجام الأكبر تبدو أوضح لكنها تُنتج ملفات أكبر.';
+
+  @override
   String get original => 'أصلي';
 
   @override

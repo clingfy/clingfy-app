@@ -4,6 +4,13 @@ enum ExportCodec { hevc, h264 }
 
 enum ExportBitratePreset { auto, low, medium, high }
 
+/// GIF output size, a file-size lever specific to GIF export. GIF has a full
+/// color table per frame, so its long edge is capped for sanity (a 4K GIF is
+/// multiple GB). Each preset caps the long edge to a different pixel budget;
+/// fps stays fixed at 15 across all presets for cross-platform (Windows)
+/// parity, so dimension is the size lever, not frame rate.
+enum GifSizePreset { small, medium, large }
+
 ExportFormat exportFormatFromWire(
   String? raw, {
   ExportFormat fallback = ExportFormat.mov,
@@ -52,6 +59,22 @@ ExportBitratePreset exportBitratePresetFromWire(
   }
 }
 
+GifSizePreset gifSizePresetFromWire(
+  String? raw, {
+  GifSizePreset fallback = GifSizePreset.large,
+}) {
+  switch (raw?.toLowerCase().trim()) {
+    case 'small':
+      return GifSizePreset.small;
+    case 'medium':
+      return GifSizePreset.medium;
+    case 'large':
+      return GifSizePreset.large;
+    default:
+      return fallback;
+  }
+}
+
 extension ExportFormatWire on ExportFormat {
   String get wireValue {
     switch (this) {
@@ -89,6 +112,36 @@ extension ExportBitratePresetWire on ExportBitratePreset {
         return 'medium';
       case ExportBitratePreset.high:
         return 'high';
+    }
+  }
+}
+
+extension GifSizePresetWire on GifSizePreset {
+  String get wireValue {
+    switch (this) {
+      case GifSizePreset.small:
+        return 'small';
+      case GifSizePreset.medium:
+        return 'medium';
+      case GifSizePreset.large:
+        return 'large';
+    }
+  }
+
+  /// GIF long-edge cap in pixels for this preset.
+  ///
+  /// Display/UI hint only. The authoritative cap the exporter enforces lives
+  /// natively in `GifExportPolicy.maxLongEdge(forSizePreset:)`
+  /// (`macos/Runner/Capture/Export/GifExportPolicy.swift`); these two must stay
+  /// in sync. A landscape 16:9 canvas at `large` becomes 1080×608, etc.
+  int get longEdgePx {
+    switch (this) {
+      case GifSizePreset.small:
+        return 480;
+      case GifSizePreset.medium:
+        return 720;
+      case GifSizePreset.large:
+        return 1080;
     }
   }
 }

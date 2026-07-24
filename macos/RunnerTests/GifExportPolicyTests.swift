@@ -207,4 +207,53 @@ final class GifExportPolicyTests: XCTestCase {
       GifExportPolicy.renderSize(canvasSize: CGSize(width: 1920, height: 1080), maxLongEdge: 0),
       CGSize(width: 1920, height: 1080))
   }
+
+  // MARK: - Size presets (Small / Medium / Large)
+
+  func testSizePresetCapsMatchTheContract() {
+    // Mirror of the Flutter GifSizePreset.longEdgePx values — keep in sync.
+    XCTAssertEqual(GifExportPolicy.smallMaxLongEdge, 480)
+    XCTAssertEqual(GifExportPolicy.mediumMaxLongEdge, 720)
+    XCTAssertEqual(GifExportPolicy.largeMaxLongEdge, 1080)
+    // Large is the default so an omitted preset renders exactly as before.
+    XCTAssertEqual(GifExportPolicy.largeMaxLongEdge, GifExportPolicy.defaultMaxLongEdge)
+  }
+
+  func testMaxLongEdgeResolvesEachSizePreset() {
+    XCTAssertEqual(GifExportPolicy.maxLongEdge(forSizePreset: "small"), 480)
+    XCTAssertEqual(GifExportPolicy.maxLongEdge(forSizePreset: "medium"), 720)
+    XCTAssertEqual(GifExportPolicy.maxLongEdge(forSizePreset: "large"), 1080)
+  }
+
+  func testMaxLongEdgeIsCaseInsensitiveAndTrimmed() {
+    XCTAssertEqual(GifExportPolicy.maxLongEdge(forSizePreset: "SMALL"), 480)
+    XCTAssertEqual(GifExportPolicy.maxLongEdge(forSizePreset: "  Medium "), 720)
+    XCTAssertEqual(GifExportPolicy.maxLongEdge(forSizePreset: "Large\n"), 1080)
+  }
+
+  func testMaxLongEdgeFallsBackToLargeForUnknownOrNil() {
+    // Older payloads (nil), empty, or a future/corrupt value all render at the
+    // shipped 1080 cap — byte-for-byte the pre-control behavior.
+    XCTAssertEqual(GifExportPolicy.maxLongEdge(forSizePreset: nil), 1080)
+    XCTAssertEqual(GifExportPolicy.maxLongEdge(forSizePreset: ""), 1080)
+    XCTAssertEqual(GifExportPolicy.maxLongEdge(forSizePreset: "gigantic"), 1080)
+  }
+
+  func testEachSizePresetDownscalesA1080LandscapeCanvas() {
+    // A 1080p 16:9 canvas through each preset's resolved cap. Small/Medium
+    // shrink the long edge; Large leaves the already-fitting canvas unchanged.
+    let canvas = CGSize(width: 1920, height: 1080)
+    XCTAssertEqual(
+      GifExportPolicy.renderSize(
+        canvasSize: canvas, maxLongEdge: GifExportPolicy.maxLongEdge(forSizePreset: "small")),
+      CGSize(width: 480, height: 270))
+    XCTAssertEqual(
+      GifExportPolicy.renderSize(
+        canvasSize: canvas, maxLongEdge: GifExportPolicy.maxLongEdge(forSizePreset: "medium")),
+      CGSize(width: 720, height: 405))
+    XCTAssertEqual(
+      GifExportPolicy.renderSize(
+        canvasSize: canvas, maxLongEdge: GifExportPolicy.maxLongEdge(forSizePreset: "large")),
+      CGSize(width: 1080, height: 608))
+  }
 }

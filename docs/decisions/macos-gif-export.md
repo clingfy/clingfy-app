@@ -189,21 +189,48 @@ pinned by automated tests on both platforms.
 
 ## Resolution UI & intermediate render (post-ship fix)
 
-Because the GIF long-edge is capped at 1080, every export resolution ≥1080
-(1080p/2K/4K/8K, all 16:9) collapses to the same ~1080×608 GIF — so the export
-dialog's **resolution / codec / bitrate controls are all hidden for GIF**
+Because the GIF long-edge is capped, every export resolution ≥ the cap
+(1080p/2K/4K/8K, all 16:9) collapses to the same GIF — so the export dialog's
+**resolution / codec / bitrate controls are all hidden for GIF**
 (`export_file_dialog.dart`, under the existing `supportsVideoEncoding` gate). A
 visible-but-inert resolution dropdown was confusing, and a 4K/8K selection also
 implied a giant render.
 
-`ExportEngine` now renders the GIF's **intermediate MOV at the capped (even)
-size** (`gifIntermediateSize`), not the chosen resolution — so a 4K/8K pick can
-never render a giant intermediate frame just to downscale it (no memory blow-up).
+`ExportEngine` renders the GIF's **intermediate MOV at the capped (even) size**
+(`gifIntermediateSize`), not the chosen resolution — so a 4K/8K pick can never
+render a giant intermediate frame just to downscale it (no memory blow-up).
 `GifExportSession`'s own downscale stays as a safety no-op.
+
+## GIF size presets (Small / Medium / Large) — file-size control
+
+The single fixed 1080 cap was replaced by a GIF-only **Size** control the user
+picks in the export dialog (shown where resolution/codec/bitrate sit for video).
+Presets map to a long-edge cap: **Small = 480 px, Medium = 720 px, Large =
+1080 px**. fps stays 15 across all presets — dimension is the file-size lever,
+and a per-preset fps would diverge from the Windows parity contract above. File
+size scales roughly with the square of the long edge, so Small is ~4× lighter
+than Large.
+
+- Wire: Dart `GifSizePreset` (`small`/`medium`/`large`, `longEdgePx`) →
+  `gifSize` on the `exportVideo` payload → `ExportVideoRequest.gifSize` →
+  `ExportEngine.Input.gifSize` → `GifExportPolicy.maxLongEdge(forSizePreset:)`,
+  which feeds **both** the intermediate render size (`gifIntermediateSize`) and
+  the transcode downscale (`GifExportSession.run(maxLongEdge:)`).
+- **Backward compatibility:** `large`'s cap == `defaultMaxLongEdge` (1080), and
+  every unknown/empty/absent value resolves to `large`. Older Flutter payloads
+  (no `gifSize`) and fresh installs render byte-for-byte as before this control.
+- Default preset is **Large**, so shipping this changes nothing for anyone who
+  doesn't touch the new dropdown.
+- The Dart `GifSizePreset.longEdgePx` and the native
+  `GifExportPolicy.{small,medium,large}MaxLongEdge` are two copies of the same
+  contract; both are pinned by tests (`export_settings_types_test.dart`,
+  `GifExportPolicyTests`).
 
 ## Follow-ups
 
-- **Windows parity follow-up:** add the ≤1080 long-edge cap and the drift-free
-  delay accumulator to the Windows encoder (both currently un-capped / drift by
-  the same ~5%). Update the stale comment in `gif_export_policy.h` that says
-  "macOS has NO real GIF encoder" once PR-4 lands.
+- **Windows parity follow-up:** add the long-edge cap and the drift-free delay
+  accumulator to the Windows encoder (both currently un-capped / drift by the
+  same ~5%). This now also means porting the **Small/Medium/Large size presets**
+  (480/720/1080) and a `gifSize` parameter through the Windows export pipeline
+  so both platforms expose the same control. Update the stale comment in
+  `gif_export_policy.h` that says "macOS has NO real GIF encoder".
