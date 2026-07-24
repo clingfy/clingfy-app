@@ -84,13 +84,17 @@ final class GifExportSessionTests: XCTestCase {
     if let error = writer.error { throw error }
   }
 
-  private func transcode(_ source: URL, to gif: URL, timeout: TimeInterval = 30) -> Result<
-    URL, Error
-  >? {
+  private func transcode(
+    _ source: URL, to gif: URL,
+    maxLongEdge: CGFloat = GifExportPolicy.defaultMaxLongEdge,
+    timeout: TimeInterval = 30
+  ) -> Result<URL, Error>? {
     let session = GifExportSession()
     let expectation = expectation(description: "transcode")
     var captured: Result<URL, Error>?
-    session.run(sourceVideoURL: source, outputURL: gif, onProgress: nil) { result in
+    session.run(
+      sourceVideoURL: source, outputURL: gif, maxLongEdge: maxLongEdge, onProgress: nil
+    ) { result in
       captured = result
       expectation.fulfill()
     }
@@ -142,5 +146,23 @@ final class GifExportSessionTests: XCTestCase {
     // 1600x900: long edge 1600 -> 1080, height 900 * (1080/1600) = 607.5 -> 608.
     XCTAssertEqual(frame.width, 1080)
     XCTAssertEqual(frame.height, 608)
+  }
+
+  func testSmallSizePresetCapDownscalesFurtherThanLarge() throws {
+    // The same 1600x900 source, but transcoded at the Small preset's 480 cap
+    // (as ExportEngine would pass through from the size selection): 1600 -> 480,
+    // 900 * (480/1600) = 270.
+    let source = tempDir.appendingPathComponent("small.mov")
+    try writeSolidVideo(url: source, width: 1600, height: 900, seconds: 0.4, fps: 30)
+    let gif = tempDir.appendingPathComponent("small.gif")
+
+    let result = try XCTUnwrap(
+      transcode(source, to: gif, maxLongEdge: GifExportPolicy.maxLongEdge(forSizePreset: "small")))
+    guard case .success = result else { return XCTFail("transcode failed: \(result)") }
+
+    let imageSource = try XCTUnwrap(CGImageSourceCreateWithURL(gif as CFURL, nil))
+    let frame = try XCTUnwrap(CGImageSourceCreateImageAtIndex(imageSource, 0, nil))
+    XCTAssertEqual(frame.width, 480)
+    XCTAssertEqual(frame.height, 270)
   }
 }

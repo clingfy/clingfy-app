@@ -436,6 +436,36 @@ abstract class AppLocalizations {
   /// **'High'**
   String get high;
 
+  /// No description provided for @gifSizeLabel.
+  ///
+  /// In en, this message translates to:
+  /// **'Size'**
+  String get gifSizeLabel;
+
+  /// No description provided for @gifSizeSmall.
+  ///
+  /// In en, this message translates to:
+  /// **'Small (480px)'**
+  String get gifSizeSmall;
+
+  /// No description provided for @gifSizeMedium.
+  ///
+  /// In en, this message translates to:
+  /// **'Medium (720px)'**
+  String get gifSizeMedium;
+
+  /// No description provided for @gifSizeLarge.
+  ///
+  /// In en, this message translates to:
+  /// **'Large (1080px)'**
+  String get gifSizeLarge;
+
+  /// No description provided for @gifSizeCaption.
+  ///
+  /// In en, this message translates to:
+  /// **'GIFs export at 15 fps. Larger sizes look sharper but make bigger files.'**
+  String get gifSizeCaption;
+
   /// No description provided for @original.
   ///
   /// In en, this message translates to:

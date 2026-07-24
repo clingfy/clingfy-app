@@ -187,6 +187,22 @@ class AppLocalizationsRo extends AppLocalizations {
   String get high => 'Ridicată';
 
   @override
+  String get gifSizeLabel => 'Dimensiune';
+
+  @override
+  String get gifSizeSmall => 'Mică (480px)';
+
+  @override
+  String get gifSizeMedium => 'Medie (720px)';
+
+  @override
+  String get gifSizeLarge => 'Mare (1080px)';
+
+  @override
+  String get gifSizeCaption =>
+      'GIF-urile se exportă la 15 fps. Dimensiunile mai mari arată mai clar, dar produc fișiere mai mari.';
+
+  @override
   String get original => 'Original';
 
   @override
