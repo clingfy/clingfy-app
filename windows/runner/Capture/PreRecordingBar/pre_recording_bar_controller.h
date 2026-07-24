@@ -105,6 +105,9 @@ class PreRecordingBarController {
   // Overlay thread.
   void OpenMicPicker(const RECT& anchor_screen);
   void OpenCameraPicker(const RECT& anchor_screen);
+  // Slice 6b: display / window dropdowns (int64 ids).
+  void OpenDisplayPicker(const RECT& anchor_screen);
+  void OpenWindowPicker(const RECT& anchor_screen);
   // Whether a client point lands on an enabled, tappable button — used by
   // WM_SETCURSOR to show the hand cursor. Overlay thread.
   bool PointOnEnabledButton(HWND hwnd, int x, int y);

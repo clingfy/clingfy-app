@@ -1,6 +1,7 @@
 #include "Bridge/Routers/pre_recording_bar_router.h"
 
 #include <cstdint>
+#include <optional>
 #include <string>
 #include <variant>
 
@@ -54,6 +55,22 @@ std::string ReadString(const flutter::EncodableMap& map,
     return *v;
   }
   return {};
+}
+
+// Read an optional int64 (display / window ids). Absent or null -> nullopt.
+std::optional<std::int64_t> ReadOptInt64(const flutter::EncodableMap& map,
+                                         const std::string& key) {
+  const auto it = map.find(flutter::EncodableValue(key));
+  if (it == map.end()) {
+    return std::nullopt;
+  }
+  if (const auto* v = std::get_if<std::int64_t>(&it->second)) {
+    return *v;
+  }
+  if (const auto* v = std::get_if<std::int32_t>(&it->second)) {
+    return static_cast<std::int64_t>(*v);
+  }
+  return std::nullopt;
 }
 
 clingfy::capture::PreRecordingBarController& Bar() {
@@ -114,6 +131,10 @@ void HandleSetState(
     // send null (no selection) -> empty string.
     inputs.selected_audio_source_id = ReadString(*args, "selectedAudioSourceId");
     inputs.selected_cam_id = ReadString(*args, "selectedCamId");
+    // Display / window ids for the Slice 6b pickers (int64, nullable).
+    inputs.selected_display_id = ReadOptInt64(*args, "selectedDisplayId");
+    inputs.selected_app_window_id =
+        ReadOptInt64(*args, "selectedAppWindowId");
     Bar().SetState(inputs);
   }
   reply::Null(*result);
