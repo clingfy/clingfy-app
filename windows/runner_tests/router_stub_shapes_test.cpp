@@ -167,6 +167,16 @@ TEST(StubShapesTest, PreRecordingBarMethodsDriveController) {
        flutter::EncodableValue(false)},
       {flutter::EncodableValue("countdownActive"),
        flutter::EncodableValue(false)},
+      // Slice 6 picker selection ids: strings (mic/camera) + int64
+      // (display/window).
+      {flutter::EncodableValue("selectedAudioSourceId"),
+       flutter::EncodableValue("mic-endpoint-7")},
+      {flutter::EncodableValue("selectedCamId"),
+       flutter::EncodableValue("cam-xyz")},
+      {flutter::EncodableValue("selectedDisplayId"),
+       flutter::EncodableValue(static_cast<int64_t>(9001))},
+      {flutter::EncodableValue("selectedAppWindowId"),
+       flutter::EncodableValue(static_cast<int64_t>(4242))},
   };
   const auto pushed =
       DispatchWithArgs(router, "setPreRecordingBarState", std::move(state));
@@ -180,6 +190,12 @@ TEST(StubShapesTest, PreRecordingBarMethodsDriveController) {
   EXPECT_FALSE(got.system_audio_enabled);
   EXPECT_TRUE(got.update_available);
   EXPECT_TRUE(got.can_pause_resume);
+  EXPECT_EQ(got.selected_audio_source_id, "mic-endpoint-7");
+  EXPECT_EQ(got.selected_cam_id, "cam-xyz");
+  ASSERT_TRUE(got.selected_display_id.has_value());
+  EXPECT_EQ(*got.selected_display_id, 9001);
+  ASSERT_TRUE(got.selected_app_window_id.has_value());
+  EXPECT_EQ(*got.selected_app_window_id, 4242);
 
   // show / toggle just reply null (no window to move while suppressed).
   EXPECT_TRUE(Dispatch(router, "showPreRecordingBar").success_called);

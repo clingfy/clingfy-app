@@ -5,12 +5,16 @@
 #include <algorithm>
 #include <array>
 #include <cmath>
+#include <cstdint>
+#include <optional>
 #include <string>
 #include <vector>
 
 #include "Bridge/Devices/audio_source_enumerator.h"
 #include "Bridge/Devices/device_record.h"
+#include "Bridge/Devices/display_enumerator.h"
 #include "Bridge/Devices/video_source_enumerator.h"
+#include "Bridge/Devices/window_enumerator.h"
 #include "Bridge/native_selection_changed_publisher.h"
 #include "Bridge/pre_recording_bar_action_publisher.h"
 #include "Capture/PreRecordingBar/pre_recording_bar_model.h"
@@ -365,6 +369,8 @@ namespace {
 // covers mic + camera; display/window arrive in 6b.
 constexpr const char* kSelTypeMic = "mic";
 constexpr const char* kSelTypeCamera = "camera";
+constexpr const char* kSelTypeDisplay = "display";
+constexpr const char* kSelTypeWindow = "window";
 
 // Widen a UTF-8 device name (the enumerators produce UTF-8 std::string) to the
 // UTF-16 the GDI text APIs want. Empty in -> empty out.
@@ -426,16 +432,29 @@ void PreRecordingBarController::HandleClick(HWND hwnd, int x, int y) {
     return;  // background, or a phase-disabled control — no reverse call.
   }
 
-  // Mic / camera open a native device dropdown (Slice 6a) instead of forwarding
-  // a tap. Anchor it to the button's screen rect.
-  if (hit.id == BarButtonId::kMic || hit.id == BarButtonId::kCamera) {
+  // The four picker buttons open a native device dropdown instead of forwarding
+  // a tap (Slice 6a mic/camera + 6b display/window). Anchor it to the button's
+  // screen rect.
+  if (hit.id == BarButtonId::kMic || hit.id == BarButtonId::kCamera ||
+      hit.id == BarButtonId::kDisplay || hit.id == BarButtonId::kWindow) {
     RECT anchor{hit.rect.left, hit.rect.top, hit.rect.right, hit.rect.bottom};
     ::MapWindowPoints(hwnd, nullptr, reinterpret_cast<POINT*>(&anchor),
                       2);  // client -> screen (both corners).
-    if (hit.id == BarButtonId::kMic) {
-      OpenMicPicker(anchor);
-    } else {
-      OpenCameraPicker(anchor);
+    switch (hit.id) {
+      case BarButtonId::kMic:
+        OpenMicPicker(anchor);
+        break;
+      case BarButtonId::kCamera:
+        OpenCameraPicker(anchor);
+        break;
+      case BarButtonId::kDisplay:
+        OpenDisplayPicker(anchor);
+        break;
+      case BarButtonId::kWindow:
+        OpenWindowPicker(anchor);
+        break;
+      default:
+        break;
     }
     return;
   }
@@ -501,6 +520,64 @@ void PreRecordingBarController::OpenCameraPicker(const RECT& anchor_screen) {
       pub.EmitNoneSelection(kSelTypeCamera);  // "No camera".
     } else if (row - 1 < static_cast<int>(ids.size())) {
       pub.EmitStringSelection(kSelTypeCamera, ids[row - 1]);
+    }
+  });
+}
+
+void PreRecordingBarController::OpenDisplayPicker(const RECT& anchor_screen) {
+  std::optional<std::int64_t> selected;
+  {
+    std::lock_guard<std::mutex> lock(state_mutex_);
+    selected = inputs_.selected_display_id;
+  }
+  const std::vector<clingfy::bridge::devices::DisplayRecord> displays =
+      clingfy::bridge::devices::EnumerateDisplays();
+
+  // A display must always be selected — no "none" row; row index maps 1:1.
+  std::vector<PreRecordingBarPopover::Row> rows;
+  std::vector<std::int64_t> ids;
+  for (const auto& d : displays) {
+    rows.push_back(
+        {Utf8ToWide(d.name), selected.has_value() && *selected == d.id});
+    ids.push_back(d.id);
+  }
+
+  popover_.Show(rows, anchor_screen, [ids](int row) {
+    if (row >= 0 && row < static_cast<int>(ids.size())) {
+      clingfy::bridge::NativeSelectionChangedPublisher::Instance()
+          .EmitIntSelection(kSelTypeDisplay, ids[row]);
+    }
+  });
+}
+
+void PreRecordingBarController::OpenWindowPicker(const RECT& anchor_screen) {
+  std::optional<std::int64_t> selected;
+  {
+    std::lock_guard<std::mutex> lock(state_mutex_);
+    selected = inputs_.selected_app_window_id;
+  }
+  const std::vector<clingfy::bridge::devices::AppWindowRecord> windows =
+      clingfy::bridge::devices::EnumerateAppWindows();
+
+  // Row label is "App - Title" (fall back to whichever is non-empty), matching
+  // how macOS composes the window picker row. No "none" row — a window target
+  // requires a window; row index maps 1:1.
+  std::vector<PreRecordingBarPopover::Row> rows;
+  std::vector<std::int64_t> ids;
+  for (const auto& w : windows) {
+    std::string label = w.app_name;
+    if (!w.title.empty()) {
+      label = w.app_name.empty() ? w.title : (w.app_name + " - " + w.title);
+    }
+    rows.push_back({Utf8ToWide(label),
+                    selected.has_value() && *selected == w.window_id});
+    ids.push_back(w.window_id);
+  }
+
+  popover_.Show(rows, anchor_screen, [ids](int row) {
+    if (row >= 0 && row < static_cast<int>(ids.size())) {
+      clingfy::bridge::NativeSelectionChangedPublisher::Instance()
+          .EmitIntSelection(kSelTypeWindow, ids[row]);
     }
   });
 }

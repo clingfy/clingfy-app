@@ -2,6 +2,8 @@
 #define RUNNER_CAPTURE_PRERECORDINGBAR_PRE_RECORDING_BAR_MODEL_H_
 
 #include <array>
+#include <cstdint>
+#include <optional>
 #include <string>
 
 // Slice 4 (Windows pre-recording bar): the pure, window-free logic behind the
@@ -73,11 +75,13 @@ struct PreRecordingBarInputs {
   bool countdown_active = false;        // the pre-record countdown is running.
 
   // Selected device ids (Slice 6 pickers, not used by render). The controller
-  // reads these to mark the current row in the mic / camera dropdowns. Empty /
-  // "__none__" / "none" means no device selected. Displays/windows (int64 ids)
-  // arrive in Slice 6b.
+  // reads these to mark the current row in the dropdowns. Mic/camera use string
+  // ids (empty / "__none__" / "none" = no device); display/window use int64 ids
+  // (nullopt = none selected).
   std::string selected_audio_source_id;
   std::string selected_cam_id;
+  std::optional<std::int64_t> selected_display_id;
+  std::optional<std::int64_t> selected_app_window_id;
 };
 
 // One button's render decision.
