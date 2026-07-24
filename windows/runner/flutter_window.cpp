@@ -9,6 +9,7 @@
 #include "Bridge/platform_thread_dispatcher.h"
 #include "Capture/Export/export_session.h"
 #include "Capture/Indicator/recording_indicator_controller.h"
+#include "Capture/PreRecordingBar/pre_recording_bar_controller.h"
 #include "Capture/recording_engine.h"
 #include "Services/temp_orphan_scan.h"
 #include "flutter/generated_plugin_registrant.h"
@@ -135,6 +136,10 @@ void FlutterWindow::OnDestroy() {
   // StopActiveSessionForShutdown above already hid the pill; this reclaims the
   // thread + window.
   clingfy::capture::RecordingIndicatorController::Instance().Shutdown();
+
+  // Slice 4 (Windows pre-recording bar): same idle-persistent overlay thread —
+  // join it at teardown so the window + thread are reclaimed cleanly.
+  clingfy::capture::PreRecordingBarController::Instance().Shutdown();
 
   // Abort any in-flight export so its worker stops decoding/encoding and
   // deletes its partial output instead of racing teardown. (The worker's

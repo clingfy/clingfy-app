@@ -11,12 +11,6 @@ namespace clingfy::bridge::routers::indicator {
 
 namespace {
 
-void HandleNoopSetter(
-    const flutter::MethodCall<flutter::EncodableValue>& /*call*/,
-    std::unique_ptr<flutter::MethodResult<flutter::EncodableValue>> result) {
-  reply::Null(*result);
-}
-
 // Slice 3: pin / unpin the on-screen recording indicator. Dart's
 // SettingsController pushes the persisted `indicatorPinned` bool on startup and
 // on toggle (mirrors macOS setRecordingIndicatorPinned). Parse the `pinned` key
@@ -75,14 +69,9 @@ void HandleSetNativeLogLevel(
 void RegisterHandlers(HandlerTable& table) {
   table["setRecordingIndicatorPinned"] = &HandleSetRecordingIndicatorPinned;
 
-  // macOS routes both `setPreRecordingBarEnabled` and
-  // `setPreRecordingBarVisible` through the same handler -- mirror that here
-  // so we stay aligned with the Dart contract.
-  table["setPreRecordingBarEnabled"] = &HandleNoopSetter;
-  table["setPreRecordingBarVisible"] = &HandleNoopSetter;
-  table["showPreRecordingBar"] = &HandleNoopSetter;
-  table["togglePreRecordingBar"] = &HandleNoopSetter;
-  table["setPreRecordingBarState"] = &HandleNoopSetter;
+  // The pre-recording bar methods (setPreRecordingBar*/show/toggle) moved to
+  // `routers::pre_recording_bar` (Slice 4) — they now drive a real Win32
+  // overlay instead of a no-op.
 
   // Runtime log-verbosity push from the Settings "verbose logging" toggle —
   // pushes the level into the native log threshold (NativeLogPublisher), so

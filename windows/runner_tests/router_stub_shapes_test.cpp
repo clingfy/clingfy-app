@@ -19,6 +19,7 @@
 #include "Capture/Export/export_passthrough.h"
 #include "Capture/Export/export_session.h"
 #include "Capture/Indicator/recording_indicator_controller.h"
+#include "Capture/PreRecordingBar/pre_recording_bar_controller.h"
 #include "Capture/recording_engine.h"
 #include "Capture/windows_selection_state.h"
 #include "test_support.h"
@@ -124,6 +125,69 @@ TEST(StubShapesTest, SetRecordingIndicatorPinnedForwardsToController) {
   EXPECT_FALSE(indicator.pinned_for_testing());
 }
 
+// === Slice 4: the pre-recording bar methods drive the controller ===========
+//
+// setPreRecordingBarEnabled / setPreRecordingBarVisible / show / toggle /
+// setPreRecordingBarState route to PreRecordingBarController and each reply
+// null. Window creation is suppressed so the routing/parse paths run headless
+// (no overlay window on the CI agent).
+TEST(StubShapesTest, PreRecordingBarMethodsDriveController) {
+  auto& bar = clingfy::capture::PreRecordingBarController::Instance();
+  bar.set_suppress_window_for_testing(true);
+  MethodRouter router;
+
+  // Enabled toggle parses {enabled} and stores it.
+  const auto disabled = DispatchWithArgs(
+      router, "setPreRecordingBarEnabled",
+      {{flutter::EncodableValue("enabled"), flutter::EncodableValue(false)}});
+  EXPECT_TRUE(disabled.success_called);
+  EXPECT_TRUE(disabled.success_value.IsNull());
+  EXPECT_FALSE(bar.enabled_for_testing());
+
+  // setPreRecordingBarVisible shares the handler (mirrors macOS).
+  const auto visible = DispatchWithArgs(
+      router, "setPreRecordingBarVisible",
+      {{flutter::EncodableValue("enabled"), flutter::EncodableValue(true)}});
+  EXPECT_TRUE(visible.success_called);
+  EXPECT_TRUE(bar.enabled_for_testing());
+
+  // The state feed parses the render subset of the map.
+  flutter::EncodableMap state{
+      {flutter::EncodableValue("phase"), flutter::EncodableValue(2)},
+      {flutter::EncodableValue("targetMode"), flutter::EncodableValue(3)},
+      {flutter::EncodableValue("cameraEnabled"), flutter::EncodableValue(true)},
+      {flutter::EncodableValue("micEnabled"), flutter::EncodableValue(true)},
+      {flutter::EncodableValue("systemAudioEnabled"),
+       flutter::EncodableValue(false)},
+      {flutter::EncodableValue("updateAvailable"),
+       flutter::EncodableValue(true)},
+      {flutter::EncodableValue("canPauseResume"),
+       flutter::EncodableValue(true)},
+      {flutter::EncodableValue("pauseResumeInFlight"),
+       flutter::EncodableValue(false)},
+      {flutter::EncodableValue("countdownActive"),
+       flutter::EncodableValue(false)},
+  };
+  const auto pushed =
+      DispatchWithArgs(router, "setPreRecordingBarState", std::move(state));
+  EXPECT_TRUE(pushed.success_called);
+  EXPECT_TRUE(pushed.success_value.IsNull());
+  const clingfy::capture::PreRecordingBarInputs got = bar.inputs_for_testing();
+  EXPECT_EQ(got.phase, 2);
+  EXPECT_EQ(got.target_mode, 3);
+  EXPECT_TRUE(got.camera_selected);
+  EXPECT_TRUE(got.mic_enabled);
+  EXPECT_FALSE(got.system_audio_enabled);
+  EXPECT_TRUE(got.update_available);
+  EXPECT_TRUE(got.can_pause_resume);
+
+  // show / toggle just reply null (no window to move while suppressed).
+  EXPECT_TRUE(Dispatch(router, "showPreRecordingBar").success_called);
+  EXPECT_TRUE(Dispatch(router, "togglePreRecordingBar").success_called);
+
+  bar.set_suppress_window_for_testing(false);
+}
+
 // === Phase 7.2/7.3: area selection lifecycle ===============================
 //
 // pickAreaRecordingRegion is intentionally NOT dispatched here: Phase 7.3 makes
@@ -209,11 +273,9 @@ TEST(StubShapesTest, NoopSettersReturnSuccessWithNullValue) {
       // setRecordingIndicatorPinned became REAL in Slice 3 — it forwards to
       // RecordingIndicatorController::SetPinned. Its dedicated contract test is
       // below (SetRecordingIndicatorPinnedForwardsToController).
-      "setPreRecordingBarEnabled",
-      "setPreRecordingBarVisible",
-      "showPreRecordingBar",
-      "togglePreRecordingBar",
-      "setPreRecordingBarState",
+      // The setPreRecordingBar* / show / toggle methods became REAL in Slice 4
+      // — they drive PreRecordingBarController. Their dedicated contract test is
+      // below (PreRecordingBarMethodsDriveController); not no-op setters.
       // previewOpen / previewClose / previewPlay / previewPause /
       // previewSeekTo are no longer no-op setters as of Steps 5.3 +
       // 5.5 — they route through PreviewEngine, return BAD_ARGS /

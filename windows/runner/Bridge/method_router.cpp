@@ -14,6 +14,7 @@
 #include "Bridge/Routers/indicator_router.h"
 #include "Bridge/Routers/misc_router.h"
 #include "Bridge/Routers/permissions_router.h"
+#include "Bridge/Routers/pre_recording_bar_router.h"
 #include "Bridge/Routers/preview_router.h"
 #include "Bridge/Routers/recording_router.h"
 #include "Bridge/Routers/storage_router.h"
@@ -85,6 +86,7 @@ MethodRouter::MethodRouter() {
   routers::devices::RegisterHandlers(handlers_);
   routers::camera_overlay::RegisterHandlers(handlers_);
   routers::indicator::RegisterHandlers(handlers_);
+  routers::pre_recording_bar::RegisterHandlers(handlers_);
   routers::preview::RegisterHandlers(handlers_);
   routers::export_::RegisterHandlers(handlers_);
   routers::permissions::RegisterHandlers(handlers_);
