@@ -68,6 +68,15 @@ inline constexpr const char* kIndicatorResumeTapped = "indicatorResumeTapped";
 // NativeToFlutterMethod.preRecordingBarAction.
 inline constexpr const char* kPreRecordingBarAction = "preRecordingBarAction";
 
+// Pre-recording bar native picker selection (Slice 6): invoked with a map
+// {type: <"display"|"window"|"mic"|"camera"|"mode">, id: <int|string|null>}
+// when the user picks a device from a native dropdown popover. Dart's
+// NativeBridge routes it to home_actions.handleNativeSelectionChanged, which
+// drives deviceController.setDisplay/setAppWindow/setAudioSource/setCamSource
+// (id null = deselect) — macOS parity (PreRecordingBarController.notifyFlutterSelection).
+// Keep the method name in sync with Dart NativeToFlutterMethod.nativeSelectionChanged.
+inline constexpr const char* kNativeSelectionChanged = "nativeSelectionChanged";
+
 }  // namespace clingfy::bridge::method
 
 #endif  // RUNNER_BRIDGE_NATIVE_CHANNEL_NAMES_H_
