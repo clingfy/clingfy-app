@@ -19,6 +19,23 @@ constexpr UINT kTickIntervalMs = 250;  // 4 Hz — keeps the seconds tick crisp.
 constexpr UINT kMsgShow = WM_APP + 1;
 constexpr UINT kMsgHide = WM_APP + 2;
 constexpr UINT kMsgRepaint = WM_APP + 3;
+constexpr UINT kMsgReplace = WM_APP + 4;  // re-run PlaceWindow (pin toggled).
+
+// Work area of the monitor the window currently sits on, falling back to the
+// primary display's full bounds. Shared by PlaceWindow + the drag clamp.
+RECT MonitorWorkArea(HWND hwnd) {
+  RECT work{0, 0, ::GetSystemMetrics(SM_CXSCREEN),
+            ::GetSystemMetrics(SM_CYSCREEN)};
+  if (HMONITOR mon = ::MonitorFromWindow(hwnd, MONITOR_DEFAULTTOPRIMARY);
+      mon != nullptr) {
+    MONITORINFO mi{};
+    mi.cbSize = sizeof(mi);
+    if (::GetMonitorInfoW(mon, &mi) != 0) {
+      work = mi.rcWork;
+    }
+  }
+  return work;
+}
 
 // Logical (96-dpi) pill size. Wide enough for the red dot + "00:00:00" + the
 // pause and stop controls on the right.
@@ -72,6 +89,39 @@ LRESULT CALLBACK RecordingIndicatorController::WndProc(HWND hwnd, UINT msg,
       return 0;
     case kMsgRepaint:
       ::InvalidateRect(hwnd, nullptr, FALSE);
+      return 0;
+    case kMsgReplace:
+      if (self != nullptr) {
+        self->PlaceWindow(hwnd);
+      }
+      ::InvalidateRect(hwnd, nullptr, FALSE);
+      return 0;
+    case WM_NCHITTEST: {
+      // Coexist drag with the Slice 2 controls: HTCLIENT over a button (so the
+      // click reaches WM_LBUTTONDOWN), HTCAPTION over the rest while unpinned
+      // (so the pill drags), HTCLIENT everywhere while pinned (non-movable).
+      if (self == nullptr) {
+        return ::DefWindowProcW(hwnd, msg, wparam, lparam);
+      }
+      POINT pt{GET_X_LPARAM(lparam), GET_Y_LPARAM(lparam)};  // screen coords
+      ::ScreenToClient(hwnd, &pt);
+      RECT client{};
+      ::GetClientRect(hwnd, &client);
+      const IndicatorHitZone zone = HitTestIndicatorZone(
+          client.right - client.left, client.bottom - client.top,
+          self->state_.load(), self->can_pause_resume_.load(), pt.x, pt.y);
+      if (zone == IndicatorHitZone::kControl) {
+        return HTCLIENT;
+      }
+      return self->pinned_.load() ? HTCLIENT : HTCAPTION;
+    }
+    case WM_EXITSIZEMOVE:
+      // End of a user drag (the HTCAPTION modal move loop). Programmatic
+      // SetWindowPos moves do NOT raise this, so PlaceWindow can't self-trigger
+      // a write-back.
+      if (self != nullptr) {
+        self->OnDragEnded(hwnd);
+      }
       return 0;
     case WM_TIMER:
       if (wparam == kTickTimerId && self != nullptr &&
@@ -270,23 +320,49 @@ void RecordingIndicatorController::Paint(HWND hwnd) {
 }
 
 void RecordingIndicatorController::PlaceWindow(HWND hwnd) {
-  RECT work{0, 0, ::GetSystemMetrics(SM_CXSCREEN),
-            ::GetSystemMetrics(SM_CYSCREEN)};
-  if (HMONITOR mon = ::MonitorFromWindow(hwnd, MONITOR_DEFAULTTOPRIMARY);
-      mon != nullptr) {
-    MONITORINFO mi{};
-    mi.cbSize = sizeof(mi);
-    if (::GetMonitorInfoW(mon, &mi) != 0) {
-      work = mi.rcWork;
-    }
-  }
+  const RECT work = MonitorWorkArea(hwnd);
   const UINT dpi = ::GetDpiForWindow(hwnd);
   const double scale = dpi > 0 ? dpi / 96.0 : 1.0;
-  const IndicatorRect r = ComputeIndicatorRect(
+  // Size always comes from the DPI-scaled base; the pinned top-right position
+  // is the default and the fallback when the pill was never dragged.
+  const IndicatorRect snap = ComputeIndicatorRect(
       work.left, work.top, work.right, work.bottom, scale, kBaseWidth,
       kBaseHeight);
-  ::SetWindowPos(hwnd, HWND_TOPMOST, r.x, r.y, r.width, r.height,
+
+  int x = snap.x;
+  int y = snap.y;
+  if (!pinned_.load() && last_origin_.has_value()) {
+    // Restore the remembered drag origin, re-clamped: the monitor/DPI may have
+    // changed since the drop, so the old origin could now be off-screen.
+    const IndicatorRect clamped = ClampIndicatorToWorkArea(
+        last_origin_->x, last_origin_->y, snap.width, snap.height, work.left,
+        work.top, work.right, work.bottom);
+    x = clamped.x;
+    y = clamped.y;
+  }
+  ::SetWindowPos(hwnd, HWND_TOPMOST, x, y, snap.width, snap.height,
                  SWP_NOACTIVATE);
+}
+
+void RecordingIndicatorController::OnDragEnded(HWND hwnd) {
+  if (pinned_.load()) {
+    return;  // pinned windows don't move; nothing to remember.
+  }
+  RECT wr{};
+  if (::GetWindowRect(hwnd, &wr) == 0) {
+    return;
+  }
+  const RECT work = MonitorWorkArea(hwnd);
+  const IndicatorRect clamped = ClampIndicatorToWorkArea(
+      wr.left, wr.top, wr.right - wr.left, wr.bottom - wr.top, work.left,
+      work.top, work.right, work.bottom);
+  last_origin_ = POINT{clamped.x, clamped.y};
+  // If the drop left the pill partly off-screen, pull it back in. SWP_NOSIZE
+  // keeps the current size; this programmatic move raises no WM_EXITSIZEMOVE.
+  if (clamped.x != wr.left || clamped.y != wr.top) {
+    ::SetWindowPos(hwnd, HWND_TOPMOST, clamped.x, clamped.y, 0, 0,
+                   SWP_NOSIZE | SWP_NOACTIVATE);
+  }
 }
 
 bool RecordingIndicatorController::EnsureRunning() {
@@ -359,6 +435,15 @@ void RecordingIndicatorController::SetState(IndicatorVisualState state) {
   state_.store(state);
   if (HWND hwnd = hwnd_.load(); hwnd != nullptr && visible_.load()) {
     ::PostMessageW(hwnd, kMsgRepaint, 0, 0);
+  }
+}
+
+void RecordingIndicatorController::SetPinned(bool pinned) {
+  pinned_.store(pinned);
+  // Apply live: snap to the corner when pinning, restore the dragged origin
+  // when unpinning. PlaceWindow reads pinned_ + last_origin_.
+  if (HWND hwnd = hwnd_.load(); hwnd != nullptr && visible_.load()) {
+    ::PostMessageW(hwnd, kMsgReplace, 0, 0);
   }
 }
 

@@ -106,4 +106,24 @@ IndicatorButton HitTestIndicatorButton(const IndicatorButtonLayout& layout,
   return IndicatorButton::kNone;
 }
 
+IndicatorHitZone HitTestIndicatorZone(int client_width, int client_height,
+                                      IndicatorVisualState state,
+                                      bool can_pause_resume, int x, int y) {
+  const IndicatorButtonLayout layout = ComputeIndicatorButtons(
+      client_width, client_height, state, can_pause_resume);
+  return HitTestIndicatorButton(layout, x, y) != IndicatorButton::kNone
+             ? IndicatorHitZone::kControl
+             : IndicatorHitZone::kDragHandle;
+}
+
+IndicatorRect ClampIndicatorToWorkArea(int origin_x, int origin_y, int width,
+                                       int height, int work_left, int work_top,
+                                       int work_right, int work_bottom) {
+  const int max_x = work_right - width;
+  const int max_y = work_bottom - height;
+  const int x = std::clamp(origin_x, work_left, std::max(work_left, max_x));
+  const int y = std::clamp(origin_y, work_top, std::max(work_top, max_y));
+  return IndicatorRect{x, y, width, height};
+}
+
 }  // namespace clingfy::capture

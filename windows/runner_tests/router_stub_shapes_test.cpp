@@ -18,6 +18,7 @@
 #include "Bridge/Routers/export_router.h"
 #include "Capture/Export/export_passthrough.h"
 #include "Capture/Export/export_session.h"
+#include "Capture/Indicator/recording_indicator_controller.h"
 #include "Capture/recording_engine.h"
 #include "Capture/windows_selection_state.h"
 #include "test_support.h"
@@ -87,6 +88,40 @@ TEST(StubShapesTest, SetAppWindowTargetStoresAndClearsWindowId) {
       clingfy::capture::WindowsSelectionState::Instance().AppWindowId());
 
   clingfy::capture::WindowsSelectionState::Instance().ResetForTesting();
+}
+
+// === Slice 3: setRecordingIndicatorPinned forwards to the controller ========
+//
+// It parses {pinned: bool} and drives RecordingIndicatorController::SetPinned,
+// replying null (the void Dart contract). With no overlay window up in the test
+// binary, SetPinned just stores the cached flag — which is exactly the state
+// the WM_NCHITTEST / PlaceWindow paths read, so pinned_for_testing() reflects
+// the wire value. A missing/garbage `pinned` must not crash and must not flip
+// the flag.
+TEST(StubShapesTest, SetRecordingIndicatorPinnedForwardsToController) {
+  auto& indicator = clingfy::capture::RecordingIndicatorController::Instance();
+  MethodRouter router;
+
+  const auto r_true = DispatchWithArgs(
+      router, "setRecordingIndicatorPinned",
+      {{flutter::EncodableValue("pinned"), flutter::EncodableValue(true)}});
+  EXPECT_TRUE(r_true.success_called);
+  EXPECT_FALSE(r_true.error_called);
+  EXPECT_TRUE(r_true.success_value.IsNull());
+  EXPECT_TRUE(indicator.pinned_for_testing());
+
+  const auto r_false = DispatchWithArgs(
+      router, "setRecordingIndicatorPinned",
+      {{flutter::EncodableValue("pinned"), flutter::EncodableValue(false)}});
+  EXPECT_TRUE(r_false.success_called);
+  EXPECT_FALSE(indicator.pinned_for_testing());
+
+  // Missing args: still a null success, and the flag is untouched.
+  const auto r_missing = DispatchWithArgs(
+      router, "setRecordingIndicatorPinned", flutter::EncodableMap{});
+  EXPECT_TRUE(r_missing.success_called);
+  EXPECT_TRUE(r_missing.success_value.IsNull());
+  EXPECT_FALSE(indicator.pinned_for_testing());
 }
 
 // === Phase 7.2/7.3: area selection lifecycle ===============================
@@ -171,7 +206,9 @@ TEST(StubShapesTest, NoopSettersReturnSuccessWithNullValue) {
       "setChromaKeyEnabled",
       "setChromaKeyColor",
       "setChromaKeyStrength",
-      "setRecordingIndicatorPinned",
+      // setRecordingIndicatorPinned became REAL in Slice 3 — it forwards to
+      // RecordingIndicatorController::SetPinned. Its dedicated contract test is
+      // below (SetRecordingIndicatorPinnedForwardsToController).
       "setPreRecordingBarEnabled",
       "setPreRecordingBarVisible",
       "showPreRecordingBar",
