@@ -195,5 +195,82 @@ TEST(RecordingIndicatorModelTest, HitTestMissesWhenButtonsAbsent) {
   EXPECT_EQ(HitTestIndicatorButton(l, 200, 22), IndicatorButton::kNone);
 }
 
+// --- HitTestIndicatorZone (Slice 3): control vs drag handle -----------------
+
+TEST(RecordingIndicatorModelTest, ZoneIsControlOverButtonsDragElsewhere) {
+  const IndicatorButtonLayout l = ComputeIndicatorButtons(
+      220, 44, IndicatorVisualState::kRecording, true);
+  // Centers of the two controls report kControl.
+  const int px = (l.primary.left + l.primary.right) / 2;
+  const int py = (l.primary.top + l.primary.bottom) / 2;
+  EXPECT_EQ(HitTestIndicatorZone(220, 44, IndicatorVisualState::kRecording,
+                                 true, px, py),
+            IndicatorHitZone::kControl);
+  const int sx = (l.stop.left + l.stop.right) / 2;
+  const int sy = (l.stop.top + l.stop.bottom) / 2;
+  EXPECT_EQ(HitTestIndicatorZone(220, 44, IndicatorVisualState::kRecording,
+                                 true, sx, sy),
+            IndicatorHitZone::kControl);
+  // The timer / background area is a drag handle.
+  EXPECT_EQ(HitTestIndicatorZone(220, 44, IndicatorVisualState::kRecording,
+                                 true, 10, 22),
+            IndicatorHitZone::kDragHandle);
+}
+
+TEST(RecordingIndicatorModelTest, ZoneWherePrimaryWouldBeIsDragWhenSuppressed) {
+  // With pause unavailable, the primary rect isn't drawn — that spot must be a
+  // drag handle, not a dead control zone.
+  const IndicatorButtonLayout with_primary = ComputeIndicatorButtons(
+      220, 44, IndicatorVisualState::kRecording, /*can_pause_resume=*/true);
+  const int px = (with_primary.primary.left + with_primary.primary.right) / 2;
+  const int py = (with_primary.primary.top + with_primary.primary.bottom) / 2;
+  EXPECT_EQ(HitTestIndicatorZone(220, 44, IndicatorVisualState::kRecording,
+                                 /*can_pause_resume=*/false, px, py),
+            IndicatorHitZone::kDragHandle);
+}
+
+TEST(RecordingIndicatorModelTest, ZoneAllDragWhenNoControls) {
+  // Hidden / stopping have no controls — every point drags.
+  EXPECT_EQ(HitTestIndicatorZone(220, 44, IndicatorVisualState::kStopping,
+                                 true, 200, 22),
+            IndicatorHitZone::kDragHandle);
+  EXPECT_EQ(HitTestIndicatorZone(220, 44, IndicatorVisualState::kHidden, true,
+                                 200, 22),
+            IndicatorHitZone::kDragHandle);
+}
+
+// --- ClampIndicatorToWorkArea (Slice 3) -------------------------------------
+
+TEST(RecordingIndicatorModelTest, ClampPullsOffscreenOriginBackInside) {
+  // Origin past the right/bottom edge is pulled fully inside a 1920x1080 area.
+  const IndicatorRect r =
+      ClampIndicatorToWorkArea(5000, 5000, 220, 44, 0, 0, 1920, 1080);
+  EXPECT_EQ(r.x, 1920 - 220);
+  EXPECT_EQ(r.y, 1080 - 44);
+  EXPECT_EQ(r.width, 220);
+  EXPECT_EQ(r.height, 44);
+}
+
+TEST(RecordingIndicatorModelTest, ClampLeavesInsideOriginUnchanged) {
+  const IndicatorRect r =
+      ClampIndicatorToWorkArea(300, 200, 220, 44, 0, 0, 1920, 1080);
+  EXPECT_EQ(r.x, 300);
+  EXPECT_EQ(r.y, 200);
+}
+
+TEST(RecordingIndicatorModelTest, ClampRespectsWorkOriginAndPinsTinyArea) {
+  // Negative origin clamps up to the work-area origin (secondary monitor / left
+  // taskbar).
+  const IndicatorRect off = ClampIndicatorToWorkArea(-50, -50, 220, 44, 100, 80,
+                                                     2020, 1160);
+  EXPECT_EQ(off.x, 100);
+  EXPECT_EQ(off.y, 80);
+  // A work area smaller than the pill pins it to the top-left origin.
+  const IndicatorRect tiny =
+      ClampIndicatorToWorkArea(500, 500, 220, 44, 0, 0, 80, 20);
+  EXPECT_EQ(tiny.x, 0);
+  EXPECT_EQ(tiny.y, 0);
+}
+
 }  // namespace
 }  // namespace clingfy::capture

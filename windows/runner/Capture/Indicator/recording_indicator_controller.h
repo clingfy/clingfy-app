@@ -8,6 +8,7 @@
 #include <functional>
 #include <future>
 #include <mutex>
+#include <optional>
 #include <thread>
 
 #include "Capture/Indicator/recording_indicator_model.h"
@@ -59,6 +60,14 @@ class RecordingIndicatorController {
   // engine's recording lock. A no-op before Show / after Hide.
   void SetState(IndicatorVisualState state);
 
+  // Pin / unpin the pill (Slice 3, `setRecordingIndicatorPinned`). Pinned snaps
+  // it to the top-right corner and makes it non-movable; unpinned lets the user
+  // drag it and restores the last dragged position (macOS parity — the dragged
+  // position is remembered for the app session only, never persisted to disk).
+  // Cached on the controller because Dart pushes `pinned` on startup + toggle,
+  // never on show. Non-blocking; safe under the engine's recording lock.
+  void SetPinned(bool pinned);
+
   // Hide the pill. Non-blocking: posts a hide to the overlay thread and returns
   // immediately, leaving the (idle) thread alive for the next recording. Safe
   // to call under the engine's recording lock. Idempotent.
@@ -71,6 +80,7 @@ class RecordingIndicatorController {
   // Test / diagnostics: whether the pill is currently shown.
   bool visible_for_testing() const { return visible_.load(); }
   IndicatorVisualState state_for_testing() const { return state_.load(); }
+  bool pinned_for_testing() const { return pinned_.load(); }
 
   static LRESULT CALLBACK WndProc(HWND hwnd, UINT msg, WPARAM wparam,
                                   LPARAM lparam);
@@ -84,12 +94,16 @@ class RecordingIndicatorController {
   bool EnsureRunning();
   void ThreadMain(std::promise<bool>* ready);
   void Paint(HWND hwnd);
-  // Position the pill in the top-right of the work area of whatever monitor it
-  // currently sits on, DPI-scaled. Runs on the overlay thread.
+  // Position the pill: top-right (DPI-scaled) when pinned or never dragged,
+  // otherwise at the remembered drag origin clamped to the current work area.
+  // Runs on the overlay thread.
   void PlaceWindow(HWND hwnd);
   // Fire the reverse call for the control at the given client point (if any),
   // deriving pause vs resume from the current visual state. Overlay thread.
   void HandleClick(HWND hwnd, int x, int y);
+  // Drag-end write-back (WM_EXITSIZEMOVE): clamp the dropped window into the
+  // work area and remember the origin for the next show. Overlay thread.
+  void OnDragEnded(HWND hwnd);
 
   std::thread thread_;
   std::atomic<bool> running_{false};
@@ -97,7 +111,16 @@ class RecordingIndicatorController {
   std::atomic<HWND> hwnd_{nullptr};
   std::atomic<IndicatorVisualState> state_{IndicatorVisualState::kHidden};
   std::atomic<bool> can_pause_resume_{true};
+  // Pinned: written from the platform thread (SetPinned), read on the overlay
+  // thread (WM_NCHITTEST / PlaceWindow) — hence atomic.
+  std::atomic<bool> pinned_{false};
   DWORD thread_id_ = 0;
+
+  // Last position the user dragged the pill to (top-left, screen coords). Set
+  // in WM_EXITSIZEMOVE, read in PlaceWindow — BOTH on the overlay thread, so no
+  // lock is needed (contrast pinned_). Empty until the first drag; in-memory
+  // for the app session only (macOS parity — never persisted to disk).
+  std::optional<POINT> last_origin_;
 
   // The elapsed-seconds source, swapped under `provider_mutex_` and read on the
   // overlay thread each tick. Null before the first Show.

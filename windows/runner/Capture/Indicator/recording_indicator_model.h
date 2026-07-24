@@ -96,6 +96,29 @@ IndicatorButtonLayout ComputeIndicatorButtons(int client_width,
 IndicatorButton HitTestIndicatorButton(const IndicatorButtonLayout& layout,
                                        int x, int y);
 
+// Slice 3: whether a client-coordinate point falls on an interactive control
+// or on the draggable background. The controller uses this in WM_NCHITTEST to
+// return HTCLIENT over the Slice 2 buttons (so clicks work) and HTCAPTION over
+// the rest (so the pill drags) — the two regimes never collide.
+enum class IndicatorHitZone {
+  kControl,     // over a pause/resume/stop button — keep it clickable
+  kDragHandle,  // background — draggable when unpinned
+};
+
+IndicatorHitZone HitTestIndicatorZone(int client_width, int client_height,
+                                      IndicatorVisualState state,
+                                      bool can_pause_resume, int x, int y);
+
+// Slice 3: clamp a proposed top-left window origin so a `width` x `height` pill
+// stays fully inside the work area. A drag can leave the pill partly
+// off-screen; this pulls it back (macOS `clampToVisibleFrame` parity). A work
+// area smaller than the pill pins it to the top-left, matching
+// ComputeIndicatorRect's degenerate rule. Returns the clamped origin + the
+// (unchanged) size.
+IndicatorRect ClampIndicatorToWorkArea(int origin_x, int origin_y, int width,
+                                       int height, int work_left, int work_top,
+                                       int work_right, int work_bottom);
+
 }  // namespace clingfy::capture
 
 #endif  // RUNNER_CAPTURE_INDICATOR_RECORDING_INDICATOR_MODEL_H_
