@@ -6,6 +6,7 @@
 #include "Bridge/export_progress_publisher.h"
 #include "Bridge/indicator_event_publisher.h"
 #include "Bridge/native_log_publisher.h"
+#include "Bridge/pre_recording_bar_action_publisher.h"
 #include "Bridge/platform_thread_dispatcher.h"
 #include "Capture/Export/export_session.h"
 #include "Capture/Indicator/recording_indicator_controller.h"
@@ -89,6 +90,12 @@ bool FlutterWindow::OnCreate() {
   clingfy::bridge::IndicatorEventPublisher::Instance().SetChannel(
       method_dispatcher_->channel());
 
+  // Pre-recording bar slice 5: same channel for the bar's button taps
+  // (`preRecordingBarAction` with {type, payload}), emitted from the overlay
+  // thread. Cleared alongside the other publishers in OnDestroy.
+  clingfy::bridge::PreRecordingBarActionPublisher::Instance().SetChannel(
+      method_dispatcher_->channel());
+
   // Phase 10.1: detect recordings stranded in %TEMP% by a crash/kill in a
   // previous session (detection + reporting only; salvage is Phase 10.4).
   // Runs on its own short-lived thread, off the startup path.
@@ -157,6 +164,7 @@ void FlutterWindow::OnDestroy() {
   clingfy::bridge::NativeLogPublisher::Instance().ClearChannel();
   clingfy::bridge::CameraOverlayMovePublisher::Instance().ClearChannel();
   clingfy::bridge::IndicatorEventPublisher::Instance().ClearChannel();
+  clingfy::bridge::PreRecordingBarActionPublisher::Instance().ClearChannel();
   event_channel_stubs_.reset();
   method_dispatcher_.reset();
 

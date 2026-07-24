@@ -93,6 +93,13 @@ class PreRecordingBarController {
   // Size the bar to the current button set + center it near the bottom of the
   // work area, then position topmost. Runs on the overlay thread.
   void PlaceWindow(HWND hwnd);
+  // Slice 5: fire the reverse `preRecordingBarAction` for the button at the
+  // given client point, skipping disabled buttons and background hits. Overlay
+  // thread.
+  void HandleClick(HWND hwnd, int x, int y);
+  // Whether a client point lands on an enabled, tappable button — used by
+  // WM_SETCURSOR to show the hand cursor. Overlay thread.
+  bool PointOnEnabledButton(HWND hwnd, int x, int y);
   // Recompute whether the bar should be visible (enabled AND not dismissed AND
   // the pushed state's phase/countdown allow it) and post the show/hide + a
   // resize/repaint to the overlay thread. Lazily starts the thread when a show
