@@ -7,6 +7,7 @@
 #include <cmath>
 #include <string>
 
+#include "Bridge/pre_recording_bar_action_publisher.h"
 #include "Capture/PreRecordingBar/pre_recording_bar_model.h"
 
 namespace clingfy::capture {
@@ -137,6 +138,24 @@ LRESULT CALLBACK PreRecordingBarController::WndProc(HWND hwnd, UINT msg,
     case kMsgHide:
       ::ShowWindow(hwnd, SW_HIDE);
       return 0;
+    case WM_LBUTTONDOWN:
+      if (self != nullptr) {
+        self->HandleClick(hwnd, GET_X_LPARAM(lparam), GET_Y_LPARAM(lparam));
+      }
+      return 0;
+    case WM_SETCURSOR:
+      // Hand cursor over an enabled button, arrow elsewhere. LOWORD(lparam) is
+      // the hit-test area; only restyle the client area.
+      if (self != nullptr && LOWORD(lparam) == HTCLIENT) {
+        POINT pt{};
+        ::GetCursorPos(&pt);
+        ::ScreenToClient(hwnd, &pt);
+        if (self->PointOnEnabledButton(hwnd, pt.x, pt.y)) {
+          ::SetCursor(::LoadCursorW(nullptr, IDC_HAND));
+          return TRUE;
+        }
+      }
+      return ::DefWindowProcW(hwnd, msg, wparam, lparam);
     case WM_PAINT:
       if (self != nullptr) {
         self->Paint(hwnd);
@@ -327,6 +346,63 @@ void PreRecordingBarController::PlaceWindow(HWND hwnd) {
   y = std::clamp(y, wt, std::max(wt, wb - height));
 
   ::SetWindowPos(hwnd, HWND_TOPMOST, x, y, width, height, SWP_NOACTIVATE);
+}
+
+namespace {
+
+// Resolve the button under a client point together with its style, from the
+// current pushed inputs. Returns kNone (and kNormal) on a miss.
+struct HitButton {
+  BarButtonId id = BarButtonId::kNone;
+  BarButtonStyle style = BarButtonStyle::kNormal;
+};
+
+HitButton ResolveHit(HWND hwnd, const PreRecordingBarInputs& inputs, int x,
+                     int y) {
+  RECT client{};
+  ::GetClientRect(hwnd, &client);
+  const std::array<BarButtonSpec, kBarButtonCount> specs =
+      ComputeBarButtons(inputs);
+  const BarLayout layout = ComputeBarLayout(client.right - client.left,
+                                            client.bottom - client.top, specs);
+  const BarButtonId id = HitTestBarButton(layout, x, y);
+  if (id == BarButtonId::kNone) {
+    return {};
+  }
+  for (int i = 0; i < kBarButtonCount; ++i) {
+    if (specs[i].id == id) {
+      return {id, specs[i].style};
+    }
+  }
+  return {};
+}
+
+}  // namespace
+
+void PreRecordingBarController::HandleClick(HWND hwnd, int x, int y) {
+  PreRecordingBarInputs inputs;
+  {
+    std::lock_guard<std::mutex> lock(state_mutex_);
+    inputs = inputs_;
+  }
+  const HitButton hit = ResolveHit(hwnd, inputs, x, y);
+  if (hit.id == BarButtonId::kNone ||
+      hit.style == BarButtonStyle::kDisabled) {
+    return;  // background, or a phase-disabled control — no reverse call.
+  }
+  clingfy::bridge::PreRecordingBarActionPublisher::Instance().EmitAction(
+      BarActionFor(hit.id, inputs.phase));
+}
+
+bool PreRecordingBarController::PointOnEnabledButton(HWND hwnd, int x, int y) {
+  PreRecordingBarInputs inputs;
+  {
+    std::lock_guard<std::mutex> lock(state_mutex_);
+    inputs = inputs_;
+  }
+  const HitButton hit = ResolveHit(hwnd, inputs, x, y);
+  return hit.id != BarButtonId::kNone &&
+         hit.style != BarButtonStyle::kDisabled;
 }
 
 bool PreRecordingBarController::EnsureRunning() {

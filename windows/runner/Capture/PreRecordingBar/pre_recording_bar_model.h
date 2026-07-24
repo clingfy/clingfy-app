@@ -140,9 +140,15 @@ BarLayout ComputeBarLayout(
     const std::array<BarButtonSpec, kBarButtonCount>& specs);
 
 // Which present button (if any) contains the client-coordinate point. Returns
-// `kNone` on a miss. (Used by Slice 5 for taps; exercised here so the layout is
-// pinned by tests now.)
+// `kNone` on a miss.
 BarButtonId HitTestBarButton(const BarLayout& layout, int x, int y);
+
+// Slice 5: the reverse-action id a button tap emits, as the `type` string in
+// the `preRecordingBarAction` call. Derives pause vs resume from the phase
+// (paused -> resumeTapped, else pauseTapped), matching macOS. Returns the empty
+// string for `kNone`. Values mirror Dart `NativeBarAction`
+// (lib/core/bridges/native_bar_action.dart) exactly.
+const char* BarActionFor(BarButtonId id, int phase);
 
 }  // namespace clingfy::capture
 

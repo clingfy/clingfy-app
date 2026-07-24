@@ -57,6 +57,17 @@ inline constexpr const char* kIndicatorPauseTapped = "indicatorPauseTapped";
 inline constexpr const char* kIndicatorStopTapped = "indicatorStopTapped";
 inline constexpr const char* kIndicatorResumeTapped = "indicatorResumeTapped";
 
+// Pre-recording bar button taps (Slice 5): invoked with a map
+// {type: <NativeBarAction string>, payload: null} when the user clicks a bar
+// button. Dart's NativeBridge reads `type` + `payload` and dispatches to
+// home_actions.handleNativeBarAction — macOS parity (the bar reports the tap UP
+// to Dart, which owns the source/record/pause logic). The action-type strings
+// mirror Dart `NativeBarAction` (lib/core/bridges/native_bar_action.dart); the
+// mapping from a hit button to its string lives in the pre-recording bar model
+// (`BarActionFor`). Keep the method name in sync with Dart
+// NativeToFlutterMethod.preRecordingBarAction.
+inline constexpr const char* kPreRecordingBarAction = "preRecordingBarAction";
+
 }  // namespace clingfy::bridge::method
 
 #endif  // RUNNER_BRIDGE_NATIVE_CHANNEL_NAMES_H_

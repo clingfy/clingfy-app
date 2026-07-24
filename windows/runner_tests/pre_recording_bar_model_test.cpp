@@ -250,5 +250,29 @@ TEST(PreRecordingBarModelTest, LayoutEmptyForNonPositiveSize) {
   }
 }
 
+// ---- reverse-action mapping (Slice 5) -------------------------------------
+
+TEST(PreRecordingBarModelTest, BarActionStringsMatchDartContract) {
+  EXPECT_STREQ(BarActionFor(BarButtonId::kClose, kIdle), "closeTapped");
+  EXPECT_STREQ(BarActionFor(BarButtonId::kDisplay, kIdle), "displayTapped");
+  EXPECT_STREQ(BarActionFor(BarButtonId::kWindow, kIdle), "windowTapped");
+  EXPECT_STREQ(BarActionFor(BarButtonId::kArea, kIdle), "areaTapped");
+  EXPECT_STREQ(BarActionFor(BarButtonId::kCamera, kIdle), "cameraTapped");
+  EXPECT_STREQ(BarActionFor(BarButtonId::kMic, kIdle), "micTapped");
+  EXPECT_STREQ(BarActionFor(BarButtonId::kSystemAudio, kIdle),
+               "systemAudioTapped");
+  EXPECT_STREQ(BarActionFor(BarButtonId::kRecord, kIdle), "recordTapped");
+  EXPECT_STREQ(BarActionFor(BarButtonId::kUpdate, kIdle), "updateTapped");
+  EXPECT_STREQ(BarActionFor(BarButtonId::kNone, kIdle), "");
+}
+
+TEST(PreRecordingBarModelTest, PauseResumeActionDependsOnPhase) {
+  // Recording -> pause; paused -> resume (the one control that flips meaning).
+  EXPECT_STREQ(BarActionFor(BarButtonId::kPauseResume, kRecording),
+               "pauseTapped");
+  EXPECT_STREQ(BarActionFor(BarButtonId::kPauseResume, kPaused),
+               "resumeTapped");
+}
+
 }  // namespace
 }  // namespace clingfy::capture

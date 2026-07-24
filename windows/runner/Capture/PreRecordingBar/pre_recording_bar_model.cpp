@@ -224,4 +224,33 @@ BarButtonId HitTestBarButton(const BarLayout& layout, int x, int y) {
   return BarButtonId::kNone;
 }
 
+const char* BarActionFor(BarButtonId id, int phase) {
+  switch (id) {
+    case BarButtonId::kClose:
+      return "closeTapped";
+    case BarButtonId::kDisplay:
+      return "displayTapped";
+    case BarButtonId::kWindow:
+      return "windowTapped";
+    case BarButtonId::kArea:
+      return "areaTapped";
+    case BarButtonId::kCamera:
+      return "cameraTapped";
+    case BarButtonId::kMic:
+      return "micTapped";
+    case BarButtonId::kSystemAudio:
+      return "systemAudioTapped";
+    case BarButtonId::kPauseResume:
+      // The one control that means resume while paused, pause while recording.
+      return phase == kPhasePaused ? "resumeTapped" : "pauseTapped";
+    case BarButtonId::kRecord:
+      return "recordTapped";
+    case BarButtonId::kUpdate:
+      return "updateTapped";
+    case BarButtonId::kNone:
+      return "";
+  }
+  return "";
+}
+
 }  // namespace clingfy::capture
