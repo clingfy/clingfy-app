@@ -9,6 +9,7 @@
 #include <thread>
 
 #include "Capture/PreRecordingBar/pre_recording_bar_model.h"
+#include "Capture/PreRecordingBar/pre_recording_bar_popover.h"
 
 // Slice 4 (Windows pre-recording bar): the always-on-top floating control bar
 // shown BEFORE (and during) a recording — record button, source pickers,
@@ -94,9 +95,16 @@ class PreRecordingBarController {
   // work area, then position topmost. Runs on the overlay thread.
   void PlaceWindow(HWND hwnd);
   // Slice 5: fire the reverse `preRecordingBarAction` for the button at the
-  // given client point, skipping disabled buttons and background hits. Overlay
-  // thread.
+  // given client point, skipping disabled buttons and background hits. The
+  // mic / camera buttons are intercepted (Slice 6a) and open a native device
+  // picker instead of forwarding. Overlay thread.
   void HandleClick(HWND hwnd, int x, int y);
+  // Slice 6a: open the mic / camera dropdown, anchored to `anchor_screen` (the
+  // tapped button in screen coords). Enumerates devices, marks the current
+  // selection from the pushed state, and on pick emits `nativeSelectionChanged`.
+  // Overlay thread.
+  void OpenMicPicker(const RECT& anchor_screen);
+  void OpenCameraPicker(const RECT& anchor_screen);
   // Whether a client point lands on an enabled, tappable button — used by
   // WM_SETCURSOR to show the hand cursor. Overlay thread.
   bool PointOnEnabledButton(HWND hwnd, int x, int y);
@@ -125,6 +133,10 @@ class PreRecordingBarController {
   std::mutex state_mutex_;
   PreRecordingBarInputs inputs_;
   int last_phase_ = 0;
+
+  // The native device dropdown (Slice 6a). Created lazily on the overlay thread
+  // when a picker button is tapped; shares this thread's message loop.
+  PreRecordingBarPopover popover_;
 
   static std::atomic<bool> suppress_window_for_testing_;
 };

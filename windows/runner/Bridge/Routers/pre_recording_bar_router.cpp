@@ -43,6 +43,19 @@ bool ReadBool(const flutter::EncodableMap& map, const std::string& key,
   return fallback;
 }
 
+// Read a string value; a missing key or a null value yields the empty string.
+std::string ReadString(const flutter::EncodableMap& map,
+                       const std::string& key) {
+  const auto it = map.find(flutter::EncodableValue(key));
+  if (it == map.end()) {
+    return {};
+  }
+  if (const auto* v = std::get_if<std::string>(&it->second)) {
+    return *v;
+  }
+  return {};
+}
+
 clingfy::capture::PreRecordingBarController& Bar() {
   return clingfy::capture::PreRecordingBarController::Instance();
 }
@@ -97,6 +110,10 @@ void HandleSetState(
     inputs.pause_resume_in_flight =
         ReadBool(*args, "pauseResumeInFlight", false);
     inputs.countdown_active = ReadBool(*args, "countdownActive", false);
+    // Selected device ids for the mic / camera pickers (Slice 6a). Dart may
+    // send null (no selection) -> empty string.
+    inputs.selected_audio_source_id = ReadString(*args, "selectedAudioSourceId");
+    inputs.selected_cam_id = ReadString(*args, "selectedCamId");
     Bar().SetState(inputs);
   }
   reply::Null(*result);

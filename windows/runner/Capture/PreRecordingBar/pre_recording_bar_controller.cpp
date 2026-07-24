@@ -6,9 +6,15 @@
 #include <array>
 #include <cmath>
 #include <string>
+#include <vector>
 
+#include "Bridge/Devices/audio_source_enumerator.h"
+#include "Bridge/Devices/device_record.h"
+#include "Bridge/Devices/video_source_enumerator.h"
+#include "Bridge/native_selection_changed_publisher.h"
 #include "Bridge/pre_recording_bar_action_publisher.h"
 #include "Capture/PreRecordingBar/pre_recording_bar_model.h"
+#include "Capture/PreRecordingBar/pre_recording_bar_popover.h"
 
 namespace clingfy::capture {
 
@@ -136,6 +142,11 @@ LRESULT CALLBACK PreRecordingBarController::WndProc(HWND hwnd, UINT msg,
       ::InvalidateRect(hwnd, nullptr, FALSE);
       return 0;
     case kMsgHide:
+      // Dismiss any open picker first — a phase change (e.g. recording starts)
+      // can hide the bar while the dropdown is up.
+      if (self != nullptr) {
+        self->popover_.Hide();
+      }
       ::ShowWindow(hwnd, SW_HIDE);
       return 0;
     case WM_LBUTTONDOWN:
@@ -350,11 +361,35 @@ void PreRecordingBarController::PlaceWindow(HWND hwnd) {
 
 namespace {
 
-// Resolve the button under a client point together with its style, from the
-// current pushed inputs. Returns kNone (and kNormal) on a miss.
+// NativeSelectionType strings (mirror Dart native_bar_action.dart). Slice 6a
+// covers mic + camera; display/window arrive in 6b.
+constexpr const char* kSelTypeMic = "mic";
+constexpr const char* kSelTypeCamera = "camera";
+
+// Widen a UTF-8 device name (the enumerators produce UTF-8 std::string) to the
+// UTF-16 the GDI text APIs want. Empty in -> empty out.
+std::wstring Utf8ToWide(const std::string& utf8) {
+  if (utf8.empty()) {
+    return {};
+  }
+  const int len = ::MultiByteToWideChar(CP_UTF8, 0, utf8.c_str(),
+                                        static_cast<int>(utf8.size()), nullptr,
+                                        0);
+  if (len <= 0) {
+    return {};
+  }
+  std::wstring out(static_cast<size_t>(len), L'\0');
+  ::MultiByteToWideChar(CP_UTF8, 0, utf8.c_str(),
+                        static_cast<int>(utf8.size()), out.data(), len);
+  return out;
+}
+
+// Resolve the button under a client point together with its style + rect, from
+// the current pushed inputs. Returns kNone on a miss.
 struct HitButton {
   BarButtonId id = BarButtonId::kNone;
   BarButtonStyle style = BarButtonStyle::kNormal;
+  BarButtonRect rect;
 };
 
 HitButton ResolveHit(HWND hwnd, const PreRecordingBarInputs& inputs, int x,
@@ -371,7 +406,7 @@ HitButton ResolveHit(HWND hwnd, const PreRecordingBarInputs& inputs, int x,
   }
   for (int i = 0; i < kBarButtonCount; ++i) {
     if (specs[i].id == id) {
-      return {id, specs[i].style};
+      return {id, specs[i].style, layout.buttons[i]};
     }
   }
   return {};
@@ -390,8 +425,84 @@ void PreRecordingBarController::HandleClick(HWND hwnd, int x, int y) {
       hit.style == BarButtonStyle::kDisabled) {
     return;  // background, or a phase-disabled control — no reverse call.
   }
+
+  // Mic / camera open a native device dropdown (Slice 6a) instead of forwarding
+  // a tap. Anchor it to the button's screen rect.
+  if (hit.id == BarButtonId::kMic || hit.id == BarButtonId::kCamera) {
+    RECT anchor{hit.rect.left, hit.rect.top, hit.rect.right, hit.rect.bottom};
+    ::MapWindowPoints(hwnd, nullptr, reinterpret_cast<POINT*>(&anchor),
+                      2);  // client -> screen (both corners).
+    if (hit.id == BarButtonId::kMic) {
+      OpenMicPicker(anchor);
+    } else {
+      OpenCameraPicker(anchor);
+    }
+    return;
+  }
+
   clingfy::bridge::PreRecordingBarActionPublisher::Instance().EmitAction(
       BarActionFor(hit.id, inputs.phase));
+}
+
+void PreRecordingBarController::OpenMicPicker(const RECT& anchor_screen) {
+  std::string selected;
+  {
+    std::lock_guard<std::mutex> lock(state_mutex_);
+    selected = inputs_.selected_audio_source_id;
+  }
+  const bool none_selected = selected.empty() || selected == "__none__";
+  const std::vector<clingfy::bridge::devices::AudioSourceRecord> devices =
+      clingfy::bridge::devices::EnumerateAudioInputs();
+
+  std::vector<PreRecordingBarPopover::Row> rows;
+  std::vector<std::string> ids;  // row (index+1) -> device id (row 0 = none).
+  rows.push_back({L"Do not record audio", none_selected});
+  for (const auto& d : devices) {
+    rows.push_back(
+        {Utf8ToWide(d.name), !none_selected && d.id == selected});
+    ids.push_back(d.id);
+  }
+
+  popover_.Show(rows, anchor_screen, [ids](int row) {
+    auto& pub = clingfy::bridge::NativeSelectionChangedPublisher::Instance();
+    if (row == 0) {
+      pub.EmitNoneSelection(kSelTypeMic);  // "Do not record audio".
+    } else if (row - 1 < static_cast<int>(ids.size())) {
+      pub.EmitStringSelection(kSelTypeMic, ids[row - 1]);
+    }
+  });
+}
+
+void PreRecordingBarController::OpenCameraPicker(const RECT& anchor_screen) {
+  std::string selected;
+  {
+    std::lock_guard<std::mutex> lock(state_mutex_);
+    selected = inputs_.selected_cam_id;
+  }
+  const bool none_selected =
+      selected.empty() || selected == "none" || selected == "__none__";
+  // One attempt only on an informational refresh — a longer retry budget would
+  // stall the overlay thread on camera-less machines.
+  const std::vector<clingfy::bridge::devices::VideoSourceRecord> devices =
+      clingfy::bridge::devices::EnumerateVideoInputs(/*max_attempts=*/1);
+
+  std::vector<PreRecordingBarPopover::Row> rows;
+  std::vector<std::string> ids;
+  rows.push_back({L"No camera", none_selected});
+  for (const auto& d : devices) {
+    rows.push_back(
+        {Utf8ToWide(d.name), !none_selected && d.id == selected});
+    ids.push_back(d.id);
+  }
+
+  popover_.Show(rows, anchor_screen, [ids](int row) {
+    auto& pub = clingfy::bridge::NativeSelectionChangedPublisher::Instance();
+    if (row == 0) {
+      pub.EmitNoneSelection(kSelTypeCamera);  // "No camera".
+    } else if (row - 1 < static_cast<int>(ids.size())) {
+      pub.EmitStringSelection(kSelTypeCamera, ids[row - 1]);
+    }
+  });
 }
 
 bool PreRecordingBarController::PointOnEnabledButton(HWND hwnd, int x, int y) {
@@ -453,6 +564,9 @@ void PreRecordingBarController::ThreadMain(std::promise<bool>* ready) {
 
   running_.store(false);
   hwnd_.store(nullptr);
+  // Destroy the picker popover on this thread (it was created here) before the
+  // bar window itself.
+  popover_.Destroy();
   ::DestroyWindow(hwnd);
 }
 

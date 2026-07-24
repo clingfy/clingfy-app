@@ -2,6 +2,7 @@
 #define RUNNER_CAPTURE_PRERECORDINGBAR_PRE_RECORDING_BAR_MODEL_H_
 
 #include <array>
+#include <string>
 
 // Slice 4 (Windows pre-recording bar): the pure, window-free logic behind the
 // floating control bar shown BEFORE (and during) a recording — record button,
@@ -70,6 +71,13 @@ struct PreRecordingBarInputs {
   bool can_pause_resume = false;      // backend offers pause/resume.
   bool pause_resume_in_flight = false;  // a pause/resume is mid-transition.
   bool countdown_active = false;        // the pre-record countdown is running.
+
+  // Selected device ids (Slice 6 pickers, not used by render). The controller
+  // reads these to mark the current row in the mic / camera dropdowns. Empty /
+  // "__none__" / "none" means no device selected. Displays/windows (int64 ids)
+  // arrive in Slice 6b.
+  std::string selected_audio_source_id;
+  std::string selected_cam_id;
 };
 
 // One button's render decision.
