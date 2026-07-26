@@ -130,4 +130,60 @@ std::optional<std::string> ChooseSaveFolderDialog(HWND parent) {
   return chosen;
 }
 
+std::optional<std::string> ChooseImageFileDialog(HWND parent) {
+  // Same COM discipline as ChooseSaveFolderDialog above: re-initializing an
+  // already-STA thread is S_FALSE and balanced below; RPC_E_CHANGED_MODE means
+  // MTA, in which case we proceed without owning the uninit.
+  const HRESULT init_hr =
+      ::CoInitializeEx(nullptr, COINIT_APARTMENTTHREADED | COINIT_DISABLE_OLE1DDE);
+  const bool owns_com = SUCCEEDED(init_hr);
+
+  std::optional<std::string> chosen;
+
+  Microsoft::WRL::ComPtr<IFileOpenDialog> dialog;
+  HRESULT hr = ::CoCreateInstance(CLSID_FileOpenDialog, nullptr,
+                                  CLSCTX_INPROC_SERVER,
+                                  IID_PPV_ARGS(dialog.GetAddressOf()));
+  if (SUCCEEDED(hr) && dialog != nullptr) {
+    DWORD options = 0;
+    dialog->GetOptions(&options);
+    // FORCEFILESYSTEM keeps the result a real path (not a shell library or a
+    // cloud placeholder), which matters because the caller copies the bytes
+    // into the project bundle.
+    dialog->SetOptions(options | FOS_FORCEFILESYSTEM | FOS_FILEMUSTEXIST |
+                       FOS_PATHMUSTEXIST);
+
+    // Formats WIC decodes and the canvas can render. Keep the "all images"
+    // entry first so it is the default filter.
+    const COMDLG_FILTERSPEC filters[] = {
+        {L"Images", L"*.png;*.jpg;*.jpeg;*.bmp;*.gif;*.tif;*.tiff;*.webp"},
+        {L"PNG", L"*.png"},
+        {L"JPEG", L"*.jpg;*.jpeg"},
+        {L"All files", L"*.*"},
+    };
+    dialog->SetFileTypes(ARRAYSIZE(filters), filters);
+    dialog->SetFileTypeIndex(1);
+
+    hr = dialog->Show(parent);
+    if (SUCCEEDED(hr)) {
+      Microsoft::WRL::ComPtr<IShellItem> item;
+      if (SUCCEEDED(dialog->GetResult(item.GetAddressOf())) && item != nullptr) {
+        PWSTR path = nullptr;
+        if (SUCCEEDED(item->GetDisplayName(SIGDN_FILESYSPATH, &path)) &&
+            path != nullptr) {
+          chosen = WideToUtf8(std::wstring(path));
+          ::CoTaskMemFree(path);
+        }
+      }
+    }
+    // Cancel returns HRESULT_FROM_WIN32(ERROR_CANCELLED); `chosen` stays empty
+    // and the bridge reports null, which Dart already treats as "cancelled".
+  }
+
+  if (owns_com) {
+    ::CoUninitialize();
+  }
+  return chosen;
+}
+
 }  // namespace clingfy::storage

@@ -354,6 +354,9 @@ void HandleExportVideo(
     input.padding = ReadDouble(*args, "padding", 0.0);
     input.corner_radius = ReadDouble(*args, "cornerRadius", 0.0);
     input.background_color = ReadOptionalInt(*args, "backgroundColor");
+    // Bundled copy inside the .clingfyproj; empty means a colour background.
+    input.background_image_path =
+        clingfy::storage::Utf8ToWide(ReadString(*args, "backgroundImagePath"));
     // Slice 4 audio. Fallbacks MUST equal the macOS identity defaults
     // (0 dB / 100% / off / -16 dBFS) so an absent arg is a no-op that keeps
     // the byte-copy fast-path — volume 100.0 in particular, not 0.0.

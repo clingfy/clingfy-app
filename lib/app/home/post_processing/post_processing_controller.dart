@@ -1,4 +1,5 @@
 import 'dart:async';
+import 'dart:io';
 import 'package:clingfy/app/infrastructure/analytics/analytics_events.dart';
 import 'package:clingfy/app/infrastructure/analytics/analytics_service.dart';
 import 'package:clingfy/app/config/build_config.dart';
@@ -237,6 +238,7 @@ class PostProcessingController extends ChangeNotifier {
             padding: _videoPadding,
             cornerRadius: _videoRadius,
             backgroundColor: _backgroundColor,
+            backgroundImagePath: _backgroundImagePath,
             layoutPreset: _settings.post.layoutPreset.name,
             resolutionPreset: _settings.post.resolutionPreset.name,
             sessionId: sessionId,
@@ -1535,11 +1537,69 @@ class PostProcessingController extends ChangeNotifier {
 
   void expandExportDock() => showExportProgressModal();
 
+  /// Name of the directory inside a `.clingfyproj` that holds bundled canvas
+  /// assets. Kept next to the other project state rather than beside the media.
+  static const String kCanvasAssetsDirName = 'canvas_assets';
+
   Future<String?> pickImage() async {
     try {
-      return await _nativeBridge.invokeMethod<String>('pickImage');
+      final picked = await _nativeBridge.invokeMethod<String>('pickImage');
+      if (picked == null || picked.isEmpty) return null;
+      // Bundle a copy into the project. A raw path breaks the moment the
+      // original moves or is deleted, and a macOS path is meaningless on
+      // Windows — so a project referencing one would render a missing
+      // background on the other platform, which is the WYSIWYG failure this
+      // whole port exists to remove.
+      return await _bundleBackgroundImage(picked) ?? picked;
     } catch (e) {
       Log.e("PostProcessing", 'Error picking image: $e');
+      return null;
+    }
+  }
+
+  /// Copies [sourcePath] into the active project's canvas-assets directory and
+  /// returns the bundled copy's path.
+  ///
+  /// Returns null when there is no open project or the copy fails; the caller
+  /// then falls back to the original path, which still works on this machine
+  /// even though it will not travel with the project.
+  Future<String?> _bundleBackgroundImage(String sourcePath) async {
+    final projectPath = _projectPath;
+    if (projectPath == null) return null;
+    try {
+      final source = File(sourcePath);
+      if (!await source.exists()) return null;
+
+      final sep = Platform.pathSeparator;
+      final assetsDir = Directory('$projectPath$sep$kCanvasAssetsDirName');
+      await assetsDir.create(recursive: true);
+
+      // Split the basename by hand: this repo does not depend on package:path
+      // (canvas_appearance_store.dart joins with Platform.pathSeparator too).
+      // Accept BOTH separators so a path that came from a macOS-authored
+      // project still splits correctly on Windows.
+      final lastSep = sourcePath.lastIndexOf(RegExp(r'[\\/]'));
+      final fileName = lastSep >= 0
+          ? sourcePath.substring(lastSep + 1)
+          : sourcePath;
+      final dot = fileName.lastIndexOf('.');
+      final base = dot > 0 ? fileName.substring(0, dot) : fileName;
+      final ext = dot > 0 ? fileName.substring(dot) : '';
+
+      // Name carries the source's modified stamp, so re-picking the same
+      // unchanged file reuses the existing copy instead of growing the bundle
+      // on every selection, while an edited original still produces a new one.
+      final stat = await source.stat();
+      final stamp = stat.modified.millisecondsSinceEpoch;
+      final destPath = '${assetsDir.path}${sep}bg_${base}_$stamp$ext';
+
+      final dest = File(destPath);
+      if (!await dest.exists()) {
+        await source.copy(destPath);
+      }
+      return destPath;
+    } catch (e) {
+      Log.e("PostProcessing", 'Error bundling background image: $e');
       return null;
     }
   }

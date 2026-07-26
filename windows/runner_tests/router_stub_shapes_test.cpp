@@ -950,9 +950,12 @@ TEST(StubShapesTest, NullGettersReturnNull) {
   // Phase 10.1: getTodayLogFilePath is real now (path or
   // LOG_FILE_NOT_FOUND/UNAVAILABLE) — pinned in
   // storage_router_reveal_test.cpp.
+  // `pickImage` used to live here as a null stub. The canvas parity port gave
+  // it a real IFileOpenDialog, so it is now excluded for the same reason
+  // `chooseSaveFolder` always has been (see below): dispatching it would open a
+  // modal dialog, which has no place in a headless test.
   const std::vector<std::string> kNullGetters = {
       "previewGetSourceDimensions",
-      "pickImage",
   };
 
   for (const auto& method : kNullGetters) {

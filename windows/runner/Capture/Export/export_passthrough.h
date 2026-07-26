@@ -91,6 +91,11 @@ struct PassthroughInput {
   double padding = 0.0;
   double corner_radius = 0.0;
   std::optional<std::int64_t> background_color;
+  // Bundled background image path (empty = colour background). Like
+  // background_color this does NOT force composition on its own: with an
+  // identity transform the video covers the canvas and the background is not
+  // visible, so a byte-copy is still correct.
+  std::wstring background_image_path;
 
   // Slice 4 audio args from the `exportVideo` map. gain (dB, 0..24, amplify
   // only) and volume (%, 0..100, attenuate only) scale the decoded PCM;

@@ -1,5 +1,7 @@
 #include "preview/preview_compositor.h"
 
+#include "Capture/Background/background_image_cache.h"
+
 #include <inspectable.h>
 #include <windows.graphics.directx.direct3d11.interop.h>
 
@@ -296,14 +298,37 @@ void PreviewCompositor::ComposeFrame(
   // a preview with no canvas pushed yet looks exactly as it did before.
   capture::export_::RgbaColor bg{};
   float corner_radius_px = 0.0f;
+  ID2D1Bitmap* bg_image = nullptr;
   {
     std::lock_guard<std::mutex> lock(canvas_mutex_);
     bg = canvas_background_;
     corner_radius_px = canvas_corner_radius_px_;
+    bg_image = canvas_background_image_;
   }
   d2d_context->Clear(D2D1::ColorF(
       static_cast<float>(bg.r), static_cast<float>(bg.g),
       static_cast<float>(bg.b), static_cast<float>(bg.a)));
+
+  // Background image over the fill, scaled to COVER the whole surface (wallpaper
+  // behaviour, not letterboxed like the video). Drawn here — before the grade
+  // chain and outside the rounded content layer — so it stays ungraded and fills
+  // the padding area, exactly like the export composites it.
+  if (bg_image != nullptr) {
+    D2D1_SIZE_F img = bg_image->GetSize();
+    D2D1_SIZE_F surface = d2d_context->GetSize();
+    const capture::export_::RectF src =
+        capture::background::ComputeCoverSourceRect(
+            capture::export_::SizeF{img.width, img.height},
+            capture::export_::SizeF{surface.width, surface.height});
+    const D2D1_RECT_F src_rect = D2D1::RectF(
+        static_cast<float>(src.x), static_cast<float>(src.y),
+        static_cast<float>(src.x + src.width),
+        static_cast<float>(src.y + src.height));
+    d2d_context->DrawBitmap(
+        bg_image, D2D1::RectF(0.0f, 0.0f, surface.width, surface.height), 1.0f,
+        D2D1_BITMAP_INTERPOLATION_MODE_LINEAR, &src_rect);
+  }
+
   if (!video_bitmap_) return;
 
   // Rounded content corners. Clamped to half the shorter side of the content
@@ -442,10 +467,12 @@ void PreviewCompositor::ComposeFrame(
 }
 
 void PreviewCompositor::SetCanvasFraming(
-    capture::export_::RgbaColor background, float corner_radius_px) {
+    capture::export_::RgbaColor background, float corner_radius_px,
+    ID2D1Bitmap* background_image) {
   std::lock_guard<std::mutex> lock(canvas_mutex_);
   canvas_background_ = background;
   canvas_corner_radius_px_ = std::max(0.0f, corner_radius_px);
+  canvas_background_image_ = background_image;
 }
 
 void PreviewCompositor::SetColorGrade(

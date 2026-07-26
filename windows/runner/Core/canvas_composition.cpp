@@ -23,12 +23,14 @@ double DenormalizeFromShortSide(double fraction, double target_short_side) {
 
 CanvasComposition MakeCanvasComposition(
     double padding_px, double corner_radius_px, double export_short_side,
-    std::optional<std::int64_t> background_argb) {
+    std::optional<std::int64_t> background_argb,
+    std::wstring background_image_path) {
   CanvasComposition out{};
   out.padding_fraction = NormalizeToShortSide(padding_px, export_short_side);
   out.corner_radius_fraction =
       NormalizeToShortSide(corner_radius_px, export_short_side);
   out.background_argb = background_argb;
+  out.background_image_path = std::move(background_image_path);
   return out;
 }
 
