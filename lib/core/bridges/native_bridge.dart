@@ -481,6 +481,37 @@ class NativeBridge {
     });
   }
 
+  /// Pushes the canvas framing (background colour, padding, corner radius) to
+  /// the live preview so the editor shows the same frame the export produces.
+  ///
+  /// `padding` and `cornerRadius` are the SAME export-output pixel values the
+  /// `processVideo` payload carries. The native side normalises them against the
+  /// export canvas so the preview's smaller surface renders proportionally
+  /// identical framing rather than ~3x thicker padding at 4K.
+  ///
+  /// The layout and resolution presets travel with them because native needs
+  /// them to resolve that canvas (`ResolveTargetSize`). Dart deliberately does
+  /// NOT compute the target itself — that math has one home, in C++.
+  ///
+  /// Keep the method name in sync with the native `previewSetCanvas` handler.
+  Future<void> previewSetCanvas({
+    required double padding,
+    required double cornerRadius,
+    required int? backgroundColor,
+    required String layoutPreset,
+    required String resolutionPreset,
+    required String? sessionId,
+  }) async {
+    await _nativeBridge.invokeMethod<void>('previewSetCanvas', {
+      'padding': padding,
+      'cornerRadius': cornerRadius,
+      'backgroundColor': backgroundColor,
+      'layoutPreset': layoutPreset,
+      'resolutionPreset': resolutionPreset,
+      if (sessionId != null) 'sessionId': sessionId,
+    });
+  }
+
   /// Pushes the edited clip list (split / cut / trim / arrange) to the live
   /// macOS preview so playback skips the cut regions. No-op on platforms whose
   /// native side stubs the method (Windows). Keep the method name in sync with

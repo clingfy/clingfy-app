@@ -38,6 +38,7 @@
 #include <vector>
 
 #include "Capture/Export/color_grade.h"
+#include "Capture/Export/export_geometry.h"
 #include "Graphics/color_grade_effect.h"
 
 namespace clingfy::preview {
@@ -184,6 +185,20 @@ class PreviewCompositor {
   // preview with one loud log per grade change.
   void SetColorGrade(const capture::export_::color::ColorGrade& grade);
 
+  // Canvas framing for the live preview: the fill drawn behind and around the
+  // video, and the corner radius applied to the video rect. Both already
+  // resolved to THIS surface's pixels by the engine (the wire contract carries
+  // resolution-independent fractions — see Core/canvas_composition.h).
+  //
+  // The background is filled by the Clear() at the top of ComposeFrame, which
+  // happens BEFORE the colour-grade effect chain runs. That ordering is what
+  // keeps the canvas ungraded, matching the existing rule that the cursor halo
+  // and camera bubble stay outside the grade.
+  //
+  // Thread-safe: called from the platform thread, read on the frame thread.
+  void SetCanvasFraming(capture::export_::RgbaColor background,
+                        float corner_radius_px);
+
  private:
   HRESULT EnsureHighlightBrush(ID2D1DeviceContext* d2d_context);
 
@@ -208,6 +223,12 @@ class PreviewCompositor {
   // ComposeFrame on the frame thread). The chain members are frame-thread
   // only.
   std::mutex grade_mutex_;
+
+  // Canvas framing (canvas_mutex_ guards both). Defaults reproduce today's
+  // behaviour exactly: opaque black fill, square corners.
+  std::mutex canvas_mutex_;
+  capture::export_::RgbaColor canvas_background_{0.0, 0.0, 0.0, 1.0};
+  float canvas_corner_radius_px_ = 0.0f;
   capture::export_::color::ColorGrade grade_;
   std::uint64_t grade_generation_ = 0;
   std::uint64_t chain_generation_ = 0;

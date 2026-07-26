@@ -16,6 +16,7 @@
 #include "Capture/Export/audio_sidecar_probe.h"
 #include "Capture/Export/mic_cleanup.h"
 #include "Capture/recording_project_reader.h"
+#include "Core/canvas_composition.h"
 #include "preview/preview_engine.h"
 
 namespace clingfy::bridge::routers::preview {
@@ -743,6 +744,37 @@ void HandlePreviewSetColorGrade(
   reply::Null(*result);
 }
 
+// Canvas framing (background colour, padding, corner radius) for the live
+// preview, so the editor shows the frame the export will produce instead of bare
+// video.
+//
+// `padding` / `cornerRadius` arrive as EXPORT-OUTPUT pixels (the same values the
+// `processVideo` payload carries). They are normalised here against
+// `exportShortSide` — the shorter side of the export target they were measured
+// against — because the preview texture is capped at 1280x720. Handing the raw
+// pixels straight through would render ~3x the padding the exported file has,
+// and the error would grow with the user's export resolution. See
+// `Core/canvas_composition.h`.
+//
+// Stale-session calls are dropped engine-side, matching every other preview
+// setter.
+void HandlePreviewSetCanvas(
+    const flutter::MethodCall<flutter::EncodableValue>& call,
+    std::unique_ptr<flutter::MethodResult<flutter::EncodableValue>> result) {
+  if (const auto* args =
+          std::get_if<flutter::EncodableMap>(call.arguments())) {
+    const std::string session_id = ReadString(*args, "sessionId");
+    clingfy::core::CanvasFramingArgs framing;
+    framing.padding_px = ReadDouble(*args, "padding", 0.0);
+    framing.corner_radius_px = ReadDouble(*args, "cornerRadius", 0.0);
+    framing.background_argb = ReadOptionalInt(*args, "backgroundColor");
+    framing.layout_preset = ReadString(*args, "layoutPreset");
+    framing.resolution_preset = ReadString(*args, "resolutionPreset");
+    PreviewEngine::Instance()->SetCanvasComposition(session_id, framing);
+  }
+  reply::Null(*result);
+}
+
 // Voice cleanup (Phase 4 preview WYSIWYG): denoise the preview's mic so the
 // live preview matches the export bake. `voiceCleanup` is a nested
 // {enabled, mode} map (Dart VoiceCleanup.toMap()); only `enabled` drives the
@@ -854,6 +886,7 @@ void RegisterHandlers(HandlerTable& table) {
   // chain the export bakes with (Graphics/color_grade_effect), applied to
   // the preview video by preview_compositor. Video-only, like macOS preview.
   table["previewSetColorGrade"] = &HandlePreviewSetColorGrade;
+  table["previewSetCanvas"] = &HandlePreviewSetCanvas;
   // Clip split/cut/trim/arrange (editing port step 4-1): the clip list is now
   // STORED on the preview session (SetClips). The stitched decode that plays
   // through cuts/reorder lands in the following slices; a passthrough list keeps
