@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'dart:io';
 
 import 'package:clingfy/app/home/post_processing/post_processing_controller.dart';
@@ -11,6 +12,7 @@ import 'package:flutter/services.dart';
 import 'package:flutter_test/flutter_test.dart';
 
 import '../../../test_helpers/native_test_setup.dart';
+import '../../../test_helpers/wait_until.dart';
 
 /// Color-grade undo/redo through the real [PostProcessingController] wiring.
 ///
@@ -25,11 +27,15 @@ void main() {
 
   late Directory projectDir;
   late List<MethodCall> colorGradeCalls;
+  // When non-null, getRecordingSceneInfo parks until this completes, so a test
+  // controls exactly when the async restore lands relative to its own edits.
+  Completer<void>? sceneLoadGate;
 
   setUp(() async {
     await installCommonNativeMocks();
     projectDir = await Directory.systemTemp.createTemp('clingfy_grade_undo_');
     colorGradeCalls = <MethodCall>[];
+    sceneLoadGate = null;
     final messenger =
         TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger;
     messenger.setMockMethodCallHandler(screenRecorderChannel, (call) async {
@@ -43,6 +49,11 @@ void main() {
           return false;
         case 'getExcludeMicFromSystemAudio':
           return true;
+        case 'getRecordingSceneInfo':
+          if (sceneLoadGate != null) {
+            await sceneLoadGate!.future;
+          }
+          return null;
         default:
           return null;
       }
@@ -533,6 +544,95 @@ void main() {
     post.commitColorGrade();
     expect(post.canUndoColorGrade, isFalse);
     expect(post.colorGrade.exposure, 0);
+  });
+
+  test('an edit inside the scene-load window leaves no stale history', () async {
+    // The window: attachToRecording returns immediately and kicks off the scene
+    // load, which later calls _loadCanvasAppearance and clears the colour
+    // session. An edit committed inside that window has its grade replaced by
+    // the restore. The invariant to pin is that no HISTORY entry survives
+    // pointing at a grade the restore threw away — otherwise undo would jump to
+    // a value the recording never had.
+    //
+    // A first attempt at this test was dropped as flaky because the outcome
+    // depended on whether the edit's fire-and-forget write beat the restore's
+    // read. Gating the scene load on a Completer removes that race entirely:
+    // the test decides both the file contents AND the moment the restore reads
+    // them.
+    const savedGrade = ColorGrade(exposure: 0.2);
+    final gate = Completer<void>();
+    sceneLoadGate = gate;
+
+    final nativeBridge = NativeBridge.instance;
+    final settings = SettingsController(nativeBridge: nativeBridge);
+    await settings.loadPreferences();
+    final player = PlayerController(nativeBridge: nativeBridge);
+    final post = PostProcessingController(
+      settings: settings,
+      player: player,
+      channel: nativeBridge,
+    );
+    addTearDown(() {
+      if (!gate.isCompleted) gate.complete();
+      post.dispose();
+      player.dispose();
+      settings.dispose();
+    });
+
+    // The scene load parks on the gate, so we are inside the window.
+    post.attachToRecording(
+      sessionId: 'rec_window',
+      projectPath: projectDir.path,
+    );
+    dragExposureTo(post, 0.8);
+    expect(post.canUndoColorGrade, isTrue, reason: 'the edit was committed');
+
+    // Let the edit's own persist land first, then plant the "already saved"
+    // grade, so the restore is guaranteed to read 0.2 and not the edit.
+    await waitUntil(
+      () =>
+          CanvasAppearanceStore.load(projectDir.path)?.colorGrade.exposure ==
+          0.8,
+      reason: "the edit's own write must land before we overwrite it",
+    );
+    await CanvasAppearanceStore.save(
+      projectDir.path,
+      const CanvasAppearanceState(
+        padding: 0,
+        cornerRadius: 0,
+        backgroundKind: BackgroundKind.color,
+        backgroundColorArgb: null,
+        backgroundImagePath: null,
+        backgroundPreset: null,
+        colorGrade: savedGrade,
+      ),
+    );
+    await waitUntil(
+      () =>
+          CanvasAppearanceStore.load(projectDir.path)?.colorGrade.exposure ==
+          0.2,
+    );
+
+    // Release the restore.
+    gate.complete();
+    await waitUntil(
+      () => post.colorGrade.exposure == 0.2,
+      reason: 'the restore should replace the in-window edit',
+    );
+
+    expect(post.colorGrade, savedGrade, reason: 'restore wins');
+    expect(
+      post.canUndoColorGrade,
+      isFalse,
+      reason: 'no history may survive pointing at the discarded grade',
+    );
+    expect(post.canRedoColorGrade, isFalse);
+
+    // And a fresh edit after the window is undoable back to the RESTORED grade,
+    // never to the value the restore discarded.
+    dragExposureTo(post, 0.5);
+    post.undoColorGrade();
+    expect(post.colorGrade.exposure, 0.2);
   });
 
   test('a restored grade is the baseline for the first edit', () async {
