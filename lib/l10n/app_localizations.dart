@@ -3706,6 +3706,18 @@ abstract class AppLocalizations {
   /// **'Your mic is barely picking anything up. Raise the input level in System Settings › Sound › Input, or move closer — otherwise this recording will have no usable voice.'**
   String get recordingMicTooLowWarning;
 
+  /// No description provided for @preRecordingBarMicTooLow.
+  ///
+  /// In en, this message translates to:
+  /// **'Mic level is very low — raise the input level in System Settings › Sound › Input.'**
+  String get preRecordingBarMicTooLow;
+
+  /// No description provided for @preRecordingBarBleedRisk.
+  ///
+  /// In en, this message translates to:
+  /// **'System audio is playing out loud and will bleed into your mic. Switch to headphones.'**
+  String get preRecordingBarBleedRisk;
+
   /// No description provided for @noMicAudioFound.
   ///
   /// In en, this message translates to:

@@ -640,14 +640,16 @@ class HomeActions {
         rawCamId != 'none' &&
         rawCamId != DeviceController.noAudioId;
 
+    final micLive =
+        deviceController.selectedAudioSourceId != DeviceController.noAudioId;
+
     final state = {
       'phase': recordingController.phase.wireValue,
       'sessionId': recordingController.sessionId,
       'countdownActive': countdownController.isActive,
       'targetMode': uiState.targetMode.index,
       'cameraEnabled': camSelected,
-      'micEnabled':
-          deviceController.selectedAudioSourceId != DeviceController.noAudioId,
+      'micEnabled': micLive,
       'systemAudioEnabled': settingsController.recording.systemAudioEnabled,
       'updateAvailable': nativeBridge.isUpdateAvailable.value,
       'canPauseResume': recordingController.canPauseResume,
@@ -656,6 +658,14 @@ class HomeActions {
       'selectedAppWindowId': deviceController.selectedAppWindowId,
       'selectedAudioSourceId': deviceController.selectedAudioSourceId,
       'selectedCamId': camSelected ? rawCamId : null,
+      // Pre-record audio warnings. The bar is the surface a user actually
+      // looks at before hitting record, so these cannot live only in the
+      // sidebar. Both are gated on a live mic for the same reason the sidebar
+      // gates them: with no microphone there is nothing to bleed INTO and no
+      // level to be too low, and "No microphone" is the first-run default.
+      'micInputTooLow': micLive && deviceController.micInputTooLow,
+      'systemAudioBleedRisk':
+          micLive && settingsController.recording.systemAudioBleedRisk,
     };
 
     nativeBridge.setPreRecordingBarState(state);

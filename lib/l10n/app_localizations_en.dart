@@ -1977,6 +1977,14 @@ class AppLocalizationsEn extends AppLocalizations {
       'Your mic is barely picking anything up. Raise the input level in System Settings › Sound › Input, or move closer — otherwise this recording will have no usable voice.';
 
   @override
+  String get preRecordingBarMicTooLow =>
+      'Mic level is very low — raise the input level in System Settings › Sound › Input.';
+
+  @override
+  String get preRecordingBarBleedRisk =>
+      'System audio is playing out loud and will bleed into your mic. Switch to headphones.';
+
+  @override
   String get noMicAudioFound => 'No mic audio track found';
 
   @override
