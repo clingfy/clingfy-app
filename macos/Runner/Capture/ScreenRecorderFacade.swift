@@ -199,6 +199,18 @@ final class ScreenRecorderFacade: NSObject {
   // events out
   var onDevicesChanged: (() -> Void)?
   var onVideoDevicesChanged: (() -> Void)?
+
+  /// Coalesces the burst of screen-parameter notifications a single dock
+  /// connect produces. 400 ms is comfortably longer than the gap between
+  /// steps of one reconfiguration and short enough to feel instant.
+  private let displaysChangedDebouncer = TrailingDebouncer(delay: 0.4)
+
+  /// Screens were added, removed or reconfigured.
+  ///
+  /// Previously a screen change called `onDevicesChanged` — the AUDIO
+  /// callback — so plugging in a monitor reloaded the microphone list and the
+  /// display list was never refreshed at all.
+  var onDisplaysChanged: (() -> Void)?
   var onIndicatorPauseTapped: (() -> Void)?
   var onIndicatorStopTapped: (() -> Void)?
   var onIndicatorResumeTapped: (() -> Void)?
@@ -2000,7 +2012,11 @@ final class ScreenRecorderFacade: NSObject {
     {
       clearAreaRecordingSelection()
     }
-    onDevicesChanged?()
+    // A single dock connect emits a burst of these; coalesce so Flutter does
+    // one reload rather than one per screen.
+    displaysChangedDebouncer.schedule { [weak self] in
+      self?.onDisplaysChanged?()
+    }
   }
 
   @objc private func workspaceWillSleep(_ notification: Notification) {

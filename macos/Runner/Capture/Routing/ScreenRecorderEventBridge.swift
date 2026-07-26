@@ -50,6 +50,9 @@ final class ScreenRecorderEventBridge {
     facade.onVideoDevicesChanged = { [weak self] in
       self?.eventHandler.fireVideoSourcesChanged()
     }
+    facade.onDisplaysChanged = { [weak self] in
+      self?.eventHandler.fireDisplaysChanged()
+    }
     facade.onMicrophoneLevel = { [weak self] sample in
       self?.eventHandler.fireMicrophoneLevel(
         linear: sample.linear,
