@@ -38,6 +38,7 @@
 
 #include "Capture/Export/clip_playback_planner.h"
 #include "Capture/Export/color_grade.h"
+#include "Core/canvas_composition.h"
 #include "Preview/preview_camera_renderer.h"
 
 #include <atomic>
@@ -386,6 +387,31 @@ class PreviewEngine {
   // camera edits.
   void SetColorGrade(const std::string& session_id,
                      const capture::export_::color::ColorGrade& grade);
+
+  // Canvas framing (background colour, padding, corner radius) for the live
+  // preview. Driven by Dart's previewSetCanvas on every canvas edit.
+  //
+  // The composition is resolution-independent (fractions of the canvas's
+  // shorter side, see Core/canvas_composition.h) precisely because this
+  // surface is capped at kTextureWidth x kTextureHeight while the export
+  // renders at the user's chosen resolution — raw pixels would make the
+  // preview's padding ~3x the export's at 4K.
+  //
+  // The background is NOT graded, matching the existing rule that the cursor
+  // halo and camera bubble stay outside the colour chain.
+  //
+  // A stale session_id is a silent no-op. Cheap and thread-safe; a PAUSED
+  // preview repaints immediately via RepaintPausedPreview() with no seek and
+  // no decode.
+  // Takes the RAW Dart args (export-output pixels + presets) and normalises them
+  // here, because only the engine knows the source dimensions that
+  // ResolveTargetSize needs to work out the export canvas.
+  void SetCanvasComposition(const std::string& session_id,
+                            const core::CanvasFramingArgs& framing);
+
+  // The canvas framing last pushed from Dart. Read on the frame thread while
+  // compositing; guarded by render_mutex.
+  core::CanvasComposition canvas_composition_for_testing();
 
   // Editing port (clips, step 4-1): store the edited-timeline kept ranges for
   // the inline preview. Driven by Dart's previewSetClips on open and on every

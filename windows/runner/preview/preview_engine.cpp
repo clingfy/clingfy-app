@@ -34,6 +34,7 @@
 #include "Bridge/platform_thread_dispatcher.h"
 #include "Bridge/player_event_publisher.h"
 #include "Bridge/workflow_event_publisher.h"
+#include "Capture/Export/export_geometry.h"
 #include "Capture/Export/audio_sidecar_probe.h"
 #include "Capture/Export/mic_cleanup.h"
 #include "Services/log_locations.h"
@@ -313,6 +314,13 @@ struct PreviewEngine::Impl {
   std::atomic<UINT> last_video_width{0};
   std::atomic<UINT> last_video_height{0};
   std::atomic<std::int64_t> frames_consumed{0};
+
+  // ---- Canvas framing (render_mutex) ----
+  // Resolution-independent, so the same authored padding renders proportionally
+  // the same here as it does in the export (see Core/canvas_composition.h).
+  // Written by SetCanvasComposition on the platform thread, read by the frame
+  // thread while compositing.
+  core::CanvasComposition canvas{};
 
   // ---- Last composed frame's timeline position (render_mutex) ----
   // Replayed verbatim by RepaintRetainedFrame so a settings change on a PAUSED
@@ -1395,9 +1403,35 @@ void PreviewEngine::ComposeAndHandoffLocked(Impl* impl,
   // ---- render bucket ----
   // The shared texture IS the destination — no slider strip. Letterbox
   // the natural video into the full canvas.
-  const D2D1_RECT_F dest = clingfy::preview::LetterboxRect(
-      static_cast<UINT>(texture_width_), static_cast<UINT>(texture_height_),
-      impl->compositor.video_width(), impl->compositor.video_height());
+  // Canvas framing, resolved from the wire contract's resolution-independent
+  // fractions onto THIS surface. The same authored padding therefore covers the
+  // same proportion of the frame here as it does in the export, instead of ~3x
+  // more (this texture is capped at kTextureWidth x kTextureHeight while the
+  // export renders at the user's chosen resolution).
+  const double surface_short = std::min(static_cast<double>(texture_width_),
+                                        static_cast<double>(texture_height_));
+  const double padding_px = core::DenormalizeFromShortSide(
+      impl->canvas.padding_fraction, surface_short);
+  const double radius_px = core::DenormalizeFromShortSide(
+      impl->canvas.corner_radius_fraction, surface_short);
+
+  impl->compositor.SetCanvasFraming(
+      capture::export_::ResolveBackgroundColor(impl->canvas.background_argb),
+      static_cast<float>(radius_px));
+
+  // The video lands in the padded content rect, not the full surface. Reuses
+  // the export's own fit/fill block so both consumers inset identically.
+  const capture::export_::RectF content = capture::export_::ComputeContentRect(
+      capture::export_::SizeF{static_cast<double>(texture_width_),
+                              static_cast<double>(texture_height_)},
+      capture::export_::SizeF{
+          static_cast<double>(impl->compositor.video_width()),
+          static_cast<double>(impl->compositor.video_height())},
+      capture::export_::FitMode::kFit, padding_px);
+  const D2D1_RECT_F dest =
+      D2D1::RectF(static_cast<float>(content.x), static_cast<float>(content.y),
+                  static_cast<float>(content.x + content.width),
+                  static_cast<float>(content.y + content.height));
 
   // Phase 9.6: advance/seek the camera frame BEFORE BeginDraw (the painter's
   // shadow bake does SetTarget round-trips, illegal inside BeginDraw).
@@ -2584,6 +2618,71 @@ void PreviewEngine::SetColorGrade(
     impl_->compositor.SetColorGrade(grade);
   }
   RepaintPausedPreview();
+}
+
+void PreviewEngine::SetCanvasComposition(
+    const std::string& session_id, const core::CanvasFramingArgs& framing) {
+  Impl* impl = nullptr;
+  UINT source_w = 0;
+  UINT source_h = 0;
+  {
+    std::lock_guard<std::mutex> lock(mutex_);
+    // Same stale-session discipline as SetColorGrade.
+    if (!session_id.empty() && session_id != active_session_id_) {
+      return;
+    }
+    if (impl_ == nullptr) {
+      return;
+    }
+    impl = impl_.get();
+    source_w = impl->last_video_width.load();
+    source_h = impl->last_video_height.load();
+  }
+
+  // Normalise here rather than in the router: only the engine knows the source
+  // dimensions, and ResolveTargetSize is the single source of truth for how a
+  // source plus layout/resolution preset becomes a canvas. Dart sends raw
+  // export-output pixels; converting them against the export target is what
+  // stops the preview from drawing ~3x the padding at 4K.
+  core::CanvasComposition canvas{};
+  canvas.background_argb = framing.background_argb;
+  if (source_w > 0 && source_h > 0) {
+    const capture::export_::SizeF target =
+        capture::export_::ResolveTargetSize(
+            capture::export_::SizeF{static_cast<double>(source_w),
+                                    static_cast<double>(source_h)},
+            framing.layout_preset, framing.resolution_preset);
+    const double export_short = std::min(target.width, target.height);
+    canvas.padding_fraction =
+        core::NormalizeToShortSide(framing.padding_px, export_short);
+    canvas.corner_radius_fraction =
+        core::NormalizeToShortSide(framing.corner_radius_px, export_short);
+  }
+  // No frame yet => source dims unknown => fractions stay 0 and the canvas
+  // renders unpadded, which is what the preview shows today anyway. The next
+  // push after the first frame resolves properly.
+
+  {
+    // The frame thread takes render_mutex -> mutex_ (never the reverse), so
+    // publish under render_mutex ALONE, after mutex_ is released above.
+    std::lock_guard<std::mutex> render_lock(impl->render_mutex);
+    impl->canvas = canvas;
+  }
+  // Paused / ended preview: re-light the retained frame so the canvas edit is
+  // visible immediately. No seek, no decode. While playing this is a no-op and
+  // the next natural frame carries the change.
+  RepaintPausedPreview();
+}
+
+core::CanvasComposition PreviewEngine::canvas_composition_for_testing() {
+  Impl* impl = nullptr;
+  {
+    std::lock_guard<std::mutex> lock(mutex_);
+    impl = impl_.get();
+    if (impl == nullptr) return {};
+  }
+  std::lock_guard<std::mutex> render_lock(impl->render_mutex);
+  return impl->canvas;
 }
 
 bool PreviewEngine::RangesAreEdited(
