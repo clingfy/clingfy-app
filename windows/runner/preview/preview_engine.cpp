@@ -314,6 +314,15 @@ struct PreviewEngine::Impl {
   std::atomic<UINT> last_video_height{0};
   std::atomic<std::int64_t> frames_consumed{0};
 
+  // ---- Last composed frame's timeline position (render_mutex) ----
+  // Replayed verbatim by RepaintRetainedFrame so a settings change on a PAUSED
+  // preview re-composites the frame that is already on screen: same timestamp,
+  // so cursor / zoom / camera resolve identically and only the edited setting
+  // moves. Also keeps the re-emitted playerTick from nudging Dart's playhead.
+  std::int64_t last_playback_us = -1;
+  std::int64_t last_emit_pos_ms = 0;
+  std::int64_t last_emit_dur_ms = 0;
+
   // ---- Step 5.5 seek tracking ----
   // Each SeekTo() call appends a sample; the next VideoFrameAvailable
   // sets resolved_qpc on the first unresolved entry. The seek-latency
@@ -1377,6 +1386,12 @@ void PreviewEngine::ComposeAndHandoffLocked(Impl* impl,
                                             std::int64_t playback_us,
                                             std::int64_t emit_pos_ms,
                                             std::int64_t emit_dur_ms) {
+  // Remember where this frame sits so a paused settings change can re-compose
+  // the same instant instead of seeking for a fresh one (RepaintRetainedFrame).
+  impl->last_playback_us = playback_us;
+  impl->last_emit_pos_ms = emit_pos_ms;
+  impl->last_emit_dur_ms = emit_dur_ms;
+
   // ---- render bucket ----
   // The shared texture IS the destination — no slider strip. Letterbox
   // the natural video into the full canvas.
@@ -2376,6 +2391,15 @@ void PreviewEngine::SeekTo(const std::string& session_id,
   }
 }
 
+PausedRepaintAction DecidePausedRepaint(bool is_playing,
+                                        bool has_composed_frame) {
+  if (is_playing) {
+    return PausedRepaintAction::kSkipPlaying;
+  }
+  return has_composed_frame ? PausedRepaintAction::kRepaintRetained
+                            : PausedRepaintAction::kNudgeSeek;
+}
+
 CameraNudgePlan ResolveCameraNudgeTarget(std::int64_t current_ms,
                                          std::int64_t previous_anchor_ms) {
   // The anchor's 1ms neighbor: one back normally, one forward at 0 so the
@@ -2443,10 +2467,81 @@ void NudgePausedPreviewPlayer(winrt_playback::MediaPlayer player_snapshot,
 
 }  // namespace
 
+void PreviewEngine::RepaintPausedPreview() {
+  winrt_playback::MediaPlayer player_snapshot{nullptr};
+  {
+    std::lock_guard<std::mutex> lock(mutex_);
+    if (impl_ == nullptr) return;
+    player_snapshot = impl_->player;
+  }
+
+  bool is_playing = false;
+  if (player_snapshot != nullptr) {
+    try {
+      is_playing = player_snapshot.PlaybackSession().PlaybackState() ==
+                   winrt_playback::MediaPlaybackState::Playing;
+    } catch (winrt::hresult_error const&) {
+      // Unreadable state: treat as not playing. A repaint on a live frame is
+      // wasteful but harmless; skipping one on a frozen frame is the bug being
+      // fixed here.
+    }
+  }
+
+  switch (DecidePausedRepaint(is_playing, HasComposedFrame())) {
+    case PausedRepaintAction::kSkipPlaying:
+      return;
+    case PausedRepaintAction::kRepaintRetained:
+      // Re-light the frame already on screen: one D2D compose, no decode. If it
+      // races a Close and reports false, there is nothing left to show anyway.
+      RepaintRetainedFrame();
+      return;
+    case PausedRepaintAction::kNudgeSeek:
+      // Nothing composed yet (preview still coming up). The historical 1ms seek
+      // can still kick a stalled pipeline into producing a first frame.
+      NudgePausedPreviewPlayer(std::move(player_snapshot), mutex_,
+                               camera_nudge_anchor_ms_);
+      return;
+  }
+}
+
+bool PreviewEngine::HasComposedFrame() {
+  std::lock_guard<std::mutex> lock(mutex_);
+  return impl_ != nullptr &&
+         impl_->frames_consumed.load(std::memory_order_relaxed) > 0;
+}
+
+bool PreviewEngine::RepaintRetainedFrame() {
+  Impl* impl = nullptr;
+  {
+    // Same lock discipline as HandleVideoFrame: take mutex_ only to resolve
+    // impl_, release it, THEN take render_mutex. ComposeAndHandoffLocked
+    // re-takes mutex_ underneath render_mutex for its session snapshot, so
+    // holding both here in the other order would invert the lock hierarchy.
+    std::lock_guard<std::mutex> lock(mutex_);
+    impl = impl_.get();
+    if (impl == nullptr) return false;
+  }
+  if (shutting_down_.load() || !running_.load()) return false;
+
+  std::lock_guard<std::mutex> render_lock(impl->render_mutex);
+  if (shutting_down_.load() || impl_ == nullptr) return false;
+
+  // Nothing has been composed yet, so there is no retained frame to re-light.
+  // (frames_consumed, not has_video_target(): the texture is allocated in
+  // EnsureResources BEFORE the first CopyFrameToVideoSurface, so a non-null
+  // texture does not by itself mean the surface holds real content.)
+  if (impl->frames_consumed.load(std::memory_order_relaxed) <= 0) {
+    return false;
+  }
+
+  ComposeAndHandoffLocked(impl, impl->last_playback_us, impl->last_emit_pos_ms,
+                          impl->last_emit_dur_ms);
+  return true;
+}
+
 void PreviewEngine::SetCameraComposition(
     const std::string& session_id,
     const PreviewCameraComposition& composition) {
-  winrt_playback::MediaPlayer player_snapshot{nullptr};
   {
     std::lock_guard<std::mutex> lock(mutex_);
     // Stale-session calls (a previous preview, or a placement update racing a
@@ -2461,23 +2556,20 @@ void PreviewEngine::SetCameraComposition(
     // SetComposition is internally synchronized and does no D2D work, so holding
     // mutex_ here is cheap and cannot deadlock against the frame thread (which
     // takes mutex_ -> render_mutex -> renderer lock; we take mutex_ -> renderer
-    // lock, so the renderer lock is always acquired last). We snapshot the player
-    // and do the WinRT nudge AFTER releasing mutex_, matching the
-    // snapshot-then-release discipline of SeekTo/Pause.
+    // lock, so the renderer lock is always acquired last). The repaint happens
+    // AFTER releasing mutex_, matching the snapshot-then-release discipline of
+    // SeekTo/Pause.
     impl_->camera_renderer->SetComposition(composition);
-    player_snapshot = impl_->player;
   }
-  NudgePausedPreviewPlayer(std::move(player_snapshot), mutex_,
-                           camera_nudge_anchor_ms_);
+  RepaintPausedPreview();
 }
 
 void PreviewEngine::SetColorGrade(
     const std::string& session_id,
     const capture::export_::color::ColorGrade& grade) {
-  winrt_playback::MediaPlayer player_snapshot{nullptr};
   {
     std::lock_guard<std::mutex> lock(mutex_);
-    // Same stale-session + snapshot-then-release discipline as
+    // Same stale-session + release-before-repaint discipline as
     // SetCameraComposition above.
     if (!session_id.empty() && session_id != active_session_id_) {
       return;
@@ -2487,12 +2579,11 @@ void PreviewEngine::SetColorGrade(
     }
     // SetColorGrade is internally synchronized (the compositor's grade
     // mutex) and does no D2D work here — the effect chain (re)builds on the
-    // frame thread at the next composited frame.
+    // frame thread at the next composited frame, or immediately below when the
+    // preview is paused and there is no next frame coming.
     impl_->compositor.SetColorGrade(grade);
-    player_snapshot = impl_->player;
   }
-  NudgePausedPreviewPlayer(std::move(player_snapshot), mutex_,
-                           camera_nudge_anchor_ms_);
+  RepaintPausedPreview();
 }
 
 bool PreviewEngine::RangesAreEdited(

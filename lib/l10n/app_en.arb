@@ -704,6 +704,7 @@
   "exportDiagnostics": "Export Diagnostics",
   "diagnosticsExported": "Diagnostics package created — revealed in your file manager.",
   "recordingSystemAudio": "System audio",
+  "recordingSystemAudioBleedWarning": "System audio is playing through speakers, so your mic will pick it up again as an echo. Use headphones for a clean recording.",
   "recordingExcludeMicFromSystemAudio": "Exclude my mic from system audio",
   "recordingMicEchoCancellation": "Remove speaker echo from mic",
   "recordingMicEchoCancellationHelp": "Experimental: filters system-audio bleed out of the mic during pauses in your speech. May affect voice quality on some recordings.",

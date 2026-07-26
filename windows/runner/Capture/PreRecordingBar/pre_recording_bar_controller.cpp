@@ -10,6 +10,7 @@
 #include <string>
 #include <vector>
 
+#include "Bridge/app_window_anchor.h"
 #include "Bridge/Devices/audio_source_enumerator.h"
 #include "Bridge/Devices/device_record.h"
 #include "Bridge/Devices/display_enumerator.h"
@@ -31,22 +32,6 @@ constexpr UINT kMsgHide = WM_APP + 2;
 // WorkflowPhase wire value for idle (mirrors the Dart enum) — the ->idle edge
 // resets the per-cycle dismissed flag.
 constexpr int kPhaseIdle = 0;
-
-// Work area of the monitor the bar currently sits on, falling back to the
-// primary display's full bounds.
-RECT MonitorWorkArea(HWND hwnd) {
-  RECT work{0, 0, ::GetSystemMetrics(SM_CXSCREEN),
-            ::GetSystemMetrics(SM_CYSCREEN)};
-  if (HMONITOR mon = ::MonitorFromWindow(hwnd, MONITOR_DEFAULTTOPRIMARY);
-      mon != nullptr) {
-    MONITORINFO mi{};
-    mi.cbSize = sizeof(mi);
-    if (::GetMonitorInfoW(mon, &mi) != 0) {
-      work = mi.rcWork;
-    }
-  }
-  return work;
-}
 
 void EnsureClassRegistered() {
   static std::once_flag flag;
@@ -332,11 +317,13 @@ void PreRecordingBarController::Paint(HWND hwnd) {
 }
 
 void PreRecordingBarController::PlaceWindow(HWND hwnd) {
-  const RECT work = MonitorWorkArea(hwnd);
+  // Anchor to the display showing the main app window, NOT the bar's own
+  // window: the bar is created at (0, 0), so resolving from it always answers
+  // "primary" and strands the bar on the wrong monitor. Mirrors macOS
+  // `NSScreen.main` (the key window's screen).
+  const RECT work = clingfy::AnchorWorkArea(hwnd);
   const UINT dpi = ::GetDpiForWindow(hwnd);
   const double scale = dpi > 0 ? dpi / 96.0 : 1.0;
-  const int height =
-      std::max(1, static_cast<int>(std::lround(kBarBaseHeight * scale)));
 
   PreRecordingBarInputs inputs;
   {
@@ -345,22 +332,14 @@ void PreRecordingBarController::PlaceWindow(HWND hwnd) {
   }
   const std::array<BarButtonSpec, kBarButtonCount> specs =
       ComputeBarButtons(inputs);
-  const int width = std::max(1, BarContentWidth(specs, height));
 
-  // Centered horizontally, tucked up from the bottom of the work area (macOS
-  // default position). Clamp so it never spills off a narrow work area. RECT
-  // fields are LONG; work in int so std::clamp deduces one type.
-  const int wl = static_cast<int>(work.left);
-  const int wt = static_cast<int>(work.top);
-  const int wr = static_cast<int>(work.right);
-  const int wb = static_cast<int>(work.bottom);
-  const int bottom_inset = static_cast<int>(std::lround(28.0 * scale));
-  int x = wl + ((wr - wl) - width) / 2;
-  int y = wb - height - bottom_inset;
-  x = std::clamp(x, wl, std::max(wl, wr - width));
-  y = std::clamp(y, wt, std::max(wt, wb - height));
+  // RECT fields are LONG; the placement math works in int.
+  const BarPlacement place = ComputeBarPlacement(
+      static_cast<int>(work.left), static_cast<int>(work.top),
+      static_cast<int>(work.right), static_cast<int>(work.bottom), scale, specs);
 
-  ::SetWindowPos(hwnd, HWND_TOPMOST, x, y, width, height, SWP_NOACTIVATE);
+  ::SetWindowPos(hwnd, HWND_TOPMOST, place.x, place.y, place.width,
+                 place.height, SWP_NOACTIVATE);
 }
 
 namespace {

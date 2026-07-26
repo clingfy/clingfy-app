@@ -17,6 +17,19 @@ enum NativeChannel {
   static let workflowEvents = "com.clingfy/workflow/events"
 }
 
+/// Method names for Flutter → native calls that have constants on both sides.
+///
+/// Most invocations still use inline string literals at the handler; new
+/// methods get constants here.
+///
+/// IMPORTANT: Keep this in sync with `native_method_channel.dart` on the Flutter side.
+enum FlutterToNativeMethod {
+  /// Returns `{route: "speakers" | "headphones" | "unknown"}` for the current
+  /// default audio-output device, so the recording UI can warn about
+  /// speaker -> mic bleed before a take.
+  static let getAudioOutputRoute = "getAudioOutputRoute"
+}
+
 /// Method names for native → Flutter calls.
 ///
 /// IMPORTANT: Keep this in sync with `native_method_channel.dart` on the Flutter side.

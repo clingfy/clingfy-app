@@ -3874,6 +3874,12 @@ abstract class AppLocalizations {
   /// **'System audio'**
   String get recordingSystemAudio;
 
+  /// No description provided for @recordingSystemAudioBleedWarning.
+  ///
+  /// In en, this message translates to:
+  /// **'System audio is playing through speakers, so your mic will pick it up again as an echo. Use headphones for a clean recording.'**
+  String get recordingSystemAudioBleedWarning;
+
   /// No description provided for @recordingExcludeMicFromSystemAudio.
   ///
   /// In en, this message translates to:

@@ -2089,6 +2089,10 @@ class AppLocalizationsRo extends AppLocalizations {
   String get recordingSystemAudio => 'Audio de sistem';
 
   @override
+  String get recordingSystemAudioBleedWarning =>
+      'Sunetul sistemului se redă prin difuzoare, deci microfonul îl va capta din nou ca ecou. Folosește căști pentru o înregistrare curată.';
+
+  @override
   String get recordingExcludeMicFromSystemAudio =>
       'Exclude microfonul meu din audio de sistem';
 

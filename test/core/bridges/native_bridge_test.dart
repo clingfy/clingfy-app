@@ -2,6 +2,7 @@ import 'dart:async';
 
 import 'package:clingfy/core/bridges/native_bridge.dart';
 import 'package:clingfy/core/bridges/native_method_channel.dart';
+import 'package:clingfy/core/recording/models/audio_output_route.dart';
 import 'package:clingfy/core/timeline/model/color_grade.dart';
 import 'package:clingfy/core/timeline/model/edit_track.dart';
 import 'package:flutter/services.dart';
@@ -393,6 +394,73 @@ void main() {
       final args = captured?.arguments as Map;
       expect(args.containsKey('sessionId'), isFalse);
       expect((args['clips'] as List), hasLength(1));
+    });
+  });
+
+  group('getAudioOutputRoute', () {
+    final messenger =
+        TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger;
+
+    tearDown(() {
+      messenger.setMockMethodCallHandler(
+        const MethodChannel(NativeChannel.screenRecorder),
+        null,
+      );
+    });
+
+    void respond(Object? Function(MethodCall call) handler) {
+      messenger.setMockMethodCallHandler(
+        const MethodChannel(NativeChannel.screenRecorder),
+        (call) async => handler(call),
+      );
+    }
+
+    test('parses each route the native side can report', () async {
+      for (final entry in {
+        'speakers': AudioOutputRoute.speakers,
+        'headphones': AudioOutputRoute.headphones,
+        'unknown': AudioOutputRoute.unknown,
+      }.entries) {
+        respond((call) {
+          expect(call.method, NativeMethod.getAudioOutputRoute);
+          return {'route': entry.key};
+        });
+        expect(await NativeBridge.instance.getAudioOutputRoute(), entry.value);
+      }
+    });
+
+    test('an unrecognized route resolves to unknown, not a warning', () async {
+      respond((_) => {'route': 'teleporter'});
+      expect(
+        await NativeBridge.instance.getAudioOutputRoute(),
+        AudioOutputRoute.unknown,
+      );
+    });
+
+    test('a missing route key resolves to unknown', () async {
+      respond((_) => <String, Object?>{});
+      expect(
+        await NativeBridge.instance.getAudioOutputRoute(),
+        AudioOutputRoute.unknown,
+      );
+    });
+
+    test('a native build without the method resolves to unknown', () async {
+      // Windows has no implementation; it must not throw into the settings
+      // load path.
+      respond((call) => throw MissingPluginException('no impl'));
+      expect(
+        await NativeBridge.instance.getAudioOutputRoute(),
+        AudioOutputRoute.unknown,
+      );
+    });
+
+    test('a platform error resolves to unknown', () async {
+      respond((call) => throw PlatformException(code: 'BOOM'));
+      expect(
+        await NativeBridge.instance.getAudioOutputRoute(),
+        AudioOutputRoute.unknown,
+      );
     });
   });
 }

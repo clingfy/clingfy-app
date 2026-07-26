@@ -40,6 +40,16 @@ abstract class NativeMethod {
   /// to exercise the crash pipeline. Native replies with an error unless the
   /// CLINGFY_CRASH_TEST=1 environment variable is set.
   static const String debugForceNativeCrash = 'debugForceNativeCrash';
+
+  /// Returns `{route: 'speakers' | 'headphones' | 'unknown'}` for the current
+  /// default audio-output device.
+  ///
+  /// Speaker playback is the precondition for the speaker -> mic bleed that
+  /// makes a recording come back with a doubled, delayed soundtrack, so the
+  /// recording UI warns before a take when system audio is on and output is
+  /// audible in the room. macOS only; other platforms reply with a
+  /// `MissingPluginException`, which the bridge maps to `unknown`.
+  static const String getAudioOutputRoute = 'getAudioOutputRoute';
 }
 
 /// Method names for native → Flutter calls.

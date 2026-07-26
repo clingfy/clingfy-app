@@ -88,6 +88,8 @@ class MainFlutterWindow: NSWindow {
         self.screenRecorder.getRecordingCapabilities(result: result)
       case "getAudioSources":
         self.screenRecorder.getAudioSources(result: result)
+      case FlutterToNativeMethod.getAudioOutputRoute:
+        self.screenRecorder.getAudioOutputRoute(result: result)
       case "setAudioSource":
         let args = call.arguments as? [String: Any]
         self.screenRecorder.setAudioSource(id: args?["id"] as? String, result: result)
