@@ -63,6 +63,8 @@ add_library(runner_bridge STATIC
   "Bridge/player_event_publisher.cpp"
   "Bridge/project_open_coordinator.cpp"
   "Bridge/workflow_event_publisher.cpp"
+  "Capture/Background/background_preset_catalog.cpp"
+  "Capture/Background/abstract_waves_renderer.cpp"
   "Capture/Background/abstract_waves_params.cpp"
   "Capture/Background/background_image_cache.cpp"
   "Core/canvas_composition.cpp"
