@@ -50,3 +50,10 @@ Deferred work captured during reviews. Each item has enough context to pick up c
 - **Context:** Raised as a known limitation when the classification landed on 2026-07-26; both cases are commented at the switch. The transport type genuinely does not carry this information — the fix likely needs the device's `kAudioDevicePropertyDataSource` / source name, or a per-device user override remembered in prefs.
 - **Start at:** `macos/Runner/Capture/Audio/AudioOutputRoute.swift` (`classify`), and `macos/RunnerTests/RunnerTests.swift` (`testOutputRouteClassificationDrivesTheBleedWarning`).
 - **Effort:** human ~2h / CC ~20min.
+
+### Surface the bleed warning on the native pre-recording bar
+- **What:** Show the speaker-bleed warning on the native pre-recording bar, not only in the Flutter recording sidebar.
+- **Why:** The pre-recording bar is the surface a user actually looks at immediately before hitting record. A warning that lives only in the sidebar is missed by anyone who set up once and now starts takes from the bar.
+- **Context:** Raised by the pre-landing review of the 2026-07-26 audio-honesty branch, severity low because the sidebar warning does exist and is correct. The bar is a separate native window (`macos/Runner/Overlays/PreRecordingBar/`), so this needs a state push over the existing pre-recording-bar feed rather than a Flutter widget.
+- **Start at:** `macos/Runner/Overlays/PreRecordingBar/PreRecordingBarController.swift`, and the bar state feed in `lib/app/home/home_actions.dart`.
+- **Effort:** human ~2h / CC ~20min.
