@@ -6405,7 +6405,11 @@ final class LetterboxExporterTests: XCTestCase {
         AVFormatIDKey: kAudioFormatMPEG4AAC,
         AVSampleRateKey: sampleRate,
         AVNumberOfChannelsKey: channels,
-        AVEncoderBitRateKey: 192_000,
+        // Was a flat 192_000, which made this helper unable to write a fixture
+        // below ~24 kHz — the very rates the export bug lives at. Same rule as
+        // production so a low-rate fixture is expressible at all.
+        AVEncoderBitRateKey: AACEncoderSettings.bitRate(
+          sampleRate: sampleRate, channels: channels),
       ])
     input.expectsMediaDataInRealTime = false
     writer.add(input)

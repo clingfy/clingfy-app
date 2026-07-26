@@ -15,11 +15,10 @@ import Foundation
 /// writer) with the output rate pinned to 16 kHz:
 ///   192 kbps → rejected, 128 kbps → rejected, 96 kbps → accepted.
 ///
-/// The exact ceiling is not purely a function of (rate, channels, bitrate):
-/// the same 16 kHz stereo 192 kbps tuple encodes happily into a `.m4a` from
-/// float PCM, which is why unit tests over the settings dictionary alone kept
-/// passing while export was broken. Staying well under the limit is the only
-/// portable answer.
+/// The rejection is not confined to the export path: the same 16 kHz stereo
+/// 192 kbps tuple also fails when writing a plain `.m4a` from float PCM, which
+/// is what made the test fixture helper unable to produce a low-rate file at
+/// all until it was moved onto this rule.
 ///
 /// The capture writer and the export writer each shipped this bug
 /// independently — same illegal combination, months apart, different files.
