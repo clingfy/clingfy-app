@@ -8,6 +8,8 @@ import 'package:clingfy/core/timeline/model/edit_track.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_test/flutter_test.dart';
 
+import '../../test_helpers/wait_until.dart';
+
 import '../../test_helpers/native_test_setup.dart';
 
 void main() {
@@ -393,11 +395,15 @@ void main() {
       addTearDown(c.dispose);
 
       c.splitAtPlayhead(4000);
-      await pumpEventQueue();
 
-      final persisted = ClipStateStore.load(projectDir.path);
-      expect(persisted, isNotNull);
-      expect(persisted!.clips, hasLength(2));
+      // The save is fire-and-forget real file I/O (ClipEditorController wraps it
+      // in `unawaited` so a save never blocks an edit), so pumpEventQueue is not
+      // a guarantee it landed — it only drains microtasks. Poll instead.
+      final persisted = await waitForValue(
+        () => ClipStateStore.load(projectDir.path),
+        reason: 'clips_state.json after a committed split',
+      );
+      expect(persisted.clips, hasLength(2));
       expect(persisted.recordingDurationMs, 10000);
     });
 
@@ -406,9 +412,18 @@ void main() {
       addTearDown(c.dispose);
 
       c.splitAtPlayhead(4000);
-      await pumpEventQueue();
+      await waitUntil(
+        () => ClipStateStore.load(projectDir.path)?.clips.length == 2,
+        reason: 'the split must be on disk before undo is meaningful',
+      );
+
       c.undo();
-      await pumpEventQueue();
+      // Polls on the VALUE, not just existence: the file already exists from the
+      // split above, so waiting for non-null would pass on the pre-undo state.
+      await waitUntil(
+        () => ClipStateStore.load(projectDir.path)?.clips.length == 1,
+        reason: 'clips_state.json after undo',
+      );
 
       final persisted = ClipStateStore.load(projectDir.path);
       expect(persisted, isNotNull);
@@ -421,6 +436,9 @@ void main() {
       addTearDown(c.dispose);
 
       c.splitAtPlayhead(4000);
+      // A negative assertion, so the fire-and-forget race cannot turn this red:
+      // with no project path the controller returns before issuing any write, so
+      // there is nothing in flight to wait for.
       await pumpEventQueue();
 
       expect(
