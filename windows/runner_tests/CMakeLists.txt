@@ -98,6 +98,7 @@ add_executable(runner_tests
   "keep_awake_test.cpp"
   "log_locations_test.cpp"
   "preview_open_reconcile_test.cpp"
+  "preview_canvas_texture_size_test.cpp"
   "mf_encoder_config_test.cpp"
   "native_log_publisher_test.cpp"
   "permission_probe_test.cpp"

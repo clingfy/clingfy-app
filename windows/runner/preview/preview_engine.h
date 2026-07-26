@@ -85,6 +85,12 @@ struct OpenArgs {
   // auto-layout canvas aspect.
   int video_width_hint = 0;
   int video_height_hint = 0;
+  // Canvas presets, so the texture starts at the CANVAS aspect rather than the
+  // video's — a 16:9 recording in a 9:16 canvas previewed as 16:9 while the
+  // export was portrait. Empty (a caller that has not plumbed them yet) falls
+  // back to the old video-aspect sizing, so this stays backwards compatible.
+  std::string layout_preset;
+  std::string resolution_preset;
   // Audio separation (design D9): the mic / system sidecar paths from the
   // project reader (existence-gated there; empty = absent). The engine runs
   // the decode probe once at Open and, when either passes, the edited-path
@@ -237,6 +243,24 @@ class PreviewEngine {
   // even-aligned, with a small floor. Unknown hints (<= 0) keep 1280x720.
   static TextureSize ComputePreviewTextureSize(int video_width_hint,
                                                int video_height_hint);
+
+  // The shared-texture size for a session's CANVAS, which is what the preview
+  // must actually match.
+  //
+  // The texture used to be sized to the VIDEO aspect. That is wrong as soon as
+  // the canvas aspect differs — a 16:9 recording inside a 9:16 reel canvas
+  // previewed as 16:9, so switching the layout preset changed nothing on screen
+  // while the export changed completely. The canvas comes from
+  // `ResolveTargetSize(source, layout, resolution)`; only its ASPECT is used
+  // here, because the texture stays inside the 1280x720 budget regardless of
+  // the user's export resolution.
+  //
+  // Falls back to the video aspect when the presets are empty or degenerate, so
+  // a caller that has not learned the presets yet behaves exactly as before.
+  static TextureSize ComputeCanvasTextureSize(int video_width_hint,
+                                              int video_height_hint,
+                                              const std::string& layout_preset,
+                                              const std::string& resolution_preset);
 
   // Editing port (step 4-5) — pure decision for Play() on an edited session:
   // pressing Play with the playhead at (or within one frame of) the edited

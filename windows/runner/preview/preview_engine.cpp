@@ -696,6 +696,36 @@ PreviewEngine::TextureSize PreviewEngine::ComputePreviewTextureSize(
   return {w, h};
 }
 
+PreviewEngine::TextureSize PreviewEngine::ComputeCanvasTextureSize(
+    int video_width_hint, int video_height_hint,
+    const std::string& layout_preset, const std::string& resolution_preset) {
+  // No usable source: nothing to derive a canvas from, so keep the budget.
+  if (video_width_hint <= 0 || video_height_hint <= 0) {
+    return {kTextureWidth, kTextureHeight};
+  }
+  // No presets yet (previewOpen before Dart has pushed canvas state): behave
+  // exactly as the video-aspect sizing did, so this is a no-op until the
+  // presets are known.
+  if (layout_preset.empty() && resolution_preset.empty()) {
+    return ComputePreviewTextureSize(video_width_hint, video_height_hint);
+  }
+
+  const capture::export_::SizeF target = capture::export_::ResolveTargetSize(
+      capture::export_::SizeF{static_cast<double>(video_width_hint),
+                              static_cast<double>(video_height_hint)},
+      layout_preset, resolution_preset);
+  if (!(target.width > 0.0) || !(target.height > 0.0)) {
+    return ComputePreviewTextureSize(video_width_hint, video_height_hint);
+  }
+
+  // Only the ASPECT matters: the texture stays inside the 1280x720 budget no
+  // matter which export resolution the user picked, and the canvas contract
+  // carries padding/radius as fractions so they scale to whatever size lands
+  // here.
+  return ComputePreviewTextureSize(static_cast<int>(std::lround(target.width)),
+                                   static_cast<int>(std::lround(target.height)));
+}
+
 bool PreviewEngine::ShouldRestartEditedPlaybackFromEnd(
     std::int64_t edited_pos_ms, std::int64_t edited_duration_ms) {
   // One-frame tolerance: the pacer stamps the LAST kept frame's edited time,
@@ -778,7 +808,8 @@ OpenResult PreviewEngine::Open(const OpenArgs& args) {
   // compositor letterbox becomes an exact fit and Flutter's AspectRatio is
   // the ONLY letterbox, so non-16:9 recordings no longer get double bars.
   const TextureSize tex =
-      ComputePreviewTextureSize(args.video_width_hint, args.video_height_hint);
+      ComputeCanvasTextureSize(args.video_width_hint, args.video_height_hint,
+                               args.layout_preset, args.resolution_preset);
 
   OpenResult result;
   result.width = tex.width;
