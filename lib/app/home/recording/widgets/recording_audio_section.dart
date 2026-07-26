@@ -134,7 +134,10 @@ class RecordingAudioSection extends StatelessWidget {
                 value: systemAudioEnabled,
                 onChanged: isRecording ? null : onSystemAudioEnabledChanged,
               ),
-              if (systemAudioBleedRisk) ...[
+              // Gated on a live mic too: with no microphone selected there is
+              // nothing for the system audio to bleed INTO, so warning would be
+              // a false alarm — and "No microphone" is the first-run default.
+              if (systemAudioBleedRisk && _hasSelectedMicrophone) ...[
                 const SizedBox(height: AppSidebarTokens.rowGap),
                 AppInlineNotice(
                   key: const Key('system_audio_bleed_warning'),

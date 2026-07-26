@@ -697,10 +697,30 @@ void main() {
       expect(find.byKey(warningKey), findsNothing);
     });
 
-    testWidgets('absent when system audio is off', (tester) async {
-      // Nothing plays out loud that the mic could double, so no warning even if
-      // the caller somehow passes the risk flag.
-      await tester.pumpWidget(_buildSection(selectedAudioSourceId: 'mic-1'));
+    testWidgets('absent when the caller reports no risk', (tester) async {
+      // systemAudioBleedRisk is computed upstream from (system audio on AND the
+      // route bleeds); the section just renders it. Prove the false branch.
+      await tester.pumpWidget(
+        _buildSection(selectedAudioSourceId: 'mic-1', systemAudioEnabled: true),
+      );
+      await tester.pump();
+
+      expect(find.byKey(warningKey), findsNothing);
+    });
+
+    testWidgets('absent with no microphone selected, even at risk', (
+      tester,
+    ) async {
+      // With no mic there is nothing for the system audio to bleed INTO, and
+      // "No microphone" is the first-run default — warning there would be a
+      // false alarm on a brand-new install.
+      await tester.pumpWidget(
+        _buildSection(
+          selectedAudioSourceId: '__none__',
+          systemAudioEnabled: true,
+          systemAudioBleedRisk: true,
+        ),
+      );
       await tester.pump();
 
       expect(find.byKey(warningKey), findsNothing);

@@ -218,6 +218,28 @@ void main() {
       expect(controller.systemAudioBleedRisk, isFalse);
     });
 
+    test(
+      'loadPreferences probes the route without an explicit refresh',
+      () async {
+        // The startup probe is what makes the warning correct on the first take.
+        // Deleting it must fail a test.
+        outputRoute = 'speakers';
+        SharedPreferences.setMockInitialValues({});
+        final controller = RecordingSettingsController(
+          nativeBridge: NativeBridge.instance,
+        );
+        addTearDown(controller.dispose);
+
+        await controller.loadPreferences(await SharedPreferences.getInstance());
+        // The probe is fire-and-forget; let it land.
+        await Future<void>.delayed(const Duration(milliseconds: 10));
+
+        expect(controller.audioOutputRoute, AudioOutputRoute.speakers);
+        expect(controller.systemAudioBleedRisk, isTrue);
+        expect(calls.map((c) => c.method), contains('getAudioOutputRoute'));
+      },
+    );
+
     test('a route change notifies exactly once', () async {
       outputRoute = 'headphones';
       SharedPreferences.setMockInitialValues({});

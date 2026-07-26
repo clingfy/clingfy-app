@@ -145,9 +145,14 @@ class RecordingSettingsController extends ChangeNotifier {
 
     // Probe the output route once at startup so the bleed warning is correct on
     // the first take of a session. Also re-probed when system audio is toggled
-    // on. KNOWN GAP: plugging in headphones mid-session without touching the
-    // toggle leaves a stale warning until one of those happens — a stale
-    // warning is a smaller harm than a missing one, so it is not gated on.
+    // on.
+    //
+    // KNOWN GAP, both directions: changing output device mid-session without
+    // touching the toggle leaves the warning stale. Plugging in headphones
+    // leaves a warning up that no longer applies; UNPLUGGING them leaves the
+    // warning absent when it now DOES apply, which is the worse half. Fixing it
+    // properly needs a CoreAudio property listener pushing route changes — see
+    // TODOS.md, "Push output-route changes instead of polling at two moments".
     unawaited(refreshAudioOutputRoute());
   }
 

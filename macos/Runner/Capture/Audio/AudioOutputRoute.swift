@@ -36,34 +36,51 @@ enum AudioOutputRouteProbe {
   {
     guard let deviceID = defaultOutputDeviceID(systemObject: objectID) else { return .unknown }
     guard let transport = transportType(of: deviceID) else { return .unknown }
-    return classify(transportType: transport)
+    return classify(transportType: transport, dataSource: outputDataSource(of: deviceID))
   }
 
-  /// Maps a CoreAudio transport type onto the bleed-risk classification.
-  /// Split out from [current] so it is testable without real hardware.
-  static func classify(transportType: UInt32) -> AudioOutputRoute {
+  /// Maps a CoreAudio transport type, plus the built-in device's data source,
+  /// onto the bleed-risk classification.
+  ///
+  /// The transport type alone is NOT enough for the built-in device: the laptop
+  /// speakers and the headphone jack are the SAME device with the same
+  /// `kAudioDeviceTransportTypeBuiltIn` transport, distinguished only by the
+  /// output data source. Classifying built-in as speakers therefore warned
+  /// every wired-headphone user — the exact false alarm this warning must not
+  /// produce, since a false alarm teaches people to ignore the real one.
+  ///
+  /// [dataSource] is the output-scope `kAudioDevicePropertyDataSource` value,
+  /// or nil when it could not be read.
+  static func classify(transportType: UInt32, dataSource: UInt32? = nil) -> AudioOutputRoute {
     switch transportType {
     case kAudioDeviceTransportTypeBuiltIn:
-      // The built-in output is the laptop speakers. Headphones plugged into
-      // the jack report as kAudioDeviceTransportTypeBuiltIn on some Macs, but
-      // the dedicated headphone transport below covers the common case; when
-      // in doubt we err toward warning rather than staying silent.
-      return .speakers
+      // 'hdpn' is the headphone jack; 'ispk' the internal speakers. Anything
+      // else on the built-in device (or an unreadable source) is treated as
+      // speakers, because on a laptop that is the overwhelmingly likely case
+      // and a missed warning is the more expensive mistake here.
+      switch dataSource {
+      case headphoneDataSource:
+        return .headphones
+      default:
+        return .speakers
+      }
     case kAudioDeviceTransportTypeBluetooth,
       kAudioDeviceTransportTypeBluetoothLE:
-      // AirPods and Bluetooth headsets. Bluetooth speakers also land here, so
-      // this is the one genuinely ambiguous bucket; we treat it as headphones
-      // because Bluetooth output on a recording Mac is overwhelmingly a headset.
+      // AirPods and Bluetooth headsets. Bluetooth SPEAKERS also land here and
+      // will not be warned about — see the TODOS entry; the transport genuinely
+      // does not carry enough information to tell them apart.
       return .headphones
-    case kAudioDeviceTransportTypeUSB,
-      kAudioDeviceTransportTypeDisplayPort,
+    case kAudioDeviceTransportTypeDisplayPort,
       kAudioDeviceTransportTypeHDMI,
-      kAudioDeviceTransportTypeThunderbolt,
       kAudioDeviceTransportTypeAirPlay:
-      // External monitors, USB speakers, AirPlay receivers — all play into the
-      // room. USB headsets are the false positive here; the warning is
-      // dismissible for that reason.
+      // Monitors and AirPlay receivers play into the room.
       return .speakers
+    case kAudioDeviceTransportTypeUSB,
+      kAudioDeviceTransportTypeThunderbolt:
+      // USB is genuinely ambiguous — headsets and desk speakers share the
+      // transport. Reported as unknown rather than guessed, so neither a false
+      // alarm nor a confident-but-wrong silence is produced.
+      return .unknown
     case kAudioDeviceTransportTypeVirtual,
       kAudioDeviceTransportTypeAggregate,
       kAudioDeviceTransportTypeAutoAggregate:
@@ -72,6 +89,12 @@ enum AudioOutputRouteProbe {
       return .unknown
     }
   }
+
+  /// `'hdpn'` — the built-in headphone jack data source.
+  static let headphoneDataSource: UInt32 = 0x6864_706E
+
+  /// `'ispk'` — the built-in internal speakers data source.
+  static let internalSpeakerDataSource: UInt32 = 0x6973_706B
 
   private static func defaultOutputDeviceID(systemObject: AudioObjectID) -> AudioDeviceID? {
     var address = AudioObjectPropertyAddress(
@@ -85,6 +108,23 @@ enum AudioOutputRouteProbe {
       systemObject, &address, 0, nil, &size, &deviceID)
     guard status == noErr, deviceID != kAudioObjectUnknown else { return nil }
     return deviceID
+  }
+
+  /// Reads the OUTPUT-scope data source, which is what separates the built-in
+  /// speakers from the built-in headphone jack. Many devices do not implement
+  /// it; nil simply means "no extra information".
+  private static func outputDataSource(of deviceID: AudioDeviceID) -> UInt32? {
+    var address = AudioObjectPropertyAddress(
+      mSelector: kAudioDevicePropertyDataSource,
+      mScope: kAudioDevicePropertyScopeOutput,
+      mElement: kAudioObjectPropertyElementMain
+    )
+    guard AudioObjectHasProperty(deviceID, &address) else { return nil }
+    var source = UInt32(0)
+    var size = UInt32(MemoryLayout<UInt32>.size)
+    let status = AudioObjectGetPropertyData(deviceID, &address, 0, nil, &size, &source)
+    guard status == noErr else { return nil }
+    return source
   }
 
   private static func transportType(of deviceID: AudioDeviceID) -> UInt32? {

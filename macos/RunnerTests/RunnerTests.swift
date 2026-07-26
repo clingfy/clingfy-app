@@ -9361,22 +9361,90 @@ final class RecordingBundleHonestyTests: XCTestCase {
     XCTAssertEqual(decoded.screen.frameRate, 30)
   }
 
-  func testOutputRouteClassificationDrivesTheBleedWarning() {
-    // Built-in output is the laptop speakers: the one route that lets system
-    // audio reach the microphone through the air.
+  func testBuiltInHeadphoneJackIsNotWarnedAbout() {
+    // The laptop speakers and the headphone jack are the SAME CoreAudio device
+    // with the same built-in transport, separated only by the data source.
+    // Classifying built-in as speakers warned every wired-headphone user.
     XCTAssertEqual(
-      AudioOutputRouteProbe.classify(transportType: kAudioDeviceTransportTypeBuiltIn), .speakers)
+      AudioOutputRouteProbe.classify(
+        transportType: kAudioDeviceTransportTypeBuiltIn,
+        dataSource: AudioOutputRouteProbe.headphoneDataSource),
+      .headphones)
+    XCTAssertEqual(
+      AudioOutputRouteProbe.classify(
+        transportType: kAudioDeviceTransportTypeBuiltIn,
+        dataSource: AudioOutputRouteProbe.internalSpeakerDataSource),
+      .speakers)
+    // Unreadable data source on the built-in device: assume speakers, because a
+    // missed warning costs a ruined take and a false one costs an eye-roll.
+    XCTAssertEqual(
+      AudioOutputRouteProbe.classify(
+        transportType: kAudioDeviceTransportTypeBuiltIn, dataSource: nil),
+      .speakers)
+  }
+
+  func testOutputRouteClassificationDrivesTheBleedWarning() {
     XCTAssertTrue(AudioOutputRoute.speakers.bleedsIntoMicrophone)
+    XCTAssertFalse(AudioOutputRoute.headphones.bleedsIntoMicrophone)
+    XCTAssertFalse(AudioOutputRoute.unknown.bleedsIntoMicrophone)
 
     XCTAssertEqual(
       AudioOutputRouteProbe.classify(transportType: kAudioDeviceTransportTypeBluetooth),
       .headphones)
-    XCTAssertFalse(AudioOutputRoute.headphones.bleedsIntoMicrophone)
-
     XCTAssertEqual(
       AudioOutputRouteProbe.classify(transportType: kAudioDeviceTransportTypeHDMI), .speakers)
     XCTAssertEqual(
+      AudioOutputRouteProbe.classify(transportType: kAudioDeviceTransportTypeAirPlay), .speakers)
+    // USB is genuinely ambiguous (headset vs desk speakers) — neither a false
+    // alarm nor a confident-but-wrong silence.
+    XCTAssertEqual(
+      AudioOutputRouteProbe.classify(transportType: kAudioDeviceTransportTypeUSB), .unknown)
+    XCTAssertEqual(
       AudioOutputRouteProbe.classify(transportType: kAudioDeviceTransportTypeAggregate), .unknown)
-    XCTAssertFalse(AudioOutputRoute.unknown.bleedsIntoMicrophone)
+  }
+
+  func testZoomManualResolvesEvenThoughTheManifestNeverNamesIt() throws {
+    // zoom.manual.json is written by the EDITOR, after the last manifest status
+    // transition, so reconcileInventory can never have recorded it. Resolution
+    // must fall back to the canonical path or every manual zoom edit is silently
+    // dropped at export while the preview still shows it.
+    let parent = FileManager.default.temporaryDirectory
+      .appendingPathComponent("clingfy_zoomres_\(UUID().uuidString)")
+    try FileManager.default.createDirectory(at: parent, withIntermediateDirectories: true)
+    addTeardownBlock { try? FileManager.default.removeItem(at: parent) }
+
+    let root = try makeRecordingProjectRoot(at: parent, includeCamera: false)
+    let manifest = try RecordingProjectManifest.read(
+      from: RecordingProjectPaths.manifestURL(for: root))
+    XCTAssertNil(manifest.capture.zoomManual, "precondition: manifest cannot know yet")
+
+    // Editor-time writes, long after the manifest was last touched.
+    try Data("[]".utf8).write(to: RecordingProjectPaths.zoomManualURL(for: root))
+    try Data("[]".utf8).write(to: RecordingProjectPaths.cursorDataURL(for: root))
+
+    let sources = RecordingProjectRef(
+      projectId: manifest.projectId, rootURL: root, manifest: manifest
+    ).mediaSources()
+
+    XCTAssertNotNil(sources.zoomManualURL, "manual zoom edits must survive export")
+    XCTAssertNotNil(sources.cursorDataURL)
+  }
+
+  func testStatusTransitionReconcilesTheManifestOnDisk() throws {
+    // Proves the reconcile actually RUNS in production, not just that the
+    // method works when called directly.
+    var manifest = RecordingProjectManifest.create(
+      projectId: "p", displayName: "d", includeCamera: false)
+    manifest.status = .capturing
+    let manifestURL = RecordingProjectPaths.manifestURL(for: projectRoot)
+    try manifest.write(to: manifestURL)
+    try write(RecordingProjectPaths.relativeMicAudioPath)
+
+    MetadataSidecarWriter.updateProjectManifestStatus(.ready, projectRoot: projectRoot)
+
+    let reloaded = try RecordingProjectManifest.read(from: manifestURL)
+    XCTAssertEqual(reloaded.status, .ready)
+    XCTAssertEqual(reloaded.capture.micAudio, RecordingProjectPaths.relativeMicAudioPath)
+    XCTAssertNil(reloaded.capture.systemAudio, "system audio was never captured")
   }
 }

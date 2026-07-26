@@ -345,14 +345,25 @@ struct RecordingProjectRef {
     let metadataURL =
       RecordingProjectPaths.resolvedURL(for: manifest.capture.screenMetadata, projectRoot: rootURL)
       ?? RecordingProjectPaths.screenMetadataURL(for: rootURL)
-    let cursorURL = RecordingProjectPaths.resolvedURL(
-      for: manifest.capture.cursorData,
-      projectRoot: rootURL
-    )
-    let zoomManualURL = RecordingProjectPaths.resolvedURL(
-      for: manifest.capture.zoomManual,
-      projectRoot: rootURL
-    )
+    // Both fall back to the canonical path, like screen/mic/system above.
+    //
+    // This matters most for zoomManual: `zoom.manual.json` is written by the
+    // EDITOR, long after the last manifest status transition, so the manifest
+    // can never have named it. Resolving it from the manifest alone silently
+    // dropped every manual zoom edit at export (the preview looked right,
+    // because it stats the file directly). Resolution must not depend on
+    // manifest bookkeeping — every URL here is existence-checked below anyway,
+    // so the fallback costs nothing and removes a whole class of silent loss.
+    let cursorURL =
+      RecordingProjectPaths.resolvedURL(
+        for: manifest.capture.cursorData,
+        projectRoot: rootURL
+      ) ?? RecordingProjectPaths.cursorDataURL(for: rootURL)
+    let zoomManualURL =
+      RecordingProjectPaths.resolvedURL(
+        for: manifest.capture.zoomManual,
+        projectRoot: rootURL
+      ) ?? RecordingProjectPaths.zoomManualURL(for: rootURL)
     let cameraVideoURL = RecordingProjectPaths.resolvedURL(
       for: manifest.camera?.rawVideo,
       projectRoot: rootURL
@@ -372,8 +383,9 @@ struct RecordingProjectRef {
       projectRootURL: rootURL,
       screenVideoURL: screenVideoURL,
       metadataURL: fileManager.fileExists(atPath: metadataURL.path) ? metadataURL : nil,
-      cursorDataURL: cursorURL.flatMap { fileManager.fileExists(atPath: $0.path) ? $0 : nil },
-      zoomManualURL: zoomManualURL.flatMap { fileManager.fileExists(atPath: $0.path) ? $0 : nil },
+      cursorDataURL: fileManager.fileExists(atPath: cursorURL.path) ? cursorURL : nil,
+      zoomManualURL: fileManager.fileExists(atPath: zoomManualURL.path)
+        ? zoomManualURL : nil,
       cameraVideoURL: cameraVideoURL.flatMap { fileManager.fileExists(atPath: $0.path) ? $0 : nil },
       cameraMetadataURL: cameraMetadataURL.flatMap {
         fileManager.fileExists(atPath: $0.path) ? $0 : nil
