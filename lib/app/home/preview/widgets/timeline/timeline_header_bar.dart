@@ -33,6 +33,11 @@ class TimelineHeaderBar extends StatelessWidget {
     this.onDeleteClip,
     this.onUndoClips,
     this.onRedoClips,
+    this.showColorControls = false,
+    this.canUndoColor = false,
+    this.canRedoColor = false,
+    this.onUndoColor,
+    this.onRedoColor,
   });
 
   final bool snappingEnabled;
@@ -62,6 +67,15 @@ class TimelineHeaderBar extends StatelessWidget {
   final VoidCallback? onDeleteClip;
   final VoidCallback? onUndoClips;
   final VoidCallback? onRedoClips;
+
+  // Color-grade undo/redo. The sliders live in the Effects sidebar, but every
+  // undo in this app lives in this bar, so the color pair joins the zoom and
+  // clip pairs here as its own trailing group.
+  final bool showColorControls;
+  final bool canUndoColor;
+  final bool canRedoColor;
+  final VoidCallback? onUndoColor;
+  final VoidCallback? onRedoColor;
 
   @override
   Widget build(BuildContext context) {
@@ -210,6 +224,35 @@ class TimelineHeaderBar extends StatelessWidget {
                       tooltip: l10n.clipRedo,
                       onPressed: canRedoClips ? onRedoClips : null,
                       color: canRedoClips
+                          ? theme.colorScheme.onSurface.withValues(alpha: 0.85)
+                          : theme.colorScheme.onSurface.withValues(alpha: 0.35),
+                    ),
+                  ],
+                  if (showColorControls) ...[
+                    SizedBox(width: sectionGap),
+                    Container(
+                      key: const Key('timeline_color_controls_divider'),
+                      width: 1,
+                      height: 22,
+                      color: theme.dividerColor.withValues(alpha: 0.2),
+                    ),
+                    SizedBox(width: sectionGap),
+                    AppIconButton(
+                      key: const Key('timeline_color_undo_button'),
+                      icon: Icons.undo_rounded,
+                      tooltip: l10n.colorUndo,
+                      onPressed: canUndoColor ? onUndoColor : null,
+                      color: canUndoColor
+                          ? theme.colorScheme.onSurface.withValues(alpha: 0.85)
+                          : theme.colorScheme.onSurface.withValues(alpha: 0.35),
+                    ),
+                    SizedBox(width: controlGap),
+                    AppIconButton(
+                      key: const Key('timeline_color_redo_button'),
+                      icon: Icons.redo_rounded,
+                      tooltip: l10n.colorRedo,
+                      onPressed: canRedoColor ? onRedoColor : null,
+                      color: canRedoColor
                           ? theme.colorScheme.onSurface.withValues(alpha: 0.85)
                           : theme.colorScheme.onSurface.withValues(alpha: 0.35),
                     ),

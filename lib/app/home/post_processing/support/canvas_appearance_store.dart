@@ -97,7 +97,39 @@ abstract final class CanvasAppearanceStore {
   static File _file(String projectPath) =>
       File('$projectPath${Platform.pathSeparator}$_fileName');
 
-  static Future<void> save(
+  // Callers fire-and-forget these writes (`unawaited`), and a single user
+  // action can produce two in the same turn — e.g. committing a color edit and
+  // the canvas resync that follows it. `writeAsString` opens truncating with no
+  // cross-call serialization, so two overlapping saves can interleave and leave
+  // a short payload followed by the tail of a longer one: unparseable JSON, and
+  // `load` then discards EVERY persisted setting for that recording, not just
+  // the grade. Chaining per project path makes the last writer win intact.
+  //
+  // Keyed on the resolved file path rather than the caller's string, so two
+  // spellings of the same bundle (trailing separator, relative vs absolute)
+  // share one queue instead of racing on the same file through two chains.
+  static final Map<String, Future<void>> _writeQueues =
+      <String, Future<void>>{};
+
+  static Future<void> save(String projectPath, CanvasAppearanceState state) {
+    final key = _file(projectPath).absolute.path;
+    // `.then` with an onError arm, not a bare `.then`: a link that somehow
+    // rejects must not skip every write queued behind it.
+    final queued = (_writeQueues[key] ?? Future<void>.value()).then(
+      (_) => _write(projectPath, state),
+      onError: (Object _) => _write(projectPath, state),
+    );
+    _writeQueues[key] = queued;
+    return queued.whenComplete(() {
+      // Drop the entry once this write is the last one queued, so the map does
+      // not grow one permanent entry per recording ever opened.
+      if (identical(_writeQueues[key], queued)) {
+        _writeQueues.remove(key);
+      }
+    });
+  }
+
+  static Future<void> _write(
     String projectPath,
     CanvasAppearanceState state,
   ) async {

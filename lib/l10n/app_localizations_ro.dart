@@ -1027,6 +1027,12 @@ class AppLocalizationsRo extends AppLocalizations {
   String get colorCorrection => 'Corecție culoare';
 
   @override
+  String get colorUndo => 'Anulează editarea culorii';
+
+  @override
+  String get colorRedo => 'Refă editarea culorii';
+
+  @override
   String get autoEnhance => 'Auto-îmbunătățire';
 
   @override

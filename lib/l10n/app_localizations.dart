@@ -2002,6 +2002,18 @@ abstract class AppLocalizations {
   /// **'Color Correction'**
   String get colorCorrection;
 
+  /// No description provided for @colorUndo.
+  ///
+  /// In en, this message translates to:
+  /// **'Undo color edit'**
+  String get colorUndo;
+
+  /// No description provided for @colorRedo.
+  ///
+  /// In en, this message translates to:
+  /// **'Redo color edit'**
+  String get colorRedo;
+
   /// No description provided for @autoEnhance.
   ///
   /// In en, this message translates to:
