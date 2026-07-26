@@ -681,9 +681,20 @@ void main() {
       expect(find.byKey(warningKey), findsOneWidget);
       final notice = tester.widget<AppInlineNotice>(find.byKey(warningKey));
       expect(notice.variant, AppInlineNoticeVariant.warning);
-      // The copy has to name the fix, not just the symptom — an unusable take
-      // is recoverable only before it is recorded.
-      expect(notice.message, contains('Input'));
+      // The headline states the condition and is visible WITHOUT hovering;
+      // the fix lives in the hover detail. Both halves matter: a headline
+      // alone does not tell you what to do, and detail alone is undiscoverable.
+      expect(notice.message, contains('too low'));
+      expect(notice.details, isNotNull);
+      expect(notice.details, contains('Input'));
+      // Held to one line so two simultaneous warnings stay compact.
+      final text = tester.widget<Text>(
+        find.descendant(
+          of: find.byKey(warningKey),
+          matching: find.byType(Text),
+        ),
+      );
+      expect(text.maxLines, 1);
     });
 
     testWidgets('absent when the level is healthy', (tester) async {
@@ -758,7 +769,8 @@ void main() {
       expect(find.byKey(warningKey), findsOneWidget);
       final notice = tester.widget<AppInlineNotice>(find.byKey(warningKey));
       expect(notice.variant, AppInlineNoticeVariant.warning);
-      expect(notice.message, contains('headphones'));
+      expect(notice.message, contains('bleed'));
+      expect(notice.details, contains('headphones'));
     });
 
     testWidgets('absent when the output route is safe', (tester) async {

@@ -138,7 +138,8 @@ class RecordingAudioSection extends StatelessWidget {
                 const SizedBox(height: AppSidebarTokens.rowGap),
                 AppInlineNotice(
                   key: const Key('mic_input_too_low_warning'),
-                  message: l10n.recordingMicTooLowWarning,
+                  message: l10n.recordingMicTooLowHeadline,
+                  details: l10n.recordingMicTooLowWarning,
                   variant: AppInlineNoticeVariant.warning,
                   icon: Icons.mic_none_outlined,
                 ),
@@ -156,7 +157,8 @@ class RecordingAudioSection extends StatelessWidget {
                 const SizedBox(height: AppSidebarTokens.rowGap),
                 AppInlineNotice(
                   key: const Key('system_audio_bleed_warning'),
-                  message: l10n.recordingSystemAudioBleedWarning,
+                  message: l10n.recordingSystemAudioBleedHeadline,
+                  details: l10n.recordingSystemAudioBleedWarning,
                   variant: AppInlineNoticeVariant.warning,
                   icon: Icons.headset_outlined,
                 ),

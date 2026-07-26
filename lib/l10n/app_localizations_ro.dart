@@ -1996,6 +1996,13 @@ class AppLocalizationsRo extends AppLocalizations {
       'Microfonul aproape nu captează nimic. Crește nivelul de intrare în Setări sistem › Sunet › Intrare sau apropie-te — altfel înregistrarea nu va avea voce utilizabilă.';
 
   @override
+  String get recordingMicTooLowHeadline => 'Nivel microfon prea scăzut';
+
+  @override
+  String get recordingSystemAudioBleedHeadline =>
+      'Difuzoarele vor intra în microfon';
+
+  @override
   String get preRecordingBarMicTooLow =>
       'Nivelul microfonului este foarte scăzut — crește nivelul de intrare în Setări sistem › Sunet › Intrare.';
 
