@@ -768,6 +768,10 @@ void HandlePreviewSetCanvas(
     framing.padding_px = ReadDouble(*args, "padding", 0.0);
     framing.corner_radius_px = ReadDouble(*args, "cornerRadius", 0.0);
     framing.background_argb = ReadOptionalInt(*args, "backgroundColor");
+    // Bundled copy inside the .clingfyproj, so the reference cannot break when
+    // the original moves or the project crosses platforms.
+    framing.background_image_path =
+        Utf8ToWide(ReadString(*args, "backgroundImagePath"));
     framing.layout_preset = ReadString(*args, "layoutPreset");
     framing.resolution_preset = ReadString(*args, "resolutionPreset");
     PreviewEngine::Instance()->SetCanvasComposition(session_id, framing);

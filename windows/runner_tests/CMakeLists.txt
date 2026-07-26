@@ -39,6 +39,7 @@ add_executable(runner_tests
   "updater_router_test.cpp"
   "area_picker_geometry_test.cpp"
   "canvas_composition_test.cpp"
+  "background_image_cache_test.cpp"
   "pre_recording_bar_placement_test.cpp"
   "argv_project_path_test.cpp"
   "camera_bubble_border_pixel_test.cpp"

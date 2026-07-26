@@ -135,20 +135,37 @@ void main() {
     );
 
     testWidgets(
-      'Windows: image/preset segments hidden and a stale image kind is '
-      'displayed as color',
+      'Windows: image segment is available and an image kind stays image',
       (tester) async {
         debugPlatformKindOverride = PlatformKind.windows;
-        // A project saved on macOS (or pre-10.3) can persist kind=image.
         await tester.pumpWidget(host(section(BackgroundKind.image)));
         await tester.pumpAndSettle();
-        // Neither the segment items nor the pick-image button render.
-        expect(find.byIcon(Icons.image_outlined), findsNothing);
+        // Canvas parity slice 2: Windows gained a real pickImage dialog, WIC
+        // decode + cache, and compositing in BOTH the preview and the export,
+        // so the image mode is no longer a silent no-op and is offered.
+        //
+        // TWO widgets carry this icon once image mode is active and selected:
+        // the segment item, and the pick-image control beneath it. Before this
+        // slice neither rendered on Windows, which is what the old expectation
+        // of `findsNothing` encoded.
+        expect(find.byIcon(Icons.image_outlined), findsNWidgets(2));
+        // Procedural presets still need a renderer Windows does not have.
         expect(find.byIcon(Icons.auto_awesome_outlined), findsNothing);
-        // The displayed mode coerces to color: its controls are live.
-        expect(find.byIcon(Icons.palette_outlined), findsOneWidget);
       },
     );
+
+    testWidgets('Windows: a stale preset kind is still displayed as color', (
+      tester,
+    ) async {
+      debugPlatformKindOverride = PlatformKind.windows;
+      // A project saved on macOS can persist kind=preset. Windows cannot
+      // render it, so the DISPLAYED mode coerces to color and its controls
+      // are live — rather than selecting a segment that is not offered.
+      await tester.pumpWidget(host(section(BackgroundKind.preset)));
+      await tester.pumpAndSettle();
+      expect(find.byIcon(Icons.auto_awesome_outlined), findsNothing);
+      expect(find.byIcon(Icons.palette_outlined), findsOneWidget);
+    });
 
     testWidgets('macOS: image and preset segments stay available', (
       tester,

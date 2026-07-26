@@ -63,6 +63,11 @@ struct CanvasFramingArgs {
   double padding_px = 0.0;
   double corner_radius_px = 0.0;
   std::optional<std::int64_t> background_argb;
+  // Absolute path to the background image, or empty for a colour background.
+  // Dart bundles the chosen image INTO the .clingfyproj and sends the bundled
+  // copy's path, so the reference cannot break when the original is moved,
+  // deleted, or the project is opened on the other platform.
+  std::wstring background_image_path;
   std::string layout_preset;
   std::string resolution_preset;
 };
@@ -78,6 +83,11 @@ struct CanvasComposition {
   // Packed 0xAARRGGBB fill behind and around the content. nullopt (the Dart
   // default) means opaque black, matching `ResolveBackgroundColor`.
   std::optional<std::int64_t> background_argb;
+  // Absolute path to a bundled background image, or empty for a colour
+  // background. When set it is drawn scaled-to-cover over the fill; the fill
+  // still paints first so a missing or undecodable image degrades to the colour
+  // rather than to nothing.
+  std::wstring background_image_path;
 };
 
 // Convert a pixel value measured against a surface whose shorter side is
@@ -95,10 +105,10 @@ double DenormalizeFromShortSide(double fraction, double target_short_side);
 // Build the contract from the raw Dart payload values, which are expressed in
 // EXPORT-OUTPUT pixels against a canvas whose shorter side is
 // `export_short_side`. This is the single place raw pixels enter the system.
-CanvasComposition MakeCanvasComposition(double padding_px,
-                                        double corner_radius_px,
-                                        double export_short_side,
-                                        std::optional<std::int64_t> background_argb);
+CanvasComposition MakeCanvasComposition(
+    double padding_px, double corner_radius_px, double export_short_side,
+    std::optional<std::int64_t> background_argb,
+    std::wstring background_image_path = {});
 
 }  // namespace clingfy::core
 

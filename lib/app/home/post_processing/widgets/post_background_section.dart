@@ -69,8 +69,14 @@ class PostBackgroundSection extends StatelessWidget {
   /// mode to color so the segmented control has a valid selection and the
   /// dead pick-image/preset UI never renders. Persisted state is left
   /// untouched (the export ignores it anyway).
+  /// Windows now renders colour AND image backgrounds (the canvas parity port
+  /// added a real `pickImage` dialog, a WIC decode + cache, and compositing in
+  /// both the preview and the export). Procedural PRESET backgrounds are still
+  /// macOS-only, so only that kind is coerced away here — a project carrying a
+  /// preset from macOS shows the colour fallback rather than dead UI. Persisted
+  /// state is left untouched.
   BackgroundKind get _effectiveBackgroundKind =>
-      isWindows() && backgroundKind != BackgroundKind.color
+      isWindows() && backgroundKind == BackgroundKind.preset
       ? BackgroundKind.color
       : backgroundKind;
 
@@ -95,22 +101,24 @@ class PostBackgroundSection extends StatelessWidget {
                   label: l10n.backgroundModeColor,
                   icon: Icons.format_color_fill_outlined,
                 ),
-                // Phase 10.3 (Windows): the export renders only
-                // backgroundColor (image/preset args are ignored and
-                // pickImage is a native null stub) — offering the modes
-                // produced silent no-ops.
-                if (!isWindows()) ...[
-                  AppSegmentedItem(
-                    value: BackgroundKind.image,
-                    label: l10n.backgroundModeImage,
-                    icon: Icons.image_outlined,
-                  ),
+                // Image works on both platforms as of the canvas parity port:
+                // Windows has a real pickImage dialog, bundles the chosen file
+                // into the .clingfyproj, and composites it in the preview and
+                // the export.
+                AppSegmentedItem(
+                  value: BackgroundKind.image,
+                  label: l10n.backgroundModeImage,
+                  icon: Icons.image_outlined,
+                ),
+                // Procedural presets remain macOS-only: they need a renderer
+                // that can produce the authoritative bitmap, which Windows does
+                // not have yet. Offering the mode here would be a silent no-op.
+                if (!isWindows())
                   AppSegmentedItem(
                     value: BackgroundKind.preset,
                     label: l10n.backgroundModePreset,
                     icon: Icons.auto_awesome_outlined,
                   ),
-                ],
               ],
             ),
             const SizedBox(height: AppSidebarTokens.optionsSubgroupGap),

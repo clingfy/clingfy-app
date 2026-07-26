@@ -1,4 +1,5 @@
 #include "Bridge/Routers/misc_router.h"
+#include "Services/save_folder.h"
 
 #include <windows.h>
 
@@ -78,8 +79,25 @@ void HandleDebugForceNativeCrash(
 
 }  // namespace
 
+// Background image picker. Was a null stub, which meant a Windows user could
+// not choose a background image at all — the UI hid the option for exactly that
+// reason. Returns the chosen absolute path; Dart then copies the bytes into the
+// .clingfyproj so the project stays self-contained.
+void HandlePickImage(
+    const flutter::MethodCall<flutter::EncodableValue>& /*call*/,
+    std::unique_ptr<flutter::MethodResult<flutter::EncodableValue>> result) {
+  const auto chosen =
+      clingfy::storage::ChooseImageFileDialog(::GetActiveWindow());
+  if (chosen.has_value() && !chosen->empty()) {
+    reply::String(*result, *chosen);
+  } else {
+    // Cancel is null, which Dart already treats as "no selection".
+    reply::Null(*result);
+  }
+}
+
 void RegisterHandlers(HandlerTable& table) {
-  table["pickImage"] = &HandleNull;
+  table["pickImage"] = &HandlePickImage;
   table["cacheLocalizedStrings"] = &HandleNull;
   // checkForUpdates moved to updater_router.cpp in Phase 10.6 (real D2
   // implementation; was a hardcoded-false stub here).
