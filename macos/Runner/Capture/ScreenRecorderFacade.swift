@@ -497,7 +497,18 @@ final class ScreenRecorderFacade: NSObject {
           shouldRecordSeparateCameraAsset: context.shouldRecordSeparateCameraAsset,
           videoDeviceId: context.videoDeviceId,
           overlayMirror: context.overlayMirror,
-          editorSeed: editorSeed(for: target)
+          editorSeed: editorSeed(for: target),
+          // Stamp the audio decision into the bundle. A recording that omits a
+          // source the user believed they were capturing is unrepeatable, so
+          // the finished project has to be able to explain itself.
+          audio: RecordingMetadata.AudioCaptureInfo(
+            micEnabled: !context.request.disableMicrophone,
+            micDeviceId: context.audioDeviceId,
+            systemAudioEnabled: systemAudioEnabled,
+            excludedMicFromSystemAudio: prefs.excludeMicFromSystemAudio,
+            echoCancellationEnabled: prefs.micEchoCancellationEnabled,
+            outputRoute: AudioOutputRouteProbe.current().rawValue
+          )
         ),
         projectService: recordingProjectService,
         cameraCoordination: cameraCoordination,

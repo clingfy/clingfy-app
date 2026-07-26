@@ -33,6 +33,34 @@ struct RecordingProjectService {
     let cursorLinked: Bool
     let windowID: CGWindowID?
     let excludedRecorderApp: Bool
+    /// What the recorder was asked to capture on the audio side. Stamped into
+    /// `screen.meta.json` so a finished bundle can answer "was system audio
+    /// on?" without replaying the session logs.
+    let audio: RecordingMetadata.AudioCaptureInfo?
+
+    init(
+      displayMode: DisplayTargetMode,
+      displayID: CGDirectDisplayID,
+      cropRect: CGRect?,
+      frameRate: Int,
+      quality: RecordingQuality,
+      cursorEnabled: Bool,
+      cursorLinked: Bool,
+      windowID: CGWindowID?,
+      excludedRecorderApp: Bool,
+      audio: RecordingMetadata.AudioCaptureInfo? = nil
+    ) {
+      self.displayMode = displayMode
+      self.displayID = displayID
+      self.cropRect = cropRect
+      self.frameRate = frameRate
+      self.quality = quality
+      self.cursorEnabled = cursorEnabled
+      self.cursorLinked = cursorLinked
+      self.windowID = windowID
+      self.excludedRecorderApp = excludedRecorderApp
+      self.audio = audio
+    }
   }
 
   func createSkeleton() throws -> PreparedRecordingSkeleton {
@@ -63,6 +91,7 @@ struct RecordingProjectService {
       windowID: metadataInputs.windowID,
       excludedRecorderApp: metadataInputs.excludedRecorderApp,
       camera: cameraCaptureInfo,
+      audio: metadataInputs.audio,
       editorSeed: editorSeed
     )
 
