@@ -129,6 +129,11 @@ struct BarButtonRect {
 // Fixed bar height in logical (96-dpi) pixels; the controller scales it by DPI.
 inline constexpr int kBarBaseHeight = 56;
 
+// Gap between the bar's bottom edge and the bottom of the work area, at 100%
+// scale. macOS uses 32pt from the visible frame; Windows work areas already
+// exclude a docked taskbar, so 28 lands the bar at the same visual height.
+inline constexpr int kBarBottomInset = 28;
+
 // The content width the present buttons need at the given bar `height` — the
 // window sizes to this so the bar grows/shrinks as Update / pause-resume toggle
 // in and out, mirroring macOS `fittingSize`. All slot widths + gaps are
@@ -137,6 +142,28 @@ inline constexpr int kBarBaseHeight = 56;
 // buttons contribute nothing.
 int BarContentWidth(const std::array<BarButtonSpec, kBarButtonCount>& specs,
                     int height);
+
+// Where the bar window belongs on a given work area.
+struct BarPlacement {
+  int x = 0;
+  int y = 0;
+  int width = 0;
+  int height = 0;
+};
+
+// Bottom-centered placement inside `work_*`, mirroring macOS: horizontally
+// centered, lifted `kBarBottomInset` (DPI-scaled) off the bottom edge, clamped
+// so a narrow work area never pushes the bar off-screen.
+//
+// The work-area bounds are virtual-desktop coordinates, so which monitor the
+// bar lands on is decided entirely by which monitor's work area is passed in.
+// Callers must pass the work area of the display showing the main app window
+// (see `clingfy::AnchorWorkArea`) -- resolving it from the bar's own window
+// instead pins the bar to the primary display, where a multi-monitor user
+// never sees it.
+BarPlacement ComputeBarPlacement(
+    int work_left, int work_top, int work_right, int work_bottom, double scale,
+    const std::array<BarButtonSpec, kBarButtonCount>& specs);
 
 // The laid-out rectangles for every slot, indexed the same as the spec array.
 struct BarLayout {

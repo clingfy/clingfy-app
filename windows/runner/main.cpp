@@ -2,6 +2,7 @@
 #include <flutter/flutter_view_controller.h>
 #include <windows.h>
 
+#include "Bridge/app_window_anchor.h"
 #include "Bridge/project_open_coordinator.h"
 #include "Core/argv_project_path.h"
 #include "Core/single_instance.h"
@@ -78,6 +79,13 @@ int APIENTRY wWinMain(_In_ HINSTANCE instance, _In_opt_ HINSTANCE prev,
     return EXIT_FAILURE;
   }
   window.SetQuitOnClose(true);
+
+  // Record the main window so the recording chrome (pre-recording bar,
+  // indicator) places itself on the display the user is actually working on.
+  // Without this the overlays resolve their monitor from their own window,
+  // which is created at (0, 0) and therefore always answers "primary" -- on a
+  // multi-monitor desktop the chrome lands on a screen the user isn't watching.
+  clingfy::SetMainAppWindow(window.GetHandle());
 
   // Step 5.6: register the WM_COPYDATA receiver AFTER the Flutter
   // window exists so the receiver lives on the same platform thread

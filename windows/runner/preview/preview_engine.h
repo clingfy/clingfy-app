@@ -150,6 +150,26 @@ struct CameraNudgePlan {
 CameraNudgePlan ResolveCameraNudgeTarget(std::int64_t current_ms,
                                          std::int64_t previous_anchor_ms);
 
+// What to do when a preview setting (color grade, camera composition) changes.
+enum class PausedRepaintAction {
+  kSkipPlaying,      // playing: the next natural frame already carries it.
+  kRepaintRetained,  // not advancing: re-composite the frame already on screen.
+  kNudgeSeek,        // nothing composed yet: fall back to the 1ms seek nudge.
+};
+
+// Policy for reflecting a settings change on a preview that is NOT advancing.
+//
+// The seek nudge above cannot be the primary path. It forces a decode for a
+// cosmetic change, and at end-of-stream the ±1ms target lands past the end so
+// no frame is ever produced -- which is why an edit made after pausing OR
+// finishing playback stayed invisible while the same edit during playback
+// worked. Re-compositing the retained frame costs one D2D compose instead, and
+// works at EOS because it never asks the player for anything.
+//
+// Pure and lock-free for unit testing; the engine supplies the two facts.
+PausedRepaintAction DecidePausedRepaint(bool is_playing,
+                                        bool has_composed_frame);
+
 class PreviewEngine {
  public:
   // Process-wide singleton accessor used by the bridge router handlers.
@@ -493,6 +513,31 @@ class PreviewEngine {
   void ComposeAndHandoffLocked(Impl* impl, std::int64_t playback_us,
                                std::int64_t emit_pos_ms,
                                std::int64_t emit_dur_ms);
+
+  // Make a just-applied settings change visible when the preview is not
+  // advancing. No-op while playing (the next frame carries it). Otherwise
+  // re-composites the retained frame; only if none exists yet does it fall back
+  // to the 1ms seek nudge. Shared by SetColorGrade + SetCameraComposition.
+  // Snapshots the player itself (this header pulls in no WinRT), so call it
+  // AFTER releasing mutex_, exactly like the nudge it replaces.
+  void RepaintPausedPreview();
+
+  // Re-composite the frame already on screen with the CURRENT settings and hand
+  // it to Flutter. The last decoded frame still lives in the compositor's video
+  // surface, so this costs one D2D compose + flush: no seek, no decode, no
+  // re-copy from the player.
+  //
+  // This is what makes an edit visible while the preview is PAUSED. While
+  // playing, the next natural frame already picks the change up and calling this
+  // would just duplicate work. Returns false when there is nothing to repaint
+  // (no frame composed yet), which is also the "preview isn't up" case.
+  bool RepaintRetainedFrame();
+
+  // True once at least one frame has been fully composed, i.e. the compositor's
+  // video surface holds real pixels. Deliberately NOT `has_video_target()`: the
+  // texture is allocated in EnsureResources BEFORE the first frame is copied
+  // into it, so a non-null texture does not imply drawable content.
+  bool HasComposedFrame();
 
   // Editing port (clips, step 4-3): render ONE frame of the edited (stitched)
   // timeline at `edited_ms` — map edited→source, decode that source frame via

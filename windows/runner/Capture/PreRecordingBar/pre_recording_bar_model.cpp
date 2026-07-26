@@ -1,6 +1,7 @@
 #include "Capture/PreRecordingBar/pre_recording_bar_model.h"
 
 #include <algorithm>
+#include <cmath>
 
 namespace clingfy::capture {
 
@@ -184,6 +185,22 @@ int BarContentWidth(const std::array<BarButtonSpec, kBarButtonCount>& specs,
     first = false;
   }
   return x + HPad(h);
+}
+
+BarPlacement ComputeBarPlacement(
+    int work_left, int work_top, int work_right, int work_bottom, double scale,
+    const std::array<BarButtonSpec, kBarButtonCount>& specs) {
+  BarPlacement out{};
+  out.height =
+      std::max(1, static_cast<int>(std::lround(kBarBaseHeight * scale)));
+  out.width = std::max(1, BarContentWidth(specs, out.height));
+
+  const int inset = static_cast<int>(std::lround(kBarBottomInset * scale));
+  out.x = work_left + ((work_right - work_left) - out.width) / 2;
+  out.y = work_bottom - out.height - inset;
+  out.x = std::clamp(out.x, work_left, std::max(work_left, work_right - out.width));
+  out.y = std::clamp(out.y, work_top, std::max(work_top, work_bottom - out.height));
+  return out;
 }
 
 BarLayout ComputeBarLayout(
