@@ -9560,3 +9560,136 @@ final class AudioSceneGateTests: XCTestCase {
     XCTAssertEqual(keys["hasSystemAudio"] as? Bool, true)
   }
 }
+
+/// The mic is the one capture source whose sample rate Clingfy does not control.
+/// A Bluetooth headset runs HFP and arrives at 8 or 16 kHz, and a flat
+/// 96 kbps/channel is outside AAC's legal range there — AVAssetWriter rejects
+/// the whole writer with -11861 and the take comes back with no voice.
+///
+/// Observed on a JBL WAVE100TWS: the mic writer failed to start while
+/// system.m4a (48 kHz from ScreenCaptureKit) encoded fine.
+@available(macOS 15.0, *)
+final class SourceAudioBitRateTests: XCTestCase {
+  func testBitRateIsUnchangedAtFortyEightKilohertz() {
+    // The regression guard: every existing 48 kHz path must be bit-identical.
+    XCTAssertEqual(
+      AudioSourceSegmentWriter.aacBitRate(sampleRate: 48_000, channels: 1),
+      AudioSourceSegmentWriter.aacBitRatePerChannel)
+    XCTAssertEqual(
+      AudioSourceSegmentWriter.aacBitRate(sampleRate: 48_000, channels: 2),
+      AudioSourceSegmentWriter.aacBitRatePerChannel * 2)
+  }
+
+  func testBitRateScalesDownForBluetoothHandsFreeRates() {
+    // 8 kHz narrowband and 16 kHz wideband mSBC — the two HFP rates.
+    XCTAssertEqual(
+      AudioSourceSegmentWriter.aacBitRate(sampleRate: 8_000, channels: 1), 16_000)
+    XCTAssertEqual(
+      AudioSourceSegmentWriter.aacBitRate(sampleRate: 16_000, channels: 1), 32_000)
+    XCTAssertEqual(
+      AudioSourceSegmentWriter.aacBitRate(sampleRate: 24_000, channels: 1), 48_000)
+  }
+
+  func testBitRateNeverDropsBelowTheFloor() {
+    XCTAssertEqual(
+      AudioSourceSegmentWriter.aacBitRate(sampleRate: 1_000, channels: 1),
+      AudioSourceSegmentWriter.minAacBitRatePerChannel)
+  }
+
+  /// The test that actually reproduces the production failure: ask
+  /// AVFoundation, not ourselves, whether the settings are encodable.
+  func testAVAssetWriterAcceptsEveryRateTheMicCanArriveAt() throws {
+    let dir = FileManager.default.temporaryDirectory
+      .appendingPathComponent("clingfy_bitrate_\(UUID().uuidString)")
+    try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
+    addTeardownBlock { try? FileManager.default.removeItem(at: dir) }
+
+    // NOTE: no sourceFormatHint here. That is the point — this is the contrast
+    // case proving the bitrate alone is not rejected, so the hint is the second
+    // required ingredient. See testHintPlusExplicitSettingsAtLowRate.
+    // 8k/16k/24k are Bluetooth HFP; 44.1k/48k are wired and built-in.
+    for (rate, channels) in [
+      (8_000.0, 1), (16_000.0, 1), (24_000.0, 1), (44_100.0, 1), (48_000.0, 2),
+    ] {
+      let url = dir.appendingPathComponent("r\(Int(rate))c\(channels).m4a")
+      let writer = try AVAssetWriter(outputURL: url, fileType: .m4a)
+      let settings: [String: Any] = [
+        AVFormatIDKey: kAudioFormatMPEG4AAC,
+        AVSampleRateKey: rate,
+        AVNumberOfChannelsKey: channels,
+        AVEncoderBitRateKey: AudioSourceSegmentWriter.aacBitRate(
+          sampleRate: rate, channels: channels),
+      ]
+      let input = AVAssetWriterInput(mediaType: .audio, outputSettings: settings)
+      XCTAssertTrue(
+        writer.canAdd(input),
+        "AVAssetWriter rejected \(Int(rate))Hz x\(channels) — this is the -11861 failure")
+      writer.add(input)
+      XCTAssertTrue(
+        writer.startWriting(),
+        "startWriting failed at \(Int(rate))Hz x\(channels): "
+          + String(describing: writer.error))
+      writer.cancelWriting()
+    }
+  }
+
+  /// The test that pins the actual cause, and the reason the fix is not a guess.
+  ///
+  /// Both ingredients are required. Without a `sourceFormatHint` AVFoundation
+  /// happily accepts a flat 96 kbps at 8 kHz (see the test above, which is kept
+  /// deliberately as the contrast case). Production DOES pass a hint, and with
+  /// it the same settings are rejected — that combination is the field -11861.
+  func testHintPlusExplicitSettingsAtLowRate() throws {
+    let dir = FileManager.default.temporaryDirectory
+      .appendingPathComponent("clingfy_hint_\(UUID().uuidString)")
+    try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
+    addTeardownBlock { try? FileManager.default.removeItem(at: dir) }
+
+    // An 8 kHz mono Int16 source, i.e. Bluetooth HFP narrowband.
+    var asbd = AudioStreamBasicDescription(
+      mSampleRate: 8_000,
+      mFormatID: kAudioFormatLinearPCM,
+      mFormatFlags: kAudioFormatFlagIsSignedInteger | kAudioFormatFlagIsPacked,
+      mBytesPerPacket: 2, mFramesPerPacket: 1, mBytesPerFrame: 2,
+      mChannelsPerFrame: 1, mBitsPerChannel: 16, mReserved: 0)
+    var hint: CMAudioFormatDescription?
+    let status = CMAudioFormatDescriptionCreate(
+      allocator: kCFAllocatorDefault, asbd: &asbd, layoutSize: 0, layout: nil,
+      magicCookieSize: 0, magicCookie: nil, extensions: nil,
+      formatDescriptionOut: &hint)
+    XCTAssertEqual(status, noErr)
+    let formatHint = try XCTUnwrap(hint)
+
+    func accepts(bitRate: Int) throws -> Bool {
+      let writer = try AVAssetWriter(
+        outputURL: dir.appendingPathComponent("\(bitRate).m4a"), fileType: .m4a)
+      let input = AVAssetWriterInput(
+        mediaType: .audio,
+        outputSettings: [
+          AVFormatIDKey: kAudioFormatMPEG4AAC,
+          AVSampleRateKey: 8_000.0,
+          AVNumberOfChannelsKey: 1,
+          AVEncoderBitRateKey: bitRate,
+        ],
+        sourceFormatHint: formatHint)
+      guard writer.canAdd(input) else { return false }
+      writer.add(input)
+      let started = writer.startWriting()
+      writer.cancelWriting()
+      return started
+    }
+
+    // The scaled bitrate must always work — that is the fix.
+    XCTAssertTrue(
+      try accepts(bitRate: AudioSourceSegmentWriter.aacBitRate(sampleRate: 8_000, channels: 1)),
+      "the scaled bitrate must be encodable at 8kHz with a source format hint")
+
+    // And this asserts the CAUSE. If it fails, the flat 96k was fine even with a
+    // hint, so -11861 came from something else and this fix is not the answer.
+    XCTAssertFalse(
+      try accepts(bitRate: AudioSourceSegmentWriter.aacBitRatePerChannel),
+      "flat 96kbps at 8kHz WITH a source format hint was accepted — the field "
+        + "failure has a different cause and this fix is unproven")
+  }
+
+}

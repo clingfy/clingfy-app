@@ -44,9 +44,37 @@ final class AudioSourceSegmentWriter {
     case failed
   }
 
-  /// AAC bitrate per channel; stereo sources encode at 192 kbps — strictly
-  /// above the 64-100 kbps track SCRecordingOutput embeds in screen.mov.
+  /// AAC bitrate per channel at 48 kHz; stereo sources encode at 192 kbps —
+  /// strictly above the 64-100 kbps track SCRecordingOutput embeds in screen.mov.
   static let aacBitRatePerChannel = 96_000
+
+  /// Floor so a pathologically low sample rate cannot ask for an unusably thin
+  /// stream.
+  static let minAacBitRatePerChannel = 16_000
+
+  /// The AAC bitrate to request for a source arriving at [sampleRate].
+  ///
+  /// AAC's legal bitrate range scales with the sample rate, and the mic is the
+  /// one source whose rate we do not control: a Bluetooth headset runs HFP and
+  /// arrives at 8 or 16 kHz, where a flat 96 kbps per channel is far out of
+  /// range. AVAssetWriter then rejects the whole writer with
+  /// `-11861 "The encoding parameters are not supported"` (underlying -12651),
+  /// the segment is discarded with zero samples appended, and the take comes
+  /// back with no voice at all.
+  ///
+  /// Observed in the field on a JBL WAVE100TWS (Bluetooth "Headset"): the mic
+  /// writer failed to start while `system.m4a` — 48 kHz from ScreenCaptureKit —
+  /// encoded fine, which is what isolated the sample rate as the variable.
+  ///
+  /// ~2 bits per sample, which evaluates to exactly [aacBitRatePerChannel] at
+  /// 48 kHz, so every existing 48 kHz path is bit-for-bit unchanged.
+  static func aacBitRate(sampleRate: Double, channels: Int) -> Int {
+    let perChannel = min(
+      aacBitRatePerChannel,
+      max(minAacBitRatePerChannel, Int(sampleRate * 2))
+    )
+    return perChannel * channels
+  }
 
   let kind: AudioSourceKind
   let index: Int
@@ -134,7 +162,7 @@ final class AudioSourceSegmentWriter {
       AVFormatIDKey: kAudioFormatMPEG4AAC,
       AVSampleRateKey: sampleRate,
       AVNumberOfChannelsKey: channels,
-      AVEncoderBitRateKey: channels * Self.aacBitRatePerChannel,
+      AVEncoderBitRateKey: Self.aacBitRate(sampleRate: sampleRate, channels: channels),
     ]
     let input = AVAssetWriterInput(
       mediaType: .audio,
