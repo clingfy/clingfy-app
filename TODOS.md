@@ -34,3 +34,19 @@ Deferred work captured during reviews. Each item has enough context to pick up c
 - **Start at:** `windows/runner/Bridge/Routers/preview_router.cpp` (`ReadCameraComposition`), `windows/runner/Bridge/Routers/export_router.cpp` (`HandleProcessVideo` camera block); model on `Bridge/Routers/color_grade_args.{h,cpp}` once PR-2a lands.
 - **Depends on:** PR-2a (color_grade_args establishes the pattern).
 - **Effort:** human ~2h / CC ~15min.
+
+## Recording — audio capture
+
+### Push output-route changes instead of polling at two moments
+- **What:** Replace the two-point probe of the audio output route with a CoreAudio property listener on `kAudioHardwarePropertyDefaultOutputDevice` that pushes changes to Flutter over an event channel.
+- **Why:** The speaker-bleed warning is only re-probed at app start and when system audio is toggled on. Plug in headphones mid-session without touching the toggle and the warning stays up; unplug them and no warning appears. A stale warning erodes trust in the real one.
+- **Context:** Shipped deliberately in the 2026-07-26 audio-honesty branch. A possibly-stale warning was chosen over a possibly-missing one, and the limitation is commented at `RecordingSettingsController.loadPreferences`. The listener is the correct fix but is a real slice: native listener + event-channel plumbing + Dart subscription + tests both sides.
+- **Start at:** `macos/Runner/Capture/Audio/AudioOutputRoute.swift` (add the listener), `macos/Runner/Core/NativeChannel.swift` (event name), `lib/core/recording/settings/recording_settings_controller.dart` (`refreshAudioOutputRoute` becomes a subscription).
+- **Effort:** human ~3h / CC ~25min.
+
+### Disambiguate Bluetooth and USB output routes
+- **What:** Distinguish a Bluetooth/USB *headset* from a Bluetooth/USB *speaker* when classifying the output route, instead of guessing by transport type.
+- **Why:** `AudioOutputRouteProbe.classify` maps Bluetooth to `headphones` and USB to `speakers`. Both guesses are wrong sometimes: a Bluetooth speaker gets no bleed warning (a missed real warning), and a USB headset gets one (a false warning that teaches the user to ignore it).
+- **Context:** Raised as a known limitation when the classification landed on 2026-07-26; both cases are commented at the switch. The transport type genuinely does not carry this information — the fix likely needs the device's `kAudioDevicePropertyDataSource` / source name, or a per-device user override remembered in prefs.
+- **Start at:** `macos/Runner/Capture/Audio/AudioOutputRoute.swift` (`classify`), and `macos/RunnerTests/RunnerTests.swift` (`testOutputRouteClassificationDrivesTheBleedWarning`).
+- **Effort:** human ~2h / CC ~20min.
