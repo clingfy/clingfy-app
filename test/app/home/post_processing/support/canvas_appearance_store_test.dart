@@ -158,5 +158,127 @@ void main() {
       expect(loaded.backgroundColorArgb, 0xFF112233);
       expect(loaded.colorGrade, const ColorGrade());
     });
+
+    test('overlapping saves serialize; the last writer wins intact', () async {
+      // Callers fire-and-forget these writes, and one user action can produce
+      // two in the same turn. writeAsString opens truncating, so unserialized
+      // overlap could leave a short payload plus the tail of a longer one —
+      // unparseable JSON, which load() turns into "all settings lost".
+      const short = CanvasAppearanceState(
+        padding: 0,
+        cornerRadius: 0,
+        backgroundKind: BackgroundKind.color,
+        backgroundColorArgb: null,
+        backgroundImagePath: null,
+        backgroundPreset: null,
+      );
+      const long = CanvasAppearanceState(
+        padding: 48,
+        cornerRadius: 16,
+        backgroundKind: BackgroundKind.image,
+        backgroundColorArgb: 0xFF8957E5,
+        backgroundImagePath:
+            '/some/deliberately/long/background/image/path.png',
+        backgroundPreset: null,
+        colorGrade: ColorGrade(
+          autoEnabled: true,
+          exposure: 0.25,
+          contrast: -0.125,
+          saturation: 0.5,
+          temperature: -0.375,
+          tint: 0.0625,
+        ),
+      );
+
+      // Issue both without awaiting, the way the controller does.
+      final first = CanvasAppearanceStore.save(projectDir.path, long);
+      final second = CanvasAppearanceStore.save(projectDir.path, short);
+      await Future.wait([first, second]);
+
+      final loaded = CanvasAppearanceStore.load(projectDir.path);
+      expect(loaded, isNotNull, reason: 'the file must still parse');
+      expect(loaded!.padding, 0);
+      expect(loaded.backgroundImagePath, isNull);
+      expect(loaded.colorGrade, const ColorGrade());
+    });
+
+    test('a failed write does not poison the queue for that path', () async {
+      const state = CanvasAppearanceState(
+        padding: 7,
+        cornerRadius: 0,
+        backgroundKind: BackgroundKind.color,
+        backgroundColorArgb: null,
+        backgroundImagePath: null,
+        backgroundPreset: null,
+      );
+      final missing = '${projectDir.path}${Platform.pathSeparator}missing';
+
+      // The directory does not exist yet, so both writes fail inside the
+      // chain — and they OVERLAP, so the second is queued behind a failing
+      // link. Both must still resolve; a rejected link would stall every
+      // later save for this recording.
+      final first = CanvasAppearanceStore.save(missing, state);
+      final second = CanvasAppearanceStore.save(missing, state);
+      await Future.wait([first, second]);
+      expect(CanvasAppearanceStore.load(missing), isNull);
+
+      await Directory(missing).create();
+      const next = CanvasAppearanceState(
+        padding: 21,
+        cornerRadius: 0,
+        backgroundKind: BackgroundKind.color,
+        backgroundColorArgb: null,
+        backgroundImagePath: null,
+        backgroundPreset: null,
+      );
+      await CanvasAppearanceStore.save(missing, next);
+
+      expect(CanvasAppearanceStore.load(missing)?.padding, 21);
+    });
+
+    test('writes to different projects do not block each other', () async {
+      final other = await Directory.systemTemp.createTemp('clingfy_canvas_b_');
+      addTearDown(() async {
+        if (await other.exists()) await other.delete(recursive: true);
+      });
+
+      CanvasAppearanceState stateFor(double padding) => CanvasAppearanceState(
+        padding: padding,
+        cornerRadius: 0,
+        backgroundKind: BackgroundKind.color,
+        backgroundColorArgb: null,
+        backgroundImagePath: null,
+        backgroundPreset: null,
+      );
+
+      final a = CanvasAppearanceStore.save(projectDir.path, stateFor(3));
+      final b = CanvasAppearanceStore.save(other.path, stateFor(9));
+      await Future.wait([a, b]);
+
+      // Each project keeps its own queue — neither clobbers the other.
+      expect(CanvasAppearanceStore.load(projectDir.path)!.padding, 3);
+      expect(CanvasAppearanceStore.load(other.path)!.padding, 9);
+    });
+
+    test('the last of many overlapping saves is the one on disk', () async {
+      CanvasAppearanceState stateFor(double padding) => CanvasAppearanceState(
+        padding: padding,
+        cornerRadius: 0,
+        backgroundKind: BackgroundKind.color,
+        backgroundColorArgb: null,
+        backgroundImagePath: null,
+        backgroundPreset: null,
+      );
+
+      final writes = <Future<void>>[
+        for (var i = 1; i <= 8; i++)
+          CanvasAppearanceStore.save(projectDir.path, stateFor(i.toDouble())),
+      ];
+      await Future.wait(writes);
+
+      final loaded = CanvasAppearanceStore.load(projectDir.path);
+      expect(loaded, isNotNull);
+      expect(loaded!.padding, 8);
+    });
   });
 }
