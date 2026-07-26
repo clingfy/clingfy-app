@@ -1019,6 +1019,12 @@ class AppLocalizationsEn extends AppLocalizations {
   String get colorCorrection => 'Color Correction';
 
   @override
+  String get colorUndo => 'Undo color edit';
+
+  @override
+  String get colorRedo => 'Redo color edit';
+
+  @override
   String get autoEnhance => 'Auto-enhance';
 
   @override

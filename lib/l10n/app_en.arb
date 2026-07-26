@@ -357,6 +357,8 @@
   "zoomUndoLastAction": "Undo last action",
   "zoomRedoLastAction": "Redo last action",
   "colorCorrection": "Color Correction",
+  "colorUndo": "Undo color edit",
+  "colorRedo": "Redo color edit",
   "autoEnhance": "Auto-enhance",
   "exposure": "Exposure",
   "contrast": "Contrast",

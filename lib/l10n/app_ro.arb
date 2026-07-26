@@ -419,6 +419,8 @@
   "zoomUndoLastAction": "Anulează ultima acțiune",
   "zoomRedoLastAction": "Refă ultima acțiune",
   "colorCorrection": "Corecție culoare",
+  "colorUndo": "Anulează editarea culorii",
+  "colorRedo": "Refă editarea culorii",
   "autoEnhance": "Auto-îmbunătățire",
   "exposure": "Expunere",
   "contrast": "Contrast",

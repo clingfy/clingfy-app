@@ -1,5 +1,6 @@
 import 'dart:async';
 
+import 'package:clingfy/app/home/post_processing/post_processing_controller.dart';
 import 'package:clingfy/app/home/post_processing/widgets/zoom_segment_behavior_floating_toolbar.dart';
 import 'package:clingfy/app/home/preview/widgets/timeline/clips_timeline_lane.dart';
 import 'package:clingfy/app/home/preview/widgets/timeline/timeline_editor_viewport.dart';
@@ -393,6 +394,20 @@ class _VideoTimelineState extends State<VideoTimeline> {
     Log.d('ClipsLane', 'cancel reorder');
   }
 
+  void _handleUndoColor() {
+    final post = context.read<PostProcessingController>();
+    if (!post.canUndoColorGrade) return;
+    post.undoColorGrade();
+    Log.d('ColorGrade', 'undo: now ${post.colorGrade}');
+  }
+
+  void _handleRedoColor() {
+    final post = context.read<PostProcessingController>();
+    if (!post.canRedoColorGrade) return;
+    post.redoColorGrade();
+    Log.d('ColorGrade', 'redo: now ${post.colorGrade}');
+  }
+
   void _handleUndoClip(ClipEditorController? clip) {
     if (clip == null || !clip.canUndo) return;
     clip.undo();
@@ -472,6 +487,16 @@ class _VideoTimelineState extends State<VideoTimeline> {
     final clipEditor = context.select<PlayerController, ClipEditorController?>(
       (player) => player.clipEditor,
     );
+    // The color sliders live in the Effects sidebar, but their undo/redo shares
+    // this bar with zoom and clips. Selecting only the two flags keeps the
+    // timeline out of every drag tick — they flip on commit/undo/redo.
+    final colorHistory = context
+        .select<PostProcessingController, ({bool canUndo, bool canRedo})>(
+          (post) => (
+            canUndo: post.canUndoColorGrade,
+            canRedo: post.canRedoColorGrade,
+          ),
+        );
     // Log the attach/detach edge once so "why is the clip lane missing?" leaves
     // a trail. The editor attaches when the preview becomes ready (PR-3c2) and
     // is absent while loading or on Windows.
@@ -548,6 +573,14 @@ class _VideoTimelineState extends State<VideoTimeline> {
                   onDeleteClip: () => _handleDeleteClip(clipEditor),
                   onUndoClips: () => _handleUndoClip(clipEditor),
                   onRedoClips: () => _handleRedoClip(clipEditor),
+                  // Color edits are available on every loaded recording (both
+                  // platforms), so the pair rides `ready` alone; like the clip
+                  // buttons it stays visible-but-disabled during an export.
+                  showColorControls: ready,
+                  canUndoColor: widget.editingEnabled && colorHistory.canUndo,
+                  canRedoColor: widget.editingEnabled && colorHistory.canRedo,
+                  onUndoColor: _handleUndoColor,
+                  onRedoColor: _handleRedoColor,
                 ),
                 SizedBox(height: shellGap),
                 TimelineTransportBar(

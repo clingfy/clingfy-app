@@ -419,6 +419,8 @@
   "zoomUndoLastAction": "تراجع عن آخر إجراء",
   "zoomRedoLastAction": "إعادة آخر إجراء",
   "colorCorrection": "تصحيح الألوان",
+  "colorUndo": "تراجع عن تعديل الألوان",
+  "colorRedo": "إعادة تعديل الألوان",
   "autoEnhance": "تحسين تلقائي",
   "exposure": "التعريض",
   "contrast": "التباين",
