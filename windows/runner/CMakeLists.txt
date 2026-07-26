@@ -49,6 +49,7 @@ endif()
 # live Flutter engine (no `flutter_window.cpp`, no plugin registrant) so the
 # test target can construct a `MethodRouter` in isolation.
 add_library(runner_bridge STATIC
+  "Bridge/app_window_anchor.cpp"
   "Bridge/method_dispatcher.cpp"
   "Bridge/method_router.cpp"
   "Bridge/camera_overlay_move_publisher.cpp"
