@@ -46,12 +46,6 @@ Deferred work captured during reviews. Each item has enough context to pick up c
 - **Start at:** `lib/app/home/preview/widgets/timeline/timeline_header_bar.dart` (the three groups and the constructor), `lib/app/home/preview/widgets/video_timeline.dart` (the single call site).
 - **Effort:** human ~1h / CC ~10min.
 
-### Preview-open scene-load window is untested for color edits
-- **What:** Pin what happens when a color edit is committed between `attachToRecording` and the async scene load landing.
-- **Why:** `_loadCanvasAppearance` clears the color undo session when it restores saved state, so an edit made inside that window has its grade replaced and its history dropped. The invariant (no history entry survives pointing at a pre-restore grade) holds, but the edit is silently lost and nothing asserts either half.
-- **Context:** Raised by the coverage audit and the testing specialist in the 2026-07-26 ship review. A first attempt at the test was dropped as flaky: the outcome depends on whether the edit's fire-and-forget `editor_state.json` write beats the restore's read, which is real-I/O timing.
-- **Start at:** `lib/app/home/post_processing/post_processing_controller.dart` (`_loadCanvasAppearance`, `attachToRecording`), `test/app/home/post_processing/color_grade_undo_redo_test.dart`. A deterministic version needs the `getRecordingSceneInfo` mock gated on a `Completer` so the test controls when the restore runs.
-- **Effort:** human ~1h / CC ~10min.
 ## Recording — audio capture
 
 ### Push output-route changes instead of polling at two moments

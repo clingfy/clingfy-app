@@ -45,38 +45,65 @@ class PostColorGradeSection extends StatelessWidget {
           showHeader: false,
           children: [
             AppToggleRow(
+              key: const Key('color_auto_enhance_toggle'),
               title: l10n.autoEnhance,
               value: colorGrade.autoEnabled,
               onChanged: onAutoEnhanceChanged,
             ),
             const SizedBox(height: AppSidebarTokens.rowGap),
-            _slider(l10n.exposure, colorGrade.exposure, onExposureChanged),
+            _slider(
+              l10n.exposure,
+              colorGrade.exposure,
+              onExposureChanged,
+              sliderKey: const Key('color_slider_exposure'),
+            ),
             const SizedBox(height: AppSidebarTokens.rowGap),
-            _slider(l10n.contrast, colorGrade.contrast, onContrastChanged),
+            _slider(
+              l10n.contrast,
+              colorGrade.contrast,
+              onContrastChanged,
+              sliderKey: const Key('color_slider_contrast'),
+            ),
             const SizedBox(height: AppSidebarTokens.rowGap),
             _slider(
               l10n.saturation,
               colorGrade.saturation,
               onSaturationChanged,
+              sliderKey: const Key('color_slider_saturation'),
             ),
             const SizedBox(height: AppSidebarTokens.rowGap),
             _slider(
               l10n.temperature,
               colorGrade.temperature,
               onTemperatureChanged,
+              sliderKey: const Key('color_slider_temperature'),
             ),
             const SizedBox(height: AppSidebarTokens.rowGap),
-            _slider(l10n.tint, colorGrade.tint, onTintChanged),
+            _slider(
+              l10n.tint,
+              colorGrade.tint,
+              onTintChanged,
+              sliderKey: const Key('color_slider_tint'),
+            ),
           ],
         ),
       ],
     );
   }
 
-  Widget _slider(String label, double value, ValueChanged<double> onChanged) {
+  /// [sliderKey] makes each row addressable from `flutter_driver` — the MCP
+  /// bridge cannot build Descendant/Ancestor finders, so without a key on the
+  /// slider itself there is no way to drive one specific colour control live.
+  Widget _slider(
+    String label,
+    double value,
+    ValueChanged<double> onChanged, {
+    Key? sliderKey,
+  }) {
     return AppSliderRow(
       label: label,
       slider: AppSlider(
+        key: sliderKey,
         value: value,
         min: -1.0,
         max: 1.0,
