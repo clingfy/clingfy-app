@@ -854,6 +854,12 @@ final class ScreenRecorderFacade: NSObject {
     }
     result(devs)
   }
+  /// The current default output device, classified by whether it can
+  /// acoustically feed the microphone. Drives the pre-recording bleed warning.
+  func getAudioOutputRoute(result: @escaping FlutterResult) {
+    result(["route": AudioOutputRouteProbe.current().rawValue])
+  }
+
   func setAudioSource(id: String?, result: @escaping FlutterResult) {
     if let id, !id.isEmpty && id != "__none__" {
       guard AVCaptureDevice(uniqueID: id) != nil else {
