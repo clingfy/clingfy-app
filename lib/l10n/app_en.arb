@@ -309,6 +309,7 @@
   "lanes": "Lanes",
   "snap": "Snap",
   "clips": "Clips",
+  "color": "Color",
   "clipSplit": "Split",
   "clipSplitTooltip": "Split clip at playhead",
   "clipRemoveSelected": "Remove selected clip",

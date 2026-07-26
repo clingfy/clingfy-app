@@ -909,6 +909,9 @@ class AppLocalizationsEn extends AppLocalizations {
   String get clips => 'Clips';
 
   @override
+  String get color => 'Color';
+
+  @override
   String get clipSplit => 'Split';
 
   @override

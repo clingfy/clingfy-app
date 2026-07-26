@@ -35,17 +35,6 @@ Deferred work captured during reviews. Each item has enough context to pick up c
 - **Depends on:** PR-2a (color_grade_args establishes the pattern).
 - **Effort:** human ~2h / CC ~15min.
 
-## Editor — timeline chrome
-
-### Extract a shared undo/redo button pair in TimelineHeaderBar
-- **What:** Replace the three near-verbatim undo/redo blocks in `timeline_header_bar.dart` (zoom, clips, color) with one private `_HistoryButtonPair` widget plus a `_sectionDivider(theme)` helper, and collapse the three parallel `show*/canUndo*/canRedo*/onUndo*/onRedo*` parameter families into a `List<TimelineHistoryGroup>`.
-- **Why:** The constructor reached 24 parameters when the color pair landed, and the enabled/disabled `onSurface` alpha ternary (0.85 / 0.35) is now spelled out six times. A fourth undoable track costs five more fields plus another copy-pasted block.
-- **Context:** Raised by the maintainability specialist in the 2026-07-26 ship review of the color-grade undo/redo wiring (confidence 8/10 and 7/10). Deferred because it is a >20-line refactor touching the zoom and clip groups, which are outside that branch's scope — the Fix-First heuristic classes it as ASK, not auto-fix.
-- **Pros:** Adding a track becomes one list entry; the alpha constants live in one place; the widget has exactly one call site so the flat parameter list buys nothing today.
-- **Cons:** Pure refactor, no user-visible change; touches the zoom and clip affordances, so it needs the existing `video_timeline_test.dart` groups green to prove nothing regressed.
-- **Start at:** `lib/app/home/preview/widgets/timeline/timeline_header_bar.dart` (the three groups and the constructor), `lib/app/home/preview/widgets/video_timeline.dart` (the single call site).
-- **Effort:** human ~1h / CC ~10min.
-
 ## Recording — audio capture
 
 ### Push output-route changes instead of polling at two moments

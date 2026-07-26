@@ -371,6 +371,7 @@
   "lanes": "Benzi",
   "snap": "Fixare",
   "clips": "Clipuri",
+  "color": "Culoare",
   "clipSplit": "Împarte",
   "clipSplitTooltip": "Împarte clipul la cursor",
   "clipRemoveSelected": "Elimină clipul selectat",

@@ -371,6 +371,7 @@
   "lanes": "المسارات",
   "snap": "المحاذاة",
   "clips": "المقاطع",
+  "color": "الألوان",
   "clipSplit": "تقسيم",
   "clipSplitTooltip": "تقسيم المقطع عند المؤشر",
   "clipRemoveSelected": "حذف المقطع المحدد",
