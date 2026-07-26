@@ -17,6 +17,7 @@ import 'package:clingfy/l10n/app_localizations.dart';
 import 'package:clingfy/core/models/app_models.dart';
 import 'package:clingfy/core/bridges/native_error_codes.dart';
 import 'package:clingfy/core/bridges/native_bridge.dart';
+import 'package:clingfy/core/bridges/native_method_channel.dart';
 import 'package:clingfy/app/settings/settings_controller.dart';
 import 'package:clingfy/app/settings/widgets/app_settings_view.dart';
 import 'package:flutter/material.dart';
@@ -264,6 +265,123 @@ void main() {
     addTearDown(harness.dispose);
     return harness;
   }
+
+  group('pre-recording bar audio warnings', () {
+    // The bar is a separate native window, so these travel as part of the
+    // setPreRecordingBarState payload rather than as widgets. Both are gated
+    // on a live mic exactly as the sidebar gates them.
+    Future<void> emitMicLevel({required double dbfs}) async {
+      const channel = NativeChannel.screenRecorderEvents;
+      final data = const StandardMethodCodec().encodeSuccessEnvelope({
+        'type': DeviceEventType.microphoneLevel,
+        'dbfs': dbfs,
+        'linear': 0.01,
+      });
+      await TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger
+          .handlePlatformMessage(channel, data, (_) {});
+    }
+
+    // updateNativeBarState no-ops until every controller has hydrated;
+    // device/overlay hydrate from an async _init, uiState needs marking.
+    Future<void> readyForBarState(WidgetTester tester, _Harness harness) async {
+      harness.uiState.markHydrated();
+      await tester.pumpAndSettle();
+      expect(harness.device.isHydrated, isTrue);
+      expect(harness.overlay.isHydrated, isTrue);
+    }
+
+    Map<Object?, Object?> lastBarState(_Harness harness) {
+      final call = harness.callsFor('setPreRecordingBarState').last;
+      return call.arguments as Map<Object?, Object?>;
+    }
+
+    testWidgets('a quiet mic is reported to the bar', (tester) async {
+      final harness = await createHarness(
+        tester,
+        permissionStatus: const {
+          'screenRecording': true,
+          'microphone': true,
+          'camera': true,
+          'accessibility': true,
+        },
+        audioSources: const [
+          {'id': 'mic-1', 'name': 'Mic One'},
+        ],
+      );
+      addTearDown(harness.dispose);
+      await readyForBarState(tester, harness);
+
+      await harness.device.setAudioSource('mic-1');
+      harness.actions.updateNativeBarState();
+      await tester.pump();
+      expect(lastBarState(harness)['micInputTooLow'], isFalse);
+
+      // Drive the real event path rather than poking private state, so the
+      // -32 dBFS threshold stays part of what this covers.
+      await emitMicLevel(dbfs: -48.0);
+      harness.actions.updateNativeBarState();
+      await tester.pump();
+      expect(lastBarState(harness)['micInputTooLow'], isTrue);
+
+      await emitMicLevel(dbfs: -12.0);
+      harness.actions.updateNativeBarState();
+      await tester.pump();
+      expect(lastBarState(harness)['micInputTooLow'], isFalse);
+    });
+
+    testWidgets('no microphone means no warning, even when flagged', (
+      tester,
+    ) async {
+      // "No microphone" is the first-run default; a level or bleed warning
+      // there would be a false alarm on a brand-new install.
+      final harness = await createHarness(
+        tester,
+        permissionStatus: const {
+          'screenRecording': true,
+          'microphone': true,
+          'camera': true,
+          'accessibility': true,
+        },
+      );
+      addTearDown(harness.dispose);
+      await readyForBarState(tester, harness);
+
+      await harness.device.setAudioSource(DeviceController.noAudioId);
+      await emitMicLevel(dbfs: -48.0);
+      harness.actions.updateNativeBarState();
+      await tester.pump();
+
+      final state = lastBarState(harness);
+      expect(state['micEnabled'], isFalse);
+      expect(state['micInputTooLow'], isFalse);
+      expect(state['systemAudioBleedRisk'], isFalse);
+    });
+
+    testWidgets('bleed risk rides along with the mic gate', (tester) async {
+      final harness = await createHarness(
+        tester,
+        permissionStatus: const {
+          'screenRecording': true,
+          'microphone': true,
+          'camera': true,
+          'accessibility': true,
+        },
+        audioSources: const [
+          {'id': 'mic-1', 'name': 'Mic One'},
+        ],
+      );
+      addTearDown(harness.dispose);
+      await readyForBarState(tester, harness);
+
+      await harness.device.setAudioSource('mic-1');
+      harness.actions.updateNativeBarState();
+      await tester.pump();
+
+      final state = lastBarState(harness);
+      expect(state.containsKey('systemAudioBleedRisk'), isTrue);
+      expect(state['systemAudioBleedRisk'], isFalse);
+    });
+  });
 
   testWidgets('hard blocker prevents countdown and native start', (
     tester,

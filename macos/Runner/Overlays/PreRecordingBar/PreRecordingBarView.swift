@@ -258,6 +258,22 @@ class PreRecordingBarView: NSView {
     return separator
   }
 
+  /// Amber for a source that is ON but in a state that will damage the take,
+  /// accent for a healthy ON source, grey for OFF.
+  ///
+  /// The warning has to be visible without hovering: the bar is what a user
+  /// looks at immediately before hitting record, and both conditions it
+  /// reports (mic far too quiet, system audio bleeding into the mic) are only
+  /// cheap to fix BEFORE the take. A tooltip alone repeats the mistake this
+  /// warning exists to correct. The tooltip carries the explanation; the tint
+  /// carries the alarm.
+  ///
+  /// A warning on an OFF source is meaningless, so `enabled` wins.
+  static func audioButtonTint(enabled: Bool, warning: Bool) -> NSColor {
+    guard enabled else { return .secondaryLabelColor }
+    return warning ? .systemOrange : .controlAccentColor
+  }
+
   func updateState(_ newState: [String: Any]) {
     self.state = newState
 
@@ -291,11 +307,21 @@ class PreRecordingBarView: NSView {
     cameraButton.contentTintColor = camSelected ? .controlAccentColor : .secondaryLabelColor
 
     let micEnabled = newState["micEnabled"] as? Bool ?? false
-    micButton.contentTintColor = micEnabled ? .controlAccentColor : .secondaryLabelColor
+    let micTooLow = newState["micInputTooLow"] as? Bool ?? false
+    micButton.contentTintColor = Self.audioButtonTint(enabled: micEnabled, warning: micTooLow)
+    micButton.toolTip =
+      micTooLow && micEnabled
+      ? NativeStringsStore.shared.string(for: NativeUIStringKey.preRecordingBarMicTooLow)
+      : nil
 
     let systemAudioEnabled = newState["systemAudioEnabled"] as? Bool ?? false
-    systemAudioButton.contentTintColor =
-      systemAudioEnabled ? .controlAccentColor : .secondaryLabelColor
+    let bleedRisk = newState["systemAudioBleedRisk"] as? Bool ?? false
+    systemAudioButton.contentTintColor = Self.audioButtonTint(
+      enabled: systemAudioEnabled, warning: bleedRisk)
+    systemAudioButton.toolTip =
+      bleedRisk && systemAudioEnabled
+      ? NativeStringsStore.shared.string(for: NativeUIStringKey.preRecordingBarBleedRisk)
+      : nil
 
     // Record button state driven by phase
     let phase = newState["phase"] as? Int ?? 0

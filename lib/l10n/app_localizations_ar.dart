@@ -1960,6 +1960,14 @@ class AppLocalizationsAr extends AppLocalizations {
       'الميكروفون لا يكاد يسجّل أي صوت. ارفع مستوى الإدخال من إعدادات النظام › الصوت › الإدخال، أو اقترب من الميكروفون — وإلا فلن يحتوي هذا التسجيل على صوت قابل للاستخدام.';
 
   @override
+  String get preRecordingBarMicTooLow =>
+      'مستوى الميكروفون منخفض جدًا — ارفع مستوى الإدخال من إعدادات النظام › الصوت › الإدخال.';
+
+  @override
+  String get preRecordingBarBleedRisk =>
+      'صوت النظام يُشغَّل عبر مكبر الصوت وسيتسرّب إلى الميكروفون. استخدم سماعات الرأس.';
+
+  @override
   String get noMicAudioFound => 'لم يتم العثور على مسار صوتي للميكروفون';
 
   @override

@@ -60,10 +60,4 @@ Deferred work captured during reviews. Each item has enough context to pick up c
 - **Start at:** `windows/runner/Encoding/mf_sink_writer_encoder.cpp:220-232`, the sibling MF writer, and `windows/runner/Encoding/mf_encoder_config.h:45-57`.
 - **Effort:** human ~1h / CC ~15min once reachable.
 
-### Surface the pre-record audio warnings on the native pre-recording bar
-- **What:** Show the pre-record audio warnings — speaker bleed **and** mic-level-too-low — on the native pre-recording bar, not only in the Flutter recording sidebar.
-- **Why:** The pre-recording bar is the surface a user actually looks at immediately before hitting record. A warning that lives only in the sidebar is missed by anyone who set up once and now starts takes from the bar. Both conditions are only cheap to fix *before* the take, which is exactly when the bar is the active surface.
-- **Context:** Raised by the pre-landing review of the 2026-07-26 audio-honesty branch, severity low because the sidebar warnings do exist and are correct. Widened on 2026-07-26 when the mic-too-low notice landed with the same blind spot. The bar is a separate native window (`macos/Runner/Overlays/PreRecordingBar/`), so this needs a state push over the existing pre-recording-bar feed rather than a Flutter widget. Do both in one slice — the plumbing is shared and the second one is nearly free once the first exists.
-- **Start at:** `macos/Runner/Overlays/PreRecordingBar/PreRecordingBarController.swift`, and the bar state feed in `lib/app/home/home_actions.dart`.
-- **Effort:** human ~2h / CC ~20min.
 

@@ -30,6 +30,8 @@ abstract class NativeUIStringKey {
   static const String preRecordingBarCamera = 'preRecordingBar.camera';
   static const String preRecordingBarMic = 'preRecordingBar.mic';
   static const String preRecordingBarSystem = 'preRecordingBar.system';
+  static const String preRecordingBarMicTooLow = 'preRecordingBar.micTooLow';
+  static const String preRecordingBarBleedRisk = 'preRecordingBar.bleedRisk';
   static const String preRecordingBarUpdate = 'preRecordingBar.update';
   static const String preRecordingBarPause = 'preRecordingBar.pause';
   static const String preRecordingBarResume = 'preRecordingBar.resume';

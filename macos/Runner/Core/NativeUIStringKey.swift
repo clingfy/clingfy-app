@@ -28,6 +28,8 @@ enum NativeUIStringKey {
   static let preRecordingBarCamera = "preRecordingBar.camera"
   static let preRecordingBarMic = "preRecordingBar.mic"
   static let preRecordingBarSystem = "preRecordingBar.system"
+  static let preRecordingBarMicTooLow = "preRecordingBar.micTooLow"
+  static let preRecordingBarBleedRisk = "preRecordingBar.bleedRisk"
   static let preRecordingBarUpdate = "preRecordingBar.update"
   static let preRecordingBarPause = "preRecordingBar.pause"
   static let preRecordingBarResume = "preRecordingBar.resume"

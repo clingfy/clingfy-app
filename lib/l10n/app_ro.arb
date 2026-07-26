@@ -662,6 +662,8 @@
   "micInputIndicatorLiveTooltip": "Nivel intrare microfon: {dbfs} dBFS",
   "micInputIndicatorLowTooltip": "Intrarea microfonului este foarte mică. Crește nivelul de intrare sau apropie-te de microfon.",
   "recordingMicTooLowWarning": "Microfonul aproape nu captează nimic. Crește nivelul de intrare în Setări sistem › Sunet › Intrare sau apropie-te — altfel înregistrarea nu va avea voce utilizabilă.",
+  "preRecordingBarMicTooLow": "Nivelul microfonului este foarte scăzut — crește nivelul de intrare în Setări sistem › Sunet › Intrare.",
+  "preRecordingBarBleedRisk": "Sunetul sistemului se aude prin difuzoare și va intra în microfon. Folosește căști.",
   "noMicAudioFound": "Nu s-a găsit nicio pistă audio de microfon",
   "autoNormalizeOnExport": "Auto-normalizare la export",
   "targetLoudness": "Volum țintă",

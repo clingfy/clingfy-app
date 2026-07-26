@@ -108,6 +108,10 @@ class NativeStringsBridge {
         return resolved.mic;
       case NativeUIStringKey.preRecordingBarSystem:
         return resolved.system;
+      case NativeUIStringKey.preRecordingBarMicTooLow:
+        return resolved.preRecordingBarMicTooLow;
+      case NativeUIStringKey.preRecordingBarBleedRisk:
+        return resolved.preRecordingBarBleedRisk;
       case NativeUIStringKey.preRecordingBarUpdate:
         return resolved.update;
       case NativeUIStringKey.preRecordingBarPause:
