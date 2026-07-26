@@ -154,19 +154,18 @@ void main() {
       },
     );
 
-    testWidgets(
-      'Windows: a stale preset kind is still displayed as color',
-      (tester) async {
-        debugPlatformKindOverride = PlatformKind.windows;
-        // A project saved on macOS can persist kind=preset. Windows cannot
-        // render it, so the DISPLAYED mode coerces to color and its controls
-        // are live — rather than selecting a segment that is not offered.
-        await tester.pumpWidget(host(section(BackgroundKind.preset)));
-        await tester.pumpAndSettle();
-        expect(find.byIcon(Icons.auto_awesome_outlined), findsNothing);
-        expect(find.byIcon(Icons.palette_outlined), findsOneWidget);
-      },
-    );
+    testWidgets('Windows: a stale preset kind is still displayed as color', (
+      tester,
+    ) async {
+      debugPlatformKindOverride = PlatformKind.windows;
+      // A project saved on macOS can persist kind=preset. Windows cannot
+      // render it, so the DISPLAYED mode coerces to color and its controls
+      // are live — rather than selecting a segment that is not offered.
+      await tester.pumpWidget(host(section(BackgroundKind.preset)));
+      await tester.pumpAndSettle();
+      expect(find.byIcon(Icons.auto_awesome_outlined), findsNothing);
+      expect(find.byIcon(Icons.palette_outlined), findsOneWidget);
+    });
 
     testWidgets('macOS: image and preset segments stay available', (
       tester,
