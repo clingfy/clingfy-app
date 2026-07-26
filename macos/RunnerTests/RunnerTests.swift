@@ -5647,6 +5647,152 @@ final class LetterboxExporterTests: XCTestCase {
     XCTAssertEqual(LetterboxExporter.aacWriterSampleRate(for: []), 48_000)
   }
 
+  /// A Bluetooth headset mic arrives at 16 kHz while system audio is 48 kHz.
+  /// Taking the FIRST track's rate let the mic decide the whole mix: it
+  /// resampled the system audio down to 16 kHz, and asked for a bitrate 16 kHz
+  /// cannot carry. The highest rate present is the only safe choice.
+  func testAacWriterSampleRateTakesTheHighestRateNotTheFirstTrack() throws {
+    let tempDir = makeTemporaryDirectory()
+    defer { try? FileManager.default.removeItem(at: tempDir) }
+
+    let mic16 = tempDir.appendingPathComponent("mic16.m4a")
+    let system48 = tempDir.appendingPathComponent("system48.m4a")
+    try makeToneAudioFile(url: mic16, seconds: 0.3, amplitude: 0.5, sampleRate: 16_000)
+    try makeToneAudioFile(url: system48, seconds: 0.3, amplitude: 0.5, sampleRate: 48_000)
+
+    let micAsset = AVAsset(url: mic16)
+    let systemAsset = AVAsset(url: system48)
+    let micTracks = micAsset.tracks(withMediaType: .audio)
+    let systemTracks = systemAsset.tracks(withMediaType: .audio)
+
+    // Mic first — the ordering that shipped the bug.
+    XCTAssertEqual(
+      LetterboxExporter.aacWriterSampleRate(for: micTracks + systemTracks),
+      48_000)
+    // Order must not matter.
+    XCTAssertEqual(
+      LetterboxExporter.aacWriterSampleRate(for: systemTracks + micTracks),
+      48_000)
+    // A genuinely mic-only project still exports at the mic's own rate rather
+    // than being pointlessly upsampled.
+    XCTAssertEqual(LetterboxExporter.aacWriterSampleRate(for: micTracks), 16_000)
+  }
+
+  /// The regression test for `-11861 "Cannot Encode Media"`.
+  ///
+  /// AAC-LC rejects a bitrate its sample rate cannot carry, but `canAdd` and
+  /// `startWriting()` BOTH succeed — the failure only lands on the first
+  /// append. So this has to drive real sample buffers through a real writer;
+  /// asserting on the settings dictionary alone would have passed while the
+  /// export was broken.
+  func testExportAudioSettingsEncodeARealBluetoothMicMix() throws {
+    let tempDir = makeTemporaryDirectory()
+    defer { try? FileManager.default.removeItem(at: tempDir) }
+
+    let mic16 = tempDir.appendingPathComponent("mic16.m4a")
+    let system48 = tempDir.appendingPathComponent("system48.m4a")
+    try makeToneAudioFile(url: mic16, seconds: 0.4, amplitude: 0.5, sampleRate: 16_000)
+    try makeToneAudioFile(url: system48, seconds: 0.4, amplitude: 0.5, sampleRate: 48_000)
+
+    // Mic first, exactly as the separated-audio composition ordered it.
+    let composition = AVMutableComposition()
+    for url in [mic16, system48] {
+      let asset = AVAsset(url: url)
+      let source = try XCTUnwrap(asset.tracks(withMediaType: .audio).first)
+      let track = try XCTUnwrap(
+        composition.addMutableTrack(
+          withMediaType: .audio, preferredTrackID: kCMPersistentTrackID_Invalid))
+      try track.insertTimeRange(
+        CMTimeRange(start: .zero, duration: source.timeRange.duration), of: source, at: .zero)
+    }
+
+    let tracks = composition.tracks(withMediaType: .audio)
+    let sampleRate = LetterboxExporter.aacWriterSampleRate(for: tracks)
+    let channels = 2
+    let settings: [String: Any] = [
+      AVFormatIDKey: kAudioFormatMPEG4AAC,
+      AVNumberOfChannelsKey: channels,
+      AVSampleRateKey: sampleRate,
+      AVEncoderBitRateKey: AACEncoderSettings.bitRate(
+        sampleRate: sampleRate, channels: channels),
+    ]
+
+    let outputURL = tempDir.appendingPathComponent("mixed.mov")
+    let reader = try AVAssetReader(asset: composition)
+    let output = AVAssetReaderAudioMixOutput(
+      audioTracks: tracks,
+      audioSettings: [
+        AVFormatIDKey: kAudioFormatLinearPCM,
+        AVLinearPCMIsFloatKey: false,
+        AVLinearPCMBitDepthKey: 16,
+        AVLinearPCMIsNonInterleaved: false,
+        AVLinearPCMIsBigEndianKey: false,
+      ])
+    XCTAssertTrue(reader.canAdd(output))
+    reader.add(output)
+
+    let writer = try AVAssetWriter(outputURL: outputURL, fileType: .mov)
+    let input = AVAssetWriterInput(mediaType: .audio, outputSettings: settings)
+    input.expectsMediaDataInRealTime = false
+    XCTAssertTrue(writer.canAdd(input))
+    writer.add(input)
+
+    XCTAssertTrue(writer.startWriting())
+    writer.startSession(atSourceTime: .zero)
+    XCTAssertTrue(reader.startReading())
+
+    var appended = 0
+    while reader.status == .reading, let buffer = output.copyNextSampleBuffer() {
+      while !input.isReadyForMoreMediaData {
+        Thread.sleep(forTimeInterval: 0.005)
+      }
+      guard input.append(buffer) else { break }
+      appended += 1
+    }
+    input.markAsFinished()
+
+    let finished = expectation(description: "writer finished")
+    writer.finishWriting { finished.fulfill() }
+    wait(for: [finished], timeout: 30)
+
+    let error = writer.error as NSError?
+    XCTAssertNotEqual(
+      writer.status, .failed,
+      "encoder rejected the settings: \(error?.code ?? 0) \(error?.localizedDescription ?? "")")
+    XCTAssertGreaterThan(appended, 0, "no audio was encoded")
+  }
+
+  /// The per-channel bitrate has to stay inside what each rate accepts.
+  /// Measured on macOS 15 with a 16 kHz stereo source: 192 kbps and 128 kbps
+  /// are rejected, 96 kbps is accepted — so 16 kHz must land well under that.
+  func testAacBitRateStaysLegalAcrossTheSupportedRates() {
+    // 48 kHz keeps the historic full-fat value, bit for bit.
+    XCTAssertEqual(AACEncoderSettings.bitRate(sampleRate: 48_000, channels: 2), 192_000)
+    XCTAssertEqual(AACEncoderSettings.bitRate(sampleRate: 48_000, channels: 1), 96_000)
+
+    // The Bluetooth HFP rates that broke both the recorder and the exporter.
+    XCTAssertEqual(AACEncoderSettings.bitRate(sampleRate: 16_000, channels: 2), 64_000)
+    XCTAssertEqual(AACEncoderSettings.bitRate(sampleRate: 8_000, channels: 2), 32_000)
+
+    // Never below the floor, never above the cap, whatever the rate.
+    for rate in AACEncoderSettings.supportedSampleRates {
+      for channels in [1, 2] {
+        let perChannel = AACEncoderSettings.bitRate(sampleRate: rate, channels: channels) / channels
+        XCTAssertGreaterThanOrEqual(perChannel, AACEncoderSettings.minBitRatePerChannel)
+        XCTAssertLessThanOrEqual(perChannel, AACEncoderSettings.maxBitRatePerChannel)
+        // Measured ceiling at 16 kHz stereo: 48 kbps/channel encoded, 64 kbps
+        // /channel was rejected — i.e. the limit sits between 3x and 4x the
+        // sample rate. Assert against the side that was demonstrated to work.
+        XCTAssertLessThanOrEqual(
+          Double(perChannel), rate * 3,
+          "\(Int(rate))Hz asked for \(perChannel) bps/channel, which AAC-LC rejects")
+      }
+    }
+
+    // A rate outside the supported set still yields something encodable.
+    XCTAssertGreaterThan(AACEncoderSettings.bitRate(sampleRate: 0, channels: 0), 0)
+  }
+
   func testMakeSeparatedAudioCompositionShapesTracksAndCuts() throws {
     let tempDir = makeTemporaryDirectory()
     defer { try? FileManager.default.removeItem(at: tempDir) }
@@ -6259,7 +6405,11 @@ final class LetterboxExporterTests: XCTestCase {
         AVFormatIDKey: kAudioFormatMPEG4AAC,
         AVSampleRateKey: sampleRate,
         AVNumberOfChannelsKey: channels,
-        AVEncoderBitRateKey: 192_000,
+        // Was a flat 192_000, which made this helper unable to write a fixture
+        // below ~24 kHz — the very rates the export bug lives at. Same rule as
+        // production so a low-rate fixture is expressible at all.
+        AVEncoderBitRateKey: AACEncoderSettings.bitRate(
+          sampleRate: sampleRate, channels: channels),
       ])
     input.expectsMediaDataInRealTime = false
     writer.add(input)

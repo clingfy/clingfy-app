@@ -46,11 +46,11 @@ final class AudioSourceSegmentWriter {
 
   /// AAC bitrate per channel at 48 kHz; stereo sources encode at 192 kbps —
   /// strictly above the 64-100 kbps track SCRecordingOutput embeds in screen.mov.
-  static let aacBitRatePerChannel = 96_000
+  static let aacBitRatePerChannel = AACEncoderSettings.maxBitRatePerChannel
 
   /// Floor so a pathologically low sample rate cannot ask for an unusably thin
   /// stream.
-  static let minAacBitRatePerChannel = 16_000
+  static let minAacBitRatePerChannel = AACEncoderSettings.minBitRatePerChannel
 
   /// The AAC bitrate to request for a source arriving at [sampleRate].
   ///
@@ -69,11 +69,7 @@ final class AudioSourceSegmentWriter {
   /// ~2 bits per sample, which evaluates to exactly [aacBitRatePerChannel] at
   /// 48 kHz, so every existing 48 kHz path is bit-for-bit unchanged.
   static func aacBitRate(sampleRate: Double, channels: Int) -> Int {
-    let perChannel = min(
-      aacBitRatePerChannel,
-      max(minAacBitRatePerChannel, Int(sampleRate * 2))
-    )
-    return perChannel * channels
+    AACEncoderSettings.bitRate(sampleRate: sampleRate, channels: channels)
   }
 
   let kind: AudioSourceKind

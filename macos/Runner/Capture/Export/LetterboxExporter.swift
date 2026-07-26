@@ -1522,29 +1522,25 @@ final class LetterboxExporter {
   /// 48kHz (typically), Windows exports 48kHz, and the old constant forced a
   /// pointless 48→44.1 resample into every manual-path export.
   private func manualAudioWriterSettings(sourceTracks: [AVAssetTrack]) -> [String: Any] {
-    [
+    let channels = 2
+    let sampleRate = Self.aacWriterSampleRate(for: sourceTracks)
+    return [
       AVFormatIDKey: kAudioFormatMPEG4AAC,
-      AVNumberOfChannelsKey: 2,
-      AVSampleRateKey: Self.aacWriterSampleRate(for: sourceTracks),
-      AVEncoderBitRateKey: 192_000,
+      AVNumberOfChannelsKey: channels,
+      AVSampleRateKey: sampleRate,
+      // Was a flat 192_000. A 16 kHz source cannot carry 96 kbps per channel,
+      // and the encoder only says so on the first append, as
+      // -11861 "Cannot Encode Media".
+      AVEncoderBitRateKey: AACEncoderSettings.bitRate(
+        sampleRate: sampleRate, channels: channels),
     ]
   }
 
-  /// Source-derived AAC output rate. AAC-LC supports a fixed rate set; a
-  /// source already on a standard rate keeps it, anything else lands on 48k.
+  /// Source-derived AAC output rate. AAC-LC supports a fixed rate set; the mix
+  /// follows the highest rate present so one low-rate source cannot drag the
+  /// others down. See `AACEncoderSettings.outputSampleRate`.
   static func aacWriterSampleRate(for sourceTracks: [AVAssetTrack]) -> Double {
-    let supportedAACRates: Set<Double> = [
-      8_000, 11_025, 12_000, 16_000, 22_050, 24_000, 32_000, 44_100, 48_000,
-    ]
-    guard
-      let formatDescription = sourceTracks.first?.formatDescriptions.first,
-      let asbd = CMAudioFormatDescriptionGetStreamBasicDescription(
-        formatDescription as! CMFormatDescription)?.pointee,
-      supportedAACRates.contains(asbd.mSampleRate)
-    else {
-      return 48_000
-    }
-    return asbd.mSampleRate
+    AACEncoderSettings.outputSampleRate(for: sourceTracks)
   }
 
   /// Builds an audio-only composition holding just the kept clip ranges,

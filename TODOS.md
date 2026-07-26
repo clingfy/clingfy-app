@@ -52,6 +52,14 @@ Deferred work captured during reviews. Each item has enough context to pick up c
 - **Start at:** `macos/Runner/Capture/Audio/AudioOutputRoute.swift` (`routeFromTerminalType`), `macos/RunnerTests/RunnerTests.swift` (`testTerminalTypeResolvesRoutesTransportTypeCannot`).
 - **Effort:** human ~15min / CC ~10min once a row exists.
 
+### Windows AAC profile-level is pinned to "2ch / 48 kHz" while the rate is configurable
+- **What:** Both Media Foundation AAC writers hardcode `MF_MT_AAC_AUDIO_PROFILE_LEVEL_INDICATION = 0x29`, which specifies AAC-LC at **2 channels, 48 kHz**, while the surrounding encoder config (`mf_encoder_config.h`) validates and permits **44.1 kHz** as well.
+- **Why:** A 44.1 kHz export would declare a profile level that does not describe the stream it contains. Today nothing reaches that path — the config defaults to 48 kHz and WASAPI capture hard-rejects any endpoint that is not 48 kHz float32 stereo — so this is latent, not live. It becomes real the moment 44.1 kHz is selectable or WASAPI accepts a wider range.
+- **Context:** Found by the completeness sweep during the 2026-07-26 macOS export `-11861 "Cannot Encode Media"` investigation. The macOS side of that bug class was the same shape: an encoder parameter fixed independently of the source. macOS is now fixed via `AACEncoderSettings`; Windows has no equivalent single source of truth.
+- **Do NOT "fix" this speculatively.** Changing a profile-level indicator without a stream that actually exercises it is how a working encoder gets broken. Wait until 44.1 kHz is genuinely reachable, then derive the indicator from the configured rate and channels.
+- **Start at:** `windows/runner/Encoding/mf_sink_writer_encoder.cpp:220-232`, the sibling MF writer, and `windows/runner/Encoding/mf_encoder_config.h:45-57`.
+- **Effort:** human ~1h / CC ~15min once reachable.
+
 ### Surface the pre-record audio warnings on the native pre-recording bar
 - **What:** Show the pre-record audio warnings — speaker bleed **and** mic-level-too-low — on the native pre-recording bar, not only in the Flutter recording sidebar.
 - **Why:** The pre-recording bar is the surface a user actually looks at immediately before hitting record. A warning that lives only in the sidebar is missed by anyone who set up once and now starts takes from the bar. Both conditions are only cheap to fix *before* the take, which is exactly when the bar is the active surface.

@@ -192,6 +192,7 @@
 		F1A0011AA11D105E00000004 /* AudioSourceRecordingTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = F1A0011AA11D105E00000003 /* AudioSourceRecordingTests.swift */; };
 		F1A0011AA11D105E00000102 /* MicEchoCanceller.swift in Sources */ = {isa = PBXBuildFile; fileRef = F1A0011AA11D105E00000101 /* MicEchoCanceller.swift */; };
 		F1A0011AA11D105E00000202 /* AudioOutputRoute.swift in Sources */ = {isa = PBXBuildFile; fileRef = F1A0011AA11D105E00000201 /* AudioOutputRoute.swift */; };
+		EB56CAFCD7AB46D59A45164F /* AACEncoderSettings.swift in Sources */ = {isa = PBXBuildFile; fileRef = 9C79B5FE92F04C2AACEAEC73 /* AACEncoderSettings.swift */; };
 		F1A0011AA11D105E00000104 /* MicEchoCancellerTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = F1A0011AA11D105E00000103 /* MicEchoCancellerTests.swift */; };
 		F1A0011AA11D105E00000106 /* CleanedMicCache.swift in Sources */ = {isa = PBXBuildFile; fileRef = F1A0011AA11D105E00000105 /* CleanedMicCache.swift */; };
 		F1A0011AA11D105E00000108 /* CleanedMicCacheTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = F1A0011AA11D105E00000107 /* CleanedMicCacheTests.swift */; };
@@ -441,6 +442,7 @@
 		F1A0011AA11D105E00000003 /* AudioSourceRecordingTests.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = AudioSourceRecordingTests.swift; sourceTree = "<group>"; };
 		F1A0011AA11D105E00000101 /* MicEchoCanceller.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = MicEchoCanceller.swift; sourceTree = "<group>"; };
 		F1A0011AA11D105E00000201 /* AudioOutputRoute.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = AudioOutputRoute.swift; sourceTree = "<group>"; };
+		9C79B5FE92F04C2AACEAEC73 /* AACEncoderSettings.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = AACEncoderSettings.swift; sourceTree = "<group>"; };
 		F1A0011AA11D105E00000103 /* MicEchoCancellerTests.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = MicEchoCancellerTests.swift; sourceTree = "<group>"; };
 		F1A0011AA11D105E00000105 /* CleanedMicCache.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = CleanedMicCache.swift; sourceTree = "<group>"; };
 		F1A0011AA11D105E00000107 /* CleanedMicCacheTests.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = CleanedMicCacheTests.swift; sourceTree = "<group>"; };
@@ -1108,6 +1110,7 @@
 				F1A0011AA11D105E00000001 /* SourceAudioRecorder.swift */,
 				F1A0011AA11D105E00000101 /* MicEchoCanceller.swift */,
 				F1A0011AA11D105E00000201 /* AudioOutputRoute.swift */,
+				9C79B5FE92F04C2AACEAEC73 /* AACEncoderSettings.swift */,
 				F1A0011AA11D105E00000105 /* CleanedMicCache.swift */,
 				F1A0011AA11D105E00002001 /* RNNoiseEngine.swift */,
 				F1A0011AA11D105E00002003 /* AudioEnhancementPipeline.swift */,
@@ -1533,6 +1536,7 @@
 				F1A0011AA11D105E00000002 /* SourceAudioRecorder.swift in Sources */,
 				F1A0011AA11D105E00000102 /* MicEchoCanceller.swift in Sources */,
 				F1A0011AA11D105E00000202 /* AudioOutputRoute.swift in Sources */,
+				EB56CAFCD7AB46D59A45164F /* AACEncoderSettings.swift in Sources */,
 				F1A0011AA11D105E00000106 /* CleanedMicCache.swift in Sources */,
 				F1A0011AA11D105E00002002 /* RNNoiseEngine.swift in Sources */,
 				F1A0011AA11D105E00002004 /* AudioEnhancementPipeline.swift in Sources */,
