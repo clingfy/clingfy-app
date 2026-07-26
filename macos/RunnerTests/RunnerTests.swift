@@ -9448,3 +9448,115 @@ final class RecordingBundleHonestyTests: XCTestCase {
     XCTAssertNil(reloaded.capture.systemAudio, "system audio was never captured")
   }
 }
+
+/// The post-processing audio sidebar must gate its controls on what THIS
+/// RECORDING contains, not on whichever input device happens to be selected
+/// now.
+///
+/// Volume is a master fader over every track, so it stays live whenever there is
+/// any audio. Gain and loudness normalization act on the voice track only
+/// (LetterboxExporter bakes gain into the mic file), so they are inert without a
+/// decodable mic sidecar. macOS used to omit these keys entirely, which left
+/// Dart on `sceneHasAudio ?? deviceHasAudio` — the wrong question.
+final class AudioSceneGateTests: XCTestCase {
+  private var dir: URL!
+
+  override func setUpWithError() throws {
+    dir = FileManager.default.temporaryDirectory
+      .appendingPathComponent("clingfy_scenegate_\(UUID().uuidString)")
+    try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
+  }
+
+  override func tearDownWithError() throws {
+    if FileManager.default.fileExists(atPath: dir.path) {
+      try FileManager.default.removeItem(at: dir)
+    }
+  }
+
+  /// A real, decodable one-channel audio file — the probe checks decodability,
+  /// not mere existence, so a touched empty file would not do.
+  private func writeDecodableAudio(named name: String) throws -> String {
+    let url = dir.appendingPathComponent(name)
+    let settings: [String: Any] = [
+      AVFormatIDKey: kAudioFormatMPEG4AAC,
+      AVSampleRateKey: 44100.0,
+      AVNumberOfChannelsKey: 1,
+    ]
+    let writer = try AVAudioRecorder(url: url, settings: settings)
+    XCTAssertTrue(writer.record())
+    Thread.sleep(forTimeInterval: 0.25)
+    writer.stop()
+    return url.path
+  }
+
+  private func sources(mic: String?, system: String?) -> PreviewMediaSources {
+    PreviewMediaSources(
+      projectPath: dir.path,
+      screenPath: dir.appendingPathComponent("screen.mov").path,
+      cameraPath: nil,
+      metadataPath: nil,
+      cursorPath: nil,
+      zoomManualPath: nil,
+      micAudioPath: mic,
+      systemAudioPath: system
+    )
+  }
+
+  func testSystemAudioOnlyKeepsVolumeButDisablesGainAndLoudness() throws {
+    // The reported case: recorded with system audio as the only input.
+    let system = try writeDecodableAudio(named: "system.m4a")
+    let keys = ScreenRecorderFacade.audioSceneKeys(
+      mediaSources: sources(mic: nil, system: system))
+
+    XCTAssertEqual(keys["hasSystemAudio"] as? Bool, true, "Volume must stay live")
+    XCTAssertEqual(keys["hasMicAudio"] as? Bool, false)
+    XCTAssertEqual(
+      keys["micGainApplies"] as? Bool, false,
+      "gain and loudness are mic-only, so they must be inert here")
+  }
+
+  func testMicPresentEnablesGainRegardlessOfSystemAudio() throws {
+    let mic = try writeDecodableAudio(named: "mic.m4a")
+    let keys = ScreenRecorderFacade.audioSceneKeys(
+      mediaSources: sources(mic: mic, system: nil))
+
+    XCTAssertEqual(keys["hasMicAudio"] as? Bool, true)
+    XCTAssertEqual(keys["hasSystemAudio"] as? Bool, false)
+    XCTAssertEqual(keys["micGainApplies"] as? Bool, true)
+  }
+
+  func testBothSidecarsReportBoth() throws {
+    let mic = try writeDecodableAudio(named: "mic.m4a")
+    let system = try writeDecodableAudio(named: "system.m4a")
+    let keys = ScreenRecorderFacade.audioSceneKeys(
+      mediaSources: sources(mic: mic, system: system))
+
+    XCTAssertEqual(keys["hasMicAudio"] as? Bool, true)
+    XCTAssertEqual(keys["hasSystemAudio"] as? Bool, true)
+    XCTAssertEqual(keys["micGainApplies"] as? Bool, true)
+  }
+
+  func testLegacyBundleOmitsTheKeysRatherThanReportingNoAudio() throws {
+    // No sidecars: a legacy recording, or one whose audio is embedded in
+    // screen.mov. Its whole-track controls DO work, so reporting false/false
+    // would disable working sliders. Omitting leaves Dart on its fallback.
+    let keys = ScreenRecorderFacade.audioSceneKeys(
+      mediaSources: sources(mic: nil, system: nil))
+    XCTAssertTrue(keys.isEmpty)
+  }
+
+  func testAPresentButUndecodableSidecarDoesNotCount() throws {
+    // A zero-byte file left behind by a crashed capture must not enable a
+    // control that has nothing to act on.
+    let empty = dir.appendingPathComponent("mic.m4a")
+    try Data().write(to: empty)
+    let system = try writeDecodableAudio(named: "system.m4a")
+
+    let keys = ScreenRecorderFacade.audioSceneKeys(
+      mediaSources: sources(mic: empty.path, system: system))
+
+    XCTAssertEqual(keys["hasMicAudio"] as? Bool, false)
+    XCTAssertEqual(keys["micGainApplies"] as? Bool, false)
+    XCTAssertEqual(keys["hasSystemAudio"] as? Bool, true)
+  }
+}

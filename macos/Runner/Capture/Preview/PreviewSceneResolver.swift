@@ -423,6 +423,36 @@ extension ScreenRecorderFacade {
     return resolved
   }
 
+  /// The `hasMicAudio` / `hasSystemAudio` / `micGainApplies` triple for a
+  /// recording, or an empty map when neither sidecar is decodable.
+  ///
+  /// Returning nothing is deliberate rather than `false, false`: a legacy
+  /// recording (or one whose audio is embedded in `screen.mov` rather than split
+  /// into sidecars) genuinely has working whole-track controls, so reporting
+  /// "no audio" would disable sliders that work. Omitting the keys leaves Dart
+  /// on its device-selection fallback, which is the pre-existing behavior for
+  /// exactly those bundles. Mirrors the Windows router's shape.
+  ///
+  /// Split out from [getRecordingSceneInfo] so it is unit-testable without a
+  /// Flutter result channel.
+  nonisolated static func audioSceneKeys(mediaSources: PreviewMediaSources) -> [String: Any] {
+    func decodable(_ path: String?) -> Bool {
+      guard let path, !path.isEmpty else { return false }
+      return LetterboxExporter.readableAudioAsset(url: URL(fileURLWithPath: path)) != nil
+    }
+
+    let hasMic = decodable(mediaSources.micAudioPath)
+    let hasSystem = decodable(mediaSources.systemAudioPath)
+    guard hasMic || hasSystem else { return [:] }
+
+    return [
+      "hasMicAudio": hasMic,
+      "hasSystemAudio": hasSystem,
+      // Gain and loudness are mic-only, so they follow the mic sidecar alone.
+      "micGainApplies": hasMic,
+    ]
+  }
+
   func getRecordingSceneInfo(projectPath: String, result: @escaping FlutterResult) {
     guard let components = resolvePreviewSceneComponents(projectPath: projectPath) else {
       result(
@@ -451,6 +481,25 @@ extension ScreenRecorderFacade {
     }
     if let cameraParams {
       payload["camera"] = cameraCompositionParamsMap(cameraParams)
+    }
+
+    // What this RECORDING contains, audio-wise — reported so the post-processing
+    // sidebar can gate its controls on the recording instead of on whatever
+    // input device happens to be selected right now.
+    //
+    // Volume is a master fader over every track, so it stays live whenever the
+    // recording has any audio. Gain and loudness normalization act on the VOICE
+    // track only (LetterboxExporter.resolveSeparatedAudioControls bakes gain
+    // into the mic file), so they are inert without a decodable mic sidecar.
+    //
+    // macOS previously omitted these keys, leaving Dart on its legacy
+    // device-selection gate (`sceneHasAudio ?? deviceHasAudio`). That answered
+    // the wrong question: a recording made WITH a mic showed the gain slider
+    // disabled once the user later switched to "No microphone", and a
+    // system-audio-only recording showed it ENABLED once any mic was selected.
+    // Windows has reported these since Phase D8/D9 — this closes the parity gap.
+    for (key, value) in Self.audioSceneKeys(mediaSources: mediaSources) {
+      payload[key] = value
     }
 
     result(payload)
