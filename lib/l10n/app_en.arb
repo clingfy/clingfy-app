@@ -675,6 +675,7 @@
     }
   },
   "micInputIndicatorLowTooltip": "Mic input is very low. Raise input level or move closer to the mic.",
+  "recordingMicTooLowWarning": "Your mic is barely picking anything up. Raise the input level in System Settings › Sound › Input, or move closer — otherwise this recording will have no usable voice.",
   "noMicAudioFound": "No mic audio track found",
   "autoNormalizeOnExport": "Auto-normalize on export",
   "targetLoudness": "Target loudness",

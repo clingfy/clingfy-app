@@ -667,6 +667,79 @@ void main() {
     expect(find.text(l10n.recordingExcludeMicFromSystemAudio), findsOneWidget);
   });
 
+  group('mic input too low warning', () {
+    const warningKey = Key('mic_input_too_low_warning');
+
+    testWidgets('shows prominently, not only as a meter tooltip', (
+      tester,
+    ) async {
+      await tester.pumpWidget(
+        _buildSection(selectedAudioSourceId: 'mic-1', micInputTooLow: true),
+      );
+      await tester.pump();
+
+      expect(find.byKey(warningKey), findsOneWidget);
+      final notice = tester.widget<AppInlineNotice>(find.byKey(warningKey));
+      expect(notice.variant, AppInlineNoticeVariant.warning);
+      // The copy has to name the fix, not just the symptom — an unusable take
+      // is recoverable only before it is recorded.
+      expect(notice.message, contains('Input'));
+    });
+
+    testWidgets('absent when the level is healthy', (tester) async {
+      await tester.pumpWidget(_buildSection(selectedAudioSourceId: 'mic-1'));
+      await tester.pump();
+
+      expect(find.byKey(warningKey), findsNothing);
+    });
+
+    testWidgets('absent with no microphone selected', (tester) async {
+      // A too-low reading with no mic selected is meaningless, and
+      // "No microphone" is the first-run default.
+      await tester.pumpWidget(
+        _buildSection(selectedAudioSourceId: '__none__', micInputTooLow: true),
+      );
+      await tester.pump();
+
+      expect(find.byKey(warningKey), findsNothing);
+    });
+
+    testWidgets('still shown while recording, so a bad take can be cut short', (
+      tester,
+    ) async {
+      await tester.pumpWidget(
+        _buildSection(
+          selectedAudioSourceId: 'mic-1',
+          micInputTooLow: true,
+          isRecording: true,
+        ),
+      );
+      await tester.pump();
+
+      expect(find.byKey(warningKey), findsOneWidget);
+    });
+
+    testWidgets('coexists with the bleed warning', (tester) async {
+      // Both conditions are independent and can hold at once; neither may
+      // suppress the other.
+      await tester.pumpWidget(
+        _buildSection(
+          selectedAudioSourceId: 'mic-1',
+          systemAudioEnabled: true,
+          systemAudioBleedRisk: true,
+          micInputTooLow: true,
+        ),
+      );
+      await tester.pump();
+
+      expect(find.byKey(warningKey), findsOneWidget);
+      expect(
+        find.byKey(const Key('system_audio_bleed_warning')),
+        findsOneWidget,
+      );
+    });
+  });
+
   group('speaker bleed warning', () {
     const warningKey = Key('system_audio_bleed_warning');
 

@@ -3700,6 +3700,12 @@ abstract class AppLocalizations {
   /// **'Mic input is very low. Raise input level or move closer to the mic.'**
   String get micInputIndicatorLowTooltip;
 
+  /// No description provided for @recordingMicTooLowWarning.
+  ///
+  /// In en, this message translates to:
+  /// **'Your mic is barely picking anything up. Raise the input level in System Settings › Sound › Input, or move closer — otherwise this recording will have no usable voice.'**
+  String get recordingMicTooLowWarning;
+
   /// No description provided for @noMicAudioFound.
   ///
   /// In en, this message translates to:

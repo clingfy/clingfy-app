@@ -51,18 +51,11 @@ Deferred work captured during reviews. Each item has enough context to pick up c
 - **How (10 seconds per device):** connect the device, run `tools/audio/probe_audio_output_route.swift`, and add the row to that file's header table. Only extend `routeFromTerminalType` for codes actually observed — mapping from the USB spec alone is how a confident wrong answer gets shipped.
 - **Start at:** `macos/Runner/Capture/Audio/AudioOutputRoute.swift` (`routeFromTerminalType`), `macos/RunnerTests/RunnerTests.swift` (`testTerminalTypeResolvesRoutesTransportTypeCannot`).
 - **Effort:** human ~15min / CC ~10min once a row exists.
-### Surface the bleed warning on the native pre-recording bar
-- **What:** Show the speaker-bleed warning on the native pre-recording bar, not only in the Flutter recording sidebar.
-- **Why:** The pre-recording bar is the surface a user actually looks at immediately before hitting record. A warning that lives only in the sidebar is missed by anyone who set up once and now starts takes from the bar.
-- **Context:** Raised by the pre-landing review of the 2026-07-26 audio-honesty branch, severity low because the sidebar warning does exist and is correct. The bar is a separate native window (`macos/Runner/Overlays/PreRecordingBar/`), so this needs a state push over the existing pre-recording-bar feed rather than a Flutter widget.
+
+### Surface the pre-record audio warnings on the native pre-recording bar
+- **What:** Show the pre-record audio warnings — speaker bleed **and** mic-level-too-low — on the native pre-recording bar, not only in the Flutter recording sidebar.
+- **Why:** The pre-recording bar is the surface a user actually looks at immediately before hitting record. A warning that lives only in the sidebar is missed by anyone who set up once and now starts takes from the bar. Both conditions are only cheap to fix *before* the take, which is exactly when the bar is the active surface.
+- **Context:** Raised by the pre-landing review of the 2026-07-26 audio-honesty branch, severity low because the sidebar warnings do exist and are correct. Widened on 2026-07-26 when the mic-too-low notice landed with the same blind spot. The bar is a separate native window (`macos/Runner/Overlays/PreRecordingBar/`), so this needs a state push over the existing pre-recording-bar feed rather than a Flutter widget. Do both in one slice — the plumbing is shared and the second one is nearly free once the first exists.
 - **Start at:** `macos/Runner/Overlays/PreRecordingBar/PreRecordingBarController.swift`, and the bar state feed in `lib/app/home/home_actions.dart`.
 - **Effort:** human ~2h / CC ~20min.
 
-### Surface source-audio writer failures to the user
-- **What:** Emit a `recordingWarning` when a source-audio segment writer fails to start or is discarded with zero samples, instead of only logging it.
-- **Why:** A Bluetooth-headset recording on 2026-07-26 completed "successfully" with **no voice at all**. The only trace was two WARNING lines in `logs_2026-07-26.jsonl`; the UI said nothing, and an unrepeatable take was lost. The encoding cause is fixed (AAC bitrate now scales with the source rate), but the *silent* failure mode is untouched: any future unencodable format loses a take just as quietly.
-- **The path already exists.** `ScreenRecorderFacade.backendDidWarn(message:)` emits `recordingWarning` on macOS, `home_bindings.dart:78` already surfaces pending warnings, and `RecordingWarningCode` already defines `micOpenFailed` and `encoderAudioError`. What is missing is a route from `SourceAudioRecorder` (which owns the failure) out to the backend's `handler`.
-- **Shape:** give `SourceAudioRecorder` a warning callback, have `CaptureBackendScreenCaptureKit` (its owner, which already holds the handler) forward it to `backendDidWarn`, and localize natively as macOS warnings already do. Assert it end to end by forcing a writer failure with a deliberately unencodable format.
-- **Do not weaken it into a log line.** The whole point is that a lost take must be visible while the user can still re-record.
-- **Start at:** `macos/Runner/Capture/Audio/SourceAudioRecorder.swift` (the `Failed to start source audio writer` / `Discarding source audio segment` sites), `macos/Runner/Capture/Backends/CaptureBackendScreenCaptureKit.swift` (owner + handler), `macos/Runner/Capture/ScreenRecorderFacade.swift:2848` (`backendDidWarn`).
-- **Effort:** human ~3h / CC ~30min.

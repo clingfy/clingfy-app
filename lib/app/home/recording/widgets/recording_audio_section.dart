@@ -128,6 +128,21 @@ class RecordingAudioSection extends StatelessWidget {
                   ),
                 ),
               ),
+              // The meter icon already carries this in a tooltip, but a hover
+              // affordance does not stop someone recording a whole take into a
+              // mic that is 40 dB too quiet — the level is only recoverable
+              // BEFORE the take, so it warrants the same prominence as the
+              // bleed warning. Shown during recording too: stopping early and
+              // redoing beats discovering it in the preview.
+              if (_hasSelectedMicrophone && micInputTooLow) ...[
+                const SizedBox(height: AppSidebarTokens.rowGap),
+                AppInlineNotice(
+                  key: const Key('mic_input_too_low_warning'),
+                  message: l10n.recordingMicTooLowWarning,
+                  variant: AppInlineNoticeVariant.warning,
+                  icon: Icons.mic_none_outlined,
+                ),
+              ],
               const SizedBox(height: AppSidebarTokens.rowGap),
               AppToggleRow(
                 title: l10n.recordingSystemAudio,
