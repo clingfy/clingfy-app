@@ -1992,6 +1992,10 @@ class AppLocalizationsRo extends AppLocalizations {
       'Intrarea microfonului este foarte mică. Crește nivelul de intrare sau apropie-te de microfon.';
 
   @override
+  String get recordingMicTooLowWarning =>
+      'Microfonul aproape nu captează nimic. Crește nivelul de intrare în Setări sistem › Sunet › Intrare sau apropie-te — altfel înregistrarea nu va avea voce utilizabilă.';
+
+  @override
   String get noMicAudioFound => 'Nu s-a găsit nicio pistă audio de microfon';
 
   @override

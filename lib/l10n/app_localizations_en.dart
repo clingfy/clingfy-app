@@ -1973,6 +1973,10 @@ class AppLocalizationsEn extends AppLocalizations {
       'Mic input is very low. Raise input level or move closer to the mic.';
 
   @override
+  String get recordingMicTooLowWarning =>
+      'Your mic is barely picking anything up. Raise the input level in System Settings › Sound › Input, or move closer — otherwise this recording will have no usable voice.';
+
+  @override
   String get noMicAudioFound => 'No mic audio track found';
 
   @override

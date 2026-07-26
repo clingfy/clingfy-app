@@ -490,6 +490,23 @@ final class CaptureBackendScreenCaptureKit: NSObject, CaptureBackend {
   var onWarning: ((String) -> Void)?
   var onMicrophoneLevel: ((MicrophoneLevelSample) -> Void)?
 
+  /// A dead separated sidecar is silent otherwise: the recording keeps going,
+  /// `screen.mov` still carries the mixed track, and the loss only shows up in
+  /// the preview as a source you can no longer adjust independently. Naming
+  /// the surviving capability is the point — the take is not lost.
+  nonisolated static func sourceAudioFailureWarning(for kind: AudioSourceKind) -> String {
+    switch kind {
+    case .microphone:
+      return "Couldn’t record your microphone to its own track. "
+        + "The recording continues and your voice is still in the mixed audio, "
+        + "but mic-only adjustments won’t be available."
+    case .systemAudio:
+      return "Couldn’t record system audio to its own track. "
+        + "The recording continues and system sound is still in the mixed audio, "
+        + "but system-only adjustments won’t be available."
+    }
+  }
+
   var canPauseResume: Bool { true }
   var supportsLiveOverlayExclusionDuringSeparateCameraCapture: Bool { true }
   var isRecording: Bool { recordingURL != nil && didStart }
@@ -752,6 +769,11 @@ final class CaptureBackendScreenCaptureKit: NSObject, CaptureBackend {
         micEnabled: streamConfig.captureMicrophone,
         systemAudioEnabled: streamConfig.capturesAudio
       )
+      // Fires on a capture queue; `onWarning` is main-actor state.
+      sourceAudioRecorder.onSourceFailure = { [weak self] kind in
+        let message = Self.sourceAudioFailureWarning(for: kind)
+        Task { @MainActor in self?.onWarning?(message) }
+      }
       dbg_configuredSizePx = CGSize(width: streamConfig.width, height: streamConfig.height)
       currentCursorRasterScale = computeCursorRasterScale(
         baseRectPoints: baseRectPoints,
