@@ -62,12 +62,14 @@ Deferred work captured during reviews. Each item has enough context to pick up c
 - **Effort:** human ~3h / CC ~25min.
 
 ### Disambiguate Bluetooth and USB output routes
-- **What:** Distinguish a Bluetooth/USB *headset* from a Bluetooth/USB *speaker* when classifying the output route, instead of guessing by transport type.
-- **Why:** `AudioOutputRouteProbe.classify` maps Bluetooth to `headphones` and USB to `speakers`. Both guesses are wrong sometimes: a Bluetooth speaker gets no bleed warning (a missed real warning), and a USB headset gets one (a false warning that teaches the user to ignore it).
-- **Context:** Raised as a known limitation when the classification landed on 2026-07-26; both cases are commented at the switch. The transport type genuinely does not carry this information — the fix likely needs the device's `kAudioDevicePropertyDataSource` / source name, or a per-device user override remembered in prefs.
-- **Start at:** `macos/Runner/Capture/Audio/AudioOutputRoute.swift` (`classify`), and `macos/RunnerTests/RunnerTests.swift` (`testOutputRouteClassificationDrivesTheBleedWarning`).
-- **Effort:** human ~2h / CC ~20min.
-
+- **What:** Decide speakers-vs-headphones for Bluetooth and USB output devices, which `AudioOutputRouteProbe.classify` currently guesses (Bluetooth → `headphones`, USB → `unknown`).
+- **Why:** A Bluetooth *speaker* gets no bleed warning today (a missed warning ruins an unrepeatable take); a USB *headset* would get a false one (which teaches the user to ignore the real alarm).
+- **Update 2026-07-26 — the signal probably EXISTS, contrary to the original note.** `kAudioStreamPropertyTerminalType` on the device's output stream looks like the real disambiguator. The CoreAudio headers document four-char constants (`'spkr'` / `'hdph'`), but the built-in device actually reports **`0x301`** — the USB Audio Class numeric code for Speaker. USB-AC also defines **`0x302` = Headphones**. So the property carries the answer in a different encoding than the headers advertise, and any implementation must accept BOTH families.
+- **Blocked on real data, not on design.** Measured so far: `MacBook Pro Speakers` → transport `'bltn'`, dataSource `'ispk'`, terminalType `0x301`, 0 input streams. What AirPods, a Bluetooth speaker, a USB headset and USB desk speakers report is **unknown** — and those are the only cases that matter.
+- **How to unblock (10 seconds per device):** run `tools/audio/probe_audio_output_route.swift` with each device connected and record the output in that file's header table. Once the ambiguous cases are known, extend `classify` to prefer terminalType and fall back to the current transport + dataSource logic when it reports 0/unknown.
+- **Do NOT implement from the spec alone.** Mapping `0x302` → headphones without ever seeing a real headset report it would be a confident guess dressed as a fix, which is the exact failure mode this warning must avoid.
+- **Start at:** `macos/Runner/Capture/Audio/AudioOutputRoute.swift` (`classify`, and add a terminalType read next to `outputDataSource`), `macos/RunnerTests/RunnerTests.swift` (`AudioSceneGateTests` / the route tests).
+- **Effort:** human ~1h / CC ~15min once the device table is filled in.
 ### Surface the bleed warning on the native pre-recording bar
 - **What:** Show the speaker-bleed warning on the native pre-recording bar, not only in the Flutter recording sidebar.
 - **Why:** The pre-recording bar is the surface a user actually looks at immediately before hitting record. A warning that lives only in the sidebar is missed by anyone who set up once and now starts takes from the bar.
