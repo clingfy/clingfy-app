@@ -106,4 +106,46 @@ void main() {
       expect((pushes.last.arguments as Map)['enabled'], isFalse);
     },
   );
+
+  group('system audio default', () {
+    test('a fresh install records system audio', () async {
+      // Shipping this OFF meant a recording could silently omit system audio,
+      // and the omission was only discoverable by inspecting the bundle after
+      // the take was already gone. "Record my screen" implies recording what
+      // the screen plays.
+      SharedPreferences.setMockInitialValues({});
+      final controller = RecordingSettingsController(
+        nativeBridge: NativeBridge.instance,
+      );
+      addTearDown(controller.dispose);
+
+      expect(controller.systemAudioEnabled, isTrue, reason: 'before load');
+      await controller.loadPreferences(await SharedPreferences.getInstance());
+      expect(controller.systemAudioEnabled, isTrue, reason: 'after load');
+    });
+
+    test('an explicit opt-out is still honoured', () async {
+      // Flipping the default must not override a user who deliberately turned
+      // system audio off.
+      SharedPreferences.setMockInitialValues({'systemAudioEnabled': false});
+      final controller = RecordingSettingsController(
+        nativeBridge: NativeBridge.instance,
+      );
+      addTearDown(controller.dispose);
+
+      await controller.loadPreferences(await SharedPreferences.getInstance());
+      expect(controller.systemAudioEnabled, isFalse);
+    });
+
+    test('an explicit opt-in still reads back on', () async {
+      SharedPreferences.setMockInitialValues({'systemAudioEnabled': true});
+      final controller = RecordingSettingsController(
+        nativeBridge: NativeBridge.instance,
+      );
+      addTearDown(controller.dispose);
+
+      await controller.loadPreferences(await SharedPreferences.getInstance());
+      expect(controller.systemAudioEnabled, isTrue);
+    });
+  });
 }

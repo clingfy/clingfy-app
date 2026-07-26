@@ -9218,3 +9218,165 @@ final class ColorGradeGoldenDumpTests: XCTestCase {
     (v * 1_000_000).rounded() / 1_000_000
   }
 }
+
+/// The recording bundle must be able to describe itself.
+///
+/// A recording is unrepeatable: if it silently omits a source the user believed
+/// they were capturing, the only recourse is explaining what happened after the
+/// fact. That failed once because `project.json` declared a `capture/system.m4a`
+/// that was never written and `screen.meta.json` said nothing about audio at
+/// all, so answering "was system audio on?" meant correlating raw tracks
+/// against session logs.
+final class RecordingBundleHonestyTests: XCTestCase {
+  private var projectRoot: URL!
+
+  override func setUpWithError() throws {
+    projectRoot = FileManager.default.temporaryDirectory
+      .appendingPathComponent("clingfy_manifest_\(UUID().uuidString)")
+    try FileManager.default.createDirectory(
+      at: projectRoot.appendingPathComponent("capture"), withIntermediateDirectories: true)
+    try FileManager.default.createDirectory(
+      at: projectRoot.appendingPathComponent("derived"), withIntermediateDirectories: true)
+  }
+
+  override func tearDownWithError() throws {
+    if FileManager.default.fileExists(atPath: projectRoot.path) {
+      try FileManager.default.removeItem(at: projectRoot)
+    }
+  }
+
+  private func write(_ relativePath: String) throws {
+    try Data("x".utf8).write(to: projectRoot.appendingPathComponent(relativePath))
+  }
+
+  func testNewManifestDoesNotAdvertiseUncapturedSources() {
+    let manifest = RecordingProjectManifest.create(
+      projectId: "p", displayName: "d", includeCamera: false)
+
+    // Only the two guaranteed files are declared up front.
+    XCTAssertFalse(manifest.capture.screenVideo.isEmpty)
+    XCTAssertFalse(manifest.capture.screenMetadata.isEmpty)
+    XCTAssertNil(manifest.capture.micAudio)
+    XCTAssertNil(manifest.capture.systemAudio)
+    XCTAssertNil(manifest.capture.zoomManual)
+    XCTAssertNil(manifest.capture.cursorData)
+    XCTAssertNil(manifest.derived?.waveform)
+  }
+
+  func testReconcileDeclaresOnlyFilesThatExist() throws {
+    try write(RecordingProjectPaths.relativeMicAudioPath)
+    try write(RecordingProjectPaths.relativeCursorDataPath)
+
+    var manifest = RecordingProjectManifest.create(
+      projectId: "p", displayName: "d", includeCamera: false)
+    manifest.reconcileInventory(projectRoot: projectRoot)
+
+    XCTAssertEqual(manifest.capture.micAudio, RecordingProjectPaths.relativeMicAudioPath)
+    XCTAssertEqual(manifest.capture.cursorData, RecordingProjectPaths.relativeCursorDataPath)
+    // Recorded with system audio off: the slot must stay empty, not point at a
+    // file the user will go looking for.
+    XCTAssertNil(manifest.capture.systemAudio)
+    XCTAssertNil(manifest.capture.zoomManual)
+    XCTAssertNil(manifest.derived?.waveform)
+  }
+
+  func testReconcileDropsAStaleDeclarationWhenTheFileIsGone() throws {
+    var manifest = RecordingProjectManifest.create(
+      projectId: "p", displayName: "d", includeCamera: false)
+    try write(RecordingProjectPaths.relativeSystemAudioPath)
+    manifest.reconcileInventory(projectRoot: projectRoot)
+    XCTAssertEqual(manifest.capture.systemAudio, RecordingProjectPaths.relativeSystemAudioPath)
+
+    try FileManager.default.removeItem(
+      at: projectRoot.appendingPathComponent(RecordingProjectPaths.relativeSystemAudioPath))
+    manifest.reconcileInventory(projectRoot: projectRoot)
+
+    XCTAssertNil(
+      manifest.capture.systemAudio,
+      "reconcile must be self-correcting in both directions")
+  }
+
+  func testAudioCaptureInfoRoundTripsThroughMetadataJSON() throws {
+    let metadata = RecordingMetadata.create(
+      screenRawRelativePath: "capture/screen.mov",
+      displayMode: .explicitID,
+      displayID: 1,
+      cropRect: nil,
+      frameRate: 30,
+      quality: .fhd,
+      cursorEnabled: false,
+      cursorLinked: true,
+      windowID: nil,
+      excludedRecorderApp: false,
+      camera: nil,
+      audio: RecordingMetadata.AudioCaptureInfo(
+        micEnabled: true,
+        micDeviceId: "BuiltInMicrophoneDevice",
+        systemAudioEnabled: false,
+        excludedMicFromSystemAudio: false,
+        echoCancellationEnabled: false,
+        outputRoute: AudioOutputRoute.speakers.rawValue
+      ),
+      editorSeed: makeBasicEditorSeed()
+    )
+
+    let url = projectRoot.appendingPathComponent("screen.meta.json")
+    try metadata.write(to: url)
+    let decoded = try RecordingMetadata.read(from: url)
+
+    // This is the assertion that would have answered the original question in
+    // one command instead of an hour.
+    XCTAssertEqual(decoded.audio?.systemAudioEnabled, false)
+    XCTAssertEqual(decoded.audio?.micEnabled, true)
+    XCTAssertEqual(decoded.audio?.outputRoute, "speakers")
+  }
+
+  func testMetadataWithoutAudioBlockStillDecodes() throws {
+    // Bundles recorded before the audio block existed must keep opening.
+    // JSONEncoder omits nil optionals, so encoding with `audio: nil` produces
+    // exactly the on-disk shape those older recordings have.
+    let metadata = RecordingMetadata.create(
+      screenRawRelativePath: "capture/screen.mov",
+      displayMode: .explicitID,
+      displayID: 1,
+      cropRect: nil,
+      frameRate: 30,
+      quality: .fhd,
+      cursorEnabled: false,
+      cursorLinked: true,
+      windowID: nil,
+      excludedRecorderApp: false,
+      camera: nil,
+      audio: nil,
+      editorSeed: makeBasicEditorSeed()
+    )
+    let url = projectRoot.appendingPathComponent("legacy.meta.json")
+    try metadata.write(to: url)
+
+    let raw = try String(contentsOf: url, encoding: .utf8)
+    XCTAssertFalse(raw.contains("\"audio\""), "nil audio must not be written at all")
+
+    let decoded = try RecordingMetadata.read(from: url)
+    XCTAssertNil(decoded.audio)
+    XCTAssertEqual(decoded.screen.frameRate, 30)
+  }
+
+  func testOutputRouteClassificationDrivesTheBleedWarning() {
+    // Built-in output is the laptop speakers: the one route that lets system
+    // audio reach the microphone through the air.
+    XCTAssertEqual(
+      AudioOutputRouteProbe.classify(transportType: kAudioDeviceTransportTypeBuiltIn), .speakers)
+    XCTAssertTrue(AudioOutputRoute.speakers.bleedsIntoMicrophone)
+
+    XCTAssertEqual(
+      AudioOutputRouteProbe.classify(transportType: kAudioDeviceTransportTypeBluetooth),
+      .headphones)
+    XCTAssertFalse(AudioOutputRoute.headphones.bleedsIntoMicrophone)
+
+    XCTAssertEqual(
+      AudioOutputRouteProbe.classify(transportType: kAudioDeviceTransportTypeHDMI), .speakers)
+    XCTAssertEqual(
+      AudioOutputRouteProbe.classify(transportType: kAudioDeviceTransportTypeAggregate), .unknown)
+    XCTAssertFalse(AudioOutputRoute.unknown.bleedsIntoMicrophone)
+  }
+}

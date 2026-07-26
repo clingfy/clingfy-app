@@ -17,7 +17,13 @@ class RecordingSettingsController extends ChangeNotifier {
       'micEchoCancellationEnabled';
 
   bool _excludeRecorderAppFromCapture = false;
-  bool _systemAudioEnabled = false;
+  // Defaults ON: "record my screen" implies recording what the screen plays.
+  // Shipping this off meant a recording could silently omit system audio, and
+  // the omission was only discoverable by inspecting the project bundle after
+  // the fact — by which point the take is gone. Speaker users are warned
+  // instead (see [RecordingController.systemAudioBleedRisk]), because the
+  // speaker -> mic bleed path is the real hazard, not system audio itself.
+  bool _systemAudioEnabled = true;
   bool _excludeMicFromSystemAudio = true;
   bool _micEchoCancellationEnabled = false;
   bool _autoStopEnabled = false;
@@ -68,7 +74,7 @@ class RecordingSettingsController extends ChangeNotifier {
       Log.e('Settings', 'Failed to sync excludeRecorderApp to native', e, st);
     }
 
-    _systemAudioEnabled = prefs.getBool('systemAudioEnabled') ?? false;
+    _systemAudioEnabled = prefs.getBool('systemAudioEnabled') ?? true;
 
     _excludeMicFromSystemAudio =
         prefs.getBool(_prefExcludeMicFromSystemAudio) ?? true;
