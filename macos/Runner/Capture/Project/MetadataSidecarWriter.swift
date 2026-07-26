@@ -47,6 +47,9 @@ enum MetadataSidecarWriter {
       return
     }
 
+    // Re-stat the bundle on every status transition so the manifest describes
+    // what was actually captured, not what the project skeleton hoped for.
+    manifest.reconcileInventory(projectRoot: projectRoot)
     manifest.updateStatus(status)
     do {
       try manifest.write(to: manifestURL)

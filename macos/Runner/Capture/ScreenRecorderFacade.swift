@@ -497,7 +497,28 @@ final class ScreenRecorderFacade: NSObject {
           shouldRecordSeparateCameraAsset: context.shouldRecordSeparateCameraAsset,
           videoDeviceId: context.videoDeviceId,
           overlayMirror: context.overlayMirror,
-          editorSeed: editorSeed(for: target)
+          editorSeed: editorSeed(for: target),
+          // Stamp the audio decision into the bundle. A recording that omits a
+          // source the user believed they were capturing is unrepeatable, so
+          // the finished project has to be able to explain itself.
+          audio: RecordingMetadata.AudioCaptureInfo(
+            // The EFFECTIVE mic state, not the request flag. disableMicrophone
+            // is only set from missing permission, so it stays false when the
+            // user picks "No microphone" (the first-run default) or when a
+            // selected device has been unplugged — in both cases no mic.m4a is
+            // written. Stamping the request flag would make the bundle claim a
+            // mic track it does not have, which defeats the whole point of
+            // recording the audio decision.
+            micEnabled: effectiveMicCaptureEnabled(
+              audioDeviceID: context.audioDeviceId,
+              disableMicrophone: context.request.disableMicrophone
+            ),
+            micDeviceId: context.audioDeviceId,
+            systemAudioEnabled: systemAudioEnabled,
+            excludedMicFromSystemAudio: prefs.excludeMicFromSystemAudio,
+            echoCancellationEnabled: prefs.micEchoCancellationEnabled,
+            outputRoute: AudioOutputRouteProbe.current().rawValue
+          )
         ),
         projectService: recordingProjectService,
         cameraCoordination: cameraCoordination,
@@ -843,6 +864,25 @@ final class ScreenRecorderFacade: NSObject {
     }
     result(devs)
   }
+  /// Whether this take will actually record a microphone track.
+  ///
+  /// Mirrors `CaptureStartConfigBuilder.resolveAudioDevice`, which is the real
+  /// predicate the capture path uses: a nil/empty/"__none__" device id, or an id
+  /// that no longer resolves to hardware, means no mic is captured even though
+  /// `disableMicrophone` is false.
+  func effectiveMicCaptureEnabled(audioDeviceID: String?, disableMicrophone: Bool) -> Bool {
+    CaptureStartConfigBuilder().resolveAudioDevice(
+      audioDeviceID: audioDeviceID,
+      disableMicrophone: disableMicrophone
+    ) != nil
+  }
+
+  /// The current default output device, classified by whether it can
+  /// acoustically feed the microphone. Drives the pre-recording bleed warning.
+  func getAudioOutputRoute(result: @escaping FlutterResult) {
+    result(["route": AudioOutputRouteProbe.current().rawValue])
+  }
+
   func setAudioSource(id: String?, result: @escaping FlutterResult) {
     if let id, !id.isEmpty && id != "__none__" {
       guard AVCaptureDevice(uniqueID: id) != nil else {

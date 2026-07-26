@@ -688,6 +688,7 @@
   "exportDiagnostics": "تصدير بيانات التشخيص",
   "diagnosticsExported": "تم إنشاء حزمة التشخيص وإظهارها في مدير الملفات.",
   "recordingSystemAudio": "صوت النظام",
+  "recordingSystemAudioBleedWarning": "صوت النظام يُشغَّل عبر مكبرات الصوت، لذا سيلتقطه الميكروفون مرة أخرى كصدى. استخدم سماعات الرأس للحصول على تسجيل نظيف.",
   "recordingExcludeMicFromSystemAudio": "استبعاد الميكروفون الخاص بي من صوت النظام",
   "recordingMicEchoCancellation": "إزالة صدى السماعات من الميكروفون",
   "recordingMicEchoCancellationHelp": "تجريبي: يرشّح تسرب صوت النظام إلى الميكروفون أثناء توقفات الكلام. قد يؤثر على جودة الصوت في بعض التسجيلات.",

@@ -688,6 +688,7 @@
   "exportDiagnostics": "Exportă diagnosticele",
   "diagnosticsExported": "Pachetul de diagnostic a fost creat și afișat în managerul de fișiere.",
   "recordingSystemAudio": "Audio de sistem",
+  "recordingSystemAudioBleedWarning": "Sunetul sistemului se redă prin difuzoare, deci microfonul îl va capta din nou ca ecou. Folosește căști pentru o înregistrare curată.",
   "recordingExcludeMicFromSystemAudio": "Exclude microfonul meu din audio de sistem",
   "recordingMicEchoCancellation": "Elimină ecoul difuzoarelor din microfon",
   "recordingMicEchoCancellationHelp": "Experimental: filtrează sunetul de sistem scurs în microfon în pauzele de vorbire. Poate afecta calitatea vocii în unele înregistrări.",

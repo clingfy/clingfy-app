@@ -77,6 +77,8 @@ class RecordingSidebarContainer extends StatelessWidget {
           onAudioSourceChanged: device.setAudioSource,
           onRefreshAudio: device.reloadAudioSources,
           systemAudioEnabled: settingsController.recording.systemAudioEnabled,
+          systemAudioBleedRisk:
+              settingsController.recording.systemAudioBleedRisk,
           onSystemAudioEnabledChanged:
               settingsController.recording.updateSystemAudioEnabled,
           excludeMicFromSystemAudio:

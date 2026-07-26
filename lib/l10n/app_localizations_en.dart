@@ -2062,6 +2062,10 @@ class AppLocalizationsEn extends AppLocalizations {
   String get recordingSystemAudio => 'System audio';
 
   @override
+  String get recordingSystemAudioBleedWarning =>
+      'System audio is playing through speakers, so your mic will pick it up again as an echo. Use headphones for a clean recording.';
+
+  @override
   String get recordingExcludeMicFromSystemAudio =>
       'Exclude my mic from system audio';
 

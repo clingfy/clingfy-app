@@ -4,6 +4,7 @@ import 'package:flutter/services.dart';
 import 'package:clingfy/core/bridges/native_method_channel.dart';
 import 'package:clingfy/core/logging/logger_service.dart';
 import 'package:clingfy/core/models/app_models.dart';
+import 'package:clingfy/core/recording/models/audio_output_route.dart';
 import 'package:clingfy/core/timeline/model/color_grade.dart';
 import 'package:clingfy/core/timeline/model/edit_track.dart';
 import 'package:clingfy/core/models/startup_recovery_report.dart';
@@ -397,6 +398,34 @@ class NativeBridge {
       'gain': gainDb,
       'volume': volumePercent,
     });
+  }
+
+  /// The current default audio-output route.
+  ///
+  /// Only [AudioOutputRoute.speakers] can carry system audio back into the
+  /// microphone through the air, which is what turns a system-audio recording
+  /// into a doubled, delayed soundtrack. The recording UI uses this to warn
+  /// before a take rather than after it.
+  ///
+  /// Never throws: a native build without the method, an unrecognized route
+  /// string, or any other failure resolves to [AudioOutputRoute.unknown], which
+  /// shows no warning. A missing warning is a smaller harm than a false one.
+  Future<AudioOutputRoute> getAudioOutputRoute() async {
+    try {
+      final reply = await _nativeBridge.invokeMethod<Map<dynamic, dynamic>>(
+        NativeMethod.getAudioOutputRoute,
+      );
+      return AudioOutputRoute.fromName(reply?['route'] as String?);
+    } on MissingPluginException {
+      Log.d(
+        'NativeBridge',
+        'getAudioOutputRoute is not implemented by this native build',
+      );
+      return AudioOutputRoute.unknown;
+    } catch (e, st) {
+      Log.w('NativeBridge', 'getAudioOutputRoute failed: $e', e, st);
+      return AudioOutputRoute.unknown;
+    }
   }
 
   /// Pushes the mic noise-reduction setting to the open preview.

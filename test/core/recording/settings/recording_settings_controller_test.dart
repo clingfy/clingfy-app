@@ -1,5 +1,6 @@
 import 'package:clingfy/core/bridges/native_bridge.dart';
 import 'package:clingfy/core/bridges/native_method_channel.dart';
+import 'package:clingfy/core/recording/models/audio_output_route.dart';
 import 'package:clingfy/core/recording/settings/recording_settings_controller.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_test/flutter_test.dart';
@@ -13,9 +14,11 @@ void main() {
       TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger;
 
   late List<MethodCall> calls;
+  late String outputRoute;
 
   setUp(() {
     calls = <MethodCall>[];
+    outputRoute = 'headphones';
     messenger.setMockMethodCallHandler(channel, (call) async {
       calls.add(call);
       switch (call.method) {
@@ -23,6 +26,8 @@ void main() {
           return false;
         case 'getExcludeMicFromSystemAudio':
           return true;
+        case 'getAudioOutputRoute':
+          return {'route': outputRoute};
         default:
           return null;
       }
@@ -106,4 +111,155 @@ void main() {
       expect((pushes.last.arguments as Map)['enabled'], isFalse);
     },
   );
+
+  group('system audio default', () {
+    test('a fresh install records system audio', () async {
+      // Shipping this OFF meant a recording could silently omit system audio,
+      // and the omission was only discoverable by inspecting the bundle after
+      // the take was already gone. "Record my screen" implies recording what
+      // the screen plays.
+      SharedPreferences.setMockInitialValues({});
+      final controller = RecordingSettingsController(
+        nativeBridge: NativeBridge.instance,
+      );
+      addTearDown(controller.dispose);
+
+      expect(controller.systemAudioEnabled, isTrue, reason: 'before load');
+      await controller.loadPreferences(await SharedPreferences.getInstance());
+      expect(controller.systemAudioEnabled, isTrue, reason: 'after load');
+    });
+
+    test('an explicit opt-out is still honoured', () async {
+      // Flipping the default must not override a user who deliberately turned
+      // system audio off.
+      SharedPreferences.setMockInitialValues({'systemAudioEnabled': false});
+      final controller = RecordingSettingsController(
+        nativeBridge: NativeBridge.instance,
+      );
+      addTearDown(controller.dispose);
+
+      await controller.loadPreferences(await SharedPreferences.getInstance());
+      expect(controller.systemAudioEnabled, isFalse);
+    });
+
+    test('an explicit opt-in still reads back on', () async {
+      SharedPreferences.setMockInitialValues({'systemAudioEnabled': true});
+      final controller = RecordingSettingsController(
+        nativeBridge: NativeBridge.instance,
+      );
+      addTearDown(controller.dispose);
+
+      await controller.loadPreferences(await SharedPreferences.getInstance());
+      expect(controller.systemAudioEnabled, isTrue);
+    });
+  });
+
+  group('speaker bleed warning', () {
+    test('warns when system audio is on and output is speakers', () async {
+      outputRoute = 'speakers';
+      SharedPreferences.setMockInitialValues({});
+      final controller = RecordingSettingsController(
+        nativeBridge: NativeBridge.instance,
+      );
+      addTearDown(controller.dispose);
+
+      await controller.loadPreferences(await SharedPreferences.getInstance());
+      await controller.refreshAudioOutputRoute();
+
+      expect(controller.systemAudioEnabled, isTrue);
+      expect(controller.audioOutputRoute, AudioOutputRoute.speakers);
+      expect(controller.systemAudioBleedRisk, isTrue);
+    });
+
+    test('stays quiet on headphones', () async {
+      outputRoute = 'headphones';
+      SharedPreferences.setMockInitialValues({});
+      final controller = RecordingSettingsController(
+        nativeBridge: NativeBridge.instance,
+      );
+      addTearDown(controller.dispose);
+
+      await controller.loadPreferences(await SharedPreferences.getInstance());
+      await controller.refreshAudioOutputRoute();
+
+      expect(controller.systemAudioBleedRisk, isFalse);
+    });
+
+    test('stays quiet when system audio is off, even on speakers', () async {
+      // No system audio means nothing for the mic to pick up twice.
+      outputRoute = 'speakers';
+      SharedPreferences.setMockInitialValues({'systemAudioEnabled': false});
+      final controller = RecordingSettingsController(
+        nativeBridge: NativeBridge.instance,
+      );
+      addTearDown(controller.dispose);
+
+      await controller.loadPreferences(await SharedPreferences.getInstance());
+      await controller.refreshAudioOutputRoute();
+
+      expect(controller.audioOutputRoute, AudioOutputRoute.speakers);
+      expect(controller.systemAudioBleedRisk, isFalse);
+    });
+
+    test('an unrecognized route never warns', () async {
+      // A native build reporting something we do not understand must not
+      // produce a false alarm — that trains the user to ignore the real one.
+      outputRoute = 'teleporter';
+      SharedPreferences.setMockInitialValues({});
+      final controller = RecordingSettingsController(
+        nativeBridge: NativeBridge.instance,
+      );
+      addTearDown(controller.dispose);
+
+      await controller.loadPreferences(await SharedPreferences.getInstance());
+      await controller.refreshAudioOutputRoute();
+
+      expect(controller.audioOutputRoute, AudioOutputRoute.unknown);
+      expect(controller.systemAudioBleedRisk, isFalse);
+    });
+
+    test(
+      'loadPreferences probes the route without an explicit refresh',
+      () async {
+        // The startup probe is what makes the warning correct on the first take.
+        // Deleting it must fail a test.
+        outputRoute = 'speakers';
+        SharedPreferences.setMockInitialValues({});
+        final controller = RecordingSettingsController(
+          nativeBridge: NativeBridge.instance,
+        );
+        addTearDown(controller.dispose);
+
+        await controller.loadPreferences(await SharedPreferences.getInstance());
+        // The probe is fire-and-forget; let it land.
+        await Future<void>.delayed(const Duration(milliseconds: 10));
+
+        expect(controller.audioOutputRoute, AudioOutputRoute.speakers);
+        expect(controller.systemAudioBleedRisk, isTrue);
+        expect(calls.map((c) => c.method), contains('getAudioOutputRoute'));
+      },
+    );
+
+    test('a route change notifies exactly once', () async {
+      outputRoute = 'headphones';
+      SharedPreferences.setMockInitialValues({});
+      final controller = RecordingSettingsController(
+        nativeBridge: NativeBridge.instance,
+      );
+      addTearDown(controller.dispose);
+      await controller.loadPreferences(await SharedPreferences.getInstance());
+      await controller.refreshAudioOutputRoute();
+
+      var notifications = 0;
+      controller.addListener(() => notifications++);
+
+      outputRoute = 'speakers';
+      await controller.refreshAudioOutputRoute();
+      expect(notifications, 1);
+
+      // Same route again is a no-op.
+      await controller.refreshAudioOutputRoute();
+      expect(notifications, 1);
+    });
+  });
 }
