@@ -1798,6 +1798,12 @@ abstract class AppLocalizations {
   /// **'Clips'**
   String get clips;
 
+  /// No description provided for @color.
+  ///
+  /// In en, this message translates to:
+  /// **'Color'**
+  String get color;
+
   /// No description provided for @clipSplit.
   ///
   /// In en, this message translates to:

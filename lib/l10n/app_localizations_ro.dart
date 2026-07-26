@@ -916,6 +916,9 @@ class AppLocalizationsRo extends AppLocalizations {
   String get clips => 'Clipuri';
 
   @override
+  String get color => 'Culoare';
+
+  @override
   String get clipSplit => 'Împarte';
 
   @override

@@ -772,6 +772,39 @@ void main() {
     expect(find.byKey(const Key('timeline_color_redo_button')), findsOneWidget);
   });
 
+  testWidgets('each history pair names its edit track', (tester) async {
+    // The reason this widget was extracted. Driving the live app showed three
+    // visually identical arrow pairs in one row, distinguishable only by hover
+    // tooltip — you could not tell which pair undid which edit at a glance.
+    final editor = await _createEditor(tester);
+    final clipEditor = _makeClipEditor();
+    final player = _FakePlayerController(
+      editor: editor,
+      clipEditor: clipEditor,
+    );
+    addTearDown(player.dispose);
+    addTearDown(clipEditor.dispose);
+    final post = _buildPostController();
+
+    await tester.pumpWidget(_buildTimeline(player: player, post: post));
+    await tester.pump();
+
+    final l10n = _l10n(tester);
+    final header = find.byKey(const Key('timeline_header_bar'));
+
+    // One label per group, each sitting inside the header bar.
+    for (final label in [l10n.zoom, l10n.clips, l10n.color]) {
+      expect(
+        find.descendant(of: header, matching: find.text(label)),
+        findsOneWidget,
+        reason: 'history group "$label" must be named',
+      );
+    }
+
+    // And they must be distinct strings, or naming them buys nothing.
+    expect({l10n.zoom, l10n.clips, l10n.color}, hasLength(3));
+  });
+
   testWidgets('color undo is inert while an export runs', (tester) async {
     final editor = await _createEditor(tester);
     final player = _FakePlayerController(editor: editor);

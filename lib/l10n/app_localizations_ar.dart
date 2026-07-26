@@ -901,6 +901,9 @@ class AppLocalizationsAr extends AppLocalizations {
   String get clips => 'المقاطع';
 
   @override
+  String get color => 'الألوان';
+
+  @override
   String get clipSplit => 'تقسيم';
 
   @override
