@@ -41,6 +41,7 @@ add_executable(runner_tests
   "canvas_composition_test.cpp"
   "background_image_cache_test.cpp"
   "abstract_waves_params_test.cpp"
+  "abstract_waves_renderer_test.cpp"
   "pre_recording_bar_placement_test.cpp"
   "argv_project_path_test.cpp"
   "camera_bubble_border_pixel_test.cpp"
