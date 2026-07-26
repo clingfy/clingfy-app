@@ -212,14 +212,49 @@ class PostProcessingController extends ChangeNotifier {
     applyProcessing();
   }
 
+  /// Pushes the canvas framing to the live preview.
+  ///
+  /// Every canvas mutator routes through here. Before this existed,
+  /// [setPadding] and [setRadius] only called `notifyListeners()` while the
+  /// three background setters also called [applyProcessing] — so once the
+  /// preview started drawing the canvas, two of the five controls would have
+  /// looked dead. One helper keeps the next canvas control correct by default
+  /// instead of correct by memory.
+  ///
+  /// `padding` and `cornerRadius` are export-output pixels; native normalises
+  /// them against the export canvas it resolves from the layout and resolution
+  /// presets, so the preview's smaller surface shows proportionally identical
+  /// framing rather than ~3x thicker padding at 4K. See
+  /// `windows/runner/Core/canvas_composition.h`.
+  void _pushCanvas() {
+    final sessionId = _activeSessionId;
+    if (sessionId == null) return;
+    // Best-effort: a stale session is dropped native-side, and a preview that
+    // is not open simply has nothing to repaint.
+    unawaited(
+      _nativeBridge
+          .previewSetCanvas(
+            padding: _videoPadding,
+            cornerRadius: _videoRadius,
+            backgroundColor: _backgroundColor,
+            layoutPreset: _settings.post.layoutPreset.name,
+            resolutionPreset: _settings.post.resolutionPreset.name,
+            sessionId: sessionId,
+          )
+          .catchError((Object _) {}),
+    );
+  }
+
   void setPadding(double v) {
     _videoPadding = v;
     notifyListeners();
+    _pushCanvas();
   }
 
   void setRadius(double v) {
     _videoRadius = v;
     notifyListeners();
+    _pushCanvas();
   }
 
   void setBackgroundColor(int? v) {
@@ -228,6 +263,7 @@ class PostProcessingController extends ChangeNotifier {
     _backgroundPreset = null;
     _backgroundKind = BackgroundKind.color;
     notifyListeners();
+    _pushCanvas();
     applyProcessing();
   }
 
@@ -239,6 +275,7 @@ class PostProcessingController extends ChangeNotifier {
         ? BackgroundKind.image
         : BackgroundKind.color;
     notifyListeners();
+    _pushCanvas();
     applyProcessing();
   }
 
@@ -248,6 +285,7 @@ class PostProcessingController extends ChangeNotifier {
     _backgroundImagePath = null;
     _backgroundKind = BackgroundKind.preset;
     notifyListeners();
+    _pushCanvas();
     applyProcessing();
   }
 

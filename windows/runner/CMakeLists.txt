@@ -63,6 +63,7 @@ add_library(runner_bridge STATIC
   "Bridge/player_event_publisher.cpp"
   "Bridge/project_open_coordinator.cpp"
   "Bridge/workflow_event_publisher.cpp"
+  "Core/canvas_composition.cpp"
   "Core/argv_project_path.cpp"
   "Core/single_instance.cpp"
   "Audio/audio_format.cpp"
