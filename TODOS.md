@@ -34,3 +34,21 @@ Deferred work captured during reviews. Each item has enough context to pick up c
 - **Start at:** `windows/runner/Bridge/Routers/preview_router.cpp` (`ReadCameraComposition`), `windows/runner/Bridge/Routers/export_router.cpp` (`HandleProcessVideo` camera block); model on `Bridge/Routers/color_grade_args.{h,cpp}` once PR-2a lands.
 - **Depends on:** PR-2a (color_grade_args establishes the pattern).
 - **Effort:** human ~2h / CC ~15min.
+
+## Editor — timeline chrome
+
+### Extract a shared undo/redo button pair in TimelineHeaderBar
+- **What:** Replace the three near-verbatim undo/redo blocks in `timeline_header_bar.dart` (zoom, clips, color) with one private `_HistoryButtonPair` widget plus a `_sectionDivider(theme)` helper, and collapse the three parallel `show*/canUndo*/canRedo*/onUndo*/onRedo*` parameter families into a `List<TimelineHistoryGroup>`.
+- **Why:** The constructor reached 24 parameters when the color pair landed, and the enabled/disabled `onSurface` alpha ternary (0.85 / 0.35) is now spelled out six times. A fourth undoable track costs five more fields plus another copy-pasted block.
+- **Context:** Raised by the maintainability specialist in the 2026-07-26 ship review of the color-grade undo/redo wiring (confidence 8/10 and 7/10). Deferred because it is a >20-line refactor touching the zoom and clip groups, which are outside that branch's scope — the Fix-First heuristic classes it as ASK, not auto-fix.
+- **Pros:** Adding a track becomes one list entry; the alpha constants live in one place; the widget has exactly one call site so the flat parameter list buys nothing today.
+- **Cons:** Pure refactor, no user-visible change; touches the zoom and clip affordances, so it needs the existing `video_timeline_test.dart` groups green to prove nothing regressed.
+- **Start at:** `lib/app/home/preview/widgets/timeline/timeline_header_bar.dart` (the three groups and the constructor), `lib/app/home/preview/widgets/video_timeline.dart` (the single call site).
+- **Effort:** human ~1h / CC ~10min.
+
+### Preview-open scene-load window is untested for color edits
+- **What:** Pin what happens when a color edit is committed between `attachToRecording` and the async scene load landing.
+- **Why:** `_loadCanvasAppearance` clears the color undo session when it restores saved state, so an edit made inside that window has its grade replaced and its history dropped. The invariant (no history entry survives pointing at a pre-restore grade) holds, but the edit is silently lost and nothing asserts either half.
+- **Context:** Raised by the coverage audit and the testing specialist in the 2026-07-26 ship review. A first attempt at the test was dropped as flaky: the outcome depends on whether the edit's fire-and-forget `editor_state.json` write beats the restore's read, which is real-I/O timing.
+- **Start at:** `lib/app/home/post_processing/post_processing_controller.dart` (`_loadCanvasAppearance`, `attachToRecording`), `test/app/home/post_processing/color_grade_undo_redo_test.dart`. A deterministic version needs the `getRecordingSceneInfo` mock gated on a `Completer` so the test controls when the restore runs.
+- **Effort:** human ~1h / CC ~10min.
