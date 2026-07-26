@@ -6,6 +6,7 @@ import 'package:clingfy/ui/platform/widgets/app_settings_group.dart';
 import 'package:clingfy/ui/platform/widgets/app_toggle_row.dart';
 import 'package:clingfy/ui/platform/widgets/platform_dropdown.dart';
 import 'package:flutter/material.dart';
+import 'package:clingfy/ui/platform/widgets/app_inline_notice.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:macos_ui/macos_ui.dart';
 import 'package:clingfy/ui/platform/platform_kind.dart';
@@ -16,6 +17,7 @@ Widget _buildSection({
   bool isRecording = false,
   bool loadingAudio = false,
   bool systemAudioEnabled = false,
+  bool systemAudioBleedRisk = false,
   bool excludeMicFromSystemAudio = false,
   bool micEchoCancellationEnabled = false,
   ValueChanged<bool>? onMicEchoCancellationEnabledChanged,
@@ -43,6 +45,7 @@ Widget _buildSection({
               selectedAudioSourceId: selectedAudioSourceId,
               loadingAudio: loadingAudio,
               systemAudioEnabled: systemAudioEnabled,
+              systemAudioBleedRisk: systemAudioBleedRisk,
               excludeMicFromSystemAudio: excludeMicFromSystemAudio,
               micEchoCancellationEnabled: micEchoCancellationEnabled,
               micInputLevelLinear: micInputLevelLinear,
@@ -662,5 +665,45 @@ void main() {
     );
 
     expect(find.text(l10n.recordingExcludeMicFromSystemAudio), findsOneWidget);
+  });
+
+  group('speaker bleed warning', () {
+    const warningKey = Key('system_audio_bleed_warning');
+
+    testWidgets('shows under the system-audio toggle when at risk', (
+      tester,
+    ) async {
+      await tester.pumpWidget(
+        _buildSection(
+          selectedAudioSourceId: 'mic-1',
+          systemAudioEnabled: true,
+          systemAudioBleedRisk: true,
+        ),
+      );
+      await tester.pump();
+
+      expect(find.byKey(warningKey), findsOneWidget);
+      final notice = tester.widget<AppInlineNotice>(find.byKey(warningKey));
+      expect(notice.variant, AppInlineNoticeVariant.warning);
+      expect(notice.message, contains('headphones'));
+    });
+
+    testWidgets('absent when the output route is safe', (tester) async {
+      await tester.pumpWidget(
+        _buildSection(selectedAudioSourceId: 'mic-1', systemAudioEnabled: true),
+      );
+      await tester.pump();
+
+      expect(find.byKey(warningKey), findsNothing);
+    });
+
+    testWidgets('absent when system audio is off', (tester) async {
+      // Nothing plays out loud that the mic could double, so no warning even if
+      // the caller somehow passes the risk flag.
+      await tester.pumpWidget(_buildSection(selectedAudioSourceId: 'mic-1'));
+      await tester.pump();
+
+      expect(find.byKey(warningKey), findsNothing);
+    });
   });
 }

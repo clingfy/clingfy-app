@@ -2044,6 +2044,10 @@ class AppLocalizationsAr extends AppLocalizations {
   String get recordingSystemAudio => 'صوت النظام';
 
   @override
+  String get recordingSystemAudioBleedWarning =>
+      'صوت النظام يُشغَّل عبر مكبرات الصوت، لذا سيلتقطه الميكروفون مرة أخرى كصدى. استخدم سماعات الرأس للحصول على تسجيل نظيف.';
+
+  @override
   String get recordingExcludeMicFromSystemAudio =>
       'استبعاد الميكروفون الخاص بي من صوت النظام';
 

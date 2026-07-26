@@ -3,6 +3,7 @@ import 'package:clingfy/l10n/app_localizations.dart';
 import 'package:clingfy/ui/platform/platform_kind.dart';
 import 'package:clingfy/ui/platform/widgets/app_form_row.dart';
 import 'package:clingfy/ui/platform/widgets/app_icon_button.dart';
+import 'package:clingfy/ui/platform/widgets/app_inline_notice.dart';
 import 'package:clingfy/ui/platform/widgets/app_inset_group.dart';
 import 'package:clingfy/ui/platform/widgets/app_settings_group.dart';
 import 'package:clingfy/ui/platform/widgets/app_sidebar_tokens.dart';
@@ -24,6 +25,7 @@ class RecordingAudioSection extends StatelessWidget {
     required this.selectedAudioSourceId,
     required this.loadingAudio,
     required this.systemAudioEnabled,
+    required this.systemAudioBleedRisk,
     required this.excludeMicFromSystemAudio,
     required this.micEchoCancellationEnabled,
     required this.micInputLevelLinear,
@@ -41,6 +43,11 @@ class RecordingAudioSection extends StatelessWidget {
   final String selectedAudioSourceId;
   final bool loadingAudio;
   final bool systemAudioEnabled;
+
+  /// System audio is on AND playing out loud, so the mic will record a second,
+  /// delayed copy of it. Warned before the take because a recording cannot be
+  /// re-taken once the echo is baked in.
+  final bool systemAudioBleedRisk;
   final bool excludeMicFromSystemAudio;
   final bool micEchoCancellationEnabled;
   final double micInputLevelLinear;
@@ -127,6 +134,15 @@ class RecordingAudioSection extends StatelessWidget {
                 value: systemAudioEnabled,
                 onChanged: isRecording ? null : onSystemAudioEnabledChanged,
               ),
+              if (systemAudioBleedRisk) ...[
+                const SizedBox(height: AppSidebarTokens.rowGap),
+                AppInlineNotice(
+                  key: const Key('system_audio_bleed_warning'),
+                  message: l10n.recordingSystemAudioBleedWarning,
+                  variant: AppInlineNoticeVariant.warning,
+                  icon: Icons.headset_outlined,
+                ),
+              ],
               // Phase 10.3 (Windows): setExcludeMicFromSystemAudio is a
               // native no-op — the WASAPI loopback mix can't exclude the
               // mic yet, so the toggle is hidden.

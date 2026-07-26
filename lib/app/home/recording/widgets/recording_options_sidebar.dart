@@ -113,6 +113,10 @@ class RecordingOptionsSidebar extends StatelessWidget {
   final String selectedAudioSourceId;
   final bool loadingAudio;
   final bool systemAudioEnabled;
+
+  /// See [RecordingAudioSection.systemAudioBleedRisk]. Defaults false so a
+  /// caller that cannot probe the output route simply shows no warning.
+  final bool systemAudioBleedRisk;
   final double micInputLevelLinear;
   final double micInputLevelDbfs;
   final bool micInputTooLow;
@@ -221,6 +225,7 @@ class RecordingOptionsSidebar extends StatelessWidget {
     required this.selectedAudioSourceId,
     required this.loadingAudio,
     required this.systemAudioEnabled,
+    this.systemAudioBleedRisk = false,
     this.micInputLevelLinear = 0.0,
     this.micInputLevelDbfs = -160.0,
     this.micInputTooLow = false,
@@ -403,6 +408,7 @@ class RecordingOptionsSidebar extends StatelessWidget {
         selectedAudioSourceId: selectedAudioSourceId,
         loadingAudio: loadingAudio,
         systemAudioEnabled: systemAudioEnabled,
+        systemAudioBleedRisk: systemAudioBleedRisk,
         excludeMicFromSystemAudio: excludeMicFromSystemAudio,
         micEchoCancellationEnabled: micEchoCancellationEnabled,
         micInputLevelLinear: micInputLevelLinear,

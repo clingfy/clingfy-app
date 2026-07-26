@@ -1,5 +1,6 @@
 import 'package:clingfy/core/bridges/native_bridge.dart';
 import 'package:clingfy/core/bridges/native_method_channel.dart';
+import 'package:clingfy/core/recording/models/audio_output_route.dart';
 import 'package:clingfy/core/recording/settings/recording_settings_controller.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_test/flutter_test.dart';
@@ -13,9 +14,11 @@ void main() {
       TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger;
 
   late List<MethodCall> calls;
+  late String outputRoute;
 
   setUp(() {
     calls = <MethodCall>[];
+    outputRoute = 'headphones';
     messenger.setMockMethodCallHandler(channel, (call) async {
       calls.add(call);
       switch (call.method) {
@@ -23,6 +26,8 @@ void main() {
           return false;
         case 'getExcludeMicFromSystemAudio':
           return true;
+        case 'getAudioOutputRoute':
+          return {'route': outputRoute};
         default:
           return null;
       }
@@ -146,6 +151,93 @@ void main() {
 
       await controller.loadPreferences(await SharedPreferences.getInstance());
       expect(controller.systemAudioEnabled, isTrue);
+    });
+  });
+
+  group('speaker bleed warning', () {
+    test('warns when system audio is on and output is speakers', () async {
+      outputRoute = 'speakers';
+      SharedPreferences.setMockInitialValues({});
+      final controller = RecordingSettingsController(
+        nativeBridge: NativeBridge.instance,
+      );
+      addTearDown(controller.dispose);
+
+      await controller.loadPreferences(await SharedPreferences.getInstance());
+      await controller.refreshAudioOutputRoute();
+
+      expect(controller.systemAudioEnabled, isTrue);
+      expect(controller.audioOutputRoute, AudioOutputRoute.speakers);
+      expect(controller.systemAudioBleedRisk, isTrue);
+    });
+
+    test('stays quiet on headphones', () async {
+      outputRoute = 'headphones';
+      SharedPreferences.setMockInitialValues({});
+      final controller = RecordingSettingsController(
+        nativeBridge: NativeBridge.instance,
+      );
+      addTearDown(controller.dispose);
+
+      await controller.loadPreferences(await SharedPreferences.getInstance());
+      await controller.refreshAudioOutputRoute();
+
+      expect(controller.systemAudioBleedRisk, isFalse);
+    });
+
+    test('stays quiet when system audio is off, even on speakers', () async {
+      // No system audio means nothing for the mic to pick up twice.
+      outputRoute = 'speakers';
+      SharedPreferences.setMockInitialValues({'systemAudioEnabled': false});
+      final controller = RecordingSettingsController(
+        nativeBridge: NativeBridge.instance,
+      );
+      addTearDown(controller.dispose);
+
+      await controller.loadPreferences(await SharedPreferences.getInstance());
+      await controller.refreshAudioOutputRoute();
+
+      expect(controller.audioOutputRoute, AudioOutputRoute.speakers);
+      expect(controller.systemAudioBleedRisk, isFalse);
+    });
+
+    test('an unrecognized route never warns', () async {
+      // A native build reporting something we do not understand must not
+      // produce a false alarm — that trains the user to ignore the real one.
+      outputRoute = 'teleporter';
+      SharedPreferences.setMockInitialValues({});
+      final controller = RecordingSettingsController(
+        nativeBridge: NativeBridge.instance,
+      );
+      addTearDown(controller.dispose);
+
+      await controller.loadPreferences(await SharedPreferences.getInstance());
+      await controller.refreshAudioOutputRoute();
+
+      expect(controller.audioOutputRoute, AudioOutputRoute.unknown);
+      expect(controller.systemAudioBleedRisk, isFalse);
+    });
+
+    test('a route change notifies exactly once', () async {
+      outputRoute = 'headphones';
+      SharedPreferences.setMockInitialValues({});
+      final controller = RecordingSettingsController(
+        nativeBridge: NativeBridge.instance,
+      );
+      addTearDown(controller.dispose);
+      await controller.loadPreferences(await SharedPreferences.getInstance());
+      await controller.refreshAudioOutputRoute();
+
+      var notifications = 0;
+      controller.addListener(() => notifications++);
+
+      outputRoute = 'speakers';
+      await controller.refreshAudioOutputRoute();
+      expect(notifications, 1);
+
+      // Same route again is a no-op.
+      await controller.refreshAudioOutputRoute();
+      expect(notifications, 1);
     });
   });
 }
