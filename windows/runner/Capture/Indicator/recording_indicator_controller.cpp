@@ -6,6 +6,7 @@
 #include <string>
 #include <utility>
 
+#include "Bridge/app_window_anchor.h"
 #include "Bridge/indicator_event_publisher.h"
 #include "Capture/Indicator/recording_indicator_model.h"
 
@@ -20,22 +21,6 @@ constexpr UINT kMsgShow = WM_APP + 1;
 constexpr UINT kMsgHide = WM_APP + 2;
 constexpr UINT kMsgRepaint = WM_APP + 3;
 constexpr UINT kMsgReplace = WM_APP + 4;  // re-run PlaceWindow (pin toggled).
-
-// Work area of the monitor the window currently sits on, falling back to the
-// primary display's full bounds. Shared by PlaceWindow + the drag clamp.
-RECT MonitorWorkArea(HWND hwnd) {
-  RECT work{0, 0, ::GetSystemMetrics(SM_CXSCREEN),
-            ::GetSystemMetrics(SM_CYSCREEN)};
-  if (HMONITOR mon = ::MonitorFromWindow(hwnd, MONITOR_DEFAULTTOPRIMARY);
-      mon != nullptr) {
-    MONITORINFO mi{};
-    mi.cbSize = sizeof(mi);
-    if (::GetMonitorInfoW(mon, &mi) != 0) {
-      work = mi.rcWork;
-    }
-  }
-  return work;
-}
 
 // Logical (96-dpi) pill size. Wide enough for the red dot + "00:00:00" + the
 // pause and stop controls on the right.
@@ -320,7 +305,15 @@ void RecordingIndicatorController::Paint(HWND hwnd) {
 }
 
 void RecordingIndicatorController::PlaceWindow(HWND hwnd) {
-  const RECT work = MonitorWorkArea(hwnd);
+  const bool restoring_drag = !pinned_.load() && last_origin_.has_value();
+  // Default (never dragged) placement follows the display showing the main app
+  // window, matching macOS `NSScreen.main` -- resolving from the pill's own
+  // window pins it to the primary display. A remembered drag origin instead
+  // clamps against the display it was dropped on, so dragging the pill to a
+  // second monitor sticks.
+  const RECT work = restoring_drag
+                        ? clingfy::WorkAreaForPoint(*last_origin_)
+                        : clingfy::AnchorWorkArea(hwnd);
   const UINT dpi = ::GetDpiForWindow(hwnd);
   const double scale = dpi > 0 ? dpi / 96.0 : 1.0;
   // Size always comes from the DPI-scaled base; the pinned top-right position
@@ -331,7 +324,7 @@ void RecordingIndicatorController::PlaceWindow(HWND hwnd) {
 
   int x = snap.x;
   int y = snap.y;
-  if (!pinned_.load() && last_origin_.has_value()) {
+  if (restoring_drag) {
     // Restore the remembered drag origin, re-clamped: the monitor/DPI may have
     // changed since the drop, so the old origin could now be off-screen.
     const IndicatorRect clamped = ClampIndicatorToWorkArea(
@@ -352,7 +345,9 @@ void RecordingIndicatorController::OnDragEnded(HWND hwnd) {
   if (::GetWindowRect(hwnd, &wr) == 0) {
     return;
   }
-  const RECT work = MonitorWorkArea(hwnd);
+  // Clamp against the display the pill was dropped on, not the anchor display,
+  // so a drag onto a second monitor is remembered there.
+  const RECT work = clingfy::WorkAreaForWindow(hwnd);
   const IndicatorRect clamped = ClampIndicatorToWorkArea(
       wr.left, wr.top, wr.right - wr.left, wr.bottom - wr.top, work.left,
       work.top, work.right, work.bottom);
