@@ -784,6 +784,8 @@ class NativeBridge {
     required String sessionId,
     required String projectPath,
     String? cameraPath,
+    String? layoutPreset,
+    String? resolutionPreset,
   }) async {
     // Windows returns an EncodableMap with the Flutter texture id and
     // surface metrics (Step 5.5.2 of the Phase 5 plan). macOS still
@@ -791,12 +793,17 @@ class NativeBridge {
     // does not need a texture id on the Dart side. Treat null /
     // wrong-shape responses as a macOS-equivalent "no texture" so the
     // caller can rely on a non-null result type.
-    final raw = await _nativeBridge
-        .invokeMethod<Map<dynamic, dynamic>>('previewOpen', {
-          'sessionId': sessionId,
-          'projectPath': projectPath,
-          if (cameraPath != null) 'cameraPath': cameraPath,
-        });
+    final raw = await _nativeBridge.invokeMethod<Map<dynamic, dynamic>>(
+      'previewOpen',
+      {
+        'sessionId': sessionId,
+        'projectPath': projectPath,
+        if (cameraPath != null) 'cameraPath': cameraPath,
+        // Size the native texture to the CANVAS aspect, not the video's.
+        if (layoutPreset != null) 'layoutPreset': layoutPreset,
+        if (resolutionPreset != null) 'resolutionPreset': resolutionPreset,
+      },
+    );
     if (raw == null) {
       return const PreviewOpenResult.none();
     }

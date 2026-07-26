@@ -700,6 +700,11 @@ class RecordingController extends ChangeNotifier {
       final openResult = await _nativeBridge.previewOpen(
         sessionId: activeSessionId,
         projectPath: path,
+        // The native texture is sized to the CANVAS aspect, which these
+        // presets determine. Without them a 16:9 recording inside a 9:16
+        // canvas opens a 16:9 preview while the export is portrait.
+        layoutPreset: _settings.post.layoutPreset.name,
+        resolutionPreset: _settings.post.resolutionPreset.name,
       );
       // Stale-session guard: if the user already pressed close while
       // native was warming the texture, drop the id on the floor.
@@ -803,6 +808,11 @@ class RecordingController extends ChangeNotifier {
       final openResult = await _nativeBridge.previewOpen(
         sessionId: activeSessionId,
         projectPath: path,
+        // The native texture is sized to the CANVAS aspect, which these
+        // presets determine. Without them a 16:9 recording inside a 9:16
+        // canvas opens a 16:9 preview while the export is portrait.
+        layoutPreset: _settings.post.layoutPreset.name,
+        resolutionPreset: _settings.post.resolutionPreset.name,
       );
       // The session may also have been closed or replaced while the reopen
       // itself was in flight — don't resurrect texture state for a session

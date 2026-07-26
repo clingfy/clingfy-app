@@ -536,6 +536,10 @@ void HandlePreviewOpen(
     open_args.video_height_hint =
         static_cast<int>(read.project->metadata->height);
   }
+  // Canvas presets size the texture to the CANVAS aspect. Without them a 16:9
+  // recording in a 9:16 canvas previewed as 16:9 while the export was portrait.
+  open_args.layout_preset = ReadString(*args, "layoutPreset");
+  open_args.resolution_preset = ReadString(*args, "resolutionPreset");
   if (read.project->cursor_path.has_value()) {
     open_args.cursor_path = *read.project->cursor_path;
   }
