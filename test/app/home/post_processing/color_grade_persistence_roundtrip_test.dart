@@ -11,6 +11,7 @@ import 'package:flutter/services.dart';
 import 'package:flutter_test/flutter_test.dart';
 
 import '../../../test_helpers/native_test_setup.dart';
+import '../../../test_helpers/wait_until.dart';
 
 /// End-to-end color-grade persistence round-trip through the real
 /// [PostProcessingController] wiring (load-on-open, push-to-preview,
@@ -148,7 +149,16 @@ void main() {
     post.setColorGradeContrast(-0.2);
     post.setColorGradeSaturation(0.1);
     post.commitColorGrade();
-    await _settle();
+
+    // The persist is fire-and-forget real file I/O, so a fixed sleep is a race
+    // the CI runner can lose. Poll on the VALUE, not just the file's existence:
+    // the bundle may already hold an earlier grade.
+    await waitUntil(
+      () =>
+          CanvasAppearanceStore.load(projectDir.path)?.colorGrade.exposure ==
+          0.5,
+      reason: 'editor_state.json after a color commit',
+    );
 
     final loaded = CanvasAppearanceStore.load(projectDir.path);
     expect(loaded, isNotNull);
@@ -165,7 +175,15 @@ void main() {
       first.setColorGradeExposure(0.35);
       first.setColorGradeTemperature(-0.4);
       first.commitColorGrade();
-      await _settle();
+      // Session 2 reads this file synchronously on open, so the write must be
+      // confirmed on disk before the first controller is torn down — otherwise
+      // the "restart" reads whatever happened to be there.
+      await waitUntil(
+        () =>
+            CanvasAppearanceStore.load(projectDir.path)?.colorGrade.exposure ==
+            0.35,
+        reason: 'session 1 must be on disk before the restart',
+      );
       first.detachRecording();
 
       // Session 2: a brand-new controller opening the same bundle (the restart).
