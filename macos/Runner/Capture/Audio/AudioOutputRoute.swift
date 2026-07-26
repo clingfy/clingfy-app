@@ -35,6 +35,12 @@ enum AudioOutputRouteProbe {
     -> AudioOutputRoute
   {
     guard let deviceID = defaultOutputDeviceID(systemObject: objectID) else { return .unknown }
+    // Terminal type first: it answers the question directly, where transport
+    // type only implies it. Falls through to transport + data source when the
+    // driver leaves it unset, which is the common case for built-in output.
+    if let route = routeFromTerminalType(outputTerminalType(of: deviceID)) {
+      return route
+    }
     guard let transport = transportType(of: deviceID) else { return .unknown }
     return classify(transportType: transport, dataSource: outputDataSource(of: deviceID))
   }
@@ -66,9 +72,9 @@ enum AudioOutputRouteProbe {
       }
     case kAudioDeviceTransportTypeBluetooth,
       kAudioDeviceTransportTypeBluetoothLE:
-      // AirPods and Bluetooth headsets. Bluetooth SPEAKERS also land here and
-      // will not be warned about — see the TODOS entry; the transport genuinely
-      // does not carry enough information to tell them apart.
+      // Reached only when the terminal type said nothing. Bluetooth speakers
+      // also land here and will not be warned about, but a device that reports
+      // its terminal type is resolved before we get this far.
       return .headphones
     case kAudioDeviceTransportTypeDisplayPort,
       kAudioDeviceTransportTypeHDMI,
@@ -88,6 +94,95 @@ enum AudioOutputRouteProbe {
     default:
       return .unknown
     }
+  }
+
+  /// Classifies the output stream's terminal type, or nil when it says nothing
+  /// useful and the caller should fall back to the transport type.
+  ///
+  /// Two encodings appear in the wild and BOTH have been measured on real
+  /// hardware, so both are handled:
+  ///
+  /// | device                | transport | dataSource | terminalType |
+  /// |-----------------------|-----------|------------|--------------|
+  /// | MacBook Pro Speakers  | `'bltn'`  | `'ispk'`   | `0x301`      |
+  /// | JBL WAVE100TWS earbud | `'blue'`  | n/a        | `'hdph'`     |
+  ///
+  /// The four-char values are the constants CoreAudio documents
+  /// (`kAudioStreamTerminalType*`). The numeric ones are USB Audio Class output
+  /// terminal codes, which Apple passes through unmapped — `0x301` on a device
+  /// that unambiguously IS the internal speakers is what established that.
+  ///
+  /// This is what lets a Bluetooth SPEAKER be told apart from a Bluetooth
+  /// headset: transport type reports `'blue'` for both, but the terminal type
+  /// does not.
+  static func routeFromTerminalType(_ terminalType: UInt32?) -> AudioOutputRoute? {
+    guard let terminalType, terminalType != kAudioStreamTerminalTypeUnknown else {
+      return nil
+    }
+    switch terminalType {
+    case kAudioStreamTerminalTypeHeadphones,  // 'hdph' — measured on a BT earbud
+      usbTerminalHeadphones:
+      return .headphones
+    case kAudioStreamTerminalTypeSpeaker,
+      kAudioStreamTerminalTypeLFESpeaker,
+      kAudioStreamTerminalTypeReceiverSpeaker,
+      usbTerminalSpeaker,  // 0x301 — measured on the built-in speakers
+      usbTerminalDesktopSpeaker,
+      usbTerminalRoomSpeaker,
+      usbTerminalCommunicationSpeaker,
+      usbTerminalLFESpeaker:
+      return .speakers
+    default:
+      // Line out, S/PDIF, HDMI, DisplayPort and anything unrecognised: let the
+      // transport type decide rather than guessing from a code we have never
+      // seen on real hardware.
+      return nil
+    }
+  }
+
+  // USB Audio Class 1.0 output terminal types (spec table A-2). Apple reports
+  // these verbatim for some devices instead of the CoreAudio constants.
+  // 0x301 is MEASURED; the rest come from the spec and are grouped with it
+  // because every one of them is a loudspeaker of some kind.
+  static let usbTerminalSpeaker: UInt32 = 0x0301
+  static let usbTerminalHeadphones: UInt32 = 0x0302
+  static let usbTerminalDesktopSpeaker: UInt32 = 0x0304
+  static let usbTerminalRoomSpeaker: UInt32 = 0x0305
+  static let usbTerminalCommunicationSpeaker: UInt32 = 0x0306
+  static let usbTerminalLFESpeaker: UInt32 = 0x0307
+
+  /// The terminal type of the device's first OUTPUT stream, or nil when the
+  /// device exposes none / the property is unreadable.
+  private static func outputTerminalType(of deviceID: AudioDeviceID) -> UInt32? {
+    var streamsAddress = AudioObjectPropertyAddress(
+      mSelector: kAudioDevicePropertyStreams,
+      mScope: kAudioDevicePropertyScopeOutput,
+      mElement: kAudioObjectPropertyElementMain
+    )
+    var size = UInt32(0)
+    guard
+      AudioObjectGetPropertyDataSize(deviceID, &streamsAddress, 0, nil, &size) == noErr,
+      size >= UInt32(MemoryLayout<AudioStreamID>.size)
+    else { return nil }
+
+    let count = Int(size) / MemoryLayout<AudioStreamID>.size
+    var streams = [AudioStreamID](repeating: 0, count: count)
+    guard
+      AudioObjectGetPropertyData(deviceID, &streamsAddress, 0, nil, &size, &streams) == noErr,
+      let first = streams.first
+    else { return nil }
+
+    var terminalAddress = AudioObjectPropertyAddress(
+      mSelector: kAudioStreamPropertyTerminalType,
+      mScope: kAudioObjectPropertyScopeGlobal,
+      mElement: kAudioObjectPropertyElementMain
+    )
+    var terminal = UInt32(0)
+    var terminalSize = UInt32(MemoryLayout<UInt32>.size)
+    guard
+      AudioObjectGetPropertyData(first, &terminalAddress, 0, nil, &terminalSize, &terminal) == noErr
+    else { return nil }
+    return terminal
   }
 
   /// `'hdpn'` — the built-in headphone jack data source.

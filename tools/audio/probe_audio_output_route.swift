@@ -10,15 +10,20 @@
 //   swiftc -O tools/audio/probe_audio_output_route.swift -o /tmp/probe && /tmp/probe
 //
 // Measured so far (MacBook Pro, 2026-07-26):
-//   MacBook Pro Speakers -> transport 'bltn', dataSource 'ispk',
-//                           stream terminalType 0x301, 0 input streams
+//   MacBook Pro Speakers  -> transport 'bltn', dataSource 'ispk',
+//                            terminalType 0x301,  0 input streams  => speakers
+//   JBL WAVE100TWS earbud -> transport 'blue', dataSource n/a,
+//                            terminalType 'hdph', 0 input streams  => headphones
 //
-// NOTE on terminalType: the CoreAudio headers document four-char constants
-// ('spkr' / 'hdph'), but the built-in device actually reports 0x301 — the USB
-// Audio Class numeric code for Speaker. USB-AC also defines 0x302 =
-// Headphones, so this property looks like the real disambiguator. It is
-// UNVERIFIED for AirPods / USB headsets, which are exactly the ambiguous cases.
-// Fill in the table above before trusting it in AudioOutputRoute.classify.
+// STILL UNMEASURED, and the only case that matters now: a Bluetooth SPEAKER.
+// If it reports 'spkr' or a USB-AC speaker code it is already handled; if it
+// reports 'hdph' or 0 it will be missed. Also unmeasured: USB headsets and USB
+// desk speakers.
+//
+// NOTE on terminalType: BOTH encodings occur in the wild. The built-in device
+// reports 0x301 (the USB Audio Class numeric code for Speaker) while a Bluetooth
+// earbud reports 'hdph' (the CoreAudio constant). AudioOutputRoute therefore
+// accepts both families. Add a row above for every device you connect.
 
 import CoreAudio
 import Foundation

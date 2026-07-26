@@ -44,15 +44,13 @@ Deferred work captured during reviews. Each item has enough context to pick up c
 - **Start at:** `macos/Runner/Capture/Audio/AudioOutputRoute.swift` (add the listener), `macos/Runner/Core/NativeChannel.swift` (event name), `lib/core/recording/settings/recording_settings_controller.dart` (`refreshAudioOutputRoute` becomes a subscription).
 - **Effort:** human ~3h / CC ~25min.
 
-### Disambiguate Bluetooth and USB output routes
-- **What:** Decide speakers-vs-headphones for Bluetooth and USB output devices, which `AudioOutputRouteProbe.classify` currently guesses (Bluetooth → `headphones`, USB → `unknown`).
-- **Why:** A Bluetooth *speaker* gets no bleed warning today (a missed warning ruins an unrepeatable take); a USB *headset* would get a false one (which teaches the user to ignore the real alarm).
-- **Update 2026-07-26 — the signal probably EXISTS, contrary to the original note.** `kAudioStreamPropertyTerminalType` on the device's output stream looks like the real disambiguator. The CoreAudio headers document four-char constants (`'spkr'` / `'hdph'`), but the built-in device actually reports **`0x301`** — the USB Audio Class numeric code for Speaker. USB-AC also defines **`0x302` = Headphones**. So the property carries the answer in a different encoding than the headers advertise, and any implementation must accept BOTH families.
-- **Blocked on real data, not on design.** Measured so far: `MacBook Pro Speakers` → transport `'bltn'`, dataSource `'ispk'`, terminalType `0x301`, 0 input streams. What AirPods, a Bluetooth speaker, a USB headset and USB desk speakers report is **unknown** — and those are the only cases that matter.
-- **How to unblock (10 seconds per device):** run `tools/audio/probe_audio_output_route.swift` with each device connected and record the output in that file's header table. Once the ambiguous cases are known, extend `classify` to prefer terminalType and fall back to the current transport + dataSource logic when it reports 0/unknown.
-- **Do NOT implement from the spec alone.** Mapping `0x302` → headphones without ever seeing a real headset report it would be a confident guess dressed as a fix, which is the exact failure mode this warning must avoid.
-- **Start at:** `macos/Runner/Capture/Audio/AudioOutputRoute.swift` (`classify`, and add a terminalType read next to `outputDataSource`), `macos/RunnerTests/RunnerTests.swift` (`AudioSceneGateTests` / the route tests).
-- **Effort:** human ~1h / CC ~15min once the device table is filled in.
+### Confirm a Bluetooth SPEAKER is warned about
+- **What:** Verify that a Bluetooth loudspeaker (not a headset) triggers the speaker-bleed warning.
+- **Why:** This is the last unresolved half of the old "disambiguate Bluetooth and USB routes" item. `AudioOutputRouteProbe` now prefers `kAudioStreamPropertyTerminalType`, which resolved the headset case on real hardware — a JBL WAVE100TWS earbud reports `'hdph'` and correctly produces no warning, verified live. A Bluetooth *speaker* has never been measured: if it reports `'spkr'` or a USB-AC speaker code it is already handled, but if it reports `'hdph'` or `0` the warning will be missed, and a missed warning ruins an unrepeatable take.
+- **Also unmeasured:** USB headsets and USB desk speakers. Both fall back to the transport type, which returns `unknown` for USB, i.e. no warning either way.
+- **How (10 seconds per device):** connect the device, run `tools/audio/probe_audio_output_route.swift`, and add the row to that file's header table. Only extend `routeFromTerminalType` for codes actually observed — mapping from the USB spec alone is how a confident wrong answer gets shipped.
+- **Start at:** `macos/Runner/Capture/Audio/AudioOutputRoute.swift` (`routeFromTerminalType`), `macos/RunnerTests/RunnerTests.swift` (`testTerminalTypeResolvesRoutesTransportTypeCannot`).
+- **Effort:** human ~15min / CC ~10min once a row exists.
 ### Surface the bleed warning on the native pre-recording bar
 - **What:** Show the speaker-bleed warning on the native pre-recording bar, not only in the Flutter recording sidebar.
 - **Why:** The pre-recording bar is the surface a user actually looks at immediately before hitting record. A warning that lives only in the sidebar is missed by anyone who set up once and now starts takes from the bar.
