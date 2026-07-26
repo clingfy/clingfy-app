@@ -9361,6 +9361,62 @@ final class RecordingBundleHonestyTests: XCTestCase {
     XCTAssertEqual(decoded.screen.frameRate, 30)
   }
 
+  func testTerminalTypeResolvesRoutesTransportTypeCannot() {
+    // Both encodings below are MEASURED on real hardware, not taken from a spec:
+    //   MacBook Pro Speakers  -> terminalType 0x301   (USB-AC numeric "Speaker")
+    //   JBL WAVE100TWS earbud -> terminalType 'hdph'  (CoreAudio constant)
+    // Apple passes USB Audio Class codes through unmapped for some devices, so a
+    // classifier that only knew the documented four-char constants would miss
+    // the built-in speakers entirely.
+    XCTAssertEqual(
+      AudioOutputRouteProbe.routeFromTerminalType(AudioOutputRouteProbe.usbTerminalSpeaker),
+      .speakers, "0x301, measured on the built-in speakers")
+    XCTAssertEqual(
+      AudioOutputRouteProbe.routeFromTerminalType(kAudioStreamTerminalTypeHeadphones),
+      .headphones, "'hdph', measured on a Bluetooth earbud")
+
+    // The whole point of the property: a Bluetooth SPEAKER is indistinguishable
+    // from a Bluetooth headset by transport alone (both report 'blue'), but the
+    // terminal type separates them.
+    XCTAssertEqual(
+      AudioOutputRouteProbe.classify(transportType: kAudioDeviceTransportTypeBluetooth),
+      .headphones, "transport-only fallback still guesses headset")
+    XCTAssertEqual(
+      AudioOutputRouteProbe.routeFromTerminalType(kAudioStreamTerminalTypeSpeaker),
+      .speakers, "but a BT speaker reporting 'spkr' is now caught")
+
+    // Other loudspeaker flavours all warn.
+    for speaker in [
+      kAudioStreamTerminalTypeLFESpeaker,
+      kAudioStreamTerminalTypeReceiverSpeaker,
+      AudioOutputRouteProbe.usbTerminalDesktopSpeaker,
+      AudioOutputRouteProbe.usbTerminalRoomSpeaker,
+      AudioOutputRouteProbe.usbTerminalCommunicationSpeaker,
+      AudioOutputRouteProbe.usbTerminalLFESpeaker,
+    ] {
+      XCTAssertEqual(AudioOutputRouteProbe.routeFromTerminalType(speaker), .speakers)
+    }
+    XCTAssertEqual(
+      AudioOutputRouteProbe.routeFromTerminalType(AudioOutputRouteProbe.usbTerminalHeadphones),
+      .headphones)
+  }
+
+  func testTerminalTypeDefersRatherThanGuessing() {
+    // nil / unknown / anything we have never seen on real hardware must hand
+    // back to the transport type instead of inventing an answer. A confident
+    // wrong route is worse than no opinion: a false alarm trains the user to
+    // ignore the real warning.
+    XCTAssertNil(AudioOutputRouteProbe.routeFromTerminalType(nil))
+    XCTAssertNil(
+      AudioOutputRouteProbe.routeFromTerminalType(kAudioStreamTerminalTypeUnknown))
+    XCTAssertNil(AudioOutputRouteProbe.routeFromTerminalType(kAudioStreamTerminalTypeLine))
+    XCTAssertNil(
+      AudioOutputRouteProbe.routeFromTerminalType(kAudioStreamTerminalTypeDigitalAudioInterface))
+    XCTAssertNil(AudioOutputRouteProbe.routeFromTerminalType(0xDEAD_BEEF))
+    // Microphone terminal types are input-side and must never classify output.
+    XCTAssertNil(AudioOutputRouteProbe.routeFromTerminalType(kAudioStreamTerminalTypeMicrophone))
+  }
+
   func testBuiltInHeadphoneJackIsNotWarnedAbout() {
     // The laptop speakers and the headphone jack are the SAME CoreAudio device
     // with the same built-in transport, separated only by the data source.
