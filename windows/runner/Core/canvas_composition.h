@@ -48,6 +48,8 @@
 #include <optional>
 #include <string>
 
+#include "Capture/Background/abstract_waves_renderer.h"
+
 namespace clingfy::core {
 
 // The canvas args exactly as Dart sends them: padding and corner radius in
@@ -68,6 +70,11 @@ struct CanvasFramingArgs {
   // copy's path, so the reference cannot break when the original is moved,
   // deleted, or the project is opened on the other platform.
   std::wstring background_image_path;
+  // Procedural preset, when the user picked one instead of a colour or image.
+  // Empty `preset_id` means "no preset". Carried as DATA: the bitmap is
+  // rendered on demand by the platform compositor and cached, never stored.
+  capture::background::CanvasPresetSpec preset;
+  bool has_preset = false;
   std::string layout_preset;
   std::string resolution_preset;
 };
@@ -88,6 +95,11 @@ struct CanvasComposition {
   // still paints first so a missing or undecodable image degrades to the colour
   // rather than to nothing.
   std::wstring background_image_path;
+  // Procedural preset. Rendered by the one platform compositor and cached by
+  // `CanvasPresetCacheKey`, so preview, export and thumbnails share both the
+  // renderer and the cache. `has_preset` false means colour/image background.
+  capture::background::CanvasPresetSpec preset;
+  bool has_preset = false;
 };
 
 // Convert a pixel value measured against a surface whose shorter side is

@@ -14,7 +14,6 @@ import 'package:clingfy/ui/platform/widgets/app_slider.dart';
 import 'package:clingfy/ui/platform/widgets/app_slider_row.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_colorpicker/flutter_colorpicker.dart';
-import 'package:clingfy/ui/platform/platform_kind.dart';
 
 /// Localized display name for a procedural preset id.
 String _presetDisplayName(AppLocalizations l10n, String presetId) {
@@ -63,22 +62,16 @@ class PostBackgroundSection extends StatelessWidget {
 
   final Future<String?> Function() onPickImage;
 
-  /// Phase 10.3 (Windows): image/preset backgrounds are hidden (the
-  /// export renders only backgroundColor), but a project saved on macOS or
-  /// a pre-10.3 build can still carry those kinds — coerce the DISPLAYED
-  /// mode to color so the segmented control has a valid selection and the
-  /// dead pick-image/preset UI never renders. Persisted state is left
-  /// untouched (the export ignores it anyway).
-  /// Windows now renders colour AND image backgrounds (the canvas parity port
-  /// added a real `pickImage` dialog, a WIC decode + cache, and compositing in
-  /// both the preview and the export). Procedural PRESET backgrounds are still
-  /// macOS-only, so only that kind is coerced away here — a project carrying a
-  /// preset from macOS shows the colour fallback rather than dead UI. Persisted
-  /// state is left untouched.
-  BackgroundKind get _effectiveBackgroundKind =>
-      isWindows() && backgroundKind == BackgroundKind.preset
-      ? BackgroundKind.color
-      : backgroundKind;
+  /// Every background kind now renders on both platforms.
+  ///
+  /// This used to coerce the displayed mode to colour on Windows, because the
+  /// export ignored image and preset backgrounds and `pickImage` was a null
+  /// stub — offering those modes produced silent no-ops. The canvas parity port
+  /// closed that: Windows has a real image picker with a WIC decode + cache, and
+  /// procedural presets render through the same Direct2D renderer the preview
+  /// and the export share. So nothing is coerced away any more, and the kind the
+  /// project stores is the kind the user sees.
+  BackgroundKind get _effectiveBackgroundKind => backgroundKind;
 
   @override
   Widget build(BuildContext context) {
@@ -110,15 +103,14 @@ class PostBackgroundSection extends StatelessWidget {
                   label: l10n.backgroundModeImage,
                   icon: Icons.image_outlined,
                 ),
-                // Procedural presets remain macOS-only: they need a renderer
-                // that can produce the authoritative bitmap, which Windows does
-                // not have yet. Offering the mode here would be a silent no-op.
-                if (!isWindows())
-                  AppSegmentedItem(
-                    value: BackgroundKind.preset,
-                    label: l10n.backgroundModePreset,
-                    icon: Icons.auto_awesome_outlined,
-                  ),
+                // Presets render on both platforms now: the preset is data and
+                // each platform draws it with its own compositor, so preview
+                // and export always agree on the machine you are using.
+                AppSegmentedItem(
+                  value: BackgroundKind.preset,
+                  label: l10n.backgroundModePreset,
+                  icon: Icons.auto_awesome_outlined,
+                ),
               ],
             ),
             const SizedBox(height: AppSidebarTokens.optionsSubgroupGap),

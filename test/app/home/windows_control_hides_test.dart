@@ -149,22 +149,24 @@ void main() {
         // slice neither rendered on Windows, which is what the old expectation
         // of `findsNothing` encoded.
         expect(find.byIcon(Icons.image_outlined), findsNWidgets(2));
-        // Procedural presets still need a renderer Windows does not have.
-        expect(find.byIcon(Icons.auto_awesome_outlined), findsNothing);
+        // Presets are offered on Windows too now — the segment renders even
+        // while image mode is the active kind.
+        expect(find.byIcon(Icons.auto_awesome_outlined), findsOneWidget);
       },
     );
 
-    testWidgets('Windows: a stale preset kind is still displayed as color', (
+    testWidgets('Windows: a preset kind stays preset and its controls render', (
       tester,
     ) async {
       debugPlatformKindOverride = PlatformKind.windows;
-      // A project saved on macOS can persist kind=preset. Windows cannot
-      // render it, so the DISPLAYED mode coerces to color and its controls
-      // are live — rather than selecting a segment that is not offered.
+      // A preset kind used to be coerced to colour here, because Windows had no
+      // renderer for it. Slice 3 gave it one — the same Direct2D renderer the
+      // preview and the export share — so the stored kind is now what the user
+      // sees, and the colour controls must NOT be what renders.
       await tester.pumpWidget(host(section(BackgroundKind.preset)));
       await tester.pumpAndSettle();
-      expect(find.byIcon(Icons.auto_awesome_outlined), findsNothing);
-      expect(find.byIcon(Icons.palette_outlined), findsOneWidget);
+      expect(find.byIcon(Icons.auto_awesome_outlined), findsOneWidget);
+      expect(find.byIcon(Icons.palette_outlined), findsNothing);
     });
 
     testWidgets('macOS: image and preset segments stay available', (
