@@ -12,6 +12,7 @@
 #include "Bridge/native_error_codes.h"
 #include "Bridge/native_log_publisher.h"
 #include "Bridge/result_helpers.h"
+#include "Capture/Background/preset_thumbnail_cache.h"
 #include "Capture/Camera/camera_meta.h"
 #include "Capture/Export/audio_sidecar_probe.h"
 #include "Capture/Export/mic_cleanup.h"
@@ -797,6 +798,46 @@ void HandlePreviewSetCanvas(
   reply::Null(*result);
 }
 
+// Preset thumbnails for the background picker. Returns the path of a rendered
+// PNG, writing it first if it is not already cached.
+//
+// Deliberately NOT tied to a preview session: the picker is usable with no
+// preview open, and a thumbnail depends only on the preset parameters.
+//
+// Returns null (not an error) when rendering fails — a missing thumbnail is
+// cosmetic, and Dart falls back to the palette swatch it drew before. Failing
+// the call would surface an error dialog for a picture.
+void HandleCanvasPresetThumbnail(
+    const flutter::MethodCall<flutter::EncodableValue>& call,
+    std::unique_ptr<flutter::MethodResult<flutter::EncodableValue>> result) {
+  const auto* args = std::get_if<flutter::EncodableMap>(call.arguments());
+  if (args == nullptr) {
+    reply::Null(*result);
+    return;
+  }
+  capture::background::CanvasPresetSpec spec;
+  spec.preset_id = ReadString(*args, "presetId");
+  spec.palette_id = ReadString(*args, "palette");
+  spec.intensity = ReadDouble(*args, "intensity", 0.5);
+  spec.blur = ReadDouble(*args, "blur", 0.0);
+  spec.seed =
+      static_cast<std::int64_t>(ReadDouble(*args, "seed", 0.0));
+  if (spec.preset_id.empty()) {
+    reply::Null(*result);
+    return;
+  }
+
+  const auto width = static_cast<UINT>(ReadDouble(*args, "width", 0.0));
+  const auto height = static_cast<UINT>(ReadDouble(*args, "height", 0.0));
+  const std::string path =
+      capture::background::EnsurePresetThumbnail(spec, width, height);
+  if (path.empty()) {
+    reply::Null(*result);
+    return;
+  }
+  result->Success(flutter::EncodableValue(path));
+}
+
 // Voice cleanup (Phase 4 preview WYSIWYG): denoise the preview's mic so the
 // live preview matches the export bake. `voiceCleanup` is a nested
 // {enabled, mode} map (Dart VoiceCleanup.toMap()); only `enabled` drives the
@@ -909,6 +950,7 @@ void RegisterHandlers(HandlerTable& table) {
   // the preview video by preview_compositor. Video-only, like macOS preview.
   table["previewSetColorGrade"] = &HandlePreviewSetColorGrade;
   table["previewSetCanvas"] = &HandlePreviewSetCanvas;
+  table["canvasPresetThumbnail"] = &HandleCanvasPresetThumbnail;
   // Clip split/cut/trim/arrange (editing port step 4-1): the clip list is now
   // STORED on the preview session (SetClips). The stitched decode that plays
   // through cuts/reorder lands in the following slices; a passthrough list keeps

@@ -15,6 +15,23 @@ import 'package:clingfy/ui/platform/widgets/app_slider_row.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_colorpicker/flutter_colorpicker.dart';
 
+/// Loads the rendered thumbnail for a preset card, returning its file path or
+/// null when none can be produced (still rendering is not a case — the future
+/// completes once).
+///
+/// Takes ONLY the preset id and palette. The implementation fixes intensity,
+/// blur and seed deliberately: the card answers "what is this preset", not
+/// "what does it look like at your current settings". Feeding the live values
+/// in would render and cache a new PNG on every frame of an intensity drag,
+/// and would make the three cards incomparable. Varying only id and palette
+/// caps the cache at one file per combination.
+typedef PresetThumbnailLoader =
+    Future<String?> Function(String presetId, String paletteId);
+
+/// Card thumbnail size, in logical pixels. Native renders at these dimensions.
+const double kPresetThumbnailWidth = 72;
+const double kPresetThumbnailHeight = 48;
+
 /// Localized display name for a procedural preset id.
 String _presetDisplayName(AppLocalizations l10n, String presetId) {
   switch (presetId) {
@@ -43,6 +60,7 @@ class PostBackgroundSection extends StatelessWidget {
     required this.onBackgroundPresetChanged,
     required this.onBackgroundPresetPreview,
     required this.onPickImage,
+    this.presetThumbnailLoader,
   });
 
   final bool isProcessing;
@@ -61,6 +79,11 @@ class PostBackgroundSection extends StatelessWidget {
   final ValueChanged<CanvasBackgroundPreset> onBackgroundPresetPreview;
 
   final Future<String?> Function() onPickImage;
+
+  /// Supplies rendered preset art for the picker cards. Null (the default, and
+  /// what widget tests get) keeps the palette-gradient cards, so this widget
+  /// stays free of any native dependency.
+  final PresetThumbnailLoader? presetThumbnailLoader;
 
   /// Every background kind now renders on both platforms.
   ///
@@ -130,6 +153,7 @@ class PostBackgroundSection extends StatelessWidget {
       case BackgroundKind.preset:
         return [
           _PresetControls(
+            thumbnailLoader: presetThumbnailLoader,
             isProcessing: isProcessing,
             preset: backgroundPreset ?? BackgroundPresetCatalog.defaultPreset(),
             onChanged: onBackgroundPresetChanged,
@@ -251,12 +275,14 @@ class PostBackgroundSection extends StatelessWidget {
 class _PresetControls extends StatelessWidget {
   const _PresetControls({
     required this.isProcessing,
+    required this.thumbnailLoader,
     required this.preset,
     required this.onChanged,
     required this.onPreview,
   });
 
   final bool isProcessing;
+  final PresetThumbnailLoader? thumbnailLoader;
   final CanvasBackgroundPreset preset;
   final ValueChanged<CanvasBackgroundPreset> onChanged;
   final ValueChanged<CanvasBackgroundPreset> onPreview;
@@ -281,6 +307,9 @@ class _PresetControls extends StatelessWidget {
                   preset.palette,
                 ).colors,
                 isSelected: preset.id == presetId,
+                presetId: presetId,
+                paletteId: preset.palette,
+                thumbnailLoader: thumbnailLoader,
                 onTap: isProcessing
                     ? null
                     : () => onChanged(preset.copyWith(id: presetId)),
@@ -362,17 +391,29 @@ class _PresetCard extends StatelessWidget {
     required this.paletteColors,
     required this.isSelected,
     required this.onTap,
+    required this.presetId,
+    required this.paletteId,
+    required this.thumbnailLoader,
   });
 
   final String label;
   final List<int> paletteColors;
   final bool isSelected;
   final VoidCallback? onTap;
+  final String presetId;
+  final String paletteId;
+  final PresetThumbnailLoader? thumbnailLoader;
 
   @override
   Widget build(BuildContext context) {
     final colorScheme = Theme.of(context).colorScheme;
     final helperStyle = AppSidebarTokens.helperStyle(Theme.of(context));
+
+    final gradient = LinearGradient(
+      begin: Alignment.topLeft,
+      end: Alignment.bottomRight,
+      colors: [for (final c in paletteColors) Color(c)],
+    );
 
     return GestureDetector(
       onTap: onTap,
@@ -380,25 +421,98 @@ class _PresetCard extends StatelessWidget {
         mainAxisSize: MainAxisSize.min,
         children: [
           Container(
-            width: 72,
-            height: 48,
+            width: kPresetThumbnailWidth,
+            height: kPresetThumbnailHeight,
+            clipBehavior: Clip.antiAlias,
             decoration: BoxDecoration(
               borderRadius: BorderRadius.circular(10),
-              gradient: LinearGradient(
-                begin: Alignment.topLeft,
-                end: Alignment.bottomRight,
-                colors: [for (final c in paletteColors) Color(c)],
-              ),
+              // The palette gradient stays as the backdrop, so a card that has
+              // no thumbnail yet (still rendering, or a platform with no
+              // handler) looks deliberate rather than empty.
+              gradient: gradient,
               border: Border.all(
                 color: isSelected ? colorScheme.primary : Colors.transparent,
                 width: 2,
               ),
             ),
+            child: thumbnailLoader == null
+                ? null
+                : _PresetThumbnail(
+                    presetId: presetId,
+                    paletteId: paletteId,
+                    loader: thumbnailLoader!,
+                  ),
           ),
           const SizedBox(height: 4),
           Text(label, style: helperStyle),
         ],
       ),
+    );
+  }
+}
+
+/// Renders the real preset art for one card, falling back to whatever is
+/// painted underneath while it loads or when none is available.
+///
+/// Requests are made at fixed intensity / blur / seed on purpose — see
+/// [PresetThumbnailLoader]. Only the preset id and the palette vary, so this
+/// reloads on a palette tap and not on a slider drag.
+class _PresetThumbnail extends StatefulWidget {
+  const _PresetThumbnail({
+    required this.presetId,
+    required this.paletteId,
+    required this.loader,
+  });
+
+  final String presetId;
+  final String paletteId;
+  final PresetThumbnailLoader loader;
+
+  @override
+  State<_PresetThumbnail> createState() => _PresetThumbnailState();
+}
+
+class _PresetThumbnailState extends State<_PresetThumbnail> {
+  String? _path;
+  int _requestId = 0;
+
+  @override
+  void initState() {
+    super.initState();
+    _load();
+  }
+
+  @override
+  void didUpdateWidget(_PresetThumbnail oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    if (oldWidget.presetId != widget.presetId ||
+        oldWidget.paletteId != widget.paletteId) {
+      _load();
+    }
+  }
+
+  Future<void> _load() async {
+    // Monotonic request id: palette taps can outpace the render, and a slow
+    // earlier reply must not overwrite the art for the palette now selected.
+    final requestId = ++_requestId;
+    final path = await widget.loader(widget.presetId, widget.paletteId);
+    if (!mounted || requestId != _requestId) return;
+    setState(() => _path = path);
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final path = _path;
+    if (path == null) return const SizedBox.expand();
+    return Image.file(
+      File(path),
+      width: kPresetThumbnailWidth,
+      height: kPresetThumbnailHeight,
+      fit: BoxFit.cover,
+      gaplessPlayback: true,
+      // A file deleted behind our back (the cache directory is disposable by
+      // design) must show the gradient, not a broken-image glyph.
+      errorBuilder: (_, _, _) => const SizedBox.expand(),
     );
   }
 }

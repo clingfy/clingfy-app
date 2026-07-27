@@ -68,6 +68,7 @@ add_library(runner_bridge STATIC
   "Capture/Background/canvas_preset_renderer.cpp"
   "Capture/Background/abstract_waves_params.cpp"
   "Capture/Background/canvas_preset_params.cpp"
+  "Capture/Background/preset_thumbnail_cache.cpp"
   "Capture/Background/background_image_cache.cpp"
   "Core/canvas_composition.cpp"
   "Core/argv_project_path.cpp"

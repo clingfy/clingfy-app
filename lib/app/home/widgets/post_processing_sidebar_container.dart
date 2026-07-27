@@ -214,6 +214,7 @@ class PostProcessingSidebarContainer extends StatelessWidget {
               onAutoNormalizeTargetDbfsChanged:
                   settingsController.post.updatePostTargetLoudnessDbfs,
               onPickImage: post.pickImage,
+              presetThumbnailLoader: post.presetThumbnail,
               onLayoutPresetChanged: post.setLayoutPreset,
               onResolutionPresetChanged: post.setResolutionPreset,
               onFitModeChanged: post.setFitMode,
