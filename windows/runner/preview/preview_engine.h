@@ -262,6 +262,36 @@ class PreviewEngine {
                                               const std::string& layout_preset,
                                               const std::string& resolution_preset);
 
+  // Pure (exposed for tests): does a canvas push need the preview session
+  // REBUILT, because the layout/resolution it carries changes the shared
+  // texture's aspect?
+  //
+  // A shared texture cannot be resized in place — Flutter holds the handle for
+  // the lifetime of the registration — so the only way a mid-session layout
+  // switch reshapes the preview is close + reopen. Rather than invent a
+  // protocol for that, the engine reuses `previewInvalidated`: Dart already
+  // rebuilds in place on that event (same session id, no phase change, no
+  // remount) and re-pushes the editing state afterwards.
+  //
+  // Returns false unless a rebuild is genuinely required, because every true
+  // costs a close+reopen:
+  //   - Source dims unknown (no frame decoded yet). This is the loop guard.
+  //     Sizing from unknown dims yields the default 1280x720, which mismatches
+  //     any portrait texture and would ask for a rebuild forever.
+  //   - Current texture size unknown (no session open).
+  //   - The required size already matches. This is the TERMINATION property:
+  //     the rebuild re-pushes the canvas, and that second push must be a
+  //     no-op or the rebuild would trigger another rebuild.
+  //
+  // Note a pure RESOLUTION change (720p -> 4K) does not rebuild: the texture
+  // is aspect-only inside a fixed budget, so the pixels on screen are
+  // unchanged and only the export target moves.
+  static bool DecideCanvasAspectRebuild(int source_width, int source_height,
+                                        int current_texture_width,
+                                        int current_texture_height,
+                                        const std::string& layout_preset,
+                                        const std::string& resolution_preset);
+
   // Editing port (step 4-5) — pure decision for Play() on an edited session:
   // pressing Play with the playhead at (or within one frame of) the edited
   // end RESTARTS from 0, macOS IsAtEnd parity — otherwise Play at the end

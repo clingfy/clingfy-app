@@ -729,6 +729,23 @@ PreviewEngine::TextureSize PreviewEngine::ComputeCanvasTextureSize(
                                    static_cast<int>(std::lround(target.height)));
 }
 
+bool PreviewEngine::DecideCanvasAspectRebuild(
+    int source_width, int source_height, int current_texture_width,
+    int current_texture_height, const std::string& layout_preset,
+    const std::string& resolution_preset) {
+  // Nothing to compare against, or nothing to compute from. Both cases mean
+  // "we cannot know", and the safe answer to that is never to rebuild — see
+  // the loop guard in the header.
+  if (source_width <= 0 || source_height <= 0 || current_texture_width <= 0 ||
+      current_texture_height <= 0) {
+    return false;
+  }
+  const TextureSize required = ComputeCanvasTextureSize(
+      source_width, source_height, layout_preset, resolution_preset);
+  return required.width != current_texture_width ||
+         required.height != current_texture_height;
+}
+
 bool PreviewEngine::ShouldRestartEditedPlaybackFromEnd(
     std::int64_t edited_pos_ms, std::int64_t edited_duration_ms) {
   // One-frame tolerance: the pacer stamps the LAST kept frame's edited time,
@@ -2677,6 +2694,9 @@ void PreviewEngine::SetCanvasComposition(
   Impl* impl = nullptr;
   UINT source_w = 0;
   UINT source_h = 0;
+  int current_tex_w = 0;
+  int current_tex_h = 0;
+  std::string session_snapshot;
   {
     std::lock_guard<std::mutex> lock(mutex_);
     // Same stale-session discipline as SetColorGrade.
@@ -2689,6 +2709,12 @@ void PreviewEngine::SetCanvasComposition(
     impl = impl_.get();
     source_w = impl->last_video_width.load();
     source_h = impl->last_video_height.load();
+    current_tex_w = texture_width_;
+    current_tex_h = texture_height_;
+    // Emit against the session that is actually active: `session_id` may be
+    // empty (meaning "whichever is active") and Dart drops events whose id
+    // does not match its own.
+    session_snapshot = active_session_id_;
   }
 
   // Normalise here rather than in the router: only the engine knows the source
@@ -2727,6 +2753,29 @@ void PreviewEngine::SetCanvasComposition(
   // visible immediately. No seek, no decode. While playing this is a no-op and
   // the next natural frame carries the change.
   RepaintPausedPreview();
+
+  // A layout change reshapes the CANVAS, and the shared texture is sized to
+  // the canvas aspect — but a registered texture cannot be resized in place.
+  // Repainting alone would letterbox the new canvas inside the old aspect, so
+  // the preview would keep lying about the export. Ask Dart to rebuild the
+  // session in place; it reopens with these presets and swaps the texture id
+  // and aspect without a phase change or a remount.
+  //
+  // Deliberately AFTER the repaint: the rebuild is asynchronous, and repainting
+  // first means the old texture shows the new colours/background during the
+  // reopen gap instead of a stale frame.
+  if (DecideCanvasAspectRebuild(static_cast<int>(source_w),
+                                static_cast<int>(source_h), current_tex_w,
+                                current_tex_h, framing.layout_preset,
+                                framing.resolution_preset)) {
+    clingfy::bridge::NativeLogPublisher::Instance().Info(
+        "Preview",
+        "canvas layout changed the required texture aspect for session " +
+            session_snapshot + " — asking Dart to rebuild the preview in place "
+            "(previewInvalidated)");
+    clingfy::bridge::PlayerEventPublisher::Instance().EmitPreviewInvalidated(
+        session_snapshot, "canvasAspectChanged");
+  }
 }
 
 core::CanvasComposition PreviewEngine::canvas_composition_for_testing() {

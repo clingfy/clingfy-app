@@ -121,6 +121,27 @@ abstract class PlayerEventType {
   static const String previewInvalidated = 'previewInvalidated';
 }
 
+/// `reason` values carried by [PlayerEventType.previewInvalidated].
+///
+/// IMPORTANT: Keep this in sync with the emit sites in the Windows runner
+/// (`preview_engine.cpp`). An unrecognised reason still rebuilds — the reason
+/// only selects how loudly it is reported, so a new native reason degrades to
+/// the fault wording rather than being ignored.
+abstract class PreviewInvalidationReason {
+  PreviewInvalidationReason._();
+
+  /// The D3D device backing the session is gone or suspect (Modern Standby /
+  /// suspend resume). A genuine fault: logged as a warning, and a failed
+  /// rebuild is a blocking error.
+  static const String systemResume = 'systemResume';
+
+  /// The canvas layout changed the aspect the shared texture must have, and a
+  /// registered texture cannot be resized in place. NOT a fault — this is the
+  /// expected consequence of the user picking a different layout preset, so it
+  /// logs at info and a failed rebuild reports the layout, not sleep.
+  static const String canvasAspectChanged = 'canvasAspectChanged';
+}
+
 /// Device event types from native EventChannel.
 ///
 /// IMPORTANT: Keep this in sync with Swift.

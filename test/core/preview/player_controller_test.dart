@@ -572,5 +572,99 @@ void main() {
         expect(harness.recording.phase, WorkflowPhase.previewReady);
       },
     );
+
+    // A canvas layout switch reshapes the export canvas, and the shared
+    // texture is sized to that aspect — but a registered texture cannot be
+    // resized in place. Native reuses this event to get the session rebuilt,
+    // so the rebuild must not be special-cased to the standby-resume reason.
+    test(
+      'a canvasAspectChanged reason rebuilds exactly like a resume',
+      () async {
+        final harness = await createReadyPreviewHarness();
+        addTearDown(harness.recording.dispose);
+        addTearDown(harness.player.dispose);
+        addTearDown(harness.settings.dispose);
+
+        final rebuildCalls = <MethodCall>[];
+        final messenger =
+            TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger;
+        messenger.setMockMethodCallHandler(screenRecorderChannel, (call) async {
+          rebuildCalls.add(call);
+          if (call.method == 'previewOpen') {
+            return <String, dynamic>{
+              'textureId': 77,
+              // Portrait: a new aspect is the whole point of this rebuild.
+              'width': 720,
+              'height': 1280,
+              'videoWidth': 1920,
+              'videoHeight': 1080,
+              'sharedHandleOk': true,
+            };
+          }
+          if (call.method == 'getZoomSegments' ||
+              call.method == 'getManualZoomSegments') {
+            return <dynamic>[];
+          }
+          return null;
+        });
+
+        await _emitPlayerEvent({
+          'type': PlayerEventType.previewInvalidated,
+          'sessionId': harness.sessionId,
+          'reason': PreviewInvalidationReason.canvasAspectChanged,
+        });
+        await pumpEventQueue();
+
+        final methods = rebuildCalls.map((c) => c.method).toList();
+        expect(methods, contains('previewClose'));
+        expect(methods, contains('previewOpen'));
+        expect(
+          methods.indexOf('previewClose'),
+          lessThan(methods.indexOf('previewOpen')),
+        );
+        // The reopen MUST carry the presets — they are what sizes the new
+        // texture. Without them native re-derives the video aspect and the
+        // rebuild lands on exactly the shape it was trying to leave.
+        final open = rebuildCalls.firstWhere((c) => c.method == 'previewOpen');
+        final openArgs = (open.arguments as Map).cast<String, dynamic>();
+        expect(openArgs['layoutPreset'], isNotNull);
+        expect(openArgs['resolutionPreset'], isNotNull);
+        // Texture id and aspect swap in place — no phase change, no remount.
+        expect(harness.recording.inlinePreviewTextureId, 77);
+        expect(
+          harness.recording.inlinePreviewTextureAspect,
+          closeTo(720 / 1280, 0.001),
+        );
+        expect(harness.recording.phase, WorkflowPhase.previewReady);
+        expect(harness.player.blockingError, isNull);
+      },
+    );
+
+    // The two reasons share one code path but not one explanation: telling a
+    // user that their layout change failed "after the system resumed from
+    // sleep" is simply false.
+    test('a failed canvas rebuild blames the layout, not sleep', () async {
+      final harness = await createReadyPreviewHarness();
+      addTearDown(harness.recording.dispose);
+      addTearDown(harness.player.dispose);
+      addTearDown(harness.settings.dispose);
+
+      // The harness mock answers previewOpen with null — no texture comes
+      // back, so the rebuild fails and must explain itself correctly.
+      await _emitPlayerEvent({
+        'type': PlayerEventType.previewInvalidated,
+        'sessionId': harness.sessionId,
+        'reason': PreviewInvalidationReason.canvasAspectChanged,
+      });
+      await pumpEventQueue();
+
+      expect(harness.player.blockingError, isNotNull);
+      expect(harness.player.blockingError, contains('canvas layout'));
+      expect(harness.player.blockingError, isNot(contains('sleep')));
+      expect(
+        harness.player.blockingErrorCode,
+        NativeErrorCode.previewOpenError,
+      );
+    });
   });
 }
