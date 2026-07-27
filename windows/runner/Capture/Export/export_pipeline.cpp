@@ -35,6 +35,7 @@
 #include "Graphics/color_grade_effect.h"
 #include "Capture/Export/export_format.h"
 #include "Capture/Background/background_image_cache.h"
+#include "Capture/Background/preset_bitmap_cache.h"
 #include "Capture/Export/export_geometry.h"
 #include "Capture/Export/gif_export_policy.h"
 #include "Capture/Export/reorder_audio_pump.h"
@@ -806,8 +807,19 @@ RenderResult RenderComposedExport(const RenderRequest& request) {
   // the fill and the clip above). The same cache the preview uses, so both
   // consumers resolve the file identically.
   background::BackgroundImageCache export_bg_cache;
-  ID2D1Bitmap* export_bg_image =
-      export_bg_cache.Get(d2d_ctx.Get(), request.background_image_path);
+  background::PresetBitmapCache export_preset_cache;
+  // A preset outranks an image (the UI offers one kind at a time). Both become
+  // a bitmap drawn to cover, so they share the draw below. Rendered ONCE for
+  // the whole export, like the fill and the clip.
+  ID2D1Bitmap* export_bg_image = nullptr;
+  if (request.has_background_preset) {
+    export_bg_image = export_preset_cache.Get(
+        d2d_ctx.Get(), request.background_preset,
+        static_cast<UINT>(canvas.width), static_cast<UINT>(canvas.height));
+  } else {
+    export_bg_image =
+        export_bg_cache.Get(d2d_ctx.Get(), request.background_image_path);
+  }
 
   const double corner_radius_px =
       ResolveCornerRadiusPx(request.corner_radius, content);

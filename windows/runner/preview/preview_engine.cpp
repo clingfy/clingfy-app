@@ -35,6 +35,7 @@
 #include "Bridge/player_event_publisher.h"
 #include "Bridge/workflow_event_publisher.h"
 #include "Capture/Background/background_image_cache.h"
+#include "Capture/Background/preset_bitmap_cache.h"
 #include "Capture/Export/export_geometry.h"
 #include "Capture/Export/audio_sidecar_probe.h"
 #include "Capture/Export/mic_cleanup.h"
@@ -319,6 +320,8 @@ struct PreviewEngine::Impl {
   // Decoded background image, keyed by path + mtime. Lives next to the canvas
   // state it serves; dropped on device loss with the rest of the D2D resources.
   capture::background::BackgroundImageCache background_images;
+  // Rendered preset pixels — disposable, regenerated from the preset data.
+  capture::background::PresetBitmapCache preset_bitmaps;
 
   // ---- Canvas framing (render_mutex) ----
   // Resolution-independent, so the same authored padding renders proportionally
@@ -1453,8 +1456,17 @@ void PreviewEngine::ComposeAndHandoffLocked(Impl* impl,
 
   // Decoded once and cached; a second lookup for an unchanged file does no
   // decode, which is what keeps a static background off the per-frame path.
-  ID2D1Bitmap* bg_image = impl->background_images.Get(
-      impl->d2d_context.Get(), impl->canvas.background_image_path);
+  // A preset outranks an image: the UI offers one background KIND at a time,
+  // and both end up as a bitmap drawn to cover, so they share the draw path.
+  ID2D1Bitmap* bg_image = nullptr;
+  if (impl->canvas.has_preset) {
+    bg_image = impl->preset_bitmaps.Get(
+        impl->d2d_context.Get(), impl->canvas.preset,
+        static_cast<UINT>(texture_width_), static_cast<UINT>(texture_height_));
+  } else {
+    bg_image = impl->background_images.Get(
+        impl->d2d_context.Get(), impl->canvas.background_image_path);
+  }
   impl->compositor.SetCanvasFraming(
       capture::export_::ResolveBackgroundColor(impl->canvas.background_argb),
       static_cast<float>(radius_px), bg_image);
@@ -2687,6 +2699,8 @@ void PreviewEngine::SetCanvasComposition(
   core::CanvasComposition canvas{};
   canvas.background_argb = framing.background_argb;
   canvas.background_image_path = framing.background_image_path;
+  canvas.preset = framing.preset;
+  canvas.has_preset = framing.has_preset;
   if (source_w > 0 && source_h > 0) {
     const capture::export_::SizeF target =
         capture::export_::ResolveTargetSize(

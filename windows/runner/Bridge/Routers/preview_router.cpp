@@ -776,6 +776,20 @@ void HandlePreviewSetCanvas(
     // the original moves or the project crosses platforms.
     framing.background_image_path =
         Utf8ToWide(ReadString(*args, "backgroundImagePath"));
+    // Procedural preset, carried as DATA. The bitmap is rendered on demand by
+    // the compositor and cached; nothing is stored in the project.
+    const std::string preset_id = ReadString(*args, "backgroundPresetId");
+    if (!preset_id.empty() &&
+        ReadString(*args, "backgroundKind") == "preset") {
+      framing.has_preset = true;
+      framing.preset.preset_id = preset_id;
+      framing.preset.palette_id = ReadString(*args, "backgroundPresetPalette");
+      framing.preset.intensity =
+          ReadDouble(*args, "backgroundPresetIntensity", 0.5);
+      framing.preset.blur = ReadDouble(*args, "backgroundPresetBlur", 0.0);
+      framing.preset.seed = static_cast<std::int64_t>(
+          ReadDouble(*args, "backgroundPresetSeed", 0.0));
+    }
     framing.layout_preset = ReadString(*args, "layoutPreset");
     framing.resolution_preset = ReadString(*args, "resolutionPreset");
     PreviewEngine::Instance()->SetCanvasComposition(session_id, framing);
