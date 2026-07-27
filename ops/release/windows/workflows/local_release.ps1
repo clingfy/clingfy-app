@@ -14,8 +14,8 @@
 # Steps: version guard -> [tests] -> build+stage -> sign app -> package ->
 # sign installer -> [publish -> Sentry symbols (non-blocking) -> smoke].
 #
-# The optional test gate runs `flutter analyze lib` plus the native Windows
-# GoogleTest suite (ctest). It deliberately does NOT run `flutter test`: the
+# The optional test gate runs `flutter analyze lib --no-fatal-infos` plus the
+# native Windows GoogleTest suite (ctest). It deliberately does NOT run `flutter test`: the
 # develop baseline carries a known-flaky set of FluentLocalizations widget-
 # test failures, so a raw exit-code gate on it would block every release —
 # compare the set of failing test names against the develop baseline instead.
@@ -66,8 +66,17 @@ Invoke-Step '00_version_guard.ps1' $channelArgs
 
 # --- Optional test gate ---------------------------------------------------------
 if ($RunTests) {
-  Write-Step 'Test gate: flutter analyze lib'
-  & flutter analyze lib
+  # --no-fatal-infos deliberately. CI's gate is `dart analyze lib test`, which
+  # does NOT fail on info-level lints; `flutter analyze` DOES by default. That
+  # mismatch made the release lane strictly stricter than the branch protection
+  # it is supposed to mirror, and info-level lints are TOOLCHAIN-VERSION
+  # DEPENDENT: CI pins Flutter 3.41.1, and a developer on a newer SDK sees
+  # deprecations that do not exist on the pinned version (SizeTransition
+  # .axisAlignment was deprecated after 3.41.0). The lane therefore failed at
+  # its first gate on any machine ahead of the pin, which is why the Windows
+  # feed was never published. Errors and warnings still abort the release.
+  Write-Step 'Test gate: flutter analyze lib (--no-fatal-infos, matching CI)'
+  & flutter analyze lib --no-fatal-infos
   if ($LASTEXITCODE -ne 0) { Fail "flutter analyze lib failed (exit $LASTEXITCODE)." }
 
   $testsDir = Resolve-RepoPath (Join-Path 'build' 'windows-tests')
