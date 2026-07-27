@@ -239,6 +239,22 @@ final class CameraRecorder: NSObject {
   private var recordingSession: CameraRecordingSession?
   private var activeSegment: ActiveCameraSegment?
   private var pendingStartCompletion: ((Result<Void, Error>) -> Void)?
+  /// Why the last session ended, kept after `recordingSession` is cleared.
+  ///
+  /// `stop()` failing with "not active" is only a symptom: the session was
+  /// already gone. Without this, all three guards returned the same string
+  /// and the cause was undecidable even with full logs — which is exactly
+  /// what happened when a take was lost in the field on 2026-07-27.
+  enum SessionEnding: String {
+    case neverBegan
+    case finishedSuccessfully
+    case failed
+  }
+
+  private(set) var lastSessionEnding: SessionEnding = .neverBegan
+  private(set) var lastSessionEndedAt: Date?
+  private(set) var lastSessionSegmentCount: Int = 0
+
   private var pendingPauseCompletion: ((Result<Void, Error>) -> Void)?
   private var pendingStopCompletion: ((Result<CameraRecordingResult, Error>) -> Void)?
 
@@ -291,7 +307,11 @@ final class CameraRecorder: NSObject {
 
   func resume(completion: @escaping (Result<Void, Error>) -> Void) {
     guard recordingSession != nil else {
-      completion(.failure(flutterError(NativeErrorCode.notRecording, "Camera recorder is not active")))
+      completion(
+        .failure(
+          flutterError(
+            NativeErrorCode.notRecording,
+            "Camera recorder is not active (resume; ended by: \(lastSessionEnding.rawValue))")))
       return
     }
 
@@ -305,7 +325,25 @@ final class CameraRecorder: NSObject {
 
   func stop(completion: @escaping (Result<CameraRecordingResult, Error>) -> Void) {
     guard recordingSession != nil else {
-      completion(.failure(flutterError(NativeErrorCode.notRecording, "Camera recorder is not active")))
+      // The interesting question is never "was it active" — it is what
+      // cleared it, and when. Answer that here so the next occurrence is
+      // decidable from one log line rather than a code reading.
+      let secondsSinceEnd = lastSessionEndedAt.map { Date().timeIntervalSince($0) }
+      NativeLogger.e(
+        "CameraRecorder",
+        "stop() called with no active session",
+        context: [
+          "endedBy": lastSessionEnding.rawValue,
+          "secondsSinceSessionEnded": secondsSinceEnd.map { String(format: "%.3f", $0) } ?? "never",
+          "segmentsAtEnd": lastSessionSegmentCount,
+          "outputIsRecording": coordinator.recordingOutput.isRecording,
+          "hasActiveSegment": activeSegment != nil,
+        ])
+      completion(
+        .failure(
+          flutterError(
+            NativeErrorCode.notRecording,
+            "Camera recorder is not active (ended by: \(lastSessionEnding.rawValue))")))
       return
     }
 
@@ -320,7 +358,11 @@ final class CameraRecorder: NSObject {
 
   private func startNextSegment(completion: @escaping (Result<Void, Error>) -> Void) {
     guard let session = recordingSession else {
-      completion(.failure(flutterError(NativeErrorCode.notRecording, "Camera recorder is not active")))
+      completion(
+        .failure(
+          flutterError(
+            NativeErrorCode.notRecording,
+            "Camera recorder is not active (startNextSegment; ended by: \(lastSessionEnding.rawValue))")))
       return
     }
 
@@ -408,6 +450,9 @@ final class CameraRecorder: NSObject {
   }
 
   private func finishSuccessfully() {
+    lastSessionEnding = .finishedSuccessfully
+    lastSessionEndedAt = Date()
+    lastSessionSegmentCount = recordingSession?.segments.count ?? 0
     coordinator.releaseRecording()
     recordingSession = nil
     activeSegment = nil
@@ -417,6 +462,9 @@ final class CameraRecorder: NSObject {
   }
 
   private func finishWithFailure(_ error: Error) {
+    lastSessionEnding = .failed
+    lastSessionEndedAt = Date()
+    lastSessionSegmentCount = recordingSession?.segments.count ?? 0
     NativeLogger.e(
       "CameraRecorder",
       "Camera recorder failed",
