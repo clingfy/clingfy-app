@@ -39,7 +39,7 @@
 #include <vector>
 
 #include "Capture/Export/clip_playback_planner.h"
-#include "Capture/Background/abstract_waves_renderer.h"
+#include "Capture/Background/canvas_preset_renderer.h"
 #include "Capture/Export/color_grade.h"
 
 namespace clingfy::capture::export_ {

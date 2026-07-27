@@ -26,7 +26,7 @@
 #include <mutex>
 #include <string>
 
-#include "Capture/Background/abstract_waves_renderer.h"
+#include "Capture/Background/canvas_preset_renderer.h"
 
 namespace clingfy::capture::background {
 

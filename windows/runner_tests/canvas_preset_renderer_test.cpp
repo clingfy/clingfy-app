@@ -1,4 +1,4 @@
-#include "Capture/Background/abstract_waves_renderer.h"
+#include "Capture/Background/canvas_preset_renderer.h"
 
 #include <d2d1_1.h>
 #include <d3d11.h>
@@ -341,6 +341,105 @@ TEST(CanvasPresetCacheKeyTest, EmbedsTheRendererVersion) {
             std::string::npos)
       << "renderer version must be in the key so a renderer change invalidates "
          "every cached bitmap";
+}
+
+
+// ---------------------------------------------------------------------------
+// Preset dispatch. THE regression these exist for: RenderCanvasPreset ignored
+// spec.preset_id and always drew abstract waves, so picking "Graphic Mesh" or
+// "Radial Glow" silently gave you waves — in the preview AND the export, while
+// macOS rendered three distinct backgrounds.
+// ---------------------------------------------------------------------------
+
+CanvasPresetSpec SpecFor(const char* preset_id) {
+  CanvasPresetSpec s = Spec();
+  s.preset_id = preset_id;
+  return s;
+}
+
+// Renders the preset and returns its pixels, or an empty vector on GPU trouble.
+std::vector<std::uint32_t> RenderPixels(HeadlessD2D* gpu, const char* id) {
+  auto bitmap = RenderCanvasPreset(gpu->ctx.Get(), kW, kH, SpecFor(id));
+  std::vector<std::uint32_t> px;
+  if (bitmap == nullptr) return px;
+  if (!gpu->ReadBack(bitmap.Get(), kW, kH, &px)) px.clear();
+  return px;
+}
+
+// Counts differing pixels, so "different" means visibly different rather than
+// one stray blend-rounding pixel.
+size_t DifferingPixels(const std::vector<std::uint32_t>& a,
+                       const std::vector<std::uint32_t>& b) {
+  size_t n = 0;
+  for (size_t i = 0; i < a.size() && i < b.size(); ++i) {
+    if (a[i] != b[i]) ++n;
+  }
+  return n;
+}
+
+TEST(CanvasPresetDispatchTest, EachPresetIdRendersADifferentBackground) {
+  HeadlessD2D gpu;
+  const std::string err = gpu.Create();
+  if (!err.empty()) SKIP_OR_FAIL(err);
+
+  const auto waves = RenderPixels(&gpu, "abstractWaves");
+  const auto mesh = RenderPixels(&gpu, "graphicMesh");
+  const auto glow = RenderPixels(&gpu, "radialGlow");
+  ASSERT_FALSE(waves.empty());
+  ASSERT_FALSE(mesh.empty());
+  ASSERT_FALSE(glow.empty());
+
+  // A tenth of the canvas is a low bar that a genuinely different composition
+  // clears easily and an identical render cannot clear at all.
+  const size_t threshold = (static_cast<size_t>(kW) * kH) / 10;
+  EXPECT_GT(DifferingPixels(waves, mesh), threshold)
+      << "graphicMesh renders as abstractWaves";
+  EXPECT_GT(DifferingPixels(waves, glow), threshold)
+      << "radialGlow renders as abstractWaves";
+  EXPECT_GT(DifferingPixels(mesh, glow), threshold)
+      << "graphicMesh and radialGlow render identically";
+}
+
+// Every preset must paint the full canvas. A transparent result reads as a
+// black rectangle and looks like "presets are broken" rather than a bug in one.
+TEST(CanvasPresetDispatchTest, EveryPresetFillsTheCanvasOpaquely) {
+  HeadlessD2D gpu;
+  const std::string err = gpu.Create();
+  if (!err.empty()) SKIP_OR_FAIL(err);
+
+  for (const char* id : {"abstractWaves", "graphicMesh", "radialGlow"}) {
+    const auto px = RenderPixels(&gpu, id);
+    ASSERT_FALSE(px.empty()) << id;
+    for (size_t i = 0; i < px.size(); ++i) {
+      ASSERT_GE(A(px[i]), 250) << id << " transparent at index " << i;
+    }
+  }
+}
+
+// An id from a newer build (or a typo) must still produce a background. macOS
+// falls back to abstract waves; anything else would render an empty canvas for
+// a project that opens fine on the other platform.
+TEST(CanvasPresetDispatchTest, UnknownPresetIdFallsBackToAbstractWaves) {
+  HeadlessD2D gpu;
+  const std::string err = gpu.Create();
+  if (!err.empty()) SKIP_OR_FAIL(err);
+
+  const auto waves = RenderPixels(&gpu, "abstractWaves");
+  const auto unknown = RenderPixels(&gpu, "notARealPreset");
+  ASSERT_FALSE(waves.empty());
+  ASSERT_FALSE(unknown.empty());
+  EXPECT_EQ(DifferingPixels(waves, unknown), 0u);
+}
+
+// The cache key folds in the preset id, so switching preset must invalidate.
+// Without this the first preset rendered would be shown for all three.
+TEST(CanvasPresetDispatchTest, CacheKeyDistinguishesThePresets) {
+  const std::string waves = CanvasPresetCacheKey(SpecFor("abstractWaves"), kW, kH);
+  const std::string mesh = CanvasPresetCacheKey(SpecFor("graphicMesh"), kW, kH);
+  const std::string glow = CanvasPresetCacheKey(SpecFor("radialGlow"), kW, kH);
+  EXPECT_NE(waves, mesh);
+  EXPECT_NE(waves, glow);
+  EXPECT_NE(mesh, glow);
 }
 
 }  // namespace
