@@ -215,7 +215,10 @@ final class ScreenRecorderFacade: NSObject {
     let watcher = AppWindowWatcher(enumerate: { [weak self] in
       self?.displaySvc.appWindows() ?? []
     })
-    watcher.onChanged = { [weak self] in self?.onAppWindowsChanged?() }
+    watcher.onChanged = { [weak self] in
+      self?.onAppWindowsChanged?()
+      DeviceChangeNotification.post(.deviceAppWindowsChanged)
+    }
     return watcher
   }()
 
@@ -247,7 +250,11 @@ final class ScreenRecorderFacade: NSObject {
   private lazy var audioHardwareListener: AudioHardwareListener = {
     let listener = AudioHardwareListener()
     listener.onDeviceListChanged = { [weak self] in
-      DispatchQueue.main.async { self?.onDevicesChanged?() }
+      DispatchQueue.main.async {
+        self?.onDevicesChanged?()
+        DeviceChangeNotification.post(.deviceAudioSourcesChanged)
+        DeviceChangeNotification.post(.deviceVideoSourcesChanged)
+      }
     }
     listener.onDefaultOutputChanged = { [weak self] in
       DispatchQueue.main.async { self?.onAudioOutputRouteChanged?() }
@@ -2046,9 +2053,13 @@ final class ScreenRecorderFacade: NSObject {
     guard let dev = n.object as? AVCaptureDevice else { return }
     if dev.hasMediaType(.audio) {
       onDevicesChanged?()
+      DeviceChangeNotification.post(.deviceAudioSourcesChanged)
       refreshMicrophoneLevelMonitoring(resetMeter: false)
     }
-    if dev.hasMediaType(.video) { onVideoDevicesChanged?() }
+    if dev.hasMediaType(.video) {
+      onVideoDevicesChanged?()
+      DeviceChangeNotification.post(.deviceVideoSourcesChanged)
+    }
   }
 
   @objc private func screenParamsChanged() {
@@ -2073,6 +2084,7 @@ final class ScreenRecorderFacade: NSObject {
     // one reload rather than one per screen.
     displaysChangedDebouncer.schedule { [weak self] in
       self?.onDisplaysChanged?()
+      DeviceChangeNotification.post(.deviceDisplaysChanged)
     }
   }
 
