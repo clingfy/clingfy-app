@@ -34,5 +34,6 @@ enum NativeSelectionType {
 enum DeviceEventType {
   static let audioSourcesChanged = "audioSourcesChanged"
   static let videoSourcesChanged = "videoSourcesChanged"
+  static let displaysChanged = "displaysChanged"
   static let microphoneLevel = "microphoneLevel"
 }
