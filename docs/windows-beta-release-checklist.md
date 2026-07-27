@@ -103,15 +103,40 @@ Open — must close before invites:
       deliberately re-run here on the real installed artifact.
 - [ ] **Licensing on a clean box**: activate / validate / consume-trial
       on a machine that never saw the repo (matrix row 2). Depends on:
-- [ ] **Beta entitlement provisioning decision** — how testers get
-      keys/entitlements on Windows (open product call, blocks row 2).
-- [ ] **Telemetry consent/disclosure decision** — Sentry crash/telemetry
-      runs without an in-app disclosure today; ship a disclosure or an
-      opt-out, and cover Windows in the privacy policy.
-- [ ] **Signing decision** — Azure Trusted Signing / OV cert, or ship the
-      beta unsigned (the tester guide documents the SmartScreen bypass;
-      `-RequireSignature` stays off until material exists; a
-      half-configured cert pair hard-fails the lane by design).
+- [x] **Beta entitlement provisioning decision** — DECIDED 2026-07-27:
+      **time-boxed subscription keys**, dated to the beta window. They
+      expire on their own, so access ends without revoking anything or
+      chasing testers afterwards. Needs no client change — `subscription`
+      is already a `LicensePlan` and the client already honours
+      `updates_expires_at` / `isUpdatesExpired`. Rejected: lifetime keys
+      (a permanent gift, revocation is a per-tester support conversation);
+      trial-only (export-limited, so testers stop exercising the export
+      paths that most need testing); a dedicated `beta` plan (cleanest
+      long-term but costs an enum value, client handling, tests and
+      backend work for a temporary need).
+      **Still to do (backend/ops, not app code):** generate the keys and
+      mail them. Row 2 stays blocked until that happens.
+- [x] **Telemetry consent/disclosure decision** — SHIPPED 2026-07-27
+      (#362): first-run disclosure + an opt-out in Settings › Diagnostics,
+      default opt-out (report, and disclose). Root cause worth remembering:
+      the pre-existing "Share anonymous usage analytics" toggle gated
+      **PostHog only** — Sentry initialised unconditionally whenever a DSN
+      was compiled in, so a user who turned analytics off was still sending
+      crash reports and had never been told. Opting out now skips
+      `SentryFlutter.init` entirely rather than filtering, because
+      `beforeSend` cannot stop the out-of-process native crash handler.
+      Flip `kCrashReportingDefaultEnabled` for consent-first.
+      **Still open:** the privacy policy itself does not cover Windows —
+      that is a document edit, not code.
+- [x] **Signing decision** — DECIDED 2026-07-27: **ship the private beta
+      UNSIGNED**, and revisit before any public/commercial ship. A
+      certificate is a cost the project is not taking on yet, and the gate
+      never required a signed build — only a decision. The tester guide
+      already documents the SmartScreen bypass, `-RequireSignature` stays
+      off, and a half-configured cert pair still hard-fails the lane by
+      design, so nothing silently ships half-signed.
+      **Consequence to expect:** every tester sees a SmartScreen warning on
+      first run. That is the price of this choice, not a bug report.
 - [ ] Sentry release tagging spot-check: one report from an installed
       build maps to the exact version+build.
 
