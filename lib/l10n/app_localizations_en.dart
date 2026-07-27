@@ -2664,4 +2664,34 @@ class AppLocalizationsEn extends AppLocalizations {
 
   @override
   String get forceNativeCrashLabel => 'Force native crash (test)';
+
+  @override
+  String get settingsPrivacyTitle => 'Privacy';
+
+  @override
+  String get crashReportingTitle => 'Crash and diagnostic reports';
+
+  @override
+  String get crashReportingDescription =>
+      'Send anonymous crash reports and error diagnostics so problems get fixed. Includes the error, a stack trace, your app version, and OS and GPU details. Never includes your recordings, screen contents, audio, or file names.';
+
+  @override
+  String get crashReportingToggle => 'Send crash reports';
+
+  @override
+  String get crashReportingRestartNote =>
+      'Turning this off stops reporting immediately. Reports for crashes that take the whole app down stop after you restart Clingfy.';
+
+  @override
+  String get crashReportingNoticeTitle => 'About crash reports';
+
+  @override
+  String get crashReportingNoticeBody =>
+      'Clingfy sends anonymous crash reports and error diagnostics so problems get fixed. This covers the error, a stack trace, your app version, and OS and GPU details — never your recordings, screen contents, audio, or file names.\n\nYou can turn this off at any time in Settings › Diagnostics.';
+
+  @override
+  String get crashReportingNoticeAccept => 'Got it';
+
+  @override
+  String get crashReportingNoticeOptOut => 'Turn off';
 }

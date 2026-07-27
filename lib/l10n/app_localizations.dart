@@ -4869,6 +4869,60 @@ abstract class AppLocalizations {
   /// In en, this message translates to:
   /// **'Force native crash (test)'**
   String get forceNativeCrashLabel;
+
+  /// No description provided for @settingsPrivacyTitle.
+  ///
+  /// In en, this message translates to:
+  /// **'Privacy'**
+  String get settingsPrivacyTitle;
+
+  /// No description provided for @crashReportingTitle.
+  ///
+  /// In en, this message translates to:
+  /// **'Crash and diagnostic reports'**
+  String get crashReportingTitle;
+
+  /// No description provided for @crashReportingDescription.
+  ///
+  /// In en, this message translates to:
+  /// **'Send anonymous crash reports and error diagnostics so problems get fixed. Includes the error, a stack trace, your app version, and OS and GPU details. Never includes your recordings, screen contents, audio, or file names.'**
+  String get crashReportingDescription;
+
+  /// No description provided for @crashReportingToggle.
+  ///
+  /// In en, this message translates to:
+  /// **'Send crash reports'**
+  String get crashReportingToggle;
+
+  /// No description provided for @crashReportingRestartNote.
+  ///
+  /// In en, this message translates to:
+  /// **'Turning this off stops reporting immediately. Reports for crashes that take the whole app down stop after you restart Clingfy.'**
+  String get crashReportingRestartNote;
+
+  /// No description provided for @crashReportingNoticeTitle.
+  ///
+  /// In en, this message translates to:
+  /// **'About crash reports'**
+  String get crashReportingNoticeTitle;
+
+  /// No description provided for @crashReportingNoticeBody.
+  ///
+  /// In en, this message translates to:
+  /// **'Clingfy sends anonymous crash reports and error diagnostics so problems get fixed. This covers the error, a stack trace, your app version, and OS and GPU details — never your recordings, screen contents, audio, or file names.\n\nYou can turn this off at any time in Settings › Diagnostics.'**
+  String get crashReportingNoticeBody;
+
+  /// No description provided for @crashReportingNoticeAccept.
+  ///
+  /// In en, this message translates to:
+  /// **'Got it'**
+  String get crashReportingNoticeAccept;
+
+  /// No description provided for @crashReportingNoticeOptOut.
+  ///
+  /// In en, this message translates to:
+  /// **'Turn off'**
+  String get crashReportingNoticeOptOut;
 }
 
 class _AppLocalizationsDelegate

@@ -1,6 +1,7 @@
 import 'dart:async';
 import 'dart:io' show Platform;
 
+import 'package:clingfy/app/infrastructure/observability/crash_reporting_consent.dart';
 import 'package:clingfy/core/bridges/native_bridge.dart';
 import 'package:clingfy/l10n/app_localizations.dart';
 import 'package:clingfy/app/settings/controllers/workspace_settings_controller.dart';
@@ -27,6 +28,10 @@ class _DiagnosticsSettingsSectionState
     extends State<DiagnosticsSettingsSection> {
   String? _noticeText;
   AppInlineNoticeVariant _noticeVariant = AppInlineNoticeVariant.info;
+
+  // Mirrors CrashReportingConsent, which is static rather than a
+  // ChangeNotifier because Sentry reads it before any controller exists.
+  bool _crashReportingEnabled = CrashReportingConsent.enabled;
 
   /// Phase 10.4: the crash-test button only exists on Windows AND when the
   /// tester explicitly opted in via CLINGFY_CRASH_TEST=1 — the same env var
@@ -118,6 +123,33 @@ class _DiagnosticsSettingsSectionState
                   ),
                 ),
                 const SizedBox(height: 12),
+                // Crash reporting is a SEPARATE consent from usage analytics
+                // above: that toggle gates PostHog product analytics only,
+                // while Sentry has been running unconditionally whenever a DSN
+                // is compiled in. Sits next to it so the two questions a user
+                // might have about data leaving their machine are answered in
+                // one place.
+                AppToggleRow(
+                  key: const Key('diagnostics_crash_reporting_toggle'),
+                  title: l10n.crashReportingToggle,
+                  helperText: l10n.crashReportingDescription,
+                  value: _crashReportingEnabled,
+                  onChanged: (value) async {
+                    setState(() => _crashReportingEnabled = value);
+                    await CrashReportingConsent.setEnabled(value);
+                  },
+                ),
+                // Says plainly that "off" is not fully off until restart. The
+                // native crash handler is installed at startup and cannot be
+                // uninstalled, so claiming otherwise would be a lie the user
+                // could not detect.
+                Padding(
+                  padding: const EdgeInsets.only(top: 4, bottom: 12),
+                  child: Text(
+                    l10n.crashReportingRestartNote,
+                    style: Theme.of(context).textTheme.bodySmall,
+                  ),
+                ),
                 // Owner/dev-only: mark this install internal (excluded from real numbers) or enter
                 // the manual test channel. Hidden from normal users — revealed only in debug builds
                 // or when CLINGFY_INTERNAL / CLINGFY_ANALYTICS_TEST is set (mirrors the web

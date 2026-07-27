@@ -897,5 +897,14 @@
       }
     }
   },
-  "forceNativeCrashLabel": "Force native crash (test)"
+  "forceNativeCrashLabel": "Force native crash (test)",
+  "settingsPrivacyTitle": "Privacy",
+  "crashReportingTitle": "Crash and diagnostic reports",
+  "crashReportingDescription": "Send anonymous crash reports and error diagnostics so problems get fixed. Includes the error, a stack trace, your app version, and OS and GPU details. Never includes your recordings, screen contents, audio, or file names.",
+  "crashReportingToggle": "Send crash reports",
+  "crashReportingRestartNote": "Turning this off stops reporting immediately. Reports for crashes that take the whole app down stop after you restart Clingfy.",
+  "crashReportingNoticeTitle": "About crash reports",
+  "crashReportingNoticeBody": "Clingfy sends anonymous crash reports and error diagnostics so problems get fixed. This covers the error, a stack trace, your app version, and OS and GPU details — never your recordings, screen contents, audio, or file names.\n\nYou can turn this off at any time in Settings › Diagnostics.",
+  "crashReportingNoticeAccept": "Got it",
+  "crashReportingNoticeOptOut": "Turn off"
 }

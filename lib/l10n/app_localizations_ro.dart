@@ -2699,4 +2699,34 @@ class AppLocalizationsRo extends AppLocalizations {
 
   @override
   String get forceNativeCrashLabel => 'Forțează blocarea nativă (test)';
+
+  @override
+  String get settingsPrivacyTitle => 'Confidențialitate';
+
+  @override
+  String get crashReportingTitle => 'Rapoarte de eroare și diagnostic';
+
+  @override
+  String get crashReportingDescription =>
+      'Trimite rapoarte anonime de eroare și diagnostice, ca problemele să fie reparate. Includ eroarea, urma stivei, versiunea aplicației și detalii despre sistem și placa video. Nu includ niciodată înregistrările tale, conținutul ecranului, sunetul sau numele fișierelor.';
+
+  @override
+  String get crashReportingToggle => 'Trimite rapoarte de eroare';
+
+  @override
+  String get crashReportingRestartNote =>
+      'Dezactivarea oprește trimiterea imediat. Rapoartele pentru erorile care închid complet aplicația se opresc după ce repornești Clingfy.';
+
+  @override
+  String get crashReportingNoticeTitle => 'Despre rapoartele de eroare';
+
+  @override
+  String get crashReportingNoticeBody =>
+      'Clingfy trimite rapoarte anonime de eroare și diagnostice, ca problemele să fie reparate. Acestea includ eroarea, urma stivei, versiunea aplicației și detalii despre sistem și placa video — niciodată înregistrările tale, conținutul ecranului, sunetul sau numele fișierelor.\n\nPoți dezactiva oricând din Setări › Diagnostic.';
+
+  @override
+  String get crashReportingNoticeAccept => 'Am înțeles';
+
+  @override
+  String get crashReportingNoticeOptOut => 'Dezactivează';
 }

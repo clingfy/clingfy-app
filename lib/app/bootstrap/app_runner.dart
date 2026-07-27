@@ -3,6 +3,7 @@ import 'package:clingfy/app/infrastructure/analytics/analytics_events.dart';
 import 'package:clingfy/app/infrastructure/analytics/analytics_service.dart';
 import 'package:clingfy/core/logging/logger_service.dart';
 import 'package:clingfy/core/bridges/native_bridge.dart';
+import 'package:clingfy/app/infrastructure/observability/crash_reporting_consent.dart';
 import 'package:clingfy/app/settings/settings_controller.dart';
 import 'package:clingfy/app/shell/platform_app.dart';
 import 'package:flutter/widgets.dart';
@@ -14,6 +15,12 @@ class AppRunner {
     final nativeBridge = NativeBridge.instance;
     final settingsController = SettingsController(nativeBridge: nativeBridge);
     await settingsController.loadPreferences();
+
+    // Crash-reporting consent lives outside SettingsController because Sentry
+    // reads it before any controller exists. SentrySetup already loads it on
+    // the path where a DSN is compiled in; load it here too so the Diagnostics
+    // toggle shows the user's real choice on builds that have no DSN.
+    await CrashReportingConsent.load();
 
     // Anonymous product analytics — a no-op in debug runs / without a POSTHOG_TOKEN define, and
     // honors the "Share anonymous usage analytics" setting loaded just above. `internal`/`testMode`

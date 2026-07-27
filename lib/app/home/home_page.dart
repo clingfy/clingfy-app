@@ -1,3 +1,6 @@
+import 'package:clingfy/app/infrastructure/observability/crash_reporting_consent.dart';
+import 'package:clingfy/ui/platform/widgets/app_dialog.dart';
+import 'package:clingfy/l10n/app_localizations.dart';
 import 'dart:async';
 
 import 'package:clingfy/app/shell/app_scope.dart';
@@ -148,7 +151,37 @@ class _HomePageState extends State<HomePage> {
       // Phase 10.4 (Windows): one-shot crash-recovery sweep + salvage
       // notice once the home shell is ready.
       unawaited(actions.announceStartupRecovery(context));
+      if (!mounted) return;
+      await _showCrashReportingNoticeIfNeeded();
     });
+  }
+
+  /// First-run disclosure for crash reporting.
+  ///
+  /// Sentry has shipped without ever telling the user it was running; a
+  /// setting they never go looking for is not a disclosure. Shown once, and
+  /// the "Turn off" path opts out on the spot so acting on it costs nothing.
+  ///
+  /// Deliberately last in the startup sequence: the recovery/salvage notice is
+  /// about the user's own recording and outranks it.
+  Future<void> _showCrashReportingNoticeIfNeeded() async {
+    if (CrashReportingConsent.noticeSeen) return;
+    final l10n = AppLocalizations.of(context)!;
+
+    final keepEnabled = await AppDialog.confirm(
+      context,
+      title: l10n.crashReportingNoticeTitle,
+      message: l10n.crashReportingNoticeBody,
+      confirmLabel: l10n.crashReportingNoticeAccept,
+      cancelLabel: l10n.crashReportingNoticeOptOut,
+    );
+
+    // Record that it was SHOWN either way — dismissing without choosing must
+    // not re-prompt on every launch.
+    await CrashReportingConsent.markNoticeSeen();
+    if (!keepEnabled) {
+      await CrashReportingConsent.setEnabled(false);
+    }
   }
 
   @override

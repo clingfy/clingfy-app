@@ -1,5 +1,6 @@
 import 'package:clingfy/app/config/build_config.dart';
 import 'package:clingfy/core/logging/logger_service.dart';
+import 'package:clingfy/app/infrastructure/observability/crash_reporting_consent.dart';
 import 'package:clingfy/app/infrastructure/observability/telemetry_service.dart';
 import 'package:flutter/foundation.dart';
 import 'package:sentry_flutter/sentry_flutter.dart';
@@ -13,9 +14,28 @@ class SentrySetup {
       return;
     }
 
+    // Read the user's choice BEFORE init. Sentry starts before any controller
+    // exists, so this is the only point where it can be honoured.
+    await CrashReportingConsent.load();
+
+    // Opted out: do not initialise at all. `beforeSend` would drop Dart events
+    // but NOT native crashes — `enableNativeCrashHandling` installs an
+    // out-of-process handler that never reaches Dart. Skipping init is the
+    // only way "off" actually means off.
+    if (!CrashReportingConsent.enabled) {
+      Log.i('Telemetry', 'Crash reporting is off — Sentry not initialised');
+      await appRunner();
+      return;
+    }
+
     await SentryFlutter.init(
       (options) {
         options.dsn = BuildConfig.sentryDsn;
+        // Honours a mid-session opt-out for everything raised in Dart. The
+        // native handler stays until the next launch, which is what the
+        // settings copy tells the user.
+        options.beforeSend = (event, hint) async =>
+            CrashReportingConsent.enabled ? event : null;
         options.environment = _resolveSentryEnvironment();
         options.release = _resolveSentryRelease();
         options.attachStacktrace = true;
