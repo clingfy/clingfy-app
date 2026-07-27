@@ -80,10 +80,25 @@ if ($RunTests) {
   if ($LASTEXITCODE -ne 0) { Fail "flutter analyze lib failed (exit $LASTEXITCODE)." }
 
   $testsDir = Resolve-RepoPath (Join-Path 'build' 'windows-tests')
+  # Configure on demand rather than failing. `01_build.ps1 -Clean` runs
+  # `flutter clean`, which deletes build/ -- INCLUDING build/windows-tests. So a
+  # lane that required the directory to pre-exist worked exactly once: the next
+  # -Clean run was sabotaged by the previous one, and the script's own
+  # documented `-Clean -RunTests` combination could never complete twice.
   if (-not (Test-Path -LiteralPath $testsDir -PathType Container)) {
-    Fail ("Native test build dir not found: $testsDir. One-time configure:`n" +
-      '  cmake -S windows -B build/windows-tests -DBUILD_RUNNER_TESTS=ON ...' + "`n" +
-      "  (see the Windows section of CLAUDE.md for the full command)")
+    Write-Step 'Test gate: configuring native test build (first run, or after -Clean)'
+    # The FLUTTER_VERSION defines feed the runner's version resource. Derived
+    # from the running SDK so this cannot drift from whatever built the app.
+    $fv = (& flutter --version --machine | ConvertFrom-Json).frameworkVersion
+    if (-not $fv) { Fail 'Could not determine the Flutter version for the test configure.' }
+    $parts = $fv.Split('.')
+    & cmake -S (Resolve-RepoPath 'windows') -B $testsDir -DBUILD_RUNNER_TESTS=ON `
+      "-DFLUTTER_VERSION=$fv" `
+      "-DFLUTTER_VERSION_MAJOR=$($parts[0])" `
+      "-DFLUTTER_VERSION_MINOR=$($parts[1])" `
+      "-DFLUTTER_VERSION_PATCH=$($parts[2])" `
+      '-DFLUTTER_VERSION_BUILD=0'
+    if ($LASTEXITCODE -ne 0) { Fail "cmake configure for runner_tests failed (exit $LASTEXITCODE)." }
   }
   # Build BEFORE ctest, and gate on the build result — ctest happily reruns a
   # stale binary and reports green if the rebuild silently failed.
