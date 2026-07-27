@@ -52,4 +52,35 @@ final class PreRecordingBarWarningTests: XCTestCase {
     XCTAssertNotEqual(bleed, NativeUIStringKey.preRecordingBarBleedRisk)
     XCTAssertNotEqual(micTooLow, bleed)
   }
+
+  // MARK: - Panel re-framing
+
+  /// updateState runs on every state push. A live microphone pushes state
+  /// many times a second, and an animated setFrame on an unchanged frame
+  /// re-lays out a floating panel each time — which disturbs which window the
+  /// window server considers key, and made in-app keyboard shortcuts stop
+  /// responding.
+  func testAnUnchangedFrameIsNotReapplied() {
+    let frame = NSRect(x: 100, y: 200, width: 640, height: 64)
+    XCTAssertTrue(PreRecordingBarController.framesAreEquivalent(frame, frame))
+  }
+
+  func testSubPointDifferencesDoNotCountAsAChange() {
+    // Layout rounding produces these; treating them as real would animate the
+    // panel forever.
+    let a = NSRect(x: 100, y: 200, width: 640, height: 64)
+    let b = NSRect(x: 100.2, y: 199.9, width: 640.3, height: 64)
+    XCTAssertTrue(PreRecordingBarController.framesAreEquivalent(a, b))
+  }
+
+  /// A genuine content-width change — a button appearing or disappearing —
+  /// must still re-frame, or the bar clips its own controls.
+  func testARealWidthChangeStillCountsAsAChange() {
+    let a = NSRect(x: 100, y: 200, width: 640, height: 64)
+    let wider = NSRect(x: 100, y: 200, width: 700, height: 64)
+    XCTAssertFalse(PreRecordingBarController.framesAreEquivalent(a, wider))
+
+    let moved = NSRect(x: 140, y: 200, width: 640, height: 64)
+    XCTAssertFalse(PreRecordingBarController.framesAreEquivalent(a, moved))
+  }
 }
