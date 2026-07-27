@@ -231,4 +231,127 @@ void main() {
     expect(harness.recording.phase, WorkflowPhase.recording);
     expect(harness.recording.sessionId, sessionId);
   });
+
+  group('a stop that fails must not resurrect a finished session', () {
+    /// Reproduces the field wedge of 2026-07-27. The camera recorder failed
+    /// to finalize; native emitted recordingFailed (which correctly tore the
+    /// session down) and then replied to the pending stopRecording call with
+    /// the same error 35 ms later. Restoring the pre-stop state there put the
+    /// UI back into "recording" over an already-idle native side, and every
+    /// subsequent Stop returned NOT_RECORDING and restored it again — eleven
+    /// presses in the field, none of which could work.
+    testWidgets('a failure event that lands before the stop reply wins', (
+      tester,
+    ) async {
+      final harness = await createHarness();
+      final sessionId = await startRecordingSession(harness.recording);
+
+      final messenger =
+          TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger;
+      final stopCalled = Completer<void>();
+      messenger.setMockMethodCallHandler(
+        const MethodChannel(NativeChannel.screenRecorder),
+        (call) async {
+          if (call.method == 'stopRecording') {
+            if (!stopCalled.isCompleted) stopCalled.complete();
+            // Native tore the session down and reports the same failure on
+            // both surfaces.
+            await _emitWorkflowEvent({
+              'type': 'recordingFailed',
+              'sessionId': sessionId,
+              'stage': 'finalize',
+              'code': NativeErrorCode.recordingError,
+              'error': 'Camera recorder is not active',
+            });
+            throw PlatformException(
+              code: NativeErrorCode.recordingError,
+              message: 'Camera recorder is not active',
+            );
+          }
+          return null;
+        },
+      );
+
+      await harness.recording.stopRecording();
+      await tester.pump();
+
+      expect(
+        harness.recording.phase,
+        WorkflowPhase.idle,
+        reason: 'the stop reply must not resurrect a torn-down session',
+      );
+    });
+
+    testWidgets('NOT_RECORDING reconciles to idle instead of restoring', (
+      tester,
+    ) async {
+      // Native holds no session, so "restore what we had" is always wrong —
+      // it guarantees the next Stop fails the same way.
+      final harness = await createHarness();
+      await startRecordingSession(harness.recording);
+
+      final messenger =
+          TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger;
+      messenger.setMockMethodCallHandler(
+        const MethodChannel(NativeChannel.screenRecorder),
+        (call) async {
+          if (call.method == 'stopRecording') {
+            throw PlatformException(code: NativeErrorCode.notRecording);
+          }
+          return null;
+        },
+      );
+
+      await harness.recording.stopRecording();
+      await tester.pump();
+
+      expect(harness.recording.phase, WorkflowPhase.idle);
+      expect(harness.recording.errorCode, NativeErrorCode.notRecording);
+    });
+
+    testWidgets('a genuine stop failure still restores the live session', (
+      tester,
+    ) async {
+      // The guard must not swallow the case it was written for: if native is
+      // still recording, the UI has to stay recording so the user can retry.
+      final harness = await createHarness();
+      await startRecordingSession(harness.recording);
+
+      final messenger =
+          TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger;
+      messenger.setMockMethodCallHandler(
+        const MethodChannel(NativeChannel.screenRecorder),
+        (call) async {
+          if (call.method == 'stopRecording') {
+            throw PlatformException(
+              code: NativeErrorCode.recordingError,
+              message: 'transient stop failure',
+            );
+          }
+          return null;
+        },
+      );
+
+      await harness.recording.stopRecording();
+      await tester.pump();
+
+      expect(
+        harness.recording.phase,
+        WorkflowPhase.recording,
+        reason: 'a live session must remain stoppable',
+      );
+
+      // Restoring a live session restarts the elapsed ticker — which is the
+      // point — so tear the session down before the test ends rather than
+      // leaving a pending timer.
+      await _emitWorkflowEvent({
+        'type': 'recordingFailed',
+        'sessionId': harness.recording.sessionId,
+        'code': NativeErrorCode.recordingError,
+        'error': 'cleanup',
+      });
+      await tester.pump();
+      expect(harness.recording.phase, WorkflowPhase.idle);
+    });
+  });
 }
