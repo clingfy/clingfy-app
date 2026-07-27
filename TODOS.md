@@ -35,17 +35,19 @@ Deferred work captured during reviews. Each item has enough context to pick up c
 - **Depends on:** PR-2a (color_grade_args establishes the pattern).
 - **Effort:** human ~2h / CC ~15min.
 
-### Today's log file was destroyed mid-session, and nothing explains it
+### Log files lose their beginning while the app is still running
 
-- **What:** `logs_2026-07-27.jsonl` was 313,453 bytes / 917 rows at 22:31 local. Four minutes later it was 3,439 bytes / 7 rows, and its earliest surviving entry was 19:35 UTC — every line before that, including a recording failure under investigation, was gone.
-- **Why it matters:** This is the second time diagnosis has been blocked by missing evidence rather than by difficulty. The whole point of the shortcut-diagnostics work was "next time, grep the log" — that promise is void if the log does not survive the session it describes. A failure that makes the user restart is exactly the case where the previous run's log matters most.
-- **Ruled out, with evidence:** the Dart sink appends (`FileMode.append`, `file_log_sink.dart:125`) and never truncates; `_pruneOldLogs` (:163) deletes only files whose *filename date* is before `today - 30 days`, so it cannot touch today's; macOS native only computes the path (`AppPaths.logFileURL`, referenced once at `MainFlutterWindow.swift:1460`) and never writes the file. No log-clearing UI exists — `logsBytes` is display-only in the storage section.
-- **Not yet explained.** Candidates worth testing: two app instances running against one file, an external tool or editor rewriting it, or a crash mid-write leaving a truncated file that later appends extend. Do NOT "fix" this speculatively — reproduce first by watching the file across an app restart and a forced crash.
-- **How to start:** `stat -f '%z %m' logs_$(date +%F).jsonl` in a loop across a start/stop/crash cycle, and check whether the size ever drops.
-- **Start at:** `lib/core/logging/file_log_sink.dart`, `lib/core/logging/logger_service.dart:159` (`Log.init`).
-- **Effort:** human ~2h / CC ~30min once reproduced.
-
-## Recording — audio capture
+- **What:** The current day's log file is silently rewritten mid-session, losing everything written before some point. The app never recovers the lost lines; it just keeps appending after them.
+- **Reproduced twice, with evidence.**
+  - `logs_2026-07-27.jsonl` was 313,453 bytes / 917 rows at 22:31 local. Four minutes later: 3,439 bytes / 7 rows.
+  - `logs_2026-07-28.jsonl` carries `sessionId 2026-07-27T22:12:15Z`, but its earliest surviving row is `22:14:39Z` — **2.4 minutes of that session's own output is missing from the front**, and the file contains no `Logger initialized` line even though `Log.init` emits one on every launch.
+- **Therefore it is not launch-time truncation.** The loss happens while a session is running, and appends continue normally afterwards (the file was back to 138 KB / 294 rows within minutes).
+- **Why it matters:** Diagnosis has now been blocked by this twice. The camera-finalize root cause is still unknown specifically because the deciding lines were destroyed while being investigated. Every logging improvement is worth less than it looks until this is fixed.
+- **Ruled out, each by reading the code:** `FileLogSink` only ever appends (`FileMode.append`, `file_log_sink.dart:125`) and its single `delete()` (:183) is inside `_pruneOldLogs`, which compares the *filename* date against `today - 30 days` and so cannot touch the current file. `Log.init` (`logger_service.dart:159`) creates no file and truncates nothing. On macOS the native side only ever *reads* the path — `getTodayLogFilePath`, `revealTodayLogFile`, `revealLogsFolder` and `StorageDiagnosticsService` all stat or reveal, none write. `AppPaths.ensureDirectory` calls `createDirectory(withIntermediateDirectories:)`, which does not delete. There is no log-clearing UI; `logsBytes` is display-only.
+- **So the writer is outside the app's logging path.** Candidates, in the order worth testing: a second app instance sharing the file, an external tail/editor/sync tool rewriting it, or a crash-and-restart cycle that reopens the path without append.
+- **How to reproduce cheaply:** `while :; do stat -f "%z %m" logs_$(date +%F).jsonl; sleep 5; done` while using the app, and note what is on screen when the size drops.
+- **Start at:** `lib/core/logging/file_log_sink.dart`, `lib/core/logging/logger_service.dart:159`.
+- **Effort:** human ~2h / CC ~30min once the drop is caught in the act.
 
 ### Confirm a Bluetooth SPEAKER is warned about
 - **What:** Verify that a Bluetooth loudspeaker (not a headset) triggers the speaker-bleed warning.
