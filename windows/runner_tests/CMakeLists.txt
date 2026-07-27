@@ -42,6 +42,7 @@ add_executable(runner_tests
   "background_image_cache_test.cpp"
   "abstract_waves_params_test.cpp"
   "canvas_preset_params_test.cpp"
+  "gain_processor_test.cpp"
   "preset_thumbnail_cache_test.cpp"
   "canvas_preset_renderer_test.cpp"
   "pre_recording_bar_placement_test.cpp"
