@@ -85,8 +85,15 @@ passthrough.** Edited sessions get a new `PreviewAudioRenderer` (see D3).
 Passthrough sessions stay on the proven MediaPlayer audio path. We do NOT
 unify passthrough onto the owned engine in this step: it would re-clock the
 MediaPlayer-driven video path against a second clock for zero user-visible
-gain today. Revisit only if the passthrough gain gap (D6) graduates from
-"documented" to "complained about".
+gain today.
+
+*Superseded as a trigger, 2026-07-27 (see D6.1):* the original wording here
+was "revisit only if the passthrough gain gap (D6) graduates from
+'documented' to 'complained about'". That test was right for a screen
+recorder with trim and wrong for an editor — an effect chain is required
+either way, so the trigger is now the product direction rather than a
+complaint. The engineering caution in this decision still stands unchanged:
+convergence must remove a clock, not add one.
 
 **D2 — Audio plan = `AudioSlots` for every edited session, monotonic or
 not.** Unlike the export (which keeps monotonic audio in the main reader
@@ -126,7 +133,8 @@ video adjustment). Sessions without an audio track (or with a failed WASAPI
 open — D7) keep today's fixed-budget behavior byte-identical.
 
 **D6 — Live mix wiring: `updateAudioPreview` becomes real; passthrough gets
-volume now, gain stays export-only there (documented gap).**
+volume now, gain stays export-only there (gap with fix pre-built, blocked on
+clock convergence — see D6.1).**
 `updateAudioPreview` (the name Dart actually sends; keys `gain`/`volume`;
 clamp [0,24] dB / [0,100] %; stale `sessionId` = silent success; not-yet-open
 session = stored override applied on next open, mirroring macOS) routes to
@@ -139,6 +147,59 @@ preview remains inaudible-in-preview for now: the Dart notice is re-gated
 `processVideo` handler additionally seeds gain/volume into the session
 (today it drops the args), so the mix survives editor open and the
 standby-resume resync without waiting for a slider touch.
+
+**D6.1 — Status update 2026-07-27: the DSP is built; the remaining blocker is
+the clock, not the maths. `MediaPlayer.AddAudioEffect` is a CLOSED option.**
+
+D6 is no longer "documented gap". The gain node exists, is tested, and is
+portable: `windows/runner/Audio/gain_processor.{h,cpp}` (#358) —
+`Process(float*, frames, channels)` plus a lock-free parameter block, no
+WinRT, no COM, no Windows headers. It reproduces `ApplyAudioGain` exactly,
+including the intermediate hard-limit between the gain and volume stages
+(cross-checked against the int16 function in a test), so wherever it is
+finally hosted the preview will agree with the export. What is missing is a
+place to run it on the passthrough path.
+
+*Reframing that motivated building it early:* under "screen recorder with
+trim" D1's deferral is right. Under "editor" it is not — per-clip gain,
+fades, crossfades, ducking, keyframed volume and monitoring-while-scrubbing
+all need a real effect chain, and `MediaPlayer.Volume` serves none of them
+because it can only attenuate. The chain gets built regardless, so gain is
+simply its cheapest first node: the place to get sample-format handling,
+mid-playback parameter delivery from Dart, and audio-callback thread-safety
+right while the DSP itself is a multiply.
+
+**Closed option — an `IBasicAudioEffect` on the passthrough MediaPlayer.**
+This is the obvious way to amplify a `MediaPlayer` and it does not work here
+cheaply. `MediaPlayer.AddAudioEffect` takes an **activatable class ID**, so
+the effect must be an AUTHORED WinRT runtime class. This runner only
+*consumes* C++/WinRT: there is no `.winmd`, no cppwinrt authoring step in
+`windows/runner/CMakeLists.txt`, and zero `<activatableClass>` entries in
+`windows/runner/runner.exe.manifest`. Taking this path means standing up
+registration-free WinRT authoring inside an unpackaged Flutter runner —
+unproven, and it buys a host adapter that the convergence below then throws
+away. Do not re-derive this; it was measured, not assumed.
+
+**Closed option — route passthrough through the owned renderer only when
+gain > 0 dB.** Conditional convergence is not convergence: it keeps both
+paths and adds a parameter value that silently flips between them, while
+still incurring the dual-clock risk D1 named. Strictly worse than either
+end state.
+
+**Open path — converge the clocks.** The passthrough/edited split is a
+temporary artifact: an uncut recording is really a timeline with one clip and
+identity edits, and special-casing it is the thing that will not scale. The
+dual-clock risk D1 keeps flagging disappears permanently only by not having
+two clocks — one master clock, audio, with video slaved to it. Once
+passthrough plays through the owned WASAPI renderer, `GainProcessor` drops in
+at the fill site next to `ApplyAudioGain` and D6 closes as a side effect, with
+no adapter written and none discarded.
+
+Two further things worth settling before an editor makes them expensive:
+model the edit as an immutable document plus a command stack (undo/redo is
+table stakes and brutal to bolt on later), and keep high-frequency state —
+playhead position, scrub deltas at 60 Hz — off the method channel, on an
+event channel with coalescing or in shared memory.
 
 **D7 — Soft-fail everywhere.** WASAPI open failure, no default endpoint,
 device invalidated (`AUDCLNT_E_DEVICE_INVALIDATED` — standby resume!), or a
