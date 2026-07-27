@@ -200,11 +200,23 @@ class PostProcessingController extends ChangeNotifier {
 
   void setLayoutPreset(LayoutPreset v) {
     _settings.post.updateLayoutPreset(v);
+    // [applyProcessing] drives `processVideo`, which is a no-op on Windows —
+    // so without this the layout reached the export and nothing else. Native
+    // needs it on the canvas channel for two reasons: padding/radius are
+    // normalised against the export target these presets resolve, and a layout
+    // that changes the canvas ASPECT requires the preview session to be
+    // rebuilt (the shared texture is sized to it and cannot be resized).
+    _pushCanvas();
     applyProcessing();
   }
 
   void setResolutionPreset(ResolutionPreset v) {
     _settings.post.updateResolutionPreset(v);
+    // Same as [setLayoutPreset]: the resolution is half of the export target
+    // that padding and corner radius are normalised against. It does not
+    // reshape the preview texture (that stays aspect-only inside a fixed
+    // budget), so this pushes the value without forcing a rebuild.
+    _pushCanvas();
     applyProcessing();
   }
 

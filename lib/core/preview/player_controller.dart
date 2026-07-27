@@ -218,8 +218,13 @@ class PlayerController extends ChangeNotifier {
     if (_rebuildingInvalidatedPreview) return;
     _rebuildingInvalidatedPreview = true;
     _userTransportDuringRebuild = false;
+    // A canvas-aspect rebuild is the expected result of the user switching
+    // layout preset — routine, and it happens as often as they change their
+    // mind. Only a fault deserves a warning; logging every preset switch at
+    // warn would bury the standby-resume signal it shares this path with.
+    final isRoutine = reason == PreviewInvalidationReason.canvasAspectChanged;
     try {
-      Log.w(
+      (isRoutine ? Log.d : Log.w)(
         'Player',
         'Native invalidated the preview session — rebuilding it in place',
         null,
@@ -233,10 +238,14 @@ class PlayerController extends ChangeNotifier {
       // never resurrect state for a preview the user already left.
       if (_activeSessionId != sessionId) return;
       if (!reopened) {
-        _blockingError =
-            'The preview could not be rebuilt after the system resumed from '
-            'sleep. Close and reopen the preview; the recording file itself '
-            'is unaffected.';
+        _blockingError = isRoutine
+            ? 'The preview could not be rebuilt for the new canvas layout. '
+                  'Close and reopen the preview; your recording and its '
+                  'settings are unaffected, and the export still uses the '
+                  'layout you picked.'
+            : 'The preview could not be rebuilt after the system resumed from '
+                  'sleep. Close and reopen the preview; the recording file '
+                  'itself is unaffected.';
         _blockingErrorCode = NativeErrorCode.previewOpenError;
         notifyListeners();
         return;

@@ -29,6 +29,7 @@ class _Harness {
     required this.settings,
     required this.processCalls,
     required this.cameraPlacementCalls,
+    required this.canvasCalls,
   });
 
   final _TestPlayerController player;
@@ -36,6 +37,7 @@ class _Harness {
   final SettingsController settings;
   final List<MethodCall> processCalls;
   final List<MethodCall> cameraPlacementCalls;
+  final List<MethodCall> canvasCalls;
 
   void dispose() {
     post.dispose();
@@ -58,6 +60,7 @@ void main() {
   Future<_Harness> createHarness({List<ZoomSegment>? zoomSegments}) async {
     final processCalls = <MethodCall>[];
     final cameraPlacementCalls = <MethodCall>[];
+    final canvasCalls = <MethodCall>[];
     final messenger =
         TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger;
 
@@ -72,6 +75,9 @@ void main() {
           return '/tmp/preview.mov';
         case 'previewSetCameraPlacement':
           cameraPlacementCalls.add(call);
+          return null;
+        case 'previewSetCanvas':
+          canvasCalls.add(call);
           return null;
         default:
           return null;
@@ -97,6 +103,7 @@ void main() {
     );
     await Future<void>.delayed(Duration.zero);
     processCalls.clear();
+    canvasCalls.clear();
 
     final harness = _Harness(
       player: player,
@@ -104,10 +111,54 @@ void main() {
       settings: settings,
       processCalls: processCalls,
       cameraPlacementCalls: cameraPlacementCalls,
+      canvasCalls: canvasCalls,
     );
     addTearDown(harness.dispose);
     return harness;
   }
+
+  // The layout preset decides the export CANVAS aspect, and native sizes the
+  // preview's shared texture to it. Before this, setLayoutPreset only called
+  // applyProcessing -> processVideo, which is a no-op on Windows: the layout
+  // reached the export and nothing else, so the preview kept showing the old
+  // shape. Same failure the padding/radius setters had.
+  test('setLayoutPreset pushes the new layout on the canvas channel', () async {
+    final harness = await createHarness();
+
+    harness.post.setLayoutPreset(LayoutPreset.reel916);
+    await Future<void>.delayed(Duration.zero);
+
+    expect(
+      harness.canvasCalls,
+      isNotEmpty,
+      reason:
+          'a layout change must reach previewSetCanvas, not only the '
+          'export args',
+    );
+    final args = Map<String, dynamic>.from(
+      harness.canvasCalls.last.arguments! as Map<dynamic, dynamic>,
+    );
+    expect(args['layoutPreset'], LayoutPreset.reel916.name);
+    // The resolution rides along: native needs BOTH to resolve the export
+    // target that padding and corner radius are normalised against.
+    expect(args['resolutionPreset'], isNotNull);
+  });
+
+  test(
+    'setResolutionPreset pushes the new resolution on the canvas channel',
+    () async {
+      final harness = await createHarness();
+
+      harness.post.setResolutionPreset(ResolutionPreset.p2160);
+      await Future<void>.delayed(Duration.zero);
+
+      expect(harness.canvasCalls, isNotEmpty);
+      final args = Map<String, dynamic>.from(
+        harness.canvasCalls.last.arguments! as Map<dynamic, dynamic>,
+      );
+      expect(args['resolutionPreset'], ResolutionPreset.p2160.name);
+    },
+  );
 
   test('applyProcessing carries the current voice-cleanup setting', () async {
     final harness = await createHarness();

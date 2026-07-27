@@ -122,5 +122,86 @@ TEST(CanvasTextureSizeTest, UnknownPresetStillProducesADrawableTexture) {
   EXPECT_LE(s.height, 720);
 }
 
+// ---------------------------------------------------------------------------
+// DecideCanvasAspectRebuild — when a canvas push must rebuild the session.
+//
+// A registered shared texture cannot be resized, so a layout switch only
+// reshapes the preview via close+reopen. These tests pin the two properties
+// that keep that from becoming an infinite close/reopen cycle.
+// ---------------------------------------------------------------------------
+
+// THE LOOP GUARD. Before the first frame the source dims are 0, and sizing from
+// 0 yields the 1280x720 default — which mismatches any portrait texture. Were
+// this to return true, the rebuild would push the canvas again, still with no
+// decoded frame, and ask for another rebuild forever.
+TEST(CanvasAspectRebuildTest, UnknownSourceDimensionsNeverRebuild) {
+  EXPECT_FALSE(PreviewEngine::DecideCanvasAspectRebuild(0, 0, 720, 1280,
+                                                        "reel916", "p1080"));
+  EXPECT_FALSE(PreviewEngine::DecideCanvasAspectRebuild(-1, 1080, 720, 1280,
+                                                        "reel916", "p1080"));
+}
+
+// No session open yet — nothing to compare against, so nothing to rebuild.
+TEST(CanvasAspectRebuildTest, UnknownTextureSizeNeverRebuilds) {
+  EXPECT_FALSE(PreviewEngine::DecideCanvasAspectRebuild(kSrcW, kSrcH, 0, 0,
+                                                        "reel916", "p1080"));
+}
+
+// THE TERMINATION PROPERTY. The rebuild re-pushes the canvas; that second push
+// arrives with the texture already at the required size and MUST be a no-op.
+TEST(CanvasAspectRebuildTest, MatchingTextureDoesNotRebuild) {
+  const TextureSize required =
+      PreviewEngine::ComputeCanvasTextureSize(kSrcW, kSrcH, "reel916", "p1080");
+  EXPECT_FALSE(PreviewEngine::DecideCanvasAspectRebuild(
+      kSrcW, kSrcH, required.width, required.height, "reel916", "p1080"));
+}
+
+// The feature itself: a 16:9 recording moved into a 9:16 canvas needs a
+// differently shaped texture, which is exactly the case the preview used to
+// get wrong (it stayed 16:9 while the export went portrait).
+TEST(CanvasAspectRebuildTest, LandscapeToPortraitLayoutRebuilds) {
+  const TextureSize landscape =
+      PreviewEngine::ComputeCanvasTextureSize(kSrcW, kSrcH, "youtube169", "p1080");
+  EXPECT_TRUE(PreviewEngine::DecideCanvasAspectRebuild(
+      kSrcW, kSrcH, landscape.width, landscape.height, "reel916", "p1080"));
+}
+
+// A resolution change is NOT a reshape: the texture is aspect-only inside a
+// fixed budget, so 1080p -> 4K/8K moves the export target and nothing on screen.
+// Rebuilding here would close and reopen the preview for no visible reason.
+TEST(CanvasAspectRebuildTest, ResolutionOnlyChangeDoesNotRebuild) {
+  const TextureSize at1080 =
+      PreviewEngine::ComputeCanvasTextureSize(kSrcW, kSrcH, "youtube169", "p1080");
+  EXPECT_FALSE(PreviewEngine::DecideCanvasAspectRebuild(
+      kSrcW, kSrcH, at1080.width, at1080.height, "youtube169", "p2160"));
+  EXPECT_FALSE(PreviewEngine::DecideCanvasAspectRebuild(
+      kSrcW, kSrcH, at1080.width, at1080.height, "youtube169", "p4320"));
+}
+
+// Empty presets mean "Dart has not pushed canvas state yet", which sizes by the
+// video aspect. A session opened that way must not immediately rebuild.
+TEST(CanvasAspectRebuildTest, EmptyPresetsDoNotRebuildAVideoSizedTexture) {
+  const TextureSize legacy =
+      PreviewEngine::ComputePreviewTextureSize(kSrcW, kSrcH);
+  EXPECT_FALSE(PreviewEngine::DecideCanvasAspectRebuild(
+      kSrcW, kSrcH, legacy.width, legacy.height, "", ""));
+}
+
+// One rebuild settles it: after reopening at the required size, deciding again
+// with the same presets is false. Together with MatchingTextureDoesNotRebuild
+// this is the full close/reopen cycle, executed twice.
+TEST(CanvasAspectRebuildTest, RebuildIsIdempotentAfterTheReopen) {
+  const TextureSize before =
+      PreviewEngine::ComputeCanvasTextureSize(kSrcW, kSrcH, "youtube169", "p1080");
+  ASSERT_TRUE(PreviewEngine::DecideCanvasAspectRebuild(
+      kSrcW, kSrcH, before.width, before.height, "square11", "p1080"));
+
+  // The reopen sizes the texture to what the new presets require.
+  const TextureSize after = PreviewEngine::ComputeCanvasTextureSize(
+      kSrcW, kSrcH, "square11", "p1080");
+  EXPECT_FALSE(PreviewEngine::DecideCanvasAspectRebuild(
+      kSrcW, kSrcH, after.width, after.height, "square11", "p1080"));
+}
+
 }  // namespace
 }  // namespace clingfy::preview
