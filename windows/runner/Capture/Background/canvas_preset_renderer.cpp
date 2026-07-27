@@ -1,4 +1,4 @@
-#include "Capture/Background/abstract_waves_renderer.h"
+#include "Capture/Background/canvas_preset_renderer.h"
 
 #include <d2d1effects.h>
 
@@ -8,6 +8,7 @@
 #include <vector>
 
 #include "Capture/Background/abstract_waves_params.h"
+#include "Capture/Background/canvas_preset_params.h"
 #include "Capture/Background/background_preset_catalog.h"
 
 namespace clingfy::capture::background {
@@ -139,6 +140,121 @@ void DrawGlow(ID2D1DeviceContext* ctx, float w, float h,
   ctx->FillRectangle(D2D1::RectF(0, 0, w, h), brush.Get());
 }
 
+// A radial blob/glow: `color` at `alpha` in the centre, fading to fully
+// transparent at `radius`. Shared by graphicMesh and radialGlow — they differ
+// in how many, how big, how opaque, and what is underneath, not in the shape.
+void DrawRadialBlob(ID2D1DeviceContext* ctx, float w, float h, double cx_frac,
+                    double cy_frac, double radius_frac, double alpha,
+                    std::uint32_t color_argb) {
+  const D2D1_GRADIENT_STOP stops[2] = {
+      {0.0f, ArgbToColor(color_argb, alpha)},
+      {1.0f, ArgbToColor(color_argb, 0.0)},
+  };
+  ComPtr<ID2D1GradientStopCollection> collection;
+  if (FAILED(ctx->CreateGradientStopCollection(stops, 2, D2D1_GAMMA_2_2,
+                                               D2D1_EXTEND_MODE_CLAMP,
+                                               &collection))) {
+    return;
+  }
+
+  const float cx = w * static_cast<float>(cx_frac);
+  // Flip: macOS measures y up from the bottom, D2D down from the top.
+  const float cy = h - h * static_cast<float>(cy_frac);
+  const float radius = std::min(w, h) * static_cast<float>(radius_frac);
+  if (!(radius > 0.0f)) return;
+
+  ComPtr<ID2D1RadialGradientBrush> brush;
+  if (FAILED(ctx->CreateRadialGradientBrush(
+          D2D1::RadialGradientBrushProperties(D2D1::Point2F(cx, cy),
+                                              D2D1::Point2F(0, 0), radius,
+                                              radius),
+          collection.Get(), &brush))) {
+    return;
+  }
+  ctx->FillRectangle(D2D1::RectF(0, 0, w, h), brush.Get());
+}
+
+// `graphicMesh`: a base fill in the darkest palette colour, then large soft
+// blobs scattered (and bleeding off) the edges.
+void DrawGraphicMesh(ID2D1DeviceContext* ctx, float w, float h,
+                     const BackgroundPalette& palette,
+                     const GraphicMeshParams& params) {
+  ComPtr<ID2D1SolidColorBrush> base;
+  if (SUCCEEDED(ctx->CreateSolidColorBrush(
+          ArgbToColor(palette.colors_argb.front()), &base))) {
+    ctx->FillRectangle(D2D1::RectF(0, 0, w, h), base.Get());
+  }
+  for (const auto& blob : params.blobs) {
+    const std::uint32_t color =
+        palette.colors_argb[static_cast<size_t>(blob.palette_index) %
+                            palette.colors_argb.size()];
+    DrawRadialBlob(ctx, w, h, blob.center_x_fraction, blob.center_y_fraction,
+                   blob.radius_fraction, blob.alpha, color);
+  }
+}
+
+// `radialGlow`: a full-palette diagonal gradient lit by three faint glows.
+void DrawRadialGlowPreset(ID2D1DeviceContext* ctx, float w, float h,
+                          const BackgroundPalette& palette,
+                          const RadialGlowParams& params) {
+  std::vector<D2D1_GRADIENT_STOP> stops;
+  const size_t count = palette.colors_argb.size();
+  stops.reserve(count);
+  for (size_t i = 0; i < count; ++i) {
+    D2D1_GRADIENT_STOP s{};
+    s.position = count <= 1
+                     ? 0.0f
+                     : static_cast<float>(i) / static_cast<float>(count - 1);
+    s.color = ArgbToColor(palette.colors_argb[i]);
+    stops.push_back(s);
+  }
+
+  ComPtr<ID2D1GradientStopCollection> collection;
+  if (SUCCEEDED(ctx->CreateGradientStopCollection(
+          stops.data(), static_cast<UINT32>(stops.size()), D2D1_GAMMA_2_2,
+          D2D1_EXTEND_MODE_CLAMP, &collection))) {
+    // macOS draws bottom-left -> top-right; flipped to D2D's top-left origin
+    // that is (0, h) -> (w, 0).
+    ComPtr<ID2D1LinearGradientBrush> brush;
+    if (SUCCEEDED(ctx->CreateLinearGradientBrush(
+            D2D1::LinearGradientBrushProperties(D2D1::Point2F(0.0f, h),
+                                                D2D1::Point2F(w, 0.0f)),
+            collection.Get(), &brush))) {
+      ctx->FillRectangle(D2D1::RectF(0, 0, w, h), brush.Get());
+    }
+  } else {
+    ComPtr<ID2D1SolidColorBrush> flat;
+    if (SUCCEEDED(ctx->CreateSolidColorBrush(
+            ArgbToColor(palette.colors_argb.front()), &flat))) {
+      ctx->FillRectangle(D2D1::RectF(0, 0, w, h), flat.Get());
+    }
+  }
+
+  for (const auto& glow : params.glows) {
+    const std::uint32_t color =
+        palette.colors_argb[static_cast<size_t>(glow.palette_index) %
+                            palette.colors_argb.size()];
+    DrawRadialBlob(ctx, w, h, glow.center_x_fraction, glow.center_y_fraction,
+                   glow.radius_fraction, glow.alpha, color);
+  }
+}
+
+// `abstractWaves`: tilted base gradient, wave ribbons, white glows.
+void DrawAbstractWaves(ID2D1DeviceContext* ctx, ID2D1Factory* factory, float w,
+                       float h, const BackgroundPalette& palette,
+                       const AbstractWavesParams& params) {
+  DrawBaseGradient(ctx, w, h, palette, params.tilt);
+  for (const auto& ribbon : params.ribbons) {
+    const std::uint32_t color =
+        palette.colors_argb[static_cast<size_t>(ribbon.palette_index) %
+                            palette.colors_argb.size()];
+    DrawWaveRibbon(ctx, factory, w, h, ribbon, color);
+  }
+  for (const auto& glow : params.glows) {
+    DrawGlow(ctx, w, h, glow);
+  }
+}
+
 // Create an offscreen BGRA target bitmap the size of the canvas.
 ComPtr<ID2D1Bitmap1> CreateTargetBitmap(ID2D1DeviceContext* ctx, UINT w,
                                         UINT h) {
@@ -169,8 +285,8 @@ Microsoft::WRL::ComPtr<ID2D1Bitmap1> RenderCanvasPreset(
   if (!canvas) return nullptr;
 
   const BackgroundPalette& palette = BackgroundPaletteFor(spec.palette_id);
-  const AbstractWavesParams params = DeriveAbstractWavesParams(
-      spec.seed, spec.intensity, static_cast<int>(palette.colors_argb.size()));
+  if (palette.colors_argb.empty()) return nullptr;
+  const int palette_size = static_cast<int>(palette.colors_argb.size());
 
   const float w = static_cast<float>(width);
   const float h = static_cast<float>(height);
@@ -184,15 +300,21 @@ Microsoft::WRL::ComPtr<ID2D1Bitmap1> RenderCanvasPreset(
   ctx->SetTarget(canvas.Get());
   ctx->BeginDraw();
   ctx->Clear(D2D1::ColorF(0, 0, 0, 0));
-  DrawBaseGradient(ctx, w, h, palette, params.tilt);
-  for (const auto& ribbon : params.ribbons) {
-    const std::uint32_t color =
-        palette.colors_argb[static_cast<size_t>(ribbon.palette_index) %
-                            palette.colors_argb.size()];
-    DrawWaveRibbon(ctx, factory.Get(), w, h, ribbon, color);
-  }
-  for (const auto& glow : params.glows) {
-    DrawGlow(ctx, w, h, glow);
+  // Unknown ids fall back to abstract waves rather than rendering nothing,
+  // matching the macOS `default:` arm — a stale or typo'd id from an older
+  // project still gets a reasonable background.
+  if (spec.preset_id == "graphicMesh") {
+    DrawGraphicMesh(
+        ctx, w, h, palette,
+        DeriveGraphicMeshParams(spec.seed, spec.intensity, palette_size));
+  } else if (spec.preset_id == "radialGlow") {
+    DrawRadialGlowPreset(
+        ctx, w, h, palette,
+        DeriveRadialGlowParams(spec.seed, spec.intensity, palette_size));
+  } else {
+    DrawAbstractWaves(
+        ctx, factory.Get(), w, h, palette,
+        DeriveAbstractWavesParams(spec.seed, spec.intensity, palette_size));
   }
   const HRESULT end_hr = ctx->EndDraw();
   ctx->SetTarget(previous_target.Get());

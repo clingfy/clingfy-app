@@ -27,8 +27,8 @@
 //
 //     y_d2d = height - y_macos
 
-#ifndef RUNNER_CAPTURE_BACKGROUND_ABSTRACT_WAVES_RENDERER_H_
-#define RUNNER_CAPTURE_BACKGROUND_ABSTRACT_WAVES_RENDERER_H_
+#ifndef RUNNER_CAPTURE_BACKGROUND_CANVAS_PRESET_RENDERER_H_
+#define RUNNER_CAPTURE_BACKGROUND_CANVAS_PRESET_RENDERER_H_
 
 #include <windows.h>
 #include <d2d1_1.h>
@@ -76,4 +76,4 @@ inline constexpr int kCanvasPresetRendererVersion = 1;
 
 }  // namespace clingfy::capture::background
 
-#endif  // RUNNER_CAPTURE_BACKGROUND_ABSTRACT_WAVES_RENDERER_H_
+#endif  // RUNNER_CAPTURE_BACKGROUND_CANVAS_PRESET_RENDERER_H_
