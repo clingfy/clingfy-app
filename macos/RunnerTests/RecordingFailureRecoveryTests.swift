@@ -954,4 +954,31 @@ final class RecordingFailureRecoveryTests: XCTestCase {
     let sources = projectRef.mediaSources()
     XCTAssertNil(sources.cameraVideoURL, "a salvaged take must not advertise a camera")
   }
+
+  // MARK: - Why the camera was inactive
+
+  /// The three "not active" paths used to return an identical string, so a
+  /// field report could not be resolved without reproducing it. Each now
+  /// names itself.
+  func testTheThreeInactiveMessagesAreDistinguishable() {
+    let endings: [CameraRecorder.SessionEnding] = [
+      .neverBegan, .finishedSuccessfully, .failed,
+    ]
+    XCTAssertEqual(
+      Set(endings.map(\.rawValue)).count, endings.count,
+      "each ending must be identifiable in a log line")
+
+    for ending in endings {
+      XCTAssertFalse(ending.rawValue.isEmpty)
+    }
+  }
+
+  /// A fresh recorder has never had a session, so an early stop must say so
+  /// rather than implying something tore a session down.
+  func testAFreshRecorderReportsThatItNeverBegan() {
+    XCTAssertEqual(CameraRecorder.SessionEnding.neverBegan.rawValue, "neverBegan")
+    XCTAssertEqual(
+      CameraRecorder.SessionEnding.finishedSuccessfully.rawValue, "finishedSuccessfully")
+    XCTAssertEqual(CameraRecorder.SessionEnding.failed.rawValue, "failed")
+  }
 }

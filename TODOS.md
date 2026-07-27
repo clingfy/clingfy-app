@@ -35,6 +35,16 @@ Deferred work captured during reviews. Each item has enough context to pick up c
 - **Depends on:** PR-2a (color_grade_args establishes the pattern).
 - **Effort:** human ~2h / CC ~15min.
 
+### Today's log file was destroyed mid-session, and nothing explains it
+
+- **What:** `logs_2026-07-27.jsonl` was 313,453 bytes / 917 rows at 22:31 local. Four minutes later it was 3,439 bytes / 7 rows, and its earliest surviving entry was 19:35 UTC — every line before that, including a recording failure under investigation, was gone.
+- **Why it matters:** This is the second time diagnosis has been blocked by missing evidence rather than by difficulty. The whole point of the shortcut-diagnostics work was "next time, grep the log" — that promise is void if the log does not survive the session it describes. A failure that makes the user restart is exactly the case where the previous run's log matters most.
+- **Ruled out, with evidence:** the Dart sink appends (`FileMode.append`, `file_log_sink.dart:125`) and never truncates; `_pruneOldLogs` (:163) deletes only files whose *filename date* is before `today - 30 days`, so it cannot touch today's; macOS native only computes the path (`AppPaths.logFileURL`, referenced once at `MainFlutterWindow.swift:1460`) and never writes the file. No log-clearing UI exists — `logsBytes` is display-only in the storage section.
+- **Not yet explained.** Candidates worth testing: two app instances running against one file, an external tool or editor rewriting it, or a crash mid-write leaving a truncated file that later appends extend. Do NOT "fix" this speculatively — reproduce first by watching the file across an app restart and a forced crash.
+- **How to start:** `stat -f '%z %m' logs_$(date +%F).jsonl` in a loop across a start/stop/crash cycle, and check whether the size ever drops.
+- **Start at:** `lib/core/logging/file_log_sink.dart`, `lib/core/logging/logger_service.dart:159` (`Log.init`).
+- **Effort:** human ~2h / CC ~30min once reproduced.
+
 ## Recording — audio capture
 
 ### Confirm a Bluetooth SPEAKER is warned about
