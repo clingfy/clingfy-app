@@ -2930,6 +2930,24 @@ extension ScreenRecorderFacade: CaptureBackendEventHandling {
     forwardMicrophoneLevel(sample, source: .recordingBackend)
   }
 
+  /// Shown when a take survives a camera failure. It names what was kept as
+  /// well as what was lost, because "camera failed" alone reads as "the
+  /// recording is gone" — which is exactly what this change stopped being
+  /// true.
+  nonisolated static let cameraFinalizeSalvageWarning =
+    "The camera track could not be saved, so this recording has no camera. "
+    + "Your screen and audio were recorded and are ready to edit."
+
+  /// Emits a recording warning outside the backend event path.
+  func emitRecordingWarning(_ message: String) {
+    guard let sessionId = sessionState.activeRecordingWorkflowSessionId else { return }
+    onRecordingWarning?([
+      "type": "recordingWarning",
+      "sessionId": sessionId,
+      "message": message,
+    ])
+  }
+
   func backendDidWarn(message: String) {
     guard let sessionId = sessionState.activeRecordingWorkflowSessionId else { return }
     onRecordingWarning?([
@@ -3167,18 +3185,24 @@ extension ScreenRecorderFacade: CaptureBackendEventHandling {
       case .success(let cameraResult):
         finalizeWithCameraResult(cameraResult)
       case .failure(let cameraError):
+        // The camera is a sidecar. Failing the whole take here discarded a
+        // screen recording that had already finalized — observed in the field
+        // with `screen.mov` logged as playable (11.83s, 2 tracks, mic merged)
+        // six milliseconds before the run was reported as failed. That is
+        // unrecoverable loss on something the user cannot re-record.
+        //
+        // `finalizeWithCameraResult(nil)` is not a fallback invented here: it
+        // is the exact path a recording with no camera already takes, so the
+        // manifest, preview and export all see a shape they handle natively.
         NativeLogger.e(
           "Facade",
-          "Camera recorder finalize failed during separate-camera recording",
+          "Camera recorder finalize failed; salvaging the screen recording",
           context: ["error": cameraError.localizedDescription]
         )
-        self.completeRecordingLifecycle(
-          finalURL: nil,
-          error: cameraError,
-          wasStarting: wasStarting,
-          pendingStartResult: pendingStartResult,
-          completion: completion
-        )
+        // Loud, but not destructive: the user has to know the camera track is
+        // gone before they publish.
+        self.emitRecordingWarning(Self.cameraFinalizeSalvageWarning)
+        finalizeWithCameraResult(nil)
       }
     }
   }
