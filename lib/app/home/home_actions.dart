@@ -145,7 +145,29 @@ class HomeActions {
     if (mode == DisplayTargetMode.singleAppWindow) {
       await deviceController.reloadAppWindows();
     }
+    await syncAppWindowWatch();
   }
+
+  /// Starts the native window watcher only while the app-window picker is
+  /// actually on screen, and stops it otherwise.
+  ///
+  /// The window list is the one picker macOS provides no notification for, so
+  /// it has to be polled. Polling it in the background forever would be pure
+  /// waste — nobody is looking — and polling during a take is worse, because
+  /// the picker is unusable then. This is the gate that keeps the cost
+  /// proportional to the benefit.
+  Future<void> syncAppWindowWatch() async {
+    final shouldWatch =
+        uiState.targetMode == DisplayTargetMode.singleAppWindow &&
+        !recordingController.isRecording;
+
+    if (shouldWatch == _appWindowWatchActive) return;
+    _appWindowWatchActive = shouldWatch;
+    await nativeBridge.setAppWindowWatchActive(shouldWatch);
+  }
+
+  /// Mirrors the native ref-count so a repeated call is not double-counted.
+  bool _appWindowWatchActive = false;
 
   Future<void> persistPaneLayout(DesktopPaneLayoutPrefs layout) async {
     uiState.applyPaneLayoutPrefs(layout);
@@ -628,6 +650,9 @@ class HomeActions {
   }
 
   void updateNativeBarState() {
+    // Cheap: syncAppWindowWatch returns immediately unless the gate flipped.
+    unawaited(syncAppWindowWatch());
+
     if (!uiState.uiPrefsHydrated ||
         !deviceController.isHydrated ||
         !overlayController.isHydrated) {

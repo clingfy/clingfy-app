@@ -10,6 +10,7 @@ import '../../test_helpers/wait_until.dart';
 /// Displays the fake native side reports on the next getDisplays call.
 List<Map<String, Object?>> _displays = const [];
 List<Map<String, Object?>> _cameras = const [];
+List<Map<String, Object?>> _appWindows = const [];
 final List<MethodCall> _calls = <MethodCall>[];
 
 void _installMocks() {
@@ -25,8 +26,9 @@ void _installMocks() {
         case 'getVideoSources':
           return _cameras;
         case 'getAudioSources':
-        case 'getAppWindows':
           return <dynamic>[];
+        case 'getAppWindows':
+          return _appWindows;
         default:
           return null;
       }
@@ -56,6 +58,7 @@ void main() {
     _calls.clear();
     _displays = const [];
     _cameras = const [];
+    _appWindows = const [];
     SharedPreferences.setMockInitialValues({});
     _installMocks();
   });
@@ -330,5 +333,50 @@ void main() {
         expect((setDisplay.last.arguments as Map)['id'], 1);
       },
     );
+  });
+
+  group('appWindowsChanged event', () {
+    test('is a wire constant, kept in sync with Swift', () {
+      expect(DeviceEventType.appWindowsChanged, 'appWindowsChanged');
+    });
+
+    test('reloads the window list', () async {
+      _appWindows = const [
+        {'windowId': 1, 'appName': 'Safari', 'title': 'Docs'},
+      ];
+      final controller = await makeController();
+      addTearDown(controller.dispose);
+      expect(controller.appWindows.length, 1);
+
+      // A second window opens while the picker is on screen.
+      _appWindows = const [
+        {'windowId': 1, 'appName': 'Safari', 'title': 'Docs'},
+        {'windowId': 2, 'appName': 'Xcode', 'title': 'Runner'},
+      ];
+      await _emit(DeviceEventType.appWindowsChanged);
+
+      await waitUntil(
+        () => controller.appWindows.length == 2,
+        reason: 'window list did not refresh on appWindowsChanged',
+      );
+    });
+
+    test('does not reload unrelated lists', () async {
+      _appWindows = const [
+        {'windowId': 1, 'appName': 'Safari', 'title': 'Docs'},
+      ];
+      final controller = await makeController();
+      addTearDown(controller.dispose);
+
+      _calls.clear();
+      await _emit(DeviceEventType.appWindowsChanged);
+      await waitUntil(
+        () => _calls.any((c) => c.method == 'getAppWindows'),
+        reason: 'windows were never re-enumerated',
+      );
+
+      expect(_calls.where((c) => c.method == 'getDisplays'), isEmpty);
+      expect(_calls.where((c) => c.method == 'getAudioSources'), isEmpty);
+    });
   });
 }

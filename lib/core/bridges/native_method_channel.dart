@@ -151,5 +151,6 @@ abstract class DeviceEventType {
   static const String audioSourcesChanged = 'audioSourcesChanged';
   static const String videoSourcesChanged = 'videoSourcesChanged';
   static const String displaysChanged = 'displaysChanged';
+  static const String appWindowsChanged = 'appWindowsChanged';
   static const String microphoneLevel = 'microphoneLevel';
 }

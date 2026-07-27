@@ -266,6 +266,97 @@ void main() {
     return harness;
   }
 
+  group('app window watcher activation', () {
+    // The window list is the one picker macOS gives no notification for, so
+    // it is polled. Polling it in the background forever would be pure waste,
+    // so the gate is what keeps the cost proportional.
+    Iterable<bool> watchCalls(_Harness harness) => harness
+        .callsFor('setAppWindowWatchActive')
+        .map((c) => (c.arguments as Map)['active'] as bool);
+
+    testWidgets('starts only when the app-window picker is the target', (
+      tester,
+    ) async {
+      final harness = await createHarness(
+        tester,
+        permissionStatus: const {
+          'screenRecording': true,
+          'microphone': true,
+          'camera': true,
+          'accessibility': true,
+        },
+      );
+      addTearDown(harness.dispose);
+      harness.uiState.markHydrated();
+      await tester.pumpAndSettle();
+
+      // Not watching while recording a whole display.
+      expect(watchCalls(harness).where((active) => active), isEmpty);
+
+      await harness.actions.setDisplayTargetMode(
+        DisplayTargetMode.singleAppWindow,
+      );
+      await tester.pumpAndSettle();
+      expect(watchCalls(harness).last, isTrue);
+    });
+
+    testWidgets('stops when the target moves off app windows', (tester) async {
+      final harness = await createHarness(
+        tester,
+        permissionStatus: const {
+          'screenRecording': true,
+          'microphone': true,
+          'camera': true,
+          'accessibility': true,
+        },
+      );
+      addTearDown(harness.dispose);
+      harness.uiState.markHydrated();
+      await tester.pumpAndSettle();
+
+      await harness.actions.setDisplayTargetMode(
+        DisplayTargetMode.singleAppWindow,
+      );
+      await tester.pumpAndSettle();
+      expect(watchCalls(harness).last, isTrue);
+
+      await harness.actions.setDisplayTargetMode(DisplayTargetMode.explicitId);
+      await tester.pumpAndSettle();
+      expect(watchCalls(harness).last, isFalse);
+    });
+
+    testWidgets('does not re-send the same activation state', (tester) async {
+      // The native side is ref-counted; repeating a true would leave the
+      // count above zero forever and the watcher polling after the picker
+      // closed.
+      final harness = await createHarness(
+        tester,
+        permissionStatus: const {
+          'screenRecording': true,
+          'microphone': true,
+          'camera': true,
+          'accessibility': true,
+        },
+      );
+      addTearDown(harness.dispose);
+      harness.uiState.markHydrated();
+      await tester.pumpAndSettle();
+
+      await harness.actions.setDisplayTargetMode(
+        DisplayTargetMode.singleAppWindow,
+      );
+      await tester.pumpAndSettle();
+      final afterFirst = watchCalls(harness).length;
+
+      // Any number of unrelated state pushes must not re-arm it.
+      harness.actions.updateNativeBarState();
+      harness.actions.updateNativeBarState();
+      await tester.pumpAndSettle();
+
+      expect(watchCalls(harness).length, afterFirst);
+    });
+  });
+
   group('pre-recording bar audio warnings', () {
     // The bar is a separate native window, so these travel as part of the
     // setPreRecordingBarState payload rather than as widgets. Both are gated

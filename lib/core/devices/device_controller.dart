@@ -110,6 +110,9 @@ class DeviceController extends ChangeNotifier {
             if (event['type'] == DeviceEventType.displaysChanged) {
               await reloadDisplays();
             }
+            if (event['type'] == DeviceEventType.appWindowsChanged) {
+              await reloadAppWindows();
+            }
             if (event['type'] == DeviceEventType.microphoneLevel) {
               _applyMicrophoneLevelEvent(Map<dynamic, dynamic>.from(event));
             }

@@ -914,6 +914,11 @@ class MainFlutterWindow: NSWindow {
         self.explicitlyShowPreRecordingBar()
         result(nil)
 
+      case "setAppWindowWatchActive":
+        let active = (call.arguments as? [String: Any])?["active"] as? Bool ?? false
+        self.screenRecorder.setAppWindowWatchActive(active)
+        result(nil)
+
       case "togglePreRecordingBar":
         self.togglePreRecordingBar()
         result(nil)
@@ -1475,6 +1480,7 @@ final class AudioDevicesEventHandler: NSObject, FlutterStreamHandler {
   func fireAudioSourcesChanged() { sink?(["type": "audioSourcesChanged"]) }
   func fireVideoSourcesChanged() { sink?(["type": "videoSourcesChanged"]) }
   func fireDisplaysChanged() { sink?(["type": "displaysChanged"]) }
+  func fireAppWindowsChanged() { sink?(["type": "appWindowsChanged"]) }
   func fireMicrophoneLevel(linear: Double, dbfs: Double, isLow: Bool) {
     sink?([
       "type": DeviceEventType.microphoneLevel,

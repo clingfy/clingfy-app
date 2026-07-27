@@ -205,6 +205,36 @@ final class ScreenRecorderFacade: NSObject {
   /// steps of one reconfiguration and short enough to feel instant.
   private let displaysChangedDebouncer = TrailingDebouncer(delay: 0.4)
 
+  /// The on-screen window list changed while something was watching it.
+  var onAppWindowsChanged: (() -> Void)?
+
+  /// The window list is the one picker macOS will not push changes for, so it
+  /// is polled — but only while a picker is actually on screen. See
+  /// AppWindowWatcher for why every other list stays push-driven.
+  private lazy var appWindowWatcher: AppWindowWatcher = {
+    let watcher = AppWindowWatcher(enumerate: { [weak self] in
+      self?.displaySvc.appWindows() ?? []
+    })
+    watcher.onChanged = { [weak self] in self?.onAppWindowsChanged?() }
+    return watcher
+  }()
+
+  /// Ref-counted: the Flutter sidebar picker and the native bar popover can
+  /// both ask for watching without either switching the other off.
+  func setAppWindowWatchActive(_ active: Bool) {
+    if active {
+      appWindowWatcher.retain()
+    } else {
+      appWindowWatcher.release()
+    }
+  }
+
+  /// Drops every watcher reference. A recording makes the picker unusable, so
+  /// nothing should still be polling behind it.
+  func stopWatchingAppWindows() {
+    appWindowWatcher.releaseAll()
+  }
+
   /// Screens were added, removed or reconfigured.
   ///
   /// Previously a screen change called `onDevicesChanged` — the AUDIO
@@ -2874,6 +2904,9 @@ extension ScreenRecorderFacade: CaptureBackendEventHandling {
     let visibleProjectPath = sessionState.activeRecordingProjectRoot?.path ?? url.path
 
     resetOverlayUpdateDeduper()
+    // The window picker is unusable during a take; nothing should still be
+    // polling behind it.
+    stopWatchingAppWindows()
     state = .recording
     recordedDurationTracker.start()
     stateAsStr()

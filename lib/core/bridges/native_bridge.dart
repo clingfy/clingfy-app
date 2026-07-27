@@ -336,6 +336,21 @@ class NativeBridge {
     await setPreRecordingBarEnabled(enabled);
   }
 
+  /// Starts or stops the native app-window watcher.
+  ///
+  /// Ref-counted natively, so callers pair their own true/false. Windows has
+  /// no implementation — the picker there is refreshed manually — so a
+  /// missing handler is expected and ignored rather than surfaced.
+  Future<void> setAppWindowWatchActive(bool active) async {
+    try {
+      await _nativeBridge.invokeMethod<void>('setAppWindowWatchActive', {
+        'active': active,
+      });
+    } on MissingPluginException {
+      // Platform without a watcher; manual refresh still works.
+    }
+  }
+
   Future<void> setPreRecordingBarState(Map<String, dynamic> state) async {
     await _nativeBridge.invokeMethod<void>('setPreRecordingBarState', state);
   }
