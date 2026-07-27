@@ -35,6 +35,16 @@ Deferred work captured during reviews. Each item has enough context to pick up c
 - **Depends on:** PR-2a (color_grade_args establishes the pattern).
 - **Effort:** human ~2h / CC ~15min.
 
+### A camera-finalize failure discards a screen recording that already succeeded
+
+- **What:** When the camera recorder fails to finalize during a separate-camera recording, `ScreenRecorderFacade` calls `completeRecordingLifecycle(finalURL: nil, error:)` — failing the whole take even though `screen.mov` and the audio sidecars finalized correctly.
+- **Why it matters:** This is unrecoverable data loss on an unrepeatable take. Observed live on 2026-07-27: the camera finalize failed with `Camera recorder is not active`, and the run was reported as failed **6 ms after** the log recorded `screen.mov` as `isPlayable: true, duration: 11.83, trackCount: 2` with `mic.m4a` already merged. A complete, playable screen recording was thrown away because the camera half broke.
+- **What it should do instead:** Finalize the take without the camera. The project already models the camera as an optional sidecar (`camera/raw.mov` plus a sync timeline), and the preview and export paths already handle projects that have no camera at all — a screen-only recording is a first-class shape, not a degraded one. Emit a `recordingWarning` explaining the camera track was lost, and open the preview on what survived.
+- **Do NOT simply swallow the error.** The user has to be told the camera is missing before they publish; the failure mode this replaces is loud but destructive, and the replacement must stay loud while being non-destructive.
+- **Related:** the UI wedge this produced is fixed separately — a stop reply arriving after the failure event used to resurrect a torn-down session. That fix keeps the app usable after this failure; it does not save the take.
+- **Start at:** `macos/Runner/Capture/ScreenRecorderFacade.swift:3169-3181` (the `.failure(let cameraError)` branch), `macos/Runner/Capture/CameraRecorder.swift:294-323` (the three `Camera recorder is not active` sites — worth understanding WHY it was inactive at finalize before changing behaviour).
+- **Effort:** human ~4h / CC ~40min.
+
 ## Recording — audio capture
 
 
