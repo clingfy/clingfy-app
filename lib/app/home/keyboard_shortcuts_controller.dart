@@ -1,4 +1,6 @@
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
+import 'package:clingfy/core/logging/logger_service.dart';
 import 'package:clingfy/l10n/app_localizations.dart';
 import 'package:clingfy/app/settings/shortcuts/shortcut_config.dart';
 import 'package:clingfy/app/settings/settings_controller.dart';
@@ -14,6 +16,12 @@ class KeyboardShortcutsController {
   final Future<void> Function() onShowActionBar;
   final VoidCallback onOpenSettings;
 
+  /// Extra state written alongside every shortcut log line — recording phase,
+  /// whether a take is in flight, and so on. Without it a "shortcut did
+  /// nothing" report is undiagnosable after the fact: the only way to tell a
+  /// swallowed key from a key that never arrived is a log that records both.
+  final Map<String, dynamic> Function()? diagnostics;
+
   KeyboardShortcutsController({
     required this.settings,
     required this.onToggleRecording,
@@ -23,7 +31,82 @@ class KeyboardShortcutsController {
     required this.onExportVideo,
     required this.onShowActionBar,
     required this.onOpenSettings,
+    this.diagnostics,
   });
+
+  Map<String, dynamic> _logContext(Map<String, dynamic> extra) => {
+    ...extra,
+    ...?diagnostics?.call(),
+  };
+
+  /// Wraps a shortcut callback so every invocation is recorded.
+  Object? _invoke(String action, VoidCallback run) {
+    Log.i(
+      'Shortcuts',
+      'Shortcut invoked',
+      null,
+      null,
+      _logContext({'action': action}),
+    );
+    run();
+    return null;
+  }
+
+  Future<Object?> _invokeAsync(
+    String action,
+    Future<void> Function() run,
+  ) async {
+    Log.i(
+      'Shortcuts',
+      'Shortcut invoked',
+      null,
+      null,
+      _logContext({'action': action}),
+    );
+    await run();
+    return null;
+  }
+
+  /// Records modifier combos that reached the app but matched no binding.
+  ///
+  /// Only combos are logged, never bare keys: this sits above every text
+  /// field in the app, and logging unmodified keystrokes would write whatever
+  /// the user types — including passwords — into the log file.
+  ///
+  /// Always returns [KeyEventResult.ignored]; this observes, it never
+  /// consumes.
+  KeyEventResult logUnhandledCombo(KeyEvent event) {
+    if (event is! KeyDownEvent) return KeyEventResult.ignored;
+
+    final keyboard = HardwareKeyboard.instance;
+    final hasModifier =
+        keyboard.isMetaPressed ||
+        keyboard.isControlPressed ||
+        keyboard.isAltPressed;
+    if (!hasModifier) return KeyEventResult.ignored;
+
+    // A combo that matches a binding is logged by the action that runs it;
+    // logging it here too would double-count and hide the interesting case.
+    final matchesBinding = shortcuts.keys.any(
+      (activator) => activator.accepts(event, keyboard),
+    );
+    if (matchesBinding) return KeyEventResult.ignored;
+
+    Log.i(
+      'Shortcuts',
+      'Shortcut combo not bound',
+      null,
+      null,
+      _logContext({
+        'key': event.logicalKey.keyLabel,
+        'meta': keyboard.isMetaPressed,
+        'control': keyboard.isControlPressed,
+        'alt': keyboard.isAltPressed,
+        'shift': keyboard.isShiftPressed,
+      }),
+    );
+    return KeyEventResult.ignored;
+  }
 
   Map<ShortcutActivator, Intent> get shortcuts {
     final bindings = settings.shortcuts.shortcutConfig.bindings;
@@ -41,40 +124,22 @@ class KeyboardShortcutsController {
   Map<Type, Action<Intent>> buildActions(BuildContext context) {
     return {
       ActivateIntent: CallbackAction<ActivateIntent>(
-        onInvoke: (_) {
-          onToggleRecording();
-          return null;
-        },
+        onInvoke: (_) => _invoke('toggleRecording', onToggleRecording),
       ),
       RefreshIntent: CallbackAction<RefreshIntent>(
-        onInvoke: (_) {
-          onRefreshDevices();
-          return null;
-        },
+        onInvoke: (_) => _invoke('refreshDevices', onRefreshDevices),
       ),
       ToggleActionBarIntent: CallbackAction<ToggleActionBarIntent>(
-        onInvoke: (_) async {
-          await onToggleActionBar();
-          return null;
-        },
+        onInvoke: (_) => _invokeAsync('toggleActionBar', onToggleActionBar),
       ),
       CycleOverlayIntent: CallbackAction<CycleOverlayIntent>(
-        onInvoke: (_) async {
-          await onCycleOverlayMode();
-          return null;
-        },
+        onInvoke: (_) => _invokeAsync('cycleOverlayMode', onCycleOverlayMode),
       ),
       ExportIntent: CallbackAction<ExportIntent>(
-        onInvoke: (_) async {
-          await onExportVideo();
-          return null;
-        },
+        onInvoke: (_) => _invokeAsync('exportVideo', onExportVideo),
       ),
       OpenSettingsIntent: CallbackAction<OpenSettingsIntent>(
-        onInvoke: (_) {
-          onOpenSettings();
-          return null;
-        },
+        onInvoke: (_) => _invoke('openSettings', onOpenSettings),
       ),
     };
   }
