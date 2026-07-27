@@ -235,6 +235,32 @@ final class ScreenRecorderFacade: NSObject {
     appWindowWatcher.releaseAll()
   }
 
+  /// The default audio output device changed, so the speaker-bleed risk may
+  /// have inverted. Previously probed only at app start and when system audio
+  /// was toggled, which left a stale warning after plugging in headphones and
+  /// no warning at all after unplugging them.
+  var onAudioOutputRouteChanged: (() -> Void)?
+
+  /// CoreAudio HAL listener. Catches what AVCaptureDevice cannot see: device
+  /// rename, aggregate/virtual devices, Bluetooth A2DP<->HFP flips, and
+  /// default-device changes.
+  private lazy var audioHardwareListener: AudioHardwareListener = {
+    let listener = AudioHardwareListener()
+    listener.onDeviceListChanged = { [weak self] in
+      DispatchQueue.main.async { self?.onDevicesChanged?() }
+    }
+    listener.onDefaultOutputChanged = { [weak self] in
+      DispatchQueue.main.async { self?.onAudioOutputRouteChanged?() }
+    }
+    listener.onDefaultInputChanged = { [weak self] in
+      DispatchQueue.main.async {
+        self?.onDevicesChanged?()
+        self?.refreshMicrophoneLevelMonitoring(resetMeter: false)
+      }
+    }
+    return listener
+  }()
+
   /// Screens were added, removed or reconfigured.
   ///
   /// Previously a screen change called `onDevicesChanged` — the AUDIO
@@ -2008,6 +2034,7 @@ final class ScreenRecorderFacade: NSObject {
     NotificationCenter.default.addObserver(
       self, selector: #selector(screenParamsChanged),
       name: NSApplication.didChangeScreenParametersNotification, object: nil)
+    audioHardwareListener.start()
     NSWorkspace.shared.notificationCenter.addObserver(
       self, selector: #selector(workspaceWillSleep(_:)),
       name: NSWorkspace.willSleepNotification, object: nil)
