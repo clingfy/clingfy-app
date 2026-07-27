@@ -112,3 +112,8 @@ default.profraw
 release_notes/
 CLAUDE.md
 CLAUDE.local.md
+
+# Ad-hoc screenshots dropped in the repo root. A 532 KB PNG reached develop
+# this way via `git add -A`; project images belong in assets/images/.
+/Screenshot *.png
+/Screen Shot *.png
