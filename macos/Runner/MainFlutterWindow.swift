@@ -1481,6 +1481,7 @@ final class AudioDevicesEventHandler: NSObject, FlutterStreamHandler {
   func fireVideoSourcesChanged() { sink?(["type": "videoSourcesChanged"]) }
   func fireDisplaysChanged() { sink?(["type": "displaysChanged"]) }
   func fireAppWindowsChanged() { sink?(["type": "appWindowsChanged"]) }
+  func fireAudioOutputRouteChanged() { sink?(["type": "audioOutputRouteChanged"]) }
   func fireMicrophoneLevel(linear: Double, dbfs: Double, isLow: Bool) {
     sink?([
       "type": DeviceEventType.microphoneLevel,

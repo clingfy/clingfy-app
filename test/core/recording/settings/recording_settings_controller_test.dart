@@ -262,4 +262,52 @@ void main() {
       expect(notifications, 1);
     });
   });
+
+  group('output route pushed by the CoreAudio listener', () {
+    Future<void> emitRouteChanged() async {
+      final data = const StandardMethodCodec().encodeSuccessEnvelope({
+        'type': DeviceEventType.audioOutputRouteChanged,
+      });
+      await messenger.handlePlatformMessage(
+        NativeChannel.screenRecorderEvents,
+        data,
+        (_) {},
+      );
+    }
+
+    test('is a wire constant, kept in sync with Swift', () {
+      expect(
+        DeviceEventType.audioOutputRouteChanged,
+        'audioOutputRouteChanged',
+      );
+    });
+
+    test(
+      're-probes the route when the default output device changes',
+      () async {
+        // The bleed warning used to be probed at exactly two moments, so
+        // plugging in headphones mid-session left a stale warning up and
+        // unplugging them showed no warning when it now applied.
+        SharedPreferences.setMockInitialValues({});
+        outputRoute = 'speakers';
+        final controller = RecordingSettingsController(
+          nativeBridge: NativeBridge.instance,
+        );
+        addTearDown(controller.dispose);
+        await controller.loadPreferences(await SharedPreferences.getInstance());
+        await controller.refreshAudioOutputRoute();
+        expect(controller.audioOutputRoute, AudioOutputRoute.speakers);
+
+        // Headphones go in — no toggle touched.
+        outputRoute = 'headphones';
+        await emitRouteChanged();
+
+        for (var i = 0; i < 40; i++) {
+          if (controller.audioOutputRoute == AudioOutputRoute.headphones) break;
+          await Future<void>.delayed(const Duration(milliseconds: 25));
+        }
+        expect(controller.audioOutputRoute, AudioOutputRoute.headphones);
+      },
+    );
+  });
 }

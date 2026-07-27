@@ -1,3 +1,5 @@
+import 'package:flutter/services.dart';
+import 'package:clingfy/core/bridges/native_method_channel.dart';
 import 'dart:async';
 
 import 'package:flutter/foundation.dart';
@@ -9,7 +11,35 @@ import 'package:clingfy/core/recording/models/audio_output_route.dart';
 
 class RecordingSettingsController extends ChangeNotifier {
   RecordingSettingsController({required NativeBridge nativeBridge})
-    : _nativeBridge = nativeBridge;
+    : _nativeBridge = nativeBridge {
+    _listenForOutputRouteChanges();
+  }
+
+  StreamSubscription<dynamic>? _deviceEventsSub;
+
+  /// The default output device now pushes changes, so the bleed warning tracks
+  /// reality instead of a probe taken minutes ago.
+  void _listenForOutputRouteChanges() {
+    _deviceEventsSub = const EventChannel(NativeChannel.screenRecorderEvents)
+        .receiveBroadcastStream()
+        .listen(
+          (dynamic event) {
+            if (event is Map &&
+                event['type'] == DeviceEventType.audioOutputRouteChanged) {
+              unawaited(refreshAudioOutputRoute());
+            }
+          },
+          onError: (Object error) {
+            Log.w('Settings', 'Audio output route stream error: $error');
+          },
+        );
+  }
+
+  @override
+  void dispose() {
+    _deviceEventsSub?.cancel();
+    super.dispose();
+  }
 
   final NativeBridge _nativeBridge;
   static const String _prefExcludeRecorderAppFromCapture =
@@ -147,12 +177,8 @@ class RecordingSettingsController extends ChangeNotifier {
     // the first take of a session. Also re-probed when system audio is toggled
     // on.
     //
-    // KNOWN GAP, both directions: changing output device mid-session without
-    // touching the toggle leaves the warning stale. Plugging in headphones
-    // leaves a warning up that no longer applies; UNPLUGGING them leaves the
-    // warning absent when it now DOES apply, which is the worse half. Fixing it
-    // properly needs a CoreAudio property listener pushing route changes — see
-    // TODOS.md, "Push output-route changes instead of polling at two moments".
+    // Route changes now arrive over audioOutputRouteChanged (a CoreAudio HAL
+    // listener), so this is belt-and-braces rather than the only signal.
     unawaited(refreshAudioOutputRoute());
   }
 

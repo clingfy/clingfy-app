@@ -36,5 +36,6 @@ enum DeviceEventType {
   static let videoSourcesChanged = "videoSourcesChanged"
   static let displaysChanged = "displaysChanged"
   static let appWindowsChanged = "appWindowsChanged"
+  static let audioOutputRouteChanged = "audioOutputRouteChanged"
   static let microphoneLevel = "microphoneLevel"
 }
