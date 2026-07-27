@@ -882,5 +882,14 @@
       }
     }
   },
-  "forceNativeCrashLabel": "Forțează blocarea nativă (test)"
+  "forceNativeCrashLabel": "Forțează blocarea nativă (test)",
+  "settingsPrivacyTitle": "Confidențialitate",
+  "crashReportingTitle": "Rapoarte de eroare și diagnostic",
+  "crashReportingDescription": "Trimite rapoarte anonime de eroare și diagnostice, ca problemele să fie reparate. Includ eroarea, urma stivei, versiunea aplicației și detalii despre sistem și placa video. Nu includ niciodată înregistrările tale, conținutul ecranului, sunetul sau numele fișierelor.",
+  "crashReportingToggle": "Trimite rapoarte de eroare",
+  "crashReportingRestartNote": "Dezactivarea oprește trimiterea imediat. Rapoartele pentru erorile care închid complet aplicația se opresc după ce repornești Clingfy.",
+  "crashReportingNoticeTitle": "Despre rapoartele de eroare",
+  "crashReportingNoticeBody": "Clingfy trimite rapoarte anonime de eroare și diagnostice, ca problemele să fie reparate. Acestea includ eroarea, urma stivei, versiunea aplicației și detalii despre sistem și placa video — niciodată înregistrările tale, conținutul ecranului, sunetul sau numele fișierelor.\n\nPoți dezactiva oricând din Setări › Diagnostic.",
+  "crashReportingNoticeAccept": "Am înțeles",
+  "crashReportingNoticeOptOut": "Dezactivează"
 }

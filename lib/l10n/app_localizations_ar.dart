@@ -2651,4 +2651,34 @@ class AppLocalizationsAr extends AppLocalizations {
 
   @override
   String get forceNativeCrashLabel => 'فرض انهيار أصلي (اختبار)';
+
+  @override
+  String get settingsPrivacyTitle => 'الخصوصية';
+
+  @override
+  String get crashReportingTitle => 'تقارير الأعطال والتشخيص';
+
+  @override
+  String get crashReportingDescription =>
+      'أرسل تقارير أعطال مجهولة المصدر وتشخيصات للأخطاء لإصلاح المشاكل. تشمل الخطأ وتتبع الاستدعاء وإصدار التطبيق وتفاصيل نظام التشغيل وبطاقة الرسوم. لا تشمل أبدًا تسجيلاتك أو محتوى الشاشة أو الصوت أو أسماء الملفات.';
+
+  @override
+  String get crashReportingToggle => 'إرسال تقارير الأعطال';
+
+  @override
+  String get crashReportingRestartNote =>
+      'إيقاف هذا يوقف الإرسال فورًا. أما تقارير الأعطال التي توقف التطبيق بالكامل فتتوقف بعد إعادة تشغيل Clingfy.';
+
+  @override
+  String get crashReportingNoticeTitle => 'حول تقارير الأعطال';
+
+  @override
+  String get crashReportingNoticeBody =>
+      'يرسل Clingfy تقارير أعطال مجهولة المصدر وتشخيصات للأخطاء لإصلاح المشاكل. يشمل ذلك الخطأ وتتبع الاستدعاء وإصدار التطبيق وتفاصيل نظام التشغيل وبطاقة الرسوم — ولا يشمل أبدًا تسجيلاتك أو محتوى الشاشة أو الصوت أو أسماء الملفات.\n\nيمكنك إيقاف هذا في أي وقت من الإعدادات › التشخيص.';
+
+  @override
+  String get crashReportingNoticeAccept => 'حسنًا';
+
+  @override
+  String get crashReportingNoticeOptOut => 'إيقاف';
 }
