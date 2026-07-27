@@ -116,6 +116,18 @@ class _HomePageState extends State<HomePage> {
       onOpenSettings: () {
         unawaited(actions.openSettings(context));
       },
+      // Written alongside every shortcut log line. A "shortcut did nothing"
+      // report is otherwise undiagnosable: this is what distinguishes a key
+      // that was swallowed from one that never reached the app at all.
+      diagnostics: () => {
+        'phase': recordingController.phase.name,
+        'isRecording': recordingController.isRecording,
+        'countdownActive': _countdownController.isActive,
+        'settingsOpen': homeScope.uiState.isSettingsOpen,
+        'micSelected':
+            deviceController.selectedAudioSourceId !=
+            DeviceController.noAudioId,
+      },
     );
 
     WidgetsBinding.instance.addPostFrameCallback((_) async {
@@ -156,6 +168,11 @@ class _HomePageState extends State<HomePage> {
       actions: keyboardShortcutsController.buildActions(context),
       child: Focus(
         autofocus: true,
+        // Observes only; always returns ignored. Records modifier combos that
+        // reached the app and matched nothing, which is the evidence missing
+        // when someone reports "the shortcuts stopped working".
+        onKeyEvent: (_, event) =>
+            keyboardShortcutsController.logUnhandledCombo(event),
         child: ListenableBuilder(
           listenable: widget.appScope.settings,
           builder: (context, _) {
