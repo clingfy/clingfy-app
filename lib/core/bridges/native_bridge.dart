@@ -527,6 +527,48 @@ class NativeBridge {
     });
   }
 
+  /// Path of a rendered PNG thumbnail for a procedural background preset,
+  /// or null when the platform cannot produce one.
+  ///
+  /// The picker used to draw a gradient of the palette colours, which made all
+  /// three presets look identical — only the palette varied. A thumbnail has to
+  /// come from the real renderer or it is not showing what the user is picking.
+  ///
+  /// Native renders on first request and caches by a key that includes the
+  /// renderer version, so the file is reused until something that changes the
+  /// pixels changes. Null is expected and cosmetic: callers fall back to the
+  /// palette swatch. Returns null on platforms with no handler
+  /// ([MissingPluginException]) rather than throwing, since a picker without
+  /// thumbnails is still a usable picker.
+  ///
+  /// Keep the method name in sync with the native `canvasPresetThumbnail`
+  /// handler.
+  Future<String?> canvasPresetThumbnail({
+    required String presetId,
+    required String palette,
+    required double intensity,
+    required double blur,
+    required int seed,
+    required int width,
+    required int height,
+  }) async {
+    try {
+      return await _nativeBridge.invokeMethod<String>('canvasPresetThumbnail', {
+        'presetId': presetId,
+        'palette': palette,
+        'intensity': intensity,
+        'blur': blur,
+        'seed': seed,
+        'width': width,
+        'height': height,
+      });
+    } on MissingPluginException {
+      return null;
+    } on PlatformException {
+      return null;
+    }
+  }
+
   /// Pushes the edited clip list (split / cut / trim / arrange) to the live
   /// macOS preview so playback skips the cut regions. No-op on platforms whose
   /// native side stubs the method (Windows). Keep the method name in sync with

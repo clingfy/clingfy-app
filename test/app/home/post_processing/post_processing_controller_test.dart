@@ -1,6 +1,7 @@
 import 'package:clingfy/core/preview/player_controller.dart';
 import 'package:clingfy/app/home/post_processing/post_processing_controller.dart';
 import 'package:clingfy/core/models/app_models.dart';
+import 'package:clingfy/core/models/background_preset_catalog.dart';
 import 'package:clingfy/core/timeline/model/edit_track.dart';
 import 'package:clingfy/core/bridges/native_bridge.dart';
 import 'package:clingfy/app/settings/settings_controller.dart';
@@ -30,6 +31,7 @@ class _Harness {
     required this.processCalls,
     required this.cameraPlacementCalls,
     required this.canvasCalls,
+    required this.thumbnailCalls,
   });
 
   final _TestPlayerController player;
@@ -38,6 +40,7 @@ class _Harness {
   final List<MethodCall> processCalls;
   final List<MethodCall> cameraPlacementCalls;
   final List<MethodCall> canvasCalls;
+  final List<MethodCall> thumbnailCalls;
 
   void dispose() {
     post.dispose();
@@ -61,6 +64,7 @@ void main() {
     final processCalls = <MethodCall>[];
     final cameraPlacementCalls = <MethodCall>[];
     final canvasCalls = <MethodCall>[];
+    final thumbnailCalls = <MethodCall>[];
     final messenger =
         TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger;
 
@@ -79,6 +83,9 @@ void main() {
         case 'previewSetCanvas':
           canvasCalls.add(call);
           return null;
+        case 'canvasPresetThumbnail':
+          thumbnailCalls.add(call);
+          return 'C:/cache/thumb.png';
         default:
           return null;
       }
@@ -112,6 +119,7 @@ void main() {
       processCalls: processCalls,
       cameraPlacementCalls: cameraPlacementCalls,
       canvasCalls: canvasCalls,
+      thumbnailCalls: thumbnailCalls,
     );
     addTearDown(harness.dispose);
     return harness;
@@ -157,6 +165,55 @@ void main() {
         harness.canvasCalls.last.arguments! as Map<dynamic, dynamic>,
       );
       expect(args['resolutionPreset'], ResolutionPreset.p2160.name);
+    },
+  );
+  // The picker cards must show the real renderer's output, but they must NOT
+  // re-render as the user drags a slider. Only the preset id and palette are
+  // allowed to vary the request.
+  test('presetThumbnail requests fixed intensity, blur and seed', () async {
+    final harness = await createHarness();
+
+    // Move the live preset well away from the defaults, including the seed.
+    harness.post.setBackgroundPreset(
+      const CanvasBackgroundPreset(
+        id: 'abstractWaves',
+        palette: 'sunset',
+        intensity: 0.11,
+        blur: 0.99,
+        seed: 4242,
+      ),
+    );
+    await Future<void>.delayed(Duration.zero);
+
+    final path = await harness.post.presetThumbnail('graphicMesh', 'aurora');
+    expect(path, 'C:/cache/thumb.png');
+
+    expect(harness.thumbnailCalls, hasLength(1));
+    final args = Map<String, dynamic>.from(
+      harness.thumbnailCalls.single.arguments! as Map<dynamic, dynamic>,
+    );
+    // Id and palette come from the CARD, not the live preset.
+    expect(args['presetId'], 'graphicMesh');
+    expect(args['palette'], 'aurora');
+    // The live 0.11 / 0.99 / 4242 must NOT appear: a slider drag would
+    // otherwise render and cache a new PNG per frame, and Randomize would
+    // invalidate every thumbnail on screen.
+    expect(args['intensity'], BackgroundPresetCatalog.defaultIntensity);
+    expect(args['blur'], BackgroundPresetCatalog.defaultBlur);
+    expect(args['seed'], 1);
+  });
+
+  test(
+    'presetThumbnail passes null through when native cannot render',
+    () async {
+      final harness = await createHarness();
+      final messenger =
+          TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger;
+      messenger.setMockMethodCallHandler(screenRecorderChannel, (call) async {
+        return null;
+      });
+
+      expect(await harness.post.presetThumbnail('radialGlow', 'mono'), isNull);
     },
   );
 

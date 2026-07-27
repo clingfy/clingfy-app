@@ -463,4 +463,108 @@ void main() {
       );
     });
   });
+
+  group('canvasPresetThumbnail', () {
+    final messenger =
+        TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger;
+
+    tearDown(() {
+      messenger.setMockMethodCallHandler(
+        const MethodChannel(NativeChannel.screenRecorder),
+        null,
+      );
+    });
+
+    void respond(Object? Function(MethodCall call) handler) {
+      messenger.setMockMethodCallHandler(
+        const MethodChannel(NativeChannel.screenRecorder),
+        (call) async => handler(call),
+      );
+    }
+
+    test('sends every parameter the renderer keys its cache on', () async {
+      MethodCall? seen;
+      respond((call) {
+        seen = call;
+        return 'C:/cache/thumb.png';
+      });
+
+      final path = await NativeBridge.instance.canvasPresetThumbnail(
+        presetId: 'graphicMesh',
+        palette: 'sunset',
+        intensity: 0.7,
+        blur: 0.35,
+        seed: 1,
+        width: 72,
+        height: 48,
+      );
+
+      expect(path, 'C:/cache/thumb.png');
+      expect(seen?.method, 'canvasPresetThumbnail');
+      final args = (seen!.arguments as Map).cast<String, dynamic>();
+      // Every one of these changes the pixels, so every one must cross the
+      // boundary — a dropped argument would silently serve another preset's
+      // cached art.
+      expect(args['presetId'], 'graphicMesh');
+      expect(args['palette'], 'sunset');
+      expect(args['intensity'], 0.7);
+      expect(args['blur'], 0.35);
+      expect(args['seed'], 1);
+      expect(args['width'], 72);
+      expect(args['height'], 48);
+    });
+
+    // A picker with no thumbnails is still a usable picker, so a platform
+    // without the handler must degrade to the palette swatch rather than throw
+    // into the sidebar build.
+    test('a native build without the method resolves to null', () async {
+      respond((_) => throw MissingPluginException('no impl'));
+      expect(
+        await NativeBridge.instance.canvasPresetThumbnail(
+          presetId: 'abstractWaves',
+          palette: 'bluePurple',
+          intensity: 0.7,
+          blur: 0.35,
+          seed: 1,
+          width: 72,
+          height: 48,
+        ),
+        isNull,
+      );
+    });
+
+    test('a render failure resolves to null rather than throwing', () async {
+      respond((_) => throw PlatformException(code: 'BOOM'));
+      expect(
+        await NativeBridge.instance.canvasPresetThumbnail(
+          presetId: 'abstractWaves',
+          palette: 'bluePurple',
+          intensity: 0.7,
+          blur: 0.35,
+          seed: 1,
+          width: 72,
+          height: 48,
+        ),
+        isNull,
+      );
+    });
+
+    // Native answers null when it cannot render; that must arrive as null, not
+    // as a crash decoding the reply.
+    test('a null reply is a valid answer', () async {
+      respond((_) => null);
+      expect(
+        await NativeBridge.instance.canvasPresetThumbnail(
+          presetId: 'abstractWaves',
+          palette: 'bluePurple',
+          intensity: 0.7,
+          blur: 0.35,
+          seed: 1,
+          width: 72,
+          height: 48,
+        ),
+        isNull,
+      );
+    });
+  });
 }

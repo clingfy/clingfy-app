@@ -198,6 +198,29 @@ class PostProcessingController extends ChangeNotifier {
 
   // --- Setters ---
 
+  /// Rendered thumbnail path for a background-preset card, or null when the
+  /// platform cannot produce one (the picker then keeps its palette swatch).
+  ///
+  /// Intensity, blur and seed are FIXED here rather than taken from the live
+  /// preset. The card says "this is Graphic Mesh", not "this is Graphic Mesh at
+  /// 62% intensity" — and passing the live values would render and cache a new
+  /// PNG on every frame of a slider drag. Only the preset id and palette vary,
+  /// which are discrete taps, so the cache holds one file per combination.
+  ///
+  /// The seed is fixed for the same reason: Randomize would otherwise
+  /// invalidate every thumbnail on the screen.
+  Future<String?> presetThumbnail(String presetId, String paletteId) {
+    return _nativeBridge.canvasPresetThumbnail(
+      presetId: presetId,
+      palette: paletteId,
+      intensity: BackgroundPresetCatalog.defaultIntensity,
+      blur: BackgroundPresetCatalog.defaultBlur,
+      seed: 1,
+      width: 72,
+      height: 48,
+    );
+  }
+
   void setLayoutPreset(LayoutPreset v) {
     _settings.post.updateLayoutPreset(v);
     // [applyProcessing] drives `processVideo`, which is a no-op on Windows —
