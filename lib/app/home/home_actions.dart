@@ -33,6 +33,7 @@ import 'package:clingfy/app/settings/widgets/about_view.dart';
 import 'package:clingfy/app/settings/widgets/app_settings_view.dart';
 import 'package:clingfy/app/home/preview/widgets/close_unexported_recording_dialog.dart';
 import 'package:clingfy/commercial/licensing/widgets/paywall_dialog.dart';
+import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 
@@ -668,8 +669,21 @@ class HomeActions {
           micLive && settingsController.recording.systemAudioBleedRisk,
     };
 
+    // The mic level meter notifies on every level delta, and DeviceController
+    // is a listener on this method — so without this guard a live microphone
+    // pushed bar state to native dozens of times a second, and the native
+    // updateState re-framed the floating panel (animated) on every one of
+    // them. The bar renders none of that: it consumes only the fields below.
+    if (_lastBarState != null && mapEquals(_lastBarState, state)) {
+      return;
+    }
+    _lastBarState = state;
+
     nativeBridge.setPreRecordingBarState(state);
   }
+
+  /// Last payload actually sent, so identical pushes are dropped.
+  Map<String, dynamic>? _lastBarState;
 
   void handleNativeBarAction(
     BuildContext context,

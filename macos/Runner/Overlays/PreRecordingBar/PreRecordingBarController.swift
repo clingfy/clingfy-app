@@ -74,6 +74,16 @@ class PreRecordingBarController: NSWindowController, NSPopoverDelegate {
     }
   }
 
+  /// Sub-point differences are invisible and come from layout rounding;
+  /// treating them as a change would animate the panel forever.
+  static func framesAreEquivalent(_ lhs: NSRect, _ rhs: NSRect) -> Bool {
+    let tolerance: CGFloat = 0.5
+    return abs(lhs.origin.x - rhs.origin.x) < tolerance
+      && abs(lhs.origin.y - rhs.origin.y) < tolerance
+      && abs(lhs.size.width - rhs.size.width) < tolerance
+      && abs(lhs.size.height - rhs.size.height) < tolerance
+  }
+
   func updateState(_ state: [String: Any]) {
     barView.updateState(state)
 
@@ -96,17 +106,22 @@ class PreRecordingBarController: NSWindowController, NSPopoverDelegate {
     // 4. Calculate the X position so the bar stays centered on its current location
     let newX = currentFrame.midX - (newWidth / 2)
 
-    // 5. Apply the new frame
-    panel.setFrame(
-      NSRect(
-        x: newX,
-        y: currentFrame.origin.y,  // Keep the current Y
-        width: newWidth,
-        height: 64
-      ),
-      display: true,
-      animate: true
+    // 5. Apply the new frame — only when it actually differs.
+    //
+    // updateState is called on every state push, and an animated setFrame on
+    // an unchanged frame is not free: it re-lays out and animates a floating
+    // panel, and doing that repeatedly disturbs the window server's idea of
+    // which window is key. Re-frame only when the width the content needs has
+    // really changed.
+    let targetFrame = NSRect(
+      x: newX,
+      y: currentFrame.origin.y,  // Keep the current Y
+      width: newWidth,
+      height: 64
     )
+    if !Self.framesAreEquivalent(currentFrame, targetFrame) {
+      panel.setFrame(targetFrame, display: true, animate: true)
+    }
     // NativeLogger.d(
     //   "PreRecordingBar",
     //   "updateState newX: \(newX), newWidth: \(newWidth), currentFrame.origin.x: \(currentFrame.origin.x), currentFrame.origin.y: \(currentFrame.origin.y), currentFrame.size.width: \(currentFrame.size.width), currentFrame.size.height: \(currentFrame.size.height), panel.frame.origin.x: \(panel.frame.origin.x), panel.frame.origin.y: \(panel.frame.origin.y), panel.frame.size.width: \(panel.frame.size.width), panel.frame.size.height: \(panel.frame.size.height)"

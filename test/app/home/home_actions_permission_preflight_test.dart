@@ -295,6 +295,81 @@ void main() {
       return call.arguments as Map<Object?, Object?>;
     }
 
+    testWidgets('mic level churn does not push bar state to native', (
+      tester,
+    ) async {
+      // DeviceController notifies on every level delta and is a listener on
+      // updateNativeBarState, so an un-guarded push re-framed the floating
+      // native panel dozens of times a second. That churn is what stopped
+      // in-app keyboard shortcuts responding.
+      final harness = await createHarness(
+        tester,
+        permissionStatus: const {
+          'screenRecording': true,
+          'microphone': true,
+          'camera': true,
+          'accessibility': true,
+        },
+        audioSources: const [
+          {'id': 'mic-1', 'name': 'Mic One'},
+        ],
+      );
+      addTearDown(harness.dispose);
+      await readyForBarState(tester, harness);
+
+      await harness.device.setAudioSource('mic-1');
+      harness.actions.updateNativeBarState();
+      await tester.pump();
+
+      final before = harness.callsFor('setPreRecordingBarState').length;
+
+      // A burst of level updates that never crosses the too-low threshold.
+      for (final dbfs in [-11.0, -10.0, -9.5, -12.0, -10.5, -9.0]) {
+        await emitMicLevel(dbfs: dbfs);
+        await tester.pump();
+      }
+
+      expect(
+        harness.callsFor('setPreRecordingBarState').length,
+        before,
+        reason: 'level-only changes must not reach the native bar',
+      );
+    });
+
+    testWidgets('a state change the bar renders still pushes', (tester) async {
+      // The guard must drop duplicates, not real changes.
+      final harness = await createHarness(
+        tester,
+        permissionStatus: const {
+          'screenRecording': true,
+          'microphone': true,
+          'camera': true,
+          'accessibility': true,
+        },
+        audioSources: const [
+          {'id': 'mic-1', 'name': 'Mic One'},
+        ],
+      );
+      addTearDown(harness.dispose);
+      await readyForBarState(tester, harness);
+
+      await harness.device.setAudioSource('mic-1');
+      harness.actions.updateNativeBarState();
+      await tester.pump();
+      final before = harness.callsFor('setPreRecordingBarState').length;
+
+      // Crossing the too-low threshold IS rendered by the bar.
+      await emitMicLevel(dbfs: -48.0);
+      harness.actions.updateNativeBarState();
+      await tester.pump();
+
+      expect(
+        harness.callsFor('setPreRecordingBarState').length,
+        greaterThan(before),
+      );
+      expect(lastBarState(harness)['micInputTooLow'], isTrue);
+    });
+
     testWidgets('a quiet mic is reported to the bar', (tester) async {
       final harness = await createHarness(
         tester,
