@@ -14,9 +14,14 @@ import XCTest
 final class ExportColorRampTests: XCTestCase {
 
   /// Flat patches, because H.264 is lossy and gradients smear across edges.
-  private static let rampValues: [UInt8] = [0, 32, 64, 96, 128, 160, 192, 224, 255]
+  private static let rampValues: [UInt8] = [
+    // 8/16 and 240/248 straddle the limited-range boundaries (16 and 235);
+    // if the file's range flag disagrees with the data these crush or clip
+    // while the 0/255 endpoints still look fine.
+    0, 8, 16, 32, 64, 96, 128, 160, 192, 224, 240, 248, 255,
+  ]
 
-  private static let patchWidth = 160
+  private static let patchWidth = 96
   private static let patchHeight = 720
 
   private var tempDirectory: URL!
@@ -93,6 +98,7 @@ final class ExportColorRampTests: XCTestCase {
   /// first frame back, decoded to sRGB.
   private func roundTripThroughExport(
     renderColorSpace: CGColorSpace,
+    ciContext: CIContext? = nil,
     tagBuffer: (CVPixelBuffer) -> Void
   ) throws -> [Double] {
     let ramp = try makeRampImage()
@@ -132,7 +138,7 @@ final class ExportColorRampTests: XCTestCase {
 
     // Render exactly as the exporter does: a CIContext working in the
     // pipeline's colour space, drawing into the buffer that gets written.
-    let ciContext = VideoColorPipeline.makeCIContext()
+    let ciContext = ciContext ?? VideoColorPipeline.makeCIContext()
     ciContext.render(
       CIImage(cgImage: ramp), to: pixelBuffer,
       bounds: CGRect(x: 0, y: 0, width: width, height: height),
@@ -183,6 +189,10 @@ final class ExportColorRampTests: XCTestCase {
     // moment the pipeline is fixed, so the fix cannot land unnoticed.
     XCTExpectFailure(
       "Export re-encodes sRGB data under a BT.709 transfer tag; midtones lift ~11/255")
+    // The extended ramp also shows a second, smaller defect at the limited-
+    // range boundaries: 8 -> 6 and 16 -> 14, with 240/248 lifted by 1-2.
+    // That is the FullRangeVideo: 0 flag disagreeing with full-range data.
+    // Small next to the ~11 gamma error, but real and independent of it.
 
     let measured = try roundTripThroughExport(
       renderColorSpace: VideoColorPipeline.workingColorSpace
@@ -222,6 +232,11 @@ final class ExportColorRampTests: XCTestCase {
     // makes the shift WORSE (+18 at midtone versus +11 for the current
     // pipeline). Whatever the fix is, it is not this.
     XCTExpectFailure("Encoding in BT.709 overshoots: +18 at midtone, worse than the +11 baseline")
+    // MEASURED, not assumed: this produces byte-identical numbers to the
+    // linear-working-space variant below. So the 709 OETF is applied exactly
+    // ONCE here — `render(_:to:bounds:colorSpace:)` governs output encoding
+    // and the context's `outputColorSpace` option is ignored for that API.
+    // The overshoot is therefore not a double encode.
 
     let bt709 = try XCTUnwrap(CGColorSpace(name: CGColorSpace.itur_709))
 
@@ -249,6 +264,63 @@ final class ExportColorRampTests: XCTestCase {
     print(table)
     try? table.write(
       to: URL(fileURLWithPath: "/tmp/ramp_candidate.txt"), atomically: true, encoding: .utf8)
+
+    for (index, expected) in Self.rampValues.enumerated() {
+      XCTAssertEqual(
+        measured[index], Double(expected), accuracy: 4.0,
+        "patch \(index): authored \(expected), decoded \(measured[index])")
+    }
+  }
+
+  /// Candidate: linear-light working space, BT.709 on the way out.
+  ///
+  /// The previous candidate applied the 709 OETF to values Core Image had
+  /// ALREADY gamma-encoded as sRGB — a double encode, which is why it
+  /// overshot to +18 rather than showing 709 to be wrong. The correct
+  /// transform is linearize, then apply 709. Working in extended linear sRGB
+  /// makes that explicit instead of implicit.
+  func testLinearWorkingSpaceWithBT709OutputRoundTripsFaithfully() throws {
+    // MEASURED IDENTICAL to the plain-709 candidate at every patch, which
+    // disproves the double-encode explanation for the overshoot. Kept as a
+    // test because "make the working space linear" is the obvious next idea
+    // and this records that, on this API, it changes nothing.
+    XCTExpectFailure("Identical to the plain 709 candidate: +18 at midtone")
+
+    let bt709 = try XCTUnwrap(CGColorSpace(name: CGColorSpace.itur_709))
+    let linear = try XCTUnwrap(CGColorSpace(name: CGColorSpace.extendedLinearSRGB))
+
+    let context = CIContext(options: [
+      .cacheIntermediates: false,
+      .workingColorSpace: linear,
+      .outputColorSpace: bt709,
+      .workingFormat: CIFormat.RGBAh,
+    ])
+
+    let measured = try roundTripThroughExport(
+      renderColorSpace: bt709, ciContext: context
+    ) { buffer in
+      CVBufferSetAttachment(buffer, kCVImageBufferCGColorSpaceKey, bt709, .shouldPropagate)
+      CVBufferSetAttachment(
+        buffer, kCVImageBufferColorPrimariesKey,
+        kCVImageBufferColorPrimaries_ITU_R_709_2, .shouldPropagate)
+      CVBufferSetAttachment(
+        buffer, kCVImageBufferTransferFunctionKey,
+        kCVImageBufferTransferFunction_ITU_R_709_2, .shouldPropagate)
+      CVBufferSetAttachment(
+        buffer, kCVImageBufferYCbCrMatrixKey,
+        kCVImageBufferYCbCrMatrix_ITU_R_709_2, .shouldPropagate)
+    }
+
+    var report: [String] = []
+    for (index, expected) in Self.rampValues.enumerated() {
+      report.append(
+        String(format: "  %3d -> %6.1f  (%+.1f)", expected, measured[index],
+               measured[index] - Double(expected)))
+    }
+    let table = "CANDIDATE (linear working -> 709 out):\n" + report.joined(separator: "\n")
+    print(table)
+    try? table.write(
+      to: URL(fileURLWithPath: "/tmp/ramp_linear.txt"), atomically: true, encoding: .utf8)
 
     for (index, expected) in Self.rampValues.enumerated() {
       XCTAssertEqual(
