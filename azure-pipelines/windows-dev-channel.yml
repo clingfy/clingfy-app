@@ -140,6 +140,34 @@ steps:
       RELEASE_CHANNEL: $(RELEASE_CHANNEL)
       BUILD_NUMBER_OVERRIDE: $(WIN_BUILD_NUMBER)
 
+  # Sentry symbols. WITHOUT THIS EVERY BETA CRASH IS UNSYMBOLICATED: testers
+  # run DEV builds, and `upload_symbols.ps1` only runs from local_release.ps1's
+  # `if ($Publish)` branch -- which this lane never takes, because it publishes
+  # in the AzureCLI task above so the upload inherits the service connection.
+  # So the prod lane had symbols and the channel real testers use did not.
+  #
+  # Verified the hard way: a dev-build crash reported 11 of 13 clingfy.exe
+  # frames as <NO SYMBOL> until the PDBs were uploaded by hand.
+  #
+  # sentry-cli is not preinstalled on windows-latest; npm ships on the agent.
+  - powershell: |
+      npm install -g @sentry/cli
+      if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+    displayName: "Install sentry-cli"
+
+  # Non-blocking, mirroring the prod lane: a missing token or a Sentry outage
+  # must not fail a build that is otherwise good. It DOES mean the upload can
+  # silently not happen, which is exactly how this gap survived -- so the step
+  # is loud in the log even when it is skipped.
+  - powershell: |
+      pwsh -NoProfile -File ops/release/windows/upload_symbols.ps1 -EnvFile ".env.dev"
+    displayName: "Upload Sentry symbols (non-blocking)"
+    continueOnError: true
+    env:
+      APP_ENV: $(APP_ENV)
+      RELEASE_CHANNEL: $(RELEASE_CHANNEL)
+      BUILD_NUMBER_OVERRIDE: $(WIN_BUILD_NUMBER)
+
   - task: PublishBuildArtifacts@1
     displayName: "Publish dev artifact"
     condition: succeededOrFailed()
