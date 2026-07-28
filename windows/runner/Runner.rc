@@ -95,7 +95,15 @@ BEGIN
             VALUE "InternalName", "clingfy" "\0"
             VALUE "LegalCopyright", "Copyright (C) 2026 com.clingfy. All rights reserved." "\0"
             VALUE "OriginalFilename", "clingfy.exe" "\0"
+#ifdef CLINGFY_CHANNEL_DEV
+            // D9: path_provider builds its directory from CompanyName and
+            // ProductName, so forking ProductName is what gives dev its own
+            // settings store. CompanyName stays shared -- it is the vendor,
+            // not the install.
+            VALUE "ProductName", "clingfy-dev" "\0"
+#else
             VALUE "ProductName", "clingfy" "\0"
+#endif
             VALUE "ProductVersion", VERSION_AS_STRING "\0"
         END
     END

@@ -11,6 +11,7 @@
 #include <string>
 #include <vector>
 
+#include "Core/app_identity.h"
 #include "Graphics/d3d_device.h"
 
 namespace clingfy::capture::background {
@@ -205,7 +206,9 @@ std::string PresetThumbnailRoot() {
     ::CoTaskMemFree(raw);
   }
   if (base.empty()) return {};
-  return (fs::path(base) / "Clingfy" / "PresetThumbnails").string();
+  return (fs::path(base) / clingfy::core::LocalAppDataFolderName() /
+          "PresetThumbnails")
+      .string();
 }
 
 std::string PresetThumbnailFileName(const CanvasPresetSpec& spec, UINT width,

@@ -111,7 +111,15 @@ if ($SkipBuild) {
     }
     $timestampUtc = [DateTime]::UtcNow.ToString('yyyy-MM-ddTHH:mm:ssZ')
 
-    Write-Step "flutter build windows --release (+ build-provenance defines: $commitHash / $branchName)"
+    # D9 per-channel identity. This env var is the ONLY channel signal that
+    # reaches native code: everything else about the channel travels as a Dart
+    # define, and the single-instance mutex is acquired before the engine
+    # exists. windows/runner/CMakeLists.txt reads it at configure time and
+    # turns it into the CLINGFY_CHANNEL compile definition; absent or
+    # unrecognised resolves to prod.
+    $env:CLINGFY_CHANNEL = $Channel
+
+    Write-Step "flutter build windows --release ($Channel identity; provenance: $commitHash / $branchName)"
     & $flutter.Source build windows --release `
       "--dart-define-from-file=$($Ctx.EnvFile)" `
       "--dart-define=COMMIT_HASH=$commitHash" `
