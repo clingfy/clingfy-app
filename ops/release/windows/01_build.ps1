@@ -120,7 +120,25 @@ if ($SkipBuild) {
     $env:CLINGFY_CHANNEL = $Channel
 
     Write-Step "flutter build windows --release ($Channel identity; provenance: $commitHash / $branchName)"
+    # FLUTTER_BUILD_NAME / FLUTTER_BUILD_NUMBER must be passed as DART-DEFINES.
+    # BuildConfig reads them with String.fromEnvironment, which only sees
+    # dart-defines -- the `--build-name` / `--build-number` flags set platform
+    # version metadata and do NOT reach String.fromEnvironment. Verified by
+    # building with the flags alone and finding no version string in app.so.
+    #
+    # Without these both default to '' and every Windows build reported itself
+    # to Sentry as `clingfy@++<commit>` -- a release tag with no version in it,
+    # so no crash report could be mapped back to a build. macOS has always
+    # passed them as defines (ops/release/commands/build_archive.sh); Windows
+    # never did. Values come from the same pubspec version model the installer
+    # name and the version guard use, so they cannot disagree.
+    #
+    # The flags are passed too, so the platform version metadata matches.
     & $flutter.Source build windows --release `
+      "--build-name=$($Ctx.AppVersion)" `
+      "--build-number=$($Ctx.BuildNumber)" `
+      "--dart-define=FLUTTER_BUILD_NAME=$($Ctx.AppVersion)" `
+      "--dart-define=FLUTTER_BUILD_NUMBER=$($Ctx.BuildNumber)" `
       "--dart-define-from-file=$($Ctx.EnvFile)" `
       "--dart-define=COMMIT_HASH=$commitHash" `
       "--dart-define=BUILD_BRANCH=$branchName" `
