@@ -70,6 +70,7 @@ add_library(runner_bridge STATIC
   "Capture/Background/canvas_preset_params.cpp"
   "Capture/Background/preset_thumbnail_cache.cpp"
   "Capture/Background/background_image_cache.cpp"
+  "Core/app_identity.cpp"
   "Core/canvas_composition.cpp"
   "Core/argv_project_path.cpp"
   "Core/single_instance.cpp"
@@ -337,6 +338,30 @@ target_compile_definitions(${BINARY_NAME} PRIVATE "FLUTTER_VERSION_PATCH=${FLUTT
 target_compile_definitions(${BINARY_NAME} PRIVATE "FLUTTER_VERSION_BUILD=${FLUTTER_VERSION_BUILD}")
 
 # Disable Windows macros that collide with C++ standard library functions.
+# D9 per-channel identity. `01_build.ps1` exports CLINGFY_CHANNEL before
+# `flutter build windows`, which is the only channel signal that reaches native
+# code -- everything else about the channel travels as a Dart define, and the
+# single-instance mutex is acquired before the engine exists.
+#
+# Absent or unrecognised resolves to PROD in app_identity.cpp. That direction is
+# deliberate: a released build must never be pointed away from the directory a
+# user's recordings are already in.
+if(DEFINED ENV{CLINGFY_CHANNEL})
+  set(CLINGFY_CHANNEL_VALUE "$ENV{CLINGFY_CHANNEL}")
+else()
+  set(CLINGFY_CHANNEL_VALUE "prod")
+endif()
+message(STATUS "Clingfy channel identity: ${CLINGFY_CHANNEL_VALUE}")
+target_compile_definitions(${BINARY_NAME} PRIVATE "CLINGFY_CHANNEL=\"${CLINGFY_CHANNEL_VALUE}\"")
+# app_identity.cpp compiles inside runner_bridge (so the tests can link it),
+# which is where the define actually has to land.
+target_compile_definitions(runner_bridge PRIVATE "CLINGFY_CHANNEL=\"${CLINGFY_CHANNEL_VALUE}\"")
+if(CLINGFY_CHANNEL_VALUE STREQUAL "dev")
+  # Reaches the RC compiler too, which is how ProductName (and therefore the
+  # path_provider data directory) forks per channel.
+  target_compile_definitions(${BINARY_NAME} PRIVATE "CLINGFY_CHANNEL_DEV")
+endif()
+
 target_compile_definitions(${BINARY_NAME} PRIVATE "NOMINMAX")
 
 # Add dependency libraries and include directories. Add any application-specific

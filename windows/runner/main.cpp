@@ -7,16 +7,10 @@
 #include "Core/argv_project_path.h"
 #include "Core/single_instance.h"
 #include "flutter_window.h"
+#include "Core/app_identity.h"
 #include "utils.h"
 
-namespace {
 
-// Bundle-id suffix used for the single-instance mutex + receiver
-// window class. Phase 5 ships a single Windows flavour; if we add a
-// dev / prod split later, fork this on a build define.
-constexpr wchar_t kBundleIdSuffix[] = L"com.clingfy.clingfy";
-
-}  // namespace
 
 int APIENTRY wWinMain(_In_ HINSTANCE instance, _In_opt_ HINSTANCE prev,
                       _In_ wchar_t *command_line, _In_ int show_command) {
@@ -28,7 +22,9 @@ int APIENTRY wWinMain(_In_ HINSTANCE instance, _In_opt_ HINSTANCE prev,
   // Single-instance gate. If we lose the race, forward the path to
   // the existing instance and exit immediately — the existing
   // instance owns the user-visible state.
-  const std::wstring bundle_suffix = kBundleIdSuffix;
+  // D9: forked per channel (the split this file used to predict), so dev and
+  // prod no longer contend for one mutex. prod keeps its historical value.
+  const std::wstring bundle_suffix = clingfy::core::InstanceMutexSuffix();
   const bool first_instance =
       clingfy::core::TryAcquireInstanceMutex(bundle_suffix);
   if (!first_instance) {

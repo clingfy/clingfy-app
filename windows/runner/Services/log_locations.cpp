@@ -1,5 +1,7 @@
 #include "Services/log_locations.h"
 
+#include "Core/app_identity.h"
+
 #include <shlobj.h>
 #include <windows.h>
 

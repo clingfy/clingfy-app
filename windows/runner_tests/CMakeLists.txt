@@ -41,6 +41,7 @@ add_executable(runner_tests
   "canvas_composition_test.cpp"
   "background_image_cache_test.cpp"
   "abstract_waves_params_test.cpp"
+  "app_identity_test.cpp"
   "canvas_preset_params_test.cpp"
   "gain_processor_test.cpp"
   "preset_thumbnail_cache_test.cpp"
