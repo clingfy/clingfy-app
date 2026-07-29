@@ -290,6 +290,7 @@ jobs:
             -only-testing:RunnerTests/GifExportPolicyTests \
             -only-testing:RunnerTests/GifEncoderTests \
             -only-testing:RunnerTests/GifExportSessionTests \
+            -only-testing:RunnerTests/ColorTransferFunctionTests \
             test-without-building 2>&1 | tee build/ci/xcode-fast-test.log
 
       - name: Upload fast native test artifacts
@@ -432,6 +433,7 @@ jobs:
             COMPILER_INDEX_STORE_ENABLE=NO \
             -parallel-testing-enabled NO \
             -only-testing:RunnerTests/LetterboxExporterTests \
+            -only-testing:RunnerTests/ExportColorRampTests \
             -skip-testing:RunnerTests/LetterboxExporterTests/testInlineCameraRenderSupportsStyledActiveZoomExport_largeFixture \
             test-without-building 2>&1 | tee build/ci/xcode-export-test.log
 
