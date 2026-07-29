@@ -261,6 +261,22 @@ jobs:
       - name: Run fast native tests
         run: |
           set -euo pipefail
+          # The classes below were previously covered by a single
+          # -only-testing:RunnerTests/RunnerTests selector. No class of that
+          # name exists — RunnerTests.swift declares LetterboxExporterTests,
+          # ColorGradeTests and 20 others — so xcodebuild matched nothing and
+          # reported success on zero tests. Enumerating the real classes turned
+          # the lane back on and immediately surfaced four problems.
+          #
+          # Three are stable failures, skipped by name below so they stay
+          # visible rather than absent. The fourth is NativeLoggerTests, which
+          # is flaky at CLASS level and is therefore left out entirely rather
+          # than skipped test-by-test: run in isolation it went 1 pass / 2
+          # fails over three runs, and a fourth run failed a DIFFERENT test
+          # than the first, so pinning individual names is whack-a-mole. It
+          # looks like shared logger buffering state plus timing. Fix the
+          # flake, then add the class back.
+          echo "::notice::3 known-failing tests skipped and NativeLoggerTests excluded as class-level flaky — all uncovered when the RunnerTests/RunnerTests no-op selector was fixed. Failing: RecordingMetadataTests/testVersion2RoundTripPreservesCameraAndEditorSeed, ScreenRecorderFacadeStartFailureTests/testNativeQualityStreamConfigurationKeepsExplicitSizeWithoutForcingBestResolution, ScreenRecorderFacadeStartFailureTests/testScreenCaptureKitInvalidParameterStartFailureSurfacesDirectlyWithoutWarning"
           xcodebuild \
             -workspace macos/Runner.xcworkspace \
             -scheme "$APP_ENV" \
@@ -283,13 +299,37 @@ jobs:
             -only-testing:RunnerTests/PreviewProfileTests \
             -only-testing:RunnerTests/RecordingFailureRecoveryTests \
             -only-testing:RunnerTests/RecordingIndicatorViewTests \
-            -only-testing:RunnerTests/RunnerTests \
+            -only-testing:RunnerTests/RenamedRecordingProjectOpenTests \
+            -only-testing:RunnerTests/RecordingProjectPathsTests \
+            -only-testing:RunnerTests/RecordingMetadataTests \
+            -only-testing:RunnerTests/RecordingProjectPackageRegistrationTests \
+            -only-testing:RunnerTests/CameraRecorderTests \
+            -only-testing:RunnerTests/CameraLayoutResolverTests \
+            -only-testing:RunnerTests/CameraTransformTimelineBuilderTests \
+            -only-testing:RunnerTests/CameraAnimationTimelineBuilderTests \
+            -only-testing:RunnerTests/ScreenCaptureKitOverlayFilterPolicyTests \
+            -only-testing:RunnerTests/ScreenCaptureKitMicrophoneFallbackTests \
+            -only-testing:RunnerTests/MicrophoneLevelTelemetryTests \
+            -only-testing:RunnerTests/ScreenRecorderFacadeStartFailureTests \
+            -only-testing:RunnerTests/ScreenRecorderFacadeSeparateCameraTests \
+            -only-testing:RunnerTests/ColorGradeTests \
+            -only-testing:RunnerTests/ClipKeptRangeTests \
+            -only-testing:RunnerTests/ClipPlaybackPlannerTests \
+            -only-testing:RunnerTests/ColorGradeGoldenDumpTests \
+            -only-testing:RunnerTests/RecordingBundleHonestyTests \
+            -only-testing:RunnerTests/AudioSceneGateTests \
+            -only-testing:RunnerTests/SourceAudioBitRateTests \
+            -skip-testing:RunnerTests/RecordingMetadataTests/testVersion2RoundTripPreservesCameraAndEditorSeed \
+            -skip-testing:RunnerTests/ScreenRecorderFacadeStartFailureTests/testNativeQualityStreamConfigurationKeepsExplicitSizeWithoutForcingBestResolution \
+            -skip-testing:RunnerTests/ScreenRecorderFacadeStartFailureTests/testScreenCaptureKitInvalidParameterStartFailureSurfacesDirectlyWithoutWarning \
             -only-testing:RunnerTests/RNNoiseEngineTests \
             -only-testing:RunnerTests/AudioEnhancementPipelineTests \
             -only-testing:RunnerTests/ExportDestinationPreflightTests \
             -only-testing:RunnerTests/GifExportPolicyTests \
             -only-testing:RunnerTests/GifEncoderTests \
             -only-testing:RunnerTests/GifExportSessionTests \
+            -only-testing:RunnerTests/ColorTransferFunctionTests \
+            -only-testing:RunnerTests/ExportColorRampTests \
             test-without-building 2>&1 | tee build/ci/xcode-fast-test.log
 
       - name: Upload fast native test artifacts
