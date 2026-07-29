@@ -39,6 +39,8 @@ pool:
   vmImage: "windows-latest"
 
 variables:
+
+  - template: flutter-version.yml
   - group: "Clingfy-Secrets"
 
   - name: APP_ENV
@@ -74,12 +76,12 @@ stages:
             displayName: "Stage .env.prod"
 
           - task: FlutterInstall@0
-            displayName: "Install Flutter 3.41.1"
+            displayName: "Install Flutter $(flutterVersion)"
             inputs:
               mode: auto
               channel: stable
               version: custom
-              customVersion: "3.41.1"
+              customVersion: "$(flutterVersion)"
 
           # Inno Setup is not preinstalled on windows-latest. 6.5+ prints a
           # "Non-commercial use only" notice on unlicensed installs — verify the

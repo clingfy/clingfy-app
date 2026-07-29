@@ -1,0 +1,21 @@
+# Single source of truth for the Flutter SDK pin used by every Azure lane.
+#
+# Before this file the four lanes each hardcoded their own version and had
+# drifted: the macOS lanes sat on 3.41.0 while the Windows lanes and GitHub CI
+# were on 3.41.1. Nothing detected it, because nothing compared them.
+#
+# Drift is not cosmetic. Info-level lints are SDK-version dependent, so a
+# deprecation that does not exist on one pin appears on another — which is
+# exactly how a "fix" for the release lane came to compile locally on 3.44.0
+# and fail CI on 3.41.1, where the replacement API did not exist yet.
+#
+# GitHub Actions cannot consume an Azure template, so its workflows still carry
+# the literal. `test/tooling/flutter_pin_consistency_test.dart` asserts every
+# pin in the repo matches this one, so a divergence fails CI wherever it is
+# introduced.
+#
+# To upgrade: change it here, change the GitHub workflows to match, and let the
+# consistency test confirm nothing was missed.
+variables:
+  - name: flutterVersion
+    value: "3.41.1"
