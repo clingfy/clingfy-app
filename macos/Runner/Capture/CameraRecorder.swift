@@ -375,16 +375,81 @@ final class CameraRecorder: NSObject {
       try? fileManager.removeItem(at: segmentURL)
     }
 
-    activeSegment = ActiveCameraSegment(index: nextIndex, url: segmentURL, startedAt: Date())
-    pendingStartCompletion = completion
-
     NativeLogger.i(
       "CameraRecorder",
       "Starting camera segment",
-      context: ["index": nextIndex, "path": segmentURL.path]
+      context: [
+        "index": nextIndex,
+        "path": segmentURL.path,
+        "sessionRunning": coordinator.isSessionRunning,
+        "videoConnectionActive": coordinator.hasActiveVideoConnection,
+      ]
     )
 
-    coordinator.recordingOutput.startRecording(to: segmentURL, recordingDelegate: self)
+    // Refuse before AVFoundation has to. `startRecording(to:)` RAISES an
+    // Objective-C exception when the capture graph is not ready — session not
+    // running, or no active video connection — and Swift cannot catch those,
+    // so the raise reaches the terminate handler and aborts the process. That
+    // is a real crash seen in the field: a camera hot-plugged and selected
+    // about ten seconds before recording started, and the first segment start
+    // killed the app.
+    //
+    // Checking here turns the common case into an ordinary start failure with
+    // a message the user can act on, and leaves the bridge below to catch the
+    // states we cannot enumerate.
+    guard coordinator.isSessionRunning, coordinator.hasActiveVideoConnection else {
+      let reason =
+        coordinator.isSessionRunning
+        ? "the camera has no active video connection"
+        : "the camera session is not running"
+      NativeLogger.e(
+        "CameraRecorder",
+        "Refusing to start a camera segment before the capture graph is ready",
+        context: [
+          "index": nextIndex,
+          "sessionRunning": coordinator.isSessionRunning,
+          "videoConnectionActive": coordinator.hasActiveVideoConnection,
+        ]
+      )
+      completion(
+        .failure(
+          flutterError(
+            NativeErrorCode.recordingError,
+            "The camera is not ready to record — \(reason). "
+              + "If you just connected or switched cameras, wait a moment and try again.")))
+      return
+    }
+
+    activeSegment = ActiveCameraSegment(index: nextIndex, url: segmentURL, startedAt: Date())
+    pendingStartCompletion = completion
+
+    do {
+      try AVCaptureMovieFileOutputExceptionBridge.startRecording(
+        output: coordinator.recordingOutput,
+        outputURL: segmentURL,
+        recordingDelegate: self
+      )
+    } catch {
+      // The delegate never fires when the start is refused, so the pending
+      // completion would otherwise be held forever and the UI would sit in
+      // "starting" until the user force-quits.
+      activeSegment = nil
+      pendingStartCompletion = nil
+      let nsError = error as NSError
+      NativeLogger.e(
+        "CameraRecorder",
+        "Camera refused to start recording",
+        context: [
+          "index": nextIndex,
+          "exceptionName": nsError.userInfo["exceptionName"] ?? "",
+          "exceptionReason": nsError.userInfo["exceptionReason"] ?? "",
+          "hasVideoConnection": nsError.userInfo["hasVideoConnection"] ?? "",
+          "videoConnectionActive": nsError.userInfo["videoConnectionActive"] ?? "",
+          "outputIsRecording": nsError.userInfo["outputIsRecording"] ?? "",
+        ]
+      )
+      completion(.failure(error))
+    }
   }
 
   private func finalizeStoppedRecording(

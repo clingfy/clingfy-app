@@ -493,6 +493,30 @@ final class CameraRecorderTests: XCTestCase {
 
     XCTAssertFalse(CameraRecorder._testRecordingFinishedSuccessfully(error))
   }
+
+  /// The preconditions that stand between a not-ready camera and a hard crash.
+  ///
+  /// `AVCaptureMovieFileOutput.startRecording(to:)` RAISES an Objective-C
+  /// exception when the session is not running or the output has no active
+  /// video connection. Swift cannot catch those, so the raise reaches the
+  /// terminate handler and calls abort(). That is not hypothetical: a camera
+  /// hot-plugged and selected about ten seconds before recording started took
+  /// the app down on macOS 26.1, at CameraRecorder.swift:387.
+  ///
+  /// A freshly built coordinator is exactly that un-ready state — session
+  /// created, no device attached, nothing running — so both predicates must
+  /// read false. If either ever starts reporting true here, the guard in
+  /// `startNextSegment` stops guarding and the crash comes back.
+  func testFreshCoordinatorIsNotReadyToRecord() {
+    let coordinator = CameraCaptureCoordinator()
+
+    XCTAssertFalse(
+      coordinator.isSessionRunning,
+      "a coordinator with no device attached must not report a running session")
+    XCTAssertFalse(
+      coordinator.hasActiveVideoConnection,
+      "a coordinator with no device attached must not report a live video connection")
+  }
 }
 
 final class CameraLayoutResolverTests: XCTestCase {

@@ -193,6 +193,7 @@
 		E119FE7B1D15945159EF746A /* CaptureTargetResolver.swift in Sources */ = {isa = PBXBuildFile; fileRef = EB6C5804359E20EA9C85113A /* CaptureTargetResolver.swift */; };
 		E13CA6F8BADB14DC1DB5A983 /* CaptureStartConfigBuilder.swift in Sources */ = {isa = PBXBuildFile; fileRef = 2CC62ED71D4FA3FF539BFFD2 /* CaptureStartConfigBuilder.swift */; };
 		E1A0C0012F60000100BEE001 /* AVAssetWriterInputExceptionBridge.m in Sources */ = {isa = PBXBuildFile; fileRef = E1A0C0032F60000100BEE003 /* AVAssetWriterInputExceptionBridge.m */; };
+		E1A0C0132F60000100BEE013 /* AVCaptureMovieFileOutputExceptionBridge.m in Sources */ = {isa = PBXBuildFile; fileRef = E1A0C0122F60000100BEE012 /* AVCaptureMovieFileOutputExceptionBridge.m */; };
 		E2E9A1BCA255E1E4D0E7D893 /* RecordingSessionCoordinatorTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 1D5A886A3A3078FDE329DDD8 /* RecordingSessionCoordinatorTests.swift */; };
 		E3ECE685EE9CE4A7311FD73C /* RecordingEngine.swift in Sources */ = {isa = PBXBuildFile; fileRef = A5A6225F6CBBE813D421D521 /* RecordingEngine.swift */; };
 		E7F90A099654ACCB10A3028D /* GifEncoder.swift in Sources */ = {isa = PBXBuildFile; fileRef = 4758E388D386E24B68B33F48 /* GifEncoder.swift */; };
@@ -452,6 +453,8 @@
 		E0F9BE980D7AC62253E76CAC /* ExportPrepTests.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = ExportPrepTests.swift; sourceTree = "<group>"; };
 		E1A0C0022F60000100BEE002 /* AVAssetWriterInputExceptionBridge.h */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.c.h; path = AVAssetWriterInputExceptionBridge.h; sourceTree = "<group>"; };
 		E1A0C0032F60000100BEE003 /* AVAssetWriterInputExceptionBridge.m */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.c.objc; path = AVAssetWriterInputExceptionBridge.m; sourceTree = "<group>"; };
+		E1A0C0112F60000100BEE011 /* AVCaptureMovieFileOutputExceptionBridge.h */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.c.h; path = AVCaptureMovieFileOutputExceptionBridge.h; sourceTree = "<group>"; };
+		E1A0C0122F60000100BEE012 /* AVCaptureMovieFileOutputExceptionBridge.m */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.c.objc; path = AVCaptureMovieFileOutputExceptionBridge.m; sourceTree = "<group>"; };
 		E1A0C0042F60000100BEE004 /* Runner-Bridging-Header.h */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.c.h; path = "Runner-Bridging-Header.h"; sourceTree = "<group>"; };
 		E241F5B3AEEB5920DAF553C2 /* OverlayVisibilityController.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = OverlayVisibilityController.swift; sourceTree = "<group>"; };
 		E2A4BFCDF024B903AA3E4CD8 /* MetadataSidecarWriterTests.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = MetadataSidecarWriterTests.swift; sourceTree = "<group>"; };
@@ -795,6 +798,8 @@
 			children = (
 				E1A0C0022F60000100BEE002 /* AVAssetWriterInputExceptionBridge.h */,
 				E1A0C0032F60000100BEE003 /* AVAssetWriterInputExceptionBridge.m */,
+				E1A0C0112F60000100BEE011 /* AVCaptureMovieFileOutputExceptionBridge.h */,
+				E1A0C0122F60000100BEE012 /* AVCaptureMovieFileOutputExceptionBridge.m */,
 				5B5426E12F21985F00B06BA6 /* FlutterError+Error.swift */,
 				E1A0C0042F60000100BEE004 /* Runner-Bridging-Header.h */,
 			);
@@ -1514,6 +1519,7 @@
 				5B5427322F21985F00B06BA6 /* NativeChannel.swift in Sources */,
 				9A1B2C3D4E5F60718293A4B4 /* CursorFrameResolver.swift in Sources */,
 				E1A0C0012F60000100BEE001 /* AVAssetWriterInputExceptionBridge.m in Sources */,
+				E1A0C0132F60000100BEE013 /* AVCaptureMovieFileOutputExceptionBridge.m in Sources */,
 				5B5427332F21985F00B06BA6 /* FlutterError+Error.swift in Sources */,
 				5B5427342F21985F00B06BA6 /* PlayerEventHandler.swift in Sources */,
 				5BE43BEC2F22CD3F0017267E /* RecordingStore.swift in Sources */,
