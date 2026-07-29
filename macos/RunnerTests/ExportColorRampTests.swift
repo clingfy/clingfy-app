@@ -99,6 +99,15 @@ final class ExportColorRampTests: XCTestCase {
   private func roundTripThroughExport(
     renderColorSpace: CGColorSpace,
     ciContext: CIContext? = nil,
+    // When true this renders through `VideoColorPipeline.renderComposedExportFrame`
+    // — the exact function both final export render sites call — instead of a
+    // bespoke `render` written for the test. That is the whole point: a
+    // measurement that renders differently from the product can pass while the
+    // product is broken.
+    throughProductionRender: Bool = false,
+    // Candidate transfer curve to apply before the write, for comparing
+    // encodes against the real writer + decoder instead of arguing about them.
+    probeEncode: ((CIImage) -> CIImage)? = nil,
     tagBuffer: (CVPixelBuffer) -> Void
   ) throws -> [Double] {
     let ramp = try makeRampImage()
@@ -139,10 +148,16 @@ final class ExportColorRampTests: XCTestCase {
     // Render exactly as the exporter does: a CIContext working in the
     // pipeline's colour space, drawing into the buffer that gets written.
     let ciContext = ciContext ?? VideoColorPipeline.makeCIContext()
-    ciContext.render(
-      CIImage(cgImage: ramp), to: pixelBuffer,
-      bounds: CGRect(x: 0, y: 0, width: width, height: height),
-      colorSpace: renderColorSpace)
+    let renderBounds = CGRect(x: 0, y: 0, width: width, height: height)
+    if throughProductionRender {
+      VideoColorPipeline.renderComposedExportFrame(
+        CIImage(cgImage: ramp), to: pixelBuffer, bounds: renderBounds, using: ciContext)
+    } else {
+      let sourceImage = CIImage(cgImage: ramp)
+      ciContext.render(
+        probeEncode?(sourceImage) ?? sourceImage, to: pixelBuffer, bounds: renderBounds,
+        colorSpace: renderColorSpace)
+    }
     tagBuffer(pixelBuffer)
 
     XCTAssertTrue(adaptor.append(pixelBuffer, withPresentationTime: .zero))
@@ -183,19 +198,38 @@ final class ExportColorRampTests: XCTestCase {
   /// Tolerance is generous because H.264 is lossy — the reported symptom is
   /// a shift of 8-16 levels, far outside codec noise.
   func testExportRoundTripPreservesAuthoredValues() throws {
-    // KNOWN FAILING — this is the reported bug, pinned as a measurement.
-    // XCTExpectFailure rather than a disabled test: it still RUNS and still
-    // records the numbers, and it will fail loudly as an unexpected PASS the
-    // moment the pipeline is fixed, so the fix cannot land unnoticed.
-    XCTExpectFailure(
-      "Export re-encodes sRGB data under a BT.709 transfer tag; midtones lift ~11/255")
-    // The extended ramp also shows a second, smaller defect at the limited-
-    // range boundaries: 8 -> 6 and 16 -> 14, with 240/248 lifted by 1-2.
-    // That is the FullRangeVideo: 0 flag disagreeing with full-range data.
-    // Small next to the ~11 gamma error, but real and independent of it.
+    // WAS the pinned bug; the pin is now removed and this must PASS. The
+    // pipeline encodes with the decoder's own transfer before the write
+    // (VideoColorPipeline.renderComposedExportFrame), so the data finally
+    // agrees with the tag the file has always carried and the round trip
+    // returns what was authored.
+    //
+    // This is the criterion the fix is held to. Two notes on why it is THIS
+    // criterion and not the two obvious alternatives.
+    //
+    // Not `ffmpeg -vf zscale`: zscale's `t=bt709` implements the BT.1886
+    // display curve, not a camera OETF. Measured, on linear 0.502: zscale
+    // gives 192 where the published OETF predicts 180. Its controls are
+    // honest — `t=linear` round-trips exactly and `t=iec61966-2-1` gives 188,
+    // matching sRGB — so the disagreement is zscale's 709 curve specifically.
+    // Verifying against it would report a correct export as broken.
+    //
+    // Not the published BT.709 OETF either, which was tried and measured:
+    // it fixes midtones (+11 -> -2) and crushes shadows by up to 17 code
+    // values, because its linear toe is never undone. See
+    // `testACandidateTransferCurveRoundTripsWithinTolerance` for the sweep
+    // that settled this and `ColorTransferFunctions.exportTransferGamma` for
+    // what shipped.
+    //
+    // The extended ramp still shows a second, smaller defect at the limited-
+    // range boundaries: 8/16 and 240/248 drift by 1-2. That is the
+    // FullRangeVideo: 0 flag disagreeing with full-range data — independent of
+    // the gamma error and deliberately not fixed here. The tolerance below
+    // absorbs it; tightening it is the job of the range change.
 
     let measured = try roundTripThroughExport(
-      renderColorSpace: VideoColorPipeline.workingColorSpace
+      renderColorSpace: VideoColorPipeline.workingColorSpace,
+      throughProductionRender: true
     ) { buffer in
       VideoColorPipeline.tag(pixelBuffer: buffer)
     }
@@ -217,6 +251,63 @@ final class ExportColorRampTests: XCTestCase {
         "patch \(index): authored \(expected), decoded \(measured[index]) — "
           + "the exported file does not match what the editor showed")
     }
+  }
+
+  /// Which transfer curve does this writer + decoder actually round-trip?
+  ///
+  /// The published BT.709 OETF gets midtones and highlights right but crushes
+  /// shadows by up to 17 code values, because its 4.5x linear toe near black
+  /// is not undone on the way back. Rather than argue about which curve the
+  /// decoder "should" apply, this sweeps plain power laws through the real
+  /// writer and the real decode and reports the worst-case error of each.
+  ///
+  /// The claim under test is that a curve exists which round-trips this
+  /// pipeline within the same tolerance the main test uses. Which one wins is
+  /// printed, so adopting it is a decision made from the table.
+  func testACandidateTransferCurveRoundTripsWithinTolerance() throws {
+    let publishedOetf = try roundTripThroughExport(
+      renderColorSpace: VideoColorPipeline.workingColorSpace,
+      probeEncode: { ColorTransferFunctions.encodeToBt709($0) }
+    ) { VideoColorPipeline.tag(pixelBuffer: $0) }
+
+    func worstError(_ measured: [Double]) -> Double {
+      zip(Self.rampValues, measured).map { abs($1 - Double($0)) }.max() ?? .infinity
+    }
+
+    var rows: [String] = [
+      String(format: "  published 709 OETF   worst %5.1f", worstError(publishedOetf))
+    ]
+    var best: (gamma: Double, worst: Double, measured: [Double])?
+
+    for gamma in [1.8, 1.961, 2.0, 2.2, 2.4] {
+      let measured = try roundTripThroughExport(
+        renderColorSpace: VideoColorPipeline.workingColorSpace,
+        probeEncode: { ColorTransferFunctions.encodeToPureGamma($0, gamma: gamma) }
+      ) { VideoColorPipeline.tag(pixelBuffer: $0) }
+      let worst = worstError(measured)
+      rows.append(String(format: "  pure gamma %-6.3f     worst %5.1f", gamma, worst))
+      if best == nil || worst < best!.worst {
+        best = (gamma, worst, measured)
+      }
+    }
+
+    let winner = try XCTUnwrap(best)
+    var detail = ["candidate transfer curves (worst |authored - decoded|):"]
+    detail.append(contentsOf: rows)
+    detail.append(String(format: "  winner: pure gamma %.3f", winner.gamma))
+    for (index, expected) in Self.rampValues.enumerated() {
+      detail.append(
+        String(format: "    %3d -> %6.1f  (%+.1f)", expected, winner.measured[index],
+               winner.measured[index] - Double(expected)))
+    }
+    let table = detail.joined(separator: "\n")
+    print(table)
+    try? table.write(
+      to: URL(fileURLWithPath: "/tmp/ramp_candidates.txt"), atomically: true, encoding: .utf8)
+
+    XCTAssertLessThanOrEqual(
+      winner.worst, 4.0,
+      "no candidate transfer curve round-trips this pipeline; see the table above")
   }
 
   /// Candidate fix, measured before it is adopted: encode the pixels in the
