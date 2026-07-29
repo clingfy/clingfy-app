@@ -299,6 +299,14 @@ struct RecordingMetadata: Codable {
     let outputRoute: String?
   }
 
+  /// Schema version written by `create`.
+  ///
+  /// Named rather than inlined because the literal used to live here and in
+  /// the round-trip test independently: the bump to 3 changed one and not the
+  /// other, and the test had been asserting 2 against a v3 writer since. It
+  /// went unnoticed because that whole test class was never running in CI.
+  static let currentVersion = 3
+
   let version: Int
   let recordingId: String
   let appVersion: String
@@ -326,7 +334,7 @@ struct RecordingMetadata: Codable {
     editorSeed: EditorSeed
   ) -> RecordingMetadata {
     RecordingMetadata(
-      version: 3,
+      version: Self.currentVersion,
       recordingId: UUID().uuidString,
       appVersion: Bundle.main.infoDictionary?["CFBundleShortVersionString"] as? String ?? "unknown",
       bundleId: Bundle.main.bundleIdentifier ?? "com.clingfy.app",

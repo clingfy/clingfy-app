@@ -205,7 +205,7 @@ final class RecordingProjectPathsTests: XCTestCase {
 }
 
 final class RecordingMetadataTests: XCTestCase {
-  func testVersion2RoundTripPreservesCameraAndEditorSeed() throws {
+  func testCurrentVersionRoundTripPreservesCameraAndEditorSeed() throws {
     let tempDir = makeTemporaryDirectory()
     defer { try? FileManager.default.removeItem(at: tempDir) }
 
@@ -274,7 +274,10 @@ final class RecordingMetadataTests: XCTestCase {
     try metadata.write(to: metadataURL)
     let decoded = try RecordingMetadata.read(from: metadataURL)
 
-    XCTAssertEqual(decoded.version, 2)
+    // Asserted against the constant, not a literal: this test spent three
+    // days claiming version 2 against a v3 writer because the two literals
+    // drifted independently and nothing ran to notice.
+    XCTAssertEqual(decoded.version, RecordingMetadata.currentVersion)
     XCTAssertEqual(decoded.screen.rawRelativePath, "capture/screen.mov")
     XCTAssertEqual(decoded.screen.windowId, 77)
     XCTAssertEqual(decoded.camera, cameraInfo)
@@ -7646,6 +7649,14 @@ private final class MockMicrophoneLevelMonitor: MicrophoneLevelMonitoring {
 }
 
 @MainActor
+/// Settle timeouts here are ceilings, not the behaviour under test.
+///
+/// Each of these waits only 0.2s in practice; the timeout exists so a hang
+/// fails rather than blocks. At 1.0s that ceiling was tight enough to be
+/// exceeded when the whole fast lane runs classes in parallel — this class
+/// passed 8/8 in isolation while failing intermittently in a full-lane run,
+/// taking 5.0s against a normal 0.3s. Raising the ceiling costs nothing when
+/// things work and still fails a genuine hang.
 final class MicrophoneLevelTelemetryTests: XCTestCase {
   func testAVFoundationBackendForwardsPipelineMicrophoneLevels() throws {
     let pipeline = MockAVFoundationCapturePipeline()
@@ -7660,7 +7671,7 @@ final class MicrophoneLevelTelemetryTests: XCTestCase {
 
     pipeline.emitMicrophoneLevel(MicrophoneLevelSample(linear: 0.27, dbfs: -11.4))
 
-    wait(for: [expectation], timeout: 1.0)
+    wait(for: [expectation], timeout: 10.0)
     let forwarded = try XCTUnwrap(received)
     XCTAssertEqual(forwarded.linear, 0.27, accuracy: 0.0001)
     XCTAssertEqual(forwarded.dbfs, -11.4, accuracy: 0.0001)
@@ -7687,7 +7698,7 @@ final class MicrophoneLevelTelemetryTests: XCTestCase {
     DispatchQueue.main.asyncAfter(deadline: .now() + 0.2) {
       settleStartTransition.fulfill()
     }
-    wait(for: [settleStartTransition], timeout: 1.0)
+    wait(for: [settleStartTransition], timeout: 10.0)
 
     XCTAssertEqual(received.count, 1)
     XCTAssertEqual(received[0].linear, 0.19, accuracy: 0.0001)
@@ -7703,7 +7714,7 @@ final class MicrophoneLevelTelemetryTests: XCTestCase {
     DispatchQueue.main.asyncAfter(deadline: .now() + 0.2) {
       settleInitialAsync.fulfill()
     }
-    wait(for: [settleInitialAsync], timeout: 1.0)
+    wait(for: [settleInitialAsync], timeout: 10.0)
 
     let forwarded = expectation(description: "backend microphone sample forwarded")
     var received: MicrophoneLevelSample?
@@ -7715,7 +7726,7 @@ final class MicrophoneLevelTelemetryTests: XCTestCase {
     backend.onStarted?(URL(fileURLWithPath: "/tmp/recording.mov"))
     backend.onMicrophoneLevel?(MicrophoneLevelSample(linear: 0.41, dbfs: -17.8))
 
-    wait(for: [forwarded], timeout: 1.0)
+    wait(for: [forwarded], timeout: 10.0)
     let forwardedSample = try XCTUnwrap(received)
     XCTAssertEqual(forwardedSample.linear, 0.41, accuracy: 0.0001)
     XCTAssertEqual(forwardedSample.dbfs, -17.8, accuracy: 0.0001)
@@ -7730,7 +7741,7 @@ final class MicrophoneLevelTelemetryTests: XCTestCase {
     DispatchQueue.main.asyncAfter(deadline: .now() + 0.2) {
       settleInitialAsync.fulfill()
     }
-    wait(for: [settleInitialAsync], timeout: 1.0)
+    wait(for: [settleInitialAsync], timeout: 10.0)
 
     let forwarded = expectation(description: "backend silence sample forwarded")
     var received: MicrophoneLevelSample?
@@ -7742,7 +7753,7 @@ final class MicrophoneLevelTelemetryTests: XCTestCase {
     backend.onStarted?(URL(fileURLWithPath: "/tmp/recording.mov"))
     backend.onMicrophoneLevel?(MicrophoneLevelSample(linear: 0.0, dbfs: -160.0))
 
-    wait(for: [forwarded], timeout: 1.0)
+    wait(for: [forwarded], timeout: 10.0)
     let forwardedSample = try XCTUnwrap(received)
     XCTAssertEqual(forwardedSample.linear, 0.0, accuracy: 0.0001)
     XCTAssertEqual(forwardedSample.dbfs, -160.0, accuracy: 0.0001)
@@ -7860,36 +7871,58 @@ final class ScreenRecorderFacadeStartFailureTests: XCTestCase {
       failurePayload?["error"] as? String,
       "Failed due to an invalid parameter"
     )
-    XCTAssertEqual(failurePayload?["failingCall"] as? String, "stream.startCapture()")
-    XCTAssertEqual(
-      failurePayload?["errorOriginFile"] as? String,
-      "CaptureBackendScreenCaptureKit.swift"
-    )
-    XCTAssertEqual(failurePayload?["errorOriginLine"] as? Int, 831)
-    let details = failurePayload?["details"] as? [String: Any]
-    XCTAssertEqual(
-      details?["underlyingErrorDomain"] as? String,
-      "com.apple.ScreenCaptureKit.SCStreamErrorDomain"
-    )
-    XCTAssertEqual(details?["underlyingErrorCode"] as? Int, -3812)
+    // Deliberately NOT asserted here: failingCall, errorOriginFile,
+    // errorOriginLine and the underlying SCStream domain/code.
+    //
+    // Those used to ride on this event payload, and #42 moved the enrichment
+    // into the backend without re-attaching it here. That is not a regression
+    // to undo — the Dart side reads them from the PlatformException raised by
+    // the startRecording CALL (RecordingController
+    // .recordingStartFailureContextFromPlatformException), and its event
+    // handler deliberately does not, because a refused start is reported on
+    // both surfaces and reading both double-reported every failure to Sentry.
+    //
+    // The rich-diagnostics contract is real and still covered, on the surface
+    // that carries it: testRecordingStartFailureWrapPreservesStartFailureInfo
+    // above asserts every one of those fields on the FlutterError. Asserting
+    // them here as well was duplicating that on the wrong surface, and it
+    // pinned a hard-coded origin LINE NUMBER (831) that any edit to
+    // CaptureBackendScreenCaptureKit.swift would have broken anyway.
+    //
+    // What this test is named for — an invalid-parameter start failure
+    // surfacing as a failure and NOT as a warning — is asserted above.
   }
 
-  func testNativeQualityStreamConfigurationKeepsExplicitSizeWithoutForcingBestResolution() {
+  /// Native quality must request the exact pixel size, unscaled.
+  ///
+  /// This test used to also assert that `captureResolution` was left at the
+  /// SDK default. #42 set it to `.best` unconditionally ("strongly
+  /// recommended for sharpness"), three weeks after this test was written,
+  /// and the assertion has been failing ever since — unnoticed, because this
+  /// class was never actually run by CI.
+  ///
+  /// The size behaviour this test is named for still holds, which is why the
+  /// assertion below now pins `.best` rather than the default: it records
+  /// what ships instead of leaving CI lying about it.
+  ///
+  /// WHAT IS NOT SETTLED: `.best` is applied to EVERY quality, not just
+  /// native. At native it is inert — the requested size already is the native
+  /// size — but at 720p on a 5K display it makes ScreenCaptureKit capture at
+  /// full 5K and downscale, which costs GPU, memory and power for a sharpness
+  /// gain nobody has measured. Whether it should be conditional on quality is
+  /// an open question, deliberately not decided by this test.
+  func testNativeQualityStreamConfigurationKeepsExplicitPixelSize() {
     let backend = CaptureBackendScreenCaptureKit()
     let streamConfig = backend._testMakeStreamConfiguration(
       quality: .native,
       baseRectPoints: CGRect(x: 0, y: 0, width: 1512, height: 982),
       pointPixelScale: 2.0
     )
-    let defaultConfig = SCStreamConfiguration()
 
     XCTAssertEqual(streamConfig.width, 3024)
     XCTAssertEqual(streamConfig.height, 1964)
     XCTAssertFalse(streamConfig.scalesToFit)
-    XCTAssertEqual(
-      streamConfig.captureResolution.rawValue,
-      defaultConfig.captureResolution.rawValue
-    )
+    XCTAssertEqual(streamConfig.captureResolution, .best)
   }
 }
 
@@ -9185,26 +9218,36 @@ final class NativeLoggerTests: XCTestCase {
 
   func testEmitWithoutChannelBuffersInsteadOfDropping() {
     NativeLogger.resetForTest()
+    NativeLogger.stayDetachedForTest()
     NativeLogger.setMinLevel("debug")
 
-    NativeLogger.d("Test", "no channel attached")
-    NativeLogger.e("Test", "no channel attached")
+    // A category unique to this test, counted with the category filter.
+    // `pending` is process-global and the test host keeps logging from its own
+    // background work while the channel is detached — exactly the state
+    // `resetForTest` creates — so an unfiltered count of 2 was flaky.
+    let category = "NativeLoggerTest.BufferWithoutChannel"
+    NativeLogger.d(category, "no channel attached")
+    NativeLogger.e(category, "no channel attached")
     drainMainQueue()
 
-    XCTAssertEqual(NativeLogger.pendingCountForTest, 2)
+    XCTAssertEqual(NativeLogger.pendingCountForTest(category: category), 2)
 
     // flushPending with no channel keeps the buffer — a later flush after
     // the channel attaches must still deliver these lines — but it does mark
     // the Dart handler as ready (the handshake arrived over the channel).
-    XCTAssertFalse(NativeLogger.dartReadyForTest)
+    //
+    // The pre-state of dartReady is deliberately not asserted: the host app's
+    // Flutter startup calls flushPendingNativeLogs, so this test does not own
+    // that flag and asserting it was false was a race, not a check.
     NativeLogger.flushPending()
     drainMainQueue()
-    XCTAssertEqual(NativeLogger.pendingCountForTest, 2)
+    XCTAssertEqual(NativeLogger.pendingCountForTest(category: category), 2)
     XCTAssertTrue(NativeLogger.dartReadyForTest)
   }
 
   func testPendingBufferIsBoundedDropOldest() {
     NativeLogger.resetForTest()
+    NativeLogger.stayDetachedForTest()
     NativeLogger.setMinLevel("debug")
 
     for i in 0..<(NativeLogger.maxPending + 40) {
@@ -9212,17 +9255,23 @@ final class NativeLoggerTests: XCTestCase {
     }
     drainMainQueue()
 
+    // Unfiltered on purpose: this asserts the buffer is CAPPED, which holds
+    // no matter who filled it, so foreign lines cannot make it flaky.
     XCTAssertEqual(NativeLogger.pendingCountForTest, NativeLogger.maxPending)
   }
 
   func testBelowThresholdEmitsAreNotBuffered() {
     NativeLogger.resetForTest()
+    NativeLogger.stayDetachedForTest()
     NativeLogger.setMinLevel("info")
 
-    NativeLogger.d("Test", "verbose line while threshold is info")
+    // Same reason as above: count only this test's own category, because the
+    // host app's info-and-above lines land in the same global buffer.
+    let category = "NativeLoggerTest.BelowThreshold"
+    NativeLogger.d(category, "verbose line while threshold is info")
     drainMainQueue()
 
-    XCTAssertEqual(NativeLogger.pendingCountForTest, 0)
+    XCTAssertEqual(NativeLogger.pendingCountForTest(category: category), 0)
   }
 }
 
@@ -9753,6 +9802,17 @@ final class AudioSceneGateTests: XCTestCase {
 
   /// A real, decodable one-channel audio file — the probe checks decodability,
   /// not mere existence, so a touched empty file would not do.
+  /// A short, real, decodable AAC file — synthesized, not recorded.
+  ///
+  /// This used to build the fixture with `AVAudioRecorder.record()`, which
+  /// needs an audio INPUT device. Any machine with a microphone passes in
+  /// well under a second; GitHub's macOS runners have none, so the four tests
+  /// using this blocked until timeout — 180s, 180s, 271s and 360s — and were
+  /// skipped in CI as a result. No local run could reproduce it, because the
+  /// failure only exists on hardware without a mic.
+  ///
+  /// Writing the samples ourselves removes the hardware dependency entirely
+  /// and drops the fixture cost to a few milliseconds.
   private func writeDecodableAudio(named name: String) throws -> String {
     let url = dir.appendingPathComponent(name)
     let settings: [String: Any] = [
@@ -9760,10 +9820,22 @@ final class AudioSceneGateTests: XCTestCase {
       AVSampleRateKey: 44100.0,
       AVNumberOfChannelsKey: 1,
     ]
-    let writer = try AVAudioRecorder(url: url, settings: settings)
-    XCTAssertTrue(writer.record())
-    Thread.sleep(forTimeInterval: 0.25)
-    writer.stop()
+    let file = try AVAudioFile(forWriting: url, settings: settings)
+    let format = try XCTUnwrap(
+      AVAudioFormat(standardFormatWithSampleRate: 44100, channels: 1))
+    let frames = AVAudioFrameCount(11025)  // 0.25s, matching the old fixture
+    let buffer = try XCTUnwrap(
+      AVAudioPCMBuffer(pcmFormat: format, frameCapacity: frames))
+    buffer.frameLength = frames
+    // A quiet tone rather than digital silence: the code under test decides
+    // whether a sidecar counts as real audio, and an all-zero file is a
+    // needlessly ambiguous fixture for that question.
+    if let samples = buffer.floatChannelData?[0] {
+      for frame in 0..<Int(frames) {
+        samples[frame] = 0.1 * sinf(2 * .pi * 440 * Float(frame) / 44100)
+      }
+    }
+    try file.write(from: buffer)
     return url.path
   }
 

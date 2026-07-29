@@ -41,6 +41,10 @@ class NativeLogger {
   }()
 
   static func configure(with channel: FlutterMethodChannel) {
+    // Ignored while a buffering test holds the logger detached. The test host
+    // is a live app: its Flutter startup calls this, and if it lands mid-test
+    // the lines under test get delivered instead of buffered.
+    guard !detachedForTest else { return }
     self.channel = channel
   }
 
@@ -177,16 +181,48 @@ class NativeLogger {
   }
 
   /// Test-only: number of buffered lines (read on the main queue).
+  ///
+  /// Process-global, so asserting on it directly is flaky: the test host is a
+  /// running app whose own components keep logging from background work, and
+  /// `resetForTest` detaches the channel, which is precisely the state in
+  /// which `send` buffers instead of delivering. Foreign lines therefore land
+  /// in `pending` between a reset and an assertion. Prefer the category
+  /// filter below for anything that asserts an exact count.
   static var pendingCountForTest: Int { pending.count }
+
+  /// Test-only: buffered lines emitted under one category.
+  ///
+  /// Lets a test count only its own emissions, so unrelated logging from the
+  /// host app cannot change the result.
+  static func pendingCountForTest(category: String) -> Int {
+    pending.filter { ($0["category"] as? String) == category }.count
+  }
 
   /// Test-only: whether the Dart-ready handshake ran.
   static var dartReadyForTest: Bool { dartReady }
+
+  /// Test-only: holds the logger in the detached state while set, so
+  /// `configure(with:)` from the host app's Flutter startup cannot attach a
+  /// channel mid-test. Always cleared by `resetForTest`, so it cannot leak
+  /// into a later test even if one forgets to unset it.
+  private static var detachedForTest = false
+
+  /// Test-only: keep the logger detached for the duration of a buffering test.
+  ///
+  /// Buffering only happens while no channel is attached. Without this the
+  /// host app's startup races the test and the lines are delivered instead,
+  /// which is a genuine 1-in-7 flake, not a timing artefact that a longer
+  /// wait would fix.
+  static func stayDetachedForTest() {
+    detachedForTest = true
+  }
 
   /// Test-only: clear channel + buffer + handshake so static state can't leak.
   static func resetForTest() {
     channel = nil
     pending = []
     dartReady = false
+    detachedForTest = false
   }
 
   private static func send(
