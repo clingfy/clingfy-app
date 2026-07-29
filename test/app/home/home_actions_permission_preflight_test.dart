@@ -576,6 +576,77 @@ void main() {
     harness.dispose();
   });
 
+  // "No microphone" is a DEVICE choice and has to reach the recorder on its own.
+  // It used to travel only as `needsMicrophone: false` on the preflight intent,
+  // which merely skips the permission prompt -- so `disableMicrophone` stayed
+  // false, native took `want_mic = true`, and opened the DEFAULT microphone for
+  // the whole session. Confirmed on a real recording: a "no mic" take shipped a
+  // mic sidecar at -73.9 dB, i.e. a live device recording silence.
+  //
+  // This is the ordinary path with every permission granted, which is exactly
+  // where it broke: the permission branch that used to set the flag never runs.
+  testWidgets('selecting no microphone disables the mic at start', (
+    tester,
+  ) async {
+    final harness = await createHarness(
+      tester,
+      permissionStatus: const {
+        'screenRecording': true,
+        'microphone': true,
+        'camera': true,
+        'accessibility': true,
+      },
+      audioSources: const [
+        {'id': 'mic-1', 'name': 'Built-in Mic'},
+      ],
+    );
+
+    await harness.device.setAudioSource(DeviceController.noAudioId);
+    unawaited(harness.actions.toggleRecording(harness.context));
+    await tester.pumpAndSettle();
+
+    final startCall = harness.callsFor('startRecording').single;
+    final args = Map<String, dynamic>.from(
+      startCall.arguments! as Map<dynamic, dynamic>,
+    );
+    expect(
+      args['disableMicrophone'],
+      isTrue,
+      reason: 'the app must not open a microphone the user deselected',
+    );
+    harness.dispose();
+  });
+
+  // The control: a selected mic must still record. A fix that disabled the mic
+  // unconditionally would pass the test above and break every recording.
+  testWidgets('selecting a microphone leaves it enabled at start', (
+    tester,
+  ) async {
+    final harness = await createHarness(
+      tester,
+      permissionStatus: const {
+        'screenRecording': true,
+        'microphone': true,
+        'camera': true,
+        'accessibility': true,
+      },
+      audioSources: const [
+        {'id': 'mic-1', 'name': 'Built-in Mic'},
+      ],
+    );
+
+    await harness.device.setAudioSource('mic-1');
+    unawaited(harness.actions.toggleRecording(harness.context));
+    await tester.pumpAndSettle();
+
+    final startCall = harness.callsFor('startRecording').single;
+    final args = Map<String, dynamic>.from(
+      startCall.arguments! as Map<dynamic, dynamic>,
+    );
+    expect(args['disableMicrophone'], isFalse);
+    harness.dispose();
+  });
+
   testWidgets(
     'optional gaps and record without missing features starts with overrides',
     (tester) async {
