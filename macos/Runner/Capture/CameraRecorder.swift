@@ -272,7 +272,28 @@ final class CameraRecorder: NSObject {
     completion: @escaping (Result<Void, Error>) -> Void
   ) {
     guard recordingSession == nil else {
-      completion(.failure(flutterError(NativeErrorCode.alreadyRecording, "Camera recorder already active")))
+      // Say which state is refusing. A paused session and one left behind by a
+      // start that failed without unwinding look identical from here, and
+      // "already active" alone sent the last investigation looking in the
+      // wrong place — the recorder was not recording anything.
+      let segments = recordingSession?.segments.count ?? 0
+      let outputRecording = coordinator.recordingOutput.isRecording
+      NativeLogger.w(
+        "CameraRecorder",
+        "Refusing to begin: a camera session is already held",
+        context: [
+          "outputIsRecording": outputRecording,
+          "hasActiveSegment": activeSegment != nil,
+          "segmentsSoFar": segments,
+          "lastSessionEnding": lastSessionEnding.rawValue,
+        ]
+      )
+      completion(
+        .failure(
+          flutterError(
+            NativeErrorCode.alreadyRecording,
+            "Camera recorder already active (recording: \(outputRecording), "
+              + "segments: \(segments))")))
       return
     }
 
@@ -284,8 +305,28 @@ final class CameraRecorder: NSObject {
       try coordinator.acquireRecording(deviceID: session.deviceId)
       coordinator.setMirrored(session.mirroredRaw)
       recordingSession = session
-      startNextSegment(completion: completion)
+      startNextSegment { [weak self] result in
+        // Unwind everything this method claimed if the first segment never
+        // starts. `recordingSession` is assigned above so `startNextSegment`
+        // can read it, and until that call could fail there was nothing to
+        // undo — it either started or the process aborted. Now that a
+        // not-ready camera is refused instead of fatal, leaving the session
+        // assigned makes the recorder look permanently active and every later
+        // attempt comes back ALREADY_RECORDING until the app is restarted,
+        // which is a worse failure than the crash it replaced.
+        //
+        // Routed through the existing teardown rather than clearing the
+        // fields here: it releases the coordinator's recording use and stamps
+        // `lastSessionEnding`, so the next error can say what ended the
+        // session instead of just refusing.
+        if case .failure(let error) = result {
+          self?.finishWithFailure(error)
+        }
+        completion(result)
+      }
     } catch {
+      // acquireRecording may have taken the recording use before throwing.
+      coordinator.releaseRecording()
       completion(.failure(error))
     }
   }
