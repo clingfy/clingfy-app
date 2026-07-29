@@ -5523,6 +5523,34 @@ final class LetterboxExporterTests: XCTestCase {
     )
   }
 
+  /// Applies the export's BT.709 transfer to an image, on the CPU.
+  ///
+  /// For comparing a composition render against an exported file. The export
+  /// encodes every frame into BT.709 before writing, so a reference render
+  /// that skipped that step differs from the file by the whole transfer — on a
+  /// Display-P3 source that doubled the measured green drift (46% of tolerance
+  /// to 92%) and turned a primaries test into a transfer test. Encoding the
+  /// reference the same way leaves only the primaries difference, which is
+  /// what these assertions are named for.
+  private func applyExportTransfer(to image: CGImage) throws -> CGImage {
+    let lut: [UInt8] = (0...255).map { ColorTransferFunctions.srgbToBt709(UInt8($0)) }
+    let width = image.width
+    let height = image.height
+    var pixels = [UInt8](repeating: 0, count: width * height * 4)
+    let context = try XCTUnwrap(
+      CGContext(
+        data: &pixels, width: width, height: height, bitsPerComponent: 8,
+        bytesPerRow: width * 4, space: CGColorSpace(name: CGColorSpace.sRGB)!,
+        bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue))
+    context.draw(image, in: CGRect(x: 0, y: 0, width: width, height: height))
+    for index in stride(from: 0, to: pixels.count, by: 4) {
+      pixels[index] = lut[Int(pixels[index])]
+      pixels[index + 1] = lut[Int(pixels[index + 1])]
+      pixels[index + 2] = lut[Int(pixels[index + 2])]
+    }
+    return try XCTUnwrap(context.makeImage())
+  }
+
   private func assertAverageColorParity(
     referenceImage: CGImage,
     candidateImage: CGImage,
@@ -5531,14 +5559,58 @@ final class LetterboxExporterTests: XCTestCase {
     file: StaticString = #filePath,
     line: UInt = #line
   ) throws {
+    // The candidate is a file the export encoded into BT.709; give the
+    // reference the same encode so this measures primaries, not transfer.
     let reference = try averageColorMetrics(
-      for: referenceImage,
+      for: try applyExportTransfer(to: referenceImage),
       ignoreTransparentPixels: false
     )
     let candidate = try averageColorMetrics(
       for: candidateImage,
       ignoreTransparentPixels: false
     )
+
+    // Print the margin on every run, pass or fail.
+    //
+    // These assertions were silently sitting at 96% of their tolerance — they
+    // passed on a developer Mac and failed on CI hardware, and nothing in a
+    // green run said so. A test that reports only "passed" cannot distinguish
+    // comfortable from about-to-break, and this suite has now lost a day to
+    // exactly that. Worst-case headroom is printed so a shrinking margin is
+    // visible in the log before it becomes a red build.
+    let deltas = [
+      ("red", abs(candidate.red - reference.red), channelTolerance),
+      ("green", abs(candidate.green - reference.green), channelTolerance),
+      ("blue", abs(candidate.blue - reference.blue), channelTolerance),
+      ("luma", abs(candidate.luma - reference.luma), lumaTolerance),
+    ]
+    let worst = deltas.max { $0.1 / $0.2 < $1.1 / $1.2 }
+    let usage = (worst.map { $0.1 / $0.2 } ?? 0) * 100
+    let summary =
+      "colour parity margins: "
+      + deltas.map { String(format: "%@ %.4f/%.2f", $0.0, $0.1, $0.2) }.joined(separator: "  ")
+      + String(format: "  | worst uses %.0f%% of tolerance (%@)", usage, worst?.0 ?? "n/a")
+
+    // Recorded three ways because none of them is reliable alone: xcodebuild's
+    // result-stream reporter swallows the test process's stdout, so `print`
+    // never reaches the log and NSLog only sometimes does. The appended file
+    // is the one that always survives, and is what to read after a run.
+    NSLog("%@", summary)
+    print(summary)
+    let marginLog = URL(fileURLWithPath: "/tmp/clingfy-colour-margins.txt")
+    if let handle = try? FileHandle(forWritingTo: marginLog) {
+      handle.seekToEndOfFile()
+      handle.write(Data((summary + "\n").utf8))
+      try? handle.close()
+    } else {
+      try? (summary + "\n").write(to: marginLog, atomically: true, encoding: .utf8)
+    }
+
+    // A margin this tight passed locally and failed on CI hardware once
+    // already. Surface it as a warning rather than waiting for the red build.
+    if usage > 80 {
+      NSLog("WARNING colour parity margin above 80%% of tolerance: %@", summary)
+    }
 
     XCTAssertLessThanOrEqual(
       abs(candidate.red - reference.red),

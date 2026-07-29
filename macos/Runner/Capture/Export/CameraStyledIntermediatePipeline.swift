@@ -936,11 +936,15 @@ final class InlineCameraRenderer {
       plan: plan
     )
 
-    ciContext.render(
+    // The encode goes on the COMPOSED image, not on `screenImage` above: the
+    // grade at the top of this function touches only the screen sub-image, so
+    // encoding there would leave the camera overlay and the background in sRGB
+    // inside a frame the file declares to be 709.
+    VideoColorPipeline.renderComposedExportFrame(
       composedImage,
       to: outputPixelBuffer,
       bounds: renderBounds,
-      colorSpace: colorSpace
+      using: ciContext
     )
   }
 
