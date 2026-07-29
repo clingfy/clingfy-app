@@ -33,6 +33,26 @@ final class CameraCaptureCoordinator: NSObject {
     movieOutput
   }
 
+  /// Whether the capture session is actually running.
+  ///
+  /// `startRunning()` does not report failure: on a device that was just
+  /// attached or switched, the session can decline to come up and leave this
+  /// false. Starting a recording in that state makes AVFoundation raise, so
+  /// callers check this first.
+  var isSessionRunning: Bool {
+    session.isRunning
+  }
+
+  /// Whether the movie output has a live video connection to record from.
+  ///
+  /// A session can be running while the output is not yet connected — the
+  /// window right after a device change — which is the other state that makes
+  /// `startRecording(to:)` raise.
+  var hasActiveVideoConnection: Bool {
+    guard let connection = movieOutput.connection(with: .video) else { return false }
+    return connection.isActive && connection.isEnabled
+  }
+
   var selectedDevice: AVCaptureDevice? {
     input?.device
   }
