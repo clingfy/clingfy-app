@@ -1,6 +1,7 @@
 #ifndef RUNNER_AUDIO_AUDIO_PACKET_QUEUE_H_
 #define RUNNER_AUDIO_AUDIO_PACKET_QUEUE_H_
 
+#include <chrono>
 #include <condition_variable>
 #include <cstddef>
 #include <cstdint>
@@ -34,6 +35,28 @@ class AudioPacketQueue {
 
   // Non-blocking variant for the mixer's "drain when stopping" pass.
   std::optional<AudioPacket> TryPop();
+
+  // Outcome of PopFor.
+  //
+  // Pop() collapses "nothing arrived" and "the producer is gone" into an empty
+  // optional. That is fine when a second source drives the consumer loop, and
+  // wrong when THIS queue is the only thing driving it: a silent-but-alive
+  // source and a dead one need opposite responses.
+  enum class PopStatus {
+    kPacket,   // `out` holds a packet
+    kTimeout,  // nothing within the deadline; the queue is still OPEN
+    kClosed,   // closed and drained; nothing more will ever arrive
+  };
+
+  // Blocking pop with a deadline.
+  //
+  // Exists for the no-microphone case. System-audio loopback delivers packets
+  // only while something is PLAYING, so a consumer blocking on it forever
+  // stalls the moment the machine goes quiet — and with no microphone there is
+  // no second source to keep the loop turning. A bounded wait lets the caller
+  // hold its own cadence (feeding silence) rather than waiting on a source
+  // that is legitimately idle.
+  PopStatus PopFor(std::chrono::milliseconds timeout, AudioPacket& out);
 
   void Close();
   bool closed() const;
