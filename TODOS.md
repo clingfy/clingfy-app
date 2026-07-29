@@ -23,6 +23,21 @@ Deferred work captured during reviews. Each item has enough context to pick up c
 - **Start at:** `lib/app/home/preview/widgets/video_timeline.dart` (`onHoverSeek`/`previewPeekTo` wiring), `lib/app/home/preview/widgets/timeline/timeline_editor_viewport.dart`.
 - **Depends on:** Scissors-split cut layer (shares the cut-hover state).
 
+## Export — colour
+
+### Exported video does not match the inline preview's colour
+
+- **What:** The same frame is visibly different between the inline preview and the exported file. Reported 2026-07-28 with a matched pair of screenshots one second apart.
+- **Measured, not eyeballed.** Sampling matching wallpaper patches (decoded to sRGB so both are compared in one space) gives export-minus-preview deltas of roughly `+9 +7 +9`, `+5 +11 +9`, `+16 +17 +14` (R G B, 0-255). Two things follow: the export is lifted overall, and **midtones lift most** — in one patch green went `68 -> 79` while red in the same patch went `29 -> 34`. That is a transfer-function signature. A wrong YCbCr matrix would shift hue roughly uniformly instead, so the matrix is probably not the culprit.
+- **Two concrete inconsistencies exist in the export path, either of which could contribute:**
+  1. `VideoColorPipeline.tag(pixelBuffer:)` attaches `kCVImageBufferCGColorSpaceKey = sRGB` **and** `kCVImageBufferTransferFunctionKey = ITU_R_709_2` to the same buffer. Those are different curves, and consumers disagree about which wins: Core Image reads the CGColorSpace attachment, AVFoundation/VideoToolbox read the discrete transfer tag. The preview and the export therefore need not agree even from identical pixels.
+  2. The written file reports `FullRangeVideo: 0` (limited range, 16-235) while Core Image renders full-range 0-255. If the data really is full-range, a decoder honouring the tag shifts everything.
+- **Do NOT guess at the fix.** Both "tag sRGB transfer instead of 709" and "convert the data to 709" are one-line changes that alter every export, and only one is right. `docs/windows-port.md` already records a colour-parity divergence, so this area punishes confident guesses.
+- **Decide it by measurement:** render one known test frame (a greyscale ramp plus primary patches) through the preview path and the export path, sample both, and fit the transform. The ramp separates the two candidates immediately — range shows as a straight-line offset with clipped ends, gamma as a curve.
+- **Start at:** `macos/Runner/Capture/Export/CompositionBuilder.swift:16` (`workingColorSpace`), `:118` (`tag(pixelBuffer:)`), and the export render loop at `macos/Runner/Capture/Export/LetterboxExporter.swift:2383-2393` where the buffer is tagged before it is appended.
+- **Evidence:** the reported screenshot pair, and the exported file's own extensions dump (`CVImageBufferColorPrimaries: ITU_R_709_2`, `FullRangeVideo: 0`).
+- **Effort:** human ~4h / CC ~45min once the ramp measurement exists.
+
 ## Windows — bridge routers
 
 ### Camera-composition arg-parsing dedupe (shared Bridge/Routers helper)
