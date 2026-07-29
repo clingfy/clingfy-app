@@ -34,6 +34,30 @@ std::optional<AudioPacket> AudioPacketQueue::Pop() {
   return front;
 }
 
+AudioPacketQueue::PopStatus AudioPacketQueue::PopFor(
+    std::chrono::milliseconds timeout, AudioPacket& out) {
+  std::unique_lock<std::mutex> lock(mutex_);
+  // The predicate form handles spurious wakes: a packet arriving late in the
+  // window is still returned rather than reported as a timeout. The return
+  // value is not needed — the state below is authoritative either way.
+  cv_.wait_for(lock, timeout, [this] {
+    return !packets_.empty() || closed_;
+  });
+  if (!packets_.empty()) {
+    out = std::move(packets_.front());
+    packets_.pop_front();
+    return PopStatus::kPacket;
+  }
+  // Drained AND closed is terminal; drained but open is just quiet. Checking
+  // `closed_` before `ready` matters: a close that lands exactly on the
+  // deadline must report kClosed, not kTimeout, or the caller keeps waiting on
+  // a producer that is gone.
+  if (closed_) {
+    return PopStatus::kClosed;
+  }
+  return PopStatus::kTimeout;
+}
+
 std::optional<AudioPacket> AudioPacketQueue::TryPop() {
   std::lock_guard<std::mutex> lock(mutex_);
   if (packets_.empty()) {

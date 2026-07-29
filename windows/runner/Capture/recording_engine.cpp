@@ -671,6 +671,21 @@ std::optional<RecordingError> RecordingEngine::Start(
     }
   });
 
+  // Idle-loopback slice. When loopback is the only source driving the mixer
+  // (no microphone), this is both how long we wait for a packet AND how much
+  // silence we synthesise when none arrives. The two MUST match: Mix advances a
+  // synthetic timeline from frame counts, so silence shorter than the wait
+  // drifts audio behind video and longer runs it ahead.
+  //
+  // 20 ms is around a WASAPI period — short enough that video never notices the
+  // audio path pausing, long enough not to spin.
+  static constexpr int kLoopbackIdleSliceMs = 20;
+  static constexpr std::uint32_t kLoopbackIdleSliceFrames =
+      clingfy::audio::kPipelineSampleRateHz * kLoopbackIdleSliceMs / 1000;
+  static_assert(kLoopbackIdleSliceFrames > 0,
+                "an idle slice of zero frames would spin without advancing the "
+                "timeline");
+
   // Audio mixer thread: pulls one packet at a time from whichever
   // queue(s) are alive, mixes (or pass-through when a source is
   // missing), and forwards to the encoder. Skipped entirely when both
@@ -721,13 +736,46 @@ std::optional<RecordingError> RecordingEngine::Start(
           // playing. When loopback IS the blocking source (no mic, or the
           // mic just died), a blocking Pop avoids a busy-spin.
           if (block == clingfy::audio::MixerBlockSource::kLoopback) {
-            loopback = loopback_queue_->Pop();
+            // Loopback is the ONLY thing driving this loop (no mic, or the mic
+            // died). WASAPI loopback delivers packets only while something is
+            // PLAYING, so a plain blocking Pop() here stalls the moment the
+            // machine goes quiet — and a stalled audio path back-pressures the
+            // sink writer into dropping video frames. Observed: 0.13 s of audio
+            // against 38.6 s of video, with 728 of 885 frames dropped.
+            //
+            // A bounded wait keeps the cadence ours. On timeout we synthesise
+            // EXACTLY the waited duration as silence, which matters because
+            // AudioMixer::Mix advances a SYNTHETIC timeline
+            // (next_sample_offset_): injecting less than the elapsed wall time
+            // would let audio drift behind video, and injecting more would run
+            // it ahead. Equal-duration silence keeps the premix, both sidecars
+            // and the video aligned by construction.
+            clingfy::audio::AudioPacket popped;
+            const auto status = loopback_queue_->PopFor(
+                std::chrono::milliseconds(kLoopbackIdleSliceMs), popped);
             if (audio_mixer_stopped_.load()) break;
-            if (!loopback.has_value()) {
+            if (status == clingfy::audio::AudioPacketQueue::PopStatus::kPacket) {
+              loopback = std::move(popped);
+            } else if (status ==
+                       clingfy::audio::AudioPacketQueue::PopStatus::kClosed) {
+              // Terminal: the producer is gone. Distinct from "quiet", which is
+              // why PopFor separates them — Pop() reported both as nullopt and
+              // the loop could not tell an idle machine from a dead device.
               loopback_alive = false;
               clingfy::bridge::devices::LogDeviceProbe(
                   "RecordingEngine: loopback queue closed; mixer continues "
                   "with mic only");
+            } else {
+              // Idle, still alive. Feed the slice as silence so the encoder
+              // keeps receiving audio on schedule and video never stalls.
+              clingfy::audio::AudioPacket silence;
+              silence.frame_count = kLoopbackIdleSliceFrames;
+              silence.silent = true;
+              silence.samples.assign(
+                  static_cast<std::size_t>(kLoopbackIdleSliceFrames) *
+                      clingfy::audio::kPipelineChannelCount,
+                  0.0f);
+              loopback = std::move(silence);
             }
           } else {
             loopback = loopback_queue_->TryPop();
