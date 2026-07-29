@@ -341,6 +341,7 @@ jobs:
             -only-testing:RunnerTests/GifExportPolicyTests \
             -only-testing:RunnerTests/GifEncoderTests \
             -only-testing:RunnerTests/GifExportSessionTests \
+            -only-testing:RunnerTests/ColorTransferFunctionTests \
             test-without-building 2>&1 | tee build/ci/xcode-fast-test.log
 
       - name: Upload fast native test artifacts
