@@ -2477,11 +2477,11 @@ final class LetterboxExporter {
               : ColorGradeRenderer.apply(imageToRender, grade: colorGrade)
 
             self.clearPixelBuffer(renderedPixelBuffer)
-            VideoColorPipeline.renderComposedExportFrame(
+            directRenderContext.render(
               gradedImage,
               to: renderedPixelBuffer,
               bounds: renderBounds,
-              using: directRenderContext
+              colorSpace: VideoColorPipeline.workingColorSpace
             )
           }
 
