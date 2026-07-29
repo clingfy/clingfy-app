@@ -555,7 +555,21 @@ class HomeActions {
 
     final preflight = await permissionsController
         .prepareRecordingStartPreflight(intent: intent);
-    var overrides = const RecordingStartOverrides();
+
+    // "No microphone" is a DEVICE choice, and it has to reach the recorder on
+    // its own. It used to travel only as `needsMicrophone: false` on the
+    // preflight intent, which merely skips the permission prompt — so
+    // `disableMicrophone` stayed false, native took `want_mic = true`, and
+    // opened the DEFAULT microphone (empty id) for the whole session. The user
+    // asked for no mic and the app recorded from one: silent, but running, and
+    // bundled as a real mic sidecar.
+    //
+    // Seeded here rather than only inside the permission branch below, because
+    // that branch runs ONLY when something needs attention — on the ordinary
+    // path it never executes and the flag stayed false.
+    final micDeselected =
+        deviceController.selectedAudioSourceId == DeviceController.noAudioId;
+    var overrides = RecordingStartOverrides(disableMicrophone: micDeselected);
 
     if (preflight.hasPermissionAttention) {
       if (!context.mounted) {
@@ -578,9 +592,13 @@ class HomeActions {
       }
 
       overrides = RecordingStartOverrides(
-        disableMicrophone: preflight.missingOptional.contains(
-          MissingPermissionKind.microphone,
-        ),
+        // Either reason disables it: the user did not want a mic, or the OS
+        // will not give us one.
+        disableMicrophone:
+            micDeselected ||
+            preflight.missingOptional.contains(
+              MissingPermissionKind.microphone,
+            ),
         disableCameraOverlay: preflight.missingOptional.contains(
           MissingPermissionKind.camera,
         ),
