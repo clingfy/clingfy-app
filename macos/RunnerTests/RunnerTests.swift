@@ -5550,7 +5550,11 @@ final class LetterboxExporterTests: XCTestCase {
     )
   }
 
-  /// Applies the export's BT.709 transfer to an image, on the CPU.
+  /// Applies the export's transfer to an image, on the CPU.
+  ///
+  /// Draws on `ColorTransferFunctions.srgbToExportTransfer` deliberately — the
+  /// same function the GPU kernel is pinned against — so this reference can
+  /// never be encoding a different curve than the file it is compared with.
   ///
   /// For comparing a composition render against an exported file. The export
   /// encodes every frame into BT.709 before writing, so a reference render
@@ -5560,7 +5564,7 @@ final class LetterboxExporterTests: XCTestCase {
   /// reference the same way leaves only the primaries difference, which is
   /// what these assertions are named for.
   private func applyExportTransfer(to image: CGImage) throws -> CGImage {
-    let lut: [UInt8] = (0...255).map { ColorTransferFunctions.srgbToBt709(UInt8($0)) }
+    let lut: [UInt8] = (0...255).map { ColorTransferFunctions.srgbToExportTransfer(UInt8($0)) }
     let width = image.width
     let height = image.height
     var pixels = [UInt8](repeating: 0, count: width * height * 4)

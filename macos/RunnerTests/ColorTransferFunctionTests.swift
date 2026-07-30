@@ -158,6 +158,85 @@ final class ColorTransferFunctionTests: XCTestCase {
       "GPU kernel disagrees with ColorTransferFunctions.srgbToBt709")
   }
 
+  // MARK: - The curve that ships
+
+  /// The shipping curve must agree between GPU and CPU at every code value.
+  ///
+  /// `srgbToBt709Kernel` above is the published reference; this is what every
+  /// exported frame actually goes through. Pinning only the former would leave
+  /// the product path untested, which is how the two drifted apart before.
+  func testTheExportKernelMatchesItsCpuTwin() throws {
+    let ramp = try makeCodeValueRamp()
+    let encoded = ColorTransferFunctions.encodeForExport(CIImage(cgImage: ramp))
+
+    let ciContext = VideoColorPipeline.makeCIContext()
+    let output = try XCTUnwrap(
+      ciContext.createCGImage(
+        encoded, from: CGRect(x: 0, y: 0, width: 256, height: 4),
+        format: .RGBA8, colorSpace: VideoColorPipeline.workingColorSpace))
+
+    var pixels = [UInt8](repeating: 0, count: 256 * 4 * 4)
+    let readback = try XCTUnwrap(
+      CGContext(
+        data: &pixels, width: 256, height: 4, bitsPerComponent: 8, bytesPerRow: 256 * 4,
+        space: CGColorSpace(name: CGColorSpace.sRGB)!,
+        bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue))
+    readback.draw(output, in: CGRect(x: 0, y: 0, width: 256, height: 4))
+
+    var mismatches: [String] = []
+    for value in 0...255 {
+      let expected = ColorTransferFunctions.srgbToExportTransfer(UInt8(value))
+      let measured = pixels[(1 * 256 + value) * 4]
+      if abs(Int(measured) - Int(expected)) > 1 {
+        mismatches.append("\(value): kernel \(measured), function \(expected)")
+      }
+    }
+    XCTAssertEqual(mismatches, [], "export kernel disagrees with its CPU twin")
+  }
+
+  func testTheExportCurveIsMonotonicAndPreservesEndpoints() {
+    XCTAssertEqual(ColorTransferFunctions.srgbToExportTransfer(0), 0)
+    XCTAssertEqual(ColorTransferFunctions.srgbToExportTransfer(255), 255)
+
+    var previous = ColorTransferFunctions.srgbToExportTransfer(0)
+    for value in 1...255 {
+      let current = ColorTransferFunctions.srgbToExportTransfer(UInt8(value))
+      XCTAssertGreaterThanOrEqual(current, previous, "non-monotonic at \(value)")
+      previous = current
+    }
+  }
+
+  /// The property that separates the shipping curve from the published one.
+  ///
+  /// Note what is NOT asserted: "an encode never raises a code value", which
+  /// the published OETF obeys and this curve does not. 1.961 is shallower than
+  /// sRGB's ~2.2, so it LIFTS shadows while lowering midtones, crossing over
+  /// around code 24. That is the single most confusing thing about this curve
+  /// and it is deliberate — the lift is what stops Apple's decoder crushing
+  /// shadows to black.
+  func testTheExportCurveLiftsShadowsAndLowersMidtones() {
+    XCTAssertGreaterThan(ColorTransferFunctions.srgbToExportTransfer(8), 8)
+    XCTAssertLessThan(ColorTransferFunctions.srgbToExportTransfer(128), 128)
+  }
+
+  /// Round-trips through APPLE's decode, which is the whole point of the curve.
+  ///
+  /// Encode at 1.961, decode at 1.961, land back where we started. The
+  /// published OETF fails this by up to 18 code values, which is what users
+  /// saw as crushed shadows in QuickTime.
+  func testTheExportCurveRoundTripsThroughAppleDecode() {
+    let gamma = ColorTransferFunctions.exportTransferGamma
+    var worst = 0
+    for value in 0...255 {
+      let encoded = Double(ColorTransferFunctions.srgbToExportTransfer(UInt8(value))) / 255.0
+      let displayed =
+        ColorTransferFunctions.linearToSrgb(pow(encoded, gamma)) * 255.0
+      worst = max(worst, abs(Int(displayed.rounded()) - value))
+    }
+    XCTAssertLessThanOrEqual(
+      worst, 2, "export curve does not survive Apple's own decode; worst error \(worst)")
+  }
+
   /// The midtone the whole investigation turns on, pinned on the GPU path too.
   func testTheKernelMovesMidGreyDown() throws {
     let measured = try renderRampThroughKernel()

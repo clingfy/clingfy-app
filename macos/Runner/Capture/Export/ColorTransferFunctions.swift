@@ -97,33 +97,93 @@ extension ColorTransferFunctions {
       + "}"
   )
 
-  /// Re-encodes a composed export frame from sRGB into BT.709.
+  /// Re-encodes a composed export frame from sRGB into BT.709, using the
+  /// PUBLISHED curve.
   ///
-  /// This is the PUBLISHED curve, and that is a deliberate choice against a
-  /// measured alternative. Apple's decoders read a 709 tag at gamma 1.961, so
-  /// encoding at 1.961 instead makes exports round-trip almost exactly through
-  /// AVFoundation — measured worst-case error 1 code value, against 17 for the
-  /// published OETF, whose 4.5x linear toe those decoders never undo.
+  /// Kept as the reference implementation and the sweep baseline. It is NOT
+  /// what the export writes — see `encodeForExport`. Encoding with this curve
+  /// shipped briefly and was reverted: Apple's decoders read a 709 tag at
+  /// gamma 1.961 rather than as an inverse OETF, so the 4.5x linear toe is
+  /// never undone and shadows collapse. Measured on a real dark-mode
+  /// recording, stored luma 20 rendered at 1.3 in QuickTime where the standard
+  /// gives 13.1 — a tenfold loss of level across most of the frame.
   ///
-  /// The published curve still wins, because the round trip is not the goal.
-  /// Screen recordings are watched on the web far more than they are inspected
-  /// in QuickTime, and spec is what stays correct as the Windows port and the
-  /// editor grow — an Apple-tuned encode would be a permanent platform
-  /// divergence baked into every file users have already exported. Where the
-  /// two disagree is the toe, below code 64; from code 96 up they differ by at
-  /// most 2.
-  ///
-  /// The consequence, stated plainly so nobody treats it as a bug: shadows
-  /// will read slightly dark in QuickTime and Preview. That is Apple's decoder
-  /// disagreeing with the standard, and it belongs in the PREVIEW path, not in
-  /// the file.
-  ///
-  /// Returns the image unchanged if the kernel failed to compile. That is the
-  /// deliberate choice: a colour shift is a wrong-looking export, but no
-  /// export at all is a broken product, and the compile failure is logged at
-  /// the call site rather than swallowed here.
   static func encodeToBt709(_ image: CIImage) -> CIImage {
     guard let kernel = srgbToBt709Kernel else { return image }
     return kernel.apply(extent: image.extent, arguments: [image]) ?? image
+  }
+
+  // MARK: - The transfer the export actually writes
+
+  /// Apple's decode gamma for a BT.709 tag.
+  ///
+  /// The export encodes with this rather than the published OETF, and the
+  /// reasoning is a measurement, not a preference for Apple.
+  ///
+  /// Both choices are wrong by the same amount — worst case 18 code values —
+  /// just on different players. What is not symmetric is the DIRECTION:
+  ///
+  ///     encode              worst on Apple   worst on strict spec
+  ///     published OETF                18.0                    0.0
+  ///     gamma 1.961                    0.0                   18.0
+  ///     gamma 2.000                    1.9                   19.0
+  ///
+  /// Splitting the difference is worse on both sides, because the error lives
+  /// in the toe's shape rather than the exponent — there is no compromise
+  /// curve to find.
+  ///
+  /// So the tie-break is which failure is more damaging. Encoding to spec
+  /// makes Apple CRUSH: on a real dark-mode recording, stored luma 20 rendered
+  /// at 1.3 against the 13.1 the standard intends, and roughly 70% of the
+  /// frame sat in that band — shadow detail gone, unrecoverably to the eye.
+  /// Encoding at 1.961 makes strict-spec players LIFT: authored 32 shows near
+  /// 45, washed but with every level still distinguishable. Lifting is the
+  /// gentler error, and QuickTime, Preview, Safari and Messages are where
+  /// macOS users actually check a recording.
+  ///
+  /// Revisit if Windows or browser playback becomes the primary target; the
+  /// sweep that produced the table above is a second to re-run.
+  static let exportTransferGamma = 1.961
+
+  /// The export's transfer as a GPU kernel: sRGB in, `exportTransferGamma` out.
+  static let srgbToExportTransferKernel: CIColorKernel? = CIColorKernel(
+    source:
+      "kernel vec4 srgbToExportTransfer(__sample s, float gamma) {"
+      + "  float alpha = max(s.a, 0.0001);"
+      + "  vec3 encoded = clamp(s.rgb / alpha, 0.0, 1.0);"
+      // sRGB EOTF: encoded -> linear light.
+      + "  vec3 linear = mix("
+      + "    encoded / 12.92,"
+      + "    pow((encoded + 0.055) / 1.055, vec3(2.4)),"
+      + "    step(vec3(0.04045), encoded));"
+      // Pure power-law OETF at the decoder's own gamma — no toe, because the
+      // decoder does not undo one.
+      + "  vec3 out709 = pow(linear, vec3(1.0 / gamma));"
+      + "  return vec4(clamp(out709, 0.0, 1.0) * s.a, s.a);"
+      + "}"
+  )
+
+  /// CPU twin of `srgbToExportTransferKernel`.
+  ///
+  /// Not a convenience: anything that needs to reason about what the export
+  /// wrote — notably the Display-P3 parity test, which compares a reference
+  /// render against the encoded file — must use THIS, so the test and the
+  /// product cannot drift onto different curves. They did once, and the P3
+  /// test sat at 92% of its tolerance until someone printed the margin.
+  static func srgbToExportTransfer(_ value: UInt8) -> UInt8 {
+    let linear = srgbToLinear(Double(value) / 255.0)
+    let encoded = pow(linear, 1.0 / exportTransferGamma)
+    return UInt8(max(0.0, min(255.0, (encoded * 255.0).rounded())))
+  }
+
+  /// The transfer every exported frame goes through. See `exportTransferGamma`.
+  ///
+  /// Returns the image unchanged if the kernel failed to compile: a colour
+  /// shift is a wrong-looking export, but no export at all is a broken
+  /// product.
+  static func encodeForExport(_ image: CIImage) -> CIImage {
+    guard let kernel = srgbToExportTransferKernel else { return image }
+    return kernel.apply(
+      extent: image.extent, arguments: [image, Float(exportTransferGamma)]) ?? image
   }
 }

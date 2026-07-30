@@ -598,7 +598,12 @@ final class RecordingFailureRecoveryTests: XCTestCase {
       completion.fulfill()
     }
 
-    wait(for: [completion], timeout: 1.0)
+    // Ceiling, not the behaviour under test: the writer completes in
+    // milliseconds. At 1.0s this was exceeded when the fast lane runs classes
+    // in parallel — 0 failures in 5 isolated runs, intermittent in a full-lane
+    // run at 3.4s against a normal 0.1s. Same shape as the settle waits in
+    // MicrophoneLevelTelemetryTests.
+    wait(for: [completion], timeout: 10.0)
     XCTAssertFalse(FileManager.default.fileExists(atPath: outputURL.path))
   }
 
@@ -631,7 +636,7 @@ final class RecordingFailureRecoveryTests: XCTestCase {
       completion.fulfill()
     }
 
-    wait(for: [completion], timeout: 1.0)
+    wait(for: [completion], timeout: 10.0)
   }
 
   func testStorageInfoProviderSnapshotCarriesThresholdsAndPaths() {
