@@ -160,7 +160,7 @@ enum VideoColorPipeline {
     using context: CIContext
   ) {
     context.render(
-      ColorTransferFunctions.encodeToBt709(image),
+      ColorTransferFunctions.encodeForExport(image),
       to: pixelBuffer,
       bounds: bounds,
       colorSpace: workingColorSpace
