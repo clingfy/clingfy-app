@@ -494,6 +494,212 @@ final class CameraRecorderTests: XCTestCase {
     XCTAssertFalse(CameraRecorder._testRecordingFinishedSuccessfully(error))
   }
 
+  // MARK: - Driving the recorder without a camera
+
+  /// Stands in for the capture graph so the failure paths can be reached.
+  ///
+  /// Every one of these states is real and none can be produced on demand from
+  /// a live camera: a session that will not come up, an output that raises on
+  /// start, and an output that accepts a start and then never calls the
+  /// delegate back. That last one was observed lasting 15 minutes 51 seconds.
+  private final class FakeCameraCoordinator: CameraCaptureCoordinating {
+    enum StartBehaviour {
+      /// Accept the start and confirm through the delegate, as a healthy camera does.
+      case succeed
+      /// Raise, as AVFoundation does when the capture graph refuses.
+      case refuse
+      /// Accept the start and never call the delegate. The stall.
+      case acceptThenNeverReport
+    }
+
+    var isSessionRunning = true
+    var hasActiveVideoConnection = true
+    var isOutputRecording = false
+    var startBehaviour: StartBehaviour = .succeed
+    var acquireError: Error?
+
+    private(set) var acquireCount = 0
+    private(set) var releaseCount = 0
+    private(set) var startedURLs: [URL] = []
+    private(set) var stopCount = 0
+
+    func acquireRecording(deviceID: String?) throws {
+      acquireCount += 1
+      if let acquireError { throw acquireError }
+    }
+
+    func releaseRecording() { releaseCount += 1 }
+    func setMirrored(_ mirrored: Bool) {}
+    func stopOutputRecording() { stopCount += 1; isOutputRecording = false }
+
+    func startOutputRecording(
+      to url: URL,
+      delegate: AVCaptureFileOutputRecordingDelegate
+    ) throws {
+      startedURLs.append(url)
+      switch startBehaviour {
+      case .refuse:
+        throw NSError(
+          domain: "Clingfy.AVCaptureMovieFileOutputExceptionBridge", code: 1,
+          userInfo: [NSLocalizedDescriptionKey: "The camera refused to start recording."])
+      case .acceptThenNeverReport:
+        isOutputRecording = true
+      case .succeed:
+        isOutputRecording = true
+        DispatchQueue.main.async {
+          delegate.fileOutput?(
+            AVCaptureMovieFileOutput(), didStartRecordingTo: url, from: [])
+        }
+      }
+    }
+  }
+
+  private func makeSession(in directory: URL) -> CameraRecordingSession {
+    CameraRecordingSession(
+      outputURL: directory.appendingPathComponent("raw.mov"),
+      metadataURL: directory.appendingPathComponent("camera.json"),
+      segmentDirectoryURL: directory.appendingPathComponent("segments", isDirectory: true),
+      deviceId: "fake-camera",
+      mirroredRaw: false,
+      nominalFrameRate: 30,
+      dimensions: nil
+    )
+  }
+
+  /// A camera that is not ready must fail the start, not crash and not wedge.
+  ///
+  /// Both halves matter. #386 made the not-ready case fail instead of abort;
+  /// #387 then had to release the session it had already claimed, because the
+  /// first fix left the recorder looking permanently active and every later
+  /// attempt answered ALREADY_RECORDING until relaunch. Neither could be
+  /// tested until the coordinator became injectable, which is why the second
+  /// bug shipped.
+  func testNotReadyCameraFailsTheStartAndReleasesTheSession() throws {
+    let directory = FileManager.default.temporaryDirectory
+      .appendingPathComponent(UUID().uuidString, isDirectory: true)
+    try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+    defer { try? FileManager.default.removeItem(at: directory) }
+
+    let coordinator = FakeCameraCoordinator()
+    coordinator.isSessionRunning = false
+    let recorder = CameraRecorder(coordinator: coordinator)
+
+    let refused = expectation(description: "start refused")
+    var firstResult: Result<Void, Error>?
+    recorder.begin(session: makeSession(in: directory)) { result in
+      firstResult = result
+      refused.fulfill()
+    }
+    wait(for: [refused], timeout: 5)
+
+    guard case .failure? = firstResult else {
+      return XCTFail("a not-ready camera must fail the start")
+    }
+    XCTAssertTrue(coordinator.startedURLs.isEmpty, "must refuse before calling AVFoundation")
+    XCTAssertGreaterThan(coordinator.releaseCount, 0, "the claimed session must be released")
+
+    // The load-bearing part: a refusal must not poison the next attempt.
+    coordinator.isSessionRunning = true
+    let second = expectation(description: "second start")
+    var secondResult: Result<Void, Error>?
+    recorder.begin(session: makeSession(in: directory)) { result in
+      secondResult = result
+      second.fulfill()
+    }
+    wait(for: [second], timeout: 5)
+
+    if case .failure(let error) = secondResult {
+      XCTFail("second start refused after a failed first: \(error)")
+    }
+  }
+
+  /// A start that is accepted and never confirmed must time out, not hang.
+  ///
+  /// Measured from a real session with an external camera: AVFoundation
+  /// accepted the start and did not call the delegate for 15 minutes 51
+  /// seconds, and the UI span the whole time. The timeout is injected here so
+  /// the test does not have to wait the shipping 20 seconds to prove it.
+  func testStalledCameraStartTimesOutInsteadOfHanging() throws {
+    let directory = FileManager.default.temporaryDirectory
+      .appendingPathComponent(UUID().uuidString, isDirectory: true)
+    try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+    defer { try? FileManager.default.removeItem(at: directory) }
+
+    let coordinator = FakeCameraCoordinator()
+    coordinator.startBehaviour = .acceptThenNeverReport
+    let recorder = CameraRecorder(coordinator: coordinator, segmentStartTimeout: 0.25)
+
+    let timedOut = expectation(description: "start timed out")
+    var result: Result<Void, Error>?
+    recorder.begin(session: makeSession(in: directory)) { outcome in
+      result = outcome
+      timedOut.fulfill()
+    }
+    wait(for: [timedOut], timeout: 5)
+
+    guard case .failure(let error)? = result else {
+      return XCTFail("a start that is never confirmed must fail")
+    }
+    // Read `message`, not `localizedDescription`: FlutterError does not route
+    // its message through the latter, which reports only "The operation
+    // couldn't be completed." The message is what crosses to Dart as
+    // PlatformException.message and reaches the user.
+    let message = (error as? FlutterError)?.message ?? error.localizedDescription
+    XCTAssertTrue(
+      message.contains("did not start recording"),
+      "the timeout should say what happened, got: \(message)")
+    XCTAssertGreaterThan(coordinator.releaseCount, 0, "a timed-out start must release")
+  }
+
+  /// A raise from AVFoundation must surface as an error, not abort the process.
+  func testRefusedOutputStartSurfacesAsAnError() throws {
+    let directory = FileManager.default.temporaryDirectory
+      .appendingPathComponent(UUID().uuidString, isDirectory: true)
+    try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+    defer { try? FileManager.default.removeItem(at: directory) }
+
+    let coordinator = FakeCameraCoordinator()
+    coordinator.startBehaviour = .refuse
+    let recorder = CameraRecorder(coordinator: coordinator)
+
+    let failed = expectation(description: "start failed")
+    var result: Result<Void, Error>?
+    recorder.begin(session: makeSession(in: directory)) { outcome in
+      result = outcome
+      failed.fulfill()
+    }
+    wait(for: [failed], timeout: 5)
+
+    guard case .failure? = result else {
+      return XCTFail("a refused output start must fail the begin")
+    }
+    XCTAssertGreaterThan(coordinator.releaseCount, 0, "a refused start must release")
+  }
+
+  /// A healthy camera still starts — the guards must not block the normal case.
+  func testHealthyCameraStartsNormally() throws {
+    let directory = FileManager.default.temporaryDirectory
+      .appendingPathComponent(UUID().uuidString, isDirectory: true)
+    try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+    defer { try? FileManager.default.removeItem(at: directory) }
+
+    let coordinator = FakeCameraCoordinator()
+    let recorder = CameraRecorder(coordinator: coordinator)
+
+    let started = expectation(description: "started")
+    var result: Result<Void, Error>?
+    recorder.begin(session: makeSession(in: directory)) { outcome in
+      result = outcome
+      started.fulfill()
+    }
+    wait(for: [started], timeout: 5)
+
+    if case .failure(let error) = result {
+      XCTFail("a healthy camera must start: \(error)")
+    }
+    XCTAssertEqual(coordinator.startedURLs.count, 1)
+  }
+
   /// The preconditions that stand between a not-ready camera and a hard crash.
   ///
   /// `AVCaptureMovieFileOutput.startRecording(to:)` RAISES an Objective-C
