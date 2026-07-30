@@ -231,7 +231,7 @@ private enum CameraMergeUtility {
 }
 
 final class CameraRecorder: NSObject {
-  private let coordinator: CameraCaptureCoordinator
+  private let coordinator: CameraCaptureCoordinating
   private let fileManager: FileManager
 
   var onFailure: ((FlutterError) -> Void)?
@@ -258,12 +258,20 @@ final class CameraRecorder: NSObject {
   private var pendingPauseCompletion: ((Result<Void, Error>) -> Void)?
   private var pendingStopCompletion: ((Result<CameraRecordingResult, Error>) -> Void)?
 
+  /// How long to wait for AVFoundation to confirm a segment started.
+  ///
+  /// Injectable so a test does not have to wait the real 20 seconds to prove
+  /// the backstop fires.
+  private let segmentStartTimeout: TimeInterval
+
   init(
-    coordinator: CameraCaptureCoordinator,
-    fileManager: FileManager = .default
+    coordinator: CameraCaptureCoordinating,
+    fileManager: FileManager = .default,
+    segmentStartTimeout: TimeInterval = CameraRecorder.segmentStartTimeoutSeconds
   ) {
     self.coordinator = coordinator
     self.fileManager = fileManager
+    self.segmentStartTimeout = segmentStartTimeout
     super.init()
   }
 
@@ -277,7 +285,7 @@ final class CameraRecorder: NSObject {
       // "already active" alone sent the last investigation looking in the
       // wrong place — the recorder was not recording anything.
       let segments = recordingSession?.segments.count ?? 0
-      let outputRecording = coordinator.recordingOutput.isRecording
+      let outputRecording = coordinator.isOutputRecording
       NativeLogger.w(
         "CameraRecorder",
         "Refusing to begin: a camera session is already held",
@@ -337,13 +345,13 @@ final class CameraRecorder: NSObject {
       return
     }
 
-    guard coordinator.recordingOutput.isRecording, activeSegment != nil else {
+    guard coordinator.isOutputRecording, activeSegment != nil else {
       completion(.success(()))
       return
     }
 
     pendingPauseCompletion = completion
-    coordinator.recordingOutput.stopRecording()
+    coordinator.stopOutputRecording()
   }
 
   func resume(completion: @escaping (Result<Void, Error>) -> Void) {
@@ -356,7 +364,7 @@ final class CameraRecorder: NSObject {
       return
     }
 
-    guard activeSegment == nil, !coordinator.recordingOutput.isRecording else {
+    guard activeSegment == nil, !coordinator.isOutputRecording else {
       completion(.success(()))
       return
     }
@@ -377,7 +385,7 @@ final class CameraRecorder: NSObject {
           "endedBy": lastSessionEnding.rawValue,
           "secondsSinceSessionEnded": secondsSinceEnd.map { String(format: "%.3f", $0) } ?? "never",
           "segmentsAtEnd": lastSessionSegmentCount,
-          "outputIsRecording": coordinator.recordingOutput.isRecording,
+          "outputIsRecording": coordinator.isOutputRecording,
           "hasActiveSegment": activeSegment != nil,
         ])
       completion(
@@ -388,9 +396,9 @@ final class CameraRecorder: NSObject {
       return
     }
 
-    if coordinator.recordingOutput.isRecording, activeSegment != nil {
+    if coordinator.isOutputRecording, activeSegment != nil {
       pendingStopCompletion = completion
-      coordinator.recordingOutput.stopRecording()
+      coordinator.stopOutputRecording()
       return
     }
 
@@ -465,11 +473,7 @@ final class CameraRecorder: NSObject {
     pendingStartCompletion = completion
 
     do {
-      try AVCaptureMovieFileOutputExceptionBridge.startRecording(
-        output: coordinator.recordingOutput,
-        outputURL: segmentURL,
-        recordingDelegate: self
-      )
+      try coordinator.startOutputRecording(to: segmentURL, delegate: self)
       scheduleSegmentStartTimeout(index: nextIndex)
     } catch {
       // The delegate never fires when the start is refused, so the pending
@@ -512,7 +516,7 @@ final class CameraRecorder: NSObject {
   private func scheduleSegmentStartTimeout(index: Int) {
     segmentStartToken &+= 1
     let token = segmentStartToken
-    DispatchQueue.main.asyncAfter(deadline: .now() + Self.segmentStartTimeoutSeconds) {
+    DispatchQueue.main.asyncAfter(deadline: .now() + segmentStartTimeout) {
       [weak self] in
       self?.failSegmentStartIfStillPending(token: token, index: index)
     }
@@ -526,15 +530,15 @@ final class CameraRecorder: NSObject {
     let error = flutterError(
       NativeErrorCode.recordingError,
       "The camera did not start recording within "
-        + "\(Int(Self.segmentStartTimeoutSeconds)) seconds. "
+        + "\(Int(segmentStartTimeout)) seconds. "
         + "If it is an external camera, reconnect it or pick a different one, then try again.")
     NativeLogger.e(
       "CameraRecorder",
       "Camera segment start timed out",
       context: [
         "index": index,
-        "timeoutSeconds": Self.segmentStartTimeoutSeconds,
-        "outputIsRecording": coordinator.recordingOutput.isRecording,
+        "timeoutSeconds": segmentStartTimeout,
+        "outputIsRecording": coordinator.isOutputRecording,
         "sessionRunning": coordinator.isSessionRunning,
         "videoConnectionActive": coordinator.hasActiveVideoConnection,
       ]
