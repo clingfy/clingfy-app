@@ -102,6 +102,21 @@ std::optional<std::uint64_t> FreeBytesForDirectory(
   return static_cast<std::uint64_t>(available.QuadPart);
 }
 
+// Capture-lifecycle breadcrumbs, at INFO so they survive a RELEASE build.
+//
+// These used to go through LogDeviceProbe, which lands as DEBUG -- and release
+// and profile builds default to INFO (logger_service.dart), so on the only
+// builds a tester ever runs they were silent. A real audio stall was diagnosed
+// from media file durations alone because of it: the log had nothing.
+//
+// Deliberately a SHORT list -- capture open, mixer start/exit, and each source
+// going away. DeviceProbe emitted 107 of 282 lines in one short session, so
+// promoting all of it would drown the signal it is meant to carry. Per-packet
+// and enumeration detail stays on LogDeviceProbe behind the verbose toggle.
+void LogCaptureLifecycle(const char* message) {
+  clingfy::bridge::NativeLogPublisher::Instance().Info("Recording", message);
+}
+
 }  // namespace
 
 StartDiskGate EvaluateStartDiskGate(std::optional<std::uint64_t> free_bytes,
@@ -528,7 +543,7 @@ std::optional<RecordingError> RecordingEngine::Start(
       std::snprintf(buf, sizeof(buf),
                     "RecordingEngine: mic open attempt id=%s",
                     mic_id.empty() ? "<default>" : mic_id.c_str());
-      clingfy::bridge::devices::LogDeviceProbe(buf);
+      LogCaptureLifecycle(buf);
     }
     auto mic_err = mic_capture_->Start(
         clingfy::audio::WasapiCaptureKind::kMicrophone, mic_id, *mic_queue_);
@@ -563,6 +578,9 @@ std::optional<RecordingError> RecordingEngine::Start(
           on_audio_capture_error(k, hr);
           queue->Close();
         });
+    // Mirrors the mic's open breadcrumb. Its absence meant a release build
+    // could not even report whether system-audio capture had STARTED.
+    LogCaptureLifecycle("RecordingEngine: loopback open attempt (default render endpoint)");
     auto loopback_err = loopback_capture_->Start(
         clingfy::audio::WasapiCaptureKind::kSystemLoopback, "",
         *loopback_queue_);
@@ -695,8 +713,7 @@ std::optional<RecordingError> RecordingEngine::Start(
   if (mic_capture_ != nullptr || loopback_capture_ != nullptr) {
     audio_mixer_stopped_.store(false);
     audio_mixer_thread_ = std::thread([this, warn_sid] {
-      clingfy::bridge::devices::LogDeviceProbe(
-          "RecordingEngine: audio mixer thread start");
+      LogCaptureLifecycle("RecordingEngine: audio mixer thread start");
       clingfy::audio::AudioMixer mixer;
       // Audio-separation D4: a source is "alive" until its queue closes —
       // either at teardown or when a fatal capture error closes it
@@ -722,7 +739,7 @@ std::optional<RecordingError> RecordingEngine::Start(
             // the blocking role to loopback within the SAME iteration so
             // no packet slot is skipped.
             mic_alive = false;
-            clingfy::bridge::devices::LogDeviceProbe(
+            LogCaptureLifecycle(
                 "RecordingEngine: mic queue closed; mixer continues with "
                 "loopback only");
             block = clingfy::audio::ChooseMixerBlockSource(mic_alive,
@@ -762,7 +779,7 @@ std::optional<RecordingError> RecordingEngine::Start(
               // why PopFor separates them — Pop() reported both as nullopt and
               // the loop could not tell an idle machine from a dead device.
               loopback_alive = false;
-              clingfy::bridge::devices::LogDeviceProbe(
+              LogCaptureLifecycle(
                   "RecordingEngine: loopback queue closed; mixer continues "
                   "with mic only");
             } else {
@@ -854,8 +871,7 @@ std::optional<RecordingError> RecordingEngine::Start(
           }
         }
       }
-      clingfy::bridge::devices::LogDeviceProbe(
-          "RecordingEngine: audio mixer thread exit");
+      LogCaptureLifecycle("RecordingEngine: audio mixer thread exit");
     });
   }
 

@@ -93,7 +93,12 @@ std::wstring JoinNativeLogsDir(const std::wstring& local_app_data) {
   if (local_app_data.empty()) {
     return {};
   }
-  return local_app_data + L"\\Clingfy\\Logs";
+  // D9: forks per channel like every other on-disk identity. This was missed
+  // when the rest of D9 landed — the edit added the include but not the use,
+  // so dev and prod kept sharing one native log directory while their
+  // recordings, caches and Dart logs had already separated.
+  return local_app_data + L"\\" + clingfy::core::LocalAppDataFolderName() +
+         L"\\Logs";
 }
 
 std::wstring JoinDartLogsDir(const std::wstring& roaming_app_data,
