@@ -83,6 +83,8 @@ Rules enforced by `03_sign.ps1`:
 
 - `pubspec.yaml` `version: X.Y.Z+N` is the single source of truth. `X.Y.Z` becomes the artifact name; `N` must stay **≤ 65535** (16-bit Windows `FILEVERSION` field; the lane fails fast otherwise — never port the macOS epoch/CI-id build-number bump).
 - Prod releases run from a `release/X.Y.Z` branch whose version matches pubspec (`00_version_guard.ps1` enforces; any other branch skips the guard — fine for dev rehearsals).
+  - CI agents check out a **detached HEAD**, so the guard resolves the branch from `BUILD_SOURCEBRANCH` / `GITHUB_REF` when `git branch --show-current` comes back empty. Until this was fixed the guard printed `Skipping version guard on non-release branch: local` on *every* pipeline run — a silent pass on the only lane it exists to protect.
+  - Under CI a branch that still resolves to `local` is now a hard failure, not a skip: "cannot tell what branch this is" must never read as "nothing to check".
 
 ## 4. The whole thing in one command
 
