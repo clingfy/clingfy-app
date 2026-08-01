@@ -76,8 +76,6 @@ final class LetterboxExporter {
     "mic-echo-cancelled-",
     "mic-enhanced-",
   ]
-  private var currentSession: AVAssetExportSession?
-  private var progressTimer: Timer?
   private var temporaryArtifacts: [URL] = []
   private var isCancelled = false
   // In-flight self-retention: the async export pipeline captures `self`
@@ -106,12 +104,12 @@ final class LetterboxExporter {
     channelFailure: 0.18
   )
 
+  /// Cancellation is a flag, not a session teardown. The manual reader/writer
+  /// is the only render path now, and it polls `isCancelled` between frames and
+  /// raises `Letterbox/-999 "Export cancelled"` itself. The old
+  /// `AVAssetExportSession.cancelExport()` call went with the session branch.
   func cancel() {
     isCancelled = true
-    progressTimer?.invalidate()
-    progressTimer = nil
-    currentSession?.cancelExport()
-    currentSession = nil
   }
 
   private func registerTemporaryArtifact(_ url: URL) {
@@ -549,6 +547,54 @@ final class LetterboxExporter {
     image.copy(colorSpace: VideoColorPipeline.workingColorSpace) ?? image
   }
 
+  /// Applies the export's transfer to a reference render, on the CPU, so it can
+  /// be compared against a file the export already encoded.
+  ///
+  /// Every validator here builds its reference with `AVAssetImageGenerator`
+  /// over the composition, which never runs
+  /// `VideoColorPipeline.renderComposedExportFrame` — so the reference is
+  /// un-encoded while the final file has been through
+  /// `ColorTransferFunctions.encodeForExport`. Comparing them raw does not
+  /// measure export drift, it measures the whole transfer curve, and it does so
+  /// with the wrong sign: a CORRECT export scores as drifted (up to 0.051 of a
+  /// 0.10 budget) and an un-encoded one scores clean. The validator was
+  /// grading the bug it was supposed to catch as the healthy case.
+  ///
+  /// Uses the CPU twin `ColorTransferFunctions.srgbToExportTransfer` rather
+  /// than a CIContext round-trip through `encodeForExport`, for the reason that
+  /// twin exists: the product and the parity tests must not end up on different
+  /// curves. `RunnerTests.applyExportTransfer` is the same routine.
+  ///
+  /// Expects an image already retagged by `normalizeForColorAnalysis`.
+  /// AVAssetImageGenerator hands animation-tool composites back tagged
+  /// GenericRGB; drawing that into an sRGB context applies a gamma-1.8
+  /// conversion that this curve does not expect, and no later retag undoes it.
+  private func encodeReferenceForFinalComparison(_ image: CGImage) -> CGImage? {
+    let width = image.width
+    let height = image.height
+    guard width > 0, height > 0 else { return nil }
+    let lut: [UInt8] = (0...255).map { ColorTransferFunctions.srgbToExportTransfer(UInt8($0)) }
+    var pixels = [UInt8](repeating: 0, count: width * height * 4)
+    guard
+      let context = CGContext(
+        data: &pixels,
+        width: width,
+        height: height,
+        bitsPerComponent: 8,
+        bytesPerRow: width * 4,
+        space: VideoColorPipeline.workingColorSpace,
+        bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue
+      )
+    else { return nil }
+    context.draw(image, in: CGRect(x: 0, y: 0, width: width, height: height))
+    for index in stride(from: 0, to: pixels.count, by: 4) {
+      pixels[index] = lut[Int(pixels[index])]
+      pixels[index + 1] = lut[Int(pixels[index + 1])]
+      pixels[index + 2] = lut[Int(pixels[index + 2])]
+    }
+    return context.makeImage()
+  }
+
   private func analyzeFrameColorMetrics(
     _ image: CGImage,
     ignoreTransparentPixels: Bool
@@ -968,7 +1014,7 @@ final class LetterboxExporter {
     }
 
     do {
-      let referenceImage = try sampleFrameImage(
+      let sampledReferenceImage = try sampleFrameImage(
         asset: referenceAsset,
         videoComposition: referenceComposition,
         at: sampleTime
@@ -977,9 +1023,24 @@ final class LetterboxExporter {
       let finalEncodedSize = orientedSize(for: finalExportAsset)
         ?? CGSize(width: finalImage.width, height: finalImage.height)
 
+      // Same two corrections as `validateFinalExportReferenceRender`, which
+      // this validator was missing entirely. Retag both sides so
+      // `analyzeFrameColorMetrics`' CGContext.draw does not convert a
+      // GenericRGB-tagged reference into sRGB (a lift of up to 0.075), then
+      // encode the reference so it sits in the same transfer space as the file.
+      // This validator only ever runs on a pre-styled camera export, which is
+      // always written by the encoding render path, so the bias was pure — both
+      // errors pushed the same way and the correct export was the one that
+      // looked wrong.
+      let normalizedReference =
+        normalizeForColorAnalysis(sampledReferenceImage) ?? sampledReferenceImage
+      let referenceImage =
+        encodeReferenceForFinalComparison(normalizedReference) ?? normalizedReference
+      let normalizedFinal = normalizeForColorAnalysis(finalImage) ?? finalImage
+
       guard let cropPair = bestAlignedCropPair(
         referenceImage: referenceImage,
-        finalImage: finalImage,
+        finalImage: normalizedFinal,
         cropRect: resolvedFrame,
         canvasSize: validationInfo.renderSize
       ) else {
@@ -1054,10 +1115,17 @@ final class LetterboxExporter {
           extraContext: validationContext
         )
 
+        // Use the shared resolver rather than the strict 0.10/0.10 constants.
+        // This validator's reference composition normally carries an animation
+        // tool, and `animationToolValidationThresholds` exists because those
+        // references are noisier — holding the styled-camera path to a tighter
+        // bar than the general final-export path was an accident of it having
+        // been written with the constants inlined.
+        let thresholds = validationThresholds(for: referenceComposition)
         let maxChannelDelta = finalCropColorMetrics.maxAverageChannelDelta(comparedTo: referenceColorMetrics)
         let lumaDelta = abs(finalCropColorMetrics.averageLuma - referenceColorMetrics.averageLuma)
-        if lumaDelta > validationLumaFailureThreshold
-          || maxChannelDelta > validationChannelFailureThreshold
+        if lumaDelta > thresholds.lumaFailure
+          || maxChannelDelta > thresholds.channelFailure
         {
           return makeAdvancedCameraExportError(
             stage: .finalOutputValidation,
@@ -1068,6 +1136,8 @@ final class LetterboxExporter {
                 "finalAverageLuma": finalCropColorMetrics.averageLuma,
                 "lumaDelta": finalCropColorMetrics.averageLuma - referenceColorMetrics.averageLuma,
                 "maxChannelDelta": maxChannelDelta,
+                "lumaFailureThreshold": thresholds.lumaFailure,
+                "channelFailureThreshold": thresholds.channelFailure,
               ],
               uniquingKeysWith: { _, new in new }
             )
@@ -1210,6 +1280,22 @@ final class LetterboxExporter {
     }
   }
 
+  /// What the final-export reference comparison measured, and what it concluded.
+  ///
+  /// The deltas are carried out alongside the verdict so a test can assert on
+  /// the measurement itself. That matters here: the transfer error this
+  /// validator used to be blind to peaks at ~0.051, while its own failure
+  /// thresholds are 0.10 (0.14/0.18 with an animation tool). A test that only
+  /// checked pass/fail could not tell a fixed validator from a broken one,
+  /// because neither rejects. The deltas can.
+  struct FinalExportReferenceEvaluation {
+    /// nil when the validator bailed before it could measure — sampling or
+    /// analysis failed, and `error` says which.
+    let lumaDelta: Double?
+    let maxChannelDelta: Double?
+    let error: NSError?
+  }
+
   private func validateFinalExportReferenceRender(
     referenceAsset: AVAsset,
     referenceComposition: AVVideoComposition,
@@ -1219,6 +1305,26 @@ final class LetterboxExporter {
     backgroundImagePath: String? = nil,
     backgroundPreset: CanvasBackgroundPreset? = nil
   ) -> NSError? {
+    evaluateFinalExportReferenceRender(
+      referenceAsset: referenceAsset,
+      referenceComposition: referenceComposition,
+      finalExportAsset: finalExportAsset,
+      inlineCameraRenderPlan: inlineCameraRenderPlan,
+      backgroundColor: backgroundColor,
+      backgroundImagePath: backgroundImagePath,
+      backgroundPreset: backgroundPreset
+    ).error
+  }
+
+  private func evaluateFinalExportReferenceRender(
+    referenceAsset: AVAsset,
+    referenceComposition: AVVideoComposition,
+    finalExportAsset: AVAsset,
+    inlineCameraRenderPlan: CompositionBuilder.InlineCameraRenderPlan? = nil,
+    backgroundColor: Int? = nil,
+    backgroundImagePath: String? = nil,
+    backgroundPreset: CanvasBackgroundPreset? = nil
+  ) -> FinalExportReferenceEvaluation {
     do {
       let sampleTime = min(max(referenceAsset.duration.seconds * 0.5, 0.0), max(referenceAsset.duration.seconds - 0.001, 0.0))
       let referenceImage: CGImage
@@ -1254,8 +1360,12 @@ final class LetterboxExporter {
             colorSpace: VideoColorPipeline.workingColorSpace
           )
         else {
-          return makeFinalExportValidationError(
-            reason: "The inline-camera validation render could not be materialized."
+          return FinalExportReferenceEvaluation(
+            lumaDelta: nil,
+            maxChannelDelta: nil,
+            error: makeFinalExportValidationError(
+              reason: "The inline-camera validation render could not be materialized."
+            )
           )
         }
         referenceImage = composedCGImage
@@ -1281,14 +1391,22 @@ final class LetterboxExporter {
       // wrongly rejected. Retagging without converting bytes makes both
       // sides comparable.
       let normalizedReference = normalizeForColorAnalysis(referenceImage) ?? referenceImage
+      // Retag first, then encode — see `encodeReferenceForFinalComparison`.
+      // The final file needs no encode; it already has one.
+      let encodedReference =
+        encodeReferenceForFinalComparison(normalizedReference) ?? normalizedReference
       let normalizedFinal = normalizeForColorAnalysis(finalImage) ?? finalImage
 
       guard
-        let referenceMetrics = analyzeFrameColorMetrics(normalizedReference, ignoreTransparentPixels: false),
+        let referenceMetrics = analyzeFrameColorMetrics(encodedReference, ignoreTransparentPixels: false),
         let finalMetrics = analyzeFrameColorMetrics(normalizedFinal, ignoreTransparentPixels: false)
       else {
-        return makeFinalExportValidationError(
-          reason: "The final export color validator could not analyze the rendered frames."
+        return FinalExportReferenceEvaluation(
+          lumaDelta: nil,
+          maxChannelDelta: nil,
+          error: makeFinalExportValidationError(
+            reason: "The final export color validator could not analyze the rendered frames."
+          )
         )
       }
 
@@ -1309,24 +1427,36 @@ final class LetterboxExporter {
       if lumaDelta > thresholds.lumaFailure
         || maxChannelDelta > thresholds.channelFailure
       {
-        return makeFinalExportValidationError(
-          reason: "The final exported file drifted materially from the reference composition render.",
-          context: [
-            "referenceAverageLuma": referenceMetrics.averageLuma,
-            "finalAverageLuma": finalMetrics.averageLuma,
-            "lumaDelta": finalMetrics.averageLuma - referenceMetrics.averageLuma,
-            "maxChannelDelta": maxChannelDelta,
-            "lumaFailureThreshold": thresholds.lumaFailure,
-            "channelFailureThreshold": thresholds.channelFailure,
-          ]
+        return FinalExportReferenceEvaluation(
+          lumaDelta: lumaDelta,
+          maxChannelDelta: maxChannelDelta,
+          error: makeFinalExportValidationError(
+            reason: "The final exported file drifted materially from the reference composition render.",
+            context: [
+              "referenceAverageLuma": referenceMetrics.averageLuma,
+              "finalAverageLuma": finalMetrics.averageLuma,
+              "lumaDelta": finalMetrics.averageLuma - referenceMetrics.averageLuma,
+              "maxChannelDelta": maxChannelDelta,
+              "lumaFailureThreshold": thresholds.lumaFailure,
+              "channelFailureThreshold": thresholds.channelFailure,
+            ]
+          )
         )
       }
 
-      return nil
+      return FinalExportReferenceEvaluation(
+        lumaDelta: lumaDelta,
+        maxChannelDelta: maxChannelDelta,
+        error: nil
+      )
     } catch {
-      return makeFinalExportValidationError(
-        reason: "The final export color validator could not sample the rendered frames.",
-        context: ["error": error.localizedDescription]
+      return FinalExportReferenceEvaluation(
+        lumaDelta: nil,
+        maxChannelDelta: nil,
+        error: makeFinalExportValidationError(
+          reason: "The final export color validator could not sample the rendered frames.",
+          context: ["error": error.localizedDescription]
+        )
       )
     }
   }
@@ -1425,79 +1555,6 @@ final class LetterboxExporter {
     let fps = track.nominalFrameRate
     guard fps > 0 else { return 1.0 / 30.0 }
     return 1.0 / Double(fps)
-  }
-
-  private func runExportSession(
-    _ export: AVAssetExportSession,
-    outputURL: URL,
-    progressRange: ClosedRange<Double>,
-    onProgress: ((Double) -> Void)?,
-    logOutputInfo: Bool = false,
-    completion: @escaping (Result<URL, Error>) -> Void
-  ) {
-    self.currentSession = export
-    let stageStart = CFAbsoluteTimeGetCurrent()
-
-    let lower = progressRange.lowerBound
-    let span = progressRange.upperBound - progressRange.lowerBound
-    progressTimer = Timer.scheduledTimer(withTimeInterval: 0.1, repeats: true) { [weak export] _ in
-      guard let export else { return }
-      onProgress?(lower + (Double(export.progress) * span))
-    }
-
-    export.exportAsynchronously { [self] in
-      DispatchQueue.main.async {
-        self.progressTimer?.invalidate()
-        self.progressTimer = nil
-        self.currentSession = nil
-
-        switch export.status {
-        case .completed:
-          onProgress?(progressRange.upperBound)
-          logExportStagePerformance(
-            stage: "final_export",
-            startedAt: stageStart,
-            renderPath: "asset_export_session"
-          )
-          if logOutputInfo {
-            self.logExportedFileInfo(url: outputURL)
-          }
-          completion(.success(outputURL))
-
-        case .cancelled:
-          completion(
-            .failure(
-              NSError(
-                domain: "Letterbox",
-                code: -999,
-                userInfo: [NSLocalizedDescriptionKey: "Export cancelled"]
-              )
-            )
-          )
-        case .failed:
-          completion(
-            .failure(
-              export.error
-                ?? NSError(
-                  domain: "Letterbox",
-                  code: -3,
-                  userInfo: [NSLocalizedDescriptionKey: "Export failed"]
-                )
-            )
-          )
-        default:
-          completion(
-            .failure(
-              NSError(
-                domain: "Letterbox",
-                code: -4,
-                userInfo: [NSLocalizedDescriptionKey: "Export ended in unexpected state \(export.status.rawValue)"]
-              )
-            )
-          )
-        }
-      }
-    }
   }
 
   private func manualVideoCodec(for codec: String) -> AVVideoCodecType {
@@ -3001,7 +3058,8 @@ final class LetterboxExporter {
       // durationMs as Int(durationSeconds * 1000), and the seed clip uses that.
       // Rounding here would make assetDurationMs one ms larger for ~1/3 of
       // durations, so isPassthrough would wrongly see an unedited recording as
-      // cut and run the manual path needlessly.
+      // cut — and keptRanges drive frame dropping and re-stamping in the render
+      // loop, so a phantom cut is a real edit to the output.
       let assetDurationMs = Int(comp.asset.duration.seconds * 1000.0)
       let coalescedClips = ClipPlaybackPlanner.coalesce(ranges: clips)
       var keptRanges: [ClipKeptRange] = []
@@ -3162,25 +3220,27 @@ final class LetterboxExporter {
         "finalURL": finalURL.path,
       ]
       exportColorContext.forEach { exportStartContext[$0.key] = $0.value }
-      // A non-identity color grade forces the manual reader/writer path: the
-      // fast AVAssetExportSession can only run an instruction/animation-tool
-      // composition, not the per-frame CIFilter pass the grade needs.
       let hasColorGrade = !colorGrade.isIdentity
-      // Cuts force the manual reader/writer path too: only it can drop the
-      // frames inside cut gaps and re-stamp the kept frames onto the compacted
-      // timeline. The fast AVAssetExportSession can't skip/re-time frames.
-      // Separated audio also forces the manual path (owner decision D8): the
-      // session path only mixes down with a non-nil audioMix and its preset
-      // owns the audio settings — the manual reader mixdown is the one
-      // pipeline that handles mic+system correctly everywhere.
-      let shouldUseManualRenderExport =
-        cameraAssetIsPreStyled
-        || comp.inlineCameraRenderPlan != nil
-        || comp.videoComposition.animationTool != nil
-        || hasColorGrade
-        || hasCuts
-        || separatedComposition != nil
-      exportStartContext["finalRenderPath"] = shouldUseManualRenderExport ? "manual_reader_writer" : "asset_export_session"
+      // THERE IS ONE FINAL RENDER PATH, AND THIS IS WHY.
+      //
+      // This used to select between the manual reader/writer and a fast
+      // AVAssetExportSession, on the theory that a composition with no grade,
+      // no cuts, no camera plan and no animation tool needed nothing the
+      // session couldn't do. That theory was wrong about colour. The output
+      // transfer function is applied in exactly one place —
+      // `VideoColorPipeline.renderComposedExportFrame` — and only the manual
+      // path goes through it. The session path handed the composition to
+      // AVFoundation, which colour-matches source to destination but sees a
+      // 709-tagged capture against a 709 composition and so converts nothing.
+      // Its output carried sRGB-encoded pixels in a BT.709-tagged file: the
+      // exact defect #383/#391 fixed on the manual path, ~11 code values of
+      // midtone lift, shipping from a branch no test covered.
+      //
+      // Collapsing to one path is what keeps the two from disagreeing again.
+      // If the export transfer ever needs to change, it changes in one place.
+      // Do not reintroduce a second final render site without routing it
+      // through `renderComposedExportFrame`.
+      exportStartContext["finalRenderPath"] = "manual_reader_writer"
       exportStartContext["colorGradeActive"] = hasColorGrade
       exportStartContext["audioSourceMode"] = separatedComposition != nil ? "separated" : "embedded"
       exportStartContext["separatedMicPresent"] = separatedMicAsset != nil
@@ -3197,55 +3257,24 @@ final class LetterboxExporter {
       // export flow must not depend on weak references at all. Lifetime is
       // bounded by the export: these closures die when the chain completes.
       let runFinalExport: (@escaping (Result<URL, Error>) -> Void) -> Void = { [self] completion in
-        if shouldUseManualRenderExport {
-          self.runRenderedExportSession(
-            asset: comp.asset,
-            videoComposition: comp.videoComposition,
-            audioMix: exportAudioMix,
-            outputURL: finalURL,
-            outputFileType: chosenType,
-            codec: codec,
-            progressRange: progressRange,
-            onProgress: onProgress,
-            inlineCameraRenderPlan: comp.inlineCameraRenderPlan,
-            backgroundColor: backgroundColor,
-            backgroundImagePath: backgroundImagePath,
-            backgroundPreset: backgroundPreset,
-            colorGrade: colorGrade,
-            keptRanges: keptRanges,
-            audioAsset: audioCutComposition,
-            useAllAudioSourceTracks: separatedComposition != nil,
-            editedDurationSeconds: editedDurationSeconds,
-            logOutputInfo: true,
-            completion: completion
-          )
-          return
-        }
-
-        guard let export = AVAssetExportSession(asset: comp.asset, presetName: preset) else {
-          completion(
-            .failure(
-              NSError(
-                domain: "Letterbox",
-                code: -2,
-                userInfo: [NSLocalizedDescriptionKey: "Cannot create export session (preset=\(preset))"]
-              )
-            )
-          )
-          return
-        }
-
-        export.videoComposition = comp.videoComposition
-        export.audioMix = exportAudioMix
-        export.outputFileType = chosenType
-        export.outputURL = finalURL
-        export.shouldOptimizeForNetworkUse = true
-
-        self.runExportSession(
-          export,
+        self.runRenderedExportSession(
+          asset: comp.asset,
+          videoComposition: comp.videoComposition,
+          audioMix: exportAudioMix,
           outputURL: finalURL,
+          outputFileType: chosenType,
+          codec: codec,
           progressRange: progressRange,
           onProgress: onProgress,
+          inlineCameraRenderPlan: comp.inlineCameraRenderPlan,
+          backgroundColor: backgroundColor,
+          backgroundImagePath: backgroundImagePath,
+          backgroundPreset: backgroundPreset,
+          colorGrade: colorGrade,
+          keptRanges: keptRanges,
+          audioAsset: audioCutComposition,
+          useAllAudioSourceTracks: separatedComposition != nil,
+          editedDurationSeconds: editedDurationSeconds,
           logOutputInfo: true,
           completion: completion
         )
@@ -3860,53 +3889,46 @@ final class LetterboxExporter {
     codec: String = "h264",
     completion: @escaping (Result<URL, Error>) -> Void
   ) {
-    if result.inlineCameraRenderPlan != nil || result.videoComposition.animationTool != nil {
-      runRenderedExportSession(
-        asset: result.asset,
-        videoComposition: result.videoComposition,
-        audioMix: nil,
-        outputURL: outputURL,
-        outputFileType: .mov,
-        codec: codec,
-        progressRange: 0.0...1.0,
-        onProgress: nil,
-        inlineCameraRenderPlan: result.inlineCameraRenderPlan,
-        backgroundColor: backgroundColor,
-        backgroundImagePath: backgroundImagePath,
-        completion: completion
-      )
-      return
-    }
-
-    guard Set(AVAssetExportSession.exportPresets(compatibleWith: result.asset)).contains(
-      AVAssetExportPresetHighestQuality
-    ),
-      let export = AVAssetExportSession(
-        asset: result.asset,
-        presetName: AVAssetExportPresetHighestQuality
-      )
-    else {
-      completion(
-        .failure(
-          NSError(
-            domain: "Letterbox",
-            code: -35,
-            userInfo: [NSLocalizedDescriptionKey: "Test export could not create an AVAssetExportSession"]
-          )
-        )
-      )
-      return
-    }
-
-    export.videoComposition = result.videoComposition
-    export.outputFileType = .mov
-    export.outputURL = outputURL
-    runExportSession(
-      export,
+    // Unconditional, exactly like production. This helper used to carry its own
+    // two-of-six copy of the render-path selector plus an AVAssetExportSession
+    // fallback, which meant the colour-parity tests asserted against a selector
+    // the product did not have. There is one render path now; the tests must
+    // exercise that one.
+    runRenderedExportSession(
+      asset: result.asset,
+      videoComposition: result.videoComposition,
+      audioMix: nil,
       outputURL: outputURL,
+      outputFileType: .mov,
+      codec: codec,
       progressRange: 0.0...1.0,
       onProgress: nil,
+      inlineCameraRenderPlan: result.inlineCameraRenderPlan,
+      backgroundColor: backgroundColor,
+      backgroundImagePath: backgroundImagePath,
       completion: completion
+    )
+  }
+
+  /// Exposes the final-export reference comparison, including the deltas it
+  /// measured. Without this the validator was private and untestable, which is
+  /// why it could compare an un-encoded reference against an encoded file for
+  /// as long as it did without anything noticing.
+  func _testEvaluateFinalExportReferenceRender(
+    referenceResult: CompositionBuilder.ExportCompositionResult,
+    finalExportURL: URL,
+    backgroundColor: Int? = nil,
+    backgroundImagePath: String? = nil,
+    backgroundPreset: CanvasBackgroundPreset? = nil
+  ) -> FinalExportReferenceEvaluation {
+    evaluateFinalExportReferenceRender(
+      referenceAsset: referenceResult.asset,
+      referenceComposition: referenceResult.videoComposition,
+      finalExportAsset: AVAsset(url: finalExportURL),
+      inlineCameraRenderPlan: referenceResult.inlineCameraRenderPlan,
+      backgroundColor: backgroundColor,
+      backgroundImagePath: backgroundImagePath,
+      backgroundPreset: backgroundPreset
     )
   }
 
