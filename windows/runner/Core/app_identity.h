@@ -51,9 +51,24 @@ std::wstring LocalAppDataFolderName(AppChannel channel);
 // instance and exited.
 std::wstring InstanceMutexSuffix(AppChannel channel);
 
+// User-visible product name: what a person reads in the window title bar and
+// in Task Manager.
+//
+// prod: "Clingfy"   dev: "Clingfy Dev"
+//
+// Distinct from ProductName in the version resource, which is FROZEN because
+// path_provider derives the data directory from it. This one is display text
+// and safe to change; that one is an identity and is not.
+//
+// Channel-aware because D9 made side-by-side installs safe: two windows both
+// titled "Clingfy" would be a worse bug than the lowercase title this
+// replaces.
+std::wstring DisplayName(AppChannel channel);
+
 // Convenience wrappers for the channel this binary was built for.
 std::wstring LocalAppDataFolderName();
 std::wstring InstanceMutexSuffix();
+std::wstring DisplayName();
 
 }  // namespace clingfy::core
 
