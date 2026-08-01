@@ -94,24 +94,9 @@ extension ScreenRecorderFacade {
     )
   }
 
+  /// Kept as a seam so `ExportEngine.Dependencies` can inject it; the mapping
+  /// itself lives in `ExportFormatInfo.resolve`.
   func exportFormatInfo(_ formatRaw: String) -> ExportFormatInfo {
-    switch formatRaw.lowercased() {
-
-    case "mp4":
-      return .init(ext: "mp4", avFileType: .mp4)
-
-    case "m4v":
-      return .init(ext: "m4v", avFileType: .m4v)
-
-    case "mov":
-      return .init(ext: "mov", avFileType: .mov)
-
-    case "gif":
-      return .init(ext: "gif", avFileType: nil)  // handled by GIF pipeline, not AVAssetExportSession
-
-    default:
-      // Fallback safe default
-      return .init(ext: "mov", avFileType: .mov)
-    }
+    ExportFormatInfo.resolve(formatRaw)
   }
 }
