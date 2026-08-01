@@ -8577,6 +8577,21 @@ final class ScreenRecorderFacadeStartFailureTests: XCTestCase {
     XCTAssertEqual(streamConfig.height, 1964)
     XCTAssertFalse(streamConfig.scalesToFit)
     XCTAssertEqual(streamConfig.captureResolution, .best)
+
+    // The capture must declare sRGB rather than inherit the display's colour
+    // space. Left unset, SCStream hands SCRecordingOutput buffers in the
+    // DISPLAY's space — P3 on these panels — while SCRecordingOutput stamps a
+    // fixed BT.709 tag on the file regardless, so the file misdescribes its own
+    // pixels and every consumer downstream believes the tag.
+    //
+    // A single property is exactly the kind of thing that reverts silently in a
+    // refactor, and the Display-P3 parity tests cannot catch it: they fabricate
+    // their own P3-TAGGED fixture rather than exercising capture.
+    XCTAssertEqual(
+      streamConfig.colorSpaceName as String?,
+      CGColorSpace.sRGB as String,
+      "capture must be sRGB so the BT.709 tag SCRecordingOutput writes is honest"
+    )
   }
 }
 
