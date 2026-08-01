@@ -101,8 +101,23 @@ function Get-PubspecVersion {
 
 function Get-CurrentBranchName {
   $branch = & git -C $script:RepoRoot branch --show-current 2>$null
-  if ($LASTEXITCODE -ne 0 -or -not $branch) { return 'local' }
-  return $branch.Trim()
+  if ($LASTEXITCODE -eq 0 -and $branch) { return $branch.Trim() }
+
+  # CI checks out a DETACHED HEAD, so `git branch --show-current` is empty and
+  # this used to fall straight through to 'local' -- which made
+  # 00_version_guard.ps1 skip itself ("non-release branch: local") on every
+  # pipeline run. The guard that exists to stop a release/X.Y.Z branch shipping
+  # a different pubspec version was inert in the one place it matters. Observed
+  # on the 1.0.7 prod run.
+  #
+  # Both hosts publish the ref they checked out; prefer that over guessing.
+  foreach ($envVar in @('BUILD_SOURCEBRANCH', 'GITHUB_REF')) {
+    $ref = [Environment]::GetEnvironmentVariable($envVar)
+    if ($ref -and $ref.StartsWith('refs/heads/')) {
+      return $ref.Substring('refs/heads/'.Length)
+    }
+  }
+  return 'local'
 }
 
 # --- Tool discovery -------------------------------------------------------------
