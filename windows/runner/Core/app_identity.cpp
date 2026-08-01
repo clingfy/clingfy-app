@@ -45,9 +45,15 @@ std::wstring InstanceMutexSuffix(AppChannel channel) {
                                      : L"com.clingfy.clingfy";
 }
 
+std::wstring DisplayName(AppChannel channel) {
+  return channel == AppChannel::kDev ? L"Clingfy Dev" : L"Clingfy";
+}
+
 std::wstring LocalAppDataFolderName() {
   return LocalAppDataFolderName(CurrentChannel());
 }
+
+std::wstring DisplayName() { return DisplayName(CurrentChannel()); }
 
 std::wstring InstanceMutexSuffix() {
   return InstanceMutexSuffix(CurrentChannel());

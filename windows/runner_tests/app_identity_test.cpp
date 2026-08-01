@@ -91,5 +91,41 @@ TEST(AppIdentityTest, TestBinaryCompilesAsProd) {
   EXPECT_EQ(CurrentChannel(), AppChannel::kProd);
 }
 
+
+// ---------------------------------------------------------------------------
+// DisplayName — user-visible text, NOT an identity.
+// ---------------------------------------------------------------------------
+
+TEST(AppIdentityTest, DisplayNameIsHumanReadable) {
+  EXPECT_EQ(DisplayName(AppChannel::kProd), L"Clingfy");
+  EXPECT_EQ(DisplayName(AppChannel::kDev), L"Clingfy Dev");
+}
+
+// The two channels must be distinguishable on screen. D9 made running both at
+// once possible, so two windows both titled "Clingfy" would be a worse bug
+// than the lowercase title this replaced.
+TEST(AppIdentityTest, DisplayNameDistinguishesTheChannels) {
+  EXPECT_NE(DisplayName(AppChannel::kDev), DisplayName(AppChannel::kProd));
+}
+
+// THE DISTINCTION THAT MATTERS. DisplayName is display text and free to
+// change; the version resource's ProductName is an IDENTITY that path_provider
+// derives the data directory from. If someone ever "tidies" them into one
+// value, prod's data directory moves and every existing user is orphaned.
+// These must not be equal, and the folder name must stay the frozen literal.
+TEST(AppIdentityTest, DisplayNameIsNotTheDataDirectoryIdentity) {
+  EXPECT_NE(DisplayName(AppChannel::kProd),
+            LocalAppDataFolderName(AppChannel::kProd) + L" ");
+  // The prod data folder is still exactly the shipped literal.
+  EXPECT_EQ(LocalAppDataFolderName(AppChannel::kProd), L"Clingfy");
+  // Dev's display name and its data folder happen to read alike; that is
+  // coincidence, not coupling — the folder is pinned above, this is not.
+  EXPECT_EQ(DisplayName(AppChannel::kDev), L"Clingfy Dev");
+}
+
+TEST(AppIdentityTest, DisplayNameWrapperMatchesTheCompiledChannel) {
+  EXPECT_EQ(DisplayName(), DisplayName(CurrentChannel()));
+}
+
 }  // namespace
 }  // namespace clingfy::core
