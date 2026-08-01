@@ -18,10 +18,10 @@ Fill this section before starting verification.
 - Channel: `prod`
 - Date: `2026-08-01`
 - Verified by: `Nabil Alhafez`
-- Commit: `TBD`
+- Commit: `216f1d0`
 - Tag: `v1.0.7`
-- Build: `TBD` (filled by the pipeline)
-- Status: `In progress`
+- Build: `Azure prod run TBD` (paste the run number from the pipeline)
+- Status: `In progress` — Windows artifact published and verified; manual flows below still open
 
 Possible status values:
 
@@ -173,13 +173,47 @@ Verify the generated release artifacts before publishing.
 
 * [ ] DMG launches correctly
 * [ ] app icon and metadata appear correctly
-* [ ] auto-updater configuration verified
-* [ ] update channel configuration verified
+* [x] auto-updater configuration verified
+* [x] update channel configuration verified
 * [ ] application launches without console errors
+
+## Windows prod publish (verified 2026-08-01)
+
+Published from `release/1.0.7` @ `216f1d0`. Feed:
+`https://clingfyreleases.blob.core.windows.net/updates/downloads/windows/latest-windows.json`
+
+| check | result |
+|---|---|
+| feed reachable + parses | 200, `1.0.7+8`, `channel: prod`, `platform: windows-x64` |
+| installer served | 200, 33 390 336 B, matches feed `sizeBytes` |
+| **sha256 of the downloaded bytes** | `e9de2b97…2ab55` — matches feed *and* `.sha256` sidecar |
+| installer version resource | `FileVersion 1.0.7.8`, `ProductVersion 1.0.7+8`, `ProductName Clingfy` |
+| signature | `NotSigned` — expected, decision D3 (no certificate yet) |
+| prior release still served | `Clingfy_Setup_1.0.6.exe` → 200 (no orphaned installs) |
+| dev feed untouched | still `1.0.6+111` on the dev account |
+
+Updater verified by running the **shipped** parser and decision logic
+(`windows/runner/Updater/update_feed.cpp`) against the live feed body, not by
+inspection — the smoke step only proves the blob is reachable, and ctest only
+proves the logic is self-consistent. Neither would catch a renamed field or a
+mispublished channel, which would leave every installed 1.0.6 silently
+believing it is current:
+
+| current version | decision |
+|---|---|
+| prod `1.0.6+7` (the shipped population) | `kUpdateAvailable` |
+| prod `1.0.7+8` | `kNoUpdate` (no re-offer) |
+| prod `1.0.8+9` | `kNoUpdate` (no downgrade) |
+| **dev** build against the prod feed | `kError` (channel isolation holds) |
+
+Not verified here — needs a machine: installing the .exe, first launch,
+icon/console errors, and an in-app update from an installed 1.0.6.
 
 Notes:
 
-*
+* The prod lane's version guard ran for the first time this release
+  (`Version guard passed: 1.0.7`). It had silently skipped every previous
+  release — see `ops/release/windows/RUNBOOK.md` §3.
 
 ---
 
