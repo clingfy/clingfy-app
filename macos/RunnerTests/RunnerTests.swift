@@ -2131,6 +2131,101 @@ final class LetterboxExporterTests: XCTestCase {
     XCTAssertGreaterThan(try dominantBlueRatio(for: centerCrop, ignoreTransparentPixels: false), 0.20)
   }
 
+  /// The camera overlay must enter the canvas in the SAME transfer space as
+  /// the screen, so the shared `encodeForExport` applies to it exactly once.
+  ///
+  /// The two sources reach `InlineCameraRenderer.render` through different
+  /// readers and nothing in the type system says so. The screen comes from an
+  /// `AVAssetReaderVideoCompositionOutput` whose composition always carries an
+  /// animation tool, so AVFoundation has already decoded it out of BT.709 into
+  /// sRGB. The camera comes from a plain `AVAssetReaderTrackOutput` and still
+  /// holds the 709-encoded values its file was written with. Both were then
+  /// declared sRGB and handed to one shared encode, so the camera was encoded
+  /// twice — measured on a real export as source (225,221,210) reaching the
+  /// file as (221,216,205), a full transfer step darker than the screen.
+  ///
+  /// Asserted at the function rather than end to end on purpose. The composited
+  /// frame puts the bubble at a layout-resolved position that the crop helpers
+  /// only approximate, so a whole-frame or approximate-crop assertion is
+  /// dominated by screen pixels and cannot separate the two states — an earlier
+  /// version of this test passed with the fix reverted for exactly that reason.
+  func testInlineCameraSourceImageIsDecodedOutOfTheExportTransfer() throws {
+    let tempDir = makeTemporaryDirectory()
+    defer { try? FileManager.default.removeItem(at: tempDir) }
+
+    // Mid-grey: 0 and 255 are fixed points of the curve, so a saturated or
+    // black fixture would pass whether or not the decode happened.
+    let level: UInt8 = 128
+    let cameraURL = tempDir.appendingPathComponent("camera.mov")
+    try makeSolidColorVideo(
+      url: cameraURL,
+      size: CGSize(width: 64, height: 64),
+      durationSeconds: 0.4,
+      color: NSColor(
+        srgbRed: CGFloat(level) / 255.0,
+        green: CGFloat(level) / 255.0,
+        blue: CGFloat(level) / 255.0,
+        alpha: 1.0)
+    )
+    let track = try XCTUnwrap(AVAsset(url: cameraURL).tracks(withMediaType: .video).first)
+
+    // A buffer holding exactly `level`, standing in for the raw 709-encoded
+    // frame the track reader hands over.
+    var pixelBufferOut: CVPixelBuffer?
+    CVPixelBufferCreate(
+      kCFAllocatorDefault, 64, 64, kCVPixelFormatType_32BGRA,
+      [
+        kCVPixelBufferCGImageCompatibilityKey as String: true,
+        kCVPixelBufferCGBitmapContextCompatibilityKey as String: true,
+      ] as CFDictionary, &pixelBufferOut)
+    let pixelBuffer = try XCTUnwrap(pixelBufferOut)
+    CVPixelBufferLockBaseAddress(pixelBuffer, [])
+    let context = try XCTUnwrap(
+      CGContext(
+        data: CVPixelBufferGetBaseAddress(pixelBuffer), width: 64, height: 64,
+        bitsPerComponent: 8, bytesPerRow: CVPixelBufferGetBytesPerRow(pixelBuffer),
+        space: VideoColorPipeline.workingColorSpace,
+        bitmapInfo: CGImageAlphaInfo.premultipliedFirst.rawValue
+          | CGBitmapInfo.byteOrder32Little.rawValue))
+    context.setFillColor(
+      red: CGFloat(level) / 255.0, green: CGFloat(level) / 255.0,
+      blue: CGFloat(level) / 255.0, alpha: 1.0)
+    context.fill(CGRect(x: 0, y: 0, width: 64, height: 64))
+    CVPixelBufferUnlockBaseAddress(pixelBuffer, [])
+
+    let renderer = InlineCameraRenderer(
+      renderSize: CGSize(width: 640, height: 360),
+      backgroundColor: nil,
+      backgroundImagePath: nil,
+      backgroundPreset: nil
+    )
+    let image = renderer.makeCameraSourceImage(
+      pixelBuffer: pixelBuffer, formatDescription: nil, track: track)
+
+    let ciContext = VideoColorPipeline.makeCIContext()
+    let cgImage = try XCTUnwrap(
+      ciContext.createCGImage(
+        image, from: image.extent, format: .RGBA8,
+        colorSpace: VideoColorPipeline.workingColorSpace))
+    let measured = try averageColorMetrics(for: cgImage, ignoreTransparentPixels: false)
+    let measuredCode = measured.red * 255.0
+
+    let expected = Double(ColorTransferFunctions.exportTransferToSrgb(level))
+    let summary = String(
+      format: "camera source decode: in %d  measured %.1f  decoded-expected %.1f  undecoded-would-be %d",
+      level, measuredCode, expected, level)
+    NSLog("%@", summary)
+    print(summary)
+
+    // The two states are ~11 code values apart; 4 separates them cleanly.
+    XCTAssertGreaterThan(
+      abs(expected - Double(level)), 8.0,
+      "fixture does not exercise the transfer curve — pick a midtone. \(summary)")
+    XCTAssertEqual(
+      measuredCode, expected, accuracy: 4.0,
+      "camera source must be decoded out of the export transfer. \(summary)")
+  }
+
   func testChromaKeyCameraPrepassRemovesGreenBackgroundAndKeepsSubject() throws {
     let tempDir = makeTemporaryDirectory()
     defer { try? FileManager.default.removeItem(at: tempDir) }

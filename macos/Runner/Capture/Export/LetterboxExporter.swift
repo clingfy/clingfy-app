@@ -1523,9 +1523,19 @@ final class LetterboxExporter {
       }
 
       let formatDescription = CMSampleBufferGetFormatDescription(sampleBuffer)
-      let orientedImage = VideoColorPipeline.sourceImage(
-        pixelBuffer: pixelBuffer,
-        formatDescription: formatDescription
+      // Decode out of the export transfer, exactly as
+      // `InlineCameraRenderer.makeCameraSourceImage` does. This reader is a
+      // plain track output, so like the product's it hands back the camera
+      // file's 709-encoded values while the screen half of the reference
+      // arrives already decoded by the composition's animation tool. If the
+      // reference skipped this, it would carry the camera a full transfer step
+      // away from the file it is being compared against, and the validator
+      // would report drift on a correct export.
+      let orientedImage = ColorTransferFunctions.decodeFromExport(
+        VideoColorPipeline.sourceImage(
+          pixelBuffer: pixelBuffer,
+          formatDescription: formatDescription
+        )
       )
         .transformed(by: normalizedTransform)
         .cropped(to: CGRect(origin: .zero, size: orientedSize))
