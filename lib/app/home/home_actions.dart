@@ -5,6 +5,7 @@ import 'package:clingfy/app/infrastructure/analytics/analytics_service.dart';
 import 'package:clingfy/core/overlay/overlay_mode.dart';
 import 'package:clingfy/core/bridges/native_bar_action.dart';
 import 'package:clingfy/core/bridges/native_error_codes.dart';
+import 'package:clingfy/app/home/widgets/crash_reporting_notice.dart';
 import 'package:clingfy/app/home/recording/countdown_controller.dart';
 import 'package:clingfy/core/devices/device_controller.dart';
 import 'package:clingfy/commercial/licensing/license_controller.dart';
@@ -438,6 +439,14 @@ class HomeActions {
       }
 
       _showSavedFileNotice(context, prefix: l10n.exportSuccess, path: path);
+      // First successful export is when the crash-reporting disclosure fires.
+      // At launch it is a modal about diagnostics in front of someone who has
+      // not used the app yet, and the fastest way past it is to dismiss it
+      // unread — which makes the disclosure worthless. Here the user has just
+      // finished something and nothing else is competing for attention.
+      if (context.mounted) {
+        await maybeShowCrashReportingNotice(context);
+      }
     } on PlatformException catch (e) {
       if (postProcessingController.lastExportWasCancelled) {
         return;
