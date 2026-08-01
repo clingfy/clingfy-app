@@ -4086,6 +4086,331 @@ final class LetterboxExporterTests: XCTestCase {
 
   }
 
+  /// Pins that the export has exactly one final render path.
+  ///
+  /// This is the configuration that used to reach `AVAssetExportSession`.
+  /// Screen-only exports can never get here: `build(forExport:)` hardcodes
+  /// `includeRoundedMask: true`, so their composition always carries an
+  /// animation tool. Reaching it takes a visible camera that needs no inline
+  /// render (square, unmirrored, opacity 1, `.fill`, no border, no shadow) plus
+  /// no cursor, no zoom, no corner radius and no background image — which is
+  /// why no test covered it and the defect shipped.
+  ///
+  /// The old branch handed the composition to AVFoundation, which colour-matches
+  /// source to destination but saw a 709-tagged capture against a 709
+  /// composition and converted nothing, writing sRGB-encoded pixels into a
+  /// BT.709-tagged file. `assertAverageColorParity` encodes its reference with
+  /// the same curve the exporter uses, so an un-encoded file fails it.
+  ///
+  /// The fixture is mid-grey on every surface on purpose. 0 and 255 are fixed
+  /// points of the export curve, so a saturated red/green/blue fixture would
+  /// pass whether or not the transfer was ever applied.
+  func testExportWithoutInlineCameraOrAnimationToolStillWritesTheExportTransfer() throws {
+    let tempDir = makeTemporaryDirectory()
+    defer { try? FileManager.default.removeItem(at: tempDir) }
+
+    let projectRoot = try makeRecordingProjectRoot(at: tempDir, includeCamera: true)
+    let project = try RecordingProjectRef.open(projectRoot: projectRoot)
+    let screenURL = RecordingProjectPaths.screenVideoURL(for: projectRoot)
+    let cameraURL = RecordingProjectPaths.cameraRawURL(for: projectRoot)
+    try makeSolidColorVideo(
+      url: screenURL,
+      size: CGSize(width: 180, height: 320),
+      durationSeconds: 1.0,
+      color: NSColor(calibratedWhite: 0.5, alpha: 1.0)
+    )
+    try makeSolidColorVideo(
+      url: cameraURL,
+      size: CGSize(width: 128, height: 128),
+      durationSeconds: 1.0,
+      color: NSColor(calibratedRed: 0.45, green: 0.55, blue: 0.35, alpha: 1.0)
+    )
+
+    let cameraParams = CameraCompositionParams(
+      visible: true,
+      layoutPreset: .overlayBottomRight,
+      normalizedCanvasCenter: nil,
+      sizeFactor: 0.24,
+      shape: .square,
+      cornerRadius: 0.0,
+      opacity: 1.0,
+      mirror: false,
+      contentMode: .fill,
+      zoomBehavior: .fixed,
+      borderWidth: 0.0,
+      borderColorArgb: nil,
+      shadowPreset: 0,
+      chromaKeyEnabled: false,
+      chromaKeyStrength: 0.4,
+      chromaKeyColorArgb: nil
+    )
+
+    let target = CGSize(width: 640, height: 360)
+    let params = CompositionParams(
+      targetSize: target,
+      padding: 0.0,
+      cornerRadius: 0.0,
+      backgroundColor: 0xFF80_8080,
+      backgroundImagePath: nil,
+      cursorSize: 1.0,
+      showCursor: false,
+      zoomEnabled: false,
+      zoomFactor: 1.5,
+      followStrength: 0.15,
+      fpsHint: 30,
+      fitMode: "fit",
+      audioGainDb: 0.0,
+      audioVolumePercent: 100.0
+    )
+
+    // The executable statement of "this is the ex-session configuration". If a
+    // future change makes one of these non-nil, this test stops proving what it
+    // claims to prove, and it should fail loudly rather than pass vacuously.
+    let composition = try XCTUnwrap(
+      CompositionBuilder().buildExport(
+        asset: AVAsset(url: screenURL),
+        cameraAsset: AVAsset(url: cameraURL),
+        params: params,
+        cameraParams: cameraParams,
+        cursorRecording: nil
+      )
+    )
+    XCTAssertNil(
+      composition.inlineCameraRenderPlan,
+      "fixture no longer reaches the branch this test exists to cover"
+    )
+    XCTAssertNil(
+      composition.videoComposition.animationTool,
+      "fixture no longer reaches the branch this test exists to cover"
+    )
+
+    let exporter = LetterboxExporter()
+    let exportExpectation = expectation(description: "export without inline camera or animation tool")
+    var exportResult: Result<URL, Error>?
+
+    exporter.export(
+      project: project,
+      target: target,
+      padding: 0.0,
+      cornerRadius: 0.0,
+      backgroundColor: 0xFF80_8080,
+      backgroundImagePath: nil,
+      cursorSize: 1.0,
+      showCursor: false,
+      zoomEnabled: false,
+      zoomFactor: 1.5,
+      followStrength: 0.15,
+      fpsHint: 30,
+      outputURL: tempDir.appendingPathComponent("no-animation-tool.mov"),
+      format: "mov",
+      codec: "h264",
+      bitrate: "auto",
+      fitMode: "fit",
+      audioGainDb: 0.0,
+      audioVolumePercent: 100.0,
+      autoNormalizeOnExport: false,
+      targetLoudnessDbfs: -16.0,
+      cameraParams: cameraParams
+    ) { result in
+      exportResult = result
+      exportExpectation.fulfill()
+    }
+
+    wait(for: [exportExpectation], timeout: 30.0)
+    let finalURL = try XCTUnwrap(try exportResult?.get())
+
+    try assertAverageColorParity(
+      referenceImage: try sampleFrameImage(
+        asset: composition.asset,
+        videoComposition: composition.videoComposition
+      ),
+      candidateImage: try sampleFrameImage(url: finalURL)
+    )
+  }
+
+  /// Pins that the final-export validator compares like with like.
+  ///
+  /// Its reference comes from `AVAssetImageGenerator` over the composition,
+  /// which never runs `VideoColorPipeline.renderComposedExportFrame`, while the
+  /// file it grades has been encoded by it. Comparing them raw did not measure
+  /// export drift, it measured the whole transfer curve — and with the wrong
+  /// sign, so the correct export scored as drifted and an un-encoded one scored
+  /// clean. The validator was grading the bug it exists to catch as healthy.
+  ///
+  /// Asserted on the measured deltas rather than the verdict on purpose: the
+  /// transfer error peaks around 0.051 while the failure thresholds are 0.10
+  /// (0.14/0.18 with an animation tool), so neither file is actually rejected.
+  /// A pass/fail assertion here would hold whether or not the reference was
+  /// encoded, and would prove nothing.
+  ///
+  /// The counterfactual is computed here rather than by producing a second,
+  /// un-encoded file through `AVAssetExportSession`. That was the first
+  /// attempt and it does not work: on a synthetic fixture AVFoundation infers
+  /// a source colour space and colour-matches it to the composition's declared
+  /// 709, so the "un-encoded" file came back encoded and measured identically
+  /// to the real one. Whether that inference fires depends on how the fixture
+  /// is tagged, which makes it a bad foundation for an assertion — and is a
+  /// large part of why this branch's defect was invisible to the suite for as
+  /// long as it was.
+  func testFinalExportReferenceValidatorComparesInTheFilesTransferSpace() throws {
+    let tempDir = makeTemporaryDirectory()
+    defer { try? FileManager.default.removeItem(at: tempDir) }
+
+    // The same animation-tool-free fixture the sibling test pins. A screen-only
+    // composition always carries an animation tool, and AVAssetImageGenerator's
+    // Core Animation render is noisy enough (it is why
+    // `animationToolValidationThresholds` is relaxed to 0.14/0.18) to blur the
+    // encoded-vs-raw separation this test measures.
+    let screenURL = tempDir.appendingPathComponent("screen.mov")
+    let cameraURL = tempDir.appendingPathComponent("camera.mov")
+    try makeSolidColorVideo(
+      url: screenURL,
+      size: CGSize(width: 180, height: 320),
+      durationSeconds: 1.0,
+      color: NSColor(calibratedWhite: 0.5, alpha: 1.0)
+    )
+    try makeSolidColorVideo(
+      url: cameraURL,
+      size: CGSize(width: 128, height: 128),
+      durationSeconds: 1.0,
+      color: NSColor(calibratedRed: 0.45, green: 0.55, blue: 0.35, alpha: 1.0)
+    )
+
+    let cameraParams = CameraCompositionParams(
+      visible: true,
+      layoutPreset: .overlayBottomRight,
+      normalizedCanvasCenter: nil,
+      sizeFactor: 0.24,
+      shape: .square,
+      cornerRadius: 0.0,
+      opacity: 1.0,
+      mirror: false,
+      contentMode: .fill,
+      zoomBehavior: .fixed,
+      borderWidth: 0.0,
+      borderColorArgb: nil,
+      shadowPreset: 0,
+      chromaKeyEnabled: false,
+      chromaKeyStrength: 0.4,
+      chromaKeyColorArgb: nil
+    )
+
+    let params = CompositionParams(
+      targetSize: CGSize(width: 640, height: 360),
+      padding: 0.0,
+      cornerRadius: 0.0,
+      backgroundColor: 0xFF80_8080,
+      backgroundImagePath: nil,
+      cursorSize: 1.0,
+      showCursor: false,
+      zoomEnabled: false,
+      zoomFactor: 1.5,
+      followStrength: 0.15,
+      fpsHint: 30,
+      fitMode: "fit",
+      audioGainDb: 0.0,
+      audioVolumePercent: 100.0
+    )
+
+    let composition = try XCTUnwrap(
+      CompositionBuilder().buildExport(
+        asset: AVAsset(url: screenURL),
+        cameraAsset: AVAsset(url: cameraURL),
+        params: params,
+        cameraParams: cameraParams,
+        cursorRecording: nil
+      )
+    )
+    XCTAssertNil(composition.inlineCameraRenderPlan)
+    XCTAssertNil(composition.videoComposition.animationTool)
+
+    let exporter = LetterboxExporter()
+    let encodedURL = tempDir.appendingPathComponent("encoded.mov")
+    let renderExpectation = expectation(description: "encoded render")
+    var renderResult: Result<URL, Error>?
+    exporter._testRenderFinalExport(result: composition, outputURL: encodedURL) { result in
+      renderResult = result
+      renderExpectation.fulfill()
+    }
+    wait(for: [renderExpectation], timeout: 30.0)
+    _ = try XCTUnwrap(try renderResult?.get())
+
+    // What the production validator measured.
+    let validatorDelta = try XCTUnwrap(
+      exporter._testEvaluateFinalExportReferenceRender(
+        referenceResult: composition,
+        finalExportURL: encodedURL
+      ).maxChannelDelta
+    )
+
+    // The same two comparisons, computed here: the file against a reference
+    // encoded the way the exporter encodes, and against a raw one.
+    let referenceImage = try sampleFrameImage(
+      asset: composition.asset,
+      videoComposition: composition.videoComposition
+    )
+    let fileMetrics = try averageColorMetrics(
+      for: try sampleFrameImage(url: encodedURL),
+      ignoreTransparentPixels: false
+    )
+    let rawReference = try averageColorMetrics(
+      for: referenceImage,
+      ignoreTransparentPixels: false
+    )
+    let encodedReference = try averageColorMetrics(
+      for: try applyExportTransfer(to: referenceImage),
+      ignoreTransparentPixels: false
+    )
+
+    func maxChannelDelta(
+      _ lhs: (red: Double, green: Double, blue: Double, luma: Double),
+      _ rhs: (red: Double, green: Double, blue: Double, luma: Double)
+    ) -> Double {
+      max(abs(lhs.red - rhs.red), abs(lhs.green - rhs.green), abs(lhs.blue - rhs.blue))
+    }
+
+    let rawDelta = maxChannelDelta(fileMetrics, rawReference)
+    let encodedDelta = maxChannelDelta(fileMetrics, encodedReference)
+    // Same three channels as the colour-parity helper, for the same reason:
+    // xcodebuild's result-stream reporter swallows the test process's stdout,
+    // so the appended file is the one that survives a run.
+    let summary = String(
+      format: "final-export validator deltas: validator %.4f  vs-encoded-ref %.4f  vs-raw-ref %.4f",
+      validatorDelta,
+      encodedDelta,
+      rawDelta
+    )
+    NSLog("%@", summary)
+    print(summary)
+    let marginLog = URL(fileURLWithPath: "/tmp/clingfy-colour-margins.txt")
+    if let handle = try? FileHandle(forWritingTo: marginLog) {
+      handle.seekToEndOfFile()
+      handle.write(Data((summary + "\n").utf8))
+      try? handle.close()
+    } else {
+      try? (summary + "\n").write(to: marginLog, atomically: true, encoding: .utf8)
+    }
+
+    // Guards against a vacuous fixture: 0 and 255 are fixed points of the
+    // export curve, so on a saturated fixture both references would agree and
+    // the assertion below would hold no matter what the validator did.
+    XCTAssertGreaterThan(
+      rawDelta,
+      0.03,
+      "fixture does not exercise the transfer curve — use a midtone"
+    )
+    XCTAssertLessThan(
+      encodedDelta,
+      0.02,
+      "the exported file should sit close to a reference encoded the same way"
+    )
+    XCTAssertLessThan(
+      validatorDelta,
+      rawDelta * 0.5,
+      "the validator is measuring the transfer curve, not export drift — its reference lost its encode"
+    )
+  }
+
   func testStyledCameraIntermediateValidationFailsForBlackStyledAsset() throws {
     let tempDir = makeTemporaryDirectory()
     defer { try? FileManager.default.removeItem(at: tempDir) }
