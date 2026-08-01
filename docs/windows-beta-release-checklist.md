@@ -69,7 +69,13 @@ zero-frame cycles, no crash, and flat GPU memory; fewer than
       constraint: a non-48 kHz device must produce the warning, not
       silence).
 
-## 3. Release gates (state as of 2026-06-12)
+## 3. Release gates (state as of 2026-08-01)
+
+> **Re-probe before trusting an item here.** The 2026-06-12 pass recorded the
+> Windows feed as "404 — never published". It had been live for weeks by the
+> time anyone acted on that line, and acting on it overwrote a published
+> artifact. Dates on entries are when they were last CHECKED, not when they
+> were written.
 
 Shipped and verified:
 
@@ -87,20 +93,32 @@ Shipped and verified:
 
 Open — must close before invites:
 
-- [ ] **Publish the Windows feed.** Live probe 2026-06-12: the dev Front
-      Door serves the macOS `appcast.xml` (HTTP 200) but
-      `downloads/windows/latest-windows.json` is **404 — never
-      published** (so are the installer + `.sha256` blobs). Until a real
-      `local_release.ps1 … -Publish` run uploads them, every installed
-      build's Check for Updates reports "update check failed". Re-probe
-      both channels after the first publish; `05_smoke.ps1` covers this
-      automatically in the publish path.
+- [x] **Publish the Windows feed.** RE-PROBED 2026-07-28: BOTH channels
+      are live. prod serves `1.0.6+7` (published 2026-07-23); dev is
+      published continuously by the Azure lane
+      (`azure-pipelines/windows-dev-channel.yml`), whose `counter()` was
+      at ~100. The 2026-06-12 "404 — never published" note was stale by
+      six weeks and is what led to a local publish that OVERWROTE the
+      pipeline's own `1.0.6+7` artifact (same name: the counter is seeded
+      at 7 and pubspec also reads 1.0.6+7). #377 added an overwrite guard
+      so that cannot recur silently.
+      **Do not publish from a workstation** — the pipeline owns this
+      feed.
 - [ ] NVIDIA + AMD stress verdicts (§2).
 - [ ] Mixed-DPI dual-monitor pass (§2).
-- [ ] **Forced-native-crash → Sentry round-trip from an installed
-      build** (`CLINGFY_CRASH_TEST=1` + hidden diagnostics button +
-      `upload_symbols.ps1`): exercised on a staged copy in 10.4,
-      deliberately re-run here on the real installed artifact.
+- [x] **Forced-native-crash → Sentry round-trip from an installed
+      build** — DONE 2026-07-29 on the real installed artifact. Crash
+      ingested, and the stack SYMBOLICATED: 15 of 16 frames named with
+      line numbers, top frame
+      `clingfy::bridge::routers::misc::…HandleDebugForceNativeCrash`
+      → `MethodRouter::Dispatch` → `StandardMethodCodec::…`. The one
+      unnamed frame is `ucrtbase.dll` CRT internals.
+      **Trap worth knowing:** `upload_symbols.ps1` only runs from
+      `local_release.ps1`'s `if ($Publish)` branch, so a build shared
+      OUTSIDE the publish path has no symbols uploaded and reports every
+      `clingfy.exe` frame as `<NO SYMBOL>` (seen once, 11 of 13). #377
+      added the missing upload step to the DEV pipeline, which had never
+      uploaded symbols at all — so every beta crash was unsymbolicated.
 - [ ] **Licensing on a clean box**: activate / validate / consume-trial
       on a machine that never saw the repo (matrix row 2). Depends on:
 - [x] **Beta entitlement provisioning decision** — DECIDED 2026-07-27:
@@ -137,8 +155,15 @@ Open — must close before invites:
       design, so nothing silently ships half-signed.
       **Consequence to expect:** every tester sees a SmartScreen warning on
       first run. That is the price of this choice, not a bug report.
-- [ ] Sentry release tagging spot-check: one report from an installed
-      build maps to the exact version+build.
+- [x] Sentry release tagging spot-check — DONE 2026-07-29:
+      `clingfy@1.0.6+7+ab92530` on the crash event itself, mapping to
+      exact version + build + commit.
+      **It was broken until #374:** every Windows build tagged
+      `clingfy@++<commit>` (no version at all), because the lane never
+      passed FLUTTER_BUILD_NAME / FLUTTER_BUILD_NUMBER as dart-defines —
+      the `--build-name` / `--build-number` FLAGS do not reach
+      `String.fromEnvironment`. Guarded by #375, which logs an error at
+      startup if the tag ever degrades again.
 
 Not beta-blocking, tracked:
 
@@ -149,8 +174,19 @@ Not beta-blocking, tracked:
 - [ ] Runner.rc cosmetic strings PR (FileDescription/window
       title/copyright → "Clingfy"); `CompanyName`/`ProductName` stay
       frozen — they are the path_provider data-directory identity.
-- [ ] D9 per-channel mutex/data-dir identity (dev + prod currently share
-      both; tester guide warns against side-by-side installs).
+- [x] D9 per-channel mutex/data-dir identity — DONE 2026-07-27 (#373)
+      and completed 2026-08-01 (#394). All five identities fork: the
+      single-instance mutex, the settings store (Runner.rc ProductName →
+      path_provider), recordings, logs and the preset-thumbnail cache.
+      prod's identity is byte-for-byte unchanged and pinned by tests;
+      anything unrecognised resolves to prod, because guessing dev for a
+      released build would point it away from the user's recordings.
+      The native LOG path was missed in #373 — the edit added the include
+      but not the use — and was fixed in #394; its test now asserts the
+      path AGREES WITH the identity helper rather than restating the
+      literal, which is what let the miss survive review.
+      Side-by-side installs are now safe; the tester-guide warning can be
+      relaxed.
 
 ## 4. Cutting the beta build
 
