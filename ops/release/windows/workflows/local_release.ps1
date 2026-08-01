@@ -86,6 +86,24 @@ if ($RunTests) {
   # -Clean run was sabotaged by the previous one, and the script's own
   # documented `-Clean -RunTests` combination could never complete twice.
   if (-not (Test-Path -LiteralPath $testsDir -PathType Container)) {
+    # windows/flutter/ephemeral/generated_config.cmake is GENERATED and
+    # gitignored, and windows/flutter/CMakeLists.txt includes it unconditionally.
+    # A developer machine always has one lying around from a previous build, so
+    # this gate configured fine locally and failed on a FRESH CI AGENT with
+    # "include could not find requested file". Observed on the first prod run
+    # that used -RunTests.
+    #
+    # --config-only writes the ephemeral files without doing a build, which is
+    # exactly what the test configure needs and costs seconds.
+    $ephemeral = Resolve-RepoPath (Join-Path 'windows' 'flutter/ephemeral/generated_config.cmake')
+    if (-not (Test-Path -LiteralPath $ephemeral)) {
+      Write-Step 'Test gate: generating Flutter ephemeral config (fresh checkout)'
+      & flutter build windows --config-only
+      if ($LASTEXITCODE -ne 0) {
+        Fail "flutter build windows --config-only failed (exit $LASTEXITCODE)."
+      }
+    }
+
     Write-Step 'Test gate: configuring native test build (first run, or after -Clean)'
     # The FLUTTER_VERSION defines feed the runner's version resource. Derived
     # from the running SDK so this cannot drift from whatever built the app.
