@@ -186,4 +186,53 @@ extension ColorTransferFunctions {
     return kernel.apply(
       extent: image.extent, arguments: [image, Float(exportTransferGamma)]) ?? image
   }
+
+  // MARK: - Reading an exported file back
+
+  /// The inverse of `srgbToExportTransferKernel`: exported value -> sRGB.
+  static let exportTransferToSrgbKernel: CIColorKernel? = CIColorKernel(
+    source:
+      "kernel vec4 exportTransferToSrgb(__sample s, float gamma) {"
+      + "  float alpha = max(s.a, 0.0001);"
+      + "  vec3 encoded = clamp(s.rgb / alpha, 0.0, 1.0);"
+      // Undo the pure power law the export wrote — the same decode Apple
+      // applies to a 709 tag.
+      + "  vec3 linear = pow(encoded, vec3(gamma));"
+      // sRGB OETF: linear light -> encoded.
+      + "  vec3 srgb = mix("
+      + "    linear * 12.92,"
+      + "    1.055 * pow(linear, vec3(1.0 / 2.4)) - 0.055,"
+      + "    step(vec3(0.0031308), linear));"
+      + "  return vec4(clamp(srgb, 0.0, 1.0) * s.a, s.a);"
+      + "}"
+  )
+
+  /// CPU twin of `exportTransferToSrgbKernel`, and the exact inverse of
+  /// `srgbToExportTransfer`.
+  static func exportTransferToSrgb(_ value: UInt8) -> UInt8 {
+    let linear = pow(Double(value) / 255.0, exportTransferGamma)
+    let encoded = linearToSrgb(linear)
+    return UInt8(max(0.0, min(255.0, (encoded * 255.0).rounded())))
+  }
+
+  /// Decodes a frame read back out of an exported file into sRGB.
+  ///
+  /// Needed by anything that re-reads the export's own output and hands the
+  /// pixels to something that will treat them as sRGB. The GIF transcode is
+  /// the case that made this necessary: it reads the finished MOV, whose
+  /// pixels carry `exportTransferGamma`, and writes them into a container
+  /// viewers read as sRGB — so without this, every GIF shipped its midtones
+  /// about 11 code values dark.
+  ///
+  /// Deliberately expressed as the inverse of `exportTransferGamma` rather
+  /// than as a fixed curve: if the export's transfer ever changes, this
+  /// follows it, and the two cannot drift apart.
+  ///
+  /// Returns the image unchanged if the kernel failed to compile, for the same
+  /// reason `encodeForExport` does.
+  static func decodeFromExport(_ image: CIImage) -> CIImage {
+    guard let kernel = exportTransferToSrgbKernel else { return image }
+    return kernel.apply(
+      extent: image.extent, arguments: [image, Float(exportTransferGamma)]) ?? image
+  }
 }

@@ -194,6 +194,32 @@ final class ColorTransferFunctionTests: XCTestCase {
     XCTAssertEqual(mismatches, [], "export kernel disagrees with its CPU twin")
   }
 
+  /// Anything that reads an exported file back has to undo what the export
+  /// wrote. The GIF transcode does exactly that, and shipped ~11 code values
+  /// dark in the midtones until it did.
+  ///
+  /// Round-trip rather than a table of expected values on purpose: both
+  /// directions derive from `exportTransferGamma`, so if that constant ever
+  /// changes this test still holds and still means the same thing.
+  func testTheExportCurveRoundTripsBackToSrgb() {
+    var worst = 0
+    for value in 0...255 {
+      let stored = ColorTransferFunctions.srgbToExportTransfer(UInt8(value))
+      let recovered = ColorTransferFunctions.exportTransferToSrgb(stored)
+      worst = max(worst, abs(Int(recovered) - value))
+    }
+    // The forward curve is lossy at 8 bits — it compresses some ranges, so a
+    // few code values cannot come back exactly. What matters is that the error
+    // stays far below the ~11-level defect this inverse exists to prevent.
+    XCTAssertLessThanOrEqual(worst, 2, "export transfer does not invert cleanly")
+  }
+
+  func testTheExportDecodeKernelCompiles() {
+    XCTAssertNotNil(
+      ColorTransferFunctions.exportTransferToSrgbKernel,
+      "the CIColorKernel source failed to compile")
+  }
+
   func testTheExportCurveIsMonotonicAndPreservesEndpoints() {
     XCTAssertEqual(ColorTransferFunctions.srgbToExportTransfer(0), 0)
     XCTAssertEqual(ColorTransferFunctions.srgbToExportTransfer(255), 255)

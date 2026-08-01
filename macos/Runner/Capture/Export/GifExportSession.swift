@@ -21,7 +21,12 @@ final class GifExportSession {
   }
 
   private let workQueue = DispatchQueue(label: "com.clingfy.gif-export", qos: .userInitiated)
-  private let ciContext = CIContext(options: [.cacheIntermediates: false])
+  /// Must be the pipeline's context, not a bare `CIContext`. Core Image
+  /// defaults to a LINEAR working space, and
+  /// `ColorTransferFunctions.decodeFromExport` — like every kernel in that
+  /// file — assumes it is handed gamma-encoded sRGB samples.
+  /// `VideoColorPipeline.makeCIContext()` is what makes that true.
+  private let ciContext = VideoColorPipeline.makeCIContext()
   private let lock = NSLock()
   private var cancelled = false
 
@@ -169,8 +174,17 @@ final class GifExportSession {
 
   /// CVPixelBuffer -> downscaled `CGImage` at `size` (aspect already baked into
   /// `size` by the policy). Skips scaling when the source already fits.
+  ///
+  /// The decode is the subtle part. The source is the exporter's own MOV, so
+  /// its pixels carry `ColorTransferFunctions.exportTransferGamma` and the file
+  /// is tagged BT.709. A GIF has no transfer tag — viewers read its palette as
+  /// sRGB — so handing those values straight through published them about 11
+  /// code values dark in the midtones, against an editor that showed sRGB.
+  /// `decodeFromExport` puts them back in the space the GIF will be read in.
   private func makeDownscaledCGImage(from pixelBuffer: CVPixelBuffer, to size: CGSize) -> CGImage? {
-    var image = CIImage(cvPixelBuffer: pixelBuffer)
+    var image = ColorTransferFunctions.decodeFromExport(
+      VideoColorPipeline.sourceImage(pixelBuffer: pixelBuffer)
+    )
     let sourceExtent = image.extent
     guard sourceExtent.width > 0, sourceExtent.height > 0 else { return nil }
     if size.width < sourceExtent.width || size.height < sourceExtent.height {
@@ -181,6 +195,11 @@ final class GifExportSession {
     }
     // Crop to the exact policy size so the emitted frame's pixel dimensions are
     // deterministic (the transform's extent can land a sub-pixel short).
-    return ciContext.createCGImage(image, from: CGRect(origin: .zero, size: size))
+    return ciContext.createCGImage(
+      image,
+      from: CGRect(origin: .zero, size: size),
+      format: .RGBA8,
+      colorSpace: VideoColorPipeline.workingColorSpace
+    )
   }
 }

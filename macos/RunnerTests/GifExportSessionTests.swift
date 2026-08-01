@@ -24,7 +24,12 @@ final class GifExportSessionTests: XCTestCase {
 
   // MARK: - fixtures
 
-  private func makeSolidPixelBuffer(width: Int, height: Int, red: CGFloat) -> CVPixelBuffer {
+  /// `level` overrides the per-frame gradient with a flat grey at that value on
+  /// every channel, for the colour test — a gradient would average away the
+  /// exact code value being asserted.
+  private func makeSolidPixelBuffer(
+    width: Int, height: Int, red: CGFloat, level: CGFloat? = nil
+  ) -> CVPixelBuffer {
     var pixelBuffer: CVPixelBuffer?
     CVPixelBufferCreate(
       kCFAllocatorDefault, width, height, kCVPixelFormatType_32BGRA,
@@ -40,15 +45,16 @@ final class GifExportSessionTests: XCTestCase {
       space: CGColorSpaceCreateDeviceRGB(),
       bitmapInfo: CGImageAlphaInfo.premultipliedFirst.rawValue
         | CGBitmapInfo.byteOrder32Little.rawValue)!
-    context.setFillColor(CGColor(colorSpace: CGColorSpaceCreateDeviceRGB(), components: [red, 0.3, 0.6, 1])!)
+    let components: [CGFloat] = level.map { [$0, $0, $0, 1] } ?? [red, 0.3, 0.6, 1]
+    context.setFillColor(CGColor(colorSpace: CGColorSpaceCreateDeviceRGB(), components: components)!)
     context.fill(CGRect(x: 0, y: 0, width: width, height: height))
     CVPixelBufferUnlockBaseAddress(buffer, [])
     return buffer
   }
 
-  private func writeSolidVideo(url: URL, width: Int, height: Int, seconds: Double, fps: Int32 = 30)
-    throws
-  {
+  private func writeSolidVideo(
+    url: URL, width: Int, height: Int, seconds: Double, fps: Int32 = 30, level: CGFloat? = nil
+  ) throws {
     let writer = try AVAssetWriter(url: url, fileType: .mov)
     let input = AVAssetWriterInput(
       mediaType: .video,
@@ -74,7 +80,7 @@ final class GifExportSessionTests: XCTestCase {
         RunLoop.current.run(until: Date(timeIntervalSinceNow: 0.005))
       }
       let buffer = makeSolidPixelBuffer(
-        width: width, height: height, red: CGFloat(frame) / CGFloat(frameCount))
+        width: width, height: height, red: CGFloat(frame) / CGFloat(frameCount), level: level)
       XCTAssertTrue(adaptor.append(buffer, withPresentationTime: CMTime(value: CMTimeValue(frame), timescale: fps)))
     }
     input.markAsFinished()
@@ -164,5 +170,72 @@ final class GifExportSessionTests: XCTestCase {
     let frame = try XCTUnwrap(CGImageSourceCreateImageAtIndex(imageSource, 0, nil))
     XCTAssertEqual(frame.width, 480)
     XCTAssertEqual(frame.height, 270)
+  }
+
+  /// The GIF source is the exporter's own MOV, so its pixels carry
+  /// `ColorTransferFunctions.exportTransferGamma` and the file is tagged
+  /// BT.709. A GIF has no transfer tag — viewers read its palette as sRGB — so
+  /// passing those values straight through published every GIF with its
+  /// midtones about 11 code values dark against the editor.
+  ///
+  /// Mid-grey on purpose: 0 and 255 are fixed points of the export curve, so a
+  /// black-or-white fixture would pass with or without the decode.
+  func testDecodesTheExportTransferSoGifMidtonesMatchTheEditor() throws {
+    // What the exporter writes for sRGB mid-grey.
+    let editorValue: UInt8 = 128
+    let storedValue = ColorTransferFunctions.srgbToExportTransfer(editorValue)
+    XCTAssertNotEqual(
+      storedValue,
+      editorValue,
+      "fixture does not exercise the transfer curve — pick a midtone"
+    )
+
+    let source = tempDir.appendingPathComponent("encoded.mov")
+    try writeSolidVideo(
+      url: source,
+      width: 120,
+      height: 80,
+      seconds: 0.4,
+      fps: 30,
+      level: CGFloat(storedValue) / 255.0
+    )
+    let gif = tempDir.appendingPathComponent("encoded.gif")
+
+    let result = try XCTUnwrap(transcode(source, to: gif))
+    guard case .success = result else { return XCTFail("transcode failed: \(result)") }
+
+    let imageSource = try XCTUnwrap(CGImageSourceCreateWithURL(gif as CFURL, nil))
+    let frame = try XCTUnwrap(CGImageSourceCreateImageAtIndex(imageSource, 0, nil))
+    let decoded = try centerPixel(of: frame)
+
+    // Tolerance covers h264 round-trip plus GIF palette quantization. The
+    // failure this guards is 11 code values wide, so it stays well separated.
+    for (channel, value) in [("red", decoded.red), ("green", decoded.green), ("blue", decoded.blue)] {
+      XCTAssertEqual(
+        Double(value),
+        Double(editorValue),
+        accuracy: 6.0,
+        "\(channel): GIF should carry the editor's value \(editorValue), not the stored \(storedValue)"
+      )
+    }
+  }
+
+  private func centerPixel(of image: CGImage) throws -> (red: UInt8, green: UInt8, blue: UInt8) {
+    var pixel = [UInt8](repeating: 0, count: 4)
+    let context = try XCTUnwrap(
+      CGContext(
+        data: &pixel,
+        width: 1,
+        height: 1,
+        bitsPerComponent: 8,
+        bytesPerRow: 4,
+        space: CGColorSpace(name: CGColorSpace.sRGB)!,
+        bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue
+      )
+    )
+    // Draw the image scaled down to the single destination pixel, which
+    // averages it — the fixture is a flat colour, so the average is the colour.
+    context.draw(image, in: CGRect(x: 0, y: 0, width: 1, height: 1))
+    return (pixel[0], pixel[1], pixel[2])
   }
 }
