@@ -1523,9 +1523,19 @@ final class LetterboxExporter {
       }
 
       let formatDescription = CMSampleBufferGetFormatDescription(sampleBuffer)
-      let orientedImage = VideoColorPipeline.sourceImage(
-        pixelBuffer: pixelBuffer,
-        formatDescription: formatDescription
+      // Decode out of the export transfer, exactly as
+      // `InlineCameraRenderer.makeCameraSourceImage` does. This reader is a
+      // plain track output, so like the product's it hands back the camera
+      // file's 709-encoded values while the screen half of the reference
+      // arrives already decoded by the composition's animation tool. If the
+      // reference skipped this, it would carry the camera a full transfer step
+      // away from the file it is being compared against, and the validator
+      // would report drift on a correct export.
+      let orientedImage = ColorTransferFunctions.decodeFromExport(
+        VideoColorPipeline.sourceImage(
+          pixelBuffer: pixelBuffer,
+          formatDescription: formatDescription
+        )
       )
         .transformed(by: normalizedTransform)
         .cropped(to: CGRect(origin: .zero, size: orientedSize))
@@ -2902,59 +2912,6 @@ final class LetterboxExporter {
       return
     }
 
-    func pickPreset(for exportAsset: AVAsset) -> String {
-      let compatible = Set(AVAssetExportSession.exportPresets(compatibleWith: exportAsset))
-
-      func pick(_ candidates: [String]) -> String {
-        for candidate in candidates where compatible.contains(candidate) {
-          return candidate
-        }
-        return AVAssetExportPresetHighestQuality
-      }
-
-      let useHevc = codec == "hevc"
-      if target.width >= 7680 || target.height >= 4320 {
-        if #available(macOS 13.0, *) {
-          return
-            useHevc
-            ? pick([
-              "AVAssetExportPresetHEVC7680x4320",
-              AVAssetExportPresetHEVCHighestQuality,
-              AVAssetExportPresetHighestQuality,
-            ])
-            : pick([AVAssetExportPresetHighestQuality])
-        }
-        return
-          useHevc
-          ? pick([AVAssetExportPresetHEVCHighestQuality, AVAssetExportPresetHighestQuality])
-          : pick([AVAssetExportPresetHighestQuality])
-      } else if target.width >= 3840 || target.height >= 2160 {
-        return
-          useHevc
-          ? pick([
-            AVAssetExportPresetHEVC3840x2160,
-            AVAssetExportPreset3840x2160,
-            AVAssetExportPresetHEVCHighestQuality,
-            AVAssetExportPresetHighestQuality,
-          ])
-          : pick([AVAssetExportPreset3840x2160, AVAssetExportPresetHighestQuality])
-      } else if target.width >= 1920 || target.height >= 1080 {
-        return
-          useHevc
-          ? pick([
-            AVAssetExportPresetHEVC1920x1080,
-            AVAssetExportPreset1920x1080,
-            AVAssetExportPresetHEVCHighestQuality,
-          ])
-          : pick([AVAssetExportPreset1920x1080, AVAssetExportPresetHighestQuality])
-      }
-
-      return
-        useHevc
-        ? pick([AVAssetExportPresetHEVCHighestQuality, AVAssetExportPresetHighestQuality])
-        : pick([AVAssetExportPresetHighestQuality])
-    }
-
     func scaledProgress(
       _ progress: Double,
       into range: ClosedRange<Double>
@@ -3042,7 +2999,6 @@ final class LetterboxExporter {
         return
       }
 
-      let preset = pickPreset(for: comp.asset)
 
       // PR-3d "cut at the writer": resolve the kept clip ranges. The effect
       // composition is left in source time (so zoom/cursor/camera/color stay
@@ -3148,28 +3104,31 @@ final class LetterboxExporter {
         )
       }
 
-      let requestedType = requestedFileType(for: format)
-      let compatibleTypes = compatibleOutputTypes(
-        for: comp.asset,
-        preset: preset,
-        requestedType: requestedType
-      )
-      guard let chosenType = compatibleTypes.requested ?? compatibleTypes.firstAvailable else {
-        cleanupTemporaryArtifacts()
-        completion(
-          .failure(
-            NSError(
-              domain: "Letterbox",
-              code: -10,
-              userInfo: [NSLocalizedDescriptionKey: "No supported output file types"]
-            )
-          )
-        )
-        return
-      }
+      // The container is a pure function of the requested format.
+      //
+      // This used to construct a throwaway `AVAssetExportSession` purely to read
+      // `supportedFileTypes`. That was never an inspection — the SDK says so
+      // outright ("Does not perform an inspection of the AVAsset"), it is a
+      // per-preset constant, and across 70 logged exports spanning several
+      // presets it returned a byte-identical list every time. Since #395 the
+      // manual writer is the only render path and never needs a session at all,
+      // so the probe was asking a component that no longer renders anything
+      // whether it approved of the output container.
+      //
+      // `AVAssetWriter` is what actually writes the file, and it reports an
+      // unusable container through its own throwing initializer, already
+      // surfaced as Letterbox/-12 with the underlying error attached. That is
+      // the real check, one line later, on the real object.
+      let writerFormat = ExportFormatInfo.resolve(format)
+      // nil `avFileType` means gif, which never reaches this writer —
+      // ExportEngine renders a temp MOV and transcodes it. Fall back to a MOV
+      // container AND a mov extension: taking the extension from the resolved
+      // format would name a QuickTime file ".gif".
+      let chosenType = writerFormat.avFileType ?? .mov
+      let chosenExtension = writerFormat.avFileType == nil ? "mov" : writerFormat.ext
       let finalURL = outputURL
         .deletingPathExtension()
-        .appendingPathExtension(ext(for: chosenType))
+        .appendingPathExtension(chosenExtension)
 
       if FileManager.default.fileExists(atPath: finalURL.path) {
         try? FileManager.default.removeItem(at: finalURL)
@@ -3216,7 +3175,7 @@ final class LetterboxExporter {
         "backgroundColor": self.formattedBackgroundColor(backgroundColor),
         "backgroundImagePath": backgroundImagePath ?? "nil",
         "hasCustomBackground": backgroundColor != nil || backgroundImagePath != nil,
-        "supportedTypes": compatibleTypes.all.map(\.rawValue),
+        "outputFileType": chosenType.rawValue,
         "finalURL": finalURL.path,
       ]
       exportColorContext.forEach { exportStartContext[$0.key] = $0.value }
@@ -3703,42 +3662,6 @@ final class LetterboxExporter {
       )
       return nil
     }
-  }
-
-  private func ext(for type: AVFileType) -> String {
-    switch type {
-    case .mp4: return "mp4"
-    case .mov: return "mov"
-    case .m4v: return "m4v"
-
-    default:
-      // Last-resort safe default
-      return "mov"
-    }
-  }
-
-  private func requestedFileType(for format: String) -> AVFileType? {
-    switch format.lowercased() {
-    case "mp4": return .mp4
-    case "mov": return .mov
-    case "m4v": return .m4v
-    case "gif": return nil  // handled by a separate GIF export pipeline
-    default: return .mov
-    }
-  }
-
-  private func compatibleOutputTypes(
-    for asset: AVAsset,
-    preset: String,
-    requestedType: AVFileType?
-  ) -> (requested: AVFileType?, firstAvailable: AVFileType?, all: [AVFileType]) {
-    guard let probe = AVAssetExportSession(asset: asset, presetName: preset) else {
-      return (nil, nil, [])
-    }
-
-    let all = probe.supportedFileTypes
-    let requested = requestedType.flatMap { all.contains($0) ? $0 : nil }
-    return (requested, all.first, all)
   }
 
   private func logExportedFileInfo(url: URL) {

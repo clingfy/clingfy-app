@@ -1938,9 +1938,33 @@ final class CaptureBackendScreenCaptureKit: NSObject, CaptureBackend {
     c.minimumFrameInterval = CMTime(value: 1, timescale: CMTimeScale(frameRate))
     c.showsCursor = false
 
-    // Strongly recommended for sharpness / full-res capture
-    c.captureResolution = .best  //SCCaptureResolutionBest  // or .best in Swift, depending on SDK
+    // Selects the SOURCE sampling resolution, not the output size — `width` and
+    // `height` below still govern the buffer. On a scaled HiDPI display this is
+    // what makes SCK sample the render backing store instead of upscaling the
+    // nominal framebuffer, so it is load-bearing for sharpness there.
+    c.captureResolution = .best
     c.preservesAspectRatio = true
+
+    // Capture in sRGB rather than inheriting the display's colour space.
+    //
+    // SCStream.h: "specifies the color space of the output buffer. If not set
+    // the output buffer uses the same color space as the display." On a
+    // Display-P3 panel that meant SCK handed SCRecordingOutput P3-encoded
+    // pixels — and SCRecordingOutput stamps a fixed BT.709 tag on the file
+    // regardless, so the file described itself incorrectly and every consumer
+    // downstream faithfully believed the tag.
+    //
+    // Measured on this machine before the change: the record-accent circle,
+    // authored sRGB #FF4D5D = (255,77,93), was stored as (233,89,97) — which is
+    // what that colour converts to in Display P3, not in 709. macOS
+    // traffic-light red showed the signature that rules out compression and
+    // range errors: green went UP 7 while red went DOWN, which only a primaries
+    // transform does.
+    //
+    // Making the buffer actually BE 709/sRGB primaries is what makes the tag
+    // honest. This is a gamut fix and does NOT touch the transfer curve, which
+    // is settled at ColorTransferFunctions.exportTransferGamma.
+    c.colorSpaceName = CGColorSpace.sRGB
 
     // Rect in points (DIPs)
     // let baseRectPoints = sourceRect ?? filter.contentRect
@@ -2013,6 +2037,10 @@ final class CaptureBackendScreenCaptureKit: NSObject, CaptureBackend {
       "scalesToFit": streamConfig.scalesToFit,
       "preservesAspectRatio": streamConfig.preservesAspectRatio,
       "captureResolution": "\(streamConfig.captureResolution)",
+      // The property that decides the recording's gamut. Without it here there
+      // is no way to tell from a support log whether a project was captured
+      // before or after the sRGB capture fix.
+      "colorSpaceName": (streamConfig.colorSpaceName as String?) ?? "inherited-from-display",
       "minimumFrameIntervalSeconds": streamConfig.minimumFrameInterval.seconds,
       "showsCursor": streamConfig.showsCursor,
       "capturesAudio": streamConfig.capturesAudio,

@@ -974,14 +974,39 @@ final class InlineCameraRenderer {
     }
   }
 
+  /// Builds the camera overlay's source image, in the same space the screen is
+  /// already in.
+  ///
+  /// THE ASYMMETRY THIS CORRECTS. The screen and the camera reach `render`
+  /// through different readers. The screen comes from an
+  /// `AVAssetReaderVideoCompositionOutput` whose composition always carries an
+  /// `AVVideoCompositionCoreAnimationTool` (`build(forExport:)` passes
+  /// `includeRoundedMask: true` unconditionally), and AVFoundation hands those
+  /// frames back ALREADY decoded out of BT.709 into sRGB values. The camera
+  /// comes from a plain `AVAssetReaderTrackOutput`, which does no such thing —
+  /// its buffer still holds the 709-encoded values the camera file was written
+  /// with.
+  ///
+  /// `VideoColorPipeline.sourceImage` then declares both to be sRGB. For the
+  /// screen that is true; for the camera it is a lie, and the shared
+  /// `encodeForExport` at the end of `render` therefore encodes the camera a
+  /// second time. Measured on a real export: camera source (225,221,210)
+  /// reached the file as (221,216,205) — the screen beside it was untouched.
+  ///
+  /// Decoding here restores the symmetry, so `encodeForExport` applies exactly
+  /// once to both. `decodeFromExport` is the exact inverse of that encode and
+  /// derives from the same `exportTransferGamma`, so the round trip stays
+  /// correct if the curve ever changes.
   func makeCameraSourceImage(
     pixelBuffer: CVPixelBuffer,
     formatDescription: CMFormatDescription? = nil,
     track: AVAssetTrack
   ) -> CIImage {
-    let sourceImage = VideoColorPipeline.sourceImage(
-      pixelBuffer: pixelBuffer,
-      formatDescription: formatDescription
+    let sourceImage = ColorTransferFunctions.decodeFromExport(
+      VideoColorPipeline.sourceImage(
+        pixelBuffer: pixelBuffer,
+        formatDescription: formatDescription
+      )
     )
     let normalizedTransform = normalizedSourceTransform(for: track)
     let orientedSize = orientedSize(for: track)
