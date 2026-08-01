@@ -18,10 +18,15 @@ Fill this section before starting verification.
 - Channel: `prod`
 - Date: `2026-08-01`
 - Verified by: `Nabil Alhafez`
-- Commit: `216f1d0`
+- Commit: `TBD` (fill from the pipeline run; the branch moved after the Windows
+  publish — `develop` was merged in to pick up the export/colour fixes)
 - Tag: `v1.0.7`
 - Build: `Azure prod run TBD` (paste the run number from the pipeline)
-- Status: `In progress` — Windows artifact published and verified; manual flows below still open
+- Status: `In progress` — Windows artifact published and verified. macOS: automated
+  checks green, colour verified on device against a reference chart, recorder and
+  MOV export exercised. Remaining before approval: a manual **GIF export** (headline
+  feature, transcode path changed this cycle), plus the permissions, overlay/zoom,
+  licensing and artifact-verification sections.
 
 Possible status values:
 
@@ -46,15 +51,22 @@ flutter build macos --flavor prod
 
 Checklist:
 
-* [ ] `dart format --output=none --set-exit-if-changed .`
-* [ ] `flutter analyze test`
-* [ ] `flutter analyze lib`
-* [ ] `flutter build macos --flavor dev`
-* [ ] `flutter build macos --flavor prod`
+* [x] `dart format --output=none --set-exit-if-changed .`
+* [x] `flutter analyze test`
+* [x] `flutter analyze lib`
+* [x] `flutter build macos --flavor dev`
+* [x] `flutter build macos --flavor prod`
 
 Notes:
 
-*
+* Run on `release/1.0.7` after merging `develop` (the four export/colour merges that
+  landed after this branch was first cut). `dart format` 355 files / 0 changed;
+  both analyzers clean; `flutter test` **1116 passed, 3 skipped**; dev build
+  114.9 MB, prod build 103.0 MB. Only warning is the pre-existing Sentry
+  `@_implementationOnly` library-evolution notice from the pod.
+* Native: `LetterboxExporterTests`, `ColorTransferFunctionTests`, `ExportPrepTests`,
+  `GifExportSessionTests`, `ScreenRecorderFacadeCaptureConfigTests` all green
+  during the colour work. The full native suite is CI's job, not this checklist's.
 
 ---
 
@@ -62,18 +74,32 @@ Notes:
 
 Verify the full recording workflow.
 
-* [ ] full display recording
+* [x] full display recording
 * [ ] single window recording
 * [ ] custom area recording
 * [ ] countdown start
 * [ ] countdown cancel
-* [ ] stop flow
+* [x] stop flow
 * [ ] menu bar control
 * [ ] recording indicator overlay
 
 Notes:
 
-*
+* Maintainer reports the recorder verified on 2026-08-01. Ticked above are the
+  flows with artefacts on disk to back them: five recordings captured today at
+  the display's native 3024x1964, each finishing with manifest `status: ready`,
+  one of them with a camera track and one with `capture/system.m4a` (48 kHz
+  stereo, mean -30.9 dBFS — real audio, not a silent placeholder).
+* Left unticked deliberately — **not** failures, just no artefact to point at:
+  single-window, custom-area, countdown start/cancel, menu-bar control, and the
+  floating indicator overlay. Tick them if they were covered; they are separate
+  entry points from the full-display path that was exercised.
+* Colour was verified end to end against an sRGB reference chart rather than by
+  eye. Recorded values vs authored: pure red (255,0,0) -> (253,0,0), pure green
+  (0,255,0) -> (0,254,0), `#FF4D5D` -> (253,74,90), `#8957E5` -> (133,86,225),
+  mid grey and white within 2. Every patch within 4 code values; the pre-fix
+  behaviour would have been off by up to 117. Exporting that recording preserved
+  it: red (253,2,0), green (0,254,2), `#FF4D5D` (254,75,91).
 
 ---
 
@@ -117,25 +143,33 @@ Notes:
 
 Verify preview playback and export pipeline.
 
-* [ ] inline preview playback
-* [ ] 16:9 preview/export
+* [x] inline preview playback
+* [x] 16:9 preview/export
 * [ ] 1080p export
-* [ ] 1440p export
+* [x] 1440p export
 * [ ] 2160p export
 * [ ] MP4 export
-* [ ] MOV export
+* [x] MOV export
 * [ ] GIF export
 * [ ] background image export
 * [ ] background color export
-* [ ] save folder selection
+* [x] save folder selection
 
 Notes:
 
-*
-
----
-
-# Licensing
+* Ticked from real exports produced today, all landing in `~/Movies/Clingfy/`:
+  2560x1440 MOV (16:9, 1440p) from a 3024x1964 source, including one of the
+  colour reference chart used to verify the gamut fix. Inline preview playback
+  was exercised while scrubbing a project to a fixed timestamp for that check.
+* **GIF export is unticked and is the gap that matters most for this release.**
+  It is a headline 1.0.7 feature and its transcode path changed in this cycle
+  (it now undoes the export transfer — without that, GIFs shipped ~11 code
+  values dark in the midtones). Covered by `GifExportSessionTests`, including a
+  mutation-checked colour test, but not yet exercised by hand. Worth one manual
+  GIF before approving.
+* 1080p / 2160p / MP4 / background image / background colour: not exercised
+  today. MP4 shares the writer path with MOV and the container decision is now a
+  single map with a test, so the risk is low, but low is not verified.
 
 Verify licensing and paywall behavior.
 

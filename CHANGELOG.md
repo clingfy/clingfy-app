@@ -1,10 +1,11 @@
 ## [1.0.7] - 2026-08-01
 
-Clingfy 1.0.7 adds **GIF export** and makes exported video finally match what you saw in the preview. Colour is the headline fix: exports were being encoded with a transfer curve they didn't actually declare, so the file you shared looked washed out next to the preview you approved. That's corrected end to end, including GIFs. Alongside it: colour-grade undo/redo, a pre-recording bar that warns you about a quiet mic or speaker bleed *before* you record instead of after, and audio that survives Bluetooth microphones.
+Clingfy 1.0.7 adds **GIF export** and fixes colour end to end — from what the screen recorder captures, through the editor, to the file you share. Exports were encoded with a transfer curve they didn't declare, recordings were captured in your display's colour space but labelled as a narrower one, and the camera bubble was processed a second time the screen wasn't. Each of those quietly drained colour out of the result. All three are corrected. Alongside them: colour-grade undo/redo, a pre-recording bar that warns you about a quiet mic or speaker bleed *before* you record instead of after, and audio that survives Bluetooth microphones.
 
 ### Highlights
 - **GIF export**, with Small / Medium / Large size presets — share a loop without leaving the app.
-- **Exported colour matches the preview.** Exports declared one colour transfer and encoded another; the mismatch showed as a washed-out or shifted picture in every player. Now the encode matches the declaration, on every export path including GIF.
+- **Colour is accurate now, capture to export.** Recordings are captured in sRGB instead of inheriting your display's wider space while being labelled otherwise, so saturated colour — brand reds, logos, syntax themes, charts — no longer arrives washed out. Verified against a reference chart: every patch now lands within a few levels of the colour that was actually on screen.
+- **Exported colour matches the preview.** Exports declared one colour transfer and encoded another; the mismatch showed as a washed-out or shifted picture in every player. Fixed on every export path, including GIF, and the camera overlay no longer comes out darker than the screen behind it.
 - **Colour grade undo/redo** — step back through grading changes instead of resetting and starting again.
 - **The pre-recording bar warns you first.** A too-quiet microphone or system audio bleeding into your mic is called out before you hit record, not discovered in the export.
 
@@ -23,6 +24,8 @@ Clingfy 1.0.7 adds **GIF export** and makes exported video finally match what yo
 
 ### Bug Fixes
 - Fixed exported colour on every path: the transfer function is now the one the file declares, the gamma matches what Apple's decoder applies, GIF transcoding undoes the export transfer rather than double-applying it, and no export path skips colour encoding.
+- Fixed **recordings being captured in the display's colour space while labelled as BT.709**. On a wide-gamut Mac the file described itself incorrectly, so saturated colour was reinterpreted and shipped desaturated. Recordings made before this release keep the old data — re-record to get accurate colour.
+- Fixed the **camera overlay coming out darker than the screen behind it**. The overlay was colour-processed once more than the rest of the frame, most visibly in midtones.
 - Fixed AAC audio on **Bluetooth microphones**: the output bitrate and sample rate are derived from the real mix instead of an assumed 48 kHz, which had produced distorted or silent audio on some headsets.
 - Fixed audio output route detection, which classified by transport and could mislabel a device; it now classifies by terminal type.
 - A camera that fails or stalls at start no longer aborts the app, and a take is kept when the camera fails to finalize — you lose the camera, not the recording.
@@ -30,6 +33,8 @@ Clingfy 1.0.7 adds **GIF export** and makes exported video finally match what yo
 - The microphone level meter no longer re-frames the floating bar as it moves.
 
 ### Refactoring / Internal
+- The export now has a single final render path. A second, rarely-taken path skipped colour encoding entirely, and the post-export validator was comparing against an un-encoded reference — scoring a correct export as drifted and an incorrect one as clean.
+- Removed a leftover `AVAssetExportSession` probe from the writer path, and collapsed three copies of the output-container decision into one.
 - Windows port (internal beta): audio capture, per-channel app identity, release-lane and telemetry fixes. Not user-facing on macOS.
 - Owner-only internal and test device modes for analytics.
 
