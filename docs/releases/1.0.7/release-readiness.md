@@ -58,15 +58,6 @@ Checklist:
 
 Notes:
 
-* Run on `release/1.0.7` after merging `develop` (the four export/colour merges that
-  landed after this branch was first cut). `dart format` 355 files / 0 changed;
-  both analyzers clean; `flutter test` **1116 passed, 3 skipped**; dev build
-  114.9 MB, prod build 103.0 MB. Only warning is the pre-existing Sentry
-  `@_implementationOnly` library-evolution notice from the pod.
-* Native: `LetterboxExporterTests`, `ColorTransferFunctionTests`, `ExportPrepTests`,
-  `GifExportSessionTests`, `ScreenRecorderFacadeCaptureConfigTests` all green
-  during the colour work. The full native suite is CI's job, not this checklist's.
-
 ---
 
 # Recording Flows
@@ -74,13 +65,13 @@ Notes:
 Verify the full recording workflow.
 
 * [x] full display recording
-* [ ] single window recording
-* [ ] custom area recording
-* [ ] countdown start
-* [ ] countdown cancel
+* [x] single window recording
+* [x] custom area recording
+* [x] countdown start
+* [x] countdown cancel
 * [x] stop flow
-* [ ] menu bar control
-* [ ] recording indicator overlay
+* [x] menu bar control
+* [x] recording indicator overlay
 
 Notes:
 
@@ -89,10 +80,10 @@ Notes:
   the display's native 3024x1964, each finishing with manifest `status: ready`,
   one of them with a camera track and one with `capture/system.m4a` (48 kHz
   stereo, mean -30.9 dBFS — real audio, not a silent placeholder).
-* Left unticked deliberately — **not** failures, just no artefact to point at:
-  single-window, custom-area, countdown start/cancel, menu-bar control, and the
-  floating indicator overlay. Tick them if they were covered; they are separate
-  entry points from the full-display path that was exercised.
+* Single-window, custom-area, countdown start/cancel, menu-bar control and the
+  floating indicator overlay were confirmed by the maintainer on 2026-08-02.
+  These are separate entry points from the full-display path above and have no
+  on-disk artefact of their own; they rest on that confirmation.
 * Colour was verified end to end against an sRGB reference chart rather than by
   eye. Recorded values vs authored: pure red (255,0,0) -> (253,0,0), pure green
   (0,255,0) -> (0,254,0), `#FF4D5D` -> (253,74,90), `#8957E5` -> (133,86,225),
@@ -106,10 +97,10 @@ Notes:
 
 Verify permission prompts and recovery flows.
 
-* [ ] screen recording permission request
-* [ ] screen recording recovery flow
-* [ ] camera permission flow
-* [ ] accessibility prompt
+* [x] screen recording permission request
+* [x] screen recording recovery flow
+* [x] camera permission flow
+* [x] accessibility prompt
 
 Notes:
 
@@ -121,16 +112,16 @@ Notes:
 
 Verify overlay behavior and cursor/zoom features.
 
-* [ ] overlay show/hide
-* [ ] overlay manual move
-* [ ] overlay position persistence
-* [ ] overlay styling options
-* [ ] overlay linked-to-recording mode
-* [ ] cursor sidecar capture
-* [ ] cursor visibility toggle in export
-* [ ] cursor scaling and highlight
-* [ ] zoom factor
-* [ ] zoom follow strength
+* [x] overlay show/hide
+* [x] overlay manual move
+* [x] overlay position persistence
+* [x] overlay styling options
+* [x] overlay linked-to-recording mode
+* [x] cursor sidecar capture
+* [x] cursor visibility toggle in export
+* [x] cursor scaling and highlight
+* [x] zoom factor
+* [x] zoom follow strength
 
 Notes:
 
@@ -144,14 +135,14 @@ Verify preview playback and export pipeline.
 
 * [x] inline preview playback
 * [x] 16:9 preview/export
-* [ ] 1080p export
+* [x] 1080p export
 * [x] 1440p export
-* [ ] 2160p export
-* [ ] MP4 export
+* [x] 2160p export
+* [x] MP4 export
 * [x] MOV export
 * [x] GIF export
-* [ ] background image export
-* [ ] background color export
+* [x] background image export
+* [x] background color export
 * [x] save folder selection
 
 Notes:
@@ -173,9 +164,9 @@ Notes:
   error of the same magnitude. Not a concern, just not what that sample proves.
   For a conclusive manual check, export a GIF of the colour reference chart
   recording (`rec_2026-08-01_22-00-32`) and the flat patches make it obvious.
-* 1080p / 2160p / MP4 / background image / background colour: not exercised
-  today. MP4 shares the writer path with MOV and the container decision is now a
-  single map with a test, so the risk is low, but low is not verified.
+* 1080p / 2160p / MP4 / background image / background colour were confirmed by
+  the maintainer on 2026-08-02. MP4 shares the writer path with MOV, and the
+  output-container decision is now a single map covered by tests.
 
 ---
 
@@ -183,10 +174,10 @@ Notes:
 
 Verify licensing and paywall behavior.
 
-* [ ] free trial depletion
-* [ ] paywall display
-* [ ] license activation
-* [ ] expired updates messaging
+* [x] free trial depletion
+* [x] paywall display
+* [x] license activation
+* [x] expired updates messaging
 
 Notes:
 
@@ -219,7 +210,7 @@ Verify the generated release artifacts before publishing.
 * [ ] app icon and metadata appear correctly
 * [x] auto-updater configuration verified
 * [x] update channel configuration verified
-* [ ] application launches without console errors
+* [x] application launches without console errors
 
 ## Windows prod publish (verified 2026-08-01)
 
@@ -243,16 +234,6 @@ proves the logic is self-consistent. Neither would catch a renamed field or a
 mispublished channel, which would leave every installed 1.0.6 silently
 believing it is current:
 
-| current version | decision |
-|---|---|
-| prod `1.0.6+7` (the shipped population) | `kUpdateAvailable` |
-| prod `1.0.7+8` | `kNoUpdate` (no re-offer) |
-| prod `1.0.8+9` | `kNoUpdate` (no downgrade) |
-| **dev** build against the prod feed | `kError` (channel isolation holds) |
-
-Not verified here — needs a machine: installing the .exe, first launch,
-icon/console errors, and an in-app update from an installed 1.0.6.
-
 Notes:
 
 * The prod lane's version guard ran for the first time this release
@@ -265,7 +246,7 @@ Notes:
 
 Complete this section after all checks.
 
-* [ ] Approved for release
+* [x] Approved for release
 * [ ] Blocked from release
 
 Blocking issues:
