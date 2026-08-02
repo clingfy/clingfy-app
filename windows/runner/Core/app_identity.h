@@ -38,7 +38,12 @@ AppChannel CurrentChannel();
 // Directory name under %LOCALAPPDATA% holding recordings, logs and caches.
 //
 // prod: "Clingfy"      — UNCHANGED from every previously shipped build.
-// dev:  "Clingfy Dev"
+// dev:  "Clingfy-Dev"
+//
+// NO SPACES, either channel. This is a PATH: it is typed, pasted into scripts
+// and passed to command-line tools, where a space obliges every consumer to
+// quote it and the ones that forget fail as though the directory were missing.
+// Pinned by a test. DisplayName is the one that may read "Clingfy Dev".
 std::wstring LocalAppDataFolderName(AppChannel channel);
 
 // Suffix for the single-instance mutex and the receiver window class.
