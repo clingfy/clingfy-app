@@ -15,7 +15,11 @@ The scripts in this directory are public. Private credentials, signing assets, a
 - `04_finish.sh` - staple the notarization ticket and verify the DMG
 - `05_publish_azure.sh` - generate Sparkle metadata, upload the DMG and deltas, upload symbols, and purge CDN paths
 - `06_git_tag.sh` - create and push the release git tag
-- `notify_telegram.sh` - send release/failure notifications when Telegram credentials are configured
+- `notify_telegram.sh` - send release/failure notifications when Telegram credentials are configured. Renders the CHANGELOG section as Telegram HTML and caps it at Telegram's 4096-character limit. Preview without sending:
+  ```bash
+  APP_ENV=prod RELEASE_CHANNEL=prod ./ops/release/notify_telegram.sh success --dry-run
+  ```
+  Never fatal: a notification failure must not stop the run, because it sits between publishing the release and tagging it.
 - `commands/` - implementation scripts used by the wrapper entrypoints above
 - `workflows/ci_release.sh` - full CI release pipeline
 - `workflows/local_release.sh` - local release workflow with optional restore/publish steps
