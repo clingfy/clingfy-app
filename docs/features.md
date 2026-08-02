@@ -22,7 +22,7 @@ Status legend: ✅ shipped · 🚧 partial / with caveats · — not available y
 | Full-display recording | Record an entire display. | ✅ | ✅ |
 | Window recording | Record a single app window. | ✅ | ✅ |
 | Area recording | Draw a custom region and record just that. | ✅ | ✅ |
-| Quality presets | SD / 720p / 1080p / 2K / 4K / 8K / Vertical 4K / Native. | ✅ | — |
+| Capture quality presets | Not available. Recording always captures at the display's native resolution; output size is chosen at export instead — see **Resolution presets** under Export. | — | — |
 | Frame rate control | 30 or 60 fps. | ✅ | — |
 | Pause & resume | Pause mid-recording and continue seamlessly. | ✅ | ✅ |
 | Countdown timer | 3 / 5 / 10-second on-screen countdown before capture. | ✅ | ✅ |

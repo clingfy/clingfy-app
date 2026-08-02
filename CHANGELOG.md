@@ -1,3 +1,43 @@
+## [1.0.7] - 2026-08-01
+
+Clingfy 1.0.7 adds **GIF export** and fixes colour end to end — from what the screen recorder captures, through the editor, to the file you share. Exports were encoded with a transfer curve they didn't declare, recordings were captured in your display's colour space but labelled as a narrower one, and the camera bubble was processed a second time the screen wasn't. Each of those quietly drained colour out of the result. All three are corrected. Alongside them: colour-grade undo/redo, a pre-recording bar that warns you about a quiet mic or speaker bleed *before* you record instead of after, and audio that survives Bluetooth microphones.
+
+### Highlights
+- **GIF export**, with Small / Medium / Large size presets — share a loop without leaving the app.
+- **Colour is accurate now, capture to export.** Recordings are captured in sRGB instead of inheriting your display's wider space while being labelled otherwise, so saturated colour — brand reds, logos, syntax themes, charts — no longer arrives washed out. Verified against a reference chart: every patch now lands within a few levels of the colour that was actually on screen.
+- **Exported colour matches the preview.** Exports declared one colour transfer and encoded another; the mismatch showed as a washed-out or shifted picture in every player. Fixed on every export path, including GIF, and the camera overlay no longer comes out darker than the screen behind it.
+- **Colour grade undo/redo** — step back through grading changes instead of resetting and starting again.
+- **The pre-recording bar warns you first.** A too-quiet microphone or system audio bleeding into your mic is called out before you hit record, not discovered in the export.
+
+### New Features
+- Added **GIF export** on macOS, with Small / Medium / Large presets that trade size against fidelity.
+- Added **undo/redo for colour grading**, with the same history affordance the timeline uses.
+- The pre-recording bar now surfaces **quiet-microphone and speaker-bleed warnings**, so a bad audio setup is visible before the take rather than after it.
+- Clingfy now tells you it sends **crash reports**, and lets you turn them off in Settings › Diagnostics. The notice appears after your first export — not on launch, where a dialog about diagnostics is meaningless to someone who hasn't used the app yet.
+
+### Improvements
+- **System audio is captured by default**, and the recording bundle now reports honestly which audio sources it actually contains.
+- The display list refreshes when screens are connected or disconnected, and your chosen device is no longer lost when the list changes.
+- Audio device and route changes are pushed by CoreAudio instead of polled, so the app notices a headset appearing without a delay.
+- Post-processing audio controls are gated on what the **recording** contains rather than whatever microphone happens to be plugged in now.
+- Audio warnings collapse to a headline with detail on hover, instead of a wall of text on the bar.
+
+### Bug Fixes
+- Fixed exported colour on every path: the transfer function is now the one the file declares, the gamma matches what Apple's decoder applies, GIF transcoding undoes the export transfer rather than double-applying it, and no export path skips colour encoding.
+- Fixed **recordings being captured in the display's colour space while labelled as BT.709**. On a wide-gamut Mac the file described itself incorrectly, so saturated colour was reinterpreted and shipped desaturated. Recordings made before this release keep the old data — re-record to get accurate colour.
+- Fixed the **camera overlay coming out darker than the screen behind it**. The overlay was colour-processed once more than the rest of the frame, most visibly in midtones.
+- Fixed AAC audio on **Bluetooth microphones**: the output bitrate and sample rate are derived from the real mix instead of an assumed 48 kHz, which had produced distorted or silent audio on some headsets.
+- Fixed audio output route detection, which classified by transport and could mislabel a device; it now classifies by terminal type.
+- A camera that fails or stalls at start no longer aborts the app, and a take is kept when the camera fails to finalize — you lose the camera, not the recording.
+- A failed stop can no longer resurrect a finished recording session.
+- The microphone level meter no longer re-frames the floating bar as it moves.
+
+### Refactoring / Internal
+- The export now has a single final render path. A second, rarely-taken path skipped colour encoding entirely, and the post-export validator was comparing against an un-encoded reference — scoring a correct export as drifted and an incorrect one as clean.
+- Removed a leftover `AVAssetExportSession` probe from the writer path, and collapsed three copies of the output-container decision into one.
+- Windows port (internal beta): audio capture, per-channel app identity, release-lane and telemetry fixes. Not user-facing on macOS.
+- Owner-only internal and test device modes for analytics.
+
 ## [1.0.6] - 2026-07-22
 
 Clingfy 1.0.6 is an audio release. It adds **Voice Cleanup** — on-device background-noise removal for your microphone — and, under it, a reworked audio pipeline that records the mic and system audio as separate tracks and previews the exact mix you'll export. Your clip and color edits now also survive a restart.
