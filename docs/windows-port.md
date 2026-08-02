@@ -258,9 +258,13 @@ Signing (decision D3): material is environment-only (`WIN_SIGN_CERT_PFX`
 — the private beta may ship unsigned with SmartScreen instructions;
 pass `-RequireSignature` once the certificate decision lands.
 
-**Deferred from the original 10.5 scope, deliberately:** `Runner.rc`
-strings → "Clingfy" — ProductName is load-bearing for the Dart log
-path, so it needs its own small slice (the icon half shipped in #171:
+**Deferred from the original 10.5 scope, then completed:** `Runner.rc`
+strings → "Clingfy". FileDescription/title/copyright landed in #398;
+ProductName followed on 2026-08-02 once it was established that a
+CASE-ONLY change reuses the same directory on case-insensitive NTFS
+(verified on a real volume, not assumed). ProductName remains
+rename-frozen — case is the only degree of freedom (the icon half
+shipped in #171:
 a 10-resolution `app_icon.ico` assembled directly from the macOS
 `AppIcon.appiconset` art, deliberately not `flutter_launcher_icons`,
 whose Windows output is single-resolution and which would regenerate
@@ -358,9 +362,10 @@ the signing decision. Internal (not tester-facing): the Dart widget-test
 suite carries a flaky pre-existing baseline of ~93–164
 "No FluentLocalizations found" failures in a fixed set of harness files
 — validate changes by set-diff against that baseline, never raw counts;
-fixing the harness backlog is tracked as its own task. Also deferred:
-the Runner.rc cosmetic strings PR (`CompanyName`/`ProductName` are
-frozen as the path_provider data identity) and D9 per-channel
+fixing the harness backlog is tracked as its own task. Also deferred at
+the time, both since shipped: the Runner.rc cosmetic strings (#398, plus
+the ProductName re-case on 2026-08-02 — `CompanyName` stays frozen as
+the parent of the path_provider data identity) and D9 per-channel
 mutex/data-dir identity.
 
 ## Current status — Phase 9 (camera overlay) — COMPLETE

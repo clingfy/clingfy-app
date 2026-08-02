@@ -56,9 +56,14 @@ std::wstring InstanceMutexSuffix(AppChannel channel);
 //
 // prod: "Clingfy"   dev: "Clingfy Dev"
 //
-// Distinct from ProductName in the version resource, which is FROZEN because
-// path_provider derives the data directory from it. This one is display text
-// and safe to change; that one is an identity and is not.
+// Distinct in KIND from ProductName in the version resource, even though both
+// now read "Clingfy": this one is display text and free to change, while that
+// one is the settings-store identity path_provider derives
+// %APPDATA%\<CompanyName>\<ProductName> from. ProductName may be re-cased
+// (NTFS is case-insensitive, so the same directory is reused) but not renamed;
+// see the rule written out in Runner.rc. Do not "tidy" them into one shared
+// constant — they are equal by coincidence, and coupling them would let a
+// display-text edit silently move a released build's data directory.
 //
 // Channel-aware because D9 made side-by-side installs safe: two windows both
 // titled "Clingfy" would be a worse bug than the lowercase title this

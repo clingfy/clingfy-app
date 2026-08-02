@@ -113,6 +113,12 @@ TEST(AppIdentityTest, DisplayNameDistinguishesTheChannels) {
 // derives the data directory from. If someone ever "tidies" them into one
 // value, prod's data directory moves and every existing user is orphaned.
 // These must not be equal, and the folder name must stay the frozen literal.
+//
+// This got sharper once ProductName was re-cased to "Clingfy": it and
+// DisplayName now read the SAME, which makes them look like duplication
+// begging to be merged. They are equal by coincidence, not by contract. The
+// resource value may be re-cased (NTFS is case-insensitive, so the store is
+// reused) but never renamed; DisplayName has no such constraint.
 TEST(AppIdentityTest, DisplayNameIsNotTheDataDirectoryIdentity) {
   EXPECT_NE(DisplayName(AppChannel::kProd),
             LocalAppDataFolderName(AppChannel::kProd) + L" ");

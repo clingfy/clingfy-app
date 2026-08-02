@@ -89,12 +89,17 @@ BEGIN
     BEGIN
         BLOCK "040904e4"
         BEGIN
+            // CompanyName is the PARENT of the settings store
+            // (%APPDATA%\<CompanyName>\<ProductName>). Unlike ProductName
+            // below it cannot even be re-cased usefully, and changing the
+            // name would move the parent and orphan BOTH channels at once.
+            // Left exactly as shipped.
             VALUE "CompanyName", "com.clingfy" "\0"
             // FileDescription is what Task Manager shows in its Name column,
             // so it is display text, not identity — safe to capitalise, and
             // worth forking per channel now that side-by-side installs are
-            // supported (D9). Contrast ProductName below, which is FROZEN
-            // because path_provider derives the data directory from it.
+            // supported (D9). ProductName below is identity, and the rules
+            // for changing it are spelled out there.
 #ifdef CLINGFY_CHANNEL_DEV
             VALUE "FileDescription", "Clingfy Dev" "\0"
 #else
@@ -106,14 +111,32 @@ BEGIN
             VALUE "InternalName", "clingfy" "\0"
             VALUE "LegalCopyright", "Copyright (C) 2026 Clingfy. All rights reserved." "\0"
             VALUE "OriginalFilename", "clingfy.exe" "\0"
+            // ProductName IS the settings store: path_provider builds
+            // %APPDATA%\<CompanyName>\<ProductName>. D9 forks it so dev gets
+            // its own store rather than writing into prod's.
+            //
+            // THE RULE, now that this has been re-cased once: the prod value
+            // may change CASE and nothing else. NTFS is case-insensitive, so
+            // "clingfy" and "Clingfy" are the same directory -- the existing
+            // store is reused, the on-disk name simply keeps whatever casing
+            // it was created with. Verified on the real volume before making
+            // this change: a file written via one casing reads back through
+            // the other, and mkdir with new casing creates no second folder.
+            //
+            // Any change that is NOT case-only is a different directory, and
+            // a released build would start up looking at an empty one while
+            // the user's settings sit in the old path. That is silent data
+            // loss on upgrade, not a rename.
+            //
+            // dev deliberately breaks that rule below ("clingfy-dev" ->
+            // "Clingfy Dev" is a real rename): it matches DisplayName and
+            // LocalAppDataFolderName, and orphaning a developer's dev-channel
+            // settings is a developer's problem. Never reason that way about
+            // the prod value.
 #ifdef CLINGFY_CHANNEL_DEV
-            // D9: path_provider builds its directory from CompanyName and
-            // ProductName, so forking ProductName is what gives dev its own
-            // settings store. CompanyName stays shared -- it is the vendor,
-            // not the install.
-            VALUE "ProductName", "clingfy-dev" "\0"
+            VALUE "ProductName", "Clingfy Dev" "\0"
 #else
-            VALUE "ProductName", "clingfy" "\0"
+            VALUE "ProductName", "Clingfy" "\0"
 #endif
             VALUE "ProductVersion", VERSION_AS_STRING "\0"
         END
