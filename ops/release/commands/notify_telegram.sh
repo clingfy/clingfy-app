@@ -40,15 +40,36 @@ if [[ "$status" == "success" ]]; then
 
   if [[ -f "$RELEASE_NOTES_TEMP" ]]; then
     message+=$'📝 <b>What\'s New:</b>\n'
+    # Telegram sendMessage caps a message at 4096 characters and answers a longer
+    # one with HTTP 400 "message is too long" — which fails this step, and this
+    # step runs BEFORE "Step 6: Create Git Tag", so an over-long changelog
+    # publishes the release and then aborts the pipeline before it is tagged.
+    # That is exactly what happened on 1.0.7 (5037 chars; 1.0.6 was 2797 and
+    # fit by luck, which is why the limit had never been hit).
+    #
+    # Budget the notes rather than the finished message, and cut on a line
+    # boundary before HTML-escaping: truncating escaped text can slice a
+    # `&amp;` in half and Telegram then rejects the whole message as malformed
+    # HTML — trading a length failure for a parse failure.
+    notes_budget=3200
+    notes_used=0
+    notes_truncated=0
     while IFS= read -r line; do
       line="${line#- }"
-      if [[ -n "$line" ]]; then
-        message+=$'• '
-        # Escape the changelog lines!
-        message+="$(escape_html "$line")"
-        message+=$'\n'
+      [[ -z "$line" ]] && continue
+      if (( notes_used + ${#line} + 3 > notes_budget )); then
+        notes_truncated=1
+        break
       fi
+      notes_used=$(( notes_used + ${#line} + 3 ))
+      message+=$'• '
+      message+="$(escape_html "$line")"
+      message+=$'\n'
     done < "$RELEASE_NOTES_TEMP"
+    if (( notes_truncated )); then
+      message+=$'…\n<i>Release notes truncated — see the full changelog in the app or on GitHub.</i>\n'
+      log_warn "Release notes exceeded ${notes_budget} chars; truncated for Telegram."
+    fi
     message+=$'\n'
   fi
 
@@ -86,7 +107,21 @@ body=$(sed '$ d' <<< "$response")
 if [[ "$http_code" != "200" ]]; then
   log_error "Telegram API failed with HTTP $http_code"
   log_error "Telegram Response: $body"
-  exit 1
+  # Deliberately NOT fatal.
+  #
+  # On the success path this runs AFTER "Step 5: Publish Release" and BEFORE
+  # "Step 6: Create Git Tag" (azure-pipelines/release-prod.yml). Exiting non-zero
+  # here therefore leaves a release that is fully built, notarized, published to
+  # the CDN and live on the appcast — but untagged, because the pipeline stops.
+  # That happened on 1.0.7: users were being offered the update while the repo
+  # had no v1.0.7 tag.
+  #
+  # A chat notification is not a release gate. Telegram being down, a rotated
+  # token, or an over-long message must never cost the tag. The failure is
+  # logged loudly above and the step is still visible in the run; the operator
+  # can resend by hand.
+  log_warn "Continuing anyway — a notification failure must not block the git tag."
+  exit 0
 fi
 
 log_success "Telegram notification sent (${status})"
