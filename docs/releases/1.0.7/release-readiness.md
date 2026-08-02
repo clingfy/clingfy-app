@@ -23,10 +23,9 @@ Fill this section before starting verification.
 - Tag: `v1.0.7`
 - Build: `Azure prod run TBD` (paste the run number from the pipeline)
 - Status: `In progress` — Windows artifact published and verified. macOS: automated
-  checks green, colour verified on device against a reference chart, recorder and
-  MOV export exercised. Remaining before approval: a manual **GIF export** (headline
-  feature, transcode path changed this cycle), plus the permissions, overlay/zoom,
-  licensing and artifact-verification sections.
+  checks green, colour verified on device against a reference chart, recorder, MOV
+  export and GIF export (both size presets) exercised. Remaining before approval:
+  the permissions, overlay/zoom, licensing and artifact-verification sections.
 
 Possible status values:
 
@@ -150,7 +149,7 @@ Verify preview playback and export pipeline.
 * [ ] 2160p export
 * [ ] MP4 export
 * [x] MOV export
-* [ ] GIF export
+* [x] GIF export
 * [ ] background image export
 * [ ] background color export
 * [x] save folder selection
@@ -161,12 +160,19 @@ Notes:
   2560x1440 MOV (16:9, 1440p) from a 3024x1964 source, including one of the
   colour reference chart used to verify the gamut fix. Inline preview playback
   was exercised while scrubbing a project to a fixed timestamp for that check.
-* **GIF export is unticked and is the gap that matters most for this release.**
-  It is a headline 1.0.7 feature and its transcode path changed in this cycle
-  (it now undoes the export transfer — without that, GIFs shipped ~11 code
-  values dark in the midtones). Covered by `GifExportSessionTests`, including a
-  mutation-checked colour test, but not yet exercised by hand. Worth one manual
-  GIF before approving.
+* **GIF export verified by hand on 2026-08-02**, at two presets: Large
+  (1080x608) and Small (480x270), from a 9.7 s recording. Valid GIF87a,
+  infinite loop (NETSCAPE2.0 count 0), 146 frames at 15.0 fps on the ideal
+  decimation grid, long-edge caps correct for both presets.
+* GIF **colour** is proven by test, not by that sample. The transcode now undoes
+  the export transfer — without it GIFs shipped ~11 code values dark in the
+  midtones — and `GifExportSessionTests` pins it with a mutation-checked case
+  (removing the decode fails 117 against an expected 128). On the hand-exported
+  sample the decode is visible but the margin is thin: the content is dark
+  blues where the curve barely moves, and GIF's 256-colour quantization adds
+  error of the same magnitude. Not a concern, just not what that sample proves.
+  For a conclusive manual check, export a GIF of the colour reference chart
+  recording (`rec_2026-08-01_22-00-32`) and the flat patches make it obvious.
 * 1080p / 2160p / MP4 / background image / background colour: not exercised
   today. MP4 shares the writer path with MOV and the container decision is now a
   single map with a test, so the risk is low, but low is not verified.
