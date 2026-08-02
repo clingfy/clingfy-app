@@ -185,6 +185,20 @@ log_info "Generating appcast with: $SPARKLE_BIN"
   --embed-release-notes \
   --ed-key-file "$SPARKLE_KEY_PATH"
 
+# The DMG name carries only the marketing version, but sparkle:version is the
+# Azure build id and changes every run. Republishing a version (the deliberate
+# ALLOW_OVERWRITE path) therefore REPLACES the blob while generate_appcast keeps
+# the old item -- 775 and 776 are different versions to it. The survivor's
+# edSignature was cut for bytes that no longer exist at the URL it points to.
+#
+# Sparkle picks the highest version, so this is latent rather than breaking,
+# which is precisely why it shipped twice unnoticed (1.0.6 as 618+619, 1.0.7 as
+# 775+776). Run before the upload so the feed never carries an item that cannot
+# pass signature verification.
+log_info "Pruning superseded appcast items"
+python3 "$SCRIPT_ROOT/lib/prune_appcast_duplicates.py" "$APPCAST_XML" \
+  || die "Appcast prune failed; refusing to publish a feed with stale items."
+
 log_info "Uploading DMG"
 az_upload_blob "$AZ_STORAGE_ACCOUNT" "$AZ_CONTAINER" "$release_dmg_path" "${AZ_BINARIES_FOLDER}/$FINAL_DMG_NAME"
 
