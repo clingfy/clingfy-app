@@ -205,8 +205,8 @@ Notes:
 
 Ensure repository documentation and release tooling are in place.
 
-* [ ] release tooling documented in `ops/release/README.md`
-* [ ] `README.md` updated
+* [x] release tooling documented in `ops/release/README.md`
+* [x] `README.md` updated
 * [x] `LICENSE` added
 * [x] `LICENSING.md` added
 * [x] `CONTRIBUTING.md` added
@@ -216,10 +216,21 @@ Notes:
 
 * The four "added" rows are ticked from the files being present at the release
   commit — that is the whole claim those rows make, and it is checkable.
-* The two left unticked are **judgment calls, not existence checks**:
-  `ops/release/README.md` and `README.md` both exist, but "documented" and
-  "updated" mean *current for this release*, which only the maintainer can say.
-  Ticking them from `test -f` would have been the wrong kind of green.
+* The other two are **currency judgments, not existence checks**. Both files
+  exist, but "documented" and "updated" mean *current for this release*, and
+  ticking those from `test -f` would have been the wrong kind of green. Closed
+  2026-08-03 against what changed in this cycle rather than against the files
+  existing:
+  * `ops/release/README.md` — updated this cycle for the notifier work: it now
+    documents the 4096-character cap, the `--dry-run` preview, and the reason the
+    notifier is deliberately non-fatal (it sits between publishing the release
+    and tagging it, so a chat failure must not cost the tag). Every script in
+    `ops/release/` still has its line.
+  * `README.md` — current for 1.0.7's user-facing surface. GIF export is listed
+    (`Export as MP4, MOV, or GIF`), there is no hardcoded version to go stale,
+    and it does **not** repeat the false "quality presets" claim corrected in
+    `docs/features.md` this cycle — its "high-resolution export presets" line
+    refers to the export-side presets, which are real and reachable.
 
 ---
 
@@ -232,6 +243,18 @@ Verify the generated release artifacts before publishing.
 * [x] auto-updater configuration verified
 * [x] update channel configuration verified
 * [x] application launches without console errors
+
+Partial evidence for the two open rows, from inspecting the **published** DMG
+(downloaded from the CDN, not a local build) on 2026-08-03:
+
+* The DMG downloads, attaches, and contains `Clingfy.app`.
+* Metadata is correct: `CFBundleShortVersionString 1.0.7`, `CFBundleVersion 776`.
+* The app was built from `8479c1b` — read out of `COMMIT_HASH` in the Flutter
+  snapshot. This is what caught `v1.0.7` being tagged at the wrong commit; the
+  tag has since been moved. See the note under Release Metadata.
+
+Left unticked because neither row is fully covered: the app was never launched
+from the mounted image, and the icon was not looked at.
 
 ## Windows prod publish (verified 2026-08-01)
 
