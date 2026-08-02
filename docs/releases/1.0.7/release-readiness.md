@@ -177,6 +177,10 @@ Notes:
   today. MP4 shares the writer path with MOV and the container decision is now a
   single map with a test, so the risk is low, but low is not verified.
 
+---
+
+# Licensing
+
 Verify licensing and paywall behavior.
 
 * [ ] free trial depletion
