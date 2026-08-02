@@ -230,6 +230,28 @@ stages:
               RELEASE_CHANNEL: $(RELEASE_CHANNEL)
               BUILD_NUMBER_OVERRIDE: $(BUILD_NUMBER)
 
+          # Tag IMMEDIATELY after publish, before anything ancillary.
+          #
+          # This used to run last, after the artifact upload and both Telegram
+          # steps. Step 5 makes the release real — the DMG is on the CDN and the
+          # appcast serves it — so every step between publish and tag is a window
+          # where the release ships untagged. On 1.0.7 that window fired: the
+          # success notification returned HTTP 400 ("message is too long"), the
+          # job stopped, and users were being offered an update the repo had no
+          # tag for. The notifier is no longer fatal, but it was never the only
+          # thing that could fail here; PublishBuildArtifacts can too.
+          #
+          # Ordering is the actual fix. Tag the moment the release exists, then
+          # do the cosmetic work.
+          - bash: |
+              ./ops/release/06_git_tag.sh
+            displayName: "Step 6: Create Git Tag"
+            condition: succeeded()
+            env:
+              APP_ENV: $(APP_ENV)
+              RELEASE_CHANNEL: $(RELEASE_CHANNEL)
+              BUILD_NUMBER_OVERRIDE: $(BUILD_NUMBER)
+
           - task: PublishBuildArtifacts@1
             displayName: "Publish dist artifact"
             inputs:
@@ -255,12 +277,3 @@ stages:
               RELEASE_CHANNEL: $(RELEASE_CHANNEL)
               BUILD_BUILDID: $(Build.BuildId)
               BUILD_SOURCEBRANCHNAME: $(Build.SourceBranchName)
-
-          - bash: |
-              ./ops/release/06_git_tag.sh
-            displayName: "Step 6: Create Git Tag"
-            condition: succeeded()
-            env:
-              APP_ENV: $(APP_ENV)
-              RELEASE_CHANNEL: $(RELEASE_CHANNEL)
-              BUILD_NUMBER_OVERRIDE: $(BUILD_NUMBER)
