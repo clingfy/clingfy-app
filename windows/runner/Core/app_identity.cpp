@@ -37,7 +37,13 @@ AppChannel CurrentChannel() {
 }
 
 std::wstring LocalAppDataFolderName(AppChannel channel) {
-  return channel == AppChannel::kDev ? L"Clingfy Dev" : L"Clingfy";
+  // Hyphen, not a space. This name ends up in paths that get typed, pasted
+  // into scripts, and passed to command-line tools --
+  // %LOCALAPPDATA%\Clingfy-Dev\recordings -- where a space means every
+  // consumer has to remember to quote it, and the ones that forget fail in
+  // ways that look like a missing directory. DisplayName keeps the space:
+  // that one is read by humans, never typed.
+  return channel == AppChannel::kDev ? L"Clingfy-Dev" : L"Clingfy";
 }
 
 std::wstring InstanceMutexSuffix(AppChannel channel) {

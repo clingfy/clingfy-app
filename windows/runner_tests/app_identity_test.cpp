@@ -40,8 +40,19 @@ TEST(AppIdentityTest, DevAndProdShareNothing) {
 }
 
 TEST(AppIdentityTest, DevHasItsOwnNames) {
-  EXPECT_EQ(LocalAppDataFolderName(AppChannel::kDev), L"Clingfy Dev");
+  EXPECT_EQ(LocalAppDataFolderName(AppChannel::kDev), L"Clingfy-Dev");
   EXPECT_EQ(InstanceMutexSuffix(AppChannel::kDev), L"com.clingfy.clingfy.dev");
+}
+
+// The data folder is a PATH: it gets typed, pasted into scripts and handed to
+// command-line tools, so a space in it means every consumer has to remember to
+// quote it and the ones that forget fail as if the directory were missing.
+// This briefly shipped as "Clingfy Dev" and the space was the complaint.
+TEST(AppIdentityTest, DataFolderNamesContainNoSpaces) {
+  for (const AppChannel channel : {AppChannel::kProd, AppChannel::kDev}) {
+    EXPECT_EQ(LocalAppDataFolderName(channel).find(L' '), std::wstring::npos)
+        << "data folder names must not contain spaces";
+  }
 }
 
 // ---------------------------------------------------------------------------
@@ -124,9 +135,13 @@ TEST(AppIdentityTest, DisplayNameIsNotTheDataDirectoryIdentity) {
             LocalAppDataFolderName(AppChannel::kProd) + L" ");
   // The prod data folder is still exactly the shipped literal.
   EXPECT_EQ(LocalAppDataFolderName(AppChannel::kProd), L"Clingfy");
-  // Dev's display name and its data folder happen to read alike; that is
-  // coincidence, not coupling — the folder is pinned above, this is not.
+  // Dev is where the two kinds visibly come apart: the folder is
+  // "Clingfy-Dev" (a path, so no space) while the display name is
+  // "Clingfy Dev" (read by humans, never typed). Same channel, two spellings,
+  // on purpose.
   EXPECT_EQ(DisplayName(AppChannel::kDev), L"Clingfy Dev");
+  EXPECT_NE(DisplayName(AppChannel::kDev),
+            LocalAppDataFolderName(AppChannel::kDev));
 }
 
 TEST(AppIdentityTest, DisplayNameWrapperMatchesTheCompiledChannel) {

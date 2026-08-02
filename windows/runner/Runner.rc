@@ -128,13 +128,14 @@ BEGIN
             // the user's settings sit in the old path. That is silent data
             // loss on upgrade, not a rename.
             //
-            // dev deliberately breaks that rule below ("clingfy-dev" ->
-            // "Clingfy Dev" is a real rename): it matches DisplayName and
-            // LocalAppDataFolderName, and orphaning a developer's dev-channel
-            // settings is a developer's problem. Never reason that way about
-            // the prod value.
+            // dev follows the same rule: "clingfy-dev" -> "Clingfy-Dev" is
+            // case-only too, so dev's existing settings store is reused as
+            // well. It briefly said "Clingfy Dev", which WOULD have been a
+            // real rename; the hyphen is what keeps both channels inside the
+            // case-only rule, and it also keeps the name free of a space that
+            // every script touching the path would have to quote.
 #ifdef CLINGFY_CHANNEL_DEV
-            VALUE "ProductName", "Clingfy Dev" "\0"
+            VALUE "ProductName", "Clingfy-Dev" "\0"
 #else
             VALUE "ProductName", "Clingfy" "\0"
 #endif

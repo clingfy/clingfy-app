@@ -173,7 +173,7 @@ Not beta-blocking, tracked:
       check; no automated gate exists.
 - [x] Runner.rc cosmetic strings — DONE (#398: FileDescription/window
       title/copyright → "Clingfy") and finished 2026-08-02 by re-casing
-      `ProductName` to "Clingfy" (dev: "Clingfy Dev"). Safe because NTFS
+      `ProductName` to "Clingfy" (dev: "Clingfy-Dev"). Safe because NTFS
       is case-insensitive: `%APPDATA%\com.clingfy\clingfy` and `...\Clingfy`
       are the same directory, verified on a real volume before the change.
       `ProductName` may still only be RE-CASED, never renamed, and
