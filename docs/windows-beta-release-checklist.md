@@ -171,9 +171,14 @@ Not beta-blocking, tracked:
       only" on unlicensed installs (`ops/release/windows/RUNBOOK.md`);
       verify the license before any **commercial** ship. Manual operator
       check; no automated gate exists.
-- [ ] Runner.rc cosmetic strings PR (FileDescription/window
-      title/copyright → "Clingfy"); `CompanyName`/`ProductName` stay
-      frozen — they are the path_provider data-directory identity.
+- [x] Runner.rc cosmetic strings — DONE (#398: FileDescription/window
+      title/copyright → "Clingfy") and finished 2026-08-02 by re-casing
+      `ProductName` to "Clingfy" (dev: "Clingfy Dev"). Safe because NTFS
+      is case-insensitive: `%APPDATA%\com.clingfy\clingfy` and `...\Clingfy`
+      are the same directory, verified on a real volume before the change.
+      `ProductName` may still only be RE-CASED, never renamed, and
+      `CompanyName` stays `com.clingfy` — it is the parent directory, so
+      changing it would orphan both channels at once.
 - [x] D9 per-channel mutex/data-dir identity — DONE 2026-07-27 (#373)
       and completed 2026-08-01 (#394). All five identities fork: the
       single-instance mutex, the settings store (Runner.rc ProductName →
