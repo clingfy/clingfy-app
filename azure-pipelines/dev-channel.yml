@@ -84,7 +84,12 @@ steps:
       BUILD_NUMBER_OVERRIDE: $(BUILD_NUMBER)
 
   - task: AzureCLI@2
-    displayName: "Step 0.5: Release Version Exists Guard"
+    # Refuses to publish over a version already in the DEV blob. Named
+    # "Release Version Exists Guard" until 2026-08-02 -- the prod lane's name,
+    # as the two were swapped. Unlike prod's, this one has no ALLOW_OVERWRITE
+    # escape hatch: a dev rebuild bumps its counter, so a collision here means
+    # something is wrong rather than intended.
+    displayName: "Step 0.5: Overwrite guard (dev version not already published)"
     env:
       APP_ENV: $(APP_ENV)
       RELEASE_CHANNEL: $(RELEASE_CHANNEL)

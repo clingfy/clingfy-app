@@ -91,7 +91,13 @@ stages:
               BUILD_SOURCEBRANCHNAME: $(Build.SourceBranchName)
 
           - task: AzureCLI@2
-            displayName: "Step 0.5: Dev Channel Version Exists Guard"
+            # Refuses to publish over a version already in the PROD blob.
+            # Named "Dev Channel Version Exists Guard" until 2026-08-02, which
+            # is the dev lane's (equally wrong) name -- the two were swapped.
+            # It reads as a precondition about some other channel; it is this
+            # lane's own overwrite guard, and the name cost real time during
+            # the 1.0.7 release.
+            displayName: "Step 0.5: Overwrite guard (prod version not already published)"
             env:
               APP_ENV: $(APP_ENV)
               RELEASE_CHANNEL: $(RELEASE_CHANNEL)
