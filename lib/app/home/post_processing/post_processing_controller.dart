@@ -1,4 +1,5 @@
 import 'dart:async';
+import 'dart:io';
 import 'package:clingfy/app/infrastructure/analytics/analytics_events.dart';
 import 'package:clingfy/app/infrastructure/analytics/analytics_service.dart';
 import 'package:clingfy/app/config/build_config.dart';
@@ -11,6 +12,9 @@ import 'package:clingfy/core/export/models/export_settings_types.dart';
 import 'package:clingfy/l10n/app_localizations.dart';
 import 'package:clingfy/core/logging/logger_service.dart';
 import 'package:clingfy/core/models/app_models.dart';
+import 'package:clingfy/core/timeline/commands/set_color_grade_command.dart';
+import 'package:clingfy/core/timeline/edit_command.dart';
+import 'package:clingfy/core/timeline/edit_session.dart';
 import 'package:clingfy/core/timeline/model/color_grade.dart';
 import 'package:clingfy/core/timeline/model/edit_track.dart';
 import 'package:clingfy/core/color/auto_grade_heuristic.dart';
@@ -135,6 +139,16 @@ class PostProcessingController extends ChangeNotifier {
   final ActionThrottler _colorGradePreviewThrottler = ActionThrottler(
     interval: Duration(milliseconds: 40),
   );
+  // Undo/redo history for the color track. Its own session (like the clip and
+  // zoom editors own theirs) — the unified cross-track stack is a later step.
+  late final EditSession _colorSession = EditSession(
+    onFlush: _onColorEditFlushed,
+  );
+  // Grade as it was when the current slider gesture started, i.e. before the
+  // live drag ticks. Non-null only between the first tick and the matching
+  // [commitColorGrade], so a whole drag collapses into ONE history entry
+  // instead of one per tick.
+  ColorGrade? _colorGestureBaseline;
   final ActionThrottler _cameraManualPreviewThrottler = ActionThrottler();
   CameraPreviewChangeKind _pendingCameraPreviewChangeKind =
       CameraPreviewChangeKind.none;
@@ -166,6 +180,11 @@ class PostProcessingController extends ChangeNotifier {
   VoiceCleanup get voiceCleanup => _voiceCleanup;
   double get audioVolumePercent => _audioVolumePercent;
   ColorGrade get colorGrade => _colorGrade;
+
+  /// True when there is a committed color edit to step back to. A slider drag
+  /// in flight does not count until [commitColorGrade] closes it.
+  bool get canUndoColorGrade => _colorSession.canUndo;
+  bool get canRedoColorGrade => _colorSession.canRedo;
   String? get cameraPath => _cameraPath;
   bool get hasCameraAsset => _cameraPath != null && _cameraPath!.isNotEmpty;
   CameraCompositionState? get cameraState => _cameraState;
@@ -179,13 +198,48 @@ class PostProcessingController extends ChangeNotifier {
 
   // --- Setters ---
 
+  /// Rendered thumbnail path for a background-preset card, or null when the
+  /// platform cannot produce one (the picker then keeps its palette swatch).
+  ///
+  /// Intensity, blur and seed are FIXED here rather than taken from the live
+  /// preset. The card says "this is Graphic Mesh", not "this is Graphic Mesh at
+  /// 62% intensity" — and passing the live values would render and cache a new
+  /// PNG on every frame of a slider drag. Only the preset id and palette vary,
+  /// which are discrete taps, so the cache holds one file per combination.
+  ///
+  /// The seed is fixed for the same reason: Randomize would otherwise
+  /// invalidate every thumbnail on the screen.
+  Future<String?> presetThumbnail(String presetId, String paletteId) {
+    return _nativeBridge.canvasPresetThumbnail(
+      presetId: presetId,
+      palette: paletteId,
+      intensity: BackgroundPresetCatalog.defaultIntensity,
+      blur: BackgroundPresetCatalog.defaultBlur,
+      seed: 1,
+      width: 72,
+      height: 48,
+    );
+  }
+
   void setLayoutPreset(LayoutPreset v) {
     _settings.post.updateLayoutPreset(v);
+    // [applyProcessing] drives `processVideo`, which is a no-op on Windows —
+    // so without this the layout reached the export and nothing else. Native
+    // needs it on the canvas channel for two reasons: padding/radius are
+    // normalised against the export target these presets resolve, and a layout
+    // that changes the canvas ASPECT requires the preview session to be
+    // rebuilt (the shared texture is sized to it and cannot be resized).
+    _pushCanvas();
     applyProcessing();
   }
 
   void setResolutionPreset(ResolutionPreset v) {
     _settings.post.updateResolutionPreset(v);
+    // Same as [setLayoutPreset]: the resolution is half of the export target
+    // that padding and corner radius are normalised against. It does not
+    // reshape the preview texture (that stays aspect-only inside a fixed
+    // budget), so this pushes the value without forcing a rebuild.
+    _pushCanvas();
     applyProcessing();
   }
 
@@ -194,14 +248,56 @@ class PostProcessingController extends ChangeNotifier {
     applyProcessing();
   }
 
+  /// Pushes the canvas framing to the live preview.
+  ///
+  /// Every canvas mutator routes through here. Before this existed,
+  /// [setPadding] and [setRadius] only called `notifyListeners()` while the
+  /// three background setters also called [applyProcessing] — so once the
+  /// preview started drawing the canvas, two of the five controls would have
+  /// looked dead. One helper keeps the next canvas control correct by default
+  /// instead of correct by memory.
+  ///
+  /// `padding` and `cornerRadius` are export-output pixels; native normalises
+  /// them against the export canvas it resolves from the layout and resolution
+  /// presets, so the preview's smaller surface shows proportionally identical
+  /// framing rather than ~3x thicker padding at 4K. See
+  /// `windows/runner/Core/canvas_composition.h`.
+  void _pushCanvas() {
+    final sessionId = _activeSessionId;
+    if (sessionId == null) return;
+    // Best-effort: a stale session is dropped native-side, and a preview that
+    // is not open simply has nothing to repaint.
+    unawaited(
+      _nativeBridge
+          .previewSetCanvas(
+            padding: _videoPadding,
+            cornerRadius: _videoRadius,
+            backgroundColor: _backgroundColor,
+            backgroundImagePath: _backgroundImagePath,
+            backgroundKind: _backgroundKind.name,
+            backgroundPresetId: _backgroundPreset?.id,
+            backgroundPresetPalette: _backgroundPreset?.palette,
+            backgroundPresetIntensity: _backgroundPreset?.intensity ?? 0.5,
+            backgroundPresetBlur: _backgroundPreset?.blur ?? 0.0,
+            backgroundPresetSeed: _backgroundPreset?.seed ?? 0,
+            layoutPreset: _settings.post.layoutPreset.name,
+            resolutionPreset: _settings.post.resolutionPreset.name,
+            sessionId: sessionId,
+          )
+          .catchError((Object _) {}),
+    );
+  }
+
   void setPadding(double v) {
     _videoPadding = v;
     notifyListeners();
+    _pushCanvas();
   }
 
   void setRadius(double v) {
     _videoRadius = v;
     notifyListeners();
+    _pushCanvas();
   }
 
   void setBackgroundColor(int? v) {
@@ -210,6 +306,7 @@ class PostProcessingController extends ChangeNotifier {
     _backgroundPreset = null;
     _backgroundKind = BackgroundKind.color;
     notifyListeners();
+    _pushCanvas();
     applyProcessing();
   }
 
@@ -221,6 +318,7 @@ class PostProcessingController extends ChangeNotifier {
         ? BackgroundKind.image
         : BackgroundKind.color;
     notifyListeners();
+    _pushCanvas();
     applyProcessing();
   }
 
@@ -230,6 +328,7 @@ class PostProcessingController extends ChangeNotifier {
     _backgroundImagePath = null;
     _backgroundKind = BackgroundKind.preset;
     notifyListeners();
+    _pushCanvas();
     applyProcessing();
   }
 
@@ -614,48 +713,114 @@ class PostProcessingController extends ChangeNotifier {
   // --- Color grade ---
 
   void setColorGradeExposure(double v) {
-    _colorGrade = _colorGrade.copyWith(exposure: v.clamp(-1.0, 1.0));
-    notifyListeners();
-    _schedulePreviewColorGrade();
+    _applyLiveColorGrade(_colorGrade.copyWith(exposure: v.clamp(-1.0, 1.0)));
   }
 
   void setColorGradeContrast(double v) {
-    _colorGrade = _colorGrade.copyWith(contrast: v.clamp(-1.0, 1.0));
-    notifyListeners();
-    _schedulePreviewColorGrade();
+    _applyLiveColorGrade(_colorGrade.copyWith(contrast: v.clamp(-1.0, 1.0)));
   }
 
   void setColorGradeSaturation(double v) {
-    _colorGrade = _colorGrade.copyWith(saturation: v.clamp(-1.0, 1.0));
-    notifyListeners();
-    _schedulePreviewColorGrade();
+    _applyLiveColorGrade(_colorGrade.copyWith(saturation: v.clamp(-1.0, 1.0)));
   }
 
   void setColorGradeTemperature(double v) {
-    _colorGrade = _colorGrade.copyWith(temperature: v.clamp(-1.0, 1.0));
-    notifyListeners();
-    _schedulePreviewColorGrade();
+    _applyLiveColorGrade(_colorGrade.copyWith(temperature: v.clamp(-1.0, 1.0)));
   }
 
   void setColorGradeTint(double v) {
-    _colorGrade = _colorGrade.copyWith(tint: v.clamp(-1.0, 1.0));
+    _applyLiveColorGrade(_colorGrade.copyWith(tint: v.clamp(-1.0, 1.0)));
+  }
+
+  /// Applies a drag tick: the grade moves (so the preview tracks the slider)
+  /// but nothing is recorded yet. The pre-gesture grade is snapshotted on the
+  /// first tick so [commitColorGrade] can record the whole drag as one edit.
+  void _applyLiveColorGrade(ColorGrade next) {
+    _colorGestureBaseline ??= _colorGrade;
+    _colorGrade = next;
     notifyListeners();
     _schedulePreviewColorGrade();
   }
 
   /// Flush the debounce and push the final grade immediately (slider release).
-  /// This is the color-edit commit point, so it is also where the grade is
-  /// persisted to the project bundle (drag ticks only update the preview).
+  /// This is the color-edit commit point: it closes the gesture into a single
+  /// undoable entry and persists the grade to the project bundle (drag ticks
+  /// only update the preview).
   void commitColorGrade() {
-    _colorGradePreviewThrottler.cancel();
-    _pushPreviewColorGrade();
-    _persistEditorStateIfActive();
+    final baseline = _colorGestureBaseline;
+    _colorGestureBaseline = null;
+    if (baseline == null || baseline == _colorGrade) {
+      // Nothing moved since the last commit (a tap on the track, or a drag
+      // that landed back where it started) — push and persist, no history
+      // entry for a no-op.
+      _syncColorGradeToPreviewAndDisk();
+      return;
+    }
+    final next = _colorGrade;
+    // Rewind to the pre-gesture grade so the command snapshots the honest
+    // "previous" through its own live getter; execute() immediately re-applies
+    // [next], so this is invisible (no notifyListeners in between).
+    _colorGrade = baseline;
+    _executeColorGradeEdit(next);
   }
 
   /// One-tap auto enhance: apply a tasteful preset, or clear back to neutral.
   void setColorGradeAutoEnhance(bool enabled) {
-    _colorGrade = enabled ? autoEnhanceGrade() : const ColorGrade();
+    // A discrete toggle can land while a slider gesture is still open (drag,
+    // then click Auto without releasing). Close that gesture first so the drag
+    // keeps its own history entry instead of being swallowed by this one.
+    // Only when that gesture actually moved something: committing a zero-net
+    // gesture (or none at all) would push and persist the PRE-toggle grade
+    // immediately before this method pushes and persists the new one.
+    if (_colorGestureBaseline != null && _colorGestureBaseline != _colorGrade) {
+      commitColorGrade();
+    }
+    _colorGestureBaseline = null;
+    final next = enabled ? autoEnhanceGrade() : const ColorGrade();
+    if (next == _colorGrade) {
+      _syncColorGradeToPreviewAndDisk();
+      return;
+    }
+    _executeColorGradeEdit(next);
+  }
+
+  /// Steps the color grade back to the state before the last committed edit.
+  /// No-op when the history is empty.
+  void undoColorGrade() {
+    if (!_colorSession.canUndo) return;
+    // An in-flight drag is abandoned rather than committed: the user asked for
+    // the *previous* state, so its uncommitted ticks must not become an entry.
+    _colorGestureBaseline = null;
+    _colorSession.undo();
+  }
+
+  /// Re-applies the last undone color edit. No-op when nothing was undone.
+  void redoColorGrade() {
+    if (!_colorSession.canRedo) return;
+    _colorGestureBaseline = null;
+    _colorSession.redo();
+  }
+
+  void _executeColorGradeEdit(ColorGrade next) {
+    _colorSession.execute(
+      SetColorGradeCommand(
+        get: () => _colorGrade,
+        set: (grade) => _colorGrade = grade,
+        next: next,
+      ),
+    );
+  }
+
+  /// Every history-recorded color change lands here via [EditSession.onFlush]
+  /// — execute, undo and redo alike. No-op commits skip the history and sync
+  /// straight through [_syncColorGradeToPreviewAndDisk].
+  void _onColorEditFlushed(Set<EditDomain> dirtyDomains) {
+    if (!dirtyDomains.contains(EditDomain.color)) return;
     notifyListeners();
+    _syncColorGradeToPreviewAndDisk();
+  }
+
+  void _syncColorGradeToPreviewAndDisk() {
     _colorGradePreviewThrottler.cancel();
     _pushPreviewColorGrade();
     _persistEditorStateIfActive();
@@ -796,6 +961,10 @@ class PostProcessingController extends ChangeNotifier {
     _voiceCleanup = _settings.post.postVoiceCleanup;
     _audioVolumePercent = _settings.post.postAudioVolumePercent;
     _colorGrade = const ColorGrade();
+    // History belongs to the recording that produced it — never let an undo
+    // from the previous project reach into this one.
+    _colorSession.clear();
+    _colorGestureBaseline = null;
     _cameraPath = null;
     _cameraState = null;
     _cameraExportCapabilities = const CameraExportCapabilities.allSupported();
@@ -851,6 +1020,11 @@ class PostProcessingController extends ChangeNotifier {
     _backgroundImagePath = state.backgroundImagePath;
     _backgroundPreset = state.backgroundPreset;
     _colorGrade = state.colorGrade;
+    // Restoring saved state is not an edit: nothing here is undoable, and this
+    // lands asynchronously (scene load) after [attachToRecording], so any entry
+    // recorded in that window would now point at a stale pre-restore grade.
+    _colorSession.clear();
+    _colorGestureBaseline = null;
   }
 
   /// Persists the current editor state (canvas appearance + color grade) to the
@@ -1073,6 +1247,7 @@ class PostProcessingController extends ChangeNotifier {
       initialExportFormat: _settings.export.exportFormatType,
       initialExportCodec: _settings.export.exportCodecType,
       initialExportBitrate: _settings.export.exportBitrateType,
+      initialGifSize: _settings.export.gifSizeType,
       onPickFolder: _settings.workspace.chooseSaveFolderPath,
     );
 
@@ -1099,6 +1274,13 @@ class PostProcessingController extends ChangeNotifier {
     final chosenBitrate = dialogResult.exportBitrate.wireValue;
     if (chosenBitrate != _settings.export.exportBitrate) {
       await _settings.export.updateExportBitrate(chosenBitrate);
+    }
+
+    // Apply and persist the GIF size (only meaningful for GIF exports, but the
+    // dialog always returns the current selection).
+    final chosenGifSize = dialogResult.gifSize.wireValue;
+    if (chosenGifSize != _settings.export.gifSize) {
+      await _settings.export.updateGifSize(chosenGifSize);
     }
 
     // Determine target size
@@ -1151,6 +1333,10 @@ class PostProcessingController extends ChangeNotifier {
       _activeExportTransaction!.setTag(
         'export.bitrate',
         _settings.export.exportBitrate,
+      );
+      _activeExportTransaction!.setTag(
+        'export.gif_size',
+        _settings.export.gifSize,
       );
       _activeExportTransaction!.setTag(
         'audio.gain_db',
@@ -1225,6 +1411,9 @@ class PostProcessingController extends ChangeNotifier {
         'format': _settings.export.exportFormat,
         'codec': _settings.export.exportCodec,
         'bitrate': _settings.export.exportBitrate,
+        // GIF-only: long-edge size preset (small/medium/large). Native ignores
+        // it for non-GIF formats. Older payloads that omit it default to large.
+        'gifSize': _settings.export.gifSize,
         if (_cameraPath != null) 'cameraPath': _cameraPath,
         ...?_cameraState?.toMap(),
         // PR-3d: the kept clip ranges (split / cut / trim) so native bakes the
@@ -1389,11 +1578,69 @@ class PostProcessingController extends ChangeNotifier {
 
   void expandExportDock() => showExportProgressModal();
 
+  /// Name of the directory inside a `.clingfyproj` that holds bundled canvas
+  /// assets. Kept next to the other project state rather than beside the media.
+  static const String kCanvasAssetsDirName = 'canvas_assets';
+
   Future<String?> pickImage() async {
     try {
-      return await _nativeBridge.invokeMethod<String>('pickImage');
+      final picked = await _nativeBridge.invokeMethod<String>('pickImage');
+      if (picked == null || picked.isEmpty) return null;
+      // Bundle a copy into the project. A raw path breaks the moment the
+      // original moves or is deleted, and a macOS path is meaningless on
+      // Windows — so a project referencing one would render a missing
+      // background on the other platform, which is the WYSIWYG failure this
+      // whole port exists to remove.
+      return await _bundleBackgroundImage(picked) ?? picked;
     } catch (e) {
       Log.e("PostProcessing", 'Error picking image: $e');
+      return null;
+    }
+  }
+
+  /// Copies [sourcePath] into the active project's canvas-assets directory and
+  /// returns the bundled copy's path.
+  ///
+  /// Returns null when there is no open project or the copy fails; the caller
+  /// then falls back to the original path, which still works on this machine
+  /// even though it will not travel with the project.
+  Future<String?> _bundleBackgroundImage(String sourcePath) async {
+    final projectPath = _projectPath;
+    if (projectPath == null) return null;
+    try {
+      final source = File(sourcePath);
+      if (!await source.exists()) return null;
+
+      final sep = Platform.pathSeparator;
+      final assetsDir = Directory('$projectPath$sep$kCanvasAssetsDirName');
+      await assetsDir.create(recursive: true);
+
+      // Split the basename by hand: this repo does not depend on package:path
+      // (canvas_appearance_store.dart joins with Platform.pathSeparator too).
+      // Accept BOTH separators so a path that came from a macOS-authored
+      // project still splits correctly on Windows.
+      final lastSep = sourcePath.lastIndexOf(RegExp(r'[\\/]'));
+      final fileName = lastSep >= 0
+          ? sourcePath.substring(lastSep + 1)
+          : sourcePath;
+      final dot = fileName.lastIndexOf('.');
+      final base = dot > 0 ? fileName.substring(0, dot) : fileName;
+      final ext = dot > 0 ? fileName.substring(dot) : '';
+
+      // Name carries the source's modified stamp, so re-picking the same
+      // unchanged file reuses the existing copy instead of growing the bundle
+      // on every selection, while an edited original still produces a new one.
+      final stat = await source.stat();
+      final stamp = stat.modified.millisecondsSinceEpoch;
+      final destPath = '${assetsDir.path}${sep}bg_${base}_$stamp$ext';
+
+      final dest = File(destPath);
+      if (!await dest.exists()) {
+        await source.copy(destPath);
+      }
+      return destPath;
+    } catch (e) {
+      Log.e("PostProcessing", 'Error bundling background image: $e');
       return null;
     }
   }

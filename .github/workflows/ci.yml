@@ -261,6 +261,17 @@ jobs:
       - name: Run fast native tests
         run: |
           set -euo pipefail
+          # These classes were previously covered by a single
+          # -only-testing:RunnerTests/RunnerTests selector. No class of that
+          # name exists — RunnerTests.swift declares LetterboxExporterTests,
+          # ColorGradeTests and 20 others — so xcodebuild matched nothing and
+          # reported success on zero tests.
+          #
+          # Enumerating the real classes surfaced five problems that had been
+          # invisible for months: three stale assertions, a flaky one, and four
+          # that hung for 180-360s each on a runner with no microphone. All are
+          # fixed, so nothing here is skipped. If a -skip-testing line ever
+          # reappears, it should say why and name what would remove it.
           xcodebuild \
             -workspace macos/Runner.xcworkspace \
             -scheme "$APP_ENV" \
@@ -283,10 +294,34 @@ jobs:
             -only-testing:RunnerTests/PreviewProfileTests \
             -only-testing:RunnerTests/RecordingFailureRecoveryTests \
             -only-testing:RunnerTests/RecordingIndicatorViewTests \
-            -only-testing:RunnerTests/RunnerTests \
+            -only-testing:RunnerTests/RenamedRecordingProjectOpenTests \
+            -only-testing:RunnerTests/RecordingProjectPathsTests \
+            -only-testing:RunnerTests/RecordingMetadataTests \
+            -only-testing:RunnerTests/RecordingProjectPackageRegistrationTests \
+            -only-testing:RunnerTests/CameraRecorderTests \
+            -only-testing:RunnerTests/CameraLayoutResolverTests \
+            -only-testing:RunnerTests/CameraTransformTimelineBuilderTests \
+            -only-testing:RunnerTests/CameraAnimationTimelineBuilderTests \
+            -only-testing:RunnerTests/ScreenCaptureKitOverlayFilterPolicyTests \
+            -only-testing:RunnerTests/ScreenCaptureKitMicrophoneFallbackTests \
+            -only-testing:RunnerTests/MicrophoneLevelTelemetryTests \
+            -only-testing:RunnerTests/ScreenRecorderFacadeStartFailureTests \
+            -only-testing:RunnerTests/ScreenRecorderFacadeSeparateCameraTests \
+            -only-testing:RunnerTests/ColorGradeTests \
+            -only-testing:RunnerTests/ClipKeptRangeTests \
+            -only-testing:RunnerTests/ClipPlaybackPlannerTests \
+            -only-testing:RunnerTests/NativeLoggerTests \
+            -only-testing:RunnerTests/ColorGradeGoldenDumpTests \
+            -only-testing:RunnerTests/RecordingBundleHonestyTests \
+            -only-testing:RunnerTests/AudioSceneGateTests \
+            -only-testing:RunnerTests/SourceAudioBitRateTests \
             -only-testing:RunnerTests/RNNoiseEngineTests \
             -only-testing:RunnerTests/AudioEnhancementPipelineTests \
             -only-testing:RunnerTests/ExportDestinationPreflightTests \
+            -only-testing:RunnerTests/GifExportPolicyTests \
+            -only-testing:RunnerTests/GifEncoderTests \
+            -only-testing:RunnerTests/GifExportSessionTests \
+            -only-testing:RunnerTests/ColorTransferFunctionTests \
             test-without-building 2>&1 | tee build/ci/xcode-fast-test.log
 
       - name: Upload fast native test artifacts

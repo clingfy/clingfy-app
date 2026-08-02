@@ -4,9 +4,14 @@
 
 #include "Bridge/camera_overlay_move_publisher.h"
 #include "Bridge/export_progress_publisher.h"
+#include "Bridge/indicator_event_publisher.h"
 #include "Bridge/native_log_publisher.h"
+#include "Bridge/native_selection_changed_publisher.h"
+#include "Bridge/pre_recording_bar_action_publisher.h"
 #include "Bridge/platform_thread_dispatcher.h"
 #include "Capture/Export/export_session.h"
+#include "Capture/Indicator/recording_indicator_controller.h"
+#include "Capture/PreRecordingBar/pre_recording_bar_controller.h"
 #include "Capture/recording_engine.h"
 #include "Services/temp_orphan_scan.h"
 #include "flutter/generated_plugin_registrant.h"
@@ -80,6 +85,24 @@ bool FlutterWindow::OnCreate() {
   clingfy::bridge::CameraOverlayMovePublisher::Instance().SetChannel(
       method_dispatcher_->channel());
 
+  // Recording-indicator slice 2: same channel for the pill's pause/stop/resume
+  // control taps (`indicator{Pause,Stop,Resume}Tapped`), emitted from the
+  // overlay thread. Cleared alongside the other publishers in OnDestroy.
+  clingfy::bridge::IndicatorEventPublisher::Instance().SetChannel(
+      method_dispatcher_->channel());
+
+  // Pre-recording bar slice 5: same channel for the bar's button taps
+  // (`preRecordingBarAction` with {type, payload}), emitted from the overlay
+  // thread. Cleared alongside the other publishers in OnDestroy.
+  clingfy::bridge::PreRecordingBarActionPublisher::Instance().SetChannel(
+      method_dispatcher_->channel());
+
+  // Pre-recording bar slice 6: same channel for a native device pick from the
+  // bar's dropdown (`nativeSelectionChanged` with {type, id}), emitted from the
+  // overlay thread. Cleared alongside the other publishers in OnDestroy.
+  clingfy::bridge::NativeSelectionChangedPublisher::Instance().SetChannel(
+      method_dispatcher_->channel());
+
   // Phase 10.1: detect recordings stranded in %TEMP% by a crash/kill in a
   // previous session (detection + reporting only; salvage is Phase 10.4).
   // Runs on its own short-lived thread, off the startup path.
@@ -122,6 +145,16 @@ void FlutterWindow::OnDestroy() {
   // channel is going away) — the on-disk project is the point.
   clingfy::capture::RecordingEngine::Instance().StopActiveSessionForShutdown();
 
+  // Slice 1 (Windows recording indicator): the overlay thread persists idle
+  // between recordings, so join it explicitly at app teardown (off any lock).
+  // StopActiveSessionForShutdown above already hid the pill; this reclaims the
+  // thread + window.
+  clingfy::capture::RecordingIndicatorController::Instance().Shutdown();
+
+  // Slice 4 (Windows pre-recording bar): same idle-persistent overlay thread —
+  // join it at teardown so the window + thread are reclaimed cleanly.
+  clingfy::capture::PreRecordingBarController::Instance().Shutdown();
+
   // Abort any in-flight export so its worker stops decoding/encoding and
   // deletes its partial output instead of racing teardown. (The worker's
   // terminal reply is safe regardless: the Flutter embedder drops a reply
@@ -137,6 +170,9 @@ void FlutterWindow::OnDestroy() {
   clingfy::bridge::ExportProgressPublisher::Instance().ClearChannel();
   clingfy::bridge::NativeLogPublisher::Instance().ClearChannel();
   clingfy::bridge::CameraOverlayMovePublisher::Instance().ClearChannel();
+  clingfy::bridge::IndicatorEventPublisher::Instance().ClearChannel();
+  clingfy::bridge::PreRecordingBarActionPublisher::Instance().ClearChannel();
+  clingfy::bridge::NativeSelectionChangedPublisher::Instance().ClearChannel();
   event_channel_stubs_.reset();
   method_dispatcher_.reset();
 

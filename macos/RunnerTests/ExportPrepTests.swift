@@ -44,6 +44,52 @@ final class ExportPrepTests: XCTestCase {
     XCTAssertEqual(facade.exportFormatInfo("weird").avFileType, .mov)
   }
 
+  /// The facade must not carry its own copy of the mapping.
+  ///
+  /// `ExportEngine` builds the output URL from this, and `LetterboxExporter`
+  /// renames the file to match its own answer — and deletes whatever already
+  /// sits at the renamed path first. A drift between the two therefore moves
+  /// the user's output somewhere `ExportEngine` is not looking, and can delete
+  /// a file on the way. Pinning delegation is what stops them drifting apart
+  /// again; they previously agreed only by coincidence.
+  func testExportFormatInfoDelegatesToTheSharedMap() {
+    for format in ["mov", "MOV", "mp4", "MP4", "m4v", "M4V", "gif", "GIF", "", "weird"] {
+      let viaFacade = facade.exportFormatInfo(format)
+      let viaMap = ExportFormatInfo.resolve(format)
+      XCTAssertEqual(viaFacade.ext, viaMap.ext, "ext drifted for \(format)")
+      XCTAssertEqual(
+        viaFacade.avFileType, viaMap.avFileType, "avFileType drifted for \(format)")
+    }
+  }
+
+  /// gif is the one format with no container of its own — `ExportEngine`
+  /// renders a temp MOV and transcodes it, so the exporter must fall back to
+  /// BOTH a `.mov` type and a "mov" extension. Taking the extension from the
+  /// resolved format instead would name a QuickTime file ".gif".
+  func testGifResolvesToNoContainerSoTheExporterMustSubstituteMov() {
+    let gif = ExportFormatInfo.resolve("gif")
+    XCTAssertNil(gif.avFileType)
+    XCTAssertEqual(gif.ext, "gif")
+    XCTAssertEqual(ExportFormatInfo.resolve("mov").avFileType, .mov)
+    XCTAssertEqual(ExportFormatInfo.resolve("mov").ext, "mov")
+  }
+
+  /// The rename the exporter performs must be a no-op for a path that already
+  /// carries the right extension, including names containing dots and spaces.
+  func testOutputExtensionRoundTripsForAwkwardFilenames() {
+    for (path, format, expected) in [
+      ("/tmp/Clingfy Export (2).mp4", "mp4", "/tmp/Clingfy Export (2).mp4"),
+      ("/tmp/my.recording.v2.mov", "mov", "/tmp/my.recording.v2.mov"),
+      ("/tmp/clip.mov", "mp4", "/tmp/clip.mp4"),
+    ] {
+      let resolved = ExportFormatInfo.resolve(format)
+      let url = URL(fileURLWithPath: path)
+        .deletingPathExtension()
+        .appendingPathExtension(resolved.ext)
+      XCTAssertEqual(url.path, expected)
+    }
+  }
+
   func testFlutterExportFailureGenericMapsToExportError() {
     let err = NSError(domain: "x", code: 1, userInfo: [NSLocalizedDescriptionKey: "boom"])
     let fe = facade.flutterExportFailure(from: err)

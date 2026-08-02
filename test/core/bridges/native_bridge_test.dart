@@ -2,6 +2,7 @@ import 'dart:async';
 
 import 'package:clingfy/core/bridges/native_bridge.dart';
 import 'package:clingfy/core/bridges/native_method_channel.dart';
+import 'package:clingfy/core/recording/models/audio_output_route.dart';
 import 'package:clingfy/core/timeline/model/color_grade.dart';
 import 'package:clingfy/core/timeline/model/edit_track.dart';
 import 'package:flutter/services.dart';
@@ -393,6 +394,177 @@ void main() {
       final args = captured?.arguments as Map;
       expect(args.containsKey('sessionId'), isFalse);
       expect((args['clips'] as List), hasLength(1));
+    });
+  });
+
+  group('getAudioOutputRoute', () {
+    final messenger =
+        TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger;
+
+    tearDown(() {
+      messenger.setMockMethodCallHandler(
+        const MethodChannel(NativeChannel.screenRecorder),
+        null,
+      );
+    });
+
+    void respond(Object? Function(MethodCall call) handler) {
+      messenger.setMockMethodCallHandler(
+        const MethodChannel(NativeChannel.screenRecorder),
+        (call) async => handler(call),
+      );
+    }
+
+    test('parses each route the native side can report', () async {
+      for (final entry in {
+        'speakers': AudioOutputRoute.speakers,
+        'headphones': AudioOutputRoute.headphones,
+        'unknown': AudioOutputRoute.unknown,
+      }.entries) {
+        respond((call) {
+          expect(call.method, NativeMethod.getAudioOutputRoute);
+          return {'route': entry.key};
+        });
+        expect(await NativeBridge.instance.getAudioOutputRoute(), entry.value);
+      }
+    });
+
+    test('an unrecognized route resolves to unknown, not a warning', () async {
+      respond((_) => {'route': 'teleporter'});
+      expect(
+        await NativeBridge.instance.getAudioOutputRoute(),
+        AudioOutputRoute.unknown,
+      );
+    });
+
+    test('a missing route key resolves to unknown', () async {
+      respond((_) => <String, Object?>{});
+      expect(
+        await NativeBridge.instance.getAudioOutputRoute(),
+        AudioOutputRoute.unknown,
+      );
+    });
+
+    test('a native build without the method resolves to unknown', () async {
+      // Windows has no implementation; it must not throw into the settings
+      // load path.
+      respond((call) => throw MissingPluginException('no impl'));
+      expect(
+        await NativeBridge.instance.getAudioOutputRoute(),
+        AudioOutputRoute.unknown,
+      );
+    });
+
+    test('a platform error resolves to unknown', () async {
+      respond((call) => throw PlatformException(code: 'BOOM'));
+      expect(
+        await NativeBridge.instance.getAudioOutputRoute(),
+        AudioOutputRoute.unknown,
+      );
+    });
+  });
+
+  group('canvasPresetThumbnail', () {
+    final messenger =
+        TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger;
+
+    tearDown(() {
+      messenger.setMockMethodCallHandler(
+        const MethodChannel(NativeChannel.screenRecorder),
+        null,
+      );
+    });
+
+    void respond(Object? Function(MethodCall call) handler) {
+      messenger.setMockMethodCallHandler(
+        const MethodChannel(NativeChannel.screenRecorder),
+        (call) async => handler(call),
+      );
+    }
+
+    test('sends every parameter the renderer keys its cache on', () async {
+      MethodCall? seen;
+      respond((call) {
+        seen = call;
+        return 'C:/cache/thumb.png';
+      });
+
+      final path = await NativeBridge.instance.canvasPresetThumbnail(
+        presetId: 'graphicMesh',
+        palette: 'sunset',
+        intensity: 0.7,
+        blur: 0.35,
+        seed: 1,
+        width: 72,
+        height: 48,
+      );
+
+      expect(path, 'C:/cache/thumb.png');
+      expect(seen?.method, 'canvasPresetThumbnail');
+      final args = (seen!.arguments as Map).cast<String, dynamic>();
+      // Every one of these changes the pixels, so every one must cross the
+      // boundary — a dropped argument would silently serve another preset's
+      // cached art.
+      expect(args['presetId'], 'graphicMesh');
+      expect(args['palette'], 'sunset');
+      expect(args['intensity'], 0.7);
+      expect(args['blur'], 0.35);
+      expect(args['seed'], 1);
+      expect(args['width'], 72);
+      expect(args['height'], 48);
+    });
+
+    // A picker with no thumbnails is still a usable picker, so a platform
+    // without the handler must degrade to the palette swatch rather than throw
+    // into the sidebar build.
+    test('a native build without the method resolves to null', () async {
+      respond((_) => throw MissingPluginException('no impl'));
+      expect(
+        await NativeBridge.instance.canvasPresetThumbnail(
+          presetId: 'abstractWaves',
+          palette: 'bluePurple',
+          intensity: 0.7,
+          blur: 0.35,
+          seed: 1,
+          width: 72,
+          height: 48,
+        ),
+        isNull,
+      );
+    });
+
+    test('a render failure resolves to null rather than throwing', () async {
+      respond((_) => throw PlatformException(code: 'BOOM'));
+      expect(
+        await NativeBridge.instance.canvasPresetThumbnail(
+          presetId: 'abstractWaves',
+          palette: 'bluePurple',
+          intensity: 0.7,
+          blur: 0.35,
+          seed: 1,
+          width: 72,
+          height: 48,
+        ),
+        isNull,
+      );
+    });
+
+    // Native answers null when it cannot render; that must arrive as null, not
+    // as a crash decoding the reply.
+    test('a null reply is a valid answer', () async {
+      respond((_) => null);
+      expect(
+        await NativeBridge.instance.canvasPresetThumbnail(
+          presetId: 'abstractWaves',
+          palette: 'bluePurple',
+          intensity: 0.7,
+          blur: 0.35,
+          seed: 1,
+          width: 72,
+          height: 48,
+        ),
+        isNull,
+      );
     });
   });
 }

@@ -5,6 +5,7 @@ import 'package:clingfy/app/infrastructure/analytics/analytics_service.dart';
 import 'package:clingfy/core/overlay/overlay_mode.dart';
 import 'package:clingfy/core/bridges/native_bar_action.dart';
 import 'package:clingfy/core/bridges/native_error_codes.dart';
+import 'package:clingfy/app/home/widgets/crash_reporting_notice.dart';
 import 'package:clingfy/app/home/recording/countdown_controller.dart';
 import 'package:clingfy/core/devices/device_controller.dart';
 import 'package:clingfy/commercial/licensing/license_controller.dart';
@@ -33,6 +34,7 @@ import 'package:clingfy/app/settings/widgets/about_view.dart';
 import 'package:clingfy/app/settings/widgets/app_settings_view.dart';
 import 'package:clingfy/app/home/preview/widgets/close_unexported_recording_dialog.dart';
 import 'package:clingfy/commercial/licensing/widgets/paywall_dialog.dart';
+import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 
@@ -144,7 +146,29 @@ class HomeActions {
     if (mode == DisplayTargetMode.singleAppWindow) {
       await deviceController.reloadAppWindows();
     }
+    await syncAppWindowWatch();
   }
+
+  /// Starts the native window watcher only while the app-window picker is
+  /// actually on screen, and stops it otherwise.
+  ///
+  /// The window list is the one picker macOS provides no notification for, so
+  /// it has to be polled. Polling it in the background forever would be pure
+  /// waste — nobody is looking — and polling during a take is worse, because
+  /// the picker is unusable then. This is the gate that keeps the cost
+  /// proportional to the benefit.
+  Future<void> syncAppWindowWatch() async {
+    final shouldWatch =
+        uiState.targetMode == DisplayTargetMode.singleAppWindow &&
+        !recordingController.isRecording;
+
+    if (shouldWatch == _appWindowWatchActive) return;
+    _appWindowWatchActive = shouldWatch;
+    await nativeBridge.setAppWindowWatchActive(shouldWatch);
+  }
+
+  /// Mirrors the native ref-count so a repeated call is not double-counted.
+  bool _appWindowWatchActive = false;
 
   Future<void> persistPaneLayout(DesktopPaneLayoutPrefs layout) async {
     uiState.applyPaneLayoutPrefs(layout);
@@ -415,6 +439,14 @@ class HomeActions {
       }
 
       _showSavedFileNotice(context, prefix: l10n.exportSuccess, path: path);
+      // First successful export is when the crash-reporting disclosure fires.
+      // At launch it is a modal about diagnostics in front of someone who has
+      // not used the app yet, and the fastest way past it is to dismiss it
+      // unread — which makes the disclosure worthless. Here the user has just
+      // finished something and nothing else is competing for attention.
+      if (context.mounted) {
+        await maybeShowCrashReportingNotice(context);
+      }
     } on PlatformException catch (e) {
       if (postProcessingController.lastExportWasCancelled) {
         return;
@@ -532,7 +564,21 @@ class HomeActions {
 
     final preflight = await permissionsController
         .prepareRecordingStartPreflight(intent: intent);
-    var overrides = const RecordingStartOverrides();
+
+    // "No microphone" is a DEVICE choice, and it has to reach the recorder on
+    // its own. It used to travel only as `needsMicrophone: false` on the
+    // preflight intent, which merely skips the permission prompt — so
+    // `disableMicrophone` stayed false, native took `want_mic = true`, and
+    // opened the DEFAULT microphone (empty id) for the whole session. The user
+    // asked for no mic and the app recorded from one: silent, but running, and
+    // bundled as a real mic sidecar.
+    //
+    // Seeded here rather than only inside the permission branch below, because
+    // that branch runs ONLY when something needs attention — on the ordinary
+    // path it never executes and the flag stayed false.
+    final micDeselected =
+        deviceController.selectedAudioSourceId == DeviceController.noAudioId;
+    var overrides = RecordingStartOverrides(disableMicrophone: micDeselected);
 
     if (preflight.hasPermissionAttention) {
       if (!context.mounted) {
@@ -555,9 +601,13 @@ class HomeActions {
       }
 
       overrides = RecordingStartOverrides(
-        disableMicrophone: preflight.missingOptional.contains(
-          MissingPermissionKind.microphone,
-        ),
+        // Either reason disables it: the user did not want a mic, or the OS
+        // will not give us one.
+        disableMicrophone:
+            micDeselected ||
+            preflight.missingOptional.contains(
+              MissingPermissionKind.microphone,
+            ),
         disableCameraOverlay: preflight.missingOptional.contains(
           MissingPermissionKind.camera,
         ),
@@ -627,6 +677,9 @@ class HomeActions {
   }
 
   void updateNativeBarState() {
+    // Cheap: syncAppWindowWatch returns immediately unless the gate flipped.
+    unawaited(syncAppWindowWatch());
+
     if (!uiState.uiPrefsHydrated ||
         !deviceController.isHydrated ||
         !overlayController.isHydrated) {
@@ -640,14 +693,16 @@ class HomeActions {
         rawCamId != 'none' &&
         rawCamId != DeviceController.noAudioId;
 
+    final micLive =
+        deviceController.selectedAudioSourceId != DeviceController.noAudioId;
+
     final state = {
       'phase': recordingController.phase.wireValue,
       'sessionId': recordingController.sessionId,
       'countdownActive': countdownController.isActive,
       'targetMode': uiState.targetMode.index,
       'cameraEnabled': camSelected,
-      'micEnabled':
-          deviceController.selectedAudioSourceId != DeviceController.noAudioId,
+      'micEnabled': micLive,
       'systemAudioEnabled': settingsController.recording.systemAudioEnabled,
       'updateAvailable': nativeBridge.isUpdateAvailable.value,
       'canPauseResume': recordingController.canPauseResume,
@@ -656,10 +711,31 @@ class HomeActions {
       'selectedAppWindowId': deviceController.selectedAppWindowId,
       'selectedAudioSourceId': deviceController.selectedAudioSourceId,
       'selectedCamId': camSelected ? rawCamId : null,
+      // Pre-record audio warnings. The bar is the surface a user actually
+      // looks at before hitting record, so these cannot live only in the
+      // sidebar. Both are gated on a live mic for the same reason the sidebar
+      // gates them: with no microphone there is nothing to bleed INTO and no
+      // level to be too low, and "No microphone" is the first-run default.
+      'micInputTooLow': micLive && deviceController.micInputTooLow,
+      'systemAudioBleedRisk':
+          micLive && settingsController.recording.systemAudioBleedRisk,
     };
+
+    // The mic level meter notifies on every level delta, and DeviceController
+    // is a listener on this method — so without this guard a live microphone
+    // pushed bar state to native dozens of times a second, and the native
+    // updateState re-framed the floating panel (animated) on every one of
+    // them. The bar renders none of that: it consumes only the fields below.
+    if (_lastBarState != null && mapEquals(_lastBarState, state)) {
+      return;
+    }
+    _lastBarState = state;
 
     nativeBridge.setPreRecordingBarState(state);
   }
+
+  /// Last payload actually sent, so identical pushes are dropped.
+  Map<String, dynamic>? _lastBarState;
 
   void handleNativeBarAction(
     BuildContext context,

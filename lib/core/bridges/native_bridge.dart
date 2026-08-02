@@ -4,6 +4,7 @@ import 'package:flutter/services.dart';
 import 'package:clingfy/core/bridges/native_method_channel.dart';
 import 'package:clingfy/core/logging/logger_service.dart';
 import 'package:clingfy/core/models/app_models.dart';
+import 'package:clingfy/core/recording/models/audio_output_route.dart';
 import 'package:clingfy/core/timeline/model/color_grade.dart';
 import 'package:clingfy/core/timeline/model/edit_track.dart';
 import 'package:clingfy/core/models/startup_recovery_report.dart';
@@ -335,6 +336,21 @@ class NativeBridge {
     await setPreRecordingBarEnabled(enabled);
   }
 
+  /// Starts or stops the native app-window watcher.
+  ///
+  /// Ref-counted natively, so callers pair their own true/false. Windows has
+  /// no implementation — the picker there is refreshed manually — so a
+  /// missing handler is expected and ignored rather than surfaced.
+  Future<void> setAppWindowWatchActive(bool active) async {
+    try {
+      await _nativeBridge.invokeMethod<void>('setAppWindowWatchActive', {
+        'active': active,
+      });
+    } on MissingPluginException {
+      // Platform without a watcher; manual refresh still works.
+    }
+  }
+
   Future<void> setPreRecordingBarState(Map<String, dynamic> state) async {
     await _nativeBridge.invokeMethod<void>('setPreRecordingBarState', state);
   }
@@ -399,6 +415,34 @@ class NativeBridge {
     });
   }
 
+  /// The current default audio-output route.
+  ///
+  /// Only [AudioOutputRoute.speakers] can carry system audio back into the
+  /// microphone through the air, which is what turns a system-audio recording
+  /// into a doubled, delayed soundtrack. The recording UI uses this to warn
+  /// before a take rather than after it.
+  ///
+  /// Never throws: a native build without the method, an unrecognized route
+  /// string, or any other failure resolves to [AudioOutputRoute.unknown], which
+  /// shows no warning. A missing warning is a smaller harm than a false one.
+  Future<AudioOutputRoute> getAudioOutputRoute() async {
+    try {
+      final reply = await _nativeBridge.invokeMethod<Map<dynamic, dynamic>>(
+        NativeMethod.getAudioOutputRoute,
+      );
+      return AudioOutputRoute.fromName(reply?['route'] as String?);
+    } on MissingPluginException {
+      Log.d(
+        'NativeBridge',
+        'getAudioOutputRoute is not implemented by this native build',
+      );
+      return AudioOutputRoute.unknown;
+    } catch (e, st) {
+      Log.w('NativeBridge', 'getAudioOutputRoute failed: $e', e, st);
+      return AudioOutputRoute.unknown;
+    }
+  }
+
   /// Pushes the mic noise-reduction setting to the open preview.
   ///
   /// Unlike gain and volume this is not a live mix parameter — native
@@ -450,6 +494,94 @@ class NativeBridge {
       'colorGrade': colorGrade.toMap(),
       if (sessionId != null) 'sessionId': sessionId,
     });
+  }
+
+  /// Pushes the canvas framing (background colour, padding, corner radius) to
+  /// the live preview so the editor shows the same frame the export produces.
+  ///
+  /// `padding` and `cornerRadius` are the SAME export-output pixel values the
+  /// `processVideo` payload carries. The native side normalises them against the
+  /// export canvas so the preview's smaller surface renders proportionally
+  /// identical framing rather than ~3x thicker padding at 4K.
+  ///
+  /// The layout and resolution presets travel with them because native needs
+  /// them to resolve that canvas (`ResolveTargetSize`). Dart deliberately does
+  /// NOT compute the target itself — that math has one home, in C++.
+  ///
+  /// Keep the method name in sync with the native `previewSetCanvas` handler.
+  Future<void> previewSetCanvas({
+    required double padding,
+    required double cornerRadius,
+    required int? backgroundColor,
+    required String? backgroundImagePath,
+    required String backgroundKind,
+    required String? backgroundPresetId,
+    required String? backgroundPresetPalette,
+    required double backgroundPresetIntensity,
+    required double backgroundPresetBlur,
+    required int backgroundPresetSeed,
+    required String layoutPreset,
+    required String resolutionPreset,
+    required String? sessionId,
+  }) async {
+    await _nativeBridge.invokeMethod<void>('previewSetCanvas', {
+      'padding': padding,
+      'cornerRadius': cornerRadius,
+      'backgroundColor': backgroundColor,
+      'backgroundImagePath': backgroundImagePath,
+      // Preset travels as DATA; native renders and caches the pixels.
+      'backgroundKind': backgroundKind,
+      'backgroundPresetId': backgroundPresetId,
+      'backgroundPresetPalette': backgroundPresetPalette,
+      'backgroundPresetIntensity': backgroundPresetIntensity,
+      'backgroundPresetBlur': backgroundPresetBlur,
+      'backgroundPresetSeed': backgroundPresetSeed,
+      'layoutPreset': layoutPreset,
+      'resolutionPreset': resolutionPreset,
+      if (sessionId != null) 'sessionId': sessionId,
+    });
+  }
+
+  /// Path of a rendered PNG thumbnail for a procedural background preset,
+  /// or null when the platform cannot produce one.
+  ///
+  /// The picker used to draw a gradient of the palette colours, which made all
+  /// three presets look identical — only the palette varied. A thumbnail has to
+  /// come from the real renderer or it is not showing what the user is picking.
+  ///
+  /// Native renders on first request and caches by a key that includes the
+  /// renderer version, so the file is reused until something that changes the
+  /// pixels changes. Null is expected and cosmetic: callers fall back to the
+  /// palette swatch. Returns null on platforms with no handler
+  /// ([MissingPluginException]) rather than throwing, since a picker without
+  /// thumbnails is still a usable picker.
+  ///
+  /// Keep the method name in sync with the native `canvasPresetThumbnail`
+  /// handler.
+  Future<String?> canvasPresetThumbnail({
+    required String presetId,
+    required String palette,
+    required double intensity,
+    required double blur,
+    required int seed,
+    required int width,
+    required int height,
+  }) async {
+    try {
+      return await _nativeBridge.invokeMethod<String>('canvasPresetThumbnail', {
+        'presetId': presetId,
+        'palette': palette,
+        'intensity': intensity,
+        'blur': blur,
+        'seed': seed,
+        'width': width,
+        'height': height,
+      });
+    } on MissingPluginException {
+      return null;
+    } on PlatformException {
+      return null;
+    }
   }
 
   /// Pushes the edited clip list (split / cut / trim / arrange) to the live
@@ -722,6 +854,8 @@ class NativeBridge {
     required String sessionId,
     required String projectPath,
     String? cameraPath,
+    String? layoutPreset,
+    String? resolutionPreset,
   }) async {
     // Windows returns an EncodableMap with the Flutter texture id and
     // surface metrics (Step 5.5.2 of the Phase 5 plan). macOS still
@@ -729,12 +863,17 @@ class NativeBridge {
     // does not need a texture id on the Dart side. Treat null /
     // wrong-shape responses as a macOS-equivalent "no texture" so the
     // caller can rely on a non-null result type.
-    final raw = await _nativeBridge
-        .invokeMethod<Map<dynamic, dynamic>>('previewOpen', {
-          'sessionId': sessionId,
-          'projectPath': projectPath,
-          if (cameraPath != null) 'cameraPath': cameraPath,
-        });
+    final raw = await _nativeBridge.invokeMethod<Map<dynamic, dynamic>>(
+      'previewOpen',
+      {
+        'sessionId': sessionId,
+        'projectPath': projectPath,
+        if (cameraPath != null) 'cameraPath': cameraPath,
+        // Size the native texture to the CANVAS aspect, not the video's.
+        if (layoutPreset != null) 'layoutPreset': layoutPreset,
+        if (resolutionPreset != null) 'resolutionPreset': resolutionPreset,
+      },
+    );
     if (raw == null) {
       return const PreviewOpenResult.none();
     }

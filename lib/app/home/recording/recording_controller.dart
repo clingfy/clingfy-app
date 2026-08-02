@@ -700,6 +700,11 @@ class RecordingController extends ChangeNotifier {
       final openResult = await _nativeBridge.previewOpen(
         sessionId: activeSessionId,
         projectPath: path,
+        // The native texture is sized to the CANVAS aspect, which these
+        // presets determine. Without them a 16:9 recording inside a 9:16
+        // canvas opens a 16:9 preview while the export is portrait.
+        layoutPreset: _settings.post.layoutPreset.name,
+        resolutionPreset: _settings.post.resolutionPreset.name,
       );
       // Stale-session guard: if the user already pressed close while
       // native was warming the texture, drop the id on the floor.
@@ -803,6 +808,11 @@ class RecordingController extends ChangeNotifier {
       final openResult = await _nativeBridge.previewOpen(
         sessionId: activeSessionId,
         projectPath: path,
+        // The native texture is sized to the CANVAS aspect, which these
+        // presets determine. Without them a 16:9 recording inside a 9:16
+        // canvas opens a 16:9 preview while the export is portrait.
+        layoutPreset: _settings.post.layoutPreset.name,
+        resolutionPreset: _settings.post.resolutionPreset.name,
       );
       // The session may also have been closed or replaced while the reopen
       // itself was in flight — don't resurrect texture state for a session
@@ -852,6 +862,35 @@ class RecordingController extends ChangeNotifier {
     String errorCode,
     String? errorMessage,
   ) {
+    // NOT_RECORDING means native holds no session at all. Restoring the UI to
+    // "recording" here is what wedged the app: every subsequent Stop asked
+    // native to stop a session that did not exist, got NOT_RECORDING back, and
+    // restored the illusion again. Observed in the field as eleven Stop
+    // presses in a row, none of which could work.
+    if (errorCode == NativeErrorCode.notRecording) {
+      _transitionToIdle(errorCode: errorCode, errorMessage: errorMessage);
+      return;
+    }
+
+    // The same failure can arrive twice: once as a recordingFailed EVENT and
+    // once as the error reply to the stop call. In the field those landed
+    // 35 ms apart, and the event had already torn the session down correctly —
+    // restoring here resurrected a session native had finished with, leaving
+    // the UI recording forever. Never restore a session that is already gone.
+    if (phase == WorkflowPhase.idle) {
+      Log.w(
+        'Recording',
+        'Stop failed after the session was already torn down; staying idle',
+        null,
+        null,
+        {'errorCode': errorCode},
+      );
+      _setState(
+        _state.copyWith(errorCode: errorCode, errorMessage: errorMessage),
+      );
+      return;
+    }
+
     _setState(
       previousState.copyWith(errorCode: errorCode, errorMessage: errorMessage),
     );

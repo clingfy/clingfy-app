@@ -187,6 +187,22 @@ class AppLocalizationsEn extends AppLocalizations {
   String get high => 'High';
 
   @override
+  String get gifSizeLabel => 'Size';
+
+  @override
+  String get gifSizeSmall => 'Small (480px)';
+
+  @override
+  String get gifSizeMedium => 'Medium (720px)';
+
+  @override
+  String get gifSizeLarge => 'Large (1080px)';
+
+  @override
+  String get gifSizeCaption =>
+      'GIFs export at 15 fps. Larger sizes look sharper but make bigger files.';
+
+  @override
   String get original => 'Original';
 
   @override
@@ -893,6 +909,9 @@ class AppLocalizationsEn extends AppLocalizations {
   String get clips => 'Clips';
 
   @override
+  String get color => 'Color';
+
+  @override
   String get clipSplit => 'Split';
 
   @override
@@ -1001,6 +1020,12 @@ class AppLocalizationsEn extends AppLocalizations {
 
   @override
   String get colorCorrection => 'Color Correction';
+
+  @override
+  String get colorUndo => 'Undo color edit';
+
+  @override
+  String get colorRedo => 'Redo color edit';
 
   @override
   String get autoEnhance => 'Auto-enhance';
@@ -1604,6 +1629,10 @@ class AppLocalizationsEn extends AppLocalizations {
   String get appDescription => 'A simple, powerful screen recorder for macOS.';
 
   @override
+  String get appDescriptionWindows =>
+      'A simple, powerful screen recorder for Windows.';
+
+  @override
   String get visitWebsite => 'Visit Website';
 
   @override
@@ -1846,6 +1875,20 @@ class AppLocalizationsEn extends AppLocalizations {
       'Help improve Clingfy by sharing feature usage and reliability data. Never includes recordings, filenames, audio, video, or transcripts.';
 
   @override
+  String get diagnosticsAnalyticsInternal => 'Mark this device internal';
+
+  @override
+  String get diagnosticsAnalyticsInternalHelp =>
+      'Owner/testing only. Excludes this install\'s analytics from the real numbers, so your own usage never inflates the stats. Normal users never see this option.';
+
+  @override
+  String get diagnosticsAnalyticsTest => 'Test analytics events';
+
+  @override
+  String get diagnosticsAnalyticsTestHelp =>
+      'Owner/testing only. Sends analytics tagged as test — visible only in the Test view of the internal dashboard, never in real numbers — so the pipeline can be verified. Also enables events in debug builds.';
+
+  @override
   String get openLogsFolder => 'Open Logs Folder';
 
   @override
@@ -1928,6 +1971,25 @@ class AppLocalizationsEn extends AppLocalizations {
   @override
   String get micInputIndicatorLowTooltip =>
       'Mic input is very low. Raise input level or move closer to the mic.';
+
+  @override
+  String get recordingMicTooLowWarning =>
+      'Your mic is barely picking anything up. Raise the input level in System Settings › Sound › Input, or move closer — otherwise this recording will have no usable voice.';
+
+  @override
+  String get recordingMicTooLowHeadline => 'Mic level too low';
+
+  @override
+  String get recordingSystemAudioBleedHeadline =>
+      'Speakers will bleed into your mic';
+
+  @override
+  String get preRecordingBarMicTooLow =>
+      'Mic level is very low — raise the input level in System Settings › Sound › Input.';
+
+  @override
+  String get preRecordingBarBleedRisk =>
+      'System audio is playing out loud and will bleed into your mic. Switch to headphones.';
 
   @override
   String get noMicAudioFound => 'No mic audio track found';
@@ -2026,6 +2088,10 @@ class AppLocalizationsEn extends AppLocalizations {
 
   @override
   String get recordingSystemAudio => 'System audio';
+
+  @override
+  String get recordingSystemAudioBleedWarning =>
+      'System audio is playing through speakers, so your mic will pick it up again as an echo. Use headphones for a clean recording.';
 
   @override
   String get recordingExcludeMicFromSystemAudio =>
@@ -2539,6 +2605,10 @@ class AppLocalizationsEn extends AppLocalizations {
 
   @override
   String get appliedOnExportNoticeWindows =>
+      'Applied on export — the inline preview doesn\'t show this effect yet.';
+
+  @override
+  String get audioGainNoticeWindows =>
       'Gain is fully audible in edited previews and exports — an uncut preview plays volume changes only.';
 
   @override
@@ -2594,4 +2664,34 @@ class AppLocalizationsEn extends AppLocalizations {
 
   @override
   String get forceNativeCrashLabel => 'Force native crash (test)';
+
+  @override
+  String get settingsPrivacyTitle => 'Privacy';
+
+  @override
+  String get crashReportingTitle => 'Crash and diagnostic reports';
+
+  @override
+  String get crashReportingDescription =>
+      'Send anonymous crash reports and error diagnostics so problems get fixed. Includes the error, a stack trace, your app version, and OS and GPU details. Never includes your recordings, screen contents, audio, or file names.';
+
+  @override
+  String get crashReportingToggle => 'Send crash reports';
+
+  @override
+  String get crashReportingRestartNote =>
+      'Turning this off stops reporting immediately. Reports for crashes that take the whole app down stop after you restart Clingfy.';
+
+  @override
+  String get crashReportingNoticeTitle => 'About crash reports';
+
+  @override
+  String get crashReportingNoticeBody =>
+      'Clingfy sends anonymous crash reports and error diagnostics so problems get fixed. This covers the error, a stack trace, your app version, and OS and GPU details — never your recordings, screen contents, audio, or file names.\n\nYou can turn this off at any time in Settings › Diagnostics.';
+
+  @override
+  String get crashReportingNoticeAccept => 'Got it';
+
+  @override
+  String get crashReportingNoticeOptOut => 'Turn off';
 }

@@ -1,4 +1,6 @@
+import 'package:clingfy/app/home/post_processing/post_processing_controller.dart';
 import 'package:clingfy/app/home/preview/widgets/video_timeline.dart';
+import 'package:clingfy/app/settings/settings_controller.dart';
 import 'package:clingfy/core/bridges/native_bridge.dart';
 import 'package:clingfy/core/clips/clip_editor_controller.dart';
 import 'package:clingfy/core/preview/player_controller.dart';
@@ -701,6 +703,135 @@ void main() {
     expect(clipEditor.clips, hasLength(2));
   });
 
+  testWidgets('color undo and redo buttons walk the color history', (
+    tester,
+  ) async {
+    final editor = await _createEditor(tester);
+    final player = _FakePlayerController(editor: editor);
+    addTearDown(player.dispose);
+    final post = _buildPostController();
+
+    await tester.pumpWidget(_buildTimeline(player: player, post: post));
+
+    final undoButton = find.byKey(const Key('timeline_color_undo_button'));
+    final redoButton = find.byKey(const Key('timeline_color_redo_button'));
+
+    // The pair is present on a ready timeline but inert until a color edit
+    // is committed — the sliders themselves live in the Effects sidebar.
+    expect(undoButton, findsOneWidget);
+    expect(redoButton, findsOneWidget);
+    expect(tester.widget<AppIconButton>(undoButton).onPressed, isNull);
+    expect(tester.widget<AppIconButton>(redoButton).onPressed, isNull);
+
+    // A committed slider gesture arms undo.
+    post.setColorGradeExposure(0.4);
+    post.commitColorGrade();
+    await tester.pump();
+    expect(tester.widget<AppIconButton>(undoButton).onPressed, isNotNull);
+
+    await tester.ensureVisible(undoButton);
+    await tester.pump();
+    await tester.tap(undoButton);
+    await tester.pump();
+    expect(post.colorGrade.exposure, 0);
+    expect(tester.widget<AppIconButton>(undoButton).onPressed, isNull);
+
+    await tester.ensureVisible(redoButton);
+    await tester.pump();
+    await tester.tap(redoButton);
+    await tester.pump();
+    expect(post.colorGrade.exposure, 0.4);
+  });
+
+  testWidgets('color undo and redo are absent until the timeline is ready', (
+    tester,
+  ) async {
+    final editor = await _createEditor(tester);
+    final player = _FakePlayerController(editor: editor);
+    addTearDown(player.dispose);
+    final post = _buildPostController();
+
+    await tester.pumpWidget(
+      _buildTimeline(player: player, post: post, isReady: false),
+    );
+
+    // Before the preview is ready there is nothing to grade, so the group is
+    // not just disabled — it is not in the bar at all.
+    expect(find.byKey(const Key('timeline_color_undo_button')), findsNothing);
+    expect(find.byKey(const Key('timeline_color_redo_button')), findsNothing);
+    expect(
+      find.byKey(const Key('timeline_color_controls_divider')),
+      findsNothing,
+    );
+
+    await tester.pumpWidget(
+      _buildTimeline(player: player, post: post, isReady: true),
+    );
+
+    expect(find.byKey(const Key('timeline_color_undo_button')), findsOneWidget);
+    expect(find.byKey(const Key('timeline_color_redo_button')), findsOneWidget);
+  });
+
+  testWidgets('each history pair names its edit track', (tester) async {
+    // The reason this widget was extracted. Driving the live app showed three
+    // visually identical arrow pairs in one row, distinguishable only by hover
+    // tooltip — you could not tell which pair undid which edit at a glance.
+    final editor = await _createEditor(tester);
+    final clipEditor = _makeClipEditor();
+    final player = _FakePlayerController(
+      editor: editor,
+      clipEditor: clipEditor,
+    );
+    addTearDown(player.dispose);
+    addTearDown(clipEditor.dispose);
+    final post = _buildPostController();
+
+    await tester.pumpWidget(_buildTimeline(player: player, post: post));
+    await tester.pump();
+
+    final l10n = _l10n(tester);
+    final header = find.byKey(const Key('timeline_header_bar'));
+
+    // One label per group, each sitting inside the header bar.
+    for (final label in [l10n.zoom, l10n.clips, l10n.color]) {
+      expect(
+        find.descendant(of: header, matching: find.text(label)),
+        findsOneWidget,
+        reason: 'history group "$label" must be named',
+      );
+    }
+
+    // And they must be distinct strings, or naming them buys nothing.
+    expect({l10n.zoom, l10n.clips, l10n.color}, hasLength(3));
+  });
+
+  testWidgets('color undo is inert while an export runs', (tester) async {
+    final editor = await _createEditor(tester);
+    final player = _FakePlayerController(editor: editor);
+    addTearDown(player.dispose);
+    final post = _buildPostController();
+    post.setColorGradeExposure(0.4);
+    post.commitColorGrade();
+
+    await tester.pumpWidget(
+      _buildTimeline(player: player, post: post, editingEnabled: false),
+    );
+
+    final undoButton = find.byKey(const Key('timeline_color_undo_button'));
+    // Visible (the bar must not reflow when an export starts) but disabled.
+    expect(undoButton, findsOneWidget);
+    expect(tester.widget<AppIconButton>(undoButton).onPressed, isNull);
+
+    // And inert in practice, not just by inspection: tapping it must not walk
+    // the history while the export bakes the grade it was started with.
+    await tester.ensureVisible(undoButton);
+    await tester.pump();
+    await tester.tap(undoButton, warnIfMissed: false);
+    await tester.pump();
+    expect(post.colorGrade.exposure, 0.4);
+    expect(post.canUndoColorGrade, isTrue, reason: 'history untouched');
+  });
+
   testWidgets('dragging a clip edge handle trims it live and is undoable', (
     tester,
   ) async {
@@ -858,15 +989,43 @@ Future<ZoomEditorController> _createEditor(
   return controller;
 }
 
+/// The header bar's color undo/redo pair reads [PostProcessingController], so
+/// every timeline test needs one in the tree. Callers that exercise color
+/// history pass their own; the rest get a neutral one (no recording attached →
+/// both flags false → the pair renders disabled).
+PostProcessingController _buildPostController() {
+  final nativeBridge = NativeBridge.instance;
+  final settings = SettingsController(nativeBridge: nativeBridge);
+  final player = PlayerController(nativeBridge: nativeBridge);
+  final post = PostProcessingController(
+    settings: settings,
+    player: player,
+    channel: nativeBridge,
+  );
+  addTearDown(() {
+    post.dispose();
+    player.dispose();
+    settings.dispose();
+  });
+  return post;
+}
+
 Widget _buildTimeline({
   required PlayerController player,
   bool editingEnabled = true,
   ValueChanged<int>? onSeek,
   ValueChanged<int>? onHoverSeek,
   VoidCallback? onHoverEnd,
+  PostProcessingController? post,
+  bool isReady = true,
 }) {
-  return ChangeNotifierProvider<PlayerController>.value(
-    value: player,
+  return MultiProvider(
+    providers: [
+      ChangeNotifierProvider<PlayerController>.value(value: player),
+      ChangeNotifierProvider<PostProcessingController>.value(
+        value: post ?? _buildPostController(),
+      ),
+    ],
     child: MaterialApp(
       localizationsDelegates: AppLocalizations.localizationsDelegates,
       supportedLocales: AppLocalizations.supportedLocales,
@@ -880,7 +1039,7 @@ Widget _buildTimeline({
             child: VideoTimeline(
               durationMs: 60000,
               positionMs: 15000,
-              isReady: true,
+              isReady: isReady,
               editingEnabled: editingEnabled,
               onSeek: onSeek ?? (_) {},
               onHoverSeek: onHoverSeek ?? (_) {},

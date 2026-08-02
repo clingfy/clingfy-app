@@ -6,6 +6,8 @@ pool:
   vmImage: "macOS-latest"
 
 variables:
+
+  - template: flutter-version.yml
   - group: "Clingfy-Secrets"
 
   - name: APP_ENV
@@ -134,12 +136,12 @@ stages:
                 fi
 
           - task: FlutterInstall@0
-            displayName: "Install Flutter 3.41.0"
+            displayName: "Install Flutter $(flutterVersion)"
             inputs:
               mode: auto
               channel: stable
               version: custom
-              customVersion: "3.41.0"
+              customVersion: "$(flutterVersion)"
 
           - bash: |
               brew install --cask sparkle

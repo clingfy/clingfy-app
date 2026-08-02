@@ -5,8 +5,9 @@ import 'package:clingfy/core/timeline/model/color_grade.dart';
 ///
 /// Closure-based so it works with any state holder: the holder passes [get] /
 /// [set], and the command snapshots the previous grade at construction so
-/// [revert] restores it. The post-processing controller wires these in the
-/// macOS render PR; here it is fully unit-testable on its own.
+/// [revert] restores it. `PostProcessingController` executes these through its
+/// color [EditSession]; the command is also unit-tested standalone in
+/// `test/core/timeline/set_color_grade_command_test.dart`.
 class SetColorGradeCommand implements EditCommand {
   SetColorGradeCommand({
     required ColorGrade Function() get,

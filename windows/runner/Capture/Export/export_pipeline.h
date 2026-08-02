@@ -39,6 +39,7 @@
 #include <vector>
 
 #include "Capture/Export/clip_playback_planner.h"
+#include "Capture/Background/canvas_preset_renderer.h"
 #include "Capture/Export/color_grade.h"
 
 namespace clingfy::capture::export_ {
@@ -100,6 +101,15 @@ struct RenderRequest {
   double padding = 0.0;
   double corner_radius = 0.0;
   std::optional<std::int64_t> background_color;
+  // Absolute path to a bundled background image (inside the .clingfyproj), or
+  // empty for a colour background. Drawn scaled-to-COVER over the fill, so a
+  // missing or undecodable file degrades to the colour rather than to nothing.
+  std::wstring background_image_path;
+  // Procedural preset (data, not pixels). Rendered by the same Direct2D
+  // renderer the preview uses, so the exported background is identical to the
+  // one the editor showed. Empty preset_id = no preset.
+  background::CanvasPresetSpec background_preset;
+  bool has_background_preset = false;
 
   // Slice 4 audio processing, verbatim from the export args (see
   // `export_audio.h`). Gain amplifies (0..24 dB), volume attenuates

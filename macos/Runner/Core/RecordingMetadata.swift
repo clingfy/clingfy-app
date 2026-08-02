@@ -280,6 +280,33 @@ struct RecordingMetadata: Codable {
     }
   }
 
+  /// What the recorder was actually asked to capture, audio-wise.
+  ///
+  /// Recorded so a finished bundle can answer "was system audio on?" on its
+  /// own. Without it, a recording that silently omitted a source could only be
+  /// diagnosed by correlating the session logs against the raw tracks — the
+  /// bundle itself said nothing, and `project.json` actively misled by
+  /// declaring a `system.m4a` that was never written.
+  struct AudioCaptureInfo: Codable, Equatable {
+    let micEnabled: Bool
+    let micDeviceId: String?
+    let systemAudioEnabled: Bool
+    let excludedMicFromSystemAudio: Bool
+    let echoCancellationEnabled: Bool
+    /// Playback route at record time (e.g. "builtInSpeaker", "headphones").
+    /// Speaker playback is what lets system audio bleed into the mic, so this
+    /// is the first field to check when a take comes back doubled.
+    let outputRoute: String?
+  }
+
+  /// Schema version written by `create`.
+  ///
+  /// Named rather than inlined because the literal used to live here and in
+  /// the round-trip test independently: the bump to 3 changed one and not the
+  /// other, and the test had been asserting 2 against a v3 writer since. It
+  /// went unnoticed because that whole test class was never running in CI.
+  static let currentVersion = 3
+
   let version: Int
   let recordingId: String
   let appVersion: String
@@ -288,6 +315,7 @@ struct RecordingMetadata: Codable {
   var endedAt: String?
   var screen: ScreenCaptureInfo
   var camera: CameraCaptureInfo?
+  var audio: AudioCaptureInfo?
   var editorSeed: EditorSeed
 
   static func create(
@@ -302,10 +330,11 @@ struct RecordingMetadata: Codable {
     windowID: CGWindowID?,
     excludedRecorderApp: Bool,
     camera: CameraCaptureInfo?,
+    audio: AudioCaptureInfo? = nil,
     editorSeed: EditorSeed
   ) -> RecordingMetadata {
     RecordingMetadata(
-      version: 2,
+      version: Self.currentVersion,
       recordingId: UUID().uuidString,
       appVersion: Bundle.main.infoDictionary?["CFBundleShortVersionString"] as? String ?? "unknown",
       bundleId: Bundle.main.bundleIdentifier ?? "com.clingfy.app",
@@ -325,6 +354,7 @@ struct RecordingMetadata: Codable {
         segments: []
       ),
       camera: camera,
+      audio: audio,
       editorSeed: editorSeed
     )
   }
@@ -341,6 +371,7 @@ struct RecordingMetadata: Codable {
     windowID: CGWindowID?,
     excludedRecorderApp: Bool,
     camera: CameraCaptureInfo?,
+    audio: AudioCaptureInfo? = nil,
     editorSeed: EditorSeed
   ) -> RecordingMetadata {
     create(
@@ -355,6 +386,7 @@ struct RecordingMetadata: Codable {
       windowID: windowID,
       excludedRecorderApp: excludedRecorderApp,
       camera: camera,
+      audio: audio,
       editorSeed: editorSeed
     )
   }

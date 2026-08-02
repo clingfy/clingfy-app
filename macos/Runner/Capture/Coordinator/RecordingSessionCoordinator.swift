@@ -131,6 +131,11 @@ struct RecordingSessionCoordinator {
     let videoDeviceId: String?
     let overlayMirror: Bool
     let editorSeed: RecordingMetadata.EditorSeed
+    /// Assembled by the facade (which owns the prefs and the stream config) so
+    /// the finished bundle records what was actually asked for on the audio
+    /// side. Optional purely so a caller that has not been updated still
+    /// compiles; every production path passes it.
+    let audio: RecordingMetadata.AudioCaptureInfo?
   }
 
   /// Result returned to the facade. The facade applies state mutations in
@@ -210,7 +215,8 @@ struct RecordingSessionCoordinator {
         cursorEnabled: inputs.cursorEnabledForRecording,
         cursorLinked: inputs.cursorLinked,
         windowID: (inputs.displayMode == .singleAppWindow ? inputs.selectedAppWindowID : nil),
-        excludedRecorderApp: inputs.excludeRecorderApp
+        excludedRecorderApp: inputs.excludeRecorderApp,
+        audio: inputs.audio
       ),
       cameraCaptureInfo: cameraCoordination.makeCaptureInfo(
         projectRoot: skeleton.projectRoot,

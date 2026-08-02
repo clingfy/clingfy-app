@@ -1,5 +1,7 @@
 #include "preview/preview_compositor.h"
 
+#include "Capture/Background/background_image_cache.h"
+
 #include <inspectable.h>
 #include <windows.graphics.directx.direct3d11.interop.h>
 
@@ -290,10 +292,78 @@ void PreviewCompositor::ComposeFrame(
     ID2D1DeviceContext* d2d_context, const D2D1_RECT_F& dest_rect,
     const std::vector<CursorEvent>& cursor_events,
     std::int64_t playback_us, double now_seconds, ZoomState& zoom) {
-  // Clear to opaque black so letterbox bars / halo background are
-  // unambiguous.
-  d2d_context->Clear(D2D1::ColorF(0.0f, 0.0f, 0.0f, 1.0f));
+  // Canvas background. This Clear runs BEFORE the colour-grade effect chain
+  // below, which is precisely what keeps the canvas ungraded — same rule the
+  // cursor halo and camera bubble already follow. Defaults to opaque black, so
+  // a preview with no canvas pushed yet looks exactly as it did before.
+  capture::export_::RgbaColor bg{};
+  float corner_radius_px = 0.0f;
+  ID2D1Bitmap* bg_image = nullptr;
+  {
+    std::lock_guard<std::mutex> lock(canvas_mutex_);
+    bg = canvas_background_;
+    corner_radius_px = canvas_corner_radius_px_;
+    bg_image = canvas_background_image_;
+  }
+  d2d_context->Clear(D2D1::ColorF(
+      static_cast<float>(bg.r), static_cast<float>(bg.g),
+      static_cast<float>(bg.b), static_cast<float>(bg.a)));
+
+  // Background image over the fill, scaled to COVER the whole surface (wallpaper
+  // behaviour, not letterboxed like the video). Drawn here — before the grade
+  // chain and outside the rounded content layer — so it stays ungraded and fills
+  // the padding area, exactly like the export composites it.
+  if (bg_image != nullptr) {
+    D2D1_SIZE_F img = bg_image->GetSize();
+    D2D1_SIZE_F surface = d2d_context->GetSize();
+    const capture::export_::RectF src =
+        capture::background::ComputeCoverSourceRect(
+            capture::export_::SizeF{img.width, img.height},
+            capture::export_::SizeF{surface.width, surface.height});
+    const D2D1_RECT_F src_rect = D2D1::RectF(
+        static_cast<float>(src.x), static_cast<float>(src.y),
+        static_cast<float>(src.x + src.width),
+        static_cast<float>(src.y + src.height));
+    d2d_context->DrawBitmap(
+        bg_image, D2D1::RectF(0.0f, 0.0f, surface.width, surface.height), 1.0f,
+        D2D1_BITMAP_INTERPOLATION_MODE_LINEAR, &src_rect);
+  }
+
   if (!video_bitmap_) return;
+
+  // Rounded content corners. Clamped to half the shorter side of the content
+  // rect so an over-large radius degenerates to a pill rather than inverting
+  // the geometry — same clamp rule the export applies.
+  Microsoft::WRL::ComPtr<ID2D1Layer> canvas_layer;
+  bool canvas_layer_pushed = false;
+  if (corner_radius_px > 0.0f) {
+    const float w = dest_rect.right - dest_rect.left;
+    const float h = dest_rect.bottom - dest_rect.top;
+    const float r = std::min(corner_radius_px, std::min(w, h) * 0.5f);
+    if (r > 0.0f && w > 0.0f && h > 0.0f) {
+      Microsoft::WRL::ComPtr<ID2D1Factory> factory;
+      d2d_context->GetFactory(&factory);
+      Microsoft::WRL::ComPtr<ID2D1RoundedRectangleGeometry> geo;
+      if (factory &&
+          SUCCEEDED(factory->CreateRoundedRectangleGeometry(
+              D2D1::RoundedRect(dest_rect, r, r), &geo)) &&
+          SUCCEEDED(d2d_context->CreateLayer(nullptr, &canvas_layer))) {
+        d2d_context->PushLayer(
+            D2D1::LayerParameters(D2D1::InfiniteRect(), geo.Get()),
+            canvas_layer.Get());
+        canvas_layer_pushed = true;
+      }
+      // A failed layer just means square corners this frame — the background
+      // and video still composite correctly, so there is nothing to abort.
+    }
+  }
+  // Popped at every return path below via this guard.
+  const auto pop_canvas_layer = [&]() {
+    if (canvas_layer_pushed) {
+      d2d_context->PopLayer();
+      canvas_layer_pushed = false;
+    }
+  };
 
   const bool has_cursor = !cursor_events.empty();
   float zoom_for_draw = 1.0f;
@@ -389,6 +459,20 @@ void PreviewCompositor::ComposeFrame(
         kHighlightRadiusPx, kHighlightRadiusPx};
     d2d_context->FillEllipse(halo, highlight_brush_.Get());
   }
+
+  // Content (video + cursor halo) is clipped to the rounded canvas rect so the
+  // halo cannot bleed onto the background. The background itself was filled by
+  // the Clear above, outside this layer and outside the grade chain.
+  pop_canvas_layer();
+}
+
+void PreviewCompositor::SetCanvasFraming(
+    capture::export_::RgbaColor background, float corner_radius_px,
+    ID2D1Bitmap* background_image) {
+  std::lock_guard<std::mutex> lock(canvas_mutex_);
+  canvas_background_ = background;
+  canvas_corner_radius_px_ = std::max(0.0f, corner_radius_px);
+  canvas_background_image_ = background_image;
 }
 
 void PreviewCompositor::SetColorGrade(

@@ -201,5 +201,73 @@ TEST(ChooseMixerBlockSourceTest, BothDeadExitsTheLoop) {
   EXPECT_EQ(ChooseMixerBlockSource(false, false), MixerBlockSource::kNone);
 }
 
+
+// ---------------------------------------------------------------------------
+// Synthetic-timeline behaviour under injected silence.
+//
+// With no microphone the mixer feeds SYNTHESISED silence whenever loopback is
+// idle, so the encoder keeps receiving audio and video never stalls. Mix()
+// timestamps from an accumulated frame count, not from device clocks, so those
+// silence packets must advance the timeline exactly like real ones — otherwise
+// audio drifts against video for the whole recording.
+// ---------------------------------------------------------------------------
+
+TEST(AudioMixerTimelineTest, SilenceAdvancesTheTimelineLikeRealAudio) {
+  AudioMixer with_silence;
+  AudioMixer with_audio;
+
+  AudioPacket silent = MakeStereoPacket(960, 0.0f);
+  silent.silent = true;
+  const AudioPacket loud = MakeStereoPacket(960, 0.25f);
+
+  // Same frame counts through both mixers, one silent and one not.
+  for (int i = 0; i < 4; ++i) {
+    const auto a = with_silence.Mix(nullptr, &silent);
+    const auto b = with_audio.Mix(nullptr, &loud);
+    EXPECT_EQ(a.frame_count, b.frame_count) << "iteration " << i;
+    EXPECT_EQ(a.timestamp_hns, b.timestamp_hns)
+        << "silence must not advance the timeline differently — iteration " << i;
+  }
+}
+
+// A silent packet still has to produce a real, full-length buffer: the encoder
+// and both sidecar tees consume `frame_count` samples from it.
+TEST(AudioMixerTimelineTest, SilentPacketYieldsAFullSilentBuffer) {
+  AudioMixer mixer;
+  AudioPacket silent = MakeStereoPacket(960, 0.0f);
+  silent.silent = true;
+
+  const auto mixed = mixer.Mix(nullptr, &silent);
+  EXPECT_EQ(mixed.frame_count, 960u);
+  EXPECT_EQ(mixed.samples.size(),
+            static_cast<std::size_t>(960) * kPipelineChannelCount);
+  for (const auto sample : mixed.samples) {
+    EXPECT_EQ(sample, 0) << "a silent packet must mix to actual silence";
+  }
+}
+
+// The timeline is monotonic and gapless across a mix of real and injected
+// packets — which is exactly the sequence a recording produces when the user
+// plays audio intermittently.
+TEST(AudioMixerTimelineTest, TimelineIsGaplessAcrossAlternatingSilence) {
+  AudioMixer mixer;
+  AudioPacket silent = MakeStereoPacket(960, 0.0f);
+  silent.silent = true;
+  const AudioPacket loud = MakeStereoPacket(960, 0.5f);
+
+  std::int64_t previous = -1;
+  std::int64_t expected_frames = 0;
+  for (int i = 0; i < 6; ++i) {
+    const auto mixed = mixer.Mix(nullptr, (i % 2 == 0) ? &loud : &silent);
+    EXPECT_GT(mixed.timestamp_hns, previous) << "iteration " << i;
+    previous = mixed.timestamp_hns;
+    // Timestamp must equal the frames emitted BEFORE this packet.
+    const std::int64_t want =
+        expected_frames * 10'000'000 / kPipelineSampleRateHz;
+    EXPECT_EQ(mixed.timestamp_hns, want) << "iteration " << i;
+    expected_frames += mixed.frame_count;
+  }
+}
+
 }  // namespace
 }  // namespace clingfy::audio

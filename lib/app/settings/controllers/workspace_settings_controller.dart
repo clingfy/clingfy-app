@@ -26,6 +26,8 @@ class WorkspaceSettingsController extends ChangeNotifier {
       'showPreRecordingActionBar';
   static const String _prefVerboseLogging = 'verboseLogging';
   static const String _prefShareUsageAnalytics = 'shareUsageAnalytics';
+  static const String _prefAnalyticsMarkInternal = 'analyticsMarkInternal';
+  static const String _prefAnalyticsTestMode = 'analyticsTestMode';
 
   bool _openFolderAfterStop = false;
   bool _openFolderAfterExport = true;
@@ -33,6 +35,9 @@ class WorkspaceSettingsController extends ChangeNotifier {
   bool _showPreRecordingActionBar = true;
   bool _verboseLogging = false;
   bool _shareUsageAnalytics = true;
+  bool _analyticsMarkInternal = false;
+  bool _analyticsTestMode = false;
+  bool _ownerControlsRevealedThisSession = false;
   String? _saveFolderPath;
   bool _didAutoOpenSaveFolderThisSession = false;
 
@@ -52,6 +57,45 @@ class WorkspaceSettingsController extends ChangeNotifier {
   /// audio, video, or transcripts. Enforced in [ClingfyAnalytics]; this is the user-facing off
   /// switch (and how the founder's own installs stay out of the numbers).
   bool get shareUsageAnalytics => _shareUsageAnalytics;
+
+  /// Owner/dev-only env overrides — the zero-setup founder switch (and what reveals the toggles
+  /// below). `CLINGFY_INTERNAL=1` marks every event internal; `CLINGFY_ANALYTICS_TEST=1` enters
+  /// the manual test channel (and forces capture on even in debug). Mirror the web device flags.
+  static bool get analyticsEnvInternal =>
+      Platform.environment['CLINGFY_INTERNAL'] == '1';
+  static bool get analyticsEnvTest =>
+      Platform.environment['CLINGFY_ANALYTICS_TEST'] == '1';
+
+  /// Mark THIS install internal so the founder's own usage drops out of real numbers
+  /// (`is_internal`; mirrors the web `?clingfy_internal=1`). Effective = persisted OR env.
+  bool get analyticsMarkInternal =>
+      _analyticsMarkInternal || analyticsEnvInternal;
+
+  /// Manual test channel: events also carry `is_test` and capture runs even in debug, so the
+  /// pipeline can be verified without polluting real numbers. Effective = persisted OR env.
+  bool get analyticsTestMode => _analyticsTestMode || analyticsEnvTest;
+
+  /// Whether the owner-only analytics controls appear in Diagnostics at all — kept out of normal
+  /// users' UI. Shown in debug builds, when either env override is set, or once either persisted
+  /// setting is on (so it can be switched back off).
+  bool get showAnalyticsOwnerControls =>
+      kDebugMode ||
+      analyticsEnvInternal ||
+      analyticsEnvTest ||
+      _analyticsMarkInternal ||
+      _analyticsTestMode ||
+      _ownerControlsRevealedThisSession;
+
+  /// Reveal the owner-only analytics controls for this session — the escape hatch for a shipped
+  /// RELEASE build with no env var set and neither toggle on yet (notably a macOS app launched
+  /// from Finder, which does not inherit shell env). Triggered by a hidden gesture in Diagnostics;
+  /// once the owner flips a persisted toggle it stays revealed on future launches.
+  void revealAnalyticsOwnerControls() {
+    if (_ownerControlsRevealedThisSession) return;
+    _ownerControlsRevealedThisSession = true;
+    notifyListeners();
+  }
+
   String? get saveFolderPath => _saveFolderPath;
 
   Future<void> loadPreferences(SharedPreferences prefs) async {
@@ -63,6 +107,8 @@ class WorkspaceSettingsController extends ChangeNotifier {
         prefs.getBool(_prefShowPreRecordingActionBar) ?? true;
     _verboseLogging = prefs.getBool(_prefVerboseLogging) ?? false;
     _shareUsageAnalytics = prefs.getBool(_prefShareUsageAnalytics) ?? true;
+    _analyticsMarkInternal = prefs.getBool(_prefAnalyticsMarkInternal) ?? false;
+    _analyticsTestMode = prefs.getBool(_prefAnalyticsTestMode) ?? false;
     // Only force verbose here: when off we leave the level resolved at startup
     // (which already honors the env var / build default) untouched.
     if (_verboseLogging) {
@@ -114,6 +160,47 @@ class WorkspaceSettingsController extends ChangeNotifier {
     }
 
     ClingfyAnalytics.setEnabled(value);
+  }
+
+  Future<void> setAnalyticsMarkInternal(bool value) async {
+    if (value == _analyticsMarkInternal) return;
+    _analyticsMarkInternal = value;
+    notifyListeners();
+
+    final prefs = await SharedPreferences.getInstance();
+    try {
+      await prefs.setBool(_prefAnalyticsMarkInternal, value);
+    } catch (e, st) {
+      Log.e(
+        'Settings',
+        'Failed to persist analytics-internal preference',
+        e,
+        st,
+      );
+    }
+
+    // Push the EFFECTIVE value: an env override keeps it on even when the toggle is cleared.
+    ClingfyAnalytics.setInternal(analyticsMarkInternal);
+  }
+
+  Future<void> setAnalyticsTestMode(bool value) async {
+    if (value == _analyticsTestMode) return;
+    _analyticsTestMode = value;
+    notifyListeners();
+
+    final prefs = await SharedPreferences.getInstance();
+    try {
+      await prefs.setBool(_prefAnalyticsTestMode, value);
+    } catch (e, st) {
+      Log.e(
+        'Settings',
+        'Failed to persist analytics test-mode preference',
+        e,
+        st,
+      );
+    }
+
+    ClingfyAnalytics.setTestMode(analyticsTestMode);
   }
 
   Future<void> _cacheSaveFolderPath(String? path) async {

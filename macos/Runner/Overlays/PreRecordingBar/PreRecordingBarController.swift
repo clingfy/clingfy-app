@@ -18,6 +18,30 @@ class PreRecordingBarController: NSWindowController, NSPopoverDelegate {
   private var targetMode: Int = DisplayTargetMode.explicitID.rawValue
 
   private var currentPopover: NSPopover?
+
+  /// Which picker is on screen, so a device change only refreshes the popover
+  /// it actually affects. Refreshing an unrelated one would rebuild the list
+  /// under the user's cursor for no reason.
+  enum PopoverKind {
+    case display, window, mic, camera
+
+    var changeNotification: Notification.Name {
+      switch self {
+      case .display: return Notification.Name.deviceDisplaysChanged
+      case .window: return Notification.Name.deviceAppWindowsChanged
+      case .mic: return Notification.Name.deviceAudioSourcesChanged
+      case .camera: return Notification.Name.deviceVideoSourcesChanged
+      }
+    }
+  }
+
+  private var currentPopoverKind: PopoverKind?
+
+  /// Re-runs the open popover's own fetch. Stored at present time so a device
+  /// change can reuse exactly the path the manual refresh button uses.
+  private var currentPopoverRefresh: (() -> Void)?
+
+  private var deviceChangeObservers: [NSObjectProtocol] = []
   private var outsideClickLocalMonitor: Any?
   private var outsideClickGlobalMonitor: Any?
   private let frameAutosaveName = NSWindow.FrameAutosaveName("ClingfyPreRecordingBarFrame")
@@ -65,13 +89,67 @@ class PreRecordingBarController: NSWindowController, NSPopoverDelegate {
 
   func setVisible(_ visible: Bool) {
     if visible {
+      // Only observe while the bar is on screen; a hidden bar has no popover
+      // to refresh.
+      startObservingDeviceChanges()
       if !panel.isVisible {
         panel.orderFront(nil)
       }
     } else {
       currentPopover?.performClose(nil)
+      stopObservingDeviceChanges()
       panel.orderOut(nil)
     }
+  }
+
+  /// Sub-point differences are invisible and come from layout rounding;
+  /// treating them as a change would animate the panel forever.
+  static func framesAreEquivalent(_ lhs: NSRect, _ rhs: NSRect) -> Bool {
+    let tolerance: CGFloat = 0.5
+    return abs(lhs.origin.x - rhs.origin.x) < tolerance
+      && abs(lhs.origin.y - rhs.origin.y) < tolerance
+      && abs(lhs.size.width - rhs.size.width) < tolerance
+      && abs(lhs.size.height - rhs.size.height) < tolerance
+  }
+
+  /// Popovers fetch a fresh list when they OPEN, so the bar is never stale at
+  /// open time. What it could not do is update a popover that is ALREADY
+  /// open: nothing from Flutter can reach `currentPopover`, and the only
+  /// refresh was the manual button. These observers close that gap.
+  func startObservingDeviceChanges() {
+    guard deviceChangeObservers.isEmpty else { return }
+    let center = NotificationCenter.default
+    let names: [Notification.Name] = [
+      Notification.Name.deviceDisplaysChanged,
+      Notification.Name.deviceAppWindowsChanged,
+      Notification.Name.deviceAudioSourcesChanged,
+      Notification.Name.deviceVideoSourcesChanged,
+    ]
+    deviceChangeObservers = names.map { name in
+      center.addObserver(forName: name, object: nil, queue: .main) { [weak self] _ in
+        self?.refreshOpenPopover(for: name)
+      }
+    }
+  }
+
+  func stopObservingDeviceChanges() {
+    for observer in deviceChangeObservers {
+      NotificationCenter.default.removeObserver(observer)
+    }
+    deviceChangeObservers = []
+  }
+
+  private func refreshOpenPopover(for name: Notification.Name) {
+    guard
+      let kind = currentPopoverKind,
+      kind.changeNotification == name,
+      currentPopover?.isShown == true,
+      let refresh = currentPopoverRefresh
+    else {
+      return
+    }
+    NativeLogger.d("PreRecordingBar", "Refreshing open popover for \(name.rawValue)")
+    refresh()
   }
 
   func updateState(_ state: [String: Any]) {
@@ -96,17 +174,22 @@ class PreRecordingBarController: NSWindowController, NSPopoverDelegate {
     // 4. Calculate the X position so the bar stays centered on its current location
     let newX = currentFrame.midX - (newWidth / 2)
 
-    // 5. Apply the new frame
-    panel.setFrame(
-      NSRect(
-        x: newX,
-        y: currentFrame.origin.y,  // Keep the current Y
-        width: newWidth,
-        height: 64
-      ),
-      display: true,
-      animate: true
+    // 5. Apply the new frame — only when it actually differs.
+    //
+    // updateState is called on every state push, and an animated setFrame on
+    // an unchanged frame is not free: it re-lays out and animates a floating
+    // panel, and doing that repeatedly disturbs the window server's idea of
+    // which window is key. Re-frame only when the width the content needs has
+    // really changed.
+    let targetFrame = NSRect(
+      x: newX,
+      y: currentFrame.origin.y,  // Keep the current Y
+      width: newWidth,
+      height: 64
     )
+    if !Self.framesAreEquivalent(currentFrame, targetFrame) {
+      panel.setFrame(targetFrame, display: true, animate: true)
+    }
     // NativeLogger.d(
     //   "PreRecordingBar",
     //   "updateState newX: \(newX), newWidth: \(newWidth), currentFrame.origin.x: \(currentFrame.origin.x), currentFrame.origin.y: \(currentFrame.origin.y), currentFrame.size.width: \(currentFrame.size.width), currentFrame.size.height: \(currentFrame.size.height), panel.frame.origin.x: \(panel.frame.origin.x), panel.frame.origin.y: \(panel.frame.origin.y), panel.frame.size.width: \(panel.frame.size.width), panel.frame.size.height: \(panel.frame.size.height)"
@@ -182,6 +265,7 @@ class PreRecordingBarController: NSWindowController, NSPopoverDelegate {
     fetchDisplayOptions { [weak self] options in
       guard let self = self else { return }
       self.presentPopover(
+        kind: .display,
         title: NativeStringsStore.shared.string(for: NativeUIStringKey.preRecordingBarSelectDisplay),
         options: options,
         anchor: self.barView.displayButton
@@ -230,6 +314,7 @@ class PreRecordingBarController: NSWindowController, NSPopoverDelegate {
     fetchWindowOptions { [weak self] options in
       guard let self = self else { return }
       self.presentPopover(
+        kind: .window,
         title: NativeStringsStore.shared.string(for: NativeUIStringKey.preRecordingBarSelectWindow),
         options: options,
         anchor: self.barView.windowButton
@@ -311,6 +396,7 @@ class PreRecordingBarController: NSWindowController, NSPopoverDelegate {
     fetchMicOptions { [weak self] options in
       guard let self = self else { return }
       self.presentPopover(
+        kind: .mic,
         title: NativeStringsStore.shared.string(
           for: NativeUIStringKey.preRecordingBarSelectMicrophone
         ),
@@ -361,6 +447,7 @@ class PreRecordingBarController: NSWindowController, NSPopoverDelegate {
     fetchCameraOptions { [weak self] options in
       guard let self = self else { return }
       self.presentPopover(
+        kind: .camera,
         title: NativeStringsStore.shared.string(for: NativeUIStringKey.preRecordingBarSelectCamera),
         options: options,
         anchor: self.barView.cameraButton
@@ -411,6 +498,7 @@ class PreRecordingBarController: NSWindowController, NSPopoverDelegate {
   }
 
   private func presentPopover(
+    kind: PopoverKind,
     title: String,
     options: [PickerOption],
     anchor: NSView,
@@ -432,6 +520,11 @@ class PreRecordingBarController: NSWindowController, NSPopoverDelegate {
           popover?.performClose(nil)
         }
         controller.onRefresh = { finish in refresh(controller, finish) }
+        self.currentPopoverKind = kind
+        self.currentPopoverRefresh = { [weak controller] in
+          guard let controller else { return }
+          refresh(controller) {}
+        }
         controller.updateOptions(options)
         return
       }
@@ -465,6 +558,17 @@ class PreRecordingBarController: NSWindowController, NSPopoverDelegate {
       self.installOutsideClickMonitors(popover: popover)
 
       self.currentPopover = popover
+      self.currentPopoverKind = kind
+      if let controller = popover.contentViewController as? OptionPickerPopover {
+        self.currentPopoverRefresh = { [weak controller] in
+          guard let controller else { return }
+          refresh(controller) {}
+        }
+      }
+      // Only the window list needs polling, and only while it is on screen.
+      if kind == .window {
+        self.recorder.setAppWindowWatchActive(true)
+      }
 
       DispatchQueue.main.async { [weak self, weak popover] in
         guard let self, let popover else { return }
@@ -495,7 +599,12 @@ class PreRecordingBarController: NSWindowController, NSPopoverDelegate {
 
   func popoverWillClose(_ notification: Notification) {
     removeOutsideClickMonitors()
+    if currentPopoverKind == .window {
+      recorder.setAppWindowWatchActive(false)
+    }
     currentPopover = nil
+    currentPopoverKind = nil
+    currentPopoverRefresh = nil
   }
 
   private func installOutsideClickMonitors(popover: NSPopover) {

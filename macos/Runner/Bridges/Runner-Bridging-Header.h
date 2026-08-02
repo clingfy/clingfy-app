@@ -1,4 +1,5 @@
 #import "AVAssetWriterInputExceptionBridge.h"
+#import "AVCaptureMovieFileOutputExceptionBridge.h"
 
 // Vendored RNNoise (BSD-3-Clause) — the voice-cleanup engine behind
 // RNNoiseEngine.swift. See Capture/Audio/RNNoise/README.md.

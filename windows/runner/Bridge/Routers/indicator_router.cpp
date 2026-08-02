@@ -5,14 +5,31 @@
 
 #include "Bridge/native_log_publisher.h"
 #include "Bridge/result_helpers.h"
+#include "Capture/Indicator/recording_indicator_controller.h"
 
 namespace clingfy::bridge::routers::indicator {
 
 namespace {
 
-void HandleNoopSetter(
-    const flutter::MethodCall<flutter::EncodableValue>& /*call*/,
+// Slice 3: pin / unpin the on-screen recording indicator. Dart's
+// SettingsController pushes the persisted `indicatorPinned` bool on startup and
+// on toggle (mirrors macOS setRecordingIndicatorPinned). Parse the `pinned` key
+// like HandleSetNativeLogLevel and forward to the overlay controller, which
+// snaps the pill to the corner (pinned) or restores drag (unpinned). The void
+// Dart contract: always reply null.
+void HandleSetRecordingIndicatorPinned(
+    const flutter::MethodCall<flutter::EncodableValue>& call,
     std::unique_ptr<flutter::MethodResult<flutter::EncodableValue>> result) {
+  if (const auto* args =
+          std::get_if<flutter::EncodableMap>(call.arguments())) {
+    const auto it = args->find(flutter::EncodableValue("pinned"));
+    if (it != args->end()) {
+      if (const auto* pinned = std::get_if<bool>(&it->second)) {
+        clingfy::capture::RecordingIndicatorController::Instance().SetPinned(
+            *pinned);
+      }
+    }
+  }
   reply::Null(*result);
 }
 
@@ -50,16 +67,11 @@ void HandleSetNativeLogLevel(
 }  // namespace
 
 void RegisterHandlers(HandlerTable& table) {
-  table["setRecordingIndicatorPinned"] = &HandleNoopSetter;
+  table["setRecordingIndicatorPinned"] = &HandleSetRecordingIndicatorPinned;
 
-  // macOS routes both `setPreRecordingBarEnabled` and
-  // `setPreRecordingBarVisible` through the same handler -- mirror that here
-  // so we stay aligned with the Dart contract.
-  table["setPreRecordingBarEnabled"] = &HandleNoopSetter;
-  table["setPreRecordingBarVisible"] = &HandleNoopSetter;
-  table["showPreRecordingBar"] = &HandleNoopSetter;
-  table["togglePreRecordingBar"] = &HandleNoopSetter;
-  table["setPreRecordingBarState"] = &HandleNoopSetter;
+  // The pre-recording bar methods (setPreRecordingBar*/show/toggle) moved to
+  // `routers::pre_recording_bar` (Slice 4) — they now drive a real Win32
+  // overlay instead of a no-op.
 
   // Runtime log-verbosity push from the Settings "verbose logging" toggle —
   // pushes the level into the native log threshold (NativeLogPublisher), so

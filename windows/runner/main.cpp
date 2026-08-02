@@ -2,20 +2,15 @@
 #include <flutter/flutter_view_controller.h>
 #include <windows.h>
 
+#include "Bridge/app_window_anchor.h"
 #include "Bridge/project_open_coordinator.h"
 #include "Core/argv_project_path.h"
 #include "Core/single_instance.h"
 #include "flutter_window.h"
+#include "Core/app_identity.h"
 #include "utils.h"
 
-namespace {
 
-// Bundle-id suffix used for the single-instance mutex + receiver
-// window class. Phase 5 ships a single Windows flavour; if we add a
-// dev / prod split later, fork this on a build define.
-constexpr wchar_t kBundleIdSuffix[] = L"com.clingfy.clingfy";
-
-}  // namespace
 
 int APIENTRY wWinMain(_In_ HINSTANCE instance, _In_opt_ HINSTANCE prev,
                       _In_ wchar_t *command_line, _In_ int show_command) {
@@ -27,7 +22,9 @@ int APIENTRY wWinMain(_In_ HINSTANCE instance, _In_opt_ HINSTANCE prev,
   // Single-instance gate. If we lose the race, forward the path to
   // the existing instance and exit immediately — the existing
   // instance owns the user-visible state.
-  const std::wstring bundle_suffix = kBundleIdSuffix;
+  // D9: forked per channel (the split this file used to predict), so dev and
+  // prod no longer contend for one mutex. prod keeps its historical value.
+  const std::wstring bundle_suffix = clingfy::core::InstanceMutexSuffix();
   const bool first_instance =
       clingfy::core::TryAcquireInstanceMutex(bundle_suffix);
   if (!first_instance) {
@@ -74,10 +71,19 @@ int APIENTRY wWinMain(_In_ HINSTANCE instance, _In_opt_ HINSTANCE prev,
   FlutterWindow window(project);
   Win32Window::Point origin(10, 10);
   Win32Window::Size size(1280, 720);
-  if (!window.Create(L"clingfy", origin, size)) {
+  // Title bar text. Channel-aware so two side-by-side installs are
+  // distinguishable — D9 made running both at once possible.
+  if (!window.Create(clingfy::core::DisplayName(), origin, size)) {
     return EXIT_FAILURE;
   }
   window.SetQuitOnClose(true);
+
+  // Record the main window so the recording chrome (pre-recording bar,
+  // indicator) places itself on the display the user is actually working on.
+  // Without this the overlays resolve their monitor from their own window,
+  // which is created at (0, 0) and therefore always answers "primary" -- on a
+  // multi-monitor desktop the chrome lands on a screen the user isn't watching.
+  clingfy::SetMainAppWindow(window.GetHandle());
 
   // Step 5.6: register the WM_COPYDATA receiver AFTER the Flutter
   // window exists so the receiver lives on the same platform thread

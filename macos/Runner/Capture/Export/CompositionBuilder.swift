@@ -142,6 +142,31 @@ enum VideoColorPipeline {
     )
   }
 
+  /// Renders a fully composed export frame into the writer's pixel buffer,
+  /// re-encoding it into the transfer function the output file declares.
+  ///
+  /// Every frame the user's file receives goes through here, and this is the
+  /// only place the output transfer function is applied. That is deliberate:
+  /// the manual render path has two mutually-exclusive final render sites, and
+  /// one shared function is what keeps them from drifting apart.
+  ///
+  /// The buffer is still tagged 709 by `tag(pixelBuffer:)`. The point of this
+  /// function is that the DATA now agrees with that tag; before it, the file
+  /// declared 709 while carrying sRGB-encoded pixels.
+  static func renderComposedExportFrame(
+    _ image: CIImage,
+    to pixelBuffer: CVPixelBuffer,
+    bounds: CGRect,
+    using context: CIContext
+  ) {
+    context.render(
+      ColorTransferFunctions.encodeForExport(image),
+      to: pixelBuffer,
+      bounds: bounds,
+      colorSpace: workingColorSpace
+    )
+  }
+
   static func resolveSourceColorSpace(
     pixelBuffer: CVPixelBuffer?,
     formatDescription: CMFormatDescription? = nil

@@ -22,6 +22,10 @@ final class NativeStringsStore {
     NativeUIStringKey.preRecordingBarArea: "Area",
     NativeUIStringKey.preRecordingBarCamera: "Camera",
     NativeUIStringKey.preRecordingBarMic: "Mic",
+    NativeUIStringKey.preRecordingBarMicTooLow:
+      "Mic level is very low — raise the input level in System Settings.",
+    NativeUIStringKey.preRecordingBarBleedRisk:
+      "System audio is playing out loud and will bleed into your mic. Use headphones.",
     NativeUIStringKey.preRecordingBarSystem: "System",
     NativeUIStringKey.preRecordingBarUpdate: "Update",
     NativeUIStringKey.preRecordingBarPause: "PAUSE",

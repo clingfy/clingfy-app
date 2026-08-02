@@ -59,6 +59,112 @@ final class AudioSourceRecordingTests: XCTestCase {
     )
   }
 
+  // MARK: - Failure reporting
+
+  /// A dead sidecar used to be log-only: the recording carried on and the loss
+  /// surfaced hours later in the preview. The writer must announce it.
+  func testWriterReportsSetupFailureThroughOnFailure() throws {
+    // A path under a directory that does not exist makes AVAssetWriter's
+    // creation fail, which is the real-world shape of this failure.
+    let url = tempDirectory
+      .appendingPathComponent("missing-subdir", isDirectory: true)
+      .appendingPathComponent("mic.segment-001.m4a")
+    let writer = AudioSourceSegmentWriter(kind: .microphone, index: 1, url: url)
+
+    var reported: [AudioSourceKind] = []
+    writer.onFailure = { reported.append($0) }
+
+    for buffer in try makePCMSampleBuffers(totalSeconds: 0.2) {
+      writer.append(buffer)
+    }
+
+    XCTAssertEqual(reported, [.microphone])
+    XCTAssertFalse(FileManager.default.fileExists(atPath: url.path))
+  }
+
+  /// Appends run at hundreds per second; a per-buffer warning would bury the
+  /// banner and hammer the event channel.
+  func testWriterReportsFailureOnlyOnceAcrossManyAppends() throws {
+    let url = tempDirectory
+      .appendingPathComponent("missing-subdir", isDirectory: true)
+      .appendingPathComponent("system.segment-001.m4a")
+    let writer = AudioSourceSegmentWriter(kind: .systemAudio, index: 1, url: url)
+
+    var reportCount = 0
+    writer.onFailure = { _ in reportCount += 1 }
+
+    // Two passes, so the terminal state is re-entered well after it was set.
+    for _ in 0..<2 {
+      for buffer in try makePCMSampleBuffers(totalSeconds: 0.3) {
+        writer.append(buffer)
+      }
+    }
+
+    XCTAssertEqual(reportCount, 1)
+  }
+
+  /// A healthy writer must stay silent — a false "audio is broken" banner on a
+  /// good take is worse than the original silence.
+  func testWriterDoesNotReportFailureOnSuccess() async throws {
+    let url = tempDirectory.appendingPathComponent("mic.segment-001.m4a")
+    let writer = AudioSourceSegmentWriter(kind: .microphone, index: 1, url: url)
+
+    var reportCount = 0
+    writer.onFailure = { _ in reportCount += 1 }
+
+    for buffer in try makePCMSampleBuffers(totalSeconds: 0.3) {
+      writer.append(buffer)
+    }
+    let finishedURL = await writer.finish()
+
+    XCTAssertEqual(finishedURL, url)
+    XCTAssertEqual(reportCount, 0)
+  }
+
+  /// One notice per source per recording, even though a segmented recording
+  /// builds a fresh writer for every segment.
+  func testRecorderReportsEachFailedSourceOnce() throws {
+    let recorder = SourceAudioRecorder()
+    // Configure into a directory that does not exist so every writer fails.
+    let missingDirectory = tempDirectory.appendingPathComponent("gone", isDirectory: true)
+    recorder.configure(directory: missingDirectory, micEnabled: true, systemAudioEnabled: true)
+
+    var reported: [AudioSourceKind] = []
+    recorder.onSourceFailure = { reported.append($0) }
+
+    let stream = NSObject()
+    let streamID = ObjectIdentifier(stream)
+    recorder.attachStream(id: streamID)
+
+    for segment in 1...3 {
+      recorder.prepareSegment(index: segment)
+      recorder.activatePreparedSegment(index: segment)
+      for buffer in try makePCMSampleBuffers(totalSeconds: 0.2) {
+        recorder.append(buffer, source: .microphone, from: streamID)
+        recorder.append(buffer, source: .systemAudio, from: streamID)
+      }
+    }
+
+    XCTAssertEqual(Set(reported), Set([.microphone, .systemAudio]))
+    XCTAssertEqual(reported.count, 2, "expected one notice per source, not per segment")
+  }
+
+  /// The copy must say the take survives, otherwise the banner reads as "your
+  /// recording is ruined" when only the separated track was lost.
+  func testSourceAudioFailureWarningNamesTheSurvivingAudio() {
+    let mic = CaptureBackendScreenCaptureKit.sourceAudioFailureWarning(for: .microphone)
+    XCTAssertTrue(mic.contains("microphone"))
+    XCTAssertTrue(mic.contains("recording continues"))
+    XCTAssertTrue(mic.contains("mixed audio"))
+
+    let system = CaptureBackendScreenCaptureKit.sourceAudioFailureWarning(for: .systemAudio)
+    XCTAssertTrue(system.contains("system audio"))
+    XCTAssertTrue(system.contains("recording continues"))
+    XCTAssertTrue(system.contains("mixed audio"))
+
+    XCTAssertNotEqual(mic, system)
+  }
+
   func testWriterWithNoBuffersProducesNoFile() async {
     let url = tempDirectory.appendingPathComponent("system.segment-001.m4a")
     let writer = AudioSourceSegmentWriter(kind: .systemAudio, index: 1, url: url)
@@ -307,14 +413,38 @@ final class AudioSourceRecordingTests: XCTestCase {
       RecordingProjectPaths.durableCaptureArtifactFileURLs(for: root).contains(systemURL))
   }
 
-  func testManifestPreSeedsSeparatedAudioPaths() {
+  /// The manifest is an inventory of what exists, not a promise of what might.
+  /// Pre-seeding these paths is what made `project.json` advertise a
+  /// `capture/system.m4a` that was never written — consumers then failed on a
+  /// missing file instead of simply seeing the source was absent.
+  func testManifestDoesNotClaimSeparatedAudioBeforeItIsWritten() {
     let manifest = RecordingProjectManifest.create(
       projectId: "rec_test",
       displayName: "Test",
       includeCamera: false
     )
+    XCTAssertNil(manifest.capture.micAudio)
+    XCTAssertNil(manifest.capture.systemAudio)
+  }
+
+  func testManifestReconcileInventoryAdoptsSidecarsOnceOnDisk() throws {
+    let projectRoot = tempDirectory.appendingPathComponent("rec_test", isDirectory: true)
+    let captureDirectory = projectRoot.appendingPathComponent("capture", isDirectory: true)
+    try FileManager.default.createDirectory(at: captureDirectory, withIntermediateDirectories: true)
+
+    var manifest = RecordingProjectManifest.create(
+      projectId: "rec_test",
+      displayName: "Test",
+      includeCamera: false
+    )
+
+    // Only the mic sidecar exists — a mic-only recording.
+    try Data([0x00]).write(to: captureDirectory.appendingPathComponent("mic.m4a"))
+
+    manifest.reconcileInventory(projectRoot: projectRoot)
+
     XCTAssertEqual(manifest.capture.micAudio, "capture/mic.m4a")
-    XCTAssertEqual(manifest.capture.systemAudio, "capture/system.m4a")
+    XCTAssertNil(manifest.capture.systemAudio, "system audio was never recorded")
   }
 
   func testManifestWithoutAudioKeysStillDecodes() throws {

@@ -231,7 +231,7 @@ private enum CameraMergeUtility {
 }
 
 final class CameraRecorder: NSObject {
-  private let coordinator: CameraCaptureCoordinator
+  private let coordinator: CameraCaptureCoordinating
   private let fileManager: FileManager
 
   var onFailure: ((FlutterError) -> Void)?
@@ -239,15 +239,39 @@ final class CameraRecorder: NSObject {
   private var recordingSession: CameraRecordingSession?
   private var activeSegment: ActiveCameraSegment?
   private var pendingStartCompletion: ((Result<Void, Error>) -> Void)?
+  /// Why the last session ended, kept after `recordingSession` is cleared.
+  ///
+  /// `stop()` failing with "not active" is only a symptom: the session was
+  /// already gone. Without this, all three guards returned the same string
+  /// and the cause was undecidable even with full logs — which is exactly
+  /// what happened when a take was lost in the field on 2026-07-27.
+  enum SessionEnding: String {
+    case neverBegan
+    case finishedSuccessfully
+    case failed
+  }
+
+  private(set) var lastSessionEnding: SessionEnding = .neverBegan
+  private(set) var lastSessionEndedAt: Date?
+  private(set) var lastSessionSegmentCount: Int = 0
+
   private var pendingPauseCompletion: ((Result<Void, Error>) -> Void)?
   private var pendingStopCompletion: ((Result<CameraRecordingResult, Error>) -> Void)?
 
+  /// How long to wait for AVFoundation to confirm a segment started.
+  ///
+  /// Injectable so a test does not have to wait the real 20 seconds to prove
+  /// the backstop fires.
+  private let segmentStartTimeout: TimeInterval
+
   init(
-    coordinator: CameraCaptureCoordinator,
-    fileManager: FileManager = .default
+    coordinator: CameraCaptureCoordinating,
+    fileManager: FileManager = .default,
+    segmentStartTimeout: TimeInterval = CameraRecorder.segmentStartTimeoutSeconds
   ) {
     self.coordinator = coordinator
     self.fileManager = fileManager
+    self.segmentStartTimeout = segmentStartTimeout
     super.init()
   }
 
@@ -256,7 +280,28 @@ final class CameraRecorder: NSObject {
     completion: @escaping (Result<Void, Error>) -> Void
   ) {
     guard recordingSession == nil else {
-      completion(.failure(flutterError(NativeErrorCode.alreadyRecording, "Camera recorder already active")))
+      // Say which state is refusing. A paused session and one left behind by a
+      // start that failed without unwinding look identical from here, and
+      // "already active" alone sent the last investigation looking in the
+      // wrong place — the recorder was not recording anything.
+      let segments = recordingSession?.segments.count ?? 0
+      let outputRecording = coordinator.isOutputRecording
+      NativeLogger.w(
+        "CameraRecorder",
+        "Refusing to begin: a camera session is already held",
+        context: [
+          "outputIsRecording": outputRecording,
+          "hasActiveSegment": activeSegment != nil,
+          "segmentsSoFar": segments,
+          "lastSessionEnding": lastSessionEnding.rawValue,
+        ]
+      )
+      completion(
+        .failure(
+          flutterError(
+            NativeErrorCode.alreadyRecording,
+            "Camera recorder already active (recording: \(outputRecording), "
+              + "segments: \(segments))")))
       return
     }
 
@@ -268,8 +313,28 @@ final class CameraRecorder: NSObject {
       try coordinator.acquireRecording(deviceID: session.deviceId)
       coordinator.setMirrored(session.mirroredRaw)
       recordingSession = session
-      startNextSegment(completion: completion)
+      startNextSegment { [weak self] result in
+        // Unwind everything this method claimed if the first segment never
+        // starts. `recordingSession` is assigned above so `startNextSegment`
+        // can read it, and until that call could fail there was nothing to
+        // undo — it either started or the process aborted. Now that a
+        // not-ready camera is refused instead of fatal, leaving the session
+        // assigned makes the recorder look permanently active and every later
+        // attempt comes back ALREADY_RECORDING until the app is restarted,
+        // which is a worse failure than the crash it replaced.
+        //
+        // Routed through the existing teardown rather than clearing the
+        // fields here: it releases the coordinator's recording use and stamps
+        // `lastSessionEnding`, so the next error can say what ended the
+        // session instead of just refusing.
+        if case .failure(let error) = result {
+          self?.finishWithFailure(error)
+        }
+        completion(result)
+      }
     } catch {
+      // acquireRecording may have taken the recording use before throwing.
+      coordinator.releaseRecording()
       completion(.failure(error))
     }
   }
@@ -280,22 +345,26 @@ final class CameraRecorder: NSObject {
       return
     }
 
-    guard coordinator.recordingOutput.isRecording, activeSegment != nil else {
+    guard coordinator.isOutputRecording, activeSegment != nil else {
       completion(.success(()))
       return
     }
 
     pendingPauseCompletion = completion
-    coordinator.recordingOutput.stopRecording()
+    coordinator.stopOutputRecording()
   }
 
   func resume(completion: @escaping (Result<Void, Error>) -> Void) {
     guard recordingSession != nil else {
-      completion(.failure(flutterError(NativeErrorCode.notRecording, "Camera recorder is not active")))
+      completion(
+        .failure(
+          flutterError(
+            NativeErrorCode.notRecording,
+            "Camera recorder is not active (resume; ended by: \(lastSessionEnding.rawValue))")))
       return
     }
 
-    guard activeSegment == nil, !coordinator.recordingOutput.isRecording else {
+    guard activeSegment == nil, !coordinator.isOutputRecording else {
       completion(.success(()))
       return
     }
@@ -305,13 +374,31 @@ final class CameraRecorder: NSObject {
 
   func stop(completion: @escaping (Result<CameraRecordingResult, Error>) -> Void) {
     guard recordingSession != nil else {
-      completion(.failure(flutterError(NativeErrorCode.notRecording, "Camera recorder is not active")))
+      // The interesting question is never "was it active" — it is what
+      // cleared it, and when. Answer that here so the next occurrence is
+      // decidable from one log line rather than a code reading.
+      let secondsSinceEnd = lastSessionEndedAt.map { Date().timeIntervalSince($0) }
+      NativeLogger.e(
+        "CameraRecorder",
+        "stop() called with no active session",
+        context: [
+          "endedBy": lastSessionEnding.rawValue,
+          "secondsSinceSessionEnded": secondsSinceEnd.map { String(format: "%.3f", $0) } ?? "never",
+          "segmentsAtEnd": lastSessionSegmentCount,
+          "outputIsRecording": coordinator.isOutputRecording,
+          "hasActiveSegment": activeSegment != nil,
+        ])
+      completion(
+        .failure(
+          flutterError(
+            NativeErrorCode.notRecording,
+            "Camera recorder is not active (ended by: \(lastSessionEnding.rawValue))")))
       return
     }
 
-    if coordinator.recordingOutput.isRecording, activeSegment != nil {
+    if coordinator.isOutputRecording, activeSegment != nil {
       pendingStopCompletion = completion
-      coordinator.recordingOutput.stopRecording()
+      coordinator.stopOutputRecording()
       return
     }
 
@@ -320,7 +407,11 @@ final class CameraRecorder: NSObject {
 
   private func startNextSegment(completion: @escaping (Result<Void, Error>) -> Void) {
     guard let session = recordingSession else {
-      completion(.failure(flutterError(NativeErrorCode.notRecording, "Camera recorder is not active")))
+      completion(
+        .failure(
+          flutterError(
+            NativeErrorCode.notRecording,
+            "Camera recorder is not active (startNextSegment; ended by: \(lastSessionEnding.rawValue))")))
       return
     }
 
@@ -333,16 +424,132 @@ final class CameraRecorder: NSObject {
       try? fileManager.removeItem(at: segmentURL)
     }
 
-    activeSegment = ActiveCameraSegment(index: nextIndex, url: segmentURL, startedAt: Date())
-    pendingStartCompletion = completion
-
     NativeLogger.i(
       "CameraRecorder",
       "Starting camera segment",
-      context: ["index": nextIndex, "path": segmentURL.path]
+      context: [
+        "index": nextIndex,
+        "path": segmentURL.path,
+        "sessionRunning": coordinator.isSessionRunning,
+        "videoConnectionActive": coordinator.hasActiveVideoConnection,
+      ]
     )
 
-    coordinator.recordingOutput.startRecording(to: segmentURL, recordingDelegate: self)
+    // Refuse before AVFoundation has to. `startRecording(to:)` RAISES an
+    // Objective-C exception when the capture graph is not ready — session not
+    // running, or no active video connection — and Swift cannot catch those,
+    // so the raise reaches the terminate handler and aborts the process. That
+    // is a real crash seen in the field: a camera hot-plugged and selected
+    // about ten seconds before recording started, and the first segment start
+    // killed the app.
+    //
+    // Checking here turns the common case into an ordinary start failure with
+    // a message the user can act on, and leaves the bridge below to catch the
+    // states we cannot enumerate.
+    guard coordinator.isSessionRunning, coordinator.hasActiveVideoConnection else {
+      let reason =
+        coordinator.isSessionRunning
+        ? "the camera has no active video connection"
+        : "the camera session is not running"
+      NativeLogger.e(
+        "CameraRecorder",
+        "Refusing to start a camera segment before the capture graph is ready",
+        context: [
+          "index": nextIndex,
+          "sessionRunning": coordinator.isSessionRunning,
+          "videoConnectionActive": coordinator.hasActiveVideoConnection,
+        ]
+      )
+      completion(
+        .failure(
+          flutterError(
+            NativeErrorCode.recordingError,
+            "The camera is not ready to record — \(reason). "
+              + "If you just connected or switched cameras, wait a moment and try again.")))
+      return
+    }
+
+    activeSegment = ActiveCameraSegment(index: nextIndex, url: segmentURL, startedAt: Date())
+    pendingStartCompletion = completion
+
+    do {
+      try coordinator.startOutputRecording(to: segmentURL, delegate: self)
+      scheduleSegmentStartTimeout(index: nextIndex)
+    } catch {
+      // The delegate never fires when the start is refused, so the pending
+      // completion would otherwise be held forever and the UI would sit in
+      // "starting" until the user force-quits.
+      activeSegment = nil
+      pendingStartCompletion = nil
+      let nsError = error as NSError
+      NativeLogger.e(
+        "CameraRecorder",
+        "Camera refused to start recording",
+        context: [
+          "index": nextIndex,
+          "exceptionName": nsError.userInfo["exceptionName"] ?? "",
+          "exceptionReason": nsError.userInfo["exceptionReason"] ?? "",
+          "hasVideoConnection": nsError.userInfo["hasVideoConnection"] ?? "",
+          "videoConnectionActive": nsError.userInfo["videoConnectionActive"] ?? "",
+          "outputIsRecording": nsError.userInfo["outputIsRecording"] ?? "",
+        ]
+      )
+      completion(.failure(error))
+    }
+  }
+
+  /// How long to wait for AVFoundation to confirm a camera segment started.
+  ///
+  /// Measured, not guessed. On a healthy start the delegate confirms in about
+  /// 1.4s. When the capture session was reconfigured under us, AVFoundation
+  /// reported its own error after 14s — which is more informative than a
+  /// timeout, so this must sit above that and let it speak. What this exists
+  /// for is the third case: with an external camera that stalled, the delegate
+  /// did not report for 15 minutes 51 seconds, and the UI span the entire time
+  /// with no way out but relaunching the app.
+  static let segmentStartTimeoutSeconds: TimeInterval = 20
+
+  /// Distinguishes start attempts so a timer from an abandoned attempt cannot
+  /// fail a newer one.
+  private var segmentStartToken: UInt64 = 0
+
+  private func scheduleSegmentStartTimeout(index: Int) {
+    segmentStartToken &+= 1
+    let token = segmentStartToken
+    DispatchQueue.main.asyncAfter(deadline: .now() + segmentStartTimeout) {
+      [weak self] in
+      self?.failSegmentStartIfStillPending(token: token, index: index)
+    }
+  }
+
+  private func failSegmentStartIfStillPending(token: UInt64, index: Int) {
+    // Still the current attempt, and still waiting. Either check failing means
+    // the delegate answered or the session moved on, and there is nothing to do.
+    guard token == segmentStartToken, let completion = pendingStartCompletion else { return }
+
+    let error = flutterError(
+      NativeErrorCode.recordingError,
+      "The camera did not start recording within "
+        + "\(Int(segmentStartTimeout)) seconds. "
+        + "If it is an external camera, reconnect it or pick a different one, then try again.")
+    NativeLogger.e(
+      "CameraRecorder",
+      "Camera segment start timed out",
+      context: [
+        "index": index,
+        "timeoutSeconds": segmentStartTimeout,
+        "outputIsRecording": coordinator.isOutputRecording,
+        "sessionRunning": coordinator.isSessionRunning,
+        "videoConnectionActive": coordinator.hasActiveVideoConnection,
+      ]
+    )
+    // finishWithFailure clears pendingStartCompletion, so it was captured above.
+    // Deliberately does NOT call stopRecording on the output: that method is
+    // itself a documented raiser, and it is what threw in the crash report that
+    // started this whole thread. Releasing through the normal teardown is the
+    // safer unwind.
+    finishWithFailure(error)
+    completion(.failure(error))
   }
 
   private func finalizeStoppedRecording(
@@ -408,6 +615,9 @@ final class CameraRecorder: NSObject {
   }
 
   private func finishSuccessfully() {
+    lastSessionEnding = .finishedSuccessfully
+    lastSessionEndedAt = Date()
+    lastSessionSegmentCount = recordingSession?.segments.count ?? 0
     coordinator.releaseRecording()
     recordingSession = nil
     activeSegment = nil
@@ -417,6 +627,9 @@ final class CameraRecorder: NSObject {
   }
 
   private func finishWithFailure(_ error: Error) {
+    lastSessionEnding = .failed
+    lastSessionEndedAt = Date()
+    lastSessionSegmentCount = recordingSession?.segments.count ?? 0
     NativeLogger.e(
       "CameraRecorder",
       "Camera recorder failed",

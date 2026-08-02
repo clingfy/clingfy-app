@@ -4,7 +4,43 @@ import CoreGraphics
 import Foundation
 import FlutterMacOS
 
-final class CameraCaptureCoordinator: NSObject {
+/// What `CameraRecorder` needs from the capture graph.
+///
+/// Exists so the recorder can be driven without a camera. Three defensive
+/// paths shipped untested for want of this seam — the readiness guard, the
+/// unwind after a refused start, and the start timeout — and a regression in
+/// the second of those escaped both a green suite and a green build, because
+/// nothing could put the recorder into the state they guard.
+///
+/// Note that `startOutputRecording` is here rather than the underlying
+/// `AVCaptureMovieFileOutput`: exposing the output would leave its start and
+/// stop unfakeable, which are exactly the calls that raise, hang, and need
+/// testing.
+protocol CameraCaptureCoordinating: AnyObject {
+  /// Whether the capture session is actually running.
+  var isSessionRunning: Bool { get }
+
+  /// Whether the movie output has a live video connection to record from.
+  var hasActiveVideoConnection: Bool { get }
+
+  /// Whether the movie output currently believes it is recording.
+  var isOutputRecording: Bool { get }
+
+  func acquireRecording(deviceID: String?) throws
+  func releaseRecording()
+  func setMirrored(_ mirrored: Bool)
+
+  /// Starts a file recording, throwing rather than raising if the capture
+  /// graph refuses. See `AVCaptureMovieFileOutputExceptionBridge`.
+  func startOutputRecording(
+    to url: URL,
+    delegate: AVCaptureFileOutputRecordingDelegate
+  ) throws
+
+  func stopOutputRecording()
+}
+
+final class CameraCaptureCoordinator: NSObject, CameraCaptureCoordinating {
   enum StreamUse: Hashable {
     case preview
     case recording
@@ -31,6 +67,49 @@ final class CameraCaptureCoordinator: NSObject {
 
   var recordingOutput: AVCaptureMovieFileOutput {
     movieOutput
+  }
+
+  /// Whether the capture session is actually running.
+  ///
+  /// `startRunning()` does not report failure: on a device that was just
+  /// attached or switched, the session can decline to come up and leave this
+  /// false. Starting a recording in that state makes AVFoundation raise, so
+  /// callers check this first.
+  var isSessionRunning: Bool {
+    session.isRunning
+  }
+
+  /// Whether the movie output has a live video connection to record from.
+  ///
+  /// A session can be running while the output is not yet connected — the
+  /// window right after a device change — which is the other state that makes
+  /// `startRecording(to:)` raise.
+  var hasActiveVideoConnection: Bool {
+    guard let connection = movieOutput.connection(with: .video) else { return false }
+    return connection.isActive && connection.isEnabled
+  }
+
+  var isOutputRecording: Bool {
+    movieOutput.isRecording
+  }
+
+  /// Routed through the exception bridge because
+  /// `startRecordingToOutputFileURL:` raises rather than returning an error,
+  /// and Swift cannot catch an Objective-C raise — it reaches the terminate
+  /// handler and aborts the process.
+  func startOutputRecording(
+    to url: URL,
+    delegate: AVCaptureFileOutputRecordingDelegate
+  ) throws {
+    try AVCaptureMovieFileOutputExceptionBridge.startRecording(
+      output: movieOutput,
+      outputURL: url,
+      recordingDelegate: delegate
+    )
+  }
+
+  func stopOutputRecording() {
+    movieOutput.stopRecording()
   }
 
   var selectedDevice: AVCaptureDevice? {

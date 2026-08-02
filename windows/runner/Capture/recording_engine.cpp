@@ -36,6 +36,7 @@
 #include "Capture/Camera/camera_recorder.h"
 #include "Capture/captured_video_frame.h"
 #include "Capture/Cursor/cursor_sampler.h"
+#include "Capture/Indicator/recording_indicator_controller.h"
 #include "Capture/recording_project_writer.h"
 #include "Capture/video_frame_queue.h"
 #include "Capture/wgc_display_capture_backend.h"
@@ -99,6 +100,21 @@ std::optional<std::uint64_t> FreeBytesForDirectory(
     return std::nullopt;
   }
   return static_cast<std::uint64_t>(available.QuadPart);
+}
+
+// Capture-lifecycle breadcrumbs, at INFO so they survive a RELEASE build.
+//
+// These used to go through LogDeviceProbe, which lands as DEBUG -- and release
+// and profile builds default to INFO (logger_service.dart), so on the only
+// builds a tester ever runs they were silent. A real audio stall was diagnosed
+// from media file durations alone because of it: the log had nothing.
+//
+// Deliberately a SHORT list -- capture open, mixer start/exit, and each source
+// going away. DeviceProbe emitted 107 of 282 lines in one short session, so
+// promoting all of it would drown the signal it is meant to carry. Per-packet
+// and enumeration detail stays on LogDeviceProbe behind the verbose toggle.
+void LogCaptureLifecycle(const char* message) {
+  clingfy::bridge::NativeLogPublisher::Instance().Info("Recording", message);
 }
 
 }  // namespace
@@ -527,7 +543,7 @@ std::optional<RecordingError> RecordingEngine::Start(
       std::snprintf(buf, sizeof(buf),
                     "RecordingEngine: mic open attempt id=%s",
                     mic_id.empty() ? "<default>" : mic_id.c_str());
-      clingfy::bridge::devices::LogDeviceProbe(buf);
+      LogCaptureLifecycle(buf);
     }
     auto mic_err = mic_capture_->Start(
         clingfy::audio::WasapiCaptureKind::kMicrophone, mic_id, *mic_queue_);
@@ -562,6 +578,9 @@ std::optional<RecordingError> RecordingEngine::Start(
           on_audio_capture_error(k, hr);
           queue->Close();
         });
+    // Mirrors the mic's open breadcrumb. Its absence meant a release build
+    // could not even report whether system-audio capture had STARTED.
+    LogCaptureLifecycle("RecordingEngine: loopback open attempt (default render endpoint)");
     auto loopback_err = loopback_capture_->Start(
         clingfy::audio::WasapiCaptureKind::kSystemLoopback, "",
         *loopback_queue_);
@@ -670,6 +689,21 @@ std::optional<RecordingError> RecordingEngine::Start(
     }
   });
 
+  // Idle-loopback slice. When loopback is the only source driving the mixer
+  // (no microphone), this is both how long we wait for a packet AND how much
+  // silence we synthesise when none arrives. The two MUST match: Mix advances a
+  // synthetic timeline from frame counts, so silence shorter than the wait
+  // drifts audio behind video and longer runs it ahead.
+  //
+  // 20 ms is around a WASAPI period — short enough that video never notices the
+  // audio path pausing, long enough not to spin.
+  static constexpr int kLoopbackIdleSliceMs = 20;
+  static constexpr std::uint32_t kLoopbackIdleSliceFrames =
+      clingfy::audio::kPipelineSampleRateHz * kLoopbackIdleSliceMs / 1000;
+  static_assert(kLoopbackIdleSliceFrames > 0,
+                "an idle slice of zero frames would spin without advancing the "
+                "timeline");
+
   // Audio mixer thread: pulls one packet at a time from whichever
   // queue(s) are alive, mixes (or pass-through when a source is
   // missing), and forwards to the encoder. Skipped entirely when both
@@ -679,8 +713,7 @@ std::optional<RecordingError> RecordingEngine::Start(
   if (mic_capture_ != nullptr || loopback_capture_ != nullptr) {
     audio_mixer_stopped_.store(false);
     audio_mixer_thread_ = std::thread([this, warn_sid] {
-      clingfy::bridge::devices::LogDeviceProbe(
-          "RecordingEngine: audio mixer thread start");
+      LogCaptureLifecycle("RecordingEngine: audio mixer thread start");
       clingfy::audio::AudioMixer mixer;
       // Audio-separation D4: a source is "alive" until its queue closes —
       // either at teardown or when a fatal capture error closes it
@@ -706,7 +739,7 @@ std::optional<RecordingError> RecordingEngine::Start(
             // the blocking role to loopback within the SAME iteration so
             // no packet slot is skipped.
             mic_alive = false;
-            clingfy::bridge::devices::LogDeviceProbe(
+            LogCaptureLifecycle(
                 "RecordingEngine: mic queue closed; mixer continues with "
                 "loopback only");
             block = clingfy::audio::ChooseMixerBlockSource(mic_alive,
@@ -720,13 +753,46 @@ std::optional<RecordingError> RecordingEngine::Start(
           // playing. When loopback IS the blocking source (no mic, or the
           // mic just died), a blocking Pop avoids a busy-spin.
           if (block == clingfy::audio::MixerBlockSource::kLoopback) {
-            loopback = loopback_queue_->Pop();
+            // Loopback is the ONLY thing driving this loop (no mic, or the mic
+            // died). WASAPI loopback delivers packets only while something is
+            // PLAYING, so a plain blocking Pop() here stalls the moment the
+            // machine goes quiet — and a stalled audio path back-pressures the
+            // sink writer into dropping video frames. Observed: 0.13 s of audio
+            // against 38.6 s of video, with 728 of 885 frames dropped.
+            //
+            // A bounded wait keeps the cadence ours. On timeout we synthesise
+            // EXACTLY the waited duration as silence, which matters because
+            // AudioMixer::Mix advances a SYNTHETIC timeline
+            // (next_sample_offset_): injecting less than the elapsed wall time
+            // would let audio drift behind video, and injecting more would run
+            // it ahead. Equal-duration silence keeps the premix, both sidecars
+            // and the video aligned by construction.
+            clingfy::audio::AudioPacket popped;
+            const auto status = loopback_queue_->PopFor(
+                std::chrono::milliseconds(kLoopbackIdleSliceMs), popped);
             if (audio_mixer_stopped_.load()) break;
-            if (!loopback.has_value()) {
+            if (status == clingfy::audio::AudioPacketQueue::PopStatus::kPacket) {
+              loopback = std::move(popped);
+            } else if (status ==
+                       clingfy::audio::AudioPacketQueue::PopStatus::kClosed) {
+              // Terminal: the producer is gone. Distinct from "quiet", which is
+              // why PopFor separates them — Pop() reported both as nullopt and
+              // the loop could not tell an idle machine from a dead device.
               loopback_alive = false;
-              clingfy::bridge::devices::LogDeviceProbe(
+              LogCaptureLifecycle(
                   "RecordingEngine: loopback queue closed; mixer continues "
                   "with mic only");
+            } else {
+              // Idle, still alive. Feed the slice as silence so the encoder
+              // keeps receiving audio on schedule and video never stalls.
+              clingfy::audio::AudioPacket silence;
+              silence.frame_count = kLoopbackIdleSliceFrames;
+              silence.silent = true;
+              silence.samples.assign(
+                  static_cast<std::size_t>(kLoopbackIdleSliceFrames) *
+                      clingfy::audio::kPipelineChannelCount,
+                  0.0f);
+              loopback = std::move(silence);
             }
           } else {
             loopback = loopback_queue_->TryPop();
@@ -805,8 +871,7 @@ std::optional<RecordingError> RecordingEngine::Start(
           }
         }
       }
-      clingfy::bridge::devices::LogDeviceProbe(
-          "RecordingEngine: audio mixer thread exit");
+      LogCaptureLifecycle("RecordingEngine: audio mixer thread exit");
     });
   }
 
@@ -1124,6 +1189,15 @@ std::optional<RecordingError> RecordingEngine::Start(
                       "Engine refused to enter Recording state.");
   }
 
+  // Slice 1 (Windows recording indicator): the pill goes up the moment the
+  // recording is live and comes down in TeardownPipeline (every end path).
+  // The timer pulls pause-aware elapsed seconds straight from the engine clock
+  // — never pushed from Flutter. The provider takes `mutex_`, but Show only
+  // stores it (the overlay thread calls it later), so there is no re-entrant
+  // lock here, and Hide() never joins that thread, so teardown can't deadlock.
+  RecordingIndicatorController::Instance().Show(
+      []() -> std::uint64_t { return RecordingEngine::Instance().ElapsedSeconds(); });
+
   // Lifecycle event: the recording is officially live. Phase 3E onward
   // the Flutter UI transitions to its `recording` phase on this event
   // and only then enables the stop button.
@@ -1194,6 +1268,11 @@ std::optional<RecordingError> RecordingEngine::Pause(
                           "Engine refused to enter Paused state."};
   }
 
+  // Slice 2 (Windows recording indicator): reflect the pause on the pill (dot
+  // turns amber, the primary control becomes resume). Non-blocking.
+  RecordingIndicatorController::Instance().SetState(
+      IndicatorVisualState::kPaused);
+
   clingfy::bridge::WorkflowEventPublisher::Instance().EmitRecordingPaused(
       std::string(session_.session_id()));
   return std::nullopt;
@@ -1252,6 +1331,11 @@ std::optional<RecordingError> RecordingEngine::Resume(
     return RecordingError{clingfy::bridge::error::kInvalidRecordingState,
                           "Engine refused to enter Recording state."};
   }
+
+  // Slice 2 (Windows recording indicator): back to the recording look (red dot,
+  // pause control). Non-blocking.
+  RecordingIndicatorController::Instance().SetState(
+      IndicatorVisualState::kRecording);
 
   clingfy::bridge::WorkflowEventPublisher::Instance().EmitRecordingResumed(
       std::string(session_.session_id()));
@@ -1750,6 +1834,13 @@ void RecordingEngine::HandleTargetLost(const std::string& session_id) {
 }
 
 void RecordingEngine::TeardownPipeline(bool finalize_encoder) {
+  // Slice 1 (Windows recording indicator): every recording-end path flows
+  // through here (Stop, failure, target-loss), so this is the single hide
+  // hook. Non-blocking — Hide() only posts to the overlay thread and never
+  // joins it, so calling it under `mutex_` cannot deadlock against the
+  // indicator's elapsed-seconds provider (which takes `mutex_`).
+  RecordingIndicatorController::Instance().Hide();
+
   // Strict ordering: stop the capture producers first, then signal the
   // drain / mixer consumer threads via queue Close, join them, then
   // finalize the encoder so the MP4 footer is written before the
@@ -1911,6 +2002,12 @@ RecordingState RecordingEngine::state() const {
 std::string RecordingEngine::session_id() const {
   std::lock_guard<std::mutex> lock(mutex_);
   return std::string(session_.session_id());
+}
+
+std::uint64_t RecordingEngine::ElapsedSeconds() const {
+  std::lock_guard<std::mutex> lock(mutex_);
+  const std::int64_t hns = clock_.ElapsedHns();  // 100-ns units, pause-aware.
+  return hns > 0 ? static_cast<std::uint64_t>(hns / 10'000'000) : 0;
 }
 
 RecordingEngine::CaptureDiagnostics RecordingEngine::Diagnostics() const {

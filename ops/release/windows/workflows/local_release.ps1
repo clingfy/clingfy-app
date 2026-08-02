@@ -14,8 +14,8 @@
 # Steps: version guard -> [tests] -> build+stage -> sign app -> package ->
 # sign installer -> [publish -> Sentry symbols (non-blocking) -> smoke].
 #
-# The optional test gate runs `flutter analyze lib` plus the native Windows
-# GoogleTest suite (ctest). It deliberately does NOT run `flutter test`: the
+# The optional test gate runs `flutter analyze lib --no-fatal-infos` plus the
+# native Windows GoogleTest suite (ctest). It deliberately does NOT run `flutter test`: the
 # develop baseline carries a known-flaky set of FluentLocalizations widget-
 # test failures, so a raw exit-code gate on it would block every release —
 # compare the set of failing test names against the develop baseline instead.
@@ -66,22 +66,83 @@ Invoke-Step '00_version_guard.ps1' $channelArgs
 
 # --- Optional test gate ---------------------------------------------------------
 if ($RunTests) {
-  Write-Step 'Test gate: flutter analyze lib'
-  & flutter analyze lib
+  # --no-fatal-infos deliberately. CI's gate is `dart analyze lib test`, which
+  # does NOT fail on info-level lints; `flutter analyze` DOES by default. That
+  # mismatch made the release lane strictly stricter than the branch protection
+  # it is supposed to mirror, and info-level lints are TOOLCHAIN-VERSION
+  # DEPENDENT: CI pins Flutter 3.41.1, and a developer on a newer SDK sees
+  # deprecations that do not exist on the pinned version (SizeTransition
+  # .axisAlignment was deprecated after 3.41.0). The lane therefore failed at
+  # its first gate on any machine ahead of the pin, which is why the Windows
+  # feed was never published. Errors and warnings still abort the release.
+  Write-Step 'Test gate: flutter analyze lib (--no-fatal-infos, matching CI)'
+  & flutter analyze lib --no-fatal-infos
   if ($LASTEXITCODE -ne 0) { Fail "flutter analyze lib failed (exit $LASTEXITCODE)." }
 
   $testsDir = Resolve-RepoPath (Join-Path 'build' 'windows-tests')
+  # Configure on demand rather than failing. `01_build.ps1 -Clean` runs
+  # `flutter clean`, which deletes build/ -- INCLUDING build/windows-tests. So a
+  # lane that required the directory to pre-exist worked exactly once: the next
+  # -Clean run was sabotaged by the previous one, and the script's own
+  # documented `-Clean -RunTests` combination could never complete twice.
   if (-not (Test-Path -LiteralPath $testsDir -PathType Container)) {
-    Fail ("Native test build dir not found: $testsDir. One-time configure:`n" +
-      '  cmake -S windows -B build/windows-tests -DBUILD_RUNNER_TESTS=ON ...' + "`n" +
-      "  (see the Windows section of CLAUDE.md for the full command)")
+    # windows/flutter/ephemeral/generated_config.cmake is GENERATED and
+    # gitignored, and windows/flutter/CMakeLists.txt includes it unconditionally.
+    # A developer machine always has one lying around from a previous build, so
+    # this gate configured fine locally and failed on a FRESH CI AGENT with
+    # "include could not find requested file". Observed on the first prod run
+    # that used -RunTests.
+    #
+    # --config-only writes the ephemeral files without doing a build, which is
+    # exactly what the test configure needs and costs seconds.
+    $ephemeral = Resolve-RepoPath (Join-Path 'windows' 'flutter/ephemeral/generated_config.cmake')
+    if (-not (Test-Path -LiteralPath $ephemeral)) {
+      Write-Step 'Test gate: generating Flutter ephemeral config (fresh checkout)'
+      & flutter build windows --config-only
+      if ($LASTEXITCODE -ne 0) {
+        Fail "flutter build windows --config-only failed (exit $LASTEXITCODE)."
+      }
+    }
+
+    Write-Step 'Test gate: configuring native test build (first run, or after -Clean)'
+    # The FLUTTER_VERSION defines feed the runner's version resource. Derived
+    # from the running SDK so this cannot drift from whatever built the app.
+    $fv = (& flutter --version --machine | ConvertFrom-Json).frameworkVersion
+    if (-not $fv) { Fail 'Could not determine the Flutter version for the test configure.' }
+    $parts = $fv.Split('.')
+    & cmake -S (Resolve-RepoPath 'windows') -B $testsDir -DBUILD_RUNNER_TESTS=ON `
+      "-DFLUTTER_VERSION=$fv" `
+      "-DFLUTTER_VERSION_MAJOR=$($parts[0])" `
+      "-DFLUTTER_VERSION_MINOR=$($parts[1])" `
+      "-DFLUTTER_VERSION_PATCH=$($parts[2])" `
+      '-DFLUTTER_VERSION_BUILD=0'
+    if ($LASTEXITCODE -ne 0) { Fail "cmake configure for runner_tests failed (exit $LASTEXITCODE)." }
   }
   # Build BEFORE ctest, and gate on the build result — ctest happily reruns a
   # stale binary and reports green if the rebuild silently failed.
   Write-Step 'Test gate: native runner_tests'
   & cmake --build $testsDir --config Debug --target runner_tests
   if ($LASTEXITCODE -ne 0) { Fail "runner_tests build failed (exit $LASTEXITCODE)." }
-  & ctest --test-dir $testsDir --output-on-failure -C Debug
+  # Two suites are excluded from the RELEASE gate, and the exclusion is printed
+  # rather than silent -- a gate that quietly drops tests reads as "everything
+  # passed" when it is not.
+  #
+  #   ColorGradeGoldenTest   -- mirrors CI, which excludes it for a known
+  #                             Windows<->macOS colour-grade divergence. Keeping
+  #                             the lane stricter than CI just blocks releases
+  #                             on a failure CI has already accepted.
+  #   CameraDcompOverlayPoc  -- session-dependent. These need an interactive
+  #                             desktop compositor: they SKIP in headless CI
+  #                             (so CI never sees them) and locally they pass or
+  #                             fail depending on session state. A release gate
+  #                             that fails at random is not a gate. They still
+  #                             run in a normal local `ctest` with no filter.
+  #
+  # Same reasoning this lane already applies to `flutter test`. Everything else
+  # -- all ~1267 remaining tests -- still blocks the release.
+  $ctestExclude = 'ColorGradeGoldenTest|CameraDcompOverlayPoc'
+  Write-Host "    NOTE: release gate excludes $ctestExclude (see comment above); every other test still blocks." -ForegroundColor Yellow
+  & ctest --test-dir $testsDir --output-on-failure -C Debug -E $ctestExclude
   if ($LASTEXITCODE -ne 0) { Fail "ctest failed (exit $LASTEXITCODE)." }
 }
 

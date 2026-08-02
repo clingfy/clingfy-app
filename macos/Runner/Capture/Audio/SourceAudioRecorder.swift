@@ -44,9 +44,33 @@ final class AudioSourceSegmentWriter {
     case failed
   }
 
-  /// AAC bitrate per channel; stereo sources encode at 192 kbps — strictly
-  /// above the 64-100 kbps track SCRecordingOutput embeds in screen.mov.
-  static let aacBitRatePerChannel = 96_000
+  /// AAC bitrate per channel at 48 kHz; stereo sources encode at 192 kbps —
+  /// strictly above the 64-100 kbps track SCRecordingOutput embeds in screen.mov.
+  static let aacBitRatePerChannel = AACEncoderSettings.maxBitRatePerChannel
+
+  /// Floor so a pathologically low sample rate cannot ask for an unusably thin
+  /// stream.
+  static let minAacBitRatePerChannel = AACEncoderSettings.minBitRatePerChannel
+
+  /// The AAC bitrate to request for a source arriving at [sampleRate].
+  ///
+  /// AAC's legal bitrate range scales with the sample rate, and the mic is the
+  /// one source whose rate we do not control: a Bluetooth headset runs HFP and
+  /// arrives at 8 or 16 kHz, where a flat 96 kbps per channel is far out of
+  /// range. AVAssetWriter then rejects the whole writer with
+  /// `-11861 "The encoding parameters are not supported"` (underlying -12651),
+  /// the segment is discarded with zero samples appended, and the take comes
+  /// back with no voice at all.
+  ///
+  /// Observed in the field on a JBL WAVE100TWS (Bluetooth "Headset"): the mic
+  /// writer failed to start while `system.m4a` — 48 kHz from ScreenCaptureKit —
+  /// encoded fine, which is what isolated the sample rate as the variable.
+  ///
+  /// ~2 bits per sample, which evaluates to exactly [aacBitRatePerChannel] at
+  /// 48 kHz, so every existing 48 kHz path is bit-for-bit unchanged.
+  static func aacBitRate(sampleRate: Double, channels: Int) -> Int {
+    AACEncoderSettings.bitRate(sampleRate: sampleRate, channels: channels)
+  }
 
   let kind: AudioSourceKind
   let index: Int
@@ -59,6 +83,14 @@ final class AudioSourceSegmentWriter {
   private var appendedBufferCount = 0
   private var droppedBufferCount = 0
 
+  /// Fired at most once, when this writer goes terminal. Set at construction
+  /// before any buffer can arrive, so it is safe to read without the lock.
+  /// Never invoked while `lock` is held — `append` runs on the capture queue
+  /// and the handler reaches all the way out to the Flutter event channel.
+  var onFailure: ((AudioSourceKind) -> Void)?
+  private var pendingFailureNotice = false
+  private var hasReportedFailure = false
+
   init(kind: AudioSourceKind, index: Int, url: URL) {
     self.kind = kind
     self.index = index
@@ -68,7 +100,35 @@ final class AudioSourceSegmentWriter {
   /// Hot path — called once per sample buffer on the capture queue.
   func append(_ sampleBuffer: CMSampleBuffer) {
     guard CMSampleBufferDataIsReady(sampleBuffer) else { return }
+    appendUnderLock(sampleBuffer)
+    flushFailureNotice()
+  }
 
+  /// Drains a terminal-transition notice recorded under the lock and reports
+  /// it once. Split out of `append` so the callback runs unlocked.
+  private func flushFailureNotice() {
+    lock.lock()
+    let pending = pendingFailureNotice
+    pendingFailureNotice = false
+    lock.unlock()
+
+    guard pending else { return }
+    reportFailureOnce()
+  }
+
+  /// Terminal failures reachable off the hot path (finalize) report through
+  /// here directly; `hasReportedFailure` keeps it to one notice per writer.
+  private func reportFailureOnce() {
+    lock.lock()
+    let shouldReport = !hasReportedFailure
+    if shouldReport { hasReportedFailure = true }
+    lock.unlock()
+
+    guard shouldReport else { return }
+    onFailure?(kind)
+  }
+
+  private func appendUnderLock(_ sampleBuffer: CMSampleBuffer) {
     lock.lock()
     defer { lock.unlock() }
 
@@ -79,6 +139,7 @@ final class AudioSourceSegmentWriter {
         state = .writing
       } catch {
         state = .failed
+        pendingFailureNotice = true
         NativeLogger.w(
           "SourceAudio", "Failed to start source audio writer",
           context: ["kind": kind.rawValue, "segment": index, "error": "\(error)"])
@@ -96,6 +157,7 @@ final class AudioSourceSegmentWriter {
     guard let writer, let input else { return }
     if writer.status == .failed {
       state = .failed
+      pendingFailureNotice = true
       NativeLogger.w(
         "SourceAudio", "Source audio writer failed mid-segment",
         context: [
@@ -134,7 +196,7 @@ final class AudioSourceSegmentWriter {
       AVFormatIDKey: kAudioFormatMPEG4AAC,
       AVSampleRateKey: sampleRate,
       AVNumberOfChannelsKey: channels,
-      AVEncoderBitRateKey: channels * Self.aacBitRatePerChannel,
+      AVEncoderBitRateKey: Self.aacBitRate(sampleRate: sampleRate, channels: channels),
     ]
     let input = AVAssetWriterInput(
       mediaType: .audio,
@@ -201,6 +263,7 @@ final class AudioSourceSegmentWriter {
           "error": "\(writer.error.map { "\($0)" } ?? "unknown")",
         ])
       try? FileManager.default.removeItem(at: url)
+      reportFailureOnce()
       return nil
     }
 
@@ -257,6 +320,12 @@ final class SourceAudioRecorder {
   private var attachedStreamID: ObjectIdentifier?
   private var finishedArtifactURLs: [URL] = []
 
+  /// Raised when a source loses its separated sidecar. Reported once per
+  /// source per recording: a writer that fails mid-recording would otherwise
+  /// re-fire on every subsequent segment.
+  var onSourceFailure: ((AudioSourceKind) -> Void)?
+  private var failureReportedSources: Set<AudioSourceKind> = []
+
   func configure(directory: URL, micEnabled: Bool, systemAudioEnabled: Bool) {
     var sources: Set<AudioSourceKind> = []
     if micEnabled { sources.insert(.microphone) }
@@ -265,6 +334,7 @@ final class SourceAudioRecorder {
     lock.lock()
     self.directory = directory
     self.enabledSources = sources
+    failureReportedSources.removeAll()
     lock.unlock()
 
     NativeLogger.i(
@@ -296,12 +366,28 @@ final class SourceAudioRecorder {
     var writers: [AudioSourceKind: AudioSourceSegmentWriter] = [:]
     for kind in enabledSources {
       let url = directory.appendingPathComponent(kind.segmentFileName(index: index), isDirectory: false)
-      writers[kind] = AudioSourceSegmentWriter(kind: kind, index: index, url: url)
+      let writer = AudioSourceSegmentWriter(kind: kind, index: index, url: url)
+      writer.onFailure = { [weak self] failedKind in
+        self?.reportSourceFailure(failedKind)
+      }
+      writers[kind] = writer
     }
     prepared = SegmentWriters(index: index, writers: writers)
     lock.unlock()
 
     stalePrepared?.writers.values.forEach { $0.cancel() }
+  }
+
+  /// Invoked from a writer's failure handler with no writer lock held (see
+  /// `AudioSourceSegmentWriter.onFailure`) and, on the append path, after the
+  /// recorder lock is already released.
+  private func reportSourceFailure(_ kind: AudioSourceKind) {
+    lock.lock()
+    let isFirst = failureReportedSources.insert(kind).inserted
+    lock.unlock()
+
+    guard isFirst else { return }
+    onSourceFailure?(kind)
   }
 
   func activatePreparedSegment(index: Int) {

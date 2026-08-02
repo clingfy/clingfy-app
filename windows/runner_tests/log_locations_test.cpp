@@ -1,5 +1,7 @@
 #include "Services/log_locations.h"
 
+#include "Core/app_identity.h"
+
 #include <windows.h>
 
 #include <gtest/gtest.h>
@@ -16,6 +18,24 @@ namespace {
 TEST(LogLocationsTest, JoinNativeLogsDirAppendsClingfyLogs) {
   EXPECT_EQ(JoinNativeLogsDir(L"C:\\Users\\u\\AppData\\Local"),
             L"C:\\Users\\u\\AppData\\Local\\Clingfy\\Logs");
+}
+
+// D9: the native log directory must follow the CHANNEL identity, not a
+// hardcoded literal. It was missed when the rest of D9 landed — dev and prod
+// kept sharing one log directory after their recordings, caches and Dart logs
+// had already separated — so this asserts agreement with the identity helper
+// rather than re-stating the string, which is what let the miss survive.
+TEST(LogLocationsTest, JoinNativeLogsDirFollowsTheChannelIdentity) {
+  const std::wstring base = L"C:\\Users\\u\\AppData\\Local";
+  const std::wstring expected =
+      base + L"\\" + clingfy::core::LocalAppDataFolderName() + L"\\Logs";
+  EXPECT_EQ(JoinNativeLogsDir(base), expected);
+}
+
+// And the two channels must not collide, or the split is cosmetic.
+TEST(LogLocationsTest, DevAndProdNativeLogDirsDiffer) {
+  EXPECT_NE(clingfy::core::LocalAppDataFolderName(clingfy::core::AppChannel::kDev),
+            clingfy::core::LocalAppDataFolderName(clingfy::core::AppChannel::kProd));
 }
 
 TEST(LogLocationsTest, JoinNativeLogsDirEmptyBaseYieldsEmpty) {

@@ -236,7 +236,15 @@ final class RecordingSessionCoordinatorTests: XCTestCase {
       shouldRecordSeparateCameraAsset: shouldRecordSeparateCameraAsset,
       videoDeviceId: nil,
       overlayMirror: false,
-      editorSeed: makeEditorSeed()
+      editorSeed: makeEditorSeed(),
+      audio: RecordingMetadata.AudioCaptureInfo(
+        micEnabled: true,
+        micDeviceId: nil,
+        systemAudioEnabled: true,
+        excludedMicFromSystemAudio: true,
+        echoCancellationEnabled: false,
+        outputRoute: AudioOutputRoute.headphones.rawValue
+      )
     )
   }
 

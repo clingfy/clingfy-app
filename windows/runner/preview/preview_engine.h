@@ -38,6 +38,7 @@
 
 #include "Capture/Export/clip_playback_planner.h"
 #include "Capture/Export/color_grade.h"
+#include "Core/canvas_composition.h"
 #include "Preview/preview_camera_renderer.h"
 
 #include <atomic>
@@ -84,6 +85,12 @@ struct OpenArgs {
   // auto-layout canvas aspect.
   int video_width_hint = 0;
   int video_height_hint = 0;
+  // Canvas presets, so the texture starts at the CANVAS aspect rather than the
+  // video's — a 16:9 recording in a 9:16 canvas previewed as 16:9 while the
+  // export was portrait. Empty (a caller that has not plumbed them yet) falls
+  // back to the old video-aspect sizing, so this stays backwards compatible.
+  std::string layout_preset;
+  std::string resolution_preset;
   // Audio separation (design D9): the mic / system sidecar paths from the
   // project reader (existence-gated there; empty = absent). The engine runs
   // the decode probe once at Open and, when either passes, the edited-path
@@ -149,6 +156,26 @@ struct CameraNudgePlan {
 };
 CameraNudgePlan ResolveCameraNudgeTarget(std::int64_t current_ms,
                                          std::int64_t previous_anchor_ms);
+
+// What to do when a preview setting (color grade, camera composition) changes.
+enum class PausedRepaintAction {
+  kSkipPlaying,      // playing: the next natural frame already carries it.
+  kRepaintRetained,  // not advancing: re-composite the frame already on screen.
+  kNudgeSeek,        // nothing composed yet: fall back to the 1ms seek nudge.
+};
+
+// Policy for reflecting a settings change on a preview that is NOT advancing.
+//
+// The seek nudge above cannot be the primary path. It forces a decode for a
+// cosmetic change, and at end-of-stream the ±1ms target lands past the end so
+// no frame is ever produced -- which is why an edit made after pausing OR
+// finishing playback stayed invisible while the same edit during playback
+// worked. Re-compositing the retained frame costs one D2D compose instead, and
+// works at EOS because it never asks the player for anything.
+//
+// Pure and lock-free for unit testing; the engine supplies the two facts.
+PausedRepaintAction DecidePausedRepaint(bool is_playing,
+                                        bool has_composed_frame);
 
 class PreviewEngine {
  public:
@@ -216,6 +243,54 @@ class PreviewEngine {
   // even-aligned, with a small floor. Unknown hints (<= 0) keep 1280x720.
   static TextureSize ComputePreviewTextureSize(int video_width_hint,
                                                int video_height_hint);
+
+  // The shared-texture size for a session's CANVAS, which is what the preview
+  // must actually match.
+  //
+  // The texture used to be sized to the VIDEO aspect. That is wrong as soon as
+  // the canvas aspect differs — a 16:9 recording inside a 9:16 reel canvas
+  // previewed as 16:9, so switching the layout preset changed nothing on screen
+  // while the export changed completely. The canvas comes from
+  // `ResolveTargetSize(source, layout, resolution)`; only its ASPECT is used
+  // here, because the texture stays inside the 1280x720 budget regardless of
+  // the user's export resolution.
+  //
+  // Falls back to the video aspect when the presets are empty or degenerate, so
+  // a caller that has not learned the presets yet behaves exactly as before.
+  static TextureSize ComputeCanvasTextureSize(int video_width_hint,
+                                              int video_height_hint,
+                                              const std::string& layout_preset,
+                                              const std::string& resolution_preset);
+
+  // Pure (exposed for tests): does a canvas push need the preview session
+  // REBUILT, because the layout/resolution it carries changes the shared
+  // texture's aspect?
+  //
+  // A shared texture cannot be resized in place — Flutter holds the handle for
+  // the lifetime of the registration — so the only way a mid-session layout
+  // switch reshapes the preview is close + reopen. Rather than invent a
+  // protocol for that, the engine reuses `previewInvalidated`: Dart already
+  // rebuilds in place on that event (same session id, no phase change, no
+  // remount) and re-pushes the editing state afterwards.
+  //
+  // Returns false unless a rebuild is genuinely required, because every true
+  // costs a close+reopen:
+  //   - Source dims unknown (no frame decoded yet). This is the loop guard.
+  //     Sizing from unknown dims yields the default 1280x720, which mismatches
+  //     any portrait texture and would ask for a rebuild forever.
+  //   - Current texture size unknown (no session open).
+  //   - The required size already matches. This is the TERMINATION property:
+  //     the rebuild re-pushes the canvas, and that second push must be a
+  //     no-op or the rebuild would trigger another rebuild.
+  //
+  // Note a pure RESOLUTION change (720p -> 4K) does not rebuild: the texture
+  // is aspect-only inside a fixed budget, so the pixels on screen are
+  // unchanged and only the export target moves.
+  static bool DecideCanvasAspectRebuild(int source_width, int source_height,
+                                        int current_texture_width,
+                                        int current_texture_height,
+                                        const std::string& layout_preset,
+                                        const std::string& resolution_preset);
 
   // Editing port (step 4-5) — pure decision for Play() on an edited session:
   // pressing Play with the playhead at (or within one frame of) the edited
@@ -367,6 +442,31 @@ class PreviewEngine {
   void SetColorGrade(const std::string& session_id,
                      const capture::export_::color::ColorGrade& grade);
 
+  // Canvas framing (background colour, padding, corner radius) for the live
+  // preview. Driven by Dart's previewSetCanvas on every canvas edit.
+  //
+  // The composition is resolution-independent (fractions of the canvas's
+  // shorter side, see Core/canvas_composition.h) precisely because this
+  // surface is capped at kTextureWidth x kTextureHeight while the export
+  // renders at the user's chosen resolution — raw pixels would make the
+  // preview's padding ~3x the export's at 4K.
+  //
+  // The background is NOT graded, matching the existing rule that the cursor
+  // halo and camera bubble stay outside the colour chain.
+  //
+  // A stale session_id is a silent no-op. Cheap and thread-safe; a PAUSED
+  // preview repaints immediately via RepaintPausedPreview() with no seek and
+  // no decode.
+  // Takes the RAW Dart args (export-output pixels + presets) and normalises them
+  // here, because only the engine knows the source dimensions that
+  // ResolveTargetSize needs to work out the export canvas.
+  void SetCanvasComposition(const std::string& session_id,
+                            const core::CanvasFramingArgs& framing);
+
+  // The canvas framing last pushed from Dart. Read on the frame thread while
+  // compositing; guarded by render_mutex.
+  core::CanvasComposition canvas_composition_for_testing();
+
   // Editing port (clips, step 4-1): store the edited-timeline kept ranges for
   // the inline preview. Driven by Dart's previewSetClips on open and on every
   // clip edit (split / cut / trim / drag-reorder), in TIMELINE order — the same
@@ -493,6 +593,31 @@ class PreviewEngine {
   void ComposeAndHandoffLocked(Impl* impl, std::int64_t playback_us,
                                std::int64_t emit_pos_ms,
                                std::int64_t emit_dur_ms);
+
+  // Make a just-applied settings change visible when the preview is not
+  // advancing. No-op while playing (the next frame carries it). Otherwise
+  // re-composites the retained frame; only if none exists yet does it fall back
+  // to the 1ms seek nudge. Shared by SetColorGrade + SetCameraComposition.
+  // Snapshots the player itself (this header pulls in no WinRT), so call it
+  // AFTER releasing mutex_, exactly like the nudge it replaces.
+  void RepaintPausedPreview();
+
+  // Re-composite the frame already on screen with the CURRENT settings and hand
+  // it to Flutter. The last decoded frame still lives in the compositor's video
+  // surface, so this costs one D2D compose + flush: no seek, no decode, no
+  // re-copy from the player.
+  //
+  // This is what makes an edit visible while the preview is PAUSED. While
+  // playing, the next natural frame already picks the change up and calling this
+  // would just duplicate work. Returns false when there is nothing to repaint
+  // (no frame composed yet), which is also the "preview isn't up" case.
+  bool RepaintRetainedFrame();
+
+  // True once at least one frame has been fully composed, i.e. the compositor's
+  // video surface holds real pixels. Deliberately NOT `has_video_target()`: the
+  // texture is allocated in EnsureResources BEFORE the first frame is copied
+  // into it, so a non-null texture does not imply drawable content.
+  bool HasComposedFrame();
 
   // Editing port (clips, step 4-3): render ONE frame of the edited (stitched)
   // timeline at `edited_ms` — map edited→source, decode that source frame via

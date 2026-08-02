@@ -199,6 +199,81 @@ final class ScreenRecorderFacade: NSObject {
   // events out
   var onDevicesChanged: (() -> Void)?
   var onVideoDevicesChanged: (() -> Void)?
+
+  /// Coalesces the burst of screen-parameter notifications a single dock
+  /// connect produces. 400 ms is comfortably longer than the gap between
+  /// steps of one reconfiguration and short enough to feel instant.
+  private let displaysChangedDebouncer = TrailingDebouncer(delay: 0.4)
+
+  /// The on-screen window list changed while something was watching it.
+  var onAppWindowsChanged: (() -> Void)?
+
+  /// The window list is the one picker macOS will not push changes for, so it
+  /// is polled — but only while a picker is actually on screen. See
+  /// AppWindowWatcher for why every other list stays push-driven.
+  private lazy var appWindowWatcher: AppWindowWatcher = {
+    let watcher = AppWindowWatcher(enumerate: { [weak self] in
+      self?.displaySvc.appWindows() ?? []
+    })
+    watcher.onChanged = { [weak self] in
+      self?.onAppWindowsChanged?()
+      DeviceChangeNotification.post(.deviceAppWindowsChanged)
+    }
+    return watcher
+  }()
+
+  /// Ref-counted: the Flutter sidebar picker and the native bar popover can
+  /// both ask for watching without either switching the other off.
+  func setAppWindowWatchActive(_ active: Bool) {
+    if active {
+      appWindowWatcher.retain()
+    } else {
+      appWindowWatcher.release()
+    }
+  }
+
+  /// Drops every watcher reference. A recording makes the picker unusable, so
+  /// nothing should still be polling behind it.
+  func stopWatchingAppWindows() {
+    appWindowWatcher.releaseAll()
+  }
+
+  /// The default audio output device changed, so the speaker-bleed risk may
+  /// have inverted. Previously probed only at app start and when system audio
+  /// was toggled, which left a stale warning after plugging in headphones and
+  /// no warning at all after unplugging them.
+  var onAudioOutputRouteChanged: (() -> Void)?
+
+  /// CoreAudio HAL listener. Catches what AVCaptureDevice cannot see: device
+  /// rename, aggregate/virtual devices, Bluetooth A2DP<->HFP flips, and
+  /// default-device changes.
+  private lazy var audioHardwareListener: AudioHardwareListener = {
+    let listener = AudioHardwareListener()
+    listener.onDeviceListChanged = { [weak self] in
+      DispatchQueue.main.async {
+        self?.onDevicesChanged?()
+        DeviceChangeNotification.post(.deviceAudioSourcesChanged)
+        DeviceChangeNotification.post(.deviceVideoSourcesChanged)
+      }
+    }
+    listener.onDefaultOutputChanged = { [weak self] in
+      DispatchQueue.main.async { self?.onAudioOutputRouteChanged?() }
+    }
+    listener.onDefaultInputChanged = { [weak self] in
+      DispatchQueue.main.async {
+        self?.onDevicesChanged?()
+        self?.refreshMicrophoneLevelMonitoring(resetMeter: false)
+      }
+    }
+    return listener
+  }()
+
+  /// Screens were added, removed or reconfigured.
+  ///
+  /// Previously a screen change called `onDevicesChanged` — the AUDIO
+  /// callback — so plugging in a monitor reloaded the microphone list and the
+  /// display list was never refreshed at all.
+  var onDisplaysChanged: (() -> Void)?
   var onIndicatorPauseTapped: (() -> Void)?
   var onIndicatorStopTapped: (() -> Void)?
   var onIndicatorResumeTapped: (() -> Void)?
@@ -497,7 +572,28 @@ final class ScreenRecorderFacade: NSObject {
           shouldRecordSeparateCameraAsset: context.shouldRecordSeparateCameraAsset,
           videoDeviceId: context.videoDeviceId,
           overlayMirror: context.overlayMirror,
-          editorSeed: editorSeed(for: target)
+          editorSeed: editorSeed(for: target),
+          // Stamp the audio decision into the bundle. A recording that omits a
+          // source the user believed they were capturing is unrepeatable, so
+          // the finished project has to be able to explain itself.
+          audio: RecordingMetadata.AudioCaptureInfo(
+            // The EFFECTIVE mic state, not the request flag. disableMicrophone
+            // is only set from missing permission, so it stays false when the
+            // user picks "No microphone" (the first-run default) or when a
+            // selected device has been unplugged — in both cases no mic.m4a is
+            // written. Stamping the request flag would make the bundle claim a
+            // mic track it does not have, which defeats the whole point of
+            // recording the audio decision.
+            micEnabled: effectiveMicCaptureEnabled(
+              audioDeviceID: context.audioDeviceId,
+              disableMicrophone: context.request.disableMicrophone
+            ),
+            micDeviceId: context.audioDeviceId,
+            systemAudioEnabled: systemAudioEnabled,
+            excludedMicFromSystemAudio: prefs.excludeMicFromSystemAudio,
+            echoCancellationEnabled: prefs.micEchoCancellationEnabled,
+            outputRoute: AudioOutputRouteProbe.current().rawValue
+          )
         ),
         projectService: recordingProjectService,
         cameraCoordination: cameraCoordination,
@@ -843,6 +939,25 @@ final class ScreenRecorderFacade: NSObject {
     }
     result(devs)
   }
+  /// Whether this take will actually record a microphone track.
+  ///
+  /// Mirrors `CaptureStartConfigBuilder.resolveAudioDevice`, which is the real
+  /// predicate the capture path uses: a nil/empty/"__none__" device id, or an id
+  /// that no longer resolves to hardware, means no mic is captured even though
+  /// `disableMicrophone` is false.
+  func effectiveMicCaptureEnabled(audioDeviceID: String?, disableMicrophone: Bool) -> Bool {
+    CaptureStartConfigBuilder().resolveAudioDevice(
+      audioDeviceID: audioDeviceID,
+      disableMicrophone: disableMicrophone
+    ) != nil
+  }
+
+  /// The current default output device, classified by whether it can
+  /// acoustically feed the microphone. Drives the pre-recording bleed warning.
+  func getAudioOutputRoute(result: @escaping FlutterResult) {
+    result(["route": AudioOutputRouteProbe.current().rawValue])
+  }
+
   func setAudioSource(id: String?, result: @escaping FlutterResult) {
     if let id, !id.isEmpty && id != "__none__" {
       guard AVCaptureDevice(uniqueID: id) != nil else {
@@ -1381,6 +1496,7 @@ final class ScreenRecorderFacade: NSObject {
     format: String,
     codec: String,
     bitrate: String,
+    gifSize: String,
     audioGainDb: Double,
     audioVolumePercent: Double,
     autoNormalizeOnExport: Bool,
@@ -1417,6 +1533,7 @@ final class ScreenRecorderFacade: NSObject {
         format: format,
         codec: codec,
         bitrate: bitrate,
+        gifSize: gifSize,
         audioGainDb: audioGainDb,
         audioVolumePercent: audioVolumePercent,
         autoNormalizeOnExport: autoNormalizeOnExport,
@@ -1924,6 +2041,7 @@ final class ScreenRecorderFacade: NSObject {
     NotificationCenter.default.addObserver(
       self, selector: #selector(screenParamsChanged),
       name: NSApplication.didChangeScreenParametersNotification, object: nil)
+    audioHardwareListener.start()
     NSWorkspace.shared.notificationCenter.addObserver(
       self, selector: #selector(workspaceWillSleep(_:)),
       name: NSWorkspace.willSleepNotification, object: nil)
@@ -1935,9 +2053,13 @@ final class ScreenRecorderFacade: NSObject {
     guard let dev = n.object as? AVCaptureDevice else { return }
     if dev.hasMediaType(.audio) {
       onDevicesChanged?()
+      DeviceChangeNotification.post(.deviceAudioSourcesChanged)
       refreshMicrophoneLevelMonitoring(resetMeter: false)
     }
-    if dev.hasMediaType(.video) { onVideoDevicesChanged?() }
+    if dev.hasMediaType(.video) {
+      onVideoDevicesChanged?()
+      DeviceChangeNotification.post(.deviceVideoSourcesChanged)
+    }
   }
 
   @objc private func screenParamsChanged() {
@@ -1958,7 +2080,12 @@ final class ScreenRecorderFacade: NSObject {
     {
       clearAreaRecordingSelection()
     }
-    onDevicesChanged?()
+    // A single dock connect emits a burst of these; coalesce so Flutter does
+    // one reload rather than one per screen.
+    displaysChangedDebouncer.schedule { [weak self] in
+      self?.onDisplaysChanged?()
+      DeviceChangeNotification.post(.deviceDisplaysChanged)
+    }
   }
 
   @objc private func workspaceWillSleep(_ notification: Notification) {
@@ -2803,6 +2930,24 @@ extension ScreenRecorderFacade: CaptureBackendEventHandling {
     forwardMicrophoneLevel(sample, source: .recordingBackend)
   }
 
+  /// Shown when a take survives a camera failure. It names what was kept as
+  /// well as what was lost, because "camera failed" alone reads as "the
+  /// recording is gone" — which is exactly what this change stopped being
+  /// true.
+  nonisolated static let cameraFinalizeSalvageWarning =
+    "The camera track could not be saved, so this recording has no camera. "
+    + "Your screen and audio were recorded and are ready to edit."
+
+  /// Emits a recording warning outside the backend event path.
+  func emitRecordingWarning(_ message: String) {
+    guard let sessionId = sessionState.activeRecordingWorkflowSessionId else { return }
+    onRecordingWarning?([
+      "type": "recordingWarning",
+      "sessionId": sessionId,
+      "message": message,
+    ])
+  }
+
   func backendDidWarn(message: String) {
     guard let sessionId = sessionState.activeRecordingWorkflowSessionId else { return }
     onRecordingWarning?([
@@ -2816,6 +2961,9 @@ extension ScreenRecorderFacade: CaptureBackendEventHandling {
     let visibleProjectPath = sessionState.activeRecordingProjectRoot?.path ?? url.path
 
     resetOverlayUpdateDeduper()
+    // The window picker is unusable during a take; nothing should still be
+    // polling behind it.
+    stopWatchingAppWindows()
     state = .recording
     recordedDurationTracker.start()
     stateAsStr()
@@ -3037,18 +3185,24 @@ extension ScreenRecorderFacade: CaptureBackendEventHandling {
       case .success(let cameraResult):
         finalizeWithCameraResult(cameraResult)
       case .failure(let cameraError):
+        // The camera is a sidecar. Failing the whole take here discarded a
+        // screen recording that had already finalized — observed in the field
+        // with `screen.mov` logged as playable (11.83s, 2 tracks, mic merged)
+        // six milliseconds before the run was reported as failed. That is
+        // unrecoverable loss on something the user cannot re-record.
+        //
+        // `finalizeWithCameraResult(nil)` is not a fallback invented here: it
+        // is the exact path a recording with no camera already takes, so the
+        // manifest, preview and export all see a shape they handle natively.
         NativeLogger.e(
           "Facade",
-          "Camera recorder finalize failed during separate-camera recording",
+          "Camera recorder finalize failed; salvaging the screen recording",
           context: ["error": cameraError.localizedDescription]
         )
-        self.completeRecordingLifecycle(
-          finalURL: nil,
-          error: cameraError,
-          wasStarting: wasStarting,
-          pendingStartResult: pendingStartResult,
-          completion: completion
-        )
+        // Loud, but not destructive: the user has to know the camera track is
+        // gone before they publish.
+        self.emitRecordingWarning(Self.cameraFinalizeSalvageWarning)
+        finalizeWithCameraResult(nil)
       }
     }
   }

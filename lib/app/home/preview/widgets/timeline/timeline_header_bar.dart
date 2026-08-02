@@ -33,6 +33,11 @@ class TimelineHeaderBar extends StatelessWidget {
     this.onDeleteClip,
     this.onUndoClips,
     this.onRedoClips,
+    this.showColorControls = false,
+    this.canUndoColor = false,
+    this.canRedoColor = false,
+    this.onUndoColor,
+    this.onRedoColor,
   });
 
   final bool snappingEnabled;
@@ -62,6 +67,15 @@ class TimelineHeaderBar extends StatelessWidget {
   final VoidCallback? onDeleteClip;
   final VoidCallback? onUndoClips;
   final VoidCallback? onRedoClips;
+
+  // Color-grade undo/redo. The sliders live in the Effects sidebar, but every
+  // undo in this app lives in this bar, so the color pair joins the zoom and
+  // clip pairs here as its own trailing group.
+  final bool showColorControls;
+  final bool canUndoColor;
+  final bool canRedoColor;
+  final VoidCallback? onUndoColor;
+  final VoidCallback? onRedoColor;
 
   @override
   Widget build(BuildContext context) {
@@ -144,32 +158,22 @@ class TimelineHeaderBar extends StatelessWidget {
                         : theme.colorScheme.onSurface.withValues(alpha: 0.35),
                   ),
                   SizedBox(width: controlGap),
-                  AppIconButton(
-                    key: const Key('timeline_undo_button'),
-                    icon: Icons.undo_rounded,
-                    tooltip: l10n.zoomUndoLastAction,
-                    onPressed: canUndo ? onUndo : null,
-                    color: canUndo
-                        ? theme.colorScheme.onSurface.withValues(alpha: 0.85)
-                        : theme.colorScheme.onSurface.withValues(alpha: 0.35),
-                  ),
-                  SizedBox(width: controlGap),
-                  AppIconButton(
-                    key: const Key('timeline_redo_button'),
-                    icon: Icons.redo_rounded,
-                    tooltip: l10n.zoomRedoLastAction,
-                    onPressed: canRedo ? onRedo : null,
-                    color: canRedo
-                        ? theme.colorScheme.onSurface.withValues(alpha: 0.85)
-                        : theme.colorScheme.onSurface.withValues(alpha: 0.35),
+                  _HistoryButtonPair(
+                    label: l10n.zoom,
+                    undoKey: const Key('timeline_undo_button'),
+                    redoKey: const Key('timeline_redo_button'),
+                    undoTooltip: l10n.zoomUndoLastAction,
+                    redoTooltip: l10n.zoomRedoLastAction,
+                    canUndo: canUndo,
+                    canRedo: canRedo,
+                    onUndo: onUndo,
+                    onRedo: onRedo,
                   ),
                   if (showClipsControls) ...[
                     SizedBox(width: sectionGap),
-                    Container(
-                      key: const Key('timeline_clip_controls_divider'),
-                      width: 1,
-                      height: 22,
-                      color: theme.dividerColor.withValues(alpha: 0.2),
+                    _sectionDivider(
+                      theme,
+                      const Key('timeline_clip_controls_divider'),
                     ),
                     SizedBox(width: sectionGap),
                     Tooltip(
@@ -194,24 +198,35 @@ class TimelineHeaderBar extends StatelessWidget {
                           : theme.colorScheme.onSurface.withValues(alpha: 0.35),
                     ),
                     SizedBox(width: controlGap),
-                    AppIconButton(
-                      key: const Key('timeline_clip_undo_button'),
-                      icon: Icons.undo_rounded,
-                      tooltip: l10n.clipUndo,
-                      onPressed: canUndoClips ? onUndoClips : null,
-                      color: canUndoClips
-                          ? theme.colorScheme.onSurface.withValues(alpha: 0.85)
-                          : theme.colorScheme.onSurface.withValues(alpha: 0.35),
+                    _HistoryButtonPair(
+                      label: l10n.clips,
+                      undoKey: const Key('timeline_clip_undo_button'),
+                      redoKey: const Key('timeline_clip_redo_button'),
+                      undoTooltip: l10n.clipUndo,
+                      redoTooltip: l10n.clipRedo,
+                      canUndo: canUndoClips,
+                      canRedo: canRedoClips,
+                      onUndo: onUndoClips,
+                      onRedo: onRedoClips,
                     ),
-                    SizedBox(width: controlGap),
-                    AppIconButton(
-                      key: const Key('timeline_clip_redo_button'),
-                      icon: Icons.redo_rounded,
-                      tooltip: l10n.clipRedo,
-                      onPressed: canRedoClips ? onRedoClips : null,
-                      color: canRedoClips
-                          ? theme.colorScheme.onSurface.withValues(alpha: 0.85)
-                          : theme.colorScheme.onSurface.withValues(alpha: 0.35),
+                  ],
+                  if (showColorControls) ...[
+                    SizedBox(width: sectionGap),
+                    _sectionDivider(
+                      theme,
+                      const Key('timeline_color_controls_divider'),
+                    ),
+                    SizedBox(width: sectionGap),
+                    _HistoryButtonPair(
+                      label: l10n.color,
+                      undoKey: const Key('timeline_color_undo_button'),
+                      redoKey: const Key('timeline_color_redo_button'),
+                      undoTooltip: l10n.colorUndo,
+                      redoTooltip: l10n.colorRedo,
+                      canUndo: canUndoColor,
+                      canRedo: canRedoColor,
+                      onUndo: onUndoColor,
+                      onRedo: onRedoColor,
                     ),
                   ],
                 ],
@@ -225,6 +240,99 @@ class TimelineHeaderBar extends StatelessWidget {
 }
 
 enum _TimelineOverflowAction { selectAfterPlayhead }
+
+/// The thin rule that separates one edit-track group from the next.
+Widget _sectionDivider(ThemeData theme, Key key) {
+  return Container(
+    key: key,
+    width: 1,
+    height: 22,
+    color: theme.dividerColor.withValues(alpha: 0.2),
+  );
+}
+
+/// One edit track's undo/redo controls, with the track named next to them.
+///
+/// Extracted because the bar carries three of these — zoom, clips, colour — and
+/// they were verbatim copies: the same two icons, the same enabled/disabled
+/// `onSurface` alpha ternary spelled out six times, the same gap. A fourth
+/// undoable track used to mean another copy-pasted block.
+///
+/// [label] is the part that matters to the user, not the deduplication. Driving
+/// the running app showed three visually identical arrow pairs sitting in one
+/// row, separated only by a 1px divider and distinguishable only by hovering for
+/// a tooltip — you could not tell which pair undid which edit at a glance.
+/// Naming each group is what makes the row scannable.
+class _HistoryButtonPair extends StatelessWidget {
+  const _HistoryButtonPair({
+    required this.label,
+    required this.undoKey,
+    required this.redoKey,
+    required this.undoTooltip,
+    required this.redoTooltip,
+    required this.canUndo,
+    required this.canRedo,
+    this.onUndo,
+    this.onRedo,
+  });
+
+  final String label;
+  final Key undoKey;
+  final Key redoKey;
+  final String undoTooltip;
+  final String redoTooltip;
+  final bool canUndo;
+  final bool canRedo;
+  final VoidCallback? onUndo;
+  final VoidCallback? onRedo;
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    final spacing = theme.appSpacing;
+    final typography = theme.appTypography;
+    final metrics = context.shellMetricsOrNull;
+    final controlGap = metrics?.timelineControlGap ?? spacing.xs;
+
+    // The label dims with the pair: a track with nothing to undo should not
+    // advertise itself as loudly as one that does.
+    final anyEnabled = canUndo || canRedo;
+    Color iconColor(bool enabled) =>
+        theme.colorScheme.onSurface.withValues(alpha: enabled ? 0.85 : 0.35);
+
+    return Row(
+      mainAxisSize: MainAxisSize.min,
+      children: [
+        Text(
+          label,
+          maxLines: 1,
+          overflow: TextOverflow.ellipsis,
+          style: typography.value.copyWith(
+            color: theme.colorScheme.onSurface.withValues(
+              alpha: anyEnabled ? 0.62 : 0.32,
+            ),
+          ),
+        ),
+        SizedBox(width: controlGap),
+        AppIconButton(
+          key: undoKey,
+          icon: Icons.undo_rounded,
+          tooltip: undoTooltip,
+          onPressed: canUndo ? onUndo : null,
+          color: iconColor(canUndo),
+        ),
+        SizedBox(width: controlGap),
+        AppIconButton(
+          key: redoKey,
+          icon: Icons.redo_rounded,
+          tooltip: redoTooltip,
+          onPressed: canRedo ? onRedo : null,
+          color: iconColor(canRedo),
+        ),
+      ],
+    );
+  }
+}
 
 class _TimelineToolbarButton extends StatelessWidget {
   const _TimelineToolbarButton({

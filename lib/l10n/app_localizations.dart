@@ -436,6 +436,36 @@ abstract class AppLocalizations {
   /// **'High'**
   String get high;
 
+  /// No description provided for @gifSizeLabel.
+  ///
+  /// In en, this message translates to:
+  /// **'Size'**
+  String get gifSizeLabel;
+
+  /// No description provided for @gifSizeSmall.
+  ///
+  /// In en, this message translates to:
+  /// **'Small (480px)'**
+  String get gifSizeSmall;
+
+  /// No description provided for @gifSizeMedium.
+  ///
+  /// In en, this message translates to:
+  /// **'Medium (720px)'**
+  String get gifSizeMedium;
+
+  /// No description provided for @gifSizeLarge.
+  ///
+  /// In en, this message translates to:
+  /// **'Large (1080px)'**
+  String get gifSizeLarge;
+
+  /// No description provided for @gifSizeCaption.
+  ///
+  /// In en, this message translates to:
+  /// **'GIFs export at 15 fps. Larger sizes look sharper but make bigger files.'**
+  String get gifSizeCaption;
+
   /// No description provided for @original.
   ///
   /// In en, this message translates to:
@@ -1768,6 +1798,12 @@ abstract class AppLocalizations {
   /// **'Clips'**
   String get clips;
 
+  /// No description provided for @color.
+  ///
+  /// In en, this message translates to:
+  /// **'Color'**
+  String get color;
+
   /// No description provided for @clipSplit.
   ///
   /// In en, this message translates to:
@@ -1971,6 +2007,18 @@ abstract class AppLocalizations {
   /// In en, this message translates to:
   /// **'Color Correction'**
   String get colorCorrection;
+
+  /// No description provided for @colorUndo.
+  ///
+  /// In en, this message translates to:
+  /// **'Undo color edit'**
+  String get colorUndo;
+
+  /// No description provided for @colorRedo.
+  ///
+  /// In en, this message translates to:
+  /// **'Redo color edit'**
+  String get colorRedo;
 
   /// No description provided for @autoEnhance.
   ///
@@ -3064,6 +3112,12 @@ abstract class AppLocalizations {
   /// **'A simple, powerful screen recorder for macOS.'**
   String get appDescription;
 
+  /// No description provided for @appDescriptionWindows.
+  ///
+  /// In en, this message translates to:
+  /// **'A simple, powerful screen recorder for Windows.'**
+  String get appDescriptionWindows;
+
   /// No description provided for @visitWebsite.
   ///
   /// In en, this message translates to:
@@ -3472,6 +3526,30 @@ abstract class AppLocalizations {
   /// **'Help improve Clingfy by sharing feature usage and reliability data. Never includes recordings, filenames, audio, video, or transcripts.'**
   String get diagnosticsShareAnalyticsHelp;
 
+  /// No description provided for @diagnosticsAnalyticsInternal.
+  ///
+  /// In en, this message translates to:
+  /// **'Mark this device internal'**
+  String get diagnosticsAnalyticsInternal;
+
+  /// No description provided for @diagnosticsAnalyticsInternalHelp.
+  ///
+  /// In en, this message translates to:
+  /// **'Owner/testing only. Excludes this install\'s analytics from the real numbers, so your own usage never inflates the stats. Normal users never see this option.'**
+  String get diagnosticsAnalyticsInternalHelp;
+
+  /// No description provided for @diagnosticsAnalyticsTest.
+  ///
+  /// In en, this message translates to:
+  /// **'Test analytics events'**
+  String get diagnosticsAnalyticsTest;
+
+  /// No description provided for @diagnosticsAnalyticsTestHelp.
+  ///
+  /// In en, this message translates to:
+  /// **'Owner/testing only. Sends analytics tagged as test — visible only in the Test view of the internal dashboard, never in real numbers — so the pipeline can be verified. Also enables events in debug builds.'**
+  String get diagnosticsAnalyticsTestHelp;
+
   /// No description provided for @openLogsFolder.
   ///
   /// In en, this message translates to:
@@ -3621,6 +3699,36 @@ abstract class AppLocalizations {
   /// In en, this message translates to:
   /// **'Mic input is very low. Raise input level or move closer to the mic.'**
   String get micInputIndicatorLowTooltip;
+
+  /// No description provided for @recordingMicTooLowWarning.
+  ///
+  /// In en, this message translates to:
+  /// **'Your mic is barely picking anything up. Raise the input level in System Settings › Sound › Input, or move closer — otherwise this recording will have no usable voice.'**
+  String get recordingMicTooLowWarning;
+
+  /// No description provided for @recordingMicTooLowHeadline.
+  ///
+  /// In en, this message translates to:
+  /// **'Mic level too low'**
+  String get recordingMicTooLowHeadline;
+
+  /// No description provided for @recordingSystemAudioBleedHeadline.
+  ///
+  /// In en, this message translates to:
+  /// **'Speakers will bleed into your mic'**
+  String get recordingSystemAudioBleedHeadline;
+
+  /// No description provided for @preRecordingBarMicTooLow.
+  ///
+  /// In en, this message translates to:
+  /// **'Mic level is very low — raise the input level in System Settings › Sound › Input.'**
+  String get preRecordingBarMicTooLow;
+
+  /// No description provided for @preRecordingBarBleedRisk.
+  ///
+  /// In en, this message translates to:
+  /// **'System audio is playing out loud and will bleed into your mic. Switch to headphones.'**
+  String get preRecordingBarBleedRisk;
 
   /// No description provided for @noMicAudioFound.
   ///
@@ -3801,6 +3909,12 @@ abstract class AppLocalizations {
   /// In en, this message translates to:
   /// **'System audio'**
   String get recordingSystemAudio;
+
+  /// No description provided for @recordingSystemAudioBleedWarning.
+  ///
+  /// In en, this message translates to:
+  /// **'System audio is playing through speakers, so your mic will pick it up again as an echo. Use headphones for a clean recording.'**
+  String get recordingSystemAudioBleedWarning;
 
   /// No description provided for @recordingExcludeMicFromSystemAudio.
   ///
@@ -4663,8 +4777,14 @@ abstract class AppLocalizations {
   /// No description provided for @appliedOnExportNoticeWindows.
   ///
   /// In en, this message translates to:
-  /// **'Gain is fully audible in edited previews and exports — an uncut preview plays volume changes only.'**
+  /// **'Applied on export — the inline preview doesn\'t show this effect yet.'**
   String get appliedOnExportNoticeWindows;
+
+  /// No description provided for @audioGainNoticeWindows.
+  ///
+  /// In en, this message translates to:
+  /// **'Gain is fully audible in edited previews and exports — an uncut preview plays volume changes only.'**
+  String get audioGainNoticeWindows;
 
   /// No description provided for @errBadMode.
   ///
@@ -4749,6 +4869,60 @@ abstract class AppLocalizations {
   /// In en, this message translates to:
   /// **'Force native crash (test)'**
   String get forceNativeCrashLabel;
+
+  /// No description provided for @settingsPrivacyTitle.
+  ///
+  /// In en, this message translates to:
+  /// **'Privacy'**
+  String get settingsPrivacyTitle;
+
+  /// No description provided for @crashReportingTitle.
+  ///
+  /// In en, this message translates to:
+  /// **'Crash and diagnostic reports'**
+  String get crashReportingTitle;
+
+  /// No description provided for @crashReportingDescription.
+  ///
+  /// In en, this message translates to:
+  /// **'Send anonymous crash reports and error diagnostics so problems get fixed. Includes the error, a stack trace, your app version, and OS and GPU details. Never includes your recordings, screen contents, audio, or file names.'**
+  String get crashReportingDescription;
+
+  /// No description provided for @crashReportingToggle.
+  ///
+  /// In en, this message translates to:
+  /// **'Send crash reports'**
+  String get crashReportingToggle;
+
+  /// No description provided for @crashReportingRestartNote.
+  ///
+  /// In en, this message translates to:
+  /// **'Turning this off stops reporting immediately. Reports for crashes that take the whole app down stop after you restart Clingfy.'**
+  String get crashReportingRestartNote;
+
+  /// No description provided for @crashReportingNoticeTitle.
+  ///
+  /// In en, this message translates to:
+  /// **'About crash reports'**
+  String get crashReportingNoticeTitle;
+
+  /// No description provided for @crashReportingNoticeBody.
+  ///
+  /// In en, this message translates to:
+  /// **'Clingfy sends anonymous crash reports and error diagnostics so problems get fixed. This covers the error, a stack trace, your app version, and OS and GPU details — never your recordings, screen contents, audio, or file names.\n\nYou can turn this off at any time in Settings › Diagnostics.'**
+  String get crashReportingNoticeBody;
+
+  /// No description provided for @crashReportingNoticeAccept.
+  ///
+  /// In en, this message translates to:
+  /// **'Got it'**
+  String get crashReportingNoticeAccept;
+
+  /// No description provided for @crashReportingNoticeOptOut.
+  ///
+  /// In en, this message translates to:
+  /// **'Turn off'**
+  String get crashReportingNoticeOptOut;
 }
 
 class _AppLocalizationsDelegate

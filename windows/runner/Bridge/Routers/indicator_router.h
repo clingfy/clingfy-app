@@ -5,11 +5,9 @@
 
 namespace clingfy::bridge::routers::indicator {
 
-// Recording-indicator pinning and the pre-recording bar.
-//
-// Phase 1: both surfaces are no-op success. The pre-recording bar is a
-// macOS-only floating panel; Windows will get a Win32 equivalent in Phase 10
-// alongside the recording indicator window.
+// Recording-indicator pinning (setRecordingIndicatorPinned) plus the runtime
+// native-log-level + flush handshakes. The pre-recording bar moved to
+// `routers::pre_recording_bar` in Slice 4.
 void RegisterHandlers(HandlerTable& table);
 
 }  // namespace clingfy::bridge::routers::indicator

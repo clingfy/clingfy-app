@@ -90,12 +90,31 @@ BEGIN
         BLOCK "040904e4"
         BEGIN
             VALUE "CompanyName", "com.clingfy" "\0"
-            VALUE "FileDescription", "clingfy" "\0"
+            // FileDescription is what Task Manager shows in its Name column,
+            // so it is display text, not identity — safe to capitalise, and
+            // worth forking per channel now that side-by-side installs are
+            // supported (D9). Contrast ProductName below, which is FROZEN
+            // because path_provider derives the data directory from it.
+#ifdef CLINGFY_CHANNEL_DEV
+            VALUE "FileDescription", "Clingfy Dev" "\0"
+#else
+            VALUE "FileDescription", "Clingfy" "\0"
+#endif
             VALUE "FileVersion", VERSION_AS_STRING "\0"
+            // InternalName stays lowercase: it is a build-identity string
+            // rather than display text, and nothing user-facing reads it.
             VALUE "InternalName", "clingfy" "\0"
-            VALUE "LegalCopyright", "Copyright (C) 2026 com.clingfy. All rights reserved." "\0"
+            VALUE "LegalCopyright", "Copyright (C) 2026 Clingfy. All rights reserved." "\0"
             VALUE "OriginalFilename", "clingfy.exe" "\0"
+#ifdef CLINGFY_CHANNEL_DEV
+            // D9: path_provider builds its directory from CompanyName and
+            // ProductName, so forking ProductName is what gives dev its own
+            // settings store. CompanyName stays shared -- it is the vendor,
+            // not the install.
+            VALUE "ProductName", "clingfy-dev" "\0"
+#else
             VALUE "ProductName", "clingfy" "\0"
+#endif
             VALUE "ProductVersion", VERSION_AS_STRING "\0"
         END
     END

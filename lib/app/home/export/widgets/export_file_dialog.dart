@@ -18,6 +18,7 @@ class ExportFileDialogResult {
     required this.exportFormat,
     required this.exportCodec,
     required this.exportBitrate,
+    required this.gifSize,
   });
 
   final String fileName;
@@ -26,6 +27,10 @@ class ExportFileDialogResult {
   final ExportFormat exportFormat;
   final ExportCodec exportCodec;
   final ExportBitratePreset exportBitrate;
+
+  /// Chosen GIF output size. Only meaningful when [exportFormat] is
+  /// [ExportFormat.gif]; the picker is hidden for video formats.
+  final GifSizePreset gifSize;
 }
 
 class ExportFileDialog extends StatefulWidget {
@@ -37,6 +42,7 @@ class ExportFileDialog extends StatefulWidget {
     required this.initialExportFormat,
     required this.initialExportCodec,
     required this.initialExportBitrate,
+    required this.initialGifSize,
     required this.onPickFolder,
   });
 
@@ -46,6 +52,7 @@ class ExportFileDialog extends StatefulWidget {
   final ExportFormat initialExportFormat;
   final ExportCodec initialExportCodec;
   final ExportBitratePreset initialExportBitrate;
+  final GifSizePreset initialGifSize;
   final Future<String?> Function() onPickFolder;
 
   static Future<ExportFileDialogResult?> show(
@@ -56,6 +63,7 @@ class ExportFileDialog extends StatefulWidget {
     required ExportFormat initialExportFormat,
     required ExportCodec initialExportCodec,
     required ExportBitratePreset initialExportBitrate,
+    required GifSizePreset initialGifSize,
     required Future<String?> Function() onPickFolder,
   }) {
     return showDialog<ExportFileDialogResult>(
@@ -68,6 +76,7 @@ class ExportFileDialog extends StatefulWidget {
         initialExportFormat: initialExportFormat,
         initialExportCodec: initialExportCodec,
         initialExportBitrate: initialExportBitrate,
+        initialGifSize: initialGifSize,
         onPickFolder: onPickFolder,
       ),
     );
@@ -89,6 +98,7 @@ class _ExportFileDialogState extends State<ExportFileDialog> {
   late ExportFormat _exportFormat = widget.initialExportFormat;
   late ExportCodec _exportCodec = widget.initialExportCodec;
   late ExportBitratePreset _exportBitrate = widget.initialExportBitrate;
+  late GifSizePreset _gifSize = widget.initialGifSize;
 
   @override
   void dispose() {
@@ -115,6 +125,7 @@ class _ExportFileDialogState extends State<ExportFileDialog> {
         exportFormat: _exportFormat,
         exportCodec: _exportCodec,
         exportBitrate: _exportBitrate,
+        gifSize: _gifSize,
       ),
     );
   }
@@ -208,19 +219,24 @@ class _ExportFileDialogState extends State<ExportFileDialog> {
               ),
               SizedBox(height: spacing.panel - 2),
 
-              // ── Resolution / Codec / Bitrate ──
-              _SectionLabel(label: l10n.resolution),
-              SizedBox(height: spacing.sm),
-              PlatformDropdown<ResolutionPreset>(
-                value: _resolutionPreset,
-                expand: true,
-                items: buildResolutionPresetMenuItems(l10n),
-                onChanged: (v) {
-                  if (v != null) setState(() => _resolutionPreset = v);
-                },
-              ),
-
+              // ── Resolution / Codec / Bitrate (video) OR Size (GIF) ──
+              // Video formats expose resolution/codec/bitrate. GIF exposes none
+              // of those — it always encodes at 15 fps and a full per-frame
+              // palette, so a 4K/8K GIF would be multiple GB. Instead GIF gets a
+              // single Small/Medium/Large size control that caps its long edge,
+              // the one lever that meaningfully trades file size for sharpness.
               if (supportsVideoEncoding) ...[
+                _SectionLabel(label: l10n.resolution),
+                SizedBox(height: spacing.sm),
+                PlatformDropdown<ResolutionPreset>(
+                  value: _resolutionPreset,
+                  expand: true,
+                  items: buildResolutionPresetMenuItems(l10n),
+                  onChanged: (v) {
+                    if (v != null) setState(() => _resolutionPreset = v);
+                  },
+                ),
+
                 SizedBox(height: spacing.md),
                 _SectionLabel(label: l10n.codec),
                 SizedBox(height: spacing.sm),
@@ -263,6 +279,37 @@ class _ExportFileDialogState extends State<ExportFileDialog> {
                   onChanged: (v) {
                     if (v != null) setState(() => _exportBitrate = v);
                   },
+                ),
+              ] else ...[
+                _SectionLabel(label: l10n.gifSizeLabel),
+                SizedBox(height: spacing.sm),
+                PlatformDropdown<GifSizePreset>(
+                  value: _gifSize,
+                  expand: true,
+                  items: [
+                    PlatformMenuItem(
+                      value: GifSizePreset.small,
+                      label: l10n.gifSizeSmall,
+                    ),
+                    PlatformMenuItem(
+                      value: GifSizePreset.medium,
+                      label: l10n.gifSizeMedium,
+                    ),
+                    PlatformMenuItem(
+                      value: GifSizePreset.large,
+                      label: l10n.gifSizeLarge,
+                    ),
+                  ],
+                  onChanged: (v) {
+                    if (v != null) setState(() => _gifSize = v);
+                  },
+                ),
+                SizedBox(height: spacing.sm),
+                Text(
+                  l10n.gifSizeCaption,
+                  style: typography.caption.copyWith(
+                    color: theme.colorScheme.onSurface.withValues(alpha: 0.6),
+                  ),
                 ),
               ],
 

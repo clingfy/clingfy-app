@@ -18,6 +18,8 @@
 #include "Bridge/Routers/export_router.h"
 #include "Capture/Export/export_passthrough.h"
 #include "Capture/Export/export_session.h"
+#include "Capture/Indicator/recording_indicator_controller.h"
+#include "Capture/PreRecordingBar/pre_recording_bar_controller.h"
 #include "Capture/recording_engine.h"
 #include "Capture/windows_selection_state.h"
 #include "test_support.h"
@@ -87,6 +89,119 @@ TEST(StubShapesTest, SetAppWindowTargetStoresAndClearsWindowId) {
       clingfy::capture::WindowsSelectionState::Instance().AppWindowId());
 
   clingfy::capture::WindowsSelectionState::Instance().ResetForTesting();
+}
+
+// === Slice 3: setRecordingIndicatorPinned forwards to the controller ========
+//
+// It parses {pinned: bool} and drives RecordingIndicatorController::SetPinned,
+// replying null (the void Dart contract). With no overlay window up in the test
+// binary, SetPinned just stores the cached flag — which is exactly the state
+// the WM_NCHITTEST / PlaceWindow paths read, so pinned_for_testing() reflects
+// the wire value. A missing/garbage `pinned` must not crash and must not flip
+// the flag.
+TEST(StubShapesTest, SetRecordingIndicatorPinnedForwardsToController) {
+  auto& indicator = clingfy::capture::RecordingIndicatorController::Instance();
+  MethodRouter router;
+
+  const auto r_true = DispatchWithArgs(
+      router, "setRecordingIndicatorPinned",
+      {{flutter::EncodableValue("pinned"), flutter::EncodableValue(true)}});
+  EXPECT_TRUE(r_true.success_called);
+  EXPECT_FALSE(r_true.error_called);
+  EXPECT_TRUE(r_true.success_value.IsNull());
+  EXPECT_TRUE(indicator.pinned_for_testing());
+
+  const auto r_false = DispatchWithArgs(
+      router, "setRecordingIndicatorPinned",
+      {{flutter::EncodableValue("pinned"), flutter::EncodableValue(false)}});
+  EXPECT_TRUE(r_false.success_called);
+  EXPECT_FALSE(indicator.pinned_for_testing());
+
+  // Missing args: still a null success, and the flag is untouched.
+  const auto r_missing = DispatchWithArgs(
+      router, "setRecordingIndicatorPinned", flutter::EncodableMap{});
+  EXPECT_TRUE(r_missing.success_called);
+  EXPECT_TRUE(r_missing.success_value.IsNull());
+  EXPECT_FALSE(indicator.pinned_for_testing());
+}
+
+// === Slice 4: the pre-recording bar methods drive the controller ===========
+//
+// setPreRecordingBarEnabled / setPreRecordingBarVisible / show / toggle /
+// setPreRecordingBarState route to PreRecordingBarController and each reply
+// null. Window creation is suppressed so the routing/parse paths run headless
+// (no overlay window on the CI agent).
+TEST(StubShapesTest, PreRecordingBarMethodsDriveController) {
+  auto& bar = clingfy::capture::PreRecordingBarController::Instance();
+  bar.set_suppress_window_for_testing(true);
+  MethodRouter router;
+
+  // Enabled toggle parses {enabled} and stores it.
+  const auto disabled = DispatchWithArgs(
+      router, "setPreRecordingBarEnabled",
+      {{flutter::EncodableValue("enabled"), flutter::EncodableValue(false)}});
+  EXPECT_TRUE(disabled.success_called);
+  EXPECT_TRUE(disabled.success_value.IsNull());
+  EXPECT_FALSE(bar.enabled_for_testing());
+
+  // setPreRecordingBarVisible shares the handler (mirrors macOS).
+  const auto visible = DispatchWithArgs(
+      router, "setPreRecordingBarVisible",
+      {{flutter::EncodableValue("enabled"), flutter::EncodableValue(true)}});
+  EXPECT_TRUE(visible.success_called);
+  EXPECT_TRUE(bar.enabled_for_testing());
+
+  // The state feed parses the render subset of the map.
+  flutter::EncodableMap state{
+      {flutter::EncodableValue("phase"), flutter::EncodableValue(2)},
+      {flutter::EncodableValue("targetMode"), flutter::EncodableValue(3)},
+      {flutter::EncodableValue("cameraEnabled"), flutter::EncodableValue(true)},
+      {flutter::EncodableValue("micEnabled"), flutter::EncodableValue(true)},
+      {flutter::EncodableValue("systemAudioEnabled"),
+       flutter::EncodableValue(false)},
+      {flutter::EncodableValue("updateAvailable"),
+       flutter::EncodableValue(true)},
+      {flutter::EncodableValue("canPauseResume"),
+       flutter::EncodableValue(true)},
+      {flutter::EncodableValue("pauseResumeInFlight"),
+       flutter::EncodableValue(false)},
+      {flutter::EncodableValue("countdownActive"),
+       flutter::EncodableValue(false)},
+      // Slice 6 picker selection ids: strings (mic/camera) + int64
+      // (display/window).
+      {flutter::EncodableValue("selectedAudioSourceId"),
+       flutter::EncodableValue("mic-endpoint-7")},
+      {flutter::EncodableValue("selectedCamId"),
+       flutter::EncodableValue("cam-xyz")},
+      {flutter::EncodableValue("selectedDisplayId"),
+       flutter::EncodableValue(static_cast<int64_t>(9001))},
+      {flutter::EncodableValue("selectedAppWindowId"),
+       flutter::EncodableValue(static_cast<int64_t>(4242))},
+  };
+  const auto pushed =
+      DispatchWithArgs(router, "setPreRecordingBarState", std::move(state));
+  EXPECT_TRUE(pushed.success_called);
+  EXPECT_TRUE(pushed.success_value.IsNull());
+  const clingfy::capture::PreRecordingBarInputs got = bar.inputs_for_testing();
+  EXPECT_EQ(got.phase, 2);
+  EXPECT_EQ(got.target_mode, 3);
+  EXPECT_TRUE(got.camera_selected);
+  EXPECT_TRUE(got.mic_enabled);
+  EXPECT_FALSE(got.system_audio_enabled);
+  EXPECT_TRUE(got.update_available);
+  EXPECT_TRUE(got.can_pause_resume);
+  EXPECT_EQ(got.selected_audio_source_id, "mic-endpoint-7");
+  EXPECT_EQ(got.selected_cam_id, "cam-xyz");
+  ASSERT_TRUE(got.selected_display_id.has_value());
+  EXPECT_EQ(*got.selected_display_id, 9001);
+  ASSERT_TRUE(got.selected_app_window_id.has_value());
+  EXPECT_EQ(*got.selected_app_window_id, 4242);
+
+  // show / toggle just reply null (no window to move while suppressed).
+  EXPECT_TRUE(Dispatch(router, "showPreRecordingBar").success_called);
+  EXPECT_TRUE(Dispatch(router, "togglePreRecordingBar").success_called);
+
+  bar.set_suppress_window_for_testing(false);
 }
 
 // === Phase 7.2/7.3: area selection lifecycle ===============================
@@ -171,12 +286,12 @@ TEST(StubShapesTest, NoopSettersReturnSuccessWithNullValue) {
       "setChromaKeyEnabled",
       "setChromaKeyColor",
       "setChromaKeyStrength",
-      "setRecordingIndicatorPinned",
-      "setPreRecordingBarEnabled",
-      "setPreRecordingBarVisible",
-      "showPreRecordingBar",
-      "togglePreRecordingBar",
-      "setPreRecordingBarState",
+      // setRecordingIndicatorPinned became REAL in Slice 3 — it forwards to
+      // RecordingIndicatorController::SetPinned. Its dedicated contract test is
+      // below (SetRecordingIndicatorPinnedForwardsToController).
+      // The setPreRecordingBar* / show / toggle methods became REAL in Slice 4
+      // — they drive PreRecordingBarController. Their dedicated contract test is
+      // below (PreRecordingBarMethodsDriveController); not no-op setters.
       // previewOpen / previewClose / previewPlay / previewPause /
       // previewSeekTo are no longer no-op setters as of Steps 5.3 +
       // 5.5 — they route through PreviewEngine, return BAD_ARGS /
@@ -835,9 +950,12 @@ TEST(StubShapesTest, NullGettersReturnNull) {
   // Phase 10.1: getTodayLogFilePath is real now (path or
   // LOG_FILE_NOT_FOUND/UNAVAILABLE) — pinned in
   // storage_router_reveal_test.cpp.
+  // `pickImage` used to live here as a null stub. The canvas parity port gave
+  // it a real IFileOpenDialog, so it is now excluded for the same reason
+  // `chooseSaveFolder` always has been (see below): dispatching it would open a
+  // modal dialog, which has no place in a headless test.
   const std::vector<std::string> kNullGetters = {
       "previewGetSourceDimensions",
-      "pickImage",
   };
 
   for (const auto& method : kNullGetters) {

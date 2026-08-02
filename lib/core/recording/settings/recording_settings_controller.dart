@@ -1,12 +1,45 @@
+import 'package:flutter/services.dart';
+import 'package:clingfy/core/bridges/native_method_channel.dart';
+import 'dart:async';
+
 import 'package:flutter/foundation.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
 import 'package:clingfy/core/logging/logger_service.dart';
 import 'package:clingfy/core/bridges/native_bridge.dart';
+import 'package:clingfy/core/recording/models/audio_output_route.dart';
 
 class RecordingSettingsController extends ChangeNotifier {
   RecordingSettingsController({required NativeBridge nativeBridge})
-    : _nativeBridge = nativeBridge;
+    : _nativeBridge = nativeBridge {
+    _listenForOutputRouteChanges();
+  }
+
+  StreamSubscription<dynamic>? _deviceEventsSub;
+
+  /// The default output device now pushes changes, so the bleed warning tracks
+  /// reality instead of a probe taken minutes ago.
+  void _listenForOutputRouteChanges() {
+    _deviceEventsSub = const EventChannel(NativeChannel.screenRecorderEvents)
+        .receiveBroadcastStream()
+        .listen(
+          (dynamic event) {
+            if (event is Map &&
+                event['type'] == DeviceEventType.audioOutputRouteChanged) {
+              unawaited(refreshAudioOutputRoute());
+            }
+          },
+          onError: (Object error) {
+            Log.w('Settings', 'Audio output route stream error: $error');
+          },
+        );
+  }
+
+  @override
+  void dispose() {
+    _deviceEventsSub?.cancel();
+    super.dispose();
+  }
 
   final NativeBridge _nativeBridge;
   static const String _prefExcludeRecorderAppFromCapture =
@@ -17,7 +50,16 @@ class RecordingSettingsController extends ChangeNotifier {
       'micEchoCancellationEnabled';
 
   bool _excludeRecorderAppFromCapture = false;
-  bool _systemAudioEnabled = false;
+  // Defaults ON: "record my screen" implies recording what the screen plays.
+  // Shipping this off meant a recording could silently omit system audio, and
+  // the omission was only discoverable by inspecting the project bundle after
+  // the fact — by which point the take is gone. Speaker users are warned
+  // instead (see [systemAudioBleedRisk]), because the speaker -> mic bleed
+  // path is the real hazard, not system audio itself.
+  bool _systemAudioEnabled = true;
+  // Unknown until probed, and unknown never warns: a false alarm about
+  // headphones would train the user to ignore the real one.
+  AudioOutputRoute _audioOutputRoute = AudioOutputRoute.unknown;
   bool _excludeMicFromSystemAudio = true;
   bool _micEchoCancellationEnabled = false;
   bool _autoStopEnabled = false;
@@ -28,6 +70,15 @@ class RecordingSettingsController extends ChangeNotifier {
 
   bool get excludeRecorderAppFromCapture => _excludeRecorderAppFromCapture;
   bool get systemAudioEnabled => _systemAudioEnabled;
+  AudioOutputRoute get audioOutputRoute => _audioOutputRoute;
+
+  /// True when this take will record system audio *and* that audio is playing
+  /// out loud, so it will also arrive through the microphone as a delayed
+  /// second copy. That doubling is the unsolved echo problem, so the recording
+  /// UI warns before the take rather than leaving it to be discovered in the
+  /// export — a recording cannot be re-taken after the fact.
+  bool get systemAudioBleedRisk =>
+      _systemAudioEnabled && _audioOutputRoute.bleedsIntoMicrophone;
   bool get excludeMicFromSystemAudio => _excludeMicFromSystemAudio;
   bool get micEchoCancellationEnabled => _micEchoCancellationEnabled;
   bool get autoStopEnabled => _autoStopEnabled;
@@ -68,7 +119,7 @@ class RecordingSettingsController extends ChangeNotifier {
       Log.e('Settings', 'Failed to sync excludeRecorderApp to native', e, st);
     }
 
-    _systemAudioEnabled = prefs.getBool('systemAudioEnabled') ?? false;
+    _systemAudioEnabled = prefs.getBool('systemAudioEnabled') ?? true;
 
     _excludeMicFromSystemAudio =
         prefs.getBool(_prefExcludeMicFromSystemAudio) ?? true;
@@ -121,6 +172,14 @@ class RecordingSettingsController extends ChangeNotifier {
     }
 
     notifyListeners();
+
+    // Probe the output route once at startup so the bleed warning is correct on
+    // the first take of a session. Also re-probed when system audio is toggled
+    // on.
+    //
+    // Route changes now arrive over audioOutputRouteChanged (a CoreAudio HAL
+    // listener), so this is belt-and-braces rather than the only signal.
+    unawaited(refreshAudioOutputRoute());
   }
 
   Future<void> updateAutoStopEnabled(bool value) async {
@@ -203,10 +262,25 @@ class RecordingSettingsController extends ChangeNotifier {
     }
   }
 
+  /// Re-reads the output route from native and notifies if it moved.
+  ///
+  /// Cheap enough to call whenever the recording UI is about to be shown or the
+  /// system-audio toggle changes — plugging in headphones between takes has to
+  /// clear the warning, or it becomes noise.
+  Future<void> refreshAudioOutputRoute() async {
+    final route = await _nativeBridge.getAudioOutputRoute();
+    if (route == _audioOutputRoute) return;
+    _audioOutputRoute = route;
+    notifyListeners();
+  }
+
   Future<void> updateSystemAudioEnabled(bool value) async {
     if (value == _systemAudioEnabled) return;
     _systemAudioEnabled = value;
     notifyListeners();
+    // Turning system audio on is exactly when the bleed risk becomes relevant,
+    // so re-probe rather than trusting a route read minutes ago.
+    unawaited(refreshAudioOutputRoute());
     final prefs = await SharedPreferences.getInstance();
     try {
       await prefs.setBool('systemAudioEnabled', value);

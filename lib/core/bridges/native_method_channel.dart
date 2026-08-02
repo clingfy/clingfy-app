@@ -40,6 +40,16 @@ abstract class NativeMethod {
   /// to exercise the crash pipeline. Native replies with an error unless the
   /// CLINGFY_CRASH_TEST=1 environment variable is set.
   static const String debugForceNativeCrash = 'debugForceNativeCrash';
+
+  /// Returns `{route: 'speakers' | 'headphones' | 'unknown'}` for the current
+  /// default audio-output device.
+  ///
+  /// Speaker playback is the precondition for the speaker -> mic bleed that
+  /// makes a recording come back with a doubled, delayed soundtrack, so the
+  /// recording UI warns before a take when system audio is on and output is
+  /// audible in the room. macOS only; other platforms reply with a
+  /// `MissingPluginException`, which the bridge maps to `unknown`.
+  static const String getAudioOutputRoute = 'getAudioOutputRoute';
 }
 
 /// Method names for native → Flutter calls.
@@ -111,6 +121,27 @@ abstract class PlayerEventType {
   static const String previewInvalidated = 'previewInvalidated';
 }
 
+/// `reason` values carried by [PlayerEventType.previewInvalidated].
+///
+/// IMPORTANT: Keep this in sync with the emit sites in the Windows runner
+/// (`preview_engine.cpp`). An unrecognised reason still rebuilds — the reason
+/// only selects how loudly it is reported, so a new native reason degrades to
+/// the fault wording rather than being ignored.
+abstract class PreviewInvalidationReason {
+  PreviewInvalidationReason._();
+
+  /// The D3D device backing the session is gone or suspect (Modern Standby /
+  /// suspend resume). A genuine fault: logged as a warning, and a failed
+  /// rebuild is a blocking error.
+  static const String systemResume = 'systemResume';
+
+  /// The canvas layout changed the aspect the shared texture must have, and a
+  /// registered texture cannot be resized in place. NOT a fault — this is the
+  /// expected consequence of the user picking a different layout preset, so it
+  /// logs at info and a failed rebuild reports the layout, not sleep.
+  static const String canvasAspectChanged = 'canvasAspectChanged';
+}
+
 /// Device event types from native EventChannel.
 ///
 /// IMPORTANT: Keep this in sync with Swift.
@@ -119,5 +150,8 @@ abstract class DeviceEventType {
 
   static const String audioSourcesChanged = 'audioSourcesChanged';
   static const String videoSourcesChanged = 'videoSourcesChanged';
+  static const String displaysChanged = 'displaysChanged';
+  static const String appWindowsChanged = 'appWindowsChanged';
+  static const String audioOutputRouteChanged = 'audioOutputRouteChanged';
   static const String microphoneLevel = 'microphoneLevel';
 }

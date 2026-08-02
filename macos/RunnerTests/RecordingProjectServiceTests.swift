@@ -77,7 +77,15 @@ final class RecordingProjectServiceTests: XCTestCase {
         cursorEnabled: true,
         cursorLinked: true,
         windowID: nil,
-        excludedRecorderApp: false
+        excludedRecorderApp: false,
+        audio: RecordingMetadata.AudioCaptureInfo(
+          micEnabled: true,
+          micDeviceId: "BuiltInMicrophoneDevice",
+          systemAudioEnabled: true,
+          excludedMicFromSystemAudio: true,
+          echoCancellationEnabled: false,
+          outputRoute: AudioOutputRoute.headphones.rawValue
+        )
       ),
       cameraCaptureInfo: nil,
       editorSeed: seed,

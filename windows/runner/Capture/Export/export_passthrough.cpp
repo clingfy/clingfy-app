@@ -499,6 +499,9 @@ PassthroughResult ExportPassthroughCopy(
     render.padding = input.padding;
     render.corner_radius = input.corner_radius;
     render.background_color = input.background_color;
+    render.background_image_path = input.background_image_path;
+    render.background_preset = input.background_preset;
+    render.has_background_preset = input.has_background_preset;
     // Editing port (color): bake the grade into the composite (identity is a
     // no-op inside the pipeline).
     render.color_grade = input.color_grade;

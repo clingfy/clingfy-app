@@ -158,7 +158,11 @@ a legacy embedded fallback when neither sidecar decodes.
   Sessions where no sidecar decodes keep today's single-pump whole-track
   path. The uncut passthrough `MediaPlayer` keeps premix + volume-only
   (finding 7) — same already-documented gap as today, notice copy updated
-  only if wording goes stale.
+  only if wording goes stale. **Status moved 2026-07-27:** that gap is now
+  "fix pre-built, blocked on clock convergence" — the DSP exists
+  (`Audio/gain_processor.{h,cpp}`, #358) and an `IBasicAudioEffect` adapter is
+  a closed option. See D6/D6.1 in
+  `docs/decisions/windows-editing-step4-7-preview-audio.md`.
 - **D10 — Scene info learns audio presence (additive).**
   `getRecordingSceneInfo` gains `hasMicAudio` / `hasSystemAudio` derived
   from the manifest + probe, so the post-processing sidebar can stop gating

@@ -6,6 +6,7 @@ import 'package:clingfy/ui/platform/widgets/app_settings_group.dart';
 import 'package:clingfy/ui/platform/widgets/app_toggle_row.dart';
 import 'package:clingfy/ui/platform/widgets/platform_dropdown.dart';
 import 'package:flutter/material.dart';
+import 'package:clingfy/ui/platform/widgets/app_inline_notice.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:macos_ui/macos_ui.dart';
 import 'package:clingfy/ui/platform/platform_kind.dart';
@@ -16,6 +17,7 @@ Widget _buildSection({
   bool isRecording = false,
   bool loadingAudio = false,
   bool systemAudioEnabled = false,
+  bool systemAudioBleedRisk = false,
   bool excludeMicFromSystemAudio = false,
   bool micEchoCancellationEnabled = false,
   ValueChanged<bool>? onMicEchoCancellationEnabledChanged,
@@ -43,6 +45,7 @@ Widget _buildSection({
               selectedAudioSourceId: selectedAudioSourceId,
               loadingAudio: loadingAudio,
               systemAudioEnabled: systemAudioEnabled,
+              systemAudioBleedRisk: systemAudioBleedRisk,
               excludeMicFromSystemAudio: excludeMicFromSystemAudio,
               micEchoCancellationEnabled: micEchoCancellationEnabled,
               micInputLevelLinear: micInputLevelLinear,
@@ -662,5 +665,150 @@ void main() {
     );
 
     expect(find.text(l10n.recordingExcludeMicFromSystemAudio), findsOneWidget);
+  });
+
+  group('mic input too low warning', () {
+    const warningKey = Key('mic_input_too_low_warning');
+
+    testWidgets('shows prominently, not only as a meter tooltip', (
+      tester,
+    ) async {
+      await tester.pumpWidget(
+        _buildSection(selectedAudioSourceId: 'mic-1', micInputTooLow: true),
+      );
+      await tester.pump();
+
+      expect(find.byKey(warningKey), findsOneWidget);
+      final notice = tester.widget<AppInlineNotice>(find.byKey(warningKey));
+      expect(notice.variant, AppInlineNoticeVariant.warning);
+      // The headline states the condition and is visible WITHOUT hovering;
+      // the fix lives in the hover detail. Both halves matter: a headline
+      // alone does not tell you what to do, and detail alone is undiscoverable.
+      expect(notice.message, contains('too low'));
+      expect(notice.details, isNotNull);
+      expect(notice.details, contains('Input'));
+      // Held to one line so two simultaneous warnings stay compact.
+      final text = tester.widget<Text>(
+        find.descendant(
+          of: find.byKey(warningKey),
+          matching: find.byType(Text),
+        ),
+      );
+      expect(text.maxLines, 1);
+    });
+
+    testWidgets('absent when the level is healthy', (tester) async {
+      await tester.pumpWidget(_buildSection(selectedAudioSourceId: 'mic-1'));
+      await tester.pump();
+
+      expect(find.byKey(warningKey), findsNothing);
+    });
+
+    testWidgets('absent with no microphone selected', (tester) async {
+      // A too-low reading with no mic selected is meaningless, and
+      // "No microphone" is the first-run default.
+      await tester.pumpWidget(
+        _buildSection(selectedAudioSourceId: '__none__', micInputTooLow: true),
+      );
+      await tester.pump();
+
+      expect(find.byKey(warningKey), findsNothing);
+    });
+
+    testWidgets('still shown while recording, so a bad take can be cut short', (
+      tester,
+    ) async {
+      await tester.pumpWidget(
+        _buildSection(
+          selectedAudioSourceId: 'mic-1',
+          micInputTooLow: true,
+          isRecording: true,
+        ),
+      );
+      await tester.pump();
+
+      expect(find.byKey(warningKey), findsOneWidget);
+    });
+
+    testWidgets('coexists with the bleed warning', (tester) async {
+      // Both conditions are independent and can hold at once; neither may
+      // suppress the other.
+      await tester.pumpWidget(
+        _buildSection(
+          selectedAudioSourceId: 'mic-1',
+          systemAudioEnabled: true,
+          systemAudioBleedRisk: true,
+          micInputTooLow: true,
+        ),
+      );
+      await tester.pump();
+
+      expect(find.byKey(warningKey), findsOneWidget);
+      expect(
+        find.byKey(const Key('system_audio_bleed_warning')),
+        findsOneWidget,
+      );
+    });
+  });
+
+  group('speaker bleed warning', () {
+    const warningKey = Key('system_audio_bleed_warning');
+
+    testWidgets('shows under the system-audio toggle when at risk', (
+      tester,
+    ) async {
+      await tester.pumpWidget(
+        _buildSection(
+          selectedAudioSourceId: 'mic-1',
+          systemAudioEnabled: true,
+          systemAudioBleedRisk: true,
+        ),
+      );
+      await tester.pump();
+
+      expect(find.byKey(warningKey), findsOneWidget);
+      final notice = tester.widget<AppInlineNotice>(find.byKey(warningKey));
+      expect(notice.variant, AppInlineNoticeVariant.warning);
+      expect(notice.message, contains('bleed'));
+      expect(notice.details, contains('headphones'));
+    });
+
+    testWidgets('absent when the output route is safe', (tester) async {
+      await tester.pumpWidget(
+        _buildSection(selectedAudioSourceId: 'mic-1', systemAudioEnabled: true),
+      );
+      await tester.pump();
+
+      expect(find.byKey(warningKey), findsNothing);
+    });
+
+    testWidgets('absent when the caller reports no risk', (tester) async {
+      // systemAudioBleedRisk is computed upstream from (system audio on AND the
+      // route bleeds); the section just renders it. Prove the false branch.
+      await tester.pumpWidget(
+        _buildSection(selectedAudioSourceId: 'mic-1', systemAudioEnabled: true),
+      );
+      await tester.pump();
+
+      expect(find.byKey(warningKey), findsNothing);
+    });
+
+    testWidgets('absent with no microphone selected, even at risk', (
+      tester,
+    ) async {
+      // With no mic there is nothing for the system audio to bleed INTO, and
+      // "No microphone" is the first-run default — warning there would be a
+      // false alarm on a brand-new install.
+      await tester.pumpWidget(
+        _buildSection(
+          selectedAudioSourceId: '__none__',
+          systemAudioEnabled: true,
+          systemAudioBleedRisk: true,
+        ),
+      );
+      await tester.pump();
+
+      expect(find.byKey(warningKey), findsNothing);
+    });
   });
 }

@@ -47,6 +47,36 @@ inline constexpr const char* kUpdateExportProgress = "updateExportProgress";
 // position — macOS parity (ScreenRecorderEventBridge.cameraOverlayMoved).
 inline constexpr const char* kCameraOverlayMoved = "cameraOverlayMoved";
 
+// Recording-indicator control taps: invoked with NO arguments when the user
+// clicks the pause / stop / resume control on the on-screen recording pill.
+// Dart's NativeBridge dispatches them to home_bindings (pauseRecording /
+// onToggleRecording / resumeRecording) — macOS parity (the indicator taps
+// report UP to Dart, which owns the pause/resume/stop logic). Keep in sync with
+// Dart NativeToFlutterMethod.indicator{Pause,Stop,Resume}Tapped.
+inline constexpr const char* kIndicatorPauseTapped = "indicatorPauseTapped";
+inline constexpr const char* kIndicatorStopTapped = "indicatorStopTapped";
+inline constexpr const char* kIndicatorResumeTapped = "indicatorResumeTapped";
+
+// Pre-recording bar button taps (Slice 5): invoked with a map
+// {type: <NativeBarAction string>, payload: null} when the user clicks a bar
+// button. Dart's NativeBridge reads `type` + `payload` and dispatches to
+// home_actions.handleNativeBarAction — macOS parity (the bar reports the tap UP
+// to Dart, which owns the source/record/pause logic). The action-type strings
+// mirror Dart `NativeBarAction` (lib/core/bridges/native_bar_action.dart); the
+// mapping from a hit button to its string lives in the pre-recording bar model
+// (`BarActionFor`). Keep the method name in sync with Dart
+// NativeToFlutterMethod.preRecordingBarAction.
+inline constexpr const char* kPreRecordingBarAction = "preRecordingBarAction";
+
+// Pre-recording bar native picker selection (Slice 6): invoked with a map
+// {type: <"display"|"window"|"mic"|"camera"|"mode">, id: <int|string|null>}
+// when the user picks a device from a native dropdown popover. Dart's
+// NativeBridge routes it to home_actions.handleNativeSelectionChanged, which
+// drives deviceController.setDisplay/setAppWindow/setAudioSource/setCamSource
+// (id null = deselect) — macOS parity (PreRecordingBarController.notifyFlutterSelection).
+// Keep the method name in sync with Dart NativeToFlutterMethod.nativeSelectionChanged.
+inline constexpr const char* kNativeSelectionChanged = "nativeSelectionChanged";
+
 }  // namespace clingfy::bridge::method
 
 #endif  // RUNNER_BRIDGE_NATIVE_CHANNEL_NAMES_H_

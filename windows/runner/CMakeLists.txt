@@ -49,20 +49,34 @@ endif()
 # live Flutter engine (no `flutter_window.cpp`, no plugin registrant) so the
 # test target can construct a `MethodRouter` in isolation.
 add_library(runner_bridge STATIC
+  "Bridge/app_window_anchor.cpp"
   "Bridge/method_dispatcher.cpp"
   "Bridge/method_router.cpp"
   "Bridge/camera_overlay_move_publisher.cpp"
   "Bridge/event_channel_stubs.cpp"
   "Bridge/export_progress_publisher.cpp"
+  "Bridge/indicator_event_publisher.cpp"
+  "Bridge/pre_recording_bar_action_publisher.cpp"
+  "Bridge/native_selection_changed_publisher.cpp"
   "Bridge/native_log_publisher.cpp"
   "Bridge/platform_thread_dispatcher.cpp"
   "Bridge/player_event_publisher.cpp"
   "Bridge/project_open_coordinator.cpp"
   "Bridge/workflow_event_publisher.cpp"
+  "Capture/Background/preset_bitmap_cache.cpp"
+  "Capture/Background/background_preset_catalog.cpp"
+  "Capture/Background/canvas_preset_renderer.cpp"
+  "Capture/Background/abstract_waves_params.cpp"
+  "Capture/Background/canvas_preset_params.cpp"
+  "Capture/Background/preset_thumbnail_cache.cpp"
+  "Capture/Background/background_image_cache.cpp"
+  "Core/app_identity.cpp"
+  "Core/canvas_composition.cpp"
   "Core/argv_project_path.cpp"
   "Core/single_instance.cpp"
   "Audio/audio_format.cpp"
   "Audio/audio_mixer.cpp"
+  "Audio/gain_processor.cpp"
   "Audio/audio_packet_queue.cpp"
   "Audio/wasapi_audio_capture.cpp"
   "Audio/VoiceCleanup/rnnoise_denoiser.cpp"
@@ -78,6 +92,7 @@ add_library(runner_bridge STATIC
   "Bridge/Routers/indicator_router.cpp"
   "Bridge/Routers/misc_router.cpp"
   "Bridge/Routers/permissions_router.cpp"
+  "Bridge/Routers/pre_recording_bar_router.cpp"
   "Bridge/Routers/clip_args.cpp"
   "Bridge/Routers/color_grade_args.cpp"
   "Bridge/Routers/preview_router.cpp"
@@ -125,6 +140,12 @@ add_library(runner_bridge STATIC
   "Capture/Zoom/zoom_follow_smoother.cpp"
   "Capture/Zoom/zoom_hysteresis.cpp"
   "Capture/Zoom/zoom_timeline_builder.cpp"
+  "Capture/Indicator/recording_indicator_controller.cpp"
+  "Capture/Indicator/recording_indicator_model.cpp"
+  "Capture/PreRecordingBar/pre_recording_bar_controller.cpp"
+  "Capture/PreRecordingBar/pre_recording_bar_model.cpp"
+  "Capture/PreRecordingBar/pre_recording_bar_popover.cpp"
+  "Capture/PreRecordingBar/pre_recording_bar_popover_model.cpp"
   "Capture/recording_clock.cpp"
   "Capture/recording_engine.cpp"
   "Capture/recording_project_reader.cpp"
@@ -317,6 +338,30 @@ target_compile_definitions(${BINARY_NAME} PRIVATE "FLUTTER_VERSION_PATCH=${FLUTT
 target_compile_definitions(${BINARY_NAME} PRIVATE "FLUTTER_VERSION_BUILD=${FLUTTER_VERSION_BUILD}")
 
 # Disable Windows macros that collide with C++ standard library functions.
+# D9 per-channel identity. `01_build.ps1` exports CLINGFY_CHANNEL before
+# `flutter build windows`, which is the only channel signal that reaches native
+# code -- everything else about the channel travels as a Dart define, and the
+# single-instance mutex is acquired before the engine exists.
+#
+# Absent or unrecognised resolves to PROD in app_identity.cpp. That direction is
+# deliberate: a released build must never be pointed away from the directory a
+# user's recordings are already in.
+if(DEFINED ENV{CLINGFY_CHANNEL})
+  set(CLINGFY_CHANNEL_VALUE "$ENV{CLINGFY_CHANNEL}")
+else()
+  set(CLINGFY_CHANNEL_VALUE "prod")
+endif()
+message(STATUS "Clingfy channel identity: ${CLINGFY_CHANNEL_VALUE}")
+target_compile_definitions(${BINARY_NAME} PRIVATE "CLINGFY_CHANNEL=\"${CLINGFY_CHANNEL_VALUE}\"")
+# app_identity.cpp compiles inside runner_bridge (so the tests can link it),
+# which is where the define actually has to land.
+target_compile_definitions(runner_bridge PRIVATE "CLINGFY_CHANNEL=\"${CLINGFY_CHANNEL_VALUE}\"")
+if(CLINGFY_CHANNEL_VALUE STREQUAL "dev")
+  # Reaches the RC compiler too, which is how ProductName (and therefore the
+  # path_provider data directory) forks per channel.
+  target_compile_definitions(${BINARY_NAME} PRIVATE "CLINGFY_CHANNEL_DEV")
+endif()
+
 target_compile_definitions(${BINARY_NAME} PRIVATE "NOMINMAX")
 
 # Add dependency libraries and include directories. Add any application-specific

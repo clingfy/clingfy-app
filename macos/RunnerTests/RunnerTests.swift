@@ -205,7 +205,7 @@ final class RecordingProjectPathsTests: XCTestCase {
 }
 
 final class RecordingMetadataTests: XCTestCase {
-  func testVersion2RoundTripPreservesCameraAndEditorSeed() throws {
+  func testCurrentVersionRoundTripPreservesCameraAndEditorSeed() throws {
     let tempDir = makeTemporaryDirectory()
     defer { try? FileManager.default.removeItem(at: tempDir) }
 
@@ -274,7 +274,10 @@ final class RecordingMetadataTests: XCTestCase {
     try metadata.write(to: metadataURL)
     let decoded = try RecordingMetadata.read(from: metadataURL)
 
-    XCTAssertEqual(decoded.version, 2)
+    // Asserted against the constant, not a literal: this test spent three
+    // days claiming version 2 against a v3 writer because the two literals
+    // drifted independently and nothing ran to notice.
+    XCTAssertEqual(decoded.version, RecordingMetadata.currentVersion)
     XCTAssertEqual(decoded.screen.rawRelativePath, "capture/screen.mov")
     XCTAssertEqual(decoded.screen.windowId, 77)
     XCTAssertEqual(decoded.camera, cameraInfo)
@@ -489,6 +492,236 @@ final class CameraRecorderTests: XCTestCase {
     )
 
     XCTAssertFalse(CameraRecorder._testRecordingFinishedSuccessfully(error))
+  }
+
+  // MARK: - Driving the recorder without a camera
+
+  /// Stands in for the capture graph so the failure paths can be reached.
+  ///
+  /// Every one of these states is real and none can be produced on demand from
+  /// a live camera: a session that will not come up, an output that raises on
+  /// start, and an output that accepts a start and then never calls the
+  /// delegate back. That last one was observed lasting 15 minutes 51 seconds.
+  private final class FakeCameraCoordinator: CameraCaptureCoordinating {
+    enum StartBehaviour {
+      /// Accept the start and confirm through the delegate, as a healthy camera does.
+      case succeed
+      /// Raise, as AVFoundation does when the capture graph refuses.
+      case refuse
+      /// Accept the start and never call the delegate. The stall.
+      case acceptThenNeverReport
+    }
+
+    var isSessionRunning = true
+    var hasActiveVideoConnection = true
+    var isOutputRecording = false
+    var startBehaviour: StartBehaviour = .succeed
+    var acquireError: Error?
+
+    private(set) var acquireCount = 0
+    private(set) var releaseCount = 0
+    private(set) var startedURLs: [URL] = []
+    private(set) var stopCount = 0
+
+    func acquireRecording(deviceID: String?) throws {
+      acquireCount += 1
+      if let acquireError { throw acquireError }
+    }
+
+    func releaseRecording() { releaseCount += 1 }
+    func setMirrored(_ mirrored: Bool) {}
+    func stopOutputRecording() { stopCount += 1; isOutputRecording = false }
+
+    func startOutputRecording(
+      to url: URL,
+      delegate: AVCaptureFileOutputRecordingDelegate
+    ) throws {
+      startedURLs.append(url)
+      switch startBehaviour {
+      case .refuse:
+        throw NSError(
+          domain: "Clingfy.AVCaptureMovieFileOutputExceptionBridge", code: 1,
+          userInfo: [NSLocalizedDescriptionKey: "The camera refused to start recording."])
+      case .acceptThenNeverReport:
+        isOutputRecording = true
+      case .succeed:
+        isOutputRecording = true
+        DispatchQueue.main.async {
+          delegate.fileOutput?(
+            AVCaptureMovieFileOutput(), didStartRecordingTo: url, from: [])
+        }
+      }
+    }
+  }
+
+  private func makeSession(in directory: URL) -> CameraRecordingSession {
+    CameraRecordingSession(
+      outputURL: directory.appendingPathComponent("raw.mov"),
+      metadataURL: directory.appendingPathComponent("camera.json"),
+      segmentDirectoryURL: directory.appendingPathComponent("segments", isDirectory: true),
+      deviceId: "fake-camera",
+      mirroredRaw: false,
+      nominalFrameRate: 30,
+      dimensions: nil
+    )
+  }
+
+  /// A camera that is not ready must fail the start, not crash and not wedge.
+  ///
+  /// Both halves matter. #386 made the not-ready case fail instead of abort;
+  /// #387 then had to release the session it had already claimed, because the
+  /// first fix left the recorder looking permanently active and every later
+  /// attempt answered ALREADY_RECORDING until relaunch. Neither could be
+  /// tested until the coordinator became injectable, which is why the second
+  /// bug shipped.
+  func testNotReadyCameraFailsTheStartAndReleasesTheSession() throws {
+    let directory = FileManager.default.temporaryDirectory
+      .appendingPathComponent(UUID().uuidString, isDirectory: true)
+    try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+    defer { try? FileManager.default.removeItem(at: directory) }
+
+    let coordinator = FakeCameraCoordinator()
+    coordinator.isSessionRunning = false
+    let recorder = CameraRecorder(coordinator: coordinator)
+
+    let refused = expectation(description: "start refused")
+    var firstResult: Result<Void, Error>?
+    recorder.begin(session: makeSession(in: directory)) { result in
+      firstResult = result
+      refused.fulfill()
+    }
+    wait(for: [refused], timeout: 5)
+
+    guard case .failure? = firstResult else {
+      return XCTFail("a not-ready camera must fail the start")
+    }
+    XCTAssertTrue(coordinator.startedURLs.isEmpty, "must refuse before calling AVFoundation")
+    XCTAssertGreaterThan(coordinator.releaseCount, 0, "the claimed session must be released")
+
+    // The load-bearing part: a refusal must not poison the next attempt.
+    coordinator.isSessionRunning = true
+    let second = expectation(description: "second start")
+    var secondResult: Result<Void, Error>?
+    recorder.begin(session: makeSession(in: directory)) { result in
+      secondResult = result
+      second.fulfill()
+    }
+    wait(for: [second], timeout: 5)
+
+    if case .failure(let error) = secondResult {
+      XCTFail("second start refused after a failed first: \(error)")
+    }
+  }
+
+  /// A start that is accepted and never confirmed must time out, not hang.
+  ///
+  /// Measured from a real session with an external camera: AVFoundation
+  /// accepted the start and did not call the delegate for 15 minutes 51
+  /// seconds, and the UI span the whole time. The timeout is injected here so
+  /// the test does not have to wait the shipping 20 seconds to prove it.
+  func testStalledCameraStartTimesOutInsteadOfHanging() throws {
+    let directory = FileManager.default.temporaryDirectory
+      .appendingPathComponent(UUID().uuidString, isDirectory: true)
+    try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+    defer { try? FileManager.default.removeItem(at: directory) }
+
+    let coordinator = FakeCameraCoordinator()
+    coordinator.startBehaviour = .acceptThenNeverReport
+    let recorder = CameraRecorder(coordinator: coordinator, segmentStartTimeout: 0.25)
+
+    let timedOut = expectation(description: "start timed out")
+    var result: Result<Void, Error>?
+    recorder.begin(session: makeSession(in: directory)) { outcome in
+      result = outcome
+      timedOut.fulfill()
+    }
+    wait(for: [timedOut], timeout: 5)
+
+    guard case .failure(let error)? = result else {
+      return XCTFail("a start that is never confirmed must fail")
+    }
+    // Read `message`, not `localizedDescription`: FlutterError does not route
+    // its message through the latter, which reports only "The operation
+    // couldn't be completed." The message is what crosses to Dart as
+    // PlatformException.message and reaches the user.
+    let message = (error as? FlutterError)?.message ?? error.localizedDescription
+    XCTAssertTrue(
+      message.contains("did not start recording"),
+      "the timeout should say what happened, got: \(message)")
+    XCTAssertGreaterThan(coordinator.releaseCount, 0, "a timed-out start must release")
+  }
+
+  /// A raise from AVFoundation must surface as an error, not abort the process.
+  func testRefusedOutputStartSurfacesAsAnError() throws {
+    let directory = FileManager.default.temporaryDirectory
+      .appendingPathComponent(UUID().uuidString, isDirectory: true)
+    try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+    defer { try? FileManager.default.removeItem(at: directory) }
+
+    let coordinator = FakeCameraCoordinator()
+    coordinator.startBehaviour = .refuse
+    let recorder = CameraRecorder(coordinator: coordinator)
+
+    let failed = expectation(description: "start failed")
+    var result: Result<Void, Error>?
+    recorder.begin(session: makeSession(in: directory)) { outcome in
+      result = outcome
+      failed.fulfill()
+    }
+    wait(for: [failed], timeout: 5)
+
+    guard case .failure? = result else {
+      return XCTFail("a refused output start must fail the begin")
+    }
+    XCTAssertGreaterThan(coordinator.releaseCount, 0, "a refused start must release")
+  }
+
+  /// A healthy camera still starts — the guards must not block the normal case.
+  func testHealthyCameraStartsNormally() throws {
+    let directory = FileManager.default.temporaryDirectory
+      .appendingPathComponent(UUID().uuidString, isDirectory: true)
+    try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+    defer { try? FileManager.default.removeItem(at: directory) }
+
+    let coordinator = FakeCameraCoordinator()
+    let recorder = CameraRecorder(coordinator: coordinator)
+
+    let started = expectation(description: "started")
+    var result: Result<Void, Error>?
+    recorder.begin(session: makeSession(in: directory)) { outcome in
+      result = outcome
+      started.fulfill()
+    }
+    wait(for: [started], timeout: 5)
+
+    if case .failure(let error) = result {
+      XCTFail("a healthy camera must start: \(error)")
+    }
+    XCTAssertEqual(coordinator.startedURLs.count, 1)
+  }
+
+  /// The preconditions that stand between a not-ready camera and a hard crash.
+  ///
+  /// `AVCaptureMovieFileOutput.startRecording(to:)` RAISES an Objective-C
+  /// exception when the session is not running or the output has no active
+  /// video connection. Swift cannot catch those, so the raise reaches the
+  /// terminate handler and calls abort(). That is not hypothetical: a camera
+  /// hot-plugged and selected about ten seconds before recording started took
+  /// the app down on macOS 26.1, at CameraRecorder.swift:387.
+  ///
+  /// A freshly built coordinator is exactly that un-ready state — session
+  /// created, no device attached, nothing running — so both predicates must
+  /// read false. If either ever starts reporting true here, the guard in
+  /// `startNextSegment` stops guarding and the crash comes back.
+  func testFreshCoordinatorIsNotReadyToRecord() {
+    let coordinator = CameraCaptureCoordinator()
+
+    XCTAssertFalse(
+      coordinator.isSessionRunning,
+      "a coordinator with no device attached must not report a running session")
+    XCTAssertFalse(
+      coordinator.hasActiveVideoConnection,
+      "a coordinator with no device attached must not report a live video connection")
   }
 }
 
@@ -1896,6 +2129,101 @@ final class LetterboxExporterTests: XCTestCase {
 
     XCTAssertGreaterThan(try dominantRedRatio(for: cameraCrop, ignoreTransparentPixels: true), 0.08)
     XCTAssertGreaterThan(try dominantBlueRatio(for: centerCrop, ignoreTransparentPixels: false), 0.20)
+  }
+
+  /// The camera overlay must enter the canvas in the SAME transfer space as
+  /// the screen, so the shared `encodeForExport` applies to it exactly once.
+  ///
+  /// The two sources reach `InlineCameraRenderer.render` through different
+  /// readers and nothing in the type system says so. The screen comes from an
+  /// `AVAssetReaderVideoCompositionOutput` whose composition always carries an
+  /// animation tool, so AVFoundation has already decoded it out of BT.709 into
+  /// sRGB. The camera comes from a plain `AVAssetReaderTrackOutput` and still
+  /// holds the 709-encoded values its file was written with. Both were then
+  /// declared sRGB and handed to one shared encode, so the camera was encoded
+  /// twice — measured on a real export as source (225,221,210) reaching the
+  /// file as (221,216,205), a full transfer step darker than the screen.
+  ///
+  /// Asserted at the function rather than end to end on purpose. The composited
+  /// frame puts the bubble at a layout-resolved position that the crop helpers
+  /// only approximate, so a whole-frame or approximate-crop assertion is
+  /// dominated by screen pixels and cannot separate the two states — an earlier
+  /// version of this test passed with the fix reverted for exactly that reason.
+  func testInlineCameraSourceImageIsDecodedOutOfTheExportTransfer() throws {
+    let tempDir = makeTemporaryDirectory()
+    defer { try? FileManager.default.removeItem(at: tempDir) }
+
+    // Mid-grey: 0 and 255 are fixed points of the curve, so a saturated or
+    // black fixture would pass whether or not the decode happened.
+    let level: UInt8 = 128
+    let cameraURL = tempDir.appendingPathComponent("camera.mov")
+    try makeSolidColorVideo(
+      url: cameraURL,
+      size: CGSize(width: 64, height: 64),
+      durationSeconds: 0.4,
+      color: NSColor(
+        srgbRed: CGFloat(level) / 255.0,
+        green: CGFloat(level) / 255.0,
+        blue: CGFloat(level) / 255.0,
+        alpha: 1.0)
+    )
+    let track = try XCTUnwrap(AVAsset(url: cameraURL).tracks(withMediaType: .video).first)
+
+    // A buffer holding exactly `level`, standing in for the raw 709-encoded
+    // frame the track reader hands over.
+    var pixelBufferOut: CVPixelBuffer?
+    CVPixelBufferCreate(
+      kCFAllocatorDefault, 64, 64, kCVPixelFormatType_32BGRA,
+      [
+        kCVPixelBufferCGImageCompatibilityKey as String: true,
+        kCVPixelBufferCGBitmapContextCompatibilityKey as String: true,
+      ] as CFDictionary, &pixelBufferOut)
+    let pixelBuffer = try XCTUnwrap(pixelBufferOut)
+    CVPixelBufferLockBaseAddress(pixelBuffer, [])
+    let context = try XCTUnwrap(
+      CGContext(
+        data: CVPixelBufferGetBaseAddress(pixelBuffer), width: 64, height: 64,
+        bitsPerComponent: 8, bytesPerRow: CVPixelBufferGetBytesPerRow(pixelBuffer),
+        space: VideoColorPipeline.workingColorSpace,
+        bitmapInfo: CGImageAlphaInfo.premultipliedFirst.rawValue
+          | CGBitmapInfo.byteOrder32Little.rawValue))
+    context.setFillColor(
+      red: CGFloat(level) / 255.0, green: CGFloat(level) / 255.0,
+      blue: CGFloat(level) / 255.0, alpha: 1.0)
+    context.fill(CGRect(x: 0, y: 0, width: 64, height: 64))
+    CVPixelBufferUnlockBaseAddress(pixelBuffer, [])
+
+    let renderer = InlineCameraRenderer(
+      renderSize: CGSize(width: 640, height: 360),
+      backgroundColor: nil,
+      backgroundImagePath: nil,
+      backgroundPreset: nil
+    )
+    let image = renderer.makeCameraSourceImage(
+      pixelBuffer: pixelBuffer, formatDescription: nil, track: track)
+
+    let ciContext = VideoColorPipeline.makeCIContext()
+    let cgImage = try XCTUnwrap(
+      ciContext.createCGImage(
+        image, from: image.extent, format: .RGBA8,
+        colorSpace: VideoColorPipeline.workingColorSpace))
+    let measured = try averageColorMetrics(for: cgImage, ignoreTransparentPixels: false)
+    let measuredCode = measured.red * 255.0
+
+    let expected = Double(ColorTransferFunctions.exportTransferToSrgb(level))
+    let summary = String(
+      format: "camera source decode: in %d  measured %.1f  decoded-expected %.1f  undecoded-would-be %d",
+      level, measuredCode, expected, level)
+    NSLog("%@", summary)
+    print(summary)
+
+    // The two states are ~11 code values apart; 4 separates them cleanly.
+    XCTAssertGreaterThan(
+      abs(expected - Double(level)), 8.0,
+      "fixture does not exercise the transfer curve — pick a midtone. \(summary)")
+    XCTAssertEqual(
+      measuredCode, expected, accuracy: 4.0,
+      "camera source must be decoded out of the export transfer. \(summary)")
   }
 
   func testChromaKeyCameraPrepassRemovesGreenBackgroundAndKeepsSubject() throws {
@@ -3853,6 +4181,331 @@ final class LetterboxExporterTests: XCTestCase {
 
   }
 
+  /// Pins that the export has exactly one final render path.
+  ///
+  /// This is the configuration that used to reach `AVAssetExportSession`.
+  /// Screen-only exports can never get here: `build(forExport:)` hardcodes
+  /// `includeRoundedMask: true`, so their composition always carries an
+  /// animation tool. Reaching it takes a visible camera that needs no inline
+  /// render (square, unmirrored, opacity 1, `.fill`, no border, no shadow) plus
+  /// no cursor, no zoom, no corner radius and no background image — which is
+  /// why no test covered it and the defect shipped.
+  ///
+  /// The old branch handed the composition to AVFoundation, which colour-matches
+  /// source to destination but saw a 709-tagged capture against a 709
+  /// composition and converted nothing, writing sRGB-encoded pixels into a
+  /// BT.709-tagged file. `assertAverageColorParity` encodes its reference with
+  /// the same curve the exporter uses, so an un-encoded file fails it.
+  ///
+  /// The fixture is mid-grey on every surface on purpose. 0 and 255 are fixed
+  /// points of the export curve, so a saturated red/green/blue fixture would
+  /// pass whether or not the transfer was ever applied.
+  func testExportWithoutInlineCameraOrAnimationToolStillWritesTheExportTransfer() throws {
+    let tempDir = makeTemporaryDirectory()
+    defer { try? FileManager.default.removeItem(at: tempDir) }
+
+    let projectRoot = try makeRecordingProjectRoot(at: tempDir, includeCamera: true)
+    let project = try RecordingProjectRef.open(projectRoot: projectRoot)
+    let screenURL = RecordingProjectPaths.screenVideoURL(for: projectRoot)
+    let cameraURL = RecordingProjectPaths.cameraRawURL(for: projectRoot)
+    try makeSolidColorVideo(
+      url: screenURL,
+      size: CGSize(width: 180, height: 320),
+      durationSeconds: 1.0,
+      color: NSColor(calibratedWhite: 0.5, alpha: 1.0)
+    )
+    try makeSolidColorVideo(
+      url: cameraURL,
+      size: CGSize(width: 128, height: 128),
+      durationSeconds: 1.0,
+      color: NSColor(calibratedRed: 0.45, green: 0.55, blue: 0.35, alpha: 1.0)
+    )
+
+    let cameraParams = CameraCompositionParams(
+      visible: true,
+      layoutPreset: .overlayBottomRight,
+      normalizedCanvasCenter: nil,
+      sizeFactor: 0.24,
+      shape: .square,
+      cornerRadius: 0.0,
+      opacity: 1.0,
+      mirror: false,
+      contentMode: .fill,
+      zoomBehavior: .fixed,
+      borderWidth: 0.0,
+      borderColorArgb: nil,
+      shadowPreset: 0,
+      chromaKeyEnabled: false,
+      chromaKeyStrength: 0.4,
+      chromaKeyColorArgb: nil
+    )
+
+    let target = CGSize(width: 640, height: 360)
+    let params = CompositionParams(
+      targetSize: target,
+      padding: 0.0,
+      cornerRadius: 0.0,
+      backgroundColor: 0xFF80_8080,
+      backgroundImagePath: nil,
+      cursorSize: 1.0,
+      showCursor: false,
+      zoomEnabled: false,
+      zoomFactor: 1.5,
+      followStrength: 0.15,
+      fpsHint: 30,
+      fitMode: "fit",
+      audioGainDb: 0.0,
+      audioVolumePercent: 100.0
+    )
+
+    // The executable statement of "this is the ex-session configuration". If a
+    // future change makes one of these non-nil, this test stops proving what it
+    // claims to prove, and it should fail loudly rather than pass vacuously.
+    let composition = try XCTUnwrap(
+      CompositionBuilder().buildExport(
+        asset: AVAsset(url: screenURL),
+        cameraAsset: AVAsset(url: cameraURL),
+        params: params,
+        cameraParams: cameraParams,
+        cursorRecording: nil
+      )
+    )
+    XCTAssertNil(
+      composition.inlineCameraRenderPlan,
+      "fixture no longer reaches the branch this test exists to cover"
+    )
+    XCTAssertNil(
+      composition.videoComposition.animationTool,
+      "fixture no longer reaches the branch this test exists to cover"
+    )
+
+    let exporter = LetterboxExporter()
+    let exportExpectation = expectation(description: "export without inline camera or animation tool")
+    var exportResult: Result<URL, Error>?
+
+    exporter.export(
+      project: project,
+      target: target,
+      padding: 0.0,
+      cornerRadius: 0.0,
+      backgroundColor: 0xFF80_8080,
+      backgroundImagePath: nil,
+      cursorSize: 1.0,
+      showCursor: false,
+      zoomEnabled: false,
+      zoomFactor: 1.5,
+      followStrength: 0.15,
+      fpsHint: 30,
+      outputURL: tempDir.appendingPathComponent("no-animation-tool.mov"),
+      format: "mov",
+      codec: "h264",
+      bitrate: "auto",
+      fitMode: "fit",
+      audioGainDb: 0.0,
+      audioVolumePercent: 100.0,
+      autoNormalizeOnExport: false,
+      targetLoudnessDbfs: -16.0,
+      cameraParams: cameraParams
+    ) { result in
+      exportResult = result
+      exportExpectation.fulfill()
+    }
+
+    wait(for: [exportExpectation], timeout: 30.0)
+    let finalURL = try XCTUnwrap(try exportResult?.get())
+
+    try assertAverageColorParity(
+      referenceImage: try sampleFrameImage(
+        asset: composition.asset,
+        videoComposition: composition.videoComposition
+      ),
+      candidateImage: try sampleFrameImage(url: finalURL)
+    )
+  }
+
+  /// Pins that the final-export validator compares like with like.
+  ///
+  /// Its reference comes from `AVAssetImageGenerator` over the composition,
+  /// which never runs `VideoColorPipeline.renderComposedExportFrame`, while the
+  /// file it grades has been encoded by it. Comparing them raw did not measure
+  /// export drift, it measured the whole transfer curve — and with the wrong
+  /// sign, so the correct export scored as drifted and an un-encoded one scored
+  /// clean. The validator was grading the bug it exists to catch as healthy.
+  ///
+  /// Asserted on the measured deltas rather than the verdict on purpose: the
+  /// transfer error peaks around 0.051 while the failure thresholds are 0.10
+  /// (0.14/0.18 with an animation tool), so neither file is actually rejected.
+  /// A pass/fail assertion here would hold whether or not the reference was
+  /// encoded, and would prove nothing.
+  ///
+  /// The counterfactual is computed here rather than by producing a second,
+  /// un-encoded file through `AVAssetExportSession`. That was the first
+  /// attempt and it does not work: on a synthetic fixture AVFoundation infers
+  /// a source colour space and colour-matches it to the composition's declared
+  /// 709, so the "un-encoded" file came back encoded and measured identically
+  /// to the real one. Whether that inference fires depends on how the fixture
+  /// is tagged, which makes it a bad foundation for an assertion — and is a
+  /// large part of why this branch's defect was invisible to the suite for as
+  /// long as it was.
+  func testFinalExportReferenceValidatorComparesInTheFilesTransferSpace() throws {
+    let tempDir = makeTemporaryDirectory()
+    defer { try? FileManager.default.removeItem(at: tempDir) }
+
+    // The same animation-tool-free fixture the sibling test pins. A screen-only
+    // composition always carries an animation tool, and AVAssetImageGenerator's
+    // Core Animation render is noisy enough (it is why
+    // `animationToolValidationThresholds` is relaxed to 0.14/0.18) to blur the
+    // encoded-vs-raw separation this test measures.
+    let screenURL = tempDir.appendingPathComponent("screen.mov")
+    let cameraURL = tempDir.appendingPathComponent("camera.mov")
+    try makeSolidColorVideo(
+      url: screenURL,
+      size: CGSize(width: 180, height: 320),
+      durationSeconds: 1.0,
+      color: NSColor(calibratedWhite: 0.5, alpha: 1.0)
+    )
+    try makeSolidColorVideo(
+      url: cameraURL,
+      size: CGSize(width: 128, height: 128),
+      durationSeconds: 1.0,
+      color: NSColor(calibratedRed: 0.45, green: 0.55, blue: 0.35, alpha: 1.0)
+    )
+
+    let cameraParams = CameraCompositionParams(
+      visible: true,
+      layoutPreset: .overlayBottomRight,
+      normalizedCanvasCenter: nil,
+      sizeFactor: 0.24,
+      shape: .square,
+      cornerRadius: 0.0,
+      opacity: 1.0,
+      mirror: false,
+      contentMode: .fill,
+      zoomBehavior: .fixed,
+      borderWidth: 0.0,
+      borderColorArgb: nil,
+      shadowPreset: 0,
+      chromaKeyEnabled: false,
+      chromaKeyStrength: 0.4,
+      chromaKeyColorArgb: nil
+    )
+
+    let params = CompositionParams(
+      targetSize: CGSize(width: 640, height: 360),
+      padding: 0.0,
+      cornerRadius: 0.0,
+      backgroundColor: 0xFF80_8080,
+      backgroundImagePath: nil,
+      cursorSize: 1.0,
+      showCursor: false,
+      zoomEnabled: false,
+      zoomFactor: 1.5,
+      followStrength: 0.15,
+      fpsHint: 30,
+      fitMode: "fit",
+      audioGainDb: 0.0,
+      audioVolumePercent: 100.0
+    )
+
+    let composition = try XCTUnwrap(
+      CompositionBuilder().buildExport(
+        asset: AVAsset(url: screenURL),
+        cameraAsset: AVAsset(url: cameraURL),
+        params: params,
+        cameraParams: cameraParams,
+        cursorRecording: nil
+      )
+    )
+    XCTAssertNil(composition.inlineCameraRenderPlan)
+    XCTAssertNil(composition.videoComposition.animationTool)
+
+    let exporter = LetterboxExporter()
+    let encodedURL = tempDir.appendingPathComponent("encoded.mov")
+    let renderExpectation = expectation(description: "encoded render")
+    var renderResult: Result<URL, Error>?
+    exporter._testRenderFinalExport(result: composition, outputURL: encodedURL) { result in
+      renderResult = result
+      renderExpectation.fulfill()
+    }
+    wait(for: [renderExpectation], timeout: 30.0)
+    _ = try XCTUnwrap(try renderResult?.get())
+
+    // What the production validator measured.
+    let validatorDelta = try XCTUnwrap(
+      exporter._testEvaluateFinalExportReferenceRender(
+        referenceResult: composition,
+        finalExportURL: encodedURL
+      ).maxChannelDelta
+    )
+
+    // The same two comparisons, computed here: the file against a reference
+    // encoded the way the exporter encodes, and against a raw one.
+    let referenceImage = try sampleFrameImage(
+      asset: composition.asset,
+      videoComposition: composition.videoComposition
+    )
+    let fileMetrics = try averageColorMetrics(
+      for: try sampleFrameImage(url: encodedURL),
+      ignoreTransparentPixels: false
+    )
+    let rawReference = try averageColorMetrics(
+      for: referenceImage,
+      ignoreTransparentPixels: false
+    )
+    let encodedReference = try averageColorMetrics(
+      for: try applyExportTransfer(to: referenceImage),
+      ignoreTransparentPixels: false
+    )
+
+    func maxChannelDelta(
+      _ lhs: (red: Double, green: Double, blue: Double, luma: Double),
+      _ rhs: (red: Double, green: Double, blue: Double, luma: Double)
+    ) -> Double {
+      max(abs(lhs.red - rhs.red), abs(lhs.green - rhs.green), abs(lhs.blue - rhs.blue))
+    }
+
+    let rawDelta = maxChannelDelta(fileMetrics, rawReference)
+    let encodedDelta = maxChannelDelta(fileMetrics, encodedReference)
+    // Same three channels as the colour-parity helper, for the same reason:
+    // xcodebuild's result-stream reporter swallows the test process's stdout,
+    // so the appended file is the one that survives a run.
+    let summary = String(
+      format: "final-export validator deltas: validator %.4f  vs-encoded-ref %.4f  vs-raw-ref %.4f",
+      validatorDelta,
+      encodedDelta,
+      rawDelta
+    )
+    NSLog("%@", summary)
+    print(summary)
+    let marginLog = URL(fileURLWithPath: "/tmp/clingfy-colour-margins.txt")
+    if let handle = try? FileHandle(forWritingTo: marginLog) {
+      handle.seekToEndOfFile()
+      handle.write(Data((summary + "\n").utf8))
+      try? handle.close()
+    } else {
+      try? (summary + "\n").write(to: marginLog, atomically: true, encoding: .utf8)
+    }
+
+    // Guards against a vacuous fixture: 0 and 255 are fixed points of the
+    // export curve, so on a saturated fixture both references would agree and
+    // the assertion below would hold no matter what the validator did.
+    XCTAssertGreaterThan(
+      rawDelta,
+      0.03,
+      "fixture does not exercise the transfer curve — use a midtone"
+    )
+    XCTAssertLessThan(
+      encodedDelta,
+      0.02,
+      "the exported file should sit close to a reference encoded the same way"
+    )
+    XCTAssertLessThan(
+      validatorDelta,
+      rawDelta * 0.5,
+      "the validator is measuring the transfer curve, not export drift — its reference lost its encode"
+    )
+  }
+
   func testStyledCameraIntermediateValidationFailsForBlackStyledAsset() throws {
     let tempDir = makeTemporaryDirectory()
     defer { try? FileManager.default.removeItem(at: tempDir) }
@@ -5523,6 +6176,38 @@ final class LetterboxExporterTests: XCTestCase {
     )
   }
 
+  /// Applies the export's transfer to an image, on the CPU.
+  ///
+  /// Draws on `ColorTransferFunctions.srgbToExportTransfer` deliberately — the
+  /// same function the GPU kernel is pinned against — so this reference can
+  /// never be encoding a different curve than the file it is compared with.
+  ///
+  /// For comparing a composition render against an exported file. The export
+  /// encodes every frame into BT.709 before writing, so a reference render
+  /// that skipped that step differs from the file by the whole transfer — on a
+  /// Display-P3 source that doubled the measured green drift (46% of tolerance
+  /// to 92%) and turned a primaries test into a transfer test. Encoding the
+  /// reference the same way leaves only the primaries difference, which is
+  /// what these assertions are named for.
+  private func applyExportTransfer(to image: CGImage) throws -> CGImage {
+    let lut: [UInt8] = (0...255).map { ColorTransferFunctions.srgbToExportTransfer(UInt8($0)) }
+    let width = image.width
+    let height = image.height
+    var pixels = [UInt8](repeating: 0, count: width * height * 4)
+    let context = try XCTUnwrap(
+      CGContext(
+        data: &pixels, width: width, height: height, bitsPerComponent: 8,
+        bytesPerRow: width * 4, space: CGColorSpace(name: CGColorSpace.sRGB)!,
+        bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue))
+    context.draw(image, in: CGRect(x: 0, y: 0, width: width, height: height))
+    for index in stride(from: 0, to: pixels.count, by: 4) {
+      pixels[index] = lut[Int(pixels[index])]
+      pixels[index + 1] = lut[Int(pixels[index + 1])]
+      pixels[index + 2] = lut[Int(pixels[index + 2])]
+    }
+    return try XCTUnwrap(context.makeImage())
+  }
+
   private func assertAverageColorParity(
     referenceImage: CGImage,
     candidateImage: CGImage,
@@ -5531,14 +6216,58 @@ final class LetterboxExporterTests: XCTestCase {
     file: StaticString = #filePath,
     line: UInt = #line
   ) throws {
+    // The candidate is a file the export encoded into BT.709; give the
+    // reference the same encode so this measures primaries, not transfer.
     let reference = try averageColorMetrics(
-      for: referenceImage,
+      for: try applyExportTransfer(to: referenceImage),
       ignoreTransparentPixels: false
     )
     let candidate = try averageColorMetrics(
       for: candidateImage,
       ignoreTransparentPixels: false
     )
+
+    // Print the margin on every run, pass or fail.
+    //
+    // These assertions were silently sitting at 96% of their tolerance — they
+    // passed on a developer Mac and failed on CI hardware, and nothing in a
+    // green run said so. A test that reports only "passed" cannot distinguish
+    // comfortable from about-to-break, and this suite has now lost a day to
+    // exactly that. Worst-case headroom is printed so a shrinking margin is
+    // visible in the log before it becomes a red build.
+    let deltas = [
+      ("red", abs(candidate.red - reference.red), channelTolerance),
+      ("green", abs(candidate.green - reference.green), channelTolerance),
+      ("blue", abs(candidate.blue - reference.blue), channelTolerance),
+      ("luma", abs(candidate.luma - reference.luma), lumaTolerance),
+    ]
+    let worst = deltas.max { $0.1 / $0.2 < $1.1 / $1.2 }
+    let usage = (worst.map { $0.1 / $0.2 } ?? 0) * 100
+    let summary =
+      "colour parity margins: "
+      + deltas.map { String(format: "%@ %.4f/%.2f", $0.0, $0.1, $0.2) }.joined(separator: "  ")
+      + String(format: "  | worst uses %.0f%% of tolerance (%@)", usage, worst?.0 ?? "n/a")
+
+    // Recorded three ways because none of them is reliable alone: xcodebuild's
+    // result-stream reporter swallows the test process's stdout, so `print`
+    // never reaches the log and NSLog only sometimes does. The appended file
+    // is the one that always survives, and is what to read after a run.
+    NSLog("%@", summary)
+    print(summary)
+    let marginLog = URL(fileURLWithPath: "/tmp/clingfy-colour-margins.txt")
+    if let handle = try? FileHandle(forWritingTo: marginLog) {
+      handle.seekToEndOfFile()
+      handle.write(Data((summary + "\n").utf8))
+      try? handle.close()
+    } else {
+      try? (summary + "\n").write(to: marginLog, atomically: true, encoding: .utf8)
+    }
+
+    // A margin this tight passed locally and failed on CI hardware once
+    // already. Surface it as a warning rather than waiting for the red build.
+    if usage > 80 {
+      NSLog("WARNING colour parity margin above 80%% of tolerance: %@", summary)
+    }
 
     XCTAssertLessThanOrEqual(
       abs(candidate.red - reference.red),
@@ -5645,6 +6374,152 @@ final class LetterboxExporterTests: XCTestCase {
 
     // Empty track list falls back to 48k.
     XCTAssertEqual(LetterboxExporter.aacWriterSampleRate(for: []), 48_000)
+  }
+
+  /// A Bluetooth headset mic arrives at 16 kHz while system audio is 48 kHz.
+  /// Taking the FIRST track's rate let the mic decide the whole mix: it
+  /// resampled the system audio down to 16 kHz, and asked for a bitrate 16 kHz
+  /// cannot carry. The highest rate present is the only safe choice.
+  func testAacWriterSampleRateTakesTheHighestRateNotTheFirstTrack() throws {
+    let tempDir = makeTemporaryDirectory()
+    defer { try? FileManager.default.removeItem(at: tempDir) }
+
+    let mic16 = tempDir.appendingPathComponent("mic16.m4a")
+    let system48 = tempDir.appendingPathComponent("system48.m4a")
+    try makeToneAudioFile(url: mic16, seconds: 0.3, amplitude: 0.5, sampleRate: 16_000)
+    try makeToneAudioFile(url: system48, seconds: 0.3, amplitude: 0.5, sampleRate: 48_000)
+
+    let micAsset = AVAsset(url: mic16)
+    let systemAsset = AVAsset(url: system48)
+    let micTracks = micAsset.tracks(withMediaType: .audio)
+    let systemTracks = systemAsset.tracks(withMediaType: .audio)
+
+    // Mic first — the ordering that shipped the bug.
+    XCTAssertEqual(
+      LetterboxExporter.aacWriterSampleRate(for: micTracks + systemTracks),
+      48_000)
+    // Order must not matter.
+    XCTAssertEqual(
+      LetterboxExporter.aacWriterSampleRate(for: systemTracks + micTracks),
+      48_000)
+    // A genuinely mic-only project still exports at the mic's own rate rather
+    // than being pointlessly upsampled.
+    XCTAssertEqual(LetterboxExporter.aacWriterSampleRate(for: micTracks), 16_000)
+  }
+
+  /// The regression test for `-11861 "Cannot Encode Media"`.
+  ///
+  /// AAC-LC rejects a bitrate its sample rate cannot carry, but `canAdd` and
+  /// `startWriting()` BOTH succeed — the failure only lands on the first
+  /// append. So this has to drive real sample buffers through a real writer;
+  /// asserting on the settings dictionary alone would have passed while the
+  /// export was broken.
+  func testExportAudioSettingsEncodeARealBluetoothMicMix() throws {
+    let tempDir = makeTemporaryDirectory()
+    defer { try? FileManager.default.removeItem(at: tempDir) }
+
+    let mic16 = tempDir.appendingPathComponent("mic16.m4a")
+    let system48 = tempDir.appendingPathComponent("system48.m4a")
+    try makeToneAudioFile(url: mic16, seconds: 0.4, amplitude: 0.5, sampleRate: 16_000)
+    try makeToneAudioFile(url: system48, seconds: 0.4, amplitude: 0.5, sampleRate: 48_000)
+
+    // Mic first, exactly as the separated-audio composition ordered it.
+    let composition = AVMutableComposition()
+    for url in [mic16, system48] {
+      let asset = AVAsset(url: url)
+      let source = try XCTUnwrap(asset.tracks(withMediaType: .audio).first)
+      let track = try XCTUnwrap(
+        composition.addMutableTrack(
+          withMediaType: .audio, preferredTrackID: kCMPersistentTrackID_Invalid))
+      try track.insertTimeRange(
+        CMTimeRange(start: .zero, duration: source.timeRange.duration), of: source, at: .zero)
+    }
+
+    let tracks = composition.tracks(withMediaType: .audio)
+    let sampleRate = LetterboxExporter.aacWriterSampleRate(for: tracks)
+    let channels = 2
+    let settings: [String: Any] = [
+      AVFormatIDKey: kAudioFormatMPEG4AAC,
+      AVNumberOfChannelsKey: channels,
+      AVSampleRateKey: sampleRate,
+      AVEncoderBitRateKey: AACEncoderSettings.bitRate(
+        sampleRate: sampleRate, channels: channels),
+    ]
+
+    let outputURL = tempDir.appendingPathComponent("mixed.mov")
+    let reader = try AVAssetReader(asset: composition)
+    let output = AVAssetReaderAudioMixOutput(
+      audioTracks: tracks,
+      audioSettings: [
+        AVFormatIDKey: kAudioFormatLinearPCM,
+        AVLinearPCMIsFloatKey: false,
+        AVLinearPCMBitDepthKey: 16,
+        AVLinearPCMIsNonInterleaved: false,
+        AVLinearPCMIsBigEndianKey: false,
+      ])
+    XCTAssertTrue(reader.canAdd(output))
+    reader.add(output)
+
+    let writer = try AVAssetWriter(outputURL: outputURL, fileType: .mov)
+    let input = AVAssetWriterInput(mediaType: .audio, outputSettings: settings)
+    input.expectsMediaDataInRealTime = false
+    XCTAssertTrue(writer.canAdd(input))
+    writer.add(input)
+
+    XCTAssertTrue(writer.startWriting())
+    writer.startSession(atSourceTime: .zero)
+    XCTAssertTrue(reader.startReading())
+
+    var appended = 0
+    while reader.status == .reading, let buffer = output.copyNextSampleBuffer() {
+      while !input.isReadyForMoreMediaData {
+        Thread.sleep(forTimeInterval: 0.005)
+      }
+      guard input.append(buffer) else { break }
+      appended += 1
+    }
+    input.markAsFinished()
+
+    let finished = expectation(description: "writer finished")
+    writer.finishWriting { finished.fulfill() }
+    wait(for: [finished], timeout: 30)
+
+    let error = writer.error as NSError?
+    XCTAssertNotEqual(
+      writer.status, .failed,
+      "encoder rejected the settings: \(error?.code ?? 0) \(error?.localizedDescription ?? "")")
+    XCTAssertGreaterThan(appended, 0, "no audio was encoded")
+  }
+
+  /// The per-channel bitrate has to stay inside what each rate accepts.
+  /// Measured on macOS 15 with a 16 kHz stereo source: 192 kbps and 128 kbps
+  /// are rejected, 96 kbps is accepted — so 16 kHz must land well under that.
+  func testAacBitRateStaysLegalAcrossTheSupportedRates() {
+    // 48 kHz keeps the historic full-fat value, bit for bit.
+    XCTAssertEqual(AACEncoderSettings.bitRate(sampleRate: 48_000, channels: 2), 192_000)
+    XCTAssertEqual(AACEncoderSettings.bitRate(sampleRate: 48_000, channels: 1), 96_000)
+
+    // The Bluetooth HFP rates that broke both the recorder and the exporter.
+    XCTAssertEqual(AACEncoderSettings.bitRate(sampleRate: 16_000, channels: 2), 64_000)
+    XCTAssertEqual(AACEncoderSettings.bitRate(sampleRate: 8_000, channels: 2), 32_000)
+
+    // Never below the floor, never above the cap, whatever the rate.
+    for rate in AACEncoderSettings.supportedSampleRates {
+      for channels in [1, 2] {
+        let perChannel = AACEncoderSettings.bitRate(sampleRate: rate, channels: channels) / channels
+        XCTAssertGreaterThanOrEqual(perChannel, AACEncoderSettings.minBitRatePerChannel)
+        XCTAssertLessThanOrEqual(perChannel, AACEncoderSettings.maxBitRatePerChannel)
+        // Measured ceiling at 16 kHz stereo: 48 kbps/channel encoded, 64 kbps
+        // /channel was rejected — i.e. the limit sits between 3x and 4x the
+        // sample rate. Assert against the side that was demonstrated to work.
+        XCTAssertLessThanOrEqual(
+          Double(perChannel), rate * 3,
+          "\(Int(rate))Hz asked for \(perChannel) bps/channel, which AAC-LC rejects")
+      }
+    }
+
+    // A rate outside the supported set still yields something encodable.
+    XCTAssertGreaterThan(AACEncoderSettings.bitRate(sampleRate: 0, channels: 0), 0)
   }
 
   func testMakeSeparatedAudioCompositionShapesTracksAndCuts() throws {
@@ -6259,7 +7134,11 @@ final class LetterboxExporterTests: XCTestCase {
         AVFormatIDKey: kAudioFormatMPEG4AAC,
         AVSampleRateKey: sampleRate,
         AVNumberOfChannelsKey: channels,
-        AVEncoderBitRateKey: 192_000,
+        // Was a flat 192_000, which made this helper unable to write a fixture
+        // below ~24 kHz — the very rates the export bug lives at. Same rule as
+        // production so a low-rate fixture is expressible at all.
+        AVEncoderBitRateKey: AACEncoderSettings.bitRate(
+          sampleRate: sampleRate, channels: channels),
       ])
     input.expectsMediaDataInRealTime = false
     writer.add(input)
@@ -7424,6 +8303,14 @@ private final class MockMicrophoneLevelMonitor: MicrophoneLevelMonitoring {
 }
 
 @MainActor
+/// Settle timeouts here are ceilings, not the behaviour under test.
+///
+/// Each of these waits only 0.2s in practice; the timeout exists so a hang
+/// fails rather than blocks. At 1.0s that ceiling was tight enough to be
+/// exceeded when the whole fast lane runs classes in parallel — this class
+/// passed 8/8 in isolation while failing intermittently in a full-lane run,
+/// taking 5.0s against a normal 0.3s. Raising the ceiling costs nothing when
+/// things work and still fails a genuine hang.
 final class MicrophoneLevelTelemetryTests: XCTestCase {
   func testAVFoundationBackendForwardsPipelineMicrophoneLevels() throws {
     let pipeline = MockAVFoundationCapturePipeline()
@@ -7438,7 +8325,7 @@ final class MicrophoneLevelTelemetryTests: XCTestCase {
 
     pipeline.emitMicrophoneLevel(MicrophoneLevelSample(linear: 0.27, dbfs: -11.4))
 
-    wait(for: [expectation], timeout: 1.0)
+    wait(for: [expectation], timeout: 10.0)
     let forwarded = try XCTUnwrap(received)
     XCTAssertEqual(forwarded.linear, 0.27, accuracy: 0.0001)
     XCTAssertEqual(forwarded.dbfs, -11.4, accuracy: 0.0001)
@@ -7465,7 +8352,7 @@ final class MicrophoneLevelTelemetryTests: XCTestCase {
     DispatchQueue.main.asyncAfter(deadline: .now() + 0.2) {
       settleStartTransition.fulfill()
     }
-    wait(for: [settleStartTransition], timeout: 1.0)
+    wait(for: [settleStartTransition], timeout: 10.0)
 
     XCTAssertEqual(received.count, 1)
     XCTAssertEqual(received[0].linear, 0.19, accuracy: 0.0001)
@@ -7481,7 +8368,7 @@ final class MicrophoneLevelTelemetryTests: XCTestCase {
     DispatchQueue.main.asyncAfter(deadline: .now() + 0.2) {
       settleInitialAsync.fulfill()
     }
-    wait(for: [settleInitialAsync], timeout: 1.0)
+    wait(for: [settleInitialAsync], timeout: 10.0)
 
     let forwarded = expectation(description: "backend microphone sample forwarded")
     var received: MicrophoneLevelSample?
@@ -7493,7 +8380,7 @@ final class MicrophoneLevelTelemetryTests: XCTestCase {
     backend.onStarted?(URL(fileURLWithPath: "/tmp/recording.mov"))
     backend.onMicrophoneLevel?(MicrophoneLevelSample(linear: 0.41, dbfs: -17.8))
 
-    wait(for: [forwarded], timeout: 1.0)
+    wait(for: [forwarded], timeout: 10.0)
     let forwardedSample = try XCTUnwrap(received)
     XCTAssertEqual(forwardedSample.linear, 0.41, accuracy: 0.0001)
     XCTAssertEqual(forwardedSample.dbfs, -17.8, accuracy: 0.0001)
@@ -7508,7 +8395,7 @@ final class MicrophoneLevelTelemetryTests: XCTestCase {
     DispatchQueue.main.asyncAfter(deadline: .now() + 0.2) {
       settleInitialAsync.fulfill()
     }
-    wait(for: [settleInitialAsync], timeout: 1.0)
+    wait(for: [settleInitialAsync], timeout: 10.0)
 
     let forwarded = expectation(description: "backend silence sample forwarded")
     var received: MicrophoneLevelSample?
@@ -7520,7 +8407,7 @@ final class MicrophoneLevelTelemetryTests: XCTestCase {
     backend.onStarted?(URL(fileURLWithPath: "/tmp/recording.mov"))
     backend.onMicrophoneLevel?(MicrophoneLevelSample(linear: 0.0, dbfs: -160.0))
 
-    wait(for: [forwarded], timeout: 1.0)
+    wait(for: [forwarded], timeout: 10.0)
     let forwardedSample = try XCTUnwrap(received)
     XCTAssertEqual(forwardedSample.linear, 0.0, accuracy: 0.0001)
     XCTAssertEqual(forwardedSample.dbfs, -160.0, accuracy: 0.0001)
@@ -7638,35 +8525,72 @@ final class ScreenRecorderFacadeStartFailureTests: XCTestCase {
       failurePayload?["error"] as? String,
       "Failed due to an invalid parameter"
     )
-    XCTAssertEqual(failurePayload?["failingCall"] as? String, "stream.startCapture()")
-    XCTAssertEqual(
-      failurePayload?["errorOriginFile"] as? String,
-      "CaptureBackendScreenCaptureKit.swift"
-    )
-    XCTAssertEqual(failurePayload?["errorOriginLine"] as? Int, 831)
-    let details = failurePayload?["details"] as? [String: Any]
-    XCTAssertEqual(
-      details?["underlyingErrorDomain"] as? String,
-      "com.apple.ScreenCaptureKit.SCStreamErrorDomain"
-    )
-    XCTAssertEqual(details?["underlyingErrorCode"] as? Int, -3812)
+    // Deliberately NOT asserted here: failingCall, errorOriginFile,
+    // errorOriginLine and the underlying SCStream domain/code.
+    //
+    // Those used to ride on this event payload, and #42 moved the enrichment
+    // into the backend without re-attaching it here. That is not a regression
+    // to undo — the Dart side reads them from the PlatformException raised by
+    // the startRecording CALL (RecordingController
+    // .recordingStartFailureContextFromPlatformException), and its event
+    // handler deliberately does not, because a refused start is reported on
+    // both surfaces and reading both double-reported every failure to Sentry.
+    //
+    // The rich-diagnostics contract is real and still covered, on the surface
+    // that carries it: testRecordingStartFailureWrapPreservesStartFailureInfo
+    // above asserts every one of those fields on the FlutterError. Asserting
+    // them here as well was duplicating that on the wrong surface, and it
+    // pinned a hard-coded origin LINE NUMBER (831) that any edit to
+    // CaptureBackendScreenCaptureKit.swift would have broken anyway.
+    //
+    // What this test is named for — an invalid-parameter start failure
+    // surfacing as a failure and NOT as a warning — is asserted above.
   }
 
-  func testNativeQualityStreamConfigurationKeepsExplicitSizeWithoutForcingBestResolution() {
+  /// Native quality must request the exact pixel size, unscaled.
+  ///
+  /// This test used to also assert that `captureResolution` was left at the
+  /// SDK default. #42 set it to `.best` unconditionally ("strongly
+  /// recommended for sharpness"), three weeks after this test was written,
+  /// and the assertion has been failing ever since — unnoticed, because this
+  /// class was never actually run by CI.
+  ///
+  /// The size behaviour this test is named for still holds, which is why the
+  /// assertion below now pins `.best` rather than the default: it records
+  /// what ships instead of leaving CI lying about it.
+  ///
+  /// WHAT IS NOT SETTLED: `.best` is applied to EVERY quality, not just
+  /// native. At native it is inert — the requested size already is the native
+  /// size — but at 720p on a 5K display it makes ScreenCaptureKit capture at
+  /// full 5K and downscale, which costs GPU, memory and power for a sharpness
+  /// gain nobody has measured. Whether it should be conditional on quality is
+  /// an open question, deliberately not decided by this test.
+  func testNativeQualityStreamConfigurationKeepsExplicitPixelSize() {
     let backend = CaptureBackendScreenCaptureKit()
     let streamConfig = backend._testMakeStreamConfiguration(
       quality: .native,
       baseRectPoints: CGRect(x: 0, y: 0, width: 1512, height: 982),
       pointPixelScale: 2.0
     )
-    let defaultConfig = SCStreamConfiguration()
 
     XCTAssertEqual(streamConfig.width, 3024)
     XCTAssertEqual(streamConfig.height, 1964)
     XCTAssertFalse(streamConfig.scalesToFit)
+    XCTAssertEqual(streamConfig.captureResolution, .best)
+
+    // The capture must declare sRGB rather than inherit the display's colour
+    // space. Left unset, SCStream hands SCRecordingOutput buffers in the
+    // DISPLAY's space — P3 on these panels — while SCRecordingOutput stamps a
+    // fixed BT.709 tag on the file regardless, so the file misdescribes its own
+    // pixels and every consumer downstream believes the tag.
+    //
+    // A single property is exactly the kind of thing that reverts silently in a
+    // refactor, and the Display-P3 parity tests cannot catch it: they fabricate
+    // their own P3-TAGGED fixture rather than exercising capture.
     XCTAssertEqual(
-      streamConfig.captureResolution.rawValue,
-      defaultConfig.captureResolution.rawValue
+      streamConfig.colorSpaceName as String?,
+      CGColorSpace.sRGB as String,
+      "capture must be sRGB so the BT.709 tag SCRecordingOutput writes is honest"
     )
   }
 }
@@ -8963,26 +9887,36 @@ final class NativeLoggerTests: XCTestCase {
 
   func testEmitWithoutChannelBuffersInsteadOfDropping() {
     NativeLogger.resetForTest()
+    NativeLogger.stayDetachedForTest()
     NativeLogger.setMinLevel("debug")
 
-    NativeLogger.d("Test", "no channel attached")
-    NativeLogger.e("Test", "no channel attached")
+    // A category unique to this test, counted with the category filter.
+    // `pending` is process-global and the test host keeps logging from its own
+    // background work while the channel is detached — exactly the state
+    // `resetForTest` creates — so an unfiltered count of 2 was flaky.
+    let category = "NativeLoggerTest.BufferWithoutChannel"
+    NativeLogger.d(category, "no channel attached")
+    NativeLogger.e(category, "no channel attached")
     drainMainQueue()
 
-    XCTAssertEqual(NativeLogger.pendingCountForTest, 2)
+    XCTAssertEqual(NativeLogger.pendingCountForTest(category: category), 2)
 
     // flushPending with no channel keeps the buffer — a later flush after
     // the channel attaches must still deliver these lines — but it does mark
     // the Dart handler as ready (the handshake arrived over the channel).
-    XCTAssertFalse(NativeLogger.dartReadyForTest)
+    //
+    // The pre-state of dartReady is deliberately not asserted: the host app's
+    // Flutter startup calls flushPendingNativeLogs, so this test does not own
+    // that flag and asserting it was false was a race, not a check.
     NativeLogger.flushPending()
     drainMainQueue()
-    XCTAssertEqual(NativeLogger.pendingCountForTest, 2)
+    XCTAssertEqual(NativeLogger.pendingCountForTest(category: category), 2)
     XCTAssertTrue(NativeLogger.dartReadyForTest)
   }
 
   func testPendingBufferIsBoundedDropOldest() {
     NativeLogger.resetForTest()
+    NativeLogger.stayDetachedForTest()
     NativeLogger.setMinLevel("debug")
 
     for i in 0..<(NativeLogger.maxPending + 40) {
@@ -8990,17 +9924,23 @@ final class NativeLoggerTests: XCTestCase {
     }
     drainMainQueue()
 
+    // Unfiltered on purpose: this asserts the buffer is CAPPED, which holds
+    // no matter who filled it, so foreign lines cannot make it flaky.
     XCTAssertEqual(NativeLogger.pendingCountForTest, NativeLogger.maxPending)
   }
 
   func testBelowThresholdEmitsAreNotBuffered() {
     NativeLogger.resetForTest()
+    NativeLogger.stayDetachedForTest()
     NativeLogger.setMinLevel("info")
 
-    NativeLogger.d("Test", "verbose line while threshold is info")
+    // Same reason as above: count only this test's own category, because the
+    // host app's info-and-above lines land in the same global buffer.
+    let category = "NativeLoggerTest.BelowThreshold"
+    NativeLogger.d(category, "verbose line while threshold is info")
     drainMainQueue()
 
-    XCTAssertEqual(NativeLogger.pendingCountForTest, 0)
+    XCTAssertEqual(NativeLogger.pendingCountForTest(category: category), 0)
   }
 }
 
@@ -9217,4 +10157,558 @@ final class ColorGradeGoldenDumpTests: XCTestCase {
   private static func round6(_ v: Double) -> Double {
     (v * 1_000_000).rounded() / 1_000_000
   }
+}
+
+/// The recording bundle must be able to describe itself.
+///
+/// A recording is unrepeatable: if it silently omits a source the user believed
+/// they were capturing, the only recourse is explaining what happened after the
+/// fact. That failed once because `project.json` declared a `capture/system.m4a`
+/// that was never written and `screen.meta.json` said nothing about audio at
+/// all, so answering "was system audio on?" meant correlating raw tracks
+/// against session logs.
+final class RecordingBundleHonestyTests: XCTestCase {
+  private var projectRoot: URL!
+
+  override func setUpWithError() throws {
+    projectRoot = FileManager.default.temporaryDirectory
+      .appendingPathComponent("clingfy_manifest_\(UUID().uuidString)")
+    try FileManager.default.createDirectory(
+      at: projectRoot.appendingPathComponent("capture"), withIntermediateDirectories: true)
+    try FileManager.default.createDirectory(
+      at: projectRoot.appendingPathComponent("derived"), withIntermediateDirectories: true)
+  }
+
+  override func tearDownWithError() throws {
+    if FileManager.default.fileExists(atPath: projectRoot.path) {
+      try FileManager.default.removeItem(at: projectRoot)
+    }
+  }
+
+  private func write(_ relativePath: String) throws {
+    try Data("x".utf8).write(to: projectRoot.appendingPathComponent(relativePath))
+  }
+
+  func testNewManifestDoesNotAdvertiseUncapturedSources() {
+    let manifest = RecordingProjectManifest.create(
+      projectId: "p", displayName: "d", includeCamera: false)
+
+    // Only the two guaranteed files are declared up front.
+    XCTAssertFalse(manifest.capture.screenVideo.isEmpty)
+    XCTAssertFalse(manifest.capture.screenMetadata.isEmpty)
+    XCTAssertNil(manifest.capture.micAudio)
+    XCTAssertNil(manifest.capture.systemAudio)
+    XCTAssertNil(manifest.capture.zoomManual)
+    XCTAssertNil(manifest.capture.cursorData)
+    XCTAssertNil(manifest.derived?.waveform)
+  }
+
+  func testReconcileDeclaresOnlyFilesThatExist() throws {
+    try write(RecordingProjectPaths.relativeMicAudioPath)
+    try write(RecordingProjectPaths.relativeCursorDataPath)
+
+    var manifest = RecordingProjectManifest.create(
+      projectId: "p", displayName: "d", includeCamera: false)
+    manifest.reconcileInventory(projectRoot: projectRoot)
+
+    XCTAssertEqual(manifest.capture.micAudio, RecordingProjectPaths.relativeMicAudioPath)
+    XCTAssertEqual(manifest.capture.cursorData, RecordingProjectPaths.relativeCursorDataPath)
+    // Recorded with system audio off: the slot must stay empty, not point at a
+    // file the user will go looking for.
+    XCTAssertNil(manifest.capture.systemAudio)
+    XCTAssertNil(manifest.capture.zoomManual)
+    XCTAssertNil(manifest.derived?.waveform)
+  }
+
+  func testReconcileDropsAStaleDeclarationWhenTheFileIsGone() throws {
+    var manifest = RecordingProjectManifest.create(
+      projectId: "p", displayName: "d", includeCamera: false)
+    try write(RecordingProjectPaths.relativeSystemAudioPath)
+    manifest.reconcileInventory(projectRoot: projectRoot)
+    XCTAssertEqual(manifest.capture.systemAudio, RecordingProjectPaths.relativeSystemAudioPath)
+
+    try FileManager.default.removeItem(
+      at: projectRoot.appendingPathComponent(RecordingProjectPaths.relativeSystemAudioPath))
+    manifest.reconcileInventory(projectRoot: projectRoot)
+
+    XCTAssertNil(
+      manifest.capture.systemAudio,
+      "reconcile must be self-correcting in both directions")
+  }
+
+  func testAudioCaptureInfoRoundTripsThroughMetadataJSON() throws {
+    let metadata = RecordingMetadata.create(
+      screenRawRelativePath: "capture/screen.mov",
+      displayMode: .explicitID,
+      displayID: 1,
+      cropRect: nil,
+      frameRate: 30,
+      quality: .fhd,
+      cursorEnabled: false,
+      cursorLinked: true,
+      windowID: nil,
+      excludedRecorderApp: false,
+      camera: nil,
+      audio: RecordingMetadata.AudioCaptureInfo(
+        micEnabled: true,
+        micDeviceId: "BuiltInMicrophoneDevice",
+        systemAudioEnabled: false,
+        excludedMicFromSystemAudio: false,
+        echoCancellationEnabled: false,
+        outputRoute: AudioOutputRoute.speakers.rawValue
+      ),
+      editorSeed: makeBasicEditorSeed()
+    )
+
+    let url = projectRoot.appendingPathComponent("screen.meta.json")
+    try metadata.write(to: url)
+    let decoded = try RecordingMetadata.read(from: url)
+
+    // This is the assertion that would have answered the original question in
+    // one command instead of an hour.
+    XCTAssertEqual(decoded.audio?.systemAudioEnabled, false)
+    XCTAssertEqual(decoded.audio?.micEnabled, true)
+    XCTAssertEqual(decoded.audio?.outputRoute, "speakers")
+  }
+
+  func testMetadataWithoutAudioBlockStillDecodes() throws {
+    // Bundles recorded before the audio block existed must keep opening.
+    // JSONEncoder omits nil optionals, so encoding with `audio: nil` produces
+    // exactly the on-disk shape those older recordings have.
+    let metadata = RecordingMetadata.create(
+      screenRawRelativePath: "capture/screen.mov",
+      displayMode: .explicitID,
+      displayID: 1,
+      cropRect: nil,
+      frameRate: 30,
+      quality: .fhd,
+      cursorEnabled: false,
+      cursorLinked: true,
+      windowID: nil,
+      excludedRecorderApp: false,
+      camera: nil,
+      audio: nil,
+      editorSeed: makeBasicEditorSeed()
+    )
+    let url = projectRoot.appendingPathComponent("legacy.meta.json")
+    try metadata.write(to: url)
+
+    let raw = try String(contentsOf: url, encoding: .utf8)
+    XCTAssertFalse(raw.contains("\"audio\""), "nil audio must not be written at all")
+
+    let decoded = try RecordingMetadata.read(from: url)
+    XCTAssertNil(decoded.audio)
+    XCTAssertEqual(decoded.screen.frameRate, 30)
+  }
+
+  func testTerminalTypeResolvesRoutesTransportTypeCannot() {
+    // Both encodings below are MEASURED on real hardware, not taken from a spec:
+    //   MacBook Pro Speakers  -> terminalType 0x301   (USB-AC numeric "Speaker")
+    //   JBL WAVE100TWS earbud -> terminalType 'hdph'  (CoreAudio constant)
+    // Apple passes USB Audio Class codes through unmapped for some devices, so a
+    // classifier that only knew the documented four-char constants would miss
+    // the built-in speakers entirely.
+    XCTAssertEqual(
+      AudioOutputRouteProbe.routeFromTerminalType(AudioOutputRouteProbe.usbTerminalSpeaker),
+      .speakers, "0x301, measured on the built-in speakers")
+    XCTAssertEqual(
+      AudioOutputRouteProbe.routeFromTerminalType(kAudioStreamTerminalTypeHeadphones),
+      .headphones, "'hdph', measured on a Bluetooth earbud")
+
+    // The whole point of the property: a Bluetooth SPEAKER is indistinguishable
+    // from a Bluetooth headset by transport alone (both report 'blue'), but the
+    // terminal type separates them.
+    XCTAssertEqual(
+      AudioOutputRouteProbe.classify(transportType: kAudioDeviceTransportTypeBluetooth),
+      .headphones, "transport-only fallback still guesses headset")
+    XCTAssertEqual(
+      AudioOutputRouteProbe.routeFromTerminalType(kAudioStreamTerminalTypeSpeaker),
+      .speakers, "but a BT speaker reporting 'spkr' is now caught")
+
+    // Other loudspeaker flavours all warn.
+    for speaker in [
+      kAudioStreamTerminalTypeLFESpeaker,
+      kAudioStreamTerminalTypeReceiverSpeaker,
+      AudioOutputRouteProbe.usbTerminalDesktopSpeaker,
+      AudioOutputRouteProbe.usbTerminalRoomSpeaker,
+      AudioOutputRouteProbe.usbTerminalCommunicationSpeaker,
+      AudioOutputRouteProbe.usbTerminalLFESpeaker,
+    ] {
+      XCTAssertEqual(AudioOutputRouteProbe.routeFromTerminalType(speaker), .speakers)
+    }
+    XCTAssertEqual(
+      AudioOutputRouteProbe.routeFromTerminalType(AudioOutputRouteProbe.usbTerminalHeadphones),
+      .headphones)
+  }
+
+  func testTerminalTypeDefersRatherThanGuessing() {
+    // nil / unknown / anything we have never seen on real hardware must hand
+    // back to the transport type instead of inventing an answer. A confident
+    // wrong route is worse than no opinion: a false alarm trains the user to
+    // ignore the real warning.
+    XCTAssertNil(AudioOutputRouteProbe.routeFromTerminalType(nil))
+    XCTAssertNil(
+      AudioOutputRouteProbe.routeFromTerminalType(kAudioStreamTerminalTypeUnknown))
+    XCTAssertNil(AudioOutputRouteProbe.routeFromTerminalType(kAudioStreamTerminalTypeLine))
+    XCTAssertNil(
+      AudioOutputRouteProbe.routeFromTerminalType(kAudioStreamTerminalTypeDigitalAudioInterface))
+    XCTAssertNil(AudioOutputRouteProbe.routeFromTerminalType(0xDEAD_BEEF))
+    // Microphone terminal types are input-side and must never classify output.
+    XCTAssertNil(AudioOutputRouteProbe.routeFromTerminalType(kAudioStreamTerminalTypeMicrophone))
+  }
+
+  func testBuiltInHeadphoneJackIsNotWarnedAbout() {
+    // The laptop speakers and the headphone jack are the SAME CoreAudio device
+    // with the same built-in transport, separated only by the data source.
+    // Classifying built-in as speakers warned every wired-headphone user.
+    XCTAssertEqual(
+      AudioOutputRouteProbe.classify(
+        transportType: kAudioDeviceTransportTypeBuiltIn,
+        dataSource: AudioOutputRouteProbe.headphoneDataSource),
+      .headphones)
+    XCTAssertEqual(
+      AudioOutputRouteProbe.classify(
+        transportType: kAudioDeviceTransportTypeBuiltIn,
+        dataSource: AudioOutputRouteProbe.internalSpeakerDataSource),
+      .speakers)
+    // Unreadable data source on the built-in device: assume speakers, because a
+    // missed warning costs a ruined take and a false one costs an eye-roll.
+    XCTAssertEqual(
+      AudioOutputRouteProbe.classify(
+        transportType: kAudioDeviceTransportTypeBuiltIn, dataSource: nil),
+      .speakers)
+  }
+
+  func testOutputRouteClassificationDrivesTheBleedWarning() {
+    XCTAssertTrue(AudioOutputRoute.speakers.bleedsIntoMicrophone)
+    XCTAssertFalse(AudioOutputRoute.headphones.bleedsIntoMicrophone)
+    XCTAssertFalse(AudioOutputRoute.unknown.bleedsIntoMicrophone)
+
+    XCTAssertEqual(
+      AudioOutputRouteProbe.classify(transportType: kAudioDeviceTransportTypeBluetooth),
+      .headphones)
+    XCTAssertEqual(
+      AudioOutputRouteProbe.classify(transportType: kAudioDeviceTransportTypeHDMI), .speakers)
+    XCTAssertEqual(
+      AudioOutputRouteProbe.classify(transportType: kAudioDeviceTransportTypeAirPlay), .speakers)
+    // USB is genuinely ambiguous (headset vs desk speakers) — neither a false
+    // alarm nor a confident-but-wrong silence.
+    XCTAssertEqual(
+      AudioOutputRouteProbe.classify(transportType: kAudioDeviceTransportTypeUSB), .unknown)
+    XCTAssertEqual(
+      AudioOutputRouteProbe.classify(transportType: kAudioDeviceTransportTypeAggregate), .unknown)
+  }
+
+  func testZoomManualResolvesEvenThoughTheManifestNeverNamesIt() throws {
+    // zoom.manual.json is written by the EDITOR, after the last manifest status
+    // transition, so reconcileInventory can never have recorded it. Resolution
+    // must fall back to the canonical path or every manual zoom edit is silently
+    // dropped at export while the preview still shows it.
+    let parent = FileManager.default.temporaryDirectory
+      .appendingPathComponent("clingfy_zoomres_\(UUID().uuidString)")
+    try FileManager.default.createDirectory(at: parent, withIntermediateDirectories: true)
+    addTeardownBlock { try? FileManager.default.removeItem(at: parent) }
+
+    let root = try makeRecordingProjectRoot(at: parent, includeCamera: false)
+    let manifest = try RecordingProjectManifest.read(
+      from: RecordingProjectPaths.manifestURL(for: root))
+    XCTAssertNil(manifest.capture.zoomManual, "precondition: manifest cannot know yet")
+
+    // Editor-time writes, long after the manifest was last touched.
+    try Data("[]".utf8).write(to: RecordingProjectPaths.zoomManualURL(for: root))
+    try Data("[]".utf8).write(to: RecordingProjectPaths.cursorDataURL(for: root))
+
+    let sources = RecordingProjectRef(
+      projectId: manifest.projectId, rootURL: root, manifest: manifest
+    ).mediaSources()
+
+    XCTAssertNotNil(sources.zoomManualURL, "manual zoom edits must survive export")
+    XCTAssertNotNil(sources.cursorDataURL)
+  }
+
+  func testStatusTransitionReconcilesTheManifestOnDisk() throws {
+    // Proves the reconcile actually RUNS in production, not just that the
+    // method works when called directly.
+    var manifest = RecordingProjectManifest.create(
+      projectId: "p", displayName: "d", includeCamera: false)
+    manifest.status = .capturing
+    let manifestURL = RecordingProjectPaths.manifestURL(for: projectRoot)
+    try manifest.write(to: manifestURL)
+    try write(RecordingProjectPaths.relativeMicAudioPath)
+
+    MetadataSidecarWriter.updateProjectManifestStatus(.ready, projectRoot: projectRoot)
+
+    let reloaded = try RecordingProjectManifest.read(from: manifestURL)
+    XCTAssertEqual(reloaded.status, .ready)
+    XCTAssertEqual(reloaded.capture.micAudio, RecordingProjectPaths.relativeMicAudioPath)
+    XCTAssertNil(reloaded.capture.systemAudio, "system audio was never captured")
+  }
+}
+
+/// The post-processing audio sidebar must gate its controls on what THIS
+/// RECORDING contains, not on whichever input device happens to be selected
+/// now.
+///
+/// Volume is a master fader over every track, so it stays live whenever there is
+/// any audio. Gain and loudness normalization act on the voice track only
+/// (LetterboxExporter bakes gain into the mic file), so they are inert without a
+/// decodable mic sidecar. macOS used to omit these keys entirely, which left
+/// Dart on `sceneHasAudio ?? deviceHasAudio` — the wrong question.
+final class AudioSceneGateTests: XCTestCase {
+  private var dir: URL!
+
+  override func setUpWithError() throws {
+    dir = FileManager.default.temporaryDirectory
+      .appendingPathComponent("clingfy_scenegate_\(UUID().uuidString)")
+    try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
+  }
+
+  override func tearDownWithError() throws {
+    if FileManager.default.fileExists(atPath: dir.path) {
+      try FileManager.default.removeItem(at: dir)
+    }
+  }
+
+  /// A real, decodable one-channel audio file — the probe checks decodability,
+  /// not mere existence, so a touched empty file would not do.
+  /// A short, real, decodable AAC file — synthesized, not recorded.
+  ///
+  /// This used to build the fixture with `AVAudioRecorder.record()`, which
+  /// needs an audio INPUT device. Any machine with a microphone passes in
+  /// well under a second; GitHub's macOS runners have none, so the four tests
+  /// using this blocked until timeout — 180s, 180s, 271s and 360s — and were
+  /// skipped in CI as a result. No local run could reproduce it, because the
+  /// failure only exists on hardware without a mic.
+  ///
+  /// Writing the samples ourselves removes the hardware dependency entirely
+  /// and drops the fixture cost to a few milliseconds.
+  private func writeDecodableAudio(named name: String) throws -> String {
+    let url = dir.appendingPathComponent(name)
+    let settings: [String: Any] = [
+      AVFormatIDKey: kAudioFormatMPEG4AAC,
+      AVSampleRateKey: 44100.0,
+      AVNumberOfChannelsKey: 1,
+    ]
+    let file = try AVAudioFile(forWriting: url, settings: settings)
+    let format = try XCTUnwrap(
+      AVAudioFormat(standardFormatWithSampleRate: 44100, channels: 1))
+    let frames = AVAudioFrameCount(11025)  // 0.25s, matching the old fixture
+    let buffer = try XCTUnwrap(
+      AVAudioPCMBuffer(pcmFormat: format, frameCapacity: frames))
+    buffer.frameLength = frames
+    // A quiet tone rather than digital silence: the code under test decides
+    // whether a sidecar counts as real audio, and an all-zero file is a
+    // needlessly ambiguous fixture for that question.
+    if let samples = buffer.floatChannelData?[0] {
+      for frame in 0..<Int(frames) {
+        samples[frame] = 0.1 * sinf(2 * .pi * 440 * Float(frame) / 44100)
+      }
+    }
+    try file.write(from: buffer)
+    return url.path
+  }
+
+  private func sources(mic: String?, system: String?) -> PreviewMediaSources {
+    PreviewMediaSources(
+      projectPath: dir.path,
+      screenPath: dir.appendingPathComponent("screen.mov").path,
+      cameraPath: nil,
+      metadataPath: nil,
+      cursorPath: nil,
+      zoomManualPath: nil,
+      micAudioPath: mic,
+      systemAudioPath: system
+    )
+  }
+
+  func testSystemAudioOnlyKeepsVolumeButDisablesGainAndLoudness() throws {
+    // The reported case: recorded with system audio as the only input.
+    let system = try writeDecodableAudio(named: "system.m4a")
+    let keys = ScreenRecorderFacade.audioSceneKeys(
+      mediaSources: sources(mic: nil, system: system))
+
+    XCTAssertEqual(keys["hasSystemAudio"] as? Bool, true, "Volume must stay live")
+    XCTAssertEqual(keys["hasMicAudio"] as? Bool, false)
+    XCTAssertEqual(
+      keys["micGainApplies"] as? Bool, false,
+      "gain and loudness are mic-only, so they must be inert here")
+  }
+
+  func testMicPresentEnablesGainRegardlessOfSystemAudio() throws {
+    let mic = try writeDecodableAudio(named: "mic.m4a")
+    let keys = ScreenRecorderFacade.audioSceneKeys(
+      mediaSources: sources(mic: mic, system: nil))
+
+    XCTAssertEqual(keys["hasMicAudio"] as? Bool, true)
+    XCTAssertEqual(keys["hasSystemAudio"] as? Bool, false)
+    XCTAssertEqual(keys["micGainApplies"] as? Bool, true)
+  }
+
+  func testBothSidecarsReportBoth() throws {
+    let mic = try writeDecodableAudio(named: "mic.m4a")
+    let system = try writeDecodableAudio(named: "system.m4a")
+    let keys = ScreenRecorderFacade.audioSceneKeys(
+      mediaSources: sources(mic: mic, system: system))
+
+    XCTAssertEqual(keys["hasMicAudio"] as? Bool, true)
+    XCTAssertEqual(keys["hasSystemAudio"] as? Bool, true)
+    XCTAssertEqual(keys["micGainApplies"] as? Bool, true)
+  }
+
+  func testLegacyBundleOmitsTheKeysRatherThanReportingNoAudio() throws {
+    // No sidecars: a legacy recording, or one whose audio is embedded in
+    // screen.mov. Its whole-track controls DO work, so reporting false/false
+    // would disable working sliders. Omitting leaves Dart on its fallback.
+    let keys = ScreenRecorderFacade.audioSceneKeys(
+      mediaSources: sources(mic: nil, system: nil))
+    XCTAssertTrue(keys.isEmpty)
+  }
+
+  func testAPresentButUndecodableSidecarDoesNotCount() throws {
+    // A zero-byte file left behind by a crashed capture must not enable a
+    // control that has nothing to act on.
+    let empty = dir.appendingPathComponent("mic.m4a")
+    try Data().write(to: empty)
+    let system = try writeDecodableAudio(named: "system.m4a")
+
+    let keys = ScreenRecorderFacade.audioSceneKeys(
+      mediaSources: sources(mic: empty.path, system: system))
+
+    XCTAssertEqual(keys["hasMicAudio"] as? Bool, false)
+    XCTAssertEqual(keys["micGainApplies"] as? Bool, false)
+    XCTAssertEqual(keys["hasSystemAudio"] as? Bool, true)
+  }
+}
+
+/// The mic is the one capture source whose sample rate Clingfy does not control.
+/// A Bluetooth headset runs HFP and arrives at 8 or 16 kHz, and a flat
+/// 96 kbps/channel is outside AAC's legal range there — AVAssetWriter rejects
+/// the whole writer with -11861 and the take comes back with no voice.
+///
+/// Observed on a JBL WAVE100TWS: the mic writer failed to start while
+/// system.m4a (48 kHz from ScreenCaptureKit) encoded fine.
+@available(macOS 15.0, *)
+final class SourceAudioBitRateTests: XCTestCase {
+  func testBitRateIsUnchangedAtFortyEightKilohertz() {
+    // The regression guard: every existing 48 kHz path must be bit-identical.
+    XCTAssertEqual(
+      AudioSourceSegmentWriter.aacBitRate(sampleRate: 48_000, channels: 1),
+      AudioSourceSegmentWriter.aacBitRatePerChannel)
+    XCTAssertEqual(
+      AudioSourceSegmentWriter.aacBitRate(sampleRate: 48_000, channels: 2),
+      AudioSourceSegmentWriter.aacBitRatePerChannel * 2)
+  }
+
+  func testBitRateScalesDownForBluetoothHandsFreeRates() {
+    // 8 kHz narrowband and 16 kHz wideband mSBC — the two HFP rates.
+    XCTAssertEqual(
+      AudioSourceSegmentWriter.aacBitRate(sampleRate: 8_000, channels: 1), 16_000)
+    XCTAssertEqual(
+      AudioSourceSegmentWriter.aacBitRate(sampleRate: 16_000, channels: 1), 32_000)
+    XCTAssertEqual(
+      AudioSourceSegmentWriter.aacBitRate(sampleRate: 24_000, channels: 1), 48_000)
+  }
+
+  func testBitRateNeverDropsBelowTheFloor() {
+    XCTAssertEqual(
+      AudioSourceSegmentWriter.aacBitRate(sampleRate: 1_000, channels: 1),
+      AudioSourceSegmentWriter.minAacBitRatePerChannel)
+  }
+
+  /// The test that actually reproduces the production failure: ask
+  /// AVFoundation, not ourselves, whether the settings are encodable.
+  func testAVAssetWriterAcceptsEveryRateTheMicCanArriveAt() throws {
+    let dir = FileManager.default.temporaryDirectory
+      .appendingPathComponent("clingfy_bitrate_\(UUID().uuidString)")
+    try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
+    addTeardownBlock { try? FileManager.default.removeItem(at: dir) }
+
+    // NOTE: no sourceFormatHint here. That is the point — this is the contrast
+    // case proving the bitrate alone is not rejected, so the hint is the second
+    // required ingredient. See testHintPlusExplicitSettingsAtLowRate.
+    // 8k/16k/24k are Bluetooth HFP; 44.1k/48k are wired and built-in.
+    for (rate, channels) in [
+      (8_000.0, 1), (16_000.0, 1), (24_000.0, 1), (44_100.0, 1), (48_000.0, 2),
+    ] {
+      let url = dir.appendingPathComponent("r\(Int(rate))c\(channels).m4a")
+      let writer = try AVAssetWriter(outputURL: url, fileType: .m4a)
+      let settings: [String: Any] = [
+        AVFormatIDKey: kAudioFormatMPEG4AAC,
+        AVSampleRateKey: rate,
+        AVNumberOfChannelsKey: channels,
+        AVEncoderBitRateKey: AudioSourceSegmentWriter.aacBitRate(
+          sampleRate: rate, channels: channels),
+      ]
+      let input = AVAssetWriterInput(mediaType: .audio, outputSettings: settings)
+      XCTAssertTrue(
+        writer.canAdd(input),
+        "AVAssetWriter rejected \(Int(rate))Hz x\(channels) — this is the -11861 failure")
+      writer.add(input)
+      XCTAssertTrue(
+        writer.startWriting(),
+        "startWriting failed at \(Int(rate))Hz x\(channels): "
+          + String(describing: writer.error))
+      writer.cancelWriting()
+    }
+  }
+
+  /// The test that pins the actual cause, and the reason the fix is not a guess.
+  ///
+  /// Both ingredients are required. Without a `sourceFormatHint` AVFoundation
+  /// happily accepts a flat 96 kbps at 8 kHz (see the test above, which is kept
+  /// deliberately as the contrast case). Production DOES pass a hint, and with
+  /// it the same settings are rejected — that combination is the field -11861.
+  func testHintPlusExplicitSettingsAtLowRate() throws {
+    let dir = FileManager.default.temporaryDirectory
+      .appendingPathComponent("clingfy_hint_\(UUID().uuidString)")
+    try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
+    addTeardownBlock { try? FileManager.default.removeItem(at: dir) }
+
+    // An 8 kHz mono Int16 source, i.e. Bluetooth HFP narrowband.
+    var asbd = AudioStreamBasicDescription(
+      mSampleRate: 8_000,
+      mFormatID: kAudioFormatLinearPCM,
+      mFormatFlags: kAudioFormatFlagIsSignedInteger | kAudioFormatFlagIsPacked,
+      mBytesPerPacket: 2, mFramesPerPacket: 1, mBytesPerFrame: 2,
+      mChannelsPerFrame: 1, mBitsPerChannel: 16, mReserved: 0)
+    var hint: CMAudioFormatDescription?
+    let status = CMAudioFormatDescriptionCreate(
+      allocator: kCFAllocatorDefault, asbd: &asbd, layoutSize: 0, layout: nil,
+      magicCookieSize: 0, magicCookie: nil, extensions: nil,
+      formatDescriptionOut: &hint)
+    XCTAssertEqual(status, noErr)
+    let formatHint = try XCTUnwrap(hint)
+
+    func accepts(bitRate: Int) throws -> Bool {
+      let writer = try AVAssetWriter(
+        outputURL: dir.appendingPathComponent("\(bitRate).m4a"), fileType: .m4a)
+      let input = AVAssetWriterInput(
+        mediaType: .audio,
+        outputSettings: [
+          AVFormatIDKey: kAudioFormatMPEG4AAC,
+          AVSampleRateKey: 8_000.0,
+          AVNumberOfChannelsKey: 1,
+          AVEncoderBitRateKey: bitRate,
+        ],
+        sourceFormatHint: formatHint)
+      guard writer.canAdd(input) else { return false }
+      writer.add(input)
+      let started = writer.startWriting()
+      writer.cancelWriting()
+      return started
+    }
+
+    // The scaled bitrate must always work — that is the fix.
+    XCTAssertTrue(
+      try accepts(bitRate: AudioSourceSegmentWriter.aacBitRate(sampleRate: 8_000, channels: 1)),
+      "the scaled bitrate must be encodable at 8kHz with a source format hint")
+
+    // And this asserts the CAUSE. If it fails, the flat 96k was fine even with a
+    // hint, so -11861 came from something else and this fix is not the answer.
+    XCTAssertFalse(
+      try accepts(bitRate: AudioSourceSegmentWriter.aacBitRatePerChannel),
+      "flat 96kbps at 8kHz WITH a source format hint was accepted — the field "
+        + "failure has a different cause and this fix is unproven")
+  }
+
 }

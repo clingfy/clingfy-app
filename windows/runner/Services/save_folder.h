@@ -52,6 +52,14 @@ bool EnsureDirectoryExists(const std::wstring& path);
 // WideCharToMultiByte dance.
 std::string WideToUtf8(const std::wstring& wide);
 
+// Show the Windows image picker (IFileOpenDialog filtered to image types).
+// Returns the chosen file's absolute path as UTF-8, or nullopt when the user
+// cancels — which Dart treats the same as "no image selected".
+//
+// This is the real implementation the misc_router header promised: `pickImage`
+// was a null stub, so a Windows user could not choose a background at all.
+std::optional<std::string> ChooseImageFileDialog(HWND parent);
+
 // Show the Windows folder picker (IFileOpenDialog with FOS_PICKFOLDERS).
 // Returns the chosen absolute path (UTF-8), or std::nullopt when the user
 // cancels or the dialog cannot be created. `parent` may be nullptr.

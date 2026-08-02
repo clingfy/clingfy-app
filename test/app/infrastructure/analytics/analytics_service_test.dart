@@ -142,6 +142,59 @@ void main() {
         },
         skip: hasToken ? false : 'needs --dart-define=POSTHOG_TOKEN=phc_test',
       );
+
+      test(
+        'internal marking stamps is_internal (excluded from real numbers)',
+        () async {
+          final prefs = await SharedPreferences.getInstance();
+          await ClingfyAnalytics.init(
+            enabled: true,
+            internal: true,
+            client: client,
+            debugOverride: false,
+            prefs: prefs,
+          );
+          ClingfyAnalytics.capture('desktop:app_launch');
+          await Future<void>.delayed(const Duration(milliseconds: 50));
+
+          expect(sent, hasLength(1));
+          final props =
+              (jsonDecode(sent.single.body)
+                      as Map<String, dynamic>)['properties']
+                  as Map<String, dynamic>;
+          expect(props['is_internal'], isTrue);
+          expect(props.containsKey('is_test'), isFalse);
+        },
+        skip: hasToken ? false : 'needs --dart-define=POSTHOG_TOKEN=phc_test',
+      );
+
+      test(
+        'test mode stamps is_test + is_internal and captures even in debug',
+        () async {
+          final prefs = await SharedPreferences.getInstance();
+          await ClingfyAnalytics.init(
+            enabled: true,
+            testMode: true,
+            client: client,
+            // Debug build: test mode must still exercise the real capture path.
+            debugOverride: true,
+            prefs: prefs,
+          );
+          expect(ClingfyAnalytics.isActive, isTrue);
+          ClingfyAnalytics.capture('recording:session_start');
+          await Future<void>.delayed(const Duration(milliseconds: 50));
+
+          expect(sent, hasLength(1));
+          final props =
+              (jsonDecode(sent.single.body)
+                      as Map<String, dynamic>)['properties']
+                  as Map<String, dynamic>;
+          expect(props['is_test'], isTrue);
+          // Test implies internal — a test event stays out of real numbers too.
+          expect(props['is_internal'], isTrue);
+        },
+        skip: hasToken ? false : 'needs --dart-define=POSTHOG_TOKEN=phc_test',
+      );
     },
   );
 }

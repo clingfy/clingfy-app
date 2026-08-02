@@ -354,6 +354,24 @@ void HandleExportVideo(
     input.padding = ReadDouble(*args, "padding", 0.0);
     input.corner_radius = ReadDouble(*args, "cornerRadius", 0.0);
     input.background_color = ReadOptionalInt(*args, "backgroundColor");
+    // Bundled copy inside the .clingfyproj; empty means a colour background.
+    input.background_image_path =
+        clingfy::storage::Utf8ToWide(ReadString(*args, "backgroundImagePath"));
+    // Procedural preset, carried as DATA and rendered at export time by the
+    // same renderer the preview uses.
+    const std::string preset_id = ReadString(*args, "backgroundPresetId");
+    if (!preset_id.empty() && ReadString(*args, "backgroundKind") == "preset") {
+      input.has_background_preset = true;
+      input.background_preset.preset_id = preset_id;
+      input.background_preset.palette_id =
+          ReadString(*args, "backgroundPresetPalette");
+      input.background_preset.intensity =
+          ReadDouble(*args, "backgroundPresetIntensity", 0.5);
+      input.background_preset.blur =
+          ReadDouble(*args, "backgroundPresetBlur", 0.0);
+      input.background_preset.seed = static_cast<std::int64_t>(
+          ReadDouble(*args, "backgroundPresetSeed", 0.0));
+    }
     // Slice 4 audio. Fallbacks MUST equal the macOS identity defaults
     // (0 dB / 100% / off / -16 dBFS) so an absent arg is a no-op that keeps
     // the byte-copy fast-path — volume 100.0 in particular, not 0.0.

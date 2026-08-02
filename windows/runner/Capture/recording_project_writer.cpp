@@ -1,5 +1,7 @@
 #include "Capture/recording_project_writer.h"
 
+#include "Core/app_identity.h"
+
 #include <windows.h>
 #include <shlobj.h>
 
@@ -201,7 +203,8 @@ std::string ResolveDefaultRecordingsRoot() {
   if (base.empty()) {
     base = "C:\\Users\\Default\\AppData\\Local";
   }
-  fs::path root = fs::path(base) / "Clingfy" / "recordings";
+  fs::path root =
+      fs::path(base) / clingfy::core::LocalAppDataFolderName() / "recordings";
   return root.string();
 #else
   return std::string("/tmp/clingfy/recordings");

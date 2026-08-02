@@ -164,6 +164,10 @@ class PostProcessingSidebar extends StatelessWidget {
   final Function(double) onZoomFactorChangeEnd;
   final ValueChanged<bool> onZoomEffectEnabledChanged;
   final Future<String?> Function() onPickImage;
+
+  /// Supplies rendered preset art for the background picker cards. Null keeps
+  /// the palette-gradient placeholders.
+  final PresetThumbnailLoader? presetThumbnailLoader;
   final Function(bool) onCameraVisibleChanged;
   final Function(CameraLayoutPreset) onCameraLayoutPresetChanged;
   final Function(double) onCameraSizeFactorChanged;
@@ -250,6 +254,7 @@ class PostProcessingSidebar extends StatelessWidget {
     required this.onColorTintChanged,
     required this.onColorChangeEnd,
     required this.onPickImage,
+    this.presetThumbnailLoader,
     required this.hasCameraAsset,
     required this.cameraExportCapabilities,
     required this.cameraState,
@@ -395,6 +400,7 @@ class PostProcessingSidebar extends StatelessWidget {
         onBackgroundPresetChanged: onBackgroundPresetChanged,
         onBackgroundPresetPreview: onBackgroundPresetPreview,
         onPickImage: onPickImage,
+        presetThumbnailLoader: presetThumbnailLoader,
       ),
     ];
   }

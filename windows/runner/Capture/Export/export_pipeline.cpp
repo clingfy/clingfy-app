@@ -34,6 +34,8 @@
 #include "Capture/Export/export_audio.h"
 #include "Graphics/color_grade_effect.h"
 #include "Capture/Export/export_format.h"
+#include "Capture/Background/background_image_cache.h"
+#include "Capture/Background/preset_bitmap_cache.h"
 #include "Capture/Export/export_geometry.h"
 #include "Capture/Export/gif_export_policy.h"
 #include "Capture/Export/reorder_audio_pump.h"
@@ -801,6 +803,24 @@ RenderResult RenderComposedExport(const RenderRequest& request) {
       D2D1::ColorF(static_cast<float>(bg.r), static_cast<float>(bg.g),
                    static_cast<float>(bg.b),
                    gif ? 1.0f : static_cast<float>(bg.a));
+  // Background image, decoded ONCE for the whole export (loop-invariant, like
+  // the fill and the clip above). The same cache the preview uses, so both
+  // consumers resolve the file identically.
+  background::BackgroundImageCache export_bg_cache;
+  background::PresetBitmapCache export_preset_cache;
+  // A preset outranks an image (the UI offers one kind at a time). Both become
+  // a bitmap drawn to cover, so they share the draw below. Rendered ONCE for
+  // the whole export, like the fill and the clip.
+  ID2D1Bitmap* export_bg_image = nullptr;
+  if (request.has_background_preset) {
+    export_bg_image = export_preset_cache.Get(
+        d2d_ctx.Get(), request.background_preset,
+        static_cast<UINT>(canvas.width), static_cast<UINT>(canvas.height));
+  } else {
+    export_bg_image =
+        export_bg_cache.Get(d2d_ctx.Get(), request.background_image_path);
+  }
+
   const double corner_radius_px =
       ResolveCornerRadiusPx(request.corner_radius, content);
   ComPtr<ID2D1RoundedRectangleGeometry> rounded_clip;
@@ -1328,6 +1348,23 @@ RenderResult RenderComposedExport(const RenderRequest& request) {
       // rect so the corners reveal the background, matching the macOS
       // bg-fill-then-rounded-video draw order.
       d2d_ctx->Clear(clear_color);
+      // Background image over the fill, scaled to COVER — wallpaper behaviour,
+      // matching the preview compositor exactly so the two agree.
+      if (export_bg_image != nullptr) {
+        const D2D1_SIZE_F img = export_bg_image->GetSize();
+        const D2D1_SIZE_F surface = d2d_ctx->GetSize();
+        const RectF src = background::ComputeCoverSourceRect(
+            SizeF{img.width, img.height},
+            SizeF{surface.width, surface.height});
+        const D2D1_RECT_F src_rect = D2D1::RectF(
+            static_cast<float>(src.x), static_cast<float>(src.y),
+            static_cast<float>(src.x + src.width),
+            static_cast<float>(src.y + src.height));
+        d2d_ctx->DrawBitmap(
+            export_bg_image,
+            D2D1::RectF(0.0f, 0.0f, surface.width, surface.height), 1.0f,
+            D2D1_BITMAP_INTERPOLATION_MODE_LINEAR, &src_rect);
+      }
       if (grading) {
         // The intermediate is canvas-sized, so the graded output lands at the
         // origin 1:1 — no scaling, no interpolation surprises.

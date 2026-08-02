@@ -32,7 +32,19 @@ param(
   [string]$Channel = 'dev',
 
   # Override the dotenv file (defaults to .env.<channel> in the repo root).
-  [string]$EnvFile
+  [string]$EnvFile,
+
+  # Allow replacing an ALREADY-PUBLISHED versioned artifact.
+  #
+  # Off by default because the blob is the release: overwriting it changes what
+  # a URL means after people may already have downloaded it, and the .sha256
+  # published beside it silently starts describing different bytes. Re-running
+  # a release for a version that shipped is almost always a mistake -- the
+  # intended fix is a new build number.
+  #
+  # `latest-windows.json` is exempt: it is a POINTER, not a release, and every
+  # publish is meant to replace it.
+  [switch]$AllowOverwrite
 )
 
 . (Join-Path $PSScriptRoot '_config.ps1')
@@ -89,7 +101,36 @@ $latest | ConvertTo-Json | Set-Content -LiteralPath $Ctx.LatestJsonPath -Encodin
 Write-Info "feed:   $($Ctx.LatestJsonPath)"
 
 # --- Upload -------------------------------------------------------------------------
-function Publish-Blob([string]$File, [string]$BlobName) {
+# True when the blob already exists in the container.
+function Test-BlobExists([string]$BlobName) {
+  $exists = & az storage blob exists `
+    --account-name $Ctx.AzStorageAccount `
+    --container-name $Ctx.AzContainer `
+    --name $BlobName `
+    --auth-mode login `
+    --query exists -o tsv 2>$null
+  if ($LASTEXITCODE -ne 0) {
+    # Can't tell -- treat as "not there" and let the upload surface the real
+    # auth/network error, rather than blocking a release on a failed probe.
+    return $false
+  }
+  return ($exists -eq 'true')
+}
+
+function Publish-Blob([string]$File, [string]$BlobName, [switch]$IsPointer) {
+  # The overwrite guard. A versioned artifact that already exists means this
+  # version was published before; replacing it rewrites history for anyone
+  # holding the URL, and re-points the published .sha256 at different bytes.
+  if (-not $IsPointer -and -not $AllowOverwrite) {
+    if (Test-BlobExists $BlobName) {
+      Fail (
+        "$BlobName is ALREADY PUBLISHED. Refusing to overwrite a released " +
+        "artifact.`n" +
+        "  If this is a mistake, cut a new build number and publish that.`n" +
+        "  If you genuinely mean to replace the published bytes, re-run with " +
+        "-AllowOverwrite.")
+    }
+  }
   Write-Info "uploading $BlobName"
   & az storage blob upload `
     --account-name $Ctx.AzStorageAccount `
@@ -108,7 +149,8 @@ Write-Step "Uploading to $($Ctx.AzStorageAccount)/$($Ctx.AzContainer)"
 $prefix = $Ctx.WindowsBlobPrefix
 Publish-Blob $Ctx.InstallerPath "$prefix/$($Ctx.InstallerName)"
 Publish-Blob $Ctx.Sha256Path "$prefix/$($Ctx.InstallerName).sha256"
-Publish-Blob $Ctx.LatestJsonPath "$prefix/latest-windows.json"
+# The feed is a pointer and is REPLACED on every publish by design.
+Publish-Blob $Ctx.LatestJsonPath "$prefix/latest-windows.json" -IsPointer
 
 # --- Front Door purge ------------------------------------------------------------------
 # Purge exactly the touched paths, like purge_frontdoor_paths on macOS. The

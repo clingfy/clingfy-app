@@ -23,6 +23,48 @@ void main() {
       ),
       ExportBitratePreset.medium,
     );
+
+    expect(gifSizePresetFromWire('small'), GifSizePreset.small);
+    expect(gifSizePresetFromWire('MEDIUM'), GifSizePreset.medium);
+    expect(gifSizePresetFromWire('  large '), GifSizePreset.large);
+    expect(
+      gifSizePresetFromWire('legacy', fallback: GifSizePreset.small),
+      GifSizePreset.small,
+    );
+  });
+
+  test('GIF size preset defaults to large when absent (backward compat)', () {
+    // Older payloads and fresh installs carry no `gifSize`; they must render at
+    // the same 1080 long-edge cap that shipped before the control existed.
+    expect(gifSizePresetFromWire(null), GifSizePreset.large);
+    expect(gifSizePresetFromWire(''), GifSizePreset.large);
+    expect(gifSizePresetFromWire('nonsense'), GifSizePreset.large);
+  });
+
+  test('GIF size preset wire values and pixel caps', () {
+    expect(GifSizePreset.small.wireValue, 'small');
+    expect(GifSizePreset.medium.wireValue, 'medium');
+    expect(GifSizePreset.large.wireValue, 'large');
+
+    // These caps mirror GifExportPolicy.{small,medium,large}MaxLongEdge on the
+    // native side — the two must stay in sync.
+    expect(GifSizePreset.small.longEdgePx, 480);
+    expect(GifSizePreset.medium.longEdgePx, 720);
+    expect(GifSizePreset.large.longEdgePx, 1080);
+
+    // Every preset round-trips through its wire value (guards a future value
+    // added without a matching parse case).
+    for (final size in GifSizePreset.values) {
+      final fallback = size == GifSizePreset.large
+          ? GifSizePreset.small
+          : GifSizePreset.large;
+      expect(
+        gifSizePresetFromWire(size.wireValue, fallback: fallback),
+        size,
+        reason:
+            'GifSizePreset.${size.name} must parse back from its wire value',
+      );
+    }
   });
 
   test('enum wire values stay backward-compatible', () {

@@ -187,6 +187,22 @@ class AppLocalizationsRo extends AppLocalizations {
   String get high => 'Ridicată';
 
   @override
+  String get gifSizeLabel => 'Dimensiune';
+
+  @override
+  String get gifSizeSmall => 'Mică (480px)';
+
+  @override
+  String get gifSizeMedium => 'Medie (720px)';
+
+  @override
+  String get gifSizeLarge => 'Mare (1080px)';
+
+  @override
+  String get gifSizeCaption =>
+      'GIF-urile se exportă la 15 fps. Dimensiunile mai mari arată mai clar, dar produc fișiere mai mari.';
+
+  @override
   String get original => 'Original';
 
   @override
@@ -900,6 +916,9 @@ class AppLocalizationsRo extends AppLocalizations {
   String get clips => 'Clipuri';
 
   @override
+  String get color => 'Culoare';
+
+  @override
   String get clipSplit => 'Împarte';
 
   @override
@@ -1009,6 +1028,12 @@ class AppLocalizationsRo extends AppLocalizations {
 
   @override
   String get colorCorrection => 'Corecție culoare';
+
+  @override
+  String get colorUndo => 'Anulează editarea culorii';
+
+  @override
+  String get colorRedo => 'Refă editarea culorii';
 
   @override
   String get autoEnhance => 'Auto-îmbunătățire';
@@ -1618,6 +1643,10 @@ class AppLocalizationsRo extends AppLocalizations {
       'Un înregistrator de ecran simplu și puternic pentru macOS.';
 
   @override
+  String get appDescriptionWindows =>
+      'Un înregistrator de ecran simplu și puternic pentru Windows.';
+
+  @override
   String get visitWebsite => 'Vizitați Website-ul';
 
   @override
@@ -1863,6 +1892,21 @@ class AppLocalizationsRo extends AppLocalizations {
       'Ajută la îmbunătățirea Clingfy partajând date despre utilizarea funcțiilor și fiabilitate. Nu include niciodată înregistrări, nume de fișiere, audio, video sau transcrieri.';
 
   @override
+  String get diagnosticsAnalyticsInternal =>
+      'Marchează acest dispozitiv ca intern';
+
+  @override
+  String get diagnosticsAnalyticsInternalHelp =>
+      'Doar pentru proprietar/testare. Exclude statisticile acestei instalări din numerele reale, astfel încât propria utilizare să nu umfle statisticile. Utilizatorii obișnuiți nu văd această opțiune.';
+
+  @override
+  String get diagnosticsAnalyticsTest => 'Testează evenimentele de statistici';
+
+  @override
+  String get diagnosticsAnalyticsTestHelp =>
+      'Doar pentru proprietar/testare. Trimite statistici marcate ca test — vizibile doar în vizualizarea Test din tabloul de bord intern, niciodată în numerele reale — pentru a verifica fluxul. Activează evenimentele și în versiunile de depanare.';
+
+  @override
   String get openLogsFolder => 'Deschide folderul de loguri';
 
   @override
@@ -1946,6 +1990,25 @@ class AppLocalizationsRo extends AppLocalizations {
   @override
   String get micInputIndicatorLowTooltip =>
       'Intrarea microfonului este foarte mică. Crește nivelul de intrare sau apropie-te de microfon.';
+
+  @override
+  String get recordingMicTooLowWarning =>
+      'Microfonul aproape nu captează nimic. Crește nivelul de intrare în Setări sistem › Sunet › Intrare sau apropie-te — altfel înregistrarea nu va avea voce utilizabilă.';
+
+  @override
+  String get recordingMicTooLowHeadline => 'Nivel microfon prea scăzut';
+
+  @override
+  String get recordingSystemAudioBleedHeadline =>
+      'Difuzoarele vor intra în microfon';
+
+  @override
+  String get preRecordingBarMicTooLow =>
+      'Nivelul microfonului este foarte scăzut — crește nivelul de intrare în Setări sistem › Sunet › Intrare.';
+
+  @override
+  String get preRecordingBarBleedRisk =>
+      'Sunetul sistemului se aude prin difuzoare și va intra în microfon. Folosește căști.';
 
   @override
   String get noMicAudioFound => 'Nu s-a găsit nicio pistă audio de microfon';
@@ -2046,6 +2109,10 @@ class AppLocalizationsRo extends AppLocalizations {
 
   @override
   String get recordingSystemAudio => 'Audio de sistem';
+
+  @override
+  String get recordingSystemAudioBleedWarning =>
+      'Sunetul sistemului se redă prin difuzoare, deci microfonul îl va capta din nou ca ecou. Folosește căști pentru o înregistrare curată.';
 
   @override
   String get recordingExcludeMicFromSystemAudio =>
@@ -2569,6 +2636,10 @@ class AppLocalizationsRo extends AppLocalizations {
 
   @override
   String get appliedOnExportNoticeWindows =>
+      'Se aplică la export — previzualizarea din aplicație nu arată încă acest efect.';
+
+  @override
+  String get audioGainNoticeWindows =>
       'Amplificarea se aude complet în previzualizările editate și la export — o previzualizare netăiată redă doar modificările volumului.';
 
   @override
@@ -2628,4 +2699,34 @@ class AppLocalizationsRo extends AppLocalizations {
 
   @override
   String get forceNativeCrashLabel => 'Forțează blocarea nativă (test)';
+
+  @override
+  String get settingsPrivacyTitle => 'Confidențialitate';
+
+  @override
+  String get crashReportingTitle => 'Rapoarte de eroare și diagnostic';
+
+  @override
+  String get crashReportingDescription =>
+      'Trimite rapoarte anonime de eroare și diagnostice, ca problemele să fie reparate. Includ eroarea, urma stivei, versiunea aplicației și detalii despre sistem și placa video. Nu includ niciodată înregistrările tale, conținutul ecranului, sunetul sau numele fișierelor.';
+
+  @override
+  String get crashReportingToggle => 'Trimite rapoarte de eroare';
+
+  @override
+  String get crashReportingRestartNote =>
+      'Dezactivarea oprește trimiterea imediat. Rapoartele pentru erorile care închid complet aplicația se opresc după ce repornești Clingfy.';
+
+  @override
+  String get crashReportingNoticeTitle => 'Despre rapoartele de eroare';
+
+  @override
+  String get crashReportingNoticeBody =>
+      'Clingfy trimite rapoarte anonime de eroare și diagnostice, ca problemele să fie reparate. Acestea includ eroarea, urma stivei, versiunea aplicației și detalii despre sistem și placa video — niciodată înregistrările tale, conținutul ecranului, sunetul sau numele fișierelor.\n\nPoți dezactiva oricând din Setări › Diagnostic.';
+
+  @override
+  String get crashReportingNoticeAccept => 'Am înțeles';
+
+  @override
+  String get crashReportingNoticeOptOut => 'Dezactivează';
 }

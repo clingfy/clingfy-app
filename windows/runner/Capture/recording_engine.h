@@ -153,6 +153,13 @@ class RecordingEngine {
   RecordingState state() const;
   std::string session_id() const;
 
+  // Elapsed whole seconds of the active recording, pause-aware (subtracts time
+  // spent paused, matching the encoded timeline). 0 before the clock is
+  // started. Thread-safe — the recording-indicator overlay thread polls this
+  // once per tick to drive its native timer, so it must not push time from
+  // Flutter.
+  std::uint64_t ElapsedSeconds() const;
+
   // Diagnostics snapshot — used by manual smoke-tests in Phase 3B to
   // confirm frames are arriving and by Phase 3E to surface counts on the
   // bridge. Returns zeros when no capture is in flight.

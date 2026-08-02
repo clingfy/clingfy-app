@@ -34,6 +34,9 @@
 #include "Bridge/platform_thread_dispatcher.h"
 #include "Bridge/player_event_publisher.h"
 #include "Bridge/workflow_event_publisher.h"
+#include "Capture/Background/background_image_cache.h"
+#include "Capture/Background/preset_bitmap_cache.h"
+#include "Capture/Export/export_geometry.h"
 #include "Capture/Export/audio_sidecar_probe.h"
 #include "Capture/Export/mic_cleanup.h"
 #include "Services/log_locations.h"
@@ -313,6 +316,28 @@ struct PreviewEngine::Impl {
   std::atomic<UINT> last_video_width{0};
   std::atomic<UINT> last_video_height{0};
   std::atomic<std::int64_t> frames_consumed{0};
+
+  // Decoded background image, keyed by path + mtime. Lives next to the canvas
+  // state it serves; dropped on device loss with the rest of the D2D resources.
+  capture::background::BackgroundImageCache background_images;
+  // Rendered preset pixels — disposable, regenerated from the preset data.
+  capture::background::PresetBitmapCache preset_bitmaps;
+
+  // ---- Canvas framing (render_mutex) ----
+  // Resolution-independent, so the same authored padding renders proportionally
+  // the same here as it does in the export (see Core/canvas_composition.h).
+  // Written by SetCanvasComposition on the platform thread, read by the frame
+  // thread while compositing.
+  core::CanvasComposition canvas{};
+
+  // ---- Last composed frame's timeline position (render_mutex) ----
+  // Replayed verbatim by RepaintRetainedFrame so a settings change on a PAUSED
+  // preview re-composites the frame that is already on screen: same timestamp,
+  // so cursor / zoom / camera resolve identically and only the edited setting
+  // moves. Also keeps the re-emitted playerTick from nudging Dart's playhead.
+  std::int64_t last_playback_us = -1;
+  std::int64_t last_emit_pos_ms = 0;
+  std::int64_t last_emit_dur_ms = 0;
 
   // ---- Step 5.5 seek tracking ----
   // Each SeekTo() call appends a sample; the next VideoFrameAvailable
@@ -674,6 +699,53 @@ PreviewEngine::TextureSize PreviewEngine::ComputePreviewTextureSize(
   return {w, h};
 }
 
+PreviewEngine::TextureSize PreviewEngine::ComputeCanvasTextureSize(
+    int video_width_hint, int video_height_hint,
+    const std::string& layout_preset, const std::string& resolution_preset) {
+  // No usable source: nothing to derive a canvas from, so keep the budget.
+  if (video_width_hint <= 0 || video_height_hint <= 0) {
+    return {kTextureWidth, kTextureHeight};
+  }
+  // No presets yet (previewOpen before Dart has pushed canvas state): behave
+  // exactly as the video-aspect sizing did, so this is a no-op until the
+  // presets are known.
+  if (layout_preset.empty() && resolution_preset.empty()) {
+    return ComputePreviewTextureSize(video_width_hint, video_height_hint);
+  }
+
+  const capture::export_::SizeF target = capture::export_::ResolveTargetSize(
+      capture::export_::SizeF{static_cast<double>(video_width_hint),
+                              static_cast<double>(video_height_hint)},
+      layout_preset, resolution_preset);
+  if (!(target.width > 0.0) || !(target.height > 0.0)) {
+    return ComputePreviewTextureSize(video_width_hint, video_height_hint);
+  }
+
+  // Only the ASPECT matters: the texture stays inside the 1280x720 budget no
+  // matter which export resolution the user picked, and the canvas contract
+  // carries padding/radius as fractions so they scale to whatever size lands
+  // here.
+  return ComputePreviewTextureSize(static_cast<int>(std::lround(target.width)),
+                                   static_cast<int>(std::lround(target.height)));
+}
+
+bool PreviewEngine::DecideCanvasAspectRebuild(
+    int source_width, int source_height, int current_texture_width,
+    int current_texture_height, const std::string& layout_preset,
+    const std::string& resolution_preset) {
+  // Nothing to compare against, or nothing to compute from. Both cases mean
+  // "we cannot know", and the safe answer to that is never to rebuild — see
+  // the loop guard in the header.
+  if (source_width <= 0 || source_height <= 0 || current_texture_width <= 0 ||
+      current_texture_height <= 0) {
+    return false;
+  }
+  const TextureSize required = ComputeCanvasTextureSize(
+      source_width, source_height, layout_preset, resolution_preset);
+  return required.width != current_texture_width ||
+         required.height != current_texture_height;
+}
+
 bool PreviewEngine::ShouldRestartEditedPlaybackFromEnd(
     std::int64_t edited_pos_ms, std::int64_t edited_duration_ms) {
   // One-frame tolerance: the pacer stamps the LAST kept frame's edited time,
@@ -756,7 +828,8 @@ OpenResult PreviewEngine::Open(const OpenArgs& args) {
   // compositor letterbox becomes an exact fit and Flutter's AspectRatio is
   // the ONLY letterbox, so non-16:9 recordings no longer get double bars.
   const TextureSize tex =
-      ComputePreviewTextureSize(args.video_width_hint, args.video_height_hint);
+      ComputeCanvasTextureSize(args.video_width_hint, args.video_height_hint,
+                               args.layout_preset, args.resolution_preset);
 
   OpenResult result;
   result.width = tex.width;
@@ -1377,12 +1450,57 @@ void PreviewEngine::ComposeAndHandoffLocked(Impl* impl,
                                             std::int64_t playback_us,
                                             std::int64_t emit_pos_ms,
                                             std::int64_t emit_dur_ms) {
+  // Remember where this frame sits so a paused settings change can re-compose
+  // the same instant instead of seeking for a fresh one (RepaintRetainedFrame).
+  impl->last_playback_us = playback_us;
+  impl->last_emit_pos_ms = emit_pos_ms;
+  impl->last_emit_dur_ms = emit_dur_ms;
+
   // ---- render bucket ----
   // The shared texture IS the destination — no slider strip. Letterbox
   // the natural video into the full canvas.
-  const D2D1_RECT_F dest = clingfy::preview::LetterboxRect(
-      static_cast<UINT>(texture_width_), static_cast<UINT>(texture_height_),
-      impl->compositor.video_width(), impl->compositor.video_height());
+  // Canvas framing, resolved from the wire contract's resolution-independent
+  // fractions onto THIS surface. The same authored padding therefore covers the
+  // same proportion of the frame here as it does in the export, instead of ~3x
+  // more (this texture is capped at kTextureWidth x kTextureHeight while the
+  // export renders at the user's chosen resolution).
+  const double surface_short = std::min(static_cast<double>(texture_width_),
+                                        static_cast<double>(texture_height_));
+  const double padding_px = core::DenormalizeFromShortSide(
+      impl->canvas.padding_fraction, surface_short);
+  const double radius_px = core::DenormalizeFromShortSide(
+      impl->canvas.corner_radius_fraction, surface_short);
+
+  // Decoded once and cached; a second lookup for an unchanged file does no
+  // decode, which is what keeps a static background off the per-frame path.
+  // A preset outranks an image: the UI offers one background KIND at a time,
+  // and both end up as a bitmap drawn to cover, so they share the draw path.
+  ID2D1Bitmap* bg_image = nullptr;
+  if (impl->canvas.has_preset) {
+    bg_image = impl->preset_bitmaps.Get(
+        impl->d2d_context.Get(), impl->canvas.preset,
+        static_cast<UINT>(texture_width_), static_cast<UINT>(texture_height_));
+  } else {
+    bg_image = impl->background_images.Get(
+        impl->d2d_context.Get(), impl->canvas.background_image_path);
+  }
+  impl->compositor.SetCanvasFraming(
+      capture::export_::ResolveBackgroundColor(impl->canvas.background_argb),
+      static_cast<float>(radius_px), bg_image);
+
+  // The video lands in the padded content rect, not the full surface. Reuses
+  // the export's own fit/fill block so both consumers inset identically.
+  const capture::export_::RectF content = capture::export_::ComputeContentRect(
+      capture::export_::SizeF{static_cast<double>(texture_width_),
+                              static_cast<double>(texture_height_)},
+      capture::export_::SizeF{
+          static_cast<double>(impl->compositor.video_width()),
+          static_cast<double>(impl->compositor.video_height())},
+      capture::export_::FitMode::kFit, padding_px);
+  const D2D1_RECT_F dest =
+      D2D1::RectF(static_cast<float>(content.x), static_cast<float>(content.y),
+                  static_cast<float>(content.x + content.width),
+                  static_cast<float>(content.y + content.height));
 
   // Phase 9.6: advance/seek the camera frame BEFORE BeginDraw (the painter's
   // shadow bake does SetTarget round-trips, illegal inside BeginDraw).
@@ -2376,6 +2494,15 @@ void PreviewEngine::SeekTo(const std::string& session_id,
   }
 }
 
+PausedRepaintAction DecidePausedRepaint(bool is_playing,
+                                        bool has_composed_frame) {
+  if (is_playing) {
+    return PausedRepaintAction::kSkipPlaying;
+  }
+  return has_composed_frame ? PausedRepaintAction::kRepaintRetained
+                            : PausedRepaintAction::kNudgeSeek;
+}
+
 CameraNudgePlan ResolveCameraNudgeTarget(std::int64_t current_ms,
                                          std::int64_t previous_anchor_ms) {
   // The anchor's 1ms neighbor: one back normally, one forward at 0 so the
@@ -2443,10 +2570,81 @@ void NudgePausedPreviewPlayer(winrt_playback::MediaPlayer player_snapshot,
 
 }  // namespace
 
+void PreviewEngine::RepaintPausedPreview() {
+  winrt_playback::MediaPlayer player_snapshot{nullptr};
+  {
+    std::lock_guard<std::mutex> lock(mutex_);
+    if (impl_ == nullptr) return;
+    player_snapshot = impl_->player;
+  }
+
+  bool is_playing = false;
+  if (player_snapshot != nullptr) {
+    try {
+      is_playing = player_snapshot.PlaybackSession().PlaybackState() ==
+                   winrt_playback::MediaPlaybackState::Playing;
+    } catch (winrt::hresult_error const&) {
+      // Unreadable state: treat as not playing. A repaint on a live frame is
+      // wasteful but harmless; skipping one on a frozen frame is the bug being
+      // fixed here.
+    }
+  }
+
+  switch (DecidePausedRepaint(is_playing, HasComposedFrame())) {
+    case PausedRepaintAction::kSkipPlaying:
+      return;
+    case PausedRepaintAction::kRepaintRetained:
+      // Re-light the frame already on screen: one D2D compose, no decode. If it
+      // races a Close and reports false, there is nothing left to show anyway.
+      RepaintRetainedFrame();
+      return;
+    case PausedRepaintAction::kNudgeSeek:
+      // Nothing composed yet (preview still coming up). The historical 1ms seek
+      // can still kick a stalled pipeline into producing a first frame.
+      NudgePausedPreviewPlayer(std::move(player_snapshot), mutex_,
+                               camera_nudge_anchor_ms_);
+      return;
+  }
+}
+
+bool PreviewEngine::HasComposedFrame() {
+  std::lock_guard<std::mutex> lock(mutex_);
+  return impl_ != nullptr &&
+         impl_->frames_consumed.load(std::memory_order_relaxed) > 0;
+}
+
+bool PreviewEngine::RepaintRetainedFrame() {
+  Impl* impl = nullptr;
+  {
+    // Same lock discipline as HandleVideoFrame: take mutex_ only to resolve
+    // impl_, release it, THEN take render_mutex. ComposeAndHandoffLocked
+    // re-takes mutex_ underneath render_mutex for its session snapshot, so
+    // holding both here in the other order would invert the lock hierarchy.
+    std::lock_guard<std::mutex> lock(mutex_);
+    impl = impl_.get();
+    if (impl == nullptr) return false;
+  }
+  if (shutting_down_.load() || !running_.load()) return false;
+
+  std::lock_guard<std::mutex> render_lock(impl->render_mutex);
+  if (shutting_down_.load() || impl_ == nullptr) return false;
+
+  // Nothing has been composed yet, so there is no retained frame to re-light.
+  // (frames_consumed, not has_video_target(): the texture is allocated in
+  // EnsureResources BEFORE the first CopyFrameToVideoSurface, so a non-null
+  // texture does not by itself mean the surface holds real content.)
+  if (impl->frames_consumed.load(std::memory_order_relaxed) <= 0) {
+    return false;
+  }
+
+  ComposeAndHandoffLocked(impl, impl->last_playback_us, impl->last_emit_pos_ms,
+                          impl->last_emit_dur_ms);
+  return true;
+}
+
 void PreviewEngine::SetCameraComposition(
     const std::string& session_id,
     const PreviewCameraComposition& composition) {
-  winrt_playback::MediaPlayer player_snapshot{nullptr};
   {
     std::lock_guard<std::mutex> lock(mutex_);
     // Stale-session calls (a previous preview, or a placement update racing a
@@ -2461,23 +2659,20 @@ void PreviewEngine::SetCameraComposition(
     // SetComposition is internally synchronized and does no D2D work, so holding
     // mutex_ here is cheap and cannot deadlock against the frame thread (which
     // takes mutex_ -> render_mutex -> renderer lock; we take mutex_ -> renderer
-    // lock, so the renderer lock is always acquired last). We snapshot the player
-    // and do the WinRT nudge AFTER releasing mutex_, matching the
-    // snapshot-then-release discipline of SeekTo/Pause.
+    // lock, so the renderer lock is always acquired last). The repaint happens
+    // AFTER releasing mutex_, matching the snapshot-then-release discipline of
+    // SeekTo/Pause.
     impl_->camera_renderer->SetComposition(composition);
-    player_snapshot = impl_->player;
   }
-  NudgePausedPreviewPlayer(std::move(player_snapshot), mutex_,
-                           camera_nudge_anchor_ms_);
+  RepaintPausedPreview();
 }
 
 void PreviewEngine::SetColorGrade(
     const std::string& session_id,
     const capture::export_::color::ColorGrade& grade) {
-  winrt_playback::MediaPlayer player_snapshot{nullptr};
   {
     std::lock_guard<std::mutex> lock(mutex_);
-    // Same stale-session + snapshot-then-release discipline as
+    // Same stale-session + release-before-repaint discipline as
     // SetCameraComposition above.
     if (!session_id.empty() && session_id != active_session_id_) {
       return;
@@ -2487,12 +2682,111 @@ void PreviewEngine::SetColorGrade(
     }
     // SetColorGrade is internally synchronized (the compositor's grade
     // mutex) and does no D2D work here — the effect chain (re)builds on the
-    // frame thread at the next composited frame.
+    // frame thread at the next composited frame, or immediately below when the
+    // preview is paused and there is no next frame coming.
     impl_->compositor.SetColorGrade(grade);
-    player_snapshot = impl_->player;
   }
-  NudgePausedPreviewPlayer(std::move(player_snapshot), mutex_,
-                           camera_nudge_anchor_ms_);
+  RepaintPausedPreview();
+}
+
+void PreviewEngine::SetCanvasComposition(
+    const std::string& session_id, const core::CanvasFramingArgs& framing) {
+  Impl* impl = nullptr;
+  UINT source_w = 0;
+  UINT source_h = 0;
+  int current_tex_w = 0;
+  int current_tex_h = 0;
+  std::string session_snapshot;
+  {
+    std::lock_guard<std::mutex> lock(mutex_);
+    // Same stale-session discipline as SetColorGrade.
+    if (!session_id.empty() && session_id != active_session_id_) {
+      return;
+    }
+    if (impl_ == nullptr) {
+      return;
+    }
+    impl = impl_.get();
+    source_w = impl->last_video_width.load();
+    source_h = impl->last_video_height.load();
+    current_tex_w = texture_width_;
+    current_tex_h = texture_height_;
+    // Emit against the session that is actually active: `session_id` may be
+    // empty (meaning "whichever is active") and Dart drops events whose id
+    // does not match its own.
+    session_snapshot = active_session_id_;
+  }
+
+  // Normalise here rather than in the router: only the engine knows the source
+  // dimensions, and ResolveTargetSize is the single source of truth for how a
+  // source plus layout/resolution preset becomes a canvas. Dart sends raw
+  // export-output pixels; converting them against the export target is what
+  // stops the preview from drawing ~3x the padding at 4K.
+  core::CanvasComposition canvas{};
+  canvas.background_argb = framing.background_argb;
+  canvas.background_image_path = framing.background_image_path;
+  canvas.preset = framing.preset;
+  canvas.has_preset = framing.has_preset;
+  if (source_w > 0 && source_h > 0) {
+    const capture::export_::SizeF target =
+        capture::export_::ResolveTargetSize(
+            capture::export_::SizeF{static_cast<double>(source_w),
+                                    static_cast<double>(source_h)},
+            framing.layout_preset, framing.resolution_preset);
+    const double export_short = std::min(target.width, target.height);
+    canvas.padding_fraction =
+        core::NormalizeToShortSide(framing.padding_px, export_short);
+    canvas.corner_radius_fraction =
+        core::NormalizeToShortSide(framing.corner_radius_px, export_short);
+  }
+  // No frame yet => source dims unknown => fractions stay 0 and the canvas
+  // renders unpadded, which is what the preview shows today anyway. The next
+  // push after the first frame resolves properly.
+
+  {
+    // The frame thread takes render_mutex -> mutex_ (never the reverse), so
+    // publish under render_mutex ALONE, after mutex_ is released above.
+    std::lock_guard<std::mutex> render_lock(impl->render_mutex);
+    impl->canvas = canvas;
+  }
+  // Paused / ended preview: re-light the retained frame so the canvas edit is
+  // visible immediately. No seek, no decode. While playing this is a no-op and
+  // the next natural frame carries the change.
+  RepaintPausedPreview();
+
+  // A layout change reshapes the CANVAS, and the shared texture is sized to
+  // the canvas aspect — but a registered texture cannot be resized in place.
+  // Repainting alone would letterbox the new canvas inside the old aspect, so
+  // the preview would keep lying about the export. Ask Dart to rebuild the
+  // session in place; it reopens with these presets and swaps the texture id
+  // and aspect without a phase change or a remount.
+  //
+  // Deliberately AFTER the repaint: the rebuild is asynchronous, and repainting
+  // first means the old texture shows the new colours/background during the
+  // reopen gap instead of a stale frame.
+  if (DecideCanvasAspectRebuild(static_cast<int>(source_w),
+                                static_cast<int>(source_h), current_tex_w,
+                                current_tex_h, framing.layout_preset,
+                                framing.resolution_preset)) {
+    clingfy::bridge::NativeLogPublisher::Instance().Info(
+        "Preview",
+        "canvas layout changed the required texture aspect for session " +
+            session_snapshot + " — asking Dart to rebuild the preview in place "
+            "(previewInvalidated)");
+    clingfy::bridge::PlayerEventPublisher::Instance().EmitPreviewInvalidated(
+        session_snapshot, "canvasAspectChanged");
+  }
+}
+
+core::CanvasComposition PreviewEngine::canvas_composition_for_testing() {
+  Impl* impl = nullptr;
+  {
+    std::lock_guard<std::mutex> lock(mutex_);
+    impl = impl_.get();
+    if (impl == nullptr) return {};
+  }
+  std::lock_guard<std::mutex> render_lock(impl->render_mutex);
+  return impl->canvas;
 }
 
 bool PreviewEngine::RangesAreEdited(

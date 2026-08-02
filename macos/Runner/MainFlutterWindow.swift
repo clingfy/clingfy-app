@@ -88,6 +88,8 @@ class MainFlutterWindow: NSWindow {
         self.screenRecorder.getRecordingCapabilities(result: result)
       case "getAudioSources":
         self.screenRecorder.getAudioSources(result: result)
+      case FlutterToNativeMethod.getAudioOutputRoute:
+        self.screenRecorder.getAudioOutputRoute(result: result)
       case "setAudioSource":
         let args = call.arguments as? [String: Any]
         self.screenRecorder.setAudioSource(id: args?["id"] as? String, result: result)
@@ -818,6 +820,7 @@ class MainFlutterWindow: NSWindow {
             format: req.format,
             codec: req.codec,
             bitrate: req.bitrate,
+            gifSize: req.gifSize,
             audioGainDb: req.audioGainDb,
             audioVolumePercent: req.audioVolumePercent,
             autoNormalizeOnExport: req.autoNormalizeOnExport,
@@ -909,6 +912,11 @@ class MainFlutterWindow: NSWindow {
 
       case "showPreRecordingBar":
         self.explicitlyShowPreRecordingBar()
+        result(nil)
+
+      case "setAppWindowWatchActive":
+        let active = (call.arguments as? [String: Any])?["active"] as? Bool ?? false
+        self.screenRecorder.setAppWindowWatchActive(active)
         result(nil)
 
       case "togglePreRecordingBar":
@@ -1471,6 +1479,9 @@ final class AudioDevicesEventHandler: NSObject, FlutterStreamHandler {
   }
   func fireAudioSourcesChanged() { sink?(["type": "audioSourcesChanged"]) }
   func fireVideoSourcesChanged() { sink?(["type": "videoSourcesChanged"]) }
+  func fireDisplaysChanged() { sink?(["type": "displaysChanged"]) }
+  func fireAppWindowsChanged() { sink?(["type": "appWindowsChanged"]) }
+  func fireAudioOutputRouteChanged() { sink?(["type": "audioOutputRouteChanged"]) }
   func fireMicrophoneLevel(linear: Double, dbfs: Double, isLow: Bool) {
     sink?([
       "type": DeviceEventType.microphoneLevel,

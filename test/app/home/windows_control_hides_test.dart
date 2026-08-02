@@ -135,20 +135,39 @@ void main() {
     );
 
     testWidgets(
-      'Windows: image/preset segments hidden and a stale image kind is '
-      'displayed as color',
+      'Windows: image segment is available and an image kind stays image',
       (tester) async {
         debugPlatformKindOverride = PlatformKind.windows;
-        // A project saved on macOS (or pre-10.3) can persist kind=image.
         await tester.pumpWidget(host(section(BackgroundKind.image)));
         await tester.pumpAndSettle();
-        // Neither the segment items nor the pick-image button render.
-        expect(find.byIcon(Icons.image_outlined), findsNothing);
-        expect(find.byIcon(Icons.auto_awesome_outlined), findsNothing);
-        // The displayed mode coerces to color: its controls are live.
-        expect(find.byIcon(Icons.palette_outlined), findsOneWidget);
+        // Canvas parity slice 2: Windows gained a real pickImage dialog, WIC
+        // decode + cache, and compositing in BOTH the preview and the export,
+        // so the image mode is no longer a silent no-op and is offered.
+        //
+        // TWO widgets carry this icon once image mode is active and selected:
+        // the segment item, and the pick-image control beneath it. Before this
+        // slice neither rendered on Windows, which is what the old expectation
+        // of `findsNothing` encoded.
+        expect(find.byIcon(Icons.image_outlined), findsNWidgets(2));
+        // Presets are offered on Windows too now — the segment renders even
+        // while image mode is the active kind.
+        expect(find.byIcon(Icons.auto_awesome_outlined), findsOneWidget);
       },
     );
+
+    testWidgets('Windows: a preset kind stays preset and its controls render', (
+      tester,
+    ) async {
+      debugPlatformKindOverride = PlatformKind.windows;
+      // A preset kind used to be coerced to colour here, because Windows had no
+      // renderer for it. Slice 3 gave it one — the same Direct2D renderer the
+      // preview and the export share — so the stored kind is now what the user
+      // sees, and the colour controls must NOT be what renders.
+      await tester.pumpWidget(host(section(BackgroundKind.preset)));
+      await tester.pumpAndSettle();
+      expect(find.byIcon(Icons.auto_awesome_outlined), findsOneWidget);
+      expect(find.byIcon(Icons.palette_outlined), findsNothing);
+    });
 
     testWidgets('macOS: image and preset segments stay available', (
       tester,

@@ -107,6 +107,12 @@ class DeviceController extends ChangeNotifier {
             if (event['type'] == DeviceEventType.videoSourcesChanged) {
               await reloadCameras();
             }
+            if (event['type'] == DeviceEventType.displaysChanged) {
+              await reloadDisplays();
+            }
+            if (event['type'] == DeviceEventType.appWindowsChanged) {
+              await reloadAppWindows();
+            }
             if (event['type'] == DeviceEventType.microphoneLevel) {
               _applyMicrophoneLevelEvent(Map<dynamic, dynamic>.from(event));
             }
@@ -233,22 +239,21 @@ class DeviceController extends ChangeNotifier {
       final sp = await SharedPreferences.getInstance();
       final savedCamId = sp.getString(_prefVideoDeviceId);
       _cams = cams;
-      _selectedCamId =
-          (savedCamId != null && cams.any((c) => c.id == savedCamId))
-          ? savedCamId
-          : ((_selectedCamId != null && cams.any((c) => c.id == _selectedCamId))
-                ? _selectedCamId
-                : (cams.isNotEmpty ? cams.first.id : null));
+      // Preferred vs effective — see reloadDisplays. Falling back to
+      // cams.first AND persisting it meant unplugging a USB camera silently
+      // rewrote the stored preference to the built-in one, so re-plugging
+      // never restored the user's actual choice.
+      final preferredCamId = savedCamId ?? _selectedCamId;
+      final preferredCamPresent =
+          preferredCamId != null && cams.any((c) => c.id == preferredCamId);
+
+      _selectedCamId = preferredCamPresent
+          ? preferredCamId
+          : (cams.isNotEmpty ? cams.first.id : null);
 
       await _nativeBridge.invokeMethod<void>('setVideoSource', {
         'id': _selectedCamId,
       });
-
-      if (_selectedCamId == null || _selectedCamId!.isEmpty) {
-        await sp.remove(_prefVideoDeviceId);
-      } else {
-        await sp.setString(_prefVideoDeviceId, _selectedCamId!);
-      }
     } on PlatformException catch (e) {
       Log.e("Device", "Error is $e");
       _errorMessage = e.code;
@@ -291,19 +296,28 @@ class DeviceController extends ChangeNotifier {
       final savedDisplayId = sp.getInt(_prefSelectedDisplayId);
 
       _displays = displays;
-      _selectedDisplayId =
-          (_selectedDisplayId != null &&
-              displays.any((d) => d.id == _selectedDisplayId))
-          ? _selectedDisplayId
-          : ((savedDisplayId != null &&
-                    displays.any((d) => d.id == savedDisplayId))
-                ? savedDisplayId
-                : (displays.isNotEmpty ? displays.first.id : null));
 
-      if (_selectedDisplayId == null) {
-        await sp.remove(_prefSelectedDisplayId);
-      } else {
-        await sp.setInt(_prefSelectedDisplayId, _selectedDisplayId!);
+      // Preferred vs effective. The PREFERRED display is whatever the user
+      // last chose deliberately, and only setDisplay() — a user action —
+      // rewrites it. A reload may fall back to another screen so recording
+      // still works, but it must never persist that fallback: unplugging a
+      // monitor would otherwise overwrite the stored preference with the
+      // built-in display, and re-plugging would never bring the choice back.
+      final preferredId = savedDisplayId ?? _selectedDisplayId;
+      final preferredIsPresent =
+          preferredId != null && displays.any((d) => d.id == preferredId);
+
+      final nextId = preferredIsPresent
+          ? preferredId
+          : (displays.isNotEmpty ? displays.first.id : null);
+
+      final changed = nextId != _selectedDisplayId;
+      _selectedDisplayId = nextId;
+
+      // Native holds its own selected display; without this the Swift facade
+      // keeps targeting a screen Dart has already moved off.
+      if (changed) {
+        await _nativeBridge.invokeMethod<void>('setDisplay', {'id': nextId});
       }
       notifyListeners();
     } on PlatformException catch (e) {

@@ -33,6 +33,12 @@ everything on the gate hardware.
 | 11 | Cursor / zoom / click rings | Record with deliberate clicks + movement; export | Cursor drawn (arrow), auto-zoom segments fire near clicks, click rings render; all under the same zoom transform | (Phase 8 smokes) |
 | 12 | Permission-denied paths | Deny camera + mic in Windows Settings (privacy page); run onboarding fresh (clear the `onboarding_seen_v1` pref); try recording with camera/mic enabled | Onboarding = Welcome + Mic/Cam only; settings rows show status detail + working ms-settings deep links; recording starts screen-only with a localized warning toast, never silently | 2026-06-10 (10.2) |
 | 13 | Device-loss paths | Close the captured window mid-recording; unplug monitor being recorded; unplug camera mid-recording; unplug mic mid-recording | Window/display loss → partial recording finalized + warning (keep-partial policy); camera loss → camera-only stop, screen continues; mic loss → warning, recording continues | (7.4 / 9.2 / 10.1 smokes) |
+| 14 | Voice cleanup — export | Record with a mic in a slightly noisy room (fan/AC/keyboard) + system audio; in post → Audio, enable Voice Cleanup (Balanced); export; play the result | Background noise stripped from the mic in the export; the raw recording is untouched; cleaned voice stays lip-synced (no ~20 ms drift) | — (engine/export code + CI; on-device pending) |
+| 15 | Voice cleanup — live preview (WYSIWYG) | Cut the timeline (so the preview is stitched), enable cleanup, play the edited preview | Preview mic is denoised too, matching the export; a brief background pass runs after enabling before it applies | — (on-device pending) |
+| 16 | Voice cleanup — Light vs Balanced | With cleanup on, switch Light ↔ Balanced (in both the edited preview and an export) | Audibly different: Light leaves the voice more natural / more residual room tone, Balanced strips more | — (unit-verified balanced<light<noisy; on-device pending) |
+| 17 | Voice cleanup — threading edges | Toggle cleanup on/off DURING edited-preview playback; rapidly flip Light↔Balanced a few times while playing; enable on a longer recording then immediately close the preview / switch projects mid-compute | Audio keeps playing and becomes/stops being denoised without a freeze, silence-stall, hang, or crash; settles on the last choice; no leftover `clingfy-preview-miccleanup-*.mp4` in `%TEMP%` after close | — (2× adversarial concurrency review; NOT headless-testable — needs eyes) |
+| 18 | Voice cleanup — gating | Open a system-audio-only recording (no mic) in post → Audio | Voice Cleanup control hidden and the "no mic audio" notice shown; a separated mic recording shows the control (depends on §2 mic+system separation working) | **2026-07-30 PASS** — control hidden + "No mic audio track found" notice. Verified on a release build (9111a29) recording made with "No microphone": no `mic.m4a` in the bundle at all, `micActive: false`. Note this row FAILED until #390: "No microphone" did not stop the app opening the default mic (a real take shipped an 81 s sidecar at −52.1 dB), and the resulting decodable-but-silent sidecar made `hasMicAudio` true. The gate itself was always correct — it had a mic sidecar to find. |
+| 19 | Editing — clips / reorder / mix | Cut + delete a middle segment then replay across the cut; drag-reorder clips then play and export; raise mic-only gain on a separated recording | Video stays locked to audio across the cut (no lag); reorder plays/export in timeline order; gain raises the mic only, system steady | PARTIAL 2026-07-30 — separation itself VERIFIED on device: a mic+system take produced mic -34.4 dB and system -22.1 dB as distinct tracks, and a mic-only take correctly omitted `system.m4a`. Mic-only GAIN still unverified: on an UNCUT preview it is inaudible BY DESIGN (D6 - MediaPlayer.Volume cannot amplify), so judge it on a CUT timeline or in the export. For a scripted pass `tools/make_smoke_fixtures.ps1` builds `smoke-separated-mic-system` with mic 440 Hz @ -20 dBFS vs system 880 Hz @ -12 dBFS, so "mic only" is audible as ONE tone moving. |
 
 ## 2. Hardware verdict checklist (gates invites — 10.0 plan D10)
 
@@ -63,7 +69,13 @@ zero-frame cycles, no crash, and flat GPU memory; fewer than
       constraint: a non-48 kHz device must produce the warning, not
       silence).
 
-## 3. Release gates (state as of 2026-06-12)
+## 3. Release gates (state as of 2026-08-01)
+
+> **Re-probe before trusting an item here.** The 2026-06-12 pass recorded the
+> Windows feed as "404 — never published". It had been live for weeks by the
+> time anyone acted on that line, and acting on it overwrote a published
+> artifact. Dates on entries are when they were last CHECKED, not when they
+> were written.
 
 Shipped and verified:
 
@@ -81,33 +93,77 @@ Shipped and verified:
 
 Open — must close before invites:
 
-- [ ] **Publish the Windows feed.** Live probe 2026-06-12: the dev Front
-      Door serves the macOS `appcast.xml` (HTTP 200) but
-      `downloads/windows/latest-windows.json` is **404 — never
-      published** (so are the installer + `.sha256` blobs). Until a real
-      `local_release.ps1 … -Publish` run uploads them, every installed
-      build's Check for Updates reports "update check failed". Re-probe
-      both channels after the first publish; `05_smoke.ps1` covers this
-      automatically in the publish path.
+- [x] **Publish the Windows feed.** RE-PROBED 2026-07-28: BOTH channels
+      are live. prod serves `1.0.6+7` (published 2026-07-23); dev is
+      published continuously by the Azure lane
+      (`azure-pipelines/windows-dev-channel.yml`), whose `counter()` was
+      at ~100. The 2026-06-12 "404 — never published" note was stale by
+      six weeks and is what led to a local publish that OVERWROTE the
+      pipeline's own `1.0.6+7` artifact (same name: the counter is seeded
+      at 7 and pubspec also reads 1.0.6+7). #377 added an overwrite guard
+      so that cannot recur silently.
+      **Do not publish from a workstation** — the pipeline owns this
+      feed.
 - [ ] NVIDIA + AMD stress verdicts (§2).
 - [ ] Mixed-DPI dual-monitor pass (§2).
-- [ ] **Forced-native-crash → Sentry round-trip from an installed
-      build** (`CLINGFY_CRASH_TEST=1` + hidden diagnostics button +
-      `upload_symbols.ps1`): exercised on a staged copy in 10.4,
-      deliberately re-run here on the real installed artifact.
+- [x] **Forced-native-crash → Sentry round-trip from an installed
+      build** — DONE 2026-07-29 on the real installed artifact. Crash
+      ingested, and the stack SYMBOLICATED: 15 of 16 frames named with
+      line numbers, top frame
+      `clingfy::bridge::routers::misc::…HandleDebugForceNativeCrash`
+      → `MethodRouter::Dispatch` → `StandardMethodCodec::…`. The one
+      unnamed frame is `ucrtbase.dll` CRT internals.
+      **Trap worth knowing:** `upload_symbols.ps1` only runs from
+      `local_release.ps1`'s `if ($Publish)` branch, so a build shared
+      OUTSIDE the publish path has no symbols uploaded and reports every
+      `clingfy.exe` frame as `<NO SYMBOL>` (seen once, 11 of 13). #377
+      added the missing upload step to the DEV pipeline, which had never
+      uploaded symbols at all — so every beta crash was unsymbolicated.
 - [ ] **Licensing on a clean box**: activate / validate / consume-trial
       on a machine that never saw the repo (matrix row 2). Depends on:
-- [ ] **Beta entitlement provisioning decision** — how testers get
-      keys/entitlements on Windows (open product call, blocks row 2).
-- [ ] **Telemetry consent/disclosure decision** — Sentry crash/telemetry
-      runs without an in-app disclosure today; ship a disclosure or an
-      opt-out, and cover Windows in the privacy policy.
-- [ ] **Signing decision** — Azure Trusted Signing / OV cert, or ship the
-      beta unsigned (the tester guide documents the SmartScreen bypass;
-      `-RequireSignature` stays off until material exists; a
-      half-configured cert pair hard-fails the lane by design).
-- [ ] Sentry release tagging spot-check: one report from an installed
-      build maps to the exact version+build.
+- [x] **Beta entitlement provisioning decision** — DECIDED 2026-07-27:
+      **time-boxed subscription keys**, dated to the beta window. They
+      expire on their own, so access ends without revoking anything or
+      chasing testers afterwards. Needs no client change — `subscription`
+      is already a `LicensePlan` and the client already honours
+      `updates_expires_at` / `isUpdatesExpired`. Rejected: lifetime keys
+      (a permanent gift, revocation is a per-tester support conversation);
+      trial-only (export-limited, so testers stop exercising the export
+      paths that most need testing); a dedicated `beta` plan (cleanest
+      long-term but costs an enum value, client handling, tests and
+      backend work for a temporary need).
+      **Still to do (backend/ops, not app code):** generate the keys and
+      mail them. Row 2 stays blocked until that happens.
+- [x] **Telemetry consent/disclosure decision** — SHIPPED 2026-07-27
+      (#362): first-run disclosure + an opt-out in Settings › Diagnostics,
+      default opt-out (report, and disclose). Root cause worth remembering:
+      the pre-existing "Share anonymous usage analytics" toggle gated
+      **PostHog only** — Sentry initialised unconditionally whenever a DSN
+      was compiled in, so a user who turned analytics off was still sending
+      crash reports and had never been told. Opting out now skips
+      `SentryFlutter.init` entirely rather than filtering, because
+      `beforeSend` cannot stop the out-of-process native crash handler.
+      Flip `kCrashReportingDefaultEnabled` for consent-first.
+      **Still open:** the privacy policy itself does not cover Windows —
+      that is a document edit, not code.
+- [x] **Signing decision** — DECIDED 2026-07-27: **ship the private beta
+      UNSIGNED**, and revisit before any public/commercial ship. A
+      certificate is a cost the project is not taking on yet, and the gate
+      never required a signed build — only a decision. The tester guide
+      already documents the SmartScreen bypass, `-RequireSignature` stays
+      off, and a half-configured cert pair still hard-fails the lane by
+      design, so nothing silently ships half-signed.
+      **Consequence to expect:** every tester sees a SmartScreen warning on
+      first run. That is the price of this choice, not a bug report.
+- [x] Sentry release tagging spot-check — DONE 2026-07-29:
+      `clingfy@1.0.6+7+ab92530` on the crash event itself, mapping to
+      exact version + build + commit.
+      **It was broken until #374:** every Windows build tagged
+      `clingfy@++<commit>` (no version at all), because the lane never
+      passed FLUTTER_BUILD_NAME / FLUTTER_BUILD_NUMBER as dart-defines —
+      the `--build-name` / `--build-number` FLAGS do not reach
+      `String.fromEnvironment`. Guarded by #375, which logs an error at
+      startup if the tag ever degrades again.
 
 Not beta-blocking, tracked:
 
@@ -118,8 +174,19 @@ Not beta-blocking, tracked:
 - [ ] Runner.rc cosmetic strings PR (FileDescription/window
       title/copyright → "Clingfy"); `CompanyName`/`ProductName` stay
       frozen — they are the path_provider data-directory identity.
-- [ ] D9 per-channel mutex/data-dir identity (dev + prod currently share
-      both; tester guide warns against side-by-side installs).
+- [x] D9 per-channel mutex/data-dir identity — DONE 2026-07-27 (#373)
+      and completed 2026-08-01 (#394). All five identities fork: the
+      single-instance mutex, the settings store (Runner.rc ProductName →
+      path_provider), recordings, logs and the preset-thumbnail cache.
+      prod's identity is byte-for-byte unchanged and pinned by tests;
+      anything unrecognised resolves to prod, because guessing dev for a
+      released build would point it away from the user's recordings.
+      The native LOG path was missed in #373 — the edit added the include
+      but not the use — and was fixed in #394; its test now asserts the
+      path AGREES WITH the identity helper rather than restating the
+      literal, which is what let the miss survive review.
+      Side-by-side installs are now safe; the tester-guide warning can be
+      relaxed.
 
 ## 4. Cutting the beta build
 

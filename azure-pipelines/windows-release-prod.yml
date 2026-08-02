@@ -39,6 +39,8 @@ pool:
   vmImage: "windows-latest"
 
 variables:
+
+  - template: flutter-version.yml
   - group: "Clingfy-Secrets"
 
   - name: APP_ENV
@@ -74,12 +76,12 @@ stages:
             displayName: "Stage .env.prod"
 
           - task: FlutterInstall@0
-            displayName: "Install Flutter 3.41.1"
+            displayName: "Install Flutter $(flutterVersion)"
             inputs:
               mode: auto
               channel: stable
               version: custom
-              customVersion: "3.41.1"
+              customVersion: "$(flutterVersion)"
 
           # Inno Setup is not preinstalled on windows-latest. 6.5+ prints a
           # "Non-commercial use only" notice on unlicensed installs — verify the
@@ -104,11 +106,29 @@ stages:
           # runs under the service connection below). No WIN_SIGN_* env => 03_sign
           # skips and the build is unsigned. Build number comes from pubspec
           # (`X.Y.Z+N`), NOT $(Build.BuildId), so it stays within 16 bits.
+          #
+          # -RunTests gates the PRODUCTION release on `flutter analyze lib` plus
+          # the native ctest suite. It shipped without this: the lane that cuts
+          # what users install ran no tests at all, while the dev channel and
+          # GitHub CI both did. A release could be built, published and smoke-
+          # tested green with a native regression in it, because "smoke" checks
+          # that the feed serves the bytes -- not that the bytes work.
+          #
+          # Costs a second compile (runner_tests, Debug) on top of the release
+          # build, and a cold agent also pays the GoogleTest fetch + CMake
+          # configure. That is minutes on a lane that runs per RELEASE, which is
+          # the right place to spend them. The dev channel deliberately stays
+          # untested-by-lane: it runs on every merge, and GitHub CI already
+          # covers those commits.
+          #
+          # The gate excludes ColorGradeGoldenTest (mirroring GitHub CI) and
+          # CameraDcompOverlayPoc (needs an interactive compositor; it SKIPS on
+          # a headless agent). Everything else blocks the release.
           - powershell: |
               pwsh -NoProfile -File `
-                ops/release/windows/workflows/local_release.ps1 -Channel prod -Clean
+                ops/release/windows/workflows/local_release.ps1 -Channel prod -Clean -RunTests
               if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
-            displayName: "Build + package (unsigned prod)"
+            displayName: "Build + test + package (unsigned prod)"
             env:
               APP_ENV: $(APP_ENV)
               RELEASE_CHANNEL: $(RELEASE_CHANNEL)

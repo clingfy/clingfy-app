@@ -598,7 +598,12 @@ final class RecordingFailureRecoveryTests: XCTestCase {
       completion.fulfill()
     }
 
-    wait(for: [completion], timeout: 1.0)
+    // Ceiling, not the behaviour under test: the writer completes in
+    // milliseconds. At 1.0s this was exceeded when the fast lane runs classes
+    // in parallel — 0 failures in 5 isolated runs, intermittent in a full-lane
+    // run at 3.4s against a normal 0.1s. Same shape as the settle waits in
+    // MicrophoneLevelTelemetryTests.
+    wait(for: [completion], timeout: 10.0)
     XCTAssertFalse(FileManager.default.fileExists(atPath: outputURL.path))
   }
 
@@ -631,7 +636,7 @@ final class RecordingFailureRecoveryTests: XCTestCase {
       completion.fulfill()
     }
 
-    wait(for: [completion], timeout: 1.0)
+    wait(for: [completion], timeout: 10.0)
   }
 
   func testStorageInfoProviderSnapshotCarriesThresholdsAndPaths() {
@@ -886,5 +891,99 @@ final class RecordingFailureRecoveryTests: XCTestCase {
     var manifest = try RecordingProjectManifest.read(from: manifestURL)
     manifest.updateStatus(status)
     try manifest.write(to: manifestURL)
+  }
+
+  // MARK: - Camera failure must not cost the take
+
+  /// The message has to say what SURVIVED, not just what broke. "Camera
+  /// failed" alone reads as "your recording is gone", which is precisely what
+  /// this change stopped being true.
+  func testSalvageWarningNamesWhatWasKeptAndWhatWasLost() {
+    let message = ScreenRecorderFacade.cameraFinalizeSalvageWarning
+
+    XCTAssertTrue(message.lowercased().contains("camera"))
+    XCTAssertTrue(
+      message.lowercased().contains("no camera")
+        || message.lowercased().contains("could not be saved"),
+      "the loss has to be stated plainly")
+    XCTAssertTrue(
+      message.lowercased().contains("screen"),
+      "the surviving screen recording has to be named")
+    XCTAssertTrue(
+      message.lowercased().contains("audio"),
+      "the surviving audio has to be named")
+    XCTAssertTrue(
+      message.lowercased().contains("ready"),
+      "the user needs to know the take is usable, not merely present")
+  }
+
+  /// Guards the wording against a future "simplification" back to a bare
+  /// failure string.
+  func testSalvageWarningDoesNotReadAsATotalFailure() {
+    let message = ScreenRecorderFacade.cameraFinalizeSalvageWarning.lowercased()
+    XCTAssertFalse(message.contains("recording failed"))
+    XCTAssertFalse(message.contains("discarded"))
+    XCTAssertFalse(message.contains("lost your"))
+  }
+
+  /// The behavioural promise of the salvage change: a take whose camera
+  /// failed is a normal, openable recording that simply has no camera.
+  ///
+  /// This is the assertion that matters — the warning copy above is only how
+  /// it is explained. Before the change this project shape never reached disk
+  /// as `ready`, because a camera finalize failure completed the lifecycle
+  /// with `finalURL: nil`.
+  func testAProjectSalvagedWithoutACameraIsStillOpenable() throws {
+    let rootURL = makeTemporaryDirectory()
+    defer { try? FileManager.default.removeItem(at: rootURL) }
+
+    let projectRoot = rootURL.appendingPathComponent(
+      RecordingProjectPaths.projectDirectoryName(for: "rec_salvaged"),
+      isDirectory: true
+    )
+    try createProjectSkeleton(at: projectRoot, projectId: "rec_salvaged")
+    try writeReadyMetadataFiles(to: projectRoot)
+    try markProjectReady(at: projectRoot)
+
+    // Exactly what survives a camera finalize failure: screen + audio on
+    // disk, no camera directory at all.
+    let cameraDirectory = projectRoot.appendingPathComponent("camera", isDirectory: true)
+    try? FileManager.default.removeItem(at: cameraDirectory)
+    XCTAssertFalse(FileManager.default.fileExists(atPath: cameraDirectory.path))
+
+    let projectRef = try ProjectOpenValidator.validateProjectURL(projectRoot)
+    XCTAssertEqual(projectRef.projectId, "rec_salvaged")
+
+    // And the manifest must not claim a camera it does not have, or export
+    // would look for a file that was never written.
+    let sources = projectRef.mediaSources()
+    XCTAssertNil(sources.cameraVideoURL, "a salvaged take must not advertise a camera")
+  }
+
+  // MARK: - Why the camera was inactive
+
+  /// The three "not active" paths used to return an identical string, so a
+  /// field report could not be resolved without reproducing it. Each now
+  /// names itself.
+  func testTheThreeInactiveMessagesAreDistinguishable() {
+    let endings: [CameraRecorder.SessionEnding] = [
+      .neverBegan, .finishedSuccessfully, .failed,
+    ]
+    XCTAssertEqual(
+      Set(endings.map(\.rawValue)).count, endings.count,
+      "each ending must be identifiable in a log line")
+
+    for ending in endings {
+      XCTAssertFalse(ending.rawValue.isEmpty)
+    }
+  }
+
+  /// A fresh recorder has never had a session, so an early stop must say so
+  /// rather than implying something tore a session down.
+  func testAFreshRecorderReportsThatItNeverBegan() {
+    XCTAssertEqual(CameraRecorder.SessionEnding.neverBegan.rawValue, "neverBegan")
+    XCTAssertEqual(
+      CameraRecorder.SessionEnding.finishedSuccessfully.rawValue, "finishedSuccessfully")
+    XCTAssertEqual(CameraRecorder.SessionEnding.failed.rawValue, "failed")
   }
 }

@@ -186,6 +186,22 @@ class AppLocalizationsAr extends AppLocalizations {
   String get high => 'عالية';
 
   @override
+  String get gifSizeLabel => 'الحجم';
+
+  @override
+  String get gifSizeSmall => 'صغير (480 بكسل)';
+
+  @override
+  String get gifSizeMedium => 'متوسط (720 بكسل)';
+
+  @override
+  String get gifSizeLarge => 'كبير (1080 بكسل)';
+
+  @override
+  String get gifSizeCaption =>
+      'يتم تصدير ملفات GIF بمعدل 15 إطارًا في الثانية. الأحجام الأكبر تبدو أوضح لكنها تُنتج ملفات أكبر.';
+
+  @override
   String get original => 'أصلي';
 
   @override
@@ -885,6 +901,9 @@ class AppLocalizationsAr extends AppLocalizations {
   String get clips => 'المقاطع';
 
   @override
+  String get color => 'الألوان';
+
+  @override
   String get clipSplit => 'تقسيم';
 
   @override
@@ -992,6 +1011,12 @@ class AppLocalizationsAr extends AppLocalizations {
 
   @override
   String get colorCorrection => 'تصحيح الألوان';
+
+  @override
+  String get colorUndo => 'تراجع عن تعديل الألوان';
+
+  @override
+  String get colorRedo => 'إعادة تعديل الألوان';
 
   @override
   String get autoEnhance => 'تحسين تلقائي';
@@ -1591,6 +1616,9 @@ class AppLocalizationsAr extends AppLocalizations {
   String get appDescription => 'مسجل شاشة بسيط وقوي لنظام macOS.';
 
   @override
+  String get appDescriptionWindows => 'مسجل شاشة بسيط وقوي لنظام Windows.';
+
+  @override
   String get visitWebsite => 'زيارة الموقع';
 
   @override
@@ -1831,6 +1859,20 @@ class AppLocalizationsAr extends AppLocalizations {
       'ساعد في تحسين Clingfy من خلال مشاركة بيانات استخدام الميزات والموثوقية. لا تتضمن أبدًا التسجيلات أو أسماء الملفات أو الصوت أو الفيديو أو النصوص المفرّغة.';
 
   @override
+  String get diagnosticsAnalyticsInternal => 'وضع علامة داخلي على هذا الجهاز';
+
+  @override
+  String get diagnosticsAnalyticsInternalHelp =>
+      'للمالك/الاختبار فقط. يستبعد إحصاءات هذا التثبيت من الأرقام الحقيقية، بحيث لا يضخّم استخدامك الخاص الإحصاءات. لا يرى المستخدمون العاديون هذا الخيار.';
+
+  @override
+  String get diagnosticsAnalyticsTest => 'اختبار أحداث الإحصاءات';
+
+  @override
+  String get diagnosticsAnalyticsTestHelp =>
+      'للمالك/الاختبار فقط. يرسل إحصاءات موسومة كاختبار — تظهر فقط في عرض الاختبار بلوحة المعلومات الداخلية، وليس في الأرقام الحقيقية — للتحقق من المسار. كما يفعّل الأحداث في إصدارات التصحيح.';
+
+  @override
   String get openLogsFolder => 'افتتاح مجلد السجلات';
 
   @override
@@ -1912,6 +1954,25 @@ class AppLocalizationsAr extends AppLocalizations {
   @override
   String get micInputIndicatorLowTooltip =>
       'مستوى إدخال الميكروفون منخفض جدًا. ارفع مستوى الإدخال أو اقترب من الميكروفون.';
+
+  @override
+  String get recordingMicTooLowWarning =>
+      'الميكروفون لا يكاد يسجّل أي صوت. ارفع مستوى الإدخال من إعدادات النظام › الصوت › الإدخال، أو اقترب من الميكروفون — وإلا فلن يحتوي هذا التسجيل على صوت قابل للاستخدام.';
+
+  @override
+  String get recordingMicTooLowHeadline => 'مستوى الميكروفون منخفض جدًا';
+
+  @override
+  String get recordingSystemAudioBleedHeadline =>
+      'صوت السماعات سيتسرّب إلى الميكروفون';
+
+  @override
+  String get preRecordingBarMicTooLow =>
+      'مستوى الميكروفون منخفض جدًا — ارفع مستوى الإدخال من إعدادات النظام › الصوت › الإدخال.';
+
+  @override
+  String get preRecordingBarBleedRisk =>
+      'صوت النظام يُشغَّل عبر مكبر الصوت وسيتسرّب إلى الميكروفون. استخدم سماعات الرأس.';
 
   @override
   String get noMicAudioFound => 'لم يتم العثور على مسار صوتي للميكروفون';
@@ -2009,6 +2070,10 @@ class AppLocalizationsAr extends AppLocalizations {
 
   @override
   String get recordingSystemAudio => 'صوت النظام';
+
+  @override
+  String get recordingSystemAudioBleedWarning =>
+      'صوت النظام يُشغَّل عبر مكبرات الصوت، لذا سيلتقطه الميكروفون مرة أخرى كصدى. استخدم سماعات الرأس للحصول على تسجيل نظيف.';
 
   @override
   String get recordingExcludeMicFromSystemAudio =>
@@ -2526,6 +2591,10 @@ class AppLocalizationsAr extends AppLocalizations {
 
   @override
   String get appliedOnExportNoticeWindows =>
+      'يُطبَّق عند التصدير — المعاينة الداخلية لا تعرض هذا التأثير بعد.';
+
+  @override
+  String get audioGainNoticeWindows =>
       'يُسمع الكسب بالكامل في المعاينات المُعدَّلة وعند التصدير — المعاينة غير المقصوصة تعكس تغييرات مستوى الصوت فقط.';
 
   @override
@@ -2582,4 +2651,34 @@ class AppLocalizationsAr extends AppLocalizations {
 
   @override
   String get forceNativeCrashLabel => 'فرض انهيار أصلي (اختبار)';
+
+  @override
+  String get settingsPrivacyTitle => 'الخصوصية';
+
+  @override
+  String get crashReportingTitle => 'تقارير الأعطال والتشخيص';
+
+  @override
+  String get crashReportingDescription =>
+      'أرسل تقارير أعطال مجهولة المصدر وتشخيصات للأخطاء لإصلاح المشاكل. تشمل الخطأ وتتبع الاستدعاء وإصدار التطبيق وتفاصيل نظام التشغيل وبطاقة الرسوم. لا تشمل أبدًا تسجيلاتك أو محتوى الشاشة أو الصوت أو أسماء الملفات.';
+
+  @override
+  String get crashReportingToggle => 'إرسال تقارير الأعطال';
+
+  @override
+  String get crashReportingRestartNote =>
+      'إيقاف هذا يوقف الإرسال فورًا. أما تقارير الأعطال التي توقف التطبيق بالكامل فتتوقف بعد إعادة تشغيل Clingfy.';
+
+  @override
+  String get crashReportingNoticeTitle => 'حول تقارير الأعطال';
+
+  @override
+  String get crashReportingNoticeBody =>
+      'يرسل Clingfy تقارير أعطال مجهولة المصدر وتشخيصات للأخطاء لإصلاح المشاكل. يشمل ذلك الخطأ وتتبع الاستدعاء وإصدار التطبيق وتفاصيل نظام التشغيل وبطاقة الرسوم — ولا يشمل أبدًا تسجيلاتك أو محتوى الشاشة أو الصوت أو أسماء الملفات.\n\nيمكنك إيقاف هذا في أي وقت من الإعدادات › التشخيص.';
+
+  @override
+  String get crashReportingNoticeAccept => 'حسنًا';
+
+  @override
+  String get crashReportingNoticeOptOut => 'إيقاف';
 }
