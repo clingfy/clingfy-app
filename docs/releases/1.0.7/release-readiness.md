@@ -20,14 +20,24 @@ Fill this section before starting verification.
 - Verified by: `Nabil Alhafez`
 - Commit: **two** — the platforms were built from different commits.
   - Windows: `216f1d0`
-  - macOS: `e60b838` (what tag `v1.0.7` points at)
+  - macOS: `8479c1b` (what tag `v1.0.7` points at)
   - The branch moved between the two publishes: `develop` was merged in to pick
-    up the export/colour fixes. Everything Windows would have missed is
-    macOS-only — `14a4af6` (#402 camera overlay encoded twice), `ff91a13` (#403
-    export writer probe), `19dcd9b` (#404 sRGB capture) touch `macos/**` and
-    nothing else, so the shipped Windows 1.0.7 is not short a fix. Checked, not
-    assumed: `git show --stat` on each.
-- Tag: `v1.0.7` → `e60b838`
+    up the export/colour fixes. Over that whole range the only non-macOS change
+    is `8479c1b` itself, which touches `ops/release` — release tooling, not app
+    code — so **the shipped Windows 1.0.7 is not short a fix**. The app-code
+    commits in the window are macOS-only: `14a4af6` (#402 camera overlay encoded
+    twice), `ff91a13` (#403 export writer probe), `19dcd9b` (#404 sRGB capture).
+    Checked, not assumed: `git diff --name-only 216f1d0..8479c1b`.
+- Tag: `v1.0.7` → `8479c1b`
+  - **The tag moved after this doc was first filled in.** It initially pointed at
+    `e60b838`; the macOS lane ran a second time after `8479c1b` (a Telegram
+    failure must not abort the release before tagging) and re-tagged. An earlier
+    revision of this file recorded `e60b838` as the macOS commit — that was the
+    FIRST run, not what is live. A local `git fetch` will refuse the new tag as a
+    clobber; `git fetch --tags --force` is needed.
+  - This is also why the appcast carries two `1.0.7` items, `775` and `776`: one
+    per run, the second published with `ALLOW_OVERWRITE`. `776` is live. See the
+    follow-up at the end of this doc.
 - Build:
   - macOS: `776` — `CFBundleVersion` / appcast `sparkle:version`, set from
     `$(Build.BuildId)` by the prod lane.
@@ -287,7 +297,8 @@ believing it is current:
 
 ## macOS prod publish (verified 2026-08-02)
 
-Published from `e60b838` (tag `v1.0.7`). Appcast:
+Published from `8479c1b` (tag `v1.0.7`) — the second lane run; the first ran from
+`e60b838` and produced the superseded `775` entry. Appcast:
 `https://clingfyreleases.blob.core.windows.net/updates/appcast.xml`
 
 | check | result |
@@ -326,10 +337,15 @@ Follow-up issues after release:
   URL (`Clingfy_1.0.7.dmg`). The blob now holds the 776 bytes (52 121 219), so
   775's `edSignature` — cut for 52 121 035 — does not verify against what that
   URL serves. Sparkle picks the highest version, so real updates are unaffected;
-  1.0.6 shipped with the same duplication (618/619). Worth fixing at the source:
-  re-running a publish for a version that already has an entry appends rather
-  than replaces, leaving an item that would fail signature verification if
-  anything ever selected it.
+  1.0.6 shipped with the same duplication (618/619).
+  **Cause, confirmed after the fact:** the lane ran twice for 1.0.7 — once from
+  `e60b838` (→ `775`) and again from `8479c1b` (→ `776`) with `ALLOW_OVERWRITE`,
+  which is also why tag `v1.0.7` moved. The DMG name carries only the marketing
+  version while `sparkle:version` is the build id, so the second run replaced
+  the blob while `generate_appcast` kept the first run's item.
+  **FIXED at the source in #410**: the publish now prunes to one item per
+  enclosure URL before uploading. That is preventive — the live feed keeps its
+  stale `775` item until the next macOS publish rewrites the appcast.
 * macOS prod lane runs **no tests** — the gap the Windows lane closed in #401
   with `-RunTests`. Did not bite this release (every macOS commit here landed
   through PR CI), but the lane that builds what users install still gates on
