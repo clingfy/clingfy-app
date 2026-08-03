@@ -2881,6 +2881,35 @@ bool PreviewEngine::RenderEditedFrameLocked(Impl* impl,
   return true;
 }
 
+PreviewEngine::PacerStallDecision PreviewEngine::DecidePacerStallReport(
+    const PacerStallInput& in) {
+  PacerStallDecision out;
+
+  if (in.rendered_in_window > 0) {
+    // Producing again. Only announce recovery if a stall was announced —
+    // otherwise a sub-threshold gap would log a recovery from nothing.
+    out.next_stalled_windows = 0;
+    out.next_stall_reported = false;
+    out.report = in.stall_reported ? PacerStallReport::kRecovered
+                                   : PacerStallReport::kNone;
+    return out;
+  }
+
+  const int windows = in.stalled_windows + 1;
+  out.next_stalled_windows = windows;
+  out.next_stall_reported = in.stall_reported;
+
+  if (windows < kPacerStallOnsetWindows) {
+    return out;  // not yet convincing — playback can legitimately pause here
+  }
+  const int since_onset = windows - kPacerStallOnsetWindows;
+  if (!in.stall_reported || since_onset % kPacerStallRepeatWindows == 0) {
+    out.report = PacerStallReport::kStalled;
+    out.next_stall_reported = true;
+  }
+  return out;
+}
+
 PreviewEngine::PacerChaseDecision PreviewEngine::DecidePacerChase(
     const PacerChaseInput& in) {
   PacerChaseDecision out;
@@ -3248,6 +3277,10 @@ void PreviewEngine::PacerLoop() {
   int telemetry_rendered = 0;
   int telemetry_skipping = 0;
   int telemetry_idle = 0;
+  // Stall watchdog (Info level, rate-limited): the same counters, but reported
+  // when the pacer is playing and emits NOTHING. See DecidePacerStallReport.
+  int stalled_windows = 0;
+  bool stall_reported = false;
   while (!shutting_down_.load()) {
     Impl* impl = nullptr;
     {
@@ -3296,6 +3329,32 @@ void PreviewEngine::PacerLoop() {
                   " rendered=" + std::to_string(telemetry_rendered) +
                   " skipping=" + std::to_string(telemetry_skipping) +
                   " idle=" + std::to_string(telemetry_idle) + " per 2s");
+
+          // The same numbers, escalated to Info ONLY when the pacer is playing
+          // and producing nothing — the shape of the 35-hour burn that left no
+          // trace in a release log (625 frames, one core, Debug-only evidence).
+          const int stalled_before = stalled_windows;
+          const auto stall = DecidePacerStallReport(PacerStallInput{
+              telemetry_rendered, stalled_windows, stall_reported});
+          stalled_windows = stall.next_stalled_windows;
+          stall_reported = stall.next_stall_reported;
+          if (stall.report == PacerStallReport::kStalled) {
+            clingfy::bridge::NativeLogPublisher::Instance().Info(
+                "Preview",
+                "pacer STALLED: playing but no frame emitted for ~" +
+                    std::to_string(stalled_windows * 2) +
+                    "s. video_edited=" + std::to_string(impl->edited_pos_ms) +
+                    "ms audio=" + std::to_string(audio_ms) +
+                    "ms audio_playing=" + (audio_playing ? "1" : "0") +
+                    " skipping=" + std::to_string(telemetry_skipping) +
+                    " idle=" + std::to_string(telemetry_idle) + " per 2s");
+          } else if (stall.report == PacerStallReport::kRecovered) {
+            clingfy::bridge::NativeLogPublisher::Instance().Info(
+                "Preview", "pacer recovered after ~" +
+                               std::to_string(stalled_before * 2) +
+                               "s without a frame");
+          }
+
           telemetry_last = now;
           telemetry_rendered = 0;
           telemetry_skipping = 0;

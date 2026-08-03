@@ -376,6 +376,49 @@ class PreviewEngine {
   // Pure decision for one decoded frame. See the tunables above.
   static PacerChaseDecision DecidePacerChase(const PacerChaseInput& input);
 
+  // --- Pacer stall watchdog -------------------------------------------------
+  //
+  // A dev build was once found burning ~0.7 of a core for 35 hours with a
+  // preview session open that had rendered 625 frames in that time, and
+  // NOTHING in the release log said so: the per-window pacer line is Debug,
+  // which release builds do not surface, so the only evidence was Task
+  // Manager. The condition is cheap to name — the pacer is PLAYING yet
+  // emitted no frame across a whole telemetry window — and that is what this
+  // reports, at Info, so the next occurrence is diagnosable from the log
+  // instead of requiring the process to be caught alive.
+  //
+  // Deliberately NOT "promote the 2s line to Info": that would put a line
+  // every 2 seconds into every release log for the entire duration of every
+  // normal playback, which is how a log stops being read at all.
+
+  // Windows are the telemetry cadence (~2s each).
+  static constexpr int kPacerStallOnsetWindows = 15;   // ~30s before the first
+  static constexpr int kPacerStallRepeatWindows = 30;  // then ~every 60s
+
+  enum class PacerStallReport { kNone, kStalled, kRecovered };
+
+  struct PacerStallInput {
+    // Frames emitted during the window that just closed.
+    int rendered_in_window = 0;
+    // Consecutive stalled windows BEFORE this one.
+    int stalled_windows = 0;
+    // A stall has already been reported for this run of windows.
+    bool stall_reported = false;
+  };
+
+  struct PacerStallDecision {
+    PacerStallReport report = PacerStallReport::kNone;
+    int next_stalled_windows = 0;
+    bool next_stall_reported = false;
+  };
+
+  // Pure: rate-limits the stall report so a long stall logs on onset and then
+  // periodically, and logs once on recovery. Recovery is only reported when a
+  // stall was actually reported — a brief gap that never crossed the onset
+  // threshold must not produce a "recovered" line for an event nobody saw.
+  static PacerStallDecision DecidePacerStallReport(
+      const PacerStallInput& input);
+
   // Pure (exposed for tests): the next kept range's source_in_ms strictly
   // AFTER `source_ms`, or -1 when none follows. The monotonic pacer uses it
   // to SEEK across a large cut gap instead of decode-crawling every deleted
