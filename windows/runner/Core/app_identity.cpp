@@ -43,6 +43,17 @@ std::wstring LocalAppDataFolderName(AppChannel channel) {
   // consumer has to remember to quote it, and the ones that forget fail in
   // ways that look like a missing directory. DisplayName keeps the space:
   // that one is read by humans, never typed.
+  //
+  // Note what this change WAS, because the sibling edit in Runner.rc was a
+  // different thing and the two are easy to conflate. Dev here shipped as
+  // "Clingfy Dev" with a space; "Clingfy-Dev" is a REAL rename, not a case
+  // change, and NTFS case-insensitivity does not bridge a space to a hyphen.
+  // Anything a dev build had written under the old path was orphaned. That
+  // was acceptable only because no distributed build ever used it -- the
+  // spaced name landed in #373 (2026-07-28) and the dev feed was still
+  // 1.0.6+111 from about a week earlier, so it existed on local dev machines
+  // and nowhere else. Renaming this for prod, or for dev once a dev build
+  // ships with a given name, orphans real recordings and logs.
   return channel == AppChannel::kDev ? L"Clingfy-Dev" : L"Clingfy";
 }
 
