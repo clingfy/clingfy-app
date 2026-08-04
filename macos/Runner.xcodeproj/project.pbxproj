@@ -82,6 +82,7 @@
 		5B5427312F21985F00B06BA6 /* NativeLogger.swift in Sources */ = {isa = PBXBuildFile; fileRef = 5B54271A2F21985F00B06BA6 /* NativeLogger.swift */; };
 		193E0C2FDA9743A29C651BEA /* TrailingDebouncer.swift in Sources */ = {isa = PBXBuildFile; fileRef = C9C120E099404694B2032107 /* TrailingDebouncer.swift */; };
 		5B5427322F21985F00B06BA6 /* NativeChannel.swift in Sources */ = {isa = PBXBuildFile; fileRef = 5B5426F72F21985F00B06BA6 /* NativeChannel.swift */; };
+		8C7E50F4BC49D3BAED87C61D /* JobProgress.swift in Sources */ = {isa = PBXBuildFile; fileRef = 47F49948C35190FB284C2577 /* JobProgress.swift */; };
 		5B5427332F21985F00B06BA6 /* FlutterError+Error.swift in Sources */ = {isa = PBXBuildFile; fileRef = 5B5426E12F21985F00B06BA6 /* FlutterError+Error.swift */; };
 		5B5427342F21985F00B06BA6 /* PlayerEventHandler.swift in Sources */ = {isa = PBXBuildFile; fileRef = 5B5427042F21985F00B06BA6 /* PlayerEventHandler.swift */; };
 		5B5427352F21985F00B06BA6 /* CaptureBackend.swift in Sources */ = {isa = PBXBuildFile; fileRef = 5B5426E32F21985F00B06BA6 /* CaptureBackend.swift */; };
@@ -352,6 +353,7 @@
 		5B5426F52F21985F00B06BA6 /* Models.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Models.swift; sourceTree = "<group>"; };
 		5B5426F62F21985F00B06BA6 /* NativeBarAction.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = NativeBarAction.swift; sourceTree = "<group>"; };
 		5B5426F72F21985F00B06BA6 /* NativeChannel.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = NativeChannel.swift; sourceTree = "<group>"; };
+		47F49948C35190FB284C2577 /* JobProgress.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = JobProgress.swift; sourceTree = "<group>"; };
 		5B5426F82F21985F00B06BA6 /* NativeErrorCode.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = NativeErrorCode.swift; sourceTree = "<group>"; };
 		5B5426F92F21985F00B06BA6 /* NativeStringsStore.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = NativeStringsStore.swift; sourceTree = "<group>"; };
 		5B5426FA2F21985F00B06BA6 /* NativeUIStringKey.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = NativeUIStringKey.swift; sourceTree = "<group>"; };
@@ -926,6 +928,7 @@
 				5B5426F52F21985F00B06BA6 /* Models.swift */,
 				5B5426F62F21985F00B06BA6 /* NativeBarAction.swift */,
 				5B5426F72F21985F00B06BA6 /* NativeChannel.swift */,
+				47F49948C35190FB284C2577 /* JobProgress.swift */,
 				5B5426F82F21985F00B06BA6 /* NativeErrorCode.swift */,
 				5B5426F92F21985F00B06BA6 /* NativeStringsStore.swift */,
 				5B5426FA2F21985F00B06BA6 /* NativeUIStringKey.swift */,
@@ -1565,6 +1568,7 @@
 				193E0C2FDA9743A29C651BEA /* TrailingDebouncer.swift in Sources */,
 				B8E100012F90000100A0B001 /* ExportMemory.swift in Sources */,
 				5B5427322F21985F00B06BA6 /* NativeChannel.swift in Sources */,
+				8C7E50F4BC49D3BAED87C61D /* JobProgress.swift in Sources */,
 				9A1B2C3D4E5F60718293A4B4 /* CursorFrameResolver.swift in Sources */,
 				E1A0C0012F60000100BEE001 /* AVAssetWriterInputExceptionBridge.m in Sources */,
 				E1A0C0132F60000100BEE013 /* AVCaptureMovieFileOutputExceptionBridge.m in Sources */,

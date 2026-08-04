@@ -831,7 +831,11 @@ class MainFlutterWindow: NSWindow {
             colorGrade: req.colorGrade,
             clips: req.clips,
             onProgress: { [weak self] progress in
-              self?.channel?.invokeMethod("updateExportProgress", arguments: progress)
+              // Labelled payload, not a bare double. See JobProgress — the Dart
+              // side and the Windows publisher implement the same shape.
+              self?.channel?.invokeMethod(
+                "updateExportProgress",
+                arguments: JobProgress.export(progress).toFlutter())
             },
             result: result)
         } else {

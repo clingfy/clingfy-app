@@ -1,3 +1,5 @@
+#include <cmath>
+
 #include "Bridge/export_progress_publisher.h"
 
 #include <memory>
@@ -42,10 +44,22 @@ void ExportProgressPublisher::EmitProgress(double fraction) {
     if (channel_snapshot == nullptr) {
       return;
     }
-    // BARE double payload — Dart reads `call.arguments as double?`.
+    // Labelled map payload. Must stay in step with macOS
+    // Runner/Core/JobProgress.swift and lib/core/bridges/job_progress.dart.
+    flutter::EncodableMap payload;
+    payload[flutter::EncodableValue("job")] = flutter::EncodableValue("export");
+    payload[flutter::EncodableValue("stage")] =
+        flutter::EncodableValue("rendering");
+    // Omitted rather than null when not finite, so Dart shows an indeterminate
+    // spinner instead of a bar pinned at zero.
+    if (std::isfinite(fraction)) {
+      const double clamped = fraction < 0.0 ? 0.0 : (fraction > 1.0 ? 1.0 : fraction);
+      payload[flutter::EncodableValue("fraction")] =
+          flutter::EncodableValue(clamped);
+    }
     channel_snapshot->InvokeMethod(
         method::kUpdateExportProgress,
-        std::make_unique<flutter::EncodableValue>(fraction));
+        std::make_unique<flutter::EncodableValue>(payload));
   });
 }
 

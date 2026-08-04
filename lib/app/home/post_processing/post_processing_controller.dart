@@ -1645,10 +1645,13 @@ class PostProcessingController extends ChangeNotifier {
     }
   }
 
-  void updateProgress(double p) {
-    if (!p.isFinite || p.isNaN || p < 0) return;
-    final normalized = p > 1.0 ? p / 100.0 : p;
-    _exportProgress = normalized.clamp(0.0, 1.0).toDouble();
+  /// `null` means the job cannot report a fraction, which the UI shows as an
+  /// indeterminate spinner. Distinct from 0.0, which means "just started" —
+  /// conflating them is how a determinate bar gets stuck at 0% forever.
+  ///
+  /// Range normalisation already happened in [JobProgress]; this only stores.
+  void updateProgress(double? p) {
+    _exportProgress = p;
     notifyListeners();
   }
 

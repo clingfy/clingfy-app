@@ -13,6 +13,7 @@ import 'package:clingfy/core/permissions/models/windows_permission_details.dart'
 import 'package:clingfy/core/updater/windows_update_feed.dart';
 import 'package:flutter/foundation.dart';
 import '../captions/captions_capability.dart';
+import 'job_progress.dart';
 
 class NativeBridge {
   late final MethodChannel _nativeBridge;
@@ -29,7 +30,7 @@ class NativeBridge {
   VoidCallback? _onIndicatorPauseTapped;
   VoidCallback? _onIndicatorStopTapped;
   VoidCallback? _onIndicatorResumeTapped;
-  ValueChanged<double>? _onExportProgress;
+  ValueChanged<JobProgress>? _onJobProgress;
   VoidCallback? _onMenuBarToggleRequest;
   void Function(String projectPath)? _onProjectOpenRequested;
   Function(String type, Map<String, dynamic>? payload)?
@@ -177,8 +178,13 @@ class NativeBridge {
     _onNativeSelectionChanged = cb;
   }
 
-  void setOnExportProgress(ValueChanged<double>? cb) {
-    _onExportProgress = cb;
+  /// Receives every long-running native job's progress, not just export.
+  ///
+  /// Named for the job rather than the method because `updateExportProgress`
+  /// now carries captions too; renaming the method itself would break the
+  /// Windows publisher and macOS emitter for no gain.
+  void setOnJobProgress(ValueChanged<JobProgress>? cb) {
+    _onJobProgress = cb;
   }
 
   void setOnCameraOverlayMoved(
@@ -216,9 +222,13 @@ class NativeBridge {
         _onMenuBarToggleRequest?.call();
         return null;
       case NativeToFlutterMethod.updateExportProgress:
-        final p = call.arguments as double?;
-        if (p != null) {
-          _onExportProgress?.call(p);
+        // Labelled payload since captions began reporting on this channel.
+        // JobProgress.fromNative also accepts a bare double, so a native binary
+        // out of step with this build degrades to a working export bar rather
+        // than one that silently never moves.
+        final progress = JobProgress.fromNative(call.arguments);
+        if (progress != null) {
+          _onJobProgress?.call(progress);
         }
         return null;
       case NativeToFlutterMethod.preRecordingBarAction:
