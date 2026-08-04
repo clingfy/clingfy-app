@@ -57,6 +57,7 @@
 		5A747E6083E28FD362AC217C /* RecordingStateMachine.swift in Sources */ = {isa = PBXBuildFile; fileRef = A77BB536EE34C7BCF42EEA92 /* RecordingStateMachine.swift */; };
 		5B1C86BC2F300B730068C1BE /* ZoomManualStore.swift in Sources */ = {isa = PBXBuildFile; fileRef = 5B1C86BB2F300B730068C1BE /* ZoomManualStore.swift */; };
 		5B300C112F3AAA00003A4436 /* Sparkle in Frameworks */ = {isa = PBXBuildFile; productRef = 5B300C102F3AAA00003A4436 /* Sparkle */; };
+		FB079E9476E03D95C992E47F /* WhisperKit in Frameworks */ = {isa = PBXBuildFile; productRef = CB3EFCCE8786EA0B2350317C /* WhisperKit */; };
 		5B449F6D2F37828300A03934 /* PermissionState.swift in Sources */ = {isa = PBXBuildFile; fileRef = 5B449F6C2F37828300A03934 /* PermissionState.swift */; };
 		5B449F712F379BFF00A03934 /* ScreenRecorderFacade+Permissions.swift in Sources */ = {isa = PBXBuildFile; fileRef = 5B449F702F379BF900A03934 /* ScreenRecorderFacade+Permissions.swift */; };
 		5B449F7B2F379D1700A03934 /* PermissionsMethodRouter.swift in Sources */ = {isa = PBXBuildFile; fileRef = 5B449F7A2F379D1700A03934 /* PermissionsMethodRouter.swift */; };
@@ -219,6 +220,7 @@
 		F1A0011AA11D105E0000010C /* PauseResumeSupportTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = F1A0011AA11D105E0000010B /* PauseResumeSupportTests.swift */; };
 		F1A0011AA11D105E0000010E /* RecordingIndicatorViewTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = F1A0011AA11D105E0000010D /* RecordingIndicatorViewTests.swift */; };
 		F1A0011AA11D105E00002002 /* RNNoiseEngine.swift in Sources */ = {isa = PBXBuildFile; fileRef = F1A0011AA11D105E00002001 /* RNNoiseEngine.swift */; };
+		CE7FBA2144708DA2E3BDFF86 /* WhisperKitTranscriber.swift in Sources */ = {isa = PBXBuildFile; fileRef = 0F6D49BFBED570FCC825BAF5 /* WhisperKitTranscriber.swift */; };
 		1C81FF1D474AE142AFD8DF65 /* CaptionAudioDecoder.swift in Sources */ = {isa = PBXBuildFile; fileRef = CA1294225BBCC62E6F6EE207 /* CaptionAudioDecoder.swift */; };
 		B7CF718F9E65ECA62156D1E8 /* TranscriptionJob.swift in Sources */ = {isa = PBXBuildFile; fileRef = 1B53A0D0EFF57024DCDCCC3E /* TranscriptionJob.swift */; };
 		2CC278042049D40F45C4C085 /* CaptionTranscriber.swift in Sources */ = {isa = PBXBuildFile; fileRef = E31B222832063CEBAA5394AD /* CaptionTranscriber.swift */; };
@@ -490,6 +492,7 @@
 		F1A0011AA11D105E0000010B /* PauseResumeSupportTests.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = PauseResumeSupportTests.swift; sourceTree = "<group>"; };
 		F1A0011AA11D105E0000010D /* RecordingIndicatorViewTests.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = RecordingIndicatorViewTests.swift; sourceTree = "<group>"; };
 		F1A0011AA11D105E00002001 /* RNNoiseEngine.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = RNNoiseEngine.swift; sourceTree = "<group>"; };
+		0F6D49BFBED570FCC825BAF5 /* WhisperKitTranscriber.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = WhisperKitTranscriber.swift; sourceTree = "<group>"; };
 		CA1294225BBCC62E6F6EE207 /* CaptionAudioDecoder.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = CaptionAudioDecoder.swift; sourceTree = "<group>"; };
 		1B53A0D0EFF57024DCDCCC3E /* TranscriptionJob.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = TranscriptionJob.swift; sourceTree = "<group>"; };
 		E31B222832063CEBAA5394AD /* CaptionTranscriber.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = CaptionTranscriber.swift; sourceTree = "<group>"; };
@@ -550,6 +553,7 @@
 			buildActionMask = 2147483647;
 			files = (
 				5B300C112F3AAA00003A4436 /* Sparkle in Frameworks */,
+				FB079E9476E03D95C992E47F /* WhisperKit in Frameworks */,
 				32FB535522953FAAFDFB0C14 /* Pods_Runner.framework in Frameworks */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
@@ -1178,6 +1182,7 @@
 				9C79B5FE92F04C2AACEAEC73 /* AACEncoderSettings.swift */,
 				F1A0011AA11D105E00000105 /* CleanedMicCache.swift */,
 				F1A0011AA11D105E00002001 /* RNNoiseEngine.swift */,
+				0F6D49BFBED570FCC825BAF5 /* WhisperKitTranscriber.swift */,
 				CA1294225BBCC62E6F6EE207 /* CaptionAudioDecoder.swift */,
 				1B53A0D0EFF57024DCDCCC3E /* TranscriptionJob.swift */,
 				E31B222832063CEBAA5394AD /* CaptionTranscriber.swift */,
@@ -1322,6 +1327,7 @@
 			mainGroup = 33CC10E42044A3C60003C045;
 			packageReferences = (
 				5B449F7C2F382AC300A03934 /* XCRemoteSwiftPackageReference "Sparkle" */,
+				A81B86EDA0C62EBABFB10EB6 /* XCRemoteSwiftPackageReference "argmax-oss-swift" */,
 			);
 			productRefGroup = 33CC10EE2044A3C60003C045 /* Products */;
 			projectDirPath = "";
@@ -1624,6 +1630,7 @@
 				EB56CAFCD7AB46D59A45164F /* AACEncoderSettings.swift in Sources */,
 				F1A0011AA11D105E00000106 /* CleanedMicCache.swift in Sources */,
 				F1A0011AA11D105E00002002 /* RNNoiseEngine.swift in Sources */,
+				CE7FBA2144708DA2E3BDFF86 /* WhisperKitTranscriber.swift in Sources */,
 				1C81FF1D474AE142AFD8DF65 /* CaptionAudioDecoder.swift in Sources */,
 				B7CF718F9E65ECA62156D1E8 /* TranscriptionJob.swift in Sources */,
 				2CC278042049D40F45C4C085 /* CaptionTranscriber.swift in Sources */,
@@ -1821,7 +1828,7 @@
 				GCC_WARN_UNINITIALIZED_AUTOS = YES_AGGRESSIVE;
 				GCC_WARN_UNUSED_FUNCTION = YES;
 				GCC_WARN_UNUSED_VARIABLE = YES;
-				MACOSX_DEPLOYMENT_TARGET = 10.15;
+				MACOSX_DEPLOYMENT_TARGET = 14.0;
 				MTL_ENABLE_DEBUG_INFO = NO;
 				SDKROOT = macosx;
 				SWIFT_COMPILATION_MODE = wholemodule;
@@ -1849,7 +1856,7 @@
 					"$(inherited)",
 					"@executable_path/../Frameworks",
 				);
-				MACOSX_DEPLOYMENT_TARGET = 10.15;
+				MACOSX_DEPLOYMENT_TARGET = 14.0;
 				PROVISIONING_PROFILE_SPECIFIER = "";
 				"PROVISIONING_PROFILE_SPECIFIER[sdk=macosx*]" = Clingfy_Distribution;
 				SPARKLE_FEED_URL = "https://clingfy.com/updates/appcast.xml";
@@ -1913,7 +1920,7 @@
 				GCC_WARN_UNINITIALIZED_AUTOS = YES_AGGRESSIVE;
 				GCC_WARN_UNUSED_FUNCTION = YES;
 				GCC_WARN_UNUSED_VARIABLE = YES;
-				MACOSX_DEPLOYMENT_TARGET = 10.15;
+				MACOSX_DEPLOYMENT_TARGET = 14.0;
 				MTL_ENABLE_DEBUG_INFO = YES;
 				ONLY_ACTIVE_ARCH = YES;
 				SDKROOT = macosx;
@@ -1963,7 +1970,7 @@
 				GCC_WARN_UNINITIALIZED_AUTOS = YES_AGGRESSIVE;
 				GCC_WARN_UNUSED_FUNCTION = YES;
 				GCC_WARN_UNUSED_VARIABLE = YES;
-				MACOSX_DEPLOYMENT_TARGET = 10.15;
+				MACOSX_DEPLOYMENT_TARGET = 14.0;
 				MTL_ENABLE_DEBUG_INFO = NO;
 				SDKROOT = macosx;
 				SWIFT_COMPILATION_MODE = wholemodule;
@@ -1991,7 +1998,7 @@
 					"$(inherited)",
 					"@executable_path/../Frameworks",
 				);
-				MACOSX_DEPLOYMENT_TARGET = 10.15;
+				MACOSX_DEPLOYMENT_TARGET = 14.0;
 				PROVISIONING_PROFILE_SPECIFIER = "";
 				"PROVISIONING_PROFILE_SPECIFIER[sdk=macosx*]" = Clingfy_Distribution;
 				SPARKLE_FEED_URL = "https://clingfy.com/updates/appcast.xml";
@@ -2021,7 +2028,7 @@
 					"$(inherited)",
 					"@executable_path/../Frameworks",
 				);
-				MACOSX_DEPLOYMENT_TARGET = 10.15;
+				MACOSX_DEPLOYMENT_TARGET = 14.0;
 				PROVISIONING_PROFILE_SPECIFIER = "";
 				"PROVISIONING_PROFILE_SPECIFIER[sdk=macosx*]" = Clingfy_Distribution;
 				SPARKLE_FEED_URL = "https://clingfy.com/updates/appcast.xml";
@@ -2093,7 +2100,7 @@
 				GCC_WARN_UNINITIALIZED_AUTOS = YES_AGGRESSIVE;
 				GCC_WARN_UNUSED_FUNCTION = YES;
 				GCC_WARN_UNUSED_VARIABLE = YES;
-				MACOSX_DEPLOYMENT_TARGET = 10.15;
+				MACOSX_DEPLOYMENT_TARGET = 14.0;
 				MTL_ENABLE_DEBUG_INFO = YES;
 				ONLY_ACTIVE_ARCH = YES;
 				SDKROOT = macosx;
@@ -2122,7 +2129,7 @@
 					"$(inherited)",
 					"@executable_path/../Frameworks",
 				);
-				MACOSX_DEPLOYMENT_TARGET = 10.15;
+				MACOSX_DEPLOYMENT_TARGET = 14.0;
 				PRODUCT_BUNDLE_IDENTIFIER = com.clingfy.clingfy.dev;
 				PROVISIONING_PROFILE_SPECIFIER = "";
 				"PROVISIONING_PROFILE_SPECIFIER[sdk=macosx*]" = Clingfy_Dev_Distribution;
@@ -2197,7 +2204,7 @@
 				GCC_WARN_UNINITIALIZED_AUTOS = YES_AGGRESSIVE;
 				GCC_WARN_UNUSED_FUNCTION = YES;
 				GCC_WARN_UNUSED_VARIABLE = YES;
-				MACOSX_DEPLOYMENT_TARGET = 10.15;
+				MACOSX_DEPLOYMENT_TARGET = 14.0;
 				MTL_ENABLE_DEBUG_INFO = NO;
 				SDKROOT = macosx;
 				SWIFT_COMPILATION_MODE = wholemodule;
@@ -2225,7 +2232,7 @@
 					"$(inherited)",
 					"@executable_path/../Frameworks",
 				);
-				MACOSX_DEPLOYMENT_TARGET = 10.15;
+				MACOSX_DEPLOYMENT_TARGET = 14.0;
 				PRODUCT_BUNDLE_IDENTIFIER = com.clingfy.clingfy.dev;
 				PROVISIONING_PROFILE_SPECIFIER = "";
 				"PROVISIONING_PROFILE_SPECIFIER[sdk=macosx*]" = Clingfy_Dev_Distribution;
@@ -2299,7 +2306,7 @@
 				GCC_WARN_UNINITIALIZED_AUTOS = YES_AGGRESSIVE;
 				GCC_WARN_UNUSED_FUNCTION = YES;
 				GCC_WARN_UNUSED_VARIABLE = YES;
-				MACOSX_DEPLOYMENT_TARGET = 10.15;
+				MACOSX_DEPLOYMENT_TARGET = 14.0;
 				MTL_ENABLE_DEBUG_INFO = NO;
 				SDKROOT = macosx;
 				SWIFT_COMPILATION_MODE = wholemodule;
@@ -2327,7 +2334,7 @@
 					"$(inherited)",
 					"@executable_path/../Frameworks",
 				);
-				MACOSX_DEPLOYMENT_TARGET = 10.15;
+				MACOSX_DEPLOYMENT_TARGET = 14.0;
 				PRODUCT_BUNDLE_IDENTIFIER = com.clingfy.clingfy.dev;
 				PROVISIONING_PROFILE_SPECIFIER = "";
 				"PROVISIONING_PROFILE_SPECIFIER[sdk=macosx*]" = Clingfy_Dev_Distribution;
@@ -2426,6 +2433,14 @@
 				minimumVersion = 2.8.1;
 			};
 		};
+		A81B86EDA0C62EBABFB10EB6 /* XCRemoteSwiftPackageReference "argmax-oss-swift" */ = {
+			isa = XCRemoteSwiftPackageReference;
+			repositoryURL = "https://github.com/argmaxinc/argmax-oss-swift.git";
+			requirement = {
+				kind = exactVersion;
+				version = 1.0.0;
+			};
+		};
 /* End XCRemoteSwiftPackageReference section */
 
 /* Begin XCSwiftPackageProductDependency section */
@@ -2433,6 +2448,11 @@
 			isa = XCSwiftPackageProductDependency;
 			package = 5B449F7C2F382AC300A03934 /* XCRemoteSwiftPackageReference "Sparkle" */;
 			productName = Sparkle;
+		};
+		CB3EFCCE8786EA0B2350317C /* WhisperKit */ = {
+			isa = XCSwiftPackageProductDependency;
+			package = A81B86EDA0C62EBABFB10EB6 /* XCRemoteSwiftPackageReference "argmax-oss-swift" */;
+			productName = WhisperKit;
 		};
 /* End XCSwiftPackageProductDependency section */
 	};
