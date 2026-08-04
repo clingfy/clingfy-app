@@ -6,6 +6,13 @@ import 'package:clingfy/core/timeline/model/edit_track.dart';
 import 'package:flutter/painting.dart';
 import 'package:flutter_test/flutter_test.dart';
 
+bool _identical(List<int> a, List<int> b) {
+  for (var i = 0; i < a.length; i++) {
+    if (a[i] != b[i]) return false;
+  }
+  return true;
+}
+
 void main() {
   TestWidgetsFlutterBinding.ensureInitialized();
 
@@ -21,6 +28,41 @@ void main() {
 
   Caption cue(String id, String text, {int start = 0, int end = 1000}) =>
       Caption(id: id, startMs: start, endMs: end, text: text);
+
+  /// Whether this environment draws real glyphs, or a stub box font.
+  ///
+  /// `flutter test` ships a stub font that renders EVERY character as a filled
+  /// rectangle of uniform width. That is deliberate — it makes golden tests
+  /// deterministic — but it means a rasterizer test can pass while producing
+  /// visually meaningless output.
+  ///
+  /// This bit us. An earlier version of this file asserted Arabic layout with
+  /// `width > 0`, `height > 0` and `mixed.width > arabicOnly.width`. Boxes
+  /// satisfy all three. The tests were green while every exported caption was
+  /// tofu, and it was only caught by burning captions into a real recording and
+  /// looking at the frames.
+  ///
+  /// The discriminator: two strings of equal length made of DIFFERENT letters.
+  /// Real glyphs differ in shape, so the rasterized bytes differ. A box font
+  /// draws the same rectangle for every character, so the bytes are identical.
+  Future<bool> rendersRealGlyphs() async {
+    const r = CaptionRasterizer();
+    const size = Size(1920, 1080);
+    final a = await r.renderCue(text: 'iiiiiiii', videoSize: size);
+    final b = await r.renderCue(text: 'WWWWWWWW', videoSize: size);
+    final aBytes = await a.toByteData(format: ui.ImageByteFormat.rawRgba);
+    final bBytes = await b.toByteData(format: ui.ImageByteFormat.rawRgba);
+    a.dispose();
+    b.dispose();
+    if (aBytes == null || bBytes == null) return false;
+    if (aBytes.lengthInBytes != bBytes.lengthInBytes) return true;
+    final av = aBytes.buffer.asUint8List();
+    final bv = bBytes.buffer.asUint8List();
+    for (var i = 0; i < av.length; i++) {
+      if (av[i] != bv[i]) return true;
+    }
+    return false;
+  }
 
   group('font scaling', () {
     // A caption authored against 1080p must not render at a quarter size on a
@@ -85,36 +127,70 @@ void main() {
       long.dispose();
     });
 
-    /// Arabic is why rendering lives in Flutter at all. This does not assert
-    /// glyph shaping — that needs a rendered-pixel or platform check — but it
-    /// does assert the text engine produced a real laid-out box rather than
-    /// collapsing, which is what happens when a script has no coverage.
-    test('lays out Arabic without collapsing', () {
-      const r = CaptionRasterizer();
-      final arabic = r.layOut(
-        text: 'مرحبا بكم في كلينجفاي',
-        videoSize: const Size(1920, 1080),
+    /// Pins the environment so nobody reads a green suite as proof of shaping.
+    ///
+    /// While `flutter test` uses its stub box font this asserts FALSE. Once a
+    /// font is bundled and loaded via FontLoader it will start failing, which
+    /// is the intended signal to enable the real glyph tests below.
+    test('reports whether this environment renders real glyphs', () async {
+      final real = await rendersRealGlyphs();
+      expect(
+        real,
+        isFalse,
+        reason:
+            'A real font is now available in tests. Delete this expectation '
+            'and remove the skip from the Arabic shaping tests below — they '
+            'can finally mean something.',
       );
-      expect(arabic.width, greaterThan(0));
-      expect(arabic.height, greaterThan(0));
-      arabic.dispose();
     });
 
-    test('lays out a mixed Arabic and Latin line', () {
+    /// Arabic shaping is the entire reason caption rendering lives in Flutter
+    /// rather than CoreText, so it is the one thing most worth testing — and
+    /// the one thing the stub font makes untestable.
+    ///
+    /// Skipped rather than weakened. A test that passes on tofu is worse than
+    /// no test: it reports coverage that does not exist, which is exactly how
+    /// every caption shipped as empty boxes while this file was green.
+    test('shapes Arabic into distinct glyphs', () async {
+      if (!await rendersRealGlyphs()) {
+        markTestSkipped(
+          'stub box font: bundle a font and load it via FontLoader',
+        );
+        return;
+      }
       const r = CaptionRasterizer();
-      final mixed = r.layOut(
-        text: 'مرحبا Clingfy',
-        videoSize: const Size(1920, 1080),
-      );
-      final arabicOnly = r.layOut(
-        text: 'مرحبا',
-        videoSize: const Size(1920, 1080),
-      );
+      const size = Size(1920, 1080);
+      // Same character count, different letters. Correct shaping renders these
+      // differently; tofu renders both as identical rows of boxes.
+      final a = await r.renderCue(text: 'مرحبا', videoSize: size);
+      final b = await r.renderCue(text: 'بستان', videoSize: size);
+      final ab = (await a.toByteData(
+        format: ui.ImageByteFormat.rawRgba,
+      ))!.buffer.asUint8List();
+      final bb = (await b.toByteData(
+        format: ui.ImageByteFormat.rawRgba,
+      ))!.buffer.asUint8List();
       expect(
-        mixed.width,
-        greaterThan(arabicOnly.width),
-        reason: 'the Latin run must contribute width, not be dropped',
+        ab.length == bb.length && _identical(ab, bb),
+        isFalse,
+        reason: 'two different Arabic words rendered identically — tofu',
       );
+      a.dispose();
+      b.dispose();
+    });
+
+    test('a mixed Arabic and Latin line renders both runs', () async {
+      if (!await rendersRealGlyphs()) {
+        markTestSkipped(
+          'stub box font: bundle a font and load it via FontLoader',
+        );
+        return;
+      }
+      const r = CaptionRasterizer();
+      const size = Size(1920, 1080);
+      final mixed = r.layOut(text: 'مرحبا Clingfy', videoSize: size);
+      final arabicOnly = r.layOut(text: 'مرحبا', videoSize: size);
+      expect(mixed.width, greaterThan(arabicOnly.width));
       mixed.dispose();
       arabicOnly.dispose();
     });

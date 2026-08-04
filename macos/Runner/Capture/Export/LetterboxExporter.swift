@@ -3888,6 +3888,9 @@ final class LetterboxExporter {
     backgroundColor: Int? = nil,
     backgroundImagePath: String? = nil,
     codec: String = "h264",
+    colorGrade: ColorGrade = .identity,
+    captionBitmapDirectory: String? = nil,
+    captions: [CaptionCueTrack.Cue] = [],
     completion: @escaping (Result<URL, Error>) -> Void
   ) {
     // Unconditional, exactly like production. This helper used to carry its own
@@ -3907,6 +3910,9 @@ final class LetterboxExporter {
       inlineCameraRenderPlan: result.inlineCameraRenderPlan,
       backgroundColor: backgroundColor,
       backgroundImagePath: backgroundImagePath,
+      colorGrade: colorGrade,
+      captionBitmapDirectory: captionBitmapDirectory,
+      captions: captions,
       completion: completion
     )
   }
