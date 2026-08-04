@@ -843,6 +843,23 @@ class MainFlutterWindow: NSWindow {
         self.screenRecorder.cancelExport()
         result(nil)
 
+      case "captionsCapability":
+        // Answered natively rather than inferred by the UI, for the same reason
+        // the audio panel gates on getRecordingSceneInfo: only this side knows
+        // the hardware, the OS, and what is actually decodable on disk.
+        if let args = call.arguments as? [String: Any],
+          let projectPath = args["projectPath"] as? String
+        {
+          self.screenRecorder.captionsCapability(projectPath: projectPath, result: result)
+        } else {
+          result(
+            FlutterError(
+              code: NativeErrorCode.badArgs,
+              message: "missing projectPath",
+              details: nil
+            ))
+        }
+
       case "getRecordingSceneInfo":
         if let args = call.arguments as? [String: Any],
           let projectPath = args["projectPath"] as? String

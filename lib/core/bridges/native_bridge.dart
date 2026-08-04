@@ -12,6 +12,7 @@ import 'package:clingfy/core/models/storage_snapshot.dart';
 import 'package:clingfy/core/permissions/models/windows_permission_details.dart';
 import 'package:clingfy/core/updater/windows_update_feed.dart';
 import 'package:flutter/foundation.dart';
+import '../captions/captions_capability.dart';
 
 class NativeBridge {
   late final MethodChannel _nativeBridge;
@@ -892,6 +893,30 @@ class NativeBridge {
       );
     }
     return RecordingSceneInfo.fromMap(raw);
+  }
+
+  /// Asks native whether captions can run on this machine for this recording.
+  ///
+  /// Mirrors `getRecordingSceneInfo`: native is the only side that knows the
+  /// hardware, the OS, and what is actually decodable on disk, so the UI asks
+  /// rather than inferring. Every platform answers — Windows reports
+  /// `platformNotSupported` rather than leaving the method unhandled, because
+  /// an unhandled method throws MissingPluginException and reaches the user as
+  /// a crash-shaped error instead of an explanation.
+  ///
+  /// Falls back to unavailable on a missing implementation or a malformed
+  /// reply. Captions being off is a far better outcome than an exception.
+  Future<CaptionsCapabilityInfo> captionsCapability(String projectPath) async {
+    try {
+      final raw = await _nativeBridge.invokeMethod<Map<dynamic, dynamic>>(
+        'captionsCapability',
+        {'projectPath': projectPath},
+      );
+      if (raw == null) return CaptionsCapabilityInfo.unsupported;
+      return CaptionsCapabilityInfo.fromMap(raw);
+    } on MissingPluginException {
+      return CaptionsCapabilityInfo.unsupported;
+    }
   }
 
   Future<void> previewClose({required String sessionId}) async {

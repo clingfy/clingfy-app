@@ -453,6 +453,69 @@ extension ScreenRecorderFacade {
     ]
   }
 
+  /// Whether captions can run on this machine for this recording.
+  ///
+  /// Uses the same decode probe as the audio scene keys — `readableAudioAsset`,
+  /// which actually decodes a sample buffer rather than trusting
+  /// `fileExists`. A sidecar can be present and undecodable (the documented
+  /// Bluetooth-HFP writer failure), and a caption job that trusted the file
+  /// system would start and then fail partway through instead of never
+  /// offering.
+  func captionsCapability(projectPath: String, result: @escaping FlutterResult) {
+    guard let components = resolvePreviewSceneComponents(projectPath: projectPath) else {
+      result(
+        FlutterError(
+          code: "SCENE_INPUT_MISSING",
+          message: "Recording project not found. It may have been moved or deleted.",
+          details: projectPath
+        )
+      )
+      return
+    }
+
+    let mediaSources = components.mediaSources
+    func decodable(_ path: String?) -> Bool {
+      guard let path, !path.isEmpty else { return false }
+      return LetterboxExporter.readableAudioAsset(url: URL(fileURLWithPath: path)) != nil
+    }
+
+    // Recordings made before macOS 15 have no sidecars at all — the sidecar
+    // writer is macOS 15+ — so their only audio is inside screen.mov, and on
+    // that capture backend it is the microphone alone.
+    let hasMic = decodable(mediaSources.micAudioPath)
+    let hasSystem = decodable(mediaSources.systemAudioPath)
+    let hasEmbedded = !hasMic && !hasSystem && decodable(mediaSources.screenPath)
+
+    #if arch(arm64)
+      let isAppleSilicon = true
+    #else
+      let isAppleSilicon = false
+    #endif
+
+    let capability = CaptionsCapability.resolve(
+      isAppleSilicon: isAppleSilicon,
+      // The deployment target is already at or above the engine's minimum, so
+      // this cannot currently be false. Kept explicit so lowering the floor
+      // produces an explained refusal rather than a link error.
+      meetsMinimumOS: true,
+      hasDecodableMic: hasMic,
+      hasDecodableSystem: hasSystem,
+      hasDecodableEmbedded: hasEmbedded
+    )
+
+    NativeLogger.i(
+      "Captions", "Capability probed",
+      context: [
+        "available": capability.isAvailable,
+        "reason": capability.reason?.rawValue ?? "",
+        "hasMic": hasMic,
+        "hasSystem": hasSystem,
+        "embeddedOnly": capability.usesEmbeddedAudioOnly,
+      ])
+
+    result(capability.toFlutter())
+  }
+
   func getRecordingSceneInfo(projectPath: String, result: @escaping FlutterResult) {
     guard let components = resolvePreviewSceneComponents(projectPath: projectPath) else {
       result(
