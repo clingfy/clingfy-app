@@ -905,6 +905,45 @@ class NativeBridge {
     return RecordingSceneInfo.fromMap(raw);
   }
 
+  /// Transcribes a recording's audio into caption cues.
+  ///
+  /// Long-running: progress arrives on the shared job-progress callback tagged
+  /// `ProgressJob.captions`, and [cancelCaptions] abandons it. The first run on
+  /// a machine also downloads the model, which is why the early ticks are
+  /// indeterminate rather than a bar pinned at zero.
+  ///
+  /// Both sources default on — meetings, demos and tutorials are the common
+  /// case and both sides matter there.
+  ///
+  /// Throws [PlatformException] with code `CAPTIONS_CANCELLED` when the user
+  /// cancelled, which callers should treat as a normal outcome rather than an
+  /// error worth reporting.
+  Future<List<Map<dynamic, dynamic>>> generateCaptions({
+    required String projectPath,
+    bool useMic = true,
+    bool useSystem = true,
+    String? language,
+  }) async {
+    final raw = await _nativeBridge
+        .invokeMethod<List<dynamic>>('generateCaptions', {
+          'projectPath': projectPath,
+          'useMic': useMic,
+          'useSystem': useSystem,
+          if (language != null) 'language': language,
+        });
+    if (raw == null) return const [];
+    return raw.whereType<Map<dynamic, dynamic>>().toList();
+  }
+
+  /// Abandons an in-flight transcription. Safe to call when none is running.
+  Future<void> cancelCaptions() async {
+    try {
+      await _nativeBridge.invokeMethod<void>('cancelCaptions');
+    } on MissingPluginException {
+      // Nothing to cancel on a platform without the engine.
+    }
+  }
+
   /// Asks native whether captions can run on this machine for this recording.
   ///
   /// Mirrors `getRecordingSceneInfo`: native is the only side that knows the

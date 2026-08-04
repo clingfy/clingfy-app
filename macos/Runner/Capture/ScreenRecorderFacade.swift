@@ -108,6 +108,12 @@ final class ScreenRecorderFacade: NSObject {
   // moved into `PreviewEngine`. Facade keeps the public method
   // signatures unchanged and delegates.
   private let previewEngine = PreviewEngine()
+
+  /// Owns the one in-flight transcription: its own serial queue, its engine
+  /// instance, its cancel flag. Deliberately not on `AudioComputeQueue` — see
+  /// CaptionsService for why a minutes-long job cannot share the queue that an
+  /// export preamble blocks on.
+  let captionsService = CaptionsService()
   var captureFPS: Int = 30  // internal: read by StorageDiagnosticsService (PR 7)
   private let defaultZoomFollowStrength: CGFloat = 0.15
   private let cameraCaptureCoordinator = CameraCaptureCoordinator()

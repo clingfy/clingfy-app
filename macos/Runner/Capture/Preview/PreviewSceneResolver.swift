@@ -453,6 +453,89 @@ extension ScreenRecorderFacade {
     ]
   }
 
+  /// Transcribes a recording's audio into caption cues.
+  ///
+  /// Sources are resolved HERE, on the calling thread, and handed to the service
+  /// as plain URLs. That ordering is the rule `AudioComputeQueue`'s doc comment
+  /// demands: resolving a decodable asset can block, and a job must never reach
+  /// back into a blocking cache from inside its own queue.
+  func generateCaptions(
+    projectPath: String,
+    useMic: Bool,
+    useSystem: Bool,
+    language: String?,
+    onProgress: @escaping (JobProgress) -> Void,
+    result: @escaping FlutterResult
+  ) {
+    guard let components = resolvePreviewSceneComponents(projectPath: projectPath) else {
+      result(
+        FlutterError(
+          code: "SCENE_INPUT_MISSING",
+          message: "Recording project not found. It may have been moved or deleted.",
+          details: projectPath
+        )
+      )
+      return
+    }
+
+    let sources = CaptionsService.resolveSources(
+      mediaSources: components.mediaSources, useMic: useMic, useSystem: useSystem)
+
+    guard sources.micURL != nil || sources.systemURL != nil || sources.embeddedURL != nil
+    else {
+      result(
+        FlutterError(
+          code: "CAPTIONS_NO_AUDIO",
+          message: "This recording has no audio that can be transcribed.",
+          details: projectPath
+        ))
+      return
+    }
+
+    NativeLogger.i(
+      "Captions", "Starting transcription",
+      context: [
+        "useMic": sources.micURL != nil,
+        "useSystem": sources.systemURL != nil,
+        "embeddedFallback": sources.embeddedURL != nil,
+        "language": language ?? "auto",
+      ])
+
+    captionsService.generateCaptions(
+      sources: sources,
+      language: language,
+      onProgress: { progress in
+        DispatchQueue.main.async { onProgress(progress) }
+      },
+      completion: { outcome in
+        DispatchQueue.main.async {
+          switch outcome {
+          case .success(let cues):
+            result(cues.map { $0.toFlutter() })
+          case .failure(let error):
+            // Cancellation is a normal outcome, not a failure to report as one.
+            if let transcriptionError = error as? TranscriptionError,
+              transcriptionError == .cancelled
+            {
+              result(
+                FlutterError(
+                  code: "CAPTIONS_CANCELLED", message: "Transcription cancelled",
+                  details: nil))
+            } else {
+              result(
+                FlutterError(
+                  code: "CAPTIONS_FAILED", message: String(describing: error),
+                  details: nil))
+            }
+          }
+        }
+      })
+  }
+
+  func cancelCaptions() {
+    captionsService.cancel()
+  }
+
   /// Whether captions can run on this machine for this recording.
   ///
   /// Uses the same decode probe as the audio scene keys — `readableAudioAsset`,

@@ -124,6 +124,21 @@ void HandleCaptionsCapability(
   result->Success(flutter::EncodableValue(out));
 }
 
+// generateCaptions / cancelCaptions — the engine is Apple-only and not ported.
+//
+// Fails with a coded error rather than going unhandled, for the same reason
+// captionsCapability answers instead of 404ing: an unhandled method throws
+// MissingPluginException in Dart, which reaches the user as a crash-shaped
+// error rather than an explanation. In practice the UI never calls this on
+// Windows because captionsCapability already reported platformNotSupported, so
+// this is the belt to that braces.
+void HandleGenerateCaptions(
+    const flutter::MethodCall<flutter::EncodableValue>& /*call*/,
+    std::unique_ptr<flutter::MethodResult<flutter::EncodableValue>> result) {
+  result->Error("CAPTIONS_UNSUPPORTED",
+                "Caption generation is not available on Windows.");
+}
+
 void RegisterHandlers(HandlerTable& table) {
   table["pickImage"] = &HandlePickImage;
   table["cacheLocalizedStrings"] = &HandleNull;
@@ -131,6 +146,9 @@ void RegisterHandlers(HandlerTable& table) {
   // implementation; was a hardcoded-false stub here).
   table["debugForceNativeCrash"] = &HandleDebugForceNativeCrash;
   table["captionsCapability"] = &HandleCaptionsCapability;
+  table["generateCaptions"] = &HandleGenerateCaptions;
+  // Cancelling a job that can never start is a no-op, not an error.
+  table["cancelCaptions"] = &HandleNull;
 }
 
 }  // namespace clingfy::bridge::routers::misc

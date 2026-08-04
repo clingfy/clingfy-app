@@ -847,6 +847,35 @@ class MainFlutterWindow: NSWindow {
         self.screenRecorder.cancelExport()
         result(nil)
 
+      case "generateCaptions":
+        if let args = call.arguments as? [String: Any],
+          let projectPath = args["projectPath"] as? String
+        {
+          self.screenRecorder.generateCaptions(
+            projectPath: projectPath,
+            // Both sources default ON: meetings, demos and tutorials are the
+            // common case and both sides matter there.
+            useMic: (args["useMic"] as? Bool) ?? true,
+            useSystem: (args["useSystem"] as? Bool) ?? true,
+            language: args["language"] as? String,
+            onProgress: { [weak self] progress in
+              self?.channel?.invokeMethod(
+                "updateExportProgress", arguments: progress.toFlutter())
+            },
+            result: result)
+        } else {
+          result(
+            FlutterError(
+              code: NativeErrorCode.badArgs,
+              message: "missing projectPath",
+              details: nil
+            ))
+        }
+
+      case "cancelCaptions":
+        self.screenRecorder.cancelCaptions()
+        result(nil)
+
       case "captionsCapability":
         // Answered natively rather than inferred by the UI, for the same reason
         // the audio panel gates on getRecordingSceneInfo: only this side knows
