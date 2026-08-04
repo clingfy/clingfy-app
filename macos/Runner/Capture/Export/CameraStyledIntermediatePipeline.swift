@@ -910,6 +910,14 @@ final class InlineCameraRenderer {
     presentationTime: Double,
     plan: CompositionBuilder.InlineCameraRenderPlan,
     screenColorGrade: ColorGrade = .identity,
+    /// Applied to the fully composed frame just before the export transfer
+    /// encode. Used for caption burn-in, which must land on top of the camera
+    /// bubble and must not be touched by `screenColorGrade` above.
+    ///
+    /// A closure rather than caption types so this pipeline stays unaware of
+    /// them; the exporter owns cue lookup and placement. `nil` = no overlay,
+    /// which is the byte-for-byte-unchanged path.
+    composedOverlay: ((CIImage) -> CIImage)? = nil,
     to outputPixelBuffer: CVPixelBuffer
   ) {
     let rawScreenImage = VideoColorPipeline.sourceImage(
@@ -936,12 +944,17 @@ final class InlineCameraRenderer {
       plan: plan
     )
 
+    // Captions (and anything else composed-frame-wide) go on here: after the
+    // camera bubble so they sit above it, and before the encode below so they
+    // travel through the same transfer as every other pixel.
+    let overlaidImage = composedOverlay?(composedImage) ?? composedImage
+
     // The encode goes on the COMPOSED image, not on `screenImage` above: the
     // grade at the top of this function touches only the screen sub-image, so
     // encoding there would leave the camera overlay and the background in sRGB
     // inside a frame the file declares to be 709.
     VideoColorPipeline.renderComposedExportFrame(
-      composedImage,
+      overlaidImage,
       to: outputPixelBuffer,
       bounds: renderBounds,
       using: ciContext

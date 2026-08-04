@@ -1784,6 +1784,8 @@ final class LetterboxExporter {
     backgroundPreset: CanvasBackgroundPreset? = nil,
     colorGrade: ColorGrade = .identity,
     keptRanges: [ClipKeptRange] = [],
+    captionBitmapDirectory: String? = nil,
+    captions: [CaptionCueTrack.Cue] = [],
     audioAsset: AVAsset? = nil,
     useAllAudioSourceTracks: Bool = false,
     editedDurationSeconds: Double? = nil,
@@ -2150,6 +2152,53 @@ final class LetterboxExporter {
     var didLogScreenSourceColorMetadata = false
     var didLogCameraSourceColorMetadata = false
     let directRenderContext = VideoColorPipeline.makeCIContext()
+
+    // Caption burn-in. Both stay nil when captions are off, and every composite
+    // site below is a no-op in that case, so an export without captions is
+    // byte-for-byte what it was before this existed.
+    //
+    // Cues are in SOURCE time, so they are looked up by `sampleTime` — not by
+    // the remapped `outputPresentationTime`. See CaptionCueTrack for why the
+    // cursor must be reset at every reader swap on the reorder path.
+    var captionCueTrack: CaptionCueTrack? = captions.isEmpty ? nil : CaptionCueTrack(cues: captions)
+    let captionRenderer: CaptionOverlayRenderer? = {
+      guard captionCueTrack?.isEmpty == false, let captionBitmapDirectory else { return nil }
+      return CaptionOverlayRenderer(
+        bitmapDirectory: URL(fileURLWithPath: captionBitmapDirectory))
+    }()
+    if let captionCueTrack, captionRenderer != nil {
+      NativeLogger.i(
+        "Export", "Manual render burning in captions",
+        context: [
+          "renderPath": "manual_reader_writer",
+          "cues": captionCueTrack.count,
+          "rejectedCues": captionCueTrack.rejectedCueIds.count,
+          "hasInlineCamera": inlineCameraRenderPlan != nil,
+        ])
+      if !captionCueTrack.rejectedCueIds.isEmpty {
+        NativeLogger.w(
+          "Export", "Caption cues rejected before burn-in",
+          context: ["ids": captionCueTrack.rejectedCueIds.joined(separator: ",")])
+      }
+    }
+
+    /// Composites the cue active at `sourceSeconds`, or returns the frame
+    /// untouched. Shared by both render branches so the camera and non-camera
+    /// paths cannot drift on placement or on which cue is considered active.
+    ///
+    /// Takes SOURCE seconds. Passing edited/output time here would put captions
+    /// on the wrong frames the moment a recording has cuts.
+    let applyCaptions: (CIImage, Double) -> CIImage = { image, sourceSeconds in
+      guard let captionRenderer else { return image }
+      guard let cue = captionCueTrack?.activeCue(atSourceMs: Int(sourceSeconds * 1000.0))
+      else { return image }
+      return captionRenderer.composite(
+        image,
+        cue: cue,
+        renderBounds: renderBounds,
+        bottomMarginFraction: CaptionOverlayRenderer.defaultBottomMarginFraction
+      )
+    }
     if !colorGrade.isIdentity {
       NativeLogger.i(
         "Export", "Manual render applying color grade",
@@ -2339,6 +2388,13 @@ final class LetterboxExporter {
             if rangeSequenced, currentRangeIndex + 1 < keptRanges.count {
               currentEditedBaseMs += keptRanges[currentRangeIndex].durationMs
               currentRangeIndex += 1
+              // Source time is about to jump BACKWARD (ranges are read in
+              // timeline order, not source order). The caption cursor only
+              // walks forward, so without this it stays parked past every
+              // earlier cue and silently renders no captions for the rest of
+              // the export. Covered by CaptionCueTrackTests' reset pair.
+              captionCueTrack?.reset()
+              captionRenderer?.reset()
               switch makeWindowReader(
                 timeRange: sourceWindow(for: keptRanges[currentRangeIndex]))
               {
@@ -2510,6 +2566,10 @@ final class LetterboxExporter {
               presentationTime: sampleTime,
               plan: inlineCameraRenderPlan,
               screenColorGrade: colorGrade,
+              // Same cue lookup and placement as the non-camera branch; the
+              // pipeline applies it after the camera bubble and before the
+              // transfer encode.
+              composedOverlay: { applyCaptions($0, sampleTime) },
               to: renderedPixelBuffer
             )
           } else {
@@ -2543,9 +2603,23 @@ final class LetterboxExporter {
               ? imageToRender
               : ColorGradeRenderer.apply(imageToRender, grade: colorGrade)
 
+            // Captions go on AFTER the grade and BEFORE the transfer encode.
+            //
+            // After the grade, because a caption is authored in a colour the
+            // user picked; running their grade over it would mean a warmed
+            // video also warms its captions. That is why the CALayer seat in
+            // CompositionBuilder is wrong for this — everything composited
+            // there arrives inside `imageToRender` above.
+            //
+            // Before renderComposedExportFrame, because captions are pixels
+            // like any other and must go through the same export transfer.
+            // Anything reading a caption colour back out has to decode with
+            // ColorTransferFunctions.exportTransferToSrgb first.
+            let captionedImage = applyCaptions(gradedImage, sampleTime)
+
             self.clearPixelBuffer(renderedPixelBuffer)
             VideoColorPipeline.renderComposedExportFrame(
-              gradedImage,
+              captionedImage,
               to: renderedPixelBuffer,
               bounds: renderBounds,
               using: directRenderContext
@@ -2657,6 +2731,8 @@ final class LetterboxExporter {
     cameraParams: CameraCompositionParams? = nil,
     colorGrade: ColorGrade = .identity,
     clips: [ClipKeptRange] = [],
+    captionBitmapDirectory: String? = nil,
+    captions: [CaptionCueTrack.Cue] = [],
     onProgress: ((Double) -> Void)? = nil,
     completion: @escaping (Result<URL, Error>) -> Void
   ) {
@@ -3231,6 +3307,8 @@ final class LetterboxExporter {
           backgroundPreset: backgroundPreset,
           colorGrade: colorGrade,
           keptRanges: keptRanges,
+          captionBitmapDirectory: captionBitmapDirectory,
+          captions: captions,
           audioAsset: audioCutComposition,
           useAllAudioSourceTracks: separatedComposition != nil,
           editedDurationSeconds: editedDurationSeconds,

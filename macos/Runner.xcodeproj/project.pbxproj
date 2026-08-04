@@ -132,6 +132,10 @@
 		81CB5B49A932A3DC69059C83 /* MetadataSidecarWriter.swift in Sources */ = {isa = PBXBuildFile; fileRef = C7624E3F54B75567B79BEB96 /* MetadataSidecarWriter.swift */; };
 		82988B71EFD8E0C92461A1E0 /* GifExportPolicyTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 523922A25F5F34150B8F9459 /* GifExportPolicyTests.swift */; };
 		89810FF4C029B0A37903EF47 /* GifExportPolicy.swift in Sources */ = {isa = PBXBuildFile; fileRef = F44E22AB2A7EA86DE6C7B238 /* GifExportPolicy.swift */; };
+		ACEE5EF53ACF2689541946B4 /* CaptionOverlayRenderer.swift in Sources */ = {isa = PBXBuildFile; fileRef = 96ECD5ECD6A23FA1CA33BE58 /* CaptionOverlayRenderer.swift */; };
+		9059C1FCB24BB8C03F71CFC8 /* CaptionOverlayRendererTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = C2658B73179F52226D6D29DF /* CaptionOverlayRendererTests.swift */; };
+		E5208EC1E2EC9B87A3721643 /* CaptionCueTrack.swift in Sources */ = {isa = PBXBuildFile; fileRef = 755A0211759478DDA3D7D204 /* CaptionCueTrack.swift */; };
+		12D91885E4F7C378D82C5CC4 /* CaptionCueTrackTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 0E057F32867A1DB4C958B0B3 /* CaptionCueTrackTests.swift */; };
 		8A7F969A09CE93447DE1EA17 /* ZoomQueryServiceTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = A74D174212C4749A322E8474 /* ZoomQueryServiceTests.swift */; };
 		8AAA59EA7CDDF22B4E47FB07 /* CaptureDestinationDiagnostics.swift in Sources */ = {isa = PBXBuildFile; fileRef = BDCE6283CC82D1BA03141B01 /* CaptureDestinationDiagnostics.swift */; };
 		8DD941C470535110159C907D /* RecordingSessionState.swift in Sources */ = {isa = PBXBuildFile; fileRef = 7756A56B1B8A4B603EFFAEA1 /* RecordingSessionState.swift */; };
@@ -306,6 +310,8 @@
 		4899C8EB90C6FE3503A404A8 /* Pods-RunnerTests.release-prod.xcconfig */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = text.xcconfig; name = "Pods-RunnerTests.release-prod.xcconfig"; path = "Target Support Files/Pods-RunnerTests/Pods-RunnerTests.release-prod.xcconfig"; sourceTree = "<group>"; };
 		49998781A7ED783ED2315B93 /* NSColor+ARGB.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = "NSColor+ARGB.swift"; sourceTree = "<group>"; };
 		523922A25F5F34150B8F9459 /* GifExportPolicyTests.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = GifExportPolicyTests.swift; sourceTree = "<group>"; };
+		C2658B73179F52226D6D29DF /* CaptionOverlayRendererTests.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = CaptionOverlayRendererTests.swift; sourceTree = "<group>"; };
+		0E057F32867A1DB4C958B0B3 /* CaptionCueTrackTests.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = CaptionCueTrackTests.swift; sourceTree = "<group>"; };
 		5964845B237A9BCC08254B7C /* MicrophoneLevelMonitor.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = MicrophoneLevelMonitor.swift; sourceTree = "<group>"; };
 		5B1C86BB2F300B730068C1BE /* ZoomManualStore.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ZoomManualStore.swift; sourceTree = "<group>"; };
 		5B449F6C2F37828300A03934 /* PermissionState.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PermissionState.swift; sourceTree = "<group>"; };
@@ -510,6 +516,8 @@
 		F1A0011AA11D105E00002031 /* AudioEnhancementPipelineTests.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = AudioEnhancementPipelineTests.swift; sourceTree = "<group>"; };
 		F1A0011AA11D105E00002101 /* ExportDestinationPreflightTests.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = ExportDestinationPreflightTests.swift; sourceTree = "<group>"; };
 		F44E22AB2A7EA86DE6C7B238 /* GifExportPolicy.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = GifExportPolicy.swift; sourceTree = "<group>"; };
+		96ECD5ECD6A23FA1CA33BE58 /* CaptionOverlayRenderer.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = CaptionOverlayRenderer.swift; sourceTree = "<group>"; };
+		755A0211759478DDA3D7D204 /* CaptionCueTrack.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = CaptionCueTrack.swift; sourceTree = "<group>"; };
 		F54D9966BB1B393ACEF4E44A /* Pods-Runner.profile-dev.xcconfig */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = text.xcconfig; name = "Pods-Runner.profile-dev.xcconfig"; path = "Target Support Files/Pods-Runner/Pods-Runner.profile-dev.xcconfig"; sourceTree = "<group>"; };
 		F6DF001BDAEDC3B8FCDE13F9 /* PreviewSceneResolver.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = PreviewSceneResolver.swift; sourceTree = "<group>"; };
 		FC018DDF8B9C3E041725E337 /* CanvasBackgroundRendererTests.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = CanvasBackgroundRendererTests.swift; sourceTree = "<group>"; };
@@ -631,6 +639,8 @@
 				F1A0011AA11D105E0000010B /* PauseResumeSupportTests.swift */,
 				F1A0011AA11D105E0000010D /* RecordingIndicatorViewTests.swift */,
 				523922A25F5F34150B8F9459 /* GifExportPolicyTests.swift */,
+				C2658B73179F52226D6D29DF /* CaptionOverlayRendererTests.swift */,
+				0E057F32867A1DB4C958B0B3 /* CaptionCueTrackTests.swift */,
 				A7CE3815FDED694968446657 /* GifEncoderTests.swift */,
 				33E7C0552411D20AD111CD2A /* GifExportSessionTests.swift */,
 			);
@@ -835,6 +845,8 @@
 				DBAFE534F311451D8C165B52 /* ExportPrep.swift */,
 				A2DFE0B0B122000B271D8965 /* ExportEngine.swift */,
 				F44E22AB2A7EA86DE6C7B238 /* GifExportPolicy.swift */,
+				96ECD5ECD6A23FA1CA33BE58 /* CaptionOverlayRenderer.swift */,
+				755A0211759478DDA3D7D204 /* CaptionCueTrack.swift */,
 				4758E388D386E24B68B33F48 /* GifEncoder.swift */,
 				CB989167B352270D10F024F0 /* GifExportSession.swift */,
 			);
@@ -1490,6 +1502,8 @@
 				F1A0011AA11D105E0000010C /* PauseResumeSupportTests.swift in Sources */,
 				F1A0011AA11D105E0000010E /* RecordingIndicatorViewTests.swift in Sources */,
 				82988B71EFD8E0C92461A1E0 /* GifExportPolicyTests.swift in Sources */,
+				9059C1FCB24BB8C03F71CFC8 /* CaptionOverlayRendererTests.swift in Sources */,
+				12D91885E4F7C378D82C5CC4 /* CaptionCueTrackTests.swift in Sources */,
 				6C7415F5D3D15C0CF94618EB /* GifEncoderTests.swift in Sources */,
 				D3B86C9B77CAC4669C1F88FC /* GifExportSessionTests.swift in Sources */,
 			);
@@ -1638,6 +1652,8 @@
 				91CE937036D54A858468EA85 /* GraphicMeshBackgroundRenderer.swift in Sources */,
 				78803A98243937CED6567313 /* RadialGlowBackgroundRenderer.swift in Sources */,
 				89810FF4C029B0A37903EF47 /* GifExportPolicy.swift in Sources */,
+				ACEE5EF53ACF2689541946B4 /* CaptionOverlayRenderer.swift in Sources */,
+				E5208EC1E2EC9B87A3721643 /* CaptionCueTrack.swift in Sources */,
 				E7F90A099654ACCB10A3028D /* GifEncoder.swift in Sources */,
 				147A5143745688FAE0A95466 /* GifExportSession.swift in Sources */,
 			);
