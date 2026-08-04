@@ -10,14 +10,21 @@ import '../timeline/model/edit_track.dart';
 ///
 /// ## Why the text is drawn here and not in Swift
 ///
-/// The app already renders every script it ships — including Arabic, which
-/// needs bidi reordering and contextual joining — correctly and with no bundled
-/// font, because Flutter's text engine does it. The macOS target has no CoreText
-/// usage at all. Doing layout natively would mean bundling a font, registering
-/// it with `CTFontManager`, asserting that the resolved face was not silently
-/// substituted, asserting that shaping actually happened, and then writing the
-/// whole thing a second time in DirectWrite for Windows. Rasterizing here and
-/// compositing there costs one directory of PNGs and skips all of it.
+/// Flutter's text engine already does bidi reordering and contextual joining for
+/// every script the app ships. The macOS target has no CoreText usage at all, so
+/// laying out natively would mean writing that from scratch, registering fonts
+/// with `CTFontManager`, and then writing the whole thing a second time in
+/// DirectWrite for the Windows port. Rasterizing here and compositing there
+/// skips all of it, and gives preview and export one shaper instead of two that
+/// can disagree.
+///
+/// An earlier version of this comment claimed the win included *not* needing a
+/// bundled font, since Flutter shapes Arabic against the host font stack. That
+/// was wrong twice over, and the code now bundles one ([bundledCaptionFontFamily]):
+/// the host stack drifts across machines and macOS versions, and in
+/// `flutter test` it resolves to a stub that draws every glyph as a filled box —
+/// which shipped a fully green test suite describing captions that were entirely
+/// tofu. Bundling is about determinism and testability, not about capability.
 ///
 /// ## The contract with native
 ///
@@ -39,10 +46,40 @@ class CaptionRasterizer {
     this.style = const CaptionStyle(),
     this.maxWidthFraction = 0.9,
     this.referenceHeight = 1080.0,
+    this.fontFamily = bundledCaptionFontFamily,
+    this.fontFamilyFallback,
   }) : assert(maxWidthFraction > 0 && maxWidthFraction <= 1),
        assert(referenceHeight > 0);
 
+  /// The bundled caption face, declared in `pubspec.yaml`'s `fonts:` block.
+  ///
+  /// Covers Latin, Romanian and Arabic in one file — see
+  /// `assets/fonts/README.md`. Defaulting to it here is the point: leaving
+  /// `fontFamily` null resolves against the host font stack, which is the
+  /// nondeterminism bundling a font exists to remove.
+  ///
+  /// Setting only [fontFamilyFallback] does NOT work as a substitute. The stub
+  /// font used by `flutter test` claims coverage of every codepoint, so the
+  /// fallback chain is never consulted and text silently renders as boxes.
+  static const String bundledCaptionFontFamily = 'ClingfyCaption';
+
   final CaptionStyle style;
+
+  /// Family to draw captions in, or `null` to use the platform default.
+  ///
+  /// Passing a bundled family is what makes a caption look the same on every
+  /// machine. Left to the platform, the render depends on whatever the host
+  /// font stack resolves, which drifts across macOS versions — and in
+  /// `flutter test` resolves to a stub that draws every glyph as a filled box,
+  /// which is how a whole suite of green tests once described tofu.
+  final String? fontFamily;
+
+  /// Families to fall back through when [fontFamily] lacks a glyph.
+  ///
+  /// Worth setting even with a broad bundled family: a transcript can contain
+  /// anything a person said, including scripts and emoji the bundled face does
+  /// not cover, and silently drawing a box is worse than falling back.
+  final List<String>? fontFamilyFallback;
 
   /// Widest a caption may be, as a fraction of video width. Text beyond this
   /// wraps. 0.9 leaves a margin so captions do not run to the frame edge.
@@ -164,6 +201,8 @@ class CaptionRasterizer {
           color: Color(style.textColorArgb),
           fontWeight: FontWeight.w600,
           height: 1.25,
+          fontFamily: fontFamily,
+          fontFamilyFallback: fontFamilyFallback,
         ),
       ),
       textAlign: TextAlign.center,

@@ -127,20 +127,52 @@ void main() {
       long.dispose();
     });
 
-    /// Pins the environment so nobody reads a green suite as proof of shaping.
+    /// Guards the whole file. Every rendering assertion below is meaningless if
+    /// the bundled font is not actually loaded, and the failure is silent: a
+    /// typo'd family name falls back to the stub box font in tests and to the
+    /// system font in production, both of which still "render".
     ///
-    /// While `flutter test` uses its stub box font this asserts FALSE. Once a
-    /// font is bundled and loaded via FontLoader it will start failing, which
-    /// is the intended signal to enable the real glyph tests below.
-    test('reports whether this environment renders real glyphs', () async {
-      final real = await rendersRealGlyphs();
+    /// Two assertions, because they catch different things:
+    ///  - advance-width variety proves a real font is present at all
+    ///  - Arabic joining proves SHAPING ran, which coverage alone does not
+    ///
+    /// The second is the one that matters. A font can contain every Arabic
+    /// codepoint and still render them unjoined, which looks wrong to any
+    /// reader and passes every width-based check.
+    test('the bundled caption font is loaded and shaping', () async {
       expect(
-        real,
-        isFalse,
+        await rendersRealGlyphs(),
+        isTrue,
         reason:
-            'A real font is now available in tests. Delete this expectation '
-            'and remove the skip from the Arabic shaping tests below — they '
-            'can finally mean something.',
+            'stub box font in use — the bundled family is not reaching '
+            'TextPainter. Check pubspec.yaml fonts:, the asset path in '
+            'test/flutter_test_config.dart, and CaptionRasterizer.fontFamily.',
+      );
+
+      double widthOf(String text) {
+        final painter = TextPainter(
+          text: TextSpan(
+            text: text,
+            style: const TextStyle(
+              fontSize: 48,
+              fontWeight: FontWeight.w600,
+              fontFamily: CaptionRasterizer.bundledCaptionFontFamily,
+            ),
+          ),
+          textDirection: TextDirection.ltr,
+        )..layout(maxWidth: 4000);
+        final w = painter.width;
+        painter.dispose();
+        return w;
+      }
+
+      // Arabic letters join, so a run of three contracts well below three
+      // isolated forms. No contraction means captions export in isolated
+      // forms — readable-ish to a machine, wrong to a person.
+      expect(
+        widthOf('ببب'),
+        lessThan(3 * widthOf('ب') * 0.8),
+        reason: 'no contextual joining — Arabic will export unshaped',
       );
     });
 
@@ -148,16 +180,11 @@ void main() {
     /// rather than CoreText, so it is the one thing most worth testing — and
     /// the one thing the stub font makes untestable.
     ///
-    /// Skipped rather than weakened. A test that passes on tofu is worse than
-    /// no test: it reports coverage that does not exist, which is exactly how
-    /// every caption shipped as empty boxes while this file was green.
+    /// Was skipped while the stub font made it untestable, on the principle
+    /// that a test passing on tofu is worse than no test. The bundled font
+    /// makes it real: two different Arabic words must rasterize differently,
+    /// which boxes cannot do.
     test('shapes Arabic into distinct glyphs', () async {
-      if (!await rendersRealGlyphs()) {
-        markTestSkipped(
-          'stub box font: bundle a font and load it via FontLoader',
-        );
-        return;
-      }
       const r = CaptionRasterizer();
       const size = Size(1920, 1080);
       // Same character count, different letters. Correct shaping renders these
@@ -180,12 +207,6 @@ void main() {
     });
 
     test('a mixed Arabic and Latin line renders both runs', () async {
-      if (!await rendersRealGlyphs()) {
-        markTestSkipped(
-          'stub box font: bundle a font and load it via FontLoader',
-        );
-        return;
-      }
       const r = CaptionRasterizer();
       const size = Size(1920, 1080);
       final mixed = r.layOut(text: 'مرحبا Clingfy', videoSize: size);
