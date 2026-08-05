@@ -7,11 +7,13 @@ import 'package:clingfy/ui/platform/widgets/responsive_shell_scope.dart';
 import 'package:clingfy/app/home/post_processing/widgets/post_audio_section.dart';
 import 'package:clingfy/app/home/post_processing/widgets/post_background_section.dart';
 import 'package:clingfy/app/home/post_processing/widgets/post_camera_section.dart';
+import 'package:clingfy/app/home/post_processing/widgets/post_captions_section.dart';
 import 'package:clingfy/app/home/post_processing/widgets/post_cursor_section.dart';
 import 'package:clingfy/app/home/post_processing/widgets/post_export_settings_section.dart';
 import 'package:clingfy/app/home/post_processing/widgets/post_layout_section.dart';
 import 'package:clingfy/app/home/post_processing/widgets/post_zoom_section.dart';
 import 'package:clingfy/app/home/post_processing/widgets/post_color_grade_section.dart';
+import 'package:clingfy/core/captions/captions_capability.dart';
 import 'package:clingfy/core/timeline/model/color_grade.dart';
 import 'package:clingfy/core/timeline/model/edit_track.dart';
 import 'package:flutter/material.dart' hide PlatformMenuItem;
@@ -141,6 +143,14 @@ class PostProcessingSidebar extends StatelessWidget {
   final bool showResolutionControl;
   final double audioGainDb;
   final VoiceCleanup voiceCleanup;
+  final CaptionsCapabilityInfo? captionsCapability;
+  final List<Caption> captions;
+  final bool captionsUseMic;
+  final bool captionsUseSystem;
+  final bool isGeneratingCaptions;
+  final double? captionsProgress;
+  final String? captionsStageLabel;
+  final bool hasEverGeneratedCaptions;
   final double audioVolume;
   final bool autoNormalizeOnExport;
   final double autoNormalizeTargetDbfs;
@@ -195,6 +205,11 @@ class PostProcessingSidebar extends StatelessWidget {
   final Function(double) onAudioGainChanged;
   final Function(double) onAudioGainChangeEnd;
   final ValueChanged<VoiceCleanup> onVoiceCleanupChanged;
+  final ValueChanged<bool> onCaptionsUseMicChanged;
+  final ValueChanged<bool> onCaptionsUseSystemChanged;
+  final VoidCallback onGenerateCaptions;
+  final VoidCallback onCancelCaptions;
+  final void Function(String cueId, String text) onCaptionTextChanged;
   final ColorGrade colorGrade;
   final ValueChanged<bool> onColorAutoEnhanceChanged;
   final ValueChanged<double> onColorExposureChanged;
@@ -284,12 +299,25 @@ class PostProcessingSidebar extends StatelessWidget {
     required this.onCameraManualCenterSnapped,
     required this.audioGainDb,
     required this.voiceCleanup,
+    required this.captionsCapability,
+    required this.captions,
+    required this.captionsUseMic,
+    required this.captionsUseSystem,
+    required this.isGeneratingCaptions,
+    required this.captionsProgress,
+    required this.captionsStageLabel,
+    required this.hasEverGeneratedCaptions,
     required this.audioVolume,
     required this.autoNormalizeOnExport,
     required this.autoNormalizeTargetDbfs,
     required this.onAudioGainChanged,
     required this.onAudioGainChangeEnd,
     required this.onVoiceCleanupChanged,
+    required this.onCaptionsUseMicChanged,
+    required this.onCaptionsUseSystemChanged,
+    required this.onGenerateCaptions,
+    required this.onCancelCaptions,
+    required this.onCaptionTextChanged,
     required this.onAudioVolumeChanged,
     required this.onAudioVolumeChangeEnd,
     required this.onAutoNormalizeOnExportChanged,
@@ -483,6 +511,25 @@ class PostProcessingSidebar extends StatelessWidget {
         onAudioGainChanged: onAudioGainChanged,
         onAudioGainChangeEnd: onAudioGainChangeEnd,
         onVoiceCleanupChanged: onVoiceCleanupChanged,
+      ),
+      // Sits with audio because that is what it transcribes, and above export
+      // settings because burn-in is an export decision made after the cues
+      // exist.
+      PostCaptionsSection(
+        capability: captionsCapability,
+        captions: captions,
+        useMic: captionsUseMic,
+        useSystem: captionsUseSystem,
+        isGenerating: isGeneratingCaptions,
+        progress: captionsProgress,
+        stageLabel: captionsStageLabel,
+        isProcessing: isProcessing,
+        hasEverGenerated: hasEverGeneratedCaptions,
+        onUseMicChanged: onCaptionsUseMicChanged,
+        onUseSystemChanged: onCaptionsUseSystemChanged,
+        onGenerate: onGenerateCaptions,
+        onCancel: onCancelCaptions,
+        onCueTextChanged: onCaptionTextChanged,
       ),
       PostExportSettingsSection(
         isProcessing: isProcessing,

@@ -26,6 +26,8 @@ import 'package:clingfy/app/home/post_processing/support/audio_debouncer.dart';
 import 'package:clingfy/app/home/post_processing/support/canvas_appearance_store.dart';
 import 'package:clingfy/app/home/export/widgets/export_file_dialog.dart';
 import 'package:clingfy/core/preview/player_controller.dart';
+import 'package:clingfy/core/captions/captions_capability.dart';
+import 'package:clingfy/core/bridges/job_progress.dart';
 
 class PostProcessingController extends ChangeNotifier {
   final NativeBridge _nativeBridge;
@@ -115,6 +117,27 @@ class PostProcessingController extends ChangeNotifier {
   bool _cursorAvailable = true;
   double _audioGainDb = 0.0;
   VoiceCleanup _voiceCleanup = const VoiceCleanup();
+
+  // ---- Subtitles -----------------------------------------------------------
+
+  /// What native says about captioning this machine and this recording.
+  /// `null` until the probe answers; the section shows nothing until then
+  /// rather than flashing controls that may be replaced by a refusal.
+  CaptionsCapabilityInfo? _captionsCapability;
+
+  List<Caption> _captions = const [];
+  bool _captionsUseMic = true;
+  bool _captionsUseSystem = true;
+  bool _isGeneratingCaptions = false;
+
+  /// `null` = indeterminate. The model download and Core ML specialisation take
+  /// tens of seconds before any real fraction exists.
+  double? _captionsProgress;
+  ProgressStage _captionsStage = ProgressStage.preparing;
+
+  /// Separates "not run yet" from "ran and found nothing" — very different
+  /// things to tell someone.
+  bool _hasEverGeneratedCaptions = false;
   double _audioVolumePercent = 100.0;
   String? _cameraPath;
   CameraCompositionState? _cameraState;
@@ -178,6 +201,121 @@ class PostProcessingController extends ChangeNotifier {
   bool get cursorAvailable => _cursorAvailable;
   double get audioGainDb => _audioGainDb;
   VoiceCleanup get voiceCleanup => _voiceCleanup;
+
+  CaptionsCapabilityInfo? get captionsCapability => _captionsCapability;
+  List<Caption> get captions => _captions;
+  bool get captionsUseMic => _captionsUseMic;
+  bool get captionsUseSystem => _captionsUseSystem;
+  bool get isGeneratingCaptions => _isGeneratingCaptions;
+  double? get captionsProgress => _captionsProgress;
+  ProgressStage get captionsStage => _captionsStage;
+  bool get hasEverGeneratedCaptions => _hasEverGeneratedCaptions;
+
+  /// Asks native whether captions are possible here, and seeds the source
+  /// selection from what the recording actually contains.
+  Future<void> refreshCaptionsCapability() async {
+    final projectPath = _projectPath;
+    if (projectPath == null) return;
+    try {
+      final info = await _nativeBridge.captionsCapability(projectPath);
+      if (_projectPath != projectPath) return; // switched project mid-flight
+      _captionsCapability = info;
+      _captionsUseMic = info.defaultUsesMic;
+      _captionsUseSystem = info.defaultUsesSystem;
+      notifyListeners();
+    } catch (e, st) {
+      Log.e("PostProcessing", "Captions capability probe failed", e, st);
+    }
+  }
+
+  void setCaptionsUseMic(bool value) {
+    if (value == _captionsUseMic) return;
+    _captionsUseMic = value;
+    notifyListeners();
+  }
+
+  void setCaptionsUseSystem(bool value) {
+    if (value == _captionsUseSystem) return;
+    _captionsUseSystem = value;
+    notifyListeners();
+  }
+
+  /// Routed here from the shared job-progress callback when the tick is tagged
+  /// `captions`, so a transcription never moves the export bar.
+  void updateCaptionsProgress(JobProgress progress) {
+    if (!_isGeneratingCaptions) return;
+    _captionsProgress = progress.fraction;
+    _captionsStage = progress.stage;
+    notifyListeners();
+  }
+
+  Future<void> generateCaptions() async {
+    final projectPath = _projectPath;
+    if (projectPath == null || _isGeneratingCaptions) return;
+    if (!_captionsUseMic && !_captionsUseSystem) return;
+
+    _isGeneratingCaptions = true;
+    _captionsProgress = null;
+    _captionsStage = ProgressStage.preparing;
+    notifyListeners();
+
+    try {
+      final raw = await _nativeBridge.generateCaptions(
+        projectPath: projectPath,
+        useMic: _captionsUseMic,
+        useSystem: _captionsUseSystem,
+      );
+      if (_projectPath != projectPath) return;
+      _captions = [for (final m in raw) Caption.fromMap(m)];
+      _hasEverGeneratedCaptions = true;
+    } on PlatformException catch (e) {
+      // Cancelling is a normal outcome, not a failure worth surfacing.
+      if (e.code != 'CAPTIONS_CANCELLED') {
+        Log.e(
+          "PostProcessing",
+          "Caption generation failed: ${e.code}",
+          e,
+          null,
+        );
+        _hasEverGeneratedCaptions = true;
+      }
+    } catch (e, st) {
+      Log.e("PostProcessing", "Caption generation failed", e, st);
+    } finally {
+      _isGeneratingCaptions = false;
+      _captionsProgress = null;
+      notifyListeners();
+    }
+  }
+
+  Future<void> cancelCaptions() async {
+    if (!_isGeneratingCaptions) return;
+    await _nativeBridge.cancelCaptions();
+  }
+
+  /// Corrects one cue's text.
+  ///
+  /// The edited track is the truth from here on: re-generating replaces it
+  /// wholesale, which is why the button says so once cues exist.
+  void updateCaptionText(String cueId, String text) {
+    final index = _captions.indexWhere((c) => c.id == cueId);
+    if (index < 0) return;
+    final trimmed = text.trim();
+    if (trimmed == _captions[index].text) return;
+    final next = List<Caption>.from(_captions);
+    final existing = next[index];
+    next[index] = Caption(
+      id: existing.id,
+      startMs: existing.startMs,
+      endMs: existing.endMs,
+      text: trimmed,
+      words: existing.words,
+      translatedText: existing.translatedText,
+    );
+    _captions = next;
+    notifyListeners();
+  }
+
   double get audioVolumePercent => _audioVolumePercent;
   ColorGrade get colorGrade => _colorGrade;
 
@@ -910,8 +1048,16 @@ class PostProcessingController extends ChangeNotifier {
     _activeSessionId = sessionId;
     _projectPath = projectPath;
     _previewPath = projectPath;
+    // A new recording has its own audio and its own answer, so nothing from the
+    // last one may survive — a stale capability would offer sources this
+    // project does not have, and stale cues would show another recording's
+    // subtitles.
+    _captions = const [];
+    _captionsCapability = null;
+    _hasEverGeneratedCaptions = false;
     notifyListeners();
     unawaited(_loadRecordingSceneInfo(projectPath));
+    unawaited(refreshCaptionsCapability());
   }
 
   void detachRecording() {

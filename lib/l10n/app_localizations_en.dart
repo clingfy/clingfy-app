@@ -2694,4 +2694,66 @@ class AppLocalizationsEn extends AppLocalizations {
 
   @override
   String get crashReportingNoticeOptOut => 'Turn off';
+
+  @override
+  String get captions => 'Subtitles';
+
+  @override
+  String get captionsGenerate => 'Generate subtitles';
+
+  @override
+  String get captionsRegenerate => 'Generate again';
+
+  @override
+  String get captionsCancel => 'Stop';
+
+  @override
+  String get captionsPreparing => 'Preparing…';
+
+  @override
+  String get captionsTranscribing => 'Transcribing…';
+
+  @override
+  String get captionsSourceMic => 'Microphone';
+
+  @override
+  String get captionsSourceSystem => 'Screen audio';
+
+  @override
+  String get captionsNoneYet => 'No subtitles yet.';
+
+  @override
+  String get captionsNoSpeechFound => 'No speech found in this recording.';
+
+  @override
+  String get captionsUnavailableOs =>
+      'Subtitles need a newer version of macOS.';
+
+  @override
+  String get captionsUnavailableIntel =>
+      'Subtitles run slowly on Intel Macs, which have no Neural Engine.';
+
+  @override
+  String get captionsUnavailableNoAudio =>
+      'This recording has no audio to transcribe.';
+
+  @override
+  String get captionsUnavailablePlatform =>
+      'Subtitles are only available on macOS.';
+
+  @override
+  String get captionsMicOnlyRecording =>
+      'This recording predates separate audio capture, so only your microphone was recorded.';
+
+  @override
+  String get captionsFirstRunDownload =>
+      'The first run downloads a speech model. This happens once.';
+
+  @override
+  String get captionsFailed => 'Couldn’t generate subtitles.';
+
+  @override
+  String captionsCueCount(int count) {
+    return '$count subtitles';
+  }
 }

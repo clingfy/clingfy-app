@@ -263,9 +263,11 @@ class HomeActions {
       case ProgressJob.export:
         postProcessingController.updateProgress(progress.fraction);
       case ProgressJob.captions:
+        postProcessingController.updateCaptionsProgress(progress);
       case ProgressJob.unknown:
-        // Captions have no UI owner yet; the transcription surface will claim
-        // this when it lands.
+        // Dropped rather than shown as export progress — a tick from a job this
+        // build does not know about moving the export bar would be worse than
+        // no bar at all.
         break;
     }
   }

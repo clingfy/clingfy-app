@@ -4923,6 +4923,114 @@ abstract class AppLocalizations {
   /// In en, this message translates to:
   /// **'Turn off'**
   String get crashReportingNoticeOptOut;
+
+  /// No description provided for @captions.
+  ///
+  /// In en, this message translates to:
+  /// **'Subtitles'**
+  String get captions;
+
+  /// No description provided for @captionsGenerate.
+  ///
+  /// In en, this message translates to:
+  /// **'Generate subtitles'**
+  String get captionsGenerate;
+
+  /// No description provided for @captionsRegenerate.
+  ///
+  /// In en, this message translates to:
+  /// **'Generate again'**
+  String get captionsRegenerate;
+
+  /// No description provided for @captionsCancel.
+  ///
+  /// In en, this message translates to:
+  /// **'Stop'**
+  String get captionsCancel;
+
+  /// No description provided for @captionsPreparing.
+  ///
+  /// In en, this message translates to:
+  /// **'Preparing…'**
+  String get captionsPreparing;
+
+  /// No description provided for @captionsTranscribing.
+  ///
+  /// In en, this message translates to:
+  /// **'Transcribing…'**
+  String get captionsTranscribing;
+
+  /// No description provided for @captionsSourceMic.
+  ///
+  /// In en, this message translates to:
+  /// **'Microphone'**
+  String get captionsSourceMic;
+
+  /// No description provided for @captionsSourceSystem.
+  ///
+  /// In en, this message translates to:
+  /// **'Screen audio'**
+  String get captionsSourceSystem;
+
+  /// No description provided for @captionsNoneYet.
+  ///
+  /// In en, this message translates to:
+  /// **'No subtitles yet.'**
+  String get captionsNoneYet;
+
+  /// No description provided for @captionsNoSpeechFound.
+  ///
+  /// In en, this message translates to:
+  /// **'No speech found in this recording.'**
+  String get captionsNoSpeechFound;
+
+  /// No description provided for @captionsUnavailableOs.
+  ///
+  /// In en, this message translates to:
+  /// **'Subtitles need a newer version of macOS.'**
+  String get captionsUnavailableOs;
+
+  /// No description provided for @captionsUnavailableIntel.
+  ///
+  /// In en, this message translates to:
+  /// **'Subtitles run slowly on Intel Macs, which have no Neural Engine.'**
+  String get captionsUnavailableIntel;
+
+  /// No description provided for @captionsUnavailableNoAudio.
+  ///
+  /// In en, this message translates to:
+  /// **'This recording has no audio to transcribe.'**
+  String get captionsUnavailableNoAudio;
+
+  /// No description provided for @captionsUnavailablePlatform.
+  ///
+  /// In en, this message translates to:
+  /// **'Subtitles are only available on macOS.'**
+  String get captionsUnavailablePlatform;
+
+  /// No description provided for @captionsMicOnlyRecording.
+  ///
+  /// In en, this message translates to:
+  /// **'This recording predates separate audio capture, so only your microphone was recorded.'**
+  String get captionsMicOnlyRecording;
+
+  /// No description provided for @captionsFirstRunDownload.
+  ///
+  /// In en, this message translates to:
+  /// **'The first run downloads a speech model. This happens once.'**
+  String get captionsFirstRunDownload;
+
+  /// No description provided for @captionsFailed.
+  ///
+  /// In en, this message translates to:
+  /// **'Couldn’t generate subtitles.'**
+  String get captionsFailed;
+
+  /// No description provided for @captionsCueCount.
+  ///
+  /// In en, this message translates to:
+  /// **'{count} subtitles'**
+  String captionsCueCount(int count);
 }
 
 class _AppLocalizationsDelegate
