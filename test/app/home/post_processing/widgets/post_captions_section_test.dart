@@ -7,6 +7,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:macos_ui/macos_ui.dart';
 import 'package:clingfy/core/captions/subtitle_serializer.dart';
+import 'package:clingfy/core/captions/caption_reflow.dart';
 
 /// The captions panel: what it refuses to offer, when it offers it, and what
 /// an edit actually commits.
@@ -54,6 +55,7 @@ void main() {
     void Function(String, String)? onCueTextChanged,
     SubtitleMode subtitleMode = SubtitleMode.burnIn,
     ValueChanged<SubtitleMode>? onSubtitleModeChanged,
+    List<Clip>? clips,
   }) {
     return PostCaptionsSection(
       capability: capability,
@@ -71,6 +73,12 @@ void main() {
       onCueTextChanged: onCueTextChanged ?? (_, _) {},
       subtitleMode: subtitleMode,
       onSubtitleModeChanged: onSubtitleModeChanged ?? (_) {},
+      // Defaults to an unedited recording, so the timestamp a test sees is the
+      // cue's own time unless the test supplies clips.
+      reflowed: CaptionReflow.reflow(
+        captions: captions,
+        clips: clips ?? const <Clip>[],
+      ),
     );
   }
 
@@ -364,6 +372,103 @@ void main() {
     );
     final field = tester.widget<TextField>(find.byType(TextField));
     expect(field.enabled, isFalse);
+  });
+
+  // ---- Timestamps on an edited recording ---------------------------------
+
+  Clip clip(String id, int inMs, int outMs) =>
+      Clip(id: id, sourceInMs: inMs, sourceOutMs: outMs, timelineStartMs: inMs);
+
+  testWidgets('a timestamp says where the cue is in the EXPORT', (
+    tester,
+  ) async {
+    // Trimming the first 30s means the cue transcribed at 00:47 plays at 00:17.
+    // Showing the source time sends the user to a different sentence, with
+    // nothing on screen to explain the offset.
+    await tester.pumpWidget(
+      host(
+        section(
+          captions: [cue('a', 'the line', startMs: 47000)],
+          clips: [clip('c', 30000, 120000)],
+        ),
+      ),
+    );
+
+    expect(find.text('00:17'), findsOneWidget);
+    expect(find.text('00:47'), findsNothing);
+  });
+
+  testWidgets('an unedited recording still shows the cue time', (tester) async {
+    await tester.pumpWidget(
+      host(section(captions: [cue('a', 'the line', startMs: 65000)])),
+    );
+    expect(find.text('01:05'), findsOneWidget);
+  });
+
+  testWidgets('a cue whose footage was cut is marked, not timestamped', (
+    tester,
+  ) async {
+    final l10n = await AppLocalizations.delegate.load(const Locale('en'));
+    await tester.pumpWidget(
+      host(
+        section(
+          captions: [
+            cue('kept', 'still here', startMs: 1000),
+            cue('gone', 'removed', startMs: 40000),
+          ],
+          clips: [clip('c', 0, 30000)],
+        ),
+      ),
+    );
+
+    expect(find.text(l10n.captionsNotInExport), findsOneWidget);
+    // Still listed rather than hidden: a correction the user typed into it is
+    // real work, and undoing the cut must bring the line back.
+    expect(find.text('removed'), findsOneWidget);
+  });
+
+  testWidgets('rows are ordered the way the export plays them', (tester) async {
+    // Reordered clips: the tail plays first, so the cue transcribed later is
+    // the one the viewer hears first.
+    await tester.pumpWidget(
+      host(
+        section(
+          captions: [
+            cue('early', 'spoken first', startMs: 1000),
+            cue('late', 'spoken last', startMs: 7000),
+          ],
+          clips: [clip('b', 6000, 10000), clip('a', 0, 4000)],
+        ),
+      ),
+    );
+
+    final fields = tester
+        .widgetList<TextField>(find.byType(TextField))
+        .toList();
+    expect(fields.first.controller!.text, 'spoken last');
+    expect(fields.last.controller!.text, 'spoken first');
+  });
+
+  testWidgets('cut cues sort last, after everything still in the export', (
+    tester,
+  ) async {
+    await tester.pumpWidget(
+      host(
+        section(
+          captions: [
+            cue('gone', 'cut away', startMs: 1000),
+            cue('kept', 'in the file', startMs: 40000),
+          ],
+          clips: [clip('c', 30000, 60000)],
+        ),
+      ),
+    );
+
+    final fields = tester
+        .widgetList<TextField>(find.byType(TextField))
+        .toList();
+    expect(fields.first.controller!.text, 'in the file');
+    expect(fields.last.controller!.text, 'cut away');
   });
 
   // ---- Export destination ------------------------------------------------

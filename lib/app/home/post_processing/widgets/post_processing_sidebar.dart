@@ -13,6 +13,7 @@ import 'package:clingfy/app/home/post_processing/widgets/post_export_settings_se
 import 'package:clingfy/app/home/post_processing/widgets/post_layout_section.dart';
 import 'package:clingfy/app/home/post_processing/widgets/post_zoom_section.dart';
 import 'package:clingfy/app/home/post_processing/widgets/post_color_grade_section.dart';
+import 'package:clingfy/core/captions/caption_reflow.dart';
 import 'package:clingfy/core/captions/captions_capability.dart';
 import 'package:clingfy/core/captions/subtitle_serializer.dart';
 import 'package:clingfy/core/timeline/model/color_grade.dart';
@@ -153,6 +154,7 @@ class PostProcessingSidebar extends StatelessWidget {
   final String? captionsStageLabel;
   final bool hasEverGeneratedCaptions;
   final SubtitleMode subtitleMode;
+  final ReflowedCaptions reflowedCaptions;
   final double audioVolume;
   final bool autoNormalizeOnExport;
   final double autoNormalizeTargetDbfs;
@@ -311,6 +313,7 @@ class PostProcessingSidebar extends StatelessWidget {
     required this.captionsStageLabel,
     required this.hasEverGeneratedCaptions,
     required this.subtitleMode,
+    required this.reflowedCaptions,
     required this.audioVolume,
     required this.autoNormalizeOnExport,
     required this.autoNormalizeTargetDbfs,
@@ -536,6 +539,7 @@ class PostProcessingSidebar extends StatelessWidget {
         onCancel: onCancelCaptions,
         onCueTextChanged: onCaptionTextChanged,
         subtitleMode: subtitleMode,
+        reflowed: reflowedCaptions,
         onSubtitleModeChanged: onSubtitleModeChanged,
       ),
       PostExportSettingsSection(

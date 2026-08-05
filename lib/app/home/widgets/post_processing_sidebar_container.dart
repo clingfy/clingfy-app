@@ -13,6 +13,7 @@ import 'package:clingfy/core/captions/captions_capability.dart';
 import 'package:clingfy/core/bridges/job_progress.dart';
 import 'package:clingfy/l10n/app_localizations.dart';
 import 'dart:async';
+import 'package:clingfy/core/captions/caption_reflow.dart';
 
 class PostProcessingSidebarContainer extends StatelessWidget {
   const PostProcessingSidebarContainer({
@@ -81,6 +82,7 @@ class PostProcessingSidebarContainer extends StatelessWidget {
         double? captionsProgress,
         ProgressStage captionsStage,
         bool hasEverGeneratedCaptions,
+        ReflowedCaptions reflowedCaptions,
       })
     >(
       selector: (_, p) => (
@@ -119,6 +121,9 @@ class PostProcessingSidebarContainer extends StatelessWidget {
         captionsProgress: p.captionsProgress,
         captionsStage: p.captionsStage,
         hasEverGeneratedCaptions: p.hasEverGeneratedCaptions,
+        // Recomputed on every rebuild the record triggers, so a cut made in the
+        // clips panel immediately restamps the caption timestamps.
+        reflowedCaptions: p.reflowedCaptions(),
       ),
       builder: (context, vm, _) {
         final post = context.read<PostProcessingController>();
@@ -181,6 +186,7 @@ class PostProcessingSidebarContainer extends StatelessWidget {
               ),
               hasEverGeneratedCaptions: vm.hasEverGeneratedCaptions,
               subtitleMode: settingsController.post.postSubtitleMode,
+              reflowedCaptions: vm.reflowedCaptions,
               autoNormalizeOnExport:
                   settingsController.post.postAutoNormalizeEnabled,
               autoNormalizeTargetDbfs:

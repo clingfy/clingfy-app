@@ -915,5 +915,6 @@
   "captionsDestinationBurnIn": "مدمجة",
   "captionsDestinationSidecar": "ملف",
   "captionsDestinationBoth": "كلاهما",
-  "captionsDestinationHint": "الترجمة المدمجة تبقى بعد إعادة الرفع. الملف يظل قابلاً للبحث ويمكن إيقافه."
+  "captionsDestinationHint": "الترجمة المدمجة تبقى بعد إعادة الرفع. الملف يظل قابلاً للبحث ويمكن إيقافه.",
+  "captionsNotInExport": "محذوف"
 }

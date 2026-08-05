@@ -2811,4 +2811,7 @@ class AppLocalizationsRo extends AppLocalizations {
   @override
   String get captionsDestinationHint =>
       'Subtitrările incluse rezistă la reîncărcare. Un fișier rămâne căutabil și poate fi dezactivat.';
+
+  @override
+  String get captionsNotInExport => 'Tăiat';
 }

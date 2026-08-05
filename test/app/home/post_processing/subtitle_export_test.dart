@@ -10,11 +10,25 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
 import '../../../test_helpers/native_test_setup.dart';
+import 'package:clingfy/core/clips/clip_editor_controller.dart';
+import 'package:clingfy/core/clips/clip_state_store.dart';
+import 'package:clingfy/core/timeline/model/edit_track.dart';
 
 /// What the export carries, and what lands next to the file afterwards.
 ///
 /// Burn-in is native's job (it owns the frames); the sidecar is written here,
 /// from the same cue list, once native reports where the video actually landed.
+/// Exposes a clip editor the controller will read, so an export can be run
+/// against a genuinely edited timeline.
+class _EditedPlayer extends PlayerController {
+  _EditedPlayer({required super.nativeBridge, this.editor});
+
+  final ClipEditorController? editor;
+
+  @override
+  ClipEditorController? get clipEditor => editor ?? super.clipEditor;
+}
+
 void main() {
   TestWidgetsFlutterBinding.ensureInitialized();
 
@@ -41,6 +55,8 @@ void main() {
     ],
     String? exportReturns,
     Object? exportSizeReturns = const {'width': 1920, 'height': 1080},
+    List<Clip>? clips,
+    int recordingDurationMs = 120000,
   }) async {
     SharedPreferences.setMockInitialValues({
       'postSubtitleMode': mode.wireValue,
@@ -72,7 +88,26 @@ void main() {
     final nativeBridge = NativeBridge.instance;
     final settings = SettingsController(nativeBridge: nativeBridge);
     await settings.loadPreferences();
-    final player = PlayerController(nativeBridge: nativeBridge);
+    ClipEditorController? editor;
+    if (clips != null) {
+      // Through the real restore path, so the clips the export sees are the
+      // ones the editor would actually hold.
+      await ClipStateStore.save(
+        tempDir.path,
+        ClipPersistState(
+          recordingDurationMs: recordingDurationMs,
+          clips: clips,
+        ),
+      );
+      editor = ClipEditorController(
+        nativeBridge: nativeBridge,
+        durationMs: recordingDurationMs,
+        sessionId: 'rec_export',
+        projectPath: tempDir.path,
+      );
+      addTearDown(editor.dispose);
+    }
+    final player = _EditedPlayer(nativeBridge: nativeBridge, editor: editor);
     final post = PostProcessingController(
       settings: settings,
       player: player,
@@ -85,7 +120,9 @@ void main() {
     });
     post.attachToRecording(
       sessionId: 'rec_export',
-      projectPath: '${tempDir.path}/project.clingfyproj',
+      projectPath: clips == null
+          ? '${tempDir.path}/project.clingfyproj'
+          : tempDir.path,
     );
     await pumpEventQueue();
     return post;
@@ -228,6 +265,90 @@ void main() {
       ),
       completes,
     );
+  });
+
+  // ---- Edited recordings -------------------------------------------------
+
+  Clip clip(String id, int inMs, int outMs) =>
+      Clip(id: id, sourceInMs: inMs, sourceOutMs: outMs, timelineStartMs: inMs);
+
+  test(
+    'sidecar timestamps are on the exported timeline, not the source',
+    () async {
+      // Trims the first 3s. A cue transcribed at 5.0s plays at 2.0s in the file;
+      // writing 5.0s would put every subtitle 3 seconds late.
+      final post = await createController(
+        mode: SubtitleMode.sidecar,
+        transcript: const [
+          {'id': 'c1', 'startMs': 5000, 'endMs': 6000, 'text': 'hello there'},
+        ],
+        clips: [clip('a', 3000, 120000)],
+      );
+      await post.generateCaptions();
+
+      await exportWith(post, SubtitleMode.sidecar);
+
+      final srtText = srt().readAsStringSync();
+      expect(srtText, contains('00:00:02,000 --> 00:00:03,000'));
+      expect(srtText, isNot(contains('00:00:05,000')));
+    },
+  );
+
+  test('a cue inside cut footage reaches neither destination', () async {
+    final post = await createController(
+      mode: SubtitleMode.both,
+      transcript: const [
+        {'id': 'gone', 'startMs': 40000, 'endMs': 41000, 'text': 'removed'},
+        {'id': 'kept', 'startMs': 1000, 'endMs': 2000, 'text': 'survives'},
+      ],
+      clips: [clip('a', 0, 30000)],
+    );
+    await post.generateCaptions();
+
+    final args = await post.rasterizeCaptionsForExport();
+    await exportWith(post, SubtitleMode.both);
+
+    final cueIds = (args!['captions'] as List)
+        .map((c) => (c as Map)['id'])
+        .toList();
+    expect(cueIds, ['kept'], reason: 'a cut cue must not be rasterised');
+    expect(srt().readAsStringSync(), contains('survives'));
+    expect(srt().readAsStringSync(), isNot(contains('removed')));
+  });
+
+  test(
+    'burn-in keeps source times while the sidecar gets output times',
+    () async {
+      // The one invariant that makes both destinations correct at once: native
+      // looks cues up by source time, players read the sidecar in output time.
+      final post = await createController(
+        mode: SubtitleMode.both,
+        transcript: const [
+          {'id': 'c1', 'startMs': 8000, 'endMs': 9000, 'text': 'the line'},
+        ],
+        clips: [clip('a', 5000, 120000)],
+      );
+      await post.generateCaptions();
+
+      final args = await post.rasterizeCaptionsForExport();
+      await exportWith(post, SubtitleMode.both);
+
+      final burnIn = (args!['captions'] as List).first as Map;
+      expect(burnIn['startMs'], 8000, reason: 'source time for native');
+      expect(srt().readAsStringSync(), contains('00:00:03,000'));
+    },
+  );
+
+  test('an unedited recording is unaffected by reflow', () async {
+    final post = await createController(
+      mode: SubtitleMode.sidecar,
+      clips: [clip('whole', 0, 120000)],
+    );
+    await post.generateCaptions();
+
+    await exportWith(post, SubtitleMode.sidecar);
+
+    expect(srt().readAsStringSync(), contains('00:00:00,000 --> 00:00:01,500'));
   });
 
   // ---- Export payload ---------------------------------------------------

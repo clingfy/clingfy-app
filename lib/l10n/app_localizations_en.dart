@@ -2775,4 +2775,7 @@ class AppLocalizationsEn extends AppLocalizations {
   @override
   String get captionsDestinationHint =>
       'Burned-in subtitles survive re-upload. A file stays searchable and can be turned off.';
+
+  @override
+  String get captionsNotInExport => 'Cut';
 }

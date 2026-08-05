@@ -21,6 +21,7 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:macos_ui/macos_ui.dart';
 import 'package:clingfy/ui/platform/platform_kind.dart';
 import 'package:clingfy/core/captions/subtitle_serializer.dart';
+import 'package:clingfy/core/captions/caption_reflow.dart';
 
 void main() {
   // Phase 10.3 forked this surface's widget tree by platform (no-op
@@ -171,6 +172,7 @@ void main() {
       onCancelCaptions: () {},
       onCaptionTextChanged: (_, _) {},
       subtitleMode: SubtitleMode.burnIn,
+      reflowedCaptions: ReflowedCaptions.empty,
       onSubtitleModeChanged: (_) {},
       onAudioVolumeChanged: (_) {},
       onAudioVolumeChangeEnd: (_) {},

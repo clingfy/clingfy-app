@@ -1,3 +1,4 @@
+import 'package:clingfy/core/captions/caption_reflow.dart';
 import 'package:clingfy/core/captions/captions_capability.dart';
 import 'package:clingfy/core/captions/subtitle_serializer.dart';
 import 'package:clingfy/core/timeline/model/edit_track.dart';
@@ -30,6 +31,7 @@ class PostCaptionsSection extends StatelessWidget {
     required this.onCancel,
     required this.onCueTextChanged,
     required this.subtitleMode,
+    required this.reflowed,
     required this.onSubtitleModeChanged,
     this.stageLabel,
     this.hasEverGenerated = false,
@@ -63,6 +65,12 @@ class PostCaptionsSection extends StatelessWidget {
   /// Where subtitles go on export. Only meaningful once cues exist, so the
   /// control is not shown before then.
   final SubtitleMode subtitleMode;
+
+  /// The transcript mapped onto the edited timeline. Each row's timestamp comes
+  /// from here rather than from the cue itself: the cue holds a SOURCE time,
+  /// and after a trim that number points at a different sentence than the one
+  /// the preview will play there.
+  final ReflowedCaptions reflowed;
   final ValueChanged<SubtitleMode> onSubtitleModeChanged;
 
   @override
@@ -205,12 +213,17 @@ class PostCaptionsSection extends StatelessWidget {
             title: l10n.captionsCueCount(captions.length),
             showHeader: true,
             children: [
-              for (final caption in captions)
+              for (final entry in _rowsInPlaybackOrder())
                 _CueRow(
-                  key: Key('captions_cue_${caption.id}'),
-                  caption: caption,
+                  key: Key('captions_cue_${entry.caption.id}'),
+                  caption: entry.caption,
+                  // Null when an edit removed every moment this cue covered:
+                  // there is no position in the exported file to point at.
+                  outputStartMs: entry.outputStartMs,
+                  cutLabel: l10n.captionsNotInExport,
                   enabled: !isGenerating && !isProcessing,
-                  onTextChanged: (text) => onCueTextChanged(caption.id, text),
+                  onTextChanged: (text) =>
+                      onCueTextChanged(entry.caption.id, text),
                 ),
             ],
           ),
@@ -223,6 +236,36 @@ class PostCaptionsSection extends StatelessWidget {
         ],
       ],
     );
+  }
+
+  /// Cues in the order the exported video plays them, each with the position
+  /// it lands at — or null when it was cut away.
+  ///
+  /// A cut cue is still listed rather than hidden: the user's correction to it
+  /// is real work, and undoing the cut must bring the line back rather than a
+  /// re-transcription. It is listed last because it has no place in the video.
+  List<({Caption caption, int? outputStartMs})> _rowsInPlaybackOrder() {
+    final firstOutput = <String, int>{};
+    for (final span in reflowed.sidecar) {
+      final existing = firstOutput[span.cueId];
+      if (existing == null || span.outputStartMs < existing) {
+        firstOutput[span.cueId] = span.outputStartMs;
+      }
+    }
+    final rows = [
+      for (final caption in captions)
+        (caption: caption, outputStartMs: firstOutput[caption.id]),
+    ];
+    rows.sort((a, b) {
+      final ao = a.outputStartMs, bo = b.outputStartMs;
+      if (ao == null && bo == null) {
+        return a.caption.startMs.compareTo(b.caption.startMs);
+      }
+      if (ao == null) return 1;
+      if (bo == null) return -1;
+      return ao.compareTo(bo);
+    });
+    return rows;
   }
 
   String _unavailableMessage(
@@ -297,11 +340,17 @@ class _CueRow extends StatefulWidget {
   const _CueRow({
     super.key,
     required this.caption,
+    required this.outputStartMs,
+    required this.cutLabel,
     required this.enabled,
     required this.onTextChanged,
   });
 
   final Caption caption;
+
+  /// Where this cue lands in the exported file, or null if an edit cut it.
+  final int? outputStartMs;
+  final String cutLabel;
   final bool enabled;
   final ValueChanged<String> onTextChanged;
 
@@ -344,7 +393,9 @@ class _CueRowState extends State<_CueRow> {
   }
 
   String get _timestamp {
-    final seconds = widget.caption.startMs ~/ 1000;
+    final startMs = widget.outputStartMs;
+    if (startMs == null) return widget.cutLabel;
+    final seconds = startMs ~/ 1000;
     final minutes = seconds ~/ 60;
     return '${minutes.toString().padLeft(2, '0')}:'
         '${(seconds % 60).toString().padLeft(2, '0')}';

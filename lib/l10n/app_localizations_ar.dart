@@ -2760,4 +2760,7 @@ class AppLocalizationsAr extends AppLocalizations {
   @override
   String get captionsDestinationHint =>
       'الترجمة المدمجة تبقى بعد إعادة الرفع. الملف يظل قابلاً للبحث ويمكن إيقافه.';
+
+  @override
+  String get captionsNotInExport => 'محذوف';
 }

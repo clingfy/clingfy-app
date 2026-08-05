@@ -8,6 +8,7 @@ import 'package:flutter/services.dart';
 import 'package:flutter_test/flutter_test.dart';
 
 import '../../../test_helpers/native_test_setup.dart';
+import '../../../test_helpers/wait_until.dart';
 import 'dart:io';
 import 'package:clingfy/core/captions/caption_state_store.dart';
 import 'package:clingfy/core/timeline/model/edit_track.dart';
@@ -423,11 +424,15 @@ void main() {
     await pumpEventQueue();
 
     await post.generateCaptions();
-    await pumpEventQueue();
 
-    final stored = CaptionStateStore.load(project.path);
-    expect(stored, isNotNull);
-    expect(stored!.captions.map((c) => c.text), ['hello there', 'second line']);
+    // Persistence is fire-and-forget, so the write can outlast a fixed number
+    // of event-loop pumps when the suite is contending for the disk. Poll for
+    // the file instead of guessing how long it takes.
+    final stored = await waitForValue(
+      () => CaptionStateStore.load(project.path),
+      reason: 'the transcript should have been written',
+    );
+    expect(stored.captions.map((c) => c.text), ['hello there', 'second line']);
   });
 
   test('a correction is persisted, not just held in memory', () async {
@@ -441,10 +446,13 @@ void main() {
     await post.generateCaptions();
 
     post.updateCaptionText('c1', 'Clingfy');
-    await pumpEventQueue();
 
-    final stored = CaptionStateStore.load(project.path);
-    expect(stored!.captions.first.text, 'Clingfy');
+    await waitUntil(
+      () =>
+          CaptionStateStore.load(project.path)?.captions.first.text ==
+          'Clingfy',
+      reason: 'the correction should have been written',
+    );
   });
 
   test('reopening a recording restores its transcript', () async {

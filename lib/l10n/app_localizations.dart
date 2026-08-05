@@ -5067,6 +5067,12 @@ abstract class AppLocalizations {
   /// In en, this message translates to:
   /// **'Burned-in subtitles survive re-upload. A file stays searchable and can be turned off.'**
   String get captionsDestinationHint;
+
+  /// Marker on a caption whose footage was removed by an edit, so it will not appear in the export.
+  ///
+  /// In en, this message translates to:
+  /// **'Cut'**
+  String get captionsNotInExport;
 }
 
 class _AppLocalizationsDelegate

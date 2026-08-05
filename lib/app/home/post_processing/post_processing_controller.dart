@@ -32,6 +32,7 @@ import 'package:clingfy/core/captions/subtitle_serializer.dart';
 import 'dart:convert';
 import 'package:clingfy/core/captions/caption_rasterizer.dart';
 import 'package:clingfy/core/captions/caption_state_store.dart';
+import 'package:clingfy/core/captions/caption_reflow.dart';
 
 class PostProcessingController extends ChangeNotifier {
   final NativeBridge _nativeBridge;
@@ -214,6 +215,18 @@ class PostProcessingController extends ChangeNotifier {
   double? get captionsProgress => _captionsProgress;
   ProgressStage get captionsStage => _captionsStage;
   bool get hasEverGeneratedCaptions => _hasEverGeneratedCaptions;
+
+  /// The transcript mapped onto the edited timeline.
+  ///
+  /// Cues are transcribed against the ORIGINAL audio, so their times are source
+  /// times; cuts, splits and reordering change where each one lands in the
+  /// exported file. Evaluated once per export and shared by both destinations,
+  /// so the burned-in caption and the sidecar entry can never be computed
+  /// against different clip lists.
+  ReflowedCaptions reflowedCaptions() => CaptionReflow.reflow(
+    captions: _captions,
+    clips: _player.clipEditor?.clips ?? const <Clip>[],
+  );
 
   /// The destination the next export will actually use.
   ///
@@ -1411,9 +1424,14 @@ class PostProcessingController extends ChangeNotifier {
   /// failure — rasterising at a guessed size burns permanently wrong captions
   /// into the video, which is worse than none.
   @visibleForTesting
-  Future<Map<String, dynamic>?> rasterizeCaptionsForExport() async {
+  Future<Map<String, dynamic>?> rasterizeCaptionsForExport([
+    ReflowedCaptions? reflowed,
+  ]) async {
     final projectPath = _projectPath;
-    if (projectPath == null || _captions.isEmpty) return null;
+    // The burn-in view: source-timed, and guaranteed free of overlapping spans
+    // so native's cue track accepts every one of them.
+    final spans = (reflowed ?? reflowedCaptions()).burnIn;
+    if (projectPath == null || spans.isEmpty) return null;
 
     try {
       final size = await _nativeBridge.resolveExportSize(
@@ -1434,7 +1452,7 @@ class PostProcessingController extends ChangeNotifier {
       // native reading bitmaps that have vanished.
       final directory = Directory('$projectPath/post/captions');
       final manifest = await const CaptionRasterizer().rasterize(
-        captions: _captions,
+        captions: [for (final span in spans) span.asSourceCue()],
         videoSize: size,
         directory: directory,
       );
@@ -1471,15 +1489,21 @@ class PostProcessingController extends ChangeNotifier {
   @visibleForTesting
   Future<void> writeSubtitleSidecars(
     String videoPath,
-    SubtitleMode mode,
-  ) async {
-    if (!mode.writesSidecar || _captions.isEmpty) return;
+    SubtitleMode mode, [
+    ReflowedCaptions? reflowed,
+  ]) async {
+    // The sidecar view: timestamps on the EXPORTED timeline. Writing source
+    // times here would put every subtitle at the wrong moment the instant a
+    // recording has a single cut.
+    final spans = (reflowed ?? reflowedCaptions()).sidecar;
+    if (!mode.writesSidecar || spans.isEmpty) return;
+    final cues = [for (final span in spans) span.asOutputCue()];
 
     final stem = _withoutExtension(videoPath);
 
     for (final entry in {
-      '$stem.srt': SubtitleSerializer.toSrt(_captions),
-      '$stem.vtt': SubtitleSerializer.toWebVtt(_captions),
+      '$stem.srt': SubtitleSerializer.toSrt(cues),
+      '$stem.vtt': SubtitleSerializer.toWebVtt(cues),
     }.entries) {
       try {
         // Written as UTF-8 without a BOM: WebVTT requires UTF-8, and SubRip
@@ -1644,8 +1668,11 @@ class PostProcessingController extends ChangeNotifier {
       }
 
       final subtitleMode = exportSubtitleMode;
+      // Once, before either destination runs: the clip list must not be read
+      // twice across the awaits that follow.
+      final reflowed = reflowedCaptions();
       final captionArgs = subtitleMode.burnsIn
-          ? await rasterizeCaptionsForExport()
+          ? await rasterizeCaptionsForExport(reflowed)
           : null;
 
       Map<String, dynamic> args = {
@@ -1724,7 +1751,7 @@ class PostProcessingController extends ChangeNotifier {
       if (newPath != null) {
         Log.i("PostProcessing", "Export completed successfully");
         _hasExportedCurrentRecording = true;
-        await writeSubtitleSidecars(newPath, subtitleMode);
+        await writeSubtitleSidecars(newPath, subtitleMode, reflowed);
         ClingfyAnalytics.capture(
           AnalyticsEvents.exportJobComplete,
           properties: {

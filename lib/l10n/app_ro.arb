@@ -915,5 +915,6 @@
   "captionsDestinationBurnIn": "Incluse în video",
   "captionsDestinationSidecar": "Fișier",
   "captionsDestinationBoth": "Ambele",
-  "captionsDestinationHint": "Subtitrările incluse rezistă la reîncărcare. Un fișier rămâne căutabil și poate fi dezactivat."
+  "captionsDestinationHint": "Subtitrările incluse rezistă la reîncărcare. Un fișier rămâne căutabil și poate fi dezactivat.",
+  "captionsNotInExport": "Tăiat"
 }
