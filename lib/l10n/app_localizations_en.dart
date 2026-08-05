@@ -2756,4 +2756,23 @@ class AppLocalizationsEn extends AppLocalizations {
   String captionsCueCount(int count) {
     return '$count subtitles';
   }
+
+  @override
+  String get captionsDestination => 'Subtitles in export';
+
+  @override
+  String get captionsDestinationOff => 'Off';
+
+  @override
+  String get captionsDestinationBurnIn => 'Burn in';
+
+  @override
+  String get captionsDestinationSidecar => 'File';
+
+  @override
+  String get captionsDestinationBoth => 'Both';
+
+  @override
+  String get captionsDestinationHint =>
+      'Burned-in subtitles survive re-upload. A file stays searchable and can be turned off.';
 }

@@ -931,5 +931,29 @@
         "type": "int"
       }
     }
+  },
+  "captionsDestination": "Subtitles in export",
+  "@captionsDestination": {
+    "description": "Header for choosing where subtitles go when the project is exported."
+  },
+  "captionsDestinationOff": "Off",
+  "@captionsDestinationOff": {
+    "description": "Subtitle export destination: no subtitles in the output."
+  },
+  "captionsDestinationBurnIn": "Burn in",
+  "@captionsDestinationBurnIn": {
+    "description": "Subtitle export destination: composited into the video frames."
+  },
+  "captionsDestinationSidecar": "File",
+  "@captionsDestinationSidecar": {
+    "description": "Subtitle export destination: written as separate .srt and .vtt files."
+  },
+  "captionsDestinationBoth": "Both",
+  "@captionsDestinationBoth": {
+    "description": "Subtitle export destination: burned into the video and written as files."
+  },
+  "captionsDestinationHint": "Burned-in subtitles survive re-upload. A file stays searchable and can be turned off.",
+  "@captionsDestinationHint": {
+    "description": "Explains the trade-off between burned-in subtitles and a sidecar file."
   }
 }

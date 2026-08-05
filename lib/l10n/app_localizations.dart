@@ -5031,6 +5031,42 @@ abstract class AppLocalizations {
   /// In en, this message translates to:
   /// **'{count} subtitles'**
   String captionsCueCount(int count);
+
+  /// Header for choosing where subtitles go when the project is exported.
+  ///
+  /// In en, this message translates to:
+  /// **'Subtitles in export'**
+  String get captionsDestination;
+
+  /// Subtitle export destination: no subtitles in the output.
+  ///
+  /// In en, this message translates to:
+  /// **'Off'**
+  String get captionsDestinationOff;
+
+  /// Subtitle export destination: composited into the video frames.
+  ///
+  /// In en, this message translates to:
+  /// **'Burn in'**
+  String get captionsDestinationBurnIn;
+
+  /// Subtitle export destination: written as separate .srt and .vtt files.
+  ///
+  /// In en, this message translates to:
+  /// **'File'**
+  String get captionsDestinationSidecar;
+
+  /// Subtitle export destination: burned into the video and written as files.
+  ///
+  /// In en, this message translates to:
+  /// **'Both'**
+  String get captionsDestinationBoth;
+
+  /// Explains the trade-off between burned-in subtitles and a sidecar file.
+  ///
+  /// In en, this message translates to:
+  /// **'Burned-in subtitles survive re-upload. A file stays searchable and can be turned off.'**
+  String get captionsDestinationHint;
 }
 
 class _AppLocalizationsDelegate

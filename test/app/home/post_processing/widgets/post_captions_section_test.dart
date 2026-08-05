@@ -6,6 +6,7 @@ import 'package:fluent_ui/fluent_ui.dart' as fluent;
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:macos_ui/macos_ui.dart';
+import 'package:clingfy/core/captions/subtitle_serializer.dart';
 
 /// The captions panel: what it refuses to offer, when it offers it, and what
 /// an edit actually commits.
@@ -51,6 +52,8 @@ void main() {
     VoidCallback? onGenerate,
     VoidCallback? onCancel,
     void Function(String, String)? onCueTextChanged,
+    SubtitleMode subtitleMode = SubtitleMode.burnIn,
+    ValueChanged<SubtitleMode>? onSubtitleModeChanged,
   }) {
     return PostCaptionsSection(
       capability: capability,
@@ -66,6 +69,8 @@ void main() {
       onGenerate: onGenerate ?? () {},
       onCancel: onCancel ?? () {},
       onCueTextChanged: onCueTextChanged ?? (_, _) {},
+      subtitleMode: subtitleMode,
+      onSubtitleModeChanged: onSubtitleModeChanged ?? (_) {},
     );
   }
 
@@ -173,9 +178,7 @@ void main() {
   testWidgets('generate is dead when every source is off', (tester) async {
     var fired = 0;
     await tester.pumpWidget(
-      host(
-        section(useMic: false, useSystem: false, onGenerate: () => fired++),
-      ),
+      host(section(useMic: false, useSystem: false, onGenerate: () => fired++)),
     );
     await tester.tap(find.byKey(generateKey));
     await tester.pump();
@@ -361,6 +364,86 @@ void main() {
     );
     final field = tester.widget<TextField>(find.byType(TextField));
     expect(field.enabled, isFalse);
+  });
+
+  // ---- Export destination ------------------------------------------------
+
+  testWidgets('the destination picker only appears once cues exist', (
+    tester,
+  ) async {
+    const key = ValueKey('captions_destination');
+    await tester.pumpWidget(host(section()));
+    expect(
+      find.byKey(key),
+      findsNothing,
+      reason: 'nothing to burn in or write out yet',
+    );
+
+    await tester.pumpWidget(host(section(captions: [cue('a', 'hello')])));
+    expect(find.byKey(key), findsOneWidget);
+  });
+
+  testWidgets('picking a destination reports it', (tester) async {
+    final picked = <SubtitleMode>[];
+    final l10n = await AppLocalizations.delegate.load(const Locale('en'));
+    await tester.pumpWidget(
+      host(
+        section(
+          captions: [cue('a', 'hello')],
+          onSubtitleModeChanged: picked.add,
+        ),
+      ),
+    );
+
+    await tester.tap(find.text(l10n.captionsDestinationBoth));
+    await tester.pumpAndSettle();
+    expect(picked, [SubtitleMode.both]);
+  });
+
+  testWidgets('every destination is offered, each with its own label', (
+    tester,
+  ) async {
+    final l10n = await AppLocalizations.delegate.load(const Locale('en'));
+    final labels = [
+      l10n.captionsDestinationOff,
+      l10n.captionsDestinationBurnIn,
+      l10n.captionsDestinationSidecar,
+      l10n.captionsDestinationBoth,
+    ];
+    expect(labels.toSet(), hasLength(SubtitleMode.values.length));
+
+    await tester.pumpWidget(host(section(captions: [cue('a', 'hello')])));
+    for (final label in labels) {
+      expect(find.text(label), findsOneWidget, reason: label);
+    }
+    // Burn-in and sidecar are not alternatives, so the trade-off is spelled
+    // out rather than left to the four one-word labels.
+    expect(find.text(l10n.captionsDestinationHint), findsOneWidget);
+  });
+
+  testWidgets('the destination is inert while an export runs', (tester) async {
+    final picked = <SubtitleMode>[];
+    final l10n = await AppLocalizations.delegate.load(const Locale('en'));
+    await tester.pumpWidget(
+      host(
+        section(
+          captions: [cue('a', 'hello')],
+          isProcessing: true,
+          onSubtitleModeChanged: picked.add,
+        ),
+      ),
+    );
+
+    await tester.tap(
+      find.text(l10n.captionsDestinationBoth),
+      warnIfMissed: false,
+    );
+    await tester.pumpAndSettle();
+    expect(
+      picked,
+      isEmpty,
+      reason: 'changing the destination mid-export would not take effect',
+    );
   });
 
   // ---- Direction -------------------------------------------------------

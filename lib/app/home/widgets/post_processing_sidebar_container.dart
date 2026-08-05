@@ -180,6 +180,7 @@ class PostProcessingSidebarContainer extends StatelessWidget {
                 vm.captionsStage,
               ),
               hasEverGeneratedCaptions: vm.hasEverGeneratedCaptions,
+              subtitleMode: settingsController.post.postSubtitleMode,
               autoNormalizeOnExport:
                   settingsController.post.postAutoNormalizeEnabled,
               autoNormalizeTargetDbfs:
@@ -208,6 +209,9 @@ class PostProcessingSidebarContainer extends StatelessWidget {
               onGenerateCaptions: () => unawaited(post.generateCaptions()),
               onCancelCaptions: () => unawaited(post.cancelCaptions()),
               onCaptionTextChanged: post.updateCaptionText,
+              onSubtitleModeChanged: (mode) => unawaited(
+                settingsController.post.updatePostSubtitleMode(mode),
+              ),
               colorGrade: vm.colorGrade,
               onColorAutoEnhanceChanged: post.setColorGradeAutoEnhance,
               onColorExposureChanged: post.setColorGradeExposure,

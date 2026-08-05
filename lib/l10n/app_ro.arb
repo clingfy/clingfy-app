@@ -909,5 +909,11 @@
   "captionsMicOnlyRecording": "Această înregistrare este anterioară capturii audio separate, deci s-a înregistrat doar microfonul.",
   "captionsFirstRunDownload": "Prima rulare descarcă un model de vorbire. Se întâmplă o singură dată.",
   "captionsFailed": "Nu s-au putut genera subtitrările.",
-  "captionsCueCount": "{count} subtitrări"
+  "captionsCueCount": "{count} subtitrări",
+  "captionsDestination": "Subtitrări la export",
+  "captionsDestinationOff": "Dezactivat",
+  "captionsDestinationBurnIn": "Incluse în video",
+  "captionsDestinationSidecar": "Fișier",
+  "captionsDestinationBoth": "Ambele",
+  "captionsDestinationHint": "Subtitrările incluse rezistă la reîncărcare. Un fișier rămâne căutabil și poate fi dezactivat."
 }

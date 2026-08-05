@@ -909,5 +909,11 @@
   "captionsMicOnlyRecording": "هذا التسجيل يسبق التقاط الصوت المنفصل، لذا تم تسجيل الميكروفون فقط.",
   "captionsFirstRunDownload": "يقوم التشغيل الأول بتنزيل نموذج الكلام. يحدث هذا مرة واحدة.",
   "captionsFailed": "تعذّر إنشاء الترجمة.",
-  "captionsCueCount": "{count} ترجمة"
+  "captionsCueCount": "{count} ترجمة",
+  "captionsDestination": "الترجمة في التصدير",
+  "captionsDestinationOff": "إيقاف",
+  "captionsDestinationBurnIn": "مدمجة",
+  "captionsDestinationSidecar": "ملف",
+  "captionsDestinationBoth": "كلاهما",
+  "captionsDestinationHint": "الترجمة المدمجة تبقى بعد إعادة الرفع. الملف يظل قابلاً للبحث ويمكن إيقافه."
 }

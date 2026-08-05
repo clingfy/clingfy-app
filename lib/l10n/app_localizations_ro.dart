@@ -2792,4 +2792,23 @@ class AppLocalizationsRo extends AppLocalizations {
   String captionsCueCount(int count) {
     return '$count subtitrări';
   }
+
+  @override
+  String get captionsDestination => 'Subtitrări la export';
+
+  @override
+  String get captionsDestinationOff => 'Dezactivat';
+
+  @override
+  String get captionsDestinationBurnIn => 'Incluse în video';
+
+  @override
+  String get captionsDestinationSidecar => 'Fișier';
+
+  @override
+  String get captionsDestinationBoth => 'Ambele';
+
+  @override
+  String get captionsDestinationHint =>
+      'Subtitrările incluse rezistă la reîncărcare. Un fișier rămâne căutabil și poate fi dezactivat.';
 }

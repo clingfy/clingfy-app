@@ -1,7 +1,9 @@
 import 'package:clingfy/core/captions/captions_capability.dart';
+import 'package:clingfy/core/captions/subtitle_serializer.dart';
 import 'package:clingfy/core/timeline/model/edit_track.dart';
 import 'package:clingfy/l10n/app_localizations.dart';
 import 'package:clingfy/ui/platform/widgets/app_inline_notice.dart';
+import 'package:clingfy/ui/platform/widgets/app_segmented.dart';
 import 'package:clingfy/ui/platform/widgets/app_settings_group.dart';
 import 'package:clingfy/ui/platform/widgets/app_sidebar_tokens.dart';
 import 'package:clingfy/ui/platform/widgets/app_toggle_row.dart';
@@ -27,6 +29,8 @@ class PostCaptionsSection extends StatelessWidget {
     required this.onGenerate,
     required this.onCancel,
     required this.onCueTextChanged,
+    required this.subtitleMode,
+    required this.onSubtitleModeChanged,
     this.stageLabel,
     this.hasEverGenerated = false,
   });
@@ -55,6 +59,11 @@ class PostCaptionsSection extends StatelessWidget {
   final VoidCallback onGenerate;
   final VoidCallback onCancel;
   final void Function(String cueId, String text) onCueTextChanged;
+
+  /// Where subtitles go on export. Only meaningful once cues exist, so the
+  /// control is not shown before then.
+  final SubtitleMode subtitleMode;
+  final ValueChanged<SubtitleMode> onSubtitleModeChanged;
 
   @override
   Widget build(BuildContext context) {
@@ -156,6 +165,41 @@ class PostCaptionsSection extends StatelessWidget {
           ],
         ),
         if (captions.isNotEmpty) ...[
+          const SizedBox(height: AppSidebarTokens.rowGap),
+          AppSettingsGroup(
+            title: l10n.captionsDestination,
+            children: [
+              AppSegmented<SubtitleMode>(
+                key: const ValueKey('captions_destination'),
+                value: subtitleMode,
+                compact: true,
+                onChanged: isProcessing ? null : onSubtitleModeChanged,
+                items: [
+                  AppSegmentedItem(
+                    value: SubtitleMode.none,
+                    label: l10n.captionsDestinationOff,
+                  ),
+                  AppSegmentedItem(
+                    value: SubtitleMode.burnIn,
+                    label: l10n.captionsDestinationBurnIn,
+                  ),
+                  AppSegmentedItem(
+                    value: SubtitleMode.sidecar,
+                    label: l10n.captionsDestinationSidecar,
+                  ),
+                  AppSegmentedItem(
+                    value: SubtitleMode.both,
+                    label: l10n.captionsDestinationBoth,
+                  ),
+                ],
+              ),
+              const SizedBox(height: AppSidebarTokens.compactGap),
+              Text(
+                l10n.captionsDestinationHint,
+                style: Theme.of(context).textTheme.bodySmall,
+              ),
+            ],
+          ),
           const SizedBox(height: AppSidebarTokens.rowGap),
           AppSettingsGroup(
             title: l10n.captionsCueCount(captions.length),

@@ -2741,4 +2741,23 @@ class AppLocalizationsAr extends AppLocalizations {
   String captionsCueCount(int count) {
     return '$count ترجمة';
   }
+
+  @override
+  String get captionsDestination => 'الترجمة في التصدير';
+
+  @override
+  String get captionsDestinationOff => 'إيقاف';
+
+  @override
+  String get captionsDestinationBurnIn => 'مدمجة';
+
+  @override
+  String get captionsDestinationSidecar => 'ملف';
+
+  @override
+  String get captionsDestinationBoth => 'كلاهما';
+
+  @override
+  String get captionsDestinationHint =>
+      'الترجمة المدمجة تبقى بعد إعادة الرفع. الملف يظل قابلاً للبحث ويمكن إيقافه.';
 }

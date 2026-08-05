@@ -14,6 +14,7 @@ import 'package:clingfy/app/home/post_processing/widgets/post_layout_section.dar
 import 'package:clingfy/app/home/post_processing/widgets/post_zoom_section.dart';
 import 'package:clingfy/app/home/post_processing/widgets/post_color_grade_section.dart';
 import 'package:clingfy/core/captions/captions_capability.dart';
+import 'package:clingfy/core/captions/subtitle_serializer.dart';
 import 'package:clingfy/core/timeline/model/color_grade.dart';
 import 'package:clingfy/core/timeline/model/edit_track.dart';
 import 'package:flutter/material.dart' hide PlatformMenuItem;
@@ -151,6 +152,7 @@ class PostProcessingSidebar extends StatelessWidget {
   final double? captionsProgress;
   final String? captionsStageLabel;
   final bool hasEverGeneratedCaptions;
+  final SubtitleMode subtitleMode;
   final double audioVolume;
   final bool autoNormalizeOnExport;
   final double autoNormalizeTargetDbfs;
@@ -210,6 +212,7 @@ class PostProcessingSidebar extends StatelessWidget {
   final VoidCallback onGenerateCaptions;
   final VoidCallback onCancelCaptions;
   final void Function(String cueId, String text) onCaptionTextChanged;
+  final ValueChanged<SubtitleMode> onSubtitleModeChanged;
   final ColorGrade colorGrade;
   final ValueChanged<bool> onColorAutoEnhanceChanged;
   final ValueChanged<double> onColorExposureChanged;
@@ -307,6 +310,7 @@ class PostProcessingSidebar extends StatelessWidget {
     required this.captionsProgress,
     required this.captionsStageLabel,
     required this.hasEverGeneratedCaptions,
+    required this.subtitleMode,
     required this.audioVolume,
     required this.autoNormalizeOnExport,
     required this.autoNormalizeTargetDbfs,
@@ -318,6 +322,7 @@ class PostProcessingSidebar extends StatelessWidget {
     required this.onGenerateCaptions,
     required this.onCancelCaptions,
     required this.onCaptionTextChanged,
+    required this.onSubtitleModeChanged,
     required this.onAudioVolumeChanged,
     required this.onAudioVolumeChangeEnd,
     required this.onAutoNormalizeOnExportChanged,
@@ -530,6 +535,8 @@ class PostProcessingSidebar extends StatelessWidget {
         onGenerate: onGenerateCaptions,
         onCancel: onCancelCaptions,
         onCueTextChanged: onCaptionTextChanged,
+        subtitleMode: subtitleMode,
+        onSubtitleModeChanged: onSubtitleModeChanged,
       ),
       PostExportSettingsSection(
         isProcessing: isProcessing,
