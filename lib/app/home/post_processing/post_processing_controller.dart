@@ -282,6 +282,10 @@ class PostProcessingController extends ChangeNotifier {
     if (spans.isEmpty) {
       if (_pushedCaptionSignature == null) return;
       _pushedCaptionSignature = null;
+      Log.i("Captions", "Preview captions cleared", null, null, {
+        'mode': exportSubtitleMode.wireValue,
+        'cues': _captions.length,
+      });
       await _nativeBridge.previewSetCaptions(
         sessionId: sessionId,
         bitmapDirectory: null,
@@ -319,6 +323,10 @@ class PostProcessingController extends ChangeNotifier {
       if (_isDisposed || _projectPath != projectPath) return;
 
       _pushedCaptionSignature = signature;
+      Log.i("Captions", "Preview captions pushed", null, null, {
+        'cues': manifest.entries.length,
+        'canvas': '${size.width.toInt()}x${size.height.toInt()}',
+      });
       await _nativeBridge.previewSetCaptions(
         sessionId: sessionId,
         bitmapDirectory: manifest.directoryPath,
@@ -1578,7 +1586,15 @@ class PostProcessingController extends ChangeNotifier {
     // The burn-in view: source-timed, and guaranteed free of overlapping spans
     // so native's cue track accepts every one of them.
     final spans = (reflowed ?? reflowedCaptions()).burnIn;
-    if (projectPath == null || spans.isEmpty) return null;
+    if (projectPath == null || spans.isEmpty) {
+      Log.i("Captions", "No burn-in payload", null, null, {
+        'hasProject': projectPath != null,
+        'cues': _captions.length,
+        'burnInSpans': spans.length,
+        'mode': exportSubtitleMode.wireValue,
+      });
+      return null;
+    }
 
     try {
       final size = await _nativeBridge.resolveExportSize(
@@ -1588,7 +1604,7 @@ class PostProcessingController extends ChangeNotifier {
       );
       if (size == null) {
         Log.w(
-          "PostProcessing",
+          "Captions",
           "Skipping caption burn-in: native did not report an export size",
         );
         return null;
@@ -1604,6 +1620,12 @@ class PostProcessingController extends ChangeNotifier {
         directory: directory,
       );
       final args = manifest.toExportArgs();
+      Log.i("Captions", "Export burn-in payload prepared", null, null, {
+        'cues': manifest.entries.length,
+        'spans': spans.length,
+        'canvas': '${size.width.toInt()}x${size.height.toInt()}',
+        'directory': manifest.directoryPath,
+      });
       return args.isEmpty ? null : args;
     } catch (e, st) {
       Log.e("PostProcessing", "Caption rasterization failed", e, st);

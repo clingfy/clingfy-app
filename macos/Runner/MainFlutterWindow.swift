@@ -830,6 +830,8 @@ class MainFlutterWindow: NSWindow {
             cameraParams: cameraParams,
             colorGrade: req.colorGrade,
             clips: req.clips,
+            captionBitmapDirectory: req.captionBitmapDirectory,
+            captions: req.captions,
             onProgress: { [weak self] progress in
               // Labelled payload, not a bare double. See JobProgress — the Dart
               // side and the Windows publisher implement the same shape.

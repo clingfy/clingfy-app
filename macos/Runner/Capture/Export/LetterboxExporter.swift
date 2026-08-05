@@ -2166,6 +2166,28 @@ final class LetterboxExporter {
       return CaptionOverlayRenderer(
         bitmapDirectory: URL(fileURLWithPath: captionBitmapDirectory))
     }()
+    // Logged unconditionally, including the nil cases. Burn-in shipped broken
+    // because nothing said anything when the cues never arrived: the request
+    // parsed them and the facade signature dropped them, and every log line in
+    // the export was silent about it.
+    NativeLogger.i(
+      "Captions", "Export caption inputs",
+      context: [
+        "cuesReceived": captions.count,
+        "cuesAccepted": captionCueTrack?.count ?? 0,
+        "bitmapDirectory": captionBitmapDirectory ?? "nil",
+        "rendererReady": captionRenderer != nil,
+        "willBurnIn": captionCueTrack != nil && captionRenderer != nil,
+      ])
+    if captions.isEmpty {
+      NativeLogger.i(
+        "Captions", "No captions in the export payload — nothing to burn in")
+    } else if captionBitmapDirectory == nil {
+      NativeLogger.w(
+        "Captions", "Captions received but no bitmap directory; burn-in skipped",
+        context: ["cues": captions.count])
+    }
+
     if let captionCueTrack, captionRenderer != nil {
       NativeLogger.i(
         "Export", "Manual render burning in captions",

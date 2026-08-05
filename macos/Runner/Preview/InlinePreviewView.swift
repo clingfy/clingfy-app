@@ -220,6 +220,8 @@ final class InlinePreviewView: NSView {
   /// one shows the wrong line for the length of the debounce — and for a whole
   /// trim drag, which re-arms it continuously.
   private var pendingCaptionTrack: CaptionPreviewTrack??
+  /// Last canvas a mismatch was logged for, so the warning is not per-frame.
+  private var lastCaptionCanvasMismatch: CGSize?
   private var cameraBorderLayer: CAShapeLayer?
 
   // Zoom state
@@ -3705,8 +3707,8 @@ final class InlinePreviewView: NSView {
     // rebuild will produce, not the one currently playing. Hold it.
     if clipRebuildWorkItem != nil {
       pendingCaptionTrack = .some(track)
-      NativeLogger.d(
-        "Player", "updateCaptionsOnly: held for pending clip rebuild",
+      NativeLogger.i(
+        "Captions", "Preview caption track held for pending clip rebuild",
         context: ["cues": track?.count ?? 0])
       return
     }
@@ -3722,8 +3724,8 @@ final class InlinePreviewView: NSView {
     }
     refreshCaptionOverlay(at: player?.currentTime().seconds ?? 0)
     needsDisplay = true
-    NativeLogger.d(
-      "Player", "updateCaptionsOnly: applied",
+    NativeLogger.i(
+      "Captions", "Preview caption track applied",
       context: [
         "cues": track?.count ?? 0,
         "canvas": "\(Int(track?.canvasSize.width ?? 0))x\(Int(track?.canvasSize.height ?? 0))",
@@ -3747,10 +3749,25 @@ final class InlinePreviewView: NSView {
     // honest move while a preset change is in flight is to show nothing rather
     // than something the export will not reproduce.
     guard track.matches(targetSize: container.bounds.size) else {
+      // Logged once per canvas, not per frame: this fires on every tick while a
+      // preset change is in flight, and the whole point is that it is otherwise
+      // invisible — the captions simply do not appear.
+      if lastCaptionCanvasMismatch != container.bounds.size {
+        lastCaptionCanvasMismatch = container.bounds.size
+        NativeLogger.w(
+          "Captions", "Preview captions hidden: bitmaps built for another canvas",
+          context: [
+            "bitmapCanvas":
+              "\(Int(track.canvasSize.width))x\(Int(track.canvasSize.height))",
+            "previewCanvas":
+              "\(Int(container.bounds.width))x\(Int(container.bounds.height))",
+          ])
+      }
       layer.isHidden = true
       captionCueId = nil
       return
     }
+    lastCaptionCanvasMismatch = nil
 
     let editedMs = playerSeconds.isFinite ? Int(playerSeconds * 1000.0) : 0
     guard let cue = track.activeCue(atEditedMs: editedMs) else {
@@ -3763,6 +3780,9 @@ final class InlinePreviewView: NSView {
       guard let image = NSImage(contentsOf: track.bitmapURL(for: cue)),
         let cgImage = image.cgImage(forProposedRect: nil, context: nil, hints: nil)
       else {
+        NativeLogger.w(
+          "Captions", "Preview caption bitmap missing or undecodable",
+          context: ["cue": cue.id, "path": track.bitmapURL(for: cue).path])
         layer.isHidden = true
         captionCueId = nil
         return
