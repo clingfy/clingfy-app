@@ -39,8 +39,37 @@ class KeyboardShortcutsController {
     ...?diagnostics?.call(),
   };
 
+  /// True when an unmodified keystroke belongs to a focused text field rather
+  /// than to the app.
+  ///
+  /// This `Shortcuts` layer sits above every text field in the app, so a
+  /// BARE-key binding steals the key before the field can insert it. Space is
+  /// bound to toggleRecording, which made the space bar unusable in the caption
+  /// editor: each press toggled playback instead of typing a space, eight times
+  /// in three seconds in the logs.
+  ///
+  /// Only bare keys are suppressed. A modified combo is unambiguously the
+  /// app's — Cmd+E should still export while the caret is in a field — and that
+  /// is the macOS convention: the text field owns unmodified keys, the app owns
+  /// the combos.
+  static bool _belongsToFocusedTextField() {
+    final keyboard = HardwareKeyboard.instance;
+    if (keyboard.isMetaPressed ||
+        keyboard.isControlPressed ||
+        keyboard.isAltPressed) {
+      return false;
+    }
+    // Walk up rather than testing the focused widget directly: a TextField's
+    // focus node lives on a `Focus` INSIDE `EditableText`, so the focused
+    // context's own widget is that `Focus`, never the `EditableText`.
+    final context = FocusManager.instance.primaryFocus?.context;
+    if (context == null) return false;
+    return context.findAncestorStateOfType<EditableTextState>() != null;
+  }
+
   /// Wraps a shortcut callback so every invocation is recorded.
   Object? _invoke(String action, VoidCallback run) {
+    if (_belongsToFocusedTextField()) return null;
     Log.i(
       'Shortcuts',
       'Shortcut invoked',
@@ -56,6 +85,7 @@ class KeyboardShortcutsController {
     String action,
     Future<void> Function() run,
   ) async {
+    if (_belongsToFocusedTextField()) return null;
     Log.i(
       'Shortcuts',
       'Shortcut invoked',

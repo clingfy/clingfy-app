@@ -380,6 +380,61 @@ void main() {
     expect(commits, [('cue-7', 'Clingfy')]);
   });
 
+  testWidgets('typing reaches the preview without leaving the field', (
+    tester,
+  ) async {
+    // Commit-on-blur alone meant the preview kept showing the old text until
+    // the user clicked elsewhere, which reads as the edit not working — on a
+    // feature whose entire point is watching the caption change.
+    final commits = <(String, String)>[];
+    await tester.pumpWidget(
+      host(
+        section(
+          captions: [cue('cue-7', 'wrong name')],
+          onCueTextChanged: (id, text) => commits.add((id, text)),
+        ),
+      ),
+    );
+
+    await tester.tap(find.byType(TextField).first);
+    await tester.pump();
+    await tester.enterText(find.byType(TextField).first, 'Clingfy');
+
+    expect(commits, isEmpty, reason: 'not on the keystroke itself');
+    await tester.pump(const Duration(milliseconds: 500));
+    expect(
+      commits,
+      [('cue-7', 'Clingfy')],
+      reason: 'but shortly after typing stops, with the field still focused',
+    );
+  });
+
+  testWidgets('a burst of typing commits once, not once per character', (
+    tester,
+  ) async {
+    // Every commit is an undoable edit and re-rasterizes the cue, so
+    // per-keystroke commits would bury real changes in the undo stack.
+    final commits = <(String, String)>[];
+    await tester.pumpWidget(
+      host(
+        section(
+          captions: [cue('cue-7', 'x')],
+          onCueTextChanged: (id, text) => commits.add((id, text)),
+        ),
+      ),
+    );
+
+    await tester.tap(find.byType(TextField).first);
+    await tester.pump();
+    for (final text in ['C', 'Cl', 'Cli', 'Clin', 'Cling']) {
+      await tester.enterText(find.byType(TextField).first, text);
+      await tester.pump(const Duration(milliseconds: 60));
+    }
+    await tester.pump(const Duration(milliseconds: 500));
+
+    expect(commits, [('cue-7', 'Cling')]);
+  });
+
   testWidgets('an unchanged field commits nothing on blur', (tester) async {
     final commits = <(String, String)>[];
     await tester.pumpWidget(

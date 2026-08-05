@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'package:clingfy/core/captions/caption_reflow.dart';
 import 'package:clingfy/core/captions/captions_capability.dart';
 import 'package:clingfy/core/captions/subtitle_serializer.dart';
@@ -375,17 +376,40 @@ class _CueRowState extends State<_CueRow> {
     text: widget.caption.text,
   );
   late final FocusNode _focusNode = FocusNode();
+  Timer? _commitDebounce;
+
+  /// How long typing has to pause before the correction reaches the preview.
+  ///
+  /// Commit-on-blur alone was wrong for a feature whose whole point is
+  /// watching the caption change: the preview kept showing the old text until
+  /// the user clicked somewhere else, which read as the edit not working. Long
+  /// enough not to fire mid-word, short enough to feel like the preview is
+  /// following you.
+  static const Duration _commitDelay = Duration(milliseconds: 350);
 
   @override
   void initState() {
     super.initState();
-    // Commit on blur rather than per keystroke: every commit is an undoable
-    // edit, and one per character would bury real changes in the undo stack.
+    // Blur still commits, so the last edit is never lost to a pending timer.
     _focusNode.addListener(() {
-      if (!_focusNode.hasFocus && _controller.text != widget.caption.text) {
-        widget.onTextChanged(_controller.text);
+      if (!_focusNode.hasFocus) {
+        _commitDebounce?.cancel();
+        _commit();
       }
     });
+  }
+
+  /// Debounced rather than per-keystroke: every commit is an undoable edit and
+  /// re-rasterizes the cue, so one per character would both bury real changes
+  /// in the undo stack and re-render on every letter.
+  void _onChanged(String _) {
+    _commitDebounce?.cancel();
+    _commitDebounce = Timer(_commitDelay, _commit);
+  }
+
+  void _commit() {
+    if (_controller.text == widget.caption.text) return;
+    widget.onTextChanged(_controller.text);
   }
 
   @override
@@ -399,6 +423,7 @@ class _CueRowState extends State<_CueRow> {
 
   @override
   void dispose() {
+    _commitDebounce?.cancel();
     _focusNode.dispose();
     _controller.dispose();
     super.dispose();
@@ -443,6 +468,7 @@ class _CueRowState extends State<_CueRow> {
                 enabled: widget.enabled,
                 maxLines: null,
                 style: Theme.of(context).textTheme.bodySmall,
+                onChanged: _onChanged,
                 decoration: const InputDecoration(
                   isDense: true,
                   border: OutlineInputBorder(),
