@@ -40,6 +40,7 @@ void main() {
       {'id': 'c1', 'startMs': 0, 'endMs': 1500, 'text': 'hello there'},
     ],
     String? exportReturns,
+    Object? exportSizeReturns = const {'width': 1920, 'height': 1080},
   }) async {
     SharedPreferences.setMockInitialValues({
       'postSubtitleMode': mode.wireValue,
@@ -57,6 +58,8 @@ void main() {
           };
         case 'generateCaptions':
           return transcript;
+        case 'resolveExportSize':
+          return exportSizeReturns;
         case 'exportVideo':
           return exportReturns ?? exportedPath;
         case 'processVideo':
@@ -82,7 +85,7 @@ void main() {
     });
     post.attachToRecording(
       sessionId: 'rec_export',
-      projectPath: '/tmp/original.clingfyproj',
+      projectPath: '${tempDir.path}/project.clingfyproj',
     );
     await pumpEventQueue();
     return post;
@@ -228,6 +231,100 @@ void main() {
   });
 
   // ---- Export payload ---------------------------------------------------
+
+  test('the burn-in payload carries bitmaps, not text', () async {
+    // The contract native actually parses is {id, startMs, endMs, bitmapName}.
+    // A cue sent as text is rejected by native's own parser and silently
+    // produces zero cues — no burn-in, no error, nothing in the log.
+    final post = await createController(mode: SubtitleMode.burnIn);
+    await post.generateCaptions();
+
+    final args = await post.rasterizeCaptionsForExport();
+
+    expect(args, isNotNull);
+    expect(args!['captionBitmapDirectory'], isA<String>());
+    final cues = args['captions'] as List;
+    expect(cues, hasLength(1));
+    expect(cues.first, containsPair('bitmapName', isA<String>()));
+    expect(cues.first, containsPair('id', 'c1'));
+    expect(cues.first, isNot(contains('text')));
+  });
+
+  test('the bitmaps are really on disk where native is pointed', () async {
+    final post = await createController(mode: SubtitleMode.burnIn);
+    await post.generateCaptions();
+
+    final args = await post.rasterizeCaptionsForExport();
+    final dir = args!['captionBitmapDirectory'] as String;
+    final name = (args['captions'] as List).first['bitmapName'] as String;
+
+    final bitmap = File('$dir/$name');
+    expect(bitmap.existsSync(), isTrue);
+    // PNG magic. Native decodes these by content, so an empty or truncated
+    // file would fail at render time rather than here.
+    expect(bitmap.readAsBytesSync().take(4), [0x89, 0x50, 0x4E, 0x47]);
+  });
+
+  test('no export size means no burn-in rather than a guessed one', () async {
+    // Rasterising at a made-up size burns permanently wrong captions into the
+    // video. Skipping is the honest failure.
+    final post = await createController(
+      mode: SubtitleMode.burnIn,
+      exportSizeReturns: null,
+    );
+    await post.generateCaptions();
+
+    expect(await post.rasterizeCaptionsForExport(), isNull);
+  });
+
+  test('a degenerate export size is refused', () async {
+    final post = await createController(
+      mode: SubtitleMode.burnIn,
+      exportSizeReturns: {'width': 0, 'height': 1080},
+    );
+    await post.generateCaptions();
+
+    expect(await post.rasterizeCaptionsForExport(), isNull);
+  });
+
+  test('no transcript rasterises nothing', () async {
+    final post = await createController(mode: SubtitleMode.burnIn);
+    expect(await post.rasterizeCaptionsForExport(), isNull);
+  });
+
+  test(
+    'a rasterization failure skips burn-in instead of failing the export',
+    () async {
+      // The bitmap directory cannot be created when a FILE already occupies the
+      // path. A throw here would abort an export the user has already waited
+      // through the transcription for; losing the burn-in is the lesser harm.
+      final post = await createController(mode: SubtitleMode.burnIn);
+      await post.generateCaptions();
+
+      final blocked = File('${tempDir.path}/project.clingfyproj/post');
+      if (blocked.parent.existsSync()) {
+        blocked.parent.listSync().whereType<Directory>().forEach(
+          (d) => d.deleteSync(recursive: true),
+        );
+      }
+      blocked.parent.createSync(recursive: true);
+      blocked.writeAsStringSync('not a directory');
+
+      // A throw fails this line outright; null is the documented outcome.
+      expect(await post.rasterizeCaptionsForExport(), isNull);
+    },
+  );
+
+  test('the resolved size is asked for with the current presets', () async {
+    final post = await createController(mode: SubtitleMode.burnIn);
+    await post.generateCaptions();
+    await post.rasterizeCaptionsForExport();
+
+    final call = calls.lastWhere((c) => c.method == 'resolveExportSize');
+    expect(call.arguments, containsPair('projectPath', isA<String>()));
+    expect(call.arguments, containsPair('layoutPreset', isA<String>()));
+    expect(call.arguments, containsPair('resolutionPreset', isA<String>()));
+  });
 
   test('the payload always states the destination', () async {
     final post = await createController(mode: SubtitleMode.burnIn);

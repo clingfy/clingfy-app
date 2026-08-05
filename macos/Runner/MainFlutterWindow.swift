@@ -893,6 +893,29 @@ class MainFlutterWindow: NSWindow {
             ))
         }
 
+      case "resolveExportSize":
+        // Flutter rasterises caption bitmaps before the export and needs the
+        // pixel size the frames will actually be. It cannot compute this: the
+        // "auto" resolution preset derives from the recording's own oriented
+        // track size, which only this side has read. Guessing here would ship
+        // captions sized for the wrong canvas.
+        if let args = call.arguments as? [String: Any],
+          let projectPath = args["projectPath"] as? String
+        {
+          self.screenRecorder.resolveExportSize(
+            projectPath: projectPath,
+            layout: args["layoutPreset"] as? String ?? "auto",
+            resolution: args["resolutionPreset"] as? String ?? "auto",
+            result: result)
+        } else {
+          result(
+            FlutterError(
+              code: NativeErrorCode.badArgs,
+              message: "missing projectPath",
+              details: nil
+            ))
+        }
+
       case "getRecordingSceneInfo":
         if let args = call.arguments as? [String: Any],
           let projectPath = args["projectPath"] as? String

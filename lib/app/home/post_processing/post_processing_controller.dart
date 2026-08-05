@@ -30,6 +30,7 @@ import 'package:clingfy/core/captions/captions_capability.dart';
 import 'package:clingfy/core/bridges/job_progress.dart';
 import 'package:clingfy/core/captions/subtitle_serializer.dart';
 import 'dart:convert';
+import 'package:clingfy/core/captions/caption_rasterizer.dart';
 
 class PostProcessingController extends ChangeNotifier {
   final NativeBridge _nativeBridge;
@@ -1376,6 +1377,54 @@ class PostProcessingController extends ChangeNotifier {
     }
   }
 
+  /// Renders each cue to a PNG and returns the `exportVideo` arguments that
+  /// point native at them.
+  ///
+  /// Burn-in composites bitmaps, not strings, because the caption font is
+  /// bundled with the Flutter side and Arabic needs bidi reordering and
+  /// contextual shaping — text handed to native as a string would draw as
+  /// disconnected letters in the wrong order.
+  ///
+  /// Returns null whenever burn-in cannot be done honestly: no cues, or native
+  /// declining to say what size the frames will be. Skipping is the right
+  /// failure — rasterising at a guessed size burns permanently wrong captions
+  /// into the video, which is worse than none.
+  @visibleForTesting
+  Future<Map<String, dynamic>?> rasterizeCaptionsForExport() async {
+    final projectPath = _projectPath;
+    if (projectPath == null || _captions.isEmpty) return null;
+
+    try {
+      final size = await _nativeBridge.resolveExportSize(
+        projectPath: projectPath,
+        layoutPreset: _settings.post.layoutPreset.name,
+        resolutionPreset: _settings.post.resolutionPreset.name,
+      );
+      if (size == null) {
+        Log.w(
+          "PostProcessing",
+          "Skipping caption burn-in: native did not report an export size",
+        );
+        return null;
+      }
+
+      // Inside the project bundle, not a temp dir: the export can be cancelled
+      // or fail partway, and a cache the OS may reap mid-render would leave
+      // native reading bitmaps that have vanished.
+      final directory = Directory('$projectPath/post/captions');
+      final manifest = await const CaptionRasterizer().rasterize(
+        captions: _captions,
+        videoSize: size,
+        directory: directory,
+      );
+      final args = manifest.toExportArgs();
+      return args.isEmpty ? null : args;
+    } catch (e, st) {
+      Log.e("PostProcessing", "Caption rasterization failed", e, st);
+      return null;
+    }
+  }
+
   /// Strips a trailing file extension, if there is one.
   ///
   /// Only a dot in the last path segment counts: `~/My.Videos/clip` has no
@@ -1574,6 +1623,9 @@ class PostProcessingController extends ChangeNotifier {
       }
 
       final subtitleMode = exportSubtitleMode;
+      final captionArgs = subtitleMode.burnsIn
+          ? await rasterizeCaptionsForExport()
+          : null;
 
       Map<String, dynamic> args = {
         'layoutPreset': _settings.post.layoutPreset.name,
@@ -1626,13 +1678,11 @@ class PostProcessingController extends ChangeNotifier {
         'clips':
             _player.clipEditor?.clips.map((c) => c.toMap()).toList() ??
             const <Map<String, dynamic>>[],
-        'subtitleMode': subtitleMode.wireValue,
-        // Only sent when native will actually composite them. The sidecar is
-        // written on this side, from the same list, once native reports where
-        // the video landed — so shipping the transcript for a sidecar-only
-        // export would be a payload native drops on the floor.
-        if (subtitleMode.burnsIn && _captions.isNotEmpty)
-          'captions': [for (final cue in _captions) cue.toMap()],
+        // Caption bitmaps and their directory, or nothing at all. Native
+        // composites pre-rendered PNGs rather than text: the bundled font and
+        // the bidi/shaping engine live on this side, so a transcript sent as
+        // strings could not be drawn correctly for every script we ship.
+        ...?captionArgs,
       };
 
       _activeExportInvokeSpan = _activeExportTransaction!.startChild(

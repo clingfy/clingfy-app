@@ -544,6 +544,58 @@ extension ScreenRecorderFacade {
   /// Bluetooth-HFP writer failure), and a caption job that trusted the file
   /// system would start and then fail partway through instead of never
   /// offering.
+  /// The pixel size the exported frames will be, for the given layout and
+  /// resolution presets.
+  ///
+  /// Exists because Flutter rasterises caption bitmaps before calling
+  /// `exportVideo` and must draw them at the canvas they will land on. The
+  /// "auto" resolution preset resolves against the recording's own oriented
+  /// video track, which only this side has read, so Flutter cannot compute it.
+  ///
+  /// Deliberately runs the SAME `resolveTargetSize` the exporter runs. A second
+  /// implementation would drift, and the failure would be silent: captions
+  /// sized for a canvas the video does not have.
+  func resolveExportSize(
+    projectPath: String,
+    layout: String,
+    resolution: String,
+    result: @escaping FlutterResult
+  ) {
+    guard let components = resolvePreviewSceneComponents(projectPath: projectPath) else {
+      result(
+        FlutterError(
+          code: "SCENE_INPUT_MISSING",
+          message: "Recording project not found. It may have been moved or deleted.",
+          details: projectPath
+        )
+      )
+      return
+    }
+
+    let asset = AVAsset(
+      url: URL(fileURLWithPath: components.mediaSources.screenPath))
+    let sourceSize: CGSize = {
+      guard let track = asset.tracks(withMediaType: AVMediaType.video).first else {
+        // Matches the exporter's own fallback, so a project whose video track
+        // cannot be read still produces captions at the size it will render.
+        return CGSize(width: 1920, height: 1080)
+      }
+      // Oriented, not natural: a portrait recording carries a rotation
+      // transform, and captions laid out against the unrotated size would be
+      // scaled for the wrong axis.
+      let rect = CGRect(origin: .zero, size: track.naturalSize)
+        .applying(track.preferredTransform)
+      return CGSize(width: abs(rect.width), height: abs(rect.height))
+    }()
+
+    let target = resolveTargetSize(
+      sourceSize: sourceSize, layout: layout, resolution: resolution)
+    result([
+      "width": Int(target.width.rounded()),
+      "height": Int(target.height.rounded()),
+    ])
+  }
+
   func captionsCapability(projectPath: String, result: @escaping FlutterResult) {
     guard let components = resolvePreviewSceneComponents(projectPath: projectPath) else {
       result(

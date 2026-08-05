@@ -968,6 +968,42 @@ class NativeBridge {
     }
   }
 
+  /// The pixel size the exported frames will be, for the current layout and
+  /// resolution presets.
+  ///
+  /// Asked rather than computed because the `auto` resolution preset resolves
+  /// against the recording's own oriented video track, which only native has
+  /// read. Caption bitmaps are rasterised at this size, so guessing here would
+  /// burn in captions scaled for a canvas the video does not have.
+  ///
+  /// Returns null when native cannot answer — on Windows, on an older binary,
+  /// or when the project is unreadable. The caller skips burn-in rather than
+  /// rasterising at a made-up size.
+  Future<Size?> resolveExportSize({
+    required String projectPath,
+    required String layoutPreset,
+    required String resolutionPreset,
+  }) async {
+    try {
+      final raw = await _nativeBridge
+          .invokeMethod<Map<dynamic, dynamic>>('resolveExportSize', {
+            'projectPath': projectPath,
+            'layoutPreset': layoutPreset,
+            'resolutionPreset': resolutionPreset,
+          });
+      final width = (raw?['width'] as num?)?.toDouble();
+      final height = (raw?['height'] as num?)?.toDouble();
+      if (width == null || height == null || width <= 0 || height <= 0) {
+        return null;
+      }
+      return Size(width, height);
+    } on MissingPluginException {
+      return null;
+    } on PlatformException {
+      return null;
+    }
+  }
+
   Future<void> previewClose({required String sessionId}) async {
     await _nativeBridge.invokeMethod<void>('previewClose', {
       'sessionId': sessionId,
