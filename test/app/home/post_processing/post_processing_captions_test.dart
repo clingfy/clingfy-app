@@ -8,6 +8,9 @@ import 'package:flutter/services.dart';
 import 'package:flutter_test/flutter_test.dart';
 
 import '../../../test_helpers/native_test_setup.dart';
+import 'dart:io';
+import 'package:clingfy/core/captions/caption_state_store.dart';
+import 'package:clingfy/core/timeline/model/edit_track.dart';
 
 /// Caption state on the controller: what it asks native, what it refuses to
 /// ask twice, and what survives an edit.
@@ -408,6 +411,81 @@ void main() {
     expect(post.captions.first.words.first.endMs, 400);
   });
 
+  // ---- Persistence -------------------------------------------------------
+
+  test('a generated transcript is written into the project bundle', () async {
+    final project = await Directory.systemTemp.createTemp('clingfy_persist');
+    addTearDown(() {
+      if (project.existsSync()) project.deleteSync(recursive: true);
+    });
+    final post = await createController(attach: false);
+    post.attachToRecording(sessionId: 's', projectPath: project.path);
+    await pumpEventQueue();
+
+    await post.generateCaptions();
+    await pumpEventQueue();
+
+    final stored = CaptionStateStore.load(project.path);
+    expect(stored, isNotNull);
+    expect(stored!.captions.map((c) => c.text), ['hello there', 'second line']);
+  });
+
+  test('a correction is persisted, not just held in memory', () async {
+    final project = await Directory.systemTemp.createTemp('clingfy_persist');
+    addTearDown(() {
+      if (project.existsSync()) project.deleteSync(recursive: true);
+    });
+    final post = await createController(attach: false);
+    post.attachToRecording(sessionId: 's', projectPath: project.path);
+    await pumpEventQueue();
+    await post.generateCaptions();
+
+    post.updateCaptionText('c1', 'Clingfy');
+    await pumpEventQueue();
+
+    final stored = CaptionStateStore.load(project.path);
+    expect(stored!.captions.first.text, 'Clingfy');
+  });
+
+  test('reopening a recording restores its transcript', () async {
+    // The whole point of persisting: minutes of compute plus the user\'s own
+    // corrections must not die with the window.
+    final project = await Directory.systemTemp.createTemp('clingfy_persist');
+    addTearDown(() {
+      if (project.existsSync()) project.deleteSync(recursive: true);
+    });
+    await CaptionStateStore.save(
+      project.path,
+      CaptionPersistState(
+        captions: const [
+          Caption(id: 'old', startMs: 0, endMs: 900, text: 'from last time'),
+        ],
+      ),
+    );
+
+    final post = await createController(attach: false);
+    post.attachToRecording(sessionId: 's', projectPath: project.path);
+
+    expect(post.captions.map((c) => c.text), ['from last time']);
+    expect(
+      post.hasEverGeneratedCaptions,
+      isTrue,
+      reason: 'a restored transcript is not a recording that never ran',
+    );
+  });
+
+  test('a recording with no stored transcript opens empty', () async {
+    final project = await Directory.systemTemp.createTemp('clingfy_persist');
+    addTearDown(() {
+      if (project.existsSync()) project.deleteSync(recursive: true);
+    });
+    final post = await createController(attach: false);
+    post.attachToRecording(sessionId: 's', projectPath: project.path);
+
+    expect(post.captions, isEmpty);
+    expect(post.hasEverGeneratedCaptions, isFalse);
+  });
+
   // ---- Project switching -------------------------------------------------
 
   test('a new recording does not inherit the last one\'s subtitles', () async {
@@ -420,6 +498,8 @@ void main() {
       projectPath: '/tmp/second.clingfyproj',
     );
 
+    // The second project has no stored transcript, so it opens empty rather
+    // than showing the first recording's subtitles.
     expect(post.captions, isEmpty);
     expect(post.hasEverGeneratedCaptions, isFalse);
     // Cleared and re-probed rather than carried over: the new recording may

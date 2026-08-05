@@ -31,6 +31,7 @@ import 'package:clingfy/core/bridges/job_progress.dart';
 import 'package:clingfy/core/captions/subtitle_serializer.dart';
 import 'dart:convert';
 import 'package:clingfy/core/captions/caption_rasterizer.dart';
+import 'package:clingfy/core/captions/caption_state_store.dart';
 
 class PostProcessingController extends ChangeNotifier {
   final NativeBridge _nativeBridge;
@@ -279,6 +280,7 @@ class PostProcessingController extends ChangeNotifier {
       if (_projectPath != projectPath) return;
       _captions = [for (final m in raw) Caption.fromMap(m)];
       _hasEverGeneratedCaptions = true;
+      _persistCaptions();
     } on PlatformException catch (e) {
       // Cancelling is a normal outcome, not a failure worth surfacing.
       if (e.code != 'CAPTIONS_CANCELLED') {
@@ -325,6 +327,21 @@ class PostProcessingController extends ChangeNotifier {
     );
     _captions = next;
     notifyListeners();
+    _persistCaptions();
+  }
+
+  /// Fire-and-forget, like every other per-project editor write. The store
+  /// serialises overlapping saves itself, so a correction landing while a
+  /// regeneration completes cannot interleave into unparseable JSON.
+  void _persistCaptions() {
+    final projectPath = _projectPath;
+    if (projectPath == null) return;
+    unawaited(
+      CaptionStateStore.save(
+        projectPath,
+        CaptionPersistState(captions: _captions),
+      ),
+    );
   }
 
   double get audioVolumePercent => _audioVolumePercent;
@@ -1063,9 +1080,13 @@ class PostProcessingController extends ChangeNotifier {
     // last one may survive — a stale capability would offer sources this
     // project does not have, and stale cues would show another recording's
     // subtitles.
-    _captions = const [];
     _captionsCapability = null;
-    _hasEverGeneratedCaptions = false;
+    // Restored, not cleared: a transcript costs minutes of compute and carries
+    // the user's own corrections, so reopening a recording that has one must
+    // not silently present it as never transcribed.
+    final storedCaptions = CaptionStateStore.load(projectPath);
+    _captions = storedCaptions?.captions ?? const [];
+    _hasEverGeneratedCaptions = _captions.isNotEmpty;
     notifyListeners();
     unawaited(_loadRecordingSceneInfo(projectPath));
     unawaited(refreshCaptionsCapability());
