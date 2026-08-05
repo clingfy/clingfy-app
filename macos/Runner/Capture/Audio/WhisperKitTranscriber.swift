@@ -272,8 +272,40 @@ final class WhisperKitTranscriber: CaptionTranscriber {
     decoding.concurrentWorkerCount = 4
     // WhisperKit defaults this false; upstream whisper defaults it true.
     decoding.suppressBlank = true
+    // Also false by default, and that default puts Whisper's own control tokens
+    // into the caption text: `SegmentSeeker` builds segment text from
+    // `skipSpecialTokens ? wordTokens : decodingResult.tokens`, so leaving it
+    // off yielded cues reading
+    // `<|startoftranscript|><|en|><|transcribe|><|0.00|> And I was ...`.
+    // Found on a first real run — it would have burned straight into the video
+    // and the .srt. It also fixes the word list, which was being built from the
+    // same unfiltered token stream.
+    decoding.skipSpecialTokens = true
     decoding.noSpeechThreshold = Float(options.noSpeechThreshold)
     return decoding
+  }
+
+  /// Whisper control tokens, e.g. `<|startoftranscript|>`, `<|en|>`, `<|0.00|>`.
+  private static let specialTokenPattern = try? NSRegularExpression(
+    pattern: "<\\|[^|>]*\\|>")
+
+  /// Removes any control token that survived the decoder, then collapses the
+  /// whitespace they leave behind.
+  ///
+  /// Belt and braces on top of `skipSpecialTokens`. The engine's defaults have
+  /// now surprised this file twice — `suppressBlank` and `skipSpecialTokens`
+  /// both ship off — and a caption reading `<|startoftranscript|>` is burned
+  /// into the user's video permanently. A regex is nothing next to that.
+  static func stripSpecialTokens(_ text: String) -> String {
+    let range = NSRange(text.startIndex..., in: text)
+    let cleaned =
+      specialTokenPattern?.stringByReplacingMatches(
+        in: text, range: range, withTemplate: " ") ?? text
+    return
+      cleaned
+      .components(separatedBy: .whitespacesAndNewlines)
+      .filter { !$0.isEmpty }
+      .joined(separator: " ")
   }
 
   static func map(_ segments: [TranscriptionSegment]) -> [TranscribedSegment] {
@@ -281,10 +313,10 @@ final class WhisperKitTranscriber: CaptionTranscriber {
       TranscribedSegment(
         startMs: Int((segment.start * 1000).rounded()),
         endMs: Int((segment.end * 1000).rounded()),
-        text: segment.text.trimmingCharacters(in: .whitespacesAndNewlines),
+        text: stripSpecialTokens(segment.text),
         words: (segment.words ?? []).map { word in
           TranscribedWord(
-            text: word.word,
+            text: stripSpecialTokens(word.word),
             startMs: Int((word.start * 1000).rounded()),
             endMs: Int((word.end * 1000).rounded())
           )
