@@ -14,6 +14,147 @@ bool _identical(List<int> a, List<int> b) {
 }
 
 void main() {
+  // ---- Content addressing -----------------------------------------------
+  //
+  // The file name is a hash of everything the pixels depend on. That is what
+  // makes the live preview affordable: correcting one line in a long transcript
+  // must not re-render the whole transcript.
+
+  group('content-addressed bitmaps', () {
+    late Directory dir;
+
+    setUp(() async {
+      dir = await Directory.systemTemp.createTemp('clingfy_raster_cas');
+    });
+
+    tearDown(() {
+      if (dir.existsSync()) dir.deleteSync(recursive: true);
+    });
+
+    Caption cue(String id, String text) =>
+        Caption(id: id, startMs: 0, endMs: 1000, text: text);
+
+    const size = Size(1920, 1080);
+
+    test('an unchanged cue is not re-rendered', () async {
+      const rasterizer = CaptionRasterizer();
+      final first = await rasterizer.rasterize(
+        captions: [cue('c1', 'hello'), cue('c2', 'world')],
+        videoSize: size,
+        directory: dir,
+      );
+      final stamps = {
+        for (final e in first.entries)
+          e.bitmapName: File('${dir.path}/${e.bitmapName}').statSync().modified,
+      };
+
+      // Only c2's text changes. c1's file must be left untouched — not
+      // rewritten with identical bytes, untouched.
+      final second = await rasterizer.rasterize(
+        captions: [cue('c1', 'hello'), cue('c2', 'changed')],
+        videoSize: size,
+        directory: dir,
+      );
+
+      final unchanged = second.entries.firstWhere((e) => e.id == 'c1');
+      expect(stamps.containsKey(unchanged.bitmapName), isTrue);
+      expect(
+        File('${dir.path}/${unchanged.bitmapName}').statSync().modified,
+        stamps[unchanged.bitmapName],
+        reason: 'a re-render would move the mtime',
+      );
+    });
+
+    test('two cues with the same text share one bitmap', () async {
+      // The two halves of a cue split by a cut carry identical text, so this is
+      // the common case once reflow is in play, not a curiosity.
+      final manifest = await const CaptionRasterizer().rasterize(
+        captions: [cue('a#1', 'same words'), cue('a#2', 'same words')],
+        videoSize: size,
+        directory: dir,
+      );
+
+      expect(manifest.entries, hasLength(2));
+      expect(
+        manifest.entries.first.bitmapName,
+        manifest.entries.last.bitmapName,
+      );
+      expect(dir.listSync().whereType<File>(), hasLength(1));
+    });
+
+    test('a different canvas is a different bitmap', () async {
+      // The font scales with canvas height and the wrap width is a fraction of
+      // canvas width, so the same sentence is genuinely different pixels — and
+      // sometimes a different line count — at another preset.
+      final wide = await const CaptionRasterizer().rasterize(
+        captions: [cue('c1', 'hello')],
+        videoSize: const Size(1920, 1080),
+        directory: dir,
+      );
+      final tall = await const CaptionRasterizer().rasterize(
+        captions: [cue('c1', 'hello')],
+        videoSize: const Size(1080, 1920),
+        directory: dir,
+      );
+
+      expect(
+        wide.entries.single.bitmapName,
+        isNot(tall.entries.single.bitmapName),
+        reason: 'reusing the 1080p bitmap at 9:16 would show the wrong size',
+      );
+    });
+
+    test('distinct ids never collide onto one file', () async {
+      // Sanitising ids was lossy: `abc#1` and `abc_1` both became `abc_1.png`,
+      // so one silently rendered the other's text.
+      final manifest = await const CaptionRasterizer().rasterize(
+        captions: [cue('abc#1', 'first'), cue('abc_1', 'second')],
+        videoSize: size,
+        directory: dir,
+      );
+
+      expect(
+        manifest.entries.first.bitmapName,
+        isNot(manifest.entries.last.bitmapName),
+      );
+      expect(dir.listSync().whereType<File>(), hasLength(2));
+    });
+
+    test('bitmaps nothing references any more are swept', () async {
+      const rasterizer = CaptionRasterizer();
+      await rasterizer.rasterize(
+        captions: [cue('c1', 'first version')],
+        videoSize: size,
+        directory: dir,
+      );
+      expect(dir.listSync().whereType<File>(), hasLength(1));
+
+      await rasterizer.rasterize(
+        captions: [cue('c1', 'second version')],
+        videoSize: size,
+        directory: dir,
+      );
+
+      // Without a sweep this directory grows on every edit, inside a bundle the
+      // user backs up and moves around.
+      expect(dir.listSync().whereType<File>(), hasLength(1));
+    });
+
+    test('a name is stable across rasterizer instances', () async {
+      final a = await const CaptionRasterizer().rasterize(
+        captions: [cue('c1', 'hello')],
+        videoSize: size,
+        directory: dir,
+      );
+      final b = await const CaptionRasterizer().rasterize(
+        captions: [cue('other-id', 'hello')],
+        videoSize: size,
+        directory: dir,
+      );
+      expect(a.entries.single.bitmapName, b.entries.single.bitmapName);
+    });
+  });
+
   TestWidgetsFlutterBinding.ensureInitialized();
 
   late Directory tempDir;

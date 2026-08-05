@@ -28,6 +28,9 @@ environment:
 # the latest version available on pub.dev. To see which dependencies have newer
 # versions available, run `flutter pub outdated`.
 dependencies:
+  # Content-addressed caption bitmap names: the file name is a hash of the
+  # text, style and canvas, so an unchanged cue is never re-rendered.
+  crypto: ^3.0.6
   archive: ^4.0.7
   cupertino_icons: ^1.0.8
   flutter:

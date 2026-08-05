@@ -5,6 +5,8 @@ import 'package:flutter/foundation.dart';
 import 'package:flutter/painting.dart';
 
 import '../timeline/model/edit_track.dart';
+import 'dart:convert';
+import 'package:crypto/crypto.dart';
 
 /// Paints caption cues to PNG bitmaps for the native export to composite.
 ///
@@ -117,20 +119,27 @@ class CaptionRasterizer {
     }
 
     final entries = <CaptionBitmapEntry>[];
-    final usedNames = <String>{};
+    // Rendered this pass, so two cues with the same text cost one render even
+    // when neither was on disk to begin with.
+    final rendered = <String>{};
     for (final caption in captions) {
       final text = caption.text.trim();
       if (text.isEmpty) continue;
 
-      final image = await renderCue(text: text, videoSize: videoSize);
-      final bytes = await image.toByteData(format: ui.ImageByteFormat.png);
-      image.dispose();
-      if (bytes == null) continue;
-
-      final name = _uniqueName(_sanitize(caption.id), usedNames);
-      await File('${directory.path}/$name').writeAsBytes(
-        bytes.buffer.asUint8List(bytes.offsetInBytes, bytes.lengthInBytes),
-      );
+      final name = _bitmapNameFor(text, videoSize);
+      final file = File('${directory.path}/$name');
+      // The name is a hash of everything the pixels depend on, so a file that
+      // is already there is already correct. Skipping it is what makes editing
+      // one cue in a long transcript cost one render rather than all of them.
+      if (rendered.add(name) && !file.existsSync()) {
+        final image = await renderCue(text: text, videoSize: videoSize);
+        final bytes = await image.toByteData(format: ui.ImageByteFormat.png);
+        image.dispose();
+        if (bytes == null) continue;
+        await file.writeAsBytes(
+          bytes.buffer.asUint8List(bytes.offsetInBytes, bytes.lengthInBytes),
+        );
+      }
 
       entries.add(
         CaptionBitmapEntry(
@@ -142,10 +151,32 @@ class CaptionRasterizer {
       );
     }
 
+    // Anything the current cue set does not reference is debris from an earlier
+    // pass. Without this the directory grows without bound inside the user's
+    // project bundle, which they back up and move around.
+    _sweep(directory, keep: {for (final e in entries) e.bitmapName});
+
     return CaptionBitmapManifest(
       directoryPath: directory.path,
       entries: entries,
     );
+  }
+
+  /// Deletes bitmaps in [directory] that nothing references any more.
+  ///
+  /// Best-effort: a file that cannot be removed is left alone rather than
+  /// failing a render the user is waiting on.
+  static void _sweep(Directory directory, {required Set<String> keep}) {
+    try {
+      for (final entity in directory.listSync()) {
+        if (entity is! File) continue;
+        final name = entity.uri.pathSegments.last;
+        if (!name.endsWith('.png') || keep.contains(name)) continue;
+        entity.deleteSync();
+      }
+    } catch (_) {
+      // Leaving debris is strictly better than failing the render.
+    }
   }
 
   /// Paints one cue: a rounded background pill with the text on top, sized to
@@ -214,26 +245,53 @@ class CaptionRasterizer {
     return painter;
   }
 
-  /// Cue ids come from the ASR engine and end up as file names. Keep them to
-  /// characters that survive a round trip through both file systems.
-  static String _sanitize(String id) {
-    final cleaned = id.replaceAll(RegExp(r'[^A-Za-z0-9_-]'), '_');
-    return cleaned.isEmpty ? 'cue' : cleaned;
+  /// The file name for a cue's bitmap: a hash of everything the pixels depend
+  /// on.
+  ///
+  /// Content-addressed rather than derived from the cue id, for three reasons
+  /// that all matter once the live preview rasterises too:
+  ///
+  /// * A rewrite of an unchanged cue is a no-op, so correcting one line in a
+  ///   300-cue transcript renders one bitmap instead of three hundred.
+  /// * Two cues with the same text — including the two halves of a cue split
+  ///   by a cut — share one file instead of duplicating it.
+  /// * Nothing is lossy, so two distinct cue ids can no longer collide onto one
+  ///   name and silently render each other's text.
+  ///
+  /// The canvas is part of the key because the pixels genuinely depend on it:
+  /// the font scales with canvas height and the wrap width is a fraction of
+  /// canvas width, so the same sentence is a different bitmap — sometimes a
+  /// different LINE COUNT — at a different layout or resolution preset.
+  static String bitmapName({
+    required String text,
+    required Size videoSize,
+    required CaptionStyle style,
+    required String? fontFamily,
+    required double maxWidthFraction,
+    required double referenceHeight,
+  }) {
+    final key = [
+      text,
+      videoSize.width.round(),
+      videoSize.height.round(),
+      style.fontSizePx,
+      style.textColorArgb,
+      style.backgroundColorArgb,
+      fontFamily ?? '',
+      maxWidthFraction,
+      referenceHeight,
+    ].join('\u0000');
+    return '${sha1.convert(utf8.encode(key))}.png';
   }
 
-  /// Sanitising is lossy, so two distinct ids can map to one file name and the
-  /// second would overwrite the first — a caption silently rendering the wrong
-  /// text. Not hypothetical: the clip mapper suffixes split pieces as `id#n`,
-  /// and `#` sanitises to `_`, so `abc#1` collides with a real `abc_1`.
-  static String _uniqueName(String stem, Set<String> used) {
-    var candidate = '$stem.png';
-    var suffix = 2;
-    while (!used.add(candidate)) {
-      candidate = '$stem-$suffix.png';
-      suffix++;
-    }
-    return candidate;
-  }
+  String _bitmapNameFor(String text, Size videoSize) => bitmapName(
+    text: text,
+    videoSize: videoSize,
+    style: style,
+    fontFamily: fontFamily,
+    maxWidthFraction: maxWidthFraction,
+    referenceHeight: referenceHeight,
+  );
 }
 
 /// One rasterized cue, in the shape `ExportVideoRequest.fromFlutter` parses.
