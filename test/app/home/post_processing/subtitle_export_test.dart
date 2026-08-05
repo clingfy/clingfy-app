@@ -10,6 +10,7 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
 import '../../../test_helpers/native_test_setup.dart';
+import '../../../test_helpers/wait_until.dart';
 import 'package:clingfy/core/clips/clip_editor_controller.dart';
 import 'package:clingfy/core/clips/clip_state_store.dart';
 import 'package:clingfy/core/timeline/model/edit_track.dart';
@@ -349,6 +350,127 @@ void main() {
     await exportWith(post, SubtitleMode.sidecar);
 
     expect(srt().readAsStringSync(), contains('00:00:00,000 --> 00:00:01,500'));
+  });
+
+  // ---- Preview push ------------------------------------------------------
+
+  List<MethodCall> previewPushes() =>
+      calls.where((c) => c.method == 'previewSetCaptions').toList();
+
+  /// The push is fire-and-forget and rasterizes to disk on the way, so a fixed
+  /// number of event-loop pumps is a race. Poll for the most recent push whose
+  /// CONTENT matches, rather than counting: matching on a count makes the
+  /// assertion depend on how many pushes happened to be in flight.
+  Future<Map<dynamic, dynamic>> waitForPush(
+    bool Function(Map<dynamic, dynamic>) matches, {
+    String? reason,
+  }) => waitForValue(() {
+    for (final call in previewPushes().reversed) {
+      final args = call.arguments as Map<dynamic, dynamic>;
+      if (matches(args)) return args;
+    }
+    return null;
+  }, reason: reason ?? 'expected a matching preview caption push');
+
+  bool hasCues(Map<dynamic, dynamic> args) => (args['cues'] as List).isNotEmpty;
+  bool hasNoCues(Map<dynamic, dynamic> args) => (args['cues'] as List).isEmpty;
+
+  test('generating captions hands them to the live preview', () async {
+    final post = await createController(mode: SubtitleMode.burnIn);
+    await post.generateCaptions();
+
+    final args = await waitForPush(hasCues);
+    expect(args['bitmapDirectory'], isA<String>());
+    expect((args['cues'] as List), hasLength(1));
+    expect(args['canvasWidth'], 1920);
+    expect(args['canvasHeight'], 1080);
+  });
+
+  test('preview cues are on the EDITED timeline', () async {
+    // The preview player's clock is edited time, so this payload is the mirror
+    // image of the export one: same cues, other timebase.
+    final post = await createController(
+      mode: SubtitleMode.burnIn,
+      transcript: const [
+        {'id': 'c1', 'startMs': 8000, 'endMs': 9000, 'text': 'the line'},
+      ],
+      clips: [clip('a', 5000, 120000)],
+    );
+    await post.generateCaptions();
+
+    final cue = ((await waitForPush(hasCues))['cues'] as List).first as Map;
+    expect(cue['startMs'], 3000, reason: '8000 - 5000');
+  });
+
+  test('subtitles off clears the preview instead of leaving a burn-in', () async {
+    // The preview shows what the exported FRAMES will contain. Leaving captions
+    // up after the user switches subtitles off would have them proof-reading a
+    // look the export is not going to produce.
+    final post = await createController(mode: SubtitleMode.burnIn);
+    await post.generateCaptions();
+    await waitForPush(hasCues);
+
+    post.setSubtitleMode(SubtitleMode.none);
+
+    final cleared = await waitForPush(hasNoCues);
+    expect(cleared['bitmapDirectory'], isNull);
+  });
+
+  test('sidecar-only shows no burn-in in the preview', () async {
+    // The captions go in a separate file; the frames stay clean. Showing them
+    // burned in would misrepresent the export.
+    final post = await createController(mode: SubtitleMode.burnIn);
+    await post.generateCaptions();
+    await waitForPush(hasCues);
+
+    post.setSubtitleMode(SubtitleMode.sidecar);
+
+    await waitForPush(hasNoCues, reason: 'sidecar-only must clear the burn-in');
+  });
+
+  test('both mode does show a preview burn-in', () async {
+    final post = await createController(mode: SubtitleMode.sidecar);
+    await post.generateCaptions();
+    post.setSubtitleMode(SubtitleMode.both);
+
+    await waitForPush(hasCues, reason: 'both mode burns in');
+  });
+
+  test('an edit re-pushes with the corrected text', () async {
+    final post = await createController(mode: SubtitleMode.burnIn);
+    await post.generateCaptions();
+    await waitForPush(hasCues);
+    final before = previewPushes().length;
+
+    post.updateCaptionText('c1', 'Clingfy');
+
+    await waitUntil(
+      () => previewPushes().length > before,
+      reason: 'a corrected cue must reach the preview',
+    );
+  });
+
+  test('a push that would change nothing is skipped', () async {
+    // Player notifications fire at 60Hz during playback and throughout a trim
+    // drag, and each one reaches this path. Without the signature check every
+    // one of them would rasterize the transcript again.
+    final post = await createController(mode: SubtitleMode.burnIn);
+    await post.generateCaptions();
+    await waitForPush(hasCues);
+    final before = previewPushes().length;
+
+    for (var i = 0; i < 20; i++) {
+      await post.pushPreviewCaptions();
+    }
+
+    expect(previewPushes().length, before);
+  });
+
+  test('no transcript pushes nothing at all', () async {
+    final post = await createController(mode: SubtitleMode.burnIn);
+    await post.pushPreviewCaptions();
+    await pumpEventQueue();
+    expect(previewPushes(), isEmpty);
   });
 
   // ---- Export payload ---------------------------------------------------

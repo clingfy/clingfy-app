@@ -46,9 +46,7 @@ class PostProcessingController extends ChangeNotifier {
   }) : _settings = settings,
        _player = player,
        _nativeBridge = channel {
-    _player.addListener(
-      notifyListeners,
-    ); // Propagate player state changes (like error)
+    _player.addListener(_onPlayerChanged);
     _warningSub = _player.warningCodeStream.listen(_onPlayerWarning);
     _cameraManualPositionSub = _player.cameraManualPositionStream.listen(
       _onCameraManualPositionChanged,
@@ -56,9 +54,19 @@ class PostProcessingController extends ChangeNotifier {
     _resetForNewRecording();
   }
 
+  /// Player notifications also carry CLIP edits (the clip editor forwards
+  /// through `PlayerController`), and a clip edit moves every caption's edited
+  /// position. The push de-duplicates on its own signature, so the 60Hz
+  /// notifications a trim drag produces collapse to one real push.
+  void _onPlayerChanged() {
+    notifyListeners();
+    unawaited(pushPreviewCaptions());
+  }
+
   @override
   void dispose() {
-    _player.removeListener(notifyListeners);
+    _isDisposed = true;
+    _player.removeListener(_onPlayerChanged);
     _warningSub?.cancel();
     _cameraManualPositionSub?.cancel();
     _audioPreviewDebouncer.dispose();
@@ -216,6 +224,103 @@ class PostProcessingController extends ChangeNotifier {
   ProgressStage get captionsStage => _captionsStage;
   bool get hasEverGeneratedCaptions => _hasEverGeneratedCaptions;
 
+  /// The caption manifest the preview is currently showing, so an identical
+  /// re-push (a rebuild, a clip nudge that changed nothing) does no work.
+  bool _isDisposed = false;
+  String? _pushedCaptionSignature;
+
+  /// Pushes run one at a time, in the order they were requested.
+  ///
+  /// The signature that suppresses redundant work is only assigned after the
+  /// rasterization await, so two overlapping pushes race on it. Concretely:
+  /// generate captions, then immediately switch subtitles off, and the clear
+  /// reads a still-null signature, decides nothing is installed, and returns —
+  /// while the generate push it overlapped goes on to install captions that
+  /// nothing will ever take down.
+  Future<void> _captionPushChain = Future<void>.value();
+
+  /// Rasterizes the reflowed cues and hands them to the live preview.
+  ///
+  /// Gated on [exportSubtitleMode] burning in, because the preview's job is to
+  /// show what the exported FRAMES will contain. With subtitles off there is
+  /// nothing to show; with sidecar-only the captions go in a separate file and
+  /// burning them into the preview would have the user proof-read a look the
+  /// export will not produce.
+  ///
+  /// Best-effort and fire-and-forget everywhere it is called from: a preview
+  /// without captions must never block an edit.
+  Future<void> pushPreviewCaptions() {
+    final queued = _captionPushChain.then(
+      (_) => _pushPreviewCaptions(),
+      // A link that fails must not swallow every push queued behind it.
+      onError: (Object _) => _pushPreviewCaptions(),
+    );
+    _captionPushChain = queued;
+    return queued;
+  }
+
+  Future<void> _pushPreviewCaptions() async {
+    if (_isDisposed) return;
+    final projectPath = _projectPath;
+    final sessionId = _activeSessionId;
+    if (projectPath == null) return;
+
+    final spans = exportSubtitleMode.burnsIn
+        ? reflowedCaptions().sidecar
+        : const <CaptionSpan>[];
+
+    if (spans.isEmpty) {
+      if (_pushedCaptionSignature == null) return;
+      _pushedCaptionSignature = null;
+      await _nativeBridge.previewSetCaptions(
+        sessionId: sessionId,
+        bitmapDirectory: null,
+        cues: const [],
+        canvasWidth: 0,
+        canvasHeight: 0,
+      );
+      return;
+    }
+
+    try {
+      // The canvas the EXPORT will use, not the preview's on-screen size: the
+      // preview canvas is the same pixel space, shrunk by a layer transform, so
+      // one rasterization serves both and the placement math is identical.
+      final size = await _nativeBridge.resolveExportSize(
+        projectPath: projectPath,
+        layoutPreset: _settings.post.layoutPreset.name,
+        resolutionPreset: _settings.post.resolutionPreset.name,
+      );
+      if (size == null || _isDisposed || _projectPath != projectPath) return;
+
+      final signature = [
+        size.width.round(),
+        size.height.round(),
+        for (final span in spans)
+          '${span.id}|${span.outputStartMs}|${span.outputEndMs}|${span.text}',
+      ].join('\u0000');
+      if (signature == _pushedCaptionSignature) return;
+
+      final manifest = await const CaptionRasterizer().rasterize(
+        captions: [for (final span in spans) span.asOutputCue()],
+        videoSize: size,
+        directory: Directory('$projectPath/post/captions'),
+      );
+      if (_isDisposed || _projectPath != projectPath) return;
+
+      _pushedCaptionSignature = signature;
+      await _nativeBridge.previewSetCaptions(
+        sessionId: sessionId,
+        bitmapDirectory: manifest.directoryPath,
+        cues: [for (final entry in manifest.entries) entry.toExportArgs()],
+        canvasWidth: size.width,
+        canvasHeight: size.height,
+      );
+    } catch (e, st) {
+      Log.e("PostProcessing", "Preview caption push failed", e, st);
+    }
+  }
+
   /// The transcript mapped onto the edited timeline.
   ///
   /// Cues are transcribed against the ORIGINAL audio, so their times are source
@@ -294,6 +399,7 @@ class PostProcessingController extends ChangeNotifier {
       _captions = [for (final m in raw) Caption.fromMap(m)];
       _hasEverGeneratedCaptions = true;
       _persistCaptions();
+      unawaited(pushPreviewCaptions());
     } on PlatformException catch (e) {
       // Cancelling is a normal outcome, not a failure worth surfacing.
       if (e.code != 'CAPTIONS_CANCELLED') {
@@ -312,6 +418,17 @@ class PostProcessingController extends ChangeNotifier {
       _captionsProgress = null;
       notifyListeners();
     }
+  }
+
+  /// Routed through the controller rather than written straight to settings,
+  /// so switching subtitles off — or to sidecar-only — actually clears the
+  /// burned-in captions from the preview. Written directly, the preview would
+  /// keep showing a burn-in the export is not going to produce.
+  void setSubtitleMode(SubtitleMode value) {
+    if (value == _settings.post.postSubtitleMode) return;
+    unawaited(_settings.post.updatePostSubtitleMode(value));
+    notifyListeners();
+    unawaited(pushPreviewCaptions());
   }
 
   Future<void> cancelCaptions() async {
@@ -341,6 +458,7 @@ class PostProcessingController extends ChangeNotifier {
     _captions = next;
     notifyListeners();
     _persistCaptions();
+    unawaited(pushPreviewCaptions());
   }
 
   /// Fire-and-forget, like every other per-project editor write. The store
@@ -410,6 +528,11 @@ class PostProcessingController extends ChangeNotifier {
     // rebuilt (the shared texture is sized to it and cannot be resized).
     _pushCanvas();
     applyProcessing();
+    // The caption bitmaps are sized to the export canvas this preset resolves,
+    // so a preset change makes them the wrong size — and, once the wrap width
+    // changes, sometimes the wrong line count. Native hides them until this
+    // re-rasterization lands.
+    unawaited(pushPreviewCaptions());
   }
 
   void setResolutionPreset(ResolutionPreset v) {
@@ -420,6 +543,7 @@ class PostProcessingController extends ChangeNotifier {
     // budget), so this pushes the value without forcing a rebuild.
     _pushCanvas();
     applyProcessing();
+    unawaited(pushPreviewCaptions());
   }
 
   void setFitMode(FitMode v) {
@@ -1100,6 +1224,8 @@ class PostProcessingController extends ChangeNotifier {
     final storedCaptions = CaptionStateStore.load(projectPath);
     _captions = storedCaptions?.captions ?? const [];
     _hasEverGeneratedCaptions = _captions.isNotEmpty;
+    // Another recording's manifest may still be installed natively.
+    _pushedCaptionSignature = null;
     notifyListeners();
     unawaited(_loadRecordingSceneInfo(projectPath));
     unawaited(refreshCaptionsCapability());

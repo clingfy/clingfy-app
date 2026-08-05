@@ -1071,6 +1071,19 @@ class MainFlutterWindow: NSWindow {
             FlutterError(code: NativeErrorCode.badArgs, message: "Missing segments", details: nil))
         }
 
+      case "previewSetCaptions":
+        // Cues here are on the EDITED timeline, unlike the export payload,
+        // because the preview player's own clock is edited time. A nil track
+        // (absent payload, no cues, or subtitles switched off) clears them.
+        if let previewView = inlinePreviewViewInstance {
+          let args = call.arguments as? [String: Any]
+          let sessionId = args?["sessionId"] as? String
+          if sessionId == nil || previewView.currentSessionId == sessionId {
+            previewView.updateCaptionsOnly(CaptionPreviewTrack.fromFlutter(args))
+          }
+        }
+        result(nil)
+
       case "previewSetColorGrade":
         if let args = call.arguments as? [String: Any],
           let gradeDict = args["colorGrade"] as? [String: Any]

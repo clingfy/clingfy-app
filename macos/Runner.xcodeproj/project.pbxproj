@@ -142,7 +142,9 @@
 		ACEE5EF53ACF2689541946B4 /* CaptionOverlayRenderer.swift in Sources */ = {isa = PBXBuildFile; fileRef = 96ECD5ECD6A23FA1CA33BE58 /* CaptionOverlayRenderer.swift */; };
 		9059C1FCB24BB8C03F71CFC8 /* CaptionOverlayRendererTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = C2658B73179F52226D6D29DF /* CaptionOverlayRendererTests.swift */; };
 		E5208EC1E2EC9B87A3721643 /* CaptionCueTrack.swift in Sources */ = {isa = PBXBuildFile; fileRef = 755A0211759478DDA3D7D204 /* CaptionCueTrack.swift */; };
+		C4P71002CAP71002CAP71002 /* CaptionPreviewTrack.swift in Sources */ = {isa = PBXBuildFile; fileRef = C4P71001CAP71001CAP71001 /* CaptionPreviewTrack.swift */; };
 		12D91885E4F7C378D82C5CC4 /* CaptionCueTrackTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 0E057F32867A1DB4C958B0B3 /* CaptionCueTrackTests.swift */; };
+		C4P71004CAP71004CAP71004 /* CaptionPreviewTrackTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = C4P71003CAP71003CAP71003 /* CaptionPreviewTrackTests.swift */; };
 		8A7F969A09CE93447DE1EA17 /* ZoomQueryServiceTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = A74D174212C4749A322E8474 /* ZoomQueryServiceTests.swift */; };
 		8AAA59EA7CDDF22B4E47FB07 /* CaptureDestinationDiagnostics.swift in Sources */ = {isa = PBXBuildFile; fileRef = BDCE6283CC82D1BA03141B01 /* CaptureDestinationDiagnostics.swift */; };
 		8DD941C470535110159C907D /* RecordingSessionState.swift in Sources */ = {isa = PBXBuildFile; fileRef = 7756A56B1B8A4B603EFFAEA1 /* RecordingSessionState.swift */; };
@@ -330,6 +332,7 @@
 		42CD7BAF4AE5896C6D8FCB0E /* CaptionBurnInProofTests.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = CaptionBurnInProofTests.swift; sourceTree = "<group>"; };
 		C2658B73179F52226D6D29DF /* CaptionOverlayRendererTests.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = CaptionOverlayRendererTests.swift; sourceTree = "<group>"; };
 		0E057F32867A1DB4C958B0B3 /* CaptionCueTrackTests.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = CaptionCueTrackTests.swift; sourceTree = "<group>"; };
+		C4P71003CAP71003CAP71003 /* CaptionPreviewTrackTests.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = CaptionPreviewTrackTests.swift; sourceTree = "<group>"; };
 		5964845B237A9BCC08254B7C /* MicrophoneLevelMonitor.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = MicrophoneLevelMonitor.swift; sourceTree = "<group>"; };
 		5B1C86BB2F300B730068C1BE /* ZoomManualStore.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ZoomManualStore.swift; sourceTree = "<group>"; };
 		5B449F6C2F37828300A03934 /* PermissionState.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PermissionState.swift; sourceTree = "<group>"; };
@@ -543,6 +546,7 @@
 		F44E22AB2A7EA86DE6C7B238 /* GifExportPolicy.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = GifExportPolicy.swift; sourceTree = "<group>"; };
 		96ECD5ECD6A23FA1CA33BE58 /* CaptionOverlayRenderer.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = CaptionOverlayRenderer.swift; sourceTree = "<group>"; };
 		755A0211759478DDA3D7D204 /* CaptionCueTrack.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = CaptionCueTrack.swift; sourceTree = "<group>"; };
+		C4P71001CAP71001CAP71001 /* CaptionPreviewTrack.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = CaptionPreviewTrack.swift; sourceTree = "<group>"; };
 		F54D9966BB1B393ACEF4E44A /* Pods-Runner.profile-dev.xcconfig */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = text.xcconfig; name = "Pods-Runner.profile-dev.xcconfig"; path = "Target Support Files/Pods-Runner/Pods-Runner.profile-dev.xcconfig"; sourceTree = "<group>"; };
 		F6DF001BDAEDC3B8FCDE13F9 /* PreviewSceneResolver.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = PreviewSceneResolver.swift; sourceTree = "<group>"; };
 		FC018DDF8B9C3E041725E337 /* CanvasBackgroundRendererTests.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = CanvasBackgroundRendererTests.swift; sourceTree = "<group>"; };
@@ -672,6 +676,7 @@
 				42CD7BAF4AE5896C6D8FCB0E /* CaptionBurnInProofTests.swift */,
 				C2658B73179F52226D6D29DF /* CaptionOverlayRendererTests.swift */,
 				0E057F32867A1DB4C958B0B3 /* CaptionCueTrackTests.swift */,
+				C4P71003CAP71003CAP71003 /* CaptionPreviewTrackTests.swift */,
 				A7CE3815FDED694968446657 /* GifEncoderTests.swift */,
 				33E7C0552411D20AD111CD2A /* GifExportSessionTests.swift */,
 			);
@@ -953,6 +958,7 @@
 		5B5427052F21985F00B06BA6 /* Preview */ = {
 			isa = PBXGroup;
 			children = (
+				C4P71001CAP71001CAP71001 /* CaptionPreviewTrack.swift */,
 				9A1B2C3D4E5F60718293A4B3 /* CursorFrameResolver.swift */,
 				5B5427022F21985F00B06BA6 /* InlinePreviewView.swift */,
 				5B5427032F21985F00B06BA6 /* InlinePreviewViewFactory.swift */,
@@ -1548,6 +1554,7 @@
 				9025A948FACC6DAE30CA97D0 /* CaptionBurnInProofTests.swift in Sources */,
 				9059C1FCB24BB8C03F71CFC8 /* CaptionOverlayRendererTests.swift in Sources */,
 				12D91885E4F7C378D82C5CC4 /* CaptionCueTrackTests.swift in Sources */,
+				C4P71004CAP71004CAP71004 /* CaptionPreviewTrackTests.swift in Sources */,
 				6C7415F5D3D15C0CF94618EB /* GifEncoderTests.swift in Sources */,
 				D3B86C9B77CAC4669C1F88FC /* GifExportSessionTests.swift in Sources */,
 			);
@@ -1705,6 +1712,7 @@
 				89810FF4C029B0A37903EF47 /* GifExportPolicy.swift in Sources */,
 				ACEE5EF53ACF2689541946B4 /* CaptionOverlayRenderer.swift in Sources */,
 				E5208EC1E2EC9B87A3721643 /* CaptionCueTrack.swift in Sources */,
+				C4P71002CAP71002CAP71002 /* CaptionPreviewTrack.swift in Sources */,
 				E7F90A099654ACCB10A3028D /* GifEncoder.swift in Sources */,
 				147A5143745688FAE0A95466 /* GifExportSession.swift in Sources */,
 			);

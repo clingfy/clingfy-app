@@ -1004,6 +1004,42 @@ class NativeBridge {
     }
   }
 
+  /// Hands the running preview its caption bitmaps, or clears them.
+  ///
+  /// Cue times are EDITED-timeline milliseconds — where each caption lands in
+  /// the file the export would produce — because the preview player's clock is
+  /// edited time once a kept-range composition is playing. That is the opposite
+  /// of the export payload, which is source-timed.
+  ///
+  /// [canvasWidth]/[canvasHeight] are the canvas the bitmaps were rasterized
+  /// against. Native refuses to draw them on a differently-sized composition:
+  /// the caption font scales with canvas height, so a stale bitmap is the wrong
+  /// size and sometimes the wrong line count.
+  ///
+  /// Never throws — a preview without captions is a far better outcome than an
+  /// exception, and Windows has no implementation at all.
+  Future<void> previewSetCaptions({
+    required String? sessionId,
+    required String? bitmapDirectory,
+    required List<Map<String, dynamic>> cues,
+    required double canvasWidth,
+    required double canvasHeight,
+  }) async {
+    try {
+      await _nativeBridge.invokeMethod<void>('previewSetCaptions', {
+        'sessionId': sessionId,
+        'bitmapDirectory': bitmapDirectory,
+        'cues': cues,
+        'canvasWidth': canvasWidth,
+        'canvasHeight': canvasHeight,
+      });
+    } on MissingPluginException {
+      // No preview caption support on this platform.
+    } on PlatformException catch (e) {
+      Log.w('NativeBridge', 'previewSetCaptions failed: ${e.code}');
+    }
+  }
+
   Future<void> previewClose({required String sessionId}) async {
     await _nativeBridge.invokeMethod<void>('previewClose', {
       'sessionId': sessionId,
