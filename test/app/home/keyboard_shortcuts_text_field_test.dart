@@ -29,6 +29,17 @@ void main() {
   late TextEditingController textController;
   late FocusNode elsewhere;
 
+  /// Set when a key event travels PAST the Shortcuts layer.
+  ///
+  /// This is the assertion that matters and the one the first version of these
+  /// tests was missing. Suppressing the callback is not enough:
+  /// `ShortcutManager.handleKeypress` reports the key as handled as soon as the
+  /// activator matches an ENABLED action — `invoke`'s return value is never
+  /// read — and the engine only forwards a key to macOS text input when nothing
+  /// handled it. So a test that only checks `fired` passes while the space bar
+  /// is still being eaten, which is exactly what happened.
+  late bool reachedPastShortcuts;
+
   Future<Widget> harness() async {
     final settings = SettingsController(nativeBridge: NativeBridge.instance);
     await settings.loadPreferences();
@@ -47,28 +58,38 @@ void main() {
 
     return MaterialApp(
       home: Builder(
-        builder: (context) => Shortcuts(
-          shortcuts: shortcuts.shortcuts,
-          child: Actions(
-            actions: shortcuts.buildActions(context),
-            child: Scaffold(
-              body: Column(
-                children: [
-                  TextField(
-                    key: const Key('field'),
-                    controller: textController,
-                    autofocus: false,
-                  ),
-                  Focus(
-                    focusNode: elsewhere,
-                    autofocus: true,
-                    child: const SizedBox(
-                      key: Key('elsewhere'),
-                      width: 10,
-                      height: 10,
+        builder: (context) => Focus(
+          // ABOVE Shortcuts: key events bubble up from the focused node, so
+          // this only runs if Shortcuts let the key through.
+          onKeyEvent: (_, event) {
+            // KeyDown only: a shortcut consumes the DOWN, and the UP always
+            // propagates — counting it would make this always true.
+            if (event is KeyDownEvent) reachedPastShortcuts = true;
+            return KeyEventResult.ignored;
+          },
+          child: Shortcuts(
+            shortcuts: shortcuts.shortcuts,
+            child: Actions(
+              actions: shortcuts.buildActions(context),
+              child: Scaffold(
+                body: Column(
+                  children: [
+                    TextField(
+                      key: const Key('field'),
+                      controller: textController,
+                      autofocus: false,
                     ),
-                  ),
-                ],
+                    Focus(
+                      focusNode: elsewhere,
+                      autofocus: true,
+                      child: const SizedBox(
+                        key: Key('elsewhere'),
+                        width: 10,
+                        height: 10,
+                      ),
+                    ),
+                  ],
+                ),
               ),
             ),
           ),
@@ -79,6 +100,7 @@ void main() {
 
   setUp(() {
     fired = [];
+    reachedPastShortcuts = false;
     textController = TextEditingController();
     elsewhere = FocusNode();
   });
@@ -103,6 +125,13 @@ void main() {
       isEmpty,
       reason: 'the space bar belongs to the focused field, not to the app',
     );
+    expect(
+      reachedPastShortcuts,
+      isTrue,
+      reason:
+          'and the key must travel ON — a consumed key never reaches macOS '
+          'text input, so the space is never typed even though nothing fired',
+    );
   });
 
   testWidgets('space still toggles recording when no field has focus', (
@@ -117,6 +146,11 @@ void main() {
     expect(fired, [
       'toggleRecording',
     ], reason: 'the shortcut must survive — this guard is not a removal');
+    expect(
+      reachedPastShortcuts,
+      isFalse,
+      reason: 'and outside a text field it SHOULD consume the key',
+    );
   });
 
   testWidgets('a modified combo still fires while editing text', (

@@ -52,7 +52,7 @@ class KeyboardShortcutsController {
   /// app's — Cmd+E should still export while the caret is in a field — and that
   /// is the macOS convention: the text field owns unmodified keys, the app owns
   /// the combos.
-  static bool _belongsToFocusedTextField() {
+  static bool belongsToFocusedTextField() {
     final keyboard = HardwareKeyboard.instance;
     if (keyboard.isMetaPressed ||
         keyboard.isControlPressed ||
@@ -69,7 +69,7 @@ class KeyboardShortcutsController {
 
   /// Wraps a shortcut callback so every invocation is recorded.
   Object? _invoke(String action, VoidCallback run) {
-    if (_belongsToFocusedTextField()) return null;
+    if (belongsToFocusedTextField()) return null;
     Log.i(
       'Shortcuts',
       'Shortcut invoked',
@@ -85,7 +85,7 @@ class KeyboardShortcutsController {
     String action,
     Future<void> Function() run,
   ) async {
-    if (_belongsToFocusedTextField()) return null;
+    if (belongsToFocusedTextField()) return null;
     Log.i(
       'Shortcuts',
       'Shortcut invoked',
@@ -153,22 +153,22 @@ class KeyboardShortcutsController {
 
   Map<Type, Action<Intent>> buildActions(BuildContext context) {
     return {
-      ActivateIntent: CallbackAction<ActivateIntent>(
+      ActivateIntent: _EditingAwareAction<ActivateIntent>(
         onInvoke: (_) => _invoke('toggleRecording', onToggleRecording),
       ),
-      RefreshIntent: CallbackAction<RefreshIntent>(
+      RefreshIntent: _EditingAwareAction<RefreshIntent>(
         onInvoke: (_) => _invoke('refreshDevices', onRefreshDevices),
       ),
-      ToggleActionBarIntent: CallbackAction<ToggleActionBarIntent>(
+      ToggleActionBarIntent: _EditingAwareAction<ToggleActionBarIntent>(
         onInvoke: (_) => _invokeAsync('toggleActionBar', onToggleActionBar),
       ),
-      CycleOverlayIntent: CallbackAction<CycleOverlayIntent>(
+      CycleOverlayIntent: _EditingAwareAction<CycleOverlayIntent>(
         onInvoke: (_) => _invokeAsync('cycleOverlayMode', onCycleOverlayMode),
       ),
-      ExportIntent: CallbackAction<ExportIntent>(
+      ExportIntent: _EditingAwareAction<ExportIntent>(
         onInvoke: (_) => _invokeAsync('exportVideo', onExportVideo),
       ),
-      OpenSettingsIntent: CallbackAction<OpenSettingsIntent>(
+      OpenSettingsIntent: _EditingAwareAction<OpenSettingsIntent>(
         onInvoke: (_) => _invoke('openSettings', onOpenSettings),
       ),
     };
@@ -301,4 +301,25 @@ class ExportIntent extends Intent {
 
 class OpenSettingsIntent extends Intent {
   const OpenSettingsIntent();
+}
+
+/// A shortcut action that steps aside entirely while a text field has focus.
+///
+/// Disabling the ACTION is what matters, not skipping its callback.
+/// `ShortcutManager.handleKeypress` returns `action.toKeyEventResult(...)` as
+/// soon as the activator matches and an ENABLED action is found, and
+/// `Action.consumesKey` defaults to true — the return value of `invoke` is never
+/// consulted. So guarding only the callback suppressed the side effect while
+/// still reporting the key as HANDLED, and `FlutterKeyboardManager` calls
+/// `dispatchTextEvent:` only when nothing handled the key. The space bar was
+/// swallowed before macOS text input ever saw it.
+///
+/// Reporting the action as disabled makes `handleKeypress` fall through to
+/// `KeyEventResult.ignored`, so the key continues to the text field.
+class _EditingAwareAction<T extends Intent> extends CallbackAction<T> {
+  _EditingAwareAction({required super.onInvoke});
+
+  @override
+  bool get isActionEnabled =>
+      !KeyboardShortcutsController.belongsToFocusedTextField();
 }
