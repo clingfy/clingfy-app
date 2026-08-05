@@ -2206,6 +2206,20 @@ final class InlinePreviewView: NSView {
     updateCursorLayer(tick: tickState)
     let screenZoom = updateZoom(tick: tickState)
     updateCameraPreviewGeometry(time: t, screenZoom: screenZoom)
+    // Captions take `posSeconds` — the PLAYER's time — not `t`. Every other
+    // overlay here is keyed to SOURCE time and maps edited→source above; the
+    // caption track is already on the edited timeline, because that is what a
+    // .srt beside the exported file has to match. Passing `t` would put every
+    // caption at the wrong moment the instant a recording has a cut.
+    //
+    // It belongs in THIS function and not in `applyPreviewOverlayState`, which
+    // is where it was: that runs only on a cursor load, a settings change, a
+    // composition apply and a zoom push — never on playback and never on a
+    // scrub. So the caption resolved once, when the track was installed, and
+    // then never changed for the rest of the session. `sendTick` is reached
+    // from both the periodic observer and `seekTo`, so one call covers playing
+    // and scrubbing while paused.
+    refreshCaptionOverlay(atEditedSeconds: posSeconds)
     CATransaction.commit()
 
     // Only EMIT the transport tick once the duration is real: a not-yet-loaded
@@ -2378,7 +2392,7 @@ final class InlinePreviewView: NSView {
       // Same reason the camera is re-synced above: clip edits happen while
       // paused, so no tick will arrive to correct a caption left on a stale
       // edited position.
-      refreshCaptionOverlay(at: Double(restoreEditedMs) / 1000.0)
+      refreshCaptionOverlay(atEditedSeconds: Double(restoreEditedMs) / 1000.0)
     }
 
     NativeLogger.i(
@@ -3722,7 +3736,7 @@ final class InlinePreviewView: NSView {
     if track == nil {
       captionLayer?.isHidden = true
     }
-    refreshCaptionOverlay(at: player?.currentTime().seconds ?? 0)
+    refreshCaptionOverlay(atEditedSeconds: player?.currentTime().seconds ?? 0)
     needsDisplay = true
     NativeLogger.i(
       "Captions", "Preview caption track applied",
@@ -3736,7 +3750,7 @@ final class InlinePreviewView: NSView {
   ///
   /// `playerSeconds` is EDITED time, which is exactly the timebase the track is
   /// in — no source conversion, unlike every other overlay here.
-  private func refreshCaptionOverlay(at playerSeconds: Double) {
+  private func refreshCaptionOverlay(atEditedSeconds playerSeconds: Double) {
     guard let layer = captionLayer else { return }
     guard let track = captionTrack, let container = canvasContainer else {
       layer.isHidden = true
@@ -3826,7 +3840,7 @@ final class InlinePreviewView: NSView {
     let image = cgImage as! CGImage
     layoutCaptionOverlay(
       bitmapSize: CGSize(width: image.width, height: image.height))
-    refreshCaptionOverlay(at: player?.currentTime().seconds ?? 0)
+    refreshCaptionOverlay(atEditedSeconds: player?.currentTime().seconds ?? 0)
   }
 
   func updateZoomSegmentsOnly(segments: [ZoomTimelineSegment]) {
@@ -3858,7 +3872,7 @@ final class InlinePreviewView: NSView {
     // below use: the track is in edited time already. Placed here so every
     // path that moves the playhead — the periodic tick, a scrub while paused,
     // the post-rebuild restore seek — refreshes the caption too.
-    refreshCaptionOverlay(at: time)
+    refreshCaptionOverlay(atEditedSeconds: time)
     let sourceTime = sourceSeconds(forPlayerSeconds: time)
     let normalizedTime = sourceTime.isFinite ? sourceTime : 0
     let tick = PreviewTickState(

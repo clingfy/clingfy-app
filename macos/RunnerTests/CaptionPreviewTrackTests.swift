@@ -171,6 +171,45 @@ final class CaptionPreviewTrackTests: XCTestCase {
     XCTAssertTrue(t.matches(targetSize: CGSize(width: 1920, height: 1080)))
   }
 
+  // MARK: - Timebase
+
+  /// The preview's caption track is on the EDITED timeline; every other overlay
+  /// in `sendTick` is keyed to SOURCE time and maps edited→source first. Feeding
+  /// the caption lookup that mapped value — the natural mistake, since it is the
+  /// variable every neighbouring line uses — puts captions at the wrong moment
+  /// on any recording with a cut.
+  ///
+  /// This pins the consequence rather than the call: with 5s trimmed off the
+  /// front, the two values pick different cues, so a regression is a wrong
+  /// caption on screen and not merely a different number.
+  func testEditedAndSourceTimePickDifferentCuesOnACutRecording() {
+    // Kept range: source [5000, 20000) → edited [0, 15000).
+    let ranges = [ClipKeptRange(sourceInMs: 5000, sourceOutMs: 20000)]
+    let editedMs = 1000
+    let sourceMs = ClipPlaybackPlanner.sourceMs(forEditedMs: editedMs, ranges: ranges)
+    XCTAssertEqual(sourceMs, 6000, "5s of trimmed head")
+
+    let t = track([
+      cue("correct", 0, 2000, bitmap: "a.png"),
+      cue("wrong", 6000, 8000, bitmap: "b.png"),
+    ])
+
+    XCTAssertEqual(
+      t.activeCue(atEditedMs: editedMs)?.id, "correct",
+      "the player's own time is what the track is keyed to")
+    XCTAssertEqual(
+      t.activeCue(atEditedMs: sourceMs)?.id, "wrong",
+      "and the source mapping picks a different cue — that is the bug shape")
+  }
+
+  /// On an unedited recording the two timebases coincide, which is exactly why
+  /// this class of mistake survives casual testing: it is invisible until a
+  /// recording has a cut.
+  func testTheTwoTimebasesAgreeWhenNothingWasCut() {
+    let sourceMs = ClipPlaybackPlanner.sourceMs(forEditedMs: 1000, ranges: [])
+    XCTAssertEqual(sourceMs, 1000)
+  }
+
   // MARK: - Placement parity with the export
 
   /// The preview must place captions with the EXPORT's own function, against
