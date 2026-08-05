@@ -28,6 +28,8 @@ import 'package:clingfy/app/home/export/widgets/export_file_dialog.dart';
 import 'package:clingfy/core/preview/player_controller.dart';
 import 'package:clingfy/core/captions/captions_capability.dart';
 import 'package:clingfy/core/bridges/job_progress.dart';
+import 'package:clingfy/core/captions/subtitle_serializer.dart';
+import 'dart:convert';
 
 class PostProcessingController extends ChangeNotifier {
   final NativeBridge _nativeBridge;
@@ -210,6 +212,14 @@ class PostProcessingController extends ChangeNotifier {
   double? get captionsProgress => _captionsProgress;
   ProgressStage get captionsStage => _captionsStage;
   bool get hasEverGeneratedCaptions => _hasEverGeneratedCaptions;
+
+  /// The destination the next export will actually use.
+  ///
+  /// The stored preference is overridden to [SubtitleMode.none] when there is
+  /// no transcript, so a stored "burn in" never puts native into a caption
+  /// path with an empty track.
+  SubtitleMode get exportSubtitleMode =>
+      _captions.isEmpty ? SubtitleMode.none : _settings.post.postSubtitleMode;
 
   /// Asks native whether captions are possible here, and seeds the source
   /// selection from what the recording actually contains.
@@ -1366,6 +1376,52 @@ class PostProcessingController extends ChangeNotifier {
     }
   }
 
+  /// Strips a trailing file extension, if there is one.
+  ///
+  /// Only a dot in the last path segment counts: `~/My.Videos/clip` has no
+  /// extension, and naively cutting at the last dot would write the sidecar
+  /// into a sibling of the directory rather than beside the video.
+  static String _withoutExtension(String path) {
+    final lastSeparator = path.lastIndexOf(Platform.pathSeparator);
+    final dot = path.lastIndexOf('.');
+    if (dot <= lastSeparator + 1) return path;
+    return path.substring(0, dot);
+  }
+
+  /// Writes `.srt` and `.vtt` beside the exported video.
+  ///
+  /// Done here rather than natively because the formats are pure text and the
+  /// serializer is already shared, and because native has just told us where
+  /// the file actually landed — after its own name-collision handling, which
+  /// is the only path that knows the final name.
+  ///
+  /// A sidecar failure never fails the export. The video is already on disk
+  /// and re-running the whole render to retry two small text files would be a
+  /// far worse outcome than a missing subtitle track the user can regenerate.
+  @visibleForTesting
+  Future<void> writeSubtitleSidecars(
+    String videoPath,
+    SubtitleMode mode,
+  ) async {
+    if (!mode.writesSidecar || _captions.isEmpty) return;
+
+    final stem = _withoutExtension(videoPath);
+
+    for (final entry in {
+      '$stem.srt': SubtitleSerializer.toSrt(_captions),
+      '$stem.vtt': SubtitleSerializer.toWebVtt(_captions),
+    }.entries) {
+      try {
+        // Written as UTF-8 without a BOM: WebVTT requires UTF-8, and SubRip
+        // has no encoding declaration at all, so UTF-8 is what every modern
+        // parser assumes.
+        await File(entry.key).writeAsString(entry.value, encoding: utf8);
+      } catch (e, st) {
+        Log.e("PostProcessing", "Failed to write ${entry.key}", e, st);
+      }
+    }
+  }
+
   Future<String?> exportCurrentRecording(BuildContext context) async {
     _lastExportWasCancelled = false;
 
@@ -1517,6 +1573,8 @@ class PostProcessingController extends ChangeNotifier {
         );
       }
 
+      final subtitleMode = exportSubtitleMode;
+
       Map<String, dynamic> args = {
         'layoutPreset': _settings.post.layoutPreset.name,
         'resolutionPreset': _settings.post.resolutionPreset.name,
@@ -1568,6 +1626,13 @@ class PostProcessingController extends ChangeNotifier {
         'clips':
             _player.clipEditor?.clips.map((c) => c.toMap()).toList() ??
             const <Map<String, dynamic>>[],
+        'subtitleMode': subtitleMode.wireValue,
+        // Only sent when native will actually composite them. The sidecar is
+        // written on this side, from the same list, once native reports where
+        // the video landed — so shipping the transcript for a sidecar-only
+        // export would be a payload native drops on the floor.
+        if (subtitleMode.burnsIn && _captions.isNotEmpty)
+          'captions': [for (final cue in _captions) cue.toMap()],
       };
 
       _activeExportInvokeSpan = _activeExportTransaction!.startChild(
@@ -1588,6 +1653,7 @@ class PostProcessingController extends ChangeNotifier {
       if (newPath != null) {
         Log.i("PostProcessing", "Export completed successfully");
         _hasExportedCurrentRecording = true;
+        await writeSubtitleSidecars(newPath, subtitleMode);
         ClingfyAnalytics.capture(
           AnalyticsEvents.exportJobComplete,
           properties: {
