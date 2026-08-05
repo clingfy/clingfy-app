@@ -122,8 +122,17 @@ final class CaptionsService {
           sources: sources,
           micOptions: micOptions,
           systemOptions: systemOptions,
-          progress: { fraction in
-            onProgress(JobProgress.captions(fraction, stage: .transcribing))
+          progress: { update in
+            // The phase decides the stage the panel names. Before this every
+            // phase was reported as `transcribing`, so a first-run model
+            // download showed a determinate bar frozen at 10% for minutes.
+            let stage: JobProgress.Stage
+            switch update.phase {
+            case .downloadingModel: stage = .downloadingModel
+            case .preparing: stage = .preparing
+            case .transcribing: stage = .transcribing
+            }
+            onProgress(JobProgress.captions(update.fraction, stage: stage))
           },
           isCancelled: { [self] in shouldCancel() }
         )

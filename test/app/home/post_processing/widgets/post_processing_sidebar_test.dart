@@ -163,6 +163,7 @@ void main() {
       captionsUseMic: true,
       captionsUseSystem: true,
       isGeneratingCaptions: false,
+      isCancellingCaptions: false,
       captionsProgress: null,
       captionsStageLabel: null,
       hasEverGeneratedCaptions: false,

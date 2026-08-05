@@ -143,6 +143,15 @@ class PostProcessingController extends ChangeNotifier {
   bool _captionsUseSystem = true;
   bool _isGeneratingCaptions = false;
 
+  /// Set the moment the user asks to stop, and cleared when the engine
+  /// actually finishes unwinding.
+  ///
+  /// Its whole job is to acknowledge the press. A model download is not
+  /// interruptible, so a cancel can take a while to land; with nothing changing
+  /// on screen the button reads as broken, which is exactly what happened —
+  /// eleven presses in four seconds, in the logs.
+  bool _isCancellingCaptions = false;
+
   /// `null` = indeterminate. The model download and Core ML specialisation take
   /// tens of seconds before any real fraction exists.
   double? _captionsProgress;
@@ -220,6 +229,7 @@ class PostProcessingController extends ChangeNotifier {
   bool get captionsUseMic => _captionsUseMic;
   bool get captionsUseSystem => _captionsUseSystem;
   bool get isGeneratingCaptions => _isGeneratingCaptions;
+  bool get isCancellingCaptions => _isCancellingCaptions;
   double? get captionsProgress => _captionsProgress;
   ProgressStage get captionsStage => _captionsStage;
   bool get hasEverGeneratedCaptions => _hasEverGeneratedCaptions;
@@ -373,7 +383,9 @@ class PostProcessingController extends ChangeNotifier {
   /// Routed here from the shared job-progress callback when the tick is tagged
   /// `captions`, so a transcription never moves the export bar.
   void updateCaptionsProgress(JobProgress progress) {
-    if (!_isGeneratingCaptions) return;
+    // A cancelled job keeps emitting for as long as it takes to unwind. Letting
+    // those ticks through would move a bar the user has already stopped.
+    if (!_isGeneratingCaptions || _isCancellingCaptions) return;
     _captionsProgress = progress.fraction;
     _captionsStage = progress.stage;
     notifyListeners();
@@ -385,6 +397,8 @@ class PostProcessingController extends ChangeNotifier {
     if (!_captionsUseMic && !_captionsUseSystem) return;
 
     _isGeneratingCaptions = true;
+    // Not reset here: the `finally` below always runs once past the guards
+    // above, so a previous run cannot leave this set.
     _captionsProgress = null;
     _captionsStage = ProgressStage.preparing;
     notifyListeners();
@@ -415,6 +429,7 @@ class PostProcessingController extends ChangeNotifier {
       Log.e("PostProcessing", "Caption generation failed", e, st);
     } finally {
       _isGeneratingCaptions = false;
+      _isCancellingCaptions = false;
       _captionsProgress = null;
       notifyListeners();
     }
@@ -432,7 +447,13 @@ class PostProcessingController extends ChangeNotifier {
   }
 
   Future<void> cancelCaptions() async {
-    if (!_isGeneratingCaptions) return;
+    if (!_isGeneratingCaptions || _isCancellingCaptions) return;
+    // Flip the UI first. The engine may take seconds to unwind — it cannot be
+    // interrupted mid-download — and the press has to be visibly received or
+    // the user just presses again.
+    _isCancellingCaptions = true;
+    _captionsProgress = null;
+    notifyListeners();
     await _nativeBridge.cancelCaptions();
   }
 

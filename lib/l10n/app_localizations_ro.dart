@@ -2814,4 +2814,10 @@ class AppLocalizationsRo extends AppLocalizations {
 
   @override
   String get captionsNotInExport => 'Tăiat';
+
+  @override
+  String get captionsDownloadingModel => 'Se descarcă modelul vocal';
+
+  @override
+  String get captionsStopping => 'Se oprește…';
 }

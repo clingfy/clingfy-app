@@ -31,6 +31,11 @@ enum ProgressStage {
   /// Setting up — resolving inputs, loading a model, compiling shaders.
   preparing('preparing'),
 
+  /// Fetching the speech model over the network. Distinct from [preparing]
+  /// because it is the only phase that can run for minutes on a first use and
+  /// the only one that can report a real fraction before work begins.
+  downloadingModel('downloadingModel'),
+
   /// Speech-to-text.
   transcribing('transcribing'),
 

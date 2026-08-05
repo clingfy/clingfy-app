@@ -24,17 +24,46 @@ protocol CaptionTranscriber {
   ///     system audio is 48 kHz stereo, so per-file resampling is the
   ///     implementation's job, not the caller's.
   ///   - options: thresholds and hints; see `TranscriptionOptions`.
-  ///   - progress: called with 0...1 as decoding advances. May be called on any
-  ///     queue; callers marshal.
+  ///   - progress: phase plus an optional 0...1 fraction. May be called on any
+  ///     queue; callers marshal. The phase matters because the model download
+  ///     is the one part that can run for minutes and is worth naming — the UI
+  ///     labelled everything "Preparing", so a first run looked frozen.
   ///   - isCancelled: polled during decoding. Returning `true` must abandon the
   ///     run promptly and throw `TranscriptionError.cancelled`.
   /// - Returns: segments in SOURCE time, ordered, non-overlapping.
   func transcribe(
     url: URL,
     options: TranscriptionOptions,
-    progress: @escaping (Double) -> Void,
+    progress: @escaping (TranscriptionProgress) -> Void,
     isCancelled: @escaping () -> Bool
   ) throws -> [TranscribedSegment]
+}
+
+/// What a transcriber is doing, and how far in.
+struct TranscriptionProgress: Equatable {
+  enum Phase: Equatable {
+    /// Fetching the speech model. First run only, and the only phase that can
+    /// take minutes.
+    case downloadingModel
+    /// Decoding audio, loading the model, Core ML specialisation. Genuinely
+    /// indeterminate.
+    case preparing
+    case transcribing
+  }
+
+  let phase: Phase
+  /// `nil` when the phase cannot report one. Shown as a spinner, not a bar.
+  let fraction: Double?
+
+  static func downloadingModel(_ fraction: Double?) -> TranscriptionProgress {
+    TranscriptionProgress(phase: .downloadingModel, fraction: fraction)
+  }
+  static func preparing() -> TranscriptionProgress {
+    TranscriptionProgress(phase: .preparing, fraction: nil)
+  }
+  static func transcribing(_ fraction: Double) -> TranscriptionProgress {
+    TranscriptionProgress(phase: .transcribing, fraction: fraction)
+  }
 }
 
 enum TranscriberAvailability: Equatable {

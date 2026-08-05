@@ -79,7 +79,7 @@ struct TranscriptionJob {
     sources: Sources,
     micOptions: TranscriptionOptions = .default,
     systemOptions: TranscriptionOptions = .strict,
-    progress: @escaping (Double) -> Void,
+    progress: @escaping (TranscriptionProgress) -> Void,
     isCancelled: @escaping () -> Bool
   ) throws -> [Caption] {
     guard transcriber.availability.isAvailable else {
@@ -118,7 +118,16 @@ struct TranscriptionJob {
       let raw = try transcriber.transcribe(
         url: pass.url,
         options: pass.options,
-        progress: { fraction in progress(lower + (fraction * span)) },
+        progress: { update in
+          // Only transcription fractions belong to a source's sub-range. The
+          // model download happens once for the whole job, so scaling it into
+          // the first source's half would report 50% for a finished download.
+          guard update.phase == .transcribing, let fraction = update.fraction else {
+            progress(update)
+            return
+          }
+          progress(.transcribing(lower + (fraction * span)))
+        },
         isCancelled: isCancelled
       )
       let kept = Self.applyGuards(raw, options: pass.options)
@@ -130,7 +139,7 @@ struct TranscriptionJob {
 
     if isCancelled() { throw TranscriptionError.cancelled }
     let merged = Self.merge(mic: micSegments, system: systemSegments)
-    progress(1.0)
+    progress(.transcribing(1.0))
     return merged
   }
 

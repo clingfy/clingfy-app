@@ -16,18 +16,24 @@ final class CaptionsServiceTests: XCTestCase {
     /// Blocks the run until signalled, so single-flight and cancellation can be
     /// observed while a job is genuinely in flight.
     var gate: DispatchSemaphore?
+    /// Fractions to emit as a model download before transcribing, mirroring the
+    /// real engine's first-run behaviour.
+    var downloadFractions: [Double] = []
     private(set) var callCount = 0
 
     func transcribe(
       url: URL,
       options: TranscriptionOptions,
-      progress: @escaping (Double) -> Void,
+      progress: @escaping (TranscriptionProgress) -> Void,
       isCancelled: @escaping () -> Bool
     ) throws -> [TranscribedSegment] {
       callCount += 1
+      for fraction in downloadFractions {
+        progress(.downloadingModel(fraction))
+      }
       if let gate { gate.wait() }
       if isCancelled() { throw TranscriptionError.cancelled }
-      progress(1.0)
+      progress(.transcribing(1.0))
       return segments
     }
   }
@@ -181,6 +187,66 @@ final class CaptionsServiceTests: XCTestCase {
     XCTAssertEqual(
       jobs, ["captions"],
       "a caption tick tagged export would move the export bar")
+  }
+
+  // MARK: - Model download
+
+  /// The bug this pins, from a real first run: the panel showed a determinate
+  /// bar frozen at 10% for the length of a 626 MB download, because every phase
+  /// was reported as `transcribing` and the download reported nothing at all.
+  func testModelDownloadIsItsOwnStage() {
+    let fake = FakeTranscriber()
+    fake.downloadFractions = [0.25, 0.5, 0.75]
+    let service = CaptionsService(transcriber: fake)
+
+    var stages: [JobProgress.Stage] = []
+    var downloadFractions: [Double] = []
+    let done = expectation(description: "finished")
+    service.generateCaptions(
+      sources: TranscriptionJob.Sources(
+        micURL: URL(fileURLWithPath: "/tmp/mic.m4a"), systemURL: nil, embeddedURL: nil),
+      language: nil,
+      onProgress: { progress in
+        stages.append(progress.stage)
+        if progress.stage == .downloadingModel, let fraction = progress.fraction {
+          downloadFractions.append(fraction)
+        }
+      },
+      completion: { _ in done.fulfill() })
+    wait(for: [done], timeout: 10)
+
+    XCTAssertTrue(
+      stages.contains(.downloadingModel),
+      "a model download must be named, not reported as transcribing")
+    XCTAssertEqual(downloadFractions, [0.25, 0.5, 0.75], "and it must carry a real fraction")
+  }
+
+  /// A download fraction belongs to the whole job, not to one audio source. The
+  /// per-source scaling would otherwise report a finished download as 50%.
+  func testDownloadFractionsAreNotScaledPerSource() {
+    let fake = FakeTranscriber()
+    fake.downloadFractions = [1.0]
+    let service = CaptionsService(transcriber: fake)
+
+    var downloadFractions: [Double] = []
+    let done = expectation(description: "finished")
+    service.generateCaptions(
+      sources: TranscriptionJob.Sources(
+        micURL: URL(fileURLWithPath: "/tmp/mic.m4a"),
+        systemURL: URL(fileURLWithPath: "/tmp/system.m4a"),
+        embeddedURL: nil),
+      language: nil,
+      onProgress: { progress in
+        if progress.stage == .downloadingModel, let fraction = progress.fraction {
+          downloadFractions.append(fraction)
+        }
+      },
+      completion: { _ in done.fulfill() })
+    wait(for: [done], timeout: 10)
+
+    XCTAssertTrue(
+      downloadFractions.allSatisfy { $0 == 1.0 },
+      "got \(downloadFractions) — a whole-job phase must not be halved")
   }
 
   // MARK: - Cancellation

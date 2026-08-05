@@ -37,6 +37,11 @@ struct JobProgress {
   enum Stage: String {
     /// Resolving inputs, loading a model, compiling shaders.
     case preparing
+    /// Fetching the speech model over the network. Its own stage because it is
+    /// the one phase that can take minutes on a first run, reports a real
+    /// fraction, and is worth naming — "Preparing" pinned for four minutes
+    /// reads as a hang.
+    case downloadingModel
     case transcribing
     case rendering
     /// Muxing, transcoding, writing the final file.

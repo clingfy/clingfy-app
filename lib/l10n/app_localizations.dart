@@ -5073,6 +5073,18 @@ abstract class AppLocalizations {
   /// In en, this message translates to:
   /// **'Cut'**
   String get captionsNotInExport;
+
+  /// Progress label while the one-time speech-recognition model download runs.
+  ///
+  /// In en, this message translates to:
+  /// **'Downloading speech model'**
+  String get captionsDownloadingModel;
+
+  /// Shown after the user cancels a transcription, while the engine finishes unwinding.
+  ///
+  /// In en, this message translates to:
+  /// **'Stopping…'**
+  String get captionsStopping;
 }
 
 class _AppLocalizationsDelegate

@@ -2763,4 +2763,10 @@ class AppLocalizationsAr extends AppLocalizations {
 
   @override
   String get captionsNotInExport => 'محذوف';
+
+  @override
+  String get captionsDownloadingModel => 'جارٍ تنزيل نموذج الكلام';
+
+  @override
+  String get captionsStopping => 'جارٍ الإيقاف…';
 }

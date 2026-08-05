@@ -39,6 +39,16 @@ final class WhisperKitTranscriber: CaptionTranscriber {
   private let queue = DispatchQueue(label: "com.clingfy.captions.asr", qos: .userInitiated)
   private var pipe: WhisperKit?
 
+  /// The engine task from a job the user cancelled, still unwinding.
+  ///
+  /// Cancelling no longer blocks the caller, because the model download is not
+  /// interruptible — `HubApi.snapshot` has no cancellation check, so a cancel
+  /// during a first-run download used to leave the user staring at a live
+  /// progress bar for the ten seconds the old code spent waiting on it. The
+  /// task is abandoned instead, and the NEXT job waits for it here rather than
+  /// touching a `WhisperKit` instance it is still using.
+  private var draining: Task<Void, Never>?
+
   init(model: String = WhisperKitTranscriber.defaultModel, modelDirectory: URL) {
     self.model = model
     self.modelDirectory = modelDirectory
@@ -62,22 +72,45 @@ final class WhisperKitTranscriber: CaptionTranscriber {
   func transcribe(
     url: URL,
     options: TranscriptionOptions,
-    progress: @escaping (Double) -> Void,
+    progress: @escaping (TranscriptionProgress) -> Void,
     isCancelled: @escaping () -> Bool
   ) throws -> [TranscribedSegment] {
     // Decode first, and report it as the first slice of progress. On a long
     // recording this is seconds of real work and a bar that sits at zero
     // through it reads as a hang.
-    progress(0.0)
+    progress(.preparing())
     var samples = try CaptionAudioDecoder.decodeMono16k(url: url, isCancelled: isCancelled)
     CaptionAudioDecoder.normalizePeak(&samples)
     if isCancelled() { throw TranscriptionError.cancelled }
-    progress(decodeProgressShare)
+    progress(.transcribing(decodeProgressShare))
 
     return try queue.sync {
-      try runTranscription(
+      // An earlier job the user cancelled may still be inside a download or an
+      // encoder pass on the shared WhisperKit instance, which is not Sendable
+      // and has open data races. Starting a second one on top of it would be a
+      // crash, so wait it out first.
+      awaitDrain(isCancelled: isCancelled)
+      if isCancelled() { throw TranscriptionError.cancelled }
+      return try runTranscription(
         samples: samples, options: options, progress: progress, isCancelled: isCancelled)
     }
+  }
+
+  /// Blocks until an abandoned engine task has finished.
+  ///
+  /// Runs on the transcriber's serial queue, so nothing else can reach the
+  /// pipeline meanwhile. The wait is bounded only by how long the abandoned
+  /// download takes; the caller is showing an indeterminate "preparing" state
+  /// through it, which is the honest thing to show.
+  private func awaitDrain(isCancelled: @escaping () -> Bool) {
+    guard let draining else { return }
+    let done = DispatchSemaphore(value: 0)
+    Task {
+      await draining.value
+      done.signal()
+    }
+    done.wait()
+    self.draining = nil
   }
 
   /// Decode is roughly this fraction of the wall clock on a typical recording.
@@ -87,7 +120,7 @@ final class WhisperKitTranscriber: CaptionTranscriber {
   private func runTranscription(
     samples: [Float],
     options: TranscriptionOptions,
-    progress: @escaping (Double) -> Void,
+    progress: @escaping (TranscriptionProgress) -> Void,
     isCancelled: @escaping () -> Bool
   ) throws -> [TranscribedSegment] {
     let semaphore = DispatchSemaphore(value: 0)
@@ -95,7 +128,14 @@ final class WhisperKitTranscriber: CaptionTranscriber {
 
     let work = Task { [self] in
       do {
-        let pipeline = try await loadedPipeline()
+        let pipeline = try await loadedPipeline(
+          report: { fraction, phase in
+            switch phase {
+            case .downloadingModel: progress(.downloadingModel(fraction))
+            case .preparing: progress(.preparing())
+            }
+          },
+          isCancelled: isCancelled)
         // Poll rather than KVO: WhisperKit REASSIGNS its `progress` property on
         // completion and on cancellation, so an observer registered on the
         // original object silently stops firing. Polling is what Argmax's own
@@ -104,7 +144,7 @@ final class WhisperKitTranscriber: CaptionTranscriber {
           while !Task.isCancelled {
             if let fraction = pipeline?.progress.fractionCompleted, fraction > 0 {
               let scaled = decodeProgressShare + (fraction * (1.0 - decodeProgressShare))
-              progress(min(scaled, 0.999))
+              progress(.transcribing(min(scaled, 0.999)))
             }
             try? await Task.sleep(nanoseconds: 200_000_000)
           }
@@ -125,25 +165,64 @@ final class WhisperKitTranscriber: CaptionTranscriber {
       semaphore.signal()
     }
 
-    // Task cancellation is the real cancel: WhisperKit checks
-    // `Task.checkCancellation()` three times per 30s window plus once in the
-    // decode loop, so the worst-case latency is about one encoder pass.
-    // Returning false from the decoding callback would only truncate the
-    // current window, not the job.
+    // Task cancellation reaches the transcription loop quickly — WhisperKit
+    // checks `Task.checkCancellation()` three times per 30s window plus once in
+    // the decode loop. It does NOT reach a model download: `HubApi.snapshot`
+    // never checks it, so a first-run cancel can leave this task running for as
+    // long as the download takes.
+    //
+    // So the user is not made to wait for it. Cancelling returns immediately
+    // and the task is left to unwind; the next job waits for it in
+    // `awaitDrain()` rather than touching a `WhisperKit` it is still using.
+    // Blocking here for ten seconds — which is what this did — is exactly the
+    // "pressed stop and nothing happened" the logs showed.
     while semaphore.wait(timeout: .now() + 0.1) == .timedOut {
       if isCancelled() {
         work.cancel()
-        _ = semaphore.wait(timeout: .now() + 10)
+        draining = Task { _ = await work.result }
         throw TranscriptionError.cancelled
       }
     }
+    draining = nil
 
-    progress(1.0)
+    progress(.transcribing(1.0))
     return try result.get()
   }
 
-  private func loadedPipeline() async throws -> WhisperKit {
+  private func loadedPipeline(
+    report: @escaping (Double?, PipelinePhase) -> Void,
+    isCancelled: @escaping () -> Bool
+  ) async throws -> WhisperKit {
     if let pipe { return pipe }
+
+    // Downloaded explicitly rather than letting `WhisperKit(download: true)` do
+    // it internally, because only this form yields a progress fraction. The
+    // model is 626 MB, so on a first run the internal path left the bar frozen
+    // for minutes with nothing to say — the single worst thing this feature did.
+    //
+    // Same network calls either way: WhisperKit's own init calls this exact
+    // function, and HubApi skips files already on disk, so a warm cache still
+    // returns quickly.
+    report(nil, .downloadingModel)
+    let folder = try await WhisperKit.download(
+      variant: model,
+      downloadBase: modelDirectory,
+      progressCallback: { progress in
+        // Best-effort abort. `HubApi.snapshot` never checks task cancellation,
+        // so this Progress is the only handle on an in-flight download. It may
+        // not be cancellable, in which case the download runs to completion and
+        // is discarded — the user is not kept waiting either way.
+        if isCancelled() {
+          progress.cancel()
+          return
+        }
+        report(progress.fractionCompleted, .downloadingModel)
+      })
+    if isCancelled() { throw TranscriptionError.cancelled }
+
+    // Loading and Core ML specialisation. Genuinely indeterminate and not
+    // interruptible, but it is tens of seconds rather than minutes.
+    report(nil, .preparing)
     let config = WhisperKitConfig(
       model: model,
       // Never the default. WhisperKit's HubApi defaults downloadBase to
@@ -151,17 +230,26 @@ final class WhisperKitTranscriber: CaptionTranscriber {
       // the user's real Documents folder — visible clutter in a paid app, and
       // possibly inside iCloud Drive sync.
       downloadBase: modelDirectory,
+      modelFolder: folder.path,
       // Loads each model then unloads before the next, so peak memory is one
       // model rather than all three plus compilation. Costs a second load when
       // Core ML's per-chip specialisation cache is already warm, which is the
       // right trade for a 626 MB model.
       prewarm: true,
       load: true,
-      download: true
+      // Already on disk by now; re-entering the download path would repeat the
+      // filename lookup for nothing.
+      download: false
     )
     let created = try await WhisperKit(config)
     pipe = created
     return created
+  }
+
+  /// What the engine is doing, for the stage the UI names.
+  enum PipelinePhase {
+    case downloadingModel
+    case preparing
   }
 
   // MARK: - Mapping

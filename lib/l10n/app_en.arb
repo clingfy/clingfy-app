@@ -959,5 +959,13 @@
   "captionsNotInExport": "Cut",
   "@captionsNotInExport": {
     "description": "Marker on a caption whose footage was removed by an edit, so it will not appear in the export."
+  },
+  "captionsDownloadingModel": "Downloading speech model",
+  "@captionsDownloadingModel": {
+    "description": "Progress label while the one-time speech-recognition model download runs."
+  },
+  "captionsStopping": "Stopping…",
+  "@captionsStopping": {
+    "description": "Shown after the user cancels a transcription, while the engine finishes unwinding."
   }
 }

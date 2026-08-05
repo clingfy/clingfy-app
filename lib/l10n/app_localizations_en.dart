@@ -2778,4 +2778,10 @@ class AppLocalizationsEn extends AppLocalizations {
 
   @override
   String get captionsNotInExport => 'Cut';
+
+  @override
+  String get captionsDownloadingModel => 'Downloading speech model';
+
+  @override
+  String get captionsStopping => 'Stopping…';
 }

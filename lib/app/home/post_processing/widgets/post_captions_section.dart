@@ -23,6 +23,7 @@ class PostCaptionsSection extends StatelessWidget {
     required this.useMic,
     required this.useSystem,
     required this.isGenerating,
+    required this.isCancelling,
     required this.progress,
     required this.isProcessing,
     required this.onUseMicChanged,
@@ -42,6 +43,11 @@ class PostCaptionsSection extends StatelessWidget {
   final bool useMic;
   final bool useSystem;
   final bool isGenerating;
+
+  /// The user asked to stop and the engine has not finished unwinding. The row
+  /// stays up, saying so, with the button inert — pressing it again does
+  /// nothing, and an unacknowledged press is what made people press repeatedly.
+  final bool isCancelling;
 
   /// `null` while the job cannot report a fraction — model download and Core ML
   /// specialisation take tens of seconds before any real progress exists, and a
@@ -142,9 +148,13 @@ class PostCaptionsSection extends StatelessWidget {
 
             if (isGenerating)
               _ProgressRow(
-                label: stageLabel ?? l10n.captionsPreparing,
-                progress: progress,
-                onCancel: onCancel,
+                label: isCancelling
+                    ? l10n.captionsStopping
+                    : (stageLabel ?? l10n.captionsPreparing),
+                // Indeterminate while stopping: there is no meaningful fraction
+                // left, and a bar still advancing after Stop is a lie.
+                progress: isCancelling ? null : progress,
+                onCancel: isCancelling ? null : onCancel,
                 cancelLabel: l10n.captionsCancel,
               )
             else
@@ -297,7 +307,9 @@ class _ProgressRow extends StatelessWidget {
 
   final String label;
   final double? progress;
-  final VoidCallback onCancel;
+
+  /// Null once the stop has been accepted, so a second press is inert.
+  final VoidCallback? onCancel;
   final String cancelLabel;
 
   @override

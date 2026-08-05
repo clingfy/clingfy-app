@@ -916,5 +916,7 @@
   "captionsDestinationSidecar": "Fișier",
   "captionsDestinationBoth": "Ambele",
   "captionsDestinationHint": "Subtitrările incluse rezistă la reîncărcare. Un fișier rămâne căutabil și poate fi dezactivat.",
-  "captionsNotInExport": "Tăiat"
+  "captionsNotInExport": "Tăiat",
+  "captionsDownloadingModel": "Se descarcă modelul vocal",
+  "captionsStopping": "Se oprește…"
 }

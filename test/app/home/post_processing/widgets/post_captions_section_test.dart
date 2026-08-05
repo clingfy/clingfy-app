@@ -46,6 +46,7 @@ void main() {
     bool useMic = true,
     bool useSystem = true,
     bool isGenerating = false,
+    bool isCancelling = false,
     double? progress,
     bool isProcessing = false,
     bool hasEverGenerated = false,
@@ -63,6 +64,7 @@ void main() {
       useMic: useMic,
       useSystem: useSystem,
       isGenerating: isGenerating,
+      isCancelling: isCancelling,
       progress: progress,
       isProcessing: isProcessing,
       hasEverGenerated: hasEverGenerated,
@@ -258,6 +260,49 @@ void main() {
     await tester.tap(find.byKey(cancelKey));
     await tester.pump();
     expect(cancelled, 1);
+  });
+
+  testWidgets('stopping is acknowledged the moment it is pressed', (
+    tester,
+  ) async {
+    // The engine cannot be interrupted mid-download, so the press has to be
+    // visibly received. It was not, and the logs show eleven presses in four
+    // seconds because of it.
+    final l10n = await AppLocalizations.delegate.load(const Locale('en'));
+    await tester.pumpWidget(
+      host(section(isGenerating: true, isCancelling: true, progress: 0.4)),
+    );
+
+    expect(find.text(l10n.captionsStopping), findsOneWidget);
+  });
+
+  testWidgets('a second stop press does nothing', (tester) async {
+    var cancelled = 0;
+    await tester.pumpWidget(
+      host(
+        section(
+          isGenerating: true,
+          isCancelling: true,
+          onCancel: () => cancelled++,
+        ),
+      ),
+    );
+
+    await tester.tap(find.byKey(cancelKey), warnIfMissed: false);
+    await tester.pump();
+    expect(cancelled, 0);
+  });
+
+  testWidgets('the bar stops advancing once stop is pressed', (tester) async {
+    // A bar still moving after Stop says the work is continuing, which is the
+    // opposite of what the user just asked for.
+    await tester.pumpWidget(
+      host(section(isGenerating: true, isCancelling: true, progress: 0.4)),
+    );
+    final bar = tester.widget<LinearProgressIndicator>(
+      find.byType(LinearProgressIndicator),
+    );
+    expect(bar.value, isNull);
   });
 
   testWidgets('the first-run download notice is shown once, not forever', (

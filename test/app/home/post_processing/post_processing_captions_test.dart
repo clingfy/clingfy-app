@@ -262,6 +262,90 @@ void main() {
     await run;
   });
 
+  // ---- Cancelling --------------------------------------------------------
+
+  test('cancelling is acknowledged before native answers', () async {
+    // The engine cannot be interrupted mid-download, so the acknowledgement
+    // cannot wait for it. This is the state the panel renders as "Stopping…".
+    final post = await createController();
+    generateGate = Completer<List<Map<String, Object?>>>();
+    final run = post.generateCaptions();
+    await pumpEventQueue();
+
+    final cancelling = post.cancelCaptions();
+
+    expect(
+      post.isCancellingCaptions,
+      isTrue,
+      reason: 'set synchronously, before the native round trip resolves',
+    );
+    expect(post.captionsProgress, isNull);
+
+    await cancelling;
+    generateGate!.complete([]);
+    await run;
+    expect(post.isCancellingCaptions, isFalse);
+    expect(post.isGeneratingCaptions, isFalse);
+  });
+
+  test('a second stop press does not reach native', () async {
+    final post = await createController();
+    generateGate = Completer<List<Map<String, Object?>>>();
+    final run = post.generateCaptions();
+    await pumpEventQueue();
+
+    await post.cancelCaptions();
+    await post.cancelCaptions();
+    await post.cancelCaptions();
+
+    expect(
+      callsNamed('cancelCaptions'),
+      hasLength(1),
+      reason: 'the logs show eleven presses in four seconds; one is enough',
+    );
+
+    generateGate!.complete([]);
+    await run;
+  });
+
+  test('progress from a cancelled job never moves the bar again', () async {
+    // A cancelled job keeps emitting while it unwinds. Those ticks must not
+    // advance a bar the user has already stopped.
+    final post = await createController();
+    generateGate = Completer<List<Map<String, Object?>>>();
+    final run = post.generateCaptions();
+    await pumpEventQueue();
+    await post.cancelCaptions();
+
+    post.updateCaptionsProgress(
+      const JobProgress(
+        job: ProgressJob.captions,
+        stage: ProgressStage.transcribing,
+        fraction: 0.9,
+      ),
+    );
+
+    expect(post.captionsProgress, isNull);
+
+    generateGate!.complete([]);
+    await run;
+  });
+
+  test('a fresh run clears the stopping state', () async {
+    final post = await createController();
+    generateGate = Completer<List<Map<String, Object?>>>();
+    final first = post.generateCaptions();
+    await pumpEventQueue();
+    await post.cancelCaptions();
+    generateGate!.complete([]);
+    await first;
+
+    generateGate = null;
+    await post.generateCaptions();
+
+    expect(post.isCancellingCaptions, isFalse);
+  });
+
   // ---- Progress ---------------------------------------------------------
 
   test('progress ticks land only while a transcription runs', () async {

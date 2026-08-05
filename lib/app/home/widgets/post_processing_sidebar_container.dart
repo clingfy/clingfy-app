@@ -79,6 +79,7 @@ class PostProcessingSidebarContainer extends StatelessWidget {
         bool captionsUseMic,
         bool captionsUseSystem,
         bool isGeneratingCaptions,
+        bool isCancellingCaptions,
         double? captionsProgress,
         ProgressStage captionsStage,
         bool hasEverGeneratedCaptions,
@@ -118,6 +119,7 @@ class PostProcessingSidebarContainer extends StatelessWidget {
         captionsUseMic: p.captionsUseMic,
         captionsUseSystem: p.captionsUseSystem,
         isGeneratingCaptions: p.isGeneratingCaptions,
+        isCancellingCaptions: p.isCancellingCaptions,
         captionsProgress: p.captionsProgress,
         captionsStage: p.captionsStage,
         hasEverGeneratedCaptions: p.hasEverGeneratedCaptions,
@@ -179,6 +181,7 @@ class PostProcessingSidebarContainer extends StatelessWidget {
               captionsUseMic: vm.captionsUseMic,
               captionsUseSystem: vm.captionsUseSystem,
               isGeneratingCaptions: vm.isGeneratingCaptions,
+              isCancellingCaptions: vm.isCancellingCaptions,
               captionsProgress: vm.captionsProgress,
               captionsStageLabel: _captionsStageLabel(
                 context,
@@ -278,6 +281,7 @@ class PostProcessingSidebarContainer extends StatelessWidget {
   static String _captionsStageLabel(BuildContext context, ProgressStage stage) {
     final l10n = AppLocalizations.of(context)!;
     return switch (stage) {
+      ProgressStage.downloadingModel => l10n.captionsDownloadingModel,
       ProgressStage.transcribing => l10n.captionsTranscribing,
       _ => l10n.captionsPreparing,
     };

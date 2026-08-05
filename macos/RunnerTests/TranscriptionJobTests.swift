@@ -24,14 +24,14 @@ final class TranscriptionJobTests: XCTestCase {
     func transcribe(
       url: URL,
       options: TranscriptionOptions,
-      progress: @escaping (Double) -> Void,
+      progress: @escaping (TranscriptionProgress) -> Void,
       isCancelled: @escaping () -> Bool
     ) throws -> [TranscribedSegment] {
       transcribedFiles.append(url.lastPathComponent)
       optionsUsed.append(options)
       for step in progressSteps {
         if isCancelled() { throw TranscriptionError.cancelled }
-        progress(step)
+        progress(.transcribing(step))
       }
       if isCancelled() { throw TranscriptionError.cancelled }
       return byFile[url.lastPathComponent] ?? []
@@ -246,7 +246,13 @@ final class TranscriptionJobTests: XCTestCase {
     var seen: [Double] = []
     _ = try job.run(
       sources: .init(micURL: url("mic.m4a"), systemURL: url("system.m4a"), embeddedURL: nil),
-      progress: { seen.append($0) }, isCancelled: { false })
+      progress: { update in
+        // Only transcription fractions are scaled into a source's sub-range;
+        // the model download is a whole-job phase and is passed through.
+        if update.phase == .transcribing, let fraction = update.fraction {
+          seen.append(fraction)
+        }
+      }, isCancelled: { false })
 
     XCTAssertFalse(seen.isEmpty)
     for (a, b) in zip(seen, seen.dropFirst()) {

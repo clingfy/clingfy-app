@@ -916,5 +916,7 @@
   "captionsDestinationSidecar": "ملف",
   "captionsDestinationBoth": "كلاهما",
   "captionsDestinationHint": "الترجمة المدمجة تبقى بعد إعادة الرفع. الملف يظل قابلاً للبحث ويمكن إيقافه.",
-  "captionsNotInExport": "محذوف"
+  "captionsNotInExport": "محذوف",
+  "captionsDownloadingModel": "جارٍ تنزيل نموذج الكلام",
+  "captionsStopping": "جارٍ الإيقاف…"
 }

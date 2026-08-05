@@ -150,6 +150,7 @@ class PostProcessingSidebar extends StatelessWidget {
   final bool captionsUseMic;
   final bool captionsUseSystem;
   final bool isGeneratingCaptions;
+  final bool isCancellingCaptions;
   final double? captionsProgress;
   final String? captionsStageLabel;
   final bool hasEverGeneratedCaptions;
@@ -309,6 +310,7 @@ class PostProcessingSidebar extends StatelessWidget {
     required this.captionsUseMic,
     required this.captionsUseSystem,
     required this.isGeneratingCaptions,
+    required this.isCancellingCaptions,
     required this.captionsProgress,
     required this.captionsStageLabel,
     required this.hasEverGeneratedCaptions,
@@ -529,6 +531,7 @@ class PostProcessingSidebar extends StatelessWidget {
         useMic: captionsUseMic,
         useSystem: captionsUseSystem,
         isGenerating: isGeneratingCaptions,
+        isCancelling: isCancellingCaptions,
         progress: captionsProgress,
         stageLabel: captionsStageLabel,
         isProcessing: isProcessing,
