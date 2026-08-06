@@ -155,5 +155,101 @@ TEST(ReadCameraComposition, WrongTypedValuesFallBackInsteadOfThrowing) {
   EXPECT_FALSE(c.has_center);
 }
 
+// --- preview / export parity ------------------------------------------------
+//
+// The export used to hand-parse this same payload a THIRD time with its own
+// default literals. These pin the two halves of that collapse: that the shared
+// parser's defaults are the ones the export parse used (so removing it changed
+// nothing), and that every composition field actually reaches the export
+// request (so the next added field cannot go missing on one side).
+
+TEST(ReadCameraComposition, DefaultsMatchTheOnesTheExportParseUsed) {
+  // Every literal the removed export block used, pinned here. If a default
+  // drifts, the export's rendering changes silently for any payload missing
+  // that key — which is precisely how a partial payload used to diverge.
+  const auto c = ReadCameraComposition(EncodableMap{});
+  EXPECT_FALSE(c.visible);
+  EXPECT_EQ(c.layout_preset, "");
+  EXPECT_DOUBLE_EQ(c.size_factor, 0.18);
+  EXPECT_EQ(c.shape, "");
+  EXPECT_DOUBLE_EQ(c.corner_radius, 0.0);
+  EXPECT_EQ(c.content_mode, "");
+  EXPECT_FALSE(c.mirror);
+  EXPECT_DOUBLE_EQ(c.opacity, 1.0);
+  EXPECT_DOUBLE_EQ(c.border_width, 0.0);
+  EXPECT_FALSE(c.has_border_color);
+  EXPECT_EQ(c.shadow_preset, 0);
+  EXPECT_FALSE(c.chroma_enabled);
+  EXPECT_DOUBLE_EQ(c.chroma_strength, 0.4);
+  EXPECT_FALSE(c.has_chroma_color);
+  EXPECT_EQ(c.intro_preset, "");
+  EXPECT_EQ(c.outro_preset, "");
+  EXPECT_EQ(c.intro_duration_ms, 0);
+  EXPECT_EQ(c.outro_duration_ms, 0);
+  EXPECT_EQ(c.zoom_behavior, "");
+  EXPECT_DOUBLE_EQ(c.zoom_scale_multiplier, 0.0);
+  EXPECT_FALSE(c.has_center);
+}
+
+TEST(ApplyCameraCompositionToExport, CarriesEveryFieldToTheExportRequest) {
+  // THE regression guard. Every field is set to a distinctive NON-default, so
+  // any field the mapper forgets shows up as a default on the export side and
+  // fails here. Add a field to PreviewCameraComposition without extending
+  // ApplyCameraCompositionToExport and this test tells you — which is exactly
+  // what nothing did when the four intro/outro keys reached the export but
+  // never the preview.
+  const auto c = ReadCameraComposition(FullArgs());
+  capture::export_::PassthroughInput input;
+  ApplyCameraCompositionToExport(c, input);
+
+  EXPECT_TRUE(input.camera_visible);
+  EXPECT_EQ(input.camera_layout_preset, "overlayTopLeft");
+  EXPECT_DOUBLE_EQ(input.camera_size_factor, 0.25);
+  EXPECT_EQ(input.camera_shape, "squircle");
+  EXPECT_DOUBLE_EQ(input.camera_corner_radius, 0.3);
+  EXPECT_EQ(input.camera_content_mode, "fill");
+  EXPECT_TRUE(input.camera_mirror);
+  EXPECT_DOUBLE_EQ(input.camera_opacity, 0.8);
+  EXPECT_DOUBLE_EQ(input.camera_border_width, 4.0);
+  ASSERT_TRUE(input.camera_border_color_argb.has_value());
+  EXPECT_EQ(*input.camera_border_color_argb,
+            static_cast<std::int64_t>(0xFF00FF00));
+  EXPECT_EQ(input.camera_shadow_preset, 2);
+  EXPECT_TRUE(input.camera_chroma_enabled);
+  EXPECT_DOUBLE_EQ(input.camera_chroma_strength, 0.55);
+  ASSERT_TRUE(input.camera_chroma_color_argb.has_value());
+  EXPECT_EQ(input.camera_intro_preset, "pop");
+  EXPECT_EQ(input.camera_outro_preset, "slide");
+  EXPECT_EQ(input.camera_intro_duration_ms, 300);
+  EXPECT_EQ(input.camera_outro_duration_ms, 260);
+  EXPECT_TRUE(input.camera_has_center);
+  EXPECT_DOUBLE_EQ(input.camera_center_x, 0.7);
+  EXPECT_DOUBLE_EQ(input.camera_center_y, 0.9);
+}
+
+TEST(ApplyCameraCompositionToExport, CarriesTheZoomBehaviourFields) {
+  auto args = FullArgs();
+  args[Key("cameraZoomBehavior")] =
+      EncodableValue(std::string("scaleWithScreenZoom"));
+  args[Key("cameraZoomScaleMultiplier")] = EncodableValue(0.6);
+  capture::export_::PassthroughInput input;
+  ApplyCameraCompositionToExport(ReadCameraComposition(args), input);
+  EXPECT_EQ(input.camera_zoom_behavior, "scaleWithScreenZoom");
+  EXPECT_DOUBLE_EQ(input.camera_zoom_scale_multiplier, 0.6);
+}
+
+TEST(ApplyCameraCompositionToExport, AbsentColoursStayNulloptNotZero) {
+  // The export keeps nullable colours as optionals while the preview flattens
+  // them at parse time. Converting a "no colour" into an explicit 0 would paint
+  // an opaque black border on the export only.
+  auto args = FullArgs();
+  args.erase(Key("cameraBorderColorArgb"));
+  args.erase(Key("cameraChromaKeyColorArgb"));
+  capture::export_::PassthroughInput input;
+  ApplyCameraCompositionToExport(ReadCameraComposition(args), input);
+  EXPECT_FALSE(input.camera_border_color_argb.has_value());
+  EXPECT_FALSE(input.camera_chroma_color_argb.has_value());
+}
+
 }  // namespace
 }  // namespace clingfy::bridge

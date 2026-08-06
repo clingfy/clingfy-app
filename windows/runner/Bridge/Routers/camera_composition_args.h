@@ -28,6 +28,7 @@
 
 #include <flutter/encodable_value.h>
 
+#include "Capture/Export/export_passthrough.h"
 #include "preview/preview_camera_renderer.h"
 
 namespace clingfy::bridge {
@@ -37,6 +38,26 @@ namespace clingfy::bridge {
 // soft-fails to "no animation" rather than erroring.
 preview::PreviewCameraComposition ReadCameraComposition(
     const flutter::EncodableMap& args);
+
+// Copy a parsed composition into the export request's flat `camera_*` fields.
+//
+// `exportVideo` was the THIRD parse of this payload — a hand-written copy of
+// the same 21 keys with its own default literals. It read the same values as
+// the shared parser, but only by coincidence of two people writing the same
+// list twice, and that coincidence had already failed twice (chroma in the 9.7
+// review, then the four intro/outro keys). Routing the export through
+// ReadCameraComposition + this mapper leaves ONE parser for all three call
+// sites.
+//
+// Every field must be carried. `ExportCameraFieldsAreComplete` in the tests
+// sets a distinctive non-default on every composition field and fails if any
+// export field comes out at its default — so adding a field to
+// PreviewCameraComposition without extending this mapper breaks the build's
+// tests rather than silently dropping the value on the export path only, which
+// is exactly how the intro/outro bug shipped.
+void ApplyCameraCompositionToExport(
+    const preview::PreviewCameraComposition& composition,
+    capture::export_::PassthroughInput& input);
 
 }  // namespace clingfy::bridge
 

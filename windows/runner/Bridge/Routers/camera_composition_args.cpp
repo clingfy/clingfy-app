@@ -104,4 +104,41 @@ preview::PreviewCameraComposition ReadCameraComposition(
   return c;
 }
 
+void ApplyCameraCompositionToExport(
+    const preview::PreviewCameraComposition& c,
+    capture::export_::PassthroughInput& input) {
+  input.camera_visible = c.visible;
+  input.camera_has_center = c.has_center;
+  input.camera_center_x = c.center_x;
+  input.camera_center_y = c.center_y;
+  input.camera_layout_preset = c.layout_preset;
+  input.camera_size_factor = c.size_factor;
+  input.camera_shape = c.shape;
+  input.camera_corner_radius = c.corner_radius;
+  input.camera_content_mode = c.content_mode;
+  input.camera_mirror = c.mirror;
+  input.camera_opacity = c.opacity;
+  input.camera_border_width = c.border_width;
+  // The export keeps the nullable colours as optionals and only flattens them
+  // when it builds the painter Style; the preview flattens at parse time. Same
+  // information, two shapes — convert rather than leaving one side blank.
+  input.camera_border_color_argb =
+      c.has_border_color
+          ? std::optional<std::int64_t>(static_cast<std::int64_t>(c.border_argb))
+          : std::nullopt;
+  input.camera_shadow_preset = c.shadow_preset;
+  input.camera_chroma_enabled = c.chroma_enabled;
+  input.camera_chroma_strength = c.chroma_strength;
+  input.camera_chroma_color_argb =
+      c.has_chroma_color
+          ? std::optional<std::int64_t>(static_cast<std::int64_t>(c.chroma_argb))
+          : std::nullopt;
+  input.camera_intro_preset = c.intro_preset;
+  input.camera_outro_preset = c.outro_preset;
+  input.camera_intro_duration_ms = c.intro_duration_ms;
+  input.camera_outro_duration_ms = c.outro_duration_ms;
+  input.camera_zoom_behavior = c.zoom_behavior;
+  input.camera_zoom_scale_multiplier = c.zoom_scale_multiplier;
+}
+
 }  // namespace clingfy::bridge

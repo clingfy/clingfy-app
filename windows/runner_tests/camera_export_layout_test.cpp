@@ -207,6 +207,99 @@ CameraAnimationOutput Resolve(const CameraAnimationParams& p, std::int64_t t,
 }
 }  // namespace
 
+// --- preview vs export geometry parity --------------------------------------
+//
+// The inline preview composites into a texture capped near 1280x720 while the
+// export renders at the user's resolution, so the two agree PROPORTIONALLY, not
+// pixel for pixel. These assert the proportional contract and, just as
+// importantly, PIN the two places it legitimately breaks — a parity test that
+// quietly absorbed those with a fat epsilon would be worse than none.
+
+namespace {
+constexpr double kPreviewW = 1280.0;
+constexpr double kPreviewH = 720.0;
+constexpr double kExportW = 3840.0;
+constexpr double kExportH = 2160.0;
+}  // namespace
+
+TEST(CameraParityTest, BubbleGeometryIsProportionalAcrossCanvasSizes) {
+  // Same composition, two canvases: the bubble's normalized centre and its size
+  // as a fraction of the short edge must match. This is the property that makes
+  // the shared painter produce a WYSIWYG bubble on both surfaces.
+  const auto preview = ComputeCameraBubbleRect(kPreviewW, kPreviewH, false, 0, 0,
+                                               "overlayBottomRight", 0.25);
+  const auto exported = ComputeCameraBubbleRect(kExportW, kExportH, false, 0, 0,
+                                                "overlayBottomRight", 0.25);
+  EXPECT_NEAR((preview.x + preview.width / 2.0) / kPreviewW,
+              (exported.x + exported.width / 2.0) / kExportW, 0.0001);
+  EXPECT_NEAR((preview.y + preview.height / 2.0) / kPreviewH,
+              (exported.y + exported.height / 2.0) / kExportH, 0.0001);
+  EXPECT_NEAR(preview.width / kPreviewH, exported.width / kExportH, 0.0001);
+}
+
+TEST(CameraParityTest, ManualPlacementIsProportionalAcrossCanvasSizes) {
+  // Same check for a dragged bubble, including the y-UP flip — a one-sided
+  // flip would show up here as a mismatched normalized centre.
+  const auto preview =
+      ComputeCameraBubbleRect(kPreviewW, kPreviewH, true, 0.3, 0.8, "", 0.2);
+  const auto exported =
+      ComputeCameraBubbleRect(kExportW, kExportH, true, 0.3, 0.8, "", 0.2);
+  EXPECT_NEAR((preview.x + preview.width / 2.0) / kPreviewW,
+              (exported.x + exported.width / 2.0) / kExportW, 0.0001);
+  EXPECT_NEAR((preview.y + preview.height / 2.0) / kPreviewH,
+              (exported.y + exported.height / 2.0) / kExportH, 0.0001);
+}
+
+TEST(CameraParityTest, TheMinSideFloorIsAKnownNonProportionalDivergence) {
+  // kCameraBubbleMinSidePx is ABSOLUTE, so at a small size factor the preview's
+  // bubble is proportionally larger than the export's. Pinned rather than
+  // hidden: 0.08 * 720 = 57.6px floors to 96 on the preview, while
+  // 0.08 * 2160 = 172.8px is comfortably above it on the export.
+  const auto preview =
+      ComputeCameraBubbleRect(kPreviewW, kPreviewH, false, 0, 0, "", 0.08);
+  const auto exported =
+      ComputeCameraBubbleRect(kExportW, kExportH, false, 0, 0, "", 0.08);
+  EXPECT_NEAR(preview.width, kCameraBubbleMinSidePx, 0.001);
+  EXPECT_NEAR(exported.width, kExportH * 0.08, 0.001);
+  // The divergence is real: the preview bubble is proportionally BIGGER.
+  EXPECT_GT(preview.width / kPreviewH, exported.width / kExportH);
+}
+
+TEST(CameraParityTest, AnimationOutputIsCanvasIndependentExceptTheSlide) {
+  // Opacity and scale are pure functions of time and durations, so they must be
+  // identical on both canvases. The slide translation and the zoom clamp are
+  // canvas-proportional by design, which is why the parity assertion normalizes
+  // them rather than comparing raw pixels.
+  CameraAnimationParams p =
+      MakeParams(CameraIntroKind::kPop, CameraOutroKind::kFade);
+  const auto small = ResolveCameraAnimation(
+      p, 100, 1000,
+      ComputeCameraBubbleRect(kPreviewW, kPreviewH, false, 0, 0, "", 0.25),
+      kPreviewW, kPreviewH, CameraSlideEdge::kRight);
+  const auto big = ResolveCameraAnimation(
+      p, 100, 1000,
+      ComputeCameraBubbleRect(kExportW, kExportH, false, 0, 0, "", 0.25),
+      kExportW, kExportH, CameraSlideEdge::kRight);
+  EXPECT_NEAR(small.opacity, big.opacity, 0.0001);
+  EXPECT_NEAR(small.scale, big.scale, 0.0001);
+}
+
+TEST(CameraParityTest, SlideTranslationIsProportionalAcrossCanvasSizes) {
+  CameraAnimationParams p =
+      MakeParams(CameraIntroKind::kSlide, CameraOutroKind::kNone);
+  // Mid-intro, so the slide offset is partially applied on both.
+  const auto small = ResolveCameraAnimation(
+      p, 100, 1000,
+      ComputeCameraBubbleRect(kPreviewW, kPreviewH, false, 0, 0, "", 0.25),
+      kPreviewW, kPreviewH, CameraSlideEdge::kRight);
+  const auto big = ResolveCameraAnimation(
+      p, 100, 1000,
+      ComputeCameraBubbleRect(kExportW, kExportH, false, 0, 0, "", 0.25),
+      kExportW, kExportH, CameraSlideEdge::kRight);
+  EXPECT_NEAR(small.translate_x / kPreviewW, big.translate_x / kExportW, 0.001);
+}
+
+
 TEST(CameraIntroKindTest, ParsesKnownNamesAndSoftFails) {
   EXPECT_EQ(ParseCameraIntroKind("fade"), CameraIntroKind::kFade);
   EXPECT_EQ(ParseCameraIntroKind("pop"), CameraIntroKind::kPop);

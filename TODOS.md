@@ -40,6 +40,23 @@ Deferred work captured during reviews. Each item has enough context to pick up c
 
 ## Windows — preview/export parity
 
+### Camera border width and shadow blur are raw pixels on both surfaces (preview reads ~3x heavier)
+
+- **What:** `CameraBubblePainter` uses `border_width` and the shadow blur/offset as ABSOLUTE pixels, unscaled by canvas. The inline preview composites into a texture capped near 1280x720 while the export renders at the user's resolution, so a 4px border reads roughly 3x thicker relative to the preview than to a 4K export, and the shadow likewise.
+- **Why it is not a parity-test failure:** it is a genuine, known non-proportional term, so `CameraParityTest` deliberately excludes it rather than absorbing it in an epsilon. Recording it here so the exclusion is a decision rather than a blind spot.
+- **Same class as the canvas ~3x bug already fixed** by expressing canvas padding/radius as fractions of the short side (`Core/canvas_composition.h`). The camera never got that treatment.
+- **Start at:** `windows/runner/Capture/Camera/camera_bubble_painter.cpp` (`border_width_px_`, and `ResolveCameraShadowStyle`'s 10/16/22px blur constants). Decide whether the wire value stays absolute px and the painter scales it by `canvas_short_edge / reference`, or the wire value becomes a fraction (a wire change, so check macOS first).
+- **Effort:** human ~3h / CC ~30min plus an on-device look, since "does the border read right" is not unit-testable.
+
+### Camera render-plan extraction (make derivation parity structural, not just tested)
+
+- **What:** Both surfaces independently derive the same five things from their parsed composition — bubble rect, painter `Style`, `CameraAnimationParams`, slide edge, and the shape/radius/content-mode passed to `painter_.Prepare`. The derivations are currently line-for-line equivalent (audited field by field), but that equivalence is maintained by hand in two files.
+- **Proposed seam:** `BuildCameraRenderPlan(spec, canvas_w, canvas_h) -> CameraRenderPlan` plus a per-frame `ResolveCameraFrame(plan, clock_ms, total_ms, screen_zoom)`, in a D2D-free header. Each surface collapses to one call. It is a pure refactor — the moved lines call identical functions with identical arguments in identical order.
+- **Why it is NOT done yet:** the parse side was the surface that actually drifted (twice), and that is now unified with a mapper plus a guard test. The derivation side has never drifted, so this is hardening rather than a fix, and it is wide: it touches export_router, export_passthrough, export_pipeline, camera_export_renderer, preview_camera_renderer and their tests. Worth doing as its own commit so a regression bisects cleanly.
+- **One real snag to fix while doing it:** the preview assigns its cached animation state INSIDE the `factory1 != nullptr && frame_bitmap_ != nullptr` guard, so a one-time bitmap-creation failure leaves `zoom_behavior_` / `layout_preset_` / `slide_edge_` stale. Harmless today because `painter_ready_` stays false, but the pure plan build should be hoisted out of that guard.
+- **Note `CameraBubblePainter::Style` lives in a header that pulls in `d2d1_1.h`** — move it down into `camera_export_layout.h` with a painter-side alias, or the "pure" plan drags D2D into every test translation unit.
+- **Effort:** human ~1 day / CC ~1h.
+
 ### Camera zoom emphasis (the pulse) is not ported — deferred, with the reason
 
 - **What:** `cameraZoomEmphasisPreset` (`none` / `pulse`) + `cameraZoomEmphasisStrength`. The editor controls exist and round-trip to disk on Windows; nothing renders them. macOS ships it. Scale-with-zoom, the other half of what used to be one features.md row, IS ported — these are separate features and the row is now split.
