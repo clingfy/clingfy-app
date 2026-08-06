@@ -736,21 +736,35 @@ void CameraDcompOverlay::UpdateHaloClickThrough(HWND hwnd) {
   // Electron #47834 lesson: window mutations can silently drop the capture
   // exclusion on some builds. Re-verify after every flip; if it cannot be
   // restored, hide — an unexcluded bubble must never stay on screen.
-  if (options_.apply_capture_exclusion && wda_excluded_.load()) {
-    DWORD affinity = 0;
-    if (::GetWindowDisplayAffinity(hwnd, &affinity) != 0 &&
-        affinity == WDA_EXCLUDEFROMCAPTURE) {
-      return;
-    }
-    if (::SetWindowDisplayAffinity(hwnd, WDA_EXCLUDEFROMCAPTURE) != 0) {
-      return;  // restored
-    }
-    wda_excluded_.store(false);
-    ::ShowWindow(hwnd, SW_HIDE);
-    clingfy::bridge::devices::LogDeviceProbe(
-        "CameraDcompOverlay: WDA lost after click-through flip and could not "
-        "be restored — bubble hidden");
+  ReverifyCaptureExclusion(hwnd, "click-through flip");
+}
+
+bool CameraDcompOverlay::ReverifyCaptureExclusion(HWND hwnd,
+                                                  const char* where) {
+  // A session that never got exclusion, or already lost it, is not re-probed:
+  // wda_excluded_ is a ONE-WAY latch and the kMsgShow gate already refuses
+  // every Show once it is false. Re-probing could only widen the blast radius
+  // of a spurious failure.
+  if (!options_.apply_capture_exclusion || !wda_excluded_.load()) {
+    return true;
   }
+  DWORD affinity = 0;
+  if (::GetWindowDisplayAffinity(hwnd, &affinity) != 0 &&
+      affinity == WDA_EXCLUDEFROMCAPTURE) {
+    return true;
+  }
+  if (::SetWindowDisplayAffinity(hwnd, WDA_EXCLUDEFROMCAPTURE) != 0) {
+    return true;  // restored
+  }
+  wda_excluded_.store(false);
+  ::ShowWindow(hwnd, SW_HIDE);
+  char b[160];
+  std::snprintf(b, sizeof(b),
+                "CameraDcompOverlay: WDA lost after %s and could not be "
+                "restored — bubble hidden",
+                where);
+  clingfy::bridge::devices::LogDeviceProbe(b);
+  return false;
 }
 
 void CameraDcompOverlay::SyncAndRender(HWND hwnd) {
@@ -808,6 +822,15 @@ void CameraDcompOverlay::SyncAndRender(HWND hwnd) {
       // the resize below fails and this tick bails out.
       prepared_content_side_ = placed.content_side;
       prepared_padding_px_ = placed.padding_px;
+      // AFTER the prepared_* writes, not before: the unrepairable branch calls
+      // ShowWindow(SW_HIDE), which synchronously re-enters this WndProc, and
+      // the comment above exists precisely so those fields are never stale
+      // relative to the rect just applied.
+      //
+      // Cost: this is NOT per tick. The two enclosing gates mean an idle bubble
+      // reaches it zero times; it fires on a store revision or a DPI change,
+      // i.e. one thin win32k syscall per actual placement change.
+      ReverifyCaptureExclusion(hwnd, "placement sync");
     }
     // Also retry when a previous failed resize left the context target-less:
     // a side-REVERTING revision (style toggled back off; the glow flip at
@@ -1032,6 +1055,18 @@ void CameraDcompOverlay::OnDragEnded(HWND hwnd) {
     last_geometry_revision_ =
         AdoptDragRevision(last_geometry_revision_, revision);
   }
+  // A drag is the LARGEST window mutation this overlay undergoes, and the one
+  // the user actually triggers: WM_NCHITTEST returns HTCAPTION, so
+  // DefWindowProc runs a real SC_MOVE modal loop that moves the HWND
+  // continuously. It is also invisible to the placement-sync re-verify — the
+  // outer gate skips the whole block while in_size_move_, and AdoptDragRevision
+  // above marks the drag's own revision as already-seen, so the next tick's
+  // geometry_changed is false and SetWindowPos never runs. Re-verify here,
+  // once per drop, or every same-monitor drag goes unchecked.
+  //
+  // After the write-back, so the user's drop is persisted even if the bubble is
+  // then hidden.
+  ReverifyCaptureExclusion(hwnd, "drag end");
 }
 
 void CameraDcompOverlay::Stop() {
