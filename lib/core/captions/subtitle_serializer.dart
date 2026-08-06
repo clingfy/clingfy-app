@@ -152,12 +152,17 @@ abstract final class SubtitleSerializer {
   /// concerned, so everything after it in the file is read as a malformed
   /// timestamp and usually discarded — one stray newline from an edit field
   /// silently truncates the whole subtitle track.
+  ///
+  /// `-->` gets the same treatment for the same reason: a text line carrying it
+  /// reads as a timing line to SRT parsers and as a malformed cue to strict
+  /// WebVTT ones. Cue text is editable in the caption editor, so this needs no
+  /// unusual transcription to reach.
   static String _sanitizeText(String text) {
     final lines = text
         .replaceAll('\r\n', '\n')
         .replaceAll('\r', '\n')
         .split('\n')
-        .map((line) => line.trim())
+        .map((line) => line.trim().replaceAll('-->', '→'))
         .where((line) => line.isNotEmpty);
     return lines.join(_newline);
   }

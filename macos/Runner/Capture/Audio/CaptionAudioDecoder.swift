@@ -116,12 +116,17 @@ enum CaptionAudioDecoder {
       }
       let length = CMBlockBufferGetDataLength(block)
       let count = length / MemoryLayout<Float>.size
+      // Copy whole samples only. `count` truncates, so handing `length` to the
+      // copy would write up to three bytes past the end of `chunk` on a block
+      // whose length is not a multiple of four — improbable for LPCM Float32,
+      // but it is a heap overflow rather than a wrong sample when it happens.
+      let byteCount = count * MemoryLayout<Float>.size
       if count > 0 {
         var chunk = [Float](repeating: 0, count: count)
         chunk.withUnsafeMutableBytes { raw in
           guard let base = raw.baseAddress else { return }
           _ = CMBlockBufferCopyDataBytes(
-            block, atOffset: 0, dataLength: length, destination: base)
+            block, atOffset: 0, dataLength: byteCount, destination: base)
         }
         samples.append(contentsOf: chunk)
       }

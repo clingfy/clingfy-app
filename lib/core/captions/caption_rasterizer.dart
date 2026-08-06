@@ -4,7 +4,8 @@ import 'dart:ui' as ui;
 import 'package:flutter/foundation.dart';
 import 'package:flutter/painting.dart';
 
-import '../timeline/model/edit_track.dart';
+import 'package:clingfy/core/logging/logger_service.dart';
+import 'package:clingfy/core/timeline/model/edit_track.dart';
 import 'dart:convert';
 import 'package:crypto/crypto.dart';
 
@@ -135,7 +136,21 @@ class CaptionRasterizer {
         final image = await renderCue(text: text, videoSize: videoSize);
         final bytes = await image.toByteData(format: ui.ImageByteFormat.png);
         image.dispose();
-        if (bytes == null) continue;
+        if (bytes == null) {
+          // Un-mark it: `rendered` is what makes a repeated line cost one
+          // render, so leaving a failed name in there would let a LATER cue
+          // with the same text skip the render AND still emit a manifest entry
+          // pointing at a PNG that was never written.
+          rendered.remove(name);
+          Log.w(
+            "Captions",
+            "Cue bitmap encode returned no bytes; the cue will not burn in",
+            null,
+            null,
+            {'cue': caption.id},
+          );
+          continue;
+        }
         await file.writeAsBytes(
           bytes.buffer.asUint8List(bytes.offsetInBytes, bytes.lengthInBytes),
         );

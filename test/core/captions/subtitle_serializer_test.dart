@@ -105,6 +105,30 @@ hello there
     expect(srt.split('\n\n').where((b) => b.isNotEmpty), hasLength(2));
   });
 
+  test('an arrow inside cue text cannot be read as a timing line', () {
+    // Cue text is editable in the caption editor, so "a --> b" needs no unusual
+    // transcription to reach. Left alone it reads as a timing line to SRT and
+    // as a malformed cue to strict WebVTT parsers.
+    final srt = SubtitleSerializer.toSrt([
+      cue(0, 1000, 'press A --> B to continue'),
+      cue(1000, 2000, 'survivor'),
+    ]);
+
+    expect(srt, isNot(contains('A --> B')));
+    expect(srt, contains('press A → B to continue'));
+    expect(
+      '\n$srt'.split('\n').where((l) => l.contains('-->')),
+      hasLength(2),
+      reason: 'only the two real timing lines may contain the arrow',
+    );
+    expect(srt, contains('survivor'));
+
+    final vtt = SubtitleSerializer.toWebVtt([
+      cue(0, 1000, 'press A --> B to continue'),
+    ]);
+    expect('\n$vtt'.split('\n').where((l) => l.contains('-->')), hasLength(1));
+  });
+
   test('windows and classic-mac newlines inside text are normalised', () {
     final srt = SubtitleSerializer.toSrt([cue(0, 1000, 'a\r\nb\rc')]);
     expect(srt, contains('a\nb\nc'));
