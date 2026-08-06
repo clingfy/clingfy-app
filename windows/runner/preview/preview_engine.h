@@ -474,6 +474,18 @@ class PreviewEngine {
   void SetCameraComposition(const std::string& session_id,
                             const PreviewCameraComposition& composition);
 
+  // The recording's smart-zoom settings: `factor` is the user's 1.0-3.0
+  // magnitude (postZoomFactor) and `effect_enabled` its on/off toggle. Both
+  // arrive on every processVideo, the same args the EXPORT has always read.
+  //
+  // Until this existed the preview hardcoded kZoomFactorDefault (1.5x) and
+  // ignored the toggle, so the editor's screen zoom silently disagreed with
+  // the exported file for anyone who moved the slider or turned zoom off. A
+  // stale session_id is a silent no-op; a paused preview is nudged to
+  // recomposite so the change is visible without pressing play.
+  void SetZoomSettings(const std::string& session_id, double factor,
+                       bool effect_enabled);
+
   // Editing port (color): update the live color grade for the inline preview.
   // Driven by Dart's previewSetColorGrade on every slider tick / auto-enhance
   // toggle. Applies to the VIDEO ONLY (the cursor halo and camera bubble stay

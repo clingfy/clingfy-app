@@ -2673,6 +2673,31 @@ void PreviewEngine::SetCameraComposition(
   RepaintPausedPreview();
 }
 
+void PreviewEngine::SetZoomSettings(const std::string& session_id,
+                                    double factor, bool effect_enabled) {
+  Impl* impl = nullptr;
+  {
+    std::lock_guard<std::mutex> lock(mutex_);
+    // Same stale-session discipline as SetColorGrade.
+    if (!session_id.empty() && session_id != active_session_id_) {
+      return;
+    }
+    if (impl_ == nullptr) {
+      return;
+    }
+    impl = impl_.get();
+  }
+  {
+    // The frame thread takes render_mutex -> mutex_ (never the reverse), so
+    // publish under render_mutex ALONE, after mutex_ is released above —
+    // the SetCanvasComposition discipline.
+    std::lock_guard<std::mutex> render_lock(impl->render_mutex);
+    impl->zoom.zoom_factor = factor;
+    impl->zoom.effect_enabled = effect_enabled;
+  }
+  RepaintPausedPreview();
+}
+
 void PreviewEngine::SetColorGrade(
     const std::string& session_id,
     const capture::export_::color::ColorGrade& grade) {
