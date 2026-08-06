@@ -143,6 +143,12 @@ class HomeErrorMapper {
       case RecordingWarningCode.cameraDisconnected:
         // Unplugged hardware — no settings page helps; message only.
         message = l10n.warnCameraDisconnected;
+      case RecordingWarningCode.cameraPreviewHidden:
+        // A SetWindowDisplayAffinity failure; no settings page fixes it, so
+        // message only. The wording must not read as camera loss — the camera
+        // IS recorded and DOES appear in the export, only the live bubble is
+        // missing.
+        message = l10n.warnCameraPreviewHidden;
       case RecordingWarningCode.encoderVideoError:
         message = l10n.warnEncoderVideoError;
       case RecordingWarningCode.encoderAudioError:

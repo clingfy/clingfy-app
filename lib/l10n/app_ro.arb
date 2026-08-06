@@ -830,6 +830,7 @@
   "warnCameraUnavailable": "Camera nu este disponibilă acum. Înregistrarea continuă fără suprapunerea camerei.",
   "warnCameraOpenFailed": "Camera nu a putut porni — verifică accesul la cameră în setările de confidențialitate Windows. Înregistrarea continuă fără suprapunere.",
   "warnCameraDisconnected": "Camera a fost deconectată. Înregistrarea continuă fără ea.",
+  "warnCameraPreviewHidden": "Previzualizarea live a camerei nu poate fi afișată în timpul înregistrării pe acest PC. Înregistrarea continuă — camera este în continuare capturată și apare în videoclipul final.",
   "warnEncoderVideoError": "Înregistrarea a întâmpinat o problemă de codare — videoclipul poate fi incomplet.",
   "warnEncoderAudioError": "Înregistrarea a întâmpinat o problemă de codare audio — sunetul poate fi incomplet.",
   "errMicrophonePermissionRequiredWindows": "Activează accesul la microfon în Setări Windows > Confidențialitate și securitate > Microfon, apoi încearcă din nou.",

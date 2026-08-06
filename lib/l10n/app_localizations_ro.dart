@@ -2556,6 +2556,10 @@ class AppLocalizationsRo extends AppLocalizations {
       'Camera a fost deconectată. Înregistrarea continuă fără ea.';
 
   @override
+  String get warnCameraPreviewHidden =>
+      'Previzualizarea live a camerei nu poate fi afișată în timpul înregistrării pe acest PC. Înregistrarea continuă — camera este în continuare capturată și apare în videoclipul final.';
+
+  @override
   String get warnEncoderVideoError =>
       'Înregistrarea a întâmpinat o problemă de codare — videoclipul poate fi incomplet.';
 
