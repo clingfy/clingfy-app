@@ -565,6 +565,15 @@ void HandleProcessVideo(
         clingfy::bridge::ReadCameraComposition(*args);
     clingfy::preview::PreviewEngine::Instance()->SetCameraComposition(
         ReadString(*args, "sessionId"), c);
+    // Smart-zoom settings for the inline preview. Same two args the export
+    // reads in HandleExportVideo, with the same defaults — the preview used to
+    // hardcode 1.5x and ignore the toggle, so the editor's screen zoom did not
+    // match the exported file for anyone who moved the slider or turned zoom
+    // off. processVideo carries them on editor open and on every change.
+    clingfy::preview::PreviewEngine::Instance()->SetZoomSettings(
+        ReadString(*args, "sessionId"),
+        ReadDouble(*args, "zoomFactor", 1.5),
+        ReadBool(*args, "zoomEffectEnabled", true));
     // Editing port (audio, step 4-7d): seed the preview audio mix — Dart
     // sends the persisted gain/volume in every processVideo (editor open and
     // the standby-resume resync included), so the mix applies without

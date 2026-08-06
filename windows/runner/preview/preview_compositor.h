@@ -38,6 +38,7 @@
 #include <vector>
 
 #include "Capture/Export/color_grade.h"
+#include "preview/zoom_easing_constants.h"
 #include "Capture/Export/export_geometry.h"
 #include "Graphics/color_grade_effect.h"
 
@@ -92,7 +93,27 @@ struct ZoomState {
   double target_y = 0.0;
   double last_update_seconds = -1.0;
   std::int64_t last_click_ts_us = std::numeric_limits<std::int64_t>::min();
+
+  // The user's per-recording zoom settings, mirrored from the same
+  // `zoomFactor` / `zoomEffectEnabled` args the EXPORT already honours
+  // (export_router HandleExportVideo). The preview used to hardcode
+  // kZoomFactorDefault and ignore the toggle entirely, so the editor zoomed
+  // 1.5x no matter what the user picked on the 1.0-3.0 slider, and kept
+  // zooming after they turned the effect off — while the exported file did
+  // neither. Defaults match the Dart defaults so an old payload behaves as
+  // before.
+  double zoom_factor = kZoomFactorDefault;
+  bool effect_enabled = kZoomEffectEnabledDefault;
 };
+
+// The magnitude a frame should ease TOWARD: the user's configured factor
+// (clamped to the 1.0-3.0 slider range) while a zoom is wanted and the effect
+// is on, else 1.0. Pure so the "preview honours the user's zoom settings"
+// contract is unit-testable without a D2D device — the preview previously
+// hardcoded kZoomFactorDefault here and ignored the toggle entirely, which the
+// export never did.
+double ResolveTargetZoom(bool effect_enabled, bool zoom_wanted,
+                         double configured_factor);
 
 // Lerps current_* toward target_* with the exponential smoothing
 // alpha from zoom_easing_constants.h. `now_seconds` is wall-clock

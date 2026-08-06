@@ -1,5 +1,7 @@
 #include "preview/zoom_easing_constants.h"
 
+#include "preview/preview_compositor.h"
+
 #include <cmath>
 
 #include <gtest/gtest.h>
@@ -32,6 +34,39 @@ TEST(ZoomEasingConstantsTest, ZoomFactorDefaultsMatchDartSettings) {
   EXPECT_DOUBLE_EQ(kZoomFactorMax, 3.0);
   EXPECT_DOUBLE_EQ(kZoomFactorWriteEpsilon, 0.001);
   EXPECT_TRUE(kZoomEffectEnabledDefault);
+}
+
+// --- the preview honours the user's zoom settings ----------------------
+//
+// The preview used to hardcode kZoomFactorDefault and ignore the effect
+// toggle, so the editor zoomed 1.5x whatever the user picked on the
+// 1.0-3.0 slider, and kept zooming after they switched the effect off —
+// while the export honoured both. These pin the fix.
+
+TEST(ResolveTargetZoom, UsesTheConfiguredFactorNotTheDefault) {
+  EXPECT_DOUBLE_EQ(ResolveTargetZoom(true, true, 2.5), 2.5);
+  EXPECT_DOUBLE_EQ(ResolveTargetZoom(true, true, 1.2), 1.2);
+  // The old behavior would have returned 1.5 for both of the above.
+  EXPECT_NE(ResolveTargetZoom(true, true, 2.5), kZoomFactorDefault);
+}
+
+TEST(ResolveTargetZoom, EffectDisabledNeverZooms) {
+  // Even mid-click, a disabled effect must rest at 1.0 — the export has
+  // always skipped the zoom entirely in this case.
+  EXPECT_DOUBLE_EQ(ResolveTargetZoom(false, true, 3.0), 1.0);
+  EXPECT_DOUBLE_EQ(ResolveTargetZoom(false, false, 3.0), 1.0);
+}
+
+TEST(ResolveTargetZoom, RestsAtOneWhenNoZoomWanted) {
+  EXPECT_DOUBLE_EQ(ResolveTargetZoom(true, false, 2.0), 1.0);
+}
+
+TEST(ResolveTargetZoom, ClampsToTheSliderRange) {
+  // A malformed payload must not drive an absurd magnification.
+  EXPECT_DOUBLE_EQ(ResolveTargetZoom(true, true, 99.0), kZoomFactorMax);
+  EXPECT_DOUBLE_EQ(ResolveTargetZoom(true, true, 0.1), kZoomFactorMin);
+  // A factor of exactly 1.0 is legal and means "no visible zoom".
+  EXPECT_DOUBLE_EQ(ResolveTargetZoom(true, true, 1.0), 1.0);
 }
 
 TEST(ZoomEasingConstantsTest, FollowSmootherBoundsMatchSwift) {

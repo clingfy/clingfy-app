@@ -590,8 +590,13 @@ Every slice is a merged PR with native tests, smoked on a real Windows box.
 - **Clicks are recorded and drive zoom + click animation; macOS records no
   clicks** (it triggers zoom from cursor-shape changes). This is a deliberate
   Windows substitute because sprite data isn't captured.
-- **Cursor/zoom/click are export-rendered only.** The live preview player does not
-  draw them yet.
+- **Cursor/zoom/click render in the live preview too**, not only in the export —
+  the preview compositor draws the cursor, the click halo and the smart zoom,
+  and honours the user's `zoomFactor` / `zoomEffectEnabled` (it hardcoded 1.5x
+  and ignored the toggle until that was fixed). The preview's zoom ACTIVATION
+  is still its own model though: a click-hold window, where the export uses
+  resolved segments with hysteresis and gap-merge, so the two agree on
+  magnitude but not on exact onset.
 - **Auto-zoom only.** Manual zoom-segment editing is not wired — the
   `getZoomSegments` / `saveManualZoomSegments` bridge methods remain stubs.
 - **No export-time cursor-highlight halo.** The `cursorHighlight` setting is a
