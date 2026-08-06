@@ -210,6 +210,11 @@ struct RenderRequest {
   std::string camera_outro_preset;
   int camera_intro_duration_ms = 0;
   int camera_outro_duration_ms = 0;
+  // Scale-with-screen-zoom: the CameraZoomBehavior enum name and the 0..1
+  // fraction of the zoom's excess the bubble adopts. Default "" behaves as
+  // fixed, so an old payload renders exactly as before.
+  std::string camera_zoom_behavior;
+  double camera_zoom_scale_multiplier = 0.0;
 };
 
 struct RenderResult {

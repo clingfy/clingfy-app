@@ -88,6 +88,10 @@ preview::PreviewCameraComposition ReadCameraComposition(
       static_cast<int>(NumberOr(args, "cameraIntroDurationMs", 0.0));
   c.outro_duration_ms =
       static_cast<int>(NumberOr(args, "cameraOutroDurationMs", 0.0));
+  // Scale-with-screen-zoom. Same ""/0 (fixed bubble) fallbacks as the export
+  // request parser, so a payload missing these renders identically on both.
+  c.zoom_behavior = StringOrEmpty(args, "cameraZoomBehavior");
+  c.zoom_scale_multiplier = NumberOr(args, "cameraZoomScaleMultiplier", 0.0);
   if (const auto it =
           args.find(flutter::EncodableValue("cameraNormalizedCenter"));
       it != args.end()) {

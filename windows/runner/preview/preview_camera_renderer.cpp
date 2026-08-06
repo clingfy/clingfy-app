@@ -239,6 +239,9 @@ void PreviewCameraRenderer::PrepareAndAdvance(ID2D1DeviceContext* ctx,
       canvas_h_ = static_cast<double>(canvas_h);
       slide_edge_ = clingfy::capture::ResolveCameraSlideEdge(
           comp.layout_preset, comp.has_center, bubble_, canvas_w_, canvas_h_);
+      zoom_behavior_ = comp.zoom_behavior;
+      zoom_scale_multiplier_ = comp.zoom_scale_multiplier;
+      layout_preset_ = comp.layout_preset;
     }
     prepared_canvas_w_ = canvas_w;
     prepared_canvas_h_ = canvas_h;
@@ -267,10 +270,13 @@ void PreviewCameraRenderer::PrepareAndAdvance(ID2D1DeviceContext* ctx,
 
 void PreviewCameraRenderer::Draw(ID2D1DeviceContext* ctx,
                                  std::int64_t frame_ms,
-                                 std::int64_t total_duration_ms) {
+                                 std::int64_t total_duration_ms,
+                                 double screen_zoom) {
   if (!composition_visible_ || !painter_ready_ || !has_held_frame_) {
     return;
   }
+  anim_params_.zoom_scale = clingfy::capture::ResolveCameraZoomScale(
+      zoom_behavior_, zoom_scale_multiplier_, screen_zoom, layout_preset_);
   // Same nine lines as CameraExportRenderer::Draw, on the same shared painter.
   // ResolveCameraAnimation returns identity when no preset is set or the
   // duration is not known yet, and the painter's Draw falls through to the

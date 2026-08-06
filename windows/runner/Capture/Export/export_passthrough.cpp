@@ -574,6 +574,8 @@ PassthroughResult ExportPassthroughCopy(
       render.camera_outro_preset = input.camera_outro_preset;
       render.camera_intro_duration_ms = input.camera_intro_duration_ms;
       render.camera_outro_duration_ms = input.camera_outro_duration_ms;
+      render.camera_zoom_behavior = input.camera_zoom_behavior;
+      render.camera_zoom_scale_multiplier = input.camera_zoom_scale_multiplier;
     }
     render.on_progress = on_progress;
     render.is_cancelled = is_cancelled;

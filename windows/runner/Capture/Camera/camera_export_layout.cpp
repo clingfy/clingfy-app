@@ -219,6 +219,24 @@ CameraSlideEdge ResolveCameraSlideEdge(const std::string& layout_preset,
                                 : CameraSlideEdge::kBottom;
 }
 
+double ResolveCameraZoomScale(const std::string& zoom_behavior,
+                              double multiplier, double screen_zoom,
+                              const std::string& layout_preset) {
+  // A full-canvas camera has no meaningful "grow with the zoom" (macOS guards
+  // the same preset).
+  if (layout_preset == "backgroundBehind") {
+    return 1.0;
+  }
+  if (zoom_behavior != "scaleWithScreenZoom") {
+    return 1.0;  // "fixed", empty, or an unknown future value.
+  }
+  // Floor the zoom at 1.0 so a zoom-out (or a smoother undershoot) never
+  // shrinks the bubble below its authored size.
+  const double zoom = std::max(1.0, screen_zoom);
+  const double m = Clamp(multiplier, 0.0, 1.0);
+  return 1.0 + ((zoom - 1.0) * m);
+}
+
 CameraAnimationOutput ResolveCameraAnimation(const CameraAnimationParams& params,
                                              std::int64_t frame_ms,
                                              std::int64_t total_duration_ms,
@@ -226,47 +244,81 @@ CameraAnimationOutput ResolveCameraAnimation(const CameraAnimationParams& params
                                              double canvas_w, double canvas_h,
                                              CameraSlideEdge edge) {
   CameraAnimationOutput out;
-  if (!CameraHasPresentationEffects(params) || total_duration_ms <= 0) {
-    return out;  // identity
+  if (!CameraHasPresentationEffects(params)) {
+    return out;  // identity — nothing to animate and no live zoom
   }
 
+  // The intro/outro presets need a timeline; the zoom scale does not. A clip
+  // whose duration is not known yet still scales with the zoom rather than
+  // popping to its resting size.
+  const bool timed =
+      total_duration_ms > 0 && (params.intro != CameraIntroKind::kNone ||
+                                params.outro != CameraOutroKind::kNone);
+
   const std::int64_t t =
-      std::max<std::int64_t>(0, std::min(frame_ms, total_duration_ms));
+      timed ? std::max<std::int64_t>(0, std::min(frame_ms, total_duration_ms))
+            : 0;
 
   // --- Opacity: fade/pop/slide ramp in; fade/shrink/slide ramp out. ---
   double opacity = 1.0;
-  if (params.intro != CameraIntroKind::kNone) {
+  if (timed && params.intro != CameraIntroKind::kNone) {
     opacity *= IntroProgress(t, params.intro_duration_ms);
   }
-  if (params.outro != CameraOutroKind::kNone) {
+  if (timed && params.outro != CameraOutroKind::kNone) {
     opacity *= 1.0 - OutroProgress(t, total_duration_ms, params.outro_duration_ms);
   }
   out.opacity = Clamp(opacity, 0.0, 1.0);
 
-  // --- Scale: only `pop` (intro) and `shrink` (outro) scale. ---
-  double scale = 1.0;
-  if (params.intro == CameraIntroKind::kPop) {
+  // --- Scale: the live zoom scale, times `pop` (intro) and `shrink` (outro).
+  // All three are uniform scales about the same bubble centre, so they compose
+  // multiplicatively (macOS: additionalScale = introScale * outroScale * ...
+  // applied on top of the zoom-scaled frame). ---
+  double scale = params.zoom_scale > 0.0 ? params.zoom_scale : 1.0;
+  if (timed && params.intro == CameraIntroKind::kPop) {
     const double eased = EaseOutCubic(IntroProgress(t, params.intro_duration_ms));
     scale *= Lerp(0.90, 1.0, eased);
   }
-  if (params.outro == CameraOutroKind::kShrink) {
+  if (timed && params.outro == CameraOutroKind::kShrink) {
     const double eased =
         EaseInCubic(OutroProgress(t, total_duration_ms, params.outro_duration_ms));
     scale *= Lerp(1.0, 0.90, eased);
   }
   out.scale = scale;
 
+  // --- Canvas clamp, BEFORE any slide translation. ---
+  // ComputeCameraBubbleRect clamped the RESTING rect, but scaling it up about
+  // its centre can push it back off the canvas — a corner bubble at a high zoom
+  // scale is the common case. Nudge it back inside, and if it no longer fits at
+  // all, centre it on that axis rather than picking an edge. The slide offsets
+  // are added AFTER this so a slide-out can still leave the canvas.
+  if (canvas_w > 0.0 && canvas_h > 0.0) {
+    const double cx = bubble.x + bubble.width / 2.0;
+    const double cy = bubble.y + bubble.height / 2.0;
+    const double half_w = (bubble.width * scale) / 2.0;
+    const double half_h = (bubble.height * scale) / 2.0;
+    if (half_w * 2.0 <= canvas_w) {
+      out.translate_x += Clamp(cx, half_w, canvas_w - half_w) - cx;
+    } else {
+      out.translate_x += (canvas_w / 2.0) - cx;
+    }
+    if (half_h * 2.0 <= canvas_h) {
+      out.translate_y += Clamp(cy, half_h, canvas_h - half_h) - cy;
+    } else {
+      out.translate_y += (canvas_h / 2.0) - cy;
+    }
+  }
+
   // --- Translation: only `slide` moves; intro eases in from offscreen, outro
   // eases out to offscreen. The two never overlap in time. ---
   double off_dx = 0.0;
   double off_dy = 0.0;
   OffscreenOffset(edge, bubble, canvas_w, canvas_h, &off_dx, &off_dy);
-  if (params.intro == CameraIntroKind::kSlide) {
+  if (timed && params.intro == CameraIntroKind::kSlide) {
     const double eased = EaseOutCubic(IntroProgress(t, params.intro_duration_ms));
     out.translate_x += Lerp(off_dx, 0.0, eased);
     out.translate_y += Lerp(off_dy, 0.0, eased);
   }
-  if (params.outro == CameraOutroKind::kSlide) {
+  if (timed && params.outro == CameraOutroKind::kSlide) {
     const double eased =
         EaseInCubic(OutroProgress(t, total_duration_ms, params.outro_duration_ms));
     out.translate_x += Lerp(0.0, off_dx, eased);

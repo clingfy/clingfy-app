@@ -1529,7 +1529,7 @@ void PreviewEngine::ComposeAndHandoffLocked(Impl* impl,
   // inside a cut, so a source-keyed intro would fire where the user never looks.
   if (impl->camera_renderer) {
     impl->camera_renderer->Draw(impl->d2d_context.Get(), emit_pos_ms,
-                                emit_dur_ms);
+                                emit_dur_ms, impl->zoom.current_zoom);
   }
   const HRESULT end_hr = impl->d2d_context->EndDraw();
   impl->timing_render.EndFrame();

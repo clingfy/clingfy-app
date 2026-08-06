@@ -640,7 +640,10 @@ RenderResult RenderComposedExport(const RenderRequest& request) {
               d2d_factory.Get(), d2d_ctx.Get(), bubble, request.camera_shape,
               request.camera_corner_radius, request.camera_content_mode,
               cam_style, cam_anim, static_cast<double>(canvas.width),
-              static_cast<double>(canvas.height), cam_edge)) {
+              static_cast<double>(canvas.height), cam_edge,
+              request.camera_zoom_behavior,
+              request.camera_zoom_scale_multiplier,
+              request.camera_layout_preset)) {
         camera_renderer.reset();
       }
     }
@@ -1392,7 +1395,11 @@ RenderResult RenderComposedExport(const RenderRequest& request) {
                      : (duration_hns > first_video_hns
                             ? (duration_hns - first_video_hns) / 10000
                             : 0);
-        camera_renderer->Draw(d2d_ctx.Get(), camera_clock_ms, camera_total_ms);
+        // `zf.zoom` is the smoothed screen zoom for THIS frame. It only scales
+        // the bubble; the camera is still drawn in canvas space, outside the
+        // zoom transform the video and cursor share.
+        camera_renderer->Draw(d2d_ctx.Get(), camera_clock_ms, camera_total_ms,
+                              zf.zoom);
       }
       const HRESULT end_hr = d2d_ctx->EndDraw();
       d2d_ctx->SetTarget(nullptr);
