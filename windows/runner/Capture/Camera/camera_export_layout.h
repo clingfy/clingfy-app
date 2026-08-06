@@ -26,7 +26,12 @@ inline constexpr double kCameraBubbleMinSidePx = 96.0;
 
 // Compute the bubble rect on a `canvas_w` x `canvas_h` output.
 //   has_center / center_x / center_y — the manual normalized center (0..1) when
-//     the user dragged the bubble; ignored when has_center is false.
+//     the user dragged the bubble; ignored when has_center is false. `center_y`
+//     is y-UP (0 = canvas BOTTOM): that is the `cameraNormalizedCenter` wire
+//     contract shared with Dart (which stores `1 - dy`) and macOS (which
+//     consumes it as a bottom-up CGRect), so it is flipped into Direct2D's
+//     y-DOWN space here. The preset centers below are already y-DOWN and are
+//     not flipped.
 //   layout_preset — the CameraLayoutPreset enum name (e.g. "overlayBottomRight");
 //     used only when has_center is false. Unknown / full-canvas presets fall back
 //     to the bottom-right corner for 9.4 (side-by-side / stacked are deferred).

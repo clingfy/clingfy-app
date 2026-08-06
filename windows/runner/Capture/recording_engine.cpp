@@ -2,6 +2,7 @@
 
 #include <windows.h>
 #include <dwmapi.h>
+#include <shellscalingapi.h>
 
 #include <algorithm>
 #include <cstdio>
@@ -32,6 +33,7 @@
 #include "Capture/Camera/camera_overlay_host.h"
 #include "Capture/Camera/camera_overlay_presenter.h"
 #include "Capture/Camera/camera_meta.h"
+#include "Capture/Camera/camera_overlay_geometry_store.h"
 #include "Capture/Camera/camera_overlay_style_store.h"
 #include "Capture/Camera/camera_recorder.h"
 #include "Capture/captured_video_frame.h"
@@ -407,6 +409,62 @@ std::optional<RecordingError> RecordingEngine::Start(
   encoder_config.fps = static_cast<std::uint32_t>(request.frame_rate);
   encoder_config.output_path =
       clingfy::encoding::ResolveTempMp4Path(request.session_id);
+
+  // Snapshot the reference rects the camera editor seed needs at Stop. This is
+  // the one point where the resolved monitor, the crop box, the window target
+  // and the final capture size are all still in scope; by the time the seed is
+  // built, TeardownPipeline has destroyed both the bubble window and the
+  // capture backend. Best-effort — a failed probe just leaves the optional
+  // empty and the seed falls back to its corner preset.
+  current_capture_work_area_.reset();
+  current_capture_content_rect_.reset();
+  current_capture_dpi_scale_ = 1.0;
+  {
+    std::int32_t content_left = 0;
+    std::int32_t content_top = 0;
+    bool have_origin = false;
+    if (monitor.has_value()) {
+      MONITORINFO mi{};
+      mi.cbSize = sizeof(mi);
+      if (::GetMonitorInfoW(*monitor, &mi) != 0) {
+        current_capture_work_area_ = SourceBounds{
+            mi.rcWork.left, mi.rcWork.top, mi.rcWork.right - mi.rcWork.left,
+            mi.rcWork.bottom - mi.rcWork.top};
+        content_left = mi.rcMonitor.left;
+        content_top = mi.rcMonitor.top;
+        have_origin = true;
+      }
+      UINT dpi_x = 96;
+      UINT dpi_y = 96;
+      if (SUCCEEDED(::GetDpiForMonitor(*monitor, MDT_EFFECTIVE_DPI, &dpi_x,
+                                       &dpi_y)) &&
+          dpi_x > 0) {
+        current_capture_dpi_scale_ = static_cast<double>(dpi_x) / 96.0;
+      }
+    }
+    if (is_window_mode) {
+      // The window's extended frame bounds, NOT GetWindowRect — the same
+      // origin the cursor sidecar uses, since GetWindowRect includes the
+      // invisible drop-shadow border.
+      RECT frame{};
+      if (::DwmGetWindowAttribute(*window_target, DWMWA_EXTENDED_FRAME_BOUNDS,
+                                  &frame, sizeof(frame)) == S_OK ||
+          ::GetWindowRect(*window_target, &frame) != 0) {
+        content_left = frame.left;
+        content_top = frame.top;
+        have_origin = true;
+      }
+    } else if (is_area_mode && area_crop.has_value()) {
+      content_left += static_cast<std::int32_t>(area_crop->x);
+      content_top += static_cast<std::int32_t>(area_crop->y);
+    }
+    if (have_origin) {
+      current_capture_content_rect_ = SourceBounds{
+          content_left, content_top,
+          static_cast<std::int32_t>(encoder_config.width),
+          static_cast<std::int32_t>(encoder_config.height)};
+    }
+  }
 
   // Decide whether to ship an audio stream. Both gates have to clear:
   // mic must not be explicitly disabled by Dart, AND/OR system audio
@@ -1586,11 +1644,31 @@ void RecordingEngine::FillCameraWriterFields(ProjectWriterInput& input) const {
       ResolveOverlayBubbleStyle(CameraOverlayStyleStore::Instance().Snapshot());
   CameraEditorSeed seed;
   seed.visible = current_camera_enabled_;  // a camera actually produced frames
-  // Overlay position/size are not tracked natively yet: a visible camera lands
-  // in the bottom-right preset (the common default) which the user can
-  // reposition in the editor; size stays at the .hidden baseline.
-  seed.layout_preset =
-      current_camera_enabled_ ? "overlayBottomRight" : "hidden";
+  // Overlay PLACEMENT comes from the sibling CameraOverlayGeometryStore — the
+  // same store the live bubble places itself from, so whatever the user ended
+  // the recording with (a corner preset, a drag, the size slider) is what the
+  // editor opens on. ResolveCameraSeedGeometry does the work-area -> captured
+  // content rebase and the y-up conversion; see its header comment for why
+  // neither is a straight copy. The reference rects were snapshot at Start
+  // because the bubble window and the capture backend are already gone here.
+  if (current_camera_enabled_) {
+    const SourceBounds work = current_capture_work_area_.value_or(SourceBounds{});
+    const SourceBounds content =
+        current_capture_content_rect_.value_or(SourceBounds{});
+    const CameraSeedGeometry geometry = ResolveCameraSeedGeometry(
+        CameraOverlayGeometryStore::Instance().Snapshot(), work.x, work.y,
+        work.x + work.width, work.y + work.height, content.x, content.y,
+        content.x + content.width, content.y + content.height,
+        current_capture_dpi_scale_);
+    seed.layout_preset = geometry.layout_preset;
+    seed.normalized_center_x = geometry.normalized_center_x;
+    seed.normalized_center_y = geometry.normalized_center_y;
+    seed.size_factor = geometry.size_factor;
+  } else {
+    // No camera in this recording: the macOS `.hidden` baseline. `visible` is
+    // false either way, but macOS's resolver also gates rendering on the preset.
+    seed.layout_preset = "hidden";
+  }
   seed.shape = resolved.shape;
   seed.corner_radius = resolved.corner_radius;
   seed.content_mode = resolved.content_mode;

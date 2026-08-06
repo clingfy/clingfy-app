@@ -22,6 +22,31 @@ TEST(CameraExportLayoutTest, ManualCenterPlacesSquareBubble) {
   EXPECT_NEAR(r.y, kH / 2.0 - side / 2.0, 0.001);
 }
 
+TEST(CameraExportLayoutTest, ManualCenterYIsBottomUp) {
+  // `cameraNormalizedCenter` is y-UP: Dart stores `1 - dy` and macOS consumes
+  // it as a bottom-up CGRect, so a HIGH y means the TOP of the canvas. Every
+  // pre-existing manual-center case here used a vertically symmetric center
+  // (0.5 / clamped corners), which is exactly how a mirrored placement went
+  // unnoticed — so assert the direction explicitly.
+  const double side = kH * 0.18;
+  const auto high = ComputeCameraBubbleRect(kW, kH, true, 0.5, 0.9, "", 0.18);
+  const auto low = ComputeCameraBubbleRect(kW, kH, true, 0.5, 0.1, "", 0.18);
+  EXPECT_NEAR(high.y, 0.1 * kH - side / 2.0, 0.001);
+  EXPECT_NEAR(low.y, 0.9 * kH - side / 2.0, 0.001);
+  EXPECT_LT(high.y, low.y);  // y-UP 0.9 sits ABOVE y-UP 0.1
+}
+
+TEST(CameraExportLayoutTest, PresetCentersAreNotFlipped) {
+  // Presets are authored in y-DOWN space, so they must bypass the flip: a
+  // top-left preset stays visually at the top.
+  const auto tl =
+      ComputeCameraBubbleRect(kW, kH, false, 0, 0, "overlayTopLeft", 0.18);
+  const auto bl =
+      ComputeCameraBubbleRect(kW, kH, false, 0, 0, "overlayBottomLeft", 0.18);
+  EXPECT_LT(tl.y, kH / 2.0);
+  EXPECT_GT(bl.y, kH / 2.0);
+}
+
 TEST(CameraExportLayoutTest, SizeFactorClampedToRange) {
   // Use a large canvas so the 0.08 floor stays well above the 96px min-side
   // floor (tested separately) and the factor clamp is what we observe.
