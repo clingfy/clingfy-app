@@ -38,17 +38,31 @@ Deferred work captured during reviews. Each item has enough context to pick up c
 - **Evidence:** the reported screenshot pair, and the exported file's own extensions dump (`CVImageBufferColorPrimaries: ITU_R_709_2`, `FullRangeVideo: 0`).
 - **Effort:** human ~4h / CC ~45min once the ramp measurement exists.
 
+## Windows — preview/export parity
+
+### Camera intro/outro may run on a different time base in the preview vs the export (UNTRIMMED clips only)
+
+- **What:** On a clip with no cuts, the preview and the export derive the animation clock from different sources, so a fade-in / slide-out could start and finish at slightly different absolute times on each side. Trimmed projects are NOT affected — both sides use the edited position and edited duration there, which is the case the animation port was built and reasoned about.
+- **The specific divergence.** Export rebases to the first decoded video frame: `frame_ms = (timestamp - first_video_hns) / 10000` and `camera_total_ms = (duration_hns - first_video_hns) / 10000` (`windows/runner/Capture/Export/export_pipeline.cpp:1097-1103`, `:1385-1394`). The preview uses the MediaPlayer's own clock: `CurrentPlaybackUs()` and `PlaybackSession().NaturalDuration()` (`windows/runner/preview/preview_engine.cpp:1434-1446`). Those agree only when the container's PTS base is zero.
+- **Why the export bothers to rebase**, per its own comment: raw `MF_PD_DURATION` keeps the container's PTS base, and an unrebased duration pushes the outro window past the last reachable `frame_ms`, so the outro never completes. That is the failure this rebasing exists to prevent — which is the reason to suspect the un-rebased preview side rather than the export.
+- **Not observed, only derived.** Found by reading both clocks while wiring the preview animation (PR #419); no recording has been measured. Our own screen recordings may well have a zero PTS base, in which case the two agree today and this is latent rather than live. Do not "fix" it before measuring.
+- **How to settle it:** open a real untrimmed recording, log `first_video_hns` from the export path and `NaturalDuration` / position from the preview path for the same file, and compare. Zero base and equal durations → close this as a non-issue and record that. Non-zero → rebase the preview clock the same way the export does, which keeps one definition of "clip time" instead of two.
+- **Start at:** `windows/runner/preview/preview_engine.cpp:1434-1446` (where `emit_pos_ms` / `emit_dur_ms` are produced on the MediaPlayer path) and `windows/runner/Capture/Export/export_pipeline.cpp:1385-1394` (the rebasing it should match).
+- **Effort:** human ~2h / CC ~30min, most of it the measurement.
+
 ## Windows — bridge routers
 
-### Camera-composition arg-parsing dedupe (shared Bridge/Routers helper)
-- **What:** Extract the duplicated camera-composition parsing (`preview_router.cpp` `ReadCameraComposition` + `export_router.cpp` `HandleProcessVideo`) into one shared `Bridge/Routers` helper, following the `color_grade_args` pattern.
-- **Why:** The duplication already hid a missing-chroma bug once (caught in the 9.7 review). Two parsers for one wire shape will drift again.
-- **Context:** Deferred in the 2026-07-03 eng review of the color-grade port (editing step 2). PR-2a introduces `Bridge/Routers/color_grade_args.{h,cpp}` — one parser used by both routers — which is exactly the shape the camera parsing should adopt. Deferred because touching two hot routers for zero user-visible change would widen an already-full color slice.
-- **Pros:** Kills the parser-drift bug class for camera args; makes the routers smaller.
-- **Cons:** Pure refactor — no user-visible change; needs careful diffing of the two existing parsers (they may have drifted already, which is the point).
-- **Start at:** `windows/runner/Bridge/Routers/preview_router.cpp` (`ReadCameraComposition`), `windows/runner/Bridge/Routers/export_router.cpp` (`HandleProcessVideo` camera block); model on `Bridge/Routers/color_grade_args.{h,cpp}` once PR-2a lands.
-- **Depends on:** PR-2a (color_grade_args establishes the pattern).
-- **Effort:** human ~2h / CC ~15min.
+### ~~Camera-composition arg-parsing dedupe (shared Bridge/Routers helper)~~ — DONE
+- Landed with the intro/outro preview slice as
+  `Bridge/Routers/camera_composition_args.{h,cpp}`, following the
+  `color_grade_args` pattern. Both `preview_router`
+  (previewSetCameraPlacement) and `export_router` (processVideo) now call
+  `clingfy::bridge::ReadCameraComposition`.
+- The prediction in this entry was correct twice over: after the
+  missing-chroma bug, the two parsers had drifted AGAIN — neither read the four
+  `cameraIntroPreset` / `cameraOutroPreset` / `cameraIntroDurationMs` /
+  `cameraOutroDurationMs` keys, so the inline preview never animated while the
+  export did. Covered by `camera_composition_args_test.cpp`.
 
 ### Log files lose their beginning while the app is still running
 

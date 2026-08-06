@@ -129,8 +129,11 @@ Editing & export
   yet.
 - Cursor, smart zoom, and click rings render **in the export**, not in
   the preview player (the post-processing panels say "applied on
-  export"). The camera bubble, including chroma key, *is* shown live in
-  the preview; camera intro/outro animations are export-only.
+  export"). The camera bubble *is* shown live in the preview, including
+  chroma key and the intro/outro animations. The intro runs at the start
+  of the edited timeline, so parking the playhead at 0:00 with a fade
+  intro shows the bubble part-way through its fade-in — that is what the
+  exported file does at that instant too.
 - With chroma key + a camera shadow enabled together, a faint shadow
   tint can show through the keyed (transparent) region.
 - The camera joins a moment after the screen recording starts, so the

@@ -1522,8 +1522,14 @@ void PreviewEngine::ComposeAndHandoffLocked(Impl* impl,
                                 impl->cursor_events, playback_us,
                                 NowSeconds(), impl->zoom);
   // Camera bubble draws on top of the composited screen frame, in canvas space.
+  // The intro/outro clock is the EDITED position + edited duration, not
+  // `playback_us` (source time, used above to advance the camera VIDEO frame).
+  // The export splits the two the same way — see "camera_clock_ms" in
+  // export_pipeline.cpp — because on a trimmed project the source origin may sit
+  // inside a cut, so a source-keyed intro would fire where the user never looks.
   if (impl->camera_renderer) {
-    impl->camera_renderer->Draw(impl->d2d_context.Get());
+    impl->camera_renderer->Draw(impl->d2d_context.Get(), emit_pos_ms,
+                                emit_dur_ms);
   }
   const HRESULT end_hr = impl->d2d_context->EndDraw();
   impl->timing_render.EndFrame();
