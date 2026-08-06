@@ -461,6 +461,15 @@ final class LetterboxExporter {
         height: validationSampleDimension
       )
     }
+    // Sample the frame that was ASKED for. Left at the default
+    // `kCMTimePositiveInfinity`, the generator is free to return the nearest
+    // sync sample instead, which on the final file is whatever keyframe
+    // VideoToolbox chose — so the caption-free instant computed for the colour
+    // validator would be a suggestion, and the two sides of the comparison
+    // could come from different moments. The test twin in RunnerTests already
+    // zeroes both, which is why no test could ever reproduce that drift.
+    generator.requestedTimeToleranceBefore = .zero
+    generator.requestedTimeToleranceAfter = .zero
     return try generator.copyCGImage(at: sampleTime, actualTime: nil)
   }
 
@@ -1303,7 +1312,9 @@ final class LetterboxExporter {
     inlineCameraRenderPlan: CompositionBuilder.InlineCameraRenderPlan? = nil,
     backgroundColor: Int? = nil,
     backgroundImagePath: String? = nil,
-    backgroundPreset: CanvasBackgroundPreset? = nil
+    backgroundPreset: CanvasBackgroundPreset? = nil,
+    captions: [CaptionCueTrack.Cue] = [],
+    keptRanges: [ClipKeptRange] = []
   ) -> NSError? {
     evaluateFinalExportReferenceRender(
       referenceAsset: referenceAsset,
@@ -1312,7 +1323,9 @@ final class LetterboxExporter {
       inlineCameraRenderPlan: inlineCameraRenderPlan,
       backgroundColor: backgroundColor,
       backgroundImagePath: backgroundImagePath,
-      backgroundPreset: backgroundPreset
+      backgroundPreset: backgroundPreset,
+      captions: captions,
+      keptRanges: keptRanges
     ).error
   }
 
@@ -1323,10 +1336,74 @@ final class LetterboxExporter {
     inlineCameraRenderPlan: CompositionBuilder.InlineCameraRenderPlan? = nil,
     backgroundColor: Int? = nil,
     backgroundImagePath: String? = nil,
-    backgroundPreset: CanvasBackgroundPreset? = nil
+    backgroundPreset: CanvasBackgroundPreset? = nil,
+    captions: [CaptionCueTrack.Cue] = [],
+    keptRanges: [ClipKeptRange] = []
   ) -> FinalExportReferenceEvaluation {
     do {
-      let sampleTime = min(max(referenceAsset.duration.seconds * 0.5, 0.0), max(referenceAsset.duration.seconds - 0.001, 0.0))
+      let referenceDurationSeconds = referenceAsset.duration.seconds
+      let finalDurationSeconds = finalExportAsset.duration.seconds
+      let lastReferenceSecond = max(referenceDurationSeconds - 0.001, 0.0)
+      let lastFinalSecond = max(finalDurationSeconds - 0.001, 0.0)
+
+      // Burned-in captions are NOT in the reference render: they are composited
+      // in the writer loop, after the grade, so the composition never sees
+      // them. Sampling a captioned frame charges the caption's own pixels to
+      // the colour budget, and this validator DELETES the file it rejects.
+      // Truncate, never round — the same rule as `assetDurationMs` at the
+      // caller, and for the same reason: the Flutter side derives the
+      // whole-recording clip's sourceOutMs as Int(durationSeconds * 1000), and
+      // the last cue is clamped to it. Rounding makes this one millisecond
+      // larger for about a third of durations, which manufactures a 1 ms
+      // "uncaptioned" tail at the end of a recording that is captioned to the
+      // last frame — turning the skip below into a sample of the final,
+      // captioned frame, which is the deletion this whole branch prevents.
+      let frameDurationMs = max(
+        Int(referenceComposition.frameDuration.seconds * 1000.0), 1)
+      let captionFreeSample: CaptionCueTrack.ValidationSample? =
+        referenceDurationSeconds.isFinite && referenceDurationSeconds > 0
+        ? CaptionCueTrack.captionFreeSample(
+          cues: captions,
+          keptRanges: keptRanges,
+          sourceDurationMs: Int(referenceDurationSeconds * 1000.0),
+          frameDurationMs: frameDurationMs
+        )
+        : nil
+      if !captions.isEmpty, captionFreeSample == nil {
+        // Wall-to-wall speech, which is the normal shape of a tutorial or a
+        // demo. There is no frame where the two sides are comparable, so the
+        // only honest options are "measure something meaningless and maybe
+        // delete a correct export" or "do not measure". Skipping keeps the
+        // user's file; the colour work this guards is already covered by the
+        // per-frame transfer tests and by every uncaptioned export.
+        NativeLogger.w(
+          "Export",
+          "Skipped final-export colour validation: every frame carries a caption the reference render does not",
+          context: ["cues": captions.count]
+        )
+        return FinalExportReferenceEvaluation(
+          lumaDelta: nil, maxChannelDelta: nil, error: nil)
+      }
+
+      // Two timebases, deliberately. "Cut at the writer" keeps the reference
+      // composition in SOURCE time while the written file is compacted onto the
+      // EDITED timeline, so one number cannot address both: after a cut it
+      // names two different moments, and after a reorder they are unrelated.
+      // Comparing mismatched content as if it were colour is how a correct
+      // export gets deleted.
+      let referenceSampleTime: Double
+      let finalSampleTime: Double
+      if let captionFreeSample {
+        referenceSampleTime = min(
+          max(Double(captionFreeSample.referenceMs) / 1000.0, 0.0), lastReferenceSecond)
+        finalSampleTime = min(
+          max(Double(captionFreeSample.finalMs) / 1000.0, 0.0), lastFinalSecond)
+      } else {
+        // No captions: unchanged from before captions existed.
+        referenceSampleTime = min(max(referenceDurationSeconds * 0.5, 0.0), lastReferenceSecond)
+        finalSampleTime = referenceSampleTime
+      }
+      let sampleTime = referenceSampleTime
       let referenceImage: CGImage
       if let inlineCameraRenderPlan {
         let screenImage = try sampleFrameImage(
@@ -1378,7 +1455,7 @@ final class LetterboxExporter {
       }
       let finalImage = try sampleFrameImage(
         asset: finalExportAsset,
-        at: CMTime(seconds: sampleTime, preferredTimescale: 600)
+        at: CMTime(seconds: finalSampleTime, preferredTimescale: 600)
       )
 
       // Retag the reference and final as sRGB before colour analysis.
@@ -2322,6 +2399,19 @@ final class LetterboxExporter {
               )
               if logOutputInfo {
                 self.logExportedFileInfo(url: outputURL)
+              }
+              // A cue whose bitmap would not load is skipped frame by frame, so
+              // it is simply absent from the finished video with nothing else
+              // saying so. The renderer records the ids for exactly this line.
+              if let missing = captionRenderer?.missingBitmapCueIds, !missing.isEmpty {
+                NativeLogger.w(
+                  "Captions",
+                  "Cues dropped from the export: their bitmaps could not be loaded",
+                  context: [
+                    "count": missing.count,
+                    "ids": missing.joined(separator: ","),
+                    "bitmapDirectory": captionBitmapDirectory ?? "nil",
+                  ])
               }
               completion(.success(outputURL))
             } else {
@@ -3349,7 +3439,9 @@ final class LetterboxExporter {
             inlineCameraRenderPlan: comp.inlineCameraRenderPlan,
             backgroundColor: backgroundColor,
             backgroundImagePath: backgroundImagePath,
-            backgroundPreset: backgroundPreset
+            backgroundPreset: backgroundPreset,
+            captions: captions,
+            keptRanges: keptRanges
           ) {
             NativeLogger.e(
               "Export",
@@ -3948,7 +4040,9 @@ final class LetterboxExporter {
     finalExportURL: URL,
     backgroundColor: Int? = nil,
     backgroundImagePath: String? = nil,
-    backgroundPreset: CanvasBackgroundPreset? = nil
+    backgroundPreset: CanvasBackgroundPreset? = nil,
+    captions: [CaptionCueTrack.Cue] = [],
+    keptRanges: [ClipKeptRange] = []
   ) -> FinalExportReferenceEvaluation {
     evaluateFinalExportReferenceRender(
       referenceAsset: referenceResult.asset,
@@ -3957,7 +4051,9 @@ final class LetterboxExporter {
       inlineCameraRenderPlan: referenceResult.inlineCameraRenderPlan,
       backgroundColor: backgroundColor,
       backgroundImagePath: backgroundImagePath,
-      backgroundPreset: backgroundPreset
+      backgroundPreset: backgroundPreset,
+      captions: captions,
+      keptRanges: keptRanges
     )
   }
 

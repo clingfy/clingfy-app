@@ -116,6 +116,122 @@ struct CaptionCueTrack {
     return candidate.startMs <= sourceMs ? candidate : nil
   }
 
+  /// One frame the final-export colour validator can compare, expressed in
+  /// BOTH timebases because the two things it compares do not share one.
+  struct ValidationSample: Equatable {
+    /// Position in the SOURCE-timed reference composition. "Cut at the writer"
+    /// means the composition keeps source time; only the written file is
+    /// compacted onto the edited timeline.
+    let referenceMs: Int
+    /// The same moment in the EDITED-timed exported file.
+    let finalMs: Int
+  }
+
+  /// A frame carrying no burned-in caption, or `nil` when there is none — which
+  /// includes the wall-to-wall-speech case, and which the caller must treat as
+  /// "do not run this comparison" rather than "sample anywhere".
+  ///
+  /// This exists for the final-export colour validator. That validator compares
+  /// one sampled frame of the finished file against a reference render built
+  /// from the `AVVideoComposition`, and the composition never sees captions:
+  /// they are composited in the writer loop, after the grade. So a sampled
+  /// frame that happens to carry a caption charges the pill's pixels to the
+  /// colour budget — and the default caption is 60%-opaque black across most of
+  /// the frame width, which over bright content is a large fraction of a
+  /// threshold whose whole job is catching transfer errors worth ~0.05.
+  ///
+  /// Returns both timebases because handing one number to both sides compares
+  /// two different moments the instant the recording has a cut, and a reorder
+  /// makes them unrelated. Content mismatch then reads as colour drift, and the
+  /// validator deletes the file.
+  ///
+  /// Cues are sanitized exactly as the render path sanitizes them, so a cue the
+  /// renderer would reject cannot make this treat a painted moment as a gap,
+  /// and everything is clamped to the real source duration so a cue with times
+  /// past the end of the recording cannot nominate a frame that does not exist.
+  /// - Parameter frameDurationMs: how long one output frame lasts. A gap is
+  ///   only usable if it is at least TWO frames wide, because the validator
+  ///   samples a *frame*, not a millisecond: the frame shown at time `t` is the
+  ///   last one whose presentation stamp is `<= t`, so a gap narrower than that
+  ///   nominates an instant whose displayed frame still belongs to the cue
+  ///   before it. At two frames the midpoint is more than one frame from each
+  ///   edge, so the frame it lands on is strictly inside the gap. Defaults to 1
+  ///   (millisecond precision) only so tests can reason without a frame rate.
+  static func captionFreeSample(
+    cues: [Cue],
+    keptRanges: [ClipKeptRange],
+    sourceDurationMs: Int,
+    frameDurationMs: Int = 1
+  ) -> ValidationSample? {
+    guard !cues.isEmpty, sourceDurationMs > 0 else { return nil }
+    let minimumUsableWidthMs = max(2 * max(frameDurationMs, 1), 2)
+
+    // Same sorting and overlap rejection the renderer applies, so the cue set
+    // reasoned about here is the cue set that actually paints.
+    let painted = CaptionCueTrack(cues: cues).cues
+      .compactMap { cue -> (start: Int, end: Int)? in
+        let start = min(max(cue.startMs, 0), sourceDurationMs)
+        let end = min(max(cue.endMs, 0), sourceDurationMs)
+        return end > start ? (start, end) : nil
+      }
+    guard !painted.isEmpty else { return nil }
+
+    var gaps: [(start: Int, end: Int)] = []
+    var uncovered = 0
+    for cue in painted {
+      if cue.start - uncovered >= minimumUsableWidthMs {
+        gaps.append((uncovered, cue.start))
+      }
+      uncovered = max(uncovered, cue.end)
+    }
+    if sourceDurationMs - uncovered >= minimumUsableWidthMs {
+      gaps.append((uncovered, sourceDurationMs))
+    }
+    guard !gaps.isEmpty else { return nil }
+
+    let ranges = keptRanges.compactMap { range -> ClipKeptRange? in
+      let low = min(max(range.sourceInMs, 0), sourceDurationMs)
+      let high = min(max(range.sourceOutMs, 0), sourceDurationMs)
+      return high > low ? ClipKeptRange(sourceInMs: low, sourceOutMs: high) : nil
+    }
+    // An empty `keptRanges` means "no cuts, everything plays". Ranges that all
+    // clamp away mean something is wrong with the edit, and treating that as
+    // "no cuts" would map identity onto a timeline that does not exist.
+    if !keptRanges.isEmpty, ranges.isEmpty { return nil }
+
+    let editedDurationMs = ranges.isEmpty
+      ? sourceDurationMs
+      : ClipPlaybackPlanner.editedDurationMs(ranges: ranges)
+    guard editedDurationMs > 0 else { return nil }
+    let preferredEditedMs = editedDurationMs / 2
+
+    var best: (sample: ValidationSample, distance: Int)?
+    for gap in gaps {
+      // A gap only helps if it survives the cut, so intersect it with the kept
+      // ranges before mapping. With no cuts the gap maps through unchanged.
+      let sourceCandidates: [Int] = ranges.isEmpty
+        ? [(gap.start + gap.end) / 2]
+        : ranges.compactMap { range in
+          let low = max(gap.start, range.sourceInMs)
+          let high = min(gap.end, range.sourceOutMs)
+          // The surviving piece has to clear the same two-frame bar: a cut can
+          // leave a sliver of an otherwise wide gap.
+          return high - low >= minimumUsableWidthMs ? (low + high) / 2 : nil
+        }
+      for sourceMs in sourceCandidates {
+        guard
+          let editedMs = ClipPlaybackPlanner.editedMsForKeptSourceMs(
+            sourceMs, ranges: ranges)
+        else { continue }
+        let distance = abs(editedMs - preferredEditedMs)
+        if best == nil || distance < best!.distance {
+          best = (ValidationSample(referenceMs: sourceMs, finalMs: editedMs), distance)
+        }
+      }
+    }
+    return best?.sample
+  }
+
   /// Non-mutating lookup for tests and for callers that cannot hold the track
   /// as `var`. O(log n); the render loop should use `activeCue(atSourceMs:)`.
   func cueForBinarySearch(atSourceMs sourceMs: Int) -> Cue? {

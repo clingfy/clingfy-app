@@ -180,4 +180,198 @@ final class CaptionCueTrackTests: XCTestCase {
     ])
     XCTAssertEqual(cues.map(\.id), ["a", "b"])
   }
+
+  // MARK: - Caption-free sampling for the colour validator
+  //
+  // The final-export validator compares one sampled frame against a render of
+  // the composition, and the composition never carries captions — they are
+  // composited later, in the writer loop. Sampling a captioned frame therefore
+  // charges the caption's own pixels to a colour budget sized for transfer
+  // errors, which can fail and DELETE a correct export.
+
+  func testPicksTheGapNearestTheMidpointOnAnUncutRecording() {
+    // Cues at 0-1s and 8-10s in a 10s recording. Midpoint is 5s, inside the
+    // 1-8s gap, so the answer should land there. With no cuts the two
+    // timebases coincide.
+    let chosen = CaptionCueTrack.captionFreeSample(
+      cues: [cue("a", 0, 1000), cue("b", 8000, 10000)],
+      keptRanges: [],
+      sourceDurationMs: 10000)
+    XCTAssertEqual(chosen?.referenceMs, 4500, "midpoint of the 1000-8000 gap")
+    XCTAssertEqual(chosen?.finalMs, 4500, "no cut, so source and edited agree")
+  }
+
+  func testReturnsNilWhenCuesLeaveNoGap() {
+    // Wall-to-wall speech. There is no caption-free frame to find, and saying
+    // so is what lets the caller fall back and log rather than pick a lie.
+    let chosen = CaptionCueTrack.captionFreeSample(
+      cues: [cue("a", 0, 5000), cue("b", 5000, 10000)],
+      keptRanges: [],
+      sourceDurationMs: 10000)
+    XCTAssertNil(chosen, "the caller must skip the comparison, not sample anyway")
+  }
+
+  func testReturnsNilWithNoCuesSoTheCallerKeepsItsOwnMidpoint() {
+    XCTAssertNil(
+      CaptionCueTrack.captionFreeSample(
+        cues: [], keptRanges: [], sourceDurationMs: 10000),
+      "no captions means nothing to avoid")
+  }
+
+  func testMapsTheGapThroughACutOntoTheEditedTimeline() {
+    // Keep 0-2s and 6-10s of a 10s source: a 6s edited timeline. The only
+    // caption-free source moment is 1000-2000 (the 2000-6000 stretch was cut
+    // away), which sits at 1000-2000 on the edited timeline too.
+    let chosen = CaptionCueTrack.captionFreeSample(
+      cues: [cue("a", 0, 1000), cue("b", 6000, 10000)],
+      keptRanges: [
+        ClipKeptRange(sourceInMs: 0, sourceOutMs: 2000),
+        ClipKeptRange(sourceInMs: 6000, sourceOutMs: 10000),
+      ],
+      sourceDurationMs: 10000)
+    XCTAssertEqual(chosen?.referenceMs, 1500, "midpoint of the surviving 1000-2000 gap")
+    XCTAssertEqual(chosen?.finalMs, 1500, "first range starts at edited zero")
+  }
+
+  func testIgnoresAGapThatTheCutRemovedEntirely() {
+    // The only gap in source (2000-6000) is exactly what the cut dropped, so
+    // every frame that survives carries a caption.
+    let chosen = CaptionCueTrack.captionFreeSample(
+      cues: [cue("a", 0, 2000), cue("b", 6000, 10000)],
+      keptRanges: [
+        ClipKeptRange(sourceInMs: 0, sourceOutMs: 2000),
+        ClipKeptRange(sourceInMs: 6000, sourceOutMs: 10000),
+      ],
+      sourceDurationMs: 10000)
+    XCTAssertNil(chosen, "the gap did not survive the cut")
+  }
+
+  func testMapsThroughAReorderRatherThanAssumingSourceOrder() {
+    // Ranges listed out of source order: 6-10s plays first, then 0-2s. A gap at
+    // source 1000-2000 therefore lands at edited 5000-6000, not 1000-2000.
+    let chosen = CaptionCueTrack.captionFreeSample(
+      cues: [cue("a", 0, 1000), cue("b", 6000, 10000)],
+      keptRanges: [
+        ClipKeptRange(sourceInMs: 6000, sourceOutMs: 10000),
+        ClipKeptRange(sourceInMs: 0, sourceOutMs: 2000),
+      ],
+      sourceDurationMs: 10000)
+    XCTAssertEqual(chosen?.referenceMs, 1500, "the gap is at 1500 in the SOURCE")
+    XCTAssertEqual(
+      chosen?.finalMs, 5500,
+      "4000ms of range one plays first, then 1500 into range two")
+  }
+
+  func testACueRunningPastTheEndOfTheRecordingCannotNominateAFrame() {
+    // ASR can emit a cue whose end overshoots the recording. Reasoning over raw
+    // cue times would find a "gap" between two out-of-range cues and hand back
+    // a frame that does not exist in either asset; clamping to the real
+    // duration is what stops that landing back on a captioned frame.
+    let chosen = CaptionCueTrack.captionFreeSample(
+      cues: [cue("a", 0, 9000), cue("b", 20000, 30000)],
+      keptRanges: [],
+      sourceDurationMs: 10000)
+    XCTAssertEqual(
+      chosen?.referenceMs, 9500,
+      "the only real gap is 9000-10000, inside the recording")
+    XCTAssertNil(
+      CaptionCueTrack.captionFreeSample(
+        cues: [cue("a", 0, 10000), cue("b", 20000, 30000)],
+        keptRanges: [],
+        sourceDurationMs: 10000),
+      "a cue past the end cannot manufacture a gap")
+  }
+
+  func testCuesTheRendererWouldRejectDoNotOpenAFakeGap() {
+    // An overlapping cue is rejected by the renderer, so it never paints — but
+    // it must not be reasoned about here either, or its span could be treated
+    // as covered and hide the real gap, or vice versa. Same sanitisation both
+    // sides is the invariant.
+    let chosen = CaptionCueTrack.captionFreeSample(
+      cues: [
+        cue("a", 0, 4000),
+        cue("overlaps", 3000, 9000),  // rejected: starts before `a` ends
+        cue("b", 9000, 10000),
+      ],
+      keptRanges: [],
+      sourceDurationMs: 10000)
+    XCTAssertEqual(
+      chosen?.referenceMs, 6500,
+      "4000-9000 is genuinely uncaptioned once the overlap is rejected")
+  }
+
+  func testAZeroDurationRecordingIsRefusedRatherThanDividedBy() {
+    XCTAssertNil(
+      CaptionCueTrack.captionFreeSample(
+        cues: [cue("a", 0, 1000)], keptRanges: [], sourceDurationMs: 0))
+  }
+
+  /// The exporter derives `assetDurationMs` by TRUNCATING, and the Flutter side
+  /// clamps the last cue to that same truncated value. If the validator's call
+  /// site rounds instead, `sourceDurationMs` is one larger for about a third of
+  /// durations and this 1 ms tail appears — uncaptioned, at the very end of a
+  /// recording that is captioned to its last frame. Nominating it is how a
+  /// wall-to-wall export gets sampled on a captioned frame and deleted.
+  func testAOneMillisecondTailIsTooNarrowToNominate() {
+    XCTAssertNil(
+      CaptionCueTrack.captionFreeSample(
+        cues: [cue("a", 0, 10000)],
+        keptRanges: [],
+        sourceDurationMs: 10001,
+        frameDurationMs: 33),
+      "a 1 ms tail is far narrower than a frame")
+    XCTAssertNil(
+      CaptionCueTrack.captionFreeSample(
+        cues: [cue("a", 0, 10000)],
+        keptRanges: [],
+        sourceDurationMs: 10001),
+      "and still too narrow even at millisecond precision")
+  }
+
+  /// The validator samples a FRAME, not a millisecond: the frame on screen at
+  /// time t is the last one stamped at or before t. A gap narrower than two
+  /// frames therefore names an instant whose displayed frame still belongs to
+  /// the cue before it, and the export gets deleted for the caption it was
+  /// supposed to avoid.
+  func testAGapNarrowerThanTwoFramesIsRejectedEvenWhenItSitsAtTheMidpoint() {
+    // Continuous speech from 0 to 45 s with one 20 ms hole at the exact centre,
+    // then 15 s of real silence. Ranked by nearness to the middle alone, the
+    // 20 ms hole would win — it is 180 ms from the midpoint, the tail is 22.5 s.
+    let chosen = CaptionCueTrack.captionFreeSample(
+      cues: [cue("intro", 0, 29000), cue("a", 29000, 29810), cue("b", 29830, 45000)],
+      keptRanges: [],
+      sourceDurationMs: 60000,
+      frameDurationMs: 33)
+    XCTAssertEqual(
+      chosen?.referenceMs, 52500,
+      "the wide tail gap wins; the 20 ms hole is under two frames")
+  }
+
+  func testAGapOfExactlyTwoFramesIsUsableAndLandsClearOfBothCues() {
+    // Two frames wide is the smallest safe gap: the midpoint sits a full frame
+    // from each edge, so whichever frame is displayed there is inside the gap.
+    let chosen = CaptionCueTrack.captionFreeSample(
+      cues: [cue("a", 0, 1000), cue("b", 1066, 10000)],
+      keptRanges: [],
+      sourceDurationMs: 10000,
+      frameDurationMs: 33)
+    XCTAssertEqual(chosen?.referenceMs, 1033)
+    let track = CaptionCueTrack(cues: [cue("a", 0, 1000), cue("b", 1066, 10000)])
+    XCTAssertNil(
+      track.cueForBinarySearch(atSourceMs: 1033),
+      "the nominated instant must not be inside a cue")
+    XCTAssertNil(
+      track.cueForBinarySearch(atSourceMs: 1033 - 33),
+      "nor must the frame that would actually be displayed there")
+  }
+
+  func testRangesThatSurviveNothingAreRefused() {
+    // Every kept range clamps away to nothing (they sit past the recording), so
+    // there is no edited timeline to place a sample on.
+    XCTAssertNil(
+      CaptionCueTrack.captionFreeSample(
+        cues: [cue("a", 0, 1000)],
+        keptRanges: [ClipKeptRange(sourceInMs: 50000, sourceOutMs: 60000)],
+        sourceDurationMs: 10000))
+  }
 }
