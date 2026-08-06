@@ -50,6 +50,7 @@ void main() {
     double? progress,
     bool isProcessing = false,
     bool hasEverGenerated = false,
+    bool failed = false,
     ValueChanged<bool>? onUseMicChanged,
     VoidCallback? onGenerate,
     VoidCallback? onCancel,
@@ -68,6 +69,7 @@ void main() {
       progress: progress,
       isProcessing: isProcessing,
       hasEverGenerated: hasEverGenerated,
+      failed: failed,
       onUseMicChanged: onUseMicChanged ?? (_) {},
       onUseSystemChanged: (_) {},
       onGenerate: onGenerate ?? () {},
@@ -333,6 +335,22 @@ void main() {
 
     await tester.pumpWidget(host(section(hasEverGenerated: true)));
     expect(find.text(l10n.captionsNoSpeechFound), findsOneWidget);
+  });
+
+  testWidgets('a failed run says so instead of blaming the recording', (
+    tester,
+  ) async {
+    // A failure and a silent recording both end with `hasEverGenerated` true
+    // and an empty cue list, so without the `failed` flag a model that would
+    // not download is reported as "no speech found" — which tells the user the
+    // wrong thing and gives them nothing to retry.
+    final l10n = await AppLocalizations.delegate.load(const Locale('en'));
+    await tester.pumpWidget(
+      host(section(hasEverGenerated: true, failed: true)),
+    );
+
+    expect(find.text(l10n.captionsFailed), findsOneWidget);
+    expect(find.text(l10n.captionsNoSpeechFound), findsNothing);
   });
 
   testWidgets('every cue gets a field and a timestamp', (tester) async {

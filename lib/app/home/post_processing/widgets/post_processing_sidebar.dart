@@ -154,6 +154,7 @@ class PostProcessingSidebar extends StatelessWidget {
   final double? captionsProgress;
   final String? captionsStageLabel;
   final bool hasEverGeneratedCaptions;
+  final bool captionsFailed;
   final SubtitleMode subtitleMode;
   final ReflowedCaptions reflowedCaptions;
   final double audioVolume;
@@ -314,6 +315,7 @@ class PostProcessingSidebar extends StatelessWidget {
     required this.captionsProgress,
     required this.captionsStageLabel,
     required this.hasEverGeneratedCaptions,
+    required this.captionsFailed,
     required this.subtitleMode,
     required this.reflowedCaptions,
     required this.audioVolume,
@@ -536,6 +538,7 @@ class PostProcessingSidebar extends StatelessWidget {
         stageLabel: captionsStageLabel,
         isProcessing: isProcessing,
         hasEverGenerated: hasEverGeneratedCaptions,
+        failed: captionsFailed,
         onUseMicChanged: onCaptionsUseMicChanged,
         onUseSystemChanged: onCaptionsUseSystemChanged,
         onGenerate: onGenerateCaptions,

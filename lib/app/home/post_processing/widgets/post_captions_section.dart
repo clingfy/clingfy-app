@@ -37,6 +37,7 @@ class PostCaptionsSection extends StatelessWidget {
     required this.onSubtitleModeChanged,
     this.stageLabel,
     this.hasEverGenerated = false,
+    this.failed = false,
   });
 
   final CaptionsCapabilityInfo? capability;
@@ -62,6 +63,11 @@ class PostCaptionsSection extends StatelessWidget {
   /// Distinguishes "not run yet" from "ran and found nothing", which are very
   /// different messages to show someone.
   final bool hasEverGenerated;
+
+  /// The last run failed rather than finding nothing. Both leave an empty cue
+  /// list, so without this the two are indistinguishable here and a failure
+  /// gets reported as silence.
+  final bool failed;
 
   final ValueChanged<bool> onUseMicChanged;
   final ValueChanged<bool> onUseSystemChanged;
@@ -241,8 +247,10 @@ class PostCaptionsSection extends StatelessWidget {
         ] else if (hasEverGenerated && !isGenerating) ...[
           const SizedBox(height: AppSidebarTokens.compactGap),
           AppInlineNotice(
-            message: l10n.captionsNoSpeechFound,
-            variant: AppInlineNoticeVariant.info,
+            message: failed ? l10n.captionsFailed : l10n.captionsNoSpeechFound,
+            variant: failed
+                ? AppInlineNoticeVariant.warning
+                : AppInlineNoticeVariant.info,
           ),
         ],
       ],

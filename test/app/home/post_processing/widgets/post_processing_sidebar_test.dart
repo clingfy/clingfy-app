@@ -167,6 +167,7 @@ void main() {
       captionsProgress: null,
       captionsStageLabel: null,
       hasEverGeneratedCaptions: false,
+      captionsFailed: false,
       onCaptionsUseMicChanged: (_) {},
       onCaptionsUseSystemChanged: (_) {},
       onGenerateCaptions: () {},

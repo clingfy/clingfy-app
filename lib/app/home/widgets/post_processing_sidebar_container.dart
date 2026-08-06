@@ -83,6 +83,7 @@ class PostProcessingSidebarContainer extends StatelessWidget {
         double? captionsProgress,
         ProgressStage captionsStage,
         bool hasEverGeneratedCaptions,
+        bool captionsFailed,
         ReflowedCaptions reflowedCaptions,
       })
     >(
@@ -123,6 +124,7 @@ class PostProcessingSidebarContainer extends StatelessWidget {
         captionsProgress: p.captionsProgress,
         captionsStage: p.captionsStage,
         hasEverGeneratedCaptions: p.hasEverGeneratedCaptions,
+        captionsFailed: p.captionsFailed,
         // Recomputed on every rebuild the record triggers, so a cut made in the
         // clips panel immediately restamps the caption timestamps.
         reflowedCaptions: p.reflowedCaptions(),
@@ -188,6 +190,7 @@ class PostProcessingSidebarContainer extends StatelessWidget {
                 vm.captionsStage,
               ),
               hasEverGeneratedCaptions: vm.hasEverGeneratedCaptions,
+              captionsFailed: vm.captionsFailed,
               subtitleMode: settingsController.post.postSubtitleMode,
               reflowedCaptions: vm.reflowedCaptions,
               autoNormalizeOnExport:
