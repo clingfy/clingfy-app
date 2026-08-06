@@ -1,0 +1,128 @@
+name: Release plumbing check (OIDC + blob access)
+
+# PHASE 0 of the Azure Pipelines -> GitHub Actions release migration.
+#
+# Proves the three things every other release lane depends on, without building
+# anything: that OIDC federation works, that the federated subject is accepted
+# for this repo/branch, and that the app registration actually holds Storage
+# Blob Data Contributor on the storage account for the chosen channel.
+#
+# Run this first, per channel. If it is green, a failure in a real lane is a
+# build problem, not a credentials problem -- which is worth knowing up front,
+# because an Azure auth failure surfaces at the publish step, forty minutes into
+# a macOS build.
+#
+# Delete this workflow once both channels have passed and the lanes are live.
+
+on:
+  workflow_dispatch:
+    inputs:
+      channel:
+        description: "Which channel's storage account to test"
+        type: choice
+        options: [dev, prod]
+        default: dev
+      write_probe:
+        description: "Also upload and delete a probe blob (tests write access, not just read)"
+        type: boolean
+        default: false
+
+concurrency:
+  group: release-plumbing-${{ inputs.channel }}
+  cancel-in-progress: false
+
+permissions:
+  id-token: write   # required to mint the OIDC token for azure/login
+  contents: read
+
+jobs:
+  check:
+    name: "Check ${{ inputs.channel }} Azure access"
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Stage .env.${{ inputs.channel }}
+        env:
+          ENV_B64: ${{ inputs.channel == 'prod' && secrets.ENV_PROD_B64 || secrets.ENV_DEV_B64 }}
+        run: |
+          set -euo pipefail
+          if [ -z "${ENV_B64:-}" ]; then
+            echo "::error::Secret ENV_${{ inputs.channel == 'prod' && 'PROD' || 'DEV' }}_B64 is not set on this repository."
+            exit 1
+          fi
+          printf '%s' "$ENV_B64" | base64 -d > ".env.${{ inputs.channel }}"
+          test -s ".env.${{ inputs.channel }}"
+          echo "Staged .env.${{ inputs.channel }} ($(wc -l < ".env.${{ inputs.channel }}") lines)"
+
+      - name: Azure login (OIDC)
+        uses: azure/login@v2
+        with:
+          client-id: ${{ vars.AZURE_CLIENT_ID }}
+          tenant-id: ${{ vars.AZURE_TENANT_ID }}
+          subscription-id: ${{ vars.AZURE_SUBSCRIPTION_ID }}
+
+      - name: Read the storage account out of the env file
+        run: |
+          set -euo pipefail
+          # Read only the two keys needed. Sourcing the whole file would pull
+          # Sentry/Telegram/PostHog tokens into the step environment for no reason.
+          ACCOUNT="$(grep -E '^AZ_STORAGE_ACCOUNT=' ".env.${{ inputs.channel }}" | tail -1 | cut -d= -f2- | tr -d '"'"'"'\r ')"
+          CONTAINER="$(grep -E '^AZ_CONTAINER=' ".env.${{ inputs.channel }}" | tail -1 | cut -d= -f2- | tr -d '"'"'"'\r ')"
+          CONTAINER="${CONTAINER:-updates}"
+          if [ -z "$ACCOUNT" ]; then
+            echo "::error::AZ_STORAGE_ACCOUNT is not set in .env.${{ inputs.channel }}"
+            exit 1
+          fi
+          echo "AZ_STORAGE_ACCOUNT=$ACCOUNT" >> "$GITHUB_ENV"
+          echo "AZ_CONTAINER=$CONTAINER" >> "$GITHUB_ENV"
+          echo "Account: $ACCOUNT / container: $CONTAINER"
+
+      - name: Read access (list blobs)
+        run: |
+          set -euo pipefail
+          echo "Listing up to 5 blobs in $AZ_STORAGE_ACCOUNT/$AZ_CONTAINER"
+          az storage blob list \
+            --account-name "$AZ_STORAGE_ACCOUNT" \
+            --container-name "$AZ_CONTAINER" \
+            --auth-mode login \
+            --num-results 5 \
+            --query "[].name" -o tsv
+
+      - name: Write access (probe blob, then delete)
+        if: inputs.write_probe
+        run: |
+          set -euo pipefail
+          # Namespaced and removed immediately. Publishing needs write, so a
+          # read-only check would pass and the lane would still fail at step 5.
+          PROBE="ci-plumbing/oidc-probe-${{ github.run_id }}.txt"
+          echo "probe from github run ${{ github.run_id }}" > probe.txt
+
+          az storage blob upload \
+            --account-name "$AZ_STORAGE_ACCOUNT" \
+            --container-name "$AZ_CONTAINER" \
+            --name "$PROBE" \
+            --file probe.txt \
+            --auth-mode login \
+            --overwrite >/dev/null
+          echo "Uploaded $PROBE"
+
+          az storage blob delete \
+            --account-name "$AZ_STORAGE_ACCOUNT" \
+            --container-name "$AZ_CONTAINER" \
+            --name "$PROBE" \
+            --auth-mode login >/dev/null
+          echo "Deleted $PROBE -- write access confirmed"
+
+      - name: Summary
+        if: always()
+        run: |
+          {
+            echo "### Release plumbing: ${{ inputs.channel }}"
+            echo ""
+            echo "- OIDC login: ${{ job.status }}"
+            echo "- Account: \`${AZ_STORAGE_ACCOUNT:-unresolved}\`"
+            echo "- Write probe: ${{ inputs.write_probe && 'run' || 'skipped' }}"
+          } >> "$GITHUB_STEP_SUMMARY"

@@ -1,0 +1,258 @@
+name: Release - macOS dev channel
+
+# PHASE B of the Azure Pipelines -> GitHub Actions release migration.
+# GitHub counterpart of azure-pipelines/dev-channel.yml.
+#
+# This lane produces a signed, notarized, stapled build against the DEV
+# certificate and publishes it to the dev appcast, so it exercises the whole
+# Apple path (see .github/actions/apple-signing) without touching what real
+# users install.
+#
+# Gate before trusting it, per the migration spec: `codesign -dvvv` and
+# `spctl -a -vvv` on a GitHub-built .app must match an Azure-built one, and the
+# notarization ticket must staple. The lane prints both, and Step 4 already
+# fails on an unstapled build.
+#
+# Controlled by the same repository variable as the Windows dev lane:
+# GH_RELEASE_LANES_ENABLED must be "true", and the Azure trigger for this lane
+# must be disabled first, or both systems publish the same channel.
+
+on:
+  push:
+    branches: [develop]
+  workflow_dispatch:
+
+concurrency:
+  group: release-macos-dev
+  cancel-in-progress: false
+
+permissions:
+  id-token: write
+  contents: read
+
+env:
+  APP_ENV: dev
+  RELEASE_CHANNEL: dev
+  BUILD_SOURCEBRANCH: ${{ github.ref }}
+  BUILD_SOURCEBRANCHNAME: ${{ github.ref_name }}
+  BUILD_BUILDID: ${{ github.run_id }}
+
+jobs:
+  build-publish:
+    name: Build, notarize, publish
+    runs-on: macos-latest
+    timeout-minutes: 120
+    if: vars.GH_RELEASE_LANES_ENABLED == 'true'
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Verify Xcode and Swift
+        run: |
+          xcodebuild -version
+          swift --version
+
+      - name: Make release scripts executable
+        run: find ops/release -type f -name "*.sh" -exec chmod +x {} +
+
+      - name: Stage .env.dev
+        env:
+          ENV_DEV_B64: ${{ secrets.ENV_DEV_B64 }}
+        run: |
+          set -euo pipefail
+          if [ -z "${ENV_DEV_B64:-}" ]; then
+            echo "::error::Secret ENV_DEV_B64 is not set."
+            exit 1
+          fi
+          printf '%s' "$ENV_DEV_B64" | base64 -d > .env.dev
+          test -s .env.dev
+          echo "Staged .env.dev"
+
+      - name: Resolve version and build number
+        env:
+          # github.run_number restarts at 1 for a new workflow file, while the
+          # Azure lane numbered dev builds with the org-wide $(Build.BuildId),
+          # which had reached 802 by 2026-08-06. Sparkle compares these numbers,
+          # so publishing a lower one means installed dev builds ignore the
+          # release. Seed chosen with headroom; the check below is the real
+          # safety net. Raise it, never lower it.
+          MACOS_DEV_BUILD_SEED: "1000"
+        run: |
+          set -euo pipefail
+
+          VERSION_LINE="$(grep '^version:' pubspec.yaml | awk '{print $2}')"
+          APP_VERSION="${VERSION_LINE%%+*}"
+          CANDIDATE=$(( GITHUB_RUN_NUMBER + MACOS_DEV_BUILD_SEED ))
+
+          # Read only the endpoint. Sourcing .env.dev would pull every token in
+          # it into this step's environment for no reason.
+          CDN="$(grep -E '^AZ_CDN_ENDPOINT=' .env.dev | tail -1 | cut -d= -f2- | tr -d '"'"'"'\r ')"
+          PUBLISHED=""
+          if [ -n "$CDN" ]; then
+            PUBLISHED="$(curl -fsS --max-time 30 "https://${CDN}/appcast.xml" 2>/dev/null \
+              | grep -o '<sparkle:version>[0-9]*' \
+              | grep -o '[0-9]*' | sort -n | tail -1 || true)"
+          fi
+
+          if [ -n "$PUBLISHED" ]; then
+            echo "Live dev appcast advertises build $PUBLISHED"
+            if [ "$CANDIDATE" -le "$PUBLISHED" ]; then
+              echo "::error::Computed build number $CANDIDATE is not greater than the published $PUBLISHED. Sparkle would treat this release as older and installed dev builds would never update. Raise MACOS_DEV_BUILD_SEED above $(( PUBLISHED - GITHUB_RUN_NUMBER )) in this workflow."
+              exit 1
+            fi
+          else
+            echo "::warning::Could not read the live appcast; skipping the monotonicity check."
+          fi
+
+          echo "Resolved dev version: ${APP_VERSION}+${CANDIDATE}"
+          {
+            echo "APP_VERSION=$APP_VERSION"
+            echo "BUILD_NUMBER=$CANDIDATE"
+            echo "BUILD_NUMBER_OVERRIDE=$CANDIDATE"
+          } >> "$GITHUB_ENV"
+
+      - name: Azure login (OIDC)
+        uses: azure/login@v2
+        with:
+          client-id: ${{ vars.AZURE_CLIENT_ID }}
+          tenant-id: ${{ vars.AZURE_TENANT_ID }}
+          subscription-id: ${{ vars.AZURE_SUBSCRIPTION_ID }}
+
+      - name: "Step 0: Restore dev release history"
+        run: ./ops/release/00_restore_history.sh
+
+      - name: "Step 0.5: Overwrite guard (dev version not already published)"
+        run: |
+          set -euo pipefail
+          source ./ops/release/_config.sh
+
+          EXPECTED_BLOB="${AZ_BINARIES_FOLDER}/${FINAL_DMG_NAME}"
+          echo "Checking Azure blob: ${EXPECTED_BLOB}"
+
+          EXISTS="$(
+            az storage blob exists \
+              --account-name "$AZ_STORAGE_ACCOUNT" \
+              --container-name "$AZ_CONTAINER" \
+              --name "$EXPECTED_BLOB" \
+              --auth-mode login \
+              --query exists -o tsv | tr '[:upper:]' '[:lower:]' | tr -d '\r\n '
+          )"
+
+          if [ "$EXISTS" = "true" ]; then
+            echo "::error::Dev channel version already exists at ${EXPECTED_BLOB}"
+            exit 1
+          fi
+          echo "Version does not exist yet. Proceeding."
+
+      - name: Set up Flutter
+        uses: subosito/flutter-action@v2
+        with:
+          flutter-version: 3.41.1
+          channel: stable
+
+      - name: Install Sparkle tools
+        run: brew install --cask sparkle
+
+      - name: Install create-dmg
+        run: |
+          if command -v create-dmg >/dev/null 2>&1; then
+            echo "create-dmg already installed"
+          else
+            brew install create-dmg
+          fi
+
+      - name: Install Apple signing material
+        id: signing
+        uses: ./.github/actions/apple-signing
+        with:
+          certificate-p12-base64: ${{ secrets.APPLE_CERT_P12_B64 }}
+          certificate-password: ${{ secrets.APPLE_CERT_PASSWORD }}
+          provisioning-profile-base64: ${{ secrets.APPLE_PROFILE_DEV_B64 }}
+
+      - name: Stage notary and Sparkle keys
+        env:
+          APPLE_NOTARY_KEY_B64: ${{ secrets.APPLE_NOTARY_KEY_B64 }}
+          SPARKLE_KEY_B64: ${{ secrets.SPARKLE_KEY_B64 }}
+        run: |
+          set -euo pipefail
+          printf '%s' "$APPLE_NOTARY_KEY_B64" | base64 -d > "$RUNNER_TEMP/AuthKey.p8"
+          printf '%s' "$SPARKLE_KEY_B64"      | base64 -d > "$RUNNER_TEMP/SparkleKey"
+          chmod 600 "$RUNNER_TEMP/AuthKey.p8" "$RUNNER_TEMP/SparkleKey"
+          test -s "$RUNNER_TEMP/AuthKey.p8" || { echo "::error::APPLE_NOTARY_KEY_B64 decoded empty"; exit 1; }
+          test -s "$RUNNER_TEMP/SparkleKey" || { echo "::error::SPARKLE_KEY_B64 decoded empty"; exit 1; }
+          {
+            echo "NOTARY_KEY_PATH=$RUNNER_TEMP/AuthKey.p8"
+            echo "SPARKLE_KEY_PATH=$RUNNER_TEMP/SparkleKey"
+          } >> "$GITHUB_ENV"
+
+      - name: "Step 1: Build and archive"
+        run: ./ops/release/01_build.sh
+
+      - name: "Step 2: Create DMG"
+        run: ./ops/release/02_create_dmg.sh
+
+      - name: "Step 3: Notarize"
+        run: ./ops/release/03_notarize.sh
+
+      - name: "Step 4: Staple and verify"
+        run: ./ops/release/04_finish.sh
+
+      - name: Signing evidence
+        run: |
+          # The Phase B acceptance gate: this output must match an Azure-built
+          # app. codesign does not fail on a wrong identity, so comparing here
+          # is the only way to catch a build signed by the wrong team.
+          set +e
+          APP="build/macos/Build/Products/Release/Clingfy.app"
+          [ -d "$APP" ] || APP="$(find build/macos -maxdepth 6 -name '*.app' -type d | head -1)"
+          echo "Inspecting: $APP"
+          codesign -dvvv "$APP" 2>&1
+          echo "---"
+          spctl -a -vvv -t exec "$APP" 2>&1
+          echo "---"
+          xcrun stapler validate "$APP" 2>&1
+
+      - name: Re-authenticate to Azure before publishing
+        # The GitHub OIDC client assertion is valid for FIVE MINUTES. The ARM
+        # token cached by the first login lasts about an hour, but `az storage
+        # --auth-mode login` needs a token for a different resource, which means
+        # a fresh assertion exchange -- and by now the original is long dead.
+        # It fails as AADSTS700024 and reads exactly like a permissions problem.
+        # azure/login mints a new assertion on each invocation.
+        uses: azure/login@v2
+        with:
+          client-id: ${{ vars.AZURE_CLIENT_ID }}
+          tenant-id: ${{ vars.AZURE_TENANT_ID }}
+          subscription-id: ${{ vars.AZURE_SUBSCRIPTION_ID }}
+
+      - name: "Step 5: Publish dev release"
+        run: ./ops/release/05_publish_azure.sh
+
+      - name: Upload dist artifact
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: Clingfy-Dev-Release
+          path: dist
+          if-no-files-found: warn
+
+      - name: Notify Telegram (success)
+        if: success()
+        run: ./ops/release/notify_telegram.sh success
+
+      - name: Notify Telegram (failure)
+        if: failure()
+        run: ./ops/release/notify_telegram.sh failure
+
+      - name: Delete signing keychain
+        if: always()
+        run: |
+          # The runner is ephemeral, but an unlocked keychain holding a Developer
+          # ID private key should not outlive the steps that need it.
+          if [ -n "${CLINGFY_SIGNING_KEYCHAIN:-}" ] && [ -f "$CLINGFY_SIGNING_KEYCHAIN" ]; then
+            security delete-keychain "$CLINGFY_SIGNING_KEYCHAIN" || true
+            echo "Deleted $CLINGFY_SIGNING_KEYCHAIN"
+          fi
+          rm -f "$RUNNER_TEMP/AuthKey.p8" "$RUNNER_TEMP/SparkleKey" || true
