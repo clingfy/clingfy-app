@@ -13,6 +13,7 @@
 #include <vector>
 
 #include "Capture/Camera/camera_bubble_painter.h"
+#include "Capture/Camera/camera_export_layout.h"
 
 // Phase 9.6 — composites `camera/raw.mov` into the post-record inline preview as
 // the SAME styled bubble the export draws (shared CameraBubblePainter → WYSIWYG).
@@ -61,12 +62,22 @@ struct PreviewCameraComposition {
   std::uint32_t border_argb = 0;
   int shadow_preset = 0;
   // Phase 9.7 chroma key, mirrored into the inline preview for WYSIWYG with the
-  // export. (Intro/outro animations are NOT previewed — the player has no export
-  // timeline; they are an export-only effect.)
+  // export.
   bool chroma_enabled = false;
   double chroma_strength = 0.4;
   bool has_chroma_color = false;
   std::uint32_t chroma_argb = 0;
+  // Phase 9.7 intro/outro animations, also previewed (macOS parity: its inline
+  // preview runs CameraAnimationTimelineBuilder.resolvePresentation too). The
+  // player DOES have a timeline — the engine already carries the edited
+  // position + edited duration to the draw call, which is the clock the export
+  // animates on. Empty preset / 0 ms parse to "no animation", matching the
+  // export request parser; see camera_composition_args.h for why these must not
+  // default to the CameraEditorSeed values.
+  std::string intro_preset;
+  std::string outro_preset;
+  int intro_duration_ms = 0;
+  int outro_duration_ms = 0;
 };
 
 class PreviewCameraRenderer {
@@ -88,7 +99,18 @@ class PreviewCameraRenderer {
                          std::int64_t playback_us);
 
   // INSIDE BeginDraw: draw the styled bubble for the frame advanced to above.
-  void Draw(ID2D1DeviceContext* ctx);
+  //
+  // `frame_ms` / `total_duration_ms` drive the intro/outro animation and are
+  // EDITED-timeline values, NOT the source `playback_us` handed to
+  // PrepareAndAdvance. That split is deliberate and mirrors the export, which
+  // advances the camera VIDEO on source time while running the animation clock
+  // on edited time (export_pipeline.cpp, "camera_clock_ms"): on a trimmed
+  // project the source origin may never be reached in the edited preview, so a
+  // source-keyed intro would fire somewhere the user never sees. A
+  // total_duration_ms <= 0 (duration not resolved yet) resolves to a static
+  // bubble rather than an error.
+  void Draw(ID2D1DeviceContext* ctx, std::int64_t frame_ms,
+            std::int64_t total_duration_ms);
 
  private:
   PreviewCameraRenderer() = default;
@@ -116,6 +138,19 @@ class PreviewCameraRenderer {
   UINT prepared_canvas_w_ = 0;
   UINT prepared_canvas_h_ = 0;
   bool composition_visible_ = false;  // snapshot used by Draw
+
+  // Animation context, resolved alongside the painter rebuild and consumed by
+  // Draw — the same state CameraExportRenderer::Prepare caches. It must be
+  // recomputed in the rebuild branch rather than once at construction: the
+  // bubble rect and the slide edge both depend on the live placement, so
+  // dragging the bubble from the right edge to the left would otherwise keep
+  // sliding it out the right.
+  clingfy::capture::CameraAnimationParams anim_params_;
+  clingfy::capture::CameraBubbleRect bubble_;
+  double canvas_w_ = 0.0;
+  double canvas_h_ = 0.0;
+  clingfy::capture::CameraSlideEdge slide_edge_ =
+      clingfy::capture::CameraSlideEdge::kRight;
 
   // Decode cursor (frame-server thread only). A pending sample buffer (like the
   // export renderer) parks a peeked future frame so normal forward playback

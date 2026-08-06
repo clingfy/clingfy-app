@@ -14,6 +14,7 @@
 #include <thread>
 #include <utility>
 
+#include "Bridge/Routers/camera_composition_args.h"
 #include "Bridge/Routers/clip_args.h"
 #include "Bridge/Routers/color_grade_args.h"
 #include "Bridge/export_progress_publisher.h"
@@ -556,41 +557,12 @@ void HandleProcessVideo(
   // previewSetCameraPlacement. Stale-session calls are dropped engine-side.
   if (const auto* args =
           std::get_if<flutter::EncodableMap>(call.arguments())) {
-    clingfy::preview::PreviewCameraComposition c;
-    c.visible = ReadBool(*args, "cameraVisible", false);
-    c.layout_preset = ReadString(*args, "cameraLayoutPreset");
-    c.size_factor = ReadDouble(*args, "cameraSizeFactor", 0.18);
-    c.shape = ReadString(*args, "cameraShape");
-    c.corner_radius = ReadDouble(*args, "cameraCornerRadius", 0.0);
-    c.content_mode = ReadString(*args, "cameraContentMode");
-    c.mirror = ReadBool(*args, "cameraMirror", false);
-    c.opacity = ReadDouble(*args, "cameraOpacity", 1.0);
-    c.border_width = ReadDouble(*args, "cameraBorderWidth", 0.0);
-    if (const auto argb = ReadOptionalInt(*args, "cameraBorderColorArgb")) {
-      c.has_border_color = true;
-      c.border_argb = static_cast<std::uint32_t>(*argb);
-    }
-    c.shadow_preset =
-        static_cast<int>(ReadDouble(*args, "cameraShadowPreset", 0.0));
-    // Phase 9.7 chroma key — kept in sync with preview_router's
-    // ReadCameraComposition so a chroma edit (which arrives via processVideo)
-    // shows in the inline preview, WYSIWYG with the export.
-    c.chroma_enabled = ReadBool(*args, "cameraChromaKeyEnabled", false);
-    c.chroma_strength = ReadDouble(*args, "cameraChromaKeyStrength", 0.4);
-    if (const auto argb = ReadOptionalInt(*args, "cameraChromaKeyColorArgb")) {
-      c.has_chroma_color = true;
-      c.chroma_argb = static_cast<std::uint32_t>(*argb);
-    }
-    if (const auto it =
-            args->find(flutter::EncodableValue("cameraNormalizedCenter"));
-        it != args->end()) {
-      if (const auto* center =
-              std::get_if<flutter::EncodableMap>(&it->second)) {
-        c.has_center = true;
-        c.center_x = ReadDouble(*center, "x", 0.0);
-        c.center_y = ReadDouble(*center, "y", 0.0);
-      }
-    }
+    // ONE parser, shared with previewSetCameraPlacement. This used to be a
+    // hand-duplicated copy of preview_router's block; the drift hid a
+    // missing-chroma bug once and left intro/outro unparsed on both preview
+    // paths, and no test can see a field added to only one copy.
+    clingfy::preview::PreviewCameraComposition c =
+        clingfy::bridge::ReadCameraComposition(*args);
     clingfy::preview::PreviewEngine::Instance()->SetCameraComposition(
         ReadString(*args, "sessionId"), c);
     // Editing port (audio, step 4-7d): seed the preview audio mix — Dart

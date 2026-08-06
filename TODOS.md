@@ -40,15 +40,17 @@ Deferred work captured during reviews. Each item has enough context to pick up c
 
 ## Windows — bridge routers
 
-### Camera-composition arg-parsing dedupe (shared Bridge/Routers helper)
-- **What:** Extract the duplicated camera-composition parsing (`preview_router.cpp` `ReadCameraComposition` + `export_router.cpp` `HandleProcessVideo`) into one shared `Bridge/Routers` helper, following the `color_grade_args` pattern.
-- **Why:** The duplication already hid a missing-chroma bug once (caught in the 9.7 review). Two parsers for one wire shape will drift again.
-- **Context:** Deferred in the 2026-07-03 eng review of the color-grade port (editing step 2). PR-2a introduces `Bridge/Routers/color_grade_args.{h,cpp}` — one parser used by both routers — which is exactly the shape the camera parsing should adopt. Deferred because touching two hot routers for zero user-visible change would widen an already-full color slice.
-- **Pros:** Kills the parser-drift bug class for camera args; makes the routers smaller.
-- **Cons:** Pure refactor — no user-visible change; needs careful diffing of the two existing parsers (they may have drifted already, which is the point).
-- **Start at:** `windows/runner/Bridge/Routers/preview_router.cpp` (`ReadCameraComposition`), `windows/runner/Bridge/Routers/export_router.cpp` (`HandleProcessVideo` camera block); model on `Bridge/Routers/color_grade_args.{h,cpp}` once PR-2a lands.
-- **Depends on:** PR-2a (color_grade_args establishes the pattern).
-- **Effort:** human ~2h / CC ~15min.
+### ~~Camera-composition arg-parsing dedupe (shared Bridge/Routers helper)~~ — DONE
+- Landed with the intro/outro preview slice as
+  `Bridge/Routers/camera_composition_args.{h,cpp}`, following the
+  `color_grade_args` pattern. Both `preview_router`
+  (previewSetCameraPlacement) and `export_router` (processVideo) now call
+  `clingfy::bridge::ReadCameraComposition`.
+- The prediction in this entry was correct twice over: after the
+  missing-chroma bug, the two parsers had drifted AGAIN — neither read the four
+  `cameraIntroPreset` / `cameraOutroPreset` / `cameraIntroDurationMs` /
+  `cameraOutroDurationMs` keys, so the inline preview never animated while the
+  export did. Covered by `camera_composition_args_test.cpp`.
 
 ### Log files lose their beginning while the app is still running
 

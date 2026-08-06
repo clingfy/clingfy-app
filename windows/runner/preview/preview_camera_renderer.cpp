@@ -222,6 +222,23 @@ void PreviewCameraRenderer::PrepareAndAdvance(ID2D1DeviceContext* ctx,
       painter_ready_ = painter_.Prepare(factory1.Get(), ctx, bubble, comp.shape,
                                         comp.corner_radius, comp.content_mode,
                                         style, cam_w_, cam_h_);
+      // Cache the animation context for Draw, the way
+      // CameraExportRenderer::Prepare does. The slide edge is derived from the
+      // COMPUTED bubble rect (already D2D y-DOWN, because
+      // ComputeCameraBubbleRect flips a manual y-UP center) — never from
+      // comp.center_y, which would double-flip and slide the bubble out of the
+      // wrong edge.
+      anim_params_.intro =
+          clingfy::capture::ParseCameraIntroKind(comp.intro_preset);
+      anim_params_.outro =
+          clingfy::capture::ParseCameraOutroKind(comp.outro_preset);
+      anim_params_.intro_duration_ms = comp.intro_duration_ms;
+      anim_params_.outro_duration_ms = comp.outro_duration_ms;
+      bubble_ = bubble;
+      canvas_w_ = static_cast<double>(canvas_w);
+      canvas_h_ = static_cast<double>(canvas_h);
+      slide_edge_ = clingfy::capture::ResolveCameraSlideEdge(
+          comp.layout_preset, comp.has_center, bubble_, canvas_w_, canvas_h_);
     }
     prepared_canvas_w_ = canvas_w;
     prepared_canvas_h_ = canvas_h;
@@ -248,11 +265,28 @@ void PreviewCameraRenderer::PrepareAndAdvance(ID2D1DeviceContext* ctx,
   PullForward(camera_hns);
 }
 
-void PreviewCameraRenderer::Draw(ID2D1DeviceContext* ctx) {
+void PreviewCameraRenderer::Draw(ID2D1DeviceContext* ctx,
+                                 std::int64_t frame_ms,
+                                 std::int64_t total_duration_ms) {
   if (!composition_visible_ || !painter_ready_ || !has_held_frame_) {
     return;
   }
-  painter_.Draw(ctx, frame_bitmap_.Get());
+  // Same nine lines as CameraExportRenderer::Draw, on the same shared painter.
+  // ResolveCameraAnimation returns identity when no preset is set or the
+  // duration is not known yet, and the painter's Draw falls through to the
+  // byte-identical static path on an identity Frame — so an un-animated preview
+  // renders exactly as before.
+  const clingfy::capture::CameraAnimationOutput a =
+      clingfy::capture::ResolveCameraAnimation(anim_params_, frame_ms,
+                                               total_duration_ms, bubble_,
+                                               canvas_w_, canvas_h_,
+                                               slide_edge_);
+  clingfy::capture::CameraBubblePainter::Frame frame;
+  frame.opacity_mul = a.opacity;
+  frame.scale = a.scale;
+  frame.translate_x = a.translate_x;
+  frame.translate_y = a.translate_y;
+  painter_.Draw(ctx, frame_bitmap_.Get(), frame);
 }
 
 }  // namespace clingfy::preview

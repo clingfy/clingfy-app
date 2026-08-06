@@ -93,6 +93,7 @@ add_library(runner_bridge STATIC
   "Bridge/Routers/misc_router.cpp"
   "Bridge/Routers/permissions_router.cpp"
   "Bridge/Routers/pre_recording_bar_router.cpp"
+  "Bridge/Routers/camera_composition_args.cpp"
   "Bridge/Routers/clip_args.cpp"
   "Bridge/Routers/color_grade_args.cpp"
   "Bridge/Routers/preview_router.cpp"

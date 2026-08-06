@@ -412,7 +412,11 @@ Every code slice is a merged PR with native tests, smoked on a real Windows box
   read `camera/raw.mov`, align it via `startOffsetMs`
   (camera time = screen `tMs` − `startOffsetMs`, both clocks pause-aware), and
   draw through the shared `CameraBubblePainter` — so the preview is WYSIWYG
-  with the export (chroma included; intro/outro are export-only by design).
+  with the export (chroma AND intro/outro animations included). The animation
+  clock is the EDITED position + edited duration the engine already carries to
+  the draw call, not the source `playback_us` used to advance the camera video
+  frame — the same two-clock split the export makes, so a trimmed project
+  animates at the same instant on both sides.
 - **In-app preview is the Windows default; floating is opt-in.**
   `SetWindowDisplayAffinity(WDA_EXCLUDEFROMCAPTURE)` can report success while
   the window is never composited on some hybrid-GPU machines (undetectable in
@@ -451,7 +455,8 @@ On a real Windows box, record a clip with the camera enabled, then verify:
 - [ ] Chroma key makes the keyed color transparent (camera pixels only — border
       and shadow are never keyed).
 - [ ] Intro/outro animations (fade/pop/slide in; fade/shrink/slide out) play and
-      the outro completes at the end of the clip.
+      the outro completes at the end of the clip — in the inline preview AND in
+      the export, at the same instant on a trimmed project.
 - [ ] A recording with no camera (or camera disabled) previews and exports
       cleanly with no bubble.
 
@@ -474,10 +479,14 @@ On a real Windows box, record a clip with the camera enabled, then verify:
 - **Floating-preview parity is limited by WDA/GPU behavior.** On machines where
   capture-exclusion silently fails to composite, floating mode is unavailable
   by design (the gate refuses to show a window that would burn in).
-- **Camera-composition arg parsing is duplicated** in
-  `preview_router ReadCameraComposition` and `export_router HandleProcessVideo`
-  (the duplication hid a missing-chroma bug in 9.7 review). Optional cleanup:
-  dedupe into one shared helper.
+- **Camera-composition arg parsing is now a single shared parser**,
+  `Bridge/Routers/camera_composition_args.{h,cpp}`, used by both
+  `preview_router` (previewSetCameraPlacement) and `export_router`
+  (processVideo). It was duplicated until the intro/outro preview slice: the
+  drift hid a missing-chroma bug in the 9.7 review and then left the four
+  animation keys unparsed on BOTH preview paths. `bridge_contract_coverage_test`
+  checks method names only and cannot catch a field read on one path, which is
+  why one parser is the fix rather than a test.
 - **Zoom-emphasis "pulse" animation not ported** — it is gated on live zoom
   events and the camera sits outside the zoom transform on Windows.
 

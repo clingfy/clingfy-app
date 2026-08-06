@@ -50,6 +50,7 @@ add_executable(runner_tests
   "argv_project_path_test.cpp"
   "camera_bubble_border_pixel_test.cpp"
   "camera_bubble_shape_geometry_test.cpp"
+  "camera_composition_args_test.cpp"
   "camera_dcomp_device_loss_test.cpp"
   "camera_export_layout_test.cpp"
   "camera_format_test.cpp"
