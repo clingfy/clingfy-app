@@ -143,6 +143,14 @@ const CursorEvent* FindNearestClick(
 // Zoom smoother
 // ---------------------------------------------------------------------
 
+double ResolveTargetZoom(bool effect_enabled, bool zoom_wanted,
+                         double configured_factor) {
+  if (!effect_enabled || !zoom_wanted) {
+    return 1.0;
+  }
+  return std::clamp(configured_factor, kZoomFactorMin, kZoomFactorMax);
+}
+
 void StepZoomSmoother(ZoomState& z, double now_seconds) {
   if (z.last_update_seconds < 0.0) {
     z.last_update_seconds = now_seconds;
@@ -393,7 +401,12 @@ void PreviewCompositor::ComposeFrame(
                (now_us - zoom.last_click_ts_us) < hold_us) {
       zoom_wanted = true;
     }
-    zoom.target_zoom = zoom_wanted ? kZoomFactorDefault : 1.0;
+    // The user's zoom magnitude, not the hardcoded default — and no zoom at
+    // all when the effect is off, which is what the export has always done.
+    const double factor =
+        std::clamp(zoom.zoom_factor, kZoomFactorMin, kZoomFactorMax);
+    zoom.target_zoom =
+        ResolveTargetZoom(zoom.effect_enabled, zoom_wanted, zoom.zoom_factor);
     StepZoomSmoother(zoom, now_seconds);
 
     zoom_for_draw = static_cast<float>(zoom.current_zoom);
@@ -402,7 +415,11 @@ void PreviewCompositor::ComposeFrame(
         dest_rect);
     cursor_back_x = cursor_bb.x;
     cursor_back_y = cursor_bb.y;
-    const double span = kZoomFactorDefault - 1.0;
+    // Halo alpha ramps with how far into the CONFIGURED zoom we are, so a
+    // gentle 1.2x zoom still reaches full highlight at its own peak instead of
+    // topping out at 40% of it. A factor of exactly 1.0 leaves span 0 and the
+    // halo off, which is the right answer for "zoom disabled".
+    const double span = factor - 1.0;
     const double t = span > 0 ? (zoom.current_zoom - 1.0) / span : 0.0;
     highlight_alpha = static_cast<float>(std::clamp(t, 0.0, 1.0));
   }

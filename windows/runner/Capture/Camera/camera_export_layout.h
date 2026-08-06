@@ -26,7 +26,12 @@ inline constexpr double kCameraBubbleMinSidePx = 96.0;
 
 // Compute the bubble rect on a `canvas_w` x `canvas_h` output.
 //   has_center / center_x / center_y — the manual normalized center (0..1) when
-//     the user dragged the bubble; ignored when has_center is false.
+//     the user dragged the bubble; ignored when has_center is false. `center_y`
+//     is y-UP (0 = canvas BOTTOM): that is the `cameraNormalizedCenter` wire
+//     contract shared with Dart (which stores `1 - dy`) and macOS (which
+//     consumes it as a bottom-up CGRect), so it is flipped into Direct2D's
+//     y-DOWN space here. The preset centers below are already y-DOWN and are
+//     not flipped.
 //   layout_preset — the CameraLayoutPreset enum name (e.g. "overlayBottomRight");
 //     used only when has_center is false. Unknown / full-canvas presets fall back
 //     to the bottom-right corner for 9.4 (side-by-side / stacked are deferred).
@@ -75,10 +80,22 @@ int SelectHeldCameraFrameIndex(std::int64_t camera_ms,
 
 // --- Phase 9.7 camera intro/outro animations --------------------------------
 //
-// Parity with macOS `CameraAnimationTimelineBuilder`. The zoom-emphasis "pulse"
-// preset is intentionally NOT ported here: it is gated on live smart-zoom events
-// and the Windows camera deliberately sits OUTSIDE the smart-zoom transform, so
-// there is no zoom-local time to drive it.
+// Parity with macOS `CameraAnimationTimelineBuilder`.
+//
+// The zoom-emphasis "pulse" preset is still NOT ported. Read the reason
+// carefully, because the older wording here invited the wrong fix: the camera
+// sitting OUTSIDE the smart-zoom transform is correct and deliberate — macOS
+// keeps its camera outside the zoom transform too, and a bubble that magnified
+// and panned with the screen would be wrong. Do not "fix" that. The screen zoom
+// reaches the camera as a scalar instead (ResolveCameraZoomScale above), which
+// is how scale-with-zoom ships.
+//
+// What the pulse actually lacks is a zoom-LOCAL clock: it needs the time since
+// the active zoom SEGMENT began. The export is close to having one
+// (ZoomExportController already resolves the active segment and its start_ms);
+// the preview has no segment concept at all, so porting the pulse means
+// converging the preview's zoom activation with the export's. Tracked in
+// TODOS.md under "Windows — preview/export parity".
 
 // Intro presets. fade/pop/slide all ramp opacity 0→1 over introDurationMs; only
 // `pop` additionally scales 0.90→1.0 (easeOutCubic) and only `slide` translates
@@ -107,17 +124,57 @@ CameraSlideEdge ResolveCameraSlideEdge(const std::string& layout_preset,
                                        const CameraBubbleRect& bubble,
                                        double canvas_w, double canvas_h);
 
+// --- Camera scale-with-screen-zoom -------------------------------------------
+//
+// Parity with macOS `CameraTransformTimelineBuilder.resolvedScale`. When the
+// user picks the `scaleWithScreenZoom` behaviour the bubble grows with the
+// smart zoom, taking `multiplier` of the zoom's excess: at screen zoom 2.0 and
+// the default multiplier 0.35 the bubble renders 1.35x.
+//
+// This does NOT put the camera inside the screen-zoom transform, and must not:
+// a bubble that magnifies AND pans with the screen would be wrong, and macOS
+// keeps its camera outside the zoom transform too (the bubble is a sibling of
+// the zoomed layer, never a child). The zoom reaches the camera only as this
+// scalar; everything else about the bubble stays in canvas space.
+//
+//   zoom_behavior — the CameraZoomBehavior enum name. Anything other than
+//     "scaleWithScreenZoom" (including empty / unknown) means a fixed bubble.
+//   multiplier — 0..1 fraction of the zoom excess the bubble adopts; clamped.
+//   screen_zoom — the SMOOTHED per-frame zoom, floored at 1.0 so a zoom-out
+//     never shrinks the bubble.
+//   layout_preset — "backgroundBehind" opts out entirely (macOS parity: a
+//     full-canvas camera has no meaningful "grow with the zoom").
+// Returns a multiplier >= 1.0. Pure + unit-tested.
+//
+// FIDELITY NOTE: Windows applies the result as a render transform, so the
+// border stroke and the pre-baked shadow bitmap scale WITH it, where macOS
+// re-renders both at the new frame size. At the default 0.35 multiplier
+// (1.175x at a 2x zoom) this is not visible; at multiplier 1.0 with a 3x zoom
+// the border reads thicker and the upscaled shadow softer than macOS would
+// draw them.
+double ResolveCameraZoomScale(const std::string& zoom_behavior,
+                              double multiplier, double screen_zoom,
+                              const std::string& layout_preset);
+
 struct CameraAnimationParams {
   CameraIntroKind intro = CameraIntroKind::kNone;
   CameraOutroKind outro = CameraOutroKind::kNone;
   int intro_duration_ms = 0;
   int outro_duration_ms = 0;
+  // Composed scale from ResolveCameraZoomScale for THIS frame (1.0 = fixed).
+  // Lives here rather than as a separate argument because it multiplies into
+  // the same scale the intro/outro presets produce, exactly as macOS composes
+  // `additionalScale = introScale * outroScale * pulseScale` on top of the
+  // zoom-scaled frame.
+  double zoom_scale = 1.0;
 };
 
-// Whether any intro/outro effect is active (lets the renderer skip the animated
-// draw path entirely and stay byte-identical to the static bubble).
+// Whether anything at all perturbs the resting bubble this frame — an
+// intro/outro preset, or a live zoom scale. Lets the renderer skip the animated
+// draw path entirely and stay byte-identical to the static bubble.
 inline bool CameraHasPresentationEffects(const CameraAnimationParams& p) {
-  return p.intro != CameraIntroKind::kNone || p.outro != CameraOutroKind::kNone;
+  return p.intro != CameraIntroKind::kNone ||
+         p.outro != CameraOutroKind::kNone || p.zoom_scale != 1.0;
 }
 
 // Per-frame presentation result. `opacity` multiplies the styled-bubble alpha;
@@ -135,6 +192,13 @@ struct CameraAnimationOutput {
 // resting (static) bubble rect; `edge` is the resolved slide edge. Mirrors macOS
 // `CameraAnimationTimelineBuilder.resolve` (opacity ramps, pop/shrink scale,
 // slide translation). Pure + unit-tested.
+//
+// ORDER MATTERS, and it is the macOS order: the zoom scale and the intro/outro
+// scale compose into one uniform scale about the bubble centre, the SCALED rect
+// is then nudged back inside the canvas, and only then is the slide translation
+// added. Clamping after the slide instead would drag a slide-out bubble back
+// on-screen and silently break the outro. Keeping the clamp here (rather than
+// in the painter) is also why the painter can stay a dumb transform.
 CameraAnimationOutput ResolveCameraAnimation(const CameraAnimationParams& params,
                                              std::int64_t frame_ms,
                                              std::int64_t total_duration_ms,

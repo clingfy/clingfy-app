@@ -1,0 +1,124 @@
+name: Release - Windows production
+
+# PHASE C of the Azure Pipelines -> GitHub Actions release migration.
+# GitHub counterpart of azure-pipelines/windows-release-prod.yml.
+#
+# Manual dispatch from a release/* branch only, behind the `production`
+# environment's required reviewer. Ships UNSIGNED (decision D3): 03_sign.ps1
+# skips with a loud warning when no WIN_SIGN_* material is present, so users see
+# a SmartScreen "unknown publisher" prompt until a certificate is wired.
+#
+# Unlike the dev channel, the build number here comes from pubspec (`X.Y.Z+N`),
+# never from a CI run number: prod installers are named by version alone, and
+# the pubspec build number feeds FILEVERSION, which is 16-bit.
+
+on:
+  workflow_dispatch:
+
+concurrency:
+  group: release-windows-prod
+  cancel-in-progress: false
+
+permissions:
+  id-token: write
+  contents: read
+
+env:
+  APP_ENV: prod
+  RELEASE_CHANNEL: prod
+  BUILD_SOURCEBRANCH: ${{ github.ref }}
+  BUILD_SOURCEBRANCHNAME: ${{ github.ref_name }}
+  BUILD_BUILDID: ${{ github.run_id }}
+
+jobs:
+  build-publish:
+    name: Build, test, package (unsigned), publish, smoke
+    runs-on: windows-latest
+    timeout-minutes: 120
+    if: startsWith(github.ref, 'refs/heads/release/')
+    environment: production
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Stage .env.prod
+        shell: bash
+        env:
+          ENV_PROD_B64: ${{ secrets.ENV_PROD_B64 }}
+        run: |
+          set -euo pipefail
+          if [ -z "${ENV_PROD_B64:-}" ]; then
+            echo "::error::Secret ENV_PROD_B64 is not set on the production environment."
+            exit 1
+          fi
+          printf '%s' "$ENV_PROD_B64" | base64 -d > .env.prod
+          test -s .env.prod
+          echo "Staged .env.prod"
+
+      - name: Set up Flutter
+        uses: subosito/flutter-action@v2
+        with:
+          flutter-version: 3.41.1
+          channel: stable
+
+      - name: Install Inno Setup
+        shell: pwsh
+        run: |
+          # 6.5+ prints a "Non-commercial use only" notice on unlicensed
+          # installs. Pre-existing licensing question, flagged in
+          # ops/release/windows/RUNBOOK.md, not created by this migration.
+          choco install innosetup -y --no-progress
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+
+      - name: Version guard (branch <-> pubspec)
+        shell: pwsh
+        run: |
+          pwsh -NoProfile -File ops/release/windows/00_version_guard.ps1 -Channel prod
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+
+      - name: Build + test + package (unsigned prod)
+        shell: pwsh
+        run: |
+          # -RunTests gates the production release on `flutter analyze lib` plus
+          # the native ctest suite. Without it the lane that cuts what users
+          # install runs no tests at all, while the dev channel and CI both do --
+          # "smoke" only proves the feed serves the bytes, not that they work.
+          pwsh -NoProfile -File ops/release/windows/workflows/local_release.ps1 -Channel prod -Clean -RunTests
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+
+      - name: Azure login (OIDC)
+        uses: azure/login@v2
+        with:
+          client-id: ${{ vars.AZURE_CLIENT_ID }}
+          tenant-id: ${{ vars.AZURE_TENANT_ID }}
+          subscription-id: ${{ vars.AZURE_SUBSCRIPTION_ID }}
+
+      - name: Publish to prod blob + smoke
+        shell: pwsh
+        run: |
+          pwsh -NoProfile -File ops/release/windows/04_publish_azure.ps1 -Channel prod
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          pwsh -NoProfile -File ops/release/windows/05_smoke.ps1 -Channel prod
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+
+      - name: Install sentry-cli
+        shell: pwsh
+        run: |
+          npm install -g @sentry/cli
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+
+      - name: Upload Sentry symbols (non-blocking)
+        continue-on-error: true
+        shell: pwsh
+        run: |
+          pwsh -NoProfile -File ops/release/windows/upload_symbols.ps1 -EnvFile ".env.prod"
+
+      - name: Upload prod installer artifact
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: Clingfy-Windows-Prod
+          path: dist/windows/installer
+          if-no-files-found: warn

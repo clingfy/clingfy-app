@@ -1522,8 +1522,14 @@ void PreviewEngine::ComposeAndHandoffLocked(Impl* impl,
                                 impl->cursor_events, playback_us,
                                 NowSeconds(), impl->zoom);
   // Camera bubble draws on top of the composited screen frame, in canvas space.
+  // The intro/outro clock is the EDITED position + edited duration, not
+  // `playback_us` (source time, used above to advance the camera VIDEO frame).
+  // The export splits the two the same way — see "camera_clock_ms" in
+  // export_pipeline.cpp — because on a trimmed project the source origin may sit
+  // inside a cut, so a source-keyed intro would fire where the user never looks.
   if (impl->camera_renderer) {
-    impl->camera_renderer->Draw(impl->d2d_context.Get());
+    impl->camera_renderer->Draw(impl->d2d_context.Get(), emit_pos_ms,
+                                emit_dur_ms, impl->zoom.current_zoom);
   }
   const HRESULT end_hr = impl->d2d_context->EndDraw();
   impl->timing_render.EndFrame();
@@ -2663,6 +2669,31 @@ void PreviewEngine::SetCameraComposition(
     // AFTER releasing mutex_, matching the snapshot-then-release discipline of
     // SeekTo/Pause.
     impl_->camera_renderer->SetComposition(composition);
+  }
+  RepaintPausedPreview();
+}
+
+void PreviewEngine::SetZoomSettings(const std::string& session_id,
+                                    double factor, bool effect_enabled) {
+  Impl* impl = nullptr;
+  {
+    std::lock_guard<std::mutex> lock(mutex_);
+    // Same stale-session discipline as SetColorGrade.
+    if (!session_id.empty() && session_id != active_session_id_) {
+      return;
+    }
+    if (impl_ == nullptr) {
+      return;
+    }
+    impl = impl_.get();
+  }
+  {
+    // The frame thread takes render_mutex -> mutex_ (never the reverse), so
+    // publish under render_mutex ALONE, after mutex_ is released above —
+    // the SetCanvasComposition discipline.
+    std::lock_guard<std::mutex> render_lock(impl->render_mutex);
+    impl->zoom.zoom_factor = factor;
+    impl->zoom.effect_enabled = effect_enabled;
   }
   RepaintPausedPreview();
 }

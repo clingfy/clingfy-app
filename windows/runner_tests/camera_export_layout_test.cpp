@@ -22,6 +22,31 @@ TEST(CameraExportLayoutTest, ManualCenterPlacesSquareBubble) {
   EXPECT_NEAR(r.y, kH / 2.0 - side / 2.0, 0.001);
 }
 
+TEST(CameraExportLayoutTest, ManualCenterYIsBottomUp) {
+  // `cameraNormalizedCenter` is y-UP: Dart stores `1 - dy` and macOS consumes
+  // it as a bottom-up CGRect, so a HIGH y means the TOP of the canvas. Every
+  // pre-existing manual-center case here used a vertically symmetric center
+  // (0.5 / clamped corners), which is exactly how a mirrored placement went
+  // unnoticed — so assert the direction explicitly.
+  const double side = kH * 0.18;
+  const auto high = ComputeCameraBubbleRect(kW, kH, true, 0.5, 0.9, "", 0.18);
+  const auto low = ComputeCameraBubbleRect(kW, kH, true, 0.5, 0.1, "", 0.18);
+  EXPECT_NEAR(high.y, 0.1 * kH - side / 2.0, 0.001);
+  EXPECT_NEAR(low.y, 0.9 * kH - side / 2.0, 0.001);
+  EXPECT_LT(high.y, low.y);  // y-UP 0.9 sits ABOVE y-UP 0.1
+}
+
+TEST(CameraExportLayoutTest, PresetCentersAreNotFlipped) {
+  // Presets are authored in y-DOWN space, so they must bypass the flip: a
+  // top-left preset stays visually at the top.
+  const auto tl =
+      ComputeCameraBubbleRect(kW, kH, false, 0, 0, "overlayTopLeft", 0.18);
+  const auto bl =
+      ComputeCameraBubbleRect(kW, kH, false, 0, 0, "overlayBottomLeft", 0.18);
+  EXPECT_LT(tl.y, kH / 2.0);
+  EXPECT_GT(bl.y, kH / 2.0);
+}
+
 TEST(CameraExportLayoutTest, SizeFactorClampedToRange) {
   // Use a large canvas so the 0.08 floor stays well above the 96px min-side
   // floor (tested separately) and the factor clamp is what we observe.
@@ -182,6 +207,99 @@ CameraAnimationOutput Resolve(const CameraAnimationParams& p, std::int64_t t,
 }
 }  // namespace
 
+// --- preview vs export geometry parity --------------------------------------
+//
+// The inline preview composites into a texture capped near 1280x720 while the
+// export renders at the user's resolution, so the two agree PROPORTIONALLY, not
+// pixel for pixel. These assert the proportional contract and, just as
+// importantly, PIN the two places it legitimately breaks — a parity test that
+// quietly absorbed those with a fat epsilon would be worse than none.
+
+namespace {
+constexpr double kPreviewW = 1280.0;
+constexpr double kPreviewH = 720.0;
+constexpr double kExportW = 3840.0;
+constexpr double kExportH = 2160.0;
+}  // namespace
+
+TEST(CameraParityTest, BubbleGeometryIsProportionalAcrossCanvasSizes) {
+  // Same composition, two canvases: the bubble's normalized centre and its size
+  // as a fraction of the short edge must match. This is the property that makes
+  // the shared painter produce a WYSIWYG bubble on both surfaces.
+  const auto preview = ComputeCameraBubbleRect(kPreviewW, kPreviewH, false, 0, 0,
+                                               "overlayBottomRight", 0.25);
+  const auto exported = ComputeCameraBubbleRect(kExportW, kExportH, false, 0, 0,
+                                                "overlayBottomRight", 0.25);
+  EXPECT_NEAR((preview.x + preview.width / 2.0) / kPreviewW,
+              (exported.x + exported.width / 2.0) / kExportW, 0.0001);
+  EXPECT_NEAR((preview.y + preview.height / 2.0) / kPreviewH,
+              (exported.y + exported.height / 2.0) / kExportH, 0.0001);
+  EXPECT_NEAR(preview.width / kPreviewH, exported.width / kExportH, 0.0001);
+}
+
+TEST(CameraParityTest, ManualPlacementIsProportionalAcrossCanvasSizes) {
+  // Same check for a dragged bubble, including the y-UP flip — a one-sided
+  // flip would show up here as a mismatched normalized centre.
+  const auto preview =
+      ComputeCameraBubbleRect(kPreviewW, kPreviewH, true, 0.3, 0.8, "", 0.2);
+  const auto exported =
+      ComputeCameraBubbleRect(kExportW, kExportH, true, 0.3, 0.8, "", 0.2);
+  EXPECT_NEAR((preview.x + preview.width / 2.0) / kPreviewW,
+              (exported.x + exported.width / 2.0) / kExportW, 0.0001);
+  EXPECT_NEAR((preview.y + preview.height / 2.0) / kPreviewH,
+              (exported.y + exported.height / 2.0) / kExportH, 0.0001);
+}
+
+TEST(CameraParityTest, TheMinSideFloorIsAKnownNonProportionalDivergence) {
+  // kCameraBubbleMinSidePx is ABSOLUTE, so at a small size factor the preview's
+  // bubble is proportionally larger than the export's. Pinned rather than
+  // hidden: 0.08 * 720 = 57.6px floors to 96 on the preview, while
+  // 0.08 * 2160 = 172.8px is comfortably above it on the export.
+  const auto preview =
+      ComputeCameraBubbleRect(kPreviewW, kPreviewH, false, 0, 0, "", 0.08);
+  const auto exported =
+      ComputeCameraBubbleRect(kExportW, kExportH, false, 0, 0, "", 0.08);
+  EXPECT_NEAR(preview.width, kCameraBubbleMinSidePx, 0.001);
+  EXPECT_NEAR(exported.width, kExportH * 0.08, 0.001);
+  // The divergence is real: the preview bubble is proportionally BIGGER.
+  EXPECT_GT(preview.width / kPreviewH, exported.width / kExportH);
+}
+
+TEST(CameraParityTest, AnimationOutputIsCanvasIndependentExceptTheSlide) {
+  // Opacity and scale are pure functions of time and durations, so they must be
+  // identical on both canvases. The slide translation and the zoom clamp are
+  // canvas-proportional by design, which is why the parity assertion normalizes
+  // them rather than comparing raw pixels.
+  CameraAnimationParams p =
+      MakeParams(CameraIntroKind::kPop, CameraOutroKind::kFade);
+  const auto small = ResolveCameraAnimation(
+      p, 100, 1000,
+      ComputeCameraBubbleRect(kPreviewW, kPreviewH, false, 0, 0, "", 0.25),
+      kPreviewW, kPreviewH, CameraSlideEdge::kRight);
+  const auto big = ResolveCameraAnimation(
+      p, 100, 1000,
+      ComputeCameraBubbleRect(kExportW, kExportH, false, 0, 0, "", 0.25),
+      kExportW, kExportH, CameraSlideEdge::kRight);
+  EXPECT_NEAR(small.opacity, big.opacity, 0.0001);
+  EXPECT_NEAR(small.scale, big.scale, 0.0001);
+}
+
+TEST(CameraParityTest, SlideTranslationIsProportionalAcrossCanvasSizes) {
+  CameraAnimationParams p =
+      MakeParams(CameraIntroKind::kSlide, CameraOutroKind::kNone);
+  // Mid-intro, so the slide offset is partially applied on both.
+  const auto small = ResolveCameraAnimation(
+      p, 100, 1000,
+      ComputeCameraBubbleRect(kPreviewW, kPreviewH, false, 0, 0, "", 0.25),
+      kPreviewW, kPreviewH, CameraSlideEdge::kRight);
+  const auto big = ResolveCameraAnimation(
+      p, 100, 1000,
+      ComputeCameraBubbleRect(kExportW, kExportH, false, 0, 0, "", 0.25),
+      kExportW, kExportH, CameraSlideEdge::kRight);
+  EXPECT_NEAR(small.translate_x / kPreviewW, big.translate_x / kExportW, 0.001);
+}
+
+
 TEST(CameraIntroKindTest, ParsesKnownNamesAndSoftFails) {
   EXPECT_EQ(ParseCameraIntroKind("fade"), CameraIntroKind::kFade);
   EXPECT_EQ(ParseCameraIntroKind("pop"), CameraIntroKind::kPop);
@@ -331,4 +449,126 @@ TEST(CameraAnimationTest, FrameTimeIsClampedToClip) {
 }
 
 }  // namespace
+
+// --- scale with screen zoom -------------------------------------------------
+
+TEST(ResolveCameraZoomScale, GrowsWithTheZoomExcessTimesTheMultiplier) {
+  // macOS CameraTransformTimelineBuilder.resolvedScale: the bubble adopts
+  // `multiplier` of the zoom's excess. Default 0.35 at a 2.0x screen zoom.
+  EXPECT_NEAR(
+      ResolveCameraZoomScale("scaleWithScreenZoom", 0.35, 2.0, "overlayBottomRight"),
+      1.35, 0.0001);
+  EXPECT_NEAR(
+      ResolveCameraZoomScale("scaleWithScreenZoom", 1.0, 2.0, "overlayBottomRight"),
+      2.0, 0.0001);
+  EXPECT_NEAR(
+      ResolveCameraZoomScale("scaleWithScreenZoom", 0.0, 3.0, "overlayBottomRight"),
+      1.0, 0.0001);  // multiplier 0 == fixed
+}
+
+TEST(ResolveCameraZoomScale, FixedAndUnknownBehavioursDoNotScale) {
+  EXPECT_DOUBLE_EQ(ResolveCameraZoomScale("fixed", 1.0, 3.0, "overlayTopLeft"), 1.0);
+  EXPECT_DOUBLE_EQ(ResolveCameraZoomScale("", 1.0, 3.0, "overlayTopLeft"), 1.0);
+  // A future behaviour name this binary predates must not silently scale.
+  EXPECT_DOUBLE_EQ(
+      ResolveCameraZoomScale("orbitTheCursor", 1.0, 3.0, "overlayTopLeft"), 1.0);
+}
+
+TEST(ResolveCameraZoomScale, BackgroundBehindOptsOut) {
+  // A full-canvas camera has no meaningful "grow with the zoom" (macOS guards
+  // the same preset).
+  EXPECT_DOUBLE_EQ(
+      ResolveCameraZoomScale("scaleWithScreenZoom", 1.0, 3.0, "backgroundBehind"),
+      1.0);
+}
+
+TEST(ResolveCameraZoomScale, NeverShrinksBelowTheAuthoredSize) {
+  // A zoom-out, or a smoother undershoot, must not shrink the bubble.
+  EXPECT_DOUBLE_EQ(
+      ResolveCameraZoomScale("scaleWithScreenZoom", 1.0, 0.5, "overlayTopLeft"),
+      1.0);
+  EXPECT_DOUBLE_EQ(
+      ResolveCameraZoomScale("scaleWithScreenZoom", 1.0, 1.0, "overlayTopLeft"),
+      1.0);
+  // Out-of-range multipliers clamp rather than inverting the effect.
+  EXPECT_NEAR(
+      ResolveCameraZoomScale("scaleWithScreenZoom", -2.0, 3.0, "overlayTopLeft"),
+      1.0, 0.0001);
+  EXPECT_NEAR(
+      ResolveCameraZoomScale("scaleWithScreenZoom", 9.0, 3.0, "overlayTopLeft"),
+      3.0, 0.0001);
+}
+
+TEST(CameraAnimationTest, ZoomScaleAppliesWithNoIntroOrOutro) {
+  // The zoom scale is not gated on a preset or on a known duration: a clip
+  // whose duration has not resolved yet still scales with the zoom rather than
+  // popping to its resting size.
+  CameraAnimationParams p;
+  p.zoom_scale = 1.4;
+  const auto out = ResolveCameraAnimation(p, 0, 0, kBubble, kCanvasW, kCanvasH,
+                                          CameraSlideEdge::kRight);
+  EXPECT_NEAR(out.scale, 1.4, 0.0001);
+  EXPECT_DOUBLE_EQ(out.opacity, 1.0);
+}
+
+TEST(CameraAnimationTest, ZoomScaleComposesWithThePopIntro) {
+  // Both are uniform scales about the same centre, so they multiply — macOS
+  // composes additionalScale on top of the zoom-scaled frame the same way.
+  CameraAnimationParams p = MakeParams(CameraIntroKind::kPop,
+                                       CameraOutroKind::kNone);
+  p.zoom_scale = 1.5;
+  // t=0 → pop scale is exactly 0.90.
+  const auto out = Resolve(p, 0);
+  EXPECT_NEAR(out.scale, 1.5 * 0.90, 0.0001);
+}
+
+TEST(CameraAnimationTest, AnIdentityZoomLeavesTheStaticBubbleUntouched) {
+  // The un-zoomed, un-animated case must stay exactly identity so the painter
+  // keeps taking its byte-identical fast path.
+  CameraAnimationParams p;
+  p.zoom_scale = 1.0;
+  const auto out = Resolve(p, 500);
+  EXPECT_DOUBLE_EQ(out.scale, 1.0);
+  EXPECT_DOUBLE_EQ(out.opacity, 1.0);
+  EXPECT_DOUBLE_EQ(out.translate_x, 0.0);
+  EXPECT_DOUBLE_EQ(out.translate_y, 0.0);
+}
+
+TEST(CameraAnimationTest, ScalingUpNudgesACornerBubbleBackOnCanvas) {
+  // kBubble is centred at x=1700 on a 1920-wide canvas. At 2x it still fits
+  // (half-width 200, right edge 1900), so nothing should move. At 3x the half
+  // -width is 300 and the right edge would reach 2000, so the centre must be
+  // pulled back to 1620 — a translate of -80.
+  CameraAnimationParams fits;
+  fits.zoom_scale = 2.0;
+  EXPECT_DOUBLE_EQ(ResolveCameraAnimation(fits, 0, 0, kBubble, kCanvasW,
+                                          kCanvasH, CameraSlideEdge::kRight)
+                       .translate_x,
+                   0.0);
+
+  CameraAnimationParams spills;
+  spills.zoom_scale = 3.0;
+  const auto out = ResolveCameraAnimation(spills, 0, 0, kBubble, kCanvasW,
+                                          kCanvasH, CameraSlideEdge::kRight);
+  const double cx = kBubble.x + kBubble.width / 2.0;
+  const double half = (kBubble.width * 3.0) / 2.0;
+  EXPECT_NEAR(cx + out.translate_x, kCanvasW - half, 0.001);
+  EXPECT_NEAR(out.translate_x, -80.0, 0.001);  // pulled LEFT, back inside
+}
+
+TEST(CameraAnimationTest, TheClampDoesNotCancelTheSlideOutro) {
+  // THE trap this ordering exists to avoid: clamping AFTER the slide would drag
+  // a slide-out bubble back on-screen and silently kill the outro. The clamp
+  // offset and the slide offset must simply ADD, so the bubble still travels
+  // its full distance off-canvas even while the zoom clamp is pulling it in.
+  CameraAnimationParams p =
+      MakeParams(CameraIntroKind::kNone, CameraOutroKind::kSlide);
+  const auto plain = Resolve(p, kTotalMs, CameraSlideEdge::kRight);
+  EXPECT_GT(plain.translate_x, 0.0);  // the outro travels right, off-canvas
+
+  p.zoom_scale = 3.0;  // the same 3x that clamps the resting centre by -80
+  const auto zoomed = Resolve(p, kTotalMs, CameraSlideEdge::kRight);
+  EXPECT_NEAR(zoomed.translate_x, plain.translate_x - 80.0, 0.001);
+}
+
 }  // namespace clingfy::capture

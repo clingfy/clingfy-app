@@ -82,17 +82,61 @@ which are the only recorded numbers for this defect.
   under a 709 tag. Re-exporting an old project still looks desaturated. Expected,
   and recorded in the CHANGELOG.
 
+## Windows — preview/export parity
+
+### Camera border width and shadow blur are raw pixels on both surfaces (preview reads ~3x heavier)
+
+- **What:** `CameraBubblePainter` uses `border_width` and the shadow blur/offset as ABSOLUTE pixels, unscaled by canvas. The inline preview composites into a texture capped near 1280x720 while the export renders at the user's resolution, so a 4px border reads roughly 3x thicker relative to the preview than to a 4K export, and the shadow likewise.
+- **Why it is not a parity-test failure:** it is a genuine, known non-proportional term, so `CameraParityTest` deliberately excludes it rather than absorbing it in an epsilon. Recording it here so the exclusion is a decision rather than a blind spot.
+- **Same class as the canvas ~3x bug already fixed** by expressing canvas padding/radius as fractions of the short side (`Core/canvas_composition.h`). The camera never got that treatment.
+- **Start at:** `windows/runner/Capture/Camera/camera_bubble_painter.cpp` (`border_width_px_`, and `ResolveCameraShadowStyle`'s 10/16/22px blur constants). Decide whether the wire value stays absolute px and the painter scales it by `canvas_short_edge / reference`, or the wire value becomes a fraction (a wire change, so check macOS first).
+- **Effort:** human ~3h / CC ~30min plus an on-device look, since "does the border read right" is not unit-testable.
+
+### Camera render-plan extraction (make derivation parity structural, not just tested)
+
+- **What:** Both surfaces independently derive the same five things from their parsed composition — bubble rect, painter `Style`, `CameraAnimationParams`, slide edge, and the shape/radius/content-mode passed to `painter_.Prepare`. The derivations are currently line-for-line equivalent (audited field by field), but that equivalence is maintained by hand in two files.
+- **Proposed seam:** `BuildCameraRenderPlan(spec, canvas_w, canvas_h) -> CameraRenderPlan` plus a per-frame `ResolveCameraFrame(plan, clock_ms, total_ms, screen_zoom)`, in a D2D-free header. Each surface collapses to one call. It is a pure refactor — the moved lines call identical functions with identical arguments in identical order.
+- **Why it is NOT done yet:** the parse side was the surface that actually drifted (twice), and that is now unified with a mapper plus a guard test. The derivation side has never drifted, so this is hardening rather than a fix, and it is wide: it touches export_router, export_passthrough, export_pipeline, camera_export_renderer, preview_camera_renderer and their tests. Worth doing as its own commit so a regression bisects cleanly.
+- **One real snag to fix while doing it:** the preview assigns its cached animation state INSIDE the `factory1 != nullptr && frame_bitmap_ != nullptr` guard, so a one-time bitmap-creation failure leaves `zoom_behavior_` / `layout_preset_` / `slide_edge_` stale. Harmless today because `painter_ready_` stays false, but the pure plan build should be hoisted out of that guard.
+- **Note `CameraBubblePainter::Style` lives in a header that pulls in `d2d1_1.h`** — move it down into `camera_export_layout.h` with a painter-side alias, or the "pure" plan drags D2D into every test translation unit.
+- **Effort:** human ~1 day / CC ~1h.
+
+### Camera zoom emphasis (the pulse) is not ported — deferred, with the reason
+
+- **What:** `cameraZoomEmphasisPreset` (`none` / `pulse`) + `cameraZoomEmphasisStrength`. The editor controls exist and round-trip to disk on Windows; nothing renders them. macOS ships it. Scale-with-zoom, the other half of what used to be one features.md row, IS ported — these are separate features and the row is now split.
+- **What it actually is, which the name hides:** not a one-shot bump on the zoom edge. macOS runs `1 + strength*0.5*(1 - cos(2π · 2Hz · localTime))` for the WHOLE time a zoom segment is active — a continuous 2 Hz throb, amplitude `strength` (clamped 0…0.20), starting at exactly 1.0 and snapping back to 1.0 when the segment ends. Roughly three full cycles across a typical segment. Default is OFF (`none`).
+- **Why it is deferred: it is a zoom-subsystem job, not a camera job.** The pulse needs a zoom-local clock — `(isActive, localTime since this segment started)`. On the EXPORT that is nearly free: `ZoomExportController::Advance` already locates the active `ResolvedSegment` and that struct carries `start_ms`, so it is ~6 lines onto `ZoomExportController::Frame`. On the PREVIEW there is no onset at any distance: the preview zoom is a different algorithm entirely — click-hold with a hardcoded activation window, no segments, no hysteresis, no gap-merge, no minimum-segment rule. Shipping the pulse means building real segments in the preview and reconciling them with its own activation rule.
+- **The cheap shortcut is actively wrong.** Deriving the preview's local time from `zoom.last_click_ts_us` looks obvious and produces a visible defect: the export's segment starts ~200 ms after the click (hysteresis), and at 2 Hz a 200 ms offset is ~144° of phase — the editor would show the bubble growing at the exact timestamp where the export shows it shrinking. Worse than not shipping it.
+- **Two more decisions with no macOS answer to copy:** (1) `zf.active` on Windows means "smoothed zoom > 1+eps", which stays true through the whole ease-out tail after the segment's `end_ms` — a literal port either cuts the throb dead mid-cycle at a hard scale discontinuity, or throbs with no owning segment. (2) Zoom segments are SOURCE-keyed while the camera animation clock is EDITED-keyed, so a cut landing inside a zoom segment makes the pulse phase jump. macOS's segment model differs enough that neither has a copyable answer.
+- **The composition is already correct for it.** `CameraAnimationParams::zoom_scale` and the intro/outro scale already compose multiplicatively about the same bubble centre, and the canvas clamp runs before the slide translation — a pulse scale would drop into the same product with no restructuring. That part is done.
+- **Start at:** `windows/runner/Capture/Zoom/zoom_export_controller.{h,cpp}` (add `segment_active` / `segment_start_ms` to `Frame`), then the preview's segment problem at `windows/runner/preview/preview_compositor.cpp` (the click-hold block) — note `getZoomSegments` proves segments CAN be built from the cursor sidecar the preview already loads, and `previewSetZoomSegments` is a registered no-op.
+- **Effort:** human ~1 week / CC ~1 day, nearly all of it the preview zoom convergence, plus on-device phase comparison that CI cannot do.
+
+
+
+### Camera intro/outro may run on a different time base in the preview vs the export (UNTRIMMED clips only)
+
+- **What:** On a clip with no cuts, the preview and the export derive the animation clock from different sources, so a fade-in / slide-out could start and finish at slightly different absolute times on each side. Trimmed projects are NOT affected — both sides use the edited position and edited duration there, which is the case the animation port was built and reasoned about.
+- **The specific divergence.** Export rebases to the first decoded video frame: `frame_ms = (timestamp - first_video_hns) / 10000` and `camera_total_ms = (duration_hns - first_video_hns) / 10000` (`windows/runner/Capture/Export/export_pipeline.cpp:1097-1103`, `:1385-1394`). The preview uses the MediaPlayer's own clock: `CurrentPlaybackUs()` and `PlaybackSession().NaturalDuration()` (`windows/runner/preview/preview_engine.cpp:1434-1446`). Those agree only when the container's PTS base is zero.
+- **Why the export bothers to rebase**, per its own comment: raw `MF_PD_DURATION` keeps the container's PTS base, and an unrebased duration pushes the outro window past the last reachable `frame_ms`, so the outro never completes. That is the failure this rebasing exists to prevent — which is the reason to suspect the un-rebased preview side rather than the export.
+- **Not observed, only derived.** Found by reading both clocks while wiring the preview animation (PR #419); no recording has been measured. Our own screen recordings may well have a zero PTS base, in which case the two agree today and this is latent rather than live. Do not "fix" it before measuring.
+- **How to settle it:** open a real untrimmed recording, log `first_video_hns` from the export path and `NaturalDuration` / position from the preview path for the same file, and compare. Zero base and equal durations → close this as a non-issue and record that. Non-zero → rebase the preview clock the same way the export does, which keeps one definition of "clip time" instead of two.
+- **Start at:** `windows/runner/preview/preview_engine.cpp:1434-1446` (where `emit_pos_ms` / `emit_dur_ms` are produced on the MediaPlayer path) and `windows/runner/Capture/Export/export_pipeline.cpp:1385-1394` (the rebasing it should match).
+- **Effort:** human ~2h / CC ~30min, most of it the measurement.
+
 ## Windows — bridge routers
 
-### Camera-composition arg-parsing dedupe (shared Bridge/Routers helper)
-- **What:** Extract the duplicated camera-composition parsing (`preview_router.cpp` `ReadCameraComposition` + `export_router.cpp` `HandleProcessVideo`) into one shared `Bridge/Routers` helper, following the `color_grade_args` pattern.
-- **Why:** The duplication already hid a missing-chroma bug once (caught in the 9.7 review). Two parsers for one wire shape will drift again.
-- **Context:** Deferred in the 2026-07-03 eng review of the color-grade port (editing step 2). PR-2a introduces `Bridge/Routers/color_grade_args.{h,cpp}` — one parser used by both routers — which is exactly the shape the camera parsing should adopt. Deferred because touching two hot routers for zero user-visible change would widen an already-full color slice.
-- **Pros:** Kills the parser-drift bug class for camera args; makes the routers smaller.
-- **Cons:** Pure refactor — no user-visible change; needs careful diffing of the two existing parsers (they may have drifted already, which is the point).
-- **Start at:** `windows/runner/Bridge/Routers/preview_router.cpp` (`ReadCameraComposition`), `windows/runner/Bridge/Routers/export_router.cpp` (`HandleProcessVideo` camera block); model on `Bridge/Routers/color_grade_args.{h,cpp}` once PR-2a lands.
-- **Depends on:** PR-2a (color_grade_args establishes the pattern).
-- **Effort:** human ~2h / CC ~15min.
+### ~~Camera-composition arg-parsing dedupe (shared Bridge/Routers helper)~~ — DONE
+- Landed with the intro/outro preview slice as
+  `Bridge/Routers/camera_composition_args.{h,cpp}`, following the
+  `color_grade_args` pattern. Both `preview_router`
+  (previewSetCameraPlacement) and `export_router` (processVideo) now call
+  `clingfy::bridge::ReadCameraComposition`.
+- The prediction in this entry was correct twice over: after the
+  missing-chroma bug, the two parsers had drifted AGAIN — neither read the four
+  `cameraIntroPreset` / `cameraOutroPreset` / `cameraIntroDurationMs` /
+  `cameraOutroDurationMs` keys, so the inline preview never animated while the
+  export did. Covered by `camera_composition_args_test.cpp`.
 
 ### Log files lose their beginning while the app is still running
 

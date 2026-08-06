@@ -7,6 +7,7 @@
 #include <sstream>
 #include <string>
 
+#include "Bridge/Routers/camera_composition_args.h"
 #include "Bridge/Routers/clip_args.h"
 #include "Bridge/Routers/color_grade_args.h"
 #include "Bridge/native_error_codes.h"
@@ -157,45 +158,6 @@ std::optional<std::string> ReadFileUtf8(const std::wstring& path) {
   return ss.str();
 }
 
-// Build the live preview camera composition from a Dart `camera*` arg map (the
-// keys CameraCompositionState.toMap() emits, shared by processVideo +
-// previewSetCameraPlacement). Same shape the export router parses.
-clingfy::preview::PreviewCameraComposition ReadCameraComposition(
-    const flutter::EncodableMap& args) {
-  clingfy::preview::PreviewCameraComposition c;
-  c.visible = ReadBool(args, "cameraVisible", false);
-  c.layout_preset = ReadString(args, "cameraLayoutPreset");
-  c.size_factor = ReadDouble(args, "cameraSizeFactor", 0.18);
-  c.shape = ReadString(args, "cameraShape");
-  c.corner_radius = ReadDouble(args, "cameraCornerRadius", 0.0);
-  c.content_mode = ReadString(args, "cameraContentMode");
-  c.mirror = ReadBool(args, "cameraMirror", false);
-  c.opacity = ReadDouble(args, "cameraOpacity", 1.0);
-  c.border_width = ReadDouble(args, "cameraBorderWidth", 0.0);
-  if (const auto argb = ReadOptionalInt(args, "cameraBorderColorArgb")) {
-    c.has_border_color = true;
-    c.border_argb = static_cast<std::uint32_t>(*argb);
-  }
-  c.shadow_preset =
-      static_cast<int>(ReadDouble(args, "cameraShadowPreset", 0.0));
-  // Phase 9.7 chroma key (previewed for WYSIWYG with the export).
-  c.chroma_enabled = ReadBool(args, "cameraChromaKeyEnabled", false);
-  c.chroma_strength = ReadDouble(args, "cameraChromaKeyStrength", 0.4);
-  if (const auto argb = ReadOptionalInt(args, "cameraChromaKeyColorArgb")) {
-    c.has_chroma_color = true;
-    c.chroma_argb = static_cast<std::uint32_t>(*argb);
-  }
-  if (const auto it = args.find(flutter::EncodableValue("cameraNormalizedCenter"));
-      it != args.end()) {
-    if (const auto* center = std::get_if<flutter::EncodableMap>(&it->second)) {
-      c.has_center = true;
-      c.center_x = ReadDouble(*center, "x", 0.0);
-      c.center_y = ReadDouble(*center, "y", 0.0);
-    }
-  }
-  return c;
-}
-
 // ---------------------------------------------------------------------
 // getRecordingSceneInfo — Step 5.2 of the Phase 5 implementation plan.
 //
@@ -225,8 +187,10 @@ flutter::EncodableMap BuildCameraExportCapabilities() {
   //   * 9.7 → chromaKey ✅
   // Phase 9.4 composites the camera as a masked circle / rounded-rect / square
   // bubble; Phase 9.5 adds mirror, opacity, a stroked border, and a blurred drop
-  // shadow; Phase 9.7 adds a Direct2D chroma key (and export-only intro/outro
-  // animations, which are not gated by this map). So shapeMask + cornerRadius +
+  // shadow; Phase 9.7 adds a Direct2D chroma key (and intro/outro animations,
+  // which the preview also runs but which are not gated by this map, since they
+  // are a timeline effect rather than a per-bubble capability). So shapeMask +
+  // cornerRadius +
   // border + shadow + chromaKey are all true. (mirror / opacity are always-on
   // transforms, not gated by this map.) (Camera *device selection* readiness is a
   // separate concern, surfaced via getVideoSources / setVideoSource + the
@@ -727,7 +691,7 @@ void HandlePreviewSetCameraPlacement(
           std::get_if<flutter::EncodableMap>(call.arguments())) {
     const std::string session_id = ReadString(*args, "sessionId");
     PreviewEngine::Instance()->SetCameraComposition(
-        session_id, ReadCameraComposition(*args));
+        session_id, clingfy::bridge::ReadCameraComposition(*args));
   }
   reply::Null(*result);
 }

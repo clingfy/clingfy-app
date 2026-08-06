@@ -58,8 +58,9 @@ Status legend: ✅ shipped · 🚧 partial / with caveats · — not available y
 | Border, shadow, opacity, mirror, fit/fill | Full bubble styling. | ✅ | 🚧 |
 | Glow highlight | Attention glow with strength control. | ✅ | 🚧 |
 | Chroma key | Green/blue-screen removal with key color + strength. | ✅ | ✅ |
-| Intro / outro animations | Fade, pop, slide in; fade, shrink, slide out. | ✅ | 🚧 (export-only) |
-| Zoom emphasis + scale-with-zoom | Camera reacts to zoom segments. | ✅ | — |
+| Intro / outro animations | Fade, pop, slide in; fade, shrink, slide out. | ✅ | ✅ |
+| Scale with zoom | Camera bubble grows with the screen zoom. | ✅ | ✅ |
+| Zoom emphasis (pulse) | Camera throbs while a zoom segment is active. | ✅ | — |
 
 ## Cursor & zoom
 

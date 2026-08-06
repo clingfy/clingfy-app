@@ -1,0 +1,200 @@
+name: Release - Windows dev channel
+
+# PHASE A of the Azure Pipelines -> GitHub Actions release migration.
+# GitHub counterpart of azure-pipelines/windows-dev-channel.yml.
+#
+# No Apple signing anywhere in this lane, which is why it migrates first: it
+# isolates the one genuinely hard problem, the build number.
+#
+# ── THE SWITCH ───────────────────────────────────────────────────────────────
+# This lane does nothing until the repository variable GH_RELEASE_LANES_ENABLED
+# is set to "true". Until then every push skips the job.
+#
+# That is deliberate. The Azure lane still fires on the same pushes, and two
+# lanes publishing the same channel concurrently is the one failure this
+# migration can cause on its own. Cut over in this order:
+#
+#   1. Run "Release plumbing check" for dev, with write_probe on. Green?
+#   2. Comment out the `trigger:` block in azure-pipelines/windows-dev-channel.yml
+#      (or disable that pipeline in the ADO UI).
+#   3. Set GH_RELEASE_LANES_ENABLED=true.
+#   4. Push to develop and confirm a tester box still sees the update.
+#
+# Reverting is the same three steps backwards. Nothing here deletes the Azure
+# lane; that is Phase D.
+
+on:
+  push:
+    branches: [develop]
+    # Same path scoping as the Azure lane: a macOS-only, docs-only or
+    # workflow-only commit must not spin a Windows agent and republish.
+    paths:
+      - "windows/**"
+      - "lib/**"
+      - "assets/**"
+      - "pubspec.yaml"
+      - "pubspec.lock"
+      - "l10n.yaml"
+      - "ops/release/windows/**"
+      - ".github/workflows/release-windows-dev.yml"
+  workflow_dispatch:
+
+concurrency:
+  # Never cancel in flight: a cancelled run can leave the feed advertising an
+  # installer that was only half uploaded.
+  group: release-windows-dev
+  cancel-in-progress: false
+
+permissions:
+  id-token: write
+  contents: read
+
+env:
+  APP_ENV: dev
+  RELEASE_CHANNEL: dev
+  # Azure Pipelines predefined variables the release scripts read directly.
+  # ops/release/lib/context.sh already falls back to CI for is_ci(), which
+  # GitHub sets, so TF_BUILD is not needed.
+  BUILD_SOURCEBRANCH: ${{ github.ref }}
+  BUILD_SOURCEBRANCHNAME: ${{ github.ref_name }}
+  BUILD_BUILDID: ${{ github.run_id }}
+
+jobs:
+  build-publish:
+    name: Build, package (unsigned), publish, smoke
+    runs-on: windows-latest
+    timeout-minutes: 90
+    if: vars.GH_RELEASE_LANES_ENABLED == 'true'
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Stage .env.dev
+        shell: bash
+        env:
+          ENV_DEV_B64: ${{ secrets.ENV_DEV_B64 }}
+        run: |
+          set -euo pipefail
+          if [ -z "${ENV_DEV_B64:-}" ]; then
+            echo "::error::Secret ENV_DEV_B64 is not set."
+            exit 1
+          fi
+          printf '%s' "$ENV_DEV_B64" | base64 -d > .env.dev
+          test -s .env.dev
+          echo "Staged .env.dev"
+
+      - name: Resolve build number
+        shell: pwsh
+        env:
+          # Seed for the run_number offset. github.run_number is per-workflow and
+          # starts at 1, so it must be lifted above whatever the Azure counter()
+          # last published or a tester's client would treat the new feed as older
+          # and silently stop updating -- no error, on their machine, invisible here.
+          #
+          # 200 chosen 2026-08-06, when the live dev feed advertised build 121.
+          # Raise it (never lower it) if this workflow file is ever renamed or
+          # recreated, because that resets run_number to 1. The guard below fails
+          # loudly rather than letting a stale number publish.
+          WIN_DEV_BUILD_SEED: "200"
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $seed = [int]$env:WIN_DEV_BUILD_SEED
+          $candidate = [int]$env:GITHUB_RUN_NUMBER + $seed
+
+          # 16-bit ceiling: windows/runner.rc's FILEVERSION truncates above this
+          # and ops/release/windows/_config.ps1 hard-fails. Checked before the
+          # build rather than 30 minutes into it.
+          if ($candidate -gt 65535) {
+            Write-Host "::error::Build number $candidate exceeds the 16-bit FILEVERSION ceiling (65535). The dev channel needs a fresh version line."
+            exit 1
+          }
+
+          $env:BUILD_NUMBER_OVERRIDE = "$candidate"
+
+          # Compare against what the live feed actually advertises, using the
+          # lane's own URL construction so the two can never disagree.
+          . ops/release/windows/_config.ps1
+          $ctx = Initialize-WindowsReleaseContext -Channel dev
+          Import-AzurePublishSettings $ctx
+          $feedUrl = "$(Get-WindowsDownloadBaseUrl $ctx)latest-windows.json"
+
+          $published = $null
+          try {
+            $feed = (Invoke-WebRequest -Uri $feedUrl -UseBasicParsing -TimeoutSec 30).Content | ConvertFrom-Json
+            $published = [int]$feed.build
+            Write-Host "Live dev feed advertises build $published ($($feed.versionFull))"
+          } catch {
+            Write-Host "::warning::Could not read $feedUrl ($($_.Exception.Message)). Skipping the monotonicity check -- this is expected only on the very first publish."
+          }
+
+          if ($null -ne $published -and $candidate -le $published) {
+            Write-Host "::error::Computed build number $candidate is not greater than the published $published. Installed dev builds would ignore this release. Raise WIN_DEV_BUILD_SEED above $($published - [int]$env:GITHUB_RUN_NUMBER) in .github/workflows/release-windows-dev.yml."
+            exit 1
+          }
+
+          Write-Host "Using build number $candidate (run_number $env:GITHUB_RUN_NUMBER + seed $seed)"
+          "BUILD_NUMBER_OVERRIDE=$candidate" | Out-File -FilePath $env:GITHUB_ENV -Append -Encoding utf8
+
+      - name: Set up Flutter
+        uses: subosito/flutter-action@v2
+        with:
+          flutter-version: 3.41.1
+          channel: stable
+
+      - name: Install Inno Setup
+        shell: pwsh
+        run: |
+          # Not preinstalled on windows-latest. 6.5+ prints a "Non-commercial
+          # use only" notice on unlicensed installs -- a pre-existing licensing
+          # question for the prod lane, acceptable on the dev channel.
+          choco install innosetup -y --no-progress
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+
+      - name: Build + package (unsigned dev)
+        shell: pwsh
+        run: |
+          # No -Publish: the upload runs after azure/login below so `az` has an
+          # identity, mirroring how the Azure lane split it across AzureCLI@2.
+          pwsh -NoProfile -File ops/release/windows/workflows/local_release.ps1 -Channel dev
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+
+      - name: Azure login (OIDC)
+        uses: azure/login@v2
+        with:
+          client-id: ${{ vars.AZURE_CLIENT_ID }}
+          tenant-id: ${{ vars.AZURE_TENANT_ID }}
+          subscription-id: ${{ vars.AZURE_SUBSCRIPTION_ID }}
+
+      - name: Publish to dev blob + smoke
+        shell: pwsh
+        run: |
+          pwsh -NoProfile -File ops/release/windows/04_publish_azure.ps1 -Channel dev
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          pwsh -NoProfile -File ops/release/windows/05_smoke.ps1 -Channel dev
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+
+      - name: Install sentry-cli
+        shell: pwsh
+        run: |
+          npm install -g @sentry/cli
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+
+      - name: Upload Sentry symbols (non-blocking)
+        continue-on-error: true
+        shell: pwsh
+        run: |
+          # Testers run DEV builds, so without this every beta crash report is
+          # unsymbolicated. Non-blocking on purpose -- a Sentry outage must not
+          # fail an otherwise good build -- which is exactly how the gap once
+          # went unnoticed, so the step stays loud in the log.
+          pwsh -NoProfile -File ops/release/windows/upload_symbols.ps1 -EnvFile ".env.dev"
+
+      - name: Upload dev installer artifact
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: Clingfy-Windows-Dev
+          path: dist/windows/installer
+          if-no-files-found: warn

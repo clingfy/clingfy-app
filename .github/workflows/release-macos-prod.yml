@@ -1,0 +1,273 @@
+name: Release - macOS production
+
+# PHASE C of the Azure Pipelines -> GitHub Actions release migration.
+# GitHub counterpart of azure-pipelines/release-prod.yml.
+#
+# This is the lane that ships to real users. Three independent gates stand in
+# front of it, matching the Azure lane and adding one:
+#
+#   1. Manual dispatch only. There is no push trigger, as with `trigger: none`.
+#   2. The job refuses to run unless the ref is a release/* branch, and
+#      00_version_guard.sh separately ties that branch name to pubspec's semver.
+#   3. The `production` GitHub Environment, whose required reviewer must approve
+#      the run before any step executes. This replaces nothing in the Azure lane
+#      -- it is new, and it is what keeps a public repo's release lane safe.
+#
+# Do not enable this before the dev lanes (Phases A and B) have run green
+# repeatedly and a GitHub-built app has been compared against an Azure-built one.
+
+on:
+  workflow_dispatch:
+    inputs:
+      allow_overwrite:
+        description: "Overwrite an existing published version (dangerous)"
+        type: boolean
+        default: false
+
+concurrency:
+  group: release-macos-prod
+  cancel-in-progress: false
+
+permissions:
+  id-token: write
+  contents: write   # 06_git_tag.sh pushes the release tag
+
+env:
+  APP_ENV: prod
+  RELEASE_CHANNEL: prod
+  BUILD_SOURCEBRANCH: ${{ github.ref }}
+  BUILD_SOURCEBRANCHNAME: ${{ github.ref_name }}
+  BUILD_BUILDID: ${{ github.run_id }}
+
+jobs:
+  build-sign-publish:
+    name: Build, notarize, publish, tag
+    runs-on: macos-latest
+    timeout-minutes: 150
+    # Belt and braces with 00_version_guard.sh: a manual run from develop can
+    # never publish production.
+    if: startsWith(github.ref, 'refs/heads/release/')
+    environment: production
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Verify Xcode and Swift
+        run: |
+          xcodebuild -version
+          swift --version
+
+      - name: Make release scripts executable
+        run: find ops/release -type f -name "*.sh" -exec chmod +x {} +
+
+      - name: Stage .env.prod
+        env:
+          ENV_PROD_B64: ${{ secrets.ENV_PROD_B64 }}
+        run: |
+          set -euo pipefail
+          if [ -z "${ENV_PROD_B64:-}" ]; then
+            echo "::error::Secret ENV_PROD_B64 is not set on the production environment."
+            exit 1
+          fi
+          printf '%s' "$ENV_PROD_B64" | base64 -d > .env.prod
+          test -s .env.prod
+          echo "Staged .env.prod"
+
+      - name: Resolve version and build number
+        env:
+          # Sparkle compares this number across PRODUCTION releases. The Azure
+          # lane used the org-wide $(Build.BuildId), which had reached 776 on the
+          # live prod appcast by 2026-08-06. A lower number means every installed
+          # copy ignores the update. Raise, never lower.
+          MACOS_PROD_BUILD_SEED: "1000"
+        run: |
+          set -euo pipefail
+
+          VERSION_LINE="$(grep '^version:' pubspec.yaml | awk '{print $2}')"
+          APP_VERSION="${VERSION_LINE%%+*}"
+          CANDIDATE=$(( GITHUB_RUN_NUMBER + MACOS_PROD_BUILD_SEED ))
+
+          CDN="$(grep -E '^AZ_CDN_ENDPOINT=' .env.prod | tail -1 | cut -d= -f2- | tr -d '"'"'"'\r ')"
+          PUBLISHED=""
+          if [ -n "$CDN" ]; then
+            PUBLISHED="$(curl -fsS --max-time 30 "https://${CDN}/appcast.xml" 2>/dev/null \
+              | grep -o '<sparkle:version>[0-9]*' \
+              | grep -o '[0-9]*' | sort -n | tail -1 || true)"
+          fi
+
+          if [ -n "$PUBLISHED" ]; then
+            echo "Live prod appcast advertises build $PUBLISHED"
+            if [ "$CANDIDATE" -le "$PUBLISHED" ]; then
+              echo "::error::Computed build number $CANDIDATE is not greater than the published $PUBLISHED. Every installed copy would ignore this release. Raise MACOS_PROD_BUILD_SEED above $(( PUBLISHED - GITHUB_RUN_NUMBER )) in this workflow."
+              exit 1
+            fi
+          else
+            echo "::warning::Could not read the live prod appcast; skipping the monotonicity check."
+          fi
+
+          echo "Resolved prod version: ${APP_VERSION}+${CANDIDATE}"
+          {
+            echo "APP_VERSION=$APP_VERSION"
+            echo "BUILD_NUMBER=$CANDIDATE"
+            echo "BUILD_NUMBER_OVERRIDE=$CANDIDATE"
+          } >> "$GITHUB_ENV"
+
+      - name: Azure login (OIDC)
+        uses: azure/login@v2
+        with:
+          client-id: ${{ vars.AZURE_CLIENT_ID }}
+          tenant-id: ${{ vars.AZURE_TENANT_ID }}
+          subscription-id: ${{ vars.AZURE_SUBSCRIPTION_ID }}
+
+      - name: "Step 0: Restore prod release history"
+        run: ./ops/release/00_restore_history.sh
+
+      - name: "Step 0.2: Version guard (branch <-> pubspec)"
+        run: ./ops/release/00_version_guard.sh
+
+      - name: "Step 0.5: Overwrite guard (prod version not already published)"
+        env:
+          # The Azure lane kept ALLOW_OVERWRITE in a variable group and reached
+          # back into the ADO API to reset it to false after a run, so the escape
+          # hatch could not be left switched on. A workflow_dispatch input is
+          # single-use by construction: it applies to one run and cannot persist.
+          # That reset logic is deliberately not ported.
+          ALLOW_OVERWRITE: ${{ inputs.allow_overwrite }}
+        run: |
+          set -euo pipefail
+          source ./ops/release/_config.sh
+
+          EXPECTED_BLOB="${AZ_BINARIES_FOLDER}/${FINAL_DMG_NAME}"
+          echo "Checking Azure blob: ${EXPECTED_BLOB}"
+
+          EXISTS="$(
+            az storage blob exists \
+              --account-name "$AZ_STORAGE_ACCOUNT" \
+              --container-name "$AZ_CONTAINER" \
+              --name "$EXPECTED_BLOB" \
+              --auth-mode login \
+              --query exists -o tsv | tr '[:upper:]' '[:lower:]' | tr -d '\r\n '
+          )"
+
+          if [ "$EXISTS" = "true" ]; then
+            if [ "${ALLOW_OVERWRITE:-false}" = "true" ]; then
+              echo "::warning::Version ${APP_VERSION} already exists at ${EXPECTED_BLOB}; overwriting because allow_overwrite was set for this run."
+            else
+              echo "::error::Version ${APP_VERSION} already exists at ${EXPECTED_BLOB}. Re-run with allow_overwrite if that is intended."
+              exit 1
+            fi
+          else
+            echo "Version does not exist yet. Proceeding."
+          fi
+
+      - name: Set up Flutter
+        uses: subosito/flutter-action@v2
+        with:
+          flutter-version: 3.41.1
+          channel: stable
+
+      - name: Install Sparkle tools
+        run: brew install --cask sparkle
+
+      - name: Install create-dmg
+        run: |
+          if command -v create-dmg >/dev/null 2>&1; then
+            echo "create-dmg already installed"
+          else
+            brew install create-dmg
+          fi
+
+      - name: Install Apple signing material
+        id: signing
+        uses: ./.github/actions/apple-signing
+        with:
+          certificate-p12-base64: ${{ secrets.APPLE_CERT_P12_B64 }}
+          certificate-password: ${{ secrets.APPLE_CERT_PASSWORD }}
+          provisioning-profile-base64: ${{ secrets.APPLE_PROFILE_PROD_B64 }}
+
+      - name: Stage notary and Sparkle keys
+        env:
+          APPLE_NOTARY_KEY_B64: ${{ secrets.APPLE_NOTARY_KEY_B64 }}
+          SPARKLE_KEY_B64: ${{ secrets.SPARKLE_KEY_B64 }}
+        run: |
+          set -euo pipefail
+          printf '%s' "$APPLE_NOTARY_KEY_B64" | base64 -d > "$RUNNER_TEMP/AuthKey.p8"
+          printf '%s' "$SPARKLE_KEY_B64"      | base64 -d > "$RUNNER_TEMP/SparkleKey"
+          chmod 600 "$RUNNER_TEMP/AuthKey.p8" "$RUNNER_TEMP/SparkleKey"
+          test -s "$RUNNER_TEMP/AuthKey.p8" || { echo "::error::APPLE_NOTARY_KEY_B64 decoded empty"; exit 1; }
+          test -s "$RUNNER_TEMP/SparkleKey" || { echo "::error::SPARKLE_KEY_B64 decoded empty"; exit 1; }
+          {
+            echo "NOTARY_KEY_PATH=$RUNNER_TEMP/AuthKey.p8"
+            echo "SPARKLE_KEY_PATH=$RUNNER_TEMP/SparkleKey"
+          } >> "$GITHUB_ENV"
+
+      - name: "Step 1: Build and archive"
+        run: ./ops/release/01_build.sh
+
+      - name: "Step 2: Create DMG"
+        run: ./ops/release/02_create_dmg.sh
+
+      - name: "Step 3: Notarize"
+        run: ./ops/release/03_notarize.sh
+
+      - name: "Step 4: Staple and verify"
+        run: ./ops/release/04_finish.sh
+
+      - name: Signing evidence
+        run: |
+          set +e
+          APP="build/macos/Build/Products/Release/Clingfy.app"
+          [ -d "$APP" ] || APP="$(find build/macos -maxdepth 6 -name '*.app' -type d | head -1)"
+          echo "Inspecting: $APP"
+          codesign -dvvv "$APP" 2>&1
+          echo "---"
+          spctl -a -vvv -t exec "$APP" 2>&1
+          echo "---"
+          xcrun stapler validate "$APP" 2>&1
+
+      - name: Re-authenticate to Azure before publishing
+        # See the note in release-macos-dev.yml: the OIDC client assertion lives
+        # five minutes, and by this point in a notarized build it expired long ago.
+        uses: azure/login@v2
+        with:
+          client-id: ${{ vars.AZURE_CLIENT_ID }}
+          tenant-id: ${{ vars.AZURE_TENANT_ID }}
+          subscription-id: ${{ vars.AZURE_SUBSCRIPTION_ID }}
+
+      - name: "Step 5: Publish release"
+        run: ./ops/release/05_publish_azure.sh
+
+      - name: "Step 6: Create git tag"
+        # Immediately after publish, before anything cosmetic. Step 5 is what
+        # makes the release real -- the DMG is on the CDN and the appcast serves
+        # it -- so every step between publish and tag is a window where users are
+        # offered an update the repo has no tag for. That window fired on 1.0.7
+        # when the Telegram notifier returned HTTP 400 and stopped the job.
+        run: ./ops/release/06_git_tag.sh
+
+      - name: Upload dist artifact
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: Clingfy-Release
+          path: dist
+          if-no-files-found: warn
+
+      - name: Notify Telegram (success)
+        if: success()
+        run: ./ops/release/notify_telegram.sh success
+
+      - name: Notify Telegram (failure)
+        if: failure()
+        run: ./ops/release/notify_telegram.sh failure
+
+      - name: Delete signing keychain
+        if: always()
+        run: |
+          if [ -n "${CLINGFY_SIGNING_KEYCHAIN:-}" ] && [ -f "$CLINGFY_SIGNING_KEYCHAIN" ]; then
+            security delete-keychain "$CLINGFY_SIGNING_KEYCHAIN" || true
+            echo "Deleted $CLINGFY_SIGNING_KEYCHAIN"
+          fi
+          rm -f "$RUNNER_TEMP/AuthKey.p8" "$RUNNER_TEMP/SparkleKey" || true

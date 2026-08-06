@@ -14,6 +14,7 @@
 #include <thread>
 #include <utility>
 
+#include "Bridge/Routers/camera_composition_args.h"
 #include "Bridge/Routers/clip_args.h"
 #include "Bridge/Routers/color_grade_args.h"
 #include "Bridge/export_progress_publisher.h"
@@ -411,46 +412,15 @@ void HandleExportVideo(
     // drawn also depends on the project assets + camera.meta.json, resolved in
     // ExportPassthroughCopy. Styling we don't support yet (mirror / opacity /
     // border / shadow / chroma) is accepted-but-ignored per the capabilities map.
-    input.camera_visible = ReadBool(*args, "cameraVisible", false);
-    input.camera_layout_preset = ReadString(*args, "cameraLayoutPreset");
-    input.camera_size_factor = ReadDouble(*args, "cameraSizeFactor", 0.18);
-    input.camera_shape = ReadString(*args, "cameraShape");
-    input.camera_corner_radius = ReadDouble(*args, "cameraCornerRadius", 0.0);
-    input.camera_content_mode = ReadString(*args, "cameraContentMode");
-    // Phase 9.5 styling. cameraBorderColorArgb is a nullable ARGB int (null →
-    // no border even if width > 0); the others have identity-ish defaults.
-    input.camera_mirror = ReadBool(*args, "cameraMirror", false);
-    input.camera_opacity = ReadDouble(*args, "cameraOpacity", 1.0);
-    input.camera_border_width = ReadDouble(*args, "cameraBorderWidth", 0.0);
-    input.camera_border_color_argb =
-        ReadOptionalInt(*args, "cameraBorderColorArgb");
-    input.camera_shadow_preset =
-        static_cast<int>(ReadDouble(*args, "cameraShadowPreset", 0.0));
-    // Phase 9.7 chroma key + intro/outro animation. chromaKeyColorArgb is a
-    // nullable ARGB int (null → default green); strength is the keying tolerance.
-    // The intro/outro preset strings parse natively (unknown → static bubble).
-    input.camera_chroma_enabled = ReadBool(*args, "cameraChromaKeyEnabled", false);
-    input.camera_chroma_strength =
-        ReadDouble(*args, "cameraChromaKeyStrength", 0.4);
-    input.camera_chroma_color_argb =
-        ReadOptionalInt(*args, "cameraChromaKeyColorArgb");
-    input.camera_intro_preset = ReadString(*args, "cameraIntroPreset");
-    input.camera_outro_preset = ReadString(*args, "cameraOutroPreset");
-    input.camera_intro_duration_ms =
-        static_cast<int>(ReadDouble(*args, "cameraIntroDurationMs", 0.0));
-    input.camera_outro_duration_ms =
-        static_cast<int>(ReadDouble(*args, "cameraOutroDurationMs", 0.0));
-    // cameraNormalizedCenter is a nested {x,y} map (or null when the bubble is
-    // auto-placed by preset). Present → manual placement.
-    if (const auto it = args->find(flutter::EncodableValue(
-            "cameraNormalizedCenter"));
-        it != args->end()) {
-      if (const auto* center = std::get_if<flutter::EncodableMap>(&it->second)) {
-        input.camera_has_center = true;
-        input.camera_center_x = ReadDouble(*center, "x", 0.0);
-        input.camera_center_y = ReadDouble(*center, "y", 0.0);
-      }
-    }
+    // ONE parser for all three call sites. exportVideo used to hand-parse the
+    // same 21 camera keys with its own default literals -- a third copy of the
+    // list that agreed with the shared parser only by coincidence, and that
+    // coincidence had already failed twice (missing chroma in the 9.7 review,
+    // then the four intro/outro keys reaching the export but never the
+    // preview). ApplyCameraCompositionToExport carries every field across, and
+    // a test fails if a new one is added without extending it.
+    clingfy::bridge::ApplyCameraCompositionToExport(
+        clingfy::bridge::ReadCameraComposition(*args), input);
     // Editing port: the nested `colorGrade` map and the `clips` list, each
     // parsed by the shared helper both routers use (one wire shape, one
     // parser — the camera-parsing duplication hid a bug once). Absent /
@@ -556,43 +526,23 @@ void HandleProcessVideo(
   // previewSetCameraPlacement. Stale-session calls are dropped engine-side.
   if (const auto* args =
           std::get_if<flutter::EncodableMap>(call.arguments())) {
-    clingfy::preview::PreviewCameraComposition c;
-    c.visible = ReadBool(*args, "cameraVisible", false);
-    c.layout_preset = ReadString(*args, "cameraLayoutPreset");
-    c.size_factor = ReadDouble(*args, "cameraSizeFactor", 0.18);
-    c.shape = ReadString(*args, "cameraShape");
-    c.corner_radius = ReadDouble(*args, "cameraCornerRadius", 0.0);
-    c.content_mode = ReadString(*args, "cameraContentMode");
-    c.mirror = ReadBool(*args, "cameraMirror", false);
-    c.opacity = ReadDouble(*args, "cameraOpacity", 1.0);
-    c.border_width = ReadDouble(*args, "cameraBorderWidth", 0.0);
-    if (const auto argb = ReadOptionalInt(*args, "cameraBorderColorArgb")) {
-      c.has_border_color = true;
-      c.border_argb = static_cast<std::uint32_t>(*argb);
-    }
-    c.shadow_preset =
-        static_cast<int>(ReadDouble(*args, "cameraShadowPreset", 0.0));
-    // Phase 9.7 chroma key — kept in sync with preview_router's
-    // ReadCameraComposition so a chroma edit (which arrives via processVideo)
-    // shows in the inline preview, WYSIWYG with the export.
-    c.chroma_enabled = ReadBool(*args, "cameraChromaKeyEnabled", false);
-    c.chroma_strength = ReadDouble(*args, "cameraChromaKeyStrength", 0.4);
-    if (const auto argb = ReadOptionalInt(*args, "cameraChromaKeyColorArgb")) {
-      c.has_chroma_color = true;
-      c.chroma_argb = static_cast<std::uint32_t>(*argb);
-    }
-    if (const auto it =
-            args->find(flutter::EncodableValue("cameraNormalizedCenter"));
-        it != args->end()) {
-      if (const auto* center =
-              std::get_if<flutter::EncodableMap>(&it->second)) {
-        c.has_center = true;
-        c.center_x = ReadDouble(*center, "x", 0.0);
-        c.center_y = ReadDouble(*center, "y", 0.0);
-      }
-    }
+    // ONE parser, shared with previewSetCameraPlacement. This used to be a
+    // hand-duplicated copy of preview_router's block; the drift hid a
+    // missing-chroma bug once and left intro/outro unparsed on both preview
+    // paths, and no test can see a field added to only one copy.
+    clingfy::preview::PreviewCameraComposition c =
+        clingfy::bridge::ReadCameraComposition(*args);
     clingfy::preview::PreviewEngine::Instance()->SetCameraComposition(
         ReadString(*args, "sessionId"), c);
+    // Smart-zoom settings for the inline preview. Same two args the export
+    // reads in HandleExportVideo, with the same defaults — the preview used to
+    // hardcode 1.5x and ignore the toggle, so the editor's screen zoom did not
+    // match the exported file for anyone who moved the slider or turned zoom
+    // off. processVideo carries them on editor open and on every change.
+    clingfy::preview::PreviewEngine::Instance()->SetZoomSettings(
+        ReadString(*args, "sessionId"),
+        ReadDouble(*args, "zoomFactor", 1.5),
+        ReadBool(*args, "zoomEffectEnabled", true));
     // Editing port (audio, step 4-7d): seed the preview audio mix — Dart
     // sends the persisted gain/volume in every processVideo (editor open and
     // the standby-resume resync included), so the mix applies without
