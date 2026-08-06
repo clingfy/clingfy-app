@@ -40,13 +40,22 @@ Deferred work captured during reviews. Each item has enough context to pick up c
 
 ## Windows — preview/export parity
 
-### Camera border width and shadow blur are raw pixels on both surfaces (preview reads ~3x heavier)
+### ~~Camera border width and shadow blur are raw pixels on both surfaces (preview reads ~3x heavier)~~ — DONE
 
-- **What:** `CameraBubblePainter` uses `border_width` and the shadow blur/offset as ABSOLUTE pixels, unscaled by canvas. The inline preview composites into a texture capped near 1280x720 while the export renders at the user's resolution, so a 4px border reads roughly 3x thicker relative to the preview than to a 4K export, and the shadow likewise.
-- **Why it is not a parity-test failure:** it is a genuine, known non-proportional term, so `CameraParityTest` deliberately excludes it rather than absorbing it in an epsilon. Recording it here so the exclusion is a decision rather than a blind spot.
-- **Same class as the canvas ~3x bug already fixed** by expressing canvas padding/radius as fractions of the short side (`Core/canvas_composition.h`). The camera never got that treatment.
-- **Start at:** `windows/runner/Capture/Camera/camera_bubble_painter.cpp` (`border_width_px_`, and `ResolveCameraShadowStyle`'s 10/16/22px blur constants). Decide whether the wire value stays absolute px and the painter scales it by `canvas_short_edge / reference`, or the wire value becomes a fraction (a wire change, so check macOS first).
-- **Effort:** human ~3h / CC ~30min plus an on-device look, since "does the border read right" is not unit-testable.
+Fixed. The wire value stays absolute export-canvas px (no wire change, so macOS is
+untouched) and the painter resolves it onto whatever surface it is drawing, via
+`CameraBubblePainter::Style::effect_scale` =
+`short_side(surface) / short_side(export)`. The bubble's 96px min-side floor —
+the other non-proportional term, which bound for most of the size-factor band in
+portrait/reel916 — takes the same scale through a defaulted
+`ComputeCameraBubbleRect(..., min_side_px)` parameter.
+
+Residual, deliberately not fixed here: the LIVE overlay has the same class of
+defect internally (`ComputeFloatingRect` scales the bubble by `dpi_scale` while
+`ResolveOverlayBubbleStyle` passes `border_width` through unscaled), so at 150%
+display scaling the live bubble's border is proportionally thinner than at 100%.
+Separate surface, separate fix, and macOS shares the absolute constants — raise
+it with macOS in scope rather than diverging one platform at a time.
 
 ### Camera render-plan extraction (make derivation parity structural, not just tested)
 

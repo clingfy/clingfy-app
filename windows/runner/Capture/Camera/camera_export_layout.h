@@ -36,12 +36,18 @@ inline constexpr double kCameraBubbleMinSidePx = 96.0;
 //     used only when has_center is false. Unknown / full-canvas presets fall back
 //     to the bottom-right corner for 9.4 (side-by-side / stacked are deferred).
 //   size_factor — fraction of the shorter canvas side; clamped to [0.08, 0.45].
+//   min_side_px — the floor, in THIS canvas's pixels. Defaults to the export
+//     reference value. A surface that is smaller than the export canvas must
+//     pass the floor scaled by its own short-side ratio, otherwise the floor —
+//     the one non-proportional term in this function — makes its bubble
+//     proportionally larger than the exported one. That is the whole reason the
+//     parameter exists; see `PreviewCameraEffectScale` in
+//     preview/preview_camera_renderer.h for the only caller that overrides it.
 // The returned rect is always fully inside the canvas (clamped).
-CameraBubbleRect ComputeCameraBubbleRect(double canvas_w, double canvas_h,
-                                         bool has_center, double center_x,
-                                         double center_y,
-                                         const std::string& layout_preset,
-                                         double size_factor);
+CameraBubbleRect ComputeCameraBubbleRect(
+    double canvas_w, double canvas_h, bool has_center, double center_x,
+    double center_y, const std::string& layout_preset, double size_factor,
+    double min_side_px = kCameraBubbleMinSidePx);
 
 // --- Camera/screen time alignment (the Phase 9.2 `startOffsetMs` sync key) ---
 
@@ -68,7 +74,14 @@ struct CameraShadowStyle {
 // macOS y-offsets are in a y-UP space (negative = down), so they are sign-
 // flipped here for D2D's y-DOWN canvas (shadow drops downward). Preset <=0 or
 // unknown → disabled. Pure + unit-tested.
-CameraShadowStyle ResolveCameraShadowStyle(int preset);
+//
+// The table is authored in EXPORT-canvas pixels. `scale` resolves it onto a
+// surface of a different size: blur radius and both offsets are lengths and
+// scale; opacity is dimensionless and must NOT. The default 1.0 keeps the
+// export and the live overlay byte-identical — only the preview, whose texture
+// is capped at 1280x720, passes anything else. A non-positive scale degrades to
+// a disabled-geometry shadow rather than producing a negative blur.
+CameraShadowStyle ResolveCameraShadowStyle(int preset, double scale = 1.0);
 
 // Index of the camera frame to HOLD at camera-file time `camera_ms`: the latest
 // frame whose timestamp is <= `camera_ms`, or -1 when `camera_ms` is negative or

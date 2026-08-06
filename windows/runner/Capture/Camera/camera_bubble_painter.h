@@ -49,6 +49,18 @@ class CameraBubblePainter {
     bool has_border_color = false;
     std::uint32_t border_argb = 0;
     int shadow_preset = 0;
+    // THE RULE FOR THIS STRUCT: every length in `Style` is measured in EXPORT
+    // canvas pixels. `effect_scale` converts them onto the surface actually
+    // being painted — 1.0 for the export and the live overlay, and
+    // short_side(surface)/short_side(export) for the inline preview, whose
+    // texture is capped at 1280x720 while the export renders at up to 4K.
+    //
+    // Without it the same authored 4 px border covers 1.03% of a 4K export
+    // bubble and 3.09% of the preview's, i.e. the preview reads ~3x too thick —
+    // the identical defect `Core/canvas_composition.h` documents for canvas
+    // padding, and the reason that contract carries fractions. Any length added
+    // to this struct in future must be multiplied by it too.
+    double effect_scale = 1.0;
     // Phase 9.7 chroma key. When enabled, a D2D ChromaKey effect turns the key
     // color (default green when has_chroma_color is false) transparent on the
     // camera content only — border and shadow are drawn from the bubble shape,

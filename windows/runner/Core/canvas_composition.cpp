@@ -29,6 +29,11 @@ CanvasComposition MakeCanvasComposition(
   out.padding_fraction = NormalizeToShortSide(padding_px, export_short_side);
   out.corner_radius_fraction =
       NormalizeToShortSide(corner_radius_px, export_short_side);
+  // Kept so consumers that cannot use a fraction (the camera shadow preset is
+  // an index, the bubble floor is a constant) can still resolve onto their own
+  // surface. Non-positive stays 0 = "reference unknown", matching
+  // NormalizeToShortSide's own degenerate contract.
+  out.export_short_side = export_short_side > 0.0 ? export_short_side : 0.0;
   out.background_argb = background_argb;
   out.background_image_path = std::move(background_image_path);
   return out;

@@ -3,6 +3,7 @@
 #include <mfapi.h>
 #include <mferror.h>
 
+#include <cmath>
 #include <utility>
 
 #include "Capture/Camera/camera_export_layout.h"
@@ -163,9 +164,60 @@ void PreviewCameraRenderer::PullForward(std::int64_t camera_hns) {
   }
 }
 
+double PreviewCameraEffectScale(double surface_short_side,
+                                double export_short_side) {
+  if (!(surface_short_side > 0.0) || !(export_short_side > 0.0)) {
+    return 1.0;
+  }
+  return surface_short_side / export_short_side;
+}
+
+bool PreviewCameraNeedsRebuild(bool dirty, UINT canvas_w, UINT canvas_h,
+                               double effect_scale, UINT prepared_canvas_w,
+                               UINT prepared_canvas_h,
+                               double prepared_effect_scale) {
+  if (dirty || canvas_w != prepared_canvas_w || canvas_h != prepared_canvas_h) {
+    return true;
+  }
+  // The export size resolves one frame LATE (it needs the decoded source
+  // dimensions), so the scale can change while the canvas does not. Without
+  // this term the first painter — built at the identity fallback — would never
+  // be replaced.
+  return std::abs(effect_scale - prepared_effect_scale) > 1e-6;
+}
+
+PreviewCameraPlan ResolvePreviewCameraPlan(const PreviewCameraComposition& comp,
+                                           double canvas_w, double canvas_h,
+                                           double effect_scale) {
+  const double scale = effect_scale > 0.0 ? effect_scale : 1.0;
+  PreviewCameraPlan plan;
+  // The floor is the one non-proportional term in ComputeCameraBubbleRect, so
+  // it is the one that has to be resolved onto this surface. Everything else in
+  // there is a fraction of the canvas and is already correct.
+  plan.bubble = clingfy::capture::ComputeCameraBubbleRect(
+      canvas_w, canvas_h, comp.has_center, comp.center_x, comp.center_y,
+      comp.layout_preset, comp.size_factor,
+      clingfy::capture::kCameraBubbleMinSidePx * scale);
+  plan.style.mirror = comp.mirror;
+  plan.style.opacity = comp.opacity;
+  plan.style.border_width = comp.border_width;
+  plan.style.has_border_color = comp.has_border_color;
+  plan.style.border_argb = comp.border_argb;
+  plan.style.shadow_preset = comp.shadow_preset;
+  // Border width and the shadow table are export-canvas lengths; the painter
+  // resolves both through this one field.
+  plan.style.effect_scale = scale;
+  plan.style.chroma_enabled = comp.chroma_enabled;
+  plan.style.chroma_strength = comp.chroma_strength;
+  plan.style.has_chroma_color = comp.has_chroma_color;
+  plan.style.chroma_argb = comp.chroma_argb;
+  return plan;
+}
+
 void PreviewCameraRenderer::PrepareAndAdvance(ID2D1DeviceContext* ctx,
                                               UINT canvas_w, UINT canvas_h,
-                                              std::int64_t playback_us) {
+                                              std::int64_t playback_us,
+                                              double effect_scale) {
   if (ctx == nullptr || canvas_w == 0 || canvas_h == 0) {
     return;
   }
@@ -176,8 +228,10 @@ void PreviewCameraRenderer::PrepareAndAdvance(ID2D1DeviceContext* ctx,
   {
     std::lock_guard<std::mutex> lock(mutex_);
     comp = composition_;
-    needs_rebuild = dirty_ || canvas_w != prepared_canvas_w_ ||
-                    canvas_h != prepared_canvas_h_;
+    needs_rebuild =
+        PreviewCameraNeedsRebuild(dirty_, canvas_w, canvas_h, effect_scale,
+                                  prepared_canvas_w_, prepared_canvas_h_,
+                                  prepared_effect_scale_);
     dirty_ = false;
   }
   composition_visible_ = comp.visible;
@@ -203,25 +257,14 @@ void PreviewCameraRenderer::PrepareAndAdvance(ID2D1DeviceContext* ctx,
     }
     painter_ready_ = false;
     if (factory1 != nullptr && frame_bitmap_ != nullptr) {
-      const clingfy::capture::CameraBubbleRect bubble =
-          clingfy::capture::ComputeCameraBubbleRect(
-              static_cast<double>(canvas_w), static_cast<double>(canvas_h),
-              comp.has_center, comp.center_x, comp.center_y, comp.layout_preset,
-              comp.size_factor);
-      clingfy::capture::CameraBubblePainter::Style style;
-      style.mirror = comp.mirror;
-      style.opacity = comp.opacity;
-      style.border_width = comp.border_width;
-      style.has_border_color = comp.has_border_color;
-      style.border_argb = comp.border_argb;
-      style.shadow_preset = comp.shadow_preset;
-      style.chroma_enabled = comp.chroma_enabled;
-      style.chroma_strength = comp.chroma_strength;
-      style.has_chroma_color = comp.has_chroma_color;
-      style.chroma_argb = comp.chroma_argb;
-      painter_ready_ = painter_.Prepare(factory1.Get(), ctx, bubble, comp.shape,
-                                        comp.corner_radius, comp.content_mode,
-                                        style, cam_w_, cam_h_);
+      const PreviewCameraPlan plan = ResolvePreviewCameraPlan(
+          comp, static_cast<double>(canvas_w), static_cast<double>(canvas_h),
+          effect_scale);
+      const clingfy::capture::CameraBubbleRect bubble = plan.bubble;
+      painter_ready_ =
+          painter_.Prepare(factory1.Get(), ctx, bubble, comp.shape,
+                           comp.corner_radius, comp.content_mode, plan.style,
+                           cam_w_, cam_h_);
       // Cache the animation context for Draw, the way
       // CameraExportRenderer::Prepare does. The slide edge is derived from the
       // COMPUTED bubble rect (already D2D y-DOWN, because
@@ -245,6 +288,7 @@ void PreviewCameraRenderer::PrepareAndAdvance(ID2D1DeviceContext* ctx,
     }
     prepared_canvas_w_ = canvas_w;
     prepared_canvas_h_ = canvas_h;
+    prepared_effect_scale_ = effect_scale;
   }
 
   // Advance the held camera frame to the playback position.

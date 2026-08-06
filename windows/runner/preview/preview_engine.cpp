@@ -1505,9 +1505,16 @@ void PreviewEngine::ComposeAndHandoffLocked(Impl* impl,
   // Phase 9.6: advance/seek the camera frame BEFORE BeginDraw (the painter's
   // shadow bake does SetTarget round-trips, illegal inside BeginDraw).
   if (impl->camera_renderer) {
+    // Same reasoning as the padding/radius denormalize above, for the values
+    // that are not fractions: the authored border width, the shadow table and
+    // the bubble's min-side floor are all EXPORT-canvas pixels, so on this
+    // smaller texture they must be resolved by the short-side ratio or the
+    // preview shows a ~3x-too-thick border and a floored-oversized bubble.
+    const double camera_effect_scale = PreviewCameraEffectScale(
+        surface_short, impl->canvas.export_short_side);
     impl->camera_renderer->PrepareAndAdvance(
         impl->d2d_context.Get(), static_cast<UINT>(texture_width_),
-        static_cast<UINT>(texture_height_), playback_us);
+        static_cast<UINT>(texture_height_), playback_us, camera_effect_scale);
   }
 
   impl->timing_render.BeginFrame();
@@ -2769,6 +2776,11 @@ void PreviewEngine::SetCanvasComposition(
         core::NormalizeToShortSide(framing.padding_px, export_short);
     canvas.corner_radius_fraction =
         core::NormalizeToShortSide(framing.corner_radius_px, export_short);
+    // Carried for the camera bubble, whose border/shadow/min-side floor are
+    // export-canvas lengths that cannot be expressed as canvas fractions (a
+    // shadow preset is an index, the floor is a constant). It rides this struct
+    // so it inherits the render_mutex publish below.
+    canvas.export_short_side = export_short;
   }
   // No frame yet => source dims unknown => fractions stay 0 and the canvas
   // renders unpadded, which is what the preview shows today anyway. The next
