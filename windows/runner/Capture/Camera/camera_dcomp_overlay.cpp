@@ -956,6 +956,37 @@ void CameraDcompOverlay::SyncAndRender(HWND hwnd) {
   }
 }
 
+void CameraDcompOverlay::SetParkObserver(std::function<void()> observer) {
+  std::lock_guard<std::mutex> lock(park_mutex_);
+  park_observer_ = std::move(observer);
+  // Deliberately does NOT fire here even if the park already happened. Owners
+  // install this while holding their own lock, and firing synchronously would
+  // re-enter them on the installing thread — which deadlocked
+  // CameraOverlayHost outright, since its observer takes the same
+  // non-recursive mutex the install runs under.
+  //
+  // The already-parked case is covered by the owner polling needs_fallback()
+  // once immediately after installing (CameraOverlayHost::Start and
+  // AdoptInnerForTest both do). That poll plus this push together are
+  // level-triggered; neither alone is.
+}
+
+void CameraDcompOverlay::NotifyParkOnce() {
+  std::function<void()> observer;
+  {
+    std::lock_guard<std::mutex> lock(park_mutex_);
+    if (park_notified_ || !park_observer_) {
+      return;
+    }
+    park_notified_ = true;
+    observer = park_observer_;
+  }
+  // Called with park_mutex_ RELEASED: the observer marshals to another thread
+  // and may re-enter this object, and holding the lock across an owner callback
+  // is how re-entrancy deadlocks get built.
+  observer();
+}
+
 void CameraDcompOverlay::AttemptDeviceLossRecovery(HWND hwnd,
                                                    const char* where) {
   device_loss_retry_pending_ = false;
@@ -975,12 +1006,21 @@ void CameraDcompOverlay::AttemptDeviceLossRecovery(HWND hwnd,
     // keeping the thread alive for the mid-session GDI fallback (P4c-c3).
     device_loss_gave_up_.store(true);
     ReleaseRenderResources();  // sets gpu_ready_ false
+    // The DComp visual is never re-pointed after this, so whatever was last
+    // composited stays frozen on screen for as long as the park lasts — which
+    // is unbounded. Hide the window: a bubble that is not being drawn should
+    // not be shown. This runs on the overlay thread, the same thread that
+    // already hides on WDA loss.
+    if (hwnd != nullptr) {
+      ::ShowWindow(hwnd, SW_HIDE);
+    }
     if (!device_loss_fallback_logged_) {
       device_loss_fallback_logged_ = true;
       clingfy::bridge::devices::LogDeviceProbe(
           "CameraDcompOverlay: device loss persists past the rebuild budget — "
-          "mid-session GDI fallback lands in P4c-c3");
+          "parked, window hidden, notifying the owner to swap to GDI");
     }
+    NotifyParkOnce();
     return;
   }
   if (RebuildGpuStack(hwnd)) {
