@@ -412,52 +412,15 @@ void HandleExportVideo(
     // drawn also depends on the project assets + camera.meta.json, resolved in
     // ExportPassthroughCopy. Styling we don't support yet (mirror / opacity /
     // border / shadow / chroma) is accepted-but-ignored per the capabilities map.
-    input.camera_visible = ReadBool(*args, "cameraVisible", false);
-    input.camera_layout_preset = ReadString(*args, "cameraLayoutPreset");
-    input.camera_size_factor = ReadDouble(*args, "cameraSizeFactor", 0.18);
-    input.camera_shape = ReadString(*args, "cameraShape");
-    input.camera_corner_radius = ReadDouble(*args, "cameraCornerRadius", 0.0);
-    input.camera_content_mode = ReadString(*args, "cameraContentMode");
-    // Phase 9.5 styling. cameraBorderColorArgb is a nullable ARGB int (null →
-    // no border even if width > 0); the others have identity-ish defaults.
-    input.camera_mirror = ReadBool(*args, "cameraMirror", false);
-    input.camera_opacity = ReadDouble(*args, "cameraOpacity", 1.0);
-    input.camera_border_width = ReadDouble(*args, "cameraBorderWidth", 0.0);
-    input.camera_border_color_argb =
-        ReadOptionalInt(*args, "cameraBorderColorArgb");
-    input.camera_shadow_preset =
-        static_cast<int>(ReadDouble(*args, "cameraShadowPreset", 0.0));
-    // Phase 9.7 chroma key + intro/outro animation. chromaKeyColorArgb is a
-    // nullable ARGB int (null → default green); strength is the keying tolerance.
-    // The intro/outro preset strings parse natively (unknown → static bubble).
-    input.camera_chroma_enabled = ReadBool(*args, "cameraChromaKeyEnabled", false);
-    input.camera_chroma_strength =
-        ReadDouble(*args, "cameraChromaKeyStrength", 0.4);
-    input.camera_chroma_color_argb =
-        ReadOptionalInt(*args, "cameraChromaKeyColorArgb");
-    input.camera_intro_preset = ReadString(*args, "cameraIntroPreset");
-    input.camera_outro_preset = ReadString(*args, "cameraOutroPreset");
-    input.camera_intro_duration_ms =
-        static_cast<int>(ReadDouble(*args, "cameraIntroDurationMs", 0.0));
-    input.camera_outro_duration_ms =
-        static_cast<int>(ReadDouble(*args, "cameraOutroDurationMs", 0.0));
-    // Scale-with-screen-zoom. Fallbacks are ""/0 (a fixed bubble) rather than
-    // the Dart defaults, so a payload that predates these keys renders exactly
-    // as it did before.
-    input.camera_zoom_behavior = ReadString(*args, "cameraZoomBehavior");
-    input.camera_zoom_scale_multiplier =
-        ReadDouble(*args, "cameraZoomScaleMultiplier", 0.0);
-    // cameraNormalizedCenter is a nested {x,y} map (or null when the bubble is
-    // auto-placed by preset). Present → manual placement.
-    if (const auto it = args->find(flutter::EncodableValue(
-            "cameraNormalizedCenter"));
-        it != args->end()) {
-      if (const auto* center = std::get_if<flutter::EncodableMap>(&it->second)) {
-        input.camera_has_center = true;
-        input.camera_center_x = ReadDouble(*center, "x", 0.0);
-        input.camera_center_y = ReadDouble(*center, "y", 0.0);
-      }
-    }
+    // ONE parser for all three call sites. exportVideo used to hand-parse the
+    // same 21 camera keys with its own default literals -- a third copy of the
+    // list that agreed with the shared parser only by coincidence, and that
+    // coincidence had already failed twice (missing chroma in the 9.7 review,
+    // then the four intro/outro keys reaching the export but never the
+    // preview). ApplyCameraCompositionToExport carries every field across, and
+    // a test fails if a new one is added without extending it.
+    clingfy::bridge::ApplyCameraCompositionToExport(
+        clingfy::bridge::ReadCameraComposition(*args), input);
     // Editing port: the nested `colorGrade` map and the `clips` list, each
     // parsed by the shared helper both routers use (one wire shape, one
     // parser — the camera-parsing duplication hid a bug once). Absent /
