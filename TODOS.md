@@ -38,6 +38,19 @@ Deferred work captured during reviews. Each item has enough context to pick up c
 - **Evidence:** the reported screenshot pair, and the exported file's own extensions dump (`CVImageBufferColorPrimaries: ITU_R_709_2`, `FullRangeVideo: 0`).
 - **Effort:** human ~4h / CC ~45min once the ramp measurement exists.
 
+## Windows — capture exclusion
+
+### The other four capture-excluded windows never re-verify WDA after a mutation
+
+- **What:** the ADR (`docs/decisions/windows-camera-bubble-renderer-architecture.md:123-126`) says to re-verify `GetWindowDisplayAffinity` after any unavoidable window mutation — the Electron #47834 lesson. The DComp camera overlay now does, at all three of its mutation sites. Four other capture-excluded windows still call `SetWindowDisplayAffinity` exactly once at creation and then mutate freely:
+  - `camera_floating_overlay.cpp` — `SetWindowPos` (:425), `SetWindowRgn` (:393), `WM_EXITSIZEMOVE` drag path (:125)
+  - `recording_indicator_controller.cpp` — `SetWindowPos` (:336, :358), `SetWindowRgn` (:199), drag path (:103)
+  - `pre_recording_bar_controller.cpp` — :341, :212
+  - `pre_recording_bar_popover.cpp` — :203, :262
+- **Why not folded into the camera fix:** none of these has the DComp overlay's `wda_excluded_` one-way latch or its hide-on-loss policy, so there is nothing to re-verify *into*. Giving them one is a design decision about what a bar/indicator should do when exclusion is lost mid-recording — hide (and lose the recording UI) or keep showing (and burn into the capture). That is a product call, not a few lines.
+- **Severity:** the same class as the camera bug, and the indicator/bar are on screen for the whole recording. Worth deciding rather than leaving implicit.
+- **Effort:** human ~1 day / CC ~2h once the hide-vs-show policy is chosen.
+
 ## Windows — preview/export parity
 
 ### Camera border width and shadow blur are raw pixels on both surfaces (preview reads ~3x heavier)

@@ -548,6 +548,181 @@ TEST(CameraDcompOverlayPoc, StyleOnlyRevisionKeepsDraggedPosition) {
   geometry.SetPosition(3);
 }
 
+// --- WDA re-verification after window mutations (ADR: Electron #47834) -------
+
+namespace {
+
+// Park the window far from the cursor. UpdateHaloClickThrough re-verifies
+// affinity too, but ONLY on a content/halo boundary crossing — so a cursor that
+// happens to sit over the bubble could repair the affinity on its own and hand
+// these tests a false green. Moving the WINDOW away is deterministic and, unlike
+// ::SetCursorPos, does not disturb the machine the suite is running on.
+POINT PlacementFarFromCursor() {
+  POINT cursor{0, 0};
+  ::GetCursorPos(&cursor);
+  return POINT{cursor.x + 420, cursor.y + 320};
+}
+
+bool WaitForAffinity(HWND hwnd, DWORD want) {
+  const auto deadline =
+      std::chrono::steady_clock::now() + std::chrono::seconds(3);
+  while (std::chrono::steady_clock::now() < deadline) {
+    DWORD affinity = 0;
+    if (::GetWindowDisplayAffinity(hwnd, &affinity) != 0 && affinity == want) {
+      return true;
+    }
+    std::this_thread::sleep_for(std::chrono::milliseconds(25));
+  }
+  return false;
+}
+
+}  // namespace
+
+// A drag is the largest window mutation the bubble undergoes and the only one
+// the USER triggers: HTCAPTION hands the window to DefWindowProc's SC_MOVE
+// modal loop. It is also the one the placement-sync re-verify cannot see — the
+// sync block is gated on !in_size_move_ for the whole drag, and OnDragEnded
+// adopts the drag's own revision as already-seen, so the next tick's
+// geometry_changed is false and the placement SetWindowPos never runs.
+TEST(CameraDcompOverlayPoc, DragEndReverifiesCaptureExclusion) {
+  auto& geometry = CameraOverlayGeometryStore::Instance();
+  geometry.SetSize(220.0);
+  geometry.SetPosition(3);
+
+  CameraDcompOverlay overlay;
+  const POINT spot = PlacementFarFromCursor();
+  FloatingPlacement place;
+  place.x = spot.x;
+  place.y = spot.y;
+  place.width = 220;
+  place.height = 220;
+  if (!overlay.Start(place)) {
+    if (::GetDesktopWindow() == nullptr) {
+      GTEST_SKIP() << "no desktop in this session";
+    }
+    FAIL() << "DComp presenter failed to start on this machine";
+  }
+  // Without this the whole test is vacuous: ReverifyCaptureExclusion returns
+  // early when exclusion was never applied, so on a machine hitting the
+  // documented Win11 SetWindowDisplayAffinity defect the assertions below would
+  // pass with the fix deleted.
+  ASSERT_TRUE(overlay.wda_excluded())
+      << "capture exclusion never applied on this machine";
+  HWND hwnd = ::FindWindowW(L"ClingfyCameraDcompOverlay", nullptr);
+  ASSERT_NE(hwnd, nullptr);
+  ASSERT_TRUE(WaitForAffinity(hwnd, WDA_EXCLUDEFROMCAPTURE));
+
+  // Simulate what #47834 describes: the mutation silently drops the affinity.
+  ASSERT_NE(::SetWindowDisplayAffinity(hwnd, WDA_NONE), 0);
+
+  // Simulated OS drag: move, then the modal loop's terminating message.
+  RECT before{};
+  ASSERT_NE(::GetWindowRect(hwnd, &before), 0);
+  ASSERT_NE(::SetWindowPos(hwnd, nullptr, before.left + 40, before.top + 30, 0,
+                           0, SWP_NOSIZE | SWP_NOZORDER | SWP_NOACTIVATE),
+            0);
+  ::PostMessageW(hwnd, WM_EXITSIZEMOVE, 0, 0);
+
+  EXPECT_TRUE(WaitForAffinity(hwnd, WDA_EXCLUDEFROMCAPTURE))
+      << "capture exclusion was not re-verified after the drag ended — a "
+         "dragged bubble would burn into the recording";
+  EXPECT_TRUE(overlay.wda_excluded())
+      << "the one-way latch was tripped even though affinity was repairable";
+
+  overlay.Stop();
+  geometry.SetSize(220.0);
+  geometry.SetPosition(3);
+}
+
+// The placement-sync site: a DPI change re-places the window without any drag.
+TEST(CameraDcompOverlayPoc, PlacementSyncReverifiesCaptureExclusion) {
+  auto& geometry = CameraOverlayGeometryStore::Instance();
+  geometry.SetSize(220.0);
+  geometry.SetPosition(3);
+
+  CameraDcompOverlay overlay;
+  const POINT spot = PlacementFarFromCursor();
+  FloatingPlacement place;
+  place.x = spot.x;
+  place.y = spot.y;
+  place.width = 220;
+  place.height = 220;
+  if (!overlay.Start(place)) {
+    if (::GetDesktopWindow() == nullptr) {
+      GTEST_SKIP() << "no desktop in this session";
+    }
+    FAIL() << "DComp presenter failed to start on this machine";
+  }
+  ASSERT_TRUE(overlay.wda_excluded())
+      << "capture exclusion never applied on this machine";
+  HWND hwnd = ::FindWindowW(L"ClingfyCameraDcompOverlay", nullptr);
+  ASSERT_NE(hwnd, nullptr);
+  ASSERT_TRUE(WaitForAffinity(hwnd, WDA_EXCLUDEFROMCAPTURE));
+
+  ASSERT_NE(::SetWindowDisplayAffinity(hwnd, WDA_NONE), 0);
+  overlay.SetTestDpiScale(2.0);  // drives dpi_changed -> the placement block
+
+  EXPECT_TRUE(WaitForAffinity(hwnd, WDA_EXCLUDEFROMCAPTURE))
+      << "capture exclusion was not re-verified after the placement sync";
+  EXPECT_TRUE(overlay.wda_excluded());
+
+  overlay.SetTestDpiScale(0.0);
+  overlay.Stop();
+  geometry.SetSize(220.0);
+  geometry.SetPosition(3);
+}
+
+// Negative control for the one-way latch. Re-verification must be a Get-first
+// check, not a blind Set-and-check: a placement change with affinity INTACT
+// must leave wda_excluded() true and the window shown. Without this, a
+// simplification that trips the latch on a spurious failure would silently kill
+// working bubbles for the rest of the session and no test would notice.
+TEST(CameraDcompOverlayPoc, ReverifyDoesNotWidenTheOneWayLatch) {
+  auto& geometry = CameraOverlayGeometryStore::Instance();
+  geometry.SetSize(220.0);
+  geometry.SetPosition(3);
+
+  CameraDcompOverlay overlay;
+  const POINT spot = PlacementFarFromCursor();
+  FloatingPlacement place;
+  place.x = spot.x;
+  place.y = spot.y;
+  place.width = 220;
+  place.height = 220;
+  if (!overlay.Start(place)) {
+    if (::GetDesktopWindow() == nullptr) {
+      GTEST_SKIP() << "no desktop in this session";
+    }
+    FAIL() << "DComp presenter failed to start on this machine";
+  }
+  ASSERT_TRUE(overlay.wda_excluded());
+  HWND hwnd = ::FindWindowW(L"ClingfyCameraDcompOverlay", nullptr);
+  ASSERT_NE(hwnd, nullptr);
+
+  // Several placement changes, affinity never touched.
+  geometry.SetSize(260.0);
+  std::this_thread::sleep_for(std::chrono::milliseconds(200));
+  geometry.SetSize(200.0);
+  std::this_thread::sleep_for(std::chrono::milliseconds(200));
+  RECT before{};
+  ASSERT_NE(::GetWindowRect(hwnd, &before), 0);
+  ASSERT_NE(::SetWindowPos(hwnd, nullptr, before.left + 20, before.top + 10, 0,
+                           0, SWP_NOSIZE | SWP_NOZORDER | SWP_NOACTIVATE),
+            0);
+  ::PostMessageW(hwnd, WM_EXITSIZEMOVE, 0, 0);
+  std::this_thread::sleep_for(std::chrono::milliseconds(300));
+
+  EXPECT_TRUE(overlay.wda_excluded())
+      << "re-verification tripped the latch with affinity intact";
+  DWORD affinity = 0;
+  EXPECT_NE(::GetWindowDisplayAffinity(hwnd, &affinity), 0);
+  EXPECT_EQ(affinity, static_cast<DWORD>(WDA_EXCLUDEFROMCAPTURE));
+
+  overlay.Stop();
+  geometry.SetSize(220.0);
+  geometry.SetPosition(3);
+}
+
 // DPI self-detection (P4c), HIDDEN: a monitor scale change (a Settings scale
 // change mid-recording, or a move to a different-DPI monitor) bumps no store
 // revision, so the sync tick watches the live scale directly and re-places at

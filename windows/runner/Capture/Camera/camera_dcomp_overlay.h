@@ -199,6 +199,16 @@ class CameraDcompOverlay : public ICameraOverlayPresenter {
   // once at initial creation (the render-only rebuild leaves WDA untouched).
   // Overlay thread.
   void ApplyCaptureExclusion(HWND hwnd);
+  // Re-check WDA_EXCLUDEFROMCAPTURE after a window mutation and repair it if it
+  // was dropped; if it cannot be repaired, latch wda_excluded_ false and HIDE —
+  // an unexcluded bubble must never stay on screen, because it would burn into
+  // the recording. `where` names the mutation for the field log.
+  //
+  // The ADR requires this after ANY unavoidable window mutation (the Electron
+  // #47834 lesson). Returns false only in the unrepairable case; callers
+  // deliberately do not branch on it — the tick carries on against a hidden
+  // window exactly as it already did on the click-through path. Overlay thread.
+  bool ReverifyCaptureExclusion(HWND hwnd, const char* where);
   // Renderer P4d default-flip guard: after the GPU stack builds and capture
   // exclusion is applied, prove THIS adapter actually rasterizes into the
   // composition swapchain before the flip makes DComp everyone's default. Draws
