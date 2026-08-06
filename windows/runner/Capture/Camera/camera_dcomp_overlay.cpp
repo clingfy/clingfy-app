@@ -7,6 +7,7 @@
 #include <utility>
 
 #include "Bridge/Devices/device_probe_log.h"
+#include "Bridge/native_log_publisher.h"
 #include "Capture/Camera/camera_dcomp_device_loss.h"
 #include "Capture/Camera/camera_overlay_drag.h"
 #include "Capture/Camera/camera_overlay_geometry_store.h"
@@ -764,6 +765,12 @@ bool CameraDcompOverlay::ReverifyCaptureExclusion(HWND hwnd,
                 "restored — bubble hidden",
                 where);
   clingfy::bridge::devices::LogDeviceProbe(b);
+  // WARN as well as probe. This is a mid-recording degradation on a machine
+  // where exclusion SUCCEEDED at start, and the bubble vanishes from the user's
+  // screen — but the probe log sits behind the verbose diagnostics toggle, so
+  // it was the only camera degradation path with NO release-visible line at
+  // all. Support could not see it in logs or Sentry.
+  clingfy::bridge::NativeLogPublisher::Instance().Warn("Camera", b);
   return false;
 }
 
