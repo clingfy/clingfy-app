@@ -58,8 +58,13 @@ CameraBubbleRect ComputeCameraBubbleRect(double canvas_w, double canvas_h,
   double cy = 0.0;
   if (has_center) {
     cx = Clamp(center_x, 0.0, 1.0);
-    cy = Clamp(center_y, 0.0, 1.0);
+    // The wire value is y-UP (Dart stores `1 - dy`; macOS reads it as a
+    // bottom-up CGRect). Direct2D is y-DOWN, so flip. Without this the manual
+    // placement renders vertically mirrored — drag the bubble to the top of
+    // the editor canvas and the export puts it at the bottom.
+    cy = 1.0 - Clamp(center_y, 0.0, 1.0);
   } else {
+    // Preset centers are authored in y-DOWN space already.
     PresetCenter(layout_preset, &cx, &cy);
   }
 

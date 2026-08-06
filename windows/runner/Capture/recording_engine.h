@@ -320,6 +320,27 @@ class RecordingEngine {
   std::optional<std::int64_t> current_window_id_;
   std::optional<SourceBounds> current_source_bounds_;
 
+  // Reference rects for the record-stop -> editor camera hand-off
+  // (CameraEditorSeed geometry), both in PHYSICAL screen px, snapshot at Start.
+  //
+  // They cannot be derived at Stop: FillCameraWriterFields runs after
+  // TeardownPipeline, which has already destroyed the floating bubble window
+  // (so MonitorFromWindow is out) and the capture backend. Recomputing would
+  // also be wrong even if it were possible — monitors can be unplugged or
+  // rearranged mid-recording, and a window capture's monitor is derived from a
+  // window that may already be gone.
+  //
+  // `current_capture_work_area_` is the recorded monitor's rcWork — the space
+  // CameraOverlayGeometryStore normalizes against. `current_capture_content_rect_`
+  // is what the video actually covers: rcMonitor for a display capture (the
+  // FULL monitor, taskbar included — deliberately not rcWork), the crop box for
+  // an area capture, the extended frame bounds for a window capture.
+  // `current_capture_dpi_scale_` is that monitor's dpi/96, needed because the
+  // store's overlay size is logical px. See ResolveCameraSeedGeometry.
+  std::optional<SourceBounds> current_capture_work_area_;
+  std::optional<SourceBounds> current_capture_content_rect_;
+  double current_capture_dpi_scale_ = 1.0;
+
   // Phase 8.1: cursor sidecar. The sampler streams `cursor.jsonl` to a temp path
   // during recording; the project writer bundles it at finalize.
   // `current_cursor_enabled_` records whether the sampler started (and thus
