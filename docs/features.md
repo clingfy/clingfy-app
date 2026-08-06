@@ -128,6 +128,9 @@ Status legend: ✅ shipped · 🚧 partial / with caveats · — not available y
 
 ## In development on `develop` (unreleased)
 
+- **Auto-subtitles (macOS)** — on-device transcription via WhisperKit, a
+  cue-level caption editor, burned-in captions and `.srt` / `.vtt` sidecars.
+  macOS only; Windows reports the feature as unavailable with a reason.
 - **Windows Voice Cleanup** — the on-device RNNoise engine is built into the
   Windows target; wiring it into the Windows export/preview is the remaining
   work.
@@ -136,7 +139,9 @@ Status legend: ✅ shipped · 🚧 partial / with caveats · — not available y
 
 ## Roadmap (not started)
 
-- Auto-subtitles + translation (on-device Whisper)
+- Auto-subtitle translation (transcription ships on macOS; translating the
+  transcript into another language needs a second engine — Whisper cannot
+  translate out of English)
 - AI-assisted recording workflows
 - Collaborative recording tools
 
