@@ -1,5 +1,6 @@
 import 'dart:async';
 import 'dart:io';
+import 'package:flutter/foundation.dart' show listEquals;
 import 'package:clingfy/app/infrastructure/analytics/analytics_events.dart';
 import 'package:clingfy/app/infrastructure/analytics/analytics_service.dart';
 import 'package:clingfy/app/config/build_config.dart';
@@ -160,6 +161,11 @@ class PostProcessingController extends ChangeNotifier {
   /// Separates "not run yet" from "ran and found nothing" — very different
   /// things to tell someone.
   bool _hasEverGeneratedCaptions = false;
+
+  /// Set when the last run FAILED, so "ran and found nothing" is not reported
+  /// for a model that would not download or a decode that threw. Cleared at the
+  /// start of every run and by a successful one.
+  String? _captionsErrorCode;
   double _audioVolumePercent = 100.0;
   String? _cameraPath;
   CameraCompositionState? _cameraState;
@@ -234,20 +240,44 @@ class PostProcessingController extends ChangeNotifier {
   ProgressStage get captionsStage => _captionsStage;
   bool get hasEverGeneratedCaptions => _hasEverGeneratedCaptions;
 
+  /// True when the last transcription failed rather than finding no speech.
+  bool get captionsFailed => _captionsErrorCode != null;
+
   /// The caption manifest the preview is currently showing, so an identical
   /// re-push (a rebuild, a clip nudge that changed nothing) does no work.
   bool _isDisposed = false;
   String? _pushedCaptionSignature;
 
-  /// Pushes run one at a time, in the order they were requested.
+  /// Pushes run one at a time, and everything requested while one is running
+  /// collapses into a SINGLE follow-up run.
   ///
-  /// The signature that suppresses redundant work is only assigned after the
-  /// rasterization await, so two overlapping pushes race on it. Concretely:
-  /// generate captions, then immediately switch subtitles off, and the clear
-  /// reads a still-null signature, decides nothing is installed, and returns —
-  /// while the generate push it overlapped goes on to install captions that
-  /// nothing will ever take down.
-  Future<void> _captionPushChain = Future<void>.value();
+  /// One at a time because the signature that suppresses redundant work is only
+  /// assigned after the rasterization await, so two overlapping pushes race on
+  /// it. Concretely: generate captions, then immediately switch subtitles off,
+  /// and the clear reads a still-null signature, decides nothing is installed,
+  /// and returns — while the generate push it overlapped goes on to install
+  /// captions that nothing will ever take down.
+  ///
+  /// Collapsed rather than queued because `_onPlayerChanged` fires on every
+  /// position update during playback. A chain would grow one link per tick and
+  /// each link re-reads live state anyway, so all but the last are wasted work
+  /// on results that are already stale by the time they run.
+  bool _captionPushRunning = false;
+  Completer<void>? _captionPushQueued;
+
+  /// The export canvas, cached per (project, layout, resolution).
+  ///
+  /// Resolving it is a native round trip that loads the project, parses its
+  /// metadata and reads the screen track — far too expensive to repeat per
+  /// player tick, and the answer only moves when one of those three does.
+  Size? _cachedExportSize;
+  String? _cachedExportSizeKey;
+
+  /// Memoized so the sidebar selector, which calls this on every notification,
+  /// does not re-run an O(cues x clips) reflow each time.
+  ReflowedCaptions? _reflowCache;
+  List<Caption>? _reflowCacheCaptions;
+  List<Clip>? _reflowCacheClips;
 
   /// Rasterizes the reflowed cues and hands them to the live preview.
   ///
@@ -260,13 +290,63 @@ class PostProcessingController extends ChangeNotifier {
   /// Best-effort and fire-and-forget everywhere it is called from: a preview
   /// without captions must never block an edit.
   Future<void> pushPreviewCaptions() {
-    final queued = _captionPushChain.then(
-      (_) => _pushPreviewCaptions(),
-      // A link that fails must not swallow every push queued behind it.
-      onError: (Object _) => _pushPreviewCaptions(),
+    if (_captionPushRunning) {
+      // Everything that lands mid-flight shares one follow-up run, and the
+      // returned future still completes only once that run has finished, so an
+      // `await` in a test or an export pre-flight remains honest.
+      return (_captionPushQueued ??= Completer<void>()).future;
+    }
+    return _drainCaptionPushes();
+  }
+
+  Future<void> _drainCaptionPushes() async {
+    _captionPushRunning = true;
+    try {
+      await _pushPreviewCaptionsGuarded();
+      while (_captionPushQueued != null && !_isDisposed) {
+        final pending = _captionPushQueued!;
+        _captionPushQueued = null;
+        await _pushPreviewCaptionsGuarded();
+        pending.complete();
+      }
+    } finally {
+      _captionPushRunning = false;
+      // Disposal mid-drain must not strand a waiter on a future that will
+      // never complete.
+      final stranded = _captionPushQueued;
+      _captionPushQueued = null;
+      stranded?.complete();
+    }
+  }
+
+  /// A failed push must not take the queued one down with it.
+  Future<void> _pushPreviewCaptionsGuarded() async {
+    try {
+      await _pushPreviewCaptions();
+    } catch (e, st) {
+      Log.e("Captions", "Preview caption push failed", e, st);
+    }
+  }
+
+  /// The canvas the EXPORT will use, cached per project and preset pair.
+  Future<Size?> _exportCanvasSize(String projectPath) async {
+    final key = [
+      projectPath,
+      _settings.post.layoutPreset.name,
+      _settings.post.resolutionPreset.name,
+    ].join(' ');
+    final cached = _cachedExportSize;
+    if (cached != null && key == _cachedExportSizeKey) return cached;
+
+    final size = await _nativeBridge.resolveExportSize(
+      projectPath: projectPath,
+      layoutPreset: _settings.post.layoutPreset.name,
+      resolutionPreset: _settings.post.resolutionPreset.name,
     );
-    _captionPushChain = queued;
-    return queued;
+    if (size == null) return null;
+    _cachedExportSizeKey = key;
+    _cachedExportSize = size;
+    return size;
   }
 
   Future<void> _pushPreviewCaptions() async {
@@ -300,11 +380,9 @@ class PostProcessingController extends ChangeNotifier {
       // The canvas the EXPORT will use, not the preview's on-screen size: the
       // preview canvas is the same pixel space, shrunk by a layer transform, so
       // one rasterization serves both and the placement math is identical.
-      final size = await _nativeBridge.resolveExportSize(
-        projectPath: projectPath,
-        layoutPreset: _settings.post.layoutPreset.name,
-        resolutionPreset: _settings.post.resolutionPreset.name,
-      );
+      // Cached: this is a native round trip and the signature check below is
+      // downstream of it, so an uncached call would pay full price per tick.
+      final size = await _exportCanvasSize(projectPath);
       if (size == null || _isDisposed || _projectPath != projectPath) return;
 
       final signature = [
@@ -346,10 +424,23 @@ class PostProcessingController extends ChangeNotifier {
   /// exported file. Evaluated once per export and shared by both destinations,
   /// so the burned-in caption and the sidecar entry can never be computed
   /// against different clip lists.
-  ReflowedCaptions reflowedCaptions() => CaptionReflow.reflow(
-    captions: _captions,
-    clips: _player.clipEditor?.clips ?? const <Clip>[],
-  );
+  ReflowedCaptions reflowedCaptions() {
+    // `clipEditor.clips` hands back a fresh unmodifiable wrapper every call, so
+    // the cache key compares values. Clips are few and carry `==`; the reflow
+    // it skips is O(cues x clips) and runs on every controller notification.
+    final clips = _player.clipEditor?.clips ?? const <Clip>[];
+    final cached = _reflowCache;
+    if (cached != null &&
+        identical(_reflowCacheCaptions, _captions) &&
+        listEquals(_reflowCacheClips, clips)) {
+      return cached;
+    }
+    final reflowed = CaptionReflow.reflow(captions: _captions, clips: clips);
+    _reflowCacheCaptions = _captions;
+    _reflowCacheClips = clips;
+    _reflowCache = reflowed;
+    return reflowed;
+  }
 
   /// The destination the next export will actually use.
   ///
@@ -409,6 +500,9 @@ class PostProcessingController extends ChangeNotifier {
     // above, so a previous run cannot leave this set.
     _captionsProgress = null;
     _captionsStage = ProgressStage.preparing;
+    // Reset here, because a retry that succeeds must stop reporting the last
+    // failure and the `finally` cannot tell the two outcomes apart.
+    _captionsErrorCode = null;
     notifyListeners();
 
     try {
@@ -431,10 +525,23 @@ class PostProcessingController extends ChangeNotifier {
           e,
           null,
         );
+        // Same guard the success path uses: a job that fails after the user
+        // has moved to another recording must not report its failure against
+        // that one.
+        if (_projectPath != projectPath) return;
         _hasEverGeneratedCaptions = true;
+        // Without this the section reads "no speech found", because that
+        // notice keys off `hasEverGenerated` plus an empty cue list — which is
+        // exactly the state a failure leaves behind. A model that would not
+        // download and a recording of silence are not the same thing to tell
+        // someone, and only one of them is worth retrying.
+        _captionsErrorCode = e.code;
       }
     } catch (e, st) {
       Log.e("PostProcessing", "Caption generation failed", e, st);
+      if (_projectPath != projectPath) return;
+      _hasEverGeneratedCaptions = true;
+      _captionsErrorCode = 'CAPTIONS_FAILED';
     } finally {
       _isGeneratingCaptions = false;
       _isCancellingCaptions = false;
@@ -1295,6 +1402,9 @@ class PostProcessingController extends ChangeNotifier {
     _backgroundImagePath = null;
     _backgroundKind = BackgroundKind.color;
     _backgroundPreset = null;
+    // Per-recording, like everything else here: a failure belongs to the
+    // recording it happened on, not to the next one opened.
+    _captionsErrorCode = null;
     _cursorSize = 1.5;
     _zoomFactor = _settings.post.postZoomFactor;
     _zoomEffectEnabled = _settings.post.postZoomEffectEnabled;

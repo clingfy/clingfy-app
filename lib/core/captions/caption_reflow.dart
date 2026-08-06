@@ -98,6 +98,22 @@ class ReflowedCaptions {
   final List<CaptionSpan> sidecar;
 
   bool get isEmpty => burnIn.isEmpty && sidecar.isEmpty;
+
+  // Value equality because this is handed to a provider `Selector` inside a
+  // record. Records compare field-wise, so without this a freshly reflowed
+  // instance never equals the previous one and the whole post-processing
+  // sidebar rebuilds on every controller notification.
+  @override
+  bool operator ==(Object other) =>
+      identical(this, other) ||
+      other is ReflowedCaptions &&
+          runtimeType == other.runtimeType &&
+          listEquals(burnIn, other.burnIn) &&
+          listEquals(sidecar, other.sidecar);
+
+  @override
+  int get hashCode =>
+      Object.hash(Object.hashAll(burnIn), Object.hashAll(sidecar));
 }
 
 /// Maps a source-timed transcript onto an edited recording.
