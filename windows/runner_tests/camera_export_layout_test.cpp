@@ -356,4 +356,126 @@ TEST(CameraAnimationTest, FrameTimeIsClampedToClip) {
 }
 
 }  // namespace
+
+// --- scale with screen zoom -------------------------------------------------
+
+TEST(ResolveCameraZoomScale, GrowsWithTheZoomExcessTimesTheMultiplier) {
+  // macOS CameraTransformTimelineBuilder.resolvedScale: the bubble adopts
+  // `multiplier` of the zoom's excess. Default 0.35 at a 2.0x screen zoom.
+  EXPECT_NEAR(
+      ResolveCameraZoomScale("scaleWithScreenZoom", 0.35, 2.0, "overlayBottomRight"),
+      1.35, 0.0001);
+  EXPECT_NEAR(
+      ResolveCameraZoomScale("scaleWithScreenZoom", 1.0, 2.0, "overlayBottomRight"),
+      2.0, 0.0001);
+  EXPECT_NEAR(
+      ResolveCameraZoomScale("scaleWithScreenZoom", 0.0, 3.0, "overlayBottomRight"),
+      1.0, 0.0001);  // multiplier 0 == fixed
+}
+
+TEST(ResolveCameraZoomScale, FixedAndUnknownBehavioursDoNotScale) {
+  EXPECT_DOUBLE_EQ(ResolveCameraZoomScale("fixed", 1.0, 3.0, "overlayTopLeft"), 1.0);
+  EXPECT_DOUBLE_EQ(ResolveCameraZoomScale("", 1.0, 3.0, "overlayTopLeft"), 1.0);
+  // A future behaviour name this binary predates must not silently scale.
+  EXPECT_DOUBLE_EQ(
+      ResolveCameraZoomScale("orbitTheCursor", 1.0, 3.0, "overlayTopLeft"), 1.0);
+}
+
+TEST(ResolveCameraZoomScale, BackgroundBehindOptsOut) {
+  // A full-canvas camera has no meaningful "grow with the zoom" (macOS guards
+  // the same preset).
+  EXPECT_DOUBLE_EQ(
+      ResolveCameraZoomScale("scaleWithScreenZoom", 1.0, 3.0, "backgroundBehind"),
+      1.0);
+}
+
+TEST(ResolveCameraZoomScale, NeverShrinksBelowTheAuthoredSize) {
+  // A zoom-out, or a smoother undershoot, must not shrink the bubble.
+  EXPECT_DOUBLE_EQ(
+      ResolveCameraZoomScale("scaleWithScreenZoom", 1.0, 0.5, "overlayTopLeft"),
+      1.0);
+  EXPECT_DOUBLE_EQ(
+      ResolveCameraZoomScale("scaleWithScreenZoom", 1.0, 1.0, "overlayTopLeft"),
+      1.0);
+  // Out-of-range multipliers clamp rather than inverting the effect.
+  EXPECT_NEAR(
+      ResolveCameraZoomScale("scaleWithScreenZoom", -2.0, 3.0, "overlayTopLeft"),
+      1.0, 0.0001);
+  EXPECT_NEAR(
+      ResolveCameraZoomScale("scaleWithScreenZoom", 9.0, 3.0, "overlayTopLeft"),
+      3.0, 0.0001);
+}
+
+TEST(CameraAnimationTest, ZoomScaleAppliesWithNoIntroOrOutro) {
+  // The zoom scale is not gated on a preset or on a known duration: a clip
+  // whose duration has not resolved yet still scales with the zoom rather than
+  // popping to its resting size.
+  CameraAnimationParams p;
+  p.zoom_scale = 1.4;
+  const auto out = ResolveCameraAnimation(p, 0, 0, kBubble, kCanvasW, kCanvasH,
+                                          CameraSlideEdge::kRight);
+  EXPECT_NEAR(out.scale, 1.4, 0.0001);
+  EXPECT_DOUBLE_EQ(out.opacity, 1.0);
+}
+
+TEST(CameraAnimationTest, ZoomScaleComposesWithThePopIntro) {
+  // Both are uniform scales about the same centre, so they multiply — macOS
+  // composes additionalScale on top of the zoom-scaled frame the same way.
+  CameraAnimationParams p = MakeParams(CameraIntroKind::kPop,
+                                       CameraOutroKind::kNone);
+  p.zoom_scale = 1.5;
+  // t=0 → pop scale is exactly 0.90.
+  const auto out = Resolve(p, 0);
+  EXPECT_NEAR(out.scale, 1.5 * 0.90, 0.0001);
+}
+
+TEST(CameraAnimationTest, AnIdentityZoomLeavesTheStaticBubbleUntouched) {
+  // The un-zoomed, un-animated case must stay exactly identity so the painter
+  // keeps taking its byte-identical fast path.
+  CameraAnimationParams p;
+  p.zoom_scale = 1.0;
+  const auto out = Resolve(p, 500);
+  EXPECT_DOUBLE_EQ(out.scale, 1.0);
+  EXPECT_DOUBLE_EQ(out.opacity, 1.0);
+  EXPECT_DOUBLE_EQ(out.translate_x, 0.0);
+  EXPECT_DOUBLE_EQ(out.translate_y, 0.0);
+}
+
+TEST(CameraAnimationTest, ScalingUpNudgesACornerBubbleBackOnCanvas) {
+  // kBubble is centred at x=1700 on a 1920-wide canvas. At 2x it still fits
+  // (half-width 200, right edge 1900), so nothing should move. At 3x the half
+  // -width is 300 and the right edge would reach 2000, so the centre must be
+  // pulled back to 1620 — a translate of -80.
+  CameraAnimationParams fits;
+  fits.zoom_scale = 2.0;
+  EXPECT_DOUBLE_EQ(ResolveCameraAnimation(fits, 0, 0, kBubble, kCanvasW,
+                                          kCanvasH, CameraSlideEdge::kRight)
+                       .translate_x,
+                   0.0);
+
+  CameraAnimationParams spills;
+  spills.zoom_scale = 3.0;
+  const auto out = ResolveCameraAnimation(spills, 0, 0, kBubble, kCanvasW,
+                                          kCanvasH, CameraSlideEdge::kRight);
+  const double cx = kBubble.x + kBubble.width / 2.0;
+  const double half = (kBubble.width * 3.0) / 2.0;
+  EXPECT_NEAR(cx + out.translate_x, kCanvasW - half, 0.001);
+  EXPECT_NEAR(out.translate_x, -80.0, 0.001);  // pulled LEFT, back inside
+}
+
+TEST(CameraAnimationTest, TheClampDoesNotCancelTheSlideOutro) {
+  // THE trap this ordering exists to avoid: clamping AFTER the slide would drag
+  // a slide-out bubble back on-screen and silently kill the outro. The clamp
+  // offset and the slide offset must simply ADD, so the bubble still travels
+  // its full distance off-canvas even while the zoom clamp is pulling it in.
+  CameraAnimationParams p =
+      MakeParams(CameraIntroKind::kNone, CameraOutroKind::kSlide);
+  const auto plain = Resolve(p, kTotalMs, CameraSlideEdge::kRight);
+  EXPECT_GT(plain.translate_x, 0.0);  // the outro travels right, off-canvas
+
+  p.zoom_scale = 3.0;  // the same 3x that clamps the resting centre by -80
+  const auto zoomed = Resolve(p, kTotalMs, CameraSlideEdge::kRight);
+  EXPECT_NEAR(zoomed.translate_x, plain.translate_x - 80.0, 0.001);
+}
+
 }  // namespace clingfy::capture

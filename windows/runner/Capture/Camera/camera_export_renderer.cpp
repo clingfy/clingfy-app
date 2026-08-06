@@ -85,7 +85,10 @@ bool CameraExportRenderer::Prepare(ID2D1Factory1* factory,
                                    const Style& style,
                                    const CameraAnimationParams& anim,
                                    double canvas_w, double canvas_h,
-                                   CameraSlideEdge slide_edge) {
+                                   CameraSlideEdge slide_edge,
+                                   const std::string& zoom_behavior,
+                                   double zoom_scale_multiplier,
+                                   const std::string& layout_preset) {
   if (factory == nullptr || ctx == nullptr || cam_w_ == 0 || cam_h_ == 0) {
     return false;
   }
@@ -95,6 +98,9 @@ bool CameraExportRenderer::Prepare(ID2D1Factory1* factory,
   canvas_w_ = canvas_w;
   canvas_h_ = canvas_h;
   slide_edge_ = slide_edge;
+  zoom_behavior_ = zoom_behavior;
+  zoom_scale_multiplier_ = zoom_scale_multiplier;
+  layout_preset_ = layout_preset;
 
   // Source bitmap holds the latest decoded camera frame (system-memory upload).
   const D2D1_BITMAP_PROPERTIES1 props = D2D1::BitmapProperties1(
@@ -199,12 +205,16 @@ void CameraExportRenderer::SeekTo(std::int64_t frame_ms) {
 
 void CameraExportRenderer::Draw(ID2D1DeviceContext* ctx,
                                 std::int64_t frame_ms,
-                                std::int64_t total_duration_ms) {
+                                std::int64_t total_duration_ms,
+                                double screen_zoom) {
   if (!ready_ || !has_held_frame_) {
     return;
   }
+  CameraAnimationParams params = anim_params_;
+  params.zoom_scale = ResolveCameraZoomScale(
+      zoom_behavior_, zoom_scale_multiplier_, screen_zoom, layout_preset_);
   const CameraAnimationOutput a =
-      ResolveCameraAnimation(anim_params_, frame_ms, total_duration_ms, bubble_,
+      ResolveCameraAnimation(params, frame_ms, total_duration_ms, bubble_,
                              canvas_w_, canvas_h_, slide_edge_);
   CameraBubblePainter::Frame frame;
   frame.opacity_mul = a.opacity;

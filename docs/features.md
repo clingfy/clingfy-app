@@ -59,7 +59,8 @@ Status legend: ✅ shipped · 🚧 partial / with caveats · — not available y
 | Glow highlight | Attention glow with strength control. | ✅ | 🚧 |
 | Chroma key | Green/blue-screen removal with key color + strength. | ✅ | ✅ |
 | Intro / outro animations | Fade, pop, slide in; fade, shrink, slide out. | ✅ | ✅ |
-| Zoom emphasis + scale-with-zoom | Camera reacts to zoom segments. | ✅ | — |
+| Scale with zoom | Camera bubble grows with the screen zoom. | ✅ | ✅ |
+| Zoom emphasis (pulse) | Camera throbs while a zoom segment is active. | ✅ | — |
 
 ## Cursor & zoom
 

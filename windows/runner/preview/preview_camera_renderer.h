@@ -78,6 +78,10 @@ struct PreviewCameraComposition {
   std::string outro_preset;
   int intro_duration_ms = 0;
   int outro_duration_ms = 0;
+  // Scale-with-screen-zoom. Empty behaviour / 0 multiplier = a fixed bubble,
+  // matching the export parser's fallbacks.
+  std::string zoom_behavior;
+  double zoom_scale_multiplier = 0.0;
 };
 
 class PreviewCameraRenderer {
@@ -109,8 +113,11 @@ class PreviewCameraRenderer {
   // source-keyed intro would fire somewhere the user never sees. A
   // total_duration_ms <= 0 (duration not resolved yet) resolves to a static
   // bubble rather than an error.
+  // `screen_zoom` is the preview compositor's smoothed smart-zoom factor for
+  // this frame; it scales the bubble (scale-with-screen-zoom) without moving
+  // it under the zoom transform. Pass 1.0 when not zooming.
   void Draw(ID2D1DeviceContext* ctx, std::int64_t frame_ms,
-            std::int64_t total_duration_ms);
+            std::int64_t total_duration_ms, double screen_zoom);
 
  private:
   PreviewCameraRenderer() = default;
@@ -151,6 +158,10 @@ class PreviewCameraRenderer {
   double canvas_h_ = 0.0;
   clingfy::capture::CameraSlideEdge slide_edge_ =
       clingfy::capture::CameraSlideEdge::kRight;
+  // Scale-with-screen-zoom inputs; the scale itself is per-frame in Draw.
+  std::string zoom_behavior_;
+  double zoom_scale_multiplier_ = 0.0;
+  std::string layout_preset_;
 
   // Decode cursor (frame-server thread only). A pending sample buffer (like the
   // export renderer) parks a peeked future frame so normal forward playback

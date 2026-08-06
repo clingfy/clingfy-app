@@ -381,8 +381,19 @@ void CameraBubblePainter::Draw(ID2D1DeviceContext* ctx, ID2D1Bitmap1* source,
 
   // Anything to animate or key? If not, fall through to the Phase 9.6 fast path
   // below, which the inline preview's static bubble depends on staying identical.
-  const bool animated = frame.scale != 1.0 || frame.translate_x != 0.0 ||
-                        frame.translate_y != 0.0 || frame.opacity_mul != 1.0;
+  //
+  // Compared with an epsilon, NOT exactly. The zoom smoother decays toward 1.0
+  // asymptotically and never actually reaches it, so an exact `!= 1.0` meant
+  // that after the first zoom of a clip every remaining frame took the enhanced
+  // path (PushLayer + DrawImage + a per-frame transform) forever, and the
+  // byte-identical static path was never re-entered. Sub-epsilon values are
+  // visually indistinguishable anyway — a 1e-4 scale on a 200px bubble is
+  // 0.02px.
+  constexpr double kIdentityEpsilon = 1e-4;
+  const bool animated = std::abs(frame.scale - 1.0) > kIdentityEpsilon ||
+                        std::abs(frame.translate_x) > kIdentityEpsilon ||
+                        std::abs(frame.translate_y) > kIdentityEpsilon ||
+                        std::abs(frame.opacity_mul - 1.0) > kIdentityEpsilon;
   if (chroma_effect_ != nullptr || animated) {
     DrawEnhanced(ctx, source, frame);
     return;

@@ -441,6 +441,12 @@ void HandleExportVideo(
         static_cast<int>(ReadDouble(*args, "cameraIntroDurationMs", 0.0));
     input.camera_outro_duration_ms =
         static_cast<int>(ReadDouble(*args, "cameraOutroDurationMs", 0.0));
+    // Scale-with-screen-zoom. Fallbacks are ""/0 (a fixed bubble) rather than
+    // the Dart defaults, so a payload that predates these keys renders exactly
+    // as it did before.
+    input.camera_zoom_behavior = ReadString(*args, "cameraZoomBehavior");
+    input.camera_zoom_scale_multiplier =
+        ReadDouble(*args, "cameraZoomScaleMultiplier", 0.0);
     // cameraNormalizedCenter is a nested {x,y} map (or null when the bubble is
     // auto-placed by preset). Present → manual placement.
     if (const auto it = args->find(flutter::EncodableValue(
