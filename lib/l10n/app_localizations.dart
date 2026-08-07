@@ -4654,6 +4654,12 @@ abstract class AppLocalizations {
   /// **'Your camera was disconnected. Recording continues without it.'**
   String get warnCameraDisconnected;
 
+  /// No description provided for @warnCameraPreviewHidden.
+  ///
+  /// In en, this message translates to:
+  /// **'Your live camera preview can\'t be shown while recording on this PC. Recording continues — your camera is still captured and appears in the finished video.'**
+  String get warnCameraPreviewHidden;
+
   /// No description provided for @warnEncoderVideoError.
   ///
   /// In en, this message translates to:

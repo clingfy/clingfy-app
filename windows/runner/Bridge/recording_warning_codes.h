@@ -20,6 +20,13 @@ inline constexpr const char* kSystemAudioStopped = "SYSTEM_AUDIO_STOPPED";
 inline constexpr const char* kCameraUnavailable = "CAMERA_UNAVAILABLE";
 inline constexpr const char* kCameraOpenFailed = "CAMERA_OPEN_FAILED";
 inline constexpr const char* kCameraDisconnected = "CAMERA_DISCONNECTED";
+// The camera records fine but its LIVE bubble cannot be shown, because
+// SetWindowDisplayAffinity(WDA_EXCLUDEFROMCAPTURE) failed on both presenters
+// (a documented Win11 defect). Showing it anyway would burn the camera into
+// screen.mov and double it at export, so the bubble stays hidden. Distinct
+// from kCameraOpenFailed: the camera IS captured and DOES appear in the
+// finished video — only the live preview is missing.
+inline constexpr const char* kCameraPreviewHidden = "CAMERA_PREVIEW_HIDDEN";
 inline constexpr const char* kEncoderVideoError = "ENCODER_VIDEO_ERROR";
 inline constexpr const char* kEncoderAudioError = "ENCODER_AUDIO_ERROR";
 inline constexpr const char* kWindowClosedPartialSaved =

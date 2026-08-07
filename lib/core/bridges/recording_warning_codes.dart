@@ -15,6 +15,7 @@ class RecordingWarningCode {
   static const String cameraUnavailable = 'CAMERA_UNAVAILABLE';
   static const String cameraOpenFailed = 'CAMERA_OPEN_FAILED';
   static const String cameraDisconnected = 'CAMERA_DISCONNECTED';
+  static const String cameraPreviewHidden = 'CAMERA_PREVIEW_HIDDEN';
   static const String encoderVideoError = 'ENCODER_VIDEO_ERROR';
   static const String encoderAudioError = 'ENCODER_AUDIO_ERROR';
   static const String windowClosedPartialSaved = 'WINDOW_CLOSED_PARTIAL_SAVED';

@@ -135,6 +135,12 @@ StartDiskGate EvaluateStartDiskGate(std::optional<std::uint64_t> free_bytes,
   return StartDiskGate::kOk;
 }
 
+bool ShouldWarnCameraPreviewHidden(bool floating_requested, bool overlay_exists,
+                                   bool wda_excluded, bool already_warned) {
+  return floating_requested && overlay_exists && !wda_excluded &&
+         !already_warned;
+}
+
 RecordingEngine& RecordingEngine::Instance() {
   static RecordingEngine engine;
   return engine;
@@ -1131,6 +1137,8 @@ std::optional<RecordingError> RecordingEngine::Start(
         // mid-recording (P4c-c3), transparently to the rest of the engine.
         auto host = std::make_shared<CameraOverlayHost>();
         camera_floating_ = host->Start(place) ? host : nullptr;
+        // Fresh session, fresh chance to warn about an unshowable bubble.
+        camera_preview_hidden_warned_ = false;
         if (camera_floating_ == nullptr) {
           // WARN (not a debug probe): the user records without a floating
           // bubble and support needs this line in release logs/Sentry.
@@ -1750,6 +1758,36 @@ bool RecordingEngine::SetCameraPreviewFloating(bool floating) {
       camera_floating_->wda_excluded()) {
     camera_floating_->Show();
     return true;
+  }
+  // A bubble that EXISTS but could not be capture-excluded is the silent
+  // failure this warning exists for: the user asked for a live preview, the
+  // camera is recording, and nothing appears — with no explanation. Dart only
+  // ever saw `{floating:false}` here and logged it.
+  //
+  // Emitted from this function rather than the start_warnings rail because the
+  // discriminating predicate lives here, and because it is mutually exclusive
+  // with kCameraOpenFailed BY CONSTRUCTION: the recorder-failure branch resets
+  // camera_floating_ to nullptr, so the two can never both fire.
+  //
+  // Deliberately NOT emitted when camera_floating_ is null. That is a different
+  // failure (nothing started at all, already WARNed) and this message would
+  // misdescribe it — it promises the camera still reaches the finished video,
+  // which is only true when the bubble exists and is merely unshowable.
+  if (ShouldWarnCameraPreviewHidden(floating, camera_floating_ != nullptr,
+                                    camera_floating_ != nullptr &&
+                                        camera_floating_->wda_excluded(),
+                                    camera_preview_hidden_warned_)) {
+    camera_preview_hidden_warned_ = true;  // one-shot across mode toggles
+    clingfy::bridge::NativeLogPublisher::Instance().Warn(
+        "Camera",
+        "capture exclusion failed on both presenters — the live camera bubble "
+        "stays hidden; the camera is still recorded");
+    clingfy::bridge::WorkflowEventPublisher::Instance().EmitRecordingWarning(
+        std::string(session_.session_id()),
+        "Your live camera preview can't be shown while recording on this PC. "
+        "Recording continues — your camera is still captured and appears in "
+        "the finished video.",
+        clingfy::bridge::warning::kCameraPreviewHidden);
   }
   if (camera_floating_ != nullptr) {
     camera_floating_->Hide();

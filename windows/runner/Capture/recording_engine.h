@@ -85,6 +85,25 @@ inline constexpr std::uint64_t kStartDiskSoftFloorBytes =
 StartDiskGate EvaluateStartDiskGate(std::optional<std::uint64_t> free_bytes,
                                     bool allow_low_storage_bypass);
 
+// Should the kCameraPreviewHidden warning fire on this SetCameraPreviewFloating
+// call? Pure so the truth table is unit-testable — the emit itself needs a live
+// recording session, which no headless test can build.
+//
+// Fires only when the user ASKED for the floating bubble, an overlay EXISTS,
+// and its capture exclusion failed. The three exclusions are each deliberate:
+//   * not requested        — the user chose the in-app preview; nothing failed.
+//   * no overlay at all    — a different failure (nothing started), already
+//                            WARNed, and this message would misdescribe it: it
+//                            promises the camera still reaches the export,
+//                            which is only true when the bubble merely cannot
+//                            be SHOWN. It is also mutually exclusive with
+//                            kCameraOpenFailed by construction, because the
+//                            recorder-failure branch nulls the overlay.
+//   * already warned       — one-shot, so toggling preview modes during one
+//                            recording cannot re-toast.
+bool ShouldWarnCameraPreviewHidden(bool floating_requested, bool overlay_exists,
+                                   bool wda_excluded, bool already_warned);
+
 class RecordingEngine {
  public:
   static RecordingEngine& Instance();
@@ -375,6 +394,10 @@ class RecordingEngine {
   // Renderer P2: held through the presenter interface (GDI today, DComp in
   // P3) — see docs/decisions/windows-camera-bubble-renderer-architecture.md.
   std::shared_ptr<ICameraOverlayPresenter> camera_floating_;
+  // One-shot latch for the kCameraPreviewHidden toast, so toggling the preview
+  // mode repeatedly during one recording cannot re-toast. Reset per session in
+  // StartRecording. Guarded by mutex_.
+  bool camera_preview_hidden_warned_ = false;
 
   // Held for the whole session (Starting → terminal): keeps the machine out
   // of Modern Standby and the recorded display on — sleep mid-recording
