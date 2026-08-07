@@ -129,7 +129,6 @@ constexpr int kDefaultHeight = 720;
 // kClickLookupWindowUs + kHighlightRadiusPx live in preview_compositor.h
 // (the shared static lib). The HWND demo and the Flutter texture bridge
 // both consume the same values.
-using clingfy::preview::CursorEvent;
 using clingfy::preview::ZoomState;
 
 // --- Stage 1D constants -----------------------------------------------
@@ -170,10 +169,59 @@ constexpr wchar_t kStage1dResultPath[] =
 constexpr double kPassBarMedianMs = 16.0;
 constexpr double kPassBarP99Ms = 25.0;
 
-// CursorEvent, JSONL parser, FindNearestCursor / FindNearestClick,
-// ZoomState, StepZoomSmoother — all moved to preview_compositor.{h,cpp}
-// (the preview_poc_common static lib) so the Flutter texture bridge in
-// Stage 2A-2 can reuse the same logic. See preview/preview_compositor.h.
+// ZoomState / StepZoomSmoother live in preview_compositor.{h,cpp} (the
+// preview_poc_common static lib), shared with the Flutter texture bridge.
+//
+// The CURSOR PARSER does not. This demo consumes the Stage-1 POC format
+// (`{"ts_us":N,"x":N,"y":N,"button_state":N}`), which the shipping recorder
+// has never written — it emits the `tMs` sidecar that `ParseCursorSidecar`
+// reads. Keeping the POC parser here, next to the fixtures that use it, is
+// what let the production preview move to the real reader; sharing it is what
+// made the production preview silently parse zero events on every real
+// project. Do not promote it back into the shared lib.
+capture::CursorSidecarData LoadPocCursorJsonl(const std::wstring& path) {
+  capture::CursorSidecarData out;
+  std::ifstream in(path);
+  if (!in.is_open()) return out;
+  std::string line;
+  while (std::getline(in, line)) {
+    const auto brace = line.find('{');
+    if (brace == std::string::npos) continue;
+    auto num = [&line](const char* key, long long* dest) {
+      const std::string needle = std::string("\"") + key + "\"";
+      const auto k = line.find(needle);
+      if (k == std::string::npos) return false;
+      const auto colon = line.find(':', k + needle.size());
+      if (colon == std::string::npos) return false;
+      *dest = std::strtoll(line.c_str() + colon + 1, nullptr, 10);
+      return true;
+    };
+    long long ts_us = 0, x = 0, y = 0, button = 0;
+    if (!num("ts_us", &ts_us) || !num("x", &x) || !num("y", &y)) continue;
+    capture::CursorSidecarSample sample;
+    sample.t_ms = ts_us / 1000;
+    sample.x = static_cast<std::int32_t>(x);
+    sample.y = static_cast<std::int32_t>(y);
+    sample.visible = true;
+    out.samples.push_back(sample);
+    if (num("button_state", &button) && button != 0) {
+      capture::CursorSidecarClick click;
+      click.t_ms = sample.t_ms;
+      out.clicks.push_back(click);
+    }
+  }
+  std::sort(out.samples.begin(), out.samples.end(),
+            [](const capture::CursorSidecarSample& a,
+               const capture::CursorSidecarSample& b) {
+              return a.t_ms < b.t_ms;
+            });
+  std::sort(out.clicks.begin(), out.clicks.end(),
+            [](const capture::CursorSidecarClick& a,
+               const capture::CursorSidecarClick& b) {
+              return a.t_ms < b.t_ms;
+            });
+  return out;
+}
 
 // ---------------------------------------------------------------------
 // Stage 1D — seek samples + measurement window state
@@ -231,7 +279,7 @@ struct DemoState {
   // ---- CLI + cursor fixture ----
   std::wstring video_path;
   std::wstring cursor_path;
-  std::vector<CursorEvent> cursor_events;
+  capture::CursorSidecarData cursor;
   bool cursor_mode = false;
 
   // ---- Zoom state ----
@@ -902,10 +950,10 @@ void HandleVideoFrameAvailable(DemoState& s,
   // optional zoom + highlight in one go. cursor_events empty means
   // video-only mode; zoom and halo are skipped and the call is a
   // pure DrawBitmap.
-  // Compositor handles empty cursor_events as the "video-only" path
+  // Compositor handles an empty sidecar as the "video-only" path
   // internally; no separate codepath needed when cursor_mode is off
-  // (s.cursor_events is just empty in that case).
-  s.compositor.ComposeFrame(s.d2d_context.Get(), dest, s.cursor_events,
+  // (s.cursor has no samples in that case).
+  s.compositor.ComposeFrame(s.d2d_context.Get(), dest, s.cursor,
                             playback_us, NowSeconds(), s.zoom);
   const HRESULT end_hr = s.d2d_context->EndDraw();
   if (end_hr == D2DERR_RECREATE_TARGET) {
@@ -1136,8 +1184,8 @@ int RunDemo(HINSTANCE hinstance, int show_cmd, LPWSTR cmdline) {
   state.video_path = paths.video;
   state.cursor_path = paths.cursor;
   if (!paths.cursor.empty()) {
-    state.cursor_events = clingfy::preview::LoadCursorJsonl(paths.cursor);
-    state.cursor_mode = !state.cursor_events.empty();
+    state.cursor = LoadPocCursorJsonl(paths.cursor);
+    state.cursor_mode = !state.cursor.samples.empty();
     if (!state.cursor_mode) {
       return ShowErrorAndExit(
           L"Cursor file parsed to zero events:\n" + paths.cursor +

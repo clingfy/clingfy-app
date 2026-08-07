@@ -288,7 +288,7 @@ struct PreviewEngine::Impl {
 
   // ---- Compositor + cursor fixture ----
   clingfy::preview::PreviewCompositor compositor;
-  std::vector<clingfy::preview::CursorEvent> cursor_events;
+  capture::CursorSidecarData cursor;
   clingfy::preview::ZoomState zoom;
   bool cursor_mode = false;
 
@@ -885,7 +885,7 @@ OpenResult PreviewEngine::Open(const OpenArgs& args) {
         result.video_width = static_cast<int>(impl_->last_video_width.load());
         result.video_height = static_cast<int>(impl_->last_video_height.load());
         result.cursor_event_count =
-            static_cast<std::int64_t>(impl_->cursor_events.size());
+            static_cast<std::int64_t>(impl_->cursor.samples.size());
         result.cursor_mode = impl_->cursor_mode;
       }
       return result;
@@ -1104,15 +1104,29 @@ OpenResult PreviewEngine::Open(const OpenArgs& args) {
   impl_->descriptor.release_callback = nullptr;
   impl_->descriptor.release_context = nullptr;
 
-  // ---- 5. Load cursor JSONL (if provided). ----
+  // ---- 5. Load the cursor sidecar (if provided). ----
+  // The SAME parser the export uses. The preview used to run its own
+  // `ts_us`-shaped loader from the frame-server POC, which the shipping
+  // recorder has never written — so this parsed to zero events on every real
+  // project and the preview's zoom, cursor halo and camera scale-with-zoom
+  // were all silently dead.
   if (!args.cursor_path.empty()) {
-    impl_->cursor_events =
-        clingfy::preview::LoadCursorJsonl(args.cursor_path);
-    impl_->cursor_mode = !impl_->cursor_events.empty();
-    char buf[96];
+    impl_->cursor = {};
+    std::ifstream in(args.cursor_path, std::ios::binary);
+    if (in.is_open()) {
+      const std::string jsonl((std::istreambuf_iterator<char>(in)),
+                              std::istreambuf_iterator<char>());
+      if (auto parsed = capture::ParseCursorSidecar(jsonl)) {
+        impl_->cursor = std::move(*parsed);
+      }
+    }
+    impl_->cursor_mode = !impl_->cursor.samples.empty();
+    char buf[128];
     std::snprintf(buf, sizeof(buf),
-                  "cursor_events parsed: %zu  (cursor_mode=%d)",
-                  impl_->cursor_events.size(), impl_->cursor_mode ? 1 : 0);
+                  "cursor sidecar parsed: %zu samples, %zu clicks "
+                  "(cursor_mode=%d)",
+                  impl_->cursor.samples.size(), impl_->cursor.clicks.size(),
+                  impl_->cursor_mode ? 1 : 0);
     LogNative(buf);
   }
 
@@ -1328,7 +1342,7 @@ OpenResult PreviewEngine::Open(const OpenArgs& args) {
   result.video_width = 0;  // discovered on first frame
   result.video_height = 0;
   result.cursor_event_count =
-      static_cast<std::int64_t>(impl_->cursor_events.size());
+      static_cast<std::int64_t>(impl_->cursor.samples.size());
   result.cursor_mode = impl_->cursor_mode;
   result.error.clear();
   return result;
@@ -1526,7 +1540,7 @@ void PreviewEngine::ComposeAndHandoffLocked(Impl* impl,
   impl->d2d_context->SetTarget(impl->shared_bitmap.Get());
   impl->d2d_context->BeginDraw();
   impl->compositor.ComposeFrame(impl->d2d_context.Get(), dest,
-                                impl->cursor_events, playback_us,
+                                impl->cursor, playback_us,
                                 NowSeconds(), impl->zoom);
   // Camera bubble draws on top of the composited screen frame, in canvas space.
   // The intro/outro clock is the EDITED position + edited duration, not
@@ -2138,7 +2152,7 @@ void PreviewEngine::Close(const CloseArgs& args) {
     frames_consumed = dying_impl->frames_consumed.load();
     video_w = dying_impl->last_video_width.load();
     video_h = dying_impl->last_video_height.load();
-    cursor_events_size = dying_impl->cursor_events.size();
+    cursor_events_size = dying_impl->cursor.samples.size();
     cursor_mode = dying_impl->cursor_mode;
     stats_total = dying_impl->timing_total.ComputeStats();
     stats_copy = dying_impl->timing_copy.ComputeStats();

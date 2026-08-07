@@ -75,64 +75,17 @@ bool ReadJsonNumber(const std::string& line, const std::string& key, T& out) {
   return true;
 }
 
-bool ParseCursorLine(const std::string& line, CursorEvent& out) {
-  const auto first = line.find_first_not_of(" \t\r\n");
-  if (first == std::string::npos) return false;
-  if (line[first] != '{') return false;
-
-  CursorEvent ev;
-  if (!ReadJsonNumber<std::int64_t>(line, "ts_us", ev.ts_us)) return false;
-  if (!ReadJsonNumber<double>(line, "x", ev.x)) return false;
-  if (!ReadJsonNumber<double>(line, "y", ev.y)) return false;
-  ReadJsonNumber<int>(line, "button_state", ev.button_state);
-  ReadJsonNumber<int>(line, "monitor_id", ev.monitor_id);
-  out = ev;
-  return true;
-}
-
 }  // namespace
 
-std::vector<CursorEvent> LoadCursorJsonl(const std::wstring& path) {
-  std::vector<CursorEvent> out;
-  std::ifstream in(path);
-  if (!in.is_open()) return out;
-  std::string line;
-  while (std::getline(in, line)) {
-    CursorEvent ev;
-    if (ParseCursorLine(line, ev)) out.push_back(ev);
-  }
-  std::sort(out.begin(), out.end(),
-            [](const CursorEvent& a, const CursorEvent& b) {
-              return a.ts_us < b.ts_us;
-            });
-  return out;
-}
-
-const CursorEvent* FindNearestCursor(
-    const std::vector<CursorEvent>& events, std::int64_t ts_us) {
-  if (events.empty()) return nullptr;
-  auto it = std::lower_bound(
-      events.begin(), events.end(), ts_us,
-      [](const CursorEvent& e, std::int64_t v) { return e.ts_us < v; });
-  if (it == events.end()) return &events.back();
-  if (it == events.begin()) return &*it;
-  auto prev = std::prev(it);
-  const std::int64_t diff_prev = std::llabs(prev->ts_us - ts_us);
-  const std::int64_t diff_next = std::llabs(it->ts_us - ts_us);
-  return diff_prev <= diff_next ? &*prev : &*it;
-}
-
-const CursorEvent* FindNearestClick(
-    const std::vector<CursorEvent>& events, std::int64_t ts_us,
-    std::int64_t window_us) {
-  if (events.empty()) return nullptr;
-  const CursorEvent* best = nullptr;
-  std::int64_t best_diff = window_us + 1;
-  for (const auto& e : events) {
-    if (e.button_state == 0) continue;
-    const std::int64_t diff = std::llabs(e.ts_us - ts_us);
-    if (diff <= window_us && diff < best_diff) {
-      best = &e;
+const capture::CursorSidecarClick* FindCursorClickWithin(
+    const std::vector<capture::CursorSidecarClick>& clicks,
+    std::int64_t t_ms, std::int64_t window_ms) {
+  const capture::CursorSidecarClick* best = nullptr;
+  std::int64_t best_diff = window_ms + 1;
+  for (const auto& c : clicks) {
+    const std::int64_t diff = std::llabs(c.t_ms - t_ms);
+    if (diff <= window_ms && diff < best_diff) {
+      best = &c;
       best_diff = diff;
     }
   }
@@ -298,7 +251,7 @@ HRESULT PreviewCompositor::EnsureHighlightBrush(
 
 void PreviewCompositor::ComposeFrame(
     ID2D1DeviceContext* d2d_context, const D2D1_RECT_F& dest_rect,
-    const std::vector<CursorEvent>& cursor_events,
+    const capture::CursorSidecarData& cursor,
     std::int64_t playback_us, double now_seconds, ZoomState& zoom) {
   // Canvas background. This Clear runs BEFORE the colour-grade effect chain
   // below, which is precisely what keeps the canvas ungraded — same rule the
@@ -373,27 +326,34 @@ void PreviewCompositor::ComposeFrame(
     }
   };
 
-  const bool has_cursor = !cursor_events.empty();
+  const bool has_cursor = !cursor.samples.empty();
   float zoom_for_draw = 1.0f;
   float cursor_back_x = 0.0f;
   float cursor_back_y = 0.0f;
   float highlight_alpha = 0.0f;
 
   if (has_cursor) {
-    const CursorEvent* nearest =
-        FindNearestCursor(cursor_events, playback_us);
-    const CursorEvent* click = FindNearestClick(cursor_events, playback_us,
-                                                kClickLookupWindowUs);
-    if (nearest != nullptr) {
-      zoom.target_x = nearest->x;
-      zoom.target_y = nearest->y;
+    // The sidecar is keyed in recording-relative MS; the preview's playback
+    // clock is US.
+    const std::int64_t playback_ms = playback_us / 1000;
+    // SampleCursorAt interpolates between samples and refuses to interpolate
+    // across a visibility boundary — the export's own rule, rather than the
+    // nearest-sample snap the POC used.
+    const capture::CursorAtResult at =
+        capture::SampleCursorAt(cursor.samples, playback_ms);
+    const capture::CursorSidecarClick* click = FindCursorClickWithin(
+        cursor.clicks, playback_ms, kClickLookupWindowUs / 1000);
+    if (at.has) {
+      zoom.target_x = at.x;
+      zoom.target_y = at.y;
     }
     const std::int64_t now_us = playback_us;
     const std::int64_t hold_us = static_cast<std::int64_t>(
         kZoomMinOnSeconds * 1'000'000.0);
     bool zoom_wanted = false;
     if (click != nullptr) {
-      zoom.last_click_ts_us = std::max(zoom.last_click_ts_us, click->ts_us);
+      zoom.last_click_ts_us =
+          std::max(zoom.last_click_ts_us, click->t_ms * 1000);
       zoom_wanted = true;
     } else if (zoom.last_click_ts_us !=
                    std::numeric_limits<std::int64_t>::min() &&
