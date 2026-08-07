@@ -289,6 +289,8 @@ struct PreviewEngine::Impl {
   // ---- Compositor + cursor fixture ----
   clingfy::preview::PreviewCompositor compositor;
   capture::CursorSidecarData cursor;
+  // Source-keyed, built once at Open. Read on the frame thread.
+  std::vector<capture::ZoomSegment> zoom_segments;
   clingfy::preview::ZoomState zoom;
   bool cursor_mode = false;
 
@@ -1121,12 +1123,25 @@ OpenResult PreviewEngine::Open(const OpenArgs& args) {
       }
     }
     impl_->cursor_mode = !impl_->cursor.samples.empty();
-    char buf[128];
+    // The SAME segments the export builds, from the same clicks, through the
+    // same builder — hysteresis, 120 ms gap-merge, minimum length and the
+    // visibility gate included. The preview used to decide "is a zoom wanted"
+    // with its own symmetric ±500 ms click window, which turned the zoom on
+    // half a second BEFORE the click the export starts it at, and had no
+    // notion of a segment ending at all.
+    //
+    // duration_ms 0 = derive the extent from the samples. The export passes the
+    // media's natural duration, which differs only in where a still-active
+    // FINAL segment is truncated; segment starts — and therefore anything
+    // keyed to segment-local time — are identical either way.
+    impl_->zoom_segments = capture::BuildZoomSegments(
+        impl_->cursor.samples, impl_->cursor.clicks, /*duration_ms=*/0);
+    char buf[160];
     std::snprintf(buf, sizeof(buf),
-                  "cursor sidecar parsed: %zu samples, %zu clicks "
-                  "(cursor_mode=%d)",
+                  "cursor sidecar parsed: %zu samples, %zu clicks, "
+                  "%zu zoom segments (cursor_mode=%d)",
                   impl_->cursor.samples.size(), impl_->cursor.clicks.size(),
-                  impl_->cursor_mode ? 1 : 0);
+                  impl_->zoom_segments.size(), impl_->cursor_mode ? 1 : 0);
     LogNative(buf);
   }
 
@@ -1540,7 +1555,7 @@ void PreviewEngine::ComposeAndHandoffLocked(Impl* impl,
   impl->d2d_context->SetTarget(impl->shared_bitmap.Get());
   impl->d2d_context->BeginDraw();
   impl->compositor.ComposeFrame(impl->d2d_context.Get(), dest,
-                                impl->cursor, playback_us,
+                                impl->cursor, impl->zoom_segments, playback_us,
                                 NowSeconds(), impl->zoom);
   // Camera bubble draws on top of the composited screen frame, in canvas space.
   // The intro/outro clock is the EDITED position + edited duration, not

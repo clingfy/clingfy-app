@@ -954,6 +954,7 @@ void HandleVideoFrameAvailable(DemoState& s,
   // internally; no separate codepath needed when cursor_mode is off
   // (s.cursor has no samples in that case).
   s.compositor.ComposeFrame(s.d2d_context.Get(), dest, s.cursor,
+                            s.zoom_segments,
                             playback_us, NowSeconds(), s.zoom);
   const HRESULT end_hr = s.d2d_context->EndDraw();
   if (end_hr == D2DERR_RECREATE_TARGET) {
